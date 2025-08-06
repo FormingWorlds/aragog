@@ -5,6 +5,8 @@
 [![Documentation Status](https://readthedocs.org/projects/aragog/badge/?version=latest)](https://aragog.readthedocs.io/en/latest/?badge=latest)
 [![Python package](https://github.com/ExPlanetology/aragog/actions/workflows/python-package.yml/badge.svg)](https://github.com/ExPlanetology/aragog/actions/workflows/python-package.yml)
 
+test
+
 ## Under development
 
 This code remains under active development, hence the interface is not stable and should not be relied upon.
