@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-__version__: str = "0.2.8-alpha"
+__version__: str = "25.10.27"
 
 import importlib.resources
 import logging
