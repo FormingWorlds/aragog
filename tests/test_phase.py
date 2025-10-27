@@ -37,7 +37,7 @@ pressure: npt.NDArray = np.atleast_2d([0, 135e9]).T
 
 def test_version():
     """Test version."""
-    assert __version__ == "0.2.8-alpha"
+    assert __version__ == "25.10.27"
 
 
 def test_liquid_constant_properties(helper):
