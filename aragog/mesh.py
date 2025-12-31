@@ -448,7 +448,7 @@ class Mesh:
         return quantity_at_staggered_nodes
 
     def volume_average(self, staggered_quantity: npt.NDArray) -> float:
-        return float(np.dot(staggered_quantity.T, self.basic.volume)) / self.basic.total_volume
+        return np.dot(staggered_quantity.T, self.basic.volume).item() / self.basic.total_volume
 
 
 class EOS(ABC):
