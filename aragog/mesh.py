@@ -135,7 +135,7 @@ class FixedMesh:
 
     @cached_property
     def total_volume(self) -> float:
-        return 4 / 3 * np.pi * float(self._mesh_cubed[-1] - self._mesh_cubed[0])
+        return 4 / 3 * np.pi * (self._mesh_cubed[-1] - self._mesh_cubed[0]).item()
 
 
 class Mesh:
