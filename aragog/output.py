@@ -346,7 +346,7 @@ class Output:
         # Function to save scalar quantities
         def _add_scalar_variable(key: str, value: float, units: str):
             ds.createVariable(key, np.float64)
-            ds[key][0] = float(value)
+            ds[key][0] = value.item() if hasattr(value, 'item') else value
             ds[key].units = units
 
         # Save scalar quantities
