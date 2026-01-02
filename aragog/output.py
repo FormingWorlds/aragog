@@ -228,7 +228,7 @@ class Output:
     @property
     def mantle_mass(self) -> float:
         """Mantle mass computed from the AdamsWilliamsonEOS"""
-        return np.sum(self.mass_staggered)
+        return np.sum(self.mass_staggered).item()
 
     @property
     def mass_staggered(self) -> npt.NDArray:
@@ -310,7 +310,7 @@ class Output:
     @property
     def solution_top_temperature(self) -> float:
         """Solution (last iteration) temperature at the top of the domain (planet surface)"""
-        return self.temperature_K_basic[-1, -1]
+        return self.temperature_K_basic[-1, -1].item()
 
     @property
     def times(self) -> npt.NDArray:
@@ -319,7 +319,7 @@ class Output:
 
     @property
     def time_range(self) -> float:
-        return self.times[-1] - self.times[0]
+        return (self.times[-1] - self.times[0]).item()
 
     def write_at_time(self, file_path: str, tidx: int = -1, compress: bool = False) -> None:
         """Write the state of the model at a particular time to a NetCDF4 file on the disk.
@@ -346,7 +346,7 @@ class Output:
         # Function to save scalar quantities
         def _add_scalar_variable(key: str, value: float, units: str):
             ds.createVariable(key, np.float64)
-            ds[key][0] = float(value)
+            ds[key][0] = value.item() if hasattr(value, 'item') else value
             ds[key].units = units
 
         # Save scalar quantities

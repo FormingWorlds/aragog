@@ -135,7 +135,7 @@ class FixedMesh:
 
     @cached_property
     def total_volume(self) -> float:
-        return 4 / 3 * np.pi * float(self._mesh_cubed[-1] - self._mesh_cubed[0])
+        return 4 / 3 * np.pi * (self._mesh_cubed[-1] - self._mesh_cubed[0]).item()
 
 
 class Mesh:
@@ -240,7 +240,7 @@ class Mesh:
         )
         planet_density = (
             (core_mass + mantle_mass) / (np.power(basic_coordinates[-1,0],3.0)))
-        return planet_density
+        return planet_density.item()
 
     def get_basic_mass_coordinates_from_spatial_coordinates(self, basic_coordinates: npt.NDArray) -> npt.NDArray:
         """Computes the basic mass coordinates from basic spatial coordinates.
