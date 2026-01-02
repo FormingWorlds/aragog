@@ -62,7 +62,7 @@ def is_file(value: Any) -> bool:
     return False
 
 
-def is_monotonic_increasing(some_array: npt.NDArray) -> np.bool_:
+def is_monotonic_increasing(some_array: npt.NDArray) -> bool:
     """Returns True if an array is monotonically increasing, otherwise returns False."""
     return np.all(np.diff(some_array) > 0)
 
