@@ -1,10 +1,25 @@
-[tool.poetry]
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
 name = "fwl-aragog"
-version = "25.10.27"
+version = "26.01.06"
+authors = [
+    {name="Dan J. Bower",            email="dbower@ethz.ch"},
+    {name="Mariana Sastre",          email="m.c.villamil.sastre@rug.nl"},
+    {name="Laurent Soucasse",        email="l.soucasse@esciencecenter.nl"},
+    {name="Tim Lichtenberg",         email="tim.lichtenberg@rug.nl"},
+    {name="Harrison Nicholls",       email="harrison.nicholls@physics.ox.ac.uk"},
+    {name="Hanno Spreeuw",           email="h.spreeuw@esciencecenter.nl"},
+    {name="Robb Calder",             email="rdc49@cam.ac.uk"},
+]
 description = "1-D interior dynamics of rocky mantles that are solid, liquid, or mixed phase"
-authors = ["Dan J Bower <djbower@users.noreply.github.com>"]
 license = "GPL-3.0-or-later"
 readme = "README.md"
+
+
+[tool.poetry]
 packages = [
     { include = "aragog" },
     { include = "notebooks", to = "aragog" },
@@ -29,7 +44,10 @@ osfclient = "^0.0.5"
 zenodo_get = ">=1.6.0"
 
 [tool.poetry.group.test.dependencies]
-pytest = "^7.4.4"
+pytest = ">=8.1"
+pytest-cov = ">=1.0.0"
+pytest-dependency = ">=1.0.0"
+
 
 [tool.poetry.extras]
 docs = [
@@ -42,6 +60,3 @@ docs = [
 [tool.poetry.scripts]
 aragog = "aragog.cli:cli"
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
