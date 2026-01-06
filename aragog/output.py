@@ -181,7 +181,7 @@ class Output:
             rf = self.evaluator.mesh.basic.radii[idx]
 
         # Return dimensionless rheological front
-        return (self.evaluator.mesh.basic.radii[-1] - rf) / self.evaluator.mesh.basic.radii[-1]
+        return ((self.evaluator.mesh.basic.radii[-1] - rf) / self.evaluator.mesh.basic.radii[-1]).item()
 
     @property
     def melt_fraction_global(self) -> float:

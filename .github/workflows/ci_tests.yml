@@ -17,6 +17,10 @@ on:
       - ready_for_review
   workflow_dispatch:
 
+permissions:
+  actions: write
+  contents: write
+
 jobs:
   build:
 
