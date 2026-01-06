@@ -18,7 +18,7 @@
 
 import importlib.resources
 from contextlib import AbstractContextManager
-from importlib.abc import Traversable
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 import pytest

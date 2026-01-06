@@ -18,12 +18,12 @@
 
 from __future__ import annotations
 
-__version__: str = "25.10.27"
+__version__: str = "26.01.06"
 
 import importlib.resources
 import logging
 import os
-from importlib.abc import Traversable
+from importlib.resources.abc import Traversable
 
 CFG_DATA: Traversable = importlib.resources.files(f"{__package__}.cfg")
 
