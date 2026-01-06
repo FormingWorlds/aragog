@@ -45,8 +45,8 @@ zenodo_get = ">=1.6.0"
 
 [tool.poetry.group.test.dependencies]
 pytest = ">=8.1"
-pytest-cov = ">1"
-pytest-dependency = ">1"
+pytest-cov = ">=1.0.0"
+pytest-dependency = ">=1.0.0"
 
 
 [tool.poetry.extras]
