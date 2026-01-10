@@ -1,0 +1,78 @@
+site_name: aragog
+site_url: https://proteus-framework.org/aragog
+repo_url: https://github.com/FormingWorlds/aragog
+repo_name: GitHub
+
+nav:
+  - Home: index.md
+  - Contributing: CONTRIBUTING.md
+  - Code of Conduct: CODE_OF_CONDUCT.md
+  - Source code: https://github.com/FormingWorlds/aragog
+  - Issues page: https://github.com/FormingWorlds/aragog/issues
+  - 🔗 PROTEUS: https://github.com/FormingWorlds/PROTEUS/
+  - 🔗 JANUS: https://fwl-janus.readthedocs.io/
+  - 🔗 ZEPHYRUS: https://github.com/FormingWorlds/ZEPHYRUS/
+  - 🔗 CALLIOPE: https://github.com/FormingWorlds/CALLIOPE/ 
+  - 🔗 MORS: https://fwl-mors.readthedocs.io/
+  - 🔗 AGNI: https://h-nicholls.space/AGNI/
+  - 🔗 LovePy: https://github.com/nichollsh/lovepy
+  - 🔗 VULCAN: https://github.com/FormingWorlds/VULCAN
+  - 🔗 Zalmoxis: https://zalmoxis.readthedocs.io/
+  - 🔗 SPIDER: https://github.com/djbower/spider
+
+theme:
+  name: material
+  palette:
+    primary: black
+    accent: deep orange
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - markdown_include.include:
+      base_path: docs
+  - pymdownx.extra
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+plugins:
+- search
+- mkdocstrings:
+    # https://mkdocstrings.github.io/usage/
+    handlers:
+      python:
+        paths: [src]
+        inventories:
+        - https://installer.readthedocs.io/en/stable/objects.inv
+        - https://docs.python.org/3/objects.inv
+        - https://numpy.org/doc/stable/objects.inv
+        - https://docs.scipy.org/doc/scipy/objects.inv
+        - https://pandas.pydata.org/docs/objects.inv
+        - https://matplotlib.org/stable/objects.inv
+        options:
+          docstring_style: numpy
+          docstring_options:
+            ignore_init_summary: yes
+          show_submodules: no
+          show_source: true
+          show_symbol_type_heading: True
+          show_root_heading: true
+          show_root_toc_entry: true
+          show_docstring_attributes: true
+          show_root_full_path: false
+          docstring_section_style: list
+          members_order: alphabetical
+          merge_init_into_class: yes
+          filters: ["!^_"]
+
+watch:
+  - src/
+  - docs/
+  - README.md
