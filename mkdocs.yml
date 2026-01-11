@@ -5,8 +5,6 @@ repo_name: GitHub
 
 nav:
   - Home: index.md
-  - Contributing: CONTRIBUTING.md
-  - Code of Conduct: CODE_OF_CONDUCT.md
   - Source code: https://github.com/FormingWorlds/aragog
   - Issues page: https://github.com/FormingWorlds/aragog/issues
   - 🔗 PROTEUS: https://github.com/FormingWorlds/PROTEUS/
@@ -37,6 +35,7 @@ markdown_extensions:
   - pymdownx.extra
   - pymdownx.arithmatex:
       generic: true
+  - footnotes
 
 extra_javascript:
   - https://polyfill.io/v3/polyfill.min.js?features=es6
@@ -71,8 +70,10 @@ plugins:
           members_order: alphabetical
           merge_init_into_class: yes
           filters: ["!^_"]
+- bibtex:
+      bib_file: docs/refs.bib
 
 watch:
-  - src/
+  - aragog/
   - docs/
   - README.md
