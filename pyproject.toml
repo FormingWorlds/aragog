@@ -46,13 +46,14 @@ pytest-cov = ">=1.0.0"
 pytest-dependency = ">=1.0.0"
 
 
-[tool.poetry.extras]
-docs = [
-    "markdown-include",
-    "mkdocs",
-    "mkdocs-material",
-    "mkdocstrings[python]",
-]
+[tool.poetry.group.docs.dependencies]
+markdown-include = "^0.8"
+mkdocs = "^1.6"
+mkdocs-material = "^9.5"
+pymdown-extensions = "^10.0"
+mkdocstrings = "^0.26"
+mkdocstrings-python = "^1.10"
+mkdocs-bibtex = "^4.4.0"
 
 [tool.poetry.scripts]
 aragog = "aragog.cli:cli"
