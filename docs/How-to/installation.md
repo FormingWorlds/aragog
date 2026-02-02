@@ -9,7 +9,7 @@ conda create -n aragog python
 conda activate aragog
 ```
 
-Alternatively, you can create and activate a `virtual environment <https://docs.python.org/3/library/venv.html>`_.
+Alternatively, you can create and activate a [virtual environment](https://docs.python.org/3/library/venv.html).
 
 Finally, install Aragog into the activated environment:
 
@@ -32,13 +32,13 @@ There are some subtle differences between Poetry and pip, but in general Aragog 
 
 (a) Poetry option, which requires that [Poetry](https://python-poetry.org) is installed:
 
- ```sh
-poetry install --all-extras
+```sh
+poetry install --with docs
 ```
 
 (b) pip option, where the ``-e`` option is for an [editable install](https://setuptools.pypa.io/en/latest/userguide/development_mode.html):
 
- ```sh 
+```sh 
 pip install -e ".[docs]"
 ```
 
