@@ -55,6 +55,17 @@ mkdocstrings = "^0.26"
 mkdocstrings-python = "^1.10"
 mkdocs-bibtex = "^4.4.0"
 
+[tool.poetry.extras]
+docs = [
+    "markdown-include",
+    "mkdocs",
+    "mkdocs-material",
+    "pymdown-extensions",
+    "mkdocstrings",
+    "mkdocstrings-python",
+    "mkdocs-bibtex",
+]
+
 [tool.poetry.scripts]
 aragog = "aragog.cli:cli"
 
