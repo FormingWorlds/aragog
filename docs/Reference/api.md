@@ -28,3 +28,19 @@ aragog
 
 Here, the `cfg` subdirectory contains config files used as input for aragog, that can be adjusted or added to. 
 
+## CLI (`cli.py`)
+
+The CLI defines these entry points:
+
+### Command groups
+
+- `cli` — top-level group
+- `download` — subgroup for data download
+
+### Commands
+
+- `download all`
+  - Calls `data.DownloadLookupTableData()` to download lookup-table data.
+- `env`
+  - Prints the data directory location via `data.FWL_DATA_DIR`.
+
