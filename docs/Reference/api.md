@@ -44,3 +44,41 @@ The CLI defines these entry points:
 - `env`
   - Prints the data directory location via `data.FWL_DATA_DIR`.
 
+## Data download (`data.py`)
+
+### Constants
+
+- `FWL_DATA_DIR: pathlib.Path`
+  - From environment variable `FWL_DATA`, otherwise defaults to a per-user data directory via `platformdirs.user_data_dir("fwl_data")`.
+- `project_id = "phsxf"` (OSF project)
+- `basic_list`, `full_list`
+  - Folder path tuples defining available datasets.
+
+### Functions
+
+#### `GetFWLData() -> Path`
+Returns the absolute filesystem path to the root “FWL data” directory.
+
+#### `DownloadLookupTableData(fname: str = "") -> None`
+Downloads lookup table data into:
+
+```
+GetFWLData() / "interior_lookup_tables" / <folder>
+```
+
+Behavior:
+- If `fname == ""`: downloads `basic_list`.
+- If `fname` is in `full_list`: downloads only that folder.
+
+Download strategy for each folder:
+1. Try Zenodo using `zenodo_get <record_id> -o <folder_dir>`
+2. If Zenodo fails: fall back to OSF via `osfclient`
+
+### Helper functions 
+
+- `get_zenodo_record(folder: str) -> str | None`
+  - Returns a Zenodo record ID for a known folder.
+- `download_zenodo_folder(folder: str, data_dir: Path) -> None`
+  - Runs `zenodo_get` via subprocess, logs stdout/stderr into `zenodo.log` under `GetFWLData()`.
+- `download_OSF_folder(*, storage, folders: list[str], data_dir: Path) -> None`
+  - Streams matching OSF files to local disk.
