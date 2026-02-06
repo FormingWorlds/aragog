@@ -22,7 +22,7 @@ Finally, install Aragog into the activated environment:
 Navigate to a location on your computer and obtain the source code using git:
 
 ```sh
-git clone git@github.com:ExPlanetology/aragog.git aragog
+git clone git@github.com:FormingWorlds/aragog.git aragog
 cd aragog
 ```
 
