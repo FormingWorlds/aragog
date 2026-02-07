@@ -250,6 +250,42 @@ Aragog is intended as a computationally efficient mantle thermal evolution tool.
 - **Parameterised convection** via mixing-length eddy diffusivity, not explicit momentum equations.
 - **Mixed-phase physics** represented through melt fraction, latent heat effects, and simplified segregation/mixing fluxes.
 
+## Symbols and units
+
+- **$r$** — Radius (spatial coordinate) \[m\]
+- **$\xi$** — Mass coordinate \[m\]
+- **$t$** — Time \[s\] (often shown in years in postprocessing)
+- **$T$** — Temperature \[K\]
+- **$P$** — Pressure \[Pa\]
+- **$\rho$** — Density \[kg/m³\]
+- **$\rho_s$** — Solid density \[kg/m³\]
+- **$\rho_m$** — Melt (liquid) density \[kg/m³\]
+- **$c_p$** — Heat capacity \[J/kg/K\]
+- **$\alpha$** — Thermal expansivity \[K⁻¹\]
+- **$\lambda$** — Thermal conductivity \[W/m/K\]
+- **$g$** — Gravitational acceleration \[m/s²\]
+- **$\vec{q}$** — Heat flux vector \[W/m²\]
+- **$q_{\mathrm{cd}}$** — Conductive heat flux \[W/m²\]
+- **$q_{\mathrm{cv}}$** — Convective (eddy-diffusive) heat flux \[W/m²\]
+- **$q_{\mathrm{tot}}$** — Total heat flux \[W/m²\]
+- **$\Phi$** — Volumetric heating / source term \[W/m³\]
+- **$\phi$** — Melt mass fraction \[-\]
+- **$T_{\mathrm{sol}}(P)$** — Solidus temperature \[K\]
+- **$T_{\mathrm{liq}}(P)$** — Liquidus temperature \[K\]
+- **$\kappa_h$** — Eddy diffusivity \[m²/s\]
+- **$l$** — Mixing length \[m\]
+- **$\eta$** — Dynamic viscosity \[Pa·s\]
+- **$\nu$** — Kinematic viscosity \($\nu=\eta/\rho$\) \[m²/s\]
+- **$\vec{j}$** — Melt mass flux vector \[kg/m²/s\]
+- **$j_{\mathrm{cm}}$** — Convective mixing mass flux \[kg/m²/s\]
+- **$j_{\mathrm{gm}}$** — Gravitational separation mass flux \[kg/m²/s\]
+- **$v_{\mathrm{rel}}$** — Relative melt–solid velocity \[m/s\]
+- **$K$** — Permeability of the partially molten matrix \[m²\]
+- **$\Delta h$** — Latent heat of fusion \[J/kg\]
+- **$\varepsilon$** — Emissivity \[-\]
+- **$\sigma$** — Stefan–Boltzmann constant \[W/m²/K⁴\]
+- **$B$** — Adiabatic bulk modulus (used in Adams–Williamson EOS) \[Pa\]
+
 
 ## Code mapping (high level)
 
@@ -257,35 +293,24 @@ Aragog is intended as a computationally efficient mantle thermal evolution tool.
 
 The formulation corresponds broadly to:
 
-- **Mesh + coordinates + pressure/EOS**
-  - [`mesh.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/mesh.py)
+- **Mesh + coordinates + pressure/EOS**: [`mesh.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/mesh.py)
 
-- **Phase and material properties**
-  - [`phase.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/phase.py)
-  - [`interfaces.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/interfaces.py)
+- **Phase and material properties**: [`phase.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/phase.py), [`interfaces.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/interfaces.py)
 
-- **Core model pieces (initial and boundary conditions)**
-  - [`core.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/core.py)
+- **Core model pieces (initial and boundary conditions)**: [`core.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/core.py)
 
-- **Time integration and main solver**
-  - [`solver.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/solver.py)
+- **Time integration and main solver**: [`solver.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/solver.py)
 
 ### Project scripts
 
 Additionally, the code contains:
 
-- **CLI / entry point**
-  - [`cli.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/cli.py)
+- **CLI / entry point**: [`cli.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/cli.py)
 
-- **Configuration and parameters**
-  - [`parser.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/parser.py)
-  - [`cfg/`](https://github.com/FormingWorlds/aragog/tree/main/aragog/cfg)
+- **Configuration and parameters**: [`parser.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/parser.py), [`cfg/`](https://github.com/FormingWorlds/aragog/tree/main/aragog/cfg)
 
-  - **Output and plotting**
-  - [`output.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/output.py)
+  - **Output and plotting**: [`output.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/output.py)
 
-- **Data download (lookup tables)**
-  - [`data.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/data.py)
+- **Data download (lookup tables)**: [`data.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/data.py)
 
-- **Small utilities**
-  - [`utilities.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/utilities.py)
+- **Small utilities**: [`utilities.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/utilities.py)
