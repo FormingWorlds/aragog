@@ -5,6 +5,7 @@ repo_name: GitHub
 
 nav:
   - Home: index.md
+  - Getting started: getting_started.md
   - Code of Conduct: CODE_OF_CONDUCT.md
 
   - How-to guides:
