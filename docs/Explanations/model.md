@@ -6,16 +6,16 @@ Aragog is a 1‑D (radial), spherically symmetric thermal evolution model for ro
 
 ### Integral enthalpy balance
 
-Aragog evolves temperature by enforcing an enthalpy/energy balance over a spherical shell (mantle) between the **core–mantle boundary (CMB)** at $r=r_{\mathrm{cmb}}$ and the **surface** at $r=r_{\mathrm{top}}$. In integral form, for a control volume $V$ with boundary $S$,
+Aragog evolves temperature by enforcing an enthalpy balance over a spherical shell (mantle) between the **core–mantle boundary (CMB)** at $r=r_{\mathrm{cmb}}$ and the **surface** at $r=r_{\mathrm{top}}$. In integral form, for a control volume $V$ with boundary $S$,
 
 $$
 \int_V \rho c_p \left.\frac{\partial T}{\partial t}\right|_{\xi}\, dV
 =
 - \int_S \mathbf{q}\cdot \mathbf{n}\, dS
-+ \int_V \Phi\, dV.
++ \int_V \Phi\, dV,
 $$
 
-The time derivative is taken at **constant mass coordinate** $\xi$ (a Lagrangian-like coordinate; see below).
+where $ \mathbf{q}$ is the heat flux, $\Phi$ the heating rate and $c_p$ the specific heat capacity. The time derivative is taken at **constant mass coordinate** $\xi$ (a Lagrangian-like coordinate; see below).
 
 Each finite-volume cell is assumed to coincide with a **material volume**: its mass is constant and there is **no net mass flux through cell interfaces** in the control-volume sense (species fluxes may exist internally in mixed phase via melt/solid segregation, but their sum is zero).
 
@@ -60,7 +60,7 @@ $$
 \frac{\partial \psi}{\partial \xi}.
 $$
 
-If the mass-coordinate transform is ignored (i.e., you compute on a fixed spatial mesh), the model effectively approximates
+If the mass-coordinate transform is ignored (i.e. on a fixed spatial mesh), the model approximates
 $\left.\partial T/\partial t\right|_{\xi} \approx \left.\partial T/\partial t\right|_{r}$.
 
 
@@ -112,17 +112,17 @@ where $\Delta h$ is latent heat and $j$ are **melt mass fluxes** $[\mathrm{kg\,m
 
 - **Convective mixing mass flux** (diffusion of melt fraction):
   $
-  j_{\mathrm{cm}} = -\rho \kappa_h \frac{\partial \phi}{\partial r}.
+  j_{\mathrm{cm}} = -\rho \kappa_h \frac{\partial \phi}{\partial r},
   $
+  with $\phi$ the melt fraction. 
 - **Gravitational separation mass flux** (buoyant percolation/settling):
   $$
   j_{\mathrm{gm}} = \rho\,\phi(1-\phi)\, v_{\mathrm{rel}},
   \qquad
-  v_{\mathrm{rel}} = \frac{(\rho_m-\rho_s)gK}{\eta_m}.
+  v_{\mathrm{rel}} = \frac{(\rho_m-\rho_s)gK}{\eta_m},
   $$
 
-These melt-transport fluxes are constructed so that melt and solid species fluxes sum to zero (no net mass flux).
-
+where $v_{\mathrm{rel}}$ is the relative velocity between melt and solid; $K$ is the permeability of the mixed-phase region and  $\eta_m$ is the melt viscosity. These melt-transport fluxes are constructed so that melt and solid species fluxes sum to zero (no net mass flux).
 
 ## Volumetric heating sources
 
@@ -186,11 +186,11 @@ It may differ slightly from the actual density $\rho$ used in transport, which v
 
 Thermophysical properties can depend on $T$ and $P$, with separate solid and melt values ($s$ and $m$). In the mixed phase:
 
-- **Mixture density** (harmonic form):
+- **Mixture density** $\rho$ (harmonic form):
   $$
   \frac{1}{\rho} = \frac{\phi}{\rho_m} + \frac{1-\phi}{\rho_s}.
   $$
-- **Mixture conductivity** (linear):
+- **Mixture conductivity** $\lambda$ (linear):
   $$
   \lambda = \phi\lambda_m + (1-\phi)\lambda_s.
   $$
@@ -240,7 +240,7 @@ $$
 
 solved numerically when properties vary with depth.
 
-## Assumptions and scope
+## Assumptions 
 
 Aragog is intended as a computationally efficient mantle thermal evolution tool. Its core assumptions are:
 
@@ -253,10 +253,39 @@ Aragog is intended as a computationally efficient mantle thermal evolution tool.
 
 ## Code mapping (high level)
 
+### Physical scripts
+
 The formulation corresponds broadly to:
 
-- **mesh:** radial/mass coordinate mapping, gradients/interpolation routines, pressure model
-- **phase:** melt fraction and thermophysical property evaluation
-- **solver:** assembly of fluxes/sources and the time integration of the finite-volume balance
-- **core / boundary:** boundary condition handling and optional core cooling coupling
+- **Mesh + coordinates + pressure/EOS**
+  - [`mesh.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/mesh.py)
 
+- **Phase and material properties**
+  - [`phase.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/phase.py)
+  - [`interfaces.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/interfaces.py)
+
+- **Core model pieces (initial and boundary conditions)**
+  - [`core.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/core.py)
+
+- **Time integration and main solver**
+  - [`solver.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/solver.py)
+
+### Project scripts
+
+Additionally, the code contains:
+
+- **CLI / entry point**
+  - [`cli.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/cli.py)
+
+- **Configuration and parameters**
+  - [`parser.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/parser.py)
+  - [`cfg/`](https://github.com/FormingWorlds/aragog/tree/main/aragog/cfg)
+
+  - **Output and plotting**
+  - [`output.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/output.py)
+
+- **Data download (lookup tables)**
+  - [`data.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/data.py)
+
+- **Small utilities**
+  - [`utilities.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/utilities.py)
