@@ -474,11 +474,11 @@ class AdamsWilliamsonEOS(EOS):
 
     EOS due to adiabatic self-compression from the definition of the adiabatic bulk modulus:
 
-    .. math::
+    $$
+    \left( \frac{{d\rho}}{{dP}} \right)_S = \frac{{\rho}}{{K_S}}
+    $$
 
-        \left( \frac{{d\rho}}{{dP}} \right)_S = \frac{{\rho}}{{K_S}}
-
-    where :math:`\rho` is density, :math:`K_S` the adiabatic bulk modulus, and :math:`S` is
+    where $\rho$ is density, $K_S$ the adiabatic bulk modulus, and $S$ is
     entropy.
     """
 
@@ -543,12 +543,12 @@ class AdamsWilliamsonEOS(EOS):
     def get_density(self, pressure: FloatOrArray) -> npt.NDArray:
         r"""Computes density from pressure:
 
-        .. math::
-
-            \rho(P) = \rho_s \exp(P/K_S)
-
-        where :math:`\rho` is density, :math:`P` is pressure, :math:`\rho_s` is surface density,
-        and :math:`K_S` is adiabatic bulk modulus.
+        $$
+        \rho(P) = \rho_s \exp(P/K_S)
+        $$
+        
+        where $\rho$ is density, $P$ is pressure, $\rho_s$ is surface density,
+        and $K_S$ is adiabatic bulk modulus.
 
         Args:
             pressure: Pressure
@@ -565,12 +565,11 @@ class AdamsWilliamsonEOS(EOS):
     def get_density_from_radii(self, radii: FloatOrArray) -> FloatOrArray:
         r"""Computes density from radii:
 
-        .. math::
-
+        $$
             \rho(r) = \frac{\rho_s K_S}{K_S + \rho_s g (r-r_s)}
-
-        where :math:`\rho` is density, :math:`r` is radius, :math:`\rho_s` is surface density,
-        :math:`K_S` is adiabatic bulk modulus, and :math:`r_s` is surface radius.
+        $$
+        where $\rho$ is density, $r$ is radius, $\rho_s$ is surface density,
+        $K_S$ is adiabatic bulk modulus, and $r_s$ is surface radius.
 
         Args:
             radii: Radii
@@ -590,11 +589,11 @@ class AdamsWilliamsonEOS(EOS):
     def get_mass_element(self, radii: FloatOrArray) -> npt.NDArray:
         r"""Computes the mass element:
 
-        .. math::
+        $$
+        \frac{\delta m}{\delta r} = 4 \pi r^2 \rho
+        $$
 
-            \frac{\delta m}{\delta r} = 4 \pi r^2 \rho
-
-        where :math:`\delta m` is the mass element, :math:`r` is radius, and :math:`\rho` is
+        where $\delta m$ is the mass element, $r$ is radius, and $\rho$ is
         density.
 
         Args:
@@ -612,11 +611,10 @@ class AdamsWilliamsonEOS(EOS):
     def get_mass_within_radii(self, radii: FloatOrArray) -> npt.NDArray:
         r"""Computes mass within radii:
 
-        .. math::
-
-            m(r) = \int 4 \pi r^2 \rho dr
-
-        where :math:`m` is mass, :math:`r` is radius, and :math:`\rho` is density.
+        $$
+        m(r) = \int 4 \pi r^2 \rho dr
+        $$ 
+        where $m$ is mass, $r$ is radius, and $\rho$ is density.
 
         The integral was evaluated using WolframAlpha.
 
@@ -680,13 +678,13 @@ class AdamsWilliamsonEOS(EOS):
     def get_pressure_from_radii(self, radii: FloatOrArray) -> npt.NDArray:
         r"""Computes pressure from radii:
 
-        .. math::
+        $$
+        P(r) = -K_S \ln \left( 1 + \frac{\rho_s g (r-r_s)}{K_S} \right)
+        $$
 
-            P(r) = -K_S \ln \left( 1 + \frac{\rho_s g (r-r_s)}{K_S} \right)
-
-        where :math:`r` is radius, :math:`K_S` is adiabatic bulk modulus, :math:`P` is pressure,
-        :math:`\rho_s` is surface density, :math:`g` is gravitational acceleration, and
-        :math:`r_s` is surface radius.
+        where $r$ is radius, $K_S$ is adiabatic bulk modulus, $P$ is pressure,
+        $\rho_s$ is surface density, $g$ is gravitational acceleration, and
+        $r_s$ is surface radius.
 
         Args:
             radii: Radii
@@ -709,11 +707,11 @@ class AdamsWilliamsonEOS(EOS):
     def get_pressure_gradient(self, pressure: FloatOrArray) -> npt.NDArray:
         r"""Computes the pressure gradient:
 
-        .. math::
+        $$
+        \frac{dP}{dr} = -g \rho
+        $$ 
 
-            \frac{dP}{dr} = -g \rho
-
-        where :math:`\rho` is density, :math:`P` is pressure, and  :math:`g` is gravitational
+        where $\rho$ is density, $P$ is pressure, and  $g$ is gravitational
         acceleration.
 
         Args:
@@ -729,19 +727,19 @@ class AdamsWilliamsonEOS(EOS):
     def get_radii_from_pressure(self, pressure: FloatOrArray) -> npt.NDArray:
         r"""Computes radii from pressure:
 
-        .. math::
+        $$
+        P(r) = \int \frac{dP}{dr} dr = \int -g \rho_s \exp(P/K_S) dr
+        $$ 
 
-            P(r) = \int \frac{dP}{dr} dr = \int -g \rho_s \exp(P/K_S) dr
+        And apply the boundary condition $P=0$ at $r=r_s$ to get:
 
-        And apply the boundary condition :math:`P=0` at :math:`r=r_s` to get:
-
-        .. math::
-
-            r(P) = \frac{K_s \left( \exp(-P/K_S)-1 \right)}{\rho_s g} + r_s
-
-        where :math:`r` is radius, :math:`K_S` is adiabatic bulk modulus, :math:`P` is pressure,
-        :math:`\rho_s` is surface density, :math:`g` is gravitational acceleration, and
-        :math:`r_s` is surface radius.
+        $$
+        r(P) = \frac{K_s \left( \exp(-P/K_S)-1 \right)}{\rho_s g} + r_s
+        $$
+        
+        where $r$ is radius, $K_S$ is adiabatic bulk modulus, $P$ is pressure,
+        $\rho_s$ is surface density, $g$ is gravitational acceleration, and
+        $r_s$ is surface radius.
 
         Args:
             pressure: Pressure
