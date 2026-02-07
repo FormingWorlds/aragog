@@ -1,15 +1,15 @@
 # Getting started
 **aragog** is a Python package for computing one-dimensional interior dynamics of rocky planets, including partially molten and fully solid regimes.
 
+> **Note**: This documentation describes the version integrated into the **PROTEUS framework**: https://proteus-framework.org/PROTEUS. For documentation of the original project, see: https://aragog.readthedocs.io.
+
 - If you want learning oriented, step-by-step instructions, follow the **Tutorials** section.
 - If you want task-oriented recipes for common workflows, go to **How-to guides**. 
-- If you want concepts and model background**, see **Explanations**.
+- If you want concepts and model background, see **Explanations**.
 - If you want reference information such as function and parameter lookup, see **Reference**.
 
 An easy way to get started is to go through our [First Run tutorial](Tutorials/firstrun.md).
 If you plan to contribute to aragog, please read our [Code of Conduct](CODE_OF_CONDUCT.md).
-
-> This documentation describes the aragog version distributed with the **PROTEUS framework**.  
 
 ## Install
 Follow the project’s installation instructions:
@@ -18,7 +18,7 @@ Follow the project’s installation instructions:
 
 ## Source code and issues
 - [Repository (PROTEUS distribution)](https://github.com/FormingWorlds/aragog)
-- Issues: see the [**Issues page**](https://github.com/FormingWorlds/aragog/issues) link in the sidebar
+- Issues: see the [Issues page](https://github.com/FormingWorlds/aragog/issues) link in the sidebar
 
 ## Citation
 If you use aragog, please cite:
