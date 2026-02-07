@@ -275,7 +275,7 @@ Aragog is intended as a computationally efficient mantle thermal evolution tool.
 - **$\kappa_h$** — Eddy diffusivity \[m²/s\]
 - **$l$** — Mixing length \[m\]
 - **$\eta$** — Dynamic viscosity \[Pa·s\]
-- **$\nu$** — Kinematic viscosity \($\nu=\eta/\rho$\) \[m²/s\]
+- **$\nu$** — Kinematic viscosity ( $\nu=\eta/\rho$ ) \[m²/s\]
 - **$\vec{j}$** — Melt mass flux vector \[kg/m²/s\]
 - **$j_{\mathrm{cm}}$** — Convective mixing mass flux \[kg/m²/s\]
 - **$j_{\mathrm{gm}}$** — Gravitational separation mass flux \[kg/m²/s\]
