@@ -14,7 +14,7 @@ If you plan to contribute to aragog, please read our [Code of Conduct](CODE_OF_C
 ## Install
 Follow the project’s installation instructions:
 
-- [**Installation guide**](How-to/installation.md)
+- [Installation guide](How-to/installation.md)
 
 ## Source code and issues
 - [Repository (PROTEUS distribution)](https://github.com/FormingWorlds/aragog)
