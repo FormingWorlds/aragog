@@ -8,20 +8,16 @@ nav:
   - Code of Conduct: CODE_OF_CONDUCT.md
 
   - How-to guides:
-      - Overview: How-to/index.md
       - Installation: How-to/installation.md
       - Inspecting aragog NetCDF output: How-to/netcdf.md
 
   - Tutorials:
-      - Overview: Tutorials/index.md
       - First run: Tutorials/firstrun.md
 
   - Explanations:
-      - Overview: Explanations/index.md
       - Model overview: Explanations/model.md
 
   - Reference:
-      - Overview: Reference/index.md
       - API reference: Reference/api.md
       - Publications: Reference/publications.md
 
@@ -45,6 +41,8 @@ nav:
 theme:
   name: material
   custom_dir: docs/overrides
+  features:
+    - navigation.expand
 
   # Default assets (used unless overridden per palette below)
   favicon: assets/PROTEUS_black_on_white_logo_only.png
