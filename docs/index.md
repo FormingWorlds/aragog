@@ -1,4 +1,4 @@
-# aragog (PROTEUS distribution)
+# aragog (PROTEUS Framework)
 
 **aragog** is an open-source Python package for computing one-dimensional interior dynamics of rocky planets, including partially molten and fully solid regimes. 
 
