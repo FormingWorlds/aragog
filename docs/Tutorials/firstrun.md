@@ -1,5 +1,7 @@
 # First-run tutorial 
 
+Welcome to this first-run tutorial. We’ll run a single configuration, then export and inspect the results.
+
 ## What does aragog do?
 
 Aragog solves the **time evolution of a 1-D radial temperature profile** inside a spherical shell (mantle) using conduction and optional parameterized convection, melt physics, and internal heating. 
@@ -124,9 +126,10 @@ python first.py
 ```
 
 If everything is working, you should see:
+
 - solver logging indicating integration succeeded
-- a NetCDF file `first_output.nc`
-- a matplotlib figure window with multiple panels vs pressure
+- a NetCDF file `first_output.nc` in the `out` directory
+- a matplotlib figure with multiple panels vs pressure in the `out` directory
 
 ## 5. NetCDF outputs
 
