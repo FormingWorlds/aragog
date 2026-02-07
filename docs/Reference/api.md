@@ -39,58 +39,81 @@ Aragog is structured around a small number of components:
 5. **Time integration** ([`solver.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/solver.py) → `scipy.integrate.solve_ivp`)
 6. **Postprocessing and export** ([`output.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/output.py))
 
+## Module reference
 
-## CLI (`cli.py`)
+### aragog.cli
+::: aragog.cli
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-The CLI defines these entry points:
+### aragog.data
+::: aragog.data
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-### Command groups
+### aragog.core
+::: aragog.core
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-- `cli` — top-level group
-- `download` — subgroup for data download
+### aragog.interfaces
+::: aragog.interfaces
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-### Commands
+### aragog.mesh
+::: aragog.mesh
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-- `download all`
-  - Calls `data.DownloadLookupTableData()` to download lookup-table data.
-- `env`
-  - Prints the data directory location via `data.FWL_DATA_DIR`.
+### aragog.output
+::: aragog.output
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-## Data download (`data.py`)
+### aragog.parser
+::: aragog.parser
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-### Constants
+### aragog.phase
+::: aragog.phase
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-- `FWL_DATA_DIR: pathlib.Path`
-  - From environment variable `FWL_DATA`, otherwise defaults to a per-user data directory via `platformdirs.user_data_dir("fwl_data")`.
-- `project_id = "phsxf"` (OSF project)
-- `basic_list`, `full_list`
-  - Folder path tuples defining available datasets.
+### aragog.solver
+::: aragog.solver
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-### Functions
+### aragog.utilities
+::: aragog.utilities
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
 
-#### `GetFWLData() -> Path`
-Returns the absolute filesystem path to the root “FWL data” directory.
-
-#### `DownloadLookupTableData(fname: str = "") -> None`
-Downloads lookup table data into:
-
-```
-GetFWLData() / "interior_lookup_tables" / <folder>
-```
-
-Behavior:
-- If `fname == ""`: downloads `basic_list`.
-- If `fname` is in `full_list`: downloads only that folder.
-
-Download strategy for each folder:
-1. Try Zenodo using `zenodo_get <record_id> -o <folder_dir>`
-2. If Zenodo fails: fall back to OSF via `osfclient`
-
-### Helper functions 
-
-- `get_zenodo_record(folder: str) -> str | None`
-  - Returns a Zenodo record ID for a known folder.
-- `download_zenodo_folder(folder: str, data_dir: Path) -> None`
-  - Runs `zenodo_get` via subprocess, logs stdout/stderr into `zenodo.log` under `GetFWLData()`.
-- `download_OSF_folder(*, storage, folders: list[str], data_dir: Path) -> None`
-  - Streams matching OSF files to local disk.
+### aragog (package)
+::: aragog
+    options:
+      members: true
+      inherited_members: true
+      show_source: true
