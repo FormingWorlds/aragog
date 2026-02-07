@@ -86,7 +86,7 @@ from pathlib import Path
 matplotlib.use("Agg")  
 
 # Load config, initialize, solve
-solver = Solver.from_file("aragog/cfg/abe_liquid.cfg")
+solver = Solver.from_file("aragog/cfg/abe_mixed.cfg")
 solver.initialize()
 solver.solve()
 
@@ -94,7 +94,7 @@ solver.solve()
 out = Output(solver)
 
 print("\n=== Aragog run summary ===")
-print("Config file: aragog/cfg/abe_liquid.cfg")
+print("Config file: aragog/cfg/abe_mixed.cfg")
 print("Stop early:", getattr(solver, "stop_early", None))
 print("Time span (years):", out.time_range)
 print("Final surface temperature (K):", out.solution_top_temperature)
