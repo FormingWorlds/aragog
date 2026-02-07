@@ -9,6 +9,7 @@ nav:
   - How-to guides:
       - Overview: How-to/index.md
       - Installation: How-to/installation.md
+      - Inspecting aragog NetCDF output: How-to/netcdf.md
 
   - Tutorials:
       - Overview: Tutorials/index.md
@@ -16,10 +17,11 @@ nav:
 
   - Explanations:
       - Overview: Explanations/index.md
-      - Model background: Explanations/model.md
+      - Model overview: Explanations/model.md
 
   - Reference:
       - Overview: Reference/index.md
+      - API reference: Reference/api.md
       - Publications: Reference/publications.md
 
   - Source code: https://github.com/FormingWorlds/aragog
@@ -31,7 +33,7 @@ nav:
   - 🔗 CALLIOPE: https://proteus-framework.org/CALLIOPE/
   - 🔗 AGNI: https://www.h-nicholls.space/AGNI/
   - 🔗 Obliqua: https://proteus-framework.org/Obliqua/
-  - 🔗 VULCAN: https://proteus-framework/VULCAN/
+  - 🔗 VULCAN: https://proteus-framework.org/VULCAN/
   - 🔗 Zalmoxis: https://proteus-framework.org/Zalmoxis/
   - 🔗 Aragog: https://proteus-framework.org/aragog/
   - 🔗 SPIDER: https://github.com/djbower/spider
@@ -68,9 +70,6 @@ theme:
       toggle:
         icon: material/weather-sunny
         name: Switch to light mode
-
-extra_css:
-  - stylesheets/extra.css
 
 markdown_extensions:
   - admonition
