@@ -15,7 +15,7 @@ Institute of Geochemistry and Petrology, ETH Zurich, Switzerland
 | Name |  Email|
 |---|---|
 | Dan J. Bower      | dbower@ethz.ch                        |       
-| Harrison Nicholls | harrison.nicholls@physics.ox.ac.uk    |
+| Harrison Nicholls | h-nicholls@pm.me                      |
 | Mariana Sastre    | m.c.villamil.sastre@rug.nl            |
 | Tim Lichtenberg   | tim.lichtenberg@rug.nl                |
 | Karen Stuitje     | e.k.e.stuitje@student.rug.nl          |
