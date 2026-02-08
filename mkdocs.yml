@@ -10,7 +10,7 @@ nav:
 
   - How-to guides:
       - Installation: How-to/installation.md
-      - Inspecting aragog NetCDF output: How-to/netcdf.md
+      - Inspecting NetCDF output: How-to/netcdf.md
 
   - Tutorials:
       - First run: Tutorials/firstrun.md
