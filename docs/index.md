@@ -2,7 +2,7 @@
 
 **aragog** is an open-source Python package for computing one-dimensional interior dynamics of rocky planets, including partially molten and fully solid regimes. 
 
-> **Note**: This documentation describes the version integrated into the [PROTEUS framework](https://proteus-framework.org/PROTEUS.). For documentation of the original project, see [Explanetology](https://aragog.readthedocs.io.).
+> **Note**: This documentation describes the version integrated into the [PROTEUS framework](https://proteus-framework.org/PROTEUS.). For documentation of the original project, see [ExPlanetology](https://aragog.readthedocs.io.).
 
 **License:** [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html)
 
