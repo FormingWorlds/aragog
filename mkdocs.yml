@@ -6,7 +6,6 @@ repo_name: GitHub
 nav:
   - Home: index.md
   - Getting started: getting_started.md
-  - Code of Conduct: CODE_OF_CONDUCT.md
 
   - How-to guides:
       - Installation: How-to/installation.md
@@ -21,7 +20,8 @@ nav:
   - Reference:
       - API reference: Reference/api.md
       - Publications: Reference/publications.md
-
+      
+  - Code of Conduct: CODE_OF_CONDUCT.md
   - Source code: https://github.com/FormingWorlds/aragog
   - Issues page: https://github.com/FormingWorlds/aragog/issues
   - 🔗 PROTEUS: https://proteus-framework.org/PROTEUS/
