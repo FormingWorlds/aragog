@@ -155,11 +155,13 @@ For more info on opening, inspecting and plotting NetCDF files, you can go throu
 
 ### Zenodo download problems
 If you download:
+
 - ensure `zenodo_get` is installed 
 - ensure you have write permissions to `FWL_DATA`.
 
 ### Solver is slow 
 Update your configuration file, living in `aragog/cgf`, with:
+
 - fewer nodes (`number_of_nodes = 40`)
 - shorter run (`end_time = 1e3`)
 - looser tolerances (`atol=1e-5`, `rtol=1e-5`)
