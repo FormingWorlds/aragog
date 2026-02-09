@@ -15,7 +15,7 @@ $$
 + \int_V \Phi\, dV,
 $$
 
-where $ \mathbf{q}$ is the heat flux, $\Phi$ the heating rate and $c_p$ the specific heat capacity. The time derivative is taken at **constant mass coordinate** $\xi$ (a Lagrangian-like coordinate; see below).
+where $\mathbf{q}$ is the heat flux, $\Phi$ the heating rate and $c_p$ the specific heat capacity. The time derivative is taken at **constant mass coordinate** $\xi$ (a Lagrangian-like coordinate; see below).
 
 Each finite-volume cell is assumed to coincide with a **material volume**: its mass is constant and there is **no net mass flux through cell interfaces** in the control-volume sense (species fluxes may exist internally in mixed phase via melt/solid segregation, but their sum is zero).
 
