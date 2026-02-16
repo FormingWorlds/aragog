@@ -1,6 +1,6 @@
-# Inspecting aragog NetCDF output
+# Inspecting Aragog NetCDF output
 
-This is a quick how-to for opening, inspecting, and plotting variables from aragog’s NetCDF snapshot files. This how-to assumes you have output `out/first_output.nc` from the [First Run tutorial](../Tutorials/firstrun.md), but is applicable to any output file. 
+This is a quick how-to for opening, inspecting, and plotting variables from Aragog’s NetCDF snapshot files. This how-to assumes you have output `out/first_output.nc` from the [First Run tutorial](../Tutorials/firstrun.md), but is applicable to any output file. 
 
 ## 1. Quick command-line inspect
 
