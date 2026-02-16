@@ -111,9 +111,9 @@ $$
 where $\Delta h$ is latent heat and $j$ are **melt mass fluxes** $[\mathrm{kg\,m^{-2}\,s^{-1}}]$.
 
 - **Convective mixing mass flux** (diffusion of melt fraction):
-  $
+  $$
   j_{\mathrm{cm}} = -\rho \kappa_h \frac{\partial \phi}{\partial r},
-  $
+  $$
   with $\phi$ the melt fraction. 
 - **Gravitational separation mass flux** (buoyant percolation/settling):
   $$
