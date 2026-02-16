@@ -11,37 +11,9 @@ Successfully install Aragog; get to a **first successful model run** and a **Net
 
 ## Assumptions
  - You're using Python 3.10+ (3.12 recommended).
+ - You hava Aragog installed according to the [installation instructions](../How-to/installation.md).
 
-## 1. Install Aragog (editable install)
-
-Clone Aragog to a suitable location:
-
-```sh
-git clone git@github.com:FormingWorlds/aragog.git aragog
-cd aragog
-```
-
-Create a Conda environment:
-
-```sh
-conda create -n aragog python
-conda activate aragog
-```
-
-No `conda` installed? Create a virtual environment (venv):
-
-```sh
-python -m venv .venv
-source .venv/bin/activate  # macOS/Linux
-```
-
-Finally, install Aragog and all dependencies:
-
-```sh 
-pip install -e ".[docs]"
-```
-
-## 2. OPTIONAL: Choose a data directory
+## 1. OPTIONAL: Choose a data directory
 
 Aragog’s data helper uses `FWL_DATA` to decide where lookup tables/logs go. If you have not set this up yet, set it to something you control:
 
@@ -62,9 +34,10 @@ aragog env
 You should see:
 - `FWL_DATA location: <...>`
 
-> **Note** If you are coming from a different module of the PROTEUS Framework, FWL_DATA might be set to a datafolder in this other module. Check this, so that you know where your data goes.
+!!! note
+    If you are coming from a different module of the PROTEUS Framework, FWL_DATA might be set to a datafolder in this other module. Check this, so that you know where your data goes.
 
-## 3. Download official lookup tables
+## 2. Download official lookup tables
 
 To download published lookup tables, run:
 
@@ -72,7 +45,7 @@ To download published lookup tables, run:
 aragog download all
 ```
 
-## 4. Run aragog from Python 
+## 3. Run aragog from Python 
 
 Create `first.py`:
 
@@ -131,7 +104,7 @@ If everything is working, you should see:
 - a NetCDF file `first_output.nc` in the `out` directory
 - a matplotlib figure with multiple panels vs pressure in the `out` directory
 
-## 5. NetCDF outputs
+## 4. NetCDF outputs
 
 Aragog writes mesh variables like:
 
@@ -151,7 +124,7 @@ ncdump -h out/first_output.nc
 For more info on opening, inspecting and plotting NetCDF files, you can go through the how-to [Opening NetCDF output](../How-to/netcdf.md). 
 
 
-## 6. Troubleshooting
+## 5. Troubleshooting
 
 ### Zenodo download problems
 If you download:
