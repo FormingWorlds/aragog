@@ -1,6 +1,6 @@
 # API overview
 
-This is a detailed overview of aragog's API for the user's reference. If you want to understand the underlying model, please visit the [model overview](../Explanations/model.md). 
+This is a detailed overview of Aragog's API for the user's reference. If you want to understand the underlying model, please visit the [model overview](../Explanations/model.md). 
 
 ## Directory structure
 
@@ -26,7 +26,7 @@ aragog
 └── utilities.py
 ```
 
-Here, the `cfg` subdirectory contains config files used as input for aragog, that can be adjusted or added to. 
+Here, the `cfg` subdirectory contains config files used as input for Aragog, that can be adjusted or added to. 
 
 ## High-level architecture
 
