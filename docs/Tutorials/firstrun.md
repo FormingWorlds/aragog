@@ -7,7 +7,7 @@ Welcome to this first-run tutorial. We’ll run a single configuration, then exp
 Aragog solves the **time evolution of a 1-D radial temperature profile** inside a spherical shell (mantle) using conduction and optional parameterized convection, melt physics, and internal heating. 
 
 ## Goals
-Succesfully install Aragog; get to a **first successful model run** and a **NetCDF output and plots**.
+Successfully install Aragog; get to a **first successful model run** and a **NetCDF output and plots**.
 
 ## Assumptions
  - You're using Python 3.10+ (3.12 recommended).
