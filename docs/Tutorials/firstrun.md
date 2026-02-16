@@ -2,19 +2,19 @@
 
 Welcome to this first-run tutorial. We’ll run a single configuration, then export and inspect the results.
 
-## What does aragog do?
+## What does Aragog do?
 
 Aragog solves the **time evolution of a 1-D radial temperature profile** inside a spherical shell (mantle) using conduction and optional parameterized convection, melt physics, and internal heating. 
 
 ## Goals
-Succesfully install aragog; get to a **first successful model run** and a **NetCDF output and plots**.
+Succesfully install Aragog; get to a **first successful model run** and a **NetCDF output and plots**.
 
 ## Assumptions
  - You're using Python 3.10+ (3.12 recommended).
 
-## 1. Install aragog (editable install)
+## 1. Install Aragog (editable install)
 
-Clone aragog to a suitable location:
+Clone Aragog to a suitable location:
 
 ```sh
 git clone git@github.com:FormingWorlds/aragog.git aragog
@@ -35,7 +35,7 @@ python -m venv .venv
 source .venv/bin/activate  # macOS/Linux
 ```
 
-Finally, install aragog and all dependencies:
+Finally, install Aragog and all dependencies:
 
 ```sh 
 pip install -e ".[docs]"
@@ -43,7 +43,7 @@ pip install -e ".[docs]"
 
 ## 2. OPTIONAL: Choose a data directory
 
-aragog’s data helper uses `FWL_DATA` to decide where lookup tables/logs go. If you have not set this up yet, set it to something you control:
+Aragog’s data helper uses `FWL_DATA` to decide where lookup tables/logs go. If you have not set this up yet, set it to something you control:
 
 ```sh
 mkdir /your/local/path/FWL_DATA
@@ -53,7 +53,7 @@ mkdir /your/local/path/FWL_DATA
 export FWL_DATA="/your/local/path/FWL_DATA"   # macOS/Linux
 ```
 
-Then check what aragog sees:
+Then check what Aragog sees:
 
 ```bash
 aragog env
@@ -133,7 +133,7 @@ If everything is working, you should see:
 
 ## 5. NetCDF outputs
 
-aragog writes mesh variables like:
+Aragog writes mesh variables like:
 
 - `radius_b` (km), `pres_b` (GPa), `temp_b` (K), `phi_b` (melt fraction)
 - `Fcond_b`, `Fconv_b`, `Ftotal_b` (W/m^2)
