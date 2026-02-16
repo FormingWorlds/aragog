@@ -114,10 +114,11 @@ class State:
     def conductive_heat_flux(self) -> npt.NDArray:
         r"""Conductive heat flux:
 
-        .. math::
-            q_{cond} = -k \frac{\partial T}{\partial r}
+        $$
+        q_{cond} = -k \frac{\partial T}{\partial r}
+        $$
 
-        where :math:`k` is thermal conductivity, :math:`T` is temperature, and :math:`r` is radius.
+        where $k$ is thermal conductivity, $T$ is temperature, and $r$ is radius.
         """
         conductive_heat_flux: npt.NDArray = self.phase_basic.thermal_conductivity() * -self.dTdr()
 
@@ -126,13 +127,14 @@ class State:
     def convective_heat_flux(self) -> npt.NDArray:
         r"""Convective heat flux:
 
-        .. math::
-            q_{conv} = -\rho c_p \kappa_h \left( \frac{\partial T}{\partial r}
-                - \left( \frac{\partial T}{\partial r} \right)_S \right)
+        $$
+        q_{conv} = -\rho c_p \kappa_h \left( \frac{\partial T}{\partial r}
+            - \left( \frac{\partial T}{\partial r} \right)_S \right)
+        $$ 
 
-        where :math:`\rho` is density, :math:`c_p` is heat capacity at constant pressure,
-        :math:`\kappa_h` is eddy diffusivity, :math:`T` is temperature, :math:`r` is radius, and
-        :math:`S` is entropy.
+        where $\rho$ is density, $c_p$ is heat capacity at constant pressure,
+        $\kappa_h$ is eddy diffusivity, $T$ is temperature, $r$ is radius, and
+        $S$ is entropy.
         """
         convective_heat_flux: npt.NDArray = (
             self.phase_basic.density()
@@ -146,11 +148,12 @@ class State:
     def gravitational_separation_mass_flux(self) -> npt.NDArray:
         r"""Gravitational separation mass flux:
 
-        .. math::
-            j_{grav} = \rho \phi (1 - \phi) v_{rel}
+        $$
+        j_{grav} = \rho \phi (1 - \phi) v_{rel}
+        $$ 
 
-        where :math:`\rho` is density, :math:`\phi` is melt fraction, and
-        :math:`v_{rel}` is relative velocity.
+        where $\rho$ is density, $\phi$ is melt fraction, and
+        $v_{rel}$ is relative velocity.
         """
         gravitational_separation_mass_flux: npt.NDArray = (
             self.phase_basic.density()
@@ -163,11 +166,12 @@ class State:
     def mixing_mass_flux(self) -> npt.NDArray:
         r"""Mixing mass flux:
 
-        .. math::
-            j_{cm} = -\rho \kappa_h \frac{\partial \phi}{\partial r}
-
-        where :math:`\rho` is density, :math:`\kappa_h` is eddy diffusivity,
-        :math:`\phi` is melt mass fraction, and :math:`r` is radius.
+        $$
+        j_{cm} = -\rho \kappa_h \frac{\partial \phi}{\partial r}
+        $$
+        
+        where $\rho$ is density, $\kappa_h$ is eddy diffusivity,
+        $\phi$ is melt mass fraction, and $r$ is radius.
         """
         mixing_mass_flux: npt.NDArray = (
             self.phase_basic.density()

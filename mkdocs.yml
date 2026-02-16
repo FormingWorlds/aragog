@@ -1,0 +1,124 @@
+site_name: Aragog
+site_url: https://proteus-framework.org/aragog
+repo_url: https://github.com/FormingWorlds/aragog
+repo_name: GitHub
+
+nav:
+  - Home: index.md
+
+  - How-to guides:
+      - Installation: How-to/installation.md
+      - Inspecting NetCDF output: How-to/netcdf.md
+
+  - Tutorials:
+      - First run: Tutorials/firstrun.md
+
+  - Explanations:
+      - Model overview: Explanations/model.md
+
+  - Reference:
+      - API reference: Reference/api.md
+      - Publications: Reference/publications.md
+      
+  - Code of Conduct: CODE_OF_CONDUCT.md
+  - Source code: https://github.com/FormingWorlds/aragog
+  - Issues page: https://github.com/FormingWorlds/aragog/issues
+  - 🔗 PROTEUS: https://proteus-framework.org/PROTEUS/
+  - 🔗 MORS:  https://proteus-framework.org/MORS/
+  - 🔗 JANUS: https://proteus-framework.org/JANUS/
+  - 🔗 ZEPHYRUS: https://proteus-framework.org/ZEPHYRUS/
+  - 🔗 CALLIOPE: https://proteus-framework.org/CALLIOPE/
+  - 🔗 AGNI: https://www.h-nicholls.space/AGNI/
+  - 🔗 Obliqua: https://proteus-framework.org/Obliqua/
+  - 🔗 VULCAN: https://proteus-framework.org/VULCAN/
+  - 🔗 Zalmoxis: https://proteus-framework.org/Zalmoxis/
+  - 🔗 SPIDER: https://proteus-framework.org/SPIDER/
+  - 🔗 Atmodeller: https://atmodeller.readthedocs.io/en/latest/
+  - 🔗 FastChem: https://newstrangeworlds.github.io/FastChem/
+  - 🔗 PLATON: https://platon.readthedocs.io/en/latest/
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  features:
+    - navigation.expand
+    - content.code.copy
+
+  # Default assets (used unless overridden per palette below)
+  favicon: assets/PROTEUS_black_on_white_logo_only.png
+  logo: assets/PROTEUS_white_on_black.png
+
+  palette:
+    # Auto: follow system preference (and show a toggle)
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: deep orange
+      favicon: assets/PROTEUS_black_on_white_logo_only.png
+      logo: assets/PROTEUS_white_on_black.png
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep orange
+      favicon: assets/PROTEUS_white_on_black_logo_only.png
+      logo: assets/PROTEUS_white_on_black.png
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - markdown_include.include:
+      base_path: docs
+  - pymdownx.extra
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+plugins:
+- search
+- mkdocstrings:
+    # https://mkdocstrings.github.io/usage/
+    handlers:
+      python:
+        paths: [src]
+        inventories:
+        - https://installer.readthedocs.io/en/stable/objects.inv
+        - https://docs.python.org/3/objects.inv
+        - https://numpy.org/doc/stable/objects.inv
+        - https://docs.scipy.org/doc/scipy/objects.inv
+        - https://pandas.pydata.org/docs/objects.inv
+        - https://matplotlib.org/stable/objects.inv
+        options:
+          docstring_style: numpy
+          docstring_options:
+            ignore_init_summary: yes
+          show_submodules: no
+          show_source: true
+          show_symbol_type_heading: True
+          show_root_heading: true
+          show_root_toc_entry: true
+          show_docstring_attributes: true
+          show_root_full_path: false
+          docstring_section_style: list
+          members_order: alphabetical
+          merge_init_into_class: yes
+          filters: ["!^_"]
+          docstring_section_style: list
+
+use_directory_urls: false
+
+watch:
+  - aragog/
+  - docs/
+  - README.md

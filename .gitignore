@@ -161,3 +161,9 @@ cython_debug/
 
 .DS_Store
 poetry.lock
+
+# output and data
+out/
+FWL_DATA/
+
+pylintrc
