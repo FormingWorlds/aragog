@@ -10,7 +10,7 @@ Aragog solves the **time evolution of a 1-D radial temperature profile** inside 
 Succesfully install aragog; get to a **first successful model run** and a **NetCDF output and plots**.
 
 ## Assumptions
- - You’re using Python 3.10+ (3.11+ recommended).
+ - You're using Python 3.10+ (3.12 recommended).
 
 ## 1. Install aragog (editable install)
 
