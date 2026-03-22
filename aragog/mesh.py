@@ -154,25 +154,47 @@ class Mesh:
 
         # STEP 1: Set up the basic mesh
         self.settings: _MeshParameters = parameters.mesh
-        basic_coordinates: npt.NDArray = self.get_constant_spacing()
+        # Start with uniform spatial spacing to initialize EOS/density
+        initial_spatial: npt.NDArray = self.get_constant_spacing()
         if self.settings.eos_method == 1:
             self.eos = AdamsWilliamsonEOS(
-                self.settings, basic_coordinates
+                self.settings, initial_spatial
             )
         elif self.settings.eos_method == 2:
             self.eos = UserDefinedEOS(
-                self.settings, basic_coordinates
+                self.settings, initial_spatial
             )
         else:
             msg: str = (f"Unknown method to initialize Equation of State")
             raise ValueError(msg)
+
         if parameters.mesh.mass_coordinates:
-            self._planet_density: float = self.get_planet_density(basic_coordinates)
-            basic_mass_coordinates: npt.NDArray = (
-                self.get_basic_mass_coordinates_from_spatial_coordinates(basic_coordinates))
-            logger.debug("Basic mass coordinates = %s", basic_mass_coordinates)
+            # Compute planet density and mass coordinates from the initial spatial grid
+            self._planet_density: float = self.get_planet_density(initial_spatial)
+            initial_mass_coordinates: npt.NDArray = (
+                self.get_basic_mass_coordinates_from_spatial_coordinates(initial_spatial))
+
+            # Create UNIFORM mass coordinate grid (this is the key change)
+            xi_min = initial_mass_coordinates[0, 0]
+            xi_max = initial_mass_coordinates[-1, 0]
+            basic_mass_coordinates = np.linspace(
+                xi_min, xi_max, self.settings.number_of_nodes
+            ).reshape(-1, 1)
+
+            # Derive NON-UNIFORM spatial coordinates from the uniform xi grid
+            # by interpolating the xi -> r mapping from the initial grid
+            from scipy.interpolate import PchipInterpolator
+            xi_to_r = PchipInterpolator(
+                initial_mass_coordinates.flatten(),
+                initial_spatial.flatten(),
+            )
+            basic_coordinates = xi_to_r(basic_mass_coordinates.flatten()).reshape(-1, 1)
+            logger.debug("Basic mass coordinates (uniform) = %s", basic_mass_coordinates)
+            logger.debug("Basic spatial coordinates (non-uniform) = %s", basic_coordinates)
         else:
-            basic_mass_coordinates = basic_coordinates
+            basic_coordinates = initial_spatial
+            basic_mass_coordinates = initial_spatial
+
         self.basic: FixedMesh = FixedMesh(
             self.settings,
             basic_coordinates,
