@@ -144,6 +144,8 @@ class _BoundaryConditionsParameters:
     emissivity: float
     equilibrium_temperature: float
     core_heat_capacity: float
+    param_utbl: bool = False
+    param_utbl_const: float = 1.0e-7
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:
@@ -155,6 +157,10 @@ class _BoundaryConditionsParameters:
         self.scalings_ = scalings
         self.equilibrium_temperature /= self.scalings_.temperature
         self.core_heat_capacity /= self.scalings_.heat_capacity
+        if self.param_utbl:
+            self.param_utbl_const *= self.scalings_.temperature**2
+        else:
+            self.param_utbl_const = 0.0
         self._scale_inner_boundary_condition()
         self._scale_outer_boundary_condition()
 

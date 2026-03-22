@@ -153,14 +153,52 @@ class BoundaryConditions:
     def grey_body(self, state: State) -> None:
         """Applies a grey body flux at the surface.
 
-        Args:
-            state: The state to apply the boundary conditions to
+        When param_utbl is enabled, the surface radiating temperature is reduced
+        to account for the ultra-thin thermal boundary layer at the magma ocean
+        surface. The temperature drop across this unresolved boundary layer is
+        parameterized as dT = b * T_surf^3 (Bower et al. 2018, Eq. 18), giving
+        the cubic relation T_interior = T_surf + b * T_surf^3. The analytical
+        solution (Cardano's formula) gives T_surf < T_interior.
+
+        Parameters
+        ----------
+        state : State
+            The state to apply the boundary conditions to.
         """
+        t_top = state.top_temperature
+        if self._settings.param_utbl:
+            t_surf = self._utbl_tsurf(t_top)
+        else:
+            t_surf = t_top
         state.heat_flux[-1, :] = (
             self._settings.emissivity
             * self._settings.scalings_.stefan_boltzmann_constant
-            * (np.power(state.top_temperature, 4) - self._settings.equilibrium_temperature**4)
+            * (np.power(t_surf, 4) - self._settings.equilibrium_temperature**4)
         )
+
+    def _utbl_tsurf(self, t_interior: npt.NDArray) -> npt.NDArray:
+        """Compute surface radiating temperature accounting for the UTBL.
+
+        Solves: b * x^3 + x - T = 0, where x = T_surf, T = T_interior, b = param_utbl_const.
+        Standard cubic form: x^3 + (1/b)*x - T/b = 0.
+        Cardano's formula gives the real root.
+
+        Parameters
+        ----------
+        t_interior : npt.NDArray
+            Interior temperature at the surface node (non-dimensional).
+
+        Returns
+        -------
+        npt.NDArray
+            Surface radiating temperature (non-dimensional).
+        """
+        b = self._settings.param_utbl_const
+        p = 1.0 / b
+        q = -t_interior / b
+        discriminant = q**2 / 4.0 + p**3 / 27.0
+        sqrt_disc = np.sqrt(discriminant)
+        return np.cbrt(-q / 2.0 + sqrt_disc) + np.cbrt(-q / 2.0 - sqrt_disc)
 
     def apply_flux_inner_boundary_condition(self, state: State) -> None:
         """Applies the flux boundary condition to the state at the inner boundary.
