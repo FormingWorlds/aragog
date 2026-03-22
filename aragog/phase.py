@@ -308,8 +308,22 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         self._delta_density = self._solid.density() - self._liquid.density()
         self._delta_specific_volume = 1.0/self._liquid.density() - 1.0/self._solid.density()
         self._delta_fusion = self.liquidus() - self.solidus()
-        # Heat capacity of the mixed phase :cite:p:`{Equation 4,}SOLO07`
-        self._heat_capacity = self.latent_heat() / self.delta_fusion()
+        # Heat capacity of the mixed phase (Soucasse, Aragog_notes_properties.pdf):
+        #   cp = phi*cp_m + (1-phi)*cp_s + (h_m - h_s) / (T_liq - T_sol)
+        # The first two terms are the sensible heat contribution from each phase,
+        # the third is the latent heat contribution. Previously only the latent
+        # heat term was included (Eq. 31 of Aragog formulation, which noted
+        # "the second term dominates such that cp >> cp^0").
+        self._heat_capacity_sensible_liquid = self._liquid.heat_capacity()
+        self._heat_capacity_sensible_solid = self._solid.heat_capacity()
+        self._heat_capacity_latent = self.latent_heat() / self.delta_fusion()
+        # Default until update() sets the phi-dependent value:
+        # use phi=0.5 as initial estimate
+        self._heat_capacity = (
+            0.5 * self._heat_capacity_sensible_liquid
+            + 0.5 * self._heat_capacity_sensible_solid
+            + self._heat_capacity_latent
+        )
 
     @override
     def update(self):
@@ -339,10 +353,26 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
             self._solid.thermal_conductivity(),
         )
 
-        # Thermal expansivity :cite:p:`{Equation 3,}SOLO07`
-        # The first term in :cite:t:`{Equation 3,}SOLO07` is not included because it is small
-        # compared to the latent heat term :cite:p:`{Equation 33,}SS93`.
-        self._thermal_expansivity = self.delta_density() / self.delta_fusion() / self.density()
+        # Heat capacity: sensible + latent contributions
+        # cp = phi*cp_m + (1-phi)*cp_s + L / (T_liq - T_sol)
+        self._heat_capacity = (
+            self.melt_fraction() * self._heat_capacity_sensible_liquid
+            + (1 - self.melt_fraction()) * self._heat_capacity_sensible_solid
+            + self._heat_capacity_latent
+        )
+
+        # Thermal expansivity (Soucasse, Aragog_notes_properties.pdf):
+        #   alpha = zeta*alpha_m + (1-zeta)*alpha_s
+        #         + rho/(rho_m*rho_s) * (rho_s - rho_m) / (T_liq - T_sol)
+        # where zeta = porosity = (rho_s - rho) / (rho_s - rho_m).
+        # First two terms: single-phase contributions weighted by porosity.
+        # Third term: mixed-phase contribution from density change on melting.
+        alpha_single_phase = (
+            self._porosity * self._liquid.thermal_expansivity()
+            + (1 - self._porosity) * self._solid.thermal_expansivity()
+        )
+        alpha_mixed_phase = self.delta_density() / self.delta_fusion() / self.density()
+        self._thermal_expansivity = alpha_single_phase + alpha_mixed_phase
 
         # Viscosity
         weight: npt.NDArray = tanh_weight(
