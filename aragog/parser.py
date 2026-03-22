@@ -278,6 +278,7 @@ class _MeshParameters:
     surface_density: float = 4000
     gravitational_acceleration: float = 9.81
     adiabatic_bulk_modulus: float = 260e9
+    surface_pressure: float = 0.0
     mass_coordinates: bool = False
     eos_file: str = ""
     scalings_: _ScalingsParameters = field(init=False)
@@ -295,6 +296,7 @@ class _MeshParameters:
         self.surface_density /= self.scalings_.density
         self.gravitational_acceleration /= self.scalings_.gravitational_acceleration
         self.adiabatic_bulk_modulus /= self.scalings_.pressure
+        self.surface_pressure /= self.scalings_.pressure
 
         if self.eos_method == 2:
             if self.eos_file == "":

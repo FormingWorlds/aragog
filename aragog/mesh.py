@@ -516,6 +516,7 @@ class AdamsWilliamsonEOS(EOS):
         self._surface_density: float = self._settings.surface_density
         self._gravitational_acceleration: float = self._settings.gravitational_acceleration
         self._adiabatic_bulk_modulus: float = self._settings.adiabatic_bulk_modulus
+        self._surface_pressure: float = self._settings.surface_pressure
         self._basic_pressure = self.get_pressure_from_radii(basic_radii)
         self._basic_density = self.get_density_from_radii(basic_radii)
         self._staggered_effective_density = self.get_effective_density(basic_radii)
@@ -701,20 +702,25 @@ class AdamsWilliamsonEOS(EOS):
         r"""Computes pressure from radii:
 
         $$
-        P(r) = -K_S \ln \left( 1 + \frac{\rho_s g (r-r_s)}{K_S} \right)
+        P(r) = P_{surf} - K_S \ln \left( 1 + \frac{\rho_s g (r-r_s)}{K_S} \right)
         $$
 
         where $r$ is radius, $K_S$ is adiabatic bulk modulus, $P$ is pressure,
+        $P_{surf}$ is the surface pressure (atmospheric overburden),
         $\rho_s$ is surface density, $g$ is gravitational acceleration, and
         $r_s$ is surface radius.
 
-        Args:
-            radii: Radii
+        Parameters
+        ----------
+        radii : FloatOrArray
+            Radii at which to compute pressure.
 
-        Returns:
-            Pressure
+        Returns
+        -------
+        npt.NDArray
+            Pressure at the given radii.
         """
-        pressure: npt.NDArray = -self._adiabatic_bulk_modulus * np.log(
+        pressure: npt.NDArray = self._surface_pressure - self._adiabatic_bulk_modulus * np.log(
             (
                 self._adiabatic_bulk_modulus
                 + self._surface_density
