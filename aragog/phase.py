@@ -646,6 +646,9 @@ class CompositePhaseEvaluator(PhaseEvaluatorABC):
     def solidus_gradient(self) -> npt.NDArray:
         return self._mixed.solidus_gradient()
 
+    def delta_fusion(self) -> npt.NDArray:
+        return self._mixed.delta_fusion()
+
     @override
     def thermal_conductivity(self) -> npt.NDArray:
         """Thermal conductivity"""

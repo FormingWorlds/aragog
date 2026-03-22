@@ -218,6 +218,7 @@ class _EnergyParameters:
     radionuclides: bool
     dilatation: bool
     tidal: bool
+    eddy_diffusivity_chemical: float = 1.0
 
     tidal_array: npt.NDArray = field(default_factory=lambda:np.array([0.0], dtype=float))
 

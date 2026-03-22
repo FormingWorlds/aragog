@@ -145,12 +145,27 @@ class State:
 
         return convective_heat_flux
 
+    def chemical_eddy_diffusivity(self) -> npt.NDArray:
+        r"""Chemical eddy diffusivity for compositional transport.
+
+        Scales the thermal eddy diffusivity by the chemical diffusivity
+        ratio. When eddy_diffusivity_chemical = 1.0 (default), this equals
+        the thermal eddy diffusivity. Separate scaling allows independent
+        control of how efficiently convection mixes composition vs heat.
+
+        Returns
+        -------
+        npt.NDArray
+            Chemical eddy diffusivity at basic nodes.
+        """
+        return self._eddy_diffusivity * self._settings.eddy_diffusivity_chemical
+
     def gravitational_separation_mass_flux(self) -> npt.NDArray:
         r"""Gravitational separation mass flux:
 
         $$
         j_{grav} = \rho \phi (1 - \phi) v_{rel}
-        $$ 
+        $$
 
         where $\rho$ is density, $\phi$ is melt fraction, and
         $v_{rel}$ is relative velocity.
@@ -164,19 +179,51 @@ class State:
         return gravitational_separation_mass_flux
 
     def mixing_mass_flux(self) -> npt.NDArray:
-        r"""Mixing mass flux:
+        r"""Mixing mass flux with pressure-dependent Clapeyron slopes.
+
+        Uses the analytical melt fraction gradient that accounts for the
+        pressure-dependence of the solidus and liquidus:
 
         $$
-        j_{cm} = -\rho \kappa_h \frac{\partial \phi}{\partial r}
+        \frac{\partial \phi}{\partial r} = \frac{1}{T_{liq} - T_{sol}}
+            \left[ \frac{\partial T}{\partial r}
+            - \frac{\partial T_{sol}}{\partial P} \frac{\partial P}{\partial r}
+            - \phi \left( \frac{\partial T_{liq}}{\partial P}
+            - \frac{\partial T_{sol}}{\partial P} \right)
+            \frac{\partial P}{\partial r} \right]
         $$
-        
-        where $\rho$ is density, $\kappa_h$ is eddy diffusivity,
-        $\phi$ is melt mass fraction, and $r$ is radius.
+
+        The mass flux uses the chemical eddy diffusivity (kappa_c) rather
+        than the thermal eddy diffusivity (kappa_h), following SPIDER's
+        convention. When eddy_diffusivity_chemical = 1.0 (default), they
+        are equal.
+
+        Returns
+        -------
+        npt.NDArray
+            Mixing mass flux at basic nodes.
         """
+        phi = self.phase_basic.melt_fraction()
+        delta_T = self.phase_basic.delta_fusion()
+        dTdr = self.dTdr()
+
+        # Clapeyron slopes: dT_sol/dP and dT_liq/dP
+        dTsol_dP = self.phase_basic.solidus_gradient()
+        dTliq_dP = self.phase_basic.liquidus_gradient()
+
+        # Pressure gradient dP/dr at basic nodes (from finite difference of pressure)
+        dPdr = self._evaluator.mesh.d_dr_at_basic_nodes(
+            self._evaluator.mesh.staggered_pressure
+        )
+
+        # Analytical dphi/dr including Clapeyron slopes
+        dphi_dr = (dTdr - dTsol_dP * dPdr - phi * (dTliq_dP - dTsol_dP) * dPdr) / delta_T
+
+        # Use chemical eddy diffusivity for compositional transport
         mixing_mass_flux: npt.NDArray = (
             self.phase_basic.density()
-            * self.eddy_diffusivity()
-            * -self.dphidr()
+            * self.chemical_eddy_diffusivity()
+            * -dphi_dr
         )
         return mixing_mass_flux
 
