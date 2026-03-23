@@ -100,6 +100,7 @@ class _ScalingsParameters:
     velocity: float = field(init=False)
     kinetic_energy_per_volume: float = field(init=False)
     heat_capacity: float = field(init=False)
+    entropy: float = field(init=False)
     latent_heat_per_mass: float = field(init=False)
     power_per_volume: float = field(init=False)
     power_per_mass: float = field(init=False)
@@ -118,6 +119,7 @@ class _ScalingsParameters:
         self.velocity = self.radius / self.time
         self.kinetic_energy_per_volume = self.density * np.square(self.velocity)
         self.heat_capacity = self.kinetic_energy_per_volume / self.density / self.temperature
+        self.entropy = self.heat_capacity  # J/(kg*K), same dimensions as heat_capacity
         self.latent_heat_per_mass = self.heat_capacity * self.temperature
         self.power_per_volume = self.kinetic_energy_per_volume / self.time
         self.power_per_mass = self.power_per_volume / self.density
@@ -353,6 +355,7 @@ class _PhaseParameters:
     thermal_conductivity: float | str
     thermal_expansivity: float | str
     viscosity: float | str
+    entropy: float | str = ""
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:

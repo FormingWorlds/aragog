@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import numpy.typing as npt
 from scipy.integrate import solve_ivp
+from scipy.optimize import brentq
 
 from aragog.mesh import Mesh
 from aragog.phase import PhaseEvaluatorCollection
@@ -303,18 +304,57 @@ class InitialCondition:
         return self._mesh.quantity_at_staggered_nodes(temperature_basic)
 
     def get_adiabat(self, pressure_basic) -> npt.NDArray:
-        """Gets an adiabatic temperature profile by integrating
-           the adiatiabatic temperature gradient dTdPs from the surface.
-           Uses the set surface temperature.
+        """Gets an adiabatic temperature profile.
 
-        Args:
-            Pressure field on the basic nodes
+        If entropy lookup tables are available, uses entropy-conserving
+        integration that correctly handles the two-phase (mushy) region.
+        Otherwise falls back to integrating dTdPs = alpha*T/(rho*Cp),
+        which is only accurate in single-phase regions.
 
-        Returns:
-            Adiabatic temperature profile for the staggered nodes
+        Parameters
+        ----------
+        pressure_basic : npt.NDArray
+            Pressure field on the basic nodes (CMB to surface ordering).
+
+        Returns
+        -------
+        npt.NDArray
+            Adiabatic temperature profile for the staggered nodes.
+        """
+        active = self._phases.active
+        has_entropy = hasattr(active, 'has_entropy') and active.has_entropy
+
+        if has_entropy:
+            logger.info(
+                "Using entropy-conserving adiabat (handles two-phase region correctly)"
+            )
+            return self._get_adiabat_entropy_conserving(pressure_basic)
+
+        logger.warning(
+            "No entropy tables available. Using dTdPs = alpha*T/(rho*Cp) for "
+            "adiabatic IC. This is only accurate in single-phase regions and "
+            "will NOT conserve entropy across phase boundaries (solidus/liquidus)."
+        )
+        return self._get_adiabat_single_phase(pressure_basic)
+
+    def _get_adiabat_single_phase(self, pressure_basic) -> npt.NDArray:
+        """Adiabat by integrating dTdPs = alpha*T/(rho*Cp).
+
+        Accurate for single-phase regions only. Does not conserve entropy
+        across solidus/liquidus crossings.
+
+        Parameters
+        ----------
+        pressure_basic : npt.NDArray
+            Pressure on basic nodes (CMB to surface).
+
+        Returns
+        -------
+        npt.NDArray
+            Temperature at staggered nodes.
         """
 
-        def adiabat_ode(P,T):
+        def adiabat_ode(P, T):
             self._phases.active.set_pressure(P)
             self._phases.active.set_temperature(T)
             self._phases.active.update()
@@ -324,12 +364,108 @@ class InitialCondition:
         pressure_basic = np.flip(pressure_basic)
 
         sol = solve_ivp(
-             adiabat_ode, (pressure_basic[0], pressure_basic[-1]),
-             [self._settings.surface_temperature], t_eval=pressure_basic,
-             method='RK45', rtol=1e-6, atol=1e-9)
+            adiabat_ode, (pressure_basic[0], pressure_basic[-1]),
+            [self._settings.surface_temperature], t_eval=pressure_basic,
+            method='RK45', rtol=1e-6, atol=1e-9)
 
         # flip back the temperature field from bottom to top
         temperature_basic = np.flip(sol.y[0])
 
         # Return temperature field at staggered nodes
+        return self._mesh.quantity_at_staggered_nodes(temperature_basic)
+
+    def _get_adiabat_entropy_conserving(self, pressure_basic) -> npt.NDArray:
+        """Adiabat by inverting S(P, T) = S_target at each pressure.
+
+        Correctly conserves entropy across phase boundaries. In the
+        two-phase region, the entropy includes the latent heat contribution
+        via linear interpolation between solid and liquid entropies at the
+        solidus and liquidus temperatures.
+
+        Parameters
+        ----------
+        pressure_basic : npt.NDArray
+            Pressure on basic nodes (CMB to surface).
+
+        Returns
+        -------
+        npt.NDArray
+            Temperature at staggered nodes.
+        """
+        active = self._phases.active
+
+        # Compute target entropy at the surface
+        P_surf = np.flip(pressure_basic)[0]  # surface pressure (lowest)
+        T_surf = self._settings.surface_temperature
+        S_target = active.entropy_at(P_surf, T_surf)
+        logger.info(
+            "Entropy-conserving adiabat: S_target = %.2f at T_surf = %.2f, P_surf = %.4e",
+            S_target, T_surf, P_surf,
+        )
+
+        # flip to surface-to-CMB ordering for downward integration
+        P_down = np.flip(pressure_basic)
+        T_profile = np.zeros_like(P_down)
+        T_profile[0] = T_surf
+
+        # Integrate downward: at each P, find T such that S(P, T) = S_target
+        for i in range(1, len(P_down)):
+            P_i = float(P_down[i])
+            T_prev = float(T_profile[i - 1])
+
+            def entropy_residual(T_candidate):
+                return active.entropy_at(P_i, T_candidate) - S_target
+
+            # Search interval: expand around previous T
+            # Temperature must increase with depth along an adiabat
+            T_lo = T_prev * 0.8
+            T_hi = T_prev * 2.0
+
+            # Ensure the bracket contains the root
+            s_lo = entropy_residual(T_lo)
+            s_hi = entropy_residual(T_hi)
+
+            # Widen bracket if needed
+            n_expand = 0
+            while s_lo * s_hi > 0 and n_expand < 20:
+                if s_lo > 0:
+                    T_lo *= 0.5
+                    s_lo = entropy_residual(T_lo)
+                else:
+                    T_hi *= 2.0
+                    s_hi = entropy_residual(T_hi)
+                n_expand += 1
+
+            if s_lo * s_hi > 0:
+                logger.warning(
+                    "Could not bracket entropy root at P=%.4e (T_lo=%.1f, T_hi=%.1f, "
+                    "S_lo=%.2f, S_hi=%.2f, S_target=%.2f). Using dTdPs fallback.",
+                    P_i, T_lo, T_hi, s_lo + S_target, s_hi + S_target, S_target,
+                )
+                # Fallback: use single-phase gradient for this step
+                active.set_pressure(np.atleast_1d(P_i))
+                active.set_temperature(np.atleast_1d(T_prev))
+                active.update()
+                dTdP = float(active.dTdPs())
+                T_profile[i] = T_prev + dTdP * (P_i - float(P_down[i - 1]))
+            else:
+                T_profile[i] = brentq(entropy_residual, T_lo, T_hi, rtol=1e-10)
+
+        # Verify entropy conservation
+        S_cmb = active.entropy_at(P_down[-1], T_profile[-1])
+        S_drift = abs(S_cmb - S_target) / abs(S_target) * 100
+        logger.info(
+            "Entropy-conserving adiabat: T_surf=%.1f, T_cmb=%.1f, "
+            "S_target=%.2f, S_cmb=%.2f (drift=%.4f%%)",
+            T_profile[0], T_profile[-1], S_target, S_cmb, S_drift,
+        )
+        if S_drift > 0.1:
+            logger.warning(
+                "Entropy drift %.4f%% exceeds 0.1%% tolerance. The adiabat may "
+                "not be fully converged.", S_drift,
+            )
+
+        # flip back to CMB-to-surface ordering
+        temperature_basic = np.flip(T_profile)
+
         return self._mesh.quantity_at_staggered_nodes(temperature_basic)

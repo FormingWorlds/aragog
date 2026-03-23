@@ -224,9 +224,29 @@ class SinglePhaseEvaluator(PhaseEvaluatorABC):
 
         self._gravitational_acceleration = gravitational_acceleration
 
+    @property
+    def has_entropy(self) -> bool:
+        """Whether this evaluator has entropy lookup data."""
+        return hasattr(self, '_entropy') and isinstance(
+            self._entropy, (LookupProperty1D, LookupProperty2D)
+        )
+
     @override
     def density(self) -> FloatOrArray:
         return self._density(self.temperature, self.pressure)
+
+    def entropy(self) -> FloatOrArray:
+        """Specific entropy [J/(kg*K)].
+
+        Only available if an entropy lookup table was provided in the
+        phase parameters. Raises AttributeError otherwise.
+        """
+        if not self.has_entropy:
+            raise AttributeError(
+                "Entropy lookup not available. Provide an entropy table in the "
+                "phase parameters to enable entropy-conserving adiabatic IC."
+            )
+        return self._entropy(self.temperature, self.pressure)
 
     @override
     def gravitational_acceleration(self) -> FloatOrArray:
@@ -239,7 +259,7 @@ class SinglePhaseEvaluator(PhaseEvaluatorABC):
     @override
     def melt_fraction(self) -> float:
         return self._melt_fraction(self.temperature, self.pressure)
-    
+
     @override
     def latent_heat(self) -> float:
         return 0.
@@ -403,6 +423,26 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
     def heat_capacity(self) -> FloatOrArray:
         """Heat capacity of the mixed phase :cite:p:`{Equation 4,}SOLO07`"""
         return self._heat_capacity
+
+    @property
+    def has_entropy(self) -> bool:
+        """Whether the underlying single-phase evaluators have entropy lookups."""
+        return self._solid.has_entropy and self._liquid.has_entropy
+
+    def entropy(self) -> FloatOrArray:
+        """Mixed-phase entropy: linear interpolation between solid and liquid entropies.
+
+        S_mixed = phi * S_liquid(P, T_liquidus) + (1-phi) * S_solid(P, T_solidus)
+
+        The single-phase entropies are evaluated at the melting curve temperatures
+        (solidus for solid, liquidus for liquid), which is where each phase exists
+        in thermodynamic equilibrium within the mushy zone.
+        """
+        return combine_properties(
+            self.melt_fraction(),
+            self._liquid.entropy(),   # evaluated at T=T_liquidus (set in set_pressure)
+            self._solid.entropy(),    # evaluated at T=T_solidus (set in set_pressure)
+        )
 
     def liquidus(self) -> npt.NDArray:
         """Liquidus"""
@@ -603,6 +643,11 @@ class CompositePhaseEvaluator(PhaseEvaluatorABC):
         )
         self._viscosity = 10**self._viscosity
 
+    @property
+    def has_entropy(self) -> bool:
+        """Whether entropy lookups are available for entropy-conserving adiabats."""
+        return self._mixed.has_entropy
+
     @override
     def density(self) -> npt.NDArray:
         return self._density
@@ -614,6 +659,32 @@ class CompositePhaseEvaluator(PhaseEvaluatorABC):
     @override
     def dTdrs(self) -> npt.NDArray:
         return self._dTdrs
+
+    def entropy(self) -> npt.NDArray:
+        """Composite entropy dispatching to solid, mixed, or liquid evaluator."""
+        return self._get_composite_entropy()
+
+    def entropy_at(self, pressure: float, temperature: float) -> float:
+        """Evaluate entropy at a single (P, T) point with correct phase dispatch.
+
+        Parameters
+        ----------
+        pressure : float
+            Pressure (in scaled units).
+        temperature : float
+            Temperature (in scaled units).
+
+        Returns
+        -------
+        float
+            Specific entropy at (P, T).
+        """
+        P_arr = np.atleast_1d(pressure)
+        T_arr = np.atleast_1d(temperature)
+        self.set_pressure(P_arr)
+        self.set_temperature(T_arr)
+        self.update()
+        return float(self.entropy())
 
     @override
     def gravitational_acceleration(self) -> FloatOrArray:
@@ -737,6 +808,28 @@ class CompositePhaseEvaluator(PhaseEvaluatorABC):
         )
 
         return combined
+
+    def _get_composite_entropy(self) -> npt.NDArray:
+        """Composite entropy with correct phase dispatch.
+
+        In single-phase regions, uses the single-phase entropy lookup.
+        In the mushy zone, uses the mixed-phase entropy (linear interpolation
+        between solid entropy at solidus and liquid entropy at liquidus).
+        """
+        mixed_phase: npt.NDArray = self._mixed.entropy()
+        single_phase: npt.NDArray = np.empty_like(self._blending_factor)
+        try:
+            single_phase[self._liquid_mask] = self._liquid.entropy()[self._liquid_mask]
+        except (IndexError, TypeError):
+            single_phase[self._liquid_mask] = self._liquid.entropy()
+        try:
+            single_phase[self._solid_mask] = self._solid.entropy()[self._solid_mask]
+        except (IndexError, TypeError):
+            single_phase[self._solid_mask] = self._solid.entropy()
+
+        return combine_properties(
+            self._blending_factor, mixed_phase, single_phase
+        )
 
 
 @dataclass
