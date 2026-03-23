@@ -533,7 +533,7 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
 
         # Blake-Kozeny-Carman regime
         permeability = np.where(
-            self._porosity < 0.0769452,
+            self._porosity < 0.0769618,
             self._permeability_blake_kozeny_carman(),
             permeability
             )
