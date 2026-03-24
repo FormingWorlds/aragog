@@ -226,10 +226,18 @@ class BoundaryConditions:
             raise ValueError(msg)
 
     def core_cooling(self, state: State) -> None:
-        """Applies a core cooling heat flux according to Eq. (37) of Bower et al., 2018
+        """Applies a core cooling heat flux according to Eq. (37) of Bower et al., 2018.
 
-        Args:
-            state: The state to apply the boundary condition to
+        The core is modelled as a well-mixed reservoir with an effective
+        temperature T_core = tfac_core_avg * T_cmb. The factor tfac_core_avg
+        accounts for the adiabatic temperature gradient within the core
+        (mass-weighted average core temperature / CMB temperature).
+        Default 1.147 is for Earth-like parameters (Bower+2018, Table 2).
+
+        Parameters
+        ----------
+        state : State
+            The state to apply the boundary condition to.
         """
         core_capacity: float = (
             4
@@ -241,7 +249,8 @@ class BoundaryConditions:
         )
         cell_capacity = self._mesh.basic.volume[0] * state.capacitance_staggered()[0, :]
         radius_ratio: float = self._mesh.basic.radii[1] / self._mesh.basic.radii[0]
-        alpha = np.power(radius_ratio, 2) / ((cell_capacity / (core_capacity * 1.147)) + 1)
+        tfac = self._settings.tfac_core_avg
+        alpha = np.power(radius_ratio, 2) / ((cell_capacity / (core_capacity * tfac)) + 1)
 
         state.heat_flux[0, :] = alpha * state.heat_flux[1, :]
 

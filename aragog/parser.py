@@ -146,6 +146,7 @@ class _BoundaryConditionsParameters:
     emissivity: float
     equilibrium_temperature: float
     core_heat_capacity: float
+    tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
     scalings_: _ScalingsParameters = field(init=False)
