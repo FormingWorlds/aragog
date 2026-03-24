@@ -774,7 +774,7 @@ class CompositePhaseEvaluator(PhaseEvaluatorABC):
         self.set_pressure(P_arr)
         self.set_temperature(T_arr)
         self.update()
-        return float(self.entropy())
+        return float(np.squeeze(self.entropy()))
 
     @override
     def gravitational_acceleration(self) -> FloatOrArray:
