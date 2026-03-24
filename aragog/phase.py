@@ -587,9 +587,15 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         return self._relative_velocity
 
     def _get_relative_velocity(self) -> npt.NDArray:
-        """Compute relative velocity"""
+        """Compute relative velocity between melt and solid.
+
+        Positive = melt moves outward (buoyant rise).
+        delta_density = rho_solid - rho_liquid > 0 for buoyant melt.
+        gravitational_acceleration > 0 (magnitude; Aragog uses positive g).
+        Result: dv > 0 when melt is lighter than solid (standard case).
+        """
         dv = (
-            - self.delta_density()
+            self.delta_density()
             * self.gravitational_acceleration()
             * self._permeability()
             / self._liquid.viscosity()
