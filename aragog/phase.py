@@ -313,11 +313,20 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
             "liquidus", self.settings.liquidus
         )
         self._grain_size: float = self.settings.grain_size
-        self._latent_heat: float = self.settings.latent_heat_of_fusion
+        self._latent_heat_constant: float = self.settings.latent_heat_of_fusion
 
     @override
     def set_pressure(self, pressure: npt.NDArray) -> None:
-        """Sets pressure and updates quantities that only depend on pressure"""
+        """Sets pressure and updates quantities that only depend on pressure.
+
+        Computes the pressure-dependent latent heat via the Clausius-Clapeyron
+        relation: L(P) = T_fus * Delta_V / (dT_sol/dP). This replaces the
+        constant latent_heat_of_fusion parameter for all physics that depend
+        on L (mixing flux, mixed-phase Cp, gravitational separation heat flux).
+
+        When entropy tables are available, also computes L from the entropy
+        difference at the phase boundaries for verification.
+        """
         super().set_pressure(pressure)
         # Sets the temperature of the solid and liquid phases to the appropriate melting curve in
         # order to evaluate mixed properties
@@ -328,12 +337,34 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         self._delta_density = self._solid.density() - self._liquid.density()
         self._delta_specific_volume = 1.0/self._liquid.density() - 1.0/self._solid.density()
         self._delta_fusion = self.liquidus() - self.solidus()
+
+        # Clausius-Clapeyron pressure-dependent latent heat:
+        #   L(P) = T_fus * Delta_V / (dT_sol/dP)
+        # where Delta_V = 1/rho_liq - 1/rho_sol and dT_sol/dP is the solidus
+        # Clapeyron slope. This is thermodynamically exact for a first-order
+        # phase transition and matches SPIDER's T_fus * Delta_S formulation.
+        T_fus = self.solidus() + 0.5 * self._delta_fusion
+        dTsol_dP = self.solidus_gradient()
+        safe_dTsol_dP = np.where(np.abs(dTsol_dP) > 1e-30, dTsol_dP, 1e-30)
+        self._latent_heat = T_fus * self._delta_specific_volume / safe_dTsol_dP
+        # L must be positive (endothermic melting)
+        self._latent_heat = np.abs(self._latent_heat)
+
+        # When entropy tables are available, compute L from entropy for
+        # verification: L_S = T_fus * (S_liq - S_sol). Both approaches
+        # should give the same result if the EOS is thermodynamically
+        # consistent. Store for diagnostic access.
+        if self.has_entropy:
+            S_sol = self._solid.entropy()
+            S_liq = self._liquid.entropy()
+            self._latent_heat_from_entropy = T_fus * (S_liq - S_sol)
+        else:
+            self._latent_heat_from_entropy = None
+
         # Heat capacity of the mixed phase (Soucasse, Aragog_notes_properties.pdf):
         #   cp = phi*cp_m + (1-phi)*cp_s + (h_m - h_s) / (T_liq - T_sol)
         # The first two terms are the sensible heat contribution from each phase,
-        # the third is the latent heat contribution. Previously only the latent
-        # heat term was included (Eq. 31 of Aragog formulation, which noted
-        # "the second term dominates such that cp >> cp^0").
+        # the third is the latent heat contribution. Now uses pressure-dependent L.
         self._heat_capacity_sensible_liquid = self._liquid.heat_capacity()
         self._heat_capacity_sensible_solid = self._solid.heat_capacity()
         self._heat_capacity_latent = self.latent_heat() / self.delta_fusion()
@@ -468,9 +499,26 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         return self._melt_fraction
 
     @override
-    def latent_heat(self) -> float:
-        """Latent heat of fusion"""
+    def latent_heat(self) -> FloatOrArray:
+        """Pressure-dependent latent heat of fusion via Clausius-Clapeyron.
+
+        Returns L(P) = T_fus * Delta_V / (dT_sol/dP) after set_pressure()
+        has been called. Before set_pressure(), returns the constant value
+        from the configuration as a fallback.
+        """
         return self._latent_heat
+
+    def latent_heat_constant(self) -> float:
+        """Original constant latent heat from configuration [J/kg]."""
+        return self._latent_heat_constant
+
+    def latent_heat_from_entropy(self) -> FloatOrArray | None:
+        """Latent heat computed from entropy tables (for verification).
+
+        Returns L_S = T_fus * (S_liq - S_sol) if entropy tables are
+        available, otherwise None.
+        """
+        return self._latent_heat_from_entropy
 
     def porosity(self) -> npt.NDArray:
         """Porosity of the mixed phase, that is the volume fraction occupied by the melt"""

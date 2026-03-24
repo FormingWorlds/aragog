@@ -304,12 +304,15 @@ class InitialCondition:
         return self._mesh.quantity_at_staggered_nodes(temperature_basic)
 
     def get_adiabat(self, pressure_basic) -> npt.NDArray:
-        """Gets an adiabatic temperature profile.
+        """Gets an entropy-conserving adiabatic temperature profile.
 
-        If entropy lookup tables are available, uses entropy-conserving
-        integration that correctly handles the two-phase (mushy) region.
-        Otherwise falls back to integrating dTdPs = alpha*T/(rho*Cp),
-        which is only accurate in single-phase regions.
+        Uses Clausius-Clapeyron and Maxwell relations to correctly
+        integrate through the two-phase (mushy) region without
+        requiring entropy tables. Detects solidus/liquidus crossings
+        and switches between single-phase and mushy-zone integration.
+
+        When entropy tables are also available, verifies the CC result
+        against the entropy-inversion method.
 
         Parameters
         ----------
@@ -321,21 +324,37 @@ class InitialCondition:
         npt.NDArray
             Adiabatic temperature profile for the staggered nodes.
         """
+        logger.info(
+            "Computing entropy-conserving adiabat via Clausius-Clapeyron"
+        )
+        T_cc = self._get_adiabat_clausius_clapeyron(pressure_basic)
+
+        # Verification against entropy-table method when available
         active = self._phases.active
         has_entropy = hasattr(active, 'has_entropy') and active.has_entropy
-
         if has_entropy:
             logger.info(
-                "Using entropy-conserving adiabat (handles two-phase region correctly)"
+                "Verifying CC adiabat against entropy-table inversion"
             )
-            return self._get_adiabat_entropy_conserving(pressure_basic)
+            T_entropy = self._get_adiabat_entropy_conserving(pressure_basic)
+            T_cc_phys = T_cc * self._parameters.scalings.temperature
+            T_ent_phys = T_entropy * self._parameters.scalings.temperature
+            diff = np.abs(T_cc_phys - T_ent_phys)
+            max_diff = np.max(diff)
+            mean_diff = np.mean(diff)
+            rel_max = np.max(diff / T_cc_phys) * 100
+            logger.info(
+                "CC vs entropy-table IC: max_diff=%.1f K (%.3f%%), "
+                "mean_diff=%.1f K",
+                max_diff, rel_max, mean_diff,
+            )
+            if rel_max > 1.0:
+                logger.warning(
+                    "CC and entropy-table adiabats disagree by >1%%. "
+                    "Check EOS thermodynamic consistency."
+                )
 
-        logger.warning(
-            "No entropy tables available. Using dTdPs = alpha*T/(rho*Cp) for "
-            "adiabatic IC. This is only accurate in single-phase regions and "
-            "will NOT conserve entropy across phase boundaries (solidus/liquidus)."
-        )
-        return self._get_adiabat_single_phase(pressure_basic)
+        return T_cc
 
     def _get_adiabat_single_phase(self, pressure_basic) -> npt.NDArray:
         """Adiabat by integrating dTdPs = alpha*T/(rho*Cp).
@@ -372,6 +391,149 @@ class InitialCondition:
         temperature_basic = np.flip(sol.y[0])
 
         # Return temperature field at staggered nodes
+        return self._mesh.quantity_at_staggered_nodes(temperature_basic)
+
+    def _get_adiabat_clausius_clapeyron(self, pressure_basic) -> npt.NDArray:
+        """Entropy-conserving adiabat via Clausius-Clapeyron relations.
+
+        Integrates through three regimes:
+        - Single-phase solid: dT/dP = alpha*T/(rho*Cp)
+        - Mushy zone: coupled ODE using Maxwell + Clausius-Clapeyron
+        - Single-phase liquid: dT/dP = alpha*T/(rho*Cp)
+
+        In the mushy zone, entropy conservation is enforced via:
+          Delta_S = Delta_V / (dT_sol/dP)           (Clausius-Clapeyron)
+          dS_sol/dP = -alpha_sol/rho_sol + Cp_sol/T_sol * dT_sol/dP  (Maxwell)
+          dS_liq/dP = -alpha_liq/rho_liq + Cp_liq/T_liq * dT_liq/dP  (Maxwell)
+          dphi/dP = -[phi*dS_liq/dP + (1-phi)*dS_sol/dP] / Delta_S
+          dT/dP = dT_sol/dP + dphi/dP*(T_liq-T_sol) + phi*(dT_liq/dP-dT_sol/dP)
+
+        No entropy tables required; uses only alpha, Cp, rho, and melting
+        curve slopes.
+
+        Parameters
+        ----------
+        pressure_basic : npt.NDArray
+            Pressure on basic nodes (CMB to surface).
+
+        Returns
+        -------
+        npt.NDArray
+            Temperature at staggered nodes.
+        """
+        active = self._phases.active
+
+        def get_solidus_liquidus(P):
+            """Get solidus and liquidus T at pressure P."""
+            P_arr = np.atleast_1d(P)
+            active.set_pressure(P_arr)
+            T_sol = float(active.solidus())
+            T_liq = float(active.liquidus())
+            return T_sol, T_liq
+
+        def dTdP_single_phase(P, T):
+            """Single-phase adiabatic gradient."""
+            active.set_pressure(np.atleast_1d(P))
+            active.set_temperature(np.atleast_1d(T))
+            active.update()
+            return float(active.dTdPs())
+
+        def dTdP_mushy(P, T):
+            """Mushy-zone adiabatic gradient via Clausius-Clapeyron.
+
+            Uses Maxwell relations to compute entropy gradients along
+            the phase boundaries, then enforces dS_total/dP = 0.
+            """
+            P_arr = np.atleast_1d(P)
+            active.set_pressure(P_arr)
+
+            T_sol = float(active.solidus())
+            T_liq = float(active.liquidus())
+            delta_T = T_liq - T_sol
+            if delta_T < 1e-10:
+                return dTdP_single_phase(P, T)
+
+            phi = max(0.0, min(1.0, (T - T_sol) / delta_T))
+
+            # Clapeyron slopes
+            dTsol_dP = float(active.solidus_gradient())
+            dTliq_dP = float(active.liquidus_gradient())
+
+            # Phase properties at solidus and liquidus
+            # (already set by set_pressure -> solid at T_sol, liquid at T_liq)
+            rho_sol = float(active._mixed._solid.density())
+            rho_liq = float(active._mixed._liquid.density())
+            alpha_sol = float(active._mixed._solid.thermal_expansivity())
+            alpha_liq = float(active._mixed._liquid.thermal_expansivity())
+            Cp_sol = float(active._mixed._solid.heat_capacity())
+            Cp_liq = float(active._mixed._liquid.heat_capacity())
+
+            # Clausius-Clapeyron: Delta_S = Delta_V / (dT_sol/dP)
+            delta_V = 1.0 / rho_liq - 1.0 / rho_sol
+            if abs(dTsol_dP) < 1e-30:
+                return dTdP_single_phase(P, T)
+            delta_S = delta_V / dTsol_dP
+
+            if abs(delta_S) < 1e-30:
+                return dTdP_single_phase(P, T)
+
+            # Maxwell relations: dS_phase/dP along each phase boundary
+            # dS/dP|boundary = (dS/dP)_T + (dS/dT)_P * dT_boundary/dP
+            #                = -alpha/rho + Cp/T * dT_boundary/dP
+            dSsol_dP = -alpha_sol / rho_sol + Cp_sol / T_sol * dTsol_dP
+            dSliq_dP = -alpha_liq / rho_liq + Cp_liq / T_liq * dTliq_dP
+
+            # Entropy conservation: dphi/dP = -[phi*dSliq/dP + (1-phi)*dSsol/dP] / Delta_S
+            dphi_dP = -(phi * dSliq_dP + (1 - phi) * dSsol_dP) / delta_S
+
+            # Temperature gradient in mushy zone
+            dT_dP = dTsol_dP + dphi_dP * delta_T + phi * (dTliq_dP - dTsol_dP)
+
+            return dT_dP
+
+        # Flip pressure to surface -> CMB ordering for downward integration
+        P_down = np.flip(pressure_basic)
+        T_profile = np.zeros_like(P_down)
+        T_profile[0] = self._settings.surface_temperature
+
+        for i in range(1, len(P_down)):
+            P_i = float(P_down[i])
+            P_prev = float(P_down[i - 1])
+            T_prev = float(T_profile[i - 1])
+            dP = P_i - P_prev
+
+            T_sol, T_liq = get_solidus_liquidus(P_i)
+            T_sol_prev, T_liq_prev = get_solidus_liquidus(P_prev)
+
+            # Determine regime at current point
+            in_mushy_prev = T_sol_prev <= T_prev <= T_liq_prev
+            in_mushy_next_est = T_sol <= (T_prev + dTdP_single_phase(P_prev, T_prev) * dP) <= T_liq
+
+            if in_mushy_prev or in_mushy_next_est:
+                # Use Clausius-Clapeyron ODE in mushy zone
+                # RK4 step for accuracy
+                k1 = dTdP_mushy(P_prev, T_prev)
+                k2 = dTdP_mushy(P_prev + 0.5 * dP, T_prev + 0.5 * dP * k1)
+                k3 = dTdP_mushy(P_prev + 0.5 * dP, T_prev + 0.5 * dP * k2)
+                k4 = dTdP_mushy(P_i, T_prev + dP * k3)
+                T_profile[i] = T_prev + dP / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
+            else:
+                # Single-phase: standard adiabatic gradient
+                k1 = dTdP_single_phase(P_prev, T_prev)
+                k2 = dTdP_single_phase(P_prev + 0.5 * dP, T_prev + 0.5 * dP * k1)
+                k3 = dTdP_single_phase(P_prev + 0.5 * dP, T_prev + 0.5 * dP * k2)
+                k4 = dTdP_single_phase(P_i, T_prev + dP * k3)
+                T_profile[i] = T_prev + dP / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4)
+
+        logger.info(
+            "CC adiabat: T_surf=%.1f -> T_cmb=%.1f (n=%d nodes)",
+            T_profile[0] * self._parameters.scalings.temperature,
+            T_profile[-1] * self._parameters.scalings.temperature,
+            len(T_profile),
+        )
+
+        # Flip back to CMB -> surface ordering
+        temperature_basic = np.flip(T_profile)
         return self._mesh.quantity_at_staggered_nodes(temperature_basic)
 
     def _get_adiabat_entropy_conserving(self, pressure_basic) -> npt.NDArray:
