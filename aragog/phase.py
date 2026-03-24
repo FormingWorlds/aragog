@@ -356,6 +356,11 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         dTliq_dP = self.liquidus_gradient()
         safe_dTliq_dP = np.where(np.abs(dTliq_dP) > 1e-30, dTliq_dP, 1e-30)
 
+        # Compute single-phase heat capacities first (needed for both
+        # the CC latent heat and the mixed-phase Cp below)
+        self._heat_capacity_sensible_liquid = self._liquid.heat_capacity()
+        self._heat_capacity_sensible_solid = self._solid.heat_capacity()
+
         # Clausius-Clapeyron latent heat entropy at the liquidus (real melting curve)
         delta_S_melt = self._delta_specific_volume / safe_dTliq_dP
 
@@ -364,18 +369,20 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         T_liq = self.liquidus()
         safe_T_sol = np.where(T_sol > 0, T_sol, 1.0)
         delta_S_sensible = self._heat_capacity_sensible_solid * np.log(T_liq / safe_T_sol)
+        delta_S_sensible = np.maximum(delta_S_sensible, 0.0)
 
         # Total effective Delta_S and latent heat
         delta_S_total = np.abs(delta_S_melt) + delta_S_sensible
         self._latent_heat = T_fus * delta_S_total
 
-        # When entropy tables are available, compute L from entropy for
-        # verification: L_S = T_fus * (S_liq - S_sol). Both approaches
-        # should agree if the EOS is thermodynamically consistent.
+        # When entropy tables are available, use entropy-derived L instead
+        # (more accurate since PALEOS EOS is not CC-consistent at melting curve)
         if self.has_entropy:
             S_sol = self._solid.entropy()
             S_liq = self._liquid.entropy()
             self._latent_heat_from_entropy = T_fus * (S_liq - S_sol)
+            # Use entropy-derived L as the primary value
+            self._latent_heat = self._latent_heat_from_entropy
         else:
             self._latent_heat_from_entropy = None
 
@@ -383,8 +390,6 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         #   cp = phi*cp_m + (1-phi)*cp_s + (h_m - h_s) / (T_liq - T_sol)
         # The first two terms are the sensible heat contribution from each phase,
         # the third is the latent heat contribution. Now uses pressure-dependent L.
-        self._heat_capacity_sensible_liquid = self._liquid.heat_capacity()
-        self._heat_capacity_sensible_solid = self._solid.heat_capacity()
         self._heat_capacity_latent = self.latent_heat() / self.delta_fusion()
         # Default until update() sets the phi-dependent value:
         # use phi=0.5 as initial estimate
@@ -518,11 +523,11 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
 
     @override
     def latent_heat(self) -> FloatOrArray:
-        """Pressure-dependent latent heat of fusion via Clausius-Clapeyron.
+        """Pressure-dependent latent heat of fusion.
 
-        Returns L(P) = T_fus * Delta_V / (dT_sol/dP) after set_pressure()
-        has been called. Before set_pressure(), returns the constant value
-        from the configuration as a fallback.
+        After set_pressure() has been called, returns L(P) computed from
+        either entropy tables (primary) or Clausius-Clapeyron + sensible
+        heat (fallback). Must call set_pressure() before using this method.
         """
         return self._latent_heat
 
@@ -727,7 +732,15 @@ class CompositePhaseEvaluator(PhaseEvaluatorABC):
         return self._dTdrs
 
     def entropy(self) -> npt.NDArray:
-        """Composite entropy dispatching to solid, mixed, or liquid evaluator."""
+        """Composite entropy dispatching to solid, mixed, or liquid evaluator.
+
+        Raises AttributeError if entropy tables are not available.
+        """
+        if not self.has_entropy:
+            raise AttributeError(
+                "Entropy lookup not available. Provide entropy tables in "
+                "the phase parameters to enable entropy evaluation."
+            )
         return self._get_composite_entropy()
 
     def entropy_at(self, pressure: float, temperature: float) -> float:

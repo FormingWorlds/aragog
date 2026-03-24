@@ -423,6 +423,14 @@ class InitialCondition:
         """
         active = self._phases.active
 
+        # CC adiabat requires composite evaluator (solid + mixed + liquid)
+        if not hasattr(active, '_mixed'):
+            logger.warning(
+                "CC adiabat requires composite phase evaluator. "
+                "Falling back to single-phase dTdPs."
+            )
+            return self._get_adiabat_single_phase(pressure_basic)
+
         def get_solidus_liquidus(P):
             """Get solidus and liquidus T at pressure P."""
             P_arr = np.atleast_1d(P)
@@ -475,7 +483,7 @@ class InitialCondition:
             if abs(dTliq_dP) < 1e-30:
                 return dTdP_single_phase(P, T)
             delta_S_melt = abs(delta_V / dTliq_dP)
-            delta_S_sensible = Cp_sol * np.log(T_liq / max(T_sol, 1.0))
+            delta_S_sensible = max(0.0, Cp_sol * np.log(T_liq / max(T_sol, 1.0)))
             delta_S = delta_S_melt + delta_S_sensible
 
             if abs(delta_S) < 1e-30:
