@@ -435,8 +435,8 @@ class InitialCondition:
             """Get solidus and liquidus T at pressure P."""
             P_arr = np.atleast_1d(P)
             active.set_pressure(P_arr)
-            T_sol = float(active.solidus())
-            T_liq = float(active.liquidus())
+            T_sol = float(np.squeeze(active.solidus()))
+            T_liq = float(np.squeeze(active.liquidus()))
             return T_sol, T_liq
 
         def dTdP_single_phase(P, T):
@@ -444,7 +444,7 @@ class InitialCondition:
             active.set_pressure(np.atleast_1d(P))
             active.set_temperature(np.atleast_1d(T))
             active.update()
-            return float(active.dTdPs())
+            return float(np.squeeze(active.dTdPs()))
 
         def dTdP_mushy(P, T):
             """Mushy-zone adiabatic gradient via Clausius-Clapeyron.
@@ -455,8 +455,8 @@ class InitialCondition:
             P_arr = np.atleast_1d(P)
             active.set_pressure(P_arr)
 
-            T_sol = float(active.solidus())
-            T_liq = float(active.liquidus())
+            T_sol = float(np.squeeze(active.solidus()))
+            T_liq = float(np.squeeze(active.liquidus()))
             delta_T = T_liq - T_sol
             if delta_T < 1e-10:
                 return dTdP_single_phase(P, T)
@@ -464,17 +464,17 @@ class InitialCondition:
             phi = max(0.0, min(1.0, (T - T_sol) / delta_T))
 
             # Clapeyron slopes
-            dTsol_dP = float(active.solidus_gradient())
-            dTliq_dP = float(active.liquidus_gradient())
+            dTsol_dP = float(np.squeeze(active.solidus_gradient()))
+            dTliq_dP = float(np.squeeze(active.liquidus_gradient()))
 
             # Phase properties at solidus and liquidus
             # (already set by set_pressure -> solid at T_sol, liquid at T_liq)
-            rho_sol = float(active._mixed._solid.density())
-            rho_liq = float(active._mixed._liquid.density())
-            alpha_sol = float(active._mixed._solid.thermal_expansivity())
-            alpha_liq = float(active._mixed._liquid.thermal_expansivity())
-            Cp_sol = float(active._mixed._solid.heat_capacity())
-            Cp_liq = float(active._mixed._liquid.heat_capacity())
+            rho_sol = float(np.squeeze(active._mixed._solid.density()))
+            rho_liq = float(np.squeeze(active._mixed._liquid.density()))
+            alpha_sol = float(np.squeeze(active._mixed._solid.thermal_expansivity()))
+            alpha_liq = float(np.squeeze(active._mixed._liquid.thermal_expansivity()))
+            Cp_sol = float(np.squeeze(active._mixed._solid.heat_capacity()))
+            Cp_liq = float(np.squeeze(active._mixed._liquid.heat_capacity()))
 
             # Effective Delta_S across the mushy zone: Clausius-Clapeyron
             # latent heat + sensible heat of solid from T_sol to T_liq.
