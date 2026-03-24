@@ -324,37 +324,25 @@ class InitialCondition:
         npt.NDArray
             Adiabatic temperature profile for the staggered nodes.
         """
-        logger.info(
-            "Computing entropy-conserving adiabat via Clausius-Clapeyron"
-        )
-        T_cc = self._get_adiabat_clausius_clapeyron(pressure_basic)
-
-        # Verification against entropy-table method when available
         active = self._phases.active
         has_entropy = hasattr(active, 'has_entropy') and active.has_entropy
-        if has_entropy:
-            logger.info(
-                "Verifying CC adiabat against entropy-table inversion"
-            )
-            T_entropy = self._get_adiabat_entropy_conserving(pressure_basic)
-            T_cc_phys = T_cc * self._parameters.scalings.temperature
-            T_ent_phys = T_entropy * self._parameters.scalings.temperature
-            diff = np.abs(T_cc_phys - T_ent_phys)
-            max_diff = np.max(diff)
-            mean_diff = np.mean(diff)
-            rel_max = np.max(diff / T_cc_phys) * 100
-            logger.info(
-                "CC vs entropy-table IC: max_diff=%.1f K (%.3f%%), "
-                "mean_diff=%.1f K",
-                max_diff, rel_max, mean_diff,
-            )
-            if rel_max > 1.0:
-                logger.warning(
-                    "CC and entropy-table adiabats disagree by >1%%. "
-                    "Check EOS thermodynamic consistency."
-                )
 
-        return T_cc
+        if has_entropy:
+            # Primary: entropy-table inversion (exact, matches SPIDER)
+            logger.info(
+                "Using entropy-table adiabat (matches SPIDER formulation)"
+            )
+            return self._get_adiabat_entropy_conserving(pressure_basic)
+
+        # Fallback: Clausius-Clapeyron ODE (approximate for PALEOS
+        # because the EOS is not thermodynamically consistent at the
+        # melting curve; CC underestimates Delta_S by ~5x)
+        logger.warning(
+            "No entropy tables available. Using Clausius-Clapeyron "
+            "adiabat (approximate; PALEOS CC underestimates Delta_S "
+            "by ~5x at the melting curve)."
+        )
+        return self._get_adiabat_clausius_clapeyron(pressure_basic)
 
     def _get_adiabat_single_phase(self, pressure_basic) -> npt.NDArray:
         """Adiabat by integrating dTdPs = alpha*T/(rho*Cp).
