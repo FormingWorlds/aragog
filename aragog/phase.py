@@ -361,8 +361,19 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         self._heat_capacity_sensible_liquid = self._liquid.heat_capacity()
         self._heat_capacity_sensible_solid = self._solid.heat_capacity()
 
-        # Clausius-Clapeyron latent heat entropy at the liquidus (real melting curve)
+        # Clausius-Clapeyron latent heat entropy at the liquidus (real melting curve).
+        # Delta_S_melt should be positive (melting absorbs heat). If negative,
+        # the EOS density contrast and Clapeyron slope are inconsistent; warn
+        # and use the absolute value as a best-effort estimate.
         delta_S_melt = self._delta_specific_volume / safe_dTliq_dP
+        n_negative = np.sum(delta_S_melt < 0) if hasattr(delta_S_melt, '__len__') else (delta_S_melt < 0)
+        if np.any(n_negative):
+            logger.warning(
+                'CC Delta_S_melt < 0 at %d nodes (Delta_V and dT_liq/dP have '
+                'inconsistent signs). Using |Delta_S_melt| as fallback.',
+                int(np.sum(n_negative)) if hasattr(n_negative, '__len__') else 1,
+            )
+        delta_S_melt = np.abs(delta_S_melt)
 
         # Sensible heat entropy of the solid across the mushy zone
         T_sol = self.solidus()
@@ -372,7 +383,7 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         delta_S_sensible = np.maximum(delta_S_sensible, 0.0)
 
         # Total effective Delta_S and latent heat
-        delta_S_total = np.abs(delta_S_melt) + delta_S_sensible
+        delta_S_total = delta_S_melt + delta_S_sensible
         self._latent_heat = T_fus * delta_S_total
 
         # When entropy tables are available, use entropy-derived L instead
