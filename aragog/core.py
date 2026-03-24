@@ -468,11 +468,15 @@ class InitialCondition:
             Cp_sol = float(active._mixed._solid.heat_capacity())
             Cp_liq = float(active._mixed._liquid.heat_capacity())
 
-            # Clausius-Clapeyron: Delta_S = Delta_V / (dT_sol/dP)
+            # Effective Delta_S across the mushy zone: Clausius-Clapeyron
+            # latent heat + sensible heat of solid from T_sol to T_liq.
+            # Uses the liquidus slope (real melting curve) for CC.
             delta_V = 1.0 / rho_liq - 1.0 / rho_sol
-            if abs(dTsol_dP) < 1e-30:
+            if abs(dTliq_dP) < 1e-30:
                 return dTdP_single_phase(P, T)
-            delta_S = delta_V / dTsol_dP
+            delta_S_melt = abs(delta_V / dTliq_dP)
+            delta_S_sensible = Cp_sol * np.log(T_liq / max(T_sol, 1.0))
+            delta_S = delta_S_melt + delta_S_sensible
 
             if abs(delta_S) < 1e-30:
                 return dTdP_single_phase(P, T)

@@ -338,22 +338,40 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         self._delta_specific_volume = 1.0/self._liquid.density() - 1.0/self._solid.density()
         self._delta_fusion = self.liquidus() - self.solidus()
 
-        # Clausius-Clapeyron pressure-dependent latent heat:
-        #   L(P) = T_fus * Delta_V / (dT_sol/dP)
-        # where Delta_V = 1/rho_liq - 1/rho_sol and dT_sol/dP is the solidus
-        # Clapeyron slope. This is thermodynamically exact for a first-order
-        # phase transition and matches SPIDER's T_fus * Delta_S formulation.
+        # Pressure-dependent effective latent heat via Clausius-Clapeyron
+        # plus sensible heat across the mushy zone.
+        #
+        # The effective Delta_S across the mushy zone (solidus to liquidus) is:
+        #   Delta_S = Delta_S_melt + Delta_S_sensible
+        #
+        # where Delta_S_melt = Delta_V / (dT_liq/dP) is the true latent heat
+        # entropy from Clausius-Clapeyron (using the liquidus as the real
+        # melting curve), and Delta_S_sensible = Cp_sol * ln(T_liq/T_sol) is
+        # the sensible heat entropy of the solid from the artificial solidus
+        # to the melting point.
+        #
+        # The effective latent heat is then L_eff = T_fus * Delta_S, which
+        # matches SPIDER's T_fus * (S_liq - S_sol) formulation.
         T_fus = self.solidus() + 0.5 * self._delta_fusion
-        dTsol_dP = self.solidus_gradient()
-        safe_dTsol_dP = np.where(np.abs(dTsol_dP) > 1e-30, dTsol_dP, 1e-30)
-        self._latent_heat = T_fus * self._delta_specific_volume / safe_dTsol_dP
-        # L must be positive (endothermic melting)
-        self._latent_heat = np.abs(self._latent_heat)
+        dTliq_dP = self.liquidus_gradient()
+        safe_dTliq_dP = np.where(np.abs(dTliq_dP) > 1e-30, dTliq_dP, 1e-30)
+
+        # Clausius-Clapeyron latent heat entropy at the liquidus (real melting curve)
+        delta_S_melt = self._delta_specific_volume / safe_dTliq_dP
+
+        # Sensible heat entropy of the solid across the mushy zone
+        T_sol = self.solidus()
+        T_liq = self.liquidus()
+        safe_T_sol = np.where(T_sol > 0, T_sol, 1.0)
+        delta_S_sensible = self._heat_capacity_sensible_solid * np.log(T_liq / safe_T_sol)
+
+        # Total effective Delta_S and latent heat
+        delta_S_total = np.abs(delta_S_melt) + delta_S_sensible
+        self._latent_heat = T_fus * delta_S_total
 
         # When entropy tables are available, compute L from entropy for
         # verification: L_S = T_fus * (S_liq - S_sol). Both approaches
-        # should give the same result if the EOS is thermodynamically
-        # consistent. Store for diagnostic access.
+        # should agree if the EOS is thermodynamically consistent.
         if self.has_entropy:
             S_sol = self._solid.entropy()
             S_liq = self._liquid.entropy()
