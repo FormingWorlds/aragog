@@ -14,23 +14,28 @@
 # You should have received a copy of the GNU General Public License along with Aragog. If not,
 # see <https://www.gnu.org/licenses/>.
 #
-"""Output"""
+"""Output subpackage: Output class for storing and writing model results."""
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
 
-import matplotlib.pyplot as plt
 import netCDF4 as nc
 import numpy as np
 import numpy.typing as npt
 from scipy.optimize import OptimizeResult
 
 from aragog import __version__
+from aragog.output.diagnostics import (
+    melt_fraction_global as _melt_fraction_global,
+    rheological_front as _rheological_front,
+)
 from aragog.parser import Parameters
 from aragog.solver import Evaluator
 from aragog.utilities import FloatOrArray
+
+__all__ = ["Output"]
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -149,37 +154,21 @@ class Output:
         """Rheological front at the last solve iteration given user defined threshold.
         It is defined as a dimensionless distance with respect to the outer radius.
         """
-
-        _phi_global = float(self.melt_fraction_global)
-
-        # if global melt fraction is close to one everywhere (magma ocean) rf is the inner radius
-        if _phi_global > 0.99:
-            rf: float = self.evaluator.mesh.basic.radii[0]
-        # if global melt fraction is close to zero everywhere (solidified) rf is the outer radius
-        elif _phi_global < 0.01:
-            rf = self.evaluator.mesh.basic.radii[-1]
-        # general case
-        else:
-            idx = np.argmin(
-                np.abs(
-                    self.melt_fraction_basic[:, -1]
-                    - self.parameters.phase_mixed.rheological_transition_melt_fraction
-                )
-            )
-            rf = self.evaluator.mesh.basic.radii[idx]
-
-        # Return dimensionless rheological front
-        return ((self.evaluator.mesh.basic.radii[-1] - rf) / self.evaluator.mesh.basic.radii[-1]).item()
+        return _rheological_front(
+            mesh=self.evaluator.mesh,
+            melt_fraction_basic=self.melt_fraction_basic,
+            rheological_transition_melt_fraction=self.parameters.phase_mixed.rheological_transition_melt_fraction,
+            phi_global=float(self.melt_fraction_global),
+        )
 
     @property
     def melt_fraction_global(self) -> float:
         """Volume-averaged melt fraction"""
-        phase_to_use = self.evaluator._parameters.phase_mixed.phase
-        if phase_to_use == "mixed" or phase_to_use == "composite":
-            out = self.evaluator.mesh.volume_average(self.melt_fraction_staggered[:, -1])
-        else:
-            out = self.melt_fraction_staggered
-        return out
+        return _melt_fraction_global(
+            mesh=self.evaluator.mesh,
+            melt_fraction_staggered=self.melt_fraction_staggered,
+            phase_mode=self.evaluator._parameters.phase_mixed.phase,
+        )
 
     @property
     def radii_km_basic(self) -> npt.NDArray:
@@ -380,6 +369,8 @@ class Output:
             num_lines: Number of lines to plot. Defaults to 11.
             figsize: Size of the figure. Defaults to (25, 10).
         """
+        import matplotlib.pyplot as plt
+
         assert self.solution is not None
 
         self.state.update(self.solution.y, self.solution.t)
@@ -494,13 +485,7 @@ class Output:
         axs[9].set_xlabel("Thermal expansivity")
         axs[9].set_title("Thermal expansivity")
 
-        # Shrink current axis by 20% to allow space for the legend.
-        # box = ax.get_position()
-        # ax.set_position((box.x0, box.y0, box.width * 0.8, box.height))
-
-        # axs[0].grid(True)
-
-        legend = axs[2].legend()  # (loc="center left", bbox_to_anchor=(1, 0.5))
+        legend = axs[2].legend()
         legend.set_title("Time (yr)")
         plt.gca().invert_yaxis()
 
