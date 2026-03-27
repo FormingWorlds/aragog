@@ -233,17 +233,28 @@ class BoundaryConditions:
         state : State
             The state to apply the boundary condition to.
         """
-        core_capacity: float = (
-            4
-            / 3
-            * np.pi
-            * np.power(self._mesh.basic.radii[0], 3)
+        # Core thermal capacity: C_core = rho_core * cp_core * V_core
+        r_cmb = float(np.squeeze(self._mesh.basic.radii[0]))
+        core_capacity = (
+            4 / 3 * np.pi * r_cmb**3
             * self._mesh.settings.core_density
             * self._settings.core_heat_capacity
         )
-        cell_capacity = self._mesh.basic.volume[0] * state.capacitance_staggered()[0, :]
-        radius_ratio: float = self._mesh.basic.radii[1] / self._mesh.basic.radii[0]
+
+        # First mantle cell thermal capacity: C_cell = rho * cp * V_cell
+        cap_stag = state.capacitance_staggered()  # rho * cp, may be float or array
+        cap_first = float(np.squeeze(cap_stag[0])) if hasattr(cap_stag, '__getitem__') else float(cap_stag)
+        cell_capacity = float(np.squeeze(self._mesh.basic.volume[0])) * cap_first
+
+        # Geometric correction: area ratio between first interior face and CMB
+        r_above = float(np.squeeze(self._mesh.basic.radii[1]))
+        radius_ratio = r_above / r_cmb
+
+        # Core buffering factor (Bower+2018 Eq. 37):
+        # alpha = (R_1/R_0)^2 / (1 + C_cell / (C_core * tfac))
+        # When C_core >> C_cell: alpha -> (R_1/R_0)^2 (core tracks mantle)
+        # When C_core << C_cell: alpha -> 0 (core absorbs all heat)
         tfac = self._settings.tfac_core_avg
-        alpha = np.power(radius_ratio, 2) / ((cell_capacity / (core_capacity * tfac)) + 1)
+        alpha = radius_ratio**2 / (cell_capacity / (core_capacity * tfac) + 1)
 
         state.heat_flux[0, :] = alpha * state.heat_flux[1, :]
