@@ -287,30 +287,18 @@ Aragog is intended as a computationally efficient mantle thermal evolution tool.
 - **$B$** — Adiabatic bulk modulus (used in Adams–Williamson EOS) \[Pa\]
 
 
-## Code mapping (high level)
+## Code mapping
 
-### Physical scripts
+The formulation maps to the following source packages:
 
-The formulation corresponds broadly to:
+| Component | Source |
+|-----------|--------|
+| Mesh, coordinates, pressure/EOS | `aragog.mesh` |
+| Phase and material properties | `aragog.eos` (single_phase, mixed_phase, composite, properties) |
+| Boundary conditions | `aragog.solver.boundary` |
+| Initial condition | `aragog.solver.initial` |
+| Time integration and main solver | `aragog.solver` |
+| Configuration | `aragog.config` (TOML), `aragog.parser` (legacy INI) |
+| Output and plotting | `aragog.output` |
 
-- **Mesh + coordinates + pressure/EOS**: [`mesh.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/mesh.py)
-
-- **Phase and material properties**: [`phase.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/phase.py), [`interfaces.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/interfaces.py)
-
-- **Core model pieces (initial and boundary conditions)**: [`core.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/core.py)
-
-- **Time integration and main solver**: [`solver.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/solver.py)
-
-### Project scripts
-
-Additionally, the code contains:
-
-- **CLI / entry point**: [`cli.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/cli.py)
-
-- **Configuration and parameters**: [`parser.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/parser.py), [`cfg/`](https://github.com/FormingWorlds/aragog/tree/main/aragog/cfg)
-
-  - **Output and plotting**: [`output.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/output.py)
-
-- **Data download (lookup tables)**: [`data.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/data.py)
-
-- **Small utilities**: [`utilities.py`](https://github.com/FormingWorlds/aragog/tree/main/aragog/utilities.py)
+For details on the package structure, see [Code architecture](code_architecture.md). For the full API, see the [API reference](../Reference/api/index.md).
