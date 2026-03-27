@@ -14,11 +14,8 @@
 # You should have received a copy of the GNU General Public License along with Aragog. If not,
 # see <https://www.gnu.org/licenses/>.
 #
-"""Backward compatibility: re-exports from aragog.eos."""
+"""Transport property utilities: re-exports from aragog.utilities."""
 
-from aragog.eos import *  # noqa: F401, F403
-from aragog.eos.base import *  # noqa: F401, F403
-from aragog.eos.composite import *  # noqa: F401, F403
-from aragog.eos.mixed_phase import *  # noqa: F401, F403
-from aragog.eos.properties import *  # noqa: F401, F403
-from aragog.eos.single_phase import *  # noqa: F401, F403
+from aragog.utilities import combine_properties, tanh_weight
+
+__all__ = ["tanh_weight", "combine_properties"]
