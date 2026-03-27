@@ -3,14 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 import attrs
 import numpy as np
 import numpy.typing as npt
-
-if TYPE_CHECKING:
-    from aragog.config.scalings import ScalingsConfig
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -45,8 +41,3 @@ class EnergyConfig:
     tidal_array: npt.NDArray = attrs.Factory(
         lambda: np.array([0.0], dtype=float)
     )
-
-    def scale_attributes(self, scalings: ScalingsConfig) -> None:
-        """Apply non-dimensionalization."""
-        self.scalings_ = scalings
-        self.tidal_array = self.tidal_array / scalings.power_per_mass

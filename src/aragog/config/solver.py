@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 import attrs
-
-if TYPE_CHECKING:
-    from aragog.config.scalings import ScalingsConfig
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -39,11 +35,3 @@ class SolverConfig:
     rtol: float
     tsurf_poststep_change: float = 30.0
     event_triggering: bool = False
-    scalings_: ScalingsConfig | None = attrs.field(init=False, default=None)
-
-    def scale_attributes(self, scalings: ScalingsConfig) -> None:
-        """Apply non-dimensionalization."""
-        self.scalings_ = scalings
-        self.start_time /= scalings.time_years
-        self.end_time /= scalings.time_years
-        self.tsurf_poststep_change /= scalings.temperature

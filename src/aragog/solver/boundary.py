@@ -181,12 +181,12 @@ class BoundaryConditions:
         Parameters
         ----------
         t_interior : npt.NDArray
-            Interior temperature at the surface node (non-dimensional).
+            Interior temperature at the surface node [K].
 
         Returns
         -------
         npt.NDArray
-            Surface radiating temperature (non-dimensional).
+            Surface radiating temperature [K].
         """
         b = self._settings.param_utbl_const
         p = 1.0 / b

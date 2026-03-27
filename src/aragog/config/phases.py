@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
 
 import attrs
-
-if TYPE_CHECKING:
-    from aragog.config.scalings import ScalingsConfig
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -45,33 +41,6 @@ class PhaseConfig:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ""
-    scalings_: ScalingsConfig | None = attrs.field(init=False, default=None)
-
-    def scale_attributes(self, scalings: ScalingsConfig) -> None:
-        """Apply non-dimensionalization to numeric properties.
-
-        String properties (file paths) are not scaled here; they are
-        scaled when loaded by the phase evaluator.
-        """
-        self.scalings_ = scalings
-        for name in ("density", "heat_capacity", "melt_fraction",
-                      "thermal_conductivity", "thermal_expansivity",
-                      "viscosity", "entropy"):
-            value = getattr(self, name)
-            try:
-                scaling = getattr(scalings, name)
-                scaled_value = value / scaling
-                setattr(self, name, scaled_value)
-                logger.info(
-                    "%s is a number (value=%s, scaling=%s, scaled=%s)",
-                    name, value, scaling, scaled_value,
-                )
-            except AttributeError:
-                logger.info("No scaling found for %s", name)
-            except TypeError:
-                logger.info(
-                    "%s is a string (file path), will be scaled later", name
-                )
 
 
 @attrs.define
@@ -106,10 +75,3 @@ class MixedPhaseConfig:
     phase: str
     phase_transition_width: float
     grain_size: float
-    scalings_: ScalingsConfig | None = attrs.field(init=False, default=None)
-
-    def scale_attributes(self, scalings: ScalingsConfig) -> None:
-        """Apply non-dimensionalization."""
-        self.scalings_ = scalings
-        self.latent_heat_of_fusion /= scalings.latent_heat_per_mass
-        self.grain_size /= scalings.radius
