@@ -106,6 +106,5 @@ def aragog_file_logger(
 
 
 # Expose public API so pylint: disable = C0413
-from aragog.data import DownloadLookupTableData
 from aragog.output import Output
 from aragog.solver import Solver
