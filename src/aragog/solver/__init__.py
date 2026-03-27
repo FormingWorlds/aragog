@@ -101,11 +101,27 @@ class Solver:
         self.state = State(self.parameters, self.evaluator)
 
     def reset(self) -> None:
-        """This function initializes the model, while keeping the previous state of the
-        PhaseEvaluatorCollection object. This avoids multiple loads of lookup table data
-        when running Aragog multiple times.
+        """Reset the model for a new integration, keeping phase lookup tables.
+
+        Re-reads the EOS file from disk if eos_method=2, so that updates
+        to the Zalmoxis output file between coupling iterations are picked up.
+        Phase property lookup tables (density, cp, etc.) are NOT reloaded
+        to avoid expensive re-interpolation.
         """
         logger.info("Resetting %s", self.__class__.__name__)
+
+        # Re-read the user-defined EOS file if it exists, so dynamic mesh
+        # refresh from Zalmoxis is picked up (fixes stale-mesh bug).
+        if self.parameters.mesh.eos_method == 2 and self.parameters.mesh.eos_file:
+            import numpy as np
+
+            arr = np.loadtxt(self.parameters.mesh.eos_file)
+            self.parameters.mesh.eos_radius = arr[:, 0]
+            self.parameters.mesh.eos_pressure = arr[:, 1]
+            self.parameters.mesh.eos_density = arr[:, 2]
+            self.parameters.mesh.eos_gravity = arr[:, 3]
+            logger.debug("Re-read EOS file: %s", self.parameters.mesh.eos_file)
+
         # Update the Evaluator object except the phase properties
         from aragog.mesh import Mesh
 
