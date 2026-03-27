@@ -159,7 +159,10 @@ class Solver:
         delta_energy_flux: npt.NDArray = np.diff(energy_flux, axis=0)
         # logger.debug("delta_energy_flux size = %s", delta_energy_flux.shape)
         # logger.debug("capacitance = %s", self.state.phase_staggered.capacitance.shape)
-        # FIXME: Update capacitance for mixed phase (enthalpy of fusion contribution)
+        # Capacitance includes latent heat: in the mixed phase, cp already contains
+        # the L/(T_liq - T_sol) contribution via MixedPhaseEvaluator.heat_capacity().
+        # The separate latent heat flux term (j_grav + j_mix)*L handles melt TRANSPORT,
+        # not in-situ phase change. These two mechanisms are physically distinct.
         capacitance: npt.NDArray = (
             self.state.capacitance_staggered() * self.evaluator.mesh.basic.volume
         )

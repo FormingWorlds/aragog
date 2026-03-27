@@ -437,9 +437,16 @@ class State:
             * self._evaluator.mesh.basic.mixing_length
             / self.phase_basic.kinematic_viscosity()
         )
-        # Eddy diffusivity
-        self._eddy_diffusivity = np.where(
-            self.viscous_regime, self._viscous_velocity, self._inviscid_velocity
+        # Eddy diffusivity: smooth blending between viscous and inviscid regimes
+        # near the critical Reynolds number (Re = 9/8) to avoid a discontinuous
+        # RHS that would cause BDF convergence issues. Uses a tanh transition
+        # with width 0.2 in Re-space centered on Re_crit.
+        re_crit = self.critical_reynolds_number
+        blend_width = 0.2 * re_crit  # smooth over 20% of Re_crit
+        inviscid_weight = 0.5 * (1.0 + np.tanh((self._reynolds_number - re_crit) / max(blend_width, 1e-30)))
+        self._eddy_diffusivity = (
+            (1.0 - inviscid_weight) * self._viscous_velocity
+            + inviscid_weight * self._inviscid_velocity
         )
         self._eddy_diffusivity *= self._evaluator.mesh.basic.mixing_length
 

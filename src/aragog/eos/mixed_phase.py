@@ -182,9 +182,13 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
         )
         self._density = 1 / self._density
 
-        # Porosity
-        epsilon = 1e-10  # Used to avoid division by zero when dividing by the delta density for higher mass planets
+        # Porosity (volume fraction of melt)
+        # Epsilon prevents division by zero when delta_density is very small (high-mass planets).
+        # Clipping to [0, 1] prevents unphysical values and avoids singularities
+        # in the BKC permeability formula where (1-porosity)^2 appears in the denominator.
+        epsilon = 1e-10
         self._porosity = (self._solid.density() - self.density()) / (self.delta_density() + epsilon)
+        self._porosity = np.clip(self._porosity, 0.0, 1.0 - epsilon)
 
         # Relative velocity between melt and solid
         self._relative_velocity = self._get_relative_velocity()
@@ -367,17 +371,20 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
 
     def _permeability(self) -> npt.NDArray:
 
-        # RumpfGupte regime (default)
+        # Three-regime permeability model (Abe 1995):
+        #   Stokes:   porosity > 0.771462 (high melt fraction, dilute suspension)
+        #   Rumpf-Gupte: 0.0769618 <= porosity <= 0.771462 (intermediate)
+        #   Blake-Kozeny-Carman: porosity < 0.0769618 (low melt fraction, porous flow)
+        # Thresholds from Abe (1995); the BKC threshold 0.0769618 corrects the
+        # truncation artifact 0.0769452 in the Soucasse formulation document.
         permeability = self._permeability_rumpf_gupte()
 
-        # Stokes regime
         permeability = np.where(
             self._porosity > 0.771462,
             self._permeability_stokes(),
             permeability
             )
 
-        # Blake-Kozeny-Carman regime
         permeability = np.where(
             self._porosity < 0.0769618,
             self._permeability_blake_kozeny_carman(),

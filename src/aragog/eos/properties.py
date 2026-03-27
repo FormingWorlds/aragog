@@ -16,6 +16,7 @@
 #
 """Property classes: constant, 1-D lookup, and 2-D lookup."""
 
+import logging
 from dataclasses import KW_ONLY, dataclass, field
 
 import numpy as np
@@ -24,6 +25,8 @@ from scipy.interpolate import RectBivariateSpline
 
 from aragog.eos.base import PropertyProtocol
 from aragog.utilities import FloatOrArray
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -84,8 +87,15 @@ class LookupProperty1D(PropertyProtocol):
         # Sort the data to ensure x is increasing
         self.value = self.value[self.value[:, 0].argsort()]
         self._gradient = np.gradient(self.value[:, 1], self.value[:, 0])
+        self._x_bounds = (self.value[0, 0], self.value[-1, 0])
 
     def eval(self, pressure: npt.NDArray) -> npt.NDArray:
+        p_arr = np.asarray(pressure).ravel()
+        if len(p_arr) > 0 and (np.any(p_arr < self._x_bounds[0]) or np.any(p_arr > self._x_bounds[1])):
+            logger.warning(
+                "%s: pressure outside table range [%.2e, %.2e]",
+                self.name, self._x_bounds[0], self._x_bounds[1],
+            )
         return np.interp(pressure, self.value[:, 0], self.value[:, 1])
 
     def gradient(self, pressure: npt.NDArray) -> npt.NDArray:
@@ -120,27 +130,54 @@ class LookupProperty2D(PropertyProtocol):
     def __post_init__(self):
         # Prepare data for spline
         x_values, y_values, z_values = self.prepare_data_for_spline(self.value)
-        self._lookup = RectBivariateSpline(x_values, y_values, z_values, kx=1, ky=1, s=0)
+        # Use cubic interpolation (kx=3, ky=3) for accuracy consistent with the
+        # 2nd-order FV discretization. Falls back to bilinear if grid is too small.
+        nx, ny = len(x_values), len(y_values)
+        kx = min(3, nx - 1)
+        ky = min(3, ny - 1)
+        self._lookup = RectBivariateSpline(x_values, y_values, z_values, kx=kx, ky=ky, s=0)
+        # Store bounds for out-of-range warnings
+        self._x_bounds = (x_values[0], x_values[-1])
+        self._y_bounds = (y_values[0], y_values[-1])
 
     def prepare_data_for_spline(self, data):
-        """Ensure your data is on a regular grid for RectBivariateSpline"""
-        # Extract x, y, and z values
+        """Reshape tabular data onto a regular grid for RectBivariateSpline."""
         x_values = np.unique(data[:, 0])  # Unique pressure values
         y_values = np.unique(data[:, 1])  # Unique temperature values
 
-        # Create a grid for z values
         z_values = np.full((x_values.size, y_values.size), np.nan)
 
-        # Find the indices of the x and y values in the unique arrays
         x_indices = np.searchsorted(x_values, data[:, 0])
         y_indices = np.searchsorted(y_values, data[:, 1])
 
-        # Fill the z_values grid
         z_values[x_indices, y_indices] = data[:, 2]
+
+        # Validate: check for missing grid points
+        n_nan = np.sum(np.isnan(z_values))
+        if n_nan > 0:
+            logger.warning(
+                "%s: %d of %d grid points are NaN (%.1f%%). "
+                "Interpolation may be unreliable near gaps.",
+                self.name, n_nan, z_values.size, 100 * n_nan / z_values.size,
+            )
 
         return x_values, y_values, z_values
 
     def eval(self, temperature: npt.NDArray, pressure: npt.NDArray) -> npt.NDArray:
+        # Warn if queried outside table bounds (extrapolation is unreliable)
+        p_arr = np.asarray(pressure).ravel()
+        t_arr = np.asarray(temperature).ravel()
+        if len(p_arr) > 0:
+            if np.any(p_arr < self._x_bounds[0]) or np.any(p_arr > self._x_bounds[1]):
+                logger.warning(
+                    "%s: pressure outside table range [%.2e, %.2e]",
+                    self.name, self._x_bounds[0], self._x_bounds[1],
+                )
+            if np.any(t_arr < self._y_bounds[0]) or np.any(t_arr > self._y_bounds[1]):
+                logger.warning(
+                    "%s: temperature outside table range [%.2e, %.2e]",
+                    self.name, self._y_bounds[0], self._y_bounds[1],
+                )
         return self._lookup(pressure, temperature, grid=False)
 
     def __call__(self, temperature: npt.NDArray, pressure: npt.NDArray) -> npt.NDArray:
