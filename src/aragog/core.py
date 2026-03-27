@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
+from scipy import constants as sp_constants
 from scipy.integrate import solve_ivp
 from scipy.optimize import brentq
 
@@ -173,7 +174,7 @@ class BoundaryConditions:
             t_surf = t_top
         state.heat_flux[-1, :] = (
             self._settings.emissivity
-            * self._settings.scalings_.stefan_boltzmann_constant
+            * sp_constants.Stefan_Boltzmann
             * (np.power(t_surf, 4) - self._settings.equilibrium_temperature**4)
         )
 
@@ -536,8 +537,8 @@ class InitialCondition:
 
         logger.info(
             "CC adiabat: T_surf=%.1f -> T_cmb=%.1f (n=%d nodes)",
-            T_profile[0] * self._parameters.scalings.temperature,
-            T_profile[-1] * self._parameters.scalings.temperature,
+            T_profile[0],
+            T_profile[-1],
             len(T_profile),
         )
 

@@ -60,91 +60,79 @@ class Output:
 
     @property
     def conductive_heat_flux_basic(self) -> npt.NDArray:
-        """Conductive heat flux"""
-        return self.state.conductive_heat_flux() * self.parameters.scalings.heat_flux
+        """Conductive heat flux in W/m^2"""
+        return self.state.conductive_heat_flux()
 
     @property
     def convective_heat_flux_basic(self) -> npt.NDArray:
-        """Convective heat flux"""
-        return self.state.convective_heat_flux() * self.parameters.scalings.heat_flux
+        """Convective heat flux in W/m^2"""
+        return self.state.convective_heat_flux()
 
     @property
     def gravitational_separation_heat_flux_basic(self) -> npt.NDArray:
-        """Gravitational separation heat flux"""
+        """Gravitational separation heat flux in W/m^2"""
         return (
             self.state.gravitational_separation_mass_flux()
             * self.state.phase_basic.latent_heat()
-            * self.parameters.scalings.heat_flux
         )
 
     @property
     def mixing_heat_flux_basic(self) -> npt.NDArray:
-        """Convective mixing heat flux"""
+        """Convective mixing heat flux in W/m^2"""
         return (
             self.state.mixing_mass_flux()
             * self.state.phase_basic.latent_heat()
-            * self.parameters.scalings.heat_flux
         )
 
     @property
     def total_heat_flux_basic(self) -> npt.NDArray:
-        """Conductive heat flux"""
-        return self.state.heat_flux * self.parameters.scalings.heat_flux
+        """Total heat flux in W/m^2"""
+        return self.state.heat_flux
 
     @property
     def density_basic(self) -> npt.NDArray:
-        """Density"""
-        return (
-            self.state.phase_basic.density()
-            * np.ones(self.shape_basic)
-            * self.parameters.scalings.density
-        )
+        """Density in kg/m^3"""
+        return self.state.phase_basic.density() * np.ones(self.shape_basic)
 
     @property
     def dTdr(self) -> npt.NDArray:
-        """dTdr"""
-        return self.solver.state.dTdr() * self.parameters.scalings.temperature_gradient
+        """dTdr in K/m"""
+        return self.solver.state.dTdr()
 
     @property
     def dTdrs(self) -> npt.NDArray:
-        """dTdrs"""
-        return (  # FIXME
-            self.state.phase_basic.dTdrs() * self.parameters.scalings.temperature_gradient
-        )
+        """dTdrs (adiabatic gradient) in K/m"""
+        return self.state.phase_basic.dTdrs()
 
     @property
     def heat_capacity_basic(self) -> npt.NDArray:
-        """Heat capacity"""
-        return (
-            self.state.phase_basic.heat_capacity()
-            * np.ones(self.shape_basic)
-            * self.parameters.scalings.heat_capacity
-        )
+        """Heat capacity in J/kg/K"""
+        return self.state.phase_basic.heat_capacity() * np.ones(self.shape_basic)
 
     @property
     def heating(self) -> npt.NDArray:
-        """Internal heat generation at staggered nodes"""
-        return self.state.heating * self.parameters.scalings.power_per_mass
+        """Internal heat generation at staggered nodes in W/kg"""
+        return self.state.heating
 
     @property
     def heating_radio(self) -> npt.NDArray:
-        """Internal heat generation from radioactive decay at staggered nodes"""
-        return self.state.heating_radio * self.parameters.scalings.power_per_mass
+        """Internal heat generation from radioactive decay at staggered nodes in W/kg"""
+        return self.state.heating_radio
 
     @property
     def heating_dilatation(self) -> npt.NDArray:
-        """Internal heat generation from dilatation/compression at staggered nodes"""
-        return self.state.heating_dilatation * self.parameters.scalings.power_per_mass
+        """Internal heat generation from dilatation/compression at staggered nodes in W/kg"""
+        return self.state.heating_dilatation
 
     @property
     def heating_tidal(self) -> npt.NDArray:
-        """Internal heat generation from tidal heat dissipation at staggered nodes"""
-        return self.state.heating_tidal * self.parameters.scalings.power_per_mass
+        """Internal heat generation from tidal heat dissipation at staggered nodes in W/kg"""
+        return self.state.heating_tidal
 
     @property
     def liquidus_K_staggered(self) -> npt.NDArray:
-        """Liquidus"""
-        return self.evaluator.phases.mixed.liquidus() * self.parameters.scalings.temperature
+        """Liquidus in K"""
+        return self.evaluator.phases.mixed.liquidus()
 
     @property
     def melt_fraction_staggered(self) -> FloatOrArray:
@@ -196,34 +184,32 @@ class Output:
     @property
     def radii_km_basic(self) -> npt.NDArray:
         """Radii of the basic mesh in km"""
-        return self.evaluator.mesh.basic.radii * self.parameters.scalings.radius * 1.0e-3
+        return self.evaluator.mesh.basic.radii * 1.0e-3
 
     @property
     def radii_km_staggered(self) -> npt.NDArray:
         """Radii of the staggered mesh in km"""
-        return self.evaluator.mesh.staggered.radii * self.parameters.scalings.radius * 1.0e-3
+        return self.evaluator.mesh.staggered.radii * 1.0e-3
 
     @property
     def mass_radii_km_basic(self) -> npt.NDArray:
         """Mass radii of the basic mesh in km"""
-        return self.evaluator.mesh.basic.mass_radii * self.parameters.scalings.radius * 1.0e-3
+        return self.evaluator.mesh.basic.mass_radii * 1.0e-3
 
     @property
     def mass_radii_km_staggered(self) -> npt.NDArray:
         """Mass radii of the staggered mesh in km"""
-        return self.evaluator.mesh.staggered.mass_radii * self.parameters.scalings.radius * 1.0e-3
+        return self.evaluator.mesh.staggered.mass_radii * 1.0e-3
 
     @property
     def pressure_GPa_basic(self) -> npt.NDArray:
         """Pressure of the basic mesh in GPa"""
-        return self.evaluator.mesh.basic_pressure * self.parameters.scalings.pressure * 1.0e-9
+        return self.evaluator.mesh.basic_pressure * 1.0e-9
 
     @property
     def pressure_GPa_staggered(self) -> npt.NDArray:
         """Pressure of the staggered mesh in GPa"""
-        return (
-            self.evaluator.mesh.staggered_pressure * self.parameters.scalings.pressure * 1.0e-9
-        )
+        return self.evaluator.mesh.staggered_pressure * 1.0e-9
 
     @property
     def mantle_mass(self) -> float:
@@ -232,48 +218,42 @@ class Output:
 
     @property
     def mass_staggered(self) -> npt.NDArray:
-        """Mass of each layer on staggered mesh"""
+        """Mass of each layer on staggered mesh in kg"""
         return (
-            # shells centred on staggered nodes
             self.evaluator.mesh.staggered_effective_density
             * self.evaluator.mesh.basic.volume
-            * self.parameters.scalings.density
-            * np.power(self.parameters.scalings.radius, 3)
         )
 
     @property
     def core_mass(self) -> float:
-        """Core mass computed with constant density"""
+        """Core mass computed with constant density in kg"""
 
-        # core radius
-        R_core = self.evaluator.mesh.basic.inner_boundary * self.parameters.scalings.radius
+        # core radius (already in m)
+        R_core = self.evaluator.mesh.basic.inner_boundary
 
         # core volume
         volume = 4 * np.pi * (R_core**3) / 3
 
-        # core density
-        rho = self.parameters.scalings.density * self.parameters.mesh.core_density
+        # core density (already in kg/m^3)
+        rho = self.parameters.mesh.core_density
 
         # core mass
         return rho * volume
 
     @property
     def solidus_K_staggered(self) -> npt.NDArray:
-        """Solidus"""
-        return self.evaluator.phases.mixed.solidus() * self.parameters.scalings.temperature
+        """Solidus in K"""
+        return self.evaluator.phases.mixed.solidus()
 
     @property
     def super_adiabatic_temperature_gradient_basic(self) -> npt.NDArray:
-        """Super adiabatic temperature gradient"""
-        return (
-            self.state.super_adiabatic_temperature_gradient
-            * self.parameters.scalings.temperature_gradient
-        )
+        """Super adiabatic temperature gradient in K/m"""
+        return self.state.super_adiabatic_temperature_gradient
 
     @property
     def temperature_K_basic(self) -> npt.NDArray:
         """Temperature of the basic mesh in K"""
-        return self.state.temperature_basic * self.parameters.scalings.temperature
+        return self.state.temperature_basic
 
     @property
     def temperature_K_staggered(self) -> npt.NDArray:
@@ -282,29 +262,21 @@ class Output:
 
     @property
     def thermal_expansivity_basic(self) -> npt.NDArray:
-        """Thermal expansivity"""
-        return (
-            self.state.phase_basic.thermal_expansivity()
-            * np.ones(self.shape_basic)
-            * self.parameters.scalings.thermal_expansivity
-        )
+        """Thermal expansivity in 1/K"""
+        return self.state.phase_basic.thermal_expansivity() * np.ones(self.shape_basic)
 
     @property
     def log10_viscosity_basic(self) -> npt.NDArray:
-        """Viscosity of the basic mesh"""
+        """Log10 viscosity of the basic mesh in Pa s"""
         return np.log10(
-            self.state.phase_basic.viscosity()
-            * self.parameters.scalings.viscosity
-            * np.ones(self.shape_basic)
+            self.state.phase_basic.viscosity() * np.ones(self.shape_basic)
         )
 
     @property
     def log10_viscosity_staggered(self) -> npt.NDArray:
-        """Viscosity of the staggered mesh"""
+        """Log10 viscosity of the staggered mesh in Pa s"""
         return np.log10(
-            self.state.phase_staggered.viscosity()
-            * self.parameters.scalings.viscosity
-            * np.ones(self.shape_staggered)
+            self.state.phase_staggered.viscosity() * np.ones(self.shape_staggered)
         )
 
     @property
@@ -315,7 +287,7 @@ class Output:
     @property
     def times(self) -> npt.NDArray:
         """Times in years"""
-        return self.solution.t * self.parameters.scalings.time_years
+        return self.solution.t
 
     @property
     def time_range(self) -> float:

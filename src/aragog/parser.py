@@ -14,7 +14,13 @@
 # You should have received a copy of the GNU General Public License along with Aragog. If not,
 # see <https://www.gnu.org/licenses/>.
 #
-"""Parses the configuration file and scales and stores the parameters."""
+"""Parses the configuration file and stores the parameters.
+
+Non-dimensionalization has been removed. All quantities are in SI units,
+with time in years. The _ScalingsParameters class is retained with all
+scales set to 1.0 so that downstream code referencing scalings_ attributes
+sees identity operations (division by 1.0).
+"""
 
 from __future__ import annotations
 
@@ -25,8 +31,6 @@ from typing import Any
 
 import numpy as np
 import numpy.typing as npt
-from scipy import constants
-from thermochem import codata
 from typed_configparser import ConfigParser
 
 if sys.version_info < (3, 11):
@@ -57,35 +61,11 @@ def _get_dataclass_from_section_name() -> dict[str, Any]:
 
 @dataclass
 class _ScalingsParameters:
-    """Stores parameters in the scalings section in the configuration data. All units are SI.
+    """Vestigial scalings class retained for API compatibility.
 
-    Args:
-        radius: Radius in metres. Defaults to 1.
-        temperature: Temperature in Kelvin. Defaults to 1.
-        density: Density in kg/m^3. Defaults to 1.
-        time: Time in seconds. Defaults to 1.
-
-    Attributes:
-        radius, m
-        temperature, K
-        density, kg/m^3
-        time, s
-        area, m^2
-        kinetic_energy_per_volume, J/m^3
-        gravitational_acceleration, m/s^2
-        heat_capacity, J/kg/K
-        heat_flux, W/m^2
-        latent_heat_per_mass, J/kg
-        power_per_mass, W/kg
-        power_per_volume, W/m^3
-        pressure, Pa
-        temperature_gradient, K/m
-        thermal_expansivity, 1/K
-        thermal_conductivity, W/m/K
-        velocity, m/s
-        viscosity, Pa s
-        time_years, years
-        stefan_boltzmann_constant (non-dimensional)
+    All scales are set to 1.0 so that any code dividing by a scale
+    factor becomes an identity operation. The config file may still
+    contain a [scalings] section; the values are parsed but ignored.
     """
 
     radius: float = 1
@@ -111,28 +91,29 @@ class _ScalingsParameters:
     stefan_boltzmann_constant: float = field(init=False)
 
     def __post_init__(self) -> None:
-        self.area = np.square(self.radius)
-        self.gravitational_acceleration = self.radius / np.square(self.time)
-        self.temperature_gradient = self.temperature / self.radius
-        self.thermal_expansivity = 1 / self.temperature
-        self.pressure = self.density * self.gravitational_acceleration * self.radius
-        self.velocity = self.radius / self.time
-        self.kinetic_energy_per_volume = self.density * np.square(self.velocity)
-        self.heat_capacity = self.kinetic_energy_per_volume / self.density / self.temperature
-        self.entropy = self.heat_capacity  # J/(kg*K), same dimensions as heat_capacity
-        self.latent_heat_per_mass = self.heat_capacity * self.temperature
-        self.power_per_volume = self.kinetic_energy_per_volume / self.time
-        self.power_per_mass = self.power_per_volume / self.density
-        self.heat_flux = self.power_per_volume * self.radius
-        self.thermal_conductivity = self.power_per_volume * self.area / self.temperature
-        self.viscosity = self.pressure * self.time
-        self.time_years = self.time / constants.Julian_year  # Equivalent to TIMEYRS C code
-        # Stefan-Boltzmann units for dimensional are W/m^2/K^4
-        self.stefan_boltzmann_constant: float = codata.value("Stefan-Boltzmann constant")
-        self.stefan_boltzmann_constant /= (
-            self.power_per_volume * self.radius / np.power(self.temperature, 4)
-        )
-        logger.debug("scalings = %s", self)
+        # Override whatever was parsed from the config: all scales = 1.0
+        self.radius = 1.0
+        self.temperature = 1.0
+        self.density = 1.0
+        self.time = 1.0
+        self.area = 1.0
+        self.gravitational_acceleration = 1.0
+        self.temperature_gradient = 1.0
+        self.thermal_expansivity = 1.0
+        self.pressure = 1.0
+        self.velocity = 1.0
+        self.kinetic_energy_per_volume = 1.0
+        self.heat_capacity = 1.0
+        self.entropy = 1.0
+        self.latent_heat_per_mass = 1.0
+        self.power_per_volume = 1.0
+        self.power_per_mass = 1.0
+        self.heat_flux = 1.0
+        self.thermal_conductivity = 1.0
+        self.viscosity = 1.0
+        self.time_years = 1.0
+        self.stefan_boltzmann_constant = 1.0
+        logger.debug("scalings = %s (all unity, non-dimensionalization removed)", self)
 
 
 @dataclass
@@ -455,8 +436,8 @@ class _SolverParameters:
 class Parameters:
     """Assembles all the parameters.
 
-    The parameters in each section are scaled here to ensure that all the parameters are scaled
-    (non-dimensionalised) consistently with each other.
+    All quantities are stored in SI units (time in years).
+    Non-dimensionalization has been removed.
     """
 
     boundary_conditions: _BoundaryConditionsParameters
@@ -471,17 +452,50 @@ class Parameters:
     solver: _SolverParameters
 
     def __post_init__(self):
-        cls_fields: tuple[Field, ...] = fields(self.__class__)
-        for field_ in cls_fields:
-            data = getattr(self, field_.name)
-            # Dataclass
-            if hasattr(data, "scale_attributes"):
-                data.scale_attributes(self.scalings)
-            # List of dataclasses
-            elif isinstance(data, list):
-                for entry in data:
-                    if hasattr(entry, "scale_attributes"):
-                        entry.scale_attributes(self.scalings)
+        # Store scalings_ reference on sub-dataclasses that need it
+        # (phase.py reads scalings_ from PhaseParameters and PhaseMixedParameters).
+        # With all scales = 1.0, division by scalings is a no-op.
+        for sub in [
+            self.boundary_conditions, self.energy, self.initial_condition,
+            self.mesh, self.phase_solid, self.phase_liquid, self.phase_mixed,
+            self.solver,
+        ]:
+            sub.scalings_ = self.scalings
+        for r in self.radionuclides:
+            r.scalings_ = self.scalings
+
+        # Load initial temperature from file if IC method 2
+        if self.initial_condition.initial_condition == 2:
+            if self.initial_condition.init_file == "":
+                raise ValueError("you must provide an initial temperature file")
+            self.initial_condition.init_temperature = np.loadtxt(
+                self.initial_condition.init_file
+            )
+
+        # Load EOS from file if EOS method 2
+        if self.mesh.eos_method == 2:
+            if self.mesh.eos_file == "":
+                raise ValueError("you must provide a file for setting up equation of state")
+            arr = np.loadtxt(self.mesh.eos_file)
+            self.mesh.eos_radius = arr[:, 0]
+            self.mesh.eos_pressure = arr[:, 1]
+            self.mesh.eos_density = arr[:, 2]
+            self.mesh.eos_gravity = arr[:, 3]
+            if (
+                (self.mesh.eos_radius[0] < self.mesh.inner_radius)
+                or (self.mesh.eos_radius[-1] > self.mesh.outer_radius)
+                or (self.mesh.eos_radius[-1] - self.mesh.eos_radius[0])
+                < 0.75 * (self.mesh.outer_radius - self.mesh.inner_radius)
+            ):
+                raise ValueError("Radius array in EOS file: Values out of range.")
+
+        # Convert radionuclide concentration from ppm to mass fraction
+        for r in self.radionuclides:
+            r.concentration *= 1e-6
+
+        # UTBL constant: when param_utbl is disabled, zero it out
+        if not self.boundary_conditions.param_utbl:
+            self.boundary_conditions.param_utbl_const = 0.0
 
     @classmethod
     def from_file(cls, *filenames) -> Self:

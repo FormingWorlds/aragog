@@ -205,12 +205,7 @@ class SinglePhaseEvaluator(PhaseEvaluatorABC):
                     header = infile.readline()
                     col_names = header[1:].split()
                 value_array: npt.NDArray = np.loadtxt(value, ndmin=2)
-                logger.debug("before scaling, value_array = %s", value_array)
-                # Scale lookup data
-                for nn, col_name in enumerate(col_names):
-                    logger.info("Scaling %s from %s", col_name, value)
-                    value_array[:, nn] /= getattr(self._settings.scalings_, col_name)
-                logger.debug("after scaling, value_array = %s", value_array)
+                logger.debug("loaded value_array = %s", value_array)
                 ndim = value_array.shape[1]
                 logger.debug("ndim = %d", ndim)
                 if ndim == 2:
@@ -657,10 +652,7 @@ class MixedPhaseEvaluator(PhaseEvaluatorABC):
             header = infile.readline()
             col_names = header[1:].split()
         value_array: npt.NDArray = np.loadtxt(value, ndmin=2)
-        logger.debug("before scaling, value_array = %s", value_array)
-        for nn, col_name in enumerate(col_names):
-            logger.info("Scaling %s from %s", col_name, value)
-            value_array[:, nn] /= getattr(self.settings.scalings_, col_name)
+        logger.debug("loaded melting curve %s = %s", name, value_array)
 
         return LookupProperty1D(name=name, value=value_array)
 
@@ -994,7 +986,7 @@ def setup_gravitational_acceleration(parameters: Parameters):
             np.flip(parameters.mesh.eos_pressure),
             np.flip(parameters.mesh.eos_gravity))
         num_points: int = 138
-        max_pressure: float = 1.37e11 / parameters.scalings.pressure
+        max_pressure: float = 1.37e11  # Pa
         lookup_data: npt.NDArray = np.zeros((num_points, 2), dtype=float)
         lookup_data[:,0] = np.linspace(0.0, max_pressure, num=num_points)
         lookup_data[:,1] = interp_gravity(lookup_data[:,0])

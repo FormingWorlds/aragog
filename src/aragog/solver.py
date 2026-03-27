@@ -26,8 +26,13 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+from scipy import constants as sp_constants
 from scipy.integrate import solve_ivp
 from scipy.optimize import OptimizeResult
+
+# Time unit conversion: the ODE is integrated in years, but fluxes are in SI (W/m^2).
+# dT/dt from flux divergence gives K/s; multiply by SECS_PER_YEAR to get K/yr.
+SECS_PER_YEAR: float = sp_constants.Julian_year  # 31557600.0 s
 
 from aragog.core import BoundaryConditions, InitialCondition
 from aragog.interfaces import PhaseEvaluatorProtocol
@@ -581,9 +586,7 @@ class Solver:
     @property
     def temperature_staggered(self) -> npt.NDArray:
         """Temperature of the staggered mesh in K"""
-        temperature: npt.NDArray = self.solution.y * self.parameters.scalings.temperature
-
-        return temperature
+        return self.solution.y
 
     @property
     def solution(self) -> OptimizeResult:
@@ -624,16 +627,20 @@ class Solver:
             self.state.capacitance_staggered() * self.evaluator.mesh.basic.volume
         )
 
-        # Heating rate (dT/dt) from flux divergence (power per unit area)
+        # Heating rate (dT/dt) from flux divergence (power per unit area).
+        # Fluxes are in SI (W/m^2), so the raw dT/dt is in K/s.
         dTdt: npt.NDArray = -delta_energy_flux / capacitance
-        logger.debug("dTdt (fluxes only) = %s", dTdt)
+        logger.debug("dTdt (fluxes only, K/s) = %s", dTdt)
 
         # Additional heating rate (dT/dt) from internal heating (power per unit mass)
         dTdt += self.state.heating * (
             self.state.phase_staggered.density() / self.state.capacitance_staggered()
         )
 
-        logger.debug("dTdt (with internal heating) = %s", dTdt)
+        # Convert K/s to K/yr since the ODE is integrated in years
+        dTdt *= SECS_PER_YEAR
+
+        logger.debug("dTdt (with internal heating, K/yr) = %s", dTdt)
 
         return dTdt
 
@@ -662,8 +669,8 @@ class Solver:
                 float: The difference between the threshold and the actual change in surface 
                     temperature. When this value crosses zero from above, the event is triggered.
             """
-            tsurf_current = temperature[-1] * self.parameters.scalings.temperature
-            tsurf_threshold = self.parameters.solver.tsurf_poststep_change * self.parameters.scalings.temperature
+            tsurf_current = temperature[-1]  # Already in K
+            tsurf_threshold = self.parameters.solver.tsurf_poststep_change  # Already in K
 
             if tsurf_initial[0] is None:
                 tsurf_initial[0] = tsurf_current
