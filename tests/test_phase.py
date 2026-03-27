@@ -24,7 +24,7 @@ import numpy as np
 import numpy.typing as npt
 
 from aragog import Solver, __version__, debug_logger
-from aragog.interfaces import MixedPhaseEvaluatorProtocol, PhaseEvaluatorProtocol
+from aragog.eos.base import MixedPhaseEvaluatorProtocol, PhaseEvaluatorProtocol
 from aragog.utilities import FloatOrArray
 
 logger: logging.Logger = debug_logger()

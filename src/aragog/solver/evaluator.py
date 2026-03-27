@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 from aragog.mesh import Mesh
 from aragog.parser import Parameters, _Radionuclide
-from aragog.phase import PhaseEvaluatorCollection
+from aragog.eos import PhaseEvaluatorCollection
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.initial import InitialCondition
 

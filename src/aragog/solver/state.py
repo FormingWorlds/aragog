@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import numpy.typing as npt
 
-from aragog.interfaces import PhaseEvaluatorProtocol
+from aragog.eos.base import PhaseEvaluatorProtocol
 from aragog.parser import Parameters, _EnergyParameters
 from aragog.utilities import FloatOrArray
 

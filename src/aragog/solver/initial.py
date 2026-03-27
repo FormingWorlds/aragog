@@ -28,7 +28,7 @@ from scipy.optimize import brentq
 
 from aragog.mesh import Mesh
 from aragog.parser import Parameters, _InitialConditionParameters
-from aragog.phase import PhaseEvaluatorCollection
+from aragog.eos import PhaseEvaluatorCollection
 
 logger: logging.Logger = logging.getLogger(__name__)
 
