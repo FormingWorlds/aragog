@@ -395,8 +395,8 @@ class InitialCondition:
                 active.set_pressure(np.atleast_1d(P_i))
                 active.set_temperature(np.atleast_1d(T_prev))
                 active.update()
-                dTdP = float(active.dTdPs())
-                T_profile[i] = T_prev + dTdP * (P_i - float(P_down[i - 1]))
+                dTdP = float(np.squeeze(active.dTdPs()))
+                T_profile[i] = T_prev + dTdP * (P_i - float(np.squeeze(P_down[i - 1])))
             else:
                 T_profile[i] = brentq(entropy_residual, T_lo, T_hi, rtol=1e-10)
 
