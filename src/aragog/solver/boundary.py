@@ -234,7 +234,7 @@ class BoundaryConditions:
             The state to apply the boundary condition to.
         """
         # Core thermal capacity: C_core = rho_core * cp_core * V_core
-        r_cmb = float(np.squeeze(self._mesh.basic.radii[0]))
+        r_cmb = np.asarray(self._mesh.basic.radii).flat[0]
         core_capacity = (
             4 / 3 * np.pi * r_cmb**3
             * self._mesh.settings.core_density
@@ -243,11 +243,11 @@ class BoundaryConditions:
 
         # First mantle cell thermal capacity: C_cell = rho * cp * V_cell
         cap_stag = state.capacitance_staggered()  # rho * cp, may be float or array
-        cap_first = float(np.squeeze(cap_stag[0])) if hasattr(cap_stag, '__getitem__') else float(cap_stag)
-        cell_capacity = float(np.squeeze(self._mesh.basic.volume[0])) * cap_first
+        cap_first = np.asarray(cap_stag).flat[0]
+        cell_capacity = np.asarray(self._mesh.basic.volume).flat[0] * cap_first
 
         # Geometric correction: area ratio between first interior face and CMB
-        r_above = float(np.squeeze(self._mesh.basic.radii[1]))
+        r_above = np.asarray(self._mesh.basic.radii).flat[1]
         radius_ratio = r_above / r_cmb
 
         # Core buffering factor (Bower+2018 Eq. 37):
