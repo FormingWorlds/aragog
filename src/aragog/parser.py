@@ -481,13 +481,21 @@ class Parameters:
             self.mesh.eos_pressure = arr[:, 1]
             self.mesh.eos_density = arr[:, 2]
             self.mesh.eos_gravity = arr[:, 3]
+            # Validate EOS file radii against mesh bounds with 5% tolerance.
+            # Small mismatches arise from Zalmoxis grid vs PROTEUS-passed radii.
+            D = self.mesh.outer_radius - self.mesh.inner_radius
+            tol = 0.05 * D if D > 0 else 1e3  # 5% of shell thickness
             if (
-                (self.mesh.eos_radius[0] < self.mesh.inner_radius)
-                or (self.mesh.eos_radius[-1] > self.mesh.outer_radius)
+                (self.mesh.eos_radius[0] < self.mesh.inner_radius - tol)
+                or (self.mesh.eos_radius[-1] > self.mesh.outer_radius + tol)
                 or (self.mesh.eos_radius[-1] - self.mesh.eos_radius[0])
-                < 0.75 * (self.mesh.outer_radius - self.mesh.inner_radius)
+                < 0.50 * max(D, 1.0)
             ):
-                raise ValueError("Radius array in EOS file: Values out of range.")
+                raise ValueError(
+                    f"Radius array in EOS file: Values out of range. "
+                    f"EOS: [{self.mesh.eos_radius[0]:.3e}, {self.mesh.eos_radius[-1]:.3e}], "
+                    f"Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]"
+                )
 
         # Convert radionuclide concentration from ppm to mass fraction
         for r in self.radionuclides:
