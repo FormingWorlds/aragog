@@ -203,6 +203,7 @@ class _EnergyParameters:
     dilatation: bool
     tidal: bool
     eddy_diffusivity_chemical: float = 1.0
+    kappah_floor: float = 0.0  # m^2/s, phase-dependent eddy diffusivity floor
 
     tidal_array: npt.NDArray = field(default_factory=lambda:np.array([0.0], dtype=float))
 

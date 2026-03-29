@@ -450,6 +450,19 @@ class State:
         )
         self._eddy_diffusivity *= self._evaluator.mesh.basic.mixing_length
 
+        # Phase-dependent kappa_h floor: maintains convective coupling even
+        # when the super-adiabatic gradient is numerically zero (e.g., on a
+        # near-isentropic adiabat). Modulated by melt fraction: full floor
+        # in the liquid regime (phi > phi_crit), zero in solid.
+        kappah_floor_val = self._settings.kappah_floor
+        if kappah_floor_val > 0.0:
+            phi = self.phase_basic.melt_fraction()
+            phi_crit = self._evaluator._parameters.phase_mixed.rheological_transition_melt_fraction
+            phi_width = self._evaluator._parameters.phase_mixed.rheological_transition_width
+            f_floor = 0.5 * (1.0 + np.tanh((phi - phi_crit) / np.maximum(phi_width, 1e-30)))
+            kh_floor = kappah_floor_val * f_floor
+            self._eddy_diffusivity = np.maximum(self._eddy_diffusivity, kh_floor)
+
         # Heat flux (power per unit area)
         self._heat_flux = np.zeros_like(self.temperature_basic)
         self._mass_flux = np.zeros_like(self.temperature_basic)
