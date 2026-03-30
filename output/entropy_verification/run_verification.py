@@ -222,11 +222,31 @@ def main():
         if t <= sol4.t[-1]:
             profiles[t] = sol4.sol(t)
 
-    # ── Generate 4-panel figure ──────────────────────────────────────
-    print('\nGenerating verification figure...')
-    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    # ── Extract T-P and P-S profiles at several times from sol3 ─────
+    print('Extracting T-P and P-S profiles...')
+    P_stag_GPa = mesh.staggered.pressure / 1e9
+    tp_times = [0, 500, 1000, 2000, 5000, 10000]
+    tp_profiles = {}  # {t: (T_array, S_array, phi_array)}
+    for t in tp_times:
+        if t <= sol3.t[-1]:
+            S_t = sol3.sol(t)
+            T_t = eos.temperature(mesh.staggered.pressure, S_t)
+            phi_t = eos.melt_fraction(mesh.staggered.pressure, S_t)
+            tp_profiles[t] = (T_t, S_t, phi_t)
 
-    # Panel (a): Entropy conservation
+    # Solidus and liquidus in T-P space
+    P_range = np.linspace(mesh.staggered.pressure[0], mesh.staggered.pressure[-1], 200)
+    P_range_GPa = P_range / 1e9
+    S_sol = eos.solidus_entropy(P_range)
+    S_liq = eos.liquidus_entropy(P_range)
+    T_sol = eos._lookup_at_phase_boundary('temperature', P_range, 'solid')
+    T_liq = eos._lookup_at_phase_boundary('temperature', P_range, 'melt')
+
+    # ── Generate 6-panel figure (3x2) ────────────────────────────────
+    print('\nGenerating verification figure...')
+    fig, axes = plt.subplots(3, 2, figsize=(14, 18))
+
+    # Panel (a): Entropy conservation [row 0, col 0]
     ax = axes[0, 0]
     ax.semilogy(times1, np.maximum(max_drift, 1e-15), 'b-', linewidth=2)
     ax.set_xlabel('Time [yr]')
@@ -279,7 +299,35 @@ def main():
     ax.set_title('(d) Convective homogenization (no conduction)')
     ax.legend()
 
-    fig.suptitle('First-principles verification: Aragog entropy solver', fontsize=16, y=1.01)
+    # Panel (e): T-P profiles with solidus/liquidus
+    ax = axes[2, 0]
+    colors_tp = plt.cm.plasma(np.linspace(0.1, 0.9, len(tp_profiles)))
+    for i, (t, (T_t, S_t, phi_t)) in enumerate(tp_profiles.items()):
+        ax.plot(T_t, P_stag_GPa, color=colors_tp[i], linewidth=1.8,
+                label=f't = {t/1e3:.0f} kyr' if t >= 1000 else f't = {t} yr')
+    ax.plot(T_sol, P_range_GPa, 'k--', linewidth=1.5, label='Solidus')
+    ax.plot(T_liq, P_range_GPa, 'k-', linewidth=1.5, label='Liquidus')
+    ax.set_xlabel('Temperature [K]')
+    ax.set_ylabel('Pressure [GPa]')
+    ax.set_title('(e) T-P profiles during cooling')
+    ax.legend(fontsize=8, ncol=2)
+    ax.invert_yaxis()
+    ax.set_xlim(left=0)
+
+    # Panel (f): P-S profiles
+    ax = axes[2, 1]
+    for i, (t, (T_t, S_t, phi_t)) in enumerate(tp_profiles.items()):
+        ax.plot(S_t, P_stag_GPa, color=colors_tp[i], linewidth=1.8,
+                label=f't = {t/1e3:.0f} kyr' if t >= 1000 else f't = {t} yr')
+    ax.plot(S_sol, P_range_GPa, 'k--', linewidth=1.5, label='Solidus')
+    ax.plot(S_liq, P_range_GPa, 'k-', linewidth=1.5, label='Liquidus')
+    ax.set_xlabel('Entropy [J/kg/K]')
+    ax.set_ylabel('Pressure [GPa]')
+    ax.set_title('(f) P-S profiles during cooling')
+    ax.legend(fontsize=8, ncol=2)
+    ax.invert_yaxis()
+
+    fig.suptitle('First-principles verification: Aragog entropy solver', fontsize=16, y=1.005)
     fig.tight_layout()
 
     fname = OUT_DIR / 'verify_entropy_solver.pdf'
