@@ -25,6 +25,7 @@ from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
 from aragog.solver import SECS_PER_YEAR
+from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.evaluator import Evaluator
 from aragog.solver.entropy_state import EntropyState
 
@@ -34,10 +35,14 @@ logger = logging.getLogger(__name__)
 class EntropySolver:
     """Entropy-based interior dynamics solver.
 
+    Drop-in replacement for Solver (T-based) when using PALEOS P-S tables.
+    Same interface: initialize() -> set_initial_entropy() -> solve().
+    PROTEUS can swap Solver for EntropySolver without changing the wrapper.
+
     Parameters
     ----------
     parameters : Parameters
-        Parsed configuration.
+        Parsed configuration (same as T-based Solver).
     entropy_eos : EntropyEOS
         Loaded P-S EOS tables.
     """
@@ -50,15 +55,51 @@ class EntropySolver:
         self._solution: OptimizeResult
         self.stop_early: bool = False
 
-    def initialize(self) -> None:
-        """Initialize mesh, boundary conditions, and entropy state."""
-        logger.info('Initializing EntropySolver')
-        self.evaluator = Evaluator(self.parameters)
+    @classmethod
+    def from_file(cls, filename: str, eos_dir: str, root: str = '') -> 'EntropySolver':
+        """Create EntropySolver from a config file and EOS directory.
 
-        mesh = self.evaluator.mesh
-        P_stag = mesh.staggered.pressure
-        P_basic = mesh.basic.pressure
-        g_basic = mesh.basic.gravitational_acceleration
+        Parameters
+        ----------
+        filename : str
+            Path to TOML configuration file.
+        eos_dir : str
+            Path to directory with SPIDER-format P-S tables.
+        root : str
+            Root directory for the config file.
+        """
+        config_path = Path(root) / Path(filename)
+        parameters = Parameters.from_file(config_path)
+        entropy_eos = EntropyEOS(Path(eos_dir))
+        return cls(parameters, entropy_eos)
+
+    def initialize(self) -> None:
+        """Initialize mesh, boundary conditions, and entropy state.
+
+        Unlike the T-based Solver, we only need the mesh and BCs from
+        the Evaluator. The T-based phase evaluators (which require
+        solidus/liquidus files) are replaced by EntropyPhaseEvaluator.
+        """
+        logger.info('Initializing EntropySolver')
+
+        # Build mesh and BCs without the T-based phases
+        from aragog.mesh import Mesh
+        mesh = Mesh(self.parameters)
+        bc = BoundaryConditions(self.parameters, mesh)
+
+        # Create a lightweight evaluator-like object
+        class _EntropyEvaluator:
+            pass
+        self.evaluator = _EntropyEvaluator()
+        self.evaluator.mesh = mesh
+        self.evaluator.boundary_conditions = bc
+        self.evaluator._parameters = self.parameters
+
+        # Extract pressure and gravity from the mesh EOS.
+        # Mesh arrays are (N, 1) column vectors; flatten for EOS lookups.
+        P_basic = np.asarray(mesh.basic_pressure).flatten()
+        P_stag = np.asarray(mesh.staggered_pressure).flatten()
+        g = float(mesh.eos._gravitational_acceleration)  # scalar from config
 
         # Create entropy phase evaluators for staggered and basic nodes
         phase_kwargs = dict(
@@ -73,24 +114,24 @@ class EntropySolver:
             latent_heat_constant=self.parameters.phase_mixed.latent_heat_of_fusion,
         )
 
-        # Try to get viscosity from config
+        # Get viscosity from config
         try:
-            phase_kwargs['viscosity_solid'] = self.parameters.phase_solid.viscosity.eval()
+            phase_kwargs['viscosity_solid'] = float(self.parameters.phase_solid.viscosity.eval())
         except Exception:
             phase_kwargs['viscosity_solid'] = 1e21
         try:
-            phase_kwargs['viscosity_liquid'] = self.parameters.phase_liquid.viscosity.eval()
+            phase_kwargs['viscosity_liquid'] = float(self.parameters.phase_liquid.viscosity.eval())
         except Exception:
             phase_kwargs['viscosity_liquid'] = 1e-1
 
         phase_stag = EntropyPhaseEvaluator(
-            gravitational_acceleration=mesh.staggered.gravitational_acceleration,
+            gravitational_acceleration=g,
             **phase_kwargs,
         )
         phase_stag.set_pressure(P_stag)
 
         phase_basic = EntropyPhaseEvaluator(
-            gravitational_acceleration=g_basic,
+            gravitational_acceleration=g,
             **phase_kwargs,
         )
         phase_basic.set_pressure(P_basic)
@@ -118,7 +159,7 @@ class EntropySolver:
             Entropy at staggered nodes [J/kg/K]. If scalar, sets uniform
             (isentropic) profile.
         """
-        n_stag = self.evaluator.mesh.staggered.radius.shape[0]
+        n_stag = self.evaluator.mesh.staggered.radii.shape[0]
         if np.isscalar(S_init):
             self._S0 = np.full(n_stag, float(S_init))
         else:
@@ -151,18 +192,41 @@ class EntropySolver:
         """
         self.state.update(entropy, time)
 
-        # Apply flux boundary conditions
-        self.evaluator.boundary_conditions.apply_flux_boundary_conditions(self.state)
+        # Apply flux BCs directly (not via BC module, which expects 2D arrays).
+        # Surface: grey-body or prescribed flux
+        bc = self.evaluator.boundary_conditions._settings
+        if bc.outer_boundary_condition == 1:
+            # Grey-body: F = emissivity * sigma * (T_surf^4 - T_eq^4)
+            from scipy.constants import Stefan_Boltzmann
+            T_surf = self.state.top_temperature.item()
+            T_eq = bc.equilibrium_temperature
+            self.state._heat_flux[-1] = (
+                bc.emissivity * Stefan_Boltzmann * (T_surf**4 - T_eq**4)
+            )
+        elif bc.outer_boundary_condition == 4:
+            # Prescribed flux (PROTEUS coupling)
+            self.state._heat_flux[-1] = bc.outer_boundary_value
 
-        # Flux divergence: dE/dr at staggered nodes
-        energy_flux = self.state.heat_flux * self.evaluator.mesh.basic.area
-        delta_energy_flux = np.diff(energy_flux, axis=0)
+        # CMB: prescribed flux or insulating
+        if bc.inner_boundary_condition == 2:
+            self.state._heat_flux[0] = bc.inner_boundary_value
+        elif bc.inner_boundary_condition == 3:
+            pass  # prescribed T (not applicable in S formulation)
+        else:
+            self.state._heat_flux[0] = 0.0  # default: insulating
+
+        # Flux divergence: dE/dr at staggered nodes.
+        # Flatten mesh arrays (N,1) -> (N,) for consistent broadcasting.
+        area = np.asarray(self.evaluator.mesh.basic.area).flatten()
+        volume = np.asarray(self.evaluator.mesh.basic.volume).flatten()
+        heat_flux = np.asarray(self.state.heat_flux).flatten()
+
+        energy_flux = heat_flux * area
+        delta_energy_flux = np.diff(energy_flux)
 
         # Capacitance: rho * T * volume (for entropy equation)
-        capacitance = (
-            self.state.capacitance_staggered()
-            * self.evaluator.mesh.basic.volume
-        )
+        cap = np.asarray(self.state.capacitance_staggered()).flatten()
+        capacitance = cap * volume
 
         # dS/dt from flux divergence [J/kg/K/s]
         dSdt = -delta_energy_flux / capacitance

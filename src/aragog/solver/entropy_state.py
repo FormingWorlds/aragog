@@ -68,10 +68,12 @@ class EntropyState:
         self._kappah_floor = kappah_floor
 
         mesh = evaluator.mesh
-        n_basic = mesh.basic.radius.shape[0]
-        n_staggered = mesh.staggered.radius.shape[0]
+        n_basic = mesh.basic.radii.shape[0]
+        n_staggered = mesh.staggered.radii.shape[0]
 
-        # Allocate arrays
+        # Allocate arrays. Arrays are 2D (N, 1) when used with vectorized BDF
+        # solver, which passes state as (N, K) for K simultaneous evaluations.
+        # BoundaryConditions indexes as heat_flux[-1, :] and heat_flux[0, :].
         self._entropy_staggered = np.zeros(n_staggered)
         self._entropy_basic = np.zeros(n_basic)
         self._dSdr = np.zeros(n_basic)
@@ -93,10 +95,12 @@ class EntropyState:
         """
         mesh = self._evaluator.mesh
 
-        # Store entropy and compute at basic nodes
-        self._entropy_staggered = entropy
-        self._entropy_basic = mesh.quantity_at_basic_nodes(entropy)
-        self._dSdr = mesh.d_dr_at_basic_nodes(entropy)
+        # Store entropy and compute at basic nodes.
+        # Mesh transforms use (N, 1) column vectors; ensure correct shape.
+        S_col = np.asarray(entropy).reshape(-1, 1) if np.asarray(entropy).ndim == 1 else entropy
+        self._entropy_staggered = np.asarray(entropy).flatten()
+        self._entropy_basic = np.asarray(mesh.quantity_at_basic_nodes(S_col)).flatten()
+        self._dSdr = np.asarray(mesh.d_dr_at_basic_nodes(S_col)).flatten()
 
         # Update phase evaluators with current (P, S)
         self.phase_staggered.set_entropy(entropy)
@@ -105,8 +109,8 @@ class EntropyState:
         self.phase_basic.update()
 
         # Melt fraction gradient for gravitational separation
-        phi = self.phase_staggered.melt_fraction()
-        self._dphidr = mesh.d_dr_at_basic_nodes(phi)
+        phi = np.asarray(self.phase_staggered.melt_fraction()).reshape(-1, 1)
+        self._dphidr = np.asarray(mesh.d_dr_at_basic_nodes(phi)).flatten()
 
         # ── MLT from entropy gradient ────────────────────────────────
         # Convection is unstable when dS/dr < 0 (entropy decreasing outward).
@@ -115,19 +119,20 @@ class EntropyState:
 
         # Buoyancy: convert entropy gradient to effective thermal buoyancy
         # |superadiabatic| = alpha * T * |dS/dr| / Cp
-        alpha = self.phase_basic.thermal_expansivity()
-        T = self.phase_basic.temperature()
-        Cp = self.phase_basic.heat_capacity()
-        g = self.phase_basic.gravitational_acceleration()
+        # All arrays must be 1D (mesh gives (N,1) column vectors)
+        alpha = np.asarray(self.phase_basic.thermal_expansivity()).flatten()
+        T = np.asarray(self.phase_basic.temperature()).flatten()
+        Cp = np.asarray(self.phase_basic.heat_capacity()).flatten()
+        g = np.asarray(self.phase_basic.gravitational_acceleration()).flatten()
 
         effective_superadiabatic = alpha * T * np.abs(self._dSdr) / np.maximum(Cp, 1.0)
         velocity_prefactor = g * effective_superadiabatic
 
         # Viscous velocity (Re <= Re_crit)
-        mixing_length = mesh.basic.mixing_length
-        mixing_length_cubed = mesh.basic.mixing_length_cubed
-        mixing_length_squared = mesh.basic.mixing_length_squared
-        nu = self.phase_basic.kinematic_viscosity()
+        mixing_length = np.asarray(mesh.basic.mixing_length).flatten()
+        mixing_length_cubed = np.asarray(mesh.basic.mixing_length_cubed).flatten()
+        mixing_length_squared = np.asarray(mesh.basic.mixing_length_squared).flatten()
+        nu = np.asarray(self.phase_basic.kinematic_viscosity()).flatten()
 
         viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * nu)
         viscous_velocity[~self._is_convective] = 0.0
@@ -160,9 +165,9 @@ class EntropyState:
             self._eddy_diffusivity = np.maximum(self._eddy_diffusivity, kh_floor)
 
         # ── Compute fluxes ───────────────────────────────────────────
-        rho = self.phase_basic.density()
-        k = self.phase_basic.thermal_conductivity()
-        dTdPs = self.phase_basic.dTdPs()
+        rho = np.asarray(self.phase_basic.density()).flatten()
+        k = np.asarray(self.phase_basic.thermal_conductivity()).flatten()
+        dTdPs = np.asarray(self.phase_basic.dTdPs()).flatten()
 
         self._heat_flux = np.zeros_like(self._entropy_basic)
         self._mass_flux = np.zeros_like(self._entropy_basic)
@@ -180,8 +185,8 @@ class EntropyState:
             # SPIDER handles this by computing the total energy flux at cell edges.
             # For simplicity, use the approximation:
             # F_cond ≈ -k * (∂T/∂r) where ∂T/∂r is computed from T(P,S) profile
-            T_stag = self.phase_staggered.temperature()
-            dTdr = mesh.d_dr_at_basic_nodes(T_stag)
+            T_stag = np.asarray(self.phase_staggered.temperature()).reshape(-1, 1)
+            dTdr = np.asarray(mesh.d_dr_at_basic_nodes(T_stag)).flatten()
             self._heat_flux += -k * dTdr
 
         if self._convection:
