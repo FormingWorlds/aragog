@@ -362,14 +362,21 @@ def main():
 
     # ── Compute solidus/liquidus in T-P space for mush zone shading ──
     from aragog.eos.entropy import EntropyEOS
+    from scipy.signal import savgol_filter
     eos = EntropyEOS(EOS_DIR)
-    P_curve = np.linspace(1e5, 135e9, 300)
-    T_sol = np.array([eos.temperature(np.array([p]),
-                       np.array([eos.solidus_entropy(p)])).item()
-                       for p in P_curve])
-    T_liq = np.array([eos.temperature(np.array([p]),
-                       np.array([eos.liquidus_entropy(p)])).item()
-                       for p in P_curve])
+    P_curve = np.linspace(1e5, 135e9, 500)
+    T_sol_raw = np.array([eos.temperature(np.array([p]),
+                           np.array([eos.solidus_entropy(p)])).item()
+                           for p in P_curve])
+    T_liq_raw = np.array([eos.temperature(np.array([p]),
+                           np.array([eos.liquidus_entropy(p)])).item()
+                           for p in P_curve])
+    # Smooth kinks from bilinear interpolation on 500x200 P-S grid.
+    # TODO: regenerate PALEOS-2phase tables at higher resolution to
+    # eliminate the need for post-hoc smoothing.
+    window = min(51, len(P_curve) // 4 * 2 + 1)
+    T_sol = savgol_filter(T_sol_raw, window, 3)
+    T_liq = savgol_filter(T_liq_raw, window, 3)
     P_curve_GPa = P_curve / 1e9
 
     # ── Figure: 3 rows x 2 columns ───────────────────────────────────

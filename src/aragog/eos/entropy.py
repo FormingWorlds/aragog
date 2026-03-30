@@ -94,7 +94,7 @@ def _load_spider_ps_table(filepath: Path) -> dict:
 
     interp = RegularGridInterpolator(
         (P_unique, S_unique), values,
-        method='cubic', bounds_error=False, fill_value=np.nan,
+        method='linear', bounds_error=False, fill_value=np.nan,
     )
 
     return {
@@ -134,7 +134,7 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
     S = data[:, 1] * S_scale
 
     from scipy.interpolate import interp1d
-    interp = interp1d(P, S, kind='cubic', bounds_error=False,
+    interp = interp1d(P, S, kind='linear', bounds_error=False,
                       fill_value=(S[0], S[-1]))
 
     return {'P': P, 'S': S, 'interp': interp}
