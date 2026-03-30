@@ -143,7 +143,7 @@ def main():
     eos = EntropyEOS(EOS_DIR)
     N = 50
     mesh = make_mesh(N=N)
-    S_init = 3200.0
+    S_init = 10000.0
 
     # ── Test 1: Entropy conservation (insulating box) ────────────────
     print('\nTest 1: Entropy conservation (insulating box, no conduction)...')
@@ -161,7 +161,7 @@ def main():
     print('Test 2: Energy budget (grey-body cooling)...')
     state_cool = make_state(mesh, eos, conduction=True, convection=True)
     S0 = np.full(N, S_init)
-    sol2, t_log, F_log = run_solver(state_cool, mesh, S0, 2000, surface_bc='greybody')
+    sol2, t_log, F_log = run_solver(state_cool, mesh, S0, 10000, surface_bc='greybody')
 
     E_start = compute_thermal_energy(S0, mesh, eos)
     sample_times = np.linspace(0, sol2.t[-1], 50)
@@ -201,18 +201,13 @@ def main():
     T_surfs = np.array(T_surfs)
     phi_surfs = np.array(phi_surfs)
 
-    # Analytical t^{-1/3} reference (lumped model)
-    T0 = T_surfs[0]
-    M_mantle = 4.0 / 3.0 * np.pi * (6371e3**3 - 3480e3**3) * 4000.0
-    Cp_eff = 1200.0
-    A_surf = 4.0 * np.pi * 6371e3**2
-    tau_rad = M_mantle * Cp_eff / (3 * Stefan_Boltzmann * A_surf * T0**3)
-    T_analytical = T0 * (1 + sample_times3 * SECS_PER_YEAR / tau_rad)**(-1.0/3.0)
+    # No analytical prediction overlaid: the t^{-1/3} lumped model
+    # does not apply to a phase-changing magma ocean with variable Cp.
 
     # ── Test 4: Convective homogenization ────────────────────────────
     print('Test 4: Convective homogenization...')
     state_homo = make_state(mesh, eos, conduction=False, convection=True)
-    S0_gradient = np.linspace(3400.0, 3000.0, N)
+    S0_gradient = np.linspace(10400.0, 9600.0, N)
     sol4, _, _ = run_solver(state_homo, mesh, S0_gradient, 500, surface_bc='insulating')
 
     r_stag_km = mesh.staggered.radii / 1e3
@@ -289,10 +284,9 @@ def main():
     # Panel (c): Cooling trajectory
     ax = axes[1, 0]
     ax.plot(sample_times3, T_surfs, 'b-', label='Aragog (entropy)', linewidth=2)
-    ax.plot(sample_times3, T_analytical, 'r--', label=r'$T_0 (1 + t/\tau)^{-1/3}$', linewidth=1.5)
     ax.set_xlabel('Time [yr]')
     ax.set_ylabel(r'$T_\mathrm{surf}$ [K]')
-    ax.set_title(r'(c) Grey-body cooling ($S_0 = 3200$ J/kg/K)')
+    ax.set_title(r'(c) Grey-body cooling ($S_0 = 10{,}000$ J/kg/K)')
     ax.legend()
 
     # Add phi on twin axis
