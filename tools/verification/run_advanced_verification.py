@@ -223,7 +223,7 @@ def run_bl_test():
     alpha_conv = 1e-5
     profiles = {}
 
-    for visc, label in [(1e18, r'$\eta = 10^{18}$'),
+    for visc, label in [(1e22, r'$\eta = 10^{22}$'),
                          (1e15, r'$\eta = 10^{15}$'),
                          (1e12, r'$\eta = 10^{12}$'),
                          (1e10, r'$\eta = 10^{10}$')]:
@@ -282,7 +282,7 @@ def main():
     ax.legend(fontsize=8)
 
     # Inset: flux uniformity (relative error in Q = F*4pi*r^2)
-    ax_ins = ax.inset_axes([0.08, 0.08, 0.45, 0.35])
+    ax_ins = ax.inset_axes([0.18, 0.08, 0.45, 0.35])
     for N, (r, T_ss, T_final, Q_prof, Q_err) in cond_results.items():
         r_basic_km = np.linspace(R_INNER, R_OUTER, N + 1) / 1e3
         ax_ins.plot(r_basic_km[1:-1], Q_err * 100, '-',
@@ -335,6 +335,8 @@ def main():
     ax = axes[1, 1]
     colors_bl = {
         'Conduction': 'k',
+        r'$\eta = 10^{22}$': '#AA3377',
+        r'$\eta = 10^{20}$': '#CC6677',
         r'$\eta = 10^{18}$': '#332288',
         r'$\eta = 10^{15}$': '#4477AA',
         r'$\eta = 10^{12}$': '#EE6677',
