@@ -230,26 +230,57 @@ def main():
     print('Test 4: Convective homogenization...')
     state_homo = make_state(mesh, eos, conduction=False, convection=True)
     S0_gradient = np.linspace(10400.0, 9600.0, N)
-    sol4, _, _ = run_solver(state_homo, mesh, S0_gradient, 500, surface_bc='insulating')
+    sol4, _, _ = run_solver(state_homo, mesh, S0_gradient, 200, surface_bc='insulating')
 
     r_stag_km = mesh.staggered.radii / 1e3
-    profile_times = [0, 10, 50, 100, 500]
+    # Finer time sampling to see the homogenization transition
+    profile_times = [0, 1, 5, 10, 20, 50, 100, 200]
     profiles = {}
     for t in profile_times:
         if t <= sol4.t[-1]:
             profiles[t] = sol4.sol(t)
 
     # ── Extract T-P and P-S profiles at several times from sol3 ─────
+    # ── Run the same cooling at double resolution (N=100) ─────────────
+    print('Test 3b: Grey-body cooling at N=100 (convergence check)...')
+    N_hi = 100
+    mesh_hi = make_mesh(N=N_hi)
+    state_hi = make_state(mesh_hi, eos, conduction=True, convection=True)
+    S0_hi = np.full(N_hi, S_init)
+    sol3b, _, _ = run_solver(state_hi, mesh_hi, S0_hi, 10000, surface_bc='greybody')
+
+    # Sample T_surf at same times for convergence comparison
+    T_surfs_hi = []
+    phi_surfs_hi = []
+    for t in sample_times3:
+        if t <= sol3b.t[-1]:
+            S_t = sol3b.sol(t)
+            state_hi.phase_staggered.set_entropy(S_t)
+            state_hi.phase_staggered.update()
+            T_surfs_hi.append(float(state_hi.phase_staggered.temperature()[-1]))
+            phi_surfs_hi.append(float(state_hi.phase_staggered.melt_fraction()[-1]))
+        else:
+            T_surfs_hi.append(np.nan)
+            phi_surfs_hi.append(np.nan)
+    T_surfs_hi = np.array(T_surfs_hi)
+    phi_surfs_hi = np.array(phi_surfs_hi)
+
+    # Extract T-P and P-S profiles at several times from both resolutions
     print('Extracting T-P and P-S profiles...')
-    P_stag_GPa = mesh.staggered.pressure / 1e9
     tp_times = [0, 500, 1000, 2000, 5000, 10000]
-    tp_profiles = {}  # {t: (T_array, S_array, phi_array)}
+    tp_profiles = {}       # N=50: {t: (T, S, phi, P_GPa)}
+    tp_profiles_hi = {}    # N=100
     for t in tp_times:
         if t <= sol3.t[-1]:
             S_t = sol3.sol(t)
             T_t = eos.temperature(mesh.staggered.pressure, S_t)
             phi_t = eos.melt_fraction(mesh.staggered.pressure, S_t)
-            tp_profiles[t] = (T_t, S_t, phi_t)
+            tp_profiles[t] = (T_t, S_t, phi_t, mesh.staggered.pressure / 1e9)
+        if t <= sol3b.t[-1]:
+            S_t = sol3b.sol(t)
+            T_t = eos.temperature(mesh_hi.staggered.pressure, S_t)
+            phi_t = eos.melt_fraction(mesh_hi.staggered.pressure, S_t)
+            tp_profiles_hi[t] = (T_t, S_t, phi_t, mesh_hi.staggered.pressure / 1e9)
 
     # Solidus and liquidus in T-P space from PALEOS analytic parameterization.
     # Liquidus: Belonoshko+2005 (P < 2.55 GPa) / Fei+2021 (P >= 2.55 GPa).
@@ -304,7 +335,8 @@ def main():
 
     # Panel (c): Cooling trajectory
     ax = axes[1, 0]
-    ax.plot(sample_times3, T_surfs, 'b-', label='Aragog (entropy)', linewidth=2)
+    ax.plot(sample_times3, T_surfs, 'b-', label='N=50', linewidth=2)
+    ax.plot(sample_times3[:len(T_surfs_hi)], T_surfs_hi, 'b--', label='N=100', linewidth=1.5, alpha=0.7)
     ax.set_xlabel('Time [yr]')
     ax.set_ylabel(r'$T_\mathrm{surf}$ [K]')
     ax.set_title(r'(c) Grey-body cooling ($S_0 = 10{,}000$ J/kg/K)')
@@ -313,6 +345,7 @@ def main():
     # Add phi on twin axis
     ax2 = ax.twinx()
     ax2.plot(sample_times3, phi_surfs, 'g-', alpha=0.5, linewidth=1.5)
+    ax2.plot(sample_times3[:len(phi_surfs_hi)], phi_surfs_hi, 'g--', alpha=0.3, linewidth=1.5)
     ax2.set_ylabel(r'$\phi_\mathrm{surf}$', color='green')
     ax2.tick_params(axis='y', labelcolor='green')
     ax2.set_ylim(0, 1.05)
@@ -327,32 +360,38 @@ def main():
     ax.set_title('(d) Convective homogenization (no conduction)')
     ax.legend()
 
-    # Panel (e): T-P profiles with solidus/liquidus
+    # Panel (e): T-P profiles with solidus/liquidus (both resolutions)
     ax = axes[2, 0]
-    colors_tp = plt.cm.plasma(np.linspace(0.1, 0.9, len(tp_profiles)))
-    for i, (t, (T_t, S_t, phi_t)) in enumerate(tp_profiles.items()):
-        ax.plot(T_t, P_stag_GPa, color=colors_tp[i], linewidth=1.8,
-                label=f't = {t/1e3:.0f} kyr' if t >= 1000 else f't = {t} yr')
+    n_tp = len(tp_profiles)
+    colors_tp = plt.cm.plasma(np.linspace(0.1, 0.9, n_tp))
+    for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles.items()):
+        lbl = f't = {t/1e3:.0f} kyr' if t >= 1000 else f't = {t} yr'
+        ax.plot(T_t, P_GPa, color=colors_tp[i], linewidth=1.8, label=lbl)
+    # Overlay N=100 as thin dashed
+    for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles_hi.items()):
+        ax.plot(T_t, P_GPa, color=colors_tp[i], linewidth=0.8, ls='--', alpha=0.6)
     ax.plot(T_sol, P_range_GPa, 'k--', linewidth=1.5, label='Solidus')
     ax.plot(T_liq, P_range_GPa, 'k-', linewidth=1.5, label='Liquidus')
     ax.set_xlabel('Temperature [K]')
     ax.set_ylabel('Pressure [GPa]')
-    ax.set_title('(e) T-P profiles during cooling')
-    ax.legend(fontsize=8, ncol=2)
+    ax.set_title('(e) T-P profiles (solid: N=50, dashed: N=100)')
+    ax.legend(fontsize=7, ncol=2)
     ax.invert_yaxis()
     ax.set_xlim(left=0)
 
-    # Panel (f): P-S profiles
+    # Panel (f): P-S profiles (both resolutions)
     ax = axes[2, 1]
-    for i, (t, (T_t, S_t, phi_t)) in enumerate(tp_profiles.items()):
-        ax.plot(S_t, P_stag_GPa, color=colors_tp[i], linewidth=1.8,
-                label=f't = {t/1e3:.0f} kyr' if t >= 1000 else f't = {t} yr')
+    for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles.items()):
+        lbl = f't = {t/1e3:.0f} kyr' if t >= 1000 else f't = {t} yr'
+        ax.plot(S_t, P_GPa, color=colors_tp[i], linewidth=1.8, label=lbl)
+    for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles_hi.items()):
+        ax.plot(S_t, P_GPa, color=colors_tp[i], linewidth=0.8, ls='--', alpha=0.6)
     ax.plot(S_sol, P_range_GPa, 'k--', linewidth=1.5, label='Solidus')
     ax.plot(S_liq, P_range_GPa, 'k-', linewidth=1.5, label='Liquidus')
     ax.set_xlabel('Entropy [J/kg/K]')
     ax.set_ylabel('Pressure [GPa]')
-    ax.set_title('(f) P-S profiles during cooling')
-    ax.legend(fontsize=8, ncol=2)
+    ax.set_title('(f) P-S profiles (solid: N=50, dashed: N=100)')
+    ax.legend(fontsize=7, ncol=2)
     ax.invert_yaxis()
 
     fig.suptitle('First-principles verification: Aragog entropy solver', fontsize=16, y=1.005)
