@@ -282,7 +282,7 @@ def main():
     ax.legend(fontsize=8)
 
     # Inset: flux uniformity (relative error in Q = F*4pi*r^2)
-    ax_ins = ax.inset_axes([0.18, 0.08, 0.45, 0.35])
+    ax_ins = ax.inset_axes([0.18, 0.18, 0.45, 0.35])
     for N, (r, T_ss, T_final, Q_prof, Q_err) in cond_results.items():
         r_basic_km = np.linspace(R_INNER, R_OUTER, N + 1) / 1e3
         ax_ins.plot(r_basic_km[1:-1], Q_err * 100, '-',
