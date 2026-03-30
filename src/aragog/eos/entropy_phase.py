@@ -205,27 +205,29 @@ class EntropyPhaseEvaluator:
             (rho_s - rho) / np.maximum(rho_s - rho_l, 1.0), 0.0, 1.0
         )
 
-        # Three-regime permeability / porosity (SPIDER convention: F = K/porosity)
+        # Three-regime permeability / porosity (Abe 1993/1995, SPIDER convention).
+        # F = permeability(porosity) / porosity. The relative velocity is
+        # v = |delta_rho| * g * F / eta_liquid.
         por = np.maximum(porosity, 1e-20)
         one_m_por = np.maximum(1.0 - porosity, 1e-20)
 
-        # Blake-Kozeny-Carman (low porosity)
+        # Blake-Kozeny-Carman (low porosity): K/por = d^2 por^2 / ((1-por)^2 * 1000)
         F_bkc = d**2 * por**2 / (one_m_por**2 * 1000.0)
-        # Rumpf-Gupte (intermediate porosity)
-        F_rg = d**2 * por**3.5 / 5.6
-        # Stokes settling (high porosity)
-        F_stokes = d**2 * 2.0 * one_m_por**2 / 9.0
+        # Rumpf-Gupte (intermediate): K/por = d^2 por^4.5 * 5/7
+        F_rg = d**2 * por**4.5 * (5.0 / 7.0)
+        # Stokes settling (high porosity): K/por = d^2 * 2/9
+        F_stokes = d**2 * 2.0 / 9.0
 
-        # Regime switching at critical porosities (Abe 1993)
-        # BKC -> RG transition at porosity where BKC = RG
-        # RG -> Stokes transition at porosity where RG = Stokes
-        w_rg = tanh_weight(porosity, 0.1, 0.05)
-        w_stokes = tanh_weight(porosity, 0.4, 0.1)
+        # Regime switching at critical porosities (Abe 1995):
+        # BKC -> RG at porosity ~0.077, RG -> Stokes at ~0.771
+        w_rg = tanh_weight(porosity, 0.0769618, 0.02)
+        w_stokes = tanh_weight(porosity, 0.771462, 0.05)
         F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
         F = np.maximum(F, 0.0)
 
-        # Relative velocity: v = delta_rho * g * F / eta_liquid
-        v_rel = delta_rho * g * F / np.maximum(eta_l, 1e-10)
+        # Relative velocity: v = |delta_rho| * g * F / eta_liquid
+        # Sign convention: positive = outward (melt rising, solid sinking)
+        v_rel = np.abs(delta_rho) * g * F / np.maximum(eta_l, 1e-10)
 
         return v_rel
 
