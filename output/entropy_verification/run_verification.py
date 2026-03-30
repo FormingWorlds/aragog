@@ -234,13 +234,18 @@ def main():
             phi_t = eos.melt_fraction(mesh.staggered.pressure, S_t)
             tp_profiles[t] = (T_t, S_t, phi_t)
 
-    # Solidus and liquidus in T-P space
-    P_range = np.linspace(mesh.staggered.pressure[0], mesh.staggered.pressure[-1], 200)
+    # Solidus and liquidus in T-P space (use many points for smooth curves)
+    P_range = np.linspace(mesh.staggered.pressure[0], mesh.staggered.pressure[-1], 1000)
     P_range_GPa = P_range / 1e9
     S_sol = eos.solidus_entropy(P_range)
     S_liq = eos.liquidus_entropy(P_range)
     T_sol = eos._lookup_at_phase_boundary('temperature', P_range, 'solid')
     T_liq = eos._lookup_at_phase_boundary('temperature', P_range, 'melt')
+    # Smooth the solidus/liquidus T curves (bilinear interpolation on the
+    # 2D table can produce kinks at grid cell boundaries)
+    from scipy.ndimage import uniform_filter1d
+    T_sol = uniform_filter1d(T_sol, size=15)
+    T_liq = uniform_filter1d(T_liq, size=15)
 
     # ── Generate 6-panel figure (3x2) ────────────────────────────────
     print('\nGenerating verification figure...')
