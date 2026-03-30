@@ -372,8 +372,6 @@ def main():
                            np.array([eos.liquidus_entropy(p)])).item()
                            for p in P_curve])
     # Smooth kinks from bilinear interpolation on 500x200 P-S grid.
-    # TODO: regenerate PALEOS-2phase tables at higher resolution to
-    # eliminate the need for post-hoc smoothing.
     window = min(51, len(P_curve) // 4 * 2 + 1)
     T_sol = savgol_filter(T_sol_raw, window, 3)
     T_liq = savgol_filter(T_liq_raw, window, 3)
