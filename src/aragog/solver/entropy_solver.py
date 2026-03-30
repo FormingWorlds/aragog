@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 from scipy.optimize import OptimizeResult
 
@@ -81,6 +82,10 @@ class EntropySolver:
         solidus/liquidus files) are replaced by EntropyPhaseEvaluator.
         """
         logger.info('Initializing EntropySolver')
+        self._initialize_internals()
+
+    def _initialize_internals(self) -> None:
+        """Build mesh, BCs, and entropy phase evaluators."""
 
         # Build mesh and BCs without the T-based phases
         from aragog.mesh import Mesh
@@ -122,6 +127,18 @@ class EntropySolver:
         except Exception:
             phase_kwargs['viscosity_liquid'] = 1e-1
 
+        # Wire thermal conductivity from config
+        try:
+            phase_kwargs['thermal_conductivity_solid'] = float(
+                self.parameters.phase_solid.thermal_conductivity.eval())
+        except Exception:
+            pass  # use default 4.0 W/m/K
+        try:
+            phase_kwargs['thermal_conductivity_liquid'] = float(
+                self.parameters.phase_liquid.thermal_conductivity.eval())
+        except Exception:
+            pass  # use default 2.0 W/m/K
+
         phase_stag = EntropyPhaseEvaluator(
             gravitational_acceleration=g,
             **phase_kwargs,
@@ -148,6 +165,21 @@ class EntropySolver:
             eddy_diffusivity_chemical=energy.eddy_diffusivity_chemical,
             kappah_floor=energy.kappah_floor,
         )
+
+    def reset(self) -> None:
+        """Reset for a new integration (PROTEUS coupling loop).
+
+        Re-reads the EOS mesh file if eos_method=2, then rebuilds
+        the mesh, BCs, and entropy state. Matches Solver.reset().
+        """
+        logger.info('Resetting EntropySolver')
+        if self.parameters.mesh.eos_method == 2 and self.parameters.mesh.eos_file:
+            arr = np.loadtxt(self.parameters.mesh.eos_file)
+            self.parameters.mesh.eos_radius = arr[:, 0]
+            self.parameters.mesh.eos_pressure = arr[:, 1]
+            self.parameters.mesh.eos_density = arr[:, 2]
+            self.parameters.mesh.eos_gravity = arr[:, 3]
+        self._initialize_internals()
 
     def set_initial_entropy(self, S_init: npt.NDArray | float) -> None:
         """Set the initial entropy profile.
@@ -196,7 +228,6 @@ class EntropySolver:
         bc = self.evaluator.boundary_conditions._settings
         if bc.outer_boundary_condition == 1:
             # Grey-body: F = emissivity * sigma * (T_surf^4 - T_eq^4)
-            from scipy.constants import Stefan_Boltzmann
             T_surf = self.state.top_temperature.item()
             T_eq = bc.equilibrium_temperature
             self.state._heat_flux[-1] = (

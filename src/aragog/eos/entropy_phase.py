@@ -129,6 +129,21 @@ class EntropyPhaseEvaluator:
         # P-dependent latent heat from EOS
         self._latent_heat_val = self._eos.latent_heat(P)
 
+        # NaN detection: catch entropy leaving the EOS table domain
+        if np.any(np.isnan(self._temperature)):
+            n_nan = int(np.sum(np.isnan(self._temperature)))
+            logger.error(
+                'NaN from EOS lookup at %d nodes. S range: [%.0f, %.0f], '
+                'table domain: [%.0f, %.0f] J/kg/K',
+                n_nan, float(np.nanmin(S)), float(np.nanmax(S)),
+                self._eos.S_min, self._eos.S_max,
+            )
+            raise RuntimeError(
+                f'Entropy out of EOS table domain at {n_nan} nodes. '
+                f'S range [{np.nanmin(S):.0f}, {np.nanmax(S):.0f}] vs '
+                f'table [{self._eos.S_min:.0f}, {self._eos.S_max:.0f}]'
+            )
+
     # ── Property accessors (PhaseEvaluatorProtocol) ──────────────────
 
     def density(self) -> FloatOrArray:
