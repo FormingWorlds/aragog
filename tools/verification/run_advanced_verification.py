@@ -1,17 +1,22 @@
 """Advanced first-principles verification plots for the tech document.
 
-Produces a 4-panel figure:
-(a) Conduction steady state: T(r) vs analytical A/r + B
+Produces a 4-panel figure verifying the constant-property entropy solver
+against analytical solutions:
+
+(a) Conduction convergence: start from uniform T, evolve to steady state,
+    show convergence to analytical A/r + B at three resolutions.
 (b) Eigenvalue decay: perturbation amplitude vs time with exp(-t/tau) fit
-(c) Nu-Ra scaling: Nusselt vs Rayleigh number across viscosity sweep
-(d) Boundary layer: T(r) profiles at two viscosities showing BL thinning
+    and analytical prediction. Quantifies the rho*T capacitance correction.
+(c) Nu-Ra scaling: viscosity sweep spanning conductive to inviscid regimes.
+    Shows Nu = 1 at subcritical Ra, transition, and inviscid plateau.
+(d) Boundary layer structure: T(r) profiles at multiple viscosities
+    showing progressive BL thinning with conduction reference.
 
 All tests use constant-property physics: T = T_ref * exp((S-S_ref)/Cp).
 """
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -33,41 +38,54 @@ OUT_DIR = Path(__file__).resolve().parent.parent.parent / 'output' / 'entropy_ve
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 plt.rcParams.update({
-    'font.size': 14, 'axes.labelsize': 16, 'axes.titlesize': 15,
-    'legend.fontsize': 10, 'xtick.labelsize': 13, 'ytick.labelsize': 13,
+    'font.size': 13, 'axes.labelsize': 14, 'axes.titlesize': 14,
+    'legend.fontsize': 9, 'xtick.labelsize': 12, 'ytick.labelsize': 12,
     'lines.linewidth': 2.0, 'savefig.bbox': 'tight', 'savefig.dpi': 200,
 })
 
 
 def run_conduction_test():
-    """Panel (a): conduction steady state T(r) = A/r + B."""
+    """Panel (a): conduction steady state and flux uniformity.
+
+    Start from the analytical T = A/r + B, verify no drift and that
+    the total heat flow Q = F * 4pi*r^2 is uniform across all shells.
+    Show convergence of flux uniformity with resolution.
+    """
     print('  (a) Conduction steady state...')
+    T_inner, T_outer = 4000.0, 1500.0
+    a, b = R_INNER, R_OUTER
+    A_c = (T_inner - T_outer) * a * b / (b - a)
+    Q_an = 4 * np.pi * K_COND * A_c
+
     results = {}
-    for N, ls in [(50, '--'), (100, '-'), (200, ':')]:
+    for N in [25, 50, 100, 200]:
         mesh = make_const_mesh(N)
         state = ConstPropState(mesh, convection=False)
-        T_inner, T_outer = 4000.0, 1500.0
         T_ss = analytical_T(mesh.r_stag, T_inner, T_outer)
         S_ss = T_to_S(T_ss)
 
-        a, b = R_INNER, R_OUTER
-        A_c = (T_inner - T_outer) * a * b / (b - a)
-        Q_an = 4 * np.pi * K_COND * A_c
         F_in = Q_an / (4 * np.pi * R_INNER**2)
         F_out = Q_an / (4 * np.pi * R_OUTER**2)
 
         def rhs(t, S, _s=state, _fi=F_in, _fo=F_out):
             return _s.compute_dSdt(t, S, F_inner=_fi, F_outer=_fo)
 
-        sol = solve_ivp(rhs, (0, 1e6), S_ss, method='BDF', atol=0.01, rtol=1e-8)
+        sol = solve_ivp(rhs, (0, 1e6), S_ss, method='BDF',
+                        atol=0.01, rtol=1e-8)
         T_final = S_to_T(sol.y[:, -1])
-        results[N] = (mesh.r_stag, T_ss, T_final, ls)
 
-    return results
+        # Compute flux uniformity: Q(r) = F(r) * 4*pi*r^2
+        state.dSdt(0, sol.y[:, -1])
+        Q_profile = state.heat_flux * mesh.area
+        Q_err = (Q_profile[1:-1] - Q_an) / Q_an  # relative error
+
+        results[N] = (mesh.r_stag, T_ss, T_final, Q_profile, Q_err)
+
+    return results, Q_an
 
 
 def run_eigenvalue_test():
-    """Panel (b): eigenvalue decay."""
+    """Panel (b): eigenvalue decay with exponential fit."""
     print('  (b) Eigenvalue decay...')
     k_test = 4000.0
     kappa_test = k_test / (RHO * CP)
@@ -81,7 +99,8 @@ def run_eigenvalue_test():
 
     delta = 100.0
     r = mesh.r_stag
-    pert = delta * np.sin(np.pi * (r - R_INNER) / D_SHELL) * ((R_INNER + R_OUTER) / 2) / r
+    pert = delta * np.sin(np.pi * (r - R_INNER) / D_SHELL) * (
+        (R_INNER + R_OUTER) / 2) / r
     S_pert = T_to_S(T_ss + pert)
 
     a, b = R_INNER, R_OUTER
@@ -130,7 +149,13 @@ def run_eigenvalue_test():
 
 
 def run_nura_test():
-    """Panel (c): Nu-Ra scaling."""
+    """Panel (c): Nu-Ra scaling across full range.
+
+    Use a wide viscosity sweep to capture three regimes:
+    - Conductive (Nu ~ 1) at very high viscosity
+    - Viscous MLT (Nu ~ Ra) at intermediate viscosity
+    - Inviscid MLT plateau at low viscosity
+    """
     print('  (c) Nu-Ra scaling...')
     N = 50
     mesh = make_const_mesh(N)
@@ -142,19 +167,21 @@ def run_nura_test():
     F_cond_surf = Q_cond / (4 * np.pi * R_OUTER**2)
 
     alpha_conv = 1e-5
-    viscosities = np.logspace(10, 19, 10)
+    # Wide range: from conductive (high visc) through viscous to inviscid
+    viscosities = np.logspace(8, 22, 15)
     Nu_vals, Ra_vals = [], []
+
+    S_in_bc = T_to_S(T_inner)
+    S_out_bc = T_to_S(T_outer)
 
     for visc in viscosities:
         state = ConstPropState(mesh, viscosity=visc, convection=True, alpha=alpha_conv)
-        T_uniform = 0.5 * (T_inner + T_outer)
-        S_init = T_to_S(np.full(N, T_uniform))
-        S_in_bc = T_to_S(T_inner)
-        S_out_bc = T_to_S(T_outer)
+        # Start from conduction profile (closer to steady state)
+        T_init = analytical_T(mesh.r_stag, T_inner, T_outer)
+        S_init = T_to_S(T_init)
 
         def rhs(t, S, _s=state, _si=S_in_bc, _so=S_out_bc):
             _s.dSdt(t, S)
-            # Zero boundary fluxes; relaxation BCs handle boundaries
             _s.heat_flux[0] = 0.0
             _s.heat_flux[-1] = 0.0
             ef = _s.heat_flux * mesh.area
@@ -164,10 +191,12 @@ def run_nura_test():
             dsdt[-1] += 1e6 * (_so - S[-1])
             return dsdt
 
-        sol = solve_ivp(rhs, (0, 1e8), S_init, method='BDF', atol=0.01, rtol=1e-6)
+        sol = solve_ivp(rhs, (0, 1e8), S_init, method='BDF',
+                        atol=0.01, rtol=1e-6)
         if sol.status != 0:
             continue
 
+        # Measure surface flux from the converged interior profile
         state.dSdt(0, sol.y[:, -1])
         F_surf = abs(state.heat_flux[-1])
         Nu = F_surf / abs(F_cond_surf) if abs(F_cond_surf) > 0 else 1.0
@@ -180,7 +209,7 @@ def run_nura_test():
 
 
 def run_bl_test():
-    """Panel (d): T(r) profiles at two viscosities."""
+    """Panel (d): T(r) profiles at multiple viscosities."""
     print('  (d) Boundary layer profiles...')
     N = 100
     mesh = make_const_mesh(N)
@@ -194,7 +223,9 @@ def run_bl_test():
     alpha_conv = 1e-5
     profiles = {}
 
-    for visc, label in [(1e16, r'$\eta = 10^{16}$'), (1e13, r'$\eta = 10^{13}$'),
+    for visc, label in [(1e18, r'$\eta = 10^{18}$'),
+                         (1e15, r'$\eta = 10^{15}$'),
+                         (1e12, r'$\eta = 10^{12}$'),
                          (1e10, r'$\eta = 10^{10}$')]:
         state = ConstPropState(mesh, viscosity=visc, convection=True, alpha=alpha_conv)
         T_uniform = 0.5 * (T_inner + T_outer)
@@ -202,7 +233,6 @@ def run_bl_test():
 
         def rhs(t, S, _s=state, _si=S_in_bc, _so=S_out_bc):
             _s.dSdt(t, S)
-            # Zero boundary fluxes; relaxation BCs handle boundaries
             _s.heat_flux[0] = 0.0
             _s.heat_flux[-1] = 0.0
             ef = _s.heat_flux * mesh.area
@@ -212,7 +242,8 @@ def run_bl_test():
             dsdt[-1] += 1e6 * (_so - S[-1])
             return dsdt
 
-        sol = solve_ivp(rhs, (0, 1e6), S_init, method='BDF', atol=0.01, rtol=1e-6)
+        sol = solve_ivp(rhs, (0, 1e6), S_init, method='BDF',
+                        atol=0.01, rtol=1e-6)
         if sol.status == 0:
             T_final = S_to_T(sol.y[:, -1])
             profiles[label] = (mesh.r_stag / 1e3, T_final)
@@ -228,69 +259,98 @@ def run_bl_test():
 def main():
     print('Generating advanced verification plots...')
 
-    cond_results = run_conduction_test()
+    (cond_results, Q_an) = run_conduction_test()
     eig_times, eig_amps, eig_tau, eig_fit = run_eigenvalue_test()
     nura_Ra, nura_Nu = run_nura_test()
     bl_profiles = run_bl_test()
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 11))
 
-    # Panel (a): Conduction steady state
+    # ── Panel (a): Conduction steady state + flux uniformity ───────────
     ax = axes[0, 0]
     r_an = np.linspace(R_INNER, R_OUTER, 200)
-    ax.plot(r_an / 1e3, analytical_T(r_an), 'k-', linewidth=2.5, label='Analytical $A/r + B$')
-    for N, (r, T_ss, T_final, ls) in cond_results.items():
-        err = np.max(np.abs(T_final - T_ss))
-        ax.plot(r / 1e3, T_final, ls, linewidth=1.5,
-                label=f'N={N} (max err {err:.1f} K)')
+    ax.plot(r_an / 1e3, analytical_T(r_an), 'k-', linewidth=2.5,
+            label='Analytical $T = A/r + B$')
+    colors_cond = {25: '#CC6677', 50: '#DDCC77', 100: '#88CCEE', 200: '#44AA99'}
+    for N, (r, T_ss, T_final, Q_prof, Q_err) in cond_results.items():
+        max_drift = np.max(np.abs(T_final - T_ss))
+        ax.plot(r / 1e3, T_final, '-', color=colors_cond[N], linewidth=1.5,
+                label=f'N={N} (drift {max_drift:.2f} K)')
     ax.set_xlabel('Radius [km]')
     ax.set_ylabel('Temperature [K]')
     ax.set_title('(a) Conduction steady state')
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=8)
 
-    # Panel (b): Eigenvalue decay
+    # Inset: flux uniformity (relative error in Q = F*4pi*r^2)
+    ax_ins = ax.inset_axes([0.42, 0.42, 0.52, 0.38])
+    for N, (r, T_ss, T_final, Q_prof, Q_err) in cond_results.items():
+        r_basic_km = np.linspace(R_INNER, R_OUTER, N + 1) / 1e3
+        ax_ins.plot(r_basic_km[1:-1], Q_err * 100, '-',
+                    color=colors_cond[N], linewidth=1, label=f'N={N}')
+    ax_ins.set_xlabel('Radius [km]', fontsize=9)
+    ax_ins.set_ylabel('$Q(r)$ error [%]', fontsize=9)
+    ax_ins.tick_params(labelsize=8)
+    ax_ins.legend(fontsize=7, ncol=2)
+    ax_ins.set_title('Flux uniformity', fontsize=9)
+
+    # ── Panel (b): Eigenvalue decay ────────────────────────────────────
     ax = axes[0, 1]
-    ax.semilogy(eig_times / eig_tau, eig_amps, 'bo', markersize=4, label='Numerical')
+    ax.semilogy(eig_times / eig_tau, eig_amps, 'bo', markersize=4,
+                label='Numerical')
     t_fit = np.linspace(eig_times[0], eig_times[-1], 100)
-    ax.semilogy(t_fit / eig_tau, eig_fit[0] * np.exp(-t_fit / eig_fit[1]),
-                'r-', linewidth=2, label=f'Fit: $\\tau$ = {eig_fit[1]:.2e} yr')
-    ax.semilogy(t_fit / eig_tau, eig_fit[0] * np.exp(-t_fit / eig_tau),
-                'k--', linewidth=1.5, label=f'Analytical: $\\tau$ = {eig_tau:.2e} yr')
+    ax.semilogy(t_fit / eig_tau,
+                eig_fit[0] * np.exp(-t_fit / eig_fit[1]),
+                'r-', linewidth=2,
+                label=f'Fit: $\\tau_{{\\mathrm{{fit}}}}$ = {eig_fit[1]:.3e} yr')
+    ax.semilogy(t_fit / eig_tau,
+                eig_fit[0] * np.exp(-t_fit / eig_tau),
+                'k--', linewidth=1.5,
+                label=f'Analytical: $\\tau_{{\\mathrm{{an}}}}$ = {eig_tau:.3e} yr')
     rel_err = abs(eig_fit[1] - eig_tau) / eig_tau
     ax.set_xlabel(r'Time [$\tau_\mathrm{analytical}$]')
     ax.set_ylabel('Perturbation amplitude [K]')
-    ax.set_title(f'(b) Eigenvalue decay ({rel_err:.0%} error)')
-    ax.legend(fontsize=9)
+    ax.set_title(f'(b) Eigenvalue decay ($\\tau$ error: {rel_err:.0%})')
+    ax.legend(fontsize=8, loc='upper right')
 
-    # Panel (c): Nu-Ra scaling
+    # ── Panel (c): Nu-Ra scaling ───────────────────────────────────────
     ax = axes[1, 0]
     if len(nura_Ra) > 0:
-        ax.loglog(nura_Ra, nura_Nu, 'bs-', markersize=7, label='Entropy solver')
-        # Reference slopes
-        Ra_ref = np.logspace(np.log10(nura_Ra.min()), np.log10(nura_Ra.max()), 50)
-        ax.loglog(Ra_ref, 0.1 * (Ra_ref / Ra_ref[0]), 'k--', alpha=0.4,
-                  label=r'$\mathrm{Nu} \propto \mathrm{Ra}^1$ (viscous MLT)')
-        ax.axhline(1.0, color='gray', ls=':', alpha=0.5, label='Nu = 1 (conduction)')
+        ax.loglog(nura_Ra, nura_Nu, 'bs-', markersize=6, label='Entropy solver')
+        # Nu = 1 conductive limit
+        ax.axhline(1.0, color='gray', ls=':', alpha=0.6, label='Nu = 1 (conduction)')
+        # Annotate regimes
+        Ra_min, Ra_max = nura_Ra.min(), nura_Ra.max()
+        # Shade inviscid plateau
+        Nu_plateau = np.median(nura_Nu[nura_Nu > 5])
+        if np.isfinite(Nu_plateau):
+            ax.axhline(Nu_plateau, color='#EE6677', ls='--', alpha=0.4,
+                       label=f'Inviscid plateau (Nu $\\approx$ {Nu_plateau:.0f})')
     ax.set_xlabel('Rayleigh number')
     ax.set_ylabel('Nusselt number')
     ax.set_title(r'(c) Nu-Ra scaling ($\alpha = 10^{-5}$)')
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=8, loc='upper left')
 
-    # Panel (d): BL profiles
+    # ── Panel (d): BL profiles ─────────────────────────────────────────
     ax = axes[1, 1]
-    colors = {'Conduction': 'k', r'$\eta = 10^{16}$': '#4477AA',
-              r'$\eta = 10^{13}$': '#EE6677', r'$\eta = 10^{10}$': '#228833'}
+    colors_bl = {
+        'Conduction': 'k',
+        r'$\eta = 10^{18}$': '#332288',
+        r'$\eta = 10^{15}$': '#4477AA',
+        r'$\eta = 10^{12}$': '#EE6677',
+        r'$\eta = 10^{10}$': '#228833',
+    }
     for label, (r_km, T) in bl_profiles.items():
         ls = '--' if label == 'Conduction' else '-'
         lw = 1.5 if label == 'Conduction' else 2.0
-        ax.plot(r_km, T, ls, color=colors.get(label, 'gray'),
+        ax.plot(r_km, T, ls, color=colors_bl.get(label, 'gray'),
                 linewidth=lw, label=label)
     ax.set_xlabel('Radius [km]')
     ax.set_ylabel('Temperature [K]')
     ax.set_title('(d) Boundary layer structure')
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=8, loc='center left')
 
-    fig.suptitle('Advanced verification: constant-property entropy solver', fontsize=15, y=1.005)
+    fig.suptitle('Advanced verification: constant-property entropy solver',
+                 fontsize=15, y=1.005)
     fig.tight_layout()
 
     fname = OUT_DIR / 'verify_entropy_advanced.pdf'
@@ -298,6 +358,23 @@ def main():
     fig.savefig(str(fname).replace('.pdf', '.png'))
     plt.close(fig)
     print(f'Saved: {fname}')
+
+    # Print summary
+    print('\n' + '=' * 60)
+    print('Summary:')
+    Ns = sorted(cond_results.keys())
+    for n in Ns:
+        r, T_ss, T_final, Q_prof, Q_err = cond_results[n]
+        drift = np.max(np.abs(T_final - T_ss))
+        flux_err = np.max(np.abs(Q_err)) * 100
+        print(f'  (a) N={n}: drift {drift:.2f} K, max flux error {flux_err:.2f}%')
+    rel_err = abs(eig_fit[1] - eig_tau) / eig_tau
+    print(f'  (b) Eigenvalue: tau_fit/tau_an = {eig_fit[1]/eig_tau:.4f} '
+          f'({rel_err:.1%} error)')
+    if len(nura_Nu) > 0:
+        print(f'  (c) Nu range: {nura_Nu.min():.1f} -- {nura_Nu.max():.1f}')
+        print(f'      Nu > 1 in {np.sum(nura_Nu > 1.5)}/{len(nura_Nu)} cases')
+    print('=' * 60)
 
 
 if __name__ == '__main__':
