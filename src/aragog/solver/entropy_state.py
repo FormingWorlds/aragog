@@ -238,3 +238,27 @@ class EntropyState:
         Compare T-formulation: rho * Cp * dT/dt = -div(F) + sources.
         """
         return self.phase_staggered.capacitance()
+
+    # ── Compatibility with BoundaryConditions (expects State interface) ──
+
+    @property
+    def temperature_basic(self) -> npt.NDArray:
+        """Temperature at basic nodes (derived from S via EOS)."""
+        return self.phase_basic.temperature()
+
+    @property
+    def top_temperature(self) -> npt.NDArray:
+        """Temperature at the outermost basic node [K]."""
+        T_basic = self.phase_basic.temperature()
+        return T_basic[-1:]  # keep as array for BC compatibility
+
+    @property
+    def bottom_temperature(self) -> npt.NDArray:
+        """Temperature at the innermost basic node [K]."""
+        T_basic = self.phase_basic.temperature()
+        return T_basic[:1]
+
+    def dTdr(self) -> npt.NDArray:
+        """Temperature gradient at basic nodes (from T profile, for BCs)."""
+        T_stag = self.phase_staggered.temperature()
+        return self._evaluator.mesh.d_dr_at_basic_nodes(T_stag)
