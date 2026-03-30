@@ -282,7 +282,7 @@ def main():
     ax.legend(fontsize=8)
 
     # Inset: flux uniformity (relative error in Q = F*4pi*r^2)
-    ax_ins = ax.inset_axes([0.42, 0.42, 0.52, 0.38])
+    ax_ins = ax.inset_axes([0.08, 0.08, 0.45, 0.35])
     for N, (r, T_ss, T_final, Q_prof, Q_err) in cond_results.items():
         r_basic_km = np.linspace(R_INNER, R_OUTER, N + 1) / 1e3
         ax_ins.plot(r_basic_km[1:-1], Q_err * 100, '-',
@@ -327,6 +327,7 @@ def main():
                        label=f'Inviscid plateau (Nu $\\approx$ {Nu_plateau:.0f})')
     ax.set_xlabel('Rayleigh number')
     ax.set_ylabel('Nusselt number')
+    ax.set_ylim(0.8, 50)
     ax.set_title(r'(c) Nu-Ra scaling ($\alpha = 10^{-5}$)')
     ax.legend(fontsize=8, loc='upper left')
 
@@ -347,7 +348,7 @@ def main():
     ax.set_xlabel('Radius [km]')
     ax.set_ylabel('Temperature [K]')
     ax.set_title('(d) Boundary layer structure')
-    ax.legend(fontsize=8, loc='center left')
+    ax.legend(fontsize=8, loc='upper right')
 
     fig.suptitle('Advanced verification: constant-property entropy solver',
                  fontsize=15, y=1.005)
