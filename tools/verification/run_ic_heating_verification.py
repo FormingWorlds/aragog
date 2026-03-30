@@ -3,7 +3,7 @@
 Produces a 2x2 figure with four verification panels:
 
 (a) IC sweep: T_surf(t) for different initial entropy values
-    S0 = 500 (mostly solid), 3200 (SPIDER default), 5000 (partially liquid),
+    S0 = 2500 (mostly solid), 3200 (SPIDER default), 5000 (partially liquid),
     10000 (fully liquid). Grey-body surface, insulating core, N=30.
 
 (b) IC sweep: Phi_global(t) for the same runs.
@@ -142,7 +142,7 @@ def run_ic_sweep(eos):
     results : dict
         {S0_val: {'times': array, 'T_surf': array, 'phi_global': array}}
     """
-    S0_values = [500.0, 3200.0, 5000.0, 10000.0]
+    S0_values = [2500.0, 3200.0, 5000.0, 10000.0]
     t_end = 10000.0  # 10 kyr
     n_samples = 80
 
@@ -381,13 +381,13 @@ def main():
 
     # Color map for IC sweep
     colors = {
-        500.0: '#2166ac',
+        2500.0: '#2166ac',
         3200.0: '#4daf4a',
         5000.0: '#ff7f00',
         10000.0: '#e41a1c',
     }
     labels = {
-        500.0: r'$S_0 = 500$ (mostly solid)',
+        2500.0: r'$S_0 = 2500$ (mostly solid)',
         3200.0: r'$S_0 = 3200$ (SPIDER default)',
         5000.0: r'$S_0 = 5000$ (partially liquid)',
         10000.0: r'$S_0 = 10{,}000$ (fully liquid)',
