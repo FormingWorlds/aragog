@@ -29,7 +29,8 @@ from test_entropy_advanced import (
     T_to_S, S_to_T, analytical_T, ConstPropState, make_const_mesh,
 )
 
-OUT_DIR = Path(__file__).parent
+OUT_DIR = Path(__file__).resolve().parent.parent.parent / 'output' / 'entropy_verification'
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 plt.rcParams.update({
     'font.size': 14, 'axes.labelsize': 16, 'axes.titlesize': 15,
@@ -150,13 +151,12 @@ def run_nura_test():
         S_init = T_to_S(np.full(N, T_uniform))
         S_in_bc = T_to_S(T_inner)
         S_out_bc = T_to_S(T_outer)
-        F_in = Q_cond / (4 * np.pi * R_INNER**2)
-        F_out = Q_cond / (4 * np.pi * R_OUTER**2)
 
-        def rhs(t, S, _s=state, _fi=F_in, _fo=F_out, _si=S_in_bc, _so=S_out_bc):
+        def rhs(t, S, _s=state, _si=S_in_bc, _so=S_out_bc):
             _s.dSdt(t, S)
-            _s.heat_flux[0] = _fi
-            _s.heat_flux[-1] = _fo
+            # Zero boundary fluxes; relaxation BCs handle boundaries
+            _s.heat_flux[0] = 0.0
+            _s.heat_flux[-1] = 0.0
             ef = _s.heat_flux * mesh.area
             cap = RHO * S_to_T(S) * mesh.volume
             dsdt = -np.diff(ef) / cap * SECS_PER_YEAR
@@ -164,7 +164,7 @@ def run_nura_test():
             dsdt[-1] += 1e6 * (_so - S[-1])
             return dsdt
 
-        sol = solve_ivp(rhs, (0, 1e6), S_init, method='BDF', atol=0.01, rtol=1e-6)
+        sol = solve_ivp(rhs, (0, 1e8), S_init, method='BDF', atol=0.01, rtol=1e-6)
         if sol.status != 0:
             continue
 
@@ -188,11 +188,6 @@ def run_bl_test():
         np.minimum(mesh.r_basic - R_INNER, R_OUTER - mesh.r_basic), 1.0)
 
     T_inner, T_outer = 4000.0, 1500.0
-    DT = T_inner - T_outer
-    A_c = DT * R_INNER * R_OUTER / D_SHELL
-    Q_cond = 4 * np.pi * K_COND * A_c
-    F_in = Q_cond / (4 * np.pi * R_INNER**2)
-    F_out = Q_cond / (4 * np.pi * R_OUTER**2)
     S_in_bc = T_to_S(T_inner)
     S_out_bc = T_to_S(T_outer)
 
@@ -205,10 +200,11 @@ def run_bl_test():
         T_uniform = 0.5 * (T_inner + T_outer)
         S_init = T_to_S(np.full(N, T_uniform))
 
-        def rhs(t, S, _s=state, _fi=F_in, _fo=F_out, _si=S_in_bc, _so=S_out_bc):
+        def rhs(t, S, _s=state, _si=S_in_bc, _so=S_out_bc):
             _s.dSdt(t, S)
-            _s.heat_flux[0] = _fi
-            _s.heat_flux[-1] = _fo
+            # Zero boundary fluxes; relaxation BCs handle boundaries
+            _s.heat_flux[0] = 0.0
+            _s.heat_flux[-1] = 0.0
             ef = _s.heat_flux * mesh.area
             cap = RHO * S_to_T(S) * mesh.volume
             dsdt = -np.diff(ef) / cap * SECS_PER_YEAR

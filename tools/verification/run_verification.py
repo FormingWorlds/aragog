@@ -29,7 +29,8 @@ from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.solver.entropy_state import EntropyState
 
-OUT_DIR = Path(__file__).parent
+OUT_DIR = Path(__file__).resolve().parent.parent.parent / 'output' / 'entropy_verification'
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 EOS_DIR = Path('/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos')
 SECS_PER_YEAR = 31557600.0
 
