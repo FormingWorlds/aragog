@@ -59,6 +59,8 @@ class EntropyPhaseEvaluator:
         viscosity_liquid: float = 1e-1,
         grain_size: float = 1e-3,
         latent_heat_constant: float = 4e5,
+        thermal_conductivity_solid: float = 4.0,
+        thermal_conductivity_liquid: float = 2.0,
     ):
         self._eos = entropy_eos
         self._g = gravitational_acceleration
@@ -68,6 +70,8 @@ class EntropyPhaseEvaluator:
         self._visc_liquid = viscosity_liquid
         self._grain_size = grain_size
         self._latent_heat_constant = latent_heat_constant
+        self._k_solid = thermal_conductivity_solid
+        self._k_liquid = thermal_conductivity_liquid
 
         # State arrays (set by set_entropy / set_pressure / update)
         self.entropy: npt.NDArray = np.array([])
@@ -109,16 +113,20 @@ class EntropyPhaseEvaluator:
         self._thermal_expansivity = self._eos.thermal_expansivity(P, S)
         self._melt_fraction = self._eos.melt_fraction(P, S)
 
+        # Guard: clamp negative alpha to zero (can occur from EOS table edges)
+        self._thermal_expansivity = np.maximum(self._thermal_expansivity, 0.0)
+
         # Viscosity: tanh blend between solid and liquid at phi_rheo
         phi = self._melt_fraction
         w = tanh_weight(phi, self._phi_rheo, self._phi_width)
         log_visc = (1.0 - w) * np.log10(self._visc_solid) + w * np.log10(self._visc_liquid)
         self._viscosity_val = 10.0 ** log_visc
 
-        # Thermal conductivity: blend solid (4 W/m/K) and liquid (2 W/m/K)
-        k_solid = 4.0
-        k_liquid = 2.0
-        self._thermal_conductivity_val = (1.0 - phi) * k_solid + phi * k_liquid
+        # Thermal conductivity from config (not hardcoded)
+        self._thermal_conductivity_val = (1.0 - phi) * self._k_solid + phi * self._k_liquid
+
+        # P-dependent latent heat from EOS
+        self._latent_heat_val = self._eos.latent_heat(P)
 
     # ── Property accessors (PhaseEvaluatorProtocol) ──────────────────
 
@@ -156,8 +164,11 @@ class EntropyPhaseEvaluator:
         return self._melt_fraction
 
     def latent_heat(self) -> FloatOrArray:
-        """Latent heat [J/kg]. Constant value from config."""
-        return np.full_like(self._temperature, self._latent_heat_constant)
+        """Latent heat L(P) = T_fus × (S_liq - S_sol) [J/kg].
+
+        P-dependent from EOS tables, matching SPIDER convention.
+        """
+        return self._latent_heat_val
 
     def thermal_conductivity(self) -> FloatOrArray:
         return self._thermal_conductivity_val
@@ -171,37 +182,57 @@ class EntropyPhaseEvaluator:
     def relative_velocity(self) -> FloatOrArray:
         """Melt-solid relative velocity for gravitational separation [m/s].
 
-        Uses Darcy permeability (low phi) / Stokes settling (high phi)
-        following Abe (1993).
+        Uses Abe (1993) three-regime permeability model based on porosity
+        (volume fraction of melt, not mass fraction), matching SPIDER's
+        GetGravitationalHeatFlux in energy.c.
+
+        Regimes:
+        1. Blake-Kozeny-Carman (low porosity): K = d^2 por^3 / (1-por)^2 / 1000
+        2. Rumpf-Gupte (intermediate): K = d^2 por^4.5 / 5.6
+        3. Stokes settling (high porosity): K = d^2 * 2(1-por)^2 / 9
         """
         phi = self._melt_fraction
-        rho_s = self._eos.density(self.pressure,
-                                   np.full_like(self.entropy, self._eos.solidus_entropy(self.pressure)))
-        rho_l = self._eos.density(self.pressure,
-                                   np.full_like(self.entropy, self._eos.liquidus_entropy(self.pressure)))
-        delta_rho = rho_s - rho_l
+        rho_s = self._eos._lookup_at_phase_boundary('density', self.pressure, 'solid')
+        rho_l = self._eos._lookup_at_phase_boundary('density', self.pressure, 'melt')
+        delta_rho = rho_l - rho_s  # typically negative (melt lighter)
         g = self._g
-
-        # Darcy regime (phi < phi_rheo): v = phi^2 * d^2 * delta_rho * g / (18 * eta_l)
-        eta_l = self._visc_liquid
         d = self._grain_size
-        v_darcy = phi**2 * d**2 * np.abs(delta_rho) * g / (18.0 * np.maximum(eta_l, 1e-10))
+        eta_l = self._visc_liquid
 
-        # Stokes regime (phi > phi_rheo): v = 2 * d^2 * delta_rho * g * (1-phi)^2 / (9 * eta_l)
-        v_stokes = 2.0 * d**2 * np.abs(delta_rho) * g * (1.0 - phi)**2 / (9.0 * np.maximum(eta_l, 1e-10))
+        # Porosity (volume fraction of melt) from densities
+        rho = self._density
+        porosity = np.clip(
+            (rho_s - rho) / np.maximum(rho_s - rho_l, 1.0), 0.0, 1.0
+        )
 
-        # Blend
-        w = tanh_weight(phi, self._phi_rheo, self._phi_width)
-        v_rel = (1.0 - w) * v_darcy + w * v_stokes
+        # Three-regime permeability / porosity (SPIDER convention: F = K/porosity)
+        por = np.maximum(porosity, 1e-20)
+        one_m_por = np.maximum(1.0 - porosity, 1e-20)
+
+        # Blake-Kozeny-Carman (low porosity)
+        F_bkc = d**2 * por**2 / (one_m_por**2 * 1000.0)
+        # Rumpf-Gupte (intermediate porosity)
+        F_rg = d**2 * por**3.5 / 5.6
+        # Stokes settling (high porosity)
+        F_stokes = d**2 * 2.0 * one_m_por**2 / 9.0
+
+        # Regime switching at critical porosities (Abe 1993)
+        # BKC -> RG transition at porosity where BKC = RG
+        # RG -> Stokes transition at porosity where RG = Stokes
+        w_rg = tanh_weight(porosity, 0.1, 0.05)
+        w_stokes = tanh_weight(porosity, 0.4, 0.1)
+        F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
+        F = np.maximum(F, 0.0)
+
+        # Relative velocity: v = delta_rho * g * F / eta_liquid
+        v_rel = delta_rho * g * F / np.maximum(eta_l, 1e-10)
 
         return v_rel
 
     def delta_specific_volume(self) -> FloatOrArray:
         """Specific volume difference between solid and liquid [m^3/kg]."""
-        rho_s = self._eos.density(self.pressure,
-                                   np.full_like(self.entropy, self._eos.solidus_entropy(self.pressure)))
-        rho_l = self._eos.density(self.pressure,
-                                   np.full_like(self.entropy, self._eos.liquidus_entropy(self.pressure)))
+        rho_s = self._eos._lookup_at_phase_boundary('density', self.pressure, 'solid')
+        rho_l = self._eos._lookup_at_phase_boundary('density', self.pressure, 'melt')
         return 1.0 / np.maximum(rho_l, 1.0) - 1.0 / np.maximum(rho_s, 1.0)
 
     # ── Entropy-specific methods ─────────────────────────────────────

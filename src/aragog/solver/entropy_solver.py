@@ -146,6 +146,7 @@ class EntropySolver:
             convection=energy.convection,
             gravitational_separation=energy.gravitational_separation,
             mixing=energy.mixing,
+            eddy_diffusivity_thermal=getattr(energy, 'eddy_diffusivity_thermal', 1.0),
             eddy_diffusivity_chemical=energy.eddy_diffusivity_chemical,
             kappah_floor=energy.kappah_floor,
         )
@@ -207,13 +208,32 @@ class EntropySolver:
             # Prescribed flux (PROTEUS coupling)
             self.state._heat_flux[-1] = bc.outer_boundary_value
 
-        # CMB: prescribed flux or insulating
-        if bc.inner_boundary_condition == 2:
+        # CMB boundary condition
+        if bc.inner_boundary_condition == 1:
+            # Core cooling (simplified from SPIDER bc.c:76-131):
+            # F_cmb = alpha_core * F_next_node, where alpha_core accounts for
+            # the ratio of mantle cell to core thermal capacity.
+            r_cmb = float(np.asarray(self.evaluator.mesh.basic.radii).flat[0])
+            core_cap = (
+                4.0 / 3.0 * np.pi * r_cmb**3
+                * self.evaluator.mesh.settings.core_density
+                * bc.core_heat_capacity
+            )
+            cap_first = float(np.asarray(self.state.capacitance_staggered()).flat[0])
+            vol_first = float(np.asarray(self.evaluator.mesh.basic.volume).flat[0])
+            cell_cap = vol_first * cap_first
+            r_above = float(np.asarray(self.evaluator.mesh.basic.radii).flat[1])
+            alpha_core = cell_cap / (
+                core_cap * getattr(bc, 'tfac_core_avg', 1.147)
+                * (r_above / r_cmb)**2
+            )
+            self.state._heat_flux[0] = alpha_core * self.state._heat_flux[1]
+        elif bc.inner_boundary_condition == 2:
             self.state._heat_flux[0] = bc.inner_boundary_value
         elif bc.inner_boundary_condition == 3:
-            pass  # prescribed T (not applicable in S formulation)
+            pass  # prescribed T
         else:
-            self.state._heat_flux[0] = 0.0  # default: insulating
+            self.state._heat_flux[0] = 0.0  # insulating
 
         # Flux divergence: dE/dr at staggered nodes.
         # Flatten mesh arrays (N,1) -> (N,) for consistent broadcasting.
@@ -230,6 +250,15 @@ class EntropySolver:
 
         # dS/dt from flux divergence [J/kg/K/s]
         dSdt = -delta_energy_flux / capacitance
+
+        # Internal heating: dS/dt += H / T (SPIDER rhs.c line 62)
+        # H is power per unit mass [W/kg], T is temperature [K]
+        # This adds radiogenic, tidal, and other volumetric heating
+        T_stag = np.asarray(self.state.phase_staggered.temperature()).flatten()
+        # TODO: wire up radiogenic/tidal heating from config
+        # For now, H = 0 (pure cooling). When heating is needed:
+        # H = self.state.heating  # power per unit mass [W/kg]
+        # dSdt += H / T_stag
 
         # Convert to J/kg/K/yr
         dSdt *= SECS_PER_YEAR

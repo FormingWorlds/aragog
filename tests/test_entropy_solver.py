@@ -65,7 +65,7 @@ def build_simple_mesh(N=50, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5
     mesh.basic = BasicMesh()
     mesh.staggered = StaggeredMesh()
 
-    mesh.basic.radius = r_basic
+    mesh.basic.radii = r_basic
     mesh.basic.pressure = P_basic
     mesh.basic.gravitational_acceleration = g_basic
     mesh.basic.area = area_basic
@@ -74,20 +74,22 @@ def build_simple_mesh(N=50, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5
     mesh.basic.mixing_length_squared = mixing_length**2
     mesh.basic.mixing_length_cubed = mixing_length**3
 
-    mesh.staggered.radius = r_stag
+    mesh.staggered.radii = r_stag
     mesh.staggered.pressure = P_stag
     mesh.staggered.gravitational_acceleration = g_stag
 
     def quantity_at_basic_nodes(q_stag):
+        q = np.asarray(q_stag).flatten()
         q_basic = np.zeros(N + 1)
-        q_basic[0] = q_stag[0]
-        q_basic[-1] = q_stag[-1]
-        q_basic[1:-1] = 0.5 * (q_stag[:-1] + q_stag[1:])
+        q_basic[0] = q[0]
+        q_basic[-1] = q[-1]
+        q_basic[1:-1] = 0.5 * (q[:-1] + q[1:])
         return q_basic
 
     def d_dr_at_basic_nodes(q_stag):
+        q = np.asarray(q_stag).flatten()
         dqdr = np.zeros(N + 1)
-        dqdr[1:-1] = np.diff(q_stag) / dr
+        dqdr[1:-1] = np.diff(q) / dr
         dqdr[0] = dqdr[1]
         dqdr[-1] = dqdr[-2]
         return dqdr

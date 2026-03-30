@@ -54,6 +54,7 @@ class EntropyState:
         convection: bool = True,
         gravitational_separation: bool = False,
         mixing: bool = False,
+        eddy_diffusivity_thermal: float = 1.0,
         eddy_diffusivity_chemical: float = 1.0,
         kappah_floor: float = 0.0,
     ):
@@ -64,6 +65,7 @@ class EntropyState:
         self._convection = convection
         self._grav_sep = gravitational_separation
         self._mixing = mixing
+        self._eddy_diff_thermal = eddy_diffusivity_thermal
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
 
@@ -150,16 +152,30 @@ class EntropyState:
         inviscid_weight = 0.5 * (1.0 + np.tanh(
             (reynolds - RE_CRIT) / max(blend_width, 1e-30)
         ))
-        self._eddy_diffusivity = (
+        # Raw eddy diffusivity (before thermal scaling and floor)
+        kh_raw = (
             (1.0 - inviscid_weight) * viscous_velocity
             + inviscid_weight * inviscid_velocity
         ) * mixing_length
 
+        # Apply eddy_diffusivity_thermal scaling (SPIDER convention:
+        # positive = scale factor, negative = fixed constant)
+        if self._eddy_diff_thermal > 0:
+            self._eddy_diffusivity = self._eddy_diff_thermal * kh_raw
+        else:
+            self._eddy_diffusivity = np.full_like(kh_raw, -self._eddy_diff_thermal)
+
+        # Chemical eddy diffusivity uses raw kh (before floor and thermal scaling),
+        # matching SPIDER's matprop.c lines 318-325
+        if self._eddy_diff_chem > 0:
+            self._kappac = self._eddy_diff_chem * kh_raw
+        else:
+            self._kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
+
         # kappa_h floor (phase-dependent, modulated by melt fraction)
         if self._kappah_floor > 0.0:
-            phi_basic = self.phase_basic.melt_fraction()
+            phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             from aragog.utilities import tanh_weight
-            # Use default rheological transition values
             f_floor = tanh_weight(phi_basic, 0.4, 0.15)
             kh_floor = self._kappah_floor * f_floor
             self._eddy_diffusivity = np.maximum(self._eddy_diffusivity, kh_floor)
@@ -195,18 +211,15 @@ class EntropyState:
             self._heat_flux += rho * T * self._eddy_diffusivity * (-self._dSdr)
 
         if self._grav_sep:
-            self._mass_flux += (
-                self.phase_basic.density()
-                * self.phase_basic.relative_velocity()
-                * self.phase_basic.delta_specific_volume()
-                * self._dphidr
-            )
+            # SPIDER formula: Jgrav = rho * phi * (1-phi) * v_rel
+            # The heat contribution is Jgrav * L (latent heat)
+            phi_b = np.asarray(self.phase_basic.melt_fraction()).flatten()
+            v_rel = np.asarray(self.phase_basic.relative_velocity()).flatten()
+            self._mass_flux += rho * phi_b * (1.0 - phi_b) * v_rel
 
         if self._mixing:
-            self._mass_flux += (
-                rho * self._eddy_diffusivity * self._eddy_diff_chem
-                * (-self._dphidr)
-            )
+            # SPIDER uses kappac (from raw kh, not from floored kappah)
+            self._mass_flux += rho * self._kappac * (-self._dphidr)
 
         self._heat_flux += self._mass_flux * self.phase_basic.latent_heat()
 
