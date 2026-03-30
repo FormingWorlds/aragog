@@ -230,11 +230,11 @@ def main():
     print('Test 4: Convective homogenization...')
     state_homo = make_state(mesh, eos, conduction=False, convection=True)
     S0_gradient = np.linspace(10400.0, 9600.0, N)
-    sol4, _, _ = run_solver(state_homo, mesh, S0_gradient, 200, surface_bc='insulating')
+    sol4, _, _ = run_solver(state_homo, mesh, S0_gradient, 1.0, surface_bc='insulating')
 
     r_stag_km = mesh.staggered.radii / 1e3
-    # Finer time sampling to see the homogenization transition
-    profile_times = [0, 1, 5, 10, 20, 50, 100, 200]
+    # Sub-year sampling: homogenization takes < 0.01 yr at liquid viscosity
+    profile_times = [0, 0.001, 0.003, 0.005, 0.01, 0.03, 0.1, 1.0]
     profiles = {}
     for t in profile_times:
         if t <= sol4.t[-1]:
@@ -354,7 +354,13 @@ def main():
     ax = axes[1, 1]
     colors = plt.cm.viridis(np.linspace(0, 1, len(profiles)))
     for i, (t, S) in enumerate(profiles.items()):
-        ax.plot(r_stag_km, S, color=colors[i], label=f't = {t} yr', linewidth=2)
+        if t >= 1:
+            lbl = f't = {t:.0f} yr'
+        elif t >= 0.01:
+            lbl = f't = {t*365:.0f} d'
+        else:
+            lbl = f't = {t*365*24:.0f} h'
+        ax.plot(r_stag_km, S, color=colors[i], label=lbl, linewidth=2)
     ax.set_xlabel('Radius [km]')
     ax.set_ylabel('Entropy [J/kg/K]')
     ax.set_title('(d) Convective homogenization (no conduction)')
