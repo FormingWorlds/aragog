@@ -22,7 +22,7 @@ import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.optimize import curve_fit
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'tests'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'tests'))
 from test_entropy_advanced import (
     RHO, CP, K_COND, ALPHA, T_REF, S_REF, KAPPA,
     R_INNER, R_OUTER, D_SHELL, G, SECS_PER_YEAR,

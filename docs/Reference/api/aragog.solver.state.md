@@ -1,3 +1,0 @@
-# State
-
-::: aragog.solver.state

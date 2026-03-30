@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
@@ -13,8 +13,10 @@ from scipy import constants as sp_constants
 from aragog.mesh import Mesh
 from aragog.parser import Parameters, _BoundaryConditionsParameters
 
+# State type is used in method signatures for the T-based BC application path.
+# The entropy solver handles BCs internally, so these methods are legacy.
 if TYPE_CHECKING:
-    from aragog.solver.state import State
+    State = Any
 
 logger: logging.Logger = logging.getLogger(__name__)
 

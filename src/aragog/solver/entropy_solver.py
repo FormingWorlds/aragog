@@ -25,10 +25,12 @@ from scipy.optimize import OptimizeResult
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
-from aragog.solver import SECS_PER_YEAR
 from aragog.solver.boundary import BoundaryConditions
-from aragog.solver.evaluator import Evaluator
 from aragog.solver.entropy_state import EntropyState
+
+# Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
+from scipy import constants as _sp_constants
+SECS_PER_YEAR: float = _sp_constants.Julian_year
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +53,7 @@ class EntropySolver:
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS):
         self.parameters = parameters
         self.entropy_eos = entropy_eos
-        self.evaluator: Evaluator
+        self.evaluator: object
         self.state: EntropyState
         self._solution: OptimizeResult
         self.stop_early: bool = False

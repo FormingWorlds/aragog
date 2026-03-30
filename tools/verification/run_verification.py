@@ -23,7 +23,7 @@ import numpy as np
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'src'))
 
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator

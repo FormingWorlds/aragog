@@ -1,3 +1,0 @@
-# Properties
-
-::: aragog.eos.properties

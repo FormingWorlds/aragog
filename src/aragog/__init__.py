@@ -89,6 +89,5 @@ def aragog_file_logger(
     return package_logger
 
 
-# Expose public API so pylint: disable = C0413
-from aragog.output import Output
-from aragog.solver import Solver
+# Expose public API
+from aragog.solver import EntropySolver
