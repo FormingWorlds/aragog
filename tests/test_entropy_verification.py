@@ -33,7 +33,7 @@ needs_eos = pytest.mark.skipif(
 SECS_PER_YEAR = 31557600.0
 
 
-# ── Shared test infrastructure ───────────────────────────────────────
+# -- Shared test infrastructure -----------------------------------------------
 
 def make_mesh(N=50, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5):
     """Build a simple radial mesh for verification tests."""
@@ -124,22 +124,47 @@ def compute_thermal_energy(S, mesh, entropy_eos):
     return np.sum(rho * Cp * T * V)
 
 
-# ── Test 1: Entropy conservation ─────────────────────────────────────
+def compute_enthalpy_integral(S, mesh, entropy_eos):
+    """Compute total enthalpy-like integral H = sum(rho * T * S * V).
+
+    This is the conserved quantity for the entropy equation
+    rho * T * dS/dt = -div(F) with zero-flux BCs. When div(F) integrates
+    to zero over the domain (zero-flux BCs), d/dt sum(rho*T*S*V) = 0 to
+    leading order for small dS.
+    """
+    P = mesh.staggered.pressure
+    T = entropy_eos.temperature(P, S)
+    rho = entropy_eos.density(P, S)
+    V = mesh.basic.volume
+    return np.sum(rho * T * S * V)
+
+
+# -- Test 1: Entropy conservation ---------------------------------------------
 
 @needs_eos
 @pytest.mark.unit
 class TestEntropyConservation:
-    """On insulating BCs with no conduction, entropy must be exactly conserved."""
+    """On insulating BCs, conservation laws must hold as entropy redistributes."""
 
     def test_isentropic_stays_isentropic(self):
-        """S = const with zero flux BCs and no conduction stays at S = const."""
+        """Non-uniform S with zero-flux BCs and conduction: entropy redistributes
+        but total enthalpy integral is conserved.
+
+        Uses a linear S profile (high at CMB, low at surface) with conduction
+        enabled and zero-flux BCs. Conduction drives heat from hot to cold,
+        redistributing entropy. The test verifies:
+        (a) the entropy profile actually changes (not a zero-RHS test),
+        (b) the mass-weighted enthalpy integral sum(rho*T*S*V) is conserved.
+        """
         from aragog.eos.entropy import EntropyEOS
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
-        state = make_state(mesh, eos, conduction=False, convection=True)
+        state = make_state(mesh, eos, conduction=True, convection=True)
 
-        S0 = np.full(N, 3200.0)
+        # Non-uniform initial entropy: linear gradient (superadiabatic at surface)
+        S0 = np.linspace(3400.0, 3000.0, N)
+        H0 = compute_enthalpy_integral(S0, mesh, eos)
 
         def dSdt(t, S):
             state.update(S, t)
@@ -150,21 +175,35 @@ class TestEntropyConservation:
             cap = state.capacitance_staggered() * mesh.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0, 10000), S0, method='BDF',
+        sol = solve_ivp(dSdt, (0, 5000), S0, method='BDF',
                         atol=0.01, rtol=1e-8)
         assert sol.status == 0
 
         S_final = sol.y[:, -1]
-        max_drift = np.max(np.abs(S_final - S0))
-        assert max_drift < 1.0, (
-            f'Entropy drifted by {max_drift:.2f} J/kg/K (should be < 1.0)'
+
+        # (a) Profile must actually change (system evolves)
+        max_change = np.max(np.abs(S_final - S0))
+        assert max_change > 1.0, (
+            f'Entropy profile barely changed (max dS={max_change:.2f} J/kg/K). '
+            f'The test must exercise the solver with nontrivial dynamics.'
+        )
+
+        # (b) Total enthalpy integral must be conserved
+        H_final = compute_enthalpy_integral(S_final, mesh, eos)
+        rel_change = abs(H_final - H0) / abs(H0)
+        assert rel_change < 1e-3, (
+            f'Enthalpy integral changed by {rel_change:.2e} '
+            f'(should be < 0.1%)'
         )
 
     def test_nonuniform_entropy_no_conduction(self):
         """Non-uniform S with zero flux and no conduction: only convection acts.
 
         Convection should homogenize entropy (dS/dr -> 0), not create it.
-        Total entropy integral should be conserved.
+        The correct conserved quantity for the entropy equation
+        rho*T*dS/dt = -div(F) with zero-flux BCs is sum(rho*T*S*V),
+        NOT sum(S*V). We check both the correct integral and that
+        the profile homogenizes.
         """
         from aragog.eos.entropy import EntropyEOS
         eos = EntropyEOS(EOS_DIR)
@@ -174,7 +213,7 @@ class TestEntropyConservation:
 
         # Linear entropy gradient (unstable: dS/dr < 0 from CMB to surface)
         S0 = np.linspace(3400.0, 3000.0, N)
-        S_total_0 = np.sum(S0 * mesh.basic.volume)
+        H0 = compute_enthalpy_integral(S0, mesh, eos)
 
         def dSdt(t, S):
             state.update(S, t)
@@ -189,14 +228,13 @@ class TestEntropyConservation:
         assert sol.status == 0
 
         S_final = sol.y[:, -1]
-        S_total_final = np.sum(S_final * mesh.basic.volume)
 
-        # Volume-weighted total entropy should be approximately conserved.
-        # Not exact because the true conserved quantity is integral(rho*T*S*dV),
-        # not integral(S*dV). The 2% tolerance accounts for the rho*T weighting.
-        rel_change = abs(S_total_final - S_total_0) / abs(S_total_0)
-        assert rel_change < 0.02, (
-            f'Total entropy changed by {rel_change:.4f} (should be < 0.02)'
+        # Check the CORRECT conserved quantity: sum(rho * T * S * V)
+        H_final = compute_enthalpy_integral(S_final, mesh, eos)
+        rel_change = abs(H_final - H0) / abs(H0)
+        assert rel_change < 5e-3, (
+            f'Enthalpy integral sum(rho*T*S*V) changed by {rel_change:.4f} '
+            f'(should be < 0.5%)'
         )
 
         # Entropy should homogenize (spread decreases)
@@ -207,7 +245,7 @@ class TestEntropyConservation:
         )
 
 
-# ── Test 2: Energy conservation ──────────────────────────────────────
+# -- Test 2: Energy conservation -----------------------------------------------
 
 @needs_eos
 @pytest.mark.smoke
@@ -215,15 +253,22 @@ class TestEnergyConservation:
     """Total thermal energy change must match integrated surface flux."""
 
     def test_closed_box_energy(self):
-        """Zero-flux BCs, no conduction: energy must be exactly conserved."""
+        """Non-uniform S, zero-flux BCs, conduction enabled: enthalpy conserved.
+
+        Starts from a non-uniform S profile so the system actually evolves
+        (conduction redistributes entropy). With zero-flux BCs, the total
+        enthalpy integral H = sum(rho*T*S*V) must be conserved.
+        """
         from aragog.eos.entropy import EntropyEOS
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
-        state = make_state(mesh, eos, conduction=False, convection=True)
+        state = make_state(mesh, eos, conduction=True, convection=True)
 
-        S0 = np.full(N, 3200.0)
+        # Non-uniform initial profile: linear gradient
+        S0 = np.linspace(3400.0, 3000.0, N)
         E0 = compute_thermal_energy(S0, mesh, eos)
+        H0 = compute_enthalpy_integral(S0, mesh, eos)
 
         def dSdt(t, S):
             state.update(S, t)
@@ -237,14 +282,32 @@ class TestEnergyConservation:
                         atol=0.01, rtol=1e-8)
         assert sol.status == 0
 
-        E_final = compute_thermal_energy(sol.y[:, -1], mesh, eos)
-        rel_change = abs(E_final - E0) / E0
-        assert rel_change < 1e-4, (
-            f'Energy changed by {rel_change:.2e} (should be < 1e-4)'
+        S_final = sol.y[:, -1]
+
+        # Verify the system actually evolved (not a zero-RHS test)
+        T0 = eos.temperature(mesh.staggered.pressure, S0)
+        T_final = eos.temperature(mesh.staggered.pressure, S_final)
+        max_dT = np.max(np.abs(T_final - T0))
+        assert max_dT > 1.0, (
+            f'Temperature barely changed (max dT = {max_dT:.1f} K). '
+            f'Test must exercise nontrivial dynamics.'
+        )
+
+        # Enthalpy integral must be conserved with zero-flux BCs
+        H_final = compute_enthalpy_integral(S_final, mesh, eos)
+        rel_change = abs(H_final - H0) / abs(H0)
+        assert rel_change < 5e-3, (
+            f'Enthalpy integral changed by {rel_change:.2e} '
+            f'(should be < 0.5%)'
         )
 
     def test_cooling_energy_budget(self):
-        """Grey-body cooling: dE/dt should match -F_surf * A_surf."""
+        """Grey-body cooling: dE/dt should match -F_surf * A_surf.
+
+        Uses dense_output to sample at uniform time points, then recomputes
+        fluxes at those times. This avoids the noise from BDF's repeated
+        RHS evaluations for Jacobian estimation.
+        """
         from aragog.eos.entropy import EntropyEOS
         eos = EntropyEOS(EOS_DIR)
         N = 30
@@ -254,51 +317,50 @@ class TestEnergyConservation:
         S0 = np.full(N, 3200.0)
         A_surf = mesh.basic.area[-1]
 
-        # Track surface flux at each output
-        flux_log = []
-        time_log = []
-
+        t_span = (0, 500)
         def dSdt(t, S):
             state.update(S, t)
             T_top = state.top_temperature.item()
             F_surf = Stefan_Boltzmann * (T_top**4 - 255.0**4)
             state._heat_flux[-1] = F_surf
             state._heat_flux[0] = 0.0
-            flux_log.append(F_surf)
-            time_log.append(t)
             energy_flux = state.heat_flux * mesh.basic.area
             cap = state.capacitance_staggered() * mesh.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        t_span = (0, 500)
         sol = solve_ivp(dSdt, t_span, S0, method='BDF',
                         atol=0.5, rtol=1e-5, dense_output=True)
         assert sol.status == 0
 
+        # Sample at uniform time points via dense_output, recompute fluxes
+        n_samples = 100
+        times = np.linspace(0, min(500, sol.t[-1]), n_samples)
+        F_surf_arr = np.zeros(n_samples)
+        for i, t in enumerate(times):
+            S_t = sol.sol(t)
+            state.update(S_t, t)
+            T_top = state.top_temperature.item()
+            F_surf_arr[i] = Stefan_Boltzmann * (T_top**4 - 255.0**4)
+
         # Compute energy at start and end
         E_start = compute_thermal_energy(S0, mesh, eos)
-        E_end = compute_thermal_energy(sol.y[:, -1], mesh, eos)
+        E_end = compute_thermal_energy(sol.sol(times[-1]), mesh, eos)
         dE = E_end - E_start  # should be negative (cooling)
 
-        # Estimate integrated flux loss (trapezoidal on logged data)
-        t_arr = np.array(time_log)
-        F_arr = np.array(flux_log)
-        idx = np.argsort(t_arr)
-        t_sorted = t_arr[idx]
-        F_sorted = F_arr[idx]
+        # Integrated flux loss (trapezoidal on uniform samples)
         # Power in watts, time in years -> energy in J
-        Q_lost = np.trapz(F_sorted * A_surf, t_sorted * SECS_PER_YEAR)
+        Q_lost = np.trapz(F_surf_arr * A_surf, times * SECS_PER_YEAR)
 
         # dE should approximately equal -Q_lost
         if abs(Q_lost) > 0:
             rel_residual = abs(dE + Q_lost) / abs(Q_lost)
-            assert rel_residual < 0.1, (
+            assert rel_residual < 0.03, (
                 f'Energy budget residual: {rel_residual:.2f} '
-                f'(dE={dE:.2e}, Q_lost={Q_lost:.2e})'
+                f'(dE={dE:.2e}, Q_lost={Q_lost:.2e}), should be < 3%'
             )
 
 
-# ── Test 3: Grey-body cooling timescale ──────────────────────────────
+# -- Test 3: Grey-body cooling timescale ---------------------------------------
 
 @needs_eos
 @pytest.mark.smoke

@@ -24,7 +24,7 @@ from scipy.integrate import solve_ivp
 
 SECS_PER_YEAR = 31557600.0
 
-# ── Constant-property entropy model ──────────────────────────────────
+# -- Constant-property entropy model -------------------------------------------
 
 # For constant rho, Cp, k, alpha:
 #   T = T_ref * exp((S - S_ref) / Cp)
@@ -64,7 +64,7 @@ def analytical_T(r, T_inner=4000.0, T_outer=1500.0):
     return A / r + B
 
 
-# ── Constant-property state class ────────────────────────────────────
+# -- Constant-property state class ---------------------------------------------
 
 class ConstPropState:
     """Entropy state with constant properties (no EOS tables needed).
@@ -179,7 +179,7 @@ def make_const_mesh(N=100):
     return mesh
 
 
-# ── Test A: Conduction steady state ──────────────────────────────────
+# -- Test A: Conduction steady state -------------------------------------------
 
 @pytest.mark.smoke
 class TestConductionSteadyState:
@@ -249,7 +249,7 @@ class TestConductionSteadyState:
         )
 
 
-# ── Test B: Eigenvalue decay ─────────────────────────────────────────
+# -- Test B: Eigenvalue decay --------------------------------------------------
 
 @pytest.mark.smoke
 class TestEigenvalueDecay:
@@ -258,7 +258,7 @@ class TestEigenvalueDecay:
     def test_decay_timescale(self):
         """Fitted decay timescale should match tau = D^2/(pi^2*kappa_eff).
 
-        Uses high k (4000 W/m/K) to get tau ~ 3000 yr (practical).
+        Uses high k (4000 W/m/K) to get tau ~ 3.2 Myr (practical for BDF).
         Small DT (500 K) so T is nearly constant across the shell.
         The effective diffusivity in entropy coordinates is
         kappa_eff = k / (rho * T_mean) * T_mean / Cp = k / (rho * Cp) = kappa.
@@ -267,7 +267,7 @@ class TestEigenvalueDecay:
         k_test = 4000.0  # W/m/K
         kappa_test = k_test / (RHO * CP)  # 1e-3 m^2/s
         tau_yr = D_SHELL**2 / (np.pi**2 * kappa_test) / SECS_PER_YEAR
-        # tau ~ 3215 yr
+        # tau ~ 3.21e6 yr (3.2 Myr)
 
         N = 100
         mesh = make_const_mesh(N)
@@ -310,12 +310,6 @@ class TestEigenvalueDecay:
             # Compute fluxes
             state.dSdt(t, S)
             # Override boundary fluxes to enforce fixed S (Dirichlet)
-            # Instead of prescribed flux, we enforce S at boundaries by
-            # computing what flux would keep S constant there.
-            # Simpler: just reset S at boundaries after each step.
-            # But solve_ivp doesn't support this directly.
-            # Alternative: use very large conductance at boundaries.
-            # Simplest: compute dS/dt normally, then set dS/dt = 0 at boundaries.
             state.heat_flux[0] = F_in
             state.heat_flux[-1] = F_out
             ef = state.heat_flux * mesh.area
@@ -355,11 +349,18 @@ class TestEigenvalueDecay:
         )
 
 
-# ── Test C: Nu-Ra scaling ────────────────────────────────────────────
+# -- Test C: Nu-Ra scaling -----------------------------------------------------
 
 @pytest.mark.smoke
 class TestNuRaScaling:
-    """Verify MLT produces correct Nu-Ra scaling by sweeping viscosity."""
+    """Verify MLT produces correct Nu-Ra scaling by sweeping viscosity.
+
+    Uses relaxation BCs (penalty method) instead of prescribed-flux BCs.
+    Prescribed flux forces F_surf = prescribed value at steady state
+    regardless of convection, so Nu = 1 always. Relaxation BCs fix the
+    temperature (entropy) at boundaries, letting the interior set its own
+    flux profile. Nu should increase with Ra.
+    """
 
     def test_viscous_regime_slope(self):
         """In the viscous MLT regime, Nu should scale linearly with Ra."""
@@ -368,10 +369,18 @@ class TestNuRaScaling:
         T_inner, T_outer = 4000.0, 1500.0
         DT = T_inner - T_outer
 
-        # Conductive reference flux
+        # Conductive reference flux (for Nu normalization)
         A_coeff = DT * R_INNER * R_OUTER / D_SHELL
         Q_cond = 4 * np.pi * K_COND * A_coeff
         F_cond_surf = Q_cond / (4 * np.pi * R_OUTER**2)
+
+        # Fixed-entropy BCs (relaxation / penalty method)
+        S_in_bc = T_to_S(T_inner)
+        S_out_bc = T_to_S(T_outer)
+        relax = 1e6  # strong relaxation rate [1/yr]
+
+        # alpha_conv for convection and Ra calculation
+        alpha_conv = 1e-5
 
         # Sweep viscosity in the viscous regime (high viscosity)
         viscosities = np.logspace(14, 18, 5)
@@ -379,18 +388,24 @@ class TestNuRaScaling:
         Ra_vals = []
 
         for visc in viscosities:
-            state = ConstPropState(mesh, viscosity=visc, convection=True, alpha=1e-5)
+            state = ConstPropState(mesh, viscosity=visc, convection=True, alpha=alpha_conv)
 
-            # Start from slightly superadiabatic profile
+            # Start from conduction profile
             T_init = analytical_T(mesh.r_stag, T_inner, T_outer)
             S_init = T_to_S(T_init)
 
-            # Prescribed flux BCs
-            F_in = Q_cond / (4 * np.pi * R_INNER**2)
-            F_out = Q_cond / (4 * np.pi * R_OUTER**2)
-
-            def rhs(t, S, _s=state, _fi=F_in, _fo=F_out):
-                return _s.compute_dSdt(t, S, F_inner=_fi, F_outer=_fo)
+            def rhs(t, S, _s=state, _si=S_in_bc, _so=S_out_bc):
+                _s.dSdt(t, S)
+                # Zero prescribed flux at boundaries (relaxation does the work)
+                _s.heat_flux[0] = 0.0
+                _s.heat_flux[-1] = 0.0
+                ef = _s.heat_flux * mesh.area
+                cap = RHO * S_to_T(S) * mesh.volume
+                dsdt = -np.diff(ef) / cap * SECS_PER_YEAR
+                # Relaxation BCs: penalty terms that fix S at boundaries
+                dsdt[0] += relax * (_si - S[0])
+                dsdt[-1] += relax * (_so - S[-1])
+                return dsdt
 
             # Run to approximate steady state
             sol = solve_ivp(rhs, (0, 1e8), S_init, method='BDF',
@@ -398,14 +413,14 @@ class TestNuRaScaling:
             if sol.status != 0:
                 continue
 
-            # Measure surface flux
+            # Measure surface flux from the internal flux profile
             state.dSdt(0, sol.y[:, -1])
             F_surf = state.heat_flux[-1]
             Nu = abs(F_surf) / abs(F_cond_surf) if abs(F_cond_surf) > 0 else 1.0
             Nu_vals.append(Nu)
 
             nu = visc / RHO
-            Ra = RHO * G * ALPHA * DT * D_SHELL**3 / (nu * KAPPA)
+            Ra = RHO * G * alpha_conv * DT * D_SHELL**3 / (nu * KAPPA)
             Ra_vals.append(Ra)
 
         Nu_vals = np.array(Nu_vals)
@@ -413,20 +428,31 @@ class TestNuRaScaling:
 
         # In the viscous regime, Nu should increase as Ra increases
         # (viscosity decreases -> Ra increases -> more convection -> higher Nu)
-        if len(Nu_vals) >= 3:
-            assert Nu_vals[-1] >= Nu_vals[0], (
-                f'Nu should increase with Ra: Nu={Nu_vals}, Ra={Ra_vals}'
-            )
+        assert len(Nu_vals) >= 3, (
+            f'Too few converged cases: {len(Nu_vals)} (need >= 3)'
+        )
+        assert Nu_vals[-1] >= Nu_vals[0], (
+            f'Nu should increase with Ra: Nu={Nu_vals}, Ra={Ra_vals}'
+        )
 
 
-# ── Test D: Boundary layer thickness ─────────────────────────────────
+# -- Test D: Boundary layer thickness ------------------------------------------
 
 @pytest.mark.smoke
-class TestBoundaryLayerThickness:
-    """Verify BL thickness decreases with increasing Ra."""
+class TestBoundaryLayer:
+    """Verify BL thickness decreases with increasing Ra.
+
+    Uses at least 4 viscosity points and checks monotonic decrease of BL
+    thickness with decreasing viscosity (increasing Ra). Optionally fits
+    a power law to verify the exponent is negative.
+    """
 
     def test_bl_thins_with_decreasing_viscosity(self):
-        """Lower viscosity -> higher Ra -> thinner boundary layer."""
+        """Lower viscosity -> higher Ra -> thinner boundary layer.
+
+        Uses 5 viscosity points spanning 8 orders of magnitude. Checks
+        that delta is monotonically decreasing as viscosity decreases.
+        """
         N = 100
         mesh = make_const_mesh(N)
         T_inner, T_outer = 4000.0, 1500.0
@@ -442,41 +468,42 @@ class TestBoundaryLayerThickness:
         Q_cond = 4 * np.pi * K_COND * A_coeff
         F_cond_surf = Q_cond / (4 * np.pi * R_OUTER**2)
 
+        # alpha_conv for convection and Ra calculation
+        alpha_conv = 1e-5
+
+        # Fixed-entropy BCs (relaxation / penalty method)
+        S_in_bc = T_to_S(T_inner)
+        S_out_bc = T_to_S(T_outer)
+        relax = 1e6
+
+        # 5 viscosity points spanning a wide range
+        viscosities = [1e18, 1e16, 1e14, 1e12, 1e10]
         bl_thicknesses = []
-        # Use moderate viscosities where Ra is supercritical
-        # Ra = rho*g*alpha*DT*D^3/(nu*kappa) ~ 4e3*10*1e-5*2500*1e18/(nu*1e-6)
-        # At visc=1e12: nu=2.5e8, Ra~4e11 (strongly convecting)
-        # At visc=1e15: nu=2.5e11, Ra~4e8 (weakly convecting)
-        viscosities = [1e15, 1e12]
+        Ra_vals = []
 
         for visc in viscosities:
-            state = ConstPropState(mesh, viscosity=visc, convection=True, alpha=1e-5)
+            state = ConstPropState(mesh, viscosity=visc, convection=True, alpha=alpha_conv)
             # Start from uniform T (highly superadiabatic) with fixed-S BCs
             T_uniform = 0.5 * (T_inner + T_outer)
             S_init = T_to_S(np.full(N, T_uniform))
-            S_in_bc = T_to_S(T_inner)
-            S_out_bc = T_to_S(T_outer)
 
-            F_in = Q_cond / (4 * np.pi * R_INNER**2)
-            F_out = Q_cond / (4 * np.pi * R_OUTER**2)
-
-            def rhs(t, S, _s=state, _fi=F_in, _fo=F_out,
-                    _si=S_in_bc, _so=S_out_bc):
+            def rhs(t, S, _s=state, _si=S_in_bc, _so=S_out_bc):
                 _s.dSdt(t, S)
-                _s.heat_flux[0] = _fi
-                _s.heat_flux[-1] = _fo
+                _s.heat_flux[0] = 0.0
+                _s.heat_flux[-1] = 0.0
                 ef = _s.heat_flux * mesh.area
                 cap = RHO * S_to_T(S) * mesh.volume
                 dsdt = -np.diff(ef) / cap * SECS_PER_YEAR
                 # Relaxation BCs
-                dsdt[0] += 1e6 * (_si - S[0])
-                dsdt[-1] += 1e6 * (_so - S[-1])
+                dsdt[0] += relax * (_si - S[0])
+                dsdt[-1] += relax * (_so - S[-1])
                 return dsdt
 
             sol = solve_ivp(rhs, (0, 1e6), S_init, method='BDF',
                             atol=0.01, rtol=1e-6)
             if sol.status != 0:
                 bl_thicknesses.append(np.nan)
+                Ra_vals.append(np.nan)
                 continue
 
             # Flux-derived BL thickness: delta = D / Nu
@@ -486,8 +513,39 @@ class TestBoundaryLayerThickness:
             delta = D_SHELL / max(Nu, 1.0)
             bl_thicknesses.append(delta)
 
-        # Lower viscosity should give thinner BL
-        if len(bl_thicknesses) == 2 and not any(np.isnan(bl_thicknesses)):
-            assert bl_thicknesses[1] < bl_thicknesses[0], (
-                f'BL should thin: visc={viscosities}, delta={bl_thicknesses}'
+            nu = visc / RHO
+            Ra = RHO * G * alpha_conv * DT * D_SHELL**3 / (nu * KAPPA)
+            Ra_vals.append(Ra)
+
+        # Filter out NaN entries
+        valid = [(v, d, r) for v, d, r in zip(viscosities, bl_thicknesses, Ra_vals)
+                 if not np.isnan(d)]
+        assert len(valid) >= 4, (
+            f'Too few converged cases: {len(valid)} (need >= 4). '
+            f'viscosities={viscosities}, deltas={bl_thicknesses}'
+        )
+
+        valid_deltas = [d for _, d, _ in valid]
+
+        # Check monotonic decrease: delta should decrease as viscosity decreases
+        # (viscosities are in decreasing order, so deltas should also decrease)
+        for i in range(len(valid_deltas) - 1):
+            assert valid_deltas[i + 1] <= valid_deltas[i], (
+                f'BL thickness not monotonically decreasing: '
+                f'delta[{i}]={valid_deltas[i]:.0f} m, '
+                f'delta[{i+1}]={valid_deltas[i+1]:.0f} m. '
+                f'Full sequence: {valid_deltas}'
+            )
+
+        # Optionally verify negative power-law exponent: delta ~ Ra^beta, beta < 0
+        valid_Ra = np.array([r for _, _, r in valid])
+        valid_d = np.array(valid_deltas)
+        if len(valid_Ra) >= 3 and np.all(valid_Ra > 0) and np.all(valid_d > 0):
+            log_Ra = np.log10(valid_Ra)
+            log_d = np.log10(valid_d)
+            coeffs = np.polyfit(log_Ra, log_d, 1)
+            beta = coeffs[0]
+            assert beta < 0, (
+                f'Power-law exponent should be negative: beta={beta:.3f}. '
+                f'delta should decrease with increasing Ra.'
             )
