@@ -234,18 +234,26 @@ def main():
             phi_t = eos.melt_fraction(mesh.staggered.pressure, S_t)
             tp_profiles[t] = (T_t, S_t, phi_t)
 
-    # Solidus and liquidus in T-P space (use many points for smooth curves)
-    P_range = np.linspace(mesh.staggered.pressure[0], mesh.staggered.pressure[-1], 1000)
+    # Solidus and liquidus in T-P space from PALEOS analytic parameterization.
+    # Liquidus: Belonoshko+2005 (P < 2.55 GPa) / Fei+2021 (P >= 2.55 GPa).
+    # Solidus: PALEOS liquidus with cryoscopic depression (x0=0.79, Stixrude 2014).
+    P_range = np.linspace(mesh.staggered.pressure[0], mesh.staggered.pressure[-1], 500)
     P_range_GPa = P_range / 1e9
+    P_GPa = P_range / 1e9
+    PALEOS_P0 = 2.551686137257537  # GPa crossover
+    T_liq = np.where(
+        P_GPa < PALEOS_P0,
+        1831.0 * (1.0 + P_GPa / 4.6)**0.33,
+        6000.0 * (P_GPa / 140.0)**0.26,
+    )
+    T_liq = np.where(P_range > 0, T_liq, 0.0)
+    # Cryoscopic solidus: T_sol = T_liq / (1 - ln(x0)) with x0=0.79
+    cryo_factor = 1.0 / (1.0 - np.log(0.79))
+    T_sol = T_liq * cryo_factor
+
+    # Also get S boundaries from the P-S table files (for panel f)
     S_sol = eos.solidus_entropy(P_range)
     S_liq = eos.liquidus_entropy(P_range)
-    T_sol = eos._lookup_at_phase_boundary('temperature', P_range, 'solid')
-    T_liq = eos._lookup_at_phase_boundary('temperature', P_range, 'melt')
-    # Smooth the solidus/liquidus T curves (bilinear interpolation on the
-    # 2D table can produce kinks at grid cell boundaries)
-    from scipy.ndimage import uniform_filter1d
-    T_sol = uniform_filter1d(T_sol, size=15)
-    T_liq = uniform_filter1d(T_liq, size=15)
 
     # ── Generate 6-panel figure (3x2) ────────────────────────────────
     print('\nGenerating verification figure...')
