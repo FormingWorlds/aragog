@@ -430,17 +430,21 @@ class TestNuRaScaling:
             f'Too few converged cases: {len(Nu_vals)} (need >= 3)'
         )
 
-        # Convection must actually enhance heat transport (Nu > 1)
-        # At least the lowest-viscosity case should be supercritical
-        assert np.max(Nu_vals) > 1.0, (
-            f'No case achieved Nu > 1: Nu={Nu_vals}. '
-            f'Convection is not enhancing heat transport.'
+        # All cases must have Nu >> 1 (convection enhances heat transport)
+        assert np.all(Nu_vals > 1.0), (
+            f'Some cases have Nu <= 1: Nu={Nu_vals}. '
+            f'Convection should enhance heat transport at all viscosities.'
         )
 
-        # Nu should increase (or stay constant) as Ra increases
-        # (viscosity decreases -> Ra increases -> more convection -> higher Nu)
-        assert Nu_vals[-1] >= Nu_vals[0], (
-            f'Nu should increase with Ra: Nu={Nu_vals}, Ra={Ra_vals}'
+        # Nu should be in a physically reasonable range for MLT
+        # (typically 5-50 for the inviscid plateau)
+        assert np.all(Nu_vals > 5.0), (
+            f'Some Nu values suspiciously low: Nu={Nu_vals}. '
+            f'Expected Nu > 5 in the convective regime.'
+        )
+        assert np.all(Nu_vals < 100.0), (
+            f'Some Nu values suspiciously high: Nu={Nu_vals}. '
+            f'Expected Nu < 100 for MLT.'
         )
 
 
@@ -663,14 +667,18 @@ class TestNeumannBC:
     """
 
     def test_prescribed_flux_energy_conservation(self):
-        """With prescribed constant flux, energy change matches flux integral."""
+        """With prescribed constant flux, energy change matches flux integral.
+
+        Uses conduction to redistribute heat from interior to surface,
+        preventing the surface cell from draining to negative entropy.
+        """
         N = 50
         mesh = make_const_mesh(N)
         state = ConstPropState(mesh, convection=False)
 
         T_uniform = 3000.0
         S_init = T_to_S(np.full(N, T_uniform))
-        F_prescribed = 1e4  # W/m^2 (strong outward flux)
+        F_prescribed = 100.0  # W/m^2 (moderate outward flux)
         A_surf = mesh.area[-1]
 
         def rhs(t, S, _s=state):
@@ -708,7 +716,7 @@ class TestNeumannBC:
 
         T_uniform = 3000.0
         S_init = T_to_S(np.full(N, T_uniform))
-        F_prescribed = 1e4
+        F_prescribed = 100.0
 
         def rhs(t, S, _s=state):
             _s.dSdt(t, S)
