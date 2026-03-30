@@ -161,10 +161,18 @@ class EntropySolver:
             convection=energy.convection,
             gravitational_separation=energy.gravitational_separation,
             mixing=energy.mixing,
+            radionuclides=energy.radionuclides,
+            tidal=energy.tidal,
+            tidal_array=getattr(energy, 'tidal_array', [0.0]),
             eddy_diffusivity_thermal=getattr(energy, 'eddy_diffusivity_thermal', 1.0),
             eddy_diffusivity_chemical=energy.eddy_diffusivity_chemical,
             kappah_floor=energy.kappah_floor,
         )
+        # Store radionuclide data for the state's heating computation
+        if hasattr(self.parameters, 'radionuclides'):
+            self.evaluator.radionuclides = self.parameters.radionuclides
+        else:
+            self.evaluator.radionuclides = []
 
     def reset(self) -> None:
         """Reset for a new integration (PROTEUS coupling loop).
@@ -209,18 +217,36 @@ class EntropySolver:
     ) -> npt.NDArray:
         """dS/dt at the staggered nodes.
 
+        Supports vectorized evaluation: when entropy is (N, K), returns
+        (N, K) by looping over K columns. This enables scipy BDF to
+        evaluate multiple perturbations for Jacobian approximation.
+
         Parameters
         ----------
         time : float
             Time [yr].
         entropy : array
-            Entropy at staggered nodes [J/kg/K].
+            Entropy at staggered nodes [J/kg/K]. Shape (N,) or (N, K).
 
         Returns
         -------
         array
-            dS/dt at staggered nodes [J/kg/K/yr].
+            dS/dt at staggered nodes [J/kg/K/yr]. Same shape as input.
         """
+        # Handle vectorized (N, K) input by looping over columns
+        if entropy.ndim > 1:
+            result = np.zeros_like(entropy)
+            for k in range(entropy.shape[1]):
+                result[:, k] = self._dSdt_single(time, entropy[:, k])
+            return result
+        return self._dSdt_single(time, entropy)
+
+    def _dSdt_single(
+        self,
+        time: npt.NDArray | float,
+        entropy: npt.NDArray,
+    ) -> npt.NDArray:
+        """dS/dt for a single entropy profile (1D)."""
         self.state.update(entropy, time)
 
         # Apply flux BCs directly (not via BC module, which expects 2D arrays).
@@ -283,12 +309,9 @@ class EntropySolver:
 
         # Internal heating: dS/dt += H / T (SPIDER rhs.c line 62)
         # H is power per unit mass [W/kg], T is temperature [K]
-        # This adds radiogenic, tidal, and other volumetric heating
+        H = np.asarray(self.state.heating).flatten()
         T_stag = np.asarray(self.state.phase_staggered.temperature()).flatten()
-        # TODO: wire up radiogenic/tidal heating from config
-        # For now, H = 0 (pure cooling). When heating is needed:
-        # H = self.state.heating  # power per unit mass [W/kg]
-        # dSdt += H / T_stag
+        dSdt += H / np.maximum(T_stag, 1.0)
 
         # Convert to J/kg/K/yr
         dSdt *= SECS_PER_YEAR
@@ -328,6 +351,7 @@ class EntropySolver:
             (start_time, end_time),
             self._S0,
             method='BDF',
+            vectorized=True,
             dense_output=True,
             atol=atol,
             rtol=rtol,

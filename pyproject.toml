@@ -61,3 +61,11 @@ docs = [
 [tool.poetry.scripts]
 aragog = "aragog.cli:cli"
 
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+    "unit: Unit tests (fast, no external data)",
+    "smoke: Integration tests (may need external data)",
+]

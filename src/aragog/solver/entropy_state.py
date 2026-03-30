@@ -55,6 +55,9 @@ class EntropyState:
         convection: bool = True,
         gravitational_separation: bool = False,
         mixing: bool = False,
+        radionuclides: bool = False,
+        tidal: bool = False,
+        tidal_array: list | None = None,
         eddy_diffusivity_thermal: float = 1.0,
         eddy_diffusivity_chemical: float = 1.0,
         kappah_floor: float = 0.0,
@@ -66,6 +69,9 @@ class EntropyState:
         self._convection = convection
         self._grav_sep = gravitational_separation
         self._mixing = mixing
+        self._radionuclides = radionuclides
+        self._tidal = tidal
+        self._tidal_array = tidal_array or [0.0]
         self._eddy_diff_thermal = eddy_diffusivity_thermal
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
@@ -219,7 +225,28 @@ class EntropyState:
         self._mass_flux[-1] = 0.0
         self._heat_flux += self._mass_flux * self.phase_basic.latent_heat()
 
+        # ── Internal heating (power per unit mass [W/kg]) ────────────
+        n_stag = len(self._entropy_staggered)
+        self._heating = np.zeros(n_stag)
+
+        if self._radionuclides and hasattr(self._evaluator, 'radionuclides'):
+            radio = 0.0
+            for r in self._evaluator.radionuclides:
+                radio += r.get_heating(time)
+            self._heating += radio
+
+        if self._tidal:
+            if len(self._tidal_array) == 1:
+                self._heating += self._tidal_array[0]
+            elif len(self._tidal_array) == n_stag:
+                self._heating += np.array(self._tidal_array)
+
     # ── Properties ───────────────────────────────────────────────────
+
+    @property
+    def heating(self) -> npt.NDArray:
+        """Total internal heating [W/kg] at staggered nodes."""
+        return self._heating
 
     @property
     def entropy_staggered(self) -> npt.NDArray:
