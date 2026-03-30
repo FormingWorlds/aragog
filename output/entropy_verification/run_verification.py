@@ -163,25 +163,47 @@ def main():
     S0 = np.full(N, S_init)
     sol2, t_log, F_log = run_solver(state_cool, mesh, S0, 10000, surface_bc='greybody')
 
-    E_start = compute_thermal_energy(S0, mesh, eos)
-    sample_times = np.linspace(0, sol2.t[-1], 50)
-    E_history = []
-    for t in sample_times:
-        S_t = sol2.sol(t)
-        E_history.append(compute_thermal_energy(S_t, mesh, eos))
-    E_history = np.array(E_history)
-
-    # Integrated surface flux
-    idx = np.argsort(t_log)
+    # Sample at uniform times and compute INCREMENTAL enthalpy changes.
+    # E = sum(rho*Cp*T*V) is not conserved by the entropy equation because
+    # rho, Cp, T all depend on S nonlinearly. Instead, compute cumulative
+    # enthalpy change: dH = sum(rho_i * Cp_i * dT_i * V_i) between steps.
+    n_samples = 500
+    sample_times = np.linspace(0, sol2.t[-1], n_samples)
     _trapz = getattr(np, 'trapezoid', np.trapz)
-    Q_cumul = np.zeros(len(sample_times))
+    A_surf = mesh.basic.area[-1]
+
+    # Compute T, rho, Cp, F at each sample time
+    T_all = np.zeros((n_samples, N))
+    F_history = np.zeros(n_samples)
+    rho_all = np.zeros((n_samples, N))
+    Cp_all = np.zeros((n_samples, N))
     for i, t in enumerate(sample_times):
-        mask = t_log[idx] <= t
-        if np.sum(mask) > 1:
-            Q_cumul[i] = _trapz(
-                F_log[idx][mask] * mesh.basic.area[-1],
-                t_log[idx][mask] * SECS_PER_YEAR
-            )
+        S_t = sol2.sol(t)
+        T_all[i] = eos.temperature(mesh.staggered.pressure, S_t)
+        rho_all[i] = eos.density(mesh.staggered.pressure, S_t)
+        Cp_all[i] = eos.heat_capacity(mesh.staggered.pressure, S_t)
+        F_history[i] = Stefan_Boltzmann * (T_all[i, -1]**4 - 255.0**4)
+
+    # Incremental energy change using dH = rho * T * dS * V
+    # (the natural energy measure for the entropy equation)
+    S_all = np.zeros((n_samples, N))
+    for i, t in enumerate(sample_times):
+        S_all[i] = sol2.sol(t)
+
+    dH_cumul = np.zeros(n_samples)
+    for i in range(1, n_samples):
+        dS = S_all[i] - S_all[i-1]
+        rho_mid = 0.5 * (rho_all[i] + rho_all[i-1])
+        T_mid = 0.5 * (T_all[i] + T_all[i-1])
+        dH_cumul[i] = dH_cumul[i-1] + np.sum(rho_mid * T_mid * dS * mesh.basic.volume)
+
+    # Cumulative surface flux loss
+    Q_cumul = np.zeros(n_samples)
+    for i in range(1, n_samples):
+        Q_cumul[i] = _trapz(
+            F_history[:i+1] * A_surf,
+            sample_times[:i+1] * SECS_PER_YEAR
+        )
 
     # ── Test 3: Grey-body cooling trajectory ─────────────────────────
     print('Test 3: Grey-body cooling trajectory (10 kyr)...')
@@ -266,17 +288,16 @@ def main():
             transform=ax.transAxes, ha='right', va='top',
             bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
 
-    # Panel (b): Energy budget
+    # Panel (b): Energy budget (incremental enthalpy vs integrated flux)
     ax = axes[0, 1]
-    dE = E_history - E_start
-    ax.plot(sample_times, dE, 'b-', label=r'$\Delta E_\mathrm{th}$', linewidth=2)
+    ax.plot(sample_times, dH_cumul, 'b-', label=r'$\Delta H$ (incremental)', linewidth=2)
     ax.plot(sample_times, -Q_cumul, 'r--', label=r'$-\int F_\mathrm{surf} A \, dt$', linewidth=2)
     ax.set_xlabel('Time [yr]')
     ax.set_ylabel('Energy change [J]')
     ax.set_title('(b) Energy budget (grey-body cooling)')
     ax.legend()
     if abs(Q_cumul[-1]) > 0:
-        residual = abs(dE[-1] + Q_cumul[-1]) / abs(Q_cumul[-1])
+        residual = abs(dH_cumul[-1] + Q_cumul[-1]) / abs(Q_cumul[-1])
         ax.text(0.95, 0.05, f'Residual: {residual:.1%}',
                 transform=ax.transAxes, ha='right', va='bottom',
                 bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
