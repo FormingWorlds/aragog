@@ -222,8 +222,9 @@ class EntropyEOS:
         properties at the phase boundaries (not at the actual S).
         """
         P = np.asarray(P, dtype=float)
-        P_clamped = np.clip(P, self.P_min, self.P_max)
         table = self._tables[f'{prop_name}_{phase}']
+        # Clamp P to THIS table's range (not global range)
+        P_clamped = np.clip(P, table['P'][0], table['P'][-1])
 
         if phase == 'solid':
             S_boundary = self.solidus_entropy(P)
@@ -247,22 +248,25 @@ class EntropyEOS:
         S = np.asarray(S, dtype=float)
         phi = self.melt_fraction(P, S)
 
-        # Clamp S to table ranges for each phase
+        # Clamp S and P to each table's own range (not global range)
+        # to avoid NaN from fill_value=nan outside individual table domains.
         solid_table = self._tables[f'{prop_name}_solid']
         melt_table = self._tables[f'{prop_name}_melt']
 
         S_solid_clamped = np.clip(S, solid_table['S'][0], solid_table['S'][-1])
         S_melt_clamped = np.clip(S, melt_table['S'][0], melt_table['S'][-1])
-        P_clamped = np.clip(P, self.P_min, self.P_max)
+        P_solid_clamped = np.clip(P, solid_table['P'][0], solid_table['P'][-1])
+        P_melt_clamped = np.clip(P, melt_table['P'][0], melt_table['P'][-1])
 
-        pts_solid = np.column_stack([P_clamped.ravel(), S_solid_clamped.ravel()])
-        pts_melt = np.column_stack([P_clamped.ravel(), S_melt_clamped.ravel()])
+        pts_solid = np.column_stack([P_solid_clamped.ravel(), S_solid_clamped.ravel()])
+        pts_melt = np.column_stack([P_melt_clamped.ravel(), S_melt_clamped.ravel()])
 
         val_solid = solid_table['interp'](pts_solid).reshape(P.shape)
         val_melt = melt_table['interp'](pts_melt).reshape(P.shape)
 
-        # Phase-weighted blend
-        result = (1.0 - phi) * val_solid + phi * val_melt
+        # NaN-safe phase-weighted blend: avoid 0.0 * NaN = NaN
+        result = np.where(phi > 0, phi * val_melt, 0.0) + \
+                 np.where(phi < 1, (1.0 - phi) * val_solid, 0.0)
         return result
 
     def temperature(self, P: npt.NDArray | float,

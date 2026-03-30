@@ -239,9 +239,8 @@ class EntropySolver:
 
         # CMB boundary condition
         if bc.inner_boundary_condition == 1:
-            # Core cooling (simplified from SPIDER bc.c:76-131):
-            # F_cmb = alpha_core * F_next_node, where alpha_core accounts for
-            # the ratio of mantle cell to core thermal capacity.
+            # Core cooling (Bower+2018 Eq. 37, matching boundary.py):
+            # alpha = (R_1/R_0)^2 / (1 + C_cell / (C_core * tfac))
             r_cmb = float(np.asarray(self.evaluator.mesh.basic.radii).flat[0])
             core_cap = (
                 4.0 / 3.0 * np.pi * r_cmb**3
@@ -252,11 +251,10 @@ class EntropySolver:
             vol_first = float(np.asarray(self.evaluator.mesh.basic.volume).flat[0])
             cell_cap = vol_first * cap_first
             r_above = float(np.asarray(self.evaluator.mesh.basic.radii).flat[1])
-            alpha_core = cell_cap / (
-                core_cap * getattr(bc, 'tfac_core_avg', 1.147)
-                * (r_above / r_cmb)**2
-            )
-            self.state._heat_flux[0] = alpha_core * self.state._heat_flux[1]
+            tfac = getattr(bc, 'tfac_core_avg', 1.147)
+            radius_ratio = r_above / r_cmb
+            alpha = radius_ratio**2 / (cell_cap / (core_cap * tfac) + 1.0)
+            self.state._heat_flux[0] = alpha * self.state._heat_flux[1]
         elif bc.inner_boundary_condition == 2:
             self.state._heat_flux[0] = bc.inner_boundary_value
         elif bc.inner_boundary_condition == 3:
