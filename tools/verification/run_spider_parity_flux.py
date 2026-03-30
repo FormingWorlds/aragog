@@ -360,11 +360,23 @@ def main():
         aragog = run_aragog_flux(F_val, t_end)
         results[F_val] = {"spider": spider, "aragog": aragog}
 
+    # ── Compute solidus/liquidus in T-P space for mush zone shading ──
+    from aragog.eos.entropy import EntropyEOS
+    eos = EntropyEOS(EOS_DIR)
+    P_curve = np.linspace(1e5, 135e9, 200)
+    # Get solidus and liquidus S at each P, then convert to T
+    T_sol = np.array([eos.temperature(np.array([p]),
+                       np.array([eos.solidus_entropy(p)])).item()
+                       for p in P_curve])
+    T_liq = np.array([eos.temperature(np.array([p]),
+                       np.array([eos.liquidus_entropy(p)])).item()
+                       for p in P_curve])
+    P_curve_GPa = P_curve / 1e9
+
     # ── Figure: 3 rows x 2 columns ───────────────────────────────────
     flux_list = sorted(FLUX_CASES.keys())
     fig, axes = plt.subplots(3, 2, figsize=(14, 16))
 
-    # Color maps for time progression
     import matplotlib.cm as cm
 
     panel_labels = ['(a)', '(b)', '(c)', '(d)']
@@ -375,13 +387,17 @@ def main():
         r = results[F_val]
         sp = r["spider"]
         ar = r["aragog"]
-        t_end = FLUX_CASES[F_val][0]
 
-        # Select 5 SPIDER snapshots at similar fractional times
+        # Mush zone shading (between solidus and liquidus)
+        ax.fill_betweenx(P_curve_GPa, T_sol, T_liq,
+                         color='#cccccc', alpha=0.4, zorder=0)
+        ax.plot(T_sol, P_curve_GPa, 'k-', linewidth=0.7, alpha=0.5)
+        ax.plot(T_liq, P_curve_GPa, 'k-', linewidth=0.7, alpha=0.5)
+
+        # SPIDER snapshots
         if sp is not None and sp["snapshots"]:
             snaps = sp["snapshots"]
             n_snap = len(snaps)
-            # Pick 5 evenly spaced indices
             snap_idxs = [0] + [int(f * (n_snap - 1))
                                 for f in [0.1, 0.3, 0.6, 1.0]]
             snap_idxs = sorted(set(snap_idxs))
