@@ -426,11 +426,19 @@ class TestNuRaScaling:
         Nu_vals = np.array(Nu_vals)
         Ra_vals = np.array(Ra_vals)
 
-        # In the viscous regime, Nu should increase as Ra increases
-        # (viscosity decreases -> Ra increases -> more convection -> higher Nu)
         assert len(Nu_vals) >= 3, (
             f'Too few converged cases: {len(Nu_vals)} (need >= 3)'
         )
+
+        # Convection must actually enhance heat transport (Nu > 1)
+        # At least the lowest-viscosity case should be supercritical
+        assert np.max(Nu_vals) > 1.0, (
+            f'No case achieved Nu > 1: Nu={Nu_vals}. '
+            f'Convection is not enhancing heat transport.'
+        )
+
+        # Nu should increase (or stay constant) as Ra increases
+        # (viscosity decreases -> Ra increases -> more convection -> higher Nu)
         assert Nu_vals[-1] >= Nu_vals[0], (
             f'Nu should increase with Ra: Nu={Nu_vals}, Ra={Ra_vals}'
         )

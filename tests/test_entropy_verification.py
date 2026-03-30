@@ -252,12 +252,17 @@ class TestEntropyConservation:
 class TestEnergyConservation:
     """Total thermal energy change must match integrated surface flux."""
 
-    def test_closed_box_energy(self):
-        """Non-uniform S, zero-flux BCs, conduction enabled: enthalpy conserved.
+    def test_closed_box_conserved_vs_nonconserved(self):
+        """Closed box: enthalpy integral IS conserved, thermal energy is NOT.
 
-        Starts from a non-uniform S profile so the system actually evolves
-        (conduction redistributes entropy). With zero-flux BCs, the total
-        enthalpy integral H = sum(rho*T*S*V) must be conserved.
+        The entropy equation rho*T*dS/dt = -div(F) conserves sum(rho*T*S*V)
+        when boundary fluxes are zero. But sum(rho*Cp*T*V) (thermal energy)
+        is NOT a conserved quantity of this equation because rho, Cp, T all
+        depend nonlinearly on S.
+
+        This test verifies that the solver correctly preserves the RIGHT
+        integral while the WRONG integral drifts, confirming the entropy
+        formulation is working as intended.
         """
         from aragog.eos.entropy import EntropyEOS
         eos = EntropyEOS(EOS_DIR)
@@ -284,21 +289,30 @@ class TestEnergyConservation:
 
         S_final = sol.y[:, -1]
 
-        # Verify the system actually evolved (not a zero-RHS test)
-        T0 = eos.temperature(mesh.staggered.pressure, S0)
-        T_final = eos.temperature(mesh.staggered.pressure, S_final)
-        max_dT = np.max(np.abs(T_final - T0))
-        assert max_dT > 1.0, (
-            f'Temperature barely changed (max dT = {max_dT:.1f} K). '
+        # Verify the system actually evolved
+        max_dS = np.max(np.abs(S_final - S0))
+        assert max_dS > 1.0, (
+            f'Entropy barely changed (max dS={max_dS:.2f} J/kg/K). '
             f'Test must exercise nontrivial dynamics.'
         )
 
-        # Enthalpy integral must be conserved with zero-flux BCs
+        # The CORRECT conserved quantity must be conserved
         H_final = compute_enthalpy_integral(S_final, mesh, eos)
-        rel_change = abs(H_final - H0) / abs(H0)
-        assert rel_change < 5e-3, (
-            f'Enthalpy integral changed by {rel_change:.2e} '
+        rel_H = abs(H_final - H0) / abs(H0)
+        assert rel_H < 5e-3, (
+            f'Enthalpy integral sum(rho*T*S*V) changed by {rel_H:.2e} '
             f'(should be < 0.5%)'
+        )
+
+        # The WRONG measure (thermal energy) should NOT be conserved
+        # This validates the key insight: rho*Cp*T*V is not the right
+        # conserved quantity for the entropy equation.
+        E_final = compute_thermal_energy(S_final, mesh, eos)
+        rel_E = abs(E_final - E0) / abs(E0)
+        assert rel_E > rel_H, (
+            f'Thermal energy sum(rho*Cp*T*V) changed by {rel_E:.2e}, '
+            f'but enthalpy integral changed by {rel_H:.2e}. '
+            f'Thermal energy should drift MORE than the conserved integral.'
         )
 
     def test_cooling_energy_budget(self):
