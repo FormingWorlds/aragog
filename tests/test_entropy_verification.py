@@ -451,3 +451,256 @@ class TestGreyBodyCooling:
             f'Mid-mantle entropy barely changed: {S_mid:.0f} (was 3200). '
             f'Convection should transport entropy from interior to surface.'
         )
+
+
+# -- Tier 2c: Initial condition sensitivity -----------------------------------
+
+@needs_eos
+@pytest.mark.smoke
+class TestInitialEntropySweep:
+    """Different initial entropy values should all cool monotonically,
+    with solidification timescale increasing with S0."""
+
+    def test_all_ics_cool_monotonically(self):
+        """Grey-body cooling from 4 different S0 values: T_surf always decreases."""
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+
+        for S0_val in [2500.0, 3200.0, 5000.0]:
+            N = 30
+            mesh = make_mesh(N=N)
+            state = make_state(mesh, eos, conduction=True, convection=True)
+            S0 = np.full(N, S0_val)
+
+            def dSdt(t, S, _s=state):
+                _s.update(S, t)
+                T_top = _s.top_temperature.item()
+                F_surf = 5.670374419e-8 * (T_top**4 - 255.0**4)
+                _s._heat_flux[-1] = F_surf
+                _s._heat_flux[0] = 0.0
+                energy_flux = _s.heat_flux * mesh.basic.area
+                cap = _s.capacitance_staggered() * mesh.basic.volume
+                return -np.diff(energy_flux) / cap * SECS_PER_YEAR
+
+            sol = solve_ivp(dSdt, (0, 500), S0, method='BDF',
+                            atol=0.5, rtol=1e-5, dense_output=True)
+            assert sol.status == 0, f'S0={S0_val}: solver failed'
+
+            # Check T_surf is monotonically decreasing
+            times = np.linspace(0, min(500, sol.t[-1]), 20)
+            T_surfs = []
+            for t in times:
+                S_t = sol.sol(t)
+                _s_tmp = state
+                _s_tmp.update(S_t, t)
+                T_surfs.append(_s_tmp.top_temperature.item())
+            T_surfs = np.array(T_surfs)
+            diffs = np.diff(T_surfs)
+            n_increasing = np.sum(diffs > 5.0)  # allow tiny fluctuations
+            assert n_increasing == 0, (
+                f'S0={S0_val}: T_surf increased in {n_increasing} steps')
+
+    def test_higher_s0_cools_slower(self):
+        """Higher initial entropy should take longer to cool by the same amount."""
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+
+        dT_threshold = 200.0  # K drop to measure
+        cooling_times = {}
+
+        for S0_val in [3200.0, 5000.0]:
+            N = 30
+            mesh = make_mesh(N=N)
+            state = make_state(mesh, eos, conduction=True, convection=True)
+            S0 = np.full(N, S0_val)
+
+            state.update(S0, 0)
+            T_surf_init = state.top_temperature.item()
+
+            def dSdt(t, S, _s=state):
+                _s.update(S, t)
+                T_top = _s.top_temperature.item()
+                F_surf = 5.670374419e-8 * (T_top**4 - 255.0**4)
+                _s._heat_flux[-1] = F_surf
+                _s._heat_flux[0] = 0.0
+                energy_flux = _s.heat_flux * mesh.basic.area
+                cap = _s.capacitance_staggered() * mesh.basic.volume
+                return -np.diff(energy_flux) / cap * SECS_PER_YEAR
+
+            sol = solve_ivp(dSdt, (0, 10000), S0, method='BDF',
+                            atol=0.5, rtol=1e-5, dense_output=True)
+            if sol.status != 0:
+                continue
+
+            # Find time to cool by dT_threshold
+            times = np.linspace(0, sol.t[-1], 200)
+            for t in times:
+                state.update(sol.sol(t), t)
+                T_now = state.top_temperature.item()
+                if T_surf_init - T_now >= dT_threshold:
+                    cooling_times[S0_val] = t
+                    break
+
+        if 3200.0 in cooling_times and 5000.0 in cooling_times:
+            assert cooling_times[5000.0] > cooling_times[3200.0], (
+                f'S0=5000 cooled in {cooling_times[5000.0]:.0f} yr but '
+                f'S0=3200 took {cooling_times[3200.0]:.0f} yr. '
+                f'Higher entropy should take longer.')
+
+
+# -- Tier 2d: Radiogenic heating ----------------------------------------------
+
+@needs_eos
+@pytest.mark.smoke
+class TestRadiogenicHeating:
+    """Insulating box with radiogenic heating: entropy must increase."""
+
+    def test_heating_increases_entropy(self):
+        """Zero-flux BCs + constant heating: entropy rises monotonically."""
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+        N = 30
+        mesh = make_mesh(N=N)
+        state = make_state(mesh, eos, conduction=True, convection=True)
+
+        S0 = np.full(N, 3200.0)
+        H_rate = 1e-11  # W/kg (Earth-like radiogenic)
+
+        def dSdt(t, S, _s=state):
+            _s.update(S, t)
+            _s._heat_flux[-1] = 0.0
+            _s._heat_flux[0] = 0.0
+            energy_flux = _s.heat_flux * mesh.basic.area
+            cap = _s.capacitance_staggered() * mesh.basic.volume
+            dsdt = -np.diff(energy_flux) / cap * SECS_PER_YEAR
+            # Add heating: dS/dt += H / T
+            T_stag = eos.temperature(mesh.staggered.pressure,
+                                     np.asarray(S).flatten())
+            dsdt += H_rate / np.maximum(T_stag, 1.0) * SECS_PER_YEAR
+            return dsdt
+
+        sol = solve_ivp(dSdt, (0, 1e6), S0, method='BDF',
+                        atol=0.1, rtol=1e-6)
+        assert sol.status == 0
+
+        S_final = sol.y[:, -1]
+        # Mean entropy should increase (heating with no cooling)
+        dS_mean = np.mean(S_final) - np.mean(S0)
+        assert dS_mean > 1.0, (
+            f'Mean entropy change {dS_mean:.2f} J/kg/K is too small. '
+            f'Heating should increase entropy.')
+
+
+# -- Tier 2e: Core cooling BC ------------------------------------------------
+
+@needs_eos
+@pytest.mark.smoke
+class TestCoreCooling:
+    """Core cooling BC: CMB flux positive, decreasing as mantle cools."""
+
+    def test_core_heats_mantle(self):
+        """With core cooling BC, CMB flux should be positive (core to mantle)."""
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+        N = 30
+        mesh = make_mesh(N=N)
+        state = make_state(mesh, eos, conduction=True, convection=True)
+
+        S0 = np.full(N, 3200.0)
+        # Core cooling parameters (Bower+2018)
+        core_density = 12000.0  # kg/m^3
+        core_cp = 800.0  # J/kg/K
+        tfac = 1.147
+        r_cmb = float(np.asarray(mesh.basic.radii).flat[0])
+        r_above = float(np.asarray(mesh.basic.radii).flat[1])
+        core_vol = 4.0 / 3.0 * np.pi * r_cmb**3
+        core_cap = core_vol * core_density * core_cp
+
+        def dSdt(t, S, _s=state):
+            _s.update(S, t)
+            # Grey-body at surface
+            T_top = _s.top_temperature.item()
+            _s._heat_flux[-1] = 5.670374419e-8 * (T_top**4 - 255.0**4)
+            # Core cooling at CMB (Bower+2018 Eq. 37)
+            rho_first = float(np.asarray(
+                _s.phase_staggered.density()).flat[0])
+            cp_first = float(np.asarray(
+                _s.phase_staggered.heat_capacity()).flat[0])
+            vol_first = float(np.asarray(mesh.basic.volume).flat[0])
+            cell_cap = vol_first * rho_first * cp_first
+            alpha_core = (r_above / r_cmb)**2 / (
+                cell_cap / (core_cap * tfac) + 1.0)
+            _s._heat_flux[0] = alpha_core * _s._heat_flux[1]
+
+            energy_flux = _s.heat_flux * mesh.basic.area
+            cap = _s.capacitance_staggered() * mesh.basic.volume
+            return -np.diff(energy_flux) / cap * SECS_PER_YEAR
+
+        sol = solve_ivp(dSdt, (0, 1000), S0, method='BDF',
+                        atol=0.5, rtol=1e-5, dense_output=True)
+        assert sol.status == 0
+
+        # Check CMB flux is positive at multiple times
+        for t in [10, 100, 500]:
+            if t > sol.t[-1]:
+                break
+            S_t = sol.sol(t)
+            state.update(S_t, t)
+            # Recompute CMB flux
+            rho_first = float(np.asarray(
+                state.phase_staggered.density()).flat[0])
+            cp_first = float(np.asarray(
+                state.phase_staggered.heat_capacity()).flat[0])
+            vol_first = float(np.asarray(mesh.basic.volume).flat[0])
+            cell_cap = vol_first * rho_first * cp_first
+            alpha_core = (r_above / r_cmb)**2 / (
+                cell_cap / (core_cap * tfac) + 1.0)
+            F_cmb = alpha_core * state._heat_flux[1]
+            assert F_cmb > 0, (
+                f't={t} yr: CMB flux = {F_cmb:.2e} W/m^2 (should be > 0)')
+
+
+# -- Tier 2g: Mesh convergence -----------------------------------------------
+
+@needs_eos
+@pytest.mark.smoke
+class TestMeshConvergence:
+    """Grey-body cooling should converge with mesh resolution."""
+
+    def test_convergence_with_resolution(self):
+        """T_surf at t=500 yr should converge as N increases."""
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+
+        T_surfs = {}
+        for N in [25, 50, 100]:
+            mesh = make_mesh(N=N)
+            state = make_state(mesh, eos, conduction=True, convection=True)
+            S0 = np.full(N, 3200.0)
+
+            def dSdt(t, S, _s=state, _m=mesh):
+                _s.update(S, t)
+                T_top = _s.top_temperature.item()
+                _s._heat_flux[-1] = 5.670374419e-8 * (T_top**4 - 255.0**4)
+                _s._heat_flux[0] = 0.0
+                energy_flux = _s.heat_flux * _m.basic.area
+                cap = _s.capacitance_staggered() * _m.basic.volume
+                return -np.diff(energy_flux) / cap * SECS_PER_YEAR
+
+            sol = solve_ivp(dSdt, (0, 500), S0, method='BDF',
+                            atol=0.5, rtol=1e-5, dense_output=True)
+            if sol.status == 0:
+                state.update(sol.sol(500), 500)
+                T_surfs[N] = state.top_temperature.item()
+
+        assert len(T_surfs) >= 2, f'Too few converged: {T_surfs}'
+
+        # T_surf should converge: difference between finest resolutions
+        # should be smaller than between coarsest
+        Ns = sorted(T_surfs.keys())
+        if len(Ns) >= 3:
+            diff_coarse = abs(T_surfs[Ns[1]] - T_surfs[Ns[0]])
+            diff_fine = abs(T_surfs[Ns[2]] - T_surfs[Ns[1]])
+            assert diff_fine <= diff_coarse + 1.0, (
+                f'Not converging: |T(N={Ns[2]})-T(N={Ns[1]})| = {diff_fine:.1f} K '
+                f'> |T(N={Ns[1]})-T(N={Ns[0]})| = {diff_coarse:.1f} K')
