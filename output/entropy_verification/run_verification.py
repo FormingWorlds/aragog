@@ -305,7 +305,7 @@ def main():
 
     # ── Generate 6-panel figure (3x2) ────────────────────────────────
     print('\nGenerating verification figure...')
-    fig, axes = plt.subplots(3, 2, figsize=(14, 18))
+    fig, axes = plt.subplots(3, 2, figsize=(13, 15))
 
     # Panel (a): Entropy conservation [row 0, col 0]
     ax = axes[0, 0]
