@@ -241,15 +241,18 @@ class EntropySolver:
         if bc.inner_boundary_condition == 1:
             # Core cooling (Bower+2018 Eq. 37, matching boundary.py):
             # alpha = (R_1/R_0)^2 / (1 + C_cell / (C_core * tfac))
+            # Both capacities must be THERMAL (rho*Cp*V, units J/K),
+            # not entropy (rho*T*V). Use Cp from the phase evaluator.
             r_cmb = float(np.asarray(self.evaluator.mesh.basic.radii).flat[0])
             core_cap = (
                 4.0 / 3.0 * np.pi * r_cmb**3
                 * self.evaluator.mesh.settings.core_density
                 * bc.core_heat_capacity
             )
-            cap_first = float(np.asarray(self.state.capacitance_staggered()).flat[0])
+            rho_first = float(np.asarray(self.state.phase_staggered.density()).flat[0])
+            cp_first = float(np.asarray(self.state.phase_staggered.heat_capacity()).flat[0])
             vol_first = float(np.asarray(self.evaluator.mesh.basic.volume).flat[0])
-            cell_cap = vol_first * cap_first
+            cell_cap = vol_first * rho_first * cp_first  # J/K (thermal)
             r_above = float(np.asarray(self.evaluator.mesh.basic.radii).flat[1])
             tfac = getattr(bc, 'tfac_core_avg', 1.147)
             radius_ratio = r_above / r_cmb

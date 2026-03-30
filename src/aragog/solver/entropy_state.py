@@ -213,6 +213,10 @@ class EntropyState:
             # SPIDER uses kappac (from raw kh, not from floored kappah)
             self._mass_flux += rho * self._kappac * (-self._dphidr)
 
+        # Zero mass fluxes at boundaries (SPIDER convention: no mass
+        # transfer across CMB or surface, energy.c lines 282-285, 423-426)
+        self._mass_flux[0] = 0.0
+        self._mass_flux[-1] = 0.0
         self._heat_flux += self._mass_flux * self.phase_basic.latent_heat()
 
     # ── Properties ───────────────────────────────────────────────────
