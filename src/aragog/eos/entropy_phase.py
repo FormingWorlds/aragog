@@ -58,7 +58,6 @@ class EntropyPhaseEvaluator:
         viscosity_solid: float = 1e21,
         viscosity_liquid: float = 1e-1,
         grain_size: float = 1e-3,
-        latent_heat_constant: float = 4e5,
         thermal_conductivity_solid: float = 4.0,
         thermal_conductivity_liquid: float = 2.0,
     ):
@@ -69,7 +68,6 @@ class EntropyPhaseEvaluator:
         self._visc_solid = viscosity_solid
         self._visc_liquid = viscosity_liquid
         self._grain_size = grain_size
-        self._latent_heat_constant = latent_heat_constant
         self._k_solid = thermal_conductivity_solid
         self._k_liquid = thermal_conductivity_liquid
 
@@ -94,8 +92,11 @@ class EntropyPhaseEvaluator:
         self.entropy = np.asarray(entropy, dtype=float)
 
     def set_temperature(self, temperature: npt.NDArray) -> None:
-        """Not used in entropy mode. Kept for interface compatibility."""
-        pass
+        """Not used in entropy mode. Use set_entropy() instead."""
+        raise NotImplementedError(
+            'EntropyPhaseEvaluator uses set_entropy(), not set_temperature(). '
+            'This evaluator cannot be used with the T-based solver.'
+        )
 
     def set_pressure(self, pressure: npt.NDArray) -> None:
         """Set the pressure profile."""

@@ -1,15 +1,16 @@
-"""Entropy-based state class for the entropy formulation solver.
+"""Entropy-based state for the Aragog interior dynamics solver.
 
-Replaces State (temperature-based) with entropy as the prognostic variable.
-All MLT computations use dS/dr instead of the superadiabatic T gradient.
-The c_p spike at phase boundaries is eliminated because entropy changes
-monotonically through the mushy zone.
+Stores the thermodynamic state as S(r,t) and computes heat fluxes
+(conduction, convection, gravitational separation, mixing) from the
+entropy gradient dS/dr. Convective instability is determined by
+dS/dr < 0, with eddy diffusivity from Abe (1993) viscous/inviscid
+MLT. No c_p spike at phase boundaries (entropy is monotonic through
+the mushy zone).
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -189,18 +190,9 @@ class EntropyState:
         self._mass_flux = np.zeros_like(self._entropy_basic)
 
         if self._conduction:
-            # F_cond = k * (dT/dS)_P * (-dS/dr) = k * dTdPs * (-dS/dr)
-            # But dTdPs from SPIDER is dT/dP|_S, not dT/dS|_P.
-            # We need (dT/dS)_P. For a regular grid:
-            # (dT/dS)_P = T / (rho * Cp * dTdPs_val) ... no, let's use:
-            # (dT/dr) = (dT/dS)_P * (dS/dr) + (dT/dP)_S * (dP/dr)
-            # For conduction, F = -k * dT/dr. In S coordinates:
-            # dT/dr = (dT/dS)_P * dS/dr  (at constant P along radial shells)
-            # This is not quite right because P also varies with r.
-            # The full derivative: dT/dr = (∂T/∂S)|_P * dS/dr + (∂T/∂P)|_S * dP/dr
-            # SPIDER handles this by computing the total energy flux at cell edges.
-            # For simplicity, use the approximation:
-            # F_cond ≈ -k * (∂T/∂r) where ∂T/∂r is computed from T(P,S) profile
+            # F_cond = -k * dT/dr, where T(r) is derived from the (P,S) EOS.
+            # SPIDER uses the analytical chain rule decomposition; here we
+            # numerically differentiate T(r) from the EOS lookup.
             T_stag = np.asarray(self.phase_staggered.temperature()).reshape(-1, 1)
             dTdr = np.asarray(mesh.d_dr_at_basic_nodes(T_stag)).flatten()
             self._heat_flux += -k * dTdr

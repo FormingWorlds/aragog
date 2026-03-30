@@ -1,7 +1,7 @@
 """Entropy-based EOS layer for PALEOS P-S tables.
 
 Loads SPIDER-format P-S tables (pressure-entropy) and provides property
-lookups (P, S) -> T, rho, Cp, alpha, k, dTdPs, phi. This is the EOS
+lookups (P, S) -> T, rho, Cp, alpha, dTdPs, phi, L(P). This is the EOS
 backend for the entropy formulation of Aragog.
 
 Table format (SPIDER convention):

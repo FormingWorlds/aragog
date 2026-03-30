@@ -93,7 +93,6 @@ class EntropySolver:
         self.evaluator = _EntropyEvaluator()
         self.evaluator.mesh = mesh
         self.evaluator.boundary_conditions = bc
-        self.evaluator._parameters = self.parameters
 
         # Extract pressure and gravity from the mesh EOS.
         # Mesh arrays are (N, 1) column vectors; flatten for EOS lookups.
@@ -111,7 +110,6 @@ class EntropySolver:
                 self.parameters.phase_mixed.rheological_transition_width
             ),
             grain_size=self.parameters.phase_mixed.grain_size,
-            latent_heat_constant=self.parameters.phase_mixed.latent_heat_of_fusion,
         )
 
         # Get viscosity from config

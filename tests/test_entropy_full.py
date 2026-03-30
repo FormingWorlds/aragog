@@ -17,7 +17,6 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from aragog.eos.entropy import EntropyEOS
-from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.solver.entropy_solver import EntropySolver
 from aragog.parser import Parameters
 
