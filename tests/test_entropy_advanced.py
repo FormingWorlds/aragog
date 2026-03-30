@@ -617,7 +617,9 @@ class TestDirichletBC:
 
         # Interior should be monotonically decreasing (hot core to cold surface)
         diffs = np.diff(T_final)
-        assert np.all(diffs < 1.0), 'T(r) should decrease outward'
+        assert np.all(diffs <= 0.0), (
+            f'T(r) should decrease outward but has positive gradient: '
+            f'max dT = {np.max(diffs):.2f} K')
 
     def test_convection_dirichlet_homogenizes_interior(self):
         """With convection, Dirichlet BCs produce a well-mixed interior."""
