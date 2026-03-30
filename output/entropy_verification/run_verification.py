@@ -228,12 +228,13 @@ def main():
 
     # Panel (a): Entropy conservation
     ax = axes[0, 0]
-    ax.plot(times1, max_drift, 'b-', linewidth=2)
+    ax.semilogy(times1, np.maximum(max_drift, 1e-15), 'b-', linewidth=2)
     ax.set_xlabel('Time [yr]')
     ax.set_ylabel(r'max$|S(r,t) - S_0|$ [J/kg/K]')
     ax.set_title('(a) Entropy conservation (insulating, no conduction)')
-    ax.set_ylim(bottom=0)
-    ax.text(0.95, 0.95, f'Drift < {max(max_drift):.2f} J/kg/K',
+    ax.axhline(1.0, color='r', ls=':', lw=1, alpha=0.5, label='1 J/kg/K threshold')
+    ax.legend(fontsize=9)
+    ax.text(0.95, 0.95, f'Drift < {max(max_drift):.2e} J/kg/K',
             transform=ax.transAxes, ha='right', va='top',
             bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
 
