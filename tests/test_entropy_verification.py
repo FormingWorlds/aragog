@@ -146,7 +146,7 @@ def compute_enthalpy_integral(S, mesh, entropy_eos):
 class TestEntropyConservation:
     """On insulating BCs, conservation laws must hold as entropy redistributes."""
 
-    def test_isentropic_stays_isentropic(self):
+    def test_entropy_redistribution_conserves_enthalpy(self):
         """Non-uniform S with zero-flux BCs and conduction: entropy redistributes
         but total enthalpy integral is conserved.
 

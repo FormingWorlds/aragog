@@ -210,7 +210,7 @@ class TestConductionSteadyState:
 
         T_final = S_to_T(sol.y[:, -1])
         max_drift = np.max(np.abs(T_final - T_ss))
-        assert max_drift < 1.0, f'T drifted by {max_drift:.1f} K (should be < 1 K)'
+        assert max_drift < 0.1, f'T drifted by {max_drift:.2f} K (should be < 0.1 K)'
 
     def test_flux_uniformity(self):
         """At steady state, Q = F * 4*pi*r^2 should be constant across shells."""
@@ -226,7 +226,7 @@ class TestConductionSteadyState:
         Q_interior = Q[1:-1]  # skip boundary nodes
         Q_mean = np.mean(Q_interior)
         Q_spread = np.max(np.abs(Q_interior - Q_mean)) / abs(Q_mean)
-        assert Q_spread < 0.05, f'Flux non-uniformity: {Q_spread:.1%} (should be < 5%)'
+        assert Q_spread < 0.01, f'Flux non-uniformity: {Q_spread:.2%} (should be < 1%)'
 
     def test_convergence_with_resolution(self):
         """Error should decrease with mesh resolution."""
