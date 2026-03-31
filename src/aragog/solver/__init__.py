@@ -13,12 +13,13 @@ from scipy import constants as sp_constants
 SECS_PER_YEAR: float = sp_constants.Julian_year  # 31557600.0 s
 
 from aragog.solver.boundary import BoundaryConditions
-from aragog.solver.entropy_solver import EntropySolver
+from aragog.solver.entropy_solver import EntropySolver, SolverOutput
 from aragog.solver.entropy_state import EntropyState
 
 __all__ = [
     "BoundaryConditions",
     "EntropySolver",
     "EntropyState",
+    "SolverOutput",
     "SECS_PER_YEAR",
 ]
