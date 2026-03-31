@@ -22,7 +22,6 @@ readme = "README.md"
 [tool.poetry]
 packages = [
     { include = "aragog", from = "src" },
-    { include = "notebooks", to = "aragog" },
 ]
 
 [tool.poetry.dependencies]
