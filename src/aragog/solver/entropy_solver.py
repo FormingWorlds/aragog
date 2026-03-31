@@ -101,11 +101,15 @@ class EntropySolver:
         self.evaluator.mesh = mesh
         self.evaluator.boundary_conditions = bc
 
-        # Extract pressure and gravity from the mesh EOS.
+        # Extract pressure and gravity from the mesh.
         # Mesh arrays are (N, 1) column vectors; flatten for EOS lookups.
         P_basic = np.asarray(mesh.basic_pressure).flatten()
         P_stag = np.asarray(mesh.staggered_pressure).flatten()
-        g = float(mesh.eos._gravitational_acceleration)  # scalar from config
+        # Gravity: try mesh EOS attribute first, then mesh settings
+        g = abs(float(getattr(
+            mesh.eos, '_gravitational_acceleration',
+            self.parameters.mesh.gravitational_acceleration,
+        )))
 
         # Create entropy phase evaluators for staggered and basic nodes
         phase_kwargs = dict(
