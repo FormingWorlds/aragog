@@ -20,7 +20,6 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.scipy.interpolate import RegularGridInterpolator
 
 # Enable float64 (atmodeller does the same in its __init__.py)
 jax.config.update('jax_enable_x64', True)
@@ -117,28 +116,81 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
 # JAX interpolator helpers
 # ---------------------------------------------------------------------------
 
-class _Table2D(eqx.Module):
-    """A single 2D (P, S) property table as a JAX-compatible pytree.
+def _bilinear_interp(
+    P_grid: jax.Array, S_grid: jax.Array, values: jax.Array,
+    P_query: jax.Array, S_query: jax.Array,
+) -> jax.Array:
+    """Bilinear interpolation on a regular (P, S) grid.
 
-    Wraps jax.scipy.interpolate.RegularGridInterpolator with clamping
-    to the table domain (no NaN fill, matching the numpy version's
-    clamp-before-query pattern).
+    Pure JAX implementation with no external interpolator objects.
+    Clamps queries to the grid domain. Equivalent to scipy/jax
+    RegularGridInterpolator with method='linear'.
+
+    Parameters
+    ----------
+    P_grid : (n_P,) sorted ascending
+    S_grid : (n_S,) sorted ascending
+    values : (n_P, n_S) property values
+    P_query, S_query : (N,) query points
+
+    Returns
+    -------
+    (N,) interpolated values
+    """
+    # Clamp to grid domain
+    P_c = jnp.clip(P_query, P_grid[0], P_grid[-1])
+    S_c = jnp.clip(S_query, S_grid[0], S_grid[-1])
+
+    # Find grid indices: searchsorted gives the index of the right edge.
+    # Clamp to [0, n-2] so i and i+1 are both valid indices.
+    ip = jnp.clip(jnp.searchsorted(P_grid, P_c, side='right') - 1, 0, len(P_grid) - 2)
+    js = jnp.clip(jnp.searchsorted(S_grid, S_c, side='right') - 1, 0, len(S_grid) - 2)
+
+    # Fractional position within the cell
+    P0 = P_grid[ip]
+    P1 = P_grid[ip + 1]
+    S0 = S_grid[js]
+    S1 = S_grid[js + 1]
+
+    tp = (P_c - P0) / jnp.maximum(P1 - P0, 1e-30)
+    ts = (S_c - S0) / jnp.maximum(S1 - S0, 1e-30)
+
+    # Four corner values
+    v00 = values[ip, js]
+    v10 = values[ip + 1, js]
+    v01 = values[ip, js + 1]
+    v11 = values[ip + 1, js + 1]
+
+    # Bilinear blend
+    return (
+        v00 * (1 - tp) * (1 - ts)
+        + v10 * tp * (1 - ts)
+        + v01 * (1 - tp) * ts
+        + v11 * tp * ts
+    )
+
+
+class _Table2D(eqx.Module):
+    """A single 2D (P, S) property table as a JAX pytree.
+
+    Stores the raw grid arrays and values. Interpolation is done
+    with a pure JAX bilinear function (no scipy/jax
+    RegularGridInterpolator object, which causes pytree issues
+    with diffrax).
     """
 
-    _interp: RegularGridInterpolator
+    _P_grid: jax.Array
+    _S_grid: jax.Array
+    _values: jax.Array
     P_min: float
     P_max: float
     S_min: float
     S_max: float
 
     def __init__(self, P: np.ndarray, S: np.ndarray, values: np.ndarray):
-        self._interp = RegularGridInterpolator(
-            (jnp.asarray(P), jnp.asarray(S)),
-            jnp.asarray(values),
-            method='linear',
-            bounds_error=False,
-            fill_value=jnp.nan,
-        )
+        self._P_grid = jnp.asarray(P)
+        self._S_grid = jnp.asarray(S)
+        self._values = jnp.asarray(values)
         self.P_min = float(P[0])
         self.P_max = float(P[-1])
         self.S_min = float(S[0])
@@ -146,10 +198,9 @@ class _Table2D(eqx.Module):
 
     def __call__(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Query the table at (P, S), clamping to the table domain."""
-        P_c = jnp.clip(P, self.P_min, self.P_max)
-        S_c = jnp.clip(S, self.S_min, self.S_max)
-        pts = jnp.stack([P_c, S_c], axis=-1)
-        return self._interp(pts)
+        return _bilinear_interp(
+            self._P_grid, self._S_grid, self._values, P, S,
+        )
 
 
 class _PhaseBoundary1D(eqx.Module):
