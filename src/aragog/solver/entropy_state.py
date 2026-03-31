@@ -71,7 +71,7 @@ class EntropyState:
         self._mixing = mixing
         self._radionuclides = radionuclides
         self._tidal = tidal
-        self._tidal_array = tidal_array or [0.0]
+        self._tidal_array = tidal_array if tidal_array is not None and len(tidal_array) > 0 else [0.0]
         self._eddy_diff_thermal = eddy_diffusivity_thermal
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
