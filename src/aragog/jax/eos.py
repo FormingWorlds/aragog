@@ -143,8 +143,15 @@ def _bilinear_interp(
 
     # Find grid indices: searchsorted gives the index of the right edge.
     # Clamp to [0, n-2] so i and i+1 are both valid indices.
-    ip = jnp.clip(jnp.searchsorted(P_grid, P_c, side='right') - 1, 0, len(P_grid) - 2)
-    js = jnp.clip(jnp.searchsorted(S_grid, S_c, side='right') - 1, 0, len(S_grid) - 2)
+    # stop_gradient on indices: they are discrete (non-differentiable)
+    # and keeping them in the trace graph makes implicit solver JIT
+    # compilation intractable.
+    ip = jax.lax.stop_gradient(
+        jnp.clip(jnp.searchsorted(P_grid, P_c, side='right') - 1, 0, len(P_grid) - 2)
+    )
+    js = jax.lax.stop_gradient(
+        jnp.clip(jnp.searchsorted(S_grid, S_c, side='right') - 1, 0, len(S_grid) - 2)
+    )
 
     # Fractional position within the cell
     P0 = P_grid[ip]

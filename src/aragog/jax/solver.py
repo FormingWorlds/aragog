@@ -225,6 +225,7 @@ def solve_entropy(
     atol: float = 0.01,
     rtol: float = 1e-4,
     max_steps: int = 100_000,
+    method: str = 'implicit_euler',
 ) -> SolveResult:
     """Integrate the entropy equation from t_start to t_end.
 
@@ -264,11 +265,15 @@ def solve_entropy(
         return dSdt(t, S, (eos, params, mesh, bc, h))
 
     term = diffrax.ODETerm(_rhs)
-    # Tsit5: explicit 5th-order RK. Fast JIT, good for non-stiff problems.
-    # Kvaerno5: implicit 5th-order ESDIRK. Slow JIT, needed for stiff
-    # near-solidus evolution. Use Tsit5 by default; switch to Kvaerno5
-    # when stiffness is detected (future: adaptive switching).
-    solver = diffrax.Tsit5()
+    _solvers = {
+        'tsit5': diffrax.Tsit5,            # explicit RK5, fast JIT (~5s)
+        'implicit_euler': diffrax.ImplicitEuler,  # 1-stage implicit, moderate JIT (~14s)
+        'kvaerno3': diffrax.Kvaerno3,      # 4-stage ESDIRK, slow JIT (~minutes)
+        'kvaerno5': diffrax.Kvaerno5,      # 7-stage ESDIRK, very slow JIT
+    }
+    if method not in _solvers:
+        raise ValueError(f'Unknown solver method: {method}. Choose from {list(_solvers)}')
+    solver = _solvers[method]()
     controller = diffrax.PIDController(
         atol=atol,
         rtol=rtol,
