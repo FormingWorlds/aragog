@@ -142,6 +142,9 @@ class MeshArrays(eqx.Module):
     mixing_length_sq: jax.Array  # [m^2]
     mixing_length_cu: jax.Array  # [m^3]
 
+    # Radii at staggered nodes
+    radii_stag: jax.Array        # [m]
+
     # Pressure profiles (1D, pre-flattened)
     P_stag: jax.Array            # [Pa] at staggered nodes
     P_basic: jax.Array           # [Pa] at basic nodes
@@ -159,6 +162,7 @@ class MeshArrays(eqx.Module):
             area=jnp.asarray(np.asarray(mesh.basic.area).ravel()),
             volume=jnp.asarray(np.asarray(mesh.basic.volume).ravel()),
             radii_basic=jnp.asarray(np.asarray(mesh.basic.radii).ravel()),
+            radii_stag=jnp.asarray(np.asarray(mesh.staggered.radii).ravel()),
             mixing_length=jnp.asarray(np.asarray(mesh.basic.mixing_length).ravel()),
             mixing_length_sq=jnp.asarray(np.asarray(mesh.basic.mixing_length_squared).ravel()),
             mixing_length_cu=jnp.asarray(np.asarray(mesh.basic.mixing_length_cubed).ravel()),
