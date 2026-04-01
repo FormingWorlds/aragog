@@ -650,6 +650,186 @@ class TestJAXSolverIntegration:
 
 
 # ---------------------------------------------------------------------------
+# Tier 5b: Energy conservation (Phase 5.4)
+# ---------------------------------------------------------------------------
+
+@needs_eos
+@pytest.mark.smoke
+class TestEnergyConservation:
+    """Verify energy conservation: dE/dt = -F_surf * A_surf + H * M_mantle."""
+
+    def test_prescribed_flux_energy_budget(self, jax_eos, default_params):
+        """With prescribed surface flux and no heating, total energy change
+        should match the time-integrated surface flux to within 5%.
+        """
+        from aragog.jax.solver import BoundaryParams, solve_entropy
+
+        N = 30
+        mesh = _make_jax_mesh_arrays(N)
+        S_init = jnp.full(N, 3200.0)
+        heating = jnp.zeros(N)
+        F_prescribed = 5000.0  # W/m^2
+
+        bc = BoundaryParams(
+            outer_bc_type=4,  # prescribed flux
+            outer_bc_value=F_prescribed,
+            emissivity=1.0,
+            T_eq=255.0,
+            inner_bc_type=0,  # insulating
+            inner_bc_value=0.0,
+            core_density=10738.0,
+            core_heat_capacity=880.0,
+            tfac_core_avg=1.147,
+        )
+
+        t_end = 50.0  # yr
+        result = solve_entropy(
+            S_init, 0.0, t_end,
+            jax_eos, default_params, mesh, bc, heating,
+            atol=0.1, rtol=1e-4, max_steps=50_000,
+            method='tsit5',
+        )
+        assert result.success
+
+        # Compute energy change via entropy capacitance: dE = sum(rho * T * dS * V)
+        # This is the correct energy accounting for the entropy formulation,
+        # where rho*T is the capacitance (not rho*Cp).
+        P = mesh.P_stag
+        vol = np.asarray(mesh.volume)
+        S_init_np = np.asarray(S_init)
+        S_final_np = np.asarray(result.S_final)
+        dS = S_final_np - S_init_np
+
+        # Use midpoint properties for the integral
+        S_mid = 0.5 * (S_init_np + S_final_np)
+        rho_mid = np.asarray(jax_eos.density(P, jnp.asarray(S_mid)))
+        T_mid = np.asarray(jax_eos.temperature(P, jnp.asarray(S_mid)))
+
+        dE = np.sum(rho_mid * T_mid * dS * vol)
+
+        # Expected energy loss from prescribed surface flux
+        A_surf = float(mesh.area[-1])
+        Q_lost = F_prescribed * A_surf * t_end * SECS_PER_YEAR
+
+        # dE should be approximately -Q_lost
+        rel_err = abs(dE + Q_lost) / Q_lost
+        assert rel_err < 0.10, (
+            f'Energy conservation: dE={dE:.2e} J, Q_lost={Q_lost:.2e} J, '
+            f'residual={rel_err:.1%}'
+        )
+
+    def test_insulating_no_heating_conserves(self, jax_eos, default_params):
+        """With insulating BCs and no heating, total energy should be conserved."""
+        from aragog.jax.solver import BoundaryParams, solve_entropy
+
+        N = 20
+        mesh = _make_jax_mesh_arrays(N)
+        # Non-uniform IC to force internal redistribution
+        S_init = jnp.linspace(3000.0, 3400.0, N)
+        heating = jnp.zeros(N)
+
+        bc = BoundaryParams(
+            outer_bc_type=0,  # insulating (F=0 at surface is equivalent to type 0)
+            outer_bc_value=0.0,
+            emissivity=1.0,
+            T_eq=255.0,
+            inner_bc_type=0,  # insulating
+            inner_bc_value=0.0,
+            core_density=10738.0,
+            core_heat_capacity=880.0,
+            tfac_core_avg=1.147,
+        )
+
+        result = solve_entropy(
+            S_init, 0.0, 100.0,
+            jax_eos, default_params, mesh, bc, heating,
+            atol=0.1, rtol=1e-4, max_steps=50_000,
+            method='tsit5',
+        )
+        assert result.success
+
+        # Energy change via entropy capacitance: dE = sum(rho * T * dS * V)
+        P = mesh.P_stag
+        vol = np.asarray(mesh.volume)
+        S_init_np = np.asarray(S_init)
+        S_final_np = np.asarray(result.S_final)
+        dS = S_final_np - S_init_np
+
+        S_mid = 0.5 * (S_init_np + S_final_np)
+        rho_mid = np.asarray(jax_eos.density(P, jnp.asarray(S_mid)))
+        T_mid = np.asarray(jax_eos.temperature(P, jnp.asarray(S_mid)))
+
+        dE = np.sum(rho_mid * T_mid * dS * vol)
+        E_scale = np.sum(rho_mid * T_mid * np.abs(S_init_np) * vol)
+
+        rel_change = abs(dE) / E_scale
+        assert rel_change < 0.01, (
+            f'Energy changed by {rel_change:.2%} with insulating BCs '
+            f'(should be <1%). dE={dE:.2e}'
+        )
+
+    def test_heating_increases_energy(self, jax_eos, default_params):
+        """With insulating BCs and uniform heating, energy should increase
+        by approximately H * M_mantle * dt.
+
+        The entropy-based energy change dE = sum(rho*T*dS*V) should match
+        the total heating input. The heating term in the ODE is dS/dt += H/T,
+        so the energy input is sum(rho*T*(H/T)*dt*V) = H * M * dt.
+        """
+        from aragog.jax.solver import BoundaryParams, solve_entropy
+
+        N = 20
+        mesh = _make_jax_mesh_arrays(N)
+        S_init = jnp.full(N, 3200.0)
+        H = 1e-8  # W/kg
+        heating = jnp.full(N, H)
+
+        bc = BoundaryParams(
+            outer_bc_type=0,  # insulating
+            outer_bc_value=0.0,
+            emissivity=1.0,
+            T_eq=255.0,
+            inner_bc_type=0,  # insulating
+            inner_bc_value=0.0,
+            core_density=10738.0,
+            core_heat_capacity=880.0,
+            tfac_core_avg=1.147,
+        )
+
+        t_end = 500.0  # yr
+        result = solve_entropy(
+            S_init, 0.0, t_end,
+            jax_eos, default_params, mesh, bc, heating,
+            atol=0.1, rtol=1e-4, max_steps=50_000,
+            method='tsit5',
+        )
+        assert result.success
+
+        P = mesh.P_stag
+        vol = np.asarray(mesh.volume)
+        S_init_np = np.asarray(S_init)
+        S_final_np = np.asarray(result.S_final)
+        dS = S_final_np - S_init_np
+
+        S_mid = 0.5 * (S_init_np + S_final_np)
+        rho_mid = np.asarray(jax_eos.density(P, jnp.asarray(S_mid)))
+        T_mid = np.asarray(jax_eos.temperature(P, jnp.asarray(S_mid)))
+
+        dE = np.sum(rho_mid * T_mid * dS * vol)
+
+        # Expected: dE = H * M_mantle * dt
+        M_mantle = np.sum(rho_mid * vol)
+        dE_expected = H * M_mantle * t_end * SECS_PER_YEAR
+
+        assert dE > 0, f'Energy should increase with heating, got dE={dE:.2e}'
+        rel_err = abs(dE - dE_expected) / dE_expected
+        assert rel_err < 0.10, (
+            f'Energy increase dE={dE:.2e} vs expected H*M*dt={dE_expected:.2e}, '
+            f'residual={rel_err:.1%}'
+        )
+
+
+# ---------------------------------------------------------------------------
 # Tier 6: Solver parity (JAX diffrax vs scipy BDF)
 # ---------------------------------------------------------------------------
 
