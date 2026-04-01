@@ -335,10 +335,10 @@ def compute_mlt(
     velocity_prefactor = mesh.gravity * effective_superadiabatic
 
     # Convective mask: unstable when dS/dr < 0.
-    # Use smooth sigmoid instead of hard boolean for differentiability.
-    # Width scaled by the typical entropy gradient magnitude (~1e-4 J/kg/K/m).
-    # sigmoid(-dSdr / width) -> 1 when dSdr < 0, -> 0 when dSdr > 0.
-    conv_mask = jax.nn.sigmoid(-dSdr / jnp.maximum(jnp.abs(dSdr).max() * 0.01, 1e-20))
+    # Hard mask matching the numpy reference. Using jnp.where (not boolean
+    # indexing) for JAX traceability. Produces exactly 0 at stable nodes,
+    # avoiding spurious convection from a soft sigmoid.
+    conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
 
     # Viscous velocity (Re <= Re_crit)
     viscous_velocity = (

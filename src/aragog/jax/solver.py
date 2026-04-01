@@ -54,20 +54,37 @@ class BoundaryParams(eqx.Module):
         0 = insulating (F = 0)
         1 = core cooling (Bower+2018 Eq. 37)
         2 = prescribed flux
+        3 = prescribed temperature (preserve conduction-derived flux)
+
+    All float fields are stored as JAX arrays (not Python floats) to
+    avoid JIT recompilation when values change between coupling steps.
     """
 
     # Surface
     outer_bc_type: int = eqx.field(static=True)
-    outer_bc_value: float          # prescribed flux [W/m^2] (type 4)
-    emissivity: float
-    T_eq: float                    # equilibrium temperature [K] (type 1)
+    outer_bc_value: jax.Array      # prescribed flux [W/m^2] (type 4)
+    emissivity: jax.Array
+    T_eq: jax.Array                # equilibrium temperature [K] (type 1)
 
     # CMB
     inner_bc_type: int = eqx.field(static=True)
-    inner_bc_value: float          # prescribed flux [W/m^2] (type 2)
-    core_density: float            # [kg/m^3]
-    core_heat_capacity: float      # [J/kg/K]
-    tfac_core_avg: float           # T_avg/T_cmb ratio
+    inner_bc_value: jax.Array      # prescribed flux [W/m^2] (type 2)
+    core_density: jax.Array        # [kg/m^3]
+    core_heat_capacity: jax.Array  # [J/kg/K]
+    tfac_core_avg: jax.Array       # T_avg/T_cmb ratio
+
+    def __init__(self, *, outer_bc_type, outer_bc_value, emissivity, T_eq,
+                 inner_bc_type, inner_bc_value, core_density,
+                 core_heat_capacity, tfac_core_avg):
+        self.outer_bc_type = outer_bc_type
+        self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
+        self.emissivity = jnp.asarray(emissivity, dtype=jnp.float64)
+        self.T_eq = jnp.asarray(T_eq, dtype=jnp.float64)
+        self.inner_bc_type = inner_bc_type
+        self.inner_bc_value = jnp.asarray(inner_bc_value, dtype=jnp.float64)
+        self.core_density = jnp.asarray(core_density, dtype=jnp.float64)
+        self.core_heat_capacity = jnp.asarray(core_heat_capacity, dtype=jnp.float64)
+        self.tfac_core_avg = jnp.asarray(tfac_core_avg, dtype=jnp.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -139,8 +156,11 @@ def _apply_cmb_bc(
     elif bc.inner_bc_type == 2:
         # Prescribed flux
         F_cmb = bc.inner_bc_value
+    elif bc.inner_bc_type == 3:
+        # Prescribed T: keep conduction-derived flux from compute_fluxes
+        F_cmb = heat_flux[0]
     else:
-        # Insulating (type 0 or 3)
+        # Insulating (type 0)
         F_cmb = 0.0
 
     return heat_flux.at[0].set(F_cmb)
@@ -279,8 +299,9 @@ def solve_entropy(
         rtol=rtol,
     )
 
-    # Initial step size: small fraction of the time interval
-    dt0 = (t_end - t_start) * 1e-6
+    # Initial step size: small fraction of the time interval.
+    # Guard against zero or negative intervals.
+    dt0 = max((t_end - t_start) * 1e-6, 1e-10)
 
     sol = diffrax.diffeqsolve(
         term,
