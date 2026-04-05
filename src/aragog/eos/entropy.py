@@ -383,9 +383,10 @@ class EntropyEOS:
         P_clamped = float(np.clip(P, self.P_min, self.P_max))
 
         def residual(S_cand):
-            T_eval = float(self.temperature(
+            T_arr = self.temperature(
                 np.array([P_clamped]), np.array([S_cand]),
-            ))
+            )
+            T_eval = T_arr.item() if hasattr(T_arr, 'item') else float(T_arr)
             return T_eval - T_target
 
         # Bracket: search from S_min to S_max
