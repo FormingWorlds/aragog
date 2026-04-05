@@ -380,7 +380,8 @@ class EntropyEOS:
         """
         from scipy.optimize import brentq
 
-        P_clamped = float(np.clip(P, self.P_min, self.P_max))
+        P_clip = np.clip(P, self.P_min, self.P_max)
+        P_clamped = P_clip.item() if hasattr(P_clip, 'item') else float(P_clip)
 
         def residual(S_cand):
             T_arr = self.temperature(
@@ -403,4 +404,4 @@ class EntropyEOS:
             )
 
         S_root = brentq(residual, S_lo, S_hi, xtol=0.1, rtol=1e-10)
-        return float(S_root)
+        return S_root.item() if hasattr(S_root, 'item') else float(S_root)
