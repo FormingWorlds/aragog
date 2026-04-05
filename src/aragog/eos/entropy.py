@@ -23,6 +23,7 @@ Files needed per material:
 
 from __future__ import annotations
 
+import bisect
 import logging
 from pathlib import Path
 
@@ -31,6 +32,132 @@ import numpy.typing as npt
 from scipy.interpolate import RegularGridInterpolator
 
 logger = logging.getLogger(__name__)
+
+
+def _bisect_left_clamp(arr: list[float], val: float) -> int:
+    """Find left index for interpolation, clamped to valid range.
+
+    Returns i such that arr[i] <= val <= arr[i+1], clamped to
+    [0, len(arr)-2]. Uses bisect for O(log n) lookup.
+
+    Parameters
+    ----------
+    arr : list of float
+        Sorted grid values (converted from numpy to Python list).
+    val : float
+        Value to locate.
+
+    Returns
+    -------
+    int
+        Left index, in [0, len(arr)-2].
+    """
+    n = len(arr)
+    idx = bisect.bisect_right(arr, val) - 1
+    # Clamp to valid interpolation range
+    if idx < 0:
+        return 0
+    if idx >= n - 1:
+        return n - 2
+    return idx
+
+
+def _interp_bilinear_scalar(
+    P_grid: list[float],
+    S_grid: list[float],
+    values: np.ndarray,
+    P: float,
+    S: float,
+) -> float:
+    """Pure-Python bilinear interpolation on a regular (P, S) grid.
+
+    Avoids ALL numpy scalar operations, using only Python float arithmetic
+    and direct ndarray element access via integer indexing. This is safe
+    with numpy >= 2.4 where implicit array-to-scalar conversion raises
+    TypeError.
+
+    Parameters
+    ----------
+    P_grid : list of float
+        Pressure grid values (sorted, ascending). Must be a Python list.
+    S_grid : list of float
+        Entropy grid values (sorted, ascending). Must be a Python list.
+    values : ndarray, shape (n_P, n_S)
+        Property values on the grid. Accessed via [int, int] indexing
+        which returns a numpy scalar (0-d), then converted with .item().
+    P : float
+        Pressure query point (pure Python float).
+    S : float
+        Entropy query point (pure Python float).
+
+    Returns
+    -------
+    float
+        Interpolated value (pure Python float).
+    """
+    # Clamp to grid bounds
+    P = max(P_grid[0], min(P, P_grid[-1]))
+    S = max(S_grid[0], min(S, S_grid[-1]))
+
+    ip = _bisect_left_clamp(P_grid, P)
+    js = _bisect_left_clamp(S_grid, S)
+
+    P_lo = P_grid[ip]
+    P_hi = P_grid[ip + 1]
+    S_lo = S_grid[js]
+    S_hi = S_grid[js + 1]
+
+    dP = P_hi - P_lo
+    dS = S_hi - S_lo
+
+    # Normalized distances (pure Python float arithmetic)
+    tp = (P - P_lo) / dP if dP > 0.0 else 0.0
+    ts = (S - S_lo) / dS if dS > 0.0 else 0.0
+
+    # Four corner values. Use int() to ensure Python int indices,
+    # and .item() to extract pure Python float from numpy scalar.
+    v00 = float(values[int(ip), int(js)])
+    v01 = float(values[int(ip), int(js + 1)])
+    v10 = float(values[int(ip + 1), int(js)])
+    v11 = float(values[int(ip + 1), int(js + 1)])
+
+    # Bilinear blend (pure Python float arithmetic, no numpy)
+    return (
+        v00 * (1.0 - tp) * (1.0 - ts)
+        + v01 * (1.0 - tp) * ts
+        + v10 * tp * (1.0 - ts)
+        + v11 * tp * ts
+    )
+
+
+def _interp_1d_scalar(
+    x_grid: list[float], y_grid: list[float], x: float,
+) -> float:
+    """Pure-Python 1D linear interpolation with clamping.
+
+    Parameters
+    ----------
+    x_grid : list of float
+        Sorted x values (Python list).
+    y_grid : list of float
+        Corresponding y values (Python list).
+    x : float
+        Query point.
+
+    Returns
+    -------
+    float
+        Interpolated value (pure Python float).
+    """
+    if x <= x_grid[0]:
+        return y_grid[0]
+    if x >= x_grid[-1]:
+        return y_grid[-1]
+    i = _bisect_left_clamp(x_grid, x)
+    x0, x1 = x_grid[i], x_grid[i + 1]
+    y0, y1 = y_grid[i], y_grid[i + 1]
+    t = (x - x0) / (x1 - x0) if x1 != x0 else 0.0
+    return y0 + t * (y1 - y0)
 
 
 def _load_spider_ps_table(filepath: Path) -> dict:
@@ -104,6 +231,9 @@ def _load_spider_ps_table(filepath: Path) -> dict:
         'interp': interp,
         'n_P': n_P,
         'n_S': n_S,
+        # Python lists for pure-Python scalar interpolation (numpy 2.4 safe)
+        'P_list': P_unique.tolist(),
+        'S_list': S_unique.tolist(),
     }
 
 
@@ -137,7 +267,10 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
     interp = interp1d(P, S, kind='linear', bounds_error=False,
                       fill_value=(S[0], S[-1]))
 
-    return {'P': P, 'S': S, 'interp': interp}
+    return {
+        'P': P, 'S': S, 'interp': interp,
+        'P_list': P.tolist(), 'S_list': S.tolist(),
+    }
 
 
 class EntropyEOS:
@@ -212,6 +345,109 @@ class EntropyEOS:
     def liquidus_entropy(self, P: npt.NDArray | float) -> npt.NDArray:
         """Liquidus entropy S_liq(P) [J/kg/K]."""
         return np.asarray(self._liquidus['interp'](P), dtype=float)
+
+    # ---- Pure-Python scalar methods (numpy 2.4 safe) ----
+    # These avoid ALL numpy scalar conversions and are safe to call
+    # inside scipy.optimize callbacks (brentq, etc.) where numpy 2.4
+    # raises "only 0-dimensional arrays can be converted to Python
+    # scalars" from C-extension float() calls on intermediate results.
+
+    def _solidus_entropy_scalar(self, P: float) -> float:
+        """Solidus entropy at a single pressure, pure Python."""
+        return _interp_1d_scalar(
+            self._solidus['P_list'], self._solidus['S_list'], P,
+        )
+
+    def _liquidus_entropy_scalar(self, P: float) -> float:
+        """Liquidus entropy at a single pressure, pure Python."""
+        return _interp_1d_scalar(
+            self._liquidus['P_list'], self._liquidus['S_list'], P,
+        )
+
+    def _melt_fraction_scalar(self, P: float, S: float) -> float:
+        """Melt fraction at a single (P, S) point, pure Python."""
+        S_sol = self._solidus_entropy_scalar(P)
+        S_liq = self._liquidus_entropy_scalar(P)
+        dS = max(S_liq - S_sol, 1e-10)
+        phi = (S - S_sol) / dS
+        return max(0.0, min(1.0, phi))
+
+    def _lookup_scalar(
+        self, prop_name: str, phase: str, P: float, S: float,
+    ) -> float:
+        """Look up a single property value using pure-Python bilinear interp.
+
+        Parameters
+        ----------
+        prop_name : str
+            Property name (e.g. 'temperature', 'density').
+        phase : str
+            Phase name ('solid' or 'melt').
+        P : float
+            Pressure [Pa], pure Python float.
+        S : float
+            Entropy [J/kg/K], pure Python float.
+
+        Returns
+        -------
+        float
+            Property value (pure Python float).
+        """
+        table = self._tables[f'{prop_name}_{phase}']
+        return _interp_bilinear_scalar(
+            table['P_list'], table['S_list'], table['values'], P, S,
+        )
+
+    def temperature_scalar(self, P: float, S: float) -> float:
+        """Temperature T(P, S) for a single point, pure Python.
+
+        Uses the same phase-weighted blending as ``temperature()`` but
+        with pure-Python arithmetic throughout. Safe for use inside
+        scipy.optimize callbacks on numpy >= 2.4.
+
+        Parameters
+        ----------
+        P : float
+            Pressure [Pa].
+        S : float
+            Entropy [J/kg/K].
+
+        Returns
+        -------
+        float
+            Temperature [K].
+        """
+        phi = self._melt_fraction_scalar(P, S)
+
+        solid_table = self._tables['temperature_solid']
+        melt_table = self._tables['temperature_melt']
+
+        # Clamp to each table's own range
+        S_sol_clamped = max(solid_table['S_list'][0],
+                           min(S, solid_table['S_list'][-1]))
+        S_melt_clamped = max(melt_table['S_list'][0],
+                            min(S, melt_table['S_list'][-1]))
+        P_sol_clamped = max(solid_table['P_list'][0],
+                           min(P, solid_table['P_list'][-1]))
+        P_melt_clamped = max(melt_table['P_list'][0],
+                            min(P, melt_table['P_list'][-1]))
+
+        val_solid = _interp_bilinear_scalar(
+            solid_table['P_list'], solid_table['S_list'],
+            solid_table['values'], P_sol_clamped, S_sol_clamped,
+        )
+        val_melt = _interp_bilinear_scalar(
+            melt_table['P_list'], melt_table['S_list'],
+            melt_table['values'], P_melt_clamped, S_melt_clamped,
+        )
+
+        # NaN-safe phase-weighted blend (same logic as _lookup_phase_weighted)
+        result = 0.0
+        if phi > 0.0:
+            result += phi * val_melt
+        if phi < 1.0:
+            result += (1.0 - phi) * val_solid
+        return result
 
     def melt_fraction(self, P: npt.NDArray | float,
                       S: npt.NDArray | float) -> npt.NDArray:
@@ -357,9 +593,11 @@ class EntropyEOS:
     def invert_temperature(self, P: float, T_target: float) -> float:
         """Find entropy S such that T(P, S) = T_target.
 
-        Uses Brent root-finding on the P-S temperature table. The
-        temperature is monotonically increasing with entropy at fixed P
-        (higher entropy = hotter), so the root is unique.
+        Uses Brent root-finding with pure-Python bilinear interpolation
+        on the P-S temperature tables. All arithmetic inside the brentq
+        callback uses only Python floats, avoiding numpy scalar
+        conversions that break on numpy >= 2.4 (where ndim > 0 arrays
+        cannot be implicitly converted to scalars).
 
         Parameters
         ----------
@@ -380,28 +618,27 @@ class EntropyEOS:
         """
         from scipy.optimize import brentq
 
-        P_clip = np.clip(P, self.P_min, self.P_max)
-        P_clamped = P_clip.item() if hasattr(P_clip, 'item') else float(P_clip)
+        # All values must be pure Python floats for numpy 2.4 safety.
+        P_clamped = max(self.P_min, min(float(P), self.P_max))
+        T_tgt = float(T_target)
 
-        def residual(S_cand):
-            T_arr = self.temperature(
-                np.array([P_clamped]), np.array([S_cand]),
-            )
-            T_eval = T_arr.item() if hasattr(T_arr, 'item') else float(T_arr)
-            return T_eval - T_target
+        def residual(S_cand: float) -> float:
+            # Pure-Python path: no numpy arrays created or converted.
+            return self.temperature_scalar(P_clamped, S_cand) - T_tgt
 
-        # Bracket: search from S_min to S_max
-        S_lo, S_hi = self.S_min, self.S_max
+        S_lo = self.S_min  # already Python float from __init__
+        S_hi = self.S_max
         f_lo = residual(S_lo)
         f_hi = residual(S_hi)
 
         if f_lo * f_hi > 0:
             raise ValueError(
                 f'Cannot invert T={T_target:.1f} K at P={P:.2e} Pa: '
-                f'T(S_min={S_lo:.0f})={T_target+f_lo:.0f} K, '
-                f'T(S_max={S_hi:.0f})={T_target+f_hi:.0f} K. '
+                f'T(S_min={S_lo:.0f})={T_tgt+f_lo:.0f} K, '
+                f'T(S_max={S_hi:.0f})={T_tgt+f_hi:.0f} K. '
                 f'Target outside table range.'
             )
 
         S_root = brentq(residual, S_lo, S_hi, xtol=0.1, rtol=1e-10)
-        return S_root.item() if hasattr(S_root, 'item') else float(S_root)
+        # brentq returns a Python float (from C double), but be safe
+        return float(S_root)
