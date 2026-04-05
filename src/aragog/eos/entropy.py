@@ -171,6 +171,21 @@ class EntropyEOS:
             self._tables[f'dTdPs_{phase}'] = _load_spider_ps_table(
                 eos_dir / f'adiabat_temp_grad_{phase}.dat')
 
+            # Thermal expansivity: load from table if available (matches
+            # SPIDER exactly), otherwise derived from thermodynamic identity.
+            alpha_file = eos_dir / f'thermal_exp_{phase}.dat'
+            if alpha_file.is_file():
+                self._tables[f'thermal_exp_{phase}'] = _load_spider_ps_table(
+                    alpha_file)
+        self._has_alpha_tables = (
+            'thermal_exp_solid' in self._tables
+            and 'thermal_exp_melt' in self._tables
+        )
+        if self._has_alpha_tables:
+            logger.info('Thermal expansivity loaded from P-S tables (SPIDER parity)')
+        else:
+            logger.info('Thermal expansivity will be derived from T, rho, Cp, dTdPs')
+
         # Load phase boundaries
         self._solidus = _load_spider_phase_boundary(eos_dir / 'solidus_P-S.dat')
         self._liquidus = _load_spider_phase_boundary(eos_dir / 'liquidus_P-S.dat')
@@ -324,15 +339,17 @@ class EntropyEOS:
                             S: npt.NDArray | float) -> npt.NDArray:
         """Thermal expansivity alpha(P, S) [1/K].
 
-        Derived from the thermodynamic identity: alpha = rho * Cp * dTdPs / T.
-        (NOT stored in tables; computed from other properties.)
+        When P-S thermal_exp tables are available (generated alongside
+        SPIDER tables), uses them directly for exact parity with SPIDER.
+        Otherwise, derives alpha from the thermodynamic identity:
+        alpha = rho * Cp * |dT/dP|_S| / T.
         """
+        if self._has_alpha_tables:
+            return self._lookup_phase_weighted('thermal_exp', P, S)
+
         T = self.temperature(P, S)
         rho = self.density(P, S)
         Cp = self.heat_capacity(P, S)
         dTdPs_val = self.dTdPs(P, S)
-        # alpha = rho * Cp * (dT/dP)_S / T  (from Maxwell relation)
-        # But actually: (dT/dP)_S = alpha * T / (rho * Cp)
-        # So: alpha = rho * Cp * (dT/dP)_S / T
         alpha = rho * Cp * np.abs(dTdPs_val) / np.maximum(T, 1.0)
         return alpha
