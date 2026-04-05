@@ -353,3 +353,53 @@ class EntropyEOS:
         dTdPs_val = self.dTdPs(P, S)
         alpha = rho * Cp * np.abs(dTdPs_val) / np.maximum(T, 1.0)
         return alpha
+
+    def invert_temperature(self, P: float, T_target: float) -> float:
+        """Find entropy S such that T(P, S) = T_target.
+
+        Uses Brent root-finding on the P-S temperature table. The
+        temperature is monotonically increasing with entropy at fixed P
+        (higher entropy = hotter), so the root is unique.
+
+        Parameters
+        ----------
+        P : float
+            Pressure [Pa].
+        T_target : float
+            Target temperature [K].
+
+        Returns
+        -------
+        float
+            Entropy [J/kg/K] such that T(P, S) ~ T_target.
+
+        Raises
+        ------
+        ValueError
+            If T_target is outside the range of T(P, S) for this P.
+        """
+        from scipy.optimize import brentq
+
+        P_clamped = float(np.clip(P, self.P_min, self.P_max))
+
+        def residual(S_cand):
+            T_eval = float(self.temperature(
+                np.array([P_clamped]), np.array([S_cand]),
+            ))
+            return T_eval - T_target
+
+        # Bracket: search from S_min to S_max
+        S_lo, S_hi = self.S_min, self.S_max
+        f_lo = residual(S_lo)
+        f_hi = residual(S_hi)
+
+        if f_lo * f_hi > 0:
+            raise ValueError(
+                f'Cannot invert T={T_target:.1f} K at P={P:.2e} Pa: '
+                f'T(S_min={S_lo:.0f})={T_target+f_lo:.0f} K, '
+                f'T(S_max={S_hi:.0f})={T_target+f_hi:.0f} K. '
+                f'Target outside table range.'
+            )
+
+        S_root = brentq(residual, S_lo, S_hi, xtol=0.1, rtol=1e-10)
+        return float(S_root)
