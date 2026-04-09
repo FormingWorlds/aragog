@@ -682,44 +682,39 @@ class EntropySolver:
         atol_scale = max(1.0, 100.0 * (1.0 - phi0))
         atol = atol_base * atol_scale
 
-        # Tier 1 Step 1C: use LSODA when the coupling step is entirely
-        # in the fully-liquid regime (Phi_init > 0.999). LSODA's
-        # auto-switching Adams/BDF is much faster than BDF on
-        # non-stiff problems because Adams steps are explicit and
-        # don't need a Jacobian. For mushy/solid coupling steps we
-        # stay with BDF, which is the right choice for stiff problems.
-        #
-        # The Phi=0.999 threshold is conservative: by that point
-        # the very first phase-change cells have appeared and the
-        # convective stack starts to stiffen. Below 0.999 we want
-        # the BDF safety net.
-        if phi0 > 0.999:
-            method = 'LSODA'
-            jac_arg = {}  # LSODA computes its own Jacobian
-        else:
-            method = 'BDF'
-            jac_arg = {'jac_sparsity': self._build_jac_sparsity()}
+        # Step 1C (LSODA dispatch) was REVERTED 2026-04-09 23:11 CEST.
+        # The dispatch correctly identified fully-liquid coupling
+        # steps and routed them to scipy LSODA, but LSODA turned out
+        # to be ~10x SLOWER than BDF on the Aragog problem in the
+        # PROTEUS coupling regime. The most likely cause is that
+        # scipy LSODA's Adams branch incurs a per-call setup cost
+        # that is amortised across long integrations but becomes
+        # dominant for the short (~100 yr) PROTEUS coupling steps.
+        # BDF reuses the Newton iteration state across calls more
+        # gracefully here. Reverted, BDF is used for all calls.
+        # See aragog-v4-and-path-a-multistep.md for the failure
+        # mode analysis.
 
         logger.info(
             'EntropySolver: integrating from %.2e to %.2e yr '
-            '(method=%s, Phi_init=%.3f, atol_scale=%.1fx, atol=%.2e, rtol=%.2e)',
-            start_time, end_time, method, phi0, atol_scale, atol, rtol,
+            '(Phi_init=%.3f, atol_scale=%.1fx, atol=%.2e, rtol=%.2e)',
+            start_time, end_time, phi0, atol_scale, atol, rtol,
         )
 
-        # Tier 1 Step 1B + 1C: pass vectorized=False (fake-vectorized
-        # path was pure overhead) and dispatch the solver method
-        # based on phi0. jac_sparsity is only relevant for BDF;
-        # LSODA computes its own internal Jacobian.
+        # Tier 1 Step 1B: pass vectorized=False (the fake-vectorized
+        # path was pure overhead). BDF for all calls (Step 1C LSODA
+        # dispatch reverted; see comment above).
+        jac_sparsity = self._build_jac_sparsity()
         self._solution = solve_ivp(
             self.dSdt,
             (start_time, end_time),
             self._S0,
-            method=method,
+            method='BDF',
             vectorized=False,
             dense_output=True,
             atol=atol,
             rtol=rtol,
-            **jac_arg,
+            jac_sparsity=jac_sparsity,
         )
 
         if self._solution.status == 0:
