@@ -225,6 +225,7 @@ class EntropySolver:
             eddy_diffusivity_thermal=getattr(energy, 'eddy_diffusivity_thermal', 1.0),
             eddy_diffusivity_chemical=energy.eddy_diffusivity_chemical,
             kappah_floor=energy.kappah_floor,
+            bottom_up_grav_sep=getattr(energy, 'bottom_up_grav_sep', True),
         )
         # Store radionuclide data for the state's heating computation
         if hasattr(self.parameters, 'radionuclides'):

@@ -189,6 +189,16 @@ class _EnergyParameters:
     eddy_diffusivity_chemical: float = 1.0
     kappah_floor: float = 0.0  # m^2/s, phase-dependent eddy diffusivity floor
 
+    # SPIDER-analogue bottom-up gate for the gravitational-separation mass
+    # flux. Only allows melt/solid separation across an interface when the
+    # staggered cell immediately below contains non-pure liquid/solid. This
+    # is enforced via a cubic Hermite smoothing of the un-truncated
+    # two-phase fraction at the cell below; see
+    # EntropyState.update() and SPIDER/energy.c:523. Turning this off
+    # reproduces the pre-fix CMB drain at first crystallisation and is
+    # only useful for regression tests.
+    bottom_up_grav_sep: bool = True
+
     tidal_array: npt.NDArray = field(default_factory=lambda:np.array([0.0], dtype=float))
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:

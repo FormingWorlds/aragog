@@ -267,3 +267,392 @@ class TestEntropySolverStandalone:
         # Energy change should be negative (cooling)
         dE = np.sum(rho_init * Cp_init * (T_cool - T_init))
         assert dE < 0, f'Energy should decrease on cooling, got dE={dE:.2e}'
+
+
+# ── Tier 2: Jgrav regression tests ─────────────────────────────────
+
+@needs_eos
+@pytest.mark.unit
+class TestJgravSmoothing:
+    """Regression tests for the gravitational-separation smoothing fix.
+
+    Before 2026-04-08: Aragog's Jgrav contribution to the mass flux
+    `rho * phi * (1-phi) * v_rel` did not vanish fast enough outside
+    the mushy zone. At the first crystallization step, v_rel in the
+    Stokes regime (phi ~ 0.995, grain_size = 0.1 m) is ~6 m/s, and
+    phi*(1-phi) ~ 5e-3 is still large enough to drain the CMB cell in
+    one coupling step. The drain pushed the CMB-cell entropy below
+    the PALEOS P-S table domain [-85, 3236] J/kg/K, after which the
+    T(P, S) lookup saturated at the table edge and the runtime
+    helpfile recorded byte-identical Phi=0.226607 for >90 Myr of
+    "simulation time" while the underlying S profile diverged to
+    ±1e7 J/kg/K. See memory/aragog_jgrav_cmb_drain.md.
+
+    The fix applies a SPIDER-analogue smoothing: multiply Jgrav by a
+    cubic Hermite polynomial `16 * gphi^2 * (1-gphi)^2` where gphi is
+    the un-truncated two-phase fraction at the staggered cell
+    immediately BELOW the interface. Bottom-up gating + edge smoothing
+    come for free from this single multiplication. The polynomial has
+    bounded derivatives everywhere (max |smth'| = 2), unlike SPIDER's
+    tanh smoothing, which lets scipy BDF take large adaptive coupling
+    steps without grinding.
+
+    These tests build a minimal Earth-like mesh by hand (following
+    test_grey_body_cooling's mock-mesh pattern) and drive one coupling
+    step from a near-liquidus initial state. They assert:
+        (1) the solver succeeds (status == 0),
+        (2) the entropy profile stays physically bounded,
+        (3) the CMB cell temperature does not collapse,
+        (4) turning off grav_sep yields even less damage (sanity
+            check that the test is exercising the Jgrav path),
+        (5) turning off `bottom_up_grav_sep` (no smoothing at all)
+            reproduces the pre-fix drain.
+    """
+
+    @staticmethod
+    def _build_earth_mesh(N: int = 30):
+        """Build a minimal Earth-like staggered mesh.
+
+        Mirrors `test_grey_body_cooling` (line 161-207) so the two
+        tests cover the same solver-construction path.
+        """
+        R_cmb, R_surf = 3480e3, 6371e3
+        r_stag = np.linspace(R_cmb, R_surf, N)
+        dr = np.diff(r_stag)
+        P_stag = np.linspace(135e9, 1e5, N)
+
+        r_basic = np.zeros(N + 1)
+        r_basic[0] = R_cmb
+        r_basic[-1] = R_surf
+        r_basic[1:-1] = 0.5 * (r_stag[:-1] + r_stag[1:])
+        P_basic = np.interp(r_basic, r_stag, P_stag)
+
+        class Mesh:
+            pass
+
+        class SubMesh:
+            pass
+
+        mesh = Mesh()
+        mesh.basic = SubMesh()
+        mesh.staggered = SubMesh()
+        mesh.basic.radii = r_basic
+        mesh.staggered.radii = r_stag
+        mesh.basic.area = 4.0 * np.pi * r_basic**2
+        mesh.basic.volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
+        ml = np.minimum(r_basic - R_cmb, R_surf - r_basic)
+        mesh.basic.mixing_length = np.maximum(ml, 1.0)
+        mesh.basic.mixing_length_squared = mesh.basic.mixing_length**2
+        mesh.basic.mixing_length_cubed = mesh.basic.mixing_length**3
+
+        def quantity_at_basic_nodes(q):
+            q = np.asarray(q).flatten()
+            out = np.zeros(N + 1)
+            out[0], out[-1] = q[0], q[-1]
+            out[1:-1] = 0.5 * (q[:-1] + q[1:])
+            return out
+
+        def d_dr_at_basic_nodes(q):
+            q = np.asarray(q).flatten()
+            out = np.zeros(N + 1)
+            out[1:-1] = np.diff(q) / dr
+            out[0], out[-1] = out[1], out[-2]
+            return out
+
+        mesh.quantity_at_basic_nodes = quantity_at_basic_nodes
+        mesh.d_dr_at_basic_nodes = d_dr_at_basic_nodes
+        return mesh, r_stag, r_basic, P_stag, P_basic
+
+    @staticmethod
+    def _build_state(entropy_eos, mesh, P_stag, P_basic,
+                     grav_sep: bool, bottom_up_grav_sep: bool = True,
+                     grain_size: float = 0.1):
+        """Build EntropyState with the requested Jgrav configuration.
+
+        Uses grain_size = 0.1 m by default to match the R8 CHILI
+        Earth config and make the test discriminating: smaller grain
+        sizes (e.g. 1 mm) produce a v_rel small enough that the bug
+        is hard to reproduce.
+
+        Set ``bottom_up_grav_sep=False`` to disable the cubic-Hermite
+        smoothing entirely and reproduce the pre-fix drain.
+        """
+        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+        from aragog.solver.entropy_state import EntropyState
+
+        phase_stag = EntropyPhaseEvaluator(
+            entropy_eos=entropy_eos,
+            gravitational_acceleration=9.8,
+            grain_size=grain_size,
+        )
+        phase_stag.set_pressure(P_stag)
+        phase_basic = EntropyPhaseEvaluator(
+            entropy_eos=entropy_eos,
+            gravitational_acceleration=9.8,
+            grain_size=grain_size,
+        )
+        phase_basic.set_pressure(P_basic)
+
+        class Eval:
+            pass
+
+        evaluator = Eval()
+        evaluator.mesh = mesh
+
+        return EntropyState(
+            evaluator=evaluator,
+            phase_staggered=phase_stag,
+            phase_basic=phase_basic,
+            conduction=True,
+            convection=True,
+            gravitational_separation=grav_sep,
+            mixing=True,
+            radionuclides=False,
+            tidal=False,
+            kappah_floor=10.0,
+            bottom_up_grav_sep=bottom_up_grav_sep,
+        )
+
+    def test_near_liquidus_single_step_bounded(self, entropy_eos):
+        """First crystallization step with Jgrav must keep S and T bounded.
+
+        Picks an initial entropy `S_init = S_liq(P_CMB) - 10` so the
+        CMB cell sits just below its liquidus. Pre-fix this IC drove
+        S at the CMB to -15 J/kg/K (off the PALEOS P-S table domain
+        [-85, 3236]) and T_CMB to ~500 K inside a single coupling
+        step, with the solver silently reporting `status = 0`.
+
+        With the fix in place, one short BDF step must keep:
+          - solver status 0,
+          - S_min well inside the PALEOS table domain
+            (S_min > S_EOS_min + 500 J/kg/K),
+          - T_CMB above 1500 K (far above pre-fix ~500 K, loose
+            enough not to over-constrain the physics — a cold solid
+            at 135 GPa is allowed, just not a table-edge collapse),
+          - no NaN in the final entropy profile,
+          - thermal energy decreases (E_final < E_init).
+        """
+        from scipy.integrate import solve_ivp
+        from scipy.constants import Stefan_Boltzmann
+
+        SECS_PER_YEAR = 31557600.0
+        # Smaller mesh keeps the test under a minute; the phase
+        # boundary physics does not depend on N.
+        mesh, r_stag, r_basic, P_stag, P_basic = self._build_earth_mesh(15)
+
+        P_CMB = P_stag[0]
+        S_liq_cmb = float(entropy_eos.liquidus_entropy(P_CMB))
+        S_liq_surf = float(entropy_eos.liquidus_entropy(P_stag[-1]))
+        S_init = S_liq_cmb - 10.0
+        # Sanity: pure liquid at the surface (the bug requires a
+        # mushy bottom under a pure-liquid top).
+        assert S_init > S_liq_surf + 100.0, (
+            f'Test IC is not unambiguously pure-liquid at the surface: '
+            f'S_init={S_init:.1f}, S_liq_surf={S_liq_surf:.1f}'
+        )
+
+        state = self._build_state(
+            entropy_eos, mesh, P_stag, P_basic, grav_sep=True
+        )
+
+        N = len(r_stag)
+        S0 = np.full(N, S_init)
+
+        def dSdt(t, S):
+            state.update(S, t)
+            T_top = state.top_temperature.item()
+            state._heat_flux[-1] = Stefan_Boltzmann * (T_top**4 - 255.0**4)
+            state._heat_flux[0] = 0.0
+            energy_flux = state.heat_flux * mesh.basic.area
+            cap = state.capacitance_staggered() * mesh.basic.volume
+            return -np.diff(energy_flux) / cap * SECS_PER_YEAR
+
+        # Short integration: 500 yr. Enough for the first mushy
+        # cell to transition but not enough to fully crystallize
+        # the bottom half of the mantle on a coarse mesh.
+        sol = solve_ivp(dSdt, (0.0, 500.0), S0, method='BDF',
+                         atol=1.0, rtol=1e-6)
+
+        assert sol.status == 0, f'Solver failed: {sol.message}'
+
+        S_final = sol.y[:, -1]
+        assert not np.any(np.isnan(S_final)), 'NaN in final entropy'
+
+        # Pre-fix A-variant reproducer result was S_min = -15 J/kg/K
+        # (off-table). Post-fix it stays well above the table floor.
+        assert S_final.min() > entropy_eos.S_min + 500.0, (
+            f'S_min {S_final.min():.1f} too close to table floor '
+            f'{entropy_eos.S_min:.1f}'
+        )
+
+        # T_CMB must be far above the pre-fix ~500 K collapse value.
+        # Loose bound: 1500 K. A cold solid at 135 GPa still exceeds
+        # this; only the table-clipping artifact dropped this low.
+        T_cmb_final = float(entropy_eos.temperature(
+            P_stag[0], S_final[0]
+        ))
+        assert T_cmb_final > 1500.0, (
+            f'CMB temperature collapsed: T_CMB={T_cmb_final:.0f} K. '
+            f'Pre-fix failure mode (~500 K at CMB).'
+        )
+
+        # Energy must DECREASE (cooling). The pre-fix artifact
+        # dropped T_CMB but raised E_th because the clipped T(P, S)
+        # lookup returned an inflated edge value for cells whose
+        # S had escaped the table domain. This is the discriminating
+        # "wrong answer" the test must rule out.
+        state.update(S_final, 500.0)
+        T_final = np.asarray(state.phase_staggered.temperature()).ravel()
+        rho_final = np.asarray(state.phase_staggered.density()).ravel()
+        Cp_final = np.asarray(state.phase_staggered.heat_capacity()).ravel()
+        V = mesh.basic.volume
+        E_final = float(np.sum(rho_final * Cp_final * T_final * V))
+
+        state.update(S0, 0.0)
+        T0 = np.asarray(state.phase_staggered.temperature()).ravel()
+        rho0 = np.asarray(state.phase_staggered.density()).ravel()
+        Cp0 = np.asarray(state.phase_staggered.heat_capacity()).ravel()
+        E_init = float(np.sum(rho0 * Cp0 * T0 * V))
+
+        assert E_final < E_init, (
+            f'Thermal energy increased on cooling: '
+            f'E_init={E_init:.2e}, E_final={E_final:.2e}'
+        )
+
+    def test_grav_off_is_gentler_than_grav_on(self, entropy_eos):
+        """Turning grav_sep off should reduce CMB cooling.
+
+        Sanity check that the regression tests are actually
+        exercising the Jgrav path. If grav-on and grav-off give
+        indistinguishable CMB states then the smoothing has zeroed
+        Jgrav entirely (or Jgrav is silently dead) and the other
+        regression tests would be passing on something other than
+        the Jgrav physics.
+
+        The physical expectation: gravitational settling sinks solid
+        toward the CMB and causes the CMB cell to solidify earlier.
+        Over a short integration, entropy at the CMB should drop
+        MORE with grav_sep on than with it off.
+
+        Uses a fully-liquid IC (S just above the CMB liquidus) and
+        a very short integration so both variants stay in the mushy
+        transient regime without fully crystallizing any cell.
+        """
+        from scipy.integrate import solve_ivp
+        from scipy.constants import Stefan_Boltzmann
+
+        SECS_PER_YEAR = 31557600.0
+        mesh, r_stag, r_basic, P_stag, P_basic = self._build_earth_mesh(15)
+
+        P_CMB = P_stag[0]
+        S_liq_cmb = float(entropy_eos.liquidus_entropy(P_CMB))
+        # Start JUST above the CMB liquidus so both variants will
+        # cool into the mushy zone but not fully crystallize.
+        S_init = S_liq_cmb + 20.0
+        N = len(r_stag)
+        S0 = np.full(N, S_init)
+
+        def run(state):
+            def dSdt(t, S):
+                state.update(S, t)
+                T_top = state.top_temperature.item()
+                state._heat_flux[-1] = Stefan_Boltzmann * (T_top**4 - 255.0**4)
+                state._heat_flux[0] = 0.0
+                energy_flux = state.heat_flux * mesh.basic.area
+                cap = state.capacitance_staggered() * mesh.basic.volume
+                return -np.diff(energy_flux) / cap * SECS_PER_YEAR
+            # 200 yr: short enough that both variants stay in the
+            # transient regime, long enough that Jgrav has time to
+            # move CMB entropy around.
+            sol = solve_ivp(dSdt, (0.0, 200.0), S0, method='BDF',
+                             atol=1.0, rtol=1e-6)
+            assert sol.status == 0, f'Solver failed: {sol.message}'
+            return sol.y[:, -1]
+
+        state_on = self._build_state(
+            entropy_eos, mesh, P_stag, P_basic, grav_sep=True
+        )
+        S_on = run(state_on)
+
+        state_off = self._build_state(
+            entropy_eos, mesh, P_stag, P_basic, grav_sep=False
+        )
+        S_off = run(state_off)
+
+        # With grav_sep on, the CMB cell should see MORE entropy
+        # loss (lower final S) than without it, because settling
+        # solid concentrates at the CMB.
+        dS_cmb_on = S_on[0] - S_init
+        dS_cmb_off = S_off[0] - S_init
+
+        # Discriminating assertion: grav-on must drain at least
+        # 5 J/kg/K more entropy than grav-off at the CMB cell.
+        # A silent no-op on Jgrav would give dS_on ≈ dS_off.
+        assert dS_cmb_on < dS_cmb_off - 5.0, (
+            f'Jgrav appears inert: dS_CMB(grav=ON)={dS_cmb_on:.2f}, '
+            f'dS_CMB(grav=OFF)={dS_cmb_off:.2f} (difference must '
+            f'exceed 5 J/kg/K)'
+        )
+
+        # Both must still be physically reasonable — no
+        # catastrophic drain, no off-table entropy.
+        assert S_on[0] > entropy_eos.S_min + 500.0
+        assert S_off[0] > entropy_eos.S_min + 500.0
+        T_on = float(entropy_eos.temperature(P_CMB, S_on[0]))
+        T_off = float(entropy_eos.temperature(P_CMB, S_off[0]))
+        assert T_on > 1500.0 and T_off > 1500.0, (
+            f'CMB collapsed: T_on={T_on:.0f}, T_off={T_off:.0f}'
+        )
+
+    def test_smoothing_disabled_fails_or_warns(self, entropy_eos):
+        """Disabling bottom_up_grav_sep reproduces the pre-fix drain.
+
+        Edge case: if a future refactor silently bypasses the
+        polynomial smoothing (e.g., sets ``bottom_up_grav_sep=False``
+        by default, or reintroduces a width knob and lets it be 0),
+        the pre-fix drain must come back. This test locks that in:
+        the bad config must produce EITHER a drained state OR a
+        solver failure. If neither happens, the fix has been
+        accidentally bypassed.
+        """
+        from scipy.integrate import solve_ivp
+        from scipy.constants import Stefan_Boltzmann
+
+        SECS_PER_YEAR = 31557600.0
+        mesh, r_stag, r_basic, P_stag, P_basic = self._build_earth_mesh(15)
+
+        P_CMB = P_stag[0]
+        S_init = float(entropy_eos.liquidus_entropy(P_CMB)) - 10.0
+        N = len(r_stag)
+        S0 = np.full(N, S_init)
+
+        state = self._build_state(
+            entropy_eos, mesh, P_stag, P_basic,
+            grav_sep=True, bottom_up_grav_sep=False,
+        )
+
+        def dSdt(t, S):
+            state.update(S, t)
+            T_top = state.top_temperature.item()
+            state._heat_flux[-1] = Stefan_Boltzmann * (T_top**4 - 255.0**4)
+            state._heat_flux[0] = 0.0
+            energy_flux = state.heat_flux * mesh.basic.area
+            cap = state.capacitance_staggered() * mesh.basic.volume
+            return -np.diff(energy_flux) / cap * SECS_PER_YEAR
+
+        sol = solve_ivp(dSdt, (0.0, 500.0), S0, method='BDF',
+                         atol=1.0, rtol=1e-6)
+
+        drained = False
+        if sol.status == 0:
+            S_final = sol.y[:, -1]
+            T_cmb = float(entropy_eos.temperature(P_CMB, S_final[0]))
+            drained = (
+                T_cmb < 1500.0
+                or S_final.min() < entropy_eos.S_min + 500.0
+            )
+
+        assert sol.status != 0 or drained, (
+            'Disabling smoothing (w=0) did not reproduce the pre-fix '
+            'drain or a solver failure. The fix may have been bypassed.'
+        )

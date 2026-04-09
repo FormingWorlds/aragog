@@ -61,6 +61,7 @@ class EntropyState:
         eddy_diffusivity_thermal: float = 1.0,
         eddy_diffusivity_chemical: float = 1.0,
         kappah_floor: float = 0.0,
+        bottom_up_grav_sep: bool = True,
     ):
         self._evaluator = evaluator
         self.phase_staggered = phase_staggered
@@ -75,6 +76,7 @@ class EntropyState:
         self._eddy_diff_thermal = eddy_diffusivity_thermal
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
+        self._bottom_up_grav_sep = bool(bottom_up_grav_sep)
 
         mesh = evaluator.mesh
         n_basic = mesh.basic.radii.size
@@ -212,7 +214,73 @@ class EntropyState:
         if self._grav_sep:
             phi_b = np.asarray(self.phase_basic.melt_fraction()).ravel()
             v_rel = np.asarray(self.phase_basic.relative_velocity()).ravel()
-            self._mass_flux += rho * phi_b * (1.0 - phi_b) * v_rel
+            jgrav = rho * phi_b * (1.0 - phi_b) * v_rel
+
+            # SPIDER-analogue phase-boundary smoothing.
+            #
+            # Purpose: at the first crystallisation step the raw mass
+            # flux rho * phi * (1-phi) * v_rel drains the CMB cell's
+            # entropy off the PALEOS P-S table in one coupling step,
+            # because the Stokes-regime permeability at
+            # grain_size = 0.1 m gives v_rel of several m/s and
+            # phi * (1-phi) ~ 5e-3 at phi = 0.995 is not enough
+            # damping. See memory/aragog_jgrav_cmb_drain.md.
+            #
+            # SPIDER avoids this via
+            # `smth = get_smoothing(matprop_smooth_width, gphi)` where
+            # gphi is the UN-truncated two-phase fraction
+            #     gphi = (S - S_sol(P)) / (S_liq(P) - S_sol(P))
+            # at the STAGGERED cell immediately BELOW the interface
+            # (JGRAV_BOTTOM_UP, SPIDER/energy.c:523-533). gphi exceeds
+            # 1 for pure liquid and goes negative for pure solid, so
+            # `smth` drops cleanly to 0 on both sides, killing Jgrav
+            # at any interface whose lower neighbour is in a pure
+            # phase. Aragog's bookkeeping phi is clamped to [0,1] by
+            # the EOS lookup so we recompute gphi here from the
+            # staggered-cell entropy against the solidus/liquidus
+            # entropies.
+            #
+            # Instead of SPIDER's tanh smoothing, we use a clipped
+            # cubic Hermite `16 * gphi^2 * (1-gphi)^2`. Three reasons:
+            #   1. Identical zero behaviour at pure phases (gphi = 0
+            #      or gphi = 1 -> smth = 0), which is all that's
+            #      needed to prevent the drain.
+            #   2. Peaks at smth = 1 at gphi = 0.5, with maximum
+            #      derivative |smth'| = 2 (vs ~25 for the tanh at
+            #      matprop_smooth_width = 0.01). Bounded derivatives
+            #      everywhere are much gentler on scipy BDF's
+            #      finite-difference Jacobian approximation, which
+            #      lets PROTEUS take its full adaptive coupling
+            #      timestep through the mushy zone instead of
+            #      grinding.
+            #   3. Parameter-free: no matprop_smooth_width knob to
+            #      tune. SPIDER keeps that knob for its own solver.
+            if self._bottom_up_grav_sep:
+                P_stag_arr = np.asarray(self.phase_staggered.pressure).ravel()
+                eos_stag = self.phase_staggered._eos
+                S_sol_s = np.asarray(
+                    eos_stag.solidus_entropy(P_stag_arr)
+                ).ravel()
+                S_liq_s = np.asarray(
+                    eos_stag.liquidus_entropy(P_stag_arr)
+                ).ravel()
+                dS_s = np.maximum(S_liq_s - S_sol_s, 1.0)
+                gphi_stag = (self._entropy_staggered - S_sol_s) / dS_s
+
+                # Clipped cubic Hermite: 16 * gphi^2 * (1-gphi)^2
+                # on [0,1], zero outside. smth(0)=0, smth(0.5)=1,
+                # smth(1)=0, continuous first derivative everywhere.
+                gphi_clip = np.clip(gphi_stag, 0.0, 1.0)
+                smth_stag = 16.0 * gphi_clip**2 * (1.0 - gphi_clip) ** 2
+
+                # Bottom-up: basic node i (interface between staggered
+                # i-1 and i) sees the smoothing of staggered i-1 (the
+                # cell BELOW).
+                smth_basic = np.ones_like(jgrav)
+                smth_basic[1:-1] = smth_stag[:-1]
+                jgrav = jgrav * smth_basic
+
+            self._mass_flux += jgrav
 
         if self._mixing:
             self._mass_flux += rho * self._kappac * (-self._dphidr)
