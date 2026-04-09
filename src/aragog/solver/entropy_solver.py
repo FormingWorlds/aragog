@@ -320,10 +320,28 @@ class EntropySolver:
 
         if core_bc == 'bower2018':
             # State = [S_0, ..., S_{N-1}, T_core]
-            # Default T_core = bottom-cell mantle T from EOS, unless
-            # the user has already set it via set_initial_core_temperature.
+            # T_core_init priority order:
+            #   1. user override via set_initial_core_temperature
+            #   2. preserve from a previous solve (the v4 hot path
+            #      between PROTEUS coupling steps -- without this the
+            #      core enthalpy ODE gets reset on every reset() and
+            #      the integrated T_core is lost)
+            #   3. EOS-derived bottom-cell mantle T (cold-start init)
             T_core_init = getattr(self, '_T_core_init', None)
             if T_core_init is None:
+                # Preserve from previous solution if available
+                prev_sol = getattr(self, '_solution', None)
+                if (prev_sol is not None
+                        and getattr(prev_sol, 'y', None) is not None
+                        and prev_sol.y.size > 0
+                        and prev_sol.y.shape[0] == n_stag + 1):
+                    T_core_init = float(prev_sol.y[n_stag, -1])
+                    logger.info(
+                        'Preserved T_core from previous solve: %.0f K',
+                        T_core_init,
+                    )
+            if T_core_init is None:
+                # Cold start: derive from bottom-cell mantle T via EOS
                 P_bottom = float(self._P_stag_flat[0])
                 T_core_init = float(np.asarray(
                     self.entropy_eos.temperature(
