@@ -444,10 +444,11 @@ class EntropySolver:
         For the legacy quasi-steady BC the state vector is just
         ``[S_0, ..., S_{N-1}]`` of length N.
 
-        Supports vectorized evaluation: when ``state_vec`` is 2D
-        ``(N+1, K)`` (or ``(N, K)``), returns the same shape by looping
-        over K columns. This enables scipy BDF to evaluate multiple
-        perturbations for finite-difference Jacobian approximation.
+        Tier 1 Step 1B (2026-04-09): the previous version had a
+        ``vectorized=True`` dispatch branch that fell through to a
+        sequential Python loop over the K columns -- pure overhead
+        with zero scipy benefit. Removed; the solver now uses
+        ``vectorized=False`` and the 1D path only.
 
         Parameters
         ----------
@@ -455,18 +456,13 @@ class EntropySolver:
             Time [yr].
         state_vec : array
             Solver state vector [J/kg/K for entropy, K for T_core].
-            Shape (N,)/(N+1,) or (N,K)/(N+1,K).
+            Shape (N,) or (N+1,) only.
 
         Returns
         -------
         array
             d(state_vec)/dt with the same shape as the input.
         """
-        if state_vec.ndim > 1:
-            result = np.zeros_like(state_vec)
-            for k in range(state_vec.shape[1]):
-                result[:, k] = self._dSdt_single(time, state_vec[:, k])
-            return result
         return self._dSdt_single(time, state_vec)
 
     def _dSdt_single(
@@ -666,12 +662,19 @@ class EntropySolver:
 
         jac_sparsity = self._build_jac_sparsity()
 
+        # Tier 1 Step 1B: pass vectorized=False. The dSdt method has
+        # a vectorized=True branch but it's a fake (sequential Python
+        # loop over the K columns), so it adds dispatch overhead per
+        # call without giving scipy any actual benefit. With
+        # vectorized=False, scipy's BDF perturbs each state element
+        # individually for the Jacobian, which is what was happening
+        # under the hood anyway.
         self._solution = solve_ivp(
             self.dSdt,
             (start_time, end_time),
             self._S0,
             method='BDF',
-            vectorized=True,
+            vectorized=False,
             dense_output=True,
             atol=atol,
             rtol=rtol,
