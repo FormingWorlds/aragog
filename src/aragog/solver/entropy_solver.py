@@ -652,12 +652,40 @@ class EntropySolver:
         """Run the BDF time integration."""
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
-        atol = max(self.parameters.solver.atol, 0.01)  # entropy in J/kg/K
+        atol_base = max(self.parameters.solver.atol, 0.01)  # entropy in J/kg/K
         rtol = self.parameters.solver.rtol
 
+        # Tier 1 Step 1D: phi-aware atol relaxation in the cliff.
+        # The deep-solid stiffness (Phi ~ 0.05-0.2) makes the BDF
+        # Newton iteration grind on single coupling steps for many
+        # minutes because atol = 0.01 J/kg/K is over-specified there.
+        # The cubic-Hermite Jgrav smoothing introduces ~1 % physics
+        # error in mushy/solid values anyway, so the tight atol gives
+        # no real accuracy benefit in that regime.
+        #
+        # Estimate Phi_global from the initial entropy (start of this
+        # coupling step) via the EOS, then scale atol by
+        # max(1, 100*(1 - Phi_init)) so atol relaxes from 0.01 in the
+        # fully-liquid case to ~1 J/kg/K in the deep-solid case.
+        # rtol stays 1e-6 throughout, so the relative error is still
+        # tiny (atol_eff = 1 J/kg/K vs typical S = 3000 J/kg/K is
+        # 3e-4 relative).
+        try:
+            n_stag = self._n_stag
+            S0_block = self._S0[:n_stag] if self._core_bc == 'bower2018' else self._S0
+            phi0 = float(np.asarray(
+                self.entropy_eos.melt_fraction(self._P_stag_flat, S0_block)
+            ).mean())
+            phi0 = max(0.0, min(1.0, phi0))
+        except Exception:
+            phi0 = 1.0
+        atol_scale = max(1.0, 100.0 * (1.0 - phi0))
+        atol = atol_base * atol_scale
+
         logger.info(
-            'EntropySolver: integrating from %.2e to %.2e yr (atol=%.2e, rtol=%.2e)',
-            start_time, end_time, atol, rtol,
+            'EntropySolver: integrating from %.2e to %.2e yr '
+            '(Phi_init=%.3f, atol_scale=%.1fx, atol=%.2e, rtol=%.2e)',
+            start_time, end_time, phi0, atol_scale, atol, rtol,
         )
 
         jac_sparsity = self._build_jac_sparsity()
