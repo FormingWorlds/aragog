@@ -157,6 +157,15 @@ class EntropySolver:
         self._r_basic_flat = np.asarray(mesh.basic.radii).ravel()
         self._P_stag_flat = P_stag
         self._P_basic_flat = P_basic
+        self._n_stag = int(P_stag.shape[0])
+
+        # CMB BC mode (set here from config so dSdt can dispatch even
+        # before set_initial_entropy is called):
+        #   'bower2018' = v4 default, T_core as ODE state variable
+        #   'quasi_steady' = legacy v3, alpha-factor heat-flux partition
+        self._core_bc = getattr(
+            self.parameters.boundary_conditions, 'core_bc', 'bower2018'
+        )
         # Gravity: try mesh EOS attribute first, then mesh settings
         g = abs(float(getattr(
             mesh.eos, '_gravitational_acceleration',
@@ -255,63 +264,140 @@ class EntropySolver:
         self._initialize_internals()
 
     def set_initial_entropy(self, S_init: npt.NDArray | float) -> None:
-        """Set the initial entropy profile.
+        """Set the initial entropy profile and (if used) initial T_core.
 
         Parameters
         ----------
         S_init : array or float
             Entropy at staggered nodes [J/kg/K]. If scalar, sets uniform
             (isentropic) profile.
+
+        Notes
+        -----
+        When the v4 Bower core BC is active (``core_bc='bower2018'``,
+        the default), the solver state vector is N+1 in length, with
+        ``state[-1] == T_core``. The initial T_core is taken from the
+        bottom-cell mantle temperature derived from S_init via the EOS,
+        unless ``set_initial_core_temperature`` has been called first.
+        For the legacy quasi-steady BC (``core_bc='quasi_steady'``)
+        the state vector is N as before.
         """
-        n_stag = self.evaluator.mesh.staggered.radii.shape[0]
-        if np.isscalar(S_init):
-            self._S0 = np.full(n_stag, float(S_init))
+        # Prefer the cached _n_stag from _initialize_internals; fall
+        # back to the mesh accessor for legacy callers that bypass it.
+        if hasattr(self, '_n_stag') and self._n_stag is not None:
+            n_stag = self._n_stag
         else:
-            self._S0 = np.asarray(S_init, dtype=float)
-            if len(self._S0) != n_stag:
+            n_stag = self.evaluator.mesh.staggered.radii.shape[0]
+            self._n_stag = n_stag
+
+        if np.isscalar(S_init):
+            S_arr = np.full(n_stag, float(S_init))
+        else:
+            S_arr = np.asarray(S_init, dtype=float)
+            if len(S_arr) != n_stag:
                 raise ValueError(
-                    f'S_init length {len(self._S0)} != mesh staggered nodes {n_stag}'
+                    f'S_init length {len(S_arr)} != mesh staggered nodes {n_stag}'
                 )
-        logger.info('Initial entropy: S_min=%.0f, S_max=%.0f J/kg/K',
-                     self._S0.min(), self._S0.max())
+
+        # Prefer the cached _core_bc from _initialize_internals.
+        if hasattr(self, '_core_bc') and self._core_bc is not None:
+            core_bc = self._core_bc
+        else:
+            core_bc = getattr(self.parameters.boundary_conditions,
+                              'core_bc', 'bower2018')
+            self._core_bc = core_bc
+
+        if core_bc == 'bower2018':
+            # State = [S_0, ..., S_{N-1}, T_core]
+            # Default T_core = bottom-cell mantle T from EOS, unless
+            # the user has already set it via set_initial_core_temperature.
+            T_core_init = getattr(self, '_T_core_init', None)
+            if T_core_init is None:
+                P_bottom = float(self._P_stag_flat[0])
+                T_core_init = float(np.asarray(
+                    self.entropy_eos.temperature(
+                        np.array([P_bottom]), np.array([S_arr[0]])
+                    )
+                ).item())
+            self._S0 = np.empty(n_stag + 1)
+            self._S0[:n_stag] = S_arr
+            self._S0[n_stag] = T_core_init
+            logger.info(
+                'Initial state (v4 Bower core BC): S_min=%.0f, S_max=%.0f, '
+                'T_core_init=%.0f K',
+                S_arr.min(), S_arr.max(), T_core_init,
+            )
+        else:
+            # Legacy v3 quasi-steady BC: state = [S_0, ..., S_{N-1}]
+            self._S0 = S_arr
+            logger.info('Initial entropy (v3 quasi-steady BC): '
+                         'S_min=%.0f, S_max=%.0f J/kg/K',
+                         S_arr.min(), S_arr.max())
+
+    def set_initial_core_temperature(self, T_core_init: float) -> None:
+        """Set the initial core temperature (v4 Bower BC only).
+
+        Must be called BEFORE ``set_initial_entropy``. If not called,
+        the initial T_core defaults to the bottom-cell mantle
+        temperature derived from S_init via the EOS.
+        """
+        self._T_core_init = float(T_core_init)
 
     def dSdt(
         self,
         time: npt.NDArray | float,
-        entropy: npt.NDArray,
+        state_vec: npt.NDArray,
     ) -> npt.NDArray:
-        """dS/dt at the staggered nodes.
+        """Time derivative of the full state vector.
 
-        Supports vectorized evaluation: when entropy is (N, K), returns
-        (N, K) by looping over K columns. This enables scipy BDF to
-        evaluate multiple perturbations for Jacobian approximation.
+        For the v4 Bower core BC the state vector is
+        ``[S_0, ..., S_{N-1}, T_core]`` of length N+1, and this returns
+        ``[dS/dt, dT_core/dt]`` of the same length.
+
+        For the legacy quasi-steady BC the state vector is just
+        ``[S_0, ..., S_{N-1}]`` of length N.
+
+        Supports vectorized evaluation: when ``state_vec`` is 2D
+        ``(N+1, K)`` (or ``(N, K)``), returns the same shape by looping
+        over K columns. This enables scipy BDF to evaluate multiple
+        perturbations for finite-difference Jacobian approximation.
 
         Parameters
         ----------
         time : float
             Time [yr].
-        entropy : array
-            Entropy at staggered nodes [J/kg/K]. Shape (N,) or (N, K).
+        state_vec : array
+            Solver state vector [J/kg/K for entropy, K for T_core].
+            Shape (N,)/(N+1,) or (N,K)/(N+1,K).
 
         Returns
         -------
         array
-            dS/dt at staggered nodes [J/kg/K/yr]. Same shape as input.
+            d(state_vec)/dt with the same shape as the input.
         """
-        # Handle vectorized (N, K) input by looping over columns
-        if entropy.ndim > 1:
-            result = np.zeros_like(entropy)
-            for k in range(entropy.shape[1]):
-                result[:, k] = self._dSdt_single(time, entropy[:, k])
+        if state_vec.ndim > 1:
+            result = np.zeros_like(state_vec)
+            for k in range(state_vec.shape[1]):
+                result[:, k] = self._dSdt_single(time, state_vec[:, k])
             return result
-        return self._dSdt_single(time, entropy)
+        return self._dSdt_single(time, state_vec)
 
     def _dSdt_single(
         self,
         time: npt.NDArray | float,
-        entropy: npt.NDArray,
+        state_vec: npt.NDArray,
     ) -> npt.NDArray:
-        """dS/dt for a single entropy profile (1D)."""
+        """Time derivative of one state vector column."""
+        n_stag = self._n_stag
+        bower = (self._core_bc == 'bower2018')
+
+        if bower:
+            entropy = state_vec[:n_stag]
+            T_core = float(state_vec[n_stag])
+        else:
+            entropy = state_vec
+            T_core = None
+
         self.state.update(entropy, time)
 
         # Apply flux BCs directly (not via BC module, which expects 2D arrays).
@@ -330,25 +416,60 @@ class EntropySolver:
 
         # CMB boundary condition
         if bc.inner_boundary_condition == 1:
-            # Core cooling (Bower+2018 Eq. 37, matching boundary.py):
-            # alpha = (R_1/R_0)^2 / (1 + C_cell / (C_core * tfac))
-            # Both capacities must be THERMAL (rho*Cp*V, units J/K),
-            # not entropy (rho*T*V). Use Cp from the phase evaluator.
-            r_cmb = float(self._r_basic_flat[0])
-            core_cap = (
-                4.0 / 3.0 * np.pi * r_cmb**3
-                * self.evaluator.mesh.settings.core_density
-                * bc.core_heat_capacity
-            )
-            rho_first = float(np.asarray(self.state.phase_staggered.density()).flat[0])
-            cp_first = float(np.asarray(self.state.phase_staggered.heat_capacity()).flat[0])
-            vol_first = float(self._volume_flat[0])
-            cell_cap = vol_first * rho_first * cp_first  # J/K (thermal)
-            r_above = float(self._r_basic_flat[1])
-            tfac = getattr(bc, 'tfac_core_avg', 1.147)
-            radius_ratio = r_above / r_cmb
-            alpha = radius_ratio**2 / (cell_cap / (core_cap * tfac) + 1.0)
-            self.state._heat_flux[0] = alpha * self.state._heat_flux[1]
+            if bower:
+                # v4 Bower+2018 Eq. 37 core BC
+                # F_cmb = -k_eff * (T_above - T_core) / dr_half
+                # The factor -1 makes F_cmb positive when heat flows
+                # from mantle to core (i.e., T_above > T_core), which
+                # matches Aragog's heat flux sign convention (positive
+                # outward, so negative when flowing into the core).
+                #
+                # Wait: Aragog convention is that positive flux at a
+                # basic node means heat flows in the +r direction.
+                # At the CMB (innermost basic node) this means positive
+                # = outward (from core to mantle). So when T_core >
+                # T_above, F[0] > 0 (heat flows core -> mantle, core
+                # cooling). When T_core < T_above, F[0] < 0 (heat flows
+                # mantle -> core, core heating).
+                #
+                # Discrete Fourier law:
+                #   F[0] = -k_eff * dT/dr|cmb
+                #        ≈ -k_eff * (T_above - T_core) / dr_half
+                # where T_above is the bottom mantle cell T and dr_half
+                # is the half-distance from cell 0 center to the CMB.
+                # When T_above > T_core, dT/dr > 0, so F[0] < 0 (heat
+                # flows inward = into core), which matches.
+                T_above = float(np.asarray(
+                    self.state.phase_staggered.temperature()
+                ).flat[0])
+                k_above = float(np.asarray(
+                    self.state.phase_staggered.thermal_conductivity()
+                ).flat[0]) if hasattr(self.state.phase_staggered,
+                                      'thermal_conductivity') else 4.0
+                r_cmb = float(self._r_basic_flat[0])
+                r_above = float(self._r_basic_flat[1])
+                dr_half = 0.5 * (r_above - r_cmb)
+                F_cmb = -k_above * (T_above - T_core) / max(dr_half, 1.0)
+                self.state._heat_flux[0] = F_cmb
+            else:
+                # Legacy v3 quasi-steady BC (alpha factor partition)
+                r_cmb = float(self._r_basic_flat[0])
+                core_cap = (
+                    4.0 / 3.0 * np.pi * r_cmb**3
+                    * self.evaluator.mesh.settings.core_density
+                    * bc.core_heat_capacity
+                )
+                rho_first = float(np.asarray(
+                    self.state.phase_staggered.density()).flat[0])
+                cp_first = float(np.asarray(
+                    self.state.phase_staggered.heat_capacity()).flat[0])
+                vol_first = float(self._volume_flat[0])
+                cell_cap = vol_first * rho_first * cp_first  # J/K
+                r_above = float(self._r_basic_flat[1])
+                tfac = getattr(bc, 'tfac_core_avg', 1.147)
+                radius_ratio = r_above / r_cmb
+                alpha = radius_ratio**2 / (cell_cap / (core_cap * tfac) + 1.0)
+                self.state._heat_flux[0] = alpha * self.state._heat_flux[1]
         elif bc.inner_boundary_condition == 2:
             self.state._heat_flux[0] = bc.inner_boundary_value
         elif bc.inner_boundary_condition == 3:
@@ -357,7 +478,6 @@ class EntropySolver:
             self.state._heat_flux[0] = 0.0  # insulating
 
         # Flux divergence: dE/dr at staggered nodes.
-        # Use cached 1D mesh arrays (area, volume) from _initialize_internals.
         energy_flux = self.state.heat_flux * self._area_flat
         delta_energy_flux = np.diff(energy_flux)
 
@@ -368,8 +488,7 @@ class EntropySolver:
         # dS/dt from flux divergence [J/kg/K/s]
         dSdt = -delta_energy_flux / capacitance
 
-        # Internal heating: dS/dt += H / T (SPIDER rhs.c line 62)
-        # H is power per unit mass [W/kg], T is temperature [K]
+        # Internal heating: dS/dt += H / T
         H = self.state.heating
         T_stag = np.asarray(self.state.phase_staggered.temperature()).ravel()
         dSdt += H / np.maximum(T_stag, 1.0)
@@ -377,7 +496,26 @@ class EntropySolver:
         # Convert to J/kg/K/yr
         dSdt *= SECS_PER_YEAR
 
-        return dSdt
+        if not bower:
+            return dSdt
+
+        # v4: append dT_core/dt = -F_cmb * area_cmb / (M_core * Cp_core)
+        # F_cmb is positive outward (core -> mantle = core cooling).
+        # When F_cmb > 0, the core LOSES heat at rate F_cmb * area_cmb,
+        # so dT_core/dt < 0.
+        F_cmb = float(self.state._heat_flux[0])
+        r_cmb = float(self._r_basic_flat[0])
+        area_cmb = 4.0 * np.pi * r_cmb**2
+        M_core = (
+            4.0 / 3.0 * np.pi * r_cmb**3
+            * self.evaluator.mesh.settings.core_density
+        )
+        Cp_core = float(bc.core_heat_capacity)
+        dT_core_dt = -F_cmb * area_cmb / max(M_core * Cp_core, 1.0)
+        # Convert from K/s to K/yr
+        dT_core_dt *= SECS_PER_YEAR
+
+        return np.concatenate([dSdt, [dT_core_dt]])
 
     @property
     def solution(self) -> OptimizeResult | None:
@@ -393,13 +531,25 @@ class EntropySolver:
 
     @property
     def entropy_staggered(self) -> npt.NDArray:
-        """Entropy at staggered nodes from the solution."""
-        return self._solution.y
+        """Entropy at staggered nodes from the solution.
+
+        For the v4 Bower core BC, the solver state vector is N+1 in
+        length (S followed by T_core); we strip the trailing T_core
+        row and return only the entropy block.
+        """
+        y = self._solution.y
+        if self._core_bc == 'bower2018':
+            return y[:self._n_stag]
+        return y
 
     @property
     def temperature_staggered(self) -> npt.NDArray:
         """Temperature at staggered nodes (derived from S via EOS)."""
-        S = self._solution.y[:, -1] if self._solution.y.ndim > 1 else self._solution.y
+        y = self._solution.y
+        if self._core_bc == 'bower2018':
+            S = y[:self._n_stag, -1] if y.ndim > 1 else y[:self._n_stag]
+        else:
+            S = y[:, -1] if y.ndim > 1 else y
         P = self.evaluator.mesh.staggered.pressure
         return self.entropy_eos.temperature(P, S)
 
@@ -407,23 +557,43 @@ class EntropySolver:
         """Build the Jacobian sparsity pattern for the BDF solver.
 
         The entropy equation couples node i to its nearest neighbours via
-        the flux divergence operator (diff of fluxes at basic nodes i and
-        i+1, each depending on staggered nodes i-1, i, i+1 through the
-        mesh transform matrices). The bulk Jacobian is tridiagonal.
+        the flux divergence operator. The bulk Jacobian is tridiagonal,
+        extended to pentadiagonal at the boundaries for the 3-point
+        d/dr extrapolation stencil.
 
-        At boundaries the d/dr transform uses a 3-point extrapolation
-        stencil, extending the bandwidth by 1. A pentadiagonal pattern
-        (bandwidth 2) safely covers all entries including boundaries.
+        For the v4 Bower core BC, the state vector grows by one
+        (T_core at index N) and the sparsity gets two extra entries:
+
+          - row N (T_core) couples to S[0] (via T_above in F_cmb)
+            and to itself
+          - row 0 (S[0]) couples to T_core (via F_cmb feedback)
 
         With this sparsity hint scipy groups finite-difference
-        perturbations by graph colouring: 5 RHS evaluations instead of
-        N+1 for the full dense Jacobian. For N=100 this is a ~20x
-        reduction in Jacobian construction cost.
+        perturbations by graph colouring, giving ~5 RHS evaluations
+        per Jacobian instead of N+1.
         """
-        N = len(self._S0)
-        offsets = [-2, -1, 0, 1, 2]
-        data = [np.ones(N - abs(k)) for k in offsets]
-        return sparse_diags(data, offsets, shape=(N, N), format='csc')
+        from scipy.sparse import lil_matrix
+
+        n_stag = self._n_stag
+        bower = (self._core_bc == 'bower2018')
+        N = n_stag + (1 if bower else 0)
+
+        J = lil_matrix((N, N), dtype=float)
+        # Pentadiagonal block for the entropy part
+        for i in range(n_stag):
+            for k in range(-2, 3):
+                j = i + k
+                if 0 <= j < n_stag:
+                    J[i, j] = 1.0
+
+        if bower:
+            # T_core (row N) couples to S[0] and itself
+            J[n_stag, 0] = 1.0
+            J[n_stag, n_stag] = 1.0
+            # S[0] (row 0) couples to T_core via F_cmb feedback
+            J[0, n_stag] = 1.0
+
+        return J.tocsc()
 
     def solve(self) -> None:
         """Run the BDF time integration."""
@@ -477,7 +647,19 @@ class EntropySolver:
         eos = self.entropy_eos
         mesh = self.evaluator.mesh
 
-        S_final = sol.y[:, -1]
+        n_stag = self._n_stag
+        bower = (self._core_bc == 'bower2018')
+
+        # Slice the final state vector. For v4 Bower BC the last
+        # element is T_core; for legacy quasi-steady BC the whole
+        # vector is the entropy profile.
+        if bower:
+            S_final = sol.y[:n_stag, -1]
+            T_core_solver = float(sol.y[n_stag, -1])
+        else:
+            S_final = sol.y[:, -1]
+            T_core_solver = None
+
         P_stag = self._P_stag_flat
         r_basic = self._r_basic_flat
         r_stag = np.asarray(mesh.staggered.radii).ravel()
@@ -499,7 +681,13 @@ class EntropySolver:
         mass_stag = rho_stag * vol
         M_mantle = float(np.sum(mass_stag))
         T_magma = float(T_stag[-1])
-        T_core = float(T_stag[0])
+        # Core temperature: prefer the v4 Bower-evolved value when
+        # available; fall back to the bottom-cell mantle T (the v3
+        # convention) otherwise.
+        if T_core_solver is not None:
+            T_core = T_core_solver
+        else:
+            T_core = float(T_stag[0])
         Phi_global = float(np.dot(phi_stag, vol) / np.sum(vol))
 
         # Rheological front depth

@@ -47,3 +47,12 @@ class BoundaryConfig:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
+    # Core BC mode (v4 default = 'bower2018'):
+    #   'bower2018' = T_core as ODE state variable, F_cmb from
+    #     conduction (-k_eff * (T_above - T_core) / dr_half),
+    #     dT_core/dt = -F_cmb * area_cmb / (M_core * Cp_core).
+    #     Mathematically equivalent to SPIDER's bc.c:76-131.
+    #   'quasi_steady' = legacy v3 alpha-factor heat-flux partition
+    #     between mantle bottom cell and core based on heat capacity
+    #     ratio. Less accurate, retained for backward compatibility.
+    core_bc: str = 'bower2018'

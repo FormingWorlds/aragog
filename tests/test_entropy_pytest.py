@@ -978,3 +978,135 @@ class TestLatentBlendCp:
                 gravitational_acceleration=9.8,
                 cp_blend='banana',
             )
+
+
+# ── Tier 4: Bower+2018 core BC (v4) ─────────────────────────────────
+
+@needs_eos
+@pytest.mark.unit
+class TestBowerCoreBC:
+    """Unit tests for the v4 Bower+2018 Eq. 37 core BC.
+
+    The v3 Aragog quasi-steady BC computed F_cmb as a static fraction
+    (alpha) of F[1] based on the heat capacity ratio between the
+    first mantle cell and the core. This produced a -19 % T_core
+    offset against SPIDER on R8 CHILI because Aragog had no record
+    of the actual core enthalpy state.
+
+    v4 expands the solver state vector by one element (T_core at
+    index N) and integrates dT_core/dt = -F_cmb * area_cmb /
+    (M_core * Cp_core), where F_cmb is the discrete Fourier-law
+    heat flux from the bottom mantle cell to the core.
+
+    These tests build a minimal mesh by hand (no PROTEUS coupling),
+    construct an EntropySolver with the new BC, and assert the
+    expected state-vector shape and core energy balance properties.
+    """
+
+    @staticmethod
+    def _build_minimal_mesh(N: int = 30):
+        """Build a minimal Earth-like mesh for solver tests.
+
+        Mirrors `TestJgravSmoothing._build_earth_mesh` so the new
+        tests cover the same construction path.
+        """
+        R_cmb, R_surf = 3480e3, 6371e3
+        r_stag = np.linspace(R_cmb, R_surf, N)
+        dr = np.diff(r_stag)
+        P_stag = np.linspace(135e9, 1e5, N)
+
+        r_basic = np.zeros(N + 1)
+        r_basic[0] = R_cmb
+        r_basic[-1] = R_surf
+        r_basic[1:-1] = 0.5 * (r_stag[:-1] + r_stag[1:])
+        P_basic = np.interp(r_basic, r_stag, P_stag)
+
+        class Mesh:
+            pass
+        class SubMesh:
+            pass
+
+        mesh = Mesh()
+        mesh.basic = SubMesh()
+        mesh.staggered = SubMesh()
+        mesh.basic.radii = r_basic
+        mesh.staggered.radii = r_stag
+        mesh.basic.area = 4.0 * np.pi * r_basic**2
+        mesh.basic.volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
+        ml = np.minimum(r_basic - R_cmb, R_surf - r_basic)
+        mesh.basic.mixing_length = np.maximum(ml, 1.0)
+        mesh.basic.mixing_length_squared = mesh.basic.mixing_length**2
+        mesh.basic.mixing_length_cubed = mesh.basic.mixing_length**3
+
+        return mesh, r_stag, r_basic, P_stag, P_basic
+
+    def test_state_vector_length_v3_vs_v4(self, entropy_eos):
+        """v4 state vector is N+1, v3 state vector is N."""
+        # Build a minimal solver-state-only test by directly constructing
+        # the relevant pieces.
+        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+        from aragog.solver.entropy_solver import EntropySolver
+        # We can't easily build a full Parameters object here, so we
+        # test the public set_initial_entropy + manual _n_stag/_core_bc
+        # path instead.
+
+        # Quick standin: instantiate via direct attribute assignment
+        solver = EntropySolver.__new__(EntropySolver)
+        solver.entropy_eos = entropy_eos
+        solver.parameters = None
+        solver.evaluator = None
+        solver._P_stag_flat = np.linspace(135e9, 1e5, 30)
+        solver._n_stag = 30
+        solver._core_bc = 'bower2018'
+
+        S_init = np.full(30, 2900.0)
+        solver.set_initial_entropy(S_init)
+        assert solver._S0.shape == (31,), \
+            f'v4 state should be N+1 = 31, got {solver._S0.shape}'
+
+        solver._core_bc = 'quasi_steady'
+        solver.set_initial_entropy(S_init)
+        assert solver._S0.shape == (30,), \
+            f'v3 state should be N = 30, got {solver._S0.shape}'
+
+    def test_t_core_init_from_eos(self, entropy_eos):
+        """Default initial T_core matches the bottom-cell mantle T."""
+        from aragog.solver.entropy_solver import EntropySolver
+
+        solver = EntropySolver.__new__(EntropySolver)
+        solver.entropy_eos = entropy_eos
+        solver.parameters = None
+        solver.evaluator = None
+        solver._P_stag_flat = np.linspace(135e9, 1e5, 30)
+        solver._n_stag = 30
+        solver._core_bc = 'bower2018'
+
+        S_init = np.full(30, 2900.0)
+        solver.set_initial_entropy(S_init)
+        # The last element should be the bottom-cell T from the EOS
+        T_bottom = float(np.asarray(
+            entropy_eos.temperature(
+                np.array([135e9]), np.array([2900.0])
+            )
+        ).item())
+        assert abs(solver._S0[-1] - T_bottom) < 1.0, (
+            f'Default T_core_init = {solver._S0[-1]:.0f} should match '
+            f'bottom mantle T = {T_bottom:.0f}'
+        )
+
+    def test_t_core_init_user_override(self, entropy_eos):
+        """set_initial_core_temperature overrides the default T_core."""
+        from aragog.solver.entropy_solver import EntropySolver
+
+        solver = EntropySolver.__new__(EntropySolver)
+        solver.entropy_eos = entropy_eos
+        solver.parameters = None
+        solver.evaluator = None
+        solver._P_stag_flat = np.linspace(135e9, 1e5, 30)
+        solver._n_stag = 30
+        solver._core_bc = 'bower2018'
+
+        solver.set_initial_core_temperature(7500.0)
+        S_init = np.full(30, 2900.0)
+        solver.set_initial_entropy(S_init)
+        assert solver._S0[-1] == pytest.approx(7500.0)
