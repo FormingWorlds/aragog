@@ -509,12 +509,22 @@ class EntropySolver:
         R_outer = float(r_basic[-1])
         RF_depth = 1.0 - rf / R_outer if R_outer > 0 else 0.0
 
-        # Thermal energy (sensible, for comparison with SPIDER)
-        CP_REF = 1200.0
-        E_th = float(np.sum(mass_stag * CP_REF * T_stag))
+        # Thermal energy (sensible, for comparison with SPIDER).
+        #
+        # Use the real heat capacity Cp(P, S) from the EntropyEOS
+        # phase evaluator. Until 2026-04-09 this used a hardcoded
+        # CP_REF = 1200 J/kg/K, which under-counted E_th by ~25-30 %
+        # at mantle conditions and produced a spurious +17 % offset
+        # against SPIDER (which itself was also wrong, see the
+        # parallel fix in proteus.interior_energetics.spider). With
+        # both wrappers using their respective EOS Cp(P, S) values
+        # the helpfile E_th is now physically meaningful and the
+        # SPIDER/Aragog parity reduces to a true comparison.
+        Cp_stag = np.asarray(self.state.phase_staggered.heat_capacity()).ravel()
+        E_th = float(np.sum(mass_stag * Cp_stag * T_stag))
 
-        # Effective heat capacity
-        Cp_eff = float(np.sum(cap_stag * vol)) / max(M_mantle, 1.0)
+        # Effective heat capacity (mass-weighted mean Cp)
+        Cp_eff = float(np.sum(mass_stag * Cp_stag)) / max(M_mantle, 1.0)
 
         # Volumetric melt fraction (porosity-based)
         rho_sol = np.asarray(

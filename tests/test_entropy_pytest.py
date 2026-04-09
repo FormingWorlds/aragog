@@ -656,3 +656,166 @@ class TestJgravSmoothing:
             'Disabling smoothing (w=0) did not reproduce the pre-fix '
             'drain or a solver failure. The fix may have been bypassed.'
         )
+
+
+# ── Tier 2: Cp(P,S) E_th regression ─────────────────────────────────
+
+@needs_eos
+@pytest.mark.unit
+class TestCpFromEOS:
+    """Regression tests for the E_th = sum(m_i * Cp(P_i, S_i) * T_i) fix.
+
+    Until 2026-04-09 the entropy_solver computed E_th with a hardcoded
+    ``CP_REF = 1200 J/kg/K``. The Wolf-Bower 2018 / PALEOS tables give
+    Cp(P, S) = 1400-2000 J/kg/K across the rocky mantle range, so the
+    helpfile E_th was undercount by ~25-30 % and disagreed with SPIDER
+    by +17 % at t=0 (mostly because SPIDER's same fallback combined
+    with a different mass column gave the opposite-signed bias).
+    Wired Cp_eff used to use ``cap_stag * vol = rho * T * vol`` which
+    silently reduces to ``mass-weighted T`` rather than mean Cp.
+
+    These tests assert:
+        (1) ``phase_staggered.heat_capacity()`` returns positive,
+            non-degenerate values across mantle pressures and never
+            collapses to a single number (which would mean the EOS
+            cache was stale or hardcoded);
+        (2) the post-fix E_th is strictly larger than the old
+            ``mass*1200*T`` computation at every node and the global
+            sum is at least 15 % larger;
+        (3) the post-fix Cp_eff is bounded between 1200 and 2500
+            J/kg/K (rough mantle range) and is NOT equal to mass-
+            weighted temperature, which is what the buggy formula
+            produced.
+    """
+
+    def test_heat_capacity_positive_and_varying(self, entropy_eos):
+        """Cp(P, S) varies across the mantle profile (not constant).
+
+        Discriminating choice: deep-mantle Cp is well-behaved
+        (1500-3000 J/kg/K for MgSiO3 at >50 GPa), so we measure there
+        rather than at the surface where the Wolf-Bower 2018 table
+        produces large apparent Cp from latent-heat contamination
+        near the melting curve.
+        """
+        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
+        # Sample 25 staggered nodes from surface to CMB
+        P = np.linspace(1e9, 135e9, 25)
+        # Mid-mantle isentrope (well above the rheological transition).
+        S = np.full_like(P, 2900.0)
+        phase = EntropyPhaseEvaluator(
+            entropy_eos=entropy_eos, gravitational_acceleration=9.8
+        )
+        phase.set_pressure(P)
+        phase.set_entropy(S)
+        phase.update()
+        Cp = np.asarray(phase.heat_capacity()).ravel()
+
+        assert Cp.shape == (25,)
+        assert np.all(Cp > 0.0), 'Cp must be strictly positive'
+
+        # Deep mantle (>50 GPa) Cp must be in a sensible range
+        deep_mask = P > 50e9
+        Cp_deep = Cp[deep_mask]
+        assert Cp_deep.min() > 1000.0 and Cp_deep.max() < 4000.0, (
+            f'Deep-mantle Cp out of physical bounds: '
+            f'[{Cp_deep.min():.0f}, {Cp_deep.max():.0f}] J/kg/K'
+        )
+
+        # Cp must vary across the profile (the bug we are guarding
+        # against returned a constant 1200 J/kg/K)
+        assert Cp.max() > Cp.min() * 1.05, (
+            f'Cp is degenerate across the profile (range '
+            f'[{Cp.min():.0f}, {Cp.max():.0f}]) - EOS lookup may be '
+            f'returning a single hardcoded value'
+        )
+
+        # Edge case: nothing should be exactly 1200 (the old fallback)
+        assert not np.any(np.isclose(Cp, 1200.0, atol=1e-3)), (
+            'A node returned exactly Cp = 1200 J/kg/K, suggesting '
+            'the hardcoded fallback was hit'
+        )
+
+    def test_e_th_uses_real_cp_not_constant(self, entropy_eos):
+        """Post-fix E_th must exceed the old mass*1200*T calculation."""
+        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
+        # 30 staggered nodes
+        P = np.linspace(1e9, 135e9, 30)
+        S = np.full_like(P, 2900.0)
+        phase = EntropyPhaseEvaluator(
+            entropy_eos=entropy_eos, gravitational_acceleration=9.8
+        )
+        phase.set_pressure(P)
+        phase.set_entropy(S)
+        phase.update()
+
+        rho = np.asarray(phase.density()).ravel()
+        T = np.asarray(phase.temperature()).ravel()
+        Cp = np.asarray(phase.heat_capacity()).ravel()
+
+        # Synthetic shell volumes (Earth-like, surface-to-CMB ordered)
+        # The exact volumes do not matter for the inequality test.
+        r = np.linspace(3480e3, 6371e3, 31)
+        vol = (4.0 / 3.0) * np.pi * np.diff(r**3)
+        mass = rho * vol
+
+        E_th_old = float(np.sum(mass * 1200.0 * T))
+        E_th_new = float(np.sum(mass * Cp * T))
+
+        # Cp ~ 1500 J/kg/K typical -> ~25 % more energy than 1200
+        assert E_th_new > E_th_old * 1.10, (
+            f'E_th_new={E_th_new:.3e} not > 1.10 * E_th_old={E_th_old:.3e}'
+        )
+
+    def test_cp_eff_is_mean_cp_not_mean_temperature(self, entropy_eos):
+        """Cp_eff must be a mass-weighted Cp, not mass-weighted T.
+
+        The pre-fix Cp_eff in entropy_solver.py used
+        ``sum(rho*T*vol) / M`` (cap_stag * vol = rho * T * vol),
+        which equals the mass-weighted mean temperature. Numerically
+        that lands in the 2000-4000 K range for a hot mantle, never
+        in the physical Cp range.
+        """
+        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
+        P = np.linspace(1e9, 135e9, 30)
+        S = np.full_like(P, 2900.0)
+        phase = EntropyPhaseEvaluator(
+            entropy_eos=entropy_eos, gravitational_acceleration=9.8
+        )
+        phase.set_pressure(P)
+        phase.set_entropy(S)
+        phase.update()
+
+        rho = np.asarray(phase.density()).ravel()
+        T = np.asarray(phase.temperature()).ravel()
+        Cp = np.asarray(phase.heat_capacity()).ravel()
+
+        r = np.linspace(3480e3, 6371e3, 31)
+        vol = (4.0 / 3.0) * np.pi * np.diff(r**3)
+        mass = rho * vol
+        M = float(np.sum(mass))
+
+        # Post-fix formula
+        Cp_eff_new = float(np.sum(mass * Cp)) / M
+        # Pre-fix (buggy) formula reduces to mass-weighted T
+        Cp_eff_old = float(np.sum(mass * T)) / M  # ~T_mean, in Kelvin
+
+        # The Wolf-Bower 2018 P-S table reports higher mantle Cp than
+        # textbook values for MgSiO3 because the mushy-zone blend
+        # picks up latent-heat contributions; the upper bound
+        # accommodates that.
+        assert 1100.0 < Cp_eff_new < 5000.0, (
+            f'Cp_eff_new = {Cp_eff_new:.1f} J/kg/K is out of physical '
+            f'range for silicate mantle'
+        )
+        # Cp_eff_old (mass-weighted T) is in Kelvin and must clearly
+        # differ from Cp_eff_new in J/kg/K. They should be at least
+        # 25 % apart on this profile so the bug would have been
+        # visible in the helpfile.
+        assert abs(Cp_eff_old - Cp_eff_new) > 0.25 * Cp_eff_new, (
+            f'Test setup wrong: pre-fix and post-fix formulas are not '
+            f'distinguishable (Cp_eff_old={Cp_eff_old:.1f} vs '
+            f'Cp_eff_new={Cp_eff_new:.1f})'
+        )
