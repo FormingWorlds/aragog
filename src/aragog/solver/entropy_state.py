@@ -99,7 +99,12 @@ class EntropyState:
         self._mass_flux = np.zeros(n_basic)
         self._is_convective = np.zeros(n_basic, dtype=bool)
 
-    def update(self, entropy: npt.NDArray, time: FloatOrArray) -> None:
+    def update(
+        self,
+        entropy: npt.NDArray,
+        time: FloatOrArray,
+        dSdr_cmb: float | None = None,
+    ) -> None:
         """Update the state from the entropy profile.
 
         Parameters
@@ -108,6 +113,18 @@ class EntropyState:
             Entropy at staggered nodes [J/kg/K].
         time : float
             Current time [yr].
+        dSdr_cmb : float, optional
+            Path A SPIDER-parity boundary state: the entropy gradient
+            ``dS/dr`` at the CMB basic node. When provided, this value
+            overrides the finite-difference estimate of ``_dSdr[0]``
+            and the corresponding ``_entropy_basic[0]`` is recomputed
+            via the boundary extrapolation
+                S_basic_cmb = S_stag[0] - 0.5 * dr * dSdr_cmb
+            so the convective+conductive flux at the CMB basic node
+            uses the boundary-state value rather than a one-sided FD
+            of the staggered cells. Mirrors SPIDER's bc.c convention.
+            When ``None`` (the legacy default), the FD estimate is
+            used and behaviour matches the v3/v4 quasi_steady path.
         """
         mesh = self._evaluator.mesh
 
@@ -117,6 +134,16 @@ class EntropyState:
         self._entropy_staggered = S
         self._entropy_basic = mesh.quantity_at_basic_nodes(S).ravel()
         self._dSdr = mesh.d_dr_at_basic_nodes(S).ravel()
+
+        # Path A: override the boundary entropy gradient with the
+        # state-vector value. This must happen BEFORE the phase_basic
+        # update so the bottom basic node uses the boundary entropy.
+        if dSdr_cmb is not None:
+            r_basic = np.asarray(mesh.basic.radii).ravel()
+            r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
+            dr_offset = r_basic[0] - r_stag_0  # negative: stag is above basic[0]
+            self._dSdr[0] = float(dSdr_cmb)
+            self._entropy_basic[0] = float(S[0]) + float(dSdr_cmb) * dr_offset
 
         # Update phase evaluators with current (P, S)
         self.phase_staggered.set_entropy(S)
