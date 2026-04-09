@@ -268,6 +268,55 @@ class EntropySolver:
         else:
             self.evaluator.radionuclides = []
 
+        # Tier 1 speedup (Step 1A): cache constant BC and mesh terms
+        # so the dSdt hot path doesn't recompute them on every RHS
+        # call. None of these depend on entropy.
+        self._cache_bc_constants()
+
+    def _cache_bc_constants(self) -> None:
+        """Pre-compute BC and mesh constants for the dSdt hot path.
+
+        Lifts core_density, core_heat_capacity, area_cmb, M_core,
+        r_cmb, r_above, dr_half, vol_first, tfac_core_avg, and the
+        outer/inner BC dispatch keys out of the per-RHS-call path.
+        Called from ``_initialize_internals`` after BC + mesh setup.
+
+        Tier 1 speedup, 2026-04-09. The dSdt loop previously
+        recomputed all of these on every RHS evaluation, which
+        meant ~10 µs/call of pure dispatch + arithmetic overhead.
+        At ~1000 RHS calls per coupling step on R8 CHILI, that's
+        ~10 ms per coupling step pure overhead, fully removable.
+        """
+        bc = self.evaluator.boundary_conditions._settings
+        mesh = self.evaluator.mesh
+
+        # Mesh geometry at the CMB
+        r_cmb = float(self._r_basic_flat[0])
+        r_above = float(self._r_basic_flat[1])
+        self._cmb_r_cmb = r_cmb
+        self._cmb_r_above = r_above
+        self._cmb_dr_half = 0.5 * (r_above - r_cmb)
+        self._cmb_area = 4.0 * np.pi * r_cmb**2
+        self._cmb_vol_first = float(self._volume_flat[0])
+
+        # Core properties (constant in time)
+        self._core_density = float(mesh.settings.core_density)
+        self._core_cp = float(bc.core_heat_capacity)
+        self._core_M = (4.0 / 3.0) * np.pi * r_cmb**3 * self._core_density
+        self._core_cap = self._core_M * self._core_cp  # J/K
+        self._core_tfac = float(getattr(bc, 'tfac_core_avg', 1.147))
+
+        # Quasi-steady BC alpha factor uses (R_above/R_cmb)^2
+        self._cmb_radius_ratio_sq = (r_above / r_cmb) ** 2
+
+        # BC dispatch keys captured once
+        self._outer_bc_kind = int(bc.outer_boundary_condition)
+        self._outer_bc_value = float(bc.outer_boundary_value)
+        self._outer_bc_emiss = float(bc.emissivity)
+        self._outer_bc_T_eq = float(bc.equilibrium_temperature)
+        self._inner_bc_kind = int(bc.inner_boundary_condition)
+        self._inner_bc_value = float(bc.inner_boundary_value)
+
     def reset(self) -> None:
         """Reset for a new integration (PROTEUS coupling loop).
 
@@ -439,44 +488,30 @@ class EntropySolver:
         self.state.update(entropy, time)
 
         # Apply flux BCs directly (not via BC module, which expects 2D arrays).
+        # All BC dispatch keys and constants are pre-cached in
+        # _cache_bc_constants(); see Tier 1 Step 1A.
+
         # Surface: grey-body or prescribed flux
-        bc = self.evaluator.boundary_conditions._settings
-        if bc.outer_boundary_condition == 1:
+        if self._outer_bc_kind == 1:
             # Grey-body: F = emissivity * sigma * (T_surf^4 - T_eq^4)
             T_surf = self.state.top_temperature.item()
-            T_eq = bc.equilibrium_temperature
             self.state._heat_flux[-1] = (
-                bc.emissivity * Stefan_Boltzmann * (T_surf**4 - T_eq**4)
+                self._outer_bc_emiss * Stefan_Boltzmann
+                * (T_surf**4 - self._outer_bc_T_eq**4)
             )
-        elif bc.outer_boundary_condition == 4:
-            # Prescribed flux (PROTEUS coupling)
-            self.state._heat_flux[-1] = bc.outer_boundary_value
+        elif self._outer_bc_kind == 4:
+            # Prescribed flux (PROTEUS coupling). Note: outer_boundary_value
+            # is updated in setup_or_update_solver between coupling steps,
+            # so re-read from the live BC object instead of the cache.
+            self.state._heat_flux[-1] = float(
+                self.evaluator.boundary_conditions._settings.outer_boundary_value
+            )
 
         # CMB boundary condition
-        if bc.inner_boundary_condition == 1:
+        if self._inner_bc_kind == 1:
             if bower:
-                # v4 Bower+2018 Eq. 37 core BC
-                # F_cmb = -k_eff * (T_above - T_core) / dr_half
-                # The factor -1 makes F_cmb positive when heat flows
-                # from mantle to core (i.e., T_above > T_core), which
-                # matches Aragog's heat flux sign convention (positive
-                # outward, so negative when flowing into the core).
-                #
-                # Wait: Aragog convention is that positive flux at a
-                # basic node means heat flows in the +r direction.
-                # At the CMB (innermost basic node) this means positive
-                # = outward (from core to mantle). So when T_core >
-                # T_above, F[0] > 0 (heat flows core -> mantle, core
-                # cooling). When T_core < T_above, F[0] < 0 (heat flows
-                # mantle -> core, core heating).
-                #
-                # Discrete Fourier law:
-                #   F[0] = -k_eff * dT/dr|cmb
-                #        ≈ -k_eff * (T_above - T_core) / dr_half
-                # where T_above is the bottom mantle cell T and dr_half
-                # is the half-distance from cell 0 center to the CMB.
-                # When T_above > T_core, dT/dr > 0, so F[0] < 0 (heat
-                # flows inward = into core), which matches.
+                # EXPERIMENTAL Bower+2018 BC (currently disabled by default).
+                # See aragog/src/aragog/config/boundary.py for the warning.
                 T_above = float(np.asarray(
                     self.state.phase_staggered.temperature()
                 ).flat[0])
@@ -484,33 +519,25 @@ class EntropySolver:
                     self.state.phase_staggered.thermal_conductivity()
                 ).flat[0]) if hasattr(self.state.phase_staggered,
                                       'thermal_conductivity') else 4.0
-                r_cmb = float(self._r_basic_flat[0])
-                r_above = float(self._r_basic_flat[1])
-                dr_half = 0.5 * (r_above - r_cmb)
-                F_cmb = -k_above * (T_above - T_core) / max(dr_half, 1.0)
+                F_cmb = -k_above * (T_above - T_core) / max(self._cmb_dr_half, 1.0)
                 self.state._heat_flux[0] = F_cmb
             else:
-                # Legacy v3 quasi-steady BC (alpha factor partition)
-                r_cmb = float(self._r_basic_flat[0])
-                core_cap = (
-                    4.0 / 3.0 * np.pi * r_cmb**3
-                    * self.evaluator.mesh.settings.core_density
-                    * bc.core_heat_capacity
-                )
+                # Legacy v3 quasi-steady BC (alpha factor partition).
+                # core_cap, radius_ratio_sq are constants (cached);
+                # cell_cap depends on entropy via rho/cp at the bottom
+                # cell so it must be computed each call.
                 rho_first = float(np.asarray(
                     self.state.phase_staggered.density()).flat[0])
                 cp_first = float(np.asarray(
                     self.state.phase_staggered.heat_capacity()).flat[0])
-                vol_first = float(self._volume_flat[0])
-                cell_cap = vol_first * rho_first * cp_first  # J/K
-                r_above = float(self._r_basic_flat[1])
-                tfac = getattr(bc, 'tfac_core_avg', 1.147)
-                radius_ratio = r_above / r_cmb
-                alpha = radius_ratio**2 / (cell_cap / (core_cap * tfac) + 1.0)
+                cell_cap = self._cmb_vol_first * rho_first * cp_first  # J/K
+                alpha = self._cmb_radius_ratio_sq / (
+                    cell_cap / (self._core_cap * self._core_tfac) + 1.0
+                )
                 self.state._heat_flux[0] = alpha * self.state._heat_flux[1]
-        elif bc.inner_boundary_condition == 2:
-            self.state._heat_flux[0] = bc.inner_boundary_value
-        elif bc.inner_boundary_condition == 3:
+        elif self._inner_bc_kind == 2:
+            self.state._heat_flux[0] = self._inner_bc_value
+        elif self._inner_bc_kind == 3:
             pass  # prescribed T
         else:
             self.state._heat_flux[0] = 0.0  # insulating
@@ -537,19 +564,11 @@ class EntropySolver:
         if not bower:
             return dSdt
 
-        # v4: append dT_core/dt = -F_cmb * area_cmb / (M_core * Cp_core)
-        # F_cmb is positive outward (core -> mantle = core cooling).
-        # When F_cmb > 0, the core LOSES heat at rate F_cmb * area_cmb,
-        # so dT_core/dt < 0.
+        # v4 EXPERIMENTAL Bower path (disabled by default):
+        # dT_core/dt = -F_cmb * area_cmb / (M_core * Cp_core)
+        # All constants pre-cached in _cache_bc_constants(); see Step 1A.
         F_cmb = float(self.state._heat_flux[0])
-        r_cmb = float(self._r_basic_flat[0])
-        area_cmb = 4.0 * np.pi * r_cmb**2
-        M_core = (
-            4.0 / 3.0 * np.pi * r_cmb**3
-            * self.evaluator.mesh.settings.core_density
-        )
-        Cp_core = float(bc.core_heat_capacity)
-        dT_core_dt = -F_cmb * area_cmb / max(M_core * Cp_core, 1.0)
+        dT_core_dt = -F_cmb * self._cmb_area / max(self._core_cap, 1.0)
         # Convert from K/s to K/yr
         dT_core_dt *= SECS_PER_YEAR
 
