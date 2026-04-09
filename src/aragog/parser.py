@@ -114,6 +114,12 @@ class _BoundaryConditionsParameters:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
+    # Core BC mode selector, threaded from config/boundary.py.
+    # Valid values: 'quasi_steady' (default, v3 alpha-factor),
+    #               'spider_bc' (Path A SPIDER bit-parity),
+    #               'bower2018' (EXPERIMENTAL tombstone, do not use).
+    # See aragog/config/boundary.py docstring for details.
+    core_bc: str = 'quasi_steady'
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:
