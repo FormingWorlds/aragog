@@ -150,14 +150,25 @@ class EntropySolver:
 
         # Cache flattened (1D) mesh arrays for the hot path.
         # Mesh stores (N,1) column vectors; we flatten once here.
+        # The truth source for n_stag is mesh.staggered.radii — some
+        # mesh builds give mesh.staggered_pressure a different shape
+        # (e.g., one extra entry for boundary handling) so we slice
+        # the pressure array to match.
+        self._n_stag = int(np.asarray(mesh.staggered.radii).shape[0])
         P_basic = np.asarray(mesh.basic_pressure).ravel()
         P_stag = np.asarray(mesh.staggered_pressure).ravel()
+        if P_stag.shape[0] != self._n_stag:
+            logger.warning(
+                'mesh.staggered_pressure length %d != mesh.staggered.radii '
+                'length %d, slicing to the latter',
+                P_stag.shape[0], self._n_stag,
+            )
+            P_stag = P_stag[:self._n_stag]
         self._area_flat = np.asarray(mesh.basic.area).ravel()
         self._volume_flat = np.asarray(mesh.basic.volume).ravel()
         self._r_basic_flat = np.asarray(mesh.basic.radii).ravel()
         self._P_stag_flat = P_stag
         self._P_basic_flat = P_basic
-        self._n_stag = int(P_stag.shape[0])
 
         # CMB BC mode (set here from config so dSdt can dispatch even
         # before set_initial_entropy is called):
