@@ -90,6 +90,12 @@ class PhaseParams(eqx.Module):
     eddy_diff_chemical: float
     kappah_floor: float
 
+    # SPIDER-analogue bottom-up gate for Jgrav. Stored as float for JAX
+    # tracing (1.0 = smoothing on, 0.0 = raw un-smoothed flux). Keep ON
+    # for production runs; setting this to 0.0 reproduces the pre-fix
+    # CMB drain and is only useful for regression tests.
+    bottom_up_grav_sep: float
+
     def __init__(
         self,
         phi_rheo: float = 0.4,
@@ -106,6 +112,7 @@ class PhaseParams(eqx.Module):
         eddy_diff_thermal: float = 1.0,
         eddy_diff_chemical: float = 1.0,
         kappah_floor: float = 0.0,
+        bottom_up_grav_sep: bool = True,
     ):
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -122,6 +129,7 @@ class PhaseParams(eqx.Module):
         self.eddy_diff_thermal = eddy_diff_thermal
         self.eddy_diff_chemical = eddy_diff_chemical
         self.kappah_floor = kappah_floor
+        self.bottom_up_grav_sep = float(bottom_up_grav_sep)
 
 
 class MeshArrays(eqx.Module):
@@ -463,12 +471,57 @@ def compute_fluxes(
     # Mass flux for gravitational separation and mixing
     mass_flux = jnp.zeros_like(S_basic)
 
-    # Gravitational separation
+    # Gravitational separation.
+    #
+    # Raw Stokes/permeability-driven mass flux:
+    #     jgrav_raw = rho * phi * (1 - phi) * v_rel
+    # SPIDER analogue smoothing (SPIDER/energy.c:523-533,
+    # JGRAV_BOTTOM_UP + get_smoothing): multiply jgrav_raw by a bounded
+    # polynomial of an UN-truncated two-phase fraction
+    #     gphi = (S - S_sol(P)) / (S_liq(P) - S_sol(P))
+    # evaluated at the staggered cell immediately BELOW the interface.
+    # The polynomial `16 * gphi^2 * (1 - gphi)^2` (clipped to [0, 1])
+    # vanishes cleanly at both pure phases and has bounded derivatives
+    # everywhere, unlike SPIDER's tanh smoothing. This is the scipy-
+    # path fix from entropy_state.py mirrored here so the JAX backend
+    # doesn't reproduce the pre-fix CMB drain at first crystallisation.
     phi_b = phase_basic.melt_fraction
     v_rel = relative_velocity(
         eos, params, mesh.P_basic, rho, phi_b, mesh.gravity,
     )
-    mass_flux = mass_flux + params.grav_sep * (rho * phi_b * (1.0 - phi_b) * v_rel)
+    jgrav_raw = rho * phi_b * (1.0 - phi_b) * v_rel
+
+    # gphi at STAGGERED nodes (cell below each basic interface)
+    S_sol_stag = eos.solidus_entropy(mesh.P_stag)
+    S_liq_stag = eos.liquidus_entropy(mesh.P_stag)
+    dS_stag = jnp.maximum(S_liq_stag - S_sol_stag, 1.0)
+    gphi_stag = (S_stag - S_sol_stag) / dS_stag
+
+    gphi_clip = jnp.clip(gphi_stag, 0.0, 1.0)
+    smth_stag = 16.0 * gphi_clip**2 * (1.0 - gphi_clip) ** 2
+
+    # Map staggered smoothing to basic-node interfaces: interior basic
+    # node i (1..N-2) sees the smoothing of staggered node i-1 (the
+    # cell BELOW). Boundary basic nodes (0 and -1) use smth = 1 as a
+    # placeholder because the mass flux at those indices is zeroed a
+    # few lines below anyway. Lengths: staggered has N entries, basic
+    # has N+1; smth_stag[:-1] supplies the N-1 interior interfaces
+    # plus the two boundaries, totalling N+1.
+    smth_basic = jnp.concatenate([
+        jnp.array([1.0]),
+        smth_stag[:-1],
+        jnp.array([1.0]),
+    ])
+
+    # `bottom_up_grav_sep = 1.0` selects the smoothed flux, 0.0 selects
+    # the raw flux (for reproducing the pre-fix drain in regression
+    # tests).
+    jgrav_smoothed = jgrav_raw * smth_basic
+    jgrav = (
+        params.bottom_up_grav_sep * jgrav_smoothed
+        + (1.0 - params.bottom_up_grav_sep) * jgrav_raw
+    )
+    mass_flux = mass_flux + params.grav_sep * jgrav
 
     # Mixing
     mass_flux = mass_flux + params.mixing * (rho * kappa_c * (-dphidr))

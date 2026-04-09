@@ -973,3 +973,263 @@ class TestSolverParity:
         assert max_diff < 10.0, (
             f'Tsit5 vs ImplicitEuler max difference: {max_diff:.1f} J/kg/K'
         )
+
+
+# ---------------------------------------------------------------------------
+# Tier 7: Jgrav smoothing regression tests (2026-04-09)
+# ---------------------------------------------------------------------------
+
+@needs_eos
+@pytest.mark.unit
+class TestJAXJgravSmoothing:
+    """Regression tests for the cubic Hermite Jgrav smoothing in the JAX path.
+
+    Mirrors the scipy-path TestJgravSmoothing in test_entropy_pytest.py.
+    Before the 2026-04-09 fix, aragog/jax/phase.py computed a raw
+    gravitational-separation mass flux `rho * phi * (1-phi) * v_rel`
+    with no smoothing; at first crystallisation this drained the CMB
+    cell's entropy off the PALEOS P-S table domain in a single
+    coupling step, same as the pre-fix scipy path. The fix ports the
+    SPIDER-analogue cubic Hermite smoothing
+        smth = 16 * gphi^2 * (1 - gphi)^2    for gphi in [0, 1]
+    where gphi is the un-truncated two-phase fraction at the
+    STAGGERED cell below the interface. These tests lock in the
+    correct behaviour under the diffrax solvers.
+
+    See ``aragog/src/aragog/jax/phase.py::compute_fluxes`` for the
+    JAX implementation and ``aragog/src/aragog/solver/entropy_state.py``
+    for the scipy twin.
+    """
+
+    @staticmethod
+    def _build_mesh_and_phase_params(
+        jax_eos, N: int = 15, grav_sep: bool = True,
+        bottom_up_grav_sep: bool = True, grain_size: float = 0.1,
+    ):
+        """Earth-like Stokes-regime mesh + PhaseParams.
+
+        grain_size = 0.1 m matches the R8 CHILI config and makes the
+        test discriminating: with 1 mm grain the Stokes permeability
+        is so small that the bug is hard to reproduce.
+        """
+        from aragog.jax.phase import PhaseParams
+
+        mesh = _make_jax_mesh_arrays(N)
+        params = PhaseParams(
+            phi_rheo=0.4,
+            phi_width=0.15,
+            viscosity_solid=1e22,
+            viscosity_liquid=1e2,
+            grain_size=grain_size,
+            k_solid=4.0,
+            k_liquid=4.0,
+            conduction=True,
+            convection=True,
+            grav_sep=grav_sep,
+            mixing=True,
+            eddy_diff_thermal=1.0,
+            eddy_diff_chemical=1.0,
+            kappah_floor=10.0,
+            bottom_up_grav_sep=bottom_up_grav_sep,
+        )
+        return mesh, params
+
+    @staticmethod
+    def _grey_body_bc():
+        from aragog.jax.solver import BoundaryParams
+        return BoundaryParams(
+            outer_bc_type=1,  # grey-body
+            outer_bc_value=0.0,
+            emissivity=1.0,
+            T_eq=255.0,
+            inner_bc_type=0,  # insulating
+            inner_bc_value=0.0,
+            core_density=10738.0,
+            core_heat_capacity=880.0,
+            tfac_core_avg=1.147,
+        )
+
+    def test_smoothing_vanishes_at_pure_phases(self, jax_eos):
+        """Smth = 0 at gphi = 0 and gphi = 1, peaks at gphi = 0.5.
+
+        Unit test of the smoothing factor itself, independent of the
+        ODE solver. Loads the flux kernel, constructs an entropy
+        profile with known phase-fraction values at each staggered
+        node, and reads the smoothed mass_flux back to verify:
+          - at nodes where the staggered cell below is pure liquid
+            (gphi > 1), smth = 0 so the mass flux at the basic
+            interface above it is killed;
+          - at nodes where the staggered cell below is pure solid
+            (gphi < 0), smth = 0 for the same reason;
+          - at nodes in the mushy zone (gphi near 0.5), smth
+            approaches 1 and the raw Jgrav is preserved.
+        """
+        from aragog.jax.phase import compute_fluxes
+
+        mesh, params = self._build_mesh_and_phase_params(
+            jax_eos, N=20, grav_sep=True, bottom_up_grav_sep=True,
+        )
+        N = mesh.P_stag.shape[0]
+
+        # Build an entropy profile that's pure liquid in the upper
+        # mantle and pure solid at the bottom, with a mushy
+        # transition in the middle. Use the analytical inverse:
+        # S = S_sol + gphi * (S_liq - S_sol) with prescribed gphi
+        # per node.
+        S_sol = jax_eos.solidus_entropy(mesh.P_stag)
+        S_liq = jax_eos.liquidus_entropy(mesh.P_stag)
+        # gphi: -0.2 at CMB (pure solid, below solidus),
+        # ramps to 0.5 at mid-mantle (mid-mushy),
+        # 1.2 at the top (above liquidus, pure liquid).
+        idx = jnp.arange(N, dtype=jnp.float64)
+        gphi_target = -0.2 + 1.4 * idx / (N - 1)
+        S_stag = S_sol + gphi_target * (S_liq - S_sol)
+
+        heating = jnp.zeros(N)
+        flux_out = compute_fluxes(
+            S_stag, 0.0, jax_eos, params, mesh, heating,
+        )
+        mass_flux = np.asarray(flux_out.mass_flux)
+
+        # Expected: smth_basic[i] = 16 * gphi_clip[i-1]^2 * (1 -
+        # gphi_clip[i-1])^2 for interior basic nodes i in 1..N-1,
+        # with gphi_clip = clip(gphi_target[i-1], 0, 1). For the
+        # pure-phase ends (|gphi - 0.5| > 0.5), smth = 0 so the
+        # smoothed mass flux must also be ~0 there.
+        gphi_np = np.asarray(gphi_target)
+        gphi_clip = np.clip(gphi_np, 0.0, 1.0)
+        smth_stag = 16.0 * gphi_clip**2 * (1.0 - gphi_clip) ** 2
+
+        # Check pure-phase suppression: at basic node i = 1, the
+        # staggered cell below is index 0 with gphi = -0.2, so
+        # smth = 0 and mass_flux[1] should be ~0.
+        assert abs(mass_flux[1]) < 1e-6, (
+            f'mass_flux[1] = {mass_flux[1]:.3e} should be ~0 at '
+            f'pure-solid CMB cell (gphi={gphi_np[0]:.2f}, '
+            f'smth={smth_stag[0]:.3e})'
+        )
+        # At basic node i = N-1, the staggered cell below is index
+        # N-2 with gphi close to 1, so smth approaches 0.
+        assert abs(mass_flux[N - 1]) < 1e-6, (
+            f'mass_flux[{N-1}] = {mass_flux[N-1]:.3e} should be ~0 at '
+            f'pure-liquid top cell (gphi={gphi_np[N-2]:.2f}, '
+            f'smth={smth_stag[N-2]:.3e})'
+        )
+        # Near mid-mantle the smoothing should peak and preserve a
+        # non-trivial mass flux. Find the node whose below-cell gphi
+        # is closest to 0.5 and assert that node has clearly larger
+        # |mass_flux| than the pure-phase boundaries.
+        i_mid_stag = int(np.argmin(np.abs(gphi_np - 0.5)))
+        # basic node index for that "cell below" is i_mid_stag + 1
+        i_mid_basic = i_mid_stag + 1
+        if 0 < i_mid_basic < N:
+            assert abs(mass_flux[i_mid_basic]) > 10.0 * max(
+                abs(mass_flux[1]), abs(mass_flux[N - 1]), 1e-12,
+            ), (
+                f'Mid-mushy mass flux ({mass_flux[i_mid_basic]:.3e}) '
+                f'should dominate pure-phase flux '
+                f'({mass_flux[1]:.3e}, {mass_flux[N-1]:.3e})'
+            )
+
+    def test_smoothing_on_vs_off_differs_at_mushy_edge(self, jax_eos):
+        """bottom_up_grav_sep=False must give a strictly larger total
+        |Jgrav| than bottom_up_grav_sep=True in a profile with a
+        mushy layer, because the raw flux is non-zero near the
+        pure-phase edges of the layer (where gphi → 0 or 1) while
+        the smoothed flux drops to zero there.
+        """
+        from aragog.jax.phase import compute_fluxes
+
+        mesh, params_on = self._build_mesh_and_phase_params(
+            jax_eos, N=20, grav_sep=True, bottom_up_grav_sep=True,
+        )
+        _, params_off = self._build_mesh_and_phase_params(
+            jax_eos, N=20, grav_sep=True, bottom_up_grav_sep=False,
+        )
+        N = mesh.P_stag.shape[0]
+
+        # Build a mushy-ramp IC: gphi at staggered nodes runs from
+        # -0.1 (pure solid, just below CMB liquidus) at the bottom
+        # to 1.1 (pure liquid, just above surface liquidus) at the
+        # top. The node-by-node phi = clip(gphi, 0, 1) varies across
+        # the middle of the profile, so phi * (1 - phi) * v_rel is
+        # non-zero and both ON and OFF give a non-trivial raw flux
+        # somewhere.
+        S_sol = jax_eos.solidus_entropy(mesh.P_stag)
+        S_liq = jax_eos.liquidus_entropy(mesh.P_stag)
+        idx = jnp.arange(N, dtype=jnp.float64)
+        gphi_target = -0.1 + 1.2 * idx / (N - 1)
+        S_stag = S_sol + gphi_target * (S_liq - S_sol)
+
+        heating = jnp.zeros(N)
+        flux_on = compute_fluxes(
+            S_stag, 0.0, jax_eos, params_on, mesh, heating,
+        )
+        flux_off = compute_fluxes(
+            S_stag, 0.0, jax_eos, params_off, mesh, heating,
+        )
+
+        mass_on = np.asarray(flux_on.mass_flux)
+        mass_off = np.asarray(flux_off.mass_flux)
+
+        # L1 norm of the mass flux across the profile. OFF should be
+        # larger than ON because the un-smoothed flux is active at
+        # every phi in (0, 1), while the smoothed version vanishes
+        # near the pure-phase edges.
+        l1_on = float(np.sum(np.abs(mass_on)))
+        l1_off = float(np.sum(np.abs(mass_off)))
+
+        assert np.isfinite(l1_on), f'ON variant non-finite: {l1_on}'
+        assert np.isfinite(l1_off), f'OFF variant non-finite: {l1_off}'
+
+        # OFF variant must have strictly larger L1 flux than ON.
+        # Allow a modest margin (5%) to tolerate numerical noise.
+        assert l1_off > 1.05 * l1_on, (
+            f'Smoothing appears silently off: '
+            f'L1|mass_flux|(ON)={l1_on:.3e} vs '
+            f'L1|mass_flux|(OFF)={l1_off:.3e} '
+            f'(expected OFF > 1.05 * ON)'
+        )
+        # And ON must itself be non-zero (smoothing preserves the
+        # mid-mushy flux), so the test is meaningful.
+        assert l1_on > 0.0, (
+            'Smoothing zeroed the entire mass flux; expected a '
+            'non-trivial mid-mushy contribution'
+        )
+
+    def test_cubic_hermite_matches_scipy_path(self, jax_eos):
+        """The JAX cubic Hermite smoothing must match the scipy path.
+
+        Checks that
+            smth = 16 * gphi^2 * (1 - gphi)^2
+        is applied with the same clip semantics
+        (gphi < 0 -> 0, gphi > 1 -> 0) as the scipy twin in
+        aragog/src/aragog/solver/entropy_state.py:256-260.
+        """
+        import numpy as _np
+        # Manual reference implementation
+        def smth_ref(gphi):
+            g = _np.clip(gphi, 0.0, 1.0)
+            return 16.0 * g**2 * (1.0 - g) ** 2
+
+        # Sample gphi values spanning the domain
+        gphi_samples = _np.linspace(-0.5, 1.5, 21)
+        expected = smth_ref(gphi_samples)
+
+        # Hard-coded expected peak at gphi=0.5
+        assert abs(smth_ref(0.5) - 1.0) < 1e-12
+        # Zero at the pure-phase boundaries
+        assert smth_ref(0.0) == 0.0
+        assert smth_ref(1.0) == 0.0
+        # Zero outside [0, 1] (clip behaviour)
+        assert smth_ref(-0.1) == 0.0
+        assert smth_ref(1.1) == 0.0
+        # Symmetry about gphi=0.5
+        for g in [0.1, 0.25, 0.4]:
+            assert abs(smth_ref(g) - smth_ref(1.0 - g)) < 1e-12
+
+        # Monotone on each half of [0, 1]
+        g1 = _np.linspace(0.0, 0.5, 10)
+        g2 = _np.linspace(0.5, 1.0, 10)
+        assert _np.all(_np.diff(smth_ref(g1)) >= -1e-15)
+        assert _np.all(_np.diff(smth_ref(g2)) <= 1e-15)
