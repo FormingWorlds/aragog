@@ -374,8 +374,16 @@ class EntropySolver:
         return dSdt
 
     @property
-    def solution(self) -> OptimizeResult:
-        return self._solution
+    def solution(self) -> OptimizeResult | None:
+        """Last solve_ivp result, or ``None`` if ``solve()`` has not been
+        called yet. Returning ``None`` (instead of raising
+        ``AttributeError``) matters for the PROTEUS JAX dispatch path,
+        where ``AragogJAXRunner`` handles the actual integration and
+        the scipy ``EntropySolver`` lives only to hold Parameters / BC
+        state — its ``solve()`` is never invoked, so ``_solution`` is
+        never set. Callers already handle ``sol is None``.
+        """
+        return getattr(self, '_solution', None)
 
     @property
     def entropy_staggered(self) -> npt.NDArray:
