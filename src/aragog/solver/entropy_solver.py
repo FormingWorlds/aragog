@@ -376,30 +376,79 @@ class EntropySolver:
                               'core_bc', 'quasi_steady')
             self._core_bc = core_bc
 
-        if core_bc == 'bower2018':
-            # State = [S_0, ..., S_{N-1}, T_core]
-            # T_core_init priority order:
-            #   1. user override via set_initial_core_temperature
-            #   2. preserve from a previous solve (the v4 hot path
-            #      between PROTEUS coupling steps -- without this the
-            #      core enthalpy ODE gets reset on every reset() and
-            #      the integrated T_core is lost)
-            #   3. EOS-derived bottom-cell mantle T (cold-start init)
+        if core_bc == 'spider_bc':
+            # Path A SPIDER bit-parity core BC.
+            # State = [S_0, ..., S_{N-1}, dSdr_cmb]
+            # The boundary state dSdr_cmb is the entropy gradient at
+            # the CMB basic node (mirror of SPIDER's dSdxi[ind_cmb]).
+            # Its time derivative is set by the bc.c:76-131 formula
+            # in _dSdt_single from the actual physical heat flux.
+            #
+            # Cold-start dSdr_cmb_init: use the finite-difference
+            # estimate from the staggered cells (one-sided forward
+            # difference, since there's no cell below the CMB).
+            # The boundary state will then evolve from this to its
+            # quasi-equilibrium value over the first few coupling
+            # steps as the energy balance constraint kicks in.
+            #
+            # Hot-start dSdr_cmb_init: preserve from the previous
+            # solution if available (the same pattern as the failed
+            # v4 Bower attempt), so the integrated boundary state
+            # survives PROTEUS coupling resets.
+            dSdr_cmb_init = getattr(self, '_dSdr_cmb_init', None)
+            if dSdr_cmb_init is None:
+                # Hot start: preserve from previous solution if shape matches
+                prev_sol = getattr(self, '_solution', None)
+                if (prev_sol is not None
+                        and getattr(prev_sol, 'y', None) is not None
+                        and prev_sol.y.size > 0
+                        and prev_sol.y.shape[0] == n_stag + 1):
+                    dSdr_cmb_init = float(prev_sol.y[n_stag, -1])
+                    logger.info(
+                        'Preserved dSdr_cmb from previous solve: %.3e J/kg/K/m',
+                        dSdr_cmb_init,
+                    )
+            if dSdr_cmb_init is None:
+                # Cold start: one-sided FD of S_init at the bottom.
+                # dSdr_cmb ≈ (S_stag[1] - S_stag[0]) / (r_stag[1] - r_stag[0])
+                # For a uniform S_init this is exactly zero, which
+                # is the correct neutral-buoyancy starting point.
+                if n_stag >= 2:
+                    r_basic = np.asarray(
+                        self.evaluator.mesh.basic.radii
+                    ).ravel()
+                    r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
+                    r_stag_1 = 0.5 * (r_basic[1] + r_basic[2])
+                    dSdr_cmb_init = (
+                        (float(S_arr[1]) - float(S_arr[0]))
+                        / max(r_stag_1 - r_stag_0, 1.0)
+                    )
+                else:
+                    dSdr_cmb_init = 0.0
+                logger.info(
+                    'Cold-start dSdr_cmb from FD: %.3e J/kg/K/m',
+                    dSdr_cmb_init,
+                )
+            self._S0 = np.empty(n_stag + 1)
+            self._S0[:n_stag] = S_arr
+            self._S0[n_stag] = float(dSdr_cmb_init)
+            logger.info(
+                'Initial state (Path A spider_bc): S_min=%.0f, S_max=%.0f, '
+                'dSdr_cmb_init=%.3e',
+                S_arr.min(), S_arr.max(), dSdr_cmb_init,
+            )
+        elif core_bc == 'bower2018':
+            # EXPERIMENTAL v4 Bower BC (conduction-only flux, fails on
+            # R8 CHILI; kept in tree for reference). State = [S, T_core].
             T_core_init = getattr(self, '_T_core_init', None)
             if T_core_init is None:
-                # Preserve from previous solution if available
                 prev_sol = getattr(self, '_solution', None)
                 if (prev_sol is not None
                         and getattr(prev_sol, 'y', None) is not None
                         and prev_sol.y.size > 0
                         and prev_sol.y.shape[0] == n_stag + 1):
                     T_core_init = float(prev_sol.y[n_stag, -1])
-                    logger.info(
-                        'Preserved T_core from previous solve: %.0f K',
-                        T_core_init,
-                    )
             if T_core_init is None:
-                # Cold start: derive from bottom-cell mantle T via EOS
                 P_bottom = float(self._P_stag_flat[0])
                 T_core_init = float(np.asarray(
                     self.entropy_eos.temperature(
@@ -410,8 +459,8 @@ class EntropySolver:
             self._S0[:n_stag] = S_arr
             self._S0[n_stag] = T_core_init
             logger.info(
-                'Initial state (v4 Bower core BC): S_min=%.0f, S_max=%.0f, '
-                'T_core_init=%.0f K',
+                'Initial state (EXPERIMENTAL bower2018): S_min=%.0f, '
+                'S_max=%.0f, T_core_init=%.0f K',
                 S_arr.min(), S_arr.max(), T_core_init,
             )
         else:
@@ -429,6 +478,16 @@ class EntropySolver:
         temperature derived from S_init via the EOS.
         """
         self._T_core_init = float(T_core_init)
+
+    def set_initial_dSdr_cmb(self, dSdr_cmb_init: float) -> None:
+        """Set the initial CMB entropy gradient (Path A spider_bc only).
+
+        Must be called BEFORE ``set_initial_entropy``. If not called,
+        the initial ``dSdr_cmb`` is taken from the previous solution
+        (if any), else from a one-sided FD of the staggered S_init at
+        the bottom (which is zero for a uniform isentrope).
+        """
+        self._dSdr_cmb_init = float(dSdr_cmb_init)
 
     def dSdt(
         self,
