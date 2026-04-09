@@ -651,71 +651,28 @@ class EntropySolver:
             return dSdt
 
         if spider_bc:
-            # Path A boundary-state ODE, mirroring SPIDER's
-            # bc.c:76-131 formula:
-            #
-            #     fac_cmb = cp_cmb / (cp_core * T_cmb * tfac * M_core)
-            #     rhs_cmb = (-Etot_cmb + Ecore) * fac_cmb - dSdt_s_cmb
-            #     rhs_cmb *= 2.0 / dr_cmb
-            #
-            # where dSdt_s_cmb is the dS/dt at the bottom staggered
-            # node (cell adjacent to the CMB), Etot_cmb = F_cmb *
-            # area_cmb is the heat flow at the CMB basic node, and
-            # Ecore is the core internal heat source (zero for
-            # simple core cooling, non-zero for prescribed flux).
+            # Path A boundary-state ODE (extracted to a pure helper
+            # `_spider_bc_rhs_per_s` for unit testing). The inputs are
+            # the F_cmb heat flux computed by state.update() above
+            # (which used the boundary dSdr_cmb to set the CMB basic
+            # node entropy), and the dS/dt at the bottom staggered
+            # cell (dSdt[0], which we just built from the flux
+            # divergence).
             F_cmb_basic = float(self.state._heat_flux[0])
-            E_tot_cmb = F_cmb_basic * self._cmb_area  # J/s
-
-            # Read T and Cp at the bottom basic node, derived from
-            # the boundary entropy via the EOS (already updated by
-            # state.update with the dSdr_cmb override).
             T_cmb_basic = float(np.asarray(
                 self.state.phase_basic.temperature()
             ).flat[0])
             cp_cmb_basic = float(np.asarray(
                 self.state.phase_basic.heat_capacity()
             ).flat[0])
-
-            # SPIDER's fac_cmb (units: 1 / (kg * K))
-            fac_cmb = cp_cmb_basic / (
-                self._core_cp
-                * max(T_cmb_basic, 1.0)
-                * self._core_tfac
-                * max(self._core_M, 1.0)
-            )
-
-            # Ecore = 0 for simple core cooling (no internal heat source)
-            E_core = 0.0
-
-            # dS_basic_cmb/dt from energy balance (J/(kg*K*s))
-            dS_basic_cmb_dt = (-E_tot_cmb + E_core) * fac_cmb
-
-            # dS_stag[0]/dt is the dS/dt at the bottom staggered cell.
-            # The dSdt array we just built is in J/(kg*K*yr) at this
-            # point (after the *= SECS_PER_YEAR conversion above).
-            # Convert it back to J/(kg*K*s) for the formula.
             dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
 
-            # Convert dS_basic_cmb/dt difference to d(dS/dr)/dt at the
-            # CMB basic node via the centered-difference relation
-            # between basic and staggered nodes.
-            #
-            # dS/dr at the CMB ≈ (S_stag[0] - S_basic[0]) / dr_half
-            # so d/dt(dS/dr) ≈ (dS_stag[0]/dt - dS_basic_cmb/dt) / dr_half
-            #              = -2 * (dS_basic_cmb/dt - dS_stag[0]/dt) / dr_cmb
-            # where dr_cmb = r_basic[1] - r_basic[0].
-            #
-            # SPIDER writes the same expression as
-            #     rhs_cmb -= dSdt_s_cmb
-            #     rhs_cmb *= 2 / dr_cmb
-            # which is equivalent up to sign. Using SPIDER's exact
-            # form for parity:
-            d_dSdr_cmb_dt_per_s = (
-                (dS_basic_cmb_dt - dSdt_s_cmb_per_s)
-                * 2.0 / max(self._cmb_dr_cmb, 1.0)
+            d_dSdr_cmb_dt_per_s = self._spider_bc_rhs_per_s(
+                F_cmb_basic=F_cmb_basic,
+                dSdt_s_cmb_per_s=dSdt_s_cmb_per_s,
+                T_cmb_basic=T_cmb_basic,
+                cp_cmb_basic=cp_cmb_basic,
             )
-
-            # Convert from per-second to per-year (matches dSdt units)
             d_dSdr_cmb_dt = d_dSdr_cmb_dt_per_s * SECS_PER_YEAR
 
             return np.concatenate([dSdt, [d_dSdr_cmb_dt]])
@@ -726,6 +683,96 @@ class EntropySolver:
         dT_core_dt *= SECS_PER_YEAR
 
         return np.concatenate([dSdt, [dT_core_dt]])
+
+    def _spider_bc_rhs_per_s(
+        self,
+        F_cmb_basic: float,
+        dSdt_s_cmb_per_s: float,
+        T_cmb_basic: float,
+        cp_cmb_basic: float,
+    ) -> float:
+        """SPIDER bc.c:76-131 rhs for d(dSdr_cmb)/dt at the CMB.
+
+        Pure numerical helper extracted from ``_dSdt_single`` so the
+        bit-parity formula can be unit-tested without building a full
+        solver state. Mirrors SPIDER's C code:
+
+            fac_cmb = cp_cmb / (cp_core * T_cmb * tfac * M_core)
+            rhs     = (-Etot_cmb + Ecore) * fac_cmb - dSdt_s_cmb
+            rhs    *= 2 / dr_cmb
+
+        where ``Etot_cmb = F_cmb_basic * area_cmb`` is the heat flow
+        at the CMB basic node, ``Ecore`` is the core internal heat
+        source (zero for the simple core-cooling mode used here), and
+        ``dr_cmb = r_basic[1] - r_basic[0]`` is the half-cell spacing
+        between the CMB basic node and the first staggered node.
+
+        All cached constants (``_core_cp``, ``_core_tfac``, ``_core_M``,
+        ``_cmb_area``, ``_cmb_dr_cmb``) are taken from
+        ``_cache_bc_constants()``.
+
+        Parameters
+        ----------
+        F_cmb_basic : float
+            Heat flux at the CMB basic node [W/m^2]. Positive = heat
+            flowing OUT of the core. This is normally the
+            state.update()-derived flux, which uses the boundary
+            entropy gradient to set the bottom mantle cell value.
+        dSdt_s_cmb_per_s : float
+            dS/dt at the bottom staggered cell (cell adjacent to the
+            CMB) in J/(kg*K*s). This is ``dSdt[0]`` from the flux
+            divergence, converted back from per-year to per-second.
+        T_cmb_basic : float
+            Temperature at the CMB basic node [K], derived from the
+            boundary-entropy via the EOS.
+        cp_cmb_basic : float
+            Heat capacity at the CMB basic node [J/(kg*K)], derived
+            from the boundary-entropy via the EOS.
+
+        Returns
+        -------
+        float
+            d(dSdr_cmb)/dt in J/(kg*K*m*s). The caller is responsible
+            for the per-year conversion (multiply by SECS_PER_YEAR).
+
+        Notes
+        -----
+        The formula is linear in F_cmb_basic and dSdt_s_cmb_per_s, so
+        the zero-flux-plus-zero-dSdt limit trivially returns zero.
+        This is used as a smoke-test invariant.
+        """
+        # Etot_cmb in J/s (= W)
+        E_tot_cmb = F_cmb_basic * self._cmb_area
+
+        # fac_cmb in 1/(kg*K). The max(1.0, .) clamps prevent divide-
+        # by-zero if T_cmb or M_core is unphysically small during IC
+        # wind-up. In production T_cmb ~ 4000 K and M_core ~ 2e24 kg,
+        # so the clamps are never active.
+        fac_cmb = cp_cmb_basic / (
+            self._core_cp
+            * max(T_cmb_basic, 1.0)
+            * self._core_tfac
+            * max(self._core_M, 1.0)
+        )
+
+        # Ecore = 0 for simple core cooling (no internal heat source).
+        # A future release may read radioactive heating from config
+        # and pass it in via a new parameter.
+        E_core = 0.0
+
+        # dS_basic_cmb/dt from energy balance [J/(kg*K*s)]
+        dS_basic_cmb_dt = (-E_tot_cmb + E_core) * fac_cmb
+
+        # d/dt(dS/dr) at the CMB basic node, from the centered-
+        # difference relation between basic and staggered. SPIDER
+        # writes this as
+        #     rhs_cmb -= dSdt_s_cmb
+        #     rhs_cmb *= 2 / dr_cmb
+        # which gives [J/(kg*K*m*s)].
+        return (
+            (dS_basic_cmb_dt - dSdt_s_cmb_per_s)
+            * 2.0 / max(self._cmb_dr_cmb, 1.0)
+        )
 
     @property
     def solution(self) -> OptimizeResult | None:
@@ -847,7 +894,15 @@ class EntropySolver:
         # 3e-4 relative).
         try:
             n_stag = self._n_stag
-            S0_block = self._S0[:n_stag] if self._core_bc == 'bower2018' else self._S0
+            # For any extended-state mode (bower2018 with T_core,
+            # spider_bc with dSdr_cmb), strip the trailing extra
+            # element before querying the EOS. The old check tested
+            # for bower2018 explicitly, so spider_bc used to pass the
+            # full N+1 _S0 to melt_fraction against a shape-N
+            # _P_stag_flat, which raised a shape mismatch and fell
+            # through to phi0=1.0, silently disabling the Tier 1D
+            # atol relaxation. Fixed 2026-04-10.
+            S0_block = self._S0[:n_stag] if self._state_is_extended else self._S0
             phi0 = float(np.asarray(
                 self.entropy_eos.melt_fraction(self._P_stag_flat, S0_block)
             ).mean())
