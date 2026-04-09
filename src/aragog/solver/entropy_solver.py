@@ -682,31 +682,44 @@ class EntropySolver:
         atol_scale = max(1.0, 100.0 * (1.0 - phi0))
         atol = atol_base * atol_scale
 
+        # Tier 1 Step 1C: use LSODA when the coupling step is entirely
+        # in the fully-liquid regime (Phi_init > 0.999). LSODA's
+        # auto-switching Adams/BDF is much faster than BDF on
+        # non-stiff problems because Adams steps are explicit and
+        # don't need a Jacobian. For mushy/solid coupling steps we
+        # stay with BDF, which is the right choice for stiff problems.
+        #
+        # The Phi=0.999 threshold is conservative: by that point
+        # the very first phase-change cells have appeared and the
+        # convective stack starts to stiffen. Below 0.999 we want
+        # the BDF safety net.
+        if phi0 > 0.999:
+            method = 'LSODA'
+            jac_arg = {}  # LSODA computes its own Jacobian
+        else:
+            method = 'BDF'
+            jac_arg = {'jac_sparsity': self._build_jac_sparsity()}
+
         logger.info(
             'EntropySolver: integrating from %.2e to %.2e yr '
-            '(Phi_init=%.3f, atol_scale=%.1fx, atol=%.2e, rtol=%.2e)',
-            start_time, end_time, phi0, atol_scale, atol, rtol,
+            '(method=%s, Phi_init=%.3f, atol_scale=%.1fx, atol=%.2e, rtol=%.2e)',
+            start_time, end_time, method, phi0, atol_scale, atol, rtol,
         )
 
-        jac_sparsity = self._build_jac_sparsity()
-
-        # Tier 1 Step 1B: pass vectorized=False. The dSdt method has
-        # a vectorized=True branch but it's a fake (sequential Python
-        # loop over the K columns), so it adds dispatch overhead per
-        # call without giving scipy any actual benefit. With
-        # vectorized=False, scipy's BDF perturbs each state element
-        # individually for the Jacobian, which is what was happening
-        # under the hood anyway.
+        # Tier 1 Step 1B + 1C: pass vectorized=False (fake-vectorized
+        # path was pure overhead) and dispatch the solver method
+        # based on phi0. jac_sparsity is only relevant for BDF;
+        # LSODA computes its own internal Jacobian.
         self._solution = solve_ivp(
             self.dSdt,
             (start_time, end_time),
             self._S0,
-            method='BDF',
+            method=method,
             vectorized=False,
             dense_output=True,
             atol=atol,
             rtol=rtol,
-            jac_sparsity=jac_sparsity,
+            **jac_arg,
         )
 
         if self._solution.status == 0:
