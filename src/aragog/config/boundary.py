@@ -47,12 +47,22 @@ class BoundaryConfig:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
-    # Core BC mode (v4 default = 'bower2018'):
-    #   'bower2018' = T_core as ODE state variable, F_cmb from
-    #     conduction (-k_eff * (T_above - T_core) / dr_half),
-    #     dT_core/dt = -F_cmb * area_cmb / (M_core * Cp_core).
-    #     Mathematically equivalent to SPIDER's bc.c:76-131.
+    # Core BC mode (default = 'quasi_steady' v3 behaviour):
     #   'quasi_steady' = legacy v3 alpha-factor heat-flux partition
     #     between mantle bottom cell and core based on heat capacity
-    #     ratio. Less accurate, retained for backward compatibility.
-    core_bc: str = 'bower2018'
+    #     ratio. Standard since the Aragog refactor. Gives a -19 %
+    #     T_core offset against SPIDER on R8 CHILI Earth (known
+    #     limitation, see memory/spider_aragog_parity_v3_v4.md).
+    #   'bower2018' = EXPERIMENTAL (2026-04-09 evening): T_core as
+    #     ODE state variable, F_cmb from conduction
+    #     (-k_eff * (T_above - T_core) / dr_half), dT_core/dt =
+    #     -F_cmb * area_cmb / (M_core * Cp_core). The conduction-only
+    #     flux underestimates the actual core heat loss by ~5 orders
+    #     of magnitude (the real loss is dominated by convective
+    #     coupling to the bottom mantle cell, not pure conduction
+    #     across the CMB). Empirically gives T_core that's TOO HIGH
+    #     compared to SPIDER. Kept in the codebase for future
+    #     redesign work that adds a thermal boundary layer
+    #     parameterization at the CMB. NOT recommended for
+    #     production runs.
+    core_bc: str = 'quasi_steady'

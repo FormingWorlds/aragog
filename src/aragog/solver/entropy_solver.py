@@ -172,10 +172,19 @@ class EntropySolver:
 
         # CMB BC mode (set here from config so dSdt can dispatch even
         # before set_initial_entropy is called):
-        #   'bower2018' = v4 default, T_core as ODE state variable
-        #   'quasi_steady' = legacy v3, alpha-factor heat-flux partition
+        #   'quasi_steady' = production default (v3 alpha-factor BC),
+        #     gives -19 % T_core gap to SPIDER on R8 CHILI but is
+        #     stable and well-tested. See parent memory file for the
+        #     known limitation.
+        #   'bower2018' = EXPERIMENTAL: T_core as ODE state variable
+        #     with conduction-only F_cmb. The conductive flux is
+        #     ~5 OOM smaller than the actual physical CMB heat flow
+        #     (which is dominated by convective coupling, not pure
+        #     conduction). Result: T_core stays too hot. Needs a
+        #     thermal-boundary-layer parameterization to be useful.
+        #     Kept in the codebase for follow-up work.
         self._core_bc = getattr(
-            self.parameters.boundary_conditions, 'core_bc', 'bower2018'
+            self.parameters.boundary_conditions, 'core_bc', 'quasi_steady'
         )
         # Gravity: try mesh EOS attribute first, then mesh settings
         g = abs(float(getattr(
@@ -315,7 +324,7 @@ class EntropySolver:
             core_bc = self._core_bc
         else:
             core_bc = getattr(self.parameters.boundary_conditions,
-                              'core_bc', 'bower2018')
+                              'core_bc', 'quasi_steady')
             self._core_bc = core_bc
 
         if core_bc == 'bower2018':
