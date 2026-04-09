@@ -380,16 +380,23 @@ class TestJgravSmoothing:
         from aragog.eos.entropy_phase import EntropyPhaseEvaluator
         from aragog.solver.entropy_state import EntropyState
 
+        # Force linear-blend Cp here: this test asserts E_th decreases on
+        # cooling, which only holds in the linear convention. The new
+        # latent-blend Cp can produce non-monotonic E_th(t) when cells
+        # cross the mushy zone (latent heat absorbed/released), and is
+        # tested separately in TestLatentBlendCp.
         phase_stag = EntropyPhaseEvaluator(
             entropy_eos=entropy_eos,
             gravitational_acceleration=9.8,
             grain_size=grain_size,
+            cp_blend='linear',
         )
         phase_stag.set_pressure(P_stag)
         phase_basic = EntropyPhaseEvaluator(
             entropy_eos=entropy_eos,
             gravitational_acceleration=9.8,
             grain_size=grain_size,
+            cp_blend='linear',
         )
         phase_basic.set_pressure(P_basic)
 
@@ -703,8 +710,13 @@ class TestCpFromEOS:
         P = np.linspace(1e9, 135e9, 25)
         # Mid-mantle isentrope (well above the rheological transition).
         S = np.full_like(P, 2900.0)
+        # cp_blend='linear': TestCpFromEOS asserts the wrapper-side
+        # linear-blend Cp is in the 1100-2500 J/kg/K range. The latent
+        # blend is tested separately in TestLatentBlendCp.
         phase = EntropyPhaseEvaluator(
-            entropy_eos=entropy_eos, gravitational_acceleration=9.8
+            entropy_eos=entropy_eos,
+            gravitational_acceleration=9.8,
+            cp_blend='linear',
         )
         phase.set_pressure(P)
         phase.set_entropy(S)
@@ -743,8 +755,13 @@ class TestCpFromEOS:
         # 30 staggered nodes
         P = np.linspace(1e9, 135e9, 30)
         S = np.full_like(P, 2900.0)
+        # cp_blend='linear': TestCpFromEOS asserts the wrapper-side
+        # linear-blend Cp is in the 1100-2500 J/kg/K range. The latent
+        # blend is tested separately in TestLatentBlendCp.
         phase = EntropyPhaseEvaluator(
-            entropy_eos=entropy_eos, gravitational_acceleration=9.8
+            entropy_eos=entropy_eos,
+            gravitational_acceleration=9.8,
+            cp_blend='linear',
         )
         phase.set_pressure(P)
         phase.set_entropy(S)
@@ -781,8 +798,13 @@ class TestCpFromEOS:
 
         P = np.linspace(1e9, 135e9, 30)
         S = np.full_like(P, 2900.0)
+        # cp_blend='linear': TestCpFromEOS asserts the wrapper-side
+        # linear-blend Cp is in the 1100-2500 J/kg/K range. The latent
+        # blend is tested separately in TestLatentBlendCp.
         phase = EntropyPhaseEvaluator(
-            entropy_eos=entropy_eos, gravitational_acceleration=9.8
+            entropy_eos=entropy_eos,
+            gravitational_acceleration=9.8,
+            cp_blend='linear',
         )
         phase.set_pressure(P)
         phase.set_entropy(S)
@@ -819,3 +841,140 @@ class TestCpFromEOS:
             f'distinguishable (Cp_eff_old={Cp_eff_old:.1f} vs '
             f'Cp_eff_new={Cp_eff_new:.1f})'
         )
+
+
+# ── Tier 2: latent-blend Cp regression (v4) ─────────────────────────
+
+@needs_eos
+@pytest.mark.unit
+class TestLatentBlendCp:
+    """Tests for the v4 latent-heat-augmented Cp formula.
+
+    Mirrors SPIDER's eos_composite.c:226-232 formula:
+        Cp_mix = (S_liq - S_sol) / (T_liq - T_sol) * T_mid
+
+    The empirical SPIDER vs Aragog comparison at v3 (2026-04-09) found
+    that wrapper-side linear-blend Cp underestimates SPIDER's internal
+    cp_s by up to a factor of 6 in the deep mushy zone. The new
+    `heat_capacity_latent_blend` method closes that gap.
+    """
+
+    def test_latent_blend_returns_finite_positive(self, entropy_eos):
+        """Latent-blend Cp is finite and positive across the mantle range."""
+        P = np.linspace(1e9, 135e9, 30)
+        S = np.full_like(P, 2900.0)
+        Cp = entropy_eos.heat_capacity_latent_blend(P, S)
+        assert Cp.shape == P.shape
+        assert np.all(np.isfinite(Cp)), 'latent-blend Cp must be finite'
+        assert np.all(Cp > 0.0), 'latent-blend Cp must be positive'
+
+    def test_latent_blend_pure_phase_matches_linear(self, entropy_eos):
+        """Far from the phase boundary, latent and linear blends agree.
+
+        Test ``well outside`` the mushy zone, defined relative to the
+        local mushy width dS = S_liq - S_sol (which is very wide for
+        the Wolf-Bower 2018 table, ~8000 J/kg/K at 100 GPa). At
+        gphi=-0.5 the tanh smoothing weight is < 1e-20 and the latent
+        blend reduces to the linear lookup.
+        """
+        P = np.array([100e9, 100e9])
+        S_sol = float(entropy_eos.solidus_entropy(P[0]))
+        S_liq = float(entropy_eos.liquidus_entropy(P[0]))
+        dS = S_liq - S_sol
+        # 0.5*dS below solidus and 0.5*dS above liquidus → gphi = ±0.5
+        S = np.array([S_sol - 0.5 * dS, S_liq + 0.5 * dS])
+        Cp_linear = entropy_eos.heat_capacity(P, S)
+        Cp_latent = entropy_eos.heat_capacity_latent_blend(P, S)
+        np.testing.assert_allclose(Cp_latent, Cp_linear, rtol=1e-6)
+
+    def test_latent_blend_exceeds_linear_in_mushy(self, entropy_eos):
+        """In the deep mushy zone, latent blend should exceed linear."""
+        P = 100e9
+        S_sol = float(entropy_eos.solidus_entropy(P))
+        S_liq = float(entropy_eos.liquidus_entropy(P))
+        S_mid = 0.5 * (S_sol + S_liq)  # gphi = 0.5
+
+        Cp_linear = float(entropy_eos.heat_capacity(np.asarray([P]),
+                                                    np.asarray([S_mid])))
+        Cp_latent = float(entropy_eos.heat_capacity_latent_blend(
+            np.asarray([P]), np.asarray([S_mid])))
+
+        # Latent blend should be larger than linear by at least 50 %
+        # at the mushy midpoint (the actual ratio is typically 2-5x).
+        assert Cp_latent > Cp_linear * 1.5, (
+            f'At mushy midpoint, expected Cp_latent > 1.5*Cp_linear, '
+            f'got Cp_linear={Cp_linear:.0f}, Cp_latent={Cp_latent:.0f}'
+        )
+
+    def test_latent_blend_continuous_across_solidus(self, entropy_eos):
+        """Cp_latent is continuous across S_sol (no infinite jump).
+
+        The smoothing width is 0.01 in gphi units, so the rise from 0
+        to 1 happens over a range of ~0.04 in gphi. With dS ~ 8000
+        J/kg/K at 100 GPa, that's a transition over ~320 J/kg/K of
+        entropy. We test continuity over a range much wider than that
+        but well inside the mushy zone width.
+        """
+        P = np.array([50e9])
+        S_sol = float(entropy_eos.solidus_entropy(P[0]))
+        S_liq = float(entropy_eos.liquidus_entropy(P[0]))
+        dS = S_liq - S_sol
+        # Sample two close points in the rising-shoulder region of the
+        # smoothing bell, where Cp varies smoothly but rapidly.
+        eps = 0.001 * dS  # well within the smoothing width
+        Cp_below = float(entropy_eos.heat_capacity_latent_blend(
+            P, np.array([S_sol + 0.05 * dS - eps])))
+        Cp_above = float(entropy_eos.heat_capacity_latent_blend(
+            P, np.array([S_sol + 0.05 * dS + eps])))
+        # Adjacent samples differ by less than 5 % (smooth function)
+        rel_jump = abs(Cp_above - Cp_below) / max(abs(Cp_below), 1.0)
+        assert rel_jump < 0.05, (
+            f'Cp_latent has a >5% jump over a 2*eps step (eps={eps:.2f}): '
+            f'Cp_below={Cp_below:.0f}, Cp_above={Cp_above:.0f}, '
+            f'rel_jump={rel_jump:.4f}'
+        )
+
+    def test_phase_evaluator_uses_latent_blend_when_configured(self, entropy_eos):
+        """EntropyPhaseEvaluator(cp_blend='latent') routes to the new formula."""
+        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
+        P = np.array([100e9])
+        S_sol = float(entropy_eos.solidus_entropy(P[0]))
+        S_liq = float(entropy_eos.liquidus_entropy(P[0]))
+        S_mid = 0.5 * (S_sol + S_liq)
+
+        phase_linear = EntropyPhaseEvaluator(
+            entropy_eos=entropy_eos,
+            gravitational_acceleration=9.8,
+            cp_blend='linear',
+        )
+        phase_linear.set_pressure(P)
+        phase_linear.set_entropy(np.array([S_mid]))
+        phase_linear.update()
+
+        phase_latent = EntropyPhaseEvaluator(
+            entropy_eos=entropy_eos,
+            gravitational_acceleration=9.8,
+            cp_blend='latent',
+        )
+        phase_latent.set_pressure(P)
+        phase_latent.set_entropy(np.array([S_mid]))
+        phase_latent.update()
+
+        Cp_linear = float(np.asarray(phase_linear.heat_capacity()).item())
+        Cp_latent = float(np.asarray(phase_latent.heat_capacity()).item())
+
+        assert Cp_latent > Cp_linear * 1.5, (
+            f'cp_blend=latent did not produce a larger Cp at the mushy '
+            f'midpoint (got {Cp_latent:.0f} vs linear {Cp_linear:.0f})'
+        )
+
+    def test_invalid_cp_blend_raises(self, entropy_eos):
+        """Invalid cp_blend value raises ValueError at construction."""
+        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+        with pytest.raises(ValueError, match='cp_blend'):
+            EntropyPhaseEvaluator(
+                entropy_eos=entropy_eos,
+                gravitational_acceleration=9.8,
+                cp_blend='banana',
+            )

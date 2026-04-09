@@ -60,6 +60,7 @@ class EntropyPhaseEvaluator:
         grain_size: float = 1e-3,
         thermal_conductivity_solid: float = 4.0,
         thermal_conductivity_liquid: float = 2.0,
+        cp_blend: str = 'latent',
     ):
         self._eos = entropy_eos
         self._g = gravitational_acceleration
@@ -70,6 +71,13 @@ class EntropyPhaseEvaluator:
         self._grain_size = grain_size
         self._k_solid = thermal_conductivity_solid
         self._k_liquid = thermal_conductivity_liquid
+        # 'latent' = SPIDER-parity v4 convention (latent-heat-augmented Cp)
+        # 'linear' = legacy v3 convention (pure-phase linear blend)
+        if cp_blend not in ('latent', 'linear'):
+            raise ValueError(
+                f"cp_blend must be 'latent' or 'linear', got {cp_blend!r}"
+            )
+        self._cp_blend = cp_blend
 
         # State arrays (set by set_entropy / set_pressure / update)
         self.entropy: npt.NDArray = np.array([])
@@ -109,7 +117,10 @@ class EntropyPhaseEvaluator:
 
         self._temperature = self._eos.temperature(P, S)
         self._density = self._eos.density(P, S)
-        self._heat_capacity = self._eos.heat_capacity(P, S)
+        if self._cp_blend == 'latent':
+            self._heat_capacity = self._eos.heat_capacity_latent_blend(P, S)
+        else:
+            self._heat_capacity = self._eos.heat_capacity(P, S)
         self._dTdPs_val = self._eos.dTdPs(P, S)
         self._thermal_expansivity = self._eos.thermal_expansivity(P, S)
         self._melt_fraction = self._eos.melt_fraction(P, S)
