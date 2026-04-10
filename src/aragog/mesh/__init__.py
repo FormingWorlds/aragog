@@ -89,11 +89,10 @@ class Mesh:
 
             def _xi_of_r(r: float) -> float:
                 """Mass coordinate xi(r) matching SPIDER's definition."""
-                M_shell = float(self.eos.get_mass_within_radii(
-                    np.array([r])
-                ) - self.eos.get_mass_within_radii(
-                    np.array([r_core])
-                ))
+                # get_mass_within_radii returns M(r) - M(inner_boundary)
+                # where inner_boundary = r_core. So this is already
+                # the mantle mass from r_core to r.
+                M_shell = float(self.eos.get_mass_within_radii(np.array([r])))
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0/3.0)
 
             basic_coordinates = np.empty_like(basic_mass_coordinates)
