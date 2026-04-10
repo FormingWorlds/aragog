@@ -239,10 +239,22 @@ class EntropyState:
         self._mass_flux = np.zeros_like(self._entropy_basic)
 
         if self._conduction:
-            # F_cond = -k * dT/dr, where T(r) is derived from the (P,S) EOS.
-            T_stag = np.asarray(self.phase_staggered.temperature()).ravel()
-            dTdr = mesh.d_dr_at_basic_nodes(T_stag).ravel()
-            self._heat_flux += -k * dTdr
+            # SPIDER-parity conductive flux (energy.c:358-378):
+            #   F_cond = -k * [(T/Cp) * dS/dr + dT/dr|_adiabat]
+            #
+            # The total temperature gradient decomposes into a
+            # superadiabatic part (proportional to the entropy gradient)
+            # and an adiabatic part (from the EOS at each node). This
+            # decomposition avoids the numerical artifact that arises
+            # when finite-differencing T(P,S) across staggered nodes
+            # at different phases in the mushy zone: the phase-blend
+            # in T(P,S) introduces a spurious gradient that is not a
+            # physical conductive flux.
+            T_basic = np.asarray(self.phase_basic.temperature()).ravel()
+            Cp_basic = np.asarray(self.phase_basic.heat_capacity()).ravel()
+            dTdrs_ad = np.asarray(self.phase_basic.dTdrs()).ravel()
+            superadiabatic = (T_basic / np.maximum(Cp_basic, 1.0)) * self._dSdr
+            self._heat_flux += -k * (superadiabatic + dTdrs_ad)
 
         if self._convection:
             # F_conv = rho * T * kappa_h * (-dS/dr)
