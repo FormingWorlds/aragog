@@ -227,13 +227,17 @@ class Mesh:
         basic_mass_coordinates = np.zeros_like(basic_coordinates)
         basic_mass_coordinates[:, :] = np.power(r_core, 3.0)
 
-        # Cumulative mantle mass contribution: 3 * M_AW(r_core, r) / rho_avg
+        # Cumulative mantle mass contribution.
+        # staggered_effective_density * (r^3_outer - r^3_inner) gives
+        # mass_shell / (4/3*pi). Dividing by rho_avg (which is
+        # M_no4pi / V_no4pi = M_no4pi / ((r_s^3-r_c^3)/3)) gives
+        # the correct xi^3 increment: 3 * M_shell_no4pi / rho_avg.
         basic_volumes = (np.power(basic_coordinates[1:, 0], 3.0)
             - np.power(basic_coordinates[:-1, 0], 3.0))
         for i in range(1, self.settings.number_of_nodes):
             basic_mass_coordinates[i:, :] += (
                 self.staggered_effective_density[i-1, :] * basic_volumes[i-1]
-                * 3.0 / self._planet_density
+                / self._planet_density
             )
 
         return np.power(basic_mass_coordinates, 1.0/3.0)
