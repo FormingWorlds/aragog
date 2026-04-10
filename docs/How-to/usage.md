@@ -10,7 +10,7 @@ from aragog.solver import Solver
 from aragog.output import Output
 
 # Load configuration from a TOML file
-params = Config.from_toml("src/aragog/cfg/abe_solid.toml")
+params = Config.from_toml("my_config.toml")
 
 # Create solver and run
 solver = Solver(params)
@@ -29,7 +29,7 @@ print("Global melt fraction:", float(out.melt_fraction_global))
 Aragog also has a CLI entry point:
 
 ```console
-aragog run src/aragog/cfg/abe_solid.toml
+aragog run my_config.toml
 ```
 
 Use `aragog --help` to see all available commands, including `download` and `env`.
