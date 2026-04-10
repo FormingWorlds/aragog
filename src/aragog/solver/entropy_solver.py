@@ -1032,21 +1032,27 @@ class EntropySolver:
         cap_stag = np.asarray(self.state.capacitance_staggered()).ravel()
 
         # Scalar quantities.
-        # M_mantle uses the mesh structure density (from the A-W
-        # profile when eos_method=1, or from the external file when
-        # eos_method=2). This matches SPIDER, which computes
-        # mass_mantle from its own A-W mass integral, not from the
-        # PALEOS entropy-dependent density. Using the PALEOS density
-        # here would cause the structure root finder to converge to
-        # a different R_int because rho_PALEOS(P, S) != rho_AW(r).
-        # When Zalmoxis provides the mesh (eos_method=2), the
-        # structure density IS the Zalmoxis density, which is
-        # consistent with PALEOS.
-        rho_struct_stag = np.asarray(
-            self.evaluator.mesh.staggered_effective_density
-        ).ravel()
-        mass_stag = rho_struct_stag * vol
-        M_mantle = float(np.sum(mass_stag))
+        # M_mantle uses the analytic A-W mass integral (matching
+        # SPIDER's EOSAdamsWilliamson_GetMassWithinShell) when
+        # eos_method=1. The discrete sum (rho_stag * vol) has O(h^2)
+        # quadrature error vs the analytic integral, causing the
+        # structure root finder to converge to a different R_int.
+        # For eos_method=2 (external mesh), fall back to discrete sum.
+        mesh = self.evaluator.mesh
+        if hasattr(mesh.eos, 'get_mass_within_radii'):
+            r_cmb = float(self._r_basic_flat[0])
+            r_surf = float(self._r_basic_flat[-1])
+            M_mantle = float(
+                mesh.eos.get_mass_within_radii(np.array([r_surf]))
+                - mesh.eos.get_mass_within_radii(np.array([r_cmb]))
+            )
+        else:
+            rho_struct_stag = np.asarray(
+                mesh.staggered_effective_density
+            ).ravel()
+            mass_stag = rho_struct_stag * vol
+            M_mantle = float(np.sum(mass_stag))
+        mass_stag = rho_stag * vol  # PALEOS density for per-cell output
         T_magma = float(T_stag[-1])
         # Core temperature:
         # - energy_balance: derive T_core from the boundary entropy via EOS
