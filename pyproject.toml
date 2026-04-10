@@ -47,6 +47,7 @@ pytest-dependency = ">=1.0.0"
 
 
 [tool.poetry.group.docs.dependencies]
+zensical = "*"
 markdown-include = "^0.8"
 mkdocs = "^1.6"
 mkdocs-material = "^9.5"
@@ -57,6 +58,7 @@ mkdocs-bibtex = "^4.4.0"
 
 [tool.poetry.extras]
 docs = [
+    "zensical",
     "markdown-include",
     "mkdocs",
     "mkdocs-material",
