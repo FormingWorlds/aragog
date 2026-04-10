@@ -2,7 +2,7 @@
 
 ## Transport properties
 
-Transport properties in Aragog are implemented in [`phase.py`](https://github.com/FormingWorlds/aragog/blob/main/aragog/phase.py), except for the eddy diffusivity, which is found in [`https://github.com/FormingWorlds/aragog/blob/main/aragog/solver.py`].
+Transport properties in Aragog are implemented in [`phase.py`](https://github.com/FormingWorlds/aragog/blob/main/aragog/phase.py), except for the eddy diffusivity, which is found in [`solver.py`](https://github.com/FormingWorlds/aragog/blob/main/aragog/solver.py).
 
 ---
 

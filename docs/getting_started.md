@@ -13,7 +13,7 @@ Here is the quickest path to getting started:
 
 2. **Run your first model** <br>
     Follow a minimal example run and generate a quick plot. <br>
-    → [First run tutorial](Tutorials/first_run.md)
+    → [First run tutorial](Tutorials/firstrun.md)
 
 ---
 
