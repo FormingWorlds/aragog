@@ -401,7 +401,7 @@ class EntropyEOS:
     def temperature_scalar(self, P: float, S: float) -> float:
         """Temperature T(P, S) for a single point, pure Python.
 
-        Uses the same phase-weighted blending as ``temperature()`` but
+        Uses the same Lever Rule blending as ``temperature()`` but
         with pure-Python arithmetic throughout. Safe for use inside
         scipy.optimize callbacks on numpy >= 2.4.
 
@@ -422,11 +422,20 @@ class EntropyEOS:
         solid_table = self._tables['temperature_solid']
         melt_table = self._tables['temperature_melt']
 
+        # Lever Rule: in the mushy zone, evaluate at phase boundary
+        # entropies; outside, evaluate at actual S.
+        if 0.0 < phi < 1.0:
+            S_for_solid = self._solidus_entropy_scalar(P)
+            S_for_melt = self._liquidus_entropy_scalar(P)
+        else:
+            S_for_solid = S
+            S_for_melt = S
+
         # Clamp to each table's own range
         S_sol_clamped = max(solid_table['S_list'][0],
-                           min(S, solid_table['S_list'][-1]))
+                           min(S_for_solid, solid_table['S_list'][-1]))
         S_melt_clamped = max(melt_table['S_list'][0],
-                            min(S, melt_table['S_list'][-1]))
+                            min(S_for_melt, melt_table['S_list'][-1]))
         P_sol_clamped = max(solid_table['P_list'][0],
                            min(P, solid_table['P_list'][-1]))
         P_melt_clamped = max(melt_table['P_list'][0],
@@ -441,7 +450,7 @@ class EntropyEOS:
             melt_table['values'], P_melt_clamped, S_melt_clamped,
         )
 
-        # NaN-safe phase-weighted blend (same logic as _lookup_phase_weighted)
+        # NaN-safe phase-weighted blend
         result = 0.0
         if phi > 0.0:
             result += phi * val_melt
@@ -489,23 +498,42 @@ class EntropyEOS:
     def _lookup_phase_weighted(
         self, prop_name: str, P: npt.NDArray, S: npt.NDArray,
     ) -> npt.NDArray:
-        """Look up a property with phase weighting (solid/melt blend).
+        """Look up a property with Lever Rule blending (SPIDER parity).
 
-        For S < S_sol: use solid table.
-        For S > S_liq: use melt table.
-        Between: linear blend by melt fraction.
+        In the two-phase zone (S_sol < S < S_liq), SPIDER evaluates
+        end-member properties at the phase boundary entropies, not at
+        the actual cell entropy (eos_composite.c:216-224):
+
+            val = phi * val_melt(P, S_liquidus)
+                + (1 - phi) * val_solid(P, S_solidus)
+
+        This is the Lever Rule: properties in the mushy zone are
+        interpolated between the two coexistence values at that
+        pressure, weighted by melt fraction.
+
+        Outside the two-phase zone the single-phase table is evaluated
+        at the actual (P, S).
         """
         P = np.asarray(P, dtype=float)
         S = np.asarray(S, dtype=float)
         phi = self.melt_fraction(P, S)
 
-        # Clamp S and P to each table's own range (not global range)
-        # to avoid NaN from fill_value=nan outside individual table domains.
         solid_table = self._tables[f'{prop_name}_solid']
         melt_table = self._tables[f'{prop_name}_melt']
 
-        S_solid_clamped = np.clip(S, solid_table['S'][0], solid_table['S'][-1])
-        S_melt_clamped = np.clip(S, melt_table['S'][0], melt_table['S'][-1])
+        # Phase boundary entropies for the Lever Rule
+        S_sol = self.solidus_entropy(P)
+        S_liq = self.liquidus_entropy(P)
+
+        # In the mushy zone (0 < phi < 1): evaluate at the phase
+        # boundary entropies (Lever Rule). Outside: evaluate at
+        # actual S (single-phase regime).
+        S_for_solid = np.where((phi > 0) & (phi < 1), S_sol, S)
+        S_for_melt = np.where((phi > 0) & (phi < 1), S_liq, S)
+
+        # Clamp to each table's own range
+        S_solid_clamped = np.clip(S_for_solid, solid_table['S'][0], solid_table['S'][-1])
+        S_melt_clamped = np.clip(S_for_melt, melt_table['S'][0], melt_table['S'][-1])
         P_solid_clamped = np.clip(P, solid_table['P'][0], solid_table['P'][-1])
         P_melt_clamped = np.clip(P, melt_table['P'][0], melt_table['P'][-1])
 
