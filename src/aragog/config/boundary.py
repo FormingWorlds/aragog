@@ -48,7 +48,7 @@ class BoundaryConfig:
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
     # Core BC mode (default = 'quasi_steady' v3 behaviour for now,
-    # to be flipped to 'spider_bc' once Path A is fully validated):
+    # to be flipped to 'energy_balance' once Path A is fully validated):
     #
     #   'quasi_steady' = legacy v3 alpha-factor heat-flux partition
     #     between mantle bottom cell and core based on heat capacity
@@ -56,7 +56,7 @@ class BoundaryConfig:
     #     T_core offset against SPIDER on R8 CHILI Earth (known
     #     limitation that Path A is meant to close).
     #
-    #   'spider_bc' = Path A SPIDER bit-parity core BC. Adds the
+    #   'energy_balance' = Path A SPIDER bit-parity core BC. Adds the
     #     entropy gradient at the CMB basic node as an extra state
     #     variable (mirror of SPIDER's dSdxi[ind_cmb]) and integrates
     #     its time derivative via SPIDER's bc.c:76-131 formula:

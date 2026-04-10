@@ -377,7 +377,7 @@ class EntropySolver:
                               'core_bc', 'quasi_steady')
             self._core_bc = core_bc
 
-        if core_bc == 'spider_bc':
+        if core_bc == 'energy_balance':
             # Path A SPIDER bit-parity core BC.
             # State = [S_0, ..., S_{N-1}, dSdr_cmb]
             # The boundary state dSdr_cmb is the entropy gradient at
@@ -434,7 +434,7 @@ class EntropySolver:
             self._S0[:n_stag] = S_arr
             self._S0[n_stag] = float(dSdr_cmb_init)
             logger.info(
-                'Initial state (Path A spider_bc): S_min=%.0f, S_max=%.0f, '
+                'Initial state (Path A energy_balance): S_min=%.0f, S_max=%.0f, '
                 'dSdr_cmb_init=%.3e',
                 S_arr.min(), S_arr.max(), dSdr_cmb_init,
             )
@@ -481,7 +481,7 @@ class EntropySolver:
         self._T_core_init = float(T_core_init)
 
     def set_initial_dSdr_cmb(self, dSdr_cmb_init: float) -> None:
-        """Set the initial CMB entropy gradient (Path A spider_bc only).
+        """Set the initial CMB entropy gradient (Path A energy_balance only).
 
         Must be called BEFORE ``set_initial_entropy``. If not called,
         the initial ``dSdr_cmb`` is taken from the previous solution
@@ -537,7 +537,7 @@ class EntropySolver:
         - 'quasi_steady' (default): state = [S_0, ..., S_{N-1}],
           length N. F_cmb is set by the alpha-factor partition of
           F[1].
-        - 'spider_bc' (Path A SPIDER bit-parity): state =
+        - 'energy_balance' (Path A SPIDER bit-parity): state =
           [S_0, ..., S_{N-1}, dSdr_cmb], length N+1. The boundary
           state dSdr_cmb is passed into ``state.update`` so the
           convective+conductive flux at the CMB basic node uses
@@ -548,9 +548,9 @@ class EntropySolver:
           tombstoned.
         """
         n_stag = self._n_stag
-        spider_bc = (self._core_bc == 'spider_bc')
+        energy_balance = (self._core_bc == 'energy_balance')
         bower = (self._core_bc == 'bower2018')
-        is_extended = spider_bc or bower
+        is_extended = energy_balance or bower
 
         if is_extended:
             entropy = state_vec[:n_stag]
@@ -559,11 +559,11 @@ class EntropySolver:
             entropy = state_vec
             extra = None
 
-        # In spider_bc mode the boundary state IS the entropy
+        # In energy_balance mode the boundary state IS the entropy
         # gradient, and we pass it through to state.update() so
         # the flux operator at the CMB basic node uses the
         # boundary value rather than the FD-derived estimate.
-        if spider_bc:
+        if energy_balance:
             self.state.update(entropy, time, dSdr_cmb=extra)
         else:
             self.state.update(entropy, time)
@@ -590,7 +590,7 @@ class EntropySolver:
 
         # CMB boundary condition
         if self._inner_bc_kind == 1:
-            if spider_bc:
+            if energy_balance:
                 # Path A: heat_flux[0] is ALREADY the actual physical
                 # total flux (conduction+convection+grav), computed
                 # by state.update() using the boundary-state dSdr_cmb.
@@ -650,9 +650,9 @@ class EntropySolver:
         if not is_extended:
             return dSdt
 
-        if spider_bc:
+        if energy_balance:
             # Path A boundary-state ODE (extracted to a pure helper
-            # `_spider_bc_rhs_per_s` for unit testing). The inputs are
+            # `_energy_balance_rhs_per_s` for unit testing). The inputs are
             # the F_cmb heat flux computed by state.update() above
             # (which used the boundary dSdr_cmb to set the CMB basic
             # node entropy), and the dS/dt at the bottom staggered
@@ -667,7 +667,7 @@ class EntropySolver:
             ).flat[0])
             dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
 
-            d_dSdr_cmb_dt_per_s = self._spider_bc_rhs_per_s(
+            d_dSdr_cmb_dt_per_s = self._energy_balance_rhs_per_s(
                 F_cmb_basic=F_cmb_basic,
                 dSdt_s_cmb_per_s=dSdt_s_cmb_per_s,
                 T_cmb_basic=T_cmb_basic,
@@ -684,7 +684,7 @@ class EntropySolver:
 
         return np.concatenate([dSdt, [dT_core_dt]])
 
-    def _spider_bc_rhs_per_s(
+    def _energy_balance_rhs_per_s(
         self,
         F_cmb_basic: float,
         dSdt_s_cmb_per_s: float,
@@ -798,15 +798,15 @@ class EntropySolver:
         """True when the state vector has N+1 elements.
 
         The last element is either T_core (bower2018) or dSdr_cmb
-        (spider_bc). For legacy quasi_steady the state is length N.
+        (energy_balance). For legacy quasi_steady the state is length N.
         """
-        return self._core_bc in ('bower2018', 'spider_bc')
+        return self._core_bc in ('bower2018', 'energy_balance')
 
     @property
     def entropy_staggered(self) -> npt.NDArray:
         """Entropy at staggered nodes from the solution.
 
-        For bower2018 and spider_bc modes the solver state vector is
+        For bower2018 and energy_balance modes the solver state vector is
         N+1 in length; we strip the trailing extra row and return
         only the entropy block.
         """
@@ -834,12 +834,12 @@ class EntropySolver:
         tridiagonal, extended to pentadiagonal at the boundaries
         for the 3-point d/dr extrapolation stencil.
 
-        For the extended state modes (bower2018 or spider_bc), the
+        For the extended state modes (bower2018 or energy_balance), the
         state vector grows by one element at the end and the
         Jacobian gets an extra row and column:
 
           - row N (the extra state) couples to S[0] (and S[1] for
-            spider_bc via the flux operator extension) and itself
+            energy_balance via the flux operator extension) and itself
           - rows 0 and 1 (S[0] and S[1]) gain couplings to the
             extra state via the boundary-flux feedback
 
@@ -864,7 +864,7 @@ class EntropySolver:
         if is_ext:
             extra = n_stag  # index of the boundary state
             # Extra state couples to S[0] and S[1] (and S[2] for
-            # spider_bc's pentadiagonal reach) and itself.
+            # energy_balance's pentadiagonal reach) and itself.
             J[extra, 0] = 1.0
             J[extra, 1] = 1.0
             if n_stag >= 3:
@@ -902,9 +902,9 @@ class EntropySolver:
         try:
             n_stag = self._n_stag
             # For any extended-state mode (bower2018 with T_core,
-            # spider_bc with dSdr_cmb), strip the trailing extra
+            # energy_balance with dSdr_cmb), strip the trailing extra
             # element before querying the EOS. The old check tested
-            # for bower2018 explicitly, so spider_bc used to pass the
+            # for bower2018 explicitly, so energy_balance used to pass the
             # full N+1 _S0 to melt_fraction against a shape-N
             # _P_stag_flat, which raised a shape mismatch and fell
             # through to phi0=1.0, silently disabling the Tier 1D
@@ -981,9 +981,9 @@ class EntropySolver:
         mesh = self.evaluator.mesh
 
         n_stag = self._n_stag
-        spider_bc = (self._core_bc == 'spider_bc')
+        energy_balance = (self._core_bc == 'energy_balance')
         bower = (self._core_bc == 'bower2018')
-        is_ext = spider_bc or bower
+        is_ext = energy_balance or bower
 
         # Slice the final state vector. For extended-state modes the
         # last element is the boundary state; for legacy quasi_steady
@@ -1005,9 +1005,9 @@ class EntropySolver:
         rho_stag = np.asarray(eos.density(P_stag, S_final)).ravel()
 
         # Refresh the state at the final entropy for derived quantities.
-        # For spider_bc we must pass the boundary state through so the
+        # For energy_balance we must pass the boundary state through so the
         # derived fluxes match the integrated solution.
-        if spider_bc:
+        if energy_balance:
             self.state.update(S_final, sol.t[-1], dSdr_cmb=extra_final)
         else:
             self.state.update(S_final, sol.t[-1])
@@ -1022,12 +1022,12 @@ class EntropySolver:
         M_mantle = float(np.sum(mass_stag))
         T_magma = float(T_stag[-1])
         # Core temperature:
-        # - spider_bc: derive T_core from the boundary entropy via EOS
+        # - energy_balance: derive T_core from the boundary entropy via EOS
         #   at the CMB basic node. The boundary entropy is computed by
         #   state.update() using the dSdr_cmb override.
         # - bower2018: T_core is the integrated state variable (tombstone).
         # - quasi_steady: T_core = T_stag[0] (bottom cell mantle T).
-        if spider_bc:
+        if energy_balance:
             S_basic_cmb = float(np.asarray(
                 self.state._entropy_basic
             ).ravel()[0])

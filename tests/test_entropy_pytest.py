@@ -1113,8 +1113,8 @@ class TestBowerCoreBC:
 
 @needs_eos
 @pytest.mark.unit
-class TestSpiderBC:
-    """Unit tests for Path A SPIDER bit-parity core BC (Step 2).
+class TestEnergyBalanceCoreBC:
+    """Unit tests for the energy-balance core BC (Step 2).
 
     Path A expands the solver state vector by one element at the end
     so the CMB entropy gradient ``dSdr_cmb`` becomes a separately
@@ -1138,7 +1138,7 @@ class TestSpiderBC:
     These tests exercise:
       1. The state-vector shape + initialisation paths
          (``set_initial_entropy`` with and without user override)
-      2. The pure numerical helper ``_spider_bc_rhs_per_s`` against
+      2. The pure numerical helper ``_energy_balance_rhs_per_s`` against
          hand-computed expected values for prescribed inputs, with
          at least one test value that distinguishes the correct
          formula from plausible wrong formulas (missing factor of 2,
@@ -1155,7 +1155,7 @@ class TestSpiderBC:
 
     @staticmethod
     def _make_bare_solver(entropy_eos, n_stag: int = 30,
-                          core_bc: str = 'spider_bc',
+                          core_bc: str = 'energy_balance',
                           P_cmb: float = 135e9, P_surf: float = 1e5,
                           R_cmb: float = 3480e3, R_surf: float = 6371e3):
         """Construct a minimal EntropySolver for unit-level tests.
@@ -1165,7 +1165,7 @@ class TestSpiderBC:
         wires a minimal evaluator with an Earth-like mesh so
         ``set_initial_entropy``'s cold-start FD stencil has real
         r_basic/r_stag arrays to work with. Additional cached
-        constants for ``_spider_bc_rhs_per_s`` and BC dispatch are
+        constants for ``_energy_balance_rhs_per_s`` and BC dispatch are
         wired by ``_wire_cached_constants``.
         """
         from aragog.solver.entropy_solver import EntropySolver
@@ -1210,7 +1210,7 @@ class TestSpiderBC:
         core_tfac: float = 1.147,
     ):
         """Attach the minimal subset of _cache_bc_constants needed for
-        ``_spider_bc_rhs_per_s`` to run as a pure function.
+        ``_energy_balance_rhs_per_s`` to run as a pure function.
 
         We hand-wire these instead of calling _initialize_internals to
         avoid pulling in the full mesh/BC builder. The values mirror
@@ -1234,18 +1234,18 @@ class TestSpiderBC:
 
     # ── state-vector shape tests ─────────────────────────────────
 
-    def test_state_vector_length_spider_bc(self, entropy_eos):
-        """spider_bc state has N+1 elements; quasi_steady has N.
+    def test_state_vector_length_energy_balance(self, entropy_eos):
+        """energy_balance state has N+1 elements; quasi_steady has N.
 
         Also verifies that switching modes on the same solver flips
         the length cleanly — catches any latent state leak across
         PROTEUS coupling resets.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         solver.set_initial_entropy(np.full(30, 2900.0))
         assert solver._S0.shape == (31,), (
-            f'spider_bc state should be N+1 = 31, got {solver._S0.shape}'
+            f'energy_balance state should be N+1 = 31, got {solver._S0.shape}'
         )
 
         solver._core_bc = 'quasi_steady'
@@ -1260,7 +1260,7 @@ class TestSpiderBC:
         # (S[1]-S[0])/(r[1]-r[0])). _make_bare_solver provides the
         # default 3-basic-node mesh for N=2.
         solver2 = self._make_bare_solver(entropy_eos, n_stag=2,
-                                          core_bc='spider_bc')
+                                          core_bc='energy_balance')
         solver2.set_initial_entropy(np.array([2900.0, 3100.0]))
         assert solver2._S0.shape == (3,), (
             f'N=2 minimal mesh should give state length 3, '
@@ -1275,7 +1275,7 @@ class TestSpiderBC:
         loudly, not silently pad or truncate.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         with pytest.raises(ValueError, match=r'S_init length 20'):
             solver.set_initial_entropy(np.full(20, 2900.0))
         with pytest.raises(ValueError, match=r'S_init length 31'):
@@ -1296,7 +1296,7 @@ class TestSpiderBC:
         PALEOS domain, not at any boundary or special value).
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         S_uniform = np.full(30, 2900.0)
         solver.set_initial_entropy(S_uniform)
         assert solver._S0[-1] == pytest.approx(0.0, abs=1e-12), (
@@ -1314,7 +1314,7 @@ class TestSpiderBC:
         bugs would show up at the 1 % level.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         # S_init with a linear gradient of +5 J/kg/K per cell.
         S_grad = 2900.0 + 5.0 * np.arange(30, dtype=float)
         solver.set_initial_entropy(S_grad)
@@ -1347,7 +1347,7 @@ class TestSpiderBC:
         ``set_initial_entropy`` call that immediately follows.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         # Cold-start FD on a uniform profile would give 0; the user
         # override must WIN over that default.
         solver.set_initial_dSdr_cmb(-1.234e-6)
@@ -1360,7 +1360,7 @@ class TestSpiderBC:
         # depth = unstable stratification, which the solver should
         # still accept and let the physics correct).
         solver2 = self._make_bare_solver(entropy_eos, n_stag=30,
-                                          core_bc='spider_bc')
+                                          core_bc='energy_balance')
         solver2.set_initial_dSdr_cmb(+5.678e-5)
         solver2.set_initial_entropy(np.full(30, 2900.0))
         assert solver2._S0[-1] == pytest.approx(+5.678e-5, rel=1e-12)
@@ -1369,7 +1369,7 @@ class TestSpiderBC:
         # path. Populate a fake _solution with a different boundary
         # value and confirm the user override still wins.
         solver3 = self._make_bare_solver(entropy_eos, n_stag=30,
-                                          core_bc='spider_bc')
+                                          core_bc='energy_balance')
 
         class _FakeSol:
             pass
@@ -1393,7 +1393,7 @@ class TestSpiderBC:
         integrated SPIDER energy balance is lost.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
 
         class _FakeSol:
             pass
@@ -1413,7 +1413,7 @@ class TestSpiderBC:
 
     # ── helper-formula bit-parity tests ──────────────────────────
 
-    def test_spider_bc_rhs_zero_flux_limit(self, entropy_eos):
+    def test_energy_balance_rhs_zero_flux_limit(self, entropy_eos):
         """F_cmb = 0 and dSdt_s_cmb = 0 → rhs = 0 exactly.
 
         The formula is linear in both ``F_cmb_basic`` and
@@ -1423,10 +1423,10 @@ class TestSpiderBC:
         helper MUST satisfy.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         self._wire_cached_constants(solver)
 
-        rhs = solver._spider_bc_rhs_per_s(
+        rhs = solver._energy_balance_rhs_per_s(
             F_cmb_basic=0.0,
             dSdt_s_cmb_per_s=0.0,
             T_cmb_basic=4000.0,
@@ -1442,7 +1442,7 @@ class TestSpiderBC:
         # formula is (dSdt_s - dSdt_basic) * 2/dr = dSdt_s * 2/dr).
         # This is a distinct linearity check.
         dSdt_s_nonzero = 1.5e-12  # J/(kg*K*s), a plausible cliff value
-        rhs2 = solver._spider_bc_rhs_per_s(
+        rhs2 = solver._energy_balance_rhs_per_s(
             F_cmb_basic=0.0,
             dSdt_s_cmb_per_s=dSdt_s_nonzero,
             T_cmb_basic=4000.0,
@@ -1454,7 +1454,7 @@ class TestSpiderBC:
             f'expected {expected_rhs2:.3e}'
         )
 
-    def test_spider_bc_rhs_bit_parity_prescribed_inputs(self, entropy_eos):
+    def test_energy_balance_rhs_bit_parity_prescribed_inputs(self, entropy_eos):
         """SPIDER bc.c formula bit-parity against a hand-computed value.
 
         Chosen inputs are the R8 CHILI Earth order-of-magnitude values
@@ -1507,7 +1507,7 @@ class TestSpiderBC:
         core_tfac = 1.147
 
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         self._wire_cached_constants(
             solver,
             r_cmb=r_cmb,
@@ -1537,7 +1537,7 @@ class TestSpiderBC:
             (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / dr_cmb
         )
 
-        actual = solver._spider_bc_rhs_per_s(
+        actual = solver._energy_balance_rhs_per_s(
             F_cmb_basic=F_cmb_basic,
             dSdt_s_cmb_per_s=dSdt_s_cmb_per_s,
             T_cmb_basic=T_cmb_basic,
@@ -1559,7 +1559,7 @@ class TestSpiderBC:
             f'cools faster than basic), got {actual:.3e}'
         )
 
-    def test_spider_bc_rhs_linearity_in_flux(self, entropy_eos):
+    def test_energy_balance_rhs_linearity_in_flux(self, entropy_eos):
         """rhs is linear in F_cmb_basic at fixed other inputs.
 
         Property-based invariant: doubling the heat flux must double
@@ -1568,7 +1568,7 @@ class TestSpiderBC:
         exponent (F^2, sqrt(F)) sneaks in.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         self._wire_cached_constants(solver)
 
         # Pin dSdt_s_cmb_per_s to 0 so the rhs is purely F-driven.
@@ -1577,13 +1577,13 @@ class TestSpiderBC:
             T_cmb_basic=4100.0,
             cp_cmb_basic=1280.0,
         )
-        rhs1 = solver._spider_bc_rhs_per_s(
+        rhs1 = solver._energy_balance_rhs_per_s(
             F_cmb_basic=1.5e4, **base_inputs
         )
-        rhs2 = solver._spider_bc_rhs_per_s(
+        rhs2 = solver._energy_balance_rhs_per_s(
             F_cmb_basic=3.0e4, **base_inputs
         )
-        rhs3 = solver._spider_bc_rhs_per_s(
+        rhs3 = solver._energy_balance_rhs_per_s(
             F_cmb_basic=6.0e4, **base_inputs
         )
 
@@ -1606,7 +1606,7 @@ class TestSpiderBC:
             f'positive rhs (gradient steepening), got {rhs1:.3e}'
         )
 
-    def test_spider_bc_rhs_sign_from_fd_definition(self, entropy_eos):
+    def test_energy_balance_rhs_sign_from_fd_definition(self, entropy_eos):
         """Verify the sign against the independent FD definition.
 
         The one-sided centered difference for d/dt(dS/dr) at the CMB
@@ -1621,7 +1621,7 @@ class TestSpiderBC:
         catching sign errors that would survive self-consistent checks.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         dr_cmb = 8.0e4  # different from default to catch hardcoding
         self._wire_cached_constants(solver, dr_cmb=dr_cmb)
 
@@ -1641,7 +1641,7 @@ class TestSpiderBC:
         # The FD definition gives the expected result directly
         expected = (dSdt_stag - dSdt_basic) * 2.0 / dr_cmb
 
-        actual = solver._spider_bc_rhs_per_s(
+        actual = solver._energy_balance_rhs_per_s(
             F_cmb_basic=F_cmb,
             dSdt_s_cmb_per_s=dSdt_stag,
             T_cmb_basic=4000.0,
@@ -1657,7 +1657,7 @@ class TestSpiderBC:
             f'got {actual:.3e}'
         )
 
-    def test_spider_bc_rhs_clamps_protect_against_divzero(self, entropy_eos):
+    def test_energy_balance_rhs_clamps_protect_against_divzero(self, entropy_eos):
         """Very small T_cmb and M_core do not blow the rhs up.
 
         The ``max(., 1.0)`` clamps in the helper prevent a
@@ -1666,13 +1666,13 @@ class TestSpiderBC:
         a defensive check is cheap and the clamps exist for a reason).
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         self._wire_cached_constants(solver)
 
         # Set T_cmb to a physically unreasonable 0.5 K. The clamp
         # should kick in at max(0.5, 1.0) = 1.0 and the result
         # should be finite.
-        rhs = solver._spider_bc_rhs_per_s(
+        rhs = solver._energy_balance_rhs_per_s(
             F_cmb_basic=1.0e4,
             dSdt_s_cmb_per_s=0.0,
             T_cmb_basic=0.5,  # unphysically small
@@ -1684,7 +1684,7 @@ class TestSpiderBC:
 
         # Also verify the clamp at T_cmb=0.0 (the exact degenerate
         # case) does not divide by zero.
-        rhs_zero = solver._spider_bc_rhs_per_s(
+        rhs_zero = solver._energy_balance_rhs_per_s(
             F_cmb_basic=1.0e4,
             dSdt_s_cmb_per_s=0.0,
             T_cmb_basic=0.0,
@@ -1696,10 +1696,10 @@ class TestSpiderBC:
 
     # ── Jacobian sparsity test ───────────────────────────────────
 
-    def test_jacobian_sparsity_spider_bc_coupling(self, entropy_eos):
-        """Sparsity pattern has the extra boundary row/col for spider_bc.
+    def test_jacobian_sparsity_energy_balance_coupling(self, entropy_eos):
+        """Sparsity pattern has the extra boundary row/col for energy_balance.
 
-        The spider_bc state vector grows by 1 at the end. The
+        The energy_balance state vector grows by 1 at the end. The
         sparsity pattern must:
           - have shape (N+1, N+1)
           - have a nonzero at (N, 0), (N, 1), (N, 2) and (N, N)
@@ -1715,10 +1715,10 @@ class TestSpiderBC:
         """
         N = 30
         solver = self._make_bare_solver(entropy_eos, n_stag=N,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         J = solver._build_jac_sparsity()
         assert J.shape == (N + 1, N + 1), (
-            f'spider_bc Jacobian shape should be (31, 31), got {J.shape}'
+            f'energy_balance Jacobian shape should be (31, 31), got {J.shape}'
         )
         # Convert to dense bool for element access
         Jd = J.toarray().astype(bool)
@@ -1747,7 +1747,7 @@ class TestSpiderBC:
         # fully populates). The extra row should still couple to S[0..2]
         # and self; Jd shape must be (4, 4).
         solver_small = self._make_bare_solver(entropy_eos, n_stag=3,
-                                               core_bc='spider_bc')
+                                               core_bc='energy_balance')
         J_small = solver_small._build_jac_sparsity()
         assert J_small.shape == (4, 4)
         Jd_small = J_small.toarray().astype(bool)
@@ -1756,10 +1756,10 @@ class TestSpiderBC:
     # ── atol phi0 slice regression test ──────────────────────────
 
     def test_phi0_slice_handles_extended_state(self, entropy_eos):
-        """Tier 1D atol phi0 estimate works for spider_bc.
+        """Tier 1D atol phi0 estimate works for energy_balance.
 
         Before the 2026-04-10 fix, ``solve()`` sliced ``_S0`` only
-        when ``_core_bc == 'bower2018'``, which caused spider_bc to
+        when ``_core_bc == 'bower2018'``, which caused energy_balance to
         pass the full N+1 _S0 (with dSdr_cmb appended) to
         ``melt_fraction`` against a shape-N _P_stag_flat. The shape
         mismatch raised an exception that fell through the
@@ -1774,7 +1774,7 @@ class TestSpiderBC:
         succeed.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='spider_bc')
+                                         core_bc='energy_balance')
         S_init = np.full(30, 2900.0)
         solver.set_initial_entropy(S_init)
         # _S0 is now shape (31,) — the last element is dSdr_cmb, which
