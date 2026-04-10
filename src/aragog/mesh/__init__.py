@@ -189,17 +189,19 @@ class Mesh:
         """
         r_core = basic_coordinates[0, 0]
         r_surf = basic_coordinates[-1, 0]
-        basic_volumes = (np.power(basic_coordinates[1:, 0], 3.0)
-            - np.power(basic_coordinates[:-1, 0], 3.0))
-        mantle_mass = np.sum(
-            self.staggered_effective_density[:, 0] * basic_volumes
+        # Use the analytic A-W mass integral (without 4pi, SPIDER
+        # convention) for the average density. The discrete sum
+        # (rho * delta_r^3) is inconsistent because the 4pi/3
+        # factors don't cancel between the volume elements and
+        # the effective density definition.
+        M_4pi = float(
+            self.eos.get_mass_within_radii(np.array([[r_surf]]))
+            - self.eos.get_mass_within_radii(np.array([[r_core]]))
         )
-        # SPIDER convention: rho_avg = M_mantle * 3 / (r_surf^3 - r_core^3)
-        # which is M_mantle / V_mantle_shell (without 4pi, but the 4pi
-        # cancels in the mass-coordinate definition)
-        mantle_volume = np.power(r_surf, 3.0) - np.power(r_core, 3.0)
-        mantle_avg_density = mantle_mass * 3.0 / mantle_volume
-        return mantle_avg_density.item()
+        M_no4pi = M_4pi / (4.0 * np.pi)
+        mantle_volume_no4pi = (np.power(r_surf, 3.0) - np.power(r_core, 3.0)) / 3.0
+        mantle_avg_density = M_no4pi / mantle_volume_no4pi
+        return float(mantle_avg_density)
 
     def get_basic_mass_coordinates_from_spatial_coordinates(self, basic_coordinates: npt.NDArray) -> npt.NDArray:
         """Computes mass coordinates matching SPIDER's definition.
