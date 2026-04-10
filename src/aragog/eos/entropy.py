@@ -645,15 +645,23 @@ class EntropyEOS:
         safe_dS = np.where(np.abs(dS) > 1e-10, dS, 1e-10)
         gphi = (S - S_sol) / safe_dS
 
-        # Tanh smoothing across the phase boundary, peaking at gphi=0.5
-        # SPIDER's get_smoothing(matprop_smooth_width, gphi) produces a
-        # bell shape centred on the mushy zone. We use a simple bell
-        # via the difference of two tanhs that goes 0->1->0 across
-        # gphi in [0, 1] with rise/fall width set by `width`.
-        from scipy.special import expit
-        rise = expit((gphi - 0.0) / max(width, 1e-6))
-        fall = expit((1.0 - gphi) / max(width, 1e-6))
-        smooth = np.clip(rise + fall - 1.0, 0.0, 1.0)
+        # SPIDER-parity smoothing (util.c:245-270, get_smoothing).
+        # Bell shape centred on the mushy zone: rises at gphi=0 with
+        # tanh(gphi/w), falls at gphi=1 with tanh((1-gphi)/w). The
+        # width parameter w controls the shoulder into the single-
+        # phase regime.
+        #
+        # IMPORTANT: SPIDER uses tanh(x/w), not expit(x/w) which
+        # equals 0.5*(1+tanh(x/(2w))). The previous expit formula
+        # had an effective width of w/2, making the transition twice
+        # as narrow and producing 16% less latent-heat Cp at
+        # crystallization onset (gphi=0.994).
+        w = max(width, 1e-6)
+        smooth = np.where(
+            gphi > 0.5,
+            0.5 * (1.0 + np.tanh((1.0 - gphi) / w)),  # fall at liquidus
+            0.5 * (1.0 + np.tanh(gphi / w)),            # rise at solidus
+        )
 
         return smooth * Cp_mix + (1.0 - smooth) * Cp_pure
 
