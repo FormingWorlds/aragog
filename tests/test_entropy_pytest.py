@@ -1437,9 +1437,10 @@ class TestSpiderBC:
         )
 
         # Second smoke test: with zero flux but non-zero dSdt_s,
-        # the rhs should be ``-dSdt_s_cmb_per_s * 2 / dr_cmb``
-        # (because the fac_cmb * E_core term is zero). This is a
-        # distinct linearity check.
+        # the rhs should be ``dSdt_s_cmb_per_s * 2 / dr_cmb``
+        # (because dS_basic_cmb_dt = 0 when E_tot_cmb = 0, and the
+        # formula is (dSdt_s - dSdt_basic) * 2/dr = dSdt_s * 2/dr).
+        # This is a distinct linearity check.
         dSdt_s_nonzero = 1.5e-12  # J/(kg*K*s), a plausible cliff value
         rhs2 = solver._spider_bc_rhs_per_s(
             F_cmb_basic=0.0,
@@ -1447,7 +1448,7 @@ class TestSpiderBC:
             T_cmb_basic=4000.0,
             cp_cmb_basic=1300.0,
         )
-        expected_rhs2 = -dSdt_s_nonzero * 2.0 / solver._cmb_dr_cmb
+        expected_rhs2 = dSdt_s_nonzero * 2.0 / solver._cmb_dr_cmb
         assert rhs2 == pytest.approx(expected_rhs2, rel=1e-12), (
             f'Zero-flux sub-limit: got {rhs2:.3e}, '
             f'expected {expected_rhs2:.3e}'
@@ -1479,11 +1480,21 @@ class TestSpiderBC:
                            = -4.5648e18 * 1.6322e-28
                            = -7.4507e-10  J/(kg*K*s)
             dr_cmb         = 1.0e5 m
-            rhs            = (dS_basic_cmb_dt_base - dSdt_s_cmb_per_s)
+
+            The one-sided FD for d/dt(dS/dr) at the CMB is
+              (dSdt_stag - dSdt_basic) * 2 / dr
+            because the staggered node is at the midpoint (dr/2)
+            above the CMB basic node.
+
+            rhs            = (dSdt_s_cmb_per_s - dS_basic_cmb_dt_base)
                              * 2 / dr_cmb
-                           = (-7.4507e-10 - (-1.2e-9)) * 2 / 1e5
-                           = ( 4.5493e-10) * 2 / 1e5
-                           = 9.0986e-15  J/(kg*K*m*s)
+                           = ((-1.2e-9) - (-7.4507e-10)) * 2 / 1e5
+                           = (-4.5493e-10) * 2 / 1e5
+                           = -9.0986e-15  J/(kg*K*m*s)
+
+            The result is NEGATIVE: the staggered cell cools faster
+            than the CMB basic node (core has large thermal inertia),
+            so the outward entropy gradient weakens over time.
 
         The test reproduces the same hand computation in-line so any
         future change to cached constant defaults (r_cmb, core_density,
@@ -1511,12 +1522,10 @@ class TestSpiderBC:
         T_cmb_basic = 4100.0
         cp_cmb_basic = 1280.0
 
-        # Hand-recompute the expected rhs inside the test, using the
-        # SAME arithmetic as the helper, so a bug in the helper would
-        # produce a mismatch. Note: this re-derivation is NOT just
-        # a copy of the helper: it uses long-form intermediate names
-        # so the reader can see each step, and it hard-codes the
-        # arithmetic sign convention.
+        # Hand-recompute the expected rhs inside the test using the
+        # correct FD formula: d/dt(dS/dr) = (dSdt_stag - dSdt_basic)
+        # * 2/dr. This is NOT a copy of the helper; it uses long-form
+        # intermediate names so the reader can verify each step.
         area_cmb = 4.0 * np.pi * r_cmb**2
         M_core = (4.0 / 3.0) * np.pi * r_cmb**3 * core_density
         E_tot_cmb = F_cmb_basic * area_cmb
@@ -1525,7 +1534,7 @@ class TestSpiderBC:
         )
         dS_basic_cmb_dt = -E_tot_cmb * fac_cmb  # Ecore=0
         expected = (
-            (dS_basic_cmb_dt - dSdt_s_cmb_per_s) * 2.0 / dr_cmb
+            (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / dr_cmb
         )
 
         actual = solver._spider_bc_rhs_per_s(
@@ -1540,15 +1549,14 @@ class TestSpiderBC:
         )
 
         # Additional invariant: for these inputs the rhs must be
-        # POSITIVE (not negative). The reasoning: dSdt_s is very
-        # negative (-1.2e-9) because the bottom mantle cell is cooling
-        # fast, and -E_tot_cmb*fac_cmb is only -7.5e-10, so
-        # (-7.5e-10 - (-1.2e-9)) = +4.5e-10 > 0, times 2/dr_cmb > 0.
-        # A forgotten minus sign or a swapped argument order would
-        # flip this.
-        assert actual > 0.0, (
-            f'Expected positive rhs for cooling-driven regime, '
-            f'got {actual:.3e}'
+        # NEGATIVE. The staggered cell cools faster (dSdt_s = -1.2e-9)
+        # than the CMB basic node (dSdt_basic = -7.5e-10), because
+        # the core has much larger thermal inertia. The outward
+        # entropy gradient therefore weakens over time:
+        # d/dt(dSdr) = ((-1.2e-9) - (-7.5e-10)) * 2/dr < 0.
+        assert actual < 0.0, (
+            f'Expected negative rhs (gradient weakening as stag '
+            f'cools faster than basic), got {actual:.3e}'
         )
 
     def test_spider_bc_rhs_linearity_in_flux(self, entropy_eos):
@@ -1588,13 +1596,65 @@ class TestSpiderBC:
             f'expected {4.0 * rhs1:.3e}'
         )
 
-        # Sign convention check: positive F (heat OUT of core) must
-        # give NEGATIVE F-contribution to rhs (draining the boundary
-        # entropy gradient), because the formula has a leading minus
-        # sign on F.
-        assert rhs1 < 0.0, (
-            f'Positive outward heat flow must give negative F-contribution '
-            f'to rhs, got {rhs1:.3e}'
+        # Sign convention check: positive F (heat OUT of core) with
+        # dSdt_s = 0 must give POSITIVE rhs. Physically: the core
+        # loses entropy (dSdt_basic < 0) while the staggered cell is
+        # static, so d/dt(dSdr) = (0 - negative)/positive > 0, i.e.,
+        # the outward entropy gradient steepens as the boundary cools.
+        assert rhs1 > 0.0, (
+            f'Positive outward heat flow with dSdt_s=0 must give '
+            f'positive rhs (gradient steepening), got {rhs1:.3e}'
+        )
+
+    def test_spider_bc_rhs_sign_from_fd_definition(self, entropy_eos):
+        """Verify the sign against the independent FD definition.
+
+        The one-sided centered difference for d/dt(dS/dr) at the CMB
+        basic node, using the staggered node at dr/2 above, is:
+
+            d/dt(dS/dr) = (dSdt_stag - dSdt_basic) / (dr/2)
+
+        This test constructs both terms independently and checks that
+        the helper returns the correct sign and magnitude. Unlike the
+        bit-parity test (which re-derives using the same formula), this
+        test derives the expected value purely from the FD definition,
+        catching sign errors that would survive self-consistent checks.
+        """
+        solver = self._make_bare_solver(entropy_eos, n_stag=30,
+                                         core_bc='spider_bc')
+        dr_cmb = 8.0e4  # different from default to catch hardcoding
+        self._wire_cached_constants(solver, dr_cmb=dr_cmb)
+
+        # Scenario: core cooling slowly, mantle staggered cell cooling fast
+        dSdt_basic = -5.0e-10  # J/(kg*K*s), core-buffered rate
+        dSdt_stag = -2.0e-9   # J/(kg*K*s), mantle cell rate
+
+        # Derive dSdt_basic from the energy-balance side.
+        # dSdt_basic = -E_tot * fac_cmb, so we need F that produces it.
+        area_cmb = solver._cmb_area
+        fac_cmb = 1280.0 / (
+            solver._core_cp * 4000.0 * solver._core_tfac * solver._core_M
+        )
+        # F_cmb such that -F*area*fac = dSdt_basic
+        F_cmb = -dSdt_basic / (area_cmb * fac_cmb)
+
+        # The FD definition gives the expected result directly
+        expected = (dSdt_stag - dSdt_basic) * 2.0 / dr_cmb
+
+        actual = solver._spider_bc_rhs_per_s(
+            F_cmb_basic=F_cmb,
+            dSdt_s_cmb_per_s=dSdt_stag,
+            T_cmb_basic=4000.0,
+            cp_cmb_basic=1280.0,
+        )
+        assert actual == pytest.approx(expected, rel=1e-10), (
+            f'FD-definition check failed: actual={actual:.6e}, '
+            f'expected={expected:.6e}'
+        )
+        # Stag cools faster than basic, so gradient weakens: rhs < 0
+        assert actual < 0.0, (
+            f'Expected negative rhs (stag cools faster than basic), '
+            f'got {actual:.3e}'
         )
 
     def test_spider_bc_rhs_clamps_protect_against_divzero(self, entropy_eos):

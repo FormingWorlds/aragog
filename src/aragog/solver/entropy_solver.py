@@ -763,15 +763,22 @@ class EntropySolver:
         # dS_basic_cmb/dt from energy balance [J/(kg*K*s)]
         dS_basic_cmb_dt = (-E_tot_cmb + E_core) * fac_cmb
 
-        # d/dt(dS/dr) at the CMB basic node, from the centered-
-        # difference relation between basic and staggered. SPIDER
-        # writes this as
-        #     rhs_cmb -= dSdt_s_cmb
-        #     rhs_cmb *= 2 / dr_cmb
-        # which gives [J/(kg*K*m*s)].
+        # d/dt(dS/dr) at the CMB basic node, from the one-sided
+        # centered difference between basic and staggered:
+        #
+        #   d/dt(dS/dr) = (dSdt_stag - dSdt_basic) / (dr/2)
+        #               = (dSdt_stag - dSdt_basic) * 2 / dr
+        #
+        # SPIDER bc.c writes the algebraically equivalent form
+        #     rhs = (dSdt_basic - dSdt_stag) * 2 / (xi_cmb - xi_above)
+        # where (xi_cmb - xi_above) < 0 because SPIDER's xi
+        # coordinate decreases from surface to CMB. The negative
+        # denominator flips the sign to match the formula above.
+        # Aragog's radii increase from CMB to surface, so dr > 0
+        # and the numerator must be (stag - basic) explicitly.
         return (
-            (dS_basic_cmb_dt - dSdt_s_cmb_per_s)
-            * 2.0 / max(self._cmb_dr_cmb, 1.0)
+            (dSdt_s_cmb_per_s - dS_basic_cmb_dt)
+            * 2.0 / self._cmb_dr_cmb
         )
 
     @property
