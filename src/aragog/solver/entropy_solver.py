@@ -884,31 +884,22 @@ class EntropySolver:
         atol_base = max(self.parameters.solver.atol, 0.01)  # entropy in J/kg/K
         rtol = self.parameters.solver.rtol
 
-        # Tier 1 Step 1D: phi-aware atol relaxation in the cliff.
-        # The deep-solid stiffness (Phi ~ 0.05-0.2) makes the BDF
-        # Newton iteration grind on single coupling steps for many
-        # minutes because atol = 0.01 J/kg/K is over-specified there.
-        # The cubic-Hermite Jgrav smoothing introduces ~1 % physics
-        # error in mushy/solid values anyway, so the tight atol gives
-        # no real accuracy benefit in that regime.
+        # Phase-aware atol: tight during crystallization, relaxed only
+        # when fully solid (Fix B, 2026-04-10).
         #
-        # Estimate Phi_global from the initial entropy (start of this
-        # coupling step) via the EOS, then scale atol by
-        # max(1, 100*(1 - Phi_init)) so atol relaxes from 0.01 in the
-        # fully-liquid case to ~1 J/kg/K in the deep-solid case.
-        # rtol stays 1e-6 throughout, so the relative error is still
-        # tiny (atol_eff = 1 J/kg/K vs typical S = 3000 J/kg/K is
-        # 3e-4 relative).
+        # The original Tier 1D relaxed atol by up to 100x in the mushy
+        # zone, allowing BDF to take large internal steps across the
+        # crystallization front. This caused the CMB cell entropy to
+        # overshoot below S_solidus prematurely, losing the latent-heat
+        # Cp buffering and producing a -18% T_core offset vs SPIDER.
+        #
+        # SPIDER's CVode uses fixed atol=rtol=1e-6 and resolves the
+        # phase transition with sub-year internal steps. To match this,
+        # Aragog now keeps tight atol during the entire crystallization
+        # (phi > 0.01) and only relaxes in the fully-solid tail where
+        # the stiffness is purely thermal (no phase transitions).
         try:
             n_stag = self._n_stag
-            # For any extended-state mode (bower2018 with T_core,
-            # energy_balance with dSdr_cmb), strip the trailing extra
-            # element before querying the EOS. The old check tested
-            # for bower2018 explicitly, so energy_balance used to pass the
-            # full N+1 _S0 to melt_fraction against a shape-N
-            # _P_stag_flat, which raised a shape mismatch and fell
-            # through to phi0=1.0, silently disabling the Tier 1D
-            # atol relaxation. Fixed 2026-04-10.
             S0_block = self._S0[:n_stag] if self._state_is_extended else self._S0
             phi0 = float(np.asarray(
                 self.entropy_eos.melt_fraction(self._P_stag_flat, S0_block)
@@ -916,7 +907,19 @@ class EntropySolver:
             phi0 = max(0.0, min(1.0, phi0))
         except Exception:
             phi0 = 1.0
-        atol_scale = max(1.0, 100.0 * (1.0 - phi0))
+
+        if phi0 > 0.01:
+            # Crystallization active: keep tight atol to resolve the
+            # mushy-zone entropy evolution accurately. Limit BDF
+            # internal step size to prevent spanning the phase
+            # transition in one step.
+            atol_scale = 1.0
+            max_step = 100.0  # years
+        else:
+            # Fully solid: relax atol for the conduction-only tail
+            # (10x, not the previous 100x)
+            atol_scale = 10.0
+            max_step = np.inf
         atol = atol_base * atol_scale
 
         # Step 1C (LSODA dispatch) was REVERTED 2026-04-09 23:11 CEST.
@@ -938,9 +941,7 @@ class EntropySolver:
             start_time, end_time, phi0, atol_scale, atol, rtol,
         )
 
-        # Tier 1 Step 1B: pass vectorized=False (the fake-vectorized
-        # path was pure overhead). BDF for all calls (Step 1C LSODA
-        # dispatch reverted; see comment above).
+        # BDF integration with phase-aware max_step constraint.
         jac_sparsity = self._build_jac_sparsity()
         self._solution = solve_ivp(
             self.dSdt,
@@ -952,7 +953,20 @@ class EntropySolver:
             atol=atol,
             rtol=rtol,
             jac_sparsity=jac_sparsity,
+            max_step=max_step,
         )
+
+        # Diagnostic logging: internal BDF step statistics
+        sol = self._solution
+        if sol.t is not None and len(sol.t) > 1:
+            dt_internal = np.diff(sol.t)
+            logger.info(
+                'EntropySolver: %d internal steps, %d RHS evals, '
+                'dt_min=%.2e yr, dt_max=%.2e yr, dt_med=%.2e yr',
+                len(sol.t), sol.nfev,
+                dt_internal.min(), dt_internal.max(),
+                np.median(dt_internal),
+            )
 
         if self._solution.status == 0:
             logger.info('EntropySolver: integration completed successfully.')
