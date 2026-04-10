@@ -103,6 +103,72 @@ class TestEntropyEOS:
             'temperature', np.array([P]), 'solid')[0]
         assert T_at_sol == pytest.approx(T_sol_boundary, rel=0.05)
 
+    def test_lever_rule_mushy_uses_boundary_entropy(self, entropy_eos):
+        """In the mushy zone, T must equal the Lever Rule blend of
+        coexistence temperatures, not the table evaluated at S_actual.
+
+        This distinguishes the correct Lever Rule from the pre-fix
+        formula that evaluated each table at the actual cell entropy.
+        """
+        P = np.array([50e9])
+        S_sol = float(entropy_eos.solidus_entropy(P))
+        S_liq = float(entropy_eos.liquidus_entropy(P))
+        S_mid = np.array([0.5 * (S_sol + S_liq)])  # phi = 0.5
+
+        T_sol = float(entropy_eos._lookup_at_phase_boundary(
+            'temperature', P, 'solid'))
+        T_liq = float(entropy_eos._lookup_at_phase_boundary(
+            'temperature', P, 'melt'))
+        T_expected = 0.5 * T_sol + 0.5 * T_liq
+
+        T_actual = float(entropy_eos.temperature(P, S_mid))
+        assert T_actual == pytest.approx(T_expected, rel=1e-6), (
+            f'Lever Rule violated: T={T_actual:.1f} K, '
+            f'expected 0.5*{T_sol:.1f} + 0.5*{T_liq:.1f} = {T_expected:.1f} K'
+        )
+
+    def test_pure_phase_uses_actual_entropy(self, entropy_eos):
+        """Below the solidus, T evaluates the solid table at the actual S,
+        not at S_solidus. Above the liquidus, same for the melt table."""
+        P = np.array([50e9])
+        S_sol = float(entropy_eos.solidus_entropy(P))
+        S_liq = float(entropy_eos.liquidus_entropy(P))
+
+        # Pure solid: T at a colder S must be lower than T at solidus
+        S_cold = np.array([S_sol - 500.0])
+        T_cold = float(entropy_eos.temperature(P, S_cold))
+        T_at_sol = float(entropy_eos.temperature(P, np.array([S_sol])))
+        assert T_cold < T_at_sol, (
+            f'Pure solid: T({S_cold[0]:.0f}) = {T_cold:.0f} K should be '
+            f'< T({S_sol:.0f}) = {T_at_sol:.0f} K'
+        )
+
+        # Pure melt: T at a hotter S must be higher than T at liquidus
+        S_hot = np.array([S_liq + 500.0])
+        T_hot = float(entropy_eos.temperature(P, S_hot))
+        T_at_liq = float(entropy_eos.temperature(P, np.array([S_liq])))
+        assert T_hot > T_at_liq, (
+            f'Pure melt: T({S_hot[0]:.0f}) = {T_hot:.0f} K should be '
+            f'> T({S_liq:.0f}) = {T_at_liq:.0f} K'
+        )
+
+    def test_temperature_scalar_matches_vectorized(self, entropy_eos):
+        """temperature_scalar and temperature must agree at mushy,
+        solid, and melt points."""
+        P = 50e9
+        S_sol = float(entropy_eos.solidus_entropy(np.array([P])))
+        S_liq = float(entropy_eos.liquidus_entropy(np.array([P])))
+
+        for label, S in [('solid', S_sol - 500.0),
+                         ('mushy', 0.5 * (S_sol + S_liq)),
+                         ('melt', S_liq + 500.0)]:
+            T_vec = float(entropy_eos.temperature(
+                np.array([P]), np.array([S])))
+            T_sca = entropy_eos.temperature_scalar(P, S)
+            assert T_sca == pytest.approx(T_vec, rel=1e-10), (
+                f'{label}: scalar={T_sca:.2f}, vector={T_vec:.2f}'
+            )
+
 
 # ── Tier 2: Phase evaluator tests ───────────────────────────────────
 
