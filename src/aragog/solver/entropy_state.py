@@ -250,10 +250,13 @@ class EntropyState:
             # at different phases in the mushy zone: the phase-blend
             # in T(P,S) introduces a spurious gradient that is not a
             # physical conductive flux.
-            T_basic = np.asarray(self.phase_basic.temperature()).ravel()
-            Cp_basic = np.asarray(self.phase_basic.heat_capacity()).ravel()
-            dTdrs_ad = np.asarray(self.phase_basic.dTdrs()).ravel()
-            superadiabatic = (T_basic / np.maximum(Cp_basic, 1.0)) * self._dSdr
+            #
+            # Reuses T, Cp, alpha, g already fetched above (lines
+            # 165-168) from phase_basic, which includes the dSdr_cmb
+            # boundary override when active.
+            Cp_safe = np.maximum(Cp, 100.0)  # silicate Cp floor
+            superadiabatic = (T / Cp_safe) * self._dSdr
+            dTdrs_ad = -g * alpha * T / Cp_safe
             self._heat_flux += -k * (superadiabatic + dTdrs_ad)
 
         if self._convection:
