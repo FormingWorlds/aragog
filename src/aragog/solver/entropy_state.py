@@ -220,6 +220,17 @@ class EntropyState:
             kh_floor = self._kappah_floor * f_floor
             self._eddy_diffusivity = np.maximum(self._eddy_diffusivity, kh_floor)
 
+        # Mirror SPIDER energy.c:220-223: at the CMB basic node, use
+        # the eddy diffusivity from one node above rather than the
+        # boundary-extrapolated value. SPIDER does this because kappah
+        # is a nonlinear function of the entropy gradient, and the
+        # boundary extrapolation can over- or under-estimate it relative
+        # to the interior value. Borrowing from the first interior node
+        # avoids this artifact and aligns the CMB convective flux with
+        # SPIDER's treatment.
+        if len(self._eddy_diffusivity) >= 2:
+            self._eddy_diffusivity[0] = self._eddy_diffusivity[1]
+
         # ── Compute fluxes ───────────────────────────────────────────
         rho = np.asarray(self.phase_basic.density()).ravel()
         k = np.asarray(self.phase_basic.thermal_conductivity()).ravel()
