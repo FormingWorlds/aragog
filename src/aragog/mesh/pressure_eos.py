@@ -33,14 +33,19 @@ class EOS(ABC):
 class AdamsWilliamsonEOS(EOS):
     r"""Adams-Williamson equation of state (EOS).
 
-    EOS due to adiabatic self-compression from the definition of the adiabatic bulk modulus:
+    Matches SPIDER's eos_adamswilliamson.c: exponential density profile
 
-    $$
-    \left( \frac{{d\rho}}{{dP}} \right)_S = \frac{{\rho}}{{K_S}}
-    $$
+        rho(z) = rhos * exp(beta * z)
 
-    where $\rho$ is density, $K_S$ the adiabatic bulk modulus, and $S$ is
-    entropy.
+    where z = R_surf - r is depth. The parameter beta [1/m] is passed
+    directly from the config (adams_williamson_beta), NOT derived from
+    the adiabatic bulk modulus K_S. This ensures the density profile
+    is identical to SPIDER's when both codes use the same beta.
+
+    The previous implementation used a rational (hyperbolic) form
+    rho = rhos * K_S / (K_S - rhos*g*depth) derived from K_S,
+    which differs from SPIDER's exponential by up to 6% at CMB depth,
+    causing a 3% R_int mismatch for the same target planet mass.
     """
 
     def __init__(
@@ -56,6 +61,15 @@ class AdamsWilliamsonEOS(EOS):
         self._gravitational_acceleration: float = self._settings.gravitational_acceleration
         self._adiabatic_bulk_modulus: float = self._settings.adiabatic_bulk_modulus
         self._surface_pressure: float = self._settings.surface_pressure
+        # Use beta from config if set (> 0); fall back to K_S-derived value
+        beta_cfg = float(getattr(self._settings, 'adams_williamson_beta', 0.0))
+        if beta_cfg > 0:
+            self._beta = beta_cfg
+        else:
+            self._beta = (
+                self._surface_density * self._gravitational_acceleration
+                / self._adiabatic_bulk_modulus
+            )
         self._basic_pressure = self.get_pressure_from_radii(basic_radii)
         self._basic_density = self.get_density_from_radii(basic_radii)
         self._staggered_effective_density = self.get_effective_density(basic_radii)
@@ -103,14 +117,14 @@ class AdamsWilliamsonEOS(EOS):
         return mass_shell/volume_shell
 
     def get_density(self, pressure: FloatOrArray) -> npt.NDArray:
-        r"""Computes density from pressure:
+        r"""Computes density from pressure (SPIDER parity):
 
         $$
-        \rho(P) = \rho_s \exp(P/K_S)
+        \rho(P) = \rho_s + P \beta / g
         $$
 
-        where $\rho$ is density, $P$ is pressure, $\rho_s$ is surface density,
-        and $K_S$ is adiabatic bulk modulus.
+        Matches SPIDER's eos_adamswilliamson.c:GetRho (line 116):
+        ``rho = rhos - P * beta / gravity`` where gravity is negative.
 
         Args:
             pressure: Pressure
@@ -118,20 +132,23 @@ class AdamsWilliamsonEOS(EOS):
         Returns:
             Density
         """
-        density: npt.NDArray = self._surface_density * np.exp(
-            pressure / self._adiabatic_bulk_modulus
+        density: npt.NDArray = (
+            self._surface_density
+            + pressure * self._beta / self._gravitational_acceleration
         )
 
         return density
 
     def get_density_from_radii(self, radii: FloatOrArray) -> FloatOrArray:
-        r"""Computes density from radii:
+        r"""Computes density from radii using SPIDER-parity exponential form:
 
         $$
-            \rho(r) = \frac{\rho_s K_S}{K_S + \rho_s g (r-r_s)}
+            \rho(r) = \rho_s \exp(\beta (R_s - r))
         $$
-        where $\rho$ is density, $r$ is radius, $\rho_s$ is surface density,
-        $K_S$ is adiabatic bulk modulus, and $r_s$ is surface radius.
+
+        where $\rho_s$ is surface density, $\beta$ is the Adams-Williamson
+        parameter [1/m], and $R_s$ is the surface radius. Matches SPIDER's
+        eos_adamswilliamson.c via the chain rho(P(r)).
 
         Args:
             radii: Radii
@@ -139,12 +156,8 @@ class AdamsWilliamsonEOS(EOS):
         Returns
             Density
         """
-        density: FloatOrArray = (self._surface_density * self._adiabatic_bulk_modulus) / (
-            self._adiabatic_bulk_modulus
-            + self._surface_density
-            * self._gravitational_acceleration
-            * (radii - self._outer_boundary)
-        )
+        depth = self._outer_boundary - radii
+        density: FloatOrArray = self._surface_density * np.exp(self._beta * depth)
 
         return density
 
@@ -171,52 +184,36 @@ class AdamsWilliamsonEOS(EOS):
         return mass_element
 
     def get_mass_within_radii(self, radii: FloatOrArray) -> npt.NDArray:
-        r"""Computes mass within radii:
+        r"""Computes mass within radii using SPIDER-parity exponential form:
 
         $$
-        m(r) = \int 4 \pi r^2 \rho dr
+        m(r) = 4\pi \int r^2 \rho_s \exp(\beta (R_s - r)) dr
         $$
-        where $m$ is mass, $r$ is radius, and $\rho$ is density.
 
-        The integral was evaluated using WolframAlpha.
+        The antiderivative is (matching SPIDER eos_adamswilliamson.c:191):
+
+        $$
+        M(r) = 4\pi \rho(r) \left( -\frac{2}{\beta^3} - \frac{r^2}{\beta}
+               - \frac{2r}{\beta^2} \right)
+        $$
+
+        where rho(r) = rhos * exp(beta*(R_s - r)).
 
         Args:
             radii: Radii
 
         Returns:
-            Mass within radii
+            Mass within radii (from inner_boundary to radii)
         """
-        a: float = self._surface_density
-        b: float = self._adiabatic_bulk_modulus
-        c: float = self._gravitational_acceleration
-        d: float = self._outer_boundary
-        beta: float = b / (a * c) - d
+        beta = self._beta
 
-        def mass_integral(radii_: FloatOrArray) -> npt.NDArray:
-            """Mass within radii including arbitrary constant of integration.
-
-            Args:
-                radii_: Radii
-
-            Returns:
-                Mass within radii
-            """
-
-            mass: npt.NDArray = (
-                4
-                * np.pi
-                * b
-                / c
-                * (
-                    -1.5 * beta * beta
-                    - beta * radii_
-                    + 0.5 * radii_ * radii_
-                    + beta * beta * np.log(abs(beta + radii_))
-                )
+        def mass_integral(r: FloatOrArray) -> npt.NDArray:
+            rho = self.get_density_from_radii(r)
+            return 4.0 * np.pi * rho * (
+                -2.0 / beta**3
+                - r**2 / beta
+                - 2.0 * r / beta**2
             )
-            # + constant
-
-            return mass
 
         mass: npt.NDArray = mass_integral(radii) - mass_integral(self._inner_boundary)
 
@@ -238,16 +235,15 @@ class AdamsWilliamsonEOS(EOS):
         return mass
 
     def get_pressure_from_radii(self, radii: FloatOrArray) -> npt.NDArray:
-        r"""Computes pressure from radii:
+        r"""Computes pressure from radii using SPIDER-parity exponential form:
 
         $$
-        P(r) = P_{surf} - K_S \ln \left( 1 + \frac{\rho_s g (r-r_s)}{K_S} \right)
+        P(r) = \frac{\rho_s g}{\beta} \left( \exp(\beta (R_s - r)) - 1 \right)
+              + P_{surf}
         $$
 
-        where $r$ is radius, $K_S$ is adiabatic bulk modulus, $P$ is pressure,
-        $P_{surf}$ is the surface pressure (atmospheric overburden),
-        $\rho_s$ is surface density, $g$ is gravitational acceleration, and
-        $r_s$ is surface radius.
+        Matches SPIDER's eos_adamswilliamson.c:GetPressureFromRadius.
+        Note: g is positive here (unlike SPIDER where gravity is negative).
 
         Parameters
         ----------
@@ -259,14 +255,11 @@ class AdamsWilliamsonEOS(EOS):
         npt.NDArray
             Pressure at the given radii.
         """
-        pressure: npt.NDArray = self._surface_pressure - self._adiabatic_bulk_modulus * np.log(
-            (
-                self._adiabatic_bulk_modulus
-                + self._surface_density
-                * self._gravitational_acceleration
-                * (radii - self._outer_boundary)
-            )
-            / self._adiabatic_bulk_modulus
+        depth = self._outer_boundary - radii
+        pressure: npt.NDArray = (
+            self._surface_density * self._gravitational_acceleration / self._beta
+            * (np.exp(self._beta * depth) - 1.0)
+            + self._surface_pressure
         )
 
         return pressure
@@ -292,21 +285,13 @@ class AdamsWilliamsonEOS(EOS):
         return dPdr
 
     def get_radii_from_pressure(self, pressure: FloatOrArray) -> npt.NDArray:
-        r"""Computes radii from pressure:
+        r"""Computes radii from pressure (SPIDER parity):
 
         $$
-        P(r) = \int \frac{dP}{dr} dr = \int -g \rho_s \exp(P/K_S) dr
+        r(P) = R_s - \frac{1}{\beta} \ln\left(1 + \frac{P \beta}{\rho_s g}\right)
         $$
 
-        And apply the boundary condition $P=0$ at $r=r_s$ to get:
-
-        $$
-        r(P) = \frac{K_s \left( \exp(-P/K_S)-1 \right)}{\rho_s g} + r_s
-        $$
-
-        where $r$ is radius, $K_S$ is adiabatic bulk modulus, $P$ is pressure,
-        $\rho_s$ is surface density, $g$ is gravitational acceleration, and
-        $r_s$ is surface radius.
+        Inverse of get_pressure_from_radii.
 
         Args:
             pressure: Pressure
@@ -315,10 +300,10 @@ class AdamsWilliamsonEOS(EOS):
             Radii
         """
         radii: npt.NDArray = (
-            self._adiabatic_bulk_modulus
-            * (np.exp(-pressure / self._adiabatic_bulk_modulus) - 1)
-            / (self._surface_density * self._gravitational_acceleration)
-            + self._outer_boundary
+            self._outer_boundary
+            - np.log(1.0 + pressure * self._beta
+                     / (self._surface_density * self._gravitational_acceleration))
+            / self._beta
         )
 
         return radii

@@ -50,6 +50,7 @@ class MeshConfig:
     surface_density: float = 4000.0
     gravitational_acceleration: float = 9.81
     adiabatic_bulk_modulus: float = 260e9
+    adams_williamson_beta: float = 0.0  # 0 = derive from K_S
     surface_pressure: float = 0.0
     mass_coordinates: bool = False
     eos_file: str = ""
