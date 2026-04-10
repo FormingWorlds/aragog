@@ -105,12 +105,12 @@ class Mesh:
             basic_coordinates[-1, 0] = r_surf  # surface: exact
             for j in range(1, self.settings.number_of_nodes - 1):
                 xi_target = float(basic_mass_coordinates[j, 0])
-                # Bracket: use neighbors from the initial grid as bounds
-                r_lo = float(basic_coordinates[j-1, 0])
-                r_hi = r_surf
+                # Bracket: always use the full domain [r_core, r_surf]
+                # to avoid floating-point edge cases near the boundaries
                 basic_coordinates[j, 0] = brentq(
                     lambda r: _xi_of_r(r) - xi_target,
-                    r_lo, r_hi, xtol=1.0, rtol=1e-12,
+                    r_core + 1.0, r_surf - 1.0,
+                    xtol=1.0, rtol=1e-12,
                 )
             logger.debug("Basic mass coordinates (uniform) = %s", basic_mass_coordinates)
             logger.debug("Basic spatial coordinates (non-uniform) = %s", basic_coordinates)
