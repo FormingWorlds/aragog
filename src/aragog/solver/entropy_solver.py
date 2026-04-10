@@ -1031,8 +1031,21 @@ class EntropySolver:
         eddy_diff = self.state.eddy_diffusivity.copy()
         cap_stag = np.asarray(self.state.capacitance_staggered()).ravel()
 
-        # Scalar quantities
-        mass_stag = rho_stag * vol
+        # Scalar quantities.
+        # M_mantle uses the mesh structure density (from the A-W
+        # profile when eos_method=1, or from the external file when
+        # eos_method=2). This matches SPIDER, which computes
+        # mass_mantle from its own A-W mass integral, not from the
+        # PALEOS entropy-dependent density. Using the PALEOS density
+        # here would cause the structure root finder to converge to
+        # a different R_int because rho_PALEOS(P, S) != rho_AW(r).
+        # When Zalmoxis provides the mesh (eos_method=2), the
+        # structure density IS the Zalmoxis density, which is
+        # consistent with PALEOS.
+        rho_struct_stag = np.asarray(
+            self.evaluator.mesh.staggered_effective_density
+        ).ravel()
+        mass_stag = rho_struct_stag * vol
         M_mantle = float(np.sum(mass_stag))
         T_magma = float(T_stag[-1])
         # Core temperature:
