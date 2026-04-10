@@ -301,7 +301,7 @@ class AdamsWilliamsonEOS(EOS):
         """
         radii: npt.NDArray = (
             self._outer_boundary
-            - np.log(1.0 + pressure * self._beta
+            - np.log(1.0 + (pressure - self._surface_pressure) * self._beta
                      / (self._surface_density * self._gravitational_acceleration))
             / self._beta
         )
