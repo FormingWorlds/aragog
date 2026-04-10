@@ -42,7 +42,7 @@ Alternatively, you can create and activate a [virtual environment](https://docs.
 Finally, install Aragog into the activated environment:
 
 ```sh
-pip install aragog
+pip install fwl-aragog
 ```
 
 ### Developer install
@@ -85,7 +85,7 @@ Aragog requires lookup table data storing thermophysics properties of the liquid
 aragog download all
 ```
 
-The command `aragog env` will give you the path where the data have been downloaded. If you want to setup your own path, setup the environment variable `FWL_DATA` before running the download command:
+The command `aragog env` will give you the path where the data have been downloaded. If you want to set up your own path, setup the environment variable `FWL_DATA` before running the download command:
 
 ```sh
 export FWL_DATA=your_absolute_path/
