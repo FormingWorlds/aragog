@@ -39,7 +39,7 @@ Here is the quickest path to getting started:
 
 -   :material-github: **Browse API**
 
-    [Go to API reference](Reference/api.md)
+    [Go to API reference](Reference/api/api_overview.md)
 
 -   :material-bug: **Raise an issue**
 
