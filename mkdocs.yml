@@ -26,12 +26,23 @@ nav:
 
 
   - Reference:
-      - API reference: Reference/api.md
+      - API reference:
+          - Overview: Reference/api/api_overview.md
+          - Core: Reference/api/core.md
+          - Mesh: Reference/api/mesh.md
+          - Interfaces: Reference/api/interfaces.md
+          - Solver: Reference/api/solver.md
+          - Utilities: Reference/api/utilities.md
+          - Parser: Reference/api/parser.md
+          - Data: Reference/api/data.md
+          - Output: Reference/api/output.md
+          - Package: Reference/api/package.md
+
       - Publications: Reference/publications.md
       
   - Community: 
-      - Code of Conduct: CODE_OF_CONDUCT.md
-      - Contact: contact.md
+      - Code of Conduct: Community/CODE_OF_CONDUCT.md
+      - Contact: Community/contact.md
       - Developers: https://proteus-framework.org/people
 
   - Source code: https://github.com/FormingWorlds/aragog
@@ -145,6 +156,7 @@ plugins:
             - https://matplotlib.org/stable/objects.inv
           options:
             docstring_style: numpy
+            docstring_section_style: table
             docstring_options:
               ignore_init_summary: yes
             show_submodules: no
