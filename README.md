@@ -79,7 +79,7 @@ More comprehensive set up guides are available here:
 
 ### Download data from the OSF repository
 
-Aragog requires lookup table data storing thermophysics properties of the liquid and solid matter. These data are stored in the [OSF repository](https://osf.io/phsxf/). You can download it with the command:
+Aragog requires lookup table data storing thermophysics properties of the liquid and solid matter. These data are stored in an [OSF repository](https://osf.io/phsxf/) and on a [Zenodo record](https://zenodo.org/records/15728072). You can download it with the command:
 
 ```sh
 aragog download all
