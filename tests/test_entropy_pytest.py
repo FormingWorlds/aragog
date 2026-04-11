@@ -1871,3 +1871,98 @@ class TestEnergyBalanceCoreBC:
                 solver._P_stag_flat,  # shape (30,)
                 solver._S0,           # shape (31,) — mismatch
             )
+
+
+class TestGradientReconstruction:
+    """Tests for _reconstruct_entropy, the gradient-to-value inversion.
+
+    The reconstruction integrates dS/dr from the surface inward to
+    produce S at staggered and basic nodes. It mirrors SPIDER's
+    set_entropy_reconstruction_from_ctx (util.c:85-126) and is the
+    foundation of the gradient-based solver formulation.
+    """
+
+    @pytest.fixture
+    def solver_30(self):
+        """Build a minimal 30-cell solver with cached mesh arrays."""
+        from aragog.solver.entropy_solver import EntropySolver
+        N = 30  # staggered nodes
+        R_cmb, R_surf = 3480e3, 6371e3
+        r_stag = np.linspace(R_cmb + 15e3, R_surf - 7e3, N)
+        r_basic = np.zeros(N + 1)
+        r_basic[0] = R_cmb
+        r_basic[-1] = R_surf
+        r_basic[1:-1] = 0.5 * (r_stag[:-1] + r_stag[1:])
+        solver = EntropySolver.__new__(EntropySolver)
+        solver._n_stag = N
+        solver._r_basic_flat = r_basic
+        solver._r_stag_flat = r_stag
+        return solver
+
+    def test_uniform_profile_roundtrip(self, solver_30):
+        """Uniform S -> zero gradient -> reconstruct returns uniform S."""
+        n_basic = solver_30._n_stag + 1
+        dSdr = np.zeros(n_basic)
+        S_surf = 3000.0
+        S_stag, S_basic = solver_30._reconstruct_entropy(dSdr, S_surf)
+        np.testing.assert_allclose(S_stag, S_surf, atol=1e-12)
+        np.testing.assert_allclose(S_basic, S_surf, atol=1e-12)
+
+    def test_linear_profile_exact(self, solver_30):
+        """Linear S(r) = a + b*r has constant dS/dr = b; reconstruction exact."""
+        r_stag = solver_30._r_stag_flat
+        r_basic = solver_30._r_basic_flat
+        a, b = 1000.0, 2e-4  # J/kg/K and J/kg/K/m
+        S_exact = a + b * r_stag
+        dSdr = np.full(len(r_basic), b)
+        S_stag, S_basic = solver_30._reconstruct_entropy(dSdr, S_exact[-1])
+        np.testing.assert_allclose(S_stag, S_exact, rtol=1e-10)
+
+    def test_fd_roundtrip_interior_exact(self, solver_30):
+        """FD(S) -> dS/dr -> reconstruct(dS/dr) = S at interior nodes.
+
+        The simple central difference and cumulative sum are algebraic
+        inverses at interior nodes. This must be exact (machine precision).
+        """
+        r_stag = solver_30._r_stag_flat
+        n_stag = len(r_stag)
+        n_basic = n_stag + 1
+        dr_stag = np.diff(r_stag)
+        # Non-trivial profile: quadratic with curvature
+        S_init = 2000.0 + 0.3 * r_stag + 1e-8 * r_stag**2
+        # Simple interior FD
+        dSdr = np.zeros(n_basic)
+        for i in range(1, n_basic - 1):
+            dSdr[i] = (S_init[i] - S_init[i - 1]) / dr_stag[i - 1]
+        dSdr[0] = dSdr[1]
+        dSdr[-1] = dSdr[-2]
+        S_check, _ = solver_30._reconstruct_entropy(dSdr, S_init[-1])
+        # Interior must be exact
+        np.testing.assert_allclose(
+            S_check[1:-1], S_init[1:-1], atol=1e-8,
+            err_msg='Interior FD roundtrip not exact',
+        )
+
+    def test_reconstruction_shape(self, solver_30):
+        """Output shapes match mesh dimensions."""
+        n_basic = solver_30._n_stag + 1
+        dSdr = np.zeros(n_basic)
+        S_stag, S_basic = solver_30._reconstruct_entropy(dSdr, 3000.0)
+        assert S_stag.shape == (solver_30._n_stag,)
+        assert S_basic.shape == (n_basic,)
+
+    def test_monotonic_gradient_gives_monotonic_entropy(self, solver_30):
+        """Positive dS/dr everywhere -> S increases with radius."""
+        n_basic = solver_30._n_stag + 1
+        dSdr = np.full(n_basic, 1e-4)  # positive gradient
+        S_stag, _ = solver_30._reconstruct_entropy(dSdr, 3000.0)
+        assert np.all(np.diff(S_stag) > 0), \
+            'Positive gradient must produce monotonically increasing S'
+
+    def test_negative_gradient_entropy_direction(self, solver_30):
+        """Negative dS/dr -> S decreases with radius (CMB hotter than surface)."""
+        n_basic = solver_30._n_stag + 1
+        dSdr = np.full(n_basic, -1e-4)
+        S_stag, _ = solver_30._reconstruct_entropy(dSdr, 3000.0)
+        assert np.all(np.diff(S_stag) < 0), \
+            'Negative gradient must produce monotonically decreasing S'

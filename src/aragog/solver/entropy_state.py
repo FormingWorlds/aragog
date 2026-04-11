@@ -104,6 +104,8 @@ class EntropyState:
         entropy: npt.NDArray,
         time: FloatOrArray,
         dSdr_cmb: float | None = None,
+        dSdr: npt.NDArray | None = None,
+        entropy_basic: npt.NDArray | None = None,
     ) -> None:
         """Update the state from the entropy profile.
 
@@ -114,26 +116,26 @@ class EntropyState:
         time : float
             Current time [yr].
         dSdr_cmb : float, optional
-            Path A SPIDER-parity boundary state: the entropy gradient
-            ``dS/dr`` at the CMB basic node. When provided, this value
-            overrides the finite-difference estimate of ``_dSdr[0]``
-            and the corresponding ``_entropy_basic[0]`` is recomputed
-            via the boundary extrapolation
-                S_basic_cmb = S_stag[0] - 0.5 * dr * dSdr_cmb
-            so the convective+conductive flux at the CMB basic node
-            uses the boundary-state value rather than a one-sided FD
-            of the staggered cells. Mirrors SPIDER's bc.c convention.
-            When ``None`` (the legacy default), the FD estimate is
-            used and behaviour matches the v3/v4 quasi_steady path.
+            Path A (energy_balance): override the CMB boundary gradient.
+        dSdr : array, optional
+            Gradient-mode: provide dS/dr at all basic nodes directly,
+            bypassing the FD transform. Shape (N+1,).
+        entropy_basic : array, optional
+            Gradient-mode: provide S at all basic nodes directly,
+            bypassing the quantity transform. Shape (N+1,).
         """
         mesh = self._evaluator.mesh
 
-        # Ensure 1D entropy. The transform matrices handle 1D input
-        # via dot(), returning 1D output directly (no reshape needed).
         S = np.asarray(entropy).ravel()
         self._entropy_staggered = S
-        self._entropy_basic = mesh.quantity_at_basic_nodes(S).ravel()
-        self._dSdr = mesh.d_dr_at_basic_nodes(S).ravel()
+        if entropy_basic is not None:
+            self._entropy_basic = np.asarray(entropy_basic).ravel()
+        else:
+            self._entropy_basic = mesh.quantity_at_basic_nodes(S).ravel()
+        if dSdr is not None:
+            self._dSdr = np.asarray(dSdr).ravel()
+        else:
+            self._dSdr = mesh.d_dr_at_basic_nodes(S).ravel()
 
         # Path A: override the boundary entropy gradient with the
         # state-vector value. This must happen BEFORE the phase_basic
@@ -141,7 +143,7 @@ class EntropyState:
         if dSdr_cmb is not None:
             r_basic = np.asarray(mesh.basic.radii).ravel()
             r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
-            dr_offset = r_basic[0] - r_stag_0  # negative: stag is above basic[0]
+            dr_offset = r_basic[0] - r_stag_0
             self._dSdr[0] = float(dSdr_cmb)
             self._entropy_basic[0] = float(S[0]) + float(dSdr_cmb) * dr_offset
 

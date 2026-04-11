@@ -167,6 +167,7 @@ class EntropySolver:
         self._area_flat = np.asarray(mesh.basic.area).ravel()
         self._volume_flat = np.asarray(mesh.basic.volume).ravel()
         self._r_basic_flat = np.asarray(mesh.basic.radii).ravel()
+        self._r_stag_flat = np.asarray(mesh.staggered.radii).ravel()
         self._P_stag_flat = P_stag
         self._P_basic_flat = P_basic
 
@@ -464,6 +465,27 @@ class EntropySolver:
                 'S_max=%.0f, T_core_init=%.0f K',
                 S_arr.min(), S_arr.max(), T_core_init,
             )
+        elif core_bc == 'gradient':
+            # Gradient-based formulation mirroring SPIDER's dS/dxi state.
+            # State = [dS/dr at N+1 basic nodes, S_surf], length N+2.
+            # S at staggered nodes is reconstructed by cumulative sum
+            # at each RHS evaluation, providing the global smoothing
+            # that prevents BDF overshoot at the solidus.
+            mesh = self.evaluator.mesh
+            dSdr_init = mesh.d_dr_at_basic_nodes(S_arr).ravel()
+            n_basic = len(dSdr_init)
+            S_surf = float(S_arr[-1])
+            self._S0 = np.empty(n_basic + 1)
+            self._S0[:n_basic] = dSdr_init
+            self._S0[n_basic] = S_surf
+            # Verify roundtrip
+            S_check, _ = self._reconstruct_entropy(dSdr_init, S_surf)
+            roundtrip_err = float(np.max(np.abs(S_check - S_arr)))
+            logger.info(
+                'Initial state (gradient): dSdr range [%.3e, %.3e] J/kg/K/m, '
+                'S_surf=%.1f, roundtrip err=%.2e J/kg/K',
+                dSdr_init.min(), dSdr_init.max(), S_surf, roundtrip_err,
+            )
         else:
             # Legacy v3 quasi-steady BC: state = [S_0, ..., S_{N-1}]
             self._S0 = S_arr
@@ -532,7 +554,7 @@ class EntropySolver:
     ) -> npt.NDArray:
         """Time derivative of one state vector column.
 
-        Three CMB BC modes:
+        Four CMB BC modes:
 
         - 'quasi_steady' (default): state = [S_0, ..., S_{N-1}],
           length N. F_cmb is set by the alpha-factor partition of
@@ -543,16 +565,28 @@ class EntropySolver:
           convective+conductive flux at the CMB basic node uses
           the boundary entropy gradient. d/dt(dSdr_cmb) is computed
           from SPIDER's bc.c:76-131 formula.
+        - 'gradient': state = [dS/dr at N+1 basic nodes, S_surf],
+          length N+2. Mirrors SPIDER's dS/dxi formulation. S at
+          staggered nodes is reconstructed by cumulative sum from
+          the surface inward at each RHS evaluation.
         - 'bower2018' (EXPERIMENTAL): state = [S, T_core], length
           N+1. F_cmb from conduction-only Fourier law. Failed,
           tombstoned.
         """
         n_stag = self._n_stag
+        gradient_mode = (self._core_bc == 'gradient')
         energy_balance = (self._core_bc == 'energy_balance')
         bower = (self._core_bc == 'bower2018')
         is_extended = energy_balance or bower
 
-        if is_extended:
+        # ── Gradient mode: reconstruct S from the gradient state ──
+        if gradient_mode:
+            n_basic = n_stag + 1
+            dSdr_basic = state_vec[:n_basic]
+            S_surf = float(state_vec[n_basic])
+            entropy, S_basic = self._reconstruct_entropy(dSdr_basic, S_surf)
+            self.state.update(entropy, time, dSdr=dSdr_basic, entropy_basic=S_basic)
+        elif is_extended:
             entropy = state_vec[:n_stag]
             extra = float(state_vec[n_stag])
         else:
@@ -563,7 +597,9 @@ class EntropySolver:
         # gradient, and we pass it through to state.update() so
         # the flux operator at the CMB basic node uses the
         # boundary value rather than the FD-derived estimate.
-        if energy_balance:
+        if gradient_mode:
+            pass  # state.update already called above with dSdr
+        elif energy_balance:
             self.state.update(entropy, time, dSdr_cmb=extra)
         else:
             self.state.update(entropy, time)
@@ -590,14 +626,9 @@ class EntropySolver:
 
         # CMB boundary condition
         if self._inner_bc_kind == 1:
-            if energy_balance:
-                # Path A: heat_flux[0] is ALREADY the actual physical
-                # total flux (conduction+convection+grav), computed
-                # by state.update() using the boundary-state dSdr_cmb.
-                # Do NOT override it -- that would defeat the entire
-                # point of the boundary state. The d(dSdr_cmb)/dt
-                # equation below uses this F_cmb to enforce the
-                # SPIDER energy balance.
+            if gradient_mode or energy_balance:
+                # gradient/energy_balance: heat_flux[0] is the physical
+                # flux computed from the state-provided dS/dr at the CMB.
                 pass
             elif bower:
                 # EXPERIMENTAL Bower+2018 BC (tombstone, do not use).
@@ -646,6 +677,48 @@ class EntropySolver:
 
         # Convert to J/kg/K/yr
         dSdt *= SECS_PER_YEAR
+
+        # ── Gradient mode: build d/dt(dS/dr) at basic nodes ──
+        if gradient_mode:
+            r_stag = self._r_stag_flat
+            dr_stag = np.diff(r_stag)  # shape (N-1,)
+
+            # Interior basic nodes (i=1..N-1): SPIDER rhs.c:71-72
+            # d/dt(dS/dr)[i] = (dSdt_stag[i] - dSdt_stag[i-1]) / dr_stag[i-1]
+            rhs_interior = np.diff(dSdt) / dr_stag  # shape (N-1,)
+
+            # CMB basic node (i=0): core energy balance (SPIDER bc.c:113-122)
+            F_cmb = float(self.state._heat_flux[0])
+            T_cmb = float(np.asarray(
+                self.state.phase_basic.temperature()
+            ).flat[0])
+            cp_cmb = float(np.asarray(
+                self.state.phase_basic.heat_capacity()
+            ).flat[0])
+            dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
+            rhs_cmb_per_s = self._energy_balance_rhs_per_s(
+                F_cmb_basic=F_cmb,
+                dSdt_s_cmb_per_s=dSdt_s_cmb_per_s,
+                T_cmb_basic=T_cmb,
+                cp_cmb_basic=cp_cmb,
+            )
+            rhs_cmb = rhs_cmb_per_s * SECS_PER_YEAR
+
+            # Surface basic node (i=N): copy from adjacent interior
+            # (SPIDER bc.c:63 convention)
+            rhs_surf = rhs_interior[-1]
+
+            # dS_surf/dt = dSdt at the surface staggered node
+            dS_surf_dt = dSdt[-1]
+
+            # Assemble: [rhs_cmb, rhs_interior(N-1), rhs_surf, dS_surf_dt]
+            n_basic = n_stag + 1
+            rhs = np.empty(n_basic + 1)
+            rhs[0] = rhs_cmb
+            rhs[1:n_basic - 1] = rhs_interior
+            rhs[n_basic - 1] = rhs_surf
+            rhs[n_basic] = dS_surf_dt
+            return rhs
 
         if not is_extended:
             return dSdt
@@ -781,6 +854,54 @@ class EntropySolver:
             * 2.0 / self._cmb_dr_cmb
         )
 
+    def _reconstruct_entropy(
+        self,
+        dSdr_basic: npt.NDArray,
+        S_surf: float,
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Reconstruct S at staggered and basic nodes from dS/dr gradients.
+
+        Integrates from the surface inward, mirroring SPIDER's
+        ``set_entropy_reconstruction_from_ctx`` (util.c:85-126).
+
+        Parameters
+        ----------
+        dSdr_basic : array, shape (N+1,)
+            dS/dr at basic nodes (index 0 = CMB, N = surface).
+        S_surf : float
+            Entropy at the outermost staggered node (index N-1).
+
+        Returns
+        -------
+        S_stag : array, shape (N,)
+            Reconstructed entropy at staggered nodes.
+        S_basic : array, shape (N+1,)
+            Reconstructed entropy at basic nodes.
+        """
+        r_basic = self._r_basic_flat
+        r_stag = self._r_stag_flat
+        n_stag = len(r_stag)
+        n_basic = len(r_basic)
+
+        # Staggered nodes: integrate from surface (index N-1) inward.
+        # dSdr[i+1] at basic node i+1 (between stag[i] and stag[i+1])
+        # gives S[i] = S[i+1] - dSdr[i+1] * (r_stag[i+1] - r_stag[i]).
+        S_stag = np.empty(n_stag)
+        S_stag[-1] = S_surf
+        dr_stag = np.diff(r_stag)  # shape (N-1,)
+        for i in range(n_stag - 2, -1, -1):
+            S_stag[i] = S_stag[i + 1] - dSdr_basic[i + 1] * dr_stag[i]
+
+        # Basic nodes: half-cell interpolation from adjacent staggered.
+        S_basic = np.empty(n_basic)
+        for i in range(1, n_basic - 1):
+            S_basic[i] = S_stag[i - 1] + dSdr_basic[i] * (r_basic[i] - r_stag[i - 1])
+        # Boundary extrapolation
+        S_basic[0] = S_stag[0] + dSdr_basic[0] * (r_basic[0] - r_stag[0])
+        S_basic[-1] = S_stag[-1] + dSdr_basic[-1] * (r_basic[-1] - r_stag[-1])
+
+        return S_stag, S_basic
+
     @property
     def solution(self) -> OptimizeResult | None:
         """Last solve_ivp result, or ``None`` if ``solve()`` has not been
@@ -795,12 +916,13 @@ class EntropySolver:
 
     @property
     def _state_is_extended(self) -> bool:
-        """True when the state vector has N+1 elements.
+        """True when the state vector has more than N elements.
 
-        The last element is either T_core (bower2018) or dSdr_cmb
-        (energy_balance). For legacy quasi_steady the state is length N.
+        - bower2018 / energy_balance: N+1 (entropy + 1 extra)
+        - gradient: N+2 (N+1 gradients + S_surf)
+        - quasi_steady: N (entropy only)
         """
-        return self._core_bc in ('bower2018', 'energy_balance')
+        return self._core_bc in ('bower2018', 'energy_balance', 'gradient')
 
     @property
     def entropy_staggered(self) -> npt.NDArray:
@@ -808,9 +930,17 @@ class EntropySolver:
 
         For bower2018 and energy_balance modes the solver state vector is
         N+1 in length; we strip the trailing extra row and return
-        only the entropy block.
+        only the entropy block. For gradient mode, we reconstruct S
+        from the gradient state.
         """
         y = self._solution.y
+        if self._core_bc == 'gradient':
+            n_basic = self._n_stag + 1
+            dSdr = y[:n_basic]
+            S_surf_arr = y[n_basic]
+            S_surf = float(S_surf_arr[-1]) if S_surf_arr.ndim > 0 else float(S_surf_arr)
+            S_stag, _ = self._reconstruct_entropy(dSdr[:, -1] if dSdr.ndim > 1 else dSdr, S_surf)
+            return S_stag.reshape(-1, 1) if y.ndim > 1 else S_stag
         if self._state_is_extended:
             return y[:self._n_stag]
         return y
@@ -819,7 +949,10 @@ class EntropySolver:
     def temperature_staggered(self) -> npt.NDArray:
         """Temperature at staggered nodes (derived from S via EOS)."""
         y = self._solution.y
-        if self._state_is_extended:
+        if self._core_bc == 'gradient':
+            S_stag = self.entropy_staggered
+            S = S_stag[:, -1] if S_stag.ndim > 1 else S_stag
+        elif self._state_is_extended:
             S = y[:self._n_stag, -1] if y.ndim > 1 else y[:self._n_stag]
         else:
             S = y[:, -1] if y.ndim > 1 else y
@@ -848,6 +981,12 @@ class EntropySolver:
         per Jacobian instead of N+1.
         """
         from scipy.sparse import lil_matrix
+
+        # Gradient mode: the reconstruction couples all gradients to all
+        # staggered nodes, making the Jacobian dense. Use no sparsity
+        # hint (scipy will do full finite-difference Jacobian).
+        if self._core_bc == 'gradient':
+            return None
 
         n_stag = self._n_stag
         is_ext = self._state_is_extended
@@ -886,21 +1025,18 @@ class EntropySolver:
 
         # Phase-aware atol: tight during crystallization, relaxed only
         # when fully solid (Fix B, 2026-04-10).
-        #
-        # The original Tier 1D relaxed atol by up to 100x in the mushy
-        # zone, allowing BDF to take large internal steps across the
-        # crystallization front. This caused the CMB cell entropy to
-        # overshoot below S_solidus prematurely, losing the latent-heat
-        # Cp buffering and producing a -18% T_core offset vs SPIDER.
-        #
-        # SPIDER's CVode uses fixed atol=rtol=1e-6 and resolves the
-        # phase transition with sub-year internal steps. To match this,
-        # Aragog now keeps tight atol during the entire crystallization
-        # (phi > 0.01) and only relaxes in the fully-solid tail where
-        # the stiffness is purely thermal (no phase transitions).
         try:
             n_stag = self._n_stag
-            S0_block = self._S0[:n_stag] if self._state_is_extended else self._S0
+            if self._core_bc == 'gradient':
+                # Gradient mode: reconstruct S to compute phi0
+                n_basic = n_stag + 1
+                dSdr0 = self._S0[:n_basic]
+                S_surf0 = float(self._S0[n_basic])
+                S0_block, _ = self._reconstruct_entropy(dSdr0, S_surf0)
+            elif self._state_is_extended:
+                S0_block = self._S0[:n_stag]
+            else:
+                S0_block = self._S0
             phi0 = float(np.asarray(
                 self.entropy_eos.melt_fraction(self._P_stag_flat, S0_block)
             ).mean())
@@ -943,6 +1079,18 @@ class EntropySolver:
 
         # BDF integration with phase-aware max_step constraint.
         jac_sparsity = self._build_jac_sparsity()
+
+        # Gradient mode: per-component atol. dS/dr values are ~1e-4
+        # (J/kg/K/m) while S_surf is ~3000 (J/kg/K).
+        if self._core_bc == 'gradient':
+            n_basic = self._n_stag + 1
+            atol_vec = np.empty(n_basic + 1)
+            atol_vec[:n_basic] = atol * 1e-4  # scale for gradient units
+            atol_vec[n_basic] = atol           # S_surf in entropy units
+            solve_atol = atol_vec
+        else:
+            solve_atol = atol
+
         self._solution = solve_ivp(
             self.dSdt,
             (start_time, end_time),
@@ -950,7 +1098,7 @@ class EntropySolver:
             method='BDF',
             vectorized=False,
             dense_output=True,
-            atol=atol,
+            atol=solve_atol,
             rtol=rtol,
             jac_sparsity=jac_sparsity,
             max_step=max_step,
@@ -997,12 +1145,19 @@ class EntropySolver:
         n_stag = self._n_stag
         energy_balance = (self._core_bc == 'energy_balance')
         bower = (self._core_bc == 'bower2018')
+        gradient_mode = (self._core_bc == 'gradient')
         is_ext = energy_balance or bower
 
-        # Slice the final state vector. For extended-state modes the
-        # last element is the boundary state; for legacy quasi_steady
-        # the whole vector is the entropy profile.
-        if is_ext:
+        # Slice the final state vector.
+        if gradient_mode:
+            n_basic = n_stag + 1
+            dSdr_final = sol.y[:n_basic, -1]
+            S_surf_final = float(sol.y[n_basic, -1])
+            S_final, S_basic_final = self._reconstruct_entropy(
+                dSdr_final, S_surf_final
+            )
+            extra_final = None
+        elif is_ext:
             S_final = sol.y[:n_stag, -1]
             extra_final = float(sol.y[n_stag, -1])
         else:
@@ -1019,9 +1174,11 @@ class EntropySolver:
         rho_stag = np.asarray(eos.density(P_stag, S_final)).ravel()
 
         # Refresh the state at the final entropy for derived quantities.
-        # For energy_balance we must pass the boundary state through so the
-        # derived fluxes match the integrated solution.
-        if energy_balance:
+        if gradient_mode:
+            self.state.update(
+                S_final, sol.t[-1], dSdr=dSdr_final, entropy_basic=S_basic_final
+            )
+        elif energy_balance:
             self.state.update(S_final, sol.t[-1], dSdr_cmb=extra_final)
         else:
             self.state.update(S_final, sol.t[-1])
@@ -1055,12 +1212,10 @@ class EntropySolver:
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
         T_magma = float(T_stag[-1])
         # Core temperature:
-        # - energy_balance: derive T_core from the boundary entropy via EOS
-        #   at the CMB basic node. The boundary entropy is computed by
-        #   state.update() using the dSdr_cmb override.
+        # - gradient / energy_balance: derive from CMB basic-node entropy.
         # - bower2018: T_core is the integrated state variable (tombstone).
         # - quasi_steady: T_core = T_stag[0] (bottom cell mantle T).
-        if energy_balance:
+        if gradient_mode or energy_balance:
             S_basic_cmb = float(np.asarray(
                 self.state._entropy_basic
             ).ravel()[0])
