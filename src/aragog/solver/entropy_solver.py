@@ -1103,33 +1103,11 @@ class EntropySolver:
         else:
             solve_atol = atol
 
-        # Liquidus-crossing event. Stops the BDF when the bottom
-        # staggered cell's entropy drops below the liquidus. Works
-        # for both value-based and gradient-based formulations.
+        # No terminal event. The max_step=1 yr near the liquidus
+        # (set above) is sufficient for the value-based formulation
+        # where atol directly controls S[0]. Terminal events cause
+        # the solver to get stuck at the liquidus indefinitely.
         events = None
-        P_cmb = float(self._P_basic_flat[0])
-        S_liquidus_cmb = float(self.entropy_eos.liquidus_entropy(
-            np.array([P_cmb])
-        ).item())
-
-        if self._core_bc == 'gradient':
-            n_basic = self._n_stag + 1
-            dr_stag = np.diff(self._r_stag_flat)
-
-            def _liquidus_event(t, state_vec):
-                dSdr = state_vec[:n_basic]
-                S_surf = float(state_vec[n_basic])
-                S_stag_0 = S_surf
-                for i in range(len(dr_stag) - 1, -1, -1):
-                    S_stag_0 -= dSdr[i + 1] * dr_stag[i]
-                return S_stag_0 - S_liquidus_cmb
-        else:
-            def _liquidus_event(t, state_vec):
-                return state_vec[0] - S_liquidus_cmb
-
-        _liquidus_event.terminal = True
-        _liquidus_event.direction = -1.0
-        events = [_liquidus_event]
 
         self._solution = solve_ivp(
             self.dSdt,
