@@ -1091,6 +1091,33 @@ class EntropySolver:
         else:
             solve_atol = atol
 
+        # Solidus-crossing event for gradient mode. Stops the BDF when
+        # the bottom staggered cell's reconstructed entropy drops below
+        # the solidus, preventing the solver from overshooting the phase
+        # transition in one step. Without this, scipy BDF can take a
+        # step large enough to skip from fully liquid (phi=1) to fully
+        # solid (phi=0) at the CMB cell.
+        events = None
+        if self._core_bc == 'gradient':
+            n_basic = self._n_stag + 1
+            P_cmb = float(self._P_basic_flat[0])
+            S_solidus_cmb = float(self.entropy_eos.solidus_entropy(
+                np.array([P_cmb])
+            ).item())
+            dr_stag = np.diff(self._r_stag_flat)
+
+            def _solidus_event(t, state_vec):
+                dSdr = state_vec[:n_basic]
+                S_surf = float(state_vec[n_basic])
+                S_stag_0 = S_surf
+                for i in range(len(dr_stag) - 1, -1, -1):
+                    S_stag_0 -= dSdr[i + 1] * dr_stag[i]
+                return S_stag_0 - S_solidus_cmb
+
+            _solidus_event.terminal = True
+            _solidus_event.direction = -1.0  # trigger on crossing from above
+            events = [_solidus_event]
+
         self._solution = solve_ivp(
             self.dSdt,
             (start_time, end_time),
@@ -1102,6 +1129,7 @@ class EntropySolver:
             rtol=rtol,
             jac_sparsity=jac_sparsity,
             max_step=max_step,
+            events=events,
         )
 
         # Diagnostic logging: internal BDF step statistics
@@ -1118,6 +1146,17 @@ class EntropySolver:
 
         if self._solution.status == 0:
             logger.info('EntropySolver: integration completed successfully.')
+            self.stop_early = False
+        elif self._solution.status == 1:
+            # Termination event (solidus crossing). Integration succeeded
+            # up to the event time. Not an error.
+            t_event = self._solution.t[-1]
+            logger.info(
+                'EntropySolver: solidus-crossing event at t=%.2e yr '
+                '(stopped %.1f yr before end_time). Bottom cell reached '
+                'the solidus; PROTEUS will re-step from here.',
+                t_event, end_time - t_event,
+            )
             self.stop_early = False
         else:
             logger.error(
