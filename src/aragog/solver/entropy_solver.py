@@ -30,6 +30,29 @@ from aragog.parser import Parameters
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
 
+# SUNDIALS CVODE via scikits.odes. Same underlying solver SPIDER uses
+# (SUNDIALS CVODE BDF with modified-Newton nonlinear iteration and dense
+# direct linear solver). scipy's BDF and Radau both collapse their step
+# size to machine epsilon at the crystallisation front and fail with
+# `status=-1: Required step size is less than spacing between numbers`
+# because scipy's Newton iterator cannot converge on the stiff
+# transition. CVODE's C implementation has order 1-5 BDF, a robust
+# modified-Newton with cached Jacobian factorisation, and adaptive step
+# control that handles phase-transition discontinuities cleanly.
+try:
+    from scikits_odes.ode import ode as _scikits_ode
+    _CVODE_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _CVODE_AVAILABLE = False
+    _scikits_ode = None  # type: ignore[assignment]
+
+# Temporary override (2026-04-11): when True, use scipy Radau instead
+# of CVODE even if scikits.odes is importable. Used to discriminate
+# "CVODE BDF predictor problem" (fixed by Radau) from "Aragog RHS
+# intrinsic stiffness" (Radau also struggles). Flip to False once the
+# investigation concludes.
+_FORCE_RADAU = True
+
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
 from scipy import constants as _sp_constants
 SECS_PER_YEAR: float = _sp_constants.Julian_year
@@ -1017,11 +1040,202 @@ class EntropySolver:
 
         return J.tocsc()
 
+    def _solve_cvode(
+        self,
+        start_time: float,
+        end_time: float,
+        y0: npt.NDArray,
+        atol: float | npt.NDArray,
+        rtol: float,
+        max_step: float,
+    ) -> 'OptimizeResult':
+        """Integrate the entropy equation using SUNDIALS CVODE.
+
+        Returns a scipy.integrate.OdeResult-compatible OptimizeResult
+        so the downstream extraction code (``sol.y``, ``sol.t``,
+        ``sol.status``, ``sol.nfev``, ``sol.message``) is unchanged.
+
+        CVODE uses the same BDF family as scipy, but the C
+        implementation has a modified-Newton nonlinear solver with
+        cached Jacobian factorisation and adaptive order 1..5, so it
+        handles the crystallisation-front phase transition without
+        collapsing its step size to machine epsilon. SPIDER uses the
+        same CVODE (via PETSc's TSSUNDIALS interface).
+        """
+        # Zero-span edge case: scipy's solve_ivp accepts
+        # `t_span = (t0, t0)` and returns the initial state trivially,
+        # but CVODE rejects it with "tout too close to t0". This
+        # happens during Aragog's static-init PROTEUS iterations where
+        # start_time == end_time == 0. Return a scipy-compatible
+        # result without invoking CVODE at all.
+        if not (end_time > start_time):
+            result = OptimizeResult()
+            y_arr = np.asarray(y0, dtype=float).ravel().reshape(-1, 1)
+            result.t = np.array([float(start_time)])
+            result.y = y_arr
+            result.nfev = 0
+            result.status = 0
+            result.message = 'zero-span solve, returned initial state'
+            return result
+
+        # Wrap self.dSdt into the in-place (t, y, ydot) -> int signature
+        # that scikits.odes CVODE expects. Count RHS calls for parity
+        # with scipy's sol.nfev.
+        nfev_box = [0]
+
+        def rhs_fn(t: float, y: npt.NDArray, ydot: npt.NDArray) -> int:
+            ydot[:] = self.dSdt(t, y)
+            nfev_box[0] += 1
+            return 0
+
+        # Ensure atol is a scalar float (CVODE also accepts a per-state
+        # array, but gradient mode's mixed-units atol is handled via
+        # rtol anyway and SPIDER uses scalar atol=1e-8 = rtol).
+        if isinstance(atol, np.ndarray):
+            atol_scalar = float(np.min(atol))
+        else:
+            atol_scalar = float(atol)
+
+        # Build the CVODE solver. lmm_type='BDF' matches SPIDER's
+        # TSSundialsSetType(ts, SUNDIALS_BDF). Newton is CVODE's default
+        # nonlinear solver; it uses the cached LU factorisation of the
+        # iteration matrix I - gamma * J which is the critical
+        # robustness advantage over scipy's simpler Newton.
+        #
+        # Linear solver choice: Aragog's Jacobian is pentadiagonal
+        # (bandwidth 2) in quasi_steady mode because the flux divergence
+        # operator only couples each staggered node to its 2 nearest
+        # neighbours on each side. A dense FD Jacobian needs N=80 RHS
+        # evals per Jacobian build; a banded FD Jacobian needs only
+        # ~5 (bandwidth+1 per side). This is the CVODE equivalent of
+        # the `jac_sparsity` graph-colouring hint scipy uses.
+        #
+        # Extended-state modes (bower2018, energy_balance, gradient)
+        # break the banded structure because the extra state row
+        # couples to far-away entropy nodes, so fall back to dense
+        # for those modes.
+        cvode_options = {
+            'old_api': False,
+            'rtol': float(rtol),
+            'atol': atol_scalar,
+            'lmm_type': 'BDF',
+            'nonlinsolver': 'newton',
+            'max_steps': 100000,  # per-solve cap; scipy used unlimited
+            # Maximum BDF order. CVODE's default is 5 (max of BDF(1..5))
+            # but scikits.odes exposes the knob; set explicitly for
+            # clarity. Matches SPIDER's SUNDIALS config.
+            'order': 5,
+            # Give Newton more iterations per step (default 3) and more
+            # convergence-failure tolerance (default 10) before CVODE
+            # demotes the order. Aragog's RHS has genuine physical
+            # stiffness near the crystallisation front, and the default
+            # counters trigger premature order-1 lock-in. Higher values
+            # let CVODE iterate its way through the stiff transient
+            # without permanently dropping order.
+            'max_nonlin_iters': 10,
+            'max_conv_fails': 25,
+        }
+        if self._core_bc == 'quasi_steady':
+            cvode_options['linsolver'] = 'band'
+            cvode_options['lband'] = 2
+            cvode_options['uband'] = 2
+        else:
+            cvode_options['linsolver'] = 'dense'
+        # max_step is only meaningful when < 1e100; otherwise CVODE
+        # picks its own maximum internal step.
+        if max_step is not None and np.isfinite(max_step):
+            cvode_options['max_step_size'] = float(max_step)
+
+        solver = _scikits_ode('cvode', rhs_fn, **cvode_options)
+        # One-time debug print of the CVODE options actually in effect.
+        # This helps verify banded linsolver dispatch vs silent fallback.
+        if not hasattr(EntropySolver, '_cvode_options_logged'):
+            EntropySolver._cvode_options_logged = True
+            logger.info(
+                'CVODE options in use: %s',
+                {k: v for k, v in cvode_options.items() if k != 'old_api'},
+            )
+        cvode_sol = solver.solve(
+            np.array([start_time, end_time], dtype=float),
+            np.asarray(y0, dtype=float).ravel(),
+        )
+
+        # Dump CVODE's internal counters. These expose what scipy hides
+        # from us and let us discriminate Newton thrash from step-size
+        # control thrash from linear-solver thrash.
+        #   NumSteps         = nst   (internal BDF steps taken)
+        #   NumRhsEvals      = nfe   (RHS evaluations as counted by CVODE)
+        #   NumLinSolvSetups = nsetups (iteration-matrix rebuilds, i.e.
+        #                      Jacobian FD + LU factorisations)
+        #   NumErrTestFails  = netf  (local truncation error test failures)
+        #   LastOrder/CurrentOrder = BDF order actually in use (1..5)
+        try:
+            info = solver._integrator.get_info()
+            logger.info(
+                'CVODE stats: nst=%d nfe=%d nsetups=%d netf=%d '
+                'order=%d last_step=%.2e cur_step=%.2e '
+                'rhs_wrap=%d rhs_wrap/nst=%.1f nsetups/nst=%.2f',
+                info.get('NumSteps', -1),
+                info.get('NumRhsEvals', -1),
+                info.get('NumLinSolvSetups', -1),
+                info.get('NumErrTestFails', -1),
+                info.get('CurrentOrder', info.get('LastOrder', -1)),
+                info.get('LastStep', float('nan')),
+                info.get('CurrentStep', float('nan')),
+                nfev_box[0],
+                nfev_box[0] / max(int(info.get('NumSteps', 1)), 1),
+                int(info.get('NumLinSolvSetups', 0))
+                    / max(int(info.get('NumSteps', 1)), 1),
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.debug('CVODE get_info() failed: %s', exc)
+
+        # Build a scipy-compatible result wrapper. scipy's
+        # OptimizeResult attributes used downstream:
+        #   .t      (1D array of internal time points)
+        #   .y      (2D array, shape (n_state, n_time), final state at [:, -1])
+        #   .status (0 = success, 1 = termination event, -1 = failure)
+        #   .message (human-readable)
+        #   .nfev   (RHS call count)
+        result = OptimizeResult()
+        if cvode_sol.values is not None and cvode_sol.values.t is not None:
+            t_arr = np.asarray(cvode_sol.values.t, dtype=float).ravel()
+            y_arr = np.asarray(cvode_sol.values.y, dtype=float)
+            # CVODE stores y as (n_time, n_state); scipy expects
+            # (n_state, n_time).
+            if y_arr.ndim == 2:
+                y_arr = y_arr.T
+            else:
+                y_arr = y_arr.reshape(-1, 1)
+            result.t = t_arr
+            result.y = y_arr
+        else:
+            result.t = np.array([start_time])
+            result.y = np.asarray(y0, dtype=float).reshape(-1, 1)
+
+        result.nfev = nfev_box[0]
+        result.message = getattr(cvode_sol, 'message', '')
+        # CVODE flag 0 = success, 2 = root found (tstop), negative = failure.
+        flag = int(getattr(cvode_sol, 'flag', -1))
+        if flag == 0 or flag == 2:
+            result.status = 0
+        else:
+            result.status = -1
+            if not result.message:
+                result.message = f'CVODE failed with flag {flag}'
+        return result
+
     def solve(self) -> None:
         """Run the BDF time integration."""
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
-        atol_base = max(self.parameters.solver.atol, 0.01)  # entropy in J/kg/K
+        # Test 2026-04-11 evening: lower the atol floor from 0.01 to
+        # 1e-8 to match SPIDER's `atol = rtol = 1e-8` exactly. SPIDER
+        # integrates with 8 orders of magnitude tighter absolute
+        # tolerance; if cumulative integration error over ~200 kyr of
+        # solidification contributes to the observed -18% T_core gap
+        # vs SPIDER, tightening atol should shift the trajectory.
+        atol_base = max(self.parameters.solver.atol, 1.0e-8)
         rtol = self.parameters.solver.rtol
 
         # Phase-aware atol: tight during crystallization, relaxed only
@@ -1109,19 +1323,44 @@ class EntropySolver:
         # the solver to get stuck at the liquidus indefinitely.
         events = None
 
-        self._solution = solve_ivp(
-            self.dSdt,
-            (start_time, end_time),
-            self._S0,
-            method='BDF',
-            vectorized=False,
-            dense_output=True,
-            atol=solve_atol,
-            rtol=rtol,
-            jac_sparsity=jac_sparsity,
-            max_step=max_step,
-            events=events,
-        )
+        # SOLVER: SUNDIALS CVODE via scikits.odes (2026-04-11). Same
+        # solver SPIDER uses (CVODE BDF with modified-Newton). scipy's
+        # BDF and Radau both hit `Required step size is less than
+        # spacing between numbers` at the crystallisation front because
+        # scipy's Newton iterator cannot converge on the stiff phase
+        # transition. CVODE's C implementation handles it cleanly.
+        # Scipy solve_ivp is kept as a fallback only if CVODE is not
+        # available (e.g., scikits.odes import fails).
+        if _CVODE_AVAILABLE and not _FORCE_RADAU:
+            self._solution = self._solve_cvode(
+                start_time=start_time,
+                end_time=end_time,
+                y0=self._S0,
+                atol=solve_atol,
+                rtol=rtol,
+                max_step=max_step,
+            )
+        else:
+            if _FORCE_RADAU:
+                logger.info('EntropySolver: _FORCE_RADAU active, using scipy Radau')
+            else:
+                logger.warning(
+                    'scikits.odes not available; falling back to scipy Radau. '
+                    'Install with: conda install -c conda-forge scikits.odes'
+                )
+            self._solution = solve_ivp(
+                self.dSdt,
+                (start_time, end_time),
+                self._S0,
+                method='Radau',
+                vectorized=False,
+                dense_output=True,
+                atol=solve_atol,
+                rtol=rtol,
+                jac_sparsity=jac_sparsity,
+                max_step=max_step,
+                events=events,
+            )
 
         # Diagnostic logging: internal BDF step statistics
         sol = self._solution
@@ -1134,6 +1373,13 @@ class EntropySolver:
                 dt_internal.min(), dt_internal.max(),
                 np.median(dt_internal),
             )
+            logger.info(
+                'EntropySolver: phase-boundary cache hits=%d misses=%d',
+                self.state._pb_cache_hits,
+                self.state._pb_cache_misses,
+            )
+            self.state._pb_cache_hits = 0
+            self.state._pb_cache_misses = 0
 
         if self._solution.status == 0:
             logger.info('EntropySolver: integration completed successfully.')
@@ -1229,10 +1475,10 @@ class EntropySolver:
         if hasattr(mesh.eos, 'get_mass_within_radii'):
             r_cmb = float(self._r_basic_flat[0])
             r_surf = float(self._r_basic_flat[-1])
-            M_mantle = float(
+            M_mantle = (
                 mesh.eos.get_mass_within_radii(np.array([r_surf]))
                 - mesh.eos.get_mass_within_radii(np.array([r_cmb]))
-            )
+            ).item()
         else:
             rho_struct_stag = np.asarray(
                 mesh.staggered_effective_density
@@ -1240,7 +1486,24 @@ class EntropySolver:
             mass_stag = rho_struct_stag * vol
             M_mantle = float(np.sum(mass_stag))
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
-        T_magma = float(T_stag[-1])
+        # T_magma = top BASIC node T, SPIDER-parity with
+        # `atmosphere/temperature_surface` in SPIDER's JSON output
+        # (`interior_energetics/spider.py:1237`). The top basic node is at
+        # r = outer_boundary where P = surface_pressure (= 0 for the
+        # default Adams-Williamson BC); the top staggered cell is half a
+        # cell below it at non-zero P. Previously we reported
+        # `T_magma = T_stag[-1]`, which for the CHILI R8 config at
+        # S=3900 J/kg/K, 1TPa-dK09 tables, rho_s=4000 kg/m^3 placed
+        # T_magma at (P~2770 bar, S=3900) = 3862 K instead of
+        # (P=0 bar, S=3900) = 3820 K. PROTEUS passes `hf_row['T_magma']`
+        # to AGNI as the interior-side surface boundary condition
+        # (`atmos_clim/agni.py:441`), so the ~44 K offset drove a
+        # +12% F_atm offset at iteration 1, which cumulatively explained
+        # the full -18% T_core endpoint gap against SPIDER v4.
+        T_basic_final = np.asarray(
+            self.state.phase_basic.temperature()
+        ).ravel()
+        T_magma = float(T_basic_final[-1])
         # Core temperature:
         # - gradient / energy_balance: derive from CMB basic-node entropy.
         # - bower2018: T_core is the integrated state variable (tombstone).

@@ -125,8 +125,14 @@ class EntropyPhaseEvaluator:
         self._thermal_expansivity = self._eos.thermal_expansivity(P, S)
         self._melt_fraction = self._eos.melt_fraction(P, S)
 
-        # Guard: clamp negative alpha to zero (can occur from EOS table edges)
-        self._thermal_expansivity = np.maximum(self._thermal_expansivity, 0.0)
+        # Guard: clamp negative alpha to zero (can occur from EOS table
+        # edges). Use a smooth max (sqrt-based, C^infty) so the clip
+        # doesn't introduce a kink in CVODE's BDF predictor when a cell
+        # sits at alpha ~ 0. The eps=1e-8 bandwidth is much smaller than
+        # physical alpha scales (~1e-5 1/K) so bulk values are untouched.
+        a = self._thermal_expansivity
+        eps_a = 1.0e-8
+        self._thermal_expansivity = 0.5 * (a + np.sqrt(a * a + eps_a * eps_a))
 
         # Viscosity: tanh blend between solid and liquid at phi_rheo
         phi = self._melt_fraction
@@ -226,11 +232,24 @@ class EntropyPhaseEvaluator:
         d = self._grain_size
         eta_l = self._visc_liquid
 
-        # Porosity (volume fraction of melt) from densities
+        # Porosity (volume fraction of melt) from densities. Smoothed
+        # with sqrt-based soft clip + soft max so the CVODE BDF
+        # predictor sees a C^infty RHS (previous np.clip + np.maximum
+        # had two derivative jumps that locked the solver at order 1).
         rho = self._density
-        porosity = np.clip(
-            (rho_s - rho) / np.maximum(rho_s - rho_l, 1.0), 0.0, 1.0
+        drho = rho_s - rho_l
+        eps = 1.0e-3  # kg/m^3; far below any physical density contrast
+        drho_smoothmax = 0.5 * (
+            drho + 1.0 + np.sqrt((drho - 1.0) ** 2 + eps * eps)
         )
+        porosity_raw = (rho_s - rho) / drho_smoothmax
+        # smooth_clip(porosity_raw, 0, 1) via two soft-max operations
+        eps_p = 1.0e-3  # dimensionless; invisible except near [0,1] edges
+        p_lo = 0.5 * (
+            porosity_raw + np.sqrt(porosity_raw * porosity_raw + eps_p * eps_p)
+        )
+        hi_u = 1.0 - p_lo
+        porosity = 1.0 - 0.5 * (hi_u + np.sqrt(hi_u * hi_u + eps_p * eps_p))
 
         # Three-regime permeability / porosity (Abe 1993/1995, SPIDER convention).
         # F = permeability(porosity) / porosity. The relative velocity is
@@ -254,7 +273,10 @@ class EntropyPhaseEvaluator:
 
         # Relative velocity: v = |delta_rho| * g * F / eta_liquid
         # Sign convention: positive = outward (melt rising, solid sinking)
-        v_rel = np.abs(delta_rho) * g * F / np.maximum(eta_l, 1e-10)
+        # Smoothed |delta_rho| via sqrt(x^2 + eps^2); eps tiny compared
+        # to physical delta_rho ~ -500 kg/m^3, so bulk result unchanged.
+        abs_drho = np.sqrt(delta_rho * delta_rho + 1.0e-12)
+        v_rel = abs_drho * g * F / np.maximum(eta_l, 1e-10)
 
         return v_rel
 

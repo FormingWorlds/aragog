@@ -219,9 +219,18 @@ def _load_spider_ps_table(filepath: Path) -> dict:
     # transpose to get (n_P, n_S) for RegularGridInterpolator((P, S)).
     values = Q_all.reshape(n_S, n_P).T
 
+    # Use tensor-product cubic B-spline so the interpolated field
+    # has continuous first and second derivatives (C^2). The previous
+    # 'linear' setting was bilinear (C^0 only), which breaks SUNDIALS
+    # CVODE's higher-order BDF predictor: the predictor error estimate
+    # became dominated by derivative jumps at PALEOS grid cell
+    # boundaries rather than by polynomial truncation error, and the
+    # order selector got stuck at 1 (implicit Euler) — ~100x more
+    # internal steps than needed. Cubic is O(1) per lookup after
+    # the one-time setup, same per-call cost as linear.
     interp = RegularGridInterpolator(
         (P_unique, S_unique), values,
-        method='linear', bounds_error=False, fill_value=np.nan,
+        method='cubic', bounds_error=False, fill_value=np.nan,
     )
 
     return {
@@ -263,12 +272,39 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
     P = data[:, 0] * P_scale
     S = data[:, 1] * S_scale
 
-    from scipy.interpolate import interp1d
-    interp = interp1d(P, S, kind='linear', bounds_error=False,
-                      fill_value=(S[0], S[-1]))
+    # PchipInterpolator: monotone-preserving cubic Hermite (C^1).
+    # Same reason as the 2D EOS: 'linear' interp1d was C^0 and broke
+    # CVODE's higher-order BDF predictor. PCHIP avoids the overshoot
+    # that a plain cubic spline can produce on phase-boundary curves
+    # (which need to stay monotone in P). Edge handling: extrapolate
+    # linearly outside [P[0], P[-1]] via the `extrapolate=True`
+    # default + a wrapper that clamps to the endpoints so the old
+    # `fill_value=(S[0], S[-1])` behaviour is preserved at the
+    # boundaries of the P-S table.
+    from scipy.interpolate import PchipInterpolator
+    _pchip = PchipInterpolator(P, S, extrapolate=False)
+    _dpchip = _pchip.derivative(1)
+    S_lo, S_hi, P_lo, P_hi = float(S[0]), float(S[-1]), float(P[0]), float(P[-1])
+
+    def interp(Pq):
+        Pq = np.asarray(Pq, dtype=float)
+        out = _pchip(Pq)
+        out = np.where(np.isnan(out) & (Pq < P_lo), S_lo, out)
+        out = np.where(np.isnan(out) & (Pq > P_hi), S_hi, out)
+        return out
+
+    def dinterp(Pq):
+        """dS/dP at the given pressure(s), in J/(kg·K·Pa).
+
+        Outside the tabulated range, falls back to zero (the endpoint
+        entropy is clamped by ``interp`` so its derivative is zero).
+        """
+        Pq = np.asarray(Pq, dtype=float)
+        out = _dpchip(Pq)
+        return np.where(np.isnan(out), 0.0, out)
 
     return {
-        'P': P, 'S': S, 'interp': interp,
+        'P': P, 'S': S, 'interp': interp, 'dinterp': dinterp,
         'P_list': P.tolist(), 'S_list': S.tolist(),
     }
 
@@ -345,6 +381,23 @@ class EntropyEOS:
     def liquidus_entropy(self, P: npt.NDArray | float) -> npt.NDArray:
         """Liquidus entropy S_liq(P) [J/kg/K]."""
         return np.asarray(self._liquidus['interp'](P), dtype=float)
+
+    def solidus_entropy_dP(self, P: npt.NDArray | float) -> npt.NDArray:
+        """dS_sol/dP at the given pressure(s), in J/(kg·K·Pa).
+
+        Needed by the SPIDER-parity mixing-flux formula in
+        ``entropy_state.update``. SPIDER computes Jmix via a bracket
+        expression ``dS/dr − [φ dS_liq/dP + (1−φ) dS_sol/dP] dP/dr``
+        (``energy.c::GetMixingHeatFlux`` lines 307-309). Exposing the
+        phase-boundary P-derivatives here lets Aragog match SPIDER's
+        formula exactly without resorting to un-truncated gphi
+        arithmetic.
+        """
+        return np.asarray(self._solidus['dinterp'](P), dtype=float)
+
+    def liquidus_entropy_dP(self, P: npt.NDArray | float) -> npt.NDArray:
+        """dS_liq/dP at the given pressure(s), in J/(kg·K·Pa)."""
+        return np.asarray(self._liquidus['dinterp'](P), dtype=float)
 
     # ---- Pure-Python scalar methods (numpy 2.4 safe) ----
     # These avoid ALL numpy scalar conversions and are safe to call

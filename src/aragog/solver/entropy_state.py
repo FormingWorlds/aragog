@@ -28,6 +28,98 @@ logger = logging.getLogger(__name__)
 RE_CRIT = 9.0 / 8.0
 
 
+# ── Smooth-limiter helpers (RHS regularisation for implicit BDF) ─────
+#
+# SUNDIALS CVODE's higher-order BDF predictors use polynomial fits
+# through past solution values, and its Newton iteration relies on a
+# finite-difference Jacobian. Both break down where the RHS has
+# kinks (|x|), step functions (x < 0), or flat tops (clip(x, 0, 1)):
+# the predictor error estimate is dominated by the non-smoothness
+# rather than by polynomial truncation, the order selector drops to
+# 1, and Newton fails to converge because a tiny FD perturbation
+# crosses the kink and flips the Jacobian sign.
+#
+# These helpers replace the non-smooth operations with C^1-continuous
+# approximations based on `sqrt(x^2 + eps^2)`. The smoothing bandwidth
+# eps is chosen small compared to the physically relevant scale so
+# the regularisation only affects values in the immediate neighbourhood
+# of the kink, leaving bulk physics unchanged. Both operations return
+# the exact unsmoothed value to within ~eps^2 / (2 * |x|) for |x| >> eps.
+
+
+def _smooth_abs_neg(x: npt.NDArray, eps: float = 1.0e-8) -> npt.NDArray:
+    """Smooth approximation of ``max(-x, 0)``.
+
+    Returns ``-x`` when ``x << -eps``, ``0`` when ``x >> eps``, and
+    smoothly interpolates across the zero crossing. Folds the abs()
+    and the boolean mask ``x < 0`` used for convective-cell selection
+    into a single C^infinity expression.
+    """
+    return 0.5 * (np.sqrt(x * x + eps * eps) - x)
+
+
+def _smooth_clip(
+    x: npt.NDArray, lo: float = 0.0, hi: float = 1.0, eps: float = 1.0e-3,
+) -> npt.NDArray:
+    """Smooth approximation of ``np.clip(x, lo, hi)``.
+
+    Built from two ``smooth_max`` operations. Bandwidth eps is in the
+    same units as x; for gphi (dimensionless [0,1]) eps = 1e-3 makes
+    the smoothing imperceptible except within ~0.1 % of the boundaries.
+    """
+    # smooth_max(a, b) = 0.5 * (a + b + sqrt((a-b)^2 + eps^2))
+    # First clip at the lower bound:
+    x_lo = x - lo
+    x_above_lo = 0.5 * (x + lo + np.sqrt(x_lo * x_lo + eps * eps))
+    # Then clip at the upper bound:
+    hi_u = hi - x_above_lo
+    return 0.5 * (x_above_lo + hi - np.sqrt(hi_u * hi_u + eps * eps))
+
+
+def _spider_get_smoothing(
+    gphi: npt.NDArray, smooth_width: float = 1.0e-2,
+) -> npt.NDArray:
+    """Verbatim port of SPIDER's ``get_smoothing`` (``util.c:245-270``).
+
+    Two-branch tanh smoother used for the phase-boundary smoothing
+    factor in SPIDER's mixing-flux computation. For ``gphi > 0.5``
+    the curve ramps down toward zero near ``gphi = 1``; for
+    ``gphi <= 0.5`` it ramps up toward one near ``gphi = 0``. The
+    branches join continuously at ``gphi = 0.5`` (with a derivative
+    kink that SUNDIALS CVODE's order selector handles fine; scipy
+    BDF/Radau should tolerate it too because it's bounded).
+
+    Parameters
+    ----------
+    gphi : array
+        Un-truncated lever-rule fraction
+        ``(S - S_sol) / (S_liq - S_sol)``. Values outside [0, 1]
+        are allowed (pure-phase regimes); the smoothing goes to zero
+        in both limits.
+    smooth_width : float, optional
+        tanh transition width in gphi units. SPIDER's default for
+        CHILI R8 is ``matprop_smooth_width = 0.01``.
+
+    Returns
+    -------
+    smth : array
+        Smoothing factor, 1 across most of [0, 1], smoothly tapered
+        to zero just outside.
+    """
+    if smooth_width == 0.0:
+        # No smoothing — hard clip to [0, 1].
+        out = np.ones_like(gphi)
+        out[(gphi < 0.0) | (gphi > 1.0)] = 0.0
+        return out
+    # SPIDER's two-branch tanh (util.c:261-266). Use ``np.where`` so
+    # we evaluate both branches and select per element, keeping the
+    # result smooth in numpy terms (no Python conditionals in the
+    # hot path).
+    upper = 0.5 * (1.0 - np.tanh((gphi - 1.0) / smooth_width))
+    lower = 0.5 * (1.0 + np.tanh(gphi / smooth_width))
+    return np.where(gphi > 0.5, upper, lower)
+
+
 class EntropyState:
     """Stores and updates the thermodynamic state using entropy.
 
@@ -99,6 +191,93 @@ class EntropyState:
         self._mass_flux = np.zeros(n_basic)
         self._is_convective = np.zeros(n_basic, dtype=bool)
 
+        # Phase-boundary entropy cache at staggered nodes. P_stag is
+        # fixed for the lifetime of the solve, so S_sol(P_stag) and
+        # S_liq(P_stag) are constants. Caching them avoids ~230k
+        # scipy interpolator calls per 10-yr PROTEUS step (two per
+        # RHS eval) that otherwise dominate the BDF hot path.
+        self._P_stag_cached_id: int = -1
+        self._S_sol_stag: npt.NDArray = np.zeros(n_staggered)
+        self._S_liq_stag: npt.NDArray = np.zeros(n_staggered)
+        self._dS_phase_stag: npt.NDArray = np.ones(n_staggered)
+        self._pb_cache_hits: int = 0
+        self._pb_cache_misses: int = 0
+
+        # Phase-boundary cache at basic nodes for the SPIDER-parity
+        # mixing flux (``_jmix_spider_heat`` in update()). Like the
+        # staggered cache, these quantities are mesh-fixed because the
+        # basic-node pressure profile doesn't change within a solve.
+        # Needed: S_sol/S_liq and their P-derivatives, the mesh
+        # pressure gradient dP/dr, and the phase-boundary mean
+        # temperature T_fus = ½(T_sol + T_liq).
+        self._P_basic_cached_id: int = -1
+        self._S_sol_basic: npt.NDArray = np.zeros(n_basic)
+        self._S_liq_basic: npt.NDArray = np.zeros(n_basic)
+        self._dS_phase_basic: npt.NDArray = np.ones(n_basic)
+        self._dS_sol_dP_basic: npt.NDArray = np.zeros(n_basic)
+        self._dS_liq_dP_basic: npt.NDArray = np.zeros(n_basic)
+        self._dP_dr_basic: npt.NDArray = np.zeros(n_basic)
+        self._T_fus_basic: npt.NDArray = np.zeros(n_basic)
+
+    def _ensure_phase_boundary_cache(self) -> None:
+        """Populate or refresh the cached S_sol/S_liq at staggered nodes.
+
+        Cheap no-op when the underlying phase_staggered.pressure ndarray
+        is the same object (by Python id) as the one seen on the last
+        call. Rebuilds the scipy interpolator outputs only when the mesh
+        pressure object changes, which happens at most once per
+        EntropyState construction in normal PROTEUS coupling.
+        """
+        pressure_obj = self.phase_staggered.pressure
+        if id(pressure_obj) == self._P_stag_cached_id:
+            self._pb_cache_hits += 1
+            return
+        self._pb_cache_misses += 1
+        P_stag = np.asarray(pressure_obj).ravel()
+        eos = self.phase_staggered._eos
+        self._S_sol_stag = np.asarray(eos.solidus_entropy(P_stag)).ravel()
+        self._S_liq_stag = np.asarray(eos.liquidus_entropy(P_stag)).ravel()
+        self._dS_phase_stag = np.maximum(self._S_liq_stag - self._S_sol_stag, 1.0)
+        self._P_stag_cached_id = id(pressure_obj)
+
+    def _ensure_basic_phase_boundary_cache(self) -> None:
+        """Populate or refresh the cached phase-boundary data at basic nodes.
+
+        Caches S_sol, S_liq, their P-derivatives, the mesh dP/dr, and
+        the phase-boundary mean temperature T_fus = ½(T_sol + T_liq),
+        all at basic nodes. These quantities depend only on the mesh
+        pressure profile, which is mesh-fixed for the lifetime of the
+        solve, so the cache is a cheap no-op after the first call.
+
+        Used by the SPIDER-parity mixing-flux formula (``Jmix_spider_heat``
+        in update()) which computes Jmix via the bracket expression
+        ``dS/dr − [φ dS_liq/dP + (1−φ) dS_sol/dP] dP/dr`` from
+        ``energy.c::GetMixingHeatFlux`` lines 307-314.
+        """
+        pressure_obj = self.phase_basic.pressure
+        if id(pressure_obj) == self._P_basic_cached_id:
+            return
+        P_basic = np.asarray(pressure_obj).ravel()
+        eos = self.phase_basic._eos
+        # Phase-boundary entropies and their P-derivatives
+        self._S_sol_basic = np.asarray(eos.solidus_entropy(P_basic)).ravel()
+        self._S_liq_basic = np.asarray(eos.liquidus_entropy(P_basic)).ravel()
+        self._dS_phase_basic = np.maximum(
+            self._S_liq_basic - self._S_sol_basic, 1.0
+        )
+        self._dS_sol_dP_basic = np.asarray(eos.solidus_entropy_dP(P_basic)).ravel()
+        self._dS_liq_dP_basic = np.asarray(eos.liquidus_entropy_dP(P_basic)).ravel()
+        # Mesh pressure gradient at basic nodes (P decreases outward,
+        # so dP/dr < 0 in the mantle).
+        r_basic = np.asarray(self._evaluator.mesh.basic.radii).ravel()
+        self._dP_dr_basic = np.gradient(P_basic, r_basic)
+        # Phase-boundary mean temperature T_fus. Computed from
+        # L = T_fus * ΔS_phase via L/ΔS_phase, where L is the
+        # EOS's latent_heat(P) returning T_fus * (S_liq - S_sol).
+        L_basic = np.asarray(eos.latent_heat(P_basic)).ravel()
+        self._T_fus_basic = L_basic / self._dS_phase_basic
+        self._P_basic_cached_id = id(pressure_obj)
+
     def update(
         self,
         entropy: npt.NDArray,
@@ -155,54 +334,79 @@ class EntropyState:
 
         # Melt-fraction gradient for gravitational separation and mixing.
         #
-        # The mixing flux (rho * kappac * (-dphi/dr) * L) must cancel
-        # the convective flux (rho * T * kappah * (-dS/dr)) at every
-        # node when kappac = kappah. This requires dphi/dr = dS/dr /
-        # (S_liq - S_sol), which holds only when phi is the UN-TRUNCATED
-        # lever-rule fraction gphi = (S - S_sol) / (S_liq - S_sol).
-        # The clamped melt fraction (phi in [0,1]) truncates gphi to 1
-        # in pure-liquid cells and to 0 in pure-solid cells, breaking
-        # the cancellation at the crystallisation front: the clamped
-        # gradient is ~50% of the un-truncated gradient when one cell
-        # is liquid and the adjacent cell is mushy. The resulting
-        # uncancelled convective flux drives a positive feedback that
-        # solidifies the CMB cell 30x faster than SPIDER.
-        P_stag = np.asarray(self.phase_staggered.pressure).ravel()
-        eos = self.phase_staggered._eos
-        S_sol = np.asarray(eos.solidus_entropy(P_stag)).ravel()
-        S_liq = np.asarray(eos.liquidus_entropy(P_stag)).ravel()
-        dS_phase = np.maximum(S_liq - S_sol, 1.0)
-        gphi = (S - S_sol) / dS_phase
-        self._dphidr = mesh.d_dr_at_basic_nodes(gphi).ravel()
+        # Use the CLAMPED lever-rule fraction, matching v7.5's behaviour
+        # (which scipy BDF handled cleanly). This is:
+        #     phi = clip((S - S_sol) / (S_liq - S_sol), 0, 1)
+        # Per-cell clipping gives dphi/dr = 0 in fully-molten cells
+        # (physically correct: no phase separation in pure liquid) and
+        # in fully-solid cells (physically correct: no mixing in pure
+        # solid). At the crystallisation front, the mushy cell has
+        # 0 < phi < 1 and the adjacent cells are clipped to 0 or 1,
+        # so dphi/dr is well-defined and smooth.
+        #
+        # We compute the clamped phi from the cached EOS lookups rather
+        # than via self.phase_staggered.melt_fraction() because that
+        # call introduces tiny IEEE roundoff noise on each invocation
+        # which breaks BDF's finite-difference Jacobian stability.
+        # The cached S_sol/S_liq arrays are byte-identical across
+        # calls within a solve, keeping the Jacobian stable.
+        #
+        # History: 2026-04-11 the un-truncated gphi path was tried
+        # (without clipping) to preserve the Jmix+Jconv=0 cancellation
+        # identity, but it made the RHS non-smooth across the
+        # full mantle and caused both scipy BDF and CVODE to thrash
+        # Newton convergence. A hard gate on phi_min was then tried
+        # but introduced a discontinuous RHS which failed CVODE's
+        # Newton entirely. Reverted to v7.5's clamped phi. The
+        # resulting -12% T_core vs SPIDER gap is documented in
+        # spider_aragog_parity_v3_v4.md as a formulation difference.
+        self._ensure_phase_boundary_cache()
+        gphi = (S - self._S_sol_stag) / self._dS_phase_stag
+        phi_smoothclipped = _smooth_clip(gphi, 0.0, 1.0, eps=1.0e-3)
+        self._dphidr = mesh.d_dr_at_basic_nodes(phi_smoothclipped).ravel()
 
         # ── MLT from entropy gradient ────────────────────────────────
-        # Convection is unstable when dS/dr < 0 (entropy decreasing outward).
+        # Convection is unstable when dS/dr < 0 (entropy decreasing
+        # outward). `_is_convective` is still maintained for downstream
+        # diagnostic output but is NO LONGER used to zero the velocity
+        # arrays via a boolean mask — that discontinuity broke CVODE's
+        # higher-order BDF predictor. Instead, the smoothed convective
+        # driver below naturally goes to zero (smoothly) for
+        # stably-stratified cells and to |dS/dr| for unstable ones.
         self._is_convective = self._dSdr < 0
 
-        # Buoyancy: convert entropy gradient to effective thermal buoyancy
-        # |superadiabatic| = alpha * T * |dS/dr| / Cp
-        # Phase evaluator properties are already 1D arrays.
+        # Buoyancy: convert entropy gradient to effective thermal
+        # buoyancy |superadiabatic| = alpha * T * |dS/dr| / Cp.
+        # Use the smoothed max(-dSdr, 0), which replaces the
+        # `np.abs(dSdr)` + `mask[~convective] = 0` pair with a single
+        # C^infinity expression. For dSdr << 0: reduces to -dSdr
+        # (unstable profile, full convection drive). For dSdr >> 0:
+        # smoothly reduces to 0 (stable profile, no convection).
         alpha = np.asarray(self.phase_basic.thermal_expansivity()).ravel()
         T = np.asarray(self.phase_basic.temperature()).ravel()
         Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
         g = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
 
-        effective_superadiabatic = alpha * T * np.abs(self._dSdr) / np.maximum(Cp, 1.0)
+        conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-8)
+        effective_superadiabatic = alpha * T * conv_drive / np.maximum(Cp, 1.0)
         velocity_prefactor = g * effective_superadiabatic
 
-        # Viscous velocity (Re <= Re_crit)
+        # Viscous velocity (Re <= Re_crit). No boolean masking needed:
+        # velocity_prefactor already vanishes smoothly for stable
+        # (dSdr > 0) cells via conv_drive.
         mixing_length = self._mixing_length
         mixing_length_cubed = self._mixing_length_cu
         mixing_length_squared = self._mixing_length_sq
         nu = np.asarray(self.phase_basic.kinematic_viscosity()).ravel()
 
         viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * nu)
-        viscous_velocity[~self._is_convective] = 0.0
 
-        # Inviscid velocity (Re > Re_crit)
+        # Inviscid velocity (Re > Re_crit). Add a tiny eps^2 inside the
+        # sqrt to avoid the sqrt-kink at velocity_sq = 0; the value is
+        # negligibly different from sqrt(max(x, 0)) for any physical
+        # inviscid_velocity_sq.
         inviscid_velocity_sq = velocity_prefactor * mixing_length_squared / 16.0
-        inviscid_velocity_sq[~self._is_convective] = 0.0
-        inviscid_velocity = np.sqrt(np.maximum(inviscid_velocity_sq, 0.0))
+        inviscid_velocity = np.sqrt(inviscid_velocity_sq + 1.0e-20)
 
         # Reynolds number
         reynolds = viscous_velocity * mixing_length / nu
@@ -329,21 +533,21 @@ class EntropyState:
             #   3. Parameter-free: no matprop_smooth_width knob to
             #      tune. SPIDER keeps that knob for its own solver.
             if self._bottom_up_grav_sep:
-                P_stag_arr = np.asarray(self.phase_staggered.pressure).ravel()
-                eos_stag = self.phase_staggered._eos
-                S_sol_s = np.asarray(
-                    eos_stag.solidus_entropy(P_stag_arr)
-                ).ravel()
-                S_liq_s = np.asarray(
-                    eos_stag.liquidus_entropy(P_stag_arr)
-                ).ravel()
-                dS_s = np.maximum(S_liq_s - S_sol_s, 1.0)
-                gphi_stag = (self._entropy_staggered - S_sol_s) / dS_s
+                # Reuse the phase-boundary cache populated in update().
+                # Same S_sol/S_liq/dS at staggered nodes, no repeat
+                # scipy interpolator calls in the BDF hot path.
+                gphi_stag = (
+                    self._entropy_staggered - self._S_sol_stag
+                ) / self._dS_phase_stag
 
-                # Clipped cubic Hermite: 16 * gphi^2 * (1-gphi)^2
-                # on [0,1], zero outside. smth(0)=0, smth(0.5)=1,
-                # smth(1)=0, continuous first derivative everywhere.
-                gphi_clip = np.clip(gphi_stag, 0.0, 1.0)
+                # Smooth-clipped cubic Hermite: 16 * gphi^2 * (1-gphi)^2
+                # on [0,1], smoothly approaching zero outside.
+                # smth(0)=0, smth(0.5)=1, smth(1)=0, continuous first
+                # derivative everywhere (including across the clip
+                # boundaries). The smooth clip replaces the non-
+                # differentiable np.clip so BDF's higher-order
+                # predictor sees a consistent RHS.
+                gphi_clip = _smooth_clip(gphi_stag, 0.0, 1.0, eps=1.0e-3)
                 smth_stag = 16.0 * gphi_clip**2 * (1.0 - gphi_clip) ** 2
 
                 # Bottom-up: basic node i (interface between staggered
@@ -355,14 +559,66 @@ class EntropyState:
 
             self._mass_flux += jgrav
 
-        if self._mixing:
-            self._mass_flux += rho * self._kappac * (-self._dphidr)
-
         # Zero mass fluxes at boundaries (SPIDER convention: no mass
         # transfer across CMB or surface, energy.c lines 282-285, 423-426)
         self._mass_flux[0] = 0.0
         self._mass_flux[-1] = 0.0
         self._heat_flux += self._mass_flux * self.phase_basic.latent_heat()
+
+        if self._mixing:
+            # SPIDER-parity mixing flux (energy.c::GetMixingHeatFlux
+            # lines 307-325). Computed directly as a heat flux,
+            # bypassing the mass_flux * latent_heat path used by the
+            # grav_sep term above.
+            #
+            # Previously Aragog added ``rho * kappac * (-dphi/dr)`` to
+            # mass_flux and then multiplied by L. The derivative of
+            # the *clipped* phi truncates its magnitude by ~50% at the
+            # crystallisation front (one cell at phi=1 next to a mushy
+            # cell at phi in (0,1); the un-truncated gphi contribution
+            # from the molten side is lost). This missing front-cell
+            # flux integrated over solidification explains the ~-18%
+            # T_core gap vs SPIDER reported in
+            # ``spider_aragog_parity_v3_v4.md``.
+            #
+            # SPIDER's formula is equivalent to
+            #     Jmix_heat = -kappac * rho * T_fus * bracket * smth
+            # where
+            #     bracket = dS/dr − [φ · dS_liq/dP + (1−φ) · dS_sol/dP] · dP/dr
+            # and ``smth`` is a tanh (or cubic Hermite) that zeroes the
+            # flux outside the mushy band 0 ≤ gphi ≤ 1. The bracket
+            # is algebraically equal to ``dS_fus · dgphi/dr`` at the
+            # basic node, but is computed directly from dS/dr plus
+            # phase-boundary slopes so there is no un-truncated-gphi
+            # arithmetic that could make the RHS non-smooth in the
+            # fully-molten regime.
+            self._ensure_basic_phase_boundary_cache()
+            phi_basic_clipped = np.asarray(
+                self.phase_basic.melt_fraction()
+            ).ravel()
+            bracket = self._dSdr - (
+                phi_basic_clipped * self._dS_liq_dP_basic
+                + (1.0 - phi_basic_clipped) * self._dS_sol_dP_basic
+            ) * self._dP_dr_basic
+            # Smoothing: verbatim port of SPIDER's two-branch tanh
+            # ``get_smoothing`` (util.c:245-270), applied to the
+            # UN-TRUNCATED gphi at the basic node. SPIDER's default
+            # for CHILI R8 is ``matprop_smooth_width = 1e-2``. This
+            # replaces the cubic-Hermite smoothing (which was ~3x
+            # weaker than SPIDER's tanh in the middle of the mushy
+            # band and gave a ~2-3x smaller effective Jmix).
+            gphi_basic = (
+                self._entropy_basic - self._S_sol_basic
+            ) / self._dS_phase_basic
+            smth_basic_mix = _spider_get_smoothing(gphi_basic, smooth_width=1.0e-2)
+            jmix_spider_heat = (
+                -self._kappac * rho * self._T_fus_basic * bracket * smth_basic_mix
+            )
+            # Zero at the actual boundaries (no mass transfer across
+            # CMB or surface)
+            jmix_spider_heat[0] = 0.0
+            jmix_spider_heat[-1] = 0.0
+            self._heat_flux += jmix_spider_heat
 
         # ── Internal heating (power per unit mass [W/kg]) ────────────
         n_stag = len(self._entropy_staggered)

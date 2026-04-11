@@ -96,7 +96,9 @@ class Mesh:
                 match SPIDER, since rho_avg was also computed without
                 4pi (from staggered_effective_density * delta_r^3).
                 """
-                M_shell_4pi = float(self.eos.get_mass_within_radii(np.array([r])))
+                M_shell_4pi = self.eos.get_mass_within_radii(
+                    np.array([r])
+                ).item()
                 M_shell = M_shell_4pi / (4.0 * np.pi)
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0/3.0)
 
@@ -194,10 +196,10 @@ class Mesh:
         # (rho * delta_r^3) is inconsistent because the 4pi/3
         # factors don't cancel between the volume elements and
         # the effective density definition.
-        M_4pi = float(
+        M_4pi = (
             self.eos.get_mass_within_radii(np.array([[r_surf]]))
             - self.eos.get_mass_within_radii(np.array([[r_core]]))
-        )
+        ).item()
         M_no4pi = M_4pi / (4.0 * np.pi)
         mantle_volume_no4pi = (np.power(r_surf, 3.0) - np.power(r_core, 3.0)) / 3.0
         mantle_avg_density = M_no4pi / mantle_volume_no4pi
