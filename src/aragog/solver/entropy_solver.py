@@ -1052,14 +1052,12 @@ class EntropySolver:
             atol_scale = 10.0
             max_step = np.inf
 
-        # Gradient mode: tighten max_step when the CMB cell is near
-        # the liquidus. The liquidus-crossing event stops the solver
-        # at the FIRST crossing, but subsequent coupling steps start
-        # right at the threshold. Without tight max_step, the BDF
-        # overshoots the mushy zone in one step. With max_step=1 yr,
-        # the BDF resolves the phase transition gradually (like CVode).
-        if self._core_bc == 'gradient' and phi0 > 0.01:
-            n_basic = self._n_stag + 1
+        # Tighten max_step when the CMB cell is near the liquidus.
+        # Applies to ALL core_bc modes. For value-based modes, S[0]
+        # is the direct state variable and atol controls its error,
+        # so max_step=1 yr combined with the liquidus event gives
+        # the BDF enough resolution to crystallize gradually.
+        if phi0 > 0.01:
             P_cmb = float(self._P_basic_flat[0])
             S_liq = float(self.entropy_eos.liquidus_entropy(
                 np.array([P_cmb])).item())
@@ -1067,9 +1065,7 @@ class EntropySolver:
                 np.array([P_cmb])).item())
             S0_block_cmb = float(S0_block[0])
             margin = S0_block_cmb - S_liq
-            if margin < 50.0:
-                max_step = 1.0
-            elif S0_block_cmb < S_liq and S0_block_cmb > S_sol:
+            if margin < 50.0 or (S0_block_cmb < S_liq and S0_block_cmb > S_sol):
                 max_step = 1.0
 
         atol = atol_base * atol_scale
@@ -1107,21 +1103,17 @@ class EntropySolver:
         else:
             solve_atol = atol
 
-        # Liquidus-crossing event for gradient mode. Stops the BDF when
-        # the bottom staggered cell's reconstructed entropy drops below
-        # the liquidus (onset of crystallization). Without this, scipy
-        # BDF takes a step large enough to skip from fully liquid
-        # (S > S_liquidus) to nearly solid (S ≈ S_solidus) at the CMB
-        # cell in one internal step. The event forces the solver to stop
-        # at the liquidus crossing so subsequent coupling steps resolve
-        # the mushy zone transition gradually.
+        # Liquidus-crossing event. Stops the BDF when the bottom
+        # staggered cell's entropy drops below the liquidus. Works
+        # for both value-based and gradient-based formulations.
         events = None
+        P_cmb = float(self._P_basic_flat[0])
+        S_liquidus_cmb = float(self.entropy_eos.liquidus_entropy(
+            np.array([P_cmb])
+        ).item())
+
         if self._core_bc == 'gradient':
             n_basic = self._n_stag + 1
-            P_cmb = float(self._P_basic_flat[0])
-            S_liquidus_cmb = float(self.entropy_eos.liquidus_entropy(
-                np.array([P_cmb])
-            ).item())
             dr_stag = np.diff(self._r_stag_flat)
 
             def _liquidus_event(t, state_vec):
@@ -1131,10 +1123,13 @@ class EntropySolver:
                 for i in range(len(dr_stag) - 1, -1, -1):
                     S_stag_0 -= dSdr[i + 1] * dr_stag[i]
                 return S_stag_0 - S_liquidus_cmb
+        else:
+            def _liquidus_event(t, state_vec):
+                return state_vec[0] - S_liquidus_cmb
 
-            _liquidus_event.terminal = True
-            _liquidus_event.direction = -1.0
-            events = [_liquidus_event]
+        _liquidus_event.terminal = True
+        _liquidus_event.direction = -1.0
+        events = [_liquidus_event]
 
         self._solution = solve_ivp(
             self.dSdt,
