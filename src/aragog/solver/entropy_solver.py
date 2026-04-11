@@ -1065,7 +1065,7 @@ class EntropySolver:
                 np.array([P_cmb])).item())
             S0_block_cmb = float(S0_block[0])
             margin = S0_block_cmb - S_liq
-            if margin < 50.0 or (S0_block_cmb < S_liq and S0_block_cmb > S_sol):
+            if margin < 200.0 or (S0_block_cmb < S_liq and S0_block_cmb > S_sol):
                 max_step = 1.0
 
         atol = atol_base * atol_scale
