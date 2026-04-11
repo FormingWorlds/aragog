@@ -153,9 +153,27 @@ class EntropyState:
         self.phase_basic.set_entropy(self._entropy_basic)
         self.phase_basic.update()
 
-        # Melt fraction gradient for gravitational separation
-        phi = np.asarray(self.phase_staggered.melt_fraction()).ravel()
-        self._dphidr = mesh.d_dr_at_basic_nodes(phi).ravel()
+        # Melt-fraction gradient for gravitational separation and mixing.
+        #
+        # The mixing flux (rho * kappac * (-dphi/dr) * L) must cancel
+        # the convective flux (rho * T * kappah * (-dS/dr)) at every
+        # node when kappac = kappah. This requires dphi/dr = dS/dr /
+        # (S_liq - S_sol), which holds only when phi is the UN-TRUNCATED
+        # lever-rule fraction gphi = (S - S_sol) / (S_liq - S_sol).
+        # The clamped melt fraction (phi in [0,1]) truncates gphi to 1
+        # in pure-liquid cells and to 0 in pure-solid cells, breaking
+        # the cancellation at the crystallisation front: the clamped
+        # gradient is ~50% of the un-truncated gradient when one cell
+        # is liquid and the adjacent cell is mushy. The resulting
+        # uncancelled convective flux drives a positive feedback that
+        # solidifies the CMB cell 30x faster than SPIDER.
+        P_stag = np.asarray(self.phase_staggered.pressure).ravel()
+        eos = self.phase_staggered._eos
+        S_sol = np.asarray(eos.solidus_entropy(P_stag)).ravel()
+        S_liq = np.asarray(eos.liquidus_entropy(P_stag)).ravel()
+        dS_phase = np.maximum(S_liq - S_sol, 1.0)
+        gphi = (S - S_sol) / dS_phase
+        self._dphidr = mesh.d_dr_at_basic_nodes(gphi).ravel()
 
         # ── MLT from entropy gradient ────────────────────────────────
         # Convection is unstable when dS/dr < 0 (entropy decreasing outward).
