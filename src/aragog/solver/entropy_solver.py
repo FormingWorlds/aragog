@@ -1091,32 +1091,34 @@ class EntropySolver:
         else:
             solve_atol = atol
 
-        # Solidus-crossing event for gradient mode. Stops the BDF when
+        # Liquidus-crossing event for gradient mode. Stops the BDF when
         # the bottom staggered cell's reconstructed entropy drops below
-        # the solidus, preventing the solver from overshooting the phase
-        # transition in one step. Without this, scipy BDF can take a
-        # step large enough to skip from fully liquid (phi=1) to fully
-        # solid (phi=0) at the CMB cell.
+        # the liquidus (onset of crystallization). Without this, scipy
+        # BDF takes a step large enough to skip from fully liquid
+        # (S > S_liquidus) to nearly solid (S ≈ S_solidus) at the CMB
+        # cell in one internal step. The event forces the solver to stop
+        # at the liquidus crossing so subsequent coupling steps resolve
+        # the mushy zone transition gradually.
         events = None
         if self._core_bc == 'gradient':
             n_basic = self._n_stag + 1
             P_cmb = float(self._P_basic_flat[0])
-            S_solidus_cmb = float(self.entropy_eos.solidus_entropy(
+            S_liquidus_cmb = float(self.entropy_eos.liquidus_entropy(
                 np.array([P_cmb])
             ).item())
             dr_stag = np.diff(self._r_stag_flat)
 
-            def _solidus_event(t, state_vec):
+            def _liquidus_event(t, state_vec):
                 dSdr = state_vec[:n_basic]
                 S_surf = float(state_vec[n_basic])
                 S_stag_0 = S_surf
                 for i in range(len(dr_stag) - 1, -1, -1):
                     S_stag_0 -= dSdr[i + 1] * dr_stag[i]
-                return S_stag_0 - S_solidus_cmb
+                return S_stag_0 - S_liquidus_cmb
 
-            _solidus_event.terminal = True
-            _solidus_event.direction = -1.0  # trigger on crossing from above
-            events = [_solidus_event]
+            _liquidus_event.terminal = True
+            _liquidus_event.direction = -1.0
+            events = [_liquidus_event]
 
         self._solution = solve_ivp(
             self.dSdt,
@@ -1148,13 +1150,13 @@ class EntropySolver:
             logger.info('EntropySolver: integration completed successfully.')
             self.stop_early = False
         elif self._solution.status == 1:
-            # Termination event (solidus crossing). Integration succeeded
-            # up to the event time. Not an error.
+            # Termination event (liquidus crossing at CMB cell).
+            # Integration succeeded up to the event time.
             t_event = self._solution.t[-1]
             logger.info(
-                'EntropySolver: solidus-crossing event at t=%.2e yr '
+                'EntropySolver: liquidus-crossing event at t=%.2e yr '
                 '(stopped %.1f yr before end_time). Bottom cell reached '
-                'the solidus; PROTEUS will re-step from here.',
+                'onset of crystallization.',
                 t_event, end_time - t_event,
             )
             self.stop_early = False
