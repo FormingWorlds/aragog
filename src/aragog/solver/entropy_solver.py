@@ -377,6 +377,7 @@ class EntropySolver:
             core_bc = getattr(self.parameters.boundary_conditions,
                               'core_bc', 'quasi_steady')
             self._core_bc = core_bc
+        logger.debug('set_initial_entropy: core_bc=%r, n_stag=%d', core_bc, n_stag)
 
         if core_bc == 'energy_balance':
             # Path A SPIDER bit-parity core BC.
@@ -1045,17 +1046,32 @@ class EntropySolver:
             phi0 = 1.0
 
         if phi0 > 0.01:
-            # Crystallization active: keep tight atol to resolve the
-            # mushy-zone entropy evolution accurately. Limit BDF
-            # internal step size to prevent spanning the phase
-            # transition in one step.
             atol_scale = 1.0
             max_step = 100.0  # years
         else:
-            # Fully solid: relax atol for the conduction-only tail
-            # (10x, not the previous 100x)
             atol_scale = 10.0
             max_step = np.inf
+
+        # Gradient mode: tighten max_step when the CMB cell is near
+        # the liquidus. The liquidus-crossing event stops the solver
+        # at the FIRST crossing, but subsequent coupling steps start
+        # right at the threshold. Without tight max_step, the BDF
+        # overshoots the mushy zone in one step. With max_step=1 yr,
+        # the BDF resolves the phase transition gradually (like CVode).
+        if self._core_bc == 'gradient' and phi0 > 0.01:
+            n_basic = self._n_stag + 1
+            P_cmb = float(self._P_basic_flat[0])
+            S_liq = float(self.entropy_eos.liquidus_entropy(
+                np.array([P_cmb])).item())
+            S_sol = float(self.entropy_eos.solidus_entropy(
+                np.array([P_cmb])).item())
+            S0_block_cmb = float(S0_block[0])
+            margin = S0_block_cmb - S_liq
+            if margin < 50.0:
+                max_step = 1.0
+            elif S0_block_cmb < S_liq and S0_block_cmb > S_sol:
+                max_step = 1.0
+
         atol = atol_base * atol_scale
 
         # Step 1C (LSODA dispatch) was REVERTED 2026-04-09 23:11 CEST.
