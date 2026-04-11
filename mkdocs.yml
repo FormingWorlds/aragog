@@ -146,7 +146,7 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          paths: [src]
+          paths: [aragog]
           inventories:
             - https://installer.readthedocs.io/en/stable/objects.inv
             - https://docs.python.org/3/objects.inv
