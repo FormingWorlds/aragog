@@ -32,6 +32,7 @@ nav:
           - Mesh: Reference/api/mesh.md
           - Interfaces: Reference/api/interfaces.md
           - Solver: Reference/api/solver.md
+          - Phases: Reference/api/phase.md
           - Utilities: Reference/api/utilities.md
           - Parser: Reference/api/parser.md
           - Data: Reference/api/data.md
