@@ -7,7 +7,7 @@
 
 ## About
 
-Aragog is a Python package that computes the 1-D interior dynamics of rocky mantles that are solid, liquid, or mixed phase. It is mostly a pure Python version of the [SPIDER code](https://github.com/djbower/spider) originally written in C albeit with some differences. Note that the atmosphere module in the original SPIDER code is now supported by a separate and more comprehensive Python package Atmodeller.
+Aragog is a Python package that computes the 1-D interior dynamics of rocky mantles that are solid, liquid, or mixed phase. It is mostly a pure Python version of the [SPIDER code](https://github.com/FormingWorlds/SPIDER) originally written in C albeit with some differences. Note that the atmosphere module in the original SPIDER code is now supported by a separate and more comprehensive Python package Atmodeller.
 
 Documentation: <https://proteus-framework.org/aragog>
 
