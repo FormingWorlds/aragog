@@ -11,9 +11,9 @@ Get to a **first successful model run** and a **NetCDF output and plots**.
 
 ## Assumptions
  - You're using Python 3.10+ (3.12 recommended).
- - You hava Aragog installed according to the [installation instructions](../How-to/installation.md).
+ - You have Aragog installed according to the [installation instructions](../How-to/installation.md).
 
-## 1. OPTIONAL: Choose a data directory
+## 1. Choose a data directory [optional]
 
 Aragog’s data helper uses `FWL_DATA` to decide where lookup tables/logs go. If you have not set this up yet, set it to something you control:
 
