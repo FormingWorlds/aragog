@@ -219,18 +219,13 @@ def _load_spider_ps_table(filepath: Path) -> dict:
     # transpose to get (n_P, n_S) for RegularGridInterpolator((P, S)).
     values = Q_all.reshape(n_S, n_P).T
 
-    # Use tensor-product cubic B-spline so the interpolated field
-    # has continuous first and second derivatives (C^2). The previous
-    # 'linear' setting was bilinear (C^0 only), which breaks SUNDIALS
-    # CVODE's higher-order BDF predictor: the predictor error estimate
-    # became dominated by derivative jumps at PALEOS grid cell
-    # boundaries rather than by polynomial truncation error, and the
-    # order selector got stuck at 1 (implicit Euler) — ~100x more
-    # internal steps than needed. Cubic is O(1) per lookup after
-    # the one-time setup, same per-call cost as linear.
+    # Bilinear interpolation (C^0), matching SPIDER's lookup method.
+    # Cubic (C^2) was tried but introduces sub-percent property offsets
+    # that break the Jconv-Jmix cancellation in the mushy zone, causing
+    # the CMB cell to drain. SPIDER uses bilinear for all P-S lookups.
     interp = RegularGridInterpolator(
         (P_unique, S_unique), values,
-        method='cubic', bounds_error=False, fill_value=np.nan,
+        method='linear', bounds_error=False, fill_value=np.nan,
     )
 
     return {
@@ -272,26 +267,24 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
     P = data[:, 0] * P_scale
     S = data[:, 1] * S_scale
 
-    # PchipInterpolator: monotone-preserving cubic Hermite (C^1).
-    # Same reason as the 2D EOS: 'linear' interp1d was C^0 and broke
-    # CVODE's higher-order BDF predictor. PCHIP avoids the overshoot
-    # that a plain cubic spline can produce on phase-boundary curves
-    # (which need to stay monotone in P). Edge handling: extrapolate
-    # linearly outside [P[0], P[-1]] via the `extrapolate=True`
-    # default + a wrapper that clamps to the endpoints so the old
-    # `fill_value=(S[0], S[-1])` behaviour is preserved at the
-    # boundaries of the P-S table.
-    from scipy.interpolate import PchipInterpolator
-    _pchip = PchipInterpolator(P, S, extrapolate=False)
-    _dpchip = _pchip.derivative(1)
-    S_lo, S_hi, P_lo, P_hi = float(S[0]), float(S[-1]), float(P[0]), float(P[-1])
+    # Linear interpolation matching SPIDER's 1D phase boundary lookup.
+    # PchipInterpolator (C^1 monotone cubic Hermite) was tried but its
+    # sub-percent offsets at phase boundaries compound into the Jconv-Jmix
+    # cancellation failure that drains the CMB cell. SPIDER uses plain
+    # linear interpolation for solidus/liquidus S(P).
+    from scipy.interpolate import interp1d
+    _lin = interp1d(P, S, kind='linear', bounds_error=False,
+                    fill_value=(float(S[0]), float(S[-1])))
+
+    # Finite-difference derivative for dS/dP (matches linear segments).
+    _dSdP = np.gradient(S, P)
+    _dlin = interp1d(P, _dSdP, kind='linear', bounds_error=False,
+                     fill_value=(0.0, 0.0))
 
     def interp(Pq):
-        Pq = np.asarray(Pq, dtype=float)
-        out = _pchip(Pq)
-        out = np.where(np.isnan(out) & (Pq < P_lo), S_lo, out)
-        out = np.where(np.isnan(out) & (Pq > P_hi), S_hi, out)
-        return out
+        Pq_arr = np.asarray(Pq, dtype=float)
+        out = np.asarray(_lin(Pq_arr), dtype=float)
+        return out.reshape(Pq_arr.shape)
 
     def dinterp(Pq):
         """dS/dP at the given pressure(s), in J/(kg·K·Pa).
@@ -299,9 +292,9 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
         Outside the tabulated range, falls back to zero (the endpoint
         entropy is clamped by ``interp`` so its derivative is zero).
         """
-        Pq = np.asarray(Pq, dtype=float)
-        out = _dpchip(Pq)
-        return np.where(np.isnan(out), 0.0, out)
+        Pq_arr = np.asarray(Pq, dtype=float)
+        out = np.asarray(_dlin(Pq_arr), dtype=float)
+        return out.reshape(Pq_arr.shape)
 
     return {
         'P': P, 'S': S, 'interp': interp, 'dinterp': dinterp,

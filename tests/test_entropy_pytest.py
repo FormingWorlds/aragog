@@ -18,6 +18,11 @@ EOS_DIR = Path(os.environ.get(
     '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
 ))
 
+
+def _scalar(x) -> float:
+    """Convert a numpy array or scalar to a Python float (numpy 2.4 safe)."""
+    return np.asarray(x).item()
+
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
     reason=f'SPIDER P-S tables not found at {EOS_DIR}',
@@ -111,17 +116,17 @@ class TestEntropyEOS:
         formula that evaluated each table at the actual cell entropy.
         """
         P = np.array([50e9])
-        S_sol = float(entropy_eos.solidus_entropy(P))
-        S_liq = float(entropy_eos.liquidus_entropy(P))
+        S_sol = _scalar(entropy_eos.solidus_entropy(P))
+        S_liq = _scalar(entropy_eos.liquidus_entropy(P))
         S_mid = np.array([0.5 * (S_sol + S_liq)])  # phi = 0.5
 
-        T_sol = float(entropy_eos._lookup_at_phase_boundary(
+        T_sol = _scalar(entropy_eos._lookup_at_phase_boundary(
             'temperature', P, 'solid'))
-        T_liq = float(entropy_eos._lookup_at_phase_boundary(
+        T_liq = _scalar(entropy_eos._lookup_at_phase_boundary(
             'temperature', P, 'melt'))
         T_expected = 0.5 * T_sol + 0.5 * T_liq
 
-        T_actual = float(entropy_eos.temperature(P, S_mid))
+        T_actual = _scalar(entropy_eos.temperature(P, S_mid))
         assert T_actual == pytest.approx(T_expected, rel=1e-6), (
             f'Lever Rule violated: T={T_actual:.1f} K, '
             f'expected 0.5*{T_sol:.1f} + 0.5*{T_liq:.1f} = {T_expected:.1f} K'
@@ -131,13 +136,13 @@ class TestEntropyEOS:
         """Below the solidus, T evaluates the solid table at the actual S,
         not at S_solidus. Above the liquidus, same for the melt table."""
         P = np.array([50e9])
-        S_sol = float(entropy_eos.solidus_entropy(P))
-        S_liq = float(entropy_eos.liquidus_entropy(P))
+        S_sol = _scalar(entropy_eos.solidus_entropy(P))
+        S_liq = _scalar(entropy_eos.liquidus_entropy(P))
 
         # Pure solid: T at a colder S must be lower than T at solidus
         S_cold = np.array([S_sol - 500.0])
-        T_cold = float(entropy_eos.temperature(P, S_cold))
-        T_at_sol = float(entropy_eos.temperature(P, np.array([S_sol])))
+        T_cold = _scalar(entropy_eos.temperature(P, S_cold))
+        T_at_sol = _scalar(entropy_eos.temperature(P, np.array([S_sol])))
         assert T_cold < T_at_sol, (
             f'Pure solid: T({S_cold[0]:.0f}) = {T_cold:.0f} K should be '
             f'< T({S_sol:.0f}) = {T_at_sol:.0f} K'
@@ -145,8 +150,8 @@ class TestEntropyEOS:
 
         # Pure melt: T at a hotter S must be higher than T at liquidus
         S_hot = np.array([S_liq + 500.0])
-        T_hot = float(entropy_eos.temperature(P, S_hot))
-        T_at_liq = float(entropy_eos.temperature(P, np.array([S_liq])))
+        T_hot = _scalar(entropy_eos.temperature(P, S_hot))
+        T_at_liq = _scalar(entropy_eos.temperature(P, np.array([S_liq])))
         assert T_hot > T_at_liq, (
             f'Pure melt: T({S_hot[0]:.0f}) = {T_hot:.0f} K should be '
             f'> T({S_liq:.0f}) = {T_at_liq:.0f} K'
@@ -156,13 +161,13 @@ class TestEntropyEOS:
         """temperature_scalar and temperature must agree at mushy,
         solid, and melt points."""
         P = 50e9
-        S_sol = float(entropy_eos.solidus_entropy(np.array([P])))
-        S_liq = float(entropy_eos.liquidus_entropy(np.array([P])))
+        S_sol = _scalar(entropy_eos.solidus_entropy(np.array([P])))
+        S_liq = _scalar(entropy_eos.liquidus_entropy(np.array([P])))
 
         for label, S in [('solid', S_sol - 500.0),
                          ('mushy', 0.5 * (S_sol + S_liq)),
                          ('melt', S_liq + 500.0)]:
-            T_vec = float(entropy_eos.temperature(
+            T_vec = _scalar(entropy_eos.temperature(
                 np.array([P]), np.array([S])))
             T_sca = entropy_eos.temperature_scalar(P, S)
             assert T_sca == pytest.approx(T_vec, rel=1e-10), (
@@ -514,8 +519,8 @@ class TestJgravSmoothing:
         mesh, r_stag, r_basic, P_stag, P_basic = self._build_earth_mesh(15)
 
         P_CMB = P_stag[0]
-        S_liq_cmb = float(entropy_eos.liquidus_entropy(P_CMB))
-        S_liq_surf = float(entropy_eos.liquidus_entropy(P_stag[-1]))
+        S_liq_cmb = _scalar(entropy_eos.liquidus_entropy(P_CMB))
+        S_liq_surf = _scalar(entropy_eos.liquidus_entropy(P_stag[-1]))
         S_init = S_liq_cmb - 10.0
         # Sanity: pure liquid at the surface (the bug requires a
         # mushy bottom under a pure-liquid top).
@@ -561,7 +566,7 @@ class TestJgravSmoothing:
         # T_CMB must be far above the pre-fix ~500 K collapse value.
         # Loose bound: 1500 K. A cold solid at 135 GPa still exceeds
         # this; only the table-clipping artifact dropped this low.
-        T_cmb_final = float(entropy_eos.temperature(
+        T_cmb_final = _scalar(entropy_eos.temperature(
             P_stag[0], S_final[0]
         ))
         assert T_cmb_final > 1500.0, (
@@ -618,7 +623,7 @@ class TestJgravSmoothing:
         mesh, r_stag, r_basic, P_stag, P_basic = self._build_earth_mesh(15)
 
         P_CMB = P_stag[0]
-        S_liq_cmb = float(entropy_eos.liquidus_entropy(P_CMB))
+        S_liq_cmb = _scalar(entropy_eos.liquidus_entropy(P_CMB))
         # Start JUST above the CMB liquidus so both variants will
         # cool into the mushy zone but not fully crystallize.
         S_init = S_liq_cmb + 20.0
@@ -671,8 +676,8 @@ class TestJgravSmoothing:
         # catastrophic drain, no off-table entropy.
         assert S_on[0] > entropy_eos.S_min + 500.0
         assert S_off[0] > entropy_eos.S_min + 500.0
-        T_on = float(entropy_eos.temperature(P_CMB, S_on[0]))
-        T_off = float(entropy_eos.temperature(P_CMB, S_off[0]))
+        T_on = _scalar(entropy_eos.temperature(P_CMB, S_on[0]))
+        T_off = _scalar(entropy_eos.temperature(P_CMB, S_off[0]))
         assert T_on > 1500.0 and T_off > 1500.0, (
             f'CMB collapsed: T_on={T_on:.0f}, T_off={T_off:.0f}'
         )
@@ -695,7 +700,7 @@ class TestJgravSmoothing:
         mesh, r_stag, r_basic, P_stag, P_basic = self._build_earth_mesh(15)
 
         P_CMB = P_stag[0]
-        S_init = float(entropy_eos.liquidus_entropy(P_CMB)) - 10.0
+        S_init = _scalar(entropy_eos.liquidus_entropy(P_CMB)) - 10.0
         N = len(r_stag)
         S0 = np.full(N, S_init)
 
@@ -719,7 +724,7 @@ class TestJgravSmoothing:
         drained = False
         if sol.status == 0:
             S_final = sol.y[:, -1]
-            T_cmb = float(entropy_eos.temperature(P_CMB, S_final[0]))
+            T_cmb = _scalar(entropy_eos.temperature(P_CMB, S_final[0]))
             drained = (
                 T_cmb < 1500.0
                 or S_final.min() < entropy_eos.S_min + 500.0
@@ -944,8 +949,8 @@ class TestLatentBlendCp:
         blend reduces to the linear lookup.
         """
         P = np.array([100e9, 100e9])
-        S_sol = float(entropy_eos.solidus_entropy(P[0]))
-        S_liq = float(entropy_eos.liquidus_entropy(P[0]))
+        S_sol = _scalar(entropy_eos.solidus_entropy(P[0]))
+        S_liq = _scalar(entropy_eos.liquidus_entropy(P[0]))
         dS = S_liq - S_sol
         # 0.5*dS below solidus and 0.5*dS above liquidus → gphi = ±0.5
         S = np.array([S_sol - 0.5 * dS, S_liq + 0.5 * dS])
@@ -956,13 +961,13 @@ class TestLatentBlendCp:
     def test_latent_blend_exceeds_linear_in_mushy(self, entropy_eos):
         """In the deep mushy zone, latent blend should exceed linear."""
         P = 100e9
-        S_sol = float(entropy_eos.solidus_entropy(P))
-        S_liq = float(entropy_eos.liquidus_entropy(P))
+        S_sol = _scalar(entropy_eos.solidus_entropy(P))
+        S_liq = _scalar(entropy_eos.liquidus_entropy(P))
         S_mid = 0.5 * (S_sol + S_liq)  # gphi = 0.5
 
-        Cp_linear = float(entropy_eos.heat_capacity(np.asarray([P]),
+        Cp_linear = _scalar(entropy_eos.heat_capacity(np.asarray([P]),
                                                     np.asarray([S_mid])))
-        Cp_latent = float(entropy_eos.heat_capacity_latent_blend(
+        Cp_latent = _scalar(entropy_eos.heat_capacity_latent_blend(
             np.asarray([P]), np.asarray([S_mid])))
 
         # Latent blend should be larger than linear by at least 50 %
@@ -982,15 +987,15 @@ class TestLatentBlendCp:
         but well inside the mushy zone width.
         """
         P = np.array([50e9])
-        S_sol = float(entropy_eos.solidus_entropy(P[0]))
-        S_liq = float(entropy_eos.liquidus_entropy(P[0]))
+        S_sol = _scalar(entropy_eos.solidus_entropy(P[0]))
+        S_liq = _scalar(entropy_eos.liquidus_entropy(P[0]))
         dS = S_liq - S_sol
         # Sample two close points in the rising-shoulder region of the
         # smoothing bell, where Cp varies smoothly but rapidly.
         eps = 0.001 * dS  # well within the smoothing width
-        Cp_below = float(entropy_eos.heat_capacity_latent_blend(
+        Cp_below = _scalar(entropy_eos.heat_capacity_latent_blend(
             P, np.array([S_sol + 0.05 * dS - eps])))
-        Cp_above = float(entropy_eos.heat_capacity_latent_blend(
+        Cp_above = _scalar(entropy_eos.heat_capacity_latent_blend(
             P, np.array([S_sol + 0.05 * dS + eps])))
         # Adjacent samples differ by less than 5 % (smooth function)
         rel_jump = abs(Cp_above - Cp_below) / max(abs(Cp_below), 1.0)
@@ -1005,8 +1010,8 @@ class TestLatentBlendCp:
         from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
         P = np.array([100e9])
-        S_sol = float(entropy_eos.solidus_entropy(P[0]))
-        S_liq = float(entropy_eos.liquidus_entropy(P[0]))
+        S_sol = _scalar(entropy_eos.solidus_entropy(P[0]))
+        S_liq = _scalar(entropy_eos.liquidus_entropy(P[0]))
         S_mid = 0.5 * (S_sol + S_liq)
 
         phase_linear = EntropyPhaseEvaluator(
