@@ -51,7 +51,7 @@ except ImportError:  # pragma: no cover
 # "CVODE BDF predictor problem" (fixed by Radau) from "Aragog RHS
 # intrinsic stiffness" (Radau also struggles). Flip to False once the
 # investigation concludes.
-_FORCE_RADAU = True
+_FORCE_RADAU = True  # overridden at runtime by solver_method config
 
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
 from scipy import constants as _sp_constants
@@ -1336,7 +1336,15 @@ class EntropySolver:
         # transition. CVODE's C implementation handles it cleanly.
         # Scipy solve_ivp is kept as a fallback only if CVODE is not
         # available (e.g., scikits.odes import fails).
-        if _CVODE_AVAILABLE and not _FORCE_RADAU:
+        solver_method = getattr(
+            self.parameters.energy, 'solver_method', 'radau'
+        )
+        use_cvode = (
+            solver_method == 'cvode'
+            and _CVODE_AVAILABLE
+        )
+        if use_cvode:
+            logger.info('EntropySolver: using CVODE (solver_method=cvode)')
             self._solution = self._solve_cvode(
                 start_time=start_time,
                 end_time=end_time,
@@ -1346,18 +1354,13 @@ class EntropySolver:
                 max_step=max_step,
             )
         else:
-            if _FORCE_RADAU:
-                logger.info('EntropySolver: _FORCE_RADAU active, using scipy Radau')
-            else:
-                logger.warning(
-                    'scikits.odes not available; falling back to scipy Radau. '
-                    'Install with: conda install -c conda-forge scikits.odes'
-                )
+            method = 'Radau' if solver_method != 'bdf' else 'BDF'
+            logger.info('EntropySolver: using scipy %s', method)
             self._solution = solve_ivp(
                 self.dSdt,
                 (start_time, end_time),
                 self._S0,
-                method='Radau',
+                method=method,
                 vectorized=False,
                 dense_output=True,
                 atol=solve_atol,

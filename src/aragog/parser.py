@@ -210,6 +210,9 @@ class _EnergyParameters:
     # (full-strength fluxes across the mushy zone) but requires all material
     # properties to match SPIDER to <0.01%.
     phase_smoothing: str = 'cubic_hermite'
+    # ODE solver method: 'radau' (scipy Radau, default), 'cvode' (SUNDIALS
+    # CVODE via scikits.odes, same solver SPIDER uses), 'bdf' (scipy BDF).
+    solver_method: str = 'radau'
 
     tidal_array: npt.NDArray = field(default_factory=lambda:np.array([0.0], dtype=float))
 
