@@ -314,7 +314,37 @@ class EntropyState:
         if dSdr is not None:
             self._dSdr = np.asarray(dSdr).ravel()
         else:
-            self._dSdr = mesh.d_dr_at_basic_nodes(S).ravel()
+            # SPIDER-parity entropy gradient at basic nodes.
+            #
+            # Replaces Aragog's ``mesh.d_dr_at_basic_nodes(S)`` which
+            # used a dense transform matrix with a 3-point second-order
+            # boundary extrapolation scaled by dxi/dr. That stencil
+            # overshoots catastrophically at the CMB when the
+            # crystallisation front creates a kink in the staggered S
+            # profile: the extrapolated dS/dr[0] reached 10^7x the
+            # physically correct value, producing a 2.6e10 W/m^2 Jtot
+            # spike at the CMB basic node that drained the bottom
+            # staggered cell's entropy to the solidus in one coupling
+            # step.
+            #
+            # SPIDER computes dSdxi as a simple centered difference in
+            # UNIFORM xi-space between adjacent staggered cells
+            # (ic.c:443-446), then applies the chain rule dS/dr =
+            # dSdxi * dxi/dr. At boundaries SPIDER copies the nearest
+            # interior value (ic.c:450: ``arr_dSdxi_b[CMB] =
+            # arr_dSdxi_b[CMB-1]``). The uniform-xi spacing makes the
+            # denominator constant, bounding the gradient to the actual
+            # inter-cell entropy difference regardless of the spatial
+            # mesh non-uniformity.
+            xi_s = np.asarray(mesh.staggered.mass_radii).ravel()
+            dxi_s = xi_s[1:] - xi_s[:-1]
+            n_basic = mesh.basic.radii.size
+            dSdxi = np.zeros(n_basic)
+            dSdxi[1:-1] = (S[1:] - S[:-1]) / dxi_s
+            dSdxi[0] = dSdxi[1]       # CMB: copy from 1st interior
+            dSdxi[-1] = dSdxi[-2]     # surface: copy from 1st interior
+            dxidr = np.asarray(mesh.dxidr).ravel()
+            self._dSdr = dSdxi * dxidr
 
         # Path A: override the boundary entropy gradient with the
         # state-vector value. This must happen BEFORE the phase_basic
