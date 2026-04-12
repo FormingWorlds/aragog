@@ -341,8 +341,19 @@ class EntropyState:
             n_basic = mesh.basic.radii.size
             dSdxi = np.zeros(n_basic)
             dSdxi[1:-1] = (S[1:] - S[:-1]) / dxi_s
-            dSdxi[0] = dSdxi[1]       # CMB: copy from 1st interior
-            dSdxi[-1] = dSdxi[-2]     # surface: copy from 1st interior
+            # Boundary values: SPIDER evolves dSdxi at the CMB and
+            # surface as state variables via the core energy balance
+            # ODE (bc.c:76, set_cmb_entropy_gradient_update). At the
+            # CMB, this drives dSdxi toward ~0 (core acts as a thermal
+            # reservoir in quasi-equilibrium). At t=33821 yr on CHILI
+            # R8 Earth, SPIDER's dSdxi[CMB] = -3.94e-12 while the
+            # first interior node has dSdxi = -6.99e-5 — 7 orders of
+            # magnitude larger. In Aragog's quasi_steady mode (no core
+            # energy balance ODE), we approximate this by setting the
+            # boundary gradients to zero, which is the steady-state
+            # limit of SPIDER's evolved boundary gradient.
+            dSdxi[0] = 0.0    # CMB: quasi-steady ≈ insulating BC
+            dSdxi[-1] = 0.0   # surface: managed by atmos coupling
             dxidr = np.asarray(mesh.dxidr).ravel()
             self._dSdr = dSdxi * dxidr
 

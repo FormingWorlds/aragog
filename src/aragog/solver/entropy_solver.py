@@ -196,19 +196,23 @@ class EntropySolver:
 
         # CMB BC mode (set here from config so dSdt can dispatch even
         # before set_initial_entropy is called):
-        #   'quasi_steady' = production default (v3 alpha-factor BC),
-        #     gives -19 % T_core gap to SPIDER on R8 CHILI but is
-        #     stable and well-tested. See parent memory file for the
-        #     known limitation.
+        #   'energy_balance' = SPIDER-parity (default since 2026-04-12).
+        #     State = [S_0..S_{N-1}, dSdr_cmb]: the CMB entropy gradient
+        #     is an ODE state variable evolved by the core energy balance
+        #     (bc.c:76-131). This drives dSdr_cmb toward ~0 as the core
+        #     tracks the mantle, matching SPIDER's behaviour where
+        #     dSdxi_CMB ~ 4e-12 at t=33 kyr on CHILI R8 Earth. Prevents
+        #     the CMB cell drain that occurs in quasi_steady mode (where
+        #     the FD-derived dSdr[0] overshoots at the crystallisation
+        #     front, spiking Jtot[0] to ~2.6e10 W/m^2).
+        #   'quasi_steady' = legacy (v3 alpha-factor BC). Gives -18%
+        #     T_core gap to SPIDER due to the CMB cell drain. Kept for
+        #     backward compatibility.
         #   'bower2018' = EXPERIMENTAL: T_core as ODE state variable
-        #     with conduction-only F_cmb. The conductive flux is
-        #     ~5 OOM smaller than the actual physical CMB heat flow
-        #     (which is dominated by convective coupling, not pure
-        #     conduction). Result: T_core stays too hot. Needs a
-        #     thermal-boundary-layer parameterization to be useful.
-        #     Kept in the codebase for follow-up work.
+        #     with conduction-only F_cmb. Needs thermal-boundary-layer
+        #     parameterization to be useful. Kept for follow-up work.
         self._core_bc = getattr(
-            self.parameters.boundary_conditions, 'core_bc', 'quasi_steady'
+            self.parameters.boundary_conditions, 'core_bc', 'energy_balance'
         )
         # Gravity: try mesh EOS attribute first, then mesh settings
         g = abs(float(getattr(
