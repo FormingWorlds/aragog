@@ -154,6 +154,7 @@ class EntropyState:
         eddy_diffusivity_chemical: float = 1.0,
         kappah_floor: float = 0.0,
         bottom_up_grav_sep: bool = True,
+        phase_smoothing: str = 'cubic_hermite',
     ):
         self._evaluator = evaluator
         self.phase_staggered = phase_staggered
@@ -169,6 +170,20 @@ class EntropyState:
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
         self._bottom_up_grav_sep = bool(bottom_up_grav_sep)
+        # Phase-boundary smoothing method for Jgrav and Jmix.
+        # 'cubic_hermite': 16*gphi^2*(1-gphi)^2. Provides intermediate-phi
+        #   damping (smth=0.32 at gphi=0.83) that prevents the CMB drain
+        #   when residual EOS differences exist. Default until full bit-
+        #   parity with SPIDER is achieved.
+        # 'tanh': SPIDER's get_smoothing(matprop_smooth_width=0.01, gphi).
+        #   Gives smth=1.0 across [0.05, 0.95]. Correct for SPIDER parity
+        #   once all material properties match to <0.01%.
+        if phase_smoothing not in ('cubic_hermite', 'tanh'):
+            raise ValueError(
+                f"phase_smoothing must be 'cubic_hermite' or 'tanh', "
+                f"got {phase_smoothing!r}"
+            )
+        self._phase_smoothing = phase_smoothing
 
         mesh = evaluator.mesh
         n_basic = mesh.basic.radii.size
@@ -558,25 +573,33 @@ class EntropyState:
             # staggered-cell entropy against the solidus/liquidus
             # entropies.
             #
-            # SPIDER-parity tanh smoothing (energy.c:523-533). Uses the
-            # same ``_spider_get_smoothing(gphi, smooth_width)`` as the
-            # Jmix term below (energy.c:322). Both Jgrav and Jmix MUST
-            # use the same smoothing function so the self-consistent
-            # flux balance (Jconv + Jmix + Jgrav*L = Jtot ~ O(1e3))
-            # is maintained. The earlier cubic Hermite
-            # ``16*gphi^2*(1-gphi)^2`` had the right zero behaviour at
-            # pure phases but gave smth=0.32 at gphi=0.83 where SPIDER's
-            # tanh gives smth=1.0 — a 3x mismatch that broke the flux
-            # balance and drained the CMB cell ~5 kyr after the alpha
-            # fix eliminated the other Jtot offset sources.
+            # Phase-boundary smoothing for gravitational separation.
+            # Uses the same cubic Hermite ``16*gphi^2*(1-gphi)^2`` as
+            # the Jmix term below. Both Jgrav and Jmix MUST use the
+            # same smoothing function so their relative balance is
+            # internally consistent.
+            #
+            # SPIDER uses a tanh (get_smoothing, width=0.01) for both,
+            # which gives smth=1.0 across most of [0.05, 0.95]. This
+            # works in SPIDER because all material properties match
+            # exactly, producing a precise Jtot cancellation. In Aragog,
+            # residual EOS interpolation differences create a small Jtot
+            # imbalance that the full-strength tanh amplifies into a
+            # CMB cell drain. The cubic Hermite provides intermediate-
+            # phi damping (smth=0.32 at gphi=0.83 vs tanh=1.0) that
+            # gives Aragog the margin it needs. Once all audit items
+            # (1.1, 1.2) are resolved and material properties match
+            # SPIDER to 0.01%, the smoothing can be switched to tanh.
             if self._bottom_up_grav_sep:
                 gphi_stag = (
                     self._entropy_staggered - self._S_sol_stag
                 ) / self._dS_phase_stag
 
-                smth_stag = _spider_get_smoothing(
-                    gphi_stag, smooth_width=1.0e-2
-                )
+                if self._phase_smoothing == 'tanh':
+                    smth_stag = _spider_get_smoothing(gphi_stag, smooth_width=1.0e-2)
+                else:
+                    gphi_clip = _smooth_clip(gphi_stag, 0.0, 1.0, eps=1.0e-3)
+                    smth_stag = 16.0 * gphi_clip**2 * (1.0 - gphi_clip) ** 2
 
                 # Bottom-up: basic node i (interface between staggered
                 # i-1 and i) sees the smoothing of staggered i-1 (the
@@ -628,17 +651,16 @@ class EntropyState:
                 phi_basic_clipped * self._dS_liq_dP_basic
                 + (1.0 - phi_basic_clipped) * self._dS_sol_dP_basic
             ) * self._dP_dr_basic
-            # Smoothing: verbatim port of SPIDER's two-branch tanh
-            # ``get_smoothing`` (util.c:245-270), applied to the
-            # UN-TRUNCATED gphi at the basic node. SPIDER's default
-            # for CHILI R8 is ``matprop_smooth_width = 1e-2``. This
-            # replaces the cubic-Hermite smoothing (which was ~3x
-            # weaker than SPIDER's tanh in the middle of the mushy
-            # band and gave a ~2-3x smaller effective Jmix).
+            # Smoothing: same method as Jgrav (controlled by
+            # self._phase_smoothing) for internal consistency.
             gphi_basic = (
                 self._entropy_basic - self._S_sol_basic
             ) / self._dS_phase_basic
-            smth_basic_mix = _spider_get_smoothing(gphi_basic, smooth_width=1.0e-2)
+            if self._phase_smoothing == 'tanh':
+                smth_basic_mix = _spider_get_smoothing(gphi_basic, smooth_width=1.0e-2)
+            else:
+                gphi_basic_clip = _smooth_clip(gphi_basic, 0.0, 1.0, eps=1.0e-3)
+                smth_basic_mix = 16.0 * gphi_basic_clip**2 * (1.0 - gphi_basic_clip) ** 2
             jmix_spider_heat = (
                 -self._kappac * rho * self._T_fus_basic * bracket * smth_basic_mix
             )

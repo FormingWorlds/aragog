@@ -204,6 +204,12 @@ class _EnergyParameters:
     # reproduces the pre-fix CMB drain at first crystallisation and is
     # only useful for regression tests.
     bottom_up_grav_sep: bool = True
+    # Phase-boundary smoothing for Jgrav and Jmix: 'cubic_hermite' or 'tanh'.
+    # 'cubic_hermite' provides intermediate-phi damping that prevents the CMB
+    # drain when residual EOS differences exist. 'tanh' matches SPIDER exactly
+    # (full-strength fluxes across the mushy zone) but requires all material
+    # properties to match SPIDER to <0.01%.
+    phase_smoothing: str = 'cubic_hermite'
 
     tidal_array: npt.NDArray = field(default_factory=lambda:np.array([0.0], dtype=float))
 
