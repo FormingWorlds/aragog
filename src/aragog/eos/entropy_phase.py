@@ -122,7 +122,12 @@ class EntropyPhaseEvaluator:
         else:
             self._heat_capacity = self._eos.heat_capacity(P, S)
         self._dTdPs_val = self._eos.dTdPs(P, S)
-        self._thermal_expansivity = self._eos.thermal_expansivity(P, S)
+        if self._cp_blend == 'latent':
+            self._thermal_expansivity = (
+                self._eos.thermal_expansivity_composite_blend(P, S)
+            )
+        else:
+            self._thermal_expansivity = self._eos.thermal_expansivity(P, S)
         self._melt_fraction = self._eos.melt_fraction(P, S)
 
         # Guard: clamp negative alpha to zero (can occur from EOS table

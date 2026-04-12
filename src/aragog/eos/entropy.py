@@ -718,6 +718,91 @@ class EntropyEOS:
 
         return smooth * Cp_mix + (1.0 - smooth) * Cp_pure
 
+    def thermal_expansivity_composite_blend(
+        self,
+        P: npt.NDArray | float,
+        S: npt.NDArray | float,
+        width: float = 0.01,
+    ) -> npt.NDArray:
+        """Composite two-phase thermal expansivity, matching SPIDER.
+
+        Mirrors SPIDER's ``eos_composite.c:246`` formula:
+
+            alpha_mix = (rho_solid - rho_melt) / (T_liq - T_sol) / rho
+
+        where ``rho`` is the harmonic-mean composite density. This
+        effective alpha captures the density change from the phase
+        transition (Clausius-Clapeyron contribution), which dominates
+        over the single-phase alpha by a factor of ~5 in the deep
+        mushy zone. Outside the mushy band the result reduces to the
+        pure-phase alpha from the P-S tables via tanh smoothing
+        (SPIDER ``eos_composite.c:279``).
+
+        Parameters
+        ----------
+        P : array or float
+            Pressure [Pa].
+        S : array or float
+            Entropy [J/kg/K].
+        width : float
+            Tanh smoothing width across the phase boundary.
+
+        Returns
+        -------
+        ndarray
+            Thermal expansivity [1/K].
+        """
+        P = np.asarray(P, dtype=float)
+        S = np.asarray(S, dtype=float)
+
+        # Phase-boundary quantities at this pressure
+        S_sol = np.asarray(self.solidus_entropy(P)).reshape(P.shape)
+        S_liq = np.asarray(self.liquidus_entropy(P)).reshape(P.shape)
+        T_sol = np.asarray(
+            self._lookup_at_phase_boundary('temperature', P, 'solid')
+        ).reshape(P.shape)
+        T_liq = np.asarray(
+            self._lookup_at_phase_boundary('temperature', P, 'melt')
+        ).reshape(P.shape)
+        rho_sol = np.asarray(
+            self._lookup_at_phase_boundary('density', P, 'solid')
+        ).reshape(P.shape)
+        rho_liq = np.asarray(
+            self._lookup_at_phase_boundary('density', P, 'melt')
+        ).reshape(P.shape)
+
+        # Composite density (harmonic mean, SPIDER eos_composite.c:236)
+        phi = self.melt_fraction(P, S)
+        inv_rho = (
+            phi / np.maximum(rho_liq, 1.0)
+            + (1.0 - phi) / np.maximum(rho_sol, 1.0)
+        )
+        rho_comp = 1.0 / np.maximum(inv_rho, 1e-30)
+
+        # Mixed-phase alpha (SPIDER eos_composite.c:246)
+        dT = T_liq - T_sol
+        safe_dT = np.where(np.abs(dT) > 1e-10, dT, 1e-10)
+        alpha_mix = (rho_sol - rho_liq) / safe_dT / rho_comp
+
+        # Pure-phase alpha from the linear-blend tables
+        alpha_pure = self._lookup_phase_weighted(
+            'thermal_exp', P, S
+        )
+
+        # SPIDER-parity tanh smoothing (same as heat_capacity_latent_blend)
+        dS = S_liq - S_sol
+        safe_dS = np.where(np.abs(dS) > 1e-10, dS, 1e-10)
+        gphi = (S - S_sol) / safe_dS
+
+        w = max(width, 1e-6)
+        smooth = np.where(
+            gphi > 0.5,
+            0.5 * (1.0 + np.tanh((1.0 - gphi) / w)),
+            0.5 * (1.0 + np.tanh(gphi / w)),
+        )
+
+        return smooth * alpha_mix + (1.0 - smooth) * alpha_pure
+
     def dTdPs(self, P: npt.NDArray | float,
               S: npt.NDArray | float) -> npt.NDArray:
         """Adiabatic temperature gradient dT/dP|_S (P, S) [K/Pa].
