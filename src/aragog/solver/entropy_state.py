@@ -558,38 +558,25 @@ class EntropyState:
             # staggered-cell entropy against the solidus/liquidus
             # entropies.
             #
-            # Instead of SPIDER's tanh smoothing, we use a clipped
-            # cubic Hermite `16 * gphi^2 * (1-gphi)^2`. Three reasons:
-            #   1. Identical zero behaviour at pure phases (gphi = 0
-            #      or gphi = 1 -> smth = 0), which is all that's
-            #      needed to prevent the drain.
-            #   2. Peaks at smth = 1 at gphi = 0.5, with maximum
-            #      derivative |smth'| = 2 (vs ~25 for the tanh at
-            #      matprop_smooth_width = 0.01). Bounded derivatives
-            #      everywhere are much gentler on scipy BDF's
-            #      finite-difference Jacobian approximation, which
-            #      lets PROTEUS take its full adaptive coupling
-            #      timestep through the mushy zone instead of
-            #      grinding.
-            #   3. Parameter-free: no matprop_smooth_width knob to
-            #      tune. SPIDER keeps that knob for its own solver.
+            # SPIDER-parity tanh smoothing (energy.c:523-533). Uses the
+            # same ``_spider_get_smoothing(gphi, smooth_width)`` as the
+            # Jmix term below (energy.c:322). Both Jgrav and Jmix MUST
+            # use the same smoothing function so the self-consistent
+            # flux balance (Jconv + Jmix + Jgrav*L = Jtot ~ O(1e3))
+            # is maintained. The earlier cubic Hermite
+            # ``16*gphi^2*(1-gphi)^2`` had the right zero behaviour at
+            # pure phases but gave smth=0.32 at gphi=0.83 where SPIDER's
+            # tanh gives smth=1.0 — a 3x mismatch that broke the flux
+            # balance and drained the CMB cell ~5 kyr after the alpha
+            # fix eliminated the other Jtot offset sources.
             if self._bottom_up_grav_sep:
-                # Reuse the phase-boundary cache populated in update().
-                # Same S_sol/S_liq/dS at staggered nodes, no repeat
-                # scipy interpolator calls in the BDF hot path.
                 gphi_stag = (
                     self._entropy_staggered - self._S_sol_stag
                 ) / self._dS_phase_stag
 
-                # Smooth-clipped cubic Hermite: 16 * gphi^2 * (1-gphi)^2
-                # on [0,1], smoothly approaching zero outside.
-                # smth(0)=0, smth(0.5)=1, smth(1)=0, continuous first
-                # derivative everywhere (including across the clip
-                # boundaries). The smooth clip replaces the non-
-                # differentiable np.clip so BDF's higher-order
-                # predictor sees a consistent RHS.
-                gphi_clip = _smooth_clip(gphi_stag, 0.0, 1.0, eps=1.0e-3)
-                smth_stag = 16.0 * gphi_clip**2 * (1.0 - gphi_clip) ** 2
+                smth_stag = _spider_get_smoothing(
+                    gphi_stag, smooth_width=1.0e-2
+                )
 
                 # Bottom-up: basic node i (interface between staggered
                 # i-1 and i) sees the smoothing of staggered i-1 (the
