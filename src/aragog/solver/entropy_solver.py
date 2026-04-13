@@ -60,6 +60,32 @@ SECS_PER_YEAR: float = _sp_constants.Julian_year
 logger = logging.getLogger(__name__)
 
 
+def _phase_prop_float(raw, default):
+    """Convert a phase-property config value to float.
+
+    Parameters
+    ----------
+    raw
+        Value from _PhaseParameters: a plain float (from PROTEUS) or
+        a string expression with an .eval() method (legacy .cfg parser).
+    default
+        Fallback if conversion fails entirely.  None means no fallback.
+
+    Returns
+    -------
+    float or None
+    """
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(raw.eval())
+    except Exception:
+        pass
+    return default
+
+
 @dataclass
 class SolverOutput:
     """Complete output from one EntropySolver integration step.
@@ -238,27 +264,22 @@ class EntropySolver:
             cp_blend=cp_blend,
         )
 
-        # Get viscosity from config
-        try:
-            phase_kwargs['viscosity_solid'] = float(self.parameters.phase_solid.viscosity.eval())
-        except Exception:
-            phase_kwargs['viscosity_solid'] = 1e21
-        try:
-            phase_kwargs['viscosity_liquid'] = float(self.parameters.phase_liquid.viscosity.eval())
-        except Exception:
-            phase_kwargs['viscosity_liquid'] = 1e-1
-
-        # Wire thermal conductivity from config
-        try:
-            phase_kwargs['thermal_conductivity_solid'] = float(
-                self.parameters.phase_solid.thermal_conductivity.eval())
-        except Exception:
-            pass  # use default 4.0 W/m/K
-        try:
-            phase_kwargs['thermal_conductivity_liquid'] = float(
-                self.parameters.phase_liquid.thermal_conductivity.eval())
-        except Exception:
-            pass  # use default 2.0 W/m/K
+        # Get viscosity and thermal conductivity from config.
+        # Values can be plain floats (from PROTEUS) or string expressions
+        # (from Aragog's legacy .cfg parser with .eval()).  Try float()
+        # first; fall back to .eval() for legacy strings.
+        phase_kwargs['viscosity_solid'] = _phase_prop_float(
+            self.parameters.phase_solid.viscosity, 1e21)
+        phase_kwargs['viscosity_liquid'] = _phase_prop_float(
+            self.parameters.phase_liquid.viscosity, 1e-1)
+        cond_s = _phase_prop_float(
+            self.parameters.phase_solid.thermal_conductivity, None)
+        if cond_s is not None:
+            phase_kwargs['thermal_conductivity_solid'] = cond_s
+        cond_l = _phase_prop_float(
+            self.parameters.phase_liquid.thermal_conductivity, None)
+        if cond_l is not None:
+            phase_kwargs['thermal_conductivity_liquid'] = cond_l
 
         phase_stag = EntropyPhaseEvaluator(
             gravitational_acceleration=g,
