@@ -337,6 +337,17 @@ class EntropySolver:
         # call. None of these depend on entropy.
         self._cache_bc_constants()
 
+        # Nondimensionalisation scales matching SPIDER (spider.py:832-835).
+        # After dividing by these, S_nd ~ O(1) and dSdr_nd ~ O(1),
+        # so CVODE can use tight atol without excessive internal substeps.
+        # In physical units S ~ 3000 J/kg/K, meaning atol=1e-10 demands
+        # ~13 significant digits on a 4-digit number. With nondim,
+        # atol=1e-10 needs only ~10 digits on an O(1) number.
+        self._S_ref = 2993.025       # entropy0 [J/kg/K]
+        self._t_ref_yr = 1e5 / SECS_PER_YEAR  # time0 [yr]
+        self._r_ref = 6.371e7        # radius0 [m]
+        self._dSdr_ref = self._S_ref / self._r_ref  # [J/kg/K/m]
+
     def _cache_bc_constants(self) -> None:
         """Pre-compute BC and mesh constants for the dSdt hot path.
 
@@ -1092,6 +1103,7 @@ class EntropySolver:
         atol: float | npt.NDArray,
         rtol: float,
         max_step: float,
+        rhs: 'Callable | None' = None,
     ) -> 'OptimizeResult':
         """Integrate the entropy equation using SUNDIALS CVODE.
 
@@ -1105,6 +1117,13 @@ class EntropySolver:
         handles the crystallisation-front phase transition without
         collapsing its step size to machine epsilon. SPIDER uses the
         same CVODE (via PETSc's TSSUNDIALS interface).
+
+        Parameters
+        ----------
+        rhs : callable or None
+            If provided, used as the RHS function ``rhs(t, y) -> dydt``
+            instead of ``self.dSdt``. Used by ``solve()`` to pass
+            the nondimensionalised RHS wrapper.
         """
         # Zero-span edge case: scipy's solve_ivp accepts
         # `t_span = (t0, t0)` and returns the initial state trivially,
@@ -1122,13 +1141,14 @@ class EntropySolver:
             result.message = 'zero-span solve, returned initial state'
             return result
 
-        # Wrap self.dSdt into the in-place (t, y, ydot) -> int signature
+        # Wrap the RHS into the in-place (t, y, ydot) -> int signature
         # that scikits.odes CVODE expects. Count RHS calls for parity
         # with scipy's sol.nfev.
+        _rhs = rhs if rhs is not None else self.dSdt
         nfev_box = [0]
 
         def rhs_fn(t: float, y: npt.NDArray, ydot: npt.NDArray) -> int:
-            ydot[:] = self.dSdt(t, y)
+            ydot[:] = _rhs(t, y)
             nfev_box[0] += 1
             return 0
 
@@ -1328,38 +1348,68 @@ class EntropySolver:
 
         atol = atol_base * atol_scale
 
-        # Step 1C (LSODA dispatch) was REVERTED 2026-04-09 23:11 CEST.
-        # The dispatch correctly identified fully-liquid coupling
-        # steps and routed them to scipy LSODA, but LSODA turned out
-        # to be ~10x SLOWER than BDF on the Aragog problem in the
-        # PROTEUS coupling regime. The most likely cause is that
-        # scipy LSODA's Adams branch incurs a per-call setup cost
-        # that is amortised across long integrations but becomes
-        # dominant for the short (~100 yr) PROTEUS coupling steps.
-        # BDF reuses the Newton iteration state across calls more
-        # gracefully here. Reverted, BDF is used for all calls.
-        # See aragog-v4-and-path-a-multistep.md for the failure
-        # mode analysis.
-
         logger.info(
             'EntropySolver: integrating from %.2e to %.2e yr '
             '(Phi_init=%.3f, atol_scale=%.1fx, atol=%.2e, rtol=%.2e)',
             start_time, end_time, phi0, atol_scale, atol, rtol,
         )
 
+        # ── Nondimensionalise state, time, and tolerances ──
+        # All state components become O(1) after dividing by their
+        # reference scales, so scalar atol works uniformly and the
+        # BDF solver no longer needs to resolve 9+ significant digits
+        # on an O(1000) state variable. The physics code in
+        # _dSdt_single stays in physical units; only the solver
+        # interface scales in and out.
+        S_ref = self._S_ref
+        t_ref = self._t_ref_yr
+        dSdr_ref = self._dSdr_ref
+        n_s = self._n_stag
+
+        # Per-component scale vector: y_phys = y_nd * _state_scale
+        _state_scale = np.full(len(self._S0), S_ref)
+        if self._core_bc == 'gradient':
+            nb = n_s + 1
+            _state_scale[:nb] = dSdr_ref   # dS/dr components
+            _state_scale[nb] = S_ref        # S_surf
+        elif self._state_is_extended:
+            _state_scale[:n_s] = S_ref      # entropy
+            if self._core_bc == 'energy_balance':
+                _state_scale[n_s] = dSdr_ref  # dSdr_cmb
+            else:  # bower2018
+                _state_scale[n_s] = S_ref     # T_core
+
+        # Precompute RHS scale: dydt_nd = dydt_phys * _rhs_scale
+        _rhs_scale = t_ref / _state_scale
+
+        S0_nd = self._S0 / _state_scale
+        start_nd = start_time / t_ref
+        end_nd = end_time / t_ref
+        max_step_nd = max_step / t_ref if np.isfinite(max_step) else max_step
+
+        # Uniform scalar atol in nondim units. With O(1) state
+        # variables, atol/S_ref gives the same physical accuracy as
+        # atol on the raw state, but without the 9-digit precision
+        # demand. For gradient mode, nondim makes per-component atol
+        # unnecessary because all components are O(1).
+        atol_nd = atol / S_ref
+
+        def _rhs_nondim(t_nd, y_nd):
+            """Nondim wrapper: scale state to physical, call physics, scale RHS back."""
+            dydt_phys = self._dSdt_single(
+                t_nd * t_ref, y_nd * _state_scale,
+            )
+            return dydt_phys * _rhs_scale
+
+        logger.info(
+            'Nondimensionalisation: S_ref=%.3f t_ref=%.3e yr '
+            'atol_nd=%.2e S0_nd range [%.4f, %.4f]',
+            S_ref, t_ref, atol_nd,
+            S0_nd[:n_s].min(), S0_nd[:n_s].max(),
+        )
+
         # BDF integration with phase-aware max_step constraint.
         jac_sparsity = self._build_jac_sparsity()
-
-        # Gradient mode: per-component atol. dS/dr values are ~1e-4
-        # (J/kg/K/m) while S_surf is ~3000 (J/kg/K).
-        if self._core_bc == 'gradient':
-            n_basic = self._n_stag + 1
-            atol_vec = np.empty(n_basic + 1)
-            atol_vec[:n_basic] = atol * 1e-4  # scale for gradient units
-            atol_vec[n_basic] = atol           # S_surf in entropy units
-            solve_atol = atol_vec
-        else:
-            solve_atol = atol
 
         # No terminal event. The max_step=1 yr near the liquidus
         # (set above) is sufficient for the value-based formulation
@@ -1385,32 +1435,43 @@ class EntropySolver:
         if use_cvode:
             logger.info('EntropySolver: using CVODE (solver_method=cvode)')
             self._solution = self._solve_cvode(
-                start_time=start_time,
-                end_time=end_time,
-                y0=self._S0,
-                atol=solve_atol,
+                start_time=start_nd,
+                end_time=end_nd,
+                y0=S0_nd,
+                atol=atol_nd,
                 rtol=rtol,
-                max_step=max_step,
+                max_step=max_step_nd,
+                rhs=_rhs_nondim,
             )
         else:
             method = 'Radau' if solver_method != 'bdf' else 'BDF'
             logger.info('EntropySolver: using scipy %s', method)
             self._solution = solve_ivp(
-                self.dSdt,
-                (start_time, end_time),
-                self._S0,
+                _rhs_nondim,
+                (start_nd, end_nd),
+                S0_nd,
                 method=method,
                 vectorized=False,
                 dense_output=True,
-                atol=solve_atol,
+                atol=atol_nd,
                 rtol=rtol,
                 jac_sparsity=jac_sparsity,
-                max_step=max_step,
+                max_step=max_step_nd,
                 events=events,
             )
 
-        # Diagnostic logging: internal BDF step statistics
+        # ── Restore physical units ──
         sol = self._solution
+        if sol.t is not None:
+            sol.t = np.asarray(sol.t, dtype=float) * t_ref
+        if sol.y is not None:
+            sol_y = np.asarray(sol.y, dtype=float)
+            if sol_y.ndim == 2:
+                sol.y = sol_y * _state_scale[:, np.newaxis]
+            else:
+                sol.y = sol_y * _state_scale
+
+        # Diagnostic logging: internal BDF step statistics (in physical yr)
         if sol.t is not None and len(sol.t) > 1:
             dt_internal = np.diff(sol.t)
             logger.info(
