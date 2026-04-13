@@ -404,10 +404,10 @@ class EntropyPhaseEvaluator:
         (volume fraction of melt, not mass fraction), matching SPIDER's
         GetGravitationalHeatFlux in energy.c.
 
-        Regimes:
-        1. Blake-Kozeny-Carman (low porosity): K = d^2 por^3 / (1-por)^2 / 1000
-        2. Rumpf-Gupte (intermediate): K = d^2 por^4.5 / 5.6
-        3. Stokes settling (high porosity): K = d^2 * 2(1-por)^2 / 9
+        Regimes (F = K/porosity, the quantity multiplying delta_rho*g/eta):
+        1. Blake-Kozeny-Carman (low porosity): F = d^2 por^2 / ((1-por)^2 * 1000)
+        2. Rumpf-Gupte (intermediate): F = d^2 por^4.5 * (5/7)
+        3. Stokes settling (high porosity): F = d^2 * 2/9
         """
         if self._const_properties:
             return np.zeros_like(self._density)
