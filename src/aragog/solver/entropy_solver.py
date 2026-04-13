@@ -1619,27 +1619,17 @@ class EntropySolver:
             self.state.phase_basic.temperature()
         ).ravel()
         T_magma = float(T_basic_final[-1])
-        # Core temperature:
-        # - gradient / energy_balance: derive from CMB basic-node entropy.
-        # - bower2018: T_core is the integrated state variable (tombstone).
-        # - quasi_steady: T_core = T_stag[0] (bottom cell mantle T).
-        if gradient_mode or energy_balance:
-            S_basic_cmb = float(np.asarray(
-                self.state._entropy_basic
-            ).ravel()[0])
-            if eos is not None:
-                T_core = float(np.asarray(
-                    eos.temperature(
-                        np.array([float(self._P_basic_flat[0])]),
-                        np.array([S_basic_cmb]),
-                    )
-                ).item())
-            else:
-                pm = self.parameters.phase_mixed
-                T_core = float(pm.const_T_ref * np.exp(
-                    (S_basic_cmb - pm.const_S_ref) / pm.const_Cp))
-        elif bower:
-            T_core = extra_final
+        # Core temperature: bottom staggered cell (T_stag[0]).
+        # SPIDER reports T_core = interior_o.temp[-1] which is the last
+        # staggered node (SPIDER orders surface-to-CMB, so [-1] = CMB
+        # cell). Aragog orders CMB-to-surface, so [0] = CMB cell.
+        # Previous code used the CMB basic-node entropy via EOS for
+        # energy_balance/gradient modes, but that is at the actual CMB
+        # radius (half a cell below T_stag[0]), giving a systematic
+        # +10 K offset from the higher pressure. Using T_stag[0] for
+        # all modes matches SPIDER's definition exactly.
+        if bower:
+            T_core = extra_final  # EXPERIMENTAL: integrated ODE state
         else:
             T_core = float(T_stag[0])
         Phi_global = float(np.dot(phi_stag, vol) / np.sum(vol))
