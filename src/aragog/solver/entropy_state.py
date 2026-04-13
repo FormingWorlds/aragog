@@ -239,10 +239,10 @@ class EntropyState:
 
         Cheap no-op when the underlying phase_staggered.pressure ndarray
         is the same object (by Python id) as the one seen on the last
-        call. Rebuilds the scipy interpolator outputs only when the mesh
-        pressure object changes, which happens at most once per
-        EntropyState construction in normal PROTEUS coupling.
+        call, or when const_properties mode is active (no phase boundaries).
         """
+        if getattr(self.phase_staggered, '_const_properties', False):
+            return  # no phase boundaries in const_properties mode
         pressure_obj = self.phase_staggered.pressure
         if id(pressure_obj) == self._P_stag_cached_id:
             self._pb_cache_hits += 1
@@ -269,6 +269,8 @@ class EntropyState:
         ``dS/dr − [φ dS_liq/dP + (1−φ) dS_sol/dP] dP/dr`` from
         ``energy.c::GetMixingHeatFlux`` lines 307-314.
         """
+        if getattr(self.phase_basic, '_const_properties', False):
+            return  # no phase boundaries in const_properties mode
         pressure_obj = self.phase_basic.pressure
         if id(pressure_obj) == self._P_basic_cached_id:
             return
