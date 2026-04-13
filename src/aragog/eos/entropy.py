@@ -603,19 +603,43 @@ class EntropyEOS:
                 S: npt.NDArray | float) -> npt.NDArray:
         """Density rho(P, S) [kg/m^3].
 
-        Uses harmonic mean in the mushy zone (SPIDER convention):
-        1/rho = phi/rho_liq + (1-phi)/rho_sol.
+        In the mushy zone (0 < phi < 1): harmonic mean of end-member
+        densities evaluated at phase boundary entropies (SPIDER
+        eos_composite.c:236-237).
+
+        Outside the mushy zone (phi=0 or phi=1): single-phase table
+        evaluated at the actual S (clamped to table range), matching
+        SPIDER's combine_matprop(smth=0, mixed, single) path.
         """
         P = np.asarray(P, dtype=float)
         S = np.asarray(S, dtype=float)
         phi = self.melt_fraction(P, S)
+        mushy = (phi > 0) & (phi < 1)
 
-        rho_sol = self._lookup_at_phase_boundary('density', P, 'solid')
-        rho_liq = self._lookup_at_phase_boundary('density', P, 'melt')
+        solid_table = self._tables['density_solid']
+        melt_table = self._tables['density_melt']
 
-        # Harmonic mean in mushy zone, pure phase outside
-        inv_rho = phi / np.maximum(rho_liq, 1.0) + (1.0 - phi) / np.maximum(rho_sol, 1.0)
-        return 1.0 / np.maximum(inv_rho, 1e-30)
+        # Mushy zone: evaluate at phase boundaries (Lever Rule)
+        rho_sol_boundary = self._lookup_at_phase_boundary('density', P, 'solid')
+        rho_liq_boundary = self._lookup_at_phase_boundary('density', P, 'melt')
+        inv_rho_mushy = (
+            phi / np.maximum(rho_liq_boundary, 1.0)
+            + (1.0 - phi) / np.maximum(rho_sol_boundary, 1.0)
+        )
+        rho_mushy = 1.0 / np.maximum(inv_rho_mushy, 1e-30)
+
+        # Single-phase: evaluate at actual S (clamped to table range)
+        S_solid_clamped = np.clip(S, solid_table['S'][0], solid_table['S'][-1])
+        S_melt_clamped = np.clip(S, melt_table['S'][0], melt_table['S'][-1])
+        P_solid_clamped = np.clip(P, solid_table['P'][0], solid_table['P'][-1])
+        P_melt_clamped = np.clip(P, melt_table['P'][0], melt_table['P'][-1])
+        pts_solid = np.column_stack([P_solid_clamped.ravel(), S_solid_clamped.ravel()])
+        pts_melt = np.column_stack([P_melt_clamped.ravel(), S_melt_clamped.ravel()])
+        rho_solid_single = solid_table['interp'](pts_solid).reshape(P.shape)
+        rho_melt_single = melt_table['interp'](pts_melt).reshape(P.shape)
+        rho_single = np.where(phi >= 0.5, rho_melt_single, rho_solid_single)
+
+        return np.where(mushy, rho_mushy, rho_single)
 
     def heat_capacity(self, P: npt.NDArray | float,
                       S: npt.NDArray | float) -> npt.NDArray:
