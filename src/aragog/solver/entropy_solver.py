@@ -343,7 +343,7 @@ class EntropySolver:
         # In physical units S ~ 3000 J/kg/K, meaning atol=1e-10 demands
         # ~13 significant digits on a 4-digit number. With nondim,
         # atol=1e-10 needs only ~10 digits on an O(1) number.
-        self._S_ref = 2993.025       # entropy0 [J/kg/K]
+        self._S_ref = 2993.025100070677  # entropy0 [J/kg/K] (spider.py:835)
         self._t_ref_yr = 1e5 / SECS_PER_YEAR  # time0 [yr]
         self._r_ref = 6.371e7        # radius0 [m]
         self._dSdr_ref = self._S_ref / self._r_ref  # [J/kg/K/m]
@@ -1452,7 +1452,7 @@ class EntropySolver:
                 S0_nd,
                 method=method,
                 vectorized=False,
-                dense_output=True,
+                dense_output=False,
                 atol=atol_nd,
                 rtol=rtol,
                 jac_sparsity=jac_sparsity,
