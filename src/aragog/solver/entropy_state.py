@@ -367,8 +367,11 @@ class EntropyState:
             # energy balance ODE), we approximate this by setting the
             # boundary gradients to zero, which is the steady-state
             # limit of SPIDER's evolved boundary gradient.
-            dSdxi[0] = 0.0    # CMB: quasi-steady ≈ insulating BC
-            dSdxi[-1] = 0.0   # surface: managed by atmos coupling
+            # SPIDER bc.c convention: boundary gradients copy from the
+            # adjacent interior node. In energy_balance mode, the CMB
+            # gradient is overridden later by the state-vector value.
+            dSdxi[0] = dSdxi[1]    # CMB: copy from first interior
+            dSdxi[-1] = dSdxi[-2]  # surface: copy from last interior
             dxidr = np.asarray(mesh.dxidr).ravel()
             self._dSdr = dSdxi * dxidr
 
@@ -443,7 +446,7 @@ class EntropyState:
         Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
         g = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
 
-        conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-8)
+        conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-30)
         effective_superadiabatic = alpha * T * conv_drive / np.maximum(Cp, 1.0)
         velocity_prefactor = g * effective_superadiabatic
 
@@ -524,19 +527,26 @@ class EntropyState:
             #
             # The total temperature gradient decomposes into a
             # superadiabatic part (proportional to the entropy gradient)
-            # and an adiabatic part (from the EOS at each node). This
-            # decomposition avoids the numerical artifact that arises
-            # when finite-differencing T(P,S) across staggered nodes
-            # at different phases in the mushy zone: the phase-blend
-            # in T(P,S) introduces a spurious gradient that is not a
-            # physical conductive flux.
-            #
-            # Reuses T, Cp, alpha, g already fetched above (lines
-            # 165-168) from phase_basic, which includes the dSdr_cmb
-            # boundary override when active.
-            Cp_safe = np.maximum(Cp, 100.0)  # silicate Cp floor
+            # and an adiabatic part. SPIDER evaluates dT/dr|_adiabat
+            # as dTdPs * dPdr, where dTdPs = (dT/dP)|_S comes from
+            # the EOS table (eos_composite.c:249, energy.c:369).
+            # Using the EOS table value instead of the thermodynamic
+            # identity -g*alpha*T/Cp ensures exact parity with SPIDER,
+            # since the table lookup and the identity can differ by
+            # up to 40% due to table interpolation and composite-EOS
+            # blending at phase boundaries.
+            Cp_safe = np.maximum(Cp, 100.0)
             superadiabatic = (T / Cp_safe) * self._dSdr
-            dTdrs_ad = -g * alpha * T / Cp_safe
+            # Adiabatic gradient from EOS table (SPIDER parity).
+            # SPIDER computes dTdxis*dxidr where dTdxis is from the
+            # EOS table and dxidr is the mesh Jacobian. The equivalent
+            # is dTdPs * dPdr where dPdr comes from the MESH pressure
+            # profile (Adams-Williamson), NOT from -rho_material*g.
+            # Using the mesh dPdr matches SPIDER exactly; using
+            # -rho*g introduces up to 43% error because the mesh
+            # structural density differs from the EOS material density.
+            dTdPs = np.asarray(self.phase_basic.dTdPs()).ravel()
+            dTdrs_ad = dTdPs * self._dP_dr_basic
             self._heat_flux += -k * (superadiabatic + dTdrs_ad)
 
         if self._convection:

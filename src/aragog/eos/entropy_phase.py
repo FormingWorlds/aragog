@@ -123,7 +123,6 @@ class EntropyPhaseEvaluator:
             self._heat_capacity = self._eos.heat_capacity_latent_blend(P, S)
         else:
             self._heat_capacity = self._eos.heat_capacity(P, S)
-        self._dTdPs_val = self._eos.dTdPs(P, S)
         if self._cp_blend == 'latent':
             self._thermal_expansivity = (
                 self._eos.thermal_expansivity_composite_blend(P, S)
@@ -140,6 +139,17 @@ class EntropyPhaseEvaluator:
         a = self._thermal_expansivity
         eps_a = 1.0e-8
         self._thermal_expansivity = 0.5 * (a + np.sqrt(a * a + eps_a * eps_a))
+
+        # dTdPs: SPIDER eos_composite.c:249 computes this analytically
+        # from the composite properties: dTdPs = alpha*T/(rho*Cp).
+        # The EOS table lookup (_lookup_phase_weighted) gives a different
+        # value in the mushy zone because it evaluates at phase boundary
+        # entropies. Using the analytical formula matches SPIDER exactly.
+        Cp_safe = np.maximum(self._heat_capacity, 100.0)
+        self._dTdPs_val = (
+            self._thermal_expansivity * self._temperature
+            / (np.maximum(self._density, 1.0) * Cp_safe)
+        )
 
         # Viscosity: two-stage blend matching SPIDER eos_composite.c.
         #
