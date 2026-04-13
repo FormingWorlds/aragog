@@ -322,6 +322,7 @@ class _PhaseMixedParameters:
     phase: str
     phase_transition_width: float
     grain_size: float
+    matprop_smooth_width: float = 0.0
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:

@@ -61,6 +61,7 @@ class EntropyPhaseEvaluator:
         thermal_conductivity_solid: float = 4.0,
         thermal_conductivity_liquid: float = 2.0,
         cp_blend: str = 'latent',
+        matprop_smooth_width: float = 0.0,
     ):
         self._eos = entropy_eos
         self._g = gravitational_acceleration
@@ -71,6 +72,7 @@ class EntropyPhaseEvaluator:
         self._grain_size = grain_size
         self._k_solid = thermal_conductivity_solid
         self._k_liquid = thermal_conductivity_liquid
+        self._matprop_smooth_width = matprop_smooth_width
         # 'latent' = SPIDER-parity v4 convention (latent-heat-augmented Cp)
         # 'linear' = legacy v3 convention (pure-phase linear blend)
         if cp_blend not in ('latent', 'linear'):
@@ -139,18 +141,63 @@ class EntropyPhaseEvaluator:
         eps_a = 1.0e-8
         self._thermal_expansivity = 0.5 * (a + np.sqrt(a * a + eps_a * eps_a))
 
-        # Viscosity: tanh blend between solid and liquid at phi_rheo.
-        # In single-phase regions (phi=0 or phi=1) SPIDER's composite EOS
-        # returns the phase viscosity directly; replicate that bypass to
-        # avoid the ~0.13 log-unit tanh tail at the boundaries.
+        # Viscosity: two-stage blend matching SPIDER eos_composite.c.
+        #
+        # Stage 1 (lines 255-259): tanh blend at phi_rheo between solid
+        # and liquid log10visc, weighted by truncated phi.
+        #
+        # Stage 2 (lines 266-285): blend the Stage 1 "mixed" viscosity
+        # with the single-phase viscosity using get_smoothing(smth, gphi).
+        # When gphi >> 1 or gphi << 0 (deep in single-phase), smth -> 0
+        # and the single-phase value dominates. Near the phase boundary,
+        # smth -> 1 and the mixed-phase value dominates.
         phi = self._melt_fraction
         is_scalar = np.ndim(phi) == 0
         phi_arr = np.atleast_1d(np.asarray(phi, dtype=float))
+
+        # Stage 1: tanh blend (mixed-phase viscosity)
         w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
-        log_visc = (1.0 - w) * np.log10(self._visc_solid) + w * np.log10(self._visc_liquid)
-        # Bypass: pure solid / pure liquid
-        log_visc = np.where(phi_arr >= 1.0, np.log10(self._visc_liquid), log_visc)
-        log_visc = np.where(phi_arr <= 0.0, np.log10(self._visc_solid), log_visc)
+        log_visc_mixed = (
+            (1.0 - w) * np.log10(self._visc_solid)
+            + w * np.log10(self._visc_liquid)
+        )
+
+        # Single-phase viscosity (constant per phase, no Arrhenius)
+        log_visc_single = np.where(
+            phi_arr >= 0.5,
+            np.log10(self._visc_liquid),
+            np.log10(self._visc_solid),
+        )
+
+        # Stage 2: matprop_smooth_width blend (SPIDER util.c:get_smoothing)
+        smw = self._matprop_smooth_width
+        if smw > 0:
+            # Untruncated gphi from EOS
+            S = self.entropy
+            P = self.pressure
+            S_sol = self._eos.solidus_entropy(P)
+            S_liq = self._eos.liquidus_entropy(P)
+            dS = np.maximum(S_liq - S_sol, 1e-10)
+            gphi = np.atleast_1d((np.asarray(S) - S_sol) / dS)
+
+            # get_smoothing: tanh transition at gphi=0 and gphi=1
+            smth = np.where(
+                gphi > 0.5,
+                1.0 - tanh_weight(gphi, 1.0, smw),
+                tanh_weight(gphi, 0.0, smw),
+            )
+            log_visc = smth * log_visc_mixed + (1.0 - smth) * log_visc_single
+        else:
+            # No smoothing (smw=0): hard switch at gphi boundaries
+            S = self.entropy
+            P = self.pressure
+            S_sol = self._eos.solidus_entropy(P)
+            S_liq = self._eos.liquidus_entropy(P)
+            dS = np.maximum(S_liq - S_sol, 1e-10)
+            gphi = np.atleast_1d((np.asarray(S) - S_sol) / dS)
+            in_mushy = (gphi >= 0.0) & (gphi <= 1.0)
+            log_visc = np.where(in_mushy, log_visc_mixed, log_visc_single)
+
         self._viscosity_val = 10.0 ** (log_visc.item() if is_scalar else log_visc)
 
         # Thermal conductivity from config (not hardcoded)

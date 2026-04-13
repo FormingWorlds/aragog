@@ -272,6 +272,11 @@ class EntropySolver:
             self.parameters.phase_solid.viscosity, 1e21)
         phase_kwargs['viscosity_liquid'] = _phase_prop_float(
             self.parameters.phase_liquid.viscosity, 1e-1)
+        # matprop_smooth_width: SPIDER's phase-boundary smoothing for
+        # material properties. Read from the mixed-phase config if
+        # available; defaults to 0 (no smoothing) for backward compat.
+        phase_kwargs['matprop_smooth_width'] = float(getattr(
+            self.parameters.phase_mixed, 'matprop_smooth_width', 0.0))
         cond_s = _phase_prop_float(
             self.parameters.phase_solid.thermal_conductivity, None)
         if cond_s is not None:
