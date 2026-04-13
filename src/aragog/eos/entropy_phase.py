@@ -139,11 +139,19 @@ class EntropyPhaseEvaluator:
         eps_a = 1.0e-8
         self._thermal_expansivity = 0.5 * (a + np.sqrt(a * a + eps_a * eps_a))
 
-        # Viscosity: tanh blend between solid and liquid at phi_rheo
+        # Viscosity: tanh blend between solid and liquid at phi_rheo.
+        # In single-phase regions (phi=0 or phi=1) SPIDER's composite EOS
+        # returns the phase viscosity directly; replicate that bypass to
+        # avoid the ~0.13 log-unit tanh tail at the boundaries.
         phi = self._melt_fraction
-        w = tanh_weight(phi, self._phi_rheo, self._phi_width)
+        is_scalar = np.ndim(phi) == 0
+        phi_arr = np.atleast_1d(np.asarray(phi, dtype=float))
+        w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
         log_visc = (1.0 - w) * np.log10(self._visc_solid) + w * np.log10(self._visc_liquid)
-        self._viscosity_val = 10.0 ** log_visc
+        # Bypass: pure solid / pure liquid
+        log_visc = np.where(phi_arr >= 1.0, np.log10(self._visc_liquid), log_visc)
+        log_visc = np.where(phi_arr <= 0.0, np.log10(self._visc_solid), log_visc)
+        self._viscosity_val = 10.0 ** (log_visc.item() if is_scalar else log_visc)
 
         # Thermal conductivity from config (not hardcoded)
         self._thermal_conductivity_val = (1.0 - phi) * self._k_solid + phi * self._k_liquid
