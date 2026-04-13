@@ -113,76 +113,32 @@ class EntropyPhaseEvaluator:
         self.pressure = np.asarray(pressure, dtype=float)
 
     def update(self) -> None:
-        """Recompute all cached properties from current (P, S)."""
+        """Recompute all cached properties from current (P, S).
+
+        Single-pass evaluation mirroring SPIDER's EOSEval_Composite_TwoPhase
+        (eos_composite.c:177-290). All properties are derived from a single
+        set of cached intermediates (S_sol, S_liq, phi, gphi, smth, phase-
+        boundary evaluations), eliminating redundant table lookups and
+        ensuring bit-identical intermediate values across properties.
+        """
         P = self.pressure
         S = self.entropy
-
-        self._temperature = self._eos.temperature(P, S)
-        self._density = self._eos.density(P, S)
-        if self._cp_blend == 'latent':
-            self._heat_capacity = self._eos.heat_capacity_latent_blend(P, S)
-        else:
-            self._heat_capacity = self._eos.heat_capacity(P, S)
-        if self._cp_blend == 'latent':
-            self._thermal_expansivity = (
-                self._eos.thermal_expansivity_composite_blend(P, S)
-            )
-        else:
-            self._thermal_expansivity = self._eos.thermal_expansivity(P, S)
-        self._melt_fraction = self._eos.melt_fraction(P, S)
-
-        # Guard: clamp negative alpha to zero (can occur from EOS table
-        # edges). Use a smooth max (sqrt-based, C^infty) so the clip
-        # doesn't introduce a kink in CVODE's BDF predictor when a cell
-        # sits at alpha ~ 0. The eps=1e-8 bandwidth is much smaller than
-        # physical alpha scales (~1e-5 1/K) so bulk values are untouched.
-        a = self._thermal_expansivity
-        eps_a = 1.0e-8
-        self._thermal_expansivity = 0.5 * (a + np.sqrt(a * a + eps_a * eps_a))
-
-        # dTdPs: full SPIDER eos_composite.c two-stage computation.
-        #
-        # Stage 1 (line 249): analytical from INTERMEDIATE two-phase
-        # properties (lines 222-246), NOT the final combine_matprop values.
-        #   T_mixed = phi*T_liq + (1-phi)*T_sol
-        #   rho_mixed = harmonic(rho_liq, rho_sol, phi)
-        #   alpha_mixed = (rho_sol-rho_liq)/(T_liq-T_sol)/rho_mixed
-        #   Cp_mixed = (S_liq-S_sol)/(T_liq-T_sol) * T_avg
-        #   dTdPs_mixed = alpha_mixed * T_mixed / (rho_mixed * Cp_mixed)
-        #
-        # Stage 2 (line 283): combine_matprop(smth, mixed, single)
-        #   dTdPs_single from table at actual (P, S)
-        #   smth = get_smoothing(matprop_smooth_width, gphi)
         P_arr = np.atleast_1d(np.asarray(P, dtype=float))
         S_arr = np.atleast_1d(np.asarray(S, dtype=float))
-        phi_arr = np.atleast_1d(np.asarray(self._melt_fraction, dtype=float))
-
-        # Phase boundary properties
-        S_sol = self._eos.solidus_entropy(P_arr)
-        S_liq = self._eos.liquidus_entropy(P_arr)
-        T_sol = self._eos._lookup_at_phase_boundary('temperature', P_arr, 'solid')
-        T_liq = self._eos._lookup_at_phase_boundary('temperature', P_arr, 'melt')
-        rho_sol = self._eos._lookup_at_phase_boundary('density', P_arr, 'solid')
-        rho_liq = self._eos._lookup_at_phase_boundary('density', P_arr, 'melt')
-
-        # Intermediate two-phase properties (lines 222-249)
-        T_mixed = phi_arr * T_liq + (1.0 - phi_arr) * T_sol
-        inv_rho_mixed = phi_arr / np.maximum(rho_liq, 1.0) + (1.0 - phi_arr) / np.maximum(rho_sol, 1.0)
-        rho_mixed = 1.0 / np.maximum(inv_rho_mixed, 1e-30)
-        dT_phase = np.maximum(T_liq - T_sol, 1e-10)
-        alpha_mixed = (rho_sol - rho_liq) / dT_phase / np.maximum(rho_mixed, 1.0)
-        T_avg = T_sol + 0.5 * dT_phase
-        Cp_mixed = (S_liq - S_sol) / dT_phase * T_avg
-        Cp_mixed = np.maximum(Cp_mixed, 100.0)
-        dTdPs_mixed = alpha_mixed * T_mixed / (np.maximum(rho_mixed, 1.0) * Cp_mixed)
-
-        # Single-phase dTdPs from table at actual (P, S)
-        dTdPs_single = self._eos.dTdPs(P_arr, S_arr)
-
-        # Smoothing and blend (lines 266-283)
-        dS_phase = np.maximum(S_liq - S_sol, 1e-10)
-        gphi = (S_arr - S_sol) / dS_phase
+        eos = self._eos
         smw = self._matprop_smooth_width
+
+        # ── Step 1: phase boundaries (computed ONCE) ────────────────
+        S_sol = eos.solidus_entropy(P_arr)
+        S_liq = eos.liquidus_entropy(P_arr)
+        dS_phase = np.maximum(S_liq - S_sol, 1e-10)
+
+        # phi (truncated) and gphi (untruncated)
+        gphi = (S_arr - S_sol) / dS_phase
+        phi_arr = np.clip(gphi, 0.0, 1.0)
+        self._melt_fraction = phi_arr.item() if np.ndim(P) == 0 else phi_arr
+
+        # smth: matprop_smooth_width blend factor (SPIDER util.c:get_smoothing)
         if smw > 0:
             smth = np.where(
                 gphi > 0.5,
@@ -192,74 +148,117 @@ class EntropyPhaseEvaluator:
         else:
             smth = np.where((gphi >= 0.0) & (gphi <= 1.0), 1.0, 0.0)
 
-        self._dTdPs_val = smth * dTdPs_mixed + (1.0 - smth) * dTdPs_single
+        # ── Step 2: phase-boundary table evaluations (ONCE each) ────
+        # SPIDER eos_composite.c:216-217
+        _lookup = eos._lookup_at_phase_boundary
+        T_sol = _lookup('temperature', P_arr, 'solid')
+        T_liq = _lookup('temperature', P_arr, 'melt')
+        rho_sol = _lookup('density', P_arr, 'solid')
+        rho_liq = _lookup('density', P_arr, 'melt')
+        # Cp and alpha are derived from T, rho, S at boundaries (below)
+        # dTdPs at boundaries not needed (computed analytically)
+
+        # ── Step 3: intermediate two-phase properties (SPIDER 222-249) ──
+        dT_phase = np.maximum(T_liq - T_sol, 1e-10)
+        T_avg = T_sol + 0.5 * dT_phase
+
+        # T: linear blend (line 222-224)
+        T_mixed = phi_arr * T_liq + (1.0 - phi_arr) * T_sol
+
+        # rho: harmonic mean (line 236-237)
+        inv_rho_mixed = (phi_arr / np.maximum(rho_liq, 1.0)
+                         + (1.0 - phi_arr) / np.maximum(rho_sol, 1.0))
+        rho_mixed = 1.0 / np.maximum(inv_rho_mixed, 1e-30)
+
+        if self._cp_blend == 'latent':
+            # alpha: composite (SPIDER eos_composite.c:246)
+            alpha_mixed = (rho_sol - rho_liq) / dT_phase / np.maximum(rho_mixed, 1.0)
+            # Cp: latent-heat augmented (SPIDER lines 227-232)
+            Cp_mixed = np.maximum((S_liq - S_sol) / dT_phase * T_avg, 100.0)
+        else:
+            # Legacy v3: linear blend of table values at phase boundaries
+            Cp_sol = _lookup('heat_capacity', P_arr, 'solid')
+            Cp_liq = _lookup('heat_capacity', P_arr, 'melt')
+            alpha_sol_b = _lookup('thermal_exp', P_arr, 'solid')
+            alpha_liq_b = _lookup('thermal_exp', P_arr, 'melt')
+            Cp_mixed = phi_arr * Cp_liq + (1.0 - phi_arr) * Cp_sol
+            alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
+
+        # dTdPs: analytical from intermediates (line 249)
+        dTdPs_mixed = alpha_mixed * T_mixed / (np.maximum(rho_mixed, 1.0)
+                                                * np.maximum(Cp_mixed, 100.0))
+
+        # cond: linear blend (line 252-253)
+        cond_mixed = phi_arr * self._k_liquid + (1.0 - phi_arr) * self._k_solid
+
+        # ── Step 4: single-phase table evaluations (SPIDER 269-276) ──
+        # Evaluate the melt or solid table at the ACTUAL (P, S)
+        mushy = (phi_arr > 0) & (phi_arr < 1)
+        S_for_solid = np.where(mushy, S_sol, S_arr)
+        S_for_melt = np.where(mushy, S_liq, S_arr)
+
+        def _table_lookup(prop_name):
+            solid_tbl = eos._tables[f'{prop_name}_solid']
+            melt_tbl = eos._tables[f'{prop_name}_melt']
+            S_s_c = np.clip(S_for_solid, solid_tbl['S'][0], solid_tbl['S'][-1])
+            S_m_c = np.clip(S_for_melt, melt_tbl['S'][0], melt_tbl['S'][-1])
+            P_s_c = np.clip(P_arr, solid_tbl['P'][0], solid_tbl['P'][-1])
+            P_m_c = np.clip(P_arr, melt_tbl['P'][0], melt_tbl['P'][-1])
+            v_sol = solid_tbl['interp'](np.column_stack([P_s_c.ravel(), S_s_c.ravel()])).reshape(P_arr.shape)
+            v_mel = melt_tbl['interp'](np.column_stack([P_m_c.ravel(), S_m_c.ravel()])).reshape(P_arr.shape)
+            return np.where(gphi >= 0.5, v_mel, v_sol)
+
+        T_single = _table_lookup('temperature')
+        rho_single = _table_lookup('density')
+        # For Cp, alpha, dTdPs in single-phase: use table values
+        Cp_single = _table_lookup('heat_capacity')
+        alpha_single = _table_lookup('thermal_exp')
+        dTdPs_single = _table_lookup('dTdPs')
+        cond_single = np.where(gphi >= 0.5, self._k_liquid, self._k_solid)
+
+        # ── Step 5: combine_matprop blend (SPIDER 278-285) ──────────
+        def _blend(mixed, single):
+            return smth * mixed + (1.0 - smth) * single
+
+        self._temperature = _blend(T_mixed, T_single)
+        self._density = _blend(rho_mixed, rho_single)
+        self._heat_capacity = _blend(Cp_mixed, Cp_single)
+        self._thermal_expansivity = _blend(alpha_mixed, alpha_single)
+        self._dTdPs_val = _blend(dTdPs_mixed, dTdPs_single)
+        self._thermal_conductivity_val = _blend(cond_mixed, cond_single)
+
+        # Flatten if scalar input
         if np.ndim(P) == 0:
-            self._dTdPs_val = self._dTdPs_val.ravel()
+            for attr in ('_temperature', '_density', '_heat_capacity',
+                         '_thermal_expansivity', '_dTdPs_val',
+                         '_thermal_conductivity_val'):
+                setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
 
-        # Viscosity: two-stage blend matching SPIDER eos_composite.c.
-        #
-        # Stage 1 (lines 255-259): tanh blend at phi_rheo between solid
-        # and liquid log10visc, weighted by truncated phi.
-        #
-        # Stage 2 (lines 266-285): blend the Stage 1 "mixed" viscosity
-        # with the single-phase viscosity using get_smoothing(smth, gphi).
-        # When gphi >> 1 or gphi << 0 (deep in single-phase), smth -> 0
-        # and the single-phase value dominates. Near the phase boundary,
-        # smth -> 1 and the mixed-phase value dominates.
-        phi = self._melt_fraction
-        is_scalar = np.ndim(phi) == 0
-        phi_arr = np.atleast_1d(np.asarray(phi, dtype=float))
+        # Guard: clamp negative alpha (EOS table edges)
+        a = self._thermal_expansivity
+        eps_a = 1.0e-8
+        self._thermal_expansivity = 0.5 * (a + np.sqrt(a * a + eps_a * eps_a))
 
-        # Stage 1: tanh blend (mixed-phase viscosity)
+        # ── Step 6: viscosity (two-stage, reuses cached gphi/smth) ──
+        # Stage 1: tanh blend at phi_rheo (SPIDER lines 255-259)
         w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
-        log_visc_mixed = (
-            (1.0 - w) * np.log10(self._visc_solid)
-            + w * np.log10(self._visc_liquid)
-        )
+        log_visc_mixed = ((1.0 - w) * np.log10(self._visc_solid)
+                          + w * np.log10(self._visc_liquid))
 
-        # Single-phase viscosity (constant per phase, no Arrhenius)
+        # Single-phase viscosity (constant per phase)
         log_visc_single = np.where(
             phi_arr >= 0.5,
             np.log10(self._visc_liquid),
             np.log10(self._visc_solid),
         )
 
-        # Stage 2: matprop_smooth_width blend (SPIDER util.c:get_smoothing)
-        smw = self._matprop_smooth_width
-        if smw > 0:
-            # Untruncated gphi from EOS
-            S = self.entropy
-            P = self.pressure
-            S_sol = self._eos.solidus_entropy(P)
-            S_liq = self._eos.liquidus_entropy(P)
-            dS = np.maximum(S_liq - S_sol, 1e-10)
-            gphi = np.atleast_1d((np.asarray(S) - S_sol) / dS)
-
-            # get_smoothing: tanh transition at gphi=0 and gphi=1
-            smth = np.where(
-                gphi > 0.5,
-                1.0 - tanh_weight(gphi, 1.0, smw),
-                tanh_weight(gphi, 0.0, smw),
-            )
-            log_visc = smth * log_visc_mixed + (1.0 - smth) * log_visc_single
-        else:
-            # No smoothing (smw=0): hard switch at gphi boundaries
-            S = self.entropy
-            P = self.pressure
-            S_sol = self._eos.solidus_entropy(P)
-            S_liq = self._eos.liquidus_entropy(P)
-            dS = np.maximum(S_liq - S_sol, 1e-10)
-            gphi = np.atleast_1d((np.asarray(S) - S_sol) / dS)
-            in_mushy = (gphi >= 0.0) & (gphi <= 1.0)
-            log_visc = np.where(in_mushy, log_visc_mixed, log_visc_single)
-
+        # Stage 2: combine_matprop with cached smth
+        log_visc = smth * log_visc_mixed + (1.0 - smth) * log_visc_single
+        is_scalar = np.ndim(self._melt_fraction) == 0
         self._viscosity_val = 10.0 ** (log_visc.item() if is_scalar else log_visc)
 
-        # Thermal conductivity from config (not hardcoded)
-        self._thermal_conductivity_val = (1.0 - phi) * self._k_solid + phi * self._k_liquid
-
-        # P-dependent latent heat from EOS
-        self._latent_heat_val = self._eos.latent_heat(P)
+        # ── Step 7: latent heat ─────────────────────────────────────
+        self._latent_heat_val = eos.latent_heat(P)
 
         # NaN detection: catch entropy leaving the EOS table domain
         if np.any(np.isnan(self._temperature)):
