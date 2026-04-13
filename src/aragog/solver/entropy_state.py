@@ -148,6 +148,7 @@ class EntropyState:
         gravitational_separation: bool = False,
         mixing: bool = False,
         radionuclides: bool = False,
+        dilatation: bool = False,
         tidal: bool = False,
         tidal_array: list | None = None,
         eddy_diffusivity_thermal: float = 1.0,
@@ -164,6 +165,7 @@ class EntropyState:
         self._grav_sep = gravitational_separation
         self._mixing = mixing
         self._radionuclides = radionuclides
+        self._dilatation = dilatation
         self._tidal = tidal
         self._tidal_array = tidal_array if tidal_array is not None and len(tidal_array) > 0 else [0.0]
         self._eddy_diff_thermal = eddy_diffusivity_thermal
@@ -424,7 +426,11 @@ class EntropyState:
         self._ensure_phase_boundary_cache()
         gphi = (S - self._S_sol_stag) / self._dS_phase_stag
         phi_smoothclipped = _smooth_clip(gphi, 0.0, 1.0, eps=1.0e-3)
-        self._dphidr = mesh.d_dr_at_basic_nodes(phi_smoothclipped).ravel()
+        # _dphidr was computed here via the dense transform matrix, but the
+        # result is never read (confirmed by grep across all solver files).
+        # The mixing flux now uses dSdr and dP/dr instead (SPIDER-parity
+        # rewrite at lines 643-695). Removed to save one (N+1)x(N-1)
+        # matrix multiply per RHS evaluation (~1000 calls per PROTEUS step).
 
         # ── MLT from entropy gradient ────────────────────────────────
         # Convection is unstable when dS/dr < 0 (entropy decreasing
@@ -703,6 +709,23 @@ class EntropyState:
             for r in self._evaluator.radionuclides:
                 radio += r.get_heating(time)
             self._heating += radio
+
+        if self._dilatation and self._grav_sep:
+            # Dilatation (PdV) heating: work done when melt of different
+            # density rises through a pressure gradient. This is the
+            # thermodynamically required companion to gravitational
+            # separation: H = g * (1/rho_liq - 1/rho_sol) * J_mass.
+            # Units: [m/s^2] * [m^3/kg] * [kg/m^2/s] = [W/kg].
+            # The mass flux is on basic nodes; interpolate to staggered.
+            mesh = self._evaluator.mesh
+            mass_flux_stag = mesh.quantity_at_staggered_nodes(
+                self._mass_flux
+            ).ravel()
+            delta_v = np.asarray(
+                self.phase_staggered.delta_specific_volume()
+            ).ravel()
+            g = abs(float(self.phase_staggered._gravitational_acceleration))
+            self._heating += g * delta_v * mass_flux_stag
 
         if self._tidal:
             if len(self._tidal_array) == 1:
