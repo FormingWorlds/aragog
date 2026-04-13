@@ -1019,8 +1019,12 @@ class EntropySolver:
             S = y[:self._n_stag, -1] if y.ndim > 1 else y[:self._n_stag]
         else:
             S = y[:, -1] if y.ndim > 1 else y
-        P = self.evaluator.mesh.staggered.pressure
-        return self.entropy_eos.temperature(P, S)
+        if self.entropy_eos is not None:
+            P = self.evaluator.mesh.staggered.pressure
+            return self.entropy_eos.temperature(P, S)
+        # const_properties: T = T_ref * exp((S - S_ref) / Cp)
+        pm = self.parameters.phase_mixed
+        return pm.const_T_ref * np.exp((S - pm.const_S_ref) / pm.const_Cp)
 
     def _build_jac_sparsity(self) -> 'scipy.sparse.spmatrix':
         """Build the Jacobian sparsity pattern for the BDF solver.
@@ -1310,7 +1314,7 @@ class EntropySolver:
         # is the direct state variable and atol controls its error,
         # so max_step=1 yr combined with the liquidus event gives
         # the BDF enough resolution to crystallize gradually.
-        if phi0 > 0.01:
+        if phi0 > 0.01 and self.entropy_eos is not None:
             P_cmb = float(self._P_basic_flat[0])
             S_liq = float(self.entropy_eos.liquidus_entropy(
                 np.array([P_cmb])).item())
