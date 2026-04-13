@@ -163,11 +163,12 @@ class EntropyPhaseEvaluator:
         self._thermal_conductivity_val = np.full_like(S, self._const_cond)
         self._latent_heat_val = np.zeros_like(S)
 
-        # Flatten if scalar input
-        if np.ndim(self.pressure) == 0:
+        # Flatten if scalar input (capture ndim before atleast_1d)
+        if np.ndim(self.entropy) == 0 or np.ndim(self.pressure) == 0:
             for attr in ('_temperature', '_density', '_heat_capacity',
                          '_thermal_expansivity', '_dTdPs_val',
-                         '_thermal_conductivity_val', '_melt_fraction'):
+                         '_thermal_conductivity_val', '_melt_fraction',
+                         '_latent_heat_val'):
                 setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
 
     def _update_eos(self) -> None:
@@ -397,6 +398,8 @@ class EntropyPhaseEvaluator:
     def relative_velocity(self) -> FloatOrArray:
         """Melt-solid relative velocity for gravitational separation [m/s].
 
+        Returns zero in const_properties mode (no phase contrast).
+
         Uses Abe (1993) three-regime permeability model based on porosity
         (volume fraction of melt, not mass fraction), matching SPIDER's
         GetGravitationalHeatFlux in energy.c.
@@ -406,6 +409,8 @@ class EntropyPhaseEvaluator:
         2. Rumpf-Gupte (intermediate): K = d^2 por^4.5 / 5.6
         3. Stokes settling (high porosity): K = d^2 * 2(1-por)^2 / 9
         """
+        if self._const_properties:
+            return np.zeros_like(self._density)
         phi = self._melt_fraction
         rho_s = self._eos._lookup_at_phase_boundary('density', self.pressure, 'solid')
         rho_l = self._eos._lookup_at_phase_boundary('density', self.pressure, 'melt')
@@ -464,6 +469,8 @@ class EntropyPhaseEvaluator:
 
     def delta_specific_volume(self) -> FloatOrArray:
         """Specific volume difference between solid and liquid [m^3/kg]."""
+        if self._const_properties:
+            return np.zeros_like(self._density)
         rho_s = self._eos._lookup_at_phase_boundary('density', self.pressure, 'solid')
         rho_l = self._eos._lookup_at_phase_boundary('density', self.pressure, 'melt')
         return 1.0 / np.maximum(rho_l, 1.0) - 1.0 / np.maximum(rho_s, 1.0)
