@@ -724,7 +724,7 @@ class EntropyState:
             delta_v = np.asarray(
                 self.phase_staggered.delta_specific_volume()
             ).ravel()
-            g = abs(float(self.phase_staggered._gravitational_acceleration))
+            g = abs(float(self.phase_staggered.gravitational_acceleration()))
             self._heating += g * delta_v * mass_flux_stag
 
         if self._tidal:
