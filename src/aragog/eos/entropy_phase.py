@@ -140,16 +140,61 @@ class EntropyPhaseEvaluator:
         eps_a = 1.0e-8
         self._thermal_expansivity = 0.5 * (a + np.sqrt(a * a + eps_a * eps_a))
 
-        # dTdPs: SPIDER eos_composite.c:249 computes this analytically
-        # from the composite properties: dTdPs = alpha*T/(rho*Cp).
-        # The EOS table lookup (_lookup_phase_weighted) gives a different
-        # value in the mushy zone because it evaluates at phase boundary
-        # entropies. Using the analytical formula matches SPIDER exactly.
-        Cp_safe = np.maximum(self._heat_capacity, 100.0)
-        self._dTdPs_val = (
-            self._thermal_expansivity * self._temperature
-            / (np.maximum(self._density, 1.0) * Cp_safe)
-        )
+        # dTdPs: full SPIDER eos_composite.c two-stage computation.
+        #
+        # Stage 1 (line 249): analytical from INTERMEDIATE two-phase
+        # properties (lines 222-246), NOT the final combine_matprop values.
+        #   T_mixed = phi*T_liq + (1-phi)*T_sol
+        #   rho_mixed = harmonic(rho_liq, rho_sol, phi)
+        #   alpha_mixed = (rho_sol-rho_liq)/(T_liq-T_sol)/rho_mixed
+        #   Cp_mixed = (S_liq-S_sol)/(T_liq-T_sol) * T_avg
+        #   dTdPs_mixed = alpha_mixed * T_mixed / (rho_mixed * Cp_mixed)
+        #
+        # Stage 2 (line 283): combine_matprop(smth, mixed, single)
+        #   dTdPs_single from table at actual (P, S)
+        #   smth = get_smoothing(matprop_smooth_width, gphi)
+        P_arr = np.atleast_1d(np.asarray(P, dtype=float))
+        S_arr = np.atleast_1d(np.asarray(S, dtype=float))
+        phi_arr = np.atleast_1d(np.asarray(self._melt_fraction, dtype=float))
+
+        # Phase boundary properties
+        S_sol = self._eos.solidus_entropy(P_arr)
+        S_liq = self._eos.liquidus_entropy(P_arr)
+        T_sol = self._eos._lookup_at_phase_boundary('temperature', P_arr, 'solid')
+        T_liq = self._eos._lookup_at_phase_boundary('temperature', P_arr, 'melt')
+        rho_sol = self._eos._lookup_at_phase_boundary('density', P_arr, 'solid')
+        rho_liq = self._eos._lookup_at_phase_boundary('density', P_arr, 'melt')
+
+        # Intermediate two-phase properties (lines 222-249)
+        T_mixed = phi_arr * T_liq + (1.0 - phi_arr) * T_sol
+        inv_rho_mixed = phi_arr / np.maximum(rho_liq, 1.0) + (1.0 - phi_arr) / np.maximum(rho_sol, 1.0)
+        rho_mixed = 1.0 / np.maximum(inv_rho_mixed, 1e-30)
+        dT_phase = np.maximum(T_liq - T_sol, 1e-10)
+        alpha_mixed = (rho_sol - rho_liq) / dT_phase / np.maximum(rho_mixed, 1.0)
+        T_avg = T_sol + 0.5 * dT_phase
+        Cp_mixed = (S_liq - S_sol) / dT_phase * T_avg
+        Cp_mixed = np.maximum(Cp_mixed, 100.0)
+        dTdPs_mixed = alpha_mixed * T_mixed / (np.maximum(rho_mixed, 1.0) * Cp_mixed)
+
+        # Single-phase dTdPs from table at actual (P, S)
+        dTdPs_single = self._eos.dTdPs(P_arr, S_arr)
+
+        # Smoothing and blend (lines 266-283)
+        dS_phase = np.maximum(S_liq - S_sol, 1e-10)
+        gphi = (S_arr - S_sol) / dS_phase
+        smw = self._matprop_smooth_width
+        if smw > 0:
+            smth = np.where(
+                gphi > 0.5,
+                1.0 - tanh_weight(gphi, 1.0, smw),
+                tanh_weight(gphi, 0.0, smw),
+            )
+        else:
+            smth = np.where((gphi >= 0.0) & (gphi <= 1.0), 1.0, 0.0)
+
+        self._dTdPs_val = smth * dTdPs_mixed + (1.0 - smth) * dTdPs_single
+        if np.ndim(P) == 0:
+            self._dTdPs_val = self._dTdPs_val.ravel()
 
         # Viscosity: two-stage blend matching SPIDER eos_composite.c.
         #
