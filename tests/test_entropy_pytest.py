@@ -259,6 +259,11 @@ class TestEntropySolverStandalone:
         mesh.basic.mixing_length = np.maximum(ml, 1.0)
         mesh.basic.mixing_length_squared = mesh.basic.mixing_length**2
         mesh.basic.mixing_length_cubed = mesh.basic.mixing_length**3
+        mesh.basic.pressure = P_basic
+        mesh.staggered.pressure = P_stag
+        mesh.basic.mass_radii = r_basic
+        mesh.staggered.mass_radii = r_stag
+        mesh.dxidr = np.ones_like(r_basic)
 
         def quantity_at_basic_nodes(q):
             q = np.asarray(q).flatten()
@@ -415,6 +420,11 @@ class TestJgravSmoothing:
         mesh.basic.mixing_length = np.maximum(ml, 1.0)
         mesh.basic.mixing_length_squared = mesh.basic.mixing_length**2
         mesh.basic.mixing_length_cubed = mesh.basic.mixing_length**3
+        mesh.basic.pressure = P_basic
+        mesh.staggered.pressure = P_stag
+        mesh.basic.mass_radii = r_basic
+        mesh.staggered.mass_radii = r_stag
+        mesh.dxidr = np.ones_like(r_basic)
 
         def quantity_at_basic_nodes(q):
             q = np.asarray(q).flatten()
@@ -1108,6 +1118,11 @@ class TestBowerCoreBC:
         mesh.basic.mixing_length = np.maximum(ml, 1.0)
         mesh.basic.mixing_length_squared = mesh.basic.mixing_length**2
         mesh.basic.mixing_length_cubed = mesh.basic.mixing_length**3
+        mesh.basic.pressure = P_basic
+        mesh.staggered.pressure = P_stag
+        mesh.basic.mass_radii = r_basic
+        mesh.staggered.mass_radii = r_stag
+        mesh.dxidr = np.ones_like(r_basic)
 
         return mesh, r_stag, r_basic, P_stag, P_basic
 
