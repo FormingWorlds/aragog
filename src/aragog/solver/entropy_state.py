@@ -446,6 +446,12 @@ class EntropyState:
         Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
         g = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
 
+        # eps=1e-30 is intentionally near-zero: at double precision this
+        # gives a hard max(-x, 0) without the kink smoothing. The original
+        # eps=1e-8 inflated |dSdr| by 15% when gradients were O(eps) at
+        # isentropic ICs, causing 7% kh error. SPIDER uses a hard if/else
+        # threshold, so the near-zero eps matches SPIDER's behavior. If
+        # CVODE stability requires smoothing, increase to ~1e-20.
         conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-30)
         effective_superadiabatic = alpha * T * conv_drive / np.maximum(Cp, 1.0)
         velocity_prefactor = g * effective_superadiabatic
@@ -520,6 +526,12 @@ class EntropyState:
 
         self._heat_flux = np.zeros_like(self._entropy_basic)
         self._mass_flux = np.zeros_like(self._entropy_basic)
+
+        # Ensure mesh dP/dr is populated (needed by conduction and mixing).
+        # The cache is computed lazily from the mesh pressure profile and
+        # only needs refreshing when the mesh changes.
+        if self._conduction or self._mixing:
+            self._ensure_basic_phase_boundary_cache()
 
         if self._conduction:
             # SPIDER-parity conductive flux (energy.c:358-378):

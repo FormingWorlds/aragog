@@ -136,7 +136,7 @@ class EntropyPhaseEvaluator:
         # phi (truncated) and gphi (untruncated)
         gphi = (S_arr - S_sol) / dS_phase
         phi_arr = np.clip(gphi, 0.0, 1.0)
-        self._melt_fraction = phi_arr.item() if np.ndim(P) == 0 else phi_arr
+        self._melt_fraction = phi_arr
 
         # smth: matprop_smooth_width blend factor (SPIDER util.c:get_smoothing)
         if smw > 0:
@@ -179,10 +179,18 @@ class EntropyPhaseEvaluator:
             # Legacy v3: linear blend of table values at phase boundaries
             Cp_sol = _lookup('heat_capacity', P_arr, 'solid')
             Cp_liq = _lookup('heat_capacity', P_arr, 'melt')
-            alpha_sol_b = _lookup('thermal_exp', P_arr, 'solid')
-            alpha_liq_b = _lookup('thermal_exp', P_arr, 'melt')
             Cp_mixed = phi_arr * Cp_liq + (1.0 - phi_arr) * Cp_sol
-            alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
+            if f'thermal_exp_solid' in eos._tables and f'thermal_exp_melt' in eos._tables:
+                alpha_sol_b = _lookup('thermal_exp', P_arr, 'solid')
+                alpha_liq_b = _lookup('thermal_exp', P_arr, 'melt')
+                alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
+            else:
+                # Derive from thermodynamic identity
+                dTdPs_sol = _lookup('dTdPs', P_arr, 'solid')
+                dTdPs_liq = _lookup('dTdPs', P_arr, 'melt')
+                alpha_sol_b = dTdPs_sol * rho_sol * Cp_sol / np.maximum(T_sol, 1.0)
+                alpha_liq_b = dTdPs_liq * rho_liq * Cp_liq / np.maximum(T_liq, 1.0)
+                alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
 
         # dTdPs: analytical from intermediates (line 249)
         dTdPs_mixed = alpha_mixed * T_mixed / (np.maximum(rho_mixed, 1.0)
@@ -206,15 +214,18 @@ class EntropyPhaseEvaluator:
             P_m_c = np.clip(P_arr, melt_tbl['P'][0], melt_tbl['P'][-1])
             v_sol = solid_tbl['interp'](np.column_stack([P_s_c.ravel(), S_s_c.ravel()])).reshape(P_arr.shape)
             v_mel = melt_tbl['interp'](np.column_stack([P_m_c.ravel(), S_m_c.ravel()])).reshape(P_arr.shape)
-            return np.where(gphi >= 0.5, v_mel, v_sol)
+            return np.where(gphi > 0.5, v_mel, v_sol)
 
         T_single = _table_lookup('temperature')
         rho_single = _table_lookup('density')
-        # For Cp, alpha, dTdPs in single-phase: use table values
         Cp_single = _table_lookup('heat_capacity')
-        alpha_single = _table_lookup('thermal_exp')
         dTdPs_single = _table_lookup('dTdPs')
-        cond_single = np.where(gphi >= 0.5, self._k_liquid, self._k_solid)
+        # alpha: use table if available, else derive from thermodynamic identity
+        if f'thermal_exp_solid' in eos._tables and f'thermal_exp_melt' in eos._tables:
+            alpha_single = _table_lookup('thermal_exp')
+        else:
+            alpha_single = dTdPs_single * rho_single * Cp_single / np.maximum(T_single, 1.0)
+        cond_single = np.where(gphi > 0.5, self._k_liquid, self._k_solid)
 
         # ── Step 5: combine_matprop blend (SPIDER 278-285) ──────────
         def _blend(mixed, single):
@@ -231,7 +242,7 @@ class EntropyPhaseEvaluator:
         if np.ndim(P) == 0:
             for attr in ('_temperature', '_density', '_heat_capacity',
                          '_thermal_expansivity', '_dTdPs_val',
-                         '_thermal_conductivity_val'):
+                         '_thermal_conductivity_val', '_melt_fraction'):
                 setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
 
         # Guard: clamp negative alpha (EOS table edges)
@@ -247,7 +258,7 @@ class EntropyPhaseEvaluator:
 
         # Single-phase viscosity (constant per phase)
         log_visc_single = np.where(
-            phi_arr >= 0.5,
+            phi_arr > 0.5,
             np.log10(self._visc_liquid),
             np.log10(self._visc_solid),
         )
