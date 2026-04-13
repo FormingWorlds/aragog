@@ -286,6 +286,14 @@ class EntropySolver:
         if cond_l is not None:
             phase_kwargs['thermal_conductivity_liquid'] = cond_l
 
+        # Constant-properties mode (SPIDER -use_const_properties parity)
+        _const = getattr(self.parameters.phase_mixed, 'const_properties', False)
+        if _const:
+            phase_kwargs['const_properties'] = True
+            for k in ('const_rho', 'const_Cp', 'const_alpha', 'const_cond',
+                       'const_log10visc', 'const_T_ref', 'const_S_ref'):
+                phase_kwargs[k] = float(getattr(self.parameters.phase_mixed, k))
+
         phase_stag = EntropyPhaseEvaluator(
             gravitational_acceleration=g,
             **phase_kwargs,

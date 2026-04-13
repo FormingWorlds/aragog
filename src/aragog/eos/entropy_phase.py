@@ -62,6 +62,14 @@ class EntropyPhaseEvaluator:
         thermal_conductivity_liquid: float = 2.0,
         cp_blend: str = 'latent',
         matprop_smooth_width: float = 0.0,
+        const_properties: bool = False,
+        const_rho: float = 4000.0,
+        const_Cp: float = 1000.0,
+        const_alpha: float = 1e-5,
+        const_cond: float = 4.0,
+        const_log10visc: float = 2.0,
+        const_T_ref: float = 3500.0,
+        const_S_ref: float = 3000.0,
     ):
         self._eos = entropy_eos
         self._g = gravitational_acceleration
@@ -73,6 +81,15 @@ class EntropyPhaseEvaluator:
         self._k_solid = thermal_conductivity_solid
         self._k_liquid = thermal_conductivity_liquid
         self._matprop_smooth_width = matprop_smooth_width
+        # Constant-properties mode (matches SPIDER -use_const_properties)
+        self._const_properties = const_properties
+        self._const_rho = const_rho
+        self._const_Cp = const_Cp
+        self._const_alpha = const_alpha
+        self._const_cond = const_cond
+        self._const_log10visc = const_log10visc
+        self._const_T_ref = const_T_ref
+        self._const_S_ref = const_S_ref
         # 'latent' = SPIDER-parity v4 convention (latent-heat-augmented Cp)
         # 'linear' = legacy v3 convention (pure-phase linear blend)
         if cp_blend not in ('latent', 'linear'):
@@ -115,11 +132,51 @@ class EntropyPhaseEvaluator:
     def update(self) -> None:
         """Recompute all cached properties from current (P, S).
 
-        Single-pass evaluation mirroring SPIDER's EOSEval_Composite_TwoPhase
-        (eos_composite.c:177-290). All properties are derived from a single
-        set of cached intermediates (S_sol, S_liq, phi, gphi, smth, phase-
-        boundary evaluations), eliminating redundant table lookups and
-        ensuring bit-identical intermediate values across properties.
+        Two modes:
+        - const_properties=True: analytical T(S) with constant rho, Cp,
+          alpha, k, visc. Matches SPIDER's -use_const_properties. No EOS
+          table lookups. phi=1 always (no phase transitions).
+        - const_properties=False (default): single-pass EOS evaluation
+          mirroring SPIDER's EOSEval_Composite_TwoPhase.
+        """
+        if self._const_properties:
+            return self._update_const()
+        return self._update_eos()
+
+    def _update_const(self) -> None:
+        """Constant-properties mode matching SPIDER -use_const_properties.
+
+        T = T_ref * exp((S - S_ref) / Cp). All other properties constant.
+        No EOS tables, no phase transitions (phi=1 always).
+        """
+        S = np.atleast_1d(np.asarray(self.entropy, dtype=float))
+
+        self._temperature = self._const_T_ref * np.exp(
+            (S - self._const_S_ref) / self._const_Cp)
+        self._density = np.full_like(S, self._const_rho)
+        self._heat_capacity = np.full_like(S, self._const_Cp)
+        self._thermal_expansivity = np.full_like(S, self._const_alpha)
+        self._melt_fraction = np.full_like(S, 1.0)
+        self._dTdPs_val = (self._const_alpha * self._temperature
+                           / (self._const_rho * self._const_Cp))
+        self._viscosity_val = np.full_like(S, 10.0 ** self._const_log10visc)
+        self._thermal_conductivity_val = np.full_like(S, self._const_cond)
+        self._latent_heat_val = np.zeros_like(S)
+
+        # Flatten if scalar input
+        if np.ndim(self.pressure) == 0:
+            for attr in ('_temperature', '_density', '_heat_capacity',
+                         '_thermal_expansivity', '_dTdPs_val',
+                         '_thermal_conductivity_val', '_melt_fraction'):
+                setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
+
+    def _update_eos(self) -> None:
+        """EOS-based evaluation mirroring SPIDER EOSEval_Composite_TwoPhase.
+
+        Single-pass evaluation (eos_composite.c:177-290). All properties are
+        derived from a single set of cached intermediates (S_sol, S_liq, phi,
+        gphi, smth, phase-boundary evaluations), eliminating redundant table
+        lookups and ensuring bit-identical intermediate values across properties.
         """
         P = self.pressure
         S = self.entropy

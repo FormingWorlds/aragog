@@ -323,6 +323,15 @@ class _PhaseMixedParameters:
     phase_transition_width: float
     grain_size: float
     matprop_smooth_width: float = 0.0
+    # Constant-properties mode (matches SPIDER -use_const_properties)
+    const_properties: bool = False
+    const_rho: float = 4000.0
+    const_Cp: float = 1000.0
+    const_alpha: float = 1e-5
+    const_cond: float = 4.0
+    const_log10visc: float = 2.0
+    const_T_ref: float = 3500.0
+    const_S_ref: float = 3000.0
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:
