@@ -146,7 +146,7 @@ class EntropySolver:
         Loaded P-S EOS tables.
     """
 
-    def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS):
+    def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
         self.entropy_eos = entropy_eos
         self.evaluator: object
