@@ -1491,9 +1491,16 @@ class EntropySolver:
         r_stag = np.asarray(mesh.staggered.radii).ravel()
         vol = self._volume_flat
 
-        T_stag = np.asarray(eos.temperature(P_stag, S_final)).ravel()
-        phi_stag = np.asarray(eos.melt_fraction(P_stag, S_final)).ravel()
-        rho_stag = np.asarray(eos.density(P_stag, S_final)).ravel()
+        if eos is not None:
+            T_stag = np.asarray(eos.temperature(P_stag, S_final)).ravel()
+            phi_stag = np.asarray(eos.melt_fraction(P_stag, S_final)).ravel()
+            rho_stag = np.asarray(eos.density(P_stag, S_final)).ravel()
+        else:
+            # const_properties: analytical T, phi=1, rho=const
+            pm = self.parameters.phase_mixed
+            T_stag = pm.const_T_ref * np.exp((S_final - pm.const_S_ref) / pm.const_Cp)
+            phi_stag = np.ones_like(S_final)
+            rho_stag = np.full_like(S_final, pm.const_rho)
 
         # Refresh the state at the final entropy for derived quantities.
         if gradient_mode:
@@ -1558,12 +1565,17 @@ class EntropySolver:
             S_basic_cmb = float(np.asarray(
                 self.state._entropy_basic
             ).ravel()[0])
-            T_core = float(np.asarray(
-                eos.temperature(
-                    np.array([float(self._P_basic_flat[0])]),
-                    np.array([S_basic_cmb]),
-                )
-            ).item())
+            if eos is not None:
+                T_core = float(np.asarray(
+                    eos.temperature(
+                        np.array([float(self._P_basic_flat[0])]),
+                        np.array([S_basic_cmb]),
+                    )
+                ).item())
+            else:
+                pm = self.parameters.phase_mixed
+                T_core = float(pm.const_T_ref * np.exp(
+                    (S_basic_cmb - pm.const_S_ref) / pm.const_Cp))
         elif bower:
             T_core = extra_final
         else:
@@ -1601,20 +1613,23 @@ class EntropySolver:
         Cp_eff = float(np.sum(mass_stag * Cp_stag)) / max(M_mantle, 1.0)
 
         # Volumetric melt fraction (porosity-based)
-        rho_sol = np.asarray(
-            eos._lookup_at_phase_boundary('density', P_stag, 'solid')
-        ).ravel()
-        rho_liq = np.asarray(
-            eos._lookup_at_phase_boundary('density', P_stag, 'melt')
-        ).ravel()
-        rho_bulk = 1.0 / (
-            phi_stag / np.where(rho_liq > 0, rho_liq, 1.0)
-            + (1 - phi_stag) / np.where(rho_sol > 0, rho_sol, 1.0)
-        )
-        drho = rho_sol - rho_liq
-        safe_drho = np.where(np.abs(drho) > 1e-10, drho, 1.0)
-        porosity = np.clip((rho_sol - rho_bulk) / safe_drho, 0, 1)
-        Phi_global_vol = float(np.sum(porosity * vol) / np.sum(vol))
+        if eos is not None:
+            rho_sol = np.asarray(
+                eos._lookup_at_phase_boundary('density', P_stag, 'solid')
+            ).ravel()
+            rho_liq = np.asarray(
+                eos._lookup_at_phase_boundary('density', P_stag, 'melt')
+            ).ravel()
+            rho_bulk = 1.0 / (
+                phi_stag / np.where(rho_liq > 0, rho_liq, 1.0)
+                + (1 - phi_stag) / np.where(rho_sol > 0, rho_sol, 1.0)
+            )
+            drho = rho_sol - rho_liq
+            safe_drho = np.where(np.abs(drho) > 1e-10, drho, 1.0)
+            porosity = np.clip((rho_sol - rho_bulk) / safe_drho, 0, 1)
+            Phi_global_vol = float(np.sum(porosity * vol) / np.sum(vol))
+        else:
+            Phi_global_vol = 1.0  # const_properties: fully liquid
 
         # Heating flux
         area_surf = 4 * np.pi * float(r_basic[-1]) ** 2
