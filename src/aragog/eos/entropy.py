@@ -239,12 +239,6 @@ def _load_spider_ps_table(filepath: Path) -> dict:
         dS = S_unique[-1] - S_unique[-2]
         dQ = values[:, -1] - values[:, -2]  # shape (n_P,)
         Q_extrap = values[:, -1] + dQ / dS * (S_extrap - S_max)
-        # Guard: density and Cp must stay positive. If the boundary
-        # slope would drive Q_extrap negative, clamp to a small
-        # positive floor. The function does not know which property
-        # it is loading, so a universal floor of 1.0 is safe (all
-        # SI property values in these tables exceed 100).
-        Q_extrap = np.maximum(Q_extrap, 1.0)
         # Append the extrapolated column
         S_unique = np.append(S_unique, S_extrap)
         values = np.column_stack([values, Q_extrap])
