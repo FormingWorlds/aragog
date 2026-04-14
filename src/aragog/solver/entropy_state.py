@@ -202,11 +202,9 @@ class EntropyState:
         self._entropy_staggered = np.zeros(n_staggered)
         self._entropy_basic = np.zeros(n_basic)
         self._dSdr = np.zeros(n_basic)
-        self._dphidr = np.zeros(n_basic)
         self._eddy_diffusivity = np.zeros(n_basic)
         self._heat_flux = np.zeros(n_basic)
         self._mass_flux = np.zeros(n_basic)
-        self._is_convective = np.zeros(n_basic, dtype=bool)
 
         # Per-component flux decomposition at basic nodes (diagnostics
         # for T_core phi=0 instability; see memory/tcore_*.md). These
@@ -438,23 +436,12 @@ class EntropyState:
         # resulting -12% T_core vs SPIDER gap is documented in
         # spider_aragog_parity_v3_v4.md as a formulation difference.
         self._ensure_phase_boundary_cache()
-        gphi = (S - self._S_sol_stag) / self._dS_phase_stag
-        phi_smoothclipped = _smooth_clip(gphi, 0.0, 1.0, eps=1.0e-3)
-        # _dphidr was computed here via the dense transform matrix, but the
-        # result is never read (confirmed by grep across all solver files).
-        # The mixing flux now uses dSdr and dP/dr instead (SPIDER-parity
-        # rewrite at lines 643-695). Removed to save one (N+1)x(N-1)
-        # matrix multiply per RHS evaluation (~1000 calls per PROTEUS step).
 
         # ── MLT from entropy gradient ────────────────────────────────
         # Convection is unstable when dS/dr < 0 (entropy decreasing
-        # outward). `_is_convective` is still maintained for downstream
-        # diagnostic output but is NO LONGER used to zero the velocity
-        # arrays via a boolean mask — that discontinuity broke CVODE's
-        # higher-order BDF predictor. Instead, the smoothed convective
-        # driver below naturally goes to zero (smoothly) for
-        # stably-stratified cells and to |dS/dr| for unstable ones.
-        self._is_convective = self._dSdr < 0
+        # outward). The buoyancy below uses a smoothed max(-dSdr, 0),
+        # which goes to zero for stable profiles and to |dS/dr| for
+        # unstable ones, producing a C^infinity RHS for CVODE.
 
         # Buoyancy: convert entropy gradient to effective thermal
         # buoyancy |superadiabatic| = alpha * T * |dS/dr| / Cp.
@@ -800,10 +787,6 @@ class EntropyState:
     @property
     def eddy_diffusivity(self) -> npt.NDArray:
         return self._eddy_diffusivity
-
-    @property
-    def is_convective(self) -> npt.NDArray:
-        return self._is_convective
 
     @property
     def dSdr(self) -> npt.NDArray:

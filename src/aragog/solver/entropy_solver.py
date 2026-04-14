@@ -22,7 +22,6 @@ import numpy.typing as npt
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 from scipy.optimize import OptimizeResult
-from scipy.sparse import diags as sparse_diags
 
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
@@ -30,28 +29,15 @@ from aragog.parser import Parameters
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
 
-# SUNDIALS CVODE via scikits.odes. Same underlying solver SPIDER uses
-# (SUNDIALS CVODE BDF with modified-Newton nonlinear iteration and dense
-# direct linear solver). scipy's BDF and Radau both collapse their step
-# size to machine epsilon at the crystallisation front and fail with
-# `status=-1: Required step size is less than spacing between numbers`
-# because scipy's Newton iterator cannot converge on the stiff
-# transition. CVODE's C implementation has order 1-5 BDF, a robust
-# modified-Newton with cached Jacobian factorisation, and adaptive step
-# control that handles phase-transition discontinuities cleanly.
+# SUNDIALS CVODE via scikits.odes (the same solver SPIDER uses). scipy
+# BDF/Radau collapse to machine-epsilon step size at the crystallisation
+# front; CVODE handles the phase-transition stiffness cleanly.
 try:
     from scikits_odes.ode import ode as _scikits_ode
     _CVODE_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _CVODE_AVAILABLE = False
     _scikits_ode = None  # type: ignore[assignment]
-
-# Temporary override (2026-04-11): when True, use scipy Radau instead
-# of CVODE even if scikits.odes is importable. Used to discriminate
-# "CVODE BDF predictor problem" (fixed by Radau) from "Aragog RHS
-# intrinsic stiffness" (Radau also struggles). Flip to False once the
-# investigation concludes.
-_FORCE_RADAU = True  # overridden at runtime by solver_method config
 
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
 from scipy import constants as _sp_constants
@@ -971,7 +957,7 @@ class EntropySolver:
         pm = self.parameters.phase_mixed
         return pm.const_T_ref * np.exp((S - pm.const_S_ref) / pm.const_Cp)
 
-    def _build_jac_sparsity(self) -> 'scipy.sparse.spmatrix':
+    def _build_jac_sparsity(self):
         """Build the Jacobian sparsity pattern for the BDF solver.
 
         The entropy equation couples node i to its nearest neighbours
