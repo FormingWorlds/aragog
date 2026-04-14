@@ -8,7 +8,6 @@ from functools import cached_property
 
 import numpy as np
 import numpy.typing as npt
-from scipy.interpolate import PchipInterpolator
 
 from aragog.mesh.fixed_mesh import FixedMesh
 from aragog.mesh.pressure_eos import (

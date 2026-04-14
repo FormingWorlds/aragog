@@ -57,9 +57,6 @@ docs = [
     "mkdocstrings",
 ]
 
-[tool.poetry.scripts]
-aragog = "aragog.cli:cli"
-
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
