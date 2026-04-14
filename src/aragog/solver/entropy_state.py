@@ -498,8 +498,19 @@ class EntropyState:
         # Reynolds number
         reynolds = viscous_velocity * mixing_length / nu
 
-        # Smooth blend between regimes (tanh transition at Re_crit)
-        blend_width = 0.2 * RE_CRIT
+        # Smooth blend between regimes (tanh transition at Re_crit).
+        # blend_width = 0.01 * RE_CRIT: at Re ≪ RE_CRIT (solid regime,
+        # Re ~ 1e-26), tanh saturates to -1 within machine precision so
+        # the inviscid contribution is exactly zero. Previously
+        # blend_width = 0.2 * RE_CRIT, which gave inviscid_weight ~ 5e-5
+        # at Re=0; multiplied by inviscid_velocity ~ 1 m/s and mix ~ 7e5
+        # m, that 5e-5 leak produced k_h ~ 20 m^2/s in the solid regime
+        # (vs SPIDER's hard if-else giving k_h ~ 1e-7). The artificial
+        # k_h made k_h = max(raw, kappah_floor) sit on raw rather than
+        # the floor, creating a second metastable equilibrium for
+        # dSdr_cmb and the phi=0 oscillation documented in
+        # memory/tcore_phi0_bistability.md.
+        blend_width = 0.01 * RE_CRIT
         inviscid_weight = 0.5 * (1.0 + np.tanh(
             (reynolds - RE_CRIT) / max(blend_width, 1e-30)
         ))
