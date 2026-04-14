@@ -236,11 +236,6 @@ class EntropySolver:
         )))
 
         # Create entropy phase evaluators for staggered and basic nodes.
-        # cp_blend selects how Cp is computed in the mushy zone:
-        #   'latent' = SPIDER-parity v4 convention (latent-heat-augmented)
-        #   'linear' = legacy v3 convention (linear blend of pure-phase Cp)
-        cp_blend = getattr(self.parameters.phase_mixed, 'cp_blend', 'latent')
-
         phase_kwargs = dict(
             entropy_eos=self.entropy_eos,
             rheological_transition_melt_fraction=(
@@ -250,7 +245,6 @@ class EntropySolver:
                 self.parameters.phase_mixed.rheological_transition_width
             ),
             grain_size=self.parameters.phase_mixed.grain_size,
-            cp_blend=cp_blend,
         )
 
         # Get viscosity and thermal conductivity from config.

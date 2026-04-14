@@ -60,7 +60,6 @@ class EntropyPhaseEvaluator:
         grain_size: float = 1e-3,
         thermal_conductivity_solid: float = 4.0,
         thermal_conductivity_liquid: float = 2.0,
-        cp_blend: str = 'latent',
         matprop_smooth_width: float = 0.0,
         const_properties: bool = False,
         const_rho: float = 4000.0,
@@ -90,14 +89,6 @@ class EntropyPhaseEvaluator:
         self._const_log10visc = const_log10visc
         self._const_T_ref = const_T_ref
         self._const_S_ref = const_S_ref
-        # 'latent' = SPIDER-parity v4 convention (latent-heat-augmented Cp)
-        # 'linear' = legacy v3 convention (pure-phase linear blend)
-        if cp_blend not in ('latent', 'linear'):
-            raise ValueError(
-                f"cp_blend must be 'latent' or 'linear', got {cp_blend!r}"
-            )
-        self._cp_blend = cp_blend
-
         # State arrays (set by set_entropy / set_pressure / update)
         self.entropy: npt.NDArray = np.array([])
         self.pressure: npt.NDArray = np.array([])
@@ -117,13 +108,6 @@ class EntropyPhaseEvaluator:
     def set_entropy(self, entropy: npt.NDArray) -> None:
         """Set the entropy profile."""
         self.entropy = np.asarray(entropy, dtype=float)
-
-    def set_temperature(self, temperature: npt.NDArray) -> None:
-        """Not used in entropy mode. Use set_entropy() instead."""
-        raise NotImplementedError(
-            'EntropyPhaseEvaluator uses set_entropy(), not set_temperature(). '
-            'This evaluator cannot be used with the T-based solver.'
-        )
 
     def set_pressure(self, pressure: npt.NDArray) -> None:
         """Set the pressure profile."""
@@ -228,27 +212,10 @@ class EntropyPhaseEvaluator:
                          + (1.0 - phi_arr) / np.maximum(rho_sol, 1.0))
         rho_mixed = 1.0 / np.maximum(inv_rho_mixed, 1e-30)
 
-        if self._cp_blend == 'latent':
-            # alpha: composite (SPIDER eos_composite.c:246)
-            alpha_mixed = (rho_sol - rho_liq) / dT_phase / np.maximum(rho_mixed, 1.0)
-            # Cp: latent-heat augmented (SPIDER lines 227-232)
-            Cp_mixed = np.maximum((S_liq - S_sol) / dT_phase * T_avg, 100.0)
-        else:
-            # Legacy v3: linear blend of table values at phase boundaries
-            Cp_sol = _lookup('heat_capacity', P_arr, 'solid')
-            Cp_liq = _lookup('heat_capacity', P_arr, 'melt')
-            Cp_mixed = phi_arr * Cp_liq + (1.0 - phi_arr) * Cp_sol
-            if f'thermal_exp_solid' in eos._tables and f'thermal_exp_melt' in eos._tables:
-                alpha_sol_b = _lookup('thermal_exp', P_arr, 'solid')
-                alpha_liq_b = _lookup('thermal_exp', P_arr, 'melt')
-                alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
-            else:
-                # Derive from thermodynamic identity
-                dTdPs_sol = _lookup('dTdPs', P_arr, 'solid')
-                dTdPs_liq = _lookup('dTdPs', P_arr, 'melt')
-                alpha_sol_b = dTdPs_sol * rho_sol * Cp_sol / np.maximum(T_sol, 1.0)
-                alpha_liq_b = dTdPs_liq * rho_liq * Cp_liq / np.maximum(T_liq, 1.0)
-                alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
+        # alpha: composite (SPIDER eos_composite.c:246).
+        alpha_mixed = (rho_sol - rho_liq) / dT_phase / np.maximum(rho_mixed, 1.0)
+        # Cp: latent-heat augmented (SPIDER eos_composite.c:227-232).
+        Cp_mixed = np.maximum((S_liq - S_sol) / dT_phase * T_avg, 100.0)
 
         # dTdPs: analytical from intermediates (line 249)
         dTdPs_mixed = alpha_mixed * T_mixed / (np.maximum(rho_mixed, 1.0)
