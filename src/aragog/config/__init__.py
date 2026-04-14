@@ -1,11 +1,7 @@
-"""Aragog configuration system.
+"""Aragog configuration loader.
 
-Provides attrs-based configuration classes as the modern alternative
-to the legacy dataclass-based parser. Supports construction from
-TOML files or dictionaries.
-
-During the transition period, Config.to_parameters() converts to
-the legacy Parameters object that the solver expects.
+Provides ``Config.from_toml`` / ``Config.from_dict`` / ``Config.from_file``
+that build a ``Parameters`` object from TOML or dict input.
 """
 
 from __future__ import annotations
@@ -14,16 +10,6 @@ import logging
 import sys
 from typing import Any
 
-import numpy as np
-
-from aragog.config.boundary import BoundaryConfig
-from aragog.config.energy import EnergyConfig
-from aragog.config.initial_condition import InitialConditionConfig
-from aragog.config.mesh import MeshConfig
-from aragog.config.phases import MixedPhaseConfig, PhaseConfig
-from aragog.config.radionuclides import RadionuclideConfig
-from aragog.config.solver import SolverConfig
-
 if sys.version_info < (3, 11):
     import tomli as tomllib
 else:
@@ -31,31 +17,14 @@ else:
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-# Re-export all config classes for convenient access
-__all__ = [
-    "Config",
-    "BoundaryConfig",
-    "EnergyConfig",
-    "InitialConditionConfig",
-    "MeshConfig",
-    "MixedPhaseConfig",
-    "PhaseConfig",
-    "RadionuclideConfig",
-    "SolverConfig",
-]
+__all__ = ["Config"]
 
 
 class Config:
-    """Top-level Aragog configuration.
-
-    This is a facade that constructs a legacy Parameters object
-    from modern attrs-based sub-configs or from TOML/dict input.
-    During the transition, Solver still expects Parameters internally.
+    """Construct a Parameters object from TOML or dict input.
 
     Parameters
     ----------
-    scalings : dict
-        Scaling parameters (radius, temperature, density, time).
     solver : dict
         ODE solver parameters.
     boundary_conditions : dict
@@ -64,32 +33,19 @@ class Config:
         Mesh parameters.
     energy : dict
         Energy source toggles.
-    initial_condition : dict
+    initial_condition : dict, optional
         Initial condition parameters.
-    phase_liquid : dict
-        Liquid phase properties.
-    phase_solid : dict
-        Solid phase properties.
+    phase_liquid, phase_solid : dict
+        Single-phase properties.
     phase_mixed : dict
-        Mixed phase parameters.
+        Mixed-phase parameters (latent heat, rheological transition, ...).
     radionuclide_* : dict
         Radionuclide sections (any key starting with 'radionuclide_').
     """
 
     @staticmethod
     def from_toml(filename: str) -> "Parameters":
-        """Load configuration from a TOML file and return a Parameters object.
-
-        Parameters
-        ----------
-        filename : str
-            Path to the TOML file.
-
-        Returns
-        -------
-        Parameters
-            Legacy Parameters object, ready for Solver.
-        """
+        """Load configuration from a TOML file."""
         from pathlib import Path
 
         with Path(filename).open("rb") as f:
@@ -101,17 +57,7 @@ class Config:
     def from_dict(data: dict[str, Any]) -> "Parameters":
         """Construct a Parameters object from a nested dictionary.
 
-        This is the primary construction path used by the PROTEUS wrapper.
-
-        Parameters
-        ----------
-        data : dict
-            Nested dictionary with section names as keys.
-
-        Returns
-        -------
-        Parameters
-            Legacy Parameters object, ready for Solver.
+        Used by the PROTEUS wrapper as the primary construction path.
         """
         from aragog.parser import (
             Parameters,
@@ -157,17 +103,7 @@ class Config:
 
     @staticmethod
     def from_file(*filenames: str) -> "Parameters":
-        """Load from a file, auto-detecting format (TOML or INI).
-
-        Parameters
-        ----------
-        filenames : str
-            One or more file paths.
-
-        Returns
-        -------
-        Parameters
-        """
+        """Load from one or more files, auto-detecting TOML vs INI."""
         from pathlib import Path
 
         from aragog.parser import Parameters
@@ -178,11 +114,4 @@ class Config:
             toml_path = next(p for p in paths if p.suffix == ".toml")
             return Config.from_toml(str(toml_path))
 
-        # Fall back to legacy INI parser
         return Parameters.from_file(*filenames)
-
-
-# Make Parameters importable from aragog.config for convenience
-def _get_parameters_class():
-    from aragog.parser import Parameters
-    return Parameters

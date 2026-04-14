@@ -325,7 +325,7 @@ class EntropyState:
         time : float
             Current time [yr].
         dSdr_cmb : float, optional
-            Path A (energy_balance): override the CMB boundary gradient.
+            energy_balance: override the CMB boundary gradient.
         dSdr : array, optional
             Gradient-mode: provide dS/dr at all basic nodes directly,
             bypassing the FD transform. Shape (N+1,).
@@ -360,7 +360,7 @@ class EntropyState:
             dxidr = np.asarray(mesh.dxidr).ravel()
             self._dSdr = dSdxi * dxidr
 
-        # Path A: override the boundary entropy gradient with the
+        # energy_balance: override the boundary entropy gradient with the
         # state-vector value. This must happen BEFORE the phase_basic
         # update so the bottom basic node uses the boundary entropy.
         if dSdr_cmb is not None:
