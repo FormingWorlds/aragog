@@ -72,28 +72,18 @@ class Mesh:
             ).reshape(-1, 1)
 
             # Derive NON-UNIFORM spatial coordinates from the uniform xi grid
-            # by solving the mass-coordinate equation at each node via Newton
-            # iteration, matching SPIDER's GetRadiusFromMassCoordinate.
-            #
-            # SPIDER's equation (eos_adamswilliamson.c:296-311):
+            # Solve the mass-coordinate equation at each node via Newton
+            # iteration (SPIDER eos_adamswilliamson.c:296-311):
             #   f(r) = (r_core^3 + 3*M_AW(r_core, r)/rho_avg)^(1/3) - xi = 0
-            #
-            # The PCHIP interpolation previously used here introduced
-            # O(h^4) errors on the N-point grid that accumulated to ~3%
-            # node position offsets.
             from scipy.optimize import brentq
             r_core = float(initial_spatial[0, 0])
             r_surf = float(initial_spatial[-1, 0])
             rho_avg = self._planet_density
 
             def _xi_of_r(r: float) -> float:
-                """Mass coordinate xi(r) matching SPIDER's definition.
-
-                SPIDER's mass integral is WITHOUT 4pi (convention in
-                SPIDER, see eos_adamswilliamson.c:185). Aragog's
-                get_mass_within_radii includes 4pi. Divide by 4pi to
-                match SPIDER, since rho_avg was also computed without
-                4pi (from staggered_effective_density * delta_r^3).
+                """Mass coordinate xi(r); SPIDER's mass integral omits
+                the 4pi factor (eos_adamswilliamson.c:185), so divide
+                Aragog's get_mass_within_radii by 4pi to match.
                 """
                 M_shell_4pi = self.eos.get_mass_within_radii(
                     np.array([r])
@@ -106,8 +96,7 @@ class Mesh:
             basic_coordinates[-1, 0] = r_surf  # surface: exact
             for j in range(1, self.settings.number_of_nodes - 1):
                 xi_target = float(basic_mass_coordinates[j, 0])
-                # Bracket: always use the full domain [r_core, r_surf]
-                # to avoid floating-point edge cases near the boundaries
+                # Full-domain bracket for robust brentq.
                 basic_coordinates[j, 0] = brentq(
                     lambda r: _xi_of_r(r) - xi_target,
                     r_core + 1.0, r_surf - 1.0,
@@ -170,17 +159,13 @@ class Mesh:
         return self.eos.staggered_pressure
 
     def get_planet_density(self, basic_coordinates: npt.NDArray) -> float:
-        """Computes the mantle average density for mass-coordinate mapping.
+        """Mantle average density for mass-coordinate mapping.
 
         Matches SPIDER's ``EOSAdamsWilliamson_GetMassCoordinateAverageRho``
-        (eos_adamswilliamson.c:249-267): the average density is computed
-        over the mantle shell only (r_core to r_surface), NOT including
-        the core. This ensures the mass-coordinate xi grid maps to the
-        same physical radii as SPIDER's Newton-solved mesh.
-
-        The previous implementation used whole-planet density (core +
-        mantle) / r_surface^3, which produced ~3% node position offsets
-        and cascading 12% pressure / 20% density / 17% flux differences.
+        (eos_adamswilliamson.c:249-267): averaged over the mantle shell
+        only (r_core to r_surface), NOT including the core, so the
+        mass-coordinate xi grid maps to the same physical radii as
+        SPIDER's mesh.
 
         Args:
             Basic spatial coordinates
@@ -190,11 +175,9 @@ class Mesh:
         """
         r_core = basic_coordinates[0, 0]
         r_surf = basic_coordinates[-1, 0]
-        # Use the analytic A-W mass integral (without 4pi, SPIDER
-        # convention) for the average density. The discrete sum
-        # (rho * delta_r^3) is inconsistent because the 4pi/3
-        # factors don't cancel between the volume elements and
-        # the effective density definition.
+        # Analytic Adams-Williamson mass integral (without 4pi, SPIDER
+        # convention). The discrete sum (rho * delta_r^3) is
+        # inconsistent because 4pi/3 factors don't cancel here.
         M_4pi = (
             self.eos.get_mass_within_radii(np.array([[r_surf]]))
             - self.eos.get_mass_within_radii(np.array([[r_core]]))

@@ -219,10 +219,9 @@ def _load_spider_ps_table(filepath: Path) -> dict:
     # transpose to get (n_P, n_S) for RegularGridInterpolator((P, S)).
     values = Q_all.reshape(n_S, n_P).T
 
-    # Bilinear interpolation (C^0), matching SPIDER's lookup method.
-    # Cubic (C^2) was tried but introduces sub-percent property offsets
-    # that break the Jconv-Jmix cancellation in the mushy zone, causing
-    # the CMB cell to drain. SPIDER uses bilinear for all P-S lookups.
+    # Bilinear (C^0) interpolation, matching SPIDER's P-S lookup
+    # convention. Required for the Jconv-Jmix cancellation in the
+    # mushy zone; smoother schemes shift properties enough to break it.
     interp = RegularGridInterpolator(
         (P_unique, S_unique), values,
         method='linear', bounds_error=False, fill_value=np.nan,
@@ -267,11 +266,8 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
     P = data[:, 0] * P_scale
     S = data[:, 1] * S_scale
 
-    # Linear interpolation matching SPIDER's 1D phase boundary lookup.
-    # PchipInterpolator (C^1 monotone cubic Hermite) was tried but its
-    # sub-percent offsets at phase boundaries compound into the Jconv-Jmix
-    # cancellation failure that drains the CMB cell. SPIDER uses plain
-    # linear interpolation for solidus/liquidus S(P).
+    # Linear interpolation matching SPIDER's solidus/liquidus S(P)
+    # lookup. Required for the Jconv-Jmix cancellation in the mushy zone.
     from scipy.interpolate import interp1d
     _lin = interp1d(P, S, kind='linear', bounds_error=False,
                     fill_value=(float(S[0]), float(S[-1])))

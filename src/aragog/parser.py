@@ -1,9 +1,9 @@
-"""Parses the configuration file and stores the parameters.
+"""Parses the configuration file into dataclasses.
 
-Non-dimensionalization has been removed. All quantities are in SI units,
-with time in years. The _ScalingsParameters class is retained with all
-scales set to 1.0 so that downstream code referencing scalings_ attributes
-sees identity operations (division by 1.0).
+All quantities are stored in SI units (time in years). The
+_ScalingsParameters dataclass is retained as an identity (all scales
+set to 1.0) so downstream `scalings_.X` divisions remain no-ops; will
+be removed in a future cleanup.
 """
 
 from __future__ import annotations
@@ -45,12 +45,8 @@ def _get_dataclass_from_section_name() -> dict[str, Any]:
 
 @dataclass
 class _ScalingsParameters:
-    """Vestigial scalings class retained for API compatibility.
-
-    All scales are set to 1.0 so that any code dividing by a scale
-    factor becomes an identity operation. The config file may still
-    contain a [scalings] section; the values are parsed but ignored.
-    """
+    """Identity-scaling stub. All scales are 1.0; division by any
+    ``scalings_.X`` field is a no-op. Pending removal."""
 
     radius: float = 1
     temperature: float = 1
@@ -97,7 +93,7 @@ class _ScalingsParameters:
         self.viscosity = 1.0
         self.time_years = 1.0
         self.stefan_boltzmann_constant = 1.0
-        logger.debug("scalings = %s (all unity, non-dimensionalization removed)", self)
+        logger.debug("scalings = %s", self)
 
 
 @dataclass
@@ -458,7 +454,6 @@ class Parameters:
     """Assembles all the parameters.
 
     All quantities are stored in SI units (time in years).
-    Non-dimensionalization has been removed.
     """
 
     boundary_conditions: _BoundaryConditionsParameters

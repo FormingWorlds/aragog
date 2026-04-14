@@ -101,10 +101,9 @@ class SolverOutput:
     eddy_diff: npt.NDArray      # eddy diffusivity at basic nodes [m^2/s]
     cap_stag: npt.NDArray       # capacitance rho*T at staggered nodes
 
-    # Diagnostic decomposition at basic nodes (T_core phi=0 instability
-    # investigation, see memory/tcore_phi0_*.md). Populated from the
-    # final EntropyState after integration; only consumers that set
-    # ``write_flux_diagnostics = true`` in the PROTEUS config read these.
+    # Per-component flux decomposition and basic-node EOS state.
+    # Populated from the final EntropyState after each integration;
+    # only written to NetCDF when ``write_flux_diagnostics`` is true.
     jcond_b: npt.NDArray        # conductive flux [W/m^2]
     jconv_b: npt.NDArray        # convective flux [W/m^2]
     jgrav_b: npt.NDArray        # grav-sep contribution to heat flux [W/m^2]
@@ -315,35 +314,24 @@ class EntropySolver:
         else:
             self.evaluator.radionuclides = []
 
-        # Tier 1 speedup (Step 1A): cache constant BC and mesh terms
-        # so the dSdt hot path doesn't recompute them on every RHS
-        # call. None of these depend on entropy.
+        # Cache BC and mesh constants for the dSdt hot path.
         self._cache_bc_constants()
 
         # Nondimensionalisation scales matching SPIDER (spider.py:832-835).
-        # After dividing by these, S_nd ~ O(1) and dSdr_nd ~ O(1),
-        # so CVODE can use tight atol without excessive internal substeps.
-        # In physical units S ~ 3000 J/kg/K, meaning atol=1e-10 demands
-        # ~13 significant digits on a 4-digit number. With nondim,
-        # atol=1e-10 needs only ~10 digits on an O(1) number.
+        # State and time get divided by these at the CVODE interface
+        # so the integrator works with O(1) values and tight atol.
         self._S_ref = 2993.025100070677  # entropy0 [J/kg/K] (spider.py:835)
         self._t_ref_yr = 1e5 / SECS_PER_YEAR  # time0 [yr]
         self._r_ref = 6.371e7        # radius0 [m]
         self._dSdr_ref = self._S_ref / self._r_ref  # [J/kg/K/m]
 
     def _cache_bc_constants(self) -> None:
-        """Pre-compute BC and mesh constants for the dSdt hot path.
+        """Pre-compute BC and mesh constants used in the dSdt hot path.
 
         Lifts core_density, core_heat_capacity, area_cmb, M_core,
         r_cmb, r_above, dr_half, vol_first, tfac_core_avg, and the
         outer/inner BC dispatch keys out of the per-RHS-call path.
         Called from ``_initialize_internals`` after BC + mesh setup.
-
-        Tier 1 speedup, 2026-04-09. The dSdt loop previously
-        recomputed all of these on every RHS evaluation, which
-        meant ~10 µs/call of pure dispatch + arithmetic overhead.
-        At ~1000 RHS calls per coupling step on R8 CHILI, that's
-        ~10 ms per coupling step pure overhead, fully removable.
         """
         bc = self.evaluator.boundary_conditions._settings
         mesh = self.evaluator.mesh
@@ -512,12 +500,11 @@ class EntropySolver:
                          S_arr.min(), S_arr.max())
 
     def set_initial_dSdr_cmb(self, dSdr_cmb_init: float) -> None:
-        """Set the initial CMB entropy gradient (Path A energy_balance only).
+        """Set the initial CMB entropy gradient (energy_balance BC only).
 
-        Must be called BEFORE ``set_initial_entropy``. If not called,
-        the initial ``dSdr_cmb`` is taken from the previous solution
-        (if any), else from a one-sided FD of the staggered S_init at
-        the bottom (which is zero for a uniform isentrope).
+        Must be called BEFORE ``set_initial_entropy``. Otherwise the
+        initial ``dSdr_cmb`` is taken from the previous solution, or
+        from a one-sided FD of the staggered S_init at the bottom.
         """
         self._dSdr_cmb_init = float(dSdr_cmb_init)
 
@@ -528,26 +515,17 @@ class EntropySolver:
     ) -> npt.NDArray:
         """Time derivative of the full state vector.
 
-        For the v4 Bower core BC the state vector is
-        ``[S_0, ..., S_{N-1}, T_core]`` of length N+1, and this returns
-        ``[dS/dt, dT_core/dt]`` of the same length.
-
-        For the legacy quasi-steady BC the state vector is just
-        ``[S_0, ..., S_{N-1}]`` of length N.
-
-        Tier 1 Step 1B (2026-04-09): the previous version had a
-        ``vectorized=True`` dispatch branch that fell through to a
-        sequential Python loop over the K columns -- pure overhead
-        with zero scipy benefit. Removed; the solver now uses
-        ``vectorized=False`` and the 1D path only.
+        State layout depends on ``core_bc``:
+        - 'energy_balance': [S_0..S_{N-1}, dSdr_cmb], length N+1
+        - 'gradient':       [dS/dr at N+1 basic nodes, S_surf], length N+2
+        - 'quasi_steady':   [S_0..S_{N-1}], length N
 
         Parameters
         ----------
         time : float
             Time [yr].
         state_vec : array
-            Solver state vector [J/kg/K for entropy, K for T_core].
-            Shape (N,) or (N+1,) only.
+            Solver state vector. Shape (N,) or (N+1,) or (N+2,).
 
         Returns
         -------
@@ -563,21 +541,18 @@ class EntropySolver:
     ) -> npt.NDArray:
         """Time derivative of one state vector column.
 
-        Four CMB BC modes:
+        CMB BC modes:
 
-        - 'quasi_steady' (default): state = [S_0, ..., S_{N-1}],
-          length N. F_cmb is set by the alpha-factor partition of
-          F[1].
-        - 'energy_balance' (Path A SPIDER bit-parity): state =
-          [S_0, ..., S_{N-1}, dSdr_cmb], length N+1. The boundary
-          state dSdr_cmb is passed into ``state.update`` so the
-          convective+conductive flux at the CMB basic node uses
-          the boundary entropy gradient. d/dt(dSdr_cmb) is computed
-          from SPIDER's bc.c:76-131 formula.
+        - 'energy_balance' (default, SPIDER bit-parity): state =
+          [S_0..S_{N-1}, dSdr_cmb], length N+1. dSdr_cmb is passed
+          to ``state.update`` so the CMB-basic flux operator uses the
+          boundary entropy gradient. d/dt(dSdr_cmb) follows SPIDER
+          bc.c:76-131.
         - 'gradient': state = [dS/dr at N+1 basic nodes, S_surf],
-          length N+2. Mirrors SPIDER's dS/dxi formulation. S at
-          staggered nodes is reconstructed by cumulative sum from
-          the surface inward at each RHS evaluation.
+          length N+2. SPIDER dS/dxi formulation; staggered S is
+          reconstructed by cumulative sum from the surface inward.
+        - 'quasi_steady': state = [S_0..S_{N-1}], length N. F_cmb is
+          set by the alpha-factor partition of F[1].
         """
         n_stag = self._n_stag
         gradient_mode = (self._core_bc == 'gradient')
@@ -598,20 +573,17 @@ class EntropySolver:
             entropy = state_vec
             extra = None
 
-        # In energy_balance mode the boundary state IS the entropy
-        # gradient, and we pass it through to state.update() so
-        # the flux operator at the CMB basic node uses the
-        # boundary value rather than the FD-derived estimate.
+        # In energy_balance mode dSdr_cmb is the boundary state and
+        # is passed into state.update so the CMB-basic flux operator
+        # uses it directly. gradient_mode already invoked state.update.
         if gradient_mode:
-            pass  # state.update already called above with dSdr
+            pass
         elif energy_balance:
             self.state.update(entropy, time, dSdr_cmb=extra)
         else:
             self.state.update(entropy, time)
 
-        # Apply flux BCs directly (not via BC module, which expects 2D arrays).
-        # All BC dispatch keys and constants are pre-cached in
-        # _cache_bc_constants(); see Tier 1 Step 1A.
+        # Apply flux BCs (BC dispatch keys cached in _cache_bc_constants).
 
         # Surface: grey-body or prescribed flux
         if self._outer_bc_kind == 1:
@@ -718,13 +690,10 @@ class EntropySolver:
             return dSdt
 
         if energy_balance:
-            # Path A boundary-state ODE (extracted to a pure helper
-            # `_energy_balance_rhs_per_s` for unit testing). The inputs are
-            # the F_cmb heat flux computed by state.update() above
-            # (which used the boundary dSdr_cmb to set the CMB basic
-            # node entropy), and the dS/dt at the bottom staggered
-            # cell (dSdt[0], which we just built from the flux
-            # divergence).
+            # Boundary-state ODE for dSdr_cmb. F_cmb comes from the
+            # state.update() flux operator (which used dSdr_cmb to set
+            # the CMB-basic entropy); dSdt at the bottom staggered cell
+            # comes from the flux divergence we just built.
             F_cmb_basic = float(self.state._heat_flux[0])
             T_cmb_basic = float(np.asarray(
                 self.state.phase_basic.temperature()
@@ -1201,17 +1170,12 @@ class EntropySolver:
         """Run the BDF time integration."""
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
-        # Test 2026-04-11 evening: lower the atol floor from 0.01 to
-        # 1e-8 to match SPIDER's `atol = rtol = 1e-8` exactly. SPIDER
-        # integrates with 8 orders of magnitude tighter absolute
-        # tolerance; if cumulative integration error over ~200 kyr of
-        # solidification contributes to the observed -18% T_core gap
-        # vs SPIDER, tightening atol should shift the trajectory.
+        # atol floor at 1e-8 to match SPIDER's setting.
         atol_base = max(self.parameters.solver.atol, 1.0e-8)
         rtol = self.parameters.solver.rtol
 
         # Phase-aware atol: tight during crystallization, relaxed only
-        # when fully solid (Fix B, 2026-04-10).
+        # when fully solid.
         try:
             n_stag = self._n_stag
             if self._core_bc == 'gradient':
@@ -1324,20 +1288,13 @@ class EntropySolver:
         # BDF integration with phase-aware max_step constraint.
         jac_sparsity = self._build_jac_sparsity()
 
-        # No terminal event. The max_step=1 yr near the liquidus
-        # (set above) is sufficient for the value-based formulation
-        # where atol directly controls S[0]. Terminal events cause
-        # the solver to get stuck at the liquidus indefinitely.
+        # No terminal event: max_step caps dt near the liquidus, and
+        # atol directly controls S[0] in the value-based formulation.
         events = None
 
-        # SOLVER: SUNDIALS CVODE via scikits.odes (2026-04-11). Same
-        # solver SPIDER uses (CVODE BDF with modified-Newton). scipy's
-        # BDF and Radau both hit `Required step size is less than
-        # spacing between numbers` at the crystallisation front because
-        # scipy's Newton iterator cannot converge on the stiff phase
-        # transition. CVODE's C implementation handles it cleanly.
-        # Scipy solve_ivp is kept as a fallback only if CVODE is not
-        # available (e.g., scikits.odes import fails).
+        # SUNDIALS CVODE via scikits.odes (the solver SPIDER uses).
+        # scipy solve_ivp kept as a fallback when scikits.odes is
+        # unavailable.
         solver_method = getattr(
             self.parameters.energy, 'solver_method', 'radau'
         )
@@ -1524,33 +1481,17 @@ class EntropySolver:
             mass_stag = rho_struct_stag * vol
             M_mantle = float(np.sum(mass_stag))
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
-        # T_magma = top BASIC node T, SPIDER-parity with
-        # `atmosphere/temperature_surface` in SPIDER's JSON output
-        # (`interior_energetics/spider.py:1237`). The top basic node is at
-        # r = outer_boundary where P = surface_pressure (= 0 for the
-        # default Adams-Williamson BC); the top staggered cell is half a
-        # cell below it at non-zero P. Previously we reported
-        # `T_magma = T_stag[-1]`, which for the CHILI R8 config at
-        # S=3900 J/kg/K, 1TPa-dK09 tables, rho_s=4000 kg/m^3 placed
-        # T_magma at (P~2770 bar, S=3900) = 3862 K instead of
-        # (P=0 bar, S=3900) = 3820 K. PROTEUS passes `hf_row['T_magma']`
-        # to AGNI as the interior-side surface boundary condition
-        # (`atmos_clim/agni.py:441`), so the ~44 K offset drove a
-        # +12% F_atm offset at iteration 1, which cumulatively explained
-        # the full -18% T_core endpoint gap against SPIDER v4.
+        # T_magma = top basic-node T, matching SPIDER's
+        # `atmosphere/temperature_surface` (spider.py:1237). The top
+        # basic node is at r = outer_boundary where P = surface_pressure
+        # (= 0 with the default Adams-Williamson BC).
         T_basic_final = np.asarray(
             self.state.phase_basic.temperature()
         ).ravel()
         T_magma = float(T_basic_final[-1])
-        # Core temperature: bottom staggered cell (T_stag[0]).
-        # SPIDER reports T_core = interior_o.temp[-1] which is the last
-        # staggered node (SPIDER orders surface-to-CMB, so [-1] = CMB
-        # cell). Aragog orders CMB-to-surface, so [0] = CMB cell.
-        # Previous code used the CMB basic-node entropy via EOS for
-        # energy_balance/gradient modes, but that is at the actual CMB
-        # radius (half a cell below T_stag[0]), giving a systematic
-        # +10 K offset from the higher pressure. Using T_stag[0] for
-        # all modes matches SPIDER's definition exactly.
+        # T_core = bottom staggered cell. SPIDER orders surface-to-CMB
+        # so its equivalent is interior_o.temp[-1]; Aragog orders
+        # CMB-to-surface so it is T_stag[0]. Same physical cell.
         T_core = float(T_stag[0])
         Phi_global = float(np.dot(phi_stag, vol) / np.sum(vol))
 
@@ -1570,17 +1511,7 @@ class EntropySolver:
         R_outer = float(r_basic[-1])
         RF_depth = 1.0 - rf / R_outer if R_outer > 0 else 0.0
 
-        # Thermal energy (sensible, for comparison with SPIDER).
-        #
-        # Use the real heat capacity Cp(P, S) from the EntropyEOS
-        # phase evaluator. Until 2026-04-09 this used a hardcoded
-        # CP_REF = 1200 J/kg/K, which under-counted E_th by ~25-30 %
-        # at mantle conditions and produced a spurious +17 % offset
-        # against SPIDER (which itself was also wrong, see the
-        # parallel fix in proteus.interior_energetics.spider). With
-        # both wrappers using their respective EOS Cp(P, S) values
-        # the helpfile E_th is now physically meaningful and the
-        # SPIDER/Aragog parity reduces to a true comparison.
+        # Sensible thermal energy with EOS-derived Cp(P, S).
         Cp_stag = np.asarray(self.state.phase_staggered.heat_capacity()).ravel()
         E_th = float(np.sum(mass_stag * Cp_stag * T_stag))
 

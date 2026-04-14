@@ -206,10 +206,9 @@ class EntropyState:
         self._heat_flux = np.zeros(n_basic)
         self._mass_flux = np.zeros(n_basic)
 
-        # Per-component flux decomposition at basic nodes (diagnostics
-        # for T_core phi=0 instability; see memory/tcore_*.md). These
-        # mirror the accumulations into ``_heat_flux`` below so each
-        # term can be written to NetCDF separately without re-deriving.
+        # Per-component flux decomposition at basic nodes. Each array
+        # mirrors one term in the _heat_flux accumulation in update()
+        # so the terms can be written to NetCDF separately for diagnostics.
         self._jcond = np.zeros(n_basic)
         self._jconv = np.zeros(n_basic)
         self._jgrav_heat = np.zeros(n_basic)
@@ -345,47 +344,17 @@ class EntropyState:
         if dSdr is not None:
             self._dSdr = np.asarray(dSdr).ravel()
         else:
-            # SPIDER-parity entropy gradient at basic nodes.
-            #
-            # Replaces Aragog's ``mesh.d_dr_at_basic_nodes(S)`` which
-            # used a dense transform matrix with a 3-point second-order
-            # boundary extrapolation scaled by dxi/dr. That stencil
-            # overshoots catastrophically at the CMB when the
-            # crystallisation front creates a kink in the staggered S
-            # profile: the extrapolated dS/dr[0] reached 10^7x the
-            # physically correct value, producing a 2.6e10 W/m^2 Jtot
-            # spike at the CMB basic node that drained the bottom
-            # staggered cell's entropy to the solidus in one coupling
-            # step.
-            #
-            # SPIDER computes dSdxi as a simple centered difference in
-            # UNIFORM xi-space between adjacent staggered cells
-            # (ic.c:443-446), then applies the chain rule dS/dr =
-            # dSdxi * dxi/dr. At boundaries SPIDER copies the nearest
-            # interior value (ic.c:450: ``arr_dSdxi_b[CMB] =
-            # arr_dSdxi_b[CMB-1]``). The uniform-xi spacing makes the
-            # denominator constant, bounding the gradient to the actual
-            # inter-cell entropy difference regardless of the spatial
-            # mesh non-uniformity.
+            # SPIDER-parity dS/dr at basic nodes: centered difference
+            # of staggered S in uniform xi-space (ic.c:443-446), then
+            # chain rule dS/dr = dSdxi * dxi/dr. Boundary values copy
+            # from the adjacent interior node (ic.c:450). In
+            # energy_balance mode the CMB gradient is overridden below
+            # by the state-vector value.
             xi_s = np.asarray(mesh.staggered.mass_radii).ravel()
             dxi_s = xi_s[1:] - xi_s[:-1]
             n_basic = mesh.basic.radii.size
             dSdxi = np.zeros(n_basic)
             dSdxi[1:-1] = (S[1:] - S[:-1]) / dxi_s
-            # Boundary values: SPIDER evolves dSdxi at the CMB and
-            # surface as state variables via the core energy balance
-            # ODE (bc.c:76, set_cmb_entropy_gradient_update). At the
-            # CMB, this drives dSdxi toward ~0 (core acts as a thermal
-            # reservoir in quasi-equilibrium). At t=33821 yr on CHILI
-            # R8 Earth, SPIDER's dSdxi[CMB] = -3.94e-12 while the
-            # first interior node has dSdxi = -6.99e-5 — 7 orders of
-            # magnitude larger. In Aragog's quasi_steady mode (no core
-            # energy balance ODE), we approximate this by setting the
-            # boundary gradients to zero, which is the steady-state
-            # limit of SPIDER's evolved boundary gradient.
-            # SPIDER bc.c convention: boundary gradients copy from the
-            # adjacent interior node. In energy_balance mode, the CMB
-            # gradient is overridden later by the state-vector value.
             dSdxi[0] = dSdxi[1]    # CMB: copy from first interior
             dSdxi[-1] = dSdxi[-2]  # surface: copy from last interior
             dxidr = np.asarray(mesh.dxidr).ravel()
@@ -407,34 +376,17 @@ class EntropyState:
         self.phase_basic.set_entropy(self._entropy_basic)
         self.phase_basic.update()
 
-        # Melt-fraction gradient for gravitational separation and mixing.
+        # Use the clamped lever-rule fraction
+        # `phi = clip((S - S_sol) / (S_liq - S_sol), 0, 1)`. Per-cell
+        # clipping gives dphi/dr = 0 in pure phases and a smooth
+        # well-defined gradient across the crystallisation front. The
+        # un-clipped (gphi) path is non-smooth and breaks BDF / CVODE
+        # Newton convergence.
         #
-        # Use the CLAMPED lever-rule fraction, matching v7.5's behaviour
-        # (which scipy BDF handled cleanly). This is:
-        #     phi = clip((S - S_sol) / (S_liq - S_sol), 0, 1)
-        # Per-cell clipping gives dphi/dr = 0 in fully-molten cells
-        # (physically correct: no phase separation in pure liquid) and
-        # in fully-solid cells (physically correct: no mixing in pure
-        # solid). At the crystallisation front, the mushy cell has
-        # 0 < phi < 1 and the adjacent cells are clipped to 0 or 1,
-        # so dphi/dr is well-defined and smooth.
-        #
-        # We compute the clamped phi from the cached EOS lookups rather
-        # than via self.phase_staggered.melt_fraction() because that
-        # call introduces tiny IEEE roundoff noise on each invocation
-        # which breaks BDF's finite-difference Jacobian stability.
-        # The cached S_sol/S_liq arrays are byte-identical across
-        # calls within a solve, keeping the Jacobian stable.
-        #
-        # History: 2026-04-11 the un-truncated gphi path was tried
-        # (without clipping) to preserve the Jmix+Jconv=0 cancellation
-        # identity, but it made the RHS non-smooth across the
-        # full mantle and caused both scipy BDF and CVODE to thrash
-        # Newton convergence. A hard gate on phi_min was then tried
-        # but introduced a discontinuous RHS which failed CVODE's
-        # Newton entirely. Reverted to v7.5's clamped phi. The
-        # resulting -12% T_core vs SPIDER gap is documented in
-        # spider_aragog_parity_v3_v4.md as a formulation difference.
+        # Compute from the cached S_sol/S_liq instead of
+        # self.phase_staggered.melt_fraction() because the EOS lookup
+        # introduces tiny IEEE roundoff each call and that breaks the
+        # BDF finite-difference Jacobian.
         self._ensure_phase_boundary_cache()
 
         # ── MLT from entropy gradient ────────────────────────────────
@@ -485,18 +437,10 @@ class EntropyState:
         # Reynolds number
         reynolds = viscous_velocity * mixing_length / nu
 
-        # Smooth blend between regimes (tanh transition at Re_crit).
-        # blend_width = 0.01 * RE_CRIT: at Re ≪ RE_CRIT (solid regime,
-        # Re ~ 1e-26), tanh saturates to -1 within machine precision so
-        # the inviscid contribution is exactly zero. Previously
-        # blend_width = 0.2 * RE_CRIT, which gave inviscid_weight ~ 5e-5
-        # at Re=0; multiplied by inviscid_velocity ~ 1 m/s and mix ~ 7e5
-        # m, that 5e-5 leak produced k_h ~ 20 m^2/s in the solid regime
-        # (vs SPIDER's hard if-else giving k_h ~ 1e-7). The artificial
-        # k_h made k_h = max(raw, kappah_floor) sit on raw rather than
-        # the floor, creating a second metastable equilibrium for
-        # dSdr_cmb and the phi=0 oscillation documented in
-        # memory/tcore_phi0_bistability.md.
+        # Smooth tanh blend between viscous and inviscid regimes.
+        # blend_width must be small enough that tanh saturates to ±1
+        # within machine precision at Re ≪ RE_CRIT; otherwise the
+        # inviscid leak gives a spurious k_h floor in the solid regime.
         blend_width = 0.01 * RE_CRIT
         inviscid_weight = 0.5 * (1.0 + np.tanh(
             (reynolds - RE_CRIT) / max(blend_width, 1e-30)
@@ -560,28 +504,19 @@ class EntropyState:
 
         if self._conduction:
             # SPIDER-parity conductive flux (energy.c:358-378):
-            #   F_cond = -k * [(T/Cp) * dS/dr + dT/dr|_adiabat]
-            #
-            # The total temperature gradient decomposes into a
-            # superadiabatic part (proportional to the entropy gradient)
-            # and an adiabatic part. SPIDER evaluates dT/dr|_adiabat
-            # as dTdPs * dPdr, where dTdPs = (dT/dP)|_S comes from
-            # the EOS table (eos_composite.c:249, energy.c:369).
-            # Using the EOS table value instead of the thermodynamic
-            # identity -g*alpha*T/Cp ensures exact parity with SPIDER,
-            # since the table lookup and the identity can differ by
-            # up to 40% due to table interpolation and composite-EOS
-            # blending at phase boundaries.
+            #     F_cond = -k * [(T/Cp) * dS/dr + dT/dr|_adiabat]
+            # Decompose dT/dr into superadiabatic (∝ dS/dr) and
+            # adiabatic parts; the latter uses dTdPs * dPdr with dTdPs
+            # from the EOS table (eos_composite.c:249) for bit-parity
+            # with SPIDER (the thermodynamic identity -g*α*T/Cp can
+            # disagree by up to 40% due to table interpolation in the
+            # mushy zone).
             Cp_safe = np.maximum(Cp, 100.0)
             superadiabatic = (T / Cp_safe) * self._dSdr
-            # Adiabatic gradient from EOS table (SPIDER parity).
-            # SPIDER computes dTdxis*dxidr where dTdxis is from the
-            # EOS table and dxidr is the mesh Jacobian. The equivalent
-            # is dTdPs * dPdr where dPdr comes from the MESH pressure
-            # profile (Adams-Williamson), NOT from -rho_material*g.
-            # Using the mesh dPdr matches SPIDER exactly; using
-            # -rho*g introduces up to 43% error because the mesh
-            # structural density differs from the EOS material density.
+            # Adiabatic gradient uses dPdr from the MESH (Adams-
+            # Williamson) profile, NOT -rho*g; the structural density
+            # differs from the EOS material density and the latter
+            # disagrees with SPIDER by up to 40%.
             dTdPs = np.asarray(self.phase_basic.dTdPs()).ravel()
             dTdrs_ad = dTdPs * self._dP_dr_basic
             self._jcond = -k * (superadiabatic + dTdrs_ad)
@@ -598,47 +533,14 @@ class EntropyState:
             v_rel = np.asarray(self.phase_basic.relative_velocity()).ravel()
             jgrav = rho * phi_b * (1.0 - phi_b) * v_rel
 
-            # SPIDER-analogue phase-boundary smoothing.
-            #
-            # Purpose: at the first crystallisation step the raw mass
-            # flux rho * phi * (1-phi) * v_rel drains the CMB cell's
-            # entropy off the PALEOS P-S table in one coupling step,
-            # because the Stokes-regime permeability at
-            # grain_size = 0.1 m gives v_rel of several m/s and
-            # phi * (1-phi) ~ 5e-3 at phi = 0.995 is not enough
-            # damping. See memory/aragog_jgrav_cmb_drain.md.
-            #
-            # SPIDER avoids this via
-            # `smth = get_smoothing(matprop_smooth_width, gphi)` where
-            # gphi is the UN-truncated two-phase fraction
-            #     gphi = (S - S_sol(P)) / (S_liq(P) - S_sol(P))
-            # at the STAGGERED cell immediately BELOW the interface
-            # (JGRAV_BOTTOM_UP, SPIDER/energy.c:523-533). gphi exceeds
-            # 1 for pure liquid and goes negative for pure solid, so
-            # `smth` drops cleanly to 0 on both sides, killing Jgrav
-            # at any interface whose lower neighbour is in a pure
-            # phase. Aragog's bookkeeping phi is clamped to [0,1] by
-            # the EOS lookup so we recompute gphi here from the
-            # staggered-cell entropy against the solidus/liquidus
-            # entropies.
-            #
-            # Phase-boundary smoothing for gravitational separation.
-            # Uses the same cubic Hermite ``16*gphi^2*(1-gphi)^2`` as
-            # the Jmix term below. Both Jgrav and Jmix MUST use the
-            # same smoothing function so their relative balance is
-            # internally consistent.
-            #
-            # SPIDER uses a tanh (get_smoothing, width=0.01) for both,
-            # which gives smth=1.0 across most of [0.05, 0.95]. This
-            # works in SPIDER because all material properties match
-            # exactly, producing a precise Jtot cancellation. In Aragog,
-            # residual EOS interpolation differences create a small Jtot
-            # imbalance that the full-strength tanh amplifies into a
-            # CMB cell drain. The cubic Hermite provides intermediate-
-            # phi damping (smth=0.32 at gphi=0.83 vs tanh=1.0) that
-            # gives Aragog the margin it needs. Once all audit items
-            # (1.1, 1.2) are resolved and material properties match
-            # SPIDER to 0.01%, the smoothing can be switched to tanh.
+            # Phase-boundary smoothing on the un-truncated gphi at the
+            # staggered cell immediately below the interface (SPIDER
+            # JGRAV_BOTTOM_UP, energy.c:523-533). gphi exceeds 1 in pure
+            # liquid and goes negative in pure solid, so the smoothing
+            # drops to 0 on both sides — Jgrav vanishes at any interface
+            # whose lower neighbour is single-phase. Both Jgrav and Jmix
+            # must use the same smoothing function so their cancellation
+            # in the mushy band is consistent.
             if self._bottom_up_grav_sep:
                 gphi_stag = (
                     self._entropy_staggered - self._S_sol_stag
@@ -669,32 +571,15 @@ class EntropyState:
         self._heat_flux += self._jgrav_heat
 
         if self._mixing:
-            # SPIDER-parity mixing flux (energy.c::GetMixingHeatFlux
-            # lines 307-325). Computed directly as a heat flux,
-            # bypassing the mass_flux * latent_heat path used by the
-            # grav_sep term above.
-            #
-            # Previously Aragog added ``rho * kappac * (-dphi/dr)`` to
-            # mass_flux and then multiplied by L. The derivative of
-            # the *clipped* phi truncates its magnitude by ~50% at the
-            # crystallisation front (one cell at phi=1 next to a mushy
-            # cell at phi in (0,1); the un-truncated gphi contribution
-            # from the molten side is lost). This missing front-cell
-            # flux integrated over solidification explains the ~-18%
-            # T_core gap vs SPIDER reported in
-            # ``spider_aragog_parity_v3_v4.md``.
-            #
-            # SPIDER's formula is equivalent to
+            # SPIDER-parity mixing flux (energy.c::GetMixingHeatFlux,
+            # lines 307-325). Computed as a heat flux directly:
             #     Jmix_heat = -kappac * rho * T_fus * bracket * smth
-            # where
             #     bracket = dS/dr − [φ · dS_liq/dP + (1−φ) · dS_sol/dP] · dP/dr
-            # and ``smth`` is a tanh (or cubic Hermite) that zeroes the
-            # flux outside the mushy band 0 ≤ gphi ≤ 1. The bracket
-            # is algebraically equal to ``dS_fus · dgphi/dr`` at the
-            # basic node, but is computed directly from dS/dr plus
-            # phase-boundary slopes so there is no un-truncated-gphi
-            # arithmetic that could make the RHS non-smooth in the
-            # fully-molten regime.
+            # The bracket equals dS_fus · dgphi/dr at the basic node but
+            # uses dS/dr + phase-boundary slopes, avoiding any
+            # un-truncated-gphi arithmetic that would make the RHS
+            # non-smooth in the fully-molten regime. ``smth`` zeroes
+            # the flux outside the mushy band.
             self._ensure_basic_phase_boundary_cache()
             phi_basic_clipped = np.asarray(
                 self.phase_basic.melt_fraction()
@@ -792,9 +677,8 @@ class EntropyState:
     def dSdr(self) -> npt.NDArray:
         return self._dSdr
 
-    # Diagnostics for T_core phi=0 investigation. See
-    # memory/tcore_phi0_instability.md et seq. Each array mirrors one
-    # term in the basic-node heat-flux accumulation.
+    # Per-component flux decomposition for diagnostic NetCDF export.
+    # Each array mirrors one term in the basic-node heat-flux accumulation.
     @property
     def jcond(self) -> npt.NDArray:
         return self._jcond
