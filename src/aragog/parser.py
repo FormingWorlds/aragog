@@ -148,11 +148,20 @@ class _MeshParameters:
             self.eos_pressure = arr[:, 1]
             self.eos_density = arr[:, 2]
             self.eos_gravity = arr[:, 3]
-            if ((self.eos_radius[0] < self.inner_radius)
-                or (self.eos_radius[-1] > self.outer_radius)
+            # Validate EOS file radii against mesh bounds. Allow 5%
+            # slack on the bounds because Zalmoxis-coupled runs can
+            # drift slightly between the structure radii and Aragog's.
+            D = self.outer_radius - self.inner_radius
+            tol = 0.05 * D if D > 0 else 1e3
+            if ((self.eos_radius[0] < self.inner_radius - tol)
+                or (self.eos_radius[-1] > self.outer_radius + tol)
                 or (self.eos_radius[-1] - self.eos_radius[0])
-                    < 0.75 * (self.outer_radius - self.inner_radius)):
-                raise ValueError("Radius array in EOS file: values out of range.")
+                    < 0.50 * max(D, 1.0)):
+                raise ValueError(
+                    f"Radius array in EOS file out of range. "
+                    f"EOS: [{self.eos_radius[0]:.3e}, {self.eos_radius[-1]:.3e}], "
+                    f"Mesh: [{self.inner_radius:.3e}, {self.outer_radius:.3e}]"
+                )
 
 
 @dataclass
@@ -256,40 +265,6 @@ class Parameters:
     phase_mixed: _PhaseMixedParameters
     radionuclides: list[_Radionuclide]
     solver: _SolverParameters
-
-    def __post_init__(self):
-        # Load EOS from file if EOS method 2
-        if self.mesh.eos_method == 2:
-            if self.mesh.eos_file == "":
-                raise ValueError("you must provide a file for setting up equation of state")
-            arr = np.loadtxt(self.mesh.eos_file)
-            self.mesh.eos_radius = arr[:, 0]
-            self.mesh.eos_pressure = arr[:, 1]
-            self.mesh.eos_density = arr[:, 2]
-            self.mesh.eos_gravity = arr[:, 3]
-            # Validate EOS file radii against mesh bounds with 5% tolerance.
-            # Small mismatches arise from Zalmoxis grid vs PROTEUS-passed radii.
-            D = self.mesh.outer_radius - self.mesh.inner_radius
-            tol = 0.05 * D if D > 0 else 1e3  # 5% of shell thickness
-            if (
-                (self.mesh.eos_radius[0] < self.mesh.inner_radius - tol)
-                or (self.mesh.eos_radius[-1] > self.mesh.outer_radius + tol)
-                or (self.mesh.eos_radius[-1] - self.mesh.eos_radius[0])
-                < 0.50 * max(D, 1.0)
-            ):
-                raise ValueError(
-                    f"Radius array in EOS file: Values out of range. "
-                    f"EOS: [{self.mesh.eos_radius[0]:.3e}, {self.mesh.eos_radius[-1]:.3e}], "
-                    f"Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]"
-                )
-
-        # Convert radionuclide concentration from ppm to mass fraction
-        for r in self.radionuclides:
-            r.concentration *= 1e-6
-
-        # UTBL constant: when param_utbl is disabled, zero it out
-        if not self.boundary_conditions.param_utbl:
-            self.boundary_conditions.param_utbl_const = 0.0
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
