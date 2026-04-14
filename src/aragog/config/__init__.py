@@ -22,7 +22,6 @@ from aragog.config.initial_condition import InitialConditionConfig
 from aragog.config.mesh import MeshConfig
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
 from aragog.config.radionuclides import RadionuclideConfig
-from aragog.config.scalings import ScalingsConfig
 from aragog.config.solver import SolverConfig
 
 if sys.version_info < (3, 11):
@@ -42,7 +41,6 @@ __all__ = [
     "MixedPhaseConfig",
     "PhaseConfig",
     "RadionuclideConfig",
-    "ScalingsConfig",
     "SolverConfig",
 ]
 
@@ -124,11 +122,9 @@ class Config:
             _PhaseMixedParameters,
             _PhaseParameters,
             _Radionuclide,
-            _ScalingsParameters,
             _SolverParameters,
         )
 
-        scalings = _ScalingsParameters(**data.get("scalings", {}))
         solver = _SolverParameters(**data["solver"])
         boundary_conditions = _BoundaryConditionsParameters(
             **data["boundary_conditions"]
@@ -156,7 +152,6 @@ class Config:
             phase_liquid=phase_liquid,
             phase_mixed=phase_mixed,
             radionuclides=radionuclides,
-            scalings=scalings,
             solver=solver,
         )
 

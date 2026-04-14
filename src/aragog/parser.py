@@ -1,16 +1,13 @@
 """Parses the configuration file into dataclasses.
 
-All quantities are stored in SI units (time in years). The
-_ScalingsParameters dataclass is retained as an identity (all scales
-set to 1.0) so downstream `scalings_.X` divisions remain no-ops; will
-be removed in a future cleanup.
+All quantities are stored in SI units (time in years).
 """
 
 from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import Field, dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -28,7 +25,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 def _get_dataclass_from_section_name() -> dict[str, Any]:
     """Maps the section names in the configuration data to the dataclasses that stores the data."""
     mapping: dict[str, Any] = {
-        "scalings": _ScalingsParameters,
         "solver": _SolverParameters,
         "boundary_conditions": _BoundaryConditionsParameters,
         "mesh": _MeshParameters,
@@ -41,59 +37,6 @@ def _get_dataclass_from_section_name() -> dict[str, Any]:
     }
 
     return mapping
-
-
-@dataclass
-class _ScalingsParameters:
-    """Identity-scaling stub. All scales are 1.0; division by any
-    ``scalings_.X`` field is a no-op. Pending removal."""
-
-    radius: float = 1
-    temperature: float = 1
-    density: float = 1
-    time: float = 1
-    area: float = field(init=False)
-    gravitational_acceleration: float = field(init=False)
-    temperature_gradient: float = field(init=False)
-    thermal_expansivity: float = field(init=False)
-    pressure: float = field(init=False)
-    velocity: float = field(init=False)
-    kinetic_energy_per_volume: float = field(init=False)
-    heat_capacity: float = field(init=False)
-    entropy: float = field(init=False)
-    latent_heat_per_mass: float = field(init=False)
-    power_per_volume: float = field(init=False)
-    power_per_mass: float = field(init=False)
-    heat_flux: float = field(init=False)
-    thermal_conductivity: float = field(init=False)
-    viscosity: float = field(init=False)
-    time_years: float = field(init=False)
-    stefan_boltzmann_constant: float = field(init=False)
-
-    def __post_init__(self) -> None:
-        # Override whatever was parsed from the config: all scales = 1.0
-        self.radius = 1.0
-        self.temperature = 1.0
-        self.density = 1.0
-        self.time = 1.0
-        self.area = 1.0
-        self.gravitational_acceleration = 1.0
-        self.temperature_gradient = 1.0
-        self.thermal_expansivity = 1.0
-        self.pressure = 1.0
-        self.velocity = 1.0
-        self.kinetic_energy_per_volume = 1.0
-        self.heat_capacity = 1.0
-        self.entropy = 1.0
-        self.latent_heat_per_mass = 1.0
-        self.power_per_volume = 1.0
-        self.power_per_mass = 1.0
-        self.heat_flux = 1.0
-        self.thermal_conductivity = 1.0
-        self.viscosity = 1.0
-        self.time_years = 1.0
-        self.stefan_boltzmann_constant = 1.0
-        logger.debug("scalings = %s", self)
 
 
 @dataclass
@@ -116,65 +59,13 @@ class _BoundaryConditionsParameters:
     #   'gradient'       — full dS/dr state vector
     core_bc: str = 'energy_balance'
 
-    scalings_: _ScalingsParameters = field(init=False)
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes.
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.equilibrium_temperature /= self.scalings_.temperature
-        self.core_heat_capacity /= self.scalings_.heat_capacity
-        if self.param_utbl:
-            self.param_utbl_const *= self.scalings_.temperature**2
-        else:
-            self.param_utbl_const = 0.0
-        self._scale_inner_boundary_condition()
-        self._scale_outer_boundary_condition()
-
-    def _scale_inner_boundary_condition(self) -> None:
-        """Scales the inner boundary value.
-
-        Equivalent to CORE_BC in C code.
-            1: Simple core cooling
-            2: Prescribed heat flux
-            3: Prescribed temperature
-        """
+    def __post_init__(self) -> None:
+        # inner_boundary_condition=1 (simple core cooling) ignores any
+        # configured inner_boundary_value; force to zero for clarity.
         if self.inner_boundary_condition == 1:
             self.inner_boundary_value = 0
-        elif self.inner_boundary_condition == 2:
-            self.inner_boundary_value /= self.scalings_.heat_flux
-        elif self.inner_boundary_condition == 3:
-            self.inner_boundary_value /= self.scalings_.temperature
-        else:
-            msg: str = f"inner_boundary_condition = {self.inner_boundary_condition} is unknown"
-            raise ValueError(msg)
-
-    def _scale_outer_boundary_condition(self) -> None:
-        """Scales the outer boundary value.
-
-        Equivalent to SURFACE_BC in C code.
-            1: Grey-body atmosphere
-            2: Zahnle steam atmosphere
-            3: Couple to atmodeller
-            4: Prescribed heat flux
-            5: Prescribed temperature
-        """
-        if self.outer_boundary_condition == 1:
-            pass
-        elif self.outer_boundary_condition == 2:
-            pass
-        elif self.outer_boundary_condition == 3:
-            pass
-        elif self.outer_boundary_condition == 4:
-            self.outer_boundary_value /= self.scalings_.heat_flux
-        elif self.outer_boundary_condition == 5:
-            self.outer_boundary_value /= self.scalings_.temperature
-        else:
-            msg: str = f"outer_boundary_condition = {self.outer_boundary_condition} is unknown"
-            raise ValueError(msg)
+        if not self.param_utbl:
+            self.param_utbl_const = 0.0
 
 
 @dataclass
@@ -212,15 +103,6 @@ class _EnergyParameters:
 
     tidal_array: npt.NDArray = field(default_factory=lambda:np.array([0.0], dtype=float))
 
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes.
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.tidal_array /= self.scalings_.power_per_mass
-
 
 @dataclass
 class _InitialConditionParameters:
@@ -230,29 +112,12 @@ class _InitialConditionParameters:
     surface_temperature: float = 4000
     basal_temperature: float = 4000
     init_file: str = ""
-    scalings_: _ScalingsParameters = field(init=False)
 
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes.
-
-        Initial condition method
-            1: Linear profile
-            2: User-defined temperature field (from file)
-            3: Adiabatic profile
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.surface_temperature /= self.scalings_.temperature
-        self.basal_temperature /= self.scalings_.temperature
-
+    def __post_init__(self) -> None:
         if self.initial_condition == 2:
             if self.init_file == "":
-                msg: str = (f"you must provide an initial temperature file")
-                raise ValueError(msg)
+                raise ValueError("you must provide an initial temperature file")
             self.init_temperature = np.loadtxt(self.init_file)
-            self.init_temperature /= self.scalings_.temperature
 
 
 @dataclass
@@ -273,38 +138,22 @@ class _MeshParameters:
     surface_pressure: float = 0.0
     mass_coordinates: bool = False
     eos_file: str = ""
-    scalings_: _ScalingsParameters = field(init=False)
 
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.outer_radius /= self.scalings_.radius
-        self.inner_radius /= self.scalings_.radius
-        self.core_density /= self.scalings_.density
-        self.surface_density /= self.scalings_.density
-        self.gravitational_acceleration /= self.scalings_.gravitational_acceleration
-        self.adiabatic_bulk_modulus /= self.scalings_.pressure
-        self.surface_pressure /= self.scalings_.pressure
-
+    def __post_init__(self) -> None:
         if self.eos_method == 2:
             if self.eos_file == "":
-                msg: str = (f"you must provide a file for setting up equation of state")
-                raise ValueError(msg)
+                raise ValueError("you must provide a file for setting up equation of state")
             arr = np.loadtxt(self.eos_file)
-            self.eos_radius = arr[:,0] / self.scalings_.radius
-            self.eos_pressure = arr[:,1] / self.scalings_.pressure
-            self.eos_density = arr[:,2] / self.scalings_.density
-            self.eos_gravity = arr[:,3] / self.scalings_.gravitational_acceleration
-            # Check that provided eos radius roughly match with Aragog mesh
-            if ((self.eos_radius[0] < self.inner_radius) or
-                (self.eos_radius[-1] > self.outer_radius) or
-                (self.eos_radius[-1]-self.eos_radius[0]) < 0.75*(self.outer_radius-self.inner_radius)):
-                msg: str = (f"Radius array in EOS file: Values out of range.")
-                raise ValueError(msg)
+            self.eos_radius = arr[:, 0]
+            self.eos_pressure = arr[:, 1]
+            self.eos_density = arr[:, 2]
+            self.eos_gravity = arr[:, 3]
+            if ((self.eos_radius[0] < self.inner_radius)
+                or (self.eos_radius[-1] > self.outer_radius)
+                or (self.eos_radius[-1] - self.eos_radius[0])
+                    < 0.75 * (self.outer_radius - self.inner_radius)):
+                raise ValueError("Radius array in EOS file: values out of range.")
+
 
 @dataclass
 class _PhaseMixedParameters:
@@ -328,17 +177,6 @@ class _PhaseMixedParameters:
     const_log10visc: float = 2.0
     const_T_ref: float = 3500.0
     const_S_ref: float = 3000.0
-    scalings_: _ScalingsParameters = field(init=False)
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.latent_heat_of_fusion /= self.scalings_.latent_heat_per_mass
-        self.grain_size /= self.scalings_.radius
 
 
 @dataclass
@@ -355,36 +193,6 @@ class _PhaseParameters:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ""
-    scalings_: _ScalingsParameters = field(init=False)
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes if they are numbers.
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        cls_fields: tuple[Field, ...] = fields(self.__class__)
-        for field_ in cls_fields:
-            value: Any = getattr(self, field_.name)
-            try:
-                scaling: float = getattr(self.scalings_, field_.name)
-                scaled_value = value / scaling
-                setattr(self, field_.name, scaled_value)
-                logger.info(
-                    "%s is a number (value = %s, scaling = %s, scaled_value = %s)",
-                    field_.name,
-                    value,
-                    scaling,
-                    scaled_value,
-                )
-            except AttributeError:
-                logger.info("No scaling found for %s", field_.name)
-            except TypeError:
-                logger.info(
-                    "%s is a string (path to a filename) so the data will be scaled later",
-                    field_.name,
-                )
 
 
 @dataclass
@@ -397,19 +205,9 @@ class _Radionuclide:
     concentration: float
     heat_production: float
     half_life_years: float
-    scalings_: _ScalingsParameters = field(init=False)
 
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes.
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.t0_years /= self.scalings_.time_years
+    def __post_init__(self) -> None:
         self.concentration *= 1e-6  # to mass fraction
-        self.heat_production /= self.scalings_.power_per_mass
-        self.half_life_years /= self.scalings_.time_years
 
     def get_heating(self, time: npt.NDArray | float) -> npt.NDArray | float:
         """Radiogenic heating
@@ -438,15 +236,8 @@ class _SolverParameters:
     end_time: float
     atol: float
     rtol: float
-    scalings_: _ScalingsParameters = field(init=False)
     tsurf_poststep_change: float = 30.0
-    event_triggering:bool = False
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        self.scalings_ = scalings
-        self.start_time /= self.scalings_.time_years
-        self.end_time /= self.scalings_.time_years
-        self.tsurf_poststep_change /= self.scalings_.temperature
+    event_triggering: bool = False
 
 
 @dataclass(kw_only=True)
@@ -464,30 +255,9 @@ class Parameters:
     phase_liquid: _PhaseParameters
     phase_mixed: _PhaseMixedParameters
     radionuclides: list[_Radionuclide]
-    scalings: _ScalingsParameters
     solver: _SolverParameters
 
     def __post_init__(self):
-        # Store scalings_ reference on sub-dataclasses that need it
-        # (phase.py reads scalings_ from PhaseParameters and PhaseMixedParameters).
-        # With all scales = 1.0, division by scalings is a no-op.
-        for sub in [
-            self.boundary_conditions, self.energy, self.initial_condition,
-            self.mesh, self.phase_solid, self.phase_liquid, self.phase_mixed,
-            self.solver,
-        ]:
-            sub.scalings_ = self.scalings
-        for r in self.radionuclides:
-            r.scalings_ = self.scalings
-
-        # Load initial temperature from file if IC method 2
-        if self.initial_condition.initial_condition == 2:
-            if self.initial_condition.init_file == "":
-                raise ValueError("you must provide an initial temperature file")
-            self.initial_condition.init_temperature = np.loadtxt(
-                self.initial_condition.init_file
-            )
-
         # Load EOS from file if EOS method 2
         if self.mesh.eos_method == 2:
             if self.mesh.eos_file == "":
