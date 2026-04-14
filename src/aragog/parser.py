@@ -114,12 +114,11 @@ class _BoundaryConditionsParameters:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
-    # Core BC mode selector, threaded from config/boundary.py.
-    # Valid values: 'quasi_steady' (default, v3 alpha-factor),
-    #               'energy_balance' (Path A SPIDER bit-parity),
-    #               'bower2018' (EXPERIMENTAL tombstone, do not use).
-    # See aragog/config/boundary.py docstring for details.
-    core_bc: str = 'quasi_steady'
+    # Core BC mode selector. Valid values:
+    #   'energy_balance' — SPIDER-parity (default; dSdr_cmb as ODE state)
+    #   'quasi_steady'   — alpha-factor heat-flux partition
+    #   'gradient'       — full dS/dr state vector
+    core_bc: str = 'energy_balance'
 
     scalings_: _ScalingsParameters = field(init=False)
 
