@@ -219,42 +219,13 @@ def _load_spider_ps_table(filepath: Path) -> dict:
     # transpose to get (n_P, n_S) for RegularGridInterpolator((P, S)).
     values = Q_all.reshape(n_S, n_P).T
 
-    # ── Extend S grid for above-liquidus extrapolation ──
-    # The WB2018 P-S tables have S_max ~ 3236 J/kg/K (the melt
-    # entropy at 1 TPa). The CHILI IC starts at S = 3900, well above
-    # the table. Without extrapolation, all properties clamp to their
-    # S_max values for S > 3236, making T insensitive to S changes.
-    # This freezes the temperature profile and prevents the adaptive
-    # time-step controller from detecting cooling, causing it to ramp
-    # dt to ~100 kyr and overshoot the entire solidification.
-    #
-    # Fix: linearly extrapolate from the last two S grid points to
-    # S_extrap = S_max + 1000 J/kg/K. For each pressure row, the
-    # gradient dQ/dS from the last two columns extends the table.
-    # This ensures T responds to S changes above the liquidus.
-    S_max = S_unique[-1]
-    S_extrap = S_max + 1000.0  # J/kg/K headroom above table
-    if S_unique.shape[0] >= 2:
-        # dQ/dS at each pressure from the last two S columns
-        dS = S_unique[-1] - S_unique[-2]
-        dQ = values[:, -1] - values[:, -2]  # shape (n_P,)
-        Q_extrap = values[:, -1] + dQ / dS * (S_extrap - S_max)
-        # Append the extrapolated column
-        S_unique = np.append(S_unique, S_extrap)
-        values = np.column_stack([values, Q_extrap])
-        logger.info(
-            'Table %s: extended S grid from %.0f to %.0f J/kg/K '
-            '(linear extrapolation)',
-            filepath.name, S_max, S_extrap,
-        )
-
     # Bilinear interpolation (C^0), matching SPIDER's lookup method.
     # Cubic (C^2) was tried but introduces sub-percent property offsets
     # that break the Jconv-Jmix cancellation in the mushy zone, causing
     # the CMB cell to drain. SPIDER uses bilinear for all P-S lookups.
     interp = RegularGridInterpolator(
         (P_unique, S_unique), values,
-        method='linear', bounds_error=False, fill_value=None,
+        method='linear', bounds_error=False, fill_value=np.nan,
     )
 
     return {
