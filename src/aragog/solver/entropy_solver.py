@@ -1152,13 +1152,18 @@ class EntropySolver:
             nfev_box[0] += 1
             return 0
 
-        # Ensure atol is a scalar float (CVODE also accepts a per-state
-        # array, but gradient mode's mixed-units atol is handled via
-        # rtol anyway and SPIDER uses scalar atol=1e-8 = rtol).
-        if isinstance(atol, np.ndarray):
-            atol_scalar = float(np.min(atol))
-        else:
-            atol_scalar = float(atol)
+        # CVODE (via scikits.odes) accepts a per-state 1D array for
+        # atol, matching the SUNDIALS interface. Pass it through
+        # unchanged so each state component is controlled at its
+        # physically correct tolerance. Collapsing to a scalar via
+        # np.min (the previous behaviour) defeated the per-component
+        # atol built in solve(), causing the tightest component's
+        # atol to be applied uniformly to all other components.
+        atol_cvode = (
+            np.asarray(atol, dtype=float).ravel()
+            if isinstance(atol, np.ndarray)
+            else float(atol)
+        )
 
         # Build the CVODE solver. lmm_type='BDF' matches SPIDER's
         # TSSundialsSetType(ts, SUNDIALS_BDF). Newton is CVODE's default
@@ -1181,7 +1186,7 @@ class EntropySolver:
         cvode_options = {
             'old_api': False,
             'rtol': float(rtol),
-            'atol': atol_scalar,
+            'atol': atol_cvode,
             'lmm_type': 'BDF',
             'nonlinsolver': 'newton',
             'max_steps': 100000,  # per-solve cap; scipy used unlimited
@@ -1387,12 +1392,19 @@ class EntropySolver:
         end_nd = end_time / t_ref
         max_step_nd = max_step / t_ref if np.isfinite(max_step) else max_step
 
-        # Uniform scalar atol in nondim units. With O(1) state
-        # variables, atol/S_ref gives the same physical accuracy as
-        # atol on the raw state, but without the 9-digit precision
-        # demand. For gradient mode, nondim makes per-component atol
-        # unnecessary because all components are O(1).
-        atol_nd = atol / S_ref
+        # Per-component atol in nondim units. Each state component
+        # has its own nondim scale (S_ref for entropy, dSdr_ref for
+        # dSdr_cmb in energy_balance mode, dSdr_ref for all gradient
+        # components in gradient mode). Dividing atol by _state_scale
+        # element-wise gives the same physical tolerance on every
+        # component, regardless of its nondim scale.
+        #
+        # Previously this was scalar atol_nd = atol/S_ref, which
+        # applied correctly to entropy but forced ~10^8x tighter
+        # physical tolerance on dSdr_cmb. CVODE then took very small
+        # steps to resolve dSdr_cmb, suppressing the entropy cooling
+        # rate by a large factor and preventing solidification.
+        atol_nd = atol / _state_scale
 
         def _rhs_nondim(t_nd, y_nd):
             """Nondim wrapper: scale state to physical, call physics, scale RHS back."""
@@ -1403,8 +1415,9 @@ class EntropySolver:
 
         logger.info(
             'Nondimensionalisation: S_ref=%.3f t_ref=%.3e yr '
-            'atol_nd=%.2e S0_nd range [%.4f, %.4f]',
-            S_ref, t_ref, atol_nd,
+            'atol_nd min/max=[%.2e, %.2e] S0_nd range [%.4f, %.4f]',
+            S_ref, t_ref,
+            float(np.min(atol_nd)), float(np.max(atol_nd)),
             S0_nd[:n_s].min(), S0_nd[:n_s].max(),
         )
 
