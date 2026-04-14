@@ -806,20 +806,12 @@ class EntropySolver:
         # Etot_cmb in J/s (= W)
         E_tot_cmb = F_cmb_basic * self._cmb_area
 
-        # fac_cmb in 1/(kg*K). The max(1.0, .) clamps prevent divide-
-        # by-zero if T_cmb or M_core is unphysically small during IC
-        # wind-up. In production T_cmb ~ 4000 K and M_core ~ 2e24 kg,
-        # so the clamps are never active.
+        # fac_cmb in 1/(kg*K). SPIDER bc.c:113.
         fac_cmb = cp_cmb_basic / (
-            self._core_cp
-            * max(T_cmb_basic, 1.0)
-            * self._core_tfac
-            * max(self._core_M, 1.0)
+            self._core_cp * T_cmb_basic * self._core_tfac * self._core_M
         )
 
-        # Ecore = 0 for simple core cooling (no internal heat source).
-        # A future release may read radioactive heating from config
-        # and pass it in via a new parameter.
+        # E_core = 0 for simple core cooling (no internal heat source).
         E_core = 0.0
 
         # dS_basic_cmb/dt from energy balance [J/(kg*K*s)]
