@@ -208,6 +208,20 @@ class EntropyState:
         self._mass_flux = np.zeros(n_basic)
         self._is_convective = np.zeros(n_basic, dtype=bool)
 
+        # Per-component flux decomposition at basic nodes (diagnostics
+        # for T_core phi=0 instability; see memory/tcore_*.md). These
+        # mirror the accumulations into ``_heat_flux`` below so each
+        # term can be written to NetCDF separately without re-deriving.
+        self._jcond = np.zeros(n_basic)
+        self._jconv = np.zeros(n_basic)
+        self._jgrav_heat = np.zeros(n_basic)
+        self._jmix_heat = np.zeros(n_basic)
+        # Basic-node EOS state snapshots (populated in update()).
+        self._phi_basic_diag = np.zeros(n_basic)
+        self._T_basic_diag = np.zeros(n_basic)
+        self._cp_basic_diag = np.zeros(n_basic)
+        self._rho_basic_diag = np.zeros(n_basic)
+
         # Phase-boundary entropy cache at staggered nodes. P_stag is
         # fixed for the lifetime of the solve, so S_sol(P_stag) and
         # S_liq(P_stag) are constants. Caching them avoids ~230k
@@ -534,6 +548,11 @@ class EntropyState:
 
         self._heat_flux = np.zeros_like(self._entropy_basic)
         self._mass_flux = np.zeros_like(self._entropy_basic)
+        # Reset per-component diagnostic buffers for this update() pass.
+        self._jcond = np.zeros_like(self._entropy_basic)
+        self._jconv = np.zeros_like(self._entropy_basic)
+        self._jgrav_heat = np.zeros_like(self._entropy_basic)
+        self._jmix_heat = np.zeros_like(self._entropy_basic)
 
         # Ensure mesh dP/dr is populated (needed by conduction and mixing).
         # The cache is computed lazily from the mesh pressure profile and
@@ -567,12 +586,14 @@ class EntropyState:
             # structural density differs from the EOS material density.
             dTdPs = np.asarray(self.phase_basic.dTdPs()).ravel()
             dTdrs_ad = dTdPs * self._dP_dr_basic
-            self._heat_flux += -k * (superadiabatic + dTdrs_ad)
+            self._jcond = -k * (superadiabatic + dTdrs_ad)
+            self._heat_flux += self._jcond
 
         if self._convection:
             # F_conv = rho * T * kappa_h * (-dS/dr)
             # This is the entropy flux: positive when dS/dr < 0 (unstable)
-            self._heat_flux += rho * T * self._eddy_diffusivity * (-self._dSdr)
+            self._jconv = rho * T * self._eddy_diffusivity * (-self._dSdr)
+            self._heat_flux += self._jconv
 
         if self._grav_sep:
             phi_b = np.asarray(self.phase_basic.melt_fraction()).ravel()
@@ -644,7 +665,10 @@ class EntropyState:
         # transfer across CMB or surface, energy.c lines 282-285, 423-426)
         self._mass_flux[0] = 0.0
         self._mass_flux[-1] = 0.0
-        self._heat_flux += self._mass_flux * self.phase_basic.latent_heat()
+        self._jgrav_heat = self._mass_flux * np.asarray(
+            self.phase_basic.latent_heat()
+        ).ravel()
+        self._heat_flux += self._jgrav_heat
 
         if self._mixing:
             # SPIDER-parity mixing flux (energy.c::GetMixingHeatFlux
@@ -698,7 +722,17 @@ class EntropyState:
             # CMB or surface)
             jmix_spider_heat[0] = 0.0
             jmix_spider_heat[-1] = 0.0
-            self._heat_flux += jmix_spider_heat
+            self._jmix_heat = jmix_spider_heat
+            self._heat_flux += self._jmix_heat
+
+        # Snapshot basic-node EOS quantities for diagnostics. rho, T,
+        # Cp are already evaluated above for the flux/MLT terms.
+        self._rho_basic_diag = rho
+        self._T_basic_diag = T
+        self._cp_basic_diag = Cp
+        self._phi_basic_diag = np.asarray(
+            self.phase_basic.melt_fraction()
+        ).ravel()
 
         # ── Internal heating (power per unit mass [W/kg]) ────────────
         n_stag = len(self._entropy_staggered)
@@ -763,6 +797,41 @@ class EntropyState:
     @property
     def dSdr(self) -> npt.NDArray:
         return self._dSdr
+
+    # Diagnostics for T_core phi=0 investigation. See
+    # memory/tcore_phi0_instability.md et seq. Each array mirrors one
+    # term in the basic-node heat-flux accumulation.
+    @property
+    def jcond(self) -> npt.NDArray:
+        return self._jcond
+
+    @property
+    def jconv(self) -> npt.NDArray:
+        return self._jconv
+
+    @property
+    def jgrav_heat(self) -> npt.NDArray:
+        return self._jgrav_heat
+
+    @property
+    def jmix_heat(self) -> npt.NDArray:
+        return self._jmix_heat
+
+    @property
+    def phi_basic_diag(self) -> npt.NDArray:
+        return self._phi_basic_diag
+
+    @property
+    def T_basic_diag(self) -> npt.NDArray:
+        return self._T_basic_diag
+
+    @property
+    def cp_basic_diag(self) -> npt.NDArray:
+        return self._cp_basic_diag
+
+    @property
+    def rho_basic_diag(self) -> npt.NDArray:
+        return self._rho_basic_diag
 
     def capacitance_staggered(self) -> npt.NDArray:
         """Capacitance for entropy equation: rho * T [kg K / m^3].

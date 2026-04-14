@@ -115,6 +115,20 @@ class SolverOutput:
     eddy_diff: npt.NDArray      # eddy diffusivity at basic nodes [m^2/s]
     cap_stag: npt.NDArray       # capacitance rho*T at staggered nodes
 
+    # Diagnostic decomposition at basic nodes (T_core phi=0 instability
+    # investigation, see memory/tcore_phi0_*.md). Populated from the
+    # final EntropyState after integration; only consumers that set
+    # ``write_flux_diagnostics = true`` in the PROTEUS config read these.
+    jcond_b: npt.NDArray        # conductive flux [W/m^2]
+    jconv_b: npt.NDArray        # convective flux [W/m^2]
+    jgrav_b: npt.NDArray        # grav-sep contribution to heat flux [W/m^2]
+    jmix_b: npt.NDArray         # SPIDER-parity mixing flux [W/m^2]
+    dSdr_b: npt.NDArray         # entropy gradient [J/kg/K/m]
+    phi_basic: npt.NDArray      # EOS melt fraction at basic nodes [-]
+    T_basic: npt.NDArray        # temperature at basic nodes [K]
+    cp_basic: npt.NDArray       # heat capacity at basic nodes [J/kg/K]
+    rho_basic: npt.NDArray      # density at basic nodes [kg/m^3]
+
     # Scalar quantities
     T_magma: float              # surface temperature [K]
     T_core: float               # CMB temperature [K]
@@ -1592,6 +1606,17 @@ class EntropySolver:
         eddy_diff = self.state.eddy_diffusivity.copy()
         cap_stag = np.asarray(self.state.capacitance_staggered()).ravel()
 
+        # Diagnostic snapshot from the post-integration state.update().
+        jcond_b = self.state.jcond.copy()
+        jconv_b = self.state.jconv.copy()
+        jgrav_b = self.state.jgrav_heat.copy()
+        jmix_b = self.state.jmix_heat.copy()
+        dSdr_b = self.state.dSdr.copy()
+        phi_basic_diag = self.state.phi_basic_diag.copy()
+        T_basic_diag = self.state.T_basic_diag.copy()
+        cp_basic_diag = self.state.cp_basic_diag.copy()
+        rho_basic_diag = self.state.rho_basic_diag.copy()
+
         # Scalar quantities.
         # M_mantle uses the analytic A-W mass integral (matching
         # SPIDER's EOSAdamsWilliamson_GetMassWithinShell) when
@@ -1647,15 +1672,18 @@ class EntropySolver:
             T_core = float(T_stag[0])
         Phi_global = float(np.dot(phi_stag, vol) / np.sum(vol))
 
-        # Rheological front depth
+        # Rheological front depth. ``phi_basic_stag_interp`` is the
+        # staggered-phi interpolated to basic nodes -- distinct from the
+        # EOS-evaluated ``phi_basic_diag`` captured for the diagnostic
+        # output above, which is ``phase_basic.melt_fraction()``.
         phi_rheo = self.parameters.phase_mixed.rheological_transition_melt_fraction
-        phi_basic = mesh.quantity_at_basic_nodes(phi_stag).ravel()
+        phi_basic_stag_interp = mesh.quantity_at_basic_nodes(phi_stag).ravel()
         if Phi_global > 0.99:
             rf = float(r_basic[0])
         elif Phi_global < 0.01:
             rf = float(r_basic[-1])
         else:
-            idx = np.argmin(np.abs(phi_basic - phi_rheo))
+            idx = np.argmin(np.abs(phi_basic_stag_interp - phi_rheo))
             rf = float(r_basic[idx])
         R_outer = float(r_basic[-1])
         RF_depth = 1.0 - rf / R_outer if R_outer > 0 else 0.0
@@ -1728,4 +1756,13 @@ class EntropySolver:
             F_heat_total=F_heat_total,
             dt_actual=float(sol.t[-1] - sol.t[0]),
             status=sol.status,
+            jcond_b=jcond_b,
+            jconv_b=jconv_b,
+            jgrav_b=jgrav_b,
+            jmix_b=jmix_b,
+            dSdr_b=dSdr_b,
+            phi_basic=phi_basic_diag,
+            T_basic=T_basic_diag,
+            cp_basic=cp_basic_diag,
+            rho_basic=rho_basic_diag,
         )
