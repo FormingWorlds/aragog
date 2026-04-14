@@ -120,6 +120,16 @@ class _BoundaryConditionsParameters:
     #               'bower2018' (EXPERIMENTAL tombstone, do not use).
     # See aragog/config/boundary.py docstring for details.
     core_bc: str = 'quasi_steady'
+
+    # dSdr_cmb damping (energy_balance BC only). Adds
+    #   -dsdr_cmb_damping_gamma * (dSdr_cmb - dsdr_cmb_damping_target)
+    # to the RHS of d(dSdr_cmb)/dt to stabilise the marginally-stable
+    # CMB feedback loop in the post-crystallisation regime. Default 0
+    # (no damping, parity with pre-fix behaviour). Units: gamma [1/yr],
+    # target [J/(kg*K*m)]. See memory/tcore_phi0_instrumented_diagnostic.md.
+    dsdr_cmb_damping_gamma: float = 0.0
+    dsdr_cmb_damping_target: float = 0.0
+
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:

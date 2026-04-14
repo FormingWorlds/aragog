@@ -396,6 +396,17 @@ class EntropySolver:
         self._core_cap = self._core_M * self._core_cp  # J/K
         self._core_tfac = float(getattr(bc, 'tfac_core_avg', 1.147))
 
+        # dSdr_cmb damping for marginal-stability fix. Stored in per-yr
+        # units; convert to per-s in _energy_balance_rhs_per_s where
+        # the rest of the formula is per-s. Default 0 = no damping,
+        # bit-parity with pre-fix behaviour.
+        self._dsdr_cmb_damping_gamma = float(
+            getattr(bc, 'dsdr_cmb_damping_gamma', 0.0)
+        )
+        self._dsdr_cmb_damping_target = float(
+            getattr(bc, 'dsdr_cmb_damping_target', 0.0)
+        )
+
         # Quasi-steady BC alpha factor uses (R_above/R_cmb)^2
         self._cmb_radius_ratio_sq = (r_above / r_cmb) ** 2
 
@@ -790,6 +801,7 @@ class EntropySolver:
                 dSdt_s_cmb_per_s=dSdt_s_cmb_per_s,
                 T_cmb_basic=T_cmb,
                 cp_cmb_basic=cp_cmb,
+                dSdr_cmb=float(self.state._dSdr[0]),
             )
             rhs_cmb = rhs_cmb_per_s * SECS_PER_YEAR
 
@@ -834,6 +846,7 @@ class EntropySolver:
                 dSdt_s_cmb_per_s=dSdt_s_cmb_per_s,
                 T_cmb_basic=T_cmb_basic,
                 cp_cmb_basic=cp_cmb_basic,
+                dSdr_cmb=float(self.state._dSdr[0]),
             )
             d_dSdr_cmb_dt = d_dSdr_cmb_dt_per_s * SECS_PER_YEAR
 
@@ -852,6 +865,7 @@ class EntropySolver:
         dSdt_s_cmb_per_s: float,
         T_cmb_basic: float,
         cp_cmb_basic: float,
+        dSdr_cmb: float = 0.0,
     ) -> float:
         """SPIDER bc.c:76-131 rhs for d(dSdr_cmb)/dt at the CMB.
 
@@ -938,10 +952,22 @@ class EntropySolver:
         # denominator flips the sign to match the formula above.
         # Aragog's radii increase from CMB to surface, so dr > 0
         # and the numerator must be (stag - basic) explicitly.
-        return (
+        rhs_base = (
             (dSdt_s_cmb_per_s - dS_basic_cmb_dt)
             * 2.0 / self._cmb_dr_cmb
         )
+
+        # Optional damping toward a target dSdr_cmb. The base RHS in
+        # the marginally-stable post-crystallisation regime supports a
+        # sustained oscillation (linear eigenvalue ~+2e-5/yr from the
+        # diag3 instrumented run). Adding -gamma*(dSdr - target) moves
+        # the eigenvalue into the stable half-plane. gamma is in /yr;
+        # convert to /s. See memory/tcore_phi0_instrumented_diagnostic.md.
+        if self._dsdr_cmb_damping_gamma > 0.0:
+            gamma_per_s = self._dsdr_cmb_damping_gamma / SECS_PER_YEAR
+            rhs_base -= gamma_per_s * (dSdr_cmb - self._dsdr_cmb_damping_target)
+
+        return rhs_base
 
     def _reconstruct_entropy(
         self,
