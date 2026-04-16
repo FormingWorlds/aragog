@@ -482,6 +482,17 @@ def compute_fluxes(
     S_basic = mesh.quantity_matrix @ S_stag
     dSdr = mesh.d_dr_matrix @ S_stag
 
+    # SPIDER ic.c:450 boundary-copy convention for dSdr at the surface
+    # (mirrors numpy entropy_state.py:390 ``dSdxi[-1] = dSdxi[-2]``).
+    # The d_dr_matrix gives a linear-extrapolation gradient at the top
+    # basic node, but the SPIDER convention is to copy the adjacent
+    # interior value. Without this, the surface dSdr can flip sign
+    # relative to numpy, blowing up kappa_h and dS/dt at the second-
+    # to-last staggered cell. The CMB side has its own override path
+    # via ``dSdr_cmb_override``, so the surface copy here is the only
+    # one needed at this layer.
+    dSdr = dSdr.at[-1].set(dSdr[-2])
+
     # Apply energy_balance overrides at the CMB basic node.
     # Done as separate jax.lax.cond branches so the function remains
     # JIT-compatible regardless of whether the overrides are None or
@@ -491,6 +502,12 @@ def compute_fluxes(
         S_basic = S_basic.at[0].set(S_basic_cmb_override)
     if dSdr_cmb_override is not None:
         dSdr = dSdr.at[0].set(dSdr_cmb_override)
+    elif dSdr_cmb_override is None:
+        # Mirror numpy entropy_state.py:389 ``dSdxi[0] = dSdxi[1]`` for
+        # the non-energy_balance modes (quasi_steady etc.) where there
+        # is no boundary-state override. In energy_balance mode the
+        # explicit override above wins and this branch is skipped.
+        dSdr = dSdr.at[0].set(dSdr[1])
 
     # Phase properties at staggered and basic nodes
     phase_stag = evaluate_phase(eos, params, mesh.P_stag, S_stag)
