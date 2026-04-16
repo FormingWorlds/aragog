@@ -255,7 +255,6 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
         header = f.readline().strip()
         parts = header.split()
         n_header = int(parts[1])
-        n_P = int(parts[2])
         for _ in range(n_header - 1):
             line = f.readline()
         scales_line = line.strip().lstrip('#').strip()

@@ -411,7 +411,6 @@ class EntropyPhaseEvaluator:
         """
         if self._const_properties:
             return np.zeros_like(self._density)
-        phi = self._melt_fraction
         rho_s = self._eos._lookup_at_phase_boundary('density', self.pressure, 'solid')
         rho_l = self._eos._lookup_at_phase_boundary('density', self.pressure, 'melt')
         delta_rho = rho_l - rho_s  # typically negative (melt lighter)
