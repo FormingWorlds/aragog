@@ -22,8 +22,6 @@ import numpy.typing as npt
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 from scipy.optimize import OptimizeResult
-from scipy.sparse import diags as sparse_diags
-
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters

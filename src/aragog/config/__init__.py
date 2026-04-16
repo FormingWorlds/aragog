@@ -14,8 +14,6 @@ import logging
 import sys
 from typing import Any
 
-import numpy as np
-
 from aragog.config.boundary import BoundaryConfig
 from aragog.config.energy import EnergyConfig
 from aragog.config.initial_condition import InitialConditionConfig

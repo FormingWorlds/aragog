@@ -21,7 +21,6 @@ import numpy as np
 
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.jax.phase import (
-    FluxOutput,
     MeshArrays,
     PhaseParams,
     compute_fluxes,

@@ -90,4 +90,4 @@ def aragog_file_logger(
 
 
 # Expose public API
-from aragog.solver import EntropySolver
+from aragog.solver import EntropySolver as EntropySolver
