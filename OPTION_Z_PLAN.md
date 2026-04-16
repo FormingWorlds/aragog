@@ -2,6 +2,59 @@
 
 Branch: `tl/z-analytic-jacobian` (worktree at `/Users/timlichtenberg/git/aragog-Z/` and `/Users/timlichtenberg/git/PROTEUS-Z/`).
 
+---
+
+## Status as of 2026-04-17 night session (~01:18 CEST)
+
+**Z.6.A is COMPLETE. Z.2 is COMPLETE. Z.3 is VALIDATED end-to-end.**
+
+Key milestones since the original plan was written:
+
+* SPIDER-parity ports landed in `aragog-Z/src/aragog/jax/`:
+  * `compute_phase_state` single-pass evaluation (eos.py)
+  * SPIDER conduction `F_cond = -k * (T/Cp * dSdr + dTdPs * dPdr)` (phase.py)
+  * CMB `kappa_h[0] = kappa_h[1]` boundary fix (phase.py)
+  * Surface `dSdr[-1] = dSdr[-2]` boundary copy (phase.py)
+  * `MeshArrays.dP_dr_basic` field (phase.py)
+  * `compute_mlt` autodiff-safety guards: smooth-abs and `sqrt(x+eps^2)` (phase.py)
+* `cvode_jax.build_jax_rhs_and_jacobian` extended to `core_bc_mode='energy_balance'` (cvode_jax.py)
+* 12 unit tests in `tests/test_jax_entropy.py::TestSPIDERParityPorts/TestSPIDERConductionDecomposition/TestBoundaryCopies`
+
+Multi-state parity (z02): IC + mid + near_solid all PASS, median rel err ~3e-5.
+Multi-state Jacobian validation (z04, after fix): IC max 9.8e-3, mid max 1.1e-11, near_solid max 8.1e-10 (mid/near_solid bit-identical to FD reference).
+
+End-to-end CVODE + JAX-Jacobian (z09) on chili_repro_v2 IC, 1 yr integration:
+
+| tol           | JAX wall  | FD wall   | speedup | endpoint diff |
+|---------------|-----------|-----------|---------|---------------|
+| rtol=1e-6, atol=1e-8 (CHILI prod) | 430 ms | 28949 ms | 67x | 16.3 abs |
+| rtol=1e-9, atol=1e-12             | 328 ms | 688 ms   | 2.1x | 2.1e-6 abs |
+
+The 67x at loose tol is partially an FD inefficiency artifact (CVODE without analytic Jacobian takes ~30x more Newton iterations per step). Tightening tol gives the textbook 2x and matches both endpoints to 2e-6 abs / 3e-4 rel.
+
+Z.3 wire-up went through scikits.odes `cvode` directly with `jacfn=jac_fn` in the options dict. No patches to production aragog code needed.
+
+### What's still ahead
+
+* **Z.4: production CHILI run with JAX Jacobian.** Take the chili_v_test config, swap the cvode call to use `build_jax_rhs_and_jacobian` + `jacfn`, run to Phi_crit. Compare endpoint to chili_v_test (T_core 4145.483 K, Phi 0.04956). Wall-time benchmark.
+* **Z.5: integrate into PROTEUS coupling loop.** Add a config flag `interior_energetics.aragog.use_jax_jacobian: bool` that swaps the entropy_solver._solve_cvode internals to use the JAX Jacobian path. This is the "production switch" landing.
+
+The bulk of the engineering risk is now behind us. What remains is plumbing.
+
+### Diagnostic scripts (PROTEUS-Z/scripts/)
+
+* `z01_verify_jax_numpy_parity.py` — IC RHS parity (median 2.13e-5 rel err)
+* `z02_parity_multi_state.py` — IC + mid + near_solid RHS parity (all PASS)
+* `z03_jacobian_check.py` — IC Jacobian vs FD (max 9.82e-3)
+* `z04_jacobian_multi_state.py` — multi-state Jacobian vs FD (all PASS after fix)
+* `z05_localise_jacobian_nan.py` — historical: NaN survives all transport channels off
+* `z06_phase_state_jacobian.py` — historical: compute_phase_state Jacobian FINITE
+* `z07_compute_fluxes_jacobian.py` — historical: compute_fluxes 79 NaN at mid
+* `z08_compute_mlt_jacobian.py` — historical: compute_mlt is the NaN source
+* `z09_cvode_with_jax_jacobian.py` — end-to-end CVODE + JAX Jacobian, 67x / 2x speedup
+
+### Original plan (preserved below for context)
+
 ## What's done so far (2026-04-16 evening session)
 
 Two new modules in `src/aragog/solver/`:
