@@ -58,9 +58,15 @@ class BoundaryParams(eqx.Module):
         1 = core cooling (Bower+2018 Eq. 37)
         2 = prescribed flux
         3 = prescribed temperature (preserve conduction-derived flux)
+        5 = energy_balance (SPIDER-parity Path A): F_cmb derived from
+            the boundary entropy gradient (state-tracked dSdr_cmb).
+            Used by ``dSdt_energy_balance``.
 
     All float fields are stored as JAX arrays (not Python floats) to
     avoid JIT recompilation when values change between coupling steps.
+
+    Energy-balance constants are optional (default 0); only used when
+    inner_bc_type == 5 via ``dSdt_energy_balance``.
     """
 
     # Surface
@@ -76,9 +82,19 @@ class BoundaryParams(eqx.Module):
     core_heat_capacity: jax.Array  # [J/kg/K]
     tfac_core_avg: jax.Array       # T_avg/T_cmb ratio
 
+    # Energy_balance constants (CMB BC type 5).
+    # Cached from the numpy solver's _cache_bc_constants():
+    #   cmb_area: 4*pi*r_cmb^2  [m^2]
+    #   core_M:   (4/3)*pi*r_cmb^3*core_density  [kg]
+    #   cmb_dr_cmb: r_basic[1] - r_basic[0]      [m] (half-cell)
+    cmb_area: jax.Array
+    core_M: jax.Array
+    cmb_dr_cmb: jax.Array
+
     def __init__(self, *, outer_bc_type, outer_bc_value, emissivity, T_eq,
                  inner_bc_type, inner_bc_value, core_density,
-                 core_heat_capacity, tfac_core_avg):
+                 core_heat_capacity, tfac_core_avg,
+                 cmb_area=0.0, core_M=0.0, cmb_dr_cmb=0.0):
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
         self.emissivity = jnp.asarray(emissivity, dtype=jnp.float64)
@@ -88,6 +104,9 @@ class BoundaryParams(eqx.Module):
         self.core_density = jnp.asarray(core_density, dtype=jnp.float64)
         self.core_heat_capacity = jnp.asarray(core_heat_capacity, dtype=jnp.float64)
         self.tfac_core_avg = jnp.asarray(tfac_core_avg, dtype=jnp.float64)
+        self.cmb_area = jnp.asarray(cmb_area, dtype=jnp.float64)
+        self.core_M = jnp.asarray(core_M, dtype=jnp.float64)
+        self.cmb_dr_cmb = jnp.asarray(cmb_dr_cmb, dtype=jnp.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +249,122 @@ def dSdt(
 
     # Convert to J/kg/K/yr
     return dsdt * SECS_PER_YEAR
+
+
+# ---------------------------------------------------------------------------
+# Energy_balance core BC RHS (state vector = [S, dSdr_cmb], length N+1)
+# ---------------------------------------------------------------------------
+
+def dSdt_energy_balance(
+    t: float,
+    state_ext: jax.Array,
+    args: tuple,
+) -> jax.Array:
+    """RHS for the energy_balance core BC mode (extended state, N+1).
+
+    Mirrors the numpy ``EntropySolver._dSdt_single`` for
+    ``core_bc='energy_balance'``. State layout:
+
+        state_ext[0:N] = S at staggered nodes [J/kg/K]
+        state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
+
+    Returns d/dt of the same layout. The dSdr_cmb evolution is the
+    SPIDER bc.c:76-131 closure equation (also in numpy as
+    ``EntropySolver._energy_balance_rhs_per_s``).
+
+    Parameters
+    ----------
+    t : float
+        Current time [yr].
+    state_ext : jax.Array, shape (N+1,)
+        Extended state vector (entropy + dSdr_cmb).
+    args : tuple
+        ``(eos, params, mesh, bc, heating)`` — same as ``dSdt``.
+        ``bc`` must have inner_bc_type = 5 and the energy_balance
+        constants (cmb_area, core_M, cmb_dr_cmb) populated.
+
+    Returns
+    -------
+    jax.Array
+        d(state_ext)/dt at the same layout, [J/kg/K/yr] for entropy,
+        [J/kg/K/m/yr] for dSdr_cmb.
+    """
+    eos, params, mesh, bc, heating = args
+    n_stag = mesh.P_stag.shape[0]
+    S = state_ext[:n_stag]
+    dSdr_cmb = state_ext[n_stag]
+
+    # Compute fluxes using the standard helper (this gives the
+    # conduction/convection/grav_sep/mixing fluxes at all interior
+    # basic nodes; the CMB heat_flux[0] computed here will be
+    # overridden using dSdr_cmb below).
+    flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
+    heat_flux = flux_out.heat_flux
+
+    # Phase properties needed for BCs and the dSdr_cmb closure
+    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
+    phase_basic = evaluate_phase(
+        eos, params, mesh.P_basic, mesh.quantity_matrix @ S,
+    )
+
+    # Surface BC (same as dSdt)
+    heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
+
+    # CMB BC: derive F_cmb from dSdr_cmb via the conductive flux at the
+    # CMB basic node. Mirrors the numpy state.update(dSdr_cmb=extra)
+    # path which uses the boundary entropy gradient to set the bottom
+    # mantle cell value.
+    #
+    # The flux derivation: F_cmb = -k * dT/dr at the CMB. dT/dr is
+    # decomposed into superadiabatic + adiabatic:
+    #   dT/dr|_total = (T/Cp) * dS/dr + dT/dP|_S * dP/dr
+    # where dS/dr at the CMB basic node is the state-tracked dSdr_cmb.
+    T_cmb = phase_basic.temperature[0]
+    cp_cmb = phase_basic.heat_capacity[0]
+    dTdPs_cmb = eos.dTdPs(mesh.P_basic[0:1], (mesh.quantity_matrix @ S)[0:1])[0]
+    # Pressure gradient at the CMB basic node (use one-sided diff):
+    dPdr_cmb = (mesh.P_basic[1] - mesh.P_basic[0]) / (
+        mesh.radii_basic[1] - mesh.radii_basic[0]
+    )
+    # Conductivity at the CMB (use the basic-node thermal conductivity
+    # from the existing flux output if available; for simplicity use a
+    # fixed weighting: k = (k_solid + k_liquid)/2 for now).
+    # TODO: extract k_basic[0] from the flux computation properly.
+    k_cmb = 0.5 * (params.k_solid + params.k_liquid)
+    dTdr_total = (T_cmb / jnp.maximum(cp_cmb, 100.0)) * dSdr_cmb + dTdPs_cmb * dPdr_cmb
+    F_cmb_from_dSdr = -k_cmb * dTdr_total
+    heat_flux = heat_flux.at[0].set(F_cmb_from_dSdr)
+
+    # Flux divergence (entropy derivatives, same as dSdt)
+    energy_flux = heat_flux * mesh.area
+    delta_energy_flux = jnp.diff(energy_flux)
+    cap = phase_stag.capacitance
+    capacitance = cap * mesh.volume
+    dSdt_per_s = -delta_energy_flux / capacitance
+    dSdt_per_s = dSdt_per_s + heating / jnp.maximum(phase_stag.temperature, 1.0)
+    dSdt_per_yr = dSdt_per_s * SECS_PER_YEAR
+
+    # ── dSdr_cmb closure equation (SPIDER bc.c:76-131) ──
+    # fac_cmb = cp_cmb / (core_cp * T_cmb * tfac * core_M)
+    # E_tot_cmb = F_cmb * area_cmb [W]
+    # dSdt_basic_cmb = -E_tot_cmb * fac_cmb [J/kg/K/s]
+    # rhs = (dSdt_stag[0] - dSdt_basic_cmb) * 2 / dr_cmb [J/kg/K/m/s]
+    E_tot_cmb = F_cmb_from_dSdr * bc.cmb_area
+    fac_cmb = cp_cmb / (
+        bc.core_heat_capacity
+        * jnp.maximum(T_cmb, 1.0)
+        * bc.tfac_core_avg
+        * jnp.maximum(bc.core_M, 1.0)
+    )
+    dSdt_basic_cmb_per_s = -E_tot_cmb * fac_cmb
+    d_dSdr_cmb_dt_per_s = (dSdt_per_s[0] - dSdt_basic_cmb_per_s) * 2.0 / bc.cmb_dr_cmb
+    d_dSdr_cmb_dt_per_yr = d_dSdr_cmb_dt_per_s * SECS_PER_YEAR
+
+    # Assemble extended-state derivative
+    return jnp.concatenate([
+        dSdt_per_yr,
+        jnp.array([d_dSdr_cmb_dt_per_yr]),
+    ])
 
 
 # ---------------------------------------------------------------------------
