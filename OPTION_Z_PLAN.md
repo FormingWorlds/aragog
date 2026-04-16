@@ -16,7 +16,45 @@ The JAX physics already exists in `aragog/jax/`:
 
 The PROTEUS wrapper in `proteus/interior_energetics/aragog_jax.py` already builds all JAX components from PROTEUS config — we can reuse this construction code.
 
-## Z.1 progress (2026-04-16 late evening, partial)
+## Z.1 + Z.6 progress (2026-04-17 ~00:00 CET)
+
+### Z.6 implementation (commit `6f4b4cc`)
+Added `dSdt_energy_balance(t, state_ext, args)` in `aragog/jax/solver.py` for N+1 state. Extended `BoundaryParams` with energy_balance constants (cmb_area, core_M, cmb_dr_cmb). Code compiles and imports cleanly.
+
+### Z.1 parity test result: **110x DIVERGENCE at CMB cell**
+
+```
+config: chili_repro_v2 (energy_balance core_bc, atol=3e-7)
+n_stag = 79, state vector = N+1 = 80
+                  numpy           JAX             abs_err     rel_err
+dS/dt[0]    -313.56          -34522           34209       110x
+dS/dt[79]    +0.01746        -2.282           2.30        132x
+dS/dt[60]    +12.17           -66.17          78.35       6.4x
+dS/dt[59]    -12.21           -87.95          75.73       6.2x
+median rel_err: 0.19 (19% off)
+```
+
+**Diagnosis (likely causes ranked):**
+
+1. **k_cmb approximation is wrong**: I used `k_cmb = 0.5*(k_solid+k_liquid)` (typical 3.0 W/m/K) but production uses phase-weighted k at the actual melt fraction (likely k_liquid=2.0 at fully molten Phi=1). This is ~50% off, but doesn't explain 110x.
+
+2. **F_cmb derivation may be wrong**: My formula `F_cmb = -k * [(T/Cp) * dSdr_cmb + dTdPs * dPdr]` assumes the flux derivation matches what `state.update(dSdr_cmb=extra)` does in numpy. Need to dig into `entropy_state.py` to verify the exact derivation.
+
+3. **dPdr computation**: I used one-sided finite difference between basic nodes 0 and 1; production may use the analytic Adams-Williamson dPdr or the dPdr cached in entropy_state.
+
+4. **dSdr_cmb closure formula**: my factor of 2/dr_cmb may be wrong; numpy uses `(dSdt_stag - dSdt_basic) * 2 / dr_cmb` but I should re-verify against `_energy_balance_rhs_per_s`.
+
+**Next steps for Z.1**:
+- Inspect `entropy_state.py:update(dSdr_cmb=extra)` to see exactly how F_cmb is set
+- Replace my approximation with the actual physics
+- Re-test parity
+- May need to extract internal numpy state (k_basic, dPdr, etc.) and pass to JAX as inputs
+
+This is iterative work — could easily take another 4-8 hours of careful debugging. Significant value: each fix in JAX brings parity, plus reveals subtle physics couplings worth understanding.
+
+### Original Z.1 progress notes follow:
+
+
 
 Wrote `scripts/z01_verify_jax_numpy_parity.py` in PROTEUS-Z worktree. The script:
 - Loads chili_repro_v2 config
