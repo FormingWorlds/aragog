@@ -16,7 +16,58 @@ The JAX physics already exists in `aragog/jax/`:
 
 The PROTEUS wrapper in `proteus/interior_energetics/aragog_jax.py` already builds all JAX components from PROTEUS config — we can reuse this construction code.
 
-## Z.1 + Z.6 progress (2026-04-17 ~00:00 CET)
+## Z.1 + Z.6 progress (2026-04-17 ~00:30 CET)
+
+### Iteration 2: fixed CMB basic-node entropy override
+
+Added in `dSdt_energy_balance`:
+- `S_basic_cmb = S[0] + dSdr_cmb * (r_basic[0] - r_stag[0])` (matches numpy `update(dSdr_cmb)` extrapolation)
+- Override `S_basic[0]` and recompute `phase_basic` from corrected entropy
+- Use `phase_basic.thermal_conductivity[0]` instead of average
+
+**Result: still 110x divergence**. Same numbers as iter 1.
+
+### Root cause discovered (commit 87aeb8b)
+
+Diagnostic at IC:
+- numpy `heat_flux[0]` = **1.164e9 W/m^2** (huge — initial wind-up state with strong convection)
+- numpy `phase_basic.temp[0]` = 7195 K (matches my JAX value)
+- numpy `phase_basic.cp[0]` = 1432 J/kg/K (matches)
+
+The numpy `heat_flux[0]` of 1.164e9 W/m^2 is NOT just the conductive flux. It includes ALL components: conduction + convection + grav_sep + mixing. My JAX `F_cmb_from_dSdr = -k * dT/dr` computes only ~0.27 W/m^2 (the conductive part).
+
+In numpy, `state.update(dSdr_cmb=extra)` modifies `entropy_basic[0]`, then the full flux pipeline (conduction + convection + grav_sep + mixing) runs with the corrected basic-node entropy. The convective component dominates by ~9 orders of magnitude.
+
+In JAX, `compute_fluxes` (in `aragog/jax/phase.py`) is a black-box that takes only `S` (staggered) and does its own `mesh.quantity_matrix @ S` to derive `S_basic`. It doesn't accept an override for `entropy_basic[0]`.
+
+### What's needed for Z.1 to PASS
+
+**Option Z.6.A**: Modify `aragog/jax/phase.py:compute_fluxes` to accept an optional `S_basic_override` argument. The override would replace the standard `quantity_matrix @ S` for the basic-node entropy. Modify in lockstep with `evaluate_phase` which is also called inside.
+
+This is a meaningful JAX refactor:
+- compute_fluxes signature change
+- pass-through to evaluate_phase
+- ensure JIT trace is still clean (override must be a JAX array, not None)
+
+Estimated effort: 4-6 hours of careful refactoring + parity re-verification.
+
+**Option Z.6.B**: Don't reuse compute_fluxes. Re-implement the flux computation manually in dSdt_energy_balance with the corrected basic-node entropy. Less invasive but more code duplication.
+
+**Recommendation**: Z.6.A is the right structural fix. Z.6.B accumulates technical debt.
+
+### Bigger picture: Z is more work than estimated
+
+My initial estimate was 1.5-3 days. After Z.6 + Z.1 iter 1-2, realistic estimate is **3-5 days** because:
+- compute_fluxes refactor needed for energy_balance compatibility
+- Each numpy ↔ JAX physics primitive needs parity verification
+- Mesh-derived dPdr, EOS dTdPs, k_basic - any mismatch shows up as RHS divergence
+- The 4-8 hours per iteration applies to each remaining gap
+
+**Pragmatic recommendation**: Given the U+V+W+X+Y stack is empirically eliminating the bifurcation (4 clean trajectories in flight), Z is no longer urgent. Defer Z to after the paper, OR commit to a focused 3-5 day push to complete it properly.
+
+### Original Z.1 progress notes follow:
+
+
 
 ### Z.6 implementation (commit `6f4b4cc`)
 Added `dSdt_energy_balance(t, state_ext, args)` in `aragog/jax/solver.py` for N+1 state. Extended `BoundaryParams` with energy_balance constants (cmb_area, core_M, cmb_dr_cmb). Code compiles and imports cleanly.
