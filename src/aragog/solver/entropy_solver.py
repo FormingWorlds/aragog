@@ -1201,10 +1201,15 @@ class EntropySolver:
             'lmm_type': 'BDF',
             'nonlinsolver': 'newton',
             'max_steps': 100000,  # per-solve cap; scipy used unlimited
-            # Maximum BDF order. CVODE's default is 5 (max of BDF(1..5))
-            # but scikits.odes exposes the knob; set explicitly for
-            # clarity. Matches SPIDER's SUNDIALS config.
-            'order': 5,
+            # Maximum BDF order. BDF orders 1-2 are A-stable
+            # (unconditionally stable for stiff problems on stable
+            # systems); orders 3-5 are only "stiffly stable" with
+            # stability gaps near the imaginary axis. Combustion codes
+            # (e.g. PelePhysics) cap at order 2 for robustness on
+            # discontinuous-RHS problems. Aragog's RHS has phase-
+            # boundary discontinuities that can trip the higher-order
+            # stability gaps. Order 2 trades wall time for robustness.
+            'order': 2,
             # Give Newton more iterations per step (default 3) and more
             # convergence-failure tolerance (default 10) before CVODE
             # demotes the order. Aragog's RHS has genuine physical
