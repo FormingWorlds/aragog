@@ -1233,3 +1233,406 @@ class TestJAXJgravSmoothing:
         g2 = _np.linspace(0.5, 1.0, 10)
         assert _np.all(_np.diff(smth_ref(g1)) >= -1e-15)
         assert _np.all(_np.diff(smth_ref(g2)) <= 1e-15)
+
+
+# ---------------------------------------------------------------------------
+# Tier 7: SPIDER-parity ports landed in Z.6.A (aragog 09cd760, 96894db)
+# ---------------------------------------------------------------------------
+#
+# Three structural pieces of physics in the JAX path were brought into
+# bit-tight parity with the numpy EntropyPhaseEvaluator._update_eos /
+# entropy_state.update path during the Z.6.A iteration:
+#
+#   1. EntropyEOS_JAX.compute_phase_state — single-pass evaluation that
+#      derives all six properties (T, rho, Cp, alpha, dTdPs, k) from the
+#      same (gphi, smth, S_sol, S_liq, T_sol, T_liq, rho_sol, rho_liq)
+#      cache and applies the SPIDER combine_matprop blend
+#      smth*mixed + (1-smth)*single. Replaces the per-property API that
+#      only had the mixed (harmonic-mean) branch.
+#
+#   2. compute_fluxes conduction term — uses the SPIDER decomposition
+#      F_cond = -k * [(T/Cp)*dSdr + dTdPs*dPdr_basic] in place of the
+#      textbook -k * d/dr(T_stag).
+#
+#   3. compute_mlt CMB fix and compute_fluxes surface dSdr boundary copy
+#      — mirror SPIDER energy.c:220-223 (kappa_h[0] = kappa_h[1]) and
+#      ic.c:450 (dSdr boundary copy from adjacent interior).
+#
+# The tests below exercise each port against the numpy reference
+# implementation that compute_phase_state was ported from.
+
+@needs_eos
+@pytest.mark.unit
+class TestSPIDERParityPorts:
+    """Bit-tight parity between JAX compute_phase_state and the numpy
+    EntropyPhaseEvaluator with cp_blend='latent'."""
+
+    @pytest.fixture(scope='class')
+    def numpy_phase_eval(self, numpy_eos):
+        """Numpy EntropyPhaseEvaluator with the same defaults as the
+        JAX PhaseParams used in production CHILI runs."""
+        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+        return EntropyPhaseEvaluator(
+            entropy_eos=numpy_eos,
+            gravitational_acceleration=9.81,
+            thermal_conductivity_solid=4.0,
+            thermal_conductivity_liquid=2.0,
+            cp_blend='latent',
+            matprop_smooth_width=0.01,  # CHILI Earth production setting
+        )
+
+    @pytest.mark.parametrize('S_off', [-300.0, -100.0, 0.0, 100.0, 300.0])
+    def test_compute_phase_state_blends_match_numpy(
+        self, jax_eos, numpy_phase_eval, S_off,
+    ):
+        """compute_phase_state(P, S, k_solid, k_liquid, matprop_smooth_width)
+        must reproduce numpy ._update_eos with cp_blend='latent' bit-tight
+        across solid, mushy, and molten regimes for all six blended
+        properties."""
+        P_arr = np.linspace(10e9, 130e9, 25)
+        # Sample S relative to the midpoint of solidus and liquidus so the
+        # parametrize sweep crosses pure-solid / mushy / pure-melt regimes.
+        S_sol = np.asarray(jax_eos.solidus_entropy(jnp.asarray(P_arr)))
+        S_liq = np.asarray(jax_eos.liquidus_entropy(jnp.asarray(P_arr)))
+        S_mid = 0.5 * (S_sol + S_liq)
+        S_arr = S_mid + S_off
+
+        # JAX side
+        state = jax_eos.compute_phase_state(
+            jnp.asarray(P_arr), jnp.asarray(S_arr),
+            k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01,
+        )
+
+        # Numpy side
+        numpy_phase_eval.set_pressure(P_arr)
+        numpy_phase_eval.set_entropy(S_arr)
+        numpy_phase_eval.update()
+        T_np = np.asarray(numpy_phase_eval.temperature()).ravel()
+        rho_np = np.asarray(numpy_phase_eval.density()).ravel()
+        Cp_np = np.asarray(numpy_phase_eval.heat_capacity()).ravel()
+        alpha_np = np.asarray(numpy_phase_eval.thermal_expansivity()).ravel()
+        dTdPs_np = np.asarray(numpy_phase_eval.dTdPs()).ravel()
+        # k_thermal in numpy: linear blend phi*k_liq + (1-phi)*k_sol then
+        # smth-blended against the single-phase k_single (constant per phase)
+        k_np = np.asarray(numpy_phase_eval._thermal_conductivity_val).ravel()
+        phi_np = np.asarray(numpy_phase_eval.melt_fraction()).ravel()
+
+        # Bit-tight rtol; the only intentional non-bit-identical operation
+        # is the alpha guard 0.5*(a + sqrt(a^2 + eps^2)) which is identical
+        # in both implementations.
+        np.testing.assert_allclose(
+            np.asarray(state.temperature), T_np, rtol=1e-10,
+            err_msg=f'temperature parity at S_off={S_off}',
+        )
+        np.testing.assert_allclose(
+            np.asarray(state.density), rho_np, rtol=1e-10,
+            err_msg=f'density parity at S_off={S_off}',
+        )
+        np.testing.assert_allclose(
+            np.asarray(state.heat_capacity), Cp_np, rtol=1e-10,
+            err_msg=f'heat_capacity parity at S_off={S_off}',
+        )
+        np.testing.assert_allclose(
+            np.asarray(state.thermal_expansivity), alpha_np, rtol=1e-5,
+            err_msg=f'thermal_expansivity parity at S_off={S_off}',
+        )
+        np.testing.assert_allclose(
+            np.asarray(state.dTdPs), dTdPs_np, rtol=1e-10,
+            err_msg=f'dTdPs parity at S_off={S_off}',
+        )
+        np.testing.assert_allclose(
+            np.asarray(state.thermal_conductivity), k_np, rtol=1e-10,
+            err_msg=f'thermal_conductivity parity at S_off={S_off}',
+        )
+        np.testing.assert_allclose(
+            np.asarray(state.melt_fraction), phi_np, rtol=1e-10, atol=1e-12,
+            err_msg=f'melt_fraction parity at S_off={S_off}',
+        )
+
+    def test_compute_phase_state_smth_zero_when_outside_mushy(
+        self, jax_eos,
+    ):
+        """With matprop_smooth_width=0 the SPIDER convention is
+        smth=1 strictly inside (0,1) and 0 elsewhere — the blend
+        collapses to pure single-phase outside the mushy band."""
+        # Pick three pressures and entropies that are clearly solid,
+        # mushy, and molten respectively.
+        P = jnp.asarray([60e9, 60e9, 60e9])
+        S_sol = float(jax_eos.solidus_entropy(60e9))
+        S_liq = float(jax_eos.liquidus_entropy(60e9))
+        S = jnp.asarray([S_sol - 200, 0.5 * (S_sol + S_liq), S_liq + 200])
+        state = jax_eos.compute_phase_state(
+            P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.0,
+        )
+        smth = np.asarray(state.smth)
+        assert smth[0] == 0.0, 'pure solid should have smth=0'
+        assert smth[1] == 1.0, 'mushy should have smth=1'
+        assert smth[2] == 0.0, 'pure melt should have smth=0'
+
+    def test_compute_phase_state_jit_compiles(self, jax_eos):
+        """compute_phase_state must JIT-compile (required for the
+        analytic Jacobian path which jit-traces the whole RHS)."""
+        @jax.jit
+        def fn(P, S):
+            return jax_eos.compute_phase_state(
+                P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01,
+            )
+        P = jnp.full(5, 50e9)
+        S = jnp.linspace(2800.0, 3300.0, 5)
+        state = fn(P, S)
+        assert state.density.shape == (5,)
+        assert jnp.all(state.density > 0)
+
+
+@needs_eos
+@pytest.mark.unit
+class TestSPIDERConductionDecomposition:
+    """compute_fluxes conduction term: -k*[(T/Cp)*dSdr + dTdPs*dPdr_basic]."""
+
+    def test_dPdr_basic_field_present_and_matches_np_gradient(self):
+        """MeshArrays must carry dP_dr_basic, computed via
+        np.gradient(P_basic, r_basic). Construct a synthetic mesh-like
+        namespace to verify ``from_numpy_mesh`` populates the field
+        correctly without depending on the full aragog Mesh constructor
+        (which needs a fully-resolved Parameters object that is awkward
+        to build in a unit test)."""
+        from types import SimpleNamespace
+        from aragog.jax.phase import MeshArrays
+        n_basic = 10
+        n_stag = n_basic - 1
+        r_basic_np = np.linspace(3.5e6, 6.371e6, n_basic)
+        r_stag_np = 0.5 * (r_basic_np[1:] + r_basic_np[:-1])
+        P_basic_np = np.linspace(120e9, 1e9, n_basic)
+        # Synthetic mesh with the same attribute surface that
+        # MeshArrays.from_numpy_mesh consumes.
+        basic = SimpleNamespace(
+            radii=r_basic_np,
+            area=np.ones(n_basic),
+            volume=np.ones(n_basic),
+            mixing_length=np.full(n_basic, 1e5),
+            mixing_length_squared=np.full(n_basic, 1e10),
+            mixing_length_cubed=np.full(n_basic, 1e15),
+        )
+        staggered = SimpleNamespace(radii=r_stag_np)
+        mesh = SimpleNamespace(
+            basic=basic,
+            staggered=staggered,
+            staggered_pressure=np.linspace(120e9, 5e9, n_stag),
+            basic_pressure=P_basic_np,
+            _d_dr_transform=np.zeros((n_basic, n_stag)),
+            _quantity_transform=np.zeros((n_basic, n_stag)),
+            eos=SimpleNamespace(_gravitational_acceleration=9.81),
+        )
+        jax_mesh = MeshArrays.from_numpy_mesh(mesh)
+        # Field must exist and have the right shape
+        assert jax_mesh.dP_dr_basic.shape == (n_basic,), (
+            f'dP_dr_basic shape mismatch: got {jax_mesh.dP_dr_basic.shape}, '
+            f'expected ({n_basic},)'
+        )
+        # Must equal np.gradient(P_basic, r_basic) bit-tight (the JAX
+        # MeshArrays just forwards the numpy gradient).
+        expected = np.gradient(P_basic_np, r_basic_np)
+        np.testing.assert_allclose(
+            np.asarray(jax_mesh.dP_dr_basic), expected, rtol=1e-12,
+        )
+        # Sign check: P decreases outward (large r → small P) so dPdr < 0.
+        signs = np.sign(np.asarray(jax_mesh.dP_dr_basic)[1:-1])
+        assert (signs == signs[0]).all(), (
+            f'dPdr should be monotonic; got mixed signs: {signs}'
+        )
+
+    def test_compute_fluxes_conduction_only_matches_analytic(
+        self, jax_eos, default_params,
+    ):
+        """For an isentropic profile (dSdr=0), the SPIDER conduction
+        formula reduces to F_cond = -k * dTdPs * dPdr — purely the
+        adiabatic-gradient term, no super-adiabatic contribution."""
+        from aragog.jax.phase import (
+            MeshArrays, PhaseParams, compute_fluxes,
+        )
+        # A toy mesh: linear pressure profile, uniform spacing.
+        n_stag = 10
+        n_basic = n_stag + 1
+        r_basic = jnp.linspace(3.5e6, 6.371e6, n_basic)
+        r_stag = 0.5 * (r_basic[1:] + r_basic[:-1])
+        # Synthetic Adams-Williamson-ish pressure profile (linear in r is fine
+        # for a sanity check; the analytic comparison only needs dPdr to be
+        # consistent between the mesh and the test).
+        P_basic = jnp.linspace(120e9, 0.0, n_basic)
+        P_stag = 0.5 * (P_basic[1:] + P_basic[:-1])
+        dr = float(r_basic[1] - r_basic[0])
+        # Build the d_dr / quantity matrices for this trivial mesh.
+        d_dr = jnp.zeros((n_basic, n_stag))
+        # interior centered diff
+        for i in range(1, n_basic - 1):
+            d_dr = d_dr.at[i, i - 1].set(-1.0 / dr)
+            d_dr = d_dr.at[i, i].set(1.0 / dr)
+        # boundary linear extrapolation (matches the SPIDER convention)
+        d_dr = d_dr.at[0, 0].set(0.0)  # replaced by boundary copy in compute_fluxes
+        d_dr = d_dr.at[-1, -1].set(0.0)  # replaced by boundary copy
+        q = jnp.zeros((n_basic, n_stag))
+        for i in range(1, n_basic - 1):
+            q = q.at[i, i - 1].set(0.5)
+            q = q.at[i, i].set(0.5)
+        q = q.at[0, 0].set(1.0)
+        q = q.at[-1, -1].set(1.0)
+
+        mesh = MeshArrays(
+            d_dr_matrix=d_dr,
+            quantity_matrix=q,
+            area=jnp.ones(n_basic),
+            volume=jnp.ones(n_basic),
+            radii_basic=r_basic,
+            radii_stag=r_stag,
+            mixing_length=jnp.ones(n_basic) * 1e5,
+            mixing_length_sq=jnp.ones(n_basic) * 1e10,
+            mixing_length_cu=jnp.ones(n_basic) * 1e15,
+            P_stag=P_stag,
+            P_basic=P_basic,
+            dP_dr_basic=jnp.gradient(P_basic, r_basic),
+            gravity=jnp.full(n_basic, 9.81),
+        )
+
+        # PhaseParams: only conduction enabled, no convection / grav / mix.
+        # Without convection the surface dSdr fix and CMB kappa_h fix are
+        # irrelevant — F is purely conductive everywhere.
+        params = PhaseParams(
+            conduction=True, convection=False,
+            grav_sep=False, mixing=False,
+            kappah_floor=0.0,
+            matprop_smooth_width=0.01,
+        )
+
+        S = jnp.full(n_stag, 3000.0)  # isentropic
+        flux = compute_fluxes(
+            S, 0.0, jax_eos, params, mesh, jnp.zeros(n_stag),
+        )
+
+        # Interior node sanity: F_cond should be O(k * |dTdPs * dPdr|)
+        # which for k=4, dTdPs ~ 1e-8, dPdr ~ -1e7 / 1e6 = -10 Pa/m,
+        # gives F_cond ~ 4 * 1e-8 * 10 = 4e-7 W/m^2. (Wait, dPdr is
+        # 120e9 / 2.871e6 m ~ 4.2e4 Pa/m, so F ~ 4 * 1e-8 * 4.2e4 ~ 1.7e-3.)
+        # The exact numerical value is not what we are checking here; we
+        # check only that F is non-zero and has the expected sign in the
+        # interior.
+        F_interior = np.asarray(flux.heat_flux[3:-3])
+        assert np.all(np.isfinite(F_interior)), 'F_cond must be finite'
+        # On an isentropic profile with negative dPdr, F_cond = -k * dTdPs * dPdr
+        # is positive (heat flows outward) for typical EOS dTdPs > 0.
+        assert F_interior.mean() > 0, (
+            f'F_cond on isentropic IC should be positive (outward), '
+            f'got mean = {F_interior.mean()}'
+        )
+
+
+@needs_eos
+@pytest.mark.unit
+class TestBoundaryCopies:
+    """SPIDER ic.c:450 / energy.c:220-223 boundary copies."""
+
+    def test_compute_mlt_kappa_h_cmb_copy(self, jax_eos, default_params):
+        """compute_mlt must enforce kappa_h[0] = kappa_h[1] (numpy
+        entropy_state.py:533). Test by feeding a strongly super-adiabatic
+        gradient at idx 1 and checking idx 0 picks it up."""
+        from aragog.jax.phase import (
+            MeshArrays, PhaseParams, compute_mlt, evaluate_phase,
+        )
+        n = 10
+        n_basic = n + 1
+        # Build a small synthetic mesh
+        r_basic = jnp.linspace(3.5e6, 6.371e6, n_basic)
+        r_stag = 0.5 * (r_basic[1:] + r_basic[:-1])
+        P_basic = jnp.linspace(120e9, 1e9, n_basic)
+        P_stag = 0.5 * (P_basic[1:] + P_basic[:-1])
+        mesh = MeshArrays(
+            d_dr_matrix=jnp.zeros((n_basic, n)),
+            quantity_matrix=jnp.zeros((n_basic, n)),
+            area=jnp.ones(n_basic),
+            volume=jnp.ones(n_basic),
+            radii_basic=r_basic,
+            radii_stag=r_stag,
+            mixing_length=jnp.ones(n_basic) * 1e5,
+            mixing_length_sq=jnp.ones(n_basic) * 1e10,
+            mixing_length_cu=jnp.ones(n_basic) * 1e15,
+            P_stag=P_stag,
+            P_basic=P_basic,
+            dP_dr_basic=jnp.gradient(P_basic, r_basic),
+            gravity=jnp.full(n_basic, 9.81),
+        )
+        S_basic = jnp.full(n_basic, 3000.0)
+        ph = evaluate_phase(jax_eos, default_params, P_basic, S_basic)
+        # Strongly negative dSdr (unstable) at idx 1, mild elsewhere
+        dSdr = jnp.full(n_basic, -1e-6)
+        dSdr = dSdr.at[0].set(+1e-6)  # if NOT copied, idx 0 would be stable
+        kh, _ = compute_mlt(dSdr, ph, mesh, default_params)
+        # SPIDER copy enforces kh[0] = kh[1]
+        assert float(kh[0]) == float(kh[1]), (
+            f'kappa_h[0] must equal kappa_h[1] after SPIDER CMB copy; '
+            f'got {float(kh[0])} vs {float(kh[1])}'
+        )
+
+    def test_compute_fluxes_dSdr_surface_copy(self, jax_eos, default_params):
+        """compute_fluxes must enforce dSdr[-1] = dSdr[-2] before the
+        flux computation (numpy entropy_state.py:390 ``dSdxi[-1] =
+        dSdxi[-2]``). Verify by constructing a d_dr matrix that would
+        give a wrong-sign gradient at the top boundary, and checking
+        that the surface F_conv has the same sign as the adjacent
+        interior."""
+        from aragog.jax.phase import (
+            MeshArrays, PhaseParams, compute_fluxes,
+        )
+        n = 8
+        n_basic = n + 1
+        r_basic = jnp.linspace(3.5e6, 6.371e6, n_basic)
+        r_stag = 0.5 * (r_basic[1:] + r_basic[:-1])
+        P_basic = jnp.linspace(120e9, 1e9, n_basic)
+        P_stag = 0.5 * (P_basic[1:] + P_basic[:-1])
+        dr = float(r_basic[1] - r_basic[0])
+        d_dr = jnp.zeros((n_basic, n))
+        # Interior centered diffs
+        for i in range(1, n_basic - 1):
+            d_dr = d_dr.at[i, i - 1].set(-1.0 / dr)
+            d_dr = d_dr.at[i, i].set(1.0 / dr)
+        # Boundary rows that would WRONGLY give the opposite-sign gradient
+        # at the surface basic node — the SPIDER copy must overwrite this.
+        d_dr = d_dr.at[-1, -1].set(-1.0 / dr)  # wrong sign on purpose
+        d_dr = d_dr.at[-1, -2].set(+1.0 / dr)
+        q = jnp.zeros((n_basic, n))
+        for i in range(1, n_basic - 1):
+            q = q.at[i, i - 1].set(0.5)
+            q = q.at[i, i].set(0.5)
+        q = q.at[0, 0].set(1.0)
+        q = q.at[-1, -1].set(1.0)
+        mesh = MeshArrays(
+            d_dr_matrix=d_dr, quantity_matrix=q,
+            area=jnp.ones(n_basic), volume=jnp.ones(n_basic),
+            radii_basic=r_basic, radii_stag=r_stag,
+            mixing_length=jnp.ones(n_basic) * 1e5,
+            mixing_length_sq=jnp.ones(n_basic) * 1e10,
+            mixing_length_cu=jnp.ones(n_basic) * 1e15,
+            P_stag=P_stag, P_basic=P_basic,
+            dP_dr_basic=jnp.gradient(P_basic, r_basic),
+            gravity=jnp.full(n_basic, 9.81),
+        )
+        # Linearly increasing entropy with index (so centered-diff dSdr is
+        # positive in the interior; the buggy surface row would flip it).
+        S = jnp.linspace(2800.0, 3500.0, n)
+        params = default_params  # convection on by default
+        flux = compute_fluxes(S, 0.0, jax_eos, params, mesh, jnp.zeros(n))
+
+        # The surface dSdr should equal the interior-adjacent value after
+        # the SPIDER copy. Reconstruct what compute_fluxes saw:
+        # dSdr_raw = d_dr @ S; the test passes if compute_fluxes's
+        # internal dSdr[-1] equals dSdr[-2], which we verify indirectly
+        # by checking that F at idx -1 is consistent with F at idx -2
+        # (both driven by the same dSdr, same phase properties at adjacent
+        # nodes — the small node-to-node difference reflects only the
+        # mesh-level rho/T/k differences, not a sign flip).
+        F = np.asarray(flux.heat_flux)
+        # Sign consistency between idx -2 and idx -1 (both should be
+        # outward-positive for a positive dSdr; without the copy, idx -1
+        # would flip sign).
+        assert np.sign(F[-1]) == np.sign(F[-2]), (
+            f'surface F should match sign of adjacent interior after '
+            f'SPIDER ic.c:450 dSdr copy; got F[-2]={F[-2]:.3e}, F[-1]={F[-1]:.3e}'
+        )

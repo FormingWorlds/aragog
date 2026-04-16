@@ -173,6 +173,46 @@ class MeshArrays(eqx.Module):
     # Gravity at basic nodes
     gravity: jax.Array           # [m/s^2]
 
+    def __init__(
+        self,
+        d_dr_matrix,
+        quantity_matrix,
+        area,
+        volume,
+        radii_basic,
+        mixing_length,
+        mixing_length_sq,
+        mixing_length_cu,
+        radii_stag,
+        P_stag,
+        P_basic,
+        gravity,
+        dP_dr_basic=None,
+    ):
+        """Custom init so callers that predate the dP_dr_basic field
+        keep working. When ``dP_dr_basic`` is not supplied we derive it
+        from ``P_basic`` and ``radii_basic`` via numpy gradient (matches
+        ``entropy_state._dP_dr_basic = np.gradient(P_basic, r_basic)``).
+        """
+        self.d_dr_matrix = d_dr_matrix
+        self.quantity_matrix = quantity_matrix
+        self.area = area
+        self.volume = volume
+        self.radii_basic = radii_basic
+        self.mixing_length = mixing_length
+        self.mixing_length_sq = mixing_length_sq
+        self.mixing_length_cu = mixing_length_cu
+        self.radii_stag = radii_stag
+        self.P_stag = P_stag
+        self.P_basic = P_basic
+        self.gravity = gravity
+        if dP_dr_basic is None:
+            import numpy as _np
+            dP_dr_basic = jnp.asarray(
+                _np.gradient(_np.asarray(P_basic), _np.asarray(radii_basic))
+            )
+        self.dP_dr_basic = dP_dr_basic
+
     @staticmethod
     def from_numpy_mesh(mesh) -> 'MeshArrays':
         """Build from a numpy Aragog Mesh object."""
