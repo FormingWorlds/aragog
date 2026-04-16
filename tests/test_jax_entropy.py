@@ -1571,6 +1571,81 @@ class TestBoundaryCopies:
             f'got {float(kh[0])} vs {float(kh[1])}'
         )
 
+    def test_compute_mlt_jacobian_finite_at_in_table_states(self, jax_eos):
+        """compute_mlt's autodiff backward pass must produce a finite
+        gradient even when the entropy gradient vanishes or the inviscid
+        velocity squared is ~0. Without the smooth-abs and the
+        ``sqrt(x + eps^2)`` guards, ``jax.grad`` returns NaN through
+        the ``0 / sqrt(0)`` and ``sign(0) * downstream`` patterns.
+
+        Regression test for the all-NaN Jacobian observed at the chili
+        mid-trajectory state in 2026-04-17 z04 / z08 isolation runs.
+        """
+        from aragog.jax.phase import (
+            MeshArrays, PhaseParams, compute_mlt, evaluate_phase,
+        )
+        n = 12
+        n_basic = n + 1
+        r_basic = jnp.linspace(3.5e6, 6.371e6, n_basic)
+        r_stag = 0.5 * (r_basic[1:] + r_basic[:-1])
+        # P profile that's monotonic in r (decreasing P with increasing r);
+        # tables are loaded with these P values inside their domain.
+        P_basic = jnp.linspace(120e9, 1e9, n_basic)
+        P_stag = 0.5 * (P_basic[1:] + P_basic[:-1])
+        d_dr = jnp.zeros((n_basic, n))
+        for i in range(1, n_basic - 1):
+            dr = float(r_basic[i + 1] - r_basic[i - 1])
+            d_dr = d_dr.at[i, i - 1].set(-1.0 / dr)
+            d_dr = d_dr.at[i, i].set(1.0 / dr)
+        q = jnp.zeros((n_basic, n))
+        for i in range(1, n_basic - 1):
+            q = q.at[i, i - 1].set(0.5)
+            q = q.at[i, i].set(0.5)
+        q = q.at[0, 0].set(1.0)
+        q = q.at[-1, -1].set(1.0)
+        mesh = MeshArrays(
+            d_dr_matrix=d_dr, quantity_matrix=q,
+            area=jnp.ones(n_basic), volume=jnp.ones(n_basic),
+            radii_basic=r_basic, radii_stag=r_stag,
+            mixing_length=jnp.ones(n_basic) * 1e5,
+            mixing_length_sq=jnp.ones(n_basic) * 1e10,
+            mixing_length_cu=jnp.ones(n_basic) * 1e15,
+            P_stag=P_stag, P_basic=P_basic,
+            dP_dr_basic=jnp.gradient(P_basic, r_basic),
+            gravity=jnp.full(n_basic, 9.81),
+        )
+        params = PhaseParams(matprop_smooth_width=0.01)
+
+        # Test states that previously NaN'd: in-table mushy and
+        # near-solid linear S profiles. Plus IC-style above-table S.
+        for label, S_basic in [
+            ('mid (in-table linear)', jnp.linspace(3300.0, 3700.0, n_basic)),
+            ('near_solid (in-table linear)', jnp.linspace(3000.0, 3300.0, n_basic)),
+            ('IC (above-table uniform)', jnp.full(n_basic, 3900.0)),
+        ]:
+            ph = evaluate_phase(jax_eos, params, P_basic, S_basic)
+            # dSdr that includes a near-zero region (force testing the
+            # smooth-abs guard) and the surface boundary copy.
+            dSdr = jnp.linspace(-1e-6, +1e-6, n_basic)
+            dSdr = dSdr.at[-1].set(dSdr[-2])
+
+            def kh_sum(S_arg):
+                ph_arg = evaluate_phase(jax_eos, params, P_basic, S_arg)
+                kh, _ = compute_mlt(dSdr, ph_arg, mesh, params)
+                return kh.sum()
+
+            grad = jax.grad(kh_sum)(S_basic)
+            grad_np = np.asarray(grad)
+            n_nan = int(np.isnan(grad_np).sum())
+            assert n_nan == 0, (
+                f'compute_mlt jacobian NaN regression in {label}: '
+                f'{n_nan}/{grad_np.size} NaN entries. Check the abs and '
+                f'sqrt guards in compute_mlt.'
+            )
+            assert np.all(np.isfinite(grad_np)), (
+                f'compute_mlt jacobian non-finite in {label}'
+            )
+
     def test_compute_fluxes_dSdr_surface_copy(self, jax_eos, default_params):
         """compute_fluxes must enforce dSdr[-1] = dSdr[-2] before the
         flux computation (numpy entropy_state.py:390 ``dSdxi[-1] =

@@ -399,8 +399,21 @@ def compute_mlt(
     Cp = phase_basic.heat_capacity
     nu = phase_basic.kinematic_viscosity
 
-    # Buoyancy from entropy gradient
-    effective_superadiabatic = alpha * T * jnp.abs(dSdr) / jnp.maximum(Cp, 1.0)
+    # Buoyancy from entropy gradient. ``jnp.abs`` has a non-differentiable
+    # kink at zero (subgradient anywhere in [-1, +1] is mathematically
+    # valid, but JAX returns sign(0) = 0 in fwd and the backward pass
+    # through the abs and the downstream multiplications can produce
+    # NaN at exact-zero entropy gradients. Numpy uses
+    # ``_smooth_abs_neg(dSdr, eps=1e-30)`` which is the smoothed
+    # ``max(-x, 0)``; we use the differentiable
+    # ``0.5*(|x| + sqrt(x^2 + eps^2)) ~ |x|`` instead, which keeps the
+    # forward equal to ``abs(x)`` to ULP precision while delivering a
+    # finite analytic gradient everywhere.
+    eps_abs = 1.0e-30
+    abs_dSdr_safe = 0.5 * (
+        jnp.abs(dSdr) + jnp.sqrt(dSdr * dSdr + eps_abs * eps_abs)
+    )
+    effective_superadiabatic = alpha * T * abs_dSdr_safe / jnp.maximum(Cp, 1.0)
     velocity_prefactor = mesh.gravity * effective_superadiabatic
 
     # Convective mask: unstable when dS/dr < 0.
@@ -414,11 +427,18 @@ def compute_mlt(
         velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)
     ) * conv_mask
 
-    # Inviscid velocity (Re > Re_crit)
+    # Inviscid velocity (Re > Re_crit). ``jnp.sqrt(jnp.maximum(x, 0))`` is
+    # the textbook NaN-safe forward, but its backward gradient at x=0 is
+    # ``0.5 * 0 / sqrt(0) = 0/0 = NaN`` (the maximum's stop-at-zero
+    # subgradient kills the divisor protection). Numpy avoids this with
+    # ``np.sqrt(x + 1e-20)`` (always-positive argument). Mirror it here:
+    # eps**2 = 1e-40 is far below any physical inviscid_velocity_sq, so
+    # the forward is bit-equivalent for non-trivial x.
+    eps_sqrt = 1.0e-20
     inviscid_velocity_sq = (
         velocity_prefactor * mesh.mixing_length_sq / 16.0
     ) * conv_mask
-    inviscid_velocity = jnp.sqrt(jnp.maximum(inviscid_velocity_sq, 0.0))
+    inviscid_velocity = jnp.sqrt(inviscid_velocity_sq + eps_sqrt)
 
     # Reynolds number
     reynolds = viscous_velocity * mesh.mixing_length / nu
