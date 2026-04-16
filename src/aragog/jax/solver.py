@@ -304,49 +304,36 @@ def dSdt_energy_balance(
     dr_offset = r_basic[0] - r_stag_0
     S_basic_cmb = S[0] + dSdr_cmb * dr_offset
 
-    # Build full basic-node entropy: standard quantity_matrix mapping
-    # for interior+surface nodes, but override the CMB entry with our
-    # dSdr_cmb-extrapolated value.
-    S_basic_default = mesh.quantity_matrix @ S
-    S_basic = S_basic_default.at[0].set(S_basic_cmb)
-
-    # Compute fluxes using the standard helper (this gives the
-    # conduction/convection/grav_sep/mixing fluxes at all interior
-    # basic nodes; the CMB heat_flux[0] computed here will be
-    # overridden below using the dSdr_cmb-derived F_cmb).
-    flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
+    # Compute fluxes using compute_fluxes with the energy_balance
+    # overrides for the CMB basic node. This keeps the full physics
+    # pipeline (conduction + convection + grav_sep + mixing) in one
+    # place; the overrides ensure the CMB cell's contributions use
+    # the state-tracked dSdr_cmb instead of the FD-derived gradient.
+    flux_out = compute_fluxes(
+        S, t, eos, params, mesh, heating,
+        S_basic_cmb_override=S_basic_cmb,
+        dSdr_cmb_override=dSdr_cmb,
+    )
     heat_flux = flux_out.heat_flux
 
     # Phase properties at staggered nodes
     phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
 
-    # Phase properties at basic nodes - use the corrected basic-node
-    # entropy so T, Cp, k at the CMB basic node reflect the
-    # dSdr_cmb-extrapolated state.
+    # Phase properties at basic nodes (with corrected CMB entropy,
+    # matching what compute_fluxes used internally)
+    S_basic_default = mesh.quantity_matrix @ S
+    S_basic = S_basic_default.at[0].set(S_basic_cmb)
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
-    # Surface BC (same as dSdt)
+    # Surface BC
     heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
 
-    # CMB BC: derive F_cmb from dSdr_cmb via the conductive flux at
-    # the CMB basic node. F_cmb = -k * dT/dr_total at the CMB, where
-    # dT/dr decomposes into superadiabatic + adiabatic:
-    #   dT/dr|_total = (T/Cp) * dS/dr + dT/dP|_S * dP/dr
-    # with dS/dr = dSdr_cmb (the boundary state) and Cp, T, k from
-    # the phase_basic at the corrected CMB entropy.
+    # CMB BC: heat_flux[0] is already correctly computed by
+    # compute_fluxes using the dSdr_cmb override. No additional
+    # override needed here.
     T_cmb = phase_basic.temperature[0]
     cp_cmb = phase_basic.heat_capacity[0]
-    k_cmb = phase_basic.thermal_conductivity[0]
-    dTdPs_cmb = eos.dTdPs(mesh.P_basic[0:1], S_basic[0:1])[0]
-    # Mesh-derived pressure gradient at the CMB basic node (matches
-    # numpy production - uses Adams-Williamson via the mesh, not
-    # -rho * g from the EOS):
-    dPdr_cmb = (mesh.P_basic[1] - mesh.P_basic[0]) / (
-        mesh.radii_basic[1] - mesh.radii_basic[0]
-    )
-    dTdr_total = (T_cmb / jnp.maximum(cp_cmb, 100.0)) * dSdr_cmb + dTdPs_cmb * dPdr_cmb
-    F_cmb_from_dSdr = -k_cmb * dTdr_total
-    heat_flux = heat_flux.at[0].set(F_cmb_from_dSdr)
+    F_cmb_from_dSdr = heat_flux[0]
 
     # Flux divergence (entropy derivatives, same as dSdt)
     energy_flux = heat_flux * mesh.area

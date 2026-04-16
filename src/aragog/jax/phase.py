@@ -408,6 +408,8 @@ def compute_fluxes(
     params: PhaseParams,
     mesh: MeshArrays,
     heating_rate: jax.Array,
+    S_basic_cmb_override=None,
+    dSdr_cmb_override=None,
 ) -> FluxOutput:
     """Compute all heat and mass fluxes from the entropy profile.
 
@@ -429,6 +431,17 @@ def compute_fluxes(
     heating_rate : jax.Array
         Internal heating rate at staggered nodes [W/kg]
         (radionuclide + tidal, pre-computed by caller).
+    S_basic_cmb_override : float or None
+        Optional override for the entropy at the CMB basic node
+        (basic-node index 0). Used by the energy_balance core BC
+        which reconstructs S_basic[0] from the state-tracked
+        dSdr_cmb via S[0] + dSdr_cmb * (r_basic[0] - r_stag[0]).
+        When None, the standard quantity_matrix mapping is used.
+    dSdr_cmb_override : float or None
+        Optional override for the entropy gradient at the CMB
+        basic node (dSdr[0]). Used by the energy_balance core BC
+        where dSdr_cmb is a state-tracked variable. When None,
+        the standard d_dr_matrix mapping is used.
 
     Returns
     -------
@@ -438,6 +451,16 @@ def compute_fluxes(
     # Interpolate entropy to basic nodes and compute gradient
     S_basic = mesh.quantity_matrix @ S_stag
     dSdr = mesh.d_dr_matrix @ S_stag
+
+    # Apply energy_balance overrides at the CMB basic node.
+    # Done as separate jax.lax.cond branches so the function remains
+    # JIT-compatible regardless of whether the overrides are None or
+    # JAX scalars. We use jnp.where with a static bool flag passed
+    # through from the caller via the optional argument.
+    if S_basic_cmb_override is not None:
+        S_basic = S_basic.at[0].set(S_basic_cmb_override)
+    if dSdr_cmb_override is not None:
+        dSdr = dSdr.at[0].set(dSdr_cmb_override)
 
     # Phase properties at staggered and basic nodes
     phase_stag = evaluate_phase(eos, params, mesh.P_stag, S_stag)
