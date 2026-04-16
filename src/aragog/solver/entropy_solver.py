@@ -1360,12 +1360,16 @@ class EntropySolver:
             if margin < 200.0 or (S0_block_cmb < S_liq and S0_block_cmb > S_sol):
                 max_step = 1.0
 
-        atol = atol_base * atol_scale
+        # External per-call atol scale factor (PROTEUS retry ladder
+        # opts in by setting solver._atol_sf before solve()). Default
+        # 1.0 leaves behaviour unchanged for callers that don't set it.
+        atol_sf_external = float(getattr(self, '_atol_sf', 1.0))
+        atol = atol_base * atol_scale * atol_sf_external
 
         logger.info(
             'EntropySolver: integrating from %.2e to %.2e yr '
-            '(Phi_init=%.3f, atol_scale=%.1fx, atol=%.2e, rtol=%.2e)',
-            start_time, end_time, phi0, atol_scale, atol, rtol,
+            '(Phi_init=%.3f, atol_scale=%.1fx, atol_sf=%.1fx, atol=%.2e, rtol=%.2e)',
+            start_time, end_time, phi0, atol_scale, atol_sf_external, atol, rtol,
         )
 
         # ── Nondimensionalise state, time, and tolerances ──
