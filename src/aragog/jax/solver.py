@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 from typing import NamedTuple
 
-import diffrax
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -26,6 +25,11 @@ from aragog.jax.phase import (
     compute_fluxes,
     evaluate_phase,
 )
+
+# diffrax is imported lazily inside `solve_entropy` so that the rest
+# of this module (dSdt, BoundaryParams, BC helpers) can be used by
+# downstream code (e.g. CVODE wrappers, parity tests) without
+# requiring diffrax to be installed.
 
 jax.config.update('jax_enable_x64', True)
 
@@ -274,6 +278,11 @@ def solve_entropy(
     SolveResult
         Final entropy, time, step count, success flag.
     """
+    # Lazy import: keeps the rest of this module importable when
+    # diffrax is not installed. Callers using only dSdt /
+    # BoundaryParams / phase helpers do not need diffrax.
+    import diffrax
+
     # Build a closure that captures the static args (eos, params, mesh, bc).
     # diffrax traces through `args` as a pytree, but RegularGridInterpolator
     # closures inside the EOS don't survive pytree operations. By capturing
