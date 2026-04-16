@@ -362,8 +362,11 @@ def compute_mlt(
     # Reynolds number
     reynolds = viscous_velocity * mesh.mixing_length / nu
 
-    # Smooth blend between viscous and inviscid regimes
-    blend_width = 0.2 * RE_CRIT
+    # Smooth blend between viscous and inviscid regimes.
+    # blend_width = 0.01 * RE_CRIT (was 0.2 * RE_CRIT pre-fix);
+    # the wider blend leaked inviscid k_h into the solid regime,
+    # producing T_core bistability. Aragog scipy commit 9742619.
+    blend_width = 0.01 * RE_CRIT
     inviscid_weight = 0.5 * (1.0 + jnp.tanh(
         (reynolds - RE_CRIT) / jnp.maximum(blend_width, 1e-30)
     ))
