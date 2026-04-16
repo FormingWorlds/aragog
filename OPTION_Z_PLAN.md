@@ -16,6 +16,32 @@ The JAX physics already exists in `aragog/jax/`:
 
 The PROTEUS wrapper in `proteus/interior_energetics/aragog_jax.py` already builds all JAX components from PROTEUS config — we can reuse this construction code.
 
+## Z.1 progress (2026-04-16 late evening, partial)
+
+Wrote `scripts/z01_verify_jax_numpy_parity.py` in PROTEUS-Z worktree. The script:
+- Loads chili_repro_v2 config
+- Initializes the numpy EntropySolver via AragogRunner.setup_solver
+- Attempts to build JAX components (EOS, PhaseParams, MeshArrays, BoundaryParams)
+- Calls both RHS and compares per-component
+
+**Blockers found**:
+
+1. **diffrax not installed in proteus conda env**.
+   `aragog/jax/solver.py` does a top-level `import diffrax`. Even importing just `dSdt` and `BoundaryParams` fails without diffrax. Fix options:
+   - `pip install diffrax` in the proteus env (permanent env change)
+   - Refactor `solver.py` to import diffrax lazily inside `solve_entropy` only (clean but small refactor)
+
+2. **chili_repro_v2 uses `core_bc = energy_balance` (N+1 state)**.
+   The JAX `dSdt(t, S, args)` only handles the N-element entropy state. With energy_balance, the numpy state is N+1 with dSdr_cmb at index N. Calling JAX with just the N entropy block gives a different physics (the closure equation is missing).
+   - Either run Z.1 with `core_bc = quasi_steady` (need to modify config or test setup)
+   - Or extend JAX to handle the dSdr_cmb closure (this is Z.6 work)
+
+**Recommended next session start**:
+1. Refactor `aragog/jax/solver.py` to make diffrax a lazy import (5-10 line change)
+2. Make a quasi_steady test config (copy chili_repro_v2, change one line)
+3. Re-run the Z.1 parity script
+4. Iterate: if rel_err > 1e-8, identify which JAX physics term diverges from numpy
+
 ## What remains for a working Z
 
 ### Z.1: Verify JAX dSdt matches numpy dSdt (CRITICAL pre-flight)
