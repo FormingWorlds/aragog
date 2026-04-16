@@ -1200,7 +1200,7 @@ class EntropySolver:
             'atol': atol_cvode,
             'lmm_type': 'BDF',
             'nonlinsolver': 'newton',
-            'max_steps': 100000,  # per-solve cap; scipy used unlimited
+            'max_steps': 500000,  # per-solve cap; raised from 100K after
             # Maximum BDF order. CVODE's default is 5 (max of BDF(1..5))
             # but scikits.odes exposes the knob; set explicitly for
             # clarity. Matches SPIDER's SUNDIALS config.
