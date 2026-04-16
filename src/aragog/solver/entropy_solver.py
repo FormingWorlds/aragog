@@ -1349,12 +1349,39 @@ class EntropySolver:
             atol_scale = 10.0
             max_step = np.inf
 
-        # Tighten max_step when the CMB cell is near the liquidus.
-        # Applies to ALL core_bc modes. For value-based modes, S[0]
-        # is the direct state variable and atol controls its error,
-        # so max_step=1 yr combined with the liquidus event gives
-        # the BDF enough resolution to crystallize gradually.
+        # Tighten max_step when ANY cell is near a phase boundary.
+        # Extends the previous CMB-only check to all cells, catching
+        # phase transitions that propagate through upper cells during
+        # the rheological-front sweep, not just CMB crystallisation.
+        # When a cell's entropy is within 200 J/kg/K of either the
+        # solidus or liquidus, OR sits inside the mushy band, max_step
+        # is reduced to 1 yr to give CVODE enough resolution to handle
+        # the phase-boundary stiffness gradually.
         if phi0 > 0.01 and self.entropy_eos is not None:
+            P_basic = self._P_basic_flat
+            S_liq_all = np.asarray(
+                self.entropy_eos.liquidus_entropy(P_basic)
+            ).ravel()
+            S_sol_all = np.asarray(
+                self.entropy_eos.solidus_entropy(P_basic)
+            ).ravel()
+            # S0_block is staggered (length n_stag). For per-cell
+            # phase-boundary check we use the staggered S directly
+            # against the staggered-pressure phase boundaries.
+            P_stag = self._P_stag_flat
+            S_liq_stag = np.asarray(
+                self.entropy_eos.liquidus_entropy(P_stag)
+            ).ravel()
+            S_sol_stag = np.asarray(
+                self.entropy_eos.solidus_entropy(P_stag)
+            ).ravel()
+            S_arr_stag = np.asarray(S0_block).ravel()
+            margin_to_liq = S_arr_stag - S_liq_stag  # > 0 means above liquidus
+            margin_to_sol = S_arr_stag - S_sol_stag  # > 0 means above solidus
+            near_liq = np.any(np.abs(margin_to_liq) < 200.0)
+            near_sol = np.any(np.abs(margin_to_sol) < 200.0)
+            in_mushy = np.any((margin_to_liq < 0.0) & (margin_to_sol > 0.0))
+            # Keep the original CMB-only check too as a backstop
             P_cmb = float(self._P_basic_flat[0])
             S_liq = float(self.entropy_eos.liquidus_entropy(
                 np.array([P_cmb])).item())
@@ -1362,7 +1389,9 @@ class EntropySolver:
                 np.array([P_cmb])).item())
             S0_block_cmb = float(S0_block[0])
             margin = S0_block_cmb - S_liq
-            if margin < 200.0 or (S0_block_cmb < S_liq and S0_block_cmb > S_sol):
+            if (near_liq or near_sol or in_mushy
+                    or margin < 200.0
+                    or (S0_block_cmb < S_liq and S0_block_cmb > S_sol)):
                 max_step = 1.0
 
         # External per-call atol scale factor (PROTEUS retry ladder
