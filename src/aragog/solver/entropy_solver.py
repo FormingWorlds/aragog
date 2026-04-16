@@ -115,10 +115,10 @@ class SolverOutput:
     eddy_diff: npt.NDArray      # eddy diffusivity at basic nodes [m^2/s]
     cap_stag: npt.NDArray       # capacitance rho*T at staggered nodes
 
-    # Diagnostic decomposition at basic nodes (T_core phi=0 instability
-    # investigation, see memory/tcore_phi0_*.md). Populated from the
-    # final EntropyState after integration; only consumers that set
-    # ``write_flux_diagnostics = true`` in the PROTEUS config read these.
+    # Per-component flux decomposition at basic nodes for diagnostic
+    # output. Populated from the final EntropyState after integration;
+    # only consumers that set ``write_flux_diagnostics = true`` in the
+    # PROTEUS config read these.
     jcond_b: npt.NDArray        # conductive flux [W/m^2]
     jconv_b: npt.NDArray        # convective flux [W/m^2]
     jgrav_b: npt.NDArray        # grav-sep contribution to heat flux [W/m^2]
@@ -346,9 +346,9 @@ class EntropySolver:
         else:
             self.evaluator.radionuclides = []
 
-        # Tier 1 speedup (Step 1A): cache constant BC and mesh terms
-        # so the dSdt hot path doesn't recompute them on every RHS
-        # call. None of these depend on entropy.
+        # Cache constant BC and mesh terms so the dSdt hot path
+        # doesn't recompute them on every RHS call. None of these
+        # depend on entropy.
         self._cache_bc_constants()
 
         # Nondimensionalisation scales matching SPIDER (spider.py:832-835).
@@ -483,8 +483,7 @@ class EntropySolver:
             # steps as the energy balance constraint kicks in.
             #
             # Hot-start dSdr_cmb_init: preserve from the previous
-            # solution if available (the same pattern as the failed
-            # v4 Bower attempt), so the integrated boundary state
+            # solution if available, so the integrated boundary state
             # survives PROTEUS coupling resets.
             dSdr_cmb_init = getattr(self, '_dSdr_cmb_init', None)
             if dSdr_cmb_init is None:
@@ -529,8 +528,8 @@ class EntropySolver:
                 S_arr.min(), S_arr.max(), dSdr_cmb_init,
             )
         elif core_bc == 'bower2018':
-            # EXPERIMENTAL v4 Bower BC (conduction-only flux, fails on
-            # R8 CHILI; kept in tree for reference). State = [S, T_core].
+            # EXPERIMENTAL: core temperature as ODE state variable
+            # (conduction-only flux; not recommended). State = [S, T_core].
             T_core_init = getattr(self, '_T_core_init', None)
             if T_core_init is None:
                 prev_sol = getattr(self, '_solution', None)
@@ -695,7 +694,7 @@ class EntropySolver:
 
         # Apply flux BCs directly (not via BC module, which expects 2D arrays).
         # All BC dispatch keys and constants are pre-cached in
-        # _cache_bc_constants(); see Tier 1 Step 1A.
+        # _cache_bc_constants(); cached values are reused here.
 
         # Surface: grey-body or prescribed flux
         if self._outer_bc_kind == 1:
@@ -1312,12 +1311,10 @@ class EntropySolver:
         """Run the BDF time integration."""
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
-        # Test 2026-04-11 evening: lower the atol floor from 0.01 to
-        # 1e-8 to match SPIDER's `atol = rtol = 1e-8` exactly. SPIDER
-        # integrates with 8 orders of magnitude tighter absolute
-        # tolerance; if cumulative integration error over ~200 kyr of
-        # solidification contributes to the observed -18% T_core gap
-        # vs SPIDER, tightening atol should shift the trajectory.
+        # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
+        # Tight tolerance is necessary to resolve the crystallisation
+        # front and prevent cumulative integration error during long
+        # solidification runs.
         atol_base = max(self.parameters.solver.atol, 1.0e-8)
         rtol = self.parameters.solver.rtol
 
@@ -1639,20 +1636,11 @@ class EntropySolver:
             mass_stag = rho_struct_stag * vol
             M_mantle = float(np.sum(mass_stag))
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
-        # T_magma = top BASIC node T, SPIDER-parity with
-        # `atmosphere/temperature_surface` in SPIDER's JSON output
-        # (`interior_energetics/spider.py:1237`). The top basic node is at
-        # r = outer_boundary where P = surface_pressure (= 0 for the
-        # default Adams-Williamson BC); the top staggered cell is half a
-        # cell below it at non-zero P. Previously we reported
-        # `T_magma = T_stag[-1]`, which for the CHILI R8 config at
-        # S=3900 J/kg/K, 1TPa-dK09 tables, rho_s=4000 kg/m^3 placed
-        # T_magma at (P~2770 bar, S=3900) = 3862 K instead of
-        # (P=0 bar, S=3900) = 3820 K. PROTEUS passes `hf_row['T_magma']`
-        # to AGNI as the interior-side surface boundary condition
-        # (`atmos_clim/agni.py:441`), so the ~44 K offset drove a
-        # +12% F_atm offset at iteration 1, which cumulatively explained
-        # the full -18% T_core endpoint gap against SPIDER v4.
+        # T_magma = top basic-node temperature, evaluated at
+        # r = outer_boundary where P = surface_pressure. This matches
+        # SPIDER's `atmosphere/temperature_surface` definition.
+        # PROTEUS passes T_magma to the atmosphere module as the
+        # interior-side surface boundary condition.
         T_basic_final = np.asarray(
             self.state.phase_basic.temperature()
         ).ravel()

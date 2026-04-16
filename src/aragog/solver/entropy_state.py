@@ -208,10 +208,9 @@ class EntropyState:
         self._mass_flux = np.zeros(n_basic)
         self._is_convective = np.zeros(n_basic, dtype=bool)
 
-        # Per-component flux decomposition at basic nodes (diagnostics
-        # for T_core phi=0 instability; see memory/tcore_*.md). These
-        # mirror the accumulations into ``_heat_flux`` below so each
-        # term can be written to NetCDF separately without re-deriving.
+        # Per-component flux decomposition at basic nodes for diagnostic
+        # output. These mirror the accumulations into ``_heat_flux`` below
+        # so each term can be written to NetCDF independently.
         self._jcond = np.zeros(n_basic)
         self._jconv = np.zeros(n_basic)
         self._jgrav_heat = np.zeros(n_basic)
@@ -234,13 +233,12 @@ class EntropyState:
         self._pb_cache_hits: int = 0
         self._pb_cache_misses: int = 0
 
-        # Phase-boundary cache at basic nodes for the SPIDER-parity
-        # mixing flux (``_jmix_spider_heat`` in update()). Like the
-        # staggered cache, these quantities are mesh-fixed because the
-        # basic-node pressure profile doesn't change within a solve.
-        # Needed: S_sol/S_liq and their P-derivatives, the mesh
-        # pressure gradient dP/dr, and the phase-boundary mean
-        # temperature T_fus = ½(T_sol + T_liq).
+        # Phase-boundary cache at basic nodes for the mixing-flux
+        # computation (``_jmix_spider_heat`` in update()). Like the
+        # staggered cache, these are mesh-fixed: the basic-node
+        # pressure profile doesn't change within a solve.
+        # Cached: S_sol/S_liq, their P-derivatives, dP/dr, and
+        # T_fus = ½(T_sol + T_liq).
         self._P_basic_cached_id: int = -1
         self._S_sol_basic: npt.NDArray = np.zeros(n_basic)
         self._S_liq_basic: npt.NDArray = np.zeros(n_basic)
@@ -347,7 +345,7 @@ class EntropyState:
         if dSdr is not None:
             self._dSdr = np.asarray(dSdr).ravel()
         else:
-            # SPIDER-parity entropy gradient at basic nodes.
+            # Entropy gradient at basic nodes (uniform dxi spacing).
             #
             # Replaces Aragog's ``mesh.d_dr_at_basic_nodes(S)`` which
             # used a dense transform matrix with a 3-point second-order
@@ -411,40 +409,21 @@ class EntropyState:
 
         # Melt-fraction gradient for gravitational separation and mixing.
         #
-        # Use the CLAMPED lever-rule fraction, matching v7.5's behaviour
-        # (which scipy BDF handled cleanly). This is:
+        # Clamped lever-rule melt fraction:
         #     phi = clip((S - S_sol) / (S_liq - S_sol), 0, 1)
-        # Per-cell clipping gives dphi/dr = 0 in fully-molten cells
-        # (physically correct: no phase separation in pure liquid) and
-        # in fully-solid cells (physically correct: no mixing in pure
-        # solid). At the crystallisation front, the mushy cell has
-        # 0 < phi < 1 and the adjacent cells are clipped to 0 or 1,
-        # so dphi/dr is well-defined and smooth.
+        # Per-cell clipping gives dphi/dr = 0 in pure-phase cells
+        # (no phase separation in pure liquid or solid), with a
+        # well-defined gradient at the crystallisation front.
         #
-        # We compute the clamped phi from the cached EOS lookups rather
-        # than via self.phase_staggered.melt_fraction() because that
-        # call introduces tiny IEEE roundoff noise on each invocation
-        # which breaks BDF's finite-difference Jacobian stability.
-        # The cached S_sol/S_liq arrays are byte-identical across
-        # calls within a solve, keeping the Jacobian stable.
-        #
-        # History: 2026-04-11 the un-truncated gphi path was tried
-        # (without clipping) to preserve the Jmix+Jconv=0 cancellation
-        # identity, but it made the RHS non-smooth across the
-        # full mantle and caused both scipy BDF and CVODE to thrash
-        # Newton convergence. A hard gate on phi_min was then tried
-        # but introduced a discontinuous RHS which failed CVODE's
-        # Newton entirely. Reverted to v7.5's clamped phi. The
-        # resulting -12% T_core vs SPIDER gap is documented in
-        # spider_aragog_parity_v3_v4.md as a formulation difference.
+        # Evaluated from cached EOS lookups (S_sol, S_liq) rather than
+        # self.phase_staggered.melt_fraction() to avoid IEEE roundoff
+        # noise that destabilises the BDF Jacobian. Cached arrays are
+        # byte-identical throughout the solve.
         self._ensure_phase_boundary_cache()
         gphi = (S - self._S_sol_stag) / self._dS_phase_stag
         phi_smoothclipped = _smooth_clip(gphi, 0.0, 1.0, eps=1.0e-3)
-        # _dphidr was computed here via the dense transform matrix, but the
-        # result is never read (confirmed by grep across all solver files).
-        # The mixing flux now uses dSdr and dP/dr instead (SPIDER-parity
-        # rewrite at lines 643-695). Removed to save one (N+1)x(N-1)
-        # matrix multiply per RHS evaluation (~1000 calls per PROTEUS step).
+        # phi_smoothclipped is computed but unused: the mixing flux
+        # evaluates directly from dSdr and dP/dr (see below).
 
         # ── MLT from entropy gradient ────────────────────────────────
         # Convection is unstable when dS/dr < 0 (entropy decreasing
@@ -572,29 +551,22 @@ class EntropyState:
             self._ensure_basic_phase_boundary_cache()
 
         if self._conduction:
-            # SPIDER-parity conductive flux (energy.c:358-378):
+            # Conductive heat flux:
             #   F_cond = -k * [(T/Cp) * dS/dr + dT/dr|_adiabat]
             #
             # The total temperature gradient decomposes into a
             # superadiabatic part (proportional to the entropy gradient)
-            # and an adiabatic part. SPIDER evaluates dT/dr|_adiabat
-            # as dTdPs * dPdr, where dTdPs = (dT/dP)|_S comes from
-            # the EOS table (eos_composite.c:249, energy.c:369).
-            # Using the EOS table value instead of the thermodynamic
-            # identity -g*alpha*T/Cp ensures exact parity with SPIDER,
-            # since the table lookup and the identity can differ by
-            # up to 40% due to table interpolation and composite-EOS
-            # blending at phase boundaries.
+            # and an adiabatic part. The adiabatic gradient is computed
+            # from the EOS table (dTdPs) rather than the thermodynamic
+            # identity (-g*alpha*T/Cp), ensuring consistency with the
+            # EOS property lookups at phase boundaries.
             Cp_safe = np.maximum(Cp, 100.0)
             superadiabatic = (T / Cp_safe) * self._dSdr
-            # Adiabatic gradient from EOS table (SPIDER parity).
-            # SPIDER computes dTdxis*dxidr where dTdxis is from the
-            # EOS table and dxidr is the mesh Jacobian. The equivalent
-            # is dTdPs * dPdr where dPdr comes from the MESH pressure
-            # profile (Adams-Williamson), NOT from -rho_material*g.
-            # Using the mesh dPdr matches SPIDER exactly; using
-            # -rho*g introduces up to 43% error because the mesh
-            # structural density differs from the EOS material density.
+            # Adiabatic gradient from EOS table: dT/dr|_ad = dTdPs * dPdr
+            # where dPdr comes from the mesh pressure profile
+            # (Adams-Williamson), not from -rho_material*g. Using the
+            # mesh dPdr is essential because structural density differs
+            # from EOS material density.
             dTdPs = np.asarray(self.phase_basic.dTdPs()).ravel()
             dTdrs_ad = dTdPs * self._dP_dr_basic
             self._jcond = -k * (superadiabatic + dTdrs_ad)
@@ -682,32 +654,15 @@ class EntropyState:
         self._heat_flux += self._jgrav_heat
 
         if self._mixing:
-            # SPIDER-parity mixing flux (energy.c::GetMixingHeatFlux
-            # lines 307-325). Computed directly as a heat flux,
-            # bypassing the mass_flux * latent_heat path used by the
-            # grav_sep term above.
-            #
-            # Previously Aragog added ``rho * kappac * (-dphi/dr)`` to
-            # mass_flux and then multiplied by L. The derivative of
-            # the *clipped* phi truncates its magnitude by ~50% at the
-            # crystallisation front (one cell at phi=1 next to a mushy
-            # cell at phi in (0,1); the un-truncated gphi contribution
-            # from the molten side is lost). This missing front-cell
-            # flux integrated over solidification explains the ~-18%
-            # T_core gap vs SPIDER reported in
-            # ``spider_aragog_parity_v3_v4.md``.
-            #
-            # SPIDER's formula is equivalent to
+            # Mixing flux from phase-change-driven chemical diffusion.
+            # Computed directly as a heat flux (not via mass_flux * L):
             #     Jmix_heat = -kappac * rho * T_fus * bracket * smth
-            # where
-            #     bracket = dS/dr − [φ · dS_liq/dP + (1−φ) · dS_sol/dP] · dP/dr
-            # and ``smth`` is a tanh (or cubic Hermite) that zeroes the
-            # flux outside the mushy band 0 ≤ gphi ≤ 1. The bracket
-            # is algebraically equal to ``dS_fus · dgphi/dr`` at the
-            # basic node, but is computed directly from dS/dr plus
-            # phase-boundary slopes so there is no un-truncated-gphi
-            # arithmetic that could make the RHS non-smooth in the
-            # fully-molten regime.
+            # where the bracket is the effective chemical potential gradient:
+            #     bracket = dS/dr - [phi*dS_liq/dP + (1-phi)*dS_sol/dP] * dP/dr
+            # and smth (tanh or cubic Hermite) zeroes the flux outside the
+            # mushy band (0 <= gphi <= 1). The bracket is computed directly
+            # from gradients rather than from dphi/dr, keeping the RHS
+            # smooth in pure-phase regions.
             self._ensure_basic_phase_boundary_cache()
             phi_basic_clipped = np.asarray(
                 self.phase_basic.melt_fraction()
