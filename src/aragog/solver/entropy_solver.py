@@ -1194,6 +1194,44 @@ class EntropySolver:
         # break the banded structure because the extra state row
         # couples to far-away entropy nodes, so fall back to dense
         # for those modes.
+        # Phase-boundary event detection (option Y, 2026-04-16).
+        # SUNDIALS rootfinding stops integration when any cell crosses
+        # the solidus or liquidus. Restart from the crossing avoids
+        # CVODE having to integrate THROUGH the discontinuity, which
+        # is the standard recommended pattern for phase-change problems.
+        # Pre-compute phase-boundary entropies at staggered pressures
+        # (these are mesh-fixed for the lifetime of the solve).
+        rootfn_callable = None
+        nr_rootfns = 0
+        try:
+            n_stag_local = int(np.asarray(y0).size)
+            # Use entropy_eos to get phase boundaries at staggered P
+            P_stag_local = self._P_stag_flat
+            S_sol_stag_local = np.asarray(
+                self.entropy_eos.solidus_entropy(P_stag_local)
+            ).ravel()
+            S_liq_stag_local = np.asarray(
+                self.entropy_eos.liquidus_entropy(P_stag_local)
+            ).ravel()
+            # Determine entropy block layout based on extended-state mode
+            n_S_block = len(S_sol_stag_local)
+            S_ref_local = float(self._S_ref)
+            n_state_y0 = len(y0)
+
+            def _rootfn(t_nd: float, y_nd, g, user_data):
+                # Convert non-dim S block to physical entropy
+                S_phys = np.asarray(y_nd[:n_S_block]).ravel() * S_ref_local
+                # g[i]               = distance to solidus (sign change = crossing)
+                # g[i + n_S_block]   = distance to liquidus
+                g[:n_S_block] = S_phys - S_sol_stag_local
+                g[n_S_block:2*n_S_block] = S_phys - S_liq_stag_local
+                return 0
+
+            rootfn_callable = _rootfn
+            nr_rootfns = 2 * n_S_block
+        except Exception as exc:
+            logger.debug('Rootfinding setup skipped: %s', exc)
+
         cvode_options = {
             'old_api': False,
             'rtol': float(rtol),
@@ -1230,6 +1268,11 @@ class EntropySolver:
         # picks its own maximum internal step.
         if max_step is not None and np.isfinite(max_step):
             cvode_options['max_step_size'] = float(max_step)
+
+        # Wire up rootfinding (option Y) if available
+        if rootfn_callable is not None and nr_rootfns > 0:
+            cvode_options['rootfn'] = rootfn_callable
+            cvode_options['nr_rootfns'] = nr_rootfns
 
         solver = _scikits_ode('cvode', rhs_fn, **cvode_options)
         # One-time debug print of the CVODE options actually in effect.
