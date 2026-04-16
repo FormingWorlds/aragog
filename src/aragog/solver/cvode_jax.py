@@ -42,6 +42,7 @@ def build_jax_rhs_and_jacobian(
     state_scale,
     rhs_scale,
     t_ref: float,
+    core_bc_mode: str = 'quasi_steady',
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -64,6 +65,12 @@ def build_jax_rhs_and_jacobian(
         Per-component nondim scale factor: dy/dt_nd = dy/dt_phys * rhs_scale.
     t_ref : float
         Time scale: t_phys = t_nd * t_ref.
+    core_bc_mode : str, default 'quasi_steady'
+        Which JAX RHS to wrap: 'quasi_steady' uses ``jax.solver.dSdt``
+        (N-state), 'energy_balance' uses ``jax.solver.dSdt_energy_balance``
+        (N+1 state with dSdr_cmb closure equation as the (N+1)-th
+        component). The latter matches the production CHILI Earth code
+        path (PROTEUS d55726c5+, aragog 718202a+).
 
     Returns
     -------
@@ -81,11 +88,22 @@ def build_jax_rhs_and_jacobian(
         import jax
         import jax.numpy as jnp
         from aragog.jax.solver import dSdt as jax_dsdt
+        from aragog.jax.solver import dSdt_energy_balance as jax_dsdt_eb
     except ImportError as exc:
         raise RuntimeError(
             'Option Z (JAX RHS + Jacobian) requires JAX and the '
             f'aragog.jax module. Original error: {exc}'
         ) from exc
+
+    if core_bc_mode == 'quasi_steady':
+        _rhs_jax = jax_dsdt
+    elif core_bc_mode == 'energy_balance':
+        _rhs_jax = jax_dsdt_eb
+    else:
+        raise ValueError(
+            f"core_bc_mode must be 'quasi_steady' or 'energy_balance', "
+            f"got {core_bc_mode!r}"
+        )
 
     state_scale_jax = jnp.asarray(state_scale)
     rhs_scale_jax = jnp.asarray(rhs_scale)
@@ -93,9 +111,9 @@ def build_jax_rhs_and_jacobian(
     args_tuple = (eos_jax, phase_params, mesh_arrays, boundary_params,
                   heating_jax)
 
-    # Wrap dSdt as a function of (t_phys, S_phys) only
+    # Wrap RHS as a function of (t_phys, S_phys) only
     def _rhs_phys(t_phys, S_phys):
-        return jax_dsdt(t_phys, S_phys, args_tuple)
+        return _rhs_jax(t_phys, S_phys, args_tuple)
 
     # The "nondim wrapper" applied to JAX RHS and used by both the
     # solver RHS callback and the Jacobian autodiff. Defined as a
