@@ -569,16 +569,15 @@ def compute_fluxes(
         # explicit override above wins and this branch is skipped.
         dSdr = dSdr.at[0].set(dSdr[1])
 
-    # Phase properties at staggered and basic nodes
-    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S_stag)
+    # Phase properties at basic nodes. The staggered-node phase
+    # evaluation was only needed for the old mass-flux mixing term
+    # (``dphi/dr`` on staggered nodes); the SPIDER-bracket Jmix uses
+    # basic-node quantities exclusively, so staggered-node phase
+    # properties are not materialised here.
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
     # MLT eddy diffusivity
     kappa_h, kappa_c = compute_mlt(dSdr, phase_basic, mesh, params)
-
-    # Melt fraction gradient (for mixing flux)
-    phi_stag = phase_stag.melt_fraction
-    dphidr = mesh.d_dr_matrix @ phi_stag
 
     # Basic node properties
     rho = phase_basic.density
@@ -661,15 +660,52 @@ def compute_fluxes(
     )
     mass_flux = mass_flux + params.grav_sep * jgrav
 
-    # Mixing
-    mass_flux = mass_flux + params.mixing * (rho * kappa_c * (-dphidr))
-
     # Zero mass fluxes at boundaries (SPIDER convention)
     mass_flux = mass_flux.at[0].set(0.0)
     mass_flux = mass_flux.at[-1].set(0.0)
 
     # Add latent heat transport from mass flux
     heat_flux = heat_flux + mass_flux * phase_basic.latent_heat
+
+    # Mixing flux (SPIDER-parity bracket form, heat flux only).
+    #
+    # Mirrors numpy ``entropy_state.update`` (entropy_state.py:656-692):
+    #     Jmix_heat = -kappa_c * rho * T_fus * bracket * smth_basic_mix
+    #     bracket = dS/dr - [phi·dS_liq/dP + (1-phi)·dS_sol/dP] · dP/dr
+    # evaluated at basic nodes. The earlier JAX implementation used the
+    # mass-flux form ``mass_flux += mixing * rho * kappa_c * (-dphi/dr)``
+    # (added to heat_flux via latent heat), which matches the Aragog pre-
+    # refactor convention but NOT the SPIDER bracket used in the numpy
+    # production path. That was a Z.4 v1 divergence driver.
+    #
+    # The smth polynomial ``16·gphi²·(1-gphi)²`` at basic nodes zeroes
+    # the flux outside the mushy band; the bracket itself is finite in
+    # pure phases because dS_sol/dP and dS_liq/dP are bounded.
+    S_sol_basic = eos.solidus_entropy(mesh.P_basic)
+    S_liq_basic = eos.liquidus_entropy(mesh.P_basic)
+    dS_phase_basic = jnp.maximum(S_liq_basic - S_sol_basic, 1.0)
+    dS_sol_dP_basic = eos.solidus_entropy_dP(mesh.P_basic)
+    dS_liq_dP_basic = eos.liquidus_entropy_dP(mesh.P_basic)
+    phi_clipped = phase_basic.melt_fraction
+    bracket = dSdr - (
+        phi_clipped * dS_liq_dP_basic
+        + (1.0 - phi_clipped) * dS_sol_dP_basic
+    ) * mesh.dP_dr_basic
+
+    # T_fus = latent_heat / dS_phase (mirrors numpy
+    # _ensure_basic_phase_boundary_cache: T_fus_basic = L_basic / dS_phase).
+    T_fus_basic = phase_basic.latent_heat / dS_phase_basic
+
+    # Smoothing: gphi at basic nodes, same cubic-Hermite polynomial as Jgrav.
+    gphi_basic = (S_basic - S_sol_basic) / dS_phase_basic
+    gphi_basic_clip = jnp.clip(gphi_basic, 0.0, 1.0)
+    smth_basic_mix = 16.0 * gphi_basic_clip**2 * (1.0 - gphi_basic_clip) ** 2
+
+    jmix_heat = -kappa_c * rho * T_fus_basic * bracket * smth_basic_mix
+    # Zero at CMB and surface (no mass/heat transfer across those boundaries)
+    jmix_heat = jmix_heat.at[0].set(0.0)
+    jmix_heat = jmix_heat.at[-1].set(0.0)
+    heat_flux = heat_flux + params.mixing * jmix_heat
 
     return FluxOutput(
         heat_flux=heat_flux,
