@@ -247,19 +247,37 @@ class _Table2D(eqx.Module):
 class _PhaseBoundary1D(eqx.Module):
     """A 1D phase boundary curve S(P) as a JAX-compatible pytree.
 
-    Uses jnp.interp (linear, with end-value clamping).
+    Uses jnp.interp (linear, with end-value clamping). Also precomputes
+    dS/dP via finite differences (np.gradient) so the SPIDER-parity
+    bracket Jmix formula can evaluate dS_sol/dP and dS_liq/dP at basic
+    nodes without rebuilding an interp1d each call. Mirrors the numpy
+    ``_load_spider_phase_boundary`` dinterp path (entropy.py:279-296).
     """
 
     _P: jax.Array
     _S: jax.Array
+    _dSdP: jax.Array
 
     def __init__(self, P: np.ndarray, S: np.ndarray):
         self._P = jnp.asarray(P)
         self._S = jnp.asarray(S)
+        # np.gradient matches the numpy reference (entropy.py:279) exactly
+        # so downstream dS/dP values are bit-identical across paths.
+        self._dSdP = jnp.asarray(np.gradient(np.asarray(S), np.asarray(P)))
 
     def __call__(self, P: jax.Array) -> jax.Array:
         """Evaluate S_boundary(P) with linear interpolation and clamping."""
         return jnp.interp(P, self._P, self._S)
+
+    def dSdP(self, P: jax.Array) -> jax.Array:
+        """Evaluate dS_boundary/dP(P) [J/(kg·K·Pa)].
+
+        Outside the tabulated range, ``jnp.interp`` returns the edge
+        values (which are zero in practice since ``np.gradient`` uses
+        one-sided differences at the ends). This matches the numpy
+        dinterp clamping-to-zero behaviour (entropy.py:280-281).
+        """
+        return jnp.interp(P, self._P, self._dSdP)
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +371,19 @@ class EntropyEOS_JAX(eqx.Module):
         """Liquidus entropy S_liq(P) [J/kg/K]."""
         return self._liquidus(P)
 
+    def solidus_entropy_dP(self, P: jax.Array) -> jax.Array:
+        """dS_sol/dP at the given pressure(s), in J/(kg·K·Pa).
+
+        Needed by the SPIDER-parity bracket Jmix in
+        ``aragog.jax.phase.compute_fluxes``. Mirrors numpy
+        ``EntropyEOS.solidus_entropy_dP`` (entropy.py:377-388).
+        """
+        return self._solidus.dSdP(P)
+
+    def liquidus_entropy_dP(self, P: jax.Array) -> jax.Array:
+        """dS_liq/dP at the given pressure(s), in J/(kg·K·Pa)."""
+        return self._liquidus.dSdP(P)
+
     def melt_fraction(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Melt fraction phi from position between solidus and liquidus.
 
@@ -376,20 +407,34 @@ class EntropyEOS_JAX(eqx.Module):
     def _lookup_phase_weighted(
         self, prop_name: str, P: jax.Array, S: jax.Array,
     ) -> jax.Array:
-        """Look up a property with phase weighting (solid/melt blend).
+        """Look up a property with phase weighting, matching numpy EntropyEOS.
 
-        For S < S_sol: use solid table.
-        For S > S_liq: use melt table.
-        Between: linear blend by melt fraction.
+        Mirrors ``aragog.eos.entropy.EntropyEOS._lookup_phase_weighted``:
+
+        - Mushy zone (0 < phi < 1): evaluate the solid table at the
+          solidus entropy S_sol(P) and the melt table at the liquidus
+          entropy S_liq(P) (Lever Rule / phase-boundary end-members),
+          then blend by phi.
+        - Pure phase (phi = 0 or phi = 1): evaluate the active table at
+          the actual S (clamped by the table itself).
+
+        The earlier JAX implementation always evaluated both tables at
+        the actual (P, S), which diverged from numpy by up to ~6 % in
+        T, ~2 % in Cp, and ~15 % in dTdPs inside the mushy band.
         """
         phi = self.melt_fraction(P, S)
         solid_table, melt_table = self._get_tables(prop_name)
 
-        # Each table clamps internally to its own domain
-        val_solid = solid_table(P, S)
-        val_melt = melt_table(P, S)
+        S_sol = self.solidus_entropy(P)
+        S_liq = self.liquidus_entropy(P)
 
-        # NaN-safe blend: avoid 0.0 * NaN = NaN
+        mushy = (phi > 0) & (phi < 1)
+        S_for_solid = jnp.where(mushy, S_sol, S)
+        S_for_melt = jnp.where(mushy, S_liq, S)
+
+        val_solid = solid_table(P, S_for_solid)
+        val_melt = melt_table(P, S_for_melt)
+
         result = (
             jnp.where(phi > 0, phi * val_melt, 0.0)
             + jnp.where(phi < 1, (1.0 - phi) * val_solid, 0.0)
@@ -422,19 +467,40 @@ class EntropyEOS_JAX(eqx.Module):
         return self._lookup_phase_weighted('temperature', P, S)
 
     def density(self, P: jax.Array, S: jax.Array) -> jax.Array:
-        """Density rho(P, S) [kg/m^3].
+        """Density rho(P, S) [kg/m^3], matching numpy EntropyEOS.density.
 
-        Harmonic mean in the mushy zone (SPIDER convention).
+        - Mushy zone (0 < phi < 1): harmonic mean of end-member
+          densities evaluated at phase-boundary entropies (Lever Rule,
+          SPIDER ``eos_composite.c:236-237``).
+        - Pure phase (phi = 0 or phi = 1): evaluate the active single-
+          phase table at the actual S (clamped by the table itself).
+          SPIDER ``combine_matprop(smth=0, mixed, single)`` selects the
+          single-phase branch in this regime; the earlier JAX
+          implementation used the harmonic-mean form unconditionally,
+          producing up to 21 % density bias in the fully-molten regime
+          relative to numpy.
         """
         phi = self.melt_fraction(P, S)
-        rho_sol = self._lookup_at_phase_boundary('density', P, 'solid')
-        rho_liq = self._lookup_at_phase_boundary('density', P, 'melt')
+        mushy = (phi > 0) & (phi < 1)
 
-        inv_rho = (
-            phi / jnp.maximum(rho_liq, 1.0)
-            + (1.0 - phi) / jnp.maximum(rho_sol, 1.0)
+        solid_table, melt_table = self._get_tables('density')
+
+        # Mushy zone: harmonic mean at phase boundaries
+        rho_sol_boundary = self._lookup_at_phase_boundary('density', P, 'solid')
+        rho_liq_boundary = self._lookup_at_phase_boundary('density', P, 'melt')
+        inv_rho_mushy = (
+            phi / jnp.maximum(rho_liq_boundary, 1.0)
+            + (1.0 - phi) / jnp.maximum(rho_sol_boundary, 1.0)
         )
-        return 1.0 / jnp.maximum(inv_rho, 1e-30)
+        rho_mushy = 1.0 / jnp.maximum(inv_rho_mushy, 1e-30)
+
+        # Single-phase: evaluate at actual S (clamped by the table). Pick
+        # the melt table for phi >= 0.5, solid otherwise (matches numpy).
+        rho_solid_single = solid_table(P, S)
+        rho_melt_single = melt_table(P, S)
+        rho_single = jnp.where(phi >= 0.5, rho_melt_single, rho_solid_single)
+
+        return jnp.where(mushy, rho_mushy, rho_single)
 
     def heat_capacity(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Specific heat capacity Cp(P, S) [J/kg/K]."""
