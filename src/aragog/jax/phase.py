@@ -395,10 +395,22 @@ def relative_velocity(
     d = params.grain_size
     eta_l = params.visc_liquid
 
-    # Porosity (volume fraction of melt)
-    porosity = jnp.clip(
-        (rho_s - density) / jnp.maximum(rho_s - rho_l, 1.0), 0.0, 1.0
+    # Porosity (volume fraction of melt) from densities. Smoothed with
+    # sqrt-based soft clip + soft max so the CVODE BDF predictor sees a
+    # C^infty RHS (mirrors entropy_phase.py:421-438 and the solver-order
+    # regression it avoids).
+    drho = rho_s - rho_l
+    eps = 1.0e-3
+    drho_smoothmax = 0.5 * (
+        drho + 1.0 + jnp.sqrt((drho - 1.0) ** 2 + eps * eps)
     )
+    porosity_raw = (rho_s - density) / drho_smoothmax
+    eps_p = 1.0e-3
+    p_lo = 0.5 * (
+        porosity_raw + jnp.sqrt(porosity_raw * porosity_raw + eps_p * eps_p)
+    )
+    hi_u = 1.0 - p_lo
+    porosity = 1.0 - 0.5 * (hi_u + jnp.sqrt(hi_u * hi_u + eps_p * eps_p))
 
     por = jnp.maximum(porosity, 1e-20)
     one_m_por = jnp.maximum(1.0 - porosity, 1e-20)
@@ -414,7 +426,10 @@ def relative_velocity(
     F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
     F = jnp.maximum(F, 0.0)
 
-    return jnp.abs(delta_rho) * gravity * F / jnp.maximum(eta_l, 1e-10)
+    # Smoothed |delta_rho|: sqrt(x^2 + eps^2) with eps tiny vs physical
+    # density contrast ~ 500 kg/m^3. Matches entropy_phase.py:464.
+    abs_drho = jnp.sqrt(delta_rho * delta_rho + 1.0e-12)
+    return abs_drho * gravity * F / jnp.maximum(eta_l, 1e-10)
 
 
 # ---------------------------------------------------------------------------
