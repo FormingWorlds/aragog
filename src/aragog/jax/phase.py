@@ -346,11 +346,19 @@ def evaluate_phase(
     )
     phi = state.melt_fraction
 
-    # Viscosity: tanh blend in log-space (mixed branch only here; the
-    # single-phase branch and the second smth-blend are not yet ported,
-    # since they are not currently used by compute_fluxes downstream).
+    # Viscosity: two-stage blend mirroring numpy entropy_phase.py:311-327
+    # (used downstream by MLT -> kappa_c -> Jmix, which is why both stages
+    # matter). Stage 1: tanh blend at phi_rheo (SPIDER util.c:255-259).
+    # Stage 2: combine_matprop with the cached matprop_smooth_width smth
+    # that compute_phase_state also uses for T/rho/Cp/alpha/k.
     w = tanh_weight(phi, params.phi_rheo, params.phi_width)
-    log_visc = (1.0 - w) * params.log10_visc_solid + w * params.log10_visc_liquid
+    log_visc_mixed = (
+        (1.0 - w) * params.log10_visc_solid + w * params.log10_visc_liquid
+    )
+    log_visc_single = jnp.where(
+        phi > 0.5, params.log10_visc_liquid, params.log10_visc_solid,
+    )
+    log_visc = state.smth * log_visc_mixed + (1.0 - state.smth) * log_visc_single
     viscosity = 10.0 ** log_visc
     kinematic_viscosity = viscosity / state.density
 
