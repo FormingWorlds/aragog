@@ -101,6 +101,15 @@ class PhaseParams(eqx.Module):
     # CMB drain and is only useful for regression tests.
     bottom_up_grav_sep: float
 
+    # Phase-boundary smoothing selection for Jgrav and Jmix.
+    # phase_smoothing_tanh: 1.0 -> use SPIDER's two-branch tanh
+    # (_spider_get_smoothing); 0.0 -> use cubic Hermite 16*g^2*(1-g)^2.
+    # phase_smoothing_width: tanh transition width in gphi units
+    # (ignored when phase_smoothing_tanh == 0.0). SPIDER default for CHILI
+    # Earth is 0.01 (matprop_smooth_width).
+    phase_smoothing_tanh: float
+    phase_smoothing_width: float
+
     def __init__(
         self,
         phi_rheo: float = 0.4,
@@ -119,6 +128,8 @@ class PhaseParams(eqx.Module):
         eddy_diff_chemical: float = 1.0,
         kappah_floor: float = 0.0,
         bottom_up_grav_sep: bool = True,
+        phase_smoothing: str = 'cubic_hermite',
+        phase_smoothing_width: float = 0.01,
     ):
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -137,6 +148,13 @@ class PhaseParams(eqx.Module):
         self.eddy_diff_chemical = eddy_diff_chemical
         self.kappah_floor = kappah_floor
         self.bottom_up_grav_sep = float(bottom_up_grav_sep)
+        if phase_smoothing not in ('cubic_hermite', 'tanh'):
+            raise ValueError(
+                "phase_smoothing must be 'cubic_hermite' or 'tanh', "
+                f"got {phase_smoothing!r}"
+            )
+        self.phase_smoothing_tanh = 1.0 if phase_smoothing == 'tanh' else 0.0
+        self.phase_smoothing_width = float(phase_smoothing_width)
 
 
 class MeshArrays(eqx.Module):
@@ -251,6 +269,41 @@ class MeshArrays(eqx.Module):
 def tanh_weight(x: jax.Array, threshold: float, width: float) -> jax.Array:
     """Smooth step function: 0.5 * (1 + tanh((x - threshold) / width))."""
     return 0.5 * (1.0 + jnp.tanh((x - threshold) / width))
+
+
+def spider_get_smoothing(gphi: jax.Array, smooth_width: float) -> jax.Array:
+    """SPIDER two-branch tanh phase smoothing (port of ``util.c:245-270``).
+
+    For ``gphi > 0.5`` ramps down to zero near gphi=1; for ``gphi <= 0.5``
+    ramps up from zero near gphi=0. The branches meet continuously at
+    gphi=0.5. Matches numpy ``_spider_get_smoothing`` in
+    ``entropy_state.py`` used when ``phase_smoothing='tanh'``.
+
+    ``smooth_width`` is the tanh transition width in gphi units (SPIDER
+    ``matprop_smooth_width``, default 0.01 for CHILI Earth).
+    """
+    upper = 0.5 * (1.0 - jnp.tanh((gphi - 1.0) / smooth_width))
+    lower = 0.5 * (1.0 + jnp.tanh(gphi / smooth_width))
+    return jnp.where(gphi > 0.5, upper, lower)
+
+
+def phase_boundary_smoothing(
+    gphi: jax.Array, params: PhaseParams,
+) -> jax.Array:
+    """Blend of cubic-Hermite and SPIDER tanh smoothing selected by
+    ``params.phase_smoothing_tanh`` (0.0 or 1.0). Keeps the trace static.
+
+    Cubic Hermite: ``16 * g_clip^2 * (1 - g_clip)^2`` with hard clip to
+    [0,1]. Provides intermediate-phi damping (smth=0.32 at gphi=0.83).
+
+    SPIDER tanh: two-branch tanh with width ``params.phase_smoothing_width``
+    (default 0.01). smth ≈ 1 across [0.05, 0.95].
+    """
+    gphi_clip = jnp.clip(gphi, 0.0, 1.0)
+    smth_cubic = 16.0 * gphi_clip**2 * (1.0 - gphi_clip) ** 2
+    smth_tanh = spider_get_smoothing(gphi, params.phase_smoothing_width)
+    w = params.phase_smoothing_tanh
+    return w * smth_tanh + (1.0 - w) * smth_cubic
 
 
 # ---------------------------------------------------------------------------
@@ -634,8 +687,7 @@ def compute_fluxes(
     dS_stag = jnp.maximum(S_liq_stag - S_sol_stag, 1.0)
     gphi_stag = (S_stag - S_sol_stag) / dS_stag
 
-    gphi_clip = jnp.clip(gphi_stag, 0.0, 1.0)
-    smth_stag = 16.0 * gphi_clip**2 * (1.0 - gphi_clip) ** 2
+    smth_stag = phase_boundary_smoothing(gphi_stag, params)
 
     # Map staggered smoothing to basic-node interfaces: interior basic
     # node i (1..N-2) sees the smoothing of staggered node i-1 (the
@@ -696,10 +748,10 @@ def compute_fluxes(
     # _ensure_basic_phase_boundary_cache: T_fus_basic = L_basic / dS_phase).
     T_fus_basic = phase_basic.latent_heat / dS_phase_basic
 
-    # Smoothing: gphi at basic nodes, same cubic-Hermite polynomial as Jgrav.
+    # Smoothing: gphi at basic nodes, same smoothing family as Jgrav
+    # (cubic Hermite or SPIDER tanh, selected by params.phase_smoothing_tanh).
     gphi_basic = (S_basic - S_sol_basic) / dS_phase_basic
-    gphi_basic_clip = jnp.clip(gphi_basic, 0.0, 1.0)
-    smth_basic_mix = 16.0 * gphi_basic_clip**2 * (1.0 - gphi_basic_clip) ** 2
+    smth_basic_mix = phase_boundary_smoothing(gphi_basic, params)
 
     jmix_heat = -kappa_c * rho * T_fus_basic * bracket * smth_basic_mix
     # Zero at CMB and surface (no mass/heat transfer across those boundaries)
