@@ -215,6 +215,13 @@ class _EnergyParameters:
     # CVODE via scikits.odes, same solver SPIDER uses), 'bdf' (scipy BDF).
     solver_method: str = 'radau'
 
+    # Option Z: when True and solver_method == 'cvode', the ODE integrator
+    # uses a JAX-derived analytic Jacobian (built by PROTEUS via
+    # EntropySolver.set_jax_cvode_factory) in place of CVODE's default
+    # finite-difference Jacobian. Requires JAX and the aragog.jax module.
+    # Has no effect unless a factory is registered before solve().
+    use_jax_jacobian: bool = False
+
     tidal_array: npt.NDArray = field(default_factory=lambda:np.array([0.0], dtype=float))
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:
