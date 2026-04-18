@@ -51,6 +51,15 @@ except ImportError:  # pragma: no cover
 # investigation concludes.
 _FORCE_RADAU = True  # overridden at runtime by solver_method config
 
+# Option Y (SUNDIALS rootfinding for solidus/liquidus crossings) is
+# disabled by default (2026-04-18). On chili_v_test it freezes the
+# integration at the first solidus crossing: T_core sticks at 4665 K,
+# Phi never drops below 1.0 even after model time advances by 50 Myr.
+# Bisect (PROTEUS d55726c5 + aragog 545964e) confirmed the freeze
+# disappears when Y is removed. Re-enable manually for Y debugging.
+# See PROTEUS roadmap entry "Option Y rootfinding solidus-bracket bug".
+_OPTION_Y_ENABLED = False
+
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
 from scipy import constants as _sp_constants
 SECS_PER_YEAR: float = _sp_constants.Julian_year
@@ -1319,8 +1328,9 @@ class EntropySolver:
         if max_step is not None and np.isfinite(max_step):
             cvode_options['max_step_size'] = float(max_step)
 
-        # Wire up rootfinding (option Y) if available
-        if rootfn_callable is not None and nr_rootfns > 0:
+        # Wire up rootfinding (option Y) if enabled and available.
+        # Default disabled (see _OPTION_Y_ENABLED at module top).
+        if _OPTION_Y_ENABLED and rootfn_callable is not None and nr_rootfns > 0:
             cvode_options['rootfn'] = rootfn_callable
             cvode_options['nr_rootfns'] = nr_rootfns
 
