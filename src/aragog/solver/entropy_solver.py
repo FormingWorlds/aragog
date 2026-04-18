@@ -165,6 +165,30 @@ class EntropySolver:
         self.state: EntropyState
         self._solution: OptimizeResult
         self.stop_early: bool = False
+        # Option Z: optional factory that builds JAX-derived CVODE
+        # callbacks. Signature:
+        #   factory(state_scale, rhs_scale, t_ref, core_bc_mode)
+        #     -> (rhs_fn, jac_fn)
+        # Registered by PROTEUS via set_jax_cvode_factory() when
+        # config.interior_energetics.aragog.use_jax_jacobian is True.
+        self._jax_cvode_factory = None
+
+    def set_jax_cvode_factory(self, factory) -> None:
+        """Register a factory that produces JAX-derived CVODE callbacks.
+
+        The factory is called inside ``solve()`` when ``use_jax_jacobian``
+        is enabled in the config. It is given the current nondim scales
+        and core-BC mode and must return the ``(rhs_fn, jac_fn)`` pair
+        accepted by scikits.odes CVODE.
+
+        Parameters
+        ----------
+        factory : callable
+            ``factory(state_scale, rhs_scale, t_ref, core_bc_mode) ->
+            (rhs_fn, jac_fn)``. May be None to disable the Option Z
+            path even if the flag is on.
+        """
+        self._jax_cvode_factory = factory
 
     @classmethod
     def from_file(cls, filename: str, eos_dir: str, root: str = '') -> 'EntropySolver':
@@ -1115,6 +1139,8 @@ class EntropySolver:
         rtol: float,
         max_step: float,
         rhs: 'Callable | None' = None,
+        cvode_rhs_fn_override: 'Callable | None' = None,
+        cvode_jacfn: 'Callable | None' = None,
     ) -> 'OptimizeResult':
         """Integrate the entropy equation using SUNDIALS CVODE.
 
@@ -1135,6 +1161,18 @@ class EntropySolver:
             If provided, used as the RHS function ``rhs(t, y) -> dydt``
             instead of ``self.dSdt``. Used by ``solve()`` to pass
             the nondimensionalised RHS wrapper.
+        cvode_rhs_fn_override : callable or None
+            Option Z: if provided, used directly as the CVODE RHS
+            callback ``rhs_fn(t, y, ydot) -> int`` (in-place signature).
+            Bypasses the local rhs wrapping and the nfev counter (the
+            caller is responsible for counting). Used in tandem with
+            ``cvode_jacfn`` so CVODE's Newton iteration sees a
+            self-consistent (RHS, Jacobian) pair.
+        cvode_jacfn : callable or None
+            Option Z: if provided, installed as the CVODE Jacobian
+            callback so CVODE uses this analytic Jacobian instead of
+            its default finite-difference approximation. Signature:
+            ``jacfn(t, y, fy, J, user_data=None) -> int``.
         """
         # Zero-span edge case: scipy's solve_ivp accepts
         # `t_span = (t0, t0)` and returns the initial state trivially,
@@ -1158,10 +1196,22 @@ class EntropySolver:
         _rhs = rhs if rhs is not None else self.dSdt
         nfev_box = [0]
 
-        def rhs_fn(t: float, y: npt.NDArray, ydot: npt.NDArray) -> int:
-            ydot[:] = _rhs(t, y)
-            nfev_box[0] += 1
-            return 0
+        if cvode_rhs_fn_override is not None:
+            # Option Z: caller supplies a fully-formed CVODE RHS
+            # callback (e.g. the JAX-backed rhs_fn from
+            # build_jax_rhs_and_jacobian). Wrap it so we still count
+            # RHS evaluations for the scipy-compatible nfev field.
+            _cvode_rhs = cvode_rhs_fn_override
+
+            def rhs_fn(t: float, y: npt.NDArray, ydot: npt.NDArray) -> int:
+                rc = _cvode_rhs(t, y, ydot)
+                nfev_box[0] += 1
+                return rc
+        else:
+            def rhs_fn(t: float, y: npt.NDArray, ydot: npt.NDArray) -> int:
+                ydot[:] = _rhs(t, y)
+                nfev_box[0] += 1
+                return 0
 
         # CVODE (via scikits.odes) accepts a per-state 1D array for
         # atol, matching the SUNDIALS interface. Pass it through
@@ -1273,6 +1323,18 @@ class EntropySolver:
         if rootfn_callable is not None and nr_rootfns > 0:
             cvode_options['rootfn'] = rootfn_callable
             cvode_options['nr_rootfns'] = nr_rootfns
+
+        # Option Z: install the analytic Jacobian callback. When
+        # provided, CVODE's Newton iteration uses this instead of the
+        # default finite-difference Jacobian. Forcing the linear solver
+        # to 'dense' is required because the banded solver path assumes
+        # CVODE-provided FD banded Jacobian construction; a user-
+        # supplied jacfn must fill a dense matrix.
+        if cvode_jacfn is not None:
+            cvode_options['jacfn'] = cvode_jacfn
+            cvode_options['linsolver'] = 'dense'
+            cvode_options.pop('lband', None)
+            cvode_options.pop('uband', None)
 
         solver = _scikits_ode('cvode', rhs_fn, **cvode_options)
         # One-time debug print of the CVODE options actually in effect.
@@ -1536,7 +1598,40 @@ class EntropySolver:
             and _CVODE_AVAILABLE
         )
         if use_cvode:
-            logger.info('EntropySolver: using CVODE (solver_method=cvode)')
+            # Option Z: build JAX-derived CVODE callbacks when the
+            # factory is registered AND the config flag is on. The
+            # factory re-creates the (rhs_fn, jac_fn) pair per solve
+            # call (JIT recompile cost applies; the same JAX tracing
+            # cache is hit on matching signatures, so cost collapses
+            # after the first call within a Python process lifetime).
+            cvode_rhs_override = None
+            cvode_jacfn = None
+            use_jax_jac = (
+                getattr(self.parameters.energy, 'use_jax_jacobian', False)
+                and self._jax_cvode_factory is not None
+            )
+            if use_jax_jac:
+                try:
+                    cvode_rhs_override, cvode_jacfn = self._jax_cvode_factory(
+                        np.asarray(_state_scale, dtype=float),
+                        np.asarray(_rhs_scale, dtype=float),
+                        float(t_ref),
+                        self._core_bc,
+                    )
+                    logger.info(
+                        'EntropySolver: option Z active '
+                        '(JAX analytic Jacobian + JAX RHS via scikits.odes)'
+                    )
+                except Exception as exc:  # pragma: no cover - fallback path
+                    logger.warning(
+                        'EntropySolver: JAX CVODE factory failed (%s); '
+                        'falling back to numpy RHS + FD Jacobian', exc,
+                    )
+                    cvode_rhs_override = None
+                    cvode_jacfn = None
+
+            if cvode_rhs_override is None:
+                logger.info('EntropySolver: using CVODE (solver_method=cvode)')
             self._solution = self._solve_cvode(
                 start_time=start_nd,
                 end_time=end_nd,
@@ -1545,6 +1640,8 @@ class EntropySolver:
                 rtol=rtol,
                 max_step=max_step_nd,
                 rhs=_rhs_nondim,
+                cvode_rhs_fn_override=cvode_rhs_override,
+                cvode_jacfn=cvode_jacfn,
             )
         else:
             method = 'Radau' if solver_method != 'bdf' else 'BDF'
