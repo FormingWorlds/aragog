@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import numpy.typing as npt
+from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import PchipInterpolator
 
 from aragog.parser import _MeshParameters
@@ -328,6 +329,15 @@ class UserDefinedEOS(EOS):
         # Assumes density and effective density are the same at basic nodes
         self._basic_density = basic_effective_density
 
+        # Cumulative mass M(r) = integral_{r_eos[0]}^{r} 4 pi r^2 rho(r) dr,
+        # precomputed on the EOS radius grid so get_mass_within_radii is O(1).
+        # Anchored at r_eos[0]; differences M(r2) - M(r1) cancel the anchor.
+        r_eos = np.asarray(settings.eos_radius)
+        rho_eos = np.asarray(settings.eos_density)
+        integrand = 4.0 * np.pi * r_eos**2 * rho_eos
+        cum_mass = cumulative_trapezoid(integrand, r_eos, initial=0.0)
+        self._interp_mass = PchipInterpolator(r_eos, cum_mass)
+
     @property
     def basic_pressure(self) -> npt.NDArray:
         """Pressure at basic nodes"""
@@ -351,3 +361,11 @@ class UserDefinedEOS(EOS):
     def set_staggered_pressure(self, staggered_radii: npt.NDArray,) -> None:
         """Set staggered pressure based on staggered radii."""
         self._staggered_pressure = self._interp_pressure(staggered_radii).reshape(-1,1)
+
+    def get_mass_within_radii(self, radii: FloatOrArray) -> npt.NDArray:
+        r"""4pi-included cumulative mass M(r), anchored at the inner EOS radius.
+
+        Mesh.get_planet_density and the mass-coordinate brentq loop use only
+        differences M(r2) - M(r1), so the anchor cancels.
+        """
+        return np.asarray(self._interp_mass(np.asarray(radii)))
