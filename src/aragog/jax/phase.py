@@ -286,13 +286,23 @@ def _build_gravity_array(mesh) -> 'jax.Array':
     """
     import numpy as np
     r_basic = np.asarray(mesh.basic.radii).ravel()
+    # Real Aragog Mesh objects expose the loaded EOS columns on
+    # mesh.settings (which aliases Parameters.mesh) after
+    # Parameters.__post_init__ has run np.loadtxt on the eos_file. Test
+    # stubs supply mesh.parameters directly. Tolerate both layouts.
+    _eos_src = None
+    for attr in ('settings', 'parameters'):
+        _candidate = getattr(mesh, attr, None)
+        if _candidate is not None and hasattr(_candidate, 'eos_gravity'):
+            _eos_src = _candidate
+            break
+    if _eos_src is None:
+        _eos_src = mesh
     eos_gravity_arr = np.asarray(
-        getattr(getattr(mesh, 'parameters', None) or mesh, 'eos_gravity', []),
-        dtype=float,
+        getattr(_eos_src, 'eos_gravity', []), dtype=float
     ).ravel()
     eos_radius_arr = np.asarray(
-        getattr(getattr(mesh, 'parameters', None) or mesh, 'eos_radius', []),
-        dtype=float,
+        getattr(_eos_src, 'eos_radius', []), dtype=float
     ).ravel()
     if eos_gravity_arr.size > 1 and eos_radius_arr.size == eos_gravity_arr.size:
         g_basic = np.interp(r_basic, eos_radius_arr, eos_gravity_arr)
