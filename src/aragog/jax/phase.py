@@ -252,11 +252,19 @@ class MeshArrays(eqx.Module):
             # SPIDER-parity dP/dr at basic nodes via numpy gradient (matches
             # entropy_state._dP_dr_basic = np.gradient(P_basic, r_basic)).
             dP_dr_basic=jnp.asarray(np.gradient(P_basic_arr, r_basic_arr)),
+            # Gravity fallback chain mirrors numpy entropy_solver.py:289-292:
+            # try the pressure-EOS attribute first, fall back to mesh.settings
+            # when the EOS is externally provided (e.g. Zalmoxis/PALEOS) and
+            # does not expose _gravitational_acceleration. The pre-fix code
+            # silently defaulted to 0.0, which zeroed MLT convection on the
+            # PALEOS-2phase production path and under-responded the JAX RHS
+            # by orders of magnitude.
             gravity=jnp.asarray(
                 np.full(mesh.basic.radii.size,
                         abs(float(getattr(
                             mesh.eos, '_gravitational_acceleration',
-                            0.0,
+                            getattr(getattr(mesh, 'settings', None),
+                                    'gravitational_acceleration', 9.81),
                         ))))
             ),
         )
