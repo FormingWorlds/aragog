@@ -724,8 +724,14 @@ class EntropyState:
             delta_v = np.asarray(
                 self.phase_staggered.delta_specific_volume()
             ).ravel()
-            g = abs(float(self.phase_staggered.gravitational_acceleration()))
-            self._heating += g * delta_v * mass_flux_stag
+            # Stage 1c (2026-04-20): gravity is now a per-node array aligned
+            # with the staggered grid. Use element-wise multiplication
+            # (np.abs broadcasts) rather than collapsing to a scalar, which
+            # would have been a silent accuracy regression on non-uniform g.
+            g_stag = np.abs(
+                np.asarray(self.phase_staggered.gravitational_acceleration()).ravel()
+            )
+            self._heating += g_stag * delta_v * mass_flux_stag
 
         if self._tidal:
             if len(self._tidal_array) == 1:

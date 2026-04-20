@@ -285,11 +285,39 @@ class EntropySolver:
         self._core_bc = getattr(
             self.parameters.boundary_conditions, 'core_bc', 'energy_balance'
         )
-        # Gravity: try mesh EOS attribute first, then mesh settings
-        g = abs(float(getattr(
+        # Gravity (Stage 1c, 2026-04-20): per-node array when an external
+        # mesh file carries eos_gravity (UserDefinedEOS / Zalmoxis path),
+        # else scalar broadcast from the aragog-native PressureEOS scalar
+        # attribute or the mesh.settings fallback. Interpolation from the
+        # external eos_radius grid onto aragog's basic / staggered node
+        # radii keeps the gravity array consistent with the rest of the
+        # node-aligned fields.
+        g_scalar = abs(float(getattr(
             mesh.eos, '_gravitational_acceleration',
             self.parameters.mesh.gravitational_acceleration,
         )))
+        eos_gravity_arr = np.asarray(
+            getattr(self.parameters.mesh, 'eos_gravity', []), dtype=float
+        ).ravel()
+        eos_radius_arr = np.asarray(
+            getattr(self.parameters.mesh, 'eos_radius', []), dtype=float
+        ).ravel()
+        if eos_gravity_arr.size > 1 and eos_radius_arr.size == eos_gravity_arr.size:
+            g_basic = np.interp(self._r_basic_flat, eos_radius_arr, eos_gravity_arr)
+            g_stag = np.interp(self._r_stag_flat, eos_radius_arr, eos_gravity_arr)
+            logger.info(
+                'EntropySolver gravity: per-node profile from external mesh '
+                '(n=%d, basic range [%.4f, %.4f] m/s^2)',
+                eos_gravity_arr.size, float(g_basic.min()), float(g_basic.max()),
+            )
+        else:
+            g_basic = np.full(self._r_basic_flat.shape, g_scalar)
+            g_stag = np.full(self._r_stag_flat.shape, g_scalar)
+            logger.info(
+                'EntropySolver gravity: scalar broadcast (%.4f m/s^2) — '
+                'external eos_gravity not available',
+                g_scalar,
+            )
 
         # Create entropy phase evaluators for staggered and basic nodes.
         # cp_blend selects how Cp is computed in the mushy zone:
@@ -340,13 +368,13 @@ class EntropySolver:
                 phase_kwargs[k] = float(getattr(self.parameters.phase_mixed, k))
 
         phase_stag = EntropyPhaseEvaluator(
-            gravitational_acceleration=g,
+            gravitational_acceleration=g_stag,
             **phase_kwargs,
         )
         phase_stag.set_pressure(P_stag)
 
         phase_basic = EntropyPhaseEvaluator(
-            gravitational_acceleration=g,
+            gravitational_acceleration=g_basic,
             **phase_kwargs,
         )
         phase_basic.set_pressure(P_basic)
