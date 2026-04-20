@@ -100,3 +100,55 @@ def test_mesh_gravity_prefers_eos_attribute_when_available():
     assert np.allclose(gravity, eos_g, atol=0.0, rtol=1e-12), (
         f'Expected eos override {eos_g}, got {gravity}'
     )
+
+
+@pytest.mark.unit
+def test_mesh_gravity_uses_per_node_profile_when_eos_gravity_present():
+    """Stage 1c regression: when the external mesh supplies eos_radius +
+    eos_gravity columns, MeshArrays.from_numpy_mesh must interpolate that
+    profile onto the basic-node radii rather than broadcasting a single
+    scalar. Earth-like radial profile: g rising from ~8 m/s^2 at CMB to
+    ~10 m/s^2 at surface."""
+    mesh = _StubMesh(configured_g=9.81)
+    # Populate mesh.parameters with the external eos arrays, matching the
+    # shape that entropy_solver.reset() writes when eos_method=2.
+    import types
+    mesh.parameters = types.SimpleNamespace()
+    mesh.parameters.eos_radius = np.linspace(3.48e6, 6.37e6, 60)
+    mesh.parameters.eos_gravity = np.linspace(8.0, 10.0, 60)  # CMB to surface
+    mesh_jax = MeshArrays.from_numpy_mesh(mesh)
+    gravity = np.asarray(mesh_jax.gravity)
+    assert gravity.shape == mesh.basic.radii.shape
+    # Per-node profile: gravity should NOT be uniform
+    assert gravity.max() - gravity.min() > 0.5, (
+        f'Expected non-uniform g; got min={gravity.min()}, max={gravity.max()}'
+    )
+    # Endpoints should match the supplied profile at the mesh boundaries
+    assert np.isclose(gravity[0], 8.0, atol=5e-2), (
+        f'Inner gravity {gravity[0]} far from CMB source 8.0'
+    )
+    assert np.isclose(gravity[-1], 10.0, atol=5e-2), (
+        f'Outer gravity {gravity[-1]} far from surface source 10.0'
+    )
+
+
+@pytest.mark.unit
+def test_mesh_gravity_profile_beats_eos_scalar_attribute():
+    """When both the profile (mesh.parameters.eos_gravity) AND the scalar
+    (mesh.eos._gravitational_acceleration) are available, the per-node
+    profile wins. A run that ships a full Zalmoxis profile should not be
+    silently flattened by a stale scalar attribute."""
+    import types
+    mesh = _StubMesh(configured_g=9.81)
+    mesh.eos._gravitational_acceleration = 5.0  # scalar intentionally wrong
+    mesh.parameters = types.SimpleNamespace()
+    mesh.parameters.eos_radius = np.linspace(3.48e6, 6.37e6, 30)
+    mesh.parameters.eos_gravity = np.linspace(8.0, 10.0, 30)
+    mesh_jax = MeshArrays.from_numpy_mesh(mesh)
+    gravity = np.asarray(mesh_jax.gravity)
+    assert gravity.max() - gravity.min() > 0.5, (
+        'Stale scalar attribute flattened the per-node profile'
+    )
+    assert gravity.min() > 7.0 and gravity.max() < 11.0, (
+        f'Profile corrupted; got range [{gravity.min()}, {gravity.max()}]'
+    )

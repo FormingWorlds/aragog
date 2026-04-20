@@ -252,22 +252,57 @@ class MeshArrays(eqx.Module):
             # SPIDER-parity dP/dr at basic nodes via numpy gradient (matches
             # entropy_state._dP_dr_basic = np.gradient(P_basic, r_basic)).
             dP_dr_basic=jnp.asarray(np.gradient(P_basic_arr, r_basic_arr)),
-            # Gravity fallback chain mirrors numpy entropy_solver.py:289-292:
-            # try the pressure-EOS attribute first, fall back to mesh.settings
-            # when the EOS is externally provided (e.g. Zalmoxis/PALEOS) and
-            # does not expose _gravitational_acceleration. The pre-fix code
-            # silently defaulted to 0.0, which zeroed MLT convection on the
-            # PALEOS-2phase production path and under-responded the JAX RHS
-            # by orders of magnitude.
-            gravity=jnp.asarray(
-                np.full(mesh.basic.radii.size,
-                        abs(float(getattr(
-                            mesh.eos, '_gravitational_acceleration',
-                            getattr(getattr(mesh, 'settings', None),
-                                    'gravitational_acceleration', 9.81),
-                        ))))
-            ),
+            # Gravity (Stage 1c, 2026-04-20): per-node profile when the
+            # external mesh file carries eos_gravity (UserDefinedEOS /
+            # Zalmoxis path), else scalar broadcast. The per-node array is
+            # aligned to the same basic-node grid as area / volume /
+            # mixing_length, so the MLT buoyancy cascade in compute_mlt
+            # picks up the radial dependence without any broadcasting
+            # change downstream.
+            # Fallback chain (scalar): mesh.eos._gravitational_acceleration
+            # first (AdamsWilliamsonEOS path), then mesh.settings.
+            # gravitational_acceleration (UserDefinedEOS / Zalmoxis path
+            # where the EOS object lacks the private attribute), then the
+            # 9.81 hard default. See `stage1a_jax_paleos2phase_rhs_bug`
+            # memory for the original silent-zero bug this fallback replaces.
+            gravity=_build_gravity_array(mesh),
         )
+
+
+# ---------------------------------------------------------------------------
+# Stage 1c gravity array builder (used by MeshArrays.from_numpy_mesh)
+# ---------------------------------------------------------------------------
+
+def _build_gravity_array(mesh) -> 'jax.Array':
+    """Return the per-basic-node gravity array for a numpy Aragog mesh.
+
+    Per-node profile is preferred when the external mesh file (eos_method=2,
+    UserDefinedEOS / Zalmoxis path) carries an eos_gravity column aligned
+    with an eos_radius grid. Interpolates that column onto the aragog
+    basic-node radii using numpy linear interpolation. Falls back to a
+    scalar broadcast from the pressure-EOS attribute or the mesh.settings
+    default when the external profile is not available (AdamsWilliamsonEOS,
+    dummy structure, or a short-circuited setup path).
+    """
+    import numpy as np
+    r_basic = np.asarray(mesh.basic.radii).ravel()
+    eos_gravity_arr = np.asarray(
+        getattr(getattr(mesh, 'parameters', None) or mesh, 'eos_gravity', []),
+        dtype=float,
+    ).ravel()
+    eos_radius_arr = np.asarray(
+        getattr(getattr(mesh, 'parameters', None) or mesh, 'eos_radius', []),
+        dtype=float,
+    ).ravel()
+    if eos_gravity_arr.size > 1 and eos_radius_arr.size == eos_gravity_arr.size:
+        g_basic = np.interp(r_basic, eos_radius_arr, eos_gravity_arr)
+        return jnp.asarray(g_basic)
+    g_scalar = abs(float(getattr(
+        mesh.eos, '_gravitational_acceleration',
+        getattr(getattr(mesh, 'settings', None),
+                'gravitational_acceleration', 9.81),
+    )))
+    return jnp.asarray(np.full(r_basic.size, g_scalar))
 
 
 # ---------------------------------------------------------------------------
