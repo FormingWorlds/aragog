@@ -305,12 +305,34 @@ def _build_gravity_array(mesh) -> 'jax.Array':
         getattr(_eos_src, 'eos_radius', []), dtype=float
     ).ravel()
     if eos_gravity_arr.size > 1 and eos_radius_arr.size == eos_gravity_arr.size:
+        # Monotonicity guard: np.interp silently produces wrong results if
+        # xp is not monotonically increasing. Zalmoxis writes radius
+        # CMB-outward, but an external EOS file could in principle be
+        # reversed; catch that rather than silently corrupting gravity.
+        if not np.all(np.diff(eos_radius_arr) > 0):
+            raise ValueError(
+                'eos_radius is not monotonically increasing; '
+                'np.interp would silently corrupt the gravity profile. '
+                'Sort columns 0 and 3 of the external EOS file so radius '
+                'is monotonic.'
+            )
         g_basic = np.interp(r_basic, eos_radius_arr, eos_gravity_arr)
         return jnp.asarray(g_basic)
+    # Scalar fallback chain. Mirrors the numpy reference in
+    # entropy_solver.py::_initialize_internals: try the pressure-EOS
+    # attribute first, then mesh.settings, then mesh.parameters, then
+    # the 9.81 hard default. The earlier single-source (mesh.settings
+    # only) was asymmetric with numpy for configs that populate gravity
+    # on mesh.parameters without mesh.settings and would silently
+    # return 9.81 on a non-Earth planet.
+    settings_src = (
+        getattr(mesh, 'settings', None)
+        or getattr(mesh, 'parameters', None)
+        or mesh
+    )
     g_scalar = abs(float(getattr(
         mesh.eos, '_gravitational_acceleration',
-        getattr(getattr(mesh, 'settings', None),
-                'gravitational_acceleration', 9.81),
+        getattr(settings_src, 'gravitational_acceleration', 9.81),
     )))
     return jnp.asarray(np.full(r_basic.size, g_scalar))
 

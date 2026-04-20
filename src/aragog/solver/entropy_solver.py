@@ -67,6 +67,46 @@ SECS_PER_YEAR: float = _sp_constants.Julian_year
 logger = logging.getLogger(__name__)
 
 
+def _validate_eos_radius_range(mesh_params) -> None:
+    """Validate the loaded external-EOS radial grid against the mesh bounds.
+
+    Duplicates the init-time check in ``parser._MeshParameters.scale_attributes``
+    (lines ~315-319) so that ``EntropySolver.reset()`` catches a regenerated
+    external EOS file whose radius range no longer matches the solver's
+    current inner_radius / outer_radius. Without this guard the downstream
+    ``np.interp`` calls in ``_initialize_internals`` and
+    ``jax/phase._build_gravity_array`` would silently clamp or extrapolate
+    gravity at grid boundaries, producing a subtle physics bug.
+    Raises ValueError with a clear message if the file's radius range
+    is inconsistent with the mesh; no-op if the file matches.
+    """
+    er = np.asarray(mesh_params.eos_radius).ravel()
+    if er.size < 2:
+        return
+    inner = float(mesh_params.inner_radius)
+    outer = float(mesh_params.outer_radius)
+    span_mesh = outer - inner
+    span_eos = float(er[-1]) - float(er[0])
+    if not np.all(np.diff(er) > 0):
+        raise ValueError(
+            'External EOS radius array is not monotonically increasing; '
+            'downstream np.interp would silently corrupt gravity / '
+            'pressure / density lookups.'
+        )
+    if (
+        float(er[0]) < inner
+        or float(er[-1]) > outer
+        or (span_mesh > 0 and span_eos < 0.75 * span_mesh)
+    ):
+        raise ValueError(
+            f'External EOS radius range [{er[0]:.3e}, {er[-1]:.3e}] m '
+            f'inconsistent with mesh bounds [{inner:.3e}, {outer:.3e}] m. '
+            'A regenerated Zalmoxis mesh file may have drifted outside '
+            'the solver shell; re-run Zalmoxis with the current planet '
+            'radius, or rebuild the EOS table with matching bounds.'
+        )
+
+
 def _phase_prop_float(raw, default):
     """Convert a phase-property config value to float.
 
@@ -303,6 +343,13 @@ class EntropySolver:
             getattr(self.parameters.mesh, 'eos_radius', []), dtype=float
         ).ravel()
         if eos_gravity_arr.size > 1 and eos_radius_arr.size == eos_gravity_arr.size:
+            if not np.all(np.diff(eos_radius_arr) > 0):
+                raise ValueError(
+                    'External eos_radius is not monotonically increasing; '
+                    'np.interp would silently corrupt the numpy gravity '
+                    'profile. Fix by sorting the external EOS file columns '
+                    '0 and 3 so radius is monotonic.'
+                )
             g_basic = np.interp(self._r_basic_flat, eos_radius_arr, eos_gravity_arr)
             g_stag = np.interp(self._r_stag_flat, eos_radius_arr, eos_gravity_arr)
             logger.info(
@@ -475,10 +522,20 @@ class EntropySolver:
         logger.info('Resetting EntropySolver')
         if self.parameters.mesh.eos_method == 2 and self.parameters.mesh.eos_file:
             arr = np.loadtxt(self.parameters.mesh.eos_file)
-            self.parameters.mesh.eos_radius = arr[:, 0]
-            self.parameters.mesh.eos_pressure = arr[:, 1]
-            self.parameters.mesh.eos_density = arr[:, 2]
-            self.parameters.mesh.eos_gravity = arr[:, 3]
+            # Apply the same nondim scaling parser.py:309-313 applies at
+            # first load, so reset() and __init__ stay invariant if a
+            # future refactor ever sets scalings != 1.0. Currently all
+            # scalings are 1.0 in PROTEUS so this is an identity, but
+            # the structural consistency matters for defensive
+            # refactoring.
+            sc = self.parameters.mesh.scalings_
+            self.parameters.mesh.eos_radius = arr[:, 0] / sc.radius
+            self.parameters.mesh.eos_pressure = arr[:, 1] / sc.pressure
+            self.parameters.mesh.eos_density = arr[:, 2] / sc.density
+            self.parameters.mesh.eos_gravity = (
+                arr[:, 3] / sc.gravitational_acceleration
+            )
+            _validate_eos_radius_range(self.parameters.mesh)
         self._initialize_internals()
 
     def set_initial_entropy(self, S_init: npt.NDArray | float) -> None:
