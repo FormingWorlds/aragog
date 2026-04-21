@@ -407,6 +407,19 @@ class EntropyState:
         self.phase_basic.set_entropy(self._entropy_basic)
         self.phase_basic.update()
 
+        # Cache the basic-node melt fraction once per update() call.
+        # Stage 2 Tier B1: the same array is consumed at four downstream
+        # sites (kappah floor, grav_sep phi_b, mix-SPIDER phi_basic_clipped,
+        # diagnostic snapshot). Each call allocates a new ndarray via the
+        # entropy_phase evaluator; caching collapses four redundant calls
+        # into one. Per RHS count of ~100k across a CHILI run, this saves
+        # ~300k ndarray allocations. Bit-exact: every consumer reads the
+        # same array the evaluator would have returned on a fresh call
+        # (the underlying state hasn't changed between 408 and 701).
+        phi_basic_cached = np.asarray(
+            self.phase_basic.melt_fraction()
+        ).ravel()
+
         # Melt-fraction gradient for gravitational separation and mixing.
         #
         # Clamped lever-rule melt fraction:
@@ -515,9 +528,8 @@ class EntropyState:
 
         # kappa_h floor (phase-dependent, modulated by melt fraction)
         if self._kappah_floor > 0.0:
-            phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             from aragog.utilities import tanh_weight
-            f_floor = tanh_weight(phi_basic, 0.4, 0.15)
+            f_floor = tanh_weight(phi_basic_cached, 0.4, 0.15)
             kh_floor = self._kappah_floor * f_floor
             self._eddy_diffusivity = np.maximum(self._eddy_diffusivity, kh_floor)
 
@@ -536,9 +548,27 @@ class EntropyState:
         rho = np.asarray(self.phase_basic.density()).ravel()
         k = np.asarray(self.phase_basic.thermal_conductivity()).ravel()
 
-        self._heat_flux = np.zeros_like(self._entropy_basic)
-        self._mass_flux = np.zeros_like(self._entropy_basic)
-        # Reset per-component diagnostic buffers for this update() pass.
+        # Stage 2 Tier B3: pre-allocate the two accumulator buffers
+        # (heat_flux, mass_flux) once and zero in place on subsequent
+        # calls. Each np.zeros_like(...) is a fresh ndarray allocation;
+        # with ~100k RHS calls per CHILI run this saves ~200k
+        # allocations for the accumulators alone.
+        # The four diagnostic buffers (_jcond/_jconv/_jgrav_heat/_jmix_heat)
+        # are re-bound to a fresh array in each flux-component branch
+        # below (e.g. `self._jconv = rho * T * ...`), so pre-alloc for
+        # those is a no-op in practice; left as np.zeros_like for clarity
+        # when the conduction/convection/grav_sep/mixing flag is off
+        # (diagnostic array expected to be zeros in that case).
+        _n_basic = self._entropy_basic.shape[0]
+        if (
+            getattr(self, '_heat_flux', None) is None
+            or self._heat_flux.shape[0] != _n_basic
+        ):
+            self._heat_flux = np.zeros(_n_basic, dtype=float)
+            self._mass_flux = np.zeros(_n_basic, dtype=float)
+        else:
+            self._heat_flux.fill(0.0)
+            self._mass_flux.fill(0.0)
         self._jcond = np.zeros_like(self._entropy_basic)
         self._jconv = np.zeros_like(self._entropy_basic)
         self._jgrav_heat = np.zeros_like(self._entropy_basic)
@@ -579,7 +609,7 @@ class EntropyState:
             self._heat_flux += self._jconv
 
         if self._grav_sep:
-            phi_b = np.asarray(self.phase_basic.melt_fraction()).ravel()
+            phi_b = phi_basic_cached
             v_rel = np.asarray(self.phase_basic.relative_velocity()).ravel()
             jgrav = rho * phi_b * (1.0 - phi_b) * v_rel
 
@@ -664,9 +694,7 @@ class EntropyState:
             # from gradients rather than from dphi/dr, keeping the RHS
             # smooth in pure-phase regions.
             self._ensure_basic_phase_boundary_cache()
-            phi_basic_clipped = np.asarray(
-                self.phase_basic.melt_fraction()
-            ).ravel()
+            phi_basic_clipped = phi_basic_cached
             bracket = self._dSdr - (
                 phi_basic_clipped * self._dS_liq_dP_basic
                 + (1.0 - phi_basic_clipped) * self._dS_sol_dP_basic
@@ -696,9 +724,7 @@ class EntropyState:
         self._rho_basic_diag = rho
         self._T_basic_diag = T
         self._cp_basic_diag = Cp
-        self._phi_basic_diag = np.asarray(
-            self.phase_basic.melt_fraction()
-        ).ravel()
+        self._phi_basic_diag = phi_basic_cached
 
         # ── Internal heating (power per unit mass [W/kg]) ────────────
         n_stag = len(self._entropy_staggered)
