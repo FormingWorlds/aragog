@@ -706,15 +706,49 @@ class EntropySolver:
         """
         self._T_core_init = float(T_core_init)
 
-    def set_initial_dSdr_cmb(self, dSdr_cmb_init: float) -> None:
+    def set_initial_dSdr_cmb(self, dSdr_cmb_init: float | None) -> None:
         """Set the initial CMB entropy gradient (Path A energy_balance only).
 
         Must be called BEFORE ``set_initial_entropy``. If not called,
         the initial ``dSdr_cmb`` is taken from the previous solution
         (if any), else from a one-sided FD of the staggered S_init at
         the bottom (which is zero for a uniform isentrope).
+
+        Pass ``None`` to clear a previously-set override, restoring
+        the hot-start behaviour on the next call to
+        ``set_initial_entropy``. Used by PROTEUS's retry ladder to
+        restore the pre-solve dSdr_cmb after a rejection, then release
+        the override so the subsequent coupling step can hot-start
+        from its own ``_solution`` normally.
         """
-        self._dSdr_cmb_init = float(dSdr_cmb_init)
+        self._dSdr_cmb_init = None if dSdr_cmb_init is None else float(dSdr_cmb_init)
+
+    def get_current_dSdr_cmb(self) -> float | None:
+        """Return the most recent CMB entropy gradient from the solver state.
+
+        Reads ``self._solution.y[n_stag, -1]`` (the final dSdr_cmb from the
+        last accepted solve). Returns ``None`` when no solution exists yet,
+        or when the state vector lacks the dSdr_cmb slot (core_bc other
+        than ``energy_balance``).
+
+        Used by PROTEUS's retry ladder to snapshot the pre-solve
+        dSdr_cmb before a sequence of retry attempts and restore it on
+        each retry, breaking the positive-feedback loop where a
+        rejected attempt's final dSdr_cmb would otherwise become the
+        next retry's hot-start IC and drive the boundary state further
+        from the pre-solve value each time.
+        """
+        n_stag = getattr(self, '_n_stag', None)
+        prev_sol = getattr(self, '_solution', None)
+        if (
+            n_stag is None
+            or prev_sol is None
+            or getattr(prev_sol, 'y', None) is None
+            or prev_sol.y.size == 0
+            or prev_sol.y.shape[0] != n_stag + 1
+        ):
+            return None
+        return float(prev_sol.y[n_stag, -1])
 
     def dSdt(
         self,
