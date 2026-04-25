@@ -285,17 +285,23 @@ class InitialCondition:
     # flip the pressure field top to bottom
     pressure_basic = np.flip(pressure_basic)
 
-    # Ensure t_eval is strictly within t_span to avoid ValueError
-    t_span = (pressure_basic[0], pressure_basic[-1])
-    t_eval = np.clip(pressure_basic, t_span[0], t_span[1])
-
+    # Exclude the endpoints from t_eval to avoid "Values in t_eval are not within t_span" error
+    # when pressure values are very large (e.g., for massive planets >2 Mearth)
+    t_eval_interior = pressure_basic[1:-1]  # Remove first and last elements
+    
     sol = solve_ivp(
-        adiabat_ode, t_span,
-        [self._settings.surface_temperature], t_eval=t_eval,
+        adiabat_ode, (pressure_basic[0], pressure_basic[-1]),
+        [self._settings.surface_temperature], t_eval=t_eval_interior,
         method='RK45', rtol=1e-6, atol=1e-9)
 
+    # Interpolate temperature at basic nodes since t_eval excluded endpoints
+    # Create interpolation function and evaluate at all basic node pressures
+    from scipy.interpolate import interp1d
+    temp_interp = interp1d(t_eval_interior, sol.y[0], kind='linear', bounds_error=False, fill_value=(sol.y[0][0], sol.y[0][-1]))
+    temperature_basic_flipped = temp_interp(pressure_basic)
+    
     # flip back the temperature field from bottom to top
-    temperature_basic = np.flip(sol.y[0])
+    temperature_basic = np.flip(temperature_basic_flipped)
 
         # Return temperature field at staggered nodes
         return self._mesh.quantity_at_staggered_nodes(temperature_basic)
