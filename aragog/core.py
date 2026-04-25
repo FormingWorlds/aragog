@@ -282,16 +282,20 @@ class InitialCondition:
             self._phases.active.update()
             return self._phases.active.dTdPs()
 
-        # flip the pressure field top to bottom
-        pressure_basic = np.flip(pressure_basic)
+    # flip the pressure field top to bottom
+    pressure_basic = np.flip(pressure_basic)
 
-        sol = solve_ivp(
-             adiabat_ode, (pressure_basic[0], pressure_basic[-1]),
-             [self._settings.surface_temperature], t_eval=pressure_basic,
-             method='RK45', rtol=1e-6, atol=1e-9)
+    # Ensure t_eval is strictly within t_span to avoid ValueError
+    t_span = (pressure_basic[0], pressure_basic[-1])
+    t_eval = np.clip(pressure_basic, t_span[0], t_span[1])
 
-        # flip back the temperature field from bottom to top
-        temperature_basic = np.flip(sol.y[0])
+    sol = solve_ivp(
+        adiabat_ode, t_span,
+        [self._settings.surface_temperature], t_eval=t_eval,
+        method='RK45', rtol=1e-6, atol=1e-9)
+
+    # flip back the temperature field from bottom to top
+    temperature_basic = np.flip(sol.y[0])
 
         # Return temperature field at staggered nodes
         return self._mesh.quantity_at_staggered_nodes(temperature_basic)
