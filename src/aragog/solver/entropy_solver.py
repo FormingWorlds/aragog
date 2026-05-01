@@ -44,22 +44,6 @@ except ImportError:  # pragma: no cover
     _CVODE_AVAILABLE = False
     _scikits_ode = None  # type: ignore[assignment]
 
-# Temporary override (2026-04-11): when True, use scipy Radau instead
-# of CVODE even if scikits.odes is importable. Used to discriminate
-# "CVODE BDF predictor problem" (fixed by Radau) from "Aragog RHS
-# intrinsic stiffness" (Radau also struggles). Flip to False once the
-# investigation concludes.
-_FORCE_RADAU = True  # overridden at runtime by solver_method config
-
-# Option Y (SUNDIALS rootfinding for solidus/liquidus crossings) is
-# disabled by default (2026-04-18). On chili_v_test it freezes the
-# integration at the first solidus crossing: T_core sticks at 4665 K,
-# Phi never drops below 1.0 even after model time advances by 50 Myr.
-# Bisect (PROTEUS d55726c5 + aragog 545964e) confirmed the freeze
-# disappears when Y is removed. Re-enable manually for Y debugging.
-# See PROTEUS roadmap entry "Option Y rootfinding solidus-bracket bug".
-_OPTION_Y_ENABLED = False
-
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
 from scipy import constants as _sp_constants
 SECS_PER_YEAR: float = _sp_constants.Julian_year
@@ -1368,47 +1352,9 @@ class EntropySolver:
         # ~5 (bandwidth+1 per side). This is the CVODE equivalent of
         # the `jac_sparsity` graph-colouring hint scipy uses.
         #
-        # Extended-state modes (bower2018, energy_balance, gradient)
-        # break the banded structure because the extra state row
-        # couples to far-away entropy nodes, so fall back to dense
-        # for those modes.
-        # Phase-boundary event detection (option Y, 2026-04-16).
-        # SUNDIALS rootfinding stops integration when any cell crosses
-        # the solidus or liquidus. Restart from the crossing avoids
-        # CVODE having to integrate THROUGH the discontinuity, which
-        # is the standard recommended pattern for phase-change problems.
-        # Pre-compute phase-boundary entropies at staggered pressures
-        # (these are mesh-fixed for the lifetime of the solve).
-        rootfn_callable = None
-        nr_rootfns = 0
-        try:
-            n_stag_local = int(np.asarray(y0).size)
-            # Use entropy_eos to get phase boundaries at staggered P
-            P_stag_local = self._P_stag_flat
-            S_sol_stag_local = np.asarray(
-                self.entropy_eos.solidus_entropy(P_stag_local)
-            ).ravel()
-            S_liq_stag_local = np.asarray(
-                self.entropy_eos.liquidus_entropy(P_stag_local)
-            ).ravel()
-            # Determine entropy block layout based on extended-state mode
-            n_S_block = len(S_sol_stag_local)
-            S_ref_local = float(self._S_ref)
-            n_state_y0 = len(y0)
-
-            def _rootfn(t_nd: float, y_nd, g, user_data):
-                # Convert non-dim S block to physical entropy
-                S_phys = np.asarray(y_nd[:n_S_block]).ravel() * S_ref_local
-                # g[i]               = distance to solidus (sign change = crossing)
-                # g[i + n_S_block]   = distance to liquidus
-                g[:n_S_block] = S_phys - S_sol_stag_local
-                g[n_S_block:2*n_S_block] = S_phys - S_liq_stag_local
-                return 0
-
-            rootfn_callable = _rootfn
-            nr_rootfns = 2 * n_S_block
-        except Exception as exc:
-            logger.debug('Rootfinding setup skipped: %s', exc)
+        # Extended-state modes (energy_balance, gradient) break the
+        # banded structure because the extra state row couples to
+        # far-away entropy nodes, so fall back to dense for those modes.
 
         cvode_options = {
             'old_api': False,
@@ -1446,12 +1392,6 @@ class EntropySolver:
         # picks its own maximum internal step.
         if max_step is not None and np.isfinite(max_step):
             cvode_options['max_step_size'] = float(max_step)
-
-        # Wire up rootfinding (option Y) if enabled and available.
-        # Default disabled (see _OPTION_Y_ENABLED at module top).
-        if _OPTION_Y_ENABLED and rootfn_callable is not None and nr_rootfns > 0:
-            cvode_options['rootfn'] = rootfn_callable
-            cvode_options['nr_rootfns'] = nr_rootfns
 
         # Option Z: install the analytic Jacobian callback. When
         # provided, CVODE's Newton iteration uses this instead of the
