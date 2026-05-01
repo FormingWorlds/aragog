@@ -4,6 +4,9 @@
 
 Aragog computes the time evolution of a radial temperature profile inside a spherical shell (mantle) using a staggered finite-volume mesh and scipy's BDF integrator. It handles solid, partially molten, and fully molten regimes through composable phase evaluators, with conduction, parameterized convection (mixing length theory), gravitational separation, and convective mixing of melt.
 
+!!! note "Forming Worlds fork"
+    This documentation describes the version of Aragog integrated into the [PROTEUS framework](https://proteus-framework.org/PROTEUS). For the original project, see [ExPlanetology](https://aragog.readthedocs.io).
+
 !!! tip "New to Aragog?"
     See the **[Getting Started guide](getting_started.md)** for installation, first run, and basic usage.
 
