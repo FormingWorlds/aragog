@@ -84,8 +84,10 @@ def make_radio_heating_fn(heat_prod, abundance, concentration,
     def _h(t_yr):
         # exp(log(2) · (t0 − t) / half_life) per isotope, then weighted
         # sum across isotopes. Returns a scalar [W/kg] that the caller
-        # broadcasts across the staggered grid.
-        arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1.0)
+        # broadcasts across the staggered grid. The half_life floor of
+        # 1e-10 yr only guards against a literal-zero denominator; any
+        # physical isotope has half_life >> 1e-10 yr.
+        arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1e-10)
         per_iso = hp * ab * cn * jnp.exp(arg)
         return jnp.sum(per_iso)
 

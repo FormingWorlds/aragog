@@ -130,12 +130,12 @@ def test_radio_heating_negative_time_inflates_correctly():
 
 
 def test_radio_heating_unphysical_zero_half_life_does_not_crash():
-    """Half life clamped to ≥ 1 yr to avoid divide-by-zero.
+    """Zero half-life is clamped by a numerical floor to avoid divide-by-zero.
 
     Physical edge case: a misconfigured half_life=0 input must not
-    propagate as NaN/Inf into the integrator. The
-    ``jnp.maximum(hl, 1.0)`` guard inside make_radio_heating_fn
-    handles it; this test locks the guard in place.
+    propagate as NaN/Inf into the integrator. The numerical floor
+    inside ``make_radio_heating_fn`` handles it; this test locks
+    the guard in place.
     """
     from aragog.jax.solver import make_radio_heating_fn
 
@@ -148,6 +148,40 @@ def test_radio_heating_unphysical_zero_half_life_does_not_crash():
     H = make_radio_heating_fn(hp, ab, cn, t0, hl)
     val = float(H(1.0e6))
     assert np.isfinite(val), 'H_radio with hl=0 must remain finite'
+
+
+def test_radio_heating_short_half_life_decays_correctly():
+    """Sub-year half-lives must follow physical decay, not be clamped.
+
+    Pre-fix, the floor was 1.0 yr, which silently flattened the decay
+    of any isotope with hl < 1 yr (none in production, but a latent
+    correctness bug). The current floor of 1e-10 yr only guards the
+    literal-zero divide while letting any physical isotope decay.
+
+    Discriminating test: with hl = 0.5 yr (chosen well below the old
+    1.0 yr floor) and t0 = 0, evaluate at t = 1.0 yr (= 2 half-lives).
+    Correct result is H(t0)/4. Old (buggy) clamp would give
+    H(t0)*exp(-LOG_TWO * 1.0 / 1.0) = H(t0)/2, which we explicitly
+    reject below.
+    """
+    from aragog.jax.solver import make_radio_heating_fn
+
+    hp = np.array([1.0e-9])
+    ab = np.array([1.0])
+    cn = np.array([1.0])
+    t0 = np.array([0.0])
+    hl = np.array([0.5])  # 0.5 yr, well below the historical 1.0 yr clamp
+
+    H = make_radio_heating_fn(hp, ab, cn, t0, hl)
+    H0 = float(H(0.0))                 # heating at t = t0
+    H_two_hl = float(H(1.0))           # heating at t = 2 * hl
+
+    # After 2 half-lives, heating must be H(t0) / 4 to within float-64.
+    np.testing.assert_allclose(H_two_hl, H0 / 4.0, rtol=1e-12)
+    # The old (buggy) clamp would have given H(t0) / 2; reject that.
+    assert abs(H_two_hl - H0 / 2.0) > 0.1 * H0, (
+        'half-life floor too coarse: short-life isotope decay was clamped'
+    )
 
 
 @needs_eos

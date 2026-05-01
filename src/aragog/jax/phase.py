@@ -775,7 +775,7 @@ def compute_fluxes(
         S_basic = S_basic.at[0].set(S_basic_cmb_override)
     if dSdr_cmb_override is not None:
         dSdr = dSdr.at[0].set(dSdr_cmb_override)
-    elif dSdr_cmb_override is None:
+    else:
         # Mirror numpy entropy_state.py:389 ``dSdxi[0] = dSdxi[1]`` for
         # the non-energy_balance modes (quasi_steady etc.) where there
         # is no boundary-state override. In energy_balance mode the
