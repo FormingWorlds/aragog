@@ -1649,10 +1649,25 @@ class TestBoundaryCopies:
     def test_compute_fluxes_dSdr_surface_copy(self, jax_eos, default_params):
         """compute_fluxes must enforce dSdr[-1] = dSdr[-2] before the
         flux computation (numpy entropy_state.py:390 ``dSdxi[-1] =
-        dSdxi[-2]``). Verify by constructing a d_dr matrix that would
-        give a wrong-sign gradient at the top boundary, and checking
-        that the surface F_conv has the same sign as the adjacent
-        interior."""
+        dSdxi[-2]``).
+
+        The check: build two d_dr matrices that agree on every interior
+        row but disagree on the surface row (one is the conventional
+        backward difference, the other has flipped signs). Run
+        compute_fluxes with each and compare the resulting flux arrays.
+        Because the SPIDER copy overwrites whatever d_dr produces at
+        index -1 with the value at index -2, the output flux must be
+        identical between the two runs (basic-node phase properties
+        are identical; only dSdr_raw[-1] differs and that entry is
+        overwritten by the copy).
+
+        This is a stronger and cleaner check than comparing sign(F[-1])
+        against sign(F[-2]): the conductive flux carries an adiabatic
+        term -k*(dT/dP)_S*(dP/dr) whose value at adjacent basic nodes
+        with different (P, S) can legitimately straddle zero, so a
+        sign comparison between -1 and -2 conflates the boundary-copy
+        contract with the EOS dependence of the flux components.
+        """
         from aragog.jax.phase import (
             MeshArrays, PhaseParams, compute_fluxes,
         )
@@ -1663,51 +1678,67 @@ class TestBoundaryCopies:
         P_basic = jnp.linspace(120e9, 1e9, n_basic)
         P_stag = 0.5 * (P_basic[1:] + P_basic[:-1])
         dr = float(r_basic[1] - r_basic[0])
-        d_dr = jnp.zeros((n_basic, n))
-        # Interior centered diffs
-        for i in range(1, n_basic - 1):
-            d_dr = d_dr.at[i, i - 1].set(-1.0 / dr)
-            d_dr = d_dr.at[i, i].set(1.0 / dr)
-        # Boundary rows that would WRONGLY give the opposite-sign gradient
-        # at the surface basic node — the SPIDER copy must overwrite this.
-        d_dr = d_dr.at[-1, -1].set(-1.0 / dr)  # wrong sign on purpose
-        d_dr = d_dr.at[-1, -2].set(+1.0 / dr)
+
+        # Two d_dr matrices that share interior rows and differ only at
+        # the surface row. The "correct" matrix has the conventional
+        # backward-difference signs; the "buggy" one flips them.
+        def make_ddr(buggy_surface: bool):
+            m = jnp.zeros((n_basic, n))
+            for i in range(1, n_basic - 1):
+                m = m.at[i, i - 1].set(-1.0 / dr)
+                m = m.at[i, i].set(1.0 / dr)
+            if buggy_surface:
+                m = m.at[-1, -1].set(-1.0 / dr)  # flipped
+                m = m.at[-1, -2].set(+1.0 / dr)
+            else:
+                m = m.at[-1, -1].set(+1.0 / dr)  # conventional
+                m = m.at[-1, -2].set(-1.0 / dr)
+            return m
+
         q = jnp.zeros((n_basic, n))
         for i in range(1, n_basic - 1):
             q = q.at[i, i - 1].set(0.5)
             q = q.at[i, i].set(0.5)
         q = q.at[0, 0].set(1.0)
         q = q.at[-1, -1].set(1.0)
-        mesh = MeshArrays(
-            d_dr_matrix=d_dr, quantity_matrix=q,
-            area=jnp.ones(n_basic), volume=jnp.ones(n_basic),
-            radii_basic=r_basic, radii_stag=r_stag,
-            mixing_length=jnp.ones(n_basic) * 1e5,
-            mixing_length_sq=jnp.ones(n_basic) * 1e10,
-            mixing_length_cu=jnp.ones(n_basic) * 1e15,
-            P_stag=P_stag, P_basic=P_basic,
-            dP_dr_basic=jnp.gradient(P_basic, r_basic),
-            gravity=jnp.full(n_basic, 9.81),
-        )
-        # Linearly increasing entropy with index (so centered-diff dSdr is
-        # positive in the interior; the buggy surface row would flip it).
-        S = jnp.linspace(2800.0, 3500.0, n)
-        params = default_params  # convection on by default
-        flux = compute_fluxes(S, 0.0, jax_eos, params, mesh, jnp.zeros(n))
 
-        # The surface dSdr should equal the interior-adjacent value after
-        # the SPIDER copy. Reconstruct what compute_fluxes saw:
-        # dSdr_raw = d_dr @ S; the test passes if compute_fluxes's
-        # internal dSdr[-1] equals dSdr[-2], which we verify indirectly
-        # by checking that F at idx -1 is consistent with F at idx -2
-        # (both driven by the same dSdr, same phase properties at adjacent
-        # nodes — the small node-to-node difference reflects only the
-        # mesh-level rho/T/k differences, not a sign flip).
-        F = np.asarray(flux.heat_flux)
-        # Sign consistency between idx -2 and idx -1 (both should be
-        # outward-positive for a positive dSdr; without the copy, idx -1
-        # would flip sign).
-        assert np.sign(F[-1]) == np.sign(F[-2]), (
-            f'surface F should match sign of adjacent interior after '
-            f'SPIDER ic.c:450 dSdr copy; got F[-2]={F[-2]:.3e}, F[-1]={F[-1]:.3e}'
+        def build_mesh(buggy_surface: bool):
+            return MeshArrays(
+                d_dr_matrix=make_ddr(buggy_surface), quantity_matrix=q,
+                area=jnp.ones(n_basic), volume=jnp.ones(n_basic),
+                radii_basic=r_basic, radii_stag=r_stag,
+                mixing_length=jnp.ones(n_basic) * 1e5,
+                mixing_length_sq=jnp.ones(n_basic) * 1e10,
+                mixing_length_cu=jnp.ones(n_basic) * 1e15,
+                P_stag=P_stag, P_basic=P_basic,
+                dP_dr_basic=jnp.gradient(P_basic, r_basic),
+                gravity=jnp.full(n_basic, 9.81),
+            )
+
+        S = jnp.linspace(2800.0, 3500.0, n)
+        params = default_params
+
+        flux_clean = compute_fluxes(
+            S, 0.0, jax_eos, params, build_mesh(buggy_surface=False),
+            jnp.zeros(n),
+        )
+        flux_buggy = compute_fluxes(
+            S, 0.0, jax_eos, params, build_mesh(buggy_surface=True),
+            jnp.zeros(n),
+        )
+
+        F_clean = np.asarray(flux_clean.heat_flux)
+        F_buggy = np.asarray(flux_buggy.heat_flux)
+
+        # The SPIDER copy must make the two runs identical. Use a tight
+        # absolute tolerance because the only difference between the two
+        # cases is the value at d_dr[-1, -2:], which the copy overwrites
+        # before any downstream arithmetic.
+        np.testing.assert_allclose(
+            F_clean, F_buggy, rtol=0, atol=1e-12,
+            err_msg=(
+                'compute_fluxes must overwrite dSdr[-1] with dSdr[-2] '
+                'before the flux computation; the two d_dr surface '
+                'rows should produce identical fluxes after the copy.'
+            ),
         )
