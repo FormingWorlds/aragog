@@ -47,30 +47,32 @@ class BoundaryConfig:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
-    # Core BC mode (default = 'quasi_steady' v3 behaviour for now,
-    # to be flipped to 'energy_balance' once Path A is fully validated):
+    # Core boundary condition mode. Selects the formulation used
+    # when ``inner_boundary_condition = 1`` (core cooling).
     #
-    #   'quasi_steady' = legacy v3 alpha-factor heat-flux partition
-    #     between mantle bottom cell and core based on heat capacity
-    #     ratio. Standard since the Aragog refactor. Gives a -19 %
-    #     T_core offset against SPIDER on R8 CHILI Earth (known
-    #     limitation that Path A is meant to close).
+    #   'quasi_steady' = alpha-factor heat-flux partition between
+    #     the bottom mantle cell and the core, weighted by heat
+    #     capacity ratio. State vector length N (entropy only).
+    #     Default; produces stable cooling but underestimates the
+    #     true CMB heat loss relative to a SPIDER-parity reference.
     #
-    #   'energy_balance' = Path A SPIDER bit-parity core BC. Adds the
-    #     entropy gradient at the CMB basic node as an extra state
-    #     variable (mirror of SPIDER's dSdxi[ind_cmb]) and integrates
-    #     its time derivative via SPIDER's bc.c:76-131 formula:
+    #   'energy_balance' = SPIDER-parity core BC. The entropy
+    #     gradient at the CMB basic node is added as an extra state
+    #     variable (mirror of SPIDER's ``dSdxi[ind_cmb]``) and its
+    #     time derivative is integrated via SPIDER's ``bc.c:76-131``
+    #     formula:
     #         d/dt(dSdr_cmb) = (2/dr) * ((-F_cmb*area_cmb)*fac_cmb
     #                                    - dSdt_s[0])
-    #     where fac_cmb = cp_cmb / (cp_core*T_cmb*tfac*M_core).
-    #     This is the proper SPIDER-mirroring implementation; the
-    #     state vector grows by one element. NOT yet the default
-    #     until full CHILI v5 validation passes.
+    #     where ``fac_cmb = cp_cmb / (cp_core*T_cmb*tfac*M_core)``.
+    #     State vector length N+1.
     #
-    #   'bower2018' = EXPERIMENTAL (2026-04-09 evening): T_core as
-    #     ODE state variable, F_cmb from conduction
-    #     (-k_eff * (T_above - T_core) / dr_half). The conduction-
-    #     only flux underestimates the actual core heat loss by ~5
-    #     orders of magnitude. Failed empirical validation; kept in
-    #     the codebase as a tombstone. DO NOT use for production.
+    #   'gradient' = entropy gradient as the primary state field;
+    #     S is reconstructed by cumulative integration from the
+    #     surface. State vector length N+2.
+    #
+    #   'bower2018' = T_core as an ODE state variable with F_cmb
+    #     from conduction across the bottom half-cell. The
+    #     conduction-only flux underestimates true core heat loss
+    #     by orders of magnitude; this mode is retained for parity
+    #     testing only and is not recommended for production.
     core_bc: str = 'quasi_steady'

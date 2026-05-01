@@ -291,31 +291,26 @@ class EntropySolver:
 
         # CMB BC mode (set here from config so dSdt can dispatch even
         # before set_initial_entropy is called):
-        #   'energy_balance' = SPIDER-parity (default since 2026-04-12).
-        #     State = [S_0..S_{N-1}, dSdr_cmb]: the CMB entropy gradient
-        #     is an ODE state variable evolved by the core energy balance
-        #     (bc.c:76-131). This drives dSdr_cmb toward ~0 as the core
-        #     tracks the mantle, matching SPIDER's behaviour where
-        #     dSdxi_CMB ~ 4e-12 at t=33 kyr on CHILI R8 Earth. Prevents
-        #     the CMB cell drain that occurs in quasi_steady mode (where
-        #     the FD-derived dSdr[0] overshoots at the crystallisation
-        #     front, spiking Jtot[0] to ~2.6e10 W/m^2).
-        #   'quasi_steady' = legacy (v3 alpha-factor BC). Gives -18%
-        #     T_core gap to SPIDER due to the CMB cell drain. Kept for
-        #     backward compatibility.
-        #   'bower2018' = EXPERIMENTAL: T_core as ODE state variable
-        #     with conduction-only F_cmb. Needs thermal-boundary-layer
-        #     parameterization to be useful. Kept for follow-up work.
+        #   'energy_balance' = SPIDER-parity. State =
+        #     [S_0..S_{N-1}, dSdr_cmb]: the CMB entropy gradient is an
+        #     ODE state variable evolved by the core energy balance
+        #     (bc.c:76-131). Drives dSdr_cmb toward zero as the core
+        #     tracks the mantle, preventing the CMB cell drain seen
+        #     in quasi_steady mode where the FD-derived dSdr[0]
+        #     overshoots at the crystallisation front.
+        #   'quasi_steady' = alpha-factor BC. Faster but produces a
+        #     ~18 % T_core offset versus SPIDER due to CMB cell drain.
+        #   'bower2018' = T_core as ODE state with conduction-only
+        #     F_cmb. Retained for parity testing; not recommended.
         self._core_bc = getattr(
             self.parameters.boundary_conditions, 'core_bc', 'energy_balance'
         )
-        # Gravity (Stage 1c, 2026-04-20): per-node array when an external
-        # mesh file carries eos_gravity (UserDefinedEOS / Zalmoxis path),
-        # else scalar broadcast from the aragog-native PressureEOS scalar
-        # attribute or the mesh.settings fallback. Interpolation from the
-        # external eos_radius grid onto aragog's basic / staggered node
-        # radii keeps the gravity array consistent with the rest of the
-        # node-aligned fields.
+        # Per-node gravity profile when an external mesh file carries
+        # eos_gravity (UserDefinedEOS / Zalmoxis path); otherwise the
+        # scalar gravitational_acceleration is broadcast across the
+        # mesh. Interpolation from the external eos_radius grid onto
+        # aragog's basic and staggered node radii keeps gravity
+        # consistent with the other node-aligned fields.
         g_scalar = abs(float(getattr(
             mesh.eos, '_gravitational_acceleration',
             self.parameters.mesh.gravitational_acceleration,
@@ -533,13 +528,14 @@ class EntropySolver:
 
         Notes
         -----
-        When the v4 Bower core BC is active (``core_bc='bower2018'``,
-        the default), the solver state vector is N+1 in length, with
-        ``state[-1] == T_core``. The initial T_core is taken from the
-        bottom-cell mantle temperature derived from S_init via the EOS,
-        unless ``set_initial_core_temperature`` has been called first.
-        For the legacy quasi-steady BC (``core_bc='quasi_steady'``)
-        the state vector is N as before.
+        State vector length depends on the active core BC mode:
+        ``quasi_steady`` uses length N; ``energy_balance`` and
+        ``bower2018`` use length N+1 (entropy block plus one extra
+        state variable: ``dSdr_cmb`` or ``T_core`` respectively);
+        ``gradient`` uses length N+2. For the bower2018 mode the
+        initial ``T_core`` is taken from the bottom-cell mantle
+        temperature derived from ``S_init`` via the EOS unless
+        ``set_initial_core_temperature`` has been called first.
         """
         # Prefer the cached _n_stag from _initialize_internals; fall
         # back to the mesh accessor for legacy callers that bypass it.
@@ -623,13 +619,14 @@ class EntropySolver:
             self._S0[:n_stag] = S_arr
             self._S0[n_stag] = float(dSdr_cmb_init)
             logger.info(
-                'Initial state (Path A energy_balance): S_min=%.0f, S_max=%.0f, '
+                'Initial state (energy_balance): S_min=%.0f, S_max=%.0f, '
                 'dSdr_cmb_init=%.3e',
                 S_arr.min(), S_arr.max(), dSdr_cmb_init,
             )
         elif core_bc == 'bower2018':
-            # EXPERIMENTAL: core temperature as ODE state variable
-            # (conduction-only flux; not recommended). State = [S, T_core].
+            # Core temperature as ODE state variable (conduction-only
+            # flux). State = [S, T_core]. Retained for parity testing
+            # only; not recommended for production runs.
             T_core_init = getattr(self, '_T_core_init', None)
             if T_core_init is None:
                 prev_sol = getattr(self, '_solution', None)
@@ -649,7 +646,7 @@ class EntropySolver:
             self._S0[:n_stag] = S_arr
             self._S0[n_stag] = T_core_init
             logger.info(
-                'Initial state (EXPERIMENTAL bower2018): S_min=%.0f, '
+                'Initial state (bower2018): S_min=%.0f, '
                 'S_max=%.0f, T_core_init=%.0f K',
                 S_arr.min(), S_arr.max(), T_core_init,
             )
@@ -781,7 +778,7 @@ class EntropySolver:
         - 'quasi_steady' (default): state = [S_0, ..., S_{N-1}],
           length N. F_cmb is set by the alpha-factor partition of
           F[1].
-        - 'energy_balance' (Path A SPIDER bit-parity): state =
+        - 'energy_balance' (SPIDER bit-parity): state =
           [S_0, ..., S_{N-1}, dSdr_cmb], length N+1. The boundary
           state dSdr_cmb is passed into ``state.update`` so the
           convective+conductive flux at the CMB basic node uses
@@ -791,9 +788,9 @@ class EntropySolver:
           length N+2. Mirrors SPIDER's dS/dxi formulation. S at
           staggered nodes is reconstructed by cumulative sum from
           the surface inward at each RHS evaluation.
-        - 'bower2018' (EXPERIMENTAL): state = [S, T_core], length
-          N+1. F_cmb from conduction-only Fourier law. Failed,
-          tombstoned.
+        - 'bower2018': state = [S, T_core], length N+1. F_cmb from
+          conduction-only Fourier law. Retained for parity testing
+          only; not recommended.
         """
         n_stag = self._n_stag
         gradient_mode = (self._core_bc == 'gradient')
@@ -853,7 +850,8 @@ class EntropySolver:
                 # flux computed from the state-provided dS/dr at the CMB.
                 pass
             elif bower:
-                # EXPERIMENTAL Bower+2018 BC (tombstone, do not use).
+                # bower2018 BC: F_cmb from one-sided Fourier conduction
+                # across the bottom half-cell. Retained for parity tests.
                 T_above = float(np.asarray(
                     self.state.phase_staggered.temperature()
                 ).flat[0])
@@ -864,7 +862,8 @@ class EntropySolver:
                 F_cmb = -k_above * (T_above - extra) / max(self._cmb_dr_half, 1.0)
                 self.state._heat_flux[0] = F_cmb
             else:
-                # Legacy v3 quasi-steady BC (alpha factor partition).
+                # quasi_steady BC: alpha-factor flux partition between
+                # the bottom mantle cell and the core.
                 rho_first = float(np.asarray(
                     self.state.phase_staggered.density()).flat[0])
                 cp_first = float(np.asarray(
@@ -972,7 +971,7 @@ class EntropySolver:
 
             return np.concatenate([dSdt, [d_dSdr_cmb_dt]])
 
-        # bower2018 (EXPERIMENTAL tombstone path)
+        # bower2018: T_core ODE state with conduction-only F_cmb.
         F_cmb = float(self.state._heat_flux[0])
         dT_core_dt = -F_cmb * self._cmb_area / max(self._core_cap, 1.0)
         dT_core_dt *= SECS_PER_YEAR
@@ -1891,16 +1890,14 @@ class EntropySolver:
         ).ravel()
         T_magma = float(T_basic_final[-1])
         # Core temperature: bottom staggered cell (T_stag[0]).
-        # SPIDER reports T_core = interior_o.temp[-1] which is the last
-        # staggered node (SPIDER orders surface-to-CMB, so [-1] = CMB
-        # cell). Aragog orders CMB-to-surface, so [0] = CMB cell.
-        # Previous code used the CMB basic-node entropy via EOS for
-        # energy_balance/gradient modes, but that is at the actual CMB
-        # radius (half a cell below T_stag[0]), giving a systematic
-        # +10 K offset from the higher pressure. Using T_stag[0] for
-        # all modes matches SPIDER's definition exactly.
+        # SPIDER reports T_core = interior_o.temp[-1], the last
+        # staggered node in its surface-to-CMB ordering. Aragog
+        # orders CMB-to-surface, so [0] = CMB cell. Reading T_stag[0]
+        # rather than evaluating T at the CMB basic node avoids a
+        # systematic ~10 K offset from the half-cell pressure
+        # difference and matches SPIDER's definition.
         if bower:
-            T_core = extra_final  # EXPERIMENTAL: integrated ODE state
+            T_core = extra_final  # bower2018: T_core integrated as ODE state
         else:
             T_core = float(T_stag[0])
         Phi_global = float(np.dot(phi_stag, vol) / np.sum(vol))

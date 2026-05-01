@@ -115,9 +115,14 @@ class _BoundaryConditionsParameters:
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
     # Core BC mode selector, threaded from config/boundary.py.
-    # Valid values: 'quasi_steady' (default, v3 alpha-factor),
-    #               'energy_balance' (Path A SPIDER bit-parity),
-    #               'bower2018' (EXPERIMENTAL tombstone, do not use).
+    # Valid values: 'quasi_steady' (alpha-factor flux partition,
+    #               state vector length N),
+    #               'energy_balance' (SPIDER-parity dSdr_cmb evolution,
+    #               state vector length N+1),
+    #               'gradient' (entropy gradient as primary state,
+    #               length N+2),
+    #               'bower2018' (unrecommended; T_core as ODE state,
+    #               retained for parity testing only).
     # See aragog/config/boundary.py docstring for details.
     core_bc: str = 'quasi_steady'
 
