@@ -52,16 +52,16 @@ More comprehensive set up guides are available here:
 - [VS Code and Poetry guide](https://gist.github.com/djbower/c66474000029730ac9f8b73b96071db3)
 - [Windows and Spyder guide](https://gist.github.com/djbower/c82b4a70a3c3c74ad26dc572edefdd34)
 
-## Download data from the OSF repository
+## Optional dependency: SUNDIALS CVODE
 
-Aragog requires lookup table data storing thermophysics properties of the liquid and solid matter. These data are stored in the [OSF repository](https://osf.io/phsxf/). You can download it with the command:
-
-```sh
-aragog download all
-```
-
-The command `aragog env` will give you the path where the data have been downloaded. If you want to setup your own path, setup the environment variable `FWL_DATA` before running the download command:
+For production-grade stiff integration, install `scikits_odes` so the solver can dispatch to SUNDIALS CVODE (`solver_method = "cvode"`). Without it the solver falls back to scipy `Radau` or `BDF`, which are sufficient for short tests but can collapse their step size at the crystallisation front on long magma-ocean cooling runs:
 
 ```sh
-export FWL_DATA=your_absolute_path/
+pip install scikits-odes
 ```
+
+`scikits_odes` is an optional dependency: importing Aragog without it succeeds, but selecting the CVODE path raises a clear error message at solve time.
+
+## Equation-of-state tables
+
+The entropy solver requires a directory of pressure-entropy (P-S) lookup tables in the SPIDER format. The files needed and their format are documented in [Reference: data](../Reference/data.md). In coupled PROTEUS runs the wrapper produces these tables automatically from a configured P-T melting curve and the Wolf-Bower (2018) RTpress liquid EOS; for standalone use, point the `eos_dir` argument of `EntropySolver.from_file()` at any directory containing the ten required files.
