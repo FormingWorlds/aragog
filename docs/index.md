@@ -2,7 +2,7 @@
 
 **Aragog** is a 1-D spherically symmetric interior thermal evolution solver for rocky planetary mantles, part of the [PROTEUS](https://proteus-framework.org/PROTEUS) coupled atmosphere-interior evolution framework.
 
-Aragog computes the time evolution of a radial temperature profile inside a spherical shell (mantle) using a staggered finite-volume mesh and scipy's BDF integrator. It handles solid, partially molten, and fully molten regimes through composable phase evaluators, with conduction, parameterized convection (mixing length theory), gravitational separation, and convective mixing of melt.
+Aragog evolves the specific entropy $S(r,t)$ at staggered nodes inside a spherical mantle shell. Temperature, density, melt fraction, and the other diagnostic properties are read from a pre-tabulated equation of state (EOS) at each radial node, which keeps the latent heat of fusion implicit in the table rather than expressed as a heat-capacity spike. The mantle is integrated as a stiff initial-value problem with implicit BDF or Radau time integration; conduction, convection (mixing-length theory), gravitational separation, chemical mixing, dilatation heating, radiogenic heating, and tidal heating each contribute as configurable flux or source terms.
 
 !!! note "Forming Worlds fork"
     This documentation describes the version of Aragog integrated into the [PROTEUS framework](https://proteus-framework.org/PROTEUS). For the original project, see [ExPlanetology](https://aragog.readthedocs.io).
@@ -12,13 +12,15 @@ Aragog computes the time evolution of a radial temperature profile inside a sphe
 
 ## Features
 
-- **Temperature-pressure formalism**: single prognostic variable ($T$) with diagnostic properties from EOS
-- **Staggered finite-volume mesh**: cell-center temperatures, face fluxes, with optional mass-coordinate transform
-- **BDF time integration**: implicit variable-order solver (scipy `solve_ivp`) handles stiff conduction and phase-change problems
-- **Composable phase evaluators**: separate solid, liquid, and mixed-phase evaluators assembled into a composite evaluator that switches per cell
-- **Configurable heat transport**: conduction, convective mixing (MLT with viscous/inviscid regimes), gravitational separation, tidal and radiogenic heating
-- **TOML configuration**: modern TOML config files with attrs-based validation, plus legacy INI support
-- **NetCDF output**: mesh variables, fluxes, heating sources, and scalar diagnostics at any time step
+- **Entropy formulation**: the prognostic variable is specific entropy $S(r,t)$. Temperature, density, melt fraction, heat capacity, thermal expansivity, and adiabatic gradient are looked up from a $(P, S)$ EOS table on each call, so the latent heat of fusion is encoded in the table rather than expressed as a $c_p$ spike across the solidus and liquidus.
+- **Staggered finite-volume mesh**: entropy at cell centres (staggered nodes), fluxes at cell faces (basic nodes). The radial coordinate is either uniform in radius or uniform in mass coordinate, with a Newton solve for the spatial radii in the mass-coordinate variant.
+- **Stiff implicit time integration**: scipy `Radau` is the default; an optional path through SUNDIALS CVODE (via `scikits.odes`) is provided for production-grade runs that require the same modified-Newton, cached-Jacobian solver SPIDER uses. A phase-aware `max_step` reduction caps the step size near solidus and liquidus crossings.
+- **Multiple core boundary conditions**: ``quasi_steady`` (heat-capacity-weighted flux partition, state vector length $N$), ``energy_balance`` (SPIDER-parity ODE evolution of the CMB entropy gradient, length $N+1$), ``gradient`` (entropy gradient as the primary state field, length $N+2$), and a retained ``bower2018`` mode for parity testing.
+- **Single phase evaluator backed by P-S tables**: `EntropyPhaseEvaluator` wraps the loaded `EntropyEOS` and reproduces SPIDER's ``EOSEval_Composite_TwoPhase`` blending rules between solid, mixed, and liquid regimes via cubic-Hermite or tanh smoothing across the phase boundaries.
+- **Configurable heat transport**: conduction, convection (MLT with smooth viscous/inviscid blend at $Re_\mathrm{crit} = 9/8$), gravitational separation of melt, chemical mixing flux (SPIDER bracket form), dilatation $P\,dV$ heating tied to gravitational separation, radiogenic heating, and tidal heating. Each is independently switchable.
+- **JAX-accelerated path**: optional analytic Jacobian for CVODE, built by tracing the pure-functional `compute_fluxes` in `aragog.jax.phase` with `jax.jacrev`. Removes the $O(N)$ finite-difference RHS evaluations per Jacobian build.
+- **TOML configuration**: TOML config files with attrs-based validation; legacy INI files are still parsed for back-compatibility.
+- **Programmatic output via `SolverOutput`**: a dataclass returned by `EntropySolver.get_state()` carries the staggered-node profiles ($S$, $T$, $\phi$, $\rho$, $\eta$), basic-node fluxes ($F_\mathrm{cond}$, $F_\mathrm{conv}$, $F_\mathrm{grav}$, $F_\mathrm{mix}$, $\partial S/\partial r$), scalar diagnostics ($T_\mathrm{magma}$, $T_\mathrm{core}$, $\Phi_\mathrm{global}$, $E_\mathrm{th}$, $C_p^\mathrm{eff}$, $F_\mathrm{heat}^\mathrm{total}$), and the integration status flag used by the PROTEUS retry ladder.
 
 !!! info "PROTEUS framework"
     When used within PROTEUS, Aragog is called at every coupling timestep to update the mantle temperature profile, surface temperature, and heat fluxes. The documentation for PROTEUS can be found [here](https://proteus-framework.org/PROTEUS).
@@ -63,9 +65,10 @@ Aragog computes the time evolution of a radial temperature profile inside a sphe
 
 ## Citation
 
-If you use Aragog, please cite:
+If you use Aragog in published work, please cite the original numerical method paper and, where applicable, the PALEOS multiphase EOS framework that supplies the production-run $(P, S)$ tables:
 
-Bower, D.J., Sanan, P., & Wolf, A.S. (2018). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49--62. [https://doi.org/10.1016/j.pepi.2017.11.004](https://doi.org/10.1016/j.pepi.2017.11.004)
+- Bower, D.J., Sanan, P., & Wolf, A.S. (2018). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49–62. [https://doi.org/10.1016/j.pepi.2017.11.004](https://doi.org/10.1016/j.pepi.2017.11.004)
+- Attia, M., et al. (2026). *PALEOS: a multiphase equation of state framework for terrestrial mantles*. (Forthcoming.)
 
 ## Code availability
 
