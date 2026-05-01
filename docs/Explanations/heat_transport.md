@@ -121,11 +121,19 @@ The term enters the entropy equation as a heat flux: even though the flux carrie
 Internal heating contributes to the entropy equation through the source term $\rho H$ in the integral balance. The three contributions are summarised here; the radiogenic-decay model and the per-isotope configuration are discussed in [Energy equation](energy_equation.md).
 
 - **Radiogenic.** $H_\mathrm{radio} = \sum_i \chi_i \varphi_i \exp(-\ln 2\,(t - t_0)/\tau_{1/2,i})$, time-dependent and (typically) space-uniform.
-- **Dilatation $P\,dV$.** Work done when melt of different density is transported across a pressure gradient by chemical mixing or gravitational separation:
+- **Dilatation $P\,dV$.** Work done when melt of different density is transported across a pressure gradient by chemical mixing or gravitational separation. The specific (per-mass) heating rate at staggered nodes is
   $$
-  \Phi_\mathrm{vol} = g\,\left(\frac{1}{\rho_m} - \frac{1}{\rho_s}\right)\,(j_\mathrm{mix} + j_\mathrm{grav}),
+  H_\mathrm{dil} = g\,\left(\frac{1}{\rho_m} - \frac{1}{\rho_s}\right)\,(j_\mathrm{mix} + j_\mathrm{grav}),
   $$
-  with $j_\mathrm{mix}$ the convective-mixing mass flux and $j_\mathrm{grav}$ the gravitational-separation mass flux. Only active when both `dilatation = true` and `gravitational_separation = true`.
+  with $j_\mathrm{mix}$ the convective-mixing mass flux and $j_\mathrm{grav}$ the gravitational-separation mass flux (Soucasse, Aragog formulation §1.2). The volumetric source in the integral balance is $\Phi_\mathrm{vol} = \rho\,H_\mathrm{dil}$. Active whenever `dilatation = true` and at least one of `gravitational_separation` or `mixing` is enabled; the flux corresponding to a disabled mechanism is omitted from the sum.
+
+    In the entropy formulation, the convective-mixing flux is computed directly as a heat flux $F_\mathrm{mix}$ rather than as $j_\mathrm{mix}\,L$. The equivalent mass flux is recovered as
+    $$
+    j_\mathrm{mix} = \frac{F_\mathrm{mix}}{L(P)},\qquad L(P) = T_\mathrm{fus}(P)\,[S_\mathrm{liq}(P) - S_\mathrm{sol}(P)].
+    $$
+    The identity
+    $\partial S/\partial r - [\phi\,\partial S_\mathrm{liq}/\partial P + (1-\phi)\,\partial S_\mathrm{sol}/\partial P]\,\partial P/\partial r = \Delta S_\mathrm{fus}\,\partial \phi/\partial r$
+    inside the mushy band makes this exact: the bracket-form heat flux divided by $L$ recovers Soucasse's $j_\mathrm{mix} = -\rho\,\kappa_c\,\partial \phi/\partial r$ (modulo the smoothing factor inherited from the mushy-band gate).
 - **Tidal.** Per-staggered-node array supplied through `tidal_array`; broadcast scalar or length-$N$ array.
 
 ## Per-component flux output

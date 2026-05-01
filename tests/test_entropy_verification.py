@@ -752,3 +752,575 @@ class TestMeshConvergence:
             assert diff_fine <= diff_coarse + 1.0, (
                 f'Not converging: |T(N={Ns[2]})-T(N={Ns[1]})| = {diff_fine:.1f} K '
                 f'> |T(N={Ns[1]})-T(N={Ns[0]})| = {diff_coarse:.1f} K')
+
+
+# -- Tier 1: Dilatation (PdV) heating physics --------------------------------
+#
+# Per Soucasse §1.2 (Aragog formulation, June 2025) and the PROTEUS 2607
+# canonical form, dilatation heating must include BOTH the gravitational-
+# separation mass flux ``j_gm`` and the convective-mixing mass flux
+# ``j_cm``:
+#
+#     Phi_vol = rho * g * (1/rho_m - 1/rho_s) * (j_cm + j_gm)         [W/m^3]
+#     H_dil   =       g * (1/rho_m - 1/rho_s) * (j_cm + j_gm)         [W/kg]
+#
+# In the entropy formulation the mixing mass flux is recovered from the
+# bracket-form heat flux as
+#     j_cm = _jmix_heat / L
+# where ``L = T_fus * (S_liq - S_sol)`` is the latent heat of fusion (an
+# algebraic identity inside the mushy band; see ``entropy_state.py``).
+
+def _make_test_mesh_with_staggered_interp(
+    N=40, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5,
+):
+    """Like make_mesh, but also exposes ``quantity_at_staggered_nodes``.
+
+    The dilatation heating code (entropy_state.py) calls
+    ``mesh.quantity_at_staggered_nodes`` to interpolate the basic-node
+    mass flux to the staggered grid. The default test mesh in this
+    module does not define that method, so this helper extends it.
+    """
+    mesh = make_mesh(N=N, R_cmb=R_cmb, R_surf=R_surf, P_cmb=P_cmb, P_surf=P_surf)
+
+    def quantity_at_staggered_nodes(basic_quantity):
+        b = np.asarray(basic_quantity).ravel()
+        return 0.5 * (b[:-1] + b[1:])
+
+    mesh.quantity_at_staggered_nodes = quantity_at_staggered_nodes
+    return mesh
+
+
+def _make_dilatation_state(
+    mesh, eos, *, mixing=True, grav_sep=True, dilatation=True,
+):
+    """EntropyState with dilatation/grav_sep/mixing flags exposed."""
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+    from aragog.solver.entropy_state import EntropyState
+
+    phase_stag = EntropyPhaseEvaluator(
+        entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_stag.set_pressure(mesh.staggered.pressure)
+
+    phase_basic = EntropyPhaseEvaluator(
+        entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_basic.set_pressure(mesh.basic.pressure)
+
+    class Eval:
+        pass
+    evaluator = Eval()
+    evaluator.mesh = mesh
+
+    return EntropyState(
+        evaluator=evaluator,
+        phase_staggered=phase_stag,
+        phase_basic=phase_basic,
+        conduction=True,
+        convection=True,
+        gravitational_separation=grav_sep,
+        mixing=mixing,
+        dilatation=dilatation,
+    )
+
+
+@needs_eos
+@pytest.mark.unit
+class TestDilatationHeating:
+    """Verify the entropy-form dilatation heating against Soucasse's
+    formulation. Each test independently recomputes the expected
+    H_dil array from the state's exposed ``mass_flux``, ``_jmix_heat``,
+    and EOS quantities, and compares element-wise to the heating array
+    populated by ``EntropyState.update``.
+    """
+
+    @staticmethod
+    def _expected_H_dil(state, mesh, *, include_mixing):
+        """Independently reconstruct the expected H_dil[i] (per-mass)."""
+        # Mass flux at basic nodes: gravitational-separation contribution
+        # is already in state._mass_flux (after smoothing + boundary zeros).
+        j_basic = np.asarray(state._mass_flux).ravel().copy()
+
+        if include_mixing:
+            L_basic = np.asarray(state.phase_basic.latent_heat()).ravel()
+            jmix_heat = np.asarray(state._jmix_heat).ravel()
+            j_mix = np.where(
+                np.abs(L_basic) > 1.0,
+                jmix_heat / np.maximum(L_basic, 1.0),
+                0.0,
+            )
+            j_mix[0] = 0.0
+            j_mix[-1] = 0.0
+            j_basic = j_basic + j_mix
+
+        j_stag = mesh.quantity_at_staggered_nodes(j_basic)
+        delta_v = np.asarray(
+            state.phase_staggered.delta_specific_volume()
+        ).ravel()
+        g_stag = np.abs(np.asarray(
+            state.phase_staggered.gravitational_acceleration()
+        ).ravel())
+        return g_stag * delta_v * j_stag
+
+    def test_dilatation_zero_above_liquidus(self):
+        """S well above liquidus everywhere: smth(phi) = 0, both fluxes
+        and H_dil vanish to floating-point noise.
+
+        Edge case: pure-melt regime. Discriminates against a buggy
+        formula that would still produce non-zero PdV from a non-zero
+        Δv (the smoothing/clip is what kills it).
+        """
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+        N = 30
+        mesh = _make_test_mesh_with_staggered_interp(N=N)
+        state = _make_dilatation_state(mesh, eos)
+
+        # Put S well above the highest liquidus value at any pressure.
+        S_liq_max = float(np.max(eos.liquidus_entropy(mesh.basic.pressure)))
+        S0 = np.full(N, S_liq_max + 500.0)
+        state.update(S0, 0.0)
+
+        H = state.heating
+        assert np.max(np.abs(H)) < 1e-10, (
+            f'H_dil should vanish above liquidus; got max |H|={np.max(np.abs(H)):.2e}.'
+        )
+
+    def test_dilatation_zero_below_solidus(self):
+        """S well below solidus everywhere: smth(phi) = 0, H_dil vanishes."""
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+        N = 30
+        mesh = _make_test_mesh_with_staggered_interp(N=N)
+        state = _make_dilatation_state(mesh, eos)
+
+        S_sol_min = float(np.min(eos.solidus_entropy(mesh.basic.pressure)))
+        S0 = np.full(N, max(S_sol_min - 500.0, 100.0))
+        state.update(S0, 0.0)
+
+        H = state.heating
+        assert np.max(np.abs(H)) < 1e-10, (
+            f'H_dil should vanish below solidus; got max |H|={np.max(np.abs(H)):.2e}.'
+        )
+
+    def test_dilatation_formula_matches_jgrav_only(self):
+        """With mixing OFF, H_dil must equal g·Δv·j_grav (Soucasse
+        reduced to pure gravitational separation).
+
+        Verifies that the original SPIDER-parity contribution is
+        preserved. Picks a mushy-band S so j_grav is non-zero and the
+        comparison is non-trivial.
+        """
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+        N = 30
+        mesh = _make_test_mesh_with_staggered_interp(N=N)
+        state = _make_dilatation_state(
+            mesh, eos, mixing=False, grav_sep=True, dilatation=True,
+        )
+
+        S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
+        S_liq = np.asarray(eos.liquidus_entropy(mesh.basic.pressure)).ravel()
+        S0_basic = 0.5 * (S_sol + S_liq)
+        # Add a downward gradient so j_grav is non-zero (melt rises)
+        S0_basic = S0_basic + 60.0 * np.linspace(-1, 1, mesh.basic.radii.size)
+        S0 = mesh.quantity_at_staggered_nodes(S0_basic)
+
+        state.update(S0, 0.0)
+
+        H_actual = np.asarray(state.heating).ravel()
+        H_expected = self._expected_H_dil(state, mesh, include_mixing=False)
+
+        # We require non-trivial magnitude: the j_grav contribution must
+        # be measurable, otherwise the test is vacuous.
+        assert np.max(np.abs(H_expected)) > 1e-12, (
+            'Expected dilatation heating is zero everywhere; '
+            'test setup did not produce a non-trivial j_grav.'
+        )
+        np.testing.assert_allclose(
+            H_actual, H_expected,
+            rtol=1e-12, atol=1e-14,
+            err_msg='H_dil != g·Δv·j_grav with mixing=False',
+        )
+
+    def test_dilatation_formula_matches_jmix_plus_jgrav(self):
+        """With both mixing and grav_sep ON, H_dil must equal
+        g·Δv·(j_mix + j_grav). This is the Soucasse canonical form.
+
+        Discriminating: compares against the numerically distinct
+        wrong formula H_dil = g·Δv·j_grav (the pre-fix code).
+        """
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+        N = 30
+        mesh = _make_test_mesh_with_staggered_interp(N=N)
+        state = _make_dilatation_state(
+            mesh, eos, mixing=True, grav_sep=True, dilatation=True,
+        )
+
+        # Mushy interior with a gradient that drives BOTH j_grav (sign of
+        # gravity-driven separation) and j_mix (entropy-bracket gradient).
+        S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
+        S_liq = np.asarray(eos.liquidus_entropy(mesh.basic.pressure)).ravel()
+        S0_basic = 0.5 * (S_sol + S_liq)
+        S0_basic = S0_basic + 80.0 * np.linspace(-1, 1, mesh.basic.radii.size)
+        S0 = mesh.quantity_at_staggered_nodes(S0_basic)
+
+        state.update(S0, 0.0)
+
+        H_actual = np.asarray(state.heating).ravel()
+        H_expected = self._expected_H_dil(state, mesh, include_mixing=True)
+
+        # Non-triviality: BOTH contributions must be non-zero, otherwise
+        # the test is just retesting the j_grav-only path.
+        L_basic = np.asarray(state.phase_basic.latent_heat()).ravel()
+        jmix_heat = np.asarray(state._jmix_heat).ravel()
+        j_mix = np.where(
+            np.abs(L_basic) > 1.0,
+            jmix_heat / np.maximum(L_basic, 1.0), 0.0,
+        )
+        j_grav = np.asarray(state._mass_flux).ravel()
+        assert np.max(np.abs(j_mix)) > 1e-8, (
+            f'j_mix = 0 at all nodes; mixing flux did not engage. '
+            f'max|j_mix|={np.max(np.abs(j_mix)):.2e}'
+        )
+        assert np.max(np.abs(j_grav)) > 1e-8, (
+            f'j_grav = 0 at all nodes; gravitational separation flux did '
+            f'not engage. max|j_grav|={np.max(np.abs(j_grav)):.2e}'
+        )
+
+        np.testing.assert_allclose(
+            H_actual, H_expected,
+            rtol=1e-12, atol=1e-14,
+            err_msg='H_dil != g·Δv·(j_mix + j_grav) with both fluxes ON',
+        )
+
+    def test_dilatation_jmix_changes_heating_magnitude(self):
+        """Toggling mixing ON adds a measurable contribution to H_dil
+        (post-fix). Pre-fix code would give identical heating in both
+        cases, since j_mix never entered the PdV term.
+        """
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+        N = 30
+
+        # Same physical state, only the mixing flag differs.
+        S_sol = np.asarray(eos.solidus_entropy(
+            _make_test_mesh_with_staggered_interp(N=N).basic.pressure)).ravel()
+        S_liq = np.asarray(eos.liquidus_entropy(
+            _make_test_mesh_with_staggered_interp(N=N).basic.pressure)).ravel()
+        S0_basic = 0.5 * (S_sol + S_liq)
+        S0_basic = S0_basic + 80.0 * np.linspace(-1, 1, S0_basic.size)
+
+        H_norms = {}
+        for mixing_on in (False, True):
+            mesh = _make_test_mesh_with_staggered_interp(N=N)
+            state = _make_dilatation_state(
+                mesh, eos, mixing=mixing_on, grav_sep=True, dilatation=True,
+            )
+            S0 = mesh.quantity_at_staggered_nodes(S0_basic)
+            state.update(S0, 0.0)
+            H_norms[mixing_on] = float(
+                np.linalg.norm(np.asarray(state.heating).ravel())
+            )
+
+        # Post-fix: H norm must change when mixing toggles. Pre-fix, the
+        # two values would be bit-identical because j_mix never entered.
+        rel_change = abs(H_norms[True] - H_norms[False]) / max(H_norms[False], 1e-30)
+        assert rel_change > 1e-6, (
+            f'Mixing flag did not change H_dil (rel change {rel_change:.2e}); '
+            f'norms = {H_norms}. Suggests j_mix is missing from the PdV term.'
+        )
+
+    def test_dilatation_disabled_zeros_heating(self):
+        """With ``dilatation=False`` and no other heating sources,
+        ``state.heating`` must be identically zero regardless of mass
+        fluxes.
+        """
+        from aragog.eos.entropy import EntropyEOS
+        eos = EntropyEOS(EOS_DIR)
+        N = 30
+        mesh = _make_test_mesh_with_staggered_interp(N=N)
+        state = _make_dilatation_state(
+            mesh, eos, mixing=True, grav_sep=True, dilatation=False,
+        )
+
+        S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
+        S_liq = np.asarray(eos.liquidus_entropy(mesh.basic.pressure)).ravel()
+        S0_basic = 0.5 * (S_sol + S_liq)
+        S0 = mesh.quantity_at_staggered_nodes(S0_basic)
+        state.update(S0, 0.0)
+
+        assert float(np.max(np.abs(state.heating))) == 0.0, (
+            'state.heating should be 0.0 with dilatation=False and no other heating'
+        )
+
+
+# -- Tier 1: Mass-coordinate transform identity ------------------------------
+#
+# Aragog supports a uniform-mass-coordinate basic grid (``mass_coordinates =
+# True``), an extension over the SPIDER reference. Verify:
+#   (a) when ``rho*(r) = const``, the transform reduces to identity
+#       (xi = r, dxi/dr = 1);
+#   (b) Newton round-trip ``r(xi(r)) = r`` to machine precision;
+#   (c) for Adams-Williamson EOS (rho* increases with depth), the basic
+#       radii on the uniform-xi grid are concentrated toward the CMB
+#       (where mass is densest).
+
+
+@pytest.mark.unit
+class TestMassCoordinates:
+    """First-principles tests of the mass-coordinate transform in
+    ``aragog.mesh``. These don't depend on the PALEOS EOS tables — only
+    on the Adams-Williamson pressure profile and the Newton solve in
+    ``Mesh.__init__``.
+    """
+
+    @staticmethod
+    def _build_parameters(*, mass_coordinates, rho_top=4090.0,
+                          K_S=260e9, N=40):
+        """Construct a minimal Parameters object suitable for building
+        a Mesh. Bypasses ConfigParser — keeps the test self-contained.
+        """
+        import numpy as _np
+        from aragog.parser import (
+            Parameters, _ScalingsParameters, _SolverParameters,
+            _BoundaryConditionsParameters, _MeshParameters,
+            _EnergyParameters, _InitialConditionParameters,
+            _PhaseParameters, _PhaseMixedParameters,
+        )
+
+        scalings = _ScalingsParameters(
+            radius=6.371e6,
+            temperature=4000.0,
+            density=4000.0,
+            time=3.155760e6,
+        )
+        solver = _SolverParameters(
+            start_time=0.0, end_time=1.0,
+            atol=1e-6, rtol=1e-6,
+            tsurf_poststep_change=30.0,
+            event_triggering=False,
+        )
+        bc = _BoundaryConditionsParameters(
+            outer_boundary_condition=1,
+            outer_boundary_value=1500.0,
+            inner_boundary_condition=2,
+            inner_boundary_value=0.0,
+            emissivity=1.0,
+            equilibrium_temperature=273.0,
+            core_heat_capacity=880.0,
+        )
+        mesh_p = _MeshParameters(
+            outer_radius=6.371e6,
+            inner_radius=3.480e6,
+            number_of_nodes=N,
+            mixing_length_profile='constant',
+            core_density=10738.0,
+            eos_method=1,
+            surface_density=rho_top,
+            gravitational_acceleration=9.81,
+            adiabatic_bulk_modulus=K_S,
+            mass_coordinates=mass_coordinates,
+        )
+        energy = _EnergyParameters(
+            conduction=True, convection=True,
+            gravitational_separation=False, mixing=False,
+            radionuclides=False, dilatation=False, tidal=False,
+        )
+        ic = _InitialConditionParameters(
+            initial_condition=1,
+            surface_temperature=4000.0,
+            basal_temperature=4000.0,
+        )
+        phase_liq = _PhaseParameters(
+            density=4000.0, viscosity=1e2, heat_capacity=1000.0,
+            melt_fraction=1.0, thermal_conductivity=4.0,
+            thermal_expansivity=1e-5,
+        )
+        phase_sol = _PhaseParameters(
+            density=4200.0, viscosity=1e21, heat_capacity=1000.0,
+            melt_fraction=0.0, thermal_conductivity=4.0,
+            thermal_expansivity=1e-5,
+        )
+        phase_mix = _PhaseMixedParameters(
+            latent_heat_of_fusion=4e6,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus='', liquidus='', phase='mixed',
+            phase_transition_width=0.1,
+            grain_size=1e-3,
+        )
+        params = Parameters(
+            scalings=scalings, solver=solver,
+            boundary_conditions=bc, mesh=mesh_p,
+            energy=energy, initial_condition=ic,
+            phase_liquid=phase_liq, phase_solid=phase_sol,
+            phase_mixed=phase_mix, radionuclides=[],
+        )
+        # No scaling — keep SI throughout for direct interpretation.
+        return params
+
+    def test_xi_approaches_r_as_density_becomes_uniform(self):
+        """As K_S grows large, AW density ρ*(P)=ρ_top·exp(P/K_S) flattens
+        toward ρ_top, and the mass-coord mesh approaches the uniform-r
+        mesh.
+
+        Discriminating: a buggy transform that did not respect the
+        density-weighting would give the SAME mesh at all K values, or
+        would diverge with large K. We verify that the L_inf node
+        offset DECREASES as K increases (proper trend) and that at
+        K = 1e15 Pa (effectively incompressible for a 3000 km mantle)
+        the offset is < 0.1% of the mantle thickness.
+        """
+        from aragog.mesh import Mesh
+
+        offsets = []
+        K_values = [260e9, 1e12, 1e15]
+        for K in K_values:
+            params_uni = self._build_parameters(
+                mass_coordinates=False, K_S=K, N=20)
+            params_xi = self._build_parameters(
+                mass_coordinates=True, K_S=K, N=20)
+            mesh_uni = Mesh(params_uni)
+            mesh_xi = Mesh(params_xi)
+            r_uni = np.asarray(mesh_uni.basic.radii).ravel()
+            r_xi = np.asarray(mesh_xi.basic.radii).ravel()
+            mantle_thick = r_uni[-1] - r_uni[0]
+            offsets.append(float(np.max(np.abs(r_xi - r_uni)) / mantle_thick))
+
+        # Monotone trend toward identity (transform recovers no-op limit)
+        assert offsets[-1] < offsets[0], (
+            f'Mass-coord mesh did not approach uniform-r mesh as K→∞: '
+            f'offsets {offsets} should be monotonically decreasing.'
+        )
+        # At K = 1e15 Pa, AW density variation across the mantle is
+        # < exp(P_cmb / K) ≈ exp(1e11 / 1e15) ≈ 1.0001, i.e. < 0.01%.
+        # The mass-coord and uniform-r meshes must coincide to that
+        # accuracy (with some Newton-xtol slop).
+        assert offsets[-1] < 1e-3, (
+            f'At K = 1e15 Pa the mass-coord mesh should match uniform-r '
+            f'to < 0.1% of mantle thickness; got {offsets[-1]:.2e}.'
+        )
+
+    def test_xi_grid_concentrates_at_cmb(self):
+        """Adams-Williamson with realistic K_S (260 GPa): ρ*(P) increases
+        with depth (Adams-Williamson is exponential), so the uniform-mass
+        grid should place MORE basic nodes near the CMB than a uniform-r
+        grid would.
+
+        Discriminating test: compares the mean radial spacing in the
+        bottom half of the mantle to that in the top half. For a uniform-
+        r grid, both are equal. For a uniform-xi grid with monotone
+        ρ*(r), the bottom half must have *smaller* mean spacing.
+        """
+        from aragog.mesh import Mesh
+        params_xi = self._build_parameters(
+            mass_coordinates=True, K_S=260e9, N=40)
+        mesh_xi = Mesh(params_xi)
+        r = np.asarray(mesh_xi.basic.radii).ravel()
+        dr = np.diff(r)
+        n_half = len(dr) // 2
+
+        mean_dr_bottom = float(np.mean(dr[:n_half]))
+        mean_dr_top = float(np.mean(dr[n_half:]))
+        # Adams-Williamson rho* grows with depth, so cells should be
+        # tighter near the CMB. Require a clearly resolvable contrast,
+        # not just a sign — to discriminate against a near-uniform mesh
+        # produced by a buggy transform.
+        assert mean_dr_bottom < 0.95 * mean_dr_top, (
+            f'Mass-coord mesh did not concentrate cells at the CMB: '
+            f'mean dr (bottom half) = {mean_dr_bottom:.3e} m vs '
+            f'mean dr (top half) = {mean_dr_top:.3e} m. '
+            f'Ratio = {mean_dr_bottom / mean_dr_top:.4f}; expected < 0.95.'
+        )
+
+    def test_xi_round_trip_via_analytical_mass_integral(self):
+        """The Newton solve in ``Mesh.__init__`` uses the analytical AW
+        mass integral ``eos.get_mass_within_radii`` to form ``xi(r)``.
+        Re-evaluating ``xi(r)`` at the resulting basic radii via the
+        same formula must reproduce the input uniform-xi grid to
+        Newton xtol (~1 m on a 3 Mm mantle, < 1e-6 relative).
+
+        The discrete-shell helper
+        ``get_basic_mass_coordinates_from_spatial_coordinates`` uses a
+        shell-by-shell Riemann sum that has its own discretisation
+        error and is NOT the inverse of the Newton solve; comparing
+        against it would produce a meaningless ~0.5% gap (verified
+        before the round-trip was rewritten).
+        """
+        from aragog.mesh import Mesh
+
+        params_xi = self._build_parameters(
+            mass_coordinates=True, K_S=260e9, N=30)
+        mesh_xi = Mesh(params_xi)
+
+        xi_basic = np.asarray(mesh_xi.basic.mass_radii).ravel()
+        r_basic = np.asarray(mesh_xi.basic.radii).ravel()
+        r_core = float(r_basic[0])
+        # rho_avg = mantle-average density used inside Mesh.__init__.
+        # Recompute via the same EOS path, sans 4pi.
+        r_surf = float(r_basic[-1])
+        M_4pi = (
+            mesh_xi.eos.get_mass_within_radii(np.array([[r_surf]]))
+            - mesh_xi.eos.get_mass_within_radii(np.array([[r_core]]))
+        ).item()
+        M_no4pi_total = M_4pi / (4.0 * np.pi)
+        mantle_volume_no4pi = (r_surf**3 - r_core**3) / 3.0
+        rho_avg = M_no4pi_total / mantle_volume_no4pi
+
+        # xi(r_i) per the analytical formula used by Mesh.__init__.
+        xi_recomputed = np.empty_like(r_basic)
+        for j, r in enumerate(r_basic):
+            M_shell_4pi = mesh_xi.eos.get_mass_within_radii(
+                np.array([[float(r)]])
+            ).item()
+            M_shell = M_shell_4pi / (4.0 * np.pi)
+            xi_recomputed[j] = (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
+
+        # 2 m abs (twice Newton xtol). The CMB and surface are exact
+        # by construction; interior nodes carry the brentq tolerance.
+        np.testing.assert_allclose(
+            xi_recomputed, xi_basic, atol=2.0,
+            err_msg='Round-trip xi(r_i) does not recover the uniform-xi '
+                    'grid via the same analytical formula the Newton '
+                    'solve targeted.',
+        )
+
+    def test_xi_grid_is_uniform_in_mass(self):
+        """The basic xi grid is uniform by construction; verify the
+        spacing is constant to floating-point precision (not just
+        approximately uniform after the Newton solve)."""
+        from aragog.mesh import Mesh
+        params = self._build_parameters(
+            mass_coordinates=True, K_S=260e9, N=25)
+        mesh = Mesh(params)
+        xi = np.asarray(mesh.basic.mass_radii).ravel()
+        dxi = np.diff(xi)
+        # Uniform: max - min is a few ulps of the spacing.
+        assert (np.max(dxi) - np.min(dxi)) / np.mean(dxi) < 1e-12, (
+            f'Basic xi grid is not uniform: dxi range '
+            f'[{np.min(dxi):.6e}, {np.max(dxi):.6e}] '
+            f'vs mean {np.mean(dxi):.6e}.'
+        )
+
+    def test_unphysical_negative_node_count_rejected(self):
+        """Sanity check: requesting an unphysical mesh (one node) must
+        not silently succeed — the basic-node array would be a
+        single point with no spacing.
+        """
+        from aragog.mesh import Mesh
+        params = self._build_parameters(
+            mass_coordinates=True, K_S=260e9, N=1)
+        # The Mesh constructor either raises or produces a degenerate
+        # mesh. Either way, dxi/dr cannot be a useful array of length 0.
+        try:
+            mesh = Mesh(params)
+        except (ValueError, IndexError, ZeroDivisionError):
+            return  # acceptable — implementation refused the unphysical
+        # If it returned, the mesh must have a degenerate basic.radii
+        # array (length 1). A non-trivial mesh with N=1 would indicate
+        # silent fallback.
+        n_basic = np.asarray(mesh.basic.radii).ravel().size
+        assert n_basic <= 2, (
+            f'N=1 produced a {n_basic}-point basic mesh; expected '
+            f'failure or degenerate mesh, not silent expansion.'
+        )

@@ -712,16 +712,57 @@ class EntropyState:
                 radio += r.get_heating(time)
             self._heating += radio
 
-        if self._dilatation and self._grav_sep:
+        if self._dilatation and (self._grav_sep or self._mixing):
             # Dilatation (PdV) heating: work done when melt of different
-            # density rises through a pressure gradient. This is the
-            # thermodynamically required companion to gravitational
-            # separation: H = g * (1/rho_liq - 1/rho_sol) * J_mass.
+            # density crosses a pressure gradient. Per Soucasse §1.2
+            # (Aragog formulation, June 2025) and the 2607 PROTEUS-paper
+            # canonical form
+            #     Phi_vol = rho * g * (1/rho_m - 1/rho_s) * (j_cm + j_gm),
+            # the contribution must include BOTH the gravitational-
+            # separation mass flux ``j_gm`` and the convective-mixing
+            # mass flux ``j_cm``. In specific (per-unit-mass) form
+            #     H_dil = g * (1/rho_m - 1/rho_s) * (j_cm + j_gm).
             # Units: [m/s^2] * [m^3/kg] * [kg/m^2/s] = [W/kg].
-            # The mass flux is on basic nodes; interpolate to staggered.
+            #
+            # In the entropy formulation the chemical-mixing flux is
+            # computed directly as a heat flux ``_jmix_heat`` rather
+            # than via ``mass_flux * latent_heat``. Inside the mushy
+            # band, the algebraic identity
+            #     dS/dr - [phi*dS_liq/dP + (1-phi)*dS_sol/dP] * dP/dr
+            #         = (S_liq - S_sol) * dphi/dr
+            #         = dS_phase * dphi/dr
+            # makes the bracket exactly equal to dS_phase * dphi/dr, so
+            #     _jmix_heat = -kappa_c * rho * T_fus * dS_phase * dphi/dr
+            #                = -kappa_c * rho * L * dphi/dr.
+            # Therefore the equivalent mass flux is
+            #     j_cm = _jmix_heat / L
+            # which recovers Soucasse's ``j_cm = -rho * kappa_h * dphi/dr``
+            # exactly (with kappa_c playing the role of kappa_h and the
+            # smoothing factor inherited from the mushy-band gate).
             mesh = self._evaluator.mesh
+            j_total = self._mass_flux.copy()
+            if self._mixing:
+                latent_heat_basic = np.asarray(
+                    self.phase_basic.latent_heat()
+                ).ravel()
+                # Guard against tiny latent heat at table edges; outside
+                # the mushy band _jmix_heat is itself zero by the smth
+                # gate, so the division is well-defined wherever it
+                # contributes.
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    j_mix = np.where(
+                        np.abs(latent_heat_basic) > 1.0,
+                        self._jmix_heat / np.maximum(latent_heat_basic, 1.0),
+                        0.0,
+                    )
+                # Boundaries already enforced on _jmix_heat; carry
+                # through to keep no-mass-flux at CMB and surface.
+                j_mix[0] = 0.0
+                j_mix[-1] = 0.0
+                j_total = j_total + j_mix
+
             mass_flux_stag = mesh.quantity_at_staggered_nodes(
-                self._mass_flux
+                j_total
             ).ravel()
             delta_v = np.asarray(
                 self.phase_staggered.delta_specific_volume()

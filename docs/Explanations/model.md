@@ -134,11 +134,11 @@ $$
   $$
   with mass fraction $\chi_i$, specific power $\varphi_i$, and half-life $\tau_{1/2,i}$.
 
-- **Dilatation $P\,dV$ heating.** When melt of different density is transported across a pressure gradient (by chemical mixing or by gravitational separation), the system does work against gravity:
+- **Dilatation $P\,dV$ heating.** When melt of different density is transported across a pressure gradient (by chemical mixing or by gravitational separation), the system does work against gravity. Following Soucasse (Aragog formulation §1.2), the specific heating rate is
   $$
-  \Phi_\mathrm{vol} = g\,\left(\frac{1}{\rho_m} - \frac{1}{\rho_s}\right)\,(j_\mathrm{mix} + j_\mathrm{grav}),
+  H_\mathrm{dil} = g\,\left(\frac{1}{\rho_m} - \frac{1}{\rho_s}\right)\,(j_\mathrm{mix} + j_\mathrm{grav}),
   $$
-  with $j_\mathrm{mix}$ the convective-mixing mass flux and $j_\mathrm{grav}$ the gravitational-separation mass flux. Only active when both `dilatation = true` and `gravitational_separation = true`.
+  with $j_\mathrm{mix}$ the convective-mixing mass flux and $j_\mathrm{grav}$ the gravitational-separation mass flux. Active when `dilatation = true` and at least one of `gravitational_separation` or `mixing` is enabled; a disabled mechanism contributes zero flux to the sum. In the entropy formulation, $j_\mathrm{mix}$ is reconstructed from the bracket-form mixing heat flux as $j_\mathrm{mix} = F_\mathrm{mix}/L(P)$, an algebraic identity inside the mushy band; see [Heat transport](heat_transport.md#internal-heating).
 
 - **Tidal heating.** A user-supplied scalar or per-node array passed through the `tidal_array` configuration key.
 
