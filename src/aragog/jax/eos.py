@@ -177,9 +177,17 @@ def _bilinear_interp(
 
     # Find grid indices: searchsorted gives the index of the right edge.
     # Clamp to [0, n-2] so i and i+1 are both valid indices.
+    #
     # stop_gradient on indices: they are discrete (non-differentiable)
     # and keeping them in the trace graph makes implicit solver JIT
-    # compilation intractable.
+    # compilation intractable. This gives the EXACT analytic Jacobian
+    # of the bilinear interpolation WITHIN each grid cell, with
+    # gradients flowing through tp, ts (smooth) and through the
+    # constant cell-corner values v00, v10, v01, v11 (treated as
+    # constant w.r.t. the query). At cell boundaries the bilinear
+    # function is C^0 but its Jacobian is naturally discontinuous;
+    # CVODE absorbs that as a stiff-region step-rejection event.
+    # See test_jax_eos_jacobian_within_cell.py for the parity test.
     ip = jax.lax.stop_gradient(
         jnp.clip(jnp.searchsorted(P_grid, P_c, side='right') - 1, 0, len(P_grid) - 2)
     )
