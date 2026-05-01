@@ -557,8 +557,10 @@ def relative_velocity(
     F_rg = d**2 * por**4.5 * (5.0 / 7.0)
     F_stokes = d**2 * 2.0 / 9.0
 
-    # Smooth regime switching
-    w_rg = tanh_weight(porosity, 0.0769618, 0.02)
+    # Smooth regime switching at critical porosities (Abe 1995;
+    # Soucasse Aragog formulation): BKC -> RG at 0.0769452 (analytical
+    # equality of the BKC and RG permeabilities), RG -> Stokes at 0.771462.
+    w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)
     F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
     F = jnp.maximum(F, 0.0)
