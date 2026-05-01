@@ -216,7 +216,13 @@ def dSdt(
     """
     eos, params, mesh, bc, heating = args
 
-    # Compute fluxes (conduction, convection, grav sep, mixing)
+    # Compute fluxes (conduction, convection, grav sep, mixing).
+    # ``flux_out.heating`` is the input ``heating`` plus any
+    # state-dependent contributions added inside ``compute_fluxes``
+    # (currently dilatation H_dil from B1, gated by params.dilatation).
+    # dsdt below MUST source from ``flux_out.heating``, not the
+    # closure-captured static ``heating``, otherwise dynamic terms
+    # (H_dil) compute correctly but never enter the integration.
     flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
     heat_flux = flux_out.heat_flux
 
@@ -243,9 +249,9 @@ def dSdt(
     # dS/dt from flux divergence [J/kg/K/s]
     dsdt = -delta_energy_flux / capacitance
 
-    # Internal heating: dS/dt += H / T
+    # Internal heating: dS/dt += H / T (sources radio + tidal + H_dil)
     T_stag = phase_stag.temperature
-    dsdt = dsdt + heating / jnp.maximum(T_stag, 1.0)
+    dsdt = dsdt + flux_out.heating / jnp.maximum(T_stag, 1.0)
 
     # Convert to J/kg/K/yr
     return dsdt * SECS_PER_YEAR
@@ -335,13 +341,16 @@ def dSdt_energy_balance(
     cp_cmb = phase_basic.heat_capacity[0]
     F_cmb_from_dSdr = heat_flux[0]
 
-    # Flux divergence (entropy derivatives, same as dSdt)
+    # Flux divergence (entropy derivatives, same as dSdt). Source the
+    # heating term from ``flux_out.heating`` (radio + tidal + H_dil),
+    # not the closure-captured static ``heating``, so dilatation B1
+    # actually enters the integration here too.
     energy_flux = heat_flux * mesh.area
     delta_energy_flux = jnp.diff(energy_flux)
     cap = phase_stag.capacitance
     capacitance = cap * mesh.volume
     dSdt_per_s = -delta_energy_flux / capacitance
-    dSdt_per_s = dSdt_per_s + heating / jnp.maximum(phase_stag.temperature, 1.0)
+    dSdt_per_s = dSdt_per_s + flux_out.heating / jnp.maximum(phase_stag.temperature, 1.0)
     dSdt_per_yr = dSdt_per_s * SECS_PER_YEAR
 
     # ── dSdr_cmb closure equation (SPIDER bc.c:76-131) ──

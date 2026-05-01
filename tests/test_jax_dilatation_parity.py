@@ -406,6 +406,64 @@ def test_dilatation_jax_matches_numpy_in_mushy_zone():
 
 
 @needs_eos
+def test_dilatation_changes_dSdt_in_integration():
+    """B1 amendment: dSdt must source heating from flux_out (with H_dil),
+    not from the closure-captured input heating array.
+
+    Builds the same mushy IC twice — once with dilatation off, once
+    on — and calls ``dSdt`` (the actual JAX RHS that CVODE consumes).
+    The dS/dt arrays must differ in the mushy interior, proving that
+    H_dil enters the integration. Without this test, B1 v1 silently
+    computed H_dil correctly but never used it because dSdt sourced
+    the heating term from the closure args, not from flux_out.
+    """
+    from aragog.jax.eos import EntropyEOS_JAX
+    from aragog.jax.phase import PhaseParams
+    from aragog.jax.solver import BoundaryParams, dSdt
+
+    mesh, mesh_jax, r_stag, r_basic, P_stag, P_basic, _ = _build_synthetic_mesh(N=24)
+    eos_jax = EntropyEOS_JAX(EOS_DIR)
+
+    S_sol = np.asarray(eos_jax.solidus_entropy(jnp.asarray(P_stag)))
+    S_liq = np.asarray(eos_jax.liquidus_entropy(jnp.asarray(P_stag)))
+    S_init = 0.45 * S_sol + 0.55 * S_liq
+    S_init = S_init - 5.0 * np.linspace(0.0, 1.0, S_init.size)
+
+    bc = BoundaryParams(
+        outer_bc_type=4, outer_bc_value=0.0,
+        emissivity=1.0, T_eq=255.0,
+        inner_bc_type=0, inner_bc_value=0.0,
+        core_density=10738.0, core_heat_capacity=880.0,
+        tfac_core_avg=1.147,
+    )
+    heating_in = jnp.zeros(S_init.size)
+    args_off = (
+        eos_jax,
+        PhaseParams(grav_sep=True, mixing=True, dilatation=False, grain_size=0.1),
+        mesh_jax, bc, heating_in,
+    )
+    args_on = (
+        eos_jax,
+        PhaseParams(grav_sep=True, mixing=True, dilatation=True, grain_size=0.1),
+        mesh_jax, bc, heating_in,
+    )
+    dsdt_off = np.asarray(dSdt(0.0, jnp.asarray(S_init), args_off))
+    dsdt_on = np.asarray(dSdt(0.0, jnp.asarray(S_init), args_on))
+
+    delta = dsdt_on - dsdt_off
+    # The dilatation term should produce a measurable difference in
+    # the mushy interior. If dSdt still sourced heating from the
+    # closure args (the v1 bug), every entry of delta would be ~0.
+    interior_delta = delta[1:-1]
+    max_abs_delta = float(np.max(np.abs(interior_delta)))
+    assert max_abs_delta > 0.0, (
+        'dS/dt is identical with dilatation on vs off — H_dil is not '
+        'entering the integration. dSdt must source the heating term '
+        'from flux_out.heating, not from the closure-captured args.'
+    )
+
+
+@needs_eos
 def test_dilatation_sign_with_negative_dv():
     """Sign check: melt lighter than solid (Δv > 0) and j_total > 0
     (melt rising) ⇒ H_dil > 0.
