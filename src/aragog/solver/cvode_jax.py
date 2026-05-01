@@ -69,23 +69,20 @@ def build_jax_rhs_and_jacobian(
         rhs_scale, t_ref). Constructed by EntropySolver via
         ``_build_nondim_scales``; the contract
         ``rhs_scale = t_ref / state_scale`` is enforced inside
-        ``NonDimScales.__post_init__`` (OQ3 option C). The factory only
-        validates the per-call shape against ``heating_array`` and
-        ``core_bc_mode``.
+        ``NonDimScales.__post_init__``. The factory validates the
+        per-call shape against ``heating_array`` and ``core_bc_mode``.
     core_bc_mode : str, default 'quasi_steady'
         Which JAX RHS to wrap: 'quasi_steady' uses ``jax.solver.dSdt``
         (N-state), 'energy_balance' uses ``jax.solver.dSdt_energy_balance``
         (N+1 state with dSdr_cmb closure equation as the (N+1)-th
-        component). The latter matches the production CHILI Earth code
-        path (PROTEUS d55726c5+, aragog 718202a+).
+        component). The latter is the production CHILI Earth code path.
     radio_isotope_params : tuple, default ()
         Optional 5-tuple ``(heat_prod, abundance, concentration,
         t0_years, half_life_years)`` of 1D arrays, one entry per
         radionuclide. When non-empty, the JAX RHS evaluates the
-        Soucasse §1.2 radio sum at the live integrator time
-        ``t_phys`` instead of freezing the value at the coupling-step
-        start (A2). The empty default reproduces the pre-A2
-        behaviour (no radio).
+        radiogenic source at the live integrator time ``t_phys`` so
+        the heating reflects in-step decay. Empty default disables
+        radio heating.
 
     Returns
     -------
@@ -119,12 +116,10 @@ def build_jax_rhs_and_jacobian(
     elif core_bc_mode == 'energy_balance':
         _rhs_jax = jax_dsdt_eb
     else:
-        # A4: explicit warning + clear error message so the
-        # calling solver's catch-all fallback (entropy_solver.py
-        # ~1704) logs an informative reason. Previously the ValueError
-        # said only what was got and what was expected, leaving the
-        # user to guess whether a JAX install was missing or a
-        # core_bc_mode mismatch caused the FD-Jacobian fallback.
+        # Explicit warning + clear error message so the calling
+        # solver's catch-all fallback in entropy_solver.solve logs
+        # an informative reason for the FD-Jacobian fallback rather
+        # than a bare ValueError.
         logger.warning(
             'JAX CVODE factory: core_bc_mode=%r is not implemented '
             'in the JAX RHS; only quasi_steady and energy_balance '
@@ -138,21 +133,17 @@ def build_jax_rhs_and_jacobian(
             f'set ``use_jax_jacobian = false`` in the config.'
         )
 
-    # ── OQ3 option C: NonDimScales is the single source of truth ──
-    #
-    # The internal nondim contract ``rhs_scale = t_ref / state_scale``
-    # is enforced inside ``NonDimScales.__post_init__``, so we no
-    # longer recheck it here. The factory only validates the per-call
-    # shape of ``scales`` against ``heating_array`` and ``core_bc_mode``.
+    # NonDimScales enforces the internal nondim contract
+    # rhs_scale = t_ref / state_scale in __post_init__. The factory
+    # validates only the per-call shape compatibility with
+    # ``heating_array`` and ``core_bc_mode``.
     from aragog.jax.nondim import NonDimScales
 
     if not isinstance(scales, NonDimScales):
         raise TypeError(
             'scales must be an aragog.jax.nondim.NonDimScales instance; '
-            f'got {type(scales).__name__}. The legacy '
-            '(state_scale, rhs_scale, t_ref) positional API was removed '
-            'in OQ3 option C; build NonDimScales(state_scale=..., '
-            't_ref=...) and let it derive rhs_scale.'
+            f'got {type(scales).__name__}. Build NonDimScales('
+            'state_scale=..., t_ref=...) and let it derive rhs_scale.'
         )
     heating_np = np.asarray(heating_array)
     expected_size = (
@@ -171,12 +162,11 @@ def build_jax_rhs_and_jacobian(
     t_ref = float(scales.t_ref)
     heating_jax = jnp.asarray(heating_array)
 
-    # ── A2: per-step radio heating ──
-    # When the caller supplies a non-empty radio_isotope_params tuple,
-    # build a JAX-traceable H_radio(t_yr) callable that the dSdt /
-    # dSdt_energy_balance RHS evaluates at the live integrator time.
-    # Empty tuple -> use the no-op callable, reproducing the pre-A2
-    # frozen-at-t_start behaviour (no time dependence).
+    # Per-step radio heating evaluation. When the caller supplies
+    # a non-empty radio_isotope_params tuple, build a JAX-traceable
+    # H_radio(t_yr) callable that the dSdt / dSdt_energy_balance RHS
+    # evaluates at the live integrator time. Empty tuple -> no-op
+    # callable returning zero heating.
     if radio_isotope_params:
         if len(radio_isotope_params) != 5:
             raise ValueError(

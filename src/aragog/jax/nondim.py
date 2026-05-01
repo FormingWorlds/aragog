@@ -12,10 +12,9 @@ Internal contract enforced by ``__post_init__``:
     state_scale > 0, rhs_scale > 0, t_ref > 0
     state_scale.shape == rhs_scale.shape
 
-Replaces the old positional-args API (state_scale, rhs_scale, t_ref)
-into ``build_jax_rhs_and_jacobian``. Eliminates the OQ3-B duplicated
-contract assertion: by construction every NonDimScales instance
-satisfies the contract before reaching the JAX factory.
+By construction, every NonDimScales instance enforces the internal
+contract before being passed to consumers, so no downstream code
+needs to re-validate.
 """
 
 from __future__ import annotations

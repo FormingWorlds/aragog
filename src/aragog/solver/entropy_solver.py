@@ -198,14 +198,11 @@ class EntropySolver:
         self.state: EntropyState
         self._solution: OptimizeResult
         self.stop_early: bool = False
-        # Option Z: optional factory that builds JAX-derived CVODE
-        # callbacks. Signature (post OQ3 option C):
-        #   factory(scales, core_bc_mode) -> (rhs_fn, jac_fn)
+        # Optional factory that builds JAX-derived CVODE callbacks.
+        # Signature: factory(scales, core_bc_mode) -> (rhs_fn, jac_fn)
         # where ``scales`` is an aragog.jax.nondim.NonDimScales
-        # instance built once by ``_build_nondim_scales`` (single
-        # source of truth for state_scale, rhs_scale, t_ref). The
-        # factory is registered by PROTEUS via
-        # ``set_jax_cvode_factory()`` when
+        # instance built by ``_build_nondim_scales``. The factory is
+        # registered by PROTEUS via ``set_jax_cvode_factory()`` when
         # ``config.interior_energetics.aragog.use_jax_jacobian`` is True.
         self._jax_cvode_factory = None
 
@@ -221,17 +218,17 @@ class EntropySolver:
         ----------
         factory : callable
             ``factory(scales, core_bc_mode) -> (rhs_fn, jac_fn)`` where
-            ``scales`` is an ``aragog.jax.nondim.NonDimScales`` instance
-            (OQ3 option C; replaces the legacy 4-arg signature). May be
-            None to disable the Option Z path even if the flag is on.
+            ``scales`` is an ``aragog.jax.nondim.NonDimScales`` instance.
+            May be None to disable the Option Z path even if the flag
+            is on.
         """
         self._jax_cvode_factory = factory
 
     def _build_nondim_scales(self) -> 'NonDimScales':
         """Construct the per-component NonDimScales for the active state.
 
-        Single source of truth (OQ3 option C). Mirrors the per-state-
-        component scaling rules:
+        Single source of truth for state and RHS scaling. Mirrors the
+        per-state-component scaling rules:
 
         - quasi_steady core_bc:
               state = [S_0, ..., S_{N-1}],         scale = S_ref each
@@ -241,9 +238,7 @@ class EntropySolver:
         - bower2018 core_bc (state_is_extended):
               state = [S_0, ..., S_{N-1}, T_core],
               scale = [S_ref, ..., S_ref, T_ref]
-              (T_ref matches the Bower+2018 Table 1 temperature scale;
-              previously used S_ref by accident-of-magnitude, harmless
-              numerically but a units mismatch.)
+              (T_ref matches the Bower+2018 Table 1 temperature scale.)
         - gradient core_bc:
               state = [dSdr_0, ..., dSdr_{N}, S_surf],
               scale = [dSdr_ref, ..., dSdr_ref, S_ref]
@@ -1444,7 +1439,7 @@ class EntropySolver:
         # "Tighten max_step when ANY cell is near a phase boundary"
         # block, and applies uniformly to both the FD-Jacobian path
         # and the JAX-Jacobian (option Z) path, since both reach
-        # this dispatch via _solve_cvode (OQ5).
+        # this dispatch via _solve_cvode.
         if max_step is not None and np.isfinite(max_step):
             cvode_options['max_step_size'] = float(max_step)
 
@@ -1642,9 +1637,9 @@ class EntropySolver:
         # on an O(1000) state variable. The physics code in
         # _dSdt_single stays in physical units; only the solver
         # interface scales in and out.
-        # OQ3 option C: NonDimScales is the single source of truth
-        # consumed by both the scipy/CVODE wrapper here and the JAX
-        # factory. ``__post_init__`` enforces
+        # NonDimScales is the single source of truth for nondim
+        # scaling, consumed by both the scipy/CVODE wrapper here and
+        # the JAX factory. ``__post_init__`` enforces the contract
         # ``rhs_scale = t_ref / state_scale``.
         scales = self._build_nondim_scales()
         S_ref = self._S_ref
@@ -1741,9 +1736,8 @@ class EntropySolver:
             )
             if use_jax_jac:
                 try:
-                    # OQ3 option C: pass the NonDimScales single source
-                    # of truth instead of the legacy (state_scale,
-                    # rhs_scale, t_ref) positional triplet.
+                    # Pass the NonDimScales instance, which bundles
+                    # the internal nondim contract.
                     cvode_rhs_override, cvode_jacfn = self._jax_cvode_factory(
                         scales,
                         self._core_bc,

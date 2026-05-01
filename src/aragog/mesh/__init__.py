@@ -77,9 +77,10 @@ class Mesh:
             # SPIDER's equation (eos_adamswilliamson.c:296-311):
             #   f(r) = (r_core^3 + 3*M_AW(r_core, r)/rho_avg)^(1/3) - xi = 0
             #
-            # The PCHIP interpolation previously used here introduced
-            # O(h^4) errors on the N-point grid that accumulated to ~3%
-            # node position offsets.
+            # Newton-via-brentq avoids the O(h^4) interpolation error
+            # of a PCHIP fit; on an N-point grid that error accumulated
+            # to ~3% node position offsets, large enough to perturb the
+            # Adams-Williamson reference state.
             from scipy.optimize import brentq
             r_core = float(initial_spatial[0, 0])
             r_surf = float(initial_spatial[-1, 0])

@@ -41,7 +41,7 @@ SECS_PER_YEAR: float = 31557600.0
 # Stefan-Boltzmann constant [W/m^2/K^4]
 SIGMA_SB: float = 5.670374419e-8
 
-# log(2) constant used by the radiogenic decay term (A2). Cached as a
+# log(2) constant used by the radiogenic decay term. Cached as a
 # module-level Python float so the JAX trace bakes it in cleanly.
 LOG_TWO: float = 0.6931471805599453
 
@@ -52,7 +52,8 @@ def _no_radio(_t_yr):
     Used as the args-tuple entry by ``solve_entropy`` and other call
     sites that don't have radionuclide tables. Production CHILI
     (``build_jax_rhs_and_jacobian``) replaces this with a closure
-    that evaluates Eq. (A2) at the live integrator time.
+    that evaluates the per-cell radio heating at the live integrator
+    time.
     """
     return jnp.asarray(0.0)
 
@@ -300,7 +301,7 @@ def dSdt(
         - H_radio_fn: callable(t_yr) -> scalar JAX array [W/kg].
           Returns the per-cell uniform radiogenic heating evaluated
           at the live integrator time. Use ``_no_radio`` as the
-          callable when the run has no radionuclides. (A2)
+          callable when the run has no radionuclides.
 
     Returns
     -------
@@ -309,20 +310,20 @@ def dSdt(
     """
     eos, params, mesh, bc, heating_static, H_radio_fn = args
 
-    # ── A2: time-dependent radio heating evaluated at the live t ──
-    # The previous behaviour froze H_radio at the coupling-step start,
-    # making the JAX RHS disagree with the numpy reference at every
-    # mid-step Newton iterate (verify_jax_vs_numpy_rhs parity broken).
-    # Now H_radio(t) is recomputed inside the JAX trace at each call.
+    # Time-dependent radio heating evaluated at the live integrator
+    # time. H_radio(t) is recomputed inside the JAX trace at each
+    # RHS call so per-step heating reflects the current physical time
+    # and the JAX path stays in parity with the numpy reference at
+    # every mid-step Newton iterate.
     heating = heating_static + H_radio_fn(t)
 
     # Compute fluxes (conduction, convection, grav sep, mixing).
     # ``flux_out.heating`` is the input ``heating`` plus any
     # state-dependent contributions added inside ``compute_fluxes``
-    # (currently dilatation H_dil from B1, gated by params.dilatation).
-    # dsdt below MUST source from ``flux_out.heating``, not the
-    # closure-captured static ``heating``, otherwise dynamic terms
-    # (H_dil) compute correctly but never enter the integration.
+    # (dilatation H_dil when params.dilatation is enabled). The dsdt
+    # assembly below MUST source from ``flux_out.heating`` rather than
+    # the closure-captured static ``heating`` so dynamic terms enter
+    # the integration; this is a hidden invariant.
     flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
     heat_flux = flux_out.heat_flux
 
@@ -396,7 +397,7 @@ def dSdt_energy_balance(
         [J/kg/K/m/yr] for dSdr_cmb.
     """
     eos, params, mesh, bc, heating_static, H_radio_fn = args
-    # A2: live radio heating, broadcast to per-cell uniform.
+    # Live radio heating, broadcast to per-cell uniform.
     heating = heating_static + H_radio_fn(t)
     n_stag = mesh.P_stag.shape[0]
     S = state_ext[:n_stag]
@@ -445,8 +446,11 @@ def dSdt_energy_balance(
 
     # Flux divergence (entropy derivatives, same as dSdt). Source the
     # heating term from ``flux_out.heating`` (radio + tidal + H_dil),
-    # not the closure-captured static ``heating``, so dilatation B1
-    # actually enters the integration here too.
+    # not the closure-captured static ``heating``, so the dynamic
+    # dilatation contribution enters the integration here too. Hidden
+    # invariant: any future heating contribution added inside
+    # compute_fluxes must be sourced from flux_out.heating, not the
+    # static input array.
     energy_flux = heat_flux * mesh.area
     delta_energy_flux = jnp.diff(energy_flux)
     cap = phase_stag.capacitance
@@ -536,8 +540,8 @@ def solve_entropy(
     # through args, we avoid this issue.
     def _rhs(t, S, dynamic_args):
         h = dynamic_args
-        # A2: solve_entropy is the standalone test path; no
-        # radionuclides table is exposed here, so radio = 0.
+        # Standalone test path: no radionuclides table is exposed,
+        # so radio heating defaults to zero.
         return dSdt(t, S, (eos, params, mesh, bc, h, _no_radio))
 
     term = diffrax.ODETerm(_rhs)

@@ -482,15 +482,15 @@ class EntropyState:
         # Smooth blend between regimes (tanh transition at Re_crit).
         # blend_width = 0.01 * RE_CRIT: at Re ≪ RE_CRIT (solid regime,
         # Re ~ 1e-26), tanh saturates to -1 within machine precision so
-        # the inviscid contribution is exactly zero. Previously
-        # blend_width = 0.2 * RE_CRIT, which gave inviscid_weight ~ 5e-5
-        # at Re=0; multiplied by inviscid_velocity ~ 1 m/s and mix ~ 7e5
-        # m, that 5e-5 leak produced k_h ~ 20 m^2/s in the solid regime
-        # (vs SPIDER's hard if-else giving k_h ~ 1e-7). The artificial
-        # k_h made k_h = max(raw, kappah_floor) sit on raw rather than
-        # the floor, creating a second metastable equilibrium for
-        # dSdr_cmb and the phi=0 oscillation documented in
-        # memory/tcore_phi0_bistability.md.
+        # the inviscid contribution is exactly zero. The blend width
+        # must stay well below RE_CRIT (5x narrower than 0.2 * RE_CRIT
+        # is sufficient): a wider blend leaks inviscid_weight ~ 5e-5
+        # at Re=0; multiplied by inviscid_velocity ~ 1 m/s and mixing
+        # length ~ 7e5 m that yields k_h ~ 20 m^2/s in solid layers
+        # (vs SPIDER's hard if-else giving k_h ~ 1e-7), which makes
+        # max(k_h_raw, kappah_floor) sit on the raw value rather than
+        # the phase-modulated floor and creates a metastable
+        # equilibrium for dSdr_cmb and a phi=0 oscillation.
         blend_width = 0.01 * RE_CRIT
         inviscid_weight = 0.5 * (1.0 + np.tanh(
             (reynolds - RE_CRIT) / max(blend_width, 1e-30)
@@ -617,12 +617,12 @@ class EntropyState:
             # SPIDER-analogue phase-boundary smoothing.
             #
             # Purpose: at the first crystallisation step the raw mass
-            # flux rho * phi * (1-phi) * v_rel drains the CMB cell's
-            # entropy off the PALEOS P-S table in one coupling step,
-            # because the Stokes-regime permeability at
+            # flux rho * phi * (1-phi) * v_rel can drain the CMB
+            # cell's entropy off the PALEOS P-S table in one coupling
+            # step, because the Stokes-regime permeability at
             # grain_size = 0.1 m gives v_rel of several m/s and
             # phi * (1-phi) ~ 5e-3 at phi = 0.995 is not enough
-            # damping. See memory/aragog_jgrav_cmb_drain.md.
+            # damping on its own.
             #
             # SPIDER avoids this via
             # `smth = get_smoothing(matprop_smooth_width, gphi)` where
@@ -842,9 +842,10 @@ class EntropyState:
     def dSdr(self) -> npt.NDArray:
         return self._dSdr
 
-    # Diagnostics for T_core phi=0 investigation. See
-    # memory/tcore_phi0_instability.md et seq. Each array mirrors one
-    # term in the basic-node heat-flux accumulation.
+    # Per-component diagnostics on the basic-node heat-flux
+    # accumulation. Each property mirrors one term so callers can
+    # decompose F_total = jcond + jconv + jgrav + jmix without re-
+    # running the flux assembly.
     @property
     def jcond(self) -> npt.NDArray:
         return self._jcond

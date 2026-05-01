@@ -211,7 +211,7 @@ class MeshArrays(eqx.Module):
     # Gravity at staggered nodes (cell centres). Mirrors numpy's
     # ``EntropyPhaseEvaluator(gravitational_acceleration=g_stag)`` for
     # the staggered phase evaluator. Required for the dilatation H_dil
-    # term in ``compute_fluxes`` (B1, Soucasse §1.2). Built from the
+    # term in ``compute_fluxes`` (Soucasse §1.2). Built from the
     # external EOS gravity column at staggered radii (UserDefinedEOS /
     # Zalmoxis) or scalar broadcast when the column is unavailable
     # (AdamsWilliamsonEOS).
@@ -919,7 +919,7 @@ def compute_fluxes(
     jmix_heat = jmix_heat.at[-1].set(0.0)
     heat_flux = heat_flux + params.mixing * jmix_heat
 
-    # ── Dilatation (PdV) heating, Soucasse §1.2 (B1) ────────────────
+    # ── Dilatation (PdV) heating, Soucasse §1.2 ────────────────
     #
     # Specific heating rate at staggered nodes:
     #     H_dil = g · (1/ρ_m - 1/ρ_s) · (j_mix + j_grav)
