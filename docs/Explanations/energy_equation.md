@@ -1,95 +1,103 @@
 # Energy equation
 
-This page describes the governing equation solved by Aragog and its spatial discretization.
+This page presents the governing equation, its semi-discrete finite-volume form, and the time-integration controls.
 
-## Integral enthalpy balance
+## Entropy balance in integral form
 
-Aragog evolves temperature by enforcing an enthalpy balance over a spherical shell (mantle) between the core-mantle boundary (CMB) at $r = r_{\mathrm{cmb}}$ and the surface at $r = r_{\mathrm{top}}$. In integral form, for a control volume $V$ with boundary $S$:
+Aragog evolves the specific entropy $S(r,t)$ in a spherical mantle shell between the core-mantle boundary at $r = r_\mathrm{cmb}$ and the surface at $r = r_\mathrm{top}$. For a control volume $V$ with boundary $\partial V$,
 
 $$
-\int_V \rho c_p \left.\frac{\partial T}{\partial t}\right|_{\xi}\, dV
-=
-- \int_S \mathbf{q}\cdot \mathbf{n}\, dS
-+ \int_V \Phi\, dV,
+\int_V \rho T \left.\frac{\partial S}{\partial t}\right|_{\xi}\, dV
+= -\int_{\partial V} \mathbf{F}\cdot\mathbf{n}\, dS
++ \int_V \rho H\, dV,
 $$
 
-where $\mathbf{q}$ is the heat flux, $\Phi$ the volumetric heating rate, and $c_p$ the specific heat capacity. The time derivative is taken at constant mass coordinate $\xi$ (a Lagrangian-like coordinate).
+with $\mathbf{F}$ the radial heat flux $[\mathrm{W\,m^{-2}}]$ and $H$ the specific internal heating rate $[\mathrm{W\,kg^{-1}}]$. The capacitance multiplying $\partial S/\partial t$ is $\rho T$ (not $\rho c_p$): the thermodynamic identity $T\,dS = c_p\,dT - (\alpha T/\rho)\,dP$ is enforced by the EOS lookups rather than by an explicit $c_p$ on the time derivative. The time derivative is taken at constant mass coordinate $\xi$.
 
-Each finite-volume cell coincides with a material volume: its mass is constant, and there is no net mass flux through cell interfaces in the control-volume sense. Species fluxes may exist internally in mixed phase via melt/solid segregation, but their sum is zero.
+Each finite-volume cell coincides with a material volume of constant mass; species fluxes (melt vs solid) may exist internally but their net mass flux through cell faces is zero.
 
 ## Semi-discrete finite-volume form
 
-Discretizing the mantle into radial shells (cells), Aragog applies a finite-volume balance per cell $i$:
+Discretising the mantle into $N$ shells gives, for each staggered node $i$,
 
 $$
-(\rho c_p V)_i \left.\frac{\partial T}{\partial t}\right|_i
-= -\, q_{i+1/2}\, S_{i+1/2} + q_{i-1/2}\, S_{i-1/2} + \Phi_i\, V_i ,
+(\rho T V)_i \left.\frac{\partial S}{\partial t}\right|_i
+= -F_{i+1/2}\,A_{i+1/2} + F_{i-1/2}\,A_{i-1/2} + \rho_i H_i V_i,
 $$
 
-where:
-
-- $S_{i\pm 1/2} = 4\pi r_{i\pm 1/2}^2$ is the spherical area of the outer/inner face,
-- $V_i = \frac{4}{3}\pi\left(r_{i+1/2}^3 - r_{i-1/2}^3\right)$ is the shell volume,
-- $q$ is the radial heat flux (positive upward by convention),
-- $\Phi$ is a volumetric heating rate $[\mathrm{W\,m^{-3}}]$.
-
-The unknown is $T_i(t)$ at cell centers; fluxes are evaluated on cell faces.
+with $A_{i\pm 1/2} = 4\pi r_{i\pm 1/2}^2$ and $V_i = \tfrac{4}{3}\pi(r_{i+1/2}^3 - r_{i-1/2}^3)$. Entropy lives at the $N$ staggered nodes, fluxes at the $N+1$ basic nodes, and $\rho$, $T$ are read from the EOS at the staggered pressures.
 
 ## Staggered mesh
 
-Aragog uses a **staggered mesh**:
+- **Basic nodes** ($N+1$ radial positions, cell faces): hold radial fluxes, pressure, and the entropy gradient $\partial S/\partial r$.
+- **Staggered nodes** ($N$ radial positions, cell centres): hold the prognostic entropy $S$ as well as the diagnostic temperature, density, melt fraction, viscosity, and capacitance.
 
-- **Basic (face) nodes**: $N$ radial positions where fluxes and gradients are evaluated.
-- **Staggered (cell-center) nodes**: $N-1$ midpoints where temperature and volumetric terms live.
-
-This arrangement avoids the checkerboard instability that can arise from collocated discretizations.
+The entropy gradient at basic nodes is the SPIDER-parity centred difference of the staggered $S$ values in uniform $\xi$-space, then chain-ruled through $d\xi/dr$. Boundary values copy from the nearest interior node; in `energy_balance` mode the CMB boundary value is overridden by the entropy-gradient state-vector entry on every RHS evaluation.
 
 ## Mass coordinate transform
 
-When mass coordinates are enabled (`mass_coordinates = true`), the spatial coordinate is replaced by a mass coordinate $\xi$ defined so that equal increments in $\xi$ correspond to equal mass increments:
+The radial coordinate is uniform in radius (`mass_coordinates = false`) or uniform in mass coordinate (`mass_coordinates = true`). The mass coordinate is
 
 $$
-\xi(r) = \left( 3\int_{r_{\mathrm{cmb}}}^{r} \frac{\rho^*(r')}{\rho^*_{\mathrm{planet}}} r'^2\, dr' + \xi_{\mathrm{cmb}}^3 \right)^{1/3}.
+\xi(r) = \left( 3\int_{r_\mathrm{cmb}}^{r} \frac{\rho^*(r')}{\rho^*_\mathrm{planet}}\,r'^2\,dr' + \xi_\mathrm{cmb}^3 \right)^{1/3},
 $$
 
-Spatial gradients are converted via:
+with $\rho^*(r)$ the configured pressure-density relation. In mass-coordinate mode the basic-node spatial radii are recovered by a Newton solve at construction so that $\xi$ is uniformly spaced. Gradients convert via
 
 $$
 \frac{\partial \psi}{\partial r}
-=
-\frac{\rho^*(r)}{\rho^*_{\mathrm{planet}}}\left(\frac{r}{\xi}\right)^2
-\frac{\partial \psi}{\partial \xi}.
+= \frac{\rho^*(r)}{\rho^*_\mathrm{planet}}\left(\frac{r}{\xi}\right)^2 \frac{\partial \psi}{\partial \xi}.
 $$
 
-The mass coordinate provides uniform resolution in mass, concentrating spatial resolution in high-density regions near the CMB.
-
-If mass coordinates are disabled, the model uses a uniform spatial grid and approximates $\left.\partial T/\partial t\right|_{\xi} \approx \left.\partial T/\partial t\right|_{r}$.
+When `mass_coordinates = false`, $\xi \equiv r$ and the chain rule reduces to the identity.
 
 ## Time integration
 
-The semi-discrete ODE system is advanced using an **implicit, variable-order, variable-step backward differentiation formula (BDF)** method via scipy's `solve_ivp`. BDF is well-suited to the stiffness introduced by conduction, convection, and phase-change effective heat capacities.
+The semi-discrete ODE system $\mathbf{y}'(t) = \mathbf{f}(t, \mathbf{y})$ is advanced using an implicit stiff integrator. The selector is `solver_method`:
 
-The right-hand side function (`Solver.dTdt`) computes:
+| Value | Integrator | When to use |
+|-------|------------|-------------|
+| `"radau"` | scipy `Radau` (default) | Default for short tests and standalone runs |
+| `"bdf"` | scipy `BDF` | Alternative scipy path |
+| `"cvode"` | SUNDIALS CVODE via `scikits.odes` | Production-grade stiff integration; same solver SPIDER uses |
 
-1. Face fluxes from the current temperature profile
-2. Flux divergence across each cell
-3. Capacitance (effective $\rho c_p V$) per cell
-4. Heating rate from internal sources (radiogenic, tidal, volumetric)
-5. Temperature tendency in K/yr (the ODE is integrated in years)
+CVODE provides modified-Newton with cached Jacobian factorisation and adaptive step control that handles phase-transition discontinuities cleanly. scipy's BDF and Radau can collapse the step size at the crystallisation front when their Newton iteration fails to converge; CVODE is recommended for runs that traverse the solidus or liquidus.
+
+When `solver_method = "cvode"` and `use_jax_jacobian = true`, an analytic Jacobian is built by tracing the pure-functional flux computation in `aragog.jax.phase` with `jax.jacrev`. This replaces the $O(N)$ finite-difference RHS evaluations per Jacobian build with one JAX-traced backward pass.
+
+### Right-hand side
+
+The right-hand side function `EntropySolver.dSdt(time, state_vec)` computes:
+
+1. Phase, density, $T$, $c_p$, $\alpha$, $k$, $\partial T/\partial P|_S$, and the smoothing weight $\mathrm{smth}(\phi)$ at every node from the EOS lookup at $(P, S)$.
+2. The entropy gradient $\partial S/\partial r$ at basic nodes (centred difference in uniform $\xi$, plus the optional `energy_balance` override).
+3. The four flux contributions $F_\mathrm{cond}$, $F_\mathrm{conv}$, $F_\mathrm{grav}$, $F_\mathrm{mix}$ (see [Heat transport](heat_transport.md)).
+4. The internal heating $H = H_\mathrm{radio} + H_\mathrm{dil} + H_\mathrm{tidal}$ at staggered nodes.
+5. The flux divergence $\partial S/\partial t = (\rho T V)^{-1}[-(F\,A)_{i+1/2} + (F\,A)_{i-1/2}] + H/T$, returned in $\mathrm{J\,kg^{-1}\,K^{-1}\,yr^{-1}}$.
+6. For extended-state modes, the additional ODE for the boundary state (the SPIDER `bc.c:76-131` formula in `energy_balance`, or the surface-entropy ODE in `gradient`).
+
+### Nondimensionalisation layer
+
+Inside the solver, the state vector and time are nondimensionalised before being passed to the integrator:
+
+$$
+\hat{S} = S / S_\mathrm{ref}, \qquad \hat{t} = t / t_\mathrm{ref},
+$$
+
+with $S_\mathrm{ref} = 2993.025\ \mathrm{J\,kg^{-1}\,K^{-1}}$ and $t_\mathrm{ref} = 10^5/(3.155\times 10^7)\ \mathrm{yr}$. This keeps the BDF tolerance control numerically well-behaved across the wide entropy and time scales encountered during a magma-ocean cooling. Physical units are restored when the solution is written back to `SolverOutput`.
+
+### Phase-aware step-size control
+
+Whenever any cell sits within $200\ \mathrm{J\,kg^{-1}\,K^{-1}}$ of a phase boundary, or inside the mushy band, `max_step` is reduced to one year. Once the mantle is fully solid (mean $\phi < 0.01$), the absolute tolerance is relaxed by a factor of ten so the integrator does not stall on a stiff but unimportant residual. These controls activate automatically; they are not user-configurable.
+
+### Retry ladder hooks
+
+`EntropySolver.set_initial_dSdr_cmb()` and `EntropySolver.get_current_dSdr_cmb()` give the PROTEUS wrapper a way to checkpoint and restore the CMB boundary state across retry attempts when the integrator returns `status = -1`. The `_atol_sf` attribute carries a per-attempt tolerance scaling that the wrapper increments on retry.
 
 ## Boundary conditions
 
-Aragog supports three types of boundary conditions at each boundary (CMB and surface):
+The five outer BC modes and three inner BC modes are summarised in [Model overview](model.md#boundary-conditions). At the surface, the grey-body mode ($q_\mathrm{top} = \varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$) optionally adds an upper-thermal-boundary-layer correction via Cardano's formula when `param_utbl = true`. At the CMB, the four `core_bc` formulations differ in whether the bottom-cell heat flux is partitioned by heat capacity (`quasi_steady`), driven by an evolved boundary-gradient state (`energy_balance`), reconstructed from a gradient state field (`gradient`), or set by one-sided Fourier conduction across the bottom half-cell (`bower2018`).
 
-1. **Dirichlet**: impose $T$ at the boundary; compute gradients via one-sided differences.
-2. **Neumann**: impose total heat flux $q_{\mathrm{tot}}$ at the boundary; extrapolate boundary state from interior nodes.
-3. **Radiative**: impose a radiative surface flux:
-   $$
-   q_{\mathrm{top}} = \varepsilon\sigma\left(T_{\mathrm{top}}^4 - T_{\mathrm{atm}}^4\right).
-   $$
+## Termination
 
-A **core cooling model** is available at the CMB: the lowermost mantle cell is coupled to a lumped core energy balance, estimating $q_{\mathrm{cmb}}$ from the difference between core and mantle temperatures.
-
-## Surface temperature event
-
-The solver monitors the surface temperature and can stop integration early when the change from the initial surface temperature exceeds a configured threshold (`tsurf_poststep_change`). This is used in coupled PROTEUS runs to hand control back to the atmosphere solver.
+The solver returns when the integrator reaches `end_time` from the configuration or when the integrator status flag goes negative (typically `-1`, indicating a step-size collapse). In coupled PROTEUS runs, the wrapper's outer loop also terminates when the global melt fraction drops below $\Phi_\mathrm{g} < 0.05$ or when the system reaches a radiative quasi-steady state.
