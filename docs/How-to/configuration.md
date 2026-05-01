@@ -1,230 +1,261 @@
 # Configuration
 
-Aragog reads its input from a single configuration file. The preferred format is **TOML**; the legacy INI format (`.cfg`) is still supported for backward compatibility.
+Aragog reads its input from a single configuration file. The preferred format is **TOML**; the legacy INI format (`.cfg`) is still parsed for back-compatibility.
+
+When Aragog is invoked from PROTEUS the configuration is built programmatically by the PROTEUS wrapper and the file-based path is bypassed; the same key names and value semantics apply in both cases.
 
 ## TOML configuration
 
-A TOML configuration file specifies all model parameters grouped by section. Here is a minimal example for a solid-phase cooling run:
+A TOML configuration file specifies all model parameters grouped by section. Below is a representative coupled-mantle setup; the reference tables that follow document every key.
 
 ```toml
-[scalings]
-radius = 6371000
-temperature = 4000
-density = 4000
-time = 31557600000  # 1000 years in seconds
-
 [solver]
 start_time = 0
-end_time = 1000000000
+end_time = 1.0e9                  # yr
 atol = 1e-9
 rtol = 1e-9
 tsurf_poststep_change = 30
 event_triggering = false
 
 [boundary_conditions]
-outer_boundary_condition = 1      # 1 = Dirichlet, 2 = Neumann, 3 = radiative
-outer_boundary_value = 1500       # K (Dirichlet) or W/m^2 (Neumann)
-inner_boundary_condition = 3
-inner_boundary_value = 4000
-emissivity = 1
-equilibrium_temperature = 273
-core_heat_capacity = 880
+outer_boundary_condition = 4      # 4 = prescribed flux (PROTEUS coupling)
+outer_boundary_value = 280.0      # W/m^2
+inner_boundary_condition = 1      # 1 = core cooling
+inner_boundary_value = 0.0        # ignored when inner_bc=1
+emissivity = 1.0
+equilibrium_temperature = 273.0
+core_heat_capacity = 880.0
+tfac_core_avg = 1.147
+param_utbl = false
+param_utbl_const = 1.0e-7
+core_bc = "energy_balance"        # CMB BC mode
 
 [mesh]
-outer_radius = 6371000            # m
-inner_radius = 5371000            # m (core-mantle boundary)
-number_of_nodes = 100
+outer_radius = 6.371e6            # m
+inner_radius = 3.480e6            # m
+number_of_nodes = 200
 mixing_length_profile = "nearest_boundary"
-core_density = 10738.332568062382 # kg/m^3
-surface_density = 4090            # kg/m^3
-gravitational_acceleration = 9.81 # m/s^2
+core_density = 11000.0            # kg/m^3
+surface_density = 4000.0          # kg/m^3
+gravitational_acceleration = 9.81 # m/s^2 (scalar fallback)
 adiabatic_bulk_modulus = 260e9    # Pa
+adams_williamson_beta = 0.0
+surface_pressure = 0.0            # Pa
+mass_coordinates = false
+eos_method = 1                    # 1 = Adams-Williamson, 2 = external file
+eos_file = ""                     # used when eos_method = 2
 
 [energy]
 conduction = true
 convection = true
-gravitational_separation = false
-mixing = false
-radionuclides = false
-dilatation = false
+gravitational_separation = true
+mixing = true
+radionuclides = true
+dilatation = true
 tidal = false
+eddy_diffusivity_thermal = 1.0
+eddy_diffusivity_chemical = 1.0
+kappah_floor = 0.0
+bottom_up_grav_sep = true
+phase_smoothing = "cubic_hermite"  # "cubic_hermite" or "tanh"
+solver_method = "radau"            # "radau" | "bdf" | "cvode"
+use_jax_jacobian = false
+tidal_array = [0.0]
 
 [initial_condition]
-surface_temperature = 3600        # K
-basal_temperature = 4000          # K
-
-[phase_liquid]
-density = 4000                    # kg/m^3
-viscosity = 1e2                   # Pa s
-heat_capacity = 1000              # J/kg/K
-melt_fraction = 1
-thermal_conductivity = 4          # W/m/K
-thermal_expansivity = 1.0e-5      # 1/K
+initial_condition = 1              # 1=linear T, 2=user file, 3=adiabat
+surface_temperature = 3600.0       # K
+basal_temperature = 4000.0         # K
+init_file = ""                     # used when initial_condition = 2
 
 [phase_solid]
-density = 4200
-viscosity = 1e21
-heat_capacity = 1000
-melt_fraction = 0
-thermal_conductivity = 4
+density = "data/lookup/density_solid.dat"
+heat_capacity = "data/lookup/heat_capacity_solid.dat"
+melt_fraction = 0.0
+thermal_conductivity = 4.0
 thermal_expansivity = 1.0e-5
+viscosity = 1.0e21
+
+[phase_liquid]
+density = "data/lookup/density_melt.dat"
+heat_capacity = "data/lookup/heat_capacity_melt.dat"
+melt_fraction = 1.0
+thermal_conductivity = 4.0
+thermal_expansivity = 1.0e-5
+viscosity = 1.0e2
 
 [phase_mixed]
-latent_heat_of_fusion = 4e6      # J/kg
+latent_heat_of_fusion = 4.0e5
 rheological_transition_melt_fraction = 0.4
 rheological_transition_width = 0.15
-solidus = "data/test/solidus_1d_lookup.dat"
-liquidus = "data/test/liquidus_1d_lookup.dat"
-phase = "solid"                   # "solid", "liquid", or "composite"
+solidus = "data/lookup/solidus.dat"
+liquidus = "data/lookup/liquidus.dat"
+phase = "composite"
 phase_transition_width = 0.01
-grain_size = 1.0e-3              # m
-```
+grain_size = 1.0e-3
+matprop_smooth_width = 0.0
+cp_blend = "latent"                # "latent" or "linear"
+const_properties = false
 
-### Radionuclides (optional)
-
-Any number of radionuclide sections can be added. Each section name must start with `radionuclide_`:
-
-```toml
 [radionuclide_K40]
 name = "K40"
 t0_years = 4.55e9
 abundance = 1.1668e-4
-concentration = 310
+concentration = 310.0
 heat_production = 2.8761e-5
 half_life_years = 1.248e9
-
-[radionuclide_U238]
-name = "U238"
-t0_years = 4.55e9
-abundance = 0.9927955
-concentration = 0.031
-heat_production = 9.4946e-5
-half_life_years = 4.468e9
 ```
+
+Any number of `[radionuclide_*]` sections can be added; each section name must start with `radionuclide_`.
 
 ## Configuration sections
 
-### `[scalings]`
+### `[scalings]` (legacy)
 
-Scaling parameters used to non-dimensionalize the governing equations. Typical values are order-of-magnitude characteristic quantities of the problem.
-
-| Key | Unit | Description |
-|-----|------|-------------|
-| `radius` | m | Characteristic length scale |
-| `temperature` | K | Characteristic temperature |
-| `density` | kg/m^3 | Characteristic density |
-| `time` | s | Characteristic time scale |
+A `[scalings]` section may still appear in older configuration files. Aragog no longer non-dimensionalises at the configuration level; the parser sets every scaling to 1.0 on load. The solver applies its own internal nondimensionalisation around the integrator (entropy reference $S_\mathrm{ref}$ and time reference $t_\mathrm{ref}$) which is not user-configurable. Any values supplied in `[scalings]` are ignored.
 
 ### `[solver]`
 
-ODE solver parameters controlling the BDF time integrator.
+Time-integration controls.
 
 | Key | Unit | Description |
 |-----|------|-------------|
-| `start_time` | yr | Start time of integration |
-| `end_time` | yr | End time of integration |
-| `atol` | -- | Absolute tolerance for BDF solver |
-| `rtol` | -- | Relative tolerance for BDF solver |
-| `tsurf_poststep_change` | K | Surface temperature change that triggers an event |
-| `event_triggering` | bool | Whether the surface temperature event is terminal |
+| `start_time` | yr | Start of integration |
+| `end_time` | yr | End of integration |
+| `atol` | -- | Absolute tolerance (floored at $10^{-8}$) |
+| `rtol` | -- | Relative tolerance |
+| `tsurf_poststep_change` | K | Maximum allowed surface-temperature change per coupling step (PROTEUS use) |
+| `event_triggering` | bool | Reserved; not consumed by the entropy solver |
 
 ### `[boundary_conditions]`
 
-Thermal boundary conditions at the CMB (inner) and surface (outer).
+Thermal boundary conditions at the surface and CMB.
 
 | Key | Unit | Description |
 |-----|------|-------------|
-| `outer_boundary_condition` | -- | 1 = Dirichlet (fixed $T$), 2 = Neumann (fixed flux), 3 = radiative |
-| `outer_boundary_value` | K or W/m^2 | Value applied at the outer boundary |
-| `inner_boundary_condition` | -- | Same options as outer |
-| `inner_boundary_value` | K or W/m^2 | Value applied at the inner boundary |
-| `emissivity` | -- | Surface emissivity (for radiative BC) |
-| `equilibrium_temperature` | K | Radiative equilibrium temperature (for radiative BC) |
-| `core_heat_capacity` | J/kg/K | Core heat capacity (for core cooling BC) |
+| `outer_boundary_condition` | int | Surface BC mode. `1` = grey-body atmosphere, `2` = Zahnle steam (not implemented), `3` = atmodeller coupling (not implemented), `4` = prescribed flux, `5` = prescribed temperature |
+| `outer_boundary_value` | W/m² or K | Surface flux (modes `1`, `4`) or temperature (mode `5`) |
+| `inner_boundary_condition` | int | CMB BC mode. `1` = core cooling, `2` = prescribed flux, `3` = prescribed temperature |
+| `inner_boundary_value` | W/m² or K | CMB flux (modes `1`, `2`) or temperature (mode `3`) |
+| `emissivity` | -- | Surface emissivity (used in mode `1`) |
+| `equilibrium_temperature` | K | Radiative equilibrium temperature (mode `1`) |
+| `core_heat_capacity` | J/kg/K | Core specific heat capacity |
+| `tfac_core_avg` | -- | Core adiabat correction factor (default 1.147; Bower+2018 Table 2) |
+| `param_utbl` | bool | Enable upper-thermal-boundary-layer parameterisation (default false) |
+| `param_utbl_const` | K⁻² | UTBL constant in $\Delta T = b\,T^3$ |
+| `core_bc` | str | CMB BC mode. `quasi_steady` (alpha-factor, state length $N$), `energy_balance` (SPIDER bit-parity, length $N+1$), `gradient` (entropy gradient as state, length $N+2$), or `bower2018` (parity-only, not recommended). Default: `quasi_steady`. |
 
 ### `[mesh]`
 
-Spatial discretization parameters.
+Spatial discretisation and pressure-density profile.
 
 | Key | Unit | Description |
 |-----|------|-------------|
-| `outer_radius` | m | Planet surface radius |
-| `inner_radius` | m | Core-mantle boundary radius |
-| `number_of_nodes` | -- | Number of basic mesh nodes |
-| `mixing_length_profile` | -- | `"nearest_boundary"` or `"constant"` |
-| `core_density` | kg/m^3 | Assumed core density |
-| `surface_density` | kg/m^3 | Density at the surface |
-| `gravitational_acceleration` | m/s^2 | Constant $g$ (for Adams-Williamson EOS) |
-| `adiabatic_bulk_modulus` | Pa | Bulk modulus $B$ (for Adams-Williamson EOS) |
-| `mass_coordinates` | bool | Whether to use mass coordinates |
-| `eos_method` | int | 1 = Adams-Williamson, 2 = user-defined |
+| `outer_radius` | m | Planet (mantle top) radius |
+| `inner_radius` | m | CMB radius |
+| `number_of_nodes` | -- | Number of basic-grid nodes (cell faces) |
+| `mixing_length_profile` | str | `"nearest_boundary"` or `"constant"` |
+| `core_density` | kg/m³ | Mean core density |
+| `eos_method` | int | `1` = analytic Adams–Williamson; `2` = external file (`eos_file`) |
+| `surface_density` | kg/m³ | Surface mantle density (Adams–Williamson). Default 4000 |
+| `gravitational_acceleration` | m/s² | Scalar gravity for Adams–Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. Default 9.81 |
+| `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams–Williamson. Default 260e9 |
+| `adams_williamson_beta` | -- | A–W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
+| `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |
+| `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default false |
+| `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. |
 
 ### `[energy]`
 
-Toggle individual heat transport and source terms.
+Heat-transport switches, transport parameters, and integrator selection.
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `conduction` | bool | Enable conductive heat transport |
-| `convection` | bool | Enable parameterized convection |
-| `gravitational_separation` | bool | Enable gravitational separation of melt |
-| `mixing` | bool | Enable convective mixing of melt fraction |
-| `radionuclides` | bool | Enable radiogenic heating |
-| `dilatation` | bool | Enable volumetric dilation/compression work |
-| `tidal` | bool | Enable tidal heating |
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `conduction` | bool | -- | Conductive flux $-k\,[(T/c_p)\partial S/\partial r + (\partial T/\partial P)_S\,\partial P/\partial r]$ |
+| `convection` | bool | -- | Convective flux $\rho T\kappa_h(-\partial S/\partial r)$ when $\partial S/\partial r < 0$ |
+| `gravitational_separation` | bool | -- | Stokes-regime separation of melt and solid; phase-boundary smoothed |
+| `mixing` | bool | -- | Chemical mixing flux (SPIDER bracket form involving $\partial S_\mathrm{liq}/\partial P$ and $\partial S_\mathrm{sol}/\partial P$) |
+| `radionuclides` | bool | -- | Internal radiogenic heating from any `[radionuclide_*]` sections |
+| `dilatation` | bool | -- | $P\,dV$ heating tied to gravitational separation |
+| `tidal` | bool | -- | Tidal heating from `tidal_array` |
+| `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
+| `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |
+| `kappah_floor` | m²/s | 0.0 | Phase-modulated lower bound on $\kappa_h$ |
+| `bottom_up_grav_sep` | bool | true | Apply SPIDER's bottom-up gating on the gravitational-separation flux |
+| `phase_smoothing` | str | `"cubic_hermite"` | Phase-boundary smoothing. `"cubic_hermite"` is $16\,g\phi^2(1-g\phi)^2$; `"tanh"` reproduces SPIDER's `get_smoothing` |
+| `solver_method` | str | `"radau"` | ODE integrator. `"radau"` and `"bdf"` use scipy `solve_ivp`; `"cvode"` selects SUNDIALS CVODE via `scikits.odes` |
+| `use_jax_jacobian` | bool | false | When `solver_method = "cvode"`, install a JAX-traced analytic Jacobian instead of the finite-difference Jacobian |
+| `tidal_array` | array[float] | `[0.0]` | Per-staggered-node tidal heating in W/kg. Length must be `1` (broadcast scalar) or `number_of_nodes - 1` |
 
 ### `[initial_condition]`
 
+Initial entropy profile (mapped from the temperature inputs via the EOS).
+
 | Key | Unit | Description |
 |-----|------|-------------|
-| `surface_temperature` | K | Temperature at the top of the mantle |
-| `basal_temperature` | K | Temperature at the CMB |
+| `initial_condition` | int | `1` = linear T(r) profile (default), `2` = read from `init_file`, `3` = adiabatic |
+| `surface_temperature` | K | Top temperature for modes `1` and `3` |
+| `basal_temperature` | K | Bottom temperature for mode `1` |
+| `init_file` | str | Path to a two-column `r, T` (or `r, S`) file used when `initial_condition = 2` |
 
-The initial profile is an adiabat anchored to the surface temperature by default, with the basal temperature as a fallback constraint.
+When the PROTEUS wrapper drives Aragog the initial entropy is supplied directly via `EntropySolver.set_initial_entropy()`; the section keys are still parsed but the values are overridden by the call.
 
 ### `[phase_liquid]` and `[phase_solid]`
 
-Material properties for each end-member phase. All values are constant (no pressure or temperature dependence) unless lookup tables are specified.
+End-member phase properties. Float values mean a constant; string values are file paths to one-column lookup tables.
 
 | Key | Unit | Description |
 |-----|------|-------------|
-| `density` | kg/m^3 | Phase density |
-| `viscosity` | Pa s | Dynamic viscosity |
+| `density` | kg/m³ | Reference density (or path to lookup) |
+| `viscosity` | Pa·s | Dynamic viscosity (or path) |
 | `heat_capacity` | J/kg/K | Specific heat capacity |
-| `melt_fraction` | -- | Fixed melt fraction (0 for solid, 1 for liquid) |
+| `melt_fraction` | -- | Reference melt fraction (`0` for solid, `1` for liquid) |
 | `thermal_conductivity` | W/m/K | Thermal conductivity |
 | `thermal_expansivity` | 1/K | Thermal expansivity |
+| `entropy` | J/kg/K | Optional reference entropy |
+
+In the production PROTEUS path the per-phase keys are not consumed for material properties; the EOS tables provide $\rho$, $c_p$, $\alpha$, $k$, and $T$ as functions of $(P, S)$. The values are kept for the standalone constant-properties path (see `const_properties` below).
 
 ### `[phase_mixed]`
 
-Parameters governing the mixed-phase (two-phase) region.
+Mixed-phase (mushy) parameters and the optional constant-properties analytical mode.
 
-| Key | Unit | Description |
-|-----|------|-------------|
-| `latent_heat_of_fusion` | J/kg | Latent heat of melting |
-| `rheological_transition_melt_fraction` | -- | Critical melt fraction for rheological transition |
-| `rheological_transition_width` | -- | Width of the tanh transition in log-viscosity |
-| `solidus` | -- | Path to solidus data file or analytic identifier |
-| `liquidus` | -- | Path to liquidus data file or analytic identifier |
-| `phase` | -- | `"solid"`, `"liquid"`, or `"composite"` |
-| `phase_transition_width` | -- | Smoothing width at solidus/liquidus boundaries |
-| `grain_size` | m | Grain size for permeability calculation |
+| Key | Unit | Default | Description |
+|-----|------|---------|-------------|
+| `latent_heat_of_fusion` | J/kg | -- | Reference latent heat (legacy; production runs use $L(P)$ from the EOS) |
+| `rheological_transition_melt_fraction` | -- | -- | Critical melt fraction for the viscosity transition |
+| `rheological_transition_width` | -- | -- | Width of the tanh viscosity blend |
+| `solidus` | str | -- | Path to a solidus reference (legacy T-based; not consumed by the entropy solver) |
+| `liquidus` | str | -- | Path to a liquidus reference (legacy T-based) |
+| `phase` | str | -- | Phase label |
+| `phase_transition_width` | -- | -- | Legacy smoothing width |
+| `grain_size` | m | -- | Grain size for the Stokes permeability |
+| `matprop_smooth_width` | -- | 0.0 | SPIDER-parity blending width across phase boundaries |
+| `cp_blend` | str | `"latent"` | `"latent"` (SPIDER parity) or `"linear"` for the mushy $C_p$ rule |
+| `const_properties` | bool | false | Enable the analytic constant-properties path (no EOS tables needed) |
+| `const_rho` | kg/m³ | 4000 | Constant density when `const_properties = true` |
+| `const_Cp` | J/kg/K | 1000 | Constant heat capacity |
+| `const_alpha` | 1/K | 1e-5 | Constant thermal expansivity |
+| `const_cond` | W/m/K | 4.0 | Constant thermal conductivity |
+| `const_log10visc` | -- | 2.0 | Constant log₁₀ viscosity |
+| `const_T_ref` | K | 3500 | Reference temperature for $T(S) = T_\mathrm{ref}\exp((S - S_\mathrm{ref})/C_p)$ |
+| `const_S_ref` | J/kg/K | 3000 | Reference entropy in the same expression |
 
 ## Loading configuration in Python
 
 ```python
+from aragog.parser import Parameters
+
+# From a TOML or INI file (auto-detected by suffix)
+params = Parameters.from_file("path/to/config.toml")
+
+# From a dictionary (used by PROTEUS via Config.from_dict)
 from aragog.config import Config
-
-# From a TOML file
-params = Config.from_toml("path/to/config.toml")
-
-# From a dictionary (used by the PROTEUS wrapper)
 params = Config.from_dict(config_dict)
-
-# Auto-detect format (TOML or INI)
-params = Config.from_file("path/to/config.toml")
 ```
+
+Both calls return a `Parameters` dataclass; the `Config` facade exists primarily for the dict-driven path used by the PROTEUS wrapper.
 
 ## Legacy INI format
 
-The legacy `.cfg` format is still supported. Example files are in `src/aragog/cfg/`. The INI format uses the same section and key names, but with INI syntax instead of TOML.
+The legacy `.cfg` format is still parsed. Example files live under `src/aragog/cfg/`. Keys and section names match the TOML schema; only the surface syntax differs.
