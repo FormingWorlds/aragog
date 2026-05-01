@@ -515,7 +515,19 @@ class EntropyState:
         else:
             self._kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
 
-        # kappa_h floor (phase-dependent, modulated by melt fraction)
+        # kappa_h floor (phase-dependent, modulated by melt fraction).
+        # Production CHILI runs use kappah_floor = 10 m^2/s
+        # (PROTEUS schema default, applied via SPIDER's -kappah_floor
+        # convention). The phi-modulated floor f_floor =
+        # tanh_weight(phi, 0.4, 0.15) ramps from 0 in solid layers
+        # (no spurious convective flux) to ~1 in mushy/liquid layers,
+        # where physical convection is expected and MLT can otherwise
+        # numerically freeze when the entropy gradient gets small.
+        # In stably-stratified mushy layers (rare; most mushy layers
+        # in magma-ocean cooling are convecting) the floor mildly
+        # suppresses real stratification; that is the documented SPIDER
+        # convention this implementation mirrors, so the same floor
+        # applies to PROTEUS+SPIDER and PROTEUS+Aragog runs alike.
         if self._kappah_floor > 0.0:
             phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             from aragog.utilities import tanh_weight

@@ -679,7 +679,13 @@ def compute_mlt(
         jnp.full_like(kh_raw, -params.eddy_diff_chemical),
     )
 
-    # kappa_h floor (phase-dependent, modulated by melt fraction)
+    # kappa_h floor (phase-dependent, modulated by melt fraction).
+    # Production CHILI runs use kappah_floor = 10 m^2/s; the
+    # phi-modulated f_floor ramps from 0 in solid layers (no spurious
+    # convective flux) to ~1 in mushy/liquid layers, where physical
+    # convection is expected and MLT can otherwise numerically freeze.
+    # See solver/entropy_state.py for the same comment block on the
+    # numpy path.
     phi_basic = phase_basic.melt_fraction
     f_floor = tanh_weight(phi_basic, 0.4, 0.15)
     kh_floor = params.kappah_floor * f_floor
