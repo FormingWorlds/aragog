@@ -199,29 +199,74 @@ class EntropySolver:
         self._solution: OptimizeResult
         self.stop_early: bool = False
         # Option Z: optional factory that builds JAX-derived CVODE
-        # callbacks. Signature:
-        #   factory(state_scale, rhs_scale, t_ref, core_bc_mode)
-        #     -> (rhs_fn, jac_fn)
-        # Registered by PROTEUS via set_jax_cvode_factory() when
-        # config.interior_energetics.aragog.use_jax_jacobian is True.
+        # callbacks. Signature (post OQ3 option C):
+        #   factory(scales, core_bc_mode) -> (rhs_fn, jac_fn)
+        # where ``scales`` is an aragog.jax.nondim.NonDimScales
+        # instance built once by ``_build_nondim_scales`` (single
+        # source of truth for state_scale, rhs_scale, t_ref). The
+        # factory is registered by PROTEUS via
+        # ``set_jax_cvode_factory()`` when
+        # ``config.interior_energetics.aragog.use_jax_jacobian`` is True.
         self._jax_cvode_factory = None
 
     def set_jax_cvode_factory(self, factory) -> None:
         """Register a factory that produces JAX-derived CVODE callbacks.
 
         The factory is called inside ``solve()`` when ``use_jax_jacobian``
-        is enabled in the config. It is given the current nondim scales
-        and core-BC mode and must return the ``(rhs_fn, jac_fn)`` pair
-        accepted by scikits.odes CVODE.
+        is enabled in the config. It is given the current nondim scaling
+        spec (NonDimScales) and core-BC mode and must return the
+        ``(rhs_fn, jac_fn)`` pair accepted by scikits.odes CVODE.
 
         Parameters
         ----------
         factory : callable
-            ``factory(state_scale, rhs_scale, t_ref, core_bc_mode) ->
-            (rhs_fn, jac_fn)``. May be None to disable the Option Z
-            path even if the flag is on.
+            ``factory(scales, core_bc_mode) -> (rhs_fn, jac_fn)`` where
+            ``scales`` is an ``aragog.jax.nondim.NonDimScales`` instance
+            (OQ3 option C; replaces the legacy 4-arg signature). May be
+            None to disable the Option Z path even if the flag is on.
         """
         self._jax_cvode_factory = factory
+
+    def _build_nondim_scales(self) -> 'NonDimScales':
+        """Construct the per-component NonDimScales for the active state.
+
+        Single source of truth (OQ3 option C). Mirrors the per-state-
+        component scaling rules:
+
+        - quasi_steady core_bc:
+              state = [S_0, ..., S_{N-1}],         scale = S_ref each
+        - energy_balance core_bc (state_is_extended):
+              state = [S_0, ..., S_{N-1}, dSdr_cmb],
+              scale = [S_ref, ..., S_ref, dSdr_ref]
+        - bower2018 core_bc (state_is_extended):
+              state = [S_0, ..., S_{N-1}, T_core],
+              scale = [S_ref, ..., S_ref, S_ref]
+        - gradient core_bc:
+              state = [dSdr_0, ..., dSdr_{N}, S_surf],
+              scale = [dSdr_ref, ..., dSdr_ref, S_ref]
+
+        ``rhs_scale = t_ref / state_scale`` is derived inside
+        NonDimScales.__post_init__; the same dataclass instance feeds
+        both the scipy/CVODE wrapper here and the JAX factory.
+        """
+        from aragog.jax.nondim import NonDimScales
+
+        S_ref = self._S_ref
+        t_ref = self._t_ref_yr
+        dSdr_ref = self._dSdr_ref
+        n_s = self._n_stag
+        ss = np.full(len(self._S0), S_ref)
+        if self._core_bc == 'gradient':
+            nb = n_s + 1
+            ss[:nb] = dSdr_ref
+            ss[nb] = S_ref
+        elif self._state_is_extended:
+            ss[:n_s] = S_ref
+            if self._core_bc == 'energy_balance':
+                ss[n_s] = dSdr_ref
+            else:  # bower2018
+                ss[n_s] = S_ref
+        return NonDimScales(state_scale=ss, t_ref=float(t_ref))
 
     @classmethod
     def from_file(cls, filename: str, eos_dir: str, root: str = '') -> 'EntropySolver':
@@ -1582,26 +1627,16 @@ class EntropySolver:
         # on an O(1000) state variable. The physics code in
         # _dSdt_single stays in physical units; only the solver
         # interface scales in and out.
+        # OQ3 option C: NonDimScales is the single source of truth
+        # consumed by both the scipy/CVODE wrapper here and the JAX
+        # factory. ``__post_init__`` enforces
+        # ``rhs_scale = t_ref / state_scale``.
+        scales = self._build_nondim_scales()
         S_ref = self._S_ref
-        t_ref = self._t_ref_yr
-        dSdr_ref = self._dSdr_ref
+        t_ref = scales.t_ref
         n_s = self._n_stag
-
-        # Per-component scale vector: y_phys = y_nd * _state_scale
-        _state_scale = np.full(len(self._S0), S_ref)
-        if self._core_bc == 'gradient':
-            nb = n_s + 1
-            _state_scale[:nb] = dSdr_ref   # dS/dr components
-            _state_scale[nb] = S_ref        # S_surf
-        elif self._state_is_extended:
-            _state_scale[:n_s] = S_ref      # entropy
-            if self._core_bc == 'energy_balance':
-                _state_scale[n_s] = dSdr_ref  # dSdr_cmb
-            else:  # bower2018
-                _state_scale[n_s] = S_ref     # T_core
-
-        # Precompute RHS scale: dydt_nd = dydt_phys * _rhs_scale
-        _rhs_scale = t_ref / _state_scale
+        _state_scale = scales.state_scale
+        _rhs_scale = scales.rhs_scale
 
         S0_nd = self._S0 / _state_scale
         start_nd = start_time / t_ref
@@ -1691,10 +1726,11 @@ class EntropySolver:
             )
             if use_jax_jac:
                 try:
+                    # OQ3 option C: pass the NonDimScales single source
+                    # of truth instead of the legacy (state_scale,
+                    # rhs_scale, t_ref) positional triplet.
                     cvode_rhs_override, cvode_jacfn = self._jax_cvode_factory(
-                        np.asarray(_state_scale, dtype=float),
-                        np.asarray(_rhs_scale, dtype=float),
-                        float(t_ref),
+                        scales,
                         self._core_bc,
                     )
                     logger.info(

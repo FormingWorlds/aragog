@@ -1,9 +1,11 @@
 """Defensive contract tests for the JAX CVODE factory.
 
-Locks the OQ3 option B nondim-contract assertion in
-``aragog/solver/cvode_jax.py::build_jax_rhs_and_jacobian``: the factory
-must raise on a violated ``rhs_scale * state_scale == t_ref`` identity,
-on shape mismatches, or on non-finite / non-positive scales.
+Locks the OQ3 option C contract for ``NonDimScales`` and the
+per-call shape checks in ``build_jax_rhs_and_jacobian``:
+- NonDimScales.__post_init__ enforces
+  ``rhs_scale = t_ref / state_scale`` plus per-component positivity.
+- The JAX factory checks shape compatibility against
+  ``heating_array`` and ``core_bc_mode``.
 
 The factory build path is exercised with the lightest possible JAX
 pytrees and a tiny heating array; no solver integration is performed.
@@ -18,24 +20,34 @@ jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
 
+def _make_scales(state_scale, t_ref, rhs_scale=None):
+    """Construct NonDimScales for tests; rhs_scale=None auto-derives."""
+    from aragog.jax.nondim import NonDimScales
+    return NonDimScales(
+        state_scale=np.asarray(state_scale, dtype=float),
+        t_ref=float(t_ref),
+        rhs_scale=(np.asarray(rhs_scale, dtype=float)
+                   if rhs_scale is not None else None),
+    )
+
+
 def _build_factory(state_scale, rhs_scale, t_ref, heating, core_bc_mode):
     """Call ``build_jax_rhs_and_jacobian`` with stub pytrees.
 
-    The factory only references the JAX pytrees lazily (inside the
-    closures), so the contract checks at the top of the function fire
-    before the dummy values are touched.
+    Constructs a NonDimScales (which itself enforces the internal
+    contract) then forwards. Tests targeting NonDimScales contract
+    failures construct it directly via ``_make_scales``.
     """
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
+    scales = _make_scales(state_scale, t_ref, rhs_scale)
     return build_jax_rhs_and_jacobian(
         eos_jax=None,
         phase_params=None,
         mesh_arrays=None,
         boundary_params=None,
         heating_array=np.asarray(heating, dtype=float),
-        state_scale=np.asarray(state_scale, dtype=float),
-        rhs_scale=np.asarray(rhs_scale, dtype=float),
-        t_ref=float(t_ref),
+        scales=scales,
         core_bc_mode=core_bc_mode,
     )
 
@@ -74,24 +86,24 @@ def test_contract_holds_energy_balance_extended_state():
 
 @pytest.mark.unit
 def test_contract_violation_raises():
-    """``rhs_scale * state_scale != t_ref`` must raise at factory build."""
+    """``rhs_scale * state_scale != t_ref`` must raise inside NonDimScales."""
     n = 5
     t_ref = 1.234
     state_scale = np.full(n, 3.0e3)
     rhs_scale = np.full(n, 1.0)        # WRONG: not t_ref / state_scale
-    heating = np.zeros(n)
     with pytest.raises(ValueError, match='Nondim contract violated'):
-        _build_factory(state_scale, rhs_scale, t_ref, heating, 'quasi_steady')
+        _make_scales(state_scale, t_ref, rhs_scale=rhs_scale)
 
 
 @pytest.mark.unit
 def test_shape_mismatch_state_vs_rhs_raises():
+    """Mismatched state_scale / rhs_scale shapes must raise in
+    NonDimScales (contract is owned by the dataclass)."""
     n = 5
     state_scale = np.full(n, 3.0e3)
     rhs_scale = np.full(n + 1, 1.0e-3)
-    heating = np.zeros(n)
     with pytest.raises(ValueError, match='same shape'):
-        _build_factory(state_scale, rhs_scale, 1.0, heating, 'quasi_steady')
+        _make_scales(state_scale, 1.0, rhs_scale=rhs_scale)
 
 
 @pytest.mark.unit
@@ -120,32 +132,72 @@ def test_state_size_vs_heating_energy_balance_raises():
 
 @pytest.mark.unit
 def test_negative_state_scale_raises():
+    """Negative state_scale must raise in NonDimScales."""
     n = 4
     state_scale = np.array([3.0e3, 3.0e3, -1.0, 3.0e3])
-    rhs_scale = 1.0 / np.abs(state_scale)
-    heating = np.zeros(n)
     with pytest.raises(ValueError, match='state_scale.*positive'):
-        _build_factory(state_scale, rhs_scale, 1.0, heating, 'quasi_steady')
+        _make_scales(state_scale, 1.0)  # rhs_scale auto-derived
 
 
 @pytest.mark.unit
 def test_nonfinite_t_ref_raises():
-    n = 4
-    state_scale = np.full(n, 3.0e3)
-    rhs_scale = 1.0 / state_scale
-    heating = np.zeros(n)
+    """Inf t_ref must raise in NonDimScales."""
+    state_scale = np.full(4, 3.0e3)
     with pytest.raises(ValueError, match='t_ref.*positive'):
-        _build_factory(state_scale, rhs_scale, np.inf, heating, 'quasi_steady')
+        _make_scales(state_scale, np.inf)
 
 
 @pytest.mark.unit
 def test_zero_t_ref_raises():
-    n = 4
-    state_scale = np.full(n, 3.0e3)
-    rhs_scale = 1.0 / state_scale
-    heating = np.zeros(n)
+    """Zero t_ref must raise in NonDimScales."""
+    state_scale = np.full(4, 3.0e3)
     with pytest.raises(ValueError, match='t_ref.*positive'):
-        _build_factory(state_scale, rhs_scale, 0.0, heating, 'quasi_steady')
+        _make_scales(state_scale, 0.0)
+
+
+@pytest.mark.unit
+def test_factory_rejects_legacy_positional_scales():
+    """OQ3 option C: passing the old (state_scale, rhs_scale, t_ref)
+    triplet to ``build_jax_rhs_and_jacobian`` must raise TypeError.
+
+    Forces all callers onto the new NonDimScales contract; eliminates
+    the silent-divergence risk that motivated OQ3 in the first place.
+    """
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+    n = 4
+    with pytest.raises(TypeError, match='NonDimScales'):
+        build_jax_rhs_and_jacobian(
+            eos_jax=None,
+            phase_params=None,
+            mesh_arrays=None,
+            boundary_params=None,
+            heating_array=np.zeros(n),
+            scales=np.full(n, 3.0e3),  # ← raw ndarray, not NonDimScales
+            core_bc_mode='quasi_steady',
+        )
+
+
+@pytest.mark.unit
+def test_nondim_scales_rhs_scale_auto_derived():
+    """When rhs_scale=None, NonDimScales derives t_ref / state_scale."""
+    state_scale = np.array([3.0e3, 1.0e-6, 5.0e2])
+    t_ref = 12.5
+    sc = _make_scales(state_scale, t_ref)
+    np.testing.assert_allclose(
+        np.asarray(sc.rhs_scale),
+        t_ref / state_scale,
+        rtol=1e-15, atol=0.0,
+    )
+    # And n property reports the right size
+    assert sc.n == 3
+
+
+@pytest.mark.unit
+def test_nondim_scales_immutable():
+    """NonDimScales is frozen — direct field mutation must raise."""
+    sc = _make_scales(np.full(3, 3.0e3), 1.0)
+    with pytest.raises(Exception):  # FrozenInstanceError on dataclasses
+        sc.t_ref = 2.0  # type: ignore[misc]
 
 
 @pytest.mark.unit

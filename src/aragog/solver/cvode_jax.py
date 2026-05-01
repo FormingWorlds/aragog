@@ -46,9 +46,7 @@ def build_jax_rhs_and_jacobian(
     mesh_arrays,
     boundary_params,
     heating_array,
-    state_scale,
-    rhs_scale,
-    t_ref: float,
+    scales,
     core_bc_mode: str = 'quasi_steady',
     radio_isotope_params: tuple = (),
 ):
@@ -66,13 +64,14 @@ def build_jax_rhs_and_jacobian(
         Boundary conditions as a JAX pytree.
     heating_array : ndarray, shape (n,)
         Internal heating per cell [W/kg]. Will be cast to a JAX array.
-    state_scale : ndarray, shape (n,)
-        Per-component nondim scale factor: y_phys = y_nd * state_scale.
-        Currently expected to be [S_ref] * n (uniform entropy scale).
-    rhs_scale : ndarray, shape (n,)
-        Per-component nondim scale factor: dy/dt_nd = dy/dt_phys * rhs_scale.
-    t_ref : float
-        Time scale: t_phys = t_nd * t_ref.
+    scales : NonDimScales
+        Single source of truth for the nondim scaling (state_scale,
+        rhs_scale, t_ref). Constructed by EntropySolver via
+        ``_build_nondim_scales``; the contract
+        ``rhs_scale = t_ref / state_scale`` is enforced inside
+        ``NonDimScales.__post_init__`` (OQ3 option C). The factory only
+        validates the per-call shape against ``heating_array`` and
+        ``core_bc_mode``.
     core_bc_mode : str, default 'quasi_steady'
         Which JAX RHS to wrap: 'quasi_steady' uses ``jax.solver.dSdt``
         (N-state), 'energy_balance' uses ``jax.solver.dSdt_energy_balance``
@@ -139,62 +138,37 @@ def build_jax_rhs_and_jacobian(
             f'set ``use_jax_jacobian = false`` in the config.'
         )
 
-    # ── OQ3 option B: defensive nondim contract check ──
+    # ── OQ3 option C: NonDimScales is the single source of truth ──
     #
-    # The numpy solver constructs ``_rhs_scale = t_ref / _state_scale``
-    # (entropy_solver.py around line 1604). The JAX RHS / Jacobian here
-    # consumes ``state_scale`` and ``rhs_scale`` as opaque positional
-    # args, so a future caller change that breaks the identity would
-    # silently make the JAX RHS disagree with what CVODE Newton iterates
-    # against (degraded convergence, or wrong solution).
-    #
-    # Verify the identity, the per-component positivity, and the
-    # state-vector length against ``heating_array`` and ``core_bc_mode``.
-    # Raise on violation so the failure surfaces at factory build, not
-    # silently in the integrator. TODO(OQ3 option C): refactor to derive
-    # scales inside this factory from solver state, eliminating the
-    # duplicated nondim computation entirely.
-    state_scale_np = np.asarray(state_scale, dtype=float)
-    rhs_scale_np = np.asarray(rhs_scale, dtype=float)
-    heating_np = np.asarray(heating_array)
-    if state_scale_np.shape != rhs_scale_np.shape:
-        raise ValueError(
-            'state_scale and rhs_scale must have the same shape; got '
-            f'{state_scale_np.shape} vs {rhs_scale_np.shape}'
+    # The internal nondim contract ``rhs_scale = t_ref / state_scale``
+    # is enforced inside ``NonDimScales.__post_init__``, so we no
+    # longer recheck it here. The factory only validates the per-call
+    # shape of ``scales`` against ``heating_array`` and ``core_bc_mode``.
+    from aragog.jax.nondim import NonDimScales
+
+    if not isinstance(scales, NonDimScales):
+        raise TypeError(
+            'scales must be an aragog.jax.nondim.NonDimScales instance; '
+            f'got {type(scales).__name__}. The legacy '
+            '(state_scale, rhs_scale, t_ref) positional API was removed '
+            'in OQ3 option C; build NonDimScales(state_scale=..., '
+            't_ref=...) and let it derive rhs_scale.'
         )
+    heating_np = np.asarray(heating_array)
     expected_size = (
         heating_np.size if core_bc_mode == 'quasi_steady'
         else heating_np.size + 1
     )
-    if state_scale_np.size != expected_size:
+    if scales.n != expected_size:
         raise ValueError(
-            f'state_scale length {state_scale_np.size} is incompatible '
+            f'state_scale length {scales.n} is incompatible '
             f"with core_bc_mode={core_bc_mode!r} and heating_array length "
             f'{heating_np.size}; expected {expected_size}.'
         )
-    if not (
-        np.all(np.isfinite(state_scale_np)) and np.all(state_scale_np > 0.0)
-    ):
-        raise ValueError('state_scale must be finite and strictly positive')
-    if not (
-        np.all(np.isfinite(rhs_scale_np)) and np.all(rhs_scale_np > 0.0)
-    ):
-        raise ValueError('rhs_scale must be finite and strictly positive')
-    if not (np.isfinite(t_ref) and float(t_ref) > 0.0):
-        raise ValueError(f't_ref must be finite and strictly positive; got {t_ref!r}')
-    contract_residual = float(np.max(
-        np.abs(rhs_scale_np * state_scale_np - float(t_ref)) / float(t_ref)
-    ))
-    if contract_residual > 1.0e-10:
-        raise ValueError(
-            'Nondim contract violated: rhs_scale * state_scale != t_ref '
-            f'(max relative residual {contract_residual:.3e}). The numpy '
-            'EntropySolver constructs rhs_scale = t_ref / state_scale; '
-            'the JAX factory assumes this identity holds. See OQ3 option B.'
-        )
 
-    state_scale_jax = jnp.asarray(state_scale)
-    rhs_scale_jax = jnp.asarray(rhs_scale)
+    state_scale_jax = jnp.asarray(scales.state_scale)
+    rhs_scale_jax = jnp.asarray(scales.rhs_scale)
+    t_ref = float(scales.t_ref)
     heating_jax = jnp.asarray(heating_array)
 
     # ── A2: per-step radio heating ──
