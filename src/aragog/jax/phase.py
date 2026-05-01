@@ -252,25 +252,22 @@ class MeshArrays(eqx.Module):
             # SPIDER-parity dP/dr at basic nodes via numpy gradient (matches
             # entropy_state._dP_dr_basic = np.gradient(P_basic, r_basic)).
             dP_dr_basic=jnp.asarray(np.gradient(P_basic_arr, r_basic_arr)),
-            # Gravity (Stage 1c, 2026-04-20): per-node profile when the
-            # external mesh file carries eos_gravity (UserDefinedEOS /
-            # Zalmoxis path), else scalar broadcast. The per-node array is
-            # aligned to the same basic-node grid as area / volume /
-            # mixing_length, so the MLT buoyancy cascade in compute_mlt
-            # picks up the radial dependence without any broadcasting
-            # change downstream.
-            # Fallback chain (scalar): mesh.eos._gravitational_acceleration
-            # first (AdamsWilliamsonEOS path), then mesh.settings.
-            # gravitational_acceleration (UserDefinedEOS / Zalmoxis path
-            # where the EOS object lacks the private attribute), then the
-            # 9.81 hard default. See `stage1a_jax_paleos2phase_rhs_bug`
-            # memory for the original silent-zero bug this fallback replaces.
+            # Per-node gravity profile when the external mesh file
+            # carries eos_gravity (UserDefinedEOS / Zalmoxis path),
+            # else scalar broadcast. The per-node array is aligned to
+            # the same basic-node grid as area / volume / mixing_length,
+            # so the MLT buoyancy cascade in compute_mlt picks up the
+            # radial dependence without any downstream broadcasting
+            # change. Scalar fallback chain:
+            # mesh.eos._gravitational_acceleration (AdamsWilliamsonEOS),
+            # mesh.settings.gravitational_acceleration (external EOS
+            # without the private attribute), then 9.81 m/s^2.
             gravity=_build_gravity_array(mesh),
         )
 
 
 # ---------------------------------------------------------------------------
-# Stage 1c gravity array builder (used by MeshArrays.from_numpy_mesh)
+# Per-basic-node gravity array builder (used by MeshArrays.from_numpy_mesh)
 # ---------------------------------------------------------------------------
 
 def _build_gravity_array(mesh) -> 'jax.Array':
@@ -594,10 +591,10 @@ def compute_mlt(
     # Reynolds number
     reynolds = viscous_velocity * mesh.mixing_length / nu
 
-    # Smooth blend between viscous and inviscid regimes.
-    # blend_width = 0.01 * RE_CRIT (was 0.2 * RE_CRIT pre-fix);
-    # the wider blend leaked inviscid k_h into the solid regime,
-    # producing T_core bistability. Aragog scipy commit 9742619.
+    # Smooth blend between viscous and inviscid regimes. The narrow
+    # blend_width (0.01 * RE_CRIT) keeps inviscid k_h confined to the
+    # convecting regime; widening the blend leaks inviscid mixing
+    # into the solid regime and induces T_core bistability.
     blend_width = 0.01 * RE_CRIT
     inviscid_weight = 0.5 * (1.0 + jnp.tanh(
         (reynolds - RE_CRIT) / jnp.maximum(blend_width, 1e-30)

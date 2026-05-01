@@ -106,11 +106,11 @@ def test_mesh_gravity_prefers_eos_attribute_when_available():
 
 @pytest.mark.unit
 def test_mesh_gravity_uses_per_node_profile_when_eos_gravity_present():
-    """Stage 1c regression: when the external mesh supplies eos_radius +
-    eos_gravity columns, MeshArrays.from_numpy_mesh must interpolate that
-    profile onto the basic-node radii rather than broadcasting a single
-    scalar. Earth-like radial profile: g rising from ~8 m/s^2 at CMB to
-    ~10 m/s^2 at surface."""
+    """When the external mesh supplies eos_radius + eos_gravity
+    columns, MeshArrays.from_numpy_mesh must interpolate that profile
+    onto the basic-node radii rather than broadcasting a single
+    scalar. Earth-like radial profile: g rising from ~8 m/s^2 at the
+    CMB to ~10 m/s^2 at the surface."""
     mesh = _StubMesh(configured_g=9.81)
     # Populate mesh.parameters with the external eos arrays, matching the
     # shape that entropy_solver.reset() writes when eos_method=2.

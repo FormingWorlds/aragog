@@ -455,11 +455,9 @@ class EntropySolver:
         outer/inner BC dispatch keys out of the per-RHS-call path.
         Called from ``_initialize_internals`` after BC + mesh setup.
 
-        Tier 1 speedup, 2026-04-09. The dSdt loop previously
-        recomputed all of these on every RHS evaluation, which
-        meant ~10 µs/call of pure dispatch + arithmetic overhead.
-        At ~1000 RHS calls per coupling step on R8 CHILI, that's
-        ~10 ms per coupling step pure overhead, fully removable.
+        Hoisting these onto the solver instance is worth a few
+        microseconds per RHS evaluation, which compounds over the
+        thousand-plus calls per coupling step in stiff regimes.
         """
         bc = self.evaluator.boundary_conditions._settings
         mesh = self.evaluator.mesh
@@ -564,7 +562,7 @@ class EntropySolver:
         logger.debug('set_initial_entropy: core_bc=%r, n_stag=%d', core_bc, n_stag)
 
         if core_bc == 'energy_balance':
-            # Path A SPIDER bit-parity core BC.
+            # SPIDER bit-parity core BC (energy_balance mode).
             # State = [S_0, ..., S_{N-1}, dSdr_cmb]
             # The boundary state dSdr_cmb is the entropy gradient at
             # the CMB basic node (mirror of SPIDER's dSdxi[ind_cmb]).
@@ -688,7 +686,7 @@ class EntropySolver:
         self._T_core_init = float(T_core_init)
 
     def set_initial_dSdr_cmb(self, dSdr_cmb_init: float | None) -> None:
-        """Set the initial CMB entropy gradient (Path A energy_balance only).
+        """Set the initial CMB entropy gradient (energy_balance mode only).
 
         Must be called BEFORE ``set_initial_entropy``. If not called,
         the initial ``dSdr_cmb`` is taken from the previous solution
@@ -742,14 +740,11 @@ class EntropySolver:
         ``[S_0, ..., S_{N-1}, T_core]`` of length N+1, and this returns
         ``[dS/dt, dT_core/dt]`` of the same length.
 
-        For the legacy quasi-steady BC the state vector is just
+        For the quasi_steady BC the state vector is just
         ``[S_0, ..., S_{N-1}]`` of length N.
 
-        Tier 1 Step 1B (2026-04-09): the previous version had a
-        ``vectorized=True`` dispatch branch that fell through to a
-        sequential Python loop over the K columns -- pure overhead
-        with zero scipy benefit. Removed; the solver now uses
-        ``vectorized=False`` and the 1D path only.
+        The integrator passes ``vectorized=False``; this RHS handles
+        the 1D path only.
 
         Parameters
         ----------
@@ -945,8 +940,9 @@ class EntropySolver:
             return dSdt
 
         if energy_balance:
-            # Path A boundary-state ODE (extracted to a pure helper
-            # `_energy_balance_rhs_per_s` for unit testing). The inputs are
+            # SPIDER bc.c boundary-state ODE for the CMB entropy
+            # gradient. Extracted into the pure helper
+            # `_energy_balance_rhs_per_s` for unit testing. The inputs are
             # the F_cmb heat flux computed by state.update() above
             # (which used the boundary dSdr_cmb to set the CMB basic
             # node entropy), and the dS/dt at the bottom staggered
@@ -1494,8 +1490,8 @@ class EntropySolver:
         atol_base = max(self.parameters.solver.atol, 1.0e-8)
         rtol = self.parameters.solver.rtol
 
-        # Phase-aware atol: tight during crystallization, relaxed only
-        # when fully solid (Fix B, 2026-04-10).
+        # Phase-aware atol: tight during crystallization, relaxed
+        # only when fully solid.
         try:
             n_stag = self._n_stag
             if self._core_bc == 'gradient':
@@ -1650,14 +1646,17 @@ class EntropySolver:
         # the solver to get stuck at the liquidus indefinitely.
         events = None
 
-        # SOLVER: SUNDIALS CVODE via scikits.odes (2026-04-11). Same
-        # solver SPIDER uses (CVODE BDF with modified-Newton). scipy's
-        # BDF and Radau both hit `Required step size is less than
-        # spacing between numbers` at the crystallisation front because
-        # scipy's Newton iterator cannot converge on the stiff phase
-        # transition. CVODE's C implementation handles it cleanly.
-        # Scipy solve_ivp is kept as a fallback only if CVODE is not
-        # available (e.g., scikits.odes import fails).
+        # Integrator dispatch. SUNDIALS CVODE (via scikits.odes) is
+        # the same solver SPIDER uses and is the recommended choice
+        # for production-grade stiff integration: scipy's BDF and
+        # Radau collapse their step size to machine epsilon at the
+        # crystallisation front and abort with `Required step size
+        # is less than spacing between numbers` because scipy's
+        # Newton iterator cannot converge through the stiff phase
+        # transition. CVODE's modified-Newton with cached Jacobian
+        # factorisation handles the discontinuity cleanly. Scipy
+        # solve_ivp (Radau or BDF) is kept as a fallback for systems
+        # without scikits.odes available.
         solver_method = getattr(
             self.parameters.energy, 'solver_method', 'radau'
         )
@@ -1919,16 +1918,10 @@ class EntropySolver:
         RF_depth = 1.0 - rf / R_outer if R_outer > 0 else 0.0
 
         # Thermal energy (sensible, for comparison with SPIDER).
-        #
-        # Use the real heat capacity Cp(P, S) from the EntropyEOS
-        # phase evaluator. Until 2026-04-09 this used a hardcoded
-        # CP_REF = 1200 J/kg/K, which under-counted E_th by ~25-30 %
-        # at mantle conditions and produced a spurious +17 % offset
-        # against SPIDER (which itself was also wrong, see the
-        # parallel fix in proteus.interior_energetics.spider). With
-        # both wrappers using their respective EOS Cp(P, S) values
-        # the helpfile E_th is now physically meaningful and the
-        # SPIDER/Aragog parity reduces to a true comparison.
+        # Uses the real heat capacity Cp(P, S) from the EntropyEOS
+        # phase evaluator so that E_th tracks the EOS internal energy
+        # consistently with the solver state, rather than a fixed
+        # reference Cp.
         Cp_stag = np.asarray(self.state.phase_staggered.heat_capacity()).ravel()
         E_th = float(np.sum(mass_stag * Cp_stag * T_stag))
 

@@ -350,18 +350,18 @@ class TestEntropySolverStandalone:
 @needs_eos
 @pytest.mark.unit
 class TestJgravSmoothing:
-    """Regression tests for the gravitational-separation smoothing fix.
+    """Tests for the gravitational-separation flux smoothing.
 
-    Before 2026-04-08: Aragog's Jgrav contribution to the mass flux
-    `rho * phi * (1-phi) * v_rel` did not vanish fast enough outside
-    the mushy zone. At the first crystallization step, v_rel in the
-    Stokes regime (phi ~ 0.995, grain_size = 0.1 m) is ~6 m/s, and
-    phi*(1-phi) ~ 5e-3 is still large enough to drain the CMB cell in
-    one coupling step. The drain pushed the CMB-cell entropy below
-    the PALEOS P-S table domain [-85, 3236] J/kg/K, after which the
-    T(P, S) lookup saturated at the table edge and the runtime
-    helpfile recorded byte-identical Phi=0.226607 for >90 Myr of
-    "simulation time" while the underlying S profile diverged to
+    Without smoothing, Aragog's Jgrav contribution to the mass flux
+    ``rho * phi * (1-phi) * v_rel`` does not vanish fast enough
+    outside the mushy zone. At first crystallization, v_rel in the
+    Stokes regime (phi ~ 0.995, grain_size = 0.1 m) is ~6 m/s and
+    ``phi*(1-phi) ~ 5e-3`` is still large enough to drain the CMB
+    cell in one coupling step. The drain pushes the CMB-cell entropy
+    below the PALEOS P-S table domain [-85, 3236] J/kg/K, after
+    which the T(P, S) lookup saturates at the table edge and the
+    runtime helpfile records byte-identical Phi for indefinite model
+    time while the underlying S profile diverges to
     ±1e7 J/kg/K. See memory/aragog_jgrav_cmb_drain.md.
 
     The fix applies a SPIDER-analogue smoothing: multiply Jgrav by a
@@ -751,23 +751,21 @@ class TestJgravSmoothing:
 @needs_eos
 @pytest.mark.unit
 class TestCpFromEOS:
-    """Regression tests for the E_th = sum(m_i * Cp(P_i, S_i) * T_i) fix.
+    """Tests that E_th = sum(m_i * Cp(P_i, S_i) * T_i) uses EOS Cp.
 
-    Until 2026-04-09 the entropy_solver computed E_th with a hardcoded
-    ``CP_REF = 1200 J/kg/K``. The Wolf-Bower 2018 / PALEOS tables give
-    Cp(P, S) = 1400-2000 J/kg/K across the rocky mantle range, so the
-    helpfile E_th was undercount by ~25-30 % and disagreed with SPIDER
-    by +17 % at t=0 (mostly because SPIDER's same fallback combined
-    with a different mass column gave the opposite-signed bias).
-    Wired Cp_eff used to use ``cap_stag * vol = rho * T * vol`` which
-    silently reduces to ``mass-weighted T`` rather than mean Cp.
+    A hardcoded ``CP_REF = 1200 J/kg/K`` undercounts E_th by 25-30 %
+    in the rocky mantle range (PALEOS / Wolf-Bower tables give
+    Cp(P, S) = 1400-2000 J/kg/K) and produces a spurious sign-changed
+    bias against SPIDER's helpfile depending on the mass column
+    convention. Computing Cp_eff from ``cap_stag * vol = rho * T * vol``
+    silently reduces to mass-weighted T rather than mean Cp.
 
     These tests assert:
         (1) ``phase_staggered.heat_capacity()`` returns positive,
             non-degenerate values across mantle pressures and never
             collapses to a single number (which would mean the EOS
             cache was stale or hardcoded);
-        (2) the post-fix E_th is strictly larger than the old
+        (2) the EOS-derived E_th is strictly larger than the
             ``mass*1200*T`` computation at every node and the global
             sum is at least 15 % larger;
         (3) the post-fix Cp_eff is bounded between 1200 and 2500
@@ -934,10 +932,10 @@ class TestLatentBlendCp:
     Mirrors SPIDER's eos_composite.c:226-232 formula:
         Cp_mix = (S_liq - S_sol) / (T_liq - T_sol) * T_mid
 
-    The empirical SPIDER vs Aragog comparison at v3 (2026-04-09) found
-    that wrapper-side linear-blend Cp underestimates SPIDER's internal
-    cp_s by up to a factor of 6 in the deep mushy zone. The new
-    `heat_capacity_latent_blend` method closes that gap.
+    Wrapper-side linear-blend Cp underestimates SPIDER's internal
+    cp_s by up to a factor of six in the deep mushy zone, while the
+    latent-blend method tracks SPIDER's cp_s to within a few percent
+    along the same trajectory.
     """
 
     def test_latent_blend_returns_finite_positive(self, entropy_eos):
@@ -1200,19 +1198,19 @@ class TestBowerCoreBC:
 @needs_eos
 @pytest.mark.unit
 class TestEnergyBalanceCoreBC:
-    """Unit tests for the energy-balance core BC (Step 2).
+    """Unit tests for the energy-balance core BC.
 
-    Path A expands the solver state vector by one element at the end
-    so the CMB entropy gradient ``dSdr_cmb`` becomes a separately
-    integrated ODE state variable, mirroring SPIDER's
-    ``dSdxi[ind_cmb]`` on the basic grid. The boundary value is then
-    passed into ``EntropyState.update(dSdr_cmb=...)`` on every RHS
+    The energy_balance mode expands the solver state vector by one
+    element at the end so the CMB entropy gradient ``dSdr_cmb``
+    becomes a separately integrated ODE state variable, mirroring
+    SPIDER's ``dSdxi[ind_cmb]`` on the basic grid. The boundary value
+    is passed into ``EntropyState.update(dSdr_cmb=...)`` on every RHS
     evaluation so the convective+conductive flux operator at the CMB
-    basic node uses the boundary entropy gradient rather than the
-    FD estimate from staggered cells alone.
+    basic node uses the boundary entropy gradient rather than the FD
+    estimate from staggered cells alone.
 
-    The d/dt equation for the boundary state is the exact bc.c:76-131
-    formula from SPIDER:
+    The d/dt equation for the boundary state is the SPIDER bc.c:76-131
+    formula:
 
         fac_cmb = cp_cmb / (cp_core * T_cmb * tfac * M_core)
         rhs_cmb = (-F_cmb*area_cmb + 0) * fac_cmb - dSdt_s_cmb
@@ -1232,8 +1230,8 @@ class TestEnergyBalanceCoreBC:
       3. The Jacobian sparsity pattern for the extended state.
 
     The tests DO NOT build a full solver state, because the goal is
-    to check the Path A contract, not re-test the mesh / flux machinery
-    already covered by ``TestJgravSmoothing`` and
+    to check the energy_balance contract, not re-test the mesh /
+    flux machinery already covered by ``TestJgravSmoothing`` and
     ``TestEntropySolverStandalone``. Where a full solver state IS
     needed (one end-to-end shape check), we reuse
     ``TestBowerCoreBC._build_minimal_mesh``.
@@ -1842,22 +1840,20 @@ class TestEnergyBalanceCoreBC:
     # ── atol phi0 slice regression test ──────────────────────────
 
     def test_phi0_slice_handles_extended_state(self, entropy_eos):
-        """Tier 1D atol phi0 estimate works for energy_balance.
+        """Phase-aware atol phi0 estimate works in extended-state modes.
 
-        Before the 2026-04-10 fix, ``solve()`` sliced ``_S0`` only
-        when ``_core_bc == 'bower2018'``, which caused energy_balance to
-        pass the full N+1 _S0 (with dSdr_cmb appended) to
-        ``melt_fraction`` against a shape-N _P_stag_flat. The shape
-        mismatch raised an exception that fell through the
-        ``try/except`` and left phi0 = 1.0, silently disabling the
-        Tier 1D atol relaxation. The fix swaps the check to
-        ``_state_is_extended``.
+        ``solve()`` slices ``_S0`` whenever the state vector is
+        extended (energy_balance, bower2018, gradient) so that
+        ``melt_fraction`` is called against the entropy block only,
+        not the full state vector. Without that slice, calls in the
+        N+1 modes pass a length-N+1 array to ``melt_fraction`` against
+        a shape-N ``_P_stag_flat``; the shape mismatch falls through
+        the ``try/except`` and leaves phi0 = 1.0, silently disabling
+        the phase-aware atol relaxation.
 
-        This test reproduces the old failure path by calling
-        ``melt_fraction`` the same way solve() does, both with the
-        correct slice (success) and with the old buggy slice
-        (shape mismatch). A passing test needs the correct path to
-        succeed.
+        This test calls ``melt_fraction`` the same way ``solve()``
+        does, with the entropy-block slice, and asserts the resulting
+        phi0 is finite and non-degenerate.
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30,
                                          core_bc='energy_balance')

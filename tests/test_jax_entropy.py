@@ -976,25 +976,24 @@ class TestSolverParity:
 
 
 # ---------------------------------------------------------------------------
-# Tier 7: Jgrav smoothing regression tests (2026-04-09)
+# Jgrav smoothing tests (JAX path)
 # ---------------------------------------------------------------------------
 
 @needs_eos
 @pytest.mark.unit
 class TestJAXJgravSmoothing:
-    """Regression tests for the cubic Hermite Jgrav smoothing in the JAX path.
+    """Tests for the cubic Hermite Jgrav smoothing in the JAX path.
 
     Mirrors the scipy-path TestJgravSmoothing in test_entropy_pytest.py.
-    Before the 2026-04-09 fix, aragog/jax/phase.py computed a raw
-    gravitational-separation mass flux `rho * phi * (1-phi) * v_rel`
-    with no smoothing; at first crystallisation this drained the CMB
-    cell's entropy off the PALEOS P-S table domain in a single
-    coupling step, same as the pre-fix scipy path. The fix ports the
-    SPIDER-analogue cubic Hermite smoothing
+    A raw gravitational-separation mass flux ``rho * phi * (1-phi) * v_rel``
+    without smoothing drains the CMB cell's entropy off the PALEOS P-S
+    table domain in a single coupling step at first crystallisation.
+    The SPIDER-analogue cubic Hermite smoothing
         smth = 16 * gphi^2 * (1 - gphi)^2    for gphi in [0, 1]
-    where gphi is the un-truncated two-phase fraction at the
-    STAGGERED cell below the interface. These tests lock in the
-    correct behaviour under the diffrax solvers.
+    (where gphi is the un-truncated two-phase fraction at the staggered
+    cell below the interface) keeps the flux finite through the
+    transition. These tests lock in that behaviour under the diffrax
+    solvers.
 
     See ``aragog/src/aragog/jax/phase.py::compute_fluxes`` for the
     JAX implementation and ``aragog/src/aragog/solver/entropy_state.py``
@@ -1236,12 +1235,12 @@ class TestJAXJgravSmoothing:
 
 
 # ---------------------------------------------------------------------------
-# Tier 7: SPIDER-parity ports landed in Z.6.A (aragog 09cd760, 96894db)
+# SPIDER-parity tests for the JAX path
 # ---------------------------------------------------------------------------
 #
-# Three structural pieces of physics in the JAX path were brought into
-# bit-tight parity with the numpy EntropyPhaseEvaluator._update_eos /
-# entropy_state.update path during the Z.6.A iteration:
+# Three structural pieces of physics in the JAX path are held in bit-tight
+# parity with the numpy EntropyPhaseEvaluator._update_eos /
+# entropy_state.update path:
 #
 #   1. EntropyEOS_JAX.compute_phase_state — single-pass evaluation that
 #      derives all six properties (T, rho, Cp, alpha, dTdPs, k) from the
@@ -1578,8 +1577,9 @@ class TestBoundaryCopies:
         ``sqrt(x + eps^2)`` guards, ``jax.grad`` returns NaN through
         the ``0 / sqrt(0)`` and ``sign(0) * downstream`` patterns.
 
-        Regression test for the all-NaN Jacobian observed at the chili
-        mid-trajectory state in 2026-04-17 z04 / z08 isolation runs.
+        Regression test for an all-NaN Jacobian seen at coupled
+        mid-trajectory states where the gradient and inviscid velocity
+        simultaneously vanish.
         """
         from aragog.jax.phase import (
             MeshArrays, PhaseParams, compute_mlt, evaluate_phase,

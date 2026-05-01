@@ -87,9 +87,11 @@ def make_jacobian_fn_quasi_steady(
 ):
     """Build a CVODE-compatible Jacobian function from a JAX RHS.
 
-    Only supports quasi_steady core_bc (state vector = N entropy
-    values). For energy_balance, see make_jacobian_fn_energy_balance
-    (TODO).
+    Supports the quasi_steady core_bc only (state vector of length
+    N entropy values). The energy_balance mode requires an analytic
+    derivative of the boundary closure equation w.r.t. the entropy
+    block; that path is not currently implemented and falls back to
+    the finite-difference Jacobian when CVODE is dispatched.
 
     Parameters
     ----------
@@ -211,6 +213,8 @@ def verify_rhs_match(
     return matched, info
 
 
-# TODO: make_jacobian_fn_energy_balance for N+1 state vector with
-# dSdr_cmb closure equation. Requires analytic derivative of the
-# energy_balance BC w.r.t. the entropy block.
+# An analytic Jacobian for the N+1 energy_balance state vector
+# would require differentiating the dSdr_cmb closure equation
+# (SPIDER bc.c:76-131) with respect to the entropy block. That
+# variant is not provided here; energy_balance runs use the
+# finite-difference Jacobian path through CVODE instead.

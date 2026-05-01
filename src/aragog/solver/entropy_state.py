@@ -326,7 +326,8 @@ class EntropyState:
         time : float
             Current time [yr].
         dSdr_cmb : float, optional
-            Path A (energy_balance): override the CMB boundary gradient.
+            energy_balance mode: override the CMB boundary gradient
+            with the value from the extended state vector.
         dSdr : array, optional
             Gradient-mode: provide dS/dr at all basic nodes directly,
             bypassing the FD transform. Shape (N+1,).
@@ -391,9 +392,10 @@ class EntropyState:
             dxidr = np.asarray(mesh.dxidr).ravel()
             self._dSdr = dSdxi * dxidr
 
-        # Path A: override the boundary entropy gradient with the
-        # state-vector value. This must happen BEFORE the phase_basic
-        # update so the bottom basic node uses the boundary entropy.
+        # energy_balance mode: override the boundary entropy gradient
+        # with the state-vector value. Must happen BEFORE the
+        # phase_basic update so the bottom basic node uses the
+        # boundary entropy.
         if dSdr_cmb is not None:
             r_basic = np.asarray(mesh.basic.radii).ravel()
             r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
@@ -724,10 +726,10 @@ class EntropyState:
             delta_v = np.asarray(
                 self.phase_staggered.delta_specific_volume()
             ).ravel()
-            # Stage 1c (2026-04-20): gravity is now a per-node array aligned
-            # with the staggered grid. Use element-wise multiplication
-            # (np.abs broadcasts) rather than collapsing to a scalar, which
-            # would have been a silent accuracy regression on non-uniform g.
+            # Per-node gravity aligned with the staggered grid; use
+            # element-wise multiplication so non-uniform g(r) is
+            # respected (collapsing to a scalar mean would silently
+            # bias the dilatation heating on stratified profiles).
             g_stag = np.abs(
                 np.asarray(self.phase_staggered.gravitational_acceleration()).ravel()
             )
