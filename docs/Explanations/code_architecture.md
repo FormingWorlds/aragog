@@ -35,8 +35,7 @@ src/aragog/
 │   │                      #   nondimensionalisation, retry hooks, SolverOutput
 │   ├── entropy_state.py   # EntropyState: per-RHS flux assembly, MLT, Jgrav, Jmix,
 │   │                      #   dilatation, phase-boundary caching
-│   ├── cvode_jax.py       # CVODE callbacks built from a JAX RHS+Jacobian factory
-│   └── jacobian_jax.py    # JAX jacrev-based Jacobian builder for quasi_steady mode
+│   └── cvode_jax.py       # CVODE callbacks built from a JAX RHS+Jacobian factory
 │
 ├── jax/                   # JAX-traceable replicas for the analytic-Jacobian path
 │   ├── __init__.py
@@ -75,7 +74,7 @@ from aragog.output.diagnostics import melt_fraction_global, rheological_front
 from aragog import aragog_file_logger      # logger setup
 ```
 
-Anything not in that list is internal: in particular `entropy_state`, `entropy_solver._dSdt_single`, the `aragog.jax` module, and the `cvode_jax` / `jacobian_jax` builders are implementation details that the PROTEUS wrapper and tests reach into when they need to, but external callers should treat as private.
+Anything not in that list is internal: in particular `entropy_state`, `entropy_solver._dSdt_single`, the `aragog.jax` module, and the `cvode_jax` builder are implementation details that the PROTEUS wrapper and tests reach into when they need to, but external callers should treat as private.
 
 ## Key design patterns
 
