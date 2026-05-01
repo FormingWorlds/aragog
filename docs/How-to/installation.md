@@ -17,7 +17,7 @@ Alternatively, you can create and activate a [virtual environment](https://docs.
 Finally, install Aragog into the activated environment:
 
 ```sh
-pip install aragog
+pip install fwl-aragog
 ```
 
 ## Developer install

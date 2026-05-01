@@ -4,6 +4,8 @@ repo_url: https://github.com/FormingWorlds/aragog
 
 copyright: '&copy; 2023-2026 <a href="https://formingworlds.space">Forming Worlds Lab</a>'
 
+copyright: '© 2023-2026 <a href="https://formingworlds.space">Forming Worlds Lab</a>'
+
 nav:
   - Home:
       - About: index.md
@@ -97,9 +99,6 @@ theme:
       toggle:
         icon: lucide/sun
         name: Switch to light mode
-
-extra_css:
-  - stylesheets/extra.css
 
 markdown_extensions:
   - admonition
