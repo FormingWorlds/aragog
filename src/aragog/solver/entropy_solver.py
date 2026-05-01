@@ -1658,8 +1658,20 @@ class EntropySolver:
         # solve_ivp (Radau or BDF) is kept as a fallback for systems
         # without scikits.odes available.
         solver_method = getattr(
-            self.parameters.energy, 'solver_method', 'radau'
+            self.parameters.energy, 'solver_method', 'cvode'
         )
+        # Warn when CVODE was requested but scikits.odes is not
+        # importable: the fallback to scipy Radau is a substantial
+        # change in solver behaviour (no modified-Newton, no cached
+        # Jacobian factorisation), and silent fallback has bitten
+        # production runs in the past.
+        if solver_method == 'cvode' and not _CVODE_AVAILABLE:
+            logger.warning(
+                'EntropySolver: solver_method="cvode" requested but '
+                'scikits.odes is not installed; falling back to scipy '
+                'Radau. Install scikits-odes to enable the production '
+                'CVODE path (same solver SPIDER uses).'
+            )
         use_cvode = (
             solver_method == 'cvode'
             and _CVODE_AVAILABLE

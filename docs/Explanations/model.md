@@ -134,12 +134,11 @@ $$
   $$
   with mass fraction $\chi_i$, specific power $\varphi_i$, and half-life $\tau_{1/2,i}$.
 
-- **Dilatation $P\,dV$ heating.** When gravitational separation is active, the segregating melt does work against gravity:
+- **Dilatation $P\,dV$ heating.** When melt of different density is transported across a pressure gradient (by chemical mixing or by gravitational separation), the system does work against gravity:
   $$
-  H_\mathrm{dil} = g\,\Delta v\,j_\mathrm{mass},\qquad
-  \Delta v = \frac{1}{\rho_\mathrm{liq}} - \frac{1}{\rho_\mathrm{sol}},
+  \Phi_\mathrm{vol} = g\,\left(\frac{1}{\rho_m} - \frac{1}{\rho_s}\right)\,(j_\mathrm{mix} + j_\mathrm{grav}),
   $$
-  where $j_\mathrm{mass}$ is the gravitational-separation mass flux interpolated to staggered nodes. This term is enabled only when both `dilatation = true` and `gravitational_separation = true`.
+  with $j_\mathrm{mix}$ the convective-mixing mass flux and $j_\mathrm{grav}$ the gravitational-separation mass flux. Only active when both `dilatation = true` and `gravitational_separation = true`.
 
 - **Tidal heating.** A user-supplied scalar or per-node array passed through the `tidal_array` configuration key.
 
@@ -191,7 +190,7 @@ Pressure $P(r)$ is treated as time-invariant. Two options are provided:
 
 ### Time integration
 
-The default integrator is scipy `Radau` (set via `solver_method = "radau"`); scipy `BDF` is also available. For production-grade stiff problems, `solver_method = "cvode"` selects SUNDIALS CVODE via `scikits.odes`, which is the same modified-Newton, cached-Jacobian solver SPIDER uses. The CVODE path supports an optional analytic Jacobian (`use_jax_jacobian = true`) built by tracing the pure-functional flux computation in `aragog.jax.phase` with `jax.jacrev`.
+The default integrator is SUNDIALS CVODE via `scikits.odes` (`solver_method = "cvode"`), the same modified-Newton, cached-Jacobian solver SPIDER uses. CVODE is paired by default with the JAX-derived analytic Jacobian (`use_jax_jacobian = true`), built by tracing the pure-functional flux computation in `aragog.jax.phase` with `jax.jacrev`. When `scikits.odes` is not installed the solver falls back to scipy `Radau` and emits a warning at solve time; scipy `BDF` is also selectable via `solver_method = "bdf"`.
 
 The state and time are nondimensionalised internally before being passed to the integrator (entropy reference $S_\mathrm{ref}$ and time reference $t_\mathrm{ref}$) to avoid precision loss in the BDF tolerance control. Physical units are restored on output.
 

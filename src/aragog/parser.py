@@ -216,16 +216,21 @@ class _EnergyParameters:
     # (full-strength fluxes across the mushy zone) but requires all material
     # properties to match SPIDER to <0.01%.
     phase_smoothing: str = 'cubic_hermite'
-    # ODE solver method: 'radau' (scipy Radau, default), 'cvode' (SUNDIALS
-    # CVODE via scikits.odes, same solver SPIDER uses), 'bdf' (scipy BDF).
-    solver_method: str = 'radau'
+    # ODE solver method: 'cvode' (SUNDIALS CVODE via scikits.odes,
+    # default; same solver SPIDER uses, recommended for production
+    # stiff integration), 'radau' (scipy Radau), 'bdf' (scipy BDF).
+    # When scikits.odes is not installed the solver falls back to
+    # scipy Radau and emits a warning at solve time.
+    solver_method: str = 'cvode'
 
     # Option Z: when True and solver_method == 'cvode', the ODE integrator
     # uses a JAX-derived analytic Jacobian (built by PROTEUS via
     # EntropySolver.set_jax_cvode_factory) in place of CVODE's default
     # finite-difference Jacobian. Requires JAX and the aragog.jax module.
-    # Has no effect unless a factory is registered before solve().
-    use_jax_jacobian: bool = False
+    # Default True (matches the production CHILI configuration). Has
+    # no effect unless a factory is registered before solve(); silently
+    # falls back to FD Jacobian when no factory is available.
+    use_jax_jacobian: bool = True
 
     tidal_array: npt.NDArray = field(default_factory=lambda:np.array([0.0], dtype=float))
 

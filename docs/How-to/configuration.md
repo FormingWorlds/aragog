@@ -58,8 +58,8 @@ eddy_diffusivity_chemical = 1.0
 kappah_floor = 0.0
 bottom_up_grav_sep = true
 phase_smoothing = "cubic_hermite"  # "cubic_hermite" or "tanh"
-solver_method = "radau"            # "radau" | "bdf" | "cvode"
-use_jax_jacobian = false
+solver_method = "cvode"            # "cvode" | "radau" | "bdf"
+use_jax_jacobian = true
 tidal_array = [0.0]
 
 [initial_condition]
@@ -183,8 +183,8 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `kappah_floor` | m²/s | 0.0 | Phase-modulated lower bound on $\kappa_h$ |
 | `bottom_up_grav_sep` | bool | true | Apply SPIDER's bottom-up gating on the gravitational-separation flux |
 | `phase_smoothing` | str | `"cubic_hermite"` | Phase-boundary smoothing. `"cubic_hermite"` is $16\,g\phi^2(1-g\phi)^2$; `"tanh"` reproduces SPIDER's `get_smoothing` |
-| `solver_method` | str | `"radau"` | ODE integrator. `"radau"` and `"bdf"` use scipy `solve_ivp`; `"cvode"` selects SUNDIALS CVODE via `scikits.odes` |
-| `use_jax_jacobian` | bool | false | When `solver_method = "cvode"`, install a JAX-traced analytic Jacobian instead of the finite-difference Jacobian |
+| `solver_method` | str | `"cvode"` | ODE integrator. `"cvode"` selects SUNDIALS CVODE via `scikits.odes` (default); `"radau"` and `"bdf"` use scipy `solve_ivp`. When `scikits.odes` is not installed the solver falls back to Radau with a warning. |
+| `use_jax_jacobian` | bool | true | When `solver_method = "cvode"`, install a JAX-traced analytic Jacobian instead of the finite-difference Jacobian. Requires JAX and the PROTEUS-side factory registration; falls back to FD Jacobian otherwise. |
 | `tidal_array` | array[float] | `[0.0]` | Per-staggered-node tidal heating in W/kg. Length must be `1` (broadcast scalar) or `number_of_nodes - 1` |
 
 ### `[initial_condition]`

@@ -57,13 +57,13 @@ The semi-discrete ODE system $\mathbf{y}'(t) = \mathbf{f}(t, \mathbf{y})$ is adv
 
 | Value | Integrator | When to use |
 |-------|------------|-------------|
-| `"radau"` | scipy `Radau` (default) | Default for short tests and standalone runs |
+| `"cvode"` (default) | SUNDIALS CVODE via `scikits.odes` | Production-grade stiff integration; same solver SPIDER uses |
+| `"radau"` | scipy `Radau` | Standalone tests when `scikits.odes` is not installed |
 | `"bdf"` | scipy `BDF` | Alternative scipy path |
-| `"cvode"` | SUNDIALS CVODE via `scikits.odes` | Production-grade stiff integration; same solver SPIDER uses |
 
-CVODE provides modified-Newton with cached Jacobian factorisation and adaptive step control that handles phase-transition discontinuities cleanly. scipy's BDF and Radau can collapse the step size at the crystallisation front when their Newton iteration fails to converge; CVODE is recommended for runs that traverse the solidus or liquidus.
+CVODE provides modified-Newton with cached Jacobian factorisation and adaptive step control that handles phase-transition discontinuities cleanly. scipy's BDF and Radau can collapse the step size at the crystallisation front when their Newton iteration fails to converge. When CVODE is requested but `scikits.odes` is not importable, the solver emits a warning at solve time and silently falls back to scipy Radau.
 
-When `solver_method = "cvode"` and `use_jax_jacobian = true`, an analytic Jacobian is built by tracing the pure-functional flux computation in `aragog.jax.phase` with `jax.jacrev`. This replaces the $O(N)$ finite-difference RHS evaluations per Jacobian build with one JAX-traced backward pass.
+The default also enables the JAX-derived analytic Jacobian (`use_jax_jacobian = true`), built by tracing the pure-functional flux computation in `aragog.jax.phase` with `jax.jacrev`. This replaces the $O(N)$ finite-difference RHS evaluations per Jacobian build with one JAX-traced backward pass. The analytic Jacobian is used only when CVODE is the active solver and a JAX factory has been registered (the PROTEUS wrapper does this automatically); otherwise the solver silently falls back to CVODE's finite-difference Jacobian.
 
 ### Right-hand side
 

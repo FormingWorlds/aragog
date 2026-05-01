@@ -121,7 +121,11 @@ The term enters the entropy equation as a heat flux: even though the flux carrie
 Internal heating contributes to the entropy equation through the source term $\rho H$ in the integral balance. The three contributions are summarised here; the radiogenic-decay model and the per-isotope configuration are discussed in [Energy equation](energy_equation.md).
 
 - **Radiogenic.** $H_\mathrm{radio} = \sum_i \chi_i \varphi_i \exp(-\ln 2\,(t - t_0)/\tau_{1/2,i})$, time-dependent and (typically) space-uniform.
-- **Dilatation $P\,dV$.** $H_\mathrm{dil} = g\,\Delta v\,j_\mathrm{mass}$, with $\Delta v = 1/\rho_\mathrm{liq} - 1/\rho_\mathrm{sol}$ and $j_\mathrm{mass}$ the gravitational-separation mass flux interpolated to staggered nodes. Only active when both `dilatation = true` and `gravitational_separation = true`.
+- **Dilatation $P\,dV$.** Work done when melt of different density is transported across a pressure gradient by chemical mixing or gravitational separation:
+  $$
+  \Phi_\mathrm{vol} = g\,\left(\frac{1}{\rho_m} - \frac{1}{\rho_s}\right)\,(j_\mathrm{mix} + j_\mathrm{grav}),
+  $$
+  with $j_\mathrm{mix}$ the convective-mixing mass flux and $j_\mathrm{grav}$ the gravitational-separation mass flux. Only active when both `dilatation = true` and `gravitational_separation = true`.
 - **Tidal.** Per-staggered-node array supplied through `tidal_array`; broadcast scalar or length-$N$ array.
 
 ## Per-component flux output
