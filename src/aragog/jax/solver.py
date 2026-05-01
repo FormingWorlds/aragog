@@ -124,6 +124,15 @@ class BoundaryParams(eqx.Module):
     outer_bc_value: jax.Array      # prescribed flux [W/m^2] (type 4)
     emissivity: jax.Array
     T_eq: jax.Array                # equilibrium temperature [K] (type 1)
+    # UTBL (ultra-thin thermal boundary layer) Cardano correction
+    # (Bower+2018 Eq. 18). When param_utbl is True (static, so the
+    # branch is constant-folded) the surface radiating temperature
+    # is replaced with the real cubic root of
+    #     param_utbl_const * T_surf^3 + T_surf - T_interior = 0.
+    # Off in current production CHILI configs (param_utbl=False);
+    # used by SPIDER-parity test runs.
+    param_utbl: bool = eqx.field(static=True)
+    param_utbl_const: jax.Array
 
     # CMB
     inner_bc_type: int = eqx.field(static=True)
@@ -144,7 +153,8 @@ class BoundaryParams(eqx.Module):
     def __init__(self, *, outer_bc_type, outer_bc_value, emissivity, T_eq,
                  inner_bc_type, inner_bc_value, core_density,
                  core_heat_capacity, tfac_core_avg,
-                 cmb_area=0.0, core_M=0.0, cmb_dr_cmb=0.0):
+                 cmb_area=0.0, core_M=0.0, cmb_dr_cmb=0.0,
+                 param_utbl=False, param_utbl_const=0.0):
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
         self.emissivity = jnp.asarray(emissivity, dtype=jnp.float64)
@@ -157,6 +167,8 @@ class BoundaryParams(eqx.Module):
         self.cmb_area = jnp.asarray(cmb_area, dtype=jnp.float64)
         self.core_M = jnp.asarray(core_M, dtype=jnp.float64)
         self.cmb_dr_cmb = jnp.asarray(cmb_dr_cmb, dtype=jnp.float64)
+        self.param_utbl = bool(param_utbl)
+        self.param_utbl_const = jnp.asarray(param_utbl_const, dtype=jnp.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +188,21 @@ class SolveResult(NamedTuple):
 # RHS function
 # ---------------------------------------------------------------------------
 
+def _utbl_tsurf_jax(T_interior: jax.Array, b: jax.Array) -> jax.Array:
+    """JAX-traceable Cardano cubic root for the UTBL correction.
+
+    Solves ``b * x^3 + x - T_interior = 0`` for the real root x = T_surf
+    (Bower+2018 Eq. 18). Mirrors solver.boundary._utbl_tsurf, with
+    np.cbrt -> jnp.cbrt and np.sqrt -> jnp.sqrt. JAX-traceable so the
+    analytic Jacobian sees the closure correctly.
+    """
+    p = 1.0 / b
+    q = -T_interior / b
+    discriminant = q ** 2 / 4.0 + p ** 3 / 27.0
+    sqrt_disc = jnp.sqrt(discriminant)
+    return jnp.cbrt(-q / 2.0 + sqrt_disc) + jnp.cbrt(-q / 2.0 - sqrt_disc)
+
+
 def _apply_surface_bc(
     heat_flux: jax.Array,
     bc: BoundaryParams,
@@ -185,7 +212,16 @@ def _apply_surface_bc(
 
     Uses jnp.where for JAX traceability (no Python if-statements).
     """
-    T_surf = phase_basic_T[-1]
+    T_interior = phase_basic_T[-1]
+
+    # UTBL Cardano correction (Bower+2018 Eq. 18). Off in current
+    # production CHILI configs; gated on the static `param_utbl` flag
+    # so the branch is constant-folded by JIT. Mirrors the numpy path
+    # in solver/boundary.py:_utbl_tsurf.
+    if bc.param_utbl:
+        T_surf = _utbl_tsurf_jax(T_interior, bc.param_utbl_const)
+    else:
+        T_surf = T_interior
 
     # Grey-body: F = emissivity * sigma * (T^4 - T_eq^4)
     F_grey = bc.emissivity * SIGMA_SB * (T_surf**4 - bc.T_eq**4)
