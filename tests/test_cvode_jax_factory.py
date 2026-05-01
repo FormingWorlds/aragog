@@ -146,3 +146,30 @@ def test_zero_t_ref_raises():
     heating = np.zeros(n)
     with pytest.raises(ValueError, match='t_ref.*positive'):
         _build_factory(state_scale, rhs_scale, 0.0, heating, 'quasi_steady')
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('mode', ['bower2018', 'gradient', 'unknown'])
+def test_unsupported_core_bc_mode_raises_with_clear_message(mode, caplog):
+    """A4: bower2018 / gradient / typo modes must raise with a message
+    that names the supported alternatives, AND log a warning so the
+    entropy_solver catch-all fallback explains the FD-Jacobian downgrade.
+
+    Previously the error said only "must be 'quasi_steady' or
+    'energy_balance', got ..." without explaining the user-facing
+    workaround (set use_jax_jacobian=false).
+    """
+    import logging
+    n = 4
+    state_scale = np.full(n, 3.0e3)
+    rhs_scale = 1.0 / state_scale
+    heating = np.zeros(n)
+    with caplog.at_level(logging.WARNING, logger='aragog.solver.cvode_jax'):
+        with pytest.raises(ValueError, match='is not supported'):
+            _build_factory(state_scale, rhs_scale, 1.0, heating, mode)
+    # Warning text must mention both the offending mode and the
+    # supported workaround so downstream operators don't have to
+    # bisect their own logs.
+    msgs = ' '.join(rec.message for rec in caplog.records)
+    assert mode in msgs
+    assert 'quasi_steady' in msgs and 'energy_balance' in msgs

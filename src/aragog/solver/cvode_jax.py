@@ -13,14 +13,21 @@ Benefits over pure scipy/CVODE (numpy RHS):
 - Single source of truth for physics (JAX), no risk of numpy/JAX
   divergence
 
-Limitations (current prototype):
-- Only supports quasi_steady core_bc (state vector = N entropy values)
-- The energy_balance and bower2018 modes use an extended state
-  vector (N+1 with dSdr_cmb at end) that the JAX RHS does not
-  currently model. Extending requires deriving an analytic dSdr_cmb
-  closure equation in JAX.
+Supported ``core_bc_mode`` values:
+- ``quasi_steady``: state vector is N entropy values; RHS is
+  ``jax.solver.dSdt``.
+- ``energy_balance``: state vector is N+1 (entropy + dSdr_cmb);
+  RHS is ``jax.solver.dSdt_energy_balance``. This is the
+  production CHILI Earth path under PROTEUS d55726c5+.
 
-Status: PROTOTYPE.
+Unsupported (factory raises ``ValueError`` and the calling solver
+falls back to numpy RHS + FD Jacobian after logging a warning):
+- ``bower2018``: extended state with absolute T_core. No JAX
+  closure for the core thermal balance has been implemented.
+- ``gradient``: extended state with both boundary entropies. No
+  JAX implementation.
+
+Status: PROTOTYPE for the supported modes; fallback for the rest.
 """
 
 from __future__ import annotations
@@ -113,9 +120,23 @@ def build_jax_rhs_and_jacobian(
     elif core_bc_mode == 'energy_balance':
         _rhs_jax = jax_dsdt_eb
     else:
+        # A4: explicit warning + clear error message so the
+        # calling solver's catch-all fallback (entropy_solver.py
+        # ~1704) logs an informative reason. Previously the ValueError
+        # said only what was got and what was expected, leaving the
+        # user to guess whether a JAX install was missing or a
+        # core_bc_mode mismatch caused the FD-Jacobian fallback.
+        logger.warning(
+            'JAX CVODE factory: core_bc_mode=%r is not implemented '
+            'in the JAX RHS; only quasi_steady and energy_balance '
+            'are supported. Falling back to numpy RHS + FD Jacobian.',
+            core_bc_mode,
+        )
         raise ValueError(
-            f"core_bc_mode must be 'quasi_steady' or 'energy_balance', "
-            f"got {core_bc_mode!r}"
+            f'core_bc_mode={core_bc_mode!r} is not supported by the '
+            f"JAX CVODE factory. Supported modes: 'quasi_steady', "
+            f"'energy_balance'. To use 'bower2018' or 'gradient', "
+            f'set ``use_jax_jacobian = false`` in the config.'
         )
 
     # ── OQ3 option B: defensive nondim contract check ──
