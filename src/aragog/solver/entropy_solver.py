@@ -1439,7 +1439,12 @@ class EntropySolver:
         else:
             cvode_options['linsolver'] = 'dense'
         # max_step is only meaningful when < 1e100; otherwise CVODE
-        # picks its own maximum internal step.
+        # picks its own maximum internal step. This is the SAME
+        # max_step value computed phase-aware in solve() at the
+        # "Tighten max_step when ANY cell is near a phase boundary"
+        # block, and applies uniformly to both the FD-Jacobian path
+        # and the JAX-Jacobian (option Z) path, since both reach
+        # this dispatch via _solve_cvode (OQ5).
         if max_step is not None and np.isfinite(max_step):
             cvode_options['max_step_size'] = float(max_step)
 
