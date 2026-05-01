@@ -419,7 +419,7 @@ def test_dilatation_changes_dSdt_in_integration():
     """
     from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import PhaseParams
-    from aragog.jax.solver import BoundaryParams, dSdt
+    from aragog.jax.solver import BoundaryParams, _no_radio, dSdt
 
     mesh, mesh_jax, r_stag, r_basic, P_stag, P_basic, _ = _build_synthetic_mesh(N=24)
     eos_jax = EntropyEOS_JAX(EOS_DIR)
@@ -437,15 +437,17 @@ def test_dilatation_changes_dSdt_in_integration():
         tfac_core_avg=1.147,
     )
     heating_in = jnp.zeros(S_init.size)
+    # A2: dSdt args now include an H_radio_fn slot; pass _no_radio
+    # so this test isolates the dilatation effect from radio.
     args_off = (
         eos_jax,
         PhaseParams(grav_sep=True, mixing=True, dilatation=False, grain_size=0.1),
-        mesh_jax, bc, heating_in,
+        mesh_jax, bc, heating_in, _no_radio,
     )
     args_on = (
         eos_jax,
         PhaseParams(grav_sep=True, mixing=True, dilatation=True, grain_size=0.1),
-        mesh_jax, bc, heating_in,
+        mesh_jax, bc, heating_in, _no_radio,
     )
     dsdt_off = np.asarray(dSdt(0.0, jnp.asarray(S_init), args_off))
     dsdt_on = np.asarray(dSdt(0.0, jnp.asarray(S_init), args_on))

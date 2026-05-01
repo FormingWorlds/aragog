@@ -41,6 +41,56 @@ SECS_PER_YEAR: float = 31557600.0
 # Stefan-Boltzmann constant [W/m^2/K^4]
 SIGMA_SB: float = 5.670374419e-8
 
+# log(2) constant used by the radiogenic decay term (A2). Cached as a
+# module-level Python float so the JAX trace bakes it in cleanly.
+LOG_TWO: float = 0.6931471805599453
+
+
+def _no_radio(_t_yr):
+    """Default radio heating callable: returns 0.0 W/kg, JAX-traceable.
+
+    Used as the args-tuple entry by ``solve_entropy`` and other call
+    sites that don't have radionuclide tables. Production CHILI
+    (``build_jax_rhs_and_jacobian``) replaces this with a closure
+    that evaluates Eq. (A2) at the live integrator time.
+    """
+    return jnp.asarray(0.0)
+
+
+def make_radio_heating_fn(heat_prod, abundance, concentration,
+                          t0_years, half_life_years):
+    """Return a JAX-traceable per-cell radio heating ``H_radio(t_yr)``.
+
+    Implements ``H_radio(t) = sum_i (heat_prod_i · abundance_i ·
+    concentration_i · exp(log(2) · (t0_i − t) / half_life_i))`` from
+    aragog/parser.py:_Radionuclide.get_heating, vectorised across
+    isotopes. The returned scalar is broadcast across the staggered
+    grid by the caller (radio is uniform per cell).
+
+    Parameters
+    ----------
+    heat_prod, abundance, concentration : array_like, shape (n_iso,)
+        Per-isotope power production scales [W/kg per (mass-fraction)],
+        natural abundance [-], and concentration [mass fraction].
+    t0_years, half_life_years : array_like, shape (n_iso,)
+        Per-isotope reference time [yr] and half life [yr].
+    """
+    hp = jnp.asarray(heat_prod, dtype=jnp.float64)
+    ab = jnp.asarray(abundance, dtype=jnp.float64)
+    cn = jnp.asarray(concentration, dtype=jnp.float64)
+    t0 = jnp.asarray(t0_years, dtype=jnp.float64)
+    hl = jnp.asarray(half_life_years, dtype=jnp.float64)
+
+    def _h(t_yr):
+        # exp(log(2) · (t0 − t) / half_life) per isotope, then weighted
+        # sum across isotopes. Returns a scalar [W/kg] that the caller
+        # broadcasts across the staggered grid.
+        arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1.0)
+        per_iso = hp * ab * cn * jnp.exp(arg)
+        return jnp.sum(per_iso)
+
+    return _h
+
 
 # ---------------------------------------------------------------------------
 # Boundary condition parameters
@@ -202,19 +252,31 @@ def dSdt(
     S : jax.Array
         Entropy at staggered nodes [J/kg/K], shape (N_stag,).
     args : tuple
-        (eos, params, mesh, bc, heating) where:
+        (eos, params, mesh, bc, heating_static, H_radio_fn) where:
         - eos: EntropyEOS_JAX
         - params: PhaseParams
         - mesh: MeshArrays
         - bc: BoundaryParams
-        - heating: jax.Array, internal heating [W/kg] at staggered nodes
+        - heating_static: jax.Array, time-independent heating [W/kg]
+          at staggered nodes (tidal + any other constant source).
+        - H_radio_fn: callable(t_yr) -> scalar JAX array [W/kg].
+          Returns the per-cell uniform radiogenic heating evaluated
+          at the live integrator time. Use ``_no_radio`` as the
+          callable when the run has no radionuclides. (A2)
 
     Returns
     -------
     jax.Array
         dS/dt at staggered nodes [J/kg/K/yr], shape (N_stag,).
     """
-    eos, params, mesh, bc, heating = args
+    eos, params, mesh, bc, heating_static, H_radio_fn = args
+
+    # ── A2: time-dependent radio heating evaluated at the live t ──
+    # The previous behaviour froze H_radio at the coupling-step start,
+    # making the JAX RHS disagree with the numpy reference at every
+    # mid-step Newton iterate (verify_jax_vs_numpy_rhs parity broken).
+    # Now H_radio(t) is recomputed inside the JAX trace at each call.
+    heating = heating_static + H_radio_fn(t)
 
     # Compute fluxes (conduction, convection, grav sep, mixing).
     # ``flux_out.heating`` is the input ``heating`` plus any
@@ -295,7 +357,9 @@ def dSdt_energy_balance(
         d(state_ext)/dt at the same layout, [J/kg/K/yr] for entropy,
         [J/kg/K/m/yr] for dSdr_cmb.
     """
-    eos, params, mesh, bc, heating = args
+    eos, params, mesh, bc, heating_static, H_radio_fn = args
+    # A2: live radio heating, broadcast to per-cell uniform.
+    heating = heating_static + H_radio_fn(t)
     n_stag = mesh.P_stag.shape[0]
     S = state_ext[:n_stag]
     dSdr_cmb = state_ext[n_stag]
@@ -434,7 +498,9 @@ def solve_entropy(
     # through args, we avoid this issue.
     def _rhs(t, S, dynamic_args):
         h = dynamic_args
-        return dSdt(t, S, (eos, params, mesh, bc, h))
+        # A2: solve_entropy is the standalone test path; no
+        # radionuclides table is exposed here, so radio = 0.
+        return dSdt(t, S, (eos, params, mesh, bc, h, _no_radio))
 
     term = diffrax.ODETerm(_rhs)
     _solvers = {

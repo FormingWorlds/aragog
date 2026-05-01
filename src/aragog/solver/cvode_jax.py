@@ -43,6 +43,7 @@ def build_jax_rhs_and_jacobian(
     rhs_scale,
     t_ref: float,
     core_bc_mode: str = 'quasi_steady',
+    radio_isotope_params: tuple = (),
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -71,6 +72,14 @@ def build_jax_rhs_and_jacobian(
         (N+1 state with dSdr_cmb closure equation as the (N+1)-th
         component). The latter matches the production CHILI Earth code
         path (PROTEUS d55726c5+, aragog 718202a+).
+    radio_isotope_params : tuple, default ()
+        Optional 5-tuple ``(heat_prod, abundance, concentration,
+        t0_years, half_life_years)`` of 1D arrays, one entry per
+        radionuclide. When non-empty, the JAX RHS evaluates the
+        Soucasse §1.2 radio sum at the live integrator time
+        ``t_phys`` instead of freezing the value at the coupling-step
+        start (A2). The empty default reproduces the pre-A2
+        behaviour (no radio).
 
     Returns
     -------
@@ -87,8 +96,12 @@ def build_jax_rhs_and_jacobian(
     try:
         import jax
         import jax.numpy as jnp
-        from aragog.jax.solver import dSdt as jax_dsdt
-        from aragog.jax.solver import dSdt_energy_balance as jax_dsdt_eb
+        from aragog.jax.solver import (
+            _no_radio,
+            dSdt as jax_dsdt,
+            dSdt_energy_balance as jax_dsdt_eb,
+            make_radio_heating_fn,
+        )
     except ImportError as exc:
         raise RuntimeError(
             'Option Z (JAX RHS + Jacobian) requires JAX and the '
@@ -162,8 +175,26 @@ def build_jax_rhs_and_jacobian(
     state_scale_jax = jnp.asarray(state_scale)
     rhs_scale_jax = jnp.asarray(rhs_scale)
     heating_jax = jnp.asarray(heating_array)
+
+    # ── A2: per-step radio heating ──
+    # When the caller supplies a non-empty radio_isotope_params tuple,
+    # build a JAX-traceable H_radio(t_yr) callable that the dSdt /
+    # dSdt_energy_balance RHS evaluates at the live integrator time.
+    # Empty tuple -> use the no-op callable, reproducing the pre-A2
+    # frozen-at-t_start behaviour (no time dependence).
+    if radio_isotope_params:
+        if len(radio_isotope_params) != 5:
+            raise ValueError(
+                'radio_isotope_params must be a 5-tuple '
+                '(heat_prod, abundance, concentration, t0_years, '
+                f'half_life_years); got length {len(radio_isotope_params)}'
+            )
+        H_radio_fn = make_radio_heating_fn(*radio_isotope_params)
+    else:
+        H_radio_fn = _no_radio
+
     args_tuple = (eos_jax, phase_params, mesh_arrays, boundary_params,
-                  heating_jax)
+                  heating_jax, H_radio_fn)
 
     # Wrap RHS as a function of (t_phys, S_phys) only
     def _rhs_phys(t_phys, S_phys):
