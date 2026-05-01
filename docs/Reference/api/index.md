@@ -1,42 +1,51 @@
 # API overview
 
-This is a detailed overview of Aragog's API for the user's reference. If you want to understand the underlying model, please visit the [model overview](../../Explanations/model.md).
+This is the auto-generated API reference for Aragog's public interface. For the underlying physics, see the [model overview](../../Explanations/model.md); for the package layout in detail, see [code architecture](../../Explanations/code_architecture.md).
 
 ## Module overview
 
 ```
 src/aragog/
-├── config/               # Configuration (TOML + attrs validation)
-├── solver/               # Solver, State, Evaluator, BoundaryConditions, InitialCondition
-├── eos/                  # EOS evaluators (single, mixed, composite, properties)
-├── mesh/                 # Staggered mesh, pressure EOS
-├── output/               # Output, diagnostics, NetCDF writing, plotting
-├── parser.py             # Legacy INI configuration parser
-├── cli.py                # Command-line interface
-├── core.py               # Core model helpers
-├── phase.py              # Legacy phase evaluator
-├── interfaces.py         # Legacy interface evaluator
-└── utilities.py          # Utility functions
+├── config/                # Configuration: attrs sub-classes + Config facade
+├── eos/                   # EntropyEOS, EntropyPhaseEvaluator
+├── solver/                # EntropySolver, EntropyState, BoundaryConditions, SolverOutput
+├── mesh/                  # Mesh, FixedMesh, AdamsWilliamsonEOS, UserDefinedEOS
+├── jax/                   # Optional JAX-traceable replicas (analytic-Jacobian path)
+├── output/                # Diagnostic helpers (melt_fraction_global, rheological_front)
+├── parser.py              # Parameters dataclass and INI parser
+├── cli.py                 # Click CLI entry point (minimal)
+└── utilities.py           # Utility functions and type aliases
 ```
+
+The legacy single/mixed/composite phase evaluator stack and the temperature-based `Output` class have been replaced by the entropy-formulation modules; the public path goes through `EntropySolver` and `SolverOutput`.
 
 ## API reference
 
 ### Configuration
-- [`aragog.config`](aragog.config.md) - Config facade (from_toml, from_dict, from_file)
+
+- [`aragog.config`](aragog.config.md) — `Config` facade with `.from_toml`, `.from_dict`, and `.from_file` constructors that all return a `Parameters` dataclass.
 
 ### Solver
-- [`aragog.solver`](aragog.solver.md) - Solver class (initialize, solve, dTdt)
-- [`aragog.solver.state`](aragog.solver.state.md) - State class (current temperature, fluxes, heating)
 
-### EOS (Equation of State)
-- [`aragog.eos`](aragog.eos.md) - EOS package (PhaseEvaluatorCollection, setup)
-- [`aragog.eos.single_phase`](aragog.eos.single_phase.md) - Single-phase evaluator
-- [`aragog.eos.mixed_phase`](aragog.eos.mixed_phase.md) - Mixed-phase evaluator
-- [`aragog.eos.composite`](aragog.eos.composite.md) - Composite phase evaluator
-- [`aragog.eos.properties`](aragog.eos.properties.md) - Property classes (constant, 1D lookup, 2D lookup)
+- [`aragog.solver`](aragog.solver.md) — `EntropySolver` (the public solver class), `EntropyState`, `BoundaryConditions`, `SolverOutput`. Includes `EntropySolver.from_file`, `initialize`, `set_initial_entropy`, `set_initial_dSdr_cmb`, `set_initial_core_temperature`, `solve`, `get_state`, `reset`, `set_jax_cvode_factory`, and the retry-ladder hooks.
+
+### EOS
+
+- [`aragog.eos`](aragog.eos.md) — `EntropyEOS` (P-S table loader and bilinear interpolator) and `EntropyPhaseEvaluator` (SPIDER-parity phase blending, viscosity transition, gravitational-separation velocity, pressure-dependent latent heat).
 
 ### Mesh
-- [`aragog.mesh`](aragog.mesh.md) - Staggered mesh, coordinate transforms
+
+- [`aragog.mesh`](aragog.mesh.md) — `Mesh` (staggered FV mesh with optional mass-coordinate transform), `FixedMesh`, `AdamsWilliamsonEOS`, `UserDefinedEOS` (external four-column mesh file).
 
 ### Output
-- [`aragog.output`](aragog.output.md) - Output class (NetCDF, plotting, diagnostics)
+
+- [`aragog.output`](aragog.output.md) — Standalone diagnostic functions `melt_fraction_global` and `rheological_front`. The primary output channel is `SolverOutput`, returned by `EntropySolver.get_state()`; see the [solver page](aragog.solver.md) for its field-by-field description.
+
+## What is not in the public API
+
+The following modules are implementation details. They are reachable but should be treated as private:
+
+- `aragog.solver.entropy_solver._dSdt_single`, `_solve_cvode`, `_build_jac_sparsity` (internal RHS and integrator dispatch).
+- `aragog.solver.cvode_jax` and `aragog.solver.jacobian_jax` (CVODE callback factories used by the JAX path).
+- `aragog.jax.eos`, `aragog.jax.phase`, `aragog.jax.solver` (JAX-traceable replicas, only loaded when `use_jax_jacobian = true`).
+- `aragog.parser._BoundaryConditionsParameters`, `_EnergyParameters`, etc. (the underscore-prefixed dataclasses are reached through `Parameters`, not directly).
