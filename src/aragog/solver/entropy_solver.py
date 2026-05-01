@@ -240,7 +240,10 @@ class EntropySolver:
               scale = [S_ref, ..., S_ref, dSdr_ref]
         - bower2018 core_bc (state_is_extended):
               state = [S_0, ..., S_{N-1}, T_core],
-              scale = [S_ref, ..., S_ref, S_ref]
+              scale = [S_ref, ..., S_ref, T_ref]
+              (T_ref matches the Bower+2018 Table 1 temperature scale;
+              previously used S_ref by accident-of-magnitude, harmless
+              numerically but a units mismatch.)
         - gradient core_bc:
               state = [dSdr_0, ..., dSdr_{N}, S_surf],
               scale = [dSdr_ref, ..., dSdr_ref, S_ref]
@@ -264,8 +267,8 @@ class EntropySolver:
             ss[:n_s] = S_ref
             if self._core_bc == 'energy_balance':
                 ss[n_s] = dSdr_ref
-            else:  # bower2018
-                ss[n_s] = S_ref
+            else:  # bower2018: T_core in [K], not [J/kg/K]; use T_ref
+                ss[n_s] = self._T_ref
         return NonDimScales(state_scale=ss, t_ref=float(t_ref))
 
     @classmethod
@@ -481,15 +484,22 @@ class EntropySolver:
         # depend on entropy.
         self._cache_bc_constants()
 
-        # Nondimensionalisation scales matching SPIDER (spider.py:832-835).
-        # After dividing by these, S_nd ~ O(1) and dSdr_nd ~ O(1),
-        # so CVODE can use tight atol without excessive internal substeps.
-        # In physical units S ~ 3000 J/kg/K, meaning atol=1e-10 demands
-        # ~13 significant digits on a 4-digit number. With nondim,
-        # atol=1e-10 needs only ~10 digits on an O(1) number.
-        self._S_ref = 2993.025100070677  # entropy0 [J/kg/K] (spider.py:835)
-        self._t_ref_yr = 1e5 / SECS_PER_YEAR  # time0 [yr]
-        self._r_ref = 6.371e7        # radius0 [m]
+        # Nondimensionalisation scales. S_ref matches Bower+2018 Table 1
+        # exactly (S_0 = 2993 J/kg/K). t_ref is an Aragog-specific choice
+        # (1e5 s ~ 54x the SPIDER value of 1834 s = R_0 (S_0 T_0)^{-1/2});
+        # both give an O(1) nondim state vector for CVODE, so the choice
+        # is internally arbitrary as long as the same value is used in
+        # every path that nondimensionalises (NonDimScales handles this).
+        # T_ref matches Bower+2018 Table 1 (T_0 = 4034 K) and is used as
+        # the nondim scale for the bower2018 core_bc T_core component;
+        # using S_ref there would be a units mismatch (J/kg/K vs K).
+        # Why nondim at all: in physical units S ~ 3000 J/kg/K, meaning
+        # atol=1e-10 demands ~13 significant digits on a 4-digit number.
+        # With nondim, atol=1e-10 needs only ~10 digits on an O(1) number.
+        self._S_ref = 2993.025100070677  # entropy0 [J/kg/K] (Bower+2018 Table 1)
+        self._T_ref = 4034.0             # temperature0 [K] (Bower+2018 Table 1)
+        self._t_ref_yr = 1e5 / SECS_PER_YEAR  # time0 [yr]; Aragog convention, not SPIDER
+        self._r_ref = 6.371e7            # radius0 [m]
         self._dSdr_ref = self._S_ref / self._r_ref  # [J/kg/K/m]
 
     def _cache_bc_constants(self) -> None:

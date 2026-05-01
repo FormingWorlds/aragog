@@ -562,6 +562,23 @@ class EntropyState:
             # from the EOS table (dTdPs) rather than the thermodynamic
             # identity (-g*alpha*T/Cp), ensuring consistency with the
             # EOS property lookups at phase boundaries.
+            #
+            # Cp_safe clamps Cp from below at 100 J/kg/K to guard the
+            # T/Cp factor against pathological EOS lookups. Production
+            # MgSiO3 EOS stays well above this floor (typical Cp ~ 1000+
+            # J/kg/K, latent-blend Cp_eff in mushy zone goes higher
+            # still). If the floor activates, the superadiabatic term is
+            # silently inflated relative to the true T/Cp; emit a
+            # warning so a non-standard EOS doesn't introduce a hidden
+            # bias without notice.
+            if np.any(Cp < 100.0):
+                logger.warning(
+                    'EntropyState conduction: Cp dropped below the 100 '
+                    'J/kg/K guard at %d node(s); F_cond superadiabatic '
+                    'term is biased upward at those points. Check the '
+                    'EOS Cp lookup tables.',
+                    int(np.sum(Cp < 100.0)),
+                )
             Cp_safe = np.maximum(Cp, 100.0)
             superadiabatic = (T / Cp_safe) * self._dSdr
             # Adiabatic gradient from EOS table: dT/dr|_ad = dTdPs * dPdr
