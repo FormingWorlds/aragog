@@ -39,6 +39,7 @@ from aragog.solver.entropy_state import EntropyState
 # control that handles phase-transition discontinuities cleanly.
 try:
     from scikits_odes.ode import ode as _scikits_ode
+
     _CVODE_AVAILABLE = True
 except ImportError:  # pragma: no cover
     _CVODE_AVAILABLE = False
@@ -46,6 +47,7 @@ except ImportError:  # pragma: no cover
 
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
 from scipy import constants as _sp_constants
+
 SECS_PER_YEAR: float = _sp_constants.Julian_year
 
 logger = logging.getLogger(__name__)
@@ -127,53 +129,53 @@ class SolverOutput:
     """
 
     # Profiles at staggered nodes
-    S_final: npt.NDArray        # entropy [J/kg/K]
-    T_stag: npt.NDArray         # temperature [K]
-    phi_stag: npt.NDArray       # melt fraction [-]
-    rho_stag: npt.NDArray       # density [kg/m^3]
-    visc_stag: npt.NDArray      # dynamic viscosity [Pa s]
+    S_final: npt.NDArray  # entropy [J/kg/K]
+    T_stag: npt.NDArray  # temperature [K]
+    phi_stag: npt.NDArray  # melt fraction [-]
+    rho_stag: npt.NDArray  # density [kg/m^3]
+    visc_stag: npt.NDArray  # dynamic viscosity [Pa s]
 
     # Mesh geometry
-    P_stag: npt.NDArray         # pressure at staggered nodes [Pa]
-    r_basic: npt.NDArray        # radii at basic nodes [m]
-    r_stag: npt.NDArray         # radii at staggered nodes [m]
-    vol: npt.NDArray            # shell volumes [m^3]
-    mass_stag: npt.NDArray      # mass per shell [kg]
+    P_stag: npt.NDArray  # pressure at staggered nodes [Pa]
+    r_basic: npt.NDArray  # radii at basic nodes [m]
+    r_stag: npt.NDArray  # radii at staggered nodes [m]
+    vol: npt.NDArray  # shell volumes [m^3]
+    mass_stag: npt.NDArray  # mass per shell [kg]
 
     # Fluxes and heating (at basic / staggered nodes)
-    heat_flux: npt.NDArray      # total heat flux at basic nodes [W/m^2]
-    heating: npt.NDArray        # internal heating at staggered nodes [W/kg]
-    eddy_diff: npt.NDArray      # eddy diffusivity at basic nodes [m^2/s]
-    cap_stag: npt.NDArray       # capacitance rho*T at staggered nodes
+    heat_flux: npt.NDArray  # total heat flux at basic nodes [W/m^2]
+    heating: npt.NDArray  # internal heating at staggered nodes [W/kg]
+    eddy_diff: npt.NDArray  # eddy diffusivity at basic nodes [m^2/s]
+    cap_stag: npt.NDArray  # capacitance rho*T at staggered nodes
 
     # Per-component flux decomposition at basic nodes for diagnostic
     # output. Populated from the final EntropyState after integration;
     # only consumers that set ``write_flux_diagnostics = true`` in the
     # PROTEUS config read these.
-    jcond_b: npt.NDArray        # conductive flux [W/m^2]
-    jconv_b: npt.NDArray        # convective flux [W/m^2]
-    jgrav_b: npt.NDArray        # grav-sep contribution to heat flux [W/m^2]
-    jmix_b: npt.NDArray         # SPIDER-parity mixing flux [W/m^2]
-    dSdr_b: npt.NDArray         # entropy gradient [J/kg/K/m]
-    phi_basic: npt.NDArray      # EOS melt fraction at basic nodes [-]
-    T_basic: npt.NDArray        # temperature at basic nodes [K]
-    cp_basic: npt.NDArray       # heat capacity at basic nodes [J/kg/K]
-    rho_basic: npt.NDArray      # density at basic nodes [kg/m^3]
+    jcond_b: npt.NDArray  # conductive flux [W/m^2]
+    jconv_b: npt.NDArray  # convective flux [W/m^2]
+    jgrav_b: npt.NDArray  # grav-sep contribution to heat flux [W/m^2]
+    jmix_b: npt.NDArray  # SPIDER-parity mixing flux [W/m^2]
+    dSdr_b: npt.NDArray  # entropy gradient [J/kg/K/m]
+    phi_basic: npt.NDArray  # EOS melt fraction at basic nodes [-]
+    T_basic: npt.NDArray  # temperature at basic nodes [K]
+    cp_basic: npt.NDArray  # heat capacity at basic nodes [J/kg/K]
+    rho_basic: npt.NDArray  # density at basic nodes [kg/m^3]
 
     # Scalar quantities
-    T_magma: float              # surface temperature [K]
-    T_core: float               # CMB temperature [K]
-    Phi_global: float           # volume-weighted melt fraction
-    Phi_global_vol: float       # porosity-based volumetric melt fraction
-    M_mantle: float             # mantle mass [kg]
-    M_mantle_liquid: float      # liquid mantle mass [kg]
-    M_mantle_solid: float       # solid mantle mass [kg]
-    RF_depth: float             # rheological front depth (dimensionless)
-    E_th: float                 # thermal energy [J]
-    Cp_eff: float               # effective heat capacity [J/kg/K]
-    F_heat_total: float         # total heating flux [W/m^2]
-    dt_actual: float            # actual integration time [yr]
-    status: int                 # solver status (0 = success)
+    T_magma: float  # surface temperature [K]
+    T_core: float  # CMB temperature [K]
+    Phi_global: float  # volume-weighted melt fraction
+    Phi_global_vol: float  # porosity-based volumetric melt fraction
+    M_mantle: float  # mantle mass [kg]
+    M_mantle_liquid: float  # liquid mantle mass [kg]
+    M_mantle_solid: float  # solid mantle mass [kg]
+    RF_depth: float  # rheological front depth (dimensionless)
+    E_th: float  # thermal energy [J]
+    Cp_eff: float  # effective heat capacity [J/kg/K]
+    F_heat_total: float  # total heating flux [W/m^2]
+    dt_actual: float  # actual integration time [yr]
+    status: int  # solver status (0 = success)
 
 
 class EntropySolver:
@@ -299,12 +301,14 @@ class EntropySolver:
 
         # Build mesh and BCs without the T-based phases
         from aragog.mesh import Mesh
+
         mesh = Mesh(self.parameters)
         bc = BoundaryConditions(self.parameters, mesh)
 
         # Create a lightweight evaluator-like object
         class _EntropyEvaluator:
             pass
+
         self.evaluator = _EntropyEvaluator()
         self.evaluator.mesh = mesh
         self.evaluator.boundary_conditions = bc
@@ -322,9 +326,10 @@ class EntropySolver:
             logger.warning(
                 'mesh.staggered_pressure length %d != mesh.staggered.radii '
                 'length %d, slicing to the latter',
-                P_stag.shape[0], self._n_stag,
+                P_stag.shape[0],
+                self._n_stag,
             )
-            P_stag = P_stag[:self._n_stag]
+            P_stag = P_stag[: self._n_stag]
         self._area_flat = np.asarray(mesh.basic.area).ravel()
         self._volume_flat = np.asarray(mesh.basic.volume).ravel()
         self._r_basic_flat = np.asarray(mesh.basic.radii).ravel()
@@ -354,10 +359,15 @@ class EntropySolver:
         # mesh. Interpolation from the external eos_radius grid onto
         # aragog's basic and staggered node radii keeps gravity
         # consistent with the other node-aligned fields.
-        g_scalar = abs(float(getattr(
-            mesh.eos, '_gravitational_acceleration',
-            self.parameters.mesh.gravitational_acceleration,
-        )))
+        g_scalar = abs(
+            float(
+                getattr(
+                    mesh.eos,
+                    '_gravitational_acceleration',
+                    self.parameters.mesh.gravitational_acceleration,
+                )
+            )
+        )
         eos_gravity_arr = np.asarray(
             getattr(self.parameters.mesh, 'eos_gravity', []), dtype=float
         ).ravel()
@@ -377,7 +387,9 @@ class EntropySolver:
             logger.info(
                 'EntropySolver gravity: per-node profile from external mesh '
                 '(n=%d, basic range [%.4f, %.4f] m/s^2)',
-                eos_gravity_arr.size, float(g_basic.min()), float(g_basic.max()),
+                eos_gravity_arr.size,
+                float(g_basic.min()),
+                float(g_basic.max()),
             )
         else:
             g_basic = np.full(self._r_basic_flat.shape, g_scalar)
@@ -411,20 +423,21 @@ class EntropySolver:
         # (from Aragog's legacy .cfg parser with .eval()).  Try float()
         # first; fall back to .eval() for legacy strings.
         phase_kwargs['viscosity_solid'] = _phase_prop_float(
-            self.parameters.phase_solid.viscosity, 1e21)
+            self.parameters.phase_solid.viscosity, 1e21
+        )
         phase_kwargs['viscosity_liquid'] = _phase_prop_float(
-            self.parameters.phase_liquid.viscosity, 1e-1)
+            self.parameters.phase_liquid.viscosity, 1e-1
+        )
         # matprop_smooth_width: SPIDER's phase-boundary smoothing for
         # material properties. Read from the mixed-phase config if
         # available; defaults to 0 (no smoothing) for backward compat.
-        phase_kwargs['matprop_smooth_width'] = float(getattr(
-            self.parameters.phase_mixed, 'matprop_smooth_width', 0.0))
-        cond_s = _phase_prop_float(
-            self.parameters.phase_solid.thermal_conductivity, None)
+        phase_kwargs['matprop_smooth_width'] = float(
+            getattr(self.parameters.phase_mixed, 'matprop_smooth_width', 0.0)
+        )
+        cond_s = _phase_prop_float(self.parameters.phase_solid.thermal_conductivity, None)
         if cond_s is not None:
             phase_kwargs['thermal_conductivity_solid'] = cond_s
-        cond_l = _phase_prop_float(
-            self.parameters.phase_liquid.thermal_conductivity, None)
+        cond_l = _phase_prop_float(self.parameters.phase_liquid.thermal_conductivity, None)
         if cond_l is not None:
             phase_kwargs['thermal_conductivity_liquid'] = cond_l
 
@@ -432,8 +445,15 @@ class EntropySolver:
         _const = getattr(self.parameters.phase_mixed, 'const_properties', False)
         if _const:
             phase_kwargs['const_properties'] = True
-            for k in ('const_rho', 'const_Cp', 'const_alpha', 'const_cond',
-                       'const_log10visc', 'const_T_ref', 'const_S_ref'):
+            for k in (
+                'const_rho',
+                'const_Cp',
+                'const_alpha',
+                'const_cond',
+                'const_log10visc',
+                'const_T_ref',
+                'const_S_ref',
+            ):
                 phase_kwargs[k] = float(getattr(self.parameters.phase_mixed, k))
 
         phase_stag = EntropyPhaseEvaluator(
@@ -492,9 +512,9 @@ class EntropySolver:
         # atol=1e-10 demands ~13 significant digits on a 4-digit number.
         # With nondim, atol=1e-10 needs only ~10 digits on an O(1) number.
         self._S_ref = 2993.025100070677  # entropy0 [J/kg/K] (Bower+2018 Table 1)
-        self._T_ref = 4034.0             # temperature0 [K] (Bower+2018 Table 1)
+        self._T_ref = 4034.0  # temperature0 [K] (Bower+2018 Table 1)
         self._t_ref_yr = 1e5 / SECS_PER_YEAR  # time0 [yr]; Aragog convention, not SPIDER
-        self._r_ref = 6.371e7            # radius0 [m]
+        self._r_ref = 6.371e7  # radius0 [m]
         self._dSdr_ref = self._S_ref / self._r_ref  # [J/kg/K/m]
 
     def _cache_bc_constants(self) -> None:
@@ -517,7 +537,7 @@ class EntropySolver:
         r_above = float(self._r_basic_flat[1])
         self._cmb_r_cmb = r_cmb
         self._cmb_r_above = r_above
-        self._cmb_dr_cmb = r_above - r_cmb          # basic-node spacing at CMB
+        self._cmb_dr_cmb = r_above - r_cmb  # basic-node spacing at CMB
         self._cmb_dr_half = 0.5 * self._cmb_dr_cmb  # basic-to-staggered half-spacing
         self._cmb_area = 4.0 * np.pi * r_cmb**2
         self._cmb_vol_first = float(self._volume_flat[0])
@@ -559,9 +579,7 @@ class EntropySolver:
             self.parameters.mesh.eos_radius = arr[:, 0] / sc.radius
             self.parameters.mesh.eos_pressure = arr[:, 1] / sc.pressure
             self.parameters.mesh.eos_density = arr[:, 2] / sc.density
-            self.parameters.mesh.eos_gravity = (
-                arr[:, 3] / sc.gravitational_acceleration
-            )
+            self.parameters.mesh.eos_gravity = arr[:, 3] / sc.gravitational_acceleration
             _validate_eos_radius_range(self.parameters.mesh)
         self._initialize_internals()
 
@@ -598,16 +616,13 @@ class EntropySolver:
         else:
             S_arr = np.asarray(S_init, dtype=float)
             if len(S_arr) != n_stag:
-                raise ValueError(
-                    f'S_init length {len(S_arr)} != mesh staggered nodes {n_stag}'
-                )
+                raise ValueError(f'S_init length {len(S_arr)} != mesh staggered nodes {n_stag}')
 
         # Prefer the cached _core_bc from _initialize_internals.
         if hasattr(self, '_core_bc') and self._core_bc is not None:
             core_bc = self._core_bc
         else:
-            core_bc = getattr(self.parameters.boundary_conditions,
-                              'core_bc', 'quasi_steady')
+            core_bc = getattr(self.parameters.boundary_conditions, 'core_bc', 'quasi_steady')
             self._core_bc = core_bc
         logger.debug('set_initial_entropy: core_bc=%r, n_stag=%d', core_bc, n_stag)
 
@@ -633,10 +648,12 @@ class EntropySolver:
             if dSdr_cmb_init is None:
                 # Hot start: preserve from previous solution if shape matches
                 prev_sol = getattr(self, '_solution', None)
-                if (prev_sol is not None
-                        and getattr(prev_sol, 'y', None) is not None
-                        and prev_sol.y.size > 0
-                        and prev_sol.y.shape[0] == n_stag + 1):
+                if (
+                    prev_sol is not None
+                    and getattr(prev_sol, 'y', None) is not None
+                    and prev_sol.y.size > 0
+                    and prev_sol.y.shape[0] == n_stag + 1
+                ):
                     dSdr_cmb_init = float(prev_sol.y[n_stag, -1])
                     logger.info(
                         'Preserved dSdr_cmb from previous solve: %.3e J/kg/K/m',
@@ -648,14 +665,11 @@ class EntropySolver:
                 # For a uniform S_init this is exactly zero, which
                 # is the correct neutral-buoyancy starting point.
                 if n_stag >= 2:
-                    r_basic = np.asarray(
-                        self.evaluator.mesh.basic.radii
-                    ).ravel()
+                    r_basic = np.asarray(self.evaluator.mesh.basic.radii).ravel()
                     r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
                     r_stag_1 = 0.5 * (r_basic[1] + r_basic[2])
-                    dSdr_cmb_init = (
-                        (float(S_arr[1]) - float(S_arr[0]))
-                        / max(r_stag_1 - r_stag_0, 1.0)
+                    dSdr_cmb_init = (float(S_arr[1]) - float(S_arr[0])) / max(
+                        r_stag_1 - r_stag_0, 1.0
                     )
                 else:
                     dSdr_cmb_init = 0.0
@@ -667,9 +681,10 @@ class EntropySolver:
             self._S0[:n_stag] = S_arr
             self._S0[n_stag] = float(dSdr_cmb_init)
             logger.info(
-                'Initial state (energy_balance): S_min=%.0f, S_max=%.0f, '
-                'dSdr_cmb_init=%.3e',
-                S_arr.min(), S_arr.max(), dSdr_cmb_init,
+                'Initial state (energy_balance): S_min=%.0f, S_max=%.0f, dSdr_cmb_init=%.3e',
+                S_arr.min(),
+                S_arr.max(),
+                dSdr_cmb_init,
             )
         elif core_bc == 'bower2018':
             # Core temperature as ODE state variable (conduction-only
@@ -678,25 +693,28 @@ class EntropySolver:
             T_core_init = getattr(self, '_T_core_init', None)
             if T_core_init is None:
                 prev_sol = getattr(self, '_solution', None)
-                if (prev_sol is not None
-                        and getattr(prev_sol, 'y', None) is not None
-                        and prev_sol.y.size > 0
-                        and prev_sol.y.shape[0] == n_stag + 1):
+                if (
+                    prev_sol is not None
+                    and getattr(prev_sol, 'y', None) is not None
+                    and prev_sol.y.size > 0
+                    and prev_sol.y.shape[0] == n_stag + 1
+                ):
                     T_core_init = float(prev_sol.y[n_stag, -1])
             if T_core_init is None:
                 P_bottom = float(self._P_stag_flat[0])
-                T_core_init = float(np.asarray(
-                    self.entropy_eos.temperature(
-                        np.array([P_bottom]), np.array([S_arr[0]])
-                    )
-                ).item())
+                T_core_init = float(
+                    np.asarray(
+                        self.entropy_eos.temperature(np.array([P_bottom]), np.array([S_arr[0]]))
+                    ).item()
+                )
             self._S0 = np.empty(n_stag + 1)
             self._S0[:n_stag] = S_arr
             self._S0[n_stag] = T_core_init
             logger.info(
-                'Initial state (bower2018): S_min=%.0f, '
-                'S_max=%.0f, T_core_init=%.0f K',
-                S_arr.min(), S_arr.max(), T_core_init,
+                'Initial state (bower2018): S_min=%.0f, S_max=%.0f, T_core_init=%.0f K',
+                S_arr.min(),
+                S_arr.max(),
+                T_core_init,
             )
         elif core_bc == 'gradient':
             # Gradient-based formulation mirroring SPIDER's dS/dxi state.
@@ -717,14 +735,19 @@ class EntropySolver:
             logger.info(
                 'Initial state (gradient): dSdr range [%.3e, %.3e] J/kg/K/m, '
                 'S_surf=%.1f, roundtrip err=%.2e J/kg/K',
-                dSdr_init.min(), dSdr_init.max(), S_surf, roundtrip_err,
+                dSdr_init.min(),
+                dSdr_init.max(),
+                S_surf,
+                roundtrip_err,
             )
         else:
             # Legacy v3 quasi-steady BC: state = [S_0, ..., S_{N-1}]
             self._S0 = S_arr
-            logger.info('Initial entropy (v3 quasi-steady BC): '
-                         'S_min=%.0f, S_max=%.0f J/kg/K',
-                         S_arr.min(), S_arr.max())
+            logger.info(
+                'Initial entropy (v3 quasi-steady BC): S_min=%.0f, S_max=%.0f J/kg/K',
+                S_arr.min(),
+                S_arr.max(),
+            )
 
     def set_initial_core_temperature(self, T_core_init: float) -> None:
         """Set the initial core temperature (v4 Bower BC only).
@@ -838,9 +861,9 @@ class EntropySolver:
           only; not recommended.
         """
         n_stag = self._n_stag
-        gradient_mode = (self._core_bc == 'gradient')
-        energy_balance = (self._core_bc == 'energy_balance')
-        bower = (self._core_bc == 'bower2018')
+        gradient_mode = self._core_bc == 'gradient'
+        energy_balance = self._core_bc == 'energy_balance'
+        bower = self._core_bc == 'bower2018'
         is_extended = energy_balance or bower
 
         # ── Gradient mode: reconstruct S from the gradient state ──
@@ -877,8 +900,7 @@ class EntropySolver:
             # Grey-body: F = emissivity * sigma * (T_surf^4 - T_eq^4)
             T_surf = self.state.top_temperature.item()
             self.state._heat_flux[-1] = (
-                self._outer_bc_emiss * Stefan_Boltzmann
-                * (T_surf**4 - self._outer_bc_T_eq**4)
+                self._outer_bc_emiss * Stefan_Boltzmann * (T_surf**4 - self._outer_bc_T_eq**4)
             )
         elif self._outer_bc_kind == 4:
             # Prescribed flux (PROTEUS coupling). Note: outer_boundary_value
@@ -897,22 +919,19 @@ class EntropySolver:
             elif bower:
                 # bower2018 BC: F_cmb from one-sided Fourier conduction
                 # across the bottom half-cell. Retained for parity tests.
-                T_above = float(np.asarray(
-                    self.state.phase_staggered.temperature()
-                ).flat[0])
-                k_above = float(np.asarray(
-                    self.state.phase_staggered.thermal_conductivity()
-                ).flat[0]) if hasattr(self.state.phase_staggered,
-                                      'thermal_conductivity') else 4.0
+                T_above = float(np.asarray(self.state.phase_staggered.temperature()).flat[0])
+                k_above = (
+                    float(np.asarray(self.state.phase_staggered.thermal_conductivity()).flat[0])
+                    if hasattr(self.state.phase_staggered, 'thermal_conductivity')
+                    else 4.0
+                )
                 F_cmb = -k_above * (T_above - extra) / max(self._cmb_dr_half, 1.0)
                 self.state._heat_flux[0] = F_cmb
             else:
                 # quasi_steady BC: alpha-factor flux partition between
                 # the bottom mantle cell and the core.
-                rho_first = float(np.asarray(
-                    self.state.phase_staggered.density()).flat[0])
-                cp_first = float(np.asarray(
-                    self.state.phase_staggered.heat_capacity()).flat[0])
+                rho_first = float(np.asarray(self.state.phase_staggered.density()).flat[0])
+                cp_first = float(np.asarray(self.state.phase_staggered.heat_capacity()).flat[0])
                 cell_cap = self._cmb_vol_first * rho_first * cp_first  # J/K
                 alpha = self._cmb_radius_ratio_sq / (
                     cell_cap / (self._core_cap * self._core_tfac) + 1.0
@@ -955,12 +974,8 @@ class EntropySolver:
 
             # CMB basic node (i=0): core energy balance (SPIDER bc.c:113-122)
             F_cmb = float(self.state._heat_flux[0])
-            T_cmb = float(np.asarray(
-                self.state.phase_basic.temperature()
-            ).flat[0])
-            cp_cmb = float(np.asarray(
-                self.state.phase_basic.heat_capacity()
-            ).flat[0])
+            T_cmb = float(np.asarray(self.state.phase_basic.temperature()).flat[0])
+            cp_cmb = float(np.asarray(self.state.phase_basic.heat_capacity()).flat[0])
             dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
             rhs_cmb_per_s = self._energy_balance_rhs_per_s(
                 F_cmb_basic=F_cmb,
@@ -981,7 +996,7 @@ class EntropySolver:
             n_basic = n_stag + 1
             rhs = np.empty(n_basic + 1)
             rhs[0] = rhs_cmb
-            rhs[1:n_basic - 1] = rhs_interior
+            rhs[1 : n_basic - 1] = rhs_interior
             rhs[n_basic - 1] = rhs_surf
             rhs[n_basic] = dS_surf_dt
             return rhs
@@ -999,12 +1014,8 @@ class EntropySolver:
             # cell (dSdt[0], which we just built from the flux
             # divergence).
             F_cmb_basic = float(self.state._heat_flux[0])
-            T_cmb_basic = float(np.asarray(
-                self.state.phase_basic.temperature()
-            ).flat[0])
-            cp_cmb_basic = float(np.asarray(
-                self.state.phase_basic.heat_capacity()
-            ).flat[0])
+            T_cmb_basic = float(np.asarray(self.state.phase_basic.temperature()).flat[0])
+            cp_cmb_basic = float(np.asarray(self.state.phase_basic.heat_capacity()).flat[0])
             dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
 
             d_dSdr_cmb_dt_per_s = self._energy_balance_rhs_per_s(
@@ -1089,10 +1100,7 @@ class EntropySolver:
         # wind-up. In production T_cmb ~ 4000 K and M_core ~ 2e24 kg,
         # so the clamps are never active.
         fac_cmb = cp_cmb_basic / (
-            self._core_cp
-            * max(T_cmb_basic, 1.0)
-            * self._core_tfac
-            * max(self._core_M, 1.0)
+            self._core_cp * max(T_cmb_basic, 1.0) * self._core_tfac * max(self._core_M, 1.0)
         )
 
         # Ecore = 0 for simple core cooling (no internal heat source).
@@ -1116,10 +1124,7 @@ class EntropySolver:
         # denominator flips the sign to match the formula above.
         # Aragog's radii increase from CMB to surface, so dr > 0
         # and the numerator must be (stag - basic) explicitly.
-        return (
-            (dSdt_s_cmb_per_s - dS_basic_cmb_dt)
-            * 2.0 / self._cmb_dr_cmb
-        )
+        return (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / self._cmb_dr_cmb
 
     def _reconstruct_entropy(
         self,
@@ -1206,10 +1211,12 @@ class EntropySolver:
             dSdr = y[:n_basic]
             S_surf_arr = y[n_basic]
             S_surf = float(S_surf_arr[-1]) if S_surf_arr.ndim > 0 else float(S_surf_arr)
-            S_stag, _ = self._reconstruct_entropy(dSdr[:, -1] if dSdr.ndim > 1 else dSdr, S_surf)
+            S_stag, _ = self._reconstruct_entropy(
+                dSdr[:, -1] if dSdr.ndim > 1 else dSdr, S_surf
+            )
             return S_stag.reshape(-1, 1) if y.ndim > 1 else S_stag
         if self._state_is_extended:
-            return y[:self._n_stag]
+            return y[: self._n_stag]
         return y
 
     @property
@@ -1220,7 +1227,7 @@ class EntropySolver:
             S_stag = self.entropy_staggered
             S = S_stag[:, -1] if S_stag.ndim > 1 else S_stag
         elif self._state_is_extended:
-            S = y[:self._n_stag, -1] if y.ndim > 1 else y[:self._n_stag]
+            S = y[: self._n_stag, -1] if y.ndim > 1 else y[: self._n_stag]
         else:
             S = y[:, -1] if y.ndim > 1 else y
         if self.entropy_eos is not None:
@@ -1365,6 +1372,7 @@ class EntropySolver:
                 nfev_box[0] += 1
                 return rc
         else:
+
             def rhs_fn(t: float, y: npt.NDArray, ydot: npt.NDArray) -> int:
                 ydot[:] = _rhs(t, y)
                 nfev_box[0] += 1
@@ -1493,8 +1501,7 @@ class EntropySolver:
                 info.get('CurrentStep', float('nan')),
                 nfev_box[0],
                 nfev_box[0] / max(int(info.get('NumSteps', 1)), 1),
-                int(info.get('NumLinSolvSetups', 0))
-                    / max(int(info.get('NumSteps', 1)), 1),
+                int(info.get('NumLinSolvSetups', 0)) / max(int(info.get('NumSteps', 1)), 1),
             )
         except Exception as exc:  # pragma: no cover
             logger.debug('CVODE get_info() failed: %s', exc)
@@ -1559,9 +1566,9 @@ class EntropySolver:
                 S0_block = self._S0[:n_stag]
             else:
                 S0_block = self._S0
-            phi0 = float(np.asarray(
-                self.entropy_eos.melt_fraction(self._P_stag_flat, S0_block)
-            ).mean())
+            phi0 = float(
+                np.asarray(self.entropy_eos.melt_fraction(self._P_stag_flat, S0_block)).mean()
+            )
             phi0 = max(0.0, min(1.0, phi0))
         except Exception:
             phi0 = 1.0
@@ -1583,22 +1590,14 @@ class EntropySolver:
         # the phase-boundary stiffness gradually.
         if phi0 > 0.01 and self.entropy_eos is not None:
             P_basic = self._P_basic_flat
-            S_liq_all = np.asarray(
-                self.entropy_eos.liquidus_entropy(P_basic)
-            ).ravel()
-            S_sol_all = np.asarray(
-                self.entropy_eos.solidus_entropy(P_basic)
-            ).ravel()
+            S_liq_all = np.asarray(self.entropy_eos.liquidus_entropy(P_basic)).ravel()
+            S_sol_all = np.asarray(self.entropy_eos.solidus_entropy(P_basic)).ravel()
             # S0_block is staggered (length n_stag). For per-cell
             # phase-boundary check we use the staggered S directly
             # against the staggered-pressure phase boundaries.
             P_stag = self._P_stag_flat
-            S_liq_stag = np.asarray(
-                self.entropy_eos.liquidus_entropy(P_stag)
-            ).ravel()
-            S_sol_stag = np.asarray(
-                self.entropy_eos.solidus_entropy(P_stag)
-            ).ravel()
+            S_liq_stag = np.asarray(self.entropy_eos.liquidus_entropy(P_stag)).ravel()
+            S_sol_stag = np.asarray(self.entropy_eos.solidus_entropy(P_stag)).ravel()
             S_arr_stag = np.asarray(S0_block).ravel()
             margin_to_liq = S_arr_stag - S_liq_stag  # > 0 means above liquidus
             margin_to_sol = S_arr_stag - S_sol_stag  # > 0 means above solidus
@@ -1607,16 +1606,70 @@ class EntropySolver:
             in_mushy = np.any((margin_to_liq < 0.0) & (margin_to_sol > 0.0))
             # Keep the original CMB-only check too as a backstop
             P_cmb = float(self._P_basic_flat[0])
-            S_liq = float(self.entropy_eos.liquidus_entropy(
-                np.array([P_cmb])).item())
-            S_sol = float(self.entropy_eos.solidus_entropy(
-                np.array([P_cmb])).item())
+            S_liq = float(self.entropy_eos.liquidus_entropy(np.array([P_cmb])).item())
+            S_sol = float(self.entropy_eos.solidus_entropy(np.array([P_cmb])).item())
             S0_block_cmb = float(S0_block[0])
             margin = S0_block_cmb - S_liq
-            if (near_liq or near_sol or in_mushy
-                    or margin < 200.0
-                    or (S0_block_cmb < S_liq and S0_block_cmb > S_sol)):
+            if (
+                near_liq
+                or near_sol
+                or in_mushy
+                or margin < 200.0
+                or (S0_block_cmb < S_liq and S0_block_cmb > S_sol)
+            ):
                 max_step = 1.0
+
+            # Strategy B: per-call ΔΦ cap. When phi_step_cap > 0 and at
+            # least one staggered cell sits in or near the mushy band,
+            # clamp end_time so the projected per-cell |ΔΦ| over
+            # [start_time, end_time] stays within the cap. The estimate
+            # uses |dΦ/dt| at t=start_time, scaled by a 0.5 safety
+            # factor since the rate can accelerate during the call.
+            # The PROTEUS outer loop sees the truncated achieved time
+            # via sol.t[-1] and adapts its outer dt accordingly.
+            phi_step_cap = float(getattr(self.parameters.energy, 'phi_step_cap', 0.0))
+            if phi_step_cap > 0.0 and (near_liq or near_sol or in_mushy):
+                in_mushy_arr = (margin_to_liq < 0.0) & (margin_to_sol > 0.0)
+                if np.any(in_mushy_arr):
+                    try:
+                        dydt0 = np.asarray(
+                            self._dSdt_single(
+                                start_time,
+                                np.asarray(self._S0, dtype=float),
+                            )
+                        ).ravel()
+                        dS_phase_stag = S_liq_stag - S_sol_stag
+                        dS_phase_safe = np.where(
+                            dS_phase_stag > 1.0,
+                            dS_phase_stag,
+                            np.inf,
+                        )
+                        dphi_dt_per_cell = np.where(
+                            in_mushy_arr,
+                            np.abs(dydt0[:n_stag]) / dS_phase_safe,
+                            0.0,
+                        )
+                        dphi_dt_max = float(np.max(dphi_dt_per_cell))
+                        if dphi_dt_max > 0.0:
+                            safety = 0.5
+                            dt_safe = safety * phi_step_cap / dphi_dt_max
+                            end_clamped = start_time + dt_safe
+                            if end_clamped < end_time:
+                                logger.info(
+                                    'Per-cell ΔΦ cap %.3g (Strategy B): '
+                                    'clamping end_time %.3e -> %.3e yr '
+                                    '(max |dΦ/dt| at t0 = %.3e /yr)',
+                                    phi_step_cap,
+                                    end_time,
+                                    end_clamped,
+                                    dphi_dt_max,
+                                )
+                                end_time = end_clamped
+                    except Exception as exc:
+                        logger.warning(
+                            'Per-cell ΔΦ cap evaluation failed (%s); skipping clamp',
+                            exc,
+                        )
 
         # External per-call atol scale factor (PROTEUS retry ladder
         # opts in by setting solver._atol_sf before solve()). Default
@@ -1627,7 +1680,13 @@ class EntropySolver:
         logger.info(
             'EntropySolver: integrating from %.2e to %.2e yr '
             '(Phi_init=%.3f, atol_scale=%.1fx, atol_sf=%.1fx, atol=%.2e, rtol=%.2e)',
-            start_time, end_time, phi0, atol_scale, atol_sf_external, atol, rtol,
+            start_time,
+            end_time,
+            phi0,
+            atol_scale,
+            atol_sf_external,
+            atol,
+            rtol,
         )
 
         # ── Nondimensionalise state, time, and tolerances ──
@@ -1670,16 +1729,20 @@ class EntropySolver:
         def _rhs_nondim(t_nd, y_nd):
             """Nondim wrapper: scale state to physical, call physics, scale RHS back."""
             dydt_phys = self._dSdt_single(
-                t_nd * t_ref, y_nd * _state_scale,
+                t_nd * t_ref,
+                y_nd * _state_scale,
             )
             return dydt_phys * _rhs_scale
 
         logger.info(
             'Nondimensionalisation: S_ref=%.3f t_ref=%.3e yr '
             'atol_nd min/max=[%.2e, %.2e] S0_nd range [%.4f, %.4f]',
-            S_ref, t_ref,
-            float(np.min(atol_nd)), float(np.max(atol_nd)),
-            S0_nd[:n_s].min(), S0_nd[:n_s].max(),
+            S_ref,
+            t_ref,
+            float(np.min(atol_nd)),
+            float(np.max(atol_nd)),
+            S0_nd[:n_s].min(),
+            S0_nd[:n_s].max(),
         )
 
         # BDF integration with phase-aware max_step constraint.
@@ -1702,9 +1765,7 @@ class EntropySolver:
         # factorisation handles the discontinuity cleanly. Scipy
         # solve_ivp (Radau or BDF) is kept as a fallback for systems
         # without scikits.odes available.
-        solver_method = getattr(
-            self.parameters.energy, 'solver_method', 'cvode'
-        )
+        solver_method = getattr(self.parameters.energy, 'solver_method', 'cvode')
         # Warn when CVODE was requested but scikits.odes is not
         # importable: the fallback to scipy Radau is a substantial
         # change in solver behaviour (no modified-Newton, no cached
@@ -1717,10 +1778,7 @@ class EntropySolver:
                 'Radau. Install scikits-odes to enable the production '
                 'CVODE path (same solver SPIDER uses).'
             )
-        use_cvode = (
-            solver_method == 'cvode'
-            and _CVODE_AVAILABLE
-        )
+        use_cvode = solver_method == 'cvode' and _CVODE_AVAILABLE
         if use_cvode:
             # Option Z: build JAX-derived CVODE callbacks when the
             # factory is registered AND the config flag is on. The
@@ -1749,7 +1807,8 @@ class EntropySolver:
                 except Exception as exc:  # pragma: no cover - fallback path
                     logger.warning(
                         'EntropySolver: JAX CVODE factory failed (%s); '
-                        'falling back to numpy RHS + FD Jacobian', exc,
+                        'falling back to numpy RHS + FD Jacobian',
+                        exc,
                     )
                     cvode_rhs_override = None
                     cvode_jacfn = None
@@ -1801,8 +1860,10 @@ class EntropySolver:
             logger.info(
                 'EntropySolver: %d internal steps, %d RHS evals, '
                 'dt_min=%.2e yr, dt_max=%.2e yr, dt_med=%.2e yr',
-                len(sol.t), sol.nfev,
-                dt_internal.min(), dt_internal.max(),
+                len(sol.t),
+                sol.nfev,
+                dt_internal.min(),
+                dt_internal.max(),
                 np.median(dt_internal),
             )
             logger.info(
@@ -1824,13 +1885,15 @@ class EntropySolver:
                 'EntropySolver: liquidus-crossing event at t=%.2e yr '
                 '(stopped %.1f yr before end_time). Bottom cell reached '
                 'onset of crystallization.',
-                t_event, end_time - t_event,
+                t_event,
+                end_time - t_event,
             )
             self.stop_early = False
         else:
             logger.error(
                 'EntropySolver: integration failed (status=%d): %s',
-                self._solution.status, self._solution.message,
+                self._solution.status,
+                self._solution.message,
             )
             self.stop_early = True
 
@@ -1851,9 +1914,9 @@ class EntropySolver:
         mesh = self.evaluator.mesh
 
         n_stag = self._n_stag
-        energy_balance = (self._core_bc == 'energy_balance')
-        bower = (self._core_bc == 'bower2018')
-        gradient_mode = (self._core_bc == 'gradient')
+        energy_balance = self._core_bc == 'energy_balance'
+        bower = self._core_bc == 'bower2018'
+        gradient_mode = self._core_bc == 'gradient'
         is_ext = energy_balance or bower
 
         # Slice the final state vector.
@@ -1861,9 +1924,7 @@ class EntropySolver:
             n_basic = n_stag + 1
             dSdr_final = sol.y[:n_basic, -1]
             S_surf_final = float(sol.y[n_basic, -1])
-            S_final, S_basic_final = self._reconstruct_entropy(
-                dSdr_final, S_surf_final
-            )
+            S_final, S_basic_final = self._reconstruct_entropy(dSdr_final, S_surf_final)
             extra_final = None
         elif is_ext:
             S_final = sol.y[:n_stag, -1]
@@ -1890,9 +1951,7 @@ class EntropySolver:
 
         # Refresh the state at the final entropy for derived quantities.
         if gradient_mode:
-            self.state.update(
-                S_final, sol.t[-1], dSdr=dSdr_final, entropy_basic=S_basic_final
-            )
+            self.state.update(S_final, sol.t[-1], dSdr=dSdr_final, entropy_basic=S_basic_final)
         elif energy_balance:
             self.state.update(S_final, sol.t[-1], dSdr_cmb=extra_final)
         else:
@@ -1930,9 +1989,7 @@ class EntropySolver:
                 - mesh.eos.get_mass_within_radii(np.array([r_cmb]))
             ).item()
         else:
-            rho_struct_stag = np.asarray(
-                mesh.staggered_effective_density
-            ).ravel()
+            rho_struct_stag = np.asarray(mesh.staggered_effective_density).ravel()
             mass_stag = rho_struct_stag * vol
             M_mantle = float(np.sum(mass_stag))
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
@@ -1941,9 +1998,7 @@ class EntropySolver:
         # SPIDER's `atmosphere/temperature_surface` definition.
         # PROTEUS passes T_magma to the atmosphere module as the
         # interior-side surface boundary condition.
-        T_basic_final = np.asarray(
-            self.state.phase_basic.temperature()
-        ).ravel()
+        T_basic_final = np.asarray(self.state.phase_basic.temperature()).ravel()
         T_magma = float(T_basic_final[-1])
         # Core temperature: bottom staggered cell (T_stag[0]).
         # SPIDER reports T_core = interior_o.temp[-1], the last

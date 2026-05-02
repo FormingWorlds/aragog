@@ -28,15 +28,15 @@ logger: logging.Logger = logging.getLogger(__name__)
 def _get_dataclass_from_section_name() -> dict[str, Any]:
     """Maps the section names in the configuration data to the dataclasses that stores the data."""
     mapping: dict[str, Any] = {
-        "scalings": _ScalingsParameters,
-        "solver": _SolverParameters,
-        "boundary_conditions": _BoundaryConditionsParameters,
-        "mesh": _MeshParameters,
-        "energy": _EnergyParameters,
-        "initial_condition": _InitialConditionParameters,
-        "phase_liquid": _PhaseParameters,
-        "phase_solid": _PhaseParameters,
-        "phase_mixed": _PhaseMixedParameters,
+        'scalings': _ScalingsParameters,
+        'solver': _SolverParameters,
+        'boundary_conditions': _BoundaryConditionsParameters,
+        'mesh': _MeshParameters,
+        'energy': _EnergyParameters,
+        'initial_condition': _InitialConditionParameters,
+        'phase_liquid': _PhaseParameters,
+        'phase_solid': _PhaseParameters,
+        'phase_mixed': _PhaseMixedParameters,
         # radionuclides are dealt with separately
     }
 
@@ -97,7 +97,7 @@ class _ScalingsParameters:
         self.viscosity = 1.0
         self.time_years = 1.0
         self.stefan_boltzmann_constant = 1.0
-        logger.debug("scalings = %s (all unity, non-dimensionalization removed)", self)
+        logger.debug('scalings = %s (all unity, non-dimensionalization removed)', self)
 
 
 @dataclass
@@ -159,7 +159,7 @@ class _BoundaryConditionsParameters:
         elif self.inner_boundary_condition == 3:
             self.inner_boundary_value /= self.scalings_.temperature
         else:
-            msg: str = f"inner_boundary_condition = {self.inner_boundary_condition} is unknown"
+            msg: str = f'inner_boundary_condition = {self.inner_boundary_condition} is unknown'
             raise ValueError(msg)
 
     def _scale_outer_boundary_condition(self) -> None:
@@ -183,7 +183,7 @@ class _BoundaryConditionsParameters:
         elif self.outer_boundary_condition == 5:
             self.outer_boundary_value /= self.scalings_.temperature
         else:
-            msg: str = f"outer_boundary_condition = {self.outer_boundary_condition} is unknown"
+            msg: str = f'outer_boundary_condition = {self.outer_boundary_condition} is unknown'
             raise ValueError(msg)
 
 
@@ -234,7 +234,20 @@ class _EnergyParameters:
     # falls back to FD Jacobian when no factory is available.
     use_jax_jacobian: bool = True
 
-    tidal_array: npt.NDArray = field(default_factory=lambda:np.array([0.0], dtype=float))
+    # Strategy B: per-call ΔΦ cap. When > 0 and at least one cell sits in
+    # or near the mushy band at solve() entry, clamp end_time so the
+    # projected per-cell |ΔΦ| over [start_time, end_time] stays within
+    # this cap. The estimate uses |dΦ/dt| at t=start_time scaled by a 0.5
+    # safety factor; if the achieved end_time is smaller than requested,
+    # the PROTEUS outer loop sees an early-return and adjusts dt
+    # accordingly. Default 0.0 (disabled, no behavioural change for
+    # existing tests). Recommended setting for production runs with
+    # ``dilatation = true`` is 0.05; the heat-pump driven by H_dil drives
+    # faster Φ-evolution in the mushy zone than the static dt cap can
+    # contain otherwise.
+    phi_step_cap: float = 0.0
+
+    tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:
         """Scales the attributes.
@@ -253,7 +266,7 @@ class _InitialConditionParameters:
     initial_condition: int = 1
     surface_temperature: float = 4000
     basal_temperature: float = 4000
-    init_file: str = ""
+    init_file: str = ''
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:
@@ -272,8 +285,8 @@ class _InitialConditionParameters:
         self.basal_temperature /= self.scalings_.temperature
 
         if self.initial_condition == 2:
-            if self.init_file == "":
-                msg: str = (f"you must provide an initial temperature file")
+            if self.init_file == '':
+                msg: str = f'you must provide an initial temperature file'
                 raise ValueError(msg)
             self.init_temperature = np.loadtxt(self.init_file)
             self.init_temperature /= self.scalings_.temperature
@@ -289,14 +302,14 @@ class _MeshParameters:
     mixing_length_profile: str
     core_density: float
     # Static pressure profile is derived from the Adams-Williamson equation of state.
-    eos_method: int = 1 # 1: Adams-Williamson / 2: User defined
+    eos_method: int = 1  # 1: Adams-Williamson / 2: User defined
     surface_density: float = 4000
     gravitational_acceleration: float = 9.81
     adiabatic_bulk_modulus: float = 260e9
     adams_williamson_beta: float = 0.0  # 0 = derive from K_S
     surface_pressure: float = 0.0
     mass_coordinates: bool = False
-    eos_file: str = ""
+    eos_file: str = ''
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:
@@ -315,20 +328,24 @@ class _MeshParameters:
         self.surface_pressure /= self.scalings_.pressure
 
         if self.eos_method == 2:
-            if self.eos_file == "":
-                msg: str = (f"you must provide a file for setting up equation of state")
+            if self.eos_file == '':
+                msg: str = f'you must provide a file for setting up equation of state'
                 raise ValueError(msg)
             arr = np.loadtxt(self.eos_file)
-            self.eos_radius = arr[:,0] / self.scalings_.radius
-            self.eos_pressure = arr[:,1] / self.scalings_.pressure
-            self.eos_density = arr[:,2] / self.scalings_.density
-            self.eos_gravity = arr[:,3] / self.scalings_.gravitational_acceleration
+            self.eos_radius = arr[:, 0] / self.scalings_.radius
+            self.eos_pressure = arr[:, 1] / self.scalings_.pressure
+            self.eos_density = arr[:, 2] / self.scalings_.density
+            self.eos_gravity = arr[:, 3] / self.scalings_.gravitational_acceleration
             # Check that provided eos radius roughly match with Aragog mesh
-            if ((self.eos_radius[0] < self.inner_radius) or
-                (self.eos_radius[-1] > self.outer_radius) or
-                (self.eos_radius[-1]-self.eos_radius[0]) < 0.75*(self.outer_radius-self.inner_radius)):
-                msg: str = (f"Radius array in EOS file: Values out of range.")
+            if (
+                (self.eos_radius[0] < self.inner_radius)
+                or (self.eos_radius[-1] > self.outer_radius)
+                or (self.eos_radius[-1] - self.eos_radius[0])
+                < 0.75 * (self.outer_radius - self.inner_radius)
+            ):
+                msg: str = f'Radius array in EOS file: Values out of range.'
                 raise ValueError(msg)
+
 
 @dataclass
 class _PhaseMixedParameters:
@@ -378,7 +395,7 @@ class _PhaseParameters:
     thermal_conductivity: float | str
     thermal_expansivity: float | str
     viscosity: float | str
-    entropy: float | str = ""
+    entropy: float | str = ''
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:
@@ -396,17 +413,17 @@ class _PhaseParameters:
                 scaled_value = value / scaling
                 setattr(self, field_.name, scaled_value)
                 logger.info(
-                    "%s is a number (value = %s, scaling = %s, scaled_value = %s)",
+                    '%s is a number (value = %s, scaling = %s, scaled_value = %s)',
                     field_.name,
                     value,
                     scaling,
                     scaled_value,
                 )
             except AttributeError:
-                logger.info("No scaling found for %s", field_.name)
+                logger.info('No scaling found for %s', field_.name)
             except TypeError:
                 logger.info(
-                    "%s is a string (path to a filename) so the data will be scaled later",
+                    '%s is a string (path to a filename) so the data will be scaled later',
                     field_.name,
                 )
 
@@ -464,7 +481,7 @@ class _SolverParameters:
     rtol: float
     scalings_: _ScalingsParameters = field(init=False)
     tsurf_poststep_change: float = 30.0
-    event_triggering:bool = False
+    event_triggering: bool = False
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:
         self.scalings_ = scalings
@@ -497,8 +514,13 @@ class Parameters:
         # (phase.py reads scalings_ from PhaseParameters and PhaseMixedParameters).
         # With all scales = 1.0, division by scalings is a no-op.
         for sub in [
-            self.boundary_conditions, self.energy, self.initial_condition,
-            self.mesh, self.phase_solid, self.phase_liquid, self.phase_mixed,
+            self.boundary_conditions,
+            self.energy,
+            self.initial_condition,
+            self.mesh,
+            self.phase_solid,
+            self.phase_liquid,
+            self.phase_mixed,
             self.solver,
         ]:
             sub.scalings_ = self.scalings
@@ -507,16 +529,16 @@ class Parameters:
 
         # Load initial temperature from file if IC method 2
         if self.initial_condition.initial_condition == 2:
-            if self.initial_condition.init_file == "":
-                raise ValueError("you must provide an initial temperature file")
+            if self.initial_condition.init_file == '':
+                raise ValueError('you must provide an initial temperature file')
             self.initial_condition.init_temperature = np.loadtxt(
                 self.initial_condition.init_file
             )
 
         # Load EOS from file if EOS method 2
         if self.mesh.eos_method == 2:
-            if self.mesh.eos_file == "":
-                raise ValueError("you must provide a file for setting up equation of state")
+            if self.mesh.eos_file == '':
+                raise ValueError('you must provide a file for setting up equation of state')
             arr = np.loadtxt(self.mesh.eos_file)
             self.mesh.eos_radius = arr[:, 0]
             self.mesh.eos_pressure = arr[:, 1]
@@ -529,13 +551,12 @@ class Parameters:
             if (
                 (self.mesh.eos_radius[0] < self.mesh.inner_radius - tol)
                 or (self.mesh.eos_radius[-1] > self.mesh.outer_radius + tol)
-                or (self.mesh.eos_radius[-1] - self.mesh.eos_radius[0])
-                < 0.50 * max(D, 1.0)
+                or (self.mesh.eos_radius[-1] - self.mesh.eos_radius[0]) < 0.50 * max(D, 1.0)
             ):
                 raise ValueError(
-                    f"Radius array in EOS file: Values out of range. "
-                    f"EOS: [{self.mesh.eos_radius[0]:.3e}, {self.mesh.eos_radius[-1]:.3e}], "
-                    f"Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]"
+                    f'Radius array in EOS file: Values out of range. '
+                    f'EOS: [{self.mesh.eos_radius[0]:.3e}, {self.mesh.eos_radius[-1]:.3e}], '
+                    f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
 
         # Convert radionuclide concentration from ppm to mass fraction
@@ -568,7 +589,7 @@ class Parameters:
             )
             radionuclides.append(radionuclide)
 
-        init_dict["radionuclides"] = radionuclides
+        init_dict['radionuclides'] = radionuclides
 
         return cls(**init_dict)  # Unpacking gives required arguments so pylint: disable=E1125
 
@@ -581,5 +602,5 @@ class Parameters:
         return [
             parser[section].name
             for section in parser.sections()
-            if section.startswith("radionuclide_")
+            if section.startswith('radionuclide_')
         ]
