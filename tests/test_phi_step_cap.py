@@ -548,3 +548,158 @@ def test_source_no_dt_safe_estimate_remaining():
     assert 'dphi_dt_global' not in src
     assert 'dt_safe' not in src
     assert 'safety = 0.5' not in src
+
+
+def test_source_solve_cvode_prepends_start_time_on_rootfn_fire():
+    """``_solve_cvode`` must guarantee ``result.t[0] == start_time``.
+
+    When the rootfn fires (CVODE flag=2), ``scikits.odes`` returns
+    ``cvode_sol.values.t = [t_root]`` rather than ``[start, t_root]``.
+    Without a prepend, downstream ``get_state()`` computes
+    ``dt_actual = sol.t[-1] - sol.t[0] = 0``, PROTEUS's wrapper then
+    falls back to ``dtswitch`` while Aragog's internal state advanced
+    only to t_root, locking the coupled run at a fixed point
+    (verified 2026-05-03 in output/verify_dilon_phicap005.v3.2_dt_actual_zero).
+
+    The fix MUST be in ``_solve_cvode`` (not ``solve()`` or
+    ``get_state()``) so every caller of the CVODE path benefits
+    uniformly.
+    """
+    src = (REPO_ROOT / 'solver' / 'entropy_solver.py').read_text()
+    # The prepend must be present and gated on t_arr[0] != start_time
+    # so we don't double-prepend on normal completion (where CVODE
+    # already returns [start, end]).
+    m = re.search(
+        r'if\s+t_arr\.size\s*==\s*0\s+or\s+'
+        r'float\(t_arr\[0\]\)\s*!=\s*float\(start_time\)\s*:'
+        r'[\s\S]+?'
+        r't_arr\s*=\s*np\.concatenate\(\(\[float\(start_time\)\],\s*t_arr\)\)',
+        src,
+    )
+    assert m is not None, (
+        'rootfn-fire prepend is missing from _solve_cvode; '
+        'dt_actual will silently zero out when CVODE returns [t_root].'
+    )
+    # And y must be prepended with y0 to keep shapes consistent.
+    assert (
+        'np.concatenate((y0_col, y_arr), axis=1)' in src
+    ), 'y_arr is not prepended with y0; result.y shape will mismatch result.t'
+
+
+def test_solve_cvode_prepends_start_when_rootfn_returns_lone_root():
+    """Behavioural regression: build a mock cvode_sol with values.t=[t_root]
+    and verify the returned ``result.t = [start, t_root]``, ``result.y``
+    has 2 columns (y0, y_root).
+
+    Mocks scikits.odes return shape directly to exercise the prepend
+    branch without spinning up a full integrator.
+    """
+    from unittest.mock import patch
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    # Build a cvode_sol stand-in that mimics the rootfn-fire shape:
+    # values.t = [t_root], values.y = [y_root_row].
+    mock_values = MagicMock()
+    mock_values.t = np.array([0.4])  # nondim t_root only, no start prepended
+    n_state = 5
+    y_root_row = np.linspace(0.5, 1.5, n_state)
+    mock_values.y = y_root_row.reshape(1, n_state)  # (n_time=1, n_state)
+    mock_cvode_sol = MagicMock()
+    mock_cvode_sol.values = mock_values
+    mock_cvode_sol.flag = 2  # CV_ROOT_RETURN
+    mock_cvode_sol.message = 'root found'
+
+    mock_solver = MagicMock()
+    mock_solver.solve.return_value = mock_cvode_sol
+    mock_solver._integrator.get_info.return_value = {}
+
+    start_time = 0.1
+    end_time = 1.0
+    y0 = np.linspace(0.0, 1.0, n_state)
+    instance = MagicMock(spec=EntropySolver)
+    instance.dSdt = lambda t, y: np.zeros_like(y)
+    instance._core_bc = 'energy_balance'
+
+    # Pretend the cap rootfn is armed (need a phi_cap_rootfn != None to
+    # exercise flag==2 marking; the rootfn instance is never called).
+    fake_rootfn = MagicMock()
+    fake_rootfn.evals = 7
+    fake_rootfn.cap = 0.05
+    fake_rootfn.phi0 = 0.88
+
+    with patch('aragog.solver.entropy_solver._scikits_ode', return_value=mock_solver):
+        result = EntropySolver._solve_cvode(
+            instance,
+            start_time=start_time,
+            end_time=end_time,
+            y0=y0,
+            atol=1e-8,
+            rtol=1e-8,
+            max_step=np.inf,
+            phi_cap_rootfn=fake_rootfn,
+        )
+
+    # Two-point trajectory: [start, t_root]
+    assert result.t.size == 2, f'expected 2 time points after prepend, got {result.t.size}'
+    assert float(result.t[0]) == pytest.approx(start_time)
+    assert float(result.t[1]) == pytest.approx(0.4)
+    # y must have 2 columns and the first column equals y0 exactly.
+    assert result.y.shape == (n_state, 2)
+    np.testing.assert_array_equal(result.y[:, 0], y0)
+    np.testing.assert_array_equal(result.y[:, 1], y_root_row)
+    # dt_actual = result.t[-1] - result.t[0] is positive (the bug
+    # symptom: this used to be zero).
+    dt_actual = float(result.t[-1] - result.t[0])
+    assert dt_actual > 0.0, 'dt_actual still 0; rootfn-fire prepend is not effective'
+    assert dt_actual == pytest.approx(0.4 - start_time)
+    # cap_fired marker must be set so solve() can emit the physical-time log.
+    assert getattr(result, 'cap_fired', False) is True
+    assert int(result.cap_evals) == 7
+
+
+def test_solve_cvode_does_not_double_prepend_on_normal_completion():
+    """When CVODE returns ``[start, end]`` (normal flag=0 completion), the
+    prepend must NOT add a second copy of start_time.
+
+    Edge case: the prepend is gated on ``t_arr[0] != start_time``; if
+    that gate is broken, we'd duplicate the first column.
+    """
+    from unittest.mock import patch
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    n_state = 4
+    y_full = np.array([[0.0, 1.0, 2.0, 3.0], [0.5, 1.5, 2.5, 3.5]])  # (n_time=2, n_state)
+    mock_values = MagicMock()
+    mock_values.t = np.array([0.1, 1.0])
+    mock_values.y = y_full
+    mock_cvode_sol = MagicMock()
+    mock_cvode_sol.values = mock_values
+    mock_cvode_sol.flag = 0
+    mock_cvode_sol.message = ''
+
+    mock_solver = MagicMock()
+    mock_solver.solve.return_value = mock_cvode_sol
+    mock_solver._integrator.get_info.return_value = {}
+
+    instance = MagicMock(spec=EntropySolver)
+    instance.dSdt = lambda t, y: np.zeros_like(y)
+    instance._core_bc = 'energy_balance'
+
+    with patch('aragog.solver.entropy_solver._scikits_ode', return_value=mock_solver):
+        result = EntropySolver._solve_cvode(
+            instance,
+            start_time=0.1,
+            end_time=1.0,
+            y0=np.array([0.0, 1.0, 2.0, 3.0]),
+            atol=1e-8,
+            rtol=1e-8,
+            max_step=np.inf,
+            phi_cap_rootfn=None,
+        )
+
+    # No double-prepend: t stays length-2, y stays (n_state, 2).
+    assert result.t.size == 2
+    assert result.y.shape == (n_state, 2)
+    np.testing.assert_allclose(result.t, [0.1, 1.0])

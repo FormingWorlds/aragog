@@ -1667,6 +1667,22 @@ class EntropySolver:
                 y_arr = y_arr.T
             else:
                 y_arr = y_arr.reshape(-1, 1)
+            # Normalise to ``[start_time, ...]``. When the rootfn fires
+            # (Strategy B v3 ΔΦ_global cap), ``scikits.odes`` returns
+            # only the root point ``[t_root]`` rather than
+            # ``[start_time, t_root]``. Downstream ``get_state()``
+            # computes ``dt_actual = sol.t[-1] - sol.t[0]`` and would
+            # silently report 0, causing PROTEUS's wrapper to fall back
+            # to ``dtswitch`` while Aragog's internal state had only
+            # advanced to the root. Helpfile clock then races ahead of
+            # Aragog state, locking the coupled run at a fixed point
+            # (observed v3.2, output/verify_dilon_phicap005.v3.2_dt_actual_zero,
+            # 2026-05-03). Prepend start_time + y0 whenever t_arr does
+            # not start exactly at start_time.
+            if t_arr.size == 0 or float(t_arr[0]) != float(start_time):
+                y0_col = np.asarray(y0, dtype=float).reshape(-1, 1)
+                t_arr = np.concatenate(([float(start_time)], t_arr))
+                y_arr = np.concatenate((y0_col, y_arr), axis=1)
             result.t = t_arr
             result.y = y_arr
         else:
