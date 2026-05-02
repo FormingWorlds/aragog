@@ -1680,18 +1680,16 @@ class EntropySolver:
         if flag == 0 or flag == 2:
             result.status = 0
             if flag == 2 and phi_cap_rootfn is not None:
-                # ΔΦ_global cap fired; CVODE returned at the crossing.
-                evals = int(getattr(phi_cap_rootfn, 'evals', 0))
-                t_root = float(result.t[-1])
-                logger.info(
-                    'ΔΦ_global cap (Strategy B v3): rootfn fired at '
-                    't=%.3e yr after %d evals; cap=%.3g, '
-                    'Φ_global(start)=%.4f',
-                    t_root,
-                    evals,
-                    float(phi_cap_rootfn.cap),
-                    float(phi_cap_rootfn.phi0),
-                )
+                # ΔΦ_global cap fired; mark the result so ``solve()``
+                # can emit a human-readable log line AFTER the nondim-
+                # to-physical time restoration (the t-rescale lives
+                # one frame up the stack). Logging ``result.t[-1]``
+                # here would report nondim time, which is misleading
+                # to operators.
+                result.cap_fired = True
+                result.cap_evals = int(getattr(phi_cap_rootfn, 'evals', 0))
+                result.cap_value = float(phi_cap_rootfn.cap)
+                result.cap_phi0 = float(phi_cap_rootfn.phi0)
         else:
             result.status = -1
             if not result.message:
@@ -2041,6 +2039,33 @@ class EntropySolver:
                 sol.y = sol_y * _state_scale[:, np.newaxis]
             else:
                 sol.y = sol_y * _state_scale
+
+        # Strategy B v3 cap-fire log, emitted with PHYSICAL time. The
+        # CVODE path attaches ``cap_fired`` etc. to the result inside
+        # ``_solve_cvode``; the scipy fallback exposes the same signal
+        # via ``sol.t_events`` (non-empty when the terminal event
+        # fired). Log here so operators see physical years.
+        if getattr(sol, 'cap_fired', False) and sol.t is not None:
+            t_root_phys = float(sol.t[-1])
+            logger.info(
+                'ΔΦ_global cap (Strategy B v3): CVODE rootfn fired at '
+                't=%.3e yr after %d evals; cap=%.3g, '
+                'Φ_global(start)=%.4f',
+                t_root_phys,
+                int(getattr(sol, 'cap_evals', 0)),
+                float(getattr(sol, 'cap_value', 0.0)),
+                float(getattr(sol, 'cap_phi0', 0.0)),
+            )
+        elif (
+            getattr(sol, 't_events', None) is not None
+            and len(sol.t_events) > 0
+            and len(sol.t_events[0]) > 0
+        ):
+            t_event_phys = float(sol.t_events[0][0]) * t_ref
+            logger.info(
+                'ΔΦ_global cap (Strategy B v3): scipy event fired at t=%.3e yr (terminal=True)',
+                t_event_phys,
+            )
 
         # Diagnostic logging: internal BDF step statistics (in physical yr)
         if sol.t is not None and len(sol.t) > 1:

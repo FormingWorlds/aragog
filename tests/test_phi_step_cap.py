@@ -423,8 +423,39 @@ def test_source_logs_rootfn_fire_on_flag_2():
     # The log message must mention 'rootfn fired' (specific phrase that
     # search-and-rescue scripts can grep for).
     assert 'rootfn fired' in src
-    # And it must only fire for the cap path (flag == 2 + rootfn != None).
+    # The cap path must mark the result inside _solve_cvode so solve()
+    # can log with PHYSICAL time (not nondim).
     assert 'flag == 2 and phi_cap_rootfn is not None' in src
+    assert 'result.cap_fired = True' in src
+
+
+def test_source_logs_cap_fire_in_physical_time():
+    """The cap-fire log must use physical time, not nondim.
+
+    The CVODE integrator runs in nondim units; the result wrapper
+    rescales ``sol.t`` to physical years in ``solve()`` after
+    ``_solve_cvode`` returns. The cap-fire log must be emitted AFTER
+    that rescale, otherwise operators see misleading ~1e7 yr values
+    (verified 2026-05-02 in the v3 validation run; nondim t × t_ref
+    ≈ 3.17e-3 yr converts back to physical).
+
+    This regression locks the log emission to ``solve()``, gated on
+    a marker attached to the result inside ``_solve_cvode``, so the
+    nondim/physical translation can never drift again.
+    """
+    src = (REPO_ROOT / 'solver' / 'entropy_solver.py').read_text()
+    # The marker lives on the result object.
+    assert "getattr(sol, 'cap_fired'" in src
+    # The log uses ``sol.t[-1]`` AFTER the ``sol.t * t_ref`` rescale.
+    rescale_idx = src.find('sol.t = np.asarray(sol.t, dtype=float) * t_ref')
+    log_idx = src.find("'ΔΦ_global cap (Strategy B v3): CVODE rootfn fired")
+    assert rescale_idx > 0, 't_ref rescale not found'
+    assert log_idx > 0, 'physical-time cap-fire log not found'
+    assert log_idx > rescale_idx, 'cap-fire log must come AFTER the nondim->physical rescale'
+    # The scipy fallback path also rescales its event time via t_ref
+    # (the event captures nondim t; physical = t × t_ref).
+    assert 'sol.t_events[0][0]' in src
+    assert 'event fired at' in src
 
 
 def test_source_subclasses_cv_rootfunction():
