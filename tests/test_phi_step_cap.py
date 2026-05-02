@@ -468,6 +468,72 @@ def test_source_subclasses_cv_rootfunction():
     assert m is not None, '_PhiCapRootFunction must subclass _CV_RootFunction'
 
 
+def test_source_phi_global_is_mass_weighted_in_get_state():
+    """SolverOutput.Phi_global must use mass weighting, not volume.
+
+    Volume-weighting silently froze Phi_global in mass-coordinate
+    meshes because deep high-density cells have small volumes and
+    contribute negligibly; the surface stays liquid longest and
+    dominates the volume-weighted average. PROTEUS's helpfile
+    Phi_global (used by stop criteria, structure-update triggers,
+    deadlock detection) then never moved during bottom-up
+    crystallisation. Verified 2026-05-02 in
+    output/verify_dilon_phicap005.v3_helpfile_frozen.
+    """
+    src = (REPO_ROOT / 'solver' / 'entropy_solver.py').read_text()
+    # Locate the get_state() method.
+    m = re.search(r'def get_state\(self\)[\s\S]+?return SolverOutput', src)
+    assert m is not None, 'get_state method not found'
+    block = m.group(0)
+    # Phi_global must be assembled from mass_stag, not vol.
+    assert 'phi_stag * mass_stag' in block
+    # The volume-weighted formula must NOT remain.
+    assert 'np.dot(phi_stag, vol) / np.sum(vol)' not in block
+
+
+def test_source_phi_global_matches_rootfn_formula():
+    """SolverOutput.Phi_global and rootfn.evaluate use the same metric.
+
+    If they diverge, the rootfn fires at one Phi_global definition
+    while PROTEUS reports a different one, leading to bookkeeping
+    inconsistency. Both must use mass weighting so the cap and
+    PROTEUS stop logic see the same state.
+    """
+    src = (REPO_ROOT / 'solver' / 'entropy_solver.py').read_text()
+    # Both compute Σ(mass * phi) / Σ(mass) over staggered cells.
+    rootfn_block = re.search(
+        r'class _PhiCapRootFunction[\s\S]+?(?=\n\ndef |\nclass )',
+        src,
+    )
+    get_state_block = re.search(
+        r'def get_state\(self\)[\s\S]+?return SolverOutput',
+        src,
+    )
+    assert rootfn_block is not None and get_state_block is not None
+    # Both blocks reference mass-weighting of phi.
+    assert 'mass * phi' in rootfn_block.group(0).replace(
+        ' ', ''
+    ) or 'mass*phi' in rootfn_block.group(0).replace(' ', '')
+    assert 'phi_stag*mass_stag' in get_state_block.group(0).replace(' ', '')
+
+
+def test_solver_output_docstring_says_mass_weighted():
+    """The SolverOutput field docstring must reflect the new semantics.
+
+    Doc drift would mislead future contributors into computing
+    Phi_global from the wrong field formula again.
+    """
+    src = (REPO_ROOT / 'solver' / 'entropy_solver.py').read_text()
+    # Find the SolverOutput dataclass body.
+    m = re.search(r'class SolverOutput[\s\S]+?(?=\n\nclass )', src)
+    assert m is not None
+    body = m.group(0)
+    # The Phi_global field comment must say mass-weighted.
+    assert 'mass-weighted melt fraction' in body
+    # And no longer say volume-weighted.
+    assert 'volume-weighted melt fraction' not in body
+
+
 def test_source_no_dt_safe_estimate_remaining():
     """The v1/v2 dt_safe estimate must be gone.
 

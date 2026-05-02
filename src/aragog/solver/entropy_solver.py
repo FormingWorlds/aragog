@@ -299,7 +299,7 @@ class SolverOutput:
     # Scalar quantities
     T_magma: float  # surface temperature [K]
     T_core: float  # CMB temperature [K]
-    Phi_global: float  # volume-weighted melt fraction
+    Phi_global: float  # mass-weighted melt fraction (= M_mantle_liquid / M_mantle)
     Phi_global_vol: float  # porosity-based volumetric melt fraction
     M_mantle: float  # mantle mass [kg]
     M_mantle_liquid: float  # liquid mantle mass [kg]
@@ -2224,7 +2224,27 @@ class EntropySolver:
             T_core = extra_final  # bower2018: T_core integrated as ODE state
         else:
             T_core = float(T_stag[0])
-        Phi_global = float(np.dot(phi_stag, vol) / np.sum(vol))
+        # Mass-weighted melt fraction = M_mantle_liquid / M_mantle.
+        # Volume-weighting (the prior formulation) silently weights
+        # surface cells more than deep cells when ``mass_coordinates =
+        # true``: the mesh is uniform in mass coordinate, so deep
+        # high-density cells span small radial intervals and have
+        # small volumes, while surface low-density cells are large.
+        # During bottom-up crystallisation the surface stays liquid
+        # longest, so volume-weighted Phi stays anchored near the
+        # surface value while the actual mantle has crystallised.
+        # Verified 2026-05-02 in
+        # ``output/verify_dilon_phicap005.v3_helpfile_frozen``: the
+        # planet's mass-weighted Phi_global drifted from 0.913 to
+        # 0.88 over 600 kyr while the volume-weighted value reported
+        # to PROTEUS stayed exactly 0.9129 — the helpfile-frozen
+        # symptom that broke PROTEUS's stop-criterion + structure-
+        # update bookkeeping. Matches the rootfn formula bit-for-bit.
+        mass_total_for_phi = float(np.sum(mass_stag))
+        if mass_total_for_phi > 0.0:
+            Phi_global = float(np.sum(phi_stag * mass_stag) / mass_total_for_phi)
+        else:
+            Phi_global = float(np.mean(phi_stag))
 
         # Rheological front depth. ``phi_basic_stag_interp`` is the
         # staggered-phi interpolated to basic nodes -- distinct from the
