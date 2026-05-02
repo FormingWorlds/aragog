@@ -1658,41 +1658,61 @@ class EntropySolver:
         #   .message (human-readable)
         #   .nfev   (RHS call count)
         result = OptimizeResult()
-        if cvode_sol.values is not None and cvode_sol.values.t is not None:
-            t_arr = np.asarray(cvode_sol.values.t, dtype=float).ravel()
-            y_arr = np.asarray(cvode_sol.values.y, dtype=float)
-            # CVODE stores y as (n_time, n_state); scipy expects
-            # (n_state, n_time).
-            if y_arr.ndim == 2:
-                y_arr = y_arr.T
+        # ``scikits.odes`` rootfn-fire idiosyncrasy: when CVODE's rootfn
+        # fires (flag=2), ``cvode_sol.values.t`` contains ONLY the start
+        # time (the integration progress to the root is dropped), while
+        # the actual root location is exposed via ``cvode_sol.roots.t``
+        # / ``cvode_sol.roots.y``. Probed end-to-end on 2026-05-03 with
+        # a synthetic y'=1, root at y=5: flag=2, values.t=[0.],
+        # roots.t=[5.]. Reading from values.t and computing
+        # ``dt_actual = sol.t[-1] - sol.t[0] = 0`` would cause PROTEUS's
+        # wrapper to fall back to ``dtswitch`` while Aragog's state had
+        # advanced to the root, locking the coupled run at a fixed
+        # point (observed v3.2/v3.3 in output/verify_dilon_phicap005).
+        flag = int(getattr(cvode_sol, 'flag', -1))
+        roots_obj = getattr(cvode_sol, 'roots', None)
+        used_roots = False
+        if (
+            flag == 2
+            and roots_obj is not None
+            and getattr(roots_obj, 't', None) is not None
+            and np.asarray(roots_obj.t).size > 0
+        ):
+            roots_t = np.asarray(roots_obj.t, dtype=float).ravel()
+            roots_y = np.asarray(roots_obj.y, dtype=float)
+            # ``roots.y`` is shape (n_roots_fired, n_state); take the
+            # last fired root (in the rare case CVODE captured several
+            # before stopping).
+            if roots_y.ndim == 2:
+                y_root = roots_y[-1, :]
             else:
-                y_arr = y_arr.reshape(-1, 1)
-            # Normalise to ``[start_time, ...]``. When the rootfn fires
-            # (Strategy B v3 ΔΦ_global cap), ``scikits.odes`` returns
-            # only the root point ``[t_root]`` rather than
-            # ``[start_time, t_root]``. Downstream ``get_state()``
-            # computes ``dt_actual = sol.t[-1] - sol.t[0]`` and would
-            # silently report 0, causing PROTEUS's wrapper to fall back
-            # to ``dtswitch`` while Aragog's internal state had only
-            # advanced to the root. Helpfile clock then races ahead of
-            # Aragog state, locking the coupled run at a fixed point
-            # (observed v3.2, output/verify_dilon_phicap005.v3.2_dt_actual_zero,
-            # 2026-05-03). Prepend start_time + y0 whenever t_arr does
-            # not start exactly at start_time.
-            if t_arr.size == 0 or float(t_arr[0]) != float(start_time):
-                y0_col = np.asarray(y0, dtype=float).reshape(-1, 1)
-                t_arr = np.concatenate(([float(start_time)], t_arr))
-                y_arr = np.concatenate((y0_col, y_arr), axis=1)
-            result.t = t_arr
-            result.y = y_arr
-        else:
-            result.t = np.array([start_time])
-            result.y = np.asarray(y0, dtype=float).reshape(-1, 1)
+                y_root = roots_y.ravel()
+            t_root = float(roots_t[-1])
+            y0_col = np.asarray(y0, dtype=float).reshape(-1, 1)
+            y_root_col = np.asarray(y_root, dtype=float).reshape(-1, 1)
+            result.t = np.array([float(start_time), t_root], dtype=float)
+            result.y = np.concatenate((y0_col, y_root_col), axis=1)
+            used_roots = True
+
+        if not used_roots:
+            if cvode_sol.values is not None and cvode_sol.values.t is not None:
+                t_arr = np.asarray(cvode_sol.values.t, dtype=float).ravel()
+                y_arr = np.asarray(cvode_sol.values.y, dtype=float)
+                # CVODE stores y as (n_time, n_state); scipy expects
+                # (n_state, n_time).
+                if y_arr.ndim == 2:
+                    y_arr = y_arr.T
+                else:
+                    y_arr = y_arr.reshape(-1, 1)
+                result.t = t_arr
+                result.y = y_arr
+            else:
+                result.t = np.array([float(start_time)])
+                result.y = np.asarray(y0, dtype=float).reshape(-1, 1)
 
         result.nfev = nfev_box[0]
         result.message = getattr(cvode_sol, 'message', '')
         # CVODE flag 0 = success, 2 = root found (tstop), negative = failure.
-        flag = int(getattr(cvode_sol, 'flag', -1))
         if flag == 0 or flag == 2:
             result.status = 0
             if flag == 2 and phi_cap_rootfn is not None:
