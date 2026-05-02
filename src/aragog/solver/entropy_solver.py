@@ -1619,14 +1619,25 @@ class EntropySolver:
             ):
                 max_step = 1.0
 
-            # Strategy B: per-call ΔΦ cap. When phi_step_cap > 0 and at
-            # least one staggered cell sits in or near the mushy band,
-            # clamp end_time so the projected per-cell |ΔΦ| over
-            # [start_time, end_time] stays within the cap. The estimate
-            # uses |dΦ/dt| at t=start_time, scaled by a 0.5 safety
-            # factor since the rate can accelerate during the call.
-            # The PROTEUS outer loop sees the truncated achieved time
-            # via sol.t[-1] and adapts its outer dt accordingly.
+            # Strategy B: per-call mass-weighted ΔΦ_global cap. When
+            # phi_step_cap > 0 and at least one staggered cell sits in
+            # or near the mushy band, clamp end_time so the projected
+            # mass-weighted |ΔΦ_global| over [start_time, end_time]
+            # stays within the cap. The rate is the mantle-mass average
+            # of per-cell |dΦ_i/dt| at t=start_time, scaled by a 0.5
+            # safety factor; the PROTEUS outer loop sees the truncated
+            # achieved time via sol.t[-1] and adapts its outer dt.
+            #
+            # Mass weighting (vs. per-cell max) prevents a thin
+            # rheological-transition shell with very high local
+            # |dΦ_i/dt| from dominating the cap. The thin shell carries
+            # a small fraction of the mantle mass, so its contribution
+            # to the planet-scale dΦ_global/dt is correspondingly small.
+            # The per-cell-max formulation locked dt to ~0.04 yr at the
+            # 1 M_E PALEOS-2phase rheological transition (verified
+            # 2026-05-02 in output/verify_dilon_phicap005); the
+            # mass-weighted formulation tracks the planetary cooling
+            # rate that physics actually cares about.
             phi_step_cap = float(getattr(self.parameters.energy, 'phi_step_cap', 0.0))
             if phi_step_cap > 0.0 and (near_liq or near_sol or in_mushy):
                 in_mushy_arr = (margin_to_liq < 0.0) & (margin_to_sol > 0.0)
@@ -1649,25 +1660,43 @@ class EntropySolver:
                             np.abs(dydt0[:n_stag]) / dS_phase_safe,
                             0.0,
                         )
-                        dphi_dt_max = float(np.max(dphi_dt_per_cell))
-                        if dphi_dt_max > 0.0:
+                        # Mass at each staggered node (rho * V). The
+                        # density is read from the EOS at the start
+                        # state, the volume from the mesh.
+                        rho_stag = np.asarray(
+                            self.entropy_eos.density(
+                                self._P_stag_flat,
+                                S_arr_stag,
+                            )
+                        ).ravel()
+                        mass_stag = rho_stag * self._volume_flat
+                        mass_total = float(np.sum(mass_stag))
+                        if mass_total > 0.0:
+                            dphi_dt_global = float(
+                                np.sum(mass_stag * dphi_dt_per_cell) / mass_total
+                            )
+                        else:
+                            dphi_dt_global = 0.0
+                        if dphi_dt_global > 0.0:
                             safety = 0.5
-                            dt_safe = safety * phi_step_cap / dphi_dt_max
+                            dt_safe = safety * phi_step_cap / dphi_dt_global
                             end_clamped = start_time + dt_safe
                             if end_clamped < end_time:
                                 logger.info(
-                                    'Per-cell ΔΦ cap %.3g (Strategy B): '
-                                    'clamping end_time %.3e -> %.3e yr '
-                                    '(max |dΦ/dt| at t0 = %.3e /yr)',
+                                    'Mass-weighted ΔΦ_global cap %.3g '
+                                    '(Strategy B): clamping end_time %.3e '
+                                    '-> %.3e yr (dΦ_global/dt at t0 = '
+                                    '%.3e /yr)',
                                     phi_step_cap,
                                     end_time,
                                     end_clamped,
-                                    dphi_dt_max,
+                                    dphi_dt_global,
                                 )
                                 end_time = end_clamped
                     except Exception as exc:
                         logger.warning(
-                            'Per-cell ΔΦ cap evaluation failed (%s); skipping clamp',
+                            'Mass-weighted ΔΦ_global cap evaluation '
+                            'failed (%s); skipping clamp',
                             exc,
                         )
 
