@@ -22,6 +22,7 @@ import numpy.typing as npt
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 from scipy.optimize import OptimizeResult
+
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
@@ -44,6 +45,14 @@ try:
 except ImportError:  # pragma: no cover
     _CVODE_AVAILABLE = False
     _scikits_ode = None  # type: ignore[assignment]
+
+try:
+    from scikits_odes_sundials.cvode import CV_RootFunction as _CV_RootFunction
+
+    _CV_ROOTFN_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _CV_ROOTFN_AVAILABLE = False
+    _CV_RootFunction = object  # type: ignore[misc,assignment]
 
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
 from scipy import constants as _sp_constants
@@ -117,6 +126,131 @@ def _phase_prop_float(raw, default):
     except Exception:
         pass
     return default
+
+
+class _PhiCapRootFunction(_CV_RootFunction):
+    """SUNDIALS root function for the Strategy B per-call ΔΦ_global cap.
+
+    Fires (g[0]=0) when the mass-weighted |ΔΦ_global(t, y)| relative to
+    the start-of-solve value crosses the configured cap. CVODE returns
+    at the exact crossing time, so the achieved |ΔΦ_global| equals
+    the cap to within CVODE's root tolerance and there is no rate
+    estimation involved. Per-cell weights are ρ_i(P, S) · V_i evaluated
+    at the live state, matching the helpfile's mass-weighted Phi_global
+    metric.
+
+    The integrator passes nondimensional ``t`` and ``y``; this class
+    re-scales ``y`` to physical entropy via ``state_scale`` before the
+    EOS lookup.
+
+    Parameters
+    ----------
+    eos : EntropyEOS
+        Source for ρ(P, S) and Φ(P, S) lookups.
+    P_stag : np.ndarray
+        Pressure at staggered nodes [Pa].
+    volume : np.ndarray
+        Per-cell volume [m^3] at staggered nodes (same length as
+        ``P_stag``).
+    n_stag : int
+        Number of staggered cells. The first ``n_stag`` entries of
+        ``y`` are entropy; later entries are the extended-state
+        boundary terms (energy_balance, gradient modes) which are not
+        needed for Φ_global.
+    phi0_global : float
+        Φ_global at the start of solve(). Pre-computed by ``solve()``
+        before the rootfn is constructed so the cap is anchored to
+        the entry state.
+    cap : float
+        Maximum |ΔΦ_global| permitted per solve() call.
+    state_scale : np.ndarray
+        Element-wise nondim scaling for the state vector. The first
+        ``n_stag`` entries are entropy scales (S_ref); later entries
+        scale the boundary state.
+    """
+
+    def __init__(
+        self,
+        eos,
+        P_stag,
+        volume,
+        n_stag,
+        phi0_global,
+        cap,
+        state_scale,
+    ):
+        self.eos = eos
+        self.P_stag = np.asarray(P_stag, dtype=float).ravel()
+        self.volume = np.asarray(volume, dtype=float).ravel()
+        self.n_stag = int(n_stag)
+        self.phi0 = float(phi0_global)
+        self.cap = float(cap)
+        self.state_scale = np.asarray(state_scale, dtype=float).ravel()
+        # Hit counter for diagnostics; CVODE may evaluate the rootfn
+        # at every internal step so this can grow large.
+        self.evals = 0
+        # Mass-total at start (constant within one solve); cached for
+        # repeated mass-weight normalisation.
+        self._mass_total_at_start = -1.0  # filled on first evaluate()
+
+    def evaluate(self, t, y, g, userdata=None):
+        try:
+            y_arr = np.asarray(y, dtype=float)
+            S_stag = y_arr[: self.n_stag] * self.state_scale[: self.n_stag]
+            rho = np.asarray(self.eos.density(self.P_stag, S_stag)).ravel()
+            phi = np.asarray(self.eos.melt_fraction(self.P_stag, S_stag)).ravel()
+            mass = rho * self.volume
+            mass_total = float(mass.sum())
+            if mass_total > 0.0:
+                phi_global = float((mass * phi).sum() / mass_total)
+            else:
+                phi_global = self.phi0
+            g[0] = self.cap - abs(phi_global - self.phi0)
+            self.evals += 1
+            return 0
+        except Exception:  # pragma: no cover - never crash CVODE on rootfn
+            # Returning a positive value keeps CVODE integrating; the
+            # cap simply does not fire if EOS lookup fails. The outer
+            # solve() result will still be correct.
+            g[0] = self.cap
+            return 0
+
+
+def _phi_cap_event_factory(eos, P_stag, volume, n_stag, phi0_global, cap, state_scale):
+    """Build a scipy ``solve_ivp`` event for the same Φ_global cap.
+
+    ``solve_ivp`` events are callables ``(t, y) -> float`` with sign
+    crossings that trigger termination when ``terminal=True``. The
+    semantics mirror :class:`_PhiCapRootFunction`: the event value is
+    ``cap - |Φ_global(t, y) - Φ_global(start)|``. Crossing zero from
+    positive to negative terminates the integration.
+    """
+    P_stag_arr = np.asarray(P_stag, dtype=float).ravel()
+    volume_arr = np.asarray(volume, dtype=float).ravel()
+    n_stag_int = int(n_stag)
+    phi0 = float(phi0_global)
+    cap_float = float(cap)
+    scale_arr = np.asarray(state_scale, dtype=float).ravel()
+
+    def _event(t_nd, y_nd):
+        try:
+            y_arr = np.asarray(y_nd, dtype=float)
+            S_stag = y_arr[:n_stag_int] * scale_arr[:n_stag_int]
+            rho = np.asarray(eos.density(P_stag_arr, S_stag)).ravel()
+            phi = np.asarray(eos.melt_fraction(P_stag_arr, S_stag)).ravel()
+            mass = rho * volume_arr
+            mass_total = float(mass.sum())
+            if mass_total > 0.0:
+                phi_global = float((mass * phi).sum() / mass_total)
+            else:
+                phi_global = phi0
+            return cap_float - abs(phi_global - phi0)
+        except Exception:
+            return cap_float
+
+    _event.terminal = True
+    _event.direction = -1.0  # only fire on positive-to-negative crossing
+    return _event
 
 
 @dataclass
@@ -1305,6 +1439,7 @@ class EntropySolver:
         rhs: 'Callable | None' = None,
         cvode_rhs_fn_override: 'Callable | None' = None,
         cvode_jacfn: 'Callable | None' = None,
+        phi_cap_rootfn: 'Callable | None' = None,
     ) -> 'OptimizeResult':
         """Integrate the entropy equation using SUNDIALS CVODE.
 
@@ -1451,6 +1586,15 @@ class EntropySolver:
         if max_step is not None and np.isfinite(max_step):
             cvode_options['max_step_size'] = float(max_step)
 
+        # Strategy B v3: install the per-call ΔΦ_global cap as a
+        # SUNDIALS root function. CVODE returns at the exact crossing
+        # time t* where |Φ_global(t*) − Φ_global(start)| = cap, with
+        # flag CV_ROOT_RETURN (=2). The result wrapper below already
+        # treats flag==2 as success.
+        if phi_cap_rootfn is not None:
+            cvode_options['rootfn'] = phi_cap_rootfn
+            cvode_options['nr_rootfns'] = 1
+
         # Option Z: install the analytic Jacobian callback. When
         # provided, CVODE's Newton iteration uses this instead of the
         # default finite-difference Jacobian. Forcing the linear solver
@@ -1535,6 +1679,19 @@ class EntropySolver:
         flag = int(getattr(cvode_sol, 'flag', -1))
         if flag == 0 or flag == 2:
             result.status = 0
+            if flag == 2 and phi_cap_rootfn is not None:
+                # ΔΦ_global cap fired; CVODE returned at the crossing.
+                evals = int(getattr(phi_cap_rootfn, 'evals', 0))
+                t_root = float(result.t[-1])
+                logger.info(
+                    'ΔΦ_global cap (Strategy B v3): rootfn fired at '
+                    't=%.3e yr after %d evals; cap=%.3g, '
+                    'Φ_global(start)=%.4f',
+                    t_root,
+                    evals,
+                    float(phi_cap_rootfn.cap),
+                    float(phi_cap_rootfn.phi0),
+                )
         else:
             result.status = -1
             if not result.message:
@@ -1619,84 +1776,51 @@ class EntropySolver:
             ):
                 max_step = 1.0
 
-            # Strategy B: per-call mass-weighted ΔΦ_global cap. When
-            # phi_step_cap > 0 and at least one staggered cell sits in
-            # or near the mushy band, clamp end_time so the projected
-            # mass-weighted |ΔΦ_global| over [start_time, end_time]
-            # stays within the cap. The rate is the mantle-mass average
-            # of per-cell |dΦ_i/dt| at t=start_time, scaled by a 0.5
-            # safety factor; the PROTEUS outer loop sees the truncated
-            # achieved time via sol.t[-1] and adapts its outer dt.
-            #
-            # Mass weighting (vs. per-cell max) prevents a thin
-            # rheological-transition shell with very high local
-            # |dΦ_i/dt| from dominating the cap. The thin shell carries
-            # a small fraction of the mantle mass, so its contribution
-            # to the planet-scale dΦ_global/dt is correspondingly small.
-            # The per-cell-max formulation locked dt to ~0.04 yr at the
-            # 1 M_E PALEOS-2phase rheological transition (verified
-            # 2026-05-02 in output/verify_dilon_phicap005); the
-            # mass-weighted formulation tracks the planetary cooling
-            # rate that physics actually cares about.
+            # Strategy B v3: per-call mass-weighted ΔΦ_global cap as a
+            # SUNDIALS root function. Build the rootfn metadata here
+            # (anchor: Φ_global at solve entry); the actual rootfn
+            # instance is constructed below once the nondim state_scale
+            # is known. CVODE returns at the exact time t* where
+            # |Φ_global(t*) − Φ_global(start)| = cap. No rate
+            # estimation: the integrator's own trajectory determines
+            # termination, eliminating the start-time-rate overshoot
+            # that wedged v1 (per-cell max) and v2 (mass-weighted dt
+            # estimate) in output/verify_dilon_phicap005 (2026-05-02).
             phi_step_cap = float(getattr(self.parameters.energy, 'phi_step_cap', 0.0))
+            phi_cap_anchor = None  # (cap, phi0_global) when armed; None otherwise
             if phi_step_cap > 0.0 and (near_liq or near_sol or in_mushy):
                 in_mushy_arr = (margin_to_liq < 0.0) & (margin_to_sol > 0.0)
                 if np.any(in_mushy_arr):
                     try:
-                        dydt0 = np.asarray(
-                            self._dSdt_single(
-                                start_time,
-                                np.asarray(self._S0, dtype=float),
-                            )
-                        ).ravel()
-                        dS_phase_stag = S_liq_stag - S_sol_stag
-                        dS_phase_safe = np.where(
-                            dS_phase_stag > 1.0,
-                            dS_phase_stag,
-                            np.inf,
-                        )
-                        dphi_dt_per_cell = np.where(
-                            in_mushy_arr,
-                            np.abs(dydt0[:n_stag]) / dS_phase_safe,
-                            0.0,
-                        )
-                        # Mass at each staggered node (rho * V). The
-                        # density is read from the EOS at the start
-                        # state, the volume from the mesh.
-                        rho_stag = np.asarray(
+                        rho_stag_init = np.asarray(
                             self.entropy_eos.density(
                                 self._P_stag_flat,
                                 S_arr_stag,
                             )
                         ).ravel()
-                        mass_stag = rho_stag * self._volume_flat
-                        mass_total = float(np.sum(mass_stag))
-                        if mass_total > 0.0:
-                            dphi_dt_global = float(
-                                np.sum(mass_stag * dphi_dt_per_cell) / mass_total
+                        phi_stag_init = np.asarray(
+                            self.entropy_eos.melt_fraction(
+                                self._P_stag_flat,
+                                S_arr_stag,
                             )
-                        else:
-                            dphi_dt_global = 0.0
-                        if dphi_dt_global > 0.0:
-                            safety = 0.5
-                            dt_safe = safety * phi_step_cap / dphi_dt_global
-                            end_clamped = start_time + dt_safe
-                            if end_clamped < end_time:
-                                logger.info(
-                                    'Mass-weighted ΔΦ_global cap %.3g '
-                                    '(Strategy B): clamping end_time %.3e '
-                                    '-> %.3e yr (dΦ_global/dt at t0 = '
-                                    '%.3e /yr)',
-                                    phi_step_cap,
-                                    end_time,
-                                    end_clamped,
-                                    dphi_dt_global,
-                                )
-                                end_time = end_clamped
+                        ).ravel()
+                        mass_stag_init = rho_stag_init * self._volume_flat
+                        mass_total_init = float(np.sum(mass_stag_init))
+                        if mass_total_init > 0.0:
+                            phi0_global = float(
+                                np.sum(mass_stag_init * phi_stag_init) / mass_total_init
+                            )
+                            phi_cap_anchor = (phi_step_cap, phi0_global)
+                            logger.info(
+                                'ΔΦ_global cap %.3g (Strategy B v3): '
+                                'arming CVODE rootfn anchored at '
+                                'Φ_global(start)=%.4f',
+                                phi_step_cap,
+                                phi0_global,
+                            )
                     except Exception as exc:
                         logger.warning(
-                            'Mass-weighted ΔΦ_global cap evaluation '
-                            'failed (%s); skipping clamp',
+                            'ΔΦ_global cap rootfn anchor failed (%s); proceeding without cap',
                             exc,
                         )
 
@@ -1777,11 +1901,45 @@ class EntropySolver:
         # BDF integration with phase-aware max_step constraint.
         jac_sparsity = self._build_jac_sparsity()
 
-        # No terminal event. The max_step=1 yr near the liquidus
-        # (set above) is sufficient for the value-based formulation
-        # where atol directly controls S[0]. Terminal events cause
-        # the solver to get stuck at the liquidus indefinitely.
+        # ── Strategy B v3 rootfn / event construction ──
+        # Strategy B v3: build the SUNDIALS rootfn (CVODE path) and the
+        # equivalent solve_ivp event (scipy fallback) only when the
+        # cap is armed. Both consume nondim ``y`` and rescale via
+        # ``_state_scale`` before reading the EOS. The phase-boundary
+        # max_step=1 yr clamp set above is preserved; the cap is an
+        # ADDITIONAL guardrail anchored at Φ_global(start).
         events = None
+        phi_cap_rootfn = None
+        if phi_cap_anchor is not None:
+            cap_value, phi0_global = phi_cap_anchor
+            try:
+                phi_cap_rootfn = _PhiCapRootFunction(
+                    eos=self.entropy_eos,
+                    P_stag=self._P_stag_flat,
+                    volume=self._volume_flat,
+                    n_stag=self._n_stag,
+                    phi0_global=phi0_global,
+                    cap=cap_value,
+                    state_scale=_state_scale,
+                )
+                events = [
+                    _phi_cap_event_factory(
+                        eos=self.entropy_eos,
+                        P_stag=self._P_stag_flat,
+                        volume=self._volume_flat,
+                        n_stag=self._n_stag,
+                        phi0_global=phi0_global,
+                        cap=cap_value,
+                        state_scale=_state_scale,
+                    )
+                ]
+            except Exception as exc:
+                logger.warning(
+                    'ΔΦ_global cap rootfn instantiation failed (%s); integrating without cap',
+                    exc,
+                )
+                phi_cap_rootfn = None
+                events = None
 
         # Integrator dispatch. SUNDIALS CVODE (via scikits.odes) is
         # the same solver SPIDER uses and is the recommended choice
@@ -1854,6 +2012,7 @@ class EntropySolver:
                 rhs=_rhs_nondim,
                 cvode_rhs_fn_override=cvode_rhs_override,
                 cvode_jacfn=cvode_jacfn,
+                phi_cap_rootfn=phi_cap_rootfn,
             )
         else:
             method = 'Radau' if solver_method != 'bdf' else 'BDF'
