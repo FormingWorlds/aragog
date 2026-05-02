@@ -1004,12 +1004,18 @@ class TestJAXJgravSmoothing:
     def _build_mesh_and_phase_params(
         jax_eos, N: int = 15, grav_sep: bool = True,
         bottom_up_grav_sep: bool = True, grain_size: float = 0.1,
+        phase_smoothing: str = 'tanh',
     ):
         """Earth-like Stokes-regime mesh + PhaseParams.
 
         grain_size = 0.1 m matches the R8 CHILI config and makes the
         test discriminating: with 1 mm grain the Stokes permeability
         is so small that the bug is hard to reproduce.
+
+        phase_smoothing defaults to the production setting ('tanh');
+        tests that probe cubic-Hermite-specific behaviour (e.g. the
+        >5% L1 damping at the mushy edges) must pin
+        phase_smoothing='cubic_hermite' explicitly.
         """
         from aragog.jax.phase import PhaseParams
 
@@ -1030,6 +1036,7 @@ class TestJAXJgravSmoothing:
             eddy_diff_chemical=1.0,
             kappah_floor=10.0,
             bottom_up_grav_sep=bottom_up_grav_sep,
+            phase_smoothing=phase_smoothing,
         )
         return mesh, params
 
@@ -1136,14 +1143,24 @@ class TestJAXJgravSmoothing:
         mushy layer, because the raw flux is non-zero near the
         pure-phase edges of the layer (where gphi → 0 or 1) while
         the smoothed flux drops to zero there.
+
+        Pinned to phase_smoothing='cubic_hermite' because the
+        production 'tanh' smoothing has a width of 0.01 in gphi units
+        and only departs from unity in narrow skirts at the solidus
+        and liquidus; with a 20-node sampling, the skirts contribute
+        too few cells to produce the >5% L1 difference this test
+        asserts. The cubic-Hermite path is the regime in which the
+        damping is wide enough for the assertion to be meaningful.
         """
         from aragog.jax.phase import compute_fluxes
 
         mesh, params_on = self._build_mesh_and_phase_params(
             jax_eos, N=20, grav_sep=True, bottom_up_grav_sep=True,
+            phase_smoothing='cubic_hermite',
         )
         _, params_off = self._build_mesh_and_phase_params(
             jax_eos, N=20, grav_sep=True, bottom_up_grav_sep=False,
+            phase_smoothing='cubic_hermite',
         )
         N = mesh.P_stag.shape[0]
 

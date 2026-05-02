@@ -155,7 +155,7 @@ class EntropyState:
         eddy_diffusivity_chemical: float = 1.0,
         kappah_floor: float = 0.0,
         bottom_up_grav_sep: bool = True,
-        phase_smoothing: str = 'cubic_hermite',
+        phase_smoothing: str = 'tanh',
     ):
         self._evaluator = evaluator
         self.phase_staggered = phase_staggered
@@ -173,13 +173,14 @@ class EntropyState:
         self._kappah_floor = kappah_floor
         self._bottom_up_grav_sep = bool(bottom_up_grav_sep)
         # Phase-boundary smoothing method for Jgrav and Jmix.
-        # 'cubic_hermite': 16*gphi^2*(1-gphi)^2. Provides intermediate-phi
-        #   damping (smth=0.32 at gphi=0.83) that prevents the CMB drain
-        #   when residual EOS differences exist. Default until full bit-
-        #   parity with SPIDER is achieved.
-        # 'tanh': SPIDER's get_smoothing(matprop_smooth_width=0.01, gphi).
-        #   Gives smth=1.0 across [0.05, 0.95]. Correct for SPIDER parity
-        #   once all material properties match to <0.01%.
+        # 'tanh' (default): SPIDER's get_smoothing(matprop_smooth_width=0.01, gphi).
+        #   Two-branch tanh, smth=1.0 across [0.05, 0.95]. Production setting
+        #   for all CHILI runs; matches SPIDER once material properties agree
+        #   to <0.01%.
+        # 'cubic_hermite': 16*gphi^2*(1-gphi)^2. Intermediate-phi damping
+        #   (smth=0.32 at gphi=0.83). Fallback for cases where residual EOS
+        #   mismatch would otherwise cause a CMB drain; not a production
+        #   setting.
         if phase_smoothing not in ('cubic_hermite', 'tanh'):
             raise ValueError(
                 f"phase_smoothing must be 'cubic_hermite' or 'tanh', "

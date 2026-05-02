@@ -144,7 +144,7 @@ class PhaseParams(eqx.Module):
         eddy_diff_chemical: float = 1.0,
         kappah_floor: float = 0.0,
         bottom_up_grav_sep: bool = True,
-        phase_smoothing: str = 'cubic_hermite',
+        phase_smoothing: str = 'tanh',
         phase_smoothing_width: float = 0.01,
     ):
         self.phi_rheo = phi_rheo

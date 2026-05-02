@@ -211,11 +211,13 @@ class _EnergyParameters:
     # only useful for regression tests.
     bottom_up_grav_sep: bool = True
     # Phase-boundary smoothing for Jgrav and Jmix: 'cubic_hermite' or 'tanh'.
-    # 'cubic_hermite' provides intermediate-phi damping that prevents the CMB
-    # drain when residual EOS differences exist. 'tanh' matches SPIDER exactly
-    # (full-strength fluxes across the mushy zone) but requires all material
-    # properties to match SPIDER to <0.01%.
-    phase_smoothing: str = 'cubic_hermite'
+    # 'tanh' is the SPIDER-parity two-branch tanh of width matprop_smooth_width
+    # (default 0.01); it passes full-strength fluxes across the mushy zone and
+    # is the production setting for all CHILI runs. 'cubic_hermite' applies the
+    # 16*phi^2*(1-phi)^2 weight for intermediate-phi damping and is retained as
+    # a fallback for cases where residual EOS mismatch would otherwise cause a
+    # CMB drain; it is not the production setting.
+    phase_smoothing: str = 'tanh'
     # ODE solver method: 'cvode' (SUNDIALS CVODE via scikits.odes,
     # default; same solver SPIDER uses, recommended for production
     # stiff integration), 'radau' (scipy Radau), 'bdf' (scipy BDF).

@@ -86,14 +86,20 @@ $$
 
 where $L(P)$ is the EOS-tabulated, pressure-dependent latent heat of fusion.
 
+### Permeability $K(\zeta)$ across the three Abe regimes
+
+![Permeability F(porosity)](../figures/vv/fig_04_permeability.pdf)
+
+**Figure 3.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three Abe (1993, 1995) regime branches considered individually — Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling. Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC$\to$RG) and $\zeta_2=0.771462$ (RG$\to$Stokes) per the Soucasse formulation §3.3. (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
+
 ### Phase-boundary smoothing
 
 The smoothing function $\mathrm{smth}(\phi)$ vanishes outside the mushy band, keeping the flux differentiable at the solidus and liquidus. Two forms are configurable:
 
 | `phase_smoothing` | Formula |
 |-------------------|---------|
-| `"cubic_hermite"` (default) | $\mathrm{smth}(g\phi) = 16\,g\phi^2(1 - g\phi)^2$ for $g\phi \in [0, 1]$ |
-| `"tanh"` | SPIDER-style $\mathrm{get\_smoothing}$ (parity validation) |
+| `"tanh"` (default) | SPIDER-style two-branch $\mathrm{get\_smoothing}$ with width `matprop_smooth_width = 0.01`; $\mathrm{smth}(g\phi) \approx 1$ across $[0.05, 0.95]$ and ramps to 0 in narrow skirts at the solidus and liquidus |
+| `"cubic_hermite"` | $\mathrm{smth}(g\phi) = 16\,g\phi^2(1 - g\phi)^2$ for $g\phi \in [0, 1]$ (intermediate-$\phi$ damping; fallback for residual EoS mismatch) |
 
 Here $g\phi$ is the un-truncated two-phase fraction at the staggered cell below the basic-node interface. Without smoothing, a raw $\rho\phi(1-\phi)v_\mathrm{rel}$ flux drains the CMB cell off the EOS table edge in a single coupling step at first crystallisation.
 
@@ -150,3 +156,9 @@ The basic-node flux contributions are exposed individually on `SolverOutput`:
 | `dSdr_b` | $\partial S/\partial r$ at basic nodes |
 
 Per-staggered-node heating is in `heating` (sum of the three contributions).
+
+### Decomposition on a fully-mushy state
+
+![Heat-flux decomposition](../figures/vv/fig_02_flux_decomposition.pdf)
+
+**Figure 2.** (a) Magnitude of the four heat-flux components $F_\text{cond}$, $F_\text{conv}$, $F_\text{grav}$, $F_\text{mix}$ (Soucasse §1.1) and their sum on an 80-cell Earth mesh, evaluated at a fully-mushy state where the entropy on each cell is the midpoint of the local solidus and liquidus values plus a small surface-ward gradient. Open triangles mark cells where the signed flux is negative. The four components reconstruct $F_\text{tot}$ to floating-point round-off ($\max|F_\text{tot}-\sum F_i|/|F_\text{tot}| < 10^{-15}$). (b) Internal volumetric heating sources $H_\text{radio}$, $H_\text{dil}$, $H_\text{tidal}$ at the staggered nodes for the same state, with the production CHILI radionuclide cocktail at $t=0$ and dilatation enabled. The $H_\text{dil}$ term (Soucasse §1.2 PdV heating) dominates over radio in the mushy zone where the mass fluxes are large.
