@@ -51,6 +51,14 @@ Verify that the JAX-backed `EntropyEOS_JAX` and `compute_fluxes` agree with the 
 - Boundary-copy tests: `dSdr` boundary values copy from the nearest interior node (SPIDER `ic.c:450` parity) instead of being extrapolated.
 - Solver parity: integrating the same problem with the JAX-RHS-driven CVODE path and the numpy RHS produces matching trajectories.
 
+### Numpy ↔ JAX RHS parity at representative magma-ocean states
+
+![Numpy ↔ JAX RHS parity](../figures/vv/fig_01_rhs_parity.pdf)
+
+**Figure 1.** Per-cell relative error
+$|\dot S_\text{numpy} - \dot S_\text{jax}|/|\dot S_\text{numpy}|$
+on an 80-cell CHILI Earth mesh at three representative magma-ocean states: (a) initial condition (full magma ocean, $S\approx 3900$ J/kg/K), (b) mid-solidification ($S = 3300 \to 3700$ J/kg/K from CMB to surface), (c) near-solid ($S = 3000 \to 3300$ J/kg/K). (d) Summary across states. Median relative error stays $\le 3\times 10^{-5}$ in all three regimes; the max-rel-error excursions ($\le 7\times 10^{-4}$ at the IC) are concentrated in cells where $|\dot S|$ itself is at the solver noise floor and do not affect Jacobian preconditioning quality. The dotted line is float-64 machine epsilon.
+
 ### Mesh tests (`tests/test_jax_mesh_gravity_fallback.py`)
 
 Verify that when the external mesh file (`eos_method = 2`) supplies an `eos_gravity` column, the JAX path interpolates the per-node gravity profile onto the basic grid rather than broadcasting a single scalar.

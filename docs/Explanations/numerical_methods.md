@@ -55,6 +55,14 @@ $$q_{top} = \varepsilon\sigma\left(T_{top}^4 - T_{atm}^4\right) \tag{52}$$
 
 where $\varepsilon$ is the emissivity of the ground. Equation (52) is technically a mixed boundary condition (involving the unknown surface temperature), but it is implemented as a flux boundary condition using a surface temperature extrapolated from the inner node via an expression analogous to Eq. (50).
 
+When `param_utbl = True`, an ultra-thin thermal boundary layer attenuates the radiating temperature: the surface $T_\mathrm{surf}$ is the real cubic root of $b\,T_\mathrm{surf}^3 + T_\mathrm{surf} - T_\mathrm{interior} = 0$ (Bower et al. 2018, Eq. 18), with $b = $ `param_utbl_const` controlling the strength. The numpy path (`solver/boundary.py:_utbl_tsurf`) and the JAX path (`jax/solver.py:_utbl_tsurf_jax`) both use Cardano's formula and agree to within $\sim 10^{-12}$ K.
+
+#### Verification of the UTBL Cardano correction
+
+![UTBL Cardano correction](../figures/vv/fig_05_utbl_cardano.pdf)
+
+**Figure 4.** (a) $T_\mathrm{surf}$ vs $T_\mathrm{interior}$ over the magma-ocean range 1500-5000 K for three values of $b$: $10^{-7}$ (weak), $10^{-6}$ (canonical Bower+2018), $10^{-5}$ (strong). The numpy reference and the JAX-traceable form are visually indistinguishable; their max absolute disagreement across all three $b$ values is $1.8\times 10^{-12}$ K. (b) Cubic residual $|b\,T_\mathrm{surf}^3+T_\mathrm{surf}-T_\mathrm{interior}|$ of the returned root, demonstrating that both implementations satisfy the cubic to within machine epsilon scaled by $T_\mathrm{interior}$.
+
 ### 4.2.2 Dirichlet Boundary Condition
 
 When a Dirichlet boundary condition is applied (i.e., the temperature is imposed at a boundary), the thermal state is fully defined at that boundary. The temperature gradient (and the melt fraction gradient) must be computed accordingly to obtain correct heat fluxes.

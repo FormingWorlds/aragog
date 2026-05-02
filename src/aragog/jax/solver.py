@@ -1,11 +1,18 @@
-"""JAX ODE solver for the entropy equation.
+"""JAX ODE solver for the entropy equation (research-only).
 
-Replaces ``entropy_solver.py``'s scipy BDF integration with diffrax
-Kvaerno5 (5th-order ESDIRK, A-L stable). The RHS function applies
-boundary conditions, computes flux divergence, and adds internal
-heating, all in pure JAX.
+Direct-JAX integration of the entropy equation via diffrax Kvaerno5
+(5th-order ESDIRK, A-L stable). The RHS applies boundary conditions,
+computes flux divergence, and adds internal heating, all in pure JAX.
 
-Dependencies: jax, equinox, diffrax (new), lineax (transitive via diffrax).
+NOT production-ready: kvaerno3 (and kvaerno5) stall on the cubic-Hermite
+Jgrav smoothing at the first crystallization step in CHILI Earth runs
+(documented 2026-04-09). Reserved for autodiff development.
+
+For production JAX integration, the entry point is the CVODE Option-Z
+path in ``aragog/solver/cvode_jax.py``, selected by setting
+``EnergyParams.use_jax_jacobian = True`` (PROTEUS-side: ``backend="jax"``).
+
+Dependencies: jax, equinox, diffrax, lineax (transitive via diffrax).
 """
 
 from __future__ import annotations
