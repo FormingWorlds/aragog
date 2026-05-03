@@ -305,9 +305,25 @@ class SolverOutput:
     M_mantle_liquid: float  # liquid mantle mass [kg]
     M_mantle_solid: float  # solid mantle mass [kg]
     RF_depth: float  # rheological front depth (dimensionless)
-    E_th: float  # thermal energy [J]
+    E_th: float  # thermal energy proxy [J] -- legacy sum(m * Cp_apparent * T);
+    # NOT a proper enthalpy because Cp_apparent is latent-heat-blended and
+    # spikes at the rheological transition. Retained for back-compat with
+    # existing helpfile schema. Use ``E_state`` for conservation work.
+    E_state: float  # mantle integrated specific enthalpy [J] -- EOS-consistent
+    # ``sum(m * h(P, S))`` from the precomputed ``EntropyEOS.specific_enthalpy``
+    # table. Anchor at table corner is arbitrary; differences across time
+    # are the conservation diagnostic. Set to NaN when no entropy_eos is
+    # attached (e.g. const_properties path).
     Cp_eff: float  # effective heat capacity [J/kg/K]
     F_heat_total: float  # total heating flux [W/m^2]
+    F_cmb: float  # heat flux at CMB (basic node 0) [W/m^2], signed
+    # positive-out-of-core; equals the lower-boundary value of ``heat_flux``
+    # so the closed-mantle balance dE/dt = -F_int*A_int + F_cmb*A_cmb +
+    # Q_radio + Q_dil can be checked without re-deriving from the array.
+    Q_radio_total: float  # mantle-integrated radiogenic power [W]
+    Q_dil_total: float  # mantle-integrated dilatation (PdV) power [W];
+    # zero when ``[interior_energetics.aragog].dilatation = false``.
+    Q_tidal_total: float  # mantle-integrated tidal power [W]
     dt_actual: float  # actual integration time [yr]
     status: int  # solver status (0 = success)
 
@@ -2309,6 +2325,30 @@ class EntropySolver:
         # Effective heat capacity (mass-weighted mean Cp)
         Cp_eff = float(np.sum(mass_stag * Cp_stag)) / max(M_mantle, 1.0)
 
+        # EOS-consistent mantle integrated enthalpy [J]. Falls back
+        # to NaN when no entropy EOS is loaded (e.g. const_properties
+        # path), signalling to PROTEUS that the conservation diagnostic
+        # is not available for this run.
+        if eos is not None:
+            from aragog.output.diagnostics import total_enthalpy
+
+            E_state = total_enthalpy(eos, P_stag, S_final, mass_stag)
+        else:
+            E_state = float('nan')
+
+        # CMB heat flux: lower-boundary value of the basic-node heat
+        # flux array. Sign convention follows the rest of Aragog,
+        # positive-out-of-core when entering the mantle.
+        F_cmb = float(heat_flux[0])
+
+        # Mantle-integrated source powers [W] for the closed-mantle
+        # energy balance dE/dt = -F_int*A_int + F_cmb*A_cmb + Q_radio +
+        # Q_dil + Q_tidal. Each per-source heating array is in W/kg at
+        # staggered nodes; mass-weighting recovers the total power.
+        Q_radio_total = float(np.dot(np.asarray(self.state.heating_radio).ravel(), mass_stag))
+        Q_dil_total = float(np.dot(np.asarray(self.state.heating_dil).ravel(), mass_stag))
+        Q_tidal_total = float(np.dot(np.asarray(self.state.heating_tidal).ravel(), mass_stag))
+
         # Volumetric melt fraction (porosity-based)
         if eos is not None:
             rho_sol = np.asarray(
@@ -2356,8 +2396,13 @@ class EntropySolver:
             M_mantle_solid=float(M_mantle - np.sum(phi_stag * mass_stag)),
             RF_depth=RF_depth,
             E_th=E_th,
+            E_state=E_state,
             Cp_eff=Cp_eff,
             F_heat_total=F_heat_total,
+            F_cmb=F_cmb,
+            Q_radio_total=Q_radio_total,
+            Q_dil_total=Q_dil_total,
+            Q_tidal_total=Q_tidal_total,
             dt_actual=float(sol.t[-1] - sol.t[0]),
             status=sol.status,
             jcond_b=jcond_b,

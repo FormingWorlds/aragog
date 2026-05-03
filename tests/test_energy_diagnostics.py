@@ -316,3 +316,232 @@ def test_total_enthalpy_mass_scaling_linearity(eos):
     factor = 3.7
     E_kx = total_enthalpy(eos, P_stag, S_stag, mass_stag * factor)
     assert E_kx == pytest.approx(E_1x * factor, rel=1e-12)
+
+
+# ── Per-source heating decomposition (commit A2) ───────────────────────
+
+
+def _make_minimal_state(
+    eos, *, radio=False, dilatation=False, tidal=False, tidal_array=None, radionuclides_obj=None
+):
+    """Build a minimal EntropyState wired to a test mesh and EOS for
+    direct ``update()`` calls in source-decomposition tests.
+
+    Mirrors the helper in tests/test_entropy_verification.py with the
+    additional source flags exposed so each per-source heating array
+    can be tested in isolation.
+    """
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+    from aragog.solver.entropy_state import EntropyState
+
+    N = 30
+    R_cmb, R_surf = 3.48e6, 6.371e6
+    P_cmb, P_surf = 1.35e11, 1.0e5
+    r_stag = np.linspace(R_cmb, R_surf, N)
+    r_basic = np.zeros(N + 1)
+    r_basic[0] = R_cmb
+    r_basic[-1] = R_surf
+    r_basic[1:-1] = 0.5 * (r_stag[:-1] + r_stag[1:])
+    P_stag = np.linspace(P_cmb, P_surf, N)
+    P_basic = np.interp(r_basic, r_stag, P_stag)
+
+    class Mesh:
+        pass
+
+    class SubMesh:
+        pass
+
+    mesh = Mesh()
+    mesh.basic = SubMesh()
+    mesh.staggered = SubMesh()
+    mesh.basic.radii = r_basic
+    mesh.staggered.radii = r_stag
+    mesh.basic.area = 4.0 * np.pi * r_basic**2
+    mesh.basic.volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
+    ml = np.minimum(r_basic - R_cmb, R_surf - r_basic)
+    mesh.basic.mixing_length = np.maximum(ml, 1.0)
+    mesh.basic.mixing_length_squared = mesh.basic.mixing_length**2
+    mesh.basic.mixing_length_cubed = mesh.basic.mixing_length**3
+    mesh.basic.pressure = P_basic
+    mesh.staggered.pressure = P_stag
+    mesh.basic.mass_radii = r_basic
+    mesh.staggered.mass_radii = r_stag
+    mesh.dxidr = np.ones_like(r_basic)
+    dr = np.diff(r_stag)
+
+    def quantity_at_basic_nodes(q):
+        q = np.asarray(q).flatten()
+        out = np.zeros(N + 1)
+        out[0], out[-1] = q[0], q[-1]
+        out[1:-1] = 0.5 * (q[:-1] + q[1:])
+        return out
+
+    def quantity_at_staggered_nodes(q):
+        q = np.asarray(q).flatten()
+        return 0.5 * (q[:-1] + q[1:])
+
+    def d_dr_at_basic_nodes(q):
+        q = np.asarray(q).flatten()
+        out = np.zeros(N + 1)
+        out[1:-1] = np.diff(q) / dr
+        out[0], out[-1] = out[1], out[-2]
+        return out
+
+    mesh.quantity_at_basic_nodes = quantity_at_basic_nodes
+    mesh.quantity_at_staggered_nodes = quantity_at_staggered_nodes
+    mesh.d_dr_at_basic_nodes = d_dr_at_basic_nodes
+
+    phase_stag = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_stag.set_pressure(P_stag)
+    phase_basic = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_basic.set_pressure(P_basic)
+
+    class Eval:
+        pass
+
+    evaluator = Eval()
+    evaluator.mesh = mesh
+    if radio and radionuclides_obj is not None:
+        evaluator.radionuclides = [radionuclides_obj]
+
+    return EntropyState(
+        evaluator=evaluator,
+        phase_staggered=phase_stag,
+        phase_basic=phase_basic,
+        conduction=True,
+        convection=True,
+        gravitational_separation=False,
+        mixing=False,
+        radionuclides=radio,
+        dilatation=dilatation,
+        tidal=tidal,
+        tidal_array=tidal_array,
+    )
+
+
+@needs_eos
+def test_per_source_heating_arrays_exist_and_sum_to_total(eos):
+    """The decomposition must close: heating_radio + heating_dil +
+    heating_tidal == heating, at every staggered node, after a single
+    update() call. Catches the obvious bug where one source is added
+    to the cumulative ``_heating`` but not stashed into its per-source
+    array (or vice versa).
+    """
+
+    class StubRadio:
+        def get_heating(self, t_yr):
+            return 1.5e-9  # W/kg, near Earth's mean specific decay heat
+
+    state = _make_minimal_state(
+        eos,
+        radio=True,
+        tidal=True,
+        tidal_array=[3.0e-10],
+        radionuclides_obj=StubRadio(),
+    )
+    S0 = np.full(30, 4500.0)
+    state.update(S0, time=4.567)
+    decomposed = state.heating_radio + state.heating_dil + state.heating_tidal
+    np.testing.assert_allclose(
+        decomposed,
+        state.heating,
+        rtol=0,
+        atol=1e-20,
+        err_msg='per-source heating arrays do not sum to cumulative _heating',
+    )
+
+
+@needs_eos
+def test_disabled_sources_have_exactly_zero_heating_arrays(eos):
+    """When a source flag is off, its per-source array must be exactly
+    zero everywhere -- not "small", not "ones plus epsilon". A leak of
+    even 1e-18 W/kg across all cells in a 5e24 kg mantle is 5e6 W of
+    fictitious power that would corrupt the long-time conservation
+    diagnostic.
+    """
+    state = _make_minimal_state(eos)  # all sources disabled by default
+    S0 = np.full(30, 5500.0)
+    state.update(S0, time=4.567)
+    assert np.all(state.heating_radio == 0.0)
+    assert np.all(state.heating_dil == 0.0)
+    assert np.all(state.heating_tidal == 0.0)
+    assert np.all(state.heating == 0.0), 'All source flags off: cumulative heating must be zero'
+
+
+@needs_eos
+def test_radio_heating_uniform_per_kg(eos):
+    """Radiogenic heating per unit mass is uniform across the mantle
+    (decay rate per kg of bulk silicate is independent of P and T to
+    first order). The per-source array must reflect this; a bug that
+    weights radio heating by, say, density would silently break this.
+    """
+    radio_per_kg = 2.5e-12
+
+    class StubRadio:
+        def get_heating(self, t_yr):
+            return radio_per_kg
+
+    state = _make_minimal_state(eos, radio=True, radionuclides_obj=StubRadio())
+    S0 = np.full(30, 4500.0)
+    state.update(S0, time=4.567)
+    np.testing.assert_allclose(
+        state.heating_radio,
+        radio_per_kg,
+        rtol=1e-12,
+        err_msg='radio heating array should be uniform = get_heating(t)',
+    )
+
+
+@needs_eos
+def test_tidal_heating_with_array_input(eos):
+    """When tidal_array has length n_staggered, the per-source array
+    must equal that input element-wise; when length 1, all cells get
+    the scalar value. Tests both the array and the broadcast paths.
+    """
+    n = 30
+    tidal_profile = np.linspace(1e-12, 1e-11, n).tolist()
+    state = _make_minimal_state(eos, tidal=True, tidal_array=tidal_profile)
+    state.update(np.full(n, 4500.0), time=4.567)
+    np.testing.assert_allclose(
+        state.heating_tidal,
+        tidal_profile,
+        rtol=1e-12,
+        err_msg='tidal heating per-cell profile not preserved',
+    )
+
+    # Scalar broadcast path
+    tidal_scalar = 5.0e-11
+    state_b = _make_minimal_state(eos, tidal=True, tidal_array=[tidal_scalar])
+    state_b.update(np.full(n, 4500.0), time=4.567)
+    np.testing.assert_allclose(
+        state_b.heating_tidal,
+        tidal_scalar,
+        rtol=1e-12,
+        err_msg='tidal scalar must broadcast uniformly',
+    )
+
+
+@needs_eos
+def test_unphysical_negative_radio_heating_is_passed_through(eos):
+    """A radionuclides stub returning a negative get_heating() value
+    (unphysical, but possible for a malformed config) must be reflected
+    in heating_radio without silent clamping. Diagnostics should expose
+    the bad input rather than mask it. The cumulative heating array
+    must still equal the sum of the per-source arrays.
+    """
+
+    class BadRadio:
+        def get_heating(self, t_yr):
+            return -1.0e-10  # unphysical negative power
+
+    state = _make_minimal_state(eos, radio=True, radionuclides_obj=BadRadio())
+    S0 = np.full(30, 4500.0)
+    state.update(S0, time=0.5)
+    assert np.all(state.heating_radio < 0.0), (
+        'negative get_heating must propagate into heating_radio for diagnosis'
+    )
+    np.testing.assert_allclose(
+        state.heating_radio + state.heating_dil + state.heating_tidal,
+        state.heating,
+        atol=1e-20,
+    )

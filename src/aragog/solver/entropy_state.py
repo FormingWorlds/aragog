@@ -59,7 +59,10 @@ def _smooth_abs_neg(x: npt.NDArray, eps: float = 1.0e-8) -> npt.NDArray:
 
 
 def _smooth_clip(
-    x: npt.NDArray, lo: float = 0.0, hi: float = 1.0, eps: float = 1.0e-3,
+    x: npt.NDArray,
+    lo: float = 0.0,
+    hi: float = 1.0,
+    eps: float = 1.0e-3,
 ) -> npt.NDArray:
     """Smooth approximation of ``np.clip(x, lo, hi)``.
 
@@ -77,7 +80,8 @@ def _smooth_clip(
 
 
 def _spider_get_smoothing(
-    gphi: npt.NDArray, smooth_width: float = 1.0e-2,
+    gphi: npt.NDArray,
+    smooth_width: float = 1.0e-2,
 ) -> npt.NDArray:
     """Verbatim port of SPIDER's ``get_smoothing`` (``util.c:245-270``).
 
@@ -167,7 +171,9 @@ class EntropyState:
         self._radionuclides = radionuclides
         self._dilatation = dilatation
         self._tidal = tidal
-        self._tidal_array = tidal_array if tidal_array is not None and len(tidal_array) > 0 else [0.0]
+        self._tidal_array = (
+            tidal_array if tidal_array is not None and len(tidal_array) > 0 else [0.0]
+        )
         self._eddy_diff_thermal = eddy_diffusivity_thermal
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
@@ -183,8 +189,7 @@ class EntropyState:
         #   setting.
         if phase_smoothing not in ('cubic_hermite', 'tanh'):
             raise ValueError(
-                f"phase_smoothing must be 'cubic_hermite' or 'tanh', "
-                f"got {phase_smoothing!r}"
+                f"phase_smoothing must be 'cubic_hermite' or 'tanh', got {phase_smoothing!r}"
             )
         self._phase_smoothing = phase_smoothing
 
@@ -216,6 +221,17 @@ class EntropyState:
         self._jconv = np.zeros(n_basic)
         self._jgrav_heat = np.zeros(n_basic)
         self._jmix_heat = np.zeros(n_basic)
+
+        # Per-source heating decomposition at staggered nodes [W/kg].
+        # Stashed alongside the cumulative ``_heating`` so the energy-
+        # conservation diagnostic can sum each source over cell mass to
+        # report total radiogenic / dilatational / tidal power in W,
+        # without re-running the heating assembly. Mirrors the per-component
+        # flux decomposition above.
+        self._heating_radio = np.zeros(n_staggered)
+        self._heating_dil = np.zeros(n_staggered)
+        self._heating_tidal = np.zeros(n_staggered)
+
         # Basic-node EOS state snapshots (populated in update()).
         self._phi_basic_diag = np.zeros(n_basic)
         self._T_basic_diag = np.zeros(n_basic)
@@ -294,9 +310,7 @@ class EntropyState:
         # Phase-boundary entropies and their P-derivatives
         self._S_sol_basic = np.asarray(eos.solidus_entropy(P_basic)).ravel()
         self._S_liq_basic = np.asarray(eos.liquidus_entropy(P_basic)).ravel()
-        self._dS_phase_basic = np.maximum(
-            self._S_liq_basic - self._S_sol_basic, 1.0
-        )
+        self._dS_phase_basic = np.maximum(self._S_liq_basic - self._S_sol_basic, 1.0)
         self._dS_sol_dP_basic = np.asarray(eos.solidus_entropy_dP(P_basic)).ravel()
         self._dS_liq_dP_basic = np.asarray(eos.liquidus_entropy_dP(P_basic)).ravel()
         # Mesh pressure gradient at basic nodes (P decreases outward,
@@ -388,7 +402,7 @@ class EntropyState:
             # SPIDER bc.c convention: boundary gradients copy from the
             # adjacent interior node. In energy_balance mode, the CMB
             # gradient is overridden later by the state-vector value.
-            dSdxi[0] = dSdxi[1]    # CMB: copy from first interior
+            dSdxi[0] = dSdxi[1]  # CMB: copy from first interior
             dSdxi[-1] = dSdxi[-2]  # surface: copy from last interior
             dxidr = np.asarray(mesh.dxidr).ravel()
             self._dSdr = dSdxi * dxidr
@@ -493,13 +507,10 @@ class EntropyState:
         # the phase-modulated floor and creates a metastable
         # equilibrium for dSdr_cmb and a phi=0 oscillation.
         blend_width = 0.01 * RE_CRIT
-        inviscid_weight = 0.5 * (1.0 + np.tanh(
-            (reynolds - RE_CRIT) / max(blend_width, 1e-30)
-        ))
+        inviscid_weight = 0.5 * (1.0 + np.tanh((reynolds - RE_CRIT) / max(blend_width, 1e-30)))
         # Raw eddy diffusivity (before thermal scaling and floor)
         kh_raw = (
-            (1.0 - inviscid_weight) * viscous_velocity
-            + inviscid_weight * inviscid_velocity
+            (1.0 - inviscid_weight) * viscous_velocity + inviscid_weight * inviscid_velocity
         ) * mixing_length
 
         # Apply eddy_diffusivity_thermal scaling (SPIDER convention:
@@ -532,6 +543,7 @@ class EntropyState:
         if self._kappah_floor > 0.0:
             phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             from aragog.utilities import tanh_weight
+
             f_floor = tanh_weight(phi_basic, 0.4, 0.15)
             kh_floor = self._kappah_floor * f_floor
             self._eddy_diffusivity = np.maximum(self._eddy_diffusivity, kh_floor)
@@ -657,9 +669,7 @@ class EntropyState:
             # (1.1, 1.2) are resolved and material properties match
             # SPIDER to 0.01%, the smoothing can be switched to tanh.
             if self._bottom_up_grav_sep:
-                gphi_stag = (
-                    self._entropy_staggered - self._S_sol_stag
-                ) / self._dS_phase_stag
+                gphi_stag = (self._entropy_staggered - self._S_sol_stag) / self._dS_phase_stag
 
                 if self._phase_smoothing == 'tanh':
                     smth_stag = _spider_get_smoothing(gphi_stag, smooth_width=1.0e-2)
@@ -680,9 +690,7 @@ class EntropyState:
         # transfer across CMB or surface, energy.c lines 282-285, 423-426)
         self._mass_flux[0] = 0.0
         self._mass_flux[-1] = 0.0
-        self._jgrav_heat = self._mass_flux * np.asarray(
-            self.phase_basic.latent_heat()
-        ).ravel()
+        self._jgrav_heat = self._mass_flux * np.asarray(self.phase_basic.latent_heat()).ravel()
         self._heat_flux += self._jgrav_heat
 
         if self._mixing:
@@ -696,18 +704,18 @@ class EntropyState:
             # from gradients rather than from dphi/dr, keeping the RHS
             # smooth in pure-phase regions.
             self._ensure_basic_phase_boundary_cache()
-            phi_basic_clipped = np.asarray(
-                self.phase_basic.melt_fraction()
-            ).ravel()
-            bracket = self._dSdr - (
-                phi_basic_clipped * self._dS_liq_dP_basic
-                + (1.0 - phi_basic_clipped) * self._dS_sol_dP_basic
-            ) * self._dP_dr_basic
+            phi_basic_clipped = np.asarray(self.phase_basic.melt_fraction()).ravel()
+            bracket = (
+                self._dSdr
+                - (
+                    phi_basic_clipped * self._dS_liq_dP_basic
+                    + (1.0 - phi_basic_clipped) * self._dS_sol_dP_basic
+                )
+                * self._dP_dr_basic
+            )
             # Smoothing: same method as Jgrav (controlled by
             # self._phase_smoothing) for internal consistency.
-            gphi_basic = (
-                self._entropy_basic - self._S_sol_basic
-            ) / self._dS_phase_basic
+            gphi_basic = (self._entropy_basic - self._S_sol_basic) / self._dS_phase_basic
             if self._phase_smoothing == 'tanh':
                 smth_basic_mix = _spider_get_smoothing(gphi_basic, smooth_width=1.0e-2)
             else:
@@ -728,19 +736,24 @@ class EntropyState:
         self._rho_basic_diag = rho
         self._T_basic_diag = T
         self._cp_basic_diag = Cp
-        self._phi_basic_diag = np.asarray(
-            self.phase_basic.melt_fraction()
-        ).ravel()
+        self._phi_basic_diag = np.asarray(self.phase_basic.melt_fraction()).ravel()
 
         # ── Internal heating (power per unit mass [W/kg]) ────────────
         n_stag = len(self._entropy_staggered)
         self._heating = np.zeros(n_stag)
+        # Reset per-source diagnostic buffers each pass; the energy
+        # conservation diagnostic later mass-integrates each one to
+        # report total radiogenic / dilatational / tidal power in W.
+        self._heating_radio = np.zeros(n_stag)
+        self._heating_dil = np.zeros(n_stag)
+        self._heating_tidal = np.zeros(n_stag)
 
         if self._radionuclides and hasattr(self._evaluator, 'radionuclides'):
             radio = 0.0
             for r in self._evaluator.radionuclides:
                 radio += r.get_heating(time)
             self._heating += radio
+            self._heating_radio[:] = radio
 
         if self._dilatation and (self._grav_sep or self._mixing):
             # Dilatation (PdV) heating: work done when melt of different
@@ -772,9 +785,7 @@ class EntropyState:
             mesh = self._evaluator.mesh
             j_total = self._mass_flux.copy()
             if self._mixing:
-                latent_heat_basic = np.asarray(
-                    self.phase_basic.latent_heat()
-                ).ravel()
+                latent_heat_basic = np.asarray(self.phase_basic.latent_heat()).ravel()
                 # Guard against tiny latent heat at table edges; outside
                 # the mushy band _jmix_heat is itself zero by the smth
                 # gate, so the division is well-defined wherever it
@@ -791,12 +802,8 @@ class EntropyState:
                 j_mix[-1] = 0.0
                 j_total = j_total + j_mix
 
-            mass_flux_stag = mesh.quantity_at_staggered_nodes(
-                j_total
-            ).ravel()
-            delta_v = np.asarray(
-                self.phase_staggered.delta_specific_volume()
-            ).ravel()
+            mass_flux_stag = mesh.quantity_at_staggered_nodes(j_total).ravel()
+            delta_v = np.asarray(self.phase_staggered.delta_specific_volume()).ravel()
             # Per-node gravity aligned with the staggered grid; use
             # element-wise multiplication so non-uniform g(r) is
             # respected (collapsing to a scalar mean would silently
@@ -804,13 +811,19 @@ class EntropyState:
             g_stag = np.abs(
                 np.asarray(self.phase_staggered.gravitational_acceleration()).ravel()
             )
-            self._heating += g_stag * delta_v * mass_flux_stag
+            dil_term = g_stag * delta_v * mass_flux_stag
+            self._heating += dil_term
+            self._heating_dil[:] = dil_term
 
         if self._tidal:
             if len(self._tidal_array) == 1:
-                self._heating += self._tidal_array[0]
+                tidal_term = np.full(n_stag, self._tidal_array[0])
             elif len(self._tidal_array) == n_stag:
-                self._heating += np.array(self._tidal_array)
+                tidal_term = np.array(self._tidal_array)
+            else:
+                tidal_term = np.zeros(n_stag)
+            self._heating += tidal_term
+            self._heating_tidal[:] = tidal_term
 
     # ── Properties ───────────────────────────────────────────────────
 
@@ -818,6 +831,21 @@ class EntropyState:
     def heating(self) -> npt.NDArray:
         """Total internal heating [W/kg] at staggered nodes."""
         return self._heating
+
+    @property
+    def heating_radio(self) -> npt.NDArray:
+        """Radiogenic heating contribution [W/kg] at staggered nodes."""
+        return self._heating_radio
+
+    @property
+    def heating_dil(self) -> npt.NDArray:
+        """Dilatation (PdV) heating contribution [W/kg] at staggered nodes."""
+        return self._heating_dil
+
+    @property
+    def heating_tidal(self) -> npt.NDArray:
+        """Tidal heating contribution [W/kg] at staggered nodes."""
+        return self._heating_tidal
 
     @property
     def entropy_staggered(self) -> npt.NDArray:
