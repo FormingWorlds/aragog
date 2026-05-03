@@ -657,7 +657,7 @@ class EntropySolver:
             gravitational_separation=energy.gravitational_separation,
             mixing=energy.mixing,
             radionuclides=energy.radionuclides,
-            dilatation=getattr(energy, 'dilatation', False),
+            dilatation=getattr(energy, 'dilatation', False),  # vestigial
             tidal=energy.tidal,
             tidal_array=getattr(energy, 'tidal_array', [0.0]),
             eddy_diffusivity_thermal=getattr(energy, 'eddy_diffusivity_thermal', 1.0),

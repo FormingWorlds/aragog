@@ -102,15 +102,6 @@ class PhaseParams(eqx.Module):
     grav_sep: float
     mixing: float
 
-    # Vestigial dilatation switch retained for one release cycle so
-    # PROTEUS-side callers can drop the kwarg in step. The explicit
-    # H_dil source has been removed: it was a double-count of the
-    # volumetric work already implicit in the divergence of the
-    # Δh-weighted mass-flux contributions to ``heat_flux``. Will be
-    # deleted with the corresponding numpy ``EntropyState._dilatation``
-    # in the next cleanup commit.
-    dilatation: float
-
     # Eddy diffusivity
     eddy_diff_thermal: float
     eddy_diff_chemical: float
@@ -145,7 +136,10 @@ class PhaseParams(eqx.Module):
         convection: bool = True,
         grav_sep: bool = False,
         mixing: bool = False,
-        dilatation: bool = False,
+        dilatation: bool = False,  # vestigial; accepted-and-ignored. The
+        # explicit Φ_vol source was deleted as a double-count of the
+        # Δh-weighted divergence; this kwarg stays for one release cycle
+        # so PROTEUS callers don't need a synchronised drop.
         eddy_diff_thermal: float = 1.0,
         eddy_diff_chemical: float = 1.0,
         kappah_floor: float = 0.0,
@@ -166,7 +160,7 @@ class PhaseParams(eqx.Module):
         self.convection = float(convection)
         self.grav_sep = float(grav_sep)
         self.mixing = float(mixing)
-        self.dilatation = float(dilatation)
+        del dilatation  # vestigial-kwarg, see signature note above
         self.eddy_diff_thermal = eddy_diff_thermal
         self.eddy_diff_chemical = eddy_diff_chemical
         self.kappah_floor = kappah_floor

@@ -50,7 +50,6 @@ def _make_energy(**overrides):
         gravitational_separation=True,
         mixing=True,
         radionuclides=True,
-        dilatation=True,
         tidal=False,
     )
     base.update(overrides)

@@ -816,9 +816,16 @@ def _make_dilatation_state(
     *,
     mixing=True,
     grav_sep=True,
-    dilatation=True,
+    dilatation=False,
 ):
-    """EntropyState with dilatation/grav_sep/mixing flags exposed."""
+    """EntropyState with grav_sep/mixing flags exposed.
+
+    The ``dilatation`` kwarg is accepted-and-ignored at the EntropyState
+    layer (vestigial; the explicit Φ_vol source has been deleted as a
+    double-count of the Δh-weighted divergence). It is kept as a kwarg
+    here so the lock-in tests can verify that toggling the flag does not
+    change ``state.heating``.
+    """
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
     from aragog.solver.entropy_state import EntropyState
 
@@ -947,7 +954,6 @@ class TestNoExplicitPhiVolSource:
             eos,
             mixing=False,
             grav_sep=True,
-            dilatation=True,
         )
 
         S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
@@ -993,7 +999,6 @@ class TestNoExplicitPhiVolSource:
             eos,
             mixing=True,
             grav_sep=True,
-            dilatation=True,
         )
 
         S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
@@ -1078,7 +1083,6 @@ class TestNoExplicitPhiVolSource:
             eos,
             mixing=True,
             grav_sep=True,
-            dilatation=False,
         )
 
         S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
@@ -1171,7 +1175,6 @@ class TestMassCoordinates:
             gravitational_separation=False,
             mixing=False,
             radionuclides=False,
-            dilatation=False,
             tidal=False,
         )
         ic = _InitialConditionParameters(

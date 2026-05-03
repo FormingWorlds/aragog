@@ -22,7 +22,6 @@ class EnergyConfig:
     gravitational_separation : bool
     mixing : bool
     radionuclides : bool
-    dilatation : bool
     tidal : bool
     eddy_diffusivity_chemical : float
         Ratio kappa_c / kappa_h for chemical eddy diffusivity.
@@ -35,9 +34,6 @@ class EnergyConfig:
     gravitational_separation: bool
     mixing: bool
     radionuclides: bool
-    dilatation: bool
     tidal: bool
     eddy_diffusivity_chemical: float = 1.0
-    tidal_array: npt.NDArray = attrs.Factory(
-        lambda: np.array([0.0], dtype=float)
-    )
+    tidal_array: npt.NDArray = attrs.Factory(lambda: np.array([0.0], dtype=float))

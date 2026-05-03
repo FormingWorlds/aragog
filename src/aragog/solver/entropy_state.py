@@ -152,7 +152,10 @@ class EntropyState:
         gravitational_separation: bool = False,
         mixing: bool = False,
         radionuclides: bool = False,
-        dilatation: bool = False,
+        dilatation: bool = False,  # vestigial; accepted-and-ignored. The
+        # explicit Φ_vol source was deleted as a double-count of the
+        # Δh-weighted divergence; this kwarg stays for one release cycle
+        # so PROTEUS callers don't need a synchronised drop.
         tidal: bool = False,
         tidal_array: list | None = None,
         eddy_diffusivity_thermal: float = 1.0,
@@ -161,6 +164,7 @@ class EntropyState:
         bottom_up_grav_sep: bool = True,
         phase_smoothing: str = 'tanh',
     ):
+        del dilatation  # see vestigial-kwarg note above
         self._evaluator = evaluator
         self.phase_staggered = phase_staggered
         self.phase_basic = phase_basic
@@ -169,7 +173,6 @@ class EntropyState:
         self._grav_sep = gravitational_separation
         self._mixing = mixing
         self._radionuclides = radionuclides
-        self._dilatation = dilatation
         self._tidal = tidal
         self._tidal_array = (
             tidal_array if tidal_array is not None and len(tidal_array) > 0 else [0.0]

@@ -40,7 +40,6 @@ convection = true
 gravitational_separation = false
 mixing = false
 radionuclides = false
-dilatation = false
 tidal = false
 
 [initial_condition]

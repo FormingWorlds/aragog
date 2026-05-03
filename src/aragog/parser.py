@@ -196,10 +196,20 @@ class _EnergyParameters:
     gravitational_separation: bool
     mixing: bool
     radionuclides: bool
-    dilatation: bool
     tidal: bool
     eddy_diffusivity_chemical: float = 1.0
     kappah_floor: float = 0.0  # m^2/s, phase-dependent eddy diffusivity floor
+
+    # Vestigial: accepted-and-ignored for one release cycle. The explicit
+    # Φ_vol source term that this flag used to gate has been deleted from
+    # entropy_state.py and jax/phase.py because the Δh-weighted
+    # divergence already contains +ρ·Φ_vol implicitly via the chain rule
+    # on Δh = Δu + P·Δv with hydrostatic ∂P/∂r = −ρg (Bower 2018 §3,
+    # SPIDER energy.c). Removing this field would break PROTEUS callers
+    # at proteus/interior_energetics/aragog.py which still pass
+    # ``dilatation=...``; the field is dropped together with the PROTEUS
+    # pin bump in a follow-up.
+    dilatation: bool = False
 
     # SPIDER-analogue bottom-up gate for the gravitational-separation mass
     # flux. Only allows melt/solid separation across an interface when the
@@ -241,10 +251,9 @@ class _EnergyParameters:
     # safety factor; if the achieved end_time is smaller than requested,
     # the PROTEUS outer loop sees an early-return and adjusts dt
     # accordingly. Default 0.0 (disabled, no behavioural change for
-    # existing tests). Recommended setting for production runs with
-    # ``dilatation = true`` is 0.05; the heat-pump driven by H_dil drives
-    # faster Φ-evolution in the mushy zone than the static dt cap can
-    # contain otherwise.
+    # existing tests). 0.05 is a useful upper bound for the mushy zone in
+    # 1 M⊕ runs; without a cap the dt adapter can land on a step that
+    # straddles the rheological transition and reject.
     phi_step_cap: float = 0.0
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
