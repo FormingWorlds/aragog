@@ -31,40 +31,46 @@ RE_CRIT = 9.0 / 8.0
 # Output containers (NamedTuples are JAX pytrees by default)
 # ---------------------------------------------------------------------------
 
+
 class PhaseProperties(NamedTuple):
     """Material properties at a set of mesh nodes."""
 
-    temperature: jax.Array          # [K]
-    density: jax.Array              # [kg/m^3]
-    heat_capacity: jax.Array        # [J/kg/K]
+    temperature: jax.Array  # [K]
+    density: jax.Array  # [kg/m^3]
+    heat_capacity: jax.Array  # [J/kg/K]
     thermal_expansivity: jax.Array  # [1/K]
-    dTdPs: jax.Array                # [K/Pa]
-    melt_fraction: jax.Array        # [-]
-    viscosity: jax.Array            # [Pa s]
+    dTdPs: jax.Array  # [K/Pa]
+    melt_fraction: jax.Array  # [-]
+    viscosity: jax.Array  # [Pa s]
     kinematic_viscosity: jax.Array  # [m^2/s]
-    thermal_conductivity: jax.Array # [W/m/K]
-    latent_heat: jax.Array          # [J/kg]
-    capacitance: jax.Array          # rho * T [kg K / m^3]
+    thermal_conductivity: jax.Array  # [W/m/K]
+    latent_heat: jax.Array  # [J/kg]
+    capacitance: jax.Array  # rho * T [kg K / m^3]
 
 
 class FluxOutput(NamedTuple):
     """Output from the flux computation at basic nodes."""
 
-    heat_flux: jax.Array            # total heat flux [W/m^2]
-    mass_flux: jax.Array            # mass flux [kg/m^2/s]
-    eddy_diffusivity: jax.Array     # [m^2/s]
-    heating: jax.Array              # internal heating at staggered nodes [W/kg]
-                                    # (radio + tidal + dilatation when enabled)
-    jmix_heat: jax.Array            # convective-mixing heat flux at basic
-                                    # nodes [W/m^2]; raw (NOT gated by
-                                    # params.mixing). Exposed for the
-                                    # dilatation H_dil computation in dSdt
-                                    # and for diagnostic post-processing.
+    heat_flux: jax.Array  # total heat flux [W/m^2]
+    mass_flux: jax.Array  # mass flux [kg/m^2/s]
+    eddy_diffusivity: jax.Array  # [m^2/s]
+    heating: jax.Array  # internal heating at staggered nodes [W/kg]
+    # (radio + tidal). The volumetric-work
+    # piece of segregation heating is
+    # implicit in the divergence of the
+    # Δh-weighted mass-flux contributions
+    # to ``heat_flux`` and is not added
+    # separately.
+    jmix_heat: jax.Array  # convective-mixing heat flux at basic
+    # nodes [W/m^2]; raw (NOT gated by
+    # params.mixing). Exposed for diagnostic
+    # post-processing.
 
 
 # ---------------------------------------------------------------------------
 # Static parameters (equinox Module, JAX pytree)
 # ---------------------------------------------------------------------------
+
 
 class PhaseParams(eqx.Module):
     """Static parameters for phase evaluation and flux computation.
@@ -96,13 +102,13 @@ class PhaseParams(eqx.Module):
     grav_sep: float
     mixing: float
 
-    # Dilatation (PdV) heating switch (stored as float for JAX tracing:
-    # 1.0 = on, 0.0 = off). Mirrors numpy ``EntropyState._dilatation``.
-    # When 1.0, ``compute_fluxes`` adds H_dil = g·Δv·(j_mix + j_grav) at
-    # staggered nodes to the returned ``heating`` per Soucasse §1.2.
-    # The contribution naturally vanishes when both ``grav_sep = 0`` and
-    # ``mixing = 0`` because both mass-flux components are zeroed by
-    # their respective gates.
+    # Vestigial dilatation switch retained for one release cycle so
+    # PROTEUS-side callers can drop the kwarg in step. The explicit
+    # H_dil source has been removed: it was a double-count of the
+    # volumetric work already implicit in the divergence of the
+    # Δh-weighted mass-flux contributions to ``heat_flux``. Will be
+    # deleted with the corresponding numpy ``EntropyState._dilatation``
+    # in the next cleanup commit.
     dilatation: float
 
     # Eddy diffusivity
@@ -167,8 +173,7 @@ class PhaseParams(eqx.Module):
         self.bottom_up_grav_sep = float(bottom_up_grav_sep)
         if phase_smoothing not in ('cubic_hermite', 'tanh'):
             raise ValueError(
-                "phase_smoothing must be 'cubic_hermite' or 'tanh', "
-                f"got {phase_smoothing!r}"
+                f"phase_smoothing must be 'cubic_hermite' or 'tanh', got {phase_smoothing!r}"
             )
         self.phase_smoothing_tanh = 1.0 if phase_smoothing == 'tanh' else 0.0
         self.phase_smoothing_width = float(phase_smoothing_width)
@@ -181,41 +186,42 @@ class MeshArrays(eqx.Module):
     """
 
     # Transform matrices (basic_nodes x staggered_nodes)
-    d_dr_matrix: jax.Array       # d/dr transform
-    quantity_matrix: jax.Array   # staggered-to-basic interpolation
+    d_dr_matrix: jax.Array  # d/dr transform
+    quantity_matrix: jax.Array  # staggered-to-basic interpolation
 
     # Geometry at basic nodes (N_basic,)
-    area: jax.Array              # [m^2]
-    volume: jax.Array            # [m^3]
-    radii_basic: jax.Array       # [m]
-    mixing_length: jax.Array     # [m]
+    area: jax.Array  # [m^2]
+    volume: jax.Array  # [m^3]
+    radii_basic: jax.Array  # [m]
+    mixing_length: jax.Array  # [m]
     mixing_length_sq: jax.Array  # [m^2]
     mixing_length_cu: jax.Array  # [m^3]
 
     # Radii at staggered nodes
-    radii_stag: jax.Array        # [m]
+    radii_stag: jax.Array  # [m]
 
     # Pressure profiles (1D, pre-flattened)
-    P_stag: jax.Array            # [Pa] at staggered nodes
-    P_basic: jax.Array           # [Pa] at basic nodes
+    P_stag: jax.Array  # [Pa] at staggered nodes
+    P_basic: jax.Array  # [Pa] at basic nodes
 
     # dP/dr at basic nodes from Adams-Williamson EOS profile
     # (np.gradient(P_basic, r_basic) in numpy state). Stored on the mesh
     # because it only depends on the structural pressure profile, not on
     # the entropy state.
-    dP_dr_basic: jax.Array       # [Pa/m] at basic nodes
+    dP_dr_basic: jax.Array  # [Pa/m] at basic nodes
 
     # Gravity at basic nodes
-    gravity: jax.Array           # [m/s^2]
+    gravity: jax.Array  # [m/s^2]
 
     # Gravity at staggered nodes (cell centres). Mirrors numpy's
     # ``EntropyPhaseEvaluator(gravitational_acceleration=g_stag)`` for
-    # the staggered phase evaluator. Required for the dilatation H_dil
-    # term in ``compute_fluxes`` (Soucasse §1.2). Built from the
-    # external EOS gravity column at staggered radii (UserDefinedEOS /
-    # Zalmoxis) or scalar broadcast when the column is unavailable
-    # (AdamsWilliamsonEOS).
-    gravity_stag: jax.Array      # [m/s^2]
+    # the staggered phase evaluator. Built from the external EOS
+    # gravity column at staggered radii (UserDefinedEOS / Zalmoxis) or
+    # scalar broadcast when the column is unavailable
+    # (AdamsWilliamsonEOS). Retained even after the dilatation H_dil
+    # term was deleted because future diagnostics may need
+    # cell-centred g(r).
+    gravity_stag: jax.Array  # [m/s^2]
 
     def __init__(
         self,
@@ -253,6 +259,7 @@ class MeshArrays(eqx.Module):
         self.gravity = gravity
         if dP_dr_basic is None:
             import numpy as _np
+
             dP_dr_basic = jnp.asarray(
                 _np.gradient(_np.asarray(P_basic), _np.asarray(radii_basic))
             )
@@ -271,6 +278,7 @@ class MeshArrays(eqx.Module):
     def from_numpy_mesh(mesh) -> 'MeshArrays':
         """Build from a numpy Aragog Mesh object."""
         import numpy as np
+
         P_basic_arr = np.asarray(mesh.basic_pressure).ravel()
         r_basic_arr = np.asarray(mesh.basic.radii).ravel()
         r_stag_arr = np.asarray(mesh.staggered.radii).ravel()
@@ -303,8 +311,8 @@ class MeshArrays(eqx.Module):
             # Same construction at the staggered radii. Mirrors numpy's
             # entropy_solver.py ``g_stag = np.interp(r_stag, eos_radius,
             # eos_gravity)`` (with scalar fallback). Aligned to the
-            # staggered grid; consumed by the dilatation H_dil term in
-            # compute_fluxes (Soucasse §1.2) and only there.
+            # staggered grid; retained as a future-diagnostic anchor
+            # after the dilatation H_dil consumer was deleted.
             gravity_stag=_build_gravity_array(mesh, r_stag=True),
         )
 
@@ -312,6 +320,7 @@ class MeshArrays(eqx.Module):
 # ---------------------------------------------------------------------------
 # Per-basic-node gravity array builder (used by MeshArrays.from_numpy_mesh)
 # ---------------------------------------------------------------------------
+
 
 def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
     """Return the per-node gravity array for a numpy Aragog mesh.
@@ -328,10 +337,10 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
     ----------
     r_stag : bool, default False
         Target grid: False -> basic-node radii (default), True ->
-        staggered-node radii. The dilatation H_dil term in
-        ``compute_fluxes`` consumes the staggered-node profile.
+        staggered-node radii.
     """
     import numpy as np
+
     if r_stag:
         r_target = np.asarray(mesh.staggered.radii).ravel()
     else:
@@ -352,12 +361,8 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
             break
     if _eos_src is None:
         _eos_src = mesh
-    eos_gravity_arr = np.asarray(
-        getattr(_eos_src, 'eos_gravity', []), dtype=float
-    ).ravel()
-    eos_radius_arr = np.asarray(
-        getattr(_eos_src, 'eos_radius', []), dtype=float
-    ).ravel()
+    eos_gravity_arr = np.asarray(getattr(_eos_src, 'eos_gravity', []), dtype=float).ravel()
+    eos_radius_arr = np.asarray(getattr(_eos_src, 'eos_radius', []), dtype=float).ravel()
     if eos_gravity_arr.size > 1 and eos_radius_arr.size == eos_gravity_arr.size:
         # Monotonicity guard: np.interp silently produces wrong results if
         # xp is not monotonically increasing. Zalmoxis writes radius
@@ -379,21 +384,23 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
     # only) was asymmetric with numpy for configs that populate gravity
     # on mesh.parameters without mesh.settings and would silently
     # return 9.81 on a non-Earth planet.
-    settings_src = (
-        getattr(mesh, 'settings', None)
-        or getattr(mesh, 'parameters', None)
-        or mesh
+    settings_src = getattr(mesh, 'settings', None) or getattr(mesh, 'parameters', None) or mesh
+    g_scalar = abs(
+        float(
+            getattr(
+                mesh.eos,
+                '_gravitational_acceleration',
+                getattr(settings_src, 'gravitational_acceleration', 9.81),
+            )
+        )
     )
-    g_scalar = abs(float(getattr(
-        mesh.eos, '_gravitational_acceleration',
-        getattr(settings_src, 'gravitational_acceleration', 9.81),
-    )))
     return jnp.asarray(np.full(r_basic.size, g_scalar))
 
 
 # ---------------------------------------------------------------------------
 # JAX tanh_weight (replaces aragog.utilities.tanh_weight)
 # ---------------------------------------------------------------------------
+
 
 def tanh_weight(x: jax.Array, threshold: float, width: float) -> jax.Array:
     """Smooth step function: 0.5 * (1 + tanh((x - threshold) / width))."""
@@ -417,7 +424,8 @@ def spider_get_smoothing(gphi: jax.Array, smooth_width: float) -> jax.Array:
 
 
 def phase_boundary_smoothing(
-    gphi: jax.Array, params: PhaseParams,
+    gphi: jax.Array,
+    params: PhaseParams,
 ) -> jax.Array:
     """Blend of cubic-Hermite and SPIDER tanh smoothing selected by
     ``params.phase_smoothing_tanh`` (0.0 or 1.0). Keeps the trace static.
@@ -438,6 +446,7 @@ def phase_boundary_smoothing(
 # ---------------------------------------------------------------------------
 # Phase evaluation (replaces EntropyPhaseEvaluator.update)
 # ---------------------------------------------------------------------------
+
 
 def evaluate_phase(
     eos: EntropyEOS_JAX,
@@ -468,7 +477,8 @@ def evaluate_phase(
     # cache, with the smth-blend mixed<->single matching numpy
     # EntropyPhaseEvaluator._update_eos.
     state = eos.compute_phase_state(
-        P, S,
+        P,
+        S,
         k_solid=params.k_solid,
         k_liquid=params.k_liquid,
         matprop_smooth_width=params.matprop_smooth_width,
@@ -481,14 +491,14 @@ def evaluate_phase(
     # Stage 2: combine_matprop with the cached matprop_smooth_width smth
     # that compute_phase_state also uses for T/rho/Cp/alpha/k.
     w = tanh_weight(phi, params.phi_rheo, params.phi_width)
-    log_visc_mixed = (
-        (1.0 - w) * params.log10_visc_solid + w * params.log10_visc_liquid
-    )
+    log_visc_mixed = (1.0 - w) * params.log10_visc_solid + w * params.log10_visc_liquid
     log_visc_single = jnp.where(
-        phi > 0.5, params.log10_visc_liquid, params.log10_visc_solid,
+        phi > 0.5,
+        params.log10_visc_liquid,
+        params.log10_visc_solid,
     )
     log_visc = state.smth * log_visc_mixed + (1.0 - state.smth) * log_visc_single
-    viscosity = 10.0 ** log_visc
+    viscosity = 10.0**log_visc
     kinematic_viscosity = viscosity / state.density
 
     # Capacitance for entropy equation
@@ -512,6 +522,7 @@ def evaluate_phase(
 # ---------------------------------------------------------------------------
 # Relative velocity (gravitational separation, Abe 1993)
 # ---------------------------------------------------------------------------
+
 
 def relative_velocity(
     eos: EntropyEOS_JAX,
@@ -538,14 +549,10 @@ def relative_velocity(
     # regression it avoids).
     drho = rho_s - rho_l
     eps = 1.0e-3
-    drho_smoothmax = 0.5 * (
-        drho + 1.0 + jnp.sqrt((drho - 1.0) ** 2 + eps * eps)
-    )
+    drho_smoothmax = 0.5 * (drho + 1.0 + jnp.sqrt((drho - 1.0) ** 2 + eps * eps))
     porosity_raw = (rho_s - density) / drho_smoothmax
     eps_p = 1.0e-3
-    p_lo = 0.5 * (
-        porosity_raw + jnp.sqrt(porosity_raw * porosity_raw + eps_p * eps_p)
-    )
+    p_lo = 0.5 * (porosity_raw + jnp.sqrt(porosity_raw * porosity_raw + eps_p * eps_p))
     hi_u = 1.0 - p_lo
     porosity = 1.0 - 0.5 * (hi_u + jnp.sqrt(hi_u * hi_u + eps_p * eps_p))
 
@@ -574,6 +581,7 @@ def relative_velocity(
 # ---------------------------------------------------------------------------
 # MLT eddy diffusivity (replaces the MLT block in EntropyState.update)
 # ---------------------------------------------------------------------------
+
 
 def compute_mlt(
     dSdr: jax.Array,
@@ -617,9 +625,7 @@ def compute_mlt(
     # forward equal to ``abs(x)`` to ULP precision while delivering a
     # finite analytic gradient everywhere.
     eps_abs = 1.0e-30
-    abs_dSdr_safe = 0.5 * (
-        jnp.abs(dSdr) + jnp.sqrt(dSdr * dSdr + eps_abs * eps_abs)
-    )
+    abs_dSdr_safe = 0.5 * (jnp.abs(dSdr) + jnp.sqrt(dSdr * dSdr + eps_abs * eps_abs))
     effective_superadiabatic = alpha * T * abs_dSdr_safe / jnp.maximum(Cp, 1.0)
     velocity_prefactor = mesh.gravity * effective_superadiabatic
 
@@ -630,9 +636,7 @@ def compute_mlt(
     conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
 
     # Viscous velocity (Re <= Re_crit)
-    viscous_velocity = (
-        velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)
-    ) * conv_mask
+    viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)) * conv_mask
 
     # Inviscid velocity (Re > Re_crit). ``jnp.sqrt(jnp.maximum(x, 0))`` is
     # the textbook NaN-safe forward, but its backward gradient at x=0 is
@@ -642,9 +646,7 @@ def compute_mlt(
     # eps**2 = 1e-40 is far below any physical inviscid_velocity_sq, so
     # the forward is bit-equivalent for non-trivial x.
     eps_sqrt = 1.0e-20
-    inviscid_velocity_sq = (
-        velocity_prefactor * mesh.mixing_length_sq / 16.0
-    ) * conv_mask
+    inviscid_velocity_sq = (velocity_prefactor * mesh.mixing_length_sq / 16.0) * conv_mask
     inviscid_velocity = jnp.sqrt(inviscid_velocity_sq + eps_sqrt)
 
     # Reynolds number
@@ -655,14 +657,13 @@ def compute_mlt(
     # convecting regime; widening the blend leaks inviscid mixing
     # into the solid regime and induces T_core bistability.
     blend_width = 0.01 * RE_CRIT
-    inviscid_weight = 0.5 * (1.0 + jnp.tanh(
-        (reynolds - RE_CRIT) / jnp.maximum(blend_width, 1e-30)
-    ))
+    inviscid_weight = 0.5 * (
+        1.0 + jnp.tanh((reynolds - RE_CRIT) / jnp.maximum(blend_width, 1e-30))
+    )
 
     # Raw eddy diffusivity
     kh_raw = (
-        (1.0 - inviscid_weight) * viscous_velocity
-        + inviscid_weight * inviscid_velocity
+        (1.0 - inviscid_weight) * viscous_velocity + inviscid_weight * inviscid_velocity
     ) * mesh.mixing_length
 
     # Thermal eddy diffusivity (SPIDER convention: positive=scale, negative=constant)
@@ -703,6 +704,7 @@ def compute_mlt(
 # ---------------------------------------------------------------------------
 # Full flux computation (replaces EntropyState.update flux section)
 # ---------------------------------------------------------------------------
+
 
 def compute_fluxes(
     S_stag: jax.Array,
@@ -811,9 +813,7 @@ def compute_fluxes(
     Cp_safe = jnp.maximum(Cp, 100.0)
     superadiabatic = (T / Cp_safe) * dSdr
     dT_dr_adiabat = dTdPs_basic * mesh.dP_dr_basic
-    heat_flux = heat_flux + params.conduction * (
-        -k * (superadiabatic + dT_dr_adiabat)
-    )
+    heat_flux = heat_flux + params.conduction * (-k * (superadiabatic + dT_dr_adiabat))
 
     # Convection: F_conv = rho * T * kappa_h * (-dS/dr)
     heat_flux = heat_flux + params.convection * (rho * T * kappa_h * (-dSdr))
@@ -837,7 +837,12 @@ def compute_fluxes(
     # doesn't reproduce the pre-fix CMB drain at first crystallisation.
     phi_b = phase_basic.melt_fraction
     v_rel = relative_velocity(
-        eos, params, mesh.P_basic, rho, phi_b, mesh.gravity,
+        eos,
+        params,
+        mesh.P_basic,
+        rho,
+        phi_b,
+        mesh.gravity,
     )
     jgrav_raw = rho * phi_b * (1.0 - phi_b) * v_rel
 
@@ -856,11 +861,13 @@ def compute_fluxes(
     # few lines below anyway. Lengths: staggered has N entries, basic
     # has N+1; smth_stag[:-1] supplies the N-1 interior interfaces
     # plus the two boundaries, totalling N+1.
-    smth_basic = jnp.concatenate([
-        jnp.array([1.0]),
-        smth_stag[:-1],
-        jnp.array([1.0]),
-    ])
+    smth_basic = jnp.concatenate(
+        [
+            jnp.array([1.0]),
+            smth_stag[:-1],
+            jnp.array([1.0]),
+        ]
+    )
 
     # `bottom_up_grav_sep = 1.0` selects the smoothed flux, 0.0 selects
     # the raw flux (for reproducing the pre-fix drain in regression
@@ -899,10 +906,11 @@ def compute_fluxes(
     dS_sol_dP_basic = eos.solidus_entropy_dP(mesh.P_basic)
     dS_liq_dP_basic = eos.liquidus_entropy_dP(mesh.P_basic)
     phi_clipped = phase_basic.melt_fraction
-    bracket = dSdr - (
-        phi_clipped * dS_liq_dP_basic
-        + (1.0 - phi_clipped) * dS_sol_dP_basic
-    ) * mesh.dP_dr_basic
+    bracket = (
+        dSdr
+        - (phi_clipped * dS_liq_dP_basic + (1.0 - phi_clipped) * dS_sol_dP_basic)
+        * mesh.dP_dr_basic
+    )
 
     # T_fus = latent_heat / dS_phase (mirrors numpy
     # _ensure_basic_phase_boundary_cache: T_fus_basic = L_basic / dS_phase).
@@ -919,51 +927,21 @@ def compute_fluxes(
     jmix_heat = jmix_heat.at[-1].set(0.0)
     heat_flux = heat_flux + params.mixing * jmix_heat
 
-    # ── Dilatation (PdV) heating, Soucasse §1.2 ────────────────
-    #
-    # Specific heating rate at staggered nodes:
-    #     H_dil = g · (1/ρ_m - 1/ρ_s) · (j_mix + j_grav)
-    # where (j_mix + j_grav) is the total melt mass flux at basic
-    # nodes mapped to staggered nodes by midpoint averaging. Mirrors
-    # numpy entropy_state.update (lines 715-777) bit-for-bit.
-    #
-    # Both (j_mix + j_grav) contributions are flag-gated:
-    #   - mass_flux already contains ``params.grav_sep · jgrav``
-    #   - j_mix_basic is gated by ``params.mixing`` here
-    # so the total H_dil collapses to zero whenever the originating
-    # transport mechanism is off, matching numpy's
-    # ``if dilatation and (grav_sep or mixing):`` short-circuit.
-    L_basic_safe = jnp.maximum(phase_basic.latent_heat, 1.0)
-    j_mix_basic = jnp.where(
-        jnp.abs(phase_basic.latent_heat) > 1.0,
-        jmix_heat / L_basic_safe,
-        0.0,
-    )
-    # Boundaries already zeroed on jmix_heat; carry through to keep
-    # no-mass-flux at CMB and surface.
-    j_mix_basic = j_mix_basic.at[0].set(0.0).at[-1].set(0.0)
-    j_total_basic = mass_flux + params.mixing * j_mix_basic
-    # Map basic -> staggered via simple midpoint average (matches
-    # numpy ``mesh.quantity_at_staggered_nodes`` for basic-defined
-    # quantities, mesh/__init__.py:417-419).
-    j_total_stag = 0.5 * (j_total_basic[:-1] + j_total_basic[1:])
-    # Δv at staggered nodes from EOS phase-boundary lookups
-    # (1/ρ_l - 1/ρ_s); matches numpy
-    # ``EntropyPhaseEvaluator.delta_specific_volume`` (entropy_phase.py:469).
-    rho_l_stag = eos._lookup_at_phase_boundary('density', mesh.P_stag, 'melt')
-    rho_s_stag = eos._lookup_at_phase_boundary('density', mesh.P_stag, 'solid')
-    delta_v_stag = (
-        1.0 / jnp.maximum(rho_l_stag, 1.0)
-        - 1.0 / jnp.maximum(rho_s_stag, 1.0)
-    )
-    g_stag_abs = jnp.abs(mesh.gravity_stag)
-    H_dil_stag = g_stag_abs * delta_v_stag * j_total_stag
-    heating_with_dil = heating_rate + params.dilatation * H_dil_stag
+    # The volumetric-work piece of phase-segregation heating
+    # (formerly added here as the explicit Soucasse §1.2 source
+    # H_dil = g·Δv·(j_mix + j_grav)) is already implicit in the
+    # divergence of the Δh-weighted mass-flux contributions to
+    # ``heat_flux``: by definition Δh = Δu + P·Δv, and on a
+    # hydrostatic column ∂Δh/∂r ⊃ Δv·∂P/∂r = -ρg·Δv, so
+    # -∂/∂r(j·Δh) ⊃ +ρg·Δv·j is the same quantity. Adding H_dil
+    # here would double-count (verified 2026-05-03 7-cell matrix:
+    # F_dil/(-F_int) = -1.000 lock). Bower 2018 / SPIDER's entropy
+    # form has no such source either.
 
     return FluxOutput(
         heat_flux=heat_flux,
         mass_flux=mass_flux,
         eddy_diffusivity=kappa_h,
-        heating=heating_with_dil,
+        heating=heating_rate,
         jmix_heat=jmix_heat,
     )

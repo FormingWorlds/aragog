@@ -1,17 +1,27 @@
-"""B1 parity tests: JAX dilatation H_dil vs numpy EntropyState.
+"""Lock-in tests: the explicit Φ_vol source term is deleted.
 
-Locks the dilatation (PdV) heating wired into ``compute_fluxes``
-(aragog/jax/phase.py) against the numpy reference at
-``EntropyState.update`` (aragog/solver/entropy_state.py:715-777),
-which itself implements Soucasse §1.2 (Aragog formulation, June 2025):
+The Soucasse §1.2 dilatation source
 
     Phi_vol = rho · g · (1/rho_m - 1/rho_s) · (j_cm + j_gm)
-    H_dil   = Phi_vol / rho   [W/kg, specific form on staggered nodes]
+
+is NOT added to ``heating`` in either the numpy ``EntropyState.update``
+path or the JAX ``compute_fluxes`` path. This file pins that
+invariant: setting the legacy ``dilatation`` flag has no effect on the
+heating array, and the heating array contains only the radio + tidal
+sources passed in.
+
+The volumetric work this term used to capture is already implicit in
+the divergence of the Δh-weighted mass-flux contributions to
+``heat_flux``: by definition Δh = Δu + P·Δv, and on a hydrostatic
+column ∂Δh/∂r ⊃ Δv·∂P/∂r = -ρg·Δv, so -∂/∂r(j·Δh) ⊃ +ρg·Δv·j is the
+same quantity. Adding the explicit source on top double-counts (see
+finding_2026_05_03_phi_vol_double_count_verdict.md). Bower 2018 /
+SPIDER's entropy form has no such source either.
 
 The JAX RHS is the production CHILI integration path under
 ``solver_method='cvode'`` + ``use_jax_jacobian=True``; without these
-tests, a Soucasse-correct numpy fix can land on the numpy path and
-silently leave the JAX path unchanged (the original B1 trigger).
+tests, a regression that re-introduced an explicit Φ_vol on the JAX
+side would silently produce a 2× heating contribution.
 
 Markers: all tests run as ``unit`` (synthetic mesh, no SPIDER tables
 required for the off-case tests; parity tests skip when EOS tables
@@ -31,10 +41,12 @@ jnp = pytest.importorskip('jax.numpy')
 
 jax.config.update('jax_enable_x64', True)
 
-EOS_DIR = Path(os.environ.get(
-    'ARAGOG_TEST_EOS_DIR',
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-))
+EOS_DIR = Path(
+    os.environ.get(
+        'ARAGOG_TEST_EOS_DIR',
+        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
+    )
+)
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -46,8 +58,8 @@ pytestmark = pytest.mark.unit
 
 # ── helpers ───────────────────────────────────────────────────────────
 
-def _build_synthetic_mesh(N=24, R_cmb=3.48e6, R_surf=6.371e6,
-                          P_cmb=135.0e9, P_surf=1.0e5):
+
+def _build_synthetic_mesh(N=24, R_cmb=3.48e6, R_surf=6.371e6, P_cmb=135.0e9, P_surf=1.0e5):
     """Earth-like spherical mesh shared between numpy and JAX paths.
 
     Returns the numpy mesh-mock, JAX MeshArrays, and the entropy IC
@@ -71,19 +83,21 @@ def _build_synthetic_mesh(N=24, R_cmb=3.48e6, R_surf=6.371e6,
     # tests/test_entropy_pytest.py::TestJgravCmbDrain._build_mesh).
     class _Mesh:
         pass
+
     class _Sub:
         pass
+
     mesh = _Mesh()
     mesh.basic = _Sub()
     mesh.staggered = _Sub()
     mesh.basic.radii = r_basic
     mesh.staggered.radii = r_stag
-    mesh.basic.area = 4.0 * np.pi * r_basic ** 2
-    mesh.basic.volume = (4.0 / 3.0) * np.pi * np.diff(r_basic ** 3)
+    mesh.basic.area = 4.0 * np.pi * r_basic**2
+    mesh.basic.volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
     ml = np.minimum(r_basic - R_cmb, R_surf - r_basic)
     mesh.basic.mixing_length = np.maximum(ml, 1.0)
-    mesh.basic.mixing_length_squared = mesh.basic.mixing_length ** 2
-    mesh.basic.mixing_length_cubed = mesh.basic.mixing_length ** 3
+    mesh.basic.mixing_length_squared = mesh.basic.mixing_length**2
+    mesh.basic.mixing_length_cubed = mesh.basic.mixing_length**3
     mesh.basic.pressure = P_basic
     mesh.staggered.pressure = P_stag
     mesh.basic.mass_radii = r_basic
@@ -175,17 +189,25 @@ def test_dilatation_off_returns_input_heating_unchanged():
     eos_jax = EntropyEOS_JAX(EOS_DIR)
 
     params = PhaseParams(
-        grav_sep=True, mixing=True,
-        dilatation=False,        # ← off
+        grav_sep=True,
+        mixing=True,
+        dilatation=False,  # ← off
     )
-    S_init = jnp.full(r_stag.size, 3200.0)   # mushy band entropy
+    S_init = jnp.full(r_stag.size, 3200.0)  # mushy band entropy
     heating_in = jnp.full(r_stag.size, 1.234e-9)  # constant non-zero radio
     out = compute_fluxes(
-        S_init, 0.0, eos_jax, params, mesh_jax, heating_in,
+        S_init,
+        0.0,
+        eos_jax,
+        params,
+        mesh_jax,
+        heating_in,
     )
     np.testing.assert_allclose(
-        np.asarray(out.heating), np.asarray(heating_in),
-        rtol=0.0, atol=1e-30,
+        np.asarray(out.heating),
+        np.asarray(heating_in),
+        rtol=0.0,
+        atol=1e-30,
     )
 
 
@@ -208,18 +230,26 @@ def test_dilatation_on_no_transport_yields_zero_contribution():
     eos_jax = EntropyEOS_JAX(EOS_DIR)
 
     params = PhaseParams(
-        grav_sep=False, mixing=False,
+        grav_sep=False,
+        mixing=False,
         dilatation=True,
     )
     S_init = jnp.full(r_stag.size, 3200.0)
     heating_in = jnp.zeros(r_stag.size)
     out = compute_fluxes(
-        S_init, 0.0, eos_jax, params, mesh_jax, heating_in,
+        S_init,
+        0.0,
+        eos_jax,
+        params,
+        mesh_jax,
+        heating_in,
     )
     # Every staggered cell should still see exactly zero heating
     # because (jgrav, jmix) are gated to zero by their own flags.
     np.testing.assert_allclose(
-        np.asarray(out.heating), 0.0, atol=1e-30,
+        np.asarray(out.heating),
+        0.0,
+        atol=1e-30,
     )
 
 
@@ -248,19 +278,24 @@ def test_dilatation_pure_phase_zero_contribution():
     S_init = jnp.full(r_stag.size, S_liq_max + 500.0)
 
     params = PhaseParams(
-        grav_sep=True, mixing=True, dilatation=True,
+        grav_sep=True,
+        mixing=True,
+        dilatation=True,
     )
     heating_in = jnp.zeros(r_stag.size)
     out = compute_fluxes(
-        S_init, 0.0, eos_jax, params, mesh_jax, heating_in,
+        S_init,
+        0.0,
+        eos_jax,
+        params,
+        mesh_jax,
+        heating_in,
     )
     # Allow a small numerical floor from smoothing tails; the term
     # should be ~10 orders of magnitude below a typical mushy H_dil
     # contribution (which sits around 1e-10..1e-8 W/kg).
     max_abs_H = float(np.max(np.abs(np.asarray(out.heating))))
-    assert max_abs_H < 1e-15, (
-        f'Pure-liquid H_dil should vanish, got max|H|={max_abs_H:.3e}'
-    )
+    assert max_abs_H < 1e-15, f'Pure-liquid H_dil should vanish, got max|H|={max_abs_H:.3e}'
 
 
 def test_dilatation_unphysical_negative_density_fraction_raises():
@@ -283,14 +318,21 @@ def test_dilatation_unphysical_negative_density_fraction_raises():
     mesh, mesh_jax, r_stag, r_basic, P_stag, P_basic, _ = _build_synthetic_mesh(N=24)
     eos_jax = EntropyEOS_JAX(EOS_DIR)
     params = PhaseParams(
-        grav_sep=True, mixing=True, dilatation=True,
+        grav_sep=True,
+        mixing=True,
+        dilatation=True,
     )
     # Both an entropy under S_min and over S_max — clamped by the EOS
     # to the table edges. Result must remain finite (not NaN/Inf).
     S_init = jnp.full(r_stag.size, float(eos_jax.S_min) - 1000.0)
     heating_in = jnp.zeros(r_stag.size)
     out = compute_fluxes(
-        S_init, 0.0, eos_jax, params, mesh_jax, heating_in,
+        S_init,
+        0.0,
+        eos_jax,
+        params,
+        mesh_jax,
+        heating_in,
     )
     assert bool(jnp.all(jnp.isfinite(out.heating))), (
         'H_dil must remain finite even at clamped table-edge entropies'
@@ -298,14 +340,24 @@ def test_dilatation_unphysical_negative_density_fraction_raises():
 
 
 @needs_eos
-def test_dilatation_jax_matches_numpy_in_mushy_zone():
-    """Tier-2 parity: JAX H_dil agrees with numpy state.heating to ~1e-9.
+def test_no_phi_vol_added_in_mushy_zone():
+    """Mushy regime where the old Φ_vol would have been large: zero now.
 
     Builds matched numpy and JAX evaluators on the same synthetic mesh
-    with mushy-zone IC, runs ``EntropyState.update`` (numpy) and
-    ``compute_fluxes`` (JAX) with radio=tidal=0, then compares the two
-    heating arrays element-wise. Discriminating: the test fails if the
-    sign, magnitude, or spatial structure of H_dil disagrees.
+    with a fully mushy IC (Φ ~ 0.55 across the full pressure range)
+    and a small entropy gradient so that ``j_grav`` and ``j_mix`` are
+    both non-trivially non-zero — the regime where the old explicit
+    Φ_vol source was largest. With the source deleted, both paths must
+    now return ``heating == 0`` to floating-point. Setting the legacy
+    ``dilatation=True`` flag must NOT change this: the flag is a
+    vestigial accept-and-ignore parameter.
+
+    Discriminating values: a non-zero entropy gradient (5 J/kg/K from
+    CMB to surface) drives j_grav ~ 1e-3 kg/m²/s and j_mix ~ 1e-3
+    kg/m²/s in the mushy zone, which would have produced
+    H_dil ~ 1e-8 W/kg via Soucasse §1.2. We assert below 1e-15 W/kg,
+    which discriminates against any regression that re-introduces
+    even a single fractional copy of Φ_vol.
     """
     from aragog.eos.entropy import EntropyEOS
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
@@ -320,18 +372,21 @@ def test_dilatation_jax_matches_numpy_in_mushy_zone():
 
     # ---- numpy path ----
     phase_stag = EntropyPhaseEvaluator(
-        entropy_eos=eos_np, gravitational_acceleration=g_const,
+        entropy_eos=eos_np,
+        gravitational_acceleration=g_const,
         grain_size=0.1,
     )
     phase_stag.set_pressure(P_stag)
     phase_basic = EntropyPhaseEvaluator(
-        entropy_eos=eos_np, gravitational_acceleration=g_const,
+        entropy_eos=eos_np,
+        gravitational_acceleration=g_const,
         grain_size=0.1,
     )
     phase_basic.set_pressure(P_basic)
 
     class _Eval:
         pass
+
     evaluator = _Eval()
     evaluator.mesh = mesh
 
@@ -344,7 +399,7 @@ def test_dilatation_jax_matches_numpy_in_mushy_zone():
         gravitational_separation=True,
         mixing=True,
         radionuclides=False,
-        dilatation=True,
+        dilatation=True,  # legacy flag must be ignored
         tidal=False,
     )
 
@@ -362,60 +417,54 @@ def test_dilatation_jax_matches_numpy_in_mushy_zone():
 
     # ---- JAX path ----
     params = PhaseParams(
-        grav_sep=True, mixing=True, dilatation=True,
+        grav_sep=True,
+        mixing=True,
+        dilatation=True,  # legacy flag ignored
         grain_size=0.1,
     )
     heating_in = jnp.zeros(S_init.size)
     out = compute_fluxes(
-        jnp.asarray(S_init), 0.0, eos_jax, params, mesh_jax, heating_in,
+        jnp.asarray(S_init),
+        0.0,
+        eos_jax,
+        params,
+        mesh_jax,
+        heating_in,
     )
     H_jax = np.asarray(out.heating).ravel()
 
-    # Both should be non-zero somewhere in the mushy zone (otherwise
-    # the test is trivially passing on a zero-vs-zero comparison).
-    assert np.max(np.abs(H_numpy)) > 0.0, (
-        'numpy H_dil is identically zero — IC may be off the table or '
-        'transport flags wrong'
+    # Both paths must now produce zero heating contribution from
+    # phase segregation; the only sources are radio + tidal, both of
+    # which are off in this test.
+    max_abs_numpy = float(np.max(np.abs(H_numpy)))
+    max_abs_jax = float(np.max(np.abs(H_jax)))
+    assert max_abs_numpy < 1e-15, (
+        f'numpy heating array contains a non-zero contribution '
+        f'(max|H|={max_abs_numpy:.3e} W/kg) where only radio/tidal '
+        f'should be present; Φ_vol source likely re-introduced.'
     )
-    assert np.max(np.abs(H_jax)) > 0.0, (
-        'JAX H_dil is identically zero — wiring missing'
-    )
-
-    # Element-wise comparison. The numpy and JAX paths share the same
-    # EOS tables and finite-difference stencils; the only acceptable
-    # divergence is from float32 vs float64 paths inside JAX (we have
-    # x64 enabled) and from any residual smoothing differences. 1e-9
-    # rel is tight enough to surface a real bug while tolerating ULP
-    # drift across the two stack implementations.
-    abs_err = np.abs(H_jax - H_numpy)
-    denom = np.maximum(np.abs(H_numpy), 1e-30)
-    rel_err = abs_err / denom
-    max_rel = float(np.max(rel_err))
-    max_abs = float(np.max(abs_err))
-    # Use a slightly looser tolerance than 1e-12 because the numpy
-    # mock mesh ``quantity_at_staggered_nodes`` and the JAX
-    # ``0.5 * (basic[:-1] + basic[1:])`` are algebraically identical
-    # but the EOS lookup paths use different interpolation backends
-    # (scipy RegularGridInterpolator vs JAX-traced RGI port). 1e-7
-    # is the empirical floor for "physics agrees" without being so
-    # tight that ULP noise from these backends triggers a false fail.
-    assert max_rel < 1.0e-7, (
-        f'JAX H_dil disagrees with numpy: max rel err {max_rel:.3e}, '
-        f'max abs err {max_abs:.3e} W/kg'
+    assert max_abs_jax < 1e-15, (
+        f'JAX heating array contains a non-zero contribution '
+        f'(max|H|={max_abs_jax:.3e} W/kg) where only radio/tidal '
+        f'should be present; Φ_vol source likely re-introduced.'
     )
 
 
 @needs_eos
-def test_dilatation_changes_dSdt_in_integration():
-    """B1 amendment: dSdt must source heating from flux_out (with H_dil),
-    not from the closure-captured input heating array.
+def test_dilatation_flag_does_not_change_dSdt():
+    """The legacy ``dilatation`` flag is vestigial: dSdt is identical on/off.
 
-    Builds the same mushy IC twice — once with dilatation off, once
-    on — and calls ``dSdt`` (the actual JAX RHS that CVODE consumes).
-    The dS/dt arrays must differ in the mushy interior, proving that
-    H_dil enters the integration. Without this test, B1 v1 silently
-    computed H_dil correctly but never used it because dSdt sourced
-    the heating term from the closure args, not from flux_out.
+    Builds the same mushy IC twice — once with ``dilatation=False``,
+    once with ``dilatation=True`` — and calls ``dSdt`` (the actual JAX
+    RHS that CVODE consumes). The dS/dt arrays must agree to
+    floating-point: the flag is no longer wired to anything. A
+    regression that re-introduces a flag-gated H_dil contribution
+    would produce a non-zero delta in the mushy interior.
+
+    Discriminating values: the mushy IC produces dsdt ~ 1e-15 to
+    1e-12 J/kg/K/yr from convection alone; we assert the flag-on/off
+    delta stays below 1e-20 J/kg/K/yr, which is several orders of
+    magnitude tighter than the natural noise floor of dsdt.
     """
     from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import PhaseParams
@@ -430,81 +479,94 @@ def test_dilatation_changes_dSdt_in_integration():
     S_init = S_init - 5.0 * np.linspace(0.0, 1.0, S_init.size)
 
     bc = BoundaryParams(
-        outer_bc_type=4, outer_bc_value=0.0,
-        emissivity=1.0, T_eq=255.0,
-        inner_bc_type=0, inner_bc_value=0.0,
-        core_density=10738.0, core_heat_capacity=880.0,
+        outer_bc_type=4,
+        outer_bc_value=0.0,
+        emissivity=1.0,
+        T_eq=255.0,
+        inner_bc_type=0,
+        inner_bc_value=0.0,
+        core_density=10738.0,
+        core_heat_capacity=880.0,
         tfac_core_avg=1.147,
     )
     heating_in = jnp.zeros(S_init.size)
-    # A2: dSdt args now include an H_radio_fn slot; pass _no_radio
-    # so this test isolates the dilatation effect from radio.
     args_off = (
         eos_jax,
         PhaseParams(grav_sep=True, mixing=True, dilatation=False, grain_size=0.1),
-        mesh_jax, bc, heating_in, _no_radio,
+        mesh_jax,
+        bc,
+        heating_in,
+        _no_radio,
     )
     args_on = (
         eos_jax,
         PhaseParams(grav_sep=True, mixing=True, dilatation=True, grain_size=0.1),
-        mesh_jax, bc, heating_in, _no_radio,
+        mesh_jax,
+        bc,
+        heating_in,
+        _no_radio,
     )
     dsdt_off = np.asarray(dSdt(0.0, jnp.asarray(S_init), args_off))
     dsdt_on = np.asarray(dSdt(0.0, jnp.asarray(S_init), args_on))
 
     delta = dsdt_on - dsdt_off
-    # The dilatation term should produce a measurable difference in
-    # the mushy interior. If dSdt still sourced heating from the
-    # closure args (the v1 bug), every entry of delta would be ~0.
-    interior_delta = delta[1:-1]
-    max_abs_delta = float(np.max(np.abs(interior_delta)))
-    assert max_abs_delta > 0.0, (
-        'dS/dt is identical with dilatation on vs off — H_dil is not '
-        'entering the integration. dSdt must source the heating term '
-        'from flux_out.heating, not from the closure-captured args.'
+    max_abs_delta = float(np.max(np.abs(delta)))
+    assert max_abs_delta < 1e-20, (
+        f'dS/dt changed when dilatation flag flipped: max|delta|='
+        f'{max_abs_delta:.3e} J/kg/K/yr. The flag is supposed to be '
+        f'vestigial; this suggests Φ_vol was re-introduced or some '
+        f'other code path is reading the flag.'
     )
 
 
 @needs_eos
-def test_dilatation_sign_with_negative_dv():
-    """Sign check: melt lighter than solid (Δv > 0) and j_total > 0
-    (melt rising) ⇒ H_dil > 0.
+def test_radio_only_heating_in_mushy_zone():
+    """The only heating contribution in the mushy zone is radio + tidal.
 
-    Tests the canonical sign convention: in a typical magma ocean,
-    molten material is less dense (Δv = 1/ρ_m - 1/ρ_s > 0) and
-    Stokes-rises (j_grav > 0), so the dilatation work done on the
-    cell is positive (heating). A wrong sign in the JAX implementation
-    would flip the sign of every mushy-zone H_dil contribution.
+    Builds the same mushy IC as the parity test, but passes a non-zero
+    radio heating array as ``heating_in``. The output must equal the
+    input exactly (modulo radio decay if the integrator advances the
+    clock; here t=0 so radio is pristine), with no Φ_vol contribution
+    on top.
+
+    Discriminates against a regression that re-introduces a flag-gated
+    or unconditional Φ_vol: such a regression would add ~1e-8 W/kg in
+    the mushy zone, making the radio-only assumption fail.
     """
     from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import PhaseParams, compute_fluxes
 
     mesh, mesh_jax, r_stag, r_basic, P_stag, P_basic, _ = _build_synthetic_mesh(N=24)
     eos_jax = EntropyEOS_JAX(EOS_DIR)
-    # Mushy IC, mostly liquid (phi ~ 0.55), with a small inward
-    # entropy gradient to produce convective instability.
+    # Mushy IC with the same gradient as the parity test.
     S_sol = np.asarray(eos_jax.solidus_entropy(jnp.asarray(P_stag)))
     S_liq = np.asarray(eos_jax.liquidus_entropy(jnp.asarray(P_stag)))
     S_init = 0.45 * S_sol + 0.55 * S_liq
     S_init = S_init - 5.0 * np.linspace(0.0, 1.0, S_init.size)
 
     params = PhaseParams(
-        grav_sep=True, mixing=True, dilatation=True,
+        grav_sep=True,
+        mixing=True,
+        dilatation=True,
         grain_size=0.1,
     )
-    heating_in = jnp.zeros(S_init.size)
+    radio_value = 1.234e-9  # per-cell uniform [W/kg]
+    heating_in = jnp.full(S_init.size, radio_value)
     out = compute_fluxes(
-        jnp.asarray(S_init), 0.0, eos_jax, params, mesh_jax, heating_in,
+        jnp.asarray(S_init),
+        0.0,
+        eos_jax,
+        params,
+        mesh_jax,
+        heating_in,
     )
-    H = np.asarray(out.heating)
-
-    # In the mushy interior, H_dil should be predominantly positive
-    # (melt rising lifts mass against pressure, doing PdV work
-    # released as heat). Strict positive-only would be too brittle
-    # near the boundaries where j_total is artificially zeroed; we
-    # require the integral over the interior to be positive.
-    interior = H[1:-1]
-    assert float(np.sum(interior)) > 0.0, (
-        f'Expected net positive H_dil in mushy interior, '
-        f'got sum={float(np.sum(interior)):.3e} W/kg'
+    H_out = np.asarray(out.heating)
+    H_in = np.asarray(heating_in)
+    # Output must equal input exactly; no Φ_vol contribution.
+    np.testing.assert_allclose(H_out, H_in, rtol=0.0, atol=1e-30)
+    # Also discriminate against radio being silently dropped: max|H|
+    # must equal the radio value.
+    assert float(np.max(np.abs(H_out))) == pytest.approx(radio_value, rel=1e-12), (
+        f'Expected heating == {radio_value} (radio uniform), got '
+        f'max|H|={float(np.max(np.abs(H_out))):.3e}'
     )

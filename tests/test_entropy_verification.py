@@ -20,10 +20,12 @@ import pytest
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 
-EOS_DIR = Path(os.environ.get(
-    'ARAGOG_TEST_EOS_DIR',
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-))
+EOS_DIR = Path(
+    os.environ.get(
+        'ARAGOG_TEST_EOS_DIR',
+        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
+    )
+)
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -34,6 +36,7 @@ SECS_PER_YEAR = 31557600.0
 
 
 # -- Shared test infrastructure -----------------------------------------------
+
 
 def make_mesh(N=50, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5):
     """Build a simple radial mesh for verification tests."""
@@ -48,6 +51,7 @@ def make_mesh(N=50, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5):
 
     class Mesh:
         pass
+
     class SubMesh:
         pass
 
@@ -99,16 +103,17 @@ def make_state(mesh, entropy_eos, conduction=True, convection=True):
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
     from aragog.solver.entropy_state import EntropyState
 
-    phase_stag = EntropyPhaseEvaluator(
-        entropy_eos=entropy_eos, gravitational_acceleration=10.0)
+    phase_stag = EntropyPhaseEvaluator(entropy_eos=entropy_eos, gravitational_acceleration=10.0)
     phase_stag.set_pressure(mesh.staggered.pressure)
 
     phase_basic = EntropyPhaseEvaluator(
-        entropy_eos=entropy_eos, gravitational_acceleration=10.0)
+        entropy_eos=entropy_eos, gravitational_acceleration=10.0
+    )
     phase_basic.set_pressure(mesh.basic.pressure)
 
     class Eval:
         pass
+
     evaluator = Eval()
     evaluator.mesh = mesh
 
@@ -148,6 +153,7 @@ def compute_enthalpy_integral(S, mesh, entropy_eos):
 
 # -- Test 1: Entropy conservation ---------------------------------------------
 
+
 @needs_eos
 @pytest.mark.unit
 class TestEntropyConservation:
@@ -164,6 +170,7 @@ class TestEntropyConservation:
         (b) the mass-weighted enthalpy integral sum(rho*T*S*V) is conserved.
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -182,8 +189,7 @@ class TestEntropyConservation:
             cap = state.capacitance_staggered() * mesh.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0, 5000), S0, method='BDF',
-                        atol=0.01, rtol=1e-8)
+        sol = solve_ivp(dSdt, (0, 5000), S0, method='BDF', atol=0.01, rtol=1e-8)
         assert sol.status == 0
 
         S_final = sol.y[:, -1]
@@ -199,8 +205,7 @@ class TestEntropyConservation:
         H_final = compute_enthalpy_integral(S_final, mesh, eos)
         rel_change = abs(H_final - H0) / abs(H0)
         assert rel_change < 2e-3, (
-            f'Enthalpy integral changed by {rel_change:.2e} '
-            f'(should be < 0.2%)'
+            f'Enthalpy integral changed by {rel_change:.2e} (should be < 0.2%)'
         )
 
     def test_nonuniform_entropy_no_conduction(self):
@@ -213,6 +218,7 @@ class TestEntropyConservation:
         the profile homogenizes.
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -230,8 +236,7 @@ class TestEntropyConservation:
             cap = state.capacitance_staggered() * mesh.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0, 1000), S0, method='BDF',
-                        atol=0.1, rtol=1e-6)
+        sol = solve_ivp(dSdt, (0, 1000), S0, method='BDF', atol=0.1, rtol=1e-6)
         assert sol.status == 0
 
         S_final = sol.y[:, -1]
@@ -240,8 +245,7 @@ class TestEntropyConservation:
         H_final = compute_enthalpy_integral(S_final, mesh, eos)
         rel_change = abs(H_final - H0) / abs(H0)
         assert rel_change < 5e-3, (
-            f'Enthalpy integral sum(rho*T*S*V) changed by {rel_change:.4f} '
-            f'(should be < 0.5%)'
+            f'Enthalpy integral sum(rho*T*S*V) changed by {rel_change:.4f} (should be < 0.5%)'
         )
 
         # Entropy should homogenize (spread decreases)
@@ -253,6 +257,7 @@ class TestEntropyConservation:
 
 
 # -- Test 2: Energy conservation -----------------------------------------------
+
 
 @needs_eos
 @pytest.mark.smoke
@@ -272,6 +277,7 @@ class TestEnergyConservation:
         formulation is working as intended.
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -290,8 +296,7 @@ class TestEnergyConservation:
             cap = state.capacitance_staggered() * mesh.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0, 5000), S0, method='BDF',
-                        atol=0.01, rtol=1e-8)
+        sol = solve_ivp(dSdt, (0, 5000), S0, method='BDF', atol=0.01, rtol=1e-8)
         assert sol.status == 0
 
         S_final = sol.y[:, -1]
@@ -307,8 +312,7 @@ class TestEnergyConservation:
         H_final = compute_enthalpy_integral(S_final, mesh, eos)
         rel_H = abs(H_final - H0) / abs(H0)
         assert rel_H < 5e-3, (
-            f'Enthalpy integral sum(rho*T*S*V) changed by {rel_H:.2e} '
-            f'(should be < 0.5%)'
+            f'Enthalpy integral sum(rho*T*S*V) changed by {rel_H:.2e} (should be < 0.5%)'
         )
 
         # The WRONG measure (thermal energy) should NOT be conserved
@@ -343,6 +347,7 @@ class TestEnergyConservation:
         of years. Use the integrated entropy power balance directly.
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -362,8 +367,9 @@ class TestEnergyConservation:
             cap = state.capacitance_staggered() * V
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0, 500), S0, method='BDF',
-                        atol=0.5, rtol=1e-5, dense_output=True)
+        sol = solve_ivp(
+            dSdt, (0, 500), S0, method='BDF', atol=0.5, rtol=1e-5, dense_output=True
+        )
         assert sol.status == 0
 
         # Sample at uniform time points and compute, at each:
@@ -386,7 +392,7 @@ class TestEnergyConservation:
         _trapz = getattr(np, 'trapezoid', getattr(np, 'trapz', None))
         # Convert sample times from years to seconds for the integrals.
         t_sec = times * SECS_PER_YEAR
-        E_int = _trapz(Pwr_int, t_sec)   # entropy-power integral, J
+        E_int = _trapz(Pwr_int, t_sec)  # entropy-power integral, J
         Q_lost = _trapz(Pwr_rad, t_sec)  # radiated, J
 
         # Discrete conservation says E_int = -Q_lost exactly modulo
@@ -404,6 +410,7 @@ class TestEnergyConservation:
 
 # -- Test 3: Grey-body cooling timescale ---------------------------------------
 
+
 @needs_eos
 @pytest.mark.smoke
 class TestGreyBodyCooling:
@@ -412,6 +419,7 @@ class TestGreyBodyCooling:
     def test_surface_cools_monotonically(self):
         """T_surface must decrease monotonically during grey-body cooling."""
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -428,8 +436,9 @@ class TestGreyBodyCooling:
             cap = state.capacitance_staggered() * mesh.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0, 5000), S0, method='BDF',
-                        atol=0.5, rtol=1e-5, dense_output=True)
+        sol = solve_ivp(
+            dSdt, (0, 5000), S0, method='BDF', atol=0.5, rtol=1e-5, dense_output=True
+        )
         assert sol.status == 0
 
         # Sample T_surf at regular intervals
@@ -472,6 +481,7 @@ class TestGreyBodyCooling:
         and is checked by separate tests on long-time runs.
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -488,8 +498,7 @@ class TestGreyBodyCooling:
             cap = state.capacitance_staggered() * mesh.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0, 5000), S0, method='BDF',
-                        atol=0.5, rtol=1e-5)
+        sol = solve_ivp(dSdt, (0, 5000), S0, method='BDF', atol=0.5, rtol=1e-5)
         assert sol.status == 0
 
         S_final = sol.y[:, -1]
@@ -506,7 +515,7 @@ class TestGreyBodyCooling:
 
         # The upper third of the mantle should have lost some entropy
         # via convective penetration of the cooling boundary layer.
-        upper_third = S_final[2 * N // 3:]
+        upper_third = S_final[2 * N // 3 :]
         max_drop_upper = float(S0[0] - upper_third.min())
         assert max_drop_upper > 1.0, (
             f'Upper-third entropy did not decrease (max drop '
@@ -527,6 +536,7 @@ class TestGreyBodyCooling:
 
 # -- Tier 2c: Initial condition sensitivity -----------------------------------
 
+
 @needs_eos
 @pytest.mark.smoke
 class TestInitialEntropySweep:
@@ -536,6 +546,7 @@ class TestInitialEntropySweep:
     def test_all_ics_cool_monotonically(self):
         """Grey-body cooling from 4 different S0 values: T_surf always decreases."""
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
 
         for S0_val in [2500.0, 3200.0, 5000.0]:
@@ -554,8 +565,9 @@ class TestInitialEntropySweep:
                 cap = _s.capacitance_staggered() * mesh.basic.volume
                 return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-            sol = solve_ivp(dSdt, (0, 500), S0, method='BDF',
-                            atol=0.5, rtol=1e-5, dense_output=True)
+            sol = solve_ivp(
+                dSdt, (0, 500), S0, method='BDF', atol=0.5, rtol=1e-5, dense_output=True
+            )
             assert sol.status == 0, f'S0={S0_val}: solver failed'
 
             # Check T_surf is monotonically decreasing
@@ -569,12 +581,12 @@ class TestInitialEntropySweep:
             T_surfs = np.array(T_surfs)
             diffs = np.diff(T_surfs)
             n_increasing = np.sum(diffs > 5.0)  # allow tiny fluctuations
-            assert n_increasing == 0, (
-                f'S0={S0_val}: T_surf increased in {n_increasing} steps')
+            assert n_increasing == 0, f'S0={S0_val}: T_surf increased in {n_increasing} steps'
 
     def test_higher_s0_starts_hotter(self):
         """Higher initial entropy should produce higher initial surface T."""
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
 
         T_surfs = {}
@@ -589,13 +601,16 @@ class TestInitialEntropySweep:
         # T_surf should increase with S0
         assert T_surfs[3200.0] > T_surfs[2500.0], (
             f'T_surf(S0=3200)={T_surfs[3200.0]:.0f} K should be > '
-            f'T_surf(S0=2500)={T_surfs[2500.0]:.0f} K')
+            f'T_surf(S0=2500)={T_surfs[2500.0]:.0f} K'
+        )
         assert T_surfs[5000.0] > T_surfs[3200.0], (
             f'T_surf(S0=5000)={T_surfs[5000.0]:.0f} K should be > '
-            f'T_surf(S0=3200)={T_surfs[3200.0]:.0f} K')
+            f'T_surf(S0=3200)={T_surfs[3200.0]:.0f} K'
+        )
 
 
 # -- Tier 2d: Radiogenic heating ----------------------------------------------
+
 
 @needs_eos
 @pytest.mark.smoke
@@ -605,6 +620,7 @@ class TestRadiogenicHeating:
     def test_heating_increases_entropy(self):
         """Zero-flux BCs + constant heating: entropy rises monotonically."""
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -621,13 +637,11 @@ class TestRadiogenicHeating:
             cap = _s.capacitance_staggered() * mesh.basic.volume
             dsdt = -np.diff(energy_flux) / cap * SECS_PER_YEAR
             # Add heating: dS/dt += H / T
-            T_stag = eos.temperature(mesh.staggered.pressure,
-                                     np.asarray(S).flatten())
+            T_stag = eos.temperature(mesh.staggered.pressure, np.asarray(S).flatten())
             dsdt += H_rate / np.maximum(T_stag, 1.0) * SECS_PER_YEAR
             return dsdt
 
-        sol = solve_ivp(dSdt, (0, 1e6), S0, method='BDF',
-                        atol=0.1, rtol=1e-6)
+        sol = solve_ivp(dSdt, (0, 1e6), S0, method='BDF', atol=0.1, rtol=1e-6)
         assert sol.status == 0
 
         S_final = sol.y[:, -1]
@@ -636,10 +650,12 @@ class TestRadiogenicHeating:
         dS_mean = np.mean(S_final) - np.mean(S0)
         assert dS_mean > 0.01, (
             f'Mean entropy change {dS_mean:.4f} J/kg/K is too small. '
-            f'Heating should increase entropy (expected ~0.1 J/kg/K).')
+            f'Heating should increase entropy (expected ~0.1 J/kg/K).'
+        )
 
 
 # -- Tier 2e: Core cooling BC ------------------------------------------------
+
 
 @needs_eos
 @pytest.mark.smoke
@@ -649,6 +665,7 @@ class TestCoreCooling:
     def test_core_heats_mantle(self):
         """With core cooling BC, CMB flux should be positive (core to mantle)."""
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -670,22 +687,20 @@ class TestCoreCooling:
             T_top = _s.top_temperature.item()
             _s._heat_flux[-1] = 5.670374419e-8 * (T_top**4 - 255.0**4)
             # Core cooling at CMB (Bower+2018 Eq. 37)
-            rho_first = float(np.asarray(
-                _s.phase_staggered.density()).flat[0])
-            cp_first = float(np.asarray(
-                _s.phase_staggered.heat_capacity()).flat[0])
+            rho_first = float(np.asarray(_s.phase_staggered.density()).flat[0])
+            cp_first = float(np.asarray(_s.phase_staggered.heat_capacity()).flat[0])
             vol_first = float(np.asarray(mesh.basic.volume).flat[0])
             cell_cap = vol_first * rho_first * cp_first
-            alpha_core = (r_above / r_cmb)**2 / (
-                cell_cap / (core_cap * tfac) + 1.0)
+            alpha_core = (r_above / r_cmb) ** 2 / (cell_cap / (core_cap * tfac) + 1.0)
             _s._heat_flux[0] = alpha_core * _s._heat_flux[1]
 
             energy_flux = _s.heat_flux * mesh.basic.area
             cap = _s.capacitance_staggered() * mesh.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0, 1000), S0, method='BDF',
-                        atol=0.5, rtol=1e-5, dense_output=True)
+        sol = solve_ivp(
+            dSdt, (0, 1000), S0, method='BDF', atol=0.5, rtol=1e-5, dense_output=True
+        )
         assert sol.status == 0
 
         # Check CMB flux is positive at multiple times
@@ -695,20 +710,17 @@ class TestCoreCooling:
             S_t = sol.sol(t)
             state.update(S_t, t)
             # Recompute CMB flux
-            rho_first = float(np.asarray(
-                state.phase_staggered.density()).flat[0])
-            cp_first = float(np.asarray(
-                state.phase_staggered.heat_capacity()).flat[0])
+            rho_first = float(np.asarray(state.phase_staggered.density()).flat[0])
+            cp_first = float(np.asarray(state.phase_staggered.heat_capacity()).flat[0])
             vol_first = float(np.asarray(mesh.basic.volume).flat[0])
             cell_cap = vol_first * rho_first * cp_first
-            alpha_core = (r_above / r_cmb)**2 / (
-                cell_cap / (core_cap * tfac) + 1.0)
+            alpha_core = (r_above / r_cmb) ** 2 / (cell_cap / (core_cap * tfac) + 1.0)
             F_cmb = alpha_core * state._heat_flux[1]
-            assert F_cmb > 0, (
-                f't={t} yr: CMB flux = {F_cmb:.2e} W/m^2 (should be > 0)')
+            assert F_cmb > 0, f't={t} yr: CMB flux = {F_cmb:.2e} W/m^2 (should be > 0)'
 
 
 # -- Tier 2g: Mesh convergence -----------------------------------------------
+
 
 @needs_eos
 @pytest.mark.smoke
@@ -718,6 +730,7 @@ class TestMeshConvergence:
     def test_convergence_with_resolution(self):
         """T_surf at t=500 yr should converge as N increases."""
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
 
         T_surfs = {}
@@ -735,8 +748,9 @@ class TestMeshConvergence:
                 cap = _s.capacitance_staggered() * _m.basic.volume
                 return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-            sol = solve_ivp(dSdt, (0, 500), S0, method='BDF',
-                            atol=0.5, rtol=1e-5, dense_output=True)
+            sol = solve_ivp(
+                dSdt, (0, 500), S0, method='BDF', atol=0.5, rtol=1e-5, dense_output=True
+            )
             if sol.status == 0:
                 state.update(sol.sol(500), 500)
                 T_surfs[N] = state.top_temperature.item()
@@ -751,7 +765,8 @@ class TestMeshConvergence:
             diff_fine = abs(T_surfs[Ns[2]] - T_surfs[Ns[1]])
             assert diff_fine <= diff_coarse + 1.0, (
                 f'Not converging: |T(N={Ns[2]})-T(N={Ns[1]})| = {diff_fine:.1f} K '
-                f'> |T(N={Ns[1]})-T(N={Ns[0]})| = {diff_coarse:.1f} K')
+                f'> |T(N={Ns[1]})-T(N={Ns[0]})| = {diff_coarse:.1f} K'
+            )
 
 
 # -- Tier 1: Dilatation (PdV) heating physics --------------------------------
@@ -770,8 +785,13 @@ class TestMeshConvergence:
 # where ``L = T_fus * (S_liq - S_sol)`` is the latent heat of fusion (an
 # algebraic identity inside the mushy band; see ``entropy_state.py``).
 
+
 def _make_test_mesh_with_staggered_interp(
-    N=40, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5,
+    N=40,
+    R_cmb=3480e3,
+    R_surf=6371e3,
+    P_cmb=135e9,
+    P_surf=1e5,
 ):
     """Like make_mesh, but also exposes ``quantity_at_staggered_nodes``.
 
@@ -791,22 +811,26 @@ def _make_test_mesh_with_staggered_interp(
 
 
 def _make_dilatation_state(
-    mesh, eos, *, mixing=True, grav_sep=True, dilatation=True,
+    mesh,
+    eos,
+    *,
+    mixing=True,
+    grav_sep=True,
+    dilatation=True,
 ):
     """EntropyState with dilatation/grav_sep/mixing flags exposed."""
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
     from aragog.solver.entropy_state import EntropyState
 
-    phase_stag = EntropyPhaseEvaluator(
-        entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_stag = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
     phase_stag.set_pressure(mesh.staggered.pressure)
 
-    phase_basic = EntropyPhaseEvaluator(
-        entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_basic = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
     phase_basic.set_pressure(mesh.basic.pressure)
 
     class Eval:
         pass
+
     evaluator = Eval()
     evaluator.mesh = mesh
 
@@ -824,223 +848,237 @@ def _make_dilatation_state(
 
 @needs_eos
 @pytest.mark.unit
-class TestDilatationHeating:
-    """Verify the entropy-form dilatation heating against Soucasse's
-    formulation. Each test independently recomputes the expected
-    H_dil array from the state's exposed ``mass_flux``, ``_jmix_heat``,
-    and EOS quantities, and compares element-wise to the heating array
-    populated by ``EntropyState.update``.
+class TestNoExplicitPhiVolSource:
+    """Lock-in tests: the explicit Soucasse §1.2 source term
+
+        Phi_vol = rho · g · (1/rho_m - 1/rho_s) · (j_cm + j_gm)
+
+    is NOT added to ``state.heating``. The volumetric work it
+    formerly captured is already implicit in the divergence of the
+    Δh-weighted mass-flux contributions to ``state._heat_flux`` (chain
+    rule on Δh = Δu + P·Δv with hydrostatic ∂P/∂r = -ρg). Adding it
+    explicitly would double-count, as observed in the 2026-05-03
+    7-cell matrix where F_dil/(-F_int) locked at -1.000 to four
+    digits across three independent step caps. SPIDER's energy.c has
+    no Φ_vol source either; the Bower 2018 derivation closes via the
+    divergence alone.
+
+    Each test below sets up a regime where the OLD code would have
+    produced a measurable H_dil contribution (mushy zone with active
+    j_grav and/or j_mix), then asserts that ``state.heating`` stays
+    at the radio + tidal contribution only (or zero, when those are
+    off). The legacy ``dilatation`` flag must be vestigial: setting
+    True or False has no effect on the heating array.
     """
 
-    @staticmethod
-    def _expected_H_dil(state, mesh, *, include_mixing):
-        """Independently reconstruct the expected H_dil[i] (per-mass)."""
-        # Mass flux at basic nodes: gravitational-separation contribution
-        # is already in state._mass_flux (after smoothing + boundary zeros).
-        j_basic = np.asarray(state._mass_flux).ravel().copy()
+    def test_pure_phase_yields_zero_heating(self):
+        """S well above liquidus everywhere: zero phase fluxes, zero
+        heating regardless of dilatation flag.
 
-        if include_mixing:
-            L_basic = np.asarray(state.phase_basic.latent_heat()).ravel()
-            jmix_heat = np.asarray(state._jmix_heat).ravel()
-            j_mix = np.where(
-                np.abs(L_basic) > 1.0,
-                jmix_heat / np.maximum(L_basic, 1.0),
-                0.0,
+        Edge case: with no segregation flux, neither the old explicit
+        Φ_vol nor any new code path can add anything. Sanity check that
+        the post-deletion ``heating`` array is exactly the radio + tidal
+        contribution (zero in this fixture).
+        """
+        from aragog.eos.entropy import EntropyEOS
+
+        eos = EntropyEOS(EOS_DIR)
+        N = 30
+        for dil_flag in (False, True):
+            mesh = _make_test_mesh_with_staggered_interp(N=N)
+            state = _make_dilatation_state(
+                mesh,
+                eos,
+                dilatation=dil_flag,
             )
-            j_mix[0] = 0.0
-            j_mix[-1] = 0.0
-            j_basic = j_basic + j_mix
+            S_liq_max = float(np.max(eos.liquidus_entropy(mesh.basic.pressure)))
+            S0 = np.full(N, S_liq_max + 500.0)
+            state.update(S0, 0.0)
+            H = state.heating
+            assert np.max(np.abs(H)) < 1e-15, (
+                f'state.heating should be zero above liquidus '
+                f'(dilatation={dil_flag}); got max |H|={np.max(np.abs(H)):.2e}.'
+            )
 
-        j_stag = mesh.quantity_at_staggered_nodes(j_basic)
-        delta_v = np.asarray(
-            state.phase_staggered.delta_specific_volume()
-        ).ravel()
-        g_stag = np.abs(np.asarray(
-            state.phase_staggered.gravitational_acceleration()
-        ).ravel())
-        return g_stag * delta_v * j_stag
-
-    def test_dilatation_zero_above_liquidus(self):
-        """S well above liquidus everywhere: smth(phi) = 0, both fluxes
-        and H_dil vanish to floating-point noise.
-
-        Edge case: pure-melt regime. Discriminates against a buggy
-        formula that would still produce non-zero PdV from a non-zero
-        Δv (the smoothing/clip is what kills it).
+    def test_pure_solid_yields_zero_heating(self):
+        """S well below solidus everywhere: zero phase fluxes, zero
+        heating regardless of dilatation flag.
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
-        mesh = _make_test_mesh_with_staggered_interp(N=N)
-        state = _make_dilatation_state(mesh, eos)
+        for dil_flag in (False, True):
+            mesh = _make_test_mesh_with_staggered_interp(N=N)
+            state = _make_dilatation_state(
+                mesh,
+                eos,
+                dilatation=dil_flag,
+            )
+            S_sol_min = float(np.min(eos.solidus_entropy(mesh.basic.pressure)))
+            S0 = np.full(N, max(S_sol_min - 500.0, 100.0))
+            state.update(S0, 0.0)
+            H = state.heating
+            assert np.max(np.abs(H)) < 1e-15, (
+                f'state.heating should be zero below solidus '
+                f'(dilatation={dil_flag}); got max |H|={np.max(np.abs(H)):.2e}.'
+            )
 
-        # Put S well above the highest liquidus value at any pressure.
-        S_liq_max = float(np.max(eos.liquidus_entropy(mesh.basic.pressure)))
-        S0 = np.full(N, S_liq_max + 500.0)
-        state.update(S0, 0.0)
+    def test_no_phi_vol_in_mushy_zone_with_jgrav_only(self):
+        """Mushy zone with mixing OFF, grav_sep ON, dilatation flag ON:
+        ``state.heating`` must be exactly zero despite a non-zero
+        ``state._mass_flux`` from the gravitational separation flux.
 
-        H = state.heating
-        assert np.max(np.abs(H)) < 1e-10, (
-            f'H_dil should vanish above liquidus; got max |H|={np.max(np.abs(H)):.2e}.'
-        )
+        Pre-deletion: heating == g·Δv·j_grav, scale ~1e-9 W/kg.
+        Post-deletion: heating == 0 because no source is added.
 
-    def test_dilatation_zero_below_solidus(self):
-        """S well below solidus everywhere: smth(phi) = 0, H_dil vanishes."""
-        from aragog.eos.entropy import EntropyEOS
-        eos = EntropyEOS(EOS_DIR)
-        N = 30
-        mesh = _make_test_mesh_with_staggered_interp(N=N)
-        state = _make_dilatation_state(mesh, eos)
-
-        S_sol_min = float(np.min(eos.solidus_entropy(mesh.basic.pressure)))
-        S0 = np.full(N, max(S_sol_min - 500.0, 100.0))
-        state.update(S0, 0.0)
-
-        H = state.heating
-        assert np.max(np.abs(H)) < 1e-10, (
-            f'H_dil should vanish below solidus; got max |H|={np.max(np.abs(H)):.2e}.'
-        )
-
-    def test_dilatation_formula_matches_jgrav_only(self):
-        """With mixing OFF, H_dil must equal g·Δv·j_grav (Soucasse
-        reduced to pure gravitational separation).
-
-        Verifies that the original SPIDER-parity contribution is
-        preserved. Picks a mushy-band S so j_grav is non-zero and the
-        comparison is non-trivial.
+        Discriminating value: the test asserts max|heating| < 1e-15,
+        which is ~6 orders of magnitude tighter than the pre-deletion
+        H_dil scale, so any reintroduction of even a fractional copy
+        would flip this test.
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = _make_test_mesh_with_staggered_interp(N=N)
         state = _make_dilatation_state(
-            mesh, eos, mixing=False, grav_sep=True, dilatation=True,
+            mesh,
+            eos,
+            mixing=False,
+            grav_sep=True,
+            dilatation=True,
         )
 
         S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
         S_liq = np.asarray(eos.liquidus_entropy(mesh.basic.pressure)).ravel()
         S0_basic = 0.5 * (S_sol + S_liq)
-        # Add a downward gradient so j_grav is non-zero (melt rises)
         S0_basic = S0_basic + 60.0 * np.linspace(-1, 1, mesh.basic.radii.size)
         S0 = mesh.quantity_at_staggered_nodes(S0_basic)
-
         state.update(S0, 0.0)
 
-        H_actual = np.asarray(state.heating).ravel()
-        H_expected = self._expected_H_dil(state, mesh, include_mixing=False)
-
-        # We require non-trivial magnitude: the j_grav contribution must
-        # be measurable, otherwise the test is vacuous.
-        assert np.max(np.abs(H_expected)) > 1e-12, (
-            'Expected dilatation heating is zero everywhere; '
-            'test setup did not produce a non-trivial j_grav.'
+        # Confirm the regime: j_grav is non-zero somewhere, so the OLD
+        # code WOULD have produced non-zero H_dil here.
+        j_grav_max = float(np.max(np.abs(np.asarray(state._mass_flux).ravel())))
+        assert j_grav_max > 1e-8, (
+            f'Test setup did not engage j_grav (max|j|={j_grav_max:.2e}); '
+            f'this fixture is supposed to exercise the regime where the '
+            f'old explicit Φ_vol would have been largest.'
         )
-        np.testing.assert_allclose(
-            H_actual, H_expected,
-            rtol=1e-12, atol=1e-14,
-            err_msg='H_dil != g·Δv·j_grav with mixing=False',
+        # And yet heating must be exactly zero post-deletion.
+        H_max = float(np.max(np.abs(np.asarray(state.heating).ravel())))
+        assert H_max < 1e-15, (
+            f'Mushy regime with grav_sep+dilatation flags ON produced '
+            f'non-zero state.heating (max|H|={H_max:.2e}); the explicit '
+            f'Φ_vol source is supposed to be deleted.'
         )
 
-    def test_dilatation_formula_matches_jmix_plus_jgrav(self):
-        """With both mixing and grav_sep ON, H_dil must equal
-        g·Δv·(j_mix + j_grav). This is the Soucasse canonical form.
+    def test_no_phi_vol_in_mushy_zone_with_jmix_plus_jgrav(self):
+        """Mushy zone with both mixing and grav_sep ON: ``state.heating``
+        must be exactly zero despite non-zero j_grav AND j_mix.
 
-        Discriminating: compares against the numerically distinct
-        wrong formula H_dil = g·Δv·j_grav (the pre-fix code).
+        This is the regime where the old explicit
+        Φ_vol = g·Δv·(j_mix + j_grav) was largest in production CHILI
+        runs (1 M⊕ rheological-transition layer). The 7-cell matrix
+        attractor at F_dil/(-F_int) = -1.000 came from exactly this
+        source. Post-deletion: zero.
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = _make_test_mesh_with_staggered_interp(N=N)
         state = _make_dilatation_state(
-            mesh, eos, mixing=True, grav_sep=True, dilatation=True,
+            mesh,
+            eos,
+            mixing=True,
+            grav_sep=True,
+            dilatation=True,
         )
 
-        # Mushy interior with a gradient that drives BOTH j_grav (sign of
-        # gravity-driven separation) and j_mix (entropy-bracket gradient).
         S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
         S_liq = np.asarray(eos.liquidus_entropy(mesh.basic.pressure)).ravel()
         S0_basic = 0.5 * (S_sol + S_liq)
         S0_basic = S0_basic + 80.0 * np.linspace(-1, 1, mesh.basic.radii.size)
         S0 = mesh.quantity_at_staggered_nodes(S0_basic)
-
         state.update(S0, 0.0)
 
-        H_actual = np.asarray(state.heating).ravel()
-        H_expected = self._expected_H_dil(state, mesh, include_mixing=True)
-
-        # Non-triviality: BOTH contributions must be non-zero, otherwise
-        # the test is just retesting the j_grav-only path.
+        # Both fluxes engaged?
         L_basic = np.asarray(state.phase_basic.latent_heat()).ravel()
         jmix_heat = np.asarray(state._jmix_heat).ravel()
-        j_mix = np.where(
-            np.abs(L_basic) > 1.0,
-            jmix_heat / np.maximum(L_basic, 1.0), 0.0,
-        )
+        j_mix = np.where(np.abs(L_basic) > 1.0, jmix_heat / np.maximum(L_basic, 1.0), 0.0)
         j_grav = np.asarray(state._mass_flux).ravel()
         assert np.max(np.abs(j_mix)) > 1e-8, (
-            f'j_mix = 0 at all nodes; mixing flux did not engage. '
-            f'max|j_mix|={np.max(np.abs(j_mix)):.2e}'
+            f'j_mix did not engage (max|j_mix|={np.max(np.abs(j_mix)):.2e})'
         )
         assert np.max(np.abs(j_grav)) > 1e-8, (
-            f'j_grav = 0 at all nodes; gravitational separation flux did '
-            f'not engage. max|j_grav|={np.max(np.abs(j_grav)):.2e}'
+            f'j_grav did not engage (max|j_grav|={np.max(np.abs(j_grav)):.2e})'
+        )
+        # state.heating must STILL be zero — no Φ_vol added.
+        H_max = float(np.max(np.abs(np.asarray(state.heating).ravel())))
+        assert H_max < 1e-15, (
+            f'Mushy regime with both fluxes engaged produced non-zero '
+            f'state.heating (max|H|={H_max:.2e}); the explicit Φ_vol '
+            f'source is supposed to be deleted.'
         )
 
-        np.testing.assert_allclose(
-            H_actual, H_expected,
-            rtol=1e-12, atol=1e-14,
-            err_msg='H_dil != g·Δv·(j_mix + j_grav) with both fluxes ON',
-        )
-
-    def test_dilatation_jmix_changes_heating_magnitude(self):
-        """Toggling mixing ON adds a measurable contribution to H_dil
-        (post-fix). Pre-fix code would give identical heating in both
-        cases, since j_mix never entered the PdV term.
+    def test_dilatation_flag_is_vestigial(self):
+        """Flipping ``dilatation=False`` vs ``True`` does not change
+        ``state.heating``. Pre-deletion this would have been the
+        ~1e-9 W/kg difference between H_dil OFF and ON. Post-deletion
+        the flag is accept-and-ignore, kept for one release cycle.
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
 
-        # Same physical state, only the mixing flag differs.
-        S_sol = np.asarray(eos.solidus_entropy(
-            _make_test_mesh_with_staggered_interp(N=N).basic.pressure)).ravel()
-        S_liq = np.asarray(eos.liquidus_entropy(
-            _make_test_mesh_with_staggered_interp(N=N).basic.pressure)).ravel()
+        S_sol = np.asarray(
+            eos.solidus_entropy(_make_test_mesh_with_staggered_interp(N=N).basic.pressure)
+        ).ravel()
+        S_liq = np.asarray(
+            eos.liquidus_entropy(_make_test_mesh_with_staggered_interp(N=N).basic.pressure)
+        ).ravel()
         S0_basic = 0.5 * (S_sol + S_liq)
         S0_basic = S0_basic + 80.0 * np.linspace(-1, 1, S0_basic.size)
 
-        H_norms = {}
-        for mixing_on in (False, True):
+        H_arrays = {}
+        for dil_flag in (False, True):
             mesh = _make_test_mesh_with_staggered_interp(N=N)
             state = _make_dilatation_state(
-                mesh, eos, mixing=mixing_on, grav_sep=True, dilatation=True,
+                mesh,
+                eos,
+                mixing=True,
+                grav_sep=True,
+                dilatation=dil_flag,
             )
             S0 = mesh.quantity_at_staggered_nodes(S0_basic)
             state.update(S0, 0.0)
-            H_norms[mixing_on] = float(
-                np.linalg.norm(np.asarray(state.heating).ravel())
-            )
+            H_arrays[dil_flag] = np.asarray(state.heating).ravel().copy()
 
-        # Post-fix: H norm must change when mixing toggles. Pre-fix, the
-        # two values would be bit-identical because j_mix never entered.
-        rel_change = abs(H_norms[True] - H_norms[False]) / max(H_norms[False], 1e-30)
-        assert rel_change > 1e-6, (
-            f'Mixing flag did not change H_dil (rel change {rel_change:.2e}); '
-            f'norms = {H_norms}. Suggests j_mix is missing from the PdV term.'
+        max_abs_diff = float(np.max(np.abs(H_arrays[True] - H_arrays[False])))
+        assert max_abs_diff < 1e-15, (
+            f'Toggling dilatation flag changed state.heating by '
+            f'max|diff|={max_abs_diff:.2e}; the flag is supposed to be '
+            f'vestigial (the source was deleted as a double-count).'
         )
 
-    def test_dilatation_disabled_zeros_heating(self):
-        """With ``dilatation=False`` and no other heating sources,
-        ``state.heating`` must be identically zero regardless of mass
-        fluxes.
+    def test_disabled_dilatation_yields_zero_heating(self):
+        """With ``dilatation=False`` and no other sources, heating
+        is identically zero. (Trivially preserves the pre-deletion
+        invariant.)
         """
         from aragog.eos.entropy import EntropyEOS
+
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = _make_test_mesh_with_staggered_interp(N=N)
         state = _make_dilatation_state(
-            mesh, eos, mixing=True, grav_sep=True, dilatation=False,
+            mesh,
+            eos,
+            mixing=True,
+            grav_sep=True,
+            dilatation=False,
         )
 
         S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
@@ -1075,17 +1113,21 @@ class TestMassCoordinates:
     """
 
     @staticmethod
-    def _build_parameters(*, mass_coordinates, rho_top=4090.0,
-                          K_S=260e9, N=40):
+    def _build_parameters(*, mass_coordinates, rho_top=4090.0, K_S=260e9, N=40):
         """Construct a minimal Parameters object suitable for building
         a Mesh. Bypasses ConfigParser — keeps the test self-contained.
         """
         import numpy as _np
         from aragog.parser import (
-            Parameters, _ScalingsParameters, _SolverParameters,
-            _BoundaryConditionsParameters, _MeshParameters,
-            _EnergyParameters, _InitialConditionParameters,
-            _PhaseParameters, _PhaseMixedParameters,
+            Parameters,
+            _ScalingsParameters,
+            _SolverParameters,
+            _BoundaryConditionsParameters,
+            _MeshParameters,
+            _EnergyParameters,
+            _InitialConditionParameters,
+            _PhaseParameters,
+            _PhaseMixedParameters,
         )
 
         scalings = _ScalingsParameters(
@@ -1095,8 +1137,10 @@ class TestMassCoordinates:
             time=3.155760e6,
         )
         solver = _SolverParameters(
-            start_time=0.0, end_time=1.0,
-            atol=1e-6, rtol=1e-6,
+            start_time=0.0,
+            end_time=1.0,
+            atol=1e-6,
+            rtol=1e-6,
             tsurf_poststep_change=30.0,
             event_triggering=False,
         )
@@ -1122,9 +1166,13 @@ class TestMassCoordinates:
             mass_coordinates=mass_coordinates,
         )
         energy = _EnergyParameters(
-            conduction=True, convection=True,
-            gravitational_separation=False, mixing=False,
-            radionuclides=False, dilatation=False, tidal=False,
+            conduction=True,
+            convection=True,
+            gravitational_separation=False,
+            mixing=False,
+            radionuclides=False,
+            dilatation=False,
+            tidal=False,
         )
         ic = _InitialConditionParameters(
             initial_condition=1,
@@ -1132,29 +1180,42 @@ class TestMassCoordinates:
             basal_temperature=4000.0,
         )
         phase_liq = _PhaseParameters(
-            density=4000.0, viscosity=1e2, heat_capacity=1000.0,
-            melt_fraction=1.0, thermal_conductivity=4.0,
+            density=4000.0,
+            viscosity=1e2,
+            heat_capacity=1000.0,
+            melt_fraction=1.0,
+            thermal_conductivity=4.0,
             thermal_expansivity=1e-5,
         )
         phase_sol = _PhaseParameters(
-            density=4200.0, viscosity=1e21, heat_capacity=1000.0,
-            melt_fraction=0.0, thermal_conductivity=4.0,
+            density=4200.0,
+            viscosity=1e21,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
             thermal_expansivity=1e-5,
         )
         phase_mix = _PhaseMixedParameters(
             latent_heat_of_fusion=4e6,
             rheological_transition_melt_fraction=0.4,
             rheological_transition_width=0.15,
-            solidus='', liquidus='', phase='mixed',
+            solidus='',
+            liquidus='',
+            phase='mixed',
             phase_transition_width=0.1,
             grain_size=1e-3,
         )
         params = Parameters(
-            scalings=scalings, solver=solver,
-            boundary_conditions=bc, mesh=mesh_p,
-            energy=energy, initial_condition=ic,
-            phase_liquid=phase_liq, phase_solid=phase_sol,
-            phase_mixed=phase_mix, radionuclides=[],
+            scalings=scalings,
+            solver=solver,
+            boundary_conditions=bc,
+            mesh=mesh_p,
+            energy=energy,
+            initial_condition=ic,
+            phase_liquid=phase_liq,
+            phase_solid=phase_sol,
+            phase_mixed=phase_mix,
+            radionuclides=[],
         )
         # No scaling — keep SI throughout for direct interpretation.
         return params
@@ -1176,10 +1237,8 @@ class TestMassCoordinates:
         offsets = []
         K_values = [260e9, 1e12, 1e15]
         for K in K_values:
-            params_uni = self._build_parameters(
-                mass_coordinates=False, K_S=K, N=20)
-            params_xi = self._build_parameters(
-                mass_coordinates=True, K_S=K, N=20)
+            params_uni = self._build_parameters(mass_coordinates=False, K_S=K, N=20)
+            params_xi = self._build_parameters(mass_coordinates=True, K_S=K, N=20)
             mesh_uni = Mesh(params_uni)
             mesh_xi = Mesh(params_xi)
             r_uni = np.asarray(mesh_uni.basic.radii).ravel()
@@ -1213,8 +1272,8 @@ class TestMassCoordinates:
         ρ*(r), the bottom half must have *smaller* mean spacing.
         """
         from aragog.mesh import Mesh
-        params_xi = self._build_parameters(
-            mass_coordinates=True, K_S=260e9, N=40)
+
+        params_xi = self._build_parameters(mass_coordinates=True, K_S=260e9, N=40)
         mesh_xi = Mesh(params_xi)
         r = np.asarray(mesh_xi.basic.radii).ravel()
         dr = np.diff(r)
@@ -1249,8 +1308,7 @@ class TestMassCoordinates:
         """
         from aragog.mesh import Mesh
 
-        params_xi = self._build_parameters(
-            mass_coordinates=True, K_S=260e9, N=30)
+        params_xi = self._build_parameters(mass_coordinates=True, K_S=260e9, N=30)
         mesh_xi = Mesh(params_xi)
 
         xi_basic = np.asarray(mesh_xi.basic.mass_radii).ravel()
@@ -1270,19 +1328,19 @@ class TestMassCoordinates:
         # xi(r_i) per the analytical formula used by Mesh.__init__.
         xi_recomputed = np.empty_like(r_basic)
         for j, r in enumerate(r_basic):
-            M_shell_4pi = mesh_xi.eos.get_mass_within_radii(
-                np.array([[float(r)]])
-            ).item()
+            M_shell_4pi = mesh_xi.eos.get_mass_within_radii(np.array([[float(r)]])).item()
             M_shell = M_shell_4pi / (4.0 * np.pi)
             xi_recomputed[j] = (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
         # 2 m abs (twice Newton xtol). The CMB and surface are exact
         # by construction; interior nodes carry the brentq tolerance.
         np.testing.assert_allclose(
-            xi_recomputed, xi_basic, atol=2.0,
+            xi_recomputed,
+            xi_basic,
+            atol=2.0,
             err_msg='Round-trip xi(r_i) does not recover the uniform-xi '
-                    'grid via the same analytical formula the Newton '
-                    'solve targeted.',
+            'grid via the same analytical formula the Newton '
+            'solve targeted.',
         )
 
     def test_xi_grid_is_uniform_in_mass(self):
@@ -1290,8 +1348,8 @@ class TestMassCoordinates:
         spacing is constant to floating-point precision (not just
         approximately uniform after the Newton solve)."""
         from aragog.mesh import Mesh
-        params = self._build_parameters(
-            mass_coordinates=True, K_S=260e9, N=25)
+
+        params = self._build_parameters(mass_coordinates=True, K_S=260e9, N=25)
         mesh = Mesh(params)
         xi = np.asarray(mesh.basic.mass_radii).ravel()
         dxi = np.diff(xi)
@@ -1308,8 +1366,8 @@ class TestMassCoordinates:
         single point with no spacing.
         """
         from aragog.mesh import Mesh
-        params = self._build_parameters(
-            mass_coordinates=True, K_S=260e9, N=1)
+
+        params = self._build_parameters(mass_coordinates=True, K_S=260e9, N=1)
         # The Mesh constructor either raises or produces a degenerate
         # mesh. Either way, dxi/dr cannot be a useful array of length 0.
         try:

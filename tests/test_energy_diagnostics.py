@@ -421,11 +421,12 @@ def _make_minimal_state(
 
 @needs_eos
 def test_per_source_heating_arrays_exist_and_sum_to_total(eos):
-    """The decomposition must close: heating_radio + heating_dil +
-    heating_tidal == heating, at every staggered node, after a single
-    update() call. Catches the obvious bug where one source is added
-    to the cumulative ``_heating`` but not stashed into its per-source
-    array (or vice versa).
+    """The decomposition must close: heating_radio + heating_tidal ==
+    heating, at every staggered node, after a single update() call.
+    Catches the obvious bug where one source is added to the cumulative
+    ``_heating`` but not stashed into its per-source array (or vice
+    versa). The dilatation source was deleted (double-count of the
+    Δh-weighted divergence); only radio and tidal remain.
     """
 
     class StubRadio:
@@ -441,7 +442,7 @@ def test_per_source_heating_arrays_exist_and_sum_to_total(eos):
     )
     S0 = np.full(30, 4500.0)
     state.update(S0, time=4.567)
-    decomposed = state.heating_radio + state.heating_dil + state.heating_tidal
+    decomposed = state.heating_radio + state.heating_tidal
     np.testing.assert_allclose(
         decomposed,
         state.heating,
@@ -463,7 +464,6 @@ def test_disabled_sources_have_exactly_zero_heating_arrays(eos):
     S0 = np.full(30, 5500.0)
     state.update(S0, time=4.567)
     assert np.all(state.heating_radio == 0.0)
-    assert np.all(state.heating_dil == 0.0)
     assert np.all(state.heating_tidal == 0.0)
     assert np.all(state.heating == 0.0), 'All source flags off: cumulative heating must be zero'
 
@@ -541,7 +541,7 @@ def test_unphysical_negative_radio_heating_is_passed_through(eos):
         'negative get_heating must propagate into heating_radio for diagnosis'
     )
     np.testing.assert_allclose(
-        state.heating_radio + state.heating_dil + state.heating_tidal,
+        state.heating_radio + state.heating_tidal,
         state.heating,
         atol=1e-20,
     )

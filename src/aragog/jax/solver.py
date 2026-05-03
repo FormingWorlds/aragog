@@ -65,8 +65,7 @@ def _no_radio(_t_yr):
     return jnp.asarray(0.0)
 
 
-def make_radio_heating_fn(heat_prod, abundance, concentration,
-                          t0_years, half_life_years):
+def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_life_years):
     """Return a JAX-traceable per-cell radio heating ``H_radio(t_yr)``.
 
     Implements ``H_radio(t) = sum_i (heat_prod_i · abundance_i ·
@@ -106,6 +105,7 @@ def make_radio_heating_fn(heat_prod, abundance, concentration,
 # Boundary condition parameters
 # ---------------------------------------------------------------------------
 
+
 class BoundaryParams(eqx.Module):
     """Boundary condition configuration as a JAX pytree.
 
@@ -131,9 +131,9 @@ class BoundaryParams(eqx.Module):
 
     # Surface
     outer_bc_type: int = eqx.field(static=True)
-    outer_bc_value: jax.Array      # prescribed flux [W/m^2] (type 4)
+    outer_bc_value: jax.Array  # prescribed flux [W/m^2] (type 4)
     emissivity: jax.Array
-    T_eq: jax.Array                # equilibrium temperature [K] (type 1)
+    T_eq: jax.Array  # equilibrium temperature [K] (type 1)
     # UTBL (ultra-thin thermal boundary layer) Cardano correction
     # (Bower+2018 Eq. 18). When param_utbl is True (static, so the
     # branch is constant-folded) the surface radiating temperature
@@ -146,10 +146,10 @@ class BoundaryParams(eqx.Module):
 
     # CMB
     inner_bc_type: int = eqx.field(static=True)
-    inner_bc_value: jax.Array      # prescribed flux [W/m^2] (type 2)
-    core_density: jax.Array        # [kg/m^3]
+    inner_bc_value: jax.Array  # prescribed flux [W/m^2] (type 2)
+    core_density: jax.Array  # [kg/m^3]
     core_heat_capacity: jax.Array  # [J/kg/K]
-    tfac_core_avg: jax.Array       # T_avg/T_cmb ratio
+    tfac_core_avg: jax.Array  # T_avg/T_cmb ratio
 
     # Energy_balance constants (CMB BC type 5).
     # Cached from the numpy solver's _cache_bc_constants():
@@ -160,11 +160,24 @@ class BoundaryParams(eqx.Module):
     core_M: jax.Array
     cmb_dr_cmb: jax.Array
 
-    def __init__(self, *, outer_bc_type, outer_bc_value, emissivity, T_eq,
-                 inner_bc_type, inner_bc_value, core_density,
-                 core_heat_capacity, tfac_core_avg,
-                 cmb_area=0.0, core_M=0.0, cmb_dr_cmb=0.0,
-                 param_utbl=False, param_utbl_const=0.0):
+    def __init__(
+        self,
+        *,
+        outer_bc_type,
+        outer_bc_value,
+        emissivity,
+        T_eq,
+        inner_bc_type,
+        inner_bc_value,
+        core_density,
+        core_heat_capacity,
+        tfac_core_avg,
+        cmb_area=0.0,
+        core_M=0.0,
+        cmb_dr_cmb=0.0,
+        param_utbl=False,
+        param_utbl_const=0.0,
+    ):
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
         self.emissivity = jnp.asarray(emissivity, dtype=jnp.float64)
@@ -185,18 +198,20 @@ class BoundaryParams(eqx.Module):
 # Solver output
 # ---------------------------------------------------------------------------
 
+
 class SolveResult(NamedTuple):
     """Output from solve_entropy."""
 
-    S_final: jax.Array    # entropy at staggered nodes [J/kg/K]
-    t_final: float        # final time [yr]
-    n_steps: int          # number of solver steps
-    success: bool         # solver converged
+    S_final: jax.Array  # entropy at staggered nodes [J/kg/K]
+    t_final: float  # final time [yr]
+    n_steps: int  # number of solver steps
+    success: bool  # solver converged
 
 
 # ---------------------------------------------------------------------------
 # RHS function
 # ---------------------------------------------------------------------------
+
 
 def _utbl_tsurf_jax(T_interior: jax.Array, b: jax.Array) -> jax.Array:
     """JAX-traceable Cardano cubic root for the UTBL correction.
@@ -208,7 +223,7 @@ def _utbl_tsurf_jax(T_interior: jax.Array, b: jax.Array) -> jax.Array:
     """
     p = 1.0 / b
     q = -T_interior / b
-    discriminant = q ** 2 / 4.0 + p ** 3 / 27.0
+    discriminant = q**2 / 4.0 + p**3 / 27.0
     sqrt_disc = jnp.sqrt(discriminant)
     return jnp.cbrt(-q / 2.0 + sqrt_disc) + jnp.cbrt(-q / 2.0 - sqrt_disc)
 
@@ -259,10 +274,7 @@ def _apply_cmb_bc(
     if bc.inner_bc_type == 1:
         # Core cooling (Bower+2018 Eq. 37)
         r_cmb = mesh.radii_basic[0]
-        core_cap = (
-            4.0 / 3.0 * jnp.pi * r_cmb**3
-            * bc.core_density * bc.core_heat_capacity
-        )
+        core_cap = 4.0 / 3.0 * jnp.pi * r_cmb**3 * bc.core_density * bc.core_heat_capacity
         rho_first = phase_stag_rho[0]
         cp_first = phase_stag_Cp[0]
         vol_first = mesh.volume[0]
@@ -325,25 +337,30 @@ def dSdt(
     heating = heating_static + H_radio_fn(t)
 
     # Compute fluxes (conduction, convection, grav sep, mixing).
-    # ``flux_out.heating`` is the input ``heating`` plus any
-    # state-dependent contributions added inside ``compute_fluxes``
-    # (dilatation H_dil when params.dilatation is enabled). The dsdt
-    # assembly below MUST source from ``flux_out.heating`` rather than
-    # the closure-captured static ``heating`` so dynamic terms enter
-    # the integration; this is a hidden invariant.
+    # ``flux_out.heating`` is the input ``heating`` (radio + tidal)
+    # passed through unchanged: ``compute_fluxes`` no longer adds any
+    # state-dependent volumetric source (the explicit dilatation
+    # H_dil source was removed as a double-count of the Δh-weighted
+    # divergence). Sourcing dsdt from ``flux_out.heating`` is still
+    # correct and remains a hidden invariant for any future
+    # contribution added inside compute_fluxes.
     flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
     heat_flux = flux_out.heat_flux
 
     # Phase properties needed for BCs
     phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
-    phase_basic_T = evaluate_phase(eos, params, mesh.P_basic,
-                                    mesh.quantity_matrix @ S).temperature
+    phase_basic_T = evaluate_phase(
+        eos, params, mesh.P_basic, mesh.quantity_matrix @ S
+    ).temperature
 
     # Apply boundary conditions
     heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic_T)
     heat_flux = _apply_cmb_bc(
-        heat_flux, bc, mesh,
-        phase_stag.density, phase_stag.heat_capacity,
+        heat_flux,
+        bc,
+        mesh,
+        phase_stag.density,
+        phase_stag.heat_capacity,
     )
 
     # Flux divergence at staggered nodes
@@ -357,7 +374,7 @@ def dSdt(
     # dS/dt from flux divergence [J/kg/K/s]
     dsdt = -delta_energy_flux / capacitance
 
-    # Internal heating: dS/dt += H / T (sources radio + tidal + H_dil)
+    # Internal heating: dS/dt += H / T (sources radio + tidal)
     T_stag = phase_stag.temperature
     dsdt = dsdt + flux_out.heating / jnp.maximum(T_stag, 1.0)
 
@@ -368,6 +385,7 @@ def dSdt(
 # ---------------------------------------------------------------------------
 # Energy_balance core BC RHS (state vector = [S, dSdr_cmb], length N+1)
 # ---------------------------------------------------------------------------
+
 
 def dSdt_energy_balance(
     t: float,
@@ -426,7 +444,12 @@ def dSdt_energy_balance(
     # place; the overrides ensure the CMB cell's contributions use
     # the state-tracked dSdr_cmb instead of the FD-derived gradient.
     flux_out = compute_fluxes(
-        S, t, eos, params, mesh, heating,
+        S,
+        t,
+        eos,
+        params,
+        mesh,
+        heating,
         S_basic_cmb_override=S_basic_cmb,
         dSdr_cmb_override=dSdr_cmb,
     )
@@ -452,12 +475,10 @@ def dSdt_energy_balance(
     F_cmb_from_dSdr = heat_flux[0]
 
     # Flux divergence (entropy derivatives, same as dSdt). Source the
-    # heating term from ``flux_out.heating`` (radio + tidal + H_dil),
-    # not the closure-captured static ``heating``, so the dynamic
-    # dilatation contribution enters the integration here too. Hidden
-    # invariant: any future heating contribution added inside
-    # compute_fluxes must be sourced from flux_out.heating, not the
-    # static input array.
+    # heating term from ``flux_out.heating`` (radio + tidal), not the
+    # closure-captured static ``heating``. Hidden invariant: any future
+    # heating contribution added inside compute_fluxes must be sourced
+    # from flux_out.heating, not the static input array.
     energy_flux = heat_flux * mesh.area
     delta_energy_flux = jnp.diff(energy_flux)
     cap = phase_stag.capacitance
@@ -483,15 +504,18 @@ def dSdt_energy_balance(
     d_dSdr_cmb_dt_per_yr = d_dSdr_cmb_dt_per_s * SECS_PER_YEAR
 
     # Assemble extended-state derivative
-    return jnp.concatenate([
-        dSdt_per_yr,
-        jnp.array([d_dSdr_cmb_dt_per_yr]),
-    ])
+    return jnp.concatenate(
+        [
+            dSdt_per_yr,
+            jnp.array([d_dSdr_cmb_dt_per_yr]),
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
 # Solver wrapper
 # ---------------------------------------------------------------------------
+
 
 def solve_entropy(
     S0: jax.Array,
@@ -553,10 +577,10 @@ def solve_entropy(
 
     term = diffrax.ODETerm(_rhs)
     _solvers = {
-        'tsit5': diffrax.Tsit5,            # explicit RK5, fast JIT (~5s)
+        'tsit5': diffrax.Tsit5,  # explicit RK5, fast JIT (~5s)
         'implicit_euler': diffrax.ImplicitEuler,  # 1-stage implicit, moderate JIT (~14s)
-        'kvaerno3': diffrax.Kvaerno3,      # 4-stage ESDIRK, slow JIT (~minutes)
-        'kvaerno5': diffrax.Kvaerno5,      # 7-stage ESDIRK, very slow JIT
+        'kvaerno3': diffrax.Kvaerno3,  # 4-stage ESDIRK, slow JIT (~minutes)
+        'kvaerno5': diffrax.Kvaerno5,  # 7-stage ESDIRK, very slow JIT
     }
     if method not in _solvers:
         raise ValueError(f'Unknown solver method: {method}. Choose from {list(_solvers)}')

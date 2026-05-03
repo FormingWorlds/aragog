@@ -225,11 +225,10 @@ class EntropyState:
         # Per-source heating decomposition at staggered nodes [W/kg].
         # Stashed alongside the cumulative ``_heating`` so the energy-
         # conservation diagnostic can sum each source over cell mass to
-        # report total radiogenic / dilatational / tidal power in W,
-        # without re-running the heating assembly. Mirrors the per-component
-        # flux decomposition above.
+        # report total radiogenic / tidal power in W, without re-running
+        # the heating assembly. Mirrors the per-component flux
+        # decomposition above.
         self._heating_radio = np.zeros(n_staggered)
-        self._heating_dil = np.zeros(n_staggered)
         self._heating_tidal = np.zeros(n_staggered)
 
         # Basic-node EOS state snapshots (populated in update()).
@@ -739,13 +738,19 @@ class EntropyState:
         self._phi_basic_diag = np.asarray(self.phase_basic.melt_fraction()).ravel()
 
         # ── Internal heating (power per unit mass [W/kg]) ────────────
+        # Sources: radiogenic + tidal only. The volumetric work done by
+        # phase segregation against the pressure gradient is already
+        # implicit in the divergence of the Δh-weighted mass-flux
+        # contributions to ``_heat_flux``: by definition Δh = Δu + P·Δv,
+        # and on a hydrostatic column ∂Δh/∂r ⊃ Δv·∂P/∂r = −ρg·Δv, so
+        # −∂/∂r(j·Δh) ⊃ +ρ·g·Δv·j is the same quantity Soucasse §1.2
+        # formerly added explicitly as Φ_vol. Adding it again would
+        # double-count (verified in 2026-05-03 7-cell matrix:
+        # F_dil/(−F_int) = −1.000 to four digits across three step
+        # caps). The Bower 2018 entropy form has no such source either.
         n_stag = len(self._entropy_staggered)
         self._heating = np.zeros(n_stag)
-        # Reset per-source diagnostic buffers each pass; the energy
-        # conservation diagnostic later mass-integrates each one to
-        # report total radiogenic / dilatational / tidal power in W.
         self._heating_radio = np.zeros(n_stag)
-        self._heating_dil = np.zeros(n_stag)
         self._heating_tidal = np.zeros(n_stag)
 
         if self._radionuclides and hasattr(self._evaluator, 'radionuclides'):
@@ -754,66 +759,6 @@ class EntropyState:
                 radio += r.get_heating(time)
             self._heating += radio
             self._heating_radio[:] = radio
-
-        if self._dilatation and (self._grav_sep or self._mixing):
-            # Dilatation (PdV) heating: work done when melt of different
-            # density crosses a pressure gradient. Per Soucasse §1.2
-            # (Aragog formulation, June 2025) and the 2607 PROTEUS-paper
-            # canonical form
-            #     Phi_vol = rho * g * (1/rho_m - 1/rho_s) * (j_cm + j_gm),
-            # the contribution must include BOTH the gravitational-
-            # separation mass flux ``j_gm`` and the convective-mixing
-            # mass flux ``j_cm``. In specific (per-unit-mass) form
-            #     H_dil = g * (1/rho_m - 1/rho_s) * (j_cm + j_gm).
-            # Units: [m/s^2] * [m^3/kg] * [kg/m^2/s] = [W/kg].
-            #
-            # In the entropy formulation the chemical-mixing flux is
-            # computed directly as a heat flux ``_jmix_heat`` rather
-            # than via ``mass_flux * latent_heat``. Inside the mushy
-            # band, the algebraic identity
-            #     dS/dr - [phi*dS_liq/dP + (1-phi)*dS_sol/dP] * dP/dr
-            #         = (S_liq - S_sol) * dphi/dr
-            #         = dS_phase * dphi/dr
-            # makes the bracket exactly equal to dS_phase * dphi/dr, so
-            #     _jmix_heat = -kappa_c * rho * T_fus * dS_phase * dphi/dr
-            #                = -kappa_c * rho * L * dphi/dr.
-            # Therefore the equivalent mass flux is
-            #     j_cm = _jmix_heat / L
-            # which recovers Soucasse's ``j_cm = -rho * kappa_h * dphi/dr``
-            # exactly (with kappa_c playing the role of kappa_h and the
-            # smoothing factor inherited from the mushy-band gate).
-            mesh = self._evaluator.mesh
-            j_total = self._mass_flux.copy()
-            if self._mixing:
-                latent_heat_basic = np.asarray(self.phase_basic.latent_heat()).ravel()
-                # Guard against tiny latent heat at table edges; outside
-                # the mushy band _jmix_heat is itself zero by the smth
-                # gate, so the division is well-defined wherever it
-                # contributes.
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    j_mix = np.where(
-                        np.abs(latent_heat_basic) > 1.0,
-                        self._jmix_heat / np.maximum(latent_heat_basic, 1.0),
-                        0.0,
-                    )
-                # Boundaries already enforced on _jmix_heat; carry
-                # through to keep no-mass-flux at CMB and surface.
-                j_mix[0] = 0.0
-                j_mix[-1] = 0.0
-                j_total = j_total + j_mix
-
-            mass_flux_stag = mesh.quantity_at_staggered_nodes(j_total).ravel()
-            delta_v = np.asarray(self.phase_staggered.delta_specific_volume()).ravel()
-            # Per-node gravity aligned with the staggered grid; use
-            # element-wise multiplication so non-uniform g(r) is
-            # respected (collapsing to a scalar mean would silently
-            # bias the dilatation heating on stratified profiles).
-            g_stag = np.abs(
-                np.asarray(self.phase_staggered.gravitational_acceleration()).ravel()
-            )
-            dil_term = g_stag * delta_v * mass_flux_stag
-            self._heating += dil_term
-            self._heating_dil[:] = dil_term
 
         if self._tidal:
             if len(self._tidal_array) == 1:
@@ -836,11 +781,6 @@ class EntropyState:
     def heating_radio(self) -> npt.NDArray:
         """Radiogenic heating contribution [W/kg] at staggered nodes."""
         return self._heating_radio
-
-    @property
-    def heating_dil(self) -> npt.NDArray:
-        """Dilatation (PdV) heating contribution [W/kg] at staggered nodes."""
-        return self._heating_dil
 
     @property
     def heating_tidal(self) -> npt.NDArray:
