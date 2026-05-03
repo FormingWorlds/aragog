@@ -5,8 +5,49 @@ from __future__ import annotations
 import numpy as np
 import numpy.typing as npt
 
+from aragog.eos import EntropyEOS
 from aragog.mesh import Mesh
 from aragog.utilities import FloatOrArray
+
+
+def total_enthalpy(
+    eos: EntropyEOS,
+    P_stag: npt.NDArray,
+    S_stag: npt.NDArray,
+    mass_stag: npt.NDArray,
+) -> float:
+    """Mass-integrated specific enthalpy of the mantle [J].
+
+    Computed via the EOS-consistent ``h(P, S)`` table that
+    ``EntropyEOS`` precomputes from the fundamental thermodynamic
+    relation ``dh = T dS + (1/rho) dP``. Latent heat is captured
+    automatically because the integration path crosses the mushy
+    zone at constant temperature while entropy sweeps across the
+    phase transition.
+
+    Parameters
+    ----------
+    eos : EntropyEOS
+        EOS object whose ``specific_enthalpy(P, S)`` lookup table has
+        already been built (done in ``EntropyEOS.__init__``).
+    P_stag : ndarray
+        Pressure at staggered nodes [Pa].
+    S_stag : ndarray
+        Entropy at staggered nodes [J/kg/K].
+    mass_stag : ndarray
+        Mass per shell at staggered nodes [kg].
+
+    Returns
+    -------
+    float
+        Total enthalpy [J]. The absolute value is anchor-dependent
+        (zero is fixed by the EOS table corner) but the additive
+        constant cancels in any time difference, which is what the
+        conservation diagnostic uses.
+    """
+    h_stag = np.asarray(eos.specific_enthalpy(P_stag, S_stag)).ravel()
+    mass = np.asarray(mass_stag).ravel()
+    return float(np.dot(h_stag, mass))
 
 
 def volume_average(mesh: Mesh, staggered_quantity: npt.NDArray) -> float:
@@ -49,7 +90,7 @@ def melt_fraction_global(
     float
         Global melt fraction.
     """
-    if phase_mode == "mixed" or phase_mode == "composite":
+    if phase_mode == 'mixed' or phase_mode == 'composite':
         return volume_average(mesh, melt_fraction_staggered[:, -1])
     else:
         return melt_fraction_staggered
@@ -92,10 +133,7 @@ def rheological_front(
     # General case
     else:
         idx = np.argmin(
-            np.abs(
-                melt_fraction_basic[:, -1]
-                - rheological_transition_melt_fraction
-            )
+            np.abs(melt_fraction_basic[:, -1] - rheological_transition_melt_fraction)
         )
         rf = mesh.basic.radii[idx]
 

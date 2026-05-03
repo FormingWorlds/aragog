@@ -131,7 +131,9 @@ def _interp_bilinear_scalar(
 
 
 def _interp_1d_scalar(
-    x_grid: list[float], y_grid: list[float], x: float,
+    x_grid: list[float],
+    y_grid: list[float],
+    x: float,
 ) -> float:
     """Pure-Python 1D linear interpolation with clamping.
 
@@ -210,7 +212,11 @@ def _load_spider_ps_table(filepath: Path) -> dict:
     if len(P_unique) != n_P or len(S_unique) != n_S:
         logger.warning(
             'Table %s: expected %d x %d grid, got %d x %d unique values',
-            filepath.name, n_P, n_S, len(P_unique), len(S_unique),
+            filepath.name,
+            n_P,
+            n_S,
+            len(P_unique),
+            len(S_unique),
         )
 
     # Reshape to 2D grid. SPIDER writes S varying slowest (outer loop),
@@ -224,8 +230,11 @@ def _load_spider_ps_table(filepath: Path) -> dict:
     # that break the Jconv-Jmix cancellation in the mushy zone, causing
     # the CMB cell to drain. SPIDER uses bilinear for all P-S lookups.
     interp = RegularGridInterpolator(
-        (P_unique, S_unique), values,
-        method='linear', bounds_error=False, fill_value=np.nan,
+        (P_unique, S_unique),
+        values,
+        method='linear',
+        bounds_error=False,
+        fill_value=np.nan,
     )
 
     return {
@@ -272,13 +281,14 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
     # cancellation failure that drains the CMB cell. SPIDER uses plain
     # linear interpolation for solidus/liquidus S(P).
     from scipy.interpolate import interp1d
-    _lin = interp1d(P, S, kind='linear', bounds_error=False,
-                    fill_value=(float(S[0]), float(S[-1])))
+
+    _lin = interp1d(
+        P, S, kind='linear', bounds_error=False, fill_value=(float(S[0]), float(S[-1]))
+    )
 
     # Finite-difference derivative for dS/dP (matches linear segments).
     _dSdP = np.gradient(S, P)
-    _dlin = interp1d(P, _dSdP, kind='linear', bounds_error=False,
-                     fill_value=(0.0, 0.0))
+    _dlin = interp1d(P, _dSdP, kind='linear', bounds_error=False, fill_value=(0.0, 0.0))
 
     def interp(Pq):
         Pq_arr = np.asarray(Pq, dtype=float)
@@ -296,8 +306,12 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
         return out.reshape(Pq_arr.shape)
 
     return {
-        'P': P, 'S': S, 'interp': interp, 'dinterp': dinterp,
-        'P_list': P.tolist(), 'S_list': S.tolist(),
+        'P': P,
+        'S': S,
+        'interp': interp,
+        'dinterp': dinterp,
+        'P_list': P.tolist(),
+        'S_list': S.tolist(),
     }
 
 
@@ -324,23 +338,25 @@ class EntropyEOS:
         self._tables: dict[str, dict] = {}
         for phase in ('solid', 'melt'):
             self._tables[f'temperature_{phase}'] = _load_spider_ps_table(
-                eos_dir / f'temperature_{phase}.dat')
+                eos_dir / f'temperature_{phase}.dat'
+            )
             self._tables[f'density_{phase}'] = _load_spider_ps_table(
-                eos_dir / f'density_{phase}.dat')
+                eos_dir / f'density_{phase}.dat'
+            )
             self._tables[f'heat_capacity_{phase}'] = _load_spider_ps_table(
-                eos_dir / f'heat_capacity_{phase}.dat')
+                eos_dir / f'heat_capacity_{phase}.dat'
+            )
             self._tables[f'dTdPs_{phase}'] = _load_spider_ps_table(
-                eos_dir / f'adiabat_temp_grad_{phase}.dat')
+                eos_dir / f'adiabat_temp_grad_{phase}.dat'
+            )
 
             # Thermal expansivity: load from table if available (matches
             # SPIDER exactly), otherwise derived from thermodynamic identity.
             alpha_file = eos_dir / f'thermal_exp_{phase}.dat'
             if alpha_file.is_file():
-                self._tables[f'thermal_exp_{phase}'] = _load_spider_ps_table(
-                    alpha_file)
+                self._tables[f'thermal_exp_{phase}'] = _load_spider_ps_table(alpha_file)
         self._has_alpha_tables = (
-            'thermal_exp_solid' in self._tables
-            and 'thermal_exp_melt' in self._tables
+            'thermal_exp_solid' in self._tables and 'thermal_exp_melt' in self._tables
         )
         if self._has_alpha_tables:
             logger.info('Thermal expansivity loaded from P-S tables (SPIDER parity)')
@@ -360,10 +376,146 @@ class EntropyEOS:
         self.S_max = float(max(ref_melt['S'][-1], ref_solid['S'][-1]))
 
         logger.info(
-            'Entropy EOS loaded: P=[%.2e, %.2e] Pa, S=[%.0f, %.0f] J/kg/K, '
-            '%d x %d grid (melt)',
-            self.P_min, self.P_max, self.S_min, self.S_max,
-            ref_melt['n_P'], ref_melt['n_S'],
+            'Entropy EOS loaded: P=[%.2e, %.2e] Pa, S=[%.0f, %.0f] J/kg/K, %d x %d grid (melt)',
+            self.P_min,
+            self.P_max,
+            self.S_min,
+            self.S_max,
+            ref_melt['n_P'],
+            ref_melt['n_S'],
+        )
+
+        self._build_enthalpy_table()
+
+    def _build_enthalpy_table(self) -> None:
+        """Precompute specific enthalpy h(P, S) on the table grid.
+
+        Uses the entropy form of the fundamental thermodynamic relation,
+        ``dh = T dS + (1/rho) dP``, integrated along a fixed path:
+        first an isobar at the lowest tabulated pressure (S varying
+        from S_grid[0] to the query S), then an isentrope at the query
+        S (P varying from P_grid[0] to the query P). Anchor enthalpy
+        at the table corner is set to zero. Because dh is exact, the
+        integral is path-independent, but this particular path uses
+        only table-coordinate values that the loader has already
+        evaluated, which is what makes the precomputation cheap.
+
+        The absolute level of the resulting table is anchor-dependent
+        and therefore arbitrary; only differences h(P_a, S_a) - h(P_b,
+        S_b) and the time derivatives that follow from them are
+        physical. The conservation diagnostic that consumes this table
+        cancels the anchor identically.
+
+        Latent heat enters automatically: across the mushy zone at
+        constant P the temperature on the integration isobar is held
+        at the local melting temperature while S sweeps from solidus
+        to liquidus, so the contribution to h equals T_phase * (S_liq
+        - S_sol), which is exactly the latent heat per unit mass.
+        """
+        # Pick the integration grid: take pressure from either table
+        # (they share the same P axis in the SPIDER convention) and
+        # entropy from the union of solid and melt S axes so the table
+        # spans the full physical range from cold solid (S near
+        # solidus_S(P_min)) up to superheated melt. Using only the
+        # melt table's S grid would silently clamp solid-phase queries
+        # to the lowest melt-table S and report identical h for any
+        # cell below that threshold.
+        P_grid = np.asarray(self._tables['temperature_solid']['P'], dtype=float)
+        S_grid = np.unique(
+            np.concatenate(
+                [
+                    np.asarray(self._tables['temperature_solid']['S'], dtype=float),
+                    np.asarray(self._tables['temperature_melt']['S'], dtype=float),
+                ]
+            )
+        )
+        n_P, n_S = len(P_grid), len(S_grid)
+
+        # ── Step 1: isobar h(P0, S) = ∫_{S_grid[0]}^{S} T(P0, S') dS'
+        P0 = float(P_grid[0])
+        T_isobar = np.asarray(self.temperature(np.full(n_S, P0), S_grid)).ravel()
+        h_isobar = np.zeros(n_S)
+        h_isobar[1:] = np.cumsum(0.5 * (T_isobar[:-1] + T_isobar[1:]) * np.diff(S_grid))
+
+        # ── Step 2: isentrope h(P, S_j) = h_isobar[j] + ∫_{P0}^P 1/rho dP
+        h_grid = np.empty((n_P, n_S))
+        for j in range(n_S):
+            S_iso = np.full(n_P, S_grid[j])
+            rho_iso = np.asarray(self.density(P_grid, S_iso)).ravel()
+            inv_rho = 1.0 / np.maximum(rho_iso, 1.0)
+            seg = 0.5 * (inv_rho[:-1] + inv_rho[1:]) * np.diff(P_grid)
+            h_grid[0, j] = h_isobar[j]
+            h_grid[1:, j] = h_isobar[j] + np.cumsum(seg)
+
+        self._h_grid_P = P_grid
+        self._h_grid_S = S_grid
+        self._h_grid_P_list = P_grid.tolist()
+        self._h_grid_S_list = S_grid.tolist()
+        self._h_grid = h_grid
+        self._h_interp = RegularGridInterpolator(
+            (P_grid, S_grid),
+            h_grid,
+            method='linear',
+            bounds_error=False,
+            fill_value=None,
+        )
+
+        logger.info(
+            'EOS-consistent enthalpy table built: %d x %d grid, '
+            'anchor h(P=%.2e, S=%.0f) = 0 J/kg, '
+            'h(P_max, S_max) = %.3e J/kg',
+            n_P,
+            n_S,
+            P0,
+            float(S_grid[0]),
+            float(h_grid[-1, -1]),
+        )
+
+    def specific_enthalpy(
+        self,
+        P: npt.NDArray | float,
+        S: npt.NDArray | float,
+    ) -> npt.NDArray:
+        """EOS-consistent specific enthalpy h(P, S) [J/kg].
+
+        Bilinear interpolation on the precomputed table built in
+        ``_build_enthalpy_table``. Inputs outside the table P or S
+        range are clamped to the nearest table edge so the lookup
+        never returns NaN; callers querying out-of-range states
+        receive the boundary value instead of an exception.
+
+        Parameters
+        ----------
+        P : array or float
+            Pressure [Pa].
+        S : array or float
+            Entropy [J/kg/K].
+
+        Returns
+        -------
+        ndarray
+            Specific enthalpy [J/kg], same shape as broadcast(P, S).
+        """
+        P = np.asarray(P, dtype=float)
+        S = np.asarray(S, dtype=float)
+        P_clamped = np.clip(P, self._h_grid_P[0], self._h_grid_P[-1])
+        S_clamped = np.clip(S, self._h_grid_S[0], self._h_grid_S[-1])
+        pts = np.column_stack([P_clamped.ravel(), S_clamped.ravel()])
+        return self._h_interp(pts).reshape(P_clamped.shape)
+
+    def _specific_enthalpy_scalar(self, P: float, S: float) -> float:
+        """Specific enthalpy at a single (P, S) point, pure Python.
+
+        Used inside scalar callbacks where numpy >= 2.4 forbids implicit
+        ndarray-to-scalar conversion. Same pattern as
+        ``temperature_scalar``.
+        """
+        return _interp_bilinear_scalar(
+            self._h_grid_P_list,
+            self._h_grid_S_list,
+            self._h_grid,
+            P,
+            S,
         )
 
     def solidus_entropy(self, P: npt.NDArray | float) -> npt.NDArray:
@@ -400,13 +552,17 @@ class EntropyEOS:
     def _solidus_entropy_scalar(self, P: float) -> float:
         """Solidus entropy at a single pressure, pure Python."""
         return _interp_1d_scalar(
-            self._solidus['P_list'], self._solidus['S_list'], P,
+            self._solidus['P_list'],
+            self._solidus['S_list'],
+            P,
         )
 
     def _liquidus_entropy_scalar(self, P: float) -> float:
         """Liquidus entropy at a single pressure, pure Python."""
         return _interp_1d_scalar(
-            self._liquidus['P_list'], self._liquidus['S_list'], P,
+            self._liquidus['P_list'],
+            self._liquidus['S_list'],
+            P,
         )
 
     def _melt_fraction_scalar(self, P: float, S: float) -> float:
@@ -418,7 +574,11 @@ class EntropyEOS:
         return max(0.0, min(1.0, phi))
 
     def _lookup_scalar(
-        self, prop_name: str, phase: str, P: float, S: float,
+        self,
+        prop_name: str,
+        phase: str,
+        P: float,
+        S: float,
     ) -> float:
         """Look up a single property value using pure-Python bilinear interp.
 
@@ -440,7 +600,11 @@ class EntropyEOS:
         """
         table = self._tables[f'{prop_name}_{phase}']
         return _interp_bilinear_scalar(
-            table['P_list'], table['S_list'], table['values'], P, S,
+            table['P_list'],
+            table['S_list'],
+            table['values'],
+            P,
+            S,
         )
 
     def temperature_scalar(self, P: float, S: float) -> float:
@@ -477,22 +641,26 @@ class EntropyEOS:
             S_for_melt = S
 
         # Clamp to each table's own range
-        S_sol_clamped = max(solid_table['S_list'][0],
-                           min(S_for_solid, solid_table['S_list'][-1]))
-        S_melt_clamped = max(melt_table['S_list'][0],
-                            min(S_for_melt, melt_table['S_list'][-1]))
-        P_sol_clamped = max(solid_table['P_list'][0],
-                           min(P, solid_table['P_list'][-1]))
-        P_melt_clamped = max(melt_table['P_list'][0],
-                            min(P, melt_table['P_list'][-1]))
+        S_sol_clamped = max(
+            solid_table['S_list'][0], min(S_for_solid, solid_table['S_list'][-1])
+        )
+        S_melt_clamped = max(melt_table['S_list'][0], min(S_for_melt, melt_table['S_list'][-1]))
+        P_sol_clamped = max(solid_table['P_list'][0], min(P, solid_table['P_list'][-1]))
+        P_melt_clamped = max(melt_table['P_list'][0], min(P, melt_table['P_list'][-1]))
 
         val_solid = _interp_bilinear_scalar(
-            solid_table['P_list'], solid_table['S_list'],
-            solid_table['values'], P_sol_clamped, S_sol_clamped,
+            solid_table['P_list'],
+            solid_table['S_list'],
+            solid_table['values'],
+            P_sol_clamped,
+            S_sol_clamped,
         )
         val_melt = _interp_bilinear_scalar(
-            melt_table['P_list'], melt_table['S_list'],
-            melt_table['values'], P_melt_clamped, S_melt_clamped,
+            melt_table['P_list'],
+            melt_table['S_list'],
+            melt_table['values'],
+            P_melt_clamped,
+            S_melt_clamped,
         )
 
         # NaN-safe phase-weighted blend
@@ -503,8 +671,7 @@ class EntropyEOS:
             result += (1.0 - phi) * val_solid
         return result
 
-    def melt_fraction(self, P: npt.NDArray | float,
-                      S: npt.NDArray | float) -> npt.NDArray:
+    def melt_fraction(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Melt fraction phi from position between solidus and liquidus.
 
         phi = 0 for S <= S_sol, phi = 1 for S >= S_liq, linear between.
@@ -518,7 +685,10 @@ class EntropyEOS:
         return phi
 
     def _lookup_at_phase_boundary(
-        self, prop_name: str, P: npt.NDArray, phase: str,
+        self,
+        prop_name: str,
+        P: npt.NDArray,
+        phase: str,
     ) -> npt.NDArray:
         """Look up a property at the solidus or liquidus for the given phase.
 
@@ -541,7 +711,10 @@ class EntropyEOS:
         return table['interp'](pts).reshape(P.shape)
 
     def _lookup_phase_weighted(
-        self, prop_name: str, P: npt.NDArray, S: npt.NDArray,
+        self,
+        prop_name: str,
+        P: npt.NDArray,
+        S: npt.NDArray,
     ) -> npt.NDArray:
         """Look up a property with Lever Rule blending (SPIDER parity).
 
@@ -589,17 +762,16 @@ class EntropyEOS:
         val_melt = melt_table['interp'](pts_melt).reshape(P.shape)
 
         # NaN-safe phase-weighted blend: avoid 0.0 * NaN = NaN
-        result = np.where(phi > 0, phi * val_melt, 0.0) + \
-                 np.where(phi < 1, (1.0 - phi) * val_solid, 0.0)
+        result = np.where(phi > 0, phi * val_melt, 0.0) + np.where(
+            phi < 1, (1.0 - phi) * val_solid, 0.0
+        )
         return result
 
-    def temperature(self, P: npt.NDArray | float,
-                    S: npt.NDArray | float) -> npt.NDArray:
+    def temperature(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Temperature T(P, S) [K]."""
         return self._lookup_phase_weighted('temperature', P, S)
 
-    def density(self, P: npt.NDArray | float,
-                S: npt.NDArray | float) -> npt.NDArray:
+    def density(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Density rho(P, S) [kg/m^3].
 
         In the mushy zone (0 < phi < 1): harmonic mean of end-member
@@ -621,9 +793,8 @@ class EntropyEOS:
         # Mushy zone: evaluate at phase boundaries (Lever Rule)
         rho_sol_boundary = self._lookup_at_phase_boundary('density', P, 'solid')
         rho_liq_boundary = self._lookup_at_phase_boundary('density', P, 'melt')
-        inv_rho_mushy = (
-            phi / np.maximum(rho_liq_boundary, 1.0)
-            + (1.0 - phi) / np.maximum(rho_sol_boundary, 1.0)
+        inv_rho_mushy = phi / np.maximum(rho_liq_boundary, 1.0) + (1.0 - phi) / np.maximum(
+            rho_sol_boundary, 1.0
         )
         rho_mushy = 1.0 / np.maximum(inv_rho_mushy, 1e-30)
 
@@ -640,8 +811,7 @@ class EntropyEOS:
 
         return np.where(mushy, rho_mushy, rho_single)
 
-    def heat_capacity(self, P: npt.NDArray | float,
-                      S: npt.NDArray | float) -> npt.NDArray:
+    def heat_capacity(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Specific heat capacity Cp(P, S) [J/kg/K].
 
         Linear blend of solid and melt P-S tables by melt fraction.
@@ -650,9 +820,9 @@ class EntropyEOS:
         """
         return self._lookup_phase_weighted('heat_capacity', P, S)
 
-    def heat_capacity_latent_blend(self, P: npt.NDArray | float,
-                                   S: npt.NDArray | float,
-                                   width: float = 0.01) -> npt.NDArray:
+    def heat_capacity_latent_blend(
+        self, P: npt.NDArray | float, S: npt.NDArray | float, width: float = 0.01
+    ) -> npt.NDArray:
         """Latent-heat-augmented Cp(P, S), matching SPIDER convention.
 
         Mirrors SPIDER's ``eos_composite.c:226-232`` formula:
@@ -691,12 +861,12 @@ class EntropyEOS:
         # Phase boundaries at this pressure
         S_sol = np.asarray(self.solidus_entropy(P)).reshape(P.shape)
         S_liq = np.asarray(self.liquidus_entropy(P)).reshape(P.shape)
-        T_sol = np.asarray(
-            self._lookup_at_phase_boundary('temperature', P, 'solid')
-        ).reshape(P.shape)
-        T_liq = np.asarray(
-            self._lookup_at_phase_boundary('temperature', P, 'melt')
-        ).reshape(P.shape)
+        T_sol = np.asarray(self._lookup_at_phase_boundary('temperature', P, 'solid')).reshape(
+            P.shape
+        )
+        T_liq = np.asarray(self._lookup_at_phase_boundary('temperature', P, 'melt')).reshape(
+            P.shape
+        )
 
         dS = S_liq - S_sol
         dT = T_liq - T_sol
@@ -729,7 +899,7 @@ class EntropyEOS:
         smooth = np.where(
             gphi > 0.5,
             0.5 * (1.0 + np.tanh((1.0 - gphi) / w)),  # fall at liquidus
-            0.5 * (1.0 + np.tanh(gphi / w)),            # rise at solidus
+            0.5 * (1.0 + np.tanh(gphi / w)),  # rise at solidus
         )
 
         return smooth * Cp_mix + (1.0 - smooth) * Cp_pure
@@ -774,25 +944,22 @@ class EntropyEOS:
         # Phase-boundary quantities at this pressure
         S_sol = np.asarray(self.solidus_entropy(P)).reshape(P.shape)
         S_liq = np.asarray(self.liquidus_entropy(P)).reshape(P.shape)
-        T_sol = np.asarray(
-            self._lookup_at_phase_boundary('temperature', P, 'solid')
-        ).reshape(P.shape)
-        T_liq = np.asarray(
-            self._lookup_at_phase_boundary('temperature', P, 'melt')
-        ).reshape(P.shape)
-        rho_sol = np.asarray(
-            self._lookup_at_phase_boundary('density', P, 'solid')
-        ).reshape(P.shape)
-        rho_liq = np.asarray(
-            self._lookup_at_phase_boundary('density', P, 'melt')
-        ).reshape(P.shape)
+        T_sol = np.asarray(self._lookup_at_phase_boundary('temperature', P, 'solid')).reshape(
+            P.shape
+        )
+        T_liq = np.asarray(self._lookup_at_phase_boundary('temperature', P, 'melt')).reshape(
+            P.shape
+        )
+        rho_sol = np.asarray(self._lookup_at_phase_boundary('density', P, 'solid')).reshape(
+            P.shape
+        )
+        rho_liq = np.asarray(self._lookup_at_phase_boundary('density', P, 'melt')).reshape(
+            P.shape
+        )
 
         # Composite density (harmonic mean, SPIDER eos_composite.c:236)
         phi = self.melt_fraction(P, S)
-        inv_rho = (
-            phi / np.maximum(rho_liq, 1.0)
-            + (1.0 - phi) / np.maximum(rho_sol, 1.0)
-        )
+        inv_rho = phi / np.maximum(rho_liq, 1.0) + (1.0 - phi) / np.maximum(rho_sol, 1.0)
         rho_comp = 1.0 / np.maximum(inv_rho, 1e-30)
 
         # Mixed-phase alpha (SPIDER eos_composite.c:246)
@@ -801,9 +968,7 @@ class EntropyEOS:
         alpha_mix = (rho_sol - rho_liq) / safe_dT / rho_comp
 
         # Pure-phase alpha from the linear-blend tables
-        alpha_pure = self._lookup_phase_weighted(
-            'thermal_exp', P, S
-        )
+        alpha_pure = self._lookup_phase_weighted('thermal_exp', P, S)
 
         # SPIDER-parity tanh smoothing (same as heat_capacity_latent_blend)
         dS = S_liq - S_sol
@@ -819,8 +984,7 @@ class EntropyEOS:
 
         return smooth * alpha_mix + (1.0 - smooth) * alpha_pure
 
-    def dTdPs(self, P: npt.NDArray | float,
-              S: npt.NDArray | float) -> npt.NDArray:
+    def dTdPs(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Adiabatic temperature gradient dT/dP|_S (P, S) [K/Pa].
 
         This is the SPIDER convention: dT/dP along the adiabat, NOT
@@ -842,8 +1006,9 @@ class EntropyEOS:
         T_fus = 0.5 * (T_sol + T_liq)
         return T_fus * np.maximum(S_liq - S_sol, 1.0)
 
-    def thermal_expansivity(self, P: npt.NDArray | float,
-                            S: npt.NDArray | float) -> npt.NDArray:
+    def thermal_expansivity(
+        self, P: npt.NDArray | float, S: npt.NDArray | float
+    ) -> npt.NDArray:
         """Thermal expansivity alpha(P, S) [1/K].
 
         When P-S thermal_exp tables are available (generated alongside
@@ -905,8 +1070,8 @@ class EntropyEOS:
         if f_lo * f_hi > 0:
             raise ValueError(
                 f'Cannot invert T={T_target:.1f} K at P={P:.2e} Pa: '
-                f'T(S_min={S_lo:.0f})={T_tgt+f_lo:.0f} K, '
-                f'T(S_max={S_hi:.0f})={T_tgt+f_hi:.0f} K. '
+                f'T(S_min={S_lo:.0f})={T_tgt + f_lo:.0f} K, '
+                f'T(S_max={S_hi:.0f})={T_tgt + f_hi:.0f} K. '
                 f'Target outside table range.'
             )
 
