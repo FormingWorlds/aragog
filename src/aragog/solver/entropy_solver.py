@@ -88,9 +88,17 @@ def _validate_eos_radius_range(mesh_params) -> None:
             'downstream np.interp would silently corrupt gravity / '
             'pressure / density lookups.'
         )
+    # Resume from a saved mesh: Zalmoxis recomputes inner/outer R_int
+    # from the live planet state, while the EOS table's radii are
+    # frozen at the launch-time mesh. Single-ULP drift between the two
+    # is harmless for downstream interpolation but trips a strict
+    # `<`/`>` check. Use a relative tolerance scaled to the mesh span,
+    # with a 1 m floor so absurd configurations (mismatched planet
+    # radii) still raise.
+    atol = max(1.0, 1.0e-9 * max(span_mesh, 1.0))
     if (
-        float(er[0]) < inner
-        or float(er[-1]) > outer
+        float(er[0]) < inner - atol
+        or float(er[-1]) > outer + atol
         or (span_mesh > 0 and span_eos < 0.75 * span_mesh)
     ):
         raise ValueError(
