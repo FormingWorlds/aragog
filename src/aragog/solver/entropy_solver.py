@@ -324,6 +324,21 @@ class SolverOutput:
     Q_dil_total: float  # mantle-integrated dilatation (PdV) power [W];
     # zero when ``[interior_energetics.aragog].dilatation = false``.
     Q_tidal_total: float  # mantle-integrated tidal power [W]
+
+    # Per-call energy-balance contributions [J] integrated over the
+    # CVODE sub-step trajectory. Replaces end-of-step instantaneous
+    # capture as the conservation primitive: PROTEUS just cumulatively
+    # sums these across calls instead of trapezoidal-interpolating
+    # between possibly-transient end-of-step F_cmb / Q_dil snapshots.
+    # Sign convention: positive = energy ADDED to the mantle over the
+    # call (so step_dE_F_int_J is negative when the mantle is losing
+    # heat to the atmosphere).
+    step_dE_F_int_J: float  # = -∫ F_int * A_int dt [J]
+    step_dE_F_cmb_J: float  # = +∫ F_cmb * A_cmb dt [J]
+    step_dE_Q_radio_J: float  # = +∫ Q_radio_total dt [J]
+    step_dE_Q_dil_J: float  # = +∫ Q_dil_total dt [J]
+    step_dE_Q_tidal_J: float  # = +∫ Q_tidal_total dt [J]
+
     dt_actual: float  # actual integration time [yr]
     status: int  # solver status (0 = success)
 
@@ -2162,6 +2177,113 @@ class EntropySolver:
             )
             self.stop_early = True
 
+    def _compute_step_energy_integrals(self) -> dict[str, float]:
+        """Compute per-call energy contributions [J] over the CVODE
+        sub-step trajectory, replacing end-of-step instantaneous capture.
+
+        For each accepted internal step in the integration trajectory
+        ``(sol.t[i], sol.y[:, i])``, refresh the EntropyState and read
+        the instantaneous powers (F_cmb*A_cmb, F_int*A_int, mass-
+        integrated radio/dil/tidal). Trapezoidal-integrate over the
+        physical-time trajectory to obtain per-source energy J. This
+        is correct against transient phase-boundary snapshots that
+        contaminate single end-of-step values: a spike in one CVODE
+        sub-step is bounded by the small dt to its neighbour rather
+        than propagated as a step-mean over the whole call.
+
+        Sign convention: positive = energy ADDED to mantle.
+
+        Returns
+        -------
+        dict
+            Keys ``F_int``, ``F_cmb``, ``Q_radio``, ``Q_dil``,
+            ``Q_tidal``, each mapping to the per-call integral in J.
+            All zeros when no entropy_eos is attached or the trajectory
+            has fewer than 2 points (cannot integrate).
+        """
+        zero = {
+            'F_int': 0.0,
+            'F_cmb': 0.0,
+            'Q_radio': 0.0,
+            'Q_dil': 0.0,
+            'Q_tidal': 0.0,
+        }
+        sol = self._solution
+        eos = self.entropy_eos
+        if eos is None or sol is None or sol.t is None or sol.y is None:
+            return zero
+        n_steps = int(sol.t.size)
+        if n_steps < 2:
+            return zero
+
+        n_stag = self._n_stag
+        energy_balance = self._core_bc == 'energy_balance'
+        bower = self._core_bc == 'bower2018'
+        gradient_mode = self._core_bc == 'gradient'
+        is_ext = energy_balance or bower
+
+        P_stag = self._P_stag_flat
+        vol = self._volume_flat
+        r_basic = self._r_basic_flat
+        A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
+        A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
+
+        P_F_int = np.zeros(n_steps)
+        P_F_cmb = np.zeros(n_steps)
+        P_radio = np.zeros(n_steps)
+        P_dil = np.zeros(n_steps)
+        P_tidal = np.zeros(n_steps)
+
+        for i in range(n_steps):
+            t_i = float(sol.t[i])
+            y_col = sol.y[:, i] if sol.y.ndim == 2 else sol.y
+
+            if gradient_mode:
+                n_basic = n_stag + 1
+                dSdr_i = y_col[:n_basic]
+                S_surf_i = float(y_col[n_basic])
+                S_i, S_basic_i = self._reconstruct_entropy(dSdr_i, S_surf_i)
+                self.state.update(S_i, t_i, dSdr=dSdr_i, entropy_basic=S_basic_i)
+            elif is_ext:
+                S_i = y_col[:n_stag]
+                extra_i = float(y_col[n_stag])
+                if energy_balance:
+                    self.state.update(S_i, t_i, dSdr_cmb=extra_i)
+                else:
+                    self.state.update(S_i, t_i)
+            else:
+                S_i = y_col
+                self.state.update(S_i, t_i)
+
+            F_int_i = float(self.state._heat_flux[-1])
+            F_cmb_i = float(self.state._heat_flux[0])
+
+            rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
+            mass_i = rho_i * vol
+            Q_radio_i = float(np.dot(np.asarray(self.state.heating_radio).ravel(), mass_i))
+            Q_dil_i = float(np.dot(np.asarray(self.state.heating_dil).ravel(), mass_i))
+            Q_tidal_i = float(np.dot(np.asarray(self.state.heating_tidal).ravel(), mass_i))
+
+            P_F_int[i] = -F_int_i * A_int
+            P_F_cmb[i] = +F_cmb_i * A_cmb
+            P_radio[i] = Q_radio_i
+            P_dil[i] = Q_dil_i
+            P_tidal[i] = Q_tidal_i
+
+        SEC_PER_YR = 3.155814727e7
+        dt_s = np.diff(np.asarray(sol.t, dtype=float)) * SEC_PER_YR
+
+        def trap(p):
+            return float(np.sum(0.5 * (p[:-1] + p[1:]) * dt_s))
+
+        return {
+            'F_int': trap(P_F_int),
+            'F_cmb': trap(P_F_cmb),
+            'Q_radio': trap(P_radio),
+            'Q_dil': trap(P_dil),
+            'Q_tidal': trap(P_tidal),
+        }
+
     def get_state(self) -> SolverOutput:
         """Extract the solver state as a clean output dataclass.
 
@@ -2183,6 +2305,14 @@ class EntropySolver:
         bower = self._core_bc == 'bower2018'
         gradient_mode = self._core_bc == 'gradient'
         is_ext = energy_balance or bower
+
+        # Compute per-call energy integrals BEFORE refreshing state at
+        # the final entropy. ``_compute_step_energy_integrals`` walks
+        # the CVODE trajectory and calls state.update() at each
+        # accepted sub-step; doing it before the final refresh keeps
+        # the end-of-call snapshot (heat_flux, heating arrays, etc.)
+        # consistent with what callers see in the rest of get_state().
+        step_integrals = self._compute_step_energy_integrals()
 
         # Slice the final state vector.
         if gradient_mode:
@@ -2403,6 +2533,11 @@ class EntropySolver:
             Q_radio_total=Q_radio_total,
             Q_dil_total=Q_dil_total,
             Q_tidal_total=Q_tidal_total,
+            step_dE_F_int_J=step_integrals['F_int'],
+            step_dE_F_cmb_J=step_integrals['F_cmb'],
+            step_dE_Q_radio_J=step_integrals['Q_radio'],
+            step_dE_Q_dil_J=step_integrals['Q_dil'],
+            step_dE_Q_tidal_J=step_integrals['Q_tidal'],
             dt_actual=float(sol.t[-1] - sol.t[0]),
             status=sol.status,
             jcond_b=jcond_b,
