@@ -6,7 +6,7 @@ $$
 F_\mathrm{tot} = F_\mathrm{cond} + F_\mathrm{conv} + F_\mathrm{grav} + F_\mathrm{mix}.
 $$
 
-Each term is gated by a boolean in the `[energy]` section (`conduction`, `convection`, `gravitational_separation`, `mixing`); a flux that is disabled is identically zero. Internal heating sources (radiogenic, dilatation, tidal) are documented separately in [Energy equation](energy_equation.md).
+Each term is gated by a boolean in the `[energy]` section (`conduction`, `convection`, `gravitational_separation`, `mixing`); a flux that is disabled is identically zero. Internal heating sources (radiogenic, tidal) are documented separately in [Energy equation](energy_equation.md).
 
 All flux formulas below use the entropy gradient $\partial S/\partial r$ as the primary driver. Temperature, density, heat capacity, thermal expansivity, and the isentropic temperature gradient $(\partial T/\partial P)_S$ are looked up from the EOS at $(P, S)$ on every RHS evaluation.
 
@@ -127,20 +127,9 @@ The term enters the entropy equation as a heat flux: even though the flux carrie
 Internal heating contributes to the entropy equation through the source term $\rho H$ in the integral balance. The three contributions are summarised here; the radiogenic-decay model and the per-isotope configuration are discussed in [Energy equation](energy_equation.md).
 
 - **Radiogenic.** $H_\mathrm{radio} = \sum_i \chi_i \varphi_i \exp(-\ln 2\,(t - t_0)/\tau_{1/2,i})$, time-dependent and (typically) space-uniform.
-- **Dilatation $P\,dV$.** Work done when melt of different density is transported across a pressure gradient by chemical mixing or gravitational separation. The specific (per-mass) heating rate at staggered nodes is
-  $$
-  H_\mathrm{dil} = g\,\left(\frac{1}{\rho_m} - \frac{1}{\rho_s}\right)\,(j_\mathrm{mix} + j_\mathrm{grav}),
-  $$
-  with $j_\mathrm{mix}$ the convective-mixing mass flux and $j_\mathrm{grav}$ the gravitational-separation mass flux (Soucasse, Aragog formulation §1.2). The volumetric source in the integral balance is $\Phi_\mathrm{vol} = \rho\,H_\mathrm{dil}$. Active whenever `dilatation = true` and at least one of `gravitational_separation` or `mixing` is enabled; the flux corresponding to a disabled mechanism is omitted from the sum.
-
-    In the entropy formulation, the convective-mixing flux is computed directly as a heat flux $F_\mathrm{mix}$ rather than as $j_\mathrm{mix}\,L$. The equivalent mass flux is recovered as
-    $$
-    j_\mathrm{mix} = \frac{F_\mathrm{mix}}{L(P)},\qquad L(P) = T_\mathrm{fus}(P)\,[S_\mathrm{liq}(P) - S_\mathrm{sol}(P)].
-    $$
-    The identity
-    $\partial S/\partial r - [\phi\,\partial S_\mathrm{liq}/\partial P + (1-\phi)\,\partial S_\mathrm{sol}/\partial P]\,\partial P/\partial r = \Delta S_\mathrm{fus}\,\partial \phi/\partial r$
-    inside the mushy band makes this exact: the bracket-form heat flux divided by $L$ recovers Soucasse's $j_\mathrm{mix} = -\rho\,\kappa_c\,\partial \phi/\partial r$ (modulo the smoothing factor inherited from the mushy-band gate).
 - **Tidal.** Per-staggered-node array supplied through `tidal_array`; broadcast scalar or length-$N$ array.
+
+The volumetric work done when melt of different density is transported across a pressure gradient is *not* added as an explicit volumetric source. By definition the enthalpy contrast $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h) \supset +\rho g\,\Delta v\,j$ already carries the same quantity through the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. Adding it explicitly would double-count (Bower 2018 §3, SPIDER `energy.c`).
 
 ## Per-component flux output
 
@@ -161,4 +150,4 @@ Per-staggered-node heating is in `heating` (sum of the three contributions).
 
 ![Heat-flux decomposition](../figures/vv/fig_02_flux_decomposition.pdf)
 
-**Figure 2.** (a) Magnitude of the four heat-flux components $F_\text{cond}$, $F_\text{conv}$, $F_\text{grav}$, $F_\text{mix}$ (Soucasse §1.1) and their sum on an 80-cell Earth mesh, evaluated at a fully-mushy state where the entropy on each cell is the midpoint of the local solidus and liquidus values plus a small surface-ward gradient. Open triangles mark cells where the signed flux is negative. The four components reconstruct $F_\text{tot}$ to floating-point round-off ($\max|F_\text{tot}-\sum F_i|/|F_\text{tot}| < 10^{-15}$). (b) Internal volumetric heating sources $H_\text{radio}$, $H_\text{dil}$, $H_\text{tidal}$ at the staggered nodes for the same state, with the production CHILI radionuclide cocktail at $t=0$ and dilatation enabled. The $H_\text{dil}$ term (Soucasse §1.2 PdV heating) dominates over radio in the mushy zone where the mass fluxes are large.
+**Figure 2.** (a) Magnitude of the four heat-flux components $F_\text{cond}$, $F_\text{conv}$, $F_\text{grav}$, $F_\text{mix}$ (Soucasse §1.1) and their sum on an 80-cell Earth mesh, evaluated at a fully-mushy state where the entropy on each cell is the midpoint of the local solidus and liquidus values plus a small surface-ward gradient. Open triangles mark cells where the signed flux is negative. The four components reconstruct $F_\text{tot}$ to floating-point round-off ($\max|F_\text{tot}-\sum F_i|/|F_\text{tot}| < 10^{-15}$). (b) Internal volumetric heating sources $H_\text{radio}$, $H_\text{tidal}$ at the staggered nodes for the same state, with the production CHILI radionuclide cocktail at $t=0$.

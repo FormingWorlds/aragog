@@ -28,10 +28,12 @@ jnp = pytest.importorskip('jax.numpy')
 
 jax.config.update('jax_enable_x64', True)
 
-EOS_DIR = Path(os.environ.get(
-    'ARAGOG_TEST_EOS_DIR',
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-))
+EOS_DIR = Path(
+    os.environ.get(
+        'ARAGOG_TEST_EOS_DIR',
+        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
+    )
+)
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -50,11 +52,11 @@ def test_radio_heating_decays_to_half_at_one_half_life():
     """
     from aragog.jax.solver import make_radio_heating_fn
 
-    hp = np.array([1.0e-9])      # 1 nW/kg power scale
+    hp = np.array([1.0e-9])  # 1 nW/kg power scale
     ab = np.array([1.0])
-    cn = np.array([1.0])         # full mass fraction (test-only)
+    cn = np.array([1.0])  # full mass fraction (test-only)
     t0 = np.array([0.0])
-    hl = np.array([1.0e6])       # 1 Myr half-life
+    hl = np.array([1.0e6])  # 1 Myr half-life
 
     H = make_radio_heating_fn(hp, ab, cn, t0, hl)
 
@@ -102,6 +104,7 @@ def test_radio_heating_zero_isotopes_returns_zero():
     factory. Must return a finite zero (not NaN).
     """
     from aragog.jax.solver import _no_radio
+
     val = float(_no_radio(0.0))
     assert val == 0.0
     val_later = float(_no_radio(1.0e9))
@@ -173,8 +176,8 @@ def test_radio_heating_short_half_life_decays_correctly():
     hl = np.array([0.5])  # 0.5 yr, well below the historical 1.0 yr clamp
 
     H = make_radio_heating_fn(hp, ab, cn, t0, hl)
-    H0 = float(H(0.0))                 # heating at t = t0
-    H_two_hl = float(H(1.0))           # heating at t = 2 * hl
+    H0 = float(H(0.0))  # heating at t = t0
+    H_two_hl = float(H(1.0))  # heating at t = 2 * hl
 
     # After 2 half-lives, heating must be H(t0) / 4 to within float-64.
     np.testing.assert_allclose(H_two_hl, H0 / 4.0, rtol=1e-12)
@@ -202,7 +205,7 @@ def test_dSdt_uses_live_radio_at_different_t():
         make_radio_heating_fn,
     )
 
-    # Build the same synthetic mesh used by the dilatation tests
+    # Synthetic mesh covering the mushy band over an Earth-like depth.
     R_cmb, R_surf = 3.48e6, 6.371e6
     N = 24
     r_stag = np.linspace(R_cmb, R_surf, N)
@@ -213,8 +216,8 @@ def test_dSdt_uses_live_radio_at_different_t():
     r_basic[-1] = R_surf
     r_basic[1:-1] = 0.5 * (r_stag[:-1] + r_stag[1:])
     P_basic = np.interp(r_basic, r_stag, P_stag)
-    area = 4.0 * np.pi * r_basic ** 2
-    volume = (4.0 / 3.0) * np.pi * np.diff(r_basic ** 3)
+    area = 4.0 * np.pi * r_basic**2
+    volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
     ml = np.maximum(np.minimum(r_basic - R_cmb, R_surf - r_basic), 1.0)
 
     d_dr_mat = np.zeros((N + 1, N))
@@ -240,8 +243,8 @@ def test_dSdt_uses_live_radio_at_different_t():
         radii_basic=jnp.asarray(r_basic),
         radii_stag=jnp.asarray(r_stag),
         mixing_length=jnp.asarray(ml),
-        mixing_length_sq=jnp.asarray(ml ** 2),
-        mixing_length_cu=jnp.asarray(ml ** 3),
+        mixing_length_sq=jnp.asarray(ml**2),
+        mixing_length_cu=jnp.asarray(ml**3),
         P_stag=jnp.asarray(P_stag),
         P_basic=jnp.asarray(P_basic),
         gravity=jnp.full(r_basic.shape, g),
@@ -258,14 +261,17 @@ def test_dSdt_uses_live_radio_at_different_t():
     S_init = S_init - 5.0 * np.linspace(0.0, 1.0, S_init.size)
 
     bc = BoundaryParams(
-        outer_bc_type=4, outer_bc_value=0.0,
-        emissivity=1.0, T_eq=255.0,
-        inner_bc_type=0, inner_bc_value=0.0,
-        core_density=10738.0, core_heat_capacity=880.0,
+        outer_bc_type=4,
+        outer_bc_value=0.0,
+        emissivity=1.0,
+        T_eq=255.0,
+        inner_bc_type=0,
+        inner_bc_value=0.0,
+        core_density=10738.0,
+        core_heat_capacity=880.0,
         tfac_core_avg=1.147,
     )
-    params = PhaseParams(grav_sep=False, mixing=False,
-                          dilatation=False, grain_size=0.1)
+    params = PhaseParams(grav_sep=False, mixing=False, grain_size=0.1)
 
     # Strong, short-half-life isotope so the t=0 vs t=t_half effect
     # is large relative to ULP noise.

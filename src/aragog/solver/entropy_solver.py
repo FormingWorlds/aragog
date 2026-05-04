@@ -330,11 +330,6 @@ class SolverOutput:
     # Q_radio + Q_tidal can be checked without re-deriving from the
     # array.
     Q_radio_total: float  # mantle-integrated radiogenic power [W]
-    Q_dil_total: float  # permanently 0.0; the volumetric-work piece of
-    # segregation heating is implicit in the divergence of the
-    # Δh-weighted mass-flux contributions to ``heat_flux`` and is not
-    # added separately. Field retained for one release cycle so PROTEUS
-    # can drop the F_dil column without a hard pin break.
     Q_tidal_total: float  # mantle-integrated tidal power [W]
 
     # Per-call energy-balance contributions [J] integrated over the
@@ -344,12 +339,10 @@ class SolverOutput:
     # between possibly-transient end-of-step F_cmb snapshots. Sign
     # convention: positive = energy ADDED to the mantle over the call
     # (so step_dE_F_int_J is negative when the mantle is losing heat
-    # to the atmosphere). ``step_dE_Q_dil_J`` is permanently zero;
-    # retained for one release cycle of API stability.
+    # to the atmosphere).
     step_dE_F_int_J: float  # = -∫ F_int * A_int dt [J]
     step_dE_F_cmb_J: float  # = +∫ F_cmb * A_cmb dt [J]
     step_dE_Q_radio_J: float  # = +∫ Q_radio_total dt [J]
-    step_dE_Q_dil_J: float  # permanently 0.0 (see Q_dil_total)
     step_dE_Q_tidal_J: float  # = +∫ Q_tidal_total dt [J]
 
     dt_actual: float  # actual integration time [yr]
@@ -657,7 +650,6 @@ class EntropySolver:
             gravitational_separation=energy.gravitational_separation,
             mixing=energy.mixing,
             radionuclides=energy.radionuclides,
-            dilatation=getattr(energy, 'dilatation', False),  # vestigial
             tidal=energy.tidal,
             tidal_array=getattr(energy, 'tidal_array', [0.0]),
             eddy_diffusivity_thermal=getattr(energy, 'eddy_diffusivity_thermal', 1.0),
@@ -2209,21 +2201,15 @@ class EntropySolver:
         Returns
         -------
         dict
-            Keys ``F_int``, ``F_cmb``, ``Q_radio``, ``Q_dil``,
-            ``Q_tidal``, each mapping to the per-call integral in J.
-            ``Q_dil`` is permanently zero (the explicit Φ_vol source
-            was deleted as a double-count of the volumetric work
-            already in the Δh-weighted divergence); the field stays
-            in the public API for one release cycle so PROTEUS can
-            drop the ``step_dE_Q_dil_J`` column without a hard pin
-            break. All zeros when no entropy_eos is attached or the
-            trajectory has fewer than 2 points (cannot integrate).
+            Keys ``F_int``, ``F_cmb``, ``Q_radio``, ``Q_tidal``, each
+            mapping to the per-call integral in J. All zeros when no
+            entropy_eos is attached or the trajectory has fewer than
+            2 points (cannot integrate).
         """
         zero = {
             'F_int': 0.0,
             'F_cmb': 0.0,
             'Q_radio': 0.0,
-            'Q_dil': 0.0,
             'Q_tidal': 0.0,
         }
         sol = self._solution
@@ -2249,7 +2235,6 @@ class EntropySolver:
         P_F_int = np.zeros(n_steps)
         P_F_cmb = np.zeros(n_steps)
         P_radio = np.zeros(n_steps)
-        P_dil = np.zeros(n_steps)  # permanently zero, retained for API stability
         P_tidal = np.zeros(n_steps)
 
         for i in range(n_steps):
@@ -2296,7 +2281,6 @@ class EntropySolver:
             'F_int': trap(P_F_int),
             'F_cmb': trap(P_F_cmb),
             'Q_radio': trap(P_radio),
-            'Q_dil': trap(P_dil),  # permanently zero; field retained for API stability
             'Q_tidal': trap(P_tidal),
         }
 
@@ -2490,14 +2474,8 @@ class EntropySolver:
         # Mantle-integrated source powers [W] for the closed-mantle
         # energy balance dE/dt = -F_int*A_int + F_cmb*A_cmb + Q_radio +
         # Q_tidal. Each per-source heating array is in W/kg at staggered
-        # nodes; mass-weighting recovers the total power. ``Q_dil_total``
-        # is permanently zero — the volumetric-work piece of segregation
-        # heating is already implicit in the divergence of the
-        # Δh-weighted mass-flux contributions to ``_heat_flux``; the
-        # field is retained for one release cycle so PROTEUS can drop
-        # the column without a hard pin break.
+        # nodes; mass-weighting recovers the total power.
         Q_radio_total = float(np.dot(np.asarray(self.state.heating_radio).ravel(), mass_stag))
-        Q_dil_total = 0.0
         Q_tidal_total = float(np.dot(np.asarray(self.state.heating_tidal).ravel(), mass_stag))
 
         # Volumetric melt fraction (porosity-based)
@@ -2552,12 +2530,10 @@ class EntropySolver:
             F_heat_total=F_heat_total,
             F_cmb=F_cmb,
             Q_radio_total=Q_radio_total,
-            Q_dil_total=Q_dil_total,
             Q_tidal_total=Q_tidal_total,
             step_dE_F_int_J=step_integrals['F_int'],
             step_dE_F_cmb_J=step_integrals['F_cmb'],
             step_dE_Q_radio_J=step_integrals['Q_radio'],
-            step_dE_Q_dil_J=step_integrals['Q_dil'],
             step_dE_Q_tidal_J=step_integrals['Q_tidal'],
             dt_actual=float(sol.t[-1] - sol.t[0]),
             status=sol.status,

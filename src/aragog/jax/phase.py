@@ -136,10 +136,6 @@ class PhaseParams(eqx.Module):
         convection: bool = True,
         grav_sep: bool = False,
         mixing: bool = False,
-        dilatation: bool = False,  # vestigial; accepted-and-ignored. The
-        # explicit Φ_vol source was deleted as a double-count of the
-        # Δh-weighted divergence; this kwarg stays for one release cycle
-        # so PROTEUS callers don't need a synchronised drop.
         eddy_diff_thermal: float = 1.0,
         eddy_diff_chemical: float = 1.0,
         kappah_floor: float = 0.0,
@@ -160,7 +156,6 @@ class PhaseParams(eqx.Module):
         self.convection = float(convection)
         self.grav_sep = float(grav_sep)
         self.mixing = float(mixing)
-        del dilatation  # vestigial-kwarg, see signature note above
         self.eddy_diff_thermal = eddy_diff_thermal
         self.eddy_diff_chemical = eddy_diff_chemical
         self.kappah_floor = kappah_floor
@@ -212,9 +207,7 @@ class MeshArrays(eqx.Module):
     # the staggered phase evaluator. Built from the external EOS
     # gravity column at staggered radii (UserDefinedEOS / Zalmoxis) or
     # scalar broadcast when the column is unavailable
-    # (AdamsWilliamsonEOS). Retained even after the dilatation H_dil
-    # term was deleted because future diagnostics may need
-    # cell-centred g(r).
+    # (AdamsWilliamsonEOS).
     gravity_stag: jax.Array  # [m/s^2]
 
     def __init__(
@@ -305,8 +298,7 @@ class MeshArrays(eqx.Module):
             # Same construction at the staggered radii. Mirrors numpy's
             # entropy_solver.py ``g_stag = np.interp(r_stag, eos_radius,
             # eos_gravity)`` (with scalar fallback). Aligned to the
-            # staggered grid; retained as a future-diagnostic anchor
-            # after the dilatation H_dil consumer was deleted.
+            # staggered grid.
             gravity_stag=_build_gravity_array(mesh, r_stag=True),
         )
 
@@ -920,17 +912,6 @@ def compute_fluxes(
     jmix_heat = jmix_heat.at[0].set(0.0)
     jmix_heat = jmix_heat.at[-1].set(0.0)
     heat_flux = heat_flux + params.mixing * jmix_heat
-
-    # The volumetric-work piece of phase-segregation heating
-    # (formerly added here as the explicit Soucasse §1.2 source
-    # H_dil = g·Δv·(j_mix + j_grav)) is already implicit in the
-    # divergence of the Δh-weighted mass-flux contributions to
-    # ``heat_flux``: by definition Δh = Δu + P·Δv, and on a
-    # hydrostatic column ∂Δh/∂r ⊃ Δv·∂P/∂r = -ρg·Δv, so
-    # -∂/∂r(j·Δh) ⊃ +ρg·Δv·j is the same quantity. Adding H_dil
-    # here would double-count (verified 2026-05-03 7-cell matrix:
-    # F_dil/(-F_int) = -1.000 lock). Bower 2018 / SPIDER's entropy
-    # form has no such source either.
 
     return FluxOutput(
         heat_flux=heat_flux,

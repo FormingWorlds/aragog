@@ -200,17 +200,6 @@ class _EnergyParameters:
     eddy_diffusivity_chemical: float = 1.0
     kappah_floor: float = 0.0  # m^2/s, phase-dependent eddy diffusivity floor
 
-    # Vestigial: accepted-and-ignored for one release cycle. The explicit
-    # Φ_vol source term that this flag used to gate has been deleted from
-    # entropy_state.py and jax/phase.py because the Δh-weighted
-    # divergence already contains +ρ·Φ_vol implicitly via the chain rule
-    # on Δh = Δu + P·Δv with hydrostatic ∂P/∂r = −ρg (Bower 2018 §3,
-    # SPIDER energy.c). Removing this field would break PROTEUS callers
-    # at proteus/interior_energetics/aragog.py which still pass
-    # ``dilatation=...``; the field is dropped together with the PROTEUS
-    # pin bump in a follow-up.
-    dilatation: bool = False
-
     # SPIDER-analogue bottom-up gate for the gravitational-separation mass
     # flux. Only allows melt/solid separation across an interface when the
     # staggered cell immediately below contains non-pure liquid/solid. This

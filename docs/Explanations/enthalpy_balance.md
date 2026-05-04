@@ -58,21 +58,19 @@ Both mass fluxes $j_{cm}$ and $j_{gm}$ are zero outside the mixed-phase region.
 
 The volumetric heat sources considered are:
 
-$$\Phi = \Phi_{tidal} + \Phi_{radio} + \Phi_{vol} \tag{10}$$
+$$\Phi = \Phi_{tidal} + \Phi_{radio} \tag{10}$$
 
-associated with tidal heating, radiogenic heating, and volumetric dilatation or compression, respectively.
-
-The **volumetric dilatation/compression** source is expressed as a function of the mass fluxes:
-
-$$\Phi_{vol} = \rho g \left(\frac{1}{\rho_m} - \frac{1}{\rho_s}\right)(j_{cm} + j_{gm}) \tag{11}$$
+associated with tidal heating and radiogenic heating, respectively.
 
 The **radiogenic heating** is defined as:
 
-$$\Phi_{radio} = \sum_i \rho \phi_i \chi_i \exp\left(-\frac{t - t_0}{\tau^{1/2}_i}\right) \tag{12}$$
+$$\Phi_{radio} = \sum_i \rho \phi_i \chi_i \exp\left(-\frac{t - t_0}{\tau^{1/2}_i}\right) \tag{11}$$
 
 where $\phi_i$, $\chi_i$, and $\tau^{1/2}_i$ are the power generation per unit mass, the mass fraction, and the half-life associated with radioisotope $i$, respectively. The radiogenic heating is time-dependent but spatially uniform.
 
 The **tidal heating** volume source must be provided by the user. It can be spatially dependent but is constant in time.
+
+The volumetric work associated with phase segregation is *not* added as a separate explicit source. By definition the enthalpy contrast $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column the divergence of the $\Delta h$-weighted mass-flux contributions to $q_{cm} + q_{gm}$ already carries $+\rho g \Delta v\,(j_{cm} + j_{gm})$ implicitly via the chain rule. Adding it explicitly would double-count (Bower 2018 §3, SPIDER `energy.c`).
 
 ---
 

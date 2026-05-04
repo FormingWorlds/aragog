@@ -34,7 +34,7 @@ src/aragog/
 │   ├── entropy_solver.py  # EntropySolver: ODE driver, Radau/BDF/CVODE dispatch,
 │   │                      #   nondimensionalisation, retry hooks, SolverOutput
 │   ├── entropy_state.py   # EntropyState: per-RHS flux assembly, MLT, Jgrav, Jmix,
-│   │                      #   dilatation, phase-boundary caching
+│   │                      #   phase-boundary caching
 │   └── cvode_jax.py       # CVODE callbacks built from a JAX RHS+Jacobian factory
 │
 ├── jax/                   # JAX-traceable replicas for the analytic-Jacobian path
@@ -128,7 +128,7 @@ EntropyState.update(entropy, time, dSdr_cmb=…)
    ├─ EntropyPhaseEvaluator → EntropyEOS  (P-S lookup; phase, T, ρ, cp, α, k)
    ├─ d_dr_at_basic_nodes(S)              (∂S/∂r at basic nodes)
    ├─ flux assembly: F_cond, F_conv, F_grav, F_mix
-   └─ heating assembly: H_radio, H_dil, H_tidal
+   └─ heating assembly: H_radio, H_tidal
    │
    ▼  (back in EntropySolver._dSdt_single)
 flux divergence  →  dS/dt at staggered nodes

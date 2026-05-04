@@ -338,11 +338,9 @@ def dSdt(
 
     # Compute fluxes (conduction, convection, grav sep, mixing).
     # ``flux_out.heating`` is the input ``heating`` (radio + tidal)
-    # passed through unchanged: ``compute_fluxes`` no longer adds any
-    # state-dependent volumetric source (the explicit dilatation
-    # H_dil source was removed as a double-count of the Δh-weighted
-    # divergence). Sourcing dsdt from ``flux_out.heating`` is still
-    # correct and remains a hidden invariant for any future
+    # passed through unchanged: ``compute_fluxes`` does not add any
+    # state-dependent volumetric source. Sourcing dsdt from
+    # ``flux_out.heating`` is the hidden invariant for any future
     # contribution added inside compute_fluxes.
     flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
     heat_flux = flux_out.heat_flux

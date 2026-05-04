@@ -769,21 +769,19 @@ class TestMeshConvergence:
             )
 
 
-# -- Tier 1: Dilatation (PdV) heating physics --------------------------------
+# -- Tier 1: No explicit Φ_vol source -----------------------------------------
 #
-# Per Soucasse §1.2 (Aragog formulation, June 2025) and the PROTEUS 2607
-# canonical form, dilatation heating must include BOTH the gravitational-
-# separation mass flux ``j_gm`` and the convective-mixing mass flux
-# ``j_cm``:
+# The Soucasse §1.2 form of segregation heating
 #
 #     Phi_vol = rho * g * (1/rho_m - 1/rho_s) * (j_cm + j_gm)         [W/m^3]
-#     H_dil   =       g * (1/rho_m - 1/rho_s) * (j_cm + j_gm)         [W/kg]
 #
-# In the entropy formulation the mixing mass flux is recovered from the
-# bracket-form heat flux as
-#     j_cm = _jmix_heat / L
-# where ``L = T_fus * (S_liq - S_sol)`` is the latent heat of fusion (an
-# algebraic identity inside the mushy band; see ``entropy_state.py``).
+# is NOT added as an explicit volumetric source on top of the divergence
+# of the Δh-weighted mass-flux contributions to ``state._heat_flux``.
+# By definition Δh = Δu + P·Δv, and on a hydrostatic column
+# ∂Δh/∂r ⊃ Δv·∂P/∂r = -ρg·Δv, so -∂/∂r(j·Δh) ⊃ +ρg·Δv·j is the same
+# quantity. Adding it explicitly would double-count (Bower 2018 §3,
+# SPIDER energy.c). The tests below pin that invariant by exercising
+# the regime where the historical explicit source was largest.
 
 
 def _make_test_mesh_with_staggered_interp(
@@ -795,10 +793,10 @@ def _make_test_mesh_with_staggered_interp(
 ):
     """Like make_mesh, but also exposes ``quantity_at_staggered_nodes``.
 
-    The dilatation heating code (entropy_state.py) calls
-    ``mesh.quantity_at_staggered_nodes`` to interpolate the basic-node
-    mass flux to the staggered grid. The default test mesh in this
-    module does not define that method, so this helper extends it.
+    Some heating code paths interpolate basic-node arrays to the
+    staggered grid via ``mesh.quantity_at_staggered_nodes``. The
+    default test mesh in this module does not define that method, so
+    this helper extends it.
     """
     mesh = make_mesh(N=N, R_cmb=R_cmb, R_surf=R_surf, P_cmb=P_cmb, P_surf=P_surf)
 
@@ -810,21 +808,18 @@ def _make_test_mesh_with_staggered_interp(
     return mesh
 
 
-def _make_dilatation_state(
+def _make_phi_vol_test_state(
     mesh,
     eos,
     *,
     mixing=True,
     grav_sep=True,
-    dilatation=False,
 ):
     """EntropyState with grav_sep/mixing flags exposed.
 
-    The ``dilatation`` kwarg is accepted-and-ignored at the EntropyState
-    layer (vestigial; the explicit Φ_vol source has been deleted as a
-    double-count of the Δh-weighted divergence). It is kept as a kwarg
-    here so the lock-in tests can verify that toggling the flag does not
-    change ``state.heating``.
+    Used by the negative regression tests below to exercise the
+    mushy-zone regime where the historical explicit Φ_vol source was
+    largest.
     """
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
     from aragog.solver.entropy_state import EntropyState
@@ -849,98 +844,43 @@ def _make_dilatation_state(
         convection=True,
         gravitational_separation=grav_sep,
         mixing=mixing,
-        dilatation=dilatation,
     )
 
 
 @needs_eos
 @pytest.mark.unit
 class TestNoExplicitPhiVolSource:
-    """Lock-in tests: the explicit Soucasse §1.2 source term
+    """Negative regressions guarding against re-introduction of an
+    explicit Soucasse §1.2 source term
 
         Phi_vol = rho · g · (1/rho_m - 1/rho_s) · (j_cm + j_gm)
 
-    is NOT added to ``state.heating``. The volumetric work it
-    formerly captured is already implicit in the divergence of the
-    Δh-weighted mass-flux contributions to ``state._heat_flux`` (chain
-    rule on Δh = Δu + P·Δv with hydrostatic ∂P/∂r = -ρg). Adding it
-    explicitly would double-count, as observed in the 2026-05-03
-    7-cell matrix where F_dil/(-F_int) locked at -1.000 to four
-    digits across three independent step caps. SPIDER's energy.c has
-    no Φ_vol source either; the Bower 2018 derivation closes via the
+    on top of ``state.heating``. The volumetric work this would
+    capture is already implicit in the divergence of the Δh-weighted
+    mass-flux contributions to ``state._heat_flux`` (chain rule on
+    Δh = Δu + P·Δv with hydrostatic ∂P/∂r = -ρg). Adding it
+    explicitly double-counts, as the 2026-05-03 7-cell matrix
+    demonstrated when F_dil/(-F_int) locked at -1.000 to four digits
+    across three independent step caps. SPIDER's energy.c has no
+    Φ_vol source either; the Bower 2018 derivation closes via the
     divergence alone.
 
-    Each test below sets up a regime where the OLD code would have
-    produced a measurable H_dil contribution (mushy zone with active
-    j_grav and/or j_mix), then asserts that ``state.heating`` stays
-    at the radio + tidal contribution only (or zero, when those are
-    off). The legacy ``dilatation`` flag must be vestigial: setting
-    True or False has no effect on the heating array.
+    Each test below sets up the mushy-zone regime where the historical
+    explicit source was largest, then asserts ``state.heating`` stays
+    at zero (no other sources are wired in this fixture). A regression
+    that reintroduces even a fractional copy of Φ_vol would flip these.
     """
 
-    def test_pure_phase_yields_zero_heating(self):
-        """S well above liquidus everywhere: zero phase fluxes, zero
-        heating regardless of dilatation flag.
-
-        Edge case: with no segregation flux, neither the old explicit
-        Φ_vol nor any new code path can add anything. Sanity check that
-        the post-deletion ``heating`` array is exactly the radio + tidal
-        contribution (zero in this fixture).
-        """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
-        N = 30
-        for dil_flag in (False, True):
-            mesh = _make_test_mesh_with_staggered_interp(N=N)
-            state = _make_dilatation_state(
-                mesh,
-                eos,
-                dilatation=dil_flag,
-            )
-            S_liq_max = float(np.max(eos.liquidus_entropy(mesh.basic.pressure)))
-            S0 = np.full(N, S_liq_max + 500.0)
-            state.update(S0, 0.0)
-            H = state.heating
-            assert np.max(np.abs(H)) < 1e-15, (
-                f'state.heating should be zero above liquidus '
-                f'(dilatation={dil_flag}); got max |H|={np.max(np.abs(H)):.2e}.'
-            )
-
-    def test_pure_solid_yields_zero_heating(self):
-        """S well below solidus everywhere: zero phase fluxes, zero
-        heating regardless of dilatation flag.
-        """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
-        N = 30
-        for dil_flag in (False, True):
-            mesh = _make_test_mesh_with_staggered_interp(N=N)
-            state = _make_dilatation_state(
-                mesh,
-                eos,
-                dilatation=dil_flag,
-            )
-            S_sol_min = float(np.min(eos.solidus_entropy(mesh.basic.pressure)))
-            S0 = np.full(N, max(S_sol_min - 500.0, 100.0))
-            state.update(S0, 0.0)
-            H = state.heating
-            assert np.max(np.abs(H)) < 1e-15, (
-                f'state.heating should be zero below solidus '
-                f'(dilatation={dil_flag}); got max |H|={np.max(np.abs(H)):.2e}.'
-            )
-
     def test_no_phi_vol_in_mushy_zone_with_jgrav_only(self):
-        """Mushy zone with mixing OFF, grav_sep ON, dilatation flag ON:
-        ``state.heating`` must be exactly zero despite a non-zero
-        ``state._mass_flux`` from the gravitational separation flux.
+        """Mushy zone with mixing OFF, grav_sep ON: ``state.heating``
+        must be exactly zero despite a non-zero ``state._mass_flux``
+        from the gravitational separation flux.
 
         Pre-deletion: heating == g·Δv·j_grav, scale ~1e-9 W/kg.
         Post-deletion: heating == 0 because no source is added.
 
         Discriminating value: the test asserts max|heating| < 1e-15,
-        which is ~6 orders of magnitude tighter than the pre-deletion
+        which is ~6 orders of magnitude tighter than the historical
         H_dil scale, so any reintroduction of even a fractional copy
         would flip this test.
         """
@@ -949,7 +889,7 @@ class TestNoExplicitPhiVolSource:
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = _make_test_mesh_with_staggered_interp(N=N)
-        state = _make_dilatation_state(
+        state = _make_phi_vol_test_state(
             mesh,
             eos,
             mixing=False,
@@ -963,27 +903,27 @@ class TestNoExplicitPhiVolSource:
         S0 = mesh.quantity_at_staggered_nodes(S0_basic)
         state.update(S0, 0.0)
 
-        # Confirm the regime: j_grav is non-zero somewhere, so the OLD
-        # code WOULD have produced non-zero H_dil here.
+        # Confirm the regime: j_grav is non-zero somewhere, so a
+        # reintroduced explicit Φ_vol would produce non-zero H here.
         j_grav_max = float(np.max(np.abs(np.asarray(state._mass_flux).ravel())))
         assert j_grav_max > 1e-8, (
             f'Test setup did not engage j_grav (max|j|={j_grav_max:.2e}); '
             f'this fixture is supposed to exercise the regime where the '
-            f'old explicit Φ_vol would have been largest.'
+            f'historical explicit Φ_vol would have been largest.'
         )
-        # And yet heating must be exactly zero post-deletion.
+        # And yet heating must be exactly zero.
         H_max = float(np.max(np.abs(np.asarray(state.heating).ravel())))
         assert H_max < 1e-15, (
-            f'Mushy regime with grav_sep+dilatation flags ON produced '
-            f'non-zero state.heating (max|H|={H_max:.2e}); the explicit '
-            f'Φ_vol source is supposed to be deleted.'
+            f'Mushy regime with grav_sep ON produced non-zero '
+            f'state.heating (max|H|={H_max:.2e}); the explicit Φ_vol '
+            f'source must stay deleted.'
         )
 
     def test_no_phi_vol_in_mushy_zone_with_jmix_plus_jgrav(self):
         """Mushy zone with both mixing and grav_sep ON: ``state.heating``
         must be exactly zero despite non-zero j_grav AND j_mix.
 
-        This is the regime where the old explicit
+        This is the regime where the historical explicit
         Φ_vol = g·Δv·(j_mix + j_grav) was largest in production CHILI
         runs (1 M⊕ rheological-transition layer). The 7-cell matrix
         attractor at F_dil/(-F_int) = -1.000 came from exactly this
@@ -994,7 +934,7 @@ class TestNoExplicitPhiVolSource:
         eos = EntropyEOS(EOS_DIR)
         N = 30
         mesh = _make_test_mesh_with_staggered_interp(N=N)
-        state = _make_dilatation_state(
+        state = _make_phi_vol_test_state(
             mesh,
             eos,
             mixing=True,
@@ -1024,75 +964,7 @@ class TestNoExplicitPhiVolSource:
         assert H_max < 1e-15, (
             f'Mushy regime with both fluxes engaged produced non-zero '
             f'state.heating (max|H|={H_max:.2e}); the explicit Φ_vol '
-            f'source is supposed to be deleted.'
-        )
-
-    def test_dilatation_flag_is_vestigial(self):
-        """Flipping ``dilatation=False`` vs ``True`` does not change
-        ``state.heating``. Pre-deletion this would have been the
-        ~1e-9 W/kg difference between H_dil OFF and ON. Post-deletion
-        the flag is accept-and-ignore, kept for one release cycle.
-        """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
-        N = 30
-
-        S_sol = np.asarray(
-            eos.solidus_entropy(_make_test_mesh_with_staggered_interp(N=N).basic.pressure)
-        ).ravel()
-        S_liq = np.asarray(
-            eos.liquidus_entropy(_make_test_mesh_with_staggered_interp(N=N).basic.pressure)
-        ).ravel()
-        S0_basic = 0.5 * (S_sol + S_liq)
-        S0_basic = S0_basic + 80.0 * np.linspace(-1, 1, S0_basic.size)
-
-        H_arrays = {}
-        for dil_flag in (False, True):
-            mesh = _make_test_mesh_with_staggered_interp(N=N)
-            state = _make_dilatation_state(
-                mesh,
-                eos,
-                mixing=True,
-                grav_sep=True,
-                dilatation=dil_flag,
-            )
-            S0 = mesh.quantity_at_staggered_nodes(S0_basic)
-            state.update(S0, 0.0)
-            H_arrays[dil_flag] = np.asarray(state.heating).ravel().copy()
-
-        max_abs_diff = float(np.max(np.abs(H_arrays[True] - H_arrays[False])))
-        assert max_abs_diff < 1e-15, (
-            f'Toggling dilatation flag changed state.heating by '
-            f'max|diff|={max_abs_diff:.2e}; the flag is supposed to be '
-            f'vestigial (the source was deleted as a double-count).'
-        )
-
-    def test_disabled_dilatation_yields_zero_heating(self):
-        """With ``dilatation=False`` and no other sources, heating
-        is identically zero. (Trivially preserves the pre-deletion
-        invariant.)
-        """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
-        N = 30
-        mesh = _make_test_mesh_with_staggered_interp(N=N)
-        state = _make_dilatation_state(
-            mesh,
-            eos,
-            mixing=True,
-            grav_sep=True,
-        )
-
-        S_sol = np.asarray(eos.solidus_entropy(mesh.basic.pressure)).ravel()
-        S_liq = np.asarray(eos.liquidus_entropy(mesh.basic.pressure)).ravel()
-        S0_basic = 0.5 * (S_sol + S_liq)
-        S0 = mesh.quantity_at_staggered_nodes(S0_basic)
-        state.update(S0, 0.0)
-
-        assert float(np.max(np.abs(state.heating))) == 0.0, (
-            'state.heating should be 0.0 with dilatation=False and no other heating'
+            f'source must stay deleted.'
         )
 
 

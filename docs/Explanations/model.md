@@ -122,10 +122,10 @@ where $\kappa_c$ is the chemical eddy diffusivity and $T_\mathrm{fus}$ is the lo
 
 ## Internal heating
 
-The specific heating $H$ at staggered nodes is the sum of three contributions:
+The specific heating $H$ at staggered nodes is the sum of two contributions:
 
 $$
-H = H_\mathrm{radio} + H_\mathrm{dil} + H_\mathrm{tidal}.
+H = H_\mathrm{radio} + H_\mathrm{tidal}.
 $$
 
 - **Radiogenic heating.** A sum over user-configured isotopes,
@@ -134,13 +134,9 @@ $$
   $$
   with mass fraction $\chi_i$, specific power $\varphi_i$, and half-life $\tau_{1/2,i}$.
 
-- **Dilatation $P\,dV$ heating.** When melt of different density is transported across a pressure gradient (by chemical mixing or by gravitational separation), the system does work against gravity. Following Soucasse (Aragog formulation §1.2), the specific heating rate is
-  $$
-  H_\mathrm{dil} = g\,\left(\frac{1}{\rho_m} - \frac{1}{\rho_s}\right)\,(j_\mathrm{mix} + j_\mathrm{grav}),
-  $$
-  with $j_\mathrm{mix}$ the convective-mixing mass flux and $j_\mathrm{grav}$ the gravitational-separation mass flux. Active when `dilatation = true` and at least one of `gravitational_separation` or `mixing` is enabled; a disabled mechanism contributes zero flux to the sum. In the entropy formulation, $j_\mathrm{mix}$ is reconstructed from the bracket-form mixing heat flux as $j_\mathrm{mix} = F_\mathrm{mix}/L(P)$, an algebraic identity inside the mushy band; see [Heat transport](heat_transport.md#internal-heating).
-
 - **Tidal heating.** A user-supplied scalar or per-node array passed through the `tidal_array` configuration key.
+
+The volumetric work associated with phase segregation is carried implicitly by the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux` and is not added as a separate volumetric source; see [Heat transport](heat_transport.md#internal-heating).
 
 ## Boundary conditions
 
@@ -258,7 +254,7 @@ The formulation maps to the following source modules:
 | EOS lookup tables (`EntropyEOS`) and phase evaluator (`EntropyPhaseEvaluator`) | `aragog.eos` |
 | Boundary conditions (grey-body, UTBL, prescribed flux/T) | `aragog.solver.boundary` |
 | Time integration, CVODE/Radau dispatch, retry-ladder hooks | `aragog.solver.entropy_solver` |
-| Per-RHS flux assembly, MLT, gravitational separation, mixing, dilatation | `aragog.solver.entropy_state` |
+| Per-RHS flux assembly, MLT, gravitational separation, mixing | `aragog.solver.entropy_state` |
 | JAX-traceable phase and flux for the analytic Jacobian path | `aragog.jax` |
 | Configuration parsing | `aragog.parser`, `aragog.config` |
 | Diagnostic helpers (rheological front, global $\phi$) | `aragog.output.diagnostics` |

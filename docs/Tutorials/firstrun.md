@@ -4,7 +4,7 @@ Welcome to this first-run tutorial. We will load a configuration, integrate a si
 
 ## What does Aragog do?
 
-Aragog evolves the **specific entropy $S(r,t)$** at staggered nodes inside a spherical mantle shell. The solver couples conduction, mixing-length convection, gravitational separation of melt, chemical mixing, dilatation $P\,dV$ heating, radiogenic heating, and tidal heating. Temperature, density, and melt fraction are derived from $(P, S)$ via a tabulated equation of state.
+Aragog evolves the **specific entropy $S(r,t)$** at staggered nodes inside a spherical mantle shell. The solver couples conduction, mixing-length convection, gravitational separation of melt, chemical mixing, radiogenic heating, and tidal heating. Temperature, density, and melt fraction are derived from $(P, S)$ via a tabulated equation of state.
 
 ## Goals
 

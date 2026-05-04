@@ -51,7 +51,6 @@ convection = true
 gravitational_separation = true
 mixing = true
 radionuclides = true
-dilatation = true
 tidal = false
 eddy_diffusivity_thermal = 1.0
 eddy_diffusivity_chemical = 1.0
@@ -176,7 +175,6 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `gravitational_separation` | bool | -- | Stokes-regime separation of melt and solid; phase-boundary smoothed |
 | `mixing` | bool | -- | Chemical mixing flux (SPIDER bracket form involving $\partial S_\mathrm{liq}/\partial P$ and $\partial S_\mathrm{sol}/\partial P$) |
 | `radionuclides` | bool | -- | Internal radiogenic heating from any `[radionuclide_*]` sections |
-| `dilatation` | bool | -- | $P\,dV$ heating tied to gravitational separation |
 | `tidal` | bool | -- | Tidal heating from `tidal_array` |
 | `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
 | `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |

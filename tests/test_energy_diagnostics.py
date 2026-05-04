@@ -322,7 +322,7 @@ def test_total_enthalpy_mass_scaling_linearity(eos):
 
 
 def _make_minimal_state(
-    eos, *, radio=False, dilatation=False, tidal=False, tidal_array=None, radionuclides_obj=None
+    eos, *, radio=False, tidal=False, tidal_array=None, radionuclides_obj=None
 ):
     """Build a minimal EntropyState wired to a test mesh and EOS for
     direct ``update()`` calls in source-decomposition tests.
@@ -413,7 +413,6 @@ def _make_minimal_state(
         gravitational_separation=False,
         mixing=False,
         radionuclides=radio,
-        dilatation=dilatation,
         tidal=tidal,
         tidal_array=tidal_array,
     )
@@ -425,8 +424,7 @@ def test_per_source_heating_arrays_exist_and_sum_to_total(eos):
     heating, at every staggered node, after a single update() call.
     Catches the obvious bug where one source is added to the cumulative
     ``_heating`` but not stashed into its per-source array (or vice
-    versa). The dilatation source was deleted (double-count of the
-    Δh-weighted divergence); only radio and tidal remain.
+    versa). Only radio and tidal source terms are wired in.
     """
 
     class StubRadio:
