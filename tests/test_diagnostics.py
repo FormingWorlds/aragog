@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
 from aragog.output.diagnostics import (
     melt_fraction_global,
     rheological_front,

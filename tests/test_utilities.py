@@ -14,6 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
 from aragog.utilities import (
     combine_properties,
     is_file,

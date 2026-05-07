@@ -30,6 +30,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+
 from aragog.parser import _EnergyParameters
 from aragog.solver.entropy_solver import (
     _CV_ROOTFN_AVAILABLE,

@@ -914,10 +914,11 @@ class TestSolverParity:
 
     def test_grey_body_parity(self, jax_eos, numpy_eos):
         """JAX Tsit5 and scipy BDF agree on grey-body cooling."""
+        from scipy.integrate import solve_ivp
+
         from aragog.eos.entropy_phase import EntropyPhaseEvaluator
         from aragog.jax.phase import PhaseParams
         from aragog.jax.solver import BoundaryParams, solve_entropy
-        from scipy.integrate import solve_ivp
 
         N = 20
         # Build mesh arrays for both

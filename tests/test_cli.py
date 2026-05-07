@@ -58,6 +58,7 @@ def test_cli_is_a_click_group():
     test, but would silently break future subcommand registration.
     """
     import click
+
     from aragog.cli import cli
 
     assert isinstance(cli, click.Group), (

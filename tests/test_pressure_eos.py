@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+
 from aragog.mesh.pressure_eos import AdamsWilliamsonEOS
 from aragog.parser import _MeshParameters, _ScalingsParameters
 

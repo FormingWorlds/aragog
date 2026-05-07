@@ -95,3 +95,28 @@ exclude_lines = [
 
 [tool.coverage.html]
 directory = "htmlcov"
+
+[tool.ruff]
+line-length = 96
+target-version = "py312"
+extend-exclude = ["*ipynb"]
+
+[tool.ruff.lint]
+select = [
+	"F",  # Pyflakes
+	"E",  # pycodestyle (error)
+	"W",  # pycodestyle (warning)
+    "I",    # isort
+]
+ignore = [
+    "E501", # Line too long
+    "E741", # Ambiguous variable name
+]
+
+[tool.ruff.lint.isort]
+known-first-party=["aragog"]
+required-imports = ["from __future__ import annotations"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"

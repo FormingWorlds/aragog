@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+
 from aragog.config.boundary import BoundaryConfig
 from aragog.config.energy import EnergyConfig
 from aragog.config.initial_condition import InitialConditionConfig

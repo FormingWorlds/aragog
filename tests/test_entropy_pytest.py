@@ -233,10 +233,11 @@ class TestEntropySolverStandalone:
 
     def test_grey_body_cooling(self, entropy_eos):
         """BDF integration cools the surface monotonically."""
-        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
-        from aragog.solver.entropy_state import EntropyState
         from scipy.constants import Stefan_Boltzmann
         from scipy.integrate import solve_ivp
+
+        from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+        from aragog.solver.entropy_state import EntropyState
 
         SECS_PER_YEAR = 31557600.0
         N = 30
