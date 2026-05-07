@@ -41,6 +41,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install .
           pip install pytest pytest-cov pytest-xdist pytest-dependency
+          # Optional runtime deps guarded behind try/except ImportError or
+          # pytest.importorskip. Required so the slow + JAX + CVODE tiers
+          # actually run instead of silently skipping.
+          pip install scikits-odes scikits-odes-sundials jax equinox
 
       - name: Run unit + slow tests with coverage
         run: |
