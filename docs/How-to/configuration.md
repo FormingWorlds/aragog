@@ -28,7 +28,7 @@ core_heat_capacity = 880.0
 tfac_core_avg = 1.147
 param_utbl = false
 param_utbl_const = 1.0e-7
-core_bc = "energy_balance"        # CMB BC mode; the parser default is "quasi_steady"
+core_bc = "energy_balance"        # CMB BC mode; default matches PROTEUS production
 
 [mesh]
 outer_radius = 6.371e6            # m
@@ -36,12 +36,12 @@ inner_radius = 3.480e6            # m
 number_of_nodes = 200
 mixing_length_profile = "nearest_boundary"
 core_density = 11000.0            # kg/m^3
-surface_density = 4000.0          # kg/m^3
+surface_density = 4078.95095544   # kg/m^3 (PROTEUS production default; SPIDER -adams_williamson_rhos)
 gravitational_acceleration = 9.81 # m/s^2 (scalar fallback)
 adiabatic_bulk_modulus = 260e9    # Pa
 adams_williamson_beta = 0.0
 surface_pressure = 0.0            # Pa
-mass_coordinates = false
+mass_coordinates = true           # PROTEUS production default; SPIDER mesh layout
 eos_method = 1                    # 1 = Adams-Williamson, 2 = external file
 eos_file = ""                     # used when eos_method = 2
 
@@ -54,7 +54,7 @@ radionuclides = true
 tidal = false
 eddy_diffusivity_thermal = 1.0
 eddy_diffusivity_chemical = 1.0
-kappah_floor = 0.0
+kappah_floor = 10.0                # PROTEUS production default; 0.0 = textbook MLT
 phi_step_cap = 0.0                 # 0 = disabled; 0.05 caps per-call melt-fraction change in mushy band
 bottom_up_grav_sep = true
 phase_smoothing = "tanh"           # "tanh" (default, SPIDER-parity) or "cubic_hermite"
@@ -143,7 +143,7 @@ Thermal boundary conditions at the surface and CMB.
 | `tfac_core_avg` | -- | Core adiabat correction factor (default 1.147; Bower+2018 Table 2) |
 | `param_utbl` | bool | Enable upper-thermal-boundary-layer parameterisation (default false) |
 | `param_utbl_const` | K⁻² | UTBL constant in $\Delta T = b\,T^3$ |
-| `core_bc` | str | CMB BC mode. `quasi_steady` (alpha-factor, state length $N$), `energy_balance` (SPIDER bit-parity, length $N+1$), `gradient` (entropy gradient as state, length $N+2$), or `bower2018` (parity-only, not recommended). Default: `quasi_steady`. |
+| `core_bc` | str | CMB BC mode. `energy_balance` (SPIDER bit-parity, length $N+1$, **default and PROTEUS production**), `quasi_steady` (alpha-factor, state length $N$), `gradient` (entropy gradient as state, length $N+2$, experimental), or `bower2018` (parity-only, not recommended). |
 
 ### `[mesh]`
 
@@ -157,12 +157,12 @@ Spatial discretisation and pressure-density profile.
 | `mixing_length_profile` | str | `"nearest_boundary"` or `"constant"` |
 | `core_density` | kg/m³ | Mean core density |
 | `eos_method` | int | `1` = analytic Adams–Williamson; `2` = external file (`eos_file`) |
-| `surface_density` | kg/m³ | Surface mantle density (Adams–Williamson). Default 4000 |
+| `surface_density` | kg/m³ | Surface mantle density (Adams-Williamson). Default 4078.95095544 (PROTEUS production; SPIDER `-adams_williamson_rhos`) |
 | `gravitational_acceleration` | m/s² | Scalar gravity for Adams–Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. Default 9.81 |
 | `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams–Williamson. Default 260e9 |
 | `adams_williamson_beta` | -- | A–W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
 | `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |
-| `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default false |
+| `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default true (PROTEUS production); set false for uniform spacing in radius |
 | `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. |
 
 ### `[energy]`
@@ -179,7 +179,7 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `tidal` | bool | -- | Tidal heating from `tidal_array` |
 | `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
 | `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |
-| `kappah_floor` | m²/s | 0.0 | Phase-modulated lower bound on $\kappa_h$ |
+| `kappah_floor` | m²/s | 10.0 | Phase-modulated lower bound on $\kappa_h$. Default 10.0 (PROTEUS production); set 0.0 for textbook MLT |
 | `phi_step_cap` | -- | 0.0 | Per-call $\Delta\phi$ cap. When `> 0` and the mantle straddles the rheological transition, a SUNDIALS root function returns at the step where any cell's $|\Delta\phi|$ first exceeds the cap. `0.05` is a useful upper bound for 1 M$_\oplus$ runs. Default `0.0` (disabled). |
 | `bottom_up_grav_sep` | bool | true | Apply SPIDER's bottom-up gating on the gravitational-separation flux |
 | `phase_smoothing` | str | `"tanh"` | Phase-boundary smoothing. `"tanh"` (default) is SPIDER's two-branch `get_smoothing` with width `matprop_smooth_width = 0.01`; `"cubic_hermite"` is the fallback $16\,g\phi^2(1-g\phi)^2$ form. |

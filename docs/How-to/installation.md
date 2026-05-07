@@ -29,28 +29,21 @@ git clone git@github.com:FormingWorlds/aragog.git aragog
 cd aragog
 ```
 
-Install Aragog into the environment using either: (a) [Poetry](https://python-poetry.org), or (b) [pip](https://pip.pypa.io/en/stable/getting-started/). 
-
-There are some subtle differences between Poetry and pip, but in general Aragog is configured to be interoperable for most common operations (e.g. see this [Gist](https://gist.github.com/djbower/e9538e7eb5ed3deaf3c4de9dea41ebcd)). 
-
-(a) Poetry option, which requires that [Poetry](https://python-poetry.org) is installed:
+Install Aragog into the environment with [pip](https://pip.pypa.io/en/stable/getting-started/), using an [editable install](https://setuptools.pypa.io/en/latest/userguide/development_mode.html) (`-e`) so changes in your working tree are picked up immediately:
 
 ```sh
-poetry install --with docs
+pip install -e .
 ```
 
-(b) pip option, where the ``-e`` option is for an [editable install](https://setuptools.pypa.io/en/latest/userguide/development_mode.html):
+To pull in the optional dependency groups defined in `pyproject.toml`, add the corresponding extra:
 
-```sh 
-pip install -e ".[docs]"
+```sh
+pip install -e ".[docs]"      # Zensical, mkdocstrings (build the docs site)
+pip install -e ".[test]"      # pytest, pytest-cov, pytest-xdist, pytest-dependency
+pip install -e ".[jax]"       # JAX, equinox, scikits-odes-sundials (production solver path)
 ```
 
-If desired, you will need to manually install the dependencies for the tests, which are automatically installed by Poetry but not by pip. See the additional dependencies to install in `pyproject.toml`.
-
-More comprehensive set up guides are available here:
-
-- [VS Code and Poetry guide](https://gist.github.com/djbower/c66474000029730ac9f8b73b96071db3)
-- [Windows and Spyder guide](https://gist.github.com/djbower/c82b4a70a3c3c74ad26dc572edefdd34)
+Combine extras with comma separators, e.g. `pip install -e ".[docs,test,jax]"` for a full development install.
 
 ## Optional dependency: SUNDIALS CVODE
 

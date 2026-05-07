@@ -28,7 +28,9 @@ class MeshConfig:
     eos_method : int
         1: Adams-Williamson, 2: User-defined.
     surface_density : float
-        Surface density for Adams-Williamson EOS [kg/m^3].
+        Surface mantle density [kg/m^3]. Default 4078.95095544 matches
+        the SPIDER -adams_williamson_rhos value used in PROTEUS
+        production runs.
     gravitational_acceleration : float
         Gravitational acceleration [m/s^2].
     adiabatic_bulk_modulus : float
@@ -36,7 +38,9 @@ class MeshConfig:
     surface_pressure : float
         Surface pressure [Pa].
     mass_coordinates : bool
-        Use mass-coordinate spacing.
+        Use uniform spacing in mass-coordinate space instead of radius.
+        Gives larger cells at the surface (lower density) and matches
+        SPIDER's mesh. Default True matches the PROTEUS production path.
     eos_file : str
         Path to user-defined EOS file.
     """
@@ -47,10 +51,10 @@ class MeshConfig:
     mixing_length_profile: str
     core_density: float
     eos_method: int = 1
-    surface_density: float = 4000.0
+    surface_density: float = 4078.95095544
     gravitational_acceleration: float = 9.81
     adiabatic_bulk_modulus: float = 260e9
     adams_williamson_beta: float = 0.0  # 0 = derive from K_S
     surface_pressure: float = 0.0
-    mass_coordinates: bool = False
+    mass_coordinates: bool = True
     eos_file: str = ''

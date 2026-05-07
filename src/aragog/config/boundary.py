@@ -75,4 +75,8 @@ class BoundaryConfig:
     #     conduction-only flux underestimates true core heat loss
     #     by orders of magnitude; this mode is retained for parity
     #     testing only and is not recommended for production.
-    core_bc: str = 'quasi_steady'
+    #
+    # Default 'energy_balance' matches the PROTEUS production CHILI
+    # path. Standalone callers that want the legacy alpha-factor
+    # behaviour must set core_bc='quasi_steady' explicitly.
+    core_bc: str = 'energy_balance'

@@ -4,17 +4,10 @@ Aragog uses [pytest](https://docs.pytest.org/) for testing.
 
 ## Prerequisites
 
-Install the test dependencies:
+Install Aragog with the `test` extra (which also pulls `pytest-xdist` for parallel execution):
 
 ```sh
-pip install -e ".[docs]"
-pip install pytest pytest-cov pytest-dependency
-```
-
-Or with Poetry:
-
-```sh
-poetry install --with test
+pip install -e ".[test]"
 ```
 
 ## Running tests

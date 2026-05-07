@@ -10,15 +10,9 @@ Contributions to Aragog are welcome. Here is how to get started.
    cd aragog
    ```
 
-2. Install in editable mode with development dependencies:
+2. Install in editable mode with the development extras:
    ```console
-   pip install -e ".[docs]"
-   pip install pytest pytest-cov pytest-dependency
-   ```
-
-   Or with Poetry:
-   ```console
-   poetry install --with test --with docs
+   pip install -e ".[docs,test,jax]"
    ```
 
 3. Verify your setup:

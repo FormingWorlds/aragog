@@ -124,7 +124,8 @@ class _BoundaryConditionsParameters:
     #               'bower2018' (unrecommended; T_core as ODE state,
     #               retained for parity testing only).
     # See aragog/config/boundary.py docstring for details.
-    core_bc: str = 'quasi_steady'
+    # Default 'energy_balance' matches the PROTEUS production CHILI path.
+    core_bc: str = 'energy_balance'
 
     scalings_: _ScalingsParameters = field(init=False)
 
@@ -198,7 +199,12 @@ class _EnergyParameters:
     radionuclides: bool
     tidal: bool
     eddy_diffusivity_chemical: float = 1.0
-    kappah_floor: float = 0.0  # m^2/s, phase-dependent eddy diffusivity floor
+    # Phase-dependent eddy diffusivity floor [m^2/s]. When > 0 the
+    # eddy diffusivity is clamped from below by ``floor * f(phi)``,
+    # where ``f`` falls from 1 (liquid) to 0 (solid) across the
+    # rheological transition. Default 10.0 matches the PROTEUS
+    # production CHILI value; set to 0.0 for textbook MLT.
+    kappah_floor: float = 10.0
 
     # SPIDER-analogue bottom-up gate for the gravitational-separation mass
     # flux. Only allows melt/solid separation across an interface when the
@@ -299,12 +305,19 @@ class _MeshParameters:
     core_density: float
     # Static pressure profile is derived from the Adams-Williamson equation of state.
     eos_method: int = 1  # 1: Adams-Williamson / 2: User defined
-    surface_density: float = 4000
+    # Surface mantle density [kg/m^3]. Default 4078.95095544 matches
+    # the SPIDER -adams_williamson_rhos value used in PROTEUS
+    # production runs.
+    surface_density: float = 4078.95095544
     gravitational_acceleration: float = 9.81
     adiabatic_bulk_modulus: float = 260e9
     adams_williamson_beta: float = 0.0  # 0 = derive from K_S
     surface_pressure: float = 0.0
-    mass_coordinates: bool = False
+    # Use uniform spacing in mass coordinate space instead of radius;
+    # gives larger cells at the surface where density is lower and
+    # matches SPIDER's mesh layout. Default True matches the PROTEUS
+    # production CHILI path.
+    mass_coordinates: bool = True
     eos_file: str = ''
     scalings_: _ScalingsParameters = field(init=False)
 

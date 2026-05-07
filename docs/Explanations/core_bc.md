@@ -2,15 +2,15 @@
 
 The `boundary_conditions.core_bc` setting selects the formulation used at the core-mantle boundary (CMB) when `inner_boundary_condition = 1` (core cooling). Four modes are available; they differ in what is treated as the primary state variable, what is reconstructed, and how strongly the bottom mantle cell is coupled to the core.
 
-## `quasi_steady` (default)
+## `quasi_steady`
 
 State vector length: $N$ (entropy at staggered nodes only).
 
 The CMB heat flux is computed from a quasi-steady balance using an $\alpha$-factor partition between the bottom mantle cell and the core, weighted by the heat-capacity ratio. The core temperature is reconstructed from the bottom-cell entropy and pressure via the EOS at every output time.
 
-This mode is fast, stable, and conservative in the sense that it does not require an extra ODE state. It underestimates the true CMB heat loss relative to the SPIDER reference by 5-10 % over the first solidification cycle of a 1 M$_\oplus$ run, but that is the right tradeoff for the standalone-Aragog use case where parity with SPIDER is not the goal.
+This mode is fast, stable, and conservative in the sense that it does not require an extra ODE state. It underestimates the true CMB heat loss relative to the SPIDER reference by 5-10 % over the first solidification cycle of a 1 M$_\oplus$ run, which is the right trade-off for quick standalone exploration where SPIDER parity is not the goal.
 
-## `energy_balance`
+## `energy_balance` (default)
 
 State vector length: $N + 1$ (entropy at staggered nodes plus the entropy gradient at the CMB basic node, $dS/dr |_\text{cmb}$).
 
@@ -44,8 +44,8 @@ Treats the core temperature as an ODE state variable, with the CMB heat flux com
 
 | Need | Recommended `core_bc` |
 |------|----------------------|
-| Standalone Aragog or quick coupled-mode runs | `quasi_steady` (default) |
-| SPIDER-parity coupled runs (CHILI, validation) | `energy_balance` |
+| Production CHILI runs and SPIDER-parity validation | `energy_balance` (default) |
+| Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
 | Reproducing pre-2026 results | `bower2018` (legacy) |
 

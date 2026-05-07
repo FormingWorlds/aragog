@@ -29,11 +29,11 @@ pytestmark = pytest.mark.unit
 
 def test_boundary_config_defaults_match_documented_values():
     """Documented defaults: tfac_core_avg=1.147 (Bower+2018), param_utbl=False,
-    param_utbl_const=1e-7, core_bc='quasi_steady'.
+    param_utbl_const=1e-7, core_bc='energy_balance' (PROTEUS production).
 
-    Discriminator: a regression that flipped the default core_bc to
-    'energy_balance' (or any other mode) would silently change the
-    state-vector length for every TOML that omits the field.
+    Discriminator: a regression that flipped the default core_bc away
+    from 'energy_balance' would silently change the state-vector length
+    for every TOML that omits the field, and break SPIDER bit-parity.
     """
     bc = BoundaryConfig(
         outer_boundary_condition=1,
@@ -47,7 +47,7 @@ def test_boundary_config_defaults_match_documented_values():
     assert bc.tfac_core_avg == pytest.approx(1.147, abs=1e-12)
     assert bc.param_utbl is False
     assert bc.param_utbl_const == pytest.approx(1.0e-7, rel=1e-12)
-    assert bc.core_bc == 'quasi_steady'
+    assert bc.core_bc == 'energy_balance'
 
 
 def test_boundary_config_accepts_all_documented_core_bc_modes():
@@ -132,11 +132,10 @@ def test_initial_condition_config_defaults():
 def test_mesh_config_required_and_default_fields():
     """The 5 positional fields are required; the rest have defaults.
 
-    Discriminator: surface_density default 4000.0 is the SPIDER
-    parity value; gravitational_acceleration default 9.81 is Earth.
-    A regression that introduced a sneaky default for outer_radius
-    or number_of_nodes would silently drop physics constraints from
-    every TOML.
+    Discriminator: ``surface_density`` default 4078.95095544 is the
+    SPIDER ``-adams_williamson_rhos`` value used in PROTEUS production;
+    ``mass_coordinates`` default True matches the SPIDER mesh layout.
+    ``gravitational_acceleration`` default 9.81 is Earth.
     """
     mc = MeshConfig(
         outer_radius=6.371e6,
@@ -145,14 +144,14 @@ def test_mesh_config_required_and_default_fields():
         mixing_length_profile='nearest_boundary',
         core_density=10500.0,
     )
-    # Documented defaults
+    # Documented defaults aligned with PROTEUS production CHILI.
     assert mc.eos_method == 1
-    assert mc.surface_density == pytest.approx(4000.0, abs=1e-12)
+    assert mc.surface_density == pytest.approx(4078.95095544, rel=1e-12)
     assert mc.gravitational_acceleration == pytest.approx(9.81, abs=1e-12)
     assert mc.adiabatic_bulk_modulus == pytest.approx(260e9, rel=1e-12)
     assert mc.adams_williamson_beta == pytest.approx(0.0, abs=1e-30)
     assert mc.surface_pressure == pytest.approx(0.0, abs=1e-30)
-    assert mc.mass_coordinates is False
+    assert mc.mass_coordinates is True
     assert mc.eos_file == ''
 
 
