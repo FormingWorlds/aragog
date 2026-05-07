@@ -142,13 +142,11 @@ The volumetric work associated with phase segregation is carried implicitly by t
 
 ### Outer (surface) boundary
 
-Five outer BC modes are defined; modes 1, 4, and 5 are implemented in the entropy solver:
+Three outer BC modes are implemented in the entropy solver:
 
 | Mode | Description |
 |------|-------------|
 | 1 | Grey-body atmosphere: $F_\mathrm{top} = \varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$ with optional UTBL correction |
-| 2 | Zahnle steam atmosphere (not implemented) |
-| 3 | Atmodeller coupling (not implemented; PROTEUS uses prescribed flux for atmodeller-driven runs) |
 | 4 | Prescribed flux, updated per coupling step from the helpfile |
 | 5 | Prescribed temperature |
 

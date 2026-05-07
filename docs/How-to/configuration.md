@@ -133,7 +133,7 @@ Thermal boundary conditions at the surface and CMB.
 
 | Key | Unit | Description |
 |-----|------|-------------|
-| `outer_boundary_condition` | int | Surface BC mode. `1` = grey-body atmosphere, `2` = Zahnle steam (not implemented), `3` = atmodeller coupling (not implemented), `4` = prescribed flux, `5` = prescribed temperature |
+| `outer_boundary_condition` | int | Surface BC mode. `1` = grey-body atmosphere, `4` = prescribed flux, `5` = prescribed temperature |
 | `outer_boundary_value` | W/m² or K | Surface flux (modes `1`, `4`) or temperature (mode `5`) |
 | `inner_boundary_condition` | int | CMB BC mode. `1` = core cooling, `2` = prescribed flux, `3` = prescribed temperature |
 | `inner_boundary_value` | W/m² or K | CMB flux (modes `1`, `2`) or temperature (mode `3`) |
