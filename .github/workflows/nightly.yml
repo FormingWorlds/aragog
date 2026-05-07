@@ -37,14 +37,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up conda env (sundials + gfortran from conda-forge)
+      - name: Set up conda env (sundials + gfortran + pinned numpy)
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: aragog-nightly
+          # numpy pinned to <2.3 for scikits-odes-daepack 3.0.0 source-
+          # build f2py compatibility (see ci_tests.yml for details).
           create-args: >-
             python=3.12
             sundials
             gfortran
+            numpy<2.3
           condarc: |
             channels:
               - conda-forge

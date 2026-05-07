@@ -47,14 +47,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up conda env (sundials + gfortran from conda-forge)
+      - name: Set up conda env (sundials + gfortran + pinned numpy)
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: aragog-test
+          # numpy pinned to <2.3 because scikits-odes-daepack 3.0.0's
+          # f2py-generated C code is incompatible with numpy 2.3+ f2py
+          # headers ('too many arguments to function f2py_func' compile
+          # error). aragog has no daepack imports, but scikits_odes
+          # __init__.py imports scikits_odes.dae unconditionally.
           create-args: >-
             python=${{ matrix.python-version }}
             sundials
             gfortran
+            numpy<2.3
           condarc: |
             channels:
               - conda-forge
