@@ -12,7 +12,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-MultiplyT = TypeVar("MultiplyT", float, npt.NDArray, pd.Series, pd.DataFrame)
+MultiplyT = TypeVar('MultiplyT', float, npt.NDArray, pd.Series, pd.DataFrame)
 
 FloatOrArray = float | npt.NDArray
 

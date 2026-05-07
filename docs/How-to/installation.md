@@ -62,6 +62,16 @@ pip install scikits-odes
 
 `scikits_odes` is an optional dependency: importing Aragog without it succeeds, but selecting the CVODE path raises a clear error message at solve time.
 
+## Optional dependency: JAX (production CHILI runs)
+
+`solver.use_jax_jacobian = true` (the default) requires JAX at runtime. JAX builds the analytic Jacobian via `jax.jacrev` and feeds it to CVODE through a factory registered by the PROTEUS wrapper (or by user code that calls `EntropySolver.set_jax_cvode_factory`). Without JAX, the solver silently falls back to CVODE's finite-difference Jacobian, which is correct but slower and noisier near the rheological transition.
+
+```sh
+pip install jax equinox
+```
+
+`equinox` is the JAX-compatible PyTree framework used by `aragog.jax` to declare static parameter modules. The PROTEUS-side conda environment already pulls both transitively through Atmodeller; a standalone Aragog install for development without JAX is fully supported.
+
 ## Equation-of-state tables
 
 The entropy solver requires a directory of pressure-entropy (P-S) lookup tables in the SPIDER format. The files needed and their format are documented in [Reference: data](../Reference/data.md). In coupled PROTEUS runs the wrapper produces these tables automatically from a configured P-T melting curve and the Wolf-Bower (2018) RTpress liquid EOS; for standalone use, point the `eos_dir` argument of `EntropySolver.from_file()` at any directory containing the ten required files.

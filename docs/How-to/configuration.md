@@ -28,7 +28,7 @@ core_heat_capacity = 880.0
 tfac_core_avg = 1.147
 param_utbl = false
 param_utbl_const = 1.0e-7
-core_bc = "energy_balance"        # CMB BC mode
+core_bc = "energy_balance"        # CMB BC mode (default is "quasi_steady"; "energy_balance" enables SPIDER bit-parity)
 
 [mesh]
 outer_radius = 6.371e6            # m
@@ -55,6 +55,7 @@ tidal = false
 eddy_diffusivity_thermal = 1.0
 eddy_diffusivity_chemical = 1.0
 kappah_floor = 0.0
+phi_step_cap = 0.0                 # 0 = disabled; 0.05 caps per-call melt-fraction change in mushy band
 bottom_up_grav_sep = true
 phase_smoothing = "tanh"           # "tanh" (default, SPIDER-parity) or "cubic_hermite"
 solver_method = "cvode"            # "cvode" | "radau" | "bdf"
@@ -179,6 +180,7 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
 | `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |
 | `kappah_floor` | m²/s | 0.0 | Phase-modulated lower bound on $\kappa_h$ |
+| `phi_step_cap` | -- | 0.0 | Per-call $\Delta\phi$ cap. When `> 0` and the mantle straddles the rheological transition, a SUNDIALS root function returns at the step where any cell's $|\Delta\phi|$ first exceeds the cap. `0.05` is a useful upper bound for 1 M$_\oplus$ runs. Default `0.0` (disabled). |
 | `bottom_up_grav_sep` | bool | true | Apply SPIDER's bottom-up gating on the gravitational-separation flux |
 | `phase_smoothing` | str | `"tanh"` | Phase-boundary smoothing. `"tanh"` (default) is SPIDER's two-branch `get_smoothing` with width `matprop_smooth_width = 0.01`; `"cubic_hermite"` is the fallback $16\,g\phi^2(1-g\phi)^2$ form. |
 | `solver_method` | str | `"cvode"` | ODE integrator. `"cvode"` selects SUNDIALS CVODE via `scikits.odes` (default); `"radau"` and `"bdf"` use scipy `solve_ivp`. When `scikits.odes` is not installed the solver falls back to Radau with a warning. |

@@ -41,11 +41,14 @@ The legacy single/mixed/composite phase evaluator stack and the temperature-base
 
 - [`aragog.output`](aragog.output.md) — Standalone diagnostic functions `melt_fraction_global` and `rheological_front`. The primary output channel is `SolverOutput`, returned by `EntropySolver.get_state()`; see the [solver page](aragog.solver.md) for its field-by-field description.
 
+### JAX backend
+
+- [`aragog.jax`](aragog.jax.md) — JAX-traceable replicas of the EOS, phase evaluator, and dSdt RHS, used to build analytic Jacobians via `jax.jacrev`. Only loaded when `solver.use_jax_jacobian = true`. See the [CVODE+JAX explanation](../../Explanations/cvode_jax.md) for when to opt in.
+
 ## What is not in the public API
 
 The following modules are implementation details. They are reachable but should be treated as private:
 
 - `aragog.solver.entropy_solver._dSdt_single`, `_solve_cvode`, `_build_jac_sparsity` (internal RHS and integrator dispatch).
-- `aragog.solver.cvode_jax` and `aragog.solver.jacobian_jax` (CVODE callback factories used by the JAX path).
-- `aragog.jax.eos`, `aragog.jax.phase`, `aragog.jax.solver` (JAX-traceable replicas, only loaded when `use_jax_jacobian = true`).
+- `aragog.solver.cvode_jax` (CVODE callback factory used by the JAX path).
 - `aragog.parser._BoundaryConditionsParameters`, `_EnergyParameters`, etc. (the underscore-prefixed dataclasses are reached through `Parameters`, not directly).

@@ -29,7 +29,7 @@ class InitialConditionConfig:
     initial_condition: int = 1
     surface_temperature: float = 4000.0
     basal_temperature: float = 4000.0
-    init_file: str = ""
+    init_file: str = ''
 
     # Loaded temperature array (for IC type 2)
     init_temperature: npt.NDArray | None = attrs.field(init=False, default=None)

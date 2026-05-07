@@ -284,7 +284,7 @@ class _InitialConditionParameters:
 
         if self.initial_condition == 2:
             if self.init_file == '':
-                msg: str = f'you must provide an initial temperature file'
+                msg: str = 'you must provide an initial temperature file'
                 raise ValueError(msg)
             self.init_temperature = np.loadtxt(self.init_file)
             self.init_temperature /= self.scalings_.temperature
@@ -327,7 +327,7 @@ class _MeshParameters:
 
         if self.eos_method == 2:
             if self.eos_file == '':
-                msg: str = f'you must provide a file for setting up equation of state'
+                msg: str = 'you must provide a file for setting up equation of state'
                 raise ValueError(msg)
             arr = np.loadtxt(self.eos_file)
             self.eos_radius = arr[:, 0] / self.scalings_.radius
@@ -341,7 +341,7 @@ class _MeshParameters:
                 or (self.eos_radius[-1] - self.eos_radius[0])
                 < 0.75 * (self.outer_radius - self.inner_radius)
             ):
-                msg: str = f'Radius array in EOS file: Values out of range.'
+                msg: str = 'Radius array in EOS file: Values out of range.'
                 raise ValueError(msg)
 
 

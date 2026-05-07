@@ -50,7 +50,8 @@ class BoundaryConditions:
         if self._settings.inner_boundary_condition == 3:
             temperature_basic[0, :] = self._settings.inner_boundary_value
             dTdr[0, :] = (
-                2 * (temperature[0, :] - temperature_basic[0, :])
+                2
+                * (temperature[0, :] - temperature_basic[0, :])
                 / self._mesh.basic.delta_mesh[0]
                 * self._mesh.dxidr[0]
             )
@@ -58,7 +59,8 @@ class BoundaryConditions:
         if self._settings.outer_boundary_condition == 5:
             temperature_basic[-1, :] = self._settings.outer_boundary_value
             dTdr[-1, :] = (
-                2 * (temperature_basic[-1, :] - temperature[-1, :])
+                2
+                * (temperature_basic[-1, :] - temperature[-1, :])
                 / self._mesh.basic.delta_mesh[-1]
                 * self._mesh.dxidr[-1]
             )
@@ -77,14 +79,16 @@ class BoundaryConditions:
         # Core-mantle boundary
         if self._settings.inner_boundary_condition == 3:
             dphidr[0, :] = (
-                2 * (melt_fraction[0, :] - melt_fraction_basic[0, :])
+                2
+                * (melt_fraction[0, :] - melt_fraction_basic[0, :])
                 / self._mesh.basic.delta_mesh[0]
                 * self._mesh.dxidr[0]
             )
         # Surface
         if self._settings.outer_boundary_condition == 5:
             dphidr[-1, :] = (
-                2 * (melt_fraction_basic[-1, :] - melt_fraction[-1, :])
+                2
+                * (melt_fraction_basic[-1, :] - melt_fraction[-1, :])
                 / self._mesh.basic.delta_mesh[-1]
                 * self._mesh.dxidr[-1]
             )
@@ -97,8 +101,8 @@ class BoundaryConditions:
         """
         self.apply_flux_inner_boundary_condition(state)
         self.apply_flux_outer_boundary_condition(state)
-        logger.debug("temperature = %s", state.temperature_basic)
-        logger.debug("heat_flux = %s", state.heat_flux)
+        logger.debug('temperature = %s', state.temperature_basic)
+        logger.debug('heat_flux = %s', state.heat_flux)
 
     def apply_flux_outer_boundary_condition(self, state: State) -> None:
         """Applies the flux boundary condition to the state at the outer boundary.
@@ -118,7 +122,7 @@ class BoundaryConditions:
         elif self._settings.outer_boundary_condition == 2:
             raise NotImplementedError
         elif self._settings.outer_boundary_condition == 3:
-            msg: str = "Requires coupling to atmodeller"
+            msg: str = 'Requires coupling to atmodeller'
             logger.error(msg)
             raise NotImplementedError(msg)
         elif self._settings.outer_boundary_condition == 4:
@@ -126,9 +130,7 @@ class BoundaryConditions:
         elif self._settings.outer_boundary_condition == 5:
             pass
         else:
-            msg: str = (
-                f"outer_boundary_condition = {self._settings.outer_boundary_condition} is unknown"
-            )
+            msg: str = f'outer_boundary_condition = {self._settings.outer_boundary_condition} is unknown'
             raise ValueError(msg)
 
     def grey_body(self, state: State) -> None:
@@ -200,9 +202,7 @@ class BoundaryConditions:
             pass
             # raise NotImplementedError
         else:
-            msg: str = (
-                f"inner_boundary_condition = {self._settings.inner_boundary_condition} is unknown"
-            )
+            msg: str = f'inner_boundary_condition = {self._settings.inner_boundary_condition} is unknown'
             raise ValueError(msg)
 
     def core_cooling(self, state: State) -> None:
@@ -222,7 +222,10 @@ class BoundaryConditions:
         # Core thermal capacity: C_core = rho_core * cp_core * V_core
         r_cmb = np.asarray(self._mesh.basic.radii).flat[0]
         core_capacity = (
-            4 / 3 * np.pi * r_cmb**3
+            4
+            / 3
+            * np.pi
+            * r_cmb**3
             * self._mesh.settings.core_density
             * self._settings.core_heat_capacity
         )

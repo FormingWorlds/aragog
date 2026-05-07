@@ -7,7 +7,7 @@
     </a>
 </h1>
 
-Aragog is the interior thermal evolution module of <b>PROTEUS</b> (/ˈproʊtiəs, PROH-tee-əs), a modular Python framework that simulates the coupled evolution of the atmospheres and interiors of rocky planets and exoplanets.
+Aragog is the interior evolution module of <b>PROTEUS</b> (/ˈproʊtiəs, PROH-tee-əs), a modular Python framework that simulates the coupled evolution of the atmospheres and interiors of rocky planets and exoplanets. A schematic of PROTEUS components and corresponding modules can be found below.
 <br>
 <br>
 You can find the <b>documentation of each PROTEUS module</b> in the sidebar.
@@ -15,6 +15,6 @@ You can find the <b>documentation of each PROTEUS module</b> in the sidebar.
 <br>
 
 <p align="center">
-      <img src="assets/schematic_round.png" style="max-width: 90%; height: auto;"></br>
-      <b>Schematic of PROTEUS components and corresponding modules.</b> </br>
+      <img src="assets/schematic_round.png" style="max-width: 90%; height: auto;"><br>
+      <b>Schematic of PROTEUS components and corresponding modules.</b> <br>
 </p>

@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "fwl-aragog"
-version = "26.01.06"
+version = "26.05.07"
 authors = [
     {name="Dan J. Bower",            email="dbower@ethz.ch"},
     {name="Mariana Sastre",          email="m.c.villamil.sastre@rug.nl"},
@@ -43,6 +43,7 @@ platformdirs = "^3.10.0"
 pytest = ">=8.1"
 pytest-cov = ">=1.0.0"
 pytest-dependency = ">=1.0.0"
+pytest-xdist = ">=3.0.0"
 
 
 [tool.poetry.group.docs.dependencies]
@@ -67,4 +68,30 @@ testpaths = ["tests"]
 markers = [
     "unit: Unit tests (fast, no external data)",
     "smoke: Integration tests (may need external data)",
+    "slow: Slow tests that exercise full multi-Myr solver runs",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["src/aragog"]
+omit = [
+    "*/tests/*",
+    "*/conftest.py",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "def __repr__",
+    "def __str__",
+    "if __name__ == .__main__.:",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"

@@ -13,6 +13,7 @@ Production CHILI configs use param_utbl=False, so this divergence
 does not currently affect any paper-line run. The tests pin parity
 against future SPIDER-parity test configs that may flip the flag.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -21,12 +22,11 @@ import pytest
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
-from aragog.jax.solver import (
+from aragog.jax.solver import (  # noqa: E402
     BoundaryParams,
     _apply_surface_bc,
     _utbl_tsurf_jax,
 )
-from aragog.solver.boundary import BoundaryConditions
 
 
 @pytest.mark.unit
@@ -40,13 +40,11 @@ def test_cardano_jax_vs_numpy_parity(T_interior, b):
     """
     p = 1.0 / b
     q = -T_interior / b
-    discriminant = q ** 2 / 4.0 + p ** 3 / 27.0
+    discriminant = q**2 / 4.0 + p**3 / 27.0
     sqrt_disc = np.sqrt(discriminant)
     T_surf_numpy = np.cbrt(-q / 2.0 + sqrt_disc) + np.cbrt(-q / 2.0 - sqrt_disc)
 
-    T_surf_jax = float(
-        _utbl_tsurf_jax(jnp.asarray(T_interior), jnp.asarray(b))
-    )
+    T_surf_jax = float(_utbl_tsurf_jax(jnp.asarray(T_interior), jnp.asarray(b)))
 
     assert T_surf_jax == pytest.approx(T_surf_numpy, rel=1e-12)
 
@@ -66,7 +64,7 @@ def test_cardano_satisfies_cubic():
     b = 1e-7
     T_interior = 3500.0
     T_surf = float(_utbl_tsurf_jax(jnp.asarray(T_interior), jnp.asarray(b)))
-    residual = b * T_surf ** 3 + T_surf - T_interior
+    residual = b * T_surf**3 + T_surf - T_interior
     assert abs(residual) < 1e-6 * T_interior
 
 
@@ -101,7 +99,7 @@ def test_apply_surface_bc_grey_off_utbl():
 
     SIGMA_SB = 5.670374419e-8  # CODATA, matches solver SIGMA_SB
     T_surf = 3000.0  # T_basic[-1], no UTBL correction
-    expected = SIGMA_SB * (T_surf ** 4 - 200.0 ** 4)
+    expected = SIGMA_SB * (T_surf**4 - 200.0**4)
     assert float(out[-1]) == pytest.approx(expected, rel=1e-10)
 
 
@@ -129,14 +127,21 @@ def test_apply_surface_bc_grey_on_utbl():
 
     SIGMA_SB = 5.670374419e-8
     T_surf = float(_utbl_tsurf_jax(jnp.asarray(T_interior), jnp.asarray(b)))
-    expected = SIGMA_SB * (T_surf ** 4 - 200.0 ** 4)
+    expected = SIGMA_SB * (T_surf**4 - 200.0**4)
     assert float(out[-1]) == pytest.approx(expected, rel=1e-10)
     # And the UTBL flux MUST be lower than the no-UTBL flux at the same T.
     out_no_utbl_bc = BoundaryParams(
-        outer_bc_type=1, outer_bc_value=0.0, emissivity=1.0, T_eq=200.0,
-        inner_bc_type=1, inner_bc_value=0.0, core_density=8000.0,
-        core_heat_capacity=800.0, tfac_core_avg=1.147,
-        param_utbl=False, param_utbl_const=0.0,
+        outer_bc_type=1,
+        outer_bc_value=0.0,
+        emissivity=1.0,
+        T_eq=200.0,
+        inner_bc_type=1,
+        inner_bc_value=0.0,
+        core_density=8000.0,
+        core_heat_capacity=800.0,
+        tfac_core_avg=1.147,
+        param_utbl=False,
+        param_utbl_const=0.0,
     )
     out_no_utbl = _apply_surface_bc(heat_flux, out_no_utbl_bc, T_basic)
     assert float(out[-1]) < float(out_no_utbl[-1])

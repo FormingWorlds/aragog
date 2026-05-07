@@ -14,12 +14,8 @@ Test D: Boundary layer thickness (delta/D ~ 1/Nu)
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
-from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 
 SECS_PER_YEAR = 31557600.0
@@ -32,18 +28,18 @@ SECS_PER_YEAR = 31557600.0
 #   dS/dT = Cp / T
 #   F_cond = -k * dT/dr = -k * (T/Cp) * dS/dr
 
-RHO = 4000.0       # kg/m^3
-CP = 1000.0         # J/kg/K
-K_COND = 4.0        # W/m/K
-ALPHA = 1e-10       # 1/K (negligible adiabat)
-T_REF = 3500.0      # K
-S_REF = 3000.0      # J/kg/K
+RHO = 4000.0  # kg/m^3
+CP = 1000.0  # J/kg/K
+K_COND = 4.0  # W/m/K
+ALPHA = 1e-10  # 1/K (negligible adiabat)
+T_REF = 3500.0  # K
+S_REF = 3000.0  # J/kg/K
 KAPPA = K_COND / (RHO * CP)  # 1e-6 m^2/s
 
-R_INNER = 5.371e6   # m
-R_OUTER = 6.371e6   # m
+R_INNER = 5.371e6  # m
+R_OUTER = 6.371e6  # m
 D_SHELL = R_OUTER - R_INNER  # 1e6 m
-G = 10.0            # m/s^2
+G = 10.0  # m/s^2
 
 
 def T_to_S(T):
@@ -65,6 +61,7 @@ def analytical_T(r, T_inner=4000.0, T_outer=1500.0):
 
 
 # -- Constant-property state class ---------------------------------------------
+
 
 class ConstPropState:
     """Entropy state with constant properties (no EOS tables needed).
@@ -150,6 +147,7 @@ def make_const_mesh(N=100):
 
     class Mesh:
         pass
+
     mesh = Mesh()
     mesh.N = N
     mesh.r_stag = r_stag
@@ -180,6 +178,7 @@ def make_const_mesh(N=100):
 
 
 # -- Test A: Conduction steady state -------------------------------------------
+
 
 @pytest.mark.smoke
 class TestConductionSteadyState:
@@ -251,6 +250,7 @@ class TestConductionSteadyState:
 
 # -- Test B: Eigenvalue decay --------------------------------------------------
 
+
 @pytest.mark.smoke
 class TestEigenvalueDecay:
     """Verify exponential decay of a perturbation around conduction steady state."""
@@ -303,8 +303,8 @@ class TestEigenvalueDecay:
 
         # Use fixed-entropy BCs: clamp S at boundaries to steady-state values.
         # This enforces T = T_inner at CMB and T = T_outer at surface.
-        S_inner = T_to_S(T_inner)
-        S_outer = T_to_S(T_outer)
+        T_to_S(T_inner)
+        T_to_S(T_outer)
 
         def rhs(t, S):
             # Compute fluxes
@@ -322,8 +322,9 @@ class TestEigenvalueDecay:
             return dsdt
 
         t_end = 2.0 * tau_yr
-        sol = solve_ivp(rhs, (0, t_end), S_pert, method='BDF',
-                        atol=1e-4, rtol=1e-8, dense_output=True)
+        sol = solve_ivp(
+            rhs, (0, t_end), S_pert, method='BDF', atol=1e-4, rtol=1e-8, dense_output=True
+        )
         assert sol.status == 0
 
         n_samples = 20
@@ -335,6 +336,7 @@ class TestEigenvalueDecay:
         amplitudes = np.array(amplitudes)
 
         from scipy.optimize import curve_fit
+
         def exp_decay(t, A0, tau):
             return A0 * np.exp(-t / tau)
 
@@ -350,6 +352,7 @@ class TestEigenvalueDecay:
 
 
 # -- Test C: Nu-Ra scaling -----------------------------------------------------
+
 
 @pytest.mark.smoke
 class TestNuRaScaling:
@@ -408,8 +411,7 @@ class TestNuRaScaling:
                 return dsdt
 
             # Run to approximate steady state
-            sol = solve_ivp(rhs, (0, 1e8), S_init, method='BDF',
-                            atol=0.01, rtol=1e-6)
+            sol = solve_ivp(rhs, (0, 1e8), S_init, method='BDF', atol=0.01, rtol=1e-6)
             if sol.status != 0:
                 continue
 
@@ -426,9 +428,7 @@ class TestNuRaScaling:
         Nu_vals = np.array(Nu_vals)
         Ra_vals = np.array(Ra_vals)
 
-        assert len(Nu_vals) >= 3, (
-            f'Too few converged cases: {len(Nu_vals)} (need >= 3)'
-        )
+        assert len(Nu_vals) >= 3, f'Too few converged cases: {len(Nu_vals)} (need >= 3)'
 
         # All cases must have Nu >> 1 (convection enhances heat transport)
         assert np.all(Nu_vals > 1.0), (
@@ -443,12 +443,12 @@ class TestNuRaScaling:
             f'Expected Nu > 5 in the convective regime.'
         )
         assert np.all(Nu_vals < 100.0), (
-            f'Some Nu values suspiciously high: Nu={Nu_vals}. '
-            f'Expected Nu < 100 for MLT.'
+            f'Some Nu values suspiciously high: Nu={Nu_vals}. Expected Nu < 100 for MLT.'
         )
 
 
 # -- Test D: Boundary layer thickness ------------------------------------------
+
 
 @pytest.mark.smoke
 class TestBoundaryLayer:
@@ -471,9 +471,7 @@ class TestBoundaryLayer:
         DT = T_inner - T_outer
 
         # Use nearest-boundary mixing length for genuine BL structure
-        mesh.mixing_length = np.minimum(
-            mesh.r_basic - R_INNER, R_OUTER - mesh.r_basic
-        )
+        mesh.mixing_length = np.minimum(mesh.r_basic - R_INNER, R_OUTER - mesh.r_basic)
         mesh.mixing_length = np.maximum(mesh.mixing_length, 1.0)
 
         A_coeff = DT * R_INNER * R_OUTER / D_SHELL
@@ -511,8 +509,7 @@ class TestBoundaryLayer:
                 dsdt[-1] += relax * (_so - S[-1])
                 return dsdt
 
-            sol = solve_ivp(rhs, (0, 1e6), S_init, method='BDF',
-                            atol=0.01, rtol=1e-6)
+            sol = solve_ivp(rhs, (0, 1e6), S_init, method='BDF', atol=0.01, rtol=1e-6)
             if sol.status != 0:
                 bl_thicknesses.append(np.nan)
                 Ra_vals.append(np.nan)
@@ -530,8 +527,11 @@ class TestBoundaryLayer:
             Ra_vals.append(Ra)
 
         # Filter out NaN entries
-        valid = [(v, d, r) for v, d, r in zip(viscosities, bl_thicknesses, Ra_vals)
-                 if not np.isnan(d)]
+        valid = [
+            (v, d, r)
+            for v, d, r in zip(viscosities, bl_thicknesses, Ra_vals)
+            if not np.isnan(d)
+        ]
         assert len(valid) >= 4, (
             f'Too few converged cases: {len(valid)} (need >= 4). '
             f'viscosities={viscosities}, deltas={bl_thicknesses}'
@@ -545,7 +545,7 @@ class TestBoundaryLayer:
             assert valid_deltas[i + 1] <= valid_deltas[i], (
                 f'BL thickness not monotonically decreasing: '
                 f'delta[{i}]={valid_deltas[i]:.0f} m, '
-                f'delta[{i+1}]={valid_deltas[i+1]:.0f} m. '
+                f'delta[{i + 1}]={valid_deltas[i + 1]:.0f} m. '
                 f'Full sequence: {valid_deltas}'
             )
 
@@ -565,6 +565,7 @@ class TestBoundaryLayer:
 
 # -- Test E: Dirichlet (fixed-T) BCs ------------------------------------------
 
+
 @pytest.mark.smoke
 class TestDirichletBC:
     """Verify solver behavior with fixed-temperature (relaxation) BCs.
@@ -573,15 +574,16 @@ class TestDirichletBC:
     Conduction + convection: interior homogenizes with thin BLs.
     """
 
-    def _solve_with_relaxation(self, N, T_inner, T_outer, convection=False,
-                                viscosity=1e21, alpha=ALPHA, t_end=1e8):
+    def _solve_with_relaxation(
+        self, N, T_inner, T_outer, convection=False, viscosity=1e21, alpha=ALPHA, t_end=1e8
+    ):
         """Run solver with relaxation BCs pinning S at both boundaries."""
         mesh = make_const_mesh(N)
         if convection:
             mesh.mixing_length = np.maximum(
-                np.minimum(mesh.r_basic - R_INNER, R_OUTER - mesh.r_basic), 1.0)
-        state = ConstPropState(mesh, viscosity=viscosity,
-                               convection=convection, alpha=alpha)
+                np.minimum(mesh.r_basic - R_INNER, R_OUTER - mesh.r_basic), 1.0
+            )
+        state = ConstPropState(mesh, viscosity=viscosity, convection=convection, alpha=alpha)
         S_in = T_to_S(T_inner)
         S_out = T_to_S(T_outer)
         # Start from linear T
@@ -599,15 +601,13 @@ class TestDirichletBC:
             dsdt[-1] += relax * (_so - S[-1])
             return dsdt
 
-        sol = solve_ivp(rhs, (0, t_end), S_init, method='BDF',
-                        atol=0.01, rtol=1e-8)
+        sol = solve_ivp(rhs, (0, t_end), S_init, method='BDF', atol=0.01, rtol=1e-8)
         return sol, mesh, state
 
     def test_conduction_dirichlet_steady_state(self):
         """Conduction with fixed T at both boundaries reaches T = A/r + B."""
         T_inner, T_outer = 4000.0, 1500.0
-        sol, mesh, state = self._solve_with_relaxation(
-            100, T_inner, T_outer, convection=False)
+        sol, mesh, state = self._solve_with_relaxation(100, T_inner, T_outer, convection=False)
         assert sol.status == 0
 
         T_final = S_to_T(sol.y[:, -1])
@@ -619,14 +619,15 @@ class TestDirichletBC:
         diffs = np.diff(T_final)
         assert np.all(diffs <= 0.0), (
             f'T(r) should decrease outward but has positive gradient: '
-            f'max dT = {np.max(diffs):.2f} K')
+            f'max dT = {np.max(diffs):.2f} K'
+        )
 
     def test_convection_dirichlet_homogenizes_interior(self):
         """With convection, Dirichlet BCs produce a well-mixed interior."""
         T_inner, T_outer = 4000.0, 1500.0
         sol, mesh, state = self._solve_with_relaxation(
-            100, T_inner, T_outer, convection=True,
-            viscosity=1e12, alpha=1e-5, t_end=1e6)
+            100, T_inner, T_outer, convection=True, viscosity=1e12, alpha=1e-5, t_end=1e6
+        )
         assert sol.status == 0
 
         T_final = S_to_T(sol.y[:, -1])
@@ -637,7 +638,8 @@ class TestDirichletBC:
         T_total = T_inner - T_outer
         assert T_spread < 0.3 * T_total, (
             f'Interior T spread {T_spread:.0f} K is too large '
-            f'(should be < 30% of {T_total:.0f} K for convective mixing)')
+            f'(should be < 30% of {T_total:.0f} K for convective mixing)'
+        )
 
     def test_convection_nu_above_one(self):
         """Convection with Dirichlet BCs: measured Nu > 1."""
@@ -648,8 +650,8 @@ class TestDirichletBC:
         F_cond_surf = Q_cond / (4 * np.pi * R_OUTER**2)
 
         sol, mesh, state = self._solve_with_relaxation(
-            50, T_inner, T_outer, convection=True,
-            viscosity=1e12, alpha=1e-5, t_end=1e8)
+            50, T_inner, T_outer, convection=True, viscosity=1e12, alpha=1e-5, t_end=1e8
+        )
         assert sol.status == 0
 
         state.dSdt(0, sol.y[:, -1])
@@ -659,6 +661,7 @@ class TestDirichletBC:
 
 
 # -- Test F: Neumann (prescribed-flux) BCs ------------------------------------
+
 
 @pytest.mark.smoke
 class TestNeumannBC:
@@ -692,8 +695,7 @@ class TestNeumannBC:
             return -np.diff(ef) / cap * SECS_PER_YEAR
 
         t_end = 1e4  # yr
-        sol = solve_ivp(rhs, (0, t_end), S_init, method='BDF',
-                        atol=0.01, rtol=1e-8)
+        sol = solve_ivp(rhs, (0, t_end), S_init, method='BDF', atol=0.01, rtol=1e-8)
         assert sol.status == 0
 
         # Energy change
@@ -708,7 +710,8 @@ class TestNeumannBC:
         rel_err = abs(dE + Q_lost) / Q_lost
         assert rel_err < 0.05, (
             f'Energy conservation: dE={dE:.2e}, Q_lost={Q_lost:.2e}, '
-            f'residual={rel_err:.2%} (should be < 5%)')
+            f'residual={rel_err:.2%} (should be < 5%)'
+        )
 
     def test_prescribed_flux_surface_cools(self):
         """Prescribed outward flux should cool the surface."""
@@ -728,19 +731,20 @@ class TestNeumannBC:
             cap = RHO * S_to_T(S) * mesh.volume
             return -np.diff(ef) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(rhs, (0, 1e4), S_init, method='BDF',
-                        atol=0.01, rtol=1e-8)
+        sol = solve_ivp(rhs, (0, 1e4), S_init, method='BDF', atol=0.01, rtol=1e-8)
         assert sol.status == 0
 
         T_final = S_to_T(sol.y[:, -1])
         # Surface should cool more than interior (flux extracts from surface)
         assert T_final[-1] < T_uniform - 1.0, (
-            f'Surface T={T_final[-1]:.0f} K barely changed from {T_uniform:.0f} K')
+            f'Surface T={T_final[-1]:.0f} K barely changed from {T_uniform:.0f} K'
+        )
         # Interior should still be warm
         assert T_final[0] > T_final[-1], 'CMB should be warmer than surface'
 
 
 # -- Test G: Mixed BCs (Dirichlet inner + grey-body outer) --------------------
+
 
 @pytest.mark.smoke
 class TestMixedBC:
@@ -769,8 +773,7 @@ class TestMixedBC:
             _s.dSdt(t, S)
             # Grey-body at surface
             T_surf = S_to_T(S[-1])
-            _s.heat_flux[-1] = (
-                emissivity * 5.670374419e-8 * (T_surf**4 - T_eq**4))
+            _s.heat_flux[-1] = emissivity * 5.670374419e-8 * (T_surf**4 - T_eq**4)
             # Zero internal flux at CMB; relaxation pins S
             _s.heat_flux[0] = 0.0
             ef = _s.heat_flux * mesh.area
@@ -780,20 +783,22 @@ class TestMixedBC:
             dsdt[0] += relax * (_si - S[0])
             return dsdt
 
-        sol = solve_ivp(rhs, (0, 1e6), S_init, method='BDF',
-                        atol=0.01, rtol=1e-6)
+        sol = solve_ivp(rhs, (0, 1e6), S_init, method='BDF', atol=0.01, rtol=1e-6)
         assert sol.status == 0
 
         T_final = S_to_T(sol.y[:, -1])
 
         # CMB should stay near prescribed T
         assert abs(T_final[0] - T_inner) < 50.0, (
-            f'CMB T={T_final[0]:.0f} K drifted from {T_inner:.0f} K')
+            f'CMB T={T_final[0]:.0f} K drifted from {T_inner:.0f} K'
+        )
 
         # Surface should have cooled
         assert T_final[-1] < T_inner - 100.0, (
-            f'Surface T={T_final[-1]:.0f} K should be much cooler than CMB')
+            f'Surface T={T_final[-1]:.0f} K should be much cooler than CMB'
+        )
 
         # Temperature should decrease outward (hot core to cold surface)
         assert T_final[0] > T_final[-1], (
-            f'CMB ({T_final[0]:.0f} K) should be hotter than surface ({T_final[-1]:.0f} K)')
+            f'CMB ({T_final[0]:.0f} K) should be hotter than surface ({T_final[-1]:.0f} K)'
+        )

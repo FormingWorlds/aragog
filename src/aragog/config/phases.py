@@ -40,7 +40,7 @@ class PhaseConfig:
     thermal_conductivity: float | str
     thermal_expansivity: float | str
     viscosity: float | str
-    entropy: float | str = ""
+    entropy: float | str = ''
 
 
 @attrs.define

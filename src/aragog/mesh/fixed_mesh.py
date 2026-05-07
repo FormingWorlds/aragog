@@ -52,7 +52,7 @@ class FixedMesh:
 
     def __post_init__(self):
         if not is_monotonic_increasing(self.radii):
-            msg: str = "Mesh must be monotonically increasing"
+            msg: str = 'Mesh must be monotonically increasing'
             logger.error(msg)
             raise ValueError(msg)
 
@@ -79,20 +79,22 @@ class FixedMesh:
 
     @cached_property
     def mixing_length(self) -> npt.NDArray:
-        if self.settings.mixing_length_profile == "nearest_boundary":
-            logger.debug("Set mixing length profile to nearest boundary")
+        if self.settings.mixing_length_profile == 'nearest_boundary':
+            logger.debug('Set mixing length profile to nearest boundary')
             mixing_length = np.minimum(
                 self.outer_boundary - self.radii, self.radii - self.inner_boundary
             )
-        elif self.settings.mixing_length_profile == "constant":
-            logger.debug("Set mixing length profile to constant")
+        elif self.settings.mixing_length_profile == 'constant':
+            logger.debug('Set mixing length profile to constant')
             assert self.outer_boundary is not None
             assert self.inner_boundary is not None
             mixing_length = (
                 np.ones_like(self.radii) * 0.25 * (self.outer_boundary - self.inner_boundary)
             )
         else:
-            msg: str = f"Mixing length profile = {self.settings.mixing_length_profile} is unknown"
+            msg: str = (
+                f'Mixing length profile = {self.settings.mixing_length_profile} is unknown'
+            )
             raise ValueError(msg)
 
         return mixing_length

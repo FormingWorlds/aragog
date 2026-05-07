@@ -69,4 +69,4 @@ class ScalingsConfig:
         self.viscosity = 1.0
         self.time_years = 1.0
         self.stefan_boltzmann_constant = 1.0
-        logger.debug("scalings = %s (all unity, non-dimensionalization removed)", self)
+        logger.debug('scalings = %s (all unity, non-dimensionalization removed)', self)

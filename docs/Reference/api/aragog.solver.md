@@ -9,6 +9,7 @@ The public surface re-exported from `aragog.solver` is:
 | `EntropySolver` | The ODE driver. Owns the integrator dispatch (Radau / BDF / CVODE), the nondimensionalisation layer, the retry-ladder hooks, and the `SolverOutput` post-processing. |
 | `EntropyState` | Per-RHS state container. Computes phase, density, $T$, $c_p$, $\alpha$, $k$, the four flux contributions, and the internal heating at each call. |
 | `BoundaryConditions` | Surface (grey-body, UTBL, prescribed flux/T) and inner (core cooling, prescribed flux/T) BC dispatch. |
-| `SolverOutput` | Dataclass returned by `EntropySolver.get_state()`. Carries the staggered-node profiles, basic-node fluxes, scalar diagnostics, and the integration status flag. |
+| `SolverOutput` | Dataclass returned by `EntropySolver.get_state()`. Carries the staggered-node profiles, basic-node fluxes, scalar diagnostics, the per-call energy integrals (`step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`), and the integration status flag. |
+| `SECS_PER_YEAR` | Module-level constant `scipy.constants.Julian_year` ($31{,}557{,}600$ s). The ODE is integrated in years; converting flux divergence (J/kg/K/s) to per-year requires this factor. |
 
 ::: aragog.solver

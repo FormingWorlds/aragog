@@ -20,7 +20,6 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
 from aragog.solver.entropy_solver import _validate_eos_radius_range
 
 pytestmark = pytest.mark.unit

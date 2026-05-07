@@ -178,3 +178,88 @@ def test_radio_only_heating_in_mushy_zone_jax():
         f'Expected heating == {radio_value} (radio uniform), got '
         f'max|H|={float(np.max(np.abs(H_out))):.3e}'
     )
+
+
+# ---- Schema-level negative regressions ------------------------------------
+#
+# These tests do NOT need the JAX runtime, the EOS tables, or any
+# numerical computation. They simply assert that the dilatation
+# surface (config field, SolverOutput attribute, JAX heating path)
+# stays deleted. They run fast and discriminate against the most
+# obvious regressions: someone re-adding the field "for backward
+# compatibility" without realising it would re-introduce the
+# 2x-overshoot heat-pump quasi-equilibrium documented in
+# finding_2026_05_03_phi_vol_double_count_verdict.md.
+
+
+def test_solver_output_has_no_Q_dil_total_field():
+    """SolverOutput must not expose ``Q_dil_total`` (or any Φ_vol-
+    derived total power). The PROTEUS wrapper used to read this
+    field; readers that try ``getattr(out, 'Q_dil_total')`` should
+    fail loudly so the regression is caught at PR review.
+    """
+    from aragog.solver.entropy_solver import SolverOutput
+
+    field_names = {f.name for f in SolverOutput.__dataclass_fields__.values()}
+    forbidden = {'Q_dil_total', 'Q_dil_W', 'F_dil', 'F_dil_W'}
+    found = forbidden & field_names
+    assert not found, (
+        f'SolverOutput re-introduced dilatation fields: {sorted(found)}. '
+        f'See aragog 0948279 / dcd7f37 for the deletion rationale.'
+    )
+
+
+def test_solver_output_has_no_step_dE_Q_dil_J_field():
+    """The per-call energy integral list must not include
+    step_dE_Q_dil_J. Only the four physical integrals
+    (F_int, F_cmb, Q_radio, Q_tidal) are valid sources.
+
+    Discriminator: a regression that re-added Q_dil to
+    _compute_step_energy_integrals and exposed it on SolverOutput
+    would silently restore the +200 to +2000 E_residual_frac
+    plateau seen in the 7-cell energy-diagnostic matrix.
+    """
+    from aragog.solver.entropy_solver import SolverOutput
+
+    field_names = {f.name for f in SolverOutput.__dataclass_fields__.values()}
+    assert 'step_dE_Q_dil_J' not in field_names, (
+        'SolverOutput re-introduced step_dE_Q_dil_J; '
+        'the dilatation per-call integral is gone for a reason.'
+    )
+    # Also assert the four valid integrals are still there so a
+    # regression that deletes them all (instead of just dilatation)
+    # is caught.
+    expected_integrals = {
+        'step_dE_F_int_J',
+        'step_dE_F_cmb_J',
+        'step_dE_Q_radio_J',
+        'step_dE_Q_tidal_J',
+    }
+    missing = expected_integrals - field_names
+    assert not missing, f'SolverOutput is missing required energy integrals: {sorted(missing)}'
+
+
+def test_energy_parameters_does_not_accept_dilatation_kwarg():
+    """The legacy ``dilatation`` boolean was removed from
+    ``_EnergyParameters`` in aragog c8bc611. Any TOML still passing
+    it must fail at parser construction so the silent no-op is
+    impossible.
+
+    Edge case: include several other plausibly-related keywords
+    (``Phi_vol``, ``Phi_vol_active``) in the same regression sweep
+    so a regression that re-introduces ANY dilatation alias is
+    caught.
+    """
+    from aragog.parser import _EnergyParameters
+
+    base_kwargs = dict(
+        conduction=True,
+        convection=True,
+        gravitational_separation=False,
+        mixing=False,
+        radionuclides=False,
+        tidal=False,
+    )
+    for forbidden in ('dilatation', 'Phi_vol', 'Phi_vol_active', 'phi_vol'):
+        with pytest.raises(TypeError, match='unexpected keyword'):
+            _EnergyParameters(**base_kwargs, **{forbidden: False})  # type: ignore[arg-type]

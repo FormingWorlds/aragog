@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from aragog.parser import Parameters
 
 from aragog.config.boundary import BoundaryConfig
 from aragog.config.energy import EnergyConfig
@@ -32,16 +35,16 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 # Re-export all config classes for convenient access
 __all__ = [
-    "Config",
-    "BoundaryConfig",
-    "EnergyConfig",
-    "InitialConditionConfig",
-    "MeshConfig",
-    "MixedPhaseConfig",
-    "PhaseConfig",
-    "RadionuclideConfig",
-    "ScalingsConfig",
-    "SolverConfig",
+    'Config',
+    'BoundaryConfig',
+    'EnergyConfig',
+    'InitialConditionConfig',
+    'MeshConfig',
+    'MixedPhaseConfig',
+    'PhaseConfig',
+    'RadionuclideConfig',
+    'ScalingsConfig',
+    'SolverConfig',
 ]
 
 
@@ -77,7 +80,7 @@ class Config:
     """
 
     @staticmethod
-    def from_toml(filename: str) -> "Parameters":
+    def from_toml(filename: str) -> 'Parameters':
         """Load configuration from a TOML file and return a Parameters object.
 
         Parameters
@@ -92,13 +95,13 @@ class Config:
         """
         from pathlib import Path
 
-        with Path(filename).open("rb") as f:
+        with Path(filename).open('rb') as f:
             data = tomllib.load(f)
 
         return Config.from_dict(data)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> "Parameters":
+    def from_dict(data: dict[str, Any]) -> 'Parameters':
         """Construct a Parameters object from a nested dictionary.
 
         This is the primary construction path used by the PROTEUS wrapper.
@@ -126,23 +129,19 @@ class Config:
             _SolverParameters,
         )
 
-        scalings = _ScalingsParameters(**data.get("scalings", {}))
-        solver = _SolverParameters(**data["solver"])
-        boundary_conditions = _BoundaryConditionsParameters(
-            **data["boundary_conditions"]
-        )
-        mesh = _MeshParameters(**data["mesh"])
-        energy = _EnergyParameters(**data["energy"])
-        initial_condition = _InitialConditionParameters(
-            **data.get("initial_condition", {})
-        )
-        phase_liquid = _PhaseParameters(**data["phase_liquid"])
-        phase_solid = _PhaseParameters(**data["phase_solid"])
-        phase_mixed = _PhaseMixedParameters(**data["phase_mixed"])
+        scalings = _ScalingsParameters(**data.get('scalings', {}))
+        solver = _SolverParameters(**data['solver'])
+        boundary_conditions = _BoundaryConditionsParameters(**data['boundary_conditions'])
+        mesh = _MeshParameters(**data['mesh'])
+        energy = _EnergyParameters(**data['energy'])
+        initial_condition = _InitialConditionParameters(**data.get('initial_condition', {}))
+        phase_liquid = _PhaseParameters(**data['phase_liquid'])
+        phase_solid = _PhaseParameters(**data['phase_solid'])
+        phase_mixed = _PhaseMixedParameters(**data['phase_mixed'])
 
         radionuclides: list[_Radionuclide] = []
         for key, val in data.items():
-            if key.startswith("radionuclide_"):
+            if key.startswith('radionuclide_'):
                 radionuclides.append(_Radionuclide(**val))
 
         return Parameters(
@@ -159,7 +158,7 @@ class Config:
         )
 
     @staticmethod
-    def from_file(*filenames: str) -> "Parameters":
+    def from_file(*filenames: str) -> 'Parameters':
         """Load from a file, auto-detecting format (TOML or INI).
 
         Parameters
@@ -177,8 +176,8 @@ class Config:
 
         paths = [Path(f) for f in filenames]
 
-        if any(p.suffix == ".toml" for p in paths):
-            toml_path = next(p for p in paths if p.suffix == ".toml")
+        if any(p.suffix == '.toml' for p in paths):
+            toml_path = next(p for p in paths if p.suffix == '.toml')
             return Config.from_toml(str(toml_path))
 
         # Fall back to legacy INI parser
@@ -188,4 +187,5 @@ class Config:
 # Make Parameters importable from aragog.config for convenience
 def _get_parameters_class():
     from aragog.parser import Parameters
+
     return Parameters

@@ -29,7 +29,11 @@ class EOS(ABC):
     def staggered_pressure(self) -> npt.NDArray: ...
 
     @abstractmethod
-    def set_staggered_pressure(self, staggered_radii: npt.NDArray,) -> None: ...
+    def set_staggered_pressure(
+        self,
+        staggered_radii: npt.NDArray,
+    ) -> None: ...
+
 
 class AdamsWilliamsonEOS(EOS):
     r"""Adams-Williamson equation of state (EOS).
@@ -68,7 +72,8 @@ class AdamsWilliamsonEOS(EOS):
             self._beta = beta_cfg
         else:
             self._beta = (
-                self._surface_density * self._gravitational_acceleration
+                self._surface_density
+                * self._gravitational_acceleration
                 / self._adiabatic_bulk_modulus
             )
         self._basic_pressure = self.get_pressure_from_radii(basic_radii)
@@ -95,7 +100,10 @@ class AdamsWilliamsonEOS(EOS):
         """Effective density at staggered nodes"""
         return self._staggered_effective_density
 
-    def set_staggered_pressure(self, staggered_radii: npt.NDArray,) -> None:
+    def set_staggered_pressure(
+        self,
+        staggered_radii: npt.NDArray,
+    ) -> None:
         """Set staggered pressure based on staggered radii."""
         self._staggered_pressure = self.get_pressure_from_radii(staggered_radii)
 
@@ -112,10 +120,9 @@ class AdamsWilliamsonEOS(EOS):
         """
 
         mass_shell = self.get_mass_within_shell(radii)
-        volume_shell = 4 / 3 * np.pi  \
-            * (np.power(radii[1:],3.0) - np.power(radii[:-1],3.0))
+        volume_shell = 4 / 3 * np.pi * (np.power(radii[1:], 3.0) - np.power(radii[:-1], 3.0))
 
-        return mass_shell/volume_shell
+        return mass_shell / volume_shell
 
     def get_density(self, pressure: FloatOrArray) -> npt.NDArray:
         r"""Computes density from pressure (SPIDER parity):
@@ -134,8 +141,7 @@ class AdamsWilliamsonEOS(EOS):
             Density
         """
         density: npt.NDArray = (
-            self._surface_density
-            + pressure * self._beta / self._gravitational_acceleration
+            self._surface_density + pressure * self._beta / self._gravitational_acceleration
         )
 
         return density
@@ -210,11 +216,7 @@ class AdamsWilliamsonEOS(EOS):
 
         def mass_integral(r: FloatOrArray) -> npt.NDArray:
             rho = self.get_density_from_radii(r)
-            return 4.0 * np.pi * rho * (
-                -2.0 / beta**3
-                - r**2 / beta
-                - 2.0 * r / beta**2
-            )
+            return 4.0 * np.pi * rho * (-2.0 / beta**3 - r**2 / beta - 2.0 * r / beta**2)
 
         mass: npt.NDArray = mass_integral(radii) - mass_integral(self._inner_boundary)
 
@@ -258,7 +260,9 @@ class AdamsWilliamsonEOS(EOS):
         """
         depth = self._outer_boundary - radii
         pressure: npt.NDArray = (
-            self._surface_density * self._gravitational_acceleration / self._beta
+            self._surface_density
+            * self._gravitational_acceleration
+            / self._beta
             * (np.exp(self._beta * depth) - 1.0)
             + self._surface_pressure
         )
@@ -302,12 +306,17 @@ class AdamsWilliamsonEOS(EOS):
         """
         radii: npt.NDArray = (
             self._outer_boundary
-            - np.log(1.0 + (pressure - self._surface_pressure) * self._beta
-                     / (self._surface_density * self._gravitational_acceleration))
+            - np.log(
+                1.0
+                + (pressure - self._surface_pressure)
+                * self._beta
+                / (self._surface_density * self._gravitational_acceleration)
+            )
             / self._beta
         )
 
         return radii
+
 
 class UserDefinedEOS(EOS):
     r"""User defined equation of state (EOS).
@@ -322,10 +331,11 @@ class UserDefinedEOS(EOS):
     ):
         self._interp_pressure = PchipInterpolator(settings.eos_radius, settings.eos_pressure)
         self._interp_density = PchipInterpolator(settings.eos_radius, settings.eos_density)
-        self._basic_pressure = self._interp_pressure(basic_radii).reshape(-1,1)
-        basic_effective_density = self._interp_density(basic_radii).reshape(-1,1)
-        self._staggered_effective_density = 0.5*(
-            basic_effective_density[:-1, :] + basic_effective_density[1:, :])
+        self._basic_pressure = self._interp_pressure(basic_radii).reshape(-1, 1)
+        basic_effective_density = self._interp_density(basic_radii).reshape(-1, 1)
+        self._staggered_effective_density = 0.5 * (
+            basic_effective_density[:-1, :] + basic_effective_density[1:, :]
+        )
         # Assumes density and effective density are the same at basic nodes
         self._basic_density = basic_effective_density
 
@@ -358,9 +368,12 @@ class UserDefinedEOS(EOS):
         """Effective density at staggered nodes"""
         return self._staggered_effective_density
 
-    def set_staggered_pressure(self, staggered_radii: npt.NDArray,) -> None:
+    def set_staggered_pressure(
+        self,
+        staggered_radii: npt.NDArray,
+    ) -> None:
         """Set staggered pressure based on staggered radii."""
-        self._staggered_pressure = self._interp_pressure(staggered_radii).reshape(-1,1)
+        self._staggered_pressure = self._interp_pressure(staggered_radii).reshape(-1, 1)
 
     def get_mass_within_radii(self, radii: FloatOrArray) -> npt.NDArray:
         r"""4pi-included cumulative mass M(r), anchored at the inner EOS radius.

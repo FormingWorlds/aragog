@@ -93,9 +93,7 @@ class EntropyPhaseEvaluator:
         # 'latent' = SPIDER-parity v4 convention (latent-heat-augmented Cp)
         # 'linear' = legacy v3 convention (pure-phase linear blend)
         if cp_blend not in ('latent', 'linear'):
-            raise ValueError(
-                f"cp_blend must be 'latent' or 'linear', got {cp_blend!r}"
-            )
+            raise ValueError(f"cp_blend must be 'latent' or 'linear', got {cp_blend!r}")
         self._cp_blend = cp_blend
 
         # State arrays (set by set_entropy / set_pressure / update)
@@ -151,24 +149,30 @@ class EntropyPhaseEvaluator:
         """
         S = np.atleast_1d(np.asarray(self.entropy, dtype=float))
 
-        self._temperature = self._const_T_ref * np.exp(
-            (S - self._const_S_ref) / self._const_Cp)
+        self._temperature = self._const_T_ref * np.exp((S - self._const_S_ref) / self._const_Cp)
         self._density = np.full_like(S, self._const_rho)
         self._heat_capacity = np.full_like(S, self._const_Cp)
         self._thermal_expansivity = np.full_like(S, self._const_alpha)
         self._melt_fraction = np.full_like(S, 1.0)
-        self._dTdPs_val = (self._const_alpha * self._temperature
-                           / (self._const_rho * self._const_Cp))
-        self._viscosity_val = np.full_like(S, 10.0 ** self._const_log10visc)
+        self._dTdPs_val = (
+            self._const_alpha * self._temperature / (self._const_rho * self._const_Cp)
+        )
+        self._viscosity_val = np.full_like(S, 10.0**self._const_log10visc)
         self._thermal_conductivity_val = np.full_like(S, self._const_cond)
         self._latent_heat_val = np.zeros_like(S)
 
         # Flatten if scalar input (capture ndim before atleast_1d)
         if np.ndim(self.entropy) == 0 or np.ndim(self.pressure) == 0:
-            for attr in ('_temperature', '_density', '_heat_capacity',
-                         '_thermal_expansivity', '_dTdPs_val',
-                         '_thermal_conductivity_val', '_melt_fraction',
-                         '_latent_heat_val'):
+            for attr in (
+                '_temperature',
+                '_density',
+                '_heat_capacity',
+                '_thermal_expansivity',
+                '_dTdPs_val',
+                '_thermal_conductivity_val',
+                '_melt_fraction',
+                '_latent_heat_val',
+            ):
                 setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
 
     def _update_eos(self) -> None:
@@ -224,8 +228,9 @@ class EntropyPhaseEvaluator:
         T_mixed = phi_arr * T_liq + (1.0 - phi_arr) * T_sol
 
         # rho: harmonic mean (line 236-237)
-        inv_rho_mixed = (phi_arr / np.maximum(rho_liq, 1.0)
-                         + (1.0 - phi_arr) / np.maximum(rho_sol, 1.0))
+        inv_rho_mixed = phi_arr / np.maximum(rho_liq, 1.0) + (1.0 - phi_arr) / np.maximum(
+            rho_sol, 1.0
+        )
         rho_mixed = 1.0 / np.maximum(inv_rho_mixed, 1e-30)
 
         if self._cp_blend == 'latent':
@@ -238,7 +243,7 @@ class EntropyPhaseEvaluator:
             Cp_sol = _lookup('heat_capacity', P_arr, 'solid')
             Cp_liq = _lookup('heat_capacity', P_arr, 'melt')
             Cp_mixed = phi_arr * Cp_liq + (1.0 - phi_arr) * Cp_sol
-            if f'thermal_exp_solid' in eos._tables and f'thermal_exp_melt' in eos._tables:
+            if 'thermal_exp_solid' in eos._tables and 'thermal_exp_melt' in eos._tables:
                 alpha_sol_b = _lookup('thermal_exp', P_arr, 'solid')
                 alpha_liq_b = _lookup('thermal_exp', P_arr, 'melt')
                 alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
@@ -251,8 +256,9 @@ class EntropyPhaseEvaluator:
                 alpha_mixed = phi_arr * alpha_liq_b + (1.0 - phi_arr) * alpha_sol_b
 
         # dTdPs: analytical from intermediates (line 249)
-        dTdPs_mixed = alpha_mixed * T_mixed / (np.maximum(rho_mixed, 1.0)
-                                                * np.maximum(Cp_mixed, 100.0))
+        dTdPs_mixed = (
+            alpha_mixed * T_mixed / (np.maximum(rho_mixed, 1.0) * np.maximum(Cp_mixed, 100.0))
+        )
 
         # cond: linear blend (line 252-253)
         cond_mixed = phi_arr * self._k_liquid + (1.0 - phi_arr) * self._k_solid
@@ -270,8 +276,12 @@ class EntropyPhaseEvaluator:
             S_m_c = np.clip(S_for_melt, melt_tbl['S'][0], melt_tbl['S'][-1])
             P_s_c = np.clip(P_arr, solid_tbl['P'][0], solid_tbl['P'][-1])
             P_m_c = np.clip(P_arr, melt_tbl['P'][0], melt_tbl['P'][-1])
-            v_sol = solid_tbl['interp'](np.column_stack([P_s_c.ravel(), S_s_c.ravel()])).reshape(P_arr.shape)
-            v_mel = melt_tbl['interp'](np.column_stack([P_m_c.ravel(), S_m_c.ravel()])).reshape(P_arr.shape)
+            v_sol = solid_tbl['interp'](
+                np.column_stack([P_s_c.ravel(), S_s_c.ravel()])
+            ).reshape(P_arr.shape)
+            v_mel = melt_tbl['interp'](np.column_stack([P_m_c.ravel(), S_m_c.ravel()])).reshape(
+                P_arr.shape
+            )
             return np.where(gphi > 0.5, v_mel, v_sol)
 
         T_single = _table_lookup('temperature')
@@ -279,7 +289,7 @@ class EntropyPhaseEvaluator:
         Cp_single = _table_lookup('heat_capacity')
         dTdPs_single = _table_lookup('dTdPs')
         # alpha: use table if available, else derive from thermodynamic identity
-        if f'thermal_exp_solid' in eos._tables and f'thermal_exp_melt' in eos._tables:
+        if 'thermal_exp_solid' in eos._tables and 'thermal_exp_melt' in eos._tables:
             alpha_single = _table_lookup('thermal_exp')
         else:
             alpha_single = dTdPs_single * rho_single * Cp_single / np.maximum(T_single, 1.0)
@@ -298,9 +308,15 @@ class EntropyPhaseEvaluator:
 
         # Flatten if scalar input
         if np.ndim(P) == 0:
-            for attr in ('_temperature', '_density', '_heat_capacity',
-                         '_thermal_expansivity', '_dTdPs_val',
-                         '_thermal_conductivity_val', '_melt_fraction'):
+            for attr in (
+                '_temperature',
+                '_density',
+                '_heat_capacity',
+                '_thermal_expansivity',
+                '_dTdPs_val',
+                '_thermal_conductivity_val',
+                '_melt_fraction',
+            ):
                 setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
 
         # Guard: clamp negative alpha (EOS table edges)
@@ -311,8 +327,9 @@ class EntropyPhaseEvaluator:
         # ── Step 6: viscosity (two-stage, reuses cached gphi/smth) ──
         # Stage 1: tanh blend at phi_rheo (SPIDER lines 255-259)
         w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
-        log_visc_mixed = ((1.0 - w) * np.log10(self._visc_solid)
-                          + w * np.log10(self._visc_liquid))
+        log_visc_mixed = (1.0 - w) * np.log10(self._visc_solid) + w * np.log10(
+            self._visc_liquid
+        )
 
         # Single-phase viscosity (constant per phase)
         log_visc_single = np.where(
@@ -335,8 +352,11 @@ class EntropyPhaseEvaluator:
             logger.error(
                 'NaN from EOS lookup at %d nodes. S range: [%.0f, %.0f], '
                 'table domain: [%.0f, %.0f] J/kg/K',
-                n_nan, float(np.nanmin(S)), float(np.nanmax(S)),
-                self._eos.S_min, self._eos.S_max,
+                n_nan,
+                float(np.nanmin(S)),
+                float(np.nanmax(S)),
+                self._eos.S_min,
+                self._eos.S_max,
             )
             raise RuntimeError(
                 f'Entropy out of EOS table domain at {n_nan} nodes. '
@@ -362,10 +382,7 @@ class EntropyPhaseEvaluator:
 
         dT/dr|_S = -g * alpha * T / Cp
         """
-        return (
-            -self._g * self._thermal_expansivity * self._temperature
-            / self._heat_capacity
-        )
+        return -self._g * self._thermal_expansivity * self._temperature / self._heat_capacity
 
     def gravitational_acceleration(self) -> FloatOrArray:
         return self._g
@@ -425,15 +442,11 @@ class EntropyPhaseEvaluator:
         rho = self._density
         drho = rho_s - rho_l
         eps = 1.0e-3  # kg/m^3; far below any physical density contrast
-        drho_smoothmax = 0.5 * (
-            drho + 1.0 + np.sqrt((drho - 1.0) ** 2 + eps * eps)
-        )
+        drho_smoothmax = 0.5 * (drho + 1.0 + np.sqrt((drho - 1.0) ** 2 + eps * eps))
         porosity_raw = (rho_s - rho) / drho_smoothmax
         # smooth_clip(porosity_raw, 0, 1) via two soft-max operations
         eps_p = 1.0e-3  # dimensionless; invisible except near [0,1] edges
-        p_lo = 0.5 * (
-            porosity_raw + np.sqrt(porosity_raw * porosity_raw + eps_p * eps_p)
-        )
+        p_lo = 0.5 * (porosity_raw + np.sqrt(porosity_raw * porosity_raw + eps_p * eps_p))
         hi_u = 1.0 - p_lo
         porosity = 1.0 - 0.5 * (hi_u + np.sqrt(hi_u * hi_u + eps_p * eps_p))
 

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # shared (S_sol, S_liq, gphi, smth, T_sol, T_liq, rho_sol, rho_liq) cache).
 # ---------------------------------------------------------------------------
 
+
 class PhaseState(NamedTuple):
     """Material properties at (P, S) following SPIDER eos_composite.c convention.
 
@@ -44,16 +45,16 @@ class PhaseState(NamedTuple):
     ``EntropyPhaseEvaluator._update_eos`` step-for-step.
     """
 
-    temperature: jax.Array          # [K]
-    density: jax.Array              # [kg/m^3]
-    heat_capacity: jax.Array        # [J/kg/K]
+    temperature: jax.Array  # [K]
+    density: jax.Array  # [kg/m^3]
+    heat_capacity: jax.Array  # [J/kg/K]
     thermal_expansivity: jax.Array  # [1/K]
-    dTdPs: jax.Array                # [K/Pa]
-    thermal_conductivity: jax.Array # [W/m/K]
-    melt_fraction: jax.Array        # phi, clipped to [0, 1]
-    gphi: jax.Array                 # untruncated melt fraction
-    smth: jax.Array                 # mixed-vs-single blend factor
-    latent_heat: jax.Array          # [J/kg]
+    dTdPs: jax.Array  # [K/Pa]
+    thermal_conductivity: jax.Array  # [W/m/K]
+    melt_fraction: jax.Array  # phi, clipped to [0, 1]
+    gphi: jax.Array  # untruncated melt fraction
+    smth: jax.Array  # mixed-vs-single blend factor
+    latent_heat: jax.Array  # [J/kg]
 
 
 def _tanh_weight_jax(x: jax.Array, threshold: float, width: float) -> jax.Array:
@@ -64,6 +65,7 @@ def _tanh_weight_jax(x: jax.Array, threshold: float, width: float) -> jax.Array:
 # ---------------------------------------------------------------------------
 # Table loading (numpy, not JIT-compiled)
 # ---------------------------------------------------------------------------
+
 
 def _load_spider_ps_table(filepath: Path) -> dict:
     """Load a SPIDER-format P-S property table from disk.
@@ -104,7 +106,11 @@ def _load_spider_ps_table(filepath: Path) -> dict:
     if len(P_unique) != n_P or len(S_unique) != n_S:
         logger.warning(
             'Table %s: expected %d x %d grid, got %d x %d unique values',
-            filepath.name, n_P, n_S, len(P_unique), len(S_unique),
+            filepath.name,
+            n_P,
+            n_S,
+            len(P_unique),
+            len(S_unique),
         )
 
     # SPIDER writes S varying slowest, P varying fastest.
@@ -150,9 +156,13 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
 # JAX interpolator helpers
 # ---------------------------------------------------------------------------
 
+
 def _bilinear_interp(
-    P_grid: jax.Array, S_grid: jax.Array, values: jax.Array,
-    P_query: jax.Array, S_query: jax.Array,
+    P_grid: jax.Array,
+    S_grid: jax.Array,
+    values: jax.Array,
+    P_query: jax.Array,
+    S_query: jax.Array,
 ) -> jax.Array:
     """Bilinear interpolation on a regular (P, S) grid.
 
@@ -211,12 +221,7 @@ def _bilinear_interp(
     v11 = values[ip + 1, js + 1]
 
     # Bilinear blend
-    return (
-        v00 * (1 - tp) * (1 - ts)
-        + v10 * tp * (1 - ts)
-        + v01 * (1 - tp) * ts
-        + v11 * tp * ts
-    )
+    return v00 * (1 - tp) * (1 - ts) + v10 * tp * (1 - ts) + v01 * (1 - tp) * ts + v11 * tp * ts
 
 
 class _Table2D(eqx.Module):
@@ -248,7 +253,11 @@ class _Table2D(eqx.Module):
     def __call__(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Query the table at (P, S), clamping to the table domain."""
         return _bilinear_interp(
-            self._P_grid, self._S_grid, self._values, P, S,
+            self._P_grid,
+            self._S_grid,
+            self._values,
+            P,
+            S,
         )
 
 
@@ -291,6 +300,7 @@ class _PhaseBoundary1D(eqx.Module):
 # ---------------------------------------------------------------------------
 # Main EOS class
 # ---------------------------------------------------------------------------
+
 
 class EntropyEOS_JAX(eqx.Module):
     """JAX-based entropy EOS from PALEOS P-S tables.
@@ -364,7 +374,10 @@ class EntropyEOS_JAX(eqx.Module):
 
         logger.info(
             'JAX EOS loaded: P=[%.2e, %.2e] Pa, S=[%.0f, %.0f] J/kg/K',
-            self.P_min, self.P_max, self.S_min, self.S_max,
+            self.P_min,
+            self.P_max,
+            self.S_min,
+            self.S_max,
         )
 
     # ------------------------------------------------------------------
@@ -413,7 +426,10 @@ class EntropyEOS_JAX(eqx.Module):
         return solid, melt
 
     def _lookup_phase_weighted(
-        self, prop_name: str, P: jax.Array, S: jax.Array,
+        self,
+        prop_name: str,
+        P: jax.Array,
+        S: jax.Array,
     ) -> jax.Array:
         """Look up a property with phase weighting, matching numpy EntropyEOS.
 
@@ -443,14 +459,16 @@ class EntropyEOS_JAX(eqx.Module):
         val_solid = solid_table(P, S_for_solid)
         val_melt = melt_table(P, S_for_melt)
 
-        result = (
-            jnp.where(phi > 0, phi * val_melt, 0.0)
-            + jnp.where(phi < 1, (1.0 - phi) * val_solid, 0.0)
+        result = jnp.where(phi > 0, phi * val_melt, 0.0) + jnp.where(
+            phi < 1, (1.0 - phi) * val_solid, 0.0
         )
         return result
 
     def _lookup_at_phase_boundary(
-        self, prop_name: str, P: jax.Array, phase: str,
+        self,
+        prop_name: str,
+        P: jax.Array,
+        phase: str,
     ) -> jax.Array:
         """Look up a property at the solidus or liquidus for the given phase.
 
@@ -496,9 +514,8 @@ class EntropyEOS_JAX(eqx.Module):
         # Mushy zone: harmonic mean at phase boundaries
         rho_sol_boundary = self._lookup_at_phase_boundary('density', P, 'solid')
         rho_liq_boundary = self._lookup_at_phase_boundary('density', P, 'melt')
-        inv_rho_mushy = (
-            phi / jnp.maximum(rho_liq_boundary, 1.0)
-            + (1.0 - phi) / jnp.maximum(rho_sol_boundary, 1.0)
+        inv_rho_mushy = phi / jnp.maximum(rho_liq_boundary, 1.0) + (1.0 - phi) / jnp.maximum(
+            rho_sol_boundary, 1.0
         )
         rho_mushy = 1.0 / jnp.maximum(inv_rho_mushy, 1e-30)
 
@@ -607,9 +624,8 @@ class EntropyEOS_JAX(eqx.Module):
         T_mixed = phi_arr * T_liq + (1.0 - phi_arr) * T_sol
 
         # rho: harmonic mean
-        inv_rho_mixed = (
-            phi_arr / jnp.maximum(rho_liq, 1.0)
-            + (1.0 - phi_arr) / jnp.maximum(rho_sol, 1.0)
+        inv_rho_mixed = phi_arr / jnp.maximum(rho_liq, 1.0) + (1.0 - phi_arr) / jnp.maximum(
+            rho_sol, 1.0
         )
         rho_mixed = 1.0 / jnp.maximum(inv_rho_mixed, 1e-30)
 
@@ -618,8 +634,8 @@ class EntropyEOS_JAX(eqx.Module):
         Cp_mixed = jnp.maximum((S_liq - S_sol) / dT_phase * T_avg, 100.0)
 
         # dTdPs: analytical from intermediates
-        dTdPs_mixed = alpha_mixed * T_mixed / (
-            jnp.maximum(rho_mixed, 1.0) * jnp.maximum(Cp_mixed, 100.0)
+        dTdPs_mixed = (
+            alpha_mixed * T_mixed / (jnp.maximum(rho_mixed, 1.0) * jnp.maximum(Cp_mixed, 100.0))
         )
 
         # cond: linear blend
@@ -642,10 +658,7 @@ class EntropyEOS_JAX(eqx.Module):
         Cp_single = _table_lookup_blend('heat_capacity')
         dTdPs_single = _table_lookup_blend('dTdPs')
         # alpha derived from thermodynamic identity (no thermal_exp tables yet)
-        alpha_single = (
-            dTdPs_single * rho_single * Cp_single
-            / jnp.maximum(T_single, 1.0)
-        )
+        alpha_single = dTdPs_single * rho_single * Cp_single / jnp.maximum(T_single, 1.0)
         cond_single = jnp.where(gphi > 0.5, k_liquid, k_solid)
 
         # ── Step 5: combine_matprop blend (SPIDER 278-285) ──────────

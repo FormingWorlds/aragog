@@ -13,6 +13,6 @@ from aragog.output.diagnostics import (
 )
 
 __all__ = [
-    "melt_fraction_global",
-    "rheological_front",
+    'melt_fraction_global',
+    'rheological_front',
 ]

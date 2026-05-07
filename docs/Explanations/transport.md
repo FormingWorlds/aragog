@@ -2,7 +2,7 @@
 
 ## Transport properties
 
-Transport properties in Aragog are implemented in [`phase.py`](https://github.com/FormingWorlds/aragog/blob/main/aragog/phase.py), except for the eddy diffusivity, which is found in [`solver.py`](https://github.com/FormingWorlds/aragog/blob/main/aragog/solver.py).
+Transport properties in Aragog are computed in [`solver/entropy_state.py`](https://github.com/FormingWorlds/aragog/blob/main/src/aragog/solver/entropy_state.py) for the numpy path and in [`jax/phase.py`](https://github.com/FormingWorlds/aragog/blob/main/src/aragog/jax/phase.py) for the JAX-traceable replica. The eddy-diffusivity dispatch lives in [`solver/entropy_solver.py`](https://github.com/FormingWorlds/aragog/blob/main/src/aragog/solver/entropy_solver.py).
 
 ---
 

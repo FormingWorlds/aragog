@@ -993,17 +993,16 @@ class TestMassCoordinates:
         """Construct a minimal Parameters object suitable for building
         a Mesh. Bypasses ConfigParser — keeps the test self-contained.
         """
-        import numpy as _np
         from aragog.parser import (
             Parameters,
-            _ScalingsParameters,
-            _SolverParameters,
             _BoundaryConditionsParameters,
-            _MeshParameters,
             _EnergyParameters,
             _InitialConditionParameters,
-            _PhaseParameters,
+            _MeshParameters,
             _PhaseMixedParameters,
+            _PhaseParameters,
+            _ScalingsParameters,
+            _SolverParameters,
         )
 
         scalings = _ScalingsParameters(

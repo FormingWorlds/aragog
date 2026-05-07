@@ -28,7 +28,7 @@ jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 jax.config.update('jax_enable_x64', True)
 
-from aragog.jax.phase import MeshArrays
+from aragog.jax.phase import MeshArrays  # noqa: E402
 
 
 class _StubEOS:
@@ -47,8 +47,8 @@ class _StubBasic:
         self.area = np.ones(n)
         self.volume = np.ones(n)
         self.mixing_length = np.full(n, 9.0e5)
-        self.mixing_length_squared = self.mixing_length ** 2
-        self.mixing_length_cubed = self.mixing_length ** 3
+        self.mixing_length_squared = self.mixing_length**2
+        self.mixing_length_cubed = self.mixing_length**3
 
 
 class _StubStaggered:
@@ -59,6 +59,7 @@ class _StubStaggered:
 class _StubMesh:
     """Minimal mesh stub reproducing the bug trigger: mesh.eos without
     ``_gravitational_acceleration`` AND mesh.settings with the attribute."""
+
     def __init__(self, configured_g: float = 9.81, n_basic: int = 10):
         self.eos = _StubEOS()
         self.settings = _StubSettings(configured_g)
@@ -80,9 +81,7 @@ def test_mesh_gravity_falls_back_to_settings_when_eos_lacks_attribute():
     mesh_jax = MeshArrays.from_numpy_mesh(mesh)
     gravity = np.asarray(mesh_jax.gravity)
     assert gravity.shape == mesh.basic.radii.shape
-    assert np.all(gravity > 0.0), (
-        f'Gravity zeroed: {gravity}. Regression of PALEOS-2phase bug.'
-    )
+    assert np.all(gravity > 0.0), f'Gravity zeroed: {gravity}. Regression of PALEOS-2phase bug.'
     assert np.allclose(gravity, configured_g, atol=0.0, rtol=1e-12), (
         f'Expected uniform gravity={configured_g}, got {gravity}'
     )
@@ -115,6 +114,7 @@ def test_mesh_gravity_uses_per_node_profile_when_eos_gravity_present():
     # Populate mesh.parameters with the external eos arrays, matching the
     # shape that entropy_solver.reset() writes when eos_method=2.
     import types
+
     mesh.parameters = types.SimpleNamespace()
     mesh.parameters.eos_radius = np.linspace(3.48e6, 6.37e6, 60)
     mesh.parameters.eos_gravity = np.linspace(8.0, 10.0, 60)  # CMB to surface
@@ -141,6 +141,7 @@ def test_mesh_gravity_profile_beats_eos_scalar_attribute():
     profile wins. A run that ships a full Zalmoxis profile should not be
     silently flattened by a stale scalar attribute."""
     import types
+
     mesh = _StubMesh(configured_g=9.81)
     mesh.eos._gravitational_acceleration = 5.0  # scalar intentionally wrong
     mesh.parameters = types.SimpleNamespace()
@@ -161,6 +162,7 @@ def test_mesh_gravity_rejects_non_monotonic_eos_radius():
     for np.interp. The helper must reject it with a clear error rather than
     propagate a wrong profile."""
     import types
+
     mesh = _StubMesh(configured_g=9.81)
     mesh.parameters = types.SimpleNamespace()
     mesh.parameters.eos_radius = np.linspace(6.37e6, 3.48e6, 30)  # REVERSED
@@ -175,6 +177,7 @@ def test_mesh_gravity_scalar_fallback_prefers_parameters_when_settings_absent():
     (no mesh.settings attribute) must read that value, not silently return
     9.81. Before the fix this returned 9.81 for a Mars-like 3.711 config."""
     import types
+
     mesh_mars = _StubMesh.__new__(_StubMesh)
     # Build minimal mesh without calling __init__ (no settings attribute)
     mesh_mars.eos = _StubEOS()
@@ -199,10 +202,8 @@ def test_mesh_gravity_profile_preserved_through_compute_fluxes():
     collapse anywhere would flatten the convective heat-flux radial
     structure. We check that heat_flux varies non-trivially across nodes
     when gravity does."""
-    from aragog.jax.phase import (
-        PhaseParams, compute_fluxes,
-    )
     import types
+
     pytest.importorskip('aragog.jax.eos')
 
     # Build a minimal stub mesh with a non-uniform gravity profile and a
@@ -219,8 +220,8 @@ def test_mesh_gravity_profile_preserved_through_compute_fluxes():
     mesh_stub.basic.area = np.ones(n_basic)
     mesh_stub.basic.volume = np.ones(n_basic)
     mesh_stub.basic.mixing_length = np.full(n_basic, 1e5)
-    mesh_stub.basic.mixing_length_squared = mesh_stub.basic.mixing_length ** 2
-    mesh_stub.basic.mixing_length_cubed = mesh_stub.basic.mixing_length ** 3
+    mesh_stub.basic.mixing_length_squared = mesh_stub.basic.mixing_length**2
+    mesh_stub.basic.mixing_length_cubed = mesh_stub.basic.mixing_length**3
     mesh_stub.staggered.radii = 0.5 * (r_basic[1:] + r_basic[:-1])
     mesh_stub.basic_pressure = P_basic
     mesh_stub.staggered_pressure = 0.5 * (P_basic[1:] + P_basic[:-1])

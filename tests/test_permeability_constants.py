@@ -7,13 +7,13 @@ agree on the constants byte-for-byte; otherwise gravitational separation
 diverges between the analytic-Jacobian RHS and the numpy SolverOutput
 post-processor that trusts the JAX trajectory.
 """
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1] / 'src' / 'aragog'
 
@@ -57,7 +57,7 @@ def test_numpy_and_jax_permeability_thresholds_agree():
     between the analytic-Jacobian RHS (JAX) and the numpy
     SolverOutput post-processor.
     """
-    pat = re.compile(r"tanh_weight\(porosity,\s*([0-9.]+),\s*([0-9.]+)\)")
+    pat = re.compile(r'tanh_weight\(porosity,\s*([0-9.]+),\s*([0-9.]+)\)')
     numpy_thresholds = pat.findall(_read('eos/entropy_phase.py'))
     jax_thresholds = pat.findall(_read('jax/phase.py'))
 

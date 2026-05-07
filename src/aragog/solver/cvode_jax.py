@@ -99,11 +99,16 @@ def build_jax_rhs_and_jacobian(
     try:
         import jax
         import jax.numpy as jnp
+
         from aragog.jax.solver import (
             _no_radio,
-            dSdt as jax_dsdt,
-            dSdt_energy_balance as jax_dsdt_eb,
             make_radio_heating_fn,
+        )
+        from aragog.jax.solver import (
+            dSdt as jax_dsdt,
+        )
+        from aragog.jax.solver import (
+            dSdt_energy_balance as jax_dsdt_eb,
         )
     except ImportError as exc:
         raise RuntimeError(
@@ -146,14 +151,11 @@ def build_jax_rhs_and_jacobian(
             'state_scale=..., t_ref=...) and let it derive rhs_scale.'
         )
     heating_np = np.asarray(heating_array)
-    expected_size = (
-        heating_np.size if core_bc_mode == 'quasi_steady'
-        else heating_np.size + 1
-    )
+    expected_size = heating_np.size if core_bc_mode == 'quasi_steady' else heating_np.size + 1
     if scales.n != expected_size:
         raise ValueError(
             f'state_scale length {scales.n} is incompatible '
-            f"with core_bc_mode={core_bc_mode!r} and heating_array length "
+            f'with core_bc_mode={core_bc_mode!r} and heating_array length '
             f'{heating_np.size}; expected {expected_size}.'
         )
 
@@ -178,8 +180,7 @@ def build_jax_rhs_and_jacobian(
     else:
         H_radio_fn = _no_radio
 
-    args_tuple = (eos_jax, phase_params, mesh_arrays, boundary_params,
-                  heating_jax, H_radio_fn)
+    args_tuple = (eos_jax, phase_params, mesh_arrays, boundary_params, heating_jax, H_radio_fn)
 
     # Wrap RHS as a function of (t_phys, S_phys) only
     def _rhs_phys(t_phys, S_phys):
@@ -232,8 +233,7 @@ def build_jax_rhs_and_jacobian(
                 logger.info('JAX Jacobian first call (JIT compile complete)')
             return 0
         except Exception as exc:
-            logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD',
-                         exc)
+            logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD', exc)
             return 1
 
     return rhs_fn, jacfn, info

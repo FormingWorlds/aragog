@@ -9,6 +9,6 @@ from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
 __all__ = [
-    "EntropyEOS",
-    "EntropyPhaseEvaluator",
+    'EntropyEOS',
+    'EntropyPhaseEvaluator',
 ]

@@ -20,10 +20,12 @@ import numpy as np
 import pytest
 
 # EOS directory (same as test_entropy_pytest.py)
-EOS_DIR = Path(os.environ.get(
-    'ARAGOG_TEST_EOS_DIR',
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-))
+EOS_DIR = Path(
+    os.environ.get(
+        'ARAGOG_TEST_EOS_DIR',
+        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
+    )
+)
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -45,12 +47,14 @@ SIGMA_SB = 5.670374419e-8
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope='module')
 def jax_eos():
     """Load JAX EOS from SPIDER tables."""
     if not EOS_DIR.exists():
         pytest.skip(f'EOS tables not found: {EOS_DIR}')
     from aragog.jax.eos import EntropyEOS_JAX
+
     return EntropyEOS_JAX(EOS_DIR)
 
 
@@ -60,6 +64,7 @@ def numpy_eos():
     if not EOS_DIR.exists():
         pytest.skip(f'EOS tables not found: {EOS_DIR}')
     from aragog.eos.entropy import EntropyEOS
+
     return EntropyEOS(EOS_DIR)
 
 
@@ -67,12 +72,14 @@ def numpy_eos():
 def default_params():
     """Default PhaseParams for testing."""
     from aragog.jax.phase import PhaseParams
+
     return PhaseParams()
 
 
 # ---------------------------------------------------------------------------
 # Tier 1: EOS unit tests (JAX)
 # ---------------------------------------------------------------------------
+
 
 @needs_eos
 @pytest.mark.unit
@@ -142,6 +149,7 @@ class TestJAXEOS:
 # Tier 1b: EOS parity (JAX vs numpy)
 # ---------------------------------------------------------------------------
 
+
 @needs_eos
 @pytest.mark.unit
 class TestEOSParity:
@@ -196,6 +204,7 @@ class TestEOSParity:
 # Tier 2: Phase evaluator tests
 # ---------------------------------------------------------------------------
 
+
 @needs_eos
 @pytest.mark.unit
 class TestJAXPhaseEvaluator:
@@ -239,6 +248,7 @@ class TestJAXPhaseEvaluator:
 # Tier 3: JAX-specific tests (JIT, vmap, grad)
 # ---------------------------------------------------------------------------
 
+
 @needs_eos
 @pytest.mark.unit
 class TestJAXFeatures:
@@ -246,6 +256,7 @@ class TestJAXFeatures:
 
     def test_eos_jit_compiles(self, jax_eos):
         """EOS temperature lookup can be JIT-compiled."""
+
         @jax.jit
         def f(P, S):
             return jax_eos.temperature(P, S)
@@ -257,6 +268,7 @@ class TestJAXFeatures:
 
     def test_eos_vmap_over_pressures(self, jax_eos):
         """EOS lookups can be vmapped over different pressures."""
+
         # vmap over the first argument (P), keeping S fixed
         @jax.jit
         def batch_temperature(P_batch, S_batch):
@@ -270,6 +282,7 @@ class TestJAXFeatures:
 
     def test_eos_grad_temperature_wrt_entropy(self, jax_eos):
         """jax.grad(T, S) works through the EOS lookup."""
+
         def T_scalar(S_val):
             return jax_eos.temperature(jnp.array([50e9]), jnp.array([S_val]))[0]
 
@@ -280,6 +293,7 @@ class TestJAXFeatures:
 
     def test_eos_grad_density_wrt_entropy(self, jax_eos):
         """jax.grad(rho, S) works through the EOS lookup."""
+
         def rho_scalar(S_val):
             return jax_eos.density(jnp.array([50e9]), jnp.array([S_val]))[0]
 
@@ -320,13 +334,13 @@ class TestJAXFeatures:
 # ---------------------------------------------------------------------------
 
 # Constants for constant-property tests (same as test_entropy_advanced.py)
-RHO_CONST = 4000.0       # kg/m^3
-CP_CONST = 1000.0         # J/kg/K
-K_CONST = 4.0             # W/m/K
-T_REF = 3500.0            # K
-S_REF = 3000.0            # J/kg/K
-R_INNER = 5.371e6         # m
-R_OUTER = 6.371e6         # m
+RHO_CONST = 4000.0  # kg/m^3
+CP_CONST = 1000.0  # J/kg/K
+K_CONST = 4.0  # W/m/K
+T_REF = 3500.0  # K
+S_REF = 3000.0  # J/kg/K
+R_INNER = 5.371e6  # m
+R_OUTER = 6.371e6  # m
 D_SHELL = R_OUTER - R_INNER
 
 
@@ -408,7 +422,7 @@ def _const_prop_dSdt_jax(S, mesh, F_inner=0.0, F_outer=None):
     Returns dS/dt in J/kg/K/yr.
     """
     T_stag = _S_to_T_jax(S)
-    T_basic = mesh.quantity_matrix @ T_stag
+    mesh.quantity_matrix @ T_stag
     dTdr = mesh.d_dr_matrix @ T_stag
 
     heat_flux = -K_CONST * dTdr
@@ -444,7 +458,9 @@ class TestConstPropJAX:
         dsdt = _const_prop_dSdt_jax(S_ss, mesh, F_inner=F_in, F_outer=F_out)
         max_rate = float(jnp.max(jnp.abs(dsdt)))
         # Should be very small (numerical error only)
-        assert max_rate < 1e-3, f'dS/dt should be ~0 at steady state, got max |dS/dt| = {max_rate:.2e}'
+        assert max_rate < 1e-3, (
+            f'dS/dt should be ~0 at steady state, got max |dS/dt| = {max_rate:.2e}'
+        )
 
     def test_conduction_flux_uniformity(self):
         """At steady state, Q = F * 4*pi*r^2 should be constant across shells."""
@@ -504,6 +520,7 @@ class TestConstPropJAX:
 # Tier 5: Solver integration tests (need EOS tables)
 # ---------------------------------------------------------------------------
 
+
 @needs_eos
 @pytest.mark.smoke
 class TestJAXSolverIntegration:
@@ -531,9 +548,17 @@ class TestJAXSolverIntegration:
         )
 
         result = solve_entropy(
-            S_init, 0.0, 100.0,
-            jax_eos, default_params, mesh, bc, heating,
-            atol=0.1, rtol=1e-4, max_steps=50_000,
+            S_init,
+            0.0,
+            100.0,
+            jax_eos,
+            default_params,
+            mesh,
+            bc,
+            heating,
+            atol=0.1,
+            rtol=1e-4,
+            max_steps=50_000,
             method='tsit5',
         )
 
@@ -564,9 +589,17 @@ class TestJAXSolverIntegration:
         )
 
         result = solve_entropy(
-            S_init, 0.0, 50.0,
-            jax_eos, default_params, mesh, bc, heating,
-            atol=0.1, rtol=1e-4, max_steps=50_000,
+            S_init,
+            0.0,
+            50.0,
+            jax_eos,
+            default_params,
+            mesh,
+            bc,
+            heating,
+            atol=0.1,
+            rtol=1e-4,
+            max_steps=50_000,
             method='tsit5',
         )
 
@@ -601,9 +634,17 @@ class TestJAXSolverIntegration:
         )
 
         result = solve_entropy(
-            S_init, 0.0, 100.0,
-            jax_eos, default_params, mesh, bc, heating,
-            atol=0.1, rtol=1e-4, max_steps=50_000,
+            S_init,
+            0.0,
+            100.0,
+            jax_eos,
+            default_params,
+            mesh,
+            bc,
+            heating,
+            atol=0.1,
+            rtol=1e-4,
+            max_steps=50_000,
             method='tsit5',
         )
 
@@ -635,9 +676,17 @@ class TestJAXSolverIntegration:
         )
 
         result = solve_entropy(
-            S_init, 0.0, 1000.0,
-            jax_eos, default_params, mesh, bc, heating,
-            atol=0.1, rtol=1e-4, max_steps=50_000,
+            S_init,
+            0.0,
+            1000.0,
+            jax_eos,
+            default_params,
+            mesh,
+            bc,
+            heating,
+            atol=0.1,
+            rtol=1e-4,
+            max_steps=50_000,
             method='tsit5',
         )
 
@@ -652,6 +701,7 @@ class TestJAXSolverIntegration:
 # ---------------------------------------------------------------------------
 # Tier 5b: Energy conservation (Phase 5.4)
 # ---------------------------------------------------------------------------
+
 
 @needs_eos
 @pytest.mark.smoke
@@ -684,9 +734,17 @@ class TestEnergyConservation:
 
         t_end = 50.0  # yr
         result = solve_entropy(
-            S_init, 0.0, t_end,
-            jax_eos, default_params, mesh, bc, heating,
-            atol=0.1, rtol=1e-4, max_steps=50_000,
+            S_init,
+            0.0,
+            t_end,
+            jax_eos,
+            default_params,
+            mesh,
+            bc,
+            heating,
+            atol=0.1,
+            rtol=1e-4,
+            max_steps=50_000,
             method='tsit5',
         )
         assert result.success
@@ -714,8 +772,7 @@ class TestEnergyConservation:
         # dE should be approximately -Q_lost
         rel_err = abs(dE + Q_lost) / Q_lost
         assert rel_err < 0.10, (
-            f'Energy conservation: dE={dE:.2e} J, Q_lost={Q_lost:.2e} J, '
-            f'residual={rel_err:.1%}'
+            f'Energy conservation: dE={dE:.2e} J, Q_lost={Q_lost:.2e} J, residual={rel_err:.1%}'
         )
 
     def test_insulating_no_heating_conserves(self, jax_eos, default_params):
@@ -741,9 +798,17 @@ class TestEnergyConservation:
         )
 
         result = solve_entropy(
-            S_init, 0.0, 100.0,
-            jax_eos, default_params, mesh, bc, heating,
-            atol=0.1, rtol=1e-4, max_steps=50_000,
+            S_init,
+            0.0,
+            100.0,
+            jax_eos,
+            default_params,
+            mesh,
+            bc,
+            heating,
+            atol=0.1,
+            rtol=1e-4,
+            max_steps=50_000,
             method='tsit5',
         )
         assert result.success
@@ -798,9 +863,17 @@ class TestEnergyConservation:
 
         t_end = 500.0  # yr
         result = solve_entropy(
-            S_init, 0.0, t_end,
-            jax_eos, default_params, mesh, bc, heating,
-            atol=0.1, rtol=1e-4, max_steps=50_000,
+            S_init,
+            0.0,
+            t_end,
+            jax_eos,
+            default_params,
+            mesh,
+            bc,
+            heating,
+            atol=0.1,
+            rtol=1e-4,
+            max_steps=50_000,
             method='tsit5',
         )
         assert result.success
@@ -833,6 +906,7 @@ class TestEnergyConservation:
 # Tier 6: Solver parity (JAX diffrax vs scipy BDF)
 # ---------------------------------------------------------------------------
 
+
 @needs_eos
 @pytest.mark.smoke
 class TestSolverParity:
@@ -848,8 +922,8 @@ class TestSolverParity:
         N = 20
         # Build mesh arrays for both
         mesh_jax = _make_jax_mesh_arrays(N)
-        r_stag = np.asarray(mesh_jax.radii_stag)
-        r_basic = np.asarray(mesh_jax.radii_basic)
+        np.asarray(mesh_jax.radii_stag)
+        np.asarray(mesh_jax.radii_basic)
         P_stag = np.asarray(mesh_jax.P_stag)
         P_basic = np.asarray(mesh_jax.P_basic)
         area = np.asarray(mesh_jax.area)
@@ -861,9 +935,13 @@ class TestSolverParity:
         T_eq = 255.0
 
         # ---- scipy BDF ----
-        phase_stag = EntropyPhaseEvaluator(entropy_eos=numpy_eos, gravitational_acceleration=10.0)
+        phase_stag = EntropyPhaseEvaluator(
+            entropy_eos=numpy_eos, gravitational_acceleration=10.0
+        )
         phase_stag.set_pressure(P_stag)
-        phase_basic = EntropyPhaseEvaluator(entropy_eos=numpy_eos, gravitational_acceleration=10.0)
+        phase_basic = EntropyPhaseEvaluator(
+            entropy_eos=numpy_eos, gravitational_acceleration=10.0
+        )
         phase_basic.set_pressure(P_basic)
 
         def scipy_rhs(t, S):
@@ -890,25 +968,36 @@ class TestSolverParity:
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
         t_end = 50.0  # yr
-        sol_scipy = solve_ivp(scipy_rhs, (0, t_end), S_init, method='BDF',
-                              atol=0.1, rtol=1e-4)
+        sol_scipy = solve_ivp(scipy_rhs, (0, t_end), S_init, method='BDF', atol=0.1, rtol=1e-4)
         assert sol_scipy.status == 0
 
         # ---- JAX diffrax ----
         params = PhaseParams(convection=False)  # conduction only for clean comparison
         bc = BoundaryParams(
-            outer_bc_type=1, outer_bc_value=0.0,
-            emissivity=1.0, T_eq=T_eq,
-            inner_bc_type=0, inner_bc_value=0.0,
-            core_density=10738.0, core_heat_capacity=880.0,
+            outer_bc_type=1,
+            outer_bc_value=0.0,
+            emissivity=1.0,
+            T_eq=T_eq,
+            inner_bc_type=0,
+            inner_bc_value=0.0,
+            core_density=10738.0,
+            core_heat_capacity=880.0,
             tfac_core_avg=1.147,
         )
         heating = jnp.zeros(N)
 
         result_jax = solve_entropy(
-            jnp.asarray(S_init), 0.0, t_end,
-            jax_eos, params, mesh_jax, bc, heating,
-            atol=0.1, rtol=1e-4, max_steps=50_000,
+            jnp.asarray(S_init),
+            0.0,
+            t_end,
+            jax_eos,
+            params,
+            mesh_jax,
+            bc,
+            heating,
+            atol=0.1,
+            rtol=1e-4,
+            max_steps=50_000,
             method='tsit5',
         )
         assert result_jax.success
@@ -943,23 +1032,43 @@ class TestSolverParity:
         heating = jnp.zeros(N)
 
         bc = BoundaryParams(
-            outer_bc_type=1, outer_bc_value=0.0,
-            emissivity=1.0, T_eq=255.0,
-            inner_bc_type=0, inner_bc_value=0.0,
-            core_density=10738.0, core_heat_capacity=880.0,
+            outer_bc_type=1,
+            outer_bc_value=0.0,
+            emissivity=1.0,
+            T_eq=255.0,
+            inner_bc_type=0,
+            inner_bc_value=0.0,
+            core_density=10738.0,
+            core_heat_capacity=880.0,
             tfac_core_avg=1.147,
         )
 
         result_tsit5 = solve_entropy(
-            S_init, 0.0, 10.0,
-            jax_eos, default_params, mesh, bc, heating,
-            atol=0.5, rtol=1e-3, method='tsit5',
+            S_init,
+            0.0,
+            10.0,
+            jax_eos,
+            default_params,
+            mesh,
+            bc,
+            heating,
+            atol=0.5,
+            rtol=1e-3,
+            method='tsit5',
             max_steps=100_000,
         )
         result_ie = solve_entropy(
-            S_init, 0.0, 10.0,
-            jax_eos, default_params, mesh, bc, heating,
-            atol=0.5, rtol=1e-3, method='implicit_euler',
+            S_init,
+            0.0,
+            10.0,
+            jax_eos,
+            default_params,
+            mesh,
+            bc,
+            heating,
+            atol=0.5,
+            rtol=1e-3,
+            method='implicit_euler',
             max_steps=200_000,
         )
 
@@ -970,14 +1079,13 @@ class TestSolverParity:
         S_ie = np.asarray(result_ie.S_final)
         # Should agree within tolerance band
         max_diff = np.max(np.abs(S_tsit5 - S_ie))
-        assert max_diff < 10.0, (
-            f'Tsit5 vs ImplicitEuler max difference: {max_diff:.1f} J/kg/K'
-        )
+        assert max_diff < 10.0, f'Tsit5 vs ImplicitEuler max difference: {max_diff:.1f} J/kg/K'
 
 
 # ---------------------------------------------------------------------------
 # Jgrav smoothing tests (JAX path)
 # ---------------------------------------------------------------------------
+
 
 @needs_eos
 @pytest.mark.unit
@@ -1002,8 +1110,11 @@ class TestJAXJgravSmoothing:
 
     @staticmethod
     def _build_mesh_and_phase_params(
-        jax_eos, N: int = 15, grav_sep: bool = True,
-        bottom_up_grav_sep: bool = True, grain_size: float = 0.1,
+        jax_eos,
+        N: int = 15,
+        grav_sep: bool = True,
+        bottom_up_grav_sep: bool = True,
+        grain_size: float = 0.1,
         phase_smoothing: str = 'tanh',
     ):
         """Earth-like Stokes-regime mesh + PhaseParams.
@@ -1043,6 +1154,7 @@ class TestJAXJgravSmoothing:
     @staticmethod
     def _grey_body_bc():
         from aragog.jax.solver import BoundaryParams
+
         return BoundaryParams(
             outer_bc_type=1,  # grey-body
             outer_bc_value=0.0,
@@ -1073,7 +1185,10 @@ class TestJAXJgravSmoothing:
         from aragog.jax.phase import compute_fluxes
 
         mesh, params = self._build_mesh_and_phase_params(
-            jax_eos, N=20, grav_sep=True, bottom_up_grav_sep=True,
+            jax_eos,
+            N=20,
+            grav_sep=True,
+            bottom_up_grav_sep=True,
         )
         N = mesh.P_stag.shape[0]
 
@@ -1093,7 +1208,12 @@ class TestJAXJgravSmoothing:
 
         heating = jnp.zeros(N)
         flux_out = compute_fluxes(
-            S_stag, 0.0, jax_eos, params, mesh, heating,
+            S_stag,
+            0.0,
+            jax_eos,
+            params,
+            mesh,
+            heating,
         )
         mass_flux = np.asarray(flux_out.mass_flux)
 
@@ -1117,9 +1237,9 @@ class TestJAXJgravSmoothing:
         # At basic node i = N-1, the staggered cell below is index
         # N-2 with gphi close to 1, so smth approaches 0.
         assert abs(mass_flux[N - 1]) < 1e-6, (
-            f'mass_flux[{N-1}] = {mass_flux[N-1]:.3e} should be ~0 at '
-            f'pure-liquid top cell (gphi={gphi_np[N-2]:.2f}, '
-            f'smth={smth_stag[N-2]:.3e})'
+            f'mass_flux[{N - 1}] = {mass_flux[N - 1]:.3e} should be ~0 at '
+            f'pure-liquid top cell (gphi={gphi_np[N - 2]:.2f}, '
+            f'smth={smth_stag[N - 2]:.3e})'
         )
         # Near mid-mantle the smoothing should peak and preserve a
         # non-trivial mass flux. Find the node whose below-cell gphi
@@ -1130,11 +1250,13 @@ class TestJAXJgravSmoothing:
         i_mid_basic = i_mid_stag + 1
         if 0 < i_mid_basic < N:
             assert abs(mass_flux[i_mid_basic]) > 10.0 * max(
-                abs(mass_flux[1]), abs(mass_flux[N - 1]), 1e-12,
+                abs(mass_flux[1]),
+                abs(mass_flux[N - 1]),
+                1e-12,
             ), (
                 f'Mid-mushy mass flux ({mass_flux[i_mid_basic]:.3e}) '
                 f'should dominate pure-phase flux '
-                f'({mass_flux[1]:.3e}, {mass_flux[N-1]:.3e})'
+                f'({mass_flux[1]:.3e}, {mass_flux[N - 1]:.3e})'
             )
 
     def test_smoothing_on_vs_off_differs_at_mushy_edge(self, jax_eos):
@@ -1155,11 +1277,17 @@ class TestJAXJgravSmoothing:
         from aragog.jax.phase import compute_fluxes
 
         mesh, params_on = self._build_mesh_and_phase_params(
-            jax_eos, N=20, grav_sep=True, bottom_up_grav_sep=True,
+            jax_eos,
+            N=20,
+            grav_sep=True,
+            bottom_up_grav_sep=True,
             phase_smoothing='cubic_hermite',
         )
         _, params_off = self._build_mesh_and_phase_params(
-            jax_eos, N=20, grav_sep=True, bottom_up_grav_sep=False,
+            jax_eos,
+            N=20,
+            grav_sep=True,
+            bottom_up_grav_sep=False,
             phase_smoothing='cubic_hermite',
         )
         N = mesh.P_stag.shape[0]
@@ -1179,10 +1307,20 @@ class TestJAXJgravSmoothing:
 
         heating = jnp.zeros(N)
         flux_on = compute_fluxes(
-            S_stag, 0.0, jax_eos, params_on, mesh, heating,
+            S_stag,
+            0.0,
+            jax_eos,
+            params_on,
+            mesh,
+            heating,
         )
         flux_off = compute_fluxes(
-            S_stag, 0.0, jax_eos, params_off, mesh, heating,
+            S_stag,
+            0.0,
+            jax_eos,
+            params_off,
+            mesh,
+            heating,
         )
 
         mass_on = np.asarray(flux_on.mass_flux)
@@ -1223,6 +1361,7 @@ class TestJAXJgravSmoothing:
         aragog/src/aragog/solver/entropy_state.py:256-260.
         """
         import numpy as _np
+
         # Manual reference implementation
         def smth_ref(gphi):
             g = _np.clip(gphi, 0.0, 1.0)
@@ -1230,7 +1369,7 @@ class TestJAXJgravSmoothing:
 
         # Sample gphi values spanning the domain
         gphi_samples = _np.linspace(-0.5, 1.5, 21)
-        expected = smth_ref(gphi_samples)
+        smth_ref(gphi_samples)
 
         # Hard-coded expected peak at gphi=0.5
         assert abs(smth_ref(0.5) - 1.0) < 1e-12
@@ -1277,6 +1416,7 @@ class TestJAXJgravSmoothing:
 # The tests below exercise each port against the numpy reference
 # implementation that compute_phase_state was ported from.
 
+
 @needs_eos
 @pytest.mark.unit
 class TestSPIDERParityPorts:
@@ -1288,6 +1428,7 @@ class TestSPIDERParityPorts:
         """Numpy EntropyPhaseEvaluator with the same defaults as the
         JAX PhaseParams used in production CHILI runs."""
         from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
         return EntropyPhaseEvaluator(
             entropy_eos=numpy_eos,
             gravitational_acceleration=9.81,
@@ -1299,7 +1440,10 @@ class TestSPIDERParityPorts:
 
     @pytest.mark.parametrize('S_off', [-300.0, -100.0, 0.0, 100.0, 300.0])
     def test_compute_phase_state_blends_match_numpy(
-        self, jax_eos, numpy_phase_eval, S_off,
+        self,
+        jax_eos,
+        numpy_phase_eval,
+        S_off,
     ):
         """compute_phase_state(P, S, k_solid, k_liquid, matprop_smooth_width)
         must reproduce numpy ._update_eos with cp_blend='latent' bit-tight
@@ -1315,8 +1459,11 @@ class TestSPIDERParityPorts:
 
         # JAX side
         state = jax_eos.compute_phase_state(
-            jnp.asarray(P_arr), jnp.asarray(S_arr),
-            k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01,
+            jnp.asarray(P_arr),
+            jnp.asarray(S_arr),
+            k_solid=4.0,
+            k_liquid=2.0,
+            matprop_smooth_width=0.01,
         )
 
         # Numpy side
@@ -1337,36 +1484,52 @@ class TestSPIDERParityPorts:
         # is the alpha guard 0.5*(a + sqrt(a^2 + eps^2)) which is identical
         # in both implementations.
         np.testing.assert_allclose(
-            np.asarray(state.temperature), T_np, rtol=1e-10,
+            np.asarray(state.temperature),
+            T_np,
+            rtol=1e-10,
             err_msg=f'temperature parity at S_off={S_off}',
         )
         np.testing.assert_allclose(
-            np.asarray(state.density), rho_np, rtol=1e-10,
+            np.asarray(state.density),
+            rho_np,
+            rtol=1e-10,
             err_msg=f'density parity at S_off={S_off}',
         )
         np.testing.assert_allclose(
-            np.asarray(state.heat_capacity), Cp_np, rtol=1e-10,
+            np.asarray(state.heat_capacity),
+            Cp_np,
+            rtol=1e-10,
             err_msg=f'heat_capacity parity at S_off={S_off}',
         )
         np.testing.assert_allclose(
-            np.asarray(state.thermal_expansivity), alpha_np, rtol=1e-5,
+            np.asarray(state.thermal_expansivity),
+            alpha_np,
+            rtol=1e-5,
             err_msg=f'thermal_expansivity parity at S_off={S_off}',
         )
         np.testing.assert_allclose(
-            np.asarray(state.dTdPs), dTdPs_np, rtol=1e-10,
+            np.asarray(state.dTdPs),
+            dTdPs_np,
+            rtol=1e-10,
             err_msg=f'dTdPs parity at S_off={S_off}',
         )
         np.testing.assert_allclose(
-            np.asarray(state.thermal_conductivity), k_np, rtol=1e-10,
+            np.asarray(state.thermal_conductivity),
+            k_np,
+            rtol=1e-10,
             err_msg=f'thermal_conductivity parity at S_off={S_off}',
         )
         np.testing.assert_allclose(
-            np.asarray(state.melt_fraction), phi_np, rtol=1e-10, atol=1e-12,
+            np.asarray(state.melt_fraction),
+            phi_np,
+            rtol=1e-10,
+            atol=1e-12,
             err_msg=f'melt_fraction parity at S_off={S_off}',
         )
 
     def test_compute_phase_state_smth_zero_when_outside_mushy(
-        self, jax_eos,
+        self,
+        jax_eos,
     ):
         """With matprop_smooth_width=0 the SPIDER convention is
         smth=1 strictly inside (0,1) and 0 elsewhere — the blend
@@ -1378,7 +1541,11 @@ class TestSPIDERParityPorts:
         S_liq = float(jax_eos.liquidus_entropy(60e9))
         S = jnp.asarray([S_sol - 200, 0.5 * (S_sol + S_liq), S_liq + 200])
         state = jax_eos.compute_phase_state(
-            P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.0,
+            P,
+            S,
+            k_solid=4.0,
+            k_liquid=2.0,
+            matprop_smooth_width=0.0,
         )
         smth = np.asarray(state.smth)
         assert smth[0] == 0.0, 'pure solid should have smth=0'
@@ -1388,11 +1555,17 @@ class TestSPIDERParityPorts:
     def test_compute_phase_state_jit_compiles(self, jax_eos):
         """compute_phase_state must JIT-compile (required for the
         analytic Jacobian path which jit-traces the whole RHS)."""
+
         @jax.jit
         def fn(P, S):
             return jax_eos.compute_phase_state(
-                P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01,
+                P,
+                S,
+                k_solid=4.0,
+                k_liquid=2.0,
+                matprop_smooth_width=0.01,
             )
+
         P = jnp.full(5, 50e9)
         S = jnp.linspace(2800.0, 3300.0, 5)
         state = fn(P, S)
@@ -1413,7 +1586,9 @@ class TestSPIDERConductionDecomposition:
         (which needs a fully-resolved Parameters object that is awkward
         to build in a unit test)."""
         from types import SimpleNamespace
+
         from aragog.jax.phase import MeshArrays
+
         n_basic = 10
         n_stag = n_basic - 1
         r_basic_np = np.linspace(3.5e6, 6.371e6, n_basic)
@@ -1449,23 +1624,28 @@ class TestSPIDERConductionDecomposition:
         # MeshArrays just forwards the numpy gradient).
         expected = np.gradient(P_basic_np, r_basic_np)
         np.testing.assert_allclose(
-            np.asarray(jax_mesh.dP_dr_basic), expected, rtol=1e-12,
+            np.asarray(jax_mesh.dP_dr_basic),
+            expected,
+            rtol=1e-12,
         )
         # Sign check: P decreases outward (large r → small P) so dPdr < 0.
         signs = np.sign(np.asarray(jax_mesh.dP_dr_basic)[1:-1])
-        assert (signs == signs[0]).all(), (
-            f'dPdr should be monotonic; got mixed signs: {signs}'
-        )
+        assert (signs == signs[0]).all(), f'dPdr should be monotonic; got mixed signs: {signs}'
 
     def test_compute_fluxes_conduction_only_matches_analytic(
-        self, jax_eos, default_params,
+        self,
+        jax_eos,
+        default_params,
     ):
         """For an isentropic profile (dSdr=0), the SPIDER conduction
         formula reduces to F_cond = -k * dTdPs * dPdr — purely the
         adiabatic-gradient term, no super-adiabatic contribution."""
         from aragog.jax.phase import (
-            MeshArrays, PhaseParams, compute_fluxes,
+            MeshArrays,
+            PhaseParams,
+            compute_fluxes,
         )
+
         # A toy mesh: linear pressure profile, uniform spacing.
         n_stag = 10
         n_basic = n_stag + 1
@@ -1513,15 +1693,22 @@ class TestSPIDERConductionDecomposition:
         # Without convection the surface dSdr fix and CMB kappa_h fix are
         # irrelevant — F is purely conductive everywhere.
         params = PhaseParams(
-            conduction=True, convection=False,
-            grav_sep=False, mixing=False,
+            conduction=True,
+            convection=False,
+            grav_sep=False,
+            mixing=False,
             kappah_floor=0.0,
             matprop_smooth_width=0.01,
         )
 
         S = jnp.full(n_stag, 3000.0)  # isentropic
         flux = compute_fluxes(
-            S, 0.0, jax_eos, params, mesh, jnp.zeros(n_stag),
+            S,
+            0.0,
+            jax_eos,
+            params,
+            mesh,
+            jnp.zeros(n_stag),
         )
 
         # Interior node sanity: F_cond should be O(k * |dTdPs * dPdr|)
@@ -1551,8 +1738,11 @@ class TestBoundaryCopies:
         entropy_state.py:533). Test by feeding a strongly super-adiabatic
         gradient at idx 1 and checking idx 0 picks it up."""
         from aragog.jax.phase import (
-            MeshArrays, PhaseParams, compute_mlt, evaluate_phase,
+            MeshArrays,
+            compute_mlt,
+            evaluate_phase,
         )
+
         n = 10
         n_basic = n + 1
         # Build a small synthetic mesh
@@ -1599,8 +1789,12 @@ class TestBoundaryCopies:
         simultaneously vanish.
         """
         from aragog.jax.phase import (
-            MeshArrays, PhaseParams, compute_mlt, evaluate_phase,
+            MeshArrays,
+            PhaseParams,
+            compute_mlt,
+            evaluate_phase,
         )
+
         n = 12
         n_basic = n + 1
         r_basic = jnp.linspace(3.5e6, 6.371e6, n_basic)
@@ -1621,13 +1815,17 @@ class TestBoundaryCopies:
         q = q.at[0, 0].set(1.0)
         q = q.at[-1, -1].set(1.0)
         mesh = MeshArrays(
-            d_dr_matrix=d_dr, quantity_matrix=q,
-            area=jnp.ones(n_basic), volume=jnp.ones(n_basic),
-            radii_basic=r_basic, radii_stag=r_stag,
+            d_dr_matrix=d_dr,
+            quantity_matrix=q,
+            area=jnp.ones(n_basic),
+            volume=jnp.ones(n_basic),
+            radii_basic=r_basic,
+            radii_stag=r_stag,
             mixing_length=jnp.ones(n_basic) * 1e5,
             mixing_length_sq=jnp.ones(n_basic) * 1e10,
             mixing_length_cu=jnp.ones(n_basic) * 1e15,
-            P_stag=P_stag, P_basic=P_basic,
+            P_stag=P_stag,
+            P_basic=P_basic,
             dP_dr_basic=jnp.gradient(P_basic, r_basic),
             gravity=jnp.full(n_basic, 9.81),
         )
@@ -1640,7 +1838,7 @@ class TestBoundaryCopies:
             ('near_solid (in-table linear)', jnp.linspace(3000.0, 3300.0, n_basic)),
             ('IC (above-table uniform)', jnp.full(n_basic, 3900.0)),
         ]:
-            ph = evaluate_phase(jax_eos, params, P_basic, S_basic)
+            evaluate_phase(jax_eos, params, P_basic, S_basic)
             # dSdr that includes a near-zero region (force testing the
             # smooth-abs guard) and the surface boundary copy.
             dSdr = jnp.linspace(-1e-6, +1e-6, n_basic)
@@ -1659,9 +1857,7 @@ class TestBoundaryCopies:
                 f'{n_nan}/{grad_np.size} NaN entries. Check the abs and '
                 f'sqrt guards in compute_mlt.'
             )
-            assert np.all(np.isfinite(grad_np)), (
-                f'compute_mlt jacobian non-finite in {label}'
-            )
+            assert np.all(np.isfinite(grad_np)), f'compute_mlt jacobian non-finite in {label}'
 
     def test_compute_fluxes_dSdr_surface_copy(self, jax_eos, default_params):
         """compute_fluxes must enforce dSdr[-1] = dSdr[-2] before the
@@ -1686,8 +1882,10 @@ class TestBoundaryCopies:
         contract with the EOS dependence of the flux components.
         """
         from aragog.jax.phase import (
-            MeshArrays, PhaseParams, compute_fluxes,
+            MeshArrays,
+            compute_fluxes,
         )
+
         n = 8
         n_basic = n + 1
         r_basic = jnp.linspace(3.5e6, 6.371e6, n_basic)
@@ -1721,13 +1919,17 @@ class TestBoundaryCopies:
 
         def build_mesh(buggy_surface: bool):
             return MeshArrays(
-                d_dr_matrix=make_ddr(buggy_surface), quantity_matrix=q,
-                area=jnp.ones(n_basic), volume=jnp.ones(n_basic),
-                radii_basic=r_basic, radii_stag=r_stag,
+                d_dr_matrix=make_ddr(buggy_surface),
+                quantity_matrix=q,
+                area=jnp.ones(n_basic),
+                volume=jnp.ones(n_basic),
+                radii_basic=r_basic,
+                radii_stag=r_stag,
                 mixing_length=jnp.ones(n_basic) * 1e5,
                 mixing_length_sq=jnp.ones(n_basic) * 1e10,
                 mixing_length_cu=jnp.ones(n_basic) * 1e15,
-                P_stag=P_stag, P_basic=P_basic,
+                P_stag=P_stag,
+                P_basic=P_basic,
                 dP_dr_basic=jnp.gradient(P_basic, r_basic),
                 gravity=jnp.full(n_basic, 9.81),
             )
@@ -1736,11 +1938,19 @@ class TestBoundaryCopies:
         params = default_params
 
         flux_clean = compute_fluxes(
-            S, 0.0, jax_eos, params, build_mesh(buggy_surface=False),
+            S,
+            0.0,
+            jax_eos,
+            params,
+            build_mesh(buggy_surface=False),
             jnp.zeros(n),
         )
         flux_buggy = compute_fluxes(
-            S, 0.0, jax_eos, params, build_mesh(buggy_surface=True),
+            S,
+            0.0,
+            jax_eos,
+            params,
+            build_mesh(buggy_surface=True),
             jnp.zeros(n),
         )
 
@@ -1752,7 +1962,10 @@ class TestBoundaryCopies:
         # cases is the value at d_dr[-1, -2:], which the copy overwrites
         # before any downstream arithmetic.
         np.testing.assert_allclose(
-            F_clean, F_buggy, rtol=0, atol=1e-12,
+            F_clean,
+            F_buggy,
+            rtol=0,
+            atol=1e-12,
             err_msg=(
                 'compute_fluxes must overwrite dSdr[-1] with dSdr[-2] '
                 'before the flux computation; the two d_dr surface '

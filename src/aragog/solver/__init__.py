@@ -12,14 +12,14 @@ from scipy import constants as sp_constants
 # dS/dt from flux divergence gives J/kg/K/s; multiply by SECS_PER_YEAR to get per-year.
 SECS_PER_YEAR: float = sp_constants.Julian_year  # 31557600.0 s
 
-from aragog.solver.boundary import BoundaryConditions
-from aragog.solver.entropy_solver import EntropySolver, SolverOutput
-from aragog.solver.entropy_state import EntropyState
+from aragog.solver.boundary import BoundaryConditions  # noqa: E402
+from aragog.solver.entropy_solver import EntropySolver, SolverOutput  # noqa: E402
+from aragog.solver.entropy_state import EntropyState  # noqa: E402
 
 __all__ = [
-    "BoundaryConditions",
-    "EntropySolver",
-    "EntropyState",
-    "SolverOutput",
-    "SECS_PER_YEAR",
+    'BoundaryConditions',
+    'EntropySolver',
+    'EntropyState',
+    'SolverOutput',
+    'SECS_PER_YEAR',
 ]

@@ -13,15 +13,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-EOS_DIR = Path(os.environ.get(
-    'ARAGOG_TEST_EOS_DIR',
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-))
+EOS_DIR = Path(
+    os.environ.get(
+        'ARAGOG_TEST_EOS_DIR',
+        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
+    )
+)
 
 
 def _scalar(x) -> float:
     """Convert a numpy array or scalar to a Python float (numpy 2.4 safe)."""
     return np.asarray(x).item()
+
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -33,10 +36,12 @@ needs_eos = pytest.mark.skipif(
 def entropy_eos():
     """Load EntropyEOS from SPIDER tables."""
     from aragog.eos.entropy import EntropyEOS
+
     return EntropyEOS(EOS_DIR)
 
 
 # ── Tier 1: EOS unit tests ──────────────────────────────────────────
+
 
 @needs_eos
 @pytest.mark.unit
@@ -105,7 +110,8 @@ class TestEntropyEOS:
         S_sol = entropy_eos.solidus_entropy(P)
         T_at_sol = entropy_eos.temperature(P, S_sol)
         T_sol_boundary = entropy_eos._lookup_at_phase_boundary(
-            'temperature', np.array([P]), 'solid')[0]
+            'temperature', np.array([P]), 'solid'
+        )[0]
         assert T_at_sol == pytest.approx(T_sol_boundary, rel=0.05)
 
     def test_lever_rule_mushy_uses_boundary_entropy(self, entropy_eos):
@@ -120,10 +126,8 @@ class TestEntropyEOS:
         S_liq = _scalar(entropy_eos.liquidus_entropy(P))
         S_mid = np.array([0.5 * (S_sol + S_liq)])  # phi = 0.5
 
-        T_sol = _scalar(entropy_eos._lookup_at_phase_boundary(
-            'temperature', P, 'solid'))
-        T_liq = _scalar(entropy_eos._lookup_at_phase_boundary(
-            'temperature', P, 'melt'))
+        T_sol = _scalar(entropy_eos._lookup_at_phase_boundary('temperature', P, 'solid'))
+        T_liq = _scalar(entropy_eos._lookup_at_phase_boundary('temperature', P, 'melt'))
         T_expected = 0.5 * T_sol + 0.5 * T_liq
 
         T_actual = _scalar(entropy_eos.temperature(P, S_mid))
@@ -164,11 +168,12 @@ class TestEntropyEOS:
         S_sol = _scalar(entropy_eos.solidus_entropy(np.array([P])))
         S_liq = _scalar(entropy_eos.liquidus_entropy(np.array([P])))
 
-        for label, S in [('solid', S_sol - 500.0),
-                         ('mushy', 0.5 * (S_sol + S_liq)),
-                         ('melt', S_liq + 500.0)]:
-            T_vec = _scalar(entropy_eos.temperature(
-                np.array([P]), np.array([S])))
+        for label, S in [
+            ('solid', S_sol - 500.0),
+            ('mushy', 0.5 * (S_sol + S_liq)),
+            ('melt', S_liq + 500.0),
+        ]:
+            T_vec = _scalar(entropy_eos.temperature(np.array([P]), np.array([S])))
             T_sca = entropy_eos.temperature_scalar(P, S)
             assert T_sca == pytest.approx(T_vec, rel=1e-10), (
                 f'{label}: scalar={T_sca:.2f}, vector={T_vec:.2f}'
@@ -176,6 +181,7 @@ class TestEntropyEOS:
 
 
 # ── Tier 2: Phase evaluator tests ───────────────────────────────────
+
 
 @needs_eos
 @pytest.mark.unit
@@ -185,6 +191,7 @@ class TestEntropyPhaseEvaluator:
     def test_isentropic_profile(self, entropy_eos):
         """On isentropic IC, T increases with depth."""
         from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
         P = np.linspace(1e9, 135e9, 30)
         phase = EntropyPhaseEvaluator(entropy_eos=entropy_eos, gravitational_acceleration=10.0)
         phase.set_pressure(P)
@@ -198,6 +205,7 @@ class TestEntropyPhaseEvaluator:
     def test_capacitance_is_rho_T(self, entropy_eos):
         """Capacitance = rho * T for entropy formulation."""
         from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
         P = np.array([50e9])
         phase = EntropyPhaseEvaluator(entropy_eos=entropy_eos, gravitational_acceleration=10.0)
         phase.set_pressure(P)
@@ -209,12 +217,14 @@ class TestEntropyPhaseEvaluator:
     def test_set_temperature_raises(self, entropy_eos):
         """set_temperature must raise NotImplementedError."""
         from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
         phase = EntropyPhaseEvaluator(entropy_eos=entropy_eos, gravitational_acceleration=10.0)
         with pytest.raises(NotImplementedError):
             phase.set_temperature(np.array([3000.0]))
 
 
 # ── Tier 3: Solver integration tests ────────────────────────────────
+
 
 @needs_eos
 @pytest.mark.smoke
@@ -245,6 +255,7 @@ class TestEntropySolverStandalone:
         # Simple mesh mock
         class Mesh:
             pass
+
         class SubMesh:
             pass
 
@@ -283,19 +294,25 @@ class TestEntropySolverStandalone:
         mesh.d_dr_at_basic_nodes = d_dr_at_basic_nodes
 
         # Phase evaluators
-        phase_stag = EntropyPhaseEvaluator(entropy_eos=entropy_eos, gravitational_acceleration=10.0)
+        phase_stag = EntropyPhaseEvaluator(
+            entropy_eos=entropy_eos, gravitational_acceleration=10.0
+        )
         phase_stag.set_pressure(P_stag)
-        phase_basic = EntropyPhaseEvaluator(entropy_eos=entropy_eos, gravitational_acceleration=10.0)
+        phase_basic = EntropyPhaseEvaluator(
+            entropy_eos=entropy_eos, gravitational_acceleration=10.0
+        )
         phase_basic.set_pressure(P_basic)
 
         # Mock evaluator
         class Eval:
             pass
+
         evaluator = Eval()
         evaluator.mesh = mesh
 
-        state = EntropyState(evaluator=evaluator, phase_staggered=phase_stag,
-                             phase_basic=phase_basic)
+        state = EntropyState(
+            evaluator=evaluator, phase_staggered=phase_stag, phase_basic=phase_basic
+        )
 
         S_init = 3200.0
         S0 = np.full(N, S_init)
@@ -346,6 +363,7 @@ class TestEntropySolverStandalone:
 
 
 # ── Tier 2: Jgrav regression tests ─────────────────────────────────
+
 
 @needs_eos
 @pytest.mark.unit
@@ -445,9 +463,15 @@ class TestJgravSmoothing:
         return mesh, r_stag, r_basic, P_stag, P_basic
 
     @staticmethod
-    def _build_state(entropy_eos, mesh, P_stag, P_basic,
-                     grav_sep: bool, bottom_up_grav_sep: bool = True,
-                     grain_size: float = 0.1):
+    def _build_state(
+        entropy_eos,
+        mesh,
+        P_stag,
+        P_basic,
+        grav_sep: bool,
+        bottom_up_grav_sep: bool = True,
+        grain_size: float = 0.1,
+    ):
         """Build EntropyState with the requested Jgrav configuration.
 
         Uses grain_size = 0.1 m by default to match the R8 CHILI
@@ -501,6 +525,7 @@ class TestJgravSmoothing:
             bottom_up_grav_sep=bottom_up_grav_sep,
         )
 
+    @pytest.mark.slow
     def test_near_liquidus_single_step_bounded(self, entropy_eos):
         """First crystallization step with Jgrav must keep S and T bounded.
 
@@ -539,9 +564,7 @@ class TestJgravSmoothing:
             f'S_init={S_init:.1f}, S_liq_surf={S_liq_surf:.1f}'
         )
 
-        state = self._build_state(
-            entropy_eos, mesh, P_stag, P_basic, grav_sep=True
-        )
+        state = self._build_state(entropy_eos, mesh, P_stag, P_basic, grav_sep=True)
 
         N = len(r_stag)
         S0 = np.full(N, S_init)
@@ -558,8 +581,7 @@ class TestJgravSmoothing:
         # Short integration: 500 yr. Enough for the first mushy
         # cell to transition but not enough to fully crystallize
         # the bottom half of the mantle on a coarse mesh.
-        sol = solve_ivp(dSdt, (0.0, 500.0), S0, method='BDF',
-                         atol=1.0, rtol=1e-6)
+        sol = solve_ivp(dSdt, (0.0, 500.0), S0, method='BDF', atol=1.0, rtol=1e-6)
 
         assert sol.status == 0, f'Solver failed: {sol.message}'
 
@@ -569,16 +591,13 @@ class TestJgravSmoothing:
         # Pre-fix A-variant reproducer result was S_min = -15 J/kg/K
         # (off-table). Post-fix it stays well above the table floor.
         assert S_final.min() > entropy_eos.S_min + 500.0, (
-            f'S_min {S_final.min():.1f} too close to table floor '
-            f'{entropy_eos.S_min:.1f}'
+            f'S_min {S_final.min():.1f} too close to table floor {entropy_eos.S_min:.1f}'
         )
 
         # T_CMB must be far above the pre-fix ~500 K collapse value.
         # Loose bound: 1500 K. A cold solid at 135 GPa still exceeds
         # this; only the table-clipping artifact dropped this low.
-        T_cmb_final = _scalar(entropy_eos.temperature(
-            P_stag[0], S_final[0]
-        ))
+        T_cmb_final = _scalar(entropy_eos.temperature(P_stag[0], S_final[0]))
         assert T_cmb_final > 1500.0, (
             f'CMB temperature collapsed: T_CMB={T_cmb_final:.0f} K. '
             f'Pre-fix failure mode (~500 K at CMB).'
@@ -603,10 +622,10 @@ class TestJgravSmoothing:
         E_init = float(np.sum(rho0 * Cp0 * T0 * V))
 
         assert E_final < E_init, (
-            f'Thermal energy increased on cooling: '
-            f'E_init={E_init:.2e}, E_final={E_final:.2e}'
+            f'Thermal energy increased on cooling: E_init={E_init:.2e}, E_final={E_final:.2e}'
         )
 
+    @pytest.mark.slow
     def test_grav_off_is_gentler_than_grav_on(self, entropy_eos):
         """Turning grav_sep off should reduce CMB cooling.
 
@@ -649,22 +668,18 @@ class TestJgravSmoothing:
                 energy_flux = state.heat_flux * mesh.basic.area
                 cap = state.capacitance_staggered() * mesh.basic.volume
                 return -np.diff(energy_flux) / cap * SECS_PER_YEAR
+
             # 200 yr: short enough that both variants stay in the
             # transient regime, long enough that Jgrav has time to
             # move CMB entropy around.
-            sol = solve_ivp(dSdt, (0.0, 200.0), S0, method='BDF',
-                             atol=1.0, rtol=1e-6)
+            sol = solve_ivp(dSdt, (0.0, 200.0), S0, method='BDF', atol=1.0, rtol=1e-6)
             assert sol.status == 0, f'Solver failed: {sol.message}'
             return sol.y[:, -1]
 
-        state_on = self._build_state(
-            entropy_eos, mesh, P_stag, P_basic, grav_sep=True
-        )
+        state_on = self._build_state(entropy_eos, mesh, P_stag, P_basic, grav_sep=True)
         S_on = run(state_on)
 
-        state_off = self._build_state(
-            entropy_eos, mesh, P_stag, P_basic, grav_sep=False
-        )
+        state_off = self._build_state(entropy_eos, mesh, P_stag, P_basic, grav_sep=False)
         S_off = run(state_off)
 
         # With grav_sep on, the CMB cell should see MORE entropy
@@ -692,6 +707,7 @@ class TestJgravSmoothing:
             f'CMB collapsed: T_on={T_on:.0f}, T_off={T_off:.0f}'
         )
 
+    @pytest.mark.slow
     def test_smoothing_disabled_fails_or_warns(self, entropy_eos):
         """Disabling bottom_up_grav_sep reproduces the pre-fix drain.
 
@@ -715,8 +731,12 @@ class TestJgravSmoothing:
         S0 = np.full(N, S_init)
 
         state = self._build_state(
-            entropy_eos, mesh, P_stag, P_basic,
-            grav_sep=True, bottom_up_grav_sep=False,
+            entropy_eos,
+            mesh,
+            P_stag,
+            P_basic,
+            grav_sep=True,
+            bottom_up_grav_sep=False,
         )
 
         def dSdt(t, S):
@@ -728,17 +748,13 @@ class TestJgravSmoothing:
             cap = state.capacitance_staggered() * mesh.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0.0, 500.0), S0, method='BDF',
-                         atol=1.0, rtol=1e-6)
+        sol = solve_ivp(dSdt, (0.0, 500.0), S0, method='BDF', atol=1.0, rtol=1e-6)
 
         drained = False
         if sol.status == 0:
             S_final = sol.y[:, -1]
             T_cmb = _scalar(entropy_eos.temperature(P_CMB, S_final[0]))
-            drained = (
-                T_cmb < 1500.0
-                or S_final.min() < entropy_eos.S_min + 500.0
-            )
+            drained = T_cmb < 1500.0 or S_final.min() < entropy_eos.S_min + 500.0
 
         assert sol.status != 0 or drained, (
             'Disabling smoothing (w=0) did not reproduce the pre-fix '
@@ -747,6 +763,7 @@ class TestJgravSmoothing:
 
 
 # ── Tier 2: Cp(P,S) E_th regression ─────────────────────────────────
+
 
 @needs_eos
 @pytest.mark.unit
@@ -908,8 +925,7 @@ class TestCpFromEOS:
         # picks up latent-heat contributions; the upper bound
         # accommodates that.
         assert 1100.0 < Cp_eff_new < 5000.0, (
-            f'Cp_eff_new = {Cp_eff_new:.1f} J/kg/K is out of physical '
-            f'range for silicate mantle'
+            f'Cp_eff_new = {Cp_eff_new:.1f} J/kg/K is out of physical range for silicate mantle'
         )
         # Cp_eff_old (mass-weighted T) is in Kelvin and must clearly
         # differ from Cp_eff_new in J/kg/K. They should be at least
@@ -923,6 +939,7 @@ class TestCpFromEOS:
 
 
 # ── Tier 2: latent-blend Cp regression (v4) ─────────────────────────
+
 
 @needs_eos
 @pytest.mark.unit
@@ -973,10 +990,10 @@ class TestLatentBlendCp:
         S_liq = _scalar(entropy_eos.liquidus_entropy(P))
         S_mid = 0.5 * (S_sol + S_liq)  # gphi = 0.5
 
-        Cp_linear = _scalar(entropy_eos.heat_capacity(np.asarray([P]),
-                                                    np.asarray([S_mid])))
-        Cp_latent = _scalar(entropy_eos.heat_capacity_latent_blend(
-            np.asarray([P]), np.asarray([S_mid])))
+        Cp_linear = _scalar(entropy_eos.heat_capacity(np.asarray([P]), np.asarray([S_mid])))
+        Cp_latent = _scalar(
+            entropy_eos.heat_capacity_latent_blend(np.asarray([P]), np.asarray([S_mid]))
+        )
 
         # Latent blend should be larger than linear by at least 50 %
         # at the mushy midpoint (the actual ratio is typically 2-5x).
@@ -1001,10 +1018,12 @@ class TestLatentBlendCp:
         # Sample two close points in the rising-shoulder region of the
         # smoothing bell, where Cp varies smoothly but rapidly.
         eps = 0.001 * dS  # well within the smoothing width
-        Cp_below = _scalar(entropy_eos.heat_capacity_latent_blend(
-            P, np.array([S_sol + 0.05 * dS - eps])))
-        Cp_above = _scalar(entropy_eos.heat_capacity_latent_blend(
-            P, np.array([S_sol + 0.05 * dS + eps])))
+        Cp_below = _scalar(
+            entropy_eos.heat_capacity_latent_blend(P, np.array([S_sol + 0.05 * dS - eps]))
+        )
+        Cp_above = _scalar(
+            entropy_eos.heat_capacity_latent_blend(P, np.array([S_sol + 0.05 * dS + eps]))
+        )
         # Adjacent samples differ by less than 5 % (smooth function)
         rel_jump = abs(Cp_above - Cp_below) / max(abs(Cp_below), 1.0)
         assert rel_jump < 0.05, (
@@ -1051,6 +1070,7 @@ class TestLatentBlendCp:
     def test_invalid_cp_blend_raises(self, entropy_eos):
         """Invalid cp_blend value raises ValueError at construction."""
         from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
         with pytest.raises(ValueError, match='cp_blend'):
             EntropyPhaseEvaluator(
                 entropy_eos=entropy_eos,
@@ -1060,6 +1080,7 @@ class TestLatentBlendCp:
 
 
 # ── Tier 4: Bower+2018 core BC (v4) ─────────────────────────────────
+
 
 @needs_eos
 @pytest.mark.unit
@@ -1091,7 +1112,7 @@ class TestBowerCoreBC:
         """
         R_cmb, R_surf = 3480e3, 6371e3
         r_stag = np.linspace(R_cmb, R_surf, N)
-        dr = np.diff(r_stag)
+        np.diff(r_stag)
         P_stag = np.linspace(135e9, 1e5, N)
 
         r_basic = np.zeros(N + 1)
@@ -1102,6 +1123,7 @@ class TestBowerCoreBC:
 
         class Mesh:
             pass
+
         class SubMesh:
             pass
 
@@ -1144,13 +1166,11 @@ class TestBowerCoreBC:
 
         S_init = np.full(30, 2900.0)
         solver.set_initial_entropy(S_init)
-        assert solver._S0.shape == (31,), \
-            f'v4 state should be N+1 = 31, got {solver._S0.shape}'
+        assert solver._S0.shape == (31,), f'v4 state should be N+1 = 31, got {solver._S0.shape}'
 
         solver._core_bc = 'quasi_steady'
         solver.set_initial_entropy(S_init)
-        assert solver._S0.shape == (30,), \
-            f'v3 state should be N = 30, got {solver._S0.shape}'
+        assert solver._S0.shape == (30,), f'v3 state should be N = 30, got {solver._S0.shape}'
 
     def test_t_core_init_from_eos(self, entropy_eos):
         """Default initial T_core matches the bottom-cell mantle T."""
@@ -1167,11 +1187,9 @@ class TestBowerCoreBC:
         S_init = np.full(30, 2900.0)
         solver.set_initial_entropy(S_init)
         # The last element should be the bottom-cell T from the EOS
-        T_bottom = float(np.asarray(
-            entropy_eos.temperature(
-                np.array([135e9]), np.array([2900.0])
-            )
-        ).item())
+        T_bottom = float(
+            np.asarray(entropy_eos.temperature(np.array([135e9]), np.array([2900.0]))).item()
+        )
         assert abs(solver._S0[-1] - T_bottom) < 1.0, (
             f'Default T_core_init = {solver._S0[-1]:.0f} should match '
             f'bottom mantle T = {T_bottom:.0f}'
@@ -1238,10 +1256,15 @@ class TestEnergyBalanceCoreBC:
     """
 
     @staticmethod
-    def _make_bare_solver(entropy_eos, n_stag: int = 30,
-                          core_bc: str = 'energy_balance',
-                          P_cmb: float = 135e9, P_surf: float = 1e5,
-                          R_cmb: float = 3480e3, R_surf: float = 6371e3):
+    def _make_bare_solver(
+        entropy_eos,
+        n_stag: int = 30,
+        core_bc: str = 'energy_balance',
+        P_cmb: float = 135e9,
+        P_surf: float = 1e5,
+        R_cmb: float = 3480e3,
+        R_surf: float = 6371e3,
+    ):
         """Construct a minimal EntropySolver for unit-level tests.
 
         Uses ``__new__`` + attribute injection like
@@ -1265,8 +1288,10 @@ class TestEnergyBalanceCoreBC:
         # staggered cells at basic-node midpoints.
         class _MeshStub:
             pass
+
         class _SubMesh:
             pass
+
         mesh = _MeshStub()
         mesh.basic = _SubMesh()
         mesh.staggered = _SubMesh()
@@ -1306,9 +1331,7 @@ class TestEnergyBalanceCoreBC:
         solver._cmb_dr_cmb = dr_cmb
         solver._cmb_dr_half = 0.5 * dr_cmb
         solver._cmb_area = 4.0 * np.pi * r_cmb**2
-        solver._cmb_vol_first = (4.0 / 3.0) * np.pi * (
-            (r_cmb + dr_cmb) ** 3 - r_cmb**3
-        )
+        solver._cmb_vol_first = (4.0 / 3.0) * np.pi * ((r_cmb + dr_cmb) ** 3 - r_cmb**3)
         solver._core_density = core_density
         solver._core_cp = core_cp
         solver._core_M = (4.0 / 3.0) * np.pi * r_cmb**3 * core_density
@@ -1325,8 +1348,7 @@ class TestEnergyBalanceCoreBC:
         the length cleanly — catches any latent state leak across
         PROTEUS coupling resets.
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         solver.set_initial_entropy(np.full(30, 2900.0))
         assert solver._S0.shape == (31,), (
             f'energy_balance state should be N+1 = 31, got {solver._S0.shape}'
@@ -1335,20 +1357,17 @@ class TestEnergyBalanceCoreBC:
         solver._core_bc = 'quasi_steady'
         solver.set_initial_entropy(np.full(30, 2900.0))
         assert solver._S0.shape == (30,), (
-            f'quasi_steady state should be N = 30 after flip, '
-            f'got {solver._S0.shape}'
+            f'quasi_steady state should be N = 30 after flip, got {solver._S0.shape}'
         )
 
         # Edge case: N=2 is the minimum mesh size the FD cold-start
         # can handle without special-casing (it computes
         # (S[1]-S[0])/(r[1]-r[0])). _make_bare_solver provides the
         # default 3-basic-node mesh for N=2.
-        solver2 = self._make_bare_solver(entropy_eos, n_stag=2,
-                                          core_bc='energy_balance')
+        solver2 = self._make_bare_solver(entropy_eos, n_stag=2, core_bc='energy_balance')
         solver2.set_initial_entropy(np.array([2900.0, 3100.0]))
         assert solver2._S0.shape == (3,), (
-            f'N=2 minimal mesh should give state length 3, '
-            f'got {solver2._S0.shape}'
+            f'N=2 minimal mesh should give state length 3, got {solver2._S0.shape}'
         )
 
     def test_set_initial_entropy_rejects_wrong_length(self, entropy_eos):
@@ -1358,8 +1377,7 @@ class TestEnergyBalanceCoreBC:
         in the wrong number of staggered cells, the solver must fail
         loudly, not silently pad or truncate.
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         with pytest.raises(ValueError, match=r'S_init length 20'):
             solver.set_initial_entropy(np.full(20, 2900.0))
         with pytest.raises(ValueError, match=r'S_init length 31'):
@@ -1379,13 +1397,11 @@ class TestEnergyBalanceCoreBC:
         Discriminating values: using S_init = 2900 J/kg/K (inside the
         PALEOS domain, not at any boundary or special value).
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         S_uniform = np.full(30, 2900.0)
         solver.set_initial_entropy(S_uniform)
         assert solver._S0[-1] == pytest.approx(0.0, abs=1e-12), (
-            f'Uniform S → cold-start dSdr_cmb should be exactly zero, '
-            f'got {solver._S0[-1]:.3e}'
+            f'Uniform S → cold-start dSdr_cmb should be exactly zero, got {solver._S0[-1]:.3e}'
         )
 
     def test_dSdr_cmb_cold_start_from_gradient_matches_fd(self, entropy_eos):
@@ -1397,8 +1413,7 @@ class TestEnergyBalanceCoreBC:
         negated. Using a LARGE, non-pathological gradient so both
         bugs would show up at the 1 % level.
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         # S_init with a linear gradient of +5 J/kg/K per cell.
         S_grad = 2900.0 + 5.0 * np.arange(30, dtype=float)
         solver.set_initial_entropy(S_grad)
@@ -1413,8 +1428,7 @@ class TestEnergyBalanceCoreBC:
         expected_dSdr = 5.0 / (r_stag_1 - r_stag_0)
 
         assert solver._S0[-1] == pytest.approx(expected_dSdr, rel=1e-9), (
-            f'Cold-start FD mismatch: got {solver._S0[-1]:.3e}, '
-            f'expected {expected_dSdr:.3e}'
+            f'Cold-start FD mismatch: got {solver._S0[-1]:.3e}, expected {expected_dSdr:.3e}'
         )
         # Sign sanity: positive upward gradient → positive dSdr_cmb
         assert solver._S0[-1] > 0.0, (
@@ -1430,8 +1444,7 @@ class TestEnergyBalanceCoreBC:
         This test verifies the override survives the
         ``set_initial_entropy`` call that immediately follows.
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         # Cold-start FD on a uniform profile would give 0; the user
         # override must WIN over that default.
         solver.set_initial_dSdr_cmb(-1.234e-6)
@@ -1443,8 +1456,7 @@ class TestEnergyBalanceCoreBC:
         # Negative values are allowed (physically: S decreasing with
         # depth = unstable stratification, which the solver should
         # still accept and let the physics correct).
-        solver2 = self._make_bare_solver(entropy_eos, n_stag=30,
-                                          core_bc='energy_balance')
+        solver2 = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         solver2.set_initial_dSdr_cmb(+5.678e-5)
         solver2.set_initial_entropy(np.full(30, 2900.0))
         assert solver2._S0[-1] == pytest.approx(+5.678e-5, rel=1e-12)
@@ -1452,11 +1464,11 @@ class TestEnergyBalanceCoreBC:
         # Override must also beat the hot-start-from-prev-solution
         # path. Populate a fake _solution with a different boundary
         # value and confirm the user override still wins.
-        solver3 = self._make_bare_solver(entropy_eos, n_stag=30,
-                                          core_bc='energy_balance')
+        solver3 = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
 
         class _FakeSol:
             pass
+
         fake = _FakeSol()
         fake.y = np.zeros((31, 2))
         fake.y[30, -1] = 9.999e-3  # "previous" dSdr_cmb
@@ -1476,11 +1488,11 @@ class TestEnergyBalanceCoreBC:
         the boundary state resets on every coupling reset and the
         integrated SPIDER energy balance is lost.
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
 
         class _FakeSol:
             pass
+
         fake = _FakeSol()
         fake.y = np.zeros((31, 4))
         fake.y[30, -1] = 3.14e-5
@@ -1491,8 +1503,7 @@ class TestEnergyBalanceCoreBC:
         # prev-solution value can supply the 3.14e-5 we expect.
         solver.set_initial_entropy(np.full(30, 2900.0))
         assert solver._S0[-1] == pytest.approx(3.14e-5, rel=1e-12), (
-            f'Hot start must pick y[N, -1] (not y[N, -2]), '
-            f'got {solver._S0[-1]:.3e}'
+            f'Hot start must pick y[N, -1] (not y[N, -2]), got {solver._S0[-1]:.3e}'
         )
 
     # ── helper-formula bit-parity tests ──────────────────────────
@@ -1506,8 +1517,7 @@ class TestEnergyBalanceCoreBC:
         cached core / geometry constants. This is an invariant the
         helper MUST satisfy.
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         self._wire_cached_constants(solver)
 
         rhs = solver._energy_balance_rhs_per_s(
@@ -1534,8 +1544,7 @@ class TestEnergyBalanceCoreBC:
         )
         expected_rhs2 = dSdt_s_nonzero * 2.0 / solver._cmb_dr_cmb
         assert rhs2 == pytest.approx(expected_rhs2, rel=1e-12), (
-            f'Zero-flux sub-limit: got {rhs2:.3e}, '
-            f'expected {expected_rhs2:.3e}'
+            f'Zero-flux sub-limit: got {rhs2:.3e}, expected {expected_rhs2:.3e}'
         )
 
     def test_energy_balance_rhs_bit_parity_prescribed_inputs(self, entropy_eos):
@@ -1590,8 +1599,7 @@ class TestEnergyBalanceCoreBC:
         core_cp = 880.0
         core_tfac = 1.147
 
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         self._wire_cached_constants(
             solver,
             r_cmb=r_cmb,
@@ -1613,13 +1621,9 @@ class TestEnergyBalanceCoreBC:
         area_cmb = 4.0 * np.pi * r_cmb**2
         M_core = (4.0 / 3.0) * np.pi * r_cmb**3 * core_density
         E_tot_cmb = F_cmb_basic * area_cmb
-        fac_cmb = cp_cmb_basic / (
-            core_cp * T_cmb_basic * core_tfac * M_core
-        )
+        fac_cmb = cp_cmb_basic / (core_cp * T_cmb_basic * core_tfac * M_core)
         dS_basic_cmb_dt = -E_tot_cmb * fac_cmb  # Ecore=0
-        expected = (
-            (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / dr_cmb
-        )
+        expected = (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / dr_cmb
 
         actual = solver._energy_balance_rhs_per_s(
             F_cmb_basic=F_cmb_basic,
@@ -1628,8 +1632,7 @@ class TestEnergyBalanceCoreBC:
             cp_cmb_basic=cp_cmb_basic,
         )
         assert actual == pytest.approx(expected, rel=1e-12), (
-            f'BC formula bit-parity failed: actual={actual:.6e}, '
-            f'expected={expected:.6e}'
+            f'BC formula bit-parity failed: actual={actual:.6e}, expected={expected:.6e}'
         )
 
         # Additional invariant: for these inputs the rhs must be
@@ -1651,8 +1654,7 @@ class TestEnergyBalanceCoreBC:
         unchanged. This catches a common bug class where a wrong
         exponent (F^2, sqrt(F)) sneaks in.
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         self._wire_cached_constants(solver)
 
         # Pin dSdt_s_cmb_per_s to 0 so the rhs is purely F-driven.
@@ -1661,23 +1663,15 @@ class TestEnergyBalanceCoreBC:
             T_cmb_basic=4100.0,
             cp_cmb_basic=1280.0,
         )
-        rhs1 = solver._energy_balance_rhs_per_s(
-            F_cmb_basic=1.5e4, **base_inputs
-        )
-        rhs2 = solver._energy_balance_rhs_per_s(
-            F_cmb_basic=3.0e4, **base_inputs
-        )
-        rhs3 = solver._energy_balance_rhs_per_s(
-            F_cmb_basic=6.0e4, **base_inputs
-        )
+        rhs1 = solver._energy_balance_rhs_per_s(F_cmb_basic=1.5e4, **base_inputs)
+        rhs2 = solver._energy_balance_rhs_per_s(F_cmb_basic=3.0e4, **base_inputs)
+        rhs3 = solver._energy_balance_rhs_per_s(F_cmb_basic=6.0e4, **base_inputs)
 
         assert rhs2 == pytest.approx(2.0 * rhs1, rel=1e-12), (
-            f'Linearity failed: rhs(2F) = {rhs2:.3e}, '
-            f'expected {2.0 * rhs1:.3e}'
+            f'Linearity failed: rhs(2F) = {rhs2:.3e}, expected {2.0 * rhs1:.3e}'
         )
         assert rhs3 == pytest.approx(4.0 * rhs1, rel=1e-12), (
-            f'Linearity failed: rhs(4F) = {rhs3:.3e}, '
-            f'expected {4.0 * rhs1:.3e}'
+            f'Linearity failed: rhs(4F) = {rhs3:.3e}, expected {4.0 * rhs1:.3e}'
         )
 
         # Sign convention check: positive F (heat OUT of core) with
@@ -1704,21 +1698,18 @@ class TestEnergyBalanceCoreBC:
         test derives the expected value purely from the FD definition,
         catching sign errors that would survive self-consistent checks.
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         dr_cmb = 8.0e4  # different from default to catch hardcoding
         self._wire_cached_constants(solver, dr_cmb=dr_cmb)
 
         # Scenario: core cooling slowly, mantle staggered cell cooling fast
         dSdt_basic = -5.0e-10  # J/(kg*K*s), core-buffered rate
-        dSdt_stag = -2.0e-9   # J/(kg*K*s), mantle cell rate
+        dSdt_stag = -2.0e-9  # J/(kg*K*s), mantle cell rate
 
         # Derive dSdt_basic from the energy-balance side.
         # dSdt_basic = -E_tot * fac_cmb, so we need F that produces it.
         area_cmb = solver._cmb_area
-        fac_cmb = 1280.0 / (
-            solver._core_cp * 4000.0 * solver._core_tfac * solver._core_M
-        )
+        fac_cmb = 1280.0 / (solver._core_cp * 4000.0 * solver._core_tfac * solver._core_M)
         # F_cmb such that -F*area*fac = dSdt_basic
         F_cmb = -dSdt_basic / (area_cmb * fac_cmb)
 
@@ -1732,13 +1723,11 @@ class TestEnergyBalanceCoreBC:
             cp_cmb_basic=1280.0,
         )
         assert actual == pytest.approx(expected, rel=1e-10), (
-            f'FD-definition check failed: actual={actual:.6e}, '
-            f'expected={expected:.6e}'
+            f'FD-definition check failed: actual={actual:.6e}, expected={expected:.6e}'
         )
         # Stag cools faster than basic, so gradient weakens: rhs < 0
         assert actual < 0.0, (
-            f'Expected negative rhs (stag cools faster than basic), '
-            f'got {actual:.3e}'
+            f'Expected negative rhs (stag cools faster than basic), got {actual:.3e}'
         )
 
     def test_energy_balance_rhs_clamps_protect_against_divzero(self, entropy_eos):
@@ -1749,8 +1738,7 @@ class TestEnergyBalanceCoreBC:
         T_cmb near zero (which should not happen in practice, but
         a defensive check is cheap and the clamps exist for a reason).
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         self._wire_cached_constants(solver)
 
         # Set T_cmb to a physically unreasonable 0.5 K. The clamp
@@ -1762,9 +1750,7 @@ class TestEnergyBalanceCoreBC:
             T_cmb_basic=0.5,  # unphysically small
             cp_cmb_basic=1280.0,
         )
-        assert np.isfinite(rhs), (
-            f'rhs should be finite under T_cmb clamp, got {rhs}'
-        )
+        assert np.isfinite(rhs), f'rhs should be finite under T_cmb clamp, got {rhs}'
 
         # Also verify the clamp at T_cmb=0.0 (the exact degenerate
         # case) does not divide by zero.
@@ -1774,9 +1760,7 @@ class TestEnergyBalanceCoreBC:
             T_cmb_basic=0.0,
             cp_cmb_basic=1280.0,
         )
-        assert np.isfinite(rhs_zero), (
-            f'rhs should be finite even at T_cmb=0, got {rhs_zero}'
-        )
+        assert np.isfinite(rhs_zero), f'rhs should be finite even at T_cmb=0, got {rhs_zero}'
 
     # ── Jacobian sparsity test ───────────────────────────────────
 
@@ -1798,8 +1782,7 @@ class TestEnergyBalanceCoreBC:
         For comparison the quasi_steady pattern should be (N, N).
         """
         N = 30
-        solver = self._make_bare_solver(entropy_eos, n_stag=N,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=N, core_bc='energy_balance')
         J = solver._build_jac_sparsity()
         assert J.shape == (N + 1, N + 1), (
             f'energy_balance Jacobian shape should be (31, 31), got {J.shape}'
@@ -1820,8 +1803,7 @@ class TestEnergyBalanceCoreBC:
         )
 
         # Compare with quasi_steady: no extra row or column
-        solver_qs = self._make_bare_solver(entropy_eos, n_stag=N,
-                                            core_bc='quasi_steady')
+        solver_qs = self._make_bare_solver(entropy_eos, n_stag=N, core_bc='quasi_steady')
         J_qs = solver_qs._build_jac_sparsity()
         assert J_qs.shape == (N, N), (
             f'quasi_steady Jacobian shape should be (30, 30), got {J_qs.shape}'
@@ -1830,8 +1812,7 @@ class TestEnergyBalanceCoreBC:
         # Edge case: N=3 (minimum mesh where the pentadiagonal stencil
         # fully populates). The extra row should still couple to S[0..2]
         # and self; Jd shape must be (4, 4).
-        solver_small = self._make_bare_solver(entropy_eos, n_stag=3,
-                                               core_bc='energy_balance')
+        solver_small = self._make_bare_solver(entropy_eos, n_stag=3, core_bc='energy_balance')
         J_small = solver_small._build_jac_sparsity()
         assert J_small.shape == (4, 4)
         Jd_small = J_small.toarray().astype(bool)
@@ -1855,8 +1836,7 @@ class TestEnergyBalanceCoreBC:
         does, with the entropy-block slice, and asserts the resulting
         phi0 is finite and non-degenerate.
         """
-        solver = self._make_bare_solver(entropy_eos, n_stag=30,
-                                         core_bc='energy_balance')
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         S_init = np.full(30, 2900.0)
         solver.set_initial_entropy(S_init)
         # _S0 is now shape (31,) — the last element is dSdr_cmb, which
@@ -1865,17 +1845,11 @@ class TestEnergyBalanceCoreBC:
 
         # The correct slice (using _state_is_extended) must produce a
         # finite phi0 estimate.
-        S0_block = (
-            solver._S0[:solver._n_stag]
-            if solver._state_is_extended
-            else solver._S0
+        S0_block = solver._S0[: solver._n_stag] if solver._state_is_extended else solver._S0
+        phi0 = float(
+            np.asarray(solver.entropy_eos.melt_fraction(solver._P_stag_flat, S0_block)).mean()
         )
-        phi0 = float(np.asarray(
-            solver.entropy_eos.melt_fraction(solver._P_stag_flat, S0_block)
-        ).mean())
-        assert 0.0 <= phi0 <= 1.0, (
-            f'phi0 from corrected slice should be in [0, 1], got {phi0}'
-        )
+        assert 0.0 <= phi0 <= 1.0, f'phi0 from corrected slice should be in [0, 1], got {phi0}'
 
         # The old buggy slice would raise (shape mismatch).
         # Exercise that this SPECIFIC error mode would have occurred
@@ -1885,10 +1859,11 @@ class TestEnergyBalanceCoreBC:
             # Pass full 31-element _S0 against shape-30 _P_stag_flat
             solver.entropy_eos.melt_fraction(
                 solver._P_stag_flat,  # shape (30,)
-                solver._S0,           # shape (31,) — mismatch
+                solver._S0,  # shape (31,) — mismatch
             )
 
 
+@pytest.mark.unit
 class TestGradientReconstruction:
     """Tests for _reconstruct_entropy, the gradient-to-value inversion.
 
@@ -1902,6 +1877,7 @@ class TestGradientReconstruction:
     def solver_30(self):
         """Build a minimal 30-cell solver with cached mesh arrays."""
         from aragog.solver.entropy_solver import EntropySolver
+
         N = 30  # staggered nodes
         R_cmb, R_surf = 3480e3, 6371e3
         r_stag = np.linspace(R_cmb + 15e3, R_surf - 7e3, N)
@@ -1955,7 +1931,9 @@ class TestGradientReconstruction:
         S_check, _ = solver_30._reconstruct_entropy(dSdr, S_init[-1])
         # Interior must be exact
         np.testing.assert_allclose(
-            S_check[1:-1], S_init[1:-1], atol=1e-8,
+            S_check[1:-1],
+            S_init[1:-1],
+            atol=1e-8,
             err_msg='Interior FD roundtrip not exact',
         )
 
@@ -1972,13 +1950,15 @@ class TestGradientReconstruction:
         n_basic = solver_30._n_stag + 1
         dSdr = np.full(n_basic, 1e-4)  # positive gradient
         S_stag, _ = solver_30._reconstruct_entropy(dSdr, 3000.0)
-        assert np.all(np.diff(S_stag) > 0), \
+        assert np.all(np.diff(S_stag) > 0), (
             'Positive gradient must produce monotonically increasing S'
+        )
 
     def test_negative_gradient_entropy_direction(self, solver_30):
         """Negative dS/dr -> S decreases with radius (CMB hotter than surface)."""
         n_basic = solver_30._n_stag + 1
         dSdr = np.full(n_basic, -1e-4)
         S_stag, _ = solver_30._reconstruct_entropy(dSdr, 3000.0)
-        assert np.all(np.diff(S_stag) < 0), \
+        assert np.all(np.diff(S_stag) < 0), (
             'Negative gradient must produce monotonically decreasing S'
+        )

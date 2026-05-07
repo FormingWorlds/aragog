@@ -57,9 +57,7 @@ class NonDimScales:
         object.__setattr__(self, 'state_scale', ss)
 
         if not (np.isfinite(self.t_ref) and float(self.t_ref) > 0.0):
-            raise ValueError(
-                f't_ref must be finite and strictly positive; got {self.t_ref!r}'
-            )
+            raise ValueError(f't_ref must be finite and strictly positive; got {self.t_ref!r}')
 
         if not np.all(np.isfinite(ss)) or not np.all(ss > 0.0):
             raise ValueError('state_scale must be finite and strictly positive')
@@ -77,9 +75,7 @@ class NonDimScales:
                     f'got {ss.shape} vs {rs.shape}'
                 )
             if not np.all(np.isfinite(rs)) or not np.all(rs > 0.0):
-                raise ValueError(
-                    'rhs_scale must be finite and strictly positive'
-                )
+                raise ValueError('rhs_scale must be finite and strictly positive')
             residual = float(np.max(np.abs(rs * ss - float(self.t_ref)) / float(self.t_ref)))
             if residual > 1.0e-10:
                 raise ValueError(

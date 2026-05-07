@@ -25,6 +25,10 @@ nav:
       - Energy equation: Explanations/energy_equation.md
       - Heat transport: Explanations/heat_transport.md
       - Phase transitions: Explanations/phase_transitions.md
+      - Pressure EOS: Explanations/pressure_eos.md
+      - Core BC modes: Explanations/core_bc.md
+      - CVODE and JAX: Explanations/cvode_jax.md
+      - Energy diagnostics: Explanations/energy_diagnostics.md
       - Code architecture: Explanations/code_architecture.md
       - First-principles verification: Explanations/verification.md
 
@@ -36,6 +40,7 @@ nav:
           - EOS package: Reference/api/aragog.eos.md
           - Mesh: Reference/api/aragog.mesh.md
           - Output: Reference/api/aragog.output.md
+          - JAX backend: Reference/api/aragog.jax.md
       - Data: Reference/data.md
       - Publications: Reference/publications.md
 

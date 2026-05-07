@@ -16,12 +16,19 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
+import scipy
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 from scipy.optimize import OptimizeResult
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from aragog.jax.nondim import NonDimScales
 
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
@@ -1817,8 +1824,8 @@ class EntropySolver:
         # the phase-boundary stiffness gradually.
         if phi0 > 0.01 and self.entropy_eos is not None:
             P_basic = self._P_basic_flat
-            S_liq_all = np.asarray(self.entropy_eos.liquidus_entropy(P_basic)).ravel()
-            S_sol_all = np.asarray(self.entropy_eos.solidus_entropy(P_basic)).ravel()
+            np.asarray(self.entropy_eos.liquidus_entropy(P_basic)).ravel()
+            np.asarray(self.entropy_eos.solidus_entropy(P_basic)).ravel()
             # S0_block is staggered (length n_stag). For per-cell
             # phase-boundary check we use the staggered S directly
             # against the staggered-pressure phase boundaries.

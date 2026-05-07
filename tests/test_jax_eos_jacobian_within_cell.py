@@ -16,6 +16,7 @@ property of piecewise-bilinear functions, not a bug); we verify
 the gradient matches the analytic value INSIDE one of the two
 adjacent cells.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -24,7 +25,7 @@ import pytest
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
-from aragog.jax.eos import _bilinear_interp
+from aragog.jax.eos import _bilinear_interp  # noqa: E402
 
 
 @pytest.fixture
@@ -36,9 +37,7 @@ def grid_2x2():
     # constant gradient w.r.t. P (= 100/dP) and w.r.t. S (= 1/dS)
     # within a cell, so the analytical answer is independent of
     # the query position inside the cell.
-    vals = jnp.array(
-        [[100.0 * i + j for j in range(4)] for i in range(4)]
-    )
+    vals = jnp.array([[100.0 * i + j for j in range(4)] for i in range(4)])
     return P, S, vals
 
 
@@ -89,7 +88,9 @@ def test_jacobian_at_different_cell_positions(grid_2x2):
     for P_pos, S_pos in [(1.1, 11.0), (1.5, 15.0), (1.9, 19.0)]:
         g = jac(jnp.array([P_pos, S_pos]))
         np.testing.assert_allclose(
-            np.asarray(g), [100.0, 0.1], rtol=1e-12,
+            np.asarray(g),
+            [100.0, 0.1],
+            rtol=1e-12,
             err_msg=f'(P={P_pos}, S={S_pos}) gradient shifted',
         )
 
@@ -113,7 +114,7 @@ def test_jacobian_in_neighboring_cell(grid_2x2):
         return _bilinear_interp(P, S, vals, P_q, S_q)[0]
 
     jac = jax.jacrev(f)
-    g_left = jac(jnp.array([1.5, 15.0]))   # cell [1,2]
+    g_left = jac(jnp.array([1.5, 15.0]))  # cell [1,2]
     g_right = jac(jnp.array([2.5, 15.0]))  # cell [2,3]
     np.testing.assert_allclose(np.asarray(g_left), np.asarray(g_right), rtol=1e-12)
 
@@ -138,7 +139,7 @@ def test_jacobian_discontinuity_at_cell_boundary_is_documented():
         S_q = jnp.array([15.0])
         return _bilinear_interp(P, S, vals, P_q, S_q)[0]
 
-    df_dP_left = jax.grad(f)(jnp.array([1.5]))   # cell [1,2]
+    df_dP_left = jax.grad(f)(jnp.array([1.5]))  # cell [1,2]
     df_dP_right = jax.grad(f)(jnp.array([2.5]))  # cell [2,3]
     # In cell [1,2]: ∂f/∂P = 10, in cell [2,3]: ∂f/∂P = 190.
     np.testing.assert_allclose(np.asarray(df_dP_left), [10.0], rtol=1e-12)

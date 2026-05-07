@@ -23,11 +23,11 @@ jnp = pytest.importorskip('jax.numpy')
 def _make_scales(state_scale, t_ref, rhs_scale=None):
     """Construct NonDimScales for tests; rhs_scale=None auto-derives."""
     from aragog.jax.nondim import NonDimScales
+
     return NonDimScales(
         state_scale=np.asarray(state_scale, dtype=float),
         t_ref=float(t_ref),
-        rhs_scale=(np.asarray(rhs_scale, dtype=float)
-                   if rhs_scale is not None else None),
+        rhs_scale=(np.asarray(rhs_scale, dtype=float) if rhs_scale is not None else None),
     )
 
 
@@ -74,8 +74,8 @@ def test_contract_holds_energy_balance_extended_state():
     n_stag = 4
     t_ref = 100.0
     state_scale = np.empty(n_stag + 1)
-    state_scale[:n_stag] = 3.0e3       # entropy
-    state_scale[n_stag] = 1.0e-6       # dSdr_cmb
+    state_scale[:n_stag] = 3.0e3  # entropy
+    state_scale[n_stag] = 1.0e-6  # dSdr_cmb
     rhs_scale = t_ref / state_scale
     heating = np.zeros(n_stag)
     rhs_fn, jac_fn, info = _build_factory(
@@ -90,7 +90,7 @@ def test_contract_violation_raises():
     n = 5
     t_ref = 1.234
     state_scale = np.full(n, 3.0e3)
-    rhs_scale = np.full(n, 1.0)        # WRONG: not t_ref / state_scale
+    rhs_scale = np.full(n, 1.0)  # WRONG: not t_ref / state_scale
     with pytest.raises(ValueError, match='Nondim contract violated'):
         _make_scales(state_scale, t_ref, rhs_scale=rhs_scale)
 
@@ -110,7 +110,7 @@ def test_shape_mismatch_state_vs_rhs_raises():
 def test_state_size_vs_heating_quasi_steady_raises():
     """quasi_steady requires state_scale.size == heating.size."""
     n = 5
-    state_scale = np.full(n + 2, 3.0e3)   # too long
+    state_scale = np.full(n + 2, 3.0e3)  # too long
     rhs_scale = 1.0 / state_scale
     heating = np.zeros(n)
     with pytest.raises(ValueError, match='incompatible'):
@@ -121,19 +121,16 @@ def test_state_size_vs_heating_quasi_steady_raises():
 def test_state_size_vs_heating_energy_balance_raises():
     """energy_balance requires state_scale.size == heating.size + 1."""
     n_stag = 5
-    state_scale = np.full(n_stag, 3.0e3)   # missing the dSdr_cmb slot
+    state_scale = np.full(n_stag, 3.0e3)  # missing the dSdr_cmb slot
     rhs_scale = 1.0 / state_scale
     heating = np.zeros(n_stag)
     with pytest.raises(ValueError, match='incompatible'):
-        _build_factory(
-            state_scale, rhs_scale, 1.0, heating, 'energy_balance'
-        )
+        _build_factory(state_scale, rhs_scale, 1.0, heating, 'energy_balance')
 
 
 @pytest.mark.unit
 def test_negative_state_scale_raises():
     """Negative state_scale must raise in NonDimScales."""
-    n = 4
     state_scale = np.array([3.0e3, 3.0e3, -1.0, 3.0e3])
     with pytest.raises(ValueError, match='state_scale.*positive'):
         _make_scales(state_scale, 1.0)  # rhs_scale auto-derived
@@ -164,6 +161,7 @@ def test_factory_rejects_legacy_positional_scales():
     the silent-divergence risk that motivated OQ3 in the first place.
     """
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
     n = 4
     with pytest.raises(TypeError, match='NonDimScales'):
         build_jax_rhs_and_jacobian(
@@ -186,7 +184,8 @@ def test_nondim_scales_rhs_scale_auto_derived():
     np.testing.assert_allclose(
         np.asarray(sc.rhs_scale),
         t_ref / state_scale,
-        rtol=1e-15, atol=0.0,
+        rtol=1e-15,
+        atol=0.0,
     )
     # And n property reports the right size
     assert sc.n == 3
@@ -212,6 +211,7 @@ def test_unsupported_core_bc_mode_raises_with_clear_message(mode, caplog):
     workaround (set use_jax_jacobian=false).
     """
     import logging
+
     n = 4
     state_scale = np.full(n, 3.0e3)
     rhs_scale = 1.0 / state_scale

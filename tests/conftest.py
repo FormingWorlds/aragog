@@ -1,5 +1,7 @@
 """Utilities for tests."""
 
+from __future__ import annotations
+
 import importlib.resources
 from contextlib import AbstractContextManager
 from importlib.resources.abc import Traversable
@@ -26,7 +28,7 @@ class Helper:
     def __init__(self, atol: float = 1.0e-4, rtol: float = 1.0e-4):
         self.atol: float = atol
         self.rtol: float = rtol
-        self.test_data: Traversable = importlib.resources.files("tests.reference")
+        self.test_data: Traversable = importlib.resources.files('tests.reference')
 
     @staticmethod
     def get_cfg_file(filename: str) -> AbstractContextManager[Path]:
@@ -36,6 +38,6 @@ class Helper:
         return importlib.resources.as_file(self.test_data.joinpath(filename))
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope='module')
 def helper():
     return Helper()

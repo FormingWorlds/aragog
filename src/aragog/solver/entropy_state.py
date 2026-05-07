@@ -435,7 +435,7 @@ class EntropyState:
         # byte-identical throughout the solve.
         self._ensure_phase_boundary_cache()
         gphi = (S - self._S_sol_stag) / self._dS_phase_stag
-        phi_smoothclipped = _smooth_clip(gphi, 0.0, 1.0, eps=1.0e-3)
+        _smooth_clip(gphi, 0.0, 1.0, eps=1.0e-3)
         # phi_smoothclipped is computed but unused: the mixing flux
         # evaluates directly from dSdr and dP/dr (see below).
 

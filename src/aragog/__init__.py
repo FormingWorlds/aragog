@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-__version__: str = "26.01.06"
+__version__: str = '26.01.06'
 
 import importlib.resources
 import logging
 import os
 from importlib.resources.abc import Traversable
 
-CFG_DATA: Traversable = importlib.resources.files(f"{__package__}.cfg")
+CFG_DATA: Traversable = importlib.resources.files(f'{__package__}.cfg')
 
 # Creates the package logger.
 # https://docs.python.org/3/howto/logging.html#library-config
@@ -23,9 +23,9 @@ def complex_formatter() -> logging.Formatter:
     Returns:
         Formatter for logging
     """
-    fmt: str = "[%(asctime)s - %(name)-30s - %(lineno)03d - %(levelname)-9s - %(funcName)s()]"
-    fmt += " - %(message)s"
-    datefmt: str = "%Y-%m-%d %H:%M:%S"
+    fmt: str = '[%(asctime)s - %(name)-30s - %(lineno)03d - %(levelname)-9s - %(funcName)s()]'
+    fmt += ' - %(message)s'
+    datefmt: str = '%Y-%m-%d %H:%M:%S'
     formatter: logging.Formatter = logging.Formatter(fmt, datefmt=datefmt)
 
     return formatter
@@ -37,8 +37,8 @@ def simple_formatter() -> logging.Formatter:
     Returns:
         Formatter for logging
     """
-    fmt: str = "[%(asctime)s - %(name)-30s - %(levelname)-9s] - %(message)s"
-    datefmt: str = "%H:%M:%S"
+    fmt: str = '[%(asctime)s - %(name)-30s - %(levelname)-9s] - %(message)s'
+    datefmt: str = '%H:%M:%S'
     formatter: logging.Formatter = logging.Formatter(fmt, datefmt=datefmt)
 
     return formatter
@@ -79,7 +79,7 @@ def aragog_file_logger(
     console_handler.setLevel(console_level)
     logger.addHandler(console_handler)
     # File logger
-    log_file = os.path.join(log_dir, f"{__package__}.log")
+    log_file = os.path.join(log_dir, f'{__package__}.log')
     file_handler: logging.Handler = logging.FileHandler(log_file)
     file_formatter: logging.Formatter = complex_formatter()
     file_handler.setFormatter(file_formatter)
@@ -89,5 +89,7 @@ def aragog_file_logger(
     return package_logger
 
 
-# Expose public API
-from aragog.solver import EntropySolver as EntropySolver
+# Expose public API. Imported below the logger setup to avoid circular
+# imports: the solver module imports from aragog (this file) at module
+# load time.
+from aragog.solver import EntropySolver as EntropySolver  # noqa: E402

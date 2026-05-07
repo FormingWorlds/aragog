@@ -53,4 +53,4 @@ class MeshConfig:
     adams_williamson_beta: float = 0.0  # 0 = derive from K_S
     surface_pressure: float = 0.0
     mass_coordinates: bool = False
-    eos_file: str = ""
+    eos_file: str = ''
