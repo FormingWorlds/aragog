@@ -57,7 +57,7 @@ The latent-blend mode tracks SPIDER's internal `cp_s` to within a few percent al
 
 The latent heat of fusion enters the entropy equation in two places:
 
-- The capacitance $\rho T$ multiplied by $\partial S/\partial t$ already accounts for the energy absorbed or released by melting. There is **no $c_p$ effective spike** at the solidus or liquidus in the entropy formulation; this was an explicit design goal of the entropy switch and is what makes the formulation numerically robust through phase transitions.
+- The capacitance $\rho T$ multiplied by $\partial S/\partial t$ already accounts for the energy absorbed or released by melting. There is **no $c_p$ effective spike** at the solidus or liquidus in the entropy formulation, which is what makes it numerically robust through phase transitions where a $T$-form solver would see a divergent effective heat capacity.
 - The pressure-dependent latent heat $L(P)$ multiplies the gravitational-separation mass flux to give $F_\mathrm{grav} = j_\mathrm{grav}\,L(P)$. $L(P)$ is read from the EOS-tabulated $T_\mathrm{liq}\,(S_\mathrm{liq} - S_\mathrm{sol})$ at each pressure, not from the legacy `latent_heat_of_fusion` configuration key (which is retained for the constant-properties analytical mode).
 
 ## Solidus and liquidus curves

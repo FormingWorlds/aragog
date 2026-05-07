@@ -13,17 +13,19 @@ All four are integrated by Aragog over the actual CVODE sub-step trajectory, usi
 
 ## Why this matters
 
-The PROTEUS coupling wrapper cumulatively sums these four fields across calls to track the running energy balance. The closed-mantle balance is:
+The PROTEUS coupling wrapper cumulatively sums these four fields across calls to track the running energy balance. The closed-mantle balance is
 
 $$
-\Delta E = \text{step\_dE\_F\_int\_J} + \text{step\_dE\_F\_cmb\_J} + \text{step\_dE\_Q\_radio\_J} + \text{step\_dE\_Q\_tidal\_J}
+\Delta E_\text{mantle}
+= \Delta E_{F_\text{int}} + \Delta E_{F_\text{cmb}}
++ \Delta E_{Q_\text{radio}} + \Delta E_{Q_\text{tidal}},
 $$
 
-If the integrals are correctly computed, the cumulative sum should track the change in the mantle's integrated specific enthalpy `E_state` to within numerical-noise tolerance over a coupled CHILI run.
+where each $\Delta E_{X}$ is the corresponding `step_dE_*_J` field summed over the run. If the integrals are correctly computed, the cumulative sum should track the change in the mantle's integrated specific enthalpy `E_state` to within numerical-noise tolerance over a coupled CHILI run.
 
-## Why no `step_dE_Q_dil_J`
+## Why no volumetric-work source
 
-Earlier versions of Aragog tracked a fifth integral, `step_dE_Q_dil_J`, for the explicit dilatation source $\Phi_\text{vol}$. That source has been deleted (aragog `dcd7f37`, May 2026) because the volumetric work is already implicit in the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux` (chain rule on $\Delta h = \Delta u + P\,\Delta v$ with hydrostatic $\partial P/\partial r = -\rho g$). Adding it explicitly was a 2x over-supply, locking the integrator at a heat-pump quasi-equilibrium. The deleted integral is preserved as a negative regression test in `tests/test_jax_no_phi_vol_source.py`.
+The four integrals above are exhaustive for the entropy-form solver: the volumetric work done when a melt of different density is transported across a pressure gradient is already implicit in the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. By definition $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h)$ already carries the same volumetric-work term. Exposing a separate $\Phi_\text{vol}$ source would double-count (Bower 2018 §3, SPIDER `energy.c`); a negative regression test in `tests/test_jax_no_phi_vol_source.py` ensures the source stays absent.
 
 ## Worked example
 

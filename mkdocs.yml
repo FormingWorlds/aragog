@@ -31,6 +31,7 @@ nav:
       - Phase transitions: Explanations/phase_transitions.md
       - Pressure EOS: Explanations/pressure_eos.md
       - Core BC modes: Explanations/core_bc.md
+      - Aragog vs SPIDER: Explanations/spider_comparison.md
       - CVODE and JAX: Explanations/cvode_jax.md
       - Energy diagnostics: Explanations/energy_diagnostics.md
       - Code architecture: Explanations/code_architecture.md

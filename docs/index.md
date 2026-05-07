@@ -1,5 +1,9 @@
 # Aragog
 
+[![Documentation](https://github.com/FormingWorlds/aragog/actions/workflows/docs.yaml/badge.svg)](https://proteus-framework.org/aragog)
+[![Tests](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml/badge.svg)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
+[![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
+
 **Aragog** is a 1-D spherically symmetric interior thermal evolution solver for rocky planetary mantles, part of the [PROTEUS](https://proteus-framework.org/PROTEUS) coupled atmosphere-interior evolution framework.
 
 Aragog evolves the specific entropy $S(r,t)$ at staggered nodes inside a spherical mantle shell. Temperature, density, melt fraction, and the other diagnostic properties are read from a pre-tabulated equation of state (EOS) at each radial node, which keeps the latent heat of fusion implicit in the table rather than expressed as a heat-capacity spike. The mantle is integrated as a stiff initial-value problem with implicit BDF or Radau time integration; conduction, convection (mixing-length theory), gravitational separation, chemical mixing, radiogenic heating, and tidal heating each contribute as configurable flux or source terms.

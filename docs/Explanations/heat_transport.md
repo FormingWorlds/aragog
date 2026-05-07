@@ -15,8 +15,8 @@ All flux formulas below use the entropy gradient $\partial S/\partial r$ as the 
 The Fourier flux is rewritten in entropy form using the thermodynamic identity $\partial T/\partial r |_S = (T/c_p)\,\partial S/\partial r$ and the EOS-tabulated isentropic temperature gradient:
 
 $$
-\boxed{\; F_\mathrm{cond}
-= -k\left[\frac{T}{c_p}\,\frac{\partial S}{\partial r} + \left.\frac{\partial T}{\partial P}\right|_S \frac{\partial P}{\partial r}\right]. \;}
+F_\mathrm{cond}
+= -k\left[\frac{T}{c_p}\,\frac{\partial S}{\partial r} + \left.\frac{\partial T}{\partial P}\right|_S \frac{\partial P}{\partial r}\right].
 $$
 
 The pressure gradient is the configured profile (Adams-Williamson or external mesh file). When the entropy gradient vanishes (an isentropic profile) the conduction flux reduces to the adiabatic part alone, which is non-zero because the EOS provides $(\partial T/\partial P)_S$ directly. In the production path with PALEOS tables, $k$ is read from the EOS as a function of $(P, S)$; the `phase_solid.thermal_conductivity` and `phase_liquid.thermal_conductivity` config keys are kept only for the constant-properties analytical mode.
@@ -26,7 +26,7 @@ The pressure gradient is the configured profile (Adams-Williamson or external me
 Convection is parameterised as eddy diffusion of entropy:
 
 $$
-\boxed{\; F_\mathrm{conv} = \rho T \kappa_h \max\!\left(-\tfrac{\partial S}{\partial r},\ 0\right). \;}
+F_\mathrm{conv} = \rho T \kappa_h \max\!\left(-\tfrac{\partial S}{\partial r},\ 0\right).
 $$
 
 The instability criterion is $\partial S/\partial r < 0$. The $\max(\cdot, 0)$ form is implemented as a smooth approximation (a $C^\infty$ ramp) so that the BDF Jacobian remains continuous through the onset of convection. There is no explicit "superadiabatic gradient" subtraction in the entropy formulation: the adiabat corresponds to $\partial S/\partial r = 0$, so the entropy gradient itself measures departures from the adiabat.
@@ -74,8 +74,8 @@ where $\kappa_h^\mathrm{floor}(\phi)$ is modulated by melt fraction so that the 
 In the partially molten regime, melt and solid separate vertically by gravity. The mass flux is
 
 $$
-\boxed{\; j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,K(\phi)}{\eta_m}, \;}
+j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
+v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,K(\phi)}{\eta_m},
 $$
 
 with $K(\phi)$ a Stokes-or-Darcy permeability and $\eta_m$ the melt viscosity. The corresponding heat flux is
@@ -88,7 +88,7 @@ where $L(P)$ is the EOS-tabulated, pressure-dependent latent heat of fusion.
 
 ### Permeability $K(\zeta)$ across the three Abe regimes
 
-![Permeability F(porosity)](../figures/vv/fig_04_permeability.pdf)
+![Permeability F(porosity)](../figures/vv/fig_04_permeability.png)
 
 **Figure 3.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three Abe (1993, 1995) regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling. Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes) per the Soucasse formulation §3.3. (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
 
@@ -112,10 +112,10 @@ When `bottom_up_grav_sep = true`, a SPIDER-parity bottom-up gate disables $j_\ma
 Chemical mixing acts as a diffusive flux that relaxes the entropy gradient toward the local lever-rule prediction. The SPIDER-parity bracket form is
 
 $$
-\boxed{\; F_\mathrm{mix} = -\kappa_c\,\rho\,T_\mathrm{fus}\left[
+F_\mathrm{mix} = -\kappa_c\,\rho\,T_\mathrm{fus}\left[
 \frac{\partial S}{\partial r}
 - \left(\phi\,\tfrac{\partial S_\mathrm{liq}}{\partial P} + (1-\phi)\,\tfrac{\partial S_\mathrm{sol}}{\partial P}\right)\frac{\partial P}{\partial r}
-\right]\mathrm{smth}(\phi). \;}
+\right]\mathrm{smth}(\phi).
 $$
 
 The bracketed expression is the entropy-gradient excess relative to the linear (lever-rule) interpolation between the solidus and liquidus entropy gradients at the local pressure. Outside the mushy band $\mathrm{smth}(\phi)$ vanishes and so does the flux. The chemical eddy diffusivity $\kappa_c$ is the same MLT diffusivity as $\kappa_h$ scaled by `eddy_diffusivity_chemical`.
@@ -148,6 +148,6 @@ Per-staggered-node heating is in `heating` (sum of the two contributions); per-c
 
 ### Decomposition on a fully-mushy state
 
-![Heat-flux decomposition](../figures/vv/fig_02_flux_decomposition.pdf)
+![Heat-flux decomposition](../figures/vv/fig_02_flux_decomposition.png)
 
 **Figure 2.** (a) Magnitude of the four heat-flux components $F_\text{cond}$, $F_\text{conv}$, $F_\text{grav}$, $F_\text{mix}$ (Soucasse §1.1) and their sum on an 80-cell Earth mesh, evaluated at a fully-mushy state where the entropy on each cell is the midpoint of the local solidus and liquidus values plus a small surface-ward gradient. Open triangles mark cells where the signed flux is negative. The four components reconstruct $F_\text{tot}$ to floating-point round-off ($\max|F_\text{tot}-\sum F_i|/|F_\text{tot}| < 10^{-15}$). (b) Internal volumetric heating sources $H_\text{radio}$, $H_\text{tidal}$ at the staggered nodes for the same state, with the production CHILI radionuclide cocktail at $t=0$.

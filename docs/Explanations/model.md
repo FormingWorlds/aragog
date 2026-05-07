@@ -1,4 +1,4 @@
-# Aragog model overview
+# Aragog
 
 Aragog is a 1-D (radial), spherically symmetric thermal evolution model for rocky planetary mantles in solid, fully molten, or partially molten states. The state of the mantle is represented by a single prognostic variable: the **specific entropy $S(r,t)$** at staggered nodes. Temperature, density, melt fraction, heat capacity, thermal expansivity, and the adiabatic gradient are diagnostic quantities derived from $(P, S)$ via a tabulated equation of state. This formulation absorbs the latent heat of fusion into the entropy axis of the EOS table rather than expressing it as a $c_p$ spike across the solidus and liquidus, and so handles phase boundaries without an effective heat-capacity divergence.
 
