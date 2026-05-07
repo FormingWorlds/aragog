@@ -64,7 +64,10 @@ jobs:
           # Direct install of scikits-odes-sundials only; aragog imports
           # CVODE directly from scikits_odes_sundials.cvode and skips the
           # daepack-pulling metapackage. See ci_tests.yml for details.
-          pip install scikits-odes-sundials jax equinox
+          # diffrax is the JAX-native ODE solver used by
+          # tests/test_jax_entropy.py::TestJAXSolverIntegration; without
+          # it those 8 smoke tests fail with ModuleNotFoundError.
+          pip install scikits-odes-sundials jax equinox diffrax
 
       - name: Install aragog
         run: |
