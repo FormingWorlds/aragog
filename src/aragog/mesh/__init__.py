@@ -23,9 +23,66 @@ __all__ = [
     'EOS',
     'AdamsWilliamsonEOS',
     'UserDefinedEOS',
+    'derive_core_density_from_mesh',
 ]
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+def derive_core_density_from_mesh(mesh_file: str, M_core: float) -> float:
+    """Derive the self-consistent average core density from a mantle mesh file.
+
+    Reads the CMB radius from a 5-column ascending-r mantle mesh file
+    (``r``, ``P``, ``rho``, ``g``, ``T``) and returns
+    :math:`\\rho_\\mathrm{core} = M_\\mathrm{core} / (\\tfrac{4}{3} \\pi R_\\mathrm{cmb}^3)`.
+
+    The first row of the file is the bottom of the mantle (CMB), matching
+    the format Zalmoxis writes to ``zalmoxis_output.dat``. This is the
+    Aragog-side analogue of the SPIDER wrapper's ``-rho_core`` echo-back:
+    the on-disk mesh's :math:`R_\\mathrm{cmb}` and the latest
+    ``hf_row['M_core']`` give a self-consistent average density that
+    survives mesh-blending fall-backs and stale-cache cases where
+    ``hf_row['core_density']`` has drifted from the mesh state.
+
+    Parameters
+    ----------
+    mesh_file : str
+        Path to the Zalmoxis-format mantle mesh file. The first row is
+        treated as the CMB; only the first column (``r``) is read.
+    M_core : float
+        Core mass [kg]. Must be positive.
+
+    Returns
+    -------
+    float
+        Self-consistent average core density [kg m^-3].
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``mesh_file`` does not exist.
+    ValueError
+        If ``M_core <= 0``, the mesh file is empty, or the parsed
+        :math:`R_\\mathrm{cmb}` is non-positive.
+    """
+    if M_core <= 0.0:
+        raise ValueError(f'M_core must be positive, got {M_core}')
+
+    with open(mesh_file) as f:
+        first_line = f.readline().strip()
+        if not first_line:
+            raise ValueError(f'Mesh file {mesh_file} is empty')
+        try:
+            R_cmb = float(first_line.split()[0])
+        except (IndexError, ValueError) as exc:
+            raise ValueError(
+                f'Could not parse R_cmb from first row of {mesh_file}: {first_line!r}'
+            ) from exc
+
+    if R_cmb <= 0.0:
+        raise ValueError(f'Parsed R_cmb must be positive, got {R_cmb}')
+
+    return float(M_core / (4.0 / 3.0 * np.pi * R_cmb**3))
 
 
 class Mesh:
