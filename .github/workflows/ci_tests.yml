@@ -68,7 +68,13 @@ jobs:
       - name: Install pip-only test deps (scikits-odes builds against conda SUNDIALS)
         run: |
           pip install pytest pytest-xdist pytest-dependency ruff
-          pip install scikits-odes scikits-odes-sundials jax equinox
+          # PEP 517 build isolation gives the build env a fresh numpy that
+          # ignores the conda-pinned 2.2. PIP_CONSTRAINT forces the build
+          # env's numpy to match, so scikits-odes-daepack's f2py-generated
+          # C compiles cleanly.
+          echo "numpy<2.3" > /tmp/build-constraints.txt
+          PIP_CONSTRAINT=/tmp/build-constraints.txt \
+            pip install scikits-odes scikits-odes-sundials jax equinox
 
       - name: Install aragog
         run: |
