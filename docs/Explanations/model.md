@@ -162,8 +162,8 @@ The `core_bc` selector chooses how the core energy balance is closed when `inner
 
 | Mode | State vector | Formulation |
 |------|--------------|-------------|
-| `quasi_steady` | length $N$ | Alpha-factor heat-flux partition between the bottom mantle cell and the core, weighted by heat-capacity ratio. Default. |
-| `energy_balance` | length $N+1$ | The CMB entropy gradient is an ODE state variable evolved by SPIDER's `bc.c:76-131` formula; produces SPIDER bit-parity. |
+| `quasi_steady` | length $N$ | Alpha-factor heat-flux partition between the bottom mantle cell and the core, weighted by heat-capacity ratio. Legacy v3 mode, retained for SPIDER-legacy parity. |
+| `energy_balance` | length $N+1$ | The CMB entropy gradient is an ODE state variable evolved by SPIDER's `bc.c:76-131` formula; produces SPIDER bit-parity. **Default and PROTEUS production**. |
 | `gradient` | length $N+2$ | Entropy gradient as the primary state field; $S$ is reconstructed by cumulative integration from the surface inward. |
 | `bower2018` | length $N+1$ | $T_\mathrm{core}$ as an ODE state with conduction-only $F_\mathrm{cmb}$. Retained for parity testing only; not recommended. |
 

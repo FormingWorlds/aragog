@@ -16,7 +16,7 @@ Aragog integrates the spherically symmetric specific-entropy equation for a part
 ## Features
 
 - **Entropy-form magma-ocean solver.** Specific entropy $S(r,t)$ at staggered nodes is the only state variable; $T$, $\rho$, $\phi$, $c_p$, $\alpha$, $(\partial T/\partial P)_S$ are read from PALEOS or SPIDER-format pressure-entropy tables.
-- **Production-grade integrator.** SUNDIALS CVODE via `scikits.odes` with a JAX-derived analytic Jacobian (`jax.jacrev`) installed through a factory registered by the PROTEUS wrapper. Standalone runs that do not need the JAX path fall back to scipy `Radau` cleanly.
+- **Production-grade integrator.** SUNDIALS CVODE via `scikits.odes` is the default (`solver_method = "cvode"`), paired with a JAX-derived analytic Jacobian (`use_jax_jacobian = true`) for production-tolerance coupled runs. scipy `Radau` and `BDF` are available as fall-backs (`solver_method = "radau"` / `"bdf"`); standalone installs without `scikits.odes` or JAX fall back automatically.
 - **SPIDER bit-parity boundary conditions.** Default `core_bc = "energy_balance"` evolves $dS/dr|_\mathrm{cmb}$ as an extra ODE state, mirroring SPIDER's `bc.c:76-131`. Three other modes (`quasi_steady`, `gradient`, `bower2018`) are available for parity testing and quick exploration.
 - **Per-call mass-weighted $\Delta\Phi$ cap.** SUNDIALS root function returns at the exact step where the global melt-fraction change first reaches the configured limit; required at the rheological transition where any rate estimate from $t = 0$ overshoots within the call window and stalls the adaptive $dt$.
 - **Coupling to Zalmoxis.** External P-T tables, mesh, and per-node gravity profiles read from the structure solver are accepted via `eos_method = 2` and `mass_coordinates = true`, so the magma-ocean solve and the structure solve share a single self-consistent mantle.
@@ -99,4 +99,4 @@ If you use Aragog (or the original [SPIDER code](https://github.com/djbower/spid
 
 - [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets. *Physics of the Earth and Planetary Interiors*, **274**, 49 to 62.
 
-The PALEOS pressure-entropy tables used by the production path are described in [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract) (preprint). Radioactive heat-production data are from [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract).
+The PALEOS pressure-entropy tables used by the production path are described in [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract) (preprint).

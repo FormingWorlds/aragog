@@ -6,7 +6,7 @@
 
 **Aragog** is a 1-D spherically symmetric interior thermal evolution solver for rocky planetary mantles, part of the [PROTEUS](https://proteus-framework.org/PROTEUS) coupled atmosphere-interior evolution framework.
 
-Aragog evolves the specific entropy $S(r,t)$ at staggered nodes inside a spherical mantle shell. Temperature, density, melt fraction, and the other diagnostic properties are read from a pre-tabulated equation of state (EOS) at each radial node, which keeps the latent heat of fusion implicit in the table rather than expressed as a heat-capacity spike. The mantle is integrated as a stiff initial-value problem with implicit BDF or Radau time integration; conduction, convection (mixing-length theory), gravitational separation, chemical mixing, radiogenic heating, and tidal heating each contribute as configurable flux or source terms.
+Aragog evolves the specific entropy $S(r,t)$ at staggered nodes inside a spherical mantle shell. Temperature, density, melt fraction, and the other diagnostic properties are read from a pre-tabulated equation of state (EOS) at each radial node, which keeps the latent heat of fusion implicit in the table rather than expressed as a heat-capacity spike. The mantle is integrated as a stiff initial-value problem with SUNDIALS CVODE (default) plus a JAX-derived analytic Jacobian, with scipy `Radau` and `BDF` available as fall-backs; conduction, convection (mixing-length theory), gravitational separation, chemical mixing, radiogenic heating, and tidal heating each contribute as configurable flux or source terms.
 
 !!! note "Forming Worlds fork"
     This documentation describes the version of Aragog integrated into the [PROTEUS framework](https://proteus-framework.org/PROTEUS). For the original project, see [ExPlanetology](https://aragog.readthedocs.io).
@@ -21,7 +21,7 @@ Aragog evolves the specific entropy $S(r,t)$ at staggered nodes inside a spheric
 
 - **Entropy formulation**: the prognostic variable is specific entropy $S(r,t)$. Temperature, density, melt fraction, heat capacity, thermal expansivity, and adiabatic gradient are looked up from a $(P, S)$ EOS table on each call, so the latent heat of fusion is encoded in the table rather than expressed as a $c_p$ spike across the solidus and liquidus.
 - **Staggered finite-volume mesh**: entropy at cell centres (staggered nodes), fluxes at cell faces (basic nodes). The radial coordinate is either uniform in radius or uniform in mass coordinate, with a Newton solve for the spatial radii in the mass-coordinate variant.
-- **Stiff implicit time integration**: scipy `Radau` is the default; an optional path through SUNDIALS CVODE (via `scikits.odes`) is provided for production-grade runs that require the same modified-Newton, cached-Jacobian solver SPIDER uses. A phase-aware `max_step` reduction caps the step size near solidus and liquidus crossings.
+- **Stiff implicit time integration**: SUNDIALS CVODE via `scikits.odes` is the default (`solver_method = "cvode"`), the same modified-Newton, cached-Jacobian solver SPIDER uses; scipy `Radau` and `BDF` are available as fall-backs (`solver_method = "radau"` / `"bdf"`). A phase-aware `max_step` reduction caps the step size near solidus and liquidus crossings.
 - **Multiple core boundary conditions**: ``quasi_steady`` (heat-capacity-weighted flux partition, state vector length $N$), ``energy_balance`` (SPIDER-parity ODE evolution of the CMB entropy gradient, length $N+1$), ``gradient`` (entropy gradient as the primary state field, length $N+2$), and a retained ``bower2018`` mode for parity testing.
 - **Single phase evaluator backed by P-S tables**: `EntropyPhaseEvaluator` wraps the loaded `EntropyEOS` and reproduces SPIDER's ``EOSEval_Composite_TwoPhase`` blending rules between solid, mixed, and liquid regimes via cubic-Hermite or tanh smoothing across the phase boundaries.
 - **Configurable heat transport**: conduction, convection (MLT with smooth viscous/inviscid blend at $Re_\mathrm{crit} = 9/8$), gravitational separation of melt, chemical mixing flux (SPIDER bracket form), radiogenic heating, and tidal heating. Each is independently switchable.
@@ -76,7 +76,6 @@ If you use Aragog in published work, please cite the original numerical method p
 
 - [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62.
 - [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: A planetary entropy and structure model* (preprint).
-- [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract). *Radioactive heat production of six geologically important nuclides*. **Geochemistry, Geophysics, Geosystems**, 18(9), 3530 to 3541. (Source for the bundled radionuclide cocktail.)
 
 ## Code availability
 
