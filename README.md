@@ -99,4 +99,4 @@ If you use Aragog (or the original [SPIDER code](https://github.com/djbower/spid
 
 - [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets. *Physics of the Earth and Planetary Interiors*, **274**, 49 to 62.
 
-The PALEOS pressure-entropy tables used by the production path are described in [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract) (preprint).
+The PALEOS pressure-entropy tables used by the production path are described in [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract), *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors* (submitted to A&A; arXiv:2605.03741).

@@ -12,7 +12,7 @@ Publications that use Aragog or the original SPIDER code:
 
 The pressure-entropy lookup tables that Aragog reads at startup are produced by the PALEOS code:
 
-- [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: A planetary entropy and structure model* (preprint).
+- [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors* (submitted to A&A; arXiv:2605.03741).
 
 For the PALEOS file format and how the tables are wired into the run directory, see [Reference: data](data.md).
 
