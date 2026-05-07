@@ -20,37 +20,45 @@ permissions:
 # Excluded from push and PR CI because the slow tier alone takes ~110 s and
 # coverage instrumentation pushes the full run to ~10 min on a 2-vCPU
 # runner, over the 5 min budget for fast CI.
+#
+# Uses micromamba + conda-forge for the env so SUNDIALS, gfortran, and the
+# scikits-odes binary stack come prebuilt.
 jobs:
   nightly:
     name: Aragog-nightly (ubuntu-latest)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash -el {0}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Set up conda env (sundials + scikits-odes binaries)
+        uses: mamba-org/setup-micromamba@v2
         with:
-          python-version: "3.12"
+          environment-name: aragog-nightly
+          create-args: >-
+            python=3.12
+            sundials
+            scikits-odes
+            scikits-odes-sundials
+            jax
+            equinox
+            pytest
+            pytest-cov
+            pytest-xdist
+            pytest-dependency
+          condarc: |
+            channels:
+              - conda-forge
 
-      - name: Install SUNDIALS
+      - name: Install aragog
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libsundials-dev
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install .
-          pip install pytest pytest-cov pytest-xdist pytest-dependency
-          # Optional runtime deps guarded behind try/except ImportError or
-          # pytest.importorskip. Required so the slow + JAX + CVODE tiers
-          # actually run instead of silently skipping. scikits-odes-sundials
-          # builds from source against the SUNDIALS installed above.
-          pip install scikits-odes scikits-odes-sundials jax equinox
+          pip install -e .
 
       - name: Run unit + slow tests with coverage
         run: |

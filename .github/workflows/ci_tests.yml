@@ -12,12 +12,17 @@ on:
       - ready_for_review
   workflow_dispatch:
 
-# Push and PR CI: unit tests only, on ubuntu + macos × py 3.11/3.12/3.13.
+# Push and PR CI: unit tests only, on ubuntu + macos x py 3.11/3.12/3.13.
 # Targets <5 min wall. Slow tests (full multi-Myr CVODE solves) live in
 # the scheduled nightly workflow `nightly.yml` instead, alongside coverage
 # enforcement against the 85% floor. Running the slow suite or coverage
 # instrumentation on every push burns ~10 min CI time per commit and gives
 # no bug-finding signal that the unit suite doesn't already cover.
+#
+# Uses micromamba + conda-forge for the env so SUNDIALS, gfortran, and the
+# scikits-odes binary stack come prebuilt instead of being compiled from
+# source against stock apt/brew (which lag the SUNDIALS major version
+# scikits-odes-sundials 3.x requires).
 
 permissions:
   contents: read
@@ -33,38 +38,37 @@ jobs:
 
     runs-on: ${{ matrix.os }}
 
+    defaults:
+      run:
+        shell: bash -el {0}
+
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - name: Set up conda env (sundials + gfortran + scikits-odes binaries)
+        uses: mamba-org/setup-micromamba@v2
         with:
-          python-version: ${{ matrix.python-version }}
+          environment-name: aragog-test
+          create-args: >-
+            python=${{ matrix.python-version }}
+            sundials
+            scikits-odes
+            scikits-odes-sundials
+            jax
+            equinox
+            pytest
+            pytest-xdist
+            pytest-dependency
+            ruff
+          condarc: |
+            channels:
+              - conda-forge
 
-      - name: Install SUNDIALS (Linux)
-        if: runner.os == 'Linux'
+      - name: Install aragog
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libsundials-dev
-
-      - name: Install SUNDIALS (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install sundials
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest pytest-xdist pytest-dependency ruff
-          # Optional runtime deps that the source guards behind try/except
-          # ImportError or pytest.importorskip. Without them, 168 of the 268
-          # unit tests skip silently and CI gives no real coverage signal.
-          # scikits-odes-sundials builds from source against the system
-          # SUNDIALS installed in the prior step.
-          python -m pip install scikits-odes scikits-odes-sundials jax equinox
-          if [ -f pyproject.toml ]; then pip install .; fi
+          pip install -e .
 
       - name: Lint with Ruff
         run: |
