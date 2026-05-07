@@ -27,7 +27,7 @@ jobs:
   nightly:
     name: Aragog-nightly (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash -el {0}
@@ -70,7 +70,12 @@ jobs:
 
       - name: Run unit + slow tests with coverage
         run: |
-          pytest -m "unit or slow" -o "addopts=" \
+          # -n auto runs xdist workers; coverage's parallel mode collects
+          # per-worker .coverage.* files which pytest-cov auto-combines
+          # before the report. Without xdist the serial run hit the
+          # 30-minute timeout at 23 % of the 271-test suite, dominated by
+          # JAX-traced functions where line tracing is the bottleneck.
+          pytest -m "unit or slow" -n auto -o "addopts=" \
             --cov=src/aragog --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage to Codecov
