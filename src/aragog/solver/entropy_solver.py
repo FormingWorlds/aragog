@@ -36,29 +36,32 @@ from aragog.parser import Parameters
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
 
-# SUNDIALS CVODE via scikits.odes. Same underlying solver SPIDER uses
-# (SUNDIALS CVODE BDF with modified-Newton nonlinear iteration and dense
-# direct linear solver). scipy's BDF and Radau both collapse their step
-# size to machine epsilon at the crystallisation front and fail with
+# SUNDIALS CVODE via scikits-odes-sundials. Same underlying solver SPIDER
+# uses (SUNDIALS CVODE BDF with modified-Newton nonlinear iteration and
+# dense direct linear solver). scipy's BDF and Radau both collapse their
+# step size to machine epsilon at the crystallisation front and fail with
 # `status=-1: Required step size is less than spacing between numbers`
 # because scipy's Newton iterator cannot converge on the stiff
 # transition. CVODE's C implementation has order 1-5 BDF, a robust
 # modified-Newton with cached Jacobian factorisation, and adaptive step
 # control that handles phase-transition discontinuities cleanly.
+#
+# We import CVODE directly from scikits_odes_sundials, NOT via the
+# scikits_odes metapackage's `ode('cvode', ...)` wrapper. The wrapper
+# is a one-line dispatch (`ode('cvode')._integrator is CVODE` is True),
+# but importing scikits_odes drags in scikits_odes_daepack as a transitive
+# dependency, and daepack 3.0.0's f2py-generated C code is incompatible
+# with numpy 2.3+ headers, breaking source builds in CI.
 try:
-    from scikits_odes.ode import ode as _scikits_ode
-
-    _CVODE_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _CVODE_AVAILABLE = False
-    _scikits_ode = None  # type: ignore[assignment]
-
-try:
+    from scikits_odes_sundials.cvode import CVODE as _scikits_cvode
     from scikits_odes_sundials.cvode import CV_RootFunction as _CV_RootFunction
 
+    _CVODE_AVAILABLE = True
     _CV_ROOTFN_AVAILABLE = True
 except ImportError:  # pragma: no cover
+    _CVODE_AVAILABLE = False
     _CV_ROOTFN_AVAILABLE = False
+    _scikits_cvode = None  # type: ignore[assignment]
     _CV_RootFunction = object  # type: ignore[misc,assignment]
 
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
@@ -1650,7 +1653,7 @@ class EntropySolver:
             cvode_options.pop('lband', None)
             cvode_options.pop('uband', None)
 
-        solver = _scikits_ode('cvode', rhs_fn, **cvode_options)
+        solver = _scikits_cvode(rhs_fn, **cvode_options)
         # One-time debug print of the CVODE options actually in effect.
         # This helps verify banded linsolver dispatch vs silent fallback.
         if not hasattr(EntropySolver, '_cvode_options_logged'):

@@ -47,34 +47,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up conda env (sundials + gfortran + pinned numpy)
+      - name: Set up conda env (sundials from conda-forge)
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: aragog-test
-          # numpy pinned to <2.3 because scikits-odes-daepack 3.0.0's
-          # f2py-generated C code is incompatible with numpy 2.3+ f2py
-          # headers ('too many arguments to function f2py_func' compile
-          # error). aragog has no daepack imports, but scikits_odes
-          # __init__.py imports scikits_odes.dae unconditionally.
           create-args: >-
             python=${{ matrix.python-version }}
             sundials
-            gfortran
-            numpy<2.3
           condarc: |
             channels:
               - conda-forge
 
-      - name: Install pip-only test deps (scikits-odes builds against conda SUNDIALS)
+      - name: Install pip-only test deps (scikits-odes-sundials builds against conda SUNDIALS)
         run: |
           pip install pytest pytest-xdist pytest-dependency ruff
-          # PEP 517 build isolation gives the build env a fresh numpy that
-          # ignores the conda-pinned 2.2. PIP_CONSTRAINT forces the build
-          # env's numpy to match, so scikits-odes-daepack's f2py-generated
-          # C compiles cleanly.
-          echo "numpy<2.3" > /tmp/build-constraints.txt
-          PIP_CONSTRAINT=/tmp/build-constraints.txt \
-            pip install scikits-odes scikits-odes-sundials jax equinox
+          # Install scikits-odes-sundials directly (skip the scikits-odes
+          # metapackage). This avoids scikits-odes-daepack, which is a
+          # transitive Fortran dep with f2py incompatibility with numpy
+          # 2.3+ and needs gfortran on macOS. aragog imports CVODE
+          # directly from scikits_odes_sundials.cvode and has no use for
+          # the DAE solvers in the metapackage.
+          pip install scikits-odes-sundials jax equinox
 
       - name: Install aragog
         run: |

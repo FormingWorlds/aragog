@@ -620,7 +620,7 @@ def test_solve_cvode_uses_cvode_roots_when_flag_2():
     fake_rootfn.cap = 0.05
     fake_rootfn.phi0 = 0.88
 
-    with patch('aragog.solver.entropy_solver._scikits_ode', return_value=mock_solver):
+    with patch('aragog.solver.entropy_solver._scikits_cvode', return_value=mock_solver):
         result = EntropySolver._solve_cvode(
             instance,
             start_time=start_time,
@@ -682,7 +682,7 @@ def test_solve_cvode_falls_back_to_values_when_no_roots_on_flag_2():
     fake_rootfn.cap = 0.05
     fake_rootfn.phi0 = 0.88
 
-    with patch('aragog.solver.entropy_solver._scikits_ode', return_value=mock_solver):
+    with patch('aragog.solver.entropy_solver._scikits_cvode', return_value=mock_solver):
         result = EntropySolver._solve_cvode(
             instance,
             start_time=0.1,
@@ -734,7 +734,7 @@ def test_solve_cvode_uses_values_on_normal_completion_flag_0():
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
 
-    with patch('aragog.solver.entropy_solver._scikits_ode', return_value=mock_solver):
+    with patch('aragog.solver.entropy_solver._scikits_cvode', return_value=mock_solver):
         result = EntropySolver._solve_cvode(
             instance,
             start_time=0.1,
