@@ -28,7 +28,7 @@ core_heat_capacity = 880.0
 tfac_core_avg = 1.147
 param_utbl = false
 param_utbl_const = 1.0e-7
-core_bc = "energy_balance"        # CMB BC mode (default is "quasi_steady"; "energy_balance" enables SPIDER bit-parity)
+core_bc = "energy_balance"        # CMB BC mode; the parser default is "quasi_steady"
 
 [mesh]
 outer_radius = 6.371e6            # m

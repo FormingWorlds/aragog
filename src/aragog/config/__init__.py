@@ -1,11 +1,9 @@
 """Aragog configuration system.
 
-Provides attrs-based configuration classes as the modern alternative
-to the legacy dataclass-based parser. Supports construction from
-TOML files or dictionaries.
-
-During the transition period, Config.to_parameters() converts to
-the legacy Parameters object that the solver expects.
+Provides attrs-based configuration classes that can be constructed
+from TOML files or dictionaries. The solver still consumes the
+dataclass-based ``Parameters`` object defined in ``aragog.parser``;
+``Config.to_parameters()`` performs the conversion.
 """
 
 from __future__ import annotations
@@ -51,9 +49,9 @@ __all__ = [
 class Config:
     """Top-level Aragog configuration.
 
-    This is a facade that constructs a legacy Parameters object
-    from modern attrs-based sub-configs or from TOML/dict input.
-    During the transition, Solver still expects Parameters internally.
+    Facade that constructs a ``Parameters`` object from attrs-based
+    sub-configs or from TOML/dict input. ``Solver`` consumes the
+    ``Parameters`` instance directly.
 
     Parameters
     ----------

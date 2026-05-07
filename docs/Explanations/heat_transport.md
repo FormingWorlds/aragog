@@ -90,7 +90,7 @@ where $L(P)$ is the EOS-tabulated, pressure-dependent latent heat of fusion.
 
 ![Permeability F(porosity)](../figures/vv/fig_04_permeability.pdf)
 
-**Figure 3.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three Abe (1993, 1995) regime branches considered individually — Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling. Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC$\to$RG) and $\zeta_2=0.771462$ (RG$\to$Stokes) per the Soucasse formulation §3.3. (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
+**Figure 3.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three Abe (1993, 1995) regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling. Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes) per the Soucasse formulation §3.3. (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
 
 ### Phase-boundary smoothing
 
@@ -124,7 +124,7 @@ The term enters the entropy equation as a heat flux: even though the flux carrie
 
 ## Internal heating
 
-Internal heating contributes to the entropy equation through the source term $\rho H$ in the integral balance. The three contributions are summarised here; the radiogenic-decay model and the per-isotope configuration are discussed in [Energy equation](energy_equation.md).
+Internal heating contributes to the entropy equation through the source term $\rho H$ in the integral balance. Two contributions are tracked; the radiogenic-decay model and the per-isotope configuration are discussed in [Energy equation](energy_equation.md). Per-call energy integrals (`step_dE_Q_radio_J`, `step_dE_Q_tidal_J`) are documented in [Energy diagnostics](energy_diagnostics.md).
 
 - **Radiogenic.** $H_\mathrm{radio} = \sum_i \chi_i \varphi_i \exp(-\ln 2\,(t - t_0)/\tau_{1/2,i})$, time-dependent and (typically) space-uniform.
 - **Tidal.** Per-staggered-node array supplied through `tidal_array`; broadcast scalar or length-$N$ array.
@@ -144,7 +144,7 @@ The basic-node flux contributions are exposed individually on `SolverOutput`:
 | `heat_flux` | $F_\mathrm{tot}$ |
 | `dSdr_b` | $\partial S/\partial r$ at basic nodes |
 
-Per-staggered-node heating is in `heating` (sum of the three contributions).
+Per-staggered-node heating is in `heating` (sum of the two contributions); per-component arrays are exposed via `heating_radio` and `heating_tidal`.
 
 ### Decomposition on a fully-mushy state
 

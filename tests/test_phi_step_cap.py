@@ -1,14 +1,13 @@
-"""Strategy B v3 tests: SUNDIALS root function for ΔΦ_global cap.
+"""SUNDIALS root function for the per-call ΔΦ_global cap.
 
 The cap is implemented as a CVODE root function (and equivalent
 ``solve_ivp`` event for the scipy fallback). When armed, the
 integrator returns at the exact time t* where the mass-weighted
-|Φ_global(t*) − Φ_global(start)| crosses the configured cap. There
-is no rate estimation: the integrator's own trajectory determines
-termination, eliminating the start-time-rate overshoot that wedged
-the v1 (per-cell max) and v2 (mass-weighted dt estimate)
-formulations at the 1 M_E PALEOS-2phase rheological transition
-(verified 2026-05-02 in output/verify_dilon_phicap005).
+|Φ_global(t*) − Φ_global(start)| crosses the configured cap. The
+integrator's own trajectory decides termination; there is no
+start-time rate estimate, which is required at the 1 M_E PALEOS
+rheological transition where any rate extrapolated from t=0
+overshoots within the call window and stalls the adaptive dt.
 
 Tests cover:
 - ``_EnergyParameters.phi_step_cap`` default and validation
@@ -435,9 +434,8 @@ def test_source_logs_cap_fire_in_physical_time():
     The CVODE integrator runs in nondim units; the result wrapper
     rescales ``sol.t`` to physical years in ``solve()`` after
     ``_solve_cvode`` returns. The cap-fire log must be emitted AFTER
-    that rescale, otherwise operators see misleading ~1e7 yr values
-    (verified 2026-05-02 in the v3 validation run; nondim t × t_ref
-    ≈ 3.17e-3 yr converts back to physical).
+    that rescale, otherwise operators reading the log see a nondim
+    time stamp instead of physical years.
 
     This regression locks the log emission to ``solve()``, gated on
     a marker attached to the result inside ``_solve_cvode``, so the
@@ -448,7 +446,7 @@ def test_source_logs_cap_fire_in_physical_time():
     assert "getattr(sol, 'cap_fired'" in src
     # The log uses ``sol.t[-1]`` AFTER the ``sol.t * t_ref`` rescale.
     rescale_idx = src.find('sol.t = np.asarray(sol.t, dtype=float) * t_ref')
-    log_idx = src.find("'ΔΦ_global cap (Strategy B v3): CVODE rootfn fired")
+    log_idx = src.find("'ΔΦ_global cap: CVODE rootfn fired")
     assert rescale_idx > 0, 't_ref rescale not found'
     assert log_idx > 0, 'physical-time cap-fire log not found'
     assert log_idx > rescale_idx, 'cap-fire log must come AFTER the nondim->physical rescale'

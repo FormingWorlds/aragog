@@ -54,7 +54,7 @@ More comprehensive set up guides are available here:
 
 ## Optional dependency: SUNDIALS CVODE
 
-For production-grade stiff integration, install `scikits_odes` so the solver can dispatch to SUNDIALS CVODE (`solver_method = "cvode"`). Without it the solver falls back to scipy `Radau` or `BDF`, which are sufficient for short tests but can collapse their step size at the crystallisation front on long magma-ocean cooling runs:
+`solver_method = "cvode"` is the default integrator and requires `scikits_odes` for the SUNDIALS dispatch. Without it the solver issues a warning and falls back to scipy `Radau` or `BDF`, which are sufficient for short tests but can collapse their step size at the crystallisation front on long magma-ocean cooling runs. For production-grade stiff integration, install `scikits_odes`:
 
 ```sh
 pip install scikits-odes
@@ -66,11 +66,22 @@ pip install scikits-odes
 
 `solver.use_jax_jacobian = true` (the default) requires JAX at runtime. JAX builds the analytic Jacobian via `jax.jacrev` and feeds it to CVODE through a factory registered by the PROTEUS wrapper (or by user code that calls `EntropySolver.set_jax_cvode_factory`). Without JAX, the solver silently falls back to CVODE's finite-difference Jacobian, which is correct but slower and noisier near the rheological transition.
 
+The simplest path is the `jax` extra defined in `pyproject.toml`:
+
+```sh
+pip install -e ".[jax]"
+```
+
+Or install the dependencies directly:
+
 ```sh
 pip install jax equinox
 ```
 
 `equinox` is the JAX-compatible PyTree framework used by `aragog.jax` to declare static parameter modules. The PROTEUS-side conda environment already pulls both transitively through Atmodeller; a standalone Aragog install for development without JAX is fully supported.
+
+!!! warning "JAX is a runtime requirement for the default solver path"
+    With `use_jax_jacobian = true` (default) and `solver_method = "cvode"` (default), the JAX path is exercised on every solve call. In production CHILI runs, missing JAX silently falls back to a slower finite-difference Jacobian; standalone runs that explicitly need the JAX-traced Jacobian must install the `[jax]` extra.
 
 ## Equation-of-state tables
 

@@ -13,8 +13,10 @@ from scipy import constants as sp_constants
 from aragog.mesh import Mesh
 from aragog.parser import Parameters, _BoundaryConditionsParameters
 
-# State type is used in method signatures for the T-based BC application path.
-# The entropy solver handles BCs internally, so these methods are legacy.
+# ``State`` is the T-based solver state type used by the
+# apply_temperature_boundary_conditions / apply_flux_* methods below.
+# The entropy solver does not call these (it handles BCs internally
+# via _PhiCapRootFunction and the dSdt closures).
 if TYPE_CHECKING:
     State = Any
 

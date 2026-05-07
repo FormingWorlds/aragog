@@ -233,16 +233,14 @@ class _EnergyParameters:
     # falls back to FD Jacobian when no factory is available.
     use_jax_jacobian: bool = True
 
-    # Strategy B: per-call ΔΦ cap. When > 0 and at least one cell sits in
-    # or near the mushy band at solve() entry, clamp end_time so the
-    # projected per-cell |ΔΦ| over [start_time, end_time] stays within
-    # this cap. The estimate uses |dΦ/dt| at t=start_time scaled by a 0.5
-    # safety factor; if the achieved end_time is smaller than requested,
-    # the PROTEUS outer loop sees an early-return and adjusts dt
-    # accordingly. Default 0.0 (disabled, no behavioural change for
-    # existing tests). 0.05 is a useful upper bound for the mushy zone in
-    # 1 M⊕ runs; without a cap the dt adapter can land on a step that
-    # straddles the rheological transition and reject.
+    # Per-call mass-weighted |ΔΦ_global| cap. When > 0 and at least one
+    # cell sits in or near the mushy band at solve() entry, register a
+    # SUNDIALS root function that fires when |Φ_global(t) − Φ_global(
+    # start)| reaches this value, returning early with status=2 so the
+    # PROTEUS outer loop can adjust dt. Without a cap the dt adapter
+    # can land on a step that straddles the rheological transition and
+    # reject. 0.05 is a useful upper bound for the mushy zone in 1 M⊕
+    # runs; default 0.0 disables the cap entirely.
     phi_step_cap: float = 0.0
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))

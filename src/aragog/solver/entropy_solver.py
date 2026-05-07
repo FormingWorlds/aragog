@@ -147,7 +147,7 @@ def _phase_prop_float(raw, default):
 
 
 class _PhiCapRootFunction(_CV_RootFunction):
-    """SUNDIALS root function for the Strategy B per-call ΔΦ_global cap.
+    """SUNDIALS root function for the per-call ΔΦ_global cap.
 
     Fires (g[0]=0) when the mass-weighted |ΔΦ_global(t, y)| relative to
     the start-of-solve value crosses the configured cap. CVODE returns
@@ -583,8 +583,8 @@ class EntropySolver:
 
         # Create entropy phase evaluators for staggered and basic nodes.
         # cp_blend selects how Cp is computed in the mushy zone:
-        #   'latent' = SPIDER-parity v4 convention (latent-heat-augmented)
-        #   'linear' = legacy v3 convention (linear blend of pure-phase Cp)
+        #   'latent' = SPIDER-parity, latent-heat-augmented Cp
+        #   'linear' = linear blend of pure-phase Cp (no latent term)
         cp_blend = getattr(self.parameters.phase_mixed, 'cp_blend', 'latent')
 
         phase_kwargs = dict(
@@ -921,16 +921,16 @@ class EntropySolver:
                 roundtrip_err,
             )
         else:
-            # Legacy v3 quasi-steady BC: state = [S_0, ..., S_{N-1}]
+            # quasi_steady BC: state = [S_0, ..., S_{N-1}]
             self._S0 = S_arr
             logger.info(
-                'Initial entropy (v3 quasi-steady BC): S_min=%.0f, S_max=%.0f J/kg/K',
+                'Initial entropy (quasi_steady BC): S_min=%.0f, S_max=%.0f J/kg/K',
                 S_arr.min(),
                 S_arr.max(),
             )
 
     def set_initial_core_temperature(self, T_core_init: float) -> None:
-        """Set the initial core temperature (v4 Bower BC only).
+        """Set the initial core temperature (``bower2018`` core_bc only).
 
         Must be called BEFORE ``set_initial_entropy``. If not called,
         the initial T_core defaults to the bottom-cell mantle
@@ -989,7 +989,7 @@ class EntropySolver:
     ) -> npt.NDArray:
         """Time derivative of the full state vector.
 
-        For the v4 Bower core BC the state vector is
+        For the ``bower2018`` core BC the state vector is
         ``[S_0, ..., S_{N-1}, T_core]`` of length N+1, and this returns
         ``[dS/dt, dT_core/dt]`` of the same length.
 
@@ -1632,10 +1632,10 @@ class EntropySolver:
         if max_step is not None and np.isfinite(max_step):
             cvode_options['max_step_size'] = float(max_step)
 
-        # Strategy B v3: install the per-call ΔΦ_global cap as a
-        # SUNDIALS root function. CVODE returns at the exact crossing
-        # time t* where |Φ_global(t*) − Φ_global(start)| = cap, with
-        # flag CV_ROOT_RETURN (=2). The result wrapper below already
+        # Install the per-call ΔΦ_global cap as a SUNDIALS root
+        # function. CVODE returns at the exact crossing time t* where
+        # |Φ_global(t*) − Φ_global(start)| = cap, with flag
+        # CV_ROOT_RETURN (=2). The result wrapper below already
         # treats flag==2 as success.
         if phi_cap_rootfn is not None:
             cvode_options['rootfn'] = phi_cap_rootfn
@@ -1708,13 +1708,11 @@ class EntropySolver:
         # fires (flag=2), ``cvode_sol.values.t`` contains ONLY the start
         # time (the integration progress to the root is dropped), while
         # the actual root location is exposed via ``cvode_sol.roots.t``
-        # / ``cvode_sol.roots.y``. Probed end-to-end on 2026-05-03 with
-        # a synthetic y'=1, root at y=5: flag=2, values.t=[0.],
-        # roots.t=[5.]. Reading from values.t and computing
-        # ``dt_actual = sol.t[-1] - sol.t[0] = 0`` would cause PROTEUS's
-        # wrapper to fall back to ``dtswitch`` while Aragog's state had
-        # advanced to the root, locking the coupled run at a fixed
-        # point (observed v3.2/v3.3 in output/verify_dilon_phicap005).
+        # / ``cvode_sol.roots.y``. Reading from ``values.t`` here would
+        # give ``dt_actual = sol.t[-1] - sol.t[0] = 0`` and PROTEUS's
+        # wrapper would fall back to ``dtswitch`` while Aragog's state
+        # had actually advanced to the root, locking the coupled run
+        # at a fixed point.
         flag = int(getattr(cvode_sol, 'flag', -1))
         roots_obj = getattr(cvode_sol, 'roots', None)
         used_roots = False
@@ -1856,16 +1854,16 @@ class EntropySolver:
             ):
                 max_step = 1.0
 
-            # Strategy B v3: per-call mass-weighted ΔΦ_global cap as a
-            # SUNDIALS root function. Build the rootfn metadata here
-            # (anchor: Φ_global at solve entry); the actual rootfn
-            # instance is constructed below once the nondim state_scale
-            # is known. CVODE returns at the exact time t* where
-            # |Φ_global(t*) − Φ_global(start)| = cap. No rate
-            # estimation: the integrator's own trajectory determines
-            # termination, eliminating the start-time-rate overshoot
-            # that wedged v1 (per-cell max) and v2 (mass-weighted dt
-            # estimate) in output/verify_dilon_phicap005 (2026-05-02).
+            # Per-call mass-weighted ΔΦ_global cap as a SUNDIALS root
+            # function. Build the rootfn metadata here (anchor:
+            # Φ_global at solve entry); the actual rootfn instance is
+            # constructed below once the nondim state_scale is known.
+            # CVODE returns at the exact time t* where
+            # |Φ_global(t*) − Φ_global(start)| = cap, so the cap is
+            # enforced by the integrator's own trajectory rather than
+            # by a start-time rate estimate. A rate-estimate cap can
+            # truncate end_time and lock PROTEUS's adaptive dt onto
+            # the truncated value at the rheological transition.
             phi_step_cap = float(getattr(self.parameters.energy, 'phi_step_cap', 0.0))
             phi_cap_anchor = None  # (cap, phi0_global) when armed; None otherwise
             if phi_step_cap > 0.0 and (near_liq or near_sol or in_mushy):
@@ -1892,7 +1890,7 @@ class EntropySolver:
                             )
                             phi_cap_anchor = (phi_step_cap, phi0_global)
                             logger.info(
-                                'ΔΦ_global cap %.3g (Strategy B v3): '
+                                'ΔΦ_global cap %.3g: '
                                 'arming CVODE rootfn anchored at '
                                 'Φ_global(start)=%.4f',
                                 phi_step_cap,
@@ -1950,13 +1948,11 @@ class EntropySolver:
         # dSdr_cmb in energy_balance mode, dSdr_ref for all gradient
         # components in gradient mode). Dividing atol by _state_scale
         # element-wise gives the same physical tolerance on every
-        # component, regardless of its nondim scale.
-        #
-        # Previously this was scalar atol_nd = atol/S_ref, which
-        # applied correctly to entropy but forced ~10^8x tighter
-        # physical tolerance on dSdr_cmb. CVODE then took very small
-        # steps to resolve dSdr_cmb, suppressing the entropy cooling
-        # rate by a large factor and preventing solidification.
+        # component, regardless of its nondim scale. A scalar
+        # atol_nd = atol/S_ref would force ~10^8x tighter physical
+        # tolerance on dSdr_cmb, choking the step size and
+        # suppressing the entropy cooling rate enough to prevent
+        # solidification.
         atol_nd = atol / _state_scale
 
         def _rhs_nondim(t_nd, y_nd):
@@ -1981,13 +1977,13 @@ class EntropySolver:
         # BDF integration with phase-aware max_step constraint.
         jac_sparsity = self._build_jac_sparsity()
 
-        # ── Strategy B v3 rootfn / event construction ──
-        # Strategy B v3: build the SUNDIALS rootfn (CVODE path) and the
-        # equivalent solve_ivp event (scipy fallback) only when the
-        # cap is armed. Both consume nondim ``y`` and rescale via
-        # ``_state_scale`` before reading the EOS. The phase-boundary
-        # max_step=1 yr clamp set above is preserved; the cap is an
-        # ADDITIONAL guardrail anchored at Φ_global(start).
+        # ── ΔΦ_global rootfn / event construction ──
+        # Build the SUNDIALS rootfn (CVODE path) and the equivalent
+        # solve_ivp event (scipy fallback) only when the cap is armed.
+        # Both consume nondim ``y`` and rescale via ``_state_scale``
+        # before reading the EOS. The phase-boundary max_step=1 yr
+        # clamp set above is preserved; the cap is an ADDITIONAL
+        # guardrail anchored at Φ_global(start).
         events = None
         phi_cap_rootfn = None
         if phi_cap_anchor is not None:
@@ -2036,8 +2032,8 @@ class EntropySolver:
         # Warn when CVODE was requested but scikits.odes is not
         # importable: the fallback to scipy Radau is a substantial
         # change in solver behaviour (no modified-Newton, no cached
-        # Jacobian factorisation), and silent fallback has bitten
-        # production runs in the past.
+        # Jacobian factorisation) and a silent fallback would let a
+        # broken environment masquerade as a physics regression.
         if solver_method == 'cvode' and not _CVODE_AVAILABLE:
             logger.warning(
                 'EntropySolver: solver_method="cvode" requested but '
@@ -2122,15 +2118,17 @@ class EntropySolver:
             else:
                 sol.y = sol_y * _state_scale
 
-        # Strategy B v3 cap-fire log, emitted with PHYSICAL time. The
+        # ΔΦ_global cap-fire log, emitted with PHYSICAL time. The
         # CVODE path attaches ``cap_fired`` etc. to the result inside
         # ``_solve_cvode``; the scipy fallback exposes the same signal
         # via ``sol.t_events`` (non-empty when the terminal event
-        # fired). Log here so operators see physical years.
+        # fired). Logging here (after the t_ref restoration) keeps
+        # operator-facing messages in physical years rather than the
+        # nondim time the rootfn sees internally.
         if getattr(sol, 'cap_fired', False) and sol.t is not None:
             t_root_phys = float(sol.t[-1])
             logger.info(
-                'ΔΦ_global cap (Strategy B v3): CVODE rootfn fired at '
+                'ΔΦ_global cap: CVODE rootfn fired at '
                 't=%.3e yr after %d evals; cap=%.3g, '
                 'Φ_global(start)=%.4f',
                 t_root_phys,
@@ -2145,7 +2143,7 @@ class EntropySolver:
         ):
             t_event_phys = float(sol.t_events[0][0]) * t_ref
             logger.info(
-                'ΔΦ_global cap (Strategy B v3): scipy event fired at t=%.3e yr (terminal=True)',
+                'ΔΦ_global cap: scipy event fired at t=%.3e yr (terminal=True)',
                 t_event_phys,
             )
 
@@ -2417,21 +2415,16 @@ class EntropySolver:
         else:
             T_core = float(T_stag[0])
         # Mass-weighted melt fraction = M_mantle_liquid / M_mantle.
-        # Volume-weighting (the prior formulation) silently weights
-        # surface cells more than deep cells when ``mass_coordinates =
-        # true``: the mesh is uniform in mass coordinate, so deep
-        # high-density cells span small radial intervals and have
-        # small volumes, while surface low-density cells are large.
-        # During bottom-up crystallisation the surface stays liquid
-        # longest, so volume-weighted Phi stays anchored near the
-        # surface value while the actual mantle has crystallised.
-        # Verified 2026-05-02 in
-        # ``output/verify_dilon_phicap005.v3_helpfile_frozen``: the
-        # planet's mass-weighted Phi_global drifted from 0.913 to
-        # 0.88 over 600 kyr while the volume-weighted value reported
-        # to PROTEUS stayed exactly 0.9129 — the helpfile-frozen
-        # symptom that broke PROTEUS's stop-criterion + structure-
-        # update bookkeeping. Matches the rootfn formula bit-for-bit.
+        # MUST be mass-weighted, not volume-weighted, when
+        # ``mass_coordinates = true``: the mesh is uniform in mass
+        # coordinate, so deep high-density cells span small radial
+        # intervals and have small volumes while surface low-density
+        # cells are large. During bottom-up crystallisation the
+        # surface stays liquid longest, so volume-weighted Phi stays
+        # anchored near the surface value while the actual mantle has
+        # crystallised, freezing the helpfile Phi and breaking
+        # PROTEUS's stop-criterion + structure-update bookkeeping.
+        # Matches the rootfn formula bit-for-bit.
         mass_total_for_phi = float(np.sum(mass_stag))
         if mass_total_for_phi > 0.0:
             Phi_global = float(np.sum(phi_stag * mass_stag) / mass_total_for_phi)

@@ -441,12 +441,12 @@ class EntropyState:
 
         # ── MLT from entropy gradient ────────────────────────────────
         # Convection is unstable when dS/dr < 0 (entropy decreasing
-        # outward). `_is_convective` is still maintained for downstream
-        # diagnostic output but is NO LONGER used to zero the velocity
-        # arrays via a boolean mask — that discontinuity broke CVODE's
-        # higher-order BDF predictor. Instead, the smoothed convective
-        # driver below naturally goes to zero (smoothly) for
-        # stably-stratified cells and to |dS/dr| for unstable ones.
+        # outward). `_is_convective` is kept as a diagnostic only; the
+        # convective driver itself uses the smoothed max(-dSdr, 0)
+        # below, which is C^infinity in dSdr. A hard mask zeroing the
+        # velocity arrays at the marginal-stability boundary introduces
+        # a discontinuity that breaks CVODE's higher-order BDF
+        # predictor.
         self._is_convective = self._dSdr < 0
 
         # Buoyancy: convert entropy gradient to effective thermal
@@ -742,10 +742,9 @@ class EntropyState:
         # contributions to ``_heat_flux``: by definition Δh = Δu + P·Δv,
         # and on a hydrostatic column ∂Δh/∂r ⊃ Δv·∂P/∂r = −ρg·Δv, so
         # −∂/∂r(j·Δh) ⊃ +ρ·g·Δv·j is the same quantity Soucasse §1.2
-        # formerly added explicitly as Φ_vol. Adding it again would
-        # double-count (verified in 2026-05-03 7-cell matrix:
-        # F_dil/(−F_int) = −1.000 to four digits across three step
-        # caps). The Bower 2018 entropy form has no such source either.
+        # writes as Φ_vol. Adding an explicit Φ_vol source on top would
+        # double-count. The Bower 2018 entropy form has no such source
+        # either.
         n_stag = len(self._entropy_staggered)
         self._heating = np.zeros(n_stag)
         self._heating_radio = np.zeros(n_stag)

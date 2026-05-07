@@ -442,9 +442,9 @@ class EntropyEOS_JAX(eqx.Module):
         - Pure phase (phi = 0 or phi = 1): evaluate the active table at
           the actual S (clamped by the table itself).
 
-        The earlier JAX implementation always evaluated both tables at
-        the actual (P, S), which diverged from numpy by up to ~6 % in
-        T, ~2 % in Cp, and ~15 % in dTdPs inside the mushy band.
+        Evaluating both tables at the actual (P, S) inside the mushy
+        band would produce values that are not on either phase
+        boundary, diverging from the numpy EntropyEOS reference.
         """
         phi = self.melt_fraction(P, S)
         solid_table, melt_table = self._get_tables(prop_name)
@@ -501,10 +501,9 @@ class EntropyEOS_JAX(eqx.Module):
         - Pure phase (phi = 0 or phi = 1): evaluate the active single-
           phase table at the actual S (clamped by the table itself).
           SPIDER ``combine_matprop(smth=0, mixed, single)`` selects the
-          single-phase branch in this regime; the earlier JAX
-          implementation used the harmonic-mean form unconditionally,
-          producing up to 21 % density bias in the fully-molten regime
-          relative to numpy.
+          single-phase branch in this regime. Using the harmonic-mean
+          form unconditionally biases the fully-molten density
+          relative to the numpy EntropyEOS.
         """
         phi = self.melt_fraction(P, S)
         mushy = (phi > 0) & (phi < 1)

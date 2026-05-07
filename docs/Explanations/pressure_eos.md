@@ -59,7 +59,7 @@ For uniformly spaced $\xi$, the corresponding $r$ values are found by inverting 
 
 When `eos_method = 2`, the EOS reads a four-column whitespace-separated file with columns `radius`, `pressure`, `density`, `gravity`. Aragog interpolates each onto the basic-node radii using `scipy.interpolate.PchipInterpolator` (shape-preserving cubic). The cumulative mass is precomputed via `scipy.integrate.cumulative_trapezoid` and then PCHIP-interpolated as well, so `get_mass_within_radii` is $O(1)$ per call.
 
-Validation: at construction the EOS asserts that the user file's radius range covers at least 75 % of the mesh's $[R_\text{cmb}, R_\text{surf}]$ span; otherwise it raises a `ValueError`. This guards against an undersized external mesh silently zero-padding the deep interior.
+Validation: `EntropySolver._validate_eos_radius_range` (in `solver/entropy_solver.py`) asserts that the file's radius array is strictly monotonic and that its span covers at least 75 % of the mesh's $[R_\text{cmb}, R_\text{surf}]$ range, with a relative tolerance scaled to the mesh span (and a 1 m absolute floor) so a single-ULP drift on a Zalmoxis-resumed mesh does not trip the check. Otherwise a `ValueError` is raised. This guards against an undersized external mesh silently clamping or extrapolating the deep interior.
 
 ## When the closed form is wrong
 

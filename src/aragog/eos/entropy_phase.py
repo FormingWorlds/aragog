@@ -90,8 +90,8 @@ class EntropyPhaseEvaluator:
         self._const_log10visc = const_log10visc
         self._const_T_ref = const_T_ref
         self._const_S_ref = const_S_ref
-        # 'latent' = SPIDER-parity v4 convention (latent-heat-augmented Cp)
-        # 'linear' = legacy v3 convention (pure-phase linear blend)
+        # 'latent' = SPIDER-parity, latent-heat-augmented Cp
+        # 'linear' = pure-phase linear blend (no latent term)
         if cp_blend not in ('latent', 'linear'):
             raise ValueError(f"cp_blend must be 'latent' or 'linear', got {cp_blend!r}")
         self._cp_blend = cp_blend

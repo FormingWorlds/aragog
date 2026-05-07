@@ -99,7 +99,7 @@ j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
 v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,K(\phi)}{\eta_m},
 $$
 
-where $K(\phi)$ is a Stokes-or-Darcy permeability set by the configured `grain_size`, and $\mathrm{smth}(\phi)$ is a smoothing function that vanishes outside the mushy band. The default cubic-Hermite smoothing $16\,g\phi^2(1-g\phi)^2$ keeps the flux differentiable at the solidus and liquidus; the alternative tanh form reproduces SPIDER's `get_smoothing` for parity validation. The corresponding heat flux is
+where $K(\phi)$ is a Stokes-or-Darcy permeability set by the configured `grain_size`, and $\mathrm{smth}(\phi)$ is a smoothing function that vanishes outside the mushy band. Two forms are configurable: the production setting is `phase_smoothing = "tanh"` (SPIDER's two-branch `get_smoothing` of width `matprop_smooth_width = 0.01`); the fallback is `phase_smoothing = "cubic_hermite"` ($16\,g\phi^2(1-g\phi)^2$), kept for residual-EOS-mismatch debugging. The corresponding heat flux is
 
 $$
 F_\mathrm{grav} = j_\mathrm{grav}\,L(P),
@@ -242,7 +242,7 @@ Aragog is intended as a fast 1-D mantle thermal evolution model. The core simpli
 | $K_S$ | Pa | Adiabatic bulk modulus (Adams-Williamson) |
 | $\varepsilon$ | -- | Surface emissivity |
 | $\sigma$ | W/m²/K⁴ | Stefan-Boltzmann constant |
-| $\mathrm{smth}(\phi)$ | -- | Phase-boundary smoothing function (cubic-Hermite or tanh) |
+| $\mathrm{smth}(\phi)$ | -- | Phase-boundary smoothing function (tanh by default; cubic-Hermite fallback) |
 
 ## Code mapping
 

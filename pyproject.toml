@@ -51,11 +51,22 @@ zensical = ">=0.1.0"
 markdown-include = "^0.8"
 mkdocstrings = {version = "^0.26", extras = ["python"]}
 
+[tool.poetry.group.jax]
+optional = true
+
+[tool.poetry.group.jax.dependencies]
+jax = ">=0.4.30"
+equinox = ">=0.11.0"
+
 [tool.poetry.extras]
 docs = [
     "zensical",
     "markdown-include",
     "mkdocstrings",
+]
+jax = [
+    "jax",
+    "equinox",
 ]
 
 [tool.poetry.scripts]

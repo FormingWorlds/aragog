@@ -10,6 +10,9 @@ Aragog evolves the specific entropy $S(r,t)$ at staggered nodes inside a spheric
 !!! tip "New to Aragog?"
     See the **[Getting Started guide](getting_started.md)** for installation, first run, and basic usage.
 
+!!! info "Standalone or PROTEUS-integrated?"
+    Aragog is used in two distinct ways: as a standalone Python library, or as the interior energetics module inside the PROTEUS coupled framework. The two paths share the same numerical core but differ at the configuration boundary. See [Standalone vs PROTEUS-integrated usage](How-to/usage-paths.md) before picking a How-to or Tutorial.
+
 ## Features
 
 - **Entropy formulation**: the prognostic variable is specific entropy $S(r,t)$. Temperature, density, melt fraction, heat capacity, thermal expansivity, and adiabatic gradient are looked up from a $(P, S)$ EOS table on each call, so the latent heat of fusion is encoded in the table rather than expressed as a $c_p$ spike across the solidus and liquidus.
@@ -67,7 +70,7 @@ Aragog evolves the specific entropy $S(r,t)$ at staggered nodes inside a spheric
 
 If you use Aragog in published work, please cite the original numerical method paper and, where applicable, the PALEOS multiphase EOS framework that supplies the production-run $(P, S)$ tables:
 
-- Bower, D.J., Sanan, P., & Wolf, A.S. (2018). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49–62. [https://doi.org/10.1016/j.pepi.2017.11.004](https://doi.org/10.1016/j.pepi.2017.11.004)
+- Bower, D.J., Sanan, P., & Wolf, A.S. (2018). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62. [https://doi.org/10.1016/j.pepi.2017.11.004](https://doi.org/10.1016/j.pepi.2017.11.004)
 - Attia, M., et al. (2026). *PALEOS: a multiphase equation of state framework for terrestrial mantles*. (Forthcoming.)
 
 ## Code availability

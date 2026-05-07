@@ -252,10 +252,10 @@ class MeshArrays(eqx.Module):
             )
         self.dP_dr_basic = dP_dr_basic
         # Default ``gravity_stag`` to a midpoint average of ``gravity``
-        # so legacy callers that don't supply a per-staggered profile
-        # still see a reasonable approximation. ``from_numpy_mesh``
-        # overrides this with the EOS-interpolated value at staggered
-        # radii whenever the column is available.
+        # so callers that don't supply a per-staggered profile still
+        # see a reasonable approximation. ``from_numpy_mesh`` overrides
+        # this with the EOS-interpolated value at staggered radii
+        # whenever the column is available.
         if gravity_stag is None:
             g_arr = jnp.asarray(gravity)
             gravity_stag = 0.5 * (g_arr[:-1] + g_arr[1:])
@@ -331,9 +331,9 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
         r_target = np.asarray(mesh.staggered.radii).ravel()
     else:
         r_target = np.asarray(mesh.basic.radii).ravel()
-    # The legacy local name ``r_basic`` is preserved below to keep the
-    # existing diagnostics readable; it now refers to the requested
-    # target grid (basic by default, staggered when r_stag=True).
+    # ``r_basic`` aliases the requested target grid (basic by default,
+    # staggered when r_stag=True) to keep the diagnostic logging below
+    # readable.
     r_basic = r_target
     # Real Aragog Mesh objects expose the loaded EOS columns on
     # mesh.settings (which aliases Parameters.mesh) after
@@ -366,10 +366,11 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
     # Scalar fallback chain. Mirrors the numpy reference in
     # entropy_solver.py::_initialize_internals: try the pressure-EOS
     # attribute first, then mesh.settings, then mesh.parameters, then
-    # the 9.81 hard default. The earlier single-source (mesh.settings
-    # only) was asymmetric with numpy for configs that populate gravity
-    # on mesh.parameters without mesh.settings and would silently
-    # return 9.81 on a non-Earth planet.
+    # the 9.81 hard default. Both ``settings`` and ``parameters`` are
+    # consulted because configs populated via the attrs facade live on
+    # mesh.parameters and configs built via the dataclass parser live
+    # on mesh.settings; reading only one would silently fall through
+    # to 9.81 m/s^2 for a non-Earth planet.
     settings_src = getattr(mesh, 'settings', None) or getattr(mesh, 'parameters', None) or mesh
     g_scalar = abs(
         float(
@@ -770,11 +771,9 @@ def compute_fluxes(
         # explicit override above wins and this branch is skipped.
         dSdr = dSdr.at[0].set(dSdr[1])
 
-    # Phase properties at basic nodes. The staggered-node phase
-    # evaluation was only needed for the old mass-flux mixing term
-    # (``dphi/dr`` on staggered nodes); the SPIDER-bracket Jmix uses
-    # basic-node quantities exclusively, so staggered-node phase
-    # properties are not materialised here.
+    # Phase properties at basic nodes only. The SPIDER-bracket Jmix
+    # is built entirely from basic-node quantities, so staggered-node
+    # phase properties are not materialised here.
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
     # MLT eddy diffusivity
@@ -877,11 +876,10 @@ def compute_fluxes(
     # Mirrors numpy ``entropy_state.update`` (entropy_state.py:656-692):
     #     Jmix_heat = -kappa_c * rho * T_fus * bracket * smth_basic_mix
     #     bracket = dS/dr - [phi·dS_liq/dP + (1-phi)·dS_sol/dP] · dP/dr
-    # evaluated at basic nodes. The earlier JAX implementation used the
-    # mass-flux form ``mass_flux += mixing * rho * kappa_c * (-dphi/dr)``
-    # (added to heat_flux via latent heat), which matches the Aragog pre-
-    # refactor convention but NOT the SPIDER bracket used in the numpy
-    # production path. That was a Z.4 v1 divergence driver.
+    # evaluated at basic nodes. The mass-flux form
+    # ``mass_flux += mixing * rho * kappa_c * (-dphi/dr)`` (delivered
+    # via the latent-heat term) is NOT equivalent and diverges from
+    # the numpy production path.
     #
     # The smth polynomial ``16·gphi²·(1-gphi)²`` at basic nodes zeroes
     # the flux outside the mushy band; the bracket itself is finite in

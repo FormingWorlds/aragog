@@ -4,13 +4,14 @@ Direct-JAX integration of the entropy equation via diffrax Kvaerno5
 (5th-order ESDIRK, A-L stable). The RHS applies boundary conditions,
 computes flux divergence, and adds internal heating, all in pure JAX.
 
-NOT production-ready: kvaerno3 (and kvaerno5) stall on the cubic-Hermite
-Jgrav smoothing at the first crystallization step in CHILI Earth runs
-(documented 2026-04-09). Reserved for autodiff development.
-
-For production JAX integration, the entry point is the CVODE Option-Z
-path in ``aragog/solver/cvode_jax.py``, selected by setting
-``EnergyParams.use_jax_jacobian = True`` (PROTEUS-side: ``backend="jax"``).
+Not production-ready: the diffrax ESDIRK solvers (kvaerno3, kvaerno5)
+stall at the first crystallisation step on the cubic-Hermite J_grav
+smoothing in CHILI Earth runs. Kept for autodiff development. The
+production JAX integration path is the CVODE Option-Z path in
+``aragog/solver/cvode_jax.py``, selected by setting
+``EnergyParams.use_jax_jacobian = True`` (PROTEUS-side
+``backend="jax"``), which uses CVODE for time stepping and JAX only
+for the analytic Jacobian.
 
 Dependencies: jax, equinox, diffrax, lineax (transitive via diffrax).
 """

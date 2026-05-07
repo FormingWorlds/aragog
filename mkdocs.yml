@@ -12,8 +12,12 @@ nav:
 
   - How-to guides:
       - Installation: How-to/installation.md
+      - Standalone vs PROTEUS-integrated: How-to/usage-paths.md
       - Configuration: How-to/configuration.md
       - Usage: How-to/usage.md
+      - Solver method tuning: How-to/solver-method-tuning.md
+      - Phi step cap: How-to/phi-step-cap.md
+      - UTBL parameterisation: How-to/utbl-parameterisation.md
       - Testing: How-to/testing.md
       - Inspecting NetCDF output: How-to/netcdf.md
 

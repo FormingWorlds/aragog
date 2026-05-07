@@ -814,9 +814,10 @@ class EntropyEOS:
     def heat_capacity(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Specific heat capacity Cp(P, S) [J/kg/K].
 
-        Linear blend of solid and melt P-S tables by melt fraction.
-        This is the v3 convention. For SPIDER-parity in mushy regions
-        use ``heat_capacity_latent_blend`` (v4 convention).
+        Linear blend of solid and melt P-S tables by melt fraction
+        (the ``cp_blend = 'linear'`` convention). Use
+        ``heat_capacity_latent_blend`` for SPIDER-parity mushy-zone
+        Cp that includes the latent-heat contribution.
         """
         return self._lookup_phase_weighted('heat_capacity', P, S)
 
@@ -834,11 +835,10 @@ class EntropyEOS:
         capacity in the mushy zone. Outside the phase boundary the
         result reduces to the pure-phase Cp via tanh smoothing.
 
-        The wrapper-side linear blend used by ``heat_capacity`` above
-        underestimates Cp by up to a factor of 6 in the deep mushy
-        regime (measured against SPIDER's internal cp_s), which
-        produces a -11.7% E_th_mantle gap at t=100 kyr in the v3
-        CHILI run. This formula closes that gap.
+        The plain linear blend used by ``heat_capacity`` above misses
+        the latent-heat term and underestimates Cp by up to a factor
+        of 6 in the deep mushy regime relative to SPIDER's internal
+        cp_s. This formula closes that gap.
 
         Parameters
         ----------

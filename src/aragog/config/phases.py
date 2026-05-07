@@ -76,6 +76,6 @@ class MixedPhaseConfig:
     phase_transition_width: float
     grain_size: float
     # cp_blend selects how mushy-zone Cp is computed:
-    #   'latent' = SPIDER-parity v4 convention (latent-heat-augmented)
-    #   'linear' = legacy v3 convention (linear blend of pure-phase Cp)
+    #   'latent' = SPIDER-parity, latent-heat-augmented Cp
+    #   'linear' = linear blend of pure-phase Cp (no latent term)
     cp_blend: str = 'latent'
