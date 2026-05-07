@@ -76,7 +76,7 @@ class BoundaryConfig:
     #     by orders of magnitude; this mode is retained for parity
     #     testing only and is not recommended for production.
     #
-    # Default 'energy_balance' matches the PROTEUS production CHILI
-    # path. Standalone callers that want the legacy alpha-factor
-    # behaviour must set core_bc='quasi_steady' explicitly.
+    # Default 'energy_balance' matches the PROTEUS production path.
+    # Standalone callers that want the legacy alpha-factor behaviour
+    # must set core_bc='quasi_steady' explicitly.
     core_bc: str = 'energy_balance'

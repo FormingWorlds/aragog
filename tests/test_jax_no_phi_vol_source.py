@@ -1,6 +1,6 @@
 """JAX-side negative regression: no explicit Φ_vol source on heating.
 
-The Soucasse §1.2 form
+The volumetric-work form
 
     Phi_vol = rho · g · (1/rho_m - 1/rho_s) · (j_cm + j_gm)
 
@@ -9,7 +9,7 @@ Volumetric work is already implicit in the divergence of the
 Δh-weighted mass-flux contributions to ``flux_out.heat_flux`` (chain
 rule on Δh = Δu + P·Δv with hydrostatic ∂P/∂r = -ρg). Adding it
 explicitly would double-count (Bower 2018 §3, SPIDER energy.c). The
-JAX RHS is the production CHILI integration path under
+JAX RHS is the production integration path under
 ``solver_method='cvode'`` + ``use_jax_jacobian=True``, so a separate
 JAX-side regression is required even when the numpy path is
 covered in ``test_entropy_verification.py``.
@@ -97,9 +97,9 @@ def test_no_phi_vol_added_in_mushy_zone_jax():
     """Mushy regime where the historical Φ_vol would have been large.
 
     Drives a non-trivial entropy gradient across the mushy band so
-    j_grav ~ 1e-3 kg/m²/s and j_mix ~ 1e-3 kg/m²/s; pre-deletion the
-    explicit Soucasse §1.2 source would have produced
-    H_dil ~ 1e-8 W/kg here. We assert max|heating| < 1e-15 W/kg with
+    j_grav ~ 1e-3 kg/m²/s and j_mix ~ 1e-3 kg/m²/s; an explicit
+    Φ_vol source would have produced H_dil ~ 1e-8 W/kg here.
+    We assert max|heating| < 1e-15 W/kg with
     no radio or tidal contribution wired in, which discriminates
     against any regression that re-introduces even a fractional copy
     of Φ_vol on the JAX path.

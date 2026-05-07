@@ -124,7 +124,7 @@ class _BoundaryConditionsParameters:
     #               'bower2018' (unrecommended; T_core as ODE state,
     #               retained for parity testing only).
     # See aragog/config/boundary.py docstring for details.
-    # Default 'energy_balance' matches the PROTEUS production CHILI path.
+    # Default 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'
 
     scalings_: _ScalingsParameters = field(init=False)
@@ -203,7 +203,7 @@ class _EnergyParameters:
     # eddy diffusivity is clamped from below by ``floor * f(phi)``,
     # where ``f`` falls from 1 (liquid) to 0 (solid) across the
     # rheological transition. Default 10.0 matches the PROTEUS
-    # production CHILI value; set to 0.0 for textbook MLT.
+    # production value; set to 0.0 for textbook MLT.
     kappah_floor: float = 10.0
 
     # SPIDER-analogue bottom-up gate for the gravitational-separation mass
@@ -218,7 +218,7 @@ class _EnergyParameters:
     # Phase-boundary smoothing for Jgrav and Jmix: 'cubic_hermite' or 'tanh'.
     # 'tanh' is the SPIDER-parity two-branch tanh of width matprop_smooth_width
     # (default 0.01); it passes full-strength fluxes across the mushy zone and
-    # is the production setting for all CHILI runs. 'cubic_hermite' applies the
+    # is the production setting. 'cubic_hermite' applies the
     # 16*phi^2*(1-phi)^2 weight for intermediate-phi damping and is retained as
     # a fallback for cases where residual EOS mismatch would otherwise cause a
     # CMB drain; it is not the production setting.
@@ -234,7 +234,7 @@ class _EnergyParameters:
     # uses a JAX-derived analytic Jacobian (built by PROTEUS via
     # EntropySolver.set_jax_cvode_factory) in place of CVODE's default
     # finite-difference Jacobian. Requires JAX and the aragog.jax module.
-    # Default True (matches the production CHILI configuration). Has
+    # Default True (matches the production configuration). Has
     # no effect unless a factory is registered before solve(); silently
     # falls back to FD Jacobian when no factory is available.
     use_jax_jacobian: bool = True
@@ -316,7 +316,7 @@ class _MeshParameters:
     # Use uniform spacing in mass coordinate space instead of radius;
     # gives larger cells at the surface where density is lower and
     # matches SPIDER's mesh layout. Default True matches the PROTEUS
-    # production CHILI path.
+    # production path.
     mass_coordinates: bool = True
     eos_file: str = ''
     scalings_: _ScalingsParameters = field(init=False)

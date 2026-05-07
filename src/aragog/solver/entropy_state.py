@@ -101,8 +101,8 @@ def _spider_get_smoothing(
         are allowed (pure-phase regimes); the smoothing goes to zero
         in both limits.
     smooth_width : float, optional
-        tanh transition width in gphi units. SPIDER's default for
-        CHILI R8 is ``matprop_smooth_width = 0.01``.
+        tanh transition width in gphi units. SPIDER's default
+        ``matprop_smooth_width`` is ``0.01``.
 
     Returns
     -------
@@ -178,9 +178,8 @@ class EntropyState:
         self._bottom_up_grav_sep = bool(bottom_up_grav_sep)
         # Phase-boundary smoothing method for Jgrav and Jmix.
         # 'tanh' (default): SPIDER's get_smoothing(matprop_smooth_width=0.01, gphi).
-        #   Two-branch tanh, smth=1.0 across [0.05, 0.95]. Production setting
-        #   for all CHILI runs; matches SPIDER once material properties agree
-        #   to <0.01%.
+        #   Two-branch tanh, smth=1.0 across [0.05, 0.95]. Production setting;
+        #   matches SPIDER once material properties agree to <0.01%.
         # 'cubic_hermite': 16*gphi^2*(1-gphi)^2. Intermediate-phi damping
         #   (smth=0.32 at gphi=0.83). Fallback for cases where residual EOS
         #   mismatch would otherwise cause a CMB drain; not a production
@@ -389,13 +388,13 @@ class EntropyState:
             # surface as state variables via the core energy balance
             # ODE (bc.c:76, set_cmb_entropy_gradient_update). At the
             # CMB, this drives dSdxi toward ~0 (core acts as a thermal
-            # reservoir in quasi-equilibrium). At t=33821 yr on CHILI
-            # R8 Earth, SPIDER's dSdxi[CMB] = -3.94e-12 while the
-            # first interior node has dSdxi = -6.99e-5 — 7 orders of
-            # magnitude larger. In Aragog's quasi_steady mode (no core
-            # energy balance ODE), we approximate this by setting the
-            # boundary gradients to zero, which is the steady-state
-            # limit of SPIDER's evolved boundary gradient.
+            # reservoir in quasi-equilibrium): on a representative
+            # Earth-mantle solidification trajectory SPIDER's
+            # dSdxi[CMB] is roughly seven orders of magnitude smaller
+            # than the first interior node. In Aragog's quasi_steady
+            # mode (no core energy balance ODE), we approximate this
+            # by setting the boundary gradients to zero, which is the
+            # steady-state limit of SPIDER's evolved boundary gradient.
             # SPIDER bc.c convention: boundary gradients copy from the
             # adjacent interior node. In energy_balance mode, the CMB
             # gradient is overridden later by the state-vector value.
@@ -525,7 +524,7 @@ class EntropyState:
             self._kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
 
         # kappa_h floor (phase-dependent, modulated by melt fraction).
-        # Production CHILI runs use kappah_floor = 10 m^2/s
+        # Production PROTEUS runs use kappah_floor = 10 m^2/s
         # (PROTEUS schema default, applied via SPIDER's -kappah_floor
         # convention). The phi-modulated floor f_floor =
         # tanh_weight(phi, 0.4, 0.15) ramps from 0 in solid layers
@@ -741,8 +740,8 @@ class EntropyState:
         # implicit in the divergence of the Δh-weighted mass-flux
         # contributions to ``_heat_flux``: by definition Δh = Δu + P·Δv,
         # and on a hydrostatic column ∂Δh/∂r ⊃ Δv·∂P/∂r = −ρg·Δv, so
-        # −∂/∂r(j·Δh) ⊃ +ρ·g·Δv·j is the same quantity Soucasse §1.2
-        # writes as Φ_vol. Adding an explicit Φ_vol source on top would
+        # −∂/∂r(j·Δh) ⊃ +ρ·g·Δv·j already carries the volumetric-work
+        # quantity. Adding an explicit Φ_vol source on top would
         # double-count. The Bower 2018 entropy form has no such source
         # either.
         n_stag = len(self._entropy_staggered)

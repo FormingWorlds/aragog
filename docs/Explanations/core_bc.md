@@ -26,7 +26,7 @@ $$
 \text{fac}_\text{cmb} = \frac{c_p^\text{cmb}}{c_p^\text{core} \, T_\text{cmb} \, \text{tfac} \, M_\text{core}}
 $$
 
-This is the SPIDER-parity formulation. It produces bit-for-bit agreement with SPIDER on the CHILI Earth reference. Use this mode for any run that needs to reproduce SPIDER results, including the published verification suite. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
+This is the SPIDER-parity formulation. It produces bit-for-bit agreement with SPIDER on the Earth reference. Use this mode for any run that needs to reproduce SPIDER results, including the published verification suite. State vector size and Jacobian sparsity are slightly larger than `quasi_steady`, but the integrator overhead is small.
 
 ## `gradient`
 
@@ -44,7 +44,7 @@ Treats the core temperature as an ODE state variable, with the CMB heat flux com
 
 | Need | Recommended `core_bc` |
 |------|----------------------|
-| Production CHILI runs and SPIDER-parity validation | `energy_balance` (default) |
+| Production PROTEUS runs and SPIDER-parity validation | `energy_balance` (default) |
 | Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
 | Reproducing pre-2026 results | `bower2018` (legacy) |

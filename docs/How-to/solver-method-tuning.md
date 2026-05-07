@@ -3,7 +3,7 @@
 Aragog dispatches stiff time integration through `_EnergyParameters.solver_method` (see `src/aragog/parser.py`). Three values are accepted: `"cvode"` (default), `"radau"`, and `"bdf"`. This page is the practical recipe for picking one and tuning the associated tolerances.
 
 !!! note "Default is CVODE"
-    Production CHILI runs and the validated PROTEUS pairings rely on `solver_method = "cvode"` with `use_jax_jacobian = true`. The other two values are fallback paths, not equivalents.
+    Production PROTEUS runs rely on `solver_method = "cvode"` with `use_jax_jacobian = true`. The other two values are fallback paths, not equivalents.
 
 ## Available integrators
 
@@ -21,7 +21,7 @@ The relevant keys are `solver.atol` (absolute) and `solver.rtol` (relative); bot
 
 | Regime | `atol` | `rtol` | Notes |
 |--------|--------|--------|-------|
-| Production coupled run, CVODE + JAX | `1e-9` | `1e-9` | Matches `input/chili/*` references. Tight enough that energy-conservation checks close. |
+| Production coupled run, CVODE + JAX | `1e-9` | `1e-9` | Matches PROTEUS production references. Tight enough that energy-conservation checks close. |
 | Standalone smoke test | `1e-7` | `1e-7` | Lets the integrator march through the rheological transition in seconds. Acceptable for first-run sanity checks; not for paper plots. |
 | Tight verification or parity test | `1e-10` | `1e-10` | The floor; useful for SPIDER bit-parity diagnostics. Wall time roughly doubles. |
 
@@ -43,4 +43,4 @@ The `phase-aware max_step` reduction activates at the same trigger conditions on
 
 - [CVODE and JAX explainer](../Explanations/cvode_jax.md): why the analytic Jacobian helps and how `set_jax_cvode_factory` is wired.
 - [`phi_step_cap` how-to](phi-step-cap.md): SUNDIALS-rootfn capping of $|\Delta\phi|$ across a step.
-- [Installation: JAX](installation.md#optional-dependency-jax-production-chili-runs): runtime requirement for `use_jax_jacobian = true`.
+- [Installation: JAX](installation.md#optional-dependency-jax-production-runs): runtime requirement for `use_jax_jacobian = true`.

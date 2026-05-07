@@ -6,12 +6,12 @@ The `energy.phi_step_cap` knob limits the per-call change in volume-weighted mea
 
 | Situation | Recommended `phi_step_cap` |
 |-----------|----------------------------|
-| Standard CHILI run (1 to 10 $M_\oplus$) | `0.05` |
+| Standard PROTEUS run (1 to 10 $M_\oplus$) | `0.05` |
 | Mushy-zone oscillations in early snapshots | `0.001` to `0.01` |
 | Static-Zalmoxis parity diagnostic | `0.0` (disabled) |
 | Pure cooling with smooth solidus crossing | `0.0` (disabled) |
 
-The default in `src/aragog/parser.py` is `0.0` (cap disabled). Production CHILI configs (`input/chili/*.toml`) pin it to `0.05` to keep the rheological transition trackable when atmospheric flux or interior structure changes quickly.
+The default in `src/aragog/parser.py` is `0.0` (cap disabled). Production PROTEUS configs typically pin it to `0.05` to keep the rheological transition trackable when atmospheric flux or interior structure changes quickly.
 
 ## How it works
 

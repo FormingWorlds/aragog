@@ -1,13 +1,13 @@
 # Upper thermal boundary layer (UTBL) parameterisation
 
-When the surface boundary uses the grey-body atmosphere mode (`outer_boundary_condition = 1`), the radiating surface temperature can differ from the temperature of the topmost mantle staggered node. Aragog's UTBL parameterisation accounts for the unresolved thermal boundary layer between the magma ocean interior and the radiating surface by solving a cubic relation derived in Bower et al. (2018, Eq. 18). The implementation is in `src/aragog/solver/boundary.py::_utbl_tsurf` and uses Cardano's formula for the analytic real root.
+When the surface boundary uses the grey-body atmosphere mode (`outer_boundary_condition = 1`), the radiating surface temperature can differ from the temperature of the topmost mantle staggered node. Aragog's UTBL parameterisation accounts for the unresolved thermal boundary layer between the magma ocean interior and the radiating surface by solving a cubic relation derived in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) (Eq. 18). The implementation is in `src/aragog/solver/boundary.py::_utbl_tsurf` and uses Cardano's formula for the analytic real root.
 
 ## When to enable
 
 | Situation | `param_utbl` | Notes |
 |-----------|--------------|-------|
 | Standalone hot magma ocean with grey-body BC | `true` | Resolves the temperature drop across the unresolved UTBL. |
-| Coupled CHILI runs (PROTEUS) | `false` | The atmosphere module supplies a flux directly via `outer_boundary_condition = 4`; the UTBL would be applied twice. |
+| Coupled PROTEUS runs | `false` | The atmosphere module supplies a flux directly via `outer_boundary_condition = 4`; the UTBL would be applied twice. |
 | Prescribed-flux or prescribed-temperature BC modes (`4`, `5`) | `false` | The parameterisation is only consulted in the grey-body branch. |
 | SPIDER-parity diagnostic runs | `true` | Required for bit-parity against SPIDER's UTBL implementation. |
 
@@ -15,7 +15,7 @@ The parser default is `param_utbl = false` (see `src/aragog/parser.py`). Set it 
 
 ## How it works
 
-The grey-body radiator emits at the surface radiating temperature $T_\mathrm{surf}$, not at the interior staggered-node temperature $T_\mathrm{int}$. Bower et al. (2018, Eq. 18) parameterise the temperature drop across the UTBL as
+The grey-body radiator emits at the surface radiating temperature $T_\mathrm{surf}$, not at the interior staggered-node temperature $T_\mathrm{int}$. [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) (Eq. 18) parameterise the temperature drop across the UTBL as
 
 $$
 \Delta T = b\, T_\mathrm{surf}^3
@@ -68,7 +68,7 @@ param_utbl_const         = 1.0e-7
 
 ## References
 
-- Bower, D.J., Sanan, P., & Wolf, A.S. (2018). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62. Eq. 18 derives the UTBL parameterisation.
+- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62. Eq. 18 derives the UTBL parameterisation.
 
 ## Cross-references
 

@@ -93,7 +93,7 @@ class PhaseParams(eqx.Module):
 
     # SPIDER -matprop_smooth_width: tanh blend width for the
     # mixed-vs-single phase blend. 0.0 = sharp (smth=1 inside [0,1]),
-    # 0.01 = CHILI Earth production setting.
+    # 0.01 = production setting.
     matprop_smooth_width: float
 
     # Transport flags (stored as float for JAX tracing: 1.0 = on, 0.0 = off)
@@ -117,8 +117,8 @@ class PhaseParams(eqx.Module):
     # phase_smoothing_tanh: 1.0 -> use SPIDER's two-branch tanh
     # (_spider_get_smoothing); 0.0 -> use cubic Hermite 16*g^2*(1-g)^2.
     # phase_smoothing_width: tanh transition width in gphi units
-    # (ignored when phase_smoothing_tanh == 0.0). SPIDER default for CHILI
-    # Earth is 0.01 (matprop_smooth_width).
+    # (ignored when phase_smoothing_tanh == 0.0). SPIDER's
+    # ``matprop_smooth_width`` defaults to 0.01.
     phase_smoothing_tanh: float
     phase_smoothing_width: float
 
@@ -403,7 +403,7 @@ def spider_get_smoothing(gphi: jax.Array, smooth_width: float) -> jax.Array:
     ``entropy_state.py`` used when ``phase_smoothing='tanh'``.
 
     ``smooth_width`` is the tanh transition width in gphi units (SPIDER
-    ``matprop_smooth_width``, default 0.01 for CHILI Earth).
+    ``matprop_smooth_width``, default 0.01).
     """
     upper = 0.5 * (1.0 - jnp.tanh((gphi - 1.0) / smooth_width))
     lower = 0.5 * (1.0 + jnp.tanh(gphi / smooth_width))
@@ -551,9 +551,9 @@ def relative_velocity(
     F_rg = d**2 * por**4.5 * (5.0 / 7.0)
     F_stokes = d**2 * 2.0 / 9.0
 
-    # Smooth regime switching at critical porosities (Abe 1995;
-    # Soucasse Aragog formulation): BKC -> RG at 0.0769452 (analytical
-    # equality of the BKC and RG permeabilities), RG -> Stokes at 0.771462.
+    # Smooth regime switching at critical porosities: BKC -> RG at
+    # 0.0769452 (the analytical equality point of the BKC and RG
+    # permeabilities), RG -> Stokes at 0.771462.
     w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)
     F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
@@ -668,7 +668,7 @@ def compute_mlt(
     )
 
     # kappa_h floor (phase-dependent, modulated by melt fraction).
-    # Production CHILI runs use kappah_floor = 10 m^2/s; the
+    # Production PROTEUS runs use kappah_floor = 10 m^2/s; the
     # phi-modulated f_floor ramps from 0 in solid layers (no spurious
     # convective flux) to ~1 in mushy/liquid layers, where physical
     # convection is expected and MLT can otherwise numerically freeze.

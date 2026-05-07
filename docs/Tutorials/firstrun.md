@@ -103,7 +103,7 @@ fig.savefig("first_profiles.pdf")
 
 For a coupled atmosphere-interior simulation the configuration is built programmatically by the PROTEUS wrapper at `src/proteus/interior/aragog.py`. The wrapper drives `EntropySolver.set_initial_entropy()` from the previous step's profile, supplies the four-column external mesh file from Zalmoxis when `eos_method = 2`, and reads `SolverOutput` back into the PROTEUS `Interior_t` state. See [Standalone vs PROTEUS-integrated usage](../How-to/usage-paths.md) for the path comparison.
 
-For a coupled-CHILI walkthrough (atmosphere + interior + outgassing), see the PROTEUS [usage guide](https://proteus-framework.org/PROTEUS/How-to/usage.html) and the bundled `input/chili/*.toml` reference configurations.
+For a coupled walkthrough (atmosphere + interior + outgassing), see the PROTEUS [usage guide](https://proteus-framework.org/PROTEUS/How-to/usage.html).
 
 ## 6. Troubleshooting
 

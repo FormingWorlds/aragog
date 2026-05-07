@@ -1,6 +1,6 @@
-"""A2 tests: per-step radiogenic heating evaluated inside the JAX trace.
+"""Per-step radiogenic heating evaluated inside the JAX trace.
 
-Locks the radio decay law of Soucasse §1.2
+Locks the radio decay law
 
     H_radio_i(t) = heat_prod_i · abundance_i · concentration_i ·
                    exp(log(2) · (t0_i − t) / half_life_i)

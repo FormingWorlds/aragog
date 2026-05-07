@@ -1,67 +1,118 @@
-# Testing
+# Testing suite
 
-Aragog uses [pytest](https://docs.pytest.org/) for testing.
+[![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
+
+This page is about *running* the existing test suite. For guidance on *writing*
+new tests see [How to build tests](build_tests.md).
+
+Aragog uses [pytest](https://docs.pytest.org/) with
+[pytest-xdist](https://pytest-xdist.readthedocs.io/) for parallel execution.
+Tests are categorised by speed and purpose into three pytest markers.
 
 ## Prerequisites
 
-Install Aragog with the `test` extra (which also pulls `pytest-xdist` for parallel execution):
+Install the test extras:
 
-```sh
+```console
 pip install -e ".[test]"
 ```
 
+The JAX-path tests additionally need the `jax` extra (`pip install -e ".[jax]"`); without it the JAX parity tests are skipped, not failed. SPIDER-format EOS tables are also required for a subset of tests; if `FWL_DATA` is unset or the expected files are missing, those tests skip cleanly.
+
+## Markers
+
+| Marker | Tests | Wall | Scope |
+|---|---|---|---|
+| `unit` | ~353 | ~1 to 2 min | EOS lookups, mesh helpers, phase evaluator branches, parser validation, JAX-vs-numpy parity on point inputs, regression pins on permeability constants, energy-equation invariants. No real solver call beyond a handful of cheap analytic-EOS smoke checks. |
+| `smoke` | ~40 | ~5 to 15 min | Full `EntropySolver.solve()` runs at relaxed tolerance. Verify the whole code path under representative configurations (closed mantle, gravitational separation, JAX RHS via CVODE). |
+| `slow` | ~3 | ~30+ min each | Long multi-Myr coupled-style runs and convergence studies. Manual only. |
+
+`pytest -o "addopts=" --collect-only -m <marker>` reports the live count.
+
 ## Running tests
 
-```sh
-# All tests
-pytest tests/
+### By marker
 
-# A specific file
-pytest tests/test_entropy_pytest.py
-pytest tests/test_entropy_verification.py
-pytest tests/test_jax_entropy.py
+```console
+pytest -m unit                       # Fast feedback during development
+pytest -m smoke                      # Full-solver smoke
+pytest -m "unit or smoke"            # CI push tier
+pytest -m "unit or smoke or slow"    # Full nightly tier
+```
 
-# Marker subsets
-pytest -m unit tests/
-pytest -m smoke tests/
+### Single test
 
-# Recommended: thread-based timeout for sandbox compatibility
+```console
+pytest tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_bit_parity_with_spider
+```
+
+### Without parallelization
+
+The default `addopts` in `pyproject.toml` enables xdist. To force serial execution
+(useful when debugging a flaky test or attaching a debugger), override `addopts`:
+
+```console
+pytest -o "addopts=-ra -v" -m unit
+```
+
+The `-o "addopts="` form replaces the default; this is also how the CI
+matrix runs the unit tier without xdist contention on small runners.
+
+### Sandbox-friendly invocation
+
+Some environments forbid `signal`-based timeouts. Use a thread-based timeout instead:
+
+```console
 pytest -p no:faulthandler --timeout=60 --timeout-method=thread tests/
 ```
 
-The JAX-path tests require `jax` and `equinox`; tests are skipped (not failed) when those optional dependencies are missing. Some tests also require the SPIDER-format EOS tables; they skip if `FWL_DATA` is unset or the expected files are not present.
+## CI tiers
 
-## Test suite overview
+| Trigger | Markers | Budget | Coverage |
+|---|---|---|---|
+| Push / PR (`ci_tests.yml`) | `unit and not slow` | < 5 min | None |
+| Nightly cron (`nightly.yml`, 02:30 UTC) | `unit or smoke or slow` | < 75 min | Yes; uploaded to Codecov |
+| Manual `workflow_dispatch` | as above | < 75 min | Yes |
 
-The current test suite is organised by the layer it covers:
+Push CI is intentionally unit-only because each smoke test runs a full `EntropySolver` call (5 to 15 min on a 2-vCPU runner under coverage instrumentation). Burning that budget on every push gives no bug-finding signal that the unit tier doesn't already cover.
 
-- **`tests/test_entropy_pytest.py`** — EOS unit tests, phase evaluator tests, solver-state and IC tests, mesh tests. The bulk of the unit-level coverage.
-- **`tests/test_entropy_verification.py`** — Conservation laws (energy, mass) and grey-body cooling against analytic limits.
-- **`tests/test_entropy_advanced.py`** — Advanced solver tests (extended-state modes, retry-ladder hooks).
-- **`tests/test_jax_entropy.py`** — JAX-path parity: EOS, phase evaluator, JIT/`vmap`/`grad`, boundary copies, solver parity against the numpy path.
-- **`tests/test_jax_mesh_gravity_fallback.py`** — External-mesh per-node gravity profile is interpolated correctly when `eos_method = 2`.
+## Fixtures
 
-## What the tests verify
+Shared fixtures live in `tests/conftest.py`. The most load-bearing one is `shared_eos`:
 
-1. **Solver completion.** The integrator reaches the requested end time and returns `status = 0` for representative configurations.
-2. **Physical plausibility.** Temperatures stay positive, the smooth-clipped melt fraction stays in $[0, 1]$, fluxes have the correct sign relative to the entropy gradient, and the rheological-front depth is non-negative.
-3. **EOS correctness.** Property lookups at on- and off-grid $(P, S)$ points return finite, monotone values; the SPIDER-parity two-stage blend is continuous across the solidus and liquidus.
-4. **Conservation.** Energy and mass conservation under closed integrations to within solver tolerance; mass conservation also holds through gravitational separation and chemical mixing (the segregation flux is divergence-free in mass).
-5. **JAX/numpy parity.** `EntropyEOS_JAX` and `compute_fluxes` reproduce the numpy path's outputs to within floating-point tolerance, and a CVODE run with the JAX RHS produces a trajectory that matches the numpy RHS run.
+### `shared_eos` (session)
+
+A session-scoped EOS loader that opens the SPIDER-format pressure-entropy tables once per test session and hands the `EntropyEOS` instance to every test that needs it. Without this fixture, the integration tests would each rebuild the lookup tables (~ 12 to 15 s per test); with it, the cost amortises to a single load (~ 3.5 s) across the whole nightly run.
+
+If `FWL_DATA` is unset or the expected files are missing, `shared_eos` skips the dependent tests rather than failing.
+
+## Parallelization
+
+The default `pyproject.toml` `addopts` registers xdist; `pytest -m unit` runs on
+all available cores out of the box. Tests are written to be order-independent;
+if you observe flakiness only under xdist, that is a bug in the test (not in
+xdist).
 
 ## Coverage
 
-```sh
-pytest --cov=src/aragog --cov-report=html tests/
+```console
+pytest -o "addopts=" --cov=src/aragog --cov-report=html -m "unit or smoke"
 ```
 
-Open `htmlcov/index.html` to inspect line-by-line coverage.
+Open `htmlcov/index.html` to inspect line-by-line coverage. The nightly CI
+uses `--cov-report=xml` and uploads the result to Codecov; the project floor
+is 85% (CI gate enforced via `pyproject.toml`).
 
 ## Linting
 
-Before committing, format and lint:
+Before committing, format and check all files:
 
-```sh
+```console
 ruff check --fix src/ tests/
 ruff format src/ tests/
 ```
+
+The local ruff (often 0.12.x) and the CI ruff (0.15.x) sometimes disagree on
+formatting drift; CI is canonical. Run BOTH `ruff check` and `ruff format`
+before pushing — `format` does NOT catch lint rules like `E402` misplaced
+imports.

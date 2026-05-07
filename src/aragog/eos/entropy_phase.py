@@ -463,12 +463,11 @@ class EntropyPhaseEvaluator:
         # Stokes settling (high porosity): K/por = d^2 * 2/9
         F_stokes = d**2 * 2.0 / 9.0
 
-        # Regime switching at critical porosities (Abe 1995):
-        # BKC -> RG at porosity 0.0769452 (Soucasse Aragog formulation;
-        # the analytical equality point of the BKC and RG permeabilities
-        # F_bkc(phi) = F_rg(phi) is phi ~ 0.077, with rounding-precision
-        # differences across published sources well inside the tanh
-        # blend width 0.02 below).
+        # Regime switching at critical porosities. BKC -> RG at
+        # porosity 0.0769452 is the analytical equality point of the
+        # BKC and RG permeabilities F_bkc(phi) = F_rg(phi) at phi ~
+        # 0.077; rounding-precision differences across published
+        # sources are well inside the tanh blend width 0.02 below.
         # RG -> Stokes at ~0.771.
         w_rg = tanh_weight(porosity, 0.0769452, 0.02)
         w_stokes = tanh_weight(porosity, 0.771462, 0.05)

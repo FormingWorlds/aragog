@@ -2,13 +2,13 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Documentation](https://github.com/FormingWorlds/aragog/actions/workflows/docs.yaml/badge.svg)](https://proteus-framework.org/aragog)
-[![Tests](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml/badge.svg)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
+[![Docs](https://github.com/FormingWorlds/aragog/actions/workflows/docs.yaml/badge.svg)](https://proteus-framework.org/aragog)
+[![Aragog CI Test Suite](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml/badge.svg)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
 [![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
 
 **1-D entropy-form interior thermal evolution solver for rocky planetary mantles.**
 
-Aragog integrates the spherically symmetric specific-entropy equation for a partially molten silicate mantle from the core-mantle boundary to the surface. Temperature, density, melt fraction, heat capacity, thermal expansivity, and the adiabatic gradient are all diagnostic quantities derived from $(P, S)$ via tabulated equations of state, so phase transitions are handled without an effective $c_p$ divergence at the solidus or liquidus. Aragog is part of the [PROTEUS](https://proteus-framework.org/PROTEUS) coupled atmosphere-interior evolution framework and is the production CHILI interior backend.
+Aragog integrates the spherically symmetric specific-entropy equation for a partially molten silicate mantle from the core-mantle boundary to the surface. Temperature, density, melt fraction, heat capacity, thermal expansivity, and the adiabatic gradient are all diagnostic quantities derived from $(P, S)$ via tabulated equations of state, so phase transitions are handled without an effective $c_p$ divergence at the solidus or liquidus. Aragog is part of the [PROTEUS](https://proteus-framework.org/PROTEUS) coupled atmosphere-interior evolution framework and is its production interior-energetics backend.
 
 - Documentation: <https://proteus-framework.org/aragog>
 - Source code: <https://github.com/FormingWorlds/aragog>
@@ -20,7 +20,7 @@ Aragog integrates the spherically symmetric specific-entropy equation for a part
 - **SPIDER bit-parity boundary conditions.** Default `core_bc = "energy_balance"` evolves $dS/dr|_\mathrm{cmb}$ as an extra ODE state, mirroring SPIDER's `bc.c:76-131`. Three other modes (`quasi_steady`, `gradient`, `bower2018`) are available for parity testing and quick exploration.
 - **Per-call mass-weighted $\Delta\Phi$ cap.** SUNDIALS root function returns at the exact step where the global melt-fraction change first reaches the configured limit; required at the rheological transition where any rate estimate from $t = 0$ overshoots within the call window and stalls the adaptive $dt$.
 - **Coupling to Zalmoxis.** External P-T tables, mesh, and per-node gravity profiles read from the structure solver are accepted via `eos_method = 2` and `mass_coordinates = true`, so the magma-ocean solve and the structure solve share a single self-consistent mantle.
-- **Six radionuclides per Ruedas (2017).** $^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$ for present-day heating; $^{26}\mathrm{Al}$ and $^{60}\mathrm{Fe}$ available with the same parser interface for early-Solar-System studies.
+- **Six radionuclides per [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract).** $^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$ for present-day heating; $^{26}\mathrm{Al}$ and $^{60}\mathrm{Fe}$ available with the same parser interface for early-Solar-System studies.
 
 ## Quick start
 
@@ -68,7 +68,7 @@ solver.solve()
 out = solver.get_state()
 ```
 
-The bundled `abe_mixed.cfg` uses production CHILI defaults: SUNDIALS CVODE, JAX analytic Jacobian, `core_bc = "energy_balance"`, `mass_coordinates = true`, `phase_smoothing = "tanh"`, `kappah_floor = 10` m$^2$/s, and the four long-lived radionuclides ($^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$) with Earth-mantle concentrations from Turcotte & Schubert (2014).
+The bundled `abe_mixed.cfg` uses production defaults: SUNDIALS CVODE, JAX analytic Jacobian, `core_bc = "energy_balance"`, `mass_coordinates = true`, `phase_smoothing = "tanh"`, `kappah_floor = 10` m$^2$/s, and the four long-lived radionuclides ($^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$) with Earth-mantle concentrations from [Turcotte & Schubert (2002)](https://scixplorer.org/abs/2002gdyn.book.....T/abstract).
 
 ## Test suite
 
@@ -97,6 +97,6 @@ Full theory and the prioritised-settings table live in [`docs/Explanations/`](ht
 
 If you use Aragog (or the original [SPIDER code](https://github.com/djbower/spider)) please cite:
 
-- Bower, D.J., P. Sanan, and A.S. Wolf (2018), Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets, *Phys. Earth Planet. Inter.*, **274**, 49-62, doi: <https://doi.org/10.1016/j.pepi.2017.11.004>. (open access at <https://arxiv.org/abs/1711.07303>; EarthArXiv mirror at <https://eartharxiv.org/k6tgf>).
+- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets. *Physics of the Earth and Planetary Interiors*, **274**, 49 to 62.
 
-The PALEOS pressure-entropy tables used by the production CHILI path are from Attia, M., Lichtenberg, T., Werlen, A., Bonati, I., Bower, D., et al. (2026), *PALEOS: A planetary entropy and structure model* (manuscript in preparation). Radioactive heat-production data are from Ruedas, T. (2017), *Geochem. Geophys. Geosyst.* **18**(9), 3530-3541, doi: <https://doi.org/10.1002/2017GC006997>.
+The PALEOS pressure-entropy tables used by the production path are described in [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract) (preprint). Radioactive heat-production data are from [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract).

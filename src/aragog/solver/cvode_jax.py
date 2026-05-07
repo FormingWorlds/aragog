@@ -18,7 +18,7 @@ Supported ``core_bc_mode`` values:
   ``jax.solver.dSdt``.
 - ``energy_balance``: state vector is N+1 (entropy + dSdr_cmb);
   RHS is ``jax.solver.dSdt_energy_balance``. This is the
-  production CHILI Earth path under PROTEUS d55726c5+.
+  production PROTEUS path.
 
 Unsupported (factory raises ``ValueError`` and the calling solver
 falls back to numpy RHS + FD Jacobian after logging a warning):
@@ -75,7 +75,7 @@ def build_jax_rhs_and_jacobian(
         Which JAX RHS to wrap: 'quasi_steady' uses ``jax.solver.dSdt``
         (N-state), 'energy_balance' uses ``jax.solver.dSdt_energy_balance``
         (N+1 state with dSdr_cmb closure equation as the (N+1)-th
-        component). The latter is the production CHILI Earth code path.
+        component). The latter is the production PROTEUS code path.
     radio_isotope_params : tuple, default ()
         Optional 5-tuple ``(heat_prod, abundance, concentration,
         t0_years, half_life_years)`` of 1D arrays, one entry per

@@ -9,7 +9,7 @@ with b = param_utbl_const. The JAX path (jax/solver.py:_utbl_tsurf_jax)
 must produce byte-identical results so that PROTEUS+JAX runs with
 param_utbl=True match SPIDER's UTBL-corrected surface flux.
 
-Production CHILI configs use param_utbl=False, so this divergence
+Production configs use param_utbl=False, so this divergence
 does not currently affect any paper-line run. The tests pin parity
 against future SPIDER-parity test configs that may flip the flag.
 """

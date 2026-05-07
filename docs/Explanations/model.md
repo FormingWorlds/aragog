@@ -81,7 +81,7 @@ $$
 
 The instability criterion in the entropy formulation is simply $\partial S/\partial r < 0$. The $\max$ form is implemented as a smooth approximation (rather than a hard switch) so that the BDF Jacobian remains continuous through the onset of convection.
 
-The eddy diffusivity $\kappa_h$ is computed from a mixing length $l(r)$ and a regime-dependent velocity scale. The viscous and inviscid limits of Abe (1993) are blended via a $\tanh$ on the cell Reynolds number around $Re_\mathrm{crit} = 9/8$:
+The eddy diffusivity $\kappa_h$ is computed from a mixing length $l(r)$ and a regime-dependent velocity scale. The viscous and inviscid limits of [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract) are blended via a $\tanh$ on the cell Reynolds number around $Re_\mathrm{crit} = 9/8$:
 
 $$
 \kappa_h = l\,\Big[(1-w)\,v_\mathrm{visc} + w\,v_\mathrm{inv}\Big],\qquad

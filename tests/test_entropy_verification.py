@@ -771,7 +771,7 @@ class TestMeshConvergence:
 
 # -- Tier 1: No explicit Φ_vol source -----------------------------------------
 #
-# The Soucasse §1.2 form of segregation heating
+# The historical explicit form of segregation heating
 #
 #     Phi_vol = rho * g * (1/rho_m - 1/rho_s) * (j_cm + j_gm)         [W/m^3]
 #
@@ -851,7 +851,7 @@ def _make_phi_vol_test_state(
 @pytest.mark.unit
 class TestNoExplicitPhiVolSource:
     """Negative regressions guarding against re-introduction of an
-    explicit Soucasse §1.2 source term
+    explicit volumetric segregation source term
 
         Phi_vol = rho · g · (1/rho_m - 1/rho_s) · (j_cm + j_gm)
 
@@ -924,7 +924,7 @@ class TestNoExplicitPhiVolSource:
         must be exactly zero despite non-zero j_grav AND j_mix.
 
         This is the regime where the historical explicit
-        Φ_vol = g·Δv·(j_mix + j_grav) was largest in production CHILI
+        Φ_vol = g·Δv·(j_mix + j_grav) was largest in production
         runs (1 M⊕ rheological-transition layer). The 7-cell matrix
         attractor at F_dil/(-F_int) = -1.000 came from exactly this
         source. Post-deletion: zero.

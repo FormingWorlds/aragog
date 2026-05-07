@@ -33,7 +33,7 @@ The instability criterion is $\partial S/\partial r < 0$. The $\max(\cdot, 0)$ f
 
 ### Eddy diffusivity
 
-$\kappa_h$ is the product of a mixing length $l(r)$ and a regime-dependent velocity scale. Following Abe (1993), Aragog blends the viscous and inviscid limits via a $\tanh$ on the cell Reynolds number:
+$\kappa_h$ is the product of a mixing length $l(r)$ and a regime-dependent velocity scale. Following [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract), Aragog blends the viscous and inviscid limits via a $\tanh$ on the cell Reynolds number:
 
 $$
 v_\mathrm{visc} = \frac{\alpha g\,(-\partial S/\partial r)\,T\,l^2}{18\,\nu},\qquad
@@ -90,7 +90,7 @@ where $L(P)$ is the EOS-tabulated, pressure-dependent latent heat of fusion.
 
 ![Permeability F(porosity)](../figures/vv/fig_04_permeability.png)
 
-**Figure 3.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three Abe (1993, 1995) regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling. Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes) per the Soucasse formulation §3.3. (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
+**Figure 3.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling, following [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes). (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
 
 ### Phase-boundary smoothing
 
@@ -129,7 +129,7 @@ Internal heating contributes to the entropy equation through the source term $\r
 - **Radiogenic.** $H_\mathrm{radio} = \sum_i \chi_i \varphi_i \exp(-\ln 2\,(t - t_0)/\tau_{1/2,i})$, time-dependent and (typically) space-uniform.
 - **Tidal.** Per-staggered-node array supplied through `tidal_array`; broadcast scalar or length-$N$ array.
 
-The volumetric work done when melt of different density is transported across a pressure gradient is *not* added as an explicit volumetric source. By definition the enthalpy contrast $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h) \supset +\rho g\,\Delta v\,j$ already carries the same quantity through the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. Adding it explicitly would double-count (Bower 2018 §3, SPIDER `energy.c`).
+The volumetric work done when melt of different density is transported across a pressure gradient is *not* added as an explicit volumetric source. By definition the enthalpy contrast $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h) \supset +\rho g\,\Delta v\,j$ already carries the same quantity through the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. Adding it explicitly would double-count ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §3, SPIDER `energy.c`).
 
 ## Per-component flux output
 
@@ -150,4 +150,4 @@ Per-staggered-node heating is in `heating` (sum of the two contributions); per-c
 
 ![Heat-flux decomposition](../figures/vv/fig_02_flux_decomposition.png)
 
-**Figure 2.** (a) Magnitude of the four heat-flux components $F_\text{cond}$, $F_\text{conv}$, $F_\text{grav}$, $F_\text{mix}$ (Soucasse §1.1) and their sum on an 80-cell Earth mesh, evaluated at a fully-mushy state where the entropy on each cell is the midpoint of the local solidus and liquidus values plus a small surface-ward gradient. Open triangles mark cells where the signed flux is negative. The four components reconstruct $F_\text{tot}$ to floating-point round-off ($\max|F_\text{tot}-\sum F_i|/|F_\text{tot}| < 10^{-15}$). (b) Internal volumetric heating sources $H_\text{radio}$, $H_\text{tidal}$ at the staggered nodes for the same state, with the production CHILI radionuclide cocktail at $t=0$.
+**Figure 2.** (a) Magnitude of the four heat-flux components $F_\text{cond}$, $F_\text{conv}$, $F_\text{grav}$, $F_\text{mix}$ and their sum on an 80-cell Earth mesh, evaluated at a fully-mushy state where the entropy on each cell is the midpoint of the local solidus and liquidus values plus a small surface-ward gradient. Open triangles mark cells where the signed flux is negative. The four components reconstruct $F_\text{tot}$ to floating-point round-off ($\max|F_\text{tot}-\sum F_i|/|F_\text{tot}| < 10^{-15}$). (b) Internal volumetric heating sources $H_\text{radio}$, $H_\text{tidal}$ at the staggered nodes for the same state, with the bundled radionuclide cocktail at $t=0$.

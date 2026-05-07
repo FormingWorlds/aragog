@@ -15,7 +15,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 class EnergyConfig:
     """Physics toggle flags, heating parameters, and solver knobs.
 
-    Defaults are aligned with the PROTEUS production CHILI path
+    Defaults are aligned with the PROTEUS production path
     (SUNDIALS CVODE + JAX analytic Jacobian + tanh phase smoothing
     with the bottom-up gravitational-separation gate enabled and a
     phase-dependent eddy-diffusivity floor of 10 m^2/s).

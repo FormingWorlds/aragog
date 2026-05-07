@@ -1120,9 +1120,9 @@ class TestJAXJgravSmoothing:
     ):
         """Earth-like Stokes-regime mesh + PhaseParams.
 
-        grain_size = 0.1 m matches the R8 CHILI config and makes the
-        test discriminating: with 1 mm grain the Stokes permeability
-        is so small that the bug is hard to reproduce.
+        grain_size = 0.1 m makes the test discriminating: with 1 mm
+        grain the Stokes permeability is so small that the bug is
+        hard to reproduce.
 
         phase_smoothing defaults to the production setting ('tanh');
         tests that probe cubic-Hermite-specific behaviour (e.g. the
@@ -1427,7 +1427,7 @@ class TestSPIDERParityPorts:
     @pytest.fixture(scope='class')
     def numpy_phase_eval(self, numpy_eos):
         """Numpy EntropyPhaseEvaluator with the same defaults as the
-        JAX PhaseParams used in production CHILI runs."""
+        JAX PhaseParams used in production runs."""
         from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
         return EntropyPhaseEvaluator(
@@ -1436,7 +1436,7 @@ class TestSPIDERParityPorts:
             thermal_conductivity_solid=4.0,
             thermal_conductivity_liquid=2.0,
             cp_blend='latent',
-            matprop_smooth_width=0.01,  # CHILI Earth production setting
+            matprop_smooth_width=0.01,  # production setting
         )
 
     @pytest.mark.parametrize('S_off', [-300.0, -100.0, 0.0, 100.0, 300.0])

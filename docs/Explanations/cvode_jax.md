@@ -8,7 +8,7 @@ This document explains *why* CVODE+JAX is the production default, *how* the fact
 
 The mantle ODE is stiff almost everywhere. The mushy band (around the rheological transition at melt fraction $\phi \approx 0.4$) sets the dominant timescale; conductive cells far from it sit at very different timescales. A modified-Newton solver with a cached Jacobian converges in 1-2 iterations on each step, while a finite-difference reconstruction would re-evaluate the RHS $O(N)$ times per step.
 
-CVODE applies a frozen-Jacobian strategy: the Jacobian is reused across multiple steps until convergence degrades, at which point it is rebuilt. This is the same strategy SPIDER uses through PETSc TS. With a properly factored Jacobian the CHILI 1 M$_\oplus$ run takes minutes rather than hours.
+CVODE applies a frozen-Jacobian strategy: the Jacobian is reused across multiple steps until convergence degrades, at which point it is rebuilt. This is the same strategy SPIDER uses through PETSc TS. With a properly factored Jacobian a 1 $M_\oplus$ Earth-mantle run takes minutes rather than hours.
 
 When `scikits.odes` is not installed at runtime, the solver falls back to scipy `Radau` and emits a warning at solve time. scipy `BDF` is also selectable via `solver.solver_method = "bdf"`; both scipy paths are slower than CVODE but work on platforms where the SUNDIALS bindings are unavailable.
 
@@ -16,7 +16,7 @@ When `scikits.odes` is not installed at runtime, the solver falls back to scipy 
 
 Without JAX, CVODE rebuilds its Jacobian by finite-differencing the RHS column by column. The cost is $O(N^2)$ RHS calls per Jacobian and the resulting matrix has finite-difference noise that hurts Newton convergence near the rheological transition.
 
-The JAX path replaces that with one `jax.jacrev` backward pass over the traced flux computation. A single backward pass produces the full analytic Jacobian, exact to machine precision, in time comparable to a few RHS evaluations. CHILI runs that bench-mark at 50 minutes with FD Jacobians complete in 5-10 minutes with JAX.
+The JAX path replaces that with one `jax.jacrev` backward pass over the traced flux computation. A single backward pass produces the full analytic Jacobian, exact to machine precision, in time comparable to a few RHS evaluations. Coupled PROTEUS runs that benchmark at 50 minutes with FD Jacobians complete in 5-10 minutes with JAX.
 
 ## How the factory plumbing works
 

@@ -2,7 +2,7 @@
 
 The `aragog.jax` package contains JAX-traceable replicas of the EOS, phase evaluator, and dSdt right-hand side. They are used to build an analytic Jacobian via `jax.jacrev` and feed it to SUNDIALS CVODE through the registered factory in `aragog.solver.cvode_jax`.
 
-This module is loaded only when `solver.use_jax_jacobian = true` (the production CHILI default). The numpy path in `aragog.solver.entropy_state` remains the reference implementation and is exercised by the standalone tests; both must agree to numerical precision (see [first-principles verification](../../Explanations/verification.md)).
+This module is loaded only when `solver.use_jax_jacobian = true` (the production default). The numpy path in `aragog.solver.entropy_state` remains the reference implementation and is exercised by the standalone tests; both must agree to numerical precision (see [first-principles verification](../../Explanations/verification.md)).
 
 For when and why to opt into the JAX path, see [CVODE and JAX-derived Jacobians](../../Explanations/cvode_jax.md).
 
@@ -40,7 +40,7 @@ Phase-aware property evaluation and flux assembly. `evaluate_phase` performs the
 
 ## `aragog.jax.solver`
 
-Standalone JAX solve path used by the verification suite. The production CHILI path uses CVODE driven by `aragog.solver.entropy_solver` and only borrows the Jacobian from `jax.jacrev`; this module's `solve_entropy` is kept for parity tests and gradient-based sensitivity studies.
+Standalone JAX solve path used by the verification suite. The production path uses CVODE driven by `aragog.solver.entropy_solver` and only borrows the Jacobian from `jax.jacrev`; this module's `solve_entropy` is kept for parity tests and gradient-based sensitivity studies.
 
 ::: aragog.jax.solver
     options:

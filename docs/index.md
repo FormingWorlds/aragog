@@ -1,7 +1,7 @@
 # Aragog
 
-[![Documentation](https://github.com/FormingWorlds/aragog/actions/workflows/docs.yaml/badge.svg)](https://proteus-framework.org/aragog)
-[![Tests](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml/badge.svg)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
+[![Docs](https://github.com/FormingWorlds/aragog/actions/workflows/docs.yaml/badge.svg)](https://proteus-framework.org/aragog)
+[![Aragog CI Test Suite](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml/badge.svg)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
 [![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
 
 **Aragog** is a 1-D spherically symmetric interior thermal evolution solver for rocky planetary mantles, part of the [PROTEUS](https://proteus-framework.org/PROTEUS) coupled atmosphere-interior evolution framework.
@@ -15,7 +15,7 @@ Aragog evolves the specific entropy $S(r,t)$ at staggered nodes inside a spheric
     See the **[Getting Started guide](getting_started.md)** for installation, first run, and basic usage.
 
 !!! info "Standalone or PROTEUS-integrated?"
-    Aragog is used in two distinct ways: as a standalone Python library, or as the interior energetics module inside the PROTEUS coupled framework. The two paths share the same numerical core but differ at the configuration boundary. See [Standalone vs PROTEUS-integrated usage](How-to/usage-paths.md) before picking a How-to or Tutorial.
+    Aragog is used in two distinct ways: as a standalone Python library, or as the interior energetics module inside the PROTEUS coupled framework. The two paths share the same numerical core but differ at the configuration boundary. See [Standalone usage](How-to/usage-paths.md) or [Coupling Aragog to PROTEUS](How-to/proteus_coupling.md) before picking a How-to or Tutorial.
 
 ## Features
 
@@ -74,8 +74,9 @@ Aragog evolves the specific entropy $S(r,t)$ at staggered nodes inside a spheric
 
 If you use Aragog in published work, please cite the original numerical method paper and, where applicable, the PALEOS multiphase EOS framework that supplies the production-run $(P, S)$ tables:
 
-- Bower, D.J., Sanan, P., & Wolf, A.S. (2018). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62. [https://doi.org/10.1016/j.pepi.2017.11.004](https://doi.org/10.1016/j.pepi.2017.11.004)
-- Attia, M., et al. (2026). *PALEOS: a multiphase equation of state framework for terrestrial mantles*. (Forthcoming.)
+- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62.
+- [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: A planetary entropy and structure model* (preprint).
+- [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract). *Radioactive heat production of six geologically important nuclides*. **Geochemistry, Geophysics, Geosystems**, 18(9), 3530 to 3541. (Source for the bundled radionuclide cocktail.)
 
 ## Code availability
 

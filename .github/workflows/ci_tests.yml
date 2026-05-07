@@ -1,4 +1,4 @@
-name: Aragog tests
+name: Aragog CI Test Suite
 
 on:
   push:

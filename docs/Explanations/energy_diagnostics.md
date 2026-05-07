@@ -21,11 +21,11 @@ $$
 + \Delta E_{Q_\text{radio}} + \Delta E_{Q_\text{tidal}},
 $$
 
-where each $\Delta E_{X}$ is the corresponding `step_dE_*_J` field summed over the run. If the integrals are correctly computed, the cumulative sum should track the change in the mantle's integrated specific enthalpy `E_state` to within numerical-noise tolerance over a coupled CHILI run.
+where each $\Delta E_{X}$ is the corresponding `step_dE_*_J` field summed over the run. If the integrals are correctly computed, the cumulative sum should track the change in the mantle's integrated specific enthalpy `E_state` to within numerical-noise tolerance over a coupled run.
 
 ## Why no volumetric-work source
 
-The four integrals above are exhaustive for the entropy-form solver: the volumetric work done when a melt of different density is transported across a pressure gradient is already implicit in the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. By definition $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h)$ already carries the same volumetric-work term. Exposing a separate $\Phi_\text{vol}$ source would double-count (Bower 2018 §3, SPIDER `energy.c`); a negative regression test in `tests/test_jax_no_phi_vol_source.py` ensures the source stays absent.
+The four integrals above are exhaustive for the entropy-form solver: the volumetric work done when a melt of different density is transported across a pressure gradient is already implicit in the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. By definition $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h)$ already carries the same volumetric-work term. Exposing a separate $\Phi_\text{vol}$ source would double-count ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §3, SPIDER `energy.c`); a negative regression test in `tests/test_jax_no_phi_vol_source.py` ensures the source stays absent.
 
 ## Worked example
 

@@ -583,7 +583,7 @@ class EntropyEOS_JAX(eqx.Module):
         matprop_smooth_width : float, default 0.0
             SPIDER's ``-matprop_smooth_width``. ``0.0`` reproduces the
             sharp ``smth=1`` inside [0,1] convention; ``0.01`` is the
-            CHILI Earth production setting.
+            production setting.
 
         Returns
         -------

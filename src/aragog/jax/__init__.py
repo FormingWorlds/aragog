@@ -6,7 +6,7 @@ arrays and are compatible with ``jax.jit``, ``jax.grad``,
 ``jax.jacrev``, and ``jax.vmap``.
 
 It is loaded only when ``solver.use_jax_jacobian = true`` (the
-production CHILI default). The numpy path in
+production default). The numpy path in
 ``aragog.solver.entropy_state`` remains the reference implementation
 and is exercised by the standalone tests.
 

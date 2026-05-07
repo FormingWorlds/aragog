@@ -69,7 +69,7 @@ Verify that the JAX-backed `EntropyEOS_JAX` and `compute_fluxes` agree with the 
 
 **Figure 4.** Per-cell relative error
 $|\dot S_\text{numpy} - \dot S_\text{jax}|/|\dot S_\text{numpy}|$
-on an 80-cell CHILI Earth mesh at three representative magma-ocean states: (a) initial condition (full magma ocean, $S\approx 3900$ J/kg/K), (b) mid-solidification ($S = 3300 \to 3700$ J/kg/K from CMB to surface), (c) near-solid ($S = 3000 \to 3300$ J/kg/K). (d) Summary across states. Median relative error stays $\le 3\times 10^{-5}$ in all three regimes; the max-rel-error excursions ($\le 7\times 10^{-4}$ at the IC) are concentrated in cells where $|\dot S|$ itself is at the solver noise floor and do not affect Jacobian preconditioning quality. The dotted line is float-64 machine epsilon.
+on an 80-cell Earth mesh at three representative magma-ocean states: (a) initial condition (full magma ocean, $S\approx 3900$ J/kg/K), (b) mid-solidification ($S = 3300 \to 3700$ J/kg/K from CMB to surface), (c) near-solid ($S = 3000 \to 3300$ J/kg/K). (d) Summary across states. Median relative error stays $\le 3\times 10^{-5}$ in all three regimes; the max-rel-error excursions ($\le 7\times 10^{-4}$ at the IC) are concentrated in cells where $|\dot S|$ itself is at the solver noise floor and do not affect Jacobian preconditioning quality. The dotted line is float-64 machine epsilon.
 
 ![UTBL Cardano-formula consistency](../figures/vv/fig_05_utbl_cardano.png)
 

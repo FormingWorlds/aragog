@@ -6,7 +6,7 @@ computes flux divergence, and adds internal heating, all in pure JAX.
 
 Not production-ready: the diffrax ESDIRK solvers (kvaerno3, kvaerno5)
 stall at the first crystallisation step on the cubic-Hermite J_grav
-smoothing in CHILI Earth runs. Kept for autodiff development. The
+smoothing in coupled Earth-mantle runs. Kept for autodiff development. The
 production JAX integration path is the CVODE Option-Z path in
 ``aragog/solver/cvode_jax.py``, selected by setting
 ``EnergyParams.use_jax_jacobian = True`` (PROTEUS-side
@@ -58,8 +58,8 @@ def _no_radio(_t_yr):
     """Default radio heating callable: returns 0.0 W/kg, JAX-traceable.
 
     Used as the args-tuple entry by ``solve_entropy`` and other call
-    sites that don't have radionuclide tables. Production CHILI
-    (``build_jax_rhs_and_jacobian``) replaces this with a closure
+    sites that don't have radionuclide tables. The production
+    PROTEUS path (``build_jax_rhs_and_jacobian``) replaces this with a closure
     that evaluates the per-cell radio heating at the live integrator
     time.
     """
@@ -140,7 +140,7 @@ class BoundaryParams(eqx.Module):
     # branch is constant-folded) the surface radiating temperature
     # is replaced with the real cubic root of
     #     param_utbl_const * T_surf^3 + T_surf - T_interior = 0.
-    # Off in current production CHILI configs (param_utbl=False);
+    # Off in current production configs (param_utbl=False);
     # used by SPIDER-parity test runs.
     param_utbl: bool = eqx.field(static=True)
     param_utbl_const: jax.Array
@@ -241,7 +241,7 @@ def _apply_surface_bc(
     T_interior = phase_basic_T[-1]
 
     # UTBL Cardano correction (Bower+2018 Eq. 18). Off in current
-    # production CHILI configs; gated on the static `param_utbl` flag
+    # production configs; gated on the static `param_utbl` flag
     # so the branch is constant-folded by JIT. Mirrors the numpy path
     # in solver/boundary.py:_utbl_tsurf.
     if bc.param_utbl:

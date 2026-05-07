@@ -27,7 +27,7 @@ The grid must be rectangular: phase-filtered tables (where each phase's grid is 
 
 ### Canonical source: PALEOS
 
-In the PROTEUS coupled path the tables are produced by the PALEOS multiphase EOS framework (Attia et al. 2026) from a configured P-T melting curve and the Wolf-Bower (2018) RTpress liquid EOS. The PROTEUS wrapper writes the resulting tables into `output/data/aragog_pt/` at construction time and points `eos_dir` there.
+In the PROTEUS coupled path the tables are produced by the PALEOS multiphase EOS framework ([Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract)) from a configured P-T melting curve and the [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract) RTpress liquid EOS. The PROTEUS wrapper writes the resulting tables into `output/data/aragog_pt/` at construction time and points `eos_dir` there.
 
 ## External mesh file (`eos_method = 2`)
 

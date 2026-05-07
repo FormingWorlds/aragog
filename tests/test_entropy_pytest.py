@@ -475,7 +475,7 @@ class TestJgravSmoothing:
     ):
         """Build EntropyState with the requested Jgrav configuration.
 
-        Uses grain_size = 0.1 m by default to match the R8 CHILI
+        Uses grain_size = 0.1 m by default to match the reference
         Earth config and make the test discriminating: smaller grain
         sizes (e.g. 1 mm) produce a v_rel small enough that the bug
         is hard to reproduce.
@@ -1091,7 +1091,7 @@ class TestBowerCoreBC:
     The v3 Aragog quasi-steady BC computed F_cmb as a static fraction
     (alpha) of F[1] based on the heat capacity ratio between the
     first mantle cell and the core. This produced a -19 % T_core
-    offset against SPIDER on R8 CHILI because Aragog had no record
+    offset against SPIDER on the R8 reference because Aragog had no record
     of the actual core enthalpy state.
 
     v4 expands the solver state vector by one element (T_core at
@@ -1324,7 +1324,7 @@ class TestEnergyBalanceCoreBC:
 
         We hand-wire these instead of calling _initialize_internals to
         avoid pulling in the full mesh/BC builder. The values mirror
-        the R8 CHILI Earth config (r_cmb=3480 km, dr_cmb=100 km,
+        the R8 reference Earth config (r_cmb=3480 km, dr_cmb=100 km,
         core_density=10738 kg/m^3, core_cp=880 J/(kg K), core_tfac=1.147).
         """
         solver._cmb_r_cmb = r_cmb
@@ -1551,7 +1551,7 @@ class TestEnergyBalanceCoreBC:
     def test_energy_balance_rhs_bit_parity_prescribed_inputs(self, entropy_eos):
         """SPIDER bc.c formula bit-parity against a hand-computed value.
 
-        Chosen inputs are the R8 CHILI Earth order-of-magnitude values
+        Chosen inputs are the R8 reference Earth order-of-magnitude values
         at t ≈ 10 kyr (just after first crystallization), which exercise
         the nominal operating regime of the BC:
             F_cmb_basic    = 3.0e4 W/m^2  (plausible early-evolution)

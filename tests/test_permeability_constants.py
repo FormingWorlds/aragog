@@ -1,11 +1,11 @@
 """Pin the BKC -> Rumpf-Gupte -> Stokes regime-switching porosities.
 
 The three-regime permeability model uses tanh-blended switches at two
-critical porosities (Abe 1995; Soucasse Aragog formulation). Both the
-numpy path (eos/entropy_phase.py) and the JAX path (jax/phase.py) must
-agree on the constants byte-for-byte; otherwise gravitational separation
-diverges between the analytic-Jacobian RHS and the numpy SolverOutput
-post-processor that trusts the JAX trajectory.
+critical porosities. Both the numpy path (eos/entropy_phase.py) and the
+JAX path (jax/phase.py) must agree on the constants byte-for-byte;
+otherwise gravitational separation diverges between the analytic-Jacobian
+RHS and the numpy SolverOutput post-processor that trusts the JAX
+trajectory.
 """
 
 from __future__ import annotations
@@ -26,26 +26,26 @@ def _read(rel: str) -> str:
 
 
 @pytest.mark.unit
-def test_numpy_permeability_thresholds_match_soucasse():
-    """Numpy entropy_phase.py uses Soucasse permeability thresholds."""
+def test_numpy_permeability_thresholds_pinned():
+    """Numpy entropy_phase.py pins the BKC->RG and RG->Stokes thresholds."""
     src = _read('eos/entropy_phase.py')
     assert f'tanh_weight(porosity, {_BKC_RG_THRESH}, 0.02)' in src, (
-        'BKC -> RG threshold drifted from Soucasse spec'
+        'BKC -> RG threshold drifted from the pinned value'
     )
     assert f'tanh_weight(porosity, {_RG_STOKES_THRESH}, 0.05)' in src, (
-        'RG -> Stokes threshold drifted from Soucasse spec'
+        'RG -> Stokes threshold drifted from the pinned value'
     )
 
 
 @pytest.mark.unit
-def test_jax_permeability_thresholds_match_soucasse():
-    """JAX jax/phase.py uses Soucasse permeability thresholds."""
+def test_jax_permeability_thresholds_pinned():
+    """JAX jax/phase.py pins the BKC->RG and RG->Stokes thresholds."""
     src = _read('jax/phase.py')
     assert f'tanh_weight(porosity, {_BKC_RG_THRESH}, 0.02)' in src, (
-        'BKC -> RG threshold drifted from Soucasse spec'
+        'BKC -> RG threshold drifted from the pinned value'
     )
     assert f'tanh_weight(porosity, {_RG_STOKES_THRESH}, 0.05)' in src, (
-        'RG -> Stokes threshold drifted from Soucasse spec'
+        'RG -> Stokes threshold drifted from the pinned value'
     )
 
 

@@ -14,7 +14,7 @@ solver run on each of the supported core_bc modes that have a coverage
 deficit:
 
   * ``quasi_steady`` (the default; baseline path)
-  * ``energy_balance`` (the SPIDER-parity production CHILI path)
+  * ``energy_balance`` (the SPIDER-parity production path)
 
 The bower2018 and gradient core_bc modes share most of the dispatch
 code paths exercised by the above two and adding a third / fourth run
@@ -268,7 +268,7 @@ def test_entropy_solver_solidified_run_records_finite_diagnostics(shared_eos):
             assert np.all(np.isfinite(arr)), f'{fld} contains non-finite entries'
 
 
-# ---- core_bc='energy_balance' (production CHILI path) ----------------------
+# ---- core_bc='energy_balance' (production path) ----------------------
 
 
 def test_entropy_solver_solve_energy_balance_short_run_completes(shared_eos):
@@ -355,12 +355,12 @@ def test_entropy_solver_solve_bower2018_short_run_completes(shared_eos):
     )
 
 
-# ---- solver_method='cvode' (production CHILI path with FD Jacobian) -------
+# ---- solver_method='cvode' (production path with FD Jacobian) -------
 
 
 def test_entropy_solver_solve_cvode_path_short_run_completes(shared_eos):
     """CVODE solver path (the SUNDIALS BDF integrator via scikits.odes)
-    is the production CHILI integration backend. This exercises the
+    is the production integration backend. This exercises the
     CVODE-specific branches inside ``solve()`` (cvode_options setup,
     rootfn registration, status code dispatch) which the radau-based
     tests above do not touch.

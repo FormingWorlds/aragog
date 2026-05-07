@@ -144,7 +144,7 @@ def test_mesh_config_required_and_default_fields():
         mixing_length_profile='nearest_boundary',
         core_density=10500.0,
     )
-    # Documented defaults aligned with PROTEUS production CHILI.
+    # Documented defaults aligned with PROTEUS production.
     assert mc.eos_method == 1
     assert mc.surface_density == pytest.approx(4078.95095544, rel=1e-12)
     assert mc.gravitational_acceleration == pytest.approx(9.81, abs=1e-12)
@@ -205,7 +205,7 @@ def test_mixed_phase_config_default_cp_blend_is_latent():
 
     Discriminator: a regression to 'linear' would drop the latent-
     heat augmentation in the mushy band and silently divert from
-    SPIDER parity in every coupled CHILI run.
+    SPIDER parity in every coupled PROTEUS run.
     """
     mp = MixedPhaseConfig(
         latent_heat_of_fusion=4e5,
