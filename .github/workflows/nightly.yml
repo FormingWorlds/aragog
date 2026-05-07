@@ -37,24 +37,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up conda env (sundials + scikits-odes binaries)
+      - name: Set up conda env (sundials + gfortran from conda-forge)
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: aragog-nightly
           create-args: >-
             python=3.12
             sundials
-            scikits-odes
-            scikits-odes-sundials
-            jax
-            equinox
-            pytest
-            pytest-cov
-            pytest-xdist
-            pytest-dependency
+            gfortran
           condarc: |
             channels:
               - conda-forge
+
+      - name: Install pip-only test deps (scikits-odes builds against conda SUNDIALS)
+        run: |
+          pip install pytest pytest-cov pytest-xdist pytest-dependency
+          pip install scikits-odes scikits-odes-sundials jax equinox
 
       - name: Install aragog
         run: |
