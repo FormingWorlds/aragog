@@ -129,9 +129,26 @@ The function-call coupling is robust at the file boundary, but several edges hav
 !!! warning "`prevent_warming` clamp is energy non-conserving"
     `config.planet.prevent_warming` (default `false`) gates an early ratchet `T_magma = min(new, prev)` in `interior_energetics/wrapper.py`. The clamp suits strictly-cooling regimes but **silently destroys the warming half of any heat-pump cycle** in a coupled magma-ocean run, producing an apparent "T_magma plateau" that is in fact an energy-leak bug. The clamp must remain at the `false` default for production runs. A separate runaway-T fallback (`interior_o.ic == 2` recovery path) remains active independently and is not affected. If you see `T_magma` byte-pinned across hundreds of consecutive iterations with any per-call energy residual growing without bound, check the `prevent_warming` flag first.
 
-### `core_density` echo-back (SPIDER only)
+### `core_density` echo-back
 
-When the structure module is Zalmoxis and the energetics module is **SPIDER** (not Aragog), Zalmoxis writes a self-consistent `hf_row['core_density']` from the converged structure, and SPIDER's call sequence then passes `-rho_core <value>` to the SPIDER C binary, which treats this density as authoritative. Aragog has no equivalent echo-back: its core thermal properties come from `hf_row['core_density']` and `hf_row['core_heatcap']` and feed directly into the energy-balance BC.
+The PROTEUS Aragog wrapper recomputes the average core density from the on-disk Zalmoxis mantle mesh and the live ``hf_row['M_core']`` at every solve entry, and writes the corrected value back to ``hf_row['core_density']`` so downstream modules see the actually-used density.
+
+Mechanism:
+
+1. ``aragog.mesh.derive_core_density_from_mesh(<outdir>/data/zalmoxis_output.dat, hf_row['M_core'])`` reads $R_\mathrm{cmb}$ from the first row of the Zalmoxis-written mesh file and returns $\rho_\mathrm{core} = M_\mathrm{core} / (\tfrac{4}{3} \pi R_\mathrm{cmb}^3)$.
+2. The PROTEUS-side ``proteus.interior_energetics.aragog.resolve_core_density`` wraps this helper with the configuration-aware fall-back: when no Zalmoxis mesh file is present, or ``hf_row['M_core'] <= 0``, or the mesh file is corrupt, the wrapper falls back to the cached ``hf_row['core_density']`` (or the numeric value from ``config.interior_struct.core_density``) without raising.
+3. Aragog's per-iteration ``update_structure`` re-reads the mesh file via ``solver.parameters.mesh.eos_file`` so a Zalmoxis re-solve that shifts $R_\mathrm{cmb}$ propagates into the live solver's ``MeshParameters.core_density`` before the next time step, and the corresponding write-back keeps ``hf_row['core_density']`` in sync.
+
+This mirrors the SPIDER wrapper's ``-rho_core`` re-derivation in ``proteus/interior_energetics/spider.py``: it survives mesh-blending fall-backs and stale-cache cases where ``hf_row['core_density']`` has drifted from the on-disk mesh state. Without the echo-back, a Zalmoxis re-solve that shifts $R_\mathrm{cmb}$ would silently leave the energy-balance core BC using the stale init-time density in the basal-cell flux balance.
+
+Failure modes that the echo-back handles defensively (each falls back to the cached baseline rather than raising):
+
+- ``zalmoxis_output.dat`` missing (fresh init before Zalmoxis has written it).
+- ``hf_row['M_core'] = 0`` or absent (very-first init call).
+- Empty or unparseable mesh file (truncated I/O, write race).
+- Non-positive $R_\mathrm{cmb}$ in the first row.
+
+The corresponding heat-capacity field is not echoed back: ``core_heatcap`` is treated as a configuration constant (Dulong-Petit iron, 450 J/kg/K, when ``config.interior_struct.core_heatcap = "self"``) rather than as a structure-derived quantity.
 
 ### Backend mismatch
 
