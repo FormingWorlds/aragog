@@ -34,7 +34,10 @@ jobs:
   nightly:
     name: Aragog-nightly (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 75 min: full suite is ~10 min on a 12-core Mac Studio, ~55 min on
+    # the 2-vCPU runner with --quiet + xdist. Leaves headroom for JAX
+    # warmup and conda env cache misses.
+    timeout-minutes: 75
     defaults:
       run:
         shell: bash -el {0}
@@ -82,7 +85,11 @@ jobs:
           # before the report. Without xdist the serial run hit the
           # 30-minute timeout at 23 % of the 271-test suite, dominated by
           # JAX-traced functions where line tracing is the bottleneck.
-          pytest -m "unit or smoke or slow" -n auto -o "addopts=" \
+          # -ra prints a short summary of failed/error/skipped tests at
+          # the end of the run; without it --quiet suppresses the
+          # FAILED list entirely if there are no other final messages,
+          # making post-mortem on cancelled runs near-impossible.
+          pytest -m "unit or smoke or slow" -n auto -o "addopts=" -ra \
             --cov=src/aragog --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage to Codecov

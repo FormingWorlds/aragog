@@ -158,12 +158,22 @@ def _build_parameters(
     )
 
 
-def _run_solver(parameters, S_init: float = 3300.0):
-    """Build EntropySolver, run a short integration, return solver+state."""
+@pytest.fixture(scope='module')
+def shared_eos():
+    """Build EntropyEOS once per module: PCHIP table construction
+    over multiple .dat files dominates wall time (~1-2 s on Linux CI),
+    and reusing it across the 8 integration tests cuts ~10-15 s of
+    redundant disk + interpolator setup on the 2-vCPU runner.
+    """
     from aragog.eos.entropy import EntropyEOS
+
+    return EntropyEOS(EOS_DIR)
+
+
+def _run_solver(parameters, eos, S_init: float = 3300.0):
+    """Build EntropySolver, run a short integration, return solver+state."""
     from aragog.solver.entropy_solver import EntropySolver
 
-    eos = EntropyEOS(EOS_DIR)
     solver = EntropySolver(parameters, entropy_eos=eos)
     solver.initialize()
     solver.set_initial_entropy(S_init)
@@ -184,7 +194,7 @@ def _S_init_below_liquidus(parameters) -> float:
 # ---- core_bc='quasi_steady' (the default path) -----------------------------
 
 
-def test_entropy_solver_solve_quasi_steady_short_run_completes():
+def test_entropy_solver_solve_quasi_steady_short_run_completes(shared_eos):
     """End-to-end: minimal-mesh solver run with quasi_steady BC must
     return without raising and produce a finite state vector.
 
@@ -193,7 +203,7 @@ def test_entropy_solver_solve_quasi_steady_short_run_completes():
     or leave ``solver._solution`` un-set.
     """
     parameters = _build_parameters(core_bc='quasi_steady', n_nodes=15, end_time=50.0)
-    solver, out = _run_solver(parameters, S_init=_S_init_below_liquidus(parameters))
+    solver, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
 
     # Solver must have populated _solution.
     assert hasattr(solver, '_solution')
@@ -212,14 +222,14 @@ def test_entropy_solver_solve_quasi_steady_short_run_completes():
     assert float(np.max(final_y)) < 5500.0
 
 
-def test_entropy_solver_get_state_returns_solver_output_with_required_fields():
+def test_entropy_solver_get_state_returns_solver_output_with_required_fields(shared_eos):
     """``get_state()`` must produce a ``SolverOutput`` with the documented
     fields. Discriminator for a regression that drops one of the
     per-call energy integrals (step_dE_F_int_J, step_dE_F_cmb_J,
     step_dE_Q_radio_J, step_dE_Q_tidal_J).
     """
     parameters = _build_parameters(core_bc='quasi_steady', n_nodes=15, end_time=20.0)
-    _, out = _run_solver(parameters, S_init=_S_init_below_liquidus(parameters))
+    _, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
 
     # SolverOutput dataclass: has at least the dispatched-via-PROTEUS fields.
     expected_fields = {
@@ -233,14 +243,14 @@ def test_entropy_solver_get_state_returns_solver_output_with_required_fields():
     assert not missing, f'SolverOutput missing required fields: {sorted(missing)}'
 
 
-def test_entropy_solver_solidified_run_records_finite_diagnostics():
+def test_entropy_solver_solidified_run_records_finite_diagnostics(shared_eos):
     """A short surface-cooling run must produce finite cumulative
     diagnostics. Discriminator: NaN/inf in any per-call integral
     suggests a regression in trapezoidal accumulation or in the
     entropy state update path.
     """
     parameters = _build_parameters(core_bc='quasi_steady', n_nodes=15, end_time=30.0)
-    _, out = _run_solver(parameters, S_init=_S_init_below_liquidus(parameters))
+    _, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
 
     for fld in (
         'step_dE_F_int_J',
@@ -261,7 +271,7 @@ def test_entropy_solver_solidified_run_records_finite_diagnostics():
 # ---- core_bc='energy_balance' (production CHILI path) ----------------------
 
 
-def test_entropy_solver_solve_energy_balance_short_run_completes():
+def test_entropy_solver_solve_energy_balance_short_run_completes(shared_eos):
     """Energy-balance core_bc uses the extended state vector
     [S_0, ..., S_{N-1}, dSdr_cmb] with length N+1. The dispatch
     inside ``solve()`` and ``set_initial_entropy()`` must accept
@@ -271,7 +281,7 @@ def test_entropy_solver_solve_energy_balance_short_run_completes():
     ``N`` would raise a shape mismatch on the first integrator call.
     """
     parameters = _build_parameters(core_bc='energy_balance', n_nodes=15, end_time=20.0)
-    solver, out = _run_solver(parameters, S_init=_S_init_below_liquidus(parameters))
+    solver, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
     assert solver._solution.t.size >= 2
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     # State must be length n_stag + 1 in energy_balance mode (the trailing
@@ -283,16 +293,14 @@ def test_entropy_solver_solve_energy_balance_short_run_completes():
     assert np.all(np.isfinite(final_y))
 
 
-def test_entropy_solver_set_initial_entropy_validates_length():
+def test_entropy_solver_set_initial_entropy_validates_length(shared_eos):
     """``set_initial_entropy`` must raise if the input array has the
     wrong length for the active core_bc mode.
     """
     parameters = _build_parameters(core_bc='quasi_steady', n_nodes=15, end_time=10.0)
-    from aragog.eos.entropy import EntropyEOS
     from aragog.solver.entropy_solver import EntropySolver
 
-    eos = EntropyEOS(EOS_DIR)
-    solver = EntropySolver(parameters, entropy_eos=eos)
+    solver = EntropySolver(parameters, entropy_eos=shared_eos)
     solver.initialize()
     n_stag = solver._n_stag
     # Pass an array that is n_stag - 1 long: the validator should reject.
@@ -300,17 +308,15 @@ def test_entropy_solver_set_initial_entropy_validates_length():
         solver.set_initial_entropy(np.zeros(n_stag - 1))
 
 
-def test_entropy_solver_set_initial_entropy_scalar_broadcasts():
+def test_entropy_solver_set_initial_entropy_scalar_broadcasts(shared_eos):
     """Scalar S_init must be broadcast to a uniform isentropic profile.
     Edge case: a regression that lost the scalar branch would crash
     callers passing 3500.0.
     """
     parameters = _build_parameters(core_bc='quasi_steady', n_nodes=12, end_time=10.0)
-    from aragog.eos.entropy import EntropyEOS
     from aragog.solver.entropy_solver import EntropySolver
 
-    eos = EntropyEOS(EOS_DIR)
-    solver = EntropySolver(parameters, entropy_eos=eos)
+    solver = EntropySolver(parameters, entropy_eos=shared_eos)
     solver.initialize()
     solver.set_initial_entropy(3200.0)
     # Verify isentropic: the entropy block (first n_stag entries) is uniform.
@@ -322,7 +328,7 @@ def test_entropy_solver_set_initial_entropy_scalar_broadcasts():
 # ---- core_bc='bower2018' (parity-only, retained for regression) ------------
 
 
-def test_entropy_solver_solve_bower2018_short_run_completes():
+def test_entropy_solver_solve_bower2018_short_run_completes(shared_eos):
     """bower2018 core_bc evolves T_core as the (N+1)-th state component
     via a conduction-only CMB closure. This exercises the bower2018-
     specific RHS branch in entropy_solver.py (lines 1051-1216) which
@@ -333,7 +339,7 @@ def test_entropy_solver_solve_bower2018_short_run_completes():
     a shape mismatch or leave T_core constant.
     """
     parameters = _build_parameters(core_bc='bower2018', n_nodes=15, end_time=20.0)
-    solver, _ = _run_solver(parameters, S_init=_S_init_below_liquidus(parameters))
+    solver, _ = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
     assert solver._solution.t.size >= 2
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     n_stag = solver._n_stag
@@ -352,7 +358,7 @@ def test_entropy_solver_solve_bower2018_short_run_completes():
 # ---- solver_method='cvode' (production CHILI path with FD Jacobian) -------
 
 
-def test_entropy_solver_solve_cvode_path_short_run_completes():
+def test_entropy_solver_solve_cvode_path_short_run_completes(shared_eos):
     """CVODE solver path (the SUNDIALS BDF integrator via scikits.odes)
     is the production CHILI integration backend. This exercises the
     CVODE-specific branches inside ``solve()`` (cvode_options setup,
@@ -370,7 +376,7 @@ def test_entropy_solver_solve_cvode_path_short_run_completes():
         end_time=20.0,
         use_jax_jacobian=False,  # FD Jacobian to avoid JAX path
     )
-    solver, out = _run_solver(parameters, S_init=_S_init_below_liquidus(parameters))
+    solver, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
     assert solver._solution is not None
     assert solver._solution.t is not None
     assert solver._solution.t.size >= 2
