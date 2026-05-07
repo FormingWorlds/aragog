@@ -1,0 +1,58 @@
+name: Aragog nightly
+
+on:
+  schedule:
+    # 02:30 UTC daily (offset from Zalmoxis 02:00 UTC to spread runner load).
+    - cron: "30 2 * * *"
+  # Manual trigger for ad-hoc runs (e.g. before cutting a release, or to
+  # verify the suite on a feature branch via
+  # `gh workflow run "Aragog nightly" -r <branch>`).
+  workflow_dispatch:
+
+# Least-privilege token: only read access to the repo contents. Coverage
+# upload uses the CODECOV_TOKEN secret directly, not the default
+# GITHUB_TOKEN.
+permissions:
+  contents: read
+
+# Nightly: full unit + slow suite with coverage instrumentation and the
+# 85% floor enforced via [tool.coverage.report].fail_under in pyproject.toml.
+# Excluded from push and PR CI because the slow tier alone takes ~110 s and
+# coverage instrumentation pushes the full run to ~10 min on a 2-vCPU
+# runner, over the 5 min budget for fast CI.
+jobs:
+  nightly:
+    name: Aragog-nightly (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+          pip install pytest pytest-cov pytest-xdist pytest-dependency
+
+      - name: Run unit + slow tests with coverage
+        run: |
+          pytest -m "unit or slow" -o "addopts=" \
+            --cov=src/aragog --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: FormingWorlds/Aragog
+          files: coverage.xml
+          flags: nightly
+          fail_ci_if_error: false
