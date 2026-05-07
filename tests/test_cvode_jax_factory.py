@@ -225,3 +225,122 @@ def test_unsupported_core_bc_mode_raises_with_clear_message(mode, caplog):
     msgs = ' '.join(rec.message for rec in caplog.records)
     assert mode in msgs
     assert 'quasi_steady' in msgs and 'energy_balance' in msgs
+
+
+@pytest.mark.unit
+def test_radio_isotope_params_wrong_length_raises():
+    """``radio_isotope_params`` must be a 5-tuple
+    (heat_prod, abundance, concentration, t0_years, half_life_years).
+    A 3-tuple or 7-tuple must raise ValueError before any JAX work.
+
+    Discriminator: catches a regression that loosened the length check
+    to ``len > 0`` (and the JAX call would later fail with an opaque
+    "wrong number of arguments to make_radio_heating_fn").
+    """
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    n = 4
+    scales = _make_scales(np.full(n, 3.0e3), 1.0)
+    bad_3tuple = (np.array([1.0]), np.array([1.0]), np.array([1.0]))
+    with pytest.raises(ValueError, match='radio_isotope_params must be a 5-tuple'):
+        build_jax_rhs_and_jacobian(
+            eos_jax=None,
+            phase_params=None,
+            mesh_arrays=None,
+            boundary_params=None,
+            heating_array=np.zeros(n),
+            scales=scales,
+            core_bc_mode='quasi_steady',
+            radio_isotope_params=bad_3tuple,
+        )
+
+
+@pytest.mark.unit
+def test_factory_rejects_non_NonDimScales_scales_argument():
+    """The factory's ``scales`` argument must be a NonDimScales
+    instance. Passing a plain dict (legacy interface) or tuple must
+    raise TypeError with a constructive message naming
+    ``aragog.jax.nondim.NonDimScales``.
+    """
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    with pytest.raises(TypeError, match='NonDimScales'):
+        build_jax_rhs_and_jacobian(
+            eos_jax=None,
+            phase_params=None,
+            mesh_arrays=None,
+            boundary_params=None,
+            heating_array=np.zeros(4),
+            scales={
+                'state_scale': np.full(4, 3.0e3),
+                'rhs_scale': np.full(4, 1.0),
+                't_ref': 1.0,
+            },
+            core_bc_mode='quasi_steady',
+        )
+
+
+# ---- verify_jax_vs_numpy_rhs ------------------------------------------------
+
+
+@pytest.mark.unit
+def test_verify_jax_vs_numpy_rhs_matches_when_functions_agree():
+    """Property: when two RHS callables return the same vector to
+    machine precision, ``matched=True`` and max_rel_err is below atol.
+    """
+    from aragog.solver.cvode_jax import verify_jax_vs_numpy_rhs
+
+    def rhs(t, S):
+        return np.array([1.5e-3, -2.0e-3, 4.5e-3])
+
+    matched, info = verify_jax_vs_numpy_rhs(
+        rhs_numpy=rhs, rhs_jax_phys=rhs, t_test=0.0, S_test=np.zeros(3)
+    )
+    assert matched is True
+    assert info['matched'] is True
+    assert info['n_components'] == 3
+    assert info['max_rel_err'] < 1.0e-12
+
+
+@pytest.mark.unit
+def test_verify_jax_vs_numpy_rhs_flags_disagreement():
+    """Edge case: a 10 % disagreement in one component must produce
+    matched=False AND identify the component via argmax_rel.
+    """
+    from aragog.solver.cvode_jax import verify_jax_vs_numpy_rhs
+
+    def rhs_a(t, S):
+        return np.array([1.0e-3, 2.0e-3, 3.0e-3])
+
+    def rhs_b(t, S):
+        return np.array([1.0e-3, 2.2e-3, 3.0e-3])  # 10 % off in component 1
+
+    matched, info = verify_jax_vs_numpy_rhs(
+        rhs_numpy=rhs_a, rhs_jax_phys=rhs_b, t_test=0.0, S_test=np.zeros(3), rtol=1.0e-6
+    )
+    assert matched is False
+    assert info['argmax_rel'] == 1, (
+        f'argmax_rel should point at the disagreeing component (idx 1); got {info["argmax_rel"]}'
+    )
+    assert info['max_rel_err'] > 1.0e-6
+
+
+@pytest.mark.unit
+def test_verify_jax_vs_numpy_rhs_atol_floor_handles_zero_rhs():
+    """Edge case: when both RHS values are zero, denom = atol prevents
+    division-by-zero and the relative error is 0.
+    """
+    from aragog.solver.cvode_jax import verify_jax_vs_numpy_rhs
+
+    def rhs_zero(t, S):
+        return np.zeros(4)
+
+    matched, info = verify_jax_vs_numpy_rhs(
+        rhs_numpy=rhs_zero,
+        rhs_jax_phys=rhs_zero,
+        t_test=0.0,
+        S_test=np.zeros(4),
+        atol=1.0e-12,
+    )
+    assert matched is True
+    assert info['max_rel_err'] == pytest.approx(0.0, abs=1e-30)

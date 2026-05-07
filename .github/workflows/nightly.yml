@@ -15,11 +15,18 @@ on:
 permissions:
   contents: read
 
-# Nightly: full unit + slow suite with coverage instrumentation and the
-# 85% floor enforced via [tool.coverage.report].fail_under in pyproject.toml.
-# Excluded from push and PR CI because the slow tier alone takes ~110 s and
-# coverage instrumentation pushes the full run to ~10 min on a 2-vCPU
-# runner, over the 5 min budget for fast CI.
+# Nightly: full unit + smoke + slow suite with coverage instrumentation
+# and the 85% floor enforced via [tool.coverage.report].fail_under in
+# pyproject.toml. Excluded from push and PR CI because the slow tier
+# alone takes ~110 s and coverage instrumentation pushes the full run
+# to ~10 min on a 2-vCPU runner, over the 5 min budget for fast CI.
+#
+# `smoke` is included because the integration tests in
+# test_entropy_advanced.py, test_entropy_verification.py and
+# test_entropy_solver_integration.py exercise the production
+# EntropySolver.solve() path and the JAX RHS at full physical scale —
+# without them, entropy_solver.py / cvode_jax.py / jax/solver.py sit
+# at ~33 % / ~51 % / ~63 % coverage respectively.
 #
 # Uses micromamba + conda-forge for the env so SUNDIALS, gfortran, and the
 # scikits-odes binary stack come prebuilt.
@@ -68,14 +75,14 @@ jobs:
           tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
           echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
 
-      - name: Run unit + slow tests with coverage
+      - name: Run unit + smoke + slow tests with coverage
         run: |
           # -n auto runs xdist workers; coverage's parallel mode collects
           # per-worker .coverage.* files which pytest-cov auto-combines
           # before the report. Without xdist the serial run hit the
           # 30-minute timeout at 23 % of the 271-test suite, dominated by
           # JAX-traced functions where line tracing is the bottleneck.
-          pytest -m "unit or slow" -n auto -o "addopts=" \
+          pytest -m "unit or smoke or slow" -n auto -o "addopts=" \
             --cov=src/aragog --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage to Codecov

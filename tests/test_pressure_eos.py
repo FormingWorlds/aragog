@@ -274,6 +274,150 @@ def test_mass_within_radii_total_within_earth_order_of_magnitude():
     )
 
 
+def test_get_mass_element_at_surface_matches_4pi_r2_rho():
+    """``get_mass_element(r) = 4 π r² ρ(r)``. At r = R_surf this is
+    4 π R_surf² ρ_s. Discriminator vs a missing 4π factor (only 1/4
+    the value) and vs r³ (off by a factor of R_surf).
+    """
+    settings = _earth_settings()
+    radii = _earth_radii()
+    eos = AdamsWilliamsonEOS(settings, radii)
+    r = settings.outer_radius
+    expected = 4.0 * np.pi * r**2 * settings.surface_density
+    actual = float(np.asarray(eos.get_mass_element(np.array([r]))).item())
+    assert actual == pytest.approx(expected, rel=1e-12)
+
+
+def test_get_mass_element_array_input_matches_pointwise_formula():
+    """Property: array input returns 4πr²ρ(r) elementwise. Use 3
+    distinct radii where ρ values differ by orders of magnitude
+    (exponential profile) so a wrong vectorisation is caught.
+    """
+    settings = _earth_settings()
+    radii = _earth_radii()
+    eos = AdamsWilliamsonEOS(settings, radii)
+    test_r = np.array([3.5e6, 5.0e6, 6.3e6])
+    expected = 4.0 * np.pi * test_r**2 * np.asarray(eos.get_density_from_radii(test_r))
+    actual = np.asarray(eos.get_mass_element(test_r))
+    np.testing.assert_allclose(actual, expected, rtol=1e-12)
+
+
+# ---- UserDefinedEOS --------------------------------------------------------
+
+
+def _user_defined_settings() -> _MeshParameters:
+    """Settings with eos_method=2 and a hand-built linear EOS."""
+    s = _MeshParameters(
+        outer_radius=6.371e6,
+        inner_radius=3.480e6,
+        number_of_nodes=10,
+        mixing_length_profile='nearest_boundary',
+        core_density=10500.0,
+        eos_method=2,
+        eos_file='',  # filled in by the test fixture below
+    )
+    return s
+
+
+def _attach_user_eos_arrays(settings: _MeshParameters) -> _MeshParameters:
+    """Stamp eos_radius / eos_pressure / eos_density / eos_gravity arrays
+    on the settings object directly (bypassing scale_attributes which
+    would try to load from eos_file).
+    """
+    n = 32
+    settings.eos_radius = np.linspace(3.480e6, 6.371e6, n)
+    # Linear pressure profile (P=0 at surface, monotonically rising into depth).
+    settings.eos_pressure = np.linspace(1.35e11, 0.0, n)
+    # Linear density: 5500 kg/m^3 at CMB, 4000 kg/m^3 at surface.
+    settings.eos_density = np.linspace(5500.0, 4000.0, n)
+    settings.eos_gravity = np.full(n, 9.81)
+    return settings
+
+
+def test_user_defined_eos_basic_pressure_matches_input_at_eos_nodes():
+    """Constructor must interpolate eos_pressure onto basic_radii.
+    When basic_radii equal eos_radius, basic_pressure must match
+    the input eos_pressure exactly (PchipInterpolator is local-quadratic
+    on uniform grids and identity on its anchor nodes).
+    """
+    from aragog.mesh.pressure_eos import UserDefinedEOS
+
+    settings = _attach_user_eos_arrays(_user_defined_settings())
+    basic_radii = settings.eos_radius.copy()
+    eos = UserDefinedEOS(settings, basic_radii)
+    np.testing.assert_allclose(
+        np.asarray(eos.basic_pressure).ravel(),
+        settings.eos_pressure,
+        rtol=1e-9,
+    )
+
+
+def test_user_defined_eos_staggered_density_is_neighbour_average():
+    """Property: staggered_effective_density[i] = 0.5 * (basic[i] + basic[i+1]).
+    Catches a regression that swapped the average for a min/max or used
+    only one neighbour.
+    """
+    from aragog.mesh.pressure_eos import UserDefinedEOS
+
+    settings = _attach_user_eos_arrays(_user_defined_settings())
+    basic_radii = settings.eos_radius.copy()
+    eos = UserDefinedEOS(settings, basic_radii)
+    basic_rho = np.asarray(eos.basic_density).ravel()
+    expected_staggered = 0.5 * (basic_rho[:-1] + basic_rho[1:])
+    np.testing.assert_allclose(
+        np.asarray(eos.staggered_effective_density).ravel(),
+        expected_staggered,
+        rtol=1e-9,
+    )
+
+
+def test_user_defined_eos_set_staggered_pressure_writes_property():
+    """``set_staggered_pressure(staggered_radii)`` populates
+    ``staggered_pressure``. Property: midpoint radius gives a
+    midpoint-ish pressure (linear profile; PCHIP is not exact-linear
+    but is monotone-preserving, so within the bracket).
+    """
+    from aragog.mesh.pressure_eos import UserDefinedEOS
+
+    settings = _attach_user_eos_arrays(_user_defined_settings())
+    basic_radii = settings.eos_radius.copy()
+    eos = UserDefinedEOS(settings, basic_radii)
+    staggered = 0.5 * (basic_radii[:-1] + basic_radii[1:])
+    eos.set_staggered_pressure(staggered)
+    sp = np.asarray(eos.staggered_pressure).ravel()
+    assert sp.shape == (len(basic_radii) - 1,)
+    # Monotone with depth (input pressure is monotone-decreasing in r).
+    assert np.all(np.diff(sp) < 0)
+
+
+def test_user_defined_eos_mass_within_radii_zero_at_inner_anchor():
+    """``get_mass_within_radii(r_inner)`` = 0 because the cumulative
+    integral is anchored at r_eos[0]. Edge case at the anchor point.
+    """
+    from aragog.mesh.pressure_eos import UserDefinedEOS
+
+    settings = _attach_user_eos_arrays(_user_defined_settings())
+    basic_radii = settings.eos_radius.copy()
+    eos = UserDefinedEOS(settings, basic_radii)
+    M0 = float(np.asarray(eos.get_mass_within_radii(settings.eos_radius[0])).item())
+    assert M0 == pytest.approx(0.0, abs=1e-3)
+
+
+def test_user_defined_eos_mass_within_radii_monotone_outwards():
+    """Property: M(r) increases with r. Use a non-trivial linear ρ(r)
+    profile so a sign error in the cumulative trapezoid is caught.
+    """
+    from aragog.mesh.pressure_eos import UserDefinedEOS
+
+    settings = _attach_user_eos_arrays(_user_defined_settings())
+    basic_radii = settings.eos_radius.copy()
+    eos = UserDefinedEOS(settings, basic_radii)
+    M = np.asarray(
+        [float(np.asarray(eos.get_mass_within_radii(r)).item()) for r in settings.eos_radius]
+    )
+    assert np.all(np.diff(M) > 0), 'cumulative mass must be monotone in r'
+
+
 def test_get_density_from_pressure_matches_spider_linear_form():
     """SPIDER parity: rho(P) = rho_s + P * beta / g.
 

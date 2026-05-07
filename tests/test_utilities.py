@@ -207,6 +207,36 @@ def test_combine_properties_blends_arrays_pointwise():
     np.testing.assert_allclose(out, expected, rtol=0.0, atol=1e-15)
 
 
+def test_profile_decorator_returns_decorated_function_value(capsys):
+    """``profile_decorator`` must wrap a function so that calling
+    the wrapped version returns the original return value AND prints
+    cProfile output to stdout. Discriminator: a regression that
+    swallowed the return value would leave callers seeing None.
+    """
+    from aragog.utilities import profile_decorator
+
+    @profile_decorator
+    def add(a, b):
+        return a + b
+
+    result = add(2, 3)
+    assert result == 5
+    captured = capsys.readouterr()
+    # cProfile prints a summary header containing "function calls"
+    assert 'function calls' in captured.out
+
+
+def test_profile_decorator_preserves_keyword_arguments():
+    """Edge case: kwargs must round-trip through the decorator."""
+    from aragog.utilities import profile_decorator
+
+    @profile_decorator
+    def power(base, *, exp=2):
+        return base**exp
+
+    assert power(3.0, exp=4) == pytest.approx(81.0, rel=1e-12)
+
+
 def test_combine_properties_extrapolates_for_weight_above_one():
     """Edge case: a weight > 1 extrapolates linearly (not clamped).
 
