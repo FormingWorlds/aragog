@@ -23,26 +23,38 @@ from aragog.output.diagnostics import (
 pytestmark = pytest.mark.unit
 
 
-def _fake_mesh(N: int = 10) -> SimpleNamespace:
+def _fake_mesh(
+    N: int = 10,
+    rho_struct: float | np.ndarray | None = None,
+) -> SimpleNamespace:
     """Build a minimal mesh stub with the attributes diagnostics
-    needs: ``mesh.basic.volume`` (per-cell), ``total_volume``, and
-    ``radii``.
+    needs: ``mesh.basic.volume`` (per-cell), ``total_volume``,
+    ``radii``, and ``staggered_effective_density`` (per-cell, mass
+    coordinate frame).
 
     Earth-like radii so the rheological-front test has a non-trivial
     ratio that distinguishes correct (depth/R_surf) from wrong
     formulas (e.g. r/R_surf without the surface subtraction).
+
+    ``rho_struct`` defaults to a constant 4500 kg/m^3 (typical mantle
+    average); pass an array to test asymmetric mass-weighting.
     """
     R_cmb, R_surf = 3.480e6, 6.371e6
     radii = np.linspace(R_cmb, R_surf, N + 1)  # basic nodes
     # Cell volumes: shells between basic nodes
     volumes = (4.0 / 3.0) * np.pi * (radii[1:] ** 3 - radii[:-1] ** 3)
     total_volume = float(volumes.sum())
+    if rho_struct is None:
+        rho_struct = np.full_like(volumes, 4500.0)
+    elif np.ndim(rho_struct) == 0:
+        rho_struct = np.full_like(volumes, float(rho_struct))
     return SimpleNamespace(
         basic=SimpleNamespace(
             volume=volumes,
             total_volume=total_volume,
             radii=radii,
         ),
+        staggered_effective_density=np.asarray(rho_struct),
     )
 
 
@@ -110,6 +122,39 @@ def test_melt_fraction_global_composite_uses_last_column_too():
     melt = np.full((mesh.basic.volume.size, 2), 0.7)
     out = melt_fraction_global(mesh, melt, phase_mode='composite')
     assert float(out) == pytest.approx(0.7, rel=1e-12)
+
+
+def test_melt_fraction_global_mass_weighted_not_volume_weighted():
+    """Discriminator: asymmetric (rho, phi) profile where the mass-
+    weighted and volume-weighted averages differ by a known amount.
+    Catches a regression that reverts to ``volume_average``.
+
+    Setup: deep half (cells 0:N/2) has high density 6000 and phi=0;
+    shallow half has low density 3000 and phi=1. Volume-weighted
+    average is biased toward the larger shallow shells (phi -> 1);
+    mass-weighted average is biased toward the denser deep shells
+    (phi -> 0). The two values are well-separated.
+    """
+    N = 10
+    rho = np.empty(N)
+    rho[: N // 2] = 6000.0  # deep, dense, solid
+    rho[N // 2 :] = 3000.0  # shallow, light, liquid
+    mesh = _fake_mesh(N=N, rho_struct=rho)
+    phi = np.empty(N)
+    phi[: N // 2] = 0.0
+    phi[N // 2 :] = 1.0
+    melt = phi.reshape(-1, 1)
+
+    out = melt_fraction_global(mesh, melt, phase_mode='mixed')
+    # Hand-computed expected values:
+    vols = mesh.basic.volume
+    expected_mass = float(np.dot(rho * vols, phi) / np.dot(rho, vols))
+    expected_volume = float(np.dot(vols, phi) / vols.sum())
+    # The two must be substantially different (this is the whole
+    # point of the discriminator):
+    assert abs(expected_mass - expected_volume) > 0.05
+    # And the function must agree with the mass-weighted value:
+    assert float(out) == pytest.approx(expected_mass, rel=1e-12)
 
 
 def test_melt_fraction_global_single_phase_returns_input_unchanged():
