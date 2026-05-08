@@ -2,8 +2,9 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Docs](https://github.com/FormingWorlds/aragog/actions/workflows/docs.yaml/badge.svg)](https://proteus-framework.org/aragog)
-[![Aragog CI Test Suite](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml/badge.svg)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
+[![docs](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/docs.yaml?branch=main&label=docs)](https://proteus-framework.org/aragog)
+[![Aragog CI Unit Tests](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/ci_tests.yml?branch=main&label=Aragog%20CI%20Unit%20Tests)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
+[![Aragog CI Integration Tests](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/nightly.yml?branch=main&label=Aragog%20CI%20Integration%20Tests)](https://github.com/FormingWorlds/aragog/actions/workflows/nightly.yml)
 [![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
 
 **1-D entropy-form interior thermal evolution solver for rocky planetary mantles.**
