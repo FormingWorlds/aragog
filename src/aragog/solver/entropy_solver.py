@@ -332,6 +332,17 @@ class SolverOutput:
     # table. Anchor at table corner is arbitrary; differences across time
     # are the conservation diagnostic. Set to NaN when no entropy_eos is
     # attached (e.g. const_properties path).
+    E_state_cons: float  # conservation-grade integrated enthalpy [J].
+    # Same as ``E_state`` but with the frozen STRUCTURAL mass profile
+    # (``mesh.staggered_effective_density * volume``, set once at IC)
+    # instead of the state-dependent ``rho(P,S) * volume``. The entropy
+    # ODE evolves in fixed-volume Eulerian frame with state-dependent
+    # rho, so the natural integrated thermodynamic potential against
+    # which the divergence-of-flux budget closes is the one with FROZEN
+    # mass weighting. Diff ``E_state_cons(t) - E_state_cons(0)`` should
+    # equal the cumulative ``dE_predicted_cons`` (using frozen-mass
+    # Q_*_total) to numerical precision; the residual against this is
+    # the true conservation check. Set to NaN when no entropy_eos.
     Cp_eff: float  # effective heat capacity [J/kg/K]
     F_heat_total: float  # total heating flux [W/m^2]
     F_cmb: float  # heat flux at CMB (basic node 0) [W/m^2], signed
@@ -352,8 +363,25 @@ class SolverOutput:
     # to the atmosphere).
     step_dE_F_int_J: float  # = -∫ F_int * A_int dt [J]
     step_dE_F_cmb_J: float  # = +∫ F_cmb * A_cmb dt [J]
-    step_dE_Q_radio_J: float  # = +∫ Q_radio_total dt [J]
-    step_dE_Q_tidal_J: float  # = +∫ Q_tidal_total dt [J]
+    step_dE_Q_radio_J: float  # = +∫ Q_radio_total dt [J] (state-dependent mass)
+    step_dE_Q_tidal_J: float  # = +∫ Q_tidal_total dt [J] (state-dependent mass)
+    # Frozen-mass variants for the conservation-grade budget. Identical
+    # to ``step_dE_Q_*_J`` except mass-weighting uses ``rho_struct *
+    # volume`` (set once at IC) for both ``Q_radio_total`` and
+    # ``Q_tidal_total``. Surface-flux integrals (``step_dE_F_int_J``,
+    # ``step_dE_F_cmb_J``) are area-only and do not need a frozen-mass
+    # variant.
+    step_dE_Q_radio_cons_J: float  # = +∫ Q_radio_total_cons dt [J] (frozen mass)
+    step_dE_Q_tidal_cons_J: float  # = +∫ Q_tidal_total_cons dt [J] (frozen mass)
+
+    # Per-call solver-level entropy-ODE residual [J]. Accumulates
+    # ``∫ (Σ rho T (dS/dt) V - (-F_int A_int + F_cmb A_cmb + Q_radio +
+    # Q_tidal)) dt`` over the CVODE substeps. By construction the
+    # entropy ODE balance closes at every accepted step; this column
+    # captures the trapezoidal-vs-CVODE-internal integration mismatch
+    # only. A non-trivial value here flags integrator step rejection
+    # or atol/rtol issues.
+    step_solver_residual_J: float  # = ∫ (LHS - RHS) dt [J]
 
     dt_actual: float  # actual integration time [yr]
     status: int  # solver status (0 = success)
@@ -2219,6 +2247,9 @@ class EntropySolver:
             'F_cmb': 0.0,
             'Q_radio': 0.0,
             'Q_tidal': 0.0,
+            'Q_radio_cons': 0.0,
+            'Q_tidal_cons': 0.0,
+            'solver_residual': 0.0,
         }
         sol = self._solution
         eos = self.entropy_eos
@@ -2240,44 +2271,98 @@ class EntropySolver:
         A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
         A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
 
+        # Frozen structural mass per shell, set once from the mesh's
+        # equilibrium structure. Used for the conservation-grade
+        # mass-integrated heating powers (Q_*_cons). Stays constant
+        # across the CVODE trajectory so the integrated budget closes
+        # against ``E_state_cons`` (also frozen-mass weighted).
+        rho_struct = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel()
+        mass_struct = rho_struct * vol
+
         P_F_int = np.zeros(n_steps)
         P_F_cmb = np.zeros(n_steps)
         P_radio = np.zeros(n_steps)
         P_tidal = np.zeros(n_steps)
+        P_radio_cons = np.zeros(n_steps)
+        P_tidal_cons = np.zeros(n_steps)
+        # Per-substep entropy-ODE residual integrand (LHS - RHS) [W].
+        # LHS = Σ rho(t) T(t) (dS/dt) V at the substep state; RHS is
+        # -F_int A_int + F_cmb A_cmb + Q_radio + Q_tidal. CVODE
+        # constructs the ODE so they match at every accepted step;
+        # any non-zero P_resid_solver here signals trapezoidal vs
+        # internal-step integration mismatch.
+        P_resid_solver = np.zeros(n_steps)
 
         for i in range(n_steps):
             t_i = float(sol.t[i])
             y_col = sol.y[:, i] if sol.y.ndim == 2 else sol.y
 
+            # Reconstruct S_i for EOS lookups, regardless of mode.
             if gradient_mode:
                 n_basic = n_stag + 1
                 dSdr_i = y_col[:n_basic]
                 S_surf_i = float(y_col[n_basic])
                 S_i, S_basic_i = self._reconstruct_entropy(dSdr_i, S_surf_i)
-                self.state.update(S_i, t_i, dSdr=dSdr_i, entropy_basic=S_basic_i)
             elif is_ext:
                 S_i = y_col[:n_stag]
-                extra_i = float(y_col[n_stag])
-                if energy_balance:
-                    self.state.update(S_i, t_i, dSdr_cmb=extra_i)
-                else:
-                    self.state.update(S_i, t_i)
             else:
                 S_i = y_col
-                self.state.update(S_i, t_i)
 
+            # Evaluate the ODE RHS at this accepted state. ``self.dSdt``
+            # internally calls ``state.update`` AND applies the BC
+            # dispatch (entropy_solver.py:1107-1153), populating
+            # ``state._heat_flux[-1]`` and ``[0]`` with the values that
+            # were actually used to compute dS/dt. Calling dSdt FIRST
+            # (before reading F_int/F_cmb at lines below) ensures the
+            # boundary fluxes we integrate are consistent with the
+            # ones the entropy ODE saw, so the LHS-RHS check at the
+            # bottom of this loop is meaningful. ``dSdt`` returns
+            # derivatives in [/yr] to match the integrator's time axis
+            # (entropy_solver.py:1172), so divide by SECS_PER_YEAR to
+            # align with per-second flux units in the RHS.
+            if not gradient_mode:
+                dSdt_full = np.asarray(self.dSdt(t_i, y_col)).ravel()
+                dSdt_stag_i = dSdt_full[:n_stag] / SECS_PER_YEAR  # /yr -> /s
+            else:
+                # Gradient mode: state.update with reconstructed
+                # entropy + dSdr. Skip dSdt return value (state-vec
+                # layout differs).
+                self.state.update(S_i, t_i, dSdr=dSdr_i, entropy_basic=S_basic_i)
+                dSdt_stag_i = None  # signals: skip solver-residual
+
+            # Read boundary fluxes AFTER dSdt has applied the BCs.
             F_int_i = float(self.state._heat_flux[-1])
             F_cmb_i = float(self.state._heat_flux[0])
 
             rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
             mass_i = rho_i * vol
-            Q_radio_i = float(np.dot(np.asarray(self.state.heating_radio).ravel(), mass_i))
-            Q_tidal_i = float(np.dot(np.asarray(self.state.heating_tidal).ravel(), mass_i))
+            heating_radio_i = np.asarray(self.state.heating_radio).ravel()
+            heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
+            Q_radio_i = float(np.dot(heating_radio_i, mass_i))
+            Q_tidal_i = float(np.dot(heating_tidal_i, mass_i))
+            # Frozen-mass variants for the conservation-grade budget
+            Q_radio_cons_i = float(np.dot(heating_radio_i, mass_struct))
+            Q_tidal_cons_i = float(np.dot(heating_tidal_i, mass_struct))
 
             P_F_int[i] = -F_int_i * A_int
             P_F_cmb[i] = +F_cmb_i * A_cmb
             P_radio[i] = Q_radio_i
             P_tidal[i] = Q_tidal_i
+            P_radio_cons[i] = Q_radio_cons_i
+            P_tidal_cons[i] = Q_tidal_cons_i
+
+            # Solver residual: by entropy-ODE construction
+            # ``Σ rho T (dS/dt) V == -F_int*A + F_cmb*A + Q_radio +
+            # Q_tidal`` at every accepted CVODE substep. Trapezoidal
+            # integration of this difference quantifies trapezoidal-
+            # vs-CVODE-internal integration mismatch only.
+            if dSdt_stag_i is not None:
+                T_stag_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
+                lhs_i = float(np.sum(rho_i * T_stag_i * dSdt_stag_i * vol))
+                rhs_i = P_F_int[i] + P_F_cmb[i] + P_radio[i] + P_tidal[i]
+                P_resid_solver[i] = lhs_i - rhs_i
+            else:
+                P_resid_solver[i] = 0.0
 
         SEC_PER_YR = 3.155814727e7
         dt_s = np.diff(np.asarray(sol.t, dtype=float)) * SEC_PER_YR
@@ -2290,6 +2375,9 @@ class EntropySolver:
             'F_cmb': trap(P_F_cmb),
             'Q_radio': trap(P_radio),
             'Q_tidal': trap(P_tidal),
+            'Q_radio_cons': trap(P_radio_cons),
+            'Q_tidal_cons': trap(P_tidal_cons),
+            'solver_residual': trap(P_resid_solver),
         }
 
     def get_state(self) -> SolverOutput:
@@ -2466,8 +2554,16 @@ class EntropySolver:
             from aragog.output.diagnostics import total_enthalpy
 
             E_state = total_enthalpy(eos, P_stag, S_final, mass_stag)
+            # Conservation-grade integrated enthalpy with FROZEN
+            # structural mass per shell. Same enthalpy table, but the
+            # mass weighting matches the entropy ODE's frame so that
+            # d/dt[E_state_cons] equals the divergence-of-flux budget
+            # (with frozen-mass Q_*_cons) to numerical precision.
+            mass_struct_stag = np.asarray(mesh.staggered_effective_density).ravel() * vol
+            E_state_cons = total_enthalpy(eos, P_stag, S_final, mass_struct_stag)
         else:
             E_state = float('nan')
+            E_state_cons = float('nan')
 
         # CMB heat flux: lower-boundary value of the basic-node heat
         # flux array. Sign convention follows the rest of Aragog,
@@ -2529,6 +2625,7 @@ class EntropySolver:
             RF_depth=RF_depth,
             E_th=E_th,
             E_state=E_state,
+            E_state_cons=E_state_cons,
             Cp_eff=Cp_eff,
             F_heat_total=F_heat_total,
             F_cmb=F_cmb,
@@ -2538,6 +2635,9 @@ class EntropySolver:
             step_dE_F_cmb_J=step_integrals['F_cmb'],
             step_dE_Q_radio_J=step_integrals['Q_radio'],
             step_dE_Q_tidal_J=step_integrals['Q_tidal'],
+            step_dE_Q_radio_cons_J=step_integrals['Q_radio_cons'],
+            step_dE_Q_tidal_cons_J=step_integrals['Q_tidal_cons'],
+            step_solver_residual_J=step_integrals['solver_residual'],
             dt_actual=float(sol.t[-1] - sol.t[0]),
             status=sol.status,
             jcond_b=jcond_b,
