@@ -386,6 +386,213 @@ class SolverOutput:
     dt_actual: float  # actual integration time [yr]
     status: int  # solver status (0 = success)
 
+    # ── NetCDF output ──────────────────────────────────────────────
+    def to_netcdf(
+        self,
+        path: str | Path,
+        *,
+        time: float | None = None,
+        description: str = 'Aragog SolverOutput snapshot',
+    ) -> None:
+        """Write this solver snapshot to a NetCDF4 file.
+
+        Produces a self-contained file that captures the full
+        ``SolverOutput`` dataclass: scalar diagnostics, staggered-node
+        profiles (entropy, temperature, melt fraction, density,
+        viscosity, ...), basic-node profiles (heat flux, per-component
+        flux decomposition, ...), and run-level metadata (Aragog
+        version, optional simulation time, status code). All fields
+        carry CF-style ``units`` and ``long_name`` attributes so the
+        file is interpretable without consulting the source.
+
+        Designed for the standalone solver path: a script that builds
+        an ``EntropySolver``, runs ``solve()``, and wants a portable
+        record of the final state. PROTEUS-coupled runs do *not* use
+        this; they assemble their own per-iteration helpfile rows on
+        the wrapper side. The two writers are independent on purpose
+        so the standalone schema can evolve without breaking PROTEUS.
+
+        Parameters
+        ----------
+        path : str or Path
+            Destination NetCDF4 file. Overwrites if the file exists.
+        time : float, optional
+            Simulation time at which this snapshot was taken [yr].
+            Stored as the scalar ``time`` variable; defaults to the
+            integrated step duration ``dt_actual`` if not supplied
+            (the standalone solver does not carry an absolute clock).
+        description : str, optional
+            Free-form description string written to the dataset's
+            ``description`` global attribute.
+
+        Notes
+        -----
+        - Uses ``netCDF4`` directly (already a hard dependency); no
+          xarray import to keep startup lean.
+        - All array fields are written as ``f8`` (float64). The
+          integer ``status`` field is stored as ``i4``.
+        - Reading back: ``netCDF4.Dataset(path)`` or
+          ``xarray.open_dataset(path)`` both work; the file follows the
+          CF-1.8 attribute convention.
+        """
+        from datetime import datetime, timezone
+
+        import netCDF4 as nc
+
+        from aragog import __version__
+
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        with nc.Dataset(path, mode='w') as ds:
+            ds.description = description
+            ds.aragog_version = __version__
+            ds.created_utc = datetime.now(timezone.utc).isoformat(timespec='seconds')
+            ds.Conventions = 'CF-1.8'
+
+            n_stag = int(np.asarray(self.S_final).size)
+            n_basic = int(np.asarray(self.r_basic).size)
+            ds.createDimension('staggered', n_stag)
+            ds.createDimension('basic', n_basic)
+
+            def _scalar(name: str, value: float | int, units: str, long_name: str) -> None:
+                dtype = 'i4' if isinstance(value, (int, np.integer)) else 'f8'
+                v = ds.createVariable(name, dtype)
+                v.units = units
+                v.long_name = long_name
+                v[...] = value
+
+            def _arr(name: str, value, dim: str, units: str, long_name: str) -> None:
+                arr = np.asarray(value, dtype=np.float64).ravel()
+                v = ds.createVariable(name, 'f8', (dim,))
+                v.units = units
+                v.long_name = long_name
+                v[:] = arr
+
+            # Time stamp: prefer caller-supplied absolute time, else
+            # fall back to the per-call duration.
+            t_value = float(time) if time is not None else float(self.dt_actual)
+            _scalar('time', t_value, 'yr', 'Simulation time of snapshot')
+
+            # ── Scalar diagnostics ──────────────────────────────────
+            _scalar('T_magma', self.T_magma, 'K', 'Surface (magma) temperature')
+            _scalar('T_core', self.T_core, 'K', 'Core-mantle boundary temperature')
+            _scalar(
+                'Phi_global',
+                self.Phi_global,
+                '1',
+                'Mass-weighted global mantle melt fraction (M_liq / M_mantle)',
+            )
+            _scalar(
+                'Phi_global_vol',
+                self.Phi_global_vol,
+                '1',
+                'Porosity-derived volume melt fraction (V_liq / V_mantle)',
+            )
+            _scalar('M_mantle', self.M_mantle, 'kg', 'Total mantle mass')
+            _scalar('M_mantle_liquid', self.M_mantle_liquid, 'kg', 'Liquid mantle mass')
+            _scalar('M_mantle_solid', self.M_mantle_solid, 'kg', 'Solid mantle mass')
+            _scalar('RF_depth', self.RF_depth, '1', 'Dimensionless rheological-front depth')
+            _scalar('E_th', self.E_th, 'J', 'Thermal energy proxy (legacy sum m*Cp_apparent*T)')
+            _scalar('E_state', self.E_state, 'J', 'EOS-consistent integrated mantle enthalpy')
+            _scalar(
+                'E_state_cons',
+                self.E_state_cons,
+                'J',
+                'Conservation-grade integrated enthalpy with frozen structural mass',
+            )
+            _scalar('Cp_eff', self.Cp_eff, 'J kg-1 K-1', 'Mass-weighted mean heat capacity')
+            _scalar('F_heat_total', self.F_heat_total, 'W m-2', 'Total internal heating flux')
+            _scalar('F_cmb', self.F_cmb, 'W m-2', 'Heat flux at the CMB (positive out of core)')
+            _scalar(
+                'Q_radio_total', self.Q_radio_total, 'W', 'Mantle-integrated radiogenic power'
+            )
+            _scalar('Q_tidal_total', self.Q_tidal_total, 'W', 'Mantle-integrated tidal power')
+            _scalar(
+                'step_dE_F_int_J',
+                self.step_dE_F_int_J,
+                'J',
+                'Per-call surface heat-loss energy',
+            )
+            _scalar(
+                'step_dE_F_cmb_J', self.step_dE_F_cmb_J, 'J', 'Per-call CMB heat-gain energy'
+            )
+            _scalar(
+                'step_dE_Q_radio_J', self.step_dE_Q_radio_J, 'J', 'Per-call radiogenic energy'
+            )
+            _scalar('step_dE_Q_tidal_J', self.step_dE_Q_tidal_J, 'J', 'Per-call tidal energy')
+            _scalar(
+                'step_dE_Q_radio_cons_J',
+                self.step_dE_Q_radio_cons_J,
+                'J',
+                'Per-call radiogenic energy (frozen-mass weighting)',
+            )
+            _scalar(
+                'step_dE_Q_tidal_cons_J',
+                self.step_dE_Q_tidal_cons_J,
+                'J',
+                'Per-call tidal energy (frozen-mass weighting)',
+            )
+            _scalar(
+                'step_solver_residual_J',
+                self.step_solver_residual_J,
+                'J',
+                'Per-call entropy-ODE balance residual',
+            )
+            _scalar('dt_actual', self.dt_actual, 'yr', 'Actual integration time of this step')
+            _scalar('status', int(self.status), '1', 'Solver status code (0 = success)')
+
+            # ── Staggered-node profiles ─────────────────────────────
+            _arr('r_stag', self.r_stag, 'staggered', 'm', 'Radius at staggered nodes')
+            _arr('P_stag', self.P_stag, 'staggered', 'Pa', 'Pressure at staggered nodes')
+            _arr('S_final', self.S_final, 'staggered', 'J kg-1 K-1', 'Specific entropy')
+            _arr('T_stag', self.T_stag, 'staggered', 'K', 'Temperature at staggered nodes')
+            _arr(
+                'phi_stag',
+                self.phi_stag,
+                'staggered',
+                '1',
+                'Melt mass fraction at staggered nodes',
+            )
+            _arr('rho_stag', self.rho_stag, 'staggered', 'kg m-3', 'Density at staggered nodes')
+            _arr(
+                'visc_stag',
+                self.visc_stag,
+                'staggered',
+                'Pa s',
+                'Dynamic viscosity at staggered nodes',
+            )
+            _arr('vol', self.vol, 'staggered', 'm3', 'Per-shell volume')
+            _arr('mass_stag', self.mass_stag, 'staggered', 'kg', 'Per-shell mass')
+            _arr('heating', self.heating, 'staggered', 'W kg-1', 'Internal heating rate')
+            _arr('cap_stag', self.cap_stag, 'staggered', 'kg K m-3', 'Capacitance rho*T')
+
+            # ── Basic-node profiles ─────────────────────────────────
+            _arr('r_basic', self.r_basic, 'basic', 'm', 'Radius at basic nodes')
+            _arr('heat_flux', self.heat_flux, 'basic', 'W m-2', 'Total radial heat flux')
+            _arr('eddy_diff', self.eddy_diff, 'basic', 'm2 s-1', 'Eddy thermal diffusivity')
+            _arr('jcond_b', self.jcond_b, 'basic', 'W m-2', 'Conductive heat flux')
+            _arr('jconv_b', self.jconv_b, 'basic', 'W m-2', 'Convective (MLT) heat flux')
+            _arr(
+                'jgrav_b',
+                self.jgrav_b,
+                'basic',
+                'W m-2',
+                'Gravitational-separation heat-flux contribution',
+            )
+            _arr('jmix_b', self.jmix_b, 'basic', 'W m-2', 'SPIDER-parity phase-mixing flux')
+            _arr('dSdr_b', self.dSdr_b, 'basic', 'J kg-1 K-1 m-1', 'Radial entropy gradient')
+            _arr('phi_basic', self.phi_basic, 'basic', '1', 'Melt mass fraction at basic nodes')
+            _arr('T_basic', self.T_basic, 'basic', 'K', 'Temperature at basic nodes')
+            _arr(
+                'cp_basic',
+                self.cp_basic,
+                'basic',
+                'J kg-1 K-1',
+                'Heat capacity at basic nodes',
+            )
+            _arr('rho_basic', self.rho_basic, 'basic', 'kg m-3', 'Density at basic nodes')
+
 
 class EntropySolver:
     """Entropy-based interior dynamics solver.
@@ -2379,6 +2586,35 @@ class EntropySolver:
             'Q_tidal_cons': trap(P_tidal_cons),
             'solver_residual': trap(P_resid_solver),
         }
+
+    def write_netcdf(
+        self,
+        path: str | Path,
+        *,
+        time: float | None = None,
+        description: str = 'Aragog standalone snapshot',
+    ) -> None:
+        """Convenience wrapper: ``self.get_state().to_netcdf(path)``.
+
+        Designed for the standalone solver script: build the solver,
+        call ``solve()``, then dump the final state as a NetCDF4 file.
+
+        Parameters
+        ----------
+        path : str or Path
+            Destination NetCDF4 file (overwrites if it exists).
+        time : float, optional
+            Simulation time at which this snapshot was taken [yr].
+            Defaults to ``SolverOutput.dt_actual`` if omitted.
+        description : str, optional
+            Free-form description string written as the dataset's
+            ``description`` global attribute.
+
+        See Also
+        --------
+        SolverOutput.to_netcdf : underlying writer with the full schema.
+        """
+        self.get_state().to_netcdf(path, time=time, description=description)
 
     def get_state(self) -> SolverOutput:
         """Extract the solver state as a clean output dataclass.
