@@ -216,7 +216,7 @@ def test_unsupported_core_bc_mode_raises_with_clear_message(mode, caplog):
     state_scale = np.full(n, 3.0e3)
     rhs_scale = 1.0 / state_scale
     heating = np.zeros(n)
-    with caplog.at_level(logging.WARNING, logger='aragog.solver.cvode_jax'):
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.cvode_jax'):
         with pytest.raises(ValueError, match='is not supported'):
             _build_factory(state_scale, rhs_scale, 1.0, heating, mode)
     # Warning text must mention both the offending mode and the

@@ -25,7 +25,7 @@ import numpy as np
 # Enable float64 (atmodeller does the same in its __init__.py)
 jax.config.update('jax_enable_x64', True)
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fwl.' + __name__)
 
 
 # ---------------------------------------------------------------------------
@@ -634,7 +634,13 @@ class EntropyEOS_JAX(eqx.Module):
         )
         rho_mixed = 1.0 / jnp.maximum(inv_rho_mixed, 1e-30)
 
-        # alpha and Cp: latent-heat-augmented (SPIDER eos_composite.c:227-246)
+        # alpha and Cp: latent-heat-augmented (SPIDER eos_composite.c:227-246).
+        # The 100 J/kg/K floor on Cp_mixed is a defensive guard against
+        # division-by-near-zero when the latent budget collapses
+        # (dT_phase very large, or S_liq -> S_sol, or T_avg small near
+        # the eutectic). MgSiO3 production runs are always well above
+        # this floor; a triggering EOS is the signal that the upstream
+        # property tables need clipping, not Aragog's runtime.
         alpha_mixed = (rho_sol - rho_liq) / dT_phase / jnp.maximum(rho_mixed, 1.0)
         Cp_mixed = jnp.maximum((S_liq - S_sol) / dT_phase * T_avg, 100.0)
 

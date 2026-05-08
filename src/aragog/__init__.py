@@ -13,7 +13,7 @@ CFG_DATA: Traversable = importlib.resources.files(f'{__package__}.cfg')
 
 # Creates the package logger.
 # https://docs.python.org/3/howto/logging.html#library-config
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 logger.addHandler(logging.NullHandler())
 
 
@@ -50,7 +50,7 @@ def debug_logger() -> logging.Logger:
     Returns:
         A logger
     """
-    package_logger: logging.Logger = logging.getLogger(__name__)
+    package_logger: logging.Logger = logging.getLogger('fwl.' + __name__)
     package_logger.setLevel(logging.DEBUG)
     logger.handlers = []
     console_handler: logging.Handler = logging.StreamHandler()
@@ -70,7 +70,7 @@ def aragog_file_logger(
         A logger
     """
     # Console logger
-    package_logger: logging.Logger = logging.getLogger(__name__)
+    package_logger: logging.Logger = logging.getLogger('fwl.' + __name__)
     package_logger.setLevel(file_level)
     package_logger.handlers = []
     console_handler: logging.Handler = logging.StreamHandler()

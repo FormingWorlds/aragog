@@ -105,7 +105,10 @@ Here $g\phi$ is the un-truncated two-phase fraction at the staggered cell below 
 
 ### Bottom-up gating
 
-When `bottom_up_grav_sep = true`, a SPIDER-parity bottom-up gate disables $j_\mathrm{grav}$ below the rheological transition until the solid fraction is interconnected. This prevents spurious upward percolation of the first solid grains and reflects the physics that melt cannot drain through a fully molten lower mantle.
+When `bottom_up_grav_sep = true`, a SPIDER-parity bottom-up gate disables $j_\mathrm{grav}$ below the rheological transition until the solid fraction is interconnected.
+Here "interconnected" refers to the standard porous-medium criterion: solid grains form a connected matrix that can support a self-consistent melt-percolation flow, which numerically corresponds to local melt fraction $\phi < \phi_\mathrm{rheo}$ (the rheological critical melt fraction, default 0.4 in Aragog).
+Above $\phi_\mathrm{rheo}$, the solid is a dilute suspension and the gravitational-separation flux is suppressed by the smoothing function $\mathrm{smth}(\phi)$; below it, the matrix is connected and percolation is permitted.
+This prevents spurious upward percolation of the first solid grains and reflects the physics that melt cannot drain through a fully molten lower mantle.
 
 ## Chemical mixing of melt fraction
 

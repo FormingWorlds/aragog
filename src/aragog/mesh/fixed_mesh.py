@@ -12,7 +12,7 @@ import numpy.typing as npt
 from aragog.parser import _MeshParameters
 from aragog.utilities import is_monotonic_increasing
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
 @dataclass

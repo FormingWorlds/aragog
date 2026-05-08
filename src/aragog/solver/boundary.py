@@ -20,7 +20,7 @@ from aragog.parser import Parameters, _BoundaryConditionsParameters
 if TYPE_CHECKING:
     State = Any
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
 @dataclass

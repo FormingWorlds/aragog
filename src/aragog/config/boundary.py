@@ -6,7 +6,7 @@ import logging
 
 import attrs
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
 @attrs.define

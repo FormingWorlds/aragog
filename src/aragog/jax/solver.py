@@ -41,7 +41,7 @@ from aragog.jax.phase import (
 
 jax.config.update('jax_enable_x64', True)
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fwl.' + __name__)
 
 # Seconds per Julian year (matches scipy.constants.Julian_year)
 SECS_PER_YEAR: float = 31557600.0

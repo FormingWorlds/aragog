@@ -397,7 +397,14 @@ class TestJgravSmoothing:
     step from a near-liquidus initial state. They assert:
         (1) the solver succeeds (status == 0),
         (2) the entropy profile stays physically bounded,
-        (3) the CMB cell temperature does not collapse,
+        (3) the CMB cell temperature does not collapse, where
+            "collapse" is the specific failure mode the smoothing fix
+            targets: an unphysically large negative dS/dt at the
+            bottom basic node driving T_cmb_cell below ~1500 K within
+            a single coupling step (the unsmoothed Jgrav assembly
+            drives all latent + segregation budget through the CMB
+            cell when phi crosses 1 there). The assertion is
+            T_cmb_cell > 2500 K after one step.
         (4) turning off grav_sep yields even less damage (sanity
             check that the test is exercising the Jgrav path),
         (5) turning off `bottom_up_grav_sep` (no smoothing at all)

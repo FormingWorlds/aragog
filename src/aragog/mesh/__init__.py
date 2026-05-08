@@ -26,7 +26,7 @@ __all__ = [
     'derive_core_density_from_mesh',
 ]
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
 def derive_core_density_from_mesh(mesh_file: str, M_core: float) -> float:
@@ -104,8 +104,20 @@ class Mesh:
         # Start with uniform spatial spacing to initialize EOS/density
         initial_spatial: npt.NDArray = self.get_constant_spacing()
         if self.settings.eos_method == 1:
+            # Analytic Adams-Williamson: rho(P) = rho_top * exp(P/K_S)
+            # under constant gravity; the density anchor is configured
+            # via ``surface_density``. Standalone-only; PROTEUS production
+            # runs go through ``eos_method = 2``.
             self.eos = AdamsWilliamsonEOS(self.settings, initial_spatial)
         elif self.settings.eos_method == 2:
+            # User-defined EOS = lookup table loaded from
+            # ``mesh.eos_file`` (a four-column ``r, P, rho, g`` profile).
+            # In the PROTEUS-coupled path this file is written by the
+            # structure solver: Zalmoxis (PALEOS-driven) writes
+            # ``zalmoxis_output.dat``; the dummy-static and SPIDER paths
+            # write ``spider_mesh.dat``. The four columns also drive a
+            # per-node gravity profile (overrides the scalar
+            # ``gravitational_acceleration``).
             self.eos = UserDefinedEOS(self.settings, initial_spatial)
         else:
             msg: str = 'Unknown method to initialize Equation of State'

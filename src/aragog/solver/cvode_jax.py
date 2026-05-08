@@ -37,7 +37,7 @@ from typing import Callable
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fwl.' + __name__)
 
 
 def build_jax_rhs_and_jacobian(

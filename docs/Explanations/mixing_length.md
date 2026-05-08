@@ -61,6 +61,7 @@ The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/
 ## Boundary-layer theory in companion codes
 
 BLT replaces the radial profile with one (or a few) lumped variables.
+PROTEUS exposes the BLT path via the dedicated boundary-layer interior module (`interior_energetics.module = 'dummy'` with the BL parameterisation enabled), so a coupled run can pick BLT instead of MLT without a separate code change; the two paths share PROTEUS's atmosphere coupling and configuration surface.
 The classical magma-ocean closure ([Solomatov (2007)](https://scixplorer.org/abs/2007evea.book...91S/abstract), reviewing [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract) and earlier scalings) writes the surface flux as
 
 $$
@@ -100,6 +101,11 @@ The two closures resolve different physical states.
 | Ra-Nu interpretation | Implicit, recovered as a diagnostic | Explicit, imposed as the closure |
 | Required input | $l(r)$, local $\alpha$, $\nu$, $c_p$, $\partial S/\partial r$ | Global Ra (or $T_\mathrm{surf}$ and $\delta_\mathrm{TBL}$) |
 
+A more fundamental difference, also worth noting: MLT closes the convective heat transport on a *single* representative wavenumber of the convective spectrum (typically the most unstable mode, or the one carrying the most energy at saturation), so it captures the contribution of one mode and ignores the rest of the inertial range.
+BLT, by contrast, closes the surface heat flux globally through the upper thermal boundary layer thickness, which is set by the *integrated* turbulent transport across all wavenumbers.
+As a consequence, MLT typically *under*-estimates the true convective flux (it misses the integrated contribution of the secondary modes) while BLT typically *over*-estimates it (it lumps all transport into a single Ra-Nu scaling that cannot resolve the partial-melt regime).
+The two errors point in opposite directions, and there is no general theorem that says either one bounds the truth from the same side across the whole magma-ocean parameter regime.
+
 In the high-$\mathrm{Ra}$, fully-molten, isoviscous limit MLT and BLT converge: MLT in the inviscid regime recovers the same free-fall surface-flux scaling that BLT applies as a single boundary condition.
 The two closures stop agreeing when:
 
@@ -134,6 +140,8 @@ The version of MLT in Aragog inherits five concrete choices that distinguish it 
 - **Entropy form, not temperature form.**
   The buoyancy driver is the superadiabatic entropy gradient $\max(-\partial S/\partial r, 0)$, not the superadiabatic temperature gradient.
   The two are equivalent through the thermodynamic identity $\partial T/\partial r|_S = (T/c_p)\,\partial S/\partial r$, but the entropy form keeps the EOS-tabulated $(P,S)$ lookup as the only thermodynamic call inside the RHS.
+  An earlier plan to rewrite the prognostic equation in a temperature-only formalism has been deprioritised: the entropy form's tighter coupling to the SPIDER-format P-S property tables and its correct lever-rule blending across the mushy zone outweigh the marginal interpretability gain of a $T(r,t)$ state vector.
+  A T-only path remains available through the `const_properties` mode (matching SPIDER's `-use_const_properties` flag) for analytic-mode benchmarks, but it is not the production solver path.
 
 - **Smooth viscous-to-inviscid blend.**
   SPIDER implements the [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract) two-regime form as a hard `if/else` on Re, while Aragog blends the regimes through a $\tanh$ on Re with a narrow width ($\Delta = 0.01\,\mathrm{Re}_\mathrm{crit}$).

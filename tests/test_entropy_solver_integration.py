@@ -34,16 +34,33 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-EOS_DIR = Path(
-    os.environ.get(
-        'ARAGOG_TEST_EOS_DIR',
-        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-    )
+# EOS path is environment-driven for portability across machines.
+# Resolution order:
+#   1. ``ARAGOG_TEST_EOS_DIR`` -- explicit override
+#   2. ``$FWL_DATA/aragog/spider_eos`` -- canonical PROTEUS data location
+#   3. ``$REPO/output/coupled_parity/spider/data/spider_eos`` -- legacy
+#      Mac Studio dev path; kept as a last-resort fallback so the test
+#      still runs locally for whoever generated those tables once.
+# Tests are skipped if none of these resolve; CI nightly populates the
+# canonical location via ``proteus offline`` before the smoke run.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_FWL_DATA = os.environ.get('FWL_DATA')
+_CANDIDATES = [
+    os.environ.get('ARAGOG_TEST_EOS_DIR'),
+    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
+    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
+]
+EOS_DIR = next(
+    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
+    Path(_CANDIDATES[-1]),
 )
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
-    reason=f'SPIDER P-S tables not found at {EOS_DIR}',
+    reason=(
+        f'SPIDER P-S tables not found at {EOS_DIR}. Set ARAGOG_TEST_EOS_DIR '
+        'or populate $FWL_DATA/aragog/spider_eos.'
+    ),
 )
 
 # Smoke marker: this is an integration test that needs the EOS data,

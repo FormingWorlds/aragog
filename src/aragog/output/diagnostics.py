@@ -101,12 +101,21 @@ def rheological_front(
     melt_fraction_basic: npt.NDArray,
     rheological_transition_melt_fraction: float,
     phi_global: float,
+    phi_high: float = 0.99,
+    phi_low: float = 0.01,
 ) -> float:
     """Compute the dimensionless rheological front position.
 
     The rheological front is defined as the dimensionless depth (relative to
     the outer radius) where the melt fraction crosses the rheological
-    transition threshold.
+    transition threshold. The bypass thresholds ``phi_high`` and
+    ``phi_low`` short-circuit the ``argmin`` search when the entire mantle
+    is essentially liquid (no transition has formed yet) or essentially
+    solid (transition has reached the surface). The defaults assume a
+    bottom-up solidification mode; the search returns the *first* radial
+    crossing of ``rheological_transition_melt_fraction`` from the CMB
+    outward, so non-bottom-up modes (e.g. middle-out crystallisation)
+    will need a redefined RF concept.
 
     Parameters
     ----------
@@ -118,17 +127,22 @@ def rheological_front(
         Melt fraction threshold for the rheological transition.
     phi_global : float
         Volume-averaged global melt fraction at the final timestep.
+    phi_high : float, optional
+        Upper bypass threshold (default 0.99). If ``phi_global`` is above
+        this, RF is set to the inner radius (no transition yet).
+    phi_low : float, optional
+        Lower bypass threshold (default 0.01). If ``phi_global`` is below
+        this, RF is set to the outer radius (fully solidified).
 
     Returns
     -------
     float
         Dimensionless rheological front (0 = surface, 1 = fully solidified to CMB).
     """
-    # If global melt fraction is close to one everywhere (magma ocean), rf is the inner radius
-    if phi_global > 0.99:
+    # Bypass argmin when no transition is present in the mantle.
+    if phi_global > phi_high:
         rf: float = mesh.basic.radii[0]
-    # If global melt fraction is close to zero everywhere (solidified), rf is the outer radius
-    elif phi_global < 0.01:
+    elif phi_global < phi_low:
         rf = mesh.basic.radii[-1]
     # General case
     else:

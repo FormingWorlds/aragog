@@ -8,7 +8,7 @@ import attrs
 import numpy as np
 import numpy.typing as npt
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
 @attrs.define

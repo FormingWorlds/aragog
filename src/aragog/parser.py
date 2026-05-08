@@ -22,7 +22,7 @@ if sys.version_info < (3, 11):
 else:
     from typing import Self
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
 def _get_dataclass_from_section_name() -> dict[str, Any]:

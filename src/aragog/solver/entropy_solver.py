@@ -69,7 +69,7 @@ from scipy import constants as _sp_constants
 
 SECS_PER_YEAR: float = _sp_constants.Julian_year
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fwl.' + __name__)
 
 
 def _validate_eos_radius_range(mesh_params) -> None:
@@ -696,11 +696,11 @@ class EntropySolver:
             bottom_up_grav_sep=getattr(energy, 'bottom_up_grav_sep', True),
             phase_smoothing=getattr(energy, 'phase_smoothing', 'tanh'),
         )
-        # Store radionuclide data for the state's heating computation
-        if hasattr(self.parameters, 'radionuclides'):
-            self.evaluator.radionuclides = self.parameters.radionuclides
-        else:
-            self.evaluator.radionuclides = []
+        # Store radionuclide data for the state's heating computation.
+        # ``Parameters.radionuclides`` is a required dataclass field, so
+        # the attribute is always present (an empty list when no
+        # radionuclides are configured).
+        self.evaluator.radionuclides = self.parameters.radionuclides
 
         # Cache constant BC and mesh terms so the dSdt hot path
         # doesn't recompute them on every RHS call. None of these
@@ -2525,6 +2525,13 @@ class EntropySolver:
         # output above, which is ``phase_basic.melt_fraction()``.
         phi_rheo = self.parameters.phase_mixed.rheological_transition_melt_fraction
         phi_basic_stag_interp = mesh.quantity_at_basic_nodes(phi_stag).ravel()
+        # 0.99 / 0.01 bypass thresholds: short-circuit ``argmin`` when no
+        # transition exists in the mantle (essentially-fully-liquid or
+        # essentially-fully-solid). These mirror ``rheological_front`` in
+        # ``output/diagnostics.py`` (now exposed as ``phi_high`` /
+        # ``phi_low`` kwargs there). The ``argmin``-based search assumes
+        # bottom-up crystallisation — a middle-out solidification mode
+        # would need a redefined RF concept (multiple crossings).
         if Phi_global > 0.99:
             rf = float(r_basic[0])
         elif Phi_global < 0.01:

@@ -6,7 +6,7 @@ import logging
 
 import attrs
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
 @attrs.define
@@ -16,9 +16,11 @@ class MeshConfig:
     Parameters
     ----------
     outer_radius : float
-        Outer radius [m].
+        Outer radius of the mantle shell (planet radius minus atmosphere
+        depth, in practice the same as ``planet.radius``) [m].
     inner_radius : float
-        Inner radius [m].
+        Inner radius of the mantle shell, i.e. the core-mantle boundary
+        (CMB) radius [m].
     number_of_nodes : int
         Number of basic mesh nodes.
     mixing_length_profile : str
@@ -32,9 +34,13 @@ class MeshConfig:
     eos_method : int
         1: Adams-Williamson, 2: User-defined.
     surface_density : float
-        Surface mantle density [kg/m^3]. Default 4078.95095544 matches
-        the SPIDER -adams_williamson_rhos value used in PROTEUS
-        production runs.
+        Surface-mantle density anchor [kg/m^3]. Used only by the analytic
+        Adams-Williamson EOS (``eos_method = 1``) as the constant
+        ``rho_top`` in ``rho(P) = rho_top * exp(P/K_S)``. NOT the
+        runtime material density (which is pressure-entropy dependent and
+        comes from the P-S property tables). Default 4078.95095544
+        matches the SPIDER ``-adams_williamson_rhos`` value used in
+        PROTEUS production runs. Ignored when ``eos_method = 2``.
     gravitational_acceleration : float
         Gravitational acceleration [m/s^2].
     adiabatic_bulk_modulus : float

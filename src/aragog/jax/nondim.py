@@ -12,9 +12,12 @@ Internal contract enforced by ``__post_init__``:
     state_scale > 0, rhs_scale > 0, t_ref > 0
     state_scale.shape == rhs_scale.shape
 
-By construction, every NonDimScales instance enforces the internal
-contract before being passed to consumers, so no downstream code
-needs to re-validate.
+By construction, every ``NonDimScales`` instance enforces the internal
+contract (``rhs_scale = t_ref / state_scale``, all positive, shapes
+matching) inside its ``__post_init__`` before any caller can use it. The
+two callers that consume an instance --- the scipy/CVODE wrapper in
+``entropy_solver.py`` and the JAX CVODE factory in ``cvode_jax.py`` ---
+therefore do NOT need to re-check those invariants on entry.
 """
 
 from __future__ import annotations

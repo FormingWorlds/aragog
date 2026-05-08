@@ -19,7 +19,7 @@ import numpy.typing as npt
 from aragog.eos.entropy import EntropyEOS
 from aragog.utilities import FloatOrArray, tanh_weight
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fwl.' + __name__)
 
 
 class EntropyPhaseEvaluator:
@@ -463,12 +463,17 @@ class EntropyPhaseEvaluator:
         # Stokes settling (high porosity): K/por = d^2 * 2/9
         F_stokes = d**2 * 2.0 / 9.0
 
-        # Regime switching at critical porosities. BKC -> RG at
-        # porosity 0.0769452 is the analytical equality point of the
-        # BKC and RG permeabilities F_bkc(phi) = F_rg(phi) at phi ~
-        # 0.077; rounding-precision differences across published
-        # sources are well inside the tanh blend width 0.02 below.
-        # RG -> Stokes at ~0.771.
+        # Regime switching at critical porosities. These two values
+        # (zeta_1 = 0.0769452, zeta_2 = 0.771462) are NOT material
+        # parameters: they are the analytical equality points of the
+        # three permeability laws (BKC = RG at zeta_1, RG = Stokes at
+        # zeta_2) under the equal-density-ratio limit, derived in
+        # Bower et al. 2018 Eqs. 13a-c. They depend only on the
+        # functional forms of the three regime laws, not on the
+        # underlying material; varying composition changes individual
+        # F_bkc / F_rg / F_stokes prefactors but the equality points
+        # remain fixed by construction. The tanh blend widths (0.02
+        # and 0.05) are numerical-smoothing tunables, not physics.
         w_rg = tanh_weight(porosity, 0.0769452, 0.02)
         w_stokes = tanh_weight(porosity, 0.771462, 0.05)
         F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes

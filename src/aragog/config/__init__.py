@@ -29,7 +29,7 @@ if sys.version_info < (3, 11):
 else:
     import tomllib
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 # Re-export all config classes for convenient access
 __all__ = [

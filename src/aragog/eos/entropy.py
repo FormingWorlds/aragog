@@ -31,7 +31,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.interpolate import RegularGridInterpolator
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fwl.' + __name__)
 
 
 def _bisect_left_clamp(arr: list[float], val: float) -> int:
@@ -165,6 +165,12 @@ def _interp_1d_scalar(
 def _load_spider_ps_table(filepath: Path) -> dict:
     """Load a SPIDER-format P-S property table.
 
+    The PROTEUS-coupled path provides these tables via Zalmoxis (under
+    ``<outdir>/data/aragog_pt/``) and PROTEUS standalone runs read them
+    from ``$FWL_DATA``. They are not bundled with Aragog; an explicit
+    file-existence check up front gives a clearer error than the bare
+    ``open()`` raise from a missing path.
+
     Parameters
     ----------
     filepath : Path
@@ -177,8 +183,20 @@ def _load_spider_ps_table(filepath: Path) -> dict:
         'S' : 1D array of entropy values [J/kg/K]
         'values' : 2D array of property values [SI], shape (n_P, n_S)
         'interp' : RegularGridInterpolator on (P, S)
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``filepath`` does not exist or is not a regular file.
     """
-    with open(filepath) as f:
+    fp = Path(filepath)
+    if not fp.is_file():
+        raise FileNotFoundError(
+            f'EOS table not found: {fp}. Expected a SPIDER-format P-S table; '
+            'PROTEUS-coupled runs get this from Zalmoxis under '
+            '<outdir>/data/aragog_pt/, standalone runs from $FWL_DATA.'
+        )
+    with open(fp) as f:
         header = f.readline().strip()
         parts = header.split()
         n_header = int(parts[1])

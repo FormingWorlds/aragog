@@ -22,7 +22,7 @@ from aragog.utilities import FloatOrArray
 if TYPE_CHECKING:
     from aragog.solver.evaluator import Evaluator
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fwl.' + __name__)
 
 # Critical Reynolds number from Abe (1993)
 RE_CRIT = 9.0 / 8.0
@@ -502,6 +502,12 @@ class EntropyState:
         # max(k_h_raw, kappah_floor) sit on the raw value rather than
         # the phase-modulated floor and creates a metastable
         # equilibrium for dSdr_cmb and a phi=0 oscillation.
+        # 1% of RE_CRIT. This is a numerics-tunable (NOT a smoothing-width
+        # config knob and NOT the matprop_smooth_width above): a wider
+        # blend leaks a non-zero inviscid_weight into solid layers and
+        # creates the metastable equilibrium described in the comment
+        # block above. Not exposed via config because the safe range is
+        # narrow.
         blend_width = 0.01 * RE_CRIT
         inviscid_weight = 0.5 * (1.0 + np.tanh((reynolds - RE_CRIT) / max(blend_width, 1e-30)))
         # Raw eddy diffusivity (before thermal scaling and floor)
@@ -673,7 +679,14 @@ class EntropyState:
                 gphi_stag = (self._entropy_staggered - self._S_sol_stag) / self._dS_phase_stag
 
                 if self._phase_smoothing == 'tanh':
-                    smth_stag = _spider_get_smoothing(gphi_stag, smooth_width=1.0e-2)
+                    # SPIDER tanh-smoothing width. Defaults to 0.01 (SPIDER
+                    # ``matprop_smooth_width`` convention); pulls from the
+                    # phase evaluator when configured non-zero so a single
+                    # config knob drives both EOS and Jgrav/Jmix smoothing.
+                    smw = (
+                        float(getattr(self.phase_basic, '_matprop_smooth_width', 0.0)) or 1.0e-2
+                    )
+                    smth_stag = _spider_get_smoothing(gphi_stag, smooth_width=smw)
                 else:
                     gphi_clip = _smooth_clip(gphi_stag, 0.0, 1.0, eps=1.0e-3)
                     smth_stag = 16.0 * gphi_clip**2 * (1.0 - gphi_clip) ** 2
@@ -718,7 +731,11 @@ class EntropyState:
             # self._phase_smoothing) for internal consistency.
             gphi_basic = (self._entropy_basic - self._S_sol_basic) / self._dS_phase_basic
             if self._phase_smoothing == 'tanh':
-                smth_basic_mix = _spider_get_smoothing(gphi_basic, smooth_width=1.0e-2)
+                # Same matprop_smooth_width as the Jgrav site above; one
+                # config knob drives both inline smoothings to keep them
+                # consistent across the mass-flux assembly.
+                smw = float(getattr(self.phase_basic, '_matprop_smooth_width', 0.0)) or 1.0e-2
+                smth_basic_mix = _spider_get_smoothing(gphi_basic, smooth_width=smw)
             else:
                 gphi_basic_clip = _smooth_clip(gphi_basic, 0.0, 1.0, eps=1.0e-3)
                 smth_basic_mix = 16.0 * gphi_basic_clip**2 * (1.0 - gphi_basic_clip) ** 2
@@ -754,7 +771,7 @@ class EntropyState:
         self._heating_radio = np.zeros(n_stag)
         self._heating_tidal = np.zeros(n_stag)
 
-        if self._radionuclides and hasattr(self._evaluator, 'radionuclides'):
+        if self._radionuclides:
             radio = 0.0
             for r in self._evaluator.radionuclides:
                 radio += r.get_heating(time)

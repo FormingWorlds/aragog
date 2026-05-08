@@ -61,10 +61,17 @@ class FluxOutput(NamedTuple):
     # Δh-weighted mass-flux contributions
     # to ``heat_flux`` and is not added
     # separately.
-    jmix_heat: jax.Array  # convective-mixing heat flux at basic
-    # nodes [W/m^2]; raw (NOT gated by
-    # params.mixing). Exposed for diagnostic
-    # post-processing.
+    jmix_heat: jax.Array  # phase-mixing heat flux at basic nodes
+    # [W/m^2] -- the SPIDER-parity convective
+    # heat flux carried by the chemical mass
+    # flux ``jmix`` (NOT the same as the MLT
+    # convective flux F_conv, which lives in
+    # ``heat_flux`` already). Returned raw,
+    # NOT gated by ``params.mixing``; exposed
+    # separately so diagnostic post-processing
+    # can inspect the phase-mixing
+    # contribution independently of whether
+    # the integrator's RHS includes it.
 
 
 # ---------------------------------------------------------------------------
@@ -365,22 +372,26 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
         return jnp.asarray(g_basic)
     # Scalar fallback chain. Mirrors the numpy reference in
     # entropy_solver.py::_initialize_internals: try the pressure-EOS
-    # attribute first, then mesh.settings, then mesh.parameters, then
-    # the 9.81 hard default. Both ``settings`` and ``parameters`` are
-    # consulted because configs populated via the attrs facade live on
-    # mesh.parameters and configs built via the dataclass parser live
-    # on mesh.settings; reading only one would silently fall through
-    # to 9.81 m/s^2 for a non-Earth planet.
+    # attribute first, then mesh.settings, then mesh.parameters. Both
+    # ``settings`` and ``parameters`` are consulted because configs
+    # populated via the attrs facade live on mesh.parameters and configs
+    # built via the dataclass parser live on mesh.settings; reading only
+    # one would silently fall through. If neither carries the field we
+    # raise instead of defaulting to Earth gravity, since silently using
+    # 9.81 m/s^2 on a non-Earth planet produces wrong physics.
     settings_src = getattr(mesh, 'settings', None) or getattr(mesh, 'parameters', None) or mesh
-    g_scalar = abs(
-        float(
-            getattr(
-                mesh.eos,
-                '_gravitational_acceleration',
-                getattr(settings_src, 'gravitational_acceleration', 9.81),
-            )
+    _eos_g = getattr(mesh.eos, '_gravitational_acceleration', None)
+    if _eos_g is None:
+        _eos_g = getattr(settings_src, 'gravitational_acceleration', None)
+    if _eos_g is None:
+        raise ValueError(
+            'No gravitational_acceleration available on mesh.eos, mesh.settings, '
+            'or mesh.parameters and no per-node eos_gravity profile present. '
+            'Set ``gravitational_acceleration`` on the mesh config (or supply '
+            'an external EOS file with a gravity column) before constructing '
+            'the JAX phase parameters.'
         )
-    )
+    g_scalar = abs(float(_eos_g))
     return jnp.asarray(np.full(r_basic.size, g_scalar))
 
 

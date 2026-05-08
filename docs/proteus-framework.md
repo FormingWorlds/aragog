@@ -29,7 +29,7 @@ In a PROTEUS coupled run, four submodule families deliver the mantle-atmosphere 
 |---|---|---|
 | **Outgassing** (CALLIOPE / Atmodeller) | Volatile partitioning between magma ocean and atmosphere | $X_i^\mathrm{melt}$, $X_i^\mathrm{atm}$ |
 | **Interior structure** (Zalmoxis, optionally SPIDER or `dummy`) | Static structure: hydrostatic equilibrium, mass-radius, density, gravity, $R_\mathrm{cmb}$, $P_\mathrm{cmb}$ | $\rho(r)$, $g(r)$, $P(r)$, mesh file |
-| **Interior energetics** (**Aragog** or SPIDER) | Thermal evolution: entropy ODE, $T(r)$ trajectory, surface heat flux | $S(r)$, $T(r)$, $\Phi$, $F_\mathrm{atm}$, $T_\mathrm{magma}$, $T_\mathrm{core}$ |
+| **Interior energetics** (**Aragog**, SPIDER, or `dummy`) | Thermal evolution: entropy ODE, $T(r)$ trajectory, surface heat flux | $S(r)$, $T(r)$, $\Phi$, $F_\mathrm{atm}$, $T_\mathrm{magma}$, $T_\mathrm{core}$ |
 | **Atmosphere** (AGNI / JANUS / dummy) | Radiative-balance surface temperature | $T_\mathrm{surf}$, atmospheric column |
 
 Aragog reads $\rho(r)$, $g(r)$, and $P(r)$ from the mesh file written by the interior-structure step (`data/zalmoxis_output.dat` for Zalmoxis-coupled runs), reads the surface boundary condition from the atmosphere step, and writes the entropy profile and a small set of scalar diagnostics to `hf_row` for the next iteration.

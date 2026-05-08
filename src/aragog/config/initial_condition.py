@@ -7,7 +7,7 @@ import logging
 import attrs
 import numpy.typing as npt
 
-logger: logging.Logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
 @attrs.define
@@ -31,5 +31,8 @@ class InitialConditionConfig:
     basal_temperature: float = 4000.0
     init_file: str = ''
 
-    # Loaded temperature array (for IC type 2)
+    # In-memory temperature array. Populated from ``init_file`` at parse
+    # time when ``initial_condition == 2``; users do NOT set this
+    # directly. ``init_file`` is the user-supplied path; ``init_temperature``
+    # is the loaded numpy array used by the solver.
     init_temperature: npt.NDArray | None = attrs.field(init=False, default=None)
