@@ -155,7 +155,7 @@ The version of MLT in Aragog inherits five concrete choices that distinguish it 
 ## Where to read more
 
 - [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. Geophysical Monograph 74, American Geophysical Union, pp. 41-54. The two-regime MLT form Aragog and SPIDER both follow.
-- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Source for $\mathrm{Re}_\mathrm{crit} = 9/8$ via the viscous-inviscid asymptotic match (this book chapter is not indexed on ADS/SciX, so no link is available).
+- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Source for $\mathrm{Re}_\mathrm{crit} = 9/8$ via the viscous-inviscid asymptotic match.
 - [Abe (1997)](https://scixplorer.org/abs/1997PEPI..100...27A/abstract). *Thermal and chemical evolution of the terrestrial magma ocean*. PEPI 100, 27.
 - [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. PEPI 274, 49. The SPIDER paper; the entropy-form mantle equation Aragog inherits.
 - [Elkins-Tanton (2008)](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract). *Linked magma ocean solidification and atmospheric growth for Earth and Mars*. EPSL 271, 181. A representative BLT magma-ocean evolution coupled to a grey atmosphere.

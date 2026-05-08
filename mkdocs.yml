@@ -25,6 +25,7 @@ nav:
 
   - Tutorials:
       - First run: Tutorials/firstrun.md
+      - Building a test: Tutorials/build_test.md
 
   - Explanations:
       - Model overview: Explanations/model.md

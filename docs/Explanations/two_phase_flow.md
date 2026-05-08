@@ -67,12 +67,12 @@ $$
 The permeability factor $K(\phi)$ spans three asymptotic regimes ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §2.1):
 
 - **Stokes settling** at high $\phi$: melt is the matrix and solid grains settle as isolated spheres, derived from Stokes' law ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 13a).
-- **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367; not indexed on ADS/SciX).
+- **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367).
 - **Blake-Kozeny-Carman** at low $\phi$: melt as a percolating fluid through a near-rigid solid matrix.
 
 The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995) and reviewed in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §2.1 Eqs. 13a-c, where the regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
 Aragog hard-codes the equal-density-ratio limits ($\rho_\mathrm{sol} = \rho_\mathrm{liq}$) of these expressions, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), and blends through them with a tanh switch rather than recomputing per radial node.
-The resulting permeability-vs-porosity curve (Figure 3 of [Heat transport](heat_transport.md#permeability-kzeta-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
+The resulting permeability-vs-porosity curve (Figure 1 of [Heat transport](heat_transport.md#permeability-kzeta-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
 The corresponding heat flux is
 
 $$
@@ -140,8 +140,8 @@ The one-phase formulation can give the right qualitative answer but will miss th
   Source for the rheological-transition viscosity blend that Aragog uses.
 - [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract). *Suspension in convective layers and style of differentiation of a terrestrial magma ocean*. JGR 98, 5375.
   Two-phase fluid-dynamical scaling for crystal suspension and settling.
-- Rumpf, H.C.H., and Gupte, A.R. (1971). *Einflüsse der Porosität und Korngrößenverteilung im Widerstandsgesetz der Porenströmung*. Chem. Ing. Tech. 43, 367. Permeability fit for the intermediate-$\phi$ branch (not indexed on ADS/SciX; full DOI not independently verified).
-- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Source for the consolidated three-regime $\zeta_\mathrm{grav}(\phi)$ formulation cited in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) footnote 3; not indexed on ADS/SciX.
+- Rumpf, H.C.H., and Gupte, A.R. (1971). *Einflüsse der Porosität und Korngrößenverteilung im Widerstandsgesetz der Porenströmung*. Chem. Ing. Tech. 43, 367. Permeability fit for the intermediate-$\phi$ branch.
+- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Source for the consolidated three-regime $\zeta_\mathrm{grav}(\phi)$ formulation cited in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) footnote 3.
 
 For the algebraic forms of the four heat-flux components Aragog assembles, see [Heat transport](heat_transport.md).
 For the closure that determines $\kappa_h$ in the convective flux, see [Mixing-length theory](mixing_length.md).

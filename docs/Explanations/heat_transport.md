@@ -90,7 +90,7 @@ where $L(P)$ is the EOS-tabulated, pressure-dependent latent heat of fusion.
 
 ![Permeability F(porosity)](../figures/vv/fig_04_permeability.png)
 
-**Figure 3.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling, following [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes). (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
+**Figure 1.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling, following [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes). (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
 
 ### Phase-boundary smoothing
 
