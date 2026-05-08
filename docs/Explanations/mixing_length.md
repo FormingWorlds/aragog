@@ -18,7 +18,7 @@ For the SPIDER cross-check, see [Aragog vs SPIDER](spider_comparison.md).
 
 ## Mixing-length theory inside Aragog
 
-MLT was developed for stellar interiors and adapted to terrestrial magma oceans by [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract).
+MLT was developed for stellar interiors by [Vitense (1953)](https://scixplorer.org/abs/1953ZA.....32..135V/abstract) and adapted to terrestrial magma oceans by [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract); the critical Reynolds number $\mathrm{Re}_\mathrm{crit} = 9/8$ that Aragog inherits comes via Abe (1995) and [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 6.
 The convective heat flux at a basic node is parameterised as eddy diffusion of entropy:
 
 $$
@@ -38,8 +38,8 @@ $$
 with viscous and inviscid velocity scales
 
 $$
-v_\mathrm{visc} = \frac{\alpha\,g\,T\,(-\partial S/\partial r)\,l^2}{18\,\nu\,c_p},\qquad
-v_\mathrm{inv}  = l\left[\frac{\alpha\,g\,T\,(-\partial S/\partial r)}{c_p}\right]^{1/2},
+v_\mathrm{visc} = \frac{\alpha\,g\,T\,(-\partial S/\partial r)\,l^3}{18\,\nu\,c_p},\qquad
+v_\mathrm{inv}  = \left[\frac{\alpha\,g\,T\,(-\partial S/\partial r)\,l^2}{16\,c_p}\right]^{1/2},
 $$
 
 and a smooth blend $w(\mathrm{Re}) = \tfrac{1}{2}\big[1 + \tanh\!\big((\mathrm{Re}-\mathrm{Re}_\mathrm{crit})/\Delta\big)\big]$ on the cell Reynolds number $\mathrm{Re} = v_\mathrm{visc}\,l/\nu$, with $\mathrm{Re}_\mathrm{crit} = 9/8$ and a narrow blend width $\Delta = 0.01\,\mathrm{Re}_\mathrm{crit}$.
@@ -56,7 +56,7 @@ the classical bounded-eddy profile that vanishes at both boundaries and reaches 
 A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
 A phase-modulated diffusivity floor `kappah_floor` activates only where melt fraction is non-trivial, mirroring the SPIDER convention; see [Heat transport](heat_transport.md#phase-modulated-floor).
 
-The implementation lives in `EntropyState._compute_kh` (numpy path) and `aragog.jax.phase.compute_kh` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
+The implementation lives in `EntropyState._compute_kh` (numpy path) and `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
 
 ## Boundary-layer theory in companion codes
 
@@ -108,20 +108,20 @@ The two closures stop agreeing when:
 - the lower BL evolves on the same timescale as the interior (a coupled core-mantle thermal evolution where $T_\mathrm{cmb}$ and the mantle adiabat coevolve);
 - the EOS-driven adiabat is non-trivial and an assumed reference adiabat is no longer accurate.
 
-## When each is appropriate
+## Advantages of MLT
 
-Use **MLT** when:
+- **Resolved radial structure.** The full $S(r,t)$ profile is solved for, so solidification fronts, retained melt pockets, partial-melt rheology, and EOS-resolved adiabats are recovered without an assumed reference state.
+- **Native handling of phase transitions.** Solidus and liquidus are smoothed per cell within the same flux assembly, so partial-melt physics enters the heat budget continuously rather than as a switch between regimes.
+- **Per-component flux diagnostics.** Conduction, convection, gravitational separation, and chemical mixing fluxes ($F_\mathrm{cond}$, $F_\mathrm{conv}$, $F_\mathrm{grav}$, $F_\mathrm{mix}$) are exposed individually and reconstruct the total to floating-point round-off.
+- **Two-way coupling to a multi-phase mantle.** Multi-Myr atmosphere-interior runs in which mantle composition feeds back on the lower boundary remain self-consistent because the radial structure that the lower BL sees is the solved mantle, not an imposed adiabat.
+- **Captures the viscous transition.** Both viscous (laminar) and inviscid (turbulent) limits are handled inside the same closure via the smooth blend on Re, so the parameterisation extends across the full range from solid to fully molten without piecing together separate scaling fits.
 
-- radial structure matters (solidification fronts, retained melt pockets, partial-melt rheology, EOS-resolved adiabats);
-- the run couples a multi-phase mantle to an atmosphere over many Myr and the mantle composition feeds back on the lower BL;
-- per-component flux diagnostics are required ($F_\mathrm{cond}$, $F_\mathrm{conv}$, $F_\mathrm{grav}$, $F_\mathrm{mix}$ separately);
-- gravitational separation of melt or chemical mixing of melt fraction is part of the question.
+## Advantages of BLT
 
-Use **BLT** when:
-
-- a fast bulk evolution is sufficient (parameter sweeps over many planets, atmosphere-led studies where the magma ocean is one cell);
-- the magma ocean is well within the high-Ra, fully-molten regime where the well-mixed assumption is well justified;
-- the goal is direct comparison with Rayleigh-Bénard scaling experiments or laboratory analogues.
+- **Cheap.** A single ODE in $T_\mathrm{pot}(t)$ runs in seconds, which makes parameter sweeps over many planets and atmosphere-led parameter studies tractable where a stiff PDE solve is not.
+- **Direct contact with laboratory scalings.** The Nu-Ra closure matches the form of Rayleigh-Bénard experiments and high-Ra simulations, so closure choices and uncertainties translate directly into experimentally measured exponents.
+- **Defensible in the fully-molten high-Ra limit.** When the magma ocean is well-mixed and isoviscous, the BLT closure is the one MLT itself converges to in the inviscid limit, so BLT is as accurate as MLT in that regime at a small fraction of the cost.
+- **Compact coupling interface.** A single bulk temperature is easier to hand to an atmospheric model than a full radial profile, which simplifies coupling pipelines where the magma ocean is one element of a larger system.
 
 The two formulations are complementary, not competing.
 BLT makes a defensible high-Ra assumption that an MLT solution can validate or invalidate by inspection of the radial profile, and most published MLT runs (including Aragog's) sit deep inside the parameter regime where BLT is also defensible during the fully-molten phase.
@@ -141,7 +141,8 @@ The version of MLT in Aragog inherits five concrete choices that distinguish it 
 
 - **Bounded-eddy mixing length.**
   The default profile $l(r) = \min(r_\mathrm{top}-r,\ r-r_\mathrm{cmb})$ vanishes at both boundaries.
-  This is the [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract) choice and is geometrically natural for a finite-depth shell, but it is one of two options; a `constant` profile is also available for analytical-mode tests.
+  [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §2.1 motivates this distance-to-nearest-boundary choice as the form for which the calculated convective heat flux best fits experimental measurements (Fig. 3 in Abe 1995; Stothers & Chin 1997).
+  A `constant` profile is also available for analytical-mode tests.
 
 - **Phase-modulated diffusivity floor.**
   `kappah_floor` activates only where melt fraction $\phi$ is large enough (tanh ramp around $\phi = 0.4$), so a SPIDER-equivalent floor never spuriously diffuses solid-state cells.
@@ -154,6 +155,7 @@ The version of MLT in Aragog inherits five concrete choices that distinguish it 
 ## Where to read more
 
 - [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. AGU Geophysical Monograph Series 74, 41. The two-regime MLT form Aragog and SPIDER both follow.
+- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Source for $\mathrm{Re}_\mathrm{crit} = 9/8$ via the viscous-inviscid asymptotic match (this book chapter is not indexed on ADS/SciX, so no link is available).
 - [Abe (1997)](https://scixplorer.org/abs/1997PEPI..100...27A/abstract). *Thermal and chemical evolution of the terrestrial magma ocean*. PEPI 100, 27.
 - [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. PEPI 274, 49. The SPIDER paper; the entropy-form mantle equation Aragog inherits.
 - [Elkins-Tanton (2008)](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract). *Linked magma ocean solidification and atmospheric growth for Earth and Mars*. EPSL 271, 181. A representative BLT magma-ocean evolution coupled to a grey atmosphere.
@@ -162,3 +164,4 @@ The version of MLT in Aragog inherits five concrete choices that distinguish it 
 - [Schaefer et al. (2016)](https://scixplorer.org/abs/2016ApJ...829...63S/abstract). *Predictions of the atmospheric composition of GJ 1132b*. ApJ 829, 63. A representative BLT magma-ocean coupled to atmospheric photochemistry and escape.
 - [Solomatov (2007)](https://scixplorer.org/abs/2007evea.book...91S/abstract). *Magma oceans and primordial mantle differentiation*. In *Evolution of the Earth*, Treatise on Geophysics 9, 91. Review of the Nu-Ra scalings BLT relies on.
 - [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract). *Suspension in convective layers and style of differentiation of a terrestrial magma ocean*. JGR 98, 5375.
+- [Vitense (1953)](https://scixplorer.org/abs/1953ZA.....32..135V/abstract). *Die Wasserstoffkonvektionszone der Sonne*. Zeitschrift für Astrophysik 32, 135. Origin of the inviscid free-fall MLT velocity scaling that magma-ocean MLT inherits.
