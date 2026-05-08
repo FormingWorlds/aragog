@@ -455,9 +455,23 @@ class SolverOutput:
             ds.createDimension('staggered', n_stag)
             ds.createDimension('basic', n_basic)
 
-            def _scalar(name: str, value: float | int, units: str, long_name: str) -> None:
+            def _scalar(
+                name: str,
+                value: float | int,
+                units: str,
+                long_name: str,
+                *,
+                fill_value_nan: bool = False,
+            ) -> None:
                 dtype = 'i4' if isinstance(value, (int, np.integer)) else 'f8'
-                v = ds.createVariable(name, dtype)
+                # CF convention: ``_FillValue`` must be set at variable
+                # creation time, not after, otherwise netCDF4 raises
+                # AttributeError. Pass it via the ``fill_value`` kwarg of
+                # createVariable.
+                if fill_value_nan and dtype == 'f8':
+                    v = ds.createVariable(name, dtype, fill_value=np.nan)
+                else:
+                    v = ds.createVariable(name, dtype)
                 v.units = units
                 v.long_name = long_name
                 v[...] = value
@@ -494,12 +508,24 @@ class SolverOutput:
             _scalar('M_mantle_solid', self.M_mantle_solid, 'kg', 'Solid mantle mass')
             _scalar('RF_depth', self.RF_depth, '1', 'Dimensionless rheological-front depth')
             _scalar('E_th', self.E_th, 'J', 'Thermal energy proxy (legacy sum m*Cp_apparent*T)')
-            _scalar('E_state', self.E_state, 'J', 'EOS-consistent integrated mantle enthalpy')
+            # E_state and E_state_cons are documented to be NaN on the
+            # ``const_properties`` path (no entropy EOS attached). Mark
+            # them with ``_FillValue = NaN`` so xarray correctly treats
+            # an absent value as intentional missing data rather than a
+            # silent corrupted float.
+            _scalar(
+                'E_state',
+                self.E_state,
+                'J',
+                'EOS-consistent integrated mantle enthalpy',
+                fill_value_nan=True,
+            )
             _scalar(
                 'E_state_cons',
                 self.E_state_cons,
                 'J',
                 'Conservation-grade integrated enthalpy with frozen structural mass',
+                fill_value_nan=True,
             )
             _scalar('Cp_eff', self.Cp_eff, 'J kg-1 K-1', 'Mass-weighted mean heat capacity')
             _scalar('F_heat_total', self.F_heat_total, 'W m-2', 'Total internal heating flux')
@@ -2592,7 +2618,7 @@ class EntropySolver:
         path: str | Path,
         *,
         time: float | None = None,
-        description: str = 'Aragog standalone snapshot',
+        description: str | None = None,
     ) -> None:
         """Convenience wrapper: ``self.get_state().to_netcdf(path)``.
 
@@ -2614,7 +2640,13 @@ class EntropySolver:
         --------
         SolverOutput.to_netcdf : underlying writer with the full schema.
         """
-        self.get_state().to_netcdf(path, time=time, description=description)
+        # Forward only when the caller supplied a description; otherwise
+        # let ``to_netcdf``'s default take effect so the two entry points
+        # stamp the same string into ``ds.description``.
+        kwargs: dict[str, str] = {}
+        if description is not None:
+            kwargs['description'] = description
+        self.get_state().to_netcdf(path, time=time, **kwargs)
 
     def get_state(self) -> SolverOutput:
         """Extract the solver state as a clean output dataclass.

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import netCDF4 as nc
 import numpy as np
 import pytest
 
@@ -117,7 +118,6 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
     f = tmp_path / 'snapshot.nc'
     out.to_netcdf(f, time=12345.0, description='unit test snapshot')
 
-    nc = pytest.importorskip('netCDF4')
     with nc.Dataset(f, mode='r') as ds:
         # Metadata
         assert ds.description == 'unit test snapshot'
@@ -229,7 +229,6 @@ def test_to_netcdf_default_time_falls_back_to_dt_actual(tmp_path: Path) -> None:
     f = tmp_path / 'no_time.nc'
     out.to_netcdf(f)  # no `time=`
 
-    nc = pytest.importorskip('netCDF4')
     with nc.Dataset(f, mode='r') as ds:
         assert float(ds['time'][...]) == pytest.approx(1234.5, rel=0, abs=0)
 
@@ -258,7 +257,6 @@ def test_to_netcdf_overwrites_existing_file(tmp_path: Path) -> None:
     f = tmp_path / 'over.nc'
     out_a.to_netcdf(f)
     out_b.to_netcdf(f)
-    nc = pytest.importorskip('netCDF4')
     with nc.Dataset(f, mode='r') as ds:
         assert int(ds['status'][...]) == 7
 
@@ -295,9 +293,75 @@ def test_to_netcdf_rejects_unphysical_negative_node_count() -> None:
         f = Path(tmp.name)
     try:
         out.to_netcdf(f)
-        nc = pytest.importorskip('netCDF4')
         with nc.Dataset(f, mode='r') as ds:
             assert ds.dimensions['basic'].size == 3
             assert ds.dimensions['staggered'].size == _N_STAG
     finally:
         f.unlink(missing_ok=True)
+
+
+def test_to_netcdf_round_trips_nan_with_fill_value(tmp_path: Path) -> None:
+    """Documented case: ``E_state`` and ``E_state_cons`` are set to
+    ``float('nan')`` on the ``const_properties`` solver path (no entropy
+    EOS attached). The writer must:
+        (1) preserve the NaN through the round-trip (catches a regression
+            that silently casts NaN to 0.0);
+        (2) set ``_FillValue = NaN`` on those variables so xarray and
+            other CF-aware readers correctly mark the value as
+            intentionally missing rather than silently corrupted.
+
+    Discriminator: a regression that drops the ``fill_value`` kwarg in
+    ``createVariable`` would still preserve the NaN value but lose the
+    ``_FillValue`` attribute, failing the second assertion.
+    """
+    out = _make_output()
+    out.E_state = float('nan')
+    out.E_state_cons = float('nan')
+    f = tmp_path / 'nan_state.nc'
+    out.to_netcdf(f)
+
+    with nc.Dataset(f, mode='r') as ds:
+        # Use ds.variables[name][...] with set_auto_mask(False) so we
+        # see the raw NaN rather than a masked-array NaN-as-fill.
+        for name in ('E_state', 'E_state_cons'):
+            v = ds[name]
+            v.set_auto_mask(False)
+            value = float(np.asarray(v[...]))
+            assert np.isnan(value), f'{name} did not round-trip NaN (got {value!r})'
+            # Per CF: _FillValue must be set so consumers know NaN is
+            # intentional.
+            assert hasattr(v, '_FillValue'), (
+                f'{name} missing _FillValue attribute; xarray will not '
+                'treat NaN as intentional missing'
+            )
+            assert np.isnan(float(v._FillValue))
+
+        # Sanity discriminator: a sibling scalar that is NOT documented
+        # to be NaN-legal must NOT carry _FillValue (otherwise xarray
+        # would mask out unintended NaNs that should surface as bugs).
+        for name in ('T_magma', 'Cp_eff'):
+            v = ds[name]
+            assert not hasattr(v, '_FillValue'), (
+                f'{name} should not carry _FillValue (NaN is not a documented legal value here)'
+            )
+
+
+def test_write_netcdf_default_description_matches_to_netcdf(tmp_path: Path) -> None:
+    """Property: ``EntropySolver.write_netcdf`` is documented as a thin
+    wrapper around ``SolverOutput.to_netcdf``. Default behaviour must
+    therefore agree on the ``description`` global attribute.
+
+    Direct check via ``SolverOutput.to_netcdf`` with no description, so
+    we don't need a live solver. The ``write_netcdf`` wrapper forwards
+    ``description=None`` to mean 'use the to_netcdf default', so a
+    regression where the wrapper hardcoded a different default string
+    would leave divergent ``ds.description`` values across entry
+    points.
+    """
+    out = _make_output()
+    f = tmp_path / 'default_desc.nc'
+    out.to_netcdf(f)
+    with nc.Dataset(f, mode='r') as ds:
+        # The default lives in to_netcdf; assert it's the canonical
+        # 'Aragog SolverOutput snapshot' string we documented.
+        assert ds.description == 'Aragog SolverOutput snapshot'
