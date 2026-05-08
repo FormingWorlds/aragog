@@ -30,6 +30,7 @@ nav:
       - Model overview: Explanations/model.md
       - Energy equation: Explanations/energy_equation.md
       - Heat transport: Explanations/heat_transport.md
+      - Mixing-length theory: Explanations/mixing_length.md
       - Phase transitions: Explanations/phase_transitions.md
       - Pressure EOS: Explanations/pressure_eos.md
       - Core BC modes: Explanations/core_bc.md
