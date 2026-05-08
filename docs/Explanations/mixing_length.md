@@ -56,7 +56,7 @@ the classical bounded-eddy profile that vanishes at both boundaries and reaches 
 A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
 A phase-modulated diffusivity floor `kappah_floor` activates only where melt fraction is non-trivial, mirroring the SPIDER convention; see [Heat transport](heat_transport.md#phase-modulated-floor).
 
-The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py:451-510`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
+The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py:441-557`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
 
 ## Boundary-layer theory in companion codes
 

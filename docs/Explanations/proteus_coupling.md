@@ -34,13 +34,13 @@ The wrapper is split between two files. `src/proteus/interior_energetics/aragog.
 
 ### 1. Initial setup
 
-`AragogRunner.__init__` (`interior_energetics/aragog.py` line ~78) constructs the `EntropySolver`, sets the EOS directory (Zalmoxis-written `<outdir>/data/aragog_pt/` for PALEOS-generated tables, or a SPIDER-bundled directory for parity runs), and configures all of Aragog's `Parameters` from the PROTEUS schema. Outer-boundary mode 4 (prescribed flux) is always selected: Aragog consumes `hf_row['F_atm']` as the surface flux boundary condition, and the atmosphere module is responsible for self-consistently computing it from the surface temperature.
+`AragogRunner.__init__` (`interior_energetics/aragog.py` line ~170) constructs the `EntropySolver`, sets the EOS directory (Zalmoxis-written `<outdir>/data/aragog_pt/` for PALEOS-generated tables, or a SPIDER-bundled directory for parity runs), and configures all of Aragog's `Parameters` from the PROTEUS schema. The outer-boundary mode is set by `interior_energetics.surface_bc_mode`: `'flux'` (default) selects mode 4, where Aragog consumes `hf_row['F_atm']` unchanged as the surface flux boundary condition; `'grey_body'` selects mode 1, where Aragog re-evaluates $\varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$ on every CVODE sub-step from the live mantle surface temperature. The atmosphere module produces `F_atm` (and `T_eqm`) self-consistently in either case.
 
 The initial entropy IC is set from `hf_row['ini_entropy']` on the first call, and from the previous iteration's S-field on subsequent calls (`read_last_Sfield(<outdir>, t)`). The CMB radius prefers `hf_row['R_core']` (set by Zalmoxis or SPIDER) when present and falls back to `core_frac * R_int` otherwise.
 
 ### 2. Per-iteration solve
 
-`AragogRunner.run` (line ~1259) sets:
+`AragogRunner.run_solver` (line ~1509) sets:
 
 - `start_time = hf_row['Time']`
 - `end_time   = hf_row['Time'] + dt`
@@ -92,7 +92,7 @@ Aragog reads the current planet boundary state from `hf_row`, runs its time step
 | `dt_actual` | Achieved time step [yr], may be less than requested when `phi_step_cap` fires |
 | `step_dE_*_J` | Per-call energy budget integrals [J]: `F_int_J`, `F_cmb_J`, `Q_radio_J`, `Q_tidal_J` |
 
-The full set of `hf_row` keys produced by Aragog is in `proteus.interior_energetics.aragog.AragogRunner.run` (lines ~1670 onwards). See also the [Energy diagnostics](energy_diagnostics.md) explainer for what the `step_dE_*_J` integrals mean and how they close the energy budget.
+The full set of `hf_row` keys produced by Aragog is built in `proteus.interior_energetics.aragog.AragogRunner._build_helpfile_output` (line ~1740) and emitted by `run_solver` (line ~1509). See also the [Energy diagnostics](energy_diagnostics.md) explainer for what the `step_dE_*_J` integrals mean and how they close the energy budget.
 
 ## Initial-condition contract
 
@@ -118,7 +118,7 @@ The `mesh_max_shift` cap (default 0.05 = 5%) in `interior_struct.zalmoxis` limit
 Aragog's P-T tables for the production PALEOS coupling are written by Zalmoxis on the fly through `generate_aragog_pt_tables[_2phase]` (`zalmoxis.eos_export`, called from `proteus/interior_energetics/aragog.py`). Output goes to `<outdir>/data/aragog_pt/` as `{density, temperature, heat_capacity, adiabat_temp_grad, thermal_exp}_{melt, solid}.dat`, default resolution $200 \times 200$, P-range $[10^5\,\mathrm{Pa},\ \min(10^{13}\,\mathrm{Pa},\ 150 \cdot M_\oplus + 200\,\mathrm{GPa})]$.
 
 !!! warning "Aragog tables must be strictly rectangular"
-    Aragog's loader builds a `RegularGridInterpolator` over the (P, T) grid. Phase-filtering the input PALEOS table (for example, masking out points inside the mushy zone before writing) breaks the rectangularity assumption: scipy then silently falls back to unstructured (linear-ND) interpolation, which is roughly two orders of magnitude slower per call. The Zalmoxis-side generators write the full rectangle for both solid and melt files; do not inject a phase mask between them and disk.
+    Aragog's loader builds a `RegularGridInterpolator` over the (P, S) grid (the directory name `aragog_pt/` is a legacy label; the contents follow the SPIDER P-S convention, see [Reference: data](../Reference/data.md)). Phase-filtering the input PALEOS table (for example, masking out points inside the mushy zone before writing) breaks the rectangularity assumption: scipy then silently falls back to unstructured (linear-ND) interpolation, which is roughly two orders of magnitude slower per call. The Zalmoxis-side generators write the full rectangle for both solid and melt files; do not inject a phase mask between them and disk.
 
 The two-phase variant (`PALEOS-2phase:MgSiO3`) takes separate solid and liquid PALEOS tables and lets Aragog handle the latent-heat blend internally via the `mushy_zone_factor`. The unified-fallback path uses a single PALEOS table for both phases.
 

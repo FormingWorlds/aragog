@@ -36,8 +36,8 @@ The instability criterion is $\partial S/\partial r < 0$. The $\max(\cdot, 0)$ f
 $\kappa_h$ is the product of a mixing length $l(r)$ and a regime-dependent velocity scale. Following [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract), Aragog blends the viscous and inviscid limits via a $\tanh$ on the cell Reynolds number:
 
 $$
-v_\mathrm{visc} = \frac{\alpha g\,(-\partial S/\partial r)\,T\,l^2}{18\,\nu},\qquad
-v_\mathrm{inv} = l\left[\frac{\alpha g\,T\,(-\partial S/\partial r)}{c_p}\right]^{1/2},
+v_\mathrm{visc} = \frac{\alpha\,g\,T\,(-\partial S/\partial r)\,l^3}{18\,\nu\,c_p},\qquad
+v_\mathrm{inv} = \left[\frac{\alpha\,g\,T\,(-\partial S/\partial r)\,l^2}{16\,c_p}\right]^{1/2},
 $$
 
 $$
@@ -66,8 +66,8 @@ where $\kappa_h^\mathrm{floor}(\phi)$ is modulated by melt fraction so that the 
 
 | Key | Meaning |
 |-----|---------|
-| `eddy_diffusivity_thermal` | Multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
-| `eddy_diffusivity_chemical` | Multiplier on $\kappa_c$. Negative values pin $\kappa_c$ to the absolute value |
+| `eddy_diffusivity_thermal` | Multiplier on the raw $\kappa_h$ before the floor is applied. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
+| `eddy_diffusivity_chemical` | Ratio $\kappa_c/\kappa_h$ in the mushy band; the chemical eddy diffusivity is built as `eddy_diffusivity_chemical * kh_raw`. Negative values pin $\kappa_c$ to the absolute value |
 
 ## Gravitational separation of melt
 

@@ -19,14 +19,15 @@ solver = EntropySolver.from_file(
 
 solver.initialize()
 
+# When core_bc = "energy_balance", the CMB entropy gradient is part
+# of the state vector. If you need to set its initial value explicitly,
+# do it BEFORE set_initial_entropy; otherwise the solver derives it
+# from S_init via one-sided finite differences.
+# solver.set_initial_dSdr_cmb(0.0)
+
 # Set the initial entropy profile at staggered nodes (J/kg/K).
 # A scalar S_init produces a uniform isentropic profile.
 solver.set_initial_entropy(2900.0)
-
-# When core_bc = "energy_balance", the CMB entropy gradient is part
-# of the state vector. Set its initial value here, or omit the call
-# to let the solver derive it from S_init via one-sided FD.
-# solver.set_initial_dSdr_cmb(0.0)
 
 solver.solve()
 
@@ -110,7 +111,7 @@ PROTEUS handles:
 
 - The mapping of PROTEUS config keys (`config.interior_energetics.*`, `config.interior_struct.*`) onto Aragog's `Parameters`.
 - The choice of EOS table directory (`output/data/aragog_pt/` for PALEOS-generated tables, or a SPIDER-bundled directory for parity runs).
-- The four-column external mesh file (`output/data/{spider,zalmoxis}_mesh.dat`) when `eos_method = 2`.
+- The four-column external mesh file (`output/data/zalmoxis_output.dat` for Zalmoxis-coupled runs, `output/data/spider_mesh.dat` for `spider` or `dummy` structure modes) when `eos_method = 2`.
 - A retry ladder around `solve()` that calls `set_initial_dSdr_cmb()` and `_atol_sf` to recover after a `status = -1` failure.
 
 For an end-to-end coupled run, see the [PROTEUS documentation](https://proteus-framework.org/PROTEUS).
@@ -121,9 +122,9 @@ To run multiple configurations or restart from a saved entropy profile, call `re
 
 ```python
 solver.reset()                 # rebuilds the mesh and BCs from current parameters
-solver.set_initial_entropy(S_new)
-# Optional in energy_balance mode:
+# Optional in energy_balance mode (must be called BEFORE set_initial_entropy):
 # solver.set_initial_dSdr_cmb(dSdr_cmb_new)
+solver.set_initial_entropy(S_new)
 solver.solve()
 out = solver.get_state()
 ```

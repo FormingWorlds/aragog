@@ -13,7 +13,7 @@ Aragog dispatches stiff time integration through `_EnergyParameters.solver_metho
 | `"radau"` | scipy `solve_ivp(method="Radau")` | Pure-Python fallback when `scikits_odes` is not installed. Fully implicit; reliable on smooth profiles but stalls at the rheological transition on long cooling runs. |
 | `"bdf"` | scipy `solve_ivp(method="BDF")` | Pure-Python fallback. Cheaper per step than Radau, weaker at sharp Jacobians. Use only for quick smoke tests. |
 
-If `solver_method = "cvode"` is selected and `scikits_odes` is missing, the solver logs a warning and falls back to `Radau`. See [Installation: SUNDIALS CVODE](installation.md#optional-dependency-sundials-cvode).
+If `solver_method = "cvode"` is selected and `scikits_odes` is missing, the solver logs a warning and falls back to `Radau`. See [Installation: production solver path](installation.md#production-solver-path-sundials-cvode-jax-analytic-jacobian).
 
 ## Picking tolerances
 
@@ -21,7 +21,7 @@ The relevant keys are `solver.atol` (absolute) and `solver.rtol` (relative); bot
 
 | Regime | `atol` | `rtol` | Notes |
 |--------|--------|--------|-------|
-| Production coupled run, CVODE + JAX | `1e-9` | `1e-9` | Matches PROTEUS production references. Tight enough that energy-conservation checks close. |
+| Production coupled run, CVODE + JAX | `1e-10` | `1e-10` | Matches the PROTEUS schema default in `proteus.config._interior`. Tight enough that energy-conservation checks close. |
 | Standalone smoke test | `1e-7` | `1e-7` | Lets the integrator march through the rheological transition in seconds. Acceptable for first-run sanity checks; not for paper plots. |
 | Tight verification or parity test | `1e-10` | `1e-10` | The floor; useful for SPIDER bit-parity diagnostics. Wall time roughly doubles. |
 
@@ -35,7 +35,7 @@ CVODE also accepts a SUNDIALS root function for melt-fraction step capping; see 
 
 ## Radau and BDF specifics
 
-Both scipy paths use `solve_ivp` with the `dense_output=True` flag and a `max_step` cap that the solver shrinks adaptively near phase boundaries. They do not support the JAX-traced Jacobian; a Jacobian is computed by scipy via finite differences when needed.
+Both scipy paths use `solve_ivp` with `dense_output=False` and a `max_step` cap that the solver shrinks adaptively near phase boundaries. They do not support the JAX-traced Jacobian; a Jacobian is computed by scipy via finite differences when needed.
 
 The `phase-aware max_step` reduction activates at the same trigger conditions on all three integrators; it is independent of the integrator class.
 
@@ -43,4 +43,4 @@ The `phase-aware max_step` reduction activates at the same trigger conditions on
 
 - [CVODE and JAX explainer](../Explanations/cvode_jax.md): why the analytic Jacobian helps and how `set_jax_cvode_factory` is wired.
 - [`phi_step_cap` how-to](phi-step-cap.md): SUNDIALS-rootfn capping of $|\Delta\phi|$ across a step.
-- [Installation: JAX](installation.md#optional-dependency-jax-production-runs): runtime requirement for `use_jax_jacobian = true`.
+- [Installation: production solver path](installation.md#production-solver-path-sundials-cvode-jax-analytic-jacobian): runtime requirement for `use_jax_jacobian = true`.

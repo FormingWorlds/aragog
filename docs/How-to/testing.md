@@ -25,11 +25,11 @@ The JAX-path tests additionally need the `jax` extra (`pip install -e ".[jax]"`)
 
 | Marker | Tests | Wall | Scope |
 |---|---|---|---|
-| `unit` | ~353 | ~1 to 2 min | EOS lookups, mesh helpers, phase evaluator branches, parser validation, JAX-vs-numpy parity on point inputs, regression pins on permeability constants, energy-equation invariants. No real solver call beyond a handful of cheap analytic-EOS smoke checks. |
+| `unit` | ~366 | ~1 to 2 min | EOS lookups, mesh helpers, phase evaluator branches, parser validation, JAX-vs-numpy parity on point inputs, regression pins on permeability constants, energy-equation invariants. No real solver call beyond a handful of cheap analytic-EOS smoke checks. |
 | `smoke` | ~40 | ~5 to 15 min | Full `EntropySolver.solve()` runs at relaxed tolerance. Verify the whole code path under representative configurations (closed mantle, gravitational separation, JAX RHS via CVODE). |
 | `slow` | ~3 | ~30+ min each | Long multi-Myr coupled-style runs and convergence studies. Manual only. |
 
-`pytest -o "addopts=" --collect-only -m <marker>` reports the live count.
+`pytest --collect-only -m <marker>` reports the live count.
 
 ## Running tests
 
@@ -45,20 +45,19 @@ pytest -m "unit or smoke or slow"    # Full nightly tier
 ### Single test
 
 ```console
-pytest tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_bit_parity_with_spider
+pytest tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_energy_balance_rhs_bit_parity_prescribed_inputs
 ```
 
-### Without parallelization
+### Parallel runs
 
-The default `addopts` in `pyproject.toml` enables xdist. To force serial execution
-(useful when debugging a flaky test or attaching a debugger), override `addopts`:
+`pyproject.toml` does not set a default `addopts`; `pytest` runs serial unless `-n auto` (or another xdist option) is supplied explicitly. CI invokes `pytest -m "unit and not slow" -n auto` (`ci_tests.yml`) and `pytest -m "unit or smoke or slow" -n auto` (`nightly.yml`); reproduce locally by adding the same flag:
 
 ```console
-pytest -o "addopts=-ra -v" -m unit
+pytest -m unit -n auto                       # parallel unit run
+pytest -m "unit or smoke" -n auto -ra -v     # parallel + summary + verbose
 ```
 
-The `-o "addopts="` form replaces the default; this is also how the CI
-matrix runs the unit tier without xdist contention on small runners.
+Drop `-n auto` for serial execution when debugging a flaky test or attaching a debugger.
 
 ### Sandbox-friendly invocation
 
@@ -90,15 +89,12 @@ If `FWL_DATA` is unset or the expected files are missing, `shared_eos` skips the
 
 ## Parallelization
 
-The default `pyproject.toml` `addopts` registers xdist; `pytest -m unit` runs on
-all available cores out of the box. Tests are written to be order-independent;
-if you observe flakiness only under xdist, that is a bug in the test (not in
-xdist).
+Tests are written to be order-independent and run cleanly under `pytest-xdist`. Pass `-n auto` to use all available cores; CI does this on both the unit and nightly tiers. If you observe flakiness only under xdist, that is a bug in the test (not in xdist).
 
 ## Coverage
 
 ```console
-pytest -o "addopts=" --cov=src/aragog --cov-report=html -m "unit or smoke"
+pytest --cov=src/aragog --cov-report=html -m "unit or smoke"
 ```
 
 Open `htmlcov/index.html` to inspect line-by-line coverage. The nightly CI

@@ -21,7 +21,12 @@ The directory passed to `EntropySolver.from_file(eos_dir=...)` (or referenced th
 
 ### File layout
 
-The 2D tables follow SPIDER's text format: a five-line header (table title and four metadata lines) followed by a flat list of `P S value` triples on a regular pressure-entropy grid. The pressure axis is in pascals and the entropy axis in joules per kilogram per kelvin. The `solidus_P-S.dat` and `liquidus_P-S.dat` files are two-column $(P, S)$ in the same units, with $P$ monotonically increasing.
+The 2D tables follow SPIDER's text format: a header followed by a flat list of three-column $(P, S, Q)$ rows on a regular pressure-entropy grid.
+The first header line carries the row count and grid dimensions in the form `# n_header n_P n_S`.
+The last header line carries three SI scaling factors `# P_scale S_scale Q_scale` that the loader multiplies into each non-dimensional column to recover SI units (pressure in Pa, entropy in J/kg/K, value in the property's SI unit).
+Inside the data block the entropy axis varies slowest and the pressure axis varies fastest, so the flat list contains $n_S$ blocks of $n_P$ rows each.
+
+The `solidus_P-S.dat` and `liquidus_P-S.dat` files are two-column $(P, S)$ in the same convention (header with scaling factors, then non-dimensional values), with $P$ monotonically increasing.
 
 The grid must be rectangular: phase-filtered tables (where each phase's grid is restricted to its own valid region) cause `scipy.interpolate.RegularGridInterpolator` to fall back to slow unstructured interpolation and should not be used.
 

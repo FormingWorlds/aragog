@@ -49,13 +49,9 @@ pip install fwl-aragog
 
 ### Equation-of-state tables
 
-Aragog requires SPIDER-format pressure-entropy lookup tables. Inside PROTEUS the tables are produced on the fly by Zalmoxis or distributed with SPIDER; for a standalone install you can download the bundled set from the OSF repository:
+Aragog requires SPIDER-format pressure-entropy lookup tables on disk. Inside a PROTEUS coupled run the tables are produced on the fly by Zalmoxis from PALEOS; for standalone use, point `eos_dir` at any directory containing the ten required files (see [Reference: data](https://proteus-framework.org/aragog/Reference/data) for the schema and the canonical file list).
 
-```sh
-aragog download all
-```
-
-By default the tables go to a platform-dependent cache directory (`aragog env` prints the path). Override it via `FWL_DATA`:
+`FWL_DATA` is honoured as the default data root if it is set:
 
 ```sh
 export FWL_DATA=/your/data/path
@@ -64,18 +60,27 @@ export FWL_DATA=/your/data/path
 ### Run a smoke integration
 
 ```python
-from aragog.config import Config
+from pathlib import Path
+
+from aragog import aragog_file_logger
 from aragog.solver import EntropySolver
 
-params = Config.from_file("input/abe_mixed.cfg").to_parameters()
-solver = EntropySolver(params)
+aragog_file_logger(log_dir=str(Path.cwd()))
+
+solver = EntropySolver.from_file(
+    filename="src/aragog/cfg/abe_solid.toml",
+    eos_dir="path/to/eos/tables",
+)
 solver.initialize()
-solver.set_initial_entropy(3300.0)
+solver.set_initial_entropy(2900.0)
 solver.solve()
+
 out = solver.get_state()
+print(f"Status: {out.status}")
+print(f"T_magma: {out.T_magma:.0f} K, T_core: {out.T_core:.0f} K, Phi: {out.Phi_global:.4f}")
 ```
 
-The bundled `abe_mixed.cfg` uses production defaults: SUNDIALS CVODE, JAX analytic Jacobian, `core_bc = "energy_balance"`, `mass_coordinates = true`, `phase_smoothing = "tanh"`, `kappah_floor = 10` m$^2$/s, and the four long-lived radionuclides ($^{40}\mathrm{K}$, $^{232}\mathrm{Th}$, $^{235}\mathrm{U}$, $^{238}\mathrm{U}$) with Earth-mantle concentrations from [Turcotte & Schubert (2002)](https://scixplorer.org/abs/2002gdyn.book.....T/abstract).
+`EntropySolver.from_file` builds `Parameters` from the TOML file and loads the EOS tables in one call. The bundled configs in `src/aragog/cfg/` are short standalone smoke setups; for a full walkthrough including the `SolverOutput` dataclass fields, see the [first-run tutorial](https://proteus-framework.org/aragog/Tutorials/firstrun). The production-tolerance defaults that PROTEUS uses (CVODE + JAX, `core_bc = "energy_balance"`, `mass_coordinates = true`, `phase_smoothing = "tanh"`, `kappah_floor = 10` m$^2$/s, the six-isotope radionuclide cocktail) are set on the PROTEUS side, not in `abe_solid.toml` or `abe_mixed.cfg`.
 
 ## Test suite
 

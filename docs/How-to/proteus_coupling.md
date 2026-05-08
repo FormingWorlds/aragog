@@ -20,8 +20,8 @@ In a PROTEUS TOML config, set Aragog as the energetics module with:
 [interior_energetics]
 module           = "aragog"
 num_levels       = 80
-rtol             = 1e-9
-atol             = 1e-9
+rtol             = 1e-10
+atol             = 1e-10
 trans_conduction = true
 trans_convection = true
 trans_grav_sep   = true
@@ -111,8 +111,8 @@ Tolerances are set in two places: `interior_energetics.{rtol, atol}` (the integr
 
 ```toml
 [interior_energetics]
-rtol = 1e-9
-atol = 1e-9
+rtol = 1e-10
+atol = 1e-10
 
 [interior_energetics.aragog]
 atol_temperature_equivalent = 1e-8
@@ -146,7 +146,7 @@ When `heat_radiogenic = true`, Aragog reads abundances from the four PROTEUS-sid
 
 ```toml
 [interior_energetics]
-radio_tref = 4.55       # reference age [Gyr]; Earth formation
+radio_tref = 4.567      # reference age [Gyr]; Earth formation (matches the schema default in proteus.config._interior)
 radio_K    = 310        # K-40 concentration at t = radio_tref [ppmw]
 radio_U    = 0.031      # U (²³⁵+²³⁸) [ppmw]
 radio_Th   = 0.124      # Th-232 [ppmw]
@@ -160,9 +160,9 @@ The decay constants and specific-heat-production rates come from [Ruedas (2017)]
 
 ## External mesh handover (Zalmoxis)
 
-When `interior_struct.module = "zalmoxis"`, Zalmoxis writes a five-column TSV (`r, P, rho, g, T`) to `<outdir>/zalmoxis_output.dat` on every successful re-solve. Aragog reads it inside `solver.reset()` to rebuild its mass-coordinate mesh.
+When `interior_struct.module = "zalmoxis"`, Zalmoxis writes a five-column TSV (`r, P, rho, g, T`) to `<outdir>/data/zalmoxis_output.dat` on every successful re-solve. Aragog reads it inside `solver.reset()` to rebuild its mass-coordinate mesh; only the first four columns are consumed, the temperature column is a Zalmoxis diagnostic and is ignored on the Aragog side.
 
-The handover is enforced by a schema check in `proteus.interior_struct.zalmoxis.validate_zalmoxis_output_schema`: top-of-mantle radius equality to relative tolerance $10^{-6}$, and mantle mass conservation to $5 \times 10^{-2}$. Per-call radius shifts above `interior_struct.zalmoxis.mesh_max_shift` are blended in `blend_mesh_files` to keep the mesh transition trackable.
+The handover is enforced by a schema check in `proteus.interior_struct.zalmoxis.validate_zalmoxis_output_schema`: top-of-mantle radius equality to relative tolerance $10^{-6}$, and mantle mass conservation to $5 \times 10^{-2}$. Per-call radius shifts above `interior_struct.zalmoxis.mesh_max_shift` are blended in `proteus.interior_energetics.spider.blend_mesh_files` (shared between the Aragog and SPIDER paths) to keep the mesh transition trackable.
 
 ```toml
 [interior_struct]
@@ -214,8 +214,8 @@ dry_mantle           = true
 [interior_energetics]
 module           = "aragog"
 num_levels       = 80
-rtol             = 1e-9
-atol             = 1e-9
+rtol             = 1e-10
+atol             = 1e-10
 trans_conduction = true
 trans_convection = true
 trans_grav_sep   = true
@@ -279,7 +279,7 @@ When set to `true`, all atmosphere modules and termination checks enforce a `T_m
 
 ### 6. `interior_energetics.{rtol, atol}` and `interior_energetics.aragog.atol_temperature_equivalent`
 
-**Defaults**: `rtol = 1e-9`, `atol = 1e-9`, `atol_temperature_equivalent = 1e-8`.
+**Defaults**: `rtol = 1e-10`, `atol = 1e-10`, `atol_temperature_equivalent = 1e-8`.
 **Recommendation**: keep production defaults.
 
 Loosening to `1e-7` re-introduces the CVODE marginal-stability bifurcation at iter $\sim 9$ and silent drift across the rheological transition. Tightening below `1e-10` has diminishing returns.
@@ -305,7 +305,7 @@ Uniform spacing in mass-coordinate space gives larger cells at the surface where
 | `interior_energetics.aragog.core_bc` | `"energy_balance"` | `"energy_balance"` | SPIDER bit-parity; correct T_core. |
 | `interior_energetics.aragog.phi_step_cap` | `0.0` | `0.05` | SUNDIALS rootfn caps per-call $|\Delta\Phi|$ excursion. |
 | `planet.prevent_warming` | `false` | `false` | The clamp is energy-non-conserving in warming sub-steps. |
-| `interior_energetics.rtol` / `atol` | `1e-9` | `1e-9` | Avoids CVODE marginal-stability bifurcation. |
+| `interior_energetics.rtol` / `atol` | `1e-10` | `1e-10` | Schema default; avoids CVODE marginal-stability bifurcation. Production CHILI runs occasionally relax `rtol` to `1e-8`; do not loosen further. |
 | `interior_energetics.aragog.atol_temperature_equivalent` | `1e-8` | `1e-8` | Matches SPIDER `atol = rtol = 1e-8`. |
 | `interior_energetics.num_levels` | `80` | `80` | SPIDER reference resolution. |
 | `interior_energetics.aragog.mass_coordinates` | `true` | `true` | Required by `energy_balance` core BC. |

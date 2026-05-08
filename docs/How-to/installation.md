@@ -71,4 +71,4 @@ In production runs (PROTEUS-coupled or standalone), Aragog uses the [PALEOS](htt
 
 For SPIDER-parity reproduction or older reference runs, Aragog also accepts the [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract) RTpress liquid EOS through the `phase_solid` / `phase_liquid` config keys.
 
-For a standalone install, point the `eos_dir` argument of `EntropySolver.from_file()` at any directory containing the ten required files; the bundled set is downloaded by `aragog download all` (see [README](https://github.com/FormingWorlds/aragog#equation-of-state-tables)).
+For a standalone install, point the `eos_dir` argument of `EntropySolver.from_file()` at any directory containing the ten required files; the canonical file list and schema are documented in [Reference: data](../Reference/data.md).
