@@ -88,8 +88,14 @@ class FixedMesh:
             logger.debug('Set mixing length profile to constant')
             assert self.outer_boundary is not None
             assert self.inner_boundary is not None
+            # Fraction of mantle thickness; default 0.25 (legacy SPIDER
+            # convention). Configurable via ``mixing_length_constant_fraction``
+            # on the mesh config.
+            fraction = float(getattr(self.settings, 'mixing_length_constant_fraction', 0.25))
             mixing_length = (
-                np.ones_like(self.radii) * 0.25 * (self.outer_boundary - self.inner_boundary)
+                np.ones_like(self.radii)
+                * fraction
+                * (self.outer_boundary - self.inner_boundary)
             )
         else:
             msg: str = (

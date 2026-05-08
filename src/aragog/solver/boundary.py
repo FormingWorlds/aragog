@@ -114,19 +114,14 @@ class BoundaryConditions:
 
         Equivalent to SURFACE_BC in C code.
             1: Grey-body atmosphere
-            2: Zahnle steam atmosphere
-            3: Couple to atmodeller
-            4: Prescribed heat flux
-            5: Prescribed temperature
+            2: Zahnle steam atmosphere (not implemented)
+            4: Prescribed surface heat flux (atmosphere coupling)
+            5: Prescribed surface temperature
         """
         if self._settings.outer_boundary_condition == 1:
             self.grey_body(state)
         elif self._settings.outer_boundary_condition == 2:
             raise NotImplementedError
-        elif self._settings.outer_boundary_condition == 3:
-            msg: str = 'Requires coupling to atmodeller'
-            logger.error(msg)
-            raise NotImplementedError(msg)
         elif self._settings.outer_boundary_condition == 4:
             state.heat_flux[-1, :] = self._settings.outer_boundary_value
         elif self._settings.outer_boundary_condition == 5:

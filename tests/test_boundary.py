@@ -238,12 +238,15 @@ def test_outer_bc_type_2_zahnle_steam_raises_not_implemented():
         bc.apply_flux_outer_boundary_condition(state)
 
 
-def test_outer_bc_type_3_atmodeller_raises_not_implemented():
-    """OBC=3 (atmodeller coupling) is not implemented in Aragog."""
+def test_outer_bc_type_3_removed_raises_value_error():
+    """OBC=3 (the legacy 'couple to atmodeller' slot) was removed; the
+    real atmosphere coupling uses OBC=4 (prescribed surface heat flux).
+    Setting OBC=3 must now hit the unknown-code branch.
+    """
     p = _build_parameters(outer_boundary_condition=3, param_utbl_const=0.0)
     bc = BoundaryConditions(p, _build_mock_mesh())
     state = _build_mock_state()
-    with pytest.raises(NotImplementedError, match='atmodeller'):
+    with pytest.raises(ValueError, match='outer_boundary_condition = 3'):
         bc.apply_flux_outer_boundary_condition(state)
 
 

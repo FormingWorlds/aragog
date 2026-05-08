@@ -45,7 +45,14 @@ When the mesh `eos_method` is set to 2, Aragog reads a four-column external file
 | `rho` | kg/m³ | Density at that radius |
 | `g` | m/s² | Gravitational acceleration at that radius |
 
-The radius column must be monotonically increasing and span at least 75% of the mantle thickness. The PROTEUS wrapper writes this file from the Zalmoxis structure solver into `output/data/zalmoxis_output.dat` (Zalmoxis path) or `output/data/spider_mesh.dat` (SPIDER-static path). When `eos_method = 2` the per-node gravity column overrides the scalar `gravitational_acceleration` config key, so the mixing-length theory and the gravitational-separation flux pick up the radial dependence of $g$ automatically.
+The radius column must be monotonically increasing and span at least 75% of the mantle thickness $D = R_\mathrm{outer} - R_\mathrm{inner}$.
+This is a *coverage tolerance* on the external table, not a statement that the structure is only defined over part of the domain.
+Aragog's own mesh always covers the full mantle shell; the 75% guard allows the external EOS table to undershoot the mantle bounds by up to 25% without raising (typical use: a resumed run where the Zalmoxis re-solve disagrees with the saved mesh at the single-ULP level near the outer/inner radii).
+Across that small gap `np.interp` extrapolates linearly from the nearest in-range value.
+A table that covers less than 75% is rejected with `External EOS radius range ... inconsistent with mesh bounds ...` because at that point the disagreement is no longer a numerical-precision artefact.
+
+The PROTEUS wrapper writes this file from the Zalmoxis structure solver into `output/data/zalmoxis_output.dat` (Zalmoxis path) or `output/data/spider_mesh.dat` (SPIDER-static path).
+When `eos_method = 2` the per-node gravity column overrides the scalar `gravitational_acceleration` config key, so the mixing-length theory and the gravitational-separation flux pick up the radial dependence of $g$ automatically.
 
 ## Adams-Williamson EOS (`eos_method = 1`)
 

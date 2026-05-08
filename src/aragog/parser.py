@@ -168,16 +168,13 @@ class _BoundaryConditionsParameters:
 
         Equivalent to SURFACE_BC in C code.
             1: Grey-body atmosphere
-            2: Zahnle steam atmosphere
-            3: Couple to atmodeller
-            4: Prescribed heat flux
-            5: Prescribed temperature
+            2: Zahnle steam atmosphere (not implemented)
+            4: Prescribed surface heat flux (atmosphere coupling)
+            5: Prescribed surface temperature
         """
         if self.outer_boundary_condition == 1:
             pass
         elif self.outer_boundary_condition == 2:
-            pass
-        elif self.outer_boundary_condition == 3:
             pass
         elif self.outer_boundary_condition == 4:
             self.outer_boundary_value /= self.scalings_.heat_flux
@@ -319,6 +316,9 @@ class _MeshParameters:
     # production path.
     mass_coordinates: bool = True
     eos_file: str = ''
+    # Fraction of mantle thickness used as the mixing length when
+    # ``mixing_length_profile = 'constant'``. Ignored otherwise.
+    mixing_length_constant_fraction: float = 0.25
     scalings_: _ScalingsParameters = field(init=False)
 
     def scale_attributes(self, scalings: _ScalingsParameters) -> None:

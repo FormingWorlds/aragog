@@ -527,10 +527,13 @@ class EntropyState:
         # Production PROTEUS runs use kappah_floor = 10 m^2/s
         # (PROTEUS schema default, applied via SPIDER's -kappah_floor
         # convention). The phi-modulated floor f_floor =
-        # tanh_weight(phi, 0.4, 0.15) ramps from 0 in solid layers
-        # (no spurious convective flux) to ~1 in mushy/liquid layers,
-        # where physical convection is expected and MLT can otherwise
-        # numerically freeze when the entropy gradient gets small.
+        # tanh_weight(phi, phi_rheo, phi_width) ramps from 0 in solid
+        # layers (no spurious convective flux) to ~1 in mushy/liquid
+        # layers, where physical convection is expected and MLT can
+        # otherwise numerically freeze when the entropy gradient gets
+        # small. The transition is anchored on the rheological critical
+        # melt fraction so the floor turns on exactly where Costa-blended
+        # viscosity drops, consistent across config knobs.
         # In stably-stratified mushy layers (rare; most mushy layers
         # in magma-ocean cooling are convecting) the floor mildly
         # suppresses real stratification; that is the documented SPIDER
@@ -540,7 +543,9 @@ class EntropyState:
             phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             from aragog.utilities import tanh_weight
 
-            f_floor = tanh_weight(phi_basic, 0.4, 0.15)
+            phi_rheo = float(getattr(self.phase_basic, '_phi_rheo', 0.4))
+            phi_width = float(getattr(self.phase_basic, '_phi_width', 0.15))
+            f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
             kh_floor = self._kappah_floor * f_floor
             self._eddy_diffusivity = np.maximum(self._eddy_diffusivity, kh_floor)
 

@@ -23,6 +23,10 @@ class MeshConfig:
         Number of basic mesh nodes.
     mixing_length_profile : str
         'constant' or 'nearest_boundary'.
+    mixing_length_constant_fraction : float
+        Fraction of the mantle thickness to use as the mixing length
+        when ``mixing_length_profile = 'constant'``. Default 0.25.
+        Ignored for 'nearest_boundary'.
     core_density : float
         Core density [kg/m^3].
     eos_method : int
@@ -58,3 +62,4 @@ class MeshConfig:
     surface_pressure: float = 0.0
     mass_coordinates: bool = True
     eos_file: str = ''
+    mixing_length_constant_fraction: float = 0.25

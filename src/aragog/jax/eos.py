@@ -520,6 +520,12 @@ class EntropyEOS_JAX(eqx.Module):
 
         # Single-phase: evaluate at actual S (clamped by the table). Pick
         # the melt table for phi >= 0.5, solid otherwise (matches numpy).
+        # NOTE: this 0.5 is a binary table-selector for the non-mushy
+        # fallback only — outside the mushy band phi is essentially 0 or
+        # 1 by construction. It is NOT the rheological critical melt
+        # fraction (RCMF). The RCMF lives in
+        # ``EntropyPhaseEvaluator._phi_rheo`` / ``PhaseParams.phi_rheo``
+        # and drives the viscosity tanh blend separately.
         rho_solid_single = solid_table(P, S)
         rho_melt_single = melt_table(P, S)
         rho_single = jnp.where(phi >= 0.5, rho_melt_single, rho_solid_single)
@@ -646,6 +652,11 @@ class EntropyEOS_JAX(eqx.Module):
         S_for_solid = jnp.where(mushy, S_sol, S)
         S_for_melt = jnp.where(mushy, S_liq, S)
 
+        # The ``gphi > 0.5`` switches below pick which pure-phase table to
+        # evaluate when the cell is *outside* the mushy mask. This 0.5 is
+        # a binary discriminator (gphi outside [0,1] is by definition
+        # super-liquidus or sub-solidus), not the rheological critical
+        # melt fraction; see ``PhaseParams.phi_rheo`` for the RCMF.
         def _table_lookup_blend(prop_name: str) -> jax.Array:
             solid_tbl, melt_tbl = self._get_tables(prop_name)
             v_sol = solid_tbl(P, S_for_solid)

@@ -673,9 +673,12 @@ def compute_mlt(
     # convective flux) to ~1 in mushy/liquid layers, where physical
     # convection is expected and MLT can otherwise numerically freeze.
     # See solver/entropy_state.py for the same comment block on the
-    # numpy path.
+    # numpy path. The transition is anchored on the rheological critical
+    # melt fraction (``params.phi_rheo``, default 0.4) with width
+    # ``params.phi_width`` (default 0.15) so the floor turns on exactly
+    # where Costa-blended viscosity drops, consistent across config knobs.
     phi_basic = phase_basic.melt_fraction
-    f_floor = tanh_weight(phi_basic, 0.4, 0.15)
+    f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
     kh_floor = params.kappah_floor * f_floor
     kappa_h = jnp.maximum(kappa_h, kh_floor)
 

@@ -807,6 +807,11 @@ class EntropyEOS:
         pts_melt = np.column_stack([P_melt_clamped.ravel(), S_melt_clamped.ravel()])
         rho_solid_single = solid_table['interp'](pts_solid).reshape(P.shape)
         rho_melt_single = melt_table['interp'](pts_melt).reshape(P.shape)
+        # 0.5 here is a binary table-selector for the non-mushy fallback
+        # (phi is essentially 0 or 1 outside the mushy band); it is NOT
+        # the rheological critical melt fraction. The RCMF is
+        # ``EntropyPhaseEvaluator._phi_rheo`` and drives the viscosity
+        # tanh blend separately.
         rho_single = np.where(phi >= 0.5, rho_melt_single, rho_solid_single)
 
         return np.where(mushy, rho_mushy, rho_single)
