@@ -166,3 +166,5 @@ poetry.lock
 out/
 /output/
 FWL_DATA/
+# Editor / IDE
+.vscode/
