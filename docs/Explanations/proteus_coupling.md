@@ -90,9 +90,12 @@ Aragog reads the current planet boundary state from `hf_row`, runs its time step
 | `F_radio` | Radiogenic surface-equivalent flux [W m$^{-2}$] |
 | `F_tidal` | Tidal surface-equivalent flux [W m$^{-2}$] (when `heat_tidal = true`) |
 | `dt_actual` | Achieved time step [yr], may be less than requested when `phi_step_cap` fires |
-| `step_dE_*_J` | Per-call energy budget integrals [J]: `F_int_J`, `F_cmb_J`, `Q_radio_J`, `Q_tidal_J` |
+| `E_state_cons_J` | Frozen-mass integrated mantle enthalpy [J]; pairs with `dE_predicted_cons_J` for the conservation residual |
+| `step_dE_*_J` | Per-call energy budget integrals [J]: `F_int_J`, `F_cmb_J`, `Q_radio_J`, `Q_tidal_J`, plus frozen-mass `Q_radio_cons_J`, `Q_tidal_cons_J` and `solver_residual_J` |
 
-The full set of `hf_row` keys produced by Aragog is built in `proteus.interior_energetics.aragog.AragogRunner._build_helpfile_output` (line ~1740) and emitted by `run_solver` (line ~1509). See also the [Energy diagnostics](energy_diagnostics.md) explainer for what the `step_dE_*_J` integrals mean and how they close the energy budget.
+PROTEUS's coupler accumulates the per-call integrals into running cumulative columns: `dE_predicted_cons_J`, `E_residual_cons_J`, `E_residual_cons_frac` (the canonical conservation residual, ~5 % closure on multi-Myr trajectories) and `solver_residual_J` (entropy-ODE LHS-RHS, ~10⁻⁷ machine-precision noise floor). The legacy state-mass columns `dE_predicted_J` / `E_residual_J` / `E_residual_frac` were removed on 2026-05-08; see [Energy diagnostics](energy_diagnostics.md) for the rationale.
+
+The full set of `hf_row` keys produced by Aragog is built in `proteus.interior_energetics.aragog.AragogRunner._build_helpfile_output` (line ~1740) and emitted by `run_solver` (line ~1509).
 
 ## Initial-condition contract
 
@@ -168,7 +171,7 @@ Use sparingly: the flag has a small per-step cost (XLA fast-math disabled) and m
 
 - [PROTEUS coupling how-to](../How-to/proteus_coupling.md): TOML recipe and parameter reference.
 - [Energy equation](energy_equation.md): the entropy-form RHS that Aragog integrates.
-- [Energy diagnostics](energy_diagnostics.md): per-call energy-budget integrals (`step_dE_*_J`).
+- [Energy diagnostics](energy_diagnostics.md): per-call energy-budget integrals (`step_dE_*_J`) and cumulative conservation residuals (`E_residual_cons_J`, `solver_residual_J`).
 - [Aragog vs SPIDER](spider_comparison.md): formulation differences and parity guarantees.
 - [Core BC modes](core_bc.md): the four core-mantle boundary conditions, with the `energy_balance` SPIDER bit-parity derivation.
 - [PROTEUS framework documentation](https://proteus-framework.org/PROTEUS): top-level entry.
