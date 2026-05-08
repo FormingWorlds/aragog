@@ -61,7 +61,8 @@ The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/
 ## Boundary-layer theory in companion codes
 
 BLT replaces the radial profile with one (or a few) lumped variables.
-PROTEUS exposes the BLT path via the dedicated boundary-layer interior module (`interior_energetics.module = 'dummy'` with the BL parameterisation enabled), so a coupled run can pick BLT instead of MLT without a separate code change; the two paths share PROTEUS's atmosphere coupling and configuration surface.
+PROTEUS itself does not currently ship a Nu-Ra BLT closure as a standalone interior-energetics module: `interior_energetics.module` accepts `aragog`, `spider`, or `dummy`, where `dummy` is a 0-D lumped $T_\mathrm{magma}(t)$ cooling model (no Nu-Ra scaling, no surface-flux closure) and is the closest in-tree analogue to a parameterised energetics path.
+The `param_utbl` knob in PROTEUS toggles an *ultra-thin thermal boundary-layer correction* on the surface temperature ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 18) inside the MLT solver itself; it is a thin-BL correction *inside* MLT, not a separate BLT closure.
 The classical magma-ocean closure ([Solomatov (2007)](https://scixplorer.org/abs/2007evea.book...91S/abstract), reviewing [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract) and earlier scalings) writes the surface flux as
 
 $$
