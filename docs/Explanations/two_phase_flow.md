@@ -46,7 +46,8 @@ The single-pass evaluation lives in `EntropyPhaseEvaluator._update_eos` (file `s
 The phase-boundary lookups happen exactly once per call, and all derived quantities are computed from the cached intermediates rather than via repeated table calls.
 
 The viscosity blend deserves special note.
-The melt-to-solid viscosity contrast across the mushy band is roughly $10^{15}$ over the rheological transition near $\phi \approx 0.4$ ([Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract)), which is what makes the partial-melt regime numerically stiff and motivates Aragog's smooth tanh blend over a hard if/else.
+[Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract) Figure 2 shows the relative viscosity of crystal-bearing magmas rising by $\sim 10^{10}$ across the rheological transition near the critical melt fraction $\phi_c$, while Aragog's solid/liquid end-member viscosities are $\eta_\mathrm{sol} \sim 10^{21}$ Pa s and $\eta_\mathrm{liq} \sim 10^{-1}$ Pa s by default, giving an end-member contrast of $\sim 10^{22}$ across $\phi$.
+This is what makes the partial-melt regime numerically stiff and motivates Aragog's smooth tanh blend over a hard if/else.
 
 ## Two-phase flow contributions
 
@@ -65,11 +66,13 @@ $$
 
 The permeability factor $K(\phi)$ spans three asymptotic regimes ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §2.1):
 
-- **Stokes settling** at high $\phi$: melt is the matrix and solid grains settle as isolated spheres ([Sasaki & Nakazawa (1986)](https://scixplorer.org/abs/1986JGR....91.9231S/abstract)).
-- **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367, no ADS bibcode).
+- **Stokes settling** at high $\phi$: melt is the matrix and solid grains settle as isolated spheres, derived from Stokes' law ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 13a).
+- **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367; not indexed on ADS/SciX).
 - **Blake-Kozeny-Carman** at low $\phi$: melt as a percolating fluid through a near-rigid solid matrix.
 
-Aragog blends these three regimes through tanh switches at $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), giving a smooth permeability-vs-porosity curve that the JAX Jacobian can differentiate (Figure 3 of [Heat transport](heat_transport.md#permeability-kzeta-across-the-three-abe-regimes)).
+The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995) and reviewed in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §2.1 Eqs. 13a-c, where the regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
+Aragog hard-codes the equal-density-ratio limits ($\rho_\mathrm{sol} = \rho_\mathrm{liq}$) of these expressions, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), and blends through them with a tanh switch rather than recomputing per radial node.
+The resulting permeability-vs-porosity curve (Figure 3 of [Heat transport](heat_transport.md#permeability-kzeta-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
 The corresponding heat flux is
 
 $$
@@ -85,7 +88,8 @@ with $L(P)$ the EOS-tabulated, pressure-dependent latent heat of fusion.
 Convective parcels carry melt fraction across the rheological transition.
 When parcels with different $\phi$ mix into different ambient $\phi$, latent heat is released or absorbed as the local lever rule is restored.
 [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 9 writes this as a Fick's-law flux on the melt fraction itself, $F_\mathrm{mix} = -\rho T \Delta S_\mathrm{fus}\,\kappa_h\,\partial\phi/\partial r$.
-Aragog uses the SPIDER-parity bracket form, which is mathematically equivalent in pure-phase regions and substantially better-behaved across the solidus and liquidus:
+Aragog uses the SPIDER-parity bracket form, which vanishes at the solidus and liquidus by construction (no $\partial\phi/\partial r$ singularity at phase boundaries) and reduces to the Bower (2018) Eq. 9 form in the strict mushy interior.
+The bracket form makes the smoothness of the RHS explicit at the cost of a more complex algebraic form:
 
 $$
 F_\mathrm{mix} = -\kappa_c\,\rho\,T_\mathrm{fus}\left[
@@ -105,7 +109,7 @@ Aragog supports two forms:
 
 | `phase_smoothing` | Formula |
 |---|---|
-| `"tanh"` (default, SPIDER parity) | Two-branch $\mathrm{get\_smoothing}$ with width `matprop_smooth_width = 0.01`; ramps to 0 in narrow skirts at $g\phi = 0$ and $g\phi = 1$, $\approx 1$ across $[0.05, 0.95]$ |
+| `"tanh"` (default, SPIDER parity) | Two-branch $\mathrm{get\_smoothing}$ with width `matprop_smooth_width = 0.01`; $\mathrm{smth} \approx 1$ in the mushy interior except for tanh skirts of width $\sim 0.01$ in $g\phi$ at $g\phi = 0$ and $g\phi = 1$ |
 | `"cubic_hermite"` | $\mathrm{smth}(g\phi) = 16\,g\phi^2(1-g\phi)^2$ for $g\phi \in [0, 1]$; intermediate-$\phi$ damping, slightly more conservative for residual EOS mismatch |
 
 Without smoothing, the raw $\rho\phi(1-\phi)\,v_\mathrm{rel}$ flux drains the CMB cell off the EOS table edge in a single coupling step at first crystallisation; with smoothing, the flux ramps continuously and the JAX Jacobian remains finite across the transition.
@@ -118,7 +122,7 @@ In that window:
 
 - Gravitational separation moves melt up and solid down at speeds comparable to the convective velocity in the lowest-permeability regime, transporting both mass and latent heat that a one-phase model cannot represent.
 - Chemical mixing carries entropy in the *opposite* direction to convection in parts of the mushy band, partially cancelling the convective flux on either side of the rheological transition; this is what produces the multi-component flux structure shown in Figure 2 of [Heat transport](heat_transport.md#decomposition-on-a-fully-mushy-state).
-- The viscosity contrast across the rheological transition is $\sim 10^{15}$ ([Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract)), well outside any single Ra-Nu fit, so the BLT closure that worked at fully-molten state is no longer accurate.
+- The relative viscosity rises by $\sim 10^{10}$ across the rheological transition ([Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract) Figure 2), well outside any single Ra-Nu fit, so the BLT closure that worked at fully-molten state is no longer accurate.
 - The latent heat of solidification, encoded in Aragog as a continuous function of $\phi$ via the lever rule, becomes a c$_p$ delta function in a one-phase model, which is either ignored (incorrect) or imposed as a global term that misrepresents its spatial distribution.
 
 In a coupled atmosphere-interior simulation, this is the regime where atmospheric H$_2$O outgassing, surface volatile budgets, and the timing of solidification are decided.
@@ -131,13 +135,13 @@ The one-phase formulation can give the right qualitative answer but will miss th
 - [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. AGU Geophysical Monograph Series 74, 41.
   The original two-phase magma-ocean formulation.
 - [Sasaki & Nakazawa (1986)](https://scixplorer.org/abs/1986JGR....91.9231S/abstract). *Metal-silicate fractionation in the growing Earth: Energy source for the terrestrial magma ocean*. JGR 91, 9231.
-  Stokes settling for the high-$\phi$ permeability branch.
+  Stokes settling velocity of MLT convective parcels (the viscous-regime velocity scale of [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 5a, used in [Mixing-length theory](mixing_length.md)).
 - [Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract). *A model for the rheology of particle-bearing suspensions and partially molten rocks*. G$^3$ 10, Q03010.
   Source for the rheological-transition viscosity blend that Aragog uses.
 - [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract). *Suspension in convective layers and style of differentiation of a terrestrial magma ocean*. JGR 98, 5375.
   Two-phase fluid-dynamical scaling for crystal suspension and settling.
-- Rumpf, H.C.H., and Gupte, A.R. (1971). *Einflüsse der Porosität und Korngrößenverteilung im Widerstandsgesetz der Porenströmung*. Chem. Ing. Tech. 43, 367. doi:10.1002/cite.330430610. Permeability fit for the intermediate-$\phi$ branch (no ADS/SciX link available).
-- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Continuation of the Abe two-phase formulation; not indexed on ADS/SciX.
+- Rumpf, H.C.H., and Gupte, A.R. (1971). *Einflüsse der Porosität und Korngrößenverteilung im Widerstandsgesetz der Porenströmung*. Chem. Ing. Tech. 43, 367. Permeability fit for the intermediate-$\phi$ branch (not indexed on ADS/SciX; full DOI not independently verified).
+- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Source for the consolidated three-regime $\zeta_\mathrm{grav}(\phi)$ formulation cited in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) footnote 3; not indexed on ADS/SciX.
 
 For the algebraic forms of the four heat-flux components Aragog assembles, see [Heat transport](heat_transport.md).
 For the closure that determines $\kappa_h$ in the convective flux, see [Mixing-length theory](mixing_length.md).

@@ -18,7 +18,7 @@ For the SPIDER cross-check, see [Aragog vs SPIDER](spider_comparison.md).
 
 ## Mixing-length theory inside Aragog
 
-MLT was developed for stellar interiors by [Vitense (1953)](https://scixplorer.org/abs/1953ZA.....32..135V/abstract) and adapted to terrestrial magma oceans by [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract); the critical Reynolds number $\mathrm{Re}_\mathrm{crit} = 9/8$ that Aragog inherits comes via Abe (1995) and [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 6.
+MLT was developed for stellar interiors by [Vitense (1953)](https://scixplorer.org/abs/1953ZA.....32..135V/abstract) and adapted to terrestrial magma oceans by [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract); the critical Reynolds number $\mathrm{Re}_\mathrm{crit} = 9/8$ that Aragog inherits comes via Abe (1995) and is documented in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §2.1.
 The convective heat flux at a basic node is parameterised as eddy diffusion of entropy:
 
 $$
@@ -56,7 +56,7 @@ the classical bounded-eddy profile that vanishes at both boundaries and reaches 
 A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
 A phase-modulated diffusivity floor `kappah_floor` activates only where melt fraction is non-trivial, mirroring the SPIDER convention; see [Heat transport](heat_transport.md#phase-modulated-floor).
 
-The implementation lives in `EntropyState._compute_kh` (numpy path) and `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
+The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py:451-510`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
 
 ## Boundary-layer theory in companion codes
 
@@ -154,7 +154,7 @@ The version of MLT in Aragog inherits five concrete choices that distinguish it 
 
 ## Where to read more
 
-- [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. AGU Geophysical Monograph Series 74, 41. The two-regime MLT form Aragog and SPIDER both follow.
+- [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. Geophysical Monograph 74, American Geophysical Union, pp. 41-54. The two-regime MLT form Aragog and SPIDER both follow.
 - Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Source for $\mathrm{Re}_\mathrm{crit} = 9/8$ via the viscous-inviscid asymptotic match (this book chapter is not indexed on ADS/SciX, so no link is available).
 - [Abe (1997)](https://scixplorer.org/abs/1997PEPI..100...27A/abstract). *Thermal and chemical evolution of the terrestrial magma ocean*. PEPI 100, 27.
 - [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. PEPI 274, 49. The SPIDER paper; the entropy-form mantle equation Aragog inherits.
