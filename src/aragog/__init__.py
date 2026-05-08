@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__: str = '26.01.06'
+__version__: str = '26.05.08'
 
 import importlib.resources
 import logging
