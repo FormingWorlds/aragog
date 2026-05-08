@@ -28,7 +28,7 @@ core_heat_capacity = 880
 outer_radius = 6371000
 inner_radius = 5371000
 number_of_nodes = 100
-mixing_length_profile = nearest_boundary
+mixing_length_profile = "nearest_boundary"
 core_density = 10738.332568062382
 surface_density = 4090
 gravitational_acceleration = 9.81
@@ -68,7 +68,7 @@ rheological_transition_melt_fraction = 0.4
 rheological_transition_width = 0.15
 solidus = "data/test/solidus_1d_lookup.dat"
 liquidus = "data/test/liquidus_1d_lookup.dat"
-phase = solid
+phase = "solid"
 phase_transition_width = 0.01
 grain_size = 1.0e-3
 

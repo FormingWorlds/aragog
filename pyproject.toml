@@ -55,6 +55,8 @@ docs = [
     "zensical>=0.1.0",
     "markdown-include>=0.8",
     "mkdocstrings[python]>=0.26",
+    "pymdown-extensions>=10.7",
+    "mkdocs-material>=9.5",
 ]
 jax = [
     "jax>=0.4.30",

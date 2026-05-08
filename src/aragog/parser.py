@@ -369,6 +369,11 @@ class _PhaseMixedParameters:
     phase_transition_width: float
     grain_size: float
     matprop_smooth_width: float = 0.0
+    # Mushy-zone Cp blending mode: "latent" (SPIDER parity, default) or
+    # "linear". Consumed by EntropyPhaseEvaluator via getattr fall-back,
+    # but accepting it here lets the documented [phase_mixed] cp_blend
+    # key in TOML / dict configs round-trip without a TypeError.
+    cp_blend: str = 'latent'
     # Constant-properties mode (matches SPIDER -use_const_properties)
     const_properties: bool = False
     const_rho: float = 4000.0
