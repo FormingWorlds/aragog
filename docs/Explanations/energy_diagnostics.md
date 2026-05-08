@@ -21,14 +21,12 @@ Every call to `EntropySolver.solve()` returns a [`SolverOutput`](../Reference/ap
 | `step_dE_Q_tidal_cons_J` | $+\int Q_\text{tidal}\,dt$ (frozen mass) | Non-negative; uses fixed $\rho_\text{struct}\,V$ |
 | `step_solver_residual_J` | $\int (\text{LHS} - \text{RHS})\,dt$ | $\sim 0$ at machine precision |
 
-All integrals use the trapezoidal rule on the integrator's accepted sub-steps, **not** trapezoidal interpolation between end-of-step snapshots. The previous diagnostic that recomputed $\Delta E$ from end-of-step $F$ snapshots was sensitive to transient values at sub-step boundaries (a single CVODE phase-boundary spike could blow up the integral by orders of magnitude); the per-call sub-step integration eliminates that artefact.
+All integrals use the trapezoidal rule on the integrator's accepted sub-steps. Integrating over the actual CVODE trajectory rather than between end-of-step snapshots is required because a single CVODE phase-boundary spike on a coarse end-of-step interpolation can shift the integral by orders of magnitude.
 
 The two surface-flux integrals (`step_dE_F_int_J` and `step_dE_F_cmb_J`) are area-weighted only and have no mass-weighting variant. The volumetric source integrals come in two flavours, distinguished by the mass weighting on $Q_\text{radio} = \rho\,h_\text{radio}\,V$ and $Q_\text{tidal} = \rho\,h_\text{tidal}\,V$:
 
-- **State-mass**: $\rho_\text{state} = \rho(P_\text{stag},\,S(t))$, evolves with the solver state.
-- **Frozen mass**: $\rho_\text{struct}\,V$ from `mesh.staggered_effective_density × mesh.basic.volume`, fixed at IC.
-
-The state-mass integrals are kept as instrumentation; the frozen-mass integrals are the ones that pair with the conservation-grade integrated enthalpy `E_state_cons` (see below).
+- **State-mass**: $\rho_\text{state} = \rho(P_\text{stag},\,S(t))$, evolves with the solver state. Used for instantaneous power diagnostics.
+- **Frozen mass**: $\rho_\text{struct}\,V$ from `mesh.staggered_effective_density × mesh.basic.volume`, fixed at IC. Used in the conservation-grade integrated enthalpy `E_state_cons` (see below).
 
 ## Cumulative conservation residuals (PROTEUS helpfile)
 
@@ -44,8 +42,6 @@ The PROTEUS coupling layer (`proteus.utils.coupler._populate_energy_residual`) a
 
 `E_residual_cons_J` is the **physical conservation residual**: the difference between the actual change in mantle enthalpy and the integrated boundary-and-source budget. `solver_residual_J` is the **solver-correctness residual**: by construction the entropy ODE satisfies $\sum_\text{cells}\rho T\,(\partial S/\partial t)\,V = -F_\text{int}\,A_\text{int} + F_\text{cmb}\,A_\text{cmb} + Q_\text{radio} + Q_\text{tidal}$ at every accepted CVODE sub-step, so any drift in `solver_residual_J` flags real CVODE step rejection or atol/rtol issues.
 
-The legacy state-mass columns `dE_predicted_J`, `E_residual_J`, `E_residual_frac` were **removed** on 2026-05-08; see ["Why frozen-mass weighting"](#why-frozen-mass-weighting) below.
-
 ## Closed-mantle energy balance
 
 Aragog's closed-mantle energy balance is
@@ -57,7 +53,7 @@ $$
 + Q_\text{radio} + Q_\text{tidal}.
 $$
 
-The five-term volumetric-work source $\Phi_\text{vol}$ is **not** in this budget: the volumetric work done when a melt of different density is transported across a pressure gradient is already implicit in the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. By definition $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h)$ already carries the volumetric-work term. Exposing a separate $\Phi_\text{vol}$ source would double-count ([Bower et al. 2018](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §3, SPIDER `energy.c`); a negative regression test in `tests/test_jax_no_phi_vol_source.py` ensures the source stays absent.
+A volumetric-work source $\Phi_\text{vol}$ does **not** appear in this budget: the volumetric work done when a melt of different density is transported across a pressure gradient is already implicit in the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. By definition $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h)$ already carries the volumetric-work term. A separate $\Phi_\text{vol}$ source would double-count ([Bower et al. 2018](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §3, SPIDER `energy.c`); a negative regression test in `tests/test_jax_no_phi_vol_source.py` enforces the absence.
 
 ## Why frozen-mass weighting
 
@@ -89,9 +85,9 @@ $$
 + \underbrace{\sum h\,(\partial \rho/\partial t)\,V}_{\text{frame artefact}}.
 $$
 
-The frame artefact grows with mantle cooling because $\rho(P,S(t))$ increases as the mantle solidifies. On a static-Zalmoxis dry $a_1$ benchmark, the state-mass residual reaches **51 % of total cooling** at 100 kyr — a non-physical signal that masks any real conservation drift.
+The frame artefact grows with mantle cooling because $\rho(P,S(t))$ increases as the mantle solidifies. On a static-Zalmoxis dry $a_1$ benchmark, a state-mass residual reaches **51 % of total cooling** at 100 kyr — a non-physical signal that masks any real conservation drift.
 
-`E_state_cons_J` uses the frozen mass-per-shell, eliminating $h\,\partial\rho/\partial t$ from the diagnostic side. The same trajectory closes to **5.3 % of total cooling** — bounded and physically meaningful. The legacy state-mass residual columns were removed and `E_residual_cons_J` / `E_residual_cons_frac` are the canonical conservation columns going forward.
+`E_state_cons_J` uses the frozen mass-per-shell, eliminating $h\,\partial\rho/\partial t$ from the diagnostic side. The same trajectory closes to **5.3 % of total cooling** — bounded and physically meaningful. `E_residual_cons_J` and `E_residual_cons_frac` are therefore the canonical conservation columns.
 
 ## Why two diagnostics
 
@@ -105,15 +101,14 @@ In production CHILI runs you should monitor both columns. `E_residual_cons_frac`
 
 ## Verification
 
-Three smoke runs on a static-Zalmoxis dry $a_1$ ($1\,M_\oplus$, no atmosphere, no radio, no tidal) trajectory, each starting from a fully molten mantle at $T_\text{magma} \approx 4244\,\text{K}$:
+Reference smoke runs on a static-Zalmoxis dry $a_1$ ($1\,M_\oplus$, no atmosphere, no radio, no tidal) trajectory starting from a fully molten mantle at $T_\text{magma} \approx 4244\,\text{K}$:
 
 | $t_\text{max}$ | Final $T_\text{magma}$ | Final $\Phi$ | `E_residual_cons_frac` | `solver_residual_J / dE_actual` |
 |---|---|---|---|---|
-| 1 kyr | 4106 K | 1.00 | 0.89 % | (BC bug present) |
 | 10 kyr | 3393 K | 0.97 | 11.5 % | $1.6\times10^{-7}$ |
 | 100 kyr | 2331 K | 0.73 | 5.3 % | $3.4\times10^{-7}$ |
 
-The frozen-mass residual stays bounded around a few percent over multiple orders of magnitude in time; the solver residual is at the floating-point noise floor over the full trajectory. The 1 kyr `solver_residual` was contaminated by an early BC-ordering bug fixed in aragog `048e547`.
+The frozen-mass residual stays bounded around a few percent over multiple orders of magnitude in time; the solver residual sits at the floating-point noise floor.
 
 ## Worked example
 
