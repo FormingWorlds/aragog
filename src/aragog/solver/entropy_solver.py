@@ -77,14 +77,14 @@ def _validate_eos_radius_range(mesh_params) -> None:
     """Validate the loaded external-EOS radial grid against the mesh bounds.
 
     Duplicates the init-time check in ``Parameters.__post_init__`` so that
-    ``EntropySolver.reset()`` catches a regenerated
-    external EOS file whose radius range no longer matches the solver's
-    current inner_radius / outer_radius. Without this guard the downstream
-    ``np.interp`` calls in ``_initialize_internals`` and
-    ``jax/phase._build_gravity_array`` would silently clamp or extrapolate
-    gravity at grid boundaries, producing a subtle physics bug.
-    Raises ValueError with a clear message if the file's radius range
-    is inconsistent with the mesh; no-op if the file matches.
+    ``EntropySolver.reset()`` catches a regenerated external EOS file
+    whose radius range no longer matches the solver's current
+    inner_radius / outer_radius. Without this guard the downstream
+    ``PchipInterpolator`` calls in ``_initialize_internals`` and
+    ``jax.phase._build_gravity_array`` would silently extrapolate gravity
+    at grid boundaries, producing a subtle physics bug. Raises ValueError
+    with a clear message if the file's radius range is inconsistent with
+    the mesh; no-op if the file matches.
     """
     er = np.asarray(mesh_params.eos_radius).ravel()
     if er.size < 2:
@@ -96,7 +96,7 @@ def _validate_eos_radius_range(mesh_params) -> None:
     if not np.all(np.diff(er) > 0):
         raise ValueError(
             'External EOS radius array is not monotonically increasing; '
-            'downstream np.interp would silently corrupt gravity / '
+            'downstream PchipInterpolator would silently corrupt gravity / '
             'pressure / density lookups.'
         )
     # Resume from a saved mesh: Zalmoxis recomputes inner/outer R_int
@@ -827,8 +827,8 @@ class EntropySolver:
                 )
             # PchipInterpolator (C^1 monotone cubic Hermite) for parity
             # with the pressure/density interpolations in mesh.pressure_eos
-            # and the JAX path in jax.phase._g_basic_from_mesh. Gravity is
-            # smooth wherever density is smooth, so the cubic Hermite
+            # and the JAX path in jax.phase._build_gravity_array. Gravity
+            # is smooth wherever density is smooth, so the cubic Hermite
             # carries no overshoot risk like the solidus/liquidus
             # entropy curves (where PCHIP was rejected upstream).
             g_interp = PchipInterpolator(eos_radius_arr, eos_gravity_arr)
@@ -1019,23 +1019,40 @@ class EntropySolver:
         if sol_dict is not None and liq_dict is not None:
             sol_P = np.asarray(sol_dict.get('P', []), dtype=float).ravel()
             sol_S = np.asarray(sol_dict.get('S', []), dtype=float).ravel()
+            liq_P = np.asarray(liq_dict.get('P', []), dtype=float).ravel()
             liq_interp = liq_dict.get('interp')
-            if sol_P.size and sol_S.size and liq_interp is not None:
-                liq_S_at_sol = np.asarray(liq_interp(sol_P), dtype=float).ravel()
-                ds = liq_S_at_sol - sol_S
-                ds = ds[np.isfinite(ds)]
-                if ds.size:
-                    ds_min = float(ds.min())
-                    if ds_min < ds_warn_threshold:
-                        logger.warning(
-                            'EntropySolver EOS check: min (S_liq - S_sol) '
-                            '= %.2f J/kg/K, within 10x of the 1 J/kg/K '
-                            'runtime floor. The two-phase fraction '
-                            'denominator will clip where the solidus and '
-                            'liquidus collapse. Verify phase-boundary '
-                            'tables.',
-                            ds_min,
-                        )
+            if sol_P.size and sol_S.size and liq_P.size and liq_interp is not None:
+                # Restrict the scan to the intersection of the solidus
+                # and liquidus P ranges. _load_spider_phase_boundary
+                # builds the liquidus interpolator with bounds_error=
+                # False and endpoint fill_values, so a sol_P entry
+                # outside [liq_P.min(), liq_P.max()] returns the
+                # liquidus endpoint S, which can be smaller than
+                # S_sol(P) at the same P, producing a spurious
+                # negative ds and a false phase-collapse warning.
+                P_lo = max(float(sol_P.min()), float(liq_P.min()))
+                P_hi = min(float(sol_P.max()), float(liq_P.max()))
+                mask = (sol_P >= P_lo) & (sol_P <= P_hi)
+                sol_P_in = sol_P[mask]
+                sol_S_in = sol_S[mask]
+                if sol_P_in.size:
+                    liq_S_at_sol = np.asarray(liq_interp(sol_P_in), dtype=float).ravel()
+                    ds = liq_S_at_sol - sol_S_in
+                    ds = ds[np.isfinite(ds)]
+                    if ds.size:
+                        ds_min = float(ds.min())
+                        if ds_min < ds_warn_threshold:
+                            logger.warning(
+                                'EntropySolver EOS check: min '
+                                '(S_liq - S_sol) = %.2f J/kg/K over '
+                                'the solidus-liquidus P intersection, '
+                                'within 10x of the 1 J/kg/K runtime '
+                                'floor. The two-phase fraction '
+                                'denominator will clip where the '
+                                'solidus and liquidus collapse. '
+                                'Verify phase-boundary tables.',
+                                ds_min,
+                            )
 
     def _cache_bc_constants(self) -> None:
         """Pre-compute BC and mesh constants for the dSdt hot path.
