@@ -6,12 +6,12 @@
 [![Integration Tests](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/nightly.yml?branch=main&label=Integration%20Tests)](https://github.com/FormingWorlds/aragog/actions/workflows/nightly.yml)
 [![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
 
-**Aragog** is a 1-D, two-phase, spherically symmetric magma-ocean solver with a mixing-length convective closure, part of the [PROTEUS](https://proteus-framework.org/PROTEUS) coupled atmosphere-interior evolution framework.
+**Aragog** is a 1-D, two-phase, spherically symmetric interior dynamics solver with a mixing-length convective closure, part of the [PROTEUS](https://proteus-framework.org/PROTEUS) coupled atmosphere-interior evolution framework.
 
-Two design choices set Aragog apart from boundary-layer-theory (BLT) magma-ocean codes such as [Elkins-Tanton (2008)](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract), [Hamano et al. (2013)](https://scixplorer.org/abs/2013Natur.497..607H/abstract), and [Schaefer et al. (2016)](https://scixplorer.org/abs/2016ApJ...829...63S/abstract):
+Two design choices define Aragog's approach:
 
-- **[Mixing-length theory](Explanations/mixing_length.md) (MLT)** closes the convective heat flux *locally* at every radial node, rather than globally through a Nusselt-Rayleigh scaling across a thin upper thermal boundary layer. The full radial entropy profile $S(r,t)$ is the prognostic variable, so solidification fronts, retained melt pockets, and EOS-resolved adiabats are recovered without an assumed reference state.
-- **[Two-phase flow](Explanations/two_phase_flow.md)** represents the mushy mantle as a coexisting solid + melt mixture at every node rather than as a single-phase fluid with a depth cutoff. This activates gravitational separation of melt and solid, chemical mixing of melt fraction across the rheological transition, and a continuous (lever-rule) treatment of latent heat through the partial-melt regime.
+- **[Mixing-length theory](Explanations/mixing_length.md) (MLT)** closes the convective heat flux *locally* at every radial node. The full radial entropy profile $S(r,t)$ is the prognostic variable, so solidification fronts, retained melt pockets, and EOS-resolved adiabats are recovered without an assumed reference state.
+- **[Two-phase flow](Explanations/two_phase_flow.md)** represents the mushy mantle as a coexisting solid + melt mixture at every node. This activates gravitational separation of melt and solid, chemical mixing of melt fraction across the rheological transition, and a continuous (lever-rule) treatment of latent heat through the partial-melt regime.
 
 Together, MLT and two-phase flow let Aragog resolve the partial-melt window between first crystallisation and final solidification, where atmospheric outgassing, surface volatile budgets, and the timing of solidification are shaped by the coupled mantle-atmosphere evolution.
 The mantle is integrated as a stiff initial-value problem with SUNDIALS CVODE (default) plus a JAX-derived analytic Jacobian, with scipy `Radau` and `BDF` available as fall-backs; conduction, convection (MLT), gravitational separation, chemical mixing, radiogenic heating, and tidal heating each contribute as configurable flux or source terms.
