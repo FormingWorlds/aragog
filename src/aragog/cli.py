@@ -232,7 +232,10 @@ def _derive_initial_entropy_from_config(solver) -> float | None:
     T_target = float(ic.surface_temperature)
     if not (T_target > 0.0):
         return None
-    eos = getattr(solver, 'eos', None)
+    # ``EntropySolver`` stores the EOS at ``self.entropy_eos``; older
+    # test stubs used the shorter ``self.eos``. Accept either so the
+    # CLI flow and the unit-test stubs stay decoupled.
+    eos = getattr(solver, 'entropy_eos', None) or getattr(solver, 'eos', None)
     if eos is None:
         return None
     tables = getattr(eos, '_tables', None)

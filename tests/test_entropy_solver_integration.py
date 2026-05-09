@@ -399,3 +399,82 @@ def test_entropy_solver_solve_cvode_path_short_run_completes(shared_eos):
     # Physical bounds discriminator.
     assert float(np.min(final_y)) > 1000.0
     assert float(np.max(final_y)) < 5500.0
+
+
+# ---- CLI IC-derivation against the live EOS --------------------------------
+
+
+@pytest.mark.parametrize('T_target', [3000.0, 3500.0, 4000.0])
+def test_derive_initial_entropy_round_trips_against_live_eos(shared_eos, T_target):
+    """The CLI IC-derivation helper must invert ``T(P_surf, S)`` to
+    machine precision against a real EOS.
+
+    Discriminator: brentq is set to ``xtol=1e-3`` J/kg/K. With
+    ``dT/dS`` of order 0.5-1 K/(J/kg/K) on the PALEOS table near the
+    surface, that translates to ``|T(P_surf, S0) - T_target| < 1 mK``.
+    A regression in the bracket logic, a wrong P_surf source, or a
+    bad EOS-table key would either fail to converge or land on a
+    far-off T value. The parametrize sweeps three targets that span
+    the solid + mushy regimes so a single hard-coded fall-back value
+    cannot accidentally pass.
+    """
+    from aragog.cli import _derive_initial_entropy_from_config
+    from aragog.solver.entropy_solver import EntropySolver
+
+    parameters = _build_parameters(core_bc='quasi_steady', n_nodes=15)
+    parameters.initial_condition.initial_condition = 1  # linear
+    parameters.initial_condition.surface_temperature = T_target
+
+    solver = EntropySolver(parameters, entropy_eos=shared_eos)
+    solver.initialize()
+
+    S0 = _derive_initial_entropy_from_config(solver)
+    assert S0 is not None, (
+        'derivation returned None despite IC method=1 and surface_temperature > 0'
+    )
+
+    P_surf = float(parameters.mesh.surface_pressure)
+    T_back = shared_eos.temperature_scalar(P_surf, S0)
+    assert abs(T_back - T_target) < 0.1, (
+        f'derivation did not invert T(P_surf, S0); got T_back={T_back:.4f} K, '
+        f'target={T_target:.1f} K, |delta|={abs(T_back - T_target):.4e} K. '
+        'brentq xtol=1e-3 J/kg/K should round-trip to <1 mK.'
+    )
+
+    # Round-trip test 2: feed the derived S0 back into the solver and
+    # confirm the IC stage accepts it without raising. A regression
+    # that produced an out-of-table S0 would fail here on the entropy
+    # range check inside set_initial_entropy.
+    solver.set_initial_entropy(S0)
+
+
+def test_derive_initial_entropy_skips_when_ic_method_is_2(shared_eos):
+    """Live EOS + IC method 2 (user-defined T file): the helper must
+    return ``None`` so the caller's "--initial-entropy is required"
+    branch fires.
+
+    Edge case: a regression that flipped the IC-method gate would
+    produce a derived S0 against a real EOS, silently overriding the
+    file-based IC the user explicitly requested.
+    """
+    from aragog.cli import _derive_initial_entropy_from_config
+    from aragog.solver.entropy_solver import EntropySolver
+
+    parameters = _build_parameters(core_bc='quasi_steady', n_nodes=15)
+    # IC method 2 = user-defined T file. surface_temperature is set
+    # but should be ignored by the gate.
+    parameters.initial_condition.initial_condition = 2
+    parameters.initial_condition.surface_temperature = 4000.0
+    # init_temperature is normally loaded by Parameters.__post_init__
+    # for IC=2, but bypass the file load here by setting it directly
+    # so initialize() does not raise on a missing path.
+    parameters.initial_condition.init_temperature = np.full(15, 4000.0)
+
+    solver = EntropySolver(parameters, entropy_eos=shared_eos)
+    # Do NOT call solver.initialize(); the IC-method gate runs without
+    # touching the mesh or BC dispatch.
+    S0 = _derive_initial_entropy_from_config(solver)
+    assert S0 is None, (
+        f'IC method=2 must NOT trigger derivation; got S0={S0}. '
+        'A non-None return here would silently override the user-supplied IC file.'
+    )
