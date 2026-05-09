@@ -324,10 +324,10 @@ class SolverOutput:
     M_mantle_liquid: float  # liquid mantle mass [kg]
     M_mantle_solid: float  # solid mantle mass [kg]
     RF_depth: float  # rheological front depth (dimensionless)
-    E_th: float  # thermal energy proxy [J] -- legacy sum(m * Cp_apparent * T);
+    E_th: float  # thermal energy proxy [J]: sum(m * Cp_apparent * T).
     # NOT a proper enthalpy because Cp_apparent is latent-heat-blended and
-    # spikes at the rheological transition. Retained for back-compat with
-    # existing helpfile schema. Use ``E_state`` for conservation work.
+    # spikes at the rheological transition. Reported as a diagnostic
+    # snapshot; use ``E_state`` for conservation work.
     E_state: float  # mantle integrated specific enthalpy [J] -- EOS-consistent
     # ``sum(m * h(P, S))`` from the precomputed ``EntropyEOS.specific_enthalpy``
     # table. Anchor at table corner is arbitrary; differences across time
@@ -792,7 +792,7 @@ class EntropySolver:
         #   'quasi_steady' = alpha-factor BC. Faster but produces a
         #     ~18 % T_core offset versus SPIDER due to CMB cell drain.
         #   'bower2018' = T_core as ODE state with conduction-only
-        #     F_cmb. Retained for parity testing; not recommended.
+        #     F_cmb. Available for parity testing; not recommended.
         self._core_bc = getattr(
             self.parameters.boundary_conditions, 'core_bc', 'energy_balance'
         )
@@ -879,8 +879,10 @@ class EntropySolver:
             self.parameters.phase_liquid.viscosity, 1e-1
         )
         # matprop_smooth_width: SPIDER's phase-boundary smoothing for
-        # material properties. Read from the mixed-phase config if
-        # available; defaults to 0 (no smoothing) for backward compat.
+        # material properties. The ``getattr`` default of 0 (no
+        # smoothing) matches the SPIDER convention; the production
+        # JAX setting is 0.01 and is set on the ``[phase_mixed]``
+        # block of the active config.
         phase_kwargs['matprop_smooth_width'] = float(
             getattr(self.parameters.phase_mixed, 'matprop_smooth_width', 0.0)
         )
@@ -1218,7 +1220,7 @@ class EntropySolver:
             )
         elif core_bc == 'bower2018':
             # Core temperature as ODE state variable (conduction-only
-            # flux). State = [S, T_core]. Retained for parity testing
+            # flux). State = [S, T_core]. Available for parity testing
             # only; not recommended for production runs.
             T_core_init = getattr(self, '_T_core_init', None)
             if T_core_init is None:
@@ -1387,7 +1389,7 @@ class EntropySolver:
           staggered nodes is reconstructed by cumulative sum from
           the surface inward at each RHS evaluation.
         - 'bower2018': state = [S, T_core], length N+1. F_cmb from
-          conduction-only Fourier law. Retained for parity testing
+          conduction-only Fourier law. Available for parity testing
           only; not recommended.
         """
         n_stag = self._n_stag
@@ -1448,7 +1450,7 @@ class EntropySolver:
                 pass
             elif bower:
                 # bower2018 BC: F_cmb from one-sided Fourier conduction
-                # across the bottom half-cell. Retained for parity tests.
+                # across the bottom half-cell. Available for parity tests.
                 T_above = float(np.asarray(self.state.phase_staggered.temperature()).flat[0])
                 k_above = (
                     float(np.asarray(self.state.phase_staggered.thermal_conductivity()).flat[0])

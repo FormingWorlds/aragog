@@ -239,7 +239,9 @@ class EntropyPhaseEvaluator:
             # Cp: latent-heat augmented (SPIDER lines 227-232)
             Cp_mixed = np.maximum((S_liq - S_sol) / dT_phase * T_avg, 100.0)
         else:
-            # Legacy v3: linear blend of table values at phase boundaries
+            # Linear-blend branch: blends pure-phase table values at the
+            # phase boundaries without the latent-heat augmentation. Used
+            # when the active config sets ``cp_blend = 'linear'``.
             Cp_sol = _lookup('heat_capacity', P_arr, 'solid')
             Cp_liq = _lookup('heat_capacity', P_arr, 'melt')
             Cp_mixed = phi_arr * Cp_liq + (1.0 - phi_arr) * Cp_sol

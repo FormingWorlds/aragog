@@ -69,7 +69,7 @@ Aragog supports four core-mantle boundary modes:
 | Mode | When to use | Notes |
 |---|---|---|
 | `"energy_balance"` (default) | Production. SPIDER bit-parity. | Implements the [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) `bc.c::core_BC` formula. Adds `dSdr_cmb` as a state variable; conserves core enthalpy across the CMB. |
-| `"quasi_steady"` | SPIDER-legacy parity tests only. | Legacy v3 alpha-factor heat-flux partition. Gives a $\sim 19$% T_core offset against SPIDER on a typical Earth IC; do not use for new runs. |
+| `"quasi_steady"` | SPIDER parity tests only. | Alpha-factor heat-flux partition (heat-capacity-weighted). Gives a $\sim 19$% T_core offset against SPIDER on a typical Earth IC; do not use for new runs. |
 | `"gradient"` | Numerical-experiment use. | Two boundary entropies promoted to state variables. |
 | `"bower2018"` | Experimental. | Do not use for production. |
 
@@ -263,7 +263,7 @@ The JAX-derived analytic Jacobian is the only path that consistently survives th
 
 **Default**: `"energy_balance"`. **Recommendation**: keep `"energy_balance"`.
 
-Implements [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) `bc.c::core_BC` to bit-parity. The legacy `"quasi_steady"` mode gives a $\sim 19$% T_core offset and is preserved only for SPIDER-legacy parity reproduction.
+Implements [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) `bc.c::core_BC` to bit-parity. The `"quasi_steady"` mode gives a $\sim 19$% T_core offset against SPIDER and is appropriate only for parity-test reproduction.
 
 ### 4. `interior_energetics.aragog.phi_step_cap`
 

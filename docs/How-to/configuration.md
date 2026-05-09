@@ -1,6 +1,6 @@
 # Configuration
 
-Aragog reads its input from a single configuration file. The preferred format is **TOML**; the legacy INI format (`.cfg`) is still parsed for back-compatibility.
+Aragog reads its input from a single configuration file. Two formats are accepted: **TOML** (`.toml`, recommended for new work) and **INI** (`.cfg`).
 
 When Aragog is invoked from PROTEUS the configuration is built programmatically by the PROTEUS wrapper and the file-based path is bypassed; the same key names and value semantics apply in both cases.
 
