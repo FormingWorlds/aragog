@@ -67,7 +67,7 @@ def _version_message() -> str:
 @click.version_option(
     version=_ARAGOG_VERSION,
     message='%(prog)s %(version)s',
-    help='Print aragog and key-dependency versions and exit.',
+    help='Print the bare aragog version (one line) and exit.',
 )
 @click.option(
     '--versions',
@@ -78,7 +78,10 @@ def _version_message() -> str:
     callback=lambda ctx, param, value: (
         click.echo(_version_message()) or ctx.exit(0) if value else None
     ),
-    help='Print aragog plus key-dependency versions and exit.',
+    help=(
+        'Print aragog version + numpy/scipy/jax/scikits.odes/netCDF4 versions '
+        'and exit (multi-line; recommended attachment for bug reports).'
+    ),
 )
 def cli() -> None:
     """Aragog: 1-D entropy-form magma-ocean solver."""

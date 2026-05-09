@@ -854,6 +854,13 @@ def test_validate_rejects_missing_required_field(tmp_path):
     """A config missing a required section must produce a non-zero
     exit AND a message that names the broken section, not a bare
     traceback.
+
+    Discriminator: the assertion checks that the missing-section
+    name (`solver`) appears in the output. A future refactor that
+    catches the parser exception and prints a generic
+    'configuration error: <exc>' without the section name would
+    still pass an exit-code-only test, defeating the diagnostic
+    value the command exists for.
     """
     from aragog.cli import cli
 
@@ -870,7 +877,12 @@ def test_validate_rejects_missing_required_field(tmp_path):
     result = runner.invoke(cli, ['validate', str(cfg)])
 
     assert result.exit_code != 0
-    assert 'configuration error' in (result.output or '').lower()
+    out = (result.output or '').lower()
+    assert 'configuration error' in out
+    assert 'solver' in out, (
+        'validate must surface the missing-section name (solver) so the '
+        f'user knows what to fix; got output={result.output!r}.'
+    )
 
 
 def test_new_scaffolds_default_template(tmp_path, monkeypatch):
