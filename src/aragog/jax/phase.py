@@ -17,6 +17,8 @@ from typing import NamedTuple
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
+from scipy.interpolate import PchipInterpolator
 
 from aragog.jax.eos import EntropyEOS_JAX
 
@@ -271,8 +273,6 @@ class MeshArrays(eqx.Module):
     @staticmethod
     def from_numpy_mesh(mesh) -> 'MeshArrays':
         """Build from a numpy Aragog Mesh object."""
-        import numpy as np
-
         P_basic_arr = np.asarray(mesh.basic_pressure).ravel()
         r_basic_arr = np.asarray(mesh.basic.radii).ravel()
         r_stag_arr = np.asarray(mesh.staggered.radii).ravel()
@@ -332,8 +332,6 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
         Target grid: False -> basic-node radii (default), True ->
         staggered-node radii.
     """
-    import numpy as np
-
     if r_stag:
         r_target = np.asarray(mesh.staggered.radii).ravel()
     else:
@@ -357,18 +355,25 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
     eos_gravity_arr = np.asarray(getattr(_eos_src, 'eos_gravity', []), dtype=float).ravel()
     eos_radius_arr = np.asarray(getattr(_eos_src, 'eos_radius', []), dtype=float).ravel()
     if eos_gravity_arr.size > 1 and eos_radius_arr.size == eos_gravity_arr.size:
-        # Monotonicity guard: np.interp silently produces wrong results if
-        # xp is not monotonically increasing. Zalmoxis writes radius
-        # CMB-outward, but an external EOS file could in principle be
-        # reversed; catch that rather than silently corrupting gravity.
+        # Monotonicity guard: PchipInterpolator silently produces
+        # wrong results if x is not monotonically increasing. Zalmoxis
+        # writes radius CMB-outward, but an external EOS file could in
+        # principle be reversed; catch that rather than silently
+        # corrupting gravity.
         if not np.all(np.diff(eos_radius_arr) > 0):
             raise ValueError(
                 'eos_radius is not monotonically increasing; '
-                'np.interp would silently corrupt the gravity profile. '
-                'Sort columns 0 and 3 of the external EOS file so radius '
-                'is monotonic.'
+                'PchipInterpolator would silently corrupt the gravity '
+                'profile. Sort columns 0 and 3 of the external EOS '
+                'file so radius is monotonic.'
             )
-        g_basic = np.interp(r_basic, eos_radius_arr, eos_gravity_arr)
+        # PchipInterpolator (C^1 monotone cubic Hermite) for parity
+        # with the pressure and density interpolations in
+        # mesh.pressure_eos. Gravity is smooth wherever density is
+        # smooth, so the cubic Hermite has no overshoot risk like the
+        # solidus/liquidus 1-D entropy curves (where PCHIP was
+        # rejected; see eos.entropy._load_spider_phase_boundary).
+        g_basic = PchipInterpolator(eos_radius_arr, eos_gravity_arr)(r_basic)
         return jnp.asarray(g_basic)
     # Scalar fallback chain. Mirrors the numpy reference in
     # entropy_solver.py::_initialize_internals: try the pressure-EOS

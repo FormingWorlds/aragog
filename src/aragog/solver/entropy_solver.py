@@ -23,6 +23,7 @@ import numpy.typing as npt
 import scipy
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
+from scipy.interpolate import PchipInterpolator
 from scipy.optimize import OptimizeResult
 
 if TYPE_CHECKING:
@@ -820,12 +821,19 @@ class EntropySolver:
             if not np.all(np.diff(eos_radius_arr) > 0):
                 raise ValueError(
                     'External eos_radius is not monotonically increasing; '
-                    'np.interp would silently corrupt the numpy gravity '
-                    'profile. Fix by sorting the external EOS file columns '
-                    '0 and 3 so radius is monotonic.'
+                    'PchipInterpolator would silently corrupt the numpy '
+                    'gravity profile. Fix by sorting the external EOS '
+                    'file columns 0 and 3 so radius is monotonic.'
                 )
-            g_basic = np.interp(self._r_basic_flat, eos_radius_arr, eos_gravity_arr)
-            g_stag = np.interp(self._r_stag_flat, eos_radius_arr, eos_gravity_arr)
+            # PchipInterpolator (C^1 monotone cubic Hermite) for parity
+            # with the pressure/density interpolations in mesh.pressure_eos
+            # and the JAX path in jax.phase._g_basic_from_mesh. Gravity is
+            # smooth wherever density is smooth, so the cubic Hermite
+            # carries no overshoot risk like the solidus/liquidus
+            # entropy curves (where PCHIP was rejected upstream).
+            g_interp = PchipInterpolator(eos_radius_arr, eos_gravity_arr)
+            g_basic = g_interp(self._r_basic_flat)
+            g_stag = g_interp(self._r_stag_flat)
             logger.info(
                 'EntropySolver gravity: per-node profile from external mesh '
                 '(n=%d, basic range [%.4f, %.4f] m/s^2)',
