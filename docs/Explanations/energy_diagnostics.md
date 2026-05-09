@@ -35,10 +35,10 @@ The PROTEUS coupling layer (`proteus.utils.coupler._populate_energy_residual`) a
 | Column [J or 1] | Definition |
 |---|---|
 | `E_state_cons_J` | $\sum_\text{cells} h(P,S(t))\,\rho_\text{struct}\,V$ (frozen-mass integrated enthalpy) |
-| `dE_predicted_cons_J` | $\sum_\text{rows}(\text{step\_dE\_F\_int\_J} + \text{step\_dE\_F\_cmb\_J} + \text{step\_dE\_Q\_radio\_cons\_J} + \text{step\_dE\_Q\_tidal\_cons\_J})$ |
-| `E_residual_cons_J` | $\Delta E_\text{state\_cons} - \text{dE\_predicted\_cons\_J}$, with $\Delta E_\text{state\_cons} = E_\text{state\_cons}(t) - E_\text{state\_cons}(0)$ |
-| `E_residual_cons_frac` | `E_residual_cons_J` $/\,\max(\lvert\Delta E_\text{state\_cons}\rvert,\,1\,\text{J})$ |
-| `solver_residual_J` | $\sum_\text{rows}\text{step\_solver\_residual\_J}$ (cumulative entropy-ODE LHS-RHS) |
+| `dE_predicted_cons_J` | Cumulative sum over rows of `step_dE_F_int_J` + `step_dE_F_cmb_J` + `step_dE_Q_radio_cons_J` + `step_dE_Q_tidal_cons_J` |
+| `E_residual_cons_J` | $\Delta E_\text{state,cons} -$ `dE_predicted_cons_J`, with $\Delta E_\text{state,cons} = E_\text{state,cons}(t) - E_\text{state,cons}(0)$ |
+| `E_residual_cons_frac` | `E_residual_cons_J` $/\,\max(\lvert\Delta E_\text{state,cons}\rvert,\,1\,\text{J})$ |
+| `solver_residual_J` | Cumulative sum over rows of `step_solver_residual_J` (cumulative entropy-ODE LHS$-$RHS) |
 
 `E_residual_cons_J` is the **physical conservation residual**: the difference between the actual change in mantle enthalpy and the integrated boundary-and-source budget. `solver_residual_J` is the **solver-correctness residual**: by construction the entropy ODE satisfies $\sum_\text{cells}\rho T\,(\partial S/\partial t)\,V = -F_\text{int}\,A_\text{int} + F_\text{cmb}\,A_\text{cmb} + Q_\text{radio} + Q_\text{tidal}$ at every accepted CVODE sub-step, so any drift in `solver_residual_J` flags real CVODE step rejection or atol/rtol issues.
 
