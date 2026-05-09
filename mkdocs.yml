@@ -11,17 +11,21 @@ nav:
       - Getting started: getting_started.md
 
   - How-to guides:
-      - Installation: How-to/installation.md
-      - Standalone usage: How-to/usage-paths.md
-      - Coupling Aragog to PROTEUS: How-to/proteus_coupling.md
-      - Configuration: How-to/configuration.md
-      - Usage: How-to/usage.md
-      - Solver method tuning: How-to/solver-method-tuning.md
-      - Melt-fraction step cap: How-to/phi-step-cap.md
-      - UTBL parameterisation: How-to/utbl-parameterisation.md
-      - Testing suite: How-to/testing.md
-      - Build tests: How-to/build_tests.md
-      - Inspecting NetCDF output: How-to/netcdf.md
+      - Setup:
+          - Installation: How-to/installation.md
+      - Running Aragog:
+          - Standalone usage: How-to/usage-paths.md
+          - Coupling Aragog to PROTEUS: How-to/proteus_coupling.md
+          - Configuration: How-to/configuration.md
+          - Usage: How-to/usage.md
+      - Solver tuning:
+          - Solver method tuning: How-to/solver-method-tuning.md
+          - Melt-fraction step cap: How-to/phi-step-cap.md
+          - UTBL parameterisation: How-to/utbl-parameterisation.md
+      - Outputs & testing:
+          - Inspecting NetCDF output: How-to/netcdf.md
+          - Testing suite: How-to/testing.md
+          - Build tests: How-to/build_tests.md
 
   - Tutorials:
       - First run: Tutorials/firstrun.md
