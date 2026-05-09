@@ -71,4 +71,4 @@ param_utbl_const         = 1.0e-7
 - [Configuration: `[boundary_conditions]`](configuration.md#boundary_conditions): the schema rows for `param_utbl` and `param_utbl_const`.
 - [Heat-transport explainer](../Explanations/heat_transport.md): grey-body BC alongside the prescribed-flux and prescribed-temperature modes.
 
-[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49 to 62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
+[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49–62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).

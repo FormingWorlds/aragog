@@ -28,23 +28,27 @@ nav:
       - Building a test: Tutorials/build_test.md
 
   - Explanations:
-      - Model overview: Explanations/model.md
-      - Code architecture: Explanations/code_architecture.md
-      - Coupling to PROTEUS: Explanations/proteus_coupling.md
-      - Energy equation: Explanations/energy_equation.md
-      - Heat transport: Explanations/heat_transport.md
-      - Mixing-length theory: Explanations/mixing_length.md
-      - Two-phase flow: Explanations/two_phase_flow.md
-      - Phase transitions: Explanations/phase_transitions.md
-      - Pressure EOS: Explanations/pressure_eos.md
-      - Core BC modes: Explanations/core_bc.md
-      - Aragog vs SPIDER: Explanations/spider_comparison.md
-      - CVODE and JAX: Explanations/cvode_jax.md
-      - JAX Jacobian factory: Explanations/jax_jacobian_factory.md
-      - phi_step_cap rootfn: Explanations/phi_step_cap_rationale.md
-      - EOS sanity checks: Explanations/eos_sanity_checks.md
-      - Energy diagnostics: Explanations/energy_diagnostics.md
-      - First-principles verification: Explanations/verification.md
+      - Overview:
+          - Model overview: Explanations/model.md
+          - Code architecture: Explanations/code_architecture.md
+          - Coupling to PROTEUS: Explanations/proteus_coupling.md
+          - Aragog vs SPIDER: Explanations/spider_comparison.md
+      - Physics:
+          - Energy equation: Explanations/energy_equation.md
+          - Heat transport: Explanations/heat_transport.md
+          - Mixing-length theory: Explanations/mixing_length.md
+          - Two-phase flow: Explanations/two_phase_flow.md
+          - Phase transitions: Explanations/phase_transitions.md
+          - Pressure EOS: Explanations/pressure_eos.md
+          - Core BC modes: Explanations/core_bc.md
+      - Numerics:
+          - CVODE and JAX: Explanations/cvode_jax.md
+          - JAX Jacobian factory: Explanations/jax_jacobian_factory.md
+          - phi_step_cap rootfn: Explanations/phi_step_cap_rationale.md
+      - Diagnostics & verification:
+          - EOS sanity checks: Explanations/eos_sanity_checks.md
+          - Energy diagnostics: Explanations/energy_diagnostics.md
+          - First-principles verification: Explanations/verification.md
 
   - Reference:
       - API reference:

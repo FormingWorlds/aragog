@@ -259,4 +259,4 @@ The formulation maps to the following source modules:
 
 For the package layout in detail, see [Code architecture](code_architecture.md). For the public API, see the [API reference](../Reference/api/index.md).
 
-[^cite-abe1993]: Yutaka Abe, *[Thermal evolution and chemical differentiation of the terrestrial magma ocean](https://doi.org/10.1029/GM074p0041)*, Geophysical Monograph 74, AGU, 41 to 54, 1993. [SciX](https://scixplorer.org/abs/1993GMS....74...41A/abstract).
+[^cite-abe1993]: Yutaka Abe, *[Thermal evolution and chemical differentiation of the terrestrial magma ocean](https://doi.org/10.1029/GM074p0041)*, Geophysical Monograph 74, AGU, 41–54, 1993. [SciX](https://scixplorer.org/abs/1993GMS....74...41A/abstract).

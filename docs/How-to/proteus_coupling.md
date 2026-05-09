@@ -322,5 +322,5 @@ Uniform spacing in mass-coordinate space gives larger cells at the surface where
 
 For the why behind these, see the [Coupling to PROTEUS theory page](../Explanations/proteus_coupling.md).
 
-[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49 to 62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
-[^cite-ruedas2017]: T. Ruedas, *[Radioactive heat production of six geologically important nuclides](https://doi.org/10.1002/2017GC006997)*, Geochemistry, Geophysics, Geosystems, 18, 3530 to 3541, 2017. [SciX](https://scixplorer.org/abs/2017GGG....18.3530R/abstract).
+[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49–62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
+[^cite-ruedas2017]: T. Ruedas, *[Radioactive heat production of six geologically important nuclides](https://doi.org/10.1002/2017GC006997)*, Geochemistry, Geophysics, Geosystems, 18, 3530–3541, 2017. [SciX](https://scixplorer.org/abs/2017GGG....18.3530R/abstract).
