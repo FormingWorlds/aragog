@@ -935,6 +935,13 @@ class EntropySolver:
         # radionuclides are configured).
         self.evaluator.radionuclides = self.parameters.radionuclides
 
+        # One-shot scan of the loaded EOS tables against the runtime
+        # floors (Cp >= 100 J/kg/K, S_liq - S_sol >= 1 J/kg/K). Catches
+        # a non-standard or partially-loaded EOS at load time, before
+        # any RHS call where the floors could silently bias the
+        # integrand.
+        self._check_eos_floors()
+
         # Cache constant BC and mesh terms so the dSdt hot path
         # doesn't recompute them on every RHS call. None of these
         # depend on entropy.
@@ -957,6 +964,70 @@ class EntropySolver:
         self._t_ref_yr = 1e5 / SECS_PER_YEAR  # time0 [yr]; Aragog convention, not SPIDER
         self._r_ref = 6.371e7  # radius0 [m]
         self._dSdr_ref = self._S_ref / self._r_ref  # [J/kg/K/m]
+
+    def _check_eos_floors(self) -> None:
+        """Scan loaded EOS tables for proximity to runtime floors.
+
+        Conduction clamps Cp from below at 100 J/kg/K
+        (``solver/entropy_state.py`` and ``jax/phase.py``) and the
+        two-phase fraction denominator clamps ``S_liq - S_sol`` from
+        below at 1 J/kg/K. Both floors guard pathological lookups; a
+        production MgSiO3 P-S table stays far above either bound. If a
+        loaded table sits close to the floor, the floor will silently
+        bias the conduction superadiabatic term or the phi denominator
+        once the integrator queries that region.
+
+        Emits one warning per offending quantity, at table-load time,
+        so a non-standard EOS is flagged before any RHS call rather
+        than per call. Skipped under ``const_properties`` and when
+        ``self.entropy_eos`` is None (test stubs).
+        """
+        eos = self.entropy_eos
+        if eos is None or not hasattr(eos, '_tables'):
+            return
+        cp_warn_threshold = 200.0  # 2x the runtime floor (100 J/kg/K)
+        ds_warn_threshold = 10.0  # 10x the runtime floor (1 J/kg/K)
+        cp_min = float('inf')
+        for phase in ('solid', 'melt'):
+            key = f'heat_capacity_{phase}'
+            table = eos._tables.get(key)
+            if table is None:
+                continue
+            values = np.asarray(table.get('values', []), dtype=float)
+            finite = values[np.isfinite(values)]
+            if finite.size:
+                cp_min = min(cp_min, float(finite.min()))
+        if np.isfinite(cp_min) and cp_min < cp_warn_threshold:
+            logger.warning(
+                'EntropySolver EOS check: min Cp = %.1f J/kg/K in the '
+                'loaded P-S tables, within 2x of the 100 J/kg/K runtime '
+                'floor. Conduction superadiabatic term will be biased '
+                'upward where Cp clips. Verify the EOS heat-capacity '
+                'tables.',
+                cp_min,
+            )
+        sol_dict = getattr(eos, '_solidus', None)
+        liq_dict = getattr(eos, '_liquidus', None)
+        if sol_dict is not None and liq_dict is not None:
+            sol_P = np.asarray(sol_dict.get('P', []), dtype=float).ravel()
+            sol_S = np.asarray(sol_dict.get('S', []), dtype=float).ravel()
+            liq_interp = liq_dict.get('interp')
+            if sol_P.size and sol_S.size and liq_interp is not None:
+                liq_S_at_sol = np.asarray(liq_interp(sol_P), dtype=float).ravel()
+                ds = liq_S_at_sol - sol_S
+                ds = ds[np.isfinite(ds)]
+                if ds.size:
+                    ds_min = float(ds.min())
+                    if ds_min < ds_warn_threshold:
+                        logger.warning(
+                            'EntropySolver EOS check: min (S_liq - S_sol) '
+                            '= %.2f J/kg/K, within 10x of the 1 J/kg/K '
+                            'runtime floor. The two-phase fraction '
+                            'denominator will clip where the solidus and '
+                            'liquidus collapse. Verify phase-boundary '
+                            'tables.',
+                            ds_min,
+                        )
 
     def _cache_bc_constants(self) -> None:
         """Pre-compute BC and mesh constants for the dSdt hot path.
