@@ -1,8 +1,11 @@
 """Unit tests for the Aragog CLI entry point.
 
-Verifies that the three subcommands (``run``, ``list-configs``,
-``vnv``) are registered, callable, and reject malformed input
-without silent fallthrough.
+Verifies that the seven subcommands (``run``, ``inspect``,
+``validate``, ``show-config``, ``new``, ``list-configs``, ``vnv``)
+are registered, callable, and reject malformed input without
+silent fallthrough. Also covers the ``--version`` / ``--versions``
+group flags and the ``aragog run --set <key.path>=<value>``
+override mechanic.
 """
 
 from __future__ import annotations
@@ -119,7 +122,8 @@ def test_cli_registers_expected_subcommands():
     Discriminator: the test fails if either an extra debug command
     leaks in (e.g. someone leaves a stray `@cli.command()` during
     development) or one of the documented commands goes missing.
-    Tier 1 documented set: run, list-configs, new, vnv.
+    Tier 1 documented set: run, inspect, validate, show-config, new,
+    list-configs, vnv.
     """
     from aragog.cli import cli
 

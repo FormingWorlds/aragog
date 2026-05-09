@@ -141,4 +141,14 @@ Aragog itself does not write NetCDF files; that is handled by the PROTEUS wrappe
 
 ## Command-line interface
 
-Aragog exposes a `aragog` console entry point with a single `click.Group` and no production subcommands. The CLI is intentionally minimal: data downloads, plotting, and run orchestration live in PROTEUS or in user scripts. Run the Python API from scripts or notebooks for standalone integrations.
+Aragog exposes the `aragog` console entry point with seven subcommands: `new`, `list-configs`, `validate`, `show-config`, `run`, `inspect`, and `vnv`.
+The CLI is a thin wrapper over the Python API — anything it does is also reachable from `from aragog.solver import EntropySolver` — but it covers the recommended standalone-user loop without writing Python:
+
+```bash
+aragog new my_first --from abe_solid
+aragog validate my_first.toml
+aragog run my_first.toml --eos-dir $FWL_DATA/spider/lookup-fs --initial-entropy 2900.0
+aragog inspect my_first.nc
+```
+
+`aragog run` accepts repeatable `--set <key.path>=<value>` flags for one-shot overrides without editing the TOML. The full subcommand reference, including the `--set` type-coercion rules, is in [Reference: CLI](../Reference/cli.md). PROTEUS-coupled runs bypass the CLI and call `EntropySolver` directly via `AragogRunner`.

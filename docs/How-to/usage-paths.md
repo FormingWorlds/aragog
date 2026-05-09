@@ -34,7 +34,17 @@ The full standalone walkthrough is in [Tutorials: First run](../Tutorials/firstr
 
 ## CLI
 
-The standalone CLI exposes a single `aragog` command-line entry point; it has no production subcommands. Run the Python API directly from scripts or notebooks.
+The standalone CLI exposes the `aragog` console entry point with seven subcommands:
+
+- `aragog new` scaffolds a new TOML config from a bundled template.
+- `aragog list-configs` enumerates the bundled `cfg/abe_*.{toml,cfg}` examples.
+- `aragog validate` parses a config and reports errors without solving.
+- `aragog show-config` dumps the resolved `Parameters` tree as JSON.
+- `aragog run` solves a configured run end-to-end and writes a NetCDF snapshot. Supports `--set <key.path>=<value>` overrides without editing the TOML.
+- `aragog inspect` prints key diagnostics from a `SolverOutput` NetCDF (or `--json` for `jq`-style post-processing).
+- `aragog vnv` runs a verification-figure script from `tools/verification/figures/`.
+
+For the full subcommand reference and recommended workflows, see [Reference: CLI](../Reference/cli.md). PROTEUS-coupled runs do not use the CLI; the `proteus` driver builds `Parameters` programmatically and calls `EntropySolver` directly via `AragogRunner`.
 
 ## What is shared with the coupled path
 

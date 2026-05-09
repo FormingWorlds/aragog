@@ -7,7 +7,7 @@ This page describes the package structure under `src/aragog/` and the data flow 
 ```
 src/aragog/
 ├── __init__.py            # Package version, logging helpers, exposes EntropySolver
-├── cli.py                 # Click CLI entry point (minimal: bare group)
+├── cli.py                 # Click CLI: run, inspect, validate, show-config, new, list-configs, vnv
 ├── parser.py              # Parameters dataclass and TOML/INI parsing
 ├── utilities.py           # Small utility functions, type aliases
 ├── cfg/                   # Bundled example configurations (.cfg, .toml)

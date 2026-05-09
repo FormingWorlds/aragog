@@ -30,13 +30,52 @@ Aragog's entropy solver requires a directory containing the following files:
 
 In a PROTEUS coupled run these tables are produced from the configured PALEOS or Wolf-Bower P-T file by the PROTEUS wrapper. For standalone work, point `eos_dir` at any directory containing this set.
 
-## 2. Pick a configuration file
+## 2. Scaffold a configuration
 
-Aragog ships a few example configurations under `src/aragog/cfg/`. For this tutorial, copy `abe_solid.toml` to a working directory and edit the file paths in `[phase_solid]`, `[phase_liquid]`, and `[phase_mixed]` so that they point at your local data. A configuration that still carries a `[scalings]` section is rejected at load time; remove the section.
+The fastest path is the `aragog new` scaffold:
 
-## 3. Run Aragog from Python
+```bash
+aragog new first --from abe_solid
+```
 
-Create `first.py`:
+This copies the bundled `abe_solid` template to `first.toml` in the cwd. Open the file and edit the file paths in `[phase_solid]`, `[phase_liquid]`, and `[phase_mixed]` so that they point at your local data; nothing else needs to change for a smoke run. A configuration that carries a `[scalings]` section is rejected at load time; if you copied a legacy config, remove that block.
+
+Confirm the parsed schema is what you expect before solving:
+
+```bash
+aragog validate first.toml
+# OK first.toml: core_bc=energy_balance, IBC=2, OBC=1, eos_method=1, IC_method=1, radionuclides=4
+```
+
+## 3. Solve from the CLI
+
+```bash
+aragog run first.toml \
+    --eos-dir path/to/eos/tables \
+    --initial-entropy 2900.0 \
+    --out first.nc
+```
+
+`aragog run` mirrors the recipe at the bottom of this page (`EntropySolver.from_file → initialize → set_initial_dSdr_cmb → set_initial_entropy → solve → to_netcdf`); see [Reference: CLI](../Reference/cli.md) for the full option list. A successful run leaves `aragog.log` plus `first.nc` in the working directory.
+
+Inspect the result:
+
+```bash
+aragog inspect first.nc
+```
+
+The default human format prints status, the headline scalars (`T_magma`, `T_core`, `Phi_global`, `F_heat_total`, ...), the mesh dimensions, and a `S_final` / `T_basic` profile-range block. Add `--json` for `jq`-friendly machine-readable output.
+
+For one-off tweaks during debugging, `aragog run` accepts repeatable `--set <key.path>=<value>` flags (see the [CLI reference](../Reference/cli.md#set-overrides) for type coercion rules):
+
+```bash
+aragog run first.toml --eos-dir ... --initial-entropy 2900.0 \
+    --set energy.kappah_floor=20.0 --set solver.atol=1e-11
+```
+
+## 4. Solve from Python
+
+For scripted workflows, parameter sweeps, or richer plotting you can call the same path the CLI uses directly. Create `first.py`:
 
 ```python
 from pathlib import Path
@@ -48,7 +87,7 @@ aragog_file_logger(log_dir=str(Path.cwd()))
 
 # Build the solver from a TOML config and an EOS-table directory.
 solver = EntropySolver.from_file(
-    filename="abe_solid.toml",
+    filename="first.toml",
     eos_dir="path/to/eos/tables",
 )
 
@@ -79,9 +118,9 @@ Run it:
 python first.py
 ```
 
-A successful run leaves `aragog.log` in the working directory and prints the scalar diagnostics. `out.S_final`, `out.T_stag`, `out.phi_stag`, and the basic-node fluxes (`out.jcond_b`, `out.jconv_b`, `out.jgrav_b`, `out.jmix_b`) are NumPy arrays you can plot directly.
+`out.S_final`, `out.T_stag`, `out.phi_stag`, and the basic-node fluxes (`out.jcond_b`, `out.jconv_b`, `out.jgrav_b`, `out.jmix_b`) are NumPy arrays you can plot directly.
 
-## 4. Plot the entropy and melt-fraction profiles
+## 5. Plot the entropy and melt-fraction profiles
 
 ```python
 import matplotlib.pyplot as plt
@@ -99,13 +138,13 @@ fig.tight_layout()
 fig.savefig("first_profiles.pdf")
 ```
 
-## 5. Use Aragog inside PROTEUS
+## 6. Use Aragog inside PROTEUS
 
 For a coupled atmosphere-interior simulation the configuration is built programmatically by the PROTEUS wrapper at `src/proteus/interior_energetics/aragog.py`. The wrapper drives `EntropySolver.set_initial_entropy()` from the previous step's profile, supplies the four-column external mesh file from Zalmoxis when `eos_method = 2`, and reads `SolverOutput` back into the PROTEUS `Interior_t` state. See [Standalone vs PROTEUS-integrated usage](../How-to/usage-paths.md) for the path comparison.
 
 For a coupled walkthrough (atmosphere + interior + outgassing), see the PROTEUS [usage guide](https://proteus-framework.org/PROTEUS/How-to/usage.html).
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 **`status = -1` from `solve()`.** The solver hit an integration failure: typically the integrator collapsed its step size at a phase boundary or the EOS table was queried outside its $(P, S)$ domain. PROTEUS handles these via a retry ladder that calls `set_initial_dSdr_cmb` and a tolerance-relaxation knob. In standalone use, inspect `aragog.log` for the warning trail and consider enabling the SUNDIALS CVODE path with `solver_method = "cvode"` if `scikits.odes` is installed.
 

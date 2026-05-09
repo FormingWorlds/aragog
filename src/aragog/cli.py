@@ -1,17 +1,29 @@
 """Aragog command-line entry point.
 
 The ``aragog`` script (registered under ``[project.scripts]`` in
-``pyproject.toml``) dispatches to three subcommands:
+``pyproject.toml``) dispatches to seven subcommands:
 
+* ``aragog new`` scaffolds a new TOML config from a bundled template.
+* ``aragog list-configs`` enumerates the bundled
+  ``cfg/abe_*.{toml,cfg}`` examples.
+* ``aragog validate`` parses a config and reports errors without
+  solving (no EOS load, no integrator).
+* ``aragog show-config`` dumps the resolved ``Parameters`` tree
+  as JSON for diff'ing or ``jq``-style extraction.
 * ``aragog run`` solves a configured run end-to-end and writes a
-  NetCDF snapshot of the final state.
-* ``aragog list-configs`` enumerates the configurations bundled
-  under ``src/aragog/cfg/``.
-* ``aragog vnv`` runs a single verification-figure script under
+  NetCDF snapshot. Supports ``--set <key.path>=<value>`` overrides
+  without editing the TOML on disk.
+* ``aragog inspect`` prints key diagnostics from a ``SolverOutput``
+  NetCDF (``--json`` for machine-readable output).
+* ``aragog vnv`` runs a verification-figure script under
   ``tools/verification/figures/`` by topic name.
 
+The CLI is a thin wrapper over the Python API; anything reachable
+here is also reachable via ``from aragog.solver import EntropySolver``.
 PROTEUS-coupled runs do not use this CLI; the ``proteus`` driver
 calls ``EntropySolver`` directly via ``AragogRunner``.
+
+For the full subcommand reference see ``docs/Reference/cli.md``.
 """
 
 from __future__ import annotations

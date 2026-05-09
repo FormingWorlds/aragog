@@ -13,7 +13,7 @@ src/aragog/
 ├── jax/                   # Optional JAX-traceable replicas (analytic-Jacobian path)
 ├── output/                # Diagnostic helpers (melt_fraction_global, rheological_front)
 ├── parser.py              # Parameters dataclass and INI parser
-├── cli.py                 # Click CLI entry point (minimal)
+├── cli.py                 # Click CLI (run, inspect, validate, show-config, new, list-configs, vnv)
 └── utilities.py           # Utility functions and type aliases
 ```
 

@@ -52,7 +52,7 @@ python tools/verification/figures/verify_rhs_parity.py
 aragog/
   src/aragog/
     __init__.py              # Logger setup, CFG_DATA, EntropySolver re-export
-    cli.py                   # click subcommands: run, list-configs, vnv
+    cli.py                   # click subcommands: run, inspect, validate, show-config, new, list-configs, vnv
     parser.py                # Legacy dataclass-based TOML/dict config parser
     utilities.py             # tanh_weight, smooth helpers
     cfg/                     # Bundled standalone configs (abe_solid.toml, abe_mixed.cfg, ...)
@@ -148,7 +148,7 @@ out = solver.get_state()  # SolverOutput dataclass
 ```
 
 The bundled `cfg/abe_solid.toml` and `cfg/abe_mixed.cfg` are short standalone smoke setups.
-The CLI (`aragog`) is an empty `click.group()` with no production subcommands; data downloads, plotting, and run orchestration live in PROTEUS or in user scripts.
+The CLI (`aragog`) wraps the same path with seven subcommands: `run`, `inspect`, `validate`, `show-config`, `new`, `list-configs`, `vnv`. `aragog run` accepts `--set <key.path>=<value>` overrides without editing the TOML on disk; see `docs/Reference/cli.md` for the full reference. The CLI is a thin wrapper over the Python API; PROTEUS-coupled runs bypass it and call `EntropySolver` directly via `AragogRunner`.
 
 ## PROTEUS integration
 
