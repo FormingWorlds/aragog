@@ -421,3 +421,65 @@ def test_dS_phase_basic_floor_treats_nan_gap_as_below_floor(caplog):
     assert not np.any(np.isnan(state._dS_phase_basic))
     expected = np.array([1500.0, 1.0, 1500.0, 1.0, 1.0])
     np.testing.assert_array_equal(state._dS_phase_basic, expected)
+
+
+# ---- const_properties early-return paths -----------------------------------
+
+
+def test_phase_boundary_cache_populators_skip_in_const_properties_mode():
+    """When the phase evaluator is configured for ``_const_properties``
+    mode (the analytical-mode test path), both cache populators must
+    return early without computing solidus / liquidus / latent-heat
+    arrays. Catches a regression that re-enables the EOS calls in
+    that mode and crashes when the EOS object is absent.
+    """
+    state = _make_minimal_state()
+    # Flip the const-properties flag on both phase evaluators after
+    # construction; the populators check this flag first.
+    state.phase_staggered._const_properties = True
+    state.phase_basic._const_properties = True
+
+    state._ensure_phase_boundary_cache()
+    state._ensure_basic_phase_boundary_cache()
+
+    # The pre-init zero-array stubs from __init__ are unchanged because
+    # the populators returned before assigning anything.
+    n_staggered = state._S_sol_stag.size
+    n_basic = state._S_sol_basic.size
+    np.testing.assert_array_equal(state._S_sol_stag, np.zeros(n_staggered))
+    np.testing.assert_array_equal(state._S_sol_basic, np.zeros(n_basic))
+    # Throttle flags also untouched, since no warning path can trigger
+    # without solidus / liquidus values.
+    assert state._dS_phase_stag_floor_warned is False
+    assert state._dS_phase_basic_floor_warned is False
+
+
+# ---- temperature accessor properties ---------------------------------------
+
+
+def test_temperature_accessors_delegate_to_phase_evaluator():
+    """``temperature_basic`` / ``top_temperature`` / ``bottom_temperature``
+    are thin convenience properties used by the boundary-condition
+    layer. They must (a) return the array shape the BC layer expects
+    and (b) actually delegate to ``phase_basic.temperature()`` rather
+    than returning a stale cached snapshot. We patch the stub's
+    ``temperature`` method to return a known array and verify each
+    accessor reads through correctly.
+    """
+    state = _make_minimal_state()
+    T_basic = np.array([2900.0, 3050.0, 3200.0, 3350.0, 3500.0])
+    state.phase_basic.temperature = lambda: T_basic
+    # ``temperature_basic`` returns the full per-node array.
+    np.testing.assert_array_equal(state.temperature_basic, T_basic)
+    # ``top_temperature`` returns the surface (last) node only, kept as
+    # a 1-element array so the BC layer can broadcast.
+    top = state.top_temperature
+    assert top.shape == (1,)
+    np.testing.assert_array_equal(top, T_basic[-1:])
+    # ``bottom_temperature`` returns the CMB (first) node, same shape.
+    bot = state.bottom_temperature
+    assert bot.shape == (1,)
+    np.testing.assert_array_equal(bot, T_basic[:1])
+    # Discriminator: top != bottom on this asymmetric profile, so a
+    # regression that swapped the two indices would fail loudly.
+    assert top[0] != bot[0]
