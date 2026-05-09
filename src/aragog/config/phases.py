@@ -45,7 +45,7 @@ class PhaseConfig:
 
 @attrs.define
 class MixedPhaseConfig:
-    """Mixed-phase (mushy zone) parameters.
+    r"""Mixed-phase (mushy zone) parameters.
 
     Parameters
     ----------
@@ -65,6 +65,40 @@ class MixedPhaseConfig:
         Width of smoothing at phase boundaries.
     grain_size : float
         Grain size [m] for permeability calculations.
+    cp_blend : str
+        Mushy-zone Cp blending mode: ``'latent'`` (SPIDER-parity,
+        latent-heat-augmented) or ``'linear'`` (linear blend of
+        pure-phase Cp without the latent term). Default ``'latent'``.
+    matprop_smooth_width : float
+        Half-width of the tanh used to smooth phase-dependent
+        material properties around the rheological transition.
+        Default 0.0 reproduces SPIDER's convention of no smoothing
+        on the property side; 0.01 is the typical JAX setting.
+    const_properties : bool
+        Replace the EOS-tabulated $(\rho, c_p, \alpha, k)$ and
+        $\log_{10}\eta$ with the seven constant-property values
+        below. Mirrors SPIDER's ``-use_const_properties``. Default
+        False (use the EOS tables).
+    const_rho : float
+        Constant density [kg/m^3] when ``const_properties`` is True.
+    const_Cp : float
+        Constant heat capacity [J/(kg K)] when ``const_properties``
+        is True.
+    const_alpha : float
+        Constant thermal expansivity [1/K] when ``const_properties``
+        is True.
+    const_cond : float
+        Constant thermal conductivity [W/(m K)] when
+        ``const_properties`` is True.
+    const_log10visc : float
+        Constant $\log_{10}$ dynamic viscosity [log10(Pa s)] when
+        ``const_properties`` is True.
+    const_T_ref : float
+        Reference temperature [K] for the constant-properties EOS,
+        used to anchor $T(P, S)$ on the analytic isentrope.
+    const_S_ref : float
+        Reference entropy [J/(kg K)] for the constant-properties
+        EOS, paired with ``const_T_ref``.
     """
 
     latent_heat_of_fusion: float
@@ -75,7 +109,13 @@ class MixedPhaseConfig:
     phase: str
     phase_transition_width: float
     grain_size: float
-    # cp_blend selects how mushy-zone Cp is computed:
-    #   'latent' = SPIDER-parity, latent-heat-augmented Cp
-    #   'linear' = linear blend of pure-phase Cp (no latent term)
     cp_blend: str = 'latent'
+    matprop_smooth_width: float = 0.0
+    const_properties: bool = False
+    const_rho: float = 4000.0
+    const_Cp: float = 1000.0
+    const_alpha: float = 1e-5
+    const_cond: float = 4.0
+    const_log10visc: float = 2.0
+    const_T_ref: float = 3500.0
+    const_S_ref: float = 3000.0

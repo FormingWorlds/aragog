@@ -219,6 +219,112 @@ def test_mixed_phase_config_default_cp_blend_is_latent():
     assert mp.cp_blend == 'latent'
 
 
+def test_mixed_phase_config_const_properties_defaults_match_legacy_parser():
+    """Default const_properties block reproduces the SPIDER analytic-EOS
+    smoke values that the legacy ``_PhaseMixedParameters`` dataclass
+    has carried for years.
+
+    Discriminator: each default is asymmetric (rho=4000, Cp=1000,
+    alpha=1e-5, cond=4, log10visc=2, T_ref=3500, S_ref=3000), so a
+    single mistakenly-renamed field would make ONE assertion fail
+    while the others pass. ``const_properties`` itself defaults to
+    False (do NOT use the constants unless explicitly requested);
+    flipping that default would break every TOML that omits the flag
+    and silently route the solver onto the analytic-EOS path.
+    """
+    mp = MixedPhaseConfig(
+        latent_heat_of_fusion=4e5,
+        rheological_transition_melt_fraction=0.4,
+        rheological_transition_width=0.15,
+        solidus='solidus.dat',
+        liquidus='liquidus.dat',
+        phase='mixed',
+        phase_transition_width=0.01,
+        grain_size=0.001,
+    )
+    assert mp.const_properties is False
+    assert mp.matprop_smooth_width == pytest.approx(0.0, abs=1e-15)
+    assert mp.const_rho == pytest.approx(4000.0, rel=1e-12)
+    assert mp.const_Cp == pytest.approx(1000.0, rel=1e-12)
+    assert mp.const_alpha == pytest.approx(1e-5, rel=1e-12)
+    assert mp.const_cond == pytest.approx(4.0, rel=1e-12)
+    assert mp.const_log10visc == pytest.approx(2.0, rel=1e-12)
+    assert mp.const_T_ref == pytest.approx(3500.0, rel=1e-12)
+    assert mp.const_S_ref == pytest.approx(3000.0, rel=1e-12)
+
+
+def test_mixed_phase_config_const_properties_overrides_take_effect():
+    """All nine constant-properties knobs must be overridable to
+    arbitrary positive values without an attrs validator silently
+    coercing or dropping them.
+
+    Anti-happy-path: passes physically asymmetric values (each one
+    1.5x its default) so a regression that swapped two field names
+    in the attrs definition (e.g., ``const_alpha`` and ``const_cond``)
+    would produce an assertion failure on whichever pair was swapped.
+    """
+    mp = MixedPhaseConfig(
+        latent_heat_of_fusion=4e5,
+        rheological_transition_melt_fraction=0.4,
+        rheological_transition_width=0.15,
+        solidus='solidus.dat',
+        liquidus='liquidus.dat',
+        phase='mixed',
+        phase_transition_width=0.01,
+        grain_size=0.001,
+        matprop_smooth_width=0.012,
+        const_properties=True,
+        const_rho=6000.0,
+        const_Cp=1500.0,
+        const_alpha=1.5e-5,
+        const_cond=6.0,
+        const_log10visc=3.0,
+        const_T_ref=5250.0,
+        const_S_ref=4500.0,
+    )
+    assert mp.const_properties is True
+    assert mp.matprop_smooth_width == pytest.approx(0.012, rel=1e-12)
+    assert mp.const_rho == pytest.approx(6000.0, rel=1e-12)
+    assert mp.const_Cp == pytest.approx(1500.0, rel=1e-12)
+    assert mp.const_alpha == pytest.approx(1.5e-5, rel=1e-12)
+    assert mp.const_cond == pytest.approx(6.0, rel=1e-12)
+    assert mp.const_log10visc == pytest.approx(3.0, rel=1e-12)
+    assert mp.const_T_ref == pytest.approx(5250.0, rel=1e-12)
+    assert mp.const_S_ref == pytest.approx(4500.0, rel=1e-12)
+
+
+def test_energy_config_eddy_diffusivity_thermal_default_is_unity():
+    """Default eddy_diffusivity_thermal = 1.0 passes the MLT-derived
+    kappa_h through unchanged. Non-default negative values pin the
+    diffusivity to the absolute value (SPIDER convention).
+
+    Edge case: a regression that flipped the default to 0 would
+    silently kill all convection.
+    """
+    e = EnergyConfig(
+        conduction=True,
+        convection=True,
+        gravitational_separation=False,
+        mixing=False,
+        radionuclides=False,
+        tidal=False,
+    )
+    assert e.eddy_diffusivity_thermal == pytest.approx(1.0, rel=1e-12)
+
+    # Negative-value SPIDER convention must round-trip through attrs
+    # without coercion or rejection.
+    e_pinned = EnergyConfig(
+        conduction=True,
+        convection=True,
+        gravitational_separation=False,
+        mixing=False,
+        radionuclides=False,
+        tidal=False,
+        eddy_diffusivity_thermal=-2.5,
+    )
+    assert e_pinned.eddy_diffusivity_thermal == pytest.approx(-2.5, rel=1e-12)
+
+
 # ---- RadionuclideConfig ----------------------------------------------------
 
 
