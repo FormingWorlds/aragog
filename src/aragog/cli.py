@@ -102,6 +102,79 @@ def _vnv_figures_dir() -> Path:
     return repo_root / 'tools' / 'verification' / 'figures'
 
 
+def _coerce_value(raw: str):
+    """Coerce a CLI override string to a Python value.
+
+    Heuristic ordering: int -> float -> bool ('true'/'false') ->
+    JSON (`[...]`, `{...}`, or a quoted string) -> bare string.
+    The order matters: ``20`` becomes int 20, ``20.0`` becomes
+    float 20.0, ``true`` becomes True, ``[1e-9, 2e-9]`` becomes
+    a list of floats. Anything that survives the four typed
+    parses is kept as a string; this is the right behaviour for
+    file paths and string-typed config fields like
+    ``mixing_length_profile = 'nearest_boundary'``.
+    """
+    import json
+
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    if raw.lower() == 'true':
+        return True
+    if raw.lower() == 'false':
+        return False
+    if raw.startswith(('[', '{', '"')):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            pass
+    return raw
+
+
+def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
+    """Apply ``--set <dotted.key>=<value>`` overrides to a nested dict.
+
+    Returns a deep-copied dict with the overrides applied. Each
+    override must be of the form ``key.path=value``; the dotted
+    path is walked through nested dicts and the final segment is
+    overwritten with the type-coerced value.
+
+    Raises ``click.UsageError`` if the spec is malformed (no ``=``,
+    empty path segment) or if an intermediate path segment is
+    missing or non-dict in the input. Does NOT validate the leaf
+    key against the dataclass schema; an unknown leaf key surfaces
+    later as a TypeError at ``Config.from_dict`` construction
+    time, which the caller wraps with a clearer message.
+    """
+    import copy
+
+    out = copy.deepcopy(data)
+    for spec in overrides:
+        if '=' not in spec:
+            raise click.UsageError(f'--set requires KEY=VALUE; got {spec!r} (no "=" found).')
+        key_path, _, raw_value = spec.partition('=')
+        keys = [k for k in key_path.split('.') if k]
+        if not keys or len(keys) != len(key_path.split('.')):
+            raise click.UsageError(
+                f'--set key path is malformed: {key_path!r} (empty segment).'
+            )
+        target = out
+        for k in keys[:-1]:
+            if k not in target or not isinstance(target[k], dict):
+                raise click.UsageError(
+                    f'--set {key_path!r}: section {k!r} not found in '
+                    'config or is not a section.'
+                )
+            target = target[k]
+        target[keys[-1]] = _coerce_value(raw_value)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # aragog run
 # ---------------------------------------------------------------------------
@@ -161,6 +234,19 @@ def _vnv_figures_dir() -> Path:
     show_default=True,
     help='Console log level.',
 )
+@click.option(
+    '--set',
+    'set_overrides',
+    multiple=True,
+    metavar='KEY.PATH=VALUE',
+    help=(
+        'Override a configuration field, e.g. '
+        '`--set energy.kappah_floor=20.0`. Repeatable. Type '
+        "coercion order: int, float, bool ('true'/'false'), "
+        'JSON (`[...]`, `{...}`, `"..."`), then bare string. '
+        'Requires a .toml config; .cfg legacy INI is not supported.'
+    ),
+)
 def run(
     config: Path,
     eos_dir: Path | None,
@@ -169,6 +255,7 @@ def run(
     out: Path | None,
     log_dir: Path | None,
     log_level: str,
+    set_overrides: tuple[str, ...],
 ) -> None:
     """Solve a configured run and write a NetCDF snapshot.
 
@@ -208,7 +295,39 @@ def run(
 
     logger.info('aragog run: config=%s eos_dir=%s', config, eos_dir)
 
-    solver = EntropySolver.from_file(filename=str(config), eos_dir=str(eos_dir))
+    if set_overrides:
+        if config.suffix.lower() != '.toml':
+            raise click.UsageError(
+                f'--set requires a .toml configuration; got {config.suffix!r}. '
+                'Convert the .cfg file to TOML or drop --set.'
+            )
+        if sys.version_info < (3, 11):
+            import tomli as tomllib
+        else:
+            import tomllib
+
+        from aragog.config import Config
+        from aragog.eos.entropy import EntropyEOS
+
+        with config.open('rb') as fh:
+            data = tomllib.load(fh)
+        data = _apply_overrides(data, set_overrides)
+        try:
+            parameters = Config.from_dict(data)
+        except TypeError as exc:
+            raise click.UsageError(
+                f'after applying --set overrides, the resolved config has '
+                f'unknown / mismatched fields: {exc}.'
+            ) from exc
+        entropy_eos = EntropyEOS(Path(eos_dir))
+        solver = EntropySolver(parameters, entropy_eos)
+        logger.info(
+            'aragog run: applied %d --set override(s) on top of %s',
+            len(set_overrides),
+            config.name,
+        )
+    else:
+        solver = EntropySolver.from_file(filename=str(config), eos_dir=str(eos_dir))
     solver.initialize()
 
     core_bc = getattr(solver.parameters.boundary_conditions, 'core_bc', 'energy_balance')

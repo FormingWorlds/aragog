@@ -7,6 +7,7 @@ without silent fallthrough.
 
 from __future__ import annotations
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -198,6 +199,205 @@ def test_vnv_rejects_unknown_topic():
     assert 'unknown V&V topic' in (result.output or '')
     assert '--list' in (result.output or ''), (
         'unknown-topic message should redirect users to --list.'
+    )
+
+
+def test_coerce_value_int_then_float_then_bool_then_json_then_string():
+    """The type-coercion heuristic must follow a strict order:
+    int -> float -> bool -> JSON -> bare string. Anything else
+    silently miscasts user input.
+    """
+    from aragog.cli import _coerce_value
+
+    assert _coerce_value('20') == 20
+    assert isinstance(_coerce_value('20'), int), 'plain integer must stay int.'
+    assert _coerce_value('20.0') == pytest.approx(20.0)
+    assert isinstance(_coerce_value('20.0'), float)
+    # Scientific notation is float, not int.
+    assert _coerce_value('1e-9') == pytest.approx(1.0e-9)
+    # Booleans (case-insensitive).
+    assert _coerce_value('true') is True
+    assert _coerce_value('False') is False
+    # JSON list.
+    assert _coerce_value('[1.0, 2.0, 3.0]') == [1.0, 2.0, 3.0]
+    # JSON dict.
+    assert _coerce_value('{"a": 1}') == {'a': 1}
+    # Bare strings (lookup-table paths, mode names).
+    assert _coerce_value('nearest_boundary') == 'nearest_boundary'
+    assert _coerce_value('lookup.dat') == 'lookup.dat'
+
+
+def test_apply_overrides_walks_dotted_paths():
+    """_apply_overrides must walk multi-level dotted paths and
+    overwrite the leaf with the type-coerced value.
+    """
+    from aragog.cli import _apply_overrides
+
+    data = {'energy': {'kappah_floor': 10.0}, 'solver': {'atol': 1e-9}}
+    out = _apply_overrides(data, ('energy.kappah_floor=20.0', 'solver.atol=1e-11'))
+
+    assert out['energy']['kappah_floor'] == pytest.approx(20.0)
+    assert out['solver']['atol'] == pytest.approx(1e-11)
+    # Original input must not be mutated.
+    assert data['energy']['kappah_floor'] == pytest.approx(10.0), (
+        '_apply_overrides mutated the caller-provided dict; should deep-copy.'
+    )
+
+
+def test_apply_overrides_rejects_malformed_specs():
+    """Specs without '=' or with empty path segments must raise
+    UsageError with a clear message; silently dropping a typo
+    would mask user intent.
+    """
+    from aragog.cli import _apply_overrides
+
+    data = {'energy': {'kappah_floor': 10.0}}
+    with pytest.raises(click.UsageError, match='KEY=VALUE'):
+        _apply_overrides(data, ('energy.kappah_floor20',))
+    with pytest.raises(click.UsageError, match='malformed'):
+        _apply_overrides(data, ('energy..kappah_floor=20',))
+
+
+def test_apply_overrides_rejects_missing_intermediate_section():
+    """When the dotted path traverses a section that is not in the
+    input, _apply_overrides must raise — silently creating new
+    sections would let users mistype `enrgy.kappah_floor` and have
+    it be ignored downstream.
+    """
+    from aragog.cli import _apply_overrides
+
+    data = {'energy': {'kappah_floor': 10.0}}
+    with pytest.raises(click.UsageError, match='not found'):
+        _apply_overrides(data, ('atmos.kappah_floor=20.0',))
+
+
+def test_run_set_overrides_reach_parameters(tmp_path, monkeypatch):
+    """End-to-end: `aragog run cfg.toml --set energy.kappah_floor=99` causes the
+    solver to receive a Parameters object with the override applied.
+
+    Mocks EntropySolver.__init__ + from_file so the test never
+    triggers a real EOS load or solve. Asserts the captured
+    Parameters has the override value, not the TOML default.
+    """
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'cfg.toml'
+    # Minimal valid TOML matching Config.from_dict's required sections.
+    import importlib.resources
+
+    cfg.write_text(
+        importlib.resources.files('aragog')
+        .joinpath('cfg/abe_solid.toml')
+        .read_text(encoding='utf-8'),
+        encoding='utf-8',
+    )
+    eos = tmp_path / 'eos'
+    eos.mkdir()
+
+    captured: dict = {}
+
+    class _StubSolver:
+        def __init__(self, parameters, entropy_eos):
+            captured['parameters'] = parameters
+
+        @property
+        def parameters(self):
+            return captured['parameters']
+
+        def initialize(self):
+            pass
+
+        def set_initial_dSdr_cmb(self, _):
+            pass
+
+        def set_initial_entropy(self, _):
+            pass
+
+        def solve(self):
+            pass
+
+        def get_state(self):
+            class _Out:
+                def to_netcdf(self, *a, **kw):
+                    pass
+
+            return _Out()
+
+    monkeypatch.setattr(
+        'aragog.solver.EntropySolver',
+        _StubSolver,
+        raising=True,
+    )
+
+    # Stub the EntropyEOS constructor to avoid real disk I/O.
+    monkeypatch.setattr(
+        'aragog.eos.entropy.EntropyEOS',
+        lambda *a, **kw: object(),
+        raising=True,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            'run',
+            str(cfg),
+            '--eos-dir',
+            str(eos),
+            '--initial-entropy',
+            '2900.0',
+            '--set',
+            'energy.kappah_floor=99.0',
+            '--set',
+            'solver.atol=1e-12',
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    params = captured.get('parameters')
+    assert params is not None, 'EntropySolver was never constructed.'
+    assert params.energy.kappah_floor == pytest.approx(99.0), (
+        f'override did not reach Parameters: expected 99.0, got {params.energy.kappah_floor}.'
+    )
+    assert params.solver.atol == pytest.approx(1e-12), (
+        f'second override did not reach Parameters: got {params.solver.atol}.'
+    )
+
+
+def test_run_set_overrides_rejected_for_cfg_files(tmp_path):
+    """`aragog run something.cfg --set ...` must fail loud: the
+    legacy INI parser does not produce a dict that Config.from_dict
+    can consume, so allowing --set on .cfg would silently surface
+    a different (more confusing) failure mode.
+    """
+    import importlib.resources
+
+    from aragog.cli import cli
+
+    # Bundled abe_solid.cfg doesn't have inline-comment quirks for our
+    # purposes — but we don't even reach the parser; the suffix check
+    # short-circuits.
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_solid.cfg')
+    ) as cfg_path:
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                'run',
+                str(cfg_path),
+                '--eos-dir',
+                str(tmp_path),
+                '--initial-entropy',
+                '2900.0',
+                '--set',
+                'energy.kappah_floor=20.0',
+            ],
+        )
+
+    assert result.exit_code != 0
+    assert '--set requires a .toml' in (result.output or ''), (
+        f'CLI must explain why .cfg + --set is rejected; got {result.output!r}.'
     )
 
 
