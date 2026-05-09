@@ -48,11 +48,11 @@ dependencies = [
 test = [
     "pytest>=8.1",
     "pytest-cov>=1.0.0",
-    "pytest-dependency>=1.0.0",
+    "pytest-dependency>=0.6.0",
     "pytest-xdist>=3.0.0",
 ]
 docs = [
-    "zensical>=0.1.0",
+    "zensical>=0.0.40",
     "markdown-include>=0.8",
     "mkdocstrings[python]>=0.26",
     "pymdown-extensions>=10.7",

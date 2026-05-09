@@ -29,6 +29,28 @@ git clone git@github.com:FormingWorlds/aragog.git aragog
 cd aragog
 ```
 
+### System dependencies
+
+The `[jax]` extra pulls `scikits-odes-sundials`, which is a thin Python binding around the SUNDIALS C library. The wheel does not bundle SUNDIALS, so the development headers must be available on the system before `pip install` runs. Pick the recipe that matches your platform:
+
+```sh
+# Debian / Ubuntu
+sudo apt install libsundials-dev
+
+# Fedora
+sudo dnf install sundials sundials-devel
+
+# macOS (Homebrew)
+brew install sundials
+
+# Conda / Mamba (any OS, recommended for PROTEUS)
+conda install -c conda-forge sundials
+```
+
+If `pip install -e ".[jax]"` later fails with a missing `sundials.h` or a linker error on `-lsundials_cvode`, this is the step that was skipped. The PROTEUS conda environment already provides SUNDIALS through `conda-forge`, so a PROTEUS install does not need the manual step.
+
+### Editable install
+
 Install Aragog into the environment with [pip](https://pip.pypa.io/en/stable/getting-started/), using an [editable install](https://setuptools.pypa.io/en/latest/userguide/development_mode.html) (`-e`) so changes in your working tree are picked up immediately. The `[jax]` extra is the recommended install: it pulls SUNDIALS CVODE (`scikits-odes-sundials`), JAX, and `equinox`, which together are the production solver path.
 
 ```sh
