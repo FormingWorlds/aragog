@@ -346,6 +346,117 @@ def test_inspect_rejects_non_netcdf_file(tmp_path):
     assert 'could not open' in (result.output or '').lower()
 
 
+def test_inspect_handles_nan_filled_scalar_with_fillvalue(tmp_path):
+    """A NaN-filled scalar (E_state on a const_properties run is the
+    canonical case) must round-trip as JSON null and as 'n/a' in the
+    human format, NOT as the string 'masked' or a TypeError crash.
+
+    Edge case: SolverOutput.to_netcdf writes E_state / E_state_cons
+    with _FillValue=NaN. netCDF4 returns those reads as a masked
+    array whose float() is numpy.ma.masked unless auto-masking is
+    disabled. The previous implementation evaded the
+    (TypeError, ValueError) guard because numpy.ma.masked is a
+    valid object that float() returns silently.
+    """
+    import json
+
+    import netCDF4 as nc
+    import numpy as np
+
+    from aragog.cli import cli
+
+    snap = tmp_path / 'with_fillvalue.nc'
+    with nc.Dataset(snap, mode='w') as ds:
+        ds.aragog_version = 'masked-test'
+        ds.createDimension('staggered', 3)
+        ds.createDimension('basic', 3)
+
+        v_status = ds.createVariable('status', 'i4')
+        v_status[...] = 0
+        # T_magma populated normally so the scan is not all-empty.
+        v_T = ds.createVariable('T_magma', 'f8')
+        v_T[...] = 3500.0
+        # E_state is NaN-filled with the same _FillValue=NaN pattern
+        # the production writer uses for const_properties runs.
+        v_E = ds.createVariable('E_state', 'f8', fill_value=np.nan)
+        v_E[...] = np.nan
+
+        # A profile with no _FillValue (must still inspect cleanly).
+        S = ds.createVariable('S_final', 'f8', ('staggered',))
+        S[:] = np.linspace(2900.0, 3000.0, 3)
+        T_basic = ds.createVariable('T_basic', 'f8', ('basic',))
+        T_basic[:] = np.linspace(1500.0, 4500.0, 3)
+
+    runner = CliRunner()
+
+    # Human-readable path must not crash and must mark E_state as n/a.
+    result = runner.invoke(cli, ['inspect', str(snap)])
+    assert result.exit_code == 0, result.output
+    assert 'T_magma' in result.output
+    assert 'E_state' in result.output and 'n/a' in result.output, (
+        f'NaN-filled E_state must format as n/a in the human summary; got {result.output!r}.'
+    )
+
+    # JSON path must emit null (None) for E_state, not the string 'masked'.
+    result = runner.invoke(cli, ['inspect', '--json', str(snap)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload['scalars']['E_state'] is None, (
+        'NaN-filled E_state must serialise as JSON null, not '
+        f'{payload["scalars"]["E_state"]!r}.'
+    )
+
+
+def test_inspect_handles_fillvalue_in_profile_array(tmp_path):
+    """A profile with `_FillValue` set must report finite-count
+    correctly: fill positions must NOT count as finite even when the
+    fill value itself is finite.
+
+    Edge case: netCDF4's default fill value for f8 is
+    9.969209968386869e+36 (a finite number). Without
+    set_auto_mask(False) + explicit fill the masked-array is sliced
+    with np.isfinite, which returns True at fill positions because
+    the underlying data is finite, silently corrupting the min/max.
+    """
+    import netCDF4 as nc
+    import numpy as np
+
+    from aragog.cli import cli
+
+    snap = tmp_path / 'profile_fillvalue.nc'
+    with nc.Dataset(snap, mode='w') as ds:
+        ds.aragog_version = 'profile-fill-test'
+        ds.createDimension('staggered', 5)
+        ds.createDimension('basic', 5)
+
+        v_status = ds.createVariable('status', 'i4')
+        v_status[...] = 0
+
+        # S_final with _FillValue=NaN; mark cells 2 and 4 as fill
+        # by writing NaN. netCDF4 returns those as masked when
+        # auto-masking is on.
+        S = ds.createVariable('S_final', 'f8', ('staggered',), fill_value=np.nan)
+        S[:] = [2900.0, 2950.0, np.nan, 3000.0, np.nan]
+        T_basic = ds.createVariable('T_basic', 'f8', ('basic',))
+        T_basic[:] = np.linspace(1500.0, 4500.0, 5)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['inspect', '--json', str(snap)])
+    assert result.exit_code == 0, result.output
+
+    import json
+
+    payload = json.loads(result.output)
+    info = payload['profiles']['S_final']
+    assert info['n_total'] == 5
+    assert info['n_finite'] == 3, (
+        f'expected 3 finite cells out of 5, got {info["n_finite"]}; '
+        'fill-value positions are leaking into the finite count.'
+    )
+    assert info['min'] == pytest.approx(2900.0)
+    assert info['max'] == pytest.approx(3000.0)
+
+
 def test_inspect_handles_all_nan_profile(tmp_path):
     """When a profile is entirely NaN (e.g. const_properties E_state),
     inspect's profile block must say 'all NaN' rather than crashing

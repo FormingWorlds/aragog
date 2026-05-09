@@ -501,25 +501,42 @@ def inspect_cmd(snapshot: Path, as_json: bool) -> None:
 
         # Scalar variables. Skip silently when a field is absent so an
         # older snapshot from a pre-Cp_eff version still inspects
-        # cleanly.
+        # cleanly. Production NetCDF writes E_state and E_state_cons
+        # with ``_FillValue=NaN``; netCDF4 returns those reads as a
+        # masked array whose ``float()`` is ``numpy.ma.masked`` rather
+        # than raising. Disable auto-masking so a NaN-filled scalar
+        # round-trips as a Python float (NaN), then map NaN -> None.
         scalars: dict[str, object] = {}
         for name, _label in _INSPECT_SCALARS:
             if name not in ds.variables:
                 continue
-            value = ds.variables[name][...]
-            try:
-                scalars[name] = float(value)
-            except (TypeError, ValueError):
+            var = ds.variables[name]
+            var.set_auto_mask(False)
+            raw = np.asarray(var[...]).reshape(-1)
+            value = raw[0] if raw.size else None
+            if value is None or (isinstance(value, float) and np.isnan(value)):
                 scalars[name] = None
+            else:
+                try:
+                    scalars[name] = float(value)
+                except (TypeError, ValueError):
+                    scalars[name] = None
         payload['scalars'] = scalars
 
         # Profile shape sanity: report min/max of S_final and T_basic
         # so an empty / NaN-only snapshot is obvious from the summary.
+        # Same auto-mask hazard applies to profiles whose schema sets
+        # ``_FillValue``; ``np.isfinite`` on a masked array reads the
+        # underlying fill value (often a finite sentinel) and
+        # mis-counts the finite-cell tally. Disable masking and
+        # sentinel-fill the array with NaN before the isfinite check.
         profiles: dict[str, object] = {}
         for name in ('S_final', 'T_basic'):
             if name not in ds.variables:
                 continue
-            arr = ds.variables[name][:].astype('f8')
+            var = ds.variables[name]
+            var.set_auto_mask(False)
+            arr = np.asarray(var[:]).astype('f8')
             finite = arr[np.isfinite(arr)]
             if finite.size:
                 profiles[name] = {
