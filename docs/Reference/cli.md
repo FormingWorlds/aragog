@@ -152,6 +152,7 @@ snapshot: out.nc
 
   status              0  solver status (0 = success)
   time         1.0000e+06  simulation time [yr]
+  dt_actual    1.0000e+06  integration interval [yr]
   T_magma         3500.0000  surface (magma) temperature [K]
   T_core          4200.0000  CMB temperature [K]
   Phi_global         0.4200  mass-weighted melt fraction [-]

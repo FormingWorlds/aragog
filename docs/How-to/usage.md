@@ -91,8 +91,8 @@ print(f"F_heat_total:     {out.F_heat_total:.3e} W/m^2")
 |-------|------|-------------|
 | `T_magma` | K | Top basic-node temperature; the value passed to the atmosphere module in coupled runs |
 | `T_core` | K | Bottom staggered-node temperature (or the integrated `T_core` state in `bower2018` mode) |
-| `Phi_global` | -- | Volume-weighted mean melt fraction |
-| `Phi_global_vol` | -- | Porosity-weighted mean melt fraction |
+| `Phi_global` | -- | Mass-weighted mean melt fraction (M_liq / M_mantle) |
+| `Phi_global_vol` | -- | Volume-weighted mean melt fraction (V_liq / V_mantle) |
 | `M_mantle` | kg | Total mantle mass |
 | `M_mantle_liquid` | kg | Liquid mantle mass |
 | `M_mantle_solid` | kg | Solid mantle mass |

@@ -50,8 +50,10 @@ aragog validate first.toml
 ## 3. Solve from the CLI
 
 ```bash
+# Replace $FWL_DATA/spider/lookup-fs with your local EOS directory if
+# the env var is not set.
 aragog run first.toml \
-    --eos-dir path/to/eos/tables \
+    --eos-dir $FWL_DATA/spider/lookup-fs \
     --initial-entropy 2900.0 \
     --out first.nc
 ```
