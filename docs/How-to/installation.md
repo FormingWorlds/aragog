@@ -34,7 +34,9 @@ cd aragog
 The `[jax]` extra pulls `scikits-odes-sundials`, which is a thin Python binding around the SUNDIALS C library. The wheel does not bundle SUNDIALS, so the development headers must be available on the system before `pip install` runs. Pick the recipe that matches your platform:
 
 ```sh
-# Debian / Ubuntu
+# Debian / Ubuntu (libsundials-dev lives in the universe repo;
+# enable it first if your image is stripped down, e.g. CI runners)
+sudo add-apt-repository universe
 sudo apt install libsundials-dev
 
 # Fedora
@@ -46,6 +48,8 @@ brew install sundials
 # Conda / Mamba (any OS, recommended for PROTEUS)
 conda install -c conda-forge sundials
 ```
+
+The Fedora line installs only the serial library and headers. The `sundials-openmpi-devel` and `sundials-mpich-devel` packages are not required: Aragog uses the serial CVODE binding and never opens an MPI handle.
 
 If `pip install -e ".[jax]"` later fails with a missing `sundials.h` or a linker error on `-lsundials_cvode`, this is the step that was skipped. The PROTEUS conda environment already provides SUNDIALS through `conda-forge`, so a PROTEUS install does not need the manual step.
 
