@@ -122,7 +122,7 @@ def test_cli_registers_expected_subcommands():
     """
     from aragog.cli import cli
 
-    expected = {'run', 'list-configs', 'new', 'validate', 'vnv'}
+    expected = {'run', 'list-configs', 'new', 'show-config', 'validate', 'vnv'}
     actual = set(cli.commands)
     assert actual == expected, (
         f'aragog.cli subcommands: expected {sorted(expected)}, got {sorted(actual)}.'
@@ -199,6 +199,98 @@ def test_vnv_rejects_unknown_topic():
     assert '--list' in (result.output or ''), (
         'unknown-topic message should redirect users to --list.'
     )
+
+
+def test_show_config_emits_valid_json_with_known_fields():
+    """`aragog show-config <bundled cfg>` emits valid JSON whose
+    top-level keys match the Parameters dataclass field set.
+
+    Discriminator: the printed JSON must parse with json.loads AND
+    must contain a known scalar field (energy.kappah_floor) whose
+    value matches the parsed dataclass — verifies that the
+    serializer walks sub-dataclasses, not just the top level.
+    """
+    import importlib.resources
+    import json
+
+    from aragog.cli import cli
+    from aragog.parser import Parameters
+
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_mixed.cfg')
+    ) as cfg_path:
+        runner = CliRunner()
+        result = runner.invoke(cli, ['show-config', str(cfg_path)])
+        ground_truth = Parameters.from_file(cfg_path)
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+
+    expected_top = {
+        'boundary_conditions',
+        'energy',
+        'initial_condition',
+        'mesh',
+        'phase_solid',
+        'phase_liquid',
+        'phase_mixed',
+        'radionuclides',
+        'solver',
+    }
+    assert expected_top <= set(payload.keys()), (
+        f'show-config payload missing top-level keys: '
+        f'expected superset of {expected_top}, got {sorted(payload.keys())}.'
+    )
+    # Cross-check one nested scalar against the ground-truth Parameters.
+    assert payload['energy']['kappah_floor'] == pytest.approx(
+        ground_truth.energy.kappah_floor, rel=1e-12
+    ), (
+        'show-config dropped or mutated energy.kappah_floor; the serializer '
+        'is not walking sub-dataclasses faithfully.'
+    )
+
+
+def test_show_config_indent_zero_emits_one_line(tmp_path):
+    """`aragog show-config --indent 0` produces one-line JSON
+    (jq-pipeable) rather than the default pretty-printed form.
+
+    Edge case: indent=0 in json.dumps means the literal indent
+    character is empty, which makes one-line output. Test discriminates
+    against a regression that left default indent in place.
+    """
+    import importlib.resources
+
+    from aragog.cli import cli
+
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_mixed.cfg')
+    ) as cfg_path:
+        runner = CliRunner()
+        result = runner.invoke(cli, ['show-config', '--indent', '0', str(cfg_path)])
+
+    assert result.exit_code == 0
+    body = result.output.rstrip()
+    assert '\n' not in body, (
+        f'--indent 0 should produce single-line JSON; got {len(body.splitlines())} lines.'
+    )
+
+
+def test_show_config_rejects_malformed_config(tmp_path):
+    """show-config wraps parser errors in a ClickException, not a
+    raw traceback, mirroring the validate command's contract.
+    """
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'with_scalings.cfg'
+    cfg.write_text(
+        '[scalings]\nradius = 1.0\n'
+        '\n[solver]\nstart_time = 0\nend_time = 1\natol = 1e-9\nrtol = 1e-6\n'
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ['show-config', str(cfg)])
+
+    assert result.exit_code != 0
+    assert 'configuration error' in (result.output or '').lower()
 
 
 def test_validate_accepts_bundled_abe_mixed_cfg():

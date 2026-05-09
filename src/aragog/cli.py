@@ -286,6 +286,71 @@ def _first_comment_line(entry: Traversable) -> str:
 
 
 # ---------------------------------------------------------------------------
+# aragog show-config
+# ---------------------------------------------------------------------------
+
+
+def _serialize_params(params) -> dict:
+    """Convert the resolved Parameters dataclass tree to a JSON-safe dict.
+
+    Walks the dataclass with dataclasses.asdict, then post-processes
+    numpy-array fields (notably energy.tidal_array and the optional
+    mesh.eos_* arrays loaded by __post_init__) into Python lists so
+    json.dumps does not choke. Skips fields with leading underscore.
+    """
+    import dataclasses
+
+    import numpy as np
+
+    def _convert(value):
+        if isinstance(value, dict):
+            return {k: _convert(v) for k, v in value.items() if not k.startswith('_')}
+        if isinstance(value, list):
+            return [_convert(v) for v in value]
+        if isinstance(value, tuple):
+            return [_convert(v) for v in value]
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (np.floating, np.integer)):
+            return value.item()
+        return value
+
+    return _convert(dataclasses.asdict(params))
+
+
+@cli.command(name='show-config')
+@click.argument('config', type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    '--indent',
+    type=int,
+    default=2,
+    show_default=True,
+    help='JSON indent. Pass 0 for one-line output (jq-friendly).',
+)
+def show_config(config: Path, indent: int) -> None:
+    """Dump the resolved Parameters dataclass tree as JSON.
+
+    Loads the configuration through Parameters.from_file (same path
+    as ``aragog run`` and ``aragog validate``), runs
+    __post_init__, and serialises the resulting tree to JSON on
+    stdout. Useful for diff'ing PROTEUS-extracted configs against
+    hand-crafted ones, or for machine-readable extraction
+    (`aragog show-config cfg.toml | jq .energy.kappah_floor`).
+    """
+    import json
+
+    from aragog.parser import Parameters
+
+    try:
+        params = Parameters.from_file(config)
+    except Exception as exc:
+        raise click.ClickException(f'configuration error in {config}: {exc}') from exc
+
+    payload = _serialize_params(params)
+    click.echo(json.dumps(payload, indent=indent if indent > 0 else None, default=str))
+
+
+# ---------------------------------------------------------------------------
 # aragog validate
 # ---------------------------------------------------------------------------
 
