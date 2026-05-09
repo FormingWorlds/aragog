@@ -17,7 +17,7 @@ nav:
       - Configuration: How-to/configuration.md
       - Usage: How-to/usage.md
       - Solver method tuning: How-to/solver-method-tuning.md
-      - Phi step cap: How-to/phi-step-cap.md
+      - Melt-fraction step cap: How-to/phi-step-cap.md
       - UTBL parameterisation: How-to/utbl-parameterisation.md
       - Testing suite: How-to/testing.md
       - Build tests: How-to/build_tests.md
@@ -44,7 +44,7 @@ nav:
       - Numerics:
           - CVODE and JAX: Explanations/cvode_jax.md
           - JAX Jacobian factory: Explanations/jax_jacobian_factory.md
-          - phi_step_cap rootfn: Explanations/phi_step_cap_rationale.md
+          - Melt-fraction step cap: Explanations/phi_step_cap_rationale.md
       - Diagnostics & verification:
           - EOS sanity checks: Explanations/eos_sanity_checks.md
           - Energy diagnostics: Explanations/energy_diagnostics.md
