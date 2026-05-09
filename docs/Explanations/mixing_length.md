@@ -61,8 +61,11 @@ The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/
 ## Boundary-layer theory in companion codes
 
 BLT replaces the radial profile with one (or a few) lumped variables.
-PROTEUS itself does not currently ship a Nu-Ra BLT closure as a standalone interior-energetics module: `interior_energetics.module` accepts `aragog`, `spider`, or `dummy`, where `dummy` is a 0-D lumped $T_\mathrm{magma}(t)$ cooling model (no Nu-Ra scaling, no surface-flux closure) and is the closest in-tree analogue to a parameterised energetics path.
-The `param_utbl` knob in PROTEUS toggles an *ultra-thin thermal boundary-layer correction* on the surface temperature ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 18) inside the MLT solver itself; it is a thin-BL correction *inside* MLT, not a separate BLT closure.
+PROTEUS ships a Nu-Ra BLT closure as a standalone interior-energetics module, `boundary` (`interior_energetics.module = "boundary"`, class `BoundaryRunner`), based on [Schaefer et al. (2016)](https://scixplorer.org/abs/2016ApJ...829...63S/abstract).
+It evolves a coupled ODE in $(T_\mathrm{p}, T_\mathrm{surf})$ on a 0-D mantle plus an atmospheric column, with the convective heat flux closed as $q_\mathrm{m} = \mathrm{Nu}\,k\,(T_\mathrm{p} - T_\mathrm{surf})/d_\mathrm{mantle}$ and the thermal boundary-layer thickness $\delta_\mathrm{TBL} = d_\mathrm{mantle}/\mathrm{Nu}$ with $\mathrm{Nu} = (\mathrm{Ra}/\mathrm{Ra}_\mathrm{crit})^{\beta}$.
+Three viscosity options are available: constant, an aggregate solid-melt logarithmic blend, and an Arrhenius solid mantle paired with a Vogel-Fulcher-Tammann magma-ocean branch.
+The other two options for `interior_energetics.module` are `spider` and `dummy`, where `dummy` is a 0-D lumped $T_\mathrm{magma}(t)$ cooling model (no Nu-Ra scaling, no surface-flux closure).
+The `param_utbl` knob in PROTEUS toggles an *ultra-thin thermal boundary-layer correction* on the surface temperature ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 18) inside the MLT solver itself; it is a thin-BL correction *inside* MLT, not a separate BLT closure, and is independent of the `boundary` module.
 The classical magma-ocean closure ([Solomatov (2007)](https://scixplorer.org/abs/2007evea.book...91S/abstract), reviewing [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract) and earlier scalings) writes the surface flux as
 
 $$
