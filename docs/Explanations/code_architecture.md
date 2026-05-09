@@ -48,11 +48,12 @@ src/aragog/
 │   └── pressure_eos.py    # AdamsWilliamsonEOS, UserDefinedEOS (external eos_file)
 │
 └── output/                # Diagnostic helpers
-    ├── __init__.py        # exports melt_fraction_global, rheological_front
-    └── diagnostics.py     # Standalone diagnostic functions; no Output class
+    ├── __init__.py        # exports total_enthalpy, volume_average,
+    │                      #         melt_fraction_global, rheological_front
+    └── diagnostics.py     # implementations of the four standalone diagnostics
 ```
 
-The legacy single/mixed/composite phase evaluator stack and the temperature-based `Output` class are not present in the production path; results flow through the `SolverOutput` dataclass returned by `EntropySolver.get_state()`.
+Results flow through the `SolverOutput` dataclass returned by `EntropySolver.get_state()`. Standalone NetCDF output is via `SolverOutput.to_netcdf(path)` (also reachable as `EntropySolver.write_netcdf(path)` and as `aragog run --out path.nc`).
 
 ## Public API surface
 

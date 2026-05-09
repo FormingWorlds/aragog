@@ -163,7 +163,7 @@ Two call sites in PROTEUS:
 `hf_row` exchange:
 
 - *Reads*: `Time`, `F_atm`, `T_eqm`, `R_int`, `R_core`, `gravity`, `P_surf`, `core_density`, `core_heatcap`, `M_core`, `ini_entropy` (first call only).
-- *Writes*: `T_magma`, `T_surf`, `T_core`, `Phi_global`, `F_int`, `F_radio`, `F_tidal`, `dt_actual`, `step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`.
+- *Writes*: `T_magma`, `T_surf`, `T_core`, `Phi_global`, `F_int`, `F_radio`, `F_tidal`, `dt_actual`, `E_state_J`, `E_state_cons_J`, `step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`, `step_dE_Q_radio_cons_J`, `step_dE_Q_tidal_cons_J`, `step_solver_residual_J`. The cumulative residuals (`dE_predicted_cons_J`, `E_residual_cons_J`, `E_residual_cons_frac`, `solver_residual_J`) are computed in `proteus.utils.coupler._populate_energy_residual` from the per-call writes above.
 - *Echo-back*: the wrapper recomputes `core_density` from the on-disk Zalmoxis mesh and `hf_row['M_core']` at every solve entry (`resolve_core_density` at `aragog.py:66`), mirroring SPIDER's `-rho_core` re-derivation. This survives mesh-blending fall-backs and stale-cache cases.
 
 Recommended PROTEUS-side knobs (in priority order):

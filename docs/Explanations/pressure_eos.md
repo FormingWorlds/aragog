@@ -38,8 +38,6 @@ $$
 The solver uses the analytic inverse directly; no Newton iteration is required for $r(P)$.
 
 This matches SPIDER's [`eos_adamswilliamson.c`](https://github.com/FormingWorlds/SPIDER) line by line.
-The previous Aragog implementation used a rational (hyperbolic) form $\rho = \rho_s K_S / (K_S - \rho_s g z)$ derived from the same $K_S$ but differing from SPIDER by up to 6 % at CMB depth, causing 3 % $R_\mathrm{int}$ mismatches on the same target planet mass.
-Switching to the exponential form closed that gap.
 
 ### Beta override
 

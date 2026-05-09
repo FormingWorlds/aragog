@@ -25,7 +25,7 @@ at every internal CVODE step. CVODE returns at the exact zero-crossing (flag `CV
 
 The scipy fallbacks (`Radau`, `BDF`) register the equivalent logic as a `solve_ivp` event with `terminal=True` and `direction=-1`. Both paths see the same TOML config and behave consistently up to integrator class.
 
-The mushy-zone gating (`near_liq`, `near_sol`, `in_mushy` checks at `entropy_solver.py:1869`) prevents the rootfn from arming on profiles that are far from the rheological transition: in those regimes, the cap would never fire and the rootfn evaluation is wasted work.
+The mushy-zone gating (the `near_liq` / `near_sol` / `in_mushy` checks inside `EntropySolver.solve()` before rootfn registration) prevents the rootfn from arming on profiles that are far from the rheological transition: in those regimes, the cap would never fire and the rootfn evaluation is wasted work.
 
 ## Picking a value
 
