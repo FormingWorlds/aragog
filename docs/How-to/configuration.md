@@ -177,7 +177,7 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
 | `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |
 | `kappah_floor` | m²/s | 10.0 | Phase-modulated lower bound on $\kappa_h$. Default 10.0 (PROTEUS production); set 0.0 for textbook MLT |
-| `phi_step_cap` | -- | 0.0 | Per-call $\Delta\phi$ cap. When `> 0` and the mantle straddles the rheological transition, a SUNDIALS root function returns at the step where any cell's $|\Delta\phi|$ first exceeds the cap. `0.05` is a useful upper bound for 1 M$_\oplus$ runs. Default `0.0` (disabled). |
+| `phi_step_cap` | -- | 0.0 | Per-call $\Delta\Phi_\mathrm{global}$ cap. When `> 0` and the mantle straddles the rheological transition, a SUNDIALS root function fires at the step where the mass-weighted global melt fraction $\Phi_\mathrm{global}$ has changed by `cap` from its value at `solve()` entry. `0.05` is a useful upper bound for 1 M$_\oplus$ runs. Default `0.0` (disabled). |
 | `bottom_up_grav_sep` | bool | true | Apply SPIDER's bottom-up gating on the gravitational-separation flux |
 | `phase_smoothing` | str | `"tanh"` | Phase-boundary smoothing. `"tanh"` (default) is SPIDER's two-branch `get_smoothing` with width `matprop_smooth_width = 0.01`; `"cubic_hermite"` is the fallback $16\,g\phi^2(1-g\phi)^2$ form. |
 | `solver_method` | str | `"cvode"` | ODE integrator. `"cvode"` selects SUNDIALS CVODE via `scikits.odes` (default); `"radau"` and `"bdf"` use scipy `solve_ivp`. When `scikits.odes` is not installed the solver falls back to Radau with a warning. |

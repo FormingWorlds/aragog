@@ -68,7 +68,7 @@ aragog inspect first.nc
 
 The default human format prints status, the headline scalars (`T_magma`, `T_core`, `Phi_global`, `F_heat_total`, ...), the mesh dimensions, and a `S_final` / `T_basic` profile-range block. Add `--json` for `jq`-friendly machine-readable output.
 
-For one-off tweaks during debugging, `aragog run` accepts repeatable `--set <key.path>=<value>` flags (see the [CLI reference](../Reference/cli.md#set-overrides) for type coercion rules):
+For one-off tweaks during debugging, `aragog run` accepts repeatable `--set <key.path>=<value>` flags (see the [CLI reference](../Reference/cli.md#-set-overrides) for type coercion rules):
 
 ```bash
 aragog run first.toml --eos-dir ... --initial-entropy 2900.0 \

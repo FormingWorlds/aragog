@@ -156,6 +156,8 @@ snapshot: out.nc
   T_magma         3500.0000  surface (magma) temperature [K]
   T_core          4200.0000  CMB temperature [K]
   Phi_global         0.4200  mass-weighted melt fraction [-]
+  E_state      4.5000e+30  EOS-consistent enthalpy [J]
+  E_state_cons 4.4900e+30  frozen-mass enthalpy [J]
   ...
 
   S_final: min=2.9000e+03, max=3.0000e+03 (120/120 finite)

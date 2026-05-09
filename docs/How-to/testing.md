@@ -38,7 +38,7 @@ The JAX-path tests additionally need the `jax` extra (`pip install -e ".[jax]"`)
 ```console
 pytest -m unit                       # Fast feedback during development
 pytest -m smoke                      # Full-solver smoke
-pytest -m "unit or smoke"            # CI push tier
+pytest -m "unit and not slow"        # CI push tier
 pytest -m "unit or smoke or slow"    # Full nightly tier
 ```
 
@@ -106,8 +106,8 @@ is 85% (CI gate enforced via `pyproject.toml`).
 Before committing, format and check all files:
 
 ```console
-ruff check --fix src/ tests/
-ruff format src/ tests/
+ruff check --fix src/ tests/ tools/
+ruff format src/ tests/ tools/
 ```
 
 The local ruff (often 0.12.x) and the CI ruff (0.15.x) sometimes disagree on

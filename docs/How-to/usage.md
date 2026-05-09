@@ -133,7 +133,7 @@ out = solver.get_state()
 
 ## NetCDF output
 
-Aragog itself does not write NetCDF files; that is handled by the PROTEUS wrapper, which packs the `SolverOutput` arrays into the per-iteration `int.nc` snapshot used by the PROTEUS analysis pipeline. See [Inspecting NetCDF output](netcdf.md) for the snapshot schema.
+Standalone Aragog writes a NetCDF snapshot via `SolverOutput.to_netcdf(path)` (also exposed as `EntropySolver.write_netcdf(path)` and as `aragog run --out path.nc` on the CLI). The PROTEUS wrapper builds its own per-iteration `int.nc` snapshot from `SolverOutput` arrays for the PROTEUS analysis pipeline; that path is independent. See [Inspecting NetCDF output](netcdf.md) for the snapshot schema.
 
 ## Logging
 
