@@ -122,7 +122,7 @@ def test_cli_registers_expected_subcommands():
     """
     from aragog.cli import cli
 
-    expected = {'run', 'list-configs', 'new', 'vnv'}
+    expected = {'run', 'list-configs', 'new', 'validate', 'vnv'}
     actual = set(cli.commands)
     assert actual == expected, (
         f'aragog.cli subcommands: expected {sorted(expected)}, got {sorted(actual)}.'
@@ -199,6 +199,80 @@ def test_vnv_rejects_unknown_topic():
     assert '--list' in (result.output or ''), (
         'unknown-topic message should redirect users to --list.'
     )
+
+
+def test_validate_accepts_bundled_abe_mixed_cfg():
+    """`aragog validate <bundled cfg>` must exit 0 and print a one-line
+    summary including the parsed core_bc / IBC / OBC fields.
+
+    Discriminator: the summary mentions concrete fields by name; a
+    regression that printed only "OK" would still pass an exit-code
+    test but lose the diagnostic value the command exists for.
+    """
+    import importlib.resources
+
+    from aragog.cli import cli
+
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_mixed.cfg')
+    ) as cfg_path:
+        runner = CliRunner()
+        result = runner.invoke(cli, ['validate', str(cfg_path)])
+
+    assert result.exit_code == 0, result.output
+    assert 'OK' in result.output
+    for tag in ('core_bc=', 'IBC=', 'OBC=', 'radionuclides='):
+        assert tag in result.output, f'validate summary missing {tag!r}; got {result.output!r}.'
+
+
+def test_validate_rejects_scalings_section_via_strict_reject(tmp_path):
+    """validate must surface the [scalings] strict-reject as a
+    ClickException.
+
+    Edge case: this is the most common migration error after the
+    scalings removal landed; the command's whole point is catching
+    it before a solve. The ValueError from Parameters.from_file
+    must be wrapped, not propagated as a raw traceback.
+    """
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'with_scalings.cfg'
+    cfg.write_text(
+        '[scalings]\nradius = 1.0\n'
+        '\n[solver]\nstart_time = 0\nend_time = 1\natol = 1e-9\nrtol = 1e-6\n'
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ['validate', str(cfg)])
+
+    assert result.exit_code != 0
+    assert 'scalings' in (result.output or '').lower()
+    assert 'configuration error' in (result.output or '').lower(), (
+        'validate must wrap the parser exception in a "configuration error" '
+        'frame so the user knows where the failure originated.'
+    )
+
+
+def test_validate_rejects_missing_required_field(tmp_path):
+    """A config missing a required section must produce a non-zero
+    exit AND a message that names the broken section, not a bare
+    traceback.
+    """
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'no_solver.cfg'
+    cfg.write_text(
+        '[boundary_conditions]\nouter_boundary_condition = 1\n'
+        'outer_boundary_value = 1500\n'
+        'inner_boundary_condition = 2\ninner_boundary_value = 0\n'
+        'emissivity = 1\nequilibrium_temperature = 273\n'
+        'core_heat_capacity = 880\n'
+        # No [solver] section — this is the missing required block.
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli, ['validate', str(cfg)])
+
+    assert result.exit_code != 0
+    assert 'configuration error' in (result.output or '').lower()
 
 
 def test_new_scaffolds_default_template(tmp_path, monkeypatch):

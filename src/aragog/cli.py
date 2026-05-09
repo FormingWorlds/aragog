@@ -286,6 +286,44 @@ def _first_comment_line(entry: Traversable) -> str:
 
 
 # ---------------------------------------------------------------------------
+# aragog validate
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name='validate')
+@click.argument('config', type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def validate(config: Path) -> None:
+    """Parse a configuration file and report errors without solving.
+
+    Loads the TOML/INI through Parameters.from_file, runs
+    Parameters.__post_init__ (which dispatches the BC normalise,
+    optionally loads an external EOS file, and converts radionuclide
+    concentrations from ppm), and reports the first ValueError or
+    other parser exception. EOS-table loading and the solver are not
+    touched. Use this before launching a long CHILI run to catch
+    typos, missing files, IBC=99-style dispatch errors, and the
+    [scalings] strict-rejection.
+    """
+    from aragog.parser import Parameters
+
+    try:
+        params = Parameters.from_file(config)
+    except Exception as exc:
+        raise click.ClickException(f'configuration error in {config}: {exc}') from exc
+
+    n_radio = len(params.radionuclides)
+    click.echo(
+        f'OK {config}: '
+        f'core_bc={params.boundary_conditions.core_bc}, '
+        f'IBC={params.boundary_conditions.inner_boundary_condition}, '
+        f'OBC={params.boundary_conditions.outer_boundary_condition}, '
+        f'eos_method={params.mesh.eos_method}, '
+        f'IC_method={params.initial_condition.initial_condition}, '
+        f'radionuclides={n_radio}'
+    )
+
+
+# ---------------------------------------------------------------------------
 # aragog new
 # ---------------------------------------------------------------------------
 
