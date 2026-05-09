@@ -1,6 +1,6 @@
 # Upper thermal boundary layer (UTBL) parameterisation
 
-When the surface boundary uses the grey-body atmosphere mode (`outer_boundary_condition = 1`), the radiating surface temperature can differ from the temperature of the topmost mantle staggered node. Aragog's UTBL parameterisation accounts for the unresolved thermal boundary layer between the magma ocean interior and the radiating surface by solving a cubic relation derived in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) (Eq. 18). The implementation is in `src/aragog/solver/boundary.py::_utbl_tsurf` and uses Cardano's formula for the analytic real root.
+When the surface boundary uses the grey-body atmosphere mode (`outer_boundary_condition = 1`), the radiating surface temperature can differ from the temperature of the topmost mantle staggered node. Aragog's UTBL parameterisation accounts for the unresolved thermal boundary layer between the magma ocean interior and the radiating surface by solving a cubic relation derived in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract)[^cite-bower2018] (Eq. 18). The implementation is in `src/aragog/solver/boundary.py::_utbl_tsurf` and uses Cardano's formula for the analytic real root.
 
 ## When to enable
 
@@ -66,11 +66,9 @@ param_utbl_const         = 1.0e-7
 - **Negative `param_utbl_const`**: not validated by the parser, but produces non-physical solutions ($T_\mathrm{surf} > T_\mathrm{int}$) when the cubic discriminant flips sign.
 - **Comparing UTBL on / off across runs**: the diagnostic `T_magma` returned by `SolverOutput` is the topmost basic-node interior temperature, not the UTBL-corrected radiator temperature. To extract $T_\mathrm{surf}$ for diagnostics, recompute it from `T_magma` and `param_utbl_const` using the same Cardano formula.
 
-## References
-
-- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62. Eq. 18 derives the UTBL parameterisation.
-
 ## Cross-references
 
 - [Configuration: `[boundary_conditions]`](configuration.md#boundary_conditions): the schema rows for `param_utbl` and `param_utbl_const`.
 - [Heat-transport explainer](../Explanations/heat_transport.md): grey-body BC alongside the prescribed-flux and prescribed-temperature modes.
+
+[^cite-bower2018]: D. J. Bower, et al., *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*, Physics of the Earth and Planetary Interiors, 2018.

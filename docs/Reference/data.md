@@ -32,7 +32,7 @@ The grid must be rectangular: phase-filtered tables (where each phase's grid is 
 
 ### Canonical source: PALEOS
 
-In the PROTEUS coupled path the tables are produced by the PALEOS multiphase EOS framework ([Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract)) from a configured P-T melting curve and the [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract) RTpress liquid EOS. The PROTEUS wrapper writes the resulting tables into `output/data/aragog_pt/` at construction time and points `eos_dir` there.
+In the PROTEUS coupled path the tables are produced by the PALEOS multiphase EOS framework ([Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract)[^cite-attia2026]) from a configured P-T melting curve and the [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract)[^cite-wolfbower2018] RTpress liquid EOS. The PROTEUS wrapper writes the resulting tables into `output/data/aragog_pt/` at construction time and points `eos_dir` there.
 
 ## External mesh file (`eos_method = 2`)
 
@@ -85,7 +85,5 @@ The relevant configuration keys are summarised here for cross-reference; the ful
 | `eos_file` | `[mesh]` | Path to the four-column external mesh file |
 | `surface_density`, `adiabatic_bulk_modulus`, `adams_williamson_beta`, `gravitational_acceleration`, `surface_pressure` | `[mesh]` | Adams-Williamson parameters |
 
-## References
-
-- [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*. Submitted to **A&A**, arXiv:2605.03741.
-- [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract). *An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt*. **Physics of the Earth and Planetary Interiors**, 278, 59 to 74.
+[^cite-attia2026]: O. Attia, et al., *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*, A&A (submitted), 2026.
+[^cite-wolfbower2018]: A. S. Wolf; D. J. Bower, *An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt*, Physics of the Earth and Planetary Interiors, 2018.

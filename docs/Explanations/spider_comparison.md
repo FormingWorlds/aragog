@@ -1,6 +1,6 @@
 # Aragog vs SPIDER
 
-Aragog is a deliberate descendant of SPIDER ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract)) and shares its formulation: a 1-D spherically symmetric finite-volume mantle with specific entropy as the prognostic variable, modified-Newton BDF time integration, and SPIDER-style two-branch tanh smoothing across phase boundaries. The two codes diverge in implementation language, in the way the Jacobian is built, in the EOS tables they consume by default, and in how they connect to the outside world.
+Aragog is a deliberate descendant of SPIDER ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract)[^cite-bower2018]) and shares its formulation: a 1-D spherically symmetric finite-volume mantle with specific entropy as the prognostic variable, modified-Newton BDF time integration, and SPIDER-style two-branch tanh smoothing across phase boundaries. The two codes diverge in implementation language, in the way the Jacobian is built, in the EOS tables they consume by default, and in how they connect to the outside world.
 
 This page summarises the points of agreement and divergence and gives guidance on when to pick which code.
 
@@ -16,7 +16,7 @@ This page summarises the points of agreement and divergence and gives guidance o
 | Jacobian source | Finite difference (CVODE-internal) | JAX analytic (default), CVODE finite difference (fallback) |
 | Phase-boundary smoothing | `get_smoothing` two-branch tanh, `matprop_smooth_width` (`util.c:245-265`) | Identical two-branch tanh, `matprop_smooth_width = 0.01` (default) |
 | Pressure-EOS profile | Adams-Williamson (`eos_adamswilliamson.c`) or external mesh file | Adams-Williamson (`eos_method = 1`) or external mesh file (`eos_method = 2`) |
-| Thermodynamic EOS tables | P-S lookup tables, bilinear interpolation (`eos_lookup.c`), [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract) by default | P-S lookup tables, bilinear interpolation, PALEOS ([Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract)) by default; [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract) tables for parity runs |
+| Thermodynamic EOS tables | P-S lookup tables, bilinear interpolation (`eos_lookup.c`), [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract)[^cite-wolfbower2018] by default | P-S lookup tables, bilinear interpolation, PALEOS ([Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract)[^cite-attia2026]) by default; [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract) tables for parity runs |
 | Default core BC | `bc.c:76-131` $dS/dr$ ODE | `core_bc = energy_balance` (bit-parity with SPIDER); `quasi_steady` for fast standalone exploration |
 | Step-size control during phase change | CVODE adaptive control with user tolerances | CVODE adaptive control plus an Aragog-only SUNDIALS root function `phi_step_cap` that bounds $\lvert\Delta\Phi_\mathrm{global}\rvert$ per call |
 | Atmosphere coupling | Built-in atmosphere module: grey-body, Zahnle steam, Jeans/Zahnle escape, volatile speciation (`atmosphere.c`) | Surface BC modes 1, 4, 5 only (grey-body, prescribed flux, prescribed temperature); volatile chemistry handled by JANUS / AGNI / Atmodeller through PROTEUS |
@@ -58,7 +58,7 @@ Specifically:
 - The bit-parity helper-formula tests in `tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_energy_balance_rhs_bit_parity_prescribed_inputs` reproduce the SPIDER `bc.c:76-131` evaluation to machine precision on hand-computed inputs.
 - The Adams-Williamson density profile in `eos_method = 1` matches the exponential form $\rho(z) = \rho_s \exp(\beta z)$ that SPIDER uses (`eos_adamswilliamson.c:104`) when the same $\beta$ is configured; the `adams_williamson_beta` config knob accepts $\beta$ directly so that the two codes share an unambiguous scale.
 - The `get_smoothing` two-branch tanh in `util.c:245-265` is reproduced by Aragog's `phase_smoothing = "tanh"` with the same width parameter.
-- Six-isotope radiogenic heating with the [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract) cocktail produces the same present-day $H_\mathrm{radio}$ in both codes when the same isotope abundances and half-lives are configured.
+- Six-isotope radiogenic heating with the [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract)[^cite-ruedas2017] cocktail produces the same present-day $H_\mathrm{radio}$ in both codes when the same isotope abundances and half-lives are configured.
 - Per-component heat fluxes ($F_\mathrm{cond}$, $F_\mathrm{conv}$, $F_\mathrm{grav}$, $F_\mathrm{mix}$) reconstruct the total to floating-point round-off in Aragog (Figure 2 of [Heat transport](heat_transport.md#decomposition-on-a-fully-mushy-state)), which is the same numerical relation SPIDER enforces in `energy.c`.
 
 Integration-level parity between the two codes is the criterion that the production validation track drives toward; the relevant harness lives at `output/coupled_parity/` in the PROTEUS tree.
@@ -91,9 +91,7 @@ The downstream PROTEUS plotting and analysis tooling consumes NetCDF.
 
 For the configuration details that map between the two codes, see [Configuration](../How-to/configuration.md) and [Standalone vs PROTEUS-integrated](../How-to/usage-paths.md).
 
-## References
-
-- [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*. Submitted to **A&A**, arXiv:2605.03741.
-- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62.
-- [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract). *Radioactive heat production of six geologically important nuclides*. **Geochemistry, Geophysics, Geosystems**, 18, 3530 to 3541.
-- [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract). *An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt*. **Physics of the Earth and Planetary Interiors**, 278, 59 to 74.
+[^cite-attia2026]: O. Attia, et al., *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*, A&A (submitted), 2026.
+[^cite-bower2018]: D. J. Bower, et al., *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*, Physics of the Earth and Planetary Interiors, 2018.
+[^cite-ruedas2017]: T. Ruedas, *Radioactive heat production of six geologically important nuclides*, Geochemistry, Geophysics, Geosystems, 2017.
+[^cite-wolfbower2018]: A. S. Wolf; D. J. Bower, *An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt*, Physics of the Earth and Planetary Interiors, 2018.

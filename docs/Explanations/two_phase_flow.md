@@ -10,13 +10,13 @@ This page explains the conceptual difference between one-phase and two-phase for
 In a **one-phase** magma-ocean model, the mantle is treated as a single homogeneous fluid that is either entirely above the liquidus or entirely below the solidus.
 A solidification front (a depth or a single state variable) tracks where the transition lives, and the mantle on each side of the front is closed by its own equation of state.
 The bulk fluid evolves through a global energy balance, and the latent heat of fusion either appears as an effective heat-capacity spike at the phase boundary or as a global solidification term subtracted from the surface flux.
-Most of the boundary-layer-theory (BLT) lineage of magma-ocean codes ([Elkins-Tanton (2008)](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract), [Hamano et al. (2013)](https://scixplorer.org/abs/2013Natur.497..607H/abstract), [Schaefer et al. (2016)](https://scixplorer.org/abs/2016ApJ...829...63S/abstract)) is one-phase by construction: the well-mixed assumption that defines BLT is a one-phase assumption.
+Most of the boundary-layer-theory (BLT) lineage of magma-ocean codes ([Elkins-Tanton (2008)](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract)[^cite-elkinstanton2008], [Hamano et al. (2013)](https://scixplorer.org/abs/2013Natur.497..607H/abstract)[^cite-hamano2013], [Schaefer et al. (2016)](https://scixplorer.org/abs/2016ApJ...829...63S/abstract)[^cite-schaefer2016]) is one-phase by construction: the well-mixed assumption that defines BLT is a one-phase assumption.
 
 In a **two-phase** model, both the melt and the solid coexist on the same spatial element, with a melt fraction $\phi(r,t) \in [0,1]$ describing how much of each is present.
 Solid and melt have independent equations of state, blended by the lever rule into composite material properties.
 Solid grains and melt droplets can move with respect to each other in response to gravity (gravitational separation) and chemical diffusion (chemical mixing of melt fraction).
 Phase-change latent heat enters the energy budget as a continuous function of $\phi$, not as a delta function at the solidus or liquidus.
-Aragog and [SPIDER](https://github.com/FormingWorlds/SPIDER) ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract)) are two-phase magma-ocean codes; this is the second defining feature, alongside [mixing-length theory](mixing_length.md), that distinguishes them from the BLT lineage.
+Aragog and [SPIDER](https://github.com/FormingWorlds/SPIDER) ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract)[^cite-bower2018]) are two-phase magma-ocean codes; this is the second defining feature, alongside [mixing-length theory](mixing_length.md), that distinguishes them from the BLT lineage.
 
 The trade-off is the usual one: the two-phase representation is necessary to capture the partial-melt physics that controls the rheological transition and the late-stage solidification window, but it costs an extra state variable per cell, two phase-boundary lookups per cell per call, and three additional flux contributions on the right-hand side.
 
@@ -39,7 +39,7 @@ This single ratio determines how all the other material properties are blended.
 | $\rho$ | $1/\rho = \phi/\rho_\mathrm{liq}(P) + (1-\phi)/\rho_\mathrm{sol}(P)$ (harmonic mean) |
 | $\alpha$ | composite expression $(\rho_\mathrm{sol}-\rho_\mathrm{liq})/(\Delta T_\mathrm{phase}\,\rho_\mathrm{mix})$ in `latent` Cp mode |
 | $c_p$ | latent-heat-augmented in mushy regions, returning to the per-phase EOS values at $\phi=0$ and $\phi=1$ |
-| $\eta$ (viscosity) | $\log_{10}\eta = z\,\log_{10}\eta_\mathrm{liq} + (1-z)\,\log_{10}\eta_\mathrm{sol}$, with the rheological-transition weight $z(\phi)$ from [Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract) |
+| $\eta$ (viscosity) | $\log_{10}\eta = z\,\log_{10}\eta_\mathrm{liq} + (1-z)\,\log_{10}\eta_\mathrm{sol}$, with the rheological-transition weight $z(\phi)$ from [Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract)[^cite-costa2009] |
 | $L(P)$ (latent heat) | $L(P) = T_\mathrm{fus}(P)\,(S_\mathrm{liq}(P) - S_\mathrm{sol}(P))$, EOS-tabulated |
 
 The single-pass evaluation lives in `EntropyPhaseEvaluator._update_eos` (file `src/aragog/eos/entropy_phase.py`), which mirrors SPIDER's `EOSEval_Composite_TwoPhase` (`eos_composite.c:177-290`) so the same blending rules are used in both codes.
@@ -67,10 +67,10 @@ $$
 The permeability factor $K(\phi)$ spans three asymptotic regimes ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §2.1):
 
 - **Stokes settling** at high $\phi$: melt is the matrix and solid grains settle as isolated spheres, derived from Stokes' law ([Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 13a).
-- **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367).
+- **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367)[^cite-rumpfgupte1971].
 - **Blake-Kozeny-Carman** at low $\phi$: melt as a percolating fluid through a near-rigid solid matrix.
 
-The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995) and reviewed in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §2.1 Eqs. 13a-c, where the regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
+The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995)[^cite-abe1995] and reviewed in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) §2.1 Eqs. 13a-c, where the regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
 Aragog hard-codes the equal-density-ratio limits ($\rho_\mathrm{sol} = \rho_\mathrm{liq}$) of these expressions, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), and blends through them with a tanh switch rather than recomputing per radial node.
 The resulting permeability-vs-porosity curve (Figure 1 of [Heat transport](heat_transport.md#permeability-kzeta-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
 The corresponding heat flux is
@@ -134,15 +134,10 @@ For the algebraic forms of the four heat-flux components Aragog assembles, see [
 For the closure that determines $\kappa_h$ in the convective flux, see [Mixing-length theory](mixing_length.md).
 For the SPIDER cross-check, see [Aragog vs SPIDER](spider_comparison.md).
 
-## References
-
-- [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. **Geophysical Monograph 74**, AGU, 41 to 54.
-- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, 215 to 230.
-- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62.
-- [Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract). *A model for the rheology of particle-bearing suspensions and partially molten rocks*. **Geochemistry, Geophysics, Geosystems**, 10, Q03010.
-- [Elkins-Tanton (2008)](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract). *Linked magma ocean solidification and atmospheric growth for Earth and Mars*. **Earth and Planetary Science Letters**, 271, 181 to 191.
-- [Hamano et al. (2013)](https://scixplorer.org/abs/2013Natur.497..607H/abstract). *Emergence of two types of terrestrial planet on solidification of magma ocean*. **Nature**, 497, 607 to 610.
-- Rumpf, H.C.H., and Gupte, A.R. (1971). *Einflüsse der Porosität und Korngrößenverteilung im Widerstandsgesetz der Porenströmung*. **Chemie Ingenieur Technik**, 43, 367 to 375.
-- [Sasaki & Nakazawa (1986)](https://scixplorer.org/abs/1986JGR....91.9231S/abstract). *Metal-silicate fractionation in the growing Earth: Energy source for the terrestrial magma ocean*. **Journal of Geophysical Research**, 91, 9231 to 9238.
-- [Schaefer et al. (2016)](https://scixplorer.org/abs/2016ApJ...829...63S/abstract). *Predictions of the atmospheric composition of GJ 1132b*. **The Astrophysical Journal**, 829, 63.
-- [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract). *Suspension in convective layers and style of differentiation of a terrestrial magma ocean*. **Journal of Geophysical Research**, 98, 5375 to 5390.
+[^cite-abe1995]: Yutaka Abe, *Basic equations for evolution of partially molten mantle and core*, in The Earth's Central Part: Its Structure and Dynamics, Terra Sci. Pub. Com., 1995.
+[^cite-bower2018]: D. J. Bower, et al., *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*, Physics of the Earth and Planetary Interiors, 2018.
+[^cite-costa2009]: A. Costa, et al., *A model for the rheology of particle-bearing suspensions and partially molten rocks*, Geochemistry, Geophysics, Geosystems, 2009.
+[^cite-elkinstanton2008]: L. T. Elkins-Tanton, *Linked magma ocean solidification and atmospheric growth for Earth and Mars*, Earth and Planetary Science Letters, 2008.
+[^cite-hamano2013]: K. Hamano, et al., *Emergence of two types of terrestrial planet on solidification of magma ocean*, Nature, 2013.
+[^cite-rumpfgupte1971]: H. C. H. Rumpf; A. R. Gupte, *Einflüsse der Porosität und Korngrößenverteilung im Widerstandsgesetz der Porenströmung*, Chemie Ingenieur Technik, 1971.
+[^cite-schaefer2016]: L. Schaefer, et al., *Predictions of the atmospheric composition of GJ 1132b*, The Astrophysical Journal, 2016.

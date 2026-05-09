@@ -67,13 +67,11 @@ The PROTEUS-side conda environment already pulls all three transitively through 
 
 The entropy solver requires a directory of pressure-entropy (P-S) lookup tables in the SPIDER format. The files needed and their format are documented in [Reference: data](../Reference/data.md).
 
-In production runs (PROTEUS-coupled or standalone), Aragog uses the [PALEOS](https://scixplorer.org/abs/2026arXiv260503741A/abstract) multiphase equation of state ([Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract)). PALEOS extends the entropy axis down to 0 K and uses a phase-aware blend of independent solid and liquid sub-tables joined through the lever rule on $\phi$, which gives a usable EOS down to fully solid late-stage mantle states where the original SPIDER table extrapolates. PROTEUS produces the PALEOS tables on-the-fly through Zalmoxis from a configured composition and P-T melting curve.
+In production runs (PROTEUS-coupled or standalone), Aragog uses the [PALEOS](https://scixplorer.org/abs/2026arXiv260503741A/abstract) multiphase equation of state ([Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract)[^cite-attia2026]). PALEOS extends the entropy axis down to 0 K and uses a phase-aware blend of independent solid and liquid sub-tables joined through the lever rule on $\phi$, which gives a usable EOS down to fully solid late-stage mantle states where the original SPIDER table extrapolates. PROTEUS produces the PALEOS tables on-the-fly through Zalmoxis from a configured composition and P-T melting curve.
 
-For SPIDER-parity reproduction or older reference runs, Aragog also accepts the [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract) RTpress liquid EOS through the `phase_solid` / `phase_liquid` config keys.
+For SPIDER-parity reproduction or older reference runs, Aragog also accepts the [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract)[^cite-wolfbower2018] RTpress liquid EOS through the `phase_solid` / `phase_liquid` config keys.
 
 For a standalone install, point the `eos_dir` argument of `EntropySolver.from_file()` at any directory containing the ten required files; the canonical file list and schema are documented in [Reference: data](../Reference/data.md).
 
-## References
-
-- [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*. Submitted to **A&A**, arXiv:2605.03741.
-- [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract). *An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt*. **Physics of the Earth and Planetary Interiors**, 278, 59 to 74.
+[^cite-attia2026]: O. Attia, et al., *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*, A&A (submitted), 2026.
+[^cite-wolfbower2018]: A. S. Wolf; D. J. Bower, *An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt*, Physics of the Earth and Planetary Interiors, 2018.
