@@ -552,10 +552,10 @@ class EntropyState:
         # melt fraction so the floor turns on exactly where Costa-blended
         # viscosity drops, consistent across config knobs.
         # In stably-stratified mushy layers (rare; most mushy layers
-        # in magma-ocean cooling are convecting) the floor mildly
-        # suppresses real stratification; that is the documented SPIDER
-        # convention this implementation mirrors, so the same floor
-        # applies to PROTEUS+SPIDER and PROTEUS+Aragog runs alike.
+        # in interior cooling trajectories are convecting) the floor
+        # mildly suppresses real stratification; that is the documented
+        # SPIDER convention this implementation mirrors, so the same
+        # floor applies to PROTEUS+SPIDER and PROTEUS+Aragog runs alike.
         if self._kappah_floor > 0.0:
             phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             from aragog.utilities import tanh_weight

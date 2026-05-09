@@ -1,11 +1,11 @@
 # Aragog AI Agent Guidelines
 
 Aragog is the **interior energetics module** of the PROTEUS ecosystem.
-It is a 1-D, two-phase, spherically symmetric magma-ocean solver with a mixing-length convective closure.
-Two design choices set Aragog apart from the boundary-layer-theory (BLT) lineage of magma-ocean codes:
+It is a 1-D, two-phase, spherically symmetric interior dynamics solver with a mixing-length convective closure.
+Two design choices define Aragog's approach:
 
-1. Mixing-length theory (MLT) closes the convective heat flux *locally* at every radial node, not globally through a Nusselt-Rayleigh scaling across a thin upper thermal boundary layer.
-2. The partial-melt mantle is treated as a coexisting solid + melt mixture, not a single-phase fluid with a depth cutoff.
+1. Mixing-length theory (MLT) closes the convective heat flux *locally* at every radial node.
+2. The partial-melt mantle is treated as a coexisting solid + melt mixture rather than a single-phase fluid with a depth cutoff.
 
 Together these resolve the partial-melt window between first crystallisation and final solidification.
 Ecosystem-wide guidelines live in `../CLAUDE.md` (PROTEUS-level).

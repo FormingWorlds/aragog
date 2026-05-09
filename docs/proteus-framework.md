@@ -73,7 +73,7 @@ For the PROTEUS-side documentation (config schema, orchestrator behaviour, atmos
 
 ## Standalone vs PROTEUS-coupled
 
-Aragog is also a fully self-contained tool for standalone magma-ocean simulations and parameter studies.
+Aragog is also a fully self-contained tool for standalone interior dynamics simulations and parameter studies.
 The two modes share the same numerical core but are configured at different layers:
 
 | Mode | Entry point | Configuration |

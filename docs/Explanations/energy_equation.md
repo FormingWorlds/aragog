@@ -84,7 +84,7 @@ $$
 \hat{S} = S / S_\mathrm{ref}, \qquad \hat{t} = t / t_\mathrm{ref},
 $$
 
-with $S_\mathrm{ref} = 2993.025\ \mathrm{J\,kg^{-1}\,K^{-1}}$ and $t_\mathrm{ref} = 10^5/(3.155\times 10^7)\ \mathrm{yr}$. This keeps the BDF tolerance control numerically well-behaved across the wide entropy and time scales encountered during a magma-ocean cooling. Physical units are restored when the solution is written back to `SolverOutput`.
+with $S_\mathrm{ref} = 2993.025\ \mathrm{J\,kg^{-1}\,K^{-1}}$ and $t_\mathrm{ref} = 10^5/(3.155\times 10^7)\ \mathrm{yr}$. This keeps the BDF tolerance control numerically well-behaved across the wide entropy and time scales encountered during interior cooling. Physical units are restored when the solution is written back to `SolverOutput`.
 
 ### Phase-aware step-size control
 

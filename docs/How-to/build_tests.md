@@ -203,8 +203,8 @@ file. The prompt encodes the PROTEUS and Aragog testing principles so the
 generated test passes review without an iteration round.
 
 ````text
-You are writing a pytest test for the Aragog entropy-form magma-ocean solver
-(part of the PROTEUS ecosystem). Follow these rules strictly.
+You are writing a pytest test for the Aragog entropy-form interior dynamics
+solver (part of the PROTEUS ecosystem). Follow these rules strictly.
 
 MARKERS (mandatory; CI-invisible without one):
 - @pytest.mark.unit: < 100 ms, no real solver call. Use for EOS lookup

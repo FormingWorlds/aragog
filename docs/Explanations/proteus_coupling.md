@@ -130,7 +130,7 @@ The two-phase variant (`PALEOS-2phase:MgSiO3`) takes separate solid and liquid P
 The function-call coupling is robust at the file boundary, but several edges have known traps. New code paths should re-check these before claiming behavioural neutrality.
 
 !!! warning "`prevent_warming` clamp is energy non-conserving"
-    `config.planet.prevent_warming` (default `false`) gates an early ratchet `T_magma = min(new, prev)` in `interior_energetics/wrapper.py`. The clamp suits strictly-cooling regimes but **silently destroys the warming half of any heat-pump cycle** in a coupled magma-ocean run, producing an apparent "T_magma plateau" that is in fact an energy-leak bug. The clamp must remain at the `false` default for production runs. A separate runaway-T fallback (`interior_o.ic == 2` recovery path) remains active independently and is not affected. If you see `T_magma` byte-pinned across hundreds of consecutive iterations with any per-call energy residual growing without bound, check the `prevent_warming` flag first.
+    `config.planet.prevent_warming` (default `false`) gates an early ratchet `T_magma = min(new, prev)` in `interior_energetics/wrapper.py`. The clamp suits strictly-cooling regimes but **silently destroys the warming half of any heat-pump cycle** in a coupled interior dynamics run, producing an apparent "T_magma plateau" that is in fact an energy-leak bug. The clamp must remain at the `false` default for production runs. A separate runaway-T fallback (`interior_o.ic == 2` recovery path) remains active independently and is not affected. If you see `T_magma` byte-pinned across hundreds of consecutive iterations with any per-call energy residual growing without bound, check the `prevent_warming` flag first.
 
 ### `core_density` echo-back
 

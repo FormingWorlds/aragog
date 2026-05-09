@@ -73,7 +73,7 @@ eos_file = "/path/to/your/profile.dat"  # four columns: r [m], P [Pa], rho [kg/m
 ```
 
 Any provenance for this file is acceptable, as long as the four columns are physically consistent.
-A PALEOS-derived export is the recommended source in the PROTEUS ecosystem because the same EOS family is then used for the structural solve, the thermodynamic $(P, S)$ tables, and (downstream) the magma-ocean energy balance, which keeps the three layers self-consistent.
+A PALEOS-derived export is the recommended source in the PROTEUS ecosystem because the same EOS family is then used for the structural solve, the thermodynamic $(P, S)$ tables, and (downstream) the interior energy balance, which keeps the three layers self-consistent.
 Aragog is otherwise EOS-agnostic at this layer: any file with monotone radii and physically consistent columns works.
 
 ### PROTEUS-coupled use (default production path)

@@ -84,7 +84,7 @@ def _version_message() -> str:
     ),
 )
 def cli() -> None:
-    """Aragog: 1-D entropy-form magma-ocean solver."""
+    """Aragog: 1-D entropy-form interior dynamics solver."""
 
 
 # ---------------------------------------------------------------------------
