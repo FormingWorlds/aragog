@@ -27,10 +27,47 @@ from pathlib import Path
 
 import click
 
+from aragog import __version__ as _ARAGOG_VERSION
+
 logger = logging.getLogger('fwl.' + __name__)
 
 
+def _version_message() -> str:
+    """Return a multi-line version block: aragog + key dependencies.
+
+    Lists the installed versions of the libraries that materially
+    affect solver behaviour (numpy, scipy, JAX, scikits.odes,
+    netCDF4). Helps users (and bug reports) pin down a build before
+    debugging a numerical issue.
+    """
+    lines = [f'aragog {_ARAGOG_VERSION}']
+    for name in ('numpy', 'scipy', 'jax', 'scikits.odes', 'netCDF4'):
+        try:
+            mod = importlib.import_module(name)
+            ver = getattr(mod, '__version__', 'unknown')
+        except Exception:
+            ver = 'not installed'
+        lines.append(f'  {name}: {ver}')
+    return '\n'.join(lines)
+
+
 @click.group()
+@click.version_option(
+    version=_ARAGOG_VERSION,
+    message='%(prog)s %(version)s',
+    help='Print aragog and key-dependency versions and exit.',
+)
+@click.option(
+    '--versions',
+    'show_versions',
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=lambda ctx, param, value: (
+        click.echo(_version_message()) or ctx.exit(0) if value else None
+    ),
+    help='Print aragog plus key-dependency versions and exit.',
+)
 def cli() -> None:
     """Aragog: 1-D entropy-form magma-ocean solver."""
 

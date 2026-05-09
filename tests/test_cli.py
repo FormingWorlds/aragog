@@ -13,6 +13,54 @@ from click.testing import CliRunner
 pytestmark = pytest.mark.unit
 
 
+def test_cli_version_flag_prints_aragog_version():
+    """`aragog --version` must print the package version and exit 0.
+
+    Discriminator: the printed version must match
+    ``aragog.__version__`` exactly. A regression that hard-coded a
+    stale version in cli.py would surface here.
+    """
+    from aragog import __version__
+    from aragog.cli import cli
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['--version'])
+
+    assert result.exit_code == 0, result.output
+    assert __version__ in result.output, (
+        f'aragog --version output {result.output!r} does not match '
+        f'aragog.__version__ = {__version__!r}.'
+    )
+
+
+def test_cli_versions_flag_lists_dependencies():
+    """`aragog --versions` (plural) must print the aragog version
+    plus key dependency versions (numpy, scipy, jax) so bug reports
+    are reproducible.
+
+    Edge case: in an environment with a missing optional dependency
+    (e.g. JAX), the line must still appear with 'not installed' or
+    'unknown' rather than crashing the CLI. We can't reliably
+    uninstall jax in a test, but we can assert the multi-line
+    output structure.
+    """
+    from aragog.cli import cli
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['--versions'])
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.strip().splitlines()
+    assert lines[0].startswith('aragog '), (
+        f'first line must start with "aragog "; got {lines[0]!r}.'
+    )
+    # Each dependency line is indented with two spaces and contains a colon.
+    dep_names = {ln.strip().split(':', 1)[0] for ln in lines[1:] if ':' in ln}
+    assert {'numpy', 'scipy'} <= dep_names, (
+        f'expected numpy and scipy in dependency block; got {dep_names}.'
+    )
+
+
 def test_cli_help_prints_usage_and_exits_zero():
     """`aragog --help` must print Click's usage block and return code 0.
 
