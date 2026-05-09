@@ -545,6 +545,25 @@ def test_apply_overrides_rejects_malformed_specs():
         _apply_overrides(data, ('energy..kappah_floor=20',))
 
 
+def test_apply_overrides_rejects_single_segment_path():
+    """`--set energy=20.0` (no dot) must raise UsageError instead of
+    silently overwriting the entire `energy` section dict with a float.
+
+    Edge case: without this guard the override succeeds at the
+    dict-walk layer, then fails downstream as
+    `_EnergyParameters(**20.0)` -> TypeError 'argument of type
+    'float' is not iterable'. The user sees an error from the
+    dataclass constructor instead of a clear statement about the
+    malformed key path. The check fires here so the message names
+    the actual cause.
+    """
+    from aragog.cli import _apply_overrides
+
+    data = {'energy': {'kappah_floor': 10.0}}
+    with pytest.raises(click.UsageError, match='dot separator'):
+        _apply_overrides(data, ('energy=20.0',))
+
+
 def test_apply_overrides_rejects_missing_intermediate_section():
     """When the dotted path traverses a section that is not in the
     input, _apply_overrides must raise — silently creating new

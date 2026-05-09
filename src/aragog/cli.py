@@ -125,6 +125,13 @@ def _coerce_value(raw: str):
     parses is kept as a string; this is the right behaviour for
     file paths and string-typed config fields like
     ``mixing_length_profile = 'nearest_boundary'``.
+
+    Note: bare ``null`` returns the string ``'null'``, not Python
+    ``None``. The JSON path triggers only on ``[``, ``{``, or ``"``
+    prefixes (otherwise a string like ``'null'`` would be silently
+    promoted from a path-like value to None). To clear a field to
+    None, edit the TOML directly; ``--set`` is not the right
+    surface for that.
     """
     import json
 
@@ -174,6 +181,19 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
         if not keys or len(keys) != len(key_path.split('.')):
             raise click.UsageError(
                 f'--set key path is malformed: {key_path!r} (empty segment).'
+            )
+        if len(keys) < 2:
+            # A single-segment path (e.g. --set energy=20.0) would
+            # overwrite the entire `energy` section dict with a scalar,
+            # surfacing later as a TypeError from
+            # `_EnergyParameters(**20.0)`. That error message
+            # ("argument of type 'float' is not iterable") is more
+            # confusing than naming the malformed key path here.
+            raise click.UsageError(
+                f'--set key path must contain at least one dot separator '
+                f'(e.g. energy.kappah_floor=20.0); got {key_path!r}. '
+                'Setting an entire section with a single value is not '
+                'supported.'
             )
         target = out
         for k in keys[:-1]:
