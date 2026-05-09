@@ -1001,16 +1001,9 @@ class TestMassCoordinates:
             _MeshParameters,
             _PhaseMixedParameters,
             _PhaseParameters,
-            _ScalingsParameters,
             _SolverParameters,
         )
 
-        scalings = _ScalingsParameters(
-            radius=6.371e6,
-            temperature=4000.0,
-            density=4000.0,
-            time=3.155760e6,
-        )
         solver = _SolverParameters(
             start_time=0.0,
             end_time=1.0,
@@ -1080,7 +1073,6 @@ class TestMassCoordinates:
             grain_size=1e-3,
         )
         params = Parameters(
-            scalings=scalings,
             solver=solver,
             boundary_conditions=bc,
             mesh=mesh_p,
@@ -1091,7 +1083,6 @@ class TestMassCoordinates:
             phase_mixed=phase_mix,
             radionuclides=[],
         )
-        # No scaling — keep SI throughout for direct interpretation.
         return params
 
     def test_xi_approaches_r_as_density_becomes_uniform(self):

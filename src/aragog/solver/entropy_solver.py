@@ -76,8 +76,8 @@ logger = logging.getLogger('fwl.' + __name__)
 def _validate_eos_radius_range(mesh_params) -> None:
     """Validate the loaded external-EOS radial grid against the mesh bounds.
 
-    Duplicates the init-time check in ``parser._MeshParameters.scale_attributes``
-    (lines ~315-319) so that ``EntropySolver.reset()`` catches a regenerated
+    Duplicates the init-time check in ``Parameters.__post_init__`` so that
+    ``EntropySolver.reset()`` catches a regenerated
     external EOS file whose radius range no longer matches the solver's
     current inner_radius / outer_radius. Without this guard the downstream
     ``np.interp`` calls in ``_initialize_internals`` and
@@ -1089,17 +1089,10 @@ class EntropySolver:
         logger.info('Resetting EntropySolver')
         if self.parameters.mesh.eos_method == 2 and self.parameters.mesh.eos_file:
             arr = np.loadtxt(self.parameters.mesh.eos_file)
-            # Apply the same nondim scaling parser.py:309-313 applies at
-            # first load, so reset() and __init__ stay invariant if a
-            # future refactor ever sets scalings != 1.0. Currently all
-            # scalings are 1.0 in PROTEUS so this is an identity, but
-            # the structural consistency matters for defensive
-            # refactoring.
-            sc = self.parameters.mesh.scalings_
-            self.parameters.mesh.eos_radius = arr[:, 0] / sc.radius
-            self.parameters.mesh.eos_pressure = arr[:, 1] / sc.pressure
-            self.parameters.mesh.eos_density = arr[:, 2] / sc.density
-            self.parameters.mesh.eos_gravity = arr[:, 3] / sc.gravitational_acceleration
+            self.parameters.mesh.eos_radius = arr[:, 0]
+            self.parameters.mesh.eos_pressure = arr[:, 1]
+            self.parameters.mesh.eos_density = arr[:, 2]
+            self.parameters.mesh.eos_gravity = arr[:, 3]
             _validate_eos_radius_range(self.parameters.mesh)
         self._initialize_internals()
 

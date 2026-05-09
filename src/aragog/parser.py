@@ -1,16 +1,20 @@
 """Parses the configuration file and stores the parameters.
 
-Non-dimensionalization has been removed. All quantities are in SI units,
-with time in years. The _ScalingsParameters class is retained with all
-scales set to 1.0 so that downstream code referencing scalings_ attributes
-sees identity operations (division by 1.0).
+All quantities are stored in SI units (with time in years where the
+field name carries a ``_years`` suffix). Aragog's solver applies its
+own internal nondimensionalisation around the integrator (see
+``aragog.jax.nondim`` and ``EntropySolver._S_ref``/``_t_ref_yr``);
+nothing in the config layer rescales user-supplied values.
+
+Configuration files containing a ``[scalings]`` section are
+strict-rejected at load time. Remove the section.
 """
 
 from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import Field, dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
@@ -28,7 +32,6 @@ logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 def _get_dataclass_from_section_name() -> dict[str, Any]:
     """Maps the section names in the configuration data to the dataclasses that stores the data."""
     mapping: dict[str, Any] = {
-        'scalings': _ScalingsParameters,
         'solver': _SolverParameters,
         'boundary_conditions': _BoundaryConditionsParameters,
         'mesh': _MeshParameters,
@@ -41,63 +44,6 @@ def _get_dataclass_from_section_name() -> dict[str, Any]:
     }
 
     return mapping
-
-
-@dataclass
-class _ScalingsParameters:
-    """Vestigial scalings class retained for API compatibility.
-
-    All scales are set to 1.0 so that any code dividing by a scale
-    factor becomes an identity operation. The config file may still
-    contain a [scalings] section; the values are parsed but ignored.
-    """
-
-    radius: float = 1
-    temperature: float = 1
-    density: float = 1
-    time: float = 1
-    area: float = field(init=False)
-    gravitational_acceleration: float = field(init=False)
-    temperature_gradient: float = field(init=False)
-    thermal_expansivity: float = field(init=False)
-    pressure: float = field(init=False)
-    velocity: float = field(init=False)
-    kinetic_energy_per_volume: float = field(init=False)
-    heat_capacity: float = field(init=False)
-    entropy: float = field(init=False)
-    latent_heat_per_mass: float = field(init=False)
-    power_per_volume: float = field(init=False)
-    power_per_mass: float = field(init=False)
-    heat_flux: float = field(init=False)
-    thermal_conductivity: float = field(init=False)
-    viscosity: float = field(init=False)
-    time_years: float = field(init=False)
-    stefan_boltzmann_constant: float = field(init=False)
-
-    def __post_init__(self) -> None:
-        # Override whatever was parsed from the config: all scales = 1.0
-        self.radius = 1.0
-        self.temperature = 1.0
-        self.density = 1.0
-        self.time = 1.0
-        self.area = 1.0
-        self.gravitational_acceleration = 1.0
-        self.temperature_gradient = 1.0
-        self.thermal_expansivity = 1.0
-        self.pressure = 1.0
-        self.velocity = 1.0
-        self.kinetic_energy_per_volume = 1.0
-        self.heat_capacity = 1.0
-        self.entropy = 1.0
-        self.latent_heat_per_mass = 1.0
-        self.power_per_volume = 1.0
-        self.power_per_mass = 1.0
-        self.heat_flux = 1.0
-        self.thermal_conductivity = 1.0
-        self.viscosity = 1.0
-        self.time_years = 1.0
-        self.stefan_boltzmann_constant = 1.0
-        logger.debug('scalings = %s (all unity, non-dimensionalization removed)', self)
 
 
 @dataclass
@@ -127,26 +73,25 @@ class _BoundaryConditionsParameters:
     # Default 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'
 
-    scalings_: _ScalingsParameters = field(init=False)
+    def normalize(self) -> None:
+        """Normalise BC values that need post-parse adjustment.
 
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes.
-
-        Args:
-            scalings: scalings
+        Replaces what used to be ``scale_attributes`` once
+        non-dimensionalisation was removed: the inner/outer dispatch
+        still has to zero IBC=1 and zero ``param_utbl_const`` when
+        the UTBL correction is disabled, and reject unknown BC codes.
         """
-        self.scalings_ = scalings
-        self.equilibrium_temperature /= self.scalings_.temperature
-        self.core_heat_capacity /= self.scalings_.heat_capacity
         if self.param_utbl:
-            self.param_utbl_const *= self.scalings_.temperature**2
+            # The constant carries dimension [K^2]; with no
+            # nondimensionalisation it is left at the user value.
+            pass
         else:
             self.param_utbl_const = 0.0
-        self._scale_inner_boundary_condition()
-        self._scale_outer_boundary_condition()
+        self._normalize_inner_boundary_condition()
+        self._normalize_outer_boundary_condition()
 
-    def _scale_inner_boundary_condition(self) -> None:
-        """Scales the inner boundary value.
+    def _normalize_inner_boundary_condition(self) -> None:
+        """Normalise the inner boundary value.
 
         Equivalent to CORE_BC in C code.
             1: Simple core cooling
@@ -155,16 +100,14 @@ class _BoundaryConditionsParameters:
         """
         if self.inner_boundary_condition == 1:
             self.inner_boundary_value = 0
-        elif self.inner_boundary_condition == 2:
-            self.inner_boundary_value /= self.scalings_.heat_flux
-        elif self.inner_boundary_condition == 3:
-            self.inner_boundary_value /= self.scalings_.temperature
+        elif self.inner_boundary_condition in (2, 3):
+            pass
         else:
             msg: str = f'inner_boundary_condition = {self.inner_boundary_condition} is unknown'
             raise ValueError(msg)
 
-    def _scale_outer_boundary_condition(self) -> None:
-        """Scales the outer boundary value.
+    def _normalize_outer_boundary_condition(self) -> None:
+        """Normalise the outer boundary value.
 
         Equivalent to SURFACE_BC in C code.
             1: Grey-body atmosphere
@@ -172,14 +115,8 @@ class _BoundaryConditionsParameters:
             4: Prescribed surface heat flux (atmosphere coupling)
             5: Prescribed surface temperature
         """
-        if self.outer_boundary_condition == 1:
+        if self.outer_boundary_condition in (1, 2, 4, 5):
             pass
-        elif self.outer_boundary_condition == 2:
-            pass
-        elif self.outer_boundary_condition == 4:
-            self.outer_boundary_value /= self.scalings_.heat_flux
-        elif self.outer_boundary_condition == 5:
-            self.outer_boundary_value /= self.scalings_.temperature
         else:
             msg: str = f'outer_boundary_condition = {self.outer_boundary_condition} is unknown'
             raise ValueError(msg)
@@ -248,15 +185,6 @@ class _EnergyParameters:
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
 
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes.
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.tidal_array /= self.scalings_.power_per_mass
-
 
 @dataclass
 class _InitialConditionParameters:
@@ -266,29 +194,6 @@ class _InitialConditionParameters:
     surface_temperature: float = 4000
     basal_temperature: float = 4000
     init_file: str = ''
-    scalings_: _ScalingsParameters = field(init=False)
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes.
-
-        Initial condition method
-            1: Linear profile
-            2: User-defined temperature field (from file)
-            3: Adiabatic profile
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.surface_temperature /= self.scalings_.temperature
-        self.basal_temperature /= self.scalings_.temperature
-
-        if self.initial_condition == 2:
-            if self.init_file == '':
-                msg: str = 'you must provide an initial temperature file'
-                raise ValueError(msg)
-            self.init_temperature = np.loadtxt(self.init_file)
-            self.init_temperature /= self.scalings_.temperature
 
 
 @dataclass
@@ -319,41 +224,6 @@ class _MeshParameters:
     # Fraction of mantle thickness used as the mixing length when
     # ``mixing_length_profile = 'constant'``. Ignored otherwise.
     mixing_length_constant_fraction: float = 0.25
-    scalings_: _ScalingsParameters = field(init=False)
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.outer_radius /= self.scalings_.radius
-        self.inner_radius /= self.scalings_.radius
-        self.core_density /= self.scalings_.density
-        self.surface_density /= self.scalings_.density
-        self.gravitational_acceleration /= self.scalings_.gravitational_acceleration
-        self.adiabatic_bulk_modulus /= self.scalings_.pressure
-        self.surface_pressure /= self.scalings_.pressure
-
-        if self.eos_method == 2:
-            if self.eos_file == '':
-                msg: str = 'you must provide a file for setting up equation of state'
-                raise ValueError(msg)
-            arr = np.loadtxt(self.eos_file)
-            self.eos_radius = arr[:, 0] / self.scalings_.radius
-            self.eos_pressure = arr[:, 1] / self.scalings_.pressure
-            self.eos_density = arr[:, 2] / self.scalings_.density
-            self.eos_gravity = arr[:, 3] / self.scalings_.gravitational_acceleration
-            # Check that provided eos radius roughly match with Aragog mesh
-            if (
-                (self.eos_radius[0] < self.inner_radius)
-                or (self.eos_radius[-1] > self.outer_radius)
-                or (self.eos_radius[-1] - self.eos_radius[0])
-                < 0.75 * (self.outer_radius - self.inner_radius)
-            ):
-                msg: str = 'Radius array in EOS file: Values out of range.'
-                raise ValueError(msg)
 
 
 @dataclass
@@ -383,17 +253,6 @@ class _PhaseMixedParameters:
     const_log10visc: float = 2.0
     const_T_ref: float = 3500.0
     const_S_ref: float = 3000.0
-    scalings_: _ScalingsParameters = field(init=False)
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.latent_heat_of_fusion /= self.scalings_.latent_heat_per_mass
-        self.grain_size /= self.scalings_.radius
 
 
 @dataclass
@@ -401,6 +260,8 @@ class _PhaseParameters:
     """Stores settings in a phase section in the configuration data.
 
     This is used to store settings from phase_liquid and phase_solid.
+    Float-valued fields are stored verbatim; string-valued fields are
+    interpreted as paths to lookup tables by ``EntropyPhaseEvaluator``.
     """
 
     density: float | str
@@ -410,36 +271,6 @@ class _PhaseParameters:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
-    scalings_: _ScalingsParameters = field(init=False)
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes if they are numbers.
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        cls_fields: tuple[Field, ...] = fields(self.__class__)
-        for field_ in cls_fields:
-            value: Any = getattr(self, field_.name)
-            try:
-                scaling: float = getattr(self.scalings_, field_.name)
-                scaled_value = value / scaling
-                setattr(self, field_.name, scaled_value)
-                logger.info(
-                    '%s is a number (value = %s, scaling = %s, scaled_value = %s)',
-                    field_.name,
-                    value,
-                    scaling,
-                    scaled_value,
-                )
-            except AttributeError:
-                logger.info('No scaling found for %s', field_.name)
-            except TypeError:
-                logger.info(
-                    '%s is a string (path to a filename) so the data will be scaled later',
-                    field_.name,
-                )
 
 
 @dataclass
@@ -452,19 +283,6 @@ class _Radionuclide:
     concentration: float
     heat_production: float
     half_life_years: float
-    scalings_: _ScalingsParameters = field(init=False)
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        """Scales the attributes.
-
-        Args:
-            scalings: scalings
-        """
-        self.scalings_ = scalings
-        self.t0_years /= self.scalings_.time_years
-        self.concentration *= 1e-6  # to mass fraction
-        self.heat_production /= self.scalings_.power_per_mass
-        self.half_life_years /= self.scalings_.time_years
 
     def get_heating(self, time: npt.NDArray | float) -> npt.NDArray | float:
         """Radiogenic heating
@@ -493,15 +311,8 @@ class _SolverParameters:
     end_time: float
     atol: float
     rtol: float
-    scalings_: _ScalingsParameters = field(init=False)
     tsurf_poststep_change: float = 30.0
     event_triggering: bool = False
-
-    def scale_attributes(self, scalings: _ScalingsParameters) -> None:
-        self.scalings_ = scalings
-        self.start_time /= self.scalings_.time_years
-        self.end_time /= self.scalings_.time_years
-        self.tsurf_poststep_change /= self.scalings_.temperature
 
 
 @dataclass(kw_only=True)
@@ -509,7 +320,6 @@ class Parameters:
     """Assembles all the parameters.
 
     All quantities are stored in SI units (time in years).
-    Non-dimensionalization has been removed.
     """
 
     boundary_conditions: _BoundaryConditionsParameters
@@ -520,28 +330,14 @@ class Parameters:
     phase_liquid: _PhaseParameters
     phase_mixed: _PhaseMixedParameters
     radionuclides: list[_Radionuclide]
-    scalings: _ScalingsParameters
     solver: _SolverParameters
 
     def __post_init__(self):
-        # Store scalings_ reference on sub-dataclasses that need it
-        # (phase.py reads scalings_ from PhaseParameters and PhaseMixedParameters).
-        # With all scales = 1.0, division by scalings is a no-op.
-        for sub in [
-            self.boundary_conditions,
-            self.energy,
-            self.initial_condition,
-            self.mesh,
-            self.phase_solid,
-            self.phase_liquid,
-            self.phase_mixed,
-            self.solver,
-        ]:
-            sub.scalings_ = self.scalings
-        for r in self.radionuclides:
-            r.scalings_ = self.scalings
+        # Boundary-condition normalisation (zero param_utbl_const when
+        # disabled, dispatch IBC/OBC, reject unknown codes).
+        self.boundary_conditions.normalize()
 
-        # Load initial temperature from file if IC method 2
+        # Initial-condition file load for IC method 2 (user-defined T).
         if self.initial_condition.initial_condition == 2:
             if self.initial_condition.init_file == '':
                 raise ValueError('you must provide an initial temperature file')
@@ -549,7 +345,7 @@ class Parameters:
                 self.initial_condition.init_file
             )
 
-        # Load EOS from file if EOS method 2
+        # External EOS file load for mesh.eos_method = 2.
         if self.mesh.eos_method == 2:
             if self.mesh.eos_file == '':
                 raise ValueError('you must provide a file for setting up equation of state')
@@ -573,13 +369,9 @@ class Parameters:
                     f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
 
-        # Convert radionuclide concentration from ppm to mass fraction
+        # Convert radionuclide concentration from ppm to mass fraction.
         for r in self.radionuclides:
             r.concentration *= 1e-6
-
-        # UTBL constant: when param_utbl is disabled, zero it out
-        if not self.boundary_conditions.param_utbl:
-            self.boundary_conditions.param_utbl_const = 0.0
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
@@ -590,6 +382,21 @@ class Parameters:
         """
         parser: ConfigParser = ConfigParser()
         parser.read(*filenames)
+
+        # Strict-reject the legacy [scalings] section. Aragog no longer
+        # has a config-layer non-dimensionalisation step; a [scalings]
+        # block in a TOML used to be parsed and then forced to unity
+        # everywhere, which silently let stale dimensional scales leak
+        # back in if a downstream refactor ever toggled the override
+        # off. Refusing the section at load time forecloses that path.
+        for section in parser.sections():
+            if section == 'scalings':
+                raise ValueError(
+                    'Configuration contains a [scalings] section, which is no '
+                    'longer accepted. Aragog applies its internal '
+                    'nondimensionalisation around the integrator only; remove '
+                    'the [scalings] block from the configuration file.'
+                )
 
         init_dict: dict[str, Any] = {}
         for section_name, dataclass_ in _get_dataclass_from_section_name().items():

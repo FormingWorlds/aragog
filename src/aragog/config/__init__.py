@@ -21,7 +21,6 @@ from aragog.config.initial_condition import InitialConditionConfig
 from aragog.config.mesh import MeshConfig
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
 from aragog.config.radionuclides import RadionuclideConfig
-from aragog.config.scalings import ScalingsConfig
 from aragog.config.solver import SolverConfig
 
 if sys.version_info < (3, 11):
@@ -41,7 +40,6 @@ __all__ = [
     'MixedPhaseConfig',
     'PhaseConfig',
     'RadionuclideConfig',
-    'ScalingsConfig',
     'SolverConfig',
 ]
 
@@ -55,8 +53,6 @@ class Config:
 
     Parameters
     ----------
-    scalings : dict
-        Scaling parameters (radius, temperature, density, time).
     solver : dict
         ODE solver parameters.
     boundary_conditions : dict
@@ -123,11 +119,17 @@ class Config:
             _PhaseMixedParameters,
             _PhaseParameters,
             _Radionuclide,
-            _ScalingsParameters,
             _SolverParameters,
         )
 
-        scalings = _ScalingsParameters(**data.get('scalings', {}))
+        if 'scalings' in data:
+            raise ValueError(
+                "Configuration contains a 'scalings' section, which is no "
+                'longer accepted. Aragog applies its internal '
+                'nondimensionalisation around the integrator only; remove '
+                "the 'scalings' block from the input dict / TOML."
+            )
+
         solver = _SolverParameters(**data['solver'])
         boundary_conditions = _BoundaryConditionsParameters(**data['boundary_conditions'])
         mesh = _MeshParameters(**data['mesh'])
@@ -151,7 +153,6 @@ class Config:
             phase_liquid=phase_liquid,
             phase_mixed=phase_mixed,
             radionuclides=radionuclides,
-            scalings=scalings,
             solver=solver,
         )
 

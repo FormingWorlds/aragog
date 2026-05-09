@@ -18,7 +18,6 @@ from aragog.config.initial_condition import InitialConditionConfig
 from aragog.config.mesh import MeshConfig
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
 from aragog.config.radionuclides import RadionuclideConfig
-from aragog.config.scalings import ScalingsConfig
 from aragog.config.solver import SolverConfig
 
 pytestmark = pytest.mark.unit
@@ -291,28 +290,54 @@ def test_radionuclide_decay_array_input_broadcasts():
     )
 
 
-# ---- ScalingsConfig --------------------------------------------------------
+# ---- ScalingsConfig (removed) ----------------------------------------------
 
 
-def test_scalings_config_overrides_user_values_to_unity():
-    """ScalingsConfig is intentionally a no-op: the post_init forces
-    every field to 1.0 regardless of input. This tests that a user
-    accidentally passing radius=6e6 gets back radius=1.0, NOT the
-    submitted value.
+def test_config_module_no_longer_exposes_scalings_config():
+    """``aragog.config.scalings`` and ``ScalingsConfig`` are removed.
 
-    Edge case: this is the OPPOSITE of typical attrs behaviour, so
-    a regression that "fixed" the post_init to honour user input
-    would silently re-introduce dimensional drift through the entire
-    solver (which now assumes scales are unity).
+    Edge case: a regression that re-added the legacy attrs shim would
+    silently re-introduce a config layer the parser strict-rejects at
+    load time. Catch both halves: the module file must be gone, and
+    the public ``__all__`` must not list ``ScalingsConfig``.
     """
-    sc = ScalingsConfig(radius=6.371e6, temperature=4000.0, density=4500.0, time=1e6)
-    assert sc.radius == pytest.approx(1.0, abs=1e-15)
-    assert sc.temperature == pytest.approx(1.0, abs=1e-15)
-    assert sc.density == pytest.approx(1.0, abs=1e-15)
-    assert sc.time == pytest.approx(1.0, abs=1e-15)
-    # Sample a derived field (force-overridden in post_init)
-    assert sc.heat_flux == pytest.approx(1.0, abs=1e-15)
-    assert sc.stefan_boltzmann_constant == pytest.approx(1.0, abs=1e-15)
+    import aragog.config as cfg_pkg
+
+    assert 'ScalingsConfig' not in cfg_pkg.__all__, (
+        '__all__ should not advertise ScalingsConfig; the layer was '
+        'removed when the [scalings] section was strict-rejected.'
+    )
+    with pytest.raises(ImportError):
+        import aragog.config.scalings  # noqa: F401
+
+
+def test_config_from_dict_strict_rejects_scalings_key():
+    """Config.from_dict({'scalings': ...}) must raise ValueError.
+
+    Edge case: the dict path is the canonical entry point used by
+    PROTEUS to build Parameters; silently stripping a 'scalings' key
+    would mask user-intent (a TOML carrying the legacy block would
+    quietly load as if the section was absent).
+    """
+    from aragog.config import Config
+
+    minimal = {
+        'scalings': {'radius': 1.0},
+        'solver': {
+            'start_time': 0,
+            'end_time': 1,
+            'atol': 1e-9,
+            'rtol': 1e-6,
+        },
+        'boundary_conditions': {},
+        'mesh': {},
+        'energy': {},
+        'phase_liquid': {},
+        'phase_solid': {},
+        'phase_mixed': {},
+    }
+    with pytest.raises(ValueError, match=r'scalings'):
+        Config.from_dict(minimal)
 
 
 # ---- SolverConfig ----------------------------------------------------------

@@ -92,7 +92,6 @@ def _build_parameters(
         _MeshParameters,
         _PhaseMixedParameters,
         _PhaseParameters,
-        _ScalingsParameters,
         _SolverParameters,
     )
 
@@ -170,7 +169,6 @@ def _build_parameters(
         phase_liquid=pl,
         phase_mixed=pm,
         radionuclides=[],
-        scalings=_ScalingsParameters(),
         solver=sv,
     )
 

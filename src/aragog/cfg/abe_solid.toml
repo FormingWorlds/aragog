@@ -1,12 +1,6 @@
 # Aragog test configuration: solid phase cooling
 # All units are SI unless otherwise specified.
 
-[scalings]
-radius = 6371000
-temperature = 4000
-density = 4000
-time = 31557600000
-
 [solver]
 start_time = 0
 end_time = 1000000000

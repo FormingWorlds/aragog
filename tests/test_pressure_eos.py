@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 from aragog.mesh.pressure_eos import AdamsWilliamsonEOS
-from aragog.parser import _MeshParameters, _ScalingsParameters
+from aragog.parser import _MeshParameters
 
 pytestmark = pytest.mark.unit
 
@@ -52,7 +52,6 @@ def _earth_settings(beta_override: float = 0.0) -> _MeshParameters:
         adams_williamson_beta=beta_override,
         surface_pressure=0.0,
     )
-    s.scale_attributes(_ScalingsParameters())  # all scales = 1
     return s
 
 
@@ -321,8 +320,8 @@ def _user_defined_settings() -> _MeshParameters:
 
 def _attach_user_eos_arrays(settings: _MeshParameters) -> _MeshParameters:
     """Stamp eos_radius / eos_pressure / eos_density / eos_gravity arrays
-    on the settings object directly (bypassing scale_attributes which
-    would try to load from eos_file).
+    on the settings object directly (bypassing the eos_file load path
+    that ``Parameters.__post_init__`` would otherwise perform).
     """
     n = 32
     settings.eos_radius = np.linspace(3.480e6, 6.371e6, n)

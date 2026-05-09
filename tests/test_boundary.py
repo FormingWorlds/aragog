@@ -29,7 +29,6 @@ from aragog.parser import (
     _MeshParameters,
     _PhaseMixedParameters,
     _PhaseParameters,
-    _ScalingsParameters,
     _SolverParameters,
 )
 from aragog.solver.boundary import BoundaryConditions
@@ -113,7 +112,6 @@ def _build_parameters(
             grain_size=1.0e-3,
         ),
         radionuclides=[],
-        scalings=_ScalingsParameters(),
         solver=_SolverParameters(start_time=0.0, end_time=1.0e6, atol=1e-9, rtol=1e-6),
     )
 
@@ -191,15 +189,15 @@ def test_inner_bc_type_3_is_pass_through():
 
 def test_inner_bc_unknown_code_raises():
     """Unphysical IBC code 99 must raise ValueError, not silently fall
-    through. Discriminator against losing the else-branch raise.
+    through. The rejection now fires at Parameters.__post_init__ via
+    boundary_conditions.normalize(); the duplicate runtime guard in
+    BoundaryConditions.apply_flux_inner_boundary_condition is the
+    second-line backstop.
     """
-    p = _build_parameters(
-        inner_boundary_condition=99, inner_boundary_value=0.0, param_utbl_const=0.0
-    )
-    bc = BoundaryConditions(p, _build_mock_mesh())
-    state = _build_mock_state()
     with pytest.raises(ValueError, match='inner_boundary_condition = 99'):
-        bc.apply_flux_inner_boundary_condition(state)
+        _build_parameters(
+            inner_boundary_condition=99, inner_boundary_value=0.0, param_utbl_const=0.0
+        )
 
 
 # ---- apply_flux_outer_boundary_condition dispatch --------------------------
@@ -241,22 +239,21 @@ def test_outer_bc_type_2_zahnle_steam_raises_not_implemented():
 def test_outer_bc_type_3_removed_raises_value_error():
     """OBC=3 (the legacy 'couple to atmodeller' slot) was removed; the
     real atmosphere coupling uses OBC=4 (prescribed surface heat flux).
-    Setting OBC=3 must now hit the unknown-code branch.
+    Setting OBC=3 must hit the unknown-code branch in
+    boundary_conditions.normalize() during Parameters construction.
     """
-    p = _build_parameters(outer_boundary_condition=3, param_utbl_const=0.0)
-    bc = BoundaryConditions(p, _build_mock_mesh())
-    state = _build_mock_state()
     with pytest.raises(ValueError, match='outer_boundary_condition = 3'):
-        bc.apply_flux_outer_boundary_condition(state)
+        _build_parameters(outer_boundary_condition=3, param_utbl_const=0.0)
 
 
 def test_outer_bc_unknown_code_raises_value_error():
-    """OBC=99 must raise. Discriminator for the dispatch fallthrough."""
-    p = _build_parameters(outer_boundary_condition=99, param_utbl_const=0.0)
-    bc = BoundaryConditions(p, _build_mock_mesh())
-    state = _build_mock_state()
+    """OBC=99 must raise during Parameters construction. Discriminator
+    for the dispatch fallthrough — the runtime guard in
+    BoundaryConditions.apply_flux_outer_boundary_condition is now the
+    second-line backstop.
+    """
     with pytest.raises(ValueError, match='outer_boundary_condition = 99'):
-        bc.apply_flux_outer_boundary_condition(state)
+        _build_parameters(outer_boundary_condition=99, param_utbl_const=0.0)
 
 
 # ---- grey_body (OBC=1) -----------------------------------------------------
