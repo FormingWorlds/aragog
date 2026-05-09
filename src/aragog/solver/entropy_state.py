@@ -261,16 +261,25 @@ class EntropyState:
         self._dP_dr_basic: npt.NDArray = np.zeros(n_basic)
         self._T_fus_basic: npt.NDArray = np.zeros(n_basic)
 
-        # One-shot flag: emit the conduction Cp-floor warning at most
+        # One-shot flags: emit each transient-guard warning at most
         # once per EntropyState instance. Without throttling, a
-        # non-standard EOS that triggers the floor produces one warning
+        # non-standard EOS that triggers a floor produces one warning
         # per RHS call (1000s per coupling step) and floods the log.
         # The complementary load-time scan in
-        # ``EntropySolver._check_eos_floors`` flags the same condition
-        # before any RHS call; this runtime guard exists to catch
+        # ``EntropySolver._check_eos_floors`` flags the same Cp condition
+        # before any RHS call; these runtime guards exist to catch
         # transient floor activations from out-of-bounds (P, S) lookups
         # that the static load-time scan cannot anticipate.
-        self._cp_floor_warned: bool = False
+        #
+        # The kappa_h floor at the rheological transition
+        # (``self._eddy_diffusivity = np.maximum(..., kh_floor)`` in
+        # update()) is *intentional design*, not a transient guard, and
+        # is deliberately silent: it fires by construction at every RHS
+        # call inside the mushy band.
+        self._cp_floor_warned: bool = False  # conduction Cp >= 100 J/kg/K
+        self._cp_mlt_floor_warned: bool = False  # MLT Cp >= 1 J/kg/K
+        self._dS_phase_stag_floor_warned: bool = False  # S_liq - S_sol >= 1 J/kg/K (staggered)
+        self._dS_phase_basic_floor_warned: bool = False  # S_liq - S_sol >= 1 J/kg/K (basic)
 
     def _ensure_phase_boundary_cache(self) -> None:
         """Populate or refresh the cached S_sol/S_liq at staggered nodes.
@@ -290,7 +299,18 @@ class EntropyState:
         eos = self.phase_staggered._eos
         self._S_sol_stag = np.asarray(eos.solidus_entropy(P_stag)).ravel()
         self._S_liq_stag = np.asarray(eos.liquidus_entropy(P_stag)).ravel()
-        self._dS_phase_stag = np.maximum(self._S_liq_stag - self._S_sol_stag, 1.0)
+        dS_raw_stag = self._S_liq_stag - self._S_sol_stag
+        if not self._dS_phase_stag_floor_warned and np.any(dS_raw_stag < 1.0):
+            logger.warning(
+                'EntropyState phase-boundary cache (staggered): solidus-'
+                'liquidus entropy gap fell below 1 J/kg/K at %d node(s); '
+                'lever-rule blending will be poorly conditioned at those '
+                'points. Suppressing further per-RHS warnings — check the '
+                'EOS solidus/liquidus tables.',
+                int(np.sum(dS_raw_stag < 1.0)),
+            )
+            self._dS_phase_stag_floor_warned = True
+        self._dS_phase_stag = np.maximum(dS_raw_stag, 1.0)
         self._P_stag_cached_id = id(pressure_obj)
 
     def _ensure_basic_phase_boundary_cache(self) -> None:
@@ -317,7 +337,18 @@ class EntropyState:
         # Phase-boundary entropies and their P-derivatives
         self._S_sol_basic = np.asarray(eos.solidus_entropy(P_basic)).ravel()
         self._S_liq_basic = np.asarray(eos.liquidus_entropy(P_basic)).ravel()
-        self._dS_phase_basic = np.maximum(self._S_liq_basic - self._S_sol_basic, 1.0)
+        dS_raw_basic = self._S_liq_basic - self._S_sol_basic
+        if not self._dS_phase_basic_floor_warned and np.any(dS_raw_basic < 1.0):
+            logger.warning(
+                'EntropyState phase-boundary cache (basic): solidus-'
+                'liquidus entropy gap fell below 1 J/kg/K at %d node(s); '
+                'lever-rule blending will be poorly conditioned at those '
+                'points. Suppressing further per-RHS warnings — check the '
+                'EOS solidus/liquidus tables.',
+                int(np.sum(dS_raw_basic < 1.0)),
+            )
+            self._dS_phase_basic_floor_warned = True
+        self._dS_phase_basic = np.maximum(dS_raw_basic, 1.0)
         self._dS_sol_dP_basic = np.asarray(eos.solidus_entropy_dP(P_basic)).ravel()
         self._dS_liq_dP_basic = np.asarray(eos.liquidus_entropy_dP(P_basic)).ravel()
         # Mesh pressure gradient at basic nodes (P decreases outward,
@@ -478,6 +509,16 @@ class EntropyState:
         # threshold, so the near-zero eps matches SPIDER's behavior. If
         # CVODE stability requires smoothing, increase to ~1e-20.
         conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-30)
+        if not self._cp_mlt_floor_warned and np.any(Cp < 1.0):
+            logger.warning(
+                'EntropyState MLT: Cp dropped below the 1 J/kg/K '
+                'division-safety guard at %d node(s); eddy-diffusivity '
+                'velocity prefactor is biased upward at those points. '
+                'Suppressing further per-RHS warnings — check the EOS Cp '
+                'tables and the load-time _check_eos_floors output.',
+                int(np.sum(Cp < 1.0)),
+            )
+            self._cp_mlt_floor_warned = True
         effective_superadiabatic = alpha * T * conv_drive / np.maximum(Cp, 1.0)
         velocity_prefactor = g * effective_superadiabatic
 
