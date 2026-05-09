@@ -286,6 +286,69 @@ def _first_comment_line(entry: Traversable) -> str:
 
 
 # ---------------------------------------------------------------------------
+# aragog new
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_TEMPLATE = 'abe_solid'
+
+
+@cli.command(name='new')
+@click.argument('name')
+@click.option(
+    '--from',
+    'template',
+    default=_DEFAULT_TEMPLATE,
+    show_default=True,
+    help=(
+        'Bundled template to copy. Run `aragog list-configs` to see '
+        'available templates. Match by stem (without the .toml/.cfg '
+        'suffix); .toml is preferred when both exist.'
+    ),
+)
+@click.option(
+    '--force',
+    is_flag=True,
+    default=False,
+    help='Overwrite the destination if it already exists.',
+)
+def new(name: str, template: str, force: bool) -> None:
+    """Scaffold a new TOML config in the cwd by copying a bundled template.
+
+    NAME is the destination filename (with or without a `.toml`
+    extension). The file is written to the current working directory.
+    """
+    cfg_dir = _bundled_cfg_dir()
+
+    # Prefer .toml over .cfg when both exist for the same stem; .cfg
+    # is the legacy INI flavour and is not recommended for new files.
+    candidates = [f'{template}.toml', f'{template}.cfg']
+    src: Traversable | None = None
+    for candidate in candidates:
+        entry = cfg_dir.joinpath(candidate)
+        if entry.is_file():
+            src = entry
+            break
+    if src is None:
+        available = sorted(
+            p.name for p in cfg_dir.iterdir() if p.name.endswith(('.toml', '.cfg'))
+        )
+        raise click.UsageError(
+            f"unknown template '{template}'. Available templates: {', '.join(available)}."
+        )
+
+    dest_name = name if name.endswith('.toml') else f'{name}.toml'
+    dest = Path.cwd() / dest_name
+    if dest.exists() and not force:
+        raise click.UsageError(
+            f'{dest} already exists. Pass --force to overwrite, or pick a different name.'
+        )
+
+    dest.write_text(src.read_text(encoding='utf-8'), encoding='utf-8')
+    click.echo(f'wrote {dest} (from template {template})')
+
+
+# ---------------------------------------------------------------------------
 # aragog vnv
 # ---------------------------------------------------------------------------
 

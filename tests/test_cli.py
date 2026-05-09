@@ -113,15 +113,16 @@ def test_cli_is_a_click_group():
 
 
 def test_cli_registers_expected_subcommands():
-    """The three documented subcommands must be registered.
+    """The documented subcommands must be registered.
 
     Discriminator: the test fails if either an extra debug command
     leaks in (e.g. someone leaves a stray `@cli.command()` during
-    development) or one of the three goes missing.
+    development) or one of the documented commands goes missing.
+    Tier 1 documented set: run, list-configs, new, vnv.
     """
     from aragog.cli import cli
 
-    expected = {'run', 'list-configs', 'vnv'}
+    expected = {'run', 'list-configs', 'new', 'vnv'}
     actual = set(cli.commands)
     assert actual == expected, (
         f'aragog.cli subcommands: expected {sorted(expected)}, got {sorted(actual)}.'
@@ -197,6 +198,111 @@ def test_vnv_rejects_unknown_topic():
     assert 'unknown V&V topic' in (result.output or '')
     assert '--list' in (result.output or ''), (
         'unknown-topic message should redirect users to --list.'
+    )
+
+
+def test_new_scaffolds_default_template(tmp_path, monkeypatch):
+    """`aragog new my_run` writes a TOML file in the cwd by copying the
+    default abe_solid template.
+
+    Discriminator: the destination file must exist after invocation
+    AND its contents must equal the template's contents byte-for-byte
+    (catches a regression that wrote an empty file or a stale stub).
+    """
+    from aragog.cli import cli
+
+    monkeypatch.chdir(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['new', 'my_run'])
+
+    assert result.exit_code == 0, result.output
+    dest = tmp_path / 'my_run.toml'
+    assert dest.is_file(), f'expected {dest} to exist; output={result.output!r}'
+
+    # Compare against bundled abe_solid.toml byte-for-byte.
+    import importlib.resources
+
+    template = (
+        importlib.resources.files('aragog')
+        .joinpath('cfg/abe_solid.toml')
+        .read_text(encoding='utf-8')
+    )
+    assert dest.read_text(encoding='utf-8') == template, (
+        'scaffolded file diverges from the bundled template; the copy is broken.'
+    )
+
+
+def test_new_appends_toml_suffix_when_missing(tmp_path, monkeypatch):
+    """`aragog new foo` writes foo.toml; `aragog new foo.toml` writes
+    foo.toml. Edge case: the suffix logic must be idempotent.
+    """
+    from aragog.cli import cli
+
+    monkeypatch.chdir(tmp_path)
+
+    runner = CliRunner()
+    runner.invoke(cli, ['new', 'no_suffix'])
+    runner.invoke(cli, ['new', 'with_suffix.toml'])
+
+    assert (tmp_path / 'no_suffix.toml').is_file()
+    assert (tmp_path / 'with_suffix.toml').is_file()
+    assert not (tmp_path / 'with_suffix.toml.toml').exists(), (
+        'aragog new doubled the .toml suffix; the suffix logic is not idempotent.'
+    )
+
+
+def test_new_rejects_unknown_template(tmp_path, monkeypatch):
+    """`aragog new foo --from nonexistent` must fail with a clear list
+    of available templates, not silently produce an empty file.
+    """
+    from aragog.cli import cli
+
+    monkeypatch.chdir(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['new', 'foo', '--from', 'nonexistent_template'])
+
+    assert result.exit_code != 0
+    assert 'unknown template' in (result.output or '')
+    assert 'abe_solid.toml' in (result.output or ''), (
+        'available templates list should include the canonical abe_solid.toml; '
+        f'got output={result.output!r}.'
+    )
+    assert not (tmp_path / 'foo.toml').exists(), (
+        'aragog new wrote a file even though the template was unknown.'
+    )
+
+
+def test_new_refuses_overwrite_without_force(tmp_path, monkeypatch):
+    """When the destination exists, `aragog new` must refuse to
+    overwrite unless `--force` is passed.
+
+    Edge case: a user running `aragog new my_run` twice in a row
+    must not silently lose their edits to the first file.
+    """
+    from aragog.cli import cli
+
+    monkeypatch.chdir(tmp_path)
+    existing = tmp_path / 'my_run.toml'
+    existing.write_text('# user edits\n', encoding='utf-8')
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['new', 'my_run'])
+
+    assert result.exit_code != 0
+    assert '--force' in (result.output or ''), (
+        'overwrite-refusal message should suggest the --force escape hatch.'
+    )
+    assert existing.read_text(encoding='utf-8') == '# user edits\n', (
+        'aragog new clobbered an existing file without --force.'
+    )
+
+    # With --force the overwrite goes through.
+    result = runner.invoke(cli, ['new', 'my_run', '--force'])
+    assert result.exit_code == 0
+    assert existing.read_text(encoding='utf-8') != '# user edits\n', (
+        '--force did not actually overwrite the file.'
     )
 
 
