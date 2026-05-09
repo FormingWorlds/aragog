@@ -9,11 +9,16 @@ emits a logger.warning *once* per ``EntropyState`` instance when it
 triggers, so a degenerate EOS gets flagged but does not flood the log
 across thousands of RHS calls per coupling step.
 
-These tests instantiate the cache-populating methods with stubbed
-phase evaluators that *deliberately* return floor-triggering values.
-They verify (a) the warning fires the first time the floor activates,
-(b) it does NOT fire on the second invocation (throttling holds), and
-(c) the warning stays silent on a healthy EOS (negative regression).
+The Cp clamps share a common implementation,
+``EntropyState._maybe_warn_cp_floor``, so the conduction and MLT paths
+are tested through that helper and the production callsites are
+verified by reading the source. The phase-boundary clamps live inline
+in the cache populators and are tested by direct method call. NaN
+inputs must count as below-floor and be replaced (a strict ``< floor``
+test silently misses NaN, which then propagates through
+``np.maximum(NaN, floor) = NaN`` into the lever-rule denominator on the
+next RHS call).
+
 The matching kappa_h floor at the rheological transition is *not*
 covered: that floor fires by design at every RHS call inside the mushy
 band and is intentionally silent.
@@ -41,16 +46,17 @@ def _make_minimal_state(
     liquidus_basic: np.ndarray | None = None,
     solidus_stag: np.ndarray | None = None,
     liquidus_stag: np.ndarray | None = None,
-    Cp_basic_value: float | None = None,
 ) -> EntropyState:
     """Build an EntropyState with enough stubs to exercise the cache
-    populators and the MLT block in isolation.
+    populators and the Cp-clamp helper in isolation.
 
     The real EntropyState wires through Mesh + EntropyPhaseEvaluator +
     EntropyEOS; here we replace each layer with a SimpleNamespace stub
-    that returns user-supplied solidus/liquidus arrays and a constant
-    ``Cp`` from ``heat_capacity()``. The pressure objects are unique
-    per call so the per-id cache check does not short-circuit.
+    that returns user-supplied solidus/liquidus arrays. The pressure
+    objects are unique per call so the per-id cache check does not
+    short-circuit. The stubs only need to satisfy ``__init__`` and the
+    two ``_ensure_*_phase_boundary_cache`` populators; ``update()`` is
+    not called by these tests.
 
     Parameters
     ----------
@@ -60,9 +66,6 @@ def _make_minimal_state(
     solidus_basic, liquidus_basic, solidus_stag, liquidus_stag
         Per-node solidus/liquidus entropies. Defaults: gap = 1500 J/kg/K
         on every node, well above the 1 J/kg/K floor.
-    Cp_basic_value
-        Constant Cp for the phase_basic stub. Default 1500 J/kg/K (above
-        every floor). Pass < 1.0 to trigger the MLT guard.
     """
     n_staggered = n_basic - 1
     if solidus_basic is None:
@@ -73,16 +76,15 @@ def _make_minimal_state(
         solidus_stag = np.full(n_staggered, 2500.0)
     if liquidus_stag is None:
         liquidus_stag = np.full(n_staggered, 4000.0)
-    if Cp_basic_value is None:
-        Cp_basic_value = 1500.0
 
     P_basic = np.linspace(1.0e9, 1.0e11, n_basic)
     P_stag = 0.5 * (P_basic[:-1] + P_basic[1:])
     basic_radii = np.linspace(3.5e6, 6.4e6, n_basic)
     stag_radii = 0.5 * (basic_radii[:-1] + basic_radii[1:])
 
-    # The cache populators dispatch by which pressure array the caller
-    # passed (id-based), so we route the EOS stub by ndarray length.
+    # Route by query length: solver passes basic-node and staggered-node
+    # pressure arrays separately, so dispatch the EOS stub by ndarray
+    # length to the right precomputed solidus/liquidus.
     def _route(arr_basic: np.ndarray, arr_stag: np.ndarray, P_query):
         n = np.asarray(P_query).ravel().size
         if n == n_basic:
@@ -107,13 +109,6 @@ def _make_minimal_state(
         pressure=P_basic.copy(),
         _eos=eos_stub,
         _const_properties=False,
-        heat_capacity=lambda: np.full(n_basic, Cp_basic_value),
-        temperature=lambda: np.full(n_basic, 3000.0),
-        density=lambda: np.full(n_basic, 4000.0),
-        gravitational_acceleration=lambda: np.full(n_basic, 9.8),
-        thermal_expansivity=lambda: np.full(n_basic, 3.0e-5),
-        kinematic_viscosity=lambda: np.full(n_basic, 1.0e-2),
-        melt_fraction=lambda: np.full(n_basic, 0.5),
     )
 
     mesh_basic = SimpleNamespace(
@@ -135,44 +130,211 @@ def _make_minimal_state(
     )
 
 
-# ---- dS_phase_stag floor ---------------------------------------------------
+def _force_recompute(state: EntropyState, which: str) -> None:
+    """Invalidate the per-id phase-boundary cache so a follow-up call
+    re-runs the populator. Used to verify the throttle holds across
+    multiple cache misses.
+    """
+    if which == 'staggered':
+        state._P_stag_cached_id = -1
+        state.phase_staggered.pressure = state.phase_staggered.pressure.copy()
+    elif which == 'basic':
+        state._P_basic_cached_id = -1
+        state.phase_basic.pressure = state.phase_basic.pressure.copy()
+    else:
+        raise ValueError(which)
 
 
-def test_dS_phase_stag_floor_warns_once_when_gap_is_zero(caplog):
-    """Solidus equals liquidus at every node (gap = 0): the floor must
-    fire on the first cache populate, raise exactly one WARNING with the
-    node count, and then stay silent on a second populate even after
-    invalidating the per-id cache.
+# ---- _maybe_warn_cp_floor (Cp clamp helper, shared by MLT + conduction) ----
+
+
+def test_cp_floor_helper_warns_once_with_correct_count(caplog):
+    """The shared helper must warn exactly once per (instance, flag)
+    pair and report the count of triggered nodes. Asymmetric input
+    (3 of 5 below) discriminates against a regression that uses
+    ``Cp.size`` or ``np.all`` instead of the boolean mask.
+    """
+    state = _make_minimal_state()
+    Cp = np.array([2000.0, 50.0, 1500.0, 75.0, 30.0])  # 3 of 5 below 100
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        Cp_safe_first = state._maybe_warn_cp_floor(
+            Cp,
+            floor=100.0,
+            site='conduction',
+            consequence='F_cond is biased upward',
+            flag_name='_cp_floor_warned',
+        )
+        Cp_safe_second = state._maybe_warn_cp_floor(
+            Cp,
+            floor=100.0,
+            site='conduction',
+            consequence='F_cond is biased upward',
+            flag_name='_cp_floor_warned',
+        )
+
+    records = [r for r in caplog.records if 'EntropyState conduction' in r.message]
+    assert len(records) == 1
+    assert '3 node(s)' in records[0].message
+    assert state._cp_floor_warned is True
+    # The clamp itself is applied on every call, even after the warning
+    # is throttled — only the LOG is silenced.
+    expected = np.array([2000.0, 100.0, 1500.0, 100.0, 100.0])
+    np.testing.assert_array_equal(Cp_safe_first, expected)
+    np.testing.assert_array_equal(Cp_safe_second, expected)
+
+
+def test_cp_floor_helper_silent_on_healthy_input(caplog):
+    """Negative regression: a healthy Cp profile must NOT trigger the
+    warning or the throttle flag. Catches a sign-flip regression where
+    the trigger condition is inverted and fires on every call.
+    """
+    state = _make_minimal_state()
+    Cp = np.full(5, 1500.0)  # well above any guard
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        Cp_safe = state._maybe_warn_cp_floor(
+            Cp,
+            floor=100.0,
+            site='conduction',
+            consequence='F_cond is biased upward',
+            flag_name='_cp_floor_warned',
+        )
+
+    assert all('EntropyState conduction' not in r.message for r in caplog.records)
+    assert state._cp_floor_warned is False
+    np.testing.assert_array_equal(Cp_safe, Cp)
+
+
+def test_cp_floor_helper_treats_nan_as_below_floor_and_replaces_it(caplog):
+    """Critical NaN regression: a strict ``Cp < floor`` test silently
+    misses NaN (IEEE 754 says ``NaN < x`` is False), and
+    ``np.maximum(NaN, floor)`` returns NaN, which then propagates into
+    the lever-rule denominator on the next RHS call. The helper uses
+    ``~(Cp >= floor)`` so NaN counts as below-floor, AND assigns
+    ``floor`` (not NaN) to those nodes via ``np.where``.
+    """
+    state = _make_minimal_state()
+    Cp = np.array([1500.0, np.nan, 200.0, np.nan, 1500.0])  # 2 NaN, 0 sub-floor
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        Cp_safe = state._maybe_warn_cp_floor(
+            Cp,
+            floor=100.0,
+            site='conduction',
+            consequence='F_cond is biased upward',
+            flag_name='_cp_floor_warned',
+        )
+
+    records = [r for r in caplog.records if 'EntropyState conduction' in r.message]
+    assert len(records) == 1
+    # The 2 NaN nodes count as below-floor; the sub-floor count is 0.
+    assert '2 node(s)' in records[0].message
+    # Critically, no NaN survives the clamp.
+    assert not np.any(np.isnan(Cp_safe))
+    # NaN nodes were replaced with the floor value, healthy nodes pass through.
+    expected = np.array([1500.0, 100.0, 200.0, 100.0, 1500.0])
+    np.testing.assert_array_equal(Cp_safe, expected)
+
+
+def test_cp_floor_helper_throttle_flags_independent():
+    """Conduction and MLT clamps share the helper but use distinct
+    throttle flags. Tripping the conduction flag must not silence the
+    MLT warning on a later call, and vice versa.
+    """
+    state = _make_minimal_state()
+    Cp_low = np.full(5, 0.5)  # below both floors
+    state._maybe_warn_cp_floor(
+        Cp_low,
+        floor=100.0,
+        site='conduction',
+        consequence='conduction biased',
+        flag_name='_cp_floor_warned',
+    )
+    assert state._cp_floor_warned is True
+    assert state._cp_mlt_floor_warned is False
+
+    state._maybe_warn_cp_floor(
+        Cp_low,
+        floor=1.0,
+        site='MLT',
+        consequence='MLT biased',
+        flag_name='_cp_mlt_floor_warned',
+    )
+    assert state._cp_mlt_floor_warned is True
+
+
+def test_production_callsites_use_the_helper():
+    """Source-level guard: the conduction and MLT blocks in update()
+    must dispatch through ``_maybe_warn_cp_floor``. Catches a regression
+    that re-inlines the conditional and silently breaks the NaN-safe
+    behaviour.
+
+    This is a static assertion against the bytecode constants of
+    ``EntropyState.update`` so a refactor that changes the flag names
+    or the floor values fails this check loudly rather than passing
+    every behavioural test in this file.
+    """
+    update_code = EntropyState.update.__code__
+    consts = update_code.co_consts
+    # Both flag names must appear as string literals in update()'s
+    # constant pool — they are passed by name to the helper.
+    assert '_cp_floor_warned' in consts
+    assert '_cp_mlt_floor_warned' in consts
+    # Both floor values must appear too.
+    assert 1.0 in consts  # MLT
+    assert 100.0 in consts  # conduction
+
+
+# ---- dS_phase_stag floor (inline in _ensure_phase_boundary_cache) ----------
+
+
+def test_dS_phase_stag_floor_warns_once_when_all_nodes_collapse(caplog):
+    """All staggered nodes have gap = 0: warning fires once on the
+    first cache populate, count matches n_staggered, and the floor
+    replaces every entry with 1.0.
     """
     n_basic = 5
     n_staggered = n_basic - 1  # 4
     sol_stag = np.full(n_staggered, 3000.0)
-    liq_stag = np.full(n_staggered, 3000.0)  # gap = 0 on every staggered node
+    liq_stag = np.full(n_staggered, 3000.0)
     state = _make_minimal_state(n_basic=n_basic, solidus_stag=sol_stag, liquidus_stag=liq_stag)
 
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
         state._ensure_phase_boundary_cache()
-        # Force a second populate: change the cached id sentinel and
-        # hand the populator a fresh pressure array (different id).
-        state._P_stag_cached_id = -1
-        state.phase_staggered.pressure = state.phase_staggered.pressure.copy()
+        _force_recompute(state, 'staggered')
         state._ensure_phase_boundary_cache()
 
-    stag_records = [
-        r for r in caplog.records if 'phase-boundary cache (staggered)' in r.message
-    ]
-    assert len(stag_records) == 1, (
-        f'expected exactly 1 staggered-floor warning, got {len(stag_records)}'
-    )
-    assert f'{n_staggered} node(s)' in stag_records[0].message
-    # The floor is in fact applied — physical state stays well-defined.
-    assert np.allclose(state._dS_phase_stag, 1.0)
+    records = [r for r in caplog.records if 'phase-boundary cache (staggered)' in r.message]
+    assert len(records) == 1, f'expected 1 staggered-floor warning, got {len(records)}'
+    assert f'{n_staggered} node(s)' in records[0].message
+    np.testing.assert_array_equal(state._dS_phase_stag, np.full(n_staggered, 1.0))
+
+
+def test_dS_phase_stag_floor_warns_once_with_partial_collapse(caplog):
+    """Discriminator: only 2 of 4 staggered nodes have gap < 1 J/kg/K.
+    The warning message must report 2, not 4 — catches a regression
+    that uses ``arr.size`` instead of the boolean mask, AND a
+    regression that swaps ``np.any`` for ``np.all`` (which would not
+    fire on partial collapse).
+    """
+    n_basic = 5
+    n_staggered = n_basic - 1  # 4
+    sol_stag = np.full(n_staggered, 3000.0)
+    # cells 1 and 3 collapsed (gap = 0.4 and 0); cells 0 and 2 healthy.
+    liq_stag = np.array([4500.0, 3000.4, 4500.0, 3000.0])
+    state = _make_minimal_state(n_basic=n_basic, solidus_stag=sol_stag, liquidus_stag=liq_stag)
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        state._ensure_phase_boundary_cache()
+
+    records = [r for r in caplog.records if 'phase-boundary cache (staggered)' in r.message]
+    assert len(records) == 1
+    assert '2 node(s)' in records[0].message
+    expected = np.array([1500.0, 1.0, 1500.0, 1.0])
+    np.testing.assert_array_equal(state._dS_phase_stag, expected)
 
 
 def test_dS_phase_stag_floor_silent_on_healthy_gap(caplog):
     """Negative regression: a healthy gap of 1500 J/kg/K must NOT
-    trigger the warning. Catches a sign-flip / off-by-one regression
-    that fires the warning on every healthy table.
+    trigger the warning or the floor.
     """
     state = _make_minimal_state()  # default gap = 1500
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
@@ -182,14 +344,37 @@ def test_dS_phase_stag_floor_silent_on_healthy_gap(caplog):
     assert state._dS_phase_stag_floor_warned is False
 
 
-# ---- dS_phase_basic floor --------------------------------------------------
+def test_dS_phase_stag_floor_treats_nan_gap_as_below_floor(caplog):
+    """NaN regression for the staggered cache populator: a NaN gap
+    must count as below-floor AND be replaced by the floor value.
+    Without this, ``np.maximum(NaN, 1.0) = NaN`` propagates into the
+    lever-rule denominator on the next RHS call.
+    """
+    n_basic = 5
+    n_staggered = n_basic - 1  # 4
+    sol_stag = np.full(n_staggered, 3000.0)
+    # cell 0 healthy, cell 1 NaN (S_liq = NaN), cell 2 healthy, cell 3 below floor.
+    liq_stag = np.array([4500.0, np.nan, 4500.0, 3000.0])
+    state = _make_minimal_state(n_basic=n_basic, solidus_stag=sol_stag, liquidus_stag=liq_stag)
+
+    with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+        state._ensure_phase_boundary_cache()
+
+    records = [r for r in caplog.records if 'phase-boundary cache (staggered)' in r.message]
+    assert len(records) == 1
+    assert '2 node(s)' in records[0].message  # NaN cell + below-floor cell
+    assert not np.any(np.isnan(state._dS_phase_stag))
+    expected = np.array([1500.0, 1.0, 1500.0, 1.0])
+    np.testing.assert_array_equal(state._dS_phase_stag, expected)
+
+
+# ---- dS_phase_basic floor (inline in _ensure_basic_phase_boundary_cache) ----
 
 
 def test_dS_phase_basic_floor_warns_once_with_partial_collapse(caplog):
-    """Discriminator: gap is collapsed at only 2 of 5 nodes; the
-    warning message must report the *count* of triggered nodes (2),
-    not all 5. Catches a regression where the count uses ``size``
-    instead of the boolean mask.
+    """Discriminator at the basic-node cache: 2 of 5 nodes collapsed.
+    Same anti-regression behaviour as the staggered partial-collapse
+    test, but on the basic-node cache populator.
     """
     n_basic = 5
     sol = np.full(n_basic, 3000.0)
@@ -198,16 +383,14 @@ def test_dS_phase_basic_floor_warns_once_with_partial_collapse(caplog):
 
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
         state._ensure_basic_phase_boundary_cache()
-        state._P_basic_cached_id = -1
-        state.phase_basic.pressure = state.phase_basic.pressure.copy()
+        _force_recompute(state, 'basic')
         state._ensure_basic_phase_boundary_cache()
 
-    basic_records = [r for r in caplog.records if 'phase-boundary cache (basic)' in r.message]
-    assert len(basic_records) == 1
-    assert '2 node(s)' in basic_records[0].message  # only the collapsed cells counted
-    # Healthy nodes keep their real gap; collapsed nodes were floored to 1.
+    records = [r for r in caplog.records if 'phase-boundary cache (basic)' in r.message]
+    assert len(records) == 1
+    assert '2 node(s)' in records[0].message
     expected = np.array([1500.0, 1.0, 1500.0, 1.0, 1500.0])
-    np.testing.assert_allclose(state._dS_phase_basic, expected)
+    np.testing.assert_array_equal(state._dS_phase_basic, expected)
 
 
 def test_dS_phase_basic_floor_silent_on_healthy_gap(caplog):
@@ -220,47 +403,21 @@ def test_dS_phase_basic_floor_silent_on_healthy_gap(caplog):
     assert state._dS_phase_basic_floor_warned is False
 
 
-# ---- MLT Cp floor ----------------------------------------------------------
-
-
-def test_cp_mlt_floor_warned_flag_starts_false():
-    """A fresh EntropyState must start with all four throttle flags
-    cleared. Catches a regression that forgets to initialise a new flag
-    and so warns *every* call without throttling.
+def test_dS_phase_basic_floor_treats_nan_gap_as_below_floor(caplog):
+    """NaN regression for the basic-node populator. Same mechanism as
+    the staggered case, on the second cache.
     """
-    state = _make_minimal_state()
-    assert state._cp_floor_warned is False
-    assert state._cp_mlt_floor_warned is False
-    assert state._dS_phase_stag_floor_warned is False
-    assert state._dS_phase_basic_floor_warned is False
+    n_basic = 5
+    sol = np.full(n_basic, 3000.0)
+    liq = np.array([4500.0, np.nan, 4500.0, 3000.0, np.nan])  # 3 problem cells
+    state = _make_minimal_state(n_basic=n_basic, solidus_basic=sol, liquidus_basic=liq)
 
-
-def test_cp_mlt_floor_warning_logic_throttles(caplog):
-    """The MLT clamp at the eddy-diffusivity prefactor warns at most
-    once per instance. We exercise the throttling logic directly
-    (Cp < 1 guard ⇒ flag flip) without spinning up the full update()
-    path, since update() requires a fully wired solver. The test
-    reproduces the if-block exactly as written in entropy_state.py.
-    """
-    state = _make_minimal_state(Cp_basic_value=0.5)  # below the 1.0 floor
-    Cp = np.full(5, 0.5)
-
-    # Reproduce the production conditional verbatim, twice.
-    logger = logging.getLogger(LOGGER_NAME)
     with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
-        for _ in range(2):
-            if not state._cp_mlt_floor_warned and np.any(Cp < 1.0):
-                logger.warning(
-                    'EntropyState MLT: Cp dropped below the 1 J/kg/K '
-                    'division-safety guard at %d node(s); eddy-diffusivity '
-                    'velocity prefactor is biased upward at those points. '
-                    'Suppressing further per-RHS warnings — check the EOS Cp '
-                    'tables and the load-time _check_eos_floors output.',
-                    int(np.sum(Cp < 1.0)),
-                )
-                state._cp_mlt_floor_warned = True
+        state._ensure_basic_phase_boundary_cache()
 
-    mlt_records = [r for r in caplog.records if 'EntropyState MLT' in r.message]
-    assert len(mlt_records) == 1
-    assert '5 node(s)' in mlt_records[0].message
-    assert state._cp_mlt_floor_warned is True
+    records = [r for r in caplog.records if 'phase-boundary cache (basic)' in r.message]
+    assert len(records) == 1
+    assert '3 node(s)' in records[0].message
+    assert not np.any(np.isnan(state._dS_phase_basic))
+    expected = np.array([1500.0, 1.0, 1500.0, 1.0, 1.0])
+    np.testing.assert_array_equal(state._dS_phase_basic, expected)

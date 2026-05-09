@@ -255,7 +255,7 @@ The formulation maps to the following source modules:
 | Per-RHS flux assembly, MLT, gravitational separation, mixing | `aragog.solver.entropy_state` |
 | JAX-traceable phase and flux for the analytic Jacobian path | `aragog.jax` |
 | Configuration parsing | `aragog.parser`, `aragog.config` |
-| Diagnostic helpers (rheological front, global $\phi$) | `aragog.output.diagnostics` |
+| Diagnostic helpers (rheological front, integrated enthalpy, volume average) | `aragog.output.diagnostics` |
 
 For the package layout in detail, see [Code architecture](code_architecture.md). For the public API, see the [API reference](../Reference/api/index.md).
 

@@ -300,17 +300,23 @@ class EntropyState:
         self._S_sol_stag = np.asarray(eos.solidus_entropy(P_stag)).ravel()
         self._S_liq_stag = np.asarray(eos.liquidus_entropy(P_stag)).ravel()
         dS_raw_stag = self._S_liq_stag - self._S_sol_stag
-        if not self._dS_phase_stag_floor_warned and np.any(dS_raw_stag < 1.0):
+        # ``below_floor`` is the negation of ``>= 1.0`` so it captures both
+        # x < 1.0 AND NaN entries (a strict ``< 1.0`` test silently misses
+        # NaN, which then propagates through ``np.maximum(NaN, 1.0) = NaN``
+        # into the lever-rule denominator on the next RHS call). The same
+        # mask drives both the warning count and the floor assignment.
+        below_floor = ~(dS_raw_stag >= 1.0)
+        if not self._dS_phase_stag_floor_warned and np.any(below_floor):
             logger.warning(
                 'EntropyState phase-boundary cache (staggered): solidus-'
-                'liquidus entropy gap fell below 1 J/kg/K at %d node(s); '
-                'lever-rule blending will be poorly conditioned at those '
-                'points. Suppressing further per-RHS warnings — check the '
-                'EOS solidus/liquidus tables.',
-                int(np.sum(dS_raw_stag < 1.0)),
+                'liquidus entropy gap fell below 1 J/kg/K (or is NaN) at '
+                '%d node(s); lever-rule blending will be poorly conditioned '
+                'at those points. Suppressing further per-RHS warnings — '
+                'check the EOS solidus/liquidus tables.',
+                int(np.sum(below_floor)),
             )
             self._dS_phase_stag_floor_warned = True
-        self._dS_phase_stag = np.maximum(dS_raw_stag, 1.0)
+        self._dS_phase_stag = np.where(below_floor, 1.0, dS_raw_stag)
         self._P_stag_cached_id = id(pressure_obj)
 
     def _ensure_basic_phase_boundary_cache(self) -> None:
@@ -338,17 +344,19 @@ class EntropyState:
         self._S_sol_basic = np.asarray(eos.solidus_entropy(P_basic)).ravel()
         self._S_liq_basic = np.asarray(eos.liquidus_entropy(P_basic)).ravel()
         dS_raw_basic = self._S_liq_basic - self._S_sol_basic
-        if not self._dS_phase_basic_floor_warned and np.any(dS_raw_basic < 1.0):
+        # NaN-safe trigger mask; see the staggered populator for rationale.
+        below_floor = ~(dS_raw_basic >= 1.0)
+        if not self._dS_phase_basic_floor_warned and np.any(below_floor):
             logger.warning(
                 'EntropyState phase-boundary cache (basic): solidus-'
-                'liquidus entropy gap fell below 1 J/kg/K at %d node(s); '
-                'lever-rule blending will be poorly conditioned at those '
-                'points. Suppressing further per-RHS warnings — check the '
-                'EOS solidus/liquidus tables.',
-                int(np.sum(dS_raw_basic < 1.0)),
+                'liquidus entropy gap fell below 1 J/kg/K (or is NaN) at '
+                '%d node(s); lever-rule blending will be poorly conditioned '
+                'at those points. Suppressing further per-RHS warnings — '
+                'check the EOS solidus/liquidus tables.',
+                int(np.sum(below_floor)),
             )
             self._dS_phase_basic_floor_warned = True
-        self._dS_phase_basic = np.maximum(dS_raw_basic, 1.0)
+        self._dS_phase_basic = np.where(below_floor, 1.0, dS_raw_basic)
         self._dS_sol_dP_basic = np.asarray(eos.solidus_entropy_dP(P_basic)).ravel()
         self._dS_liq_dP_basic = np.asarray(eos.liquidus_entropy_dP(P_basic)).ravel()
         # Mesh pressure gradient at basic nodes (P decreases outward,
@@ -361,6 +369,62 @@ class EntropyState:
         L_basic = np.asarray(eos.latent_heat(P_basic)).ravel()
         self._T_fus_basic = L_basic / self._dS_phase_basic
         self._P_basic_cached_id = id(pressure_obj)
+
+    def _maybe_warn_cp_floor(
+        self,
+        Cp: np.ndarray,
+        *,
+        floor: float,
+        site: str,
+        consequence: str,
+        flag_name: str,
+    ) -> np.ndarray:
+        """Apply a Cp >= ``floor`` clamp and warn once per instance if it
+        triggers anywhere on the input.
+
+        ``site`` and ``consequence`` build the user-facing warning text;
+        ``flag_name`` names the throttle attribute on ``self`` so the
+        same throttling logic services both the conduction and MLT Cp
+        guards. NaN entries count as below-floor (a strict ``Cp < floor``
+        test silently misses NaN, which then propagates through
+        ``np.maximum(NaN, floor) = NaN``).
+
+        Parameters
+        ----------
+        Cp
+            Heat-capacity values at basic nodes [J/kg/K].
+        floor
+            Lower clamp value (also the warning threshold).
+        site
+            Short label for the call site, e.g. ``'conduction'`` or
+            ``'MLT'``. Inserted into the warning text.
+        consequence
+            Short clause naming the downstream quantity that gets biased
+            when the floor activates.
+        flag_name
+            The ``self.<flag_name>`` boolean used to throttle the
+            warning to one fire per ``EntropyState`` instance.
+
+        Returns
+        -------
+        Cp_safe
+            ``Cp`` with all sub-floor and NaN entries replaced by
+            ``floor``.
+        """
+        below_floor = ~(Cp >= floor)
+        if not getattr(self, flag_name) and np.any(below_floor):
+            logger.warning(
+                'EntropyState %s: Cp dropped below the %g J/kg/K guard '
+                '(or is NaN) at %d node(s); %s. Suppressing further '
+                'per-RHS warnings — check the EOS Cp tables and the '
+                'load-time _check_eos_floors output.',
+                site,
+                floor,
+                int(np.sum(below_floor)),
+                consequence,
+            )
+            setattr(self, flag_name, True)
+        return np.where(below_floor, floor, Cp)
 
     def update(
         self,
@@ -509,17 +573,16 @@ class EntropyState:
         # threshold, so the near-zero eps matches SPIDER's behavior. If
         # CVODE stability requires smoothing, increase to ~1e-20.
         conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-30)
-        if not self._cp_mlt_floor_warned and np.any(Cp < 1.0):
-            logger.warning(
-                'EntropyState MLT: Cp dropped below the 1 J/kg/K '
-                'division-safety guard at %d node(s); eddy-diffusivity '
-                'velocity prefactor is biased upward at those points. '
-                'Suppressing further per-RHS warnings — check the EOS Cp '
-                'tables and the load-time _check_eos_floors output.',
-                int(np.sum(Cp < 1.0)),
-            )
-            self._cp_mlt_floor_warned = True
-        effective_superadiabatic = alpha * T * conv_drive / np.maximum(Cp, 1.0)
+        Cp_safe_mlt = self._maybe_warn_cp_floor(
+            Cp,
+            floor=1.0,
+            site='MLT',
+            consequence=(
+                'eddy-diffusivity velocity prefactor is biased upward at those points'
+            ),
+            flag_name='_cp_mlt_floor_warned',
+        )
+        effective_superadiabatic = alpha * T * conv_drive / Cp_safe_mlt
         velocity_prefactor = g * effective_superadiabatic
 
         # Viscous velocity (Re <= Re_crit). No boolean masking needed:
@@ -659,17 +722,13 @@ class EntropyState:
             # (P, S) queries the static scan cannot anticipate. The
             # warning is throttled to one fire per EntropyState instance
             # to avoid log spam over thousands of RHS calls per step.
-            if not self._cp_floor_warned and np.any(Cp < 100.0):
-                logger.warning(
-                    'EntropyState conduction: Cp dropped below the 100 '
-                    'J/kg/K guard at %d node(s); F_cond superadiabatic '
-                    'term is biased upward at those points. Suppressing '
-                    'further per-RHS warnings — check the EOS Cp tables '
-                    'and the load-time _check_eos_floors output.',
-                    int(np.sum(Cp < 100.0)),
-                )
-                self._cp_floor_warned = True
-            Cp_safe = np.maximum(Cp, 100.0)
+            Cp_safe = self._maybe_warn_cp_floor(
+                Cp,
+                floor=100.0,
+                site='conduction',
+                consequence=('F_cond superadiabatic term is biased upward at those points'),
+                flag_name='_cp_floor_warned',
+            )
             superadiabatic = (T / Cp_safe) * self._dSdr
             # Adiabatic gradient from EOS table: dT/dr|_ad = dTdPs * dPdr
             # where dPdr comes from the mesh pressure profile
