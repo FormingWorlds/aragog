@@ -72,3 +72,8 @@ In production runs (PROTEUS-coupled or standalone), Aragog uses the [PALEOS](htt
 For SPIDER-parity reproduction or older reference runs, Aragog also accepts the [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract) RTpress liquid EOS through the `phase_solid` / `phase_liquid` config keys.
 
 For a standalone install, point the `eos_dir` argument of `EntropySolver.from_file()` at any directory containing the ten required files; the canonical file list and schema are documented in [Reference: data](../Reference/data.md).
+
+## References
+
+- [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*. Submitted to **A&A**, arXiv:2605.03741.
+- [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract). *An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt*. **Physics of the Earth and Planetary Interiors**, 278, 59 to 74.

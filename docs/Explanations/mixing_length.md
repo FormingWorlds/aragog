@@ -164,16 +164,16 @@ The version of MLT in Aragog inherits five concrete choices that distinguish it 
   Aragog reports $F_\mathrm{conv}$ separately from the conduction, gravitational-separation, and chemical-mixing fluxes, with reconstruction of the total to floating-point round-off (Figure 2 of [Heat transport](heat_transport.md)).
   This component-wise decomposition is not natural in a BLT formulation, where the single closed-form $F_\mathrm{surf}$ is the only flux available for diagnostics.
 
-## Where to read more
+## References
 
-- [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. Geophysical Monograph 74, American Geophysical Union, pp. 41-54. The two-regime MLT form Aragog and SPIDER both follow.
-- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Source for $\mathrm{Re}_\mathrm{crit} = 9/8$ via the viscous-inviscid asymptotic match.
-- [Abe (1997)](https://scixplorer.org/abs/1997PEPI..100...27A/abstract). *Thermal and chemical evolution of the terrestrial magma ocean*. PEPI 100, 27.
-- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. PEPI 274, 49. The SPIDER paper; the entropy-form mantle equation Aragog inherits.
-- [Elkins-Tanton (2008)](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract). *Linked magma ocean solidification and atmospheric growth for Earth and Mars*. EPSL 271, 181. A representative BLT magma-ocean evolution coupled to a grey atmosphere.
-- [Hamano et al. (2013)](https://scixplorer.org/abs/2013Natur.497..607H/abstract). *Emergence of two types of terrestrial planet on solidification of magma ocean*. Nature 497, 607.
-- [Lichtenberg et al. (2021)](https://scixplorer.org/abs/2021JGRE..12606711L/abstract). *Vertically resolved magma ocean-protoatmosphere evolution*. JGR Planets 126, e06711. SPIDER + atmosphere coupling that Aragog now replaces inside PROTEUS.
-- [Schaefer et al. (2016)](https://scixplorer.org/abs/2016ApJ...829...63S/abstract). *Predictions of the atmospheric composition of GJ 1132b*. ApJ 829, 63. A representative BLT magma-ocean coupled to atmospheric photochemistry and escape.
-- [Solomatov (2007)](https://scixplorer.org/abs/2007evea.book...91S/abstract). *Magma oceans and primordial mantle differentiation*. In *Evolution of the Earth*, Treatise on Geophysics 9, 91. Review of the Nu-Ra scalings BLT relies on.
-- [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract). *Suspension in convective layers and style of differentiation of a terrestrial magma ocean*. JGR 98, 5375.
-- [Vitense (1953)](https://scixplorer.org/abs/1953ZA.....32..135V/abstract). *Die Wasserstoffkonvektionszone der Sonne*. Zeitschrift für Astrophysik 32, 135. Origin of the inviscid free-fall MLT velocity scaling that magma-ocean MLT inherits.
+- [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. **Geophysical Monograph 74**, AGU, 41 to 54.
+- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, 215 to 230.
+- [Abe (1997)](https://scixplorer.org/abs/1997PEPI..100...27A/abstract). *Thermal and chemical evolution of the terrestrial magma ocean*. **Physics of the Earth and Planetary Interiors**, 100, 27 to 39.
+- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62.
+- [Elkins-Tanton (2008)](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract). *Linked magma ocean solidification and atmospheric growth for Earth and Mars*. **Earth and Planetary Science Letters**, 271, 181 to 191.
+- [Hamano et al. (2013)](https://scixplorer.org/abs/2013Natur.497..607H/abstract). *Emergence of two types of terrestrial planet on solidification of magma ocean*. **Nature**, 497, 607 to 610.
+- [Lichtenberg et al. (2021)](https://scixplorer.org/abs/2021JGRE..12606711L/abstract). *Vertically resolved magma ocean-protoatmosphere evolution: H$_2$, H$_2$O, CO$_2$, CH$_4$, CO, O$_2$, and N$_2$ as primary absorbers*. **Journal of Geophysical Research: Planets**, 126, e06711.
+- [Schaefer et al. (2016)](https://scixplorer.org/abs/2016ApJ...829...63S/abstract). *Predictions of the atmospheric composition of GJ 1132b*. **The Astrophysical Journal**, 829, 63.
+- [Solomatov (2007)](https://scixplorer.org/abs/2007evea.book...91S/abstract). *Magma oceans and primordial mantle differentiation*. In *Evolution of the Earth*, **Treatise on Geophysics**, 9, 91 to 119.
+- [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract). *Suspension in convective layers and style of differentiation of a terrestrial magma ocean*. **Journal of Geophysical Research**, 98, 5375 to 5390.
+- [Vitense (1953)](https://scixplorer.org/abs/1953ZA.....32..135V/abstract). *Die Wasserstoffkonvektionszone der Sonne*. **Zeitschrift für Astrophysik**, 32, 135 to 164.

@@ -321,3 +321,8 @@ Uniform spacing in mass-coordinate space gives larger cells at the surface where
 - **`backend = "numpy"` at production tolerances** can trip Aragog's T_core-jump retry guard at the first dt jump. Switch to `"jax"` (or loosen tolerances explicitly, knowing this will silently drift across the rheological transition).
 
 For the why behind these, see the [Coupling to PROTEUS theory page](../Explanations/proteus_coupling.md).
+
+## References
+
+- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62.
+- [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract). *Radioactive heat production of six geologically important nuclides*. **Geochemistry, Geophysics, Geosystems**, 18, 3530 to 3541.

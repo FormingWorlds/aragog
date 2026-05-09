@@ -128,21 +128,21 @@ In that window:
 In a coupled atmosphere-interior simulation, this is the regime where atmospheric H$_2$O outgassing, surface volatile budgets, and the timing of solidification are decided.
 The one-phase formulation can give the right qualitative answer but will miss the resolved time-dependence and the radial structure that controls the coupling to the atmosphere.
 
-## Where to read more
-
-- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. PEPI 274, 49.
-  The two-phase formulation Aragog inherits, with full derivations of $j_\mathrm{grav}$, $F_\mathrm{mix}$, and the lever-rule blending.
-- [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. AGU Geophysical Monograph Series 74, 41.
-  The original two-phase magma-ocean formulation.
-- [Sasaki & Nakazawa (1986)](https://scixplorer.org/abs/1986JGR....91.9231S/abstract). *Metal-silicate fractionation in the growing Earth: Energy source for the terrestrial magma ocean*. JGR 91, 9231.
-  Stokes settling velocity of MLT convective parcels (the viscous-regime velocity scale of [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) Eq. 5a, used in [Mixing-length theory](mixing_length.md)).
-- [Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract). *A model for the rheology of particle-bearing suspensions and partially molten rocks*. G$^3$ 10, Q03010.
-  Source for the rheological-transition viscosity blend that Aragog uses.
-- [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract). *Suspension in convective layers and style of differentiation of a terrestrial magma ocean*. JGR 98, 5375.
-  Two-phase fluid-dynamical scaling for crystal suspension and settling.
-- Rumpf, H.C.H., and Gupte, A.R. (1971). *Einflüsse der Porosität und Korngrößenverteilung im Widerstandsgesetz der Porenströmung*. Chem. Ing. Tech. 43, 367. Permeability fit for the intermediate-$\phi$ branch.
-- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, pp. 215-230. Source for the consolidated three-regime $\zeta_\mathrm{grav}(\phi)$ formulation cited in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) footnote 3.
+## See also
 
 For the algebraic forms of the four heat-flux components Aragog assembles, see [Heat transport](heat_transport.md).
 For the closure that determines $\kappa_h$ in the convective flux, see [Mixing-length theory](mixing_length.md).
 For the SPIDER cross-check, see [Aragog vs SPIDER](spider_comparison.md).
+
+## References
+
+- [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. **Geophysical Monograph 74**, AGU, 41 to 54.
+- Abe, Y. (1995). *Basic equations for evolution of partially molten mantle and core*. In Yukutake, T. (ed.), *The Earth's Central Part: Its Structure and Dynamics*, Terra Sci. Pub. Com., Tokyo, 215 to 230.
+- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62.
+- [Costa et al. (2009)](https://scixplorer.org/abs/2009GGG....10.3010C/abstract). *A model for the rheology of particle-bearing suspensions and partially molten rocks*. **Geochemistry, Geophysics, Geosystems**, 10, Q03010.
+- [Elkins-Tanton (2008)](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract). *Linked magma ocean solidification and atmospheric growth for Earth and Mars*. **Earth and Planetary Science Letters**, 271, 181 to 191.
+- [Hamano et al. (2013)](https://scixplorer.org/abs/2013Natur.497..607H/abstract). *Emergence of two types of terrestrial planet on solidification of magma ocean*. **Nature**, 497, 607 to 610.
+- Rumpf, H.C.H., and Gupte, A.R. (1971). *Einflüsse der Porosität und Korngrößenverteilung im Widerstandsgesetz der Porenströmung*. **Chemie Ingenieur Technik**, 43, 367 to 375.
+- [Sasaki & Nakazawa (1986)](https://scixplorer.org/abs/1986JGR....91.9231S/abstract). *Metal-silicate fractionation in the growing Earth: Energy source for the terrestrial magma ocean*. **Journal of Geophysical Research**, 91, 9231 to 9238.
+- [Schaefer et al. (2016)](https://scixplorer.org/abs/2016ApJ...829...63S/abstract). *Predictions of the atmospheric composition of GJ 1132b*. **The Astrophysical Journal**, 829, 63.
+- [Solomatov & Stevenson (1993)](https://scixplorer.org/abs/1993JGR....98.5375S/abstract). *Suspension in convective layers and style of differentiation of a terrestrial magma ocean*. **Journal of Geophysical Research**, 98, 5375 to 5390.

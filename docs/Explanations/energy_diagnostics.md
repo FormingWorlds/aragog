@@ -125,3 +125,7 @@ Cumulative `E_residual_cons_frac` of more than ~5 % over a multi-Myr run, or `so
 python tools/plot_energy_balance.py output/<run_dir> --label <run_label>
 # writes output_files/energy_balance/<label>_balance.pdf and _powers.pdf
 ```
+
+## References
+
+- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62.

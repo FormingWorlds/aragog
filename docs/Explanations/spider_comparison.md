@@ -90,3 +90,10 @@ SPIDER writes one JSON file per output time via cJSON (`monitor.c`); Aragog writ
 The downstream PROTEUS plotting and analysis tooling consumes NetCDF.
 
 For the configuration details that map between the two codes, see [Configuration](../How-to/configuration.md) and [Standalone vs PROTEUS-integrated](../How-to/usage-paths.md).
+
+## References
+
+- [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*. Submitted to **A&A**, arXiv:2605.03741.
+- [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract). *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*. **Physics of the Earth and Planetary Interiors**, 274, 49 to 62.
+- [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract). *Radioactive heat production of six geologically important nuclides*. **Geochemistry, Geophysics, Geosystems**, 18, 3530 to 3541.
+- [Wolf & Bower (2018)](https://scixplorer.org/abs/2018PEPI..278...59W/abstract). *An equation of state for high pressure-temperature liquids (RTpress) with application to MgSiO3 melt*. **Physics of the Earth and Planetary Interiors**, 278, 59 to 74.

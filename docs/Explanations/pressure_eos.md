@@ -139,3 +139,7 @@ For the user-defined path (`eos_method = 2`) the cumulative mass is built from t
 | Constant-properties analytical mode | `1` (suffices; the analytical path bypasses the table lookups) |
 
 For a fuller treatment of when PALEOS-driven structures matter and how the standalone vs PROTEUS-coupled paths share the same numerical core, see [Standalone usage](../How-to/usage-paths.md) and [Coupling Aragog to PROTEUS](../How-to/proteus_coupling.md).
+
+## References
+
+- [Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract). *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*. Submitted to **A&A**, arXiv:2605.03741.

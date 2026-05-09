@@ -258,3 +258,7 @@ The formulation maps to the following source modules:
 | Diagnostic helpers (rheological front, global $\phi$) | `aragog.output.diagnostics` |
 
 For the package layout in detail, see [Code architecture](code_architecture.md). For the public API, see the [API reference](../Reference/api/index.md).
+
+## References
+
+- [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract). *Thermal evolution and chemical differentiation of the terrestrial magma ocean*. **Geophysical Monograph 74**, American Geophysical Union, 41 to 54.
