@@ -261,6 +261,17 @@ class EntropyState:
         self._dP_dr_basic: npt.NDArray = np.zeros(n_basic)
         self._T_fus_basic: npt.NDArray = np.zeros(n_basic)
 
+        # One-shot flag: emit the conduction Cp-floor warning at most
+        # once per EntropyState instance. Without throttling, a
+        # non-standard EOS that triggers the floor produces one warning
+        # per RHS call (1000s per coupling step) and floods the log.
+        # The complementary load-time scan in
+        # ``EntropySolver._check_eos_floors`` flags the same condition
+        # before any RHS call; this runtime guard exists to catch
+        # transient floor activations from out-of-bounds (P, S) lookups
+        # that the static load-time scan cannot anticipate.
+        self._cp_floor_warned: bool = False
+
     def _ensure_phase_boundary_cache(self) -> None:
         """Populate or refresh the cached S_sol/S_liq at staggered nodes.
 
@@ -600,17 +611,23 @@ class EntropyState:
             # MgSiO3 EOS stays well above this floor (typical Cp ~ 1000+
             # J/kg/K, latent-blend Cp_eff in mushy zone goes higher
             # still). If the floor activates, the superadiabatic term is
-            # silently inflated relative to the true T/Cp; emit a
-            # warning so a non-standard EOS doesn't introduce a hidden
-            # bias without notice.
-            if np.any(Cp < 100.0):
+            # silently inflated relative to the true T/Cp. Static checks
+            # on the loaded EOS table happen at load time in
+            # ``EntropySolver._check_eos_floors``; this runtime guard
+            # catches transient floor activations from out-of-bounds
+            # (P, S) queries the static scan cannot anticipate. The
+            # warning is throttled to one fire per EntropyState instance
+            # to avoid log spam over thousands of RHS calls per step.
+            if not self._cp_floor_warned and np.any(Cp < 100.0):
                 logger.warning(
                     'EntropyState conduction: Cp dropped below the 100 '
                     'J/kg/K guard at %d node(s); F_cond superadiabatic '
-                    'term is biased upward at those points. Check the '
-                    'EOS Cp lookup tables.',
+                    'term is biased upward at those points. Suppressing '
+                    'further per-RHS warnings — check the EOS Cp tables '
+                    'and the load-time _check_eos_floors output.',
                     int(np.sum(Cp < 100.0)),
                 )
+                self._cp_floor_warned = True
             Cp_safe = np.maximum(Cp, 100.0)
             superadiabatic = (T / Cp_safe) * self._dSdr
             # Adiabatic gradient from EOS table: dT/dr|_ad = dTdPs * dPdr

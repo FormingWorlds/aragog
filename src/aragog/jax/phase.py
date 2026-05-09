@@ -809,6 +809,11 @@ def compute_fluxes(
     # (EOS-table dT/dP|_S times the structural Adams-Williamson dP/dr).
     # This avoids the noise from finite-differencing T_stag and matches
     # SPIDER's eos-consistent conduction at phase boundaries.
+    # Cp floor (100 J/kg/K) parity with numpy entropy_state.update. A
+    # logger.warning inside this jit-compiled RHS would only fire
+    # during tracing, not on actual data; the equivalent diagnostic
+    # is emitted at load time by EntropySolver._check_eos_floors,
+    # plus a once-per-instance runtime warning on the numpy path.
     Cp_safe = jnp.maximum(Cp, 100.0)
     superadiabatic = (T / Cp_safe) * dSdr
     dT_dr_adiabat = dTdPs_basic * mesh.dP_dr_basic
