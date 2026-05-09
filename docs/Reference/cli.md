@@ -89,11 +89,13 @@ The walker uses `dataclasses.asdict` plus a numpy-array-to-list pass, so `energy
 ### `aragog run`
 
 ```
-aragog run <config.toml> --eos-dir <path> --initial-entropy <S0> [options]
+aragog run <config.toml> --eos-dir <path> [--initial-entropy <S0>] [options]
 ```
 
 Solves a configured run end-to-end and writes a NetCDF snapshot.
 Mirrors the Python recipe in [Tutorials: First run](../Tutorials/firstrun.md): load `Parameters`, initialise the solver, set the initial-condition state vector, solve, and call `SolverOutput.to_netcdf`.
+
+`--initial-entropy` is optional when the config's `[initial_condition]` block sets `surface_temperature > 0` and `initial_condition` is 1 (linear) or 3 (adiabatic); the CLI then derives $S_0$ by inverting $T(P_\mathrm{surf}, S) = $ `surface_temperature` against the loaded EOS. The bundled `cfg/abe_*.{toml,cfg}` configs all set `surface_temperature`, so they run without the flag. Pass `--initial-entropy` explicitly to override the derivation.
 
 #### Options
 
@@ -196,11 +198,11 @@ A script `main()` that raises is wrapped in a `ClickException` so the CLI exits 
 ```bash
 aragog new my_first --from abe_solid
 aragog validate my_first.toml
-aragog run my_first.toml \
-    --eos-dir $FWL_DATA/spider/lookup-fs \
-    --initial-entropy 2900.0
+aragog run my_first.toml --eos-dir $FWL_DATA/spider/lookup-fs
 aragog inspect my_first.nc
 ```
+
+The scaffolded `abe_solid.toml` carries `[initial_condition].surface_temperature = 3600`, so the CLI derives the initial entropy from the EOS. Add `--initial-entropy <S0>` to override.
 
 ### Debugging a stuck PROTEUS-coupled run
 

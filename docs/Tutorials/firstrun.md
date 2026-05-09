@@ -54,11 +54,12 @@ aragog validate first.toml
 # the env var is not set.
 aragog run first.toml \
     --eos-dir $FWL_DATA/spider/lookup-fs \
-    --initial-entropy 2900.0 \
     --out first.nc
 ```
 
 `aragog run` mirrors the recipe at the bottom of this page (`EntropySolver.from_file → initialize → set_initial_dSdr_cmb → set_initial_entropy → solve → to_netcdf`); see [Reference: CLI](../Reference/cli.md) for the full option list. A successful run leaves `aragog.log` plus `first.nc` in the working directory.
+
+The CLI derives the initial entropy $S_0$ from `[initial_condition].surface_temperature` in the scaffolded config (`abe_solid` sets it to 3600 K); pass `--initial-entropy <S0>` to use an explicit value instead.
 
 Inspect the result:
 

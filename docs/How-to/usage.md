@@ -147,8 +147,8 @@ The CLI is a thin wrapper over the Python API — anything it does is also reach
 ```bash
 aragog new my_first --from abe_solid
 aragog validate my_first.toml
-aragog run my_first.toml --eos-dir $FWL_DATA/spider/lookup-fs --initial-entropy 2900.0
+aragog run my_first.toml --eos-dir $FWL_DATA/spider/lookup-fs
 aragog inspect my_first.nc
 ```
 
-`aragog run` accepts repeatable `--set <key.path>=<value>` flags for one-shot overrides without editing the TOML. The full subcommand reference, including the `--set` type-coercion rules, is in [Reference: CLI](../Reference/cli.md). PROTEUS-coupled runs bypass the CLI and call `EntropySolver` directly via `AragogRunner`.
+`aragog run` derives the initial entropy from `[initial_condition].surface_temperature` when the bundled config provides it (the `abe_*` templates do); pass `--initial-entropy <S0>` to override. Repeatable `--set <key.path>=<value>` flags accept one-shot overrides without editing the TOML. The full subcommand reference, including the `--set` type-coercion rules, is in [Reference: CLI](../Reference/cli.md). PROTEUS-coupled runs bypass the CLI and call `EntropySolver` directly via `AragogRunner`.
