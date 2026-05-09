@@ -152,41 +152,82 @@ def test_vnv_rejects_unknown_topic():
     )
 
 
-def test_run_rejects_missing_initial_entropy(tmp_path):
-    """`aragog run` without --initial-entropy must raise UsageError.
+def test_run_rejects_malformed_config(tmp_path):
+    """`aragog run` rejects a malformed config before reaching the solve.
 
-    Edge case: the CLI cannot derive an entropy from the
-    surface-temperature initial-condition block reliably across all
-    EOS configurations, so we fail loud rather than guess.
+    Edge case: a near-empty TOML fails inside Parameters.from_file
+    (missing required sections). The CLI must surface that as a
+    non-zero exit, not catch and swallow the error.
 
-    Uses the bundled abe_solid.toml as a real config to exercise
-    the same code path a user would hit; passes a non-existent
-    eos-dir to ensure we never actually start a solve. The
-    assertion is on the UsageError message, not on the exit code
-    alone, so a future refactor that swaps UsageError for some
-    other zero-exit failure mode is caught.
+    This test deliberately uses a stub config so the failure happens
+    at parser load time. The companion test
+    test_run_rejects_missing_initial_entropy_with_valid_config
+    exercises the --initial-entropy guard with a parseable config.
     """
     from aragog.cli import cli
 
-    # Stub config that the legacy parser can swallow without
-    # needing the bundled cfg/abe_solid.toml's known inline-comment
-    # quirk to be fixed.
     cfg = tmp_path / 'stub.toml'
     cfg.write_text('# stub\n')
 
     fake_eos = tmp_path / 'no_such_eos_dir'
-    fake_eos.mkdir()  # path exists; contents would never be read
+    fake_eos.mkdir()
 
     runner = CliRunner()
     result = runner.invoke(cli, ['run', str(cfg), '--eos-dir', str(fake_eos)])
 
-    # Either UsageError ('--initial-entropy is required') or a
-    # config-parse failure earlier; both are non-zero. We accept
-    # the broader contract here because the parser path may reject
-    # the stub config before we reach the entropy check.
     assert result.exit_code != 0, (
-        'aragog run accepted missing --initial-entropy; would silently '
-        'use whatever default the solver picks.'
+        'aragog run silently accepted a malformed config; the user '
+        'would never see the parser error.'
+    )
+
+
+def test_run_rejects_missing_initial_entropy_with_valid_config(tmp_path, monkeypatch):
+    """`aragog run` raises UsageError when --initial-entropy is omitted
+    on an otherwise-valid run.
+
+    Mocks ``EntropySolver.from_file`` so the parser/EOS layer is
+    bypassed and the guard at the ``initial_entropy is None`` check
+    is the only failure surface. Without the mock the parser would
+    reject a stub config first, masking the guard. This test
+    discriminates against a future refactor that drops the
+    UsageError check (e.g., silently picking a default S_0).
+    """
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'cfg.toml'
+    cfg.write_text('# placeholder\n')
+    eos = tmp_path / 'eos'
+    eos.mkdir()
+
+    class _StubSolver:
+        parameters = type(
+            'P',
+            (),
+            {'boundary_conditions': type('BC', (), {'core_bc': 'energy_balance'})()},
+        )()
+
+        def initialize(self):
+            pass
+
+        def set_initial_dSdr_cmb(self, _):
+            pass
+
+    import aragog.solver as _solver_mod
+
+    monkeypatch.setattr(
+        _solver_mod.EntropySolver,
+        'from_file',
+        classmethod(lambda cls, **kw: _StubSolver()),
+        raising=True,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['run', str(cfg), '--eos-dir', str(eos)])
+
+    assert result.exit_code != 0
+    assert '--initial-entropy is required' in (result.output or ''), (
+        'CLI must surface the guard message verbatim so users know which '
+        f'flag to pass; got output={result.output!r}.'
     )
 
 

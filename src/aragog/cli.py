@@ -177,6 +177,14 @@ def run(
     core_bc = getattr(solver.parameters.boundary_conditions, 'core_bc', 'energy_balance')
     if core_bc == 'energy_balance':
         solver.set_initial_dSdr_cmb(initial_dsdr_cmb)
+    elif initial_dsdr_cmb != 0.0:
+        logger.warning(
+            '--initial-dsdr-cmb=%g ignored: core_bc=%r does not use the '
+            'CMB entropy gradient as a state variable. Pass core_bc='
+            "'energy_balance' to make this option meaningful.",
+            initial_dsdr_cmb,
+            core_bc,
+        )
 
     if initial_entropy is None:
         raise click.UsageError(
@@ -265,8 +273,14 @@ def vnv(topic: str | None, list_topics: bool) -> None:
 
     if list_topics or topic is None:
         if not available:
-            click.echo('(no V&V scripts found; this command requires a source checkout)')
-            return
+            # Non-zero exit so a CI script that calls `aragog vnv --list`
+            # to enumerate topics can detect the missing-checkout case
+            # rather than reading the stdout sentinel string.
+            raise click.ClickException(
+                'no V&V scripts found; this command requires a source '
+                'checkout (tools/verification/figures/) on the import '
+                'path of the installed aragog package.'
+            )
         click.echo('Available V&V topics:')
         for name in available:
             click.echo(f'  {name}')
@@ -282,12 +296,28 @@ def vnv(topic: str | None, list_topics: bool) -> None:
     if spec is None or spec.loader is None:
         raise click.ClickException(f'could not load {script}')
     module = importlib.util.module_from_spec(spec)
+    # Register on sys.modules so the script can resolve relative imports
+    # against its own module name; clean up after exec_module so a
+    # second `aragog vnv` invocation in the same process does not reuse
+    # the cached module (which would skip the script's main() side
+    # effects on the second call).
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    if hasattr(module, 'main'):
-        module.main()
-    else:
-        raise click.ClickException(f"V&V script '{script.name}' has no main() entry point.")
+    try:
+        spec.loader.exec_module(module)
+        if not hasattr(module, 'main'):
+            raise click.ClickException(f"V&V script '{script.name}' has no main() entry point.")
+        try:
+            module.main()
+        except click.ClickException:
+            raise
+        except Exception as exc:
+            # Convert any uncaught exception from the V&V script into a
+            # ClickException so the CLI exits with a non-zero status and
+            # a clean message instead of a raw traceback that callers
+            # would have to scrape.
+            raise click.ClickException(f"V&V script '{script.name}' failed: {exc}") from exc
+    finally:
+        sys.modules.pop(spec.name, None)
 
 
 if __name__ == '__main__':
