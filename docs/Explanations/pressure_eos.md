@@ -53,7 +53,7 @@ For those planets, `eos_method = 2` with a Zalmoxis-exported PALEOS profile is t
 ## PALEOS via Zalmoxis (`eos_method = 2`)
 
 The user-defined EOS path reads a four-column whitespace-separated file with columns `radius`, `pressure`, `density`, `gravity` and interpolates each column onto the basic-node radii.
-The intended source for this file in production runs is [Zalmoxis](https://proteus-framework.org/Zalmoxis/), the PROTEUS structure solver, which couples to the [PALEOS](https://scixplorer.org/abs/2026arXiv260503741A/abstract) multiphase equation of state ([Attia et al. (2026)](https://scixplorer.org/abs/2026arXiv260503741A/abstract)[^cite-attia2026]).
+The intended source for this file in production runs is [Zalmoxis](https://proteus-framework.org/Zalmoxis/), the PROTEUS structure solver, which couples to the [PALEOS](https://scixplorer.org/abs/2026arXiv260503741A/abstract) multiphase equation of state (Attia et al. (2026)[^cite-attia2026]).
 
 ### What PALEOS provides
 
@@ -140,4 +140,4 @@ For the user-defined path (`eos_method = 2`) the cumulative mass is built from t
 
 For a fuller treatment of when PALEOS-driven structures matter and how the standalone vs PROTEUS-coupled paths share the same numerical core, see [Standalone usage](../How-to/usage-paths.md) and [Coupling Aragog to PROTEUS](../How-to/proteus_coupling.md).
 
-[^cite-attia2026]: O. Attia, et al., *PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors*, A&A (submitted), 2026.
+[^cite-attia2026]: M. Attia, et al., *[PALEOS: Multiphase Equations of State and Mass-Radius Relations for Exoplanet Interiors](https://arxiv.org/abs/2605.03741)*, A&A (submitted), arXiv:2605.03741, 2026. [SciX](https://scixplorer.org/abs/2026arXiv260503741A/abstract).

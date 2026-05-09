@@ -1,6 +1,6 @@
 # Upper thermal boundary layer (UTBL) parameterisation
 
-When the surface boundary uses the grey-body atmosphere mode (`outer_boundary_condition = 1`), the radiating surface temperature can differ from the temperature of the topmost mantle staggered node. Aragog's UTBL parameterisation accounts for the unresolved thermal boundary layer between the magma ocean interior and the radiating surface by solving a cubic relation derived in [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract)[^cite-bower2018] (Eq. 18). The implementation is in `src/aragog/solver/boundary.py::_utbl_tsurf` and uses Cardano's formula for the analytic real root.
+When the surface boundary uses the grey-body atmosphere mode (`outer_boundary_condition = 1`), the radiating surface temperature can differ from the temperature of the topmost mantle staggered node. Aragog's UTBL parameterisation accounts for the unresolved thermal boundary layer between the magma ocean interior and the radiating surface by solving a cubic relation derived in Bower et al. (2018)[^cite-bower2018] (Eq. 18). The implementation is in `src/aragog/solver/boundary.py::_utbl_tsurf` and uses Cardano's formula for the analytic real root.
 
 ## When to enable
 
@@ -15,7 +15,7 @@ The parser default is `param_utbl = false` (see `src/aragog/parser.py`). Set it 
 
 ## How it works
 
-The grey-body radiator emits at the surface radiating temperature $T_\mathrm{surf}$, not at the interior staggered-node temperature $T_\mathrm{int}$. [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) (Eq. 18) parameterise the temperature drop across the UTBL as
+The grey-body radiator emits at the surface radiating temperature $T_\mathrm{surf}$, not at the interior staggered-node temperature $T_\mathrm{int}$. Bower et al. (2018) (Eq. 18) parameterise the temperature drop across the UTBL as
 
 $$
 \Delta T = b\, T_\mathrm{surf}^3
@@ -71,4 +71,4 @@ param_utbl_const         = 1.0e-7
 - [Configuration: `[boundary_conditions]`](configuration.md#boundary_conditions): the schema rows for `param_utbl` and `param_utbl_const`.
 - [Heat-transport explainer](../Explanations/heat_transport.md): grey-body BC alongside the prescribed-flux and prescribed-temperature modes.
 
-[^cite-bower2018]: D. J. Bower, et al., *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*, Physics of the Earth and Planetary Interiors, 2018.
+[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49 to 62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).

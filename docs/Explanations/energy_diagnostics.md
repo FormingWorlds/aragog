@@ -53,7 +53,7 @@ $$
 + Q_\text{radio} + Q_\text{tidal}.
 $$
 
-A volumetric-work source $\Phi_\text{vol}$ does **not** appear in this budget: the volumetric work done when a melt of different density is transported across a pressure gradient is already implicit in the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. By definition $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h)$ already carries the volumetric-work term. A separate $\Phi_\text{vol}$ source would double-count ([Bower et al. 2018](https://scixplorer.org/abs/2018PEPI..274...49B/abstract)[^cite-bower2018] §3, SPIDER `energy.c`); a negative regression test in `tests/test_jax_no_phi_vol_source.py` enforces the absence.
+A volumetric-work source $\Phi_\text{vol}$ does **not** appear in this budget: the volumetric work done when a melt of different density is transported across a pressure gradient is already implicit in the divergence of the $\Delta h$-weighted mass-flux contributions to `_heat_flux`. By definition $\Delta h = \Delta u + P\,\Delta v$, and on a hydrostatic column $\partial \Delta h/\partial r \supset \Delta v\,\partial P/\partial r = -\rho g\,\Delta v$, so $-\partial/\partial r(j\,\Delta h)$ already carries the volumetric-work term. A separate $\Phi_\text{vol}$ source would double-count (Bower et al. 2018[^cite-bower2018] §3, SPIDER `energy.c`); a negative regression test in `tests/test_jax_no_phi_vol_source.py` enforces the absence.
 
 ## Why frozen-mass weighting
 
@@ -126,4 +126,4 @@ python tools/plot_energy_balance.py output/<run_dir> --label <run_label>
 # writes output_files/energy_balance/<label>_balance.pdf and _powers.pdf
 ```
 
-[^cite-bower2018]: D. J. Bower, et al., *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*, Physics of the Earth and Planetary Interiors, 2018.
+[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49 to 62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).

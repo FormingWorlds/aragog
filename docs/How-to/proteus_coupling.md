@@ -68,7 +68,7 @@ Aragog supports four core-mantle boundary modes:
 
 | Mode | When to use | Notes |
 |---|---|---|
-| `"energy_balance"` (default) | Production. SPIDER bit-parity. | Implements the [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract)[^cite-bower2018] `bc.c::core_BC` formula. Adds `dSdr_cmb` as a state variable; conserves core enthalpy across the CMB. |
+| `"energy_balance"` (default) | Production. SPIDER bit-parity. | Implements the Bower et al. (2018)[^cite-bower2018] `bc.c::core_BC` formula. Adds `dSdr_cmb` as a state variable; conserves core enthalpy across the CMB. |
 | `"quasi_steady"` | SPIDER parity tests only. | Alpha-factor heat-flux partition (heat-capacity-weighted). Gives a $\sim 19$% T_core offset against SPIDER on a typical Earth IC; do not use for new runs. |
 | `"gradient"` | Numerical-experiment use. | Two boundary entropies promoted to state variables. |
 | `"bower2018"` | Experimental. | Do not use for production. |
@@ -154,7 +154,7 @@ radio_Th   = 0.124      # Th-232 [ppmw]
 
 Aluminium-26 and iron-60 are exposed at the Aragog-side `cfg/` defaults (zero-concentration entries that activate only if you override them). For PROTEUS coupled runs, the four-isotope $K/U/U/Th$ subset is sufficient unless you are modelling a $< 5$ Myr post-formation epoch where ²⁶Al matters.
 
-The decay constants and specific-heat-production rates come from [Ruedas (2017)](https://scixplorer.org/abs/2017GGG....18.3530R/abstract)[^cite-ruedas2017].
+The decay constants and specific-heat-production rates come from Ruedas (2017)[^cite-ruedas2017].
 
 ---
 
@@ -263,7 +263,7 @@ The JAX-derived analytic Jacobian is the only path that consistently survives th
 
 **Default**: `"energy_balance"`. **Recommendation**: keep `"energy_balance"`.
 
-Implements [Bower et al. (2018)](https://scixplorer.org/abs/2018PEPI..274...49B/abstract) `bc.c::core_BC` to bit-parity. The `"quasi_steady"` mode gives a $\sim 19$% T_core offset against SPIDER and is appropriate only for parity-test reproduction.
+Implements Bower et al. (2018) `bc.c::core_BC` to bit-parity. The `"quasi_steady"` mode gives a $\sim 19$% T_core offset against SPIDER and is appropriate only for parity-test reproduction.
 
 ### 4. `interior_energetics.aragog.phi_step_cap`
 
@@ -322,5 +322,5 @@ Uniform spacing in mass-coordinate space gives larger cells at the surface where
 
 For the why behind these, see the [Coupling to PROTEUS theory page](../Explanations/proteus_coupling.md).
 
-[^cite-bower2018]: D. J. Bower, et al., *Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets*, Physics of the Earth and Planetary Interiors, 2018.
-[^cite-ruedas2017]: T. Ruedas, *Radioactive heat production of six geologically important nuclides*, Geochemistry, Geophysics, Geosystems, 2017.
+[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49 to 62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
+[^cite-ruedas2017]: T. Ruedas, *[Radioactive heat production of six geologically important nuclides](https://doi.org/10.1002/2017GC006997)*, Geochemistry, Geophysics, Geosystems, 18, 3530 to 3541, 2017. [SciX](https://scixplorer.org/abs/2017GGG....18.3530R/abstract).

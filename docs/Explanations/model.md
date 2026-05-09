@@ -81,7 +81,7 @@ $$
 
 The instability criterion in the entropy formulation is simply $\partial S/\partial r < 0$. The $\max$ form is implemented as a smooth approximation (rather than a hard switch) so that the BDF Jacobian remains continuous through the onset of convection.
 
-The eddy diffusivity $\kappa_h$ is computed from a mixing length $l(r)$ and a regime-dependent velocity scale. The viscous and inviscid limits of [Abe (1993)](https://scixplorer.org/abs/1993GMS....74...41A/abstract)[^cite-abe1993] are blended via a $\tanh$ on the cell Reynolds number around $Re_\mathrm{crit} = 9/8$:
+The eddy diffusivity $\kappa_h$ is computed from a mixing length $l(r)$ and a regime-dependent velocity scale. The viscous and inviscid limits of Abe (1993)[^cite-abe1993] are blended via a $\tanh$ on the cell Reynolds number around $Re_\mathrm{crit} = 9/8$:
 
 $$
 \kappa_h = l\,\Big[(1-w)\,v_\mathrm{visc} + w\,v_\mathrm{inv}\Big],\qquad
@@ -259,4 +259,4 @@ The formulation maps to the following source modules:
 
 For the package layout in detail, see [Code architecture](code_architecture.md). For the public API, see the [API reference](../Reference/api/index.md).
 
-[^cite-abe1993]: Yutaka Abe, *Thermal evolution and chemical differentiation of the terrestrial magma ocean*, Geophysical Monograph 74, AGU, 1993.
+[^cite-abe1993]: Yutaka Abe, *[Thermal evolution and chemical differentiation of the terrestrial magma ocean](https://doi.org/10.1029/GM074p0041)*, Geophysical Monograph 74, AGU, 41 to 54, 1993. [SciX](https://scixplorer.org/abs/1993GMS....74...41A/abstract).
