@@ -483,3 +483,64 @@ def test_temperature_accessors_delegate_to_phase_evaluator():
     # Discriminator: top != bottom on this asymmetric profile, so a
     # regression that swapped the two indices would fail loudly.
     assert top[0] != bot[0]
+
+
+# ---- diagnostic property accessors -----------------------------------------
+
+
+def test_diagnostic_property_accessors_return_underlying_buffers():
+    """The per-component flux and state property accessors are simple
+    pass-throughs to private buffers populated by ``update()``. They are
+    read on every PROTEUS-side helpfile write, so a regression that
+    renames a buffer or returns a copy would be caught downstream by the
+    PROTEUS energy-residual diagnostics, but it is cheaper to assert
+    here. We seed each buffer with a distinct value (no array reused
+    across two properties) so that a mis-routing where two accessors
+    return the same buffer would fail the inequality checks.
+    """
+    state = _make_minimal_state()
+    n_basic = state.phase_basic.pressure.size
+    n_stag = state.phase_staggered.pressure.size
+
+    # Seed each private buffer with a unique array so the property
+    # accessor must return *the* buffer to satisfy the `is` check.
+    state._entropy_staggered = np.full(n_stag, 2700.0)
+    state._entropy_basic = np.full(n_basic, 2750.0)
+    state._heat_flux = np.full(n_basic, 1.1e6)
+    state._eddy_diffusivity = np.full(n_basic, 2.2)
+    state._is_convective = np.array([True, False, True, False, True])[:n_basic]
+    state._dSdr = np.full(n_basic, -3.3e-7)
+    state._jcond = np.full(n_basic, 1.0e5)
+    state._jconv = np.full(n_basic, 2.0e5)
+    state._jgrav_heat = np.full(n_basic, 3.0e5)
+    state._jmix_heat = np.full(n_basic, 4.0e5)
+    state._phi_basic_diag = np.full(n_basic, 0.42)
+    state._T_basic_diag = np.full(n_basic, 3300.0)
+    state._cp_basic_diag = np.full(n_basic, 1250.0)
+    state._rho_basic_diag = np.full(n_basic, 4500.0)
+
+    assert state.entropy_staggered is state._entropy_staggered
+    assert state.entropy_basic is state._entropy_basic
+    assert state.heat_flux is state._heat_flux
+    assert state.eddy_diffusivity is state._eddy_diffusivity
+    assert state.is_convective is state._is_convective
+    assert state.dSdr is state._dSdr
+    assert state.jcond is state._jcond
+    assert state.jconv is state._jconv
+    assert state.jgrav_heat is state._jgrav_heat
+    assert state.jmix_heat is state._jmix_heat
+    assert state.phi_basic_diag is state._phi_basic_diag
+    assert state.T_basic_diag is state._T_basic_diag
+    assert state.cp_basic_diag is state._cp_basic_diag
+    assert state.rho_basic_diag is state._rho_basic_diag
+
+    # Discriminator: every component must hold a distinct mean, so a
+    # regression that mis-routes (e.g. jcond -> jconv buffer) would
+    # fail one of these inequalities loudly.
+    means = [
+        state.jcond.mean(),
+        state.jconv.mean(),
+        state.jgrav_heat.mean(),
+        state.jmix_heat.mean(),
+    ]
+    assert len(set(means)) == 4
