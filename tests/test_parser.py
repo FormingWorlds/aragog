@@ -358,6 +358,24 @@ def test_parameters_from_file_strict_rejects_scalings_section(tmp_path):
         Parameters.from_file(cfg)
 
 
+@pytest.mark.parametrize('section_name', ['Scalings', 'SCALINGS', 'ScAlInGs'])
+def test_parameters_from_file_strict_rejects_scalings_case_insensitive(tmp_path, section_name):
+    """The strict-rejection of [scalings] must not depend on case.
+
+    Edge case: typed_configparser preserves section-name case. A
+    literal-string check would silently accept ``[Scalings]`` from
+    a hand-edited TOML, defeating the rejection contract for the
+    most common typo. The rejection must fire on any case variant.
+    """
+    cfg = tmp_path / 'mixed_case_scalings.cfg'
+    cfg.write_text(
+        f'[{section_name}]\nradius = 1.0\n'
+        '\n[solver]\nstart_time = 0\nend_time = 1\natol = 1e-9\nrtol = 1e-6\n'
+    )
+    with pytest.raises(ValueError, match=r'\[scalings\]'):
+        Parameters.from_file(cfg)
+
+
 def test_parameters_post_init_eos_method_2_radius_out_of_range_raises(tmp_path: Path):
     """Parameters.__post_init__ rejects an EOS file whose radius
     column starts BELOW the inner_radius (i.e. inside the core).

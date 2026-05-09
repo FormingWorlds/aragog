@@ -80,6 +80,14 @@ class _BoundaryConditionsParameters:
         non-dimensionalisation was removed: the inner/outer dispatch
         still has to zero IBC=1 and zero ``param_utbl_const`` when
         the UTBL correction is disabled, and reject unknown BC codes.
+
+        Must remain idempotent: ``Parameters.__post_init__`` calls
+        this method once, but a future caller could legitimately
+        invoke it on a bare ``_BoundaryConditionsParameters`` before
+        passing it to ``Parameters``. Re-normalising must produce the
+        same state. Any future logic added here that mutates a value
+        non-idempotently (e.g. multiplying by a factor) needs an
+        explicit "already normalised" sentinel to be safe.
         """
         if self.param_utbl:
             # The constant carries dimension [K^2]; with no
@@ -389,8 +397,11 @@ class Parameters:
         # everywhere, which silently let stale dimensional scales leak
         # back in if a downstream refactor ever toggled the override
         # off. Refusing the section at load time forecloses that path.
+        # Case-insensitive: typed_configparser preserves section-name
+        # case, so a stray [Scalings] / [SCALINGS] would otherwise slip
+        # past a literal-string check.
         for section in parser.sections():
-            if section == 'scalings':
+            if section.lower() == 'scalings':
                 raise ValueError(
                     'Configuration contains a [scalings] section, which is no '
                     'longer accepted. Aragog applies its internal '

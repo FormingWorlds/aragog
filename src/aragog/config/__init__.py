@@ -122,7 +122,11 @@ class Config:
             _SolverParameters,
         )
 
-        if 'scalings' in data:
+        # Case-insensitive scalings reject: keep parity with
+        # parser.from_file, which lowercases the section name before
+        # comparison. Keys differ in case if the dict was built from a
+        # TOML by a parser that preserves case.
+        if any(str(k).lower() == 'scalings' for k in data):
             raise ValueError(
                 "Configuration contains a 'scalings' section, which is no "
                 'longer accepted. Aragog applies its internal '

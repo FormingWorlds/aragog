@@ -311,18 +311,20 @@ def test_config_module_no_longer_exposes_scalings_config():
         import aragog.config.scalings  # noqa: F401
 
 
-def test_config_from_dict_strict_rejects_scalings_key():
+@pytest.mark.parametrize('key', ['scalings', 'Scalings', 'SCALINGS'])
+def test_config_from_dict_strict_rejects_scalings_key(key):
     """Config.from_dict({'scalings': ...}) must raise ValueError.
 
     Edge case: the dict path is the canonical entry point used by
     PROTEUS to build Parameters; silently stripping a 'scalings' key
     would mask user-intent (a TOML carrying the legacy block would
-    quietly load as if the section was absent).
+    quietly load as if the section was absent). Case variants must
+    also be rejected because TOML parsers preserve key case.
     """
     from aragog.config import Config
 
     minimal = {
-        'scalings': {'radius': 1.0},
+        key: {'radius': 1.0},
         'solver': {
             'start_time': 0,
             'end_time': 1,

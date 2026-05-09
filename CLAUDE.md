@@ -52,13 +52,13 @@ python tools/verification/figures/verify_rhs_parity.py
 aragog/
   src/aragog/
     __init__.py              # Logger setup, CFG_DATA, EntropySolver re-export
-    cli.py                   # click.group() stub; no production subcommands
+    cli.py                   # click subcommands: run, list-configs, vnv
     parser.py                # Legacy dataclass-based TOML/dict config parser
     utilities.py             # tanh_weight, smooth helpers
     cfg/                     # Bundled standalone configs (abe_solid.toml, abe_mixed.cfg, ...)
     config/                  # Attrs-based config classes (newer path)
       boundary.py energy.py initial_condition.py mesh.py
-      phases.py radionuclides.py scalings.py solver.py
+      phases.py radionuclides.py solver.py
     eos/
       entropy.py             # SPIDER-format P-S table loader (RegularGridInterpolator)
       entropy_phase.py       # Two-phase blender (lever rule for T, harmonic mean for rho,
