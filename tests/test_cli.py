@@ -123,7 +123,15 @@ def test_cli_registers_expected_subcommands():
     """
     from aragog.cli import cli
 
-    expected = {'run', 'list-configs', 'new', 'show-config', 'validate', 'vnv'}
+    expected = {
+        'run',
+        'list-configs',
+        'new',
+        'inspect',
+        'show-config',
+        'validate',
+        'vnv',
+    }
     actual = set(cli.commands)
     assert actual == expected, (
         f'aragog.cli subcommands: expected {sorted(expected)}, got {sorted(actual)}.'
@@ -200,6 +208,170 @@ def test_vnv_rejects_unknown_topic():
     assert '--list' in (result.output or ''), (
         'unknown-topic message should redirect users to --list.'
     )
+
+
+def _write_minimal_solver_output(path):
+    """Write a minimal NetCDF snapshot that mimics the schema produced
+    by SolverOutput.to_netcdf.
+
+    Includes the global attributes inspect reads, the dimensions,
+    a representative scalar set, and the two profile arrays inspect
+    reports min/max for. Designed to be byte-readable by the
+    inspect command without pulling in the full solver path.
+    """
+    import netCDF4 as nc
+    import numpy as np
+
+    with nc.Dataset(path, mode='w') as ds:
+        ds.description = 'unit-test snapshot'
+        ds.aragog_version = 'test-build'
+        ds.created_utc = '2026-05-09T00:00:00+00:00'
+        ds.Conventions = 'CF-1.8'
+
+        ds.createDimension('staggered', 5)
+        ds.createDimension('basic', 6)
+
+        scalars = {
+            'time': 1.0e6,
+            'dt_actual': 1.0e6,
+            'T_magma': 3500.0,
+            'T_core': 4200.0,
+            'Phi_global': 0.42,
+            'Phi_global_vol': 0.45,
+            'M_mantle': 4.0e24,
+            'F_heat_total': 250.0,
+            'F_cmb': 50.0,
+            'Q_radio_total': 1.5e15,
+            'Q_tidal_total': 0.0,
+            'E_th': 5.0e29,
+            'Cp_eff': 1200.0,
+            'RF_depth': 0.5,
+        }
+        for name, value in scalars.items():
+            v = ds.createVariable(name, 'f8')
+            v.units = 'unit-stub'
+            v.long_name = name
+            v[...] = value
+
+        v = ds.createVariable('status', 'i4')
+        v.units = '1'
+        v.long_name = 'solver status'
+        v[...] = 0
+
+        # Profile arrays: include S_final and T_basic so inspect's
+        # min/max block has something to report.
+        S = ds.createVariable('S_final', 'f8', ('staggered',))
+        S[:] = np.linspace(2900.0, 3000.0, 5)
+        T = ds.createVariable('T_basic', 'f8', ('basic',))
+        T[:] = np.linspace(1500.0, 4500.0, 6)
+
+
+def test_inspect_summarises_minimal_snapshot(tmp_path):
+    """`aragog inspect <file.nc>` must surface the key scalars
+    (T_magma, T_core, Phi_global, status), dimensions, and the
+    aragog_version global attribute in a human-readable summary.
+
+    Discriminator: the human format must NOT be JSON. A regression
+    that swapped the default to --json behaviour would still pass an
+    exit-code test but break shell-side post-processing.
+    """
+    from aragog.cli import cli
+
+    snap = tmp_path / 'out.nc'
+    _write_minimal_solver_output(snap)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['inspect', str(snap)])
+
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert 'T_magma' in out and '3500.0000' in out, (
+        f'inspect did not print T_magma in the human summary; got {out!r}.'
+    )
+    assert 'T_core' in out and '4200.0000' in out
+    assert 'status' in out
+    assert 'aragog: test-build' in out, (
+        'inspect summary must include the aragog_version attribute.'
+    )
+    assert 'staggered=5' in out and 'basic=6' in out
+    # Profile min/max block surfaces non-trivial data.
+    assert 'S_final' in out and 'min=2.9000e+03' in out
+    # Default output is human-readable, not JSON.
+    assert not out.lstrip().startswith('{'), (
+        'default inspect output unexpectedly looks like JSON; shell pipelines would break.'
+    )
+
+
+def test_inspect_json_emits_valid_machine_readable_document(tmp_path):
+    """`aragog inspect --json <file.nc>` emits a JSON document with
+    the expected top-level keys (path, dimensions, attrs, scalars,
+    profiles) and parseable values.
+    """
+    import json
+
+    from aragog.cli import cli
+
+    snap = tmp_path / 'out.nc'
+    _write_minimal_solver_output(snap)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['inspect', '--json', str(snap)])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert {'path', 'dimensions', 'attrs', 'scalars', 'profiles'} <= set(payload)
+    assert payload['scalars']['T_magma'] == pytest.approx(3500.0)
+    assert payload['scalars']['status'] == pytest.approx(0)
+    # Profiles min/max must be numeric, not None, on a fresh snapshot.
+    assert payload['profiles']['S_final']['n_finite'] == 5
+
+
+def test_inspect_rejects_non_netcdf_file(tmp_path):
+    """A file that is not a NetCDF dataset must produce a clean
+    ClickException, not a noisy traceback into netCDF4 internals.
+    """
+    from aragog.cli import cli
+
+    fake = tmp_path / 'not-a-netcdf.nc'
+    fake.write_text('not netcdf at all\n')
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['inspect', str(fake)])
+
+    assert result.exit_code != 0
+    assert 'could not open' in (result.output or '').lower()
+
+
+def test_inspect_handles_all_nan_profile(tmp_path):
+    """When a profile is entirely NaN (e.g. const_properties E_state),
+    inspect's profile block must say 'all NaN' rather than crashing
+    with min(empty array).
+
+    Edge case: empty-finite arrays would otherwise hit a numpy
+    DeprecationWarning or ValueError on `.min()`.
+    """
+    import netCDF4 as nc
+    import numpy as np
+
+    from aragog.cli import cli
+
+    snap = tmp_path / 'out.nc'
+    with nc.Dataset(snap, mode='w') as ds:
+        ds.aragog_version = 'test'
+        ds.createDimension('staggered', 3)
+        ds.createDimension('basic', 3)
+        v = ds.createVariable('status', 'i4')
+        v[...] = 0
+        S = ds.createVariable('S_final', 'f8', ('staggered',))
+        S[:] = np.array([np.nan, np.nan, np.nan])
+        T = ds.createVariable('T_basic', 'f8', ('basic',))
+        T[:] = np.array([np.nan, np.nan, np.nan])
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['inspect', str(snap)])
+
+    assert result.exit_code == 0, result.output
+    assert 'all NaN' in result.output
 
 
 def test_coerce_value_int_then_float_then_bool_then_json_then_string():

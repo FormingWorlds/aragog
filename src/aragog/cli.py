@@ -405,6 +405,173 @@ def _first_comment_line(entry: Traversable) -> str:
 
 
 # ---------------------------------------------------------------------------
+# aragog inspect
+# ---------------------------------------------------------------------------
+
+
+# Scalar diagnostics surfaced by `inspect`. Order matters for human
+# output: status first (so a failed run is impossible to miss), then
+# the dominant state variables, then heat-balance terms.
+_INSPECT_SCALARS: tuple[tuple[str, str], ...] = (
+    ('status', 'solver status (0 = success)'),
+    ('time', 'simulation time [yr]'),
+    ('dt_actual', 'integration interval [yr]'),
+    ('T_magma', 'surface (magma) temperature [K]'),
+    ('T_core', 'CMB temperature [K]'),
+    ('Phi_global', 'mass-weighted melt fraction [-]'),
+    ('Phi_global_vol', 'volume-weighted melt fraction [-]'),
+    ('M_mantle', 'mantle mass [kg]'),
+    ('F_heat_total', 'total internal heat flux [W/m^2]'),
+    ('F_cmb', 'CMB heat flux [W/m^2]'),
+    ('Q_radio_total', 'radiogenic power [W]'),
+    ('Q_tidal_total', 'tidal power [W]'),
+    ('E_th', 'thermal energy proxy [J]'),
+    ('E_state', 'EOS-consistent enthalpy [J]'),
+    ('E_state_cons', 'frozen-mass enthalpy [J]'),
+    ('Cp_eff', 'mass-weighted Cp [J/kg/K]'),
+    ('RF_depth', 'rheological-front depth [-]'),
+)
+
+_INSPECT_GLOBAL_ATTRS: tuple[str, ...] = (
+    'description',
+    'aragog_version',
+    'created_utc',
+    'Conventions',
+)
+
+
+@cli.command(name='inspect')
+@click.argument(
+    'snapshot',
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    '--json',
+    'as_json',
+    is_flag=True,
+    default=False,
+    help='Emit a machine-readable JSON document instead of the human-readable summary.',
+)
+def inspect_cmd(snapshot: Path, as_json: bool) -> None:
+    """Print key diagnostics from a SolverOutput NetCDF snapshot.
+
+    Reads a NetCDF file produced by ``EntropySolver.get_state().to_netcdf()``
+    (or the equivalent ``aragog run --out`` artefact) and prints the
+    scalar status fields and the key heat-balance / state diagnostics.
+
+    Use ``--json`` for a machine-readable document suitable for piping
+    into ``jq``, capturing in CI assertions, or archiving alongside
+    plots.
+    """
+    import netCDF4 as nc
+    import numpy as np
+
+    payload: dict[str, object] = {'path': str(snapshot)}
+
+    try:
+        ds = nc.Dataset(snapshot, mode='r')
+    except OSError as exc:
+        raise click.ClickException(
+            f'could not open {snapshot} as a NetCDF file: {exc}'
+        ) from exc
+
+    try:
+        # Mesh dimensions.
+        dims = {name: int(d.size) for name, d in ds.dimensions.items()}
+        payload['dimensions'] = dims
+
+        # Global attributes.
+        attrs = {}
+        for name in _INSPECT_GLOBAL_ATTRS:
+            if name in ds.ncattrs():
+                attrs[name] = ds.getncattr(name)
+        payload['attrs'] = attrs
+
+        # Scalar variables. Skip silently when a field is absent so an
+        # older snapshot from a pre-Cp_eff version still inspects
+        # cleanly.
+        scalars: dict[str, object] = {}
+        for name, _label in _INSPECT_SCALARS:
+            if name not in ds.variables:
+                continue
+            value = ds.variables[name][...]
+            try:
+                scalars[name] = float(value)
+            except (TypeError, ValueError):
+                scalars[name] = None
+        payload['scalars'] = scalars
+
+        # Profile shape sanity: report min/max of S_final and T_basic
+        # so an empty / NaN-only snapshot is obvious from the summary.
+        profiles: dict[str, object] = {}
+        for name in ('S_final', 'T_basic'):
+            if name not in ds.variables:
+                continue
+            arr = ds.variables[name][:].astype('f8')
+            finite = arr[np.isfinite(arr)]
+            if finite.size:
+                profiles[name] = {
+                    'min': float(finite.min()),
+                    'max': float(finite.max()),
+                    'n_finite': int(finite.size),
+                    'n_total': int(arr.size),
+                }
+            else:
+                profiles[name] = {
+                    'min': None,
+                    'max': None,
+                    'n_finite': 0,
+                    'n_total': int(arr.size),
+                }
+        payload['profiles'] = profiles
+    finally:
+        ds.close()
+
+    if as_json:
+        import json
+
+        click.echo(json.dumps(payload, indent=2, default=str))
+        return
+
+    # Human-readable summary.
+    lines: list[str] = []
+    lines.append(f'snapshot: {snapshot}')
+    if attrs.get('aragog_version'):
+        lines.append(f'  aragog: {attrs["aragog_version"]}')
+    if attrs.get('created_utc'):
+        lines.append(f'  created: {attrs["created_utc"]}')
+    if attrs.get('description'):
+        lines.append(f'  description: {attrs["description"]}')
+    lines.append('  dimensions: ' + ', '.join(f'{name}={size}' for name, size in dims.items()))
+    lines.append('')
+    label_width = max(len(name) for name, _ in _INSPECT_SCALARS) + 2
+    for name, label in _INSPECT_SCALARS:
+        if name not in scalars:
+            continue
+        v = scalars[name]
+        if v is None:
+            formatted = 'n/a'
+        elif name == 'status':
+            formatted = f'{int(v)}'
+        elif abs(v) >= 1e4 or (0 < abs(v) < 1e-2):
+            formatted = f'{v:.4e}'
+        else:
+            formatted = f'{v:.4f}'
+        lines.append(f'  {name:<{label_width}} {formatted:>14}  {label}')
+    if profiles:
+        lines.append('')
+        for name, info in profiles.items():
+            if info['min'] is None:
+                lines.append(f'  {name}: all NaN ({info["n_total"]} nodes)')
+            else:
+                lines.append(
+                    f'  {name}: min={info["min"]:.4e}, max={info["max"]:.4e} '
+                    f'({info["n_finite"]}/{info["n_total"]} finite)'
+                )
+    click.echo('\n'.join(lines))
+
+
+# ---------------------------------------------------------------------------
 # aragog show-config
 # ---------------------------------------------------------------------------
 
