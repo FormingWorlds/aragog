@@ -100,7 +100,7 @@ Mirrors the Python recipe in [Tutorials: First run](../Tutorials/firstrun.md): l
 | Option | Type | Description |
 |---|---|---|
 | `--eos-dir PATH` | directory | SPIDER-format P-S EOS tables. Defaults to `$FWL_DATA/spider/lookup-fs` if the env var is set. |
-| `--initial-entropy FLOAT` | J/kg/K | Initial isentropic profile. Required. |
+| `--initial-entropy FLOAT` | J/kg/K | Initial isentropic profile. Optional when the `[initial_condition]` block sets `surface_temperature > 0` and `initial_condition` is 1 (linear) or 3 (adiabatic): the CLI then derives $S_0$ from `T(P_\mathrm{surf}, S) = $ `surface_temperature`. Required in all other cases. |
 | `--initial-dsdr-cmb FLOAT` | J/kg/K/m | Initial CMB entropy gradient. Used only when `core_bc = "energy_balance"`. Default 0. |
 | `--out PATH` | file | NetCDF output path. Defaults to `<config-stem>.nc` in the cwd. |
 | `--log-dir PATH` | directory | Directory for `aragog.log`. Defaults to the cwd. |

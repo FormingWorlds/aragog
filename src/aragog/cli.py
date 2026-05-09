@@ -210,6 +210,78 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
     return out
 
 
+def _derive_initial_entropy_from_config(solver) -> float | None:
+    """Derive a uniform initial entropy ``S0`` from the config-side IC.
+
+    Returns the entropy value [J/kg/K] that satisfies
+    ``T(P_surf, S0) = surface_temperature`` for the loaded EOS, or
+    ``None`` when the config does not enable derivation (initial
+    condition is method 2, ``surface_temperature`` is non-positive,
+    or the EOS layer is not available, e.g. ``const_properties``
+    standalone runs that skip table loading).
+
+    The bracket comes from the intersection of the solid and melt
+    table entropy axes. ``brentq`` then locates the root over that
+    bracket. A bracket-error is converted to a ``click.UsageError``
+    so the CLI reports a clear "no S in [..] gives the requested T"
+    message instead of a raw ``ValueError`` traceback.
+    """
+    ic = solver.parameters.initial_condition
+    if ic.initial_condition not in (1, 3):
+        return None
+    T_target = float(ic.surface_temperature)
+    if not (T_target > 0.0):
+        return None
+    eos = getattr(solver, 'eos', None)
+    if eos is None:
+        return None
+    tables = getattr(eos, '_tables', None)
+    if not tables or 'temperature_solid' not in tables or 'temperature_melt' not in tables:
+        return None
+
+    P_surf = float(getattr(solver.parameters.mesh, 'surface_pressure', 0.0))
+    # Intersection of the two tables' entropy axes; brentq cannot
+    # bracket outside both ranges.
+    S_lo = max(
+        tables['temperature_solid']['S_list'][0], tables['temperature_melt']['S_list'][0]
+    )
+    S_hi = min(
+        tables['temperature_solid']['S_list'][-1], tables['temperature_melt']['S_list'][-1]
+    )
+    if not (S_hi > S_lo):
+        return None
+
+    from scipy.optimize import brentq
+
+    def residual(S: float) -> float:
+        return eos.temperature_scalar(P_surf, S) - T_target
+
+    f_lo = residual(S_lo)
+    f_hi = residual(S_hi)
+    if f_lo * f_hi > 0.0:
+        T_lo = eos.temperature_scalar(P_surf, S_lo)
+        T_hi = eos.temperature_scalar(P_surf, S_hi)
+        raise click.UsageError(
+            f'cannot derive S0 from surface_temperature={T_target:.1f} K '
+            f'at P_surf={P_surf:.3e} Pa: no S in '
+            f'[{S_lo:.1f}, {S_hi:.1f}] J/kg/K gives this T '
+            f'(table range [{min(T_lo, T_hi):.0f}, {max(T_lo, T_hi):.0f}] K). '
+            'Pass --initial-entropy explicitly or pick a target inside the table range.'
+        )
+
+    S0 = float(brentq(residual, S_lo, S_hi, xtol=1e-3))
+    logger.info(
+        'Derived --initial-entropy=%.1f J/kg/K from '
+        '[initial_condition].surface_temperature=%.1f K '
+        '(P_surf=%.3e Pa, IC method=%d)',
+        S0,
+        T_target,
+        P_surf,
+        ic.initial_condition,
+    )
+    return S0
+
+
 # ---------------------------------------------------------------------------
 # aragog run
 # ---------------------------------------------------------------------------
@@ -232,8 +304,12 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
     type=float,
     default=None,
     help=(
-        'Initial isentropic profile [J/kg/K]. Required unless the '
-        'config supplies a usable initial condition.'
+        'Initial isentropic profile [J/kg/K]. Optional when the '
+        '``[initial_condition]`` block supplies ``surface_temperature`` '
+        '> 0 and ``initial_condition`` is 1 (linear) or 3 (adiabatic): '
+        'the CLI then derives S0 by inverting ``T(P_surf, S) = '
+        'surface_temperature`` against the loaded EOS table. Required '
+        'in all other cases.'
     ),
 )
 @click.option(
@@ -378,10 +454,14 @@ def run(
         )
 
     if initial_entropy is None:
-        raise click.UsageError(
-            '--initial-entropy is required: pass an isentropic value '
-            'in J/kg/K (e.g. 2900.0 for an early-Earth-like state).'
-        )
+        initial_entropy = _derive_initial_entropy_from_config(solver)
+        if initial_entropy is None:
+            raise click.UsageError(
+                '--initial-entropy is required: pass an isentropic value '
+                'in J/kg/K (e.g. 2900.0 for an early-Earth-like state). '
+                'To enable auto-derivation, set ``surface_temperature`` '
+                '> 0 in the ``[initial_condition]`` block.'
+            )
     solver.set_initial_entropy(initial_entropy)
 
     solver.solve()

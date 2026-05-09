@@ -1021,7 +1021,7 @@ def test_run_rejects_malformed_config(tmp_path):
 
 def test_run_rejects_missing_initial_entropy_with_valid_config(tmp_path, monkeypatch):
     """`aragog run` raises UsageError when --initial-entropy is omitted
-    on an otherwise-valid run.
+    AND the config does NOT enable auto-derivation (IC method 2 here).
 
     Mocks ``EntropySolver.from_file`` so the parser/EOS layer is
     bypassed and the guard at the ``initial_entropy is None`` check
@@ -1038,11 +1038,21 @@ def test_run_rejects_missing_initial_entropy_with_valid_config(tmp_path, monkeyp
     eos.mkdir()
 
     class _StubSolver:
+        # IC method 2 (user-defined T file) does NOT enable auto-derivation.
         parameters = type(
             'P',
             (),
-            {'boundary_conditions': type('BC', (), {'core_bc': 'energy_balance'})()},
+            {
+                'boundary_conditions': type('BC', (), {'core_bc': 'energy_balance'})(),
+                'initial_condition': type(
+                    'IC',
+                    (),
+                    {'initial_condition': 2, 'surface_temperature': 4000.0},
+                )(),
+                'mesh': type('M', (), {'surface_pressure': 0.0})(),
+            },
         )()
+        eos = None  # also exercises the EOS-None guard
 
         def initialize(self):
             pass
@@ -1066,6 +1076,240 @@ def test_run_rejects_missing_initial_entropy_with_valid_config(tmp_path, monkeyp
     assert '--initial-entropy is required' in (result.output or ''), (
         'CLI must surface the guard message verbatim so users know which '
         f'flag to pass; got output={result.output!r}.'
+    )
+    assert 'surface_temperature' in (result.output or ''), (
+        'guard message should mention the auto-derivation pathway so users '
+        f'know how to enable it; got output={result.output!r}.'
+    )
+
+
+def _build_ic_derivation_stub(
+    *,
+    ic_method: int,
+    surface_temperature: float,
+    eos: object,
+    set_entropy_calls: list[float],
+    surface_pressure: float = 0.0,
+):
+    """Build a stub solver class for the IC-derivation tests.
+
+    Captures ``set_initial_entropy`` calls into ``set_entropy_calls``
+    so each test can assert on the derived S0 value. ``solve()`` is a
+    no-op so the test never touches the real integrator. ``get_state``
+    returns a sentinel with ``to_netcdf(...)`` capturing the path.
+    """
+
+    class _Stub:
+        parameters = type(
+            'P',
+            (),
+            {
+                'boundary_conditions': type('BC', (), {'core_bc': 'energy_balance'})(),
+                'initial_condition': type(
+                    'IC',
+                    (),
+                    {
+                        'initial_condition': ic_method,
+                        'surface_temperature': surface_temperature,
+                    },
+                )(),
+                'mesh': type('M', (), {'surface_pressure': surface_pressure})(),
+            },
+        )()
+
+        def __init__(self):
+            self.eos = eos
+            self._netcdf_path = None
+
+        def initialize(self):
+            pass
+
+        def set_initial_dSdr_cmb(self, _):
+            pass
+
+        def set_initial_entropy(self, S):
+            set_entropy_calls.append(float(S))
+
+        def solve(self):
+            pass
+
+        def get_state(self):
+            stub_self = self
+
+            class _State:
+                def to_netcdf(self, path, **_kwargs):
+                    stub_self._netcdf_path = str(path)
+
+            return _State()
+
+    return _Stub
+
+
+class _StubEOS:
+    """Tiny EOS stub: linear T(P, S) = a*S + b on a fixed S grid.
+
+    The solver-side derivation only touches ``_tables`` (for the S
+    bracket) and ``temperature_scalar`` (for the brentq residual).
+    A linear T(S) is monotone so brentq converges in one shot, and
+    the analytic root is trivial to verify.
+    """
+
+    def __init__(self, S_lo: float, S_hi: float, slope: float, intercept: float):
+        self._slope = slope
+        self._intercept = intercept
+        self._tables = {
+            'temperature_solid': {'S_list': [S_lo, S_hi]},
+            'temperature_melt': {'S_list': [S_lo, S_hi]},
+        }
+
+    def temperature_scalar(self, P: float, S: float) -> float:
+        return self._slope * S + self._intercept
+
+
+def test_run_derives_initial_entropy_from_surface_temperature(tmp_path, monkeypatch):
+    """When --initial-entropy is omitted and the config sets IC=1
+    with surface_temperature > 0, the CLI must derive S0 by inverting
+    T(P_surf, S) on the EOS table.
+
+    Discriminator: with the linear stub T(S) = 0.5 * S + 1500, a
+    target T_surf=2900 K must give S0 = (2900 - 1500) / 0.5 = 2800.
+    The asymmetric slope+intercept catches a regression that swapped
+    the residual sign or used a wrong P_surf.
+    """
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'cfg.toml'
+    cfg.write_text('# placeholder\n')
+    eos_dir = tmp_path / 'eos'
+    eos_dir.mkdir()
+    out_path = tmp_path / 'first.nc'
+
+    eos = _StubEOS(S_lo=500.0, S_hi=5500.0, slope=0.5, intercept=1500.0)
+    set_entropy_calls: list[float] = []
+    StubCls = _build_ic_derivation_stub(
+        ic_method=1,
+        surface_temperature=2900.0,
+        eos=eos,
+        set_entropy_calls=set_entropy_calls,
+    )
+
+    import aragog.solver as _solver_mod
+
+    monkeypatch.setattr(
+        _solver_mod.EntropySolver,
+        'from_file',
+        classmethod(lambda cls, **kw: StubCls()),
+        raising=True,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ['run', str(cfg), '--eos-dir', str(eos_dir), '--out', str(out_path)],
+    )
+
+    assert result.exit_code == 0, f'CLI failed unexpectedly: {result.output!r}'
+    assert len(set_entropy_calls) == 1, (
+        f'set_initial_entropy called {len(set_entropy_calls)} times, expected 1'
+    )
+    # T_target=2900, slope=0.5, intercept=1500 -> S0 = (2900-1500)/0.5 = 2800.
+    assert set_entropy_calls[0] == pytest.approx(2800.0, abs=1e-2)
+
+
+def test_run_derivation_skipped_when_ic_method_is_2(tmp_path, monkeypatch):
+    """IC method 2 (user-defined T file) must NOT trigger derivation.
+
+    Discriminator: we set surface_temperature to a sane value AND a
+    valid EOS, so the only reason derivation should NOT fire is the
+    IC-method gate. If the gate were dropped, the CLI would silently
+    set S0 from the T file's surface_temperature instead of relying
+    on the file itself, which would diverge from PROTEUS-coupled
+    semantics where the wrapper handles IC=2 explicitly.
+    """
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'cfg.toml'
+    cfg.write_text('# placeholder\n')
+    eos_dir = tmp_path / 'eos'
+    eos_dir.mkdir()
+
+    eos = _StubEOS(S_lo=500.0, S_hi=5500.0, slope=0.5, intercept=1500.0)
+    set_entropy_calls: list[float] = []
+    StubCls = _build_ic_derivation_stub(
+        ic_method=2,  # user-defined T file - derivation MUST be skipped
+        surface_temperature=2900.0,
+        eos=eos,
+        set_entropy_calls=set_entropy_calls,
+    )
+
+    import aragog.solver as _solver_mod
+
+    monkeypatch.setattr(
+        _solver_mod.EntropySolver,
+        'from_file',
+        classmethod(lambda cls, **kw: StubCls()),
+        raising=True,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['run', str(cfg), '--eos-dir', str(eos_dir)])
+
+    assert result.exit_code != 0, 'IC method 2 must NOT auto-derive S0; CLI should still raise.'
+    assert '--initial-entropy is required' in (result.output or '')
+    assert len(set_entropy_calls) == 0, (
+        'set_initial_entropy must NOT be called when derivation is skipped.'
+    )
+
+
+def test_run_derivation_raises_when_target_temperature_outside_table(tmp_path, monkeypatch):
+    """When the IC surface_temperature is outside the EOS achievable
+    range, the CLI must raise a UsageError that quotes both the
+    requested target and the table-spanned T range.
+
+    Anti-happy-path: a regression that silently clamped the brentq
+    bracket would invert ``temperature_scalar(P, S_clamped)`` to a
+    nearby value, masking the configuration error. The explicit
+    bracket-sign check ensures the error is surfaced at the boundary
+    with a clear remediation message.
+    """
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'cfg.toml'
+    cfg.write_text('# placeholder\n')
+    eos_dir = tmp_path / 'eos'
+    eos_dir.mkdir()
+
+    # T(S) = 0.5*S + 1500, S in [500, 5500] => T in [1750, 4250] K.
+    eos = _StubEOS(S_lo=500.0, S_hi=5500.0, slope=0.5, intercept=1500.0)
+    set_entropy_calls: list[float] = []
+    StubCls = _build_ic_derivation_stub(
+        ic_method=1,
+        surface_temperature=10000.0,  # well outside achievable range
+        eos=eos,
+        set_entropy_calls=set_entropy_calls,
+    )
+
+    import aragog.solver as _solver_mod
+
+    monkeypatch.setattr(
+        _solver_mod.EntropySolver,
+        'from_file',
+        classmethod(lambda cls, **kw: StubCls()),
+        raising=True,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ['run', str(cfg), '--eos-dir', str(eos_dir)])
+
+    assert result.exit_code != 0
+    assert 'cannot derive S0' in (result.output or ''), (
+        f'CLI must surface a clear out-of-range error; got output={result.output!r}.'
+    )
+    assert '10000' in (result.output or ''), (
+        'Error must echo the user-supplied target temperature.'
+    )
+    assert len(set_entropy_calls) == 0, (
+        'set_initial_entropy must NOT be called when derivation fails.'
     )
 
 
