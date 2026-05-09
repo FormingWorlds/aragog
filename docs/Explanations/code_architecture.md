@@ -20,7 +20,6 @@ src/aragog/
 │   ├── mesh.py            # MeshConfig (Adams-Williamson, mass coordinates, eos_file)
 │   ├── phases.py          # PhaseConfig (solid/liquid), MixedPhaseConfig (cp_blend, const_*)
 │   ├── radionuclides.py
-│   ├── scalings.py        # Inert; values overridden to 1.0 by parser
 │   └── solver.py          # SolverConfig (atol, rtol, time window)
 │
 ├── eos/                   # Pressure-entropy equation of state
@@ -82,7 +81,7 @@ Anything not in that list is internal: in particular `entropy_state`, `entropy_s
 
 The `Config` class in `config/__init__.py` is a facade. `Config.from_toml(path)`, `Config.from_dict(d)`, and `Config.from_file(path)` all return a `Parameters` dataclass (defined in `parser.py`); the attrs-based `BoundaryConfig`, `EnergyConfig`, `MeshConfig`, etc. provide schema validation but the solver operates on `Parameters` internally. PROTEUS uses the dict-driven path; standalone users typically use the file-driven path.
 
-The `[scalings]` section is parsed for back-compatibility but every scaling is overridden to `1.0` on load: non-dimensionalisation now happens internally inside the solver around the integrator (see [Energy equation](energy_equation.md)) and is not user-configurable.
+A configuration containing a `[scalings]` section (TOML) or a `'scalings'` key (dict) is rejected at load time. Aragog applies its internal nondimensionalisation around the integrator only (see [Energy equation](energy_equation.md)); it is not user-configurable.
 
 ### EOS: single phase-aware evaluator
 

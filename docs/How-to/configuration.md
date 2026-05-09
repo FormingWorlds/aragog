@@ -110,9 +110,8 @@ Any number of `[radionuclide_*]` sections can be added; each section name must s
 
 ## Configuration sections
 
-### `[scalings]` (legacy)
-
-A `[scalings]` section may still appear in older configuration files. Aragog no longer non-dimensionalises at the configuration level; the parser sets every scaling to 1.0 on load. The solver applies its own internal nondimensionalisation around the integrator (entropy reference $S_\mathrm{ref}$ and time reference $t_\mathrm{ref}$) which is not user-configurable. Any values supplied in `[scalings]` are ignored.
+A configuration file containing a `[scalings]` block is rejected at load time with a `ValueError`.
+Aragog applies its internal nondimensionalisation around the integrator only (entropy reference $S_\mathrm{ref}$ and time reference $t_\mathrm{ref}$); it is not user-configurable.
 
 ### `[solver]`
 

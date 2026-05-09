@@ -78,7 +78,7 @@ The two modes share the same numerical core but are configured at different laye
 
 | Mode | Entry point | Configuration |
 |---|---|---|
-| **Standalone** | `EntropySolver(parameters)` from a Python script, or `aragog` CLI | TOML config files (`abe_mixed.toml`, `abe_solid.toml`, etc.) with `[mesh]`, `[energy]`, `[boundary_conditions]`, `[phase_solid]`, `[phase_liquid]`, `[phase_mixed]`, `[radionuclides]`, `[scalings]`, `[solver]` sections. Documented under [Standalone usage](How-to/usage-paths.md) and [Configuration](How-to/configuration.md). |
+| **Standalone** | `EntropySolver(parameters)` from a Python script, or `aragog` CLI | TOML config files (`abe_mixed.toml`, `abe_solid.toml`, etc.) with `[mesh]`, `[energy]`, `[boundary_conditions]`, `[phase_solid]`, `[phase_liquid]`, `[phase_mixed]`, `[radionuclides]`, `[solver]` sections. Documented under [Standalone usage](How-to/usage-paths.md) and [Configuration](How-to/configuration.md). |
 | **PROTEUS-coupled** | `proteus start -c <run>.toml` | PROTEUS-side TOML sections `[interior_energetics]` and `[interior_energetics.aragog]`, plus the relevant `[interior_struct]`, `[outgas]`, `[atmos]` blocks. The Aragog-side TOML sections above are not read; the wrapper builds `Parameters` directly. Documented in [Coupling to PROTEUS](How-to/proteus_coupling.md). |
 
 The Aragog API, the JAX path, and the SUNDIALS CVODE integrator are identical in the two modes; only the TOML scaffolding around them differs.

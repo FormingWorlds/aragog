@@ -50,7 +50,7 @@ Standalone JAX solve path used by the verification suite. The production path us
 
 ## `aragog.jax.nondim`
 
-Reference scales used to non-dimensionalise the state vector and time before they enter the integrator. Mirrors the historical SPIDER scaling conventions; values are read from `Parameters.scalings`, which is forced to unity in production runs.
+Reference scales used internally to non-dimensionalise the state vector and time before they enter the integrator. The triplet `(state_scale, rhs_scale, t_ref)` is built from `EntropySolver._S_ref`, `_dSdr_ref`, and `_t_ref_yr`; it is not user-configurable.
 
 ::: aragog.jax.nondim
     options:

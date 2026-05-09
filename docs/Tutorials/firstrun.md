@@ -32,7 +32,7 @@ In a PROTEUS coupled run these tables are produced from the configured PALEOS or
 
 ## 2. Pick a configuration file
 
-Aragog ships a few example configurations under `src/aragog/cfg/`. For this tutorial, copy `abe_solid.toml` to a working directory and edit the file paths in `[phase_solid]`, `[phase_liquid]`, and `[phase_mixed]` so that they point at your local data, then drop the `[scalings]` section if present (it is no longer consumed).
+Aragog ships a few example configurations under `src/aragog/cfg/`. For this tutorial, copy `abe_solid.toml` to a working directory and edit the file paths in `[phase_solid]`, `[phase_liquid]`, and `[phase_mixed]` so that they point at your local data. A configuration that still carries a `[scalings]` section is rejected at load time; remove the section.
 
 ## 3. Run Aragog from Python
 
