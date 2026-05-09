@@ -293,6 +293,92 @@ def test_mixed_phase_config_const_properties_overrides_take_effect():
     assert mp.const_S_ref == pytest.approx(4500.0, rel=1e-12)
 
 
+def test_config_from_dict_round_trips_eddy_diffusivity_thermal():
+    """A TOML override on ``[energy].eddy_diffusivity_thermal`` must
+    reach ``Parameters.energy.eddy_diffusivity_thermal``.
+
+    Discriminator: the public ``EnergyConfig`` exposes the field, but
+    ``Config.from_dict`` hydrates the legacy ``_EnergyParameters``
+    parser dataclass (not ``EnergyConfig``). If ``_EnergyParameters``
+    drifts and lacks the field, the dict-load path raises
+    ``TypeError`` and the documented knob is dead. We pass an
+    asymmetric value (0.5) so a regression cannot pass by accident
+    on the default.
+    """
+    from aragog.config import Config
+
+    data = {
+        'solver': {
+            'start_time': 0,
+            'end_time': 1,
+            'atol': 1e-9,
+            'rtol': 1e-9,
+        },
+        'boundary_conditions': {
+            'outer_boundary_condition': 1,
+            'outer_boundary_value': 100.0,
+            'inner_boundary_condition': 1,
+            'inner_boundary_value': 0.0,
+            'emissivity': 1.0,
+            'equilibrium_temperature': 273.0,
+            'core_heat_capacity': 880.0,
+        },
+        'mesh': {
+            'outer_radius': 6.371e6,
+            'inner_radius': 3.481e6,
+            'number_of_nodes': 80,
+            'mixing_length_profile': 'nearest_boundary',
+            'core_density': 11000.0,
+        },
+        'energy': {
+            'conduction': True,
+            'convection': True,
+            'gravitational_separation': False,
+            'mixing': False,
+            'radionuclides': False,
+            'tidal': False,
+            'eddy_diffusivity_thermal': 0.5,
+        },
+        'phase_liquid': {
+            'density': 4000.0,
+            'heat_capacity': 1200.0,
+            'melt_fraction': 1,
+            'thermal_conductivity': 4.0,
+            'thermal_expansivity': 3e-5,
+            'viscosity': 0.1,
+        },
+        'phase_solid': {
+            'density': 4000.0,
+            'heat_capacity': 1200.0,
+            'melt_fraction': 0,
+            'thermal_conductivity': 4.0,
+            'thermal_expansivity': 3e-5,
+            'viscosity': 1e21,
+        },
+        'phase_mixed': {
+            'latent_heat_of_fusion': 4e5,
+            'rheological_transition_melt_fraction': 0.4,
+            'rheological_transition_width': 0.15,
+            'solidus': '',
+            'liquidus': '',
+            'phase': 'mixed',
+            'phase_transition_width': 0.01,
+            'grain_size': 1e-3,
+        },
+    }
+    params = Config.from_dict(data)
+    assert params.energy.eddy_diffusivity_thermal == pytest.approx(0.5, rel=1e-12), (
+        'eddy_diffusivity_thermal did not reach _EnergyParameters; the '
+        'legacy parser dataclass has likely drifted out of sync with '
+        'EnergyConfig.'
+    )
+
+    # Negative-value SPIDER convention must round-trip without coercion.
+    data_pinned = {**data, 'energy': {**data['energy'], 'eddy_diffusivity_thermal': -2.5}}
+    params_pinned = Config.from_dict(data_pinned)
+    assert params_pinned.energy.eddy_diffusivity_thermal == pytest.approx(-2.5, rel=1e-12)
+
+
 def test_energy_config_eddy_diffusivity_thermal_default_is_unity():
     """Default eddy_diffusivity_thermal = 1.0 passes the MLT-derived
     kappa_h through unchanged. Non-default negative values pin the

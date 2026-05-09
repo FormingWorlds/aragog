@@ -19,7 +19,7 @@ These floors are *guards*, not physical assumptions. They should never be the bi
 
 1. Walks `eos._tables['heat_capacity_solid']` and `eos._tables['heat_capacity_melt']` and reports `min(c_p)` across both.
 2. Walks the solidus and liquidus arrays, restricting to the *intersection* of their P ranges, and computes $\Delta S$ at every solidus pressure.
-3. Emits one `WARNING`-level log line per offending quantity if either statistic sits within `2x` of the runtime floor (`c_p < 200`, $\Delta S < 10$).
+3. Emits one `WARNING`-level log line per offending quantity if a statistic sits inside its warn band: `c_p < 200` (2x the 100 J/kg/K floor) or $\Delta S < 10$ (10x the 1 J/kg/K floor). The bands are deliberately asymmetric; see *Tuning the warn thresholds* below.
 
 The check is skipped under the `const_properties` analytic path (which never loads tables) and when `entropy_eos` is `None` (test stubs).
 

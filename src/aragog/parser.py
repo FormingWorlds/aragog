@@ -141,6 +141,14 @@ class _EnergyParameters:
     radionuclides: bool
     tidal: bool
     eddy_diffusivity_chemical: float = 1.0
+    # Multiplier on the raw thermal eddy diffusivity kappa_h before the
+    # floor is applied. Negative values pin kappa_h to the absolute
+    # value (SPIDER convention). Default 1.0 passes the MLT-derived
+    # value through unchanged. Mirrors EnergyConfig.eddy_diffusivity_thermal
+    # so a TOML override on the [energy] block reaches the solver
+    # through Config.from_dict; without this field the loader would
+    # TypeError on any user setting eddy_diffusivity_thermal != 1.0.
+    eddy_diffusivity_thermal: float = 1.0
     # Phase-dependent eddy diffusivity floor [m^2/s]. When > 0 the
     # eddy diffusivity is clamped from below by ``floor * f(phi)``,
     # where ``f`` falls from 1 (liquid) to 0 (solid) across the

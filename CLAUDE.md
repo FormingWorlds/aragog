@@ -121,7 +121,7 @@ The default behaviour with `solver_method = 'cvode'` and `solver.use_jax_jacobia
 Without `scikits-odes-sundials`, the solver falls back to scipy `Radau` / `BDF`; without JAX with `use_jax_jacobian = true`, CVODE falls back to its own finite-difference Jacobian.
 
 **Per-call $|\Delta\Phi|$ cap.**
-`phi_step_cap > 0` registers a SUNDIALS root function $g(t, y) = \mathrm{cap} - |\Phi_\mathrm{global}(t,y) - \Phi_\mathrm{global}(t_\mathrm{start})|$ that returns CVODE control at the exact step where the volume-weighted mean melt fraction first changes by `cap`.
+`phi_step_cap > 0` registers a SUNDIALS root function $g(t, y) = \mathrm{cap} - |\Phi_\mathrm{global}(t,y) - \Phi_\mathrm{global}(t_\mathrm{start})|$ that returns CVODE control at the exact step where the mass-weighted mean melt fraction first changes by `cap`.
 The scipy fallbacks register the equivalent logic as a `solve_ivp` event.
 Production CHILI runs use `phi_step_cap = 0.05`.
 
@@ -163,7 +163,7 @@ Two call sites in PROTEUS:
 `hf_row` exchange:
 
 - *Reads*: `Time`, `F_atm`, `T_eqm`, `R_int`, `R_core`, `gravity`, `P_surf`, `core_density`, `core_heatcap`, `M_core`, `ini_entropy` (first call only).
-- *Writes*: `T_magma`, `T_surf`, `T_core`, `Phi_global`, `F_int`, `F_radio`, `F_tidal`, `dt_actual`, `E_state_J`, `E_state_cons_J`, `step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`, `step_dE_Q_radio_cons_J`, `step_dE_Q_tidal_cons_J`, `step_solver_residual_J`. The cumulative residuals (`dE_predicted_cons_J`, `E_residual_cons_J`, `E_residual_cons_frac`, `solver_residual_J`) are computed in `proteus.utils.coupler._populate_energy_residual` from the per-call writes above.
+- *Writes*: scalar mantle state — `T_magma`, `T_core`, `Phi_global`, `Phi_global_vol`, `RF_depth`, `T_pot`, `M_mantle`, `M_mantle_liquid`, `M_mantle_solid`, `Cp_eff`, `E_th_mantle`. Echo-back / passthrough — `M_core`, `F_int`. Source powers — `F_radio`, `F_tidal`, `F_cmb`, `Q_radio_W`, `Q_tidal_W`. Energy-conservation primitives — `E_state_J`, `E_state_cons_J`, `step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`, `step_dE_Q_radio_cons_J`, `step_dE_Q_tidal_cons_J`, `step_solver_residual_J`. The cumulative residuals (`dE_predicted_cons_J`, `E_residual_cons_J`, `E_residual_cons_frac`, `solver_residual_J`) are computed in `proteus.utils.coupler._populate_energy_residual` from the per-call writes above. `T_surf` and `dt_actual` are NOT written by the Aragog wrapper: the former is set by `proteus.atmos_clim.wrapper`, the latter is the consumed `out.dt_actual` returned to the caller as the simulated time step.
 - *Echo-back*: the wrapper recomputes `core_density` from the on-disk Zalmoxis mesh and `hf_row['M_core']` at every solve entry (`resolve_core_density` at `aragog.py:66`), mirroring SPIDER's `-rho_core` re-derivation. This survives mesh-blending fall-backs and stale-cache cases.
 
 Recommended PROTEUS-side knobs (in priority order):
