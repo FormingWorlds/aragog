@@ -452,8 +452,8 @@ def test_config_from_dict_strict_rejects_scalings_key(key):
 
 
 def test_solver_config_required_fields_and_defaults():
-    """The 4 tolerance/time fields are required; tsurf_poststep_change
-    defaults to 30 K, event_triggering defaults False.
+    """The 4 tolerance/time fields are required; ``tsurf_poststep_change``
+    defaults to 30 K.
     """
     s = SolverConfig(
         start_time=0.0,
@@ -462,7 +462,6 @@ def test_solver_config_required_fields_and_defaults():
         rtol=1.0e-6,
     )
     assert s.tsurf_poststep_change == pytest.approx(30.0, abs=1e-12)
-    assert s.event_triggering is False
 
 
 def test_solver_config_rejects_missing_tolerances():

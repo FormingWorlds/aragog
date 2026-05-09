@@ -1010,7 +1010,6 @@ class TestMassCoordinates:
             atol=1e-6,
             rtol=1e-6,
             tsurf_poststep_change=30.0,
-            event_triggering=False,
         )
         bc = _BoundaryConditionsParameters(
             outer_boundary_condition=1,

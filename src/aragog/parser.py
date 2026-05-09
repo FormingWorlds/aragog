@@ -320,7 +320,6 @@ class _SolverParameters:
     atol: float
     rtol: float
     tsurf_poststep_change: float = 30.0
-    event_triggering: bool = False
 
 
 @dataclass(kw_only=True)

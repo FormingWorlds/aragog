@@ -158,7 +158,6 @@ def _build_parameters(
         atol=1.0e-6,
         rtol=1.0e-6,
         tsurf_poststep_change=30.0,
-        event_triggering=False,
     )
     return Parameters(
         boundary_conditions=bc,

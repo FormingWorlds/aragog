@@ -15,7 +15,6 @@ end_time = 1.0e9                  # yr
 atol = 1e-9
 rtol = 1e-9
 tsurf_poststep_change = 30
-event_triggering = false
 
 [boundary_conditions]
 outer_boundary_condition = 4      # 4 = prescribed flux (PROTEUS coupling)
@@ -124,7 +123,6 @@ Time-integration controls.
 | `atol` | -- | Absolute tolerance (floored at $10^{-8}$) |
 | `rtol` | -- | Relative tolerance |
 | `tsurf_poststep_change` | K | Maximum allowed surface-temperature change per coupling step (PROTEUS use) |
-| `event_triggering` | bool | Reserved; not consumed by the entropy solver |
 
 ### `[boundary_conditions]`
 

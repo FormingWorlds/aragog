@@ -25,8 +25,6 @@ class SolverConfig:
         Relative tolerance for BDF solver.
     tsurf_poststep_change : float
         Maximum surface temperature change per step [K].
-    event_triggering : bool
-        Enable event-based early stopping.
     """
 
     start_time: float
@@ -34,4 +32,3 @@ class SolverConfig:
     atol: float
     rtol: float
     tsurf_poststep_change: float = 30.0
-    event_triggering: bool = False
