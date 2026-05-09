@@ -15,7 +15,6 @@ import numpy as np
 import pytest
 
 from aragog.output.diagnostics import (
-    melt_fraction_global,
     rheological_front,
     volume_average,
 )
@@ -93,81 +92,6 @@ def test_volume_average_weighted_correctly_for_step_profile():
     # larger volumes (4 pi r^2 is monotonic), so the mean should
     # be biased toward 1, not 100.
     assert float(out) < 50.0
-
-
-# ---- melt_fraction_global --------------------------------------------------
-
-
-def test_melt_fraction_global_mixed_phase_picks_last_column():
-    """For phase_mode='mixed' the function uses the last column of
-    a 2D ``(nodes, times)`` array. Earlier columns must NOT affect
-    the result; this discriminates against a regression that
-    averaged across the time axis.
-    """
-    mesh = _fake_mesh(N=10)
-    melt = np.zeros((mesh.basic.volume.size, 3))
-    melt[:, 0] = 1.0  # earlier time, fully molten
-    melt[:, 1] = 0.5
-    melt[:, 2] = 0.0  # final time, fully solid
-    out = melt_fraction_global(mesh, melt, phase_mode='mixed')
-    assert float(out) == pytest.approx(0.0, abs=1e-12)
-
-
-def test_melt_fraction_global_composite_uses_last_column_too():
-    """``composite`` phase mode uses the same code path. Catches a
-    regression that branched on 'mixed' alone and silently dropped
-    composite-mode planets.
-    """
-    mesh = _fake_mesh(N=10)
-    melt = np.full((mesh.basic.volume.size, 2), 0.7)
-    out = melt_fraction_global(mesh, melt, phase_mode='composite')
-    assert float(out) == pytest.approx(0.7, rel=1e-12)
-
-
-def test_melt_fraction_global_mass_weighted_not_volume_weighted():
-    """Discriminator: asymmetric (rho, phi) profile where the mass-
-    weighted and volume-weighted averages differ by a known amount.
-    Catches a regression that reverts to ``volume_average``.
-
-    Setup: deep half (cells 0:N/2) has high density 6000 and phi=0;
-    shallow half has low density 3000 and phi=1. Volume-weighted
-    average is biased toward the larger shallow shells (phi -> 1);
-    mass-weighted average is biased toward the denser deep shells
-    (phi -> 0). The two values are well-separated.
-    """
-    N = 10
-    rho = np.empty(N)
-    rho[: N // 2] = 6000.0  # deep, dense, solid
-    rho[N // 2 :] = 3000.0  # shallow, light, liquid
-    mesh = _fake_mesh(N=N, rho_struct=rho)
-    phi = np.empty(N)
-    phi[: N // 2] = 0.0
-    phi[N // 2 :] = 1.0
-    melt = phi.reshape(-1, 1)
-
-    out = melt_fraction_global(mesh, melt, phase_mode='mixed')
-    # Hand-computed expected values:
-    vols = mesh.basic.volume
-    expected_mass = float(np.dot(rho * vols, phi) / np.dot(rho, vols))
-    expected_volume = float(np.dot(vols, phi) / vols.sum())
-    # The two must be substantially different (this is the whole
-    # point of the discriminator):
-    assert abs(expected_mass - expected_volume) > 0.05
-    # And the function must agree with the mass-weighted value:
-    assert float(out) == pytest.approx(expected_mass, rel=1e-12)
-
-
-def test_melt_fraction_global_single_phase_returns_input_unchanged():
-    """For phase_mode='solid' or 'liquid' the function returns the
-    input scalar unchanged (no volume averaging). Edge case: a
-    regression that always volume-averaged would crash here on a
-    scalar input.
-    """
-    mesh = _fake_mesh(N=10)
-    out_solid = melt_fraction_global(mesh, 0.0, phase_mode='solid')
-    out_liquid = melt_fraction_global(mesh, 1.0, phase_mode='liquid')
-    assert out_solid == 0.0
-    assert out_liquid == 1.0
 
 
 # ---- rheological_front -----------------------------------------------------

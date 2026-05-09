@@ -49,8 +49,8 @@ src/aragog/
 │
 └── output/                # Diagnostic helpers
     ├── __init__.py        # exports total_enthalpy, volume_average,
-    │                      #         melt_fraction_global, rheological_front
-    └── diagnostics.py     # implementations of the four standalone diagnostics
+    │                      #         rheological_front
+    └── diagnostics.py     # implementations of the three standalone diagnostics
 ```
 
 Results flow through the `SolverOutput` dataclass returned by `EntropySolver.get_state()`. Standalone NetCDF output is via `SolverOutput.to_netcdf(path)` (also reachable as `EntropySolver.write_netcdf(path)` and as `aragog run --out path.nc`).
@@ -70,7 +70,7 @@ from aragog.eos import EntropyEOS, EntropyPhaseEvaluator
 from aragog.mesh import Mesh
 from aragog.parser import Parameters       # config dataclass
 from aragog.config import Config           # TOML/dict facade returning Parameters
-from aragog.output.diagnostics import melt_fraction_global, rheological_front
+from aragog.output.diagnostics import rheological_front
 from aragog import aragog_file_logger      # logger setup
 ```
 

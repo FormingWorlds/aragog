@@ -11,7 +11,7 @@ src/aragog/
 ├── solver/                # EntropySolver, EntropyState, BoundaryConditions, SolverOutput
 ├── mesh/                  # Mesh, FixedMesh, AdamsWilliamsonEOS, UserDefinedEOS
 ├── jax/                   # Optional JAX-traceable replicas (analytic-Jacobian path)
-├── output/                # Diagnostic helpers (melt_fraction_global, rheological_front)
+├── output/                # Diagnostic helpers (rheological_front, total_enthalpy, volume_average)
 ├── parser.py              # Parameters dataclass and INI parser
 ├── cli.py                 # Click CLI (run, inspect, validate, show-config, new, list-configs, vnv)
 └── utilities.py           # Utility functions and type aliases
@@ -39,7 +39,7 @@ The legacy single/mixed/composite phase evaluator stack and the temperature-base
 
 ### Output
 
-- [`aragog.output`](aragog.output.md) — Standalone diagnostic functions `melt_fraction_global` and `rheological_front`. The primary output channel is `SolverOutput`, returned by `EntropySolver.get_state()`; see the [solver page](aragog.solver.md) for its field-by-field description.
+- [`aragog.output`](aragog.output.md) — Standalone diagnostic helpers (`rheological_front`, `total_enthalpy`, `volume_average`). The primary output channel is `SolverOutput`, returned by `EntropySolver.get_state()`, which already exposes the global mantle melt fraction (`Phi_global` mass-weighted, `Phi_global_vol` volume-weighted); see the [solver page](aragog.solver.md) for its field-by-field description.
 
 ### JAX backend
 

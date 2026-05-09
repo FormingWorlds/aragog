@@ -7,7 +7,6 @@ import numpy.typing as npt
 
 from aragog.eos import EntropyEOS
 from aragog.mesh import Mesh
-from aragog.utilities import FloatOrArray
 
 
 def total_enthalpy(
@@ -66,62 +65,6 @@ def volume_average(mesh: Mesh, staggered_quantity: npt.NDArray) -> float:
         Volume-averaged value.
     """
     return np.dot(staggered_quantity.T, mesh.basic.volume).item() / mesh.basic.total_volume
-
-
-def melt_fraction_global(
-    mesh: Mesh,
-    melt_fraction_staggered: FloatOrArray,
-    phase_mode: str,
-) -> float:
-    """Compute the mass-weighted global melt fraction $M_\\mathrm{liq}/M_\\mathrm{mantle}$.
-
-    Per-cell ``melt_fraction_staggered`` is the *mass* fraction of liquid in
-    that cell (the entropy lever-rule fraction
-    $(S - S_\\mathrm{sol})/(S_\\mathrm{liq} - S_\\mathrm{sol})$ equals the
-    mass-fraction split between solid and melt by the lever rule, since
-    entropy is per-unit-mass). The mass-weighted mantle average therefore
-    gives $\\sum (m_i \\phi_i) / \\sum m_i = M_\\mathrm{liq}/M_\\mathrm{mantle}$,
-    which is the quantity ``EntropySolver`` writes to the helpfile as
-    ``Phi_global`` and the rootfn cap acts on. This function used to
-    return a *volume-weighted* blend of per-cell mass-fractions, which is
-    neither $M_\\mathrm{liq}/M_\\mathrm{mantle}$ nor $V_\\mathrm{liq}/V_\\mathrm{mantle}$
-    and was inconsistent with the production helpfile path.
-
-    For the porosity-derived volume-fraction $V_\\mathrm{liq}/V_\\mathrm{mantle}$,
-    use ``SolverOutput.Phi_global_vol`` from a completed solve instead.
-
-    Parameters
-    ----------
-    mesh : Mesh
-        The staggered mesh. Must carry ``basic.volume`` (per-shell volume)
-        and ``staggered_effective_density`` (per-shell structural density,
-        set at IC and frozen for mass-coordinate consistency).
-    melt_fraction_staggered : FloatOrArray
-        Melt fraction (entropy lever-rule, i.e. local mass-fraction of
-        liquid) on the staggered mesh. For time-resolved data this is
-        typically a 2D array (nodes x times); only the last column is used.
-    phase_mode : str
-        Phase configuration string (e.g. "mixed", "composite", or a single-phase name).
-
-    Returns
-    -------
-    float
-        Mass-weighted mantle melt fraction $M_\\mathrm{liq}/M_\\mathrm{mantle} \\in [0, 1]$.
-    """
-    if phase_mode not in ('mixed', 'composite'):
-        return melt_fraction_staggered
-
-    phi = np.asarray(melt_fraction_staggered)
-    if phi.ndim == 2:
-        phi = phi[:, -1]
-    phi = phi.ravel()
-    volume = np.asarray(mesh.basic.volume).ravel()
-    rho_struct = np.asarray(mesh.staggered_effective_density).ravel()
-    mass = rho_struct * volume
-    mass_total = float(mass.sum())
-    if mass_total <= 0.0:
-        return float(np.mean(phi))
-    return float(np.dot(mass, phi) / mass_total)
 
 
 def rheological_front(
