@@ -1763,8 +1763,7 @@ class EntropySolver:
         else:
             S = y[:, -1] if y.ndim > 1 else y
         if self.entropy_eos is not None:
-            P = self.evaluator.mesh.staggered.pressure
-            return self.entropy_eos.temperature(P, S)
+            return self.entropy_eos.temperature(self._P_stag_flat, S)
         # const_properties: T = T_ref * exp((S - S_ref) / Cp)
         pm = self.parameters.phase_mixed
         return pm.const_T_ref * np.exp((S - pm.const_S_ref) / pm.const_Cp)
@@ -2167,6 +2166,14 @@ class EntropySolver:
             atol_scale = 10.0
             max_step = np.inf
 
+        # phi_cap_anchor stores the (cap, phi0_global) tuple for the
+        # SUNDIALS rootfn / scipy event, or None when the cap is not
+        # armed. Initialised here so the consumer at the bottom of
+        # solve() never hits an UnboundLocalError when the
+        # ``phi0 > 0.01 and self.entropy_eos is not None`` branch
+        # below is skipped (e.g. const_properties path with no EOS).
+        phi_cap_anchor = None
+
         # Tighten max_step when ANY cell is near a phase boundary.
         # Extends the previous CMB-only check to all cells, catching
         # phase transitions that propagate through upper cells during
@@ -2217,7 +2224,6 @@ class EntropySolver:
             # truncate end_time and lock PROTEUS's adaptive dt onto
             # the truncated value at the rheological transition.
             phi_step_cap = float(getattr(self.parameters.energy, 'phi_step_cap', 0.0))
-            phi_cap_anchor = None  # (cap, phi0_global) when armed; None otherwise
             if phi_step_cap > 0.0 and (near_liq or near_sol or in_mushy):
                 in_mushy_arr = (margin_to_liq < 0.0) & (margin_to_sol > 0.0)
                 if np.any(in_mushy_arr):

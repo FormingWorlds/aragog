@@ -97,7 +97,11 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 85
+# 95 % is the permanent ceiling for this repo; do not raise it
+# further. The CALLIOPE policy is identical: 95 % buys real
+# regression coverage without forcing tests to exercise integration
+# paths whose runtime would push CI over its budget.
+fail_under = 95
 show_missing = true
 precision = 1
 exclude_lines = [
