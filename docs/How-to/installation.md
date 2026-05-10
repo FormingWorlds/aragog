@@ -89,6 +89,44 @@ The PROTEUS-side conda environment already pulls all three transitively through 
 !!! info "Fallbacks for development without CVODE or JAX"
     If `scikits-odes-sundials` is not importable, Aragog issues a warning and falls back to scipy `Radau` or `BDF`. If `jax` is not importable with `use_jax_jacobian = true`, it falls back to CVODE's finite-difference Jacobian, which is slower and noisier near the rheological transition. Both fallbacks are sufficient for short standalone tests but are not suitable for production-tolerance multi-Myr runs.
 
+## Running on HPC clusters
+
+Aragog uses the **serial** CVODE binding and never calls `MPI_Init` or any other MPI primitive. The solver is single-process; parallelism in PROTEUS-coupled runs is exposed through ensembles of independent runs (e.g. one SLURM job per planet, or `pytest -n auto` for the local test suite), not through MPI within a single integration.
+
+That deliberate choice surfaces three failure modes on shared HPC modules where MPI libraries are loaded by default. None are bugs in Aragog; all are environment-level conflicts that the local stacks can introduce.
+
+### MPI_Comm_dup before MPI_INIT
+
+```text
+*** The MPI_Comm_dup() function was called before MPI_INIT was invoked.
+*** This is disallowed by the MPI standard.
+*** Your MPI job will now abort.
+```
+
+Symptom: `aragog run …` aborts immediately with the message above. Cause: an OpenMPI module was loaded into the shell (often by a default `module load` block in `~/.bashrc` or by the cluster's login profile), and a transitive dependency of the Python stack (typically `mpi4py` imported lazily inside `netCDF4` or `scikits-odes-sundials`) tries to duplicate the world communicator before the user code calls `MPI_Init`. SUNDIALS' `mpi4py`-based wrapper does this on import in some builds.
+
+Fix: unload the MPI module before launching Aragog.
+
+```bash
+module unload openmpi   # or: module purge && module load <minimal stack>
+which mpirun || echo "MPI cleared"
+aragog run config.toml --eos-dir "$ARAGOG_TEST_EOS_DIR"
+```
+
+For SLURM job scripts, prefer the same `module purge` + targeted load pattern at the top of the batch file; do not let the cluster's site-default `module load openmpi` propagate into the job environment. Reference for the underlying mpi4py initialisation behaviour: [mpi4py docs (3.0.1 PDF)](https://mpi4py.readthedocs.io/_/downloads/en/3.0.1/pdf/).
+
+### Mismatched conda + system MPI
+
+Symptom: `import netCDF4` or `import scikits_odes_sundials.cvode` raises a dynamic-loader error mentioning a missing `libmpi.so.<N>` or version mismatch. Cause: the conda environment built `netCDF4` against `libmpi` from `conda-forge`, but `LD_LIBRARY_PATH` points at the system OpenMPI install loaded by `module load`.
+
+Fix: keep the conda env self-contained. Either install `nompi` builds (`conda install -c conda-forge "netcdf4=*=nompi*"`) or run with the conda env's own `libmpi` first on the path (`module purge` typically restores this).
+
+### `mpiexec` / `srun` wrappers
+
+Aragog must NOT be launched through `mpiexec`, `mpirun`, or `srun --mpi=pmi2`. Doing so spawns multiple ranks each running the same serial integration, which is at best wasteful (every rank computes the same trajectory) and at worst gives nondeterministic NetCDF output if multiple ranks try to write to the same file. The job script should call `aragog run …` (or PROTEUS's `proteus start …`) directly.
+
+If you need ensembles, parallelise across array tasks (`#SBATCH --array=0-99`) and let each task run a single serial Aragog integration.
+
 ## Equation-of-state tables
 
 The entropy solver requires a directory of pressure-entropy (P-S) lookup tables in the SPIDER format. The files needed and their format are documented in [Reference: data](../Reference/data.md).
