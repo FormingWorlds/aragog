@@ -69,7 +69,12 @@ Verify that the JAX-backed `EntropyEOS_JAX` and `compute_fluxes` agree with the 
 
 **Figure 4.** Numpy $\leftrightarrow$ JAX RHS parity on an 80-cell Earth mesh at three representative magma-ocean states. *Top row, panels (a-c)*: per-cell **absolute** residual $|\dot S_\text{numpy} - \dot S_\text{jax}|$ in J/kg/K/yr; the dotted line is $\epsilon_\mathrm{mach}\,\max|\dot S|$ (the floating-point round-off floor expected on a single FP operation). *Bottom row, panels (d-f)*: per-cell **relative** residual $|\dot S_\text{numpy} - \dot S_\text{jax}|/|\dot S_\text{numpy}|$; the dotted line is float-64 machine epsilon. The three states are (a/d) initial condition (full magma ocean, $S \approx 3900$ J/kg/K, dimensionally uniform), (b/e) mid-solidification ($S = 3300 \to 3700$ J/kg/K from CMB to surface), (c/f) near-solid ($S = 3000 \to 3300$ J/kg/K).
 
-Reading the figure honestly: in the production-relevant **mid-solidification and near-solid regimes** (panels b, c, e, f), interior cells reach floating-point round-off (max abs $\sim 3\times 10^{-7}$ J/kg/K/yr, dominated by a single localised spike at the surface boundary cell where the boundary-condition assembly is independently re-derived between the numpy and JAX paths). In the **uniform-entropy IC** (panels a, d), the absolute residuals reach $\sim 1$ J/kg/K/yr because both paths walk through independent EOS-lookup operations on a fully-uniform input where the lever-rule and table-interpolation arithmetic sit on different finite-difference branches between the implementations. The relative-error formula at IC inflates because $|\dot S|$ itself is small in equilibrium states; the median relative error in the production regimes stays $\le 3\times 10^{-5}$. The IC-state residual is consistent with two independent re-derivations rather than a literal bit-equal port and does not affect Jacobian preconditioning quality at the integrator's working tolerance.
+Per-panel residuals:
+
+- **Mid-solidification (b, e) and near-solid (c, f).** Interior cells sit at the float-64 round-off floor. Maximum absolute residual $\sim 3\times 10^{-7}$ J/kg/K/yr, dominated by a single spike at the surface boundary cell where the BC assembly is re-derived independently between numpy and JAX. Median relative error $\le 3\times 10^{-5}$.
+- **Uniform-entropy IC (a, d).** Absolute residual $\sim 1$ J/kg/K/yr. Both paths run EOS lookup, lever-rule, and table interpolation on a uniform input; the arithmetic differs at the interpolation level. The relative error inflates because $|\dot S|$ itself is small in equilibrium.
+
+Numpy and JAX paths are independent re-derivations, not a bit-exact port.
 
 ![UTBL Cardano-formula consistency](../figures/vv/fig_05_utbl_cardano.png)
 
