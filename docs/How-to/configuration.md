@@ -254,6 +254,15 @@ params = Config.from_dict(config_dict)
 
 Both calls return a `Parameters` dataclass; the `Config` facade exists primarily for the dict-driven path used by the PROTEUS wrapper.
 
+`Parameters.from_file` dispatches on file suffix:
+
+| Suffix | Loader | Semantics |
+|---|---|---|
+| `.toml` | stdlib `tomllib` | TOML: quoted strings (`"nearest_boundary"`) and `# ...` inline comments. Strings round-trip without surrounding quotes; comments are stripped before type coercion. |
+| `.cfg`, `.ini`, others | `typed_configparser` | INI: bare unquoted strings (`nearest_boundary`). No inline comment support; values are read verbatim, quotes included. |
+
+Use the format matching the file you are writing: a `.toml` file must use TOML conventions, an `.ini` / `.cfg` file must use INI conventions. Mixing the two (e.g. quoted strings in a `.cfg`) is a common cause of `Mixing length profile is unknown` errors.
+
 ## Legacy INI format
 
-The legacy `.cfg` format is still parsed. Example files live under `src/aragog/cfg/`. Keys and section names match the TOML schema; only the surface syntax differs.
+The legacy `.cfg` format is still parsed. Example files live under `src/aragog/cfg/`. Keys and section names match the TOML schema; only the surface syntax differs (no quotes around strings, no `#` inline comments).

@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -22,8 +23,10 @@ import numpy.typing as npt
 from typed_configparser import ConfigParser
 
 if sys.version_info < (3, 11):
+    import tomli as tomllib  # noqa: F401  (3.10 fallback installed via pyproject)
     from typing_extensions import Self
 else:
+    import tomllib  # noqa: F401
     from typing import Self
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
@@ -390,31 +393,104 @@ class Parameters:
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
-        """Parses the parameters in a configuration file(s)
+        """Parse the parameters from a configuration file.
 
-        Args:
-            *filenames: Filenames of the configuration data
+        Dispatches on the file extension of the FIRST argument:
+
+        * ``.toml`` (recommended): parsed with the standard-library
+          ``tomllib`` loader. TOML semantics apply, so quoted strings
+          come back unquoted (``mixing_length_profile =
+          "nearest_boundary"`` lands as the Python string
+          ``'nearest_boundary'``) and ``# ...`` inline comments are
+          stripped before type coercion.
+        * ``.cfg`` / ``.ini`` / no extension: parsed with
+          ``typed_configparser`` (INI semantics: no quote stripping,
+          no inline comments). Multi-file load is supported on this
+          path for backwards compatibility with legacy callers that
+          merge a base config with overrides.
+
+        The ``[scalings]`` section is strict-rejected on both paths.
+        """
+        if not filenames:
+            raise ValueError(
+                'Parameters.from_file requires at least one configuration filename'
+            )
+
+        first = Path(filenames[0])
+        if first.suffix.lower() == '.toml':
+            if len(filenames) > 1:
+                raise ValueError(
+                    'Multi-file load is supported only for INI / .cfg configs; '
+                    f'.toml dispatch received {len(filenames)} files. Merge them '
+                    'into a single TOML or convert to .cfg.'
+                )
+            return cls._from_toml(first)
+        return cls._from_ini(*filenames)
+
+    # ------------------------------------------------------------------
+    # Per-format loaders
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _from_toml(cls, path: Path) -> Self:
+        """Load Parameters from a real TOML file via ``tomllib``.
+
+        Strings come back unquoted, inline ``# ...`` comments are
+        stripped before type coercion, and types are TOML-native
+        (``integer`` / ``float`` / ``boolean`` / ``string`` / ``array``)
+        so the dataclass constructors can accept them directly.
+        """
+        with path.open('rb') as f:
+            data: dict[str, Any] = tomllib.load(f)
+
+        # Strict-reject [scalings] (case-insensitive).
+        for section in data:
+            if section.lower() == 'scalings':
+                raise ValueError(_SCALINGS_REMOVED_MSG)
+
+        init_dict: dict[str, Any] = {}
+        for section_name, dataclass_ in _get_dataclass_from_section_name().items():
+            section = data.get(section_name)
+            if section is None:
+                raise ValueError(
+                    f'Configuration error: missing required section [{section_name}] '
+                    f'in {path.name}'
+                )
+            try:
+                init_dict[section_name] = dataclass_(**section)
+            except TypeError as exc:
+                raise ValueError(
+                    f'Configuration error in [{section_name}] of {path.name}: {exc}'
+                ) from exc
+
+        radionuclides: list[_Radionuclide] = []
+        for section_name, section in data.items():
+            if section_name.startswith('radionuclide_'):
+                if not isinstance(section, dict):
+                    raise ValueError(
+                        f'Configuration error: [{section_name}] must be a TOML table'
+                    )
+                try:
+                    radionuclides.append(_Radionuclide(**section))
+                except TypeError as exc:
+                    raise ValueError(
+                        f'Configuration error in [{section_name}] of {path.name}: {exc}'
+                    ) from exc
+
+        init_dict['radionuclides'] = radionuclides
+        return cls(**init_dict)  # pylint: disable=E1125
+
+    @classmethod
+    def _from_ini(cls, *filenames) -> Self:
+        """Load Parameters from a legacy INI / .cfg configuration via
+        ``typed_configparser``.
         """
         parser: ConfigParser = ConfigParser()
         parser.read(*filenames)
 
-        # Strict-reject the legacy [scalings] section. Aragog no longer
-        # has a config-layer non-dimensionalisation step; a [scalings]
-        # block in a TOML used to be parsed and then forced to unity
-        # everywhere, which silently let stale dimensional scales leak
-        # back in if a downstream refactor ever toggled the override
-        # off. Refusing the section at load time forecloses that path.
-        # Case-insensitive: typed_configparser preserves section-name
-        # case, so a stray [Scalings] / [SCALINGS] would otherwise slip
-        # past a literal-string check.
         for section in parser.sections():
             if section.lower() == 'scalings':
-                raise ValueError(
-                    'Configuration contains a [scalings] section, which is no '
-                    'longer accepted. Aragog applies its internal '
-                    'nondimensionalisation around the integrator only; remove '
-                    'the [scalings] block from the configuration file.'
-                )
+                raise ValueError(_SCALINGS_REMOVED_MSG)
 
         init_dict: dict[str, Any] = {}
         for section_name, dataclass_ in _get_dataclass_from_section_name().items():
@@ -427,10 +503,8 @@ class Parameters:
                 using_dataclass=_Radionuclide, section_name=radionuclide_section
             )
             radionuclides.append(radionuclide)
-
         init_dict['radionuclides'] = radionuclides
-
-        return cls(**init_dict)  # Unpacking gives required arguments so pylint: disable=E1125
+        return cls(**init_dict)  # pylint: disable=E1125
 
     @staticmethod
     def radionuclide_sections(parser: ConfigParser) -> list[str]:
@@ -443,3 +517,11 @@ class Parameters:
             for section in parser.sections()
             if section.startswith('radionuclide_')
         ]
+
+
+_SCALINGS_REMOVED_MSG = (
+    'Configuration contains a [scalings] section, which is no longer '
+    'accepted. Aragog applies its internal nondimensionalisation around '
+    'the integrator only; remove the [scalings] block from the '
+    'configuration file.'
+)
