@@ -2,6 +2,8 @@ name: Aragog CI Test Suite
 
 on:
   push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
@@ -12,12 +14,18 @@ on:
       - ready_for_review
   workflow_dispatch:
 
-# Push and PR CI: unit tests only, on ubuntu + macos x py 3.11/3.12/3.13.
+# Push and PR CI: unit tests only, on ubuntu + macos x py 3.12 / 3.13.
 # Targets <5 min wall. Slow tests (full multi-Myr CVODE solves) live in
 # the scheduled nightly workflow `nightly.yml` instead, alongside coverage
 # enforcement against the 95% floor. Running the slow suite or coverage
 # instrumentation on every push burns ~10 min CI time per commit and gives
 # no bug-finding signal that the unit suite doesn't already cover.
+#
+# Trigger scoping: push fires only on main (release-merge sanity check),
+# pull_request fires on PRs into main (feature-branch validation). With
+# both, every commit on a PR runs exactly one matrix sweep instead of two
+# (push + pull_request would otherwise both fire on a feature-branch
+# push that has an open PR).
 #
 # Uses micromamba + conda-forge for the env so SUNDIALS, gfortran, and the
 # scikits-odes binary stack come prebuilt instead of being compiled from
@@ -30,6 +38,14 @@ permissions:
   # nightly's coverage artifact for the union estimation step.
   actions: read
 
+# Cancel superseded runs on the same ref so a stack of feature-branch
+# pushes does not pile up macOS runners (free-tier concurrency is tight).
+# The base ref keeps push to main and pull_request to main in separate
+# groups so the latter cannot cancel a release sanity check.
+concurrency:
+  group: ci-tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-fast:
     name: Aragog-check (${{ matrix.os }}, py${{ matrix.python-version }})
@@ -37,7 +53,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.12", "3.13"]
 
     runs-on: ${{ matrix.os }}
 
