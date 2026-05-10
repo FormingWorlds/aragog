@@ -2,14 +2,17 @@
 
 [![Unit Tests](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/ci_tests.yml?branch=main&label=Unit%20Tests)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
 [![Integration Tests](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/nightly.yml?branch=main&label=Integration%20Tests)](https://github.com/FormingWorlds/aragog/actions/workflows/nightly.yml)
-[![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
+[![codecov](https://img.shields.io/codecov/c/github/FormingWorlds/aragog?label=coverage&logo=codecov)](https://app.codecov.io/gh/FormingWorlds/aragog)
 
 This page is about *running* the existing test suite. For guidance on *writing*
 new tests see [How to build tests](build_tests.md).
 
 Aragog uses [pytest](https://docs.pytest.org/) with
 [pytest-xdist](https://pytest-xdist.readthedocs.io/) for parallel execution.
-Tests are categorised by speed and purpose into three pytest markers.
+Tests are categorised by speed and purpose into four pytest markers (`unit`,
+`smoke`, `integration`, `slow`); the marker set is the canonical authority and
+is registered under `[tool.pytest.ini_options].markers` in `pyproject.toml`
+with `--strict-markers` enforced.
 
 ## Prerequisites
 
@@ -25,11 +28,13 @@ The JAX-path tests additionally need the `jax` extra (`pip install -e ".[jax]"`)
 
 | Marker | Tests | Wall | Scope |
 |---|---|---|---|
-| `unit` | ~366 | ~1 to 2 min | EOS lookups, mesh helpers, phase evaluator branches, parser validation, JAX-vs-numpy parity on point inputs, regression pins on permeability constants, energy-equation invariants. No real solver call beyond a handful of cheap analytic-EOS smoke checks. |
-| `smoke` | ~40 | ~5 to 15 min | Full `EntropySolver.solve()` runs at relaxed tolerance. Verify the whole code path under representative configurations (closed mantle, gravitational separation, JAX RHS via CVODE). |
+| `unit` | ~514 | ~2 min (xdist) | EOS lookups, mesh helpers, phase evaluator branches, parser validation, JAX-vs-numpy parity on point inputs, regression pins on permeability constants, energy-equation invariants. No real solver call beyond a handful of cheap analytic-EOS smoke checks. |
+| `smoke` | ~62 | ~10 min (xdist) | Full `EntropySolver.solve()` runs at relaxed tolerance. Verify the whole code path under representative configurations (closed mantle, gravitational separation, JAX RHS via CVODE). |
+| `integration` | 0 today | n/a | Real-physics integration against published references (PALEOS, SPIDER bit-parity). Reserved for tests added under this marker; nightly picks them up automatically once present. |
 | `slow` | ~3 | ~30+ min each | Long multi-Myr coupled-style runs and convergence studies. Manual only. |
 
-`pytest --collect-only -m <marker>` reports the live count.
+`pytest --collect-only -m <marker>` reports the live count. Total across the
+non-skip filter (`-m "not skip"`) on `tl/interior-refactor`: ~575.
 
 ## Running tests
 
@@ -71,11 +76,11 @@ pytest -p no:faulthandler --timeout=60 --timeout-method=thread tests/
 
 | Trigger | Markers | Budget | Coverage |
 |---|---|---|---|
-| Push / PR (`ci_tests.yml`) | `unit and not slow` | < 5 min | None |
-| Nightly cron (`nightly.yml`, 02:30 UTC) | `unit or smoke or slow` | < 75 min | Yes; uploaded to Codecov |
-| Manual `workflow_dispatch` | as above | < 75 min | Yes |
+| Push / PR (`ci_tests.yml`) | `unit and not slow` | < 5 min | Yes (unit tier); uploaded to Codecov under flag `ci` from `ubuntu-latest` + py3.12 only |
+| Nightly cron + push to main (`nightly.yml`, 02:30 UTC) | `unit or smoke or slow` | < 90 min | Yes (full suite); uploaded to Codecov under flag `nightly` |
+| Manual `workflow_dispatch` | as above | < 90 min | Yes |
 
-Push CI is intentionally unit-only because each smoke test runs a full `EntropySolver` call (5 to 15 min on a 2-vCPU runner under coverage instrumentation). Burning that budget on every push gives no bug-finding signal that the unit tier doesn't already cover.
+Push CI runs the unit tier only because each smoke test executes a full `EntropySolver` call (5 to 15 min on a 2-vCPU runner under coverage instrumentation). The nightly tier carries the canonical 95% coverage floor; the per-push upload is a fast-feedback companion view of the unit subset.
 
 ## Fixtures
 
@@ -97,9 +102,10 @@ Tests are written to be order-independent and run cleanly under `pytest-xdist`. 
 pytest --cov=src/aragog --cov-report=html -m "unit or smoke"
 ```
 
-Open `htmlcov/index.html` to inspect line-by-line coverage. The nightly CI
-uses `--cov-report=xml` and uploads the result to Codecov; the project floor
-is 85% (CI gate enforced via `pyproject.toml`).
+Open `htmlcov/index.html` to inspect line-by-line coverage. Both push CI
+(unit tier) and the nightly (full suite) emit `--cov-report=xml` and upload
+to Codecov under separate flags (`ci` and `nightly`). The project floor is
+95%, enforced via `[tool.coverage.report].fail_under` in `pyproject.toml`.
 
 ## Linting
 
