@@ -1,4 +1,4 @@
-name: Publish test badges
+name: Refresh test count badges
 
 on:
   push:
