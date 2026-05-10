@@ -1,0 +1,53 @@
+name: Publish test badges
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tests/**"
+      - "src/aragog/**"
+      - "pyproject.toml"
+      - "tools/generate_test_badges.py"
+      - ".github/workflows/publish-test-badges.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: badges-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package with test extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[test]"
+
+      - name: Generate badges
+        run: python tools/generate_test_badges.py --out .github/badges/
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name actions
+          git config user.email actions@github.com
+          git add .github/badges/
+          if git diff --cached --quiet; then
+            echo "No badge changes to commit."
+          else
+            git commit -m "ci: refresh test count badges [skip ci]"
+            git push
+          fi
