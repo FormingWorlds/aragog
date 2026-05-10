@@ -1,9 +1,9 @@
 # Testing suite
 
 [![codecov](https://img.shields.io/codecov/c/github/FormingWorlds/aragog?label=coverage&logo=codecov)](https://app.codecov.io/gh/FormingWorlds/aragog)
-[![tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/FormingWorlds/aragog/main/.github/badges/tests-total.json)](https://proteus-framework.org/testing)
 [![unit tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/FormingWorlds/aragog/main/.github/badges/tests-unit.json)](https://proteus-framework.org/testing)
 [![integration tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/FormingWorlds/aragog/main/.github/badges/tests-integration.json)](https://proteus-framework.org/testing)
+[![tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/FormingWorlds/aragog/main/.github/badges/tests-total.json)](https://proteus-framework.org/testing)
 
 ## What testing means here
 
