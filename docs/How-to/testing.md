@@ -28,13 +28,12 @@ The JAX-path tests additionally need the `jax` extra (`pip install -e ".[jax]"`)
 
 | Marker | Tests | Wall | Scope |
 |---|---|---|---|
-| `unit` | ~514 | ~2 min (xdist) | EOS lookups, mesh helpers, phase evaluator branches, parser validation, JAX-vs-numpy parity on point inputs, regression pins on permeability constants, energy-equation invariants. No real solver call beyond a handful of cheap analytic-EOS smoke checks. |
-| `smoke` | ~62 | ~10 min (xdist) | Full `EntropySolver.solve()` runs at relaxed tolerance. Verify the whole code path under representative configurations (closed mantle, gravitational separation, JAX RHS via CVODE). |
+| `unit` | ![unit count](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FFormingWorlds%2Faragog%2Fmain%2F.github%2Fbadges%2Ftests-unit.json) | ~2 min (xdist) | EOS lookups, mesh helpers, phase evaluator branches, parser validation, JAX-vs-numpy parity on point inputs, regression pins on permeability constants, energy-equation invariants. No real solver call beyond a handful of cheap analytic-EOS smoke checks. |
+| `smoke` | ![smoke count](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FFormingWorlds%2Faragog%2Fmain%2F.github%2Fbadges%2Ftests-smoke.json) | ~10 min (xdist) | Full `EntropySolver.solve()` runs at relaxed tolerance. Verify the whole code path under representative configurations (closed mantle, gravitational separation, JAX RHS via CVODE). |
 | `integration` | 0 today | n/a | Real-physics integration against published references (PALEOS, SPIDER bit-parity). Reserved for tests added under this marker; nightly picks them up automatically once present. |
-| `slow` | ~3 | ~30+ min each | Long multi-Myr coupled-style runs and convergence studies. Manual only. |
+| `slow` | ![slow count](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FFormingWorlds%2Faragog%2Fmain%2F.github%2Fbadges%2Ftests-slow.json) | ~30+ min each | Long multi-Myr coupled-style runs and convergence studies. Manual only. |
 
-`pytest --collect-only -m <marker>` reports the live count. Total across the
-non-skip filter (`-m "not skip"`) on `tl/interior-refactor`: ~575.
+The "Tests" column is rendered live from `.github/badges/tests-<marker>.json`, which is regenerated on every push to main by `publish-test-badges.yml`. Once integration tests are added, replace the `0 today` cell with the matching badge. Run `pytest --collect-only -m <marker>` for the off-line live count. Total across the non-skip filter: ![total](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FFormingWorlds%2Faragog%2Fmain%2F.github%2Fbadges%2Ftests-total.json).
 
 ## Running tests
 
