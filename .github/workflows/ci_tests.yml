@@ -84,6 +84,10 @@ jobs:
           tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
           echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
 
+      - name: Validate test markers
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
+        run: bash tools/validate_test_structure.sh
+
       - name: Lint with Ruff
         run: |
           ruff check src/ tests/
