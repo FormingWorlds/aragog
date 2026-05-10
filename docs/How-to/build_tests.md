@@ -2,26 +2,42 @@
 
 [![Unit Tests](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/ci_tests.yml?branch=main&label=Unit%20Tests)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
 [![Integration Tests](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/nightly.yml?branch=main&label=Integration%20Tests)](https://github.com/FormingWorlds/aragog/actions/workflows/nightly.yml)
-[![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
+[![codecov](https://img.shields.io/codecov/c/github/FormingWorlds/aragog?label=coverage&logo=codecov)](https://app.codecov.io/gh/FormingWorlds/aragog)
+[![tests](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/FormingWorlds/aragog/main/.github/badges/tests-total.json)](https://proteus-framework.org/testing)
 
 This page is about *writing* a new test, by hand or with an LLM. For running
 the existing suite see [Testing suite](../Explanations/testing.md).
 
 ## Decision tree: which marker?
 
-The marker is the load-bearing decision. CI runs `-m "unit and not slow"` on
-every push and `-m "unit or smoke or slow"` nightly; an unmarked test is
-invisible to CI. Pick the strictest marker the test fits.
+The marker is the load-bearing decision. The PR gate (`ci_tests.yml`) runs
+`-m "unit and not slow"` on every push and pull request; the nightly
+(`nightly.yml`) runs `-m "unit or smoke or integration or slow"` on
+schedule, push to main, and manual dispatch. An unmarked test is rejected
+at the PR gate by `tools/validate_test_structure.sh` (see below). Pick the
+strictest marker the test fits.
 
 | Use ... | When ... |
 |---|---|
 | `@pytest.mark.unit` | < 100 ms, no real solver call. EOS lookup helpers, parser validators, phase-evaluator branches, JAX-vs-numpy parity on point inputs, regression pins on physical constants (permeability thresholds, Cardano cubic coefficients), isolated branch coverage with mocked density. |
 | `@pytest.mark.smoke` | One full `EntropySolver.solve()` call at relaxed tolerance that finishes in seconds to minutes. Verifies the whole code path runs end to end. |
+| `@pytest.mark.integration` | Real-physics integration against a published reference (PALEOS, SPIDER bit-parity) where the test's contract is "this implementation reproduces *that* result." Slower than smoke, faster than slow. |
 | `@pytest.mark.slow` | Multi-Myr cooling runs, tolerance-convergence studies, anything that takes tens of minutes per test. Manual only. |
 
-Tests covering more than one tier (for example, an integration test that also
-exercises a unit-tier helper) carry a single marker matching the dominant
-runtime. Do not double-mark.
+Tests covering more than one tier carry a single marker matching the
+dominant runtime. Do not double-mark. The four-marker scheme is the
+internal CI granularity; the public-facing badge surface in the README
+collapses smoke + integration + slow into a single "Integration Tests"
+category for non-developer readers.
+
+The marker-validation gate (`tools/validate_test_structure.sh`, run as a
+step in `ci_tests.yml`) AST-parses every `def test_*` under `tests/` and
+fails the PR if any test is missing a marker, propagated from function-,
+class-, or module-level decorations. Local check before pushing:
+
+```console
+bash tools/validate_test_structure.sh
+```
 
 ## Choosing a file
 
@@ -206,13 +222,17 @@ generated test passes review without an iteration round.
 You are writing a pytest test for the Aragog entropy-form interior dynamics
 solver (part of the PROTEUS ecosystem). Follow these rules strictly.
 
-MARKERS (mandatory; CI-invisible without one):
+MARKERS (mandatory; the PR gate rejects unmarked tests via
+tools/validate_test_structure.sh):
 - @pytest.mark.unit: < 100 ms, no real solver call. Use for EOS lookup
   helpers, parser validators, phase-evaluator branches, JAX-vs-numpy parity,
   regression pins on physical constants, branch coverage.
 - @pytest.mark.smoke: one full EntropySolver.solve() call at relaxed
   tolerance that finishes in seconds to minutes. Use for end-to-end smoke
   checks.
+- @pytest.mark.integration: real-physics integration against a published
+  reference (PALEOS, SPIDER bit-parity) where the test contract is "this
+  implementation reproduces that result". Nightly tier.
 - @pytest.mark.slow: multi-Myr cooling runs, tolerance-convergence studies,
   anything that takes tens of minutes per test. Manual only.
 Pick the strictest marker the test fits. Do not double-mark.
