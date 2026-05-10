@@ -213,5 +213,4 @@ use_directory_urls: false
 
 watch:
   - src/
-  - docs/
   - README.md
