@@ -208,7 +208,140 @@ def test_set_initial_entropy_falls_back_to_mesh_when_n_stag_not_cached():
 
 
 @needs_eos
-@pytest.mark.smoke
+def test_entropy_staggered_and_temperature_staggered_accessors_for_extended_state():
+    """The state accessors ``entropy_staggered`` and
+    ``temperature_staggered`` have three structurally distinct
+    branches: gradient (covered by
+    ``test_entropy_solver_gradient_smoke``), extended-state
+    (energy_balance / bower2018, lines 1750-1751, 1761-1762), and
+    plain quasi_steady (lines 1752, 1764). The latter two need
+    explicit accessor calls.
+
+    Discriminator: the accessors must return the entropy / temperature
+    block in a shape that downstream PROTEUS code (atmosphere
+    coupling) can index. A regression that lost the extended-state
+    slice would surface as a length-N+1 array where N+1 includes
+    the trailing dSdr_cmb / T_core component; the slice must drop it.
+    """
+    from aragog.eos.entropy import EntropyEOS
+    from aragog.solver.entropy_solver import EntropySolver
+
+    eos = EntropyEOS(EOS_DIR)
+
+    # ── Energy-balance: extended state (length N+1) ─────────────
+    parameters = _build_params(inner_bc=2, core_bc='energy_balance')
+    solver = EntropySolver(parameters, entropy_eos=eos)
+    solver.initialize()
+    solver.set_initial_entropy(3050.0)
+    solver.solve()
+    n_stag = solver._n_stag
+    s_block = solver.entropy_staggered
+    assert s_block.shape[0] == n_stag, (
+        f'extended-state entropy_staggered shape {s_block.shape}; '
+        f'expected first axis = n_stag = {n_stag}'
+    )
+    t_block = solver.temperature_staggered
+    assert t_block.shape[0] == n_stag
+
+    # ── Quasi-steady: plain state (length N) ────────────────────
+    parameters = _build_params(inner_bc=2, core_bc='quasi_steady')
+    solver = EntropySolver(parameters, entropy_eos=eos)
+    solver.initialize()
+    solver.set_initial_entropy(3050.0)
+    solver.solve()
+    n_stag = solver._n_stag
+    s_block = solver.entropy_staggered
+    assert s_block.shape[0] == n_stag
+    t_block = solver.temperature_staggered
+    assert t_block.shape[0] == n_stag
+
+
+@pytest.mark.unit
+def test_temperature_staggered_const_properties_branch():
+    """Lines 1768-1769: when ``entropy_eos is None`` (const_properties
+    path), ``temperature_staggered`` must return the analytic
+    ``T_ref * exp((S - S_ref) / Cp)`` form rather than calling EOS.
+
+    Discriminator: directly compare against the const_properties
+    analytic formula. A regression that always called the EOS
+    branch would surface as an AttributeError on ``None.temperature``.
+    """
+    from unittest.mock import MagicMock
+
+    import numpy as np
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    solver = EntropySolver.__new__(EntropySolver)
+    solver._core_bc = 'quasi_steady'
+    solver._n_stag = 5
+    solver.entropy_eos = None  # const_properties
+    pm = MagicMock()
+    pm.const_T_ref = 3000.0
+    pm.const_S_ref = 3000.0
+    pm.const_Cp = 1000.0
+    solver.parameters = MagicMock()
+    solver.parameters.phase_mixed = pm
+    fake_sol = MagicMock()
+    fake_sol.y = np.full((5, 1), 3050.0)
+    solver._solution = fake_sol
+
+    T = solver.temperature_staggered
+    expected = 3000.0 * np.exp((3050.0 - 3000.0) / 1000.0)
+    np.testing.assert_allclose(T, expected, rtol=1e-12)
+
+
+@needs_eos
+def test_solve_with_fully_solid_initial_state_uses_relaxed_atol(caplog):
+    """Lines 2166-2167: when ``phi0 < 0.01`` (essentially fully
+    solid IC) the solver relaxes ``atol_scale = 10.0`` and removes
+    the per-step ``max_step`` cap, since there's no rheological
+    transition to chase.
+
+    Discriminator: the diagnostic log line emitted by ``solve()``
+    must include ``atol_scale=10.0x``. A regression that lost the
+    fully-solid branch would still log ``1.0x``, locking the
+    integrator at unnecessarily tight step bounds.
+    """
+    import logging
+
+    from aragog.eos.entropy import EntropyEOS
+    from aragog.solver.entropy_solver import EntropySolver
+
+    eos = EntropyEOS(EOS_DIR)
+    parameters = _build_params(inner_bc=2, core_bc='quasi_steady')
+    solver = EntropySolver(parameters, entropy_eos=eos)
+    solver.initialize()
+    # Pick S well below the solidus at every node so phi0 ~ 0.
+    P_basic = solver._P_basic_flat
+    S_sol_basic = eos.solidus_entropy(P_basic).ravel()
+    S_init = float(S_sol_basic.min()) - 200.0
+    solver.set_initial_entropy(S_init)
+
+    with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+        solver.solve()
+    # The relaxed atol_scale value must surface in the
+    # nondimensionalisation log line.
+    log_text = '\n'.join(r.message for r in caplog.records)
+    assert 'atol_scale=10.0x' in log_text, (
+        f'expected atol_scale=10.0x in solve() log; full log:\n{log_text}'
+    )
+
+    # Discriminator: get_state() with Phi_global < 0.01 must hit
+    # the fully-solid rheological-front branch (entropy_solver.py:2903)
+    # which sets ``rf = r_basic[-1]``. ``RF_depth`` then reduces to
+    # near zero. A regression that mis-typed the threshold would
+    # land in the argmin branch and produce a non-zero RF_depth.
+    out = solver.get_state()
+    assert float(out.Phi_global) < 0.05, (
+        f'Phi_global = {float(out.Phi_global):.4f} not in fully-solid regime'
+    )
+    assert float(out.RF_depth) < 0.01, (
+        f'RF_depth = {float(out.RF_depth):.4f}; expected near zero in fully-solid regime'
+    )
+
+
+@needs_eos
 def test_phi_global_falls_back_to_mean_when_mass_total_zero():
     """When ``mass_total_for_phi <= 0`` the helper falls back to
     ``np.mean(phi_stag)`` (line 2885). This is a pathological edge

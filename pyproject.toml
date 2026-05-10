@@ -81,9 +81,11 @@ include-package-data = true
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "--strict-markers"
 markers = [
     "unit: Unit tests (fast, no external data)",
     "smoke: Integration tests (may need external data)",
+    "integration: Real-physics integration tests against published references",
     "slow: Slow tests that exercise full multi-Myr solver runs",
 ]
 
@@ -107,9 +109,13 @@ precision = 1
 exclude_lines = [
     "pragma: no cover",
     "raise NotImplementedError",
+    "raise AssertionError",
     "if TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
     "def __repr__",
     "def __str__",
+    "@abstractmethod",
+    "@abc.abstractmethod",
     "if __name__ == .__main__.:",
 ]
 
