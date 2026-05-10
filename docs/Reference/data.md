@@ -19,6 +19,19 @@ The directory passed to `EntropySolver.from_file(eos_dir=...)` (or referenced th
 | `solidus_P-S.dat` | 2-column $(P, S)$ | Solidus entropy at each pressure |
 | `liquidus_P-S.dat` | 2-column $(P, S)$ | Liquidus entropy at each pressure |
 
+### Quick start: bundled test data
+
+A small SPIDER-format set is published as a release asset and used by the nightly CI. It is the fastest way to follow the [first-run tutorial](../Tutorials/firstrun.md) without a full PROTEUS / PALEOS install:
+
+```bash
+mkdir -p /tmp/aragog-test-data
+curl -sL -o /tmp/spider_eos.tar.gz \
+    https://github.com/FormingWorlds/aragog/releases/download/test-data-v1/spider_eos_test_data.tar.gz
+tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
+```
+
+The unpacked directory `/tmp/aragog-test-data/spider_eos/` is a drop-in `eos_dir`. Set `ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos` so the gated unit + smoke tests pick it up automatically.
+
 ### File layout
 
 The 2D tables follow SPIDER's text format: a header followed by a flat list of three-column $(P, S, Q)$ rows on a regular pressure-entropy grid.

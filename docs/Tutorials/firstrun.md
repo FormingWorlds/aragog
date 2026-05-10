@@ -28,7 +28,17 @@ Aragog's entropy solver requires a directory containing the following files:
 | `adiabat_temp_grad_solid.dat`, `adiabat_temp_grad_melt.dat` | 2D P-S grid | $(\partial T/\partial P)_S$ |
 | `solidus_P-S.dat`, `liquidus_P-S.dat` | 2-column $(P, S)$ | Phase-boundary entropy at each pressure |
 
-In a PROTEUS coupled run these tables are produced from the configured PALEOS or Wolf-Bower P-T file by the PROTEUS wrapper. For standalone work, point `eos_dir` at any directory containing this set.
+For a quick standalone walkthrough you can fetch a small SPIDER-format set bundled as a release asset:
+
+```bash
+mkdir -p /tmp/aragog-test-data
+curl -sL -o /tmp/spider_eos.tar.gz \
+    https://github.com/FormingWorlds/aragog/releases/download/test-data-v1/spider_eos_test_data.tar.gz
+tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
+export ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos
+```
+
+The same tarball is what the nightly CI populates before the smoke + slow tiers run. In a PROTEUS coupled run these tables are produced from the configured PALEOS or Wolf-Bower P-T file by the PROTEUS wrapper. For standalone work, point `eos_dir` at any directory containing this set.
 
 ## 2. Scaffold a configuration
 
