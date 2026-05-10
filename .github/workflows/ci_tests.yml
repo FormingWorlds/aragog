@@ -164,17 +164,21 @@ jobs:
           PY
 
       - name: Run unit tests
+        env:
+          # Coverage instrumentation slows pytest by ~30 %. The Codecov
+          # upload + union-estimation steps below only run on the
+          # ubuntu + py3.12 cell, so the other five matrix cells gain
+          # nothing from emitting coverage. Gate --cov flags to that one
+          # cell to keep the rest of the matrix on the original ~3 min
+          # wall. --cov-fail-under=0 overrides the 95 % floor in
+          # pyproject.toml for this tier (unit-only is around 83 %; the
+          # canonical 95 % gate is enforced in nightly.yml where the
+          # full unit + smoke + slow tier reaches ~96 %).
+          COV_FLAGS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12') && '--cov=src/aragog --cov-report=xml --cov-report=json:coverage.json --cov-fail-under=0' || '' }}
         run: |
-          # --cov-fail-under=0 overrides the 95 % floor in pyproject.toml
-          # for this tier only. The unit-only suite measures around 83 %
-          # combined coverage; the canonical 95 % gate is enforced in
-          # nightly.yml where the unit + smoke + slow tier reaches ~96 %.
-          # Coverage data is still emitted as XML and uploaded to Codecov
-          # under the `ci` flag for fast-feedback dashboards.
           pytest -m "unit and not slow" -n auto -o "addopts=" \
             -o "junit_family=legacy" --junitxml=junit.xml \
-            --cov=src/aragog --cov-report=xml --cov-report=json:coverage.json \
-            --cov-fail-under=0
+            $COV_FLAGS
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
