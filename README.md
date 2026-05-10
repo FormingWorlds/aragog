@@ -4,7 +4,7 @@
 [![Docs](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/docs.yaml?branch=main&label=Docs)](https://proteus-framework.org/aragog)
 [![Unit Tests](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/ci_tests.yml?branch=main&label=Unit%20Tests)](https://github.com/FormingWorlds/aragog/actions/workflows/ci_tests.yml)
 [![Integration Tests](https://img.shields.io/github/actions/workflow/status/FormingWorlds/aragog/nightly.yml?branch=main&label=Integration%20Tests)](https://github.com/FormingWorlds/aragog/actions/workflows/nightly.yml)
-[![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
+[![codecov](https://img.shields.io/codecov/c/github/FormingWorlds/aragog?label=coverage&logo=codecov)](https://app.codecov.io/gh/FormingWorlds/aragog)
 
 **1-D two-phase interior dynamics solver with mixing-length convective closure.**
 
@@ -89,7 +89,7 @@ pytest -m unit                           # ~2 min on a workstation
 pytest -m "unit or smoke or slow"        # full nightly suite, 10 min wall + EOS-table data
 ```
 
-Coverage is enforced at 85% by `[tool.coverage.report]` in `pyproject.toml`; the nightly workflow uploads to Codecov.
+Coverage is enforced at 95% by `[tool.coverage.report]` in `pyproject.toml`. Both push CI (unit tier) and the nightly (full suite) upload to Codecov under separate flags so the dashboard distinguishes the two cadences.
 
 ## PROTEUS integration
 

@@ -4,6 +4,10 @@ on:
   schedule:
     # 02:30 UTC daily (offset from Zalmoxis 02:00 UTC to spread runner load).
     - cron: "30 2 * * *"
+  # Refresh the canonical (full-suite) Codecov upload on every push to main
+  # so the badge tracks the merged state of the repo, not just the last cron.
+  push:
+    branches: [main]
   # Manual trigger for ad-hoc runs (e.g. before cutting a release, or to
   # verify the suite on a feature branch via
   # `gh workflow run "Aragog nightly" -r <branch>`).

@@ -60,7 +60,7 @@ jobs:
 
       - name: Install pip-only test deps (scikits-odes-sundials builds against conda SUNDIALS)
         run: |
-          pip install pytest pytest-xdist pytest-dependency ruff
+          pip install pytest pytest-cov pytest-xdist pytest-dependency ruff
           # Install scikits-odes-sundials directly (skip the scikits-odes
           # metapackage). This avoids scikits-odes-daepack, which is a
           # transitive Fortran dep with f2py incompatibility with numpy
@@ -88,8 +88,15 @@ jobs:
 
       - name: Run unit tests
         run: |
+          # --cov-fail-under=0 overrides the 95 % floor in pyproject.toml
+          # for this tier only. The unit-only suite measures around 83 %
+          # combined coverage; the canonical 95 % gate is enforced in
+          # nightly.yml where the unit + smoke + slow tier reaches ~96 %.
+          # Coverage data is still emitted as XML and uploaded to Codecov
+          # under the `ci` flag for fast-feedback dashboards.
           pytest -m "unit and not slow" -n auto -o "addopts=" \
-            -o "junit_family=legacy" --junitxml=junit.xml
+            -o "junit_family=legacy" --junitxml=junit.xml \
+            --cov=src/aragog --cov-report=xml --cov-fail-under=0
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
@@ -98,3 +105,13 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: FormingWorlds/Aragog
           files: junit.xml
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: FormingWorlds/Aragog
+          files: coverage.xml
+          flags: ci
+          fail_ci_if_error: false
