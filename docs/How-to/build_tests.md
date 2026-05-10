@@ -5,7 +5,7 @@
 [![codecov](https://codecov.io/gh/FormingWorlds/aragog/graph/badge.svg)](https://codecov.io/gh/FormingWorlds/aragog)
 
 This page is about *writing* a new test, by hand or with an LLM. For running
-the existing suite see [Testing suite](testing.md).
+the existing suite see [Testing suite](../Explanations/testing.md).
 
 ## Decision tree: which marker?
 

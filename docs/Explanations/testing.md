@@ -50,7 +50,7 @@ Install the test extras:
 pip install -e ".[test]"
 ```
 
-The JAX-path tests additionally need the `jax` extra (`pip install -e ".[jax]"`); without it the JAX parity tests are skipped, not failed. SPIDER-format EOS tables are also required for a subset of tests; if `FWL_DATA` is unset or the expected files are missing, those tests skip cleanly. For guidance on *writing* new tests see [How to build tests](build_tests.md).
+The JAX-path tests additionally need the `jax` extra (`pip install -e ".[jax]"`); without it the JAX parity tests are skipped, not failed. SPIDER-format EOS tables are also required for a subset of tests; if `FWL_DATA` is unset or the expected files are missing, those tests skip cleanly. For guidance on *writing* new tests see [How to build tests](../How-to/build_tests.md).
 
 ## Other run patterns
 

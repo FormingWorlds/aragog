@@ -24,7 +24,6 @@ nav:
           - UTBL parameterisation: How-to/utbl-parameterisation.md
       - Outputs & testing:
           - Inspecting NetCDF output: How-to/netcdf.md
-          - Testing suite: How-to/testing.md
           - Build tests: How-to/build_tests.md
 
   - Tutorials:
@@ -37,6 +36,7 @@ nav:
           - Code architecture: Explanations/code_architecture.md
           - Coupling to PROTEUS: Explanations/proteus_coupling.md
           - Aragog vs SPIDER: Explanations/spider_comparison.md
+          - Testing suite: Explanations/testing.md
       - Physics:
           - Energy equation: Explanations/energy_equation.md
           - Heat transport: Explanations/heat_transport.md
