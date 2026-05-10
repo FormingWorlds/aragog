@@ -126,11 +126,33 @@ jobs:
           head = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
 
           def fail_under(d):
-              return float(d['tool']['coverage']['report']['fail_under'])
+              try:
+                  return float(d['tool']['coverage']['report']['fail_under'])
+              except KeyError:
+                  return None
 
           base_v = fail_under(base)
           head_v = fail_under(head)
           print(f'fail_under: base={base_v} head={head_v}')
+
+          # Base has no [tool.coverage.report].fail_under: nothing to
+          # ratchet against. The first PR that introduces the gate is
+          # allowed regardless of head_v.
+          if base_v is None:
+              print(
+                  f'origin/{base_ref} has no [tool.coverage.report].fail_under; '
+                  'no ratchet to enforce. PASS.'
+              )
+              sys.exit(0)
+
+          # Head removed the gate that base had: that's a decrease.
+          if head_v is None:
+              print(
+                  f'ERROR: head removed [tool.coverage.report].fail_under '
+                  f'(base had {base_v}). The gate is one-way only.'
+              )
+              sys.exit(1)
+
           if head_v < base_v:
               print(
                   f'ERROR: fail_under decreased ({head_v} < {base_v}). '
