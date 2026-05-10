@@ -280,6 +280,108 @@ def test_ini_path_still_rejects_scalings_section(tmp_path):
         Parameters.from_file(cfg)
 
 
+def test_toml_dispatch_wraps_radionuclide_typeerror_with_section_context(tmp_path):
+    """Parser line 475-476: an unknown field on a [radionuclide_*]
+    section must be wrapped as a ValueError naming the offending
+    section, not surfaced as a bare TypeError from the
+    ``_Radionuclide`` constructor.
+
+    Discriminator: the wrapper preserves debuggability. Without
+    it the user sees a confusing ``unexpected keyword argument
+    'foo'`` from deep in the dataclass machinery.
+    """
+    from aragog.parser import Parameters
+
+    cfg = tmp_path / 'bad_radio.toml'
+    cfg.write_text(
+        # Minimal valid sections plus one bad radionuclide field.
+        '[solver]\nstart_time = 0\nend_time = 1\natol = 1e-9\nrtol = 1e-9\n'
+        'tsurf_poststep_change = 30\n'
+        '[boundary_conditions]\nouter_boundary_condition = 1\nouter_boundary_value = 1500\n'
+        'inner_boundary_condition = 2\ninner_boundary_value = 0\n'
+        'emissivity = 1.0\nequilibrium_temperature = 273\ncore_heat_capacity = 880\n'
+        '[mesh]\nouter_radius = 6.371e6\ninner_radius = 3.480e6\n'
+        'number_of_nodes = 10\nmixing_length_profile = "nearest_boundary"\n'
+        'core_density = 10500\n'
+        '[energy]\nconduction = true\nconvection = true\n'
+        'gravitational_separation = false\nmixing = false\n'
+        'radionuclides = false\ntidal = false\n'
+        '[initial_condition]\ninitial_condition = 1\n'
+        'surface_temperature = 3500\nbasal_temperature = 3500\n'
+        '[phase_solid]\ndensity = 4200\nheat_capacity = 1000\n'
+        'melt_fraction = 0\nthermal_conductivity = 4\n'
+        'thermal_expansivity = 3e-5\nviscosity = 1e21\n'
+        '[phase_liquid]\ndensity = 4000\nheat_capacity = 1000\n'
+        'melt_fraction = 1\nthermal_conductivity = 4\n'
+        'thermal_expansivity = 3e-5\nviscosity = 10\n'
+        '[phase_mixed]\nlatent_heat_of_fusion = 4e5\n'
+        'rheological_transition_melt_fraction = 0.4\n'
+        'rheological_transition_width = 0.15\n'
+        'solidus = "solidus.dat"\nliquidus = "liquidus.dat"\n'
+        'phase = "mixed"\nphase_transition_width = 0.01\n'
+        'grain_size = 1e-3\n'
+        '[radionuclide_K40]\nname = "K40"\nt0_years = 4.55e9\n'
+        'abundance = 1e-4\nconcentration = 310\nheat_production = 2.9e-5\n'
+        'half_life_years = 1.25e9\nunknown_radio_field = 99\n',
+        encoding='utf-8',
+    )
+    with pytest.raises(ValueError, match=r'\[radionuclide_K40\]'):
+        Parameters.from_file(cfg)
+
+
+def test_ic_method_2_loads_init_temperature_from_file(tmp_path):
+    """``initial_condition = 2`` (user-defined T file) must trigger
+    the ``np.loadtxt`` of ``init_file`` in ``__post_init__`` (parser
+    line 362).
+
+    Discriminator: the ``_InitialConditionParameters.init_temperature``
+    field must be populated as an ndarray after load. A regression
+    that lost the ``np.loadtxt`` call would leave it as the default.
+    """
+    import numpy as np
+
+    from aragog.parser import Parameters
+
+    init_file = tmp_path / 'init_T.dat'
+    np.savetxt(init_file, np.linspace(4000.0, 1500.0, 10))
+
+    cfg = tmp_path / 'ic_method_2.toml'
+    cfg.write_text(
+        '[solver]\nstart_time = 0\nend_time = 1\natol = 1e-9\nrtol = 1e-9\n'
+        'tsurf_poststep_change = 30\n'
+        '[boundary_conditions]\nouter_boundary_condition = 1\nouter_boundary_value = 1500\n'
+        'inner_boundary_condition = 2\ninner_boundary_value = 0\n'
+        'emissivity = 1.0\nequilibrium_temperature = 273\ncore_heat_capacity = 880\n'
+        '[mesh]\nouter_radius = 6.371e6\ninner_radius = 3.480e6\n'
+        'number_of_nodes = 10\nmixing_length_profile = "nearest_boundary"\n'
+        'core_density = 10500\n'
+        '[energy]\nconduction = true\nconvection = true\n'
+        'gravitational_separation = false\nmixing = false\n'
+        'radionuclides = false\ntidal = false\n'
+        '[initial_condition]\ninitial_condition = 2\n'
+        f'init_file = "{init_file}"\n'
+        'surface_temperature = 3500\nbasal_temperature = 3500\n'
+        '[phase_solid]\ndensity = 4200\nheat_capacity = 1000\n'
+        'melt_fraction = 0\nthermal_conductivity = 4\n'
+        'thermal_expansivity = 3e-5\nviscosity = 1e21\n'
+        '[phase_liquid]\ndensity = 4000\nheat_capacity = 1000\n'
+        'melt_fraction = 1\nthermal_conductivity = 4\n'
+        'thermal_expansivity = 3e-5\nviscosity = 10\n'
+        '[phase_mixed]\nlatent_heat_of_fusion = 4e5\n'
+        'rheological_transition_melt_fraction = 0.4\n'
+        'rheological_transition_width = 0.15\n'
+        'solidus = "solidus.dat"\nliquidus = "liquidus.dat"\n'
+        'phase = "mixed"\nphase_transition_width = 0.01\n'
+        'grain_size = 1e-3\n',
+        encoding='utf-8',
+    )
+    params = Parameters.from_file(cfg)
+    assert params.initial_condition.initial_condition == 2
+    assert isinstance(params.initial_condition.init_temperature, np.ndarray)
+    assert params.initial_condition.init_temperature.shape == (10,)
+    assert float(params.initial_condition.init_temperature[0]) == pytest.approx(4000.0)
+
+
 def test_from_file_no_arguments_raises():
     """Calling ``Parameters.from_file()`` with no filename must raise
     a clear error rather than silently building an empty Parameters.

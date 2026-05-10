@@ -262,6 +262,71 @@ def test_list_configs_skips_unreadable_entry(monkeypatch, tmp_path):
 # ──────────────────────────────────────────────────────────────────────
 
 
+def test_version_message_handles_missing_dependency(monkeypatch):
+    """Lines 60-61 of cli.py: ``_version_message`` builds the
+    ``aragog --versions`` block by importing each dependency by name;
+    when one raises ImportError or other exceptions, the line must
+    fall back to ``"not installed"`` rather than aborting the whole
+    listing.
+
+    Discriminator: a regression that let the exception propagate
+    would make ``aragog --versions`` (the bug-report-friendly mode)
+    crash on any environment that lacks one of the optional deps.
+    """
+    import importlib
+
+    import aragog.cli as cli_mod
+
+    real_import = importlib.import_module
+
+    def _faulty_import(name, package=None):
+        if name == 'jax':
+            raise ImportError('intentional test fault')
+        return real_import(name, package=package)
+
+    monkeypatch.setattr(importlib, 'import_module', _faulty_import)
+    msg = cli_mod._version_message()
+    assert 'aragog ' in msg
+    assert 'jax: not installed' in msg, (
+        f'expected "jax: not installed" line on ImportError; got {msg!r}'
+    )
+
+
+def test_vnv_handles_module_spec_load_failure(monkeypatch, tmp_path):
+    """Line 921 of cli.py: when ``importlib.util.spec_from_file_location``
+    cannot build a spec / loader, ``aragog vnv <topic>`` must raise
+    ClickException with a "could not load" message.
+
+    Discriminator: forced spec=None via monkeypatch makes the loader
+    branch fire. A regression that swallowed the failure or let the
+    None-spec into ``module_from_spec`` would crash with AttributeError
+    deeper in the stack instead of the user-facing "could not load".
+    """
+    import importlib.util
+
+    from click.testing import CliRunner
+
+    import aragog.cli as cli_mod
+
+    figures_dir = tmp_path / 'figs'
+    figures_dir.mkdir()
+    (figures_dir / 'verify_demo.py').write_text('def main(): pass\n', encoding='utf-8')
+    monkeypatch.setattr(cli_mod, '_vnv_figures_dir', lambda: figures_dir)
+
+    real_spec_from_file = importlib.util.spec_from_file_location
+
+    def _none_spec(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(importlib.util, 'spec_from_file_location', _none_spec)
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.cli, ['vnv', 'demo'])
+    assert result.exit_code != 0
+    assert 'could not load' in (result.output or '').lower()
+    # Restore (autouse cleanup happens via monkeypatch but assert).
+    monkeypatch.setattr(importlib.util, 'spec_from_file_location', real_spec_from_file)
+
+
 def test_serialize_params_walks_radionuclide_list_and_unboxes_np_scalars():
     """Lines 732, 736: ``_serialize_params`` recurses into lists and
     unboxes numpy scalars via ``.item()``.

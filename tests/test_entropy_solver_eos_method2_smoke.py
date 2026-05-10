@@ -204,6 +204,18 @@ def test_solver_loads_external_mesh_with_eos_method_2(shared_eos, tmp_path_facto
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     assert np.all(np.isfinite(final_y)), 'eos_method=2 final state has NaN'
 
+    # Discriminator: get_state() with UserDefinedEOS triggers the
+    # discrete-sum mantle-mass branch (entropy_solver.py:2848-2850)
+    # because UserDefinedEOS lacks the analytic
+    # ``get_mass_within_radii`` method that AdamsWilliamsonEOS
+    # provides. M_mantle must come back finite and physically
+    # plausible for an Earth-like geometry (a few 1e24 kg).
+    out = solver.get_state()
+    assert np.isfinite(out.M_mantle)
+    assert 1.0e23 < float(out.M_mantle) < 1.0e25, (
+        f'M_mantle = {float(out.M_mantle):.3e} kg outside plausible Earth-like mantle range'
+    )
+
 
 def test_solver_reset_reloads_external_mesh_on_each_call(shared_eos, tmp_path_factory):
     """``EntropySolver.reset()`` must re-read the eos_file when
