@@ -98,27 +98,7 @@ jobs:
           # FAILED list entirely if there are no other final messages,
           # making post-mortem on cancelled runs near-impossible.
           pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra \
-            --cov=src/aragog --cov-report=term-missing --cov-report=xml \
-            --cov-report=json:coverage.json
-
-      - name: Stamp nightly artifact timestamp
-        if: ${{ !cancelled() }}
-        run: |
-          # ISO 8601 UTC; consumed by ci_tests.yml's staleness check (>48 h
-          # since this stamp triggers a warning, not a hard fail).
-          date -u +"%Y-%m-%dT%H:%M:%SZ" > nightly-timestamp.txt
-
-      - name: Upload nightly coverage artifact
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: nightly-coverage
-          path: |
-            coverage.xml
-            coverage.json
-            nightly-timestamp.txt
-          retention-days: 14
-          if-no-files-found: warn
+            --cov=src/aragog --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}
