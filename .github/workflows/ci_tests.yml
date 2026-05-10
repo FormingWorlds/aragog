@@ -15,7 +15,7 @@ on:
 # Push and PR CI: unit tests only, on ubuntu + macos x py 3.11/3.12/3.13.
 # Targets <5 min wall. Slow tests (full multi-Myr CVODE solves) live in
 # the scheduled nightly workflow `nightly.yml` instead, alongside coverage
-# enforcement against the 85% floor. Running the slow suite or coverage
+# enforcement against the 95% floor. Running the slow suite or coverage
 # instrumentation on every push burns ~10 min CI time per commit and gives
 # no bug-finding signal that the unit suite doesn't already cover.
 #
