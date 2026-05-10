@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fwl-aragog"
-version = "26.05.08"
+version = "26.05.10"
 description = "1-D interior dynamics of rocky mantles that are solid, liquid, or mixed phase"
 readme = "README.md"
 requires-python = ">=3.12"

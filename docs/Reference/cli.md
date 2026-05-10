@@ -7,7 +7,7 @@ PROTEUS-coupled runs do *not* use the CLI; the `proteus` driver builds `Paramete
 ## Group flags
 
 ```
-aragog --version    # bare aragog version, e.g. 'aragog 26.05.08'
+aragog --version    # bare aragog version, e.g. 'aragog 26.05.10'
 aragog --versions   # multi-line block: aragog + numpy / scipy / jax / scikits.odes / netCDF4
 ```
 
@@ -147,7 +147,7 @@ Default output is human-readable: scalar lines aligned in two columns with units
 
 ```
 snapshot: out.nc
-  aragog: 26.05.08
+  aragog: 26.05.10
   created: 2026-05-09T00:00:00+00:00
   description: Aragog run from earth_smoke.toml
   dimensions: staggered=120, basic=121
