@@ -1,5 +1,3 @@
-console.log("header-links.js loaded");
-
 function wire() {
   const homepage = "https://proteus-framework.org/";
 
@@ -7,14 +5,14 @@ function wire() {
   if (logo) logo.href = homepage;
 
   const title = document.querySelector(".md-header__title[data-md-component='header-title']");
-  if (title && !title.dataset.spiderWired) {
-    title.dataset.spiderWired = "1";
+  if (title && !title.dataset.titleWired) {
+    title.dataset.titleWired = "1";
     title.style.cursor = "pointer";
 
-    // always go to /SPIDER/ when hosted there, else "/" (mkdocs serve)
+    // always go to /aragog/ when hosted there, else "/" (mkdocs serve)
     const href = location.href;
-    const docsHome = href.includes("/SPIDER/")
-      ? href.split("/SPIDER/")[0] + "/SPIDER/"
+    const docsHome = href.includes("/aragog/")
+      ? href.split("/aragog/")[0] + "/aragog/"
       : location.origin + "/";
 
     title.addEventListener("click", (e) => {

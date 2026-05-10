@@ -1,10 +1,14 @@
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "fwl-aragog"
-version = "26.01.06"
+version = "26.05.08"
+description = "1-D interior dynamics of rocky mantles that are solid, liquid, or mixed phase"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "GPL-3.0-or-later"}
 authors = [
     {name="Dan J. Bower",            email="dbower@ethz.ch"},
     {name="Mariana Sastre",          email="m.c.villamil.sastre@rug.nl"},
@@ -14,60 +18,127 @@ authors = [
     {name="Hanno Spreeuw",           email="h.spreeuw@esciencecenter.nl"},
     {name="Robb Calder",             email="rdc49@cam.ac.uk"},
 ]
-description = "1-D interior dynamics of rocky mantles that are solid, liquid, or mixed phase"
-license = "GPL-3.0-or-later"
-readme = "README.md"
-
-
-[tool.poetry]
-packages = [
-    { include = "aragog" },
-    { include = "notebooks", to = "aragog" },
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+    "attrs>=23.1.0",
+    "numpy>=2.0.0",
+    "scipy>=1.12.0",
+    "netCDF4>=1.7.0",
+    "thermochem>=0.8.2",
+    "matplotlib>=3.8.3",
+    "typed-configparser>=1.1.0",
+    "click>=8.1.3",
+    "platformdirs>=3.10.0",
 ]
 
-[tool.poetry.dependencies]
-python = ">=3.10"
-numpy = ">=2.0.0"
-scipy = "^1.12.0"
-netCDF4 = "^1.7.0"
-thermochem = "^0.8.2"
-matplotlib = "^3.8.3"
-typed-configparser = "^1.1.0"
-typing-extensions = "^4.10.0"
-setuptools = {version = "70.0.0", optional = true}
-click = "^8.1.3"
-platformdirs = "^3.10.0"
-osfclient = "^0.0.5"
-zenodo_get = ">=1.6.0"
-
-[tool.poetry.group.test.dependencies]
-pytest = ">=8.1"
-pytest-cov = ">=1.0.0"
-pytest-dependency = ">=1.0.0"
-
-
-[tool.poetry.group.docs.dependencies]
-zensical = "*"
-markdown-include = "^0.8"
-mkdocs = "^1.6"
-mkdocs-material = "^9.5"
-pymdown-extensions = "^10.0"
-mkdocstrings = "^0.26"
-mkdocstrings-python = "^1.10"
-mkdocs-bibtex = "^4.4.0"
-
-[tool.poetry.extras]
+[project.optional-dependencies]
+test = [
+    "pytest>=8.1",
+    "pytest-cov>=1.0.0",
+    "pytest-dependency>=0.6.0",
+    "pytest-xdist>=3.0.0",
+]
 docs = [
-    "zensical",
-    "markdown-include",
-    "mkdocs",
-    "mkdocs-material",
-    "pymdown-extensions",
-    "mkdocstrings",
-    "mkdocstrings-python",
-    "mkdocs-bibtex",
+    "zensical>=0.0.40",
+    "markdown-include>=0.8",
+    "mkdocstrings[python]>=0.26",
+    "pymdown-extensions>=10.7",
+    "mkdocs-material>=9.5",
+]
+jax = [
+    "jax>=0.4.30",
+    "equinox>=0.11.0",
+    "scikits-odes-sundials>=3.0.0",
 ]
 
-[tool.poetry.scripts]
+[project.scripts]
 aragog = "aragog.cli:cli"
 
+[project.urls]
+homepage = "https://github.com/FormingWorlds/aragog"
+issues = "https://github.com/FormingWorlds/aragog/issues"
+documentation = "https://proteus-framework.org/Aragog/"
+changelog = "https://github.com/FormingWorlds/aragog/releases"
+
+[tool.setuptools]
+package-dir = {"aragog" = "src/aragog"}
+include-package-data = true
+
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "unit: Unit tests (fast, no external data)",
+    "smoke: Integration tests (may need external data)",
+    "integration: Real-physics integration tests against published references",
+    "slow: Slow tests that exercise full multi-Myr solver runs",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/aragog"]
+omit = [
+    "*/tests/*",
+    "*/conftest.py",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+# 95 % is the permanent ceiling for this repo; do not raise it
+# further. The CALLIOPE policy is identical: 95 % buys real
+# regression coverage without forcing tests to exercise integration
+# paths whose runtime would push CI over its budget.
+fail_under = 95
+show_missing = true
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "raise AssertionError",
+    "if TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
+    "def __repr__",
+    "def __str__",
+    "@abstractmethod",
+    "@abc.abstractmethod",
+    "if __name__ == .__main__.:",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.ruff]
+line-length = 96
+target-version = "py312"
+extend-exclude = ["*ipynb"]
+
+[tool.ruff.lint]
+select = [
+	"F",  # Pyflakes
+	"E",  # pycodestyle (error)
+	"W",  # pycodestyle (warning)
+    "I",    # isort
+]
+ignore = [
+    "E501", # Line too long
+    "E741", # Ambiguous variable name
+]
+
+[tool.ruff.lint.isort]
+known-first-party=["aragog"]
+required-imports = ["from __future__ import annotations"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"

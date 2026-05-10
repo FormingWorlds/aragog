@@ -1,19 +1,21 @@
 # Getting started
 
 !!! note "Usage within the PROTEUS framework"
-    Aragog is most commonly installed and used as integrated into the PROTEUS framework. Understand how to use PROTEUS [here](https://proteus-framework.org/PROTEUS). 
+    Aragog is most commonly installed and used as part of the PROTEUS framework. See the [PROTEUS documentation](https://proteus-framework.org/PROTEUS) for coupled runs.
 
 ## Quick path
 
-Here is the quickest path to getting started:
+1. **Install Aragog**
+   Follow the installation steps and download necessary data. <br>
+   See [Installation guide](How-to/installation.md).
 
-1. **Install Aragog**  
-   Follow the installation steps. <br>
-   → [Installation guide](How-to/installation.md)
+2. **Configure your setup**
+   Write or modify a TOML configuration file for your mantle model. <br>
+   See [Configuration](How-to/configuration.md).
 
-2. **Run your first model** <br>
-    Follow a minimal example run and generate a quick plot. <br>
-    → [First run tutorial](Tutorials/firstrun.md)
+3. **Run your first model**
+   Learn the basic usage patterns. <br>
+   See [Usage](How-to/usage.md).
 
 ---
 
@@ -25,25 +27,29 @@ Here is the quickest path to getting started:
 
     [Go to installation guide](How-to/installation.md)
 
--   :material-rocket-launch: **Run Aragog**
+-   :material-tune: **Configure**
 
-    [Go to tutorials](Tutorials/first_run.md)
+    [Go to configuration](How-to/configuration.md)
+
+-   :material-rocket-launch: **Use Aragog**
+
+    [Go to usage](How-to/usage.md)
 
 -   :material-book-open-variant: **Understand the model**
 
-    [Go to model overview](Explanations/enthalpy_balance.md)
+    [Go to model overview](Explanations/model.md)
 
--   :material-bookshelf: **Check Aragog publications**
+-   :material-code-braces: **Browse the API**
 
-    [Go to publications](Reference/publications.md)
+    [Go to API reference](Reference/api/index.md)
 
--   :material-github: **Browse API**
+-   :material-github: **Contribute / browse code**
 
-    [Go to API reference](Reference/api/api_overview.md)
+    [Go to source code](https://github.com/FormingWorlds/aragog)
 
 -   :material-bug: **Raise an issue**
 
-    [Go to issues](https://github.com/FormingWorlds/Aragog/issues)
+    [Go to issues](https://github.com/FormingWorlds/aragog/issues)
 
 -   :material-email: **Get in touch**
 

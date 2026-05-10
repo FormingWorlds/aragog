@@ -1,0 +1,15 @@
+# `aragog.solver`
+
+The `aragog.solver` package contains the time-integration driver, the per-RHS state container, the boundary-condition handler, and the output dataclass.
+
+The public surface re-exported from `aragog.solver` is:
+
+| Name | Role |
+|------|------|
+| `EntropySolver` | The ODE driver. Owns the integrator dispatch (Radau / BDF / CVODE), the nondimensionalisation layer, the retry-ladder hooks, and the `SolverOutput` post-processing. |
+| `EntropyState` | Per-RHS state container. Computes phase, density, $T$, $c_p$, $\alpha$, $k$, the four flux contributions, and the internal heating at each call. |
+| `BoundaryConditions` | Surface (grey-body, UTBL, prescribed flux/T) and inner (core cooling, prescribed flux/T) BC dispatch. |
+| `SolverOutput` | Dataclass returned by `EntropySolver.get_state()`. Carries the staggered-node profiles, basic-node fluxes, scalar diagnostics, the per-call energy integrals (`step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`, plus frozen-mass `step_dE_Q_radio_cons_J`/`step_dE_Q_tidal_cons_J` and the entropy-ODE solver residual `step_solver_residual_J`), the conservation-grade integrated mantle enthalpy `E_state_cons` (frozen-mass), and the integration status flag. See [Energy diagnostics](../../Explanations/energy_diagnostics.md) for the conservation-residual interpretation. |
+| `SECS_PER_YEAR` | Module-level constant `scipy.constants.Julian_year` ($31{,}557{,}600$ s). The ODE is integrated in years; converting flux divergence (J/kg/K/s) to per-year requires this factor. |
+
+::: aragog.solver

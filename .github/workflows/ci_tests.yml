@@ -1,7 +1,4 @@
-# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-python
-
-name: Tests for Aragog
+name: Aragog CI Test Suite
 
 on:
   push:
@@ -17,41 +14,177 @@ on:
       - ready_for_review
   workflow_dispatch:
 
+# Push and PR CI: unit tests only, on ubuntu + macos x py 3.12 / 3.13.
+# Targets <5 min wall. Slow tests (full multi-Myr CVODE solves) live in
+# the scheduled nightly workflow `nightly.yml` instead, alongside coverage
+# enforcement against the 95% floor. Running the slow suite or coverage
+# instrumentation on every push burns ~10 min CI time per commit and gives
+# no bug-finding signal that the unit suite doesn't already cover.
+#
+# Trigger scoping: push fires only on main (release-merge sanity check),
+# pull_request fires on PRs into main (feature-branch validation). With
+# both, every commit on a PR runs exactly one matrix sweep instead of two
+# (push + pull_request would otherwise both fire on a feature-branch
+# push that has an open PR).
+#
+# Uses micromamba + conda-forge for the env so SUNDIALS, gfortran, and the
+# scikits-odes binary stack come prebuilt instead of being compiled from
+# source against stock apt/brew (which lag the SUNDIALS major version
+# scikits-odes-sundials 3.x requires).
+
 permissions:
-  actions: write
-  contents: write
+  contents: read
+
+# Cancel superseded runs on the same ref so a stack of feature-branch
+# pushes does not pile up macOS runners (free-tier concurrency is tight).
+# The base ref keeps push to main and pull_request to main in separate
+# groups so the latter cannot cancel a release sanity check.
+concurrency:
+  group: ci-tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-
+  test-fast:
+    name: Aragog-check (${{ matrix.os }}, py${{ matrix.python-version }})
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12","3.13"]
         os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12", "3.13"]
 
     runs-on: ${{ matrix.os }}
 
+    defaults:
+      run:
+        shell: bash -el {0}
+
     steps:
-    - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Set up conda env (sundials from conda-forge)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: aragog-test
+          create-args: >-
+            python=${{ matrix.python-version }}
+            sundials
+          condarc: |
+            channels:
+              - conda-forge
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install flake8 pytest pytest-cov pytest-dependency
-        if [ -f pyproject.toml ]; then pip install .; fi
+      - name: Install pip-only test deps (scikits-odes-sundials builds against conda SUNDIALS)
+        run: |
+          pip install pytest pytest-xdist pytest-dependency ruff
+          # Install scikits-odes-sundials directly (skip the scikits-odes
+          # metapackage). This avoids scikits-odes-daepack, which is a
+          # transitive Fortran dep with f2py incompatibility with numpy
+          # 2.3+ and needs gfortran on macOS. aragog imports CVODE
+          # directly from scikits_odes_sundials.cvode and has no use for
+          # the DAE solvers in the metapackage.
+          pip install scikits-odes-sundials jax equinox
 
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      - name: Install aragog
+        run: |
+          pip install -e .
 
-    - name: Test with pytest
-      run: pytest --cov-report term --cov-report markdown-append:$GITHUB_STEP_SUMMARY --cov=aragog tests/
+      - name: Fetch SPIDER EOS test data
+        run: |
+          mkdir -p /tmp/aragog-test-data
+          curl -sL -o /tmp/spider_eos.tar.gz \
+            https://github.com/FormingWorlds/aragog/releases/download/test-data-v1/spider_eos_test_data.tar.gz
+          tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
+          echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
+
+      - name: Validate test markers
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
+        run: bash tools/validate_test_structure.sh
+
+      - name: Lint with Ruff
+        run: |
+          ruff check src/ tests/
+          ruff format --check src/ tests/
+
+      - name: Pre-flight fail_under ratchet check
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+        run: |
+          # Reject PRs that lower [tool.coverage.report] fail_under below
+          # the value on the base branch. The 95% ceiling is the maximum
+          # ratchet per ecosystem policy; this check enforces the
+          # one-way-only direction (down forbidden) so the gate cannot be
+          # weakened to land an under-tested change.
+          git fetch --no-tags --depth=1 origin "$BASE_REF" || true
+          python - <<'PY'
+          import os
+          import pathlib
+          import subprocess
+          import sys
+          import tomllib
+
+          base_ref = os.environ.get('BASE_REF', 'main')
+          out = subprocess.run(
+              ['git', 'show', f'origin/{base_ref}:pyproject.toml'],
+              capture_output=True,
+              text=True,
+              check=False,
+          )
+          if out.returncode != 0:
+              print(f'Could not read pyproject.toml from origin/{base_ref}; skipping check.')
+              sys.exit(0)
+
+          base = tomllib.loads(out.stdout)
+          head = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
+
+          def fail_under(d):
+              try:
+                  return float(d['tool']['coverage']['report']['fail_under'])
+              except KeyError:
+                  return None
+
+          base_v = fail_under(base)
+          head_v = fail_under(head)
+          print(f'fail_under: base={base_v} head={head_v}')
+
+          # Base has no [tool.coverage.report].fail_under: nothing to
+          # ratchet against. The first PR that introduces the gate is
+          # allowed regardless of head_v.
+          if base_v is None:
+              print(
+                  f'origin/{base_ref} has no [tool.coverage.report].fail_under; '
+                  'no ratchet to enforce. PASS.'
+              )
+              sys.exit(0)
+
+          # Head removed the gate that base had: that's a decrease.
+          if head_v is None:
+              print(
+                  f'ERROR: head removed [tool.coverage.report].fail_under '
+                  f'(base had {base_v}). The gate is one-way only.'
+              )
+              sys.exit(1)
+
+          if head_v < base_v:
+              print(
+                  f'ERROR: fail_under decreased ({head_v} < {base_v}). '
+                  'The coverage gate is one-way only; ask a maintainer if a '
+                  'downward adjustment is required.'
+              )
+              sys.exit(1)
+          print('OK: fail_under is non-decreasing.')
+          PY
+
+      - name: Run unit tests
+        run: |
+          pytest -m "unit and not slow" -n auto -o "addopts=" \
+            -o "junit_family=legacy" --junitxml=junit.xml
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: FormingWorlds/Aragog
+          files: junit.xml

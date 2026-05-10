@@ -3,67 +3,97 @@ site_url: https://proteus-framework.org/aragog
 repo_url: https://github.com/FormingWorlds/aragog
 repo_name: GitHub
 
-copyright: '© 2023-2026 <a href="https://formingworlds.space">Forming Worlds Lab</a>'
+copyright: '&copy; 2023-2026 <a href="https://formingworlds.space">Forming Worlds Lab</a>'
 
 nav:
-  - Home: 
+  - Home:
       - About: index.md
       - Getting started: getting_started.md
 
   - How-to guides:
-      - Installation: How-to/installation.md
-      - Inspecting NetCDF output: How-to/netcdf.md
+      - Setup:
+          - Installation: How-to/installation.md
+      - Running Aragog:
+          - Standalone usage: How-to/usage-paths.md
+          - Coupling Aragog to PROTEUS: How-to/proteus_coupling.md
+          - Configuration: How-to/configuration.md
+          - Usage: How-to/usage.md
+      - Solver tuning:
+          - Solver method tuning: How-to/solver-method-tuning.md
+          - Melt-fraction step cap: How-to/phi-step-cap.md
+          - UTBL parameterisation: How-to/utbl-parameterisation.md
+      - Outputs & testing:
+          - Inspecting NetCDF output: How-to/netcdf.md
+          - Build tests: How-to/build_tests.md
 
   - Tutorials:
       - First run: Tutorials/firstrun.md
+      - Building a test: Tutorials/build_test.md
 
   - Explanations:
-      - Model overview: 
-          - Enthalpy balance: Explanations/enthalpy_balance.md
-          - Thermodynamics: Explanations/thermodynamics.md
-          - Transport: Explanations/transport.md
-          - Numerical methods: Explanations/numerical_methods.md
-
+      - Overview:
+          - Model overview: Explanations/model.md
+          - Code architecture: Explanations/code_architecture.md
+          - Coupling to PROTEUS: Explanations/proteus_coupling.md
+          - Aragog vs SPIDER: Explanations/spider_comparison.md
+          - Testing suite: Explanations/testing.md
+      - Physics:
+          - Energy equation: Explanations/energy_equation.md
+          - Heat transport: Explanations/heat_transport.md
+          - Mixing-length theory: Explanations/mixing_length.md
+          - Two-phase flow: Explanations/two_phase_flow.md
+          - Phase transitions: Explanations/phase_transitions.md
+          - Pressure EOS: Explanations/pressure_eos.md
+          - Core BC modes: Explanations/core_bc.md
+      - Numerics:
+          - CVODE and JAX: Explanations/cvode_jax.md
+          - JAX Jacobian factory: Explanations/jax_jacobian_factory.md
+          - Melt-fraction step cap: Explanations/phi_step_cap_rationale.md
+      - Diagnostics & verification:
+          - EOS sanity checks: Explanations/eos_sanity_checks.md
+          - Energy diagnostics: Explanations/energy_diagnostics.md
+          - First-principles verification: Explanations/verification.md
 
   - Reference:
       - API reference:
-          - Overview: Reference/api/api_overview.md
-          - Core: Reference/api/core.md
-          - Mesh: Reference/api/mesh.md
-          - Interfaces: Reference/api/interfaces.md
-          - Solver: Reference/api/solver.md
-          - Phases: Reference/api/phase.md
-          - Utilities: Reference/api/utilities.md
-          - Parser: Reference/api/parser.md
-          - Data: Reference/api/data.md
-          - Output: Reference/api/output.md
-          - Package: Reference/api/package.md
-
+          - Overview: Reference/api/index.md
+          - Config: Reference/api/aragog.config.md
+          - Solver: Reference/api/aragog.solver.md
+          - EOS package: Reference/api/aragog.eos.md
+          - Mesh: Reference/api/aragog.mesh.md
+          - Output: Reference/api/aragog.output.md
+          - JAX backend: Reference/api/aragog.jax.md
+      - CLI: Reference/cli.md
+      - Data: Reference/data.md
       - Publications: Reference/publications.md
-      
-  - Community: 
+
+  - Community:
       - Code of Conduct: Community/CODE_OF_CONDUCT.md
+      - Contributing: Community/CONTRIBUTING.md
       - Contact: Community/contact.md
       - Developers: https://proteus-framework.org/people
 
-  - Source code: https://github.com/FormingWorlds/aragog
+  - Source code:
+      - GitHub repository: https://github.com/FormingWorlds/aragog
+
+  - Issues:
+      - GitHub issues: https://github.com/FormingWorlds/aragog/issues
 
   - Other PROTEUS modules:
-    - PROTEUS submodules: proteus_framework.md
-    - 🔗 PROTEUS: https://proteus-framework.org/PROTEUS/
-    - 🔗 MORS:  https://proteus-framework.org/MORS/
-    - 🔗 JANUS: https://proteus-framework.org/JANUS/
-    - 🔗 ZEPHYRUS: https://proteus-framework.org/ZEPHYRUS/
-    - 🔗 CALLIOPE: https://proteus-framework.org/CALLIOPE/
-    - 🔗 AGNI: https://www.h-nicholls.space/AGNI/
-    - 🔗 Obliqua: https://proteus-framework.org/Obliqua/
-    - 🔗 VULCAN: https://proteus-framework.org/VULCAN/
-    - 🔗 Zalmoxis: https://proteus-framework.org/Zalmoxis/
-    - 🔗 SPIDER: https://proteus-framework.org/SPIDER/
-    - 🔗 Atmodeller: https://atmodeller.readthedocs.io/en/latest/
-    - 🔗 FastChem: https://newstrangeworlds.github.io/FastChem/
-    - 🔗 PLATON: https://platon.readthedocs.io/en/latest/
-    - 🔗 SOCRATES: https://proteus-framework.org/SOCRATES/
+      - PROTEUS framework: proteus-framework.md
+      - "\U0001F517 PROTEUS": https://proteus-framework.org/PROTEUS/
+      - "\U0001F517 MORS": https://proteus-framework.org/MORS/
+      - "\U0001F517 JANUS": https://proteus-framework.org/JANUS/
+      - "\U0001F517 ZEPHYRUS": https://proteus-framework.org/ZEPHYRUS/
+      - "\U0001F517 CALLIOPE": https://proteus-framework.org/CALLIOPE/
+      - "\U0001F517 AGNI": https://www.h-nicholls.space/AGNI/
+      - "\U0001F517 Obliqua": https://proteus-framework.org/Obliqua/
+      - "\U0001F517 VULCAN": https://proteus-framework.org/VULCAN/
+      - "\U0001F517 Zalmoxis": https://proteus-framework.org/Zalmoxis/
+      - "\U0001F517 SPIDER": https://proteus-framework.org/SPIDER/
+      - "\U0001F517 Atmodeller": https://atmodeller.readthedocs.io/en/latest/
+      - "\U0001F517 FastChem": https://newstrangeworlds.github.io/FastChem/
+      - "\U0001F517 PLATON": https://platon.readthedocs.io/en/latest/
 
 theme:
   name: material
@@ -75,6 +105,8 @@ theme:
     - content.code.copy
     - content.tabs.link
 
+  icon:
+    repo: fontawesome/brands/github
 
   # Default assets (used unless overridden per palette below)
   favicon: assets/PROTEUS_black_on_white_logo_only.png
@@ -101,6 +133,9 @@ theme:
         icon: lucide/sun
         name: Switch to light mode
 
+extra_css:
+  - stylesheets/extra.css
+
 markdown_extensions:
   - admonition
   - attr_list
@@ -112,6 +147,7 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.details
+  - footnotes
   - md_in_html
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
@@ -129,25 +165,27 @@ extra:
       name: Mail PROTEUS developers
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/fwl-aragog/
-      name: PROTEUS on PyPI
+      name: Aragog on PyPI
     - icon: fontawesome/brands/github
       link: https://github.com/FormingWorlds/aragog
-      name: PROTEUS on GitHub
+      name: Aragog on GitHub
 
 extra_javascript:
+  - https://unpkg.com/katex@0/dist/katex.min.js
+  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+  - javascripts/katex.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
   - javascripts/header-links.js
-
-extra_css:
-  - stylesheets/docstrings.css
-  - stylesheets/proteus_theme.css
+  - javascripts/external-links.js
 
 plugins:
   - search
+  - tags
   - mkdocstrings:
+      # https://mkdocstrings.github.io/usage/
       handlers:
         python:
-          paths: [".",]
+          paths: [src]
           inventories:
             - https://installer.readthedocs.io/en/stable/objects.inv
             - https://docs.python.org/3/objects.inv
@@ -157,9 +195,9 @@ plugins:
             - https://matplotlib.org/stable/objects.inv
           options:
             docstring_style: numpy
-            docstring_section_style: table
             docstring_options:
               ignore_init_summary: yes
+            docstring_section_style: table
             show_submodules: no
             show_source: true
             show_symbol_type_heading: true
@@ -174,7 +212,6 @@ plugins:
 use_directory_urls: false
 
 watch:
-  - aragog/
+  - src/
   - docs/
   - README.md
-  - CODE_OF_CONDUCT.md

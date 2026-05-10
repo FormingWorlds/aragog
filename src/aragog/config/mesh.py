@@ -1,0 +1,71 @@
+"""Mesh configuration."""
+
+from __future__ import annotations
+
+import logging
+
+import attrs
+
+logger: logging.Logger = logging.getLogger('fwl.' + __name__)
+
+
+@attrs.define
+class MeshConfig:
+    """Mesh and static pressure profile parameters.
+
+    Parameters
+    ----------
+    outer_radius : float
+        Outer radius of the mantle shell (planet radius minus atmosphere
+        depth, in practice the same as ``planet.radius``) [m].
+    inner_radius : float
+        Inner radius of the mantle shell, i.e. the core-mantle boundary
+        (CMB) radius [m].
+    number_of_nodes : int
+        Number of basic mesh nodes.
+    mixing_length_profile : str
+        'constant' or 'nearest_boundary'.
+    mixing_length_constant_fraction : float
+        Fraction of the mantle thickness to use as the mixing length
+        when ``mixing_length_profile = 'constant'``. Default 0.25.
+        Ignored for 'nearest_boundary'.
+    core_density : float
+        Core density [kg/m^3].
+    eos_method : int
+        1: Adams-Williamson, 2: User-defined.
+    surface_density : float
+        Surface-mantle density anchor [kg/m^3]. Used only by the analytic
+        Adams-Williamson EOS (``eos_method = 1``) as the constant
+        ``rho_top`` in ``rho(P) = rho_top * exp(P/K_S)``. NOT the
+        runtime material density (which is pressure-entropy dependent and
+        comes from the P-S property tables). Default 4078.95095544
+        matches the SPIDER ``-adams_williamson_rhos`` value used in
+        PROTEUS production runs. Ignored when ``eos_method = 2``.
+    gravitational_acceleration : float
+        Gravitational acceleration [m/s^2].
+    adiabatic_bulk_modulus : float
+        Adiabatic bulk modulus [Pa].
+    surface_pressure : float
+        Surface pressure [Pa].
+    mass_coordinates : bool
+        Use uniform spacing in mass-coordinate space instead of radius.
+        Gives larger cells at the surface (lower density) and matches
+        SPIDER's mesh. Default True matches the PROTEUS production path.
+    eos_file : str
+        Path to user-defined EOS file.
+    """
+
+    outer_radius: float
+    inner_radius: float
+    number_of_nodes: int
+    mixing_length_profile: str
+    core_density: float
+    eos_method: int = 1
+    surface_density: float = 4078.95095544
+    gravitational_acceleration: float = 9.81
+    adiabatic_bulk_modulus: float = 260e9
+    adams_williamson_beta: float = 0.0  # 0 = derive from K_S
+    surface_pressure: float = 0.0
+    mass_coordinates: bool = True
+    eos_file: str = ''
+    mixing_length_constant_fraction: float = 0.25

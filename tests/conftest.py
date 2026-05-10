@@ -1,20 +1,6 @@
-#
-# Copyright 2024 Dan J. Bower
-#
-# This file is part of Aragog.
-#
-# Aragog is free software: you can redistribute it and/or modify it under the terms of the GNU
-# General Public License as published by the Free Software Foundation, either version 3 of the
-# License, or (at your option) any later version.
-#
-# Aragog is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without
-# even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along with Aragog. If not,
-# see <https://www.gnu.org/licenses/>.
-#
-"""Utilities for tests"""
+"""Utilities for tests."""
+
+from __future__ import annotations
 
 import importlib.resources
 from contextlib import AbstractContextManager
@@ -42,7 +28,7 @@ class Helper:
     def __init__(self, atol: float = 1.0e-4, rtol: float = 1.0e-4):
         self.atol: float = atol
         self.rtol: float = rtol
-        self.test_data: Traversable = importlib.resources.files("tests.reference")
+        self.test_data: Traversable = importlib.resources.files('tests.reference')
 
     @staticmethod
     def get_cfg_file(filename: str) -> AbstractContextManager[Path]:
@@ -52,6 +38,6 @@ class Helper:
         return importlib.resources.as_file(self.test_data.joinpath(filename))
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope='module')
 def helper():
     return Helper()

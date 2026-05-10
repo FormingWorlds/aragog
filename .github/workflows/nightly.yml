@@ -4,6 +4,10 @@ on:
   schedule:
     # 02:30 UTC daily (offset from Zalmoxis 02:00 UTC to spread runner load).
     - cron: "30 2 * * *"
+  # Refresh the canonical (full-suite) Codecov upload on every push to main
+  # so the badge tracks the merged state of the repo, not just the last cron.
+  push:
+    branches: [main]
   # Manual trigger for ad-hoc runs (e.g. before cutting a release, or to
   # verify the suite on a feature branch via
   # `gh workflow run "Aragog nightly" -r <branch>`).
@@ -15,36 +19,85 @@ on:
 permissions:
   contents: read
 
-# Nightly: full unit + slow suite with coverage instrumentation and the
-# 85% floor enforced via [tool.coverage.report].fail_under in pyproject.toml.
-# Excluded from push and PR CI because the slow tier alone takes ~110 s and
-# coverage instrumentation pushes the full run to ~10 min on a 2-vCPU
-# runner, over the 5 min budget for fast CI.
+# Nightly: full unit + smoke + slow suite with coverage instrumentation
+# and the 95% floor enforced via [tool.coverage.report].fail_under in
+# pyproject.toml. Excluded from push and PR CI because the slow tier
+# alone takes ~110 s and coverage instrumentation pushes the full run
+# to ~10 min on a 2-vCPU runner, over the 5 min budget for fast CI.
+#
+# `smoke` is included because the integration tests in
+# test_entropy_advanced.py, test_entropy_verification.py and
+# test_entropy_solver_integration.py exercise the production
+# EntropySolver.solve() path and the JAX RHS at full physical scale —
+# without them, entropy_solver.py / cvode_jax.py / jax/solver.py sit
+# at ~33 % / ~51 % / ~63 % coverage respectively.
+#
+# Uses micromamba + conda-forge for the env so SUNDIALS, gfortran, and the
+# scikits-odes binary stack come prebuilt.
 jobs:
   nightly:
     name: Aragog-nightly (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 90 min: full suite is ~12 min on a 12-core Mac Studio, ~55 min on
+    # the 2-vCPU runner with --quiet + xdist. Leaves headroom for JAX
+    # warmup, conda env cache misses, and the additional smoke tests
+    # added for the 95 % coverage gate.
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -el {0}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Set up conda env (sundials from conda-forge)
+        uses: mamba-org/setup-micromamba@v2
         with:
-          python-version: "3.12"
+          environment-name: aragog-nightly
+          create-args: >-
+            python=3.12
+            sundials
+          condarc: |
+            channels:
+              - conda-forge
 
-      - name: Install dependencies
+      - name: Install pip-only test deps (scikits-odes-sundials builds against conda SUNDIALS)
         run: |
-          python -m pip install --upgrade pip
-          pip install .
           pip install pytest pytest-cov pytest-xdist pytest-dependency
+          # Direct install of scikits-odes-sundials only; aragog imports
+          # CVODE directly from scikits_odes_sundials.cvode and skips the
+          # daepack-pulling metapackage. See ci_tests.yml for details.
+          # diffrax is the JAX-native ODE solver used by
+          # tests/test_jax_entropy.py::TestJAXSolverIntegration; without
+          # it those 8 smoke tests fail with ModuleNotFoundError.
+          pip install scikits-odes-sundials jax equinox diffrax
 
-      - name: Run unit + slow tests with coverage
+      - name: Install aragog
         run: |
-          pytest -m "unit or slow" -o "addopts=" \
+          pip install -e .
+
+      - name: Fetch SPIDER EOS test data
+        run: |
+          mkdir -p /tmp/aragog-test-data
+          curl -sL -o /tmp/spider_eos.tar.gz \
+            https://github.com/FormingWorlds/aragog/releases/download/test-data-v1/spider_eos_test_data.tar.gz
+          tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
+          echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
+
+      - name: Run unit + smoke + slow tests with coverage
+        run: |
+          # -n auto runs xdist workers; coverage's parallel mode collects
+          # per-worker .coverage.* files which pytest-cov auto-combines
+          # before the report. Without xdist the serial run hit the
+          # 30-minute timeout at 23 % of the 271-test suite, dominated by
+          # JAX-traced functions where line tracing is the bottleneck.
+          # -ra prints a short summary of failed/error/skipped tests at
+          # the end of the run; without it --quiet suppresses the
+          # FAILED list entirely if there are no other final messages,
+          # making post-mortem on cancelled runs near-impossible.
+          pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra \
             --cov=src/aragog --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage to Codecov

@@ -164,6 +164,7 @@ poetry.lock
 
 # output and data
 out/
+/output/
 FWL_DATA/
-
-pylintrc
+# Editor / IDE
+.vscode/

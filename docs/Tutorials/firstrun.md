@@ -1,95 +1,128 @@
-# First-run tutorial 
+# First-run tutorial
 
-Welcome to this first-run tutorial. We’ll run a single configuration, then export and inspect the results.
+Welcome to this first-run tutorial. We will load a configuration, integrate a single mantle cooling problem with `EntropySolver`, and inspect the resulting profiles and scalar diagnostics.
 
 ## What does Aragog do?
 
-Aragog solves the **time evolution of a 1-D radial temperature profile** inside a spherical shell (mantle) using conduction and optional parameterized convection, melt physics, and internal heating. 
+Aragog evolves the **specific entropy $S(r,t)$** at staggered nodes inside a spherical mantle shell. The solver couples conduction, mixing-length convection, gravitational separation of melt, chemical mixing, radiogenic heating, and tidal heating. Temperature, density, and melt fraction are derived from $(P, S)$ via a tabulated equation of state.
 
 ## Goals
-Get to a **first successful model run** and a **NetCDF output and plots**.
+
+Reach a **first successful integration** of a coupled-mantle setup and read its results from the `SolverOutput` dataclass.
 
 ## Assumptions
- - You're using Python 3.10+ (3.12 recommended).
- - You have Aragog installed according to the [installation instructions](../How-to/installation.md).
 
-## 1. Choose a data directory [optional]
+- You are using Python 3.12 or 3.13.
+- Aragog is installed (see [Installation](../How-to/installation.md)).
+- A directory of SPIDER-format pressure-entropy EOS tables is available on disk (see [Reference: data](../Reference/data.md) for the file format and the canonical PALEOS data sources).
 
-Aragog’s data helper uses `FWL_DATA` to decide where lookup tables/logs go. If you have not set this up yet, set it to something you control:
+## 1. Locate or stage the EOS tables
 
-```sh
-mkdir /your/local/path/FWL_DATA
-```
+Aragog's entropy solver requires a directory containing the following files:
 
-```sh
-export FWL_DATA="/your/local/path/FWL_DATA"   # macOS/Linux
-```
+| File | Format | Description |
+|------|--------|-------------|
+| `temperature_solid.dat`, `temperature_melt.dat` | 2D P-S grid | $T(P, S)$ for solid and liquid phases |
+| `density_solid.dat`, `density_melt.dat` | 2D P-S grid | $\rho(P, S)$ |
+| `heat_capacity_solid.dat`, `heat_capacity_melt.dat` | 2D P-S grid | $c_p(P, S)$ |
+| `adiabat_temp_grad_solid.dat`, `adiabat_temp_grad_melt.dat` | 2D P-S grid | $(\partial T/\partial P)_S$ |
+| `solidus_P-S.dat`, `liquidus_P-S.dat` | 2-column $(P, S)$ | Phase-boundary entropy at each pressure |
 
-Then check what Aragog sees:
+For a quick standalone walkthrough you can fetch a small SPIDER-format set bundled as a release asset:
 
 ```bash
-aragog env
+mkdir -p /tmp/aragog-test-data
+curl -sL -o /tmp/spider_eos.tar.gz \
+    https://github.com/FormingWorlds/aragog/releases/download/test-data-v1/spider_eos_test_data.tar.gz
+tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
+export ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos
 ```
 
-You should see:
-- `FWL_DATA location: <...>`
+The same tarball is what the nightly CI populates before the smoke + slow tiers run. In a PROTEUS coupled run these tables are produced from the configured PALEOS or Wolf-Bower P-T file by the PROTEUS wrapper. For standalone work, point `eos_dir` at any directory containing this set.
 
-!!! note
-    If you are coming from a different module of the PROTEUS Framework, FWL_DATA might be set to a datafolder in this other module. Check this, so that you know where your data goes.
+## 2. Scaffold a configuration
 
-## 2. Download official lookup tables
+The fastest path is the `aragog new` scaffold:
 
-To download published lookup tables, run:
-
-```sh
-aragog download all
+```bash
+aragog new first --from abe_solid
 ```
 
-## 3. Run aragog from Python 
+This copies the bundled `abe_solid` template to `first.toml` in the cwd. Open the file and edit the file paths in `[phase_solid]`, `[phase_liquid]`, and `[phase_mixed]` so that they point at your local data; nothing else needs to change for a smoke run. A configuration that carries a `[scalings]` section is rejected at load time; if you copied a legacy config, remove that block.
 
-Create `first.py`:
+Confirm the parsed schema is what you expect before solving:
+
+```bash
+aragog validate first.toml
+# OK first.toml: core_bc=energy_balance, IBC=2, OBC=1, eos_method=1, IC_method=1, radionuclides=4
+```
+
+## 3. Solve from the CLI
+
+```bash
+# Replace $FWL_DATA/spider/lookup-fs with your local EOS directory if
+# the env var is not set.
+aragog run first.toml \
+    --eos-dir $FWL_DATA/spider/lookup-fs \
+    --out first.nc
+```
+
+`aragog run` mirrors the recipe at the bottom of this page (`EntropySolver.from_file → initialize → set_initial_dSdr_cmb → set_initial_entropy → solve → to_netcdf`); see [Reference: CLI](../Reference/cli.md) for the full option list. A successful run leaves `aragog.log` plus `first.nc` in the working directory.
+
+The CLI derives the initial entropy $S_0$ from `[initial_condition].surface_temperature` in the scaffolded config (`abe_solid` sets it to 3600 K); pass `--initial-entropy <S0>` to use an explicit value instead.
+
+Inspect the result:
+
+```bash
+aragog inspect first.nc
+```
+
+The default human format prints status, the headline scalars (`T_magma`, `T_core`, `Phi_global`, `F_heat_total`, ...), the mesh dimensions, and a `S_final` / `T_basic` profile-range block. Add `--json` for `jq`-friendly machine-readable output.
+
+For one-off tweaks during debugging, `aragog run` accepts repeatable `--set <key.path>=<value>` flags (see the [CLI reference](../Reference/cli.md#-set-overrides) for type coercion rules):
+
+```bash
+aragog run first.toml --eos-dir ... --initial-entropy 2900.0 \
+    --set energy.kappah_floor=20.0 --set solver.atol=1e-11
+```
+
+## 4. Solve from Python
+
+For scripted workflows, parameter sweeps, or richer plotting you can call the same path the CLI uses directly. Create `first.py`:
 
 ```python
-from aragog.solver import Solver
-from aragog.output import Output
-import matplotlib
-import matplotlib.pyplot as plt
 from pathlib import Path
+from aragog import aragog_file_logger
+from aragog.solver import EntropySolver
 
-matplotlib.use("Agg")  
+# Set up combined console + file logging in the current directory.
+aragog_file_logger(log_dir=str(Path.cwd()))
 
-# Load config, initialize, solve
-solver = Solver.from_file("aragog/cfg/abe_mixed.cfg")
+# Build the solver from a TOML config and an EOS-table directory.
+solver = EntropySolver.from_file(
+    filename="first.toml",
+    eos_dir="path/to/eos/tables",
+)
+
 solver.initialize()
+
+# Set the initial entropy at staggered nodes (J/kg/K). A scalar
+# value produces a uniform isentropic profile.
+solver.set_initial_entropy(2900.0)
+
 solver.solve()
 
-# Postprocess
-out = Output(solver)
+out = solver.get_state()
 
-print("\n=== Aragog run summary ===")
-print("Config file: aragog/cfg/abe_mixed.cfg")
-print("Stop early:", getattr(solver, "stop_early", None))
-print("Time span (years):", out.time_range)
-print("Final surface temperature (K):", out.solution_top_temperature)
-print("Global melt fraction (final):", float(out.melt_fraction_global))
-print("Mantle mass (kg):", float(out.mantle_mass))
-print("Core mass (kg):", float(out.core_mass))
-
-# make an output directory if it doesn't exist
-out_dir = Path("out")
-out_dir.mkdir(parents=True, exist_ok=True)
-
-# Save a snapshot (last time index) to NetCDF
-out.write_at_time("out/first_output.nc", tidx=-1, compress=True)
-
-# Quick plots (temperature, viscosity, fluxes, etc.)
-plot_file = "out/first_output.png"
-out.plot(num_lines=7)
-plt.savefig(plot_file, dpi=200, bbox_inches="tight")
-plt.close("all")
-
-print("Saved plot:", plot_file)
-
+print("=== Aragog run summary ===")
+print(f"Status:       {out.status}")
+print(f"T_magma:      {out.T_magma:.0f} K")
+print(f"T_core:       {out.T_core:.0f} K")
+print(f"Phi_global:   {out.Phi_global:.4f}")
+print(f"M_mantle:     {out.M_mantle:.3e} kg")
+print(f"E_th:         {out.E_th:.3e} J")
+print(f"F_heat_total: {out.F_heat_total:.3e} W/m^2")
+print(f"Cp_eff:       {out.Cp_eff:.0f} J/kg/K")
 ```
 
 Run it:
@@ -98,43 +131,36 @@ Run it:
 python first.py
 ```
 
-If everything is working, you should see:
+`out.S_final`, `out.T_stag`, `out.phi_stag`, and the basic-node fluxes (`out.jcond_b`, `out.jconv_b`, `out.jgrav_b`, `out.jmix_b`) are NumPy arrays you can plot directly.
 
-- solver logging indicating integration succeeded
-- a NetCDF file `first_output.nc` in the `out` directory
-- a matplotlib figure with multiple panels vs pressure in the `out` directory
+## 5. Plot the entropy and melt-fraction profiles
 
-## 4. NetCDF outputs
+```python
+import matplotlib.pyplot as plt
 
-Aragog writes mesh variables like:
+fig, axes = plt.subplots(1, 2, figsize=(8, 5), sharey=True)
 
-- `radius_b` (km), `pres_b` (GPa), `temp_b` (K), `phi_b` (melt fraction)
-- `Fcond_b`, `Fconv_b`, `Ftotal_b` (W/m^2)
-- `log10visc_b`, `density_b`, `heatcap_b`
-- heating sources on staggered nodes: `Hradio_s`, `Hvol_s`, `Htidal_s`, `Htotal_s`
+axes[0].plot(out.S_final, out.r_stag * 1e-3)
+axes[0].set_xlabel("Specific entropy [J/kg/K]")
+axes[0].set_ylabel("Radius [km]")
 
-to NetCDF files. It also includes scalar metadata (time, global melt fraction, etc.).
+axes[1].plot(out.phi_stag, out.r_stag * 1e-3)
+axes[1].set_xlabel("Melt fraction")
 
-Inspect the header of your file:
-
-```sh
-ncdump -h out/first_output.nc
+fig.tight_layout()
+fig.savefig("first_profiles.pdf")
 ```
 
-For more info on opening, inspecting and plotting NetCDF files, you can go through the how-to [Opening NetCDF output](../How-to/netcdf.md). 
+## 6. Use Aragog inside PROTEUS
 
+For a coupled atmosphere-interior simulation the configuration is built programmatically by the PROTEUS wrapper at `src/proteus/interior_energetics/aragog.py`. The wrapper drives `EntropySolver.set_initial_entropy()` from the previous step's profile, supplies the four-column external mesh file from Zalmoxis when `eos_method = 2`, and reads `SolverOutput` back into the PROTEUS `Interior_t` state. See [Standalone vs PROTEUS-integrated usage](../How-to/usage-paths.md) for the path comparison.
 
-## 5. Troubleshooting
+For a coupled walkthrough (atmosphere + interior + outgassing), see the PROTEUS [usage guide](https://proteus-framework.org/PROTEUS/How-to/usage.html).
 
-### Zenodo download problems
-If you download:
+## 7. Troubleshooting
 
-- ensure `zenodo_get` is installed 
-- ensure you have write permissions to `FWL_DATA`.
+**`status = -1` from `solve()`.** The solver hit an integration failure: typically the integrator collapsed its step size at a phase boundary or the EOS table was queried outside its $(P, S)$ domain. PROTEUS handles these via a retry ladder that calls `set_initial_dSdr_cmb` and a tolerance-relaxation knob. In standalone use, inspect `aragog.log` for the warning trail and consider enabling the SUNDIALS CVODE path with `solver_method = "cvode"` if `scikits.odes` is installed.
 
-### Solver is slow 
-Update your configuration file, living in `aragog/cgf`, with:
+**Slow integration.** Loosen tolerances (`atol = 1e-5`, `rtol = 1e-5`), reduce `number_of_nodes` to 40-80 for first runs, or shorten the time window. The phase-aware `max_step` cap activates automatically near solidus and liquidus crossings.
 
-- fewer nodes (`number_of_nodes = 40`)
-- shorter run (`end_time = 1e3`)
-- looser tolerances (`atol=1e-5`, `rtol=1e-5`)
+**Entropy out of table range.** Check that the EOS table covers the expected $(P, S)$ envelope. For PALEOS tables sampled at 150 points per decade, the entropy axis typically spans roughly `[-100, 5500]` J/kg/K for MgSiO₃; values outside that range usually indicate an incorrect initial entropy or an oversharp boundary flux.

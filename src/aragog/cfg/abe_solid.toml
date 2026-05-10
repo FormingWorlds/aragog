@@ -1,0 +1,116 @@
+# Aragog test configuration: solid phase cooling
+# All units are SI unless otherwise specified.
+
+[solver]
+start_time = 0
+end_time = 1000000000
+atol = 1e-9
+rtol = 1e-9
+tsurf_poststep_change = 30
+
+[boundary_conditions]
+outer_boundary_condition = 1
+outer_boundary_value = 1500
+inner_boundary_condition = 3
+inner_boundary_value = 4000
+emissivity = 1
+equilibrium_temperature = 273
+core_heat_capacity = 880
+
+[mesh]
+outer_radius = 6371000
+inner_radius = 5371000
+number_of_nodes = 100
+mixing_length_profile = "nearest_boundary"
+core_density = 10738.332568062382
+surface_density = 4090
+gravitational_acceleration = 9.81
+adiabatic_bulk_modulus = 260e9
+
+[energy]
+conduction = true
+convection = true
+gravitational_separation = false
+mixing = false
+radionuclides = false
+tidal = false
+
+[initial_condition]
+surface_temperature = 3600
+basal_temperature = 4000
+
+[phase_liquid]
+density = 4000
+viscosity = 1e2
+heat_capacity = 1000
+melt_fraction = 1
+thermal_conductivity = 4
+thermal_expansivity = 1.0e-5
+
+[phase_solid]
+density = 4200
+viscosity = 1e21
+heat_capacity = 1000
+melt_fraction = 0
+thermal_conductivity = 4
+thermal_expansivity = 1.0e-5
+
+[phase_mixed]
+latent_heat_of_fusion = 4e6
+rheological_transition_melt_fraction = 0.4
+rheological_transition_width = 0.15
+solidus = "data/test/solidus_1d_lookup.dat"
+liquidus = "data/test/liquidus_1d_lookup.dat"
+phase = "solid"
+phase_transition_width = 0.01
+grain_size = 1.0e-3
+
+[radionuclide_K40]
+name = "K40"
+t0_years = 4.55e9
+abundance = 1.1668e-4
+concentration = 310
+heat_production = 2.8761e-5
+half_life_years = 1.248e9
+
+[radionuclide_Th232]
+name = "Th232"
+t0_years = 4.55e9
+abundance = 1.0
+concentration = 0.124
+heat_production = 2.6368e-5
+half_life_years = 1.4e10
+
+[radionuclide_U235]
+name = "U235"
+t0_years = 4.55e9
+abundance = 0.0072045
+concentration = 0.031
+heat_production = 5.68402e-4
+half_life_years = 7.04e8
+
+[radionuclide_U238]
+name = "U238"
+t0_years = 4.55e9
+abundance = 0.9927955
+concentration = 0.031
+heat_production = 9.4946e-5
+half_life_years = 4.468e9
+
+[radionuclide_Al26]
+name = "Al26"
+t0_years = 4.55e9
+# Extinct today (Ruedas 2017 X_iso = 0). Set concentration > 0 for early-Solar-System runs.
+abundance = 0
+concentration = 0
+heat_production = 0.3583  # W/kg of pure 26Al (Ruedas 2017)
+half_life_years = 7.17e5
+
+[radionuclide_Fe60]
+name = "Fe60"
+t0_years = 4.55e9
+# Extinct today (Ruedas 2017 X_iso = 0). Set concentration > 0 for early-Solar-System runs.
+abundance = 0
+concentration = 0
+heat_production = 3.6579e-2  # W/kg of pure 60Fe (Ruedas 2017)
+half_life_years = 2.62e6
