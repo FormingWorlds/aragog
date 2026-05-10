@@ -12,7 +12,7 @@ Reach a **first successful integration** of a coupled-mantle setup and read its 
 
 ## Assumptions
 
-- You are using Python 3.10+ (3.12 recommended).
+- You are using Python 3.12 or 3.13.
 - Aragog is installed (see [Installation](../How-to/installation.md)).
 - A directory of SPIDER-format pressure-entropy EOS tables is available on disk (see [Reference: data](../Reference/data.md) for the file format and the canonical PALEOS data sources).
 

@@ -13,21 +13,14 @@ strict-rejected at load time. Remove the section.
 from __future__ import annotations
 
 import logging
-import sys
+import tomllib  # noqa: F401
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
-
-if sys.version_info < (3, 11):
-    import tomli as tomllib  # noqa: F401  (3.10 fallback installed via pyproject)
-    from typing_extensions import Self
-else:
-    import tomllib  # noqa: F401
-    from typing import Self
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 

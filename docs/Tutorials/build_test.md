@@ -156,10 +156,10 @@ If a test is missing from the collection output, the most likely causes are a mi
 
 ## 5. Verify CI picks them up
 
-After pushing the branch, the **Unit Tests** workflow runs `pytest -m "unit and not slow"` against ubuntu-latest and macos-latest with Python 3.11, 3.12, and 3.13.
+After pushing the branch, the **Unit Tests** workflow runs `pytest -m "unit and not slow"` against ubuntu-latest and macos-latest with Python 3.12 and 3.13.
 The test file should appear under one of the green checks; if it does not, the test was not discovered (see step 4).
 
-The **Integration Tests** workflow runs nightly and adds `-m "smoke or slow"`; unit tests run there too as part of `unit or smoke or slow`.
+The **Integration Tests** workflow runs nightly and on every push to main; it adds `-m "smoke or integration or slow"`. Unit tests run there too as part of `unit or smoke or integration or slow`.
 
 ## What's next
 
