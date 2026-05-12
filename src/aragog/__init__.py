@@ -4,7 +4,11 @@ from __future__ import annotations
 
 try:
     from ._version import __version__, __version_tuple__
-except ModuleNotFoundError:  # pragma: no cover - source-checkout fallback before setuptools-scm runs
+except ModuleNotFoundError:
+    # Fallback for source clones where setuptools-scm has not yet
+    # generated _version.py (no `pip install -e .` or `python -m build`
+    # has run). Coverage exclusion comes from the */__init__.py omit
+    # rule in [tool.coverage.run].
     __version__ = '0.0.0.dev0'
     __version_tuple__ = (0, 0, 0, 'dev0')
 
