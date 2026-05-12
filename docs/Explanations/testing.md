@@ -87,7 +87,7 @@ pytest -p no:faulthandler --timeout=60 --timeout-method=thread tests/
 | Nightly cron + push to main (`nightly.yml`, 02:30 UTC) | `unit or smoke or integration or slow` | < 90 min | Yes (full suite); uploaded to Codecov under flag `nightly` |
 | Manual `workflow_dispatch` | as above | < 90 min | Yes |
 
-Push CI runs the unit tier only because each smoke test executes a full `EntropySolver` call (5 to 15 min on a 2-vCPU runner under coverage instrumentation). The nightly tier carries the canonical 95% coverage floor; the per-push upload is a fast-feedback companion view of the unit subset.
+Push CI runs the unit tier only because each smoke test executes a full `EntropySolver` call (5 to 15 min on a 2-vCPU runner under coverage instrumentation). The nightly tier carries the canonical 90% coverage floor; the per-push upload is a fast-feedback companion view of the unit subset.
 
 ## Fixtures
 
@@ -112,7 +112,7 @@ pytest --cov=src/aragog --cov-report=html -m "unit or smoke"
 Open `htmlcov/index.html` to inspect line-by-line coverage. Both push CI
 (unit tier) and the nightly (full suite) emit `--cov-report=xml` and upload
 to Codecov under separate flags (`ci` and `nightly`). The project floor is
-95%, enforced via `[tool.coverage.report].fail_under` in `pyproject.toml`.
+90%, enforced via `[tool.coverage.report].fail_under` in `pyproject.toml`.
 
 ## Linting
 

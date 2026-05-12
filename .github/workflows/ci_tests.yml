@@ -17,7 +17,7 @@ on:
 # Push and PR CI: unit tests only, on ubuntu + macos x py 3.12 / 3.13.
 # Targets <5 min wall. Slow tests (full multi-Myr CVODE solves) live in
 # the scheduled nightly workflow `nightly.yml` instead, alongside coverage
-# enforcement against the 95% floor. Running the slow suite or coverage
+# enforcement against the 90% floor. Running the slow suite or coverage
 # instrumentation on every push burns ~10 min CI time per commit and gives
 # no bug-finding signal that the unit suite doesn't already cover.
 #
@@ -112,7 +112,7 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
         run: |
           # Reject PRs that lower [tool.coverage.report] fail_under below
-          # the value on the base branch. The 95% ceiling is the maximum
+          # the value on the base branch. The 90% ceiling is the maximum
           # ratchet per ecosystem policy; this check enforces the
           # one-way-only direction (down forbidden) so the gate cannot be
           # weakened to land an under-tested change.

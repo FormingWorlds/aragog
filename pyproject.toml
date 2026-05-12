@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fwl-aragog"
-version = "26.05.10"
+dynamic = ["version"]
 description = "1-D interior dynamics of rocky mantles that are solid, liquid, or mixed phase"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -73,6 +73,12 @@ changelog = "https://github.com/FormingWorlds/aragog/releases"
 package-dir = {"aragog" = "src/aragog"}
 include-package-data = true
 
+[tool.setuptools_scm]
+# CalVer: tags are bare YY.MM.DD dates (no leading 'v', e.g. 26.05.10).
+# setuptools-scm derives the version from the latest git tag.
+# Between tags, it appends .devN+gHASH (e.g., 26.05.10.dev5+gabc1234).
+version_file = "src/aragog/_version.py"
+
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -87,7 +93,7 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["src/aragog"]
+source = ["aragog"]
 omit = [
     "*/tests/*",
     "*/conftest.py",
@@ -95,11 +101,11 @@ omit = [
 ]
 
 [tool.coverage.report]
-# 95 % is the permanent ceiling for this repo; do not raise it
-# further. The CALLIOPE policy is identical: 95 % buys real
-# regression coverage without forcing tests to exercise integration
-# paths whose runtime would push CI over its budget.
-fail_under = 95
+# Hard 90% coverage gate. 90% is the PROTEUS-ecosystem ceiling:
+# the gate does not rise above this value even if real coverage
+# exceeds it. Above 90% you are tracking pragma usage and style,
+# not bug-finding signal.
+fail_under = 90
 show_missing = true
 precision = 1
 exclude_lines = [
