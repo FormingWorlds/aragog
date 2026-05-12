@@ -106,7 +106,7 @@ Tests are written to be order-independent and run cleanly under `pytest-xdist`. 
 ## Coverage
 
 ```console
-pytest --cov=src/aragog --cov-report=html -m "unit or smoke"
+pytest --cov=aragog --cov-report=html -m "unit or smoke"
 ```
 
 Open `htmlcov/index.html` to inspect line-by-line coverage. Both push CI
