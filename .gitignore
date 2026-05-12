@@ -162,6 +162,9 @@ cython_debug/
 .DS_Store
 poetry.lock
 
+# setuptools-scm generated version file
+src/aragog/_version.py
+
 # output and data
 out/
 /output/

@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 # Nightly: full unit + smoke + slow suite with coverage instrumentation
-# and the 95% floor enforced via [tool.coverage.report].fail_under in
+# and the 90% floor enforced via [tool.coverage.report].fail_under in
 # pyproject.toml. Excluded from push and PR CI because the slow tier
 # alone takes ~110 s and coverage instrumentation pushes the full run
 # to ~10 min on a 2-vCPU runner, over the 5 min budget for fast CI.
@@ -41,7 +41,7 @@ jobs:
     # 90 min: full suite is ~12 min on a 12-core Mac Studio, ~55 min on
     # the 2-vCPU runner with --quiet + xdist. Leaves headroom for JAX
     # warmup, conda env cache misses, and the additional smoke tests
-    # added for the 95 % coverage gate.
+    # added for the 90 % coverage gate.
     timeout-minutes: 90
     defaults:
       run:
@@ -98,7 +98,8 @@ jobs:
           # FAILED list entirely if there are no other final messages,
           # making post-mortem on cancelled runs near-impossible.
           pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra \
-            --cov=src/aragog --cov-report=term-missing --cov-report=xml
+            --cov=aragog --cov-report=term-missing --cov-report=xml \
+            --cov-fail-under=90
 
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}

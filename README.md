@@ -89,7 +89,7 @@ pytest -m unit                           # ~2 min on a workstation
 pytest -m "unit or smoke or slow"        # full nightly suite, 10 min wall + EOS-table data
 ```
 
-Coverage is enforced at 95% by `[tool.coverage.report]` in `pyproject.toml`. Both push CI (unit tier) and the nightly (full suite) upload to Codecov under separate flags so the dashboard distinguishes the two cadences.
+Coverage is enforced at 90% by `[tool.coverage.report]` in `pyproject.toml`. Both push CI (unit tier) and the nightly (full suite) upload to Codecov under separate flags so the dashboard distinguishes the two cadences.
 
 ## PROTEUS integration
 

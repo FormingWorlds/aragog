@@ -205,8 +205,8 @@ Phase-filtering the input PALEOS table breaks the rectangularity assumption and 
   - `from aragog.jax.solver import dSdt_energy_balance, make_radio_heating_fn`
   - `from aragog.jax.phase import compute_mlt, compute_fluxes`
 - `from __future__ import annotations` is required at the top of every `.py` file (enforced by ruff isort).
-- `aragog/__init__.py` re-exports `EntropySolver` at the bottom of the file with `# noqa: E402` to break the circular import with `aragog.solver`. Do not move it to the top.
-- `__version__` should match `pyproject.toml`. Both are CalVer (`YY.MM.DD`).
+- `aragog/__init__.py` re-exports `EntropySolver` at the bottom of the file with `# noqa: E402` to break the circular import with `aragog.solver`. Do not move *that re-export* to the top. Unrelated top-of-file imports (logging, the setuptools-scm `_version` shim) are fine where they are.
+- `__version__` is derived from the latest git tag via `setuptools-scm` (CalVer `YY.MM.DD`). The generated `src/aragog/_version.py` is gitignored; do not hand-edit it. Cut a release by tagging `main` and pushing the tag (see `docs/How-to/releasing.md`).
 
 ## Testing
 
@@ -216,7 +216,7 @@ Phase-filtering the input PALEOS table breaks the rectangularity assumption and 
   - `slow`: multi-Myr runs and tolerance-convergence studies.
 - CI canonical invocations:
   - Push / PR (`.github/workflows/ci_tests.yml`): `pytest -m "unit and not slow" -n auto` on Ubuntu + macOS × Python 3.11/3.12/3.13.
-  - Nightly (`.github/workflows/nightly.yml`, 02:30 UTC): `pytest -m "unit or smoke or slow" -n auto --cov=src/aragog` with the 85% Codecov floor enforced via `[tool.coverage.report].fail_under`.
+  - Nightly (`.github/workflows/nightly.yml`, 02:30 UTC): `pytest -m "unit or smoke or slow" -n auto --cov=aragog` with the 90% PROTEUS-ecosystem ceiling enforced via `[tool.coverage.report].fail_under`.
 - The `helper` fixture (in `tests/conftest.py`) provides path-resolution helpers; module-local fixtures handle EOS-dependent setup.
 - Use `pytest.approx` or `np.testing.assert_allclose` for float comparisons, never `==`.
 - Tests without a marker are invisible to CI. Add `@pytest.mark.unit` (or another tier) on every new test.

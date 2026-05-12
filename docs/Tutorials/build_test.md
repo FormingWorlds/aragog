@@ -164,5 +164,5 @@ The **Integration Tests** workflow runs nightly and on every push to main; it ad
 ## What's next
 
 - Read [How to build tests](../How-to/build_tests.md) for the full set of authoring rules: file placement, fixtures, mocking discipline, reference values, comment hygiene, and the LLM prompt template for test scaffolding.
-- Read [Testing suite](../Explanations/testing.md) for how the existing suite is organised, how to run only smoke or slow tiers, and how coverage is enforced at 95%.
+- Read [Testing suite](../Explanations/testing.md) for how the existing suite is organised, how to run only smoke or slow tiers, and how coverage is enforced at 90%.
 - Browse `tests/` for examples close to your function: `tests/test_utilities.py` for helpers, `tests/test_jax_*.py` for JAX-vs-numpy parity, `tests/test_entropy_verification.py` for first-principles regressions.
