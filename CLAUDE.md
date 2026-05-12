@@ -205,7 +205,7 @@ Phase-filtering the input PALEOS table breaks the rectangularity assumption and 
   - `from aragog.jax.solver import dSdt_energy_balance, make_radio_heating_fn`
   - `from aragog.jax.phase import compute_mlt, compute_fluxes`
 - `from __future__ import annotations` is required at the top of every `.py` file (enforced by ruff isort).
-- `aragog/__init__.py` re-exports `EntropySolver` at the bottom of the file with `# noqa: E402` to break the circular import with `aragog.solver`. Do not move it to the top.
+- `aragog/__init__.py` re-exports `EntropySolver` at the bottom of the file with `# noqa: E402` to break the circular import with `aragog.solver`. Do not move *that re-export* to the top. Unrelated top-of-file imports (logging, the setuptools-scm `_version` shim) are fine where they are.
 - `__version__` should match `pyproject.toml`. Both are CalVer (`YY.MM.DD`).
 
 ## Testing
