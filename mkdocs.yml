@@ -25,6 +25,8 @@ nav:
       - Outputs & testing:
           - Inspecting NetCDF output: How-to/netcdf.md
           - Build tests: How-to/build_tests.md
+      - Maintenance:
+          - Releasing: How-to/releasing.md
 
   - Tutorials:
       - First run: Tutorials/firstrun.md
