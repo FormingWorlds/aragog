@@ -19,7 +19,3 @@
 }
 
 
-/* optionally reduce any top margin on the first image */
-.md-typeset h1 + p img {
-  margin-top: 0;
-}
