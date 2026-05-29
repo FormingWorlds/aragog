@@ -1,3 +1,7 @@
+---
+title: Aragog in the PROTEUS framework
+---
+
 <h1 align="center">
     <a href="https://proteus-framework.org">
     <div>
@@ -7,21 +11,18 @@
     </a>
 </h1>
 
-# Aragog in the PROTEUS framework
 
-Aragog is the **interior energetics module** of [PROTEUS](https://proteus-framework.org/PROTEUS) (/ˈproʊtiəs/, PROH-tee-əs), a modular Python framework for the coupled evolution of the atmospheres and interiors of rocky planets and exoplanets.
-A schematic of PROTEUS components and corresponding modules is shown below.
+Aragog is the **interior energetics module** of [PROTEUS](https://proteus-framework.org/PROTEUS) (/ˈproʊtiəs/, PROH-tee-əs), a modular Python framework for the coupled evolution of the atmospheres and interiors of rocky planets and exoplanets. A schematic of PROTEUS components and corresponding modules can be found below. Click any module in the diagram to open its documentation, or navigate to it from the sidebar.
+<br>
 
-<p align="center">
-      <img src="assets/schematic_round.png" style="max-width: 90%; height: auto;"></br>
-      <b>Schematic of PROTEUS components and corresponding modules.</b> </br>
-</p>
+<object type="image/svg+xml" data="https://cdn.jsdelivr.net/gh/FormingWorlds/PROTEUS@main/docs/assets/proteus_modules_schematic.svg" class="mod-diagram mod-diagram--light" aria-label="PROTEUS module schematic (light mode)">PROTEUS module schematic (light mode)</object>
+<object type="image/svg+xml" data="https://cdn.jsdelivr.net/gh/FormingWorlds/PROTEUS@main/docs/assets/proteus_modules_schematic_darkmode.svg" class="mod-diagram mod-diagram--dark" aria-label="PROTEUS module schematic (dark mode)">PROTEUS module schematic (dark mode)</object>
 
-You can find the documentation of each PROTEUS module in the sidebar.
+<p style="text-align: center;"><strong>Schematic of PROTEUS components and corresponding modules.</strong></p>
 
 ---
 
-## Where Aragog sits in a coupled run
+## Where Aragog sits in a coupled PROTEUS run
 
 In a PROTEUS coupled run, four submodule families deliver the mantle-atmosphere physics in a fixed per-iteration order:
 
