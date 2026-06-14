@@ -375,13 +375,14 @@ class SolverOutput:
     step_dE_Q_radio_cons_J: float  # = +∫ Q_radio_total_cons dt [J] (frozen mass)
     step_dE_Q_tidal_cons_J: float  # = +∫ Q_tidal_total_cons dt [J] (frozen mass)
 
-    # Per-call solver-level entropy-ODE residual [J]. Accumulates
-    # ``∫ (Σ rho T (dS/dt) V - (-F_int A_int + F_cmb A_cmb + Q_radio +
-    # Q_tidal)) dt`` over the CVODE substeps. By construction the
-    # entropy ODE balance closes at every accepted step; this column
-    # captures the trapezoidal-vs-CVODE-internal integration mismatch
-    # only. A non-trivial value here flags integrator step rejection
-    # or atol/rtol issues.
+    # Per-call entropy-equation self-consistency residual [J].
+    # Accumulates ``∫ (Σ capacitance (dS/dt) V - (-F_int A_int +
+    # F_cmb A_cmb + Q_radio + Q_tidal)) dt`` over the substeps with the
+    # LHS weighted by the same capacitance (``rho_phase * T``) the RHS
+    # used. The discrete flux divergence telescopes to the boundary
+    # fluxes, so this is machine-zero by construction; a non-zero value
+    # flags a bug in the divergence assembly, not time-integration
+    # quality (that is carried by ``E_residual_cons_frac``).
     step_solver_residual_J: float  # = ∫ (LHS - RHS) dt [J]
 
     dt_actual: float  # actual integration time [yr]
@@ -2615,12 +2616,14 @@ class EntropySolver:
         P_tidal = np.zeros(n_steps)
         P_radio_cons = np.zeros(n_steps)
         P_tidal_cons = np.zeros(n_steps)
-        # Per-substep entropy-ODE residual integrand (LHS - RHS) [W].
-        # LHS = Σ rho(t) T(t) (dS/dt) V at the substep state; RHS is
-        # -F_int A_int + F_cmb A_cmb + Q_radio + Q_tidal. CVODE
-        # constructs the ODE so they match at every accepted step;
-        # any non-zero P_resid_solver here signals trapezoidal vs
-        # internal-step integration mismatch.
+        # Per-substep entropy-equation self-consistency integrand
+        # (LHS - RHS) [W]. LHS = Σ capacitance (dS/dt) V at the substep
+        # state; RHS = -F_int A_int + F_cmb A_cmb + Q_radio + Q_tidal.
+        # The discrete divergence telescopes to the boundary fluxes, so
+        # this is machine-zero by construction at every state; a non-zero
+        # value flags a bug in the flux-divergence assembly, not a
+        # time-integration error. The time-integration quality is carried
+        # by ``E_residual_cons_frac`` on the coupler side.
         P_resid_solver = np.zeros(n_steps)
 
         for i in range(n_steps):
@@ -2681,21 +2684,41 @@ class EntropySolver:
             P_radio_cons[i] = Q_radio_cons_i
             P_tidal_cons[i] = Q_tidal_cons_i
 
-            # Solver residual: by entropy-ODE construction
-            # ``Σ rho T (dS/dt) V == -F_int*A + F_cmb*A + Q_radio +
-            # Q_tidal`` at every accepted CVODE substep. Trapezoidal
-            # integration of this difference quantifies trapezoidal-
-            # vs-CVODE-internal integration mismatch only.
+            # Solver residual: the discrete entropy equation gives
+            # ``Σ capacitance (dS/dt) V == -F_int*A + F_cmb*A + Q_radio +
+            # Q_tidal`` at every accepted substep. The LHS must be
+            # weighted by the SAME capacitance (``rho_phase * T``) that
+            # the RHS used to form ``dS/dt``, and the source powers in the
+            # RHS by the same phase density. Re-deriving the cell mass
+            # from the hard-masked table density (``eos.density``) instead
+            # of the tanh-blended phase density leaves a spurious residual
+            # equal to the local flux divergence times the fractional
+            # density mismatch, concentrated in the phase-transition band
+            # (it reaches ~1e23 J for a sub-percent density difference
+            # against a ~1e16 W flux divergence). With the consistent
+            # weighting the interior fluxes telescope and the residual is
+            # machine-zero.
             if dSdt_stag_i is not None:
-                T_stag_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
-                lhs_i = float(np.sum(rho_i * T_stag_i * dSdt_stag_i * vol))
-                rhs_i = P_F_int[i] + P_F_cmb[i] + P_radio[i] + P_tidal[i]
+                cap_i = np.asarray(self.state.capacitance_staggered()).ravel()
+                T_phase_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
+                # The RHS adds heating as ``H / max(T, 1)`` (the floor the
+                # solver applies at line ~1493), so weight the source powers
+                # by the matching ``rho_phase * T / max(T, 1) * V`` to keep
+                # the identity exact down to the temperature floor.
+                heat_mass_i = (
+                    np.asarray(self.state.phase_staggered.density()).ravel()
+                    * vol
+                    * (T_phase_i / np.maximum(T_phase_i, 1.0))
+                )
+                lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
+                Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
+                Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
+                rhs_i = P_F_int[i] + P_F_cmb[i] + Q_radio_resid + Q_tidal_resid
                 P_resid_solver[i] = lhs_i - rhs_i
             else:
                 P_resid_solver[i] = 0.0
 
-        SEC_PER_YR = 3.155814727e7
-        dt_s = np.diff(np.asarray(sol.t, dtype=float)) * SEC_PER_YR
+        dt_s = np.diff(np.asarray(sol.t, dtype=float)) * SECS_PER_YEAR
 
         def trap(p):
             return float(np.sum(0.5 * (p[:-1] + p[1:]) * dt_s))
