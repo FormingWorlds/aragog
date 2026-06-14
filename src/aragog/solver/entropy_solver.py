@@ -651,6 +651,17 @@ class EntropySolver:
         # registered by PROTEUS via ``set_jax_cvode_factory()`` when
         # ``config.interior_energetics.aragog.use_jax_jacobian`` is True.
         self._jax_cvode_factory = None
+        # Number of output points CVODE returns per macro-step solve.
+        # The per-call energy integrals trapezoidate the boundary fluxes
+        # over this grid; the surface flux decays steeply within a long
+        # call, so two endpoints under-resolve it (the F_int integral can
+        # be tens of percent wrong over a multi-kyr step, which is the
+        # dominant term in ``E_residual_cons_frac``). CVODE interpolates
+        # these points from its own internal steps, so a finer output grid
+        # sharpens the diagnostic without changing the integration, the
+        # final state, or ``dt_actual``. Only the non-root path uses it;
+        # when a phi-step-cap root fires the call already stops early.
+        self._cvode_output_points = 65
 
     def set_jax_cvode_factory(self, factory) -> None:
         """Register a factory that produces JAX-derived CVODE callbacks.
@@ -2014,8 +2025,27 @@ class EntropySolver:
                 'CVODE options in use: %s',
                 {k: v for k, v in cvode_options.items() if k != 'old_api'},
             )
+        # Request intermediate output points so the per-call energy
+        # integrals resolve the within-call flux decay. CVODE interpolates
+        # these from its internal steps; the integration, final state, and
+        # step count are unchanged. A phi-step-cap root (when armed) stops
+        # the call before these points and is handled by the root path
+        # below, so the extra points are inert in that case.
+        #
+        # The grid is front-loaded (quadratic spacing, dense near the call
+        # start) because each macro-step is a relaxation toward the new
+        # boundary state, so the boundary flux changes fastest just after
+        # the start and flattens later. A quadratic grid resolves the
+        # F_int integral to ~0.1 percent with a few dozen points, where a
+        # uniform grid of the same size leaves ~10 percent.
+        n_out = max(2, int(getattr(self, '_cvode_output_points', 2)))
+        if n_out > 2 and float(end_time) > float(start_time):
+            x = np.linspace(0.0, 1.0, n_out) ** 2
+            tspan = float(start_time) + (float(end_time) - float(start_time)) * x
+        else:
+            tspan = np.array([start_time, end_time], dtype=float)
         cvode_sol = solver.solve(
-            np.array([start_time, end_time], dtype=float),
+            tspan,
             np.asarray(y0, dtype=float).ravel(),
         )
 

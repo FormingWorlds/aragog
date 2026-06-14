@@ -32,6 +32,21 @@ needs_eos = pytest.mark.skipif(
     reason=f'SPIDER P-S tables not found at {EOS_DIR}',
 )
 
+
+def _cvode_available():
+    try:
+        from aragog.solver.entropy_solver import _CVODE_AVAILABLE
+
+        return bool(_CVODE_AVAILABLE)
+    except Exception:
+        return False
+
+
+needs_cvode = pytest.mark.skipif(
+    not _cvode_available(),
+    reason='scikits-odes-sundials (CVODE) not installed',
+)
+
 SECS_PER_YEAR = 31557600.0
 
 
@@ -633,6 +648,182 @@ class TestSolverResidualTelescoping:
             f'discrimination guard: eos.density weighting residual '
             f'({naive_frac:.2e}) must dwarf the consistent one ({resid_frac:.2e})'
         )
+
+
+# -- Test 2c: CVODE energy-diagnostic output grid ------------------------------
+
+
+@needs_eos
+@needs_cvode
+@pytest.mark.smoke
+class TestCvodeEnergyOutputGrid:
+    """The per-call energy integrals must resolve the within-call flux decay.
+
+    A CVODE macro-step solve returns the solution only at the times in the
+    requested tspan. With just the two call endpoints, the trapezoidal
+    integral of a steeply-decaying boundary flux is tens of percent wrong,
+    which is the dominant term in ``E_residual_cons_frac``. ``EntropySolver``
+    requests ``_cvode_output_points`` intermediate points (front-loaded) so
+    the integral resolves the decay; CVODE interpolates them from its own
+    internal steps, so the integration and final state are unchanged.
+
+    Verifies that the dense grid recovers the flux integral to within a
+    small tolerance of a high-resolution scipy reference, with a
+    discrimination guard that the two-point grid is an order of magnitude
+    worse. See docs/How-to/test_infrastructure.md.
+    """
+
+    @staticmethod
+    def _build_greybody_solver(method, n_out=None):
+        """Grey-body surface cooling: the surface flux ~ sigma T_top^4 decays
+        steeply within the call, the regime that breaks a 2-point integral."""
+        from aragog.eos.entropy import EntropyEOS
+        from aragog.parser import (
+            Parameters,
+        )
+        from aragog.parser import (
+            _BoundaryConditionsParameters as BC,
+        )
+        from aragog.parser import (
+            _EnergyParameters as EN,
+        )
+        from aragog.parser import (
+            _InitialConditionParameters as IC,
+        )
+        from aragog.parser import (
+            _MeshParameters as MESHP,
+        )
+        from aragog.parser import (
+            _PhaseMixedParameters as PM,
+        )
+        from aragog.parser import (
+            _PhaseParameters as PH,
+        )
+        from aragog.parser import (
+            _SolverParameters as SV,
+        )
+        from aragog.solver.entropy_solver import EntropySolver
+
+        eos = EntropyEOS(EOS_DIR)
+        rhos = 4078.95095544
+        bc = BC(
+            outer_boundary_condition=1,  # grey-body radiative surface
+            outer_boundary_value=0.0,
+            inner_boundary_condition=2,
+            inner_boundary_value=0.0,
+            emissivity=1.0,
+            equilibrium_temperature=255.0,
+            core_heat_capacity=880.0,
+            core_bc='quasi_steady',
+        )
+        en = EN(
+            conduction=True,
+            convection=True,
+            gravitational_separation=False,
+            mixing=False,
+            radionuclides=False,
+            tidal=False,
+            solver_method=method,
+            use_jax_jacobian=False,
+            eddy_diffusivity_thermal=1.0,
+            kappah_floor=10.0,
+        )
+        ic = IC(initial_condition=1, surface_temperature=3000.0, basal_temperature=4000.0)
+        mesh = MESHP(
+            outer_radius=6.371e6,
+            inner_radius=3.480e6,
+            number_of_nodes=60,
+            mixing_length_profile='constant',
+            core_density=10500.0,
+            eos_method=1,
+            surface_density=rhos,
+            adams_williamson_beta=1.1115348931e-07,
+            adiabatic_bulk_modulus=260e9,
+            gravitational_acceleration=9.81,
+            surface_pressure=0.0,
+        )
+        pm = PM(
+            latent_heat_of_fusion=4e5,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus=str(EOS_DIR / 'solidus_P-S.dat'),
+            liquidus=str(EOS_DIR / 'liquidus_P-S.dat'),
+            phase='mixed',
+            phase_transition_width=0.01,
+            grain_size=1e-3,
+            matprop_smooth_width=1e-2,
+            const_properties=False,
+        )
+        pl = PH(
+            density=rhos,
+            heat_capacity=1000.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3e-5,
+            melt_fraction=1.0,
+            viscosity=1e2,
+        )
+        ps = PH(
+            density=rhos,
+            heat_capacity=1000.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3e-5,
+            melt_fraction=0.0,
+            viscosity=1e21,
+        )
+        sv = SV(start_time=0.0, end_time=5e3, atol=1e-8, rtol=1e-8, tsurf_poststep_change=1e9)
+        params = Parameters(
+            boundary_conditions=bc,
+            energy=en,
+            initial_condition=ic,
+            mesh=mesh,
+            phase_solid=ps,
+            phase_liquid=pl,
+            phase_mixed=pm,
+            radionuclides=[],
+            solver=sv,
+        )
+        s = EntropySolver(params, entropy_eos=eos)
+        s.initialize()
+        if n_out is not None:
+            s._cvode_output_points = n_out
+        Ps = np.asarray(s.evaluator.mesh.staggered_pressure).ravel()
+        S_liq = np.asarray(s.entropy_eos.liquidus_entropy(Ps)).ravel()
+        s.set_initial_entropy(S_liq * 1.01)
+        return s
+
+    def test_dense_output_recovers_flux_integral(self):
+        """The dense front-loaded grid recovers F_int to within 2 percent of
+        a high-resolution scipy reference, while the 2-point grid is at least
+        an order of magnitude worse and ``dt_actual`` is unchanged."""
+        ref = self._build_greybody_solver('bdf')
+        ref.solve()
+        f_ref = ref._compute_step_energy_integrals()['F_int']
+        assert ref._solution.t.size > 200, 'scipy reference grid must be dense'
+        assert abs(f_ref) > 1e28, 'cooling must drive a non-trivial surface flux'
+
+        s2 = self._build_greybody_solver('cvode', n_out=2)
+        s2.solve()
+        d2 = s2._compute_step_energy_integrals()
+        err_2pt = abs(d2['F_int'] / f_ref - 1.0)
+
+        sN = self._build_greybody_solver('cvode', n_out=65)
+        sN.solve()
+        dN = sN._compute_step_energy_integrals()
+        err_dense = abs(dN['F_int'] / f_ref - 1.0)
+
+        # The dense grid must recover the integral; the 2-point grid must not.
+        assert err_dense < 2e-2, (
+            f'dense-grid F_int off by {err_dense:.2e} from the reference; '
+            f'the front-loaded output grid must resolve the flux decay'
+        )
+        assert err_2pt > 10.0 * err_dense, (
+            f'discrimination guard: 2-point F_int error ({err_2pt:.2e}) must '
+            f'dwarf the dense-grid error ({err_dense:.2e})'
+        )
+        # The output grid must not perturb the integration window.
+        dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
+        dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])
+        np.testing.assert_allclose(dt_dense, dt_ref, rtol=1e-10)
 
 
 # -- Test 3: Grey-body cooling timescale ---------------------------------------
