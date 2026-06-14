@@ -385,6 +385,13 @@ class SolverOutput:
     # quality (that is carried by ``E_residual_cons_frac``).
     step_solver_residual_J: float  # = ∫ (LHS - RHS) dt [J]
 
+    # Adiabatic compression work [J] from the structure re-solve that
+    # preceded this call. ``Sum mass (h(P_new, S) - h(P_old, S))`` at the
+    # carried entropy and frozen mass. Zero for a static structure. The
+    # boundary-flux budget does not see the pressure change, so the
+    # coupler adds this to the predicted energy for the conservation check.
+    step_dE_compression_J: float
+
     dt_actual: float  # actual integration time [yr]
     status: int  # solver status (0 = success)
 
@@ -567,6 +574,12 @@ class SolverOutput:
                 'J',
                 'Per-call entropy-ODE balance residual',
             )
+            _scalar(
+                'step_dE_compression_J',
+                self.step_dE_compression_J,
+                'J',
+                'Per-call compression work from the structure re-solve',
+            )
             _scalar('dt_actual', self.dt_actual, 'yr', 'Actual integration time of this step')
             _scalar('status', int(self.status), '1', 'Solver status code (0 = success)')
 
@@ -662,6 +675,15 @@ class EntropySolver:
         # final state, or ``dt_actual``. Only the non-root path uses it;
         # when a phi-step-cap root fires the call already stops early.
         self._cvode_output_points = 65
+        # Compression work [J] from the most recent structure re-solve.
+        # When the planet contracts, the static pressure at each frozen
+        # mass element rises, so the mantle enthalpy gains the adiabatic
+        # compression term ``Sum mass (h(P_new, S) - h(P_old, S))`` at
+        # fixed entropy. ``E_state_cons`` already carries this, but the
+        # boundary-flux budget does not, so the term is exposed here for
+        # the coupler to add to the predicted energy. Zero for a static
+        # structure (P unchanged) and for the first solve (no prior mesh).
+        self._last_compression_J = 0.0
 
     def set_jax_cvode_factory(self, factory) -> None:
         """Register a factory that produces JAX-derived CVODE callbacks.
@@ -1118,6 +1140,10 @@ class EntropySolver:
         the mesh, BCs, and entropy state. Matches Solver.reset().
         """
         logger.info('Resetting EntropySolver')
+        # Snapshot the pre-re-solve pressure, carried entropy and frozen
+        # mass so the compression work across the mesh change can be
+        # measured once the new mesh is built (see ``_last_compression_J``).
+        P_old, S_old, mass_old = self._snapshot_for_compression()
         if self.parameters.mesh.eos_method == 2 and self.parameters.mesh.eos_file:
             arr = np.loadtxt(self.parameters.mesh.eos_file)
             self.parameters.mesh.eos_radius = arr[:, 0]
@@ -1126,6 +1152,54 @@ class EntropySolver:
             self.parameters.mesh.eos_gravity = arr[:, 3]
             _validate_eos_radius_range(self.parameters.mesh)
         self._initialize_internals()
+        self._last_compression_J = self._compute_compression_work(P_old, S_old, mass_old)
+
+    def _snapshot_for_compression(self):
+        """Capture (P_stag, carried entropy, frozen mass) before a re-solve.
+
+        Returns ``(None, None, None)`` when any piece is unavailable (the
+        first reset before any solve, no EOS, or no solution yet), which
+        signals a zero compression term.
+        """
+        if self.entropy_eos is None:
+            return None, None, None
+        P_old = getattr(self, '_P_stag_flat', None)
+        sol = getattr(self, '_solution', None)
+        if P_old is None or sol is None or getattr(sol, 'y', None) is None:
+            return None, None, None
+        if np.size(sol.y) == 0:
+            return None, None, None
+        try:
+            S_block = self.entropy_staggered
+            S_old = (S_block[:, -1] if S_block.ndim > 1 else S_block).ravel()
+            mesh = self.evaluator.mesh
+            mass_old = np.asarray(mesh.staggered_effective_density).ravel() * np.asarray(
+                self._volume_flat
+            ).ravel()
+        except (AttributeError, TypeError, IndexError):
+            return None, None, None
+        return (
+            np.asarray(P_old, dtype=float).ravel().copy(),
+            np.asarray(S_old, dtype=float).copy(),
+            np.asarray(mass_old, dtype=float).copy(),
+        )
+
+    def _compute_compression_work(self, P_old, S_old, mass_old) -> float:
+        """Adiabatic compression enthalpy change across a mesh re-solve [J].
+
+        ``Sum mass (h(P_new, S) - h(P_old, S))`` at the carried entropy and
+        frozen mass, using the EOS specific-enthalpy table. Returns 0.0 when
+        the snapshot is unavailable or the mesh resolution changed (the cell
+        count differs, so a per-cell pressure delta is undefined).
+        """
+        if P_old is None or S_old is None or mass_old is None:
+            return 0.0
+        P_new = np.asarray(self._P_stag_flat, dtype=float).ravel()
+        if not (P_new.shape == P_old.shape == S_old.shape == mass_old.shape):
+            return 0.0
+        h_old = np.asarray(self.entropy_eos.specific_enthalpy(P_old, S_old)).ravel()
+        h_new = np.asarray(self.entropy_eos.specific_enthalpy(P_new, S_old)).ravel()
+        return float(np.sum(mass_old * (h_new - h_old)))
 
     def set_initial_entropy(self, S_init: npt.NDArray | float) -> None:
         """Set the initial entropy profile and (if used) initial T_core.
@@ -3063,6 +3137,7 @@ class EntropySolver:
             step_dE_Q_radio_cons_J=step_integrals['Q_radio_cons'],
             step_dE_Q_tidal_cons_J=step_integrals['Q_tidal_cons'],
             step_solver_residual_J=step_integrals['solver_residual'],
+            step_dE_compression_J=float(getattr(self, '_last_compression_J', 0.0)),
             dt_actual=float(sol.t[-1] - sol.t[0]),
             status=sol.status,
             jcond_b=jcond_b,

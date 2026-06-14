@@ -97,6 +97,7 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         step_dE_Q_radio_cons_J=+3.1e19,
         step_dE_Q_tidal_cons_J=+1.1e19,
         step_solver_residual_J=1.0e10,
+        step_dE_compression_J=+2.5e19,
         dt_actual=dt,
         status=status,
     )

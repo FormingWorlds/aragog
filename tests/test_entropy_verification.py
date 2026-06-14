@@ -649,6 +649,47 @@ class TestSolverResidualTelescoping:
             f'({naive_frac:.2e}) must dwarf the consistent one ({resid_frac:.2e})'
         )
 
+    def test_compression_work_matches_enthalpy_change(self):
+        """The structure-re-solve compression term equals the adiabatic
+        enthalpy change Sum mass (h(P_new, S) - h(P_old, S)) and vanishes for
+        an unchanged structure.
+
+        Verifies the conservation primitive that closes the dynamic-
+        contraction term in E_residual_cons_frac, with a static-structure
+        guard (zero) and a shape-change guard (zero), and a discrimination
+        guard that a real pressure rise moves a non-trivial fraction of the
+        mantle enthalpy."""
+        solver, eos = self._build_two_phase_solver()
+        S0 = self._stratified_ic(solver)
+        P_old = np.asarray(solver._P_stag_flat).ravel().copy()
+        mesh = solver.evaluator.mesh
+        mass = np.asarray(mesh.staggered_effective_density).ravel() * solver._volume_flat
+
+        # Static structure: P unchanged -> exactly zero compression.
+        comp_static = solver._compute_compression_work(P_old, S0, mass)
+        assert comp_static == 0.0, 'static structure must carry no compression work'
+
+        # Contraction: a 5 percent pressure rise gains compression enthalpy.
+        solver._P_stag_flat = P_old * 1.05
+        comp = solver._compute_compression_work(P_old, S0, mass)
+        h_old = np.asarray(eos.specific_enthalpy(P_old, S0)).ravel()
+        h_new = np.asarray(eos.specific_enthalpy(P_old * 1.05, S0)).ravel()
+        expect = float(np.sum(mass * (h_new - h_old)))
+        np.testing.assert_allclose(comp, expect, rtol=1e-12)
+        assert comp > 0.0, 'compression (rising P) must add energy'
+
+        # Discrimination: the term is a non-trivial fraction of the enthalpy.
+        e_state = float(np.sum(mass * h_old))
+        assert abs(comp) > 1e-4 * abs(e_state), (
+            'a 5 percent pressure rise must move a resolvable fraction of '
+            'the mantle enthalpy, else the test is vacuous'
+        )
+
+        # Shape change (mesh resolution differs) -> undefined per-cell delta,
+        # must return zero rather than crash.
+        solver._P_stag_flat = (P_old * 1.05)[:-1]
+        assert solver._compute_compression_work(P_old, S0, mass) == 0.0
+
 
 # -- Test 2c: CVODE energy-diagnostic output grid ------------------------------
 
