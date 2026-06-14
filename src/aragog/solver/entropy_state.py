@@ -644,22 +644,22 @@ class EntropyState:
         else:
             self._kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
 
-        # kappa_h floor (phase-dependent, modulated by melt fraction).
-        # Production PROTEUS runs use kappah_floor = 10 m^2/s
-        # (PROTEUS schema default, applied via SPIDER's -kappah_floor
-        # convention). The phi-modulated floor f_floor =
-        # tanh_weight(phi, phi_rheo, phi_width) ramps from 0 in solid
-        # layers (no spurious convective flux) to ~1 in mushy/liquid
-        # layers, where physical convection is expected and MLT can
-        # otherwise numerically freeze when the entropy gradient gets
-        # small. The transition is anchored on the rheological critical
-        # melt fraction so the floor turns on exactly where Costa-blended
-        # viscosity drops, consistent across config knobs.
-        # In stably-stratified mushy layers (rare; most mushy layers
-        # in interior cooling trajectories are convecting) the floor
-        # mildly suppresses real stratification; that is the documented
-        # SPIDER convention this implementation mirrors, so the same
-        # floor applies to PROTEUS+SPIDER and PROTEUS+Aragog runs alike.
+        # kappa_h floor (phase-dependent, modulated by melt fraction), gated
+        # to convectively-unstable cells. Production PROTEUS runs use
+        # kappah_floor = 10 m^2/s (PROTEUS schema default). The phi-modulated
+        # floor f_floor = tanh_weight(phi, phi_rheo, phi_width) ramps from 0
+        # in solid layers to ~1 in mushy/liquid layers, where MLT can
+        # otherwise numerically freeze when the entropy gradient gets small.
+        # The ``self._is_convective`` (dS/dr < 0) gate confines the floor to
+        # cells that are actually convecting: a stably-stratified, just-frozen
+        # mushy cell at the crystallisation front must NOT receive a floored
+        # eddy diffusivity, because the signed convective flux
+        # rho*T*kappa_h*(-dS/dr) would then inject a spurious sign-flipped
+        # flux that pins the cell sub-solidus. SPIDER has no kappa_h floor, so
+        # floor = 0 in stratified layers is the SPIDER-consistent limit. The
+        # transition is anchored on the rheological critical melt fraction so
+        # the floor turns on where Costa-blended viscosity drops. Mirrored in
+        # the JAX twin jax/phase.py.
         if self._kappah_floor > 0.0:
             phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             from aragog.utilities import tanh_weight
@@ -667,7 +667,7 @@ class EntropyState:
             phi_rheo = float(getattr(self.phase_basic, '_phi_rheo', 0.4))
             phi_width = float(getattr(self.phase_basic, '_phi_width', 0.15))
             f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
-            kh_floor = self._kappah_floor * f_floor
+            kh_floor = self._kappah_floor * f_floor * self._is_convective
             self._eddy_diffusivity = np.maximum(self._eddy_diffusivity, kh_floor)
 
         # Mirror SPIDER energy.c:220-223: at the CMB basic node, use
