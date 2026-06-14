@@ -690,6 +690,59 @@ class TestSolverResidualTelescoping:
         solver._P_stag_flat = (P_old * 1.05)[:-1]
         assert solver._compute_compression_work(P_old, S0, mass) == 0.0
 
+    def test_entropy_remap_carries_field_by_mass_parcel(self):
+        """The conservative remap interpolates the carried entropy onto the new
+        mass grid per parcel (matching np.interp), is a no-op when the grid is
+        unchanged, and falls back to the input when the node count changes.
+
+        Discrimination guard: a +1% mass-grid drift (the structure-solve mass
+        tolerance) makes the remapped field differ from the index-carry by more
+        than rounding, confirming the remap actually moves entropy by parcel
+        rather than by node index."""
+        solver, _ = self._build_two_phase_solver()
+        S0 = self._stratified_ic(solver)
+        solver.set_initial_entropy(S0)
+        solver.solve()
+        xi = solver.staggered_mass_coordinates
+        n = len(xi)
+        assert n == solver._n_stag, 'mass-coordinate length must match the staggered mesh'
+        assert np.all(np.diff(xi) > 0) or np.all(np.diff(xi) < 0), (
+            'mass coordinates must be monotonic for np.interp'
+        )
+
+        S_field = np.linspace(3000.0, 4000.0, n)
+        xi_new = xi * 1.01  # +1% mass drift across a re-solve
+        orig = type(solver).staggered_mass_coordinates
+        try:
+            type(solver).staggered_mass_coordinates = property(lambda self: xi_new)
+            solver._xi_pre_resolve = xi.copy()
+            S_remap = solver._remap_entropy_to_current_mesh(S_field.copy())
+            asc = xi[0] < xi[-1]
+            expect = (
+                np.interp(xi_new, xi, S_field)
+                if asc
+                else np.interp(xi_new[::-1], xi[::-1], S_field[::-1])[::-1]
+            )
+            np.testing.assert_allclose(S_remap, expect, rtol=1e-12)
+            # Discrimination: the remap differs from a raw index-carry.
+            assert np.max(np.abs(S_remap - S_field)) > 1e-6 * np.ptp(S_field), (
+                'a +1% mass drift must move the entropy field by parcel'
+            )
+            assert solver._xi_pre_resolve is None, 'remap must consume the cached grid'
+
+            # No-op when the mass grid is unchanged.
+            solver._xi_pre_resolve = xi_new.copy()
+            np.testing.assert_array_equal(
+                solver._remap_entropy_to_current_mesh(S_field.copy()), S_field
+            )
+            # Node-count mismatch -> fall back to the input unchanged.
+            solver._xi_pre_resolve = xi_new[:-1].copy()
+            np.testing.assert_array_equal(
+                solver._remap_entropy_to_current_mesh(S_field.copy()), S_field
+            )
+        finally:
+            type(solver).staggered_mass_coordinates = orig
+
 
 # -- Test 2c: CVODE energy-diagnostic output grid ------------------------------
 

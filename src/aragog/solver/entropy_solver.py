@@ -684,6 +684,12 @@ class EntropySolver:
         # the coupler to add to the predicted energy. Zero for a static
         # structure (P unchanged) and for the first solve (no prior mesh).
         self._last_compression_J = 0.0
+        # Staggered mass coordinates captured before a structure re-solve.
+        # The carried entropy is interpolated from these onto the new mass
+        # grid per parcel (``_remap_entropy_to_current_mesh``) so a parcel
+        # keeps its entropy when the total mantle mass drifts across the
+        # re-solve. One-shot: consumed by the next ``set_initial_entropy``.
+        self._xi_pre_resolve = None
 
     def set_jax_cvode_factory(self, factory) -> None:
         """Register a factory that produces JAX-derived CVODE callbacks.
@@ -1142,8 +1148,14 @@ class EntropySolver:
         logger.info('Resetting EntropySolver')
         # Snapshot the pre-re-solve pressure, carried entropy and frozen
         # mass so the compression work across the mesh change can be
-        # measured once the new mesh is built (see ``_last_compression_J``).
+        # measured once the new mesh is built (see ``_last_compression_J``),
+        # and the staggered mass coordinates so the carried entropy can be
+        # remapped onto the new mass grid per parcel.
         P_old, S_old, mass_old = self._snapshot_for_compression()
+        try:
+            self._xi_pre_resolve = self.staggered_mass_coordinates.copy()
+        except (AttributeError, TypeError):
+            self._xi_pre_resolve = None
         if self.parameters.mesh.eos_method == 2 and self.parameters.mesh.eos_file:
             arr = np.loadtxt(self.parameters.mesh.eos_file)
             self.parameters.mesh.eos_radius = arr[:, 0]
@@ -1173,9 +1185,10 @@ class EntropySolver:
             S_block = self.entropy_staggered
             S_old = (S_block[:, -1] if S_block.ndim > 1 else S_block).ravel()
             mesh = self.evaluator.mesh
-            mass_old = np.asarray(mesh.staggered_effective_density).ravel() * np.asarray(
-                self._volume_flat
-            ).ravel()
+            mass_old = (
+                np.asarray(mesh.staggered_effective_density).ravel()
+                * np.asarray(self._volume_flat).ravel()
+            )
         except (AttributeError, TypeError, IndexError):
             return None, None, None
         return (
@@ -1200,6 +1213,49 @@ class EntropySolver:
         h_old = np.asarray(self.entropy_eos.specific_enthalpy(P_old, S_old)).ravel()
         h_new = np.asarray(self.entropy_eos.specific_enthalpy(P_new, S_old)).ravel()
         return float(np.sum(mass_old * (h_new - h_old)))
+
+    @property
+    def staggered_mass_coordinates(self) -> npt.NDArray:
+        """Lagrangian mass coordinate at each staggered node.
+
+        Labels each mass parcel independently of physical radius, which
+        shifts when the structure re-solves. Used to carry the entropy
+        field across a re-solve by parcel rather than by node index.
+        """
+        return np.asarray(self.evaluator.mesh.staggered.mass_radii).ravel()
+
+    def _remap_entropy_to_current_mesh(self, S_arr: npt.NDArray) -> npt.NDArray:
+        """Carry an entropy field onto the current mesh by mass parcel.
+
+        When a structure re-solve changed the mesh, ``reset()`` cached the
+        pre-resolve staggered mass coordinates. Interpolate the incoming
+        entropy from those onto the current mass coordinates so each mass
+        parcel keeps its entropy, mirroring SPIDER's
+        ``remap_entropy_for_new_mesh``. Carrying by node index instead
+        shifts the entropy field whenever the total mantle mass drifts
+        across the re-solve, which injects a spurious energy jump. The
+        cached grid is consumed (one-shot) so a later isentropic IC set is
+        unaffected. Falls back to the input unchanged when no re-solve grid
+        is cached, the node count changed, or the mass grid is unchanged.
+        """
+        xi_old = self._xi_pre_resolve
+        self._xi_pre_resolve = None
+        if xi_old is None:
+            return S_arr
+        try:
+            xi_new = self.staggered_mass_coordinates
+        except (AttributeError, TypeError):
+            return S_arr
+        xi_old = np.asarray(xi_old, dtype=float).ravel()
+        xi_new = np.asarray(xi_new, dtype=float).ravel()
+        if xi_old.shape != S_arr.shape or xi_new.shape != S_arr.shape:
+            return S_arr
+        if np.allclose(xi_new, xi_old, rtol=1e-12, atol=0.0):
+            return S_arr
+        # np.interp requires ascending x; mass coordinates are monotonic.
+        if xi_old[0] > xi_old[-1]:
+            return np.interp(xi_new[::-1], xi_old[::-1], S_arr[::-1])[::-1]
+        return np.interp(xi_new, xi_old, S_arr)
 
     def set_initial_entropy(self, S_init: npt.NDArray | float) -> None:
         """Set the initial entropy profile and (if used) initial T_core.
@@ -1235,6 +1291,11 @@ class EntropySolver:
             S_arr = np.asarray(S_init, dtype=float)
             if len(S_arr) != n_stag:
                 raise ValueError(f'S_init length {len(S_arr)} != mesh staggered nodes {n_stag}')
+
+        # Carry the entropy onto the current mesh by mass parcel when a
+        # structure re-solve changed the mass grid (no-op otherwise, and
+        # always consumes the cached pre-resolve grid).
+        S_arr = self._remap_entropy_to_current_mesh(S_arr)
 
         # Prefer the cached _core_bc from _initialize_internals.
         if hasattr(self, '_core_bc') and self._core_bc is not None:
