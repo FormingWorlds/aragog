@@ -100,6 +100,21 @@ def test_phi_step_cap_accepts_zero_explicitly():
     assert _make_energy(phi_step_cap=0.0).phi_step_cap == 0.0
 
 
+def test_temperature_and_entropy_step_caps_default_zero():
+    """The temperature and entropy step caps default to 0.0 (disabled).
+
+    Standalone Aragog must keep its prior behaviour: the caps are off unless
+    a value is supplied. The PROTEUS wrapper is what auto-enables non-zero
+    defaults for the coupled zalmoxis stack, so a non-zero default here would
+    silently change every standalone run. Positive values round-trip.
+    """
+    e = _make_energy()
+    assert e.temperature_step_cap == 0.0
+    assert e.entropy_step_cap == 0.0
+    assert _make_energy(temperature_step_cap=150.0).temperature_step_cap == pytest.approx(150.0)
+    assert _make_energy(entropy_step_cap=80.0).entropy_step_cap == pytest.approx(80.0)
+
+
 # ──────────────────────────────────────────────────────────────────────
 #                   _PhiCapRootFunction.evaluate
 # ──────────────────────────────────────────────────────────────────────
@@ -748,3 +763,208 @@ def test_solve_cvode_uses_values_on_normal_completion_flag_0():
     assert result.t.size == 2
     assert result.y.shape == (n_state, 2)
     np.testing.assert_allclose(result.t, [0.1, 1.0])
+
+
+# ──────────────────────────────────────────────────────────────────────
+#               Per-cell melt-fraction guard (cliff onset)
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(
+    not _CV_ROOTFN_AVAILABLE,
+    reason='scikits_odes_sundials.cvode.CV_RootFunction unavailable',
+)
+def test_rootfn_per_cell_catches_single_deep_cell_crossing():
+    """A single deep cell crossing the window fires the cap; the global
+    mean alone would miss it.
+
+    Crystallisation onset has the bottom cell go fully molten to fully
+    solid in one step while every other cell stays molten. With uniform
+    density and unit volume the mass-weighted global melt fraction moves
+    by only ``1/N`` (here 1/32 = 0.031 vs cap 0.05), which on its own is
+    below the cap, while the per-cell guard sees a unit swing. The
+    discrimination guard asserts the two verdicts differ by far more than
+    rounding, so the test fails if the per-cell term is dropped.
+    """
+    n_stag = 32
+    eos, P_stag, volume, n_stag, S_stag, _ = _build_synthetic_eos_and_state(
+        n_stag=n_stag, phi_uniform=1.0
+    )
+    cap = 0.05
+    phi0_cell = np.full(n_stag, 1.0)
+    phi_post = np.full(n_stag, 1.0)
+    phi_post[0] = 0.0  # bottom cell crystallises completely
+    eos.melt_fraction.return_value = phi_post
+    global_dphi = 1.0 / n_stag
+    assert global_dphi < cap  # the cliff is invisible to a global-only cap
+
+    rootfn_pc = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=1.0,
+        cap=cap,
+        state_scale=np.ones(n_stag),
+        phi0_per_cell=phi0_cell,
+    )
+    g_pc = np.zeros(1)
+    rootfn_pc.evaluate(1.0, S_stag, g_pc)
+    assert g_pc[0] < 0.0  # per-cell guard fires (g crosses zero)
+
+    rootfn_global = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=1.0,
+        cap=cap,
+        state_scale=np.ones(n_stag),
+        phi0_per_cell=None,
+    )
+    g_global = np.zeros(1)
+    rootfn_global.evaluate(1.0, S_stag, g_global)
+    assert g_global[0] > 0.0  # global-only does not fire on the same state
+    # The per-cell verdict must be decisively different, not a near-tie.
+    assert g_global[0] - g_pc[0] > 0.5
+
+
+def test_event_factory_per_cell_mirrors_rootfn():
+    """The scipy fallback event mirrors the rootfn per-cell behaviour.
+
+    Same single-deep-cell crossing: the per-cell event value is negative
+    (fires) while the global-only event stays positive (does not). The two
+    must straddle zero, so a regression that drops the per-cell term in the
+    event factory is caught even when CVODE is unavailable.
+    """
+    n_stag = 32
+    eos, P_stag, volume, n_stag, S_stag, _ = _build_synthetic_eos_and_state(
+        n_stag=n_stag, phi_uniform=1.0
+    )
+    cap = 0.05
+    phi_post = np.full(n_stag, 1.0)
+    phi_post[0] = 0.0
+    eos.melt_fraction.return_value = phi_post
+
+    ev_pc = _phi_cap_event_factory(
+        eos,
+        P_stag,
+        volume,
+        n_stag,
+        1.0,
+        cap,
+        np.ones(n_stag),
+        phi0_per_cell=np.full(n_stag, 1.0),
+    )
+    ev_global = _phi_cap_event_factory(
+        eos, P_stag, volume, n_stag, 1.0, cap, np.ones(n_stag), phi0_per_cell=None
+    )
+    val_pc = ev_pc(1.0, S_stag)
+    val_global = ev_global(1.0, S_stag)
+    assert val_pc < 0.0 < val_global
+    assert val_global - val_pc > 0.5
+
+
+# ──────────────────────────────────────────────────────────────────────
+#               Per-cell temperature and entropy step caps
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(
+    not _CV_ROOTFN_AVAILABLE,
+    reason='scikits_odes_sundials.cvode.CV_RootFunction unavailable',
+)
+def test_rootfn_temperature_cap_catches_jump_phi_cap_misses():
+    """The temperature cap fires on a per-cell |ΔT| even when melt fraction
+    barely moves.
+
+    This is the solid-adiabat blind spot: a fully solid cell (phi pinned at 0)
+    keeps cooling, so the melt-fraction cap sees no change while the reported
+    temperature drops sharply. With the melt-fraction cap disabled (cap=0) and
+    only the temperature cap armed, a 500 K drop must drive g negative; with
+    the temperature cap also disabled the same state must NOT fire. The two
+    verdicts straddle zero, so dropping the temperature term is caught.
+    """
+    n_stag = 8
+    eos = MagicMock()
+    P_stag = np.linspace(1.0e9, 1.4e11, n_stag)
+    volume = np.full(n_stag, 1.0e18)
+    S_stag = np.full(n_stag, 3000.0)
+    T0 = np.full(n_stag, 6000.0)
+    eos.temperature.return_value = T0 - 500.0  # 500 K drop, no phi change
+
+    rootfn_T = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=0.0,
+        cap=0.0,
+        state_scale=np.ones(n_stag),
+        cap_temperature=200.0,
+        T0_per_cell=T0,
+    )
+    gT = np.zeros(1)
+    rootfn_T.evaluate(1.0, S_stag, gT)
+    assert gT[0] < 0.0  # 200 - 500 = -300 -> fires
+
+    rootfn_off = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=0.0,
+        cap=0.0,
+        state_scale=np.ones(n_stag),
+        cap_temperature=0.0,
+        T0_per_cell=T0,
+    )
+    goff = np.zeros(1)
+    rootfn_off.evaluate(1.0, S_stag, goff)
+    assert goff[0] > 0.0  # no cap armed -> never fires
+    assert goff[0] - gT[0] > 0.5
+
+
+def test_event_factory_entropy_cap_catches_native_variable_jump():
+    """The entropy cap fires on a per-cell |ΔS| with no EOS lookup.
+
+    S is the native solver variable, so the entropy cap reads y*scale directly.
+    A 200 J/kg/K jump with cap_entropy=50 fires (event value negative); with the
+    cap disabled it does not. The scipy event mirrors the CVODE rootfn, so this
+    guards the fallback path. Straddle-zero discrimination as above.
+    """
+    n_stag = 6
+    eos = MagicMock()
+    S0 = np.full(n_stag, 2500.0)
+    # y is nondim; with unit state_scale, S = y. Jump the entropy by 200.
+    y_jumped = S0 + 200.0
+
+    ev_S = _phi_cap_event_factory(
+        eos,
+        np.full(n_stag, 5.0e10),
+        np.full(n_stag, 1.0e18),
+        n_stag,
+        0.0,
+        0.0,
+        np.ones(n_stag),
+        cap_entropy=50.0,
+        S0_per_cell=S0,
+    )
+    ev_off = _phi_cap_event_factory(
+        eos,
+        np.full(n_stag, 5.0e10),
+        np.full(n_stag, 1.0e18),
+        n_stag,
+        0.0,
+        0.0,
+        np.ones(n_stag),
+        cap_entropy=0.0,
+        S0_per_cell=S0,
+    )
+    val_S = ev_S(1.0, y_jumped)
+    val_off = ev_off(1.0, y_jumped)
+    assert val_S < 0.0 < val_off
+    assert val_off - val_S > 0.5
+    # The entropy cap must not have called the EOS (native-variable path).
+    assert not eos.temperature.called
+    assert not eos.density.called

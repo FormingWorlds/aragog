@@ -72,6 +72,16 @@ class EnergyConfig:
         at the exact time where the change first reaches this value.
         Default 0.0 (disabled); 0.05 is typical for production
         evolution of 1 M_E PALEOS-2phase mantles.
+    temperature_step_cap : float
+        Per-call per-cell ``|ΔT|`` cap [K] (SUNDIALS root function),
+        firing on the maximum single-cell temperature change since
+        ``solve()`` entry. Bounds the core-temperature drop on the solid
+        adiabat below the solidus, which the melt-fraction cap cannot see.
+        Default 0.0 (disabled).
+    entropy_step_cap : float
+        Per-call per-cell ``|ΔS|`` cap [J/kg/K] in the native solver
+        variable; same role as the temperature cap without an EOS lookup
+        in the root function. Default 0.0 (disabled).
     tidal_array : ndarray
         Tidal heating per unit mass [W/kg] at each layer.
     """
@@ -90,4 +100,6 @@ class EnergyConfig:
     solver_method: str = 'cvode'
     use_jax_jacobian: bool = True
     phi_step_cap: float = 0.0
+    temperature_step_cap: float = 0.0
+    entropy_step_cap: float = 0.0
     tidal_array: npt.NDArray = attrs.Factory(lambda: np.array([0.0], dtype=float))

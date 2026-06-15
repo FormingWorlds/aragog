@@ -194,6 +194,13 @@ class _EnergyParameters:
     # reject. 0.05 is a useful upper bound for the mushy zone in 1 M⊕
     # runs; default 0.0 disables the cap entirely.
     phi_step_cap: float = 0.0
+    # Per-cell temperature and entropy step caps [K] and [J/kg/K]. Like the
+    # melt-fraction cap, but the root function fires on the maximum
+    # single-cell |ΔT| or |ΔS|. These bound the reported temperature drop on
+    # the solid adiabat just below the solidus, where the melt-fraction cap
+    # goes blind (its derivative saturates at phi=0). 0.0 disables each.
+    temperature_step_cap: float = 0.0
+    entropy_step_cap: float = 0.0
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
 

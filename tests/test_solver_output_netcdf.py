@@ -98,6 +98,7 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         step_dE_Q_tidal_cons_J=+1.1e19,
         step_solver_residual_J=1.0e10,
         step_dE_compression_J=+2.5e19,
+        step_dE_state_heat_J=-7.0e21,
         dt_actual=dt,
         status=status,
     )
@@ -153,6 +154,7 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             'step_dE_Q_radio_cons_J': out.step_dE_Q_radio_cons_J,
             'step_dE_Q_tidal_cons_J': out.step_dE_Q_tidal_cons_J,
             'step_solver_residual_J': out.step_solver_residual_J,
+            'step_dE_state_heat_J': out.step_dE_state_heat_J,
             'dt_actual': out.dt_actual,
         }
         for name, expected in scalars_to_check.items():

@@ -197,6 +197,11 @@ class _PhiCapRootFunction(_CV_RootFunction):
         phi0_global,
         cap,
         state_scale,
+        phi0_per_cell=None,
+        cap_temperature=0.0,
+        T0_per_cell=None,
+        cap_entropy=0.0,
+        S0_per_cell=None,
     ):
         self.eos = eos
         self.P_stag = np.asarray(P_stag, dtype=float).ravel()
@@ -205,6 +210,30 @@ class _PhiCapRootFunction(_CV_RootFunction):
         self.phi0 = float(phi0_global)
         self.cap = float(cap)
         self.state_scale = np.asarray(state_scale, dtype=float).ravel()
+        # Per-cell melt fraction at solve entry. The cap fires on the
+        # larger of the global mass-weighted |ΔΦ| and the maximum
+        # single-cell |Δφ|, so a deep cell that crosses the whole
+        # two-phase window in one step (a negligible move in the global
+        # mean) still returns control to the integrator before the jump.
+        self.phi0_cell = (
+            None if phi0_per_cell is None else np.asarray(phi0_per_cell, dtype=float).ravel()
+        )
+        # Optional per-cell temperature and entropy step caps, anchored at
+        # solve entry. The melt-fraction cap goes blind once a cell reaches
+        # phi=0 or phi=1 (its derivative saturates), so it cannot bound the
+        # temperature drop as a cell cools on the solid adiabat just below
+        # the solidus. The temperature cap bounds max_i |T_i - T0_i| directly,
+        # and the entropy cap bounds max_i |S_i - S0_i| in the native solver
+        # variable. Whichever cap is tightest at a given state arrests the
+        # integrator (g is the minimum of the active margins).
+        self.cap_T = float(cap_temperature)
+        self.T0_cell = (
+            None if T0_per_cell is None else np.asarray(T0_per_cell, dtype=float).ravel()
+        )
+        self.cap_S = float(cap_entropy)
+        self.S0_cell = (
+            None if S0_per_cell is None else np.asarray(S0_per_cell, dtype=float).ravel()
+        )
         # Hit counter for diagnostics; CVODE may evaluate the rootfn
         # at every internal step so this can grow large.
         self.evals = 0
@@ -216,33 +245,70 @@ class _PhiCapRootFunction(_CV_RootFunction):
         try:
             y_arr = np.asarray(y, dtype=float)
             S_stag = y_arr[: self.n_stag] * self.state_scale[: self.n_stag]
-            rho = np.asarray(self.eos.density(self.P_stag, S_stag)).ravel()
-            phi = np.asarray(self.eos.melt_fraction(self.P_stag, S_stag)).ravel()
-            mass = rho * self.volume
-            mass_total = float(mass.sum())
-            if mass_total > 0.0:
-                phi_global = float((mass * phi).sum() / mass_total)
-            else:
-                phi_global = self.phi0
-            g[0] = self.cap - abs(phi_global - self.phi0)
+            # g is the minimum margin across the active caps; CVODE fires
+            # when any one is reached. Each cap's EOS lookups are computed
+            # only when that cap is enabled.
+            margin = np.inf
+            if self.cap > 0.0:
+                phi = np.asarray(self.eos.melt_fraction(self.P_stag, S_stag)).ravel()
+                rho = np.asarray(self.eos.density(self.P_stag, S_stag)).ravel()
+                mass = rho * self.volume
+                mass_total = float(mass.sum())
+                phi_global = (
+                    float((mass * phi).sum() / mass_total) if mass_total > 0.0 else self.phi0
+                )
+                dphi = abs(phi_global - self.phi0)
+                if self.phi0_cell is not None and phi.size == self.phi0_cell.size:
+                    dphi = max(dphi, float(np.max(np.abs(phi - self.phi0_cell))))
+                margin = min(margin, self.cap - dphi)
+            if (
+                self.cap_S > 0.0
+                and self.S0_cell is not None
+                and S_stag.size == self.S0_cell.size
+            ):
+                margin = min(margin, self.cap_S - float(np.max(np.abs(S_stag - self.S0_cell))))
+            if self.cap_T > 0.0 and self.T0_cell is not None:
+                T = np.asarray(self.eos.temperature(self.P_stag, S_stag)).ravel()
+                if T.size == self.T0_cell.size:
+                    margin = min(margin, self.cap_T - float(np.max(np.abs(T - self.T0_cell))))
+            g[0] = margin if np.isfinite(margin) else 1.0
             self.evals += 1
             return 0
         except Exception:  # pragma: no cover - never crash CVODE on rootfn
             # Returning a positive value keeps CVODE integrating; the
             # cap simply does not fire if EOS lookup fails. The outer
-            # solve() result will still be correct.
-            g[0] = self.cap
+            # solve() result will still be correct. The largest armed cap is
+            # a safe positive sentinel (at least one cap is positive whenever
+            # this rootfn was constructed).
+            g[0] = max(self.cap, self.cap_T, self.cap_S)
             return 0
 
 
-def _phi_cap_event_factory(eos, P_stag, volume, n_stag, phi0_global, cap, state_scale):
-    """Build a scipy ``solve_ivp`` event for the same Φ_global cap.
+def _phi_cap_event_factory(
+    eos,
+    P_stag,
+    volume,
+    n_stag,
+    phi0_global,
+    cap,
+    state_scale,
+    phi0_per_cell=None,
+    cap_temperature=0.0,
+    T0_per_cell=None,
+    cap_entropy=0.0,
+    S0_per_cell=None,
+):
+    """Build a scipy ``solve_ivp`` event for the per-cell step caps.
 
     ``solve_ivp`` events are callables ``(t, y) -> float`` with sign
     crossings that trigger termination when ``terminal=True``. The
-    semantics mirror :class:`_PhiCapRootFunction`: the event value is
-    ``cap - |Φ_global(t, y) - Φ_global(start)|``. Crossing zero from
-    positive to negative terminates the integration.
+    semantics mirror :class:`_PhiCapRootFunction`: the event value is the
+    minimum margin across the active caps, ``cap - max(|ΔΦ_global|,
+    max_i |Δφ_i|)`` and, when enabled, ``cap_temperature - max_i |ΔT_i|``
+    and ``cap_entropy - max_i |ΔS_i|``. Crossing zero from positive to
+    negative terminates the integration, so a single deep cell crossing the
+    two-phase window or cooling on the solid adiabat arrests the step even
+    when the global mean barely moves.
     """
     P_stag_arr = np.asarray(P_stag, dtype=float).ravel()
     volume_arr = np.asarray(volume, dtype=float).ravel()
@@ -250,22 +316,40 @@ def _phi_cap_event_factory(eos, P_stag, volume, n_stag, phi0_global, cap, state_
     phi0 = float(phi0_global)
     cap_float = float(cap)
     scale_arr = np.asarray(state_scale, dtype=float).ravel()
+    phi0_cell = (
+        None if phi0_per_cell is None else np.asarray(phi0_per_cell, dtype=float).ravel()
+    )
+    cap_T = float(cap_temperature)
+    T0_cell = None if T0_per_cell is None else np.asarray(T0_per_cell, dtype=float).ravel()
+    cap_S = float(cap_entropy)
+    S0_cell = None if S0_per_cell is None else np.asarray(S0_per_cell, dtype=float).ravel()
 
     def _event(t_nd, y_nd):
         try:
             y_arr = np.asarray(y_nd, dtype=float)
             S_stag = y_arr[:n_stag_int] * scale_arr[:n_stag_int]
-            rho = np.asarray(eos.density(P_stag_arr, S_stag)).ravel()
-            phi = np.asarray(eos.melt_fraction(P_stag_arr, S_stag)).ravel()
-            mass = rho * volume_arr
-            mass_total = float(mass.sum())
-            if mass_total > 0.0:
-                phi_global = float((mass * phi).sum() / mass_total)
-            else:
-                phi_global = phi0
-            return cap_float - abs(phi_global - phi0)
+            margin = np.inf
+            if cap_float > 0.0:
+                phi = np.asarray(eos.melt_fraction(P_stag_arr, S_stag)).ravel()
+                rho = np.asarray(eos.density(P_stag_arr, S_stag)).ravel()
+                mass = rho * volume_arr
+                mass_total = float(mass.sum())
+                phi_global = (
+                    float((mass * phi).sum() / mass_total) if mass_total > 0.0 else phi0
+                )
+                dphi = abs(phi_global - phi0)
+                if phi0_cell is not None and phi.size == phi0_cell.size:
+                    dphi = max(dphi, float(np.max(np.abs(phi - phi0_cell))))
+                margin = min(margin, cap_float - dphi)
+            if cap_S > 0.0 and S0_cell is not None and S_stag.size == S0_cell.size:
+                margin = min(margin, cap_S - float(np.max(np.abs(S_stag - S0_cell))))
+            if cap_T > 0.0 and T0_cell is not None:
+                T = np.asarray(eos.temperature(P_stag_arr, S_stag)).ravel()
+                if T.size == T0_cell.size:
+                    margin = min(margin, cap_T - float(np.max(np.abs(T - T0_cell))))
+            return margin if np.isfinite(margin) else 1.0
         except Exception:
-            return cap_float
+            return max(cap_float, cap_T, cap_S)
 
     _event.terminal = True
     _event.direction = -1.0  # only fire on positive-to-negative crossing
@@ -387,10 +471,29 @@ class SolverOutput:
 
     # Adiabatic compression work [J] from the structure re-solve that
     # preceded this call. ``Sum mass (h(P_new, S) - h(P_old, S))`` at the
-    # carried entropy and frozen mass. Zero for a static structure. The
-    # boundary-flux budget does not see the pressure change, so the
-    # coupler adds this to the predicted energy for the conservation check.
+    # carried entropy and frozen mass. Zero for a static structure.
+    # Informational only: the conservation residual is built from the
+    # entropy-transported heat (``step_dE_state_heat_J``), which carries
+    # the same thermodynamic content without the enthalpy framing.
     step_dE_compression_J: float
+
+    # Per-call entropy-transported heat [J]: the change in mantle heat
+    # content over the call, ``Sum_i V_i integral_{S0_i}^{Sf_i}
+    # rho(P_i, S) T(P_i, S) dS``, evaluated by direct EOS quadrature over
+    # the entropy path of each staggered cell. This is the Lagrangian
+    # heat content the entropy ODE transports (capacitance rho*T weighting),
+    # so its cumulative sum is the state side of the conservation budget the
+    # coupler differences against the boundary fluxes and sources. It is NOT
+    # the enthalpy change: the two-phase EOS specific enthalpy does not
+    # satisfy ``dh = T dS`` across the mushy zone, so an enthalpy snapshot
+    # difference carries a spurious flow-work term and cannot close the
+    # budget at all. The quadrature uses the hard-masked table density, which
+    # differs slightly from the tanh-blended phase density in the ODE
+    # capacitance, so the coupler residual closes to roughly a percent of the
+    # cumulative cooling rather than to machine precision; machine-precision
+    # conservation is carried by ``step_solver_residual_J``. Sign: negative
+    # when the mantle is cooling.
+    step_dE_state_heat_J: float
 
     dt_actual: float  # actual integration time [yr]
     status: int  # solver status (0 = success)
@@ -579,6 +682,12 @@ class SolverOutput:
                 self.step_dE_compression_J,
                 'J',
                 'Per-call compression work from the structure re-solve',
+            )
+            _scalar(
+                'step_dE_state_heat_J',
+                self.step_dE_state_heat_J,
+                'J',
+                'Per-call entropy-transported heat content change (EOS quadrature)',
             )
             _scalar('dt_actual', self.dt_actual, 'yr', 'Actual integration time of this step')
             _scalar('status', int(self.status), '1', 'Solver status code (0 = success)')
@@ -1238,7 +1347,7 @@ class EntropySolver:
         unaffected. Falls back to the input unchanged when no re-solve grid
         is cached, the node count changed, or the mass grid is unchanged.
         """
-        xi_old = self._xi_pre_resolve
+        xi_old = getattr(self, '_xi_pre_resolve', None)
         self._xi_pre_resolve = None
         if xi_old is None:
             return S_arr
@@ -2332,23 +2441,23 @@ class EntropySolver:
             atol_scale = 10.0
             max_step = np.inf
 
-        # phi_cap_anchor stores the (cap, phi0_global) tuple for the
-        # SUNDIALS rootfn / scipy event, or None when the cap is not
-        # armed. Initialised here so the consumer at the bottom of
-        # solve() never hits an UnboundLocalError when the
-        # ``phi0 > 0.01 and self.entropy_eos is not None`` branch
-        # below is skipped (e.g. const_properties path with no EOS).
+        # phi_cap_anchor stores the step-cap anchor dict for the SUNDIALS
+        # rootfn / scipy event, or None when no cap is armed. Initialised
+        # here so the consumer at the bottom of solve() never hits an
+        # UnboundLocalError when the EOS branch below is skipped (e.g. the
+        # const_properties path with no EOS).
         phi_cap_anchor = None
 
-        # Tighten max_step when ANY cell is near a phase boundary.
-        # Extends the previous CMB-only check to all cells, catching
-        # phase transitions that propagate through upper cells during
-        # the rheological-front sweep, not just CMB crystallisation.
-        # When a cell's entropy is within 200 J/kg/K of either the
-        # solidus or liquidus, OR sits inside the mushy band, max_step
-        # is reduced to 1 yr to give CVODE enough resolution to handle
-        # the phase-boundary stiffness gradually.
-        if phi0 > 0.01 and self.entropy_eos is not None:
+        # Tighten max_step when ANY cell is near a phase boundary and arm the
+        # step caps. Runs whenever the entropy EOS is loaded, independent of
+        # the mean melt fraction: the temperature and entropy caps must stay
+        # active in the deep-solid regime (mean melt fraction below 0.01),
+        # where a cell can still cool on the solid adiabat well below the
+        # solidus and the melt-fraction cap is blind. When a cell's entropy is
+        # within 200 J/kg/K of either phase boundary, OR sits inside the mushy
+        # band, max_step is reduced to 1 yr to give CVODE enough resolution to
+        # handle the phase-boundary stiffness gradually.
+        if self.entropy_eos is not None:
             P_basic = self._P_basic_flat
             np.asarray(self.entropy_eos.liquidus_entropy(P_basic)).ravel()
             np.asarray(self.entropy_eos.solidus_entropy(P_basic)).ravel()
@@ -2379,52 +2488,78 @@ class EntropySolver:
             ):
                 max_step = 1.0
 
-            # Per-call mass-weighted ΔΦ_global cap as a SUNDIALS root
-            # function. Build the rootfn metadata here (anchor:
-            # Φ_global at solve entry); the actual rootfn instance is
-            # constructed below once the nondim state_scale is known.
-            # CVODE returns at the exact time t* where
-            # |Φ_global(t*) − Φ_global(start)| = cap, so the cap is
-            # enforced by the integrator's own trajectory rather than
-            # by a start-time rate estimate. A rate-estimate cap can
-            # truncate end_time and lock PROTEUS's adaptive dt onto
-            # the truncated value at the rheological transition.
+            # Per-call step caps as a SUNDIALS root function. Build the
+            # anchor metadata here (per-cell melt fraction, temperature and
+            # entropy at solve entry); the rootfn instance is constructed
+            # below once the nondim state_scale is known. CVODE returns at
+            # the exact time the tightest active cap is reached, enforced by
+            # the integrator's own trajectory rather than a start-time rate
+            # estimate. The per-cell melt-fraction term catches a deep cell
+            # crossing the two-phase window in one step (a negligible move in
+            # the global mean but the source of the crystallisation-onset
+            # core-temperature jump). The melt-fraction derivative saturates
+            # once a cell is fully solid, so it cannot bound the temperature
+            # drop on the solid adiabat just below the solidus; the optional
+            # temperature and entropy caps bound |ΔT| and |ΔS| per cell
+            # directly. All armed caps share one rootfn (g is the minimum
+            # margin). Armed as soon as any cell is inside, near, or below the
+            # two-phase window so the caps stay active through the solid
+            # adiabat. The caps are skipped in gradient core_bc mode, where the
+            # state vector holds entropy gradients rather than entropies and
+            # the per-cell EOS lookups would be dimensionally meaningless.
             phi_step_cap = float(getattr(self.parameters.energy, 'phi_step_cap', 0.0))
-            if phi_step_cap > 0.0 and (near_liq or near_sol or in_mushy):
-                in_mushy_arr = (margin_to_liq < 0.0) & (margin_to_sol > 0.0)
-                if np.any(in_mushy_arr):
-                    try:
-                        rho_stag_init = np.asarray(
-                            self.entropy_eos.density(
-                                self._P_stag_flat,
-                                S_arr_stag,
-                            )
-                        ).ravel()
-                        phi_stag_init = np.asarray(
-                            self.entropy_eos.melt_fraction(
-                                self._P_stag_flat,
-                                S_arr_stag,
-                            )
-                        ).ravel()
-                        mass_stag_init = rho_stag_init * self._volume_flat
-                        mass_total_init = float(np.sum(mass_stag_init))
-                        if mass_total_init > 0.0:
-                            phi0_global = float(
-                                np.sum(mass_stag_init * phi_stag_init) / mass_total_init
-                            )
-                            phi_cap_anchor = (phi_step_cap, phi0_global)
-                            logger.info(
-                                'ΔΦ_global cap %.3g: '
-                                'arming CVODE rootfn anchored at '
-                                'Φ_global(start)=%.4f',
-                                phi_step_cap,
-                                phi0_global,
-                            )
-                    except Exception as exc:
-                        logger.warning(
-                            'ΔΦ_global cap rootfn anchor failed (%s); proceeding without cap',
-                            exc,
+            temp_step_cap = float(getattr(self.parameters.energy, 'temperature_step_cap', 0.0))
+            entropy_step_cap = float(getattr(self.parameters.energy, 'entropy_step_cap', 0.0))
+            any_cap = phi_step_cap > 0.0 or temp_step_cap > 0.0 or entropy_step_cap > 0.0
+            below_solidus = bool(np.any(margin_to_sol < 0.0))
+            gradient_mode = getattr(self, '_core_bc', None) == 'gradient'
+            if gradient_mode and any_cap:
+                logger.info('step caps are not supported in gradient core_bc mode; not armed')
+            if (
+                any_cap
+                and not gradient_mode
+                and (near_liq or near_sol or in_mushy or below_solidus)
+            ):
+                try:
+                    rho_stag_init = np.asarray(
+                        self.entropy_eos.density(self._P_stag_flat, S_arr_stag)
+                    ).ravel()
+                    phi_stag_init = np.asarray(
+                        self.entropy_eos.melt_fraction(self._P_stag_flat, S_arr_stag)
+                    ).ravel()
+                    mass_stag_init = rho_stag_init * self._volume_flat
+                    mass_total_init = float(np.sum(mass_stag_init))
+                    if mass_total_init > 0.0:
+                        phi0_global = float(
+                            np.sum(mass_stag_init * phi_stag_init) / mass_total_init
                         )
+                        T0_stag_init = None
+                        if temp_step_cap > 0.0:
+                            T0_stag_init = np.asarray(
+                                self.entropy_eos.temperature(self._P_stag_flat, S_arr_stag)
+                            ).ravel()
+                        phi_cap_anchor = {
+                            'cap_phi': phi_step_cap,
+                            'phi0_global': phi0_global,
+                            'phi0_cell': phi_stag_init,
+                            'cap_T': temp_step_cap,
+                            'T0_cell': T0_stag_init,
+                            'cap_S': entropy_step_cap,
+                            'S0_cell': S_arr_stag.copy(),
+                        }
+                        logger.info(
+                            'step caps armed (CVODE rootfn): phi=%.3g, T=%.3g K, S=%.3g '
+                            'J/kg/K (global Φ0=%.4f)',
+                            phi_step_cap,
+                            temp_step_cap,
+                            entropy_step_cap,
+                            phi0_global,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        'step-cap rootfn anchor failed (%s); proceeding without cap',
+                        exc,
+                    )
 
         # External per-call atol scale factor (PROTEUS retry ladder
         # opts in by setting solver._atol_sf before solve()). Default
@@ -2501,41 +2636,38 @@ class EntropySolver:
         # BDF integration with phase-aware max_step constraint.
         jac_sparsity = self._build_jac_sparsity()
 
-        # ── ΔΦ_global rootfn / event construction ──
+        # ── melt-fraction cap rootfn / event construction ──
         # Build the SUNDIALS rootfn (CVODE path) and the equivalent
         # solve_ivp event (scipy fallback) only when the cap is armed.
         # Both consume nondim ``y`` and rescale via ``_state_scale``
         # before reading the EOS. The phase-boundary max_step=1 yr
         # clamp set above is preserved; the cap is an ADDITIONAL
-        # guardrail anchored at Φ_global(start).
+        # guardrail anchored at the per-cell and global melt fractions at
+        # solve entry.
         events = None
         phi_cap_rootfn = None
         if phi_cap_anchor is not None:
-            cap_value, phi0_global = phi_cap_anchor
+            a = phi_cap_anchor
             try:
-                phi_cap_rootfn = _PhiCapRootFunction(
+                cap_kw = dict(
                     eos=self.entropy_eos,
                     P_stag=self._P_stag_flat,
                     volume=self._volume_flat,
                     n_stag=self._n_stag,
-                    phi0_global=phi0_global,
-                    cap=cap_value,
+                    phi0_global=a['phi0_global'],
+                    cap=a['cap_phi'],
                     state_scale=_state_scale,
+                    phi0_per_cell=a['phi0_cell'],
+                    cap_temperature=a['cap_T'],
+                    T0_per_cell=a['T0_cell'],
+                    cap_entropy=a['cap_S'],
+                    S0_per_cell=a['S0_cell'],
                 )
-                events = [
-                    _phi_cap_event_factory(
-                        eos=self.entropy_eos,
-                        P_stag=self._P_stag_flat,
-                        volume=self._volume_flat,
-                        n_stag=self._n_stag,
-                        phi0_global=phi0_global,
-                        cap=cap_value,
-                        state_scale=_state_scale,
-                    )
-                ]
+                phi_cap_rootfn = _PhiCapRootFunction(**cap_kw)
+                events = [_phi_cap_event_factory(**cap_kw)]
             except Exception as exc:
                 logger.warning(
-                    'ΔΦ_global cap rootfn instantiation failed (%s); integrating without cap',
+                    'step-cap rootfn instantiation failed (%s); integrating without cap',
                     exc,
                 )
                 phi_cap_rootfn = None
@@ -2746,6 +2878,7 @@ class EntropySolver:
             'Q_radio_cons': 0.0,
             'Q_tidal_cons': 0.0,
             'solver_residual': 0.0,
+            'state_heat': 0.0,
         }
         sol = self._solution
         eos = self.entropy_eos
@@ -2805,6 +2938,9 @@ class EntropySolver:
                 S_i = y_col[:n_stag]
             else:
                 S_i = y_col
+
+            if i == 0:
+                S_traj_start = np.asarray(S_i, dtype=float).copy()
 
             # Evaluate the ODE RHS at this accepted state. ``self.dSdt``
             # internally calls ``state.update`` AND applies the BC
@@ -2888,6 +3024,16 @@ class EntropySolver:
         def trap(p):
             return float(np.sum(0.5 * (p[:-1] + p[1:]) * dt_s))
 
+        # Entropy-transported heat content change over the call, evaluated by
+        # EOS quadrature of ``rho(P,S) T(P,S) dS`` along each cell's entropy
+        # path from the start-of-call state to the final state ``S_i``. This
+        # is independent of the flux trajectory above, so its cumulative sum
+        # provides a genuine conservation check against the boundary-flux
+        # budget rather than reproducing the divergence telescoping.
+        state_heat = self._step_heat_content(
+            S_traj_start, np.asarray(S_i, dtype=float).ravel()[:n_stag]
+        )
+
         return {
             'F_int': trap(P_F_int),
             'F_cmb': trap(P_F_cmb),
@@ -2896,7 +3042,72 @@ class EntropySolver:
             'Q_radio_cons': trap(P_radio_cons),
             'Q_tidal_cons': trap(P_tidal_cons),
             'solver_residual': trap(P_resid_solver),
+            'state_heat': state_heat,
         }
+
+    def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int = 16) -> float:
+        """Entropy-transported heat content change over one solver call [J].
+
+        Evaluates ``Sum_i V_i integral_{S0_i}^{Sf_i} rho(P_i, S) T(P_i, S) dS``
+        by trapezoidal quadrature over each staggered cell's entropy path,
+        reading density and temperature directly from the EOS. This is the
+        Lagrangian heat content the entropy ODE transports (capacitance
+        ``rho * T``), so its cumulative sum is the state side of the coupler's
+        conservation budget. It is evaluated from the start- and end-of-call
+        states alone, independently of the integration trajectory, so a
+        mismatch against the boundary-flux and source budget is a genuine
+        frame-consistency diagnostic rather than a restatement of the
+        divergence telescoping. The quadrature reads the hard-masked table
+        density, which differs slightly from the tanh-blended phase density in
+        the capacitance, so the coupler residual closes to roughly a percent
+        of the cumulative cooling, not to machine precision; the
+        machine-precision check is the entropy-ODE solver residual.
+
+        Enthalpy is deliberately not used: the two-phase EOS specific enthalpy
+        does not satisfy ``dh = T dS`` across the mushy zone, so an enthalpy
+        difference carries a spurious flow-work term and cannot close at all.
+
+        Parameters
+        ----------
+        S0_stag, Sf_stag : np.ndarray
+            Staggered specific entropy at the start and end of the call
+            [J/kg/K], length ``n_stag``.
+        n_quad : int
+            Quadrature points along each cell's entropy path. The per-call
+            entropy change is small, so a modest count resolves the integral.
+
+        Returns
+        -------
+        float
+            Heat content change [J], negative when the mantle cools. Zero
+            when no EOS is attached.
+        """
+        eos = self.entropy_eos
+        if eos is None:
+            return 0.0
+        P = np.asarray(self._P_stag_flat, dtype=float).ravel()
+        vol = np.asarray(self._volume_flat, dtype=float).ravel()
+        S0 = np.asarray(S0_stag, dtype=float).ravel()
+        Sf = np.asarray(Sf_stag, dtype=float).ravel()
+        n = min(P.size, vol.size, S0.size, Sf.size)
+        P, vol, S0, Sf = P[:n], vol[:n], S0[:n], Sf[:n]
+        dS = Sf - S0
+        nq = int(max(2, n_quad))
+        w = np.linspace(0.0, 1.0, nq)
+        integrand = np.empty((nq, n), dtype=float)
+        for j, wj in enumerate(w):
+            S_j = S0 + wj * dS
+            rho_j = np.asarray(eos.density(P, S_j)).ravel()[:n]
+            T_j = np.asarray(eos.temperature(P, S_j)).ravel()[:n]
+            integrand[j] = rho_j * T_j
+        # Trapezoidal weights over the unit interval; integral over S is the
+        # path integral over w in [0, 1] scaled by the cell entropy change.
+        dw = 1.0 / (nq - 1)
+        weights = np.full(nq, dw)
+        weights[0] *= 0.5
+        weights[-1] *= 0.5
+        cell_int = (weights[:, None] * integrand).sum(axis=0) * dS
+        return float(np.sum(cell_int * vol))
 
     def write_netcdf(
         self,
@@ -3199,6 +3410,7 @@ class EntropySolver:
             step_dE_Q_tidal_cons_J=step_integrals['Q_tidal_cons'],
             step_solver_residual_J=step_integrals['solver_residual'],
             step_dE_compression_J=float(getattr(self, '_last_compression_J', 0.0)),
+            step_dE_state_heat_J=step_integrals['state_heat'],
             dt_actual=float(sol.t[-1] - sol.t[0]),
             status=sol.status,
             jcond_b=jcond_b,

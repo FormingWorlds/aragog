@@ -370,3 +370,102 @@ def test_get_current_dsdr_cmb_returns_last_column_value_when_state_extended():
     solver._solution = fake_sol
     val = solver.get_current_dSdr_cmb()
     assert val == pytest.approx(sentinel, rel=1e-12)
+
+
+# ──────────────────────────────────────────────────────────────────────
+#                    _step_heat_content (entropy-transported heat)
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_step_heat_content_matches_analytic_integral():
+    """``_step_heat_content`` integrates ``rho T dS`` per cell to the
+    analytic value, not an endpoint estimate.
+
+    With a constant EOS density and a temperature linear in entropy,
+    ``integral rho T dS`` has the closed form ``rho (a dS + b (Sf^2 - S0^2)/2)``
+    per cell, which is computed here independently of the trapezoidal
+    quadrature in the method. The discrimination guard asserts the result
+    differs from the naive endpoint estimate ``rho T(Sf) dS`` by more than
+    rounding, so a regression to an endpoint formula is caught.
+    """
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    # Curved T(S) = a + b S + c S^2 so the integrand rho*T is genuinely
+    # nonlinear in S: the trapezoidal rule is then only approximate and the
+    # test actually exercises quadrature resolution (a linear T would be
+    # integrated exactly at any node count and would not catch a crippled
+    # n_quad).
+    rho0, a, b, c = 4000.0, 500.0, 0.5, 2.0e-4
+    eos = MagicMock()
+    eos.density.side_effect = lambda P, S: np.full(np.asarray(S, float).shape, rho0)
+    eos.temperature.side_effect = lambda P, S: (
+        a + b * np.asarray(S, float) + c * np.asarray(S, float) ** 2
+    )
+
+    P = np.array([1.0e10, 5.0e10, 1.0e11])
+    V = np.array([1.0e18, 2.0e18, 1.5e18])
+    S0 = np.array([3000.0, 2800.0, 2600.0])
+    Sf = np.array([2500.0, 2700.0, 2000.0])  # cooling: Sf < S0
+    fake = SimpleNamespace(entropy_eos=eos, _P_stag_flat=P, _volume_flat=V)
+
+    got = EntropySolver._step_heat_content(fake, S0, Sf, n_quad=16)
+
+    dS = Sf - S0
+    analytic = float(
+        np.sum(rho0 * (a * dS + 0.5 * b * (Sf**2 - S0**2) + c / 3.0 * (Sf**3 - S0**3)) * V)
+    )
+    # 16-point trapezoid on a quadratic integrand: close but not exact.
+    assert got == pytest.approx(analytic, rel=1e-3)
+
+    # Cooling must lower the heat content.
+    assert got < 0.0
+
+    # Discrimination 1: a crippled 2-point quadrature must differ from the
+    # 16-point result by more than the tolerance, so dropping resolution is
+    # caught (a linear T would make these identical).
+    coarse = EntropySolver._step_heat_content(fake, S0, Sf, n_quad=2)
+    assert abs(coarse - got) > 1e-3 * abs(got)
+    # ...and 16 points must be much closer to the analytic value than 2.
+    assert abs(got - analytic) < abs(coarse - analytic)
+
+    # Discrimination 2: the endpoint estimate rho T(Sf) dS is a different
+    # number, so the test fails if the integral degrades to an endpoint read.
+    endpoint = float(np.sum(rho0 * (a + b * Sf + c * Sf**2) * dS * V))
+    assert abs(got - endpoint) > 1e-3 * abs(got)
+
+
+def test_step_heat_content_zero_when_no_eos():
+    """Returns 0.0 when no EOS is attached (non-EOS interior backends)."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    fake = SimpleNamespace(
+        entropy_eos=None,
+        _P_stag_flat=np.ones(3),
+        _volume_flat=np.ones(3),
+    )
+    assert EntropySolver._step_heat_content(fake, np.ones(3), np.zeros(3)) == 0.0
+
+
+def test_remap_entropy_handles_missing_xi_pre_resolve():
+    """The per-parcel entropy remap must not raise when the pre-resolve mass
+    grid was never cached.
+
+    ``_remap_entropy_to_current_mesh`` reads ``self._xi_pre_resolve``. A solver
+    constructed outside the normal init/reset path (a stub, or an alternate
+    constructor) has no such attribute; the guard must treat that as 'no remap
+    cached', return the entropy unchanged, and leave the cache cleared rather
+    than raising AttributeError.
+    """
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    fake = SimpleNamespace()  # deliberately lacks _xi_pre_resolve
+    S = np.array([3000.0, 2900.0, 2800.0])
+    out = EntropySolver._remap_entropy_to_current_mesh(fake, S)
+    np.testing.assert_array_equal(out, S)
+    assert fake._xi_pre_resolve is None
