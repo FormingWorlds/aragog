@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import field
 from functools import cached_property
 
 import numpy as np
 import numpy.typing as npt
+from scipy.optimize import brentq
 
 from aragog.mesh.fixed_mesh import FixedMesh
 from aragog.mesh.pressure_eos import (
@@ -85,6 +87,72 @@ def derive_core_density_from_mesh(mesh_file: str, M_core: float) -> float:
     return float(M_core / (4.0 / 3.0 * np.pi * R_cmb**3))
 
 
+def _radius_for_mass_coordinate(
+    xi_of_r: Callable[[float], float],
+    xi_target: float,
+    r_lo: float,
+    r_hi: float,
+    node: int | None = None,
+) -> float:
+    """Solve ``xi_of_r(r) == xi_target`` for ``r`` in ``[r_lo, r_hi]``.
+
+    ``xi_of_r`` is the mass coordinate, monotonically increasing in radius.
+    When the bracket straddles the root the result is the ``brentq`` root, so
+    the forward initial-condition build (which always brackets) is unchanged.
+
+    When the bracket does not straddle, ``xi_target`` lies outside
+    ``[xi_of_r(r_lo), xi_of_r(r_hi)]`` and the node is clamped to the nearest
+    in-domain endpoint. This path is reached only on a resumed run, where a
+    loaded entropy field shifts the EOS mass distribution so a near-boundary
+    node on the uniform mass grid falls just outside the achievable range; a
+    bare ``brentq`` raises ``ValueError`` ("f(a) and f(b) must have different
+    signs") there and aborts the resume.
+
+    Parameters
+    ----------
+    xi_of_r : Callable[[float], float]
+        Mass coordinate as a function of radius. Must be monotonically
+        increasing on ``[r_lo, r_hi]``.
+    xi_target : float
+        Target mass coordinate for this node.
+    r_lo, r_hi : float
+        Bracket endpoints [m], ``r_lo < r_hi``.
+    node : int, optional
+        Node index, used only in the clamp warning message.
+
+    Returns
+    -------
+    float
+        Radius [m] of the node, in ``[r_lo, r_hi]``.
+    """
+
+    def _f(r: float) -> float:
+        return xi_of_r(r) - xi_target
+
+    f_lo = _f(r_lo)
+    f_hi = _f(r_hi)
+
+    if f_lo == 0.0:
+        return r_lo
+    if f_hi == 0.0:
+        return r_hi
+    if f_lo * f_hi < 0.0:
+        return float(brentq(_f, r_lo, r_hi, xtol=1.0, rtol=1e-12))
+
+    clamped = r_lo if f_lo > 0.0 else r_hi
+    logger.warning(
+        'Mesh mass-coordinate bracket failed for node %s '
+        '(xi_target=%.6e outside [%.6e, %.6e]); clamping radius to %.3f m. '
+        'Expected only on resume with a loaded entropy field.',
+        'unknown' if node is None else node,
+        xi_target,
+        xi_of_r(r_lo),
+        xi_of_r(r_hi),
+        clamped,
+    )
+    return clamped
+
+
 class Mesh:
     """A staggered mesh.
 
@@ -148,8 +216,6 @@ class Mesh:
             # of a PCHIP fit; on an N-point grid that error accumulated
             # to ~3% node position offsets, large enough to perturb the
             # Adams-Williamson reference state.
-            from scipy.optimize import brentq
-
             r_core = float(initial_spatial[0, 0])
             r_surf = float(initial_spatial[-1, 0])
             rho_avg = self._planet_density
@@ -170,16 +236,26 @@ class Mesh:
             basic_coordinates = np.empty_like(basic_mass_coordinates)
             basic_coordinates[0, 0] = r_core  # CMB: exact
             basic_coordinates[-1, 0] = r_surf  # surface: exact
+            # Bracket inset 1 m inside the boundaries to avoid floating-point
+            # edge cases right at r_core / r_surf.
+            r_lo = r_core + 1.0
+            r_hi = r_surf - 1.0
             for j in range(1, self.settings.number_of_nodes - 1):
                 xi_target = float(basic_mass_coordinates[j, 0])
-                # Bracket: always use the full domain [r_core, r_surf]
-                # to avoid floating-point edge cases near the boundaries
-                basic_coordinates[j, 0] = brentq(
-                    lambda r: _xi_of_r(r) - xi_target,
-                    r_core + 1.0,
-                    r_surf - 1.0,
-                    xtol=1.0,
-                    rtol=1e-12,
+                basic_coordinates[j, 0] = _radius_for_mass_coordinate(
+                    _xi_of_r, xi_target, r_lo, r_hi, node=j
+                )
+            # The mesh must be strictly increasing in radius: zero-width cells
+            # divide by zero in the finite-volume gradient operators. If two or
+            # more near-boundary nodes clamped to the same endpoint (only
+            # reachable on a resume with a badly-shifted entropy field), fail
+            # loudly here rather than propagate NaNs into the entropy RHS.
+            if np.any(np.diff(basic_coordinates[:, 0]) <= 0.0):
+                raise ValueError(
+                    'Non-monotonic basic mesh after mass-coordinate solve '
+                    '(duplicate node radii). The loaded entropy field shifted '
+                    'the EOS mass distribution too far for the fixed bracket; '
+                    're-run the structure module to regenerate the mesh.'
                 )
             logger.debug('Basic mass coordinates (uniform) = %s', basic_mass_coordinates)
             logger.debug('Basic spatial coordinates (non-uniform) = %s', basic_coordinates)
