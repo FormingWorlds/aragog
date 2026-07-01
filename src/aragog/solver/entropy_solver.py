@@ -1394,6 +1394,17 @@ class EntropySolver:
         cached grid is consumed (one-shot) so a later isentropic IC set is
         unaffected. Falls back to the input unchanged when no re-solve grid
         is cached, the node count changed, or the mass grid is unchanged.
+
+        Parameters
+        ----------
+        S_arr : npt.NDArray
+            Staggered specific entropy on the pre-resolve mesh [J/kg/K].
+
+        Returns
+        -------
+        npt.NDArray
+            Entropy carried onto the current mass coordinates, same shape as
+            ``S_arr``; the input array unchanged when no remap applies.
         """
         xi_old = getattr(self, '_xi_pre_resolve', None)
         self._xi_pre_resolve = None
