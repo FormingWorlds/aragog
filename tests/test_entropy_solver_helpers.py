@@ -469,3 +469,107 @@ def test_remap_entropy_handles_missing_xi_pre_resolve():
     out = EntropySolver._remap_entropy_to_current_mesh(fake, S)
     np.testing.assert_array_equal(out, S)
     assert fake._xi_pre_resolve is None
+
+
+# ──────────────────────────────────────────────────────────────────────
+#                 _phase_boundary_max_step_clamp
+# ──────────────────────────────────────────────────────────────────────
+#
+# The 1-yr max_step clamp resolves the stiff RHS a cell sees while
+# crossing the solidus/liquidus. It must fire near/inside the two-phase
+# window and must NOT fire for a fully-frozen mantle far below the
+# solidus (no phase-boundary stiffness there), otherwise CVODE is pinned
+# to 1-yr steps for the entire post-solidus thermal history. The CMB
+# liquidus-margin term is therefore two-sided (abs); a one-sided
+# ``margin < 200`` test is unconditionally true for a sub-liquidus CMB
+# cell and is the failure mode these tests guard against.
+
+
+def test_max_step_clamp_off_for_deep_cold_solid():
+    """A fully-frozen mantle far below the solidus must NOT trip the clamp.
+
+    No cell is near or inside the two-phase window, and the CMB cell sits
+    well below the solidus, so both CMB margins are large and negative.
+    The clamp must return False so ``max_step`` stays at ``np.inf`` in the
+    deep-solid regime. Discrimination: the CMB liquidus margin here is
+    -1000 J/kg/K; a one-sided ``margin < 200`` test would return True
+    (regression), whereas the two-sided ``abs(margin) < 200`` returns
+    False. The gap between the two verdicts is unambiguous.
+    """
+    from aragog.solver.entropy_solver import _phase_boundary_max_step_clamp
+
+    clamp = _phase_boundary_max_step_clamp(
+        near_liq=False,
+        near_sol=False,
+        in_mushy=False,
+        cmb_margin_to_liq=-1000.0,  # CMB entropy 1000 J/kg/K below liquidus
+        cmb_margin_to_sol=-800.0,  # and 800 below solidus (fully frozen)
+    )
+    assert clamp is False
+    # A one-sided margin<200 test (the pre-fix regression) would be True
+    # here; assert the correct two-sided verdict differs from it.
+    assert (-1000.0 < 200.0) is True  # the wrong-formula result
+    assert clamp != (-1000.0 < 200.0)
+
+
+def test_max_step_clamp_on_when_cmb_near_liquidus():
+    """A CMB cell just below the liquidus (within 200 J/kg/K) trips the clamp.
+
+    ``cmb_margin_to_liq = -50`` is inside the 200 J/kg/K band on the
+    sub-liquidus side, so the two-sided test fires even though no other
+    cell flags proximity. Boundary check: a margin of exactly -50 is well
+    inside the band, and the complementary deep-solid case above (-1000)
+    is well outside, so the 200 J/kg/K threshold is resolved on both sides.
+    """
+    from aragog.solver.entropy_solver import _phase_boundary_max_step_clamp
+
+    clamp = _phase_boundary_max_step_clamp(
+        near_liq=False,
+        near_sol=False,
+        in_mushy=False,
+        cmb_margin_to_liq=-50.0,
+        cmb_margin_to_sol=+150.0,
+    )
+    assert clamp is True
+
+
+def test_max_step_clamp_on_when_cmb_in_mushy_band():
+    """A CMB cell inside the two-phase window trips the clamp via the mushy term.
+
+    Here ``cmb_margin_to_liq`` is -400 (below liquidus, outside the 200
+    band, so the near-liquidus term is False) but ``cmb_margin_to_sol`` is
+    +300 (above solidus): the CMB cell is mushy. The dedicated
+    below-liquidus-and-above-solidus term must catch this even though the
+    two-sided near-liquidus band does not.
+    """
+    from aragog.solver.entropy_solver import _phase_boundary_max_step_clamp
+
+    clamp = _phase_boundary_max_step_clamp(
+        near_liq=False,
+        near_sol=False,
+        in_mushy=False,
+        cmb_margin_to_liq=-400.0,  # outside the 200 band, below liquidus
+        cmb_margin_to_sol=+300.0,  # above solidus -> mushy CMB cell
+    )
+    assert clamp is True
+
+
+def test_max_step_clamp_on_when_any_interior_cell_near_boundary():
+    """An interior cell flagged near a boundary trips the clamp regardless of CMB.
+
+    With the CMB cell far below the solidus (both margins large-negative,
+    as in the deep-solid case), the clamp is driven purely by an interior
+    ``near_sol`` flag. This proves the interior-cell terms are OR-combined
+    with the CMB backstop rather than gated behind it: a crystallisation
+    front deep in an otherwise-frozen mantle still tightens ``max_step``.
+    """
+    from aragog.solver.entropy_solver import _phase_boundary_max_step_clamp
+
+    clamp = _phase_boundary_max_step_clamp(
+        near_liq=False,
+        near_sol=True,  # an interior cell within 200 J/kg/K of the solidus
+        in_mushy=False,
+        cmb_margin_to_liq=-1000.0,  # CMB itself deep-solid
+        cmb_margin_to_sol=-800.0,
+    )
+    assert clamp is True

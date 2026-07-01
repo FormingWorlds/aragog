@@ -58,6 +58,48 @@ def _smooth_abs_neg(x: npt.NDArray, eps: float = 1.0e-8) -> npt.NDArray:
     return 0.5 * (np.sqrt(x * x + eps * eps) - x)
 
 
+def apply_kappah_floor(
+    eddy_diffusivity: npt.NDArray,
+    kappah_floor: float,
+    f_floor: npt.NDArray,
+    is_convective: npt.NDArray,
+) -> npt.NDArray:
+    """Floor the eddy diffusivity in convecting cells only.
+
+    Lifts the eddy diffusivity to ``kappah_floor * f_floor`` so that
+    mixing-length convection does not numerically freeze where the entropy
+    gradient becomes small in mushy/liquid layers. The ``is_convective``
+    (``dS/dr < 0``) mask confines the floor to convecting cells: a
+    stably-stratified, just-frozen cell must NOT receive a floored
+    diffusivity, because the signed convective flux
+    ``rho*T*kappa_h*(-dS/dr)`` would then inject a spurious sign-flipped
+    flux that pins the cell sub-solidus. SPIDER carries no kappa_h floor,
+    so floor = 0 in stratified layers is the SPIDER-consistent limit.
+    Mirrors the JAX twin ``aragog.jax.phase.compute_mlt``.
+
+    Parameters
+    ----------
+    eddy_diffusivity : numpy.ndarray
+        Raw (pre-floor) eddy diffusivity [m^2 s^-1].
+    kappah_floor : float
+        Floor magnitude [m^2 s^-1]; the caller applies this only when it is
+        strictly positive.
+    f_floor : numpy.ndarray
+        Melt-fraction ramp in [0, 1], from ``tanh_weight(phi, phi_rheo,
+        phi_width)``, ~0 in solid layers and ~1 in mushy/liquid layers.
+    is_convective : numpy.ndarray
+        Boolean mask, True where ``dS/dr < 0`` (convectively unstable).
+
+    Returns
+    -------
+    numpy.ndarray
+        Eddy diffusivity floored in convecting cells only; stratified cells
+        keep their raw value.
+    """
+    kh_floor = kappah_floor * f_floor * is_convective
+    return np.maximum(eddy_diffusivity, kh_floor)
+
+
 def _smooth_clip(
     x: npt.NDArray,
     lo: float = 0.0,
@@ -546,12 +588,15 @@ class EntropyState:
 
         # ── MLT from entropy gradient ────────────────────────────────
         # Convection is unstable when dS/dr < 0 (entropy decreasing
-        # outward). `_is_convective` is kept as a diagnostic only; the
-        # convective driver itself uses the smoothed max(-dSdr, 0)
-        # below, which is C^infinity in dSdr. A hard mask zeroing the
-        # velocity arrays at the marginal-stability boundary introduces
-        # a discontinuity that breaks CVODE's higher-order BDF
-        # predictor.
+        # outward). The convective driver itself uses the smoothed
+        # max(-dSdr, 0) below, which is C^infinity in dSdr, so the
+        # velocity arrays are never hard-masked at the marginal-stability
+        # boundary (a hard mask there would break CVODE's higher-order BDF
+        # predictor). `_is_convective` is the hard dS/dr < 0 gate applied
+        # only to the additive eddy-diffusivity floor (see the kappa_h
+        # floor block below), which deliberately accepts a flux-derivative
+        # kink at dS/dr = 0 in exchange for keeping the floor out of
+        # stably-stratified cells.
         self._is_convective = self._dSdr < 0
 
         # Buoyancy: convert entropy gradient to effective thermal
@@ -667,8 +712,12 @@ class EntropyState:
             phi_rheo = float(getattr(self.phase_basic, '_phi_rheo', 0.4))
             phi_width = float(getattr(self.phase_basic, '_phi_width', 0.15))
             f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
-            kh_floor = self._kappah_floor * f_floor * self._is_convective
-            self._eddy_diffusivity = np.maximum(self._eddy_diffusivity, kh_floor)
+            self._eddy_diffusivity = apply_kappah_floor(
+                self._eddy_diffusivity,
+                self._kappah_floor,
+                f_floor,
+                self._is_convective,
+            )
 
         # Mirror SPIDER energy.c:220-223: at the CMB basic node, use
         # the eddy diffusivity from one node above rather than the

@@ -10,24 +10,27 @@ sub-solidus (the T_cmb-cliff / front-inversion artifact). SPIDER carries
 no kappa_h floor, so floor = 0 in stratified layers is the
 SPIDER-consistent limit.
 
-The numpy twin of the JAX ``aragog.jax.phase.compute_mlt`` floor is inlined
-in ``EntropyState.update`` (``solver/entropy_state.py``): the floor is
-``self._kappah_floor * f_floor * self._is_convective`` with
-``self._is_convective = self._dSdr < 0`` and
-``f_floor = tanh_weight(phi, phi_rheo, phi_width)``. The companion file
-``test_jax_kappah_floor_mask.py`` covers the JAX path; this file closes the
-numpy-path gap.
+The numpy floor lives in the source helper
+``aragog.solver.entropy_state.apply_kappah_floor``, which
+``EntropyState.update`` calls with
+``f_floor = tanh_weight(phi, phi_rheo, phi_width)`` and
+``is_convective = self._dSdr < 0``. The helper computes
+``kappah_floor * f_floor * is_convective`` and floors the raw eddy
+diffusivity with ``np.maximum``. The companion file
+``test_jax_kappah_floor_mask.py`` covers the JAX twin
+(``aragog.jax.phase.compute_mlt``).
 
-Strategy. The numpy floor is inlined inside ``EntropyState.update`` and is
-reachable end-to-end only with SPIDER P-S EOS tables loaded
-(``test_entropy_state_*`` harness). Two complementary checks are used:
+Strategy. Two complementary checks are used:
 
 * The ``test_numpy_floor_*_matches_jax`` and ``..._strict_stable_vs_convecting``
-  checks run the already-verified production JAX ``compute_mlt`` to obtain the
-  ground-truth floored kappa_h in a controlled stratified-mush state, then
-  drive the numpy floor with the SAME raw kappa_h and assert term-for-term
-  parity at floor = 10. These run in every environment (no EOS data required)
-  and are the discriminating gated-vs-ungated contrast on the numpy formula.
+  checks call the REAL source helper ``apply_kappah_floor`` (via the thin
+  ``_numpy_floor`` wrapper that only derives ``f_floor`` and
+  ``is_convective``), using the already-verified production JAX
+  ``compute_mlt`` as the ground-truth floored kappa_h in a controlled
+  stratified-mush state. They assert term-for-term parity at floor = 10 and
+  run in every environment (no EOS data required), so a regression that drops
+  the convective mask inside ``apply_kappah_floor`` fails them. They are the
+  discriminating gated-vs-ungated contrast on the numpy formula.
 * ``test_numpy_entropy_state_floor_gated_end_to_end`` exercises the real
   ``EntropyState.update`` numpy MLT block end-to-end when SPIDER P-S tables
   are available; it is skipped otherwise.
@@ -48,6 +51,7 @@ import numpy as np
 import pytest
 
 from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
+from aragog.solver.entropy_state import apply_kappah_floor
 from aragog.utilities import tanh_weight
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
@@ -117,22 +121,20 @@ def _phase(n_basic: int, melt_fraction) -> PhaseProperties:
 
 
 def _numpy_floor(kh_raw: np.ndarray, phi: np.ndarray, dSdr: np.ndarray) -> np.ndarray:
-    """Apply the numpy-path kappa_h floor exactly as inlined in
-    ``EntropyState.update`` (``solver/entropy_state.py``):
+    """Apply the numpy-path kappa_h floor by calling the REAL source helper
+    ``aragog.solver.entropy_state.apply_kappah_floor``.
 
-        f_floor    = tanh_weight(phi, phi_rheo, phi_width)
-        is_convective = dSdr < 0
-        kh_floor   = kappah_floor * f_floor * is_convective
-        kappa_h    = max(kappa_h_raw, kh_floor)
-
-    The production ``tanh_weight`` is imported from ``aragog.utilities`` (the
-    same symbol the source imports), so this reproduces the source line, not a
-    private re-implementation of the tanh.
+    The masked-multiply that gates the floor to convecting cells
+    (``kappah_floor * f_floor * is_convective`` then ``max(kappa_h_raw, .)``)
+    is the source function under test; only the ``f_floor`` and
+    ``is_convective`` derivations are reproduced here, from the same
+    ``tanh_weight`` symbol and the same ``dSdr < 0`` definition the source
+    uses. A regression that drops the ``is_convective`` mask inside
+    ``apply_kappah_floor`` therefore fails these parity checks.
     """
     f_floor = tanh_weight(phi, _PHI_RHEO, _PHI_WIDTH)
     is_convective = dSdr < 0.0
-    kh_floor = _KAPPAH_FLOOR * f_floor * is_convective
-    return np.maximum(kh_raw, kh_floor)
+    return apply_kappah_floor(kh_raw, _KAPPAH_FLOOR, f_floor, is_convective)
 
 
 # ---------------------------------------------------------------------------

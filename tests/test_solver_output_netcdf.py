@@ -154,6 +154,7 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             'step_dE_Q_radio_cons_J': out.step_dE_Q_radio_cons_J,
             'step_dE_Q_tidal_cons_J': out.step_dE_Q_tidal_cons_J,
             'step_solver_residual_J': out.step_solver_residual_J,
+            'step_dE_compression_J': out.step_dE_compression_J,
             'step_dE_state_heat_J': out.step_dE_state_heat_J,
             'dt_actual': out.dt_actual,
         }

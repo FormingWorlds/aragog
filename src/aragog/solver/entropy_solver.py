@@ -147,6 +147,50 @@ def _phase_prop_float(raw, default):
     return default
 
 
+def _phase_boundary_max_step_clamp(
+    near_liq: bool,
+    near_sol: bool,
+    in_mushy: bool,
+    cmb_margin_to_liq: float,
+    cmb_margin_to_sol: float,
+) -> bool:
+    """Whether ``max_step`` should be tightened to 1 yr for phase-boundary stiffness.
+
+    The clamp resolves the stiff RHS a cell sees while crossing the
+    solidus/liquidus. It fires when any staggered cell is within
+    200 J/kg/K of either phase boundary (``near_liq``/``near_sol``), any
+    cell is inside the mushy band (``in_mushy``), the CMB cell is near the
+    liquidus, or the CMB cell is itself inside the mushy band. A
+    fully-frozen mantle far below the solidus has no phase-boundary
+    stiffness to resolve, so the clamp must NOT fire there: the CMB
+    liquidus margin is tested two-sided (``abs``) so a deeply sub-liquidus
+    CMB cell (large negative ``cmb_margin_to_liq``) does not trip it, which
+    would otherwise pin CVODE to 1-yr steps for the entire post-solidus
+    thermal history.
+
+    Parameters
+    ----------
+    near_liq, near_sol : bool
+        Any staggered cell within 200 J/kg/K of the liquidus / solidus.
+    in_mushy : bool
+        Any staggered cell strictly inside the two-phase window.
+    cmb_margin_to_liq : float
+        CMB-cell entropy minus liquidus entropy at the CMB pressure
+        [J kg^-1 K^-1]; negative when the CMB cell is sub-liquidus.
+    cmb_margin_to_sol : float
+        CMB-cell entropy minus solidus entropy at the CMB pressure
+        [J kg^-1 K^-1]; positive when the CMB cell is super-solidus.
+
+    Returns
+    -------
+    bool
+        True when ``max_step`` should be reduced to 1 yr.
+    """
+    cmb_near_liq = abs(cmb_margin_to_liq) < 200.0
+    cmb_in_mushy = cmb_margin_to_liq < 0.0 and cmb_margin_to_sol > 0.0
+    return bool(near_liq or near_sol or in_mushy or cmb_near_liq or cmb_in_mushy)
+
+
 class _PhiCapRootFunction(_CV_RootFunction):
     """SUNDIALS root function for the per-call ΔΦ_global cap.
 
@@ -788,10 +832,14 @@ class EntropySolver:
         # When the planet contracts, the static pressure at each frozen
         # mass element rises, so the mantle enthalpy gains the adiabatic
         # compression term ``Sum mass (h(P_new, S) - h(P_old, S))`` at
-        # fixed entropy. ``E_state_cons`` already carries this, but the
-        # boundary-flux budget does not, so the term is exposed here for
-        # the coupler to add to the predicted energy. Zero for a static
-        # structure (P unchanged) and for the first solve (no prior mesh).
+        # fixed entropy. Exposed as an informational diagnostic only: the
+        # coupler does NOT add it to the predicted energy. The conservation
+        # residual differences the boundary-flux budget against the
+        # entropy-transported heat (``step_dE_state_heat_J``, Sum rho T dS),
+        # which is P-jump-agnostic, so no PdV energy is dropped from that
+        # check and adding compression to the predicted side would
+        # double-count. Zero for a static structure (P unchanged) and for
+        # the first solve (no prior mesh).
         self._last_compression_J = 0.0
         # Staggered mass coordinates captured before a structure re-solve.
         # The carried entropy is interpolated from these onto the new mass
@@ -2478,13 +2526,12 @@ class EntropySolver:
             S_liq = float(self.entropy_eos.liquidus_entropy(np.array([P_cmb])).item())
             S_sol = float(self.entropy_eos.solidus_entropy(np.array([P_cmb])).item())
             S0_block_cmb = float(S0_block[0])
-            margin = S0_block_cmb - S_liq
-            if (
-                near_liq
-                or near_sol
-                or in_mushy
-                or margin < 200.0
-                or (S0_block_cmb < S_liq and S0_block_cmb > S_sol)
+            if _phase_boundary_max_step_clamp(
+                near_liq,
+                near_sol,
+                in_mushy,
+                cmb_margin_to_liq=S0_block_cmb - S_liq,
+                cmb_margin_to_sol=S0_block_cmb - S_sol,
             ):
                 max_step = 1.0
 
