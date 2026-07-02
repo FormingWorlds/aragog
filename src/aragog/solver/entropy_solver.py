@@ -192,18 +192,27 @@ def _phase_boundary_max_step_clamp(
 
 
 def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
-    """Cumulative mantle mass fraction for a staggered mass-radius array.
+    """Normalised mass coordinate for a staggered mass-radius array.
 
     The staggered coordinate ``xi`` is length-dimensioned with
-    ``xi**3 = r_core**3 + 3 M(r_core, r) / rho_avg``, so
+    ``xi**3 = r_core**3 + 3 M(r_core, r) / rho_avg``, so ``xi**3`` is affine in
+    the enclosed mantle mass. Normalising by the array endpoints,
 
-        f = (xi**3 - r_core**3) / (r_surf**3 - r_core**3)
+        f = (xi**3 - xi[0]**3) / (xi[-1]**3 - xi[0]**3),
 
-    is the enclosed mantle mass fraction and the average density cancels.
-    ``r_core`` and ``r_surf`` are taken from the array endpoints, so ``f``
-    spans ``[0, 1]`` monotonically for each mesh independently. Interpolating a
-    carried entropy field on ``f`` rather than raw ``xi`` keeps each parcel's
-    entropy when the mesh deforms.
+    cancels the average density and returns a monotone ``[0, 1]`` coordinate in
+    which equal ``f`` means equal enclosed mass measured from ``xi[0]``. The
+    endpoints ``xi[0]`` and ``xi[-1]`` are the innermost and outermost staggered
+    cell centres, not the true core and surface radii, so ``f`` is an affine
+    proxy for the enclosed mantle mass fraction: exact as a normalised mass
+    coordinate spanning the staggered endpoints under the ``xi**3``-affine-in-
+    mass relation, and within about one percent of the fraction referenced to
+    the true ``[r_core, r_surf]`` boundaries because the endpoints sit half a
+    cell inside them. Interpolating a carried entropy field on ``f`` rather than
+    raw ``xi`` keeps each parcel's entropy when the mesh deforms, and conserves
+    the mass-weighted mean entropy when the total mantle mass between the
+    endpoints is unchanged across the re-solve, which is the SPIDER
+    fixed-mass-grid parity condition.
 
     Parameters
     ----------
@@ -213,7 +222,9 @@ def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
     Returns
     -------
     npt.NDArray
-        Cumulative mantle mass fraction at each node, same shape as ``xi``.
+        Normalised mass coordinate at each node, same shape as ``xi``. Zeros
+        when every node coincides (zero mass span); the caller treats that
+        degenerate case as 'no remap' rather than interpolating on it.
     """
     xi3 = np.asarray(xi, dtype=float).ravel() ** 3
     r3_core = min(xi3[0], xi3[-1])
@@ -1454,14 +1465,37 @@ class EntropySolver:
         xi_old = np.asarray(xi_old, dtype=float).ravel()
         xi_new = np.asarray(xi_new, dtype=float).ravel()
         if xi_old.shape != S_arr.shape or xi_new.shape != S_arr.shape:
+            # A cached pre-resolve grid whose length does not match the entropy
+            # array is a coupling inconsistency, not a normal no-remap case.
+            # Carry the field through unchanged, but flag it so the anomaly is
+            # visible rather than silently masked.
+            logger.warning(
+                'Entropy remap skipped: shape mismatch between cached grid %s, '
+                'current grid %s and entropy array %s; carrying entropy through '
+                'unchanged.',
+                xi_old.shape,
+                xi_new.shape,
+                S_arr.shape,
+            )
             return S_arr
         if np.allclose(xi_new, xi_old, rtol=1e-12, atol=0.0):
             return S_arr
-        # Interpolate on cumulative mantle mass fraction, not raw mass-radius,
+        # Interpolate on the normalised mass coordinate, not raw mass-radius,
         # so each parcel keeps its entropy when the mesh deforms.
         f_old = _mantle_mass_fraction(xi_old)
         f_new = _mantle_mass_fraction(xi_new)
-        # np.interp requires ascending x; mass fraction is monotone in xi.
+        if f_old[0] == f_old[-1] or f_new[0] == f_new[-1]:
+            # Degenerate mass span (coincident nodes) on the cached or current
+            # grid: there is no parcel coordinate to map onto, so interpolating
+            # would collapse the field to a single value. Fail safe by carrying
+            # the entropy through unchanged.
+            logger.warning(
+                'Entropy remap skipped: degenerate mass span (coincident nodes) '
+                'on the cached or current grid; carrying entropy through '
+                'unchanged.'
+            )
+            return S_arr
+        # np.interp requires ascending x; the mass coordinate is monotone in xi.
         if f_old[0] > f_old[-1]:
             return np.interp(f_new[::-1], f_old[::-1], S_arr[::-1])[::-1]
         return np.interp(f_new, f_old, S_arr)

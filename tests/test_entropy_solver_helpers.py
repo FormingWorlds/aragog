@@ -474,25 +474,30 @@ def test_remap_entropy_handles_missing_xi_pre_resolve():
 @pytest.mark.physics_invariant
 def test_remap_conserves_mass_weighted_mean_entropy():
     """The per-parcel entropy remap conserves the mass-weighted mean specific
-    entropy across a structure re-solve.
+    entropy across a structure re-solve, for a field that is CURVED in mass
+    fraction so conservation is a genuine property, not linear-interp exactness.
 
     Sbar = sum(m_i S_i) / sum(m_i) is the discrete total mantle entropy per unit
-    mass. A parcel-conservative remap must leave it unchanged when the mesh
-    deforms but the material does not. The mass weight of a node is its
-    cumulative-mass-fraction width, so Sbar is the trapezoidal integral of S over
-    the mass fraction f. For an entropy field linear in f the trapezoid rule is
-    exact, so remapping on f conserves Sbar to floating point; interpolating on
-    the raw length coordinate xi does not, because xi is nonlinear in enclosed
-    mass, so it reconstructs a curved field whose mass-weighted mean drifts.
+    mass; the mass weight of a node is its mass-fraction width, so Sbar is the
+    trapezoidal integral of S over the mass fraction f. Moving parcels at fixed
+    specific entropy leaves the continuum integral unchanged, so a
+    parcel-conservative remap conserves Sbar up to quadrature error that shrinks
+    as O(h^2) with resolution. Interpolating on the raw length coordinate xi
+    mis-locates parcels (xi is nonlinear in enclosed mass) and injects a real,
+    resolution-independent Sbar drift.
 
-    Scenario: a genuine re-solve shrinks r_surf 3.3 percent and r_core 0.6
-    percent (matching a measured coupled Zalmoxis+Aragog step) and reshapes the
-    interior mass distribution, over a steep solidification entropy gradient
-    (1000 -> 3000 J/kg/K) representative of the mush phase where the raw-xi error
-    is largest.
+    The entropy field here is quadratic in f (s = s_bot + dS * f**2), a mush
+    profile that is NOT linear in f, so the mass-fraction remap does not conserve
+    Sbar by trivial linear-interp exactness. Scenario: a genuine re-solve shrinks
+    r_surf 3.3 percent and r_core 0.6 percent (matching a measured coupled
+    Zalmoxis+Aragog step) and reshapes the interior mass distribution, over a
+    steep 1000 -> 3000 J/kg/K gradient. Measured on this scenario at n=256:
+    mass-fraction drift 3.7e-6 (quadrature-limited), raw-xi drift 8.2e-2
+    (physical mislocation), a ratio near 2.2e4.
 
-    Discrimination guard: under the identical deformation the raw-xi
-    interpolation drifts Sbar by more than 100x the mass-fraction remap, so the
+    Discrimination guard: the raw-xi interpolation drifts Sbar by more than 1e-2,
+    two orders of magnitude past the 1e-4 conservation bar the mass-fraction
+    remap clears, so the superseded raw-xi formula would FAIL this test. The
     invariance assertion distinguishes the two formulas rather than passing for
     both.
     """
@@ -507,7 +512,9 @@ def test_remap_conserves_mass_weighted_mean_entropy():
         seg = 0.5 * (s_vals[1:] + s_vals[:-1])
         return float(np.sum(seg * weight) / np.sum(weight))
 
-    n = 64
+    # Fine grid so the mass-fraction remap's quadrature error is well resolved
+    # and cleanly separated from the raw-xi mislocation error.
+    n = 256
     u = np.linspace(0.0, 1.0, n)
     # Old mesh: staggered mass-radius nodes, mildly bottom-heavy density profile
     # (mass-fraction spacing non-uniform in radius).
@@ -520,9 +527,11 @@ def test_remap_conserves_mass_weighted_mean_entropy():
 
     f_old = _mantle_mass_fraction(xi_old)
     f_new = _mantle_mass_fraction(xi_new)
-    # Steep entropy field, linear in mass fraction (a mush-phase gradient).
+    # Steep entropy field, QUADRATIC in mass fraction (curved mush-phase
+    # gradient): linear interpolation of this field is not exact, so conserving
+    # Sbar is a real invariant rather than an artefact of the field shape.
     s_bot, s_top = 1000.0, 3000.0
-    s_old = s_bot + (s_top - s_bot) * f_old
+    s_old = s_bot + (s_top - s_bot) * f_old**2
 
     # Branch B (shipped): remap on mass fraction via the real method.
     fake = SimpleNamespace(
@@ -540,18 +549,202 @@ def test_remap_conserves_mass_weighted_mean_entropy():
     drift_b = abs(sbar_new_b - sbar_old) / sbar_old
     drift_a = abs(sbar_new_a - sbar_old) / sbar_old
 
-    # Invariance under the shipped mass-fraction remap.
-    assert drift_b < 1e-9, f'mass-fraction remap must conserve Sbar, got {drift_b:.2e}'
-    # Discrimination: the raw-xi formula is materially non-conservative here.
-    assert drift_a > 100.0 * max(drift_b, 1e-15), (
-        f'raw-xi interp (drift {drift_a:.2e}) must move Sbar far more than the '
-        f'mass-fraction remap (drift {drift_b:.2e}); else the test is vacuous'
+    # Invariance under the shipped mass-fraction remap: conserved to quadrature
+    # (measured 3.7e-6 at n=256; the 1e-4 bar leaves >20x headroom).
+    assert drift_b < 1e-4, f'mass-fraction remap must conserve Sbar, got {drift_b:.2e}'
+    # Discrimination: the superseded raw-xi formula violates the same 1e-2 bar
+    # by two orders of magnitude, so it would fail this conservation test.
+    assert drift_a > 1e-2, (
+        f'raw-xi interp (drift {drift_a:.2e}) must break Sbar conservation on '
+        f'the curved field; else the test does not discriminate the formulas'
     )
-    assert drift_a > 1e-6, (
-        f'the steep-gradient scenario must make raw-xi non-conservation '
-        f'resolvable, got {drift_a:.2e}'
+    # Explicit separation guard between the two formulas.
+    assert drift_a > 100.0 * drift_b, (
+        f'raw-xi drift {drift_a:.2e} must exceed mass-fraction drift {drift_b:.2e} by >100x'
     )
     # The remap consumes the cached pre-resolve grid (one-shot).
+    assert fake._xi_pre_resolve is None
+
+
+@pytest.mark.physics_invariant
+def test_mantle_mass_fraction_uses_cube_exponent():
+    """_mantle_mass_fraction normalises xi**3 (affine in enclosed mass), not
+    xi**2, xi**2.5, or xi**4.
+
+    Build a staggered array whose nodes sit at KNOWN, non-uniform enclosed-mass
+    fractions via the defining relation xi = cbrt(r_core**3 + (r_surf**3 -
+    r_core**3) * m_frac). The cube-normalised coordinate must recover those
+    fractions to floating point. Any other exponent is a different, wrong mass
+    measure: the anchor pins the physical cube law rather than passing for a
+    family of exponents.
+
+    Discrimination guard: the xi**2, xi**2.5, and xi**4 normalisations each
+    deviate from the true fraction by more than 1e-2 at interior nodes (measured
+    4e-2 to 8e-2), far past the 1e-12 recovery tolerance, so a swapped exponent
+    would fail this test.
+    """
+    from aragog.solver.entropy_solver import _mantle_mass_fraction
+
+    r_core, r_surf = 3.4149e6, 7.0670e6
+    # Non-uniform known mass fractions (not symmetric, so exponent errors show).
+    m_frac = np.linspace(0.0, 1.0, 48) ** 1.15
+    xi = np.cbrt(r_core**3 + (r_surf**3 - r_core**3) * m_frac)
+
+    f_cube = _mantle_mass_fraction(xi)
+    # The cube law recovers the enclosed-mass fractions exactly (endpoints are
+    # 0 and 1 by construction; interior to machine epsilon).
+    np.testing.assert_allclose(f_cube, m_frac, rtol=0.0, atol=1e-12)
+
+    # Wrong exponents: none reproduce the true mass fraction.
+    for p in (2.0, 2.5, 4.0):
+        xip = xi**p
+        lo, hi = min(xip[0], xip[-1]), max(xip[0], xip[-1])
+        f_wrong = (xip - lo) / (hi - lo)
+        max_dev = float(np.max(np.abs(f_wrong - m_frac)))
+        assert max_dev > 1e-2, (
+            f'xi**{p} normalisation deviates only {max_dev:.2e} from the true '
+            f'mass fraction; the cube anchor would not discriminate it'
+        )
+
+
+@pytest.mark.physics_invariant
+def test_remap_uniform_scaling_is_a_no_op():
+    """A pure uniform radial rescale of the mesh must carry the entropy field
+    through unchanged, because the mass coordinate is scale-invariant.
+
+    Under xi -> alpha * xi every cube scales by alpha**3, so
+    (xi**3 - xi[0]**3) / (xi[-1]**3 - xi[0]**3) is unchanged: each parcel keeps
+    its mass fraction, so the same material sits at the same mass coordinate and
+    its entropy must not move. The shipped mass-fraction remap returns the field
+    to floating point.
+
+    Discrimination guard: raw-xi interpolation of the same rescaled mesh shifts
+    the field by hundreds of J/kg/K (it treats the compressed radii as new
+    positions), so the no-op property is specific to the mass-fraction mapping,
+    not shared by the superseded formula.
+    """
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver, _mantle_mass_fraction
+
+    u = np.linspace(0.0, 1.0, 48)
+    r_core, r_surf = 3.4149e6, 7.0670e6
+    xi_old = np.cbrt(r_core**3 + (r_surf**3 - r_core**3) * u**1.15)
+    xi_new = 0.97 * xi_old  # uniform 3 percent contraction
+    # Curved field so a mislocating remap would visibly move it.
+    s_old = 1000.0 + 2000.0 * _mantle_mass_fraction(xi_old) ** 2
+
+    fake = SimpleNamespace(
+        _xi_pre_resolve=xi_old.copy(),
+        staggered_mass_coordinates=xi_new,
+    )
+    s_new = EntropySolver._remap_entropy_to_current_mesh(fake, s_old.copy())
+    # Mass-fraction remap is an exact no-op under uniform scaling.
+    np.testing.assert_allclose(s_new, s_old, rtol=0.0, atol=1e-9)
+
+    # Discrimination: raw-xi interpolation is NOT a no-op here.
+    s_raw = np.interp(xi_new, xi_old, s_old)
+    max_shift = float(np.max(np.abs(s_raw - s_old)))
+    assert max_shift > 1.0, (
+        f'raw-xi interp should move the field under uniform scaling, got '
+        f'{max_shift:.2e} J/kg/K; the no-op is specific to the mass mapping'
+    )
+    assert fake._xi_pre_resolve is None
+
+
+@pytest.mark.physics_invariant
+def test_remap_descending_order_matches_ascending():
+    """The remap gives the same physical result whether the mesh is stored
+    CMB-to-surface (ascending xi) or surface-to-CMB (descending xi).
+
+    np.interp needs an ascending abscissa; the descending branch reverses the
+    mass coordinate, interpolates, and reverses back. Feeding the reversed mesh
+    and reversed field must return exactly the reverse of the ascending-order
+    result. This exercises the f_old[0] > f_old[-1] branch and pins its
+    correctness, not merely that it runs.
+    """
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver, _mantle_mass_fraction
+
+    u = np.linspace(0.0, 1.0, 40)
+    r_core, r_surf = 3.4149e6, 7.0670e6
+    xi_old = np.cbrt(r_core**3 + (r_surf**3 - r_core**3) * u**1.15)
+    xi_new = np.cbrt(
+        (r_core * 0.994) ** 3 + ((r_surf * 0.967) ** 3 - (r_core * 0.994) ** 3) * u**1.30
+    )
+    s_old = 1000.0 + 2000.0 * _mantle_mass_fraction(xi_old) ** 2
+
+    fake_asc = SimpleNamespace(_xi_pre_resolve=xi_old.copy(), staggered_mass_coordinates=xi_new)
+    out_asc = EntropySolver._remap_entropy_to_current_mesh(fake_asc, s_old.copy())
+
+    fake_desc = SimpleNamespace(
+        _xi_pre_resolve=xi_old[::-1].copy(),
+        staggered_mass_coordinates=xi_new[::-1].copy(),
+    )
+    out_desc = EntropySolver._remap_entropy_to_current_mesh(fake_desc, s_old[::-1].copy())
+
+    # Descending-order result is the exact reverse of the ascending-order one.
+    np.testing.assert_allclose(out_desc, out_asc[::-1], rtol=0.0, atol=1e-9)
+    # And the remap is non-trivial (the field actually moved), so the equality
+    # is not the vacuous 'both returned the input'.
+    assert float(np.max(np.abs(out_asc - s_old))) > 1.0
+
+
+def test_remap_degenerate_mass_span_carries_field_unchanged(caplog):
+    """A degenerate cached grid (all nodes coincident, zero mass span) must fail
+    safe: carry the entropy through unchanged and warn, never collapse it.
+
+    _mantle_mass_fraction returns all zeros when every node coincides. Feeding
+    those to np.interp would collapse the whole field to a single value. The
+    remap detects the degenerate span and returns the input untouched instead,
+    logging a warning so the anomaly is visible.
+    """
+    import logging
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    xi_deg = np.full(6, 4.0e6)  # coincident nodes: zero mass span
+    u = np.linspace(0.0, 1.0, 6)
+    xi_new = np.cbrt(3.4149e6**3 + (7.0670e6**3 - 3.4149e6**3) * u**1.1)
+    s_in = np.array([3000.0, 2900.0, 2800.0, 2700.0, 2600.0, 2500.0])
+
+    fake = SimpleNamespace(_xi_pre_resolve=xi_deg.copy(), staggered_mass_coordinates=xi_new)
+    with caplog.at_level(logging.WARNING):
+        out = EntropySolver._remap_entropy_to_current_mesh(fake, s_in.copy())
+
+    # Field is carried through unchanged, NOT collapsed to a single value.
+    np.testing.assert_array_equal(out, s_in)
+    assert len(np.unique(out)) == 6, 'degenerate remap must not collapse the field'
+    assert any('degenerate mass span' in r.message for r in caplog.records)
+    assert fake._xi_pre_resolve is None
+
+
+def test_remap_shape_mismatch_passes_through_and_warns(caplog):
+    """A cached pre-resolve grid whose length does not match the entropy array
+    is a coupling inconsistency: the remap carries the field through unchanged
+    and warns, rather than silently masking the mismatch.
+
+    This is not the normal no-cache path (that returns silently); a length
+    mismatch means the cached grid and the entropy array came from different
+    mesh sizes, which should surface in the log.
+    """
+    import logging
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    xi_old = np.linspace(3.4e6, 7.0e6, 5)  # length 5
+    xi_new = np.linspace(3.4e6, 7.0e6, 5)
+    s_in = np.array([3000.0, 2900.0, 2800.0, 2700.0])  # length 4: mismatch
+
+    fake = SimpleNamespace(_xi_pre_resolve=xi_old.copy(), staggered_mass_coordinates=xi_new)
+    with caplog.at_level(logging.WARNING):
+        out = EntropySolver._remap_entropy_to_current_mesh(fake, s_in.copy())
+
+    np.testing.assert_array_equal(out, s_in)
+    assert any('shape mismatch' in r.message for r in caplog.records)
     assert fake._xi_pre_resolve is None
 
 
