@@ -191,6 +191,40 @@ def _phase_boundary_max_step_clamp(
     return bool(near_liq or near_sol or in_mushy or cmb_near_liq or cmb_in_mushy)
 
 
+def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
+    """Cumulative mantle mass fraction for a staggered mass-radius array.
+
+    The staggered coordinate ``xi`` is length-dimensioned with
+    ``xi**3 = r_core**3 + 3 M(r_core, r) / rho_avg``, so
+
+        f = (xi**3 - r_core**3) / (r_surf**3 - r_core**3)
+
+    is the enclosed mantle mass fraction and the average density cancels.
+    ``r_core`` and ``r_surf`` are taken from the array endpoints, so ``f``
+    spans ``[0, 1]`` monotonically for each mesh independently. Interpolating a
+    carried entropy field on ``f`` rather than raw ``xi`` keeps each parcel's
+    entropy when the mesh deforms.
+
+    Parameters
+    ----------
+    xi : npt.NDArray
+        Staggered mass-radius coordinates [m], monotone in radius.
+
+    Returns
+    -------
+    npt.NDArray
+        Cumulative mantle mass fraction at each node, same shape as ``xi``.
+    """
+    xi3 = np.asarray(xi, dtype=float).ravel() ** 3
+    r3_core = min(xi3[0], xi3[-1])
+    r3_surf = max(xi3[0], xi3[-1])
+    span = r3_surf - r3_core
+    if span <= 0.0:
+        # Degenerate (all nodes coincident): no meaningful mass fraction.
+        return np.zeros_like(xi3)
+    return (xi3 - r3_core) / span
+
+
 class _PhiCapRootFunction(_CV_RootFunction):
     """SUNDIALS root function for the per-call ΔΦ_global cap.
 
@@ -1386,14 +1420,17 @@ class EntropySolver:
 
         When a structure re-solve changed the mesh, ``reset()`` cached the
         pre-resolve staggered mass coordinates. Interpolate the incoming
-        entropy from those onto the current mass coordinates so each mass
-        parcel keeps its entropy, mirroring SPIDER's
-        ``remap_entropy_for_new_mesh``. Carrying by node index instead
-        shifts the entropy field whenever the total mantle mass drifts
-        across the re-solve, which injects a spurious energy jump. The
-        cached grid is consumed (one-shot) so a later isentropic IC set is
-        unaffected. Falls back to the input unchanged when no re-solve grid
-        is cached, the node count changed, or the mass grid is unchanged.
+        entropy from those onto the current mesh at equal cumulative mantle
+        mass fraction ``f`` so each mass parcel keeps its entropy, mirroring
+        SPIDER's fixed-mass-grid state. The mapping uses ``f``, not the raw
+        length coordinate ``xi``: because ``xi**3`` is affine in enclosed mass
+        while ``xi`` is not, equal ``xi`` is not equal enclosed mass once the
+        core radius, surface radius, or density profile shift across the
+        re-solve, and a raw-``xi`` interpolation mis-places parcels and injects
+        a spurious energy jump that grows with the entropy gradient. The cached
+        grid is consumed (one-shot) so a later isentropic IC set is unaffected.
+        Falls back to the input unchanged when no re-solve grid is cached, the
+        node count changed, or the mass grid is unchanged.
 
         Parameters
         ----------
@@ -1420,10 +1457,14 @@ class EntropySolver:
             return S_arr
         if np.allclose(xi_new, xi_old, rtol=1e-12, atol=0.0):
             return S_arr
-        # np.interp requires ascending x; mass coordinates are monotonic.
-        if xi_old[0] > xi_old[-1]:
-            return np.interp(xi_new[::-1], xi_old[::-1], S_arr[::-1])[::-1]
-        return np.interp(xi_new, xi_old, S_arr)
+        # Interpolate on cumulative mantle mass fraction, not raw mass-radius,
+        # so each parcel keeps its entropy when the mesh deforms.
+        f_old = _mantle_mass_fraction(xi_old)
+        f_new = _mantle_mass_fraction(xi_new)
+        # np.interp requires ascending x; mass fraction is monotone in xi.
+        if f_old[0] > f_old[-1]:
+            return np.interp(f_new[::-1], f_old[::-1], S_arr[::-1])[::-1]
+        return np.interp(f_new, f_old, S_arr)
 
     def set_initial_entropy(self, S_init: npt.NDArray | float) -> None:
         """Set the initial entropy profile and (if used) initial T_core.

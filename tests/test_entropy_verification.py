@@ -692,13 +692,20 @@ class TestSolverResidualTelescoping:
 
     def test_entropy_remap_carries_field_by_mass_parcel(self):
         """The conservative remap interpolates the carried entropy onto the new
-        mass grid per parcel (matching np.interp), is a no-op when the grid is
-        unchanged, and falls back to the input when the node count changes.
+        mesh at equal cumulative mantle mass fraction, is a no-op when the grid
+        is unchanged, and falls back to the input when the node count changes.
 
-        Discrimination guard: a +1% mass-grid drift (the structure-solve mass
-        tolerance) makes the remapped field differ from the index-carry by more
-        than rounding, confirming the remap actually moves entropy by parcel
-        rather than by node index."""
+        The deformation moves r_core and r_surf by different factors and
+        reshapes the interior mass distribution, so each parcel's mass fraction
+        shifts. The remap must match interpolation on mass fraction ``f``, not
+        on the raw length coordinate ``xi``.
+
+        Discrimination guard: under this non-uniform deformation the mass-
+        fraction remap differs from the raw-``xi`` interpolation by more than
+        rounding, confirming the remap moves entropy by mass parcel rather than
+        by length coordinate."""
+        from aragog.solver.entropy_solver import _mantle_mass_fraction
+
         solver, _ = self._build_two_phase_solver()
         S0 = self._stratified_ic(solver)
         solver.set_initial_entropy(S0)
@@ -711,22 +718,40 @@ class TestSolverResidualTelescoping:
         )
 
         S_field = np.linspace(3000.0, 4000.0, n)
-        xi_new = xi * 1.01  # +1% mass drift across a re-solve
+        asc = xi[0] < xi[-1]
+        # Non-uniform re-solve: endpoints move by different factors and the
+        # interior density profile reshapes, so mass fractions shift per parcel
+        # (a uniform scale would leave every f unchanged and remap nothing).
+        f_old = _mantle_mass_fraction(xi)
+        lo, hi = min(xi[0], xi[-1]), max(xi[0], xi[-1])
+        lo_new, hi_new = lo * 0.994, hi * 0.967
+        f_reshaped = f_old**1.08
+        xi_new = np.cbrt(lo_new**3 + (hi_new**3 - lo_new**3) * f_reshaped)
         orig = type(solver).staggered_mass_coordinates
         try:
             type(solver).staggered_mass_coordinates = property(lambda self: xi_new)
             solver._xi_pre_resolve = xi.copy()
             S_remap = solver._remap_entropy_to_current_mesh(S_field.copy())
-            asc = xi[0] < xi[-1]
+            f_new = _mantle_mass_fraction(xi_new)
             expect = (
+                np.interp(f_new, f_old, S_field)
+                if f_old[0] < f_old[-1]
+                else np.interp(f_new[::-1], f_old[::-1], S_field[::-1])[::-1]
+            )
+            np.testing.assert_allclose(S_remap, expect, rtol=1e-12)
+            # Discrimination: the mass-fraction remap differs from a raw-xi
+            # interpolation of the same deformation by more than rounding.
+            raw_xi = (
                 np.interp(xi_new, xi, S_field)
                 if asc
                 else np.interp(xi_new[::-1], xi[::-1], S_field[::-1])[::-1]
             )
-            np.testing.assert_allclose(S_remap, expect, rtol=1e-12)
-            # Discrimination: the remap differs from a raw index-carry.
+            assert np.max(np.abs(S_remap - raw_xi)) > 1e-6 * np.ptp(S_field), (
+                'the remap must interpolate on mass fraction, not raw mass-radius'
+            )
+            # The remap genuinely moves the field (parcels shifted).
             assert np.max(np.abs(S_remap - S_field)) > 1e-6 * np.ptp(S_field), (
-                'a +1% mass drift must move the entropy field by parcel'
+                'a non-uniform re-solve must move the entropy field by parcel'
             )
             assert solver._xi_pre_resolve is None, 'remap must consume the cached grid'
 

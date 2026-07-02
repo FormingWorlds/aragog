@@ -471,6 +471,90 @@ def test_remap_entropy_handles_missing_xi_pre_resolve():
     assert fake._xi_pre_resolve is None
 
 
+@pytest.mark.physics_invariant
+def test_remap_conserves_mass_weighted_mean_entropy():
+    """The per-parcel entropy remap conserves the mass-weighted mean specific
+    entropy across a structure re-solve.
+
+    Sbar = sum(m_i S_i) / sum(m_i) is the discrete total mantle entropy per unit
+    mass. A parcel-conservative remap must leave it unchanged when the mesh
+    deforms but the material does not. The mass weight of a node is its
+    cumulative-mass-fraction width, so Sbar is the trapezoidal integral of S over
+    the mass fraction f. For an entropy field linear in f the trapezoid rule is
+    exact, so remapping on f conserves Sbar to floating point; interpolating on
+    the raw length coordinate xi does not, because xi is nonlinear in enclosed
+    mass, so it reconstructs a curved field whose mass-weighted mean drifts.
+
+    Scenario: a genuine re-solve shrinks r_surf 3.3 percent and r_core 0.6
+    percent (matching a measured coupled Zalmoxis+Aragog step) and reshapes the
+    interior mass distribution, over a steep solidification entropy gradient
+    (1000 -> 3000 J/kg/K) representative of the mush phase where the raw-xi error
+    is largest.
+
+    Discrimination guard: under the identical deformation the raw-xi
+    interpolation drifts Sbar by more than 100x the mass-fraction remap, so the
+    invariance assertion distinguishes the two formulas rather than passing for
+    both.
+    """
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver, _mantle_mass_fraction
+
+    def _mass_weighted_mean(s_vals, frac):
+        # Trapezoidal integral of specific entropy over cumulative mass fraction,
+        # normalised by the fraction span: the discrete mass-weighted mean.
+        weight = np.abs(np.diff(frac))
+        seg = 0.5 * (s_vals[1:] + s_vals[:-1])
+        return float(np.sum(seg * weight) / np.sum(weight))
+
+    n = 64
+    u = np.linspace(0.0, 1.0, n)
+    # Old mesh: staggered mass-radius nodes, mildly bottom-heavy density profile
+    # (mass-fraction spacing non-uniform in radius).
+    r_core_old, r_surf_old = 3.4149e6, 7.0670e6
+    xi_old = np.cbrt(r_core_old**3 + (r_surf_old**3 - r_core_old**3) * u**1.15)
+    # New mesh: endpoints move by different factors and the interior profile
+    # reshapes, so each parcel's cumulative mass fraction shifts.
+    r_core_new, r_surf_new = r_core_old * 0.994, r_surf_old * 0.967
+    xi_new = np.cbrt(r_core_new**3 + (r_surf_new**3 - r_core_new**3) * u**1.30)
+
+    f_old = _mantle_mass_fraction(xi_old)
+    f_new = _mantle_mass_fraction(xi_new)
+    # Steep entropy field, linear in mass fraction (a mush-phase gradient).
+    s_bot, s_top = 1000.0, 3000.0
+    s_old = s_bot + (s_top - s_bot) * f_old
+
+    # Branch B (shipped): remap on mass fraction via the real method.
+    fake = SimpleNamespace(
+        _xi_pre_resolve=xi_old.copy(),
+        staggered_mass_coordinates=xi_new,
+    )
+    s_new_b = EntropySolver._remap_entropy_to_current_mesh(fake, s_old.copy())
+    # Branch A (superseded formula): raw-xi interpolation of the same field.
+    s_new_a = np.interp(xi_new, xi_old, s_old)
+
+    sbar_old = _mass_weighted_mean(s_old, f_old)
+    sbar_new_b = _mass_weighted_mean(s_new_b, f_new)
+    sbar_new_a = _mass_weighted_mean(s_new_a, f_new)
+
+    drift_b = abs(sbar_new_b - sbar_old) / sbar_old
+    drift_a = abs(sbar_new_a - sbar_old) / sbar_old
+
+    # Invariance under the shipped mass-fraction remap.
+    assert drift_b < 1e-9, f'mass-fraction remap must conserve Sbar, got {drift_b:.2e}'
+    # Discrimination: the raw-xi formula is materially non-conservative here.
+    assert drift_a > 100.0 * max(drift_b, 1e-15), (
+        f'raw-xi interp (drift {drift_a:.2e}) must move Sbar far more than the '
+        f'mass-fraction remap (drift {drift_b:.2e}); else the test is vacuous'
+    )
+    assert drift_a > 1e-6, (
+        f'the steep-gradient scenario must make raw-xi non-conservation '
+        f'resolvable, got {drift_a:.2e}'
+    )
+    # The remap consumes the cached pre-resolve grid (one-shot).
+    assert fake._xi_pre_resolve is None
+
+
 # ──────────────────────────────────────────────────────────────────────
 #                 _phase_boundary_max_step_clamp
 # ──────────────────────────────────────────────────────────────────────
