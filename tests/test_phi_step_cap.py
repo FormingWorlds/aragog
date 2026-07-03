@@ -18,7 +18,7 @@ Tests cover:
 - Source-pattern regression: the rootfn class subclasses
   ``CV_RootFunction``; ``solve()`` wires it into ``cvode_options``
   with ``nr_rootfns=1``; ``_solve_cvode`` accepts ``phi_cap_rootfn``
-- Default 0.0 keeps existing behaviour: rootfn is never installed.
+- Default None (disabled) keeps existing behaviour: rootfn is never installed.
 """
 
 from __future__ import annotations
@@ -33,8 +33,11 @@ import pytest
 from aragog.parser import _EnergyParameters
 from aragog.solver.entropy_solver import (
     _CV_ROOTFN_AVAILABLE,
+    _DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN,
     _phi_cap_event_factory,
     _PhiCapRootFunction,
+    _resolve_entropy_margin,
+    _resolve_step_cap,
 )
 
 pytestmark = pytest.mark.unit
@@ -77,16 +80,26 @@ def _build_synthetic_eos_and_state(n_stag=8, phi_uniform=0.6):
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_phi_step_cap_default_is_zero():
-    """Default phi_step_cap must be 0.0 so existing tests are unchanged.
+def test_phi_step_cap_default_is_none_and_disables():
+    """The default phi_step_cap is the None disabled-sentinel.
 
-    A positive default would activate the rootfn on every solve()
-    call in production, which is a behavioural change and would
-    break the bit-parity contract with prior runs.
+    Standalone Aragog must keep the cap off unless a value is supplied: a
+    positive default would arm the rootfn on every solve() call, a
+    behavioural change that would break the bit-parity contract with prior
+    runs. ``None`` is the self-documenting disabled sentinel, and the solver
+    coerces it (and any non-positive value) to 0.0 before the arming
+    inequality, so the cap stays off.
     """
     e = _make_energy()
-    assert e.phi_step_cap == 0.0
-    assert isinstance(e.phi_step_cap, float)
+    assert e.phi_step_cap is None
+    # None, explicit zero, and negatives all resolve to the disabled 0.0.
+    assert _resolve_step_cap(e.phi_step_cap) == 0.0
+    assert _resolve_step_cap(0.0) == 0.0
+    assert _resolve_step_cap(-5.0) == 0.0
+    # A genuine positive cap survives coercion unchanged; the two verdicts
+    # land on opposite sides of the arming inequality.
+    assert _resolve_step_cap(0.05) == pytest.approx(0.05)
+    assert _resolve_step_cap(e.phi_step_cap) <= 0.0 < _resolve_step_cap(0.05)
 
 
 def test_phi_step_cap_accepts_positive_values():
@@ -96,23 +109,87 @@ def test_phi_step_cap_accepts_positive_values():
 
 
 def test_phi_step_cap_accepts_zero_explicitly():
-    """Explicit 0.0 (disabled) is a valid configuration."""
+    """Explicit 0.0 (disabled) is a valid configuration and resolves to off."""
     assert _make_energy(phi_step_cap=0.0).phi_step_cap == 0.0
+    assert _resolve_step_cap(_make_energy(phi_step_cap=0.0).phi_step_cap) == 0.0
 
 
-def test_temperature_and_entropy_step_caps_default_zero():
-    """The temperature and entropy step caps default to 0.0 (disabled).
+def test_resolve_step_cap_maps_disabled_sentinels_to_zero():
+    """``_resolve_step_cap`` collapses every disabled spelling to exactly 0.0.
 
-    Standalone Aragog must keep its prior behaviour: the caps are off unless
-    a value is supplied. The PROTEUS wrapper is what auto-enables non-zero
-    defaults for the coupled zalmoxis stack, so a non-zero default here would
-    silently change every standalone run. Positive values round-trip.
+    The rootfn arming inequality is ``> 0.0`` on a plain float, so None,
+    zero, negatives, and non-finite values must all coerce to 0.0 (disabled)
+    while a finite positive cap passes through unchanged. This is the guard
+    that keeps a sentinel from being misread as a tiny positive threshold.
+    """
+    disabled_spellings = (
+        None,
+        0.0,
+        -0.0,
+        -1e-9,
+        -100.0,
+        float('nan'),
+        float('inf'),
+        float('-inf'),
+    )
+    for disabled in disabled_spellings:
+        assert _resolve_step_cap(disabled) == 0.0
+    # A real positive cap is preserved to full precision.
+    assert _resolve_step_cap(0.05) == pytest.approx(0.05)
+    assert _resolve_step_cap(200.0) == pytest.approx(200.0)
+    # Boundary of the ``> 0.0`` inequality: the smallest representable positive
+    # float is still an armed cap, not a disabled sentinel.
+    assert _resolve_step_cap(5e-324) > 0.0
+    # Discrimination: disabled sentinels and an armed cap sit on opposite
+    # sides of the ``> 0.0`` inequality, so they can never be confused.
+    assert _resolve_step_cap(None) <= 0.0 < _resolve_step_cap(0.05)
+
+
+def test_resolve_entropy_margin_falls_back_to_default_not_disabled():
+    """``_resolve_entropy_margin`` never yields a band that disables itself.
+
+    Unlike the step caps, zero is not a valid "off" state for the
+    phase-boundary band: a non-positive or non-finite margin would make every
+    ``abs(margin) < entropy_margin`` proximity test false and silently stop
+    arming the tighter stepping across a crossing. So ``None`` (attribute
+    absent, e.g. a coupled build predating the field), non-finite, and
+    non-positive inputs must fall back to the 200.0 default, while a genuine
+    positive band passes through unchanged. This is the opposite fallback
+    target from ``_resolve_step_cap`` (which maps disabled spellings to 0.0),
+    so the two must not be confused.
+    """
+    default = _DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN
+    assert default == pytest.approx(200.0, rel=1e-12)
+    for bad in (None, 0.0, -0.0, -1e-9, -300.0, float('nan'), float('inf'), float('-inf')):
+        assert _resolve_entropy_margin(bad) == pytest.approx(default, rel=1e-12)
+    # A genuine positive band survives unchanged, including a value far from
+    # the default so a silent collapse to 200 would be caught.
+    assert _resolve_entropy_margin(400.0) == pytest.approx(400.0, rel=1e-12)
+    assert _resolve_entropy_margin(50.0) == pytest.approx(50.0, rel=1e-12)
+    # Discrimination: a disabled-style input and a real band land on opposite
+    # sides of the default, never both collapsing to 0.0 the way a cap would.
+    assert (
+        _resolve_entropy_margin(-1.0) == pytest.approx(default) != _resolve_entropy_margin(50.0)
+    )
+
+
+def test_temperature_and_entropy_step_caps_default_none():
+    """The temperature and entropy step caps default to the None sentinel.
+
+    Standalone Aragog must keep the caps off unless a value is supplied. The
+    PROTEUS wrapper is what passes concrete positive caps for the coupled
+    zalmoxis stack, so a non-None default here would silently change every
+    standalone run. None resolves to the disabled 0.0; positive values
+    round-trip and resolve to themselves.
     """
     e = _make_energy()
-    assert e.temperature_step_cap == 0.0
-    assert e.entropy_step_cap == 0.0
+    assert e.temperature_step_cap is None
+    assert e.entropy_step_cap is None
+    assert _resolve_step_cap(e.temperature_step_cap) == 0.0
+    assert _resolve_step_cap(e.entropy_step_cap) == 0.0
     assert _make_energy(temperature_step_cap=150.0).temperature_step_cap == pytest.approx(150.0)
     assert _make_energy(entropy_step_cap=80.0).entropy_step_cap == pytest.approx(80.0)
+    assert _resolve_step_cap(150.0) == pytest.approx(150.0)
 
 
 # ──────────────────────────────────────────────────────────────────────

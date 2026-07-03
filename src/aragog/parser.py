@@ -185,22 +185,34 @@ class _EnergyParameters:
     # falls back to FD Jacobian when no factory is available.
     use_jax_jacobian: bool = True
 
-    # Per-call mass-weighted |ΔΦ_global| cap. When > 0 and at least one
+    # Per-call mass-weighted |ΔΦ_global| cap. When positive and at least one
     # cell sits in or near the mushy band at solve() entry, register a
     # SUNDIALS root function that fires when |Φ_global(t) − Φ_global(
     # start)| reaches this value, returning early with status=2 so the
     # PROTEUS outer loop can adjust dt. Without a cap the dt adapter
     # can land on a step that straddles the rheological transition and
     # reject. 0.05 is a useful upper bound for the mushy zone in 1 M⊕
-    # runs; default 0.0 disables the cap entirely.
-    phi_step_cap: float = 0.0
+    # runs; None (the default) disables the cap, as does any non-positive value.
+    phi_step_cap: float | None = None
     # Per-cell temperature and entropy step caps [K] and [J/kg/K]. Like the
     # melt-fraction cap, but the root function fires on the maximum
     # single-cell |ΔT| or |ΔS|. These bound the reported temperature drop on
     # the solid adiabat just below the solidus, where the melt-fraction cap
-    # goes blind (its derivative saturates at phi=0). 0.0 disables each.
-    temperature_step_cap: float = 0.0
-    entropy_step_cap: float = 0.0
+    # goes blind (its derivative saturates at phi=0). None (the default)
+    # disables each.
+    temperature_step_cap: float | None = None
+    entropy_step_cap: float | None = None
+    # Proximity band [J/kg/K] within which a staggered cell counts as near a
+    # phase boundary, tightening the integrator max_step to 1 yr so CVODE
+    # resolves the stiff RHS across the solidus/liquidus. Solver-accuracy
+    # control, not a physics threshold: at the default the converged trajectory
+    # is unchanged, but lowering it can under-resolve a real crossing and shift
+    # the converged state beyond the nominal tolerance (CVODE's local error
+    # control can accept an over-large step across the near-discontinuous
+    # two-phase RHS). Default 200.0, a fraction of a typical silicate fusion
+    # entropy (S_liquidus - S_solidus); a non-finite or non-positive value
+    # falls back to the default.
+    phase_boundary_entropy_margin: float = 200.0
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
 

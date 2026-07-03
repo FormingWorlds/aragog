@@ -65,23 +65,39 @@ class EnergyConfig:
         ``aragog.jax`` module. Default True matches PROTEUS
         production; silently falls back to FD if no JAX factory was
         registered before ``solve()``.
-    phi_step_cap : float
+    phi_step_cap : float or None
         Per-call mass-weighted ``|ΔΦ_global|`` cap (SUNDIALS root
-        function). When > 0 and at least one staggered cell sits in
+        function). When positive and at least one staggered cell sits in
         or near the mushy band at ``solve()`` entry, CVODE returns
         at the exact time where the change first reaches this value.
-        Default 0.0 (disabled); 0.05 is typical for production
-        evolution of 1 M_E PALEOS-2phase mantles.
-    temperature_step_cap : float
+        ``None`` (the default) disables the cap; any non-positive value
+        disables it too. 0.05 is typical for production evolution of
+        1 M_E PALEOS-2phase mantles.
+    temperature_step_cap : float or None
         Per-call per-cell ``|ΔT|`` cap [K] (SUNDIALS root function),
         firing on the maximum single-cell temperature change since
         ``solve()`` entry. Bounds the core-temperature drop on the solid
         adiabat below the solidus, which the melt-fraction cap cannot see.
-        Default 0.0 (disabled).
-    entropy_step_cap : float
+        ``None`` (the default) disables the cap.
+    entropy_step_cap : float or None
         Per-call per-cell ``|ΔS|`` cap [J/kg/K] in the native solver
         variable; same role as the temperature cap without an EOS lookup
-        in the root function. Default 0.0 (disabled).
+        in the root function. ``None`` (the default) disables the cap.
+    phase_boundary_entropy_margin : float
+        Proximity band [J/kg/K] within which a staggered cell counts as
+        "near" a phase boundary, tightening the integrator ``max_step`` to
+        1 yr so CVODE resolves the stiff RHS across the solidus/liquidus.
+        This is a solver-accuracy control, not a physics threshold. At the
+        default it reproduces the previous fixed band, so the converged
+        trajectory is unchanged; lowering it can under-resolve a real phase
+        crossing and shift the converged state by more than the nominal
+        tolerance, because CVODE's local error control can accept an
+        over-large step across the near-discontinuous two-phase RHS. Default
+        200.0, a fraction of a typical silicate fusion entropy (S_liquidus -
+        S_solidus), wide enough to arm the tighter stepping before a cell
+        reaches the boundary yet narrow enough to leave the deep-solid
+        thermal history on unrestricted steps. A non-finite or non-positive
+        value falls back to the default.
     tidal_array : ndarray
         Tidal heating per unit mass [W/kg] at each layer.
     """
@@ -99,7 +115,8 @@ class EnergyConfig:
     phase_smoothing: str = 'tanh'
     solver_method: str = 'cvode'
     use_jax_jacobian: bool = True
-    phi_step_cap: float = 0.0
-    temperature_step_cap: float = 0.0
-    entropy_step_cap: float = 0.0
+    phi_step_cap: float | None = None
+    temperature_step_cap: float | None = None
+    entropy_step_cap: float | None = None
+    phase_boundary_entropy_margin: float = 200.0
     tidal_array: npt.NDArray = attrs.Factory(lambda: np.array([0.0], dtype=float))

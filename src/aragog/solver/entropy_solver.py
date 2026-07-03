@@ -147,18 +147,89 @@ def _phase_prop_float(raw, default):
     return default
 
 
+def _resolve_step_cap(raw: float | None) -> float:
+    """Coerce a configured per-call step cap to the solver's float contract.
+
+    The three per-call step caps (``phi_step_cap``, ``temperature_step_cap``,
+    ``entropy_step_cap``) use a disabled sentinel at the configuration layer:
+    ``None`` (unset), zero, or any non-positive or non-finite value all mean
+    "cap off". The SUNDIALS root function downstream requires a plain float and
+    treats a strictly-positive value as the armed cap, so this maps every
+    disabled spelling to ``0.0`` and passes a genuine positive cap through
+    unchanged. Centralising the coercion keeps the arming inequality
+    (``> 0.0``) unambiguous: only a finite positive value can arm a cap, so a
+    sentinel can never be misread as a tiny positive threshold.
+
+    Parameters
+    ----------
+    raw : float or None
+        The configured cap value, or ``None`` when unset.
+
+    Returns
+    -------
+    float
+        ``0.0`` when the cap is disabled (``None``, non-finite, or ``<= 0``),
+        otherwise the positive cap.
+    """
+    if raw is None:
+        return 0.0
+    value = float(raw)
+    if not np.isfinite(value) or value <= 0.0:
+        return 0.0
+    return value
+
+
+# Single source of truth for the phase-boundary proximity band. The config
+# layers (config/energy.py, parser.py) carry their own literal default so a
+# user editing a config sees the number in place; this constant is the
+# solver-side fallback and must move with them.
+_DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN = 200.0
+
+
+def _resolve_entropy_margin(raw: float | None) -> float:
+    """Coerce the configured phase-boundary proximity band to a usable float.
+
+    Unlike the step caps, zero is not a valid "disabled" state for this band:
+    a non-positive or non-finite margin would make every ``abs(margin) <
+    entropy_margin`` test false and silently stop arming the tighter stepping
+    across a phase crossing. So a missing (``None``), non-finite, or
+    non-positive value falls back to the default rather than disabling the
+    band; a genuine positive value passes through unchanged.
+
+    Parameters
+    ----------
+    raw : float or None
+        The configured margin, or ``None`` when the attribute is absent (e.g.
+        a coupled build predating the field).
+
+    Returns
+    -------
+    float
+        The default (:data:`_DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN`) when the
+        input is ``None``, non-finite, or ``<= 0``, otherwise the positive
+        margin.
+    """
+    if raw is None:
+        return _DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN
+    value = float(raw)
+    if not np.isfinite(value) or value <= 0.0:
+        return _DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN
+    return value
+
+
 def _phase_boundary_max_step_clamp(
     near_liq: bool,
     near_sol: bool,
     in_mushy: bool,
     cmb_margin_to_liq: float,
     cmb_margin_to_sol: float,
+    entropy_margin: float,
 ) -> bool:
     """Whether ``max_step`` should be tightened to 1 yr for phase-boundary stiffness.
 
     The clamp resolves the stiff RHS a cell sees while crossing the
     solidus/liquidus. It fires when any staggered cell is within
-    200 J/kg/K of either phase boundary (``near_liq``/``near_sol``), any
+    ``entropy_margin`` of either phase boundary (``near_liq``/``near_sol``), any
     cell is inside the mushy band (``in_mushy``), the CMB cell is near the
     liquidus, or the CMB cell is itself inside the mushy band. A
     fully-frozen mantle far below the solidus has no phase-boundary
@@ -171,7 +242,7 @@ def _phase_boundary_max_step_clamp(
     Parameters
     ----------
     near_liq, near_sol : bool
-        Any staggered cell within 200 J/kg/K of the liquidus / solidus.
+        Any staggered cell within ``entropy_margin`` of the liquidus / solidus.
     in_mushy : bool
         Any staggered cell strictly inside the two-phase window.
     cmb_margin_to_liq : float
@@ -180,13 +251,18 @@ def _phase_boundary_max_step_clamp(
     cmb_margin_to_sol : float
         CMB-cell entropy minus solidus entropy at the CMB pressure
         [J kg^-1 K^-1]; positive when the CMB cell is super-solidus.
+    entropy_margin : float
+        Proximity band in specific-entropy units [J kg^-1 K^-1] within which a
+        cell counts as near a phase boundary. Required (no default), so the
+        production margin the caller resolves is never silently shadowed by a
+        signature default the real path does not use.
 
     Returns
     -------
     bool
         True when ``max_step`` should be reduced to 1 yr.
     """
-    cmb_near_liq = abs(cmb_margin_to_liq) < 200.0
+    cmb_near_liq = abs(cmb_margin_to_liq) < entropy_margin
     cmb_in_mushy = cmb_margin_to_liq < 0.0 and cmb_margin_to_sol > 0.0
     return bool(near_liq or near_sol or in_mushy or cmb_near_liq or cmb_in_mushy)
 
@@ -2588,13 +2664,14 @@ class EntropySolver:
         # active in the deep-solid regime (mean melt fraction below 0.01),
         # where a cell can still cool on the solid adiabat well below the
         # solidus and the melt-fraction cap is blind. When a cell's entropy is
-        # within 200 J/kg/K of either phase boundary, OR sits inside the mushy
-        # band, max_step is reduced to 1 yr to give CVODE enough resolution to
+        # within the configured phase-boundary entropy margin (default
+        # 200 J/kg/K) of either phase boundary, OR sits inside the mushy band,
+        # max_step is reduced to 1 yr to give CVODE enough resolution to
         # handle the phase-boundary stiffness gradually.
         if self.entropy_eos is not None:
-            P_basic = self._P_basic_flat
-            np.asarray(self.entropy_eos.liquidus_entropy(P_basic)).ravel()
-            np.asarray(self.entropy_eos.solidus_entropy(P_basic)).ravel()
+            entropy_margin = _resolve_entropy_margin(
+                getattr(self.parameters.energy, 'phase_boundary_entropy_margin', None)
+            )
             # S0_block is staggered (length n_stag). For per-cell
             # phase-boundary check we use the staggered S directly
             # against the staggered-pressure phase boundaries.
@@ -2604,8 +2681,8 @@ class EntropySolver:
             S_arr_stag = np.asarray(S0_block).ravel()
             margin_to_liq = S_arr_stag - S_liq_stag  # > 0 means above liquidus
             margin_to_sol = S_arr_stag - S_sol_stag  # > 0 means above solidus
-            near_liq = np.any(np.abs(margin_to_liq) < 200.0)
-            near_sol = np.any(np.abs(margin_to_sol) < 200.0)
+            near_liq = np.any(np.abs(margin_to_liq) < entropy_margin)
+            near_sol = np.any(np.abs(margin_to_sol) < entropy_margin)
             in_mushy = np.any((margin_to_liq < 0.0) & (margin_to_sol > 0.0))
             # Keep the original CMB-only check too as a backstop
             P_cmb = float(self._P_basic_flat[0])
@@ -2618,6 +2695,7 @@ class EntropySolver:
                 in_mushy,
                 cmb_margin_to_liq=S0_block_cmb - S_liq,
                 cmb_margin_to_sol=S0_block_cmb - S_sol,
+                entropy_margin=entropy_margin,
             ):
                 max_step = 1.0
 
@@ -2640,9 +2718,15 @@ class EntropySolver:
             # adiabat. The caps are skipped in gradient core_bc mode, where the
             # state vector holds entropy gradients rather than entropies and
             # the per-cell EOS lookups would be dimensionally meaningless.
-            phi_step_cap = float(getattr(self.parameters.energy, 'phi_step_cap', 0.0))
-            temp_step_cap = float(getattr(self.parameters.energy, 'temperature_step_cap', 0.0))
-            entropy_step_cap = float(getattr(self.parameters.energy, 'entropy_step_cap', 0.0))
+            phi_step_cap = _resolve_step_cap(
+                getattr(self.parameters.energy, 'phi_step_cap', None)
+            )
+            temp_step_cap = _resolve_step_cap(
+                getattr(self.parameters.energy, 'temperature_step_cap', None)
+            )
+            entropy_step_cap = _resolve_step_cap(
+                getattr(self.parameters.energy, 'entropy_step_cap', None)
+            )
             any_cap = phi_step_cap > 0.0 or temp_step_cap > 0.0 or entropy_step_cap > 0.0
             below_solidus = bool(np.any(margin_to_sol < 0.0))
             gradient_mode = getattr(self, '_core_bc', None) == 'gradient'
@@ -2680,7 +2764,7 @@ class EntropySolver:
                             'cap_S': entropy_step_cap,
                             'S0_cell': S_arr_stag.copy(),
                         }
-                        logger.info(
+                        logger.debug(
                             'step caps armed (CVODE rootfn): phi=%.3g, T=%.3g K, S=%.3g '
                             'J/kg/K (global Φ0=%.4f)',
                             phi_step_cap,

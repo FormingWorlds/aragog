@@ -781,6 +781,7 @@ def test_max_step_clamp_off_for_deep_cold_solid():
         in_mushy=False,
         cmb_margin_to_liq=-1000.0,  # CMB entropy 1000 J/kg/K below liquidus
         cmb_margin_to_sol=-800.0,  # and 800 below solidus (fully frozen)
+        entropy_margin=200.0,
     )
     assert clamp is False
     # A one-sided margin<200 test (the pre-fix regression) would be True
@@ -806,6 +807,7 @@ def test_max_step_clamp_on_when_cmb_near_liquidus():
         in_mushy=False,
         cmb_margin_to_liq=-50.0,
         cmb_margin_to_sol=+150.0,
+        entropy_margin=200.0,
     )
     assert clamp is True
 
@@ -827,6 +829,7 @@ def test_max_step_clamp_on_when_cmb_in_mushy_band():
         in_mushy=False,
         cmb_margin_to_liq=-400.0,  # outside the 200 band, below liquidus
         cmb_margin_to_sol=+300.0,  # above solidus -> mushy CMB cell
+        entropy_margin=200.0,
     )
     assert clamp is True
 
@@ -848,5 +851,38 @@ def test_max_step_clamp_on_when_any_interior_cell_near_boundary():
         in_mushy=False,
         cmb_margin_to_liq=-1000.0,  # CMB itself deep-solid
         cmb_margin_to_sol=-800.0,
+        entropy_margin=200.0,
     )
     assert clamp is True
+
+
+def test_max_step_clamp_entropy_margin_is_configurable():
+    """The near-liquidus proximity band scales with ``entropy_margin``.
+
+    A CMB cell 300 J/kg/K below the liquidus and below the solidus (so not
+    mushy, and with no interior-cell flags) sits outside a 200 J/kg/K band,
+    so the clamp is off at that margin. Widening the margin to 400 J/kg/K
+    brings the same cell inside the band and the clamp fires. The two verdicts
+    straddle the change, proving the threshold is driven by the parameter
+    rather than a hard-coded 200, and that the 300 J/kg/K offset is resolved
+    decisively on both sides. ``entropy_margin`` is a required argument, so
+    production can never fall back to a stale signature default.
+    """
+    import inspect
+
+    from aragog.solver.entropy_solver import _phase_boundary_max_step_clamp
+
+    common = dict(
+        near_liq=False,
+        near_sol=False,
+        in_mushy=False,
+        cmb_margin_to_liq=-300.0,  # 300 below liquidus
+        cmb_margin_to_sol=-100.0,  # and below solidus -> not mushy
+    )
+    assert _phase_boundary_max_step_clamp(**common, entropy_margin=200.0) is False
+    assert _phase_boundary_max_step_clamp(**common, entropy_margin=400.0) is True
+    # The margin has no default: the production caller always resolves and
+    # passes it, so a signature default would be dead code that a maintainer
+    # could silently drift away from the config default it must track.
+    sig = inspect.signature(_phase_boundary_max_step_clamp)
+    assert sig.parameters['entropy_margin'].default is inspect.Parameter.empty
