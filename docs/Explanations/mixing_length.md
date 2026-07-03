@@ -54,7 +54,7 @@ $$
 
 the classical bounded-eddy profile that vanishes at both boundaries and reaches half the layer thickness at mid-mantle.
 A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
-A phase-modulated diffusivity floor `kappah_floor` lifts the eddy diffusivity only in convecting mushy cells (melt fraction non-trivial and $\partial S/\partial r < 0$); it is zero in stably-stratified layers, matching SPIDER, which carries no such floor; see [Heat transport](heat_transport.md#phase-modulated-floor).
+A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in convecting mushy cells (melt fraction non-trivial and $\partial S/\partial r < 0$); it is switched off (zero) in stably-stratified layers. SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
 
 The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
 
