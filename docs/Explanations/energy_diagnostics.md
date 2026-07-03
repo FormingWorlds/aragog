@@ -9,7 +9,7 @@ The first track answers _did the simulation conserve energy as a physical princi
 
 ## Per-call integrals (`SolverOutput`)
 
-Every call to `EntropySolver.solve()` returns a [`SolverOutput`](../Reference/api/aragog.solver.md) with seven energy-related integrals computed over the actual CVODE sub-step trajectory.
+Every call to `EntropySolver.solve()` returns a [`SolverOutput`](../Reference/api/aragog.solver.md) with the energy-related integrals computed over the actual CVODE sub-step trajectory.
 
 | Field [J] | Definition | Sign convention |
 |---|---|---|
@@ -27,6 +27,33 @@ The two surface-flux integrals (`step_dE_F_int_J` and `step_dE_F_cmb_J`) are are
 
 - **State-mass**: $\rho_\text{state} = \rho(P_\text{stag},\,S(t))$, evolves with the solver state. Used for instantaneous power diagnostics.
 - **Frozen mass**: $\rho_\text{struct}\,V$ from `mesh.staggered_effective_density × mesh.basic.volume`, fixed at IC. Used in the conservation-grade integrated enthalpy `E_state_cons` (see below).
+
+## State-heat and compression terms
+
+Two further `SolverOutput` fields describe where the mantle's internal energy sits and how it moves. They are easy to conflate because both carry units of joules and both go through the equation of state, but only one enters the conservation budget.
+
+`step_dE_state_heat_J` is the change in the mantle's Lagrangian heat content over the call,
+
+$$
+\Delta E_\text{state-heat}
+= \sum_i V_i \int_{S_i(t_0)}^{S_i(t_f)} \rho(P_i, S)\,T(P_i, S)\,dS,
+$$
+
+evaluated by direct EOS quadrature along each staggered cell's entropy path with its pressure $P_i$ held fixed over the call. This is the **state side** of the conservation budget: the capacitance weighting $\rho T$ is exactly what the entropy ODE transports, so the coupler differences its cumulative sum against the integrated boundary fluxes and volumetric sources. It is deliberately not an enthalpy change. The two-phase EOS specific enthalpy does not satisfy $dh = T\,dS$ across the mushy zone, so an enthalpy-snapshot difference carries a spurious flow-work term and cannot close the budget. Sign: negative when the mantle cools.
+
+`step_dE_compression_J` is the adiabatic compression work from the structure re-solve that precedes the call,
+
+$$
+\Delta E_\text{compression}
+= \sum \text{mass}\,\bigl(h(P_\text{new}, S) - h(P_\text{old}, S)\bigr),
+$$
+
+taken at fixed entropy $S$ and frozen mass: the enthalpy change each mass element sees when the static pressure at its position shifts between the old and new equilibrium structures. It is informational only and is deliberately not added to the predicted energy, for two reasons.
+
+- The conservation residual already closes against the state-heat term $\sum \rho T\,dS$, which carries the same thermodynamic content as the $P\,dV$ work; adding compression to the predicted side would double-count it.
+- The two-phase specific enthalpy does not satisfy $dh = T\,dS$ across the mushy zone, so an enthalpy-snapshot difference cannot close the budget on its own in any case.
+
+`step_dE_compression_J` is zero for a static structure, where the pressures are unchanged, and for the first solve, where there is no prior mesh to difference against.
 
 ## Cumulative conservation residuals (PROTEUS helpfile)
 

@@ -636,10 +636,15 @@ class SolverOutput:
 
     # Adiabatic compression work [J] from the structure re-solve that
     # preceded this call. ``Sum mass (h(P_new, S) - h(P_old, S))`` at the
-    # carried entropy and frozen mass. Zero for a static structure.
-    # Informational only: the conservation residual is built from the
-    # entropy-transported heat (``step_dE_state_heat_J``), which carries
-    # the same thermodynamic content without the enthalpy framing.
+    # carried entropy and frozen mass. Zero for a static structure and for
+    # the first solve (no prior mesh). Informational only, deliberately NOT
+    # added to the predicted energy: the conservation residual already closes
+    # against the entropy-transported heat (``step_dE_state_heat_J``,
+    # Sum rho T dS), which carries the same PdV thermodynamic content, so
+    # adding compression to the predicted side would double-count it. The
+    # enthalpy framing also cannot close the budget on its own, because the
+    # two-phase EOS specific enthalpy does not satisfy ``dh = T dS`` across
+    # the mushy zone (see ``step_dE_state_heat_J``).
     step_dE_compression_J: float
 
     # Per-call entropy-transported heat [J]: the change in mantle heat
@@ -3626,6 +3631,11 @@ class EntropySolver:
             step_dE_Q_radio_cons_J=step_integrals['Q_radio_cons'],
             step_dE_Q_tidal_cons_J=step_integrals['Q_tidal_cons'],
             step_solver_residual_J=step_integrals['solver_residual'],
+            # state_heat is the conservation-budget state term (Sum rho T dS);
+            # compression is an informational PdV diagnostic from the preceding
+            # structure re-solve, deliberately kept out of the predicted energy
+            # to avoid double-counting the same work (see the SolverOutput field
+            # comments and docs/Explanations/energy_diagnostics.md).
             step_dE_compression_J=float(getattr(self, '_last_compression_J', 0.0)),
             step_dE_state_heat_J=step_integrals['state_heat'],
             dt_actual=float(sol.t[-1] - sol.t[0]),
