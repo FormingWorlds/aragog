@@ -54,7 +54,7 @@ $$
 
 the classical bounded-eddy profile that vanishes at both boundaries and reaches half the layer thickness at mid-mantle.
 A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
-A phase-modulated diffusivity floor `kappah_floor` activates only where melt fraction is non-trivial, mirroring the SPIDER convention; see [Heat transport](heat_transport.md#phase-modulated-floor).
+A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in convecting mushy cells (melt fraction non-trivial and $\partial S/\partial r < 0$); it is switched off (zero) in stably-stratified layers. SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
 
 The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
 
@@ -157,8 +157,9 @@ The version of MLT in Aragog inherits five concrete choices that distinguish it 
   A `constant` profile is also available for analytical-mode tests.
 
 - **Phase-modulated diffusivity floor.**
-  `kappah_floor` activates only where melt fraction $\phi$ is large enough (tanh ramp around $\phi = 0.4$), so a SPIDER-equivalent floor never spuriously diffuses solid-state cells.
-  This avoids the `kappah_floor` interacting with the rheological transition to create a metastable equilibrium for $T_\mathrm{cmb}$.
+  `kappah_floor` lifts the eddy diffusivity only in convecting cells ($\partial S/\partial r < 0$) whose melt fraction $\phi$ is large enough (tanh ramp around $\phi = 0.4$); it is zero in stably-stratified layers.
+  SPIDER carries no eddy-diffusivity floor, so $\kappa_h = 0$ in stratified layers is the SPIDER-consistent limit.
+  Gating the floor by the convective mask keeps a just-frozen, stably-stratified front cell from receiving a spurious sign-flipped convective flux that would otherwise pin it below its solidus.
 
 - **Per-component flux diagnostics.**
   Aragog reports $F_\mathrm{conv}$ separately from the conduction, gravitational-separation, and chemical-mixing fluxes, with reconstruction of the total to floating-point round-off (Figure 2 of [Heat transport](heat_transport.md)).

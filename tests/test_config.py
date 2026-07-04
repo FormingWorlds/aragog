@@ -411,6 +411,112 @@ def test_energy_config_eddy_diffusivity_thermal_default_is_unity():
     assert e_pinned.eddy_diffusivity_thermal == pytest.approx(-2.5, rel=1e-12)
 
 
+def test_phase_boundary_entropy_margin_default_matches_across_config_layers():
+    """The 200 J/kg/K proximity band default must agree in both config layers.
+
+    ``EnergyConfig`` (attrs, public) and ``_EnergyParameters`` (legacy parser
+    dataclass) carry independent literal defaults for
+    ``phase_boundary_entropy_margin``. The solver reproduces the historical
+    fixed band only if both read 200.0, and the coupled PROTEUS path (whose
+    schema does not declare the field) relies on the parser default. A drift
+    between the two layers would move ``max_step`` behaviour on one path only,
+    with no other symptom, so pin both to the same value rather than to a bare
+    literal that could be edited in isolation.
+    """
+    from aragog.parser import _EnergyParameters
+
+    kw = dict(
+        conduction=True,
+        convection=True,
+        gravitational_separation=False,
+        mixing=False,
+        radionuclides=False,
+        tidal=False,
+    )
+    attrs_default = EnergyConfig(**kw).phase_boundary_entropy_margin
+    parser_default = _EnergyParameters(**kw).phase_boundary_entropy_margin
+    assert attrs_default == pytest.approx(200.0, rel=1e-12)
+    assert parser_default == pytest.approx(200.0, rel=1e-12)
+    # The two layers must not drift apart: same conceptual default, same value.
+    assert attrs_default == pytest.approx(parser_default, rel=1e-12)
+
+
+def test_config_from_dict_round_trips_phase_boundary_entropy_margin():
+    """A TOML override on ``[energy].phase_boundary_entropy_margin`` must reach
+    ``Parameters.energy``.
+
+    ``Config.from_dict`` hydrates the legacy ``_EnergyParameters`` parser
+    dataclass, not ``EnergyConfig``. If the parser field is dropped or
+    renamed, the dict-load raises ``TypeError`` and the documented knob is
+    dead. An asymmetric 400.0 (double the default) cannot pass by accident on
+    the 200.0 default, and it is exactly the value at which the near-boundary
+    band widens enough to change a clamp verdict.
+    """
+    from aragog.config import Config
+
+    data = {
+        'solver': {'start_time': 0, 'end_time': 1, 'atol': 1e-9, 'rtol': 1e-9},
+        'boundary_conditions': {
+            'outer_boundary_condition': 1,
+            'outer_boundary_value': 100.0,
+            'inner_boundary_condition': 1,
+            'inner_boundary_value': 0.0,
+            'emissivity': 1.0,
+            'equilibrium_temperature': 273.0,
+            'core_heat_capacity': 880.0,
+        },
+        'mesh': {
+            'outer_radius': 6.371e6,
+            'inner_radius': 3.481e6,
+            'number_of_nodes': 80,
+            'mixing_length_profile': 'nearest_boundary',
+            'core_density': 11000.0,
+        },
+        'energy': {
+            'conduction': True,
+            'convection': True,
+            'gravitational_separation': False,
+            'mixing': False,
+            'radionuclides': False,
+            'tidal': False,
+            'phase_boundary_entropy_margin': 400.0,
+        },
+        'phase_liquid': {
+            'density': 4000.0,
+            'heat_capacity': 1200.0,
+            'melt_fraction': 1,
+            'thermal_conductivity': 4.0,
+            'thermal_expansivity': 3e-5,
+            'viscosity': 0.1,
+        },
+        'phase_solid': {
+            'density': 4000.0,
+            'heat_capacity': 1200.0,
+            'melt_fraction': 0,
+            'thermal_conductivity': 4.0,
+            'thermal_expansivity': 3e-5,
+            'viscosity': 1e21,
+        },
+        'phase_mixed': {
+            'latent_heat_of_fusion': 4e5,
+            'rheological_transition_melt_fraction': 0.4,
+            'rheological_transition_width': 0.15,
+            'solidus': '',
+            'liquidus': '',
+            'phase': 'mixed',
+            'phase_transition_width': 0.01,
+            'grain_size': 1e-3,
+        },
+    }
+    params = Config.from_dict(data)
+    assert params.energy.phase_boundary_entropy_margin == pytest.approx(400.0, rel=1e-12), (
+        'phase_boundary_entropy_margin did not reach _EnergyParameters; the '
+        'legacy parser dataclass has likely drifted out of sync with EnergyConfig.'
+    )
+    # Discrimination: 400.0 must not collapse to the 200.0 default.
+    assert params.energy.phase_boundary_entropy_margin > 300.0
+
+
 # ---- RadionuclideConfig ----------------------------------------------------
 
 

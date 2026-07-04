@@ -9,7 +9,7 @@ The first track answers _did the simulation conserve energy as a physical princi
 
 ## Per-call integrals (`SolverOutput`)
 
-Every call to `EntropySolver.solve()` returns a [`SolverOutput`](../Reference/api/aragog.solver.md) with seven energy-related integrals computed over the actual CVODE sub-step trajectory.
+Every call to `EntropySolver.solve()` returns a [`SolverOutput`](../Reference/api/aragog.solver.md) with the energy-related integrals computed over the actual CVODE sub-step trajectory.
 
 | Field [J] | Definition | Sign convention |
 |---|---|---|
@@ -27,6 +27,33 @@ The two surface-flux integrals (`step_dE_F_int_J` and `step_dE_F_cmb_J`) are are
 
 - **State-mass**: $\rho_\text{state} = \rho(P_\text{stag},\,S(t))$, evolves with the solver state. Used for instantaneous power diagnostics.
 - **Frozen mass**: $\rho_\text{struct}\,V$ from `mesh.staggered_effective_density × mesh.basic.volume`, fixed at IC. Used in the conservation-grade integrated enthalpy `E_state_cons` (see below).
+
+## State-heat and compression terms
+
+Two further `SolverOutput` fields describe where the mantle's internal energy sits and how it moves. They are easy to conflate because both carry units of joules and both go through the equation of state, but only one enters the conservation budget.
+
+`step_dE_state_heat_J` is the change in the mantle's Lagrangian heat content over the call,
+
+$$
+\Delta E_\text{state-heat}
+= \sum_i V_i \int_{S_i(t_0)}^{S_i(t_f)} \rho(P_i, S)\,T(P_i, S)\,dS,
+$$
+
+evaluated by direct EOS quadrature along each staggered cell's entropy path with its pressure $P_i$ held fixed over the call. This is the **state side** of the conservation budget: the capacitance weighting $\rho T$ is exactly what the entropy ODE transports, so the coupler differences its cumulative sum against the integrated boundary fluxes and volumetric sources. It is deliberately not an enthalpy change. The two-phase EOS specific enthalpy does not satisfy $dh = T\,dS$ across the mushy zone, so an enthalpy-snapshot difference carries a spurious flow-work term and cannot close the budget. Sign: negative when the mantle cools.
+
+`step_dE_compression_J` is the adiabatic compression work from the structure re-solve that precedes the call,
+
+$$
+\Delta E_\text{compression}
+= \sum \text{mass}\,\bigl(h(P_\text{new}, S) - h(P_\text{old}, S)\bigr),
+$$
+
+taken at fixed entropy $S$ and frozen mass: the enthalpy change each mass element sees when the static pressure at its position shifts between the old and new equilibrium structures. It is informational only and is deliberately not added to the predicted energy, for two reasons.
+
+- The conservation residual already closes against the state-heat term $\sum \rho T\,dS$, which carries the same thermodynamic content as the $P\,dV$ work; adding compression to the predicted side would double-count it.
+- The two-phase specific enthalpy does not satisfy $dh = T\,dS$ across the mushy zone, so an enthalpy-snapshot difference cannot close the budget on its own in any case.
+
+`step_dE_compression_J` is zero for a static structure, where the pressures are unchanged, and for the first solve, where there is no prior mesh to difference against.
 
 ## Cumulative conservation residuals (PROTEUS helpfile)
 
@@ -85,17 +112,17 @@ $$
 + \underbrace{\sum h\,(\partial \rho/\partial t)\,V}_{\text{frame artefact}}.
 $$
 
-The frame artefact grows with mantle cooling because $\rho(P,S(t))$ increases as the mantle solidifies. On a static-Zalmoxis dry $a_1$ benchmark, a state-mass residual reaches **51 % of total cooling** at 100 kyr — a non-physical signal that masks any real conservation drift.
+The frame artefact grows with mantle cooling because $\rho(P,S(t))$ increases as the mantle solidifies. On a static-Zalmoxis dry $a_1$ benchmark, a state-mass residual reaches **51 % of total cooling** at 100 kyr, a non-physical signal that masks any real conservation drift.
 
-`E_state_cons_J` uses the frozen mass-per-shell, eliminating $h\,\partial\rho/\partial t$ from the diagnostic side. The same trajectory closes to **5.3 % of total cooling** — bounded and physically meaningful. `E_residual_cons_J` and `E_residual_cons_frac` are therefore the canonical conservation columns.
+`E_state_cons_J` uses the frozen mass-per-shell, eliminating $h\,\partial\rho/\partial t$ from the diagnostic side. The same trajectory closes to **5.3 % of total cooling** at 100 kyr, an order of magnitude smaller and physically meaningful. `E_residual_cons_J` and `E_residual_cons_frac` are therefore the canonical conservation columns.
 
 ## Why two diagnostics
 
 The frozen-mass residual `E_residual_cons_frac` answers a slightly different question than the solver residual `solver_residual_J`. Both are useful:
 
-- **`E_residual_cons_frac`** quantifies the gap between the physical enthalpy change and the integrated divergence-of-flux + sources budget. It still has a small frame correction at the ~1 % level because $\rho_\text{struct}\,V \ne \rho(t)\,V$ in general, so the frozen-mass enthalpy time-derivative is not exactly the entropy-budget LHS. Acceptable values are bounded around a few percent over multi-Myr trajectories; a sustained drift well above this signals a real conservation regression.
+- **`E_residual_cons_frac`** quantifies the gap between the physical enthalpy change and the integrated divergence-of-flux + sources budget. Part of it is a frame-correction component: because $\rho_\text{struct}\,V \ne \rho(t)\,V$, the frozen-mass enthalpy time-derivative is not exactly the entropy-budget LHS. That component is expected accounting from the frozen-mass convention, not lost energy, and it grows as the mantle solidifies. While cooling is fast the frame correction stays small and the fraction dilutes as cumulative cooling accumulates; a fraction that grows over that fast-cooling span signals a real conservation regression.
 
-- **`solver_residual_J`** is the cumulative integral of the per-substep mismatch between $\sum \rho T\,(\partial S/\partial t)\,V$ and the entropy-budget RHS, evaluated at the same state-dependent $\rho$. By construction the entropy ODE satisfies this identity at every accepted CVODE step; any drift here is purely the gap between the trapezoidal accumulation Aragog uses for diagnostics and CVODE's own internal step accuracy. Closes to ~10⁻⁷ of total cooling on the verified benchmark — machine-precision noise floor. A non-trivial drift here flags real solver issues (step rejection, atol/rtol problems, hidden NaN propagation).
+- **`solver_residual_J`** is the cumulative integral of the per-substep mismatch between $\sum \rho T\,(\partial S/\partial t)\,V$ and the entropy-budget RHS, evaluated at the same state-dependent $\rho$. By construction the entropy ODE satisfies this identity at every accepted CVODE step; any drift here is purely the gap between the trapezoidal accumulation Aragog uses for diagnostics and CVODE's own internal step accuracy. Closes to ~10⁻⁷ of total cooling on the verified benchmark, at the machine-precision noise floor. A non-trivial drift here flags real solver issues (step rejection, atol/rtol problems, hidden NaN propagation).
 
 In production CHILI runs you should monitor both columns. `E_residual_cons_frac` is the headline "is the simulation conserving energy?" check; `solver_residual_J` is the gate that catches numerical pathologies before they show up as a misleading conservation drift.
 
@@ -108,7 +135,7 @@ Reference smoke runs on a static-Zalmoxis dry $a_1$ ($1\,M_\oplus$, no atmospher
 | 10 kyr | 3393 K | 0.97 | 11.5 % | $1.6\times10^{-7}$ |
 | 100 kyr | 2331 K | 0.73 | 5.3 % | $3.4\times10^{-7}$ |
 
-The frozen-mass residual stays bounded around a few percent over multiple orders of magnitude in time; the solver residual sits at the floating-point noise floor.
+The frozen-mass residual is largest early and dilutes as cumulative cooling accumulates; the solver residual sits at the floating-point noise floor across the same span. The frame correction starts near zero at the molten IC and grows only as the mantle solidifies, so at $\Phi = 0.97$ it is far too small to set the 11.5 % residual seen there: the large early fraction is the residual divided by a still-small cumulative cooling, not a frame effect. Two points constrain the dilution over this fast-cooling span but not how the residual splits between the frame correction and the non-frame error that dominates it; the trend past 100 kyr is not captured here.
 
 ## Worked example
 
@@ -119,7 +146,7 @@ For a single 100 kyr coupled step with surface flux $F_\text{int} \sim 10^3\,\te
 - `step_dE_F_cmb_J` is order $10^{27}\text{-}10^{28}\,\text{J}$ depending on core thermal state.
 - `step_dE_Q_radio_J` and `step_dE_Q_tidal_J` are typically order $10^{25}\text{-}10^{27}\,\text{J}$ for primordial Earth.
 
-Cumulative `E_residual_cons_frac` of more than ~5 % over a multi-Myr run, or `solver_residual_J / |dE_actual|` of more than ~10⁻⁵, signals an integrator-tolerance problem or a missing energy contribution. Plot both columns over time using `tools/plot_energy_balance.py` (PROTEUS-side):
+While cooling is fast, an `E_residual_cons_frac` that grows instead of diluting, with `solver_residual_J / |dE_actual|` still at its ~10⁻⁷ floor, points to a missing energy contribution. As the mantle solidifies the frame correction grows, so a later plateau or slow rise in the fraction can be that expected accounting rather than a leak; the solver residual carries no frame correction and is the reliable gate there. A `solver_residual_J / |dE_actual|` above ~10⁻⁵ points to an integrator-tolerance problem. Plot both columns over time using `tools/plot_energy_balance.py` (PROTEUS-side):
 
 ```bash
 python tools/plot_energy_balance.py output/<run_dir> --label <run_label>

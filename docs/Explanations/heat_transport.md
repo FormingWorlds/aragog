@@ -62,7 +62,7 @@ $$
 \kappa_h \;\to\; \max\!\big(\kappa_h,\ \kappa_h^\mathrm{floor}(\phi)\big),
 $$
 
-where $\kappa_h^\mathrm{floor}(\phi)$ is modulated by melt fraction so that the floor activates only in convectively suppressed solid regions. The thermal and chemical eddy diffusivities also accept independent scale factors:
+where $\kappa_h^\mathrm{floor}(\phi)$ is modulated by melt fraction and gated to convectively-unstable cells ($\partial S/\partial r < 0$): it lifts $\kappa_h$ only where the cell actually convects, and is zero in stably-stratified layers. SPIDER carries no eddy-diffusivity floor, so $\kappa_h^\mathrm{floor}=0$ in stratified layers is the SPIDER-consistent limit; gating this way keeps a just-frozen, stably-stratified front cell from receiving a spurious sign-flipped convective flux. The thermal and chemical eddy diffusivities also accept independent scale factors:
 
 | Key | Meaning |
 |-----|---------|

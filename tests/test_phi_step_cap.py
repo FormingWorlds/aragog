@@ -18,7 +18,7 @@ Tests cover:
 - Source-pattern regression: the rootfn class subclasses
   ``CV_RootFunction``; ``solve()`` wires it into ``cvode_options``
   with ``nr_rootfns=1``; ``_solve_cvode`` accepts ``phi_cap_rootfn``
-- Default 0.0 keeps existing behaviour: rootfn is never installed.
+- Default None (disabled) keeps existing behaviour: rootfn is never installed.
 """
 
 from __future__ import annotations
@@ -33,8 +33,11 @@ import pytest
 from aragog.parser import _EnergyParameters
 from aragog.solver.entropy_solver import (
     _CV_ROOTFN_AVAILABLE,
+    _DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN,
     _phi_cap_event_factory,
     _PhiCapRootFunction,
+    _resolve_entropy_margin,
+    _resolve_step_cap,
 )
 
 pytestmark = pytest.mark.unit
@@ -77,16 +80,26 @@ def _build_synthetic_eos_and_state(n_stag=8, phi_uniform=0.6):
 # ──────────────────────────────────────────────────────────────────────
 
 
-def test_phi_step_cap_default_is_zero():
-    """Default phi_step_cap must be 0.0 so existing tests are unchanged.
+def test_phi_step_cap_default_is_none_and_disables():
+    """The default phi_step_cap is the None disabled-sentinel.
 
-    A positive default would activate the rootfn on every solve()
-    call in production, which is a behavioural change and would
-    break the bit-parity contract with prior runs.
+    Standalone Aragog must keep the cap off unless a value is supplied: a
+    positive default would arm the rootfn on every solve() call, a
+    behavioural change that would break the bit-parity contract with prior
+    runs. ``None`` is the self-documenting disabled sentinel, and the solver
+    coerces it (and any non-positive value) to 0.0 before the arming
+    inequality, so the cap stays off.
     """
     e = _make_energy()
-    assert e.phi_step_cap == 0.0
-    assert isinstance(e.phi_step_cap, float)
+    assert e.phi_step_cap is None
+    # None, explicit zero, and negatives all resolve to the disabled 0.0.
+    assert _resolve_step_cap(e.phi_step_cap) == 0.0
+    assert _resolve_step_cap(0.0) == 0.0
+    assert _resolve_step_cap(-5.0) == 0.0
+    # A genuine positive cap survives coercion unchanged; the two verdicts
+    # land on opposite sides of the arming inequality.
+    assert _resolve_step_cap(0.05) == pytest.approx(0.05)
+    assert _resolve_step_cap(e.phi_step_cap) <= 0.0 < _resolve_step_cap(0.05)
 
 
 def test_phi_step_cap_accepts_positive_values():
@@ -96,8 +109,87 @@ def test_phi_step_cap_accepts_positive_values():
 
 
 def test_phi_step_cap_accepts_zero_explicitly():
-    """Explicit 0.0 (disabled) is a valid configuration."""
+    """Explicit 0.0 (disabled) is a valid configuration and resolves to off."""
     assert _make_energy(phi_step_cap=0.0).phi_step_cap == 0.0
+    assert _resolve_step_cap(_make_energy(phi_step_cap=0.0).phi_step_cap) == 0.0
+
+
+def test_resolve_step_cap_maps_disabled_sentinels_to_zero():
+    """``_resolve_step_cap`` collapses every disabled spelling to exactly 0.0.
+
+    The rootfn arming inequality is ``> 0.0`` on a plain float, so None,
+    zero, negatives, and non-finite values must all coerce to 0.0 (disabled)
+    while a finite positive cap passes through unchanged. This is the guard
+    that keeps a sentinel from being misread as a tiny positive threshold.
+    """
+    disabled_spellings = (
+        None,
+        0.0,
+        -0.0,
+        -1e-9,
+        -100.0,
+        float('nan'),
+        float('inf'),
+        float('-inf'),
+    )
+    for disabled in disabled_spellings:
+        assert _resolve_step_cap(disabled) == 0.0
+    # A real positive cap is preserved to full precision.
+    assert _resolve_step_cap(0.05) == pytest.approx(0.05)
+    assert _resolve_step_cap(200.0) == pytest.approx(200.0)
+    # Boundary of the ``> 0.0`` inequality: the smallest representable positive
+    # float is still an armed cap, not a disabled sentinel.
+    assert _resolve_step_cap(5e-324) > 0.0
+    # Discrimination: disabled sentinels and an armed cap sit on opposite
+    # sides of the ``> 0.0`` inequality, so they can never be confused.
+    assert _resolve_step_cap(None) <= 0.0 < _resolve_step_cap(0.05)
+
+
+def test_resolve_entropy_margin_falls_back_to_default_not_disabled():
+    """``_resolve_entropy_margin`` never yields a band that disables itself.
+
+    Unlike the step caps, zero is not a valid "off" state for the
+    phase-boundary band: a non-positive or non-finite margin would make every
+    ``abs(margin) < entropy_margin`` proximity test false and silently stop
+    arming the tighter stepping across a crossing. So ``None`` (attribute
+    absent, e.g. a coupled build predating the field), non-finite, and
+    non-positive inputs must fall back to the 200.0 default, while a genuine
+    positive band passes through unchanged. This is the opposite fallback
+    target from ``_resolve_step_cap`` (which maps disabled spellings to 0.0),
+    so the two must not be confused.
+    """
+    default = _DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN
+    assert default == pytest.approx(200.0, rel=1e-12)
+    for bad in (None, 0.0, -0.0, -1e-9, -300.0, float('nan'), float('inf'), float('-inf')):
+        assert _resolve_entropy_margin(bad) == pytest.approx(default, rel=1e-12)
+    # A genuine positive band survives unchanged, including a value far from
+    # the default so a silent collapse to 200 would be caught.
+    assert _resolve_entropy_margin(400.0) == pytest.approx(400.0, rel=1e-12)
+    assert _resolve_entropy_margin(50.0) == pytest.approx(50.0, rel=1e-12)
+    # Discrimination: a disabled-style input and a real band land on opposite
+    # sides of the default, never both collapsing to 0.0 the way a cap would.
+    assert (
+        _resolve_entropy_margin(-1.0) == pytest.approx(default) != _resolve_entropy_margin(50.0)
+    )
+
+
+def test_temperature_and_entropy_step_caps_default_none():
+    """The temperature and entropy step caps default to the None sentinel.
+
+    Standalone Aragog must keep the caps off unless a value is supplied. The
+    PROTEUS wrapper is what passes concrete positive caps for the coupled
+    zalmoxis stack, so a non-None default here would silently change every
+    standalone run. None resolves to the disabled 0.0; positive values
+    round-trip and resolve to themselves.
+    """
+    e = _make_energy()
+    assert e.temperature_step_cap is None
+    assert e.entropy_step_cap is None
+    assert _resolve_step_cap(e.temperature_step_cap) == 0.0
+    assert _resolve_step_cap(e.entropy_step_cap) == 0.0
+    assert _make_energy(temperature_step_cap=150.0).temperature_step_cap == pytest.approx(150.0)
+    assert _make_energy(entropy_step_cap=80.0).entropy_step_cap == pytest.approx(80.0)
+    assert _resolve_step_cap(150.0) == pytest.approx(150.0)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -748,3 +840,208 @@ def test_solve_cvode_uses_values_on_normal_completion_flag_0():
     assert result.t.size == 2
     assert result.y.shape == (n_state, 2)
     np.testing.assert_allclose(result.t, [0.1, 1.0])
+
+
+# ──────────────────────────────────────────────────────────────────────
+#               Per-cell melt-fraction guard (cliff onset)
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(
+    not _CV_ROOTFN_AVAILABLE,
+    reason='scikits_odes_sundials.cvode.CV_RootFunction unavailable',
+)
+def test_rootfn_per_cell_catches_single_deep_cell_crossing():
+    """A single deep cell crossing the window fires the cap; the global
+    mean alone would miss it.
+
+    Crystallisation onset has the bottom cell go fully molten to fully
+    solid in one step while every other cell stays molten. With uniform
+    density and unit volume the mass-weighted global melt fraction moves
+    by only ``1/N`` (here 1/32 = 0.031 vs cap 0.05), which on its own is
+    below the cap, while the per-cell guard sees a unit swing. The
+    discrimination guard asserts the two verdicts differ by far more than
+    rounding, so the test fails if the per-cell term is dropped.
+    """
+    n_stag = 32
+    eos, P_stag, volume, n_stag, S_stag, _ = _build_synthetic_eos_and_state(
+        n_stag=n_stag, phi_uniform=1.0
+    )
+    cap = 0.05
+    phi0_cell = np.full(n_stag, 1.0)
+    phi_post = np.full(n_stag, 1.0)
+    phi_post[0] = 0.0  # bottom cell crystallises completely
+    eos.melt_fraction.return_value = phi_post
+    global_dphi = 1.0 / n_stag
+    assert global_dphi < cap  # the cliff is invisible to a global-only cap
+
+    rootfn_pc = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=1.0,
+        cap=cap,
+        state_scale=np.ones(n_stag),
+        phi0_per_cell=phi0_cell,
+    )
+    g_pc = np.zeros(1)
+    rootfn_pc.evaluate(1.0, S_stag, g_pc)
+    assert g_pc[0] < 0.0  # per-cell guard fires (g crosses zero)
+
+    rootfn_global = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=1.0,
+        cap=cap,
+        state_scale=np.ones(n_stag),
+        phi0_per_cell=None,
+    )
+    g_global = np.zeros(1)
+    rootfn_global.evaluate(1.0, S_stag, g_global)
+    assert g_global[0] > 0.0  # global-only does not fire on the same state
+    # The per-cell verdict must be decisively different, not a near-tie.
+    assert g_global[0] - g_pc[0] > 0.5
+
+
+def test_event_factory_per_cell_mirrors_rootfn():
+    """The scipy fallback event mirrors the rootfn per-cell behaviour.
+
+    Same single-deep-cell crossing: the per-cell event value is negative
+    (fires) while the global-only event stays positive (does not). The two
+    must straddle zero, so a regression that drops the per-cell term in the
+    event factory is caught even when CVODE is unavailable.
+    """
+    n_stag = 32
+    eos, P_stag, volume, n_stag, S_stag, _ = _build_synthetic_eos_and_state(
+        n_stag=n_stag, phi_uniform=1.0
+    )
+    cap = 0.05
+    phi_post = np.full(n_stag, 1.0)
+    phi_post[0] = 0.0
+    eos.melt_fraction.return_value = phi_post
+
+    ev_pc = _phi_cap_event_factory(
+        eos,
+        P_stag,
+        volume,
+        n_stag,
+        1.0,
+        cap,
+        np.ones(n_stag),
+        phi0_per_cell=np.full(n_stag, 1.0),
+    )
+    ev_global = _phi_cap_event_factory(
+        eos, P_stag, volume, n_stag, 1.0, cap, np.ones(n_stag), phi0_per_cell=None
+    )
+    val_pc = ev_pc(1.0, S_stag)
+    val_global = ev_global(1.0, S_stag)
+    assert val_pc < 0.0 < val_global
+    assert val_global - val_pc > 0.5
+
+
+# ──────────────────────────────────────────────────────────────────────
+#               Per-cell temperature and entropy step caps
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(
+    not _CV_ROOTFN_AVAILABLE,
+    reason='scikits_odes_sundials.cvode.CV_RootFunction unavailable',
+)
+def test_rootfn_temperature_cap_catches_jump_phi_cap_misses():
+    """The temperature cap fires on a per-cell |ΔT| even when melt fraction
+    barely moves.
+
+    This is the solid-adiabat blind spot: a fully solid cell (phi pinned at 0)
+    keeps cooling, so the melt-fraction cap sees no change while the reported
+    temperature drops sharply. With the melt-fraction cap disabled (cap=0) and
+    only the temperature cap armed, a 500 K drop must drive g negative; with
+    the temperature cap also disabled the same state must NOT fire. The two
+    verdicts straddle zero, so dropping the temperature term is caught.
+    """
+    n_stag = 8
+    eos = MagicMock()
+    P_stag = np.linspace(1.0e9, 1.4e11, n_stag)
+    volume = np.full(n_stag, 1.0e18)
+    S_stag = np.full(n_stag, 3000.0)
+    T0 = np.full(n_stag, 6000.0)
+    eos.temperature.return_value = T0 - 500.0  # 500 K drop, no phi change
+
+    rootfn_T = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=0.0,
+        cap=0.0,
+        state_scale=np.ones(n_stag),
+        cap_temperature=200.0,
+        T0_per_cell=T0,
+    )
+    gT = np.zeros(1)
+    rootfn_T.evaluate(1.0, S_stag, gT)
+    assert gT[0] < 0.0  # 200 - 500 = -300 -> fires
+
+    rootfn_off = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=0.0,
+        cap=0.0,
+        state_scale=np.ones(n_stag),
+        cap_temperature=0.0,
+        T0_per_cell=T0,
+    )
+    goff = np.zeros(1)
+    rootfn_off.evaluate(1.0, S_stag, goff)
+    assert goff[0] > 0.0  # no cap armed -> never fires
+    assert goff[0] - gT[0] > 0.5
+
+
+def test_event_factory_entropy_cap_catches_native_variable_jump():
+    """The entropy cap fires on a per-cell |ΔS| with no EOS lookup.
+
+    S is the native solver variable, so the entropy cap reads y*scale directly.
+    A 200 J/kg/K jump with cap_entropy=50 fires (event value negative); with the
+    cap disabled it does not. The scipy event mirrors the CVODE rootfn, so this
+    guards the fallback path. Straddle-zero discrimination as above.
+    """
+    n_stag = 6
+    eos = MagicMock()
+    S0 = np.full(n_stag, 2500.0)
+    # y is nondim; with unit state_scale, S = y. Jump the entropy by 200.
+    y_jumped = S0 + 200.0
+
+    ev_S = _phi_cap_event_factory(
+        eos,
+        np.full(n_stag, 5.0e10),
+        np.full(n_stag, 1.0e18),
+        n_stag,
+        0.0,
+        0.0,
+        np.ones(n_stag),
+        cap_entropy=50.0,
+        S0_per_cell=S0,
+    )
+    ev_off = _phi_cap_event_factory(
+        eos,
+        np.full(n_stag, 5.0e10),
+        np.full(n_stag, 1.0e18),
+        n_stag,
+        0.0,
+        0.0,
+        np.ones(n_stag),
+        cap_entropy=0.0,
+        S0_per_cell=S0,
+    )
+    val_S = ev_S(1.0, y_jumped)
+    val_off = ev_off(1.0, y_jumped)
+    assert val_S < 0.0 < val_off
+    assert val_off - val_S > 0.5
+    # The entropy cap must not have called the EOS (native-variable path).
+    assert not eos.temperature.called
+    assert not eos.density.called

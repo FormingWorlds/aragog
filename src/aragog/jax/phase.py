@@ -683,19 +683,24 @@ def compute_mlt(
         jnp.full_like(kh_raw, -params.eddy_diff_chemical),
     )
 
-    # kappa_h floor (phase-dependent, modulated by melt fraction).
-    # Production PROTEUS runs use kappah_floor = 10 m^2/s; the
-    # phi-modulated f_floor ramps from 0 in solid layers (no spurious
-    # convective flux) to ~1 in mushy/liquid layers, where physical
-    # convection is expected and MLT can otherwise numerically freeze.
-    # See solver/entropy_state.py for the same comment block on the
-    # numpy path. The transition is anchored on the rheological critical
-    # melt fraction (``params.phi_rheo``, default 0.4) with width
-    # ``params.phi_width`` (default 0.15) so the floor turns on exactly
-    # where Costa-blended viscosity drops, consistent across config knobs.
+    # kappa_h floor (phase-dependent, modulated by melt fraction), gated to
+    # convectively-unstable cells. Production PROTEUS runs use
+    # kappah_floor = 10 m^2/s; the phi-modulated f_floor ramps from 0 in
+    # solid layers to ~1 in mushy/liquid layers, where MLT can otherwise
+    # numerically freeze when the entropy gradient gets small. The
+    # ``conv_mask`` gate confines the floor to cells that are actually
+    # convecting (dS/dr < 0): a stably-stratified, just-frozen mushy cell at
+    # the crystallisation front must NOT receive a floored eddy diffusivity,
+    # because the signed convective flux rho*T*kappa_h*(-dS/dr) would then
+    # inject a spurious sign-flipped flux that pins the cell sub-solidus.
+    # SPIDER has no kappa_h floor, so floor = 0 in stratified layers is the
+    # SPIDER-consistent limit. The transition is anchored on the rheological
+    # critical melt fraction (``params.phi_rheo``, default 0.4) with width
+    # ``params.phi_width`` (default 0.15). See solver/entropy_state.py for
+    # the numpy twin.
     phi_basic = phase_basic.melt_fraction
     f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
-    kh_floor = params.kappah_floor * f_floor
+    kh_floor = params.kappah_floor * f_floor * conv_mask
     kappa_h = jnp.maximum(kappa_h, kh_floor)
 
     # SPIDER energy.c:220-223 CMB fix: use kappa_h from the first interior

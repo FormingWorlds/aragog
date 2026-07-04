@@ -32,6 +32,21 @@ needs_eos = pytest.mark.skipif(
     reason=f'SPIDER P-S tables not found at {EOS_DIR}',
 )
 
+
+def _cvode_available():
+    try:
+        from aragog.solver.entropy_solver import _CVODE_AVAILABLE
+
+        return bool(_CVODE_AVAILABLE)
+    except Exception:
+        return False
+
+
+needs_cvode = pytest.mark.skipif(
+    not _cvode_available(),
+    reason='scikits-odes-sundials (CVODE) not installed',
+)
+
 SECS_PER_YEAR = 31557600.0
 
 
@@ -406,6 +421,528 @@ class TestEnergyConservation:
             f'(E_int={E_int:.2e} J, -Q_lost={-Q_lost:.2e} J); '
             f'should be < 5 %.'
         )
+
+
+# -- Test 2b: per-call solver-residual telescoping -----------------------------
+
+
+@needs_eos
+@pytest.mark.smoke
+class TestSolverResidualTelescoping:
+    """The per-call entropy-equation self-consistency residual must telescope.
+
+    ``EntropySolver._compute_step_energy_integrals`` reconstructs, at every
+    accepted integrator substep, the discrete entropy-equation identity
+
+        Σ_i capacitance_i (dS/dt)_i V_i == -F_int A_int + F_cmb A_cmb
+                                            + Q_radio + Q_tidal
+
+    where ``capacitance = ρ_phase T``. The interior flux contributions
+    telescope, so the LHS-RHS residual is machine-zero at every state -- but
+    only when the LHS mass weighting uses the SAME phase density the RHS
+    capacitance used. Re-deriving the cell mass from the hard-masked table
+    density (``EntropyEOS.density``) instead of the tanh-blended phase density
+    (``EntropyPhaseEvaluator.density``) leaves a residual equal to the local
+    flux divergence times the fractional density mismatch, concentrated in the
+    phase-transition band: a sub-percent density difference against the
+    ~1e16 W flux divergence inflates the integrated residual to ~1e23 J.
+
+    Verifies the conservation invariant (exact discrete energy telescoping)
+    with a discrimination guard against the inconsistent-density weighting.
+
+    See docs/How-to/test_infrastructure.md, test_categorization.md,
+    test_building.md.
+    """
+
+    @staticmethod
+    def _build_two_phase_solver(end_time=50.0):
+        """A small PALEOS-table solver whose stratified IC straddles the
+        solidus, so part of the mantle sits in the mushy band where the two
+        density routines diverge."""
+        from aragog.eos.entropy import EntropyEOS
+        from aragog.parser import (
+            Parameters,
+        )
+        from aragog.parser import (
+            _BoundaryConditionsParameters as BC,
+        )
+        from aragog.parser import (
+            _EnergyParameters as EN,
+        )
+        from aragog.parser import (
+            _InitialConditionParameters as IC,
+        )
+        from aragog.parser import (
+            _MeshParameters as MESHP,
+        )
+        from aragog.parser import (
+            _PhaseMixedParameters as PM,
+        )
+        from aragog.parser import (
+            _PhaseParameters as PH,
+        )
+        from aragog.parser import (
+            _SolverParameters as SV,
+        )
+        from aragog.solver.entropy_solver import EntropySolver
+
+        eos = EntropyEOS(EOS_DIR)
+        rhos = 4078.95095544
+        bc = BC(
+            outer_boundary_condition=4,
+            outer_boundary_value=1e2,
+            inner_boundary_condition=2,
+            inner_boundary_value=0.0,
+            emissivity=1.0,
+            equilibrium_temperature=255.0,
+            core_heat_capacity=880.0,
+            core_bc='quasi_steady',
+        )
+        en = EN(
+            conduction=True,
+            convection=True,
+            gravitational_separation=False,
+            mixing=False,
+            radionuclides=False,
+            tidal=False,
+            solver_method='bdf',
+            use_jax_jacobian=False,
+            eddy_diffusivity_thermal=1.0,
+            kappah_floor=10.0,
+        )
+        ic = IC(initial_condition=1, surface_temperature=2000.0, basal_temperature=4000.0)
+        mesh = MESHP(
+            outer_radius=6.371e6,
+            inner_radius=3.480e6,
+            number_of_nodes=80,
+            mixing_length_profile='constant',
+            core_density=10500.0,
+            eos_method=1,
+            surface_density=rhos,
+            adams_williamson_beta=1.1115348931e-07,
+            adiabatic_bulk_modulus=260e9,
+            gravitational_acceleration=9.81,
+            surface_pressure=0.0,
+        )
+        pm = PM(
+            latent_heat_of_fusion=4e5,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus=str(EOS_DIR / 'solidus_P-S.dat'),
+            liquidus=str(EOS_DIR / 'liquidus_P-S.dat'),
+            phase='mixed',
+            phase_transition_width=0.01,
+            grain_size=1e-3,
+            matprop_smooth_width=1e-2,
+            const_properties=False,
+        )
+        pl = PH(
+            density=rhos,
+            heat_capacity=1000.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3e-5,
+            melt_fraction=1.0,
+            viscosity=1e2,
+        )
+        ps = PH(
+            density=rhos,
+            heat_capacity=1000.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3e-5,
+            melt_fraction=0.0,
+            viscosity=1e21,
+        )
+        sv = SV(
+            start_time=0.0, end_time=end_time, atol=1e-8, rtol=1e-8, tsurf_poststep_change=1e9
+        )
+        params = Parameters(
+            boundary_conditions=bc,
+            energy=en,
+            initial_condition=ic,
+            mesh=mesh,
+            phase_solid=ps,
+            phase_liquid=pl,
+            phase_mixed=pm,
+            radionuclides=[],
+            solver=sv,
+        )
+        s = EntropySolver(params, entropy_eos=eos)
+        s.initialize()
+        return s, eos
+
+    def _stratified_ic(self, solver):
+        """Entropy profile that puts the deep half low (mushy / just-frozen)
+        and the shallow half high (molten), so the field crosses the solidus
+        somewhere in the mantle and a mushy band is guaranteed."""
+        mesh = solver.evaluator.mesh
+        rs = np.asarray(mesh.staggered.radii).ravel()
+        Ps = np.asarray(mesh.staggered_pressure).ravel()
+        S_sol = np.asarray(solver.entropy_eos.solidus_entropy(Ps)).ravel()
+        S_liq = np.asarray(solver.entropy_eos.liquidus_entropy(Ps)).ravel()
+        x = (rs - rs.min()) / (rs.max() - rs.min())  # 0 at CMB, 1 at surface
+        # deep half mid-mushy (phi ~ 0.5), shallow half just above the
+        # liquidus (molten), so the front sits at mid-radius.
+        S_mushy = S_sol + 0.5 * (S_liq - S_sol)
+        S_molten = S_liq * 1.02
+        return np.where(x < 0.5, S_mushy, S_molten)
+
+    def test_residual_telescopes_to_machine_zero_across_mushy_zone(self):
+        """With a mushy zone present, the reported solver residual must be a
+        machine-zero fraction of the boundary-flux integral, AND the
+        inconsistent ``eos.density`` weighting must produce a residual orders
+        of magnitude larger (the discrimination guard against a revert)."""
+        from aragog.solver.entropy_solver import SECS_PER_YEAR
+
+        solver, eos = self._build_two_phase_solver()
+        S0 = self._stratified_ic(solver)
+        solver.set_initial_entropy(S0)
+        solver.solve()
+
+        d = solver._compute_step_energy_integrals()
+        flux_scale = max(abs(d['F_int']), abs(d['F_cmb']), 1.0)
+
+        # The run must actually have a mushy zone and evolve, else the test
+        # is vacuous (the density routines agree everywhere outside it).
+        sol = solver._solution
+        n_stag = solver._n_stag
+        P_stag = solver._P_stag_flat
+        S_first = sol.y[:n_stag, 0] if sol.y.ndim == 2 else sol.y[:n_stag]
+        phi0 = np.asarray(eos.melt_fraction(P_stag, S_first)).ravel()
+        n_mushy = int(np.sum((phi0 > 0.0) & (phi0 < 1.0)))
+        assert n_mushy >= 3, f'IC must straddle the solidus; got {n_mushy} mushy cells'
+
+        # Conservation invariant: the consistent-density residual telescopes.
+        resid_frac = abs(d['solver_residual']) / flux_scale
+        assert resid_frac < 1e-9, (
+            f'solver_residual is {resid_frac:.2e} of the flux integral; '
+            f'the discrete entropy equation must telescope to machine zero'
+        )
+
+        # Discrimination guard: recompute the residual with the OLD
+        # ``eos.density`` (hard-masked) weighting. It must be many orders of
+        # magnitude larger, so a revert to the inconsistent weighting fails.
+        # Heating is off in this IC, so the RHS reduces to the boundary
+        # fluxes and the guard isolates the LHS density-weighting error.
+        vol = solver._volume_flat
+        r_basic = solver._r_basic_flat
+        A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
+        A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
+        dt_s = np.diff(np.asarray(sol.t, dtype=float)) * SECS_PER_YEAR
+        n_steps = int(sol.t.size)
+        p_naive = np.zeros(n_steps)
+        for i in range(n_steps):
+            t_i = float(sol.t[i])
+            y_col = sol.y[:, i] if sol.y.ndim == 2 else sol.y
+            S_i = y_col[:n_stag]
+            dSdt_full = np.asarray(solver.dSdt(t_i, y_col)).ravel()
+            dSdt_stag = dSdt_full[:n_stag] / SECS_PER_YEAR
+            F_int_i = float(solver.state._heat_flux[-1])
+            F_cmb_i = float(solver.state._heat_flux[0])
+            rho_eos = np.asarray(eos.density(P_stag, S_i)).ravel()
+            T_phase = np.asarray(solver.state.phase_staggered.temperature()).ravel()
+            lhs_naive = float(np.sum(rho_eos * T_phase * dSdt_stag * vol))
+            p_naive[i] = lhs_naive - (-F_int_i * A_int + F_cmb_i * A_cmb)
+        naive_resid = float(np.sum(0.5 * (p_naive[:-1] + p_naive[1:]) * dt_s))
+        naive_frac = abs(naive_resid) / flux_scale
+        assert naive_frac > 1e3 * resid_frac, (
+            f'discrimination guard: eos.density weighting residual '
+            f'({naive_frac:.2e}) must dwarf the consistent one ({resid_frac:.2e})'
+        )
+
+    def test_compression_work_matches_enthalpy_change(self):
+        """The structure-re-solve compression term equals the adiabatic
+        enthalpy change Sum mass (h(P_new, S) - h(P_old, S)) and vanishes for
+        an unchanged structure.
+
+        Verifies the conservation primitive that closes the dynamic-
+        contraction term in E_residual_cons_frac, with a static-structure
+        guard (zero) and a shape-change guard (zero), and a discrimination
+        guard that a real pressure rise moves a non-trivial fraction of the
+        mantle enthalpy."""
+        solver, eos = self._build_two_phase_solver()
+        S0 = self._stratified_ic(solver)
+        P_old = np.asarray(solver._P_stag_flat).ravel().copy()
+        mesh = solver.evaluator.mesh
+        mass = np.asarray(mesh.staggered_effective_density).ravel() * solver._volume_flat
+
+        # Static structure: P unchanged -> exactly zero compression.
+        comp_static = solver._compute_compression_work(P_old, S0, mass)
+        assert comp_static == 0.0, 'static structure must carry no compression work'
+
+        # Contraction: a 5 percent pressure rise gains compression enthalpy.
+        solver._P_stag_flat = P_old * 1.05
+        comp = solver._compute_compression_work(P_old, S0, mass)
+        h_old = np.asarray(eos.specific_enthalpy(P_old, S0)).ravel()
+        h_new = np.asarray(eos.specific_enthalpy(P_old * 1.05, S0)).ravel()
+        expect = float(np.sum(mass * (h_new - h_old)))
+        np.testing.assert_allclose(comp, expect, rtol=1e-12)
+        assert comp > 0.0, 'compression (rising P) must add energy'
+
+        # Discrimination: the term is a non-trivial fraction of the enthalpy.
+        e_state = float(np.sum(mass * h_old))
+        assert abs(comp) > 1e-4 * abs(e_state), (
+            'a 5 percent pressure rise must move a resolvable fraction of '
+            'the mantle enthalpy, else the test is vacuous'
+        )
+
+        # Shape change (mesh resolution differs) -> undefined per-cell delta,
+        # must return zero rather than crash.
+        solver._P_stag_flat = (P_old * 1.05)[:-1]
+        assert solver._compute_compression_work(P_old, S0, mass) == 0.0
+
+    def test_entropy_remap_carries_field_by_mass_parcel(self):
+        """The conservative remap interpolates the carried entropy onto the new
+        mesh at equal cumulative mantle mass fraction, is a no-op when the grid
+        is unchanged, and falls back to the input when the node count changes.
+
+        The deformation moves r_core and r_surf by different factors and
+        reshapes the interior mass distribution, so each parcel's mass fraction
+        shifts. The remap must match interpolation on mass fraction ``f``, not
+        on the raw length coordinate ``xi``.
+
+        Discrimination guard: under this non-uniform deformation the mass-
+        fraction remap differs from the raw-``xi`` interpolation by more than
+        rounding, confirming the remap moves entropy by mass parcel rather than
+        by length coordinate."""
+        from aragog.solver.entropy_solver import _mantle_mass_fraction
+
+        solver, _ = self._build_two_phase_solver()
+        S0 = self._stratified_ic(solver)
+        solver.set_initial_entropy(S0)
+        solver.solve()
+        xi = solver.staggered_mass_coordinates
+        n = len(xi)
+        assert n == solver._n_stag, 'mass-coordinate length must match the staggered mesh'
+        assert np.all(np.diff(xi) > 0) or np.all(np.diff(xi) < 0), (
+            'mass coordinates must be monotonic for np.interp'
+        )
+
+        S_field = np.linspace(3000.0, 4000.0, n)
+        asc = xi[0] < xi[-1]
+        # Non-uniform re-solve: endpoints move by different factors and the
+        # interior density profile reshapes, so mass fractions shift per parcel
+        # (a uniform scale would leave every f unchanged and remap nothing).
+        f_old = _mantle_mass_fraction(xi)
+        lo, hi = min(xi[0], xi[-1]), max(xi[0], xi[-1])
+        lo_new, hi_new = lo * 0.994, hi * 0.967
+        f_reshaped = f_old**1.08
+        xi_new = np.cbrt(lo_new**3 + (hi_new**3 - lo_new**3) * f_reshaped)
+        orig = type(solver).staggered_mass_coordinates
+        try:
+            type(solver).staggered_mass_coordinates = property(lambda self: xi_new)
+            solver._xi_pre_resolve = xi.copy()
+            S_remap = solver._remap_entropy_to_current_mesh(S_field.copy())
+            f_new = _mantle_mass_fraction(xi_new)
+            expect = (
+                np.interp(f_new, f_old, S_field)
+                if f_old[0] < f_old[-1]
+                else np.interp(f_new[::-1], f_old[::-1], S_field[::-1])[::-1]
+            )
+            np.testing.assert_allclose(S_remap, expect, rtol=1e-12)
+            # Discrimination: the mass-fraction remap differs from a raw-xi
+            # interpolation of the same deformation by more than rounding.
+            raw_xi = (
+                np.interp(xi_new, xi, S_field)
+                if asc
+                else np.interp(xi_new[::-1], xi[::-1], S_field[::-1])[::-1]
+            )
+            assert np.max(np.abs(S_remap - raw_xi)) > 1e-6 * np.ptp(S_field), (
+                'the remap must interpolate on mass fraction, not raw mass-radius'
+            )
+            # The remap genuinely moves the field (parcels shifted).
+            assert np.max(np.abs(S_remap - S_field)) > 1e-6 * np.ptp(S_field), (
+                'a non-uniform re-solve must move the entropy field by parcel'
+            )
+            assert solver._xi_pre_resolve is None, 'remap must consume the cached grid'
+
+            # No-op when the mass grid is unchanged.
+            solver._xi_pre_resolve = xi_new.copy()
+            np.testing.assert_array_equal(
+                solver._remap_entropy_to_current_mesh(S_field.copy()), S_field
+            )
+            # Node-count mismatch -> fall back to the input unchanged.
+            solver._xi_pre_resolve = xi_new[:-1].copy()
+            np.testing.assert_array_equal(
+                solver._remap_entropy_to_current_mesh(S_field.copy()), S_field
+            )
+        finally:
+            type(solver).staggered_mass_coordinates = orig
+
+
+# -- Test 2c: CVODE energy-diagnostic output grid ------------------------------
+
+
+@needs_eos
+@needs_cvode
+@pytest.mark.smoke
+class TestCvodeEnergyOutputGrid:
+    """The per-call energy integrals must resolve the within-call flux decay.
+
+    A CVODE macro-step solve returns the solution only at the times in the
+    requested tspan. With just the two call endpoints, the trapezoidal
+    integral of a steeply-decaying boundary flux is tens of percent wrong,
+    which is the dominant term in ``E_residual_cons_frac``. ``EntropySolver``
+    requests ``_cvode_output_points`` intermediate points (front-loaded) so
+    the integral resolves the decay; CVODE interpolates them from its own
+    internal steps, so the integration and final state are unchanged.
+
+    Verifies that the dense grid recovers the flux integral to within a
+    small tolerance of a high-resolution scipy reference, with a
+    discrimination guard that the two-point grid is an order of magnitude
+    worse. See docs/How-to/test_infrastructure.md.
+    """
+
+    @staticmethod
+    def _build_greybody_solver(method, n_out=None):
+        """Grey-body surface cooling: the surface flux ~ sigma T_top^4 decays
+        steeply within the call, the regime that breaks a 2-point integral."""
+        from aragog.eos.entropy import EntropyEOS
+        from aragog.parser import (
+            Parameters,
+        )
+        from aragog.parser import (
+            _BoundaryConditionsParameters as BC,
+        )
+        from aragog.parser import (
+            _EnergyParameters as EN,
+        )
+        from aragog.parser import (
+            _InitialConditionParameters as IC,
+        )
+        from aragog.parser import (
+            _MeshParameters as MESHP,
+        )
+        from aragog.parser import (
+            _PhaseMixedParameters as PM,
+        )
+        from aragog.parser import (
+            _PhaseParameters as PH,
+        )
+        from aragog.parser import (
+            _SolverParameters as SV,
+        )
+        from aragog.solver.entropy_solver import EntropySolver
+
+        eos = EntropyEOS(EOS_DIR)
+        rhos = 4078.95095544
+        bc = BC(
+            outer_boundary_condition=1,  # grey-body radiative surface
+            outer_boundary_value=0.0,
+            inner_boundary_condition=2,
+            inner_boundary_value=0.0,
+            emissivity=1.0,
+            equilibrium_temperature=255.0,
+            core_heat_capacity=880.0,
+            core_bc='quasi_steady',
+        )
+        en = EN(
+            conduction=True,
+            convection=True,
+            gravitational_separation=False,
+            mixing=False,
+            radionuclides=False,
+            tidal=False,
+            solver_method=method,
+            use_jax_jacobian=False,
+            eddy_diffusivity_thermal=1.0,
+            kappah_floor=10.0,
+        )
+        ic = IC(initial_condition=1, surface_temperature=3000.0, basal_temperature=4000.0)
+        mesh = MESHP(
+            outer_radius=6.371e6,
+            inner_radius=3.480e6,
+            number_of_nodes=60,
+            mixing_length_profile='constant',
+            core_density=10500.0,
+            eos_method=1,
+            surface_density=rhos,
+            adams_williamson_beta=1.1115348931e-07,
+            adiabatic_bulk_modulus=260e9,
+            gravitational_acceleration=9.81,
+            surface_pressure=0.0,
+        )
+        pm = PM(
+            latent_heat_of_fusion=4e5,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus=str(EOS_DIR / 'solidus_P-S.dat'),
+            liquidus=str(EOS_DIR / 'liquidus_P-S.dat'),
+            phase='mixed',
+            phase_transition_width=0.01,
+            grain_size=1e-3,
+            matprop_smooth_width=1e-2,
+            const_properties=False,
+        )
+        pl = PH(
+            density=rhos,
+            heat_capacity=1000.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3e-5,
+            melt_fraction=1.0,
+            viscosity=1e2,
+        )
+        ps = PH(
+            density=rhos,
+            heat_capacity=1000.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3e-5,
+            melt_fraction=0.0,
+            viscosity=1e21,
+        )
+        sv = SV(start_time=0.0, end_time=5e3, atol=1e-8, rtol=1e-8, tsurf_poststep_change=1e9)
+        params = Parameters(
+            boundary_conditions=bc,
+            energy=en,
+            initial_condition=ic,
+            mesh=mesh,
+            phase_solid=ps,
+            phase_liquid=pl,
+            phase_mixed=pm,
+            radionuclides=[],
+            solver=sv,
+        )
+        s = EntropySolver(params, entropy_eos=eos)
+        s.initialize()
+        if n_out is not None:
+            s._cvode_output_points = n_out
+        Ps = np.asarray(s.evaluator.mesh.staggered_pressure).ravel()
+        S_liq = np.asarray(s.entropy_eos.liquidus_entropy(Ps)).ravel()
+        s.set_initial_entropy(S_liq * 1.01)
+        return s
+
+    def test_dense_output_recovers_flux_integral(self):
+        """The dense front-loaded grid recovers F_int to within 2 percent of
+        a high-resolution scipy reference, while the 2-point grid is at least
+        an order of magnitude worse and ``dt_actual`` is unchanged."""
+        ref = self._build_greybody_solver('bdf')
+        ref.solve()
+        f_ref = ref._compute_step_energy_integrals()['F_int']
+        assert ref._solution.t.size > 200, 'scipy reference grid must be dense'
+        assert abs(f_ref) > 1e28, 'cooling must drive a non-trivial surface flux'
+
+        s2 = self._build_greybody_solver('cvode', n_out=2)
+        s2.solve()
+        d2 = s2._compute_step_energy_integrals()
+        err_2pt = abs(d2['F_int'] / f_ref - 1.0)
+
+        sN = self._build_greybody_solver('cvode', n_out=65)
+        sN.solve()
+        dN = sN._compute_step_energy_integrals()
+        err_dense = abs(dN['F_int'] / f_ref - 1.0)
+
+        # The dense grid must recover the integral; the 2-point grid must not.
+        assert err_dense < 2e-2, (
+            f'dense-grid F_int off by {err_dense:.2e} from the reference; '
+            f'the front-loaded output grid must resolve the flux decay'
+        )
+        assert err_2pt > 10.0 * err_dense, (
+            f'discrimination guard: 2-point F_int error ({err_2pt:.2e}) must '
+            f'dwarf the dense-grid error ({err_dense:.2e})'
+        )
+        # The output grid must not perturb the integration window.
+        dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
+        dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])
+        np.testing.assert_allclose(dt_dense, dt_ref, rtol=1e-10)
 
 
 # -- Test 3: Grey-body cooling timescale ---------------------------------------
