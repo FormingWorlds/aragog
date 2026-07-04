@@ -9,45 +9,232 @@ on:
       - "pyproject.toml"
       - "tools/generate_test_badges.py"
       - ".github/workflows/publish-test-badges.yml"
+  pull_request:
+    paths:
+      - "tests/**"
+      - "src/aragog/**"
+      - "pyproject.toml"
+      - "tools/generate_test_badges.py"
+      - ".github/workflows/publish-test-badges.yml"
   workflow_dispatch:
 
+# Least privilege by default: every job runs read-only unless it raises its
+# own grant. Only the publish job, which writes the badges branch, asks for
+# contents: write, so a pull-request run never holds write access to the repo.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: badges-${{ github.ref }}
-  cancel-in-progress: false
+  # Serialise publishing runs on main so one never overtakes another, but let
+  # a fresh push to a pull request cancel that PR's superseded badge run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  publish:
+  regenerate:
+    name: Regenerate badge JSON
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          # Full history so setuptools-scm can resolve the version from the
+          # most recent tag when the package is built below.
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up conda env (sundials from conda-forge)
+        # The counter runs pytest --collect-only, which imports the test
+        # modules; several import the JAX + scikits-odes solver stack at
+        # module scope. conda-forge provides a prebuilt SUNDIALS so the
+        # scikits-odes-sundials wheel below compiles against real headers
+        # instead of failing on the stock runner, which carries none.
+        uses: mamba-org/setup-micromamba@v2
         with:
-          python-version: "3.12"
+          environment-name: aragog-badges
+          create-args: >-
+            python=3.12
+            sundials
+          condarc: |
+            channels:
+              - conda-forge
 
-      - name: Install package with test extra
+      - name: Install solver stack and package
         run: |
-          python -m pip install --upgrade pip
-          pip install ".[test,jax]"
+          # scikits-odes-sundials builds against the conda SUNDIALS above.
+          # Install it directly rather than through the scikits-odes
+          # metapackage, which drags in the Fortran DAE solvers aragog does
+          # not use. pytest-timeout registers the timeout marker the suite
+          # applies at module scope, so collection stays clean under
+          # --strict-markers. Then install aragog editably and its runtime
+          # deps; jax/scikits are already satisfied, so no extra source build.
+          pip install pytest pytest-xdist pytest-dependency pytest-timeout
+          pip install scikits-odes-sundials jax equinox
+          pip install -e .
 
-      - name: Generate badges
+      - name: Regenerate badge JSON files
+        # Runs on every trigger, including pull requests, so a generator or
+        # test-collection regression fails the check before merge rather
+        # than silently after it reaches main.
         run: python tools/generate_test_badges.py --out .github/badges/
 
-      - name: Commit and push if changed
+      - name: Validate the badge JSON
+        # Fail the check on a malformed file or a zero total count so a
+        # collection regression never reaches the badges branch behind a
+        # green check. These are the exact bytes the publish job pushes.
         run: |
-          git config user.name actions
-          git config user.email actions@github.com
-          git add .github/badges/
-          if git diff --cached --quiet; then
-            echo "No badge changes to commit."
-          else
-            git commit -m "ci: refresh test count badges [skip ci]"
-            git push
-          fi
+          set -euo pipefail
+          python3 - .github/badges <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          payload = Path(sys.argv[1])
+          expected = ('tests-total.json', 'tests-unit.json', 'tests-integration.json')
+          counts = {}
+          for name in expected:
+              path = payload / name
+              if not path.is_file():
+                  sys.exit(f'Missing badge file: {path}')
+              data = json.loads(path.read_text())
+              message = str(data.get('message', '')).strip()
+              if data.get('schemaVersion') != 1 or not message.isdigit():
+                  sys.exit(f'Malformed badge file: {path}')
+              counts[name] = int(message)
+          # A zero total means collection found nothing, the failure this
+          # badge is most exposed to, so reject it rather than publish a
+          # green "0 tests".
+          if counts['tests-total.json'] < 1:
+              sys.exit('tests-total count is zero; treating as a collection failure.')
+          print(f'Validated {len(expected)} badge file(s): {counts}')
+          PY
+
+      - name: Upload badge payload
+        # Hand the validated files to the publish job unchanged, so the
+        # bytes that reach the badges branch are exactly the ones checked
+        # here.
+        uses: actions/upload-artifact@v4
+        with:
+          name: badge-payload
+          path: .github/badges/tests-*.json
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: Publish to the badges branch
+    needs: regenerate
+    # Pull-request runs stop after regenerate: they validate the badges but
+    # never publish, so the write grant below is never exercised on a PR.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Guard against publishing from a non-main ref
+        # A manual dispatch can be launched from any branch. Publishing
+        # another ref's test count to the public badge would be misleading,
+        # so refuse it loudly before anything is written.
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "Badges may only be published from main; this run is on ${{ github.ref }}." >&2
+          exit 1
+
+      - name: Download badge payload
+        uses: actions/download-artifact@v4
+        with:
+          name: badge-payload
+          path: badge_payload
+
+      - name: Publish badges to the badges branch
+        # The main ruleset requires a reviewed pull request for every change,
+        # so the badge JSON cannot be committed back onto main from CI. It is
+        # published instead to a dedicated badges branch that lives outside
+        # that ruleset; shields.io reads the JSON from that branch's raw URL.
+        # The branch carries only the badge files plus a README; consumers
+        # that need the source tree use main. The commit is marked [skip ci],
+        # and no workflow triggers on the badges branch, so a refresh never
+        # starts a run.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          payload="${GITHUB_WORKSPACE}/badge_payload"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          branch="badges"
+
+          # Each fallible step returns explicitly: the function is invoked
+          # from a conditional, which disables set -e inside it, so a failure
+          # must be propagated by hand rather than relied on to abort.
+          # Returns 0 on a successful push or a no-op, 1 on a retryable failure.
+          attempt_publish() {
+            local work exists rc
+
+            # Tell "branch absent" (ls-remote exit 2) apart from an
+            # unreachable remote (network/auth, other non-zero), so a
+            # transient failure is retried instead of being mistaken for
+            # an empty branch and overwritten with a root commit.
+            if git ls-remote --exit-code --heads "${remote}" "${branch}" >/dev/null 2>&1; then
+              exists=1
+            else
+              rc=$?
+              if [ "${rc}" -eq 2 ]; then
+                exists=0
+              else
+                echo "Could not reach the remote to check ${branch} (rc=${rc})." >&2
+                return 1
+              fi
+            fi
+
+            work="$(mktemp -d)" || return 1
+            cd "${work}" || return 1
+            git init -q || return 1
+
+            if [ "${exists}" -eq 1 ]; then
+              git fetch -q "${remote}" "${branch}" || return 1
+              git checkout -q FETCH_HEAD || return 1
+              # Drop everything the branch carried so the new commit holds
+              # only the freshly generated files; a stale leftover would
+              # otherwise survive the checkout-and-overwrite.
+              git rm -rfq --ignore-unmatch . >/dev/null 2>&1 || return 1
+            fi
+
+            cp "${payload}"/tests-*.json . || return 1
+            printf '%s\n' \
+              '# Test count badges' \
+              '' \
+              'Machine-generated by the `Refresh test count badges` workflow that runs on `main`.' \
+              'The documentation pages read this JSON via a shields.io endpoint badge.' \
+              'Do not edit or delete this branch by hand; the source lives on `main`.' \
+              > README.md || return 1
+            git add tests-total.json tests-unit.json tests-integration.json README.md || return 1
+
+            if [ "${exists}" -eq 1 ] && git diff --cached --quiet; then
+              echo "Badge counts unchanged; nothing to publish."
+              return 0
+            fi
+
+            git -c user.name="actions" -c user.email="actions@github.com" \
+              commit -qm "Update test count badges [skip ci]" || return 1
+            git push -q "${remote}" "HEAD:refs/heads/${branch}" || return 1
+            echo "Published refreshed badges to the ${branch} branch."
+            return 0
+          }
+
+          # The concurrency group serialises runs on main, so a competing run
+          # cannot move the branch tip mid-push; the retry only covers a
+          # transient network or fetch hiccup. Each attempt re-checks the
+          # branch state from a clean working tree.
+          for attempt in 1 2 3; do
+            if attempt_publish; then
+              exit 0
+            fi
+            echo "Publish attempt ${attempt} failed; retrying."
+            sleep 2
+          done
+          echo "Failed to publish badges after 3 attempts." >&2
+          exit 1
