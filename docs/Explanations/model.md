@@ -96,10 +96,10 @@ In the partially molten regime, melt and solid separate vertically by gravity. T
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,K(\phi)}{\eta_m},
+v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,F(\phi)}{\eta_m},
 $$
 
-where $K(\phi)$ is a Stokes-or-Darcy permeability set by the configured `grain_size`, and $\mathrm{smth}(\phi)$ is a smoothing function that vanishes outside the mushy band. Two forms are configurable: the production setting is `phase_smoothing = "tanh"` (SPIDER's two-branch `get_smoothing` of width `matprop_smooth_width = 0.01`); the fallback is `phase_smoothing = "cubic_hermite"` ($16\,g\phi^2(1-g\phi)^2$), kept for residual-EOS-mismatch debugging. The corresponding heat flux is
+where $F(\phi)$ is the melt-solid mobility (the permeability over porosity) set by the configured `grain_size`, and $\mathrm{smth}(\phi)$ is a smoothing function that vanishes outside the mushy band. Two forms are configurable: the production setting is `phase_smoothing = "tanh"` (SPIDER's two-branch `get_smoothing` of width `matprop_smooth_width = 0.01`); the fallback is `phase_smoothing = "cubic_hermite"` ($16\,g\phi^2(1-g\phi)^2$), kept for residual-EOS-mismatch debugging. The corresponding heat flux is
 
 $$
 F_\mathrm{grav} = j_\mathrm{grav}\,L(P),
@@ -236,7 +236,7 @@ Aragog is intended as a fast 1-D mantle thermal evolution model. The core simpli
 | $l$ | m | Mixing length |
 | $\eta$, $\eta_m$ | Pa·s | Dynamic viscosity (mixture, melt) |
 | $j_\mathrm{grav}$ | kg/m²/s | Gravitational-separation mass flux |
-| $K(\phi)$ | m² | Permeability of the partially molten matrix |
+| $F(\phi)$ | m² | Melt-solid mobility (permeability over porosity) |
 | $K_S$ | Pa | Adiabatic bulk modulus (Adams-Williamson) |
 | $\varepsilon$ | -- | Surface emissivity |
 | $\sigma$ | W/m²/K⁴ | Stefan-Boltzmann constant |

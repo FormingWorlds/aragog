@@ -537,7 +537,8 @@ def relative_velocity(
 ) -> jax.Array:
     """Melt-solid relative velocity for gravitational separation [m/s].
 
-    Three-regime permeability model (Abe 1993/1995, SPIDER convention):
+    Three-regime mobility model, the permeability over porosity that
+    multiplies delta_rho*g/eta (Abe 1993/1995, SPIDER convention):
     Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
     """
     rho_s = eos._lookup_at_phase_boundary('density', P, 'solid')
@@ -562,7 +563,7 @@ def relative_velocity(
     por = jnp.maximum(porosity, 1e-20)
     one_m_por = jnp.maximum(1.0 - porosity, 1e-20)
 
-    # Three permeability regimes
+    # Three mobility regimes (permeability / porosity)
     F_bkc = d**2 * por**2 / (one_m_por**2 * 1000.0)
     F_rg = d**2 * por**4.5 * (5.0 / 7.0)
     F_stokes = d**2 * 2.0 / 9.0
