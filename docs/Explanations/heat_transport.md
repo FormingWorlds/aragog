@@ -88,6 +88,21 @@ where $L(P)$ is the EOS-tabulated, pressure-dependent latent heat of fusion.
 
 ### Permeability $K(\zeta)$ across the three Abe regimes
 
+The permeability is a piecewise function of the porosity $\zeta$ (the melt volume fraction that enters $K$), with $a$ the grain size set by `grain_size`.
+Following Abe (1993)[^cite-abe1993], the three regimes are
+
+$$
+K(\zeta) = a^2
+\begin{cases}
+\dfrac{2}{9} & \zeta > 0.771462 \quad\text{(Stokes settling)} \\[2mm]
+\dfrac{5}{7}\,\zeta^{4.5} & 0.0769452 \le \zeta \le 0.771462 \quad\text{(Rumpf-Gupte)} \\[2mm]
+10^{-3}\,\dfrac{\zeta^2}{(1-\zeta)^2} & \zeta < 0.0769452 \quad\text{(Blake-Kozeny-Carman)}
+\end{cases}
+$$
+
+Aragog evaluates a $\tanh$-blended composite of these three branches rather than the hard piecewise switch, so that $K(\zeta)$ and its porosity derivative stay continuous for the JAX Jacobian.
+Figure 1 plots the dimensionless factor $F(\zeta) = K(\zeta)/a^2$: the three individual branches (dashed) and the blended composite that Aragog actually evaluates (solid).
+
 ![Permeability F(porosity)](../figures/vv/fig_04_permeability.png)
 
 **Figure 1.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling, following Abe (1993)[^cite-abe1993]. Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes). (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
