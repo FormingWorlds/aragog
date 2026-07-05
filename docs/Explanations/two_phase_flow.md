@@ -61,10 +61,10 @@ The mass flux of melt (positive upward when melt is buoyant) is
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{(\rho_\mathrm{liq} - \rho_\mathrm{sol})\,g\,K(\phi)}{\eta_\mathrm{liq}}.
+v_\mathrm{rel} = \frac{(\rho_\mathrm{liq} - \rho_\mathrm{sol})\,g\,F(\phi)}{\eta_\mathrm{liq}}.
 $$
 
-The permeability factor $K(\phi)$ spans three asymptotic regimes (Bower et al. (2018) §2.1):
+The mobility factor $F(\phi)$ (the permeability $K(\phi)$ divided by porosity) spans three asymptotic regimes (Bower et al. (2018) §2.1):
 
 - **Stokes settling** at high $\phi$: melt is the matrix and solid grains settle as isolated spheres, derived from Stokes' law (Bower et al. (2018) Eq. 13a).
 - **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367)[^cite-rumpfgupte1971].
@@ -72,7 +72,7 @@ The permeability factor $K(\phi)$ spans three asymptotic regimes (Bower et al. (
 
 The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995)[^cite-abe1995] and reviewed in Bower et al. (2018) §2.1 Eqs. 13a-c, where the regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
 Aragog hard-codes the equal-density-ratio limits ($\rho_\mathrm{sol} = \rho_\mathrm{liq}$) of these expressions, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), and blends through them with a tanh switch rather than recomputing per radial node.
-The resulting permeability-vs-porosity curve (Figure 1 of [Heat transport](heat_transport.md#permeability-kzeta-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
+The resulting mobility-vs-porosity curve (Figure 1 of [Heat transport](heat_transport.md#melt-solid-mobility-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
 The corresponding heat flux is
 
 $$

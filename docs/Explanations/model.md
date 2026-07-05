@@ -81,7 +81,7 @@ $$
 
 The instability criterion in the entropy formulation is simply $\partial S/\partial r < 0$. The $\max$ form is implemented as a smooth approximation (rather than a hard switch) so that the BDF Jacobian remains continuous through the onset of convection.
 
-The eddy diffusivity $\kappa_h$ is computed from a mixing length $l(r)$ and a regime-dependent velocity scale. The viscous and inviscid limits of Abe (1993) [^cite-abe1993] are blended via a $\tanh$ on the cell Reynolds number around $Re_\mathrm{crit} = 9/8$:
+The eddy diffusivity $\kappa_h$ is computed from a mixing length $l(r)$ and a regime-dependent velocity scale. The viscous and inviscid limits of Abe (1993)[^cite-abe1993] are blended via a $\tanh$ on the cell Reynolds number around $Re_\mathrm{crit} = 9/8$, the critical value Aragog inherits via Abe (1995)[^cite-abe1995] and documented in Bower et al. (2018)[^cite-bower2018] §2.1:
 
 $$
 \kappa_h = l\,\Big[(1-w)\,v_\mathrm{visc} + w\,v_\mathrm{inv}\Big],\qquad
@@ -96,10 +96,10 @@ In the partially molten regime, melt and solid separate vertically by gravity. T
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,K(\phi)}{\eta_m},
+v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,F(\phi)}{\eta_m},
 $$
 
-where $K(\phi)$ is a Stokes-or-Darcy permeability set by the configured `grain_size`, and $\mathrm{smth}(\phi)$ is a smoothing function that vanishes outside the mushy band. Two forms are configurable: the production setting is `phase_smoothing = "tanh"` (SPIDER's two-branch `get_smoothing` of width `matprop_smooth_width = 0.01`); the fallback is `phase_smoothing = "cubic_hermite"` ($16\,g\phi^2(1-g\phi)^2$), kept for residual-EOS-mismatch debugging. The corresponding heat flux is
+where $F(\phi)$ is the melt-solid mobility (the permeability over porosity) set by the configured `grain_size`, and $\mathrm{smth}(\phi)$ is a smoothing function that vanishes outside the mushy band. Two forms are configurable: the production setting is `phase_smoothing = "tanh"` (SPIDER's two-branch `get_smoothing` of width `matprop_smooth_width = 0.01`); the fallback is `phase_smoothing = "cubic_hermite"` ($16\,g\phi^2(1-g\phi)^2$), kept for residual-EOS-mismatch debugging. The corresponding heat flux is
 
 $$
 F_\mathrm{grav} = j_\mathrm{grav}\,L(P),
@@ -236,7 +236,7 @@ Aragog is intended as a fast 1-D mantle thermal evolution model. The core simpli
 | $l$ | m | Mixing length |
 | $\eta$, $\eta_m$ | Pa·s | Dynamic viscosity (mixture, melt) |
 | $j_\mathrm{grav}$ | kg/m²/s | Gravitational-separation mass flux |
-| $K(\phi)$ | m² | Permeability of the partially molten matrix |
+| $F(\phi)$ | m² | Melt-solid mobility (permeability over porosity) |
 | $K_S$ | Pa | Adiabatic bulk modulus (Adams-Williamson) |
 | $\varepsilon$ | -- | Surface emissivity |
 | $\sigma$ | W/m²/K⁴ | Stefan-Boltzmann constant |
@@ -260,3 +260,5 @@ The formulation maps to the following source modules:
 For the package layout in detail, see [Code architecture](code_architecture.md). For the public API, see the [API reference](../Reference/api/index.md).
 
 [^cite-abe1993]: Yutaka Abe, *[Thermal evolution and chemical differentiation of the terrestrial magma ocean](https://doi.org/10.1029/GM074p0041)*, Geophysical Monograph 74, AGU, 41–54, 1993. [SciX](https://scixplorer.org/abs/1993GMS....74...41A/abstract).
+[^cite-abe1995]: Yutaka Abe, *Basic equations for evolution of partially molten mantle and core*, in Yukutake, T. (ed.), The Earth's Central Part: Its Structure and Dynamics, Terra Sci. Pub. Com., 215–230, 1995.
+[^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49–62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).

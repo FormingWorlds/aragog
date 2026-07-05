@@ -45,7 +45,7 @@ $$
 w = \tfrac{1}{2}\Big[1 + \tanh\!\big((\mathrm{Re} - Re_\mathrm{crit})/\Delta\big)\Big],
 $$
 
-with $\mathrm{Re} = v_\mathrm{visc}\,l / \nu$, $Re_\mathrm{crit} = 9/8$, and a narrow blend width $\Delta = 0.01\,Re_\mathrm{crit}$. The narrow blend keeps inviscid mixing confined to the convecting regime; widening it leaks inviscid $\kappa_h$ into the solid phase and induces $T_\mathrm{core}$ bistability.
+with $\mathrm{Re} = v_\mathrm{visc}\,l / \nu$ and a narrow blend width $\Delta = 0.01\,Re_\mathrm{crit}$. The critical Reynolds number $Re_\mathrm{crit} = 9/8$ that Aragog inherits comes via Abe (1995)[^cite-abe1995] and is documented in Bower et al. (2018)[^cite-bower2018] §2.1. The narrow blend keeps inviscid mixing confined to the convecting regime; widening it leaks inviscid $\kappa_h$ into the solid phase and induces $T_\mathrm{core}$ bistability.
 
 ### Mixing length profile
 
@@ -75,10 +75,10 @@ In the partially molten regime, melt and solid separate vertically by gravity. T
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,K(\phi)}{\eta_m},
+v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,F(\phi)}{\eta_m},
 $$
 
-with $K(\phi)$ a Stokes-or-Darcy permeability and $\eta_m$ the melt viscosity. The corresponding heat flux is
+with $F(\phi)$ the melt-solid mobility (the permeability over porosity, detailed below) and $\eta_m$ the melt viscosity. The corresponding heat flux is
 
 $$
 F_\mathrm{grav} = j_\mathrm{grav}\,L(P),
@@ -86,11 +86,27 @@ $$
 
 where $L(P)$ is the EOS-tabulated, pressure-dependent latent heat of fusion.
 
-### Permeability $K(\zeta)$ across the three Abe regimes
+### Melt-solid mobility across the three Abe regimes
 
-![Permeability F(porosity)](../figures/vv/fig_04_permeability.png)
+The factor that sets the relative velocity, $v_\mathrm{rel} = F(\zeta)\,(\rho_m-\rho_s)\,g/\eta_m$, is the melt-solid mobility $F(\zeta)$: the permeability $K(\zeta)$ divided by the porosity $\zeta$ (the melt volume fraction, $\zeta \equiv \phi$).
+Following Abe (1995)[^cite-abe1995] and Bower et al. (2018)[^cite-bower2018] §2.1, with $a$ the grain size set by `grain_size`, its three regimes are
 
-**Figure 1.** The gravitational-separation permeability factor $F(\zeta) = K(\zeta)/a^2$ as a function of porosity. Dashed lines: the three regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling, following Abe (1993)[^cite-abe1993]. Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes). (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
+$$
+F(\zeta) = \frac{K(\zeta)}{\zeta} = a^2
+\begin{cases}
+\dfrac{2}{9} & \zeta > 0.771462 \quad\text{(Stokes settling)} \\[2mm]
+\dfrac{5}{7}\,\zeta^{4.5} & 0.0769452 \le \zeta \le 0.771462 \quad\text{(Rumpf-Gupte)} \\[2mm]
+10^{-3}\,\dfrac{\zeta^2}{(1-\zeta)^2} & \zeta < 0.0769452 \quad\text{(Blake-Kozeny-Carman)}
+\end{cases}
+$$
+
+The permeability itself is $K(\zeta) = \zeta\,F(\zeta)$, which recovers the Stokes ($K \propto \zeta$), Rumpf-Gupte ($K \propto \zeta^{5.5}$), and Blake-Kozeny-Carman ($K \propto \zeta^3/(1-\zeta)^2$) forms; the extra power of porosity that separates $K$ from $F$ is the Darcy $1/\zeta$ in the relative velocity.
+Aragog evaluates a $\tanh$-blended composite of the three branches rather than the hard piecewise switch, so that $F(\zeta)$ and its porosity derivative stay continuous for the JAX Jacobian.
+Figure 1 plots the dimensionless mobility $F(\zeta)/a^2$: the three individual branches (dashed) and the blended composite that Aragog actually evaluates (solid).
+
+![Melt-solid mobility F(porosity)](../figures/vv/fig_04_permeability.png)
+
+**Figure 1.** The gravitational-separation mobility $F(\zeta) = K(\zeta)/\zeta$ (the permeability divided by porosity), shown as the dimensionless $F(\zeta)/a^2$ against porosity. Dashed lines: the three regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling, following Abe (1995)[^cite-abe1995] and Bower et al. (2018)[^cite-bower2018] §2.1. Solid black: the smooth tanh-blended composite that Aragog actually evaluates, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes). (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
 
 ### Phase-boundary smoothing
 
@@ -156,4 +172,5 @@ Per-staggered-node heating is in `heating` (sum of the two contributions); per-c
 **Figure 2.** (a) Magnitude of the four heat-flux components $F_\text{cond}$, $F_\text{conv}$, $F_\text{grav}$, $F_\text{mix}$ and their sum on an 80-cell Earth mesh, evaluated at a fully-mushy state where the entropy on each cell is the midpoint of the local solidus and liquidus values plus a small surface-ward gradient. Open triangles mark cells where the signed flux is negative. The four components reconstruct $F_\text{tot}$ to floating-point round-off ($\max|F_\text{tot}-\sum F_i|/|F_\text{tot}| < 10^{-15}$). (b) Internal volumetric heating sources $H_\text{radio}$, $H_\text{tidal}$ at the staggered nodes for the same state, with the bundled radionuclide cocktail at $t=0$.
 
 [^cite-abe1993]: Yutaka Abe, *[Thermal evolution and chemical differentiation of the terrestrial magma ocean](https://doi.org/10.1029/GM074p0041)*, Geophysical Monograph 74, AGU, 41–54, 1993. [SciX](https://scixplorer.org/abs/1993GMS....74...41A/abstract).
+[^cite-abe1995]: Yutaka Abe, *Basic equations for evolution of partially molten mantle and core*, in Yukutake, T. (ed.), The Earth's Central Part: Its Structure and Dynamics, Terra Sci. Pub. Com., 215–230, 1995.
 [^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49–62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).

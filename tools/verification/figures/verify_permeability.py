@@ -1,6 +1,6 @@
-"""V&V Figure 4: Three-regime permeability F(porosity).
+"""V&V Figure 4: Three-regime melt-solid mobility F(porosity).
 
-Verifies that the gravitational-separation permeability factor F = K
+Verifies that the gravitational-separation mobility factor F = K/porosity
 (in m^2) implements the Abe (1993, 1995) three-regime model -- Stokes,
 Rumpf-Gupte (RG), and Blake-Kozeny-Carman (BKC) -- with the exact
 critical-porosity tanh blends specified in the Aragog formulation. Both the numpy implementation
