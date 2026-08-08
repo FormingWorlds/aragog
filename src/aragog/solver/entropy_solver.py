@@ -1030,7 +1030,7 @@ class EntropySolver:
             ss[:n_s] = S_ref
             if self._core_bc == 'energy_balance':
                 ss[n_s] = dSdr_ref
-            else:  # bower2018: T_core in [K], not [J/kg/K]; use T_ref
+            else:  # bower2018 / core_module: T_cmb in [K]; use T_ref
                 ss[n_s] = self._T_ref
         return NonDimScales(state_scale=ss, t_ref=float(t_ref))
 
@@ -1414,6 +1414,21 @@ class EntropySolver:
         # Quasi-steady BC alpha factor uses (R_above/R_cmb)^2
         self._cmb_radius_ratio_sq = (r_above / r_cmb) ** 2
 
+        # core_module: build the staged core-evolution budget once. The
+        # params dict is validated by the aragog.core constructors; the
+        # CMB radius always comes from the mesh so the budget and the
+        # solver cannot disagree on geometry.
+        if getattr(self, '_core_bc', None) == 'core_module' or (
+            getattr(bc, 'core_bc', None) == 'core_module'
+        ):
+            from aragog.core import build_core_module_budget
+
+            params = dict(getattr(bc, 'core_module_params', None) or {})
+            self._core_module_q_radio = float(params.pop('q_radio', 0.0))
+            self._core_module_budget = build_core_module_budget(
+                params, r_cmb=r_cmb, p_cmb_fallback=float(self._P_stag_flat[0])
+            )
+
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
         self._outer_bc_value = float(bc.outer_boundary_value)
@@ -1689,10 +1704,12 @@ class EntropySolver:
                 S_arr.max(),
                 dSdr_cmb_init,
             )
-        elif core_bc == 'bower2018':
-            # Core temperature as ODE state variable (conduction-only
-            # flux). State = [S, T_core]. Available for parity testing
-            # only; not recommended for production runs.
+        elif core_bc in ('bower2018', 'core_module'):
+            # Core temperature as ODE state variable. State = [S, T_core].
+            # bower2018 drains a fixed reservoir capacity (parity testing
+            # only); core_module advances the staged core-evolution budget
+            # (aragog.core), so T_cmb is boundary-layer state rather than
+            # the basal node's EOS read-off.
             T_core_init = getattr(self, '_T_core_init', None)
             if T_core_init is None:
                 prev_sol = getattr(self, '_solution', None)
@@ -1714,7 +1731,8 @@ class EntropySolver:
             self._S0[:n_stag] = S_arr
             self._S0[n_stag] = T_core_init
             logger.info(
-                'Initial state (bower2018): S_min=%.0f, S_max=%.0f, T_core_init=%.0f K',
+                'Initial state (%s): S_min=%.0f, S_max=%.0f, T_core_init=%.0f K',
+                core_bc,
                 S_arr.min(),
                 S_arr.max(),
                 T_core_init,
@@ -1753,7 +1771,7 @@ class EntropySolver:
             )
 
     def set_initial_core_temperature(self, T_core_init: float) -> None:
-        """Set the initial core temperature (``bower2018`` core_bc only).
+        """Set the initial core temperature (``bower2018`` / ``core_module``).
 
         Must be called BEFORE ``set_initial_entropy``. If not called,
         the initial T_core defaults to the bottom-cell mantle
@@ -1867,7 +1885,8 @@ class EntropySolver:
         gradient_mode = self._core_bc == 'gradient'
         energy_balance = self._core_bc == 'energy_balance'
         bower = self._core_bc == 'bower2018'
-        is_extended = energy_balance or bower
+        core_mod = self._core_bc == 'core_module'
+        is_extended = energy_balance or bower or core_mod
 
         # ── Gradient mode: reconstruct S from the gradient state ──
         if gradient_mode:
@@ -1919,9 +1938,10 @@ class EntropySolver:
                 # gradient/energy_balance: heat_flux[0] is the physical
                 # flux computed from the state-provided dS/dr at the CMB.
                 pass
-            elif bower:
-                # bower2018 BC: F_cmb from one-sided Fourier conduction
-                # across the bottom half-cell. Available for parity tests.
+            elif bower or core_mod:
+                # bower2018 / core_module BC: F_cmb from one-sided Fourier
+                # conduction across the bottom half-cell, so the mantle
+                # sees the integrated core temperature, not a node value.
                 T_above = float(np.asarray(self.state.phase_staggered.temperature()).flat[0])
                 k_above = (
                     float(np.asarray(self.state.phase_staggered.thermal_conductivity()).flat[0])
@@ -2031,9 +2051,20 @@ class EntropySolver:
 
             return np.concatenate([dSdt, [d_dSdr_cmb_dt]])
 
-        # bower2018: T_core ODE state with conduction-only F_cmb.
+        # bower2018 / core_module: T_cmb ODE state driven by the CMB flux.
         F_cmb = float(self.state._heat_flux[0])
-        dT_core_dt = -F_cmb * self._cmb_area / max(self._core_cap, 1.0)
+        if core_mod:
+            # Staged core-evolution budget: effective heat capacity with
+            # inner-core nucleation; q_sources carries radiogenic power.
+            dT_core_dt = float(
+                self._core_module_budget.dtcmb_dt(
+                    extra,
+                    F_cmb * self._cmb_area,
+                    q_sources=self._core_module_q_radio,
+                )
+            )
+        else:
+            dT_core_dt = -F_cmb * self._cmb_area / max(self._core_cap, 1.0)
         dT_core_dt *= SECS_PER_YEAR
 
         return np.concatenate([dSdt, [dT_core_dt]])
@@ -2193,11 +2224,11 @@ class EntropySolver:
     def _state_is_extended(self) -> bool:
         """True when the state vector has more than N elements.
 
-        - bower2018 / energy_balance: N+1 (entropy + 1 extra)
+        - bower2018 / core_module / energy_balance: N+1 (entropy + 1 extra)
         - gradient: N+2 (N+1 gradients + S_surf)
         - quasi_steady: N (entropy only)
         """
-        return self._core_bc in ('bower2018', 'energy_balance', 'gradient')
+        return self._core_bc in ('bower2018', 'core_module', 'energy_balance', 'gradient')
 
     @property
     def entropy_staggered(self) -> npt.NDArray:
@@ -3114,7 +3145,7 @@ class EntropySolver:
         energy_balance = self._core_bc == 'energy_balance'
         bower = self._core_bc == 'bower2018'
         gradient_mode = self._core_bc == 'gradient'
-        is_ext = energy_balance or bower
+        is_ext = energy_balance or bower or self._core_bc == 'core_module'
 
         P_stag = self._P_stag_flat
         vol = self._volume_flat
@@ -3386,7 +3417,7 @@ class EntropySolver:
         energy_balance = self._core_bc == 'energy_balance'
         bower = self._core_bc == 'bower2018'
         gradient_mode = self._core_bc == 'gradient'
-        is_ext = energy_balance or bower
+        is_ext = energy_balance or bower or self._core_bc == 'core_module'
 
         # Compute per-call energy integrals BEFORE refreshing state at
         # the final entropy. ``_compute_step_energy_integrals`` walks
@@ -3484,8 +3515,10 @@ class EntropySolver:
         # rather than evaluating T at the CMB basic node avoids a
         # systematic ~10 K offset from the half-cell pressure
         # difference and matches SPIDER's definition.
-        if bower:
-            T_core = extra_final  # bower2018: T_core integrated as ODE state
+        if bower or self._core_bc == 'core_module':
+            # Integrated ODE state: decoupled from the basal node's
+            # branch-dependent EOS read-off.
+            T_core = extra_final
         else:
             T_core = float(T_stag[0])
         # Mass-weighted melt fraction = M_mantle_liquid / M_mantle.
