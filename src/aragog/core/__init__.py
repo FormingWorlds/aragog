@@ -20,6 +20,7 @@ from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.module import CoreModule, build_core_module_budget
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.regime import REGIME_NAMES, crystallization_regime, regime_name
+from aragog.core.stratification import adiabatic_ratio, stratification_depth
 
 __all__ = [
     'CoreEnergyBudget',
@@ -32,4 +33,6 @@ __all__ = [
     'REGIME_NAMES',
     'crystallization_regime',
     'regime_name',
+    'adiabatic_ratio',
+    'stratification_depth',
 ]
