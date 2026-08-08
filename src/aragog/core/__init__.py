@@ -19,6 +19,7 @@ from aragog.core.entropy import CoreEntropyBudget
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.module import CoreModule, build_core_module_budget
 from aragog.core.profiles import GaussianCoreProfiles
+from aragog.core.regime import REGIME_NAMES, crystallization_regime, regime_name
 
 __all__ = [
     'CoreEnergyBudget',
@@ -28,4 +29,7 @@ __all__ = [
     'IronMeltingCurve',
     'QuadraticMeltingCurve',
     'build_core_module_budget',
+    'REGIME_NAMES',
+    'crystallization_regime',
+    'regime_name',
 ]
