@@ -123,6 +123,10 @@ def test_field_scaling_bounds_and_earth_magnitude(ent):
     assert float(ent.b_dipole_cmb(T_C, 17e12, dipolarity=0.5)) == pytest.approx(
         0.5 * b17, rel=1e-12
     )
+    # Dipolarity boundary values: full dipole equals the rms field, zero
+    # dipolarity extinguishes the dipole while the rms field stands.
+    assert float(ent.b_dipole_cmb(T_C, 17e12, dipolarity=1.0)) == pytest.approx(b17, rel=1e-12)
+    assert float(ent.b_dipole_cmb(T_C, 17e12, dipolarity=0.0)) == 0.0
 
 
 @pytest.mark.reference_pinned

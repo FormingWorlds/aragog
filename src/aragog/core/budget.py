@@ -4,12 +4,12 @@ Given the CMB heat flow, the budget returns the CMB cooling rate through an
 effective heat capacity: ``Q_cmb = -C_eff(T_cmb) dT_cmb/dt + Q_sources``.
 ``C_eff`` carries the secular term (the mass-weighted adiabat integral over
 the Gaussian profiles) plus, once the centre adiabat reaches the melting
-curve, the latent heat of inner-core growth. Nucleation activates through a
-sigmoid of the centre superheat with a configurable temperature width, so
-the budget is differentiable through onset; zero width recovers the hard
-switch. The gravitational-energy release of inner-core growth is not part
-of this budget stage, and radiogenic or tidal powers enter as per-call
-source terms supplied by the caller.
+curve, the latent heat and light-element gravitational energy of inner-core
+growth. Nucleation activates through a sigmoid of the centre superheat and
+winds down through a matching sigmoid of the CMB superheat at freeze-out
+completion, so the budget is differentiable through both ends of inner-core
+growth; zero width recovers the hard switches. Radiogenic or tidal powers
+enter as per-call source terms supplied by the caller.
 
 The ``legacy`` capacity mode reproduces the isothermal-reservoir closure
 (Bower et al. 2018, Eq. 37 constants: uniform core density and a fixed
@@ -187,11 +187,11 @@ class CoreEnergyBudget:
 
         Fixed-iteration bisection of the superheat on [0, r_cmb]; with no
         crossing it converges to 0 (fully liquid) or r_cmb (fully frozen),
-        so the value is always defined and trace-safe. Where the superheat
-        changes sign more than once (a top-down or snow topology), this is
-        the innermost crossing; the regime treatment of such states is the
-        stratification stage's job, and the boundary terms are shut off by
-        the freeze-out factor meanwhile.
+        so the value is always defined and trace-safe. A liquid centre
+        returns zero regardless of frozen shells above it (the top-down
+        and snow topologies have no inner core in the bottom-up sense);
+        ``crystallization_regime`` is the diagnostic for those states, and
+        the smoothed activation factors zero the boundary terms there.
 
         The derivative is the implicit-function sensitivity attached as a
         custom JVP: a comparison-driven bisection carries no gradient of
