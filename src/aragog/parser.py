@@ -64,10 +64,15 @@ class _BoundaryConditionsParameters:
     #               'gradient' (entropy gradient as primary state,
     #               length N+2),
     #               'bower2018' (unrecommended; T_core as ODE state,
-    #               retained for parity testing only).
+    #               retained for parity testing only),
+    #               'core_module' (staged core-evolution budget from
+    #               aragog.core; T_cmb as ODE state, length N+1).
     # See aragog/config/boundary.py docstring for details.
     # Default 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'
+    # Flat parameter dict for core_bc='core_module'; keys documented in
+    # aragog.core.module.build_core_module_budget (plus 'q_radio' [W]).
+    core_module_params: dict | None = None
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
