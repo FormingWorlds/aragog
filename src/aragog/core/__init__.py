@@ -14,6 +14,8 @@ budget term is an analytic integral and the whole module stays at ODE cost.
 
 from __future__ import annotations
 
+from aragog.core.budget import CoreEnergyBudget
+from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 
-__all__ = ['GaussianCoreProfiles']
+__all__ = ['CoreEnergyBudget', 'GaussianCoreProfiles', 'IronMeltingCurve']
