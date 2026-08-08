@@ -139,9 +139,12 @@ def test_nucleation_onset_growth_and_freeze_out(prof, alloy_budget):
     assert 0.0 < radii[0] < prof.r_cmb
 
     # Freeze-out: at 3300 K even the CMB is subcooled; boundary pinned at
-    # r_cmb and the latent release is over.
+    # r_cmb and the latent release is over up to the smoothing factor's
+    # exponential tail (here ~1e-17 of the secular term).
     assert float(alloy_budget.r_icb(3300.0)) == pytest.approx(prof.r_cmb, rel=1e-9)
-    assert float(alloy_budget.latent_capacity(3300.0)) == 0.0
+    assert float(alloy_budget.latent_capacity(3300.0)) < 1e-12 * float(
+        alloy_budget.secular_capacity()
+    )
 
     # Hard-switch limit: a tiny width turns the sigmoid into a step.
     sharp = CoreEnergyBudget(
@@ -172,3 +175,61 @@ def test_error_contract_and_jit(prof, alloy_budget):
     # Cooling with a net loss, and the sign flips with a dominant source.
     assert eager < 0.0
     assert float(alloy_budget.dtcmb_dt(3900.0, 1e12, q_sources=5e12)) > 0.0
+
+
+@pytest.mark.physics_invariant
+def test_r_icb_gradient_carries_the_implicit_sensitivity(prof, alloy_budget):
+    """jax.grad through r_icb must equal the finite-difference boundary
+    motion (a comparison-driven bisection alone would return exactly zero),
+    and the effective-capacity gradient must match its finite difference,
+    so the solver's analytic-Jacobian path sees the true derivatives."""
+    import jax
+
+    t = 3900.0
+    grad_r = float(jax.grad(alloy_budget.r_icb)(t))
+    h = 0.5
+    fd_r = (float(alloy_budget.r_icb(t + h)) - float(alloy_budget.r_icb(t - h))) / (2 * h)
+    assert grad_r == pytest.approx(fd_r, rel=1e-4)
+    assert abs(grad_r) > 1.0  # thousands of m/K: a zero gradient cannot pass
+
+    grad_c = float(jax.grad(alloy_budget.effective_capacity)(t))
+    fd_c = (
+        float(alloy_budget.effective_capacity(t + h))
+        - float(alloy_budget.effective_capacity(t - h))
+    ) / (2 * h)
+    assert grad_c == pytest.approx(fd_c, rel=5e-3)
+
+
+@pytest.mark.physics_invariant
+def test_gravitational_capacity_scales_linearly_in_alpha_c(prof):
+    """C_grav must scale linearly with the compositional expansivity at
+    fixed light-element fraction; a formulation that only sees the product
+    through a rescaled c_light would hide a misuse of either factor."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    lo = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.5, c_light=0.05
+    )
+    hi = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=1.5, c_light=0.05
+    )
+    g_lo = float(lo.gravitational_capacity(3900.0))
+    g_hi = float(hi.gravitational_capacity(3900.0))
+    assert g_lo > 0.0
+    assert g_hi / g_lo == pytest.approx(3.0, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+def test_freeze_out_factor_is_smooth_and_bounded(prof):
+    """The freeze-out factor spans (0, 1) smoothly across the completion
+    band instead of stepping: capacity changes across 0.4 K near completion
+    stay far below the former cliff, and the factor is exactly one half
+    where the CMB sits on the melting curve."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0)
+    # CMB melting temperature of this alloy: freeze-out midpoint.
+    t_complete = float(curve.t_melt(prof.pressure(prof.r_cmb)))
+    assert float(budget.freeze_out_factor(t_complete)) == pytest.approx(0.5, abs=1e-9)
+    t = np.linspace(t_complete - 40.0, t_complete + 40.0, 161)
+    caps = np.array([float(budget.effective_capacity(x)) for x in t])
+    rel_step = np.max(np.abs(np.diff(caps))) / np.max(caps)
+    assert rel_step < 0.05  # the former hard cutoff moved 55% in one step

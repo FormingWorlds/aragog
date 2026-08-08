@@ -171,7 +171,8 @@ def test_budget_terms_match_thermal_history_cross_check():
     assert float(budget.gravitational_capacity(T_C)) == pytest.approx(TH_GRAV, rel=0.01)
     # Printed lumped value, band only (see module docstring): the state the
     # chapter evaluates at (r_icb = 1221 km) is built on unprinted pressure
-    # machinery, so 25% covers the state difference, not term errors.
+    # machinery, so the 35% band covers the state difference, not term
+    # errors; the three 1% per-term pins above carry the discrimination.
     assert float(budget.effective_capacity(T_C)) == pytest.approx(MODELS[2]['qt'], rel=0.35)
 
 
@@ -285,5 +286,7 @@ def test_model1_printed_parameters_break_bottom_up_topology():
     p_min = -curve.t_m1 / (2.0 * curve.t_m2)
     assert prof.p_cmb < p_min < float(prof.pressure(0.0))
     budget = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0, latent_heat=L_H)
-    assert float(budget.latent_capacity(T_C)) == 0.0
-    assert float(budget.gravitational_capacity(T_C)) == 0.0
+    # The smoothed freeze-out factor drives both boundary terms to zero
+    # (sigmoid of a -1187 K CMB superheat over 10 K: below 1e-50).
+    assert float(budget.latent_capacity(T_C)) == pytest.approx(0.0, abs=1e-10)
+    assert float(budget.gravitational_capacity(T_C)) == pytest.approx(0.0, abs=1e-10)
