@@ -90,3 +90,46 @@ class IronMeltingCurve:
             else light_element_fraction
         )
         return self.t_melt_pure(pressure) * (1.0 - self.depression * x)
+
+
+class QuadraticMeltingCurve:
+    """Quadratic-in-pressure melting curve, ``T_m0 (1 + T_m1 P + T_m2 P^2)``.
+
+    The parameterisation of Nimmo (2015, Treatise on Geophysics 9.08,
+    Eq. 6), where ``T_m0`` already incorporates the light-element
+    depression; it is the form the Table 2 benchmark models are defined in,
+    and a configurable alternative to the PALEOS prescription wherever a
+    fitted curve is preferred. Valid over core pressures only; ``T_m0`` is
+    not a zero-pressure melting temperature.
+
+    Parameters
+    ----------
+    t_m0 : float
+        Prefactor [K], positive.
+    t_m1 : float
+        Linear coefficient [Pa-1]; either sign occurs in published fits.
+    t_m2 : float
+        Quadratic coefficient [Pa-2]; either sign occurs in published fits.
+    """
+
+    def __init__(self, *, t_m0: float, t_m1: float, t_m2: float):
+        if not float(t_m0) > 0.0:
+            raise ValueError(f't_m0 must be positive, got {t_m0}')
+        self.t_m0 = float(t_m0)
+        self.t_m1 = float(t_m1)
+        self.t_m2 = float(t_m2)
+
+    def t_melt(self, pressure, light_element_fraction=None):
+        """Melting temperature [K] at ``pressure`` [Pa].
+
+        The unused ``light_element_fraction`` keeps the call signature
+        interchangeable with :class:`IronMeltingCurve`; the depression is
+        already folded into ``t_m0`` in this parameterisation.
+        """
+        p = jnp.asarray(pressure)
+        return self.t_m0 * (1.0 + self.t_m1 * p + self.t_m2 * p**2)
+
+    def gradient(self, pressure):
+        """Melting-curve slope dT_m/dP [K/Pa] at ``pressure`` [Pa]."""
+        p = jnp.asarray(pressure)
+        return self.t_m0 * (self.t_m1 + 2.0 * self.t_m2 * p)
