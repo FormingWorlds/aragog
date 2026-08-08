@@ -146,6 +146,14 @@ def test_factory_geometry_override_and_error_contract():
     built = build_core_module_budget(quad, r_cmb=3.48e6, p_cmb_fallback=136e9)
     assert float(built.melting_curve.t_melt(98.5e9)) > 0.0
 
+    # A full config surface carries BOTH curves' fields; the factory must
+    # accept the inactive set and consume only the active one (the PROTEUS
+    # attrs block always sends every field).
+    both = dict(params)
+    both.update(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    iron_built = build_core_module_budget(both, r_cmb=3.48e6, p_cmb_fallback=136e9)
+    assert iron_built.melting_curve.light_element_fraction == pytest.approx(0.1)
+
     with pytest.raises(ValueError, match='unrecognised'):
         build_core_module_budget({**params, 'q_radio': 1e12}, r_cmb=3.3e6, p_cmb_fallback=1e9)
     with pytest.raises(ValueError, match='melting_curve'):
