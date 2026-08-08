@@ -175,6 +175,100 @@ def test_budget_terms_match_thermal_history_cross_check():
     assert float(budget.effective_capacity(T_C)) == pytest.approx(MODELS[2]['qt'], rel=0.35)
 
 
+@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('model,cr_printed,rel', [(2, 10100.0, 0.05), (1, 4900.0, 0.15)])
+def test_boundary_sensitivity_matches_printed_cr(model, cr_printed, rel):
+    """The implicit-function |dr_icb/dT_cmb| evaluated at the present-day
+    Earth state (r = 1221 km, T_c = 4180 K) reproduces the Cr values the
+    chapter quotes from its companion machinery (Figure 3 caption:
+    10100 m/K for model 2, 4900 m/K for model 1)."""
+    import jax
+
+    prof = _profiles(model)
+    budget = CoreEnergyBudget(prof, _curve(model), ds_fusion=170.0, icn_width=10.0)
+    d_dr = float(jax.grad(budget._superheat, argnums=0)(1221e3, T_C))
+    d_dt = float(jax.grad(budget._superheat, argnums=1)(1221e3, T_C))
+    cr = abs(d_dt / d_dr)
+    assert cr == pytest.approx(cr_printed, rel=rel)
+    # Discrimination: the two models' printed Cr differ by a factor two,
+    # far beyond either tolerance, so a model mix-up cannot pass.
+    other_printed = 4900.0 if model == 2 else 10100.0
+    assert abs(cr - other_printed) / other_printed > 0.4
+
+
+@pytest.mark.reference_pinned
+@pytest.mark.physics_invariant
+def test_baseline_scenario_reproduces_chapter_headline():
+    """Nimmo's Figure 5 baseline (model 2, entropy production 50 MW/K before
+    inner-core formation, heat flow held constant after onset, backward
+    integration) states: present-day CMB heat flow 17 TW, inner-core age
+    0.5 Gy, present-day entropy production 700 MW/K. Reconstructing that
+    pipeline on the module's terms with the chapter's own growth law
+    (delta-T_c = 60 K, r_now = 1221 km) lands on 16.7 TW, 0.43 Gy, and
+    964 MW/K; tolerances reflect that the chapter's state machinery is
+    only partly printed."""
+    from aragog.core.entropy import CoreEntropyBudget
+
+    r_now, d_tc, year = 1221e3, 60.0, 3.156e7
+    prof = _profiles(2)
+    budget = CoreEnergyBudget(
+        prof,
+        _curve(2),
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=L_H,
+        alpha_c=1.0,
+        c_light=MODELS[2]['drho_c'] / 12150.0,
+    )
+    ent = CoreEntropyBudget(budget, k_core=130.0)
+
+    # Pre-onset: constant margin of 50 MW/K sets cooling rate and heat flow.
+    cooling = (5e7 + float(ent.conduction_sink())) / float(ent.secular_entropy_capacity(T_C))
+    q_cmb = float(budget.secular_capacity()) * cooling
+    assert q_cmb / 1e12 == pytest.approx(17.0, rel=0.05)
+
+    # Age: integrate the effective capacity along the chapter's quadratic
+    # growth law T_c(r) = T_onset - d_tc (r/r_now)^2, heat flow constant.
+    r = np.linspace(1.0, r_now, 400)
+    cr_path = r_now**2 / (2.0 * d_tc * r)
+    rho = np.asarray(prof.density(r))
+    q_lat = L_H * 4.0 * np.pi * r**2 * rho * cr_path
+    sub = r[::40]
+    q_grav = []
+    for r_i in sub:
+        s = np.linspace(r_i, prof.r_cmb, 200)
+        rho_s = np.asarray(prof.density(s))
+        psi_s = np.asarray(prof.potential(s))
+        m_oc = float(prof.enclosed_mass(prof.r_cmb) - prof.enclosed_mass(r_i))
+        moment = np.trapezoid(rho_s * psi_s * 4.0 * np.pi * s**2, s) - m_oc * float(
+            prof.potential(r_i)
+        )
+        cc = (
+            4.0
+            * np.pi
+            * r_i**2
+            * float(prof.density(r_i))
+            * (MODELS[2]['drho_c'] / 12150.0)
+            / m_oc
+        )
+        q_grav.append(moment * cc)
+    q_grav = np.interp(r, sub, np.array(q_grav)) * cr_path
+    q_total = float(budget.secular_capacity()) + q_lat + q_grav
+    age = np.trapezoid(q_total * (2.0 * d_tc * r / r_now**2), r) / q_cmb / year / 1e9
+    assert age == pytest.approx(0.5, rel=0.2)
+
+    # Present-day margin at that heat flow: printed 700 MW/K, band 45%.
+    capacity = (
+        float(ent.secular_entropy_capacity(T_C))
+        + float(ent.latent_entropy_capacity(T_C))
+        + float(ent.gravitational_entropy_capacity(T_C))
+    )
+    cooling_now = q_cmb / float(budget.effective_capacity(T_C))
+    margin = capacity * cooling_now - float(ent.conduction_sink())
+    assert margin / 1e6 == pytest.approx(700.0, rel=0.45)
+
+
 @pytest.mark.physics_invariant
 def test_model1_printed_parameters_break_bottom_up_topology():
     """Model 1's negative T_m1 curve dips below the T_c = 4180 K adiabat at
