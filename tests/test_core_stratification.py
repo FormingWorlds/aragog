@@ -80,3 +80,31 @@ def test_depth_satisfies_conductive_matching_and_monotonicity(ent):
     # Discrimination: at 30% of the adiabatic flow the layer is a
     # substantial fraction of the core, not a boundary sliver.
     assert depths[2] / p.r_cmb > 0.2
+
+
+@pytest.mark.physics_invariant
+def test_large_core_layer_clamps_at_the_conducted_flow_peak():
+    """For a core larger than the peak radius of the adiabatic conducted
+    flow (D sqrt(3/2)), a subadiabatic layer is reported clamped at the
+    peak instead of a bisection converging to a meaningless deep-interior
+    root: the thin-layer estimate ends where the profile stops being
+    monotone."""
+    from aragog.core import CoreEnergyBudget, IronMeltingCurve
+
+    prof = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=9000e3,
+        p_cmb=300e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+    )
+    budget = CoreEnergyBudget(prof, IronMeltingCurve(), ds_fusion=170.0, icn_width=10.0)
+    ent = CoreEntropyBudget(budget, k_core=130.0)
+    r_peak = prof.d_scale * np.sqrt(1.5)
+    assert r_peak < prof.r_cmb  # the scenario is genuinely past the peak
+    qk = float(ent.adiabatic_heat_flow(5000.0))
+    depth = float(stratification_depth(ent, 5000.0, 0.5 * qk))
+    assert depth == pytest.approx(prof.r_cmb - r_peak, abs=1.0)
+    # The clamp binds: the unclamped rising-branch root would be far deeper.
+    assert depth < 0.2 * prof.r_cmb
