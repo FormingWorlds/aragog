@@ -778,18 +778,19 @@ class TestSolverResidualTelescoping:
 class TestCvodeEnergyOutputGrid:
     """The per-call energy integrals must resolve the within-call flux decay.
 
-    A CVODE macro-step solve returns the solution only at the times in the
-    requested tspan. With just the two call endpoints, the trapezoidal
-    integral of a steeply-decaying boundary flux is tens of percent wrong,
-    which is the dominant term in ``E_residual_cons_frac``. ``EntropySolver``
-    requests ``_cvode_output_points`` intermediate points (front-loaded) so
-    the integral resolves the decay; CVODE interpolates them from its own
-    internal steps, so the integration and final state are unchanged.
+    In step-wise mode (the production default) the trajectory handed to the
+    integrals is CVODE's own accepted internal steps, which resolve any flux
+    transient the integrator resolved, independent of the output request.
+    With ``_substep_integrals = False`` the solve returns only the times in
+    the requested tspan, where a two-point grid leaves the trapezoidal
+    integral of a steeply-decaying boundary flux tens of percent wrong and
+    the front-loaded ``_cvode_output_points`` grid recovers it.
 
-    Verifies that the dense grid recovers the flux integral to within a
-    small tolerance of a high-resolution scipy reference, with a
-    discrimination guard that the two-point grid is an order of magnitude
-    worse. See docs/How-to/test_infrastructure.md.
+    Verifies that the step-wise trajectory recovers the flux integral even
+    on a two-point output request, that the fixed dense grid recovers it
+    while the fixed two-point grid is an order of magnitude worse, and that
+    neither mode perturbs the integration window. See
+    docs/How-to/test_infrastructure.md.
     """
 
     @staticmethod
@@ -911,26 +912,45 @@ class TestCvodeEnergyOutputGrid:
         return s
 
     def test_dense_output_recovers_flux_integral(self):
-        """The dense front-loaded grid recovers F_int to within 2 percent of
-        a high-resolution scipy reference, while the 2-point grid is at least
-        an order of magnitude worse and ``dt_actual`` is unchanged."""
+        """Internal-step trajectories recover F_int regardless of the output
+        request; the fixed-grid path keeps its dense-versus-2-point contrast
+        and ``dt_actual`` is unchanged in both modes."""
         ref = self._build_greybody_solver('bdf')
         ref.solve()
         f_ref = ref._compute_step_energy_integrals()['F_int']
         assert ref._solution.t.size > 200, 'scipy reference grid must be dense'
         assert abs(f_ref) > 1e28, 'cooling must drive a non-trivial surface flux'
 
+        # Step-wise mode (the production default): the integrals ride the
+        # integrator's own accepted steps, so even a 2-point output request
+        # recovers the integral. This is what discriminates the internal-step
+        # trajectory from the output grid: on the fixed grid below, the same
+        # 2-point request is an order of magnitude worse.
+        s_sub = self._build_greybody_solver('cvode', n_out=2)
+        s_sub.solve()
+        err_sub = abs(s_sub._compute_step_energy_integrals()['F_int'] / f_ref - 1.0)
+        assert s_sub._solution.t.size > 65, (
+            'stepwise mode must return the internal steps, not the output grid'
+        )
+        assert err_sub < 2e-2, (
+            f'stepwise F_int off by {err_sub:.2e} from the reference; the '
+            f'internal-step trajectory must resolve the flux decay by construction'
+        )
+
+        # Fixed-grid path: the dense front-loaded grid recovers the integral,
+        # the 2-point grid must not.
         s2 = self._build_greybody_solver('cvode', n_out=2)
+        s2._substep_integrals = False
         s2.solve()
         d2 = s2._compute_step_energy_integrals()
         err_2pt = abs(d2['F_int'] / f_ref - 1.0)
 
         sN = self._build_greybody_solver('cvode', n_out=65)
+        sN._substep_integrals = False
         sN.solve()
         dN = sN._compute_step_energy_integrals()
         err_dense = abs(dN['F_int'] / f_ref - 1.0)
 
-        # The dense grid must recover the integral; the 2-point grid must not.
         assert err_dense < 2e-2, (
             f'dense-grid F_int off by {err_dense:.2e} from the reference; '
             f'the front-loaded output grid must resolve the flux decay'
@@ -939,10 +959,12 @@ class TestCvodeEnergyOutputGrid:
             f'discrimination guard: 2-point F_int error ({err_2pt:.2e}) must '
             f'dwarf the dense-grid error ({err_dense:.2e})'
         )
-        # The output grid must not perturb the integration window.
+        # Neither trajectory choice may perturb the integration window.
         dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
         dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])
+        dt_sub = float(s_sub._solution.t[-1] - s_sub._solution.t[0])
         np.testing.assert_allclose(dt_dense, dt_ref, rtol=1e-10)
+        np.testing.assert_allclose(dt_sub, dt_ref, rtol=1e-10)
 
 
 # -- Test 3: Grey-body cooling timescale ---------------------------------------

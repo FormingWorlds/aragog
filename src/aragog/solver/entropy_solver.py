@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -966,6 +967,13 @@ class EntropySolver:
         # final state, or ``dt_actual``. Only the non-root path uses it;
         # when a phi-step-cap root fires the call already stops early.
         self._cvode_output_points = 65
+        # Drive CVODE one internal step at a time and hand the per-call
+        # energy integrals the full internal trajectory. The output-grid
+        # trapezoid under-samples boundary-flux transients shorter than
+        # its spacing (a freezing-onset F_cmb spike spans decades in under
+        # a thousand years); the internal steps resolve whatever the
+        # integrator resolved. False restores the fixed output grid.
+        self._substep_integrals = True
         # Compression work [J] from the most recent structure re-solve.
         # When the planet contracts, the static pressure at each frozen
         # mass element rises, so the mantle enthalpy gains the adiabatic
@@ -2466,6 +2474,85 @@ class EntropySolver:
 
         return J.tocsc()
 
+    @staticmethod
+    def _run_cvode_stepwise(solver, start_time, end_time, y0, n_keep: int = 4096):
+        """Drive CVODE one internal step at a time and keep the trajectory.
+
+        The per-call energy integrals trapezoid over whatever trajectory the
+        solve returns. A fixed output grid under-samples any boundary-flux
+        transient shorter than its spacing, so this driver returns the
+        integrator's own accepted steps, which resolve the transient by
+        construction. Requires the solver to be built with
+        ``one_step_compute=True`` and ``tstop=end_time``.
+
+        Parameters
+        ----------
+        solver
+            A ``scikits_odes_sundials.cvode.CVODE`` instance (``old_api=False``).
+        start_time, end_time : float
+            Integration interval [s, nondimensional as the caller uses].
+        y0 : np.ndarray
+            Initial state vector.
+        n_keep : int
+            Ceiling on stored trajectory points. When exceeded, every other
+            interior point is dropped and the keep stride doubles, so memory
+            stays bounded while endpoints, root and tstop points are always
+            kept exactly.
+
+        Returns
+        -------
+        SimpleNamespace
+            Duck-typed like the ``solve()`` return: ``flag``, ``values.t``
+            (1D), ``values.y`` (shape ``(n_time, n_state)``), ``roots=None``,
+            ``message``. A fired root is the last trajectory point, so the
+            caller's values path reads the advance directly and the
+            ``roots``-object workaround for ``solve()`` is not needed.
+        """
+        t_end = float(end_time)
+        y0v = np.asarray(y0, dtype=float).ravel()
+        solver.init_step(float(start_time), y0v)
+        ts: list[float] = [float(start_time)]
+        ys: list[np.ndarray] = [y0v.copy()]
+        y_buf = np.empty_like(y0v)
+        flag = 0
+        message = ''
+        stride = 1
+        since_kept = 0
+        # Generous ceiling: a coupling call that needs more internal steps
+        # than this is not integrating, it is thrashing.
+        for _ in range(2_000_000):
+            ret = solver.step(t_end, y_buf)
+            flag = int(ret.flag)
+            if flag < 0:
+                message = str(getattr(ret, 'message', '')) or 'CVODE step failure'
+                break
+            t_i = float(ret.values.t)
+            y_i = np.asarray(ret.values.y, dtype=float).ravel()
+            since_kept += 1
+            terminal = flag in (1, 2) or t_i >= t_end
+            if since_kept >= stride or terminal:
+                ts.append(t_i)
+                ys.append(y_i.copy())
+                since_kept = 0
+            if len(ts) > n_keep:
+                ts = ts[:1] + ts[1:-1:2] + ts[-1:]
+                ys = ys[:1] + ys[1:-1:2] + ys[-1:]
+                stride *= 2
+            if terminal:
+                break
+        else:
+            flag = -99
+            message = 'stepwise CVODE exceeded the iteration ceiling'
+        if flag == 1:
+            # TSTOP_RETURN: the integration reached the requested end time,
+            # which is the caller's definition of success.
+            flag = 0
+        values = SimpleNamespace(
+            t=np.asarray(ts, dtype=float),
+            y=np.asarray(ys, dtype=float),
+        )
+        return SimpleNamespace(flag=flag, values=values, roots=None, message=message)
+
     def _solve_cvode(
         self,
         start_time: float,
@@ -2645,6 +2732,18 @@ class EntropySolver:
             cvode_options.pop('lband', None)
             cvode_options.pop('uband', None)
 
+        # Step-wise mode: one internal CVODE step per call, so the energy
+        # integrals see the integrator's own trajectory (see
+        # ``_run_cvode_stepwise``). ``tstop`` keeps the final internal step
+        # from crossing ``end_time``; the root function, when armed, fires
+        # inside a step exactly as it does under ``solve()``.
+        use_substeps = bool(getattr(self, '_substep_integrals', False)) and float(
+            end_time
+        ) > float(start_time)
+        if use_substeps:
+            cvode_options['one_step_compute'] = True
+            cvode_options['tstop'] = float(end_time)
+
         solver = _scikits_cvode(rhs_fn, **cvode_options)
         # One-time debug print of the CVODE options actually in effect.
         # This helps verify banded linsolver dispatch vs silent fallback.
@@ -2667,16 +2766,19 @@ class EntropySolver:
         # the start and flattens later. A quadratic grid resolves the
         # F_int integral to ~0.1 percent with a few dozen points, where a
         # uniform grid of the same size leaves ~10 percent.
-        n_out = max(2, int(getattr(self, '_cvode_output_points', 2)))
-        if n_out > 2 and float(end_time) > float(start_time):
-            x = np.linspace(0.0, 1.0, n_out) ** 2
-            tspan = float(start_time) + (float(end_time) - float(start_time)) * x
+        if use_substeps:
+            cvode_sol = self._run_cvode_stepwise(solver, start_time, end_time, y0)
         else:
-            tspan = np.array([start_time, end_time], dtype=float)
-        cvode_sol = solver.solve(
-            tspan,
-            np.asarray(y0, dtype=float).ravel(),
-        )
+            n_out = max(2, int(getattr(self, '_cvode_output_points', 2)))
+            if n_out > 2 and float(end_time) > float(start_time):
+                x = np.linspace(0.0, 1.0, n_out) ** 2
+                tspan = float(start_time) + (float(end_time) - float(start_time)) * x
+            else:
+                tspan = np.array([start_time, end_time], dtype=float)
+            cvode_sol = solver.solve(
+                tspan,
+                np.asarray(y0, dtype=float).ravel(),
+            )
 
         # Dump CVODE's internal counters. These expose what scipy hides
         # from us and let us discriminate Newton thrash from step-size
