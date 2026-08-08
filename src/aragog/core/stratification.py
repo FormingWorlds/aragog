@@ -36,17 +36,25 @@ def stratification_depth(entropy: CoreEntropyBudget, t_cmb, q_cmb):
     """Equilibrium thickness [m] of the stably stratified sub-CMB layer.
 
     Solves ``Q_ad(r_s) = Q_cmb`` for the layer base ``r_s`` by fixed
-    bisection; the thickness is ``r_cmb - r_s``. ``Q_ad(r) = (8 pi k /
-    D^2) r^3 T_a(r)`` increases monotonically outward through the core,
-    so the root is unique. Zero when the flow is superadiabatic at the
-    CMB (``ADR >= 1``); the whole core when even the centre cannot carry
-    the flow conductively (``q_cmb <= 0``).
+    bisection on the outer branch of ``Q_ad(r) = (8 pi k / D^2) r^3
+    T_a(r)``, which peaks at ``r_peak = D sqrt(3/2)`` and decreases
+    beyond it; the thickness is ``r_cmb - r_s``. For Earth-scale cores
+    the peak sits outside the CMB and the branch spans the whole core;
+    for larger cores the search is bracketed at the peak, and a layer
+    reaching the peak is reported clamped there, since the thin-layer
+    conductive-matching estimate has no meaning deeper. Zero when the
+    flow is superadiabatic at the CMB (``ADR >= 1``); the whole core
+    when the flow is non-positive (``q_cmb <= 0``).
     """
     p = entropy.budget.profiles
 
     def q_ad(r):
         grad = 2.0 * r * p.adiabat(r, t_cmb) / p.d_scale**2
         return 4.0 * jnp.pi * r**2 * entropy.k_core * grad
+
+    # Bracket at the peak of Q_ad: below it the profile rises again and a
+    # bisection could converge to a physically meaningless deep root.
+    r_peak = jnp.minimum(p.d_scale * jnp.sqrt(1.5), p.r_cmb)
 
     def body(_, bracket):
         lo, hi = bracket
@@ -58,7 +66,7 @@ def stratification_depth(entropy: CoreEntropyBudget, t_cmb, q_cmb):
         0,
         _BISECT_ITERS,
         body,
-        (jnp.zeros_like(t_cmb * 1.0), jnp.full_like(t_cmb * 1.0, p.r_cmb)),
+        (jnp.full_like(t_cmb * 1.0, r_peak), jnp.full_like(t_cmb * 1.0, p.r_cmb)),
     )
     r_s = (lo + hi) / 2.0
     thickness = p.r_cmb - r_s

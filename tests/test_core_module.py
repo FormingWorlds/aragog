@@ -72,6 +72,19 @@ def test_step_conserves_energy_through_nucleation():
     dt = 1.6e8 * YEAR  # extracts ~2e29 J, cooling ~100 K past onset at ~4054 K
     module.step(q, dt)
     assert module.t_cmb < 4054.0 < 4120.0  # onset genuinely crossed
+    # Stepping with the entropy budget attached exercises the same path a
+    # coupled caller uses; the diagnostics stay consistent post-step.
+    from aragog.core import CoreEntropyBudget
+
+    with_entropy = CoreModule(
+        _alloy_budget(),
+        t_cmb=4120.0,
+        entropy=CoreEntropyBudget(_alloy_budget(), k_core=130.0),
+        n_substeps=8,
+    )
+    with_entropy.step(q, dt)
+    diag = with_entropy.diagnostics(q_cmb=q)
+    assert diag['inner_core_present'] and 'entropy_margin' in diag
     import jax
 
     temps = np.asarray(module.last_t_cmb)
@@ -113,6 +126,7 @@ def test_diagnostics_and_entropy_attachment():
     module.t_cmb = 3900.0
     cold = module.diagnostics(q_cmb=30e12)
     assert cold['inner_core_present'] and not cold['fully_frozen']
+    assert cold['regime'] == 1  # bottom_up
     assert 0.0 < cold['r_icb'] < EARTH['r_cmb']
     assert cold['dynamo_active'] == (cold['entropy_margin'] > 0.0)
     assert cold['b_rms_core'] > 0.0

@@ -229,6 +229,11 @@ def test_freeze_out_factor_is_smooth_and_bounded(prof):
     # CMB melting temperature of this alloy: freeze-out midpoint.
     t_complete = float(curve.t_melt(prof.pressure(prof.r_cmb)))
     assert float(budget.freeze_out_factor(t_complete)) == pytest.approx(0.5, abs=1e-9)
+    # Sign discrimination: the factor must be ~1 ABOVE completion (liquid
+    # remains) and ~0 below; a flipped sigmoid argument passes the
+    # midpoint and smoothness checks but not this ordering.
+    assert float(budget.freeze_out_factor(t_complete + 30.0)) > 0.9
+    assert float(budget.freeze_out_factor(t_complete - 30.0)) < 0.1
     t = np.linspace(t_complete - 40.0, t_complete + 40.0, 161)
     caps = np.array([float(budget.effective_capacity(x)) for x in t])
     rel_step = np.max(np.abs(np.diff(caps))) / np.max(caps)

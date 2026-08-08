@@ -20,6 +20,7 @@ from aragog.core.budget import CoreEnergyBudget
 from aragog.core.entropy import CoreEntropyBudget
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
+from aragog.core.regime import crystallization_regime
 
 jax.config.update('jax_enable_x64', True)
 
@@ -141,9 +142,12 @@ class CoreModule:
         self.last_q_cmb: jnp.ndarray | None = None
         # One compiled RHS per instance: the RK4 loop calls it hundreds of
         # times per step, and the eager path re-traces the boundary
-        # bisection on every call.
+        # bisection on every call. q_radio is a traced argument, not a
+        # closure capture: jit freezes closed-over Python values at first
+        # trace, so a later mutation of the attribute would silently keep
+        # the old power.
         self._rhs = jax.jit(
-            lambda temp, q: self.budget.dtcmb_dt(temp, q, q_sources=self.q_radio)
+            lambda temp, q, q_radio: self.budget.dtcmb_dt(temp, q, q_sources=q_radio)
         )
 
     def step(self, q_cmb: float, dt: float, q_cmb_end: float | None = None) -> float:
@@ -170,7 +174,7 @@ class CoreModule:
             return float(q_cmb) + (q_end - float(q_cmb)) * (t / float(dt))
 
         def rhs(t: float, temp):
-            return self._rhs(temp, q_at(t))
+            return self._rhs(temp, q_at(t), self.q_radio)
 
         times = [0.0]
         temps = [self.t_cmb]
@@ -211,6 +215,7 @@ class CoreModule:
             'effective_capacity': float(b.effective_capacity(t)),
             'inner_core_present': bool(radius > 0.0),
             'fully_frozen': bool(~b._liquid_remains(t)),
+            'regime': int(crystallization_regime(b, t)),
         }
         if self.entropy is not None and q_cmb is not None:
             margin = float(self.entropy.entropy_margin(t, q_cmb, self.q_radio))
