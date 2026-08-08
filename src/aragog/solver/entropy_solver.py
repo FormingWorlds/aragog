@@ -2305,7 +2305,7 @@ class EntropySolver:
         return J.tocsc()
 
     @staticmethod
-    def _run_cvode_stepwise(solver, start_time, end_time, y0, n_keep: int = 4096):
+    def _run_cvode_stepwise(solver, start_time, end_time, y0, n_keep: int = 65536):
         """Drive CVODE one internal step at a time and keep the trajectory.
 
         The per-call energy integrals trapezoid over whatever trajectory the
