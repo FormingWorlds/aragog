@@ -57,6 +57,13 @@ class GaussianCoreProfiles:
         Thermal expansion coefficient [K-1], treated as constant.
     c_p : float
         Isobaric specific heat capacity [J kg-1 K-1], treated as constant.
+    pressure_mode : str
+        ``'quadrature'`` integrates hydrostatic balance against the exact
+        erf gravity; ``'labrosse'`` evaluates the printed closed form
+        (Labrosse et al. 2001; Nimmo 2015, Eq. 3), whose derivation uses
+        the small-radius gravity expansion. The two differ by ~1% in the
+        deep core, which matters when reproducing parameterised models
+        built on the printed form.
 
     Raises
     ------
@@ -75,7 +82,11 @@ class GaussianCoreProfiles:
         p_cmb: float,
         alpha: float,
         c_p: float,
+        pressure_mode: str = 'quadrature',
     ) -> None:
+        if pressure_mode not in ('quadrature', 'labrosse'):
+            raise ValueError(f'unknown pressure_mode {pressure_mode!r}')
+        self.pressure_mode = pressure_mode
         params = {
             'rho_cen': rho_cen,
             'length_scale': length_scale,
@@ -140,13 +151,31 @@ class GaussianCoreProfiles:
 
     # -- pressure -----------------------------------------------------------
 
+    def _pressure_labrosse(self, r):
+        """Printed closed form (Nimmo 2015, Eq. 3), anchored at the CMB.
+
+        ``P(r) = p_cmb + (4 pi G rho_cen^2 / 3) [f(r_cmb) - f(r)]`` with
+        ``f(x) = (3 x^2 / 10 - L^2 / 5) exp(-x^2/L^2)``; the exact
+        antiderivative of density times the small-radius gravity expansion.
+        """
+        r = jnp.asarray(r)
+        length2 = self.length_scale**2
+
+        def f(x):
+            return (0.3 * x**2 - 0.2 * length2) * jnp.exp(-(x**2) / length2)
+
+        prefactor = 4.0 * jnp.pi * G * self.rho_cen**2 / 3.0
+        return self.p_cmb + prefactor * (f(self.r_cmb) - f(r))
+
     def pressure(self, r):
         """Pressure [Pa] at radius ``r``, from hydrostatic balance.
 
-        ``P(r) = p_cmb + int_r^{r_cmb} rho(s) g(s) ds`` on a fixed 32-point
-        Gauss-Legendre panel, so the evaluation is jit-safe with no adaptive
-        control flow.
+        Quadrature mode: ``P(r) = p_cmb + int_r^{r_cmb} rho(s) g(s) ds`` on
+        a fixed 32-point Gauss-Legendre panel, jit-safe with no adaptive
+        control flow. Labrosse mode: the printed closed form.
         """
+        if self.pressure_mode == 'labrosse':
+            return self._pressure_labrosse(r)
         r = jnp.asarray(r)
         half_span = (self.r_cmb - r) / 2.0
         centre = (self.r_cmb + r) / 2.0
@@ -155,6 +184,20 @@ class GaussianCoreProfiles:
         integrand = self.density(s) * self.gravity(s)
         integral = half_span * jnp.sum(_GL_W * integrand, axis=-1)
         return self.p_cmb + integral
+
+    def potential(self, r):
+        """Gravitational potential [J/kg] at radius ``r``, zero at the CMB.
+
+        ``psi(r) = -int_r^{r_cmb} g(s) ds`` on the same fixed 32-point
+        Gauss-Legendre panel as the pressure; negative inside the core,
+        which is the reference the gravitational-energy budget term uses.
+        """
+        r = jnp.asarray(r)
+        half_span = (self.r_cmb - r) / 2.0
+        centre = (self.r_cmb + r) / 2.0
+        s = centre[..., None] + half_span[..., None] * _GL_X
+        integral = half_span * jnp.sum(_GL_W * self.gravity(s), axis=-1)
+        return -integral
 
     # -- adiabat ------------------------------------------------------------
 

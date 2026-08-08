@@ -97,6 +97,7 @@ markers = [
     "integration: Real-physics integration tests against published references",
     "slow: Slow tests that exercise full multi-Myr solver runs",
     "physics_invariant: Test asserts a conservation, positivity, or monotonicity invariant",
+    "reference_pinned: Test pins behavior against a published benchmark or cross-implementation check",
 ]
 
 [tool.coverage.run]
