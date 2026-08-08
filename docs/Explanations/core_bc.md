@@ -1,6 +1,6 @@
 # Core boundary condition modes
 
-The `boundary_conditions.core_bc` setting selects the formulation used at the core-mantle boundary (CMB) when `inner_boundary_condition = 1` (core cooling). Four modes are available; they differ in what is treated as the primary state variable, what is reconstructed, and how strongly the bottom mantle cell is coupled to the core.
+The `boundary_conditions.core_bc` setting selects the formulation used at the core-mantle boundary (CMB) when `inner_boundary_condition = 1` (core cooling). Five modes are available; they differ in what is treated as the primary state variable, what is reconstructed, and how strongly the bottom mantle cell is coupled to the core.
 
 ## `quasi_steady`
 
@@ -40,6 +40,22 @@ State vector length: $N + 1$ (with $T_\text{core}$ as the extra state).
 
 Treats the core temperature as an ODE state variable, with the CMB heat flux computed from conduction across the bottom half-cell. The conduction-only flux underestimates the true CMB heat loss by orders of magnitude for any planet with active mantle convection; this mode is retained for parity testing only and is **not recommended for production**.
 
+## `core_module`
+
+State vector length: $N + 1$ (with $T_\text{cmb}$ as the extra state, driven by the staged core-evolution budget of [`aragog.core`](../Reference/api/aragog.core.md)).
+
+The core carries its own physics instead of an isothermal reservoir: the CMB temperature evolves through an effective heat capacity
+
+$$
+Q_\text{cmb} = -\tilde{C}(T_\text{cmb})\, \frac{dT_\text{cmb}}{dt} + Q_\text{sources}, \qquad \tilde{C} = \tilde{C}_\text{secular} + \tilde{C}_\text{latent} + \tilde{C}_\text{grav},
+$$
+
+where the secular term integrates the mass-weighted adiabat over the closed-form Gaussian core profiles, and the latent and gravitational terms follow inner-core growth through the implicit-function sensitivity of the adiabat-liquidus crossing, activated smoothly at nucleation onset and wound down smoothly at freeze-out completion. The melting curve is the PALEOS iron prescription (Anzellini et al. 2013) with a light-element depression, or the Nimmo (2015) quadratic. All terms are cross-validated against the Leeds `thermal_history` implementation and pinned against Nimmo (2015) Table 2; the entropy side ([`CoreEntropyBudget`](../Reference/api/aragog.core.md)) adds the dynamo criterion and field-strength scaling.
+
+Two properties matter for coupled stability. The reported core temperature is the integrated boundary state, not the lowermost mantle node's EOS read-off, so it does not inherit the node's phase-branch snaps at crystallisation onset. And the budget is smooth with correct derivatives (the boundary solve carries a custom JVP), so implicit integrators see a well-behaved Jacobian row for the core state.
+
+With every feature disabled the mode reduces to the isothermal-reservoir law, which is its regression anchor against `bower2018`-style behaviour.
+
 ## How to choose
 
 | Need | Recommended `core_bc` |
@@ -48,5 +64,6 @@ Treats the core temperature as an ODE state variable, with the CMB heat flux com
 | Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
 | Reproducing pre-2026 results | `bower2018` (legacy) |
+| Core evolution with inner-core growth, dynamo diagnostics, or a smooth core temperature through crystallisation onset | `core_module` |
 
 The state-vector layout for each mode is documented in [`solver/entropy_solver.py`](https://github.com/FormingWorlds/aragog/blob/main/src/aragog/solver/entropy_solver.py) at the `_build_jac_sparsity` and `set_initial_entropy` methods; the test class `TestEnergyBalanceCoreBC` in `tests/test_entropy_pytest.py` exercises the `energy_balance` mode directly.
