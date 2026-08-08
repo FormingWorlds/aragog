@@ -76,7 +76,10 @@ def build_core_module_budget(
         'legacy_rho_core',
         'legacy_tfac',
     }
-    known = profile_keys | curve_keys[curve_kind] | budget_keys
+    # Both curves' keys are recognised regardless of the active selector:
+    # a config surface (the PROTEUS attrs block) carries every field, and
+    # only the active curve's subset is consumed.
+    known = profile_keys | curve_keys['iron'] | curve_keys['quadratic'] | budget_keys
     unknown = set(params) - known
     if unknown:
         raise ValueError(f'unrecognised core_module_params keys: {sorted(unknown)}')
