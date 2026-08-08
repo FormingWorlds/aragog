@@ -52,9 +52,13 @@ def stratification_depth(entropy: CoreEntropyBudget, t_cmb, q_cmb):
         grad = 2.0 * r * p.adiabat(r, t_cmb) / p.d_scale**2
         return 4.0 * jnp.pi * r**2 * entropy.k_core * grad
 
-    # Bracket at the peak of Q_ad: below it the profile rises again and a
-    # bisection could converge to a physically meaningless deep root.
-    r_peak = jnp.minimum(p.d_scale * jnp.sqrt(1.5), p.r_cmb)
+    # Q_ad rises from the centre to its peak at D sqrt(3/2) and falls
+    # beyond; the layer base always sits on the rising branch, so the
+    # search runs on [0, min(r_peak, r_cmb)] where the profile is
+    # monotone. For Earth-scale cores the peak lies outside the CMB and
+    # this is the whole core.
+    r_peak = p.d_scale * jnp.sqrt(1.5)
+    upper = jnp.minimum(r_peak, p.r_cmb)
 
     def body(_, bracket):
         lo, hi = bracket
@@ -66,10 +70,13 @@ def stratification_depth(entropy: CoreEntropyBudget, t_cmb, q_cmb):
         0,
         _BISECT_ITERS,
         body,
-        (jnp.full_like(t_cmb * 1.0, r_peak), jnp.full_like(t_cmb * 1.0, p.r_cmb)),
+        (jnp.zeros_like(t_cmb * 1.0), jnp.full_like(t_cmb * 1.0, upper)),
     )
     r_s = (lo + hi) / 2.0
     thickness = p.r_cmb - r_s
+    # A core larger than the peak radius: the thin-layer estimate ends at
+    # the peak, so a layer that would reach past it is reported clamped.
+    thickness = jnp.where(r_peak < p.r_cmb, jnp.minimum(thickness, p.r_cmb - r_peak), thickness)
     # Superadiabatic CMB: no stratification. Non-positive flow: fully stratified.
     thickness = jnp.where(q_cmb >= q_ad(p.r_cmb), 0.0, thickness)
     return jnp.where(q_cmb <= 0.0, p.r_cmb, thickness)
