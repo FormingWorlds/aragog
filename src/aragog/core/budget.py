@@ -162,13 +162,8 @@ class CoreEnergyBudget:
         p = self.profiles
         return p.adiabat(r, t_cmb) - self.melting_curve.t_melt(p.pressure(r))
 
-    def r_icb(self, t_cmb):
-        """Inner-core boundary radius [m] at ``t_cmb``.
-
-        Fixed-iteration bisection of the superheat on [0, r_cmb]; with no
-        crossing it converges to 0 (fully liquid) or r_cmb (fully frozen),
-        so the return value is always defined and trace-safe.
-        """
+    def _r_icb_bisect(self, t_cmb):
+        """Primal bisection for the boundary radius; see :meth:`r_icb`."""
         p = self.profiles
 
         def body(_, bracket):
@@ -187,19 +182,81 @@ class CoreEnergyBudget:
         # All-liquid guard: with positive centre superheat there is no root.
         return jnp.where(self._superheat(0.0, t_cmb) > 0.0, 0.0, root)
 
+    def r_icb(self, t_cmb):
+        """Inner-core boundary radius [m] at ``t_cmb``.
+
+        Fixed-iteration bisection of the superheat on [0, r_cmb]; with no
+        crossing it converges to 0 (fully liquid) or r_cmb (fully frozen),
+        so the value is always defined and trace-safe. Where the superheat
+        changes sign more than once (a top-down or snow topology), this is
+        the innermost crossing; the regime treatment of such states is the
+        stratification stage's job, and the boundary terms are shut off by
+        the freeze-out factor meanwhile.
+
+        The derivative is the implicit-function sensitivity attached as a
+        custom JVP: a comparison-driven bisection carries no gradient of
+        its own (autodiff sees only the converged constant trace), so
+        without this rule anything differentiating through the boundary
+        would silently read zero.
+        """
+        return self._r_icb_root(t_cmb)
+
+    @property
+    def _r_icb_root(self):
+        """The custom-JVP-wrapped boundary solve, built once per instance."""
+        cached = getattr(self, '_r_icb_root_cached', None)
+        if cached is not None:
+            return cached
+
+        @jax.custom_jvp
+        def root(t_cmb):
+            return self._r_icb_bisect(t_cmb)
+
+        @root.defjvp
+        def root_jvp(primals, tangents):
+            (t_cmb,) = primals
+            (t_dot,) = tangents
+            radius = self._r_icb_bisect(t_cmb)
+            d_dr = jax.grad(self._superheat, argnums=0)(radius, t_cmb)
+            d_dt = jax.grad(self._superheat, argnums=1)(radius, t_cmb)
+            safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
+            # Interior boundary: dr/dT from the implicit function theorem;
+            # pinned at the domain ends where the root does not move.
+            interior = (radius > 0.0) & (radius < self.profiles.r_cmb)
+            drdt = jnp.where(interior, -d_dt / safe, 0.0)
+            return radius, drdt * t_dot
+
+        self._r_icb_root_cached = root
+        return root
+
     def nucleation_factor(self, t_cmb):
         """Smoothed activation in [0, 1]: sigmoid of centre subcooling."""
         return jax.nn.sigmoid(-self._superheat(0.0, t_cmb) / self.icn_width)
 
     def _boundary_sensitivity(self, t_cmb):
-        """|dr_icb/dT_cmb| [m/K] from the implicit-function theorem."""
+        """|dr_icb/dT_cmb| [m/K] from the implicit-function theorem.
+
+        Written as the explicit ratio of superheat partials at the boundary
+        rather than ``|grad(r_icb)|``: the same first-order value, but a
+        smooth composition that higher-order autodiff (the capacity
+        gradient the solver Jacobian needs) differentiates correctly,
+        where nesting through the custom-JVP rule would not.
+        """
         radius = self.r_icb(t_cmb)
         d_dr = jax.grad(self._superheat, argnums=0)(radius, t_cmb)
         d_dt = jax.grad(self._superheat, argnums=1)(radius, t_cmb)
-        # Guard the pre-onset case where radius = 0 makes the downstream
-        # area factor vanish anyway.
         safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
         return jnp.abs(-d_dt / safe)
+
+    def freeze_out_factor(self, t_cmb):
+        """Smoothed survival of the liquid outer core, in [0, 1].
+
+        Sigmoid of the CMB superheat over the nucleation width: one while
+        liquid remains at the CMB, falling to zero as the last liquid
+        freezes, so the boundary terms wind down smoothly instead of
+        stepping. The same width parameter governs onset and completion.
+        """
+        return jax.nn.sigmoid(self._superheat(self.profiles.r_cmb, t_cmb) / self.icn_width)
 
     def _liquid_remains(self, t_cmb):
         """False once even the CMB sits below the melting curve."""
@@ -221,9 +278,7 @@ class CoreEnergyBudget:
             heat = p.adiabat(radius, t_cmb) * self.ds_fusion
         area_mass = p.density(radius) * 4.0 * jnp.pi * radius**2
         capacity = heat * area_mass * self._boundary_sensitivity(t_cmb)
-        return jnp.where(
-            self._liquid_remains(t_cmb), self.nucleation_factor(t_cmb) * capacity, 0.0
-        )
+        return self.freeze_out_factor(t_cmb) * self.nucleation_factor(t_cmb) * capacity
 
     def gravitational_capacity(self, t_cmb):
         """Gravitational contribution to the effective heat capacity [J/K].
@@ -260,9 +315,7 @@ class CoreEnergyBudget:
             * (enrichment / safe_mass)
             * self._boundary_sensitivity(t_cmb)
         )
-        return jnp.where(
-            self._liquid_remains(t_cmb), self.nucleation_factor(t_cmb) * capacity, 0.0
-        )
+        return self.freeze_out_factor(t_cmb) * self.nucleation_factor(t_cmb) * capacity
 
     # -- assembled budget ----------------------------------------------------
 

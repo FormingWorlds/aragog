@@ -61,9 +61,10 @@ class GaussianCoreProfiles:
         ``'quadrature'`` integrates hydrostatic balance against the exact
         erf gravity; ``'labrosse'`` evaluates the printed closed form
         (Labrosse et al. 2001; Nimmo 2015, Eq. 3), whose derivation uses
-        the small-radius gravity expansion. The two differ by ~1% in the
-        deep core, which matters when reproducing parameterised models
-        built on the printed form.
+        the small-radius gravity expansion. The two differ by a few
+        tenths of a percent in the deep core (0.3% at the Earth centre),
+        enough to move a tangent melting-curve crossing by hundreds of
+        kilometres when reproducing models built on the printed form.
 
     Raises
     ------

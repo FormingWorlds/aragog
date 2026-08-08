@@ -82,13 +82,29 @@ class IronMeltingCurve:
 
         ``light_element_fraction`` overrides the instance value when given,
         which is the hook the volatile-dissolution stage uses to evolve the
-        alloy without rebuilding the curve.
+        alloy without rebuilding the curve. A concrete override is held to
+        the constructor's contract (the depressed curve must stay
+        positive); a traced override is the caller's responsibility, since
+        a trace cannot raise on data.
+
+        Raises
+        ------
+        ValueError
+            If a concrete override is outside ``[0, 1)`` or drives the
+            depression factor to zero or below.
         """
-        x = (
-            self.light_element_fraction
-            if light_element_fraction is None
-            else light_element_fraction
-        )
+        if light_element_fraction is None:
+            x = self.light_element_fraction
+        else:
+            x = light_element_fraction
+            if isinstance(x, (int, float)):
+                if not 0.0 <= float(x) < 1.0:
+                    raise ValueError(f'light_element_fraction must be in [0, 1), got {x}')
+                if self.depression * float(x) >= 1.0:
+                    raise ValueError(
+                        f'depression * light_element_fraction = {self.depression * float(x)} '
+                        'reaches 1; the depressed melting curve would not stay positive'
+                    )
         return self.t_melt_pure(pressure) * (1.0 - self.depression * x)
 
 
@@ -110,6 +126,14 @@ class QuadraticMeltingCurve:
         Linear coefficient [Pa-1]; either sign occurs in published fits.
     t_m2 : float
         Quadratic coefficient [Pa-2]; either sign occurs in published fits.
+
+    Notes
+    -----
+    The fit is only meaningful over the pressure range it was constructed
+    for; outside it a negative-coefficient curve can fall through zero.
+    Callers own the range check, and the budget's freeze-out and
+    nucleation factors bound the physical consequences of an out-of-range
+    evaluation.
     """
 
     def __init__(self, *, t_m0: float, t_m1: float, t_m2: float):
