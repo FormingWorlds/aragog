@@ -76,6 +76,7 @@ def _build(
     end_time: float = 1.0,
     solver_method: str = 'radau',
     s_init=None,
+    use_jax_jacobian: bool = False,
 ):
     from aragog.parser import (
         Parameters,
@@ -108,7 +109,7 @@ def _build(
         radionuclides=False,
         tidal=False,
         solver_method=solver_method,
-        use_jax_jacobian=False,
+        use_jax_jacobian=use_jax_jacobian,
     )
     ic = _InitialConditionParameters(
         initial_condition=1, surface_temperature=3500.0, basal_temperature=3500.0
@@ -408,3 +409,78 @@ def test_core_module_solve_with_nucleation_active(shared_eos):
         # Latent buffering makes the effective capacity LARGER, so the
         # per-step motion must stay below the capacity-free estimate.
         assert np.max(np.abs(np.diff(t_path))) < 1.0
+
+
+def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
+    """Option Z end-to-end for core_module: the registered JAX factory is
+    consumed (not silently bypassed for the FD fallback), the solve
+    completes, and the trajectory lands on the FD twin's answer. This is
+    the production path that removes the FD-Jacobian wall-clock penalty;
+    a factory rejection would still pass a bare completes-check via the
+    fallback, which is why the call counter is asserted."""
+    pytest.importorskip('scikits_odes_sundials')
+    pytest.importorskip('equinox')
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_jax_dsdt_core_module import _build_jax_pieces
+
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    zsolver = _build(
+        'core_module',
+        shared_eos,
+        CORE_MODULE_PARAMS,
+        end_time=2.0,
+        solver_method='cvode',
+        s_init='driven',
+        use_jax_jacobian=True,
+    )
+    args = _build_jax_pieces(zsolver)
+    calls = {'n': 0}
+
+    def factory(scales, core_bc_mode):
+        calls['n'] += 1
+        rhs_fn, jac_fn, _info = build_jax_rhs_and_jacobian(
+            eos_jax=args[0],
+            phase_params=args[1],
+            mesh_arrays=args[2],
+            boundary_params=args[3],
+            heating_array=np.zeros(zsolver._n_stag),
+            scales=scales,
+            core_bc_mode=core_bc_mode,
+            core_module_budget=args[6],
+            core_module_q_radio=args[7],
+        )
+        return rhs_fn, jac_fn
+
+    zsolver.set_jax_cvode_factory(factory)
+    zsolver.solve()
+    assert calls['n'] > 0, 'the JAX factory was never consumed; Option Z did not engage'
+    sol = zsolver._solution
+    assert sol.status == 0
+    n_stag = zsolver._n_stag
+    y_z = sol.y[:, -1]
+    assert np.all(np.isfinite(y_z))
+
+    fd = _build(
+        'core_module',
+        shared_eos,
+        CORE_MODULE_PARAMS,
+        end_time=2.0,
+        solver_method='cvode',
+        s_init='driven',
+        use_jax_jacobian=False,
+    )
+    fd.solve()
+    y_fd = fd._solution.y[:, -1]
+    # Same physics through both Jacobian paths. The interior parity
+    # carries the pre-existing numpy-vs-JAX RHS difference (~4e-4 at
+    # two mid-mantle nodes), so the trajectories agree at that level,
+    # not at integrator tolerance.
+    np.testing.assert_allclose(y_z[:n_stag], y_fd[:n_stag], rtol=5e-3)
+    dT_z = float(y_z[n_stag + 1] - sol.y[n_stag + 1, 0])
+    dT_fd = float(y_fd[n_stag + 1] - fd._solution.y[n_stag + 1, 0])
+    assert dT_z < 0.0  # the core cools under the driven flux
+    assert dT_z == pytest.approx(dT_fd, rel=0.05)

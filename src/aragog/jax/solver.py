@@ -512,6 +512,118 @@ def dSdt_energy_balance(
 
 
 # ---------------------------------------------------------------------------
+# core_module core BC RHS (state vector = [S, dSdr_cmb, T_core], length N+2)
+# ---------------------------------------------------------------------------
+
+
+def dSdt_core_module(
+    t: float,
+    state_ext: jax.Array,
+    args: tuple,
+) -> jax.Array:
+    """RHS for the core_module core BC mode (extended state, N+2).
+
+    Mirrors the numpy ``EntropySolver._core_module_rhs_per_s`` closure:
+    the boundary entropy gradient evolves by the same SPIDER balance as
+    ``dSdt_energy_balance``, with the isothermal-reservoir factor
+    replaced by the staged core-evolution budget's effective heat
+    capacity, and T_core integrates the same cooling rate. State layout:
+
+        state_ext[0:N] = S at staggered nodes [J/kg/K]
+        state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
+        state_ext[N+1] = T_core, the integrated CMB temperature [K]
+
+    Parameters
+    ----------
+    t : float
+        Current time [yr].
+    state_ext : jax.Array, shape (N+2,)
+        Extended state vector (entropy, dSdr_cmb, T_core).
+    args : tuple
+        ``(eos, params, mesh, bc, heating_static, H_radio_fn,
+        core_budget, q_radio_core)``: the ``dSdt`` six plus the
+        ``aragog.core.CoreEnergyBudget`` whose ``dtcmb_dt`` closes the
+        boundary, and the constant core internal source power [W].
+
+    Returns
+    -------
+    jax.Array
+        d(state_ext)/dt at the same layout, [J/kg/K/yr] for entropy,
+        [J/kg/K/m/yr] for dSdr_cmb, [K/yr] for T_core.
+    """
+    eos, params, mesh, bc, heating_static, H_radio_fn, core_budget, q_radio_core = args
+    heating = heating_static + H_radio_fn(t)
+    n_stag = mesh.P_stag.shape[0]
+    S = state_ext[:n_stag]
+    dSdr_cmb = state_ext[n_stag]
+    t_core = state_ext[n_stag + 1]
+
+    # Boundary-entropy reconstruction and flux assembly are identical
+    # to the energy_balance path: the state-tracked gradient sets the
+    # CMB basic-node entropy and the full physics pipeline evaluates
+    # the flux from it.
+    r_basic = mesh.radii_basic
+    r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
+    dr_offset = r_basic[0] - r_stag_0
+    S_basic_cmb = S[0] + dSdr_cmb * dr_offset
+
+    flux_out = compute_fluxes(
+        S,
+        t,
+        eos,
+        params,
+        mesh,
+        heating,
+        S_basic_cmb_override=S_basic_cmb,
+        dSdr_cmb_override=dSdr_cmb,
+    )
+    heat_flux = flux_out.heat_flux
+
+    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
+    S_basic_default = mesh.quantity_matrix @ S
+    S_basic = S_basic_default.at[0].set(S_basic_cmb)
+    phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
+
+    heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
+
+    T_cmb = phase_basic.temperature[0]
+    cp_cmb = phase_basic.heat_capacity[0]
+    F_cmb_from_dSdr = heat_flux[0]
+
+    energy_flux = heat_flux * mesh.area
+    delta_energy_flux = jnp.diff(energy_flux)
+    cap = phase_stag.capacitance
+    capacitance = cap * mesh.volume
+    dSdt_per_s = -delta_energy_flux / capacitance
+    dSdt_per_s = dSdt_per_s + flux_out.heating / jnp.maximum(phase_stag.temperature, 1.0)
+    dSdt_per_yr = dSdt_per_s * SECS_PER_YEAR
+
+    # ── boundary closure with the capacity swap ──
+    # dT_core/dt = (q_radio - F_cmb * A_cmb) / C_eff(T_core), with the
+    # 1 K floor mirroring the numpy path: the melting curve and adiabat
+    # are undefined at non-positive temperature and a transient
+    # integrator excursion must not evaluate them there.
+    E_tot_cmb = F_cmb_from_dSdr * bc.cmb_area
+    dT_core_dt_per_s = core_budget.dtcmb_dt(
+        jnp.maximum(t_core, 1.0),
+        E_tot_cmb,
+        q_sources=q_radio_core,
+    )
+    # The CMB basic node rides on the core: its temperature changes at
+    # the core cooling rate, converted through the node's own cp/T.
+    dSdt_basic_cmb_per_s = cp_cmb / jnp.maximum(T_cmb, 1.0) * dT_core_dt_per_s
+    d_dSdr_cmb_dt_per_s = (dSdt_per_s[0] - dSdt_basic_cmb_per_s) * 2.0 / bc.cmb_dr_cmb
+
+    return jnp.concatenate(
+        [
+            dSdt_per_yr,
+            jnp.array([d_dSdr_cmb_dt_per_s * SECS_PER_YEAR]),
+            jnp.array([dT_core_dt_per_s * SECS_PER_YEAR]),
+        ]
+    )
+
+
+# ---------------------------------------------------------------------------
 # Solver wrapper
 # ---------------------------------------------------------------------------
 
