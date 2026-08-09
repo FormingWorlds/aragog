@@ -48,6 +48,11 @@ needs_eos = pytest.mark.skipif(
     reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
 )
 
+# Module tier: the real-EOS parity and Jacobian solves are smoke; the
+# two factory-contract tests additionally carry the unit marker so the
+# PR lane still runs them (they need no external data).
+pytestmark = [pytest.mark.smoke, pytest.mark.timeout(300)]
+
 
 def _tiny_budget(r_cmb: float = 3.48e6):
     from aragog.core import build_core_module_budget
@@ -194,7 +199,6 @@ def _build_jax_pieces(solver):
     return args
 
 
-@pytest.mark.smoke
 @needs_eos
 def test_rhs_parity_with_numpy_on_driven_state():
     """The JAX RHS matches the numpy RHS component-by-component on the
@@ -268,7 +272,6 @@ def test_rhs_parity_with_numpy_on_driven_state():
     )
 
 
-@pytest.mark.smoke
 @needs_eos
 def test_jacobian_carries_boundary_couplings():
     """``jacrev`` through the RHS (budget custom-JVP included) yields a
@@ -284,7 +287,21 @@ def test_jacobian_carries_boundary_couplings():
     solver = _build_numpy_solver(EntropyEOS(EOS_DIR))
     args = _build_jax_pieces(solver)
     n_stag = solver._n_stag
-    y0 = jnp.asarray(np.asarray(solver._S0, dtype=float))
+    y0 = np.asarray(solver._S0, dtype=float)
+
+    # Pin T_core inside the nucleation-active band, found by scanning the
+    # budget itself: outside the band the latent term is exactly zero and
+    # d(C_eff)/dT_core is a TRUE zero, so the self-coupling assertion
+    # below would fail regardless of the JVP rule. The EOS tables set the
+    # default T_core, so without this pin the test's premise depends on
+    # which table cache the environment resolves.
+    budget = solver._core_module_budget
+    secular = float(budget.secular_capacity())
+    scan = np.linspace(3200.0, 6000.0, 281)
+    active = [t for t in scan if float(budget.latent_capacity(t)) > 0.01 * secular]
+    assert active, 'no nucleation-active band in scan range; params drifted'
+    y0[n_stag + 1] = float(np.median(active))
+    y0 = jnp.asarray(y0)
 
     J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(y0))
     assert J.shape == (n_stag + 2, n_stag + 2)
