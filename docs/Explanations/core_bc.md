@@ -42,7 +42,7 @@ Treats the core temperature as an ODE state variable, with the CMB heat flux com
 
 ## `core_module`
 
-State vector length: $N + 1$ (with $T_\text{cmb}$ as the extra state, driven by the staged core-evolution budget of [`aragog.core`](../Reference/api/aragog.core.md)).
+State vector length: $N + 2$ (with the CMB entropy gradient $dS/dr|_\text{cmb}$ and $T_\text{cmb}$ as the extra states; the temperature is driven by the staged core-evolution budget of [`aragog.core`](../Reference/api/aragog.core.md)).
 
 The core carries its own physics instead of an isothermal reservoir: the CMB temperature evolves through an effective heat capacity
 
@@ -54,9 +54,7 @@ where the secular term integrates the mass-weighted adiabat over the closed-form
 
 Two properties matter for coupled stability. The reported core temperature is the integrated boundary state, not the lowermost mantle node's EOS read-off, so it does not inherit the node's phase-branch snaps at crystallisation onset. And the budget is smooth with correct derivatives (the boundary solve carries a custom JVP), so anything differentiating through the core state sees the true sensitivities; the CVODE analytic-Jacobian factory does not yet cover this mode, so the solver falls back to its finite-difference Jacobian, which the smooth budget keeps well-conditioned.
 
-With every feature disabled the mode reduces to the isothermal-reservoir law, which is its regression anchor against `bower2018`-style behaviour.
-
-The CMB heat flux is the same one-sided conduction across the bottom half-cell that `bower2018` uses, and it carries the same limitation: with molecular conductivity across a single half-cell the flux is both mesh-dependent and orders of magnitude below the transport a convecting mantle sustains, so the core is close to thermally isolated. In a coupled Earth-like test at matched melt fraction the core loses under a milli-kelvin over the interval in which the `energy_balance` closure cools it by 2400 K. Until the flux closure is replaced, use this mode for the core thermodynamics, the dynamo diagnostics, and standalone `CoreModule` work driven by an externally supplied heat flow, and not for coupled runs whose result depends on the core cooling rate.
+The CMB heat flux is the state-derived physical flux: the boundary entropy gradient is its own ODE state, exactly as in `energy_balance`, and the full conductive-plus-convective flux assembly is evaluated from it at the CMB basic node. The boundary-gradient equation is the same SPIDER balance with the isothermal-reservoir factor replaced by $\tilde{C}(T_\text{cmb})$, so the basal mantle boundary can only change entropy as fast as the core's true thermal inertia allows. With the budget in legacy capacity mode (the reservoir constants), the mantle trajectory reproduces `energy_balance` to solver tolerance, which is the mode's regression anchor; the core-side energy booking closes against $\tilde{C}\,\Delta T_\text{cmb}$, which is the guard against a decoupled boundary.
 
 ## How to choose
 
@@ -66,6 +64,6 @@ The CMB heat flux is the same one-sided conduction across the bottom half-cell t
 | Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
 | Reproducing pre-2026 results | `bower2018` (legacy) |
-| Core thermodynamics and dynamo diagnostics, with a core cooling rate supplied externally rather than by the CMB flux closure | `core_module` |
+| Core evolution with inner-core growth, dynamo diagnostics, or a core temperature decoupled from basal-node phase snaps | `core_module` |
 
 The state-vector layout for each mode is documented in [`solver/entropy_solver.py`](https://github.com/FormingWorlds/aragog/blob/main/src/aragog/solver/entropy_solver.py) at the `_build_jac_sparsity` and `set_initial_entropy` methods; the test class `TestEnergyBalanceCoreBC` in `tests/test_entropy_pytest.py` exercises the `energy_balance` mode directly.

@@ -63,7 +63,6 @@ def test_nimmo_model1_reads_as_snow_topology():
     around the curve's interior minimum) must classify as the snow family,
     not bottom_up; this is the state whose boundary terms the budget zeroes
     and whose full energetics belongs to the multi-zone treatment."""
-    prof = GaussianCoreProfiles(**EARTH, pressure_mode='labrosse')
     prof2 = GaussianCoreProfiles(
         rho_cen=12500.0,
         length_scale=7272e3,
