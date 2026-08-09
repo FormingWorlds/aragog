@@ -247,6 +247,26 @@ def test_rhs_parity_with_numpy_on_driven_state():
         # the driven profile cools the core through a real flux.
         assert f_np[n_stag + 1] < 0.0
 
+    # q_radio path: both sides receive the same nonzero core source and
+    # must still agree on the boundary slots; the offset must shift the
+    # cooling rate in the warming direction by a resolvable amount
+    # (edge case: a source comparable to the CMB heat flow).
+    f_jax_base = np.asarray(dSdt_core_module(0.0, jnp.asarray(y0), args)).ravel()
+    q_radio = 5.0e12
+    solver._core_module_q_radio = q_radio
+    args_r = args[:7] + (q_radio,)
+    try:
+        f_np_r = np.asarray(solver.dSdt(0.0, y0)).ravel()
+    finally:
+        solver._core_module_q_radio = 0.0
+    f_jax_r = np.asarray(dSdt_core_module(0.0, jnp.asarray(y0), args_r)).ravel()
+    for slot in (n_stag, n_stag + 1):
+        denom = max(abs(f_np_r[slot]), abs(f_jax_r[slot]), 1e-12)
+        assert abs(f_np_r[slot] - f_jax_r[slot]) / denom < 1e-8
+    assert f_jax_r[n_stag + 1] > f_jax_base[n_stag + 1], (
+        'a positive core source must warm the cooling rate'
+    )
+
 
 @pytest.mark.smoke
 @needs_eos
