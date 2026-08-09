@@ -205,7 +205,10 @@ class CoreModule:
         ``nucleation_factor``, ``effective_capacity``, and the phase flags
         ``inner_core_present`` / ``fully_frozen``. With an entropy budget
         attached and ``q_cmb`` given, adds ``entropy_margin``,
-        ``dynamo_active``, and ``b_rms_core``.
+        ``dynamo_active``, and ``b_rms_core``. The heat flow feeds the
+        capacity too, so a stratified budget reports the capacity of the
+        convecting volume that actually drove the trajectory (and raises
+        its missing-flow error when ``q_cmb`` is omitted).
         """
         b = self.budget
         t = self.t_cmb
@@ -215,7 +218,7 @@ class CoreModule:
             't_cen': float(b.profiles.t_cen(t)),
             'r_icb': radius,
             'nucleation_factor': float(b.nucleation_factor(t)),
-            'effective_capacity': float(b.effective_capacity(t)),
+            'effective_capacity': float(b.effective_capacity(t, q_cmb)),
             'inner_core_present': bool(radius > 0.0),
             'fully_frozen': bool(~b._liquid_remains(t)),
             'regime': int(crystallization_regime(b, t)),

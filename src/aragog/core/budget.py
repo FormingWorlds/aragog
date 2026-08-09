@@ -169,14 +169,31 @@ class CoreEnergyBudget:
     def convecting_radius(self, t_cmb, q_cmb=None):
         """Upper radius [m] of the convecting core.
 
-        The CMB radius when stratification is off or no heat flow is
-        supplied; otherwise the base of the equilibrium stratified layer,
-        floored at 10% of the CMB radius so a fully stratified transient
-        cannot collapse the capacity integrals to zero volume.
+        The CMB radius when stratification is off; otherwise the base of
+        the equilibrium stratified layer, floored at 10% of the CMB
+        radius so a fully stratified transient cannot collapse the
+        capacity integrals to zero volume. At that floor the effective
+        thermal inertia is orders of magnitude below the full core's:
+        the fully stratified regime is outside the quasi-static model's
+        validity, and the floor keeps the ODE finite there, not
+        physical. A stratified budget refuses a missing heat flow
+        rather than silently answering with the full volume.
+
+        Raises
+        ------
+        ValueError
+            When stratification is enabled and no ``q_cmb`` is supplied:
+            the reduction depends on the flow, and the full-volume
+            answer would be a silently wrong capacity.
         """
         p = self.profiles
-        if not self.stratification or q_cmb is None:
+        if not self.stratification:
             return jnp.asarray(p.r_cmb, dtype=jnp.float64)
+        if q_cmb is None:
+            raise ValueError(
+                'stratification is enabled: convecting_radius and '
+                'effective_capacity need the CMB heat flow q_cmb'
+            )
         thickness = self._thickness_fn(t_cmb, q_cmb)
         return jnp.maximum(p.r_cmb - thickness, 0.1 * p.r_cmb)
 
@@ -354,6 +371,12 @@ class CoreEnergyBudget:
         p = self.profiles
         radius = self.r_icb(t_cmb)
         top = p.r_cmb if upper is None else upper
+        # A stratified layer reaching below the ICB leaves no convecting
+        # outer-core shell: clamp the top at the ICB so the integral
+        # closes gracefully to zero instead of flipping orientation
+        # (a negative half-width would negate both moments and defeat
+        # the mass guard below with a wrong-sign capacity).
+        top = jnp.maximum(top, radius)
 
         def integrand(r):
             return p.density(r) * p.potential(r) * 4.0 * jnp.pi * r**2

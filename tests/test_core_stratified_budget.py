@@ -67,21 +67,25 @@ def _qk(budget) -> float:
 
 
 @pytest.mark.physics_invariant
-def test_switch_off_superadiabatic_and_no_flow_reproduce_the_full_budget():
-    """Three limits must reproduce the unstratified capacity exactly: the
-    switch off, a superadiabatic flow (zero thickness), and a call with
-    no flow supplied. This is the regression anchor: enabling the switch
-    must change nothing until the physics calls for a layer."""
+def test_switch_off_and_superadiabatic_reproduce_the_full_budget():
+    """The switch off and a superadiabatic flow (zero thickness) must
+    reproduce the unstratified capacity exactly: enabling the switch
+    changes nothing until the physics calls for a layer. A stratified
+    budget asked for its capacity WITHOUT a flow refuses (the reduction
+    depends on the flow, and the full-volume answer would be silently
+    wrong physics); the unstratified budget keeps the no-flow call."""
     off = _budget(stratification=False)
     on = _budget(stratification=True)
     qk = _qk(on)
 
     c_off = float(off.effective_capacity(T_C))
     assert float(on.effective_capacity(T_C, 1.2 * qk)) == pytest.approx(c_off, rel=1e-12)
-    assert float(on.effective_capacity(T_C)) == pytest.approx(c_off, rel=1e-12)
     assert float(on.dtcmb_dt(T_C, 1.2 * qk)) == pytest.approx(
         float(off.dtcmb_dt(T_C, 1.2 * qk)), rel=1e-12
     )
+    with pytest.raises(ValueError, match='q_cmb'):
+        on.effective_capacity(T_C)
+    assert float(off.effective_capacity(T_C)) == pytest.approx(c_off, rel=1e-12)
 
 
 @pytest.mark.physics_invariant
@@ -251,3 +255,103 @@ def test_factory_threads_the_stratification_keys():
             r_cmb=3480e3,
             p_cmb_fallback=136e9,
         )
+
+
+@pytest.mark.physics_invariant
+def test_layer_below_the_inner_core_closes_the_gravitational_term():
+    """A stratified layer reaching below the ICB leaves no convecting
+    outer-core shell: the gravitational capacity must close to zero
+    from above, never flip sign or magnitude. The compositional
+    parameters are ON here (the term is identically zero without them,
+    which is why an unguarded bound inversion would otherwise hide),
+    and the ICB is placed by choosing a T_cmb with an inner core, then
+    the upper bound is forced beneath it."""
+    prof = _profiles()
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        alpha_c=1.0,
+        c_light=0.05,
+        stratification=True,
+        k_core=K_CORE,
+    )
+    r_icb = float(budget.r_icb(T_C))
+    assert r_icb > 0.25 * prof.r_cmb  # a substantial inner core (~970 km here)
+
+    healthy = float(budget.gravitational_capacity(T_C, upper=prof.r_cmb))
+    assert healthy > 0.0
+
+    # Force the convecting top beneath the ICB: the shell vanishes.
+    for upper in (0.9 * r_icb, 0.5 * r_icb, 0.11 * prof.r_cmb):
+        g = float(budget.gravitational_capacity(T_C, upper=upper))
+        assert g == pytest.approx(0.0, abs=1e-6 * healthy), (
+            f'upper={upper:.3e} < r_icb={r_icb:.3e} must close the term, got {g:.3e}'
+        )
+    # Continuity from above: shrinking the shell shrinks the term.
+    slightly_above = float(budget.gravitational_capacity(T_C, upper=1.05 * r_icb))
+    assert 0.0 <= slightly_above < healthy
+
+
+@pytest.mark.physics_invariant
+def test_fully_stratified_floor_keeps_the_ode_finite():
+    """Non-positive flow pins the convecting radius at the 10% floor:
+    the capacity stays positive and finite, warming (q < 0) carries the
+    right sign with the floored inertia, and the floored regime has zero
+    flow-sensitivity so the Jacobian stays finite there. The floor is a
+    numerical guard, not physics; this pins its mechanics."""
+    on = _budget(stratification=True)
+    p = on.profiles
+
+    for q in (0.0, -1.0e12):
+        r = float(on.convecting_radius(T_C, q))
+        assert r == pytest.approx(0.1 * p.r_cmb, rel=1e-9)
+        c = float(on.effective_capacity(T_C, q))
+        assert 0.0 < c < float(_budget(stratification=False).effective_capacity(T_C))
+        rate = float(on.dtcmb_dt(T_C, q))
+        assert np.isfinite(rate)
+        if q < 0.0:
+            assert rate > 0.0  # heat flowing IN warms the core
+
+    g = float(jax.grad(lambda q: on.convecting_radius(T_C, q))(-1.0e12))
+    assert g == 0.0  # the floor is flat: no spurious sensitivity
+
+
+def test_entropy_budget_rejects_a_second_conductivity():
+    """One core, one conductivity: pairing a stratified energy budget
+    with an entropy budget carrying a different k_core must fail at
+    construction (the layer depth and the conduction sink would model
+    the same physical quantity with different numbers); the matching
+    value and the unstratified pairing both construct."""
+    on = _budget(stratification=True)
+    with pytest.raises(ValueError, match='one core, one conductivity'):
+        CoreEntropyBudget(on, k_core=90.0)
+    assert CoreEntropyBudget(on, k_core=K_CORE).k_core == pytest.approx(K_CORE)
+    off = _budget(stratification=False)
+    assert CoreEntropyBudget(off, k_core=90.0).k_core == pytest.approx(90.0)
+
+
+def test_core_module_diagnostics_report_the_reduced_capacity():
+    """CoreModule.diagnostics must report the capacity of the convecting
+    volume that drove the trajectory: with a stratified budget and a
+    subadiabatic flow the reported value equals the reduced capacity,
+    not the full-volume one, and omitting the flow raises the budget's
+    missing-flow error instead of silently answering full-volume."""
+    from aragog.core import CoreModule
+
+    on = _budget(stratification=True)
+    qk = _qk(on)
+    module = CoreModule(on, t_cmb=T_C)
+
+    q_sub = 0.5 * qk
+    d = module.diagnostics(q_cmb=q_sub)
+    assert d['effective_capacity'] == pytest.approx(
+        float(on.effective_capacity(T_C, q_sub)), rel=1e-12
+    )
+    full = float(_budget(stratification=False).effective_capacity(T_C))
+    assert d['effective_capacity'] < full
+
+    with pytest.raises(ValueError, match='q_cmb'):
+        module.diagnostics()

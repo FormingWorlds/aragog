@@ -323,3 +323,47 @@ def test_jacobian_carries_boundary_couplings():
     assert J[0, n_stag + 1] == 0.0
     # ... while the boundary-gradient state drives it strongly.
     assert abs(J[0, n_stag]) > 0.0
+
+
+@needs_eos
+def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
+    """The stratified reduction reaches the coupled RHS on both paths:
+    with stratification on and a subadiabatic state (the uniform
+    isentrope drives a near-zero flux, deeply subadiabatic for k=130),
+    numpy and JAX still agree on the boundary slots to integrator
+    precision, the cooling rate differs from the unstratified twin by
+    the reduced thermal inertia, and ``jacrev`` through the full RHS
+    stays finite with the thickness solve's sensitivity composed inside
+    (the regime where a lost or mis-signed layer JVP would corrupt the
+    analytic Jacobian without failing any standalone gradient test)."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
+
+    from aragog.eos.entropy import EntropyEOS
+    from aragog.jax.solver import dSdt_core_module
+
+    eos = EntropyEOS(EOS_DIR)
+    strat_params = dict(CORE_MODULE_PARAMS) | {'stratification': True, 'k_core': 130.0}
+    strat = _build('core_module', eos, strat_params)  # uniform isentrope
+    plain = _build('core_module', eos, CORE_MODULE_PARAMS)
+    n_stag = strat._n_stag
+    y0 = np.asarray(strat._S0, dtype=float)
+
+    f_np = np.asarray(strat.dSdt(0.0, y0)).ravel()
+    args = _build_jax_pieces(strat)
+    f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y0), args)).ravel()
+    for slot in (n_stag, n_stag + 1):
+        denom = max(abs(f_np[slot]), abs(f_jax[slot]), 1e-15)
+        assert abs(f_np[slot] - f_jax[slot]) / denom < 1e-8
+
+    # The reduced convecting volume amplifies the cooling response: the
+    # stratified T_core rate exceeds the unstratified twin's at the same
+    # state by well over the parity tolerance.
+    f_plain = np.asarray(plain.dSdt(0.0, np.asarray(plain._S0, dtype=float))).ravel()
+    assert abs(f_np[n_stag + 1]) > 2.0 * abs(f_plain[n_stag + 1])
+
+    J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(jnp.asarray(y0)))
+    assert J.shape == (n_stag + 2, n_stag + 2)
+    assert np.all(np.isfinite(J))
