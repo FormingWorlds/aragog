@@ -56,6 +56,8 @@ Two properties matter for coupled stability. The reported core temperature is th
 
 With every feature disabled the mode reduces to the isothermal-reservoir law, which is its regression anchor against `bower2018`-style behaviour.
 
+The CMB heat flux is the same one-sided conduction across the bottom half-cell that `bower2018` uses, and it carries the same limitation: with molecular conductivity across a single half-cell the flux is both mesh-dependent and orders of magnitude below the transport a convecting mantle sustains, so the core is close to thermally isolated. In a coupled Earth-like test at matched melt fraction the core loses under a milli-kelvin over the interval in which the `energy_balance` closure cools it by 2400 K. Until the flux closure is replaced, use this mode for the core thermodynamics, the dynamo diagnostics, and standalone `CoreModule` work driven by an externally supplied heat flow, and not for coupled runs whose result depends on the core cooling rate.
+
 ## How to choose
 
 | Need | Recommended `core_bc` |
@@ -64,6 +66,6 @@ With every feature disabled the mode reduces to the isothermal-reservoir law, wh
 | Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
 | Reproducing pre-2026 results | `bower2018` (legacy) |
-| Core evolution with inner-core growth, dynamo diagnostics, or a smooth core temperature through crystallisation onset | `core_module` |
+| Core thermodynamics and dynamo diagnostics, with a core cooling rate supplied externally rather than by the CMB flux closure | `core_module` |
 
 The state-vector layout for each mode is documented in [`solver/entropy_solver.py`](https://github.com/FormingWorlds/aragog/blob/main/src/aragog/solver/entropy_solver.py) at the `_build_jac_sparsity` and `set_initial_entropy` methods; the test class `TestEnergyBalanceCoreBC` in `tests/test_entropy_pytest.py` exercises the `energy_balance` mode directly.
