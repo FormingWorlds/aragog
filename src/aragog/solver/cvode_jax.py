@@ -19,6 +19,9 @@ Supported ``core_bc_mode`` values:
 - ``energy_balance``: state vector is N+1 (entropy + dSdr_cmb);
   RHS is ``jax.solver.dSdt_energy_balance``. This is the
   production PROTEUS path.
+- ``core_module``: state vector is N+2 (entropy + dSdr_cmb +
+  T_core); RHS is ``jax.solver.dSdt_core_module``, closed by the
+  staged core-evolution budget passed as ``core_module_budget``.
 
 Unsupported (factory raises ``ValueError`` and the calling solver
 falls back to numpy RHS + FD Jacobian after logging a warning):
@@ -26,8 +29,6 @@ falls back to numpy RHS + FD Jacobian after logging a warning):
   closure for the core thermal balance has been implemented.
 - ``gradient``: extended state with both boundary entropies. No
   JAX implementation.
-- ``core_module``: extended state [S, dSdr_cmb, T_core] driven by
-  the staged core-evolution budget. No JAX RHS yet.
 
 Status: PROTOTYPE for the supported modes; fallback for the rest.
 """
@@ -51,6 +52,8 @@ def build_jax_rhs_and_jacobian(
     scales,
     core_bc_mode: str = 'quasi_steady',
     radio_isotope_params: tuple = (),
+    core_module_budget=None,
+    core_module_q_radio: float = 0.0,
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -76,8 +79,9 @@ def build_jax_rhs_and_jacobian(
     core_bc_mode : str, default 'quasi_steady'
         Which JAX RHS to wrap: 'quasi_steady' uses ``jax.solver.dSdt``
         (N-state), 'energy_balance' uses ``jax.solver.dSdt_energy_balance``
-        (N+1 state with dSdr_cmb closure equation as the (N+1)-th
-        component). The latter is the production PROTEUS code path.
+        (N+1 state with the dSdr_cmb closure equation), and
+        'core_module' uses ``jax.solver.dSdt_core_module`` (N+2 state
+        with dSdr_cmb and T_core; requires ``core_module_budget``).
     radio_isotope_params : tuple, default ()
         Optional 5-tuple ``(heat_prod, abundance, concentration,
         t0_years, half_life_years)`` of 1D arrays, one entry per
@@ -85,6 +89,15 @@ def build_jax_rhs_and_jacobian(
         radiogenic source at the live integrator time ``t_phys`` so
         the heating reflects in-step decay. Empty default disables
         radio heating.
+    core_module_budget : CoreEnergyBudget, optional
+        The staged core-evolution budget whose ``dtcmb_dt`` closes the
+        boundary for ``core_bc_mode='core_module'``; required in that
+        mode, ignored otherwise. Its methods are pure JAX, so the
+        Jacobian differentiates through it (the boundary solve carries
+        a custom JVP).
+    core_module_q_radio : float, default 0.0
+        Constant core internal source power [W] for the core_module
+        closure.
 
     Returns
     -------
@@ -110,6 +123,9 @@ def build_jax_rhs_and_jacobian(
             dSdt as jax_dsdt,
         )
         from aragog.jax.solver import (
+            dSdt_core_module as jax_dsdt_cm,
+        )
+        from aragog.jax.solver import (
             dSdt_energy_balance as jax_dsdt_eb,
         )
     except ImportError as exc:
@@ -122,6 +138,14 @@ def build_jax_rhs_and_jacobian(
         _rhs_jax = jax_dsdt
     elif core_bc_mode == 'energy_balance':
         _rhs_jax = jax_dsdt_eb
+    elif core_bc_mode == 'core_module':
+        if core_module_budget is None:
+            raise ValueError(
+                "core_bc_mode='core_module' requires core_module_budget "
+                '(the CoreEnergyBudget the solver built from its config); '
+                'got None.'
+            )
+        _rhs_jax = jax_dsdt_cm
     else:
         # Explicit warning + clear error message so the calling
         # solver's catch-all fallback in entropy_solver.solve logs
@@ -129,17 +153,18 @@ def build_jax_rhs_and_jacobian(
         # than a bare ValueError.
         logger.warning(
             'JAX CVODE factory: core_bc_mode=%r is not implemented '
-            'in the JAX RHS; only quasi_steady and energy_balance '
-            'are supported. Falling back to numpy RHS + FD Jacobian.',
+            'in the JAX RHS; only quasi_steady, energy_balance, and '
+            'core_module are supported. Falling back to numpy RHS + '
+            'FD Jacobian.',
             core_bc_mode,
         )
         raise ValueError(
             f'core_bc_mode={core_bc_mode!r} is not supported by the '
             f"JAX CVODE factory. Supported modes: 'quasi_steady', "
-            f"'energy_balance'. To use any other mode (including "
-            f'{core_bc_mode!r}), set ``use_jax_jacobian = false`` in '
-            f'the config, or leave it true to get the automatic '
-            f'FD-Jacobian fallback.'
+            f"'energy_balance', 'core_module'. To use any other mode "
+            f'(including {core_bc_mode!r}), set ``use_jax_jacobian = '
+            f'false`` in the config, or leave it true to get the '
+            f'automatic FD-Jacobian fallback.'
         )
 
     # NonDimScales enforces the internal nondim contract
@@ -155,7 +180,8 @@ def build_jax_rhs_and_jacobian(
             'state_scale=..., t_ref=...) and let it derive rhs_scale.'
         )
     heating_np = np.asarray(heating_array)
-    expected_size = heating_np.size if core_bc_mode == 'quasi_steady' else heating_np.size + 1
+    n_extra = {'quasi_steady': 0, 'energy_balance': 1, 'core_module': 2}[core_bc_mode]
+    expected_size = heating_np.size + n_extra
     if scales.n != expected_size:
         raise ValueError(
             f'state_scale length {scales.n} is incompatible '
@@ -185,6 +211,10 @@ def build_jax_rhs_and_jacobian(
         H_radio_fn = _no_radio
 
     args_tuple = (eos_jax, phase_params, mesh_arrays, boundary_params, heating_jax, H_radio_fn)
+    if core_bc_mode == 'core_module':
+        # The budget rides in the closure; its methods are pure JAX and
+        # its parameters are Python floats, so jit treats it as static.
+        args_tuple = args_tuple + (core_module_budget, float(core_module_q_radio))
 
     # Wrap RHS as a function of (t_phys, S_phys) only
     def _rhs_phys(t_phys, S_phys):

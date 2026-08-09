@@ -200,9 +200,9 @@ def test_nondim_scales_immutable():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('mode', ['bower2018', 'gradient', 'core_module', 'unknown'])
+@pytest.mark.parametrize('mode', ['bower2018', 'gradient', 'unknown'])
 def test_unsupported_core_bc_mode_raises_with_clear_message(mode, caplog):
-    """A4: every unsupported mode (bower2018, gradient, core_module, a typo) must raise with a message
+    """A4: every unsupported mode (bower2018, gradient, a typo) must raise with a message
     that names the supported alternatives, AND log a warning so the
     entropy_solver catch-all fallback explains the FD-Jacobian downgrade.
 
