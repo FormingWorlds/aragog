@@ -56,6 +56,8 @@ Two properties matter for coupled stability. The reported core temperature is th
 
 The CMB heat flux is the state-derived physical flux: the boundary entropy gradient is its own ODE state, exactly as in `energy_balance`, and the full conductive-plus-convective flux assembly is evaluated from it at the CMB basic node. The boundary-gradient equation is the same SPIDER balance with the isothermal-reservoir factor replaced by $\tilde{C}(T_\text{cmb})$, so the basal mantle boundary can only change entropy as fast as the core's true thermal inertia allows. With the budget in legacy capacity mode (the reservoir constants), the mantle trajectory reproduces `energy_balance` to solver tolerance, which is the mode's regression anchor; the core-side energy booking closes against $\tilde{C}\,\Delta T_\text{cmb}$, which is the guard against a decoupled boundary.
 
+The coupling is rate-continuous, not value-continuous: the flux is set by the mantle-side transport at the boundary, so cooling is mantle-limited and the flux carries no dependence on $T_\text{cmb}$ itself, exactly as in the SPIDER balance it generalises. An initial offset between the core state and the basal cell's EOS temperature therefore persists through the run rather than relaxing, and since the melting curve is evaluated at the core state, the offset shifts inner-core nucleation timing by the corresponding interval. The solver warns at initialisation when the supplied core temperature differs from the basal-cell EOS value by more than 20 percent; keep the two consistent unless the offset is a deliberate model choice (for example a superheated core after a giant impact).
+
 ## How to choose
 
 | Need | Recommended `core_bc` |

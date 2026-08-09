@@ -1221,6 +1221,90 @@ class TestBowerCoreBC:
         assert solver._S0[-1] == pytest.approx(7500.0)
 
 
+def _make_bare_solver(
+    entropy_eos,
+    n_stag: int = 30,
+    core_bc: str = 'energy_balance',
+    P_cmb: float = 135e9,
+    P_surf: float = 1e5,
+    R_cmb: float = 3480e3,
+    R_surf: float = 6371e3,
+):
+    """Construct a minimal EntropySolver for unit-level tests.
+
+    Uses ``__new__`` + attribute injection like
+    ``TestBowerCoreBC.test_state_vector_length_v3_vs_v4``, then
+    wires a minimal evaluator with an Earth-like mesh so
+    ``set_initial_entropy``'s cold-start FD stencil has real
+    r_basic/r_stag arrays to work with. Additional cached
+    constants for ``_energy_balance_rhs_per_s`` and BC dispatch are
+    wired by ``_wire_cached_constants``.
+    """
+    from aragog.solver.entropy_solver import EntropySolver
+
+    solver = EntropySolver.__new__(EntropySolver)
+    solver.entropy_eos = entropy_eos
+    solver.parameters = None
+    solver._P_stag_flat = np.linspace(P_cmb, P_surf, n_stag)
+    solver._n_stag = n_stag
+    solver._core_bc = core_bc
+
+    # Minimal mesh: N+1 basic nodes spanning [R_cmb, R_surf], with
+    # staggered cells at basic-node midpoints.
+    class _MeshStub:
+        pass
+
+    class _SubMesh:
+        pass
+
+    mesh = _MeshStub()
+    mesh.basic = _SubMesh()
+    mesh.staggered = _SubMesh()
+    r_basic = np.linspace(R_cmb, R_surf, n_stag + 1)
+    mesh.basic.radii = r_basic
+    mesh.staggered.radii = 0.5 * (r_basic[:-1] + r_basic[1:])
+    evaluator = _MeshStub()
+    evaluator.mesh = mesh
+    solver.evaluator = evaluator
+
+    # Clear any stale IC overrides from __new__.
+    for attr in ('_dSdr_cmb_init', '_T_core_init', '_solution'):
+        if hasattr(solver, attr):
+            delattr(solver, attr)
+    return solver
+
+
+def _wire_cached_constants(
+    solver,
+    *,
+    r_cmb: float = 3480e3,
+    dr_cmb: float = 100e3,
+    core_density: float = 10738.332568062382,
+    core_cp: float = 880.0,
+    core_tfac: float = 1.147,
+):
+    """Attach the minimal subset of _cache_bc_constants needed for
+    ``_energy_balance_rhs_per_s`` to run as a pure function.
+
+    We hand-wire these instead of calling _initialize_internals to
+    avoid pulling in the full mesh/BC builder. The values mirror
+    the R8 reference Earth config (r_cmb=3480 km, dr_cmb=100 km,
+    core_density=10738 kg/m^3, core_cp=880 J/(kg K), core_tfac=1.147).
+    """
+    solver._cmb_r_cmb = r_cmb
+    solver._cmb_r_above = r_cmb + dr_cmb
+    solver._cmb_dr_cmb = dr_cmb
+    solver._cmb_dr_half = 0.5 * dr_cmb
+    solver._cmb_area = 4.0 * np.pi * r_cmb**2
+    solver._cmb_vol_first = (4.0 / 3.0) * np.pi * ((r_cmb + dr_cmb) ** 3 - r_cmb**3)
+    solver._core_density = core_density
+    solver._core_cp = core_cp
+    solver._core_M = (4.0 / 3.0) * np.pi * r_cmb**3 * core_density
+    solver._core_cap = solver._core_M * core_cp
+    solver._core_tfac = core_tfac
+    solver._cmb_radius_ratio_sq = ((r_cmb + dr_cmb) / r_cmb) ** 2
+
+
 @needs_eos
 @pytest.mark.unit
 class TestEnergyBalanceCoreBC:
@@ -1263,89 +1347,9 @@ class TestEnergyBalanceCoreBC:
     ``TestBowerCoreBC._build_minimal_mesh``.
     """
 
-    @staticmethod
-    def _make_bare_solver(
-        entropy_eos,
-        n_stag: int = 30,
-        core_bc: str = 'energy_balance',
-        P_cmb: float = 135e9,
-        P_surf: float = 1e5,
-        R_cmb: float = 3480e3,
-        R_surf: float = 6371e3,
-    ):
-        """Construct a minimal EntropySolver for unit-level tests.
-
-        Uses ``__new__`` + attribute injection like
-        ``TestBowerCoreBC.test_state_vector_length_v3_vs_v4``, then
-        wires a minimal evaluator with an Earth-like mesh so
-        ``set_initial_entropy``'s cold-start FD stencil has real
-        r_basic/r_stag arrays to work with. Additional cached
-        constants for ``_energy_balance_rhs_per_s`` and BC dispatch are
-        wired by ``_wire_cached_constants``.
-        """
-        from aragog.solver.entropy_solver import EntropySolver
-
-        solver = EntropySolver.__new__(EntropySolver)
-        solver.entropy_eos = entropy_eos
-        solver.parameters = None
-        solver._P_stag_flat = np.linspace(P_cmb, P_surf, n_stag)
-        solver._n_stag = n_stag
-        solver._core_bc = core_bc
-
-        # Minimal mesh: N+1 basic nodes spanning [R_cmb, R_surf], with
-        # staggered cells at basic-node midpoints.
-        class _MeshStub:
-            pass
-
-        class _SubMesh:
-            pass
-
-        mesh = _MeshStub()
-        mesh.basic = _SubMesh()
-        mesh.staggered = _SubMesh()
-        r_basic = np.linspace(R_cmb, R_surf, n_stag + 1)
-        mesh.basic.radii = r_basic
-        mesh.staggered.radii = 0.5 * (r_basic[:-1] + r_basic[1:])
-        evaluator = _MeshStub()
-        evaluator.mesh = mesh
-        solver.evaluator = evaluator
-
-        # Clear any stale IC overrides from __new__.
-        for attr in ('_dSdr_cmb_init', '_T_core_init', '_solution'):
-            if hasattr(solver, attr):
-                delattr(solver, attr)
-        return solver
-
-    @staticmethod
-    def _wire_cached_constants(
-        solver,
-        *,
-        r_cmb: float = 3480e3,
-        dr_cmb: float = 100e3,
-        core_density: float = 10738.332568062382,
-        core_cp: float = 880.0,
-        core_tfac: float = 1.147,
-    ):
-        """Attach the minimal subset of _cache_bc_constants needed for
-        ``_energy_balance_rhs_per_s`` to run as a pure function.
-
-        We hand-wire these instead of calling _initialize_internals to
-        avoid pulling in the full mesh/BC builder. The values mirror
-        the R8 reference Earth config (r_cmb=3480 km, dr_cmb=100 km,
-        core_density=10738 kg/m^3, core_cp=880 J/(kg K), core_tfac=1.147).
-        """
-        solver._cmb_r_cmb = r_cmb
-        solver._cmb_r_above = r_cmb + dr_cmb
-        solver._cmb_dr_cmb = dr_cmb
-        solver._cmb_dr_half = 0.5 * dr_cmb
-        solver._cmb_area = 4.0 * np.pi * r_cmb**2
-        solver._cmb_vol_first = (4.0 / 3.0) * np.pi * ((r_cmb + dr_cmb) ** 3 - r_cmb**3)
-        solver._core_density = core_density
-        solver._core_cp = core_cp
-        solver._core_M = (4.0 / 3.0) * np.pi * r_cmb**3 * core_density
-        solver._core_cap = solver._core_M * core_cp
-        solver._core_tfac = core_tfac
-        solver._cmb_radius_ratio_sq = ((r_cmb + dr_cmb) / r_cmb) ** 2
+    # Shared module-level helpers (also used by TestCoreModuleCoreBC).
+    _make_bare_solver = staticmethod(_make_bare_solver)
+    _wire_cached_constants = staticmethod(_wire_cached_constants)
 
     # ── state-vector shape tests ─────────────────────────────────
 
@@ -1898,8 +1902,8 @@ class TestCoreModuleCoreBC:
          state must not be readable as a gradient).
     """
 
-    _make_bare_solver = staticmethod(TestEnergyBalanceCoreBC._make_bare_solver)
-    _wire_cached_constants = staticmethod(TestEnergyBalanceCoreBC._wire_cached_constants)
+    _make_bare_solver = staticmethod(_make_bare_solver)
+    _wire_cached_constants = staticmethod(_wire_cached_constants)
 
     @staticmethod
     def _wire_budget(solver, *, capacity_mode: str, c_p: float = 880.0):
@@ -2041,6 +2045,77 @@ class TestCoreModuleCoreBC:
         assert J[10, 11] == 1.0 and J[11, 10] == 1.0
         # No spurious coupling to a mid-mantle node.
         assert J[10, 6] == 0.0 and J[6, 11] == 0.0
+
+    def test_rhs_floors_nonpositive_t_core(self, entropy_eos):
+        """A transient integrator excursion to zero or negative T_core
+        must not reach the melting curve or adiabat: the RHS floors the
+        state at 1 K before the budget sees it, so both derivatives
+        stay finite (edge case: the floor value itself, and a negative
+        temperature no physical core can hold)."""
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='core_module')
+        self._wire_cached_constants(solver)
+        self._wire_budget(solver, capacity_mode='profile')
+        for t_bad in (-500.0, 0.0, 1.0):
+            grad, dT = solver._core_module_rhs_per_s(
+                F_cmb_basic=2.0e4,
+                dSdt_s_cmb_per_s=-3.0e-11,
+                T_cmb_basic=4200.0,
+                cp_cmb_basic=1187.0,
+                t_core=t_bad,
+            )
+            assert np.isfinite(grad) and np.isfinite(dT), f't_core={t_bad}'
+        # The floor maps every non-positive input onto the 1 K budget
+        # evaluation, so the derivatives must agree exactly.
+        r_neg = solver._core_module_rhs_per_s(
+            F_cmb_basic=2.0e4,
+            dSdt_s_cmb_per_s=-3.0e-11,
+            T_cmb_basic=4200.0,
+            cp_cmb_basic=1187.0,
+            t_core=-500.0,
+        )
+        r_floor = solver._core_module_rhs_per_s(
+            F_cmb_basic=2.0e4,
+            dSdt_s_cmb_per_s=-3.0e-11,
+            T_cmb_basic=4200.0,
+            cp_cmb_basic=1187.0,
+            t_core=1.0,
+        )
+        assert r_neg == pytest.approx(r_floor, rel=1e-14)
+
+    def test_hot_start_never_leaks_across_mode_switch(self, entropy_eos):
+        """A previous solution from another mode must not seed either
+        extra state: its state length differs, so both IC resolvers
+        fall back to cold start instead of reading a temperature into
+        a gradient slot or vice versa.
+
+        Edge case: the leaked value would be catastrophic (a 6000 K
+        temperature read as a gradient changes the RHS by 7+ orders),
+        so the guard is on exact shape match, not clamping.
+        """
+
+        class _Sol:
+            pass
+
+        # bower2018-shaped history (N+1, T_core in slot N) feeding a
+        # core_module IC: both extra slots must ignore it.
+        solver = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='core_module')
+        stale = _Sol()
+        stale.y = np.full((11, 3), 6000.0)
+        solver._solution = stale
+        solver.set_initial_entropy(np.full(10, 2900.0))
+        assert solver._S0.shape == (12,)
+        assert solver._S0[10] == pytest.approx(0.0, abs=1e-12)  # FD cold start
+        assert solver._S0[11] != pytest.approx(6000.0)  # EOS default, not leak
+
+        # core_module-shaped history (N+2) feeding an energy_balance IC:
+        # the gradient resolver must cold-start, not read slot N blindly.
+        eb = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='energy_balance')
+        stale2 = _Sol()
+        stale2.y = np.full((12, 3), -7.7e-4)
+        eb._solution = stale2
+        eb.set_initial_entropy(np.full(10, 2900.0))
+        assert eb._S0.shape == (11,)
+        assert eb._S0[10] == pytest.approx(0.0, abs=1e-12)
 
     def test_get_current_dSdr_cmb_mode_guard(self, entropy_eos):
         """core_module exposes slot N as the gradient; bower2018 (whose

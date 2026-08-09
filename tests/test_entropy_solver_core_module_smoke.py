@@ -57,8 +57,25 @@ def shared_eos():
     return EntropyEOS(EOS_DIR)
 
 
+def _driven_s_profile(n_stag: int):
+    """Convectively unstable S(r) on the staggered nodes: hot below, cold above.
+
+    A uniform isentrope gives dS/dr = 0 everywhere, so every boundary
+    flux is near zero and any two flux closures agree trivially. The
+    solve-level guards in this file need the CMB to actually carry
+    heat, which requires a finite negative entropy gradient.
+    """
+    return np.linspace(2950.0, 2600.0, n_stag)
+
+
 def _build(
-    core_bc: str, shared_eos, core_module_params=None, n_nodes: int = 10, end_time: float = 1.0
+    core_bc: str,
+    shared_eos,
+    core_module_params=None,
+    n_nodes: int = 10,
+    end_time: float = 1.0,
+    solver_method: str = 'radau',
+    s_init=None,
 ):
     from aragog.parser import (
         Parameters,
@@ -90,7 +107,7 @@ def _build(
         mixing=False,
         radionuclides=False,
         tidal=False,
-        solver_method='radau',
+        solver_method=solver_method,
         use_jax_jacobian=False,
     )
     ic = _InitialConditionParameters(
@@ -150,7 +167,12 @@ def _build(
     )
     solver = EntropySolver(params, entropy_eos=shared_eos)
     solver.initialize()
-    solver.set_initial_entropy(2700.0)
+    if s_init is None:
+        solver.set_initial_entropy(2700.0)
+    elif isinstance(s_init, str) and s_init == 'driven':
+        solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    else:
+        solver.set_initial_entropy(s_init)
     return solver
 
 
@@ -159,7 +181,7 @@ def test_core_module_state_extension_and_integrated_t_core(shared_eos):
     integrated T_core (finite, near the EOS-derived start), keeps the
     boundary-gradient state finite, and the budget object was built with
     the mesh's own CMB radius."""
-    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
+    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, s_init='driven')
     assert solver._state_is_extended
     n_stag = solver._n_stag
     assert len(solver._S0) == n_stag + 2  # entropy block, dSdr_cmb, T_cmb
@@ -184,40 +206,58 @@ def test_core_module_state_extension_and_integrated_t_core(shared_eos):
         assert np.max(np.abs(np.diff(t_core_path))) < 50.0
 
 
-def test_core_module_energy_booking_closes_against_capacity(shared_eos):
-    """The CMB energy the solver books equals the core's temperature change
-    times the budget's effective capacity: the coupling actually drains
-    the core through the state-derived flux, rather than leaving it
-    insulated behind a conduction-only estimate.
+def test_core_module_core_cools_through_the_state_derived_flux(shared_eos):
+    """The core actually loses heat through the mantle-side transport,
+    verified against a quantity the core equation never sees.
 
-    This is the closure whose failure identifies a decoupled boundary:
-    a near-zero booked energy against a large reported flux, or a
-    temperature change orders of magnitude below the booked energy over
-    capacity, both fail here. A longer window (5 yr) accumulates enough
-    signal that the trapezoid booking error stays small against it.
+    Three guards on a driven (convectively unstable) profile:
+
+    1. Flux continuity: the state-derived CMB flux sits within a factor
+       of the mantle transport one node above (measured ratio 1.14; a
+       conduction-only closure sits five orders below the node-1 flux).
+    2. Independent cooling magnitude: the core temperature change
+       matches the prediction built from the NODE-1 flux, which does
+       not enter the core equation, so this cannot be satisfied by the
+       internal consistency of the T_core ODE alone. An insulated core
+       fails this by three-plus orders of magnitude.
+    3. Booking consistency: the trapezoid-booked CMB energy equals
+       C_eff times the temperature change (guards the energy
+       diagnostics, not the flux law, which guards 1 and 2 carry).
+
+    The uniform-isentrope variant of this test is worthless: with
+    dS/dr = 0 every closure produces near-zero flux and they all agree
+    trivially, which is why the driven profile is load-carrying here.
     """
-    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, end_time=5.0)
+    solver = _build(
+        'core_module', shared_eos, CORE_MODULE_PARAMS, end_time=5.0, s_init='driven'
+    )
     solver.solve()
     out = solver.get_state()
     y = solver._solution.y
     n_stag = solver._n_stag
     t0, t1 = float(y[n_stag + 1, 0]), float(y[n_stag + 1, -1])
-    # Effective capacity varies little over a few K; evaluate midway.
+
+    # Guard 1: flux continuity across the two lowest basic nodes.
+    F_node1 = float(out.heat_flux[1])
+    assert abs(F_node1) > 1.0  # the driven profile must actually drive
+    assert 0.2 < abs(out.F_cmb) / abs(F_node1) < 5.0
+
+    # Guard 2: independent cooling prediction from the node-1 flux.
     c_eff = float(solver._core_module_budget.effective_capacity(0.5 * (t0 + t1)))
+    span_s = float(out.dt_actual) * 3.15576e7
+    area = 4.0 * np.pi * 3.480e6**2
+    dT_pred = -abs(F_node1) * area * span_s / c_eff
+    assert t1 - t0 < 0.0  # outgoing flux cools the core (second law)
+    assert 0.2 < (t1 - t0) / dT_pred < 5.0
+    # Absolute insulation catch: the measured change is far above the
+    # sub-microkelvin an insulated core produces on this window.
+    assert abs(t1 - t0) > 1.0e-4
+
+    # Guard 3: booking consistency.
     dE_from_T = -(t1 - t0) * c_eff
     dE_booked = float(out.step_dE_F_cmb_J)
-    assert dE_booked != 0.0
-    # Trapezoid booking over accepted steps vs the exact integral: a
-    # few percent on this window. An insulated core fails by orders of
-    # magnitude, which is the regression this guards against.
+    assert dE_booked > 0.0
     assert dE_from_T == pytest.approx(dE_booked, rel=0.10)
-    # The reported F_cmb is the state-derived flux the RHS integrated,
-    # consistent in magnitude with the booked energy rate (not the
-    # decoupled FD estimate, which sits orders of magnitude away).
-    span_s = float(out.dt_actual) * 3.15576e7
-    F_mean = dE_booked / span_s / (4.0 * np.pi * 3.480e6**2)
-    assert np.sign(out.F_cmb) == np.sign(F_mean)
-    assert 0.05 < abs(out.F_cmb) / abs(F_mean) < 20.0
 
 
 def test_core_module_legacy_capacity_matches_energy_balance(shared_eos):
@@ -236,12 +276,14 @@ def test_core_module_legacy_capacity_matches_energy_balance(shared_eos):
         'legacy_rho_core': 10500.0,  # = mesh core_density in _build
         'legacy_tfac': 1.147,  # solver default tfac_core_avg
     }
-    eb = _build('energy_balance', shared_eos, None, end_time=2.0)
+    eb = _build('energy_balance', shared_eos, None, end_time=2.0, s_init='driven')
     eb.solve()
     S_eb = eb._solution.y[: eb._n_stag, -1]
     dsdr_eb = float(eb._solution.y[eb._n_stag, -1])
 
-    cm = _build('core_module', shared_eos, legacy_capacity_params, end_time=2.0)
+    cm = _build(
+        'core_module', shared_eos, legacy_capacity_params, end_time=2.0, s_init='driven'
+    )
     cm.solve()
     S_cm = cm._solution.y[: cm._n_stag, -1]
     dsdr_cm = float(cm._solution.y[cm._n_stag, -1])
@@ -253,20 +295,28 @@ def test_core_module_legacy_capacity_matches_energy_balance(shared_eos):
 
 
 def test_core_module_against_quasi_steady_baseline(shared_eos):
-    """Both modes integrate the same setup; the legacy mode reports the
-    node-derived core temperature, the module the integrated one, and the
-    two agree within the boundary-layer scale (hundreds of K) rather than
-    diverging to different regimes."""
-    legacy = _build('quasi_steady', shared_eos)
+    """Cross-mode sanity on the same driven setup: both core temperatures
+    are finite, the module's integrated state cools under the outgoing
+    flux, and the two stay within 50 K of each other. Both modes change
+    T_core by under 1 K on this window (0.16 K/yr at the wired
+    constants), so the bracket only catches catastrophic divergence
+    (initialisation or unit errors of order 100x), not closure physics;
+    the closure discrimination lives in the flux-continuity test."""
+    legacy = _build('quasi_steady', shared_eos, s_init='driven')
     legacy.solve()
     t_legacy = legacy.get_state().T_core
 
-    module = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
+    module = _build('core_module', shared_eos, CORE_MODULE_PARAMS, s_init='driven')
     module.solve()
-    t_module = module.get_state().T_core
+    out = module.get_state()
+    y = module._solution.y
+    n_stag = module._n_stag
+    t_module = out.T_core
 
     assert np.isfinite(t_legacy) and np.isfinite(t_module)
-    assert abs(t_module - t_legacy) < 500.0
+    # Outgoing driven flux: the integrated core state must cool.
+    assert float(y[n_stag + 1, -1]) < float(y[n_stag + 1, 0])
+    assert abs(t_module - t_legacy) < 50.0
 
 
 def test_core_module_missing_params_still_builds_with_defaults(shared_eos):
@@ -281,3 +331,80 @@ def test_core_module_missing_params_still_builds_with_defaults(shared_eos):
 
     with pytest.raises(ValueError, match='unrecognised'):
         _build('core_module', shared_eos, {'not_a_key': 1.0})
+
+
+def test_core_module_solves_through_cvode(shared_eos):
+    """core_module completes a driven solve through the CVODE production
+    integrator (FD Jacobian; the JAX factory rejects the mode and the
+    solver falls back) and lands on the Radau twin's answer. Guards the
+    production path PROTEUS actually runs, which the scipy-only tests
+    never touch, including the N+2 sparsity and nondim scales under
+    CVODE."""
+    pytest.importorskip('scikits_odes_sundials')
+    cv = _build(
+        'core_module',
+        shared_eos,
+        CORE_MODULE_PARAMS,
+        end_time=2.0,
+        solver_method='cvode',
+        s_init='driven',
+    )
+    cv.solve()
+    out_cv = cv.get_state()
+    y_cv = cv._solution.y
+    n_stag = cv._n_stag
+    assert y_cv.shape[0] == n_stag + 2
+    assert np.all(np.isfinite(y_cv))
+
+    rd = _build(
+        'core_module',
+        shared_eos,
+        CORE_MODULE_PARAMS,
+        end_time=2.0,
+        solver_method='radau',
+        s_init='driven',
+    )
+    rd.solve()
+    out_rd = rd.get_state()
+    # Same physics through both integrators: fluxes to 1%, the core
+    # temperature drop to 10% (both integrate the same smooth ODE; the
+    # bands absorb step-selection differences only).
+    assert out_cv.F_cmb == pytest.approx(out_rd.F_cmb, rel=1e-2)
+    dT_cv = float(y_cv[n_stag + 1, -1] - y_cv[n_stag + 1, 0])
+    dT_rd = float(rd._solution.y[n_stag + 1, -1] - rd._solution.y[n_stag + 1, 0])
+    assert dT_cv == pytest.approx(dT_rd, rel=0.10)
+    assert dT_cv < 0.0
+
+
+def test_core_module_solve_with_nucleation_active(shared_eos):
+    """A driven solve started inside the inner-core nucleation band
+    exercises the latent and gravitational capacity terms in the coupled
+    ODE (not just on the standalone budget): C_eff exceeds the secular
+    capacity at the initial state, the FD-Jacobian solve completes, and
+    the T_core path stays finite and smooth through the band."""
+    probe = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
+    budget = probe._core_module_budget
+    secular = float(budget.secular_capacity())
+    # Scan for the nucleation-active band: where the latent term
+    # contributes at least 1% of the secular capacity.
+    T_scan = np.linspace(3200.0, 6000.0, 281)
+    active = [t for t in T_scan if float(budget.latent_capacity(t)) > 0.01 * secular]
+    assert active, 'no nucleation-active band in scan range; params drifted'
+    t_start = float(np.median(active))
+
+    solver = _build(
+        'core_module', shared_eos, CORE_MODULE_PARAMS, end_time=2.0, s_init='driven'
+    )
+    solver.set_initial_core_temperature(t_start)
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    assert float(budget.effective_capacity(t_start)) > 1.01 * secular
+    solver.solve()
+    y = solver._solution.y
+    n_stag = solver._n_stag
+    t_path = y[n_stag + 1]
+    assert np.all(np.isfinite(t_path))
+    assert np.all(t_path > 0.0)
+    if t_path.size > 2:
+        # Latent buffering makes the effective capacity LARGER, so the
+        # per-step motion must stay below the capacity-free estimate.
+        assert np.max(np.abs(np.diff(t_path))) < 1.0
