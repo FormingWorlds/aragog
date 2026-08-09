@@ -82,6 +82,17 @@ class CoreEntropyBudget:
             raise ValueError(f'f_ohm must be in (0, 1], got {f_ohm}')
         if flux_geometry not in _CHR09_F_GEOMETRY:
             raise ValueError(f'unknown flux_geometry {flux_geometry!r}')
+        if (
+            getattr(budget, 'stratification', False)
+            and budget.k_core is not None
+            and float(budget.k_core) != float(k_core)
+        ):
+            raise ValueError(
+                'one core, one conductivity: the stratified budget carries '
+                f'k_core={budget.k_core} but the entropy budget was given '
+                f'{k_core}; the layer depth and the conduction sink would '
+                'disagree about the same physical quantity'
+            )
         self.budget = budget
         self.k_core = float(k_core)
         self.f_ohm = float(f_ohm)
@@ -100,9 +111,10 @@ class CoreEntropyBudget:
     def _upper(self, t_cmb, q_cmb=None):
         """Convecting-volume top for the entropy integrals.
 
-        Defers to the energy budget, so the same conductive-matching
-        depth (and the same conductivity) reduces both budgets; the CMB
-        radius when stratification is off or no flow is supplied.
+        Defers to the energy budget, so one conductive-matching depth
+        reduces both budgets (the constructor enforces one shared
+        conductivity when stratification is on); the CMB radius when
+        stratification is off.
         """
         return self.budget.convecting_radius(t_cmb, q_cmb)
 
