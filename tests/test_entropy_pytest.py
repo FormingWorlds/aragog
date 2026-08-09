@@ -1871,6 +1871,201 @@ class TestEnergyBalanceCoreBC:
             )
 
 
+@needs_eos
+@pytest.mark.unit
+class TestCoreModuleCoreBC:
+    """Unit tests for the core_module boundary-state contract.
+
+    The core_module mode extends the state vector by TWO elements:
+    ``[S_0, ..., S_{N-1}, dSdr_cmb, T_core]``. The boundary entropy
+    gradient evolves exactly as in energy_balance, so the CMB flux is
+    the state-derived physical flux, and the reservoir factor in the
+    balance is replaced by the staged core-evolution budget's effective
+    heat capacity ``C_eff(T_core)``. These tests pin:
+
+      1. State-vector shape and IC packing (FD cold start for
+         dSdr_cmb, EOS default and override for T_core).
+      2. ``_core_module_rhs_per_s`` reducing exactly to
+         ``_energy_balance_rhs_per_s`` when the budget runs in legacy
+         capacity mode with the reservoir constants, and deviating by
+         more than tolerance in profile mode (the discrimination
+         guard: an implementation that silently kept the reservoir
+         factor would pass the first check and fail the second).
+      3. The internal-source offset: ``q_radio`` equal to the CMB heat
+         flow freezes the core exactly.
+      4. Jacobian sparsity for the two extra states.
+      5. The ``get_current_dSdr_cmb`` mode guard (bower2018's T_core
+         state must not be readable as a gradient).
+    """
+
+    _make_bare_solver = staticmethod(TestEnergyBalanceCoreBC._make_bare_solver)
+    _wire_cached_constants = staticmethod(TestEnergyBalanceCoreBC._wire_cached_constants)
+
+    @staticmethod
+    def _wire_budget(solver, *, capacity_mode: str, c_p: float = 880.0):
+        """Attach a CoreEnergyBudget matching the wired reservoir constants.
+
+        Legacy mode reproduces ``cp_core * tfac * M_core`` exactly, so the
+        capacity swap in ``_core_module_rhs_per_s`` becomes the identity
+        against ``_energy_balance_rhs_per_s``.
+        """
+        from aragog.core import build_core_module_budget
+
+        params = {
+            'c_p': c_p,
+            'melting_curve': 'iron',
+            'light_element_fraction': 0.1,
+            'depression': 1.2,
+            'capacity_mode': capacity_mode,
+        }
+        if capacity_mode == 'legacy':
+            params['legacy_rho_core'] = solver._core_density
+            params['legacy_tfac'] = solver._core_tfac
+        solver._core_module_budget = build_core_module_budget(
+            params, r_cmb=solver._cmb_r_cmb, p_cmb_fallback=135e9
+        )
+        solver._core_module_q_radio = 0.0
+
+    def test_state_vector_length_and_ic_packing(self, entropy_eos):
+        """core_module packs [S, dSdr_cmb, T_core]: length N+2, FD cold
+        start in slot N (exactly zero for a uniform isentrope), EOS
+        bottom-cell default in slot N+1, both overridable."""
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='core_module')
+        solver.set_initial_entropy(np.full(30, 2900.0))
+        assert solver._S0.shape == (32,), (
+            f'core_module state should be N+2 = 32, got {solver._S0.shape}'
+        )
+        # Uniform isentrope: FD cold start is exactly zero.
+        assert solver._S0[30] == pytest.approx(0.0, abs=1e-12)
+        # T_core default: bottom-cell EOS temperature, physically bounded.
+        assert 1000.0 < solver._S0[31] < 10000.0
+
+        # Overrides respected, and cleared correctly.
+        solver2 = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='core_module')
+        solver2.set_initial_dSdr_cmb(-1.5e-4)
+        solver2.set_initial_core_temperature(7500.0)
+        solver2.set_initial_entropy(np.full(30, 2900.0))
+        assert solver2._S0[30] == pytest.approx(-1.5e-4)
+        assert solver2._S0[31] == pytest.approx(7500.0)
+
+    def test_rhs_reduces_to_energy_balance_in_legacy_mode(self, entropy_eos):
+        """With the budget in legacy capacity mode and matching reservoir
+        constants, the gradient equation equals _energy_balance_rhs_per_s
+        for several fluxes; in profile mode it deviates by more than the
+        comparison tolerance (the capacity actually changed hands)."""
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='core_module')
+        self._wire_cached_constants(solver)
+        self._wire_budget(solver, capacity_mode='legacy')
+
+        inputs = dict(dSdt_s_cmb_per_s=-3.0e-11, T_cmb_basic=4200.0, cp_cmb_basic=1187.0)
+        for F in (1.5e4, -2.0e3, 6.0e5):
+            expected = solver._energy_balance_rhs_per_s(F_cmb_basic=F, **inputs)
+            got_grad, got_dT = solver._core_module_rhs_per_s(
+                F_cmb_basic=F, t_core=4200.0, **inputs
+            )
+            assert got_grad == pytest.approx(expected, rel=1e-12), (
+                f'legacy-capacity gradient RHS must equal energy_balance at F={F}'
+            )
+            # T_core equation is the reservoir drain in this limit.
+            assert got_dT == pytest.approx(
+                -F * solver._cmb_area / (solver._core_cap * solver._core_tfac), rel=1e-12
+            )
+
+        # Discrimination guard: profile-mode capacity differs from the
+        # reservoir constant, so the same inputs give a measurably
+        # different gradient RHS (well beyond the 1e-12 equality above).
+        self._wire_budget(solver, capacity_mode='profile')
+        F = 6.0e5
+        expected = solver._energy_balance_rhs_per_s(F_cmb_basic=F, **inputs)
+        got_grad, _ = solver._core_module_rhs_per_s(F_cmb_basic=F, t_core=4200.0, **inputs)
+        assert abs(got_grad - expected) > 1e-3 * abs(expected), (
+            'profile-mode capacity must change the gradient RHS; identical values mean '
+            'the reservoir factor was silently kept'
+        )
+
+    def test_q_radio_offsets_cooling_exactly(self, entropy_eos):
+        """q_radio equal to the CMB heat flow freezes the core (dT/dt = 0)
+        and reduces the gradient equation to the pure mantle-side term;
+        q_radio above it warms the core (sign flip). The zero-flux,
+        zero-source, zero-dSdt limit returns exactly (0, 0)."""
+        solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='core_module')
+        self._wire_cached_constants(solver)
+        self._wire_budget(solver, capacity_mode='legacy')
+
+        F = 2.0e4
+        dSdt_s = -3.0e-11
+        solver._core_module_q_radio = F * solver._cmb_area
+        got_grad, got_dT = solver._core_module_rhs_per_s(
+            F_cmb_basic=F,
+            dSdt_s_cmb_per_s=dSdt_s,
+            T_cmb_basic=4200.0,
+            cp_cmb_basic=1187.0,
+            t_core=4200.0,
+        )
+        assert got_dT == pytest.approx(0.0, abs=1e-30)
+        assert got_grad == pytest.approx(dSdt_s * 2.0 / solver._cmb_dr_cmb, rel=1e-12)
+
+        # Overdriven source: the core warms.
+        solver._core_module_q_radio = 2.0 * F * solver._cmb_area
+        _, got_dT_warm = solver._core_module_rhs_per_s(
+            F_cmb_basic=F,
+            dSdt_s_cmb_per_s=dSdt_s,
+            T_cmb_basic=4200.0,
+            cp_cmb_basic=1187.0,
+            t_core=4200.0,
+        )
+        assert got_dT_warm > 0.0
+
+        # Quiescent limit: everything zero.
+        solver._core_module_q_radio = 0.0
+        grad0, dT0 = solver._core_module_rhs_per_s(
+            F_cmb_basic=0.0,
+            dSdt_s_cmb_per_s=0.0,
+            T_cmb_basic=4200.0,
+            cp_cmb_basic=1187.0,
+            t_core=4200.0,
+        )
+        assert grad0 == pytest.approx(0.0, abs=1e-30)
+        assert dT0 == pytest.approx(0.0, abs=1e-30)
+
+    def test_jac_sparsity_two_extra_states(self, entropy_eos):
+        """The sparsity pattern is (N+2)x(N+2); both extra rows couple to
+        S[0..2] and to each other, and S[0], S[1] couple back to both."""
+        solver = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='core_module')
+        J = solver._build_jac_sparsity().toarray()
+        assert J.shape == (12, 12)
+        for extra in (10, 11):
+            assert J[extra, 0] == 1.0 and J[extra, 1] == 1.0 and J[extra, 2] == 1.0
+            assert J[0, extra] == 1.0 and J[1, extra] == 1.0
+        # The two boundary states feed each other (shared flux and rate).
+        assert J[10, 11] == 1.0 and J[11, 10] == 1.0
+        # No spurious coupling to a mid-mantle node.
+        assert J[10, 6] == 0.0 and J[6, 11] == 0.0
+
+    def test_get_current_dSdr_cmb_mode_guard(self, entropy_eos):
+        """core_module exposes slot N as the gradient; bower2018 (whose
+        slot N is T_core) returns None rather than a temperature
+        masquerading as a gradient."""
+
+        class _Sol:
+            pass
+
+        solver = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='core_module')
+        sol = _Sol()
+        sol.y = np.zeros((12, 3))
+        sol.y[10, -1] = -2.5e-4
+        sol.y[11, -1] = 6000.0
+        solver._solution = sol
+        assert solver.get_current_dSdr_cmb() == pytest.approx(-2.5e-4)
+
+        bower = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='bower2018')
+        sol_b = _Sol()
+        sol_b.y = np.zeros((11, 3))
+        sol_b.y[10, -1] = 6000.0  # T_core, NOT a gradient
+        bower._solution = sol_b
+        assert bower.get_current_dSdr_cmb() is None
+
+
 @pytest.mark.unit
 class TestGradientReconstruction:
     """Tests for _reconstruct_entropy, the gradient-to-value inversion.
