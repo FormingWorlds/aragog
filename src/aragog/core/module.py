@@ -48,9 +48,10 @@ def build_core_module_budget(
     and ``depression``, or ``'quadratic'`` with ``t_m0``/``t_m1``/``t_m2``),
     and the budget parameters (``ds_fusion``, ``icn_width``,
     ``latent_heat``, ``alpha_c``, ``c_light``, ``capacity_mode``,
-    ``legacy_rho_core``, ``legacy_tfac``). The CMB radius comes from the
-    caller (the solver's mesh), never from the dict, and ``p_cmb`` falls
-    back to the caller's value when absent.
+    ``legacy_rho_core``, ``legacy_tfac``, ``stratification``,
+    ``k_core``). The CMB radius comes from the caller (the solver's
+    mesh), never from the dict, and ``p_cmb`` falls back to the
+    caller's value when absent.
 
     Raises
     ------
@@ -76,6 +77,8 @@ def build_core_module_budget(
         'capacity_mode',
         'legacy_rho_core',
         'legacy_tfac',
+        'stratification',
+        'k_core',
     }
     # Both curves' keys are recognised regardless of the active selector:
     # a config surface (the PROTEUS attrs block) carries every field, and

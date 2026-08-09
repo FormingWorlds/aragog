@@ -74,6 +74,16 @@ class CoreEnergyBudget:
     legacy_tfac : float, optional
         Core-temperature factor of the legacy closure (required in legacy
         mode; 1.147 is the Earth-like default used across the ecosystem).
+    stratification : bool
+        When true, a stably stratified sub-CMB layer at its equilibrium
+        conductive-matching depth reduces the convecting volume in the
+        capacity integrals: the budgets run to ``convecting_radius(t,
+        q)`` instead of the CMB. Quasi-static closure: the layer conducts
+        the CMB heat flow without storage, so the same ``q_cmb`` drives
+        the reduced-volume budget. Profile mode only.
+    k_core : float, optional
+        Core thermal conductivity [W m-1 K-1] for the conductive-matching
+        depth; required when ``stratification`` is on.
 
     Raises
     ------
@@ -95,6 +105,8 @@ class CoreEnergyBudget:
         capacity_mode: str = 'profile',
         legacy_rho_core: float | None = None,
         legacy_tfac: float | None = None,
+        stratification: bool = False,
+        k_core: float | None = None,
     ) -> None:
         if not float(ds_fusion) > 0.0:
             raise ValueError(f'ds_fusion must be positive, got {ds_fusion}')
@@ -108,6 +120,14 @@ class CoreEnergyBudget:
             raise ValueError(f'unknown capacity_mode {capacity_mode!r}')
         if capacity_mode == 'legacy' and (legacy_rho_core is None or legacy_tfac is None):
             raise ValueError('legacy mode needs legacy_rho_core and legacy_tfac')
+        if stratification:
+            if capacity_mode == 'legacy':
+                raise ValueError(
+                    'stratification needs the profile capacity mode; the '
+                    'legacy reservoir has no volume to reduce'
+                )
+            if k_core is None or not float(k_core) > 0.0:
+                raise ValueError(f'stratification needs a positive k_core, got {k_core}')
         self.profiles = profiles
         self.melting_curve = melting_curve
         self.ds_fusion = float(ds_fusion)
@@ -118,21 +138,56 @@ class CoreEnergyBudget:
         self.capacity_mode = capacity_mode
         self.legacy_rho_core = None if legacy_rho_core is None else float(legacy_rho_core)
         self.legacy_tfac = None if legacy_tfac is None else float(legacy_tfac)
+        self.stratification = bool(stratification)
+        self.k_core = None if k_core is None else float(k_core)
 
     # -- static integrals ----------------------------------------------------
 
     def _quad_0_rcmb(self, integrand):
         """Fixed 48-point Gauss-Legendre integral of ``integrand(r)`` on [0, r_cmb]."""
-        half = self.profiles.r_cmb / 2.0
+        return self._quad_0_upper(self.profiles.r_cmb, integrand)
+
+    def _quad_0_upper(self, upper, integrand):
+        """Fixed 48-point Gauss-Legendre integral of ``integrand(r)`` on [0, upper]."""
+        half = upper / 2.0
         r = half + half * _GL_X
         return half * jnp.sum(_GL_W * integrand(r))
 
-    def secular_capacity(self):
+    # -- stratified layer -----------------------------------------------------
+
+    @property
+    def _thickness_fn(self):
+        """The custom-JVP conductive-matching solve, built once per instance."""
+        cached = getattr(self, '_thickness_fn_cached', None)
+        if cached is None:
+            from aragog.core.stratification import make_thickness_fn
+
+            cached = make_thickness_fn(self.profiles, self.k_core)
+            self._thickness_fn_cached = cached
+        return cached
+
+    def convecting_radius(self, t_cmb, q_cmb=None):
+        """Upper radius [m] of the convecting core.
+
+        The CMB radius when stratification is off or no heat flow is
+        supplied; otherwise the base of the equilibrium stratified layer,
+        floored at 10% of the CMB radius so a fully stratified transient
+        cannot collapse the capacity integrals to zero volume.
+        """
+        p = self.profiles
+        if not self.stratification or q_cmb is None:
+            return jnp.asarray(p.r_cmb, dtype=jnp.float64)
+        thickness = self._thickness_fn(t_cmb, q_cmb)
+        return jnp.maximum(p.r_cmb - thickness, 0.1 * p.r_cmb)
+
+    def secular_capacity(self, upper=None):
         """Secular heat capacity dQ_s / d(dT_cmb/dt) [J/K].
 
-        Profile mode: ``c_p int rho(r) f(r) 4 pi r^2 dr`` with ``f`` the
-        adiabat shape ``T_a(r)/T_cmb``, i.e. ``c_p M tfac_eff``. Legacy
-        mode: ``(4/3) pi r_cmb^3 rho c_p tfac``, the reservoir constant.
+        Profile mode: ``c_p int rho(r) f(r) 4 pi r^2 dr`` over the
+        convecting volume (``upper`` defaults to the CMB radius), with
+        ``f`` the adiabat shape ``T_a(r)/T_cmb``, i.e. ``c_p M
+        tfac_eff``. Legacy mode: ``(4/3) pi r_cmb^3 rho c_p tfac``, the
+        reservoir constant.
         """
         p = self.profiles
         if self.capacity_mode == 'legacy':
@@ -143,7 +198,8 @@ class CoreEnergyBudget:
             shape = p.adiabat(r, 1.0)  # T_a / T_cmb: anchor-independent
             return p.density(r) * shape * 4.0 * jnp.pi * r**2
 
-        return p.c_p * self._quad_0_rcmb(integrand)
+        top = p.r_cmb if upper is None else upper
+        return p.c_p * self._quad_0_upper(top, integrand)
 
     def effective_tfac(self):
         """Mass-weighted mean of ``T_a/T_cmb`` over the core (profile mode)."""
@@ -280,7 +336,7 @@ class CoreEnergyBudget:
         capacity = heat * area_mass * self._boundary_sensitivity(t_cmb)
         return self.freeze_out_factor(t_cmb) * self.nucleation_factor(t_cmb) * capacity
 
-    def gravitational_capacity(self, t_cmb):
+    def gravitational_capacity(self, t_cmb, upper=None):
         """Gravitational contribution to the effective heat capacity [J/K].
 
         Light elements rejected by the growing inner core mix through the
@@ -291,17 +347,20 @@ class CoreEnergyBudget:
         complete-rejection limit; the structure of the Leeds
         ``thermal_history`` core model (Greenwood et al. 2021 lineage,
         Gubbins et al. 2003 formalism). Zero when either compositional
-        parameter is zero, before onset, and after freeze-out.
+        parameter is zero, before onset, and after freeze-out. The
+        outer-core region runs to ``upper`` (default the CMB radius),
+        which the stratified budget reduces to the convecting radius.
         """
         p = self.profiles
         radius = self.r_icb(t_cmb)
+        top = p.r_cmb if upper is None else upper
 
         def integrand(r):
             return p.density(r) * p.potential(r) * 4.0 * jnp.pi * r**2
 
-        # Outer-core integrals on [r_icb, r_cmb] with the shared GL panel.
-        half = (p.r_cmb - radius) / 2.0
-        centre = (p.r_cmb + radius) / 2.0
+        # Outer-core integrals on [r_icb, upper] with the shared GL panel.
+        half = (top - radius) / 2.0
+        centre = (top + radius) / 2.0
         s = centre[..., None] + half[..., None] * _GL_X
         rho_psi = half * jnp.sum(_GL_W * integrand(s), axis=-1)
         mass_oc = half * jnp.sum(_GL_W * p.density(s) * 4.0 * jnp.pi * s**2, axis=-1)
@@ -319,19 +378,30 @@ class CoreEnergyBudget:
 
     # -- assembled budget ----------------------------------------------------
 
-    def effective_capacity(self, t_cmb):
+    def effective_capacity(self, t_cmb, q_cmb=None):
         """Total dQ/d(dT_cmb/dt) [J/K]: secular plus latent plus
-        gravitational (profile mode)."""
-        secular = self.secular_capacity()
+        gravitational (profile mode).
+
+        With stratification enabled and a heat flow supplied, the
+        volume integrals run to the convecting radius rather than the
+        CMB, so a subadiabatic flow shrinks the capacity; without a
+        flow (or with stratification off) the full core participates.
+        """
         if self.capacity_mode == 'legacy':
-            return secular
-        return secular + self.latent_capacity(t_cmb) + self.gravitational_capacity(t_cmb)
+            return self.secular_capacity()
+        upper = self.convecting_radius(t_cmb, q_cmb)
+        return (
+            self.secular_capacity(upper=upper)
+            + self.latent_capacity(t_cmb)
+            + self.gravitational_capacity(t_cmb, upper=upper)
+        )
 
     def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
         """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of the core.
 
         ``dT_cmb/dt = (q_sources - q_cmb) / C_eff(T_cmb)``; positive
         ``q_cmb`` cools the core, and internal sources (radiogenic, tidal)
-        offset it.
+        offset it. With stratification enabled the capacity is evaluated
+        over the convecting volume for this heat flow.
         """
-        return (q_sources - q_cmb) / self.effective_capacity(t_cmb)
+        return (q_sources - q_cmb) / self.effective_capacity(t_cmb, q_cmb)
