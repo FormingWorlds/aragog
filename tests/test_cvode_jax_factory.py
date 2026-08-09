@@ -200,9 +200,9 @@ def test_nondim_scales_immutable():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('mode', ['bower2018', 'gradient', 'unknown'])
+@pytest.mark.parametrize('mode', ['bower2018', 'gradient', 'core_module', 'unknown'])
 def test_unsupported_core_bc_mode_raises_with_clear_message(mode, caplog):
-    """A4: bower2018 / gradient / typo modes must raise with a message
+    """A4: every unsupported mode (bower2018, gradient, core_module, a typo) must raise with a message
     that names the supported alternatives, AND log a warning so the
     entropy_solver catch-all fallback explains the FD-Jacobian downgrade.
 
@@ -217,8 +217,14 @@ def test_unsupported_core_bc_mode_raises_with_clear_message(mode, caplog):
     rhs_scale = 1.0 / state_scale
     heating = np.zeros(n)
     with caplog.at_level(logging.WARNING, logger='fwl.aragog.solver.cvode_jax'):
-        with pytest.raises(ValueError, match='is not supported'):
+        with pytest.raises(ValueError, match='is not supported') as exc_info:
             _build_factory(state_scale, rhs_scale, 1.0, heating, mode)
+    # The raised message (not just the log) must name the offending
+    # mode and the use_jax_jacobian remediation, so the guidance holds
+    # for every unsupported mode rather than a hardcoded pair.
+    err = str(exc_info.value)
+    assert mode in err
+    assert 'use_jax_jacobian' in err
     # Warning text must mention both the offending mode and the
     # supported workaround so downstream operators don't have to
     # bisect their own logs.

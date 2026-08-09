@@ -321,10 +321,10 @@ def _derive_initial_entropy_from_config(solver) -> float | None:
     default=0.0,
     show_default=True,
     help=(
-        'Initial dS/dr at the CMB [J/kg/K/m]. Used only when '
-        '``boundary_conditions.core_bc = "energy_balance"`` (the '
-        'default), where the CMB entropy gradient is an extended '
-        'state variable.'
+        'Initial dS/dr at the CMB [J/kg/K/m]. Used when '
+        '``boundary_conditions.core_bc`` is ``"energy_balance"`` (the '
+        'default) or ``"core_module"``, the modes that carry the CMB '
+        'entropy gradient as an extended state variable.'
     ),
 )
 @click.option(
@@ -445,13 +445,14 @@ def run(
     solver.initialize()
 
     core_bc = getattr(solver.parameters.boundary_conditions, 'core_bc', 'energy_balance')
-    if core_bc == 'energy_balance':
+    if core_bc in ('energy_balance', 'core_module'):
         solver.set_initial_dSdr_cmb(initial_dsdr_cmb)
     elif initial_dsdr_cmb != 0.0:
         logger.warning(
-            '--initial-dsdr-cmb=%g ignored: core_bc=%r does not use the '
-            'CMB entropy gradient as a state variable. Pass core_bc='
-            "'energy_balance' to make this option meaningful.",
+            '--initial-dsdr-cmb=%g ignored: core_bc=%r does not carry the '
+            'CMB entropy gradient as a state variable. Use core_bc='
+            "'energy_balance' or 'core_module' to make this option "
+            'meaningful.',
             initial_dsdr_cmb,
             core_bc,
         )

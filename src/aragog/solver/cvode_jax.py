@@ -26,6 +26,8 @@ falls back to numpy RHS + FD Jacobian after logging a warning):
   closure for the core thermal balance has been implemented.
 - ``gradient``: extended state with both boundary entropies. No
   JAX implementation.
+- ``core_module``: extended state [S, dSdr_cmb, T_core] driven by
+  the staged core-evolution budget. No JAX RHS yet.
 
 Status: PROTOTYPE for the supported modes; fallback for the rest.
 """
@@ -134,8 +136,10 @@ def build_jax_rhs_and_jacobian(
         raise ValueError(
             f'core_bc_mode={core_bc_mode!r} is not supported by the '
             f"JAX CVODE factory. Supported modes: 'quasi_steady', "
-            f"'energy_balance'. To use 'bower2018' or 'gradient', "
-            f'set ``use_jax_jacobian = false`` in the config.'
+            f"'energy_balance'. To use any other mode (including "
+            f'{core_bc_mode!r}), set ``use_jax_jacobian = false`` in '
+            f'the config, or leave it true to get the automatic '
+            f'FD-Jacobian fallback.'
         )
 
     # NonDimScales enforces the internal nondim contract
