@@ -11,6 +11,7 @@ the mushy zone).
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -56,6 +57,11 @@ def _smooth_abs_neg(x: npt.NDArray, eps: float = 1.0e-8) -> npt.NDArray:
     into a single C^infinity expression.
     """
     return 0.5 * (np.sqrt(x * x + eps * eps) - x)
+
+
+# Diagnostic switch: skip the CMB eddy-diffusivity borrow from the first
+# interior node. Set ARAGOG_NO_CMB_KH_BORROW=1 to isolate its effect.
+_NO_CMB_KH_BORROW = os.environ.get('ARAGOG_NO_CMB_KH_BORROW', '') == '1'
 
 
 def apply_kappah_floor(
@@ -727,7 +733,7 @@ class EntropyState:
         # to the interior value. Borrowing from the first interior node
         # avoids this artifact and aligns the CMB convective flux with
         # SPIDER's treatment.
-        if len(self._eddy_diffusivity) >= 2:
+        if len(self._eddy_diffusivity) >= 2 and not _NO_CMB_KH_BORROW:
             self._eddy_diffusivity[0] = self._eddy_diffusivity[1]
 
         # ── Compute fluxes ───────────────────────────────────────────

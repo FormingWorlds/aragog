@@ -104,6 +104,7 @@ def _dump_step_trajectory(
     S_bottom=None,
     y_hash=None,
     kh0=None,
+    dSdr1=None,
 ) -> None:
     """Write the accepted sub-step power trajectory of one solver call.
 
@@ -124,9 +125,10 @@ def _dump_step_trajectory(
     dSdr_cmb, S_bottom : array_like, optional
         CMB entropy gradient state component [J/kg/K/m] and bottom-cell
         specific entropy [J/kg/K] at each accepted sub-step.
-    y_hash, kh0 : array_like, optional
-        Hash of the full state vector, and the CMB-node eddy diffusivity
-        [m^2/s], at each accepted sub-step.
+    y_hash, kh0, dSdr1 : array_like, optional
+        Hash of the full state vector, the CMB-node eddy diffusivity
+        [m^2/s], and the first interior node's entropy gradient
+        [J/kg/K/m], at each accepted sub-step.
     """
     global _TRAJ_DUMP_COUNT
     if not _TRAJ_DUMP_DIR:
@@ -146,6 +148,7 @@ def _dump_step_trajectory(
             S_bottom=np.asarray(S_bottom if S_bottom is not None else [], dtype=float),
             y_hash=np.asarray(y_hash if y_hash is not None else [], dtype=float),
             kh0=np.asarray(kh0 if kh0 is not None else [], dtype=float),
+            dSdr1=np.asarray(dSdr1 if dSdr1 is not None else [], dtype=float),
         )
     except OSError as exc:
         logger.warning('Sub-step trajectory dump failed: %s', exc)
@@ -3479,6 +3482,7 @@ class EntropySolver:
         _dbg_S_bottom = np.full(n_steps, np.nan)
         _dbg_y_hash = np.full(n_steps, np.nan)
         _dbg_kh0 = np.full(n_steps, np.nan)
+        _dbg_dSdr1 = np.full(n_steps, np.nan)
         # Per-substep entropy-equation self-consistency integrand
         # (LHS - RHS) [W]. LHS = Σ capacitance (dS/dt) V at the substep
         # state; RHS = -F_int A_int + F_cmb A_cmb + Q_radio + Q_tidal.
@@ -3548,6 +3552,9 @@ class EntropySolver:
             _kh = getattr(self.state, '_eddy_diffusivity', None)
             if _kh is not None and np.size(_kh) > 0:
                 _dbg_kh0[i] = float(np.asarray(_kh).ravel()[0])
+            _gr = getattr(self.state, '_dSdr', None)
+            if _gr is not None and np.size(_gr) > 1:
+                _dbg_dSdr1[i] = float(np.asarray(_gr).ravel()[1])
 
             rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
             mass_i = rho_i * vol
@@ -3626,6 +3633,7 @@ class EntropySolver:
             _dbg_S_bottom,
             _dbg_y_hash,
             _dbg_kh0,
+            _dbg_dSdr1,
         )
 
         return {
