@@ -13,7 +13,9 @@ finite-volume mesh.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,6 +74,71 @@ from scipy import constants as _sp_constants
 SECS_PER_YEAR: float = _sp_constants.Julian_year
 
 logger = logging.getLogger('fwl.' + __name__)
+
+# Directory for the per-call sub-step trajectory dump, read from
+# ARAGOG_DUMP_STEP_TRAJ. Unset means no dump and no cost.
+_TRAJ_DUMP_DIR = os.environ.get('ARAGOG_DUMP_STEP_TRAJ', '')
+_TRAJ_DUMP_COUNT = 0
+
+
+def _dump_step_trajectory(
+    t_yr,
+    dt_s,
+    P_F_int,
+    P_F_cmb,
+    P_radio,
+    P_resid,
+    dSdr_cmb=None,
+    S_bottom=None,
+    y_hash=None,
+    kh0=None,
+) -> None:
+    """Write the accepted sub-step power trajectory of one solver call.
+
+    Diagnostic aid for the per-call energy integrals: the returned integrals
+    are scalars, so a trajectory whose shape drives the result cannot be
+    inspected after the fact. Writes one ``.npz`` per call into the directory
+    named by ``ARAGOG_DUMP_STEP_TRAJ`` and is a no-op when that is unset.
+
+    Parameters
+    ----------
+    t_yr : array_like
+        Accepted sub-step times over the call [yr].
+    dt_s : array_like
+        Sub-step widths [s], length ``len(t_yr) - 1``.
+    P_F_int, P_F_cmb, P_radio, P_resid : array_like
+        Instantaneous surface-flux, CMB-flux, radiogenic and entropy-equation
+        self-consistency powers at each accepted sub-step [W].
+    dSdr_cmb, S_bottom : array_like, optional
+        CMB entropy gradient state component [J/kg/K/m] and bottom-cell
+        specific entropy [J/kg/K] at each accepted sub-step.
+    y_hash, kh0 : array_like, optional
+        Hash of the full state vector, and the CMB-node eddy diffusivity
+        [m^2/s], at each accepted sub-step.
+    """
+    global _TRAJ_DUMP_COUNT
+    if not _TRAJ_DUMP_DIR:
+        return
+    try:
+        os.makedirs(_TRAJ_DUMP_DIR, exist_ok=True)
+        path = os.path.join(_TRAJ_DUMP_DIR, f'traj_{_TRAJ_DUMP_COUNT:06d}.npz')
+        np.savez_compressed(
+            path,
+            t_yr=np.asarray(t_yr, dtype=float),
+            dt_s=np.asarray(dt_s, dtype=float),
+            P_F_int=np.asarray(P_F_int, dtype=float),
+            P_F_cmb=np.asarray(P_F_cmb, dtype=float),
+            P_radio=np.asarray(P_radio, dtype=float),
+            P_resid=np.asarray(P_resid, dtype=float),
+            dSdr_cmb=np.asarray(dSdr_cmb if dSdr_cmb is not None else [], dtype=float),
+            S_bottom=np.asarray(S_bottom if S_bottom is not None else [], dtype=float),
+            y_hash=np.asarray(y_hash if y_hash is not None else [], dtype=float),
+            kh0=np.asarray(kh0 if kh0 is not None else [], dtype=float),
+        )
+    except OSError as exc:
+        logger.warning('Sub-step trajectory dump failed: %s', exc)
+    finally:
+        _TRAJ_DUMP_COUNT += 1
 
 
 def _validate_eos_radius_range(mesh_params) -> None:
@@ -3238,6 +3305,10 @@ class EntropySolver:
         P_tidal = np.zeros(n_steps)
         P_radio_cons = np.zeros(n_steps)
         P_tidal_cons = np.zeros(n_steps)
+        _dbg_dSdr_cmb = np.full(n_steps, np.nan)
+        _dbg_S_bottom = np.full(n_steps, np.nan)
+        _dbg_y_hash = np.full(n_steps, np.nan)
+        _dbg_kh0 = np.full(n_steps, np.nan)
         # Per-substep entropy-equation self-consistency integrand
         # (LHS - RHS) [W]. LHS = Σ capacitance (dS/dt) V at the substep
         # state; RHS = -F_int A_int + F_cmb A_cmb + Q_radio + Q_tidal.
@@ -3266,6 +3337,19 @@ class EntropySolver:
             if i == 0:
                 S_traj_start = np.asarray(S_i, dtype=float).copy()
 
+            if is_ext and y_col.size > n_stag:
+                _dbg_dSdr_cmb[i] = float(y_col[n_stag])
+            _dbg_S_bottom[i] = float(np.asarray(S_i, dtype=float).ravel()[0])
+            _dbg_y_hash[i] = float(
+                np.frombuffer(
+                    hashlib.blake2b(
+                        np.ascontiguousarray(y_col, dtype=float).tobytes(), digest_size=8
+                    ).digest(),
+                    dtype=np.uint64,
+                )[0]
+                % 9007199254740993
+            )
+
             # Evaluate the ODE RHS at this accepted state. ``self.dSdt``
             # internally calls ``state.update`` AND applies the BC
             # dispatch (entropy_solver.py:1107-1153), populating
@@ -3291,6 +3375,9 @@ class EntropySolver:
             # Read boundary fluxes AFTER dSdt has applied the BCs.
             F_int_i = float(self.state._heat_flux[-1])
             F_cmb_i = float(self.state._heat_flux[0])
+            _kh = getattr(self.state, '_eddy_diffusivity', None)
+            if _kh is not None and np.size(_kh) > 0:
+                _dbg_kh0[i] = float(np.asarray(_kh).ravel()[0])
 
             rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
             mass_i = rho_i * vol
@@ -3356,6 +3443,19 @@ class EntropySolver:
         # budget rather than reproducing the divergence telescoping.
         state_heat = self._step_heat_content(
             S_traj_start, np.asarray(S_i, dtype=float).ravel()[:n_stag]
+        )
+
+        _dump_step_trajectory(
+            sol.t,
+            dt_s,
+            P_F_int,
+            P_F_cmb,
+            P_radio,
+            P_resid_solver,
+            _dbg_dSdr_cmb,
+            _dbg_S_bottom,
+            _dbg_y_hash,
+            _dbg_kh0,
         )
 
         return {
