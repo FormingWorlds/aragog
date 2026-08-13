@@ -1113,6 +1113,41 @@ class EntropySolver:
         """
         self._jax_cvode_factory = factory
 
+    def _assemble_atol_nd(self, atol: float, state_scale: npt.NDArray) -> npt.NDArray:
+        """Per-component absolute tolerance in nondim units.
+
+        Physical-state components get ``atol / scale``: the same physical
+        tolerance on every component regardless of its nondim scale. The
+        quadrature slots get ``atol`` directly in units of their own scale,
+        which is a relative tolerance of ``atol`` against the mantle
+        heat-content scale. Dividing by their scale instead would demand
+        the boundary-energy integrals to ``atol`` JOULES absolute; each
+        call starts at E = 0, where the CVODE error weight is pure atol,
+        so at a phase-boundary crossing (huge dE/dt at tiny E) the error
+        test fails at every step size and h underflows to t + h = t.
+
+        Parameters
+        ----------
+        atol : float
+            Absolute tolerance in physical state units.
+        state_scale : np.ndarray
+            Per-component nondim scales, length equal to the state.
+
+        Returns
+        -------
+        np.ndarray
+            Per-component nondim atol vector.
+        """
+        atol_nd = atol / np.asarray(state_scale, dtype=float)
+        core_bc = getattr(self, '_core_bc', None)
+        if core_bc is None and getattr(self, 'parameters', None) is not None:
+            core_bc = getattr(self.parameters.boundary_conditions, 'core_bc', None)
+        slots = EXTRA_STATE_SLOTS.get(core_bc, ())
+        for i, slot in enumerate(slots):
+            if slot in QUADRATURE_SLOTS:
+                atol_nd[self._n_stag + i] = atol
+        return atol_nd
+
     def _build_nondim_scales(self) -> 'NonDimScales':
         """Construct the per-component NonDimScales for the active state.
 
@@ -3262,7 +3297,7 @@ class EntropySolver:
         # tolerance on dSdr_cmb, choking the step size and
         # suppressing the entropy cooling rate enough to prevent
         # solidification.
-        atol_nd = atol / _state_scale
+        atol_nd = self._assemble_atol_nd(atol, _state_scale)
 
         def _rhs_nondim(t_nd, y_nd):
             """Nondim wrapper: scale state to physical, call physics, scale RHS back."""

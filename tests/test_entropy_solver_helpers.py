@@ -893,3 +893,44 @@ def test_max_step_clamp_entropy_margin_is_configurable():
     # could silently drift away from the config default it must track.
     sig = inspect.signature(_phase_boundary_max_step_clamp)
     assert sig.parameters['entropy_margin'].default is inspect.Parameter.empty
+
+
+def test_assemble_atol_nd_gives_quadrature_slots_relative_tolerance():
+    """The quadrature slots must get ``atol`` in units of their own scale,
+    never ``atol / scale``.
+
+    Discriminator: dividing by the heat-content scale (~1e32) demands the
+    boundary-energy integrals to ``atol`` joules absolute; each call
+    starts at E = 0, where the CVODE error weight is pure atol, so a
+    phase-boundary crossing underflows the step size (t + h = t). The
+    physical-state components keep the ``atol / scale`` convention.
+    """
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS, QUADRATURE_SLOTS
+
+    solver = _build_minimal_solver(core_bc='energy_balance')
+    n_stag = 7
+    solver._n_stag = n_stag
+    slots = EXTRA_STATE_SLOTS['energy_balance']
+    scale = np.empty(n_stag + len(slots))
+    scale[:n_stag] = 3.0e3  # entropy
+    scale[n_stag] = 1.0e-6  # dSdr_cmb
+    E_ref = 1.8e32
+    for i, slot in enumerate(slots):
+        if slot in QUADRATURE_SLOTS:
+            scale[n_stag + i] = E_ref
+    atol = 1.0e-8
+
+    out = solver._assemble_atol_nd(atol, scale)
+
+    assert out.shape == scale.shape
+    np.testing.assert_allclose(out[:n_stag], atol / 3.0e3, rtol=1e-15)
+    assert out[n_stag] == pytest.approx(atol / 1.0e-6, rel=1e-15)
+    for i, slot in enumerate(slots):
+        if slot in QUADRATURE_SLOTS:
+            # Relative tolerance in units of the slot's own scale, and
+            # never within orders of magnitude of atol / E_ref.
+            assert out[n_stag + i] == pytest.approx(atol, rel=1e-15)
+            assert out[n_stag + i] > 1e6 * (atol / E_ref), (
+                'quadrature slot has an absolute physical tolerance again; '
+                'this is the t + h = t step-size underflow defect'
+            )
