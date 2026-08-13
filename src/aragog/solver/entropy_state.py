@@ -63,6 +63,13 @@ def _smooth_abs_neg(x: npt.NDArray, eps: float = 1.0e-8) -> npt.NDArray:
 # interior node. Set ARAGOG_NO_CMB_KH_BORROW=1 to isolate its effect.
 _NO_CMB_KH_BORROW = os.environ.get('ARAGOG_NO_CMB_KH_BORROW', '') == '1'
 
+# Diagnostic switch: drive the CMB convective flux with the same entropy
+# gradient that produced its borrowed eddy diffusivity, the first interior
+# node's, instead of the boundary gradient. Conduction keeps the boundary
+# gradient. Set ARAGOG_CMB_CONV_CONSISTENT_PAIR=1. Inert outside
+# energy_balance mode, where the two gradients are already equal.
+_CMB_CONV_CONSISTENT_PAIR = os.environ.get('ARAGOG_CMB_CONV_CONSISTENT_PAIR', '') == '1'
+
 
 def apply_kappah_floor(
     eddy_diffusivity: npt.NDArray,
@@ -798,7 +805,11 @@ class EntropyState:
         if self._convection:
             # F_conv = rho * T * kappa_h * (-dS/dr)
             # This is the entropy flux: positive when dS/dr < 0 (unstable)
-            self._jconv = rho * T * self._eddy_diffusivity * (-self._dSdr)
+            dSdr_conv = self._dSdr
+            if _CMB_CONV_CONSISTENT_PAIR and dSdr_conv.size >= 2:
+                dSdr_conv = dSdr_conv.copy()
+                dSdr_conv[0] = dSdr_conv[1]
+            self._jconv = rho * T * self._eddy_diffusivity * (-dSdr_conv)
             self._heat_flux += self._jconv
 
         if self._grav_sep:

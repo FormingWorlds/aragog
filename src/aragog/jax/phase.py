@@ -12,6 +12,7 @@ Dependencies: jax, equinox (already in PROTEUS ecosystem via atmodeller).
 
 from __future__ import annotations
 
+import os
 from typing import NamedTuple
 
 import equinox as eqx
@@ -27,6 +28,11 @@ jax.config.update('jax_enable_x64', True)
 
 # Critical Reynolds number from Abe (1993)
 RE_CRIT = 9.0 / 8.0
+
+# Diagnostic switch mirroring the numpy twin in solver/entropy_state.py: drive
+# the CMB convective flux with the same entropy gradient that produced its
+# borrowed eddy diffusivity. Set ARAGOG_CMB_CONV_CONSISTENT_PAIR=1.
+_CMB_CONV_CONSISTENT_PAIR = os.environ.get('ARAGOG_CMB_CONV_CONSISTENT_PAIR', '') == '1'
 
 
 # ---------------------------------------------------------------------------
@@ -831,7 +837,8 @@ def compute_fluxes(
     heat_flux = heat_flux + params.conduction * (-k * (superadiabatic + dT_dr_adiabat))
 
     # Convection: F_conv = rho * T * kappa_h * (-dS/dr)
-    heat_flux = heat_flux + params.convection * (rho * T * kappa_h * (-dSdr))
+    dSdr_conv = dSdr.at[0].set(dSdr[1]) if _CMB_CONV_CONSISTENT_PAIR else dSdr
+    heat_flux = heat_flux + params.convection * (rho * T * kappa_h * (-dSdr_conv))
 
     # Mass flux for gravitational separation and mixing
     mass_flux = jnp.zeros_like(S_basic)
