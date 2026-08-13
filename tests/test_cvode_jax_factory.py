@@ -57,7 +57,7 @@ def test_contract_holds_quasi_steady():
     """A correctly-constructed (state, rhs, t_ref) triplet must succeed."""
     n = 5
     t_ref = 1.234
-    state_scale = np.full(n, 3.0e3)
+    state_scale = np.full(n + 2, 3.0e3)
     rhs_scale = t_ref / state_scale
     heating = np.zeros(n)
     rhs_fn, jac_fn, info = _build_factory(
@@ -70,12 +70,13 @@ def test_contract_holds_quasi_steady():
 
 @pytest.mark.unit
 def test_contract_holds_energy_balance_extended_state():
-    """Energy_balance state vector is heating.size + 1; mixed scales OK."""
+    """Energy_balance state vector is heating.size + 3; mixed scales OK."""
     n_stag = 4
     t_ref = 100.0
-    state_scale = np.empty(n_stag + 1)
+    state_scale = np.empty(n_stag + 3)
     state_scale[:n_stag] = 3.0e3  # entropy
     state_scale[n_stag] = 1.0e-6  # dSdr_cmb
+    state_scale[n_stag + 1 :] = 1.0e32  # quadrature pair
     rhs_scale = t_ref / state_scale
     heating = np.zeros(n_stag)
     rhs_fn, jac_fn, info = _build_factory(
@@ -108,9 +109,9 @@ def test_shape_mismatch_state_vs_rhs_raises():
 
 @pytest.mark.unit
 def test_state_size_vs_heating_quasi_steady_raises():
-    """quasi_steady requires state_scale.size == heating.size."""
+    """quasi_steady requires state_scale.size == heating.size + 2."""
     n = 5
-    state_scale = np.full(n + 2, 3.0e3)  # too long
+    state_scale = np.full(n + 3, 3.0e3)  # too long
     rhs_scale = 1.0 / state_scale
     heating = np.zeros(n)
     with pytest.raises(ValueError, match='incompatible'):
@@ -119,7 +120,7 @@ def test_state_size_vs_heating_quasi_steady_raises():
 
 @pytest.mark.unit
 def test_state_size_vs_heating_energy_balance_raises():
-    """energy_balance requires state_scale.size == heating.size + 1."""
+    """energy_balance requires state_scale.size == heating.size + 3."""
     n_stag = 5
     state_scale = np.full(n_stag, 3.0e3)  # missing the dSdr_cmb slot
     rhs_scale = 1.0 / state_scale
@@ -246,7 +247,7 @@ def test_radio_isotope_params_wrong_length_raises():
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
     n = 4
-    scales = _make_scales(np.full(n, 3.0e3), 1.0)
+    scales = _make_scales(np.full(n + 2, 3.0e3), 1.0)
     bad_3tuple = (np.array([1.0]), np.array([1.0]), np.array([1.0]))
     with pytest.raises(ValueError, match='radio_isotope_params must be a 5-tuple'):
         build_jax_rhs_and_jacobian(

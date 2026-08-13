@@ -125,7 +125,7 @@ def _build_factory():
     mesh = _make_const_property_mesh(N=8)
     bc = _make_bc()
     n_stag = int(mesh.P_stag.shape[0])
-    state_scale = np.full(n_stag, 3.0e3)
+    state_scale = np.concatenate([np.full(n_stag, 3.0e3), np.full(2, 1.0e32)])
     scales = NonDimScales(state_scale=state_scale, t_ref=1.0)
     heating = np.zeros(n_stag)
     rhs_fn, jac_fn, info = build_jax_rhs_and_jacobian(
@@ -153,7 +153,7 @@ def test_factory_rhs_fn_returns_one_on_buffer_shape_mismatch(caplog):
     return AND the error log are both required.
     """
     rhs_fn, _, info, n_stag = _build_factory()
-    y_nd = np.full(n_stag, 3050.0 / 3.0e3)
+    y_nd = np.concatenate([np.full(n_stag, 3050.0 / 3.0e3), np.zeros(2)])
     ydot_nd = np.zeros(n_stag - 3)  # wrong length: 5 vs n_stag=8
 
     with caplog.at_level(logging.ERROR, logger='fwl.aragog.solver.cvode_jax'):
@@ -174,7 +174,7 @@ def test_factory_jacfn_returns_one_on_buffer_shape_mismatch(caplog):
     1 so CVODE drops to its FD Jacobian.
     """
     _, jacfn, info, n_stag = _build_factory()
-    y_nd = np.full(n_stag, 3050.0 / 3.0e3)
+    y_nd = np.concatenate([np.full(n_stag, 3050.0 / 3.0e3), np.zeros(2)])
     fy_nd = np.zeros(n_stag)
     J = np.zeros((n_stag - 1, n_stag - 1))  # wrong shape: (7,7) vs (8,8)
 
@@ -210,7 +210,7 @@ def test_factory_with_radio_isotope_params_builds_callable_radio_heating(caplog)
     mesh = _make_const_property_mesh(N=8)
     bc = _make_bc()
     n_stag = int(mesh.P_stag.shape[0])
-    state_scale = np.full(n_stag, 3.0e3)
+    state_scale = np.concatenate([np.full(n_stag, 3.0e3), np.full(2, 1.0e32)])
     scales = NonDimScales(state_scale=state_scale, t_ref=1.0)
     heating = np.zeros(n_stag)
 
@@ -235,8 +235,8 @@ def test_factory_with_radio_isotope_params_builds_callable_radio_heating(caplog)
     )
     # First call must succeed: the radio_heating function fires
     # inside the JAX trace at this t.
-    y_nd = np.full(n_stag, 3050.0 / 3.0e3)
-    ydot_nd = np.zeros(n_stag)
+    y_nd = np.concatenate([np.full(n_stag, 3050.0 / 3.0e3), np.zeros(2)])
+    ydot_nd = np.zeros(n_stag + 2)
     rc = rhs_fn(0.0, y_nd, ydot_nd)
     assert rc == 0, f'radio-heating-aware rhs_fn returned {rc}; expected 0'
     assert info['rhs_calls'] == 1

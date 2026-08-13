@@ -1174,11 +1174,11 @@ class TestBowerCoreBC:
 
         S_init = np.full(30, 2900.0)
         solver.set_initial_entropy(S_init)
-        assert solver._S0.shape == (31,), f'v4 state should be N+1 = 31, got {solver._S0.shape}'
+        assert solver._S0.shape == (33,), f'v4 state should be N+3 = 33, got {solver._S0.shape}'
 
         solver._core_bc = 'quasi_steady'
         solver.set_initial_entropy(S_init)
-        assert solver._S0.shape == (30,), f'v3 state should be N = 30, got {solver._S0.shape}'
+        assert solver._S0.shape == (32,), f'v3 state should be N+2 = 32, got {solver._S0.shape}'
 
     def test_t_core_init_from_eos(self, entropy_eos):
         """Default initial T_core matches the bottom-cell mantle T."""
@@ -1198,8 +1198,8 @@ class TestBowerCoreBC:
         T_bottom = float(
             np.asarray(entropy_eos.temperature(np.array([135e9]), np.array([2900.0]))).item()
         )
-        assert abs(solver._S0[-1] - T_bottom) < 1.0, (
-            f'Default T_core_init = {solver._S0[-1]:.0f} should match '
+        assert abs(solver._S0[solver._n_stag] - T_bottom) < 1.0, (
+            f'Default T_core_init = {solver._S0[solver._n_stag]:.0f} should match '
             f'bottom mantle T = {T_bottom:.0f}'
         )
 
@@ -1218,7 +1218,7 @@ class TestBowerCoreBC:
         solver.set_initial_core_temperature(7500.0)
         S_init = np.full(30, 2900.0)
         solver.set_initial_entropy(S_init)
-        assert solver._S0[-1] == pytest.approx(7500.0)
+        assert solver._S0[solver._n_stag] == pytest.approx(7500.0)
 
 
 def _make_bare_solver(
@@ -1362,14 +1362,14 @@ class TestEnergyBalanceCoreBC:
         """
         solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         solver.set_initial_entropy(np.full(30, 2900.0))
-        assert solver._S0.shape == (31,), (
-            f'energy_balance state should be N+1 = 31, got {solver._S0.shape}'
+        assert solver._S0.shape == (33,), (
+            f'energy_balance state should be N+3 = 33, got {solver._S0.shape}'
         )
 
         solver._core_bc = 'quasi_steady'
         solver.set_initial_entropy(np.full(30, 2900.0))
-        assert solver._S0.shape == (30,), (
-            f'quasi_steady state should be N = 30 after flip, got {solver._S0.shape}'
+        assert solver._S0.shape == (32,), (
+            f'quasi_steady state should be N+2 = 32 after flip, got {solver._S0.shape}'
         )
 
         # Edge case: N=2 is the minimum mesh size the FD cold-start
@@ -1378,8 +1378,8 @@ class TestEnergyBalanceCoreBC:
         # default 3-basic-node mesh for N=2.
         solver2 = self._make_bare_solver(entropy_eos, n_stag=2, core_bc='energy_balance')
         solver2.set_initial_entropy(np.array([2900.0, 3100.0]))
-        assert solver2._S0.shape == (3,), (
-            f'N=2 minimal mesh should give state length 3, got {solver2._S0.shape}'
+        assert solver2._S0.shape == (5,), (
+            f'N=2 minimal mesh should give state length 5, got {solver2._S0.shape}'
         )
 
     def test_set_initial_entropy_rejects_wrong_length(self, entropy_eos):
@@ -1412,8 +1412,8 @@ class TestEnergyBalanceCoreBC:
         solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         S_uniform = np.full(30, 2900.0)
         solver.set_initial_entropy(S_uniform)
-        assert solver._S0[-1] == pytest.approx(0.0, abs=1e-12), (
-            f'Uniform S → cold-start dSdr_cmb should be exactly zero, got {solver._S0[-1]:.3e}'
+        assert solver._S0[solver._n_stag] == pytest.approx(0.0, abs=1e-12), (
+            f'Uniform S → cold-start dSdr_cmb should be exactly zero, got {solver._S0[solver._n_stag]:.3e}'
         )
 
     def test_dSdr_cmb_cold_start_from_gradient_matches_fd(self, entropy_eos):
@@ -1439,11 +1439,11 @@ class TestEnergyBalanceCoreBC:
         r_stag_1 = 0.5 * (r_basic[1] + r_basic[2])
         expected_dSdr = 5.0 / (r_stag_1 - r_stag_0)
 
-        assert solver._S0[-1] == pytest.approx(expected_dSdr, rel=1e-9), (
-            f'Cold-start FD mismatch: got {solver._S0[-1]:.3e}, expected {expected_dSdr:.3e}'
+        assert solver._S0[solver._n_stag] == pytest.approx(expected_dSdr, rel=1e-9), (
+            f'Cold-start FD mismatch: got {solver._S0[solver._n_stag]:.3e}, expected {expected_dSdr:.3e}'
         )
         # Sign sanity: positive upward gradient → positive dSdr_cmb
-        assert solver._S0[-1] > 0.0, (
+        assert solver._S0[solver._n_stag] > 0.0, (
             'Positive S gradient must give positive dSdr_cmb '
             '(sign convention: r increasing, S increasing → +)'
         )
@@ -1461,7 +1461,7 @@ class TestEnergyBalanceCoreBC:
         # override must WIN over that default.
         solver.set_initial_dSdr_cmb(-1.234e-6)
         solver.set_initial_entropy(np.full(30, 2900.0))
-        assert solver._S0[-1] == pytest.approx(-1.234e-6, rel=1e-12), (
+        assert solver._S0[solver._n_stag] == pytest.approx(-1.234e-6, rel=1e-12), (
             'User override must beat cold-start FD zero'
         )
 
@@ -1471,7 +1471,7 @@ class TestEnergyBalanceCoreBC:
         solver2 = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         solver2.set_initial_dSdr_cmb(+5.678e-5)
         solver2.set_initial_entropy(np.full(30, 2900.0))
-        assert solver2._S0[-1] == pytest.approx(+5.678e-5, rel=1e-12)
+        assert solver2._S0[solver2._n_stag] == pytest.approx(+5.678e-5, rel=1e-12)
 
         # Override must also beat the hot-start-from-prev-solution
         # path. Populate a fake _solution with a different boundary
@@ -1482,12 +1482,12 @@ class TestEnergyBalanceCoreBC:
             pass
 
         fake = _FakeSol()
-        fake.y = np.zeros((31, 2))
+        fake.y = np.zeros((33, 2))
         fake.y[30, -1] = 9.999e-3  # "previous" dSdr_cmb
         solver3._solution = fake
         solver3.set_initial_dSdr_cmb(-7.777e-6)
         solver3.set_initial_entropy(np.full(30, 2900.0))
-        assert solver3._S0[-1] == pytest.approx(-7.777e-6, rel=1e-12), (
+        assert solver3._S0[solver3._n_stag] == pytest.approx(-7.777e-6, rel=1e-12), (
             'User override must beat previous-solution hot-start too'
         )
 
@@ -1506,7 +1506,7 @@ class TestEnergyBalanceCoreBC:
             pass
 
         fake = _FakeSol()
-        fake.y = np.zeros((31, 4))
+        fake.y = np.zeros((33, 4))
         fake.y[30, -1] = 3.14e-5
         fake.y[30, -2] = 99.0  # Earlier column, must be ignored
         solver._solution = fake
@@ -1514,8 +1514,8 @@ class TestEnergyBalanceCoreBC:
         # Use uniform S so the cold-start FD would give 0 — only the
         # prev-solution value can supply the 3.14e-5 we expect.
         solver.set_initial_entropy(np.full(30, 2900.0))
-        assert solver._S0[-1] == pytest.approx(3.14e-5, rel=1e-12), (
-            f'Hot start must pick y[N, -1] (not y[N, -2]), got {solver._S0[-1]:.3e}'
+        assert solver._S0[solver._n_stag] == pytest.approx(3.14e-5, rel=1e-12), (
+            f'Hot start must pick y[N, -1] (not y[N, -2]), got {solver._S0[solver._n_stag]:.3e}'
         )
 
     # ── helper-formula bit-parity tests ──────────────────────────
@@ -1791,13 +1791,13 @@ class TestEnergyBalanceCoreBC:
             a performance hit, but this test documents the minimal
             expected shape)
 
-        For comparison the quasi_steady pattern should be (N, N).
+        For comparison the quasi_steady pattern should be (N+2, N+2).
         """
         N = 30
         solver = self._make_bare_solver(entropy_eos, n_stag=N, core_bc='energy_balance')
         J = solver._build_jac_sparsity()
-        assert J.shape == (N + 1, N + 1), (
-            f'energy_balance Jacobian shape should be (31, 31), got {J.shape}'
+        assert J.shape == (N + 3, N + 3), (
+            f'energy_balance Jacobian shape should be (33, 33), got {J.shape}'
         )
         # Convert to dense bool for element access
         Jd = J.toarray().astype(bool)
@@ -1817,8 +1817,8 @@ class TestEnergyBalanceCoreBC:
         # Compare with quasi_steady: no extra row or column
         solver_qs = self._make_bare_solver(entropy_eos, n_stag=N, core_bc='quasi_steady')
         J_qs = solver_qs._build_jac_sparsity()
-        assert J_qs.shape == (N, N), (
-            f'quasi_steady Jacobian shape should be (30, 30), got {J_qs.shape}'
+        assert J_qs.shape == (N + 2, N + 2), (
+            f'quasi_steady Jacobian shape should be (32, 32), got {J_qs.shape}'
         )
 
         # Edge case: N=3 (minimum mesh where the pentadiagonal stencil
@@ -1826,7 +1826,7 @@ class TestEnergyBalanceCoreBC:
         # and self; Jd shape must be (4, 4).
         solver_small = self._make_bare_solver(entropy_eos, n_stag=3, core_bc='energy_balance')
         J_small = solver_small._build_jac_sparsity()
-        assert J_small.shape == (4, 4)
+        assert J_small.shape == (6, 6)
         Jd_small = J_small.toarray().astype(bool)
         assert Jd_small[3, 0] and Jd_small[3, 1] and Jd_small[3, 2] and Jd_small[3, 3]
 
@@ -1851,9 +1851,9 @@ class TestEnergyBalanceCoreBC:
         solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='energy_balance')
         S_init = np.full(30, 2900.0)
         solver.set_initial_entropy(S_init)
-        # _S0 is now shape (31,) — the last element is dSdr_cmb, which
-        # must NOT be passed to melt_fraction.
-        assert solver._S0.shape == (31,)
+        # _S0 carries the trailing extras (dSdr_cmb plus the quadrature
+        # pair), which must NOT be passed to melt_fraction.
+        assert solver._S0.shape == (33,)
 
         # The correct slice (using _state_is_extended) must produce a
         # finite phi0 estimate.
@@ -1868,10 +1868,10 @@ class TestEnergyBalanceCoreBC:
         # under the old code, which is how we know the fix is
         # actually exercised by this test.
         with pytest.raises((ValueError, IndexError, Exception)):
-            # Pass full 31-element _S0 against shape-30 _P_stag_flat
+            # Pass the full extended _S0 against shape-30 _P_stag_flat
             solver.entropy_eos.melt_fraction(
                 solver._P_stag_flat,  # shape (30,)
-                solver._S0,  # shape (31,) — mismatch
+                solver._S0,  # extended shape — mismatch
             )
 
 
@@ -1936,8 +1936,8 @@ class TestCoreModuleCoreBC:
         bottom-cell default in slot N+1, both overridable."""
         solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='core_module')
         solver.set_initial_entropy(np.full(30, 2900.0))
-        assert solver._S0.shape == (32,), (
-            f'core_module state should be N+2 = 32, got {solver._S0.shape}'
+        assert solver._S0.shape == (34,), (
+            f'core_module state should be N+4 = 34, got {solver._S0.shape}'
         )
         # Uniform isentrope: FD cold start is exactly zero.
         assert solver._S0[30] == pytest.approx(0.0, abs=1e-12)
@@ -2037,7 +2037,7 @@ class TestCoreModuleCoreBC:
         S[0..2] and to each other, and S[0], S[1] couple back to both."""
         solver = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='core_module')
         J = solver._build_jac_sparsity().toarray()
-        assert J.shape == (12, 12)
+        assert J.shape == (14, 14)
         for extra in (10, 11):
             assert J[extra, 0] == 1.0 and J[extra, 1] == 1.0 and J[extra, 2] == 1.0
             assert J[0, extra] == 1.0 and J[1, extra] == 1.0
@@ -2100,10 +2100,10 @@ class TestCoreModuleCoreBC:
         # core_module IC: both extra slots must ignore it.
         solver = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='core_module')
         stale = _Sol()
-        stale.y = np.full((11, 3), 6000.0)
+        stale.y = np.full((13, 3), 6000.0)
         solver._solution = stale
         solver.set_initial_entropy(np.full(10, 2900.0))
-        assert solver._S0.shape == (12,)
+        assert solver._S0.shape == (14,)
         assert solver._S0[10] == pytest.approx(0.0, abs=1e-12)  # FD cold start
         assert solver._S0[11] != pytest.approx(6000.0)  # EOS default, not leak
 
@@ -2111,10 +2111,10 @@ class TestCoreModuleCoreBC:
         # the gradient resolver must cold-start, not read slot N blindly.
         eb = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='energy_balance')
         stale2 = _Sol()
-        stale2.y = np.full((12, 3), -7.7e-4)
+        stale2.y = np.full((14, 3), -7.7e-4)
         eb._solution = stale2
         eb.set_initial_entropy(np.full(10, 2900.0))
-        assert eb._S0.shape == (11,)
+        assert eb._S0.shape == (13,)
         assert eb._S0[10] == pytest.approx(0.0, abs=1e-12)
 
     def test_get_current_dSdr_cmb_mode_guard(self, entropy_eos):
@@ -2127,7 +2127,7 @@ class TestCoreModuleCoreBC:
 
         solver = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='core_module')
         sol = _Sol()
-        sol.y = np.zeros((12, 3))
+        sol.y = np.zeros((14, 3))
         sol.y[10, -1] = -2.5e-4
         sol.y[11, -1] = 6000.0
         solver._solution = sol
@@ -2135,7 +2135,7 @@ class TestCoreModuleCoreBC:
 
         bower = self._make_bare_solver(entropy_eos, n_stag=10, core_bc='bower2018')
         sol_b = _Sol()
-        sol_b.y = np.zeros((11, 3))
+        sol_b.y = np.zeros((13, 3))
         sol_b.y[10, -1] = 6000.0  # T_core, NOT a gradient
         bower._solution = sol_b
         assert bower.get_current_dSdr_cmb() is None

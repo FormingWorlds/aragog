@@ -131,7 +131,7 @@ def test_factory_rhs_fn_writes_finite_ydot_in_place():
     bc = _make_bc()
     n_stag = int(mesh.P_stag.shape[0])
 
-    state_scale = np.full(n_stag, 3.0e3)
+    state_scale = np.concatenate([np.full(n_stag, 3.0e3), np.full(2, 1.0e32)])
     scales = NonDimScales(state_scale=state_scale, t_ref=1.0)
     heating = np.zeros(n_stag)
 
@@ -146,8 +146,8 @@ def test_factory_rhs_fn_writes_finite_ydot_in_place():
     )
 
     # State and ydot in nondim space (S0/state_scale ~ 1.01).
-    y_nd = np.full(n_stag, 3050.0 / 3.0e3)
-    ydot_nd = np.zeros(n_stag)
+    y_nd = np.concatenate([np.full(n_stag, 3050.0 / 3.0e3), np.zeros(2)])
+    ydot_nd = np.zeros(n_stag + 2)
 
     rc = rhs_fn(0.0, y_nd, ydot_nd)
     assert rc == 0, f'rhs_fn returned {rc}; expected 0 (CVODE success)'
@@ -186,7 +186,7 @@ def test_factory_jacfn_writes_finite_jacobian_in_place():
     bc = _make_bc()
     n_stag = int(mesh.P_stag.shape[0])
 
-    state_scale = np.full(n_stag, 3.0e3)
+    state_scale = np.concatenate([np.full(n_stag, 3.0e3), np.full(2, 1.0e32)])
     scales = NonDimScales(state_scale=state_scale, t_ref=1.0)
     heating = np.zeros(n_stag)
 
@@ -200,15 +200,15 @@ def test_factory_jacfn_writes_finite_jacobian_in_place():
         core_bc_mode='quasi_steady',
     )
 
-    y_nd = np.full(n_stag, 3050.0 / 3.0e3)
-    fy_nd = np.zeros(n_stag)
-    J = np.zeros((n_stag, n_stag), dtype=float)
+    y_nd = np.concatenate([np.full(n_stag, 3050.0 / 3.0e3), np.zeros(2)])
+    fy_nd = np.zeros(n_stag + 2)
+    J = np.zeros((n_stag + 2, n_stag + 2), dtype=float)
 
     rc = jac_fn(0.0, y_nd, fy_nd, J)
     assert rc == 0, f'jacfn returned {rc}, expected 0'
     assert info['jac_calls'] == 1
     assert info['first_jac_compile_done']
-    assert J.shape == (n_stag, n_stag)
+    assert J.shape == (n_stag + 2, n_stag + 2)
     assert np.all(np.isfinite(J)), 'jacobian has non-finite entries'
     # A non-trivial Jacobian must have non-zero entries (the entropy
     # equation couples nodes via the flux divergence). All-zero would
@@ -229,7 +229,7 @@ def test_factory_radio_isotope_5_tuple_must_be_full_length():
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
     n = 4
-    state_scale = np.full(n, 3.0e3)
+    state_scale = np.concatenate([np.full(n, 3.0e3), np.full(2, 1.0e32)])
     scales = NonDimScales(state_scale=state_scale, t_ref=1.0)
     with pytest.raises(ValueError, match='radio_isotope_params must be a 5-tuple'):
         build_jax_rhs_and_jacobian(

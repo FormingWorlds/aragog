@@ -88,15 +88,15 @@ def test_factory_requires_budget_for_core_module():
 
 @pytest.mark.unit
 def test_factory_shape_contract_core_module():
-    """core_module expects N+2 nondim scales: N+1 (the energy_balance
+    """core_module expects N+4 nondim scales: N+3 (the energy_balance
     length, the most plausible off-by-one) raises the incompatibility
-    error, and N+2 with a budget builds callable rhs/jac functions."""
+    error, and N+4 with a budget builds callable rhs/jac functions."""
     from aragog.jax.nondim import NonDimScales
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
     n = 4
     budget = _tiny_budget()
-    bad_scales = NonDimScales(state_scale=np.full(n + 1, 1.0), t_ref=1.0)
+    bad_scales = NonDimScales(state_scale=np.full(n + 3, 1.0), t_ref=1.0)
     with pytest.raises(ValueError, match='incompatible'):
         build_jax_rhs_and_jacobian(
             eos_jax=None,
@@ -109,7 +109,7 @@ def test_factory_shape_contract_core_module():
             core_module_budget=budget,
         )
 
-    good_scales = NonDimScales(state_scale=np.full(n + 2, 1.0), t_ref=1.0)
+    good_scales = NonDimScales(state_scale=np.full(n + 4, 1.0), t_ref=1.0)
     rhs_fn, jac_fn, info = build_jax_rhs_and_jacobian(
         eos_jax=None,
         phase_params=None,
