@@ -105,6 +105,9 @@ def _dump_step_trajectory(
     y_hash=None,
     kh0=None,
     dSdr1=None,
+    dSdr0=None,
+    jcond0=None,
+    jconv0=None,
 ) -> None:
     """Write the accepted sub-step power trajectory of one solver call.
 
@@ -129,6 +132,12 @@ def _dump_step_trajectory(
         Hash of the full state vector, the CMB-node eddy diffusivity
         [m^2/s], and the first interior node's entropy gradient
         [J/kg/K/m], at each accepted sub-step.
+    dSdr0, jcond0, jconv0 : array_like, optional
+        CMB-node entropy gradient [J/kg/K/m] as the flux assembly saw
+        it, and the conductive and convective parts of the CMB heat
+        flux [W/m^2], at each accepted sub-step. Splitting the boundary
+        flux separates a transport-coefficient effect from a gradient
+        effect.
     """
     global _TRAJ_DUMP_COUNT
     if not _TRAJ_DUMP_DIR:
@@ -149,6 +158,9 @@ def _dump_step_trajectory(
             y_hash=np.asarray(y_hash if y_hash is not None else [], dtype=float),
             kh0=np.asarray(kh0 if kh0 is not None else [], dtype=float),
             dSdr1=np.asarray(dSdr1 if dSdr1 is not None else [], dtype=float),
+            dSdr0=np.asarray(dSdr0 if dSdr0 is not None else [], dtype=float),
+            jcond0=np.asarray(jcond0 if jcond0 is not None else [], dtype=float),
+            jconv0=np.asarray(jconv0 if jconv0 is not None else [], dtype=float),
         )
     except OSError as exc:
         logger.warning('Sub-step trajectory dump failed: %s', exc)
@@ -3483,6 +3495,9 @@ class EntropySolver:
         _dbg_y_hash = np.full(n_steps, np.nan)
         _dbg_kh0 = np.full(n_steps, np.nan)
         _dbg_dSdr1 = np.full(n_steps, np.nan)
+        _dbg_dSdr0 = np.full(n_steps, np.nan)
+        _dbg_jcond0 = np.full(n_steps, np.nan)
+        _dbg_jconv0 = np.full(n_steps, np.nan)
         # Per-substep entropy-equation self-consistency integrand
         # (LHS - RHS) [W]. LHS = Σ capacitance (dS/dt) V at the substep
         # state; RHS = -F_int A_int + F_cmb A_cmb + Q_radio + Q_tidal.
@@ -3554,7 +3569,14 @@ class EntropySolver:
                 _dbg_kh0[i] = float(np.asarray(_kh).ravel()[0])
             _gr = getattr(self.state, '_dSdr', None)
             if _gr is not None and np.size(_gr) > 1:
+                _dbg_dSdr0[i] = float(np.asarray(_gr).ravel()[0])
                 _dbg_dSdr1[i] = float(np.asarray(_gr).ravel()[1])
+            _jcd = getattr(self.state, '_jcond', None)
+            if _jcd is not None and np.size(_jcd) > 0:
+                _dbg_jcond0[i] = float(np.asarray(_jcd).ravel()[0])
+            _jcv = getattr(self.state, '_jconv', None)
+            if _jcv is not None and np.size(_jcv) > 0:
+                _dbg_jconv0[i] = float(np.asarray(_jcv).ravel()[0])
 
             rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
             mass_i = rho_i * vol
@@ -3634,6 +3656,9 @@ class EntropySolver:
             _dbg_y_hash,
             _dbg_kh0,
             _dbg_dSdr1,
+            _dbg_dSdr0,
+            _dbg_jcond0,
+            _dbg_jconv0,
         )
 
         return {
