@@ -301,18 +301,51 @@ def test_dsdt_energy_balance_returns_extended_state_derivative():
 
     S = jnp.full(n_stag, 3050.0)
     dSdr_cmb = jnp.asarray(0.0)
-    state_ext = jnp.concatenate([S, jnp.array([dSdr_cmb])])
+    # State layout: [S, dSdr_cmb, E_F_int, E_F_cmb]; the quadrature pair
+    # starts each call at 0.
+    state_ext = jnp.concatenate([S, jnp.array([dSdr_cmb]), jnp.zeros(2)])
     heating_static = jnp.zeros(n_stag)
     args = (eos_jax, params, mesh, bc, heating_static, _no_radio)
 
     rhs = dSdt_energy_balance(0.0, state_ext, args)
     rhs_np = np.asarray(rhs)
 
-    # Discriminator 1: shape and finiteness.
-    assert rhs_np.shape == (n_stag + 1,), (
-        f'dSdt_energy_balance returned shape {rhs_np.shape}, expected ({n_stag + 1},)'
+    # Discriminator 1: shape and finiteness. The state carries the
+    # boundary gradient plus the two boundary-energy quadrature states.
+    assert rhs_np.shape == (n_stag + 3,), (
+        f'dSdt_energy_balance returned shape {rhs_np.shape}, expected ({n_stag + 3},)'
     )
     assert np.all(np.isfinite(rhs_np)), f'dSdt_energy_balance has non-finite entries: {rhs_np}'
+
+    # The quadrature derivatives are the boundary powers in J/yr. With a
+    # prescribed surface flux the expected value is exact:
+    # dE_F_int/dt = -F_int * (4 pi r_surf^2) * SECS_PER_YEAR. A zero or
+    # off-scale value means the quadrature rows are disconnected from
+    # the post-BC boundary fluxes.
+    F_surf = 250.0
+    bc_flux = BoundaryParams(
+        outer_bc_type=4,
+        outer_bc_value=F_surf,
+        emissivity=1.0,
+        T_eq=255.0,
+        inner_bc_type=5,
+        inner_bc_value=0.0,
+        core_density=10500.0,
+        core_heat_capacity=880.0,
+        tfac_core_avg=1.147,
+        cmb_area=4.0 * np.pi * r_cmb**2,
+        core_M=(4.0 / 3.0) * np.pi * r_cmb**3 * 10500.0,
+        cmb_dr_cmb=r_above - r_cmb,
+    )
+    args_flux = (eos_jax, params, mesh, bc_flux, heating_static, _no_radio)
+    rhs_flux = np.asarray(dSdt_energy_balance(0.0, state_ext, args_flux))
+    A_int = 4.0 * np.pi * float(mesh.radii_basic[-1]) ** 2
+    expected = -F_surf * A_int * 31557600.0
+    dE_F_int_dt = float(rhs_flux[n_stag + 1])
+    assert abs(dE_F_int_dt - expected) <= 1e-9 * abs(expected), (
+        f'dE_F_int/dt = {dE_F_int_dt:.6e} J/yr, expected {expected:.6e} '
+        '(-F_int * 4 pi r_surf^2 * SECS_PER_YEAR)'
+    )
 
     # Discriminator 2: entropy derivatives must be cooling-flavoured
     # (negative-or-mostly-negative for an isentrope at 3050 J/kg/K

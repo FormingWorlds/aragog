@@ -955,9 +955,24 @@ class TestCvodeEnergyOutputGrid:
             f'dense-grid F_int off by {err_dense:.2e} from the reference; '
             f'the front-loaded output grid must resolve the flux decay'
         )
-        assert err_2pt > 10.0 * err_dense, (
-            f'discrimination guard: 2-point F_int error ({err_2pt:.2e}) must '
-            f'dwarf the dense-grid error ({err_dense:.2e})'
+        # The boundary energies ride the ODE state, so the output grid
+        # cannot degrade them: the 2-point grid must match the dense one
+        # to quadrature-state accuracy. A large err_2pt here means the
+        # booking fell back to the trapezoid over the output grid.
+        assert err_2pt < 2e-2, (
+            f'2-point F_int off by {err_2pt:.2e}; the quadrature state '
+            f'must make the booking independent of the output grid'
+        )
+        # Provenance: the booked value must BE the integrated quadrature
+        # state, not a trapezoid that happens to agree.
+        from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
+
+        slots = EXTRA_STATE_SLOTS[s2._core_bc]
+        i_int = s2._n_stag + slots.index('E_F_int')
+        e_state = float(s2._solution.y[i_int, -1] - s2._solution.y[i_int, 0])
+        assert d2['F_int'] == pytest.approx(e_state, rel=1e-12), (
+            'booked F_int does not equal the integrated quadrature state; '
+            'the reader is not sourcing the ODE state'
         )
         # Neither trajectory choice may perturb the integration window.
         dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])

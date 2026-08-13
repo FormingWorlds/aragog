@@ -299,7 +299,10 @@ def test_set_jax_cvode_factory_registers_and_clears():
 @pytest.mark.parametrize(
     'core_bc, expected',
     [
-        ('quasi_steady', False),
+        # Every mode extends the state: the slot modes carry their
+        # boundary states plus the quadrature pair, and gradient
+        # replaces the layout outright.
+        ('quasi_steady', True),
         ('energy_balance', True),
         ('bower2018', True),
         ('gradient', True),
@@ -359,13 +362,17 @@ def test_get_current_dsdr_cmb_returns_last_column_value_when_state_extended():
     BUT would fail for any future extension of the state vector.
     Using a sentinel value at row N catches the off-by-one.
     """
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
+
     solver = _build_minimal_solver(core_bc='energy_balance')
     n_stag = 7
     solver._n_stag = n_stag
     sentinel = 1.234e-5
+    n_extra = len(EXTRA_STATE_SLOTS['energy_balance'])
     fake_sol = MagicMock()
-    y = np.zeros((n_stag + 1, 4))
+    y = np.zeros((n_stag + n_extra, 4))
     y[n_stag, -1] = sentinel
+    y[-1, -1] = 9.999e9  # junk in the last slot: the accessor must not read it
     fake_sol.y = y
     solver._solution = fake_sol
     val = solver.get_current_dSdr_cmb()

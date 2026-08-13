@@ -79,11 +79,19 @@ SECS_PER_YEAR: float = _sp_constants.Julian_year
 # 'gradient' replaces the whole state vector (N+1 gradients plus S_surf)
 # instead of appending extras, so it is deliberately absent.
 EXTRA_STATE_SLOTS: dict[str, tuple[str, ...]] = {
-    'quasi_steady': (),
-    'energy_balance': ('dSdr_cmb',),
-    'bower2018': ('T_core',),
-    'core_module': ('dSdr_cmb', 'T_core'),
+    'quasi_steady': ('E_F_int', 'E_F_cmb'),
+    'energy_balance': ('dSdr_cmb', 'E_F_int', 'E_F_cmb'),
+    'bower2018': ('T_core', 'E_F_int', 'E_F_cmb'),
+    'core_module': ('dSdr_cmb', 'T_core', 'E_F_int', 'E_F_cmb'),
 }
+
+# The trailing pair of quadrature states shared by every mode in
+# EXTRA_STATE_SLOTS: per-call boundary-energy integrals [J], reset to 0 at
+# each solve. Their derivatives are the instantaneous boundary powers, so
+# CVODE's own error control integrates them with the same right-hand side
+# it integrates the entropy with; the per-call energy booking reads the
+# final values instead of re-evaluating the trajectory.
+QUADRATURE_SLOTS: tuple[str, str] = ('E_F_int', 'E_F_cmb')
 
 logger = logging.getLogger('fwl.' + __name__)
 
@@ -1141,8 +1149,27 @@ class EntropySolver:
             ss[nb] = S_ref
         else:
             for i, slot in enumerate(EXTRA_STATE_SLOTS.get(self._core_bc, ())):
-                ss[n_s + i] = dSdr_ref if slot == 'dSdr_cmb' else self._T_ref
+                if slot in QUADRATURE_SLOTS:
+                    ss[n_s + i] = self._E_quad_ref
+                elif slot == 'dSdr_cmb':
+                    ss[n_s + i] = dSdr_ref
+                else:
+                    ss[n_s + i] = self._T_ref
         return NonDimScales(state_scale=ss, t_ref=float(t_ref))
+
+    @property
+    def _E_quad_ref(self) -> float:
+        """Energy scale [J] for the per-call quadrature states.
+
+        The mantle's heat-content scale ``M * S_ref * T_ref``: large
+        against any per-call boundary energy, so the quadrature states
+        never throttle the step size, while keeping the nondim values
+        bounded. The quadrature states feed nothing back into the
+        physics, so their absolute tolerance only has to be loose.
+        """
+        rho = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel()
+        mass = float(np.dot(rho, self._volume_flat))
+        return max(mass * float(self._S_ref) * float(self._T_ref), 1.0)
 
     @classmethod
     def from_file(cls, filename: str, eos_dir: str, root: str = '') -> 'EntropySolver':
@@ -1772,10 +1799,11 @@ class EntropySolver:
             # Hot-start dSdr_cmb_init: preserve from the previous
             # solution if available, so the integrated boundary state
             # survives PROTEUS coupling resets.
-            dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag, 1)
-            self._S0 = np.empty(n_stag + 1)
+            slots = EXTRA_STATE_SLOTS[core_bc]
+            dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag, len(slots))
+            self._S0 = np.zeros(n_stag + len(slots))
             self._S0[:n_stag] = S_arr
-            self._S0[n_stag] = float(dSdr_cmb_init)
+            self._S0[n_stag + slots.index('dSdr_cmb')] = float(dSdr_cmb_init)
             logger.info(
                 'Initial state (energy_balance): S_min=%.0f, S_max=%.0f, dSdr_cmb_init=%.3e',
                 S_arr.min(),
@@ -1825,7 +1853,7 @@ class EntropySolver:
                     T_core_init,
                     T_bottom_eos,
                 )
-            self._S0 = np.empty(n_stag + n_extra)
+            self._S0 = np.zeros(n_stag + n_extra)
             self._S0[:n_stag] = S_arr
             self._S0[T_core_slot] = T_core_init
             if 'dSdr_cmb' in slots:
@@ -1864,8 +1892,10 @@ class EntropySolver:
                 roundtrip_err,
             )
         else:
-            # quasi_steady BC: state = [S_0, ..., S_{N-1}]
-            self._S0 = S_arr
+            # quasi_steady BC: state = [S_0, ..., S_{N-1}, E_F_int, E_F_cmb]
+            slots = EXTRA_STATE_SLOTS['quasi_steady']
+            self._S0 = np.zeros(n_stag + len(slots))
+            self._S0[:n_stag] = S_arr
             logger.info(
                 'Initial entropy (quasi_steady BC): S_min=%.0f, S_max=%.0f J/kg/K',
                 S_arr.min(),
@@ -2052,7 +2082,9 @@ class EntropySolver:
             if core_mod:
                 t_core = float(state_vec[n_stag + 1])
         else:
-            entropy = state_vec
+            # quasi_steady: entropy block only; the trailing quadrature
+            # states are not inputs to the physics.
+            entropy = state_vec[:n_stag]
             extra = None
 
         # In energy_balance and core_module modes the first extra state
@@ -2180,7 +2212,7 @@ class EntropySolver:
             return rhs
 
         if not is_extended:
-            return dSdt
+            return np.concatenate([dSdt, self._quadrature_rhs()])
 
         if energy_balance:
             # SPIDER bc.c boundary-state ODE for the CMB entropy
@@ -2204,7 +2236,7 @@ class EntropySolver:
             )
             d_dSdr_cmb_dt = d_dSdr_cmb_dt_per_s * SECS_PER_YEAR
 
-            return np.concatenate([dSdt, [d_dSdr_cmb_dt]])
+            return np.concatenate([dSdt, [d_dSdr_cmb_dt], self._quadrature_rhs()])
 
         if core_mod:
             # [S, dSdr_cmb, T_core]: the boundary gradient evolves by the
@@ -2228,6 +2260,7 @@ class EntropySolver:
                     dSdt,
                     [d_dSdr_cmb_dt_per_s * SECS_PER_YEAR],
                     [dT_core_dt_per_s * SECS_PER_YEAR],
+                    self._quadrature_rhs(),
                 ]
             )
 
@@ -2236,7 +2269,24 @@ class EntropySolver:
         dT_core_dt = -F_cmb * self._cmb_area / max(self._core_cap, 1.0)
         dT_core_dt *= SECS_PER_YEAR
 
-        return np.concatenate([dSdt, [dT_core_dt]])
+        return np.concatenate([dSdt, [dT_core_dt], self._quadrature_rhs()])
+
+    def _quadrature_rhs(self) -> npt.NDArray:
+        """Derivatives of the per-call boundary-energy quadrature states.
+
+        ``[dE_F_int/dt, dE_F_cmb/dt]`` in J/yr, from the boundary heat
+        fluxes the BC dispatch just wrote into ``state._heat_flux``.
+        Signs follow the booking convention: positive = energy added
+        to the mantle. The areas are the same explicit ``4 pi r^2``
+        the energy booking uses, so the integrated states and the
+        booked energies share one convention.
+        """
+        r_basic = self._r_basic_flat
+        A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
+        A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
+        F_int = float(self.state._heat_flux[-1])
+        F_cmb = float(self.state._heat_flux[0])
+        return np.array([-F_int * A_int, +F_cmb * A_cmb]) * SECS_PER_YEAR
 
     def _energy_balance_rhs_per_s(
         self,
@@ -2460,12 +2510,13 @@ class EntropySolver:
     def _state_is_extended(self) -> bool:
         """True when the state vector has more than N elements.
 
-        - bower2018 / energy_balance: N+1 (entropy + 1 extra)
-        - core_module: N+2 (entropy + dSdr_cmb + T_core)
-        - gradient: N+2 (N+1 gradients + S_surf)
-        - quasi_steady: N (entropy only)
+        Every mode extends the state: the modes in ``EXTRA_STATE_SLOTS``
+        append their boundary states plus the 2 quadrature states, and
+        ``gradient`` replaces the layout with N+1 gradients plus S_surf.
+        The entropy block is always the first N components except in
+        gradient mode.
         """
-        return self._core_bc in ('bower2018', 'core_module', 'energy_balance', 'gradient')
+        return True
 
     @property
     def entropy_staggered(self) -> npt.NDArray:
@@ -2564,6 +2615,17 @@ class EntropySolver:
                 J[extra, other] = 1.0
             J[0, extra] = 1.0
             J[1, extra] = 1.0
+
+        # Quadrature rows also depend on the surface flux, whose stencil
+        # reaches the top staggered nodes. A dependency missing from the
+        # pattern corrupts the coloured finite-difference Jacobian, so
+        # the superset here is required, not cosmetic.
+        slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
+        for i, slot in enumerate(slots):
+            if slot in QUADRATURE_SLOTS:
+                row = n_stag + i
+                for j in range(max(n_stag - 3, 0), n_stag):
+                    J[row, j] = 1.0
 
         return J.tocsc()
 
@@ -3003,10 +3065,11 @@ class EntropySolver:
                 dSdr0 = self._S0[:n_basic]
                 S_surf0 = float(self._S0[n_basic])
                 S0_block, _ = self._reconstruct_entropy(dSdr0, S_surf0)
-            elif self._state_is_extended:
-                S0_block = self._S0[:n_stag]
             else:
-                S0_block = self._S0
+                # Every non-gradient mode: the entropy block is the
+                # first n_stag components; trailing extras (boundary
+                # states and the quadrature pair) are not entropies.
+                S0_block = self._S0[:n_stag]
             phi0 = float(
                 np.asarray(self.entropy_eos.melt_fraction(self._P_stag_flat, S0_block)).mean()
             )
@@ -3529,10 +3592,11 @@ class EntropySolver:
                 dSdr_i = y_col[:n_basic]
                 S_surf_i = float(y_col[n_basic])
                 S_i, S_basic_i = self._reconstruct_entropy(dSdr_i, S_surf_i)
-            elif is_ext:
-                S_i = y_col[:n_stag]
             else:
-                S_i = y_col
+                # Every non-gradient mode carries trailing extra states
+                # (boundary states and the quadrature pair); the entropy
+                # block is always the first n_stag components.
+                S_i = y_col[:n_stag]
 
             if i == 0:
                 S_traj_start = np.asarray(S_i, dtype=float).copy()
@@ -3673,9 +3737,24 @@ class EntropySolver:
             sol.y if _TRAJ_DUMP_FULL and sol.y.ndim == 2 else None,
         )
 
+        # Boundary energies come from the integrated quadrature states
+        # when the mode carries them: exact with respect to the RHS the
+        # integrator used, immune to any re-evaluation mismatch and to
+        # trajectory under-sampling. The trapezoid stays as the gradient
+        # -mode fallback and for the volumetric terms, which are smooth.
+        slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
+        E_F_int_booked = trap(P_F_int)
+        E_F_cmb_booked = trap(P_F_cmb)
+        if all(s in slots for s in QUADRATURE_SLOTS) and sol.y.ndim == 2:
+            i_int = n_stag + slots.index('E_F_int')
+            i_cmb = n_stag + slots.index('E_F_cmb')
+            if sol.y.shape[0] > max(i_int, i_cmb):
+                E_F_int_booked = float(sol.y[i_int, -1] - sol.y[i_int, 0])
+                E_F_cmb_booked = float(sol.y[i_cmb, -1] - sol.y[i_cmb, 0])
+
         return {
-            'F_int': trap(P_F_int),
-            'F_cmb': trap(P_F_cmb),
+            'F_int': E_F_int_booked,
+            'F_cmb': E_F_cmb_booked,
             'Q_radio': trap(P_radio),
             'Q_tidal': trap(P_tidal),
             'Q_radio_cons': trap(P_radio_cons),

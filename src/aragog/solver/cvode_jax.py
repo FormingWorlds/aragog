@@ -180,7 +180,9 @@ def build_jax_rhs_and_jacobian(
             'state_scale=..., t_ref=...) and let it derive rhs_scale.'
         )
     heating_np = np.asarray(heating_array)
-    n_extra = {'quasi_steady': 0, 'energy_balance': 1, 'core_module': 2}[core_bc_mode]
+    # Boundary states per mode, plus the 2 trailing quadrature states
+    # every supported mode carries (EXTRA_STATE_SLOTS is the authority).
+    n_extra = {'quasi_steady': 2, 'energy_balance': 3, 'core_module': 4}[core_bc_mode]
     expected_size = heating_np.size + n_extra
     if scales.n != expected_size:
         raise ValueError(

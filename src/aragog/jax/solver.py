@@ -337,6 +337,10 @@ def dSdt(
     # every mid-step Newton iterate.
     heating = heating_static + H_radio_fn(t)
 
+    # The state carries the 2 trailing quadrature components; only the
+    # entropy block drives the physics.
+    S = S[: mesh.P_stag.shape[0]]
+
     # Compute fluxes (conduction, convection, grav sep, mixing).
     # ``flux_out.heating`` is the input ``heating`` (radio + tidal)
     # passed through unchanged: ``compute_fluxes`` does not add any
@@ -377,12 +381,25 @@ def dSdt(
     T_stag = phase_stag.temperature
     dsdt = dsdt + flux_out.heating / jnp.maximum(T_stag, 1.0)
 
-    # Convert to J/kg/K/yr
-    return dsdt * SECS_PER_YEAR
+    # Convert to J/kg/K/yr and append the quadrature derivatives
+    return jnp.concatenate([dsdt * SECS_PER_YEAR, _quadrature_rhs(heat_flux, mesh)])
+
+
+def _quadrature_rhs(heat_flux: jax.Array, mesh) -> jax.Array:
+    """Derivatives of the per-call boundary-energy quadrature states.
+
+    ``[dE_F_int/dt, dE_F_cmb/dt]`` in J/yr from the post-BC boundary
+    heat fluxes. Mirrors the numpy ``EntropySolver._quadrature_rhs``:
+    positive = energy added to the mantle, areas the explicit
+    ``4 pi r^2`` of the booking convention.
+    """
+    A_int = 4.0 * jnp.pi * mesh.radii_basic[-1] ** 2
+    A_cmb = 4.0 * jnp.pi * mesh.radii_basic[0] ** 2
+    return jnp.stack([-heat_flux[-1] * A_int, heat_flux[0] * A_cmb]) * SECS_PER_YEAR
 
 
 # ---------------------------------------------------------------------------
-# Energy_balance core BC RHS (state vector = [S, dSdr_cmb], length N+1)
+# Energy_balance core BC RHS (state vector = [S, dSdr_cmb, E_F_int, E_F_cmb])
 # ---------------------------------------------------------------------------
 
 
@@ -507,6 +524,7 @@ def dSdt_energy_balance(
         [
             dSdt_per_yr,
             jnp.array([d_dSdr_cmb_dt_per_yr]),
+            _quadrature_rhs(heat_flux, mesh),
         ]
     )
 
@@ -619,6 +637,7 @@ def dSdt_core_module(
             dSdt_per_yr,
             jnp.array([d_dSdr_cmb_dt_per_s * SECS_PER_YEAR]),
             jnp.array([dT_core_dt_per_s * SECS_PER_YEAR]),
+            _quadrature_rhs(heat_flux, mesh),
         ]
     )
 
@@ -682,9 +701,11 @@ def solve_entropy(
     # through args, we avoid this issue.
     def _rhs(t, S, dynamic_args):
         h = dynamic_args
-        # Standalone test path: no radionuclides table is exposed,
-        # so radio heating defaults to zero.
-        return dSdt(t, S, (eos, params, mesh, bc, h, _no_radio))
+        # Standalone test path: no radionuclides table is exposed, so
+        # radio heating defaults to zero. This path integrates the
+        # entropy block only; the trailing quadrature components the
+        # production RHS appends are dropped to keep y0 = S0.
+        return dSdt(t, S, (eos, params, mesh, bc, h, _no_radio))[: S.shape[0]]
 
     term = diffrax.ODETerm(_rhs)
     _solvers = {
