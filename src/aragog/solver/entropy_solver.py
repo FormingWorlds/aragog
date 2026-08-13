@@ -90,6 +90,9 @@ logger = logging.getLogger('fwl.' + __name__)
 # Directory for the per-call sub-step trajectory dump, read from
 # ARAGOG_DUMP_STEP_TRAJ. Unset means no dump and no cost.
 _TRAJ_DUMP_DIR = os.environ.get('ARAGOG_DUMP_STEP_TRAJ', '')
+# Also store the full state trajectory in each dump. Off by default because
+# it dominates the file size (n_state x n_steps doubles).
+_TRAJ_DUMP_FULL = os.environ.get('ARAGOG_DUMP_STEP_TRAJ_FULL', '') == '1'
 _TRAJ_DUMP_COUNT = 0
 
 
@@ -108,6 +111,7 @@ def _dump_step_trajectory(
     dSdr0=None,
     jcond0=None,
     jconv0=None,
+    y_full=None,
 ) -> None:
     """Write the accepted sub-step power trajectory of one solver call.
 
@@ -138,6 +142,12 @@ def _dump_step_trajectory(
         flux [W/m^2], at each accepted sub-step. Splitting the boundary
         flux separates a transport-coefficient effect from a gradient
         effect.
+    y_full : array_like, optional
+        Full solver state at each accepted sub-step, shape
+        ``(n_state, n_steps)``. Written only when
+        ``ARAGOG_DUMP_STEP_TRAJ_FULL=1``, since it dominates the file
+        size. Lets any right-hand side be re-evaluated offline on the
+        states the integrator actually accepted.
     """
     global _TRAJ_DUMP_COUNT
     if not _TRAJ_DUMP_DIR:
@@ -161,6 +171,7 @@ def _dump_step_trajectory(
             dSdr0=np.asarray(dSdr0 if dSdr0 is not None else [], dtype=float),
             jcond0=np.asarray(jcond0 if jcond0 is not None else [], dtype=float),
             jconv0=np.asarray(jconv0 if jconv0 is not None else [], dtype=float),
+            y_full=np.asarray(y_full if y_full is not None else [], dtype=float),
         )
     except OSError as exc:
         logger.warning('Sub-step trajectory dump failed: %s', exc)
@@ -3659,6 +3670,7 @@ class EntropySolver:
             _dbg_dSdr0,
             _dbg_jcond0,
             _dbg_jconv0,
+            sol.y if _TRAJ_DUMP_FULL and sol.y.ndim == 2 else None,
         )
 
         return {
