@@ -120,6 +120,8 @@ def _dump_step_trajectory(
     jcond0=None,
     jconv0=None,
     y_full=None,
+    P_F_int_jax=None,
+    P_F_cmb_jax=None,
 ) -> None:
     """Write the accepted sub-step power trajectory of one solver call.
 
@@ -156,6 +158,12 @@ def _dump_step_trajectory(
         ``ARAGOG_DUMP_STEP_TRAJ_FULL=1``, since it dominates the file
         size. Lets any right-hand side be re-evaluated offline on the
         states the integrator actually accepted.
+    P_F_int_jax, P_F_cmb_jax : array_like, optional
+        The same two boundary powers [W] taken from the JAX right-hand
+        side that drove the solve, at the same accepted sub-steps. The
+        numpy arrays above come from a re-evaluation, so the pair
+        separates a right-hand-side disagreement from an integration
+        error.
     """
     global _TRAJ_DUMP_COUNT
     if not _TRAJ_DUMP_DIR:
@@ -180,6 +188,8 @@ def _dump_step_trajectory(
             jcond0=np.asarray(jcond0 if jcond0 is not None else [], dtype=float),
             jconv0=np.asarray(jconv0 if jconv0 is not None else [], dtype=float),
             y_full=np.asarray(y_full if y_full is not None else [], dtype=float),
+            P_F_int_jax=np.asarray(P_F_int_jax if P_F_int_jax is not None else [], dtype=float),
+            P_F_cmb_jax=np.asarray(P_F_cmb_jax if P_F_cmb_jax is not None else [], dtype=float),
         )
     except OSError as exc:
         logger.warning('Sub-step trajectory dump failed: %s', exc)
@@ -1057,6 +1067,11 @@ class EntropySolver:
         # registered by PROTEUS via ``set_jax_cvode_factory()`` when
         # ``config.interior_energetics.aragog.use_jax_jacobian`` is True.
         self._jax_cvode_factory = None
+        # The nondim JAX callback and scales of the current solve, kept
+        # so the trajectory dump can read the right-hand side that drove
+        # the integration rather than only the numpy re-evaluation.
+        self._jax_rhs_nd = None
+        self._jax_rhs_scales = None
         # Number of output points CVODE returns per macro-step solve.
         # The per-call energy integrals trapezoidate the boundary fluxes
         # over this grid; the surface flux decays steeply within a long
@@ -3392,6 +3407,8 @@ class EntropySolver:
             # after the first call within a Python process lifetime).
             cvode_rhs_override = None
             cvode_jacfn = None
+            self._jax_rhs_nd = None
+            self._jax_rhs_scales = None
             use_jax_jac = (
                 getattr(self.parameters.energy, 'use_jax_jacobian', False)
                 and self._jax_cvode_factory is not None
@@ -3408,6 +3425,11 @@ class EntropySolver:
                         'EntropySolver: option Z active '
                         '(JAX analytic Jacobian + JAX RHS via scikits.odes)'
                     )
+                    # Keep the callback reachable from the post-solve
+                    # trajectory dump, which otherwise only sees the
+                    # numpy right-hand side.
+                    self._jax_rhs_nd = cvode_rhs_override
+                    self._jax_rhs_scales = scales
                 except Exception as exc:  # pragma: no cover - fallback path
                     logger.warning(
                         'EntropySolver: JAX CVODE factory failed (%s); '
@@ -3416,6 +3438,8 @@ class EntropySolver:
                     )
                     cvode_rhs_override = None
                     cvode_jacfn = None
+                    self._jax_rhs_nd = None
+                    self._jax_rhs_scales = None
 
             if cvode_rhs_override is None:
                 logger.info('EntropySolver: using CVODE (solver_method=cvode)')
@@ -3617,6 +3641,17 @@ class EntropySolver:
         # by ``E_residual_cons_frac`` on the coupler side.
         P_resid_solver = np.zeros(n_steps)
 
+        # Same two boundary powers from the JAX right-hand side that the
+        # integrator called, so the dump can separate a right-hand-side
+        # disagreement from an integration error. Only under the full
+        # dump, which is already a diagnostic mode.
+        jax_rhs_nd = self._jax_rhs_nd if _TRAJ_DUMP_DIR and _TRAJ_DUMP_FULL else None
+        P_F_int_jax = np.full(n_steps, np.nan) if jax_rhs_nd is not None else None
+        P_F_cmb_jax = np.full(n_steps, np.nan) if jax_rhs_nd is not None else None
+        if jax_rhs_nd is not None:
+            _sc = np.asarray(self._jax_rhs_scales.state_scale, dtype=float)
+            _t_ref = float(self._jax_rhs_scales.t_ref)
+
         for i in range(n_steps):
             t_i = float(sol.t[i])
             y_col = sol.y[:, i] if sol.y.ndim == 2 else sol.y
@@ -3700,6 +3735,16 @@ class EntropySolver:
 
             P_F_int[i] = -F_int_i * A_int
             P_F_cmb[i] = +F_cmb_i * A_cmb
+
+            if jax_rhs_nd is not None:
+                # The callback is in-place and nondim; undo the scaling
+                # to get J/yr, then convert to W. The last two slots are
+                # the boundary-energy quadrature pair.
+                _ydot_nd = np.zeros_like(_sc)
+                jax_rhs_nd(t_i / _t_ref, np.asarray(y_col, dtype=float) / _sc, _ydot_nd)
+                _ydot = _ydot_nd * _sc / _t_ref
+                P_F_int_jax[i] = float(_ydot[-2]) / SECS_PER_YEAR
+                P_F_cmb_jax[i] = float(_ydot[-1]) / SECS_PER_YEAR
             P_radio[i] = Q_radio_i
             P_tidal[i] = Q_tidal_i
             P_radio_cons[i] = Q_radio_cons_i
@@ -3770,6 +3815,8 @@ class EntropySolver:
             _dbg_jcond0,
             _dbg_jconv0,
             sol.y if _TRAJ_DUMP_FULL and sol.y.ndim == 2 else None,
+            P_F_int_jax,
+            P_F_cmb_jax,
         )
 
         # Boundary energies come from the integrated quadrature states
