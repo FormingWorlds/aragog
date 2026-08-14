@@ -249,7 +249,19 @@ def test_solve_with_option_z_factory_registered_completes():
     assert sol.status == 0, f'Option Z solve returned status={sol.status}; expected 0 (success)'
     final_y = sol.y[:, -1] if sol.y.ndim == 2 else sol.y
     assert np.all(np.isfinite(final_y))
-    assert 1500.0 < float(final_y.min()) < 5500.0, (
-        f'final entropy range [{float(final_y.min())}, {float(final_y.max())}] '
+    # The trailing slots are the two boundary-energy quadrature states in
+    # joules; only the leading block is entropy, so the window applies there.
+    S_final = final_y[: solver._n_stag]
+    assert 1500.0 < float(S_final.min()) < 5500.0, (
+        f'final entropy range [{float(S_final.min())}, {float(S_final.max())}] '
         'is outside the plausible mantle window'
+    )
+    E_final = final_y[solver._n_stag :]
+    assert E_final.size == 2, (
+        f'expected the two boundary-energy quadrature slots, got {E_final.size}'
+    )
+    # Surface cooling drains the mantle, so the surface slot must be negative.
+    assert float(E_final[0]) < 0.0, (
+        f'surface boundary energy {float(E_final[0]):.6e} J is not negative '
+        'over a cooling solve'
     )

@@ -177,8 +177,11 @@ def test_bower2018_with_inner_bc_kind_1_one_sided_conduction(shared_eos):
     (entropy_solver.py:1451-1461).
 
     Discriminator: bower2018 evolves T_core as the (N+1)-th state
-    component; F_cmb is set from -k * (T_above - T_core) / dr_half.
-    The state vector length must be N+1, and F_cmb must be finite.
+    component, followed by the two boundary-energy quadrature slots,
+    so the state vector length must be N+3. T_core must stay a
+    plausible core temperature and the surface energy must be
+    negative over a cooling solve; a slot ordering that swapped them
+    would break both.
     """
     from aragog.solver.entropy_solver import EntropySolver
 
@@ -188,8 +191,13 @@ def test_bower2018_with_inner_bc_kind_1_one_sided_conduction(shared_eos):
     solver.set_initial_entropy(3050.0)
     solver.solve()
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
-    assert len(final_y) == solver._n_stag + 1, 'bower2018 state must be N+1; got {}'.format(
-        len(final_y)
+    n_stag = solver._n_stag
+    assert len(final_y) == n_stag + 3, 'bower2018 state must be N+3; got {}'.format(len(final_y))
+    T_core = float(final_y[n_stag])
+    assert 1000.0 < T_core < 10000.0, f'T_core {T_core:.6e} K is not a core temperature'
+    assert float(final_y[n_stag + 1]) < 0.0, (
+        f'surface boundary energy {float(final_y[n_stag + 1]):.6e} J is not negative '
+        'over a cooling solve'
     )
 
 

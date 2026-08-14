@@ -3990,7 +3990,10 @@ class EntropySolver:
             elif bower:
                 T_core_final = extra_final
         else:
-            S_final = sol.y[:, -1]
+            # quasi_steady carries no boundary state but still carries the
+            # trailing boundary-energy pair, so the entropy block is the
+            # first n_stag components here too.
+            S_final = sol.y[:n_stag, -1]
             extra_final = None
 
         P_stag = self._P_stag_flat
