@@ -794,9 +794,14 @@ class TestCvodeEnergyOutputGrid:
     """
 
     @staticmethod
-    def _build_greybody_solver(method, n_out=None):
+    def _build_greybody_solver(method, n_out=None, inner_flux=0.0):
         """Grey-body surface cooling: the surface flux ~ sigma T_top^4 decays
-        steeply within the call, the regime that breaks a 2-point integral."""
+        steeply within the call, the regime that breaks a 2-point integral.
+
+        ``inner_flux`` is the prescribed CMB flux in W/m2. At the default of
+        zero the CMB carries no energy, so anything asserted about the F_cmb
+        booking on this fixture passes vacuously.
+        """
         from aragog.eos.entropy import EntropyEOS
         from aragog.parser import (
             Parameters,
@@ -830,7 +835,7 @@ class TestCvodeEnergyOutputGrid:
             outer_boundary_condition=1,  # grey-body radiative surface
             outer_boundary_value=0.0,
             inner_boundary_condition=2,
-            inner_boundary_value=0.0,
+            inner_boundary_value=inner_flux,
             emissivity=1.0,
             equilibrium_temperature=255.0,
             core_heat_capacity=880.0,
@@ -980,6 +985,103 @@ class TestCvodeEnergyOutputGrid:
         dt_sub = float(s_sub._solution.t[-1] - s_sub._solution.t[0])
         np.testing.assert_allclose(dt_dense, dt_ref, rtol=1e-10)
         np.testing.assert_allclose(dt_sub, dt_ref, rtol=1e-10)
+
+
+@needs_eos
+@needs_cvode
+class TestCmbEnergyBooking:
+    """The CMB energy booking reads the integrated quadrature state.
+
+    ``TestCvodeEnergyOutputGrid`` covers the surface side. The CMB side needs
+    its own cover: the grey-body fixture prescribes a zero inner flux, so a
+    booking assertion made on it books zero and passes without reaching the
+    code it names. Every test here sets a non-zero flux and says so.
+    """
+
+    FLUX = 5.0e4      # prescribed CMB flux [W/m2]
+    OFFSET = 1.0e29   # quadrature-slot perturbation [J]
+
+    @staticmethod
+    def _solve(flux):
+        solver = TestCvodeEnergyOutputGrid._build_greybody_solver(
+            'cvode', n_out=2, inner_flux=flux
+        )
+        solver.solve()
+        return solver
+
+    @staticmethod
+    def _cmb_slot(solver):
+        from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
+
+        return solver._n_stag + EXTRA_STATE_SLOTS[solver._core_bc].index('E_F_cmb')
+
+    @staticmethod
+    def _cmb_area(solver):
+        return 4.0 * np.pi * float(np.asarray(solver._r_basic_flat).ravel()[0]) ** 2
+
+    def test_zero_prescribed_flux_books_no_cmb_energy(self):
+        """Vacuity guard for the tests below: at the fixture default the CMB
+        carries nothing, so any F_cmb assertion made there is empty."""
+        assert self._solve(0.0)._compute_step_energy_integrals()['F_cmb'] == 0.0
+
+    def test_booked_cmb_energy_matches_the_prescribed_flux_integral(self):
+        """A constant prescribed flux integrates in closed form to
+        ``F * A_cmb * dt``, so the booking is checked against arithmetic rather
+        than against a second integration of the same trajectory."""
+        solver = self._solve(self.FLUX)
+        booked = solver._compute_step_energy_integrals()['F_cmb']
+        span_s = float(solver._solution.t[-1] - solver._solution.t[0]) * SECS_PER_YEAR
+        expected = self.FLUX * self._cmb_area(solver) * span_s
+
+        assert abs(booked) > 1e29, (
+            f'booked CMB energy is {booked:.3e} J; the prescribed flux must '
+            f'move real energy or this test discriminates nothing'
+        )
+        assert booked == pytest.approx(expected, rel=1e-10), (
+            f'booked CMB energy {booked:.8e} J against the closed-form '
+            f'{expected:.8e} J'
+        )
+
+    def test_booked_cmb_energy_follows_the_quadrature_state(self):
+        """Provenance. Moving the CMB quadrature slot of the stored solution
+        must move the booked energy by the same amount. A reader that
+        integrated the flux trajectory instead cannot see the change."""
+        solver = self._solve(self.FLUX)
+        before = solver._compute_step_energy_integrals()['F_cmb']
+        solver._solution.y[self._cmb_slot(solver), -1] += self.OFFSET
+        after = solver._compute_step_energy_integrals()['F_cmb']
+
+        assert after - before == pytest.approx(self.OFFSET, rel=1e-9), (
+            f'booked CMB energy moved {after - before:.8e} J for a '
+            f'{self.OFFSET:.1e} J change in the quadrature slot; the reader is '
+            f'not sourcing the ODE state'
+        )
+
+    def test_per_call_closure_detects_a_wrong_cmb_booking(self):
+        """The per-call budget closes when the booking is sound, and the same
+        quantity moves by the full error when it is not, which is what makes it
+        usable as an acceptance metric on runs that take impacts."""
+        solver = self._solve(self.FLUX)
+        d = solver._compute_step_energy_integrals()
+        predicted = d['F_int'] + d['F_cmb'] + d['Q_radio'] + d['Q_tidal']
+        gross = sum(abs(d[k]) for k in ('F_int', 'F_cmb', 'Q_radio', 'Q_tidal'))
+        residual = d['state_heat'] - predicted
+
+        assert gross > 1e29, f'gross boundary energy {gross:.3e} J is too small to judge'
+        assert abs(residual) / gross < 1e-3, (
+            f'per-call residual is {residual:.3e} J, {abs(residual) / gross:.2e} of '
+            f'the {gross:.3e} J gross flow'
+        )
+
+        solver._solution.y[self._cmb_slot(solver), -1] += self.OFFSET
+        d2 = solver._compute_step_energy_integrals()
+        predicted2 = d2['F_int'] + d2['F_cmb'] + d2['Q_radio'] + d2['Q_tidal']
+        residual2 = d2['state_heat'] - predicted2
+
+        assert residual2 - residual == pytest.approx(-self.OFFSET, rel=1e-9), (
+            f'closure moved {residual2 - residual:.8e} J for a {self.OFFSET:.1e} J '
+            f'booking error; it does not track the booking'
+        )
 
 
 # -- Test 3: Grey-body cooling timescale ---------------------------------------
