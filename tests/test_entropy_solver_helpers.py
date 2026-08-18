@@ -905,7 +905,11 @@ def test_assemble_atol_nd_gives_quadrature_slots_relative_tolerance():
     phase-boundary crossing underflows the step size (t + h = t). The
     physical-state components keep the ``atol / scale`` convention.
     """
-    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS, QUADRATURE_SLOTS
+    from aragog.solver.entropy_solver import (
+        _CMB_QUAD_ATOL_FACTOR,
+        EXTRA_STATE_SLOTS,
+        QUADRATURE_SLOTS,
+    )
 
     solver = _build_minimal_solver(core_bc='energy_balance')
     n_stag = 7
@@ -926,10 +930,15 @@ def test_assemble_atol_nd_gives_quadrature_slots_relative_tolerance():
     np.testing.assert_allclose(out[:n_stag], atol / 3.0e3, rtol=1e-15)
     assert out[n_stag] == pytest.approx(atol / 1.0e-6, rel=1e-15)
     for i, slot in enumerate(slots):
-        if slot in QUADRATURE_SLOTS:
+        if slot == 'E_F_cmb':
+            # The CMB slot gets its own tighter raw atol on the same
+            # shared scale, not the surface slot's plain atol.
+            assert out[n_stag + i] == pytest.approx(atol * _CMB_QUAD_ATOL_FACTOR, rel=1e-15)
+        elif slot in QUADRATURE_SLOTS:
             # Relative tolerance in units of the slot's own scale, and
             # never within orders of magnitude of atol / E_ref.
             assert out[n_stag + i] == pytest.approx(atol, rel=1e-15)
+        if slot in QUADRATURE_SLOTS:
             assert out[n_stag + i] > 1e6 * (atol / E_ref), (
                 'quadrature slot has an absolute physical tolerance again; '
                 'this is the t + h = t step-size underflow defect'
