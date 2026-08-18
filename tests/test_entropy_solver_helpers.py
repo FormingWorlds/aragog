@@ -25,6 +25,7 @@ All tests are pure unit (no EOS, no solve) so they cost <100 ms each.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -901,21 +902,25 @@ def test_max_step_clamp_entropy_margin_is_configurable():
 
 @pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance', 'bower2018', 'core_module'])
 def test_assemble_atol_nd_gives_quadrature_slots_relative_tolerance(core_bc):
-    """The quadrature slots must get ``atol`` in units of their own scale,
+    """Without a call-duration estimate, both quadrature slots fall back
+    to ``atol * _CMB_QUAD_ATOL_FACTOR`` in units of their own scale,
     never ``atol / scale``, in every core_bc mode that carries them.
 
     Discriminator: dividing by the heat-content scale (~1e32) demands the
     boundary-energy integrals to ``atol`` joules absolute; each call
     starts at E = 0, where the CVODE error weight is pure atol, so a
     phase-boundary crossing underflows the step size (t + h = t). The
-    physical-state components keep the ``atol / scale`` convention.
-    Parametrized over every mode because ``_assemble_atol_nd`` dispatches
-    on slot name, not slot index, so a mode-specific index bug would not
-    surface from a single mode alone.
+    physical-state components keep the ``atol / scale`` convention. Both
+    quadrature slots get the SAME fallback factor here (this is the no
+    prior-flux-estimate path, exercised by a minimal solver with no
+    ``self.state``): the surface slot no longer stays at the plain,
+    untightened ``atol`` the CMB slot alone used to be tightened away
+    from. Parametrized over every mode because ``_assemble_atol_nd``
+    dispatches on slot name, not slot index, so a mode-specific index bug
+    would not surface from a single mode alone.
     """
     from aragog.solver.entropy_solver import (
         _CMB_QUAD_ATOL_FACTOR,
-        _CMB_QUAD_SLOT,
         EXTRA_STATE_SLOTS,
         QUADRATURE_SLOTS,
     )
@@ -938,18 +943,70 @@ def test_assemble_atol_nd_gives_quadrature_slots_relative_tolerance(core_bc):
     assert out.shape == scale.shape
     np.testing.assert_allclose(out[:n_stag], atol / 3.0e3, rtol=1e-15)
     for i, slot in enumerate(slots):
-        if slot == _CMB_QUAD_SLOT:
-            # The CMB slot gets its own tighter raw atol on the same
-            # shared scale, not the surface slot's plain atol.
-            assert out[n_stag + i] == pytest.approx(atol * _CMB_QUAD_ATOL_FACTOR, rel=1e-15)
-        elif slot in QUADRATURE_SLOTS:
-            # Relative tolerance in units of the slot's own scale, and
-            # never within orders of magnitude of atol / E_ref.
-            assert out[n_stag + i] == pytest.approx(atol, rel=1e-15)
-        else:
-            assert out[n_stag + i] == pytest.approx(atol / physical_scale[slot], rel=1e-15)
         if slot in QUADRATURE_SLOTS:
+            # Both quadrature slots get the same fallback factor on the
+            # shared scale, never the plain atol or atol / E_ref.
+            assert out[n_stag + i] == pytest.approx(atol * _CMB_QUAD_ATOL_FACTOR, rel=1e-15)
             assert out[n_stag + i] > 1e6 * (atol / E_ref), (
                 'quadrature slot has an absolute physical tolerance again; '
                 'this is the t + h = t step-size underflow defect'
             )
+        else:
+            assert out[n_stag + i] == pytest.approx(atol / physical_scale[slot], rel=1e-15)
+
+
+@pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance', 'bower2018', 'core_module'])
+def test_assemble_atol_nd_derives_quadrature_tolerance_from_prior_flux(core_bc, monkeypatch):
+    """Given a prior-call flux estimate and a call duration, each
+    quadrature slot's tolerance is derived from its OWN expected
+    per-call energy, not a fixed per-mode factor.
+
+    Discriminator: two solvers differing only in ``self.state._heat_flux``
+    (one with a small prior CMB flux, one 1000x larger) must produce
+    different CMB atol values that scale with the flux ratio, proving the
+    tolerance is state-adaptive rather than a constant. Every derived
+    value must stay at or below the plain ``atol`` ceiling: the estimate
+    must never be LOOSER than the old shared-scale tolerance was.
+    """
+    from aragog.solver.entropy_solver import EntropySolver, EXTRA_STATE_SLOTS, QUADRATURE_SLOTS
+
+    physical_scale = {'dSdr_cmb': 1.0e-6, 'T_core': 3.0e3}
+    n_stag = 7
+    slots = EXTRA_STATE_SLOTS[core_bc]
+    scale = np.empty(n_stag + len(slots))
+    scale[:n_stag] = 3.0e3
+    E_ref = 1.8e32
+    for i, slot in enumerate(slots):
+        scale[n_stag + i] = E_ref if slot in QUADRATURE_SLOTS else physical_scale[slot]
+    atol = 1.0e-8
+    dt_call_yr = 10.0
+    area = np.array([4.0 * np.pi * (3.48e6) ** 2, 4.0 * np.pi * (6.371e6) ** 2])
+
+    # _E_quad_ref reads self.evaluator.mesh, unavailable on a minimal
+    # (un-initialized) solver; pin it to the same value used to fill the
+    # nondim scale array above.
+    monkeypatch.setattr(EntropySolver, '_E_quad_ref', property(lambda self: E_ref))
+
+    def _out_for(F_cmb, F_int):
+        solver = _build_minimal_solver(core_bc=core_bc)
+        solver._n_stag = n_stag
+        solver._area_flat = area
+        solver.state = SimpleNamespace(_heat_flux=np.array([F_cmb, F_int]))
+        return solver._assemble_atol_nd(atol, scale, dt_call_yr=dt_call_yr)
+
+    out_small = _out_for(F_cmb=1.0, F_int=1.0)
+    out_large = _out_for(F_cmb=1.0e3, F_int=1.0e3)
+
+    for i, slot in enumerate(slots):
+        if slot not in QUADRATURE_SLOTS:
+            continue
+        j = n_stag + i
+        # Both derived values respect the atol ceiling.
+        assert out_small[j] <= atol + 1e-30
+        assert out_large[j] <= atol + 1e-30
+        # A 1000x larger prior flux gives a proportionally larger (never
+        # smaller) derived tolerance, until it saturates at the ceiling.
+        assert out_large[j] >= out_small[j]
+        if out_large[j] < atol:
+            ratio = out_large[j] / out_small[j]
+            assert ratio == pytest.approx(1.0e3, rel=1e-6)

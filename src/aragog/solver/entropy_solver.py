@@ -93,13 +93,19 @@ EXTRA_STATE_SLOTS: dict[str, tuple[str, ...]] = {
 # final values instead of re-evaluating the trajectory.
 QUADRATURE_SLOTS: tuple[str, str] = ('E_F_int', 'E_F_cmb')
 
-# Both quadrature slots share one nondim scale (mantle heat content); the
-# CMB slot's per-call energy is typically far below the surface slot's,
-# so a shared atol gives it almost no error control. Tightening it stops
-# a flux spike from passing CVODE's error test. The factor is fixed for
-# every core_bc mode, unverified for core_module (F_cmb/F_int can be ~1).
+# Both quadrature slots share one nondim scale (mantle heat content), so a
+# shared atol gives almost no error control to whichever slot's per-call
+# energy is far below that scale (the CMB slot in most modes, but not
+# necessarily every mode: core_module's own F_cmb/F_int ratio can be
+# order-unity). _assemble_atol_nd derives each slot's tolerance from its
+# own boundary flux at the end of the previous call instead of a blind
+# per-mode factor; _CMB_QUAD_ATOL_FACTOR is now only the fallback used
+# before any flux estimate exists (the first solve() call).
 _CMB_QUAD_ATOL_FACTOR = 1e-3
-_CMB_QUAD_SLOT = QUADRATURE_SLOTS[1]  # 'E_F_cmb'; the slot the factor above tightens
+_CMB_QUAD_SLOT = QUADRATURE_SLOTS[1]  # 'E_F_cmb'
+# Target fraction of a quadrature slot's own expected per-call energy
+# that its integration error is held to, once a flux estimate exists.
+_QUAD_ATOL_REL_FRACTION = 1e-3
 
 logger = logging.getLogger('fwl.' + __name__)
 
@@ -1136,22 +1142,32 @@ class EntropySolver:
         """
         self._jax_cvode_factory = factory
 
-    def _assemble_atol_nd(self, atol: float, state_scale: npt.NDArray) -> npt.NDArray:
+    def _assemble_atol_nd(
+        self, atol: float, state_scale: npt.NDArray, dt_call_yr: float | None = None
+    ) -> npt.NDArray:
         """Per-component absolute tolerance in nondim units.
 
         Physical-state components get ``atol / scale``: the same physical
-        tolerance on every component regardless of its nondim scale. The
-        quadrature slots get ``atol`` directly in units of their own scale,
-        which is a relative tolerance of ``atol`` against the mantle
-        heat-content scale. Dividing by their scale instead would demand
-        the boundary-energy integrals to ``atol`` JOULES absolute; each
-        call starts at E = 0, where the CVODE error weight is pure atol,
-        so at a phase-boundary crossing (huge dE/dt at tiny E) the error
-        test fails at every step size and h underflows to t + h = t.
-        The CMB slot gets ``atol * _CMB_QUAD_ATOL_FACTOR`` instead of the
-        surface slot's plain ``atol``, tightening its own error floor
-        without touching the shared scale both slots are nondimensionalised
-        against.
+        tolerance on every component regardless of its nondim scale.
+        Dividing the quadrature slots by their own scale instead would
+        demand the boundary-energy integrals to ``atol`` JOULES absolute;
+        each call starts at E = 0, where the CVODE error weight is pure
+        atol, so at a phase-boundary crossing (huge dE/dt at tiny E) the
+        error test fails at every step size and h underflows to t + h = t.
+
+        Each quadrature slot instead gets a tolerance sized to its own
+        expected per-call energy, not a blind fraction of the always-huge
+        shared mantle heat-content scale. The expected energy is
+        ``|F_prev| * A_slot * dt_call``, where ``F_prev`` is that
+        boundary's flux measured at the end of the PREVIOUS call
+        (``self.state._heat_flux``, held on the solver's persistent state
+        across repeated ``solve()`` calls) and ``A_slot`` its boundary
+        area. The nondim atol is ``_QUAD_ATOL_REL_FRACTION`` of that
+        estimate over ``_E_quad_ref``, capped at the plain ``atol``
+        ceiling so neither slot is ever looser than the shared-scale
+        tolerance was. Before any flux estimate exists (the first
+        ``solve()`` call on a fresh solver, where ``_heat_flux`` is still
+        all zero), both slots fall back to ``atol * _CMB_QUAD_ATOL_FACTOR``.
 
         Parameters
         ----------
@@ -1159,6 +1175,9 @@ class EntropySolver:
             Absolute tolerance in physical state units.
         state_scale : np.ndarray
             Per-component nondim scales, length equal to the state.
+        dt_call_yr : float, optional
+            This call's duration in years (``end_time - start_time``).
+            Without it every quadrature slot uses the fallback factor.
 
         Returns
         -------
@@ -1170,11 +1189,23 @@ class EntropySolver:
         if core_bc is None and getattr(self, 'parameters', None) is not None:
             core_bc = getattr(self.parameters.boundary_conditions, 'core_bc', None)
         slots = EXTRA_STATE_SLOTS.get(core_bc, ())
+        dt_call_s = float(dt_call_yr) * SECS_PER_YEAR if dt_call_yr else 0.0
+        heat_flux = getattr(getattr(self, 'state', None), '_heat_flux', None)
         for i, slot in enumerate(slots):
-            if slot == _CMB_QUAD_SLOT:
+            if slot not in QUADRATURE_SLOTS:
+                continue
+            is_cmb = slot == _CMB_QUAD_SLOT
+            E_scale = 0.0
+            if heat_flux is not None and dt_call_s > 0.0:
+                F_prev = float(heat_flux[0] if is_cmb else heat_flux[-1])
+                A_slot = float(self._area_flat[0] if is_cmb else self._area_flat[-1])
+                E_scale = abs(F_prev) * A_slot * dt_call_s
+            if E_scale > 0.0:
+                atol_nd[self._n_stag + i] = min(
+                    atol, _QUAD_ATOL_REL_FRACTION * E_scale / self._E_quad_ref
+                )
+            else:
                 atol_nd[self._n_stag + i] = atol * _CMB_QUAD_ATOL_FACTOR
-            elif slot in QUADRATURE_SLOTS:
-                atol_nd[self._n_stag + i] = atol
         return atol_nd
 
     def _build_nondim_scales(self) -> 'NonDimScales':
@@ -3326,7 +3357,7 @@ class EntropySolver:
         # tolerance on dSdr_cmb, choking the step size and
         # suppressing the entropy cooling rate enough to prevent
         # solidification.
-        atol_nd = self._assemble_atol_nd(atol, _state_scale)
+        atol_nd = self._assemble_atol_nd(atol, _state_scale, dt_call_yr=end_time - start_time)
 
         def _rhs_nondim(t_nd, y_nd):
             """Nondim wrapper: scale state to physical, call physics, scale RHS back."""
