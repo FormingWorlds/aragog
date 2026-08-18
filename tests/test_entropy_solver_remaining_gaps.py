@@ -148,7 +148,7 @@ def test_energy_balance_with_inner_bc_kind_1_takes_pass_branch():
     after the entropy block, so the length check covers all three.
     """
     from aragog.eos.entropy import EntropyEOS
-    from aragog.solver.entropy_solver import EntropySolver
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS, EntropySolver
 
     parameters = _build_params(inner_bc=1, core_bc='energy_balance')
     eos = EntropyEOS(EOS_DIR)
@@ -158,7 +158,8 @@ def test_energy_balance_with_inner_bc_kind_1_takes_pass_branch():
     solver.solve()
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     assert np.all(np.isfinite(final_y))
-    assert len(final_y) == solver._n_stag + 3, 'energy_balance state length mismatch'
+    n_extra = len(EXTRA_STATE_SLOTS['energy_balance'])
+    assert len(final_y) == solver._n_stag + n_extra, 'energy_balance state length mismatch'
 
 
 # ----------------------------------------------------------------------

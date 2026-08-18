@@ -339,28 +339,32 @@ def test_get_current_dsdr_cmb_returns_none_when_no_solution_exists():
 
 
 def test_get_current_dsdr_cmb_returns_none_for_quasi_steady_state_shape():
-    """When the solution state vector is length N (quasi_steady) rather
-    than N+1 (energy_balance), the accessor must return None — the
-    ``dSdr_cmb`` slot does not exist in this layout.
+    """quasi_steady has no ``dSdr_cmb`` slot in ``EXTRA_STATE_SLOTS``, so
+    the accessor must return None regardless of the state's shape — the
+    dispatch is on slot membership, not on state length.
     """
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
+
     solver = _build_minimal_solver(core_bc='quasi_steady')
-    solver._n_stag = 10
+    n_stag = 10
+    solver._n_stag = n_stag
+    n_extra = len(EXTRA_STATE_SLOTS['quasi_steady'])
 
     fake_sol = MagicMock()
-    fake_sol.y = np.zeros((10, 3))  # length N, not N+1
+    fake_sol.y = np.zeros((n_stag + n_extra, 3))
     solver._solution = fake_sol
     assert solver.get_current_dSdr_cmb() is None
 
 
 def test_get_current_dsdr_cmb_returns_last_column_value_when_state_extended():
-    """When the state has shape (N+1, K), the accessor returns the
-    final-time dSdr_cmb (``y[N, -1]``).
+    """When the state carries dSdr_cmb at row N, the accessor returns
+    its final-time value (``y[N, -1]``), not the last row.
 
-    Discriminator: a regression that returned ``y[-1, -1]`` (the
-    last STATE element) instead of ``y[N, -1]`` (the dSdr_cmb slot)
-    would still pass for energy_balance (since N is the last slot)
-    BUT would fail for any future extension of the state vector.
-    Using a sentinel value at row N catches the off-by-one.
+    Discriminator: dSdr_cmb sits at row N, followed by the E_F_int and
+    E_F_cmb quadrature slots, so row N is not the last row of the
+    state. A regression that returned ``y[-1, -1]`` (the last row)
+    instead of ``y[N, -1]`` (the dSdr_cmb row) would read the E_F_cmb
+    sentinel planted below and fail this test.
     """
     from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
 
@@ -895,42 +899,46 @@ def test_max_step_clamp_entropy_margin_is_configurable():
     assert sig.parameters['entropy_margin'].default is inspect.Parameter.empty
 
 
-def test_assemble_atol_nd_gives_quadrature_slots_relative_tolerance():
+@pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance', 'bower2018', 'core_module'])
+def test_assemble_atol_nd_gives_quadrature_slots_relative_tolerance(core_bc):
     """The quadrature slots must get ``atol`` in units of their own scale,
-    never ``atol / scale``.
+    never ``atol / scale``, in every core_bc mode that carries them.
 
     Discriminator: dividing by the heat-content scale (~1e32) demands the
     boundary-energy integrals to ``atol`` joules absolute; each call
     starts at E = 0, where the CVODE error weight is pure atol, so a
     phase-boundary crossing underflows the step size (t + h = t). The
     physical-state components keep the ``atol / scale`` convention.
+    Parametrized over every mode because ``_assemble_atol_nd`` dispatches
+    on slot name, not slot index, so a mode-specific index bug would not
+    surface from a single mode alone.
     """
     from aragog.solver.entropy_solver import (
         _CMB_QUAD_ATOL_FACTOR,
+        _CMB_QUAD_SLOT,
         EXTRA_STATE_SLOTS,
         QUADRATURE_SLOTS,
     )
 
-    solver = _build_minimal_solver(core_bc='energy_balance')
+    physical_scale = {'dSdr_cmb': 1.0e-6, 'T_core': 3.0e3}
+
+    solver = _build_minimal_solver(core_bc=core_bc)
     n_stag = 7
     solver._n_stag = n_stag
-    slots = EXTRA_STATE_SLOTS['energy_balance']
+    slots = EXTRA_STATE_SLOTS[core_bc]
     scale = np.empty(n_stag + len(slots))
     scale[:n_stag] = 3.0e3  # entropy
-    scale[n_stag] = 1.0e-6  # dSdr_cmb
     E_ref = 1.8e32
     for i, slot in enumerate(slots):
-        if slot in QUADRATURE_SLOTS:
-            scale[n_stag + i] = E_ref
+        scale[n_stag + i] = E_ref if slot in QUADRATURE_SLOTS else physical_scale[slot]
     atol = 1.0e-8
 
     out = solver._assemble_atol_nd(atol, scale)
 
     assert out.shape == scale.shape
     np.testing.assert_allclose(out[:n_stag], atol / 3.0e3, rtol=1e-15)
-    assert out[n_stag] == pytest.approx(atol / 1.0e-6, rel=1e-15)
     for i, slot in enumerate(slots):
-        if slot == 'E_F_cmb':
+        if slot == _CMB_QUAD_SLOT:
             # The CMB slot gets its own tighter raw atol on the same
             # shared scale, not the surface slot's plain atol.
             assert out[n_stag + i] == pytest.approx(atol * _CMB_QUAD_ATOL_FACTOR, rel=1e-15)
@@ -938,6 +946,8 @@ def test_assemble_atol_nd_gives_quadrature_slots_relative_tolerance():
             # Relative tolerance in units of the slot's own scale, and
             # never within orders of magnitude of atol / E_ref.
             assert out[n_stag + i] == pytest.approx(atol, rel=1e-15)
+        else:
+            assert out[n_stag + i] == pytest.approx(atol / physical_scale[slot], rel=1e-15)
         if slot in QUADRATURE_SLOTS:
             assert out[n_stag + i] > 1e6 * (atol / E_ref), (
                 'quadrature slot has an absolute physical tolerance again; '

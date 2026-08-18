@@ -93,13 +93,13 @@ EXTRA_STATE_SLOTS: dict[str, tuple[str, ...]] = {
 # final values instead of re-evaluating the trajectory.
 QUADRATURE_SLOTS: tuple[str, str] = ('E_F_int', 'E_F_cmb')
 
-# Both quadrature slots share one nondim scale (the mantle heat content),
-# but the CMB slot's own per-call energy runs several orders below the
-# surface slot's, so a shared atol leaves it with almost no error control.
-# Tighten the CMB slot's raw atol relative to the surface slot's while
-# keeping the shared scale, so a convective flux spike is no longer free
-# to pass CVODE's error test at any step size on that slot alone.
+# Both quadrature slots share one nondim scale (mantle heat content); the
+# CMB slot's per-call energy is typically far below the surface slot's,
+# so a shared atol gives it almost no error control. Tightening it stops
+# a flux spike from passing CVODE's error test. The factor is fixed for
+# every core_bc mode, unverified for core_module (F_cmb/F_int can be ~1).
 _CMB_QUAD_ATOL_FACTOR = 1e-3
+_CMB_QUAD_SLOT = QUADRATURE_SLOTS[1]  # 'E_F_cmb'; the slot the factor above tightens
 
 logger = logging.getLogger('fwl.' + __name__)
 
@@ -1171,7 +1171,7 @@ class EntropySolver:
             core_bc = getattr(self.parameters.boundary_conditions, 'core_bc', None)
         slots = EXTRA_STATE_SLOTS.get(core_bc, ())
         for i, slot in enumerate(slots):
-            if slot == 'E_F_cmb':
+            if slot == _CMB_QUAD_SLOT:
                 atol_nd[self._n_stag + i] = atol * _CMB_QUAD_ATOL_FACTOR
             elif slot in QUADRATURE_SLOTS:
                 atol_nd[self._n_stag + i] = atol

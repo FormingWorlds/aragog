@@ -302,13 +302,15 @@ def test_entropy_solver_solve_energy_balance_short_run_completes(shared_eos):
     parameters = _build_parameters(core_bc='energy_balance', n_nodes=15, end_time=20.0)
     solver, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
     assert solver._solution.t.size >= 2
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
+
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
-    # State must be length n_stag + 3 in energy_balance mode: dSdr_cmb
-    # (evolved by the core energy balance) plus the E_F_int/E_F_cmb
-    # boundary-energy quadrature slots.
+    # State must carry dSdr_cmb (evolved by the core energy balance) plus
+    # the E_F_int/E_F_cmb boundary-energy quadrature slots.
     n_stag = solver._n_stag
-    assert len(final_y) == n_stag + 3, (
-        f'energy_balance state length is {len(final_y)}, expected n_stag+3 = {n_stag + 3}'
+    n_extra = len(EXTRA_STATE_SLOTS['energy_balance'])
+    assert len(final_y) == n_stag + n_extra, (
+        f'energy_balance state length is {len(final_y)}, expected n_stag+{n_extra} = {n_stag + n_extra}'
     )
     assert np.all(np.isfinite(final_y))
 
@@ -361,12 +363,15 @@ def test_entropy_solver_solve_bower2018_short_run_completes(shared_eos):
     parameters = _build_parameters(core_bc='bower2018', n_nodes=15, end_time=20.0)
     solver, _ = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
     assert solver._solution.t.size >= 2
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
+
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     n_stag = solver._n_stag
-    # bower2018 state is N+3: entropy block, T_core, then the E_F_int/E_F_cmb
-    # boundary-energy quadrature slots.
-    assert len(final_y) == n_stag + 3, (
-        f'bower2018 state length is {len(final_y)}, expected n_stag+3 = {n_stag + 3}'
+    # bower2018 state carries the entropy block, T_core, then the
+    # E_F_int/E_F_cmb boundary-energy quadrature slots.
+    n_extra = len(EXTRA_STATE_SLOTS['bower2018'])
+    assert len(final_y) == n_stag + n_extra, (
+        f'bower2018 state length is {len(final_y)}, expected n_stag+{n_extra} = {n_stag + n_extra}'
     )
     # T_core must be physical (positive, finite, in plausible Earth range).
     T_core_final = float(final_y[n_stag])

@@ -1,12 +1,13 @@
 """Tests for ``aragog.jax.solver.dSdt_core_module`` and its factory branch.
 
-The core_module JAX RHS (extended state ``[S, dSdr_cmb, T_core]`` of
-length N+2) mirrors the numpy ``EntropySolver._dSdt_single`` closure for
-``core_bc='core_module'``: the energy_balance boundary-gradient balance
-with the staged core-evolution budget's effective heat capacity in place
-of the isothermal-reservoir factor. The contract clauses exercised here:
+The core_module JAX RHS (extended state
+``[S, dSdr_cmb, T_core, E_F_int, E_F_cmb]`` of length N+4) mirrors the
+numpy ``EntropySolver._dSdt_single`` closure for ``core_bc='core_module'``:
+the energy_balance boundary-gradient balance with the staged
+core-evolution budget's effective heat capacity in place of the
+isothermal-reservoir factor. The contract clauses exercised here:
 
-- the factory refuses the mode without a budget and enforces the N+2
+- the factory refuses the mode without a budget and enforces the N+4
   nondim-scale shape;
 - the JAX RHS reproduces the numpy RHS on a real-EOS driven state to
   integrator precision, component by component, including both boundary
@@ -214,10 +215,12 @@ def test_rhs_parity_with_numpy_on_driven_state():
     """
     from aragog.eos.entropy import EntropyEOS
     from aragog.jax.solver import dSdt_core_module
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
 
     solver = _build_numpy_solver(EntropyEOS(EOS_DIR))
     args = _build_jax_pieces(solver)
     n_stag = solver._n_stag
+    n_extra = len(EXTRA_STATE_SLOTS['core_module'])
 
     y0 = np.asarray(solver._S0, dtype=float)
     states = [y0]
@@ -229,7 +232,7 @@ def test_rhs_parity_with_numpy_on_driven_state():
     for k, y in enumerate(states):
         f_np = np.asarray(solver.dSdt(0.0, y)).ravel()
         f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), args)).ravel()
-        assert f_np.shape == f_jax.shape == (n_stag + 4,)
+        assert f_np.shape == f_jax.shape == (n_stag + n_extra,)
         denom = np.maximum(np.maximum(np.abs(f_np), np.abs(f_jax)), 1e-12)
         rel = np.abs(f_np - f_jax) / denom
         # The two boundary slots are the physics this mode adds; they
@@ -283,10 +286,12 @@ def test_jacobian_carries_boundary_couplings():
     """
     from aragog.eos.entropy import EntropyEOS
     from aragog.jax.solver import dSdt_core_module
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
 
     solver = _build_numpy_solver(EntropyEOS(EOS_DIR))
     args = _build_jax_pieces(solver)
     n_stag = solver._n_stag
+    n_extra = len(EXTRA_STATE_SLOTS['core_module'])
     y0 = np.asarray(solver._S0, dtype=float)
 
     # Pin T_core inside the nucleation-active band, found by scanning the
@@ -304,7 +309,7 @@ def test_jacobian_carries_boundary_couplings():
     y0 = jnp.asarray(y0)
 
     J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(y0))
-    assert J.shape == (n_stag + 4, n_stag + 4)
+    assert J.shape == (n_stag + n_extra, n_stag + n_extra)
     assert np.all(np.isfinite(J))
     # dT_core/dt depends on the flux, which depends on the gradient state.
     assert abs(J[n_stag + 1, n_stag]) > 0.0
@@ -343,12 +348,14 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
 
     from aragog.eos.entropy import EntropyEOS
     from aragog.jax.solver import dSdt_core_module
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
 
     eos = EntropyEOS(EOS_DIR)
     strat_params = dict(CORE_MODULE_PARAMS) | {'stratification': True, 'k_core': 130.0}
     strat = _build('core_module', eos, strat_params)  # uniform isentrope
     plain = _build('core_module', eos, CORE_MODULE_PARAMS)
     n_stag = strat._n_stag
+    n_extra = len(EXTRA_STATE_SLOTS['core_module'])
     y0 = np.asarray(strat._S0, dtype=float)
 
     f_np = np.asarray(strat.dSdt(0.0, y0)).ravel()
@@ -365,5 +372,5 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
     assert abs(f_np[n_stag + 1]) > 2.0 * abs(f_plain[n_stag + 1])
 
     J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(jnp.asarray(y0)))
-    assert J.shape == (n_stag + 4, n_stag + 4)
+    assert J.shape == (n_stag + n_extra, n_stag + n_extra)
     assert np.all(np.isfinite(J))
