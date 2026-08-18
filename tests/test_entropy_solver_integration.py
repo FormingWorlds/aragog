@@ -230,10 +230,15 @@ def test_entropy_solver_solve_quasi_steady_short_run_completes(shared_eos):
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     assert np.all(np.isfinite(final_y)), 'final state contains NaN or inf'
 
-    # Physical: entropy values should remain in a sensible range.
+    # Physical: entropy values should remain in a sensible range. quasi_steady
+    # appends the E_F_int/E_F_cmb quadrature slots (per-call boundary-energy
+    # integrals in joules) after the entropy nodes, so the bound applies only
+    # to the entropy block.
     # PALEOS staggered S in [1500, 4500] J/kg/K covers solidus to liquidus.
-    assert float(np.min(final_y)) > 1000.0
-    assert float(np.max(final_y)) < 5500.0
+    n_stag = solver._n_stag
+    entropy_y = final_y[:n_stag]
+    assert float(np.min(entropy_y)) > 1000.0
+    assert float(np.max(entropy_y)) < 5500.0
 
 
 def test_entropy_solver_get_state_returns_solver_output_with_required_fields(shared_eos):
@@ -298,11 +303,12 @@ def test_entropy_solver_solve_energy_balance_short_run_completes(shared_eos):
     solver, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
     assert solver._solution.t.size >= 2
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
-    # State must be length n_stag + 1 in energy_balance mode (the trailing
-    # entry is dSdr_cmb evolved by the core energy balance).
+    # State must be length n_stag + 3 in energy_balance mode: dSdr_cmb
+    # (evolved by the core energy balance) plus the E_F_int/E_F_cmb
+    # boundary-energy quadrature slots.
     n_stag = solver._n_stag
-    assert len(final_y) == n_stag + 1, (
-        f'energy_balance state length is {len(final_y)}, expected n_stag+1 = {n_stag + 1}'
+    assert len(final_y) == n_stag + 3, (
+        f'energy_balance state length is {len(final_y)}, expected n_stag+3 = {n_stag + 3}'
     )
     assert np.all(np.isfinite(final_y))
 
@@ -357,9 +363,10 @@ def test_entropy_solver_solve_bower2018_short_run_completes(shared_eos):
     assert solver._solution.t.size >= 2
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     n_stag = solver._n_stag
-    # bower2018 state is N+1 (entropy block + T_core).
-    assert len(final_y) == n_stag + 1, (
-        f'bower2018 state length is {len(final_y)}, expected n_stag+1 = {n_stag + 1}'
+    # bower2018 state is N+3: entropy block, T_core, then the E_F_int/E_F_cmb
+    # boundary-energy quadrature slots.
+    assert len(final_y) == n_stag + 3, (
+        f'bower2018 state length is {len(final_y)}, expected n_stag+3 = {n_stag + 3}'
     )
     # T_core must be physical (positive, finite, in plausible Earth range).
     T_core_final = float(final_y[n_stag])
@@ -396,9 +403,12 @@ def test_entropy_solver_solve_cvode_path_short_run_completes(shared_eos):
     assert solver._solution.t.size >= 2
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     assert np.all(np.isfinite(final_y)), 'CVODE final state contains NaN/inf'
-    # Physical bounds discriminator.
-    assert float(np.min(final_y)) > 1000.0
-    assert float(np.max(final_y)) < 5500.0
+    # Physical bounds discriminator, entropy block only: quasi_steady
+    # appends the E_F_int/E_F_cmb boundary-energy quadrature slots after it.
+    n_stag = solver._n_stag
+    entropy_y = final_y[:n_stag]
+    assert float(np.min(entropy_y)) > 1000.0
+    assert float(np.max(entropy_y)) < 5500.0
 
 
 # ---- CLI IC-derivation against the live EOS --------------------------------

@@ -229,7 +229,7 @@ def test_rhs_parity_with_numpy_on_driven_state():
     for k, y in enumerate(states):
         f_np = np.asarray(solver.dSdt(0.0, y)).ravel()
         f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), args)).ravel()
-        assert f_np.shape == f_jax.shape == (n_stag + 2,)
+        assert f_np.shape == f_jax.shape == (n_stag + 4,)
         denom = np.maximum(np.maximum(np.abs(f_np), np.abs(f_jax)), 1e-12)
         rel = np.abs(f_np - f_jax) / denom
         # The two boundary slots are the physics this mode adds; they
@@ -304,7 +304,7 @@ def test_jacobian_carries_boundary_couplings():
     y0 = jnp.asarray(y0)
 
     J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(y0))
-    assert J.shape == (n_stag + 2, n_stag + 2)
+    assert J.shape == (n_stag + 4, n_stag + 4)
     assert np.all(np.isfinite(J))
     # dT_core/dt depends on the flux, which depends on the gradient state.
     assert abs(J[n_stag + 1, n_stag]) > 0.0
@@ -365,5 +365,5 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
     assert abs(f_np[n_stag + 1]) > 2.0 * abs(f_plain[n_stag + 1])
 
     J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(jnp.asarray(y0)))
-    assert J.shape == (n_stag + 2, n_stag + 2)
+    assert J.shape == (n_stag + 4, n_stag + 4)
     assert np.all(np.isfinite(J))

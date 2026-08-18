@@ -143,9 +143,9 @@ def test_energy_balance_with_inner_bc_kind_1_takes_pass_branch():
     to the alpha-factor partition (1462-1471) would surface as a
     different F_cmb value.
 
-    Discriminator: the run completes with finite state and the
-    final dSdr_cmb (the trailing extra-state component) is in a
-    plausible range for a bottom-heated mantle.
+    Discriminator: the run completes with finite state. The state carries
+    dSdr_cmb plus the E_F_int/E_F_cmb boundary-energy quadrature slots
+    after the entropy block, so the length check covers all three.
     """
     from aragog.eos.entropy import EntropyEOS
     from aragog.solver.entropy_solver import EntropySolver
@@ -158,7 +158,7 @@ def test_energy_balance_with_inner_bc_kind_1_takes_pass_branch():
     solver.solve()
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     assert np.all(np.isfinite(final_y))
-    assert len(final_y) == solver._n_stag + 1, 'energy_balance state length mismatch'
+    assert len(final_y) == solver._n_stag + 3, 'energy_balance state length mismatch'
 
 
 # ----------------------------------------------------------------------

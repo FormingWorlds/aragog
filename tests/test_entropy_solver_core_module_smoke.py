@@ -185,12 +185,12 @@ def test_core_module_state_extension_and_integrated_t_core(shared_eos):
     solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, s_init='driven')
     assert solver._state_is_extended
     n_stag = solver._n_stag
-    assert len(solver._S0) == n_stag + 2  # entropy block, dSdr_cmb, T_cmb
+    assert len(solver._S0) == n_stag + 4  # entropy block, dSdr_cmb, T_core, E_F_int, E_F_cmb
     assert solver._core_module_budget.profiles.r_cmb == pytest.approx(3.480e6)
     solver.solve()
     out = solver.get_state()
     y = solver._solution.y
-    assert y.shape[0] == n_stag + 2
+    assert y.shape[0] == n_stag + 4
     dsdr_path = y[n_stag]
     t_core_path = y[n_stag + 1]
     assert np.all(np.isfinite(dsdr_path))
@@ -339,7 +339,7 @@ def test_core_module_solves_through_cvode(shared_eos):
     integrator (FD Jacobian; the JAX factory rejects the mode and the
     solver falls back) and lands on the Radau twin's answer. Guards the
     production path PROTEUS actually runs, which the scipy-only tests
-    never touch, including the N+2 sparsity and nondim scales under
+    never touch, including the N+4 sparsity and nondim scales under
     CVODE."""
     pytest.importorskip('scikits_odes_sundials')
     cv = _build(
@@ -354,7 +354,7 @@ def test_core_module_solves_through_cvode(shared_eos):
     out_cv = cv.get_state()
     y_cv = cv._solution.y
     n_stag = cv._n_stag
-    assert y_cv.shape[0] == n_stag + 2
+    assert y_cv.shape[0] == n_stag + 4
     assert np.all(np.isfinite(y_cv))
 
     rd = _build(
