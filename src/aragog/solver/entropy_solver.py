@@ -407,7 +407,9 @@ class _PhiCapRootFunction(_CV_RootFunction):
         self._mass_total_at_start = -1.0  # filled on first evaluate()
         # Which margin ('phi', 'entropy', 'temperature') produced g[0] on
         # the last evaluate() call, so a caller can name the cap that
-        # actually bound when this fires. None until the first evaluate().
+        # actually bound when this fires. None until the first evaluate(),
+        # and reset to None whenever evaluate() raises, since g[0] is then
+        # a sentinel with no margin behind it.
         self.binding_cap = None
 
     def evaluate(self, t, y, g, userdata=None):
@@ -461,6 +463,7 @@ class _PhiCapRootFunction(_CV_RootFunction):
             # solve() result will still be correct. The largest armed cap is
             # a safe positive sentinel (at least one cap is positive whenever
             # this rootfn was constructed).
+            self.binding_cap = None
             g[0] = max(self.cap, self.cap_T, self.cap_S)
             return 0
 
@@ -541,6 +544,7 @@ def _phi_cap_event_factory(
             _event.binding_cap = binding_cap
             return margin if np.isfinite(margin) else 1.0
         except Exception:
+            _event.binding_cap = None
             return max(cap_float, cap_T, cap_S)
 
     _event.terminal = True
@@ -2634,12 +2638,15 @@ class EntropySolver:
                 # frame up the stack, rather than the nondim time here.
                 result.cap_fired = True
                 result.cap_evals = int(getattr(phi_cap_rootfn, 'evals', 0))
-                result.cap_label = getattr(phi_cap_rootfn, 'binding_cap', None) or 'phi'
+                # ``binding_cap`` is None when the terminating rootfn call
+                # raised; leave cap_label as None rather than defaulting to
+                # 'phi', since that cap may not even be armed.
+                result.cap_label = getattr(phi_cap_rootfn, 'binding_cap', None)
                 if result.cap_label == 'temperature':
                     result.cap_value = float(phi_cap_rootfn.cap_T)
                 elif result.cap_label == 'entropy':
                     result.cap_value = float(phi_cap_rootfn.cap_S)
-                else:
+                elif result.cap_label == 'phi':
                     result.cap_value = float(phi_cap_rootfn.cap)
                 result.cap_phi0 = float(phi_cap_rootfn.phi0)
         else:
@@ -3034,28 +3041,37 @@ class EntropySolver:
         cap_display_names = {'phi': 'ΔΦ_global', 'temperature': 'ΔT', 'entropy': 'ΔS'}
         if getattr(sol, 'cap_fired', False) and sol.t is not None:
             t_root_phys = float(sol.t[-1])
-            cap_label = getattr(sol, 'cap_label', None) or 'phi'
-            cap_name = cap_display_names.get(cap_label, 'ΔΦ_global')
-            if cap_label == 'phi':
+            cap_label = getattr(sol, 'cap_label', None)
+            if cap_label is None:
+                # The terminating rootfn call raised, so which cap bound is
+                # unknown; report that rather than guessing 'phi'.
                 logger.info(
-                    '%s cap: CVODE rootfn fired at '
-                    't=%.3e yr after %d evals; cap=%.3g, '
-                    'Φ_global(start)=%.4f',
-                    cap_name,
+                    'step cap fired at t=%.3e yr after %d evals; '
+                    'binding cap unknown (EOS lookup failed on the terminating call)',
                     t_root_phys,
                     int(getattr(sol, 'cap_evals', 0)),
-                    float(getattr(sol, 'cap_value', 0.0)),
-                    float(getattr(sol, 'cap_phi0', 0.0)),
                 )
             else:
-                logger.info(
-                    '%s cap: CVODE rootfn fired at '
-                    't=%.3e yr after %d evals; cap=%.3g',
-                    cap_name,
-                    t_root_phys,
-                    int(getattr(sol, 'cap_evals', 0)),
-                    float(getattr(sol, 'cap_value', 0.0)),
-                )
+                cap_name = cap_display_names.get(cap_label, 'ΔΦ_global')
+                if cap_label == 'phi':
+                    logger.info(
+                        '%s cap: CVODE rootfn fired at '
+                        't=%.3e yr after %d evals; cap=%.3g, '
+                        'Φ_global(start)=%.4f',
+                        cap_name,
+                        t_root_phys,
+                        int(getattr(sol, 'cap_evals', 0)),
+                        float(getattr(sol, 'cap_value', 0.0)),
+                        float(getattr(sol, 'cap_phi0', 0.0)),
+                    )
+                else:
+                    logger.info(
+                        '%s cap: CVODE rootfn fired at t=%.3e yr after %d evals; cap=%.3g',
+                        cap_name,
+                        t_root_phys,
+                        int(getattr(sol, 'cap_evals', 0)),
+                        float(getattr(sol, 'cap_value', 0.0)),
+                    )
         elif (
             getattr(sol, 't_events', None) is not None
             and len(sol.t_events) > 0
@@ -3063,12 +3079,19 @@ class EntropySolver:
         ):
             t_event_phys = float(sol.t_events[0][0]) * t_ref
             event_label = getattr(events[0], 'binding_cap', None) if events else None
-            cap_name = cap_display_names.get(event_label, 'ΔΦ_global')
-            logger.info(
-                '%s cap: scipy event fired at t=%.3e yr (terminal=True)',
-                cap_name,
-                t_event_phys,
-            )
+            if event_label is None:
+                logger.info(
+                    'step cap fired at t=%.3e yr (terminal=True); '
+                    'binding cap unknown (EOS lookup failed on the terminating call)',
+                    t_event_phys,
+                )
+            else:
+                cap_name = cap_display_names.get(event_label, 'ΔΦ_global')
+                logger.info(
+                    '%s cap: scipy event fired at t=%.3e yr (terminal=True)',
+                    cap_name,
+                    t_event_phys,
+                )
 
         # Diagnostic logging: internal BDF step statistics (in physical yr)
         if sol.t is not None and len(sol.t) > 1:

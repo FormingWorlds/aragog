@@ -1106,6 +1106,76 @@ def test_event_factory_binding_cap_names_entropy_when_it_fires():
     assert ev.binding_cap == 'entropy'
 
 
+def test_rootfn_binding_cap_resets_to_none_after_exception():
+    """A label set by a prior successful call must not survive a later
+    EOS exception, since a stale label would misname the cap in the
+    fire log once the caller reads it off the raised call."""
+    n_stag = 8
+    eos = MagicMock()
+    P_stag = np.linspace(1.0e9, 1.4e11, n_stag)
+    volume = np.full(n_stag, 1.0e18)
+    S_stag = np.full(n_stag, 3000.0)
+    T0 = np.full(n_stag, 6000.0)
+    eos.temperature.return_value = T0 - 500.0
+
+    rootfn = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=0.0,
+        cap=0.0,
+        state_scale=np.ones(n_stag),
+        cap_temperature=200.0,
+        T0_per_cell=T0,
+    )
+    g = np.zeros(1)
+    rootfn.evaluate(1.0, S_stag, g)
+    assert rootfn.binding_cap == 'temperature'
+
+    eos.temperature.side_effect = RuntimeError('synthetic EOS failure')
+    rc = rootfn.evaluate(1.0, S_stag, g)
+    assert rc == 0
+    assert rootfn.binding_cap is None
+
+
+def test_event_factory_binding_cap_resets_to_none_after_exception():
+    """The scipy event closure must reset ``binding_cap`` the same way
+    the CVODE rootfn does.
+
+    The entropy check does not call the EOS, so the exception has to
+    come from the (still-armed, still-executed) temperature check to
+    hit the except block after entropy has already won the margin.
+    """
+    n_stag = 6
+    eos = MagicMock()
+    S0 = np.full(n_stag, 2500.0)
+    T0 = np.full(n_stag, 6000.0)
+    y_jumped = S0 + 200.0
+    eos.temperature.return_value = T0 - 5.0
+
+    ev = _phi_cap_event_factory(
+        eos,
+        np.full(n_stag, 5.0e10),
+        np.full(n_stag, 1.0e18),
+        n_stag,
+        0.0,
+        0.0,
+        np.ones(n_stag),
+        cap_temperature=200.0,
+        T0_per_cell=T0,
+        cap_entropy=50.0,
+        S0_per_cell=S0,
+    )
+    val = ev(1.0, y_jumped)
+    assert val < 0.0
+    assert ev.binding_cap == 'entropy'
+
+    eos.temperature.side_effect = RuntimeError('synthetic EOS failure')
+    val = ev(1.0, y_jumped)
+    assert ev.binding_cap is None
+
+
 def test_rootfn_binding_cap_picks_tightest_margin_when_all_three_armed():
     """When phi, temperature, and entropy caps are all armed and would all
     fire, ``binding_cap`` names whichever margin is actually the minimum,
