@@ -405,6 +405,12 @@ class _PhiCapRootFunction(_CV_RootFunction):
         # Mass-total at start (constant within one solve); cached for
         # repeated mass-weight normalisation.
         self._mass_total_at_start = -1.0  # filled on first evaluate()
+        # Which margin ('phi', 'entropy', 'temperature') produced g[0] on
+        # the last evaluate() call, so a caller can name the cap that
+        # actually bound when this fires. None until the first evaluate(),
+        # and reset to None whenever evaluate() raises, since g[0] is then
+        # a sentinel with no margin behind it.
+        self.binding_cap = None
 
     def evaluate(self, t, y, g, userdata=None):
         try:
@@ -412,8 +418,10 @@ class _PhiCapRootFunction(_CV_RootFunction):
             S_stag = y_arr[: self.n_stag] * self.state_scale[: self.n_stag]
             # g is the minimum margin across the active caps; CVODE fires
             # when any one is reached. Each cap's EOS lookups are computed
-            # only when that cap is enabled.
+            # only when that cap is enabled. binding_cap tracks which
+            # candidate produced the running minimum.
             margin = np.inf
+            binding_cap = None
             if self.cap > 0.0:
                 phi = np.asarray(self.eos.melt_fraction(self.P_stag, S_stag)).ravel()
                 rho = np.asarray(self.eos.density(self.P_stag, S_stag)).ravel()
@@ -425,18 +433,28 @@ class _PhiCapRootFunction(_CV_RootFunction):
                 dphi = abs(phi_global - self.phi0)
                 if self.phi0_cell is not None and phi.size == self.phi0_cell.size:
                     dphi = max(dphi, float(np.max(np.abs(phi - self.phi0_cell))))
-                margin = min(margin, self.cap - dphi)
+                candidate = self.cap - dphi
+                if candidate < margin:
+                    margin = candidate
+                    binding_cap = 'phi'
             if (
                 self.cap_S > 0.0
                 and self.S0_cell is not None
                 and S_stag.size == self.S0_cell.size
             ):
-                margin = min(margin, self.cap_S - float(np.max(np.abs(S_stag - self.S0_cell))))
+                candidate = self.cap_S - float(np.max(np.abs(S_stag - self.S0_cell)))
+                if candidate < margin:
+                    margin = candidate
+                    binding_cap = 'entropy'
             if self.cap_T > 0.0 and self.T0_cell is not None:
                 T = np.asarray(self.eos.temperature(self.P_stag, S_stag)).ravel()
                 if T.size == self.T0_cell.size:
-                    margin = min(margin, self.cap_T - float(np.max(np.abs(T - self.T0_cell))))
+                    candidate = self.cap_T - float(np.max(np.abs(T - self.T0_cell)))
+                    if candidate < margin:
+                        margin = candidate
+                        binding_cap = 'temperature'
             g[0] = margin if np.isfinite(margin) else 1.0
+            self.binding_cap = binding_cap
             self.evals += 1
             return 0
         except Exception:  # pragma: no cover - never crash CVODE on rootfn
@@ -445,6 +463,7 @@ class _PhiCapRootFunction(_CV_RootFunction):
             # solve() result will still be correct. The largest armed cap is
             # a safe positive sentinel (at least one cap is positive whenever
             # this rootfn was constructed).
+            self.binding_cap = None
             g[0] = max(self.cap, self.cap_T, self.cap_S)
             return 0
 
@@ -494,6 +513,7 @@ def _phi_cap_event_factory(
             y_arr = np.asarray(y_nd, dtype=float)
             S_stag = y_arr[:n_stag_int] * scale_arr[:n_stag_int]
             margin = np.inf
+            binding_cap = None
             if cap_float > 0.0:
                 phi = np.asarray(eos.melt_fraction(P_stag_arr, S_stag)).ravel()
                 rho = np.asarray(eos.density(P_stag_arr, S_stag)).ravel()
@@ -505,19 +525,31 @@ def _phi_cap_event_factory(
                 dphi = abs(phi_global - phi0)
                 if phi0_cell is not None and phi.size == phi0_cell.size:
                     dphi = max(dphi, float(np.max(np.abs(phi - phi0_cell))))
-                margin = min(margin, cap_float - dphi)
+                candidate = cap_float - dphi
+                if candidate < margin:
+                    margin = candidate
+                    binding_cap = 'phi'
             if cap_S > 0.0 and S0_cell is not None and S_stag.size == S0_cell.size:
-                margin = min(margin, cap_S - float(np.max(np.abs(S_stag - S0_cell))))
+                candidate = cap_S - float(np.max(np.abs(S_stag - S0_cell)))
+                if candidate < margin:
+                    margin = candidate
+                    binding_cap = 'entropy'
             if cap_T > 0.0 and T0_cell is not None:
                 T = np.asarray(eos.temperature(P_stag_arr, S_stag)).ravel()
                 if T.size == T0_cell.size:
-                    margin = min(margin, cap_T - float(np.max(np.abs(T - T0_cell))))
+                    candidate = cap_T - float(np.max(np.abs(T - T0_cell)))
+                    if candidate < margin:
+                        margin = candidate
+                        binding_cap = 'temperature'
+            _event.binding_cap = binding_cap
             return margin if np.isfinite(margin) else 1.0
         except Exception:
+            _event.binding_cap = None
             return max(cap_float, cap_T, cap_S)
 
     _event.terminal = True
     _event.direction = -1.0  # only fire on positive-to-negative crossing
+    _event.binding_cap = None
     return _event
 
 
@@ -2601,15 +2633,21 @@ class EntropySolver:
         if flag == 0 or flag == 2:
             result.status = 0
             if flag == 2 and phi_cap_rootfn is not None:
-                # ΔΦ_global cap fired; mark the result so ``solve()``
-                # can emit a human-readable log line AFTER the nondim-
-                # to-physical time restoration (the t-rescale lives
-                # one frame up the stack). Logging ``result.t[-1]``
-                # here would report nondim time, which is misleading
-                # to operators.
+                # Mark the fired cap and its margin so ``solve()`` can log
+                # it after the nondim-to-physical time restoration one
+                # frame up the stack, rather than the nondim time here.
                 result.cap_fired = True
                 result.cap_evals = int(getattr(phi_cap_rootfn, 'evals', 0))
-                result.cap_value = float(phi_cap_rootfn.cap)
+                # ``binding_cap`` is None when the terminating rootfn call
+                # raised; leave cap_label as None rather than defaulting to
+                # 'phi', since that cap may not even be armed.
+                result.cap_label = getattr(phi_cap_rootfn, 'binding_cap', None)
+                if result.cap_label == 'temperature':
+                    result.cap_value = float(phi_cap_rootfn.cap_T)
+                elif result.cap_label == 'entropy':
+                    result.cap_value = float(phi_cap_rootfn.cap_S)
+                elif result.cap_label == 'phi':
+                    result.cap_value = float(phi_cap_rootfn.cap)
                 result.cap_phi0 = float(phi_cap_rootfn.phi0)
         else:
             result.status = -1
@@ -2996,34 +3034,64 @@ class EntropySolver:
             else:
                 sol.y = sol_y * _state_scale
 
-        # ΔΦ_global cap-fire log, emitted with PHYSICAL time. The
-        # CVODE path attaches ``cap_fired`` etc. to the result inside
-        # ``_solve_cvode``; the scipy fallback exposes the same signal
-        # via ``sol.t_events`` (non-empty when the terminal event
-        # fired). Logging here (after the t_ref restoration) keeps
-        # operator-facing messages in physical years rather than the
-        # nondim time the rootfn sees internally.
+        # Step-cap-fire log, in physical time (after the t_ref restoration
+        # above) and naming whichever margin actually bound: read from
+        # ``sol.cap_label`` on the CVODE path, from the event closure's
+        # ``binding_cap`` on the scipy fallback path.
+        cap_display_names = {'phi': 'ΔΦ_global', 'temperature': 'ΔT', 'entropy': 'ΔS'}
         if getattr(sol, 'cap_fired', False) and sol.t is not None:
             t_root_phys = float(sol.t[-1])
-            logger.info(
-                'ΔΦ_global cap: CVODE rootfn fired at '
-                't=%.3e yr after %d evals; cap=%.3g, '
-                'Φ_global(start)=%.4f',
-                t_root_phys,
-                int(getattr(sol, 'cap_evals', 0)),
-                float(getattr(sol, 'cap_value', 0.0)),
-                float(getattr(sol, 'cap_phi0', 0.0)),
-            )
+            cap_label = getattr(sol, 'cap_label', None)
+            if cap_label is None:
+                # The terminating rootfn call raised, so which cap bound is
+                # unknown; report that rather than guessing 'phi'.
+                logger.info(
+                    'step cap fired at t=%.3e yr after %d evals; '
+                    'binding cap unknown (EOS lookup failed on the terminating call)',
+                    t_root_phys,
+                    int(getattr(sol, 'cap_evals', 0)),
+                )
+            else:
+                cap_name = cap_display_names.get(cap_label, 'ΔΦ_global')
+                if cap_label == 'phi':
+                    logger.info(
+                        '%s cap: CVODE rootfn fired at '
+                        't=%.3e yr after %d evals; cap=%.3g, '
+                        'Φ_global(start)=%.4f',
+                        cap_name,
+                        t_root_phys,
+                        int(getattr(sol, 'cap_evals', 0)),
+                        float(getattr(sol, 'cap_value', 0.0)),
+                        float(getattr(sol, 'cap_phi0', 0.0)),
+                    )
+                else:
+                    logger.info(
+                        '%s cap: CVODE rootfn fired at t=%.3e yr after %d evals; cap=%.3g',
+                        cap_name,
+                        t_root_phys,
+                        int(getattr(sol, 'cap_evals', 0)),
+                        float(getattr(sol, 'cap_value', 0.0)),
+                    )
         elif (
             getattr(sol, 't_events', None) is not None
             and len(sol.t_events) > 0
             and len(sol.t_events[0]) > 0
         ):
             t_event_phys = float(sol.t_events[0][0]) * t_ref
-            logger.info(
-                'ΔΦ_global cap: scipy event fired at t=%.3e yr (terminal=True)',
-                t_event_phys,
-            )
+            event_label = getattr(events[0], 'binding_cap', None) if events else None
+            if event_label is None:
+                logger.info(
+                    'step cap fired at t=%.3e yr (terminal=True); '
+                    'binding cap unknown (EOS lookup failed on the terminating call)',
+                    t_event_phys,
+                )
+            else:
+                cap_name = cap_display_names.get(event_label, 'ΔΦ_global')
+                logger.info(
+                    '%s cap: scipy event fired at t=%.3e yr (terminal=True)',
+                    cap_name,
+                    t_event_phys,
+                )
 
         # Diagnostic logging: internal BDF step statistics (in physical yr)
         if sol.t is not None and len(sol.t) > 1:

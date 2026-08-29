@@ -538,7 +538,7 @@ def test_source_logs_cap_fire_in_physical_time():
     assert "getattr(sol, 'cap_fired'" in src
     # The log uses ``sol.t[-1]`` AFTER the ``sol.t * t_ref`` rescale.
     rescale_idx = src.find('sol.t = np.asarray(sol.t, dtype=float) * t_ref')
-    log_idx = src.find("'ΔΦ_global cap: CVODE rootfn fired")
+    log_idx = src.find("'%s cap: CVODE rootfn fired")
     assert rescale_idx > 0, 't_ref rescale not found'
     assert log_idx > 0, 'physical-time cap-fire log not found'
     assert log_idx > rescale_idx, 'cap-fire log must come AFTER the nondim->physical rescale'
@@ -1045,3 +1045,168 @@ def test_event_factory_entropy_cap_catches_native_variable_jump():
     # The entropy cap must not have called the EOS (native-variable path).
     assert not eos.temperature.called
     assert not eos.density.called
+
+
+def test_rootfn_binding_cap_names_temperature_when_it_fires():
+    """``binding_cap`` names the margin that actually produced g[0].
+
+    With only the temperature cap armed, the running minimum is always the
+    temperature candidate, so ``binding_cap`` must read ``'temperature'``
+    rather than the phi default a caller might otherwise assume.
+    """
+    n_stag = 8
+    eos = MagicMock()
+    P_stag = np.linspace(1.0e9, 1.4e11, n_stag)
+    volume = np.full(n_stag, 1.0e18)
+    S_stag = np.full(n_stag, 3000.0)
+    T0 = np.full(n_stag, 6000.0)
+    eos.temperature.return_value = T0 - 500.0
+
+    rootfn = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=0.0,
+        cap=0.0,
+        state_scale=np.ones(n_stag),
+        cap_temperature=200.0,
+        T0_per_cell=T0,
+    )
+    assert rootfn.binding_cap is None
+    g = np.zeros(1)
+    rootfn.evaluate(1.0, S_stag, g)
+    assert g[0] < 0.0
+    assert rootfn.binding_cap == 'temperature'
+
+
+def test_event_factory_binding_cap_names_entropy_when_it_fires():
+    """The scipy event closure tracks ``binding_cap`` the same way the
+    CVODE rootfn does, since ``solve()`` reads it off the closure when the
+    scipy fallback path fires instead of CVODE."""
+    n_stag = 6
+    eos = MagicMock()
+    S0 = np.full(n_stag, 2500.0)
+    y_jumped = S0 + 200.0
+
+    ev = _phi_cap_event_factory(
+        eos,
+        np.full(n_stag, 5.0e10),
+        np.full(n_stag, 1.0e18),
+        n_stag,
+        0.0,
+        0.0,
+        np.ones(n_stag),
+        cap_entropy=50.0,
+        S0_per_cell=S0,
+    )
+    assert ev.binding_cap is None
+    val = ev(1.0, y_jumped)
+    assert val < 0.0
+    assert ev.binding_cap == 'entropy'
+
+
+def test_rootfn_binding_cap_resets_to_none_after_exception():
+    """A label set by a prior successful call must not survive a later
+    EOS exception, since a stale label would misname the cap in the
+    fire log once the caller reads it off the raised call."""
+    n_stag = 8
+    eos = MagicMock()
+    P_stag = np.linspace(1.0e9, 1.4e11, n_stag)
+    volume = np.full(n_stag, 1.0e18)
+    S_stag = np.full(n_stag, 3000.0)
+    T0 = np.full(n_stag, 6000.0)
+    eos.temperature.return_value = T0 - 500.0
+
+    rootfn = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=0.0,
+        cap=0.0,
+        state_scale=np.ones(n_stag),
+        cap_temperature=200.0,
+        T0_per_cell=T0,
+    )
+    g = np.zeros(1)
+    rootfn.evaluate(1.0, S_stag, g)
+    assert rootfn.binding_cap == 'temperature'
+
+    eos.temperature.side_effect = RuntimeError('synthetic EOS failure')
+    rc = rootfn.evaluate(1.0, S_stag, g)
+    assert rc == 0
+    assert rootfn.binding_cap is None
+
+
+def test_event_factory_binding_cap_resets_to_none_after_exception():
+    """The scipy event closure must reset ``binding_cap`` the same way
+    the CVODE rootfn does.
+
+    The entropy check does not call the EOS, so the exception has to
+    come from the (still-armed, still-executed) temperature check to
+    hit the except block after entropy has already won the margin.
+    """
+    n_stag = 6
+    eos = MagicMock()
+    S0 = np.full(n_stag, 2500.0)
+    T0 = np.full(n_stag, 6000.0)
+    y_jumped = S0 + 200.0
+    eos.temperature.return_value = T0 - 5.0
+
+    ev = _phi_cap_event_factory(
+        eos,
+        np.full(n_stag, 5.0e10),
+        np.full(n_stag, 1.0e18),
+        n_stag,
+        0.0,
+        0.0,
+        np.ones(n_stag),
+        cap_temperature=200.0,
+        T0_per_cell=T0,
+        cap_entropy=50.0,
+        S0_per_cell=S0,
+    )
+    val = ev(1.0, y_jumped)
+    assert val < 0.0
+    assert ev.binding_cap == 'entropy'
+
+    eos.temperature.side_effect = RuntimeError('synthetic EOS failure')
+    val = ev(1.0, y_jumped)
+    assert ev.binding_cap is None
+
+
+def test_rootfn_binding_cap_picks_tightest_margin_when_all_three_armed():
+    """When phi, temperature, and entropy caps are all armed and would all
+    fire, ``binding_cap`` names whichever margin is actually the minimum,
+    not just whichever cap happens to be checked first."""
+    n_stag = 8
+    eos = MagicMock()
+    P_stag = np.linspace(1.0e9, 1.4e11, n_stag)
+    volume = np.full(n_stag, 1.0e18)
+    T0 = np.full(n_stag, 6000.0)
+    S0 = np.full(n_stag, 3000.0)
+    phi0 = np.full(n_stag, 0.1)
+    eos.melt_fraction.return_value = np.full(n_stag, 0.15)  # margin 0.5 - 0.05 = 0.45
+    eos.density.return_value = np.full(n_stag, 4000.0)
+    eos.temperature.return_value = T0 - 50.0  # margin 40 - 50 = -10
+
+    rootfn = _PhiCapRootFunction(
+        eos=eos,
+        P_stag=P_stag,
+        volume=volume,
+        n_stag=n_stag,
+        phi0_global=0.1,
+        cap=0.5,
+        state_scale=np.ones(n_stag),
+        phi0_per_cell=phi0,
+        cap_temperature=40.0,
+        T0_per_cell=T0,
+        cap_entropy=10.0,
+        S0_per_cell=S0,
+    )
+    g = np.zeros(1)
+    # S jumps by 300; margin 10 - 300 = -290, the tightest of the three.
+    rootfn.evaluate(1.0, S0 + 300.0, g)
+    assert g[0] == pytest.approx(-290.0)
+    assert rootfn.binding_cap == 'entropy'
