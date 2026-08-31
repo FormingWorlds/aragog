@@ -398,17 +398,40 @@ def test_step_heat_content_matches_analytic_integral():
     # integrated exactly at any node count and would not catch a crippled
     # n_quad).
     rho0, a, b, c = 4000.0, 500.0, 0.5, 2.0e-4
-    eos = MagicMock()
-    eos.density.side_effect = lambda P, S: np.full(np.asarray(S, float).shape, rho0)
-    eos.temperature.side_effect = lambda P, S: (
-        a + b * np.asarray(S, float) + c * np.asarray(S, float) ** 2
-    )
+
+    class _QuadStub:
+        """Step-heat phase evaluator stand-in: constant density and curved
+        T(S), state set through the same set/update interface as the real
+        EntropyPhaseEvaluator instance the method reads from."""
+
+        def __init__(self):
+            self._S = None
+
+        def set_pressure(self, P):
+            pass
+
+        def set_entropy(self, S):
+            self._S = np.asarray(S, dtype=float)
+
+        def update(self):
+            pass
+
+        def density(self):
+            return np.full(self._S.shape, rho0)
+
+        def temperature(self):
+            return a + b * self._S + c * self._S**2
 
     P = np.array([1.0e10, 5.0e10, 1.0e11])
     V = np.array([1.0e18, 2.0e18, 1.5e18])
     S0 = np.array([3000.0, 2800.0, 2600.0])
     Sf = np.array([2500.0, 2700.0, 2000.0])  # cooling: Sf < S0
-    fake = SimpleNamespace(entropy_eos=eos, _P_stag_flat=P, _volume_flat=V)
+    fake = SimpleNamespace(
+        entropy_eos=object(),
+        _phase_quad=_QuadStub(),
+        _P_stag_flat=P,
+        _volume_flat=V,
+    )
 
     got = EntropySolver._step_heat_content(fake, S0, Sf, n_quad=16)
 

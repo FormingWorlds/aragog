@@ -689,10 +689,8 @@ class SolverOutput:
     # the enthalpy change: the two-phase EOS specific enthalpy does not
     # satisfy ``dh = T dS`` across the mushy zone, so an enthalpy snapshot
     # difference carries a spurious flow-work term and cannot close the
-    # budget at all. The quadrature uses the hard-masked table density, which
-    # differs slightly from the tanh-blended phase density in the ODE
-    # capacitance, so the coupler residual closes to roughly a percent of the
-    # cumulative cooling rather than to machine precision; machine-precision
+    # budget at all. The quadrature weights by the same tanh-blended phase
+    # density and temperature as the ODE capacitance; machine-precision
     # conservation is carried by ``step_solver_residual_J``. Sign: negative
     # when the mantle is cooling.
     step_dE_state_heat_J: float
@@ -1274,6 +1272,13 @@ class EntropySolver:
             **phase_kwargs,
         )
         phase_basic.set_pressure(P_basic)
+
+        # Separate instance for the step-heat quadrature: same blend
+        # parameters, private (P, S) state kept off the live profiles.
+        self._phase_quad = EntropyPhaseEvaluator(
+            gravitational_acceleration=g_stag,
+            **phase_kwargs,
+        )
 
         # Energy settings
         energy = self.parameters.energy
@@ -3345,18 +3350,18 @@ class EntropySolver:
 
         Evaluates ``Sum_i V_i integral_{S0_i}^{Sf_i} rho(P_i, S) T(P_i, S) dS``
         by trapezoidal quadrature over each staggered cell's entropy path,
-        reading density and temperature directly from the EOS. This is the
-        Lagrangian heat content the entropy ODE transports (capacitance
-        ``rho * T``), so its cumulative sum is the state side of the coupler's
-        conservation budget. It is evaluated from the start- and end-of-call
-        states alone, independently of the integration trajectory, so a
-        mismatch against the boundary-flux and source budget is a genuine
-        frame-consistency diagnostic rather than a restatement of the
-        divergence telescoping. The quadrature reads the hard-masked table
-        density, which differs slightly from the tanh-blended phase density in
-        the capacitance, so the coupler residual closes to roughly a percent
-        of the cumulative cooling, not to machine precision; the
-        machine-precision check is the entropy-ODE solver residual.
+        reading density and temperature from a dedicated phase evaluator that
+        carries the solver's own blend parameters. This is the Lagrangian heat
+        content the entropy ODE transports (capacitance ``rho * T``), so its
+        cumulative sum is the state side of the coupler's conservation budget.
+        It is evaluated from the start- and end-of-call states alone,
+        independently of the integration trajectory, so a mismatch against the
+        boundary-flux and source budget is a genuine frame-consistency
+        diagnostic rather than a restatement of the divergence telescoping.
+        The quadrature weights by the same tanh-blended phase density and
+        temperature as the ODE capacitance, so the state side shares the frame
+        of the entropy equation; the machine-precision check is the
+        entropy-ODE solver residual.
 
         Enthalpy is deliberately not used: the two-phase EOS specific enthalpy
         does not satisfy ``dh = T dS`` across the mushy zone, so an enthalpy
@@ -3377,8 +3382,7 @@ class EntropySolver:
             Heat content change [J], negative when the mantle cools. Zero
             when no EOS is attached.
         """
-        eos = self.entropy_eos
-        if eos is None:
+        if self.entropy_eos is None:
             return 0.0
         P = np.asarray(self._P_stag_flat, dtype=float).ravel()
         vol = np.asarray(self._volume_flat, dtype=float).ravel()
@@ -3387,13 +3391,17 @@ class EntropySolver:
         n = min(P.size, vol.size, S0.size, Sf.size)
         P, vol, S0, Sf = P[:n], vol[:n], S0[:n], Sf[:n]
         dS = Sf - S0
+        quad = self._phase_quad
+        quad.set_pressure(P)
         nq = int(max(2, n_quad))
         w = np.linspace(0.0, 1.0, nq)
         integrand = np.empty((nq, n), dtype=float)
         for j, wj in enumerate(w):
             S_j = S0 + wj * dS
-            rho_j = np.asarray(eos.density(P, S_j)).ravel()[:n]
-            T_j = np.asarray(eos.temperature(P, S_j)).ravel()[:n]
+            quad.set_entropy(S_j)
+            quad.update()
+            rho_j = np.asarray(quad.density(), dtype=float).ravel()[:n]
+            T_j = np.asarray(quad.temperature(), dtype=float).ravel()[:n]
             integrand[j] = rho_j * T_j
         # Trapezoidal weights over the unit interval; integral over S is the
         # path integral over w in [0, 1] scaled by the cell entropy change.
