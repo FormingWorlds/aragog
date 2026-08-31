@@ -1091,7 +1091,7 @@ class EntropySolver:
         the Evaluator. The T-based phase evaluators (which require
         solidus/liquidus files) are replaced by EntropyPhaseEvaluator.
         """
-        logger.info('Initializing EntropySolver')
+        logger.debug('Initializing EntropySolver')
         self._initialize_internals()
 
     def _initialize_internals(self) -> None:
@@ -1460,7 +1460,7 @@ class EntropySolver:
         Re-reads the EOS mesh file if eos_method=2, then rebuilds
         the mesh, BCs, and entropy state. Matches Solver.reset().
         """
-        logger.info('Resetting EntropySolver')
+        logger.debug('Resetting EntropySolver')
         # Snapshot the pre-re-solve pressure, carried entropy and frozen
         # mass so the compression work across the mesh change can be
         # measured once the new mesh is built (see ``_last_compression_J``),
