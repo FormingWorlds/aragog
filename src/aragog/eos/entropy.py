@@ -350,7 +350,7 @@ class EntropyEOS:
         if not eos_dir.is_dir():
             raise FileNotFoundError(f'EOS directory not found: {eos_dir}')
 
-        logger.info('Loading entropy EOS from %s', eos_dir)
+        logger.debug('Loading entropy EOS from %s', eos_dir)
 
         # Load property tables for solid and melt
         self._tables: dict[str, dict] = {}
@@ -377,7 +377,7 @@ class EntropyEOS:
             'thermal_exp_solid' in self._tables and 'thermal_exp_melt' in self._tables
         )
         if self._has_alpha_tables:
-            logger.info('Thermal expansivity loaded from P-S tables (SPIDER parity)')
+            logger.debug('Thermal expansivity loaded from P-S tables (SPIDER parity)')
         else:
             logger.info('Thermal expansivity will be derived from T, rho, Cp, dTdPs')
 
@@ -393,7 +393,7 @@ class EntropyEOS:
         self.S_min = float(min(ref_melt['S'][0], ref_solid['S'][0]))
         self.S_max = float(max(ref_melt['S'][-1], ref_solid['S'][-1]))
 
-        logger.info(
+        logger.debug(
             'Entropy EOS loaded: P=[%.2e, %.2e] Pa, S=[%.0f, %.0f] J/kg/K, %d x %d grid (melt)',
             self.P_min,
             self.P_max,
@@ -478,7 +478,7 @@ class EntropyEOS:
             fill_value=None,
         )
 
-        logger.info(
+        logger.debug(
             'EOS-consistent enthalpy table built: %d x %d grid, '
             'anchor h(P=%.2e, S=%.0f) = 0 J/kg, '
             'h(P_max, S_max) = %.3e J/kg',
