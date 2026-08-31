@@ -2549,25 +2549,28 @@ class EntropySolver:
         #                      Jacobian FD + LU factorisations)
         #   NumErrTestFails  = netf  (local truncation error test failures)
         #   LastOrder/CurrentOrder = BDF order actually in use (1..5)
+        info = None
         try:
-            info = solver._integrator.get_info()
-            logger.info(
-                'CVODE stats: nst=%d nfe=%d nsetups=%d netf=%d '
-                'order=%d last_step=%.2e cur_step=%.2e '
-                'rhs_wrap=%d rhs_wrap/nst=%.1f nsetups/nst=%.2f',
-                info.get('NumSteps', -1),
-                info.get('NumRhsEvals', -1),
-                info.get('NumLinSolvSetups', -1),
-                info.get('NumErrTestFails', -1),
-                info.get('CurrentOrder', info.get('LastOrder', -1)),
-                info.get('LastStep', float('nan')),
-                info.get('CurrentStep', float('nan')),
-                nfev_box[0],
-                nfev_box[0] / max(int(info.get('NumSteps', 1)), 1),
-                int(info.get('NumLinSolvSetups', 0)) / max(int(info.get('NumSteps', 1)), 1),
-            )
+            info = solver.get_info()
         except Exception as exc:  # pragma: no cover
-            logger.debug('CVODE get_info() failed: %s', exc)
+            logger.warning('CVODE get_info() raised: %r', exc)
+        if isinstance(info, dict):
+            # %s throughout: a None or missing field must not crash the
+            # stats line and silence the whole diagnostic.
+            logger.info(
+                'CVODE stats: nst=%s nfe=%s nsetups=%s netf=%s '
+                'order=%s last_step=%s cur_step=%s rhs_wrap=%s',
+                info.get('NumSteps'),
+                info.get('NumRhsEvals'),
+                info.get('NumLinSolvSetups'),
+                info.get('NumErrTestFails'),
+                info.get('CurrentOrder', info.get('LastOrder')),
+                info.get('LastStep'),
+                info.get('CurrentStep'),
+                nfev_box[0],
+            )
+        elif info is not None:
+            logger.warning('CVODE get_info() returned non-dict: %r', type(info))
 
         # Build a scipy-compatible result wrapper. scipy's
         # OptimizeResult attributes used downstream:
@@ -3093,17 +3096,19 @@ class EntropySolver:
                     t_event_phys,
                 )
 
-        # Diagnostic logging: internal BDF step statistics (in physical yr)
+        # Diagnostic logging: spacing of the returned solution grid (yr).
+        # This is the output grid, not the true internal BDF step; the
+        # authoritative nst/last_step/cur_step are in the CVODE stats line above.
         if sol.t is not None and len(sol.t) > 1:
-            dt_internal = np.diff(sol.t)
+            dt_grid = np.diff(sol.t)
             logger.info(
-                'EntropySolver: %d internal steps, %d RHS evals, '
-                'dt_min=%.2e yr, dt_max=%.2e yr, dt_med=%.2e yr',
+                'EntropySolver: %d returned grid points, %d RHS evals, '
+                'grid_dt_min=%.2e yr, grid_dt_max=%.2e yr, grid_dt_med=%.2e yr',
                 len(sol.t),
                 sol.nfev,
-                dt_internal.min(),
-                dt_internal.max(),
-                np.median(dt_internal),
+                dt_grid.min(),
+                dt_grid.max(),
+                np.median(dt_grid),
             )
             logger.info(
                 'EntropySolver: phase-boundary cache hits=%d misses=%d',
