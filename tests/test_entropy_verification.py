@@ -1744,6 +1744,32 @@ class TestMassCoordinates:
             'solve targeted.',
         )
 
+    def test_basic_pressure_matches_get_pressure_from_radii_after_mesh_solve(self):
+        """The basic-node pressure stored on ``mesh.eos`` must reflect the
+        final basic radii from the mass-coordinate solve, not the uniform
+        ``initial_spatial`` grid the EOS was constructed from. ``Mesh.__init__``
+        must refresh it via ``eos.set_basic_pressure(self.basic.radii)`` after
+        ``self.basic`` is built.
+        """
+        from aragog.mesh import Mesh
+
+        params = self._build_parameters(mass_coordinates=True, K_S=260e9, N=30)
+        mesh = Mesh(params)
+
+        basic_pressure = np.asarray(mesh.eos.basic_pressure).ravel()
+        expected_pressure = np.asarray(
+            mesh.eos.get_pressure_from_radii(mesh.basic.radii)
+        ).ravel()
+
+        np.testing.assert_allclose(
+            basic_pressure,
+            expected_pressure,
+            rtol=1e-12,
+            err_msg='mesh.eos.basic_pressure does not match '
+            'get_pressure_from_radii(mesh.basic.radii); basic pressure was '
+            'not refreshed from the post-solve mass-coordinate radii.',
+        )
+
     def test_xi_grid_is_uniform_in_mass(self):
         """The basic xi grid is uniform by construction; verify the
         spacing is constant to floating-point precision (not just
