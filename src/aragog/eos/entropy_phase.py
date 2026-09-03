@@ -427,6 +427,11 @@ class EntropyPhaseEvaluator:
         1. Blake-Kozeny-Carman (low porosity): F = d^2 por^2 / ((1-por)^2 * 1000)
         2. Rumpf-Gupte (intermediate): F = d^2 por^4.5 * (5/7)
         3. Stokes settling (high porosity): F = d^2 * 2/9
+
+        The drag viscosity is the rheological-transition-blended mixture
+        viscosity (liquid near phi_rheo and above, ramping smoothly to
+        the solid viscosity below it), so settling locks up through the
+        same phi_rheo transition that sets the bulk rheology.
         """
         if self._const_properties:
             return np.zeros_like(self._density)
@@ -435,7 +440,7 @@ class EntropyPhaseEvaluator:
         delta_rho = rho_l - rho_s  # typically negative (melt lighter)
         g = self._g
         d = self._grain_size
-        eta_l = self._visc_liquid
+        eta_l = self._viscosity_val
 
         # Porosity (volume fraction of melt) from densities. Smoothed
         # with sqrt-based soft clip + soft max so the CVODE BDF
