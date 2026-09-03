@@ -534,18 +534,24 @@ def relative_velocity(
     density: jax.Array,
     melt_fraction: jax.Array,
     gravity: jax.Array,
+    viscosity: jax.Array,
 ) -> jax.Array:
     """Melt-solid relative velocity for gravitational separation [m/s].
 
     Three-regime mobility model, the permeability over porosity that
     multiplies delta_rho*g/eta (Abe 1993/1995, SPIDER convention):
     Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
+
+    The drag viscosity is the rheological-transition-blended mixture
+    viscosity (liquid near phi_rheo and above, ramping smoothly to the
+    solid viscosity below it), so settling locks up through the same
+    phi_rheo transition that sets the bulk rheology.
     """
     rho_s = eos._lookup_at_phase_boundary('density', P, 'solid')
     rho_l = eos._lookup_at_phase_boundary('density', P, 'melt')
     delta_rho = rho_l - rho_s
     d = params.grain_size
-    eta_l = params.visc_liquid
+    eta_l = viscosity
 
     # Porosity (volume fraction of melt) from densities. Smoothed with
     # sqrt-based soft clip + soft max so the CVODE BDF predictor sees a
@@ -858,6 +864,7 @@ def compute_fluxes(
         rho,
         phi_b,
         mesh.gravity,
+        phase_basic.viscosity,
     )
     jgrav_raw = rho * phi_b * (1.0 - phi_b) * v_rel
 
