@@ -38,11 +38,11 @@ jobs:
   nightly:
     name: Aragog-nightly (ubuntu-latest)
     runs-on: ubuntu-latest
-    # 90 min: full suite is ~12 min on a 12-core Mac Studio, ~55 min on
-    # the 2-vCPU runner with --quiet + xdist. Leaves headroom for JAX
-    # warmup, conda env cache misses, and the additional smoke tests
-    # added for the 90 % coverage gate.
-    timeout-minutes: 90
+    # 120 min: full suite is ~2.5 min on a 20-core Mac Studio, 75-85 min
+    # on the 2-vCPU runner with coverage instrumentation and xdist. This
+    # leaves real headroom for JAX warmup, conda env cache misses, and
+    # ordinary runner-to-runner timing variance.
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash -el {0}
