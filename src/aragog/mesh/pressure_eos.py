@@ -40,6 +40,12 @@ class EOS(ABC):
         basic_radii: npt.NDArray,
     ) -> None: ...
 
+    @abstractmethod
+    def set_basic_density(
+        self,
+        basic_radii: npt.NDArray,
+    ) -> None: ...
+
 
 class AdamsWilliamsonEOS(EOS):
     r"""Adams-Williamson equation of state (EOS).
@@ -119,6 +125,17 @@ class AdamsWilliamsonEOS(EOS):
     ) -> None:
         """Set basic pressure based on basic radii."""
         self._basic_pressure = self.get_pressure_from_radii(basic_radii)
+
+    def set_basic_density(
+        self,
+        basic_radii: npt.NDArray,
+    ) -> None:
+        """Set basic-node density based on basic radii.
+
+        Refreshing basic_density from the post-mass-coordinate radii keeps
+        get_dxidr_basic consistent with the solved mesh.
+        """
+        self._basic_density = self.get_density_from_radii(basic_radii)
 
     def get_effective_density(self, radii) -> npt.NDArray:
         r"""
@@ -407,6 +424,17 @@ class UserDefinedEOS(EOS):
     ) -> None:
         """Set basic pressure based on basic radii."""
         self._basic_pressure = self.get_pressure_from_radii(basic_radii)
+
+    def set_basic_density(
+        self,
+        basic_radii: npt.NDArray,
+    ) -> None:
+        """Set basic-node density based on basic radii.
+
+        Interpolate the user density table at the post-mass-coordinate basic
+        radii so get_dxidr_basic reads density on the solved mesh.
+        """
+        self._basic_density = self._interp_density(basic_radii).reshape(-1, 1)
 
     def get_mass_within_radii(self, radii: FloatOrArray) -> npt.NDArray:
         r"""4pi-included cumulative mass M(r), anchored at the inner EOS radius.

@@ -1526,7 +1526,9 @@ class TestMassCoordinates:
     """
 
     @staticmethod
-    def _build_parameters(*, mass_coordinates, rho_top=4090.0, K_S=260e9, N=40):
+    def _build_parameters(
+        *, mass_coordinates, rho_top=4090.0, K_S=260e9, N=40, eos_method=1, eos_file=''
+    ):
         """Construct a minimal Parameters object suitable for building
         a Mesh. Bypasses ConfigParser — keeps the test self-contained.
         """
@@ -1563,7 +1565,8 @@ class TestMassCoordinates:
             number_of_nodes=N,
             mixing_length_profile='constant',
             core_density=10738.0,
-            eos_method=1,
+            eos_method=eos_method,
+            eos_file=eos_file,
             surface_density=rho_top,
             gravitational_acceleration=9.81,
             adiabatic_bulk_modulus=K_S,
@@ -1768,6 +1771,105 @@ class TestMassCoordinates:
             err_msg='mesh.eos.basic_pressure does not match '
             'get_pressure_from_radii(mesh.basic.radii); basic pressure was '
             'not refreshed from the post-solve mass-coordinate radii.',
+        )
+
+    def test_basic_density_matches_get_density_from_radii_after_mesh_solve(self):
+        """The basic-node density stored on ``mesh.eos`` must reflect the final
+        basic radii from the mass-coordinate solve, not the uniform
+        ``initial_spatial`` grid the EOS was constructed from. ``Mesh.__init__``
+        must refresh it via ``eos.set_basic_density(self.basic.radii)`` after
+        ``self.basic`` is built, so ``get_dxidr_basic`` reads the density on the
+        solved grid.
+        """
+        from aragog.mesh import Mesh
+
+        params = self._build_parameters(mass_coordinates=True, K_S=260e9, N=30)
+        mesh = Mesh(params)
+
+        basic_density = np.asarray(mesh.eos.basic_density).ravel()
+        expected_density = np.asarray(mesh.eos.get_density_from_radii(mesh.basic.radii)).ravel()
+
+        np.testing.assert_allclose(
+            basic_density,
+            expected_density,
+            rtol=1e-12,
+            err_msg='mesh.eos.basic_density does not match '
+            'get_density_from_radii(mesh.basic.radii); basic density was '
+            'not refreshed from the post-solve mass-coordinate radii.',
+        )
+
+        # dxidr is cached in Mesh.__init__ right after the refresh calls. This
+        # assertion fails if set_basic_density is ordered after get_dxidr_basic:
+        # eos.basic_density read here would be fresh, but the cached dxidr would
+        # carry the stale density.
+        planet_density = mesh._planet_density
+        expected_dxidr = (
+            expected_density
+            / np.asarray(planet_density).ravel()
+            * np.power(np.asarray(mesh.basic.radii).ravel(), 2.0)
+            / np.power(np.asarray(mesh.basic.mass_radii).ravel(), 2.0)
+        )
+        np.testing.assert_allclose(
+            np.asarray(mesh.dxidr).ravel(),
+            expected_dxidr,
+            rtol=1e-12,
+            err_msg='mesh.dxidr is inconsistent with the refreshed basic density.',
+        )
+
+    def test_basic_density_matches_user_defined_eos_after_mesh_solve(self, tmp_path):
+        """UserDefinedEOS (eos_method=2) is the Zalmoxis-coupled production
+        path. Its ``basic_density`` must refresh onto the post-solve
+        mass-coordinate radii, matching the user density table, and ``dxidr``
+        must stay consistent with it.
+
+        The expected values come from a fresh ``PchipInterpolator`` built from
+        the same table file, so they do not read ``mesh.eos`` internals.
+        """
+        from scipy.interpolate import PchipInterpolator
+
+        from aragog.mesh import Mesh
+
+        # Synthetic monotone mantle EOS table spanning the full shell:
+        # columns are radius, pressure, density, gravity.
+        r_eos = np.linspace(3.480e6, 6.371e6, 400)
+        rho_eos = 5500.0 - (5500.0 - 3300.0) * (r_eos - r_eos[0]) / (r_eos[-1] - r_eos[0])
+        p_eos = 1.4e11 * (r_eos[-1] - r_eos) / (r_eos[-1] - r_eos[0])
+        g_eos = np.full_like(r_eos, 9.81)
+        eos_file = tmp_path / 'eos_table.txt'
+        np.savetxt(eos_file, np.column_stack([r_eos, p_eos, rho_eos, g_eos]))
+
+        params = self._build_parameters(
+            mass_coordinates=True, N=30, eos_method=2, eos_file=str(eos_file)
+        )
+        mesh = Mesh(params)
+
+        interp_density = PchipInterpolator(r_eos, rho_eos)
+        solved_radii = np.asarray(mesh.basic.radii).ravel()
+        expected_basic = np.asarray(interp_density(solved_radii)).ravel()
+
+        basic_density = np.asarray(mesh.eos.basic_density).ravel()
+        np.testing.assert_allclose(
+            basic_density,
+            expected_basic,
+            rtol=1e-12,
+            err_msg='UserDefinedEOS basic_density was not refreshed from the '
+            'post-solve mass-coordinate radii.',
+        )
+
+        # dxidr must match a recompute from the refreshed basic density.
+        planet_density = mesh._planet_density
+        expected_dxidr = (
+            expected_basic
+            / np.asarray(planet_density).ravel()
+            * np.power(solved_radii, 2.0)
+            / np.power(np.asarray(mesh.basic.mass_radii).ravel(), 2.0)
+        )
+        np.testing.assert_allclose(
+            np.asarray(mesh.dxidr).ravel(),
+            expected_dxidr,
+            rtol=1e-12,
+            err_msg='UserDefinedEOS mesh.dxidr is inconsistent with the '
+            'refreshed basic density.',
         )
 
     def test_xi_grid_is_uniform_in_mass(self):
