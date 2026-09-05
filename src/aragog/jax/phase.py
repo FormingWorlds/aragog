@@ -93,7 +93,6 @@ class PhaseParams(eqx.Module):
     phi_width: float
     log10_visc_solid: float
     log10_visc_liquid: float
-    visc_liquid: float
     grain_size: float
 
     # Thermal conductivity
@@ -156,7 +155,6 @@ class PhaseParams(eqx.Module):
         self.phi_width = phi_width
         self.log10_visc_solid = jnp.log10(viscosity_solid)
         self.log10_visc_liquid = jnp.log10(viscosity_liquid)
-        self.visc_liquid = viscosity_liquid
         self.grain_size = grain_size
         self.k_solid = k_solid
         self.k_liquid = k_liquid
