@@ -292,3 +292,45 @@ def test_eos_update_raises_runtime_error_on_out_of_table_entropy(monkeypatch):
     ev.entropy = np.array([3300.0])
     with pytest.raises(RuntimeError, match='Entropy out of EOS table domain'):
         ev.update()
+
+
+class _StubPhaseBoundaryEOS:
+    """Exposes only the phase-boundary density lookup relative_velocity needs."""
+
+    def _lookup_at_phase_boundary(self, prop, P, phase):
+        assert prop == 'density'
+        if phase == 'solid':
+            return np.full_like(np.asarray(P, dtype=float), 4200.0)
+        elif phase == 'melt':
+            return np.full_like(np.asarray(P, dtype=float), 3900.0)
+        raise ValueError(phase)
+
+
+def test_relative_velocity_scales_with_viscosity_val_not_fixed_liquid_field():
+    """``relative_velocity`` must track ``self._viscosity_val`` (the
+    phi_rheo-blended mixture viscosity set by ``update()``), not the
+    fixed ``self._visc_liquid`` field it read before this fix.
+
+    Discriminator: a regression back to the fixed field would leave
+    the output unchanged when only ``self._viscosity_val`` varies
+    between the two calls below.
+    """
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
+    ev = EntropyPhaseEvaluator(
+        entropy_eos=_StubPhaseBoundaryEOS(),
+        gravitational_acceleration=10.0,
+        grain_size=1e-3,
+        viscosity_liquid=1e-1,
+    )
+    ev.pressure = np.array([1.0e9])
+    ev._density = np.array([4000.0])
+
+    ev._viscosity_val = np.array([1.0e2])
+    v1 = ev.relative_velocity()
+    ev._viscosity_val = np.array([1.0e4])
+    v2 = ev.relative_velocity()
+
+    assert float(v1.item()) != float(v2.item())
+    ratio = float(v1.item()) / float(v2.item())
+    assert ratio == pytest.approx(1.0e4 / 1.0e2, rel=1e-10)
