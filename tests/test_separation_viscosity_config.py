@@ -85,8 +85,12 @@ def test_melt_mode_ignores_viscosity_val():
 
 def test_mixture_mode_ignores_viscosity_liquid():
     """'mixture' must use the phi_rheo-blended value, not the fixed liquid viscosity."""
-    v_low_liquid = _numpy_relative_velocity('mixture', viscosity_val=1e21, viscosity_liquid=1e-1)
-    v_high_liquid = _numpy_relative_velocity('mixture', viscosity_val=1e21, viscosity_liquid=5e-3)
+    v_low_liquid = _numpy_relative_velocity(
+        'mixture', viscosity_val=1e21, viscosity_liquid=1e-1
+    )
+    v_high_liquid = _numpy_relative_velocity(
+        'mixture', viscosity_val=1e21, viscosity_liquid=5e-3
+    )
     assert v_low_liquid == pytest.approx(v_high_liquid, rel=1e-12)
 
 
@@ -137,3 +141,128 @@ def test_numpy_jax_parity_in_both_modes(mode):
     )
 
     assert v_jax == pytest.approx(v_numpy, rel=1e-10)
+
+
+def _build_solver_params(separation_viscosity):
+    """Build a ``Parameters`` tree for the const_properties EOS-free path.
+
+    ``separation_viscosity=None`` omits the field from ``_PhaseMixedParameters``
+    so its own default applies; any other value is passed through explicitly.
+    Uses ``const_properties=True`` so ``EntropySolver`` needs no EntropyEOS
+    table, keeping construction and ``initialize()`` fast enough for the
+    unit tier.
+    """
+    from aragog.parser import (
+        Parameters,
+        _BoundaryConditionsParameters,
+        _EnergyParameters,
+        _InitialConditionParameters,
+        _MeshParameters,
+        _PhaseMixedParameters,
+        _PhaseParameters,
+        _SolverParameters,
+    )
+
+    bc = _BoundaryConditionsParameters(
+        outer_boundary_condition=1,
+        outer_boundary_value=1500.0,
+        inner_boundary_condition=2,
+        inner_boundary_value=0.0,
+        emissivity=1.0,
+        equilibrium_temperature=255.0,
+        core_heat_capacity=880.0,
+        core_bc='quasi_steady',
+    )
+    en = _EnergyParameters(
+        conduction=True,
+        convection=True,
+        gravitational_separation=False,
+        mixing=False,
+        radionuclides=False,
+        tidal=False,
+        solver_method='radau',
+        use_jax_jacobian=False,
+    )
+    ic = _InitialConditionParameters(
+        initial_condition=1, surface_temperature=3500.0, basal_temperature=3500.0
+    )
+    mesh = _MeshParameters(
+        outer_radius=6.371e6,
+        inner_radius=3.480e6,
+        number_of_nodes=10,
+        mixing_length_profile='nearest_boundary',
+        core_density=10500.0,
+        eos_method=1,
+    )
+    pl = _PhaseParameters(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=1.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=3e-5,
+        viscosity=10.0,
+    )
+    ps = _PhaseParameters(
+        density=4200.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=3e-5,
+        viscosity=1e21,
+    )
+    pm_kwargs = dict(
+        latent_heat_of_fusion=4.0e5,
+        rheological_transition_melt_fraction=0.4,
+        rheological_transition_width=0.15,
+        solidus='solidus.dat',
+        liquidus='liquidus.dat',
+        phase='mixed',
+        phase_transition_width=0.01,
+        grain_size=1.0e-3,
+        const_properties=True,
+        const_rho=4000.0,
+        const_Cp=1000.0,
+        const_alpha=3.0e-5,
+        const_cond=4.0,
+        const_log10visc=2.0,
+        const_T_ref=3000.0,
+        const_S_ref=3000.0,
+    )
+    if separation_viscosity is not None:
+        pm_kwargs['separation_viscosity'] = separation_viscosity
+    pm = _PhaseMixedParameters(**pm_kwargs)
+    sv = _SolverParameters(
+        start_time=0.0, end_time=5.0, atol=1.0e-6, rtol=1.0e-6, tsurf_poststep_change=30.0
+    )
+    return Parameters(
+        boundary_conditions=bc,
+        energy=en,
+        initial_condition=ic,
+        mesh=mesh,
+        phase_solid=ps,
+        phase_liquid=pl,
+        phase_mixed=pm,
+        radionuclides=[],
+        solver=sv,
+    )
+
+
+@pytest.mark.parametrize(
+    'separation_viscosity,expected', [(None, 'melt'), ('melt', 'melt'), ('mixture', 'mixture')]
+)
+def test_entropy_solver_plumbs_separation_viscosity_to_evaluators(
+    separation_viscosity, expected
+):
+    """``EntropySolver`` must pass ``separation_viscosity`` through to both evaluators.
+
+    A ``getattr`` key typo in ``_initialize_internals`` would silently fall
+    back to the default and go undetected without this test.
+    """
+    from aragog.solver.entropy_solver import EntropySolver
+
+    parameters = _build_solver_params(separation_viscosity)
+    solver = EntropySolver(parameters, entropy_eos=None)
+    solver.initialize()
+
+    assert solver.state.phase_staggered._separation_viscosity == expected
+    assert solver.state.phase_basic._separation_viscosity == expected

@@ -16,6 +16,7 @@ import logging
 import numpy as np
 import numpy.typing as npt
 
+from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 from aragog.eos.entropy import EntropyEOS
 from aragog.utilities import FloatOrArray, tanh_weight
 
@@ -65,8 +66,8 @@ class EntropyPhaseEvaluator:
         grain_size: float = 1e-3,
         thermal_conductivity_solid: float = 4.0,
         thermal_conductivity_liquid: float = 2.0,
-        separation_viscosity: str = 'melt',
         cp_blend: str = 'latent',
+        separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
         matprop_smooth_width: float = 0.0,
         const_properties: bool = False,
         const_rho: float = 4000.0,
@@ -87,11 +88,6 @@ class EntropyPhaseEvaluator:
         self._k_solid = thermal_conductivity_solid
         self._k_liquid = thermal_conductivity_liquid
         self._matprop_smooth_width = matprop_smooth_width
-        if separation_viscosity not in ('melt', 'mixture'):
-            raise ValueError(
-                f"separation_viscosity must be 'melt' or 'mixture', got {separation_viscosity!r}"
-            )
-        self._separation_viscosity = separation_viscosity
         # Constant-properties mode (matches SPIDER -use_const_properties)
         self._const_properties = const_properties
         self._const_rho = const_rho
@@ -106,6 +102,12 @@ class EntropyPhaseEvaluator:
         if cp_blend not in ('latent', 'linear'):
             raise ValueError(f"cp_blend must be 'latent' or 'linear', got {cp_blend!r}")
         self._cp_blend = cp_blend
+        if separation_viscosity not in SEPARATION_VISCOSITY_MODES:
+            raise ValueError(
+                f'separation_viscosity must be one of {SEPARATION_VISCOSITY_MODES}, '
+                f'got {separation_viscosity!r}'
+            )
+        self._separation_viscosity = separation_viscosity
 
         # State arrays (set by set_entropy / set_pressure / update)
         self.entropy: npt.NDArray = np.array([])

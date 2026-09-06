@@ -563,8 +563,7 @@ def relative_velocity(
     delta_rho = rho_l - rho_s
     d = params.grain_size
     eta_melt = 10.0**params.log10_visc_liquid
-    frac = params.separation_viscosity_mixture
-    eta_l = frac * viscosity + (1.0 - frac) * eta_melt
+    eta_l = jnp.where(params.separation_viscosity_mixture > 0.5, viscosity, eta_melt)
 
     # Porosity (volume fraction of melt) from densities. Smoothed with
     # sqrt-based soft clip + soft max so the CVODE BDF predictor sees a

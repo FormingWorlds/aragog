@@ -22,6 +22,8 @@ import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
 
+from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
@@ -274,7 +276,7 @@ class _PhaseMixedParameters:
     # phase liquid viscosity, default) or "mixture" (the rheological-
     # transition-blended bulk viscosity). Consumed by
     # EntropyPhaseEvaluator.relative_velocity via getattr fall-back.
-    separation_viscosity: str = 'melt'
+    separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT
     # Mushy-zone Cp blending mode: "latent" (SPIDER parity, default) or
     # "linear". Consumed by EntropyPhaseEvaluator via getattr fall-back,
     # but accepting it here lets the documented [phase_mixed] cp_blend
@@ -289,6 +291,13 @@ class _PhaseMixedParameters:
     const_log10visc: float = 2.0
     const_T_ref: float = 3500.0
     const_S_ref: float = 3000.0
+
+    def __post_init__(self):
+        if self.separation_viscosity not in SEPARATION_VISCOSITY_MODES:
+            raise ValueError(
+                'separation_viscosity must be one of '
+                f'{SEPARATION_VISCOSITY_MODES}, got {self.separation_viscosity!r}'
+            )
 
 
 @dataclass
