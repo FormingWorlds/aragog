@@ -78,7 +78,10 @@ j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
 v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,F(\phi)}{\eta_\mathrm{mix}},
 $$
 
-with $F(\phi)$ the melt-solid mobility (the permeability over porosity, detailed below) and $\eta_\mathrm{mix}$ the rheological-transition-blended mixture viscosity: liquid near and above `phi_rheo`, ramping smoothly to the solid viscosity below it, so settling locks up through the same transition that sets the bulk rheology. The corresponding heat flux is
+with $F(\phi)$ the melt-solid mobility (the permeability over porosity, detailed below) and $\eta_\mathrm{mix}$ the drag viscosity selected by `separation_viscosity`.
+The default, `"melt"`, is the fixed liquid viscosity, matching SPIDER's `GetGravitationalHeatFlux`.
+The alternative, `"mixture"`, is the rheological-transition-blended mixture viscosity: liquid near and above `phi_rheo`, ramping smoothly to the solid viscosity below it, so settling locks up through the same transition that sets the bulk rheology.
+The corresponding heat flux is
 
 $$
 F_\mathrm{grav} = j_\mathrm{grav}\,L(P),

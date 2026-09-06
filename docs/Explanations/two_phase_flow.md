@@ -64,7 +64,9 @@ j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
 v_\mathrm{rel} = \frac{(\rho_\mathrm{liq} - \rho_\mathrm{sol})\,g\,F(\phi)}{\eta_\mathrm{mix}}.
 $$
 
-Here $\eta_\mathrm{mix}$ is the rheological-transition-blended mixture viscosity, not the liquid viscosity alone: it ramps from the liquid value near and above `phi_rheo` to the solid value below it, so settling locks up through the same transition that sets the bulk rheology.
+$\eta_\mathrm{mix}$ is the drag viscosity selected by `separation_viscosity`.
+The default, `"melt"`, is the fixed liquid viscosity $\eta_\mathrm{liq}$, matching SPIDER's `GetGravitationalHeatFlux`.
+The alternative, `"mixture"`, is the rheological-transition-blended mixture viscosity: it ramps from the liquid value near and above `phi_rheo` to the solid value below it, so settling locks up through the same transition that sets the bulk rheology.
 
 The mobility factor $F(\phi)$ (the permeability $K(\phi)$ divided by porosity) spans three asymptotic regimes (Bower et al. (2018) §2.1):
 

@@ -49,12 +49,12 @@ class _StubJaxEOS:
         raise ValueError(phase)
 
 
-def _numpy_relative_velocity(mode, viscosity_val):
+def _numpy_relative_velocity(mode, viscosity_val, viscosity_liquid=1e-1):
     ev = EntropyPhaseEvaluator(
         entropy_eos=_StubPhaseBoundaryEOS(),
         gravitational_acceleration=10.0,
         grain_size=1e-3,
-        viscosity_liquid=1e-1,
+        viscosity_liquid=viscosity_liquid,
         separation_viscosity=mode,
     )
     ev.pressure = np.array([1.0e9])
@@ -74,6 +74,36 @@ def test_modes_diverge_below_phi_rheo_and_agree_above_it():
     v_melt_above = _numpy_relative_velocity('melt', viscosity_val=1e-1)
     v_mixture_above = _numpy_relative_velocity('mixture', viscosity_val=1e-1)
     assert v_melt_above == pytest.approx(v_mixture_above, rel=1e-12)
+
+
+def test_melt_mode_ignores_viscosity_val():
+    """'melt' must use the fixed liquid viscosity, not the phi_rheo-blended value."""
+    v_low = _numpy_relative_velocity('melt', viscosity_val=1e21, viscosity_liquid=1e-1)
+    v_high = _numpy_relative_velocity('melt', viscosity_val=5e-3, viscosity_liquid=1e-1)
+    assert v_low == pytest.approx(v_high, rel=1e-12)
+
+
+def test_mixture_mode_ignores_viscosity_liquid():
+    """'mixture' must use the phi_rheo-blended value, not the fixed liquid viscosity."""
+    v_low_liquid = _numpy_relative_velocity('mixture', viscosity_val=1e21, viscosity_liquid=1e-1)
+    v_high_liquid = _numpy_relative_velocity('mixture', viscosity_val=1e21, viscosity_liquid=5e-3)
+    assert v_low_liquid == pytest.approx(v_high_liquid, rel=1e-12)
+
+
+def test_numpy_rejects_invalid_separation_viscosity():
+    with pytest.raises(ValueError):
+        EntropyPhaseEvaluator(
+            entropy_eos=_StubPhaseBoundaryEOS(),
+            gravitational_acceleration=10.0,
+            grain_size=1e-3,
+            viscosity_liquid=1e-1,
+            separation_viscosity='bogus',
+        )
+
+
+def test_jax_rejects_invalid_separation_viscosity():
+    with pytest.raises(ValueError):
+        PhaseParams(grain_size=1e-3, viscosity_liquid=1e-1, separation_viscosity='bogus')
 
 
 @pytest.mark.parametrize('mode', ['melt', 'mixture'])
