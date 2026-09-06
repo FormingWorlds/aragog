@@ -93,6 +93,7 @@ phase = "composite"
 phase_transition_width = 0.01
 grain_size = 1.0e-3
 matprop_smooth_width = 0.0
+separation_viscosity = "melt"      # "melt" or "mixture"
 cp_blend = "latent"                # "latent" or "linear"
 const_properties = false
 
@@ -229,6 +230,7 @@ Mixed-phase (mushy) parameters and the optional constant-properties analytical m
 | `phase_transition_width` | -- | -- | Legacy smoothing width |
 | `grain_size` | m | `1.0e-3` | Grain size $a$ in the melt-solid mobility $F(\zeta)=K(\zeta)/\zeta$ |
 | `matprop_smooth_width` | -- | 0.0 | SPIDER-parity blending width across phase boundaries |
+| `separation_viscosity` | str | `"melt"` | `"melt"` (single-phase liquid viscosity, SPIDER parity) or `"mixture"` (rheological-transition-blended bulk viscosity) for the gravitational-separation drag term |
 | `cp_blend` | str | `"latent"` | `"latent"` (SPIDER parity) or `"linear"` for the mushy $C_p$ rule |
 | `const_properties` | bool | false | Enable the analytic constant-properties path (no EOS tables needed) |
 | `const_rho` | kg/m³ | 4000 | Constant density when `const_properties = true` |

@@ -130,6 +130,12 @@ class PhaseParams(eqx.Module):
     phase_smoothing_tanh: float
     phase_smoothing_width: float
 
+    # separation_viscosity_mixture: 1.0 -> gravitational-separation drag
+    # uses the rheological-transition-blended mixture viscosity; 0.0 ->
+    # the fixed single-phase liquid viscosity (SPIDER's
+    # GetGravitationalHeatFlux convention).
+    separation_viscosity_mixture: float
+
     def __init__(
         self,
         phi_rheo: float = 0.4,
@@ -150,6 +156,7 @@ class PhaseParams(eqx.Module):
         bottom_up_grav_sep: bool = True,
         phase_smoothing: str = 'tanh',
         phase_smoothing_width: float = 0.01,
+        separation_viscosity: str = 'melt',
     ):
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -173,6 +180,11 @@ class PhaseParams(eqx.Module):
             )
         self.phase_smoothing_tanh = 1.0 if phase_smoothing == 'tanh' else 0.0
         self.phase_smoothing_width = float(phase_smoothing_width)
+        if separation_viscosity not in ('melt', 'mixture'):
+            raise ValueError(
+                f"separation_viscosity must be 'melt' or 'mixture', got {separation_viscosity!r}"
+            )
+        self.separation_viscosity_mixture = 1.0 if separation_viscosity == 'mixture' else 0.0
 
 
 class MeshArrays(eqx.Module):
@@ -540,16 +552,19 @@ def relative_velocity(
     multiplies delta_rho*g/eta (Abe 1993/1995, SPIDER convention):
     Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
 
-    The drag viscosity is the rheological-transition-blended mixture
-    viscosity (liquid near phi_rheo and above, ramping smoothly to the
-    solid viscosity below it), so settling locks up through the same
-    phi_rheo transition that sets the bulk rheology.
+    The drag viscosity is set by ``params.separation_viscosity_mixture``:
+    0.0 uses the fixed single-phase liquid viscosity, matching SPIDER's
+    ``GetGravitationalHeatFlux``; 1.0 uses the rheological-transition-
+    blended mixture ``viscosity`` argument, so settling locks up through
+    the same phi_rheo transition that sets the bulk rheology.
     """
     rho_s = eos._lookup_at_phase_boundary('density', P, 'solid')
     rho_l = eos._lookup_at_phase_boundary('density', P, 'melt')
     delta_rho = rho_l - rho_s
     d = params.grain_size
-    eta_l = viscosity
+    eta_melt = 10.0**params.log10_visc_liquid
+    frac = params.separation_viscosity_mixture
+    eta_l = frac * viscosity + (1.0 - frac) * eta_melt
 
     # Porosity (volume fraction of melt) from densities. Smoothed with
     # sqrt-based soft clip + soft max so the CVODE BDF predictor sees a

@@ -1210,6 +1210,13 @@ class EntropySolver:
         #   'latent' = SPIDER-parity, latent-heat-augmented Cp
         #   'linear' = linear blend of pure-phase Cp (no latent term)
         cp_blend = getattr(self.parameters.phase_mixed, 'cp_blend', 'latent')
+        # separation_viscosity selects the drag viscosity used in
+        # gravitational separation: 'melt' (SPIDER-parity single-phase
+        # liquid) or 'mixture' (the rheological-transition-blended bulk
+        # viscosity).
+        separation_viscosity = getattr(
+            self.parameters.phase_mixed, 'separation_viscosity', 'melt'
+        )
 
         phase_kwargs = dict(
             entropy_eos=self.entropy_eos,
@@ -1221,6 +1228,7 @@ class EntropySolver:
             ),
             grain_size=self.parameters.phase_mixed.grain_size,
             cp_blend=cp_blend,
+            separation_viscosity=separation_viscosity,
         )
 
         # Get viscosity and thermal conductivity from config.

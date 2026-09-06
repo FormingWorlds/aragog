@@ -45,6 +45,11 @@ class EntropyPhaseEvaluator:
         Reference liquid viscosity [Pa s].
     grain_size : float
         Grain size for permeability calculation [m].
+    separation_viscosity : str
+        Drag viscosity source for gravitational separation: ``'melt'``
+        (single-phase liquid viscosity, matches SPIDER's
+        ``GetGravitationalHeatFlux``) or ``'mixture'`` (the
+        rheological-transition-blended bulk viscosity). Default ``'melt'``.
     latent_heat_constant : float
         Latent heat of fusion [J/kg]. Used for gravitational separation flux.
     """
@@ -60,6 +65,7 @@ class EntropyPhaseEvaluator:
         grain_size: float = 1e-3,
         thermal_conductivity_solid: float = 4.0,
         thermal_conductivity_liquid: float = 2.0,
+        separation_viscosity: str = 'melt',
         cp_blend: str = 'latent',
         matprop_smooth_width: float = 0.0,
         const_properties: bool = False,
@@ -81,6 +87,11 @@ class EntropyPhaseEvaluator:
         self._k_solid = thermal_conductivity_solid
         self._k_liquid = thermal_conductivity_liquid
         self._matprop_smooth_width = matprop_smooth_width
+        if separation_viscosity not in ('melt', 'mixture'):
+            raise ValueError(
+                f"separation_viscosity must be 'melt' or 'mixture', got {separation_viscosity!r}"
+            )
+        self._separation_viscosity = separation_viscosity
         # Constant-properties mode (matches SPIDER -use_const_properties)
         self._const_properties = const_properties
         self._const_rho = const_rho
@@ -428,10 +439,12 @@ class EntropyPhaseEvaluator:
         2. Rumpf-Gupte (intermediate): F = d^2 por^4.5 * (5/7)
         3. Stokes settling (high porosity): F = d^2 * 2/9
 
-        The drag viscosity is the rheological-transition-blended mixture
-        viscosity (liquid near phi_rheo and above, ramping smoothly to
-        the solid viscosity below it), so settling locks up through the
-        same phi_rheo transition that sets the bulk rheology.
+        The drag viscosity is set by ``separation_viscosity``: ``'melt'``
+        uses the fixed single-phase liquid viscosity, matching SPIDER's
+        ``GetGravitationalHeatFlux``; ``'mixture'`` uses the
+        rheological-transition-blended bulk viscosity, so settling locks
+        up through the same phi_rheo transition that sets the bulk
+        rheology.
         """
         if self._const_properties:
             return np.zeros_like(self._density)
@@ -440,7 +453,10 @@ class EntropyPhaseEvaluator:
         delta_rho = rho_l - rho_s  # typically negative (melt lighter)
         g = self._g
         d = self._grain_size
-        eta_l = self._viscosity_val
+        if self._separation_viscosity == 'mixture':
+            eta_l = self._viscosity_val
+        else:
+            eta_l = self._visc_liquid
 
         # Porosity (volume fraction of melt) from densities. Smoothed
         # with sqrt-based soft clip + soft max so the CVODE BDF

@@ -219,6 +219,27 @@ def test_mixed_phase_config_default_cp_blend_is_latent():
     assert mp.cp_blend == 'latent'
 
 
+def test_mixed_phase_config_default_separation_viscosity_is_melt():
+    """Default separation_viscosity = 'melt' = SPIDER-parity convention.
+
+    Discriminator: a regression to 'mixture' would silently swap the
+    gravitational-separation drag viscosity to the phi_rheo-blended
+    bulk viscosity, a departure from SPIDER, in every coupled PROTEUS
+    run that omits the field.
+    """
+    mp = MixedPhaseConfig(
+        latent_heat_of_fusion=4e5,
+        rheological_transition_melt_fraction=0.4,
+        rheological_transition_width=0.15,
+        solidus='solidus.dat',
+        liquidus='liquidus.dat',
+        phase='mixed',
+        phase_transition_width=0.01,
+        grain_size=0.001,
+    )
+    assert mp.separation_viscosity == 'melt'
+
+
 def test_mixed_phase_config_const_properties_defaults_match_legacy_parser():
     """Default const_properties block reproduces the SPIDER analytic-EOS
     smoke values that the legacy ``_PhaseMixedParameters`` dataclass

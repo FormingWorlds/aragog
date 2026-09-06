@@ -65,6 +65,12 @@ class MixedPhaseConfig:
         Width of smoothing at phase boundaries.
     grain_size : float
         Grain size [m] for permeability calculations.
+    separation_viscosity : str
+        Drag viscosity source for gravitational separation:
+        ``'melt'`` (single-phase liquid viscosity, matches SPIDER's
+        ``GetGravitationalHeatFlux``) or ``'mixture'`` (the
+        rheological-transition-blended bulk viscosity). Default
+        ``'melt'``.
     cp_blend : str
         Mushy-zone Cp blending mode: ``'latent'`` (SPIDER-parity,
         latent-heat-augmented) or ``'linear'`` (linear blend of
@@ -109,6 +115,7 @@ class MixedPhaseConfig:
     phase: str
     phase_transition_width: float
     grain_size: float
+    separation_viscosity: str = 'melt'
     cp_blend: str = 'latent'
     matprop_smooth_width: float = 0.0
     const_properties: bool = False

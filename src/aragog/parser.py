@@ -270,6 +270,11 @@ class _PhaseMixedParameters:
     phase_transition_width: float
     grain_size: float
     matprop_smooth_width: float = 0.0
+    # Separation-drag viscosity source: "melt" (SPIDER-parity single-
+    # phase liquid viscosity, default) or "mixture" (the rheological-
+    # transition-blended bulk viscosity). Consumed by
+    # EntropyPhaseEvaluator.relative_velocity via getattr fall-back.
+    separation_viscosity: str = 'melt'
     # Mushy-zone Cp blending mode: "latent" (SPIDER parity, default) or
     # "linear". Consumed by EntropyPhaseEvaluator via getattr fall-back,
     # but accepting it here lets the documented [phase_mixed] cp_blend

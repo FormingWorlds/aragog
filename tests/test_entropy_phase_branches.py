@@ -307,13 +307,13 @@ class _StubPhaseBoundaryEOS:
 
 
 def test_relative_velocity_scales_with_viscosity_val_not_fixed_liquid_field():
-    """``relative_velocity`` must track ``self._viscosity_val`` (the
-    phi_rheo-blended mixture viscosity set by ``update()``), not the
-    fixed ``self._visc_liquid`` field it read before this fix.
+    """In ``separation_viscosity='mixture'`` mode, ``relative_velocity``
+    must track ``self._viscosity_val``, the phi_rheo-blended mixture
+    viscosity set by ``update()``.
 
-    Discriminator: a regression back to the fixed field would leave
-    the output unchanged when only ``self._viscosity_val`` varies
-    between the two calls below.
+    Discriminator: a regression back to the fixed liquid field would
+    leave the output unchanged when only ``self._viscosity_val``
+    varies between the two calls below.
     """
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
@@ -322,6 +322,7 @@ def test_relative_velocity_scales_with_viscosity_val_not_fixed_liquid_field():
         gravitational_acceleration=10.0,
         grain_size=1e-3,
         viscosity_liquid=1e-1,
+        separation_viscosity='mixture',
     )
     ev.pressure = np.array([1.0e9])
     ev._density = np.array([4000.0])

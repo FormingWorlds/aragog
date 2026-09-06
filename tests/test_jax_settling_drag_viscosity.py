@@ -41,9 +41,9 @@ class _StubEOS:
 
 
 def test_relative_velocity_scales_with_viscosity_argument_not_fixed_field():
-    """The drag velocity must track the passed-in viscosity, not params.log10_visc_liquid."""
+    """In mixture mode, the drag velocity must track the passed-in viscosity."""
     eos = _StubEOS()
-    params = PhaseParams(grain_size=1e-3, viscosity_liquid=1e-1)
+    params = PhaseParams(grain_size=1e-3, viscosity_liquid=1e-1, separation_viscosity='mixture')
     P = jnp.asarray(1.0e9)
     density = jnp.asarray(4000.0)
     melt_fraction = jnp.asarray(0.5)
