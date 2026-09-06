@@ -596,7 +596,7 @@ def relative_velocity(
     F_stokes = d**2 * 2.0 / 9.0
 
     # Smooth regime switching at the equal-density-ratio crossings:
-    # BKC -> RG at zeta_1 = 0.0769452 (2e-4 below the exact BKC-RG
+    # BKC -> RG at zeta_1 = 0.0769452 (1.7e-5 below the exact BKC-RG
     # crossing), RG -> Stokes at zeta_2 = 0.771462 (exact).
     w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)

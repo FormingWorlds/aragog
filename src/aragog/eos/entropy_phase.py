@@ -495,8 +495,8 @@ class EntropyPhaseEvaluator:
         # Regime switching at the equal-density-ratio crossings zeta_1 =
         # 0.0769452 (BKC = RG) and zeta_2 = 0.771462 (RG = Stokes),
         # Bower et al. 2018 Eqs. 13a-c. zeta_2 is exact; zeta_1 sits
-        # 2e-4 below the exact BKC-RG crossing. Blend widths (0.02,
-        # 0.05) are numerical-smoothing tunables, not physics.
+        # 1.7e-5 below the exact BKC-RG crossing (0.02 percent). Blend
+        # widths (0.02, 0.05) are numerical-smoothing tunables, not physics.
         w_rg = tanh_weight(porosity, 0.0769452, 0.02)
         w_stokes = tanh_weight(porosity, 0.771462, 0.05)
         F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
