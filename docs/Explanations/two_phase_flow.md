@@ -61,7 +61,7 @@ The mass flux of melt (positive upward when melt is buoyant) is
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{(\rho_\mathrm{liq} - \rho_\mathrm{sol})\,g\,F(\phi)}{\eta_\mathrm{mix}}.
+v_\mathrm{rel} = \frac{\lvert\rho_\mathrm{liq} - \rho_\mathrm{sol}\rvert\,g\,F(\phi)}{\eta_\mathrm{mix}}.
 $$
 
 $\eta_\mathrm{mix}$ is the drag viscosity selected by `separation_viscosity`.
@@ -76,7 +76,7 @@ The mobility factor $F(\phi)$ (the permeability $K(\phi)$ divided by porosity) s
 - **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367)[^cite-rumpfgupte1971].
 - **Blake-Kozeny-Carman** at low $\phi$: melt as a percolating fluid through a near-rigid solid matrix.
 
-The two regime boundaries, $\phi = 0.0769452$ and $\phi = 0.771462$, are the melt fractions at which adjacent permeability laws give the same $F(\phi)$: Blake-Kozeny-Carman equals Rumpf-Gupte at the first, Rumpf-Gupte equals Stokes settling at the second (Bower et al. (2018)[^cite-bower2018] §2.1, Eqs. 13a to 13c). They depend only on the functional forms of the three laws, not on the material.
+The two regime boundaries, $\zeta_1 = 0.0769452$ and $\zeta_2 = 0.771462$, are the porosities at which Aragog switches between adjacent permeability laws, placed at their crossings: Blake-Kozeny-Carman with Rumpf-Gupte at $\zeta_1$, Rumpf-Gupte with Stokes settling at $\zeta_2$ (Bower et al. (2018)[^cite-bower2018] §2.1, Eqs. 13a to 13c). For the coded forms, $\zeta_2$ is the exact crossing and $\zeta_1$ sits $2 \times 10^{-4}$ below it (exact value 0.07696), well inside the blend width of 0.02. The boundaries follow from the functional forms of the three laws; no Reynolds number enters.
 The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995)[^cite-abe1995] and reviewed in Bower et al. (2018) §2.1 Eqs. 13a-c, where the general regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
 Aragog hard-codes the equal-density-ratio limits ($\rho_\mathrm{sol} = \rho_\mathrm{liq}$) of these expressions, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), and blends through them with a tanh switch rather than recomputing per radial node.
 The resulting mobility-vs-porosity curve (Figure 1 of [Heat transport](heat_transport.md#melt-solid-mobility-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.

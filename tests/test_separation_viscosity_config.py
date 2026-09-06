@@ -144,7 +144,7 @@ def test_numpy_rejects_third_mode_added_to_modes_tuple(monkeypatch):
     ev.pressure = np.array([1.0e9])
     ev._density = np.array([4000.0])
     ev._viscosity_val = np.array([1e2])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='unhandled separation_viscosity'):
         ev.relative_velocity()
 
 
@@ -155,7 +155,7 @@ def test_jax_rejects_third_mode_added_to_modes_tuple(monkeypatch):
     monkeypatch.setattr(
         jax_phase_mod, 'SEPARATION_VISCOSITY_MODES', ('melt', 'mixture', 'bogus3')
     )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='unhandled separation_viscosity'):
         PhaseParams(grain_size=1e-3, viscosity_liquid=1e-1, separation_viscosity='bogus3')
 
 
