@@ -67,7 +67,7 @@ $$
 $\eta_\mathrm{mix}$ is the drag viscosity selected by `separation_viscosity`.
 The default, `"melt"`, is the fixed liquid viscosity $\eta_\mathrm{liq}$, matching SPIDER's `GetGravitationalHeatFlux`.
 The alternative, `"mixture"`, is the rheological-transition-blended mixture viscosity: it ramps from the liquid value near and above `phi_rheo` to the solid value below it, so settling locks up through the same transition that sets the bulk rheology.
-In a coupled caps-off simulation, `"melt"` keeps the drag viscosity fixed at its low liquid value below `phi_rheo`, so gravitational separation keeps draining melt toward the core-mantle boundary and produces a CMB collapse; `"mixture"` ties the drag viscosity to the same solid-fraction rise that stiffens the bulk rheology, so separation locks up at the same melt fraction and the collapse does not occur.
+In a coupled caps-off simulation, `"melt"` keeps the drag viscosity fixed at its low liquid value below `phi_rheo`, so gravitational separation keeps moving melt out of the deepest cells (melt rises, solid settles; the core-mantle boundary itself carries no mass flux) and the CMB temperature collapses; `"mixture"` ties the drag viscosity to the same solid-fraction rise that stiffens the bulk rheology, so separation locks up at the same melt fraction and the collapse does not occur.
 PROTEUS defaults `separation_viscosity` to `"mixture"` for this reason; Aragog's own default stays `"melt"` for SPIDER parity.
 
 The mobility factor $F(\phi)$ (the permeability $K(\phi)$ divided by porosity) spans three asymptotic regimes (Bower et al. (2018) §2.1):
@@ -76,8 +76,8 @@ The mobility factor $F(\phi)$ (the permeability $K(\phi)$ divided by porosity) s
 - **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367)[^cite-rumpfgupte1971].
 - **Blake-Kozeny-Carman** at low $\phi$: melt as a percolating fluid through a near-rigid solid matrix.
 
-The regime boundaries follow from a critical Reynolds number for percolating flow, $\mathrm{Re}_\mathrm{crit} = 9/8$ (Abe (1993)[^cite-abe1993]).
-The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use recasts this criterion as a porosity threshold, consolidated in Abe (1995)[^cite-abe1995] and reviewed in Bower et al. (2018) §2.1 Eqs. 13a-c, where the regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
+The two regime boundaries, $\phi = 0.0769452$ and $\phi = 0.771462$, are the melt fractions at which adjacent permeability laws give the same $F(\phi)$: Blake-Kozeny-Carman equals Rumpf-Gupte at the first, Rumpf-Gupte equals Stokes settling at the second (Bower et al. (2018)[^cite-bower2018] §2.1, Eqs. 13a to 13c). They depend only on the functional forms of the three laws, not on the material.
+The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995)[^cite-abe1995] and reviewed in Bower et al. (2018) §2.1 Eqs. 13a-c, where the general regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
 Aragog hard-codes the equal-density-ratio limits ($\rho_\mathrm{sol} = \rho_\mathrm{liq}$) of these expressions, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), and blends through them with a tanh switch rather than recomputing per radial node.
 The resulting mobility-vs-porosity curve (Figure 1 of [Heat transport](heat_transport.md#melt-solid-mobility-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
 The corresponding heat flux is
@@ -141,7 +141,6 @@ For the algebraic forms of the four heat-flux components Aragog assembles, see [
 For the closure that determines $\kappa_h$ in the convective flux, see [Mixing-length theory](mixing_length.md).
 For the SPIDER cross-check, see [Aragog vs SPIDER](spider_comparison.md).
 
-[^cite-abe1993]: Yutaka Abe, *[Thermal Evolution and Chemical Differentiation of the Terrestrial Magma Ocean](https://doi.org/10.1029/GM074p0041)*, in Takahashi, E., Jeanloz, R., Rubie, D. (eds.), Evolution of the Earth and Planets, AGU Geophysical Monograph 74, 41–54, 1993.
 [^cite-abe1995]: Yutaka Abe, *Basic equations for evolution of partially molten mantle and core*, in Yukutake, T. (ed.), The Earth's Central Part: Its Structure and Dynamics, Terra Sci. Pub. Com., 215–230, 1995.
 [^cite-bower2018]: D. J. Bower, P. Sanan, A. S. Wolf, *[Numerical solution of a non-linear conservation law applicable to the interior dynamics of partially molten planets](https://doi.org/10.1016/j.pepi.2017.11.004)*, Physics of the Earth and Planetary Interiors, 274, 49–62, 2018. [SciX](https://scixplorer.org/abs/2018PEPI..274...49B/abstract).
 [^cite-costa2009]: A. Costa, L. Caricchi, N. Bagdassarov, *[A model for the rheology of particle-bearing suspensions and partially molten rocks](https://doi.org/10.1029/2008GC002138)*, Geochemistry, Geophysics, Geosystems, 10, Q03010, 2009. [SciX](https://scixplorer.org/abs/2009GGG....10.3010C/abstract).
