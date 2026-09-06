@@ -20,6 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
+from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 from aragog.jax.eos import EntropyEOS_JAX
 
 # Enable float64
@@ -156,7 +157,7 @@ class PhaseParams(eqx.Module):
         bottom_up_grav_sep: bool = True,
         phase_smoothing: str = 'tanh',
         phase_smoothing_width: float = 0.01,
-        separation_viscosity: str = 'melt',
+        separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
     ):
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -180,9 +181,10 @@ class PhaseParams(eqx.Module):
             )
         self.phase_smoothing_tanh = 1.0 if phase_smoothing == 'tanh' else 0.0
         self.phase_smoothing_width = float(phase_smoothing_width)
-        if separation_viscosity not in ('melt', 'mixture'):
+        if separation_viscosity not in SEPARATION_VISCOSITY_MODES:
             raise ValueError(
-                f"separation_viscosity must be 'melt' or 'mixture', got {separation_viscosity!r}"
+                f'separation_viscosity must be one of {SEPARATION_VISCOSITY_MODES}, '
+                f'got {separation_viscosity!r}'
             )
         self.separation_viscosity_mixture = 1.0 if separation_viscosity == 'mixture' else 0.0
 

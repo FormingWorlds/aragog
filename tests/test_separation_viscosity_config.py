@@ -110,6 +110,23 @@ def test_jax_rejects_invalid_separation_viscosity():
         PhaseParams(grain_size=1e-3, viscosity_liquid=1e-1, separation_viscosity='bogus')
 
 
+def test_legacy_parser_rejects_invalid_separation_viscosity():
+    from aragog.parser import _PhaseMixedParameters
+
+    with pytest.raises(ValueError):
+        _PhaseMixedParameters(
+            latent_heat_of_fusion=4.0e5,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus='solidus.dat',
+            liquidus='liquidus.dat',
+            phase='mixed',
+            phase_transition_width=0.01,
+            grain_size=1.0e-3,
+            separation_viscosity='bogus',
+        )
+
+
 @pytest.mark.parametrize('mode', ['melt', 'mixture'])
 def test_numpy_jax_parity_in_both_modes(mode):
     """numpy and jax must select the same drag viscosity and agree bit-tight."""
@@ -266,3 +283,22 @@ def test_entropy_solver_plumbs_separation_viscosity_to_evaluators(
 
     assert solver.state.phase_staggered._separation_viscosity == expected
     assert solver.state.phase_basic._separation_viscosity == expected
+
+
+@pytest.mark.parametrize('separation_viscosity', ['melt', 'mixture'])
+def test_entropy_solver_logs_separation_viscosity_mode(caplog, separation_viscosity):
+    """``initialize()`` must log the selected drag-viscosity mode at INFO.
+
+    Discriminator: a silently dropped or mis-formatted log call would
+    remove the only run-time confirmation of which mode a coupled
+    PROTEUS run actually used.
+    """
+    from aragog.solver.entropy_solver import EntropySolver
+
+    parameters = _build_solver_params(separation_viscosity)
+    solver = EntropySolver(parameters, entropy_eos=None)
+    with caplog.at_level('INFO'):
+        solver.initialize()
+
+    expected = f'Gravitational separation drag viscosity: {separation_viscosity}'
+    assert expected in caplog.text

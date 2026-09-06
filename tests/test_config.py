@@ -240,6 +240,26 @@ def test_mixed_phase_config_default_separation_viscosity_is_melt():
     assert mp.separation_viscosity == 'melt'
 
 
+def test_mixed_phase_config_rejects_invalid_separation_viscosity():
+    """The ``in_`` validator must reject a value outside ('melt', 'mixture').
+
+    Discriminator: deleting this validator would let a typo'd mode
+    string reach the solver silently instead of failing at parse time.
+    """
+    with pytest.raises(ValueError):
+        MixedPhaseConfig(
+            latent_heat_of_fusion=4e5,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus='solidus.dat',
+            liquidus='liquidus.dat',
+            phase='mixed',
+            phase_transition_width=0.01,
+            grain_size=0.001,
+            separation_viscosity='bogus',
+        )
+
+
 def test_mixed_phase_config_const_properties_defaults_match_legacy_parser():
     """Default const_properties block reproduces the SPIDER analytic-EOS
     smoke values that the legacy ``_PhaseMixedParameters`` dataclass
