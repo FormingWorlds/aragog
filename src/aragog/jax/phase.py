@@ -186,7 +186,14 @@ class PhaseParams(eqx.Module):
                 f'separation_viscosity must be one of {SEPARATION_VISCOSITY_MODES}, '
                 f'got {separation_viscosity!r}'
             )
-        self.separation_viscosity_mixture = 1.0 if separation_viscosity == 'mixture' else 0.0
+        # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
+        # must fail here rather than silently fall back to 'melt'.
+        if separation_viscosity == 'mixture':
+            self.separation_viscosity_mixture = 1.0
+        elif separation_viscosity == 'melt':
+            self.separation_viscosity_mixture = 0.0
+        else:
+            raise ValueError(f'unhandled separation_viscosity {separation_viscosity!r}')
 
 
 class MeshArrays(eqx.Module):

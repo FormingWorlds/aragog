@@ -127,6 +127,38 @@ def test_legacy_parser_rejects_invalid_separation_viscosity():
         )
 
 
+def test_numpy_rejects_third_mode_added_to_modes_tuple(monkeypatch):
+    """A future third entry in SEPARATION_VISCOSITY_MODES must not silently run as 'melt'."""
+    import aragog.eos.entropy_phase as entropy_phase_mod
+
+    monkeypatch.setattr(
+        entropy_phase_mod, 'SEPARATION_VISCOSITY_MODES', ('melt', 'mixture', 'bogus3')
+    )
+    ev = EntropyPhaseEvaluator(
+        entropy_eos=_StubPhaseBoundaryEOS(),
+        gravitational_acceleration=10.0,
+        grain_size=1e-3,
+        viscosity_liquid=1e-1,
+        separation_viscosity='bogus3',
+    )
+    ev.pressure = np.array([1.0e9])
+    ev._density = np.array([4000.0])
+    ev._viscosity_val = np.array([1e2])
+    with pytest.raises(ValueError):
+        ev.relative_velocity()
+
+
+def test_jax_rejects_third_mode_added_to_modes_tuple(monkeypatch):
+    """A future third entry in SEPARATION_VISCOSITY_MODES must not silently run as 'melt'."""
+    import aragog.jax.phase as jax_phase_mod
+
+    monkeypatch.setattr(
+        jax_phase_mod, 'SEPARATION_VISCOSITY_MODES', ('melt', 'mixture', 'bogus3')
+    )
+    with pytest.raises(ValueError):
+        PhaseParams(grain_size=1e-3, viscosity_liquid=1e-1, separation_viscosity='bogus3')
+
+
 @pytest.mark.parametrize('mode', ['melt', 'mixture'])
 def test_numpy_jax_parity_in_both_modes(mode):
     """numpy and jax must select the same drag viscosity and agree bit-tight."""

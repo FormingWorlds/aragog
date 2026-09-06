@@ -455,10 +455,14 @@ class EntropyPhaseEvaluator:
         delta_rho = rho_l - rho_s  # typically negative (melt lighter)
         g = self._g
         d = self._grain_size
+        # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
+        # must fail here rather than silently fall back to 'melt'.
         if self._separation_viscosity == 'mixture':
             eta_l = self._viscosity_val
-        else:
+        elif self._separation_viscosity == 'melt':
             eta_l = self._visc_liquid
+        else:
+            raise ValueError(f'unhandled separation_viscosity {self._separation_viscosity!r}')
 
         # Porosity (volume fraction of melt) from densities. Smoothed
         # with sqrt-based soft clip + soft max so the CVODE BDF
