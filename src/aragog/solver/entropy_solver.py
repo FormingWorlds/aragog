@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from aragog.jax.nondim import NonDimScales
 
+from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
@@ -1210,6 +1211,14 @@ class EntropySolver:
         #   'latent' = SPIDER-parity, latent-heat-augmented Cp
         #   'linear' = linear blend of pure-phase Cp (no latent term)
         cp_blend = getattr(self.parameters.phase_mixed, 'cp_blend', 'latent')
+        # separation_viscosity selects the drag viscosity used in
+        # gravitational separation: 'melt' (SPIDER-parity single-phase
+        # liquid) or 'mixture' (the rheological-transition-blended bulk
+        # viscosity).
+        separation_viscosity = getattr(
+            self.parameters.phase_mixed, 'separation_viscosity', SEPARATION_VISCOSITY_DEFAULT
+        )
+        logger.info('Gravitational separation drag viscosity: %s', separation_viscosity)
 
         phase_kwargs = dict(
             entropy_eos=self.entropy_eos,
@@ -1221,6 +1230,7 @@ class EntropySolver:
             ),
             grain_size=self.parameters.phase_mixed.grain_size,
             cp_blend=cp_blend,
+            separation_viscosity=separation_viscosity,
         )
 
         # Get viscosity and thermal conductivity from config.

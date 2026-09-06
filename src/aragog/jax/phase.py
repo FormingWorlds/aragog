@@ -20,6 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
+from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 from aragog.jax.eos import EntropyEOS_JAX
 
 # Enable float64
@@ -93,7 +94,6 @@ class PhaseParams(eqx.Module):
     phi_width: float
     log10_visc_solid: float
     log10_visc_liquid: float
-    visc_liquid: float
     grain_size: float
 
     # Thermal conductivity
@@ -131,6 +131,12 @@ class PhaseParams(eqx.Module):
     phase_smoothing_tanh: float
     phase_smoothing_width: float
 
+    # separation_viscosity_mixture: 1.0 -> gravitational-separation drag
+    # uses the rheological-transition-blended mixture viscosity; 0.0 ->
+    # the fixed single-phase liquid viscosity (SPIDER's
+    # GetGravitationalHeatFlux convention).
+    separation_viscosity_mixture: float
+
     def __init__(
         self,
         phi_rheo: float = 0.4,
@@ -151,12 +157,12 @@ class PhaseParams(eqx.Module):
         bottom_up_grav_sep: bool = True,
         phase_smoothing: str = 'tanh',
         phase_smoothing_width: float = 0.01,
+        separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
     ):
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
         self.log10_visc_solid = jnp.log10(viscosity_solid)
         self.log10_visc_liquid = jnp.log10(viscosity_liquid)
-        self.visc_liquid = viscosity_liquid
         self.grain_size = grain_size
         self.k_solid = k_solid
         self.k_liquid = k_liquid
@@ -175,6 +181,19 @@ class PhaseParams(eqx.Module):
             )
         self.phase_smoothing_tanh = 1.0 if phase_smoothing == 'tanh' else 0.0
         self.phase_smoothing_width = float(phase_smoothing_width)
+        if separation_viscosity not in SEPARATION_VISCOSITY_MODES:
+            raise ValueError(
+                f'separation_viscosity must be one of {SEPARATION_VISCOSITY_MODES}, '
+                f'got {separation_viscosity!r}'
+            )
+        # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
+        # must fail here rather than silently fall back to 'melt'.
+        if separation_viscosity == 'mixture':
+            self.separation_viscosity_mixture = 1.0
+        elif separation_viscosity == 'melt':
+            self.separation_viscosity_mixture = 0.0
+        else:
+            raise ValueError(f'unhandled separation_viscosity {separation_viscosity!r}')
 
 
 class MeshArrays(eqx.Module):
@@ -534,18 +553,26 @@ def relative_velocity(
     density: jax.Array,
     melt_fraction: jax.Array,
     gravity: jax.Array,
+    viscosity: jax.Array,
 ) -> jax.Array:
     """Melt-solid relative velocity for gravitational separation [m/s].
 
     Three-regime mobility model, the permeability over porosity that
     multiplies delta_rho*g/eta (Abe 1993/1995, SPIDER convention):
     Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
+
+    The drag viscosity is set by ``params.separation_viscosity_mixture``:
+    0.0 uses the fixed single-phase liquid viscosity, matching SPIDER's
+    ``GetGravitationalHeatFlux``; 1.0 uses the rheological-transition-
+    blended mixture ``viscosity`` argument, so settling locks up through
+    the same phi_rheo transition that sets the bulk rheology.
     """
     rho_s = eos._lookup_at_phase_boundary('density', P, 'solid')
     rho_l = eos._lookup_at_phase_boundary('density', P, 'melt')
     delta_rho = rho_l - rho_s
     d = params.grain_size
-    eta_l = params.visc_liquid
+    eta_melt = 10.0**params.log10_visc_liquid
+    eta_l = jnp.where(params.separation_viscosity_mixture > 0.5, viscosity, eta_melt)
 
     # Porosity (volume fraction of melt) from densities. Smoothed with
     # sqrt-based soft clip + soft max so the CVODE BDF predictor sees a
@@ -568,9 +595,9 @@ def relative_velocity(
     F_rg = d**2 * por**4.5 * (5.0 / 7.0)
     F_stokes = d**2 * 2.0 / 9.0
 
-    # Smooth regime switching at critical porosities: BKC -> RG at
-    # 0.0769452 (the analytical equality point of the BKC and RG
-    # permeabilities), RG -> Stokes at 0.771462.
+    # Smooth regime switching at the equal-density-ratio crossings:
+    # BKC -> RG at zeta_1 = 0.0769452 (1.7e-5 below the exact BKC-RG
+    # crossing), RG -> Stokes at zeta_2 = 0.771462 (exact).
     w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)
     F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
@@ -858,6 +885,7 @@ def compute_fluxes(
         rho,
         phi_b,
         mesh.gravity,
+        phase_basic.viscosity,
     )
     jgrav_raw = rho * phi_b * (1.0 - phi_b) * v_rel
 

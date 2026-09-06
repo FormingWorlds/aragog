@@ -16,6 +16,7 @@ import logging
 import numpy as np
 import numpy.typing as npt
 
+from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 from aragog.eos.entropy import EntropyEOS
 from aragog.utilities import FloatOrArray, tanh_weight
 
@@ -45,6 +46,11 @@ class EntropyPhaseEvaluator:
         Reference liquid viscosity [Pa s].
     grain_size : float
         Grain size for permeability calculation [m].
+    separation_viscosity : str
+        Drag viscosity source for gravitational separation: ``'melt'``
+        (single-phase liquid viscosity, matches SPIDER's
+        ``GetGravitationalHeatFlux``) or ``'mixture'`` (the
+        rheological-transition-blended bulk viscosity). Default ``'melt'``.
     latent_heat_constant : float
         Latent heat of fusion [J/kg]. Used for gravitational separation flux.
     """
@@ -61,6 +67,7 @@ class EntropyPhaseEvaluator:
         thermal_conductivity_solid: float = 4.0,
         thermal_conductivity_liquid: float = 2.0,
         cp_blend: str = 'latent',
+        separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
         matprop_smooth_width: float = 0.0,
         const_properties: bool = False,
         const_rho: float = 4000.0,
@@ -95,6 +102,12 @@ class EntropyPhaseEvaluator:
         if cp_blend not in ('latent', 'linear'):
             raise ValueError(f"cp_blend must be 'latent' or 'linear', got {cp_blend!r}")
         self._cp_blend = cp_blend
+        if separation_viscosity not in SEPARATION_VISCOSITY_MODES:
+            raise ValueError(
+                f'separation_viscosity must be one of {SEPARATION_VISCOSITY_MODES}, '
+                f'got {separation_viscosity!r}'
+            )
+        self._separation_viscosity = separation_viscosity
 
         # State arrays (set by set_entropy / set_pressure / update)
         self.entropy: npt.NDArray = np.array([])
@@ -427,6 +440,13 @@ class EntropyPhaseEvaluator:
         1. Blake-Kozeny-Carman (low porosity): F = d^2 por^2 / ((1-por)^2 * 1000)
         2. Rumpf-Gupte (intermediate): F = d^2 por^4.5 * (5/7)
         3. Stokes settling (high porosity): F = d^2 * 2/9
+
+        The drag viscosity is set by ``separation_viscosity``: ``'melt'``
+        uses the fixed single-phase liquid viscosity, matching SPIDER's
+        ``GetGravitationalHeatFlux``; ``'mixture'`` uses the
+        rheological-transition-blended bulk viscosity, so settling locks
+        up through the same phi_rheo transition that sets the bulk
+        rheology.
         """
         if self._const_properties:
             return np.zeros_like(self._density)
@@ -435,7 +455,14 @@ class EntropyPhaseEvaluator:
         delta_rho = rho_l - rho_s  # typically negative (melt lighter)
         g = self._g
         d = self._grain_size
-        eta_l = self._visc_liquid
+        # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
+        # must fail here rather than silently fall back to 'melt'.
+        if self._separation_viscosity == 'mixture':
+            eta_l = self._viscosity_val
+        elif self._separation_viscosity == 'melt':
+            eta_l = self._visc_liquid
+        else:
+            raise ValueError(f'unhandled separation_viscosity {self._separation_viscosity!r}')
 
         # Porosity (volume fraction of melt) from densities. Smoothed
         # with sqrt-based soft clip + soft max so the CVODE BDF
@@ -465,17 +492,11 @@ class EntropyPhaseEvaluator:
         # Stokes settling (high porosity): K/por = d^2 * 2/9
         F_stokes = d**2 * 2.0 / 9.0
 
-        # Regime switching at critical porosities. These two values
-        # (zeta_1 = 0.0769452, zeta_2 = 0.771462) are NOT material
-        # parameters: they are the analytical equality points of the
-        # three permeability laws (BKC = RG at zeta_1, RG = Stokes at
-        # zeta_2) under the equal-density-ratio limit, derived in
-        # Bower et al. 2018 Eqs. 13a-c. They depend only on the
-        # functional forms of the three regime laws, not on the
-        # underlying material; varying composition changes individual
-        # F_bkc / F_rg / F_stokes prefactors but the equality points
-        # remain fixed by construction. The tanh blend widths (0.02
-        # and 0.05) are numerical-smoothing tunables, not physics.
+        # Regime switching at the equal-density-ratio crossings zeta_1 =
+        # 0.0769452 (BKC = RG) and zeta_2 = 0.771462 (RG = Stokes),
+        # Bower et al. 2018 Eqs. 13a-c. zeta_2 is exact; zeta_1 sits
+        # 1.7e-5 below the exact BKC-RG crossing (0.02 percent). Blend
+        # widths (0.02, 0.05) are numerical-smoothing tunables, not physics.
         w_rg = tanh_weight(porosity, 0.0769452, 0.02)
         w_stokes = tanh_weight(porosity, 0.771462, 0.05)
         F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes

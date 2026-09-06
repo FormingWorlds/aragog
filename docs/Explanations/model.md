@@ -96,7 +96,7 @@ In the partially molten regime, melt and solid separate vertically by gravity. T
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{(\rho_m - \rho_s)\,g\,F(\phi)}{\eta_m},
+v_\mathrm{rel} = \frac{\lvert\rho_m - \rho_s\rvert\,g\,F(\phi)}{\eta_m},
 $$
 
 where $F(\phi)$ is the melt-solid mobility (the permeability over porosity) set by the configured `grain_size`, and $\mathrm{smth}(\phi)$ is a smoothing function that vanishes outside the mushy band. Two forms are configurable: the production setting is `phase_smoothing = "tanh"` (SPIDER's two-branch `get_smoothing` of width `matprop_smooth_width = 0.01`); the fallback is `phase_smoothing = "cubic_hermite"` ($16\,g\phi^2(1-g\phi)^2$), kept for residual-EOS-mismatch debugging. The corresponding heat flux is

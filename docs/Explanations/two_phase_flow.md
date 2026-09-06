@@ -57,12 +57,18 @@ Two-phase flow adds two additional flux components and one additional source ter
 ### Gravitational separation of melt and solid
 
 Solid and melt have different densities, so they separate vertically by gravity.
-The mass flux of melt (positive upward when melt is buoyant) is
+The mass flux of melt is positive upward; Aragog treats melt as the lighter phase throughout the mantle (no density crossover), so separation always moves melt up and solid down:
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{(\rho_\mathrm{liq} - \rho_\mathrm{sol})\,g\,F(\phi)}{\eta_\mathrm{liq}}.
+v_\mathrm{rel} = \frac{\lvert\rho_\mathrm{liq} - \rho_\mathrm{sol}\rvert\,g\,F(\phi)}{\eta_\mathrm{mix}}.
 $$
+
+$\eta_\mathrm{mix}$ is the drag viscosity selected by `separation_viscosity`.
+The default, `"melt"`, is the fixed liquid viscosity $\eta_\mathrm{liq}$, matching SPIDER's `GetGravitationalHeatFlux`.
+The alternative, `"mixture"`, is the rheological-transition-blended mixture viscosity: it ramps from the liquid value near and above `phi_rheo` to the solid value below it, so settling locks up through the same transition that sets the bulk rheology.
+In a coupled caps-off simulation, `"melt"` keeps the drag viscosity fixed at its low liquid value below `phi_rheo`, so gravitational separation keeps moving melt out of the deepest cells (melt rises, solid settles; the core-mantle boundary itself carries no mass flux) and the CMB temperature collapses; `"mixture"` ties the drag viscosity to the same solid-fraction rise that stiffens the bulk rheology, so separation locks up at the same melt fraction and the collapse does not occur.
+PROTEUS defaults `separation_viscosity` to `"mixture"` for this reason; Aragog's own default stays `"melt"` for SPIDER parity.
 
 The mobility factor $F(\phi)$ (the permeability $K(\phi)$ divided by porosity) spans three asymptotic regimes (Bower et al. (2018) §2.1):
 
@@ -70,8 +76,9 @@ The mobility factor $F(\phi)$ (the permeability $K(\phi)$ divided by porosity) s
 - **Rumpf-Gupte** at intermediate $\phi$: power-law permeability fit to particle-bed measurements (Rumpf & Gupte, 1971, Chem. Ing. Tech. 43, 367)[^cite-rumpfgupte1971].
 - **Blake-Kozeny-Carman** at low $\phi$: melt as a percolating fluid through a near-rigid solid matrix.
 
-The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995)[^cite-abe1995] and reviewed in Bower et al. (2018) §2.1 Eqs. 13a-c, where the regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
-Aragog hard-codes the equal-density-ratio limits ($\rho_\mathrm{sol} = \rho_\mathrm{liq}$) of these expressions, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), and blends through them with a tanh switch rather than recomputing per radial node.
+The two regime boundaries, $\zeta_1 = 0.0769452$ and $\zeta_2 = 0.771462$, are the porosities at which Aragog switches between adjacent permeability laws, placed at their crossings: Blake-Kozeny-Carman with Rumpf-Gupte at $\zeta_1$, Rumpf-Gupte with Stokes settling at $\zeta_2$ (Bower et al. (2018)[^cite-bower2018] §2.1, Eqs. 13a to 13c). For the coded forms, $\zeta_2$ is the exact crossing and $\zeta_1$ sits $1.7 \times 10^{-5}$ below it in porosity (0.02 percent; exact value 0.0769618), far inside the blend width of 0.02. The boundaries follow from the functional forms of the three laws.
+The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995)[^cite-abe1995] and reviewed in Bower et al. (2018) §2.1 Eqs. 13a-c, where the general regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
+Aragog hard-codes fixed porosity thresholds, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), close to the equal-density-ratio limits of these expressions (0.0769645 and 0.7714621), and blends through them with a tanh switch rather than recomputing per radial node.
 The resulting mobility-vs-porosity curve (Figure 1 of [Heat transport](heat_transport.md#melt-solid-mobility-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
 The corresponding heat flux is
 

@@ -270,6 +270,11 @@ class Mesh:
             np.max(basic_coordinates),
             np.min(basic_coordinates),
         )
+        # Refresh basic pressure and density from the final basic radii, which
+        # differ from initial_spatial once the mass-coordinate solve has run.
+        # The density refresh keeps get_dxidr_basic consistent with the mesh.
+        self.eos.set_basic_pressure(self.basic.radii)
+        self.eos.set_basic_density(self.basic.radii)
 
         # STEP 2: Set up the staggered mesh
         staggered_mass_coordinates: npt.NDArray = (

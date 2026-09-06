@@ -8,6 +8,12 @@ import attrs
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
+# Allowed separation_viscosity modes and default, single-sourced here and
+# imported by every site that parses, validates, or consumes the option
+# (parser.py, eos/entropy_phase.py, jax/phase.py, solver/entropy_solver.py).
+SEPARATION_VISCOSITY_MODES: tuple[str, str] = ('melt', 'mixture')
+SEPARATION_VISCOSITY_DEFAULT: str = 'melt'
+
 
 @attrs.define
 class PhaseConfig:
@@ -65,6 +71,12 @@ class MixedPhaseConfig:
         Width of smoothing at phase boundaries.
     grain_size : float
         Grain size [m] for permeability calculations.
+    separation_viscosity : str
+        Drag viscosity source for gravitational separation:
+        ``'melt'`` (single-phase liquid viscosity, matches SPIDER's
+        ``GetGravitationalHeatFlux``) or ``'mixture'`` (the
+        rheological-transition-blended bulk viscosity). Default
+        ``'melt'``.
     cp_blend : str
         Mushy-zone Cp blending mode: ``'latent'`` (SPIDER-parity,
         latent-heat-augmented) or ``'linear'`` (linear blend of
@@ -109,6 +121,10 @@ class MixedPhaseConfig:
     phase: str
     phase_transition_width: float
     grain_size: float
+    separation_viscosity: str = attrs.field(
+        default=SEPARATION_VISCOSITY_DEFAULT,
+        validator=attrs.validators.in_(SEPARATION_VISCOSITY_MODES),
+    )
     cp_blend: str = 'latent'
     matprop_smooth_width: float = 0.0
     const_properties: bool = False
