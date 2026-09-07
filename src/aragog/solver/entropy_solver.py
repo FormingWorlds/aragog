@@ -986,7 +986,9 @@ class EntropySolver:
         # sharpens the diagnostic without changing the integration, the
         # final state, or ``dt_actual``. Only the non-root path uses it;
         # when a phi-step-cap root fires the call already stops early.
-        self._cvode_output_points = 65
+        # Read from the solver config section so a run can refine the
+        # diagnostic grid without changing the integration itself.
+        self._cvode_output_points = self.parameters.solver.cvode_output_points
         # Compression work [J] from the most recent structure re-solve.
         # When the planet contracts, the static pressure at each frozen
         # mass element rises, so the mantle enthalpy gains the adiabatic
@@ -2539,7 +2541,7 @@ class EntropySolver:
         # the start and flattens later. A quadratic grid resolves the
         # F_int integral to ~0.1 percent with a few dozen points, where a
         # uniform grid of the same size leaves ~10 percent.
-        n_out = max(2, int(getattr(self, '_cvode_output_points', 2)))
+        n_out = self._cvode_output_points
         if n_out > 2 and float(end_time) > float(start_time):
             x = np.linspace(0.0, 1.0, n_out) ** 2
             tspan = float(start_time) + (float(end_time) - float(start_time)) * x
@@ -2559,8 +2561,10 @@ class EntropySolver:
         #                      Jacobian FD + LU factorisations)
         #   NumErrTestFails  = netf  (local truncation error test failures)
         #   LastOrder/CurrentOrder = BDF order actually in use (1..5)
+        cvode_info: dict | None = None
         try:
-            info = solver._integrator.get_info()
+            info = solver.get_info()
+            cvode_info = info
             logger.info(
                 'CVODE stats: nst=%d nfe=%d nsetups=%d netf=%d '
                 'order=%d last_step=%.2e cur_step=%.2e '
@@ -2587,6 +2591,13 @@ class EntropySolver:
         #   .message (human-readable)
         #   .nfev   (RHS call count)
         result = OptimizeResult()
+        # True internal BDF step/RHS counts from CVODE, distinct from
+        # ``result.t``/``result.nfev`` below, which describe the dense
+        # output grid (or the 2-point root array), not CVODE's adaptive
+        # step sequence.
+        if cvode_info is not None:
+            result.cvode_nst = int(cvode_info.get('NumSteps', -1))
+            result.cvode_nfe = int(cvode_info.get('NumRhsEvals', -1))
         # ``scikits.odes`` rootfn-fire idiosyncrasy: when CVODE's rootfn
         # fires (flag=2), ``cvode_sol.values.t`` contains ONLY the start
         # time (the integration progress to the root is dropped), while
@@ -3106,15 +3117,28 @@ class EntropySolver:
         # Diagnostic logging: internal BDF step statistics (in physical yr)
         if sol.t is not None and len(sol.t) > 1:
             dt_internal = np.diff(sol.t)
-            logger.info(
-                'EntropySolver: %d internal steps, %d RHS evals, '
-                'dt_min=%.2e yr, dt_max=%.2e yr, dt_med=%.2e yr',
-                len(sol.t),
-                sol.nfev,
-                dt_internal.min(),
-                dt_internal.max(),
-                np.median(dt_internal),
-            )
+            cvode_nst = getattr(sol, 'cvode_nst', None)
+            cvode_nfe = getattr(sol, 'cvode_nfe', None)
+            if use_cvode and cvode_nst is not None:
+                logger.info(
+                    'EntropySolver: %d internal steps, %d RHS evals, '
+                    'output grid dt_min=%.2e yr, dt_max=%.2e yr, dt_med=%.2e yr',
+                    cvode_nst,
+                    cvode_nfe,
+                    dt_internal.min(),
+                    dt_internal.max(),
+                    np.median(dt_internal),
+                )
+            else:
+                logger.info(
+                    'EntropySolver: %d internal steps, %d RHS evals, '
+                    'dt_min=%.2e yr, dt_max=%.2e yr, dt_med=%.2e yr',
+                    len(sol.t),
+                    sol.nfev,
+                    dt_internal.min(),
+                    dt_internal.max(),
+                    np.median(dt_internal),
+                )
             logger.info(
                 'EntropySolver: phase-boundary cache hits=%d misses=%d',
                 self.state._pb_cache_hits,

@@ -446,3 +446,25 @@ def test_parameters_post_init_param_utbl_off_zeros_constant():
     kwargs = _build_minimal_parameters_kwargs(boundary_conditions=bc)
     p = Parameters(**kwargs)
     assert p.boundary_conditions.param_utbl_const == pytest.approx(0.0, abs=1e-30)
+
+
+# ---- _SolverParameters.cvode_output_points ----------------------------------
+
+
+def test_solver_parameters_cvode_output_points_default():
+    """``cvode_output_points`` defaults to 65 when not supplied."""
+    sv = _SolverParameters(start_time=0.0, end_time=1.0e6, atol=1e-9, rtol=1e-6)
+    assert sv.cvode_output_points == 65
+
+
+@pytest.mark.parametrize('bad_value', [1, 0, -5, 2.5, 'ten'])
+def test_solver_parameters_rejects_invalid_cvode_output_points(bad_value):
+    """Non-integer or sub-2 values must raise at construction."""
+    with pytest.raises(ValueError, match='cvode_output_points'):
+        _SolverParameters(
+            start_time=0.0,
+            end_time=1.0e6,
+            atol=1e-9,
+            rtol=1e-6,
+            cvode_output_points=bad_value,
+        )

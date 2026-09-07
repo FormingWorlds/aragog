@@ -25,6 +25,8 @@ class SolverConfig:
         Relative tolerance for BDF solver.
     tsurf_poststep_change : float
         Maximum surface temperature change per step [K].
+    cvode_output_points : int
+        Number of points on the CVODE dense output grid.
     """
 
     start_time: float
@@ -32,3 +34,10 @@ class SolverConfig:
     atol: float
     rtol: float
     tsurf_poststep_change: float = 30.0
+    cvode_output_points: int = attrs.field(
+        default=65,
+        validator=attrs.validators.and_(
+            attrs.validators.instance_of(int),
+            attrs.validators.ge(2),
+        ),
+    )

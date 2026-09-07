@@ -696,7 +696,7 @@ def test_solve_cvode_uses_cvode_roots_when_flag_2():
 
     mock_solver = MagicMock()
     mock_solver.solve.return_value = mock_cvode_sol
-    mock_solver._integrator.get_info.return_value = {}
+    mock_solver.get_info.return_value = {}
 
     start_time = 0.1
     end_time = 1.0
@@ -704,6 +704,7 @@ def test_solve_cvode_uses_cvode_roots_when_flag_2():
     instance = MagicMock(spec=EntropySolver)
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
+    instance._cvode_output_points = 65
 
     fake_rootfn = MagicMock()
     fake_rootfn.evals = 7
@@ -761,11 +762,12 @@ def test_solve_cvode_falls_back_to_values_when_no_roots_on_flag_2():
 
     mock_solver = MagicMock()
     mock_solver.solve.return_value = mock_cvode_sol
-    mock_solver._integrator.get_info.return_value = {}
+    mock_solver.get_info.return_value = {}
 
     instance = MagicMock(spec=EntropySolver)
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
+    instance._cvode_output_points = 65
 
     fake_rootfn = MagicMock()
     fake_rootfn.evals = 1
@@ -818,11 +820,12 @@ def test_solve_cvode_uses_values_on_normal_completion_flag_0():
 
     mock_solver = MagicMock()
     mock_solver.solve.return_value = mock_cvode_sol
-    mock_solver._integrator.get_info.return_value = {}
+    mock_solver.get_info.return_value = {}
 
     instance = MagicMock(spec=EntropySolver)
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
+    instance._cvode_output_points = 65
 
     with patch('aragog.solver.entropy_solver._scikits_cvode', return_value=mock_solver):
         result = EntropySolver._solve_cvode(

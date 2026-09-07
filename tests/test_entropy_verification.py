@@ -12,6 +12,7 @@ Test hierarchy:
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -943,6 +944,26 @@ class TestCvodeEnergyOutputGrid:
         dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
         dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])
         np.testing.assert_allclose(dt_dense, dt_ref, rtol=1e-10)
+
+    def test_diagnostic_log_reports_true_cvode_counts_not_output_grid_size(
+        self, caplog
+    ):
+        """The step-statistics log line must report CVODE's own internal
+        step and RHS-eval counts, distinct from the output-grid size, and
+        label the dt fields as describing the output grid."""
+        s = self._build_greybody_solver('cvode', n_out=65)
+        with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+            s.solve()
+        records = [r for r in caplog.records if 'internal steps' in r.message]
+        assert len(records) == 1, 'expected exactly one step-statistics log line'
+        msg = records[0].message
+        assert 'output grid dt_min' in msg
+        reported_steps = int(msg.split(' internal steps', 1)[0].split()[-1])
+        assert reported_steps == s._solution.cvode_nst
+        assert reported_steps != 65, (
+            'the true CVODE step count coincides with the output-grid size '
+            'by chance; pick a different n_out to keep this test meaningful'
+        )
 
 
 # -- Test 3: Grey-body cooling timescale ---------------------------------------

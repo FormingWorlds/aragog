@@ -357,6 +357,17 @@ class _SolverParameters:
     atol: float
     rtol: float
     tsurf_poststep_change: float = 30.0
+    # Number of points on the CVODE dense output grid, quadratically
+    # front-loaded over each macro-step. Raising it sharpens the F_int
+    # trapezoidation diagnostic without changing the integration itself.
+    cvode_output_points: int = 65
+
+    def __post_init__(self):
+        if not isinstance(self.cvode_output_points, int) or self.cvode_output_points < 2:
+            raise ValueError(
+                'cvode_output_points must be an integer >= 2, got '
+                f'{self.cvode_output_points!r}'
+            )
 
 
 @dataclass(kw_only=True)

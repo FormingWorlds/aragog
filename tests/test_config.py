@@ -701,3 +701,40 @@ def test_solver_config_rejects_missing_tolerances():
     """Edge case: omitting atol or rtol raises TypeError at construct."""
     with pytest.raises(TypeError):
         SolverConfig(start_time=0.0, end_time=1.0e6, rtol=1.0e-6)
+
+
+def test_solver_config_cvode_output_points_default():
+    """``cvode_output_points`` defaults to 65 when not supplied."""
+    s = SolverConfig(
+        start_time=0.0,
+        end_time=1.0e6,
+        atol=1.0e-9,
+        rtol=1.0e-6,
+    )
+    assert s.cvode_output_points == 65
+
+
+@pytest.mark.parametrize('bad_value', [2.5, 'ten', None])
+def test_solver_config_rejects_non_int_cvode_output_points(bad_value):
+    """Edge case: a non-int value raises TypeError at construct."""
+    with pytest.raises(TypeError):
+        SolverConfig(
+            start_time=0.0,
+            end_time=1.0e6,
+            atol=1.0e-9,
+            rtol=1.0e-6,
+            cvode_output_points=bad_value,
+        )
+
+
+@pytest.mark.parametrize('bad_value', [1, 0, -5])
+def test_solver_config_rejects_sub_minimum_cvode_output_points(bad_value):
+    """Edge case: a value below 2 raises ValueError at construct."""
+    with pytest.raises(ValueError, match='cvode_output_points'):
+        SolverConfig(
+            start_time=0.0,
+            end_time=1.0e6,
+            atol=1.0e-9,
+            rtol=1.0e-6,
+            cvode_output_points=bad_value,
+        )
