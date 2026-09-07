@@ -432,9 +432,10 @@ class EntropyPhaseEvaluator:
 
         Returns zero in const_properties mode (no phase contrast).
 
-        Uses Abe (1993) three-regime permeability model based on porosity
-        (volume fraction of melt, not mass fraction), matching SPIDER's
-        GetGravitationalHeatFlux in energy.c.
+        Uses the Abe (1995) gravitational separation velocity with the
+        three-regime permeability of Bower et al. (2018) section 2.1, based
+        on porosity (volume fraction of melt, not mass fraction), matching
+        SPIDER's GetGravitationalHeatFlux in energy.c.
 
         Regimes (F = K/porosity, the quantity multiplying delta_rho*g/eta):
         1. Blake-Kozeny-Carman (low porosity): F = d^2 por^2 / ((1-por)^2 * 1000)
@@ -479,7 +480,8 @@ class EntropyPhaseEvaluator:
         hi_u = 1.0 - p_lo
         porosity = 1.0 - 0.5 * (hi_u + np.sqrt(hi_u * hi_u + eps_p * eps_p))
 
-        # Three-regime permeability / porosity (Abe 1993/1995, SPIDER convention).
+        # Three-regime permeability / porosity (Abe 1995, Bower et al. 2018
+        # section 2.1; SPIDER convention).
         # F = permeability(porosity) / porosity. The relative velocity is
         # v = |delta_rho| * g * F / eta_liquid.
         por = np.maximum(porosity, 1e-20)

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger('fwl.' + __name__)
 
-# Critical Reynolds number from Abe (1993)
+# Critical Reynolds number, Abe (1995) via Bower et al. (2018) section 2.1
 RE_CRIT = 9.0 / 8.0
 
 

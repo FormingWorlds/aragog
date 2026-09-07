@@ -26,7 +26,7 @@ from aragog.jax.eos import EntropyEOS_JAX
 # Enable float64
 jax.config.update('jax_enable_x64', True)
 
-# Critical Reynolds number from Abe (1993)
+# Critical Reynolds number, Abe (1995) via Bower et al. (2018) section 2.1
 RE_CRIT = 9.0 / 8.0
 
 
@@ -542,7 +542,7 @@ def evaluate_phase(
 
 
 # ---------------------------------------------------------------------------
-# Relative velocity (gravitational separation, Abe 1993)
+# Relative velocity (gravitational separation, Abe 1995)
 # ---------------------------------------------------------------------------
 
 
@@ -558,8 +558,8 @@ def relative_velocity(
     """Melt-solid relative velocity for gravitational separation [m/s].
 
     Three-regime mobility model, the permeability over porosity that
-    multiplies delta_rho*g/eta (Abe 1993/1995, SPIDER convention):
-    Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
+    multiplies delta_rho*g/eta (Abe 1995, Bower et al. 2018 section 2.1;
+    SPIDER convention): Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
 
     The drag viscosity is set by ``params.separation_viscosity_mixture``:
     0.0 uses the fixed single-phase liquid viscosity, matching SPIDER's
