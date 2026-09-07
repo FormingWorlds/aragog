@@ -784,8 +784,9 @@ class TestCvodeEnergyOutputGrid:
     integral of a steeply-decaying boundary flux is tens of percent wrong,
     which is the dominant term in ``E_residual_cons_frac``. ``EntropySolver``
     requests ``_cvode_output_points`` intermediate points (front-loaded) so
-    the integral resolves the decay; CVODE interpolates them from its own
-    internal steps, so the integration and final state are unchanged.
+    the integral resolves the decay; that grid feeds back into CVODE
+    stepping, so the step count and final state shift weakly with it
+    (state near rtol, below any physical signal).
 
     Verifies that the dense grid recovers the flux integral to within a
     small tolerance of a high-resolution scipy reference, with a

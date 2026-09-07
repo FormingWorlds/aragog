@@ -34,6 +34,8 @@ class SolverConfig:
     atol: float
     rtol: float
     tsurf_poststep_change: float = 30.0
+    # Not the live config path: runtime validation uses
+    # aragog.parser._SolverParameters, not this attrs schema.
     cvode_output_points: int = attrs.field(
         default=65,
         validator=attrs.validators.and_(

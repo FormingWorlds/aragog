@@ -752,8 +752,10 @@ def test_run_set_out_of_range_value_reports_usage_error(tmp_path):
     assert 'cvode_output_points must be >= 2' in (result.output or ''), (
         f'UsageError must carry the validator message; got {result.output!r}.'
     )
-    assert 'Traceback' not in (result.output or ''), (
-        f'CLI must not leak a raw traceback; got {result.output!r}.'
+    # A clean UsageError exits via SystemExit; a raw TypeError or
+    # ValueError here means the handler let the config error escape.
+    assert not isinstance(result.exception, (TypeError, ValueError)), (
+        f'CLI must not leak a raw config exception; got {result.exception!r}.'
     )
 
 
