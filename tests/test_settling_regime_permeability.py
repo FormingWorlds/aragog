@@ -13,7 +13,7 @@ viscosity-scaling tests do not cover:
 
 1. ``v_rel >= 0`` across the whole porosity range, with a melt-lighter
    density contrast (``delta_rho < 0``). A dropped ``abs`` on the density
-   contrast, or a dropped ``max(F, 0)``, would produce a negative velocity.
+   contrast would produce a negative velocity here.
 2. ``v_rel`` scales linearly with the magnitude of the density contrast at
    fixed porosity. A regression that froze the contrast to a constant would
    leave the ratio at one instead of tracking the contrast ratio.
@@ -21,6 +21,9 @@ viscosity-scaling tests do not cover:
    matches that regime's closed form and differs by a wide margin from the
    other two closed forms.
 4. The numpy and JAX paths agree to 1e-10 across the porosity range.
+5. ``v_rel`` matches the full three-regime blend at porosities that bracket
+   the two crossings, which pins the crossing constants 0.0769452 and
+   0.771462 that the deep-regime cases in item 3 leave free.
 
 Both paths take the phase-boundary densities from an EOS lookup and derive
 porosity from the local density, so a stub exposing only
@@ -78,6 +81,29 @@ _REGIME_CASES = [
 ]
 
 
+# Porosities that bracket the two crossings, within a few blend widths, where
+# both weights are unsaturated and the blend depends on the crossing constant.
+_CROSSING_BRACKETS = [0.05, 0.065, 0.09, 0.11, 0.70, 0.74, 0.80, 0.85]
+
+
+def _F_blend(porosity):
+    """Full three-regime mobility blend at ``porosity``.
+
+    Mirrors the source blend: two ``tanh`` weights at the equal-mobility
+    crossings 0.0769452 (BKC-RG) and 0.771462 (RG-Stokes), with widths 0.02
+    and 0.05, combine the three closed forms. Comparing ``v_rel`` against
+    this where the weights are unsaturated pins both crossing constants,
+    since shifting either crossing moves the weight where the adjacent
+    regimes differ and breaks the match by several percent.
+    """
+    w_rg = 0.5 * (1.0 + np.tanh((porosity - 0.0769452) / 0.02))
+    w_stokes = 0.5 * (1.0 + np.tanh((porosity - 0.771462) / 0.05))
+    F = (1.0 - w_rg) * _F_bkc(porosity)
+    F += (w_rg - w_stokes) * _F_rg(porosity)
+    F += w_stokes * _F_stokes()
+    return F
+
+
 class _StubPhaseBoundaryEOS:
     """Numpy stub exposing only the phase-boundary density lookup."""
 
@@ -120,8 +146,10 @@ def test_relative_velocity_nonnegative_across_porosity_numpy():
     """Melt-lighter contrast (delta_rho < 0) still yields v_rel >= 0.
 
     A regression dropping the ``abs`` on the density contrast would make
-    every value here negative; dropping ``max(F, 0)`` would make the edge
-    values negative.
+    every value here negative. The ``max(F, 0)`` clamp is a defensive guard
+    that these in-domain porosities do not exercise: the mobility F is
+    non-negative for every porosity the density-to-porosity map produces, so
+    the clamp never changes a value in this sweep.
     """
     ev = _numpy_evaluator()
     porosities = np.linspace(0.0, 1.0, 41)
@@ -165,6 +193,21 @@ def test_relative_velocity_scales_linearly_with_density_contrast_numpy():
     v_a = _numpy_v_rel(ev_a, _density_for_porosity(porosity, 4200.0, 3900.0))
     v_b = _numpy_v_rel(ev_b, _density_for_porosity(porosity, 4350.0, 3750.0))
     assert v_b / v_a == pytest.approx(600.0 / 300.0, rel=1e-6)
+
+
+def test_relative_velocity_pins_regime_crossings_numpy():
+    """v_rel matches the pinned-crossing blend where the weights are active.
+
+    At porosities that bracket 0.0769452 and 0.771462 both blend weights are
+    unsaturated, so the velocity tracks the crossing constants. A shift of
+    either crossing moves the blend here by several percent, far outside the
+    2e-3 tolerance, so this pins the two constants that the deep-regime cases
+    leave free.
+    """
+    ev = _numpy_evaluator()
+    for porosity in _CROSSING_BRACKETS:
+        v = _numpy_v_rel(ev, _density_for_porosity(porosity))
+        assert v == pytest.approx(_v_from_F(_F_blend(porosity)), rel=2.0e-3)
 
 
 # --- JAX path -------------------------------------------------------------
@@ -239,6 +282,13 @@ def test_relative_velocity_scales_linearly_with_density_contrast_jax():
     v_a = _jax_v_rel(_density_for_porosity(porosity, 4200.0, 3900.0), 4200.0, 3900.0)
     v_b = _jax_v_rel(_density_for_porosity(porosity, 4350.0, 3750.0), 4350.0, 3750.0)
     assert v_b / v_a == pytest.approx(600.0 / 300.0, rel=1e-6)
+
+
+def test_relative_velocity_pins_regime_crossings_jax():
+    """JAX path: v_rel matches the pinned-crossing blend where weights are active."""
+    for porosity in _CROSSING_BRACKETS:
+        v = _jax_v_rel(_density_for_porosity(porosity))
+        assert v == pytest.approx(_v_from_F(_F_blend(porosity)), rel=2.0e-3)
 
 
 # --- cross-path parity ----------------------------------------------------
