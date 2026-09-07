@@ -28,6 +28,20 @@ The two surface-flux integrals (`step_dE_F_int_J` and `step_dE_F_cmb_J`) are are
 - **State-mass**: $\rho_\text{state} = \rho(P_\text{stag},\,S(t))$, evolves with the solver state. Used for instantaneous power diagnostics.
 - **Frozen mass**: $\rho_\text{struct}\,V$ from `mesh.staggered_effective_density × mesh.basic.volume`, fixed at IC. Used in the conservation-grade integrated enthalpy `E_state_cons` (see below).
 
+## Reported CMB flux column
+
+`SolverOutput.F_cmb`, written to the `F_cmb` column of `runtime_helpfile.csv`, is the conserved step-average of the core-mantle-boundary heat flux over the solver call, not an end-of-step snapshot. It is the same trapezoidal time-mean the energy budget uses,
+
+$$
+F_\text{cmb} = \frac{\texttt{step\_dE\_F\_cmb\_J}}{A_\text{cmb}\,\Delta t_\text{call}},
+$$
+
+with $\Delta t_\text{call}$ the total time integrated over the call (the sum of the accepted CVODE sub-step durations). By construction $F_\text{cmb}\,A_\text{cmb}\,\Delta t_\text{call}$ reproduces `step_dE_F_cmb_J`, so the reported flux and the closed-mantle energy budget cannot disagree.
+
+On a call where the flux varies smoothly the step-average and the end-of-step value agree to the sub-step resolution. On a call that spans a sharp transient the two differ by design. Over the first integrated step of a magma-ocean start the mean flux can exceed the end-of-step value by more than an order of magnitude. At a phase-boundary crossing the end-of-step interpolation can collapse toward zero at an internal spike while the conserved step-average tracks the physical flux. Reporting the step-average keeps the column consistent with `step_dE_F_cmb_J` and free of that interpolation artefact.
+
+For an insulating core ($F_\text{cmb} = 0$ boundary condition) the column reports the boundary-consistent zero. When no time is integrated over the call ($\Delta t_\text{call} = 0$, a duplicate output row) the column falls back to the instantaneous basic-node-0 flux. The raw end-of-step value stays available as `heat_flux[0]` on `SolverOutput`.
+
 ## State-heat and compression terms
 
 Two further `SolverOutput` fields describe where the mantle's internal energy sits and how it moves. They are easy to conflate because both carry units of joules and both go through the equation of state, but only one enters the conservation budget.

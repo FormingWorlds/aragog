@@ -448,6 +448,14 @@ class EntropyPhaseEvaluator:
         rheological-transition-blended bulk viscosity, so settling locks
         up through the same phi_rheo transition that sets the bulk
         rheology.
+
+        Where the tabulated solid and melt densities cross so that the
+        melt is locally the denser phase (``rho_s < rho_l``), the porosity
+        denominator ``rho_s - rho_l`` is floored at a small positive value.
+        This keeps the porosity near zero and the separation one-directional
+        (melt up, solid down) at those nodes instead of reversing it. The
+        suppression stays local to that shallow region and does not change
+        the macroscopic front evolution.
         """
         if self._const_properties:
             return np.zeros_like(self._density)

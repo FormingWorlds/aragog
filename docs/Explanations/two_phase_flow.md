@@ -57,7 +57,7 @@ Two-phase flow adds two additional flux components and one additional source ter
 ### Gravitational separation of melt and solid
 
 Solid and melt have different densities, so they separate vertically by gravity.
-The mass flux of melt is positive upward; Aragog treats melt as the lighter phase throughout the mantle (no density crossover), so separation always moves melt up and solid down:
+The mass flux of melt is positive upward; Aragog treats melt as the lighter phase, so separation moves melt up and solid down:
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
