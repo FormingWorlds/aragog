@@ -22,8 +22,9 @@ viscosity-scaling tests do not cover:
    other two closed forms.
 4. The numpy and JAX paths agree to 1e-10 across the porosity range.
 5. ``v_rel`` matches the full three-regime blend at porosities that bracket
-   the two crossings, which pins the crossing constants 0.0769452 and
-   0.771462 that the deep-regime cases in item 3 leave free.
+   the two crossings. The low brackets pin the BKC-RG crossing 0.0769452 and
+   the high brackets pin the RG-Stokes crossing 0.771462, the constants that
+   the deep-regime cases in item 3 leave free.
 
 Both paths take the phase-boundary densities from an EOS lookup and derive
 porosity from the local density, so a stub exposing only
@@ -81,8 +82,8 @@ _REGIME_CASES = [
 ]
 
 
-# Porosities that bracket the two crossings, within a few blend widths, where
-# both weights are unsaturated and the blend depends on the crossing constant.
+# Porosities that bracket the two crossings, within a few blend widths. The
+# four low points isolate the BKC-RG crossing, the four high points the RG-Stokes.
 _CROSSING_BRACKETS = [0.05, 0.065, 0.09, 0.11, 0.70, 0.74, 0.80, 0.85]
 
 
@@ -92,9 +93,11 @@ def _F_blend(porosity):
     Mirrors the source blend: two ``tanh`` weights at the equal-mobility
     crossings 0.0769452 (BKC-RG) and 0.771462 (RG-Stokes), with widths 0.02
     and 0.05, combine the three closed forms. Comparing ``v_rel`` against
-    this where the weights are unsaturated pins both crossing constants,
-    since shifting either crossing moves the weight where the adjacent
-    regimes differ and breaks the match by several percent.
+    this at the crossing brackets pins both constants: at the low brackets
+    ``w_stokes`` is saturated near zero while ``w_rg`` varies, so they pin
+    0.0769452; at the high brackets ``w_rg`` is saturated near one while
+    ``w_stokes`` varies, so they pin 0.771462. A shifted crossing moves the
+    unsaturated weight and breaks the match by more than the test tolerance.
     """
     w_rg = 0.5 * (1.0 + np.tanh((porosity - 0.0769452) / 0.02))
     w_stokes = 0.5 * (1.0 + np.tanh((porosity - 0.771462) / 0.05))
@@ -196,13 +199,15 @@ def test_relative_velocity_scales_linearly_with_density_contrast_numpy():
 
 
 def test_relative_velocity_pins_regime_crossings_numpy():
-    """v_rel matches the pinned-crossing blend where the weights are active.
+    """v_rel matches the pinned-crossing blend at the crossing brackets.
 
-    At porosities that bracket 0.0769452 and 0.771462 both blend weights are
-    unsaturated, so the velocity tracks the crossing constants. A shift of
-    either crossing moves the blend here by several percent, far outside the
-    2e-3 tolerance, so this pins the two constants that the deep-regime cases
-    leave free.
+    The four low brackets sit near 0.0769452, where ``w_stokes`` is saturated
+    near zero and ``w_rg`` varies, so they pin the BKC-RG crossing. The four
+    high brackets sit near 0.771462, where ``w_rg`` is saturated near one and
+    ``w_stokes`` varies, so they pin the RG-Stokes crossing. A 2 percent shift
+    of either crossing moves the blend at every bracket by more than the 2e-3
+    tolerance, so this pins the two constants that the deep-regime cases leave
+    free.
     """
     ev = _numpy_evaluator()
     for porosity in _CROSSING_BRACKETS:
@@ -285,7 +290,7 @@ def test_relative_velocity_scales_linearly_with_density_contrast_jax():
 
 
 def test_relative_velocity_pins_regime_crossings_jax():
-    """JAX path: v_rel matches the pinned-crossing blend where weights are active."""
+    """JAX path: v_rel matches the pinned-crossing blend at the crossing brackets."""
     for porosity in _CROSSING_BRACKETS:
         v = _jax_v_rel(_density_for_porosity(porosity))
         assert v == pytest.approx(_v_from_F(_F_blend(porosity)), rel=2.0e-3)
