@@ -359,7 +359,9 @@ class _SolverParameters:
     tsurf_poststep_change: float = 30.0
     # Number of points on the CVODE dense output grid, quadratically
     # front-loaded over each macro-step. Raising it sharpens the F_int
-    # trapezoidation diagnostic without changing the integration itself.
+    # trapezoidation diagnostic; it also feeds back into CVODE stepping,
+    # so the step count and final state shift weakly with it (state near
+    # rtol, below any physical signal).
     cvode_output_points: int = 65
 
     def __post_init__(self):

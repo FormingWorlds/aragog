@@ -339,6 +339,34 @@ def test_parameters_from_file_loads_bundled_abe_mixed_cfg():
         )
 
 
+def test_parameters_from_file_toml_reads_cvode_output_points(tmp_path):
+    """A ``cvode_output_points`` set in a TOML ``[solver]`` block must
+    reach ``Parameters.solver.cvode_output_points`` intact.
+
+    Covers the full TOML ingestion chain (tomllib -> section mapping ->
+    ``_SolverParameters``), not just the dataclass constructor the unit
+    tests exercise directly. Uses a non-default value (129) so a
+    regression that dropped the field and fell back to the default (65)
+    is caught.
+    """
+    from aragog import CFG_DATA
+
+    src = Path(str(CFG_DATA.joinpath('abe_solid.toml'))).read_text(encoding='utf-8')
+    assert 'cvode_output_points' not in src, (
+        'fixture assumes the bundled TOML omits cvode_output_points; '
+        'update the injected value if the default is now set there.'
+    )
+    injected = src.replace('[solver]\n', '[solver]\ncvode_output_points = 129\n', 1)
+    cfg = tmp_path / 'cvode.toml'
+    cfg.write_text(injected, encoding='utf-8')
+
+    p = Parameters.from_file(cfg)
+    assert p.solver.cvode_output_points == 129, (
+        f'TOML [solver] cvode_output_points did not reach the solver params; '
+        f'got {p.solver.cvode_output_points}.'
+    )
+
+
 def test_parameters_from_file_strict_rejects_scalings_section(tmp_path):
     """A configuration file containing a [scalings] section must
     raise ValueError at load time, not be silently ignored.

@@ -981,13 +981,11 @@ class EntropySolver:
         # over this grid; the surface flux decays steeply within a long
         # call, so two endpoints under-resolve it (the F_int integral can
         # be tens of percent wrong over a multi-kyr step, which is the
-        # dominant term in ``E_residual_cons_frac``). CVODE interpolates
-        # these points from its own internal steps, so a finer output grid
-        # sharpens the diagnostic without changing the integration, the
-        # final state, or ``dt_actual``. Only the non-root path uses it;
-        # when a phi-step-cap root fires the call already stops early.
-        # Read from the solver config section so a run can refine the
-        # diagnostic grid without changing the integration itself.
+        # dominant term in ``E_residual_cons_frac``). The requested output
+        # grid feeds back into CVODE stepping, so a finer grid weakly
+        # shifts the accepted step count and the final state; the state
+        # shift stays near rtol, below any physical signal. Only the
+        # non-root path uses it; a phi-step-cap root stops the call early.
         self._cvode_output_points = self.parameters.solver.cvode_output_points
         # Compression work [J] from the most recent structure re-solve.
         # When the planet contracts, the static pressure at each frozen
@@ -2529,11 +2527,10 @@ class EntropySolver:
                 {k: v for k, v in cvode_options.items() if k != 'old_api'},
             )
         # Request intermediate output points so the per-call energy
-        # integrals resolve the within-call flux decay. CVODE interpolates
-        # these from its internal steps; the integration, final state, and
-        # step count are unchanged. A phi-step-cap root (when armed) stops
-        # the call before these points and is handled by the root path
-        # below, so the extra points are inert in that case.
+        # integrals resolve the within-call flux decay. This grid feeds
+        # back into CVODE stepping, so the step count and final state
+        # shift weakly with it (state near rtol). The root path below
+        # handles a phi-step-cap fire, where these points are inert.
         #
         # The grid is front-loaded (quadratic spacing, dense near the call
         # start) because each macro-step is a relaxation toward the new
