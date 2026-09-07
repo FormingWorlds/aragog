@@ -3195,9 +3195,12 @@ class EntropySolver:
         -------
         dict
             Keys ``F_int``, ``F_cmb``, ``Q_radio``, ``Q_tidal``, each
-            mapping to the per-call integral in J. All zeros when no
-            entropy_eos is attached or the trajectory has fewer than
-            2 points (cannot integrate).
+            mapping to the per-call integral in J, plus
+            ``F_cmb_step_avg``, the step-average CMB flux in W/m^2
+            (``F_cmb`` divided by ``A_cmb`` and the call duration). When
+            no entropy_eos is attached or the trajectory has fewer than
+            2 points (cannot integrate), the J-integral keys are zero
+            and ``F_cmb_step_avg`` is None (no flux to report).
         """
         zero = {
             'F_int': 0.0,

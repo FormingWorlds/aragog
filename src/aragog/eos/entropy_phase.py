@@ -452,8 +452,12 @@ class EntropyPhaseEvaluator:
         Where the tabulated solid and melt densities cross so that the
         melt is locally the denser phase (``rho_s < rho_l``), the porosity
         denominator ``rho_s - rho_l`` is floored at a small positive value.
-        This keeps the porosity near zero and the separation one-directional
-        (melt up, solid down) at those nodes instead of reversing it. The
+        This keeps the porosity near zero at those nodes, so the
+        permeability factor ``F`` and the settling velocity stay small
+        there. The separation direction is fixed independently by the
+        non-negative density contrast ``|rho_l - rho_s|`` in ``v_rel``,
+        which is non-negative by construction and cannot reverse; the
+        floor suppresses the settling magnitude, not the direction. The
         suppression stays local to that shallow region and does not change
         the macroscopic front evolution.
         """
