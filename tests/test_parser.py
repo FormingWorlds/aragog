@@ -339,6 +339,34 @@ def test_parameters_from_file_loads_bundled_abe_mixed_cfg():
         )
 
 
+def test_parameters_from_file_toml_reads_cvode_output_points(tmp_path):
+    """A ``cvode_output_points`` set in a TOML ``[solver]`` block must
+    reach ``Parameters.solver.cvode_output_points`` intact.
+
+    Covers the full TOML ingestion chain (tomllib -> section mapping ->
+    ``_SolverParameters``), not just the dataclass constructor the unit
+    tests exercise directly. Uses a non-default value (129) so a
+    regression that dropped the field and fell back to the default (65)
+    is caught.
+    """
+    from aragog import CFG_DATA
+
+    src = Path(str(CFG_DATA.joinpath('abe_solid.toml'))).read_text(encoding='utf-8')
+    assert 'cvode_output_points' not in src, (
+        'fixture assumes the bundled TOML omits cvode_output_points; '
+        'update the injected value if the default is now set there.'
+    )
+    injected = src.replace('[solver]\n', '[solver]\ncvode_output_points = 129\n', 1)
+    cfg = tmp_path / 'cvode.toml'
+    cfg.write_text(injected, encoding='utf-8')
+
+    p = Parameters.from_file(cfg)
+    assert p.solver.cvode_output_points == 129, (
+        f'TOML [solver] cvode_output_points did not reach the solver params; '
+        f'got {p.solver.cvode_output_points}.'
+    )
+
+
 def test_parameters_from_file_strict_rejects_scalings_section(tmp_path):
     """A configuration file containing a [scalings] section must
     raise ValueError at load time, not be silently ignored.
@@ -446,3 +474,82 @@ def test_parameters_post_init_param_utbl_off_zeros_constant():
     kwargs = _build_minimal_parameters_kwargs(boundary_conditions=bc)
     p = Parameters(**kwargs)
     assert p.boundary_conditions.param_utbl_const == pytest.approx(0.0, abs=1e-30)
+
+
+# ---- _SolverParameters.cvode_output_points ----------------------------------
+
+
+def test_solver_parameters_cvode_output_points_default():
+    """``cvode_output_points`` defaults to 65 when not supplied."""
+    sv = _SolverParameters(start_time=0.0, end_time=1.0e6, atol=1e-9, rtol=1e-6)
+    assert sv.cvode_output_points == 65
+
+
+@pytest.mark.parametrize('bad_value', [2.5, 'ten', None])
+def test_solver_parameters_rejects_non_int_cvode_output_points(bad_value):
+    """A non-int value raises TypeError at construction.
+
+    This matches the ``SolverConfig`` attrs schema, whose
+    ``instance_of(int)`` validator raises TypeError for the same input.
+    """
+    with pytest.raises(TypeError, match='cvode_output_points'):
+        _SolverParameters(
+            start_time=0.0,
+            end_time=1.0e6,
+            atol=1e-9,
+            rtol=1e-6,
+            cvode_output_points=bad_value,
+        )
+
+
+@pytest.mark.parametrize('bad_value', [1, 0, -5])
+def test_solver_parameters_rejects_sub_minimum_cvode_output_points(bad_value):
+    """A value below 2 raises ValueError at construction.
+
+    This matches the ``SolverConfig`` attrs schema, whose ``ge(2)``
+    validator raises ValueError for the same input.
+    """
+    with pytest.raises(ValueError, match='cvode_output_points'):
+        _SolverParameters(
+            start_time=0.0,
+            end_time=1.0e6,
+            atol=1e-9,
+            rtol=1e-6,
+            cvode_output_points=bad_value,
+        )
+
+
+def test_solver_parameters_accepts_minimum_cvode_output_points():
+    """The documented minimum of 2 is accepted at construction.
+
+    This pins the lower boundary so that widening the range check from
+    ``< 2`` to ``<= 2`` is caught.
+    """
+    sv = _SolverParameters(
+        start_time=0.0,
+        end_time=1.0e6,
+        atol=1e-9,
+        rtol=1e-6,
+        cvode_output_points=2,
+    )
+    assert sv.cvode_output_points == 2
+
+
+@pytest.mark.parametrize('bad_value', [True, False])
+def test_solver_parameters_rejects_bool_cvode_output_points(bad_value):
+    """A bool raises ValueError, not TypeError.
+
+    ``isinstance(True, int)`` is True because bool subclasses int, so a
+    bool passes the type check and is rejected by the ``< 2`` bound
+    (``True`` is 1, ``False`` is 0). ``SolverConfig`` behaves the same:
+    its ``instance_of(int)`` validator accepts the bool, then ``ge(2)``
+    raises ValueError.
+    """
+    with pytest.raises(ValueError, match='cvode_output_points'):
+        _SolverParameters(
+            start_time=0.0,
+            end_time=1.0e6,
+            atol=1e-9,
+            rtol=1e-6,
+            cvode_output_points=bad_value,
+        )

@@ -428,10 +428,9 @@ def run(
         data = _apply_overrides(data, set_overrides)
         try:
             parameters = Config.from_dict(data)
-        except TypeError as exc:
+        except (TypeError, ValueError) as exc:
             raise click.UsageError(
-                f'after applying --set overrides, the resolved config has '
-                f'unknown / mismatched fields: {exc}.'
+                f'after applying --set overrides, the resolved config is invalid: {exc}.'
             ) from exc
         entropy_eos = EntropyEOS(Path(eos_dir))
         solver = EntropySolver(parameters, entropy_eos)

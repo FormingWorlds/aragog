@@ -12,6 +12,7 @@ Test hierarchy:
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -783,8 +784,9 @@ class TestCvodeEnergyOutputGrid:
     integral of a steeply-decaying boundary flux is tens of percent wrong,
     which is the dominant term in ``E_residual_cons_frac``. ``EntropySolver``
     requests ``_cvode_output_points`` intermediate points (front-loaded) so
-    the integral resolves the decay; CVODE interpolates them from its own
-    internal steps, so the integration and final state are unchanged.
+    the integral resolves the decay; that grid feeds back into CVODE
+    stepping, so the step count and final state shift weakly with it
+    (state near rtol, below any physical signal).
 
     Verifies that the dense grid recovers the flux integral to within a
     small tolerance of a high-resolution scipy reference, with a
@@ -943,6 +945,31 @@ class TestCvodeEnergyOutputGrid:
         dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
         dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])
         np.testing.assert_allclose(dt_dense, dt_ref, rtol=1e-10)
+
+    def test_diagnostic_log_reports_true_cvode_counts_not_output_grid_size(self, caplog):
+        """The step-statistics log line must report CVODE's own internal
+        step and RHS-eval counts, distinct from the output-grid size, and
+        label the dt fields as describing the output grid."""
+        n_out = 65
+        s = self._build_greybody_solver('cvode', n_out=n_out)
+        with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+            s.solve()
+        records = [r for r in caplog.records if 'internal steps' in r.message]
+        assert len(records) == 1, 'expected exactly one step-statistics log line'
+        msg = records[0].message
+        assert 'output grid dt_min' in msg
+        reported_steps = int(msg.split(' internal steps', 1)[0].split()[-1])
+        assert reported_steps == s._solution.cvode_nst
+        # A stiff BDF integration normally takes far more internal steps
+        # than the output-grid size, so the two differ. If they coincide
+        # on this platform the distinctness check is inconclusive; skip
+        # it rather than fail, so the test stays non-flaky everywhere.
+        if s._solution.cvode_nst == n_out:
+            pytest.skip(
+                f'CVODE internal step count equals the output-grid size ({n_out}); '
+                'the distinctness check is inconclusive on this platform'
+            )
+        assert reported_steps != n_out
 
 
 # -- Test 3: Grey-body cooling timescale ---------------------------------------

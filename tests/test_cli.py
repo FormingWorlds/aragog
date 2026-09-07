@@ -707,6 +707,58 @@ def test_run_set_overrides_rejected_for_cfg_files(tmp_path):
     )
 
 
+def test_run_set_out_of_range_value_reports_usage_error(tmp_path):
+    """`aragog run cfg.toml --set solver.cvode_output_points=1` must
+    fail with a clean click.UsageError, not a raw ValueError traceback.
+
+    The out-of-range value passes type coercion but fails the
+    Parameters validator (minimum 2). Config.from_dict raises
+    ValueError there; the CLI must surface it as a UsageError, the
+    same way it already does for a type mismatch.
+    """
+    import importlib.resources
+
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'cfg.toml'
+    cfg.write_text(
+        importlib.resources.files('aragog')
+        .joinpath('cfg/abe_solid.toml')
+        .read_text(encoding='utf-8'),
+        encoding='utf-8',
+    )
+    eos = tmp_path / 'eos'
+    eos.mkdir()
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            'run',
+            str(cfg),
+            '--eos-dir',
+            str(eos),
+            '--initial-entropy',
+            '2900.0',
+            '--set',
+            'solver.cvode_output_points=1',
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert 'the resolved config is invalid' in (result.output or ''), (
+        f'out-of-range --set must yield a clean UsageError; got {result.output!r}.'
+    )
+    assert 'cvode_output_points must be >= 2' in (result.output or ''), (
+        f'UsageError must carry the validator message; got {result.output!r}.'
+    )
+    # A clean UsageError exits via SystemExit; a raw TypeError or
+    # ValueError here means the handler let the config error escape.
+    assert not isinstance(result.exception, (TypeError, ValueError)), (
+        f'CLI must not leak a raw config exception; got {result.exception!r}.'
+    )
+
+
 def test_show_config_emits_valid_json_with_known_fields():
     """`aragog show-config <bundled cfg>` emits valid JSON whose
     top-level keys match the Parameters dataclass field set.
