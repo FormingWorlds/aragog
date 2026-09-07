@@ -457,9 +457,66 @@ def test_solver_parameters_cvode_output_points_default():
     assert sv.cvode_output_points == 65
 
 
-@pytest.mark.parametrize('bad_value', [1, 0, -5, 2.5, 'ten'])
-def test_solver_parameters_rejects_invalid_cvode_output_points(bad_value):
-    """Non-integer or sub-2 values must raise at construction."""
+@pytest.mark.parametrize('bad_value', [2.5, 'ten', None])
+def test_solver_parameters_rejects_non_int_cvode_output_points(bad_value):
+    """A non-int value raises TypeError at construction.
+
+    This matches the ``SolverConfig`` attrs schema, whose
+    ``instance_of(int)`` validator raises TypeError for the same input.
+    """
+    with pytest.raises(TypeError, match='cvode_output_points'):
+        _SolverParameters(
+            start_time=0.0,
+            end_time=1.0e6,
+            atol=1e-9,
+            rtol=1e-6,
+            cvode_output_points=bad_value,
+        )
+
+
+@pytest.mark.parametrize('bad_value', [1, 0, -5])
+def test_solver_parameters_rejects_sub_minimum_cvode_output_points(bad_value):
+    """A value below 2 raises ValueError at construction.
+
+    This matches the ``SolverConfig`` attrs schema, whose ``ge(2)``
+    validator raises ValueError for the same input.
+    """
+    with pytest.raises(ValueError, match='cvode_output_points'):
+        _SolverParameters(
+            start_time=0.0,
+            end_time=1.0e6,
+            atol=1e-9,
+            rtol=1e-6,
+            cvode_output_points=bad_value,
+        )
+
+
+def test_solver_parameters_accepts_minimum_cvode_output_points():
+    """The documented minimum of 2 is accepted at construction.
+
+    This pins the lower boundary so that widening the range check from
+    ``< 2`` to ``<= 2`` is caught.
+    """
+    sv = _SolverParameters(
+        start_time=0.0,
+        end_time=1.0e6,
+        atol=1e-9,
+        rtol=1e-6,
+        cvode_output_points=2,
+    )
+    assert sv.cvode_output_points == 2
+
+
+@pytest.mark.parametrize('bad_value', [True, False])
+def test_solver_parameters_rejects_bool_cvode_output_points(bad_value):
+    """A bool raises ValueError, not TypeError.
+
+    ``isinstance(True, int)`` is True because bool subclasses int, so a
+    bool passes the type check and is rejected by the ``< 2`` bound
+    (``True`` is 1, ``False`` is 0). ``SolverConfig`` behaves the same:
+    its ``instance_of(int)`` validator accepts the bool, then ``ge(2)``
+    raises ValueError.
+    """
     with pytest.raises(ValueError, match='cvode_output_points'):
         _SolverParameters(
             start_time=0.0,

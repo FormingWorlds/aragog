@@ -15,6 +15,7 @@ end_time = 1.0e9                  # yr
 atol = 1e-9
 rtol = 1e-9
 tsurf_poststep_change = 30
+cvode_output_points = 65          # dense-output grid per CVODE macro-step
 
 [boundary_conditions]
 outer_boundary_condition = 4      # 4 = prescribed flux (PROTEUS coupling)
@@ -124,6 +125,7 @@ Time-integration controls.
 | `atol` | -- | Absolute tolerance (floored at $10^{-8}$) |
 | `rtol` | -- | Relative tolerance |
 | `tsurf_poststep_change` | K | Maximum allowed surface-temperature change per coupling step (PROTEUS use) |
+| `cvode_output_points` | -- | Number of points on the CVODE dense-output grid returned per macro-step (default 65, minimum 2). The per-step boundary-flux energy integrals use the trapezoidal rule over this grid; a finer grid sharpens the $F_\mathrm{int}$ diagnostic without changing the integration or the final state. Used only when `solver_method = "cvode"`. |
 
 ### `[boundary_conditions]`
 

@@ -363,10 +363,14 @@ class _SolverParameters:
     cvode_output_points: int = 65
 
     def __post_init__(self):
-        if not isinstance(self.cvode_output_points, int) or self.cvode_output_points < 2:
+        if not isinstance(self.cvode_output_points, int):
+            raise TypeError(
+                f'cvode_output_points must be an integer, '
+                f'got {type(self.cvode_output_points).__name__}'
+            )
+        if self.cvode_output_points < 2:
             raise ValueError(
-                'cvode_output_points must be an integer >= 2, got '
-                f'{self.cvode_output_points!r}'
+                f'cvode_output_points must be >= 2, got {self.cvode_output_points!r}'
             )
 
 

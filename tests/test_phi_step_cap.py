@@ -845,6 +845,64 @@ def test_solve_cvode_uses_values_on_normal_completion_flag_0():
     np.testing.assert_allclose(result.t, [0.1, 1.0])
 
 
+def test_solve_cvode_reads_step_counts_from_correct_handle():
+    """The internal step and RHS-eval counts on the result come from
+    ``solver.get_info()``, not ``solver._integrator.get_info()``.
+
+    The two handles report different counters; reading the wrong one puts
+    the output-grid size on the result where CVODE's own adaptive step
+    count belongs. Wiring the two mock handles to distinct values makes
+    the test fail if the wrong handle is read, so it guards the fix
+    directly rather than relying on MagicMock auto-vivification.
+    """
+    from unittest.mock import patch
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    n_state = 4
+    y_full = np.array([[0.0, 1.0, 2.0, 3.0], [0.5, 1.5, 2.5, 3.5]])
+    mock_values = MagicMock()
+    mock_values.t = np.array([0.1, 1.0])
+    mock_values.y = y_full
+
+    mock_roots = MagicMock()
+    mock_roots.t = np.array([0.5])
+    mock_roots.y = np.zeros((1, n_state))
+
+    mock_cvode_sol = MagicMock()
+    mock_cvode_sol.values = mock_values
+    mock_cvode_sol.roots = mock_roots
+    mock_cvode_sol.flag = 0
+    mock_cvode_sol.message = ''
+
+    mock_solver = MagicMock()
+    mock_solver.solve.return_value = mock_cvode_sol
+    # Correct handle carries the true CVODE counters.
+    mock_solver.get_info.return_value = {'NumSteps': 1234, 'NumRhsEvals': 5678}
+    # Wrong handle carries decoy values that must not reach the result.
+    mock_solver._integrator.get_info.return_value = {'NumSteps': 11, 'NumRhsEvals': 22}
+
+    instance = MagicMock(spec=EntropySolver)
+    instance.dSdt = lambda t, y: np.zeros_like(y)
+    instance._core_bc = 'energy_balance'
+    instance._cvode_output_points = 65
+
+    with patch('aragog.solver.entropy_solver._scikits_cvode', return_value=mock_solver):
+        result = EntropySolver._solve_cvode(
+            instance,
+            start_time=0.1,
+            end_time=1.0,
+            y0=np.array([0.0, 1.0, 2.0, 3.0]),
+            atol=1e-8,
+            rtol=1e-8,
+            max_step=np.inf,
+            phi_cap_rootfn=None,
+        )
+
+    assert result.cvode_nst == 1234
+    assert result.cvode_nfe == 5678
+
+
 # ──────────────────────────────────────────────────────────────────────
 #               Per-cell melt-fraction guard (cliff onset)
 # ──────────────────────────────────────────────────────────────────────

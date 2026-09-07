@@ -945,9 +945,7 @@ class TestCvodeEnergyOutputGrid:
         dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])
         np.testing.assert_allclose(dt_dense, dt_ref, rtol=1e-10)
 
-    def test_diagnostic_log_reports_true_cvode_counts_not_output_grid_size(
-        self, caplog
-    ):
+    def test_diagnostic_log_reports_true_cvode_counts_not_output_grid_size(self, caplog):
         """The step-statistics log line must report CVODE's own internal
         step and RHS-eval counts, distinct from the output-grid size, and
         label the dt fields as describing the output grid."""

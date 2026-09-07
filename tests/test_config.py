@@ -738,3 +738,33 @@ def test_solver_config_rejects_sub_minimum_cvode_output_points(bad_value):
             rtol=1.0e-6,
             cvode_output_points=bad_value,
         )
+
+
+def test_solver_config_accepts_minimum_cvode_output_points():
+    """Edge case: the documented minimum of 2 is accepted at construct."""
+    s = SolverConfig(
+        start_time=0.0,
+        end_time=1.0e6,
+        atol=1.0e-9,
+        rtol=1.0e-6,
+        cvode_output_points=2,
+    )
+    assert s.cvode_output_points == 2
+
+
+@pytest.mark.parametrize('bad_value', [True, False])
+def test_solver_config_rejects_bool_cvode_output_points(bad_value):
+    """Edge case: a bool raises ValueError, not TypeError.
+
+    ``instance_of(int)`` accepts a bool because bool subclasses int, so
+    ``ge(2)`` rejects it (``True`` is 1, ``False`` is 0). This mirrors
+    ``_SolverParameters`` in the parser.
+    """
+    with pytest.raises(ValueError, match='cvode_output_points'):
+        SolverConfig(
+            start_time=0.0,
+            end_time=1.0e6,
+            atol=1.0e-9,
+            rtol=1.0e-6,
+            cvode_output_points=bad_value,
+        )

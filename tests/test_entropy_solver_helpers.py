@@ -181,10 +181,13 @@ def test_phi_cap_event_factory_eos_raises_falls_back_to_cap():
 # ──────────────────────────────────────────────────────────────────────
 
 
-def _build_minimal_solver(*, core_bc: str = 'energy_balance'):
+def _build_minimal_solver(*, core_bc: str = 'energy_balance', cvode_output_points: int = 65):
     """Construct an ``EntropySolver`` whose Parameters are minimal-
     enough to instantiate but whose mesh / EOS / phase machinery is
     NOT initialised. Keeps the construction cost <50 ms.
+
+    ``cvode_output_points`` passes through to the ``[solver]`` config so a
+    test can check that the value reaches ``_cvode_output_points``.
     """
     from aragog.parser import (
         Parameters,
@@ -260,6 +263,7 @@ def _build_minimal_solver(*, core_bc: str = 'energy_balance'):
         atol=1.0e-6,
         rtol=1.0e-6,
         tsurf_poststep_change=30.0,
+        cvode_output_points=cvode_output_points,
     )
     parameters = Parameters(
         boundary_conditions=bc,
@@ -273,6 +277,20 @@ def _build_minimal_solver(*, core_bc: str = 'energy_balance'):
         solver=sv,
     )
     return EntropySolver(parameters, entropy_eos=None)
+
+
+def test_cvode_output_points_config_reaches_solver_attribute():
+    """A non-default ``[solver].cvode_output_points`` reaches the solver.
+
+    Drives the value through the real construction path
+    (``_SolverParameters`` -> ``Parameters`` -> ``EntropySolver.__init__``)
+    and reads back ``_cvode_output_points``. The non-default value is the
+    mutation guard: a solver that hardcoded 65 instead of reading the
+    config would leave ``_cvode_output_points`` at 65 and fail this
+    assertion.
+    """
+    solver = _build_minimal_solver(cvode_output_points=33)
+    assert solver._cvode_output_points == 33
 
 
 def test_set_jax_cvode_factory_registers_and_clears():
