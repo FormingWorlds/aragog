@@ -2592,9 +2592,12 @@ class EntropySolver:
         # ``result.t``/``result.nfev`` below, which describe the dense
         # output grid (or the 2-point root array), not CVODE's adaptive
         # step sequence.
-        if cvode_info is not None:
-            result.cvode_nst = int(cvode_info.get('NumSteps', -1))
-            result.cvode_nfe = int(cvode_info.get('NumRhsEvals', -1))
+        # Set these only when CVODE reported both counters; otherwise
+        # leave them unset so the downstream logger falls back to the
+        # output-grid counts instead of printing a -1 sentinel.
+        if cvode_info is not None and 'NumSteps' in cvode_info and 'NumRhsEvals' in cvode_info:
+            result.cvode_nst = int(cvode_info['NumSteps'])
+            result.cvode_nfe = int(cvode_info['NumRhsEvals'])
         # ``scikits.odes`` rootfn-fire idiosyncrasy: when CVODE's rootfn
         # fires (flag=2), ``cvode_sol.values.t`` contains ONLY the start
         # time (the integration progress to the root is dropped), while
