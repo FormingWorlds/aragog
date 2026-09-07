@@ -628,11 +628,11 @@ class SolverOutput:
     # the true conservation check. Set to NaN when no entropy_eos.
     Cp_eff: float  # effective heat capacity [J/kg/K]
     F_heat_total: float  # total heating flux [W/m^2]
-    F_cmb: float  # heat flux at CMB (basic node 0) [W/m^2], signed
-    # positive-out-of-core; equals the lower-boundary value of ``heat_flux``
-    # so the closed-mantle balance dE/dt = -F_int*A_int + F_cmb*A_cmb +
-    # Q_radio + Q_tidal can be checked without re-deriving from the
-    # array.
+    F_cmb: float  # step-average heat flux at CMB (basic node 0) [W/m^2], signed
+    # positive-out-of-core; the trapezoidal time-mean over the solver call, so
+    # F_cmb * A_cmb * dt_actual equals step_dE_F_cmb_J and the closed-mantle
+    # balance holds in step-integrated form. The end-of-step basic-node-0
+    # value stays available in ``heat_flux[0]``.
     Q_radio_total: float  # mantle-integrated radiogenic power [W]
     Q_tidal_total: float  # mantle-integrated tidal power [W]
 
@@ -844,7 +844,12 @@ class SolverOutput:
             )
             _scalar('Cp_eff', self.Cp_eff, 'J kg-1 K-1', 'Mass-weighted mean heat capacity')
             _scalar('F_heat_total', self.F_heat_total, 'W m-2', 'Total internal heating flux')
-            _scalar('F_cmb', self.F_cmb, 'W m-2', 'Heat flux at the CMB (positive out of core)')
+            _scalar(
+                'F_cmb',
+                self.F_cmb,
+                'W m-2',
+                'Step-average heat flux at the CMB (positive out of core)',
+            )
             _scalar(
                 'Q_radio_total', self.Q_radio_total, 'W', 'Mantle-integrated radiogenic power'
             )
@@ -3197,6 +3202,7 @@ class EntropySolver:
         zero = {
             'F_int': 0.0,
             'F_cmb': 0.0,
+            'F_cmb_step_avg': None,
             'Q_radio': 0.0,
             'Q_tidal': 0.0,
             'Q_radio_cons': 0.0,
@@ -3358,9 +3364,18 @@ class EntropySolver:
             S_traj_start, np.asarray(S_i, dtype=float).ravel()[:n_stag]
         )
 
+        # Energy-conserving step-average CMB heat flux: the trapezoidal
+        # time-mean of the basic-node-0 flux whose integral over the call
+        # equals step_dE_F_cmb by construction. None on a zero-duration or
+        # zero-area call, so the caller keeps the end-of-step snapshot.
+        step_dE_F_cmb = trap(P_F_cmb)
+        denom = A_cmb * float(np.sum(dt_s))
+        f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
+
         return {
             'F_int': trap(P_F_int),
-            'F_cmb': trap(P_F_cmb),
+            'F_cmb': step_dE_F_cmb,
+            'F_cmb_step_avg': f_cmb_step_avg,
             'Q_radio': trap(P_radio),
             'Q_tidal': trap(P_tidal),
             'Q_radio_cons': trap(P_radio_cons),
@@ -3660,10 +3675,13 @@ class EntropySolver:
             E_state = float('nan')
             E_state_cons = float('nan')
 
-        # CMB heat flux: lower-boundary value of the basic-node heat
-        # flux array. Sign convention follows the rest of Aragog,
-        # positive-out-of-core when entering the mantle.
-        F_cmb = float(heat_flux[0])
+        # CMB heat flux reported as the energy-conserving step-average
+        # (trapezoidal time-mean over the call; integral equals step_dE_F_cmb_J).
+        # Falls back to the end-of-step basic-node-0 value when the call has no
+        # integrable trajectory. Sign positive-out-of-core into the mantle.
+        F_cmb = step_integrals['F_cmb_step_avg']
+        if F_cmb is None:
+            F_cmb = float(heat_flux[0])
 
         # Mantle-integrated source powers [W] for the closed-mantle
         # energy balance dE/dt = -F_int*A_int + F_cmb*A_cmb + Q_radio +
