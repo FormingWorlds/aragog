@@ -33,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy.constants import Julian_year
 
 # EOS path is environment-driven for portability across machines.
 # Resolution order:
@@ -75,6 +76,7 @@ def _build_parameters(
     end_time: float = 50.0,
     n_nodes: int = 15,
     use_jax_jacobian: bool = False,
+    inner_boundary_value: float = 0.0,
 ):
     """Build an in-memory Parameters object for a short solver run.
 
@@ -99,7 +101,7 @@ def _build_parameters(
         outer_boundary_condition=1,  # grey body
         outer_boundary_value=1500.0,
         inner_boundary_condition=2,  # prescribed core flux
-        inner_boundary_value=0.0,  # zero CMB flux (insulating core)
+        inner_boundary_value=inner_boundary_value,  # W/m^2 at the CMB (0 = insulating)
         emissivity=1.0,
         equilibrium_temperature=255.0,
         core_heat_capacity=880.0,
@@ -477,4 +479,86 @@ def test_derive_initial_entropy_skips_when_ic_method_is_2(shared_eos):
     assert S0 is None, (
         f'IC method=2 must NOT trigger derivation; got S0={S0}. '
         'A non-None return here would silently override the user-supplied IC file.'
+    )
+
+
+# ---- F_cmb output column: conserved step-average ---------------------------
+
+
+def test_f_cmb_column_is_conserved_step_average_not_end_of_step_snapshot(shared_eos):
+    """The reported F_cmb column is the conserved step-average, not the
+    end-of-step basic-node-0 snapshot.
+
+    A prescribed nonzero core flux (inner BC 2, 1e4 W/m^2) forces the CMB
+    flux to that value at every sub-step, so the trapezoidal step-average
+    equals it. The final state refresh does not re-impose the BC, so the
+    retained snapshot ``heat_flux[0]`` drifts to the un-constrained
+    gradient. The two therefore diverge by a known, controlled amount.
+
+    Discriminator: the closure ``F_cmb * A_cmb * dt == step_dE_F_cmb_J``
+    holds only for the step-average. If the column reverted to the
+    snapshot, the reconstruction would miss the conserved integral by the
+    snapshot-vs-average ratio, and the closure assertion would fail.
+    """
+    parameters = _build_parameters(
+        core_bc='quasi_steady', n_nodes=15, end_time=50.0, inner_boundary_value=1.0e4
+    )
+    _, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+
+    a_cmb = 4.0 * np.pi * float(out.r_basic[0]) ** 2
+    dt_s = float(out.dt_actual) * Julian_year
+    reported = float(out.F_cmb)
+    snapshot = float(out.heat_flux[0])
+    integral = float(out.step_dE_F_cmb_J)
+
+    # Closure: the reported column reconstructs the conserved integral.
+    assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0), (
+        f'F_cmb={reported:.6e} * A_cmb * dt does not reconstruct '
+        f'step_dE_F_cmb_J={integral:.6e}; column is not the conserved average'
+    )
+    # The step-average equals the prescribed flux (guards a stuck-at-zero column).
+    assert np.isclose(reported, 1.0e4, rtol=1e-6), (
+        f'step-average F_cmb={reported:.6e} != prescribed 1e4 W/m^2'
+    )
+    # The snapshot differs, so this is genuinely not the end-of-step value.
+    assert not np.isclose(reported, snapshot, rtol=1e-3), (
+        f'F_cmb={reported:.6e} equals snapshot heat_flux[0]={snapshot:.6e}; '
+        'the column reports the end-of-step snapshot, not the step-average'
+    )
+    # The raw snapshot stays available for callers that need it.
+    assert np.isfinite(snapshot)
+
+
+def test_f_cmb_column_reports_bc_consistent_zero_for_insulating_core(shared_eos):
+    """With an insulating core (inner BC 2, 0 W/m^2) the reported F_cmb is
+    the BC-consistent zero, not the un-constrained end-of-step gradient.
+
+    The zero-flux BC is imposed inside the RHS at every sub-step, so the
+    conserved flux integral is zero and the step-average is zero. The
+    final state refresh omits the BC, leaving ``heat_flux[0]`` at a
+    nonzero gradient value.
+
+    Discriminator: the column must read 0. A column that reported the
+    snapshot would carry the nonzero gradient and violate the prescribed
+    zero-flux boundary condition.
+    """
+    parameters = _build_parameters(
+        core_bc='quasi_steady', n_nodes=15, end_time=50.0, inner_boundary_value=0.0
+    )
+    _, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+
+    reported = float(out.F_cmb)
+    snapshot = float(out.heat_flux[0])
+    integral = float(out.step_dE_F_cmb_J)
+
+    # Conserved flux integral is zero, so the reported step-average is zero.
+    assert integral == 0.0, f'insulating core: step_dE_F_cmb_J={integral:.6e} != 0'
+    assert reported == 0.0, (
+        f'insulating core: reported F_cmb={reported:.6e} != 0; the column '
+        'is not the BC-consistent step-average'
+    )
+    # The snapshot is nonzero, confirming the column is not the snapshot.
+    assert snapshot != 0.0, (
+        'expected a nonzero un-constrained snapshot to make this test '
+        'discriminate; fixture no longer exercises the BC-consistency gap'
     )
