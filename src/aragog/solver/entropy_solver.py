@@ -629,10 +629,10 @@ class SolverOutput:
     Cp_eff: float  # effective heat capacity [J/kg/K]
     F_heat_total: float  # total heating flux [W/m^2]
     F_cmb: float  # step-average heat flux at CMB (basic node 0) [W/m^2], signed
-    # positive-out-of-core; the trapezoidal time-mean over the solver call, so
-    # F_cmb * A_cmb * dt_actual equals step_dE_F_cmb_J and the closed-mantle
-    # balance holds in step-integrated form. The end-of-step basic-node-0
-    # value stays available in ``heat_flux[0]``.
+    # positive-out-of-core; the trapezoidal time-mean over the solver call. With
+    # the call duration in seconds (dt_actual is [yr], times the Julian year),
+    # F_cmb * A_cmb * dt equals step_dE_F_cmb_J and the closed-mantle balance
+    # holds in step-integrated form. ``heat_flux[0]`` keeps the end-of-step value.
     Q_radio_total: float  # mantle-integrated radiogenic power [W]
     Q_tidal_total: float  # mantle-integrated tidal power [W]
 
@@ -3175,7 +3175,7 @@ class EntropySolver:
             )
             self.stop_early = True
 
-    def _compute_step_energy_integrals(self) -> dict[str, float]:
+    def _compute_step_energy_integrals(self) -> dict[str, float | None]:
         """Compute per-call energy contributions [J] over the CVODE
         sub-step trajectory, replacing end-of-step instantaneous capture.
 
@@ -3193,7 +3193,7 @@ class EntropySolver:
 
         Returns
         -------
-        dict
+        dict[str, float | None]
             Keys ``F_int``, ``F_cmb``, ``Q_radio``, ``Q_tidal``, each
             mapping to the per-call integral in J, plus
             ``F_cmb_step_avg``, the step-average CMB flux in W/m^2

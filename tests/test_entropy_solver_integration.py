@@ -620,3 +620,76 @@ def test_f_cmb_column_is_conserved_step_average_energy_balance_core(shared_eos):
     )
     # The raw snapshot stays available for callers that need it.
     assert np.isfinite(snapshot)
+
+
+# ---- F_cmb closure on the melt-fraction step-cap degenerate path -----------
+
+
+def test_f_cmb_closure_holds_on_phi_step_cap_two_point_trajectory(shared_eos):
+    """The F_cmb closure survives the melt-fraction step-cap degenerate
+    path: a CVODE call truncated to a two-point trajectory at a phi root.
+
+    A small ``phi_step_cap`` with a mushy initial condition makes the
+    melt-fraction change reach the cap early in the call. On the CVODE
+    path this fires as a solver root: ``solve()`` truncates the returned
+    trajectory to exactly [t_start, t_root], sets ``cap_fired`` and
+    ``cap_label='phi'``, and the call ends before ``end_time``. The
+    step-energy integrator then trapezoid-integrates a two-point
+    trajectory rather than the many natural steps of a full call.
+
+    Discriminator: the closure ``F_cmb * A_cmb * dt == step_dE_F_cmb_J``
+    must still hold on the two-point trajectory, and the reported column
+    must still equal the prescribed 1e4 W/m^2 core flux. A regression that
+    formed the divisor from the full ``end_time`` rather than the actual
+    truncated call duration, or that mishandled the degenerate two-point
+    integral, would break the closure here while the full-trajectory
+    tests above still passed. The cap-fire assertions pin that this test
+    exercises the truncated path and not an ordinary full call.
+
+    Skipped if scikits.odes is not installed; the two-point truncation is
+    the CVODE path, so the radau backend cannot reproduce it.
+    """
+    pytest.importorskip('scikits_odes_sundials')
+
+    parameters = _build_parameters(
+        core_bc='quasi_steady',
+        solver_method='cvode',
+        n_nodes=15,
+        end_time=50.0,
+        inner_boundary_value=1.0e4,
+        use_jax_jacobian=False,
+    )
+    parameters.energy.phi_step_cap = 0.005
+    solver, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+
+    sol = solver._solution
+    assert sol is not None and sol.t is not None
+    # The phi cap fired as a CVODE root, truncating to a two-point trajectory.
+    assert getattr(sol, 'cap_fired', False) is True, 'phi_step_cap did not fire'
+    assert getattr(sol, 'cap_label', None) == 'phi', (
+        f"cap_label={getattr(sol, 'cap_label', None)!r}, expected 'phi'"
+    )
+    assert sol.t.size == 2, (
+        f'expected a two-point trajectory at the phi root, got sol.t.size={sol.t.size}'
+    )
+    # The call ended at the root, well before end_time.
+    assert float(out.dt_actual) < 50.0, (
+        f'dt_actual={float(out.dt_actual):.6e} yr not truncated below end_time'
+    )
+
+    a_cmb = 4.0 * np.pi * float(out.r_basic[0]) ** 2
+    dt_s = float(out.dt_actual) * Julian_year
+    reported = float(out.F_cmb)
+    integral = float(out.step_dE_F_cmb_J)
+
+    # Closure holds on the truncated two-point trajectory, and because the
+    # value is nonzero the identity constrains the A_cmb * dt divisor formed
+    # from the actual call duration, not from end_time.
+    assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0), (
+        f'F_cmb={reported:.6e} * A_cmb * dt does not reconstruct '
+        f'step_dE_F_cmb_J={integral:.6e} on the two-point phi-cap trajectory'
+    )
+    # The step-average equals the prescribed flux (guards a stuck-at-zero column).
+    assert np.isclose(reported, 1.0e4, rtol=1e-6), (
+        f'step-average F_cmb={reported:.6e} != prescribed 1e4 W/m^2'
+    )
