@@ -99,6 +99,50 @@ def test_solver_config_rejects_bool():
         _solver_config(max_steps=True)
 
 
+def test_solver_parameters_rejects_nan_tcore_change_limit():
+    # A NaN limit must not silently disarm the excursion check. A plain
+    # ``x <= 0`` guard is False for NaN and would let it through; the
+    # parser uses ``not (x > 0)``, which rejects it, matching SolverConfig.
+    with pytest.raises(ValueError):
+        _solver_parameters(tcore_change_limit=float('nan'))
+
+
+def test_solver_config_rejects_nan_tcore_change_limit():
+    # The attrs ``gt(0.0)`` validator rejects NaN. This test pins the
+    # parity: both surfaces reject a NaN limit the same way.
+    with pytest.raises(ValueError):
+        _solver_config(tcore_change_limit=float('nan'))
+
+
+def test_solver_parameters_accepts_positive_tcore_change_limit():
+    assert _solver_parameters(tcore_change_limit=1500.0).tcore_change_limit == 1500.0
+
+
+def test_solver_parameters_rejects_zero_tcore_change_limit():
+    with pytest.raises(ValueError):
+        _solver_parameters(tcore_change_limit=0.0)
+
+
+def test_entropy_solver_init_wires_configured_solver_options():
+    # The other tests build the solver with ``__new__`` and set
+    # ``_max_steps`` / ``_tcore_change_limit`` by hand, so a wiring
+    # regression in the real ``__init__`` (reading the wrong solver field
+    # or dropping an assignment) would pass silently. Drive the real
+    # ``__init__`` with a real ``_SolverParameters`` and three distinct
+    # values so a cross-wire between fields is visible.
+    from types import SimpleNamespace
+
+    params = _solver_parameters(
+        max_steps=54321,
+        tcore_change_limit=1234.5,
+        cvode_output_points=9,
+    )
+    solver = EntropySolver(SimpleNamespace(solver=params))
+    assert solver._max_steps == 54321
+    assert solver._tcore_change_limit == 1234.5
+    assert solver._cvode_output_points == 9
+
+
 class _CapturingCVODE:
     """Fake CVODE that records the options dict and returns a trivial solve.
 

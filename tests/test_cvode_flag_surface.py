@@ -17,7 +17,16 @@ from aragog.solver.entropy_solver import EntropySolver, _cvode_flag_name
 
 pytestmark = pytest.mark.unit
 
+# The real CVODE StatusEnum names (SUCCESS, TOO_MUCH_WORK, CONV_FAILURE)
+# are only available when scikits_odes_sundials is installed; without it
+# ``_cvode_flag_name`` returns the ``FLAG_<n>`` fallback instead.
+requires_status_enum = pytest.mark.skipif(
+    es._CV_StatusEnum is None,
+    reason='requires scikits_odes_sundials StatusEnum for real CVODE flag names',
+)
 
+
+@requires_status_enum
 def test_flag_name_maps_known_flags():
     assert _cvode_flag_name(0) == 'SUCCESS'
     assert _cvode_flag_name(-1) == 'TOO_MUCH_WORK'
@@ -89,6 +98,7 @@ def _run_with_flag(flag: int):
         es._scikits_cvode = real_cvode
 
 
+@requires_status_enum
 def test_too_much_work_flag_is_distinct_from_conv_failure():
     too_much_work = _run_with_flag(-1)
     conv_failure = _run_with_flag(-4)
@@ -104,6 +114,7 @@ def test_too_much_work_flag_is_distinct_from_conv_failure():
     assert conv_failure.cvode_flag_name == 'CONV_FAILURE'
 
 
+@requires_status_enum
 def test_success_flag_surface():
     ok = _run_with_flag(0)
     assert ok.status == 0
@@ -111,6 +122,7 @@ def test_success_flag_surface():
     assert ok.cvode_flag_name == 'SUCCESS'
 
 
+@requires_status_enum
 def test_zero_span_reports_success_sentinel():
     real_cvode = es._scikits_cvode
     es._scikits_cvode = _FlaggingCVODE(-1)  # must never be called

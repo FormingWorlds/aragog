@@ -3587,6 +3587,18 @@ class EntropySolver:
         -------
         float
             Core-mantle-boundary temperature [K] (bottom staggered cell).
+
+        Notes
+        -----
+        The EOS temperature lookup is pointwise, so this evaluates the table
+        at the single bottom node rather than across all ``n_stag`` nodes,
+        making the per-column cost O(1) for bower2018, energy_balance and
+        quasi_steady. The gradient mode is the exception: it must reconstruct
+        the staggered entropy from the basic-node state through
+        ``_reconstruct_entropy`` before it can read the bottom cell, so its
+        per-column cost stays O(n_stag). Sweeping the excursion measure over
+        the full trajectory is therefore O(n_col) for the other three modes
+        and O(n_col * n_stag) for gradient.
         """
         n_stag = self._n_stag
         core_bc = self._core_bc
@@ -3620,12 +3632,26 @@ class EntropySolver:
     def _core_temperature_excursion(self, sol) -> tuple[float, bool]:
         """Measure the largest core-temperature change within one solve.
 
-        Walks the returned CVODE grid and returns the maximum absolute
-        change of the core temperature from its solve-entry value. When
-        ``self._tcore_change_limit`` is set, also returns whether that
-        change exceeds the limit. A large budget can let CVODE accept one
-        big step across a phase boundary and return a spurious core-
-        temperature jump; the measure lets a caller reject such a solve.
+        Walks the columns of the returned solution and returns the maximum
+        absolute change of the core temperature from its solve-entry value.
+        The columns are the solver's returned sample grid: on the CVODE path
+        this is the ``cvode_output_points`` dense-output grid rather than
+        CVODE's internal accepted-step sequence, and on the scipy path it is
+        ``solve_ivp``'s own accepted-step output. It therefore catches a jump
+        that persists to a sampled point, including the end-state jump a
+        budget-exhausted solve returns; a transient jump that both starts and
+        ends between two samples can be missed. When ``self._tcore_change_limit``
+        is set, also returns whether the change exceeds the limit. A larger
+        step budget lets CVODE keep integrating and accept a step across a
+        phase boundary, so the returned core temperature can jump; the
+        measure lets a caller reject such a solve.
+
+        A non-finite core temperature (NaN or infinite) is itself a
+        corrupted-solve signal: an ordered comparison against NaN is always
+        False, so a plain running maximum would report such a solve as a
+        zero change. This method flags any non-finite core temperature as
+        exceeded, independent of whether a limit is set, and reports the
+        change as infinite.
 
         Parameters
         ----------
@@ -3635,17 +3661,24 @@ class EntropySolver:
         Returns
         -------
         tcore_change_max : float
-            Maximum absolute core-temperature change over the grid [K].
+            Maximum absolute core-temperature change over the grid [K], or
+            infinity when any sampled core temperature is non-finite.
         tcore_change_exceeded : bool
-            ``True`` when a limit is set and the change exceeds it.
+            ``True`` when a limit is set and the change exceeds it, or when
+            any sampled core temperature is non-finite.
         """
         y = np.asarray(sol.y)
         if y.ndim != 2 or y.shape[1] == 0:
             return 0.0, False
         t0 = self._core_temperature_from_column(y[:, 0])
+        if not np.isfinite(t0):
+            return float('inf'), True
         tcore_change_max = 0.0
         for i in range(y.shape[1]):
-            change = abs(self._core_temperature_from_column(y[:, i]) - t0)
+            ti = self._core_temperature_from_column(y[:, i])
+            if not np.isfinite(ti):
+                return float('inf'), True
+            change = abs(ti - t0)
             if change > tcore_change_max:
                 tcore_change_max = change
         limit = self._tcore_change_limit

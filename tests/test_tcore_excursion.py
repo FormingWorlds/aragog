@@ -128,6 +128,29 @@ def test_flag_clear_when_change_equals_limit():
     assert exceeded is False
 
 
+def test_nan_core_temperature_at_entry_flags_exceeded():
+    # A non-finite core temperature at solve entry is a corrupted-solve
+    # signal, not "no excursion". A plain running-maximum masks it: every
+    # ``abs(T_i - nan)`` is nan and ``nan > max`` is False, so the loop
+    # would report zero change and clear the flag.
+    solver = _make_solver(limit=None)
+    sol = _quasi_steady_grid([np.nan, 1000.0, 9000.0, 1000.0])
+    change_max, exceeded = solver._core_temperature_excursion(sol)
+    assert exceeded is True
+    assert not np.isfinite(change_max)
+
+
+def test_nan_core_temperature_mid_column_flags_exceeded():
+    # A column that jumps to a non-finite core temperature mid-trajectory
+    # is masked the same way by a plain running maximum. The guard must
+    # catch it independent of any configured limit.
+    solver = _make_solver(limit=None)
+    sol = _quasi_steady_grid([1000.0, 1000.0, np.nan, 1000.0])
+    change_max, exceeded = solver._core_temperature_excursion(sol)
+    assert exceeded is True
+    assert not np.isfinite(change_max)
+
+
 def test_helper_bower_reads_core_state():
     solver = _make_solver(n_stag=4, core_bc='bower2018')
     y_col = np.array([2000.0, 1900.0, 1800.0, 1700.0, 2500.0])

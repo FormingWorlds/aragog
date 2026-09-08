@@ -399,7 +399,10 @@ class _SolverParameters:
                     f'tcore_change_limit must be a number or None, '
                     f'got {type(self.tcore_change_limit).__name__}'
                 )
-            if self.tcore_change_limit <= 0:
+            # ``not (x > 0)`` rejects NaN as well as zero and negatives,
+            # matching the SolverConfig ``gt(0.0)`` validator; a plain
+            # ``x <= 0`` is False for NaN and would let it disarm the limit.
+            if not self.tcore_change_limit > 0:
                 raise ValueError(
                     f'tcore_change_limit must be > 0 or None, got {self.tcore_change_limit!r}'
                 )
