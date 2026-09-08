@@ -3594,9 +3594,10 @@ class EntropySolver:
         # at index n_stag, so read it directly.
         if core_bc == 'bower2018':
             return float(y_col[n_stag])
-        # Only the bottom (CMB) staggered cell is needed. energy_balance
-        # stores the staggered entropy in y_col[:n_stag] and quasi_steady
-        # stores it directly in y_col; the CMB cell is index 0 in both.
+        # Only the bottom (CMB) staggered cell is needed, and it is index 0
+        # in every mode. gradient reconstructs the staggered entropy from the
+        # basic-node state first; energy_balance and quasi_steady already hold
+        # the CMB entropy at y_col[0].
         if core_bc == 'gradient':
             n_basic = n_stag + 1
             S_stag, _ = self._reconstruct_entropy(y_col[:n_basic], float(y_col[n_basic]))
