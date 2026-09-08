@@ -992,6 +992,10 @@ class EntropySolver:
         # shift stays near rtol, below any physical signal. Only the
         # non-root path uses it; a phi-step-cap root stops the call early.
         self._cvode_output_points = self.parameters.solver.cvode_output_points
+        # Maximum internal CVODE steps per solve; exceeding it returns
+        # CV_TOO_MUCH_WORK. Configurable so a stiff phase-change window
+        # can request a larger budget than the default.
+        self._max_steps = self.parameters.solver.max_steps
         # Compression work [J] from the most recent structure re-solve.
         # When the planet contracts, the static pressure at each frozen
         # mass element rises, so the mantle enthalpy gains the adiabatic
@@ -2465,7 +2469,7 @@ class EntropySolver:
             'atol': atol_cvode,
             'lmm_type': 'BDF',
             'nonlinsolver': 'newton',
-            'max_steps': 100000,  # per-solve cap; scipy used unlimited
+            'max_steps': self._max_steps,  # per-solve cap; scipy used unlimited
             # Maximum BDF order. BDF orders 1-2 are A-stable
             # (unconditionally stable for stiff problems on stable
             # systems); orders 3-5 are only "stiffly stable" with

@@ -705,6 +705,7 @@ def test_solve_cvode_uses_cvode_roots_when_flag_2():
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
     instance._cvode_output_points = 65
+    instance._max_steps = 100000
 
     fake_rootfn = MagicMock()
     fake_rootfn.evals = 7
@@ -768,6 +769,7 @@ def test_solve_cvode_falls_back_to_values_when_no_roots_on_flag_2():
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
     instance._cvode_output_points = 65
+    instance._max_steps = 100000
 
     fake_rootfn = MagicMock()
     fake_rootfn.evals = 1
@@ -826,6 +828,7 @@ def test_solve_cvode_uses_values_on_normal_completion_flag_0():
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
     instance._cvode_output_points = 65
+    instance._max_steps = 100000
 
     with patch('aragog.solver.entropy_solver._scikits_cvode', return_value=mock_solver):
         result = EntropySolver._solve_cvode(
@@ -886,6 +889,7 @@ def test_solve_cvode_reads_step_counts_from_correct_handle():
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
     instance._cvode_output_points = 65
+    instance._max_steps = 100000
 
     with patch('aragog.solver.entropy_solver._scikits_cvode', return_value=mock_solver):
         result = EntropySolver._solve_cvode(

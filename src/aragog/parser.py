@@ -363,6 +363,11 @@ class _SolverParameters:
     # so the step count and final state shift weakly with it (state near
     # rtol, below any physical signal).
     cvode_output_points: int = 65
+    # Maximum number of internal CVODE steps per solve call. CVODE
+    # returns CV_TOO_MUCH_WORK and stops once a single solve reaches
+    # this count; raise it when a stiff phase-change window needs more
+    # internal steps than the default budget.
+    max_steps: int = 100000
 
     def __post_init__(self):
         if not isinstance(self.cvode_output_points, int):
@@ -374,6 +379,13 @@ class _SolverParameters:
             raise ValueError(
                 f'cvode_output_points must be >= 2, got {self.cvode_output_points!r}'
             )
+        if not isinstance(self.max_steps, int):
+            raise TypeError(
+                f'max_steps must be an integer, '
+                f'got {type(self.max_steps).__name__}'
+            )
+        if self.max_steps < 1:
+            raise ValueError(f'max_steps must be >= 1, got {self.max_steps!r}')
 
 
 @dataclass(kw_only=True)
