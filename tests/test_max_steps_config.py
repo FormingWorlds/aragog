@@ -63,6 +63,11 @@ def test_solver_parameters_rejects_non_int():
         _solver_parameters(max_steps=1.5)
 
 
+def test_solver_parameters_rejects_bool():
+    with pytest.raises(TypeError):
+        _solver_parameters(max_steps=True)
+
+
 def test_solver_config_default_max_steps():
     assert _solver_config().max_steps == 100000
 
@@ -79,6 +84,11 @@ def test_solver_config_rejects_below_one():
 def test_solver_config_rejects_non_int():
     with pytest.raises(TypeError):
         _solver_config(max_steps=1.5)
+
+
+def test_solver_config_rejects_bool():
+    with pytest.raises((TypeError, ValueError)):
+        _solver_config(max_steps=True)
 
 
 class _CapturingCVODE:

@@ -9,6 +9,8 @@ expected excursion trivial to compute by hand.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -107,3 +109,30 @@ def test_helper_energy_balance_uses_bottom_entropy():
     solver = _make_solver(n_stag=4, core_bc='energy_balance')
     y_col = np.array([1234.0, 1300.0, 1400.0, 1500.0, 0.0])
     assert solver._core_temperature_from_column(y_col) == pytest.approx(1234.0)
+
+
+def test_helper_gradient_uses_reconstructed_bottom_entropy():
+    solver = _make_solver(n_stag=4, core_bc='gradient')
+    # gradient reconstructs the staggered entropy from the basic-node
+    # state and a surface scalar, then maps it through the EOS. The fake
+    # EOS returns entropy unchanged, so T_core is the reconstructed
+    # bottom staggered entropy.
+    solver._reconstruct_entropy = lambda dsdr, s_surf: (
+        np.array([1357.0, 1400.0, 1500.0, 1600.0]),
+        None,
+    )
+    y_col = np.array([2000.0, 1900.0, 1800.0, 1700.0, 1600.0, 100.0])
+    assert solver._core_temperature_from_column(y_col) == pytest.approx(1357.0)
+
+
+def test_helper_const_eos_uses_analytic_formula():
+    solver = _make_solver(n_stag=4, core_bc='quasi_steady')
+    # With no entropy EOS the helper uses the analytic const-property
+    # relation T = T_ref * exp((S - S_ref) / Cp). The chosen references
+    # make the exponent zero for the bottom cell, so T_core is T_ref.
+    solver.entropy_eos = None
+    solver.parameters = SimpleNamespace(
+        phase_mixed=SimpleNamespace(const_T_ref=300.0, const_S_ref=1000.0, const_Cp=1000.0)
+    )
+    y_col = np.array([1000.0, 1100.0, 1200.0, 1300.0])
+    assert solver._core_temperature_from_column(y_col) == pytest.approx(300.0)

@@ -51,6 +51,7 @@ class SolverConfig:
     max_steps: int = attrs.field(
         default=100000,
         validator=attrs.validators.and_(
+            attrs.validators.not_(attrs.validators.instance_of(bool)),
             attrs.validators.instance_of(int),
             attrs.validators.ge(1),
         ),

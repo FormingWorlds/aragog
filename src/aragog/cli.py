@@ -531,10 +531,13 @@ def _first_comment_line(entry: Traversable) -> str:
 # the dominant state variables, then heat-balance terms.
 _INSPECT_SCALARS: tuple[tuple[str, str], ...] = (
     ('status', 'solver status (0 = success)'),
+    ('cvode_flag', 'raw CVODE return flag (0 = success, -1 = too much work)'),
     ('time', 'simulation time [yr]'),
     ('dt_actual', 'integration interval [yr]'),
     ('T_magma', 'surface (magma) temperature [K]'),
     ('T_core', 'CMB temperature [K]'),
+    ('tcore_change_max', 'largest per-solve CMB-temperature change [K]'),
+    ('tcore_change_exceeded', 'CMB-temperature change over limit (0/1)'),
     ('Phi_global', 'mass-weighted melt fraction [-]'),
     ('Phi_global_vol', 'volume-weighted melt fraction [-]'),
     ('M_mantle', 'mantle mass [kg]'),
@@ -554,6 +557,7 @@ _INSPECT_GLOBAL_ATTRS: tuple[str, ...] = (
     'aragog_version',
     'created_utc',
     'Conventions',
+    'cvode_flag_name',
 )
 
 
@@ -676,6 +680,8 @@ def inspect_cmd(snapshot: Path, as_json: bool) -> None:
         lines.append(f'  created: {attrs["created_utc"]}')
     if attrs.get('description'):
         lines.append(f'  description: {attrs["description"]}')
+    if attrs.get('cvode_flag_name'):
+        lines.append(f'  cvode_flag_name: {attrs["cvode_flag_name"]}')
     lines.append('  dimensions: ' + ', '.join(f'{name}={size}' for name, size in dims.items()))
     lines.append('')
     label_width = max(len(name) for name, _ in _INSPECT_SCALARS) + 2
@@ -685,7 +691,7 @@ def inspect_cmd(snapshot: Path, as_json: bool) -> None:
         v = scalars[name]
         if v is None:
             formatted = 'n/a'
-        elif name == 'status':
+        elif name in ('status', 'cvode_flag', 'tcore_change_exceeded'):
             formatted = f'{int(v)}'
         elif abs(v) >= 1e4 or (0 < abs(v) < 1e-2):
             formatted = f'{v:.4e}'

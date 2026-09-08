@@ -385,7 +385,7 @@ class _SolverParameters:
             raise ValueError(
                 f'cvode_output_points must be >= 2, got {self.cvode_output_points!r}'
             )
-        if not isinstance(self.max_steps, int):
+        if isinstance(self.max_steps, bool) or not isinstance(self.max_steps, int):
             raise TypeError(
                 f'max_steps must be an integer, got {type(self.max_steps).__name__}'
             )
