@@ -57,12 +57,16 @@ Two-phase flow adds two additional flux components and one additional source ter
 ### Gravitational separation of melt and solid
 
 Solid and melt have different densities, so they separate vertically by gravity.
-The mass flux of melt is positive upward; Aragog treats melt as the lighter phase throughout the mantle (no density crossover), so separation always moves melt up and solid down:
+The mass flux of melt is positive upward; Aragog treats melt as the lighter phase, so separation moves melt up and solid down:
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
 v_\mathrm{rel} = \frac{\lvert\rho_\mathrm{liq} - \rho_\mathrm{sol}\rvert\,g\,F(\phi)}{\eta_\mathrm{mix}}.
 $$
+
+The tabulated densities can cross so that the melt is locally the denser phase in a shallow region.
+The absolute value $\lvert\rho_\mathrm{liq} - \rho_\mathrm{sol}\rvert$ keeps $v_\mathrm{rel}$ non-negative there, so the separation direction stays fixed (melt up, solid down).
+Aragog floors the porosity denominator at a small positive value in that region, which keeps the porosity near zero, so $F(\phi)$ and the settling flux stay small; the suppression is local and does not change the macroscopic front evolution.
 
 $\eta_\mathrm{mix}$ is the drag viscosity selected by `separation_viscosity`.
 The default, `"melt"`, is the fixed liquid viscosity $\eta_\mathrm{liq}$, matching SPIDER's `GetGravitationalHeatFlux`.

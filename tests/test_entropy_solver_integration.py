@@ -33,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy.constants import Julian_year
 
 # EOS path is environment-driven for portability across machines.
 # Resolution order:
@@ -75,6 +76,7 @@ def _build_parameters(
     end_time: float = 50.0,
     n_nodes: int = 15,
     use_jax_jacobian: bool = False,
+    inner_boundary_value: float = 0.0,
 ):
     """Build an in-memory Parameters object for a short solver run.
 
@@ -99,7 +101,7 @@ def _build_parameters(
         outer_boundary_condition=1,  # grey body
         outer_boundary_value=1500.0,
         inner_boundary_condition=2,  # prescribed core flux
-        inner_boundary_value=0.0,  # zero CMB flux (insulating core)
+        inner_boundary_value=inner_boundary_value,  # W/m^2 at the CMB (0 = insulating)
         emissivity=1.0,
         equilibrium_temperature=255.0,
         core_heat_capacity=880.0,
@@ -477,4 +479,217 @@ def test_derive_initial_entropy_skips_when_ic_method_is_2(shared_eos):
     assert S0 is None, (
         f'IC method=2 must NOT trigger derivation; got S0={S0}. '
         'A non-None return here would silently override the user-supplied IC file.'
+    )
+
+
+# ---- F_cmb output column: conserved step-average ---------------------------
+
+
+def test_f_cmb_column_is_conserved_step_average_not_end_of_step_snapshot(shared_eos):
+    """The reported F_cmb column is the conserved step-average, not the
+    end-of-step basic-node-0 snapshot.
+
+    A prescribed nonzero core flux (inner BC 2, 1e4 W/m^2) forces the CMB
+    flux to that value at every sub-step, so the trapezoidal step-average
+    equals it. The final state refresh does not re-impose the BC, so the
+    retained snapshot ``heat_flux[0]`` drifts to the un-constrained
+    gradient. The two therefore diverge by a known, controlled amount.
+
+    Discriminator: the closure ``F_cmb * A_cmb * dt == step_dE_F_cmb_J``
+    holds only for the step-average. If the column reverted to the
+    snapshot, the reconstruction would miss the conserved integral by the
+    snapshot-vs-average ratio, and the closure assertion would fail.
+    """
+    parameters = _build_parameters(
+        core_bc='quasi_steady', n_nodes=15, end_time=50.0, inner_boundary_value=1.0e4
+    )
+    _, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+
+    a_cmb = 4.0 * np.pi * float(out.r_basic[0]) ** 2
+    dt_s = float(out.dt_actual) * Julian_year
+    reported = float(out.F_cmb)
+    snapshot = float(out.heat_flux[0])
+    integral = float(out.step_dE_F_cmb_J)
+
+    # Closure: the reported column reconstructs the conserved integral.
+    assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0), (
+        f'F_cmb={reported:.6e} * A_cmb * dt does not reconstruct '
+        f'step_dE_F_cmb_J={integral:.6e}; column is not the conserved average'
+    )
+    # The step-average equals the prescribed flux (guards a stuck-at-zero column).
+    assert np.isclose(reported, 1.0e4, rtol=1e-6), (
+        f'step-average F_cmb={reported:.6e} != prescribed 1e4 W/m^2'
+    )
+    # The snapshot differs, so this is genuinely not the end-of-step value.
+    assert not np.isclose(reported, snapshot, rtol=1e-3), (
+        f'F_cmb={reported:.6e} equals snapshot heat_flux[0]={snapshot:.6e}; '
+        'the column reports the end-of-step snapshot, not the step-average'
+    )
+    # The raw snapshot stays available for callers that need it.
+    assert np.isfinite(snapshot)
+
+
+def test_f_cmb_column_reports_bc_consistent_zero_for_insulating_core(shared_eos):
+    """With an insulating core (inner BC 2, 0 W/m^2) the reported F_cmb is
+    the BC-consistent zero, not the un-constrained end-of-step gradient.
+
+    The zero-flux BC is imposed inside the RHS at every sub-step, so the
+    conserved flux integral is zero and the step-average is zero. The
+    final state refresh omits the BC, leaving ``heat_flux[0]`` at a
+    nonzero gradient value.
+
+    Discriminator: the column must read 0. A column that reported the
+    snapshot would carry the nonzero gradient and violate the prescribed
+    zero-flux boundary condition.
+    """
+    parameters = _build_parameters(
+        core_bc='quasi_steady', n_nodes=15, end_time=50.0, inner_boundary_value=0.0
+    )
+    _, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+
+    a_cmb = 4.0 * np.pi * float(out.r_basic[0]) ** 2
+    dt_s = float(out.dt_actual) * Julian_year
+    reported = float(out.F_cmb)
+    snapshot = float(out.heat_flux[0])
+    integral = float(out.step_dE_F_cmb_J)
+
+    # Conserved flux integral is zero, so the reported step-average is zero.
+    assert integral == 0.0, f'insulating core: step_dE_F_cmb_J={integral:.6e} != 0'
+    assert reported == 0.0, (
+        f'insulating core: reported F_cmb={reported:.6e} != 0; the column '
+        'is not the BC-consistent step-average'
+    )
+    # Closure holds at the zero point too. Both sides are zero here, so a
+    # divisor-scaling regression is caught by the nonzero closure tests, not
+    # this one; this assertion documents self-consistency at zero flux.
+    assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0)
+    # The snapshot is nonzero, confirming the column is not the snapshot.
+    assert snapshot != 0.0, (
+        'expected a nonzero un-constrained snapshot to make this test '
+        'discriminate; fixture no longer exercises the BC-consistency gap'
+    )
+
+
+def test_f_cmb_column_is_conserved_step_average_energy_balance_core(shared_eos):
+    """The conserved step-average column also holds under
+    ``core_bc='energy_balance'``, the SPIDER-parity production mode and the
+    setting of the reported CMB-flux artifact.
+
+    Energy-balance mode integrates the extended state vector
+    [S_0, ..., S_{N-1}, dSdr_cmb] of length N+1, so ``get_state`` and the
+    step-energy integrator take the ``is_extended`` reconstruction branch
+    that the quasi_steady tests never exercise. A prescribed nonzero core
+    flux (inner BC 2, 1e4 W/m^2) is imposed at every sub-step, so the
+    trapezoidal step-average equals it. The final state refresh does not
+    re-impose the BC, so the retained snapshot ``heat_flux[0]`` drifts to
+    the un-constrained gradient, here even to the wrong sign (flux into the
+    core): the reported step-average removes that artifact.
+
+    Discriminator: the closure ``F_cmb * A_cmb * dt == step_dE_F_cmb_J``
+    holds only for the step-average, and it constrains the ``A_cmb * dt``
+    divisor because the reported value is nonzero. A column that reverted
+    to the snapshot would be negative here, failing both the closure and
+    the prescribed-value assertion.
+    """
+    parameters = _build_parameters(
+        core_bc='energy_balance', n_nodes=15, end_time=50.0, inner_boundary_value=1.0e4
+    )
+    _, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+
+    a_cmb = 4.0 * np.pi * float(out.r_basic[0]) ** 2
+    dt_s = float(out.dt_actual) * Julian_year
+    reported = float(out.F_cmb)
+    snapshot = float(out.heat_flux[0])
+    integral = float(out.step_dE_F_cmb_J)
+
+    # Closure: the reported column reconstructs the conserved integral, and
+    # because it is nonzero the identity constrains the A_cmb * dt divisor.
+    assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0), (
+        f'F_cmb={reported:.6e} * A_cmb * dt does not reconstruct '
+        f'step_dE_F_cmb_J={integral:.6e}; column is not the conserved average'
+    )
+    # The step-average equals the prescribed flux (guards a stuck-at-zero column).
+    assert np.isclose(reported, 1.0e4, rtol=1e-6), (
+        f'step-average F_cmb={reported:.6e} != prescribed 1e4 W/m^2'
+    )
+    # The retained snapshot is the un-constrained gradient flux, below the
+    # true CMB flux and here of the wrong sign: the artifact the average removes.
+    assert reported > 0.0 and snapshot < reported, (
+        f'expected snapshot={snapshot:.6e} below the conserved average '
+        f'{reported:.6e}; fixture no longer exercises the artifact'
+    )
+    # The raw snapshot stays available for callers that need it.
+    assert np.isfinite(snapshot)
+
+
+# ---- F_cmb closure on the melt-fraction step-cap degenerate path -----------
+
+
+def test_f_cmb_closure_holds_on_phi_step_cap_two_point_trajectory(shared_eos):
+    """The F_cmb closure survives the melt-fraction step-cap degenerate
+    path: a CVODE call truncated to a two-point trajectory at a phi root.
+
+    A small ``phi_step_cap`` with a mushy initial condition makes the
+    melt-fraction change reach the cap early in the call. On the CVODE
+    path this fires as a solver root: ``solve()`` truncates the returned
+    trajectory to exactly [t_start, t_root], sets ``cap_fired`` and
+    ``cap_label='phi'``, and the call ends before ``end_time``. The
+    step-energy integrator then trapezoid-integrates a two-point
+    trajectory rather than the many natural steps of a full call.
+
+    Discriminator: the closure ``F_cmb * A_cmb * dt == step_dE_F_cmb_J``
+    must still hold on the two-point trajectory, and the reported column
+    must still equal the prescribed 1e4 W/m^2 core flux. A regression that
+    formed the divisor from the full ``end_time`` rather than the actual
+    truncated call duration, or that mishandled the degenerate two-point
+    integral, would break the closure here while the full-trajectory
+    tests above still passed. The cap-fire assertions pin that this test
+    exercises the truncated path and not an ordinary full call.
+
+    Skipped if scikits.odes is not installed; the two-point truncation is
+    the CVODE path, so the radau backend cannot reproduce it.
+    """
+    pytest.importorskip('scikits_odes_sundials')
+
+    parameters = _build_parameters(
+        core_bc='quasi_steady',
+        solver_method='cvode',
+        n_nodes=15,
+        end_time=50.0,
+        inner_boundary_value=1.0e4,
+        use_jax_jacobian=False,
+    )
+    parameters.energy.phi_step_cap = 0.005
+    solver, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+
+    sol = solver._solution
+    assert sol is not None and sol.t is not None
+    # The phi cap fired as a CVODE root, truncating to a two-point trajectory.
+    assert getattr(sol, 'cap_fired', False) is True, 'phi_step_cap did not fire'
+    assert getattr(sol, 'cap_label', None) == 'phi', (
+        f"cap_label={getattr(sol, 'cap_label', None)!r}, expected 'phi'"
+    )
+    assert sol.t.size == 2, (
+        f'expected a two-point trajectory at the phi root, got sol.t.size={sol.t.size}'
+    )
+    # The call ended at the root, well before end_time.
+    assert float(out.dt_actual) < 50.0, (
+        f'dt_actual={float(out.dt_actual):.6e} yr not truncated below end_time'
+    )
+
+    a_cmb = 4.0 * np.pi * float(out.r_basic[0]) ** 2
+    dt_s = float(out.dt_actual) * Julian_year
+    reported = float(out.F_cmb)
+    integral = float(out.step_dE_F_cmb_J)
+
+    # Closure holds on the truncated two-point trajectory, and because the
+    # value is nonzero the identity constrains the A_cmb * dt divisor formed
+    # from the actual call duration, not from end_time.
+    assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0), (
+        f'F_cmb={reported:.6e} * A_cmb * dt does not reconstruct '
+        f'step_dE_F_cmb_J={integral:.6e} on the two-point phi-cap trajectory'
+    )
+    # The step-average equals the prescribed flux (guards a stuck-at-zero column).
+    assert np.isclose(reported, 1.0e4, rtol=1e-6), (
+        f'step-average F_cmb={reported:.6e} != prescribed 1e4 W/m^2'
     )
