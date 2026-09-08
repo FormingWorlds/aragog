@@ -57,6 +57,7 @@ from aragog.solver.entropy_state import EntropyState
 try:
     from scikits_odes_sundials.cvode import CVODE as _scikits_cvode
     from scikits_odes_sundials.cvode import CV_RootFunction as _CV_RootFunction
+    from scikits_odes_sundials.cvode import StatusEnum as _CV_StatusEnum
 
     _CVODE_AVAILABLE = True
     _CV_ROOTFN_AVAILABLE = True
@@ -65,6 +66,32 @@ except ImportError:  # pragma: no cover
     _CV_ROOTFN_AVAILABLE = False
     _scikits_cvode = None  # type: ignore[assignment]
     _CV_RootFunction = object  # type: ignore[misc,assignment]
+    _CV_StatusEnum = None  # type: ignore[assignment]
+
+
+def _cvode_flag_name(flag: int) -> str:
+    """Map a raw CVODE return flag to its status-enum name.
+
+    Parameters
+    ----------
+    flag : int
+        Raw CVODE return flag as stored on the solver result, e.g. ``0``,
+        ``-1`` (step budget exhausted), ``-4`` (nonlinear-solver failure).
+
+    Returns
+    -------
+    str
+        The ``scikits_odes_sundials`` ``StatusEnum`` member name for the
+        flag (e.g. ``'SUCCESS'``, ``'TOO_MUCH_WORK'``, ``'CONV_FAILURE'``),
+        or ``'FLAG_<flag>'`` when the flag is unknown or the enum is
+        unavailable.
+    """
+    if _CV_StatusEnum is not None:
+        try:
+            return _CV_StatusEnum(flag).name
+        except ValueError:
+            pass
+    return f'FLAG_{flag}'
 
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
 from scipy import constants as _sp_constants
@@ -701,6 +728,13 @@ class SolverOutput:
     dt_actual: float  # actual integration time [yr]
     status: int  # solver status (0 = success)
 
+    # Raw CVODE return flag, surfaced distinctly from the scipy-compatible
+    # ``status`` so a caller can tell CV_TOO_MUCH_WORK (step budget) from
+    # CV_CONV_FAILURE. Defaults describe the scipy ``solve_ivp`` fallback,
+    # which runs no CVODE integration: flag 0 and name 'N/A'.
+    cvode_flag: int = 0
+    cvode_flag_name: str = 'N/A'
+
     # ── NetCDF output ──────────────────────────────────────────────
     def to_netcdf(
         self,
@@ -899,6 +933,14 @@ class SolverOutput:
             )
             _scalar('dt_actual', self.dt_actual, 'yr', 'Actual integration time of this step')
             _scalar('status', int(self.status), '1', 'Solver status code (0 = success)')
+            _scalar(
+                'cvode_flag',
+                int(self.cvode_flag),
+                '1',
+                'Raw CVODE return flag (0 SUCCESS, -1 TOO_MUCH_WORK, '
+                '-4 CONV_FAILURE); scipy solve_ivp path reports 0',
+            )
+            ds.cvode_flag_name = self.cvode_flag_name
 
             # ── Staggered-node profiles ─────────────────────────────
             _arr('r_stag', self.r_stag, 'staggered', 'm', 'Radius at staggered nodes')
@@ -2406,6 +2448,10 @@ class EntropySolver:
             result.nfev = 0
             result.status = 0
             result.message = 'zero-span solve, returned initial state'
+            # No CVODE integration ran; report the success sentinel so the
+            # flag attributes are always present on a _solve_cvode result.
+            result.cvode_flag = 0
+            result.cvode_flag_name = _cvode_flag_name(0)
             return result
 
         # Wrap the RHS into the in-place (t, y, ydot) -> int signature
@@ -2659,6 +2705,12 @@ class EntropySolver:
 
         result.nfev = nfev_box[0]
         result.message = getattr(cvode_sol, 'message', '')
+        # Surface the raw CVODE flag distinctly from result.status: status
+        # stays scipy-compatible (0 success, -1 failure), while these two
+        # let a caller tell CV_TOO_MUCH_WORK (step budget exhausted) apart
+        # from CV_CONV_FAILURE (nonlinear-solver failure).
+        result.cvode_flag = flag
+        result.cvode_flag_name = _cvode_flag_name(flag)
         # CVODE flag 0 = success, 2 = root found (tstop), negative = failure.
         if flag == 0 or flag == 2:
             result.status = 0
@@ -3767,6 +3819,8 @@ class EntropySolver:
             step_dE_state_heat_J=step_integrals['state_heat'],
             dt_actual=float(sol.t[-1] - sol.t[0]),
             status=sol.status,
+            cvode_flag=int(getattr(sol, 'cvode_flag', 0)),
+            cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,
