@@ -79,9 +79,11 @@ Variables are named verbatim after the `SolverOutput` field names, with their un
 
 #### Scalars
 
-Time, surface and CMB temperatures, both averaging conventions of the global melt fraction, the energy-balance integrals, and the solver status code:
+Time, surface and CMB temperatures, both averaging conventions of the global melt fraction, the energy-balance integrals, the solver status code, the raw CVODE return flag, and the per-solve core-temperature excursion:
 
-`time`, `T_magma`, `T_core`, `Phi_global`, `Phi_global_vol`, `M_mantle`, `M_mantle_liquid`, `M_mantle_solid`, `RF_depth`, `E_th`, `E_state`, `E_state_cons`, `Cp_eff`, `F_heat_total`, `F_cmb`, `Q_radio_total`, `Q_tidal_total`, `step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`, `step_dE_Q_radio_cons_J`, `step_dE_Q_tidal_cons_J`, `step_solver_residual_J`, `dt_actual`, `status` (i4).
+`time`, `T_magma`, `T_core`, `Phi_global`, `Phi_global_vol`, `M_mantle`, `M_mantle_liquid`, `M_mantle_solid`, `RF_depth`, `E_th`, `E_state`, `E_state_cons`, `Cp_eff`, `F_heat_total`, `F_cmb`, `Q_radio_total`, `Q_tidal_total`, `step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`, `step_dE_Q_radio_cons_J`, `step_dE_Q_tidal_cons_J`, `step_solver_residual_J`, `dt_actual`, `status` (i4), `cvode_flag` (i4), `tcore_change_max` (f8), `tcore_change_exceeded` (i4).
+
+`status` is the normalised solve outcome (0 success, negative failure). `cvode_flag` is the raw integer flag CVODE returned for the same solve, kept distinct from `status` so that a `CV_TOO_MUCH_WORK` (-1) step-budget stop is told apart from a `CV_CONV_FAILURE` (-4) convergence failure; the scipy `solve_ivp` path reports 0. Its name is written as the string global attribute `cvode_flag_name`. `tcore_change_max` is the largest change of the core temperature from the solve-entry value over the returned grid [K]; `tcore_change_exceeded` is 1 when `tcore_change_limit` is set and that change exceeds it, else 0.
 
 ## Inspecting a snapshot
 

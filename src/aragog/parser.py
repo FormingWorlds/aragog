@@ -368,6 +368,12 @@ class _SolverParameters:
     # this count; raise it when a stiff phase-change window needs more
     # internal steps than the default budget.
     max_steps: int = 100000
+    # Optional per-solve core-temperature change limit [K]. When set, the
+    # solver flags a solve whose core temperature moves by more than this
+    # from the solve-entry value at any point on the returned grid, so a
+    # caller can reject a suspect large-step solve. ``None`` disables the
+    # flag; the measured change is always reported.
+    tcore_change_limit: float | None = None
 
     def __post_init__(self):
         if not isinstance(self.cvode_output_points, int):
@@ -381,11 +387,22 @@ class _SolverParameters:
             )
         if not isinstance(self.max_steps, int):
             raise TypeError(
-                f'max_steps must be an integer, '
-                f'got {type(self.max_steps).__name__}'
+                f'max_steps must be an integer, got {type(self.max_steps).__name__}'
             )
         if self.max_steps < 1:
             raise ValueError(f'max_steps must be >= 1, got {self.max_steps!r}')
+        if self.tcore_change_limit is not None:
+            if isinstance(self.tcore_change_limit, bool) or not isinstance(
+                self.tcore_change_limit, (int, float)
+            ):
+                raise TypeError(
+                    f'tcore_change_limit must be a number or None, '
+                    f'got {type(self.tcore_change_limit).__name__}'
+                )
+            if self.tcore_change_limit <= 0:
+                raise ValueError(
+                    f'tcore_change_limit must be > 0 or None, got {self.tcore_change_limit!r}'
+                )
 
 
 @dataclass(kw_only=True)

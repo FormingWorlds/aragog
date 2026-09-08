@@ -68,6 +68,11 @@ except ImportError:  # pragma: no cover
     _CV_RootFunction = object  # type: ignore[misc,assignment]
     _CV_StatusEnum = None  # type: ignore[assignment]
 
+# Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
+from scipy import constants as _sp_constants
+
+SECS_PER_YEAR: float = _sp_constants.Julian_year
+
 
 def _cvode_flag_name(flag: int) -> str:
     """Map a raw CVODE return flag to its status-enum name.
@@ -93,10 +98,6 @@ def _cvode_flag_name(flag: int) -> str:
             pass
     return f'FLAG_{flag}'
 
-# Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
-from scipy import constants as _sp_constants
-
-SECS_PER_YEAR: float = _sp_constants.Julian_year
 
 logger = logging.getLogger('fwl.' + __name__)
 
@@ -735,6 +736,15 @@ class SolverOutput:
     cvode_flag: int = 0
     cvode_flag_name: str = 'N/A'
 
+    # Per-solve core-temperature excursion: the largest absolute change of
+    # the core temperature from its solve-entry value over the returned
+    # grid [K], and a flag set when it exceeds ``tcore_change_limit``. The
+    # change is always measured; the flag stays ``False`` when no limit is
+    # configured. A caller can reject a solve whose core temperature jumps
+    # across a phase boundary in a single accepted step.
+    tcore_change_max: float = 0.0
+    tcore_change_exceeded: bool = False
+
     # ── NetCDF output ──────────────────────────────────────────────
     def to_netcdf(
         self,
@@ -941,6 +951,18 @@ class SolverOutput:
                 '-4 CONV_FAILURE); scipy solve_ivp path reports 0',
             )
             ds.cvode_flag_name = self.cvode_flag_name
+            _scalar(
+                'tcore_change_max',
+                float(self.tcore_change_max),
+                'K',
+                'Largest per-solve core-temperature change from solve entry',
+            )
+            _scalar(
+                'tcore_change_exceeded',
+                int(self.tcore_change_exceeded),
+                '1',
+                'Flag (0/1): per-solve core-temperature change exceeds the limit',
+            )
 
             # ── Staggered-node profiles ─────────────────────────────
             _arr('r_stag', self.r_stag, 'staggered', 'm', 'Radius at staggered nodes')
@@ -1038,6 +1060,12 @@ class EntropySolver:
         # CV_TOO_MUCH_WORK. Configurable so a stiff phase-change window
         # can request a larger budget than the default.
         self._max_steps = self.parameters.solver.max_steps
+        # Optional per-solve core-temperature change limit [K]. When set,
+        # a solve whose core temperature moves by more than this from the
+        # solve-entry value at any point on the returned grid raises a flag
+        # on the result. ``None`` disables the flag; the change is always
+        # measured and reported.
+        self._tcore_change_limit = self.parameters.solver.tcore_change_limit
         # Compression work [J] from the most recent structure re-solve.
         # When the planet contracts, the static pressure at each frozen
         # mass element rises, so the mantle enthalpy gains the adiabatic
@@ -3542,6 +3570,82 @@ class EntropySolver:
             kwargs['description'] = description
         self.get_state().to_netcdf(path, time=time, **kwargs)
 
+    def _core_temperature_from_column(self, y_col: npt.NDArray) -> float:
+        """Return the core-mantle-boundary temperature for one state column.
+
+        Reproduces the scalar ``T_core`` mapping ``get_state`` applies to
+        the final state, for an arbitrary column of the CVODE trajectory.
+        Reading it per column lets the solver measure how far the core
+        temperature moves within a single solve.
+
+        Parameters
+        ----------
+        y_col : ndarray
+            One column of ``sol.y``: the full ODE state vector at one time.
+
+        Returns
+        -------
+        float
+            Core-mantle-boundary temperature [K] (bottom staggered cell).
+        """
+        n_stag = self._n_stag
+        core_bc = self._core_bc
+        # bower2018 carries the core temperature as an explicit ODE state
+        # at index n_stag, so read it directly.
+        if core_bc == 'bower2018':
+            return float(y_col[n_stag])
+        if core_bc == 'gradient':
+            n_basic = n_stag + 1
+            S_stag, _ = self._reconstruct_entropy(y_col[:n_basic], float(y_col[n_basic]))
+        elif core_bc == 'energy_balance':
+            S_stag = y_col[:n_stag]
+        else:
+            S_stag = y_col
+        eos = self.entropy_eos
+        if eos is not None:
+            T_stag = np.asarray(eos.temperature(self._P_stag_flat, S_stag)).ravel()
+        else:
+            pm = self.parameters.phase_mixed
+            T_stag = pm.const_T_ref * np.exp(
+                (np.asarray(S_stag) - pm.const_S_ref) / pm.const_Cp
+            )
+        return float(np.asarray(T_stag).ravel()[0])
+
+    def _core_temperature_excursion(self, sol) -> tuple[float, bool]:
+        """Measure the largest core-temperature change within one solve.
+
+        Walks the returned CVODE grid and returns the maximum absolute
+        change of the core temperature from its solve-entry value. When
+        ``self._tcore_change_limit`` is set, also returns whether that
+        change exceeds the limit. A large budget can let CVODE accept one
+        big step across a phase boundary and return a spurious core-
+        temperature jump; the measure lets a caller reject such a solve.
+
+        Parameters
+        ----------
+        sol : object
+            Solver result with a 2-D ``y`` array (state rows, time columns).
+
+        Returns
+        -------
+        tcore_change_max : float
+            Maximum absolute core-temperature change over the grid [K].
+        tcore_change_exceeded : bool
+            ``True`` when a limit is set and the change exceeds it.
+        """
+        y = np.asarray(sol.y)
+        if y.ndim != 2 or y.shape[1] == 0:
+            return 0.0, False
+        t0 = self._core_temperature_from_column(y[:, 0])
+        tcore_change_max = 0.0
+        for i in range(y.shape[1]):
+            change = abs(self._core_temperature_from_column(y[:, i]) - t0)
+            if change > tcore_change_max:
+                tcore_change_max = change
+        limit = self._tcore_change_limit
+        exceeded = bool(limit is not None and tcore_change_max > limit)
+        return float(tcore_change_max), exceeded
+
     def get_state(self) -> SolverOutput:
         """Extract the solver state as a clean output dataclass.
 
@@ -3660,10 +3764,11 @@ class EntropySolver:
         # rather than evaluating T at the CMB basic node avoids a
         # systematic ~10 K offset from the half-cell pressure
         # difference and matches SPIDER's definition.
-        if bower:
-            T_core = extra_final  # bower2018: T_core integrated as ODE state
-        else:
-            T_core = float(T_stag[0])
+        T_core = self._core_temperature_from_column(sol.y[:, -1])
+        # Per-solve core-temperature excursion: the largest change of the
+        # core temperature from its solve-entry value over the returned
+        # grid, with an optional flag when it exceeds the configured limit.
+        tcore_change_max, tcore_change_exceeded = self._core_temperature_excursion(sol)
         # Mass-weighted melt fraction = M_mantle_liquid / M_mantle.
         # MUST be mass-weighted, not volume-weighted, when
         # ``mass_coordinates = true``: the mesh is uniform in mass
@@ -3821,6 +3926,8 @@ class EntropySolver:
             status=sol.status,
             cvode_flag=int(getattr(sol, 'cvode_flag', 0)),
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
+            tcore_change_max=tcore_change_max,
+            tcore_change_exceeded=tcore_change_exceeded,
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,

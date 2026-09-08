@@ -17,6 +17,7 @@ rtol = 1e-9
 tsurf_poststep_change = 30
 cvode_output_points = 65          # dense-output grid per CVODE macro-step
 max_steps = 100000                # internal CVODE step budget per solve
+# tcore_change_limit = 3000       # optional; flag a per-solve core-T change above this [K] (off by default)
 
 [boundary_conditions]
 outer_boundary_condition = 4      # 4 = prescribed flux (PROTEUS coupling)
@@ -128,6 +129,7 @@ Time-integration controls.
 | `tsurf_poststep_change` | K | Maximum allowed surface-temperature change per coupling step (PROTEUS use) |
 | `cvode_output_points` | -- | Number of points on the CVODE dense-output grid returned per macro-step (default 65, minimum 2). The per-step boundary-flux energy integrals use the trapezoidal rule over this grid; a finer grid sharpens the $F_\mathrm{int}$ diagnostic. The grid also feeds back into CVODE stepping, so the accepted step count and the final state shift weakly with it; the state shift stays at the tolerance level (near `rtol`), below any physical signal. Used only when `solver_method = "cvode"`. |
 | `max_steps` | -- | Maximum number of internal CVODE steps taken in a single solve call (default 100000, minimum 1). CVODE returns `CV_TOO_MUCH_WORK` and stops once one solve reaches this count. A stiff phase-change window can need more internal steps than the default budget; raise this value to let such a solve complete. Used only when `solver_method = "cvode"`. |
+| `tcore_change_limit` | K | Optional limit on the per-solve core-temperature change (unset by default; must be positive when set). Aragog always measures the largest change of the core temperature from the solve-entry value over the returned grid and reports it as `tcore_change_max`. When this limit is set and that change exceeds it, Aragog sets the `tcore_change_exceeded` flag on the result; the solve never raises. A caller can use the flag to reject a solve whose core temperature jumps as it crosses a phase boundary in a single accepted step. |
 
 ### `[boundary_conditions]`
 
