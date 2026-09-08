@@ -3594,22 +3594,27 @@ class EntropySolver:
         # at index n_stag, so read it directly.
         if core_bc == 'bower2018':
             return float(y_col[n_stag])
+        # Only the bottom (CMB) staggered cell is needed. energy_balance
+        # stores the staggered entropy in y_col[:n_stag] and quasi_steady
+        # stores it directly in y_col; the CMB cell is index 0 in both.
         if core_bc == 'gradient':
             n_basic = n_stag + 1
             S_stag, _ = self._reconstruct_entropy(y_col[:n_basic], float(y_col[n_basic]))
-        elif core_bc == 'energy_balance':
-            S_stag = y_col[:n_stag]
+            S_bottom = float(np.asarray(S_stag).ravel()[0])
         else:
-            S_stag = y_col
+            S_bottom = float(np.asarray(y_col).ravel()[0])
         eos = self.entropy_eos
         if eos is not None:
-            T_stag = np.asarray(eos.temperature(self._P_stag_flat, S_stag)).ravel()
-        else:
-            pm = self.parameters.phase_mixed
-            T_stag = pm.const_T_ref * np.exp(
-                (np.asarray(S_stag) - pm.const_S_ref) / pm.const_Cp
-            )
-        return float(np.asarray(T_stag).ravel()[0])
+            # Evaluate the EOS at the single bottom node. The table lookup
+            # is pointwise, so this matches ``temperature(P_stag, S_stag)[0]``
+            # while avoiding a full n_stag-node lookup per trajectory column.
+            P_bottom = float(np.asarray(self._P_stag_flat).ravel()[0])
+            T_bottom = np.asarray(
+                eos.temperature(np.array([P_bottom]), np.array([S_bottom]))
+            ).ravel()[0]
+            return float(T_bottom)
+        pm = self.parameters.phase_mixed
+        return float(pm.const_T_ref * np.exp((S_bottom - pm.const_S_ref) / pm.const_Cp))
 
     def _core_temperature_excursion(self, sol) -> tuple[float, bool]:
         """Measure the largest core-temperature change within one solve.

@@ -53,6 +53,10 @@ def test_solver_parameters_accepts_custom_max_steps():
     assert _solver_parameters(max_steps=12345).max_steps == 12345
 
 
+def test_solver_parameters_accepts_minimum_one():
+    assert _solver_parameters(max_steps=1).max_steps == 1
+
+
 def test_solver_parameters_rejects_below_one():
     with pytest.raises(ValueError):
         _solver_parameters(max_steps=0)
@@ -74,6 +78,10 @@ def test_solver_config_default_max_steps():
 
 def test_solver_config_accepts_custom_max_steps():
     assert _solver_config(max_steps=12345).max_steps == 12345
+
+
+def test_solver_config_accepts_minimum_one():
+    assert _solver_config(max_steps=1).max_steps == 1
 
 
 def test_solver_config_rejects_below_one():
