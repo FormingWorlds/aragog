@@ -620,3 +620,82 @@ def test_specific_enthalpy_scalar_in_domain_does_not_warn(eos, caplog):
     h_vector = eos.specific_enthalpy(np.array([P]), np.array([S_mid]))
     assert np.isclose(h_scalar, float(h_vector[0]))
     assert not any('specific_enthalpy_scalar' in r.message for r in caplog.records)
+
+
+# ──────────────────────────────────────────────────────────────────────
+#   melt_fraction() — the one property method feeding the live CVODE
+#   phi_step_cap. clip maps +-inf to a valid-looking 0/1 and passes NaN
+#   through, so this entry must warn like its siblings.
+# ──────────────────────────────────────────────────────────────────────
+
+
+@needs_eos
+def test_melt_fraction_nan_warns(eos, caplog):
+    """A NaN S must warn via ``_check_entropy_range`` naming the
+    ``melt_fraction`` context, and phi stays NaN (clip passes it
+    through unchanged, non-strict path leaves the value alone).
+
+    Discriminator: before the guard, ``melt_fraction`` had no range
+    check, so no warning was emitted for any non-finite input.
+    """
+    P = np.array([5.0e10])
+    with caplog.at_level(logging.WARNING):
+        phi = eos.melt_fraction(P, np.array([np.nan]))
+    assert np.all(np.isnan(np.asarray(phi)))
+    matches = [r.message for r in caplog.records if 'melt_fraction' in r.message]
+    assert matches, 'expected a warning naming melt_fraction'
+    assert '1 non-finite' in matches[0]
+
+
+@needs_eos
+def test_melt_fraction_positive_inf_warns_and_value_unchanged(eos, caplog):
+    """+inf S is non-finite: it must warn, while the non-strict return
+    value stays the clamped phi=1.0 (fully molten), unchanged from the
+    pre-guard behaviour.
+
+    Discriminator: an implementation that changed the value semantics
+    (e.g. propagated NaN like the JAX path) would fail the ==1.0 check;
+    the guard must add only the warning.
+    """
+    P = np.array([5.0e10])
+    with caplog.at_level(logging.WARNING):
+        phi = eos.melt_fraction(P, np.array([np.inf]))
+    assert float(np.asarray(phi)[0]) == 1.0
+    assert any('melt_fraction' in r.message for r in caplog.records)
+
+
+@needs_eos
+def test_melt_fraction_negative_inf_warns_and_value_unchanged(eos, caplog):
+    """-inf S must warn while the non-strict return value stays the
+    clamped phi=0.0 (fully solid), mirroring the +inf case.
+    """
+    P = np.array([5.0e10])
+    with caplog.at_level(logging.WARNING):
+        phi = eos.melt_fraction(P, np.array([-np.inf]))
+    assert float(np.asarray(phi)[0]) == 0.0
+    assert any('melt_fraction' in r.message for r in caplog.records)
+
+
+@needs_eos
+def test_melt_fraction_in_domain_does_not_warn(eos, caplog):
+    """A mid-domain S must not warn, and phi must stay in [0, 1].
+
+    False-positive guard: the new check must not fire on ordinary
+    in-range input, the path the live CVODE step cap hits every step.
+    """
+    P = np.array([5.0e10])
+    S_mid = np.array([0.5 * (eos.S_min + eos.S_max)])
+    with caplog.at_level(logging.WARNING):
+        phi = eos.melt_fraction(P, S_mid)
+    assert 0.0 <= float(np.asarray(phi)[0]) <= 1.0
+    assert not any('melt_fraction' in r.message for r in caplog.records)
+
+
+@needs_eos
+def test_melt_fraction_strict_raises_on_nonfinite(eos_strict):
+    """strict_range=True must convert the melt_fraction warning into a
+    RuntimeError for a non-finite S, matching the sibling contract.
+    """
+    P = np.array([5.0e10])
+    with pytest.raises(RuntimeError, match='melt_fraction'):
+        eos_strict.melt_fraction(P, np.array([np.inf]))

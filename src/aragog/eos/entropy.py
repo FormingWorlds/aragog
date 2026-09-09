@@ -750,6 +750,20 @@ class EntropyEOS:
 
         phi = 0 for S <= S_sol, phi = 1 for S >= S_liq, linear between.
         """
+        S = np.asarray(S, dtype=float)
+        # phi feeds the live CVODE melt-fraction step cap directly, so flag a
+        # non-finite or far-out-of-range S: the clip in the core maps +-inf to
+        # a valid-looking 0 or 1 and passes NaN straight through.
+        self._check_entropy_range(S, self.S_min, self.S_max, 'melt_fraction')
+        return self._melt_fraction(P, S)
+
+    def _melt_fraction(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
+        """Melt fraction core without the entropy-range check.
+
+        The phase-property lookups that call this run their own entropy
+        range check on S, so the check is not repeated here. The public
+        ``melt_fraction`` adds it for direct callers.
+        """
         P = np.asarray(P, dtype=float)
         S = np.asarray(S, dtype=float)
         S_sol = self.solidus_entropy(P)
@@ -851,7 +865,7 @@ class EntropyEOS:
         """
         P = np.asarray(P, dtype=float)
         S = np.asarray(S, dtype=float)
-        phi = self.melt_fraction(P, S)
+        phi = self._melt_fraction(P, S)
 
         solid_table = self._tables[f'{prop_name}_solid']
         melt_table = self._tables[f'{prop_name}_melt']
@@ -924,7 +938,7 @@ class EntropyEOS:
         """
         P = np.asarray(P, dtype=float)
         S = np.asarray(S, dtype=float)
-        phi = self.melt_fraction(P, S)
+        phi = self._melt_fraction(P, S)
         mushy = (phi > 0) & (phi < 1)
 
         solid_table = self._tables['density_solid']
@@ -1121,7 +1135,7 @@ class EntropyEOS:
         )
 
         # Composite density (harmonic mean, SPIDER eos_composite.c:236)
-        phi = self.melt_fraction(P, S)
+        phi = self._melt_fraction(P, S)
         inv_rho = phi / np.maximum(rho_liq, 1.0) + (1.0 - phi) / np.maximum(rho_sol, 1.0)
         rho_comp = 1.0 / np.maximum(inv_rho, 1e-30)
 
