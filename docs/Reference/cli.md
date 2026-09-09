@@ -160,7 +160,7 @@ snapshot: out.nc
   T_magma                      3500.0000  surface (magma) temperature [K]
   T_core                       4200.0000  CMB temperature [K]
   tcore_change_max              125.0000  largest per-solve CMB-temperature change [K]
-  tcore_change_exceeded                0  CMB-temperature change over limit (0/1)
+  tcore_change_exceeded                0  CMB-temperature change over limit or non-finite (0/1)
   Phi_global                      0.4200  mass-weighted melt fraction [-]
   E_state                     4.5000e+30  EOS-consistent enthalpy [J]
   E_state_cons                4.4900e+30  frozen-mass enthalpy [J]
@@ -170,7 +170,7 @@ snapshot: out.nc
   T_basic: min=1.5000e+03, max=4.5000e+03 (121/121 finite)
 ```
 
-The CVODE diagnostics come from the last integrator return: `cvode_flag` is the raw SUNDIALS return code (`status` stays the aragog-level solver status), and `cvode_flag_name` is the matching symbolic name printed in the header block. The `tcore_change_max` / `tcore_change_exceeded` pair reports the largest core-mantle-boundary temperature change measured within the final solve and whether it crossed the configured `solver.tcore_change_limit`. `cvode_flag` and `tcore_change_exceeded` print as plain integers; the excursion magnitude follows the normal float formatting. Every fresh snapshot carries all four fields: on the default radau path CVODE never runs, so `cvode_flag` is `0` and `cvode_flag_name` reads `N/A`. Only an older snapshot that predates these fields omits them, and `inspect` then drops the `cvode_flag_name` header line and skips the absent scalars.
+The CVODE diagnostics come from the last integrator return: `cvode_flag` is the raw SUNDIALS return code (`status` stays the aragog-level solver status), and `cvode_flag_name` is the matching symbolic name printed in the header block. The `tcore_change_max` / `tcore_change_exceeded` pair reports the largest core-mantle-boundary temperature change measured within the final solve and whether it crossed the configured `solver.tcore_change_limit`; `tcore_change_exceeded` is also set when any sampled core temperature in that solve is non-finite, independent of whether a limit is set. `cvode_flag` and `tcore_change_exceeded` print as plain integers; the excursion magnitude follows the normal float formatting. Every fresh snapshot carries all four fields: on the default radau path CVODE never runs, so `cvode_flag` is `0` and `cvode_flag_name` reads `N/A`. Only an older snapshot that predates these fields omits them, and `inspect` then drops the `cvode_flag_name` header line and skips the absent scalars.
 
 `--json` emits the same payload as a single JSON document keyed `{path, dimensions, attrs, scalars, profiles}`, suitable for `jq` post-processing or CI assertions. `cvode_flag`, `tcore_change_max` and `tcore_change_exceeded` appear under `.scalars`; `cvode_flag_name` is a global attribute and appears under `.attrs`.
 

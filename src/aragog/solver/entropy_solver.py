@@ -738,10 +738,9 @@ class SolverOutput:
 
     # Per-solve core-temperature excursion: the largest absolute change of
     # the core temperature from its solve-entry value over the returned
-    # grid [K], and a flag set when it exceeds ``tcore_change_limit``. The
-    # change is always measured; the flag stays ``False`` when no limit is
-    # configured. A caller can reject a solve whose core temperature jumps
-    # across a phase boundary in a single accepted step.
+    # grid [K]. The flag is set when that change exceeds ``tcore_change_limit``
+    # (a phase-boundary crossing within one step) or when any sampled core
+    # temperature is non-finite (a corrupted solve), independent of the limit.
     tcore_change_max: float = 0.0
     tcore_change_exceeded: bool = False
 
@@ -961,7 +960,8 @@ class SolverOutput:
                 'tcore_change_exceeded',
                 int(self.tcore_change_exceeded),
                 '1',
-                'Flag (0/1): per-solve core-temperature change exceeds the limit',
+                'Flag (0/1): per-solve core-temperature change exceeds the '
+                'limit, or a sampled core temperature is non-finite',
             )
 
             # ── Staggered-node profiles ─────────────────────────────
@@ -1063,8 +1063,8 @@ class EntropySolver:
         # Optional per-solve core-temperature change limit [K]. When set,
         # a solve whose core temperature moves by more than this from the
         # solve-entry value at any point on the returned grid raises a flag
-        # on the result. ``None`` disables the flag; the change is always
-        # measured and reported.
+        # on the result. The flag is also raised, independent of this
+        # limit, whenever any sampled core temperature is non-finite.
         self._tcore_change_limit = self.parameters.solver.tcore_change_limit
         # Compression work [J] from the most recent structure re-solve.
         # When the planet contracts, the static pressure at each frozen
@@ -3821,7 +3821,8 @@ class EntropySolver:
         T_core = self._core_temperature_from_column(sol.y[:, -1])
         # Per-solve core-temperature excursion: the largest change of the
         # core temperature from its solve-entry value over the returned
-        # grid, with an optional flag when it exceeds the configured limit.
+        # grid, with a flag set when it exceeds the configured limit or
+        # when any sampled core temperature is non-finite.
         tcore_change_max, tcore_change_exceeded = self._core_temperature_excursion(sol)
         # Mass-weighted melt fraction = M_mantle_liquid / M_mantle.
         # MUST be mass-weighted, not volume-weighted, when

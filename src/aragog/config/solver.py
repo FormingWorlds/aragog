@@ -30,8 +30,9 @@ class SolverConfig:
     max_steps : int
         Maximum number of internal CVODE steps per solve call.
     tcore_change_limit : float or None
-        Optional per-solve core-temperature change limit [K]; ``None``
-        disables the flag.
+        Optional per-solve core-temperature change limit [K]. The flag is
+        also set, independent of this limit, when any sampled core
+        temperature is non-finite.
     """
 
     start_time: float

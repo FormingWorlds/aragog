@@ -370,9 +370,9 @@ class _SolverParameters:
     max_steps: int = 100000
     # Optional per-solve core-temperature change limit [K]. When set, the
     # solver flags a solve whose core temperature moves by more than this
-    # from the solve-entry value at any point on the returned grid, so a
-    # caller can reject a suspect large-step solve. ``None`` disables the
-    # flag; the measured change is always reported.
+    # from the solve-entry value at any point on the returned grid. The
+    # flag is also set, independent of this limit, whenever any sampled
+    # core temperature is non-finite; the measured change is always reported.
     tcore_change_limit: float | None = None
 
     def __post_init__(self):

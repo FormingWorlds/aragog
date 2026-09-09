@@ -537,7 +537,7 @@ _INSPECT_SCALARS: tuple[tuple[str, str], ...] = (
     ('T_magma', 'surface (magma) temperature [K]'),
     ('T_core', 'CMB temperature [K]'),
     ('tcore_change_max', 'largest per-solve CMB-temperature change [K]'),
-    ('tcore_change_exceeded', 'CMB-temperature change over limit (0/1)'),
+    ('tcore_change_exceeded', 'CMB-temperature change over limit or non-finite (0/1)'),
     ('Phi_global', 'mass-weighted melt fraction [-]'),
     ('Phi_global_vol', 'volume-weighted melt fraction [-]'),
     ('M_mantle', 'mantle mass [kg]'),
