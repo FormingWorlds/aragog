@@ -207,7 +207,9 @@ class EntropyPhaseEvaluator:
         # here, before any table lookup, instead of only detecting the
         # NaN it produces downstream (see the guard at the end of this
         # method).
-        eos._check_entropy_range(S_arr, eos.S_min, eos.S_max, 'entropy_phase (composite domain)')
+        eos._check_entropy_range(
+            S_arr, eos.S_min, eos.S_max, 'entropy_phase (composite domain)'
+        )
 
         # ── Step 1: phase boundaries (computed ONCE) ────────────────
         S_sol = eos.solidus_entropy(P_arr)
