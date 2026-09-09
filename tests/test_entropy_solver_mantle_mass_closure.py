@@ -160,8 +160,7 @@ def test_mantle_liquid_solid_split_conserves_against_reported_m_mantle():
         'inconsistent with the reported M_mantle.'
     )
     assert 0.0 <= out.M_mantle_solid <= out.M_mantle, (
-        f'M_mantle_solid={out.M_mantle_solid:.6e} escaped [0, M_mantle='
-        f'{out.M_mantle:.6e}].'
+        f'M_mantle_solid={out.M_mantle_solid:.6e} escaped [0, M_mantle={out.M_mantle:.6e}].'
     )
     np.testing.assert_allclose(
         out.M_mantle_liquid + out.M_mantle_solid,
