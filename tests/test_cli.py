@@ -231,6 +231,7 @@ def _write_minimal_solver_output(path):
         ds.aragog_version = 'test-build'
         ds.created_utc = '2026-05-09T00:00:00+00:00'
         ds.Conventions = 'CF-1.8'
+        ds.cvode_flag_name = 'TOO_MUCH_WORK'
 
         ds.createDimension('staggered', 5)
         ds.createDimension('basic', 6)
@@ -250,6 +251,7 @@ def _write_minimal_solver_output(path):
             'E_th': 5.0e29,
             'Cp_eff': 1200.0,
             'RF_depth': 0.5,
+            'tcore_change_max': 200.0,
         }
         for name, value in scalars.items():
             v = ds.createVariable(name, 'f8')
@@ -257,10 +259,11 @@ def _write_minimal_solver_output(path):
             v.long_name = name
             v[...] = value
 
-        v = ds.createVariable('status', 'i4')
-        v.units = '1'
-        v.long_name = 'solver status'
-        v[...] = 0
+        for name, value in (('status', 0), ('cvode_flag', -1), ('tcore_change_exceeded', 1)):
+            v = ds.createVariable(name, 'i4')
+            v.units = '1'
+            v.long_name = name
+            v[...] = value
 
         # Profile arrays: include S_final and T_basic so inspect's
         # min/max block has something to report.
@@ -294,6 +297,13 @@ def test_inspect_summarises_minimal_snapshot(tmp_path):
     )
     assert 'T_core' in out and '4200.0000' in out
     assert 'status' in out
+    # New CVODE-budget diagnostics surface in the human summary: the raw
+    # flag as an integer, its enum name from the global attribute, and the
+    # per-solve core-temperature excursion measure and over-limit flag.
+    assert 'cvode_flag' in out and '-1' in out
+    assert 'cvode_flag_name: TOO_MUCH_WORK' in out
+    assert 'tcore_change_max' in out and '200.0000' in out
+    assert 'tcore_change_exceeded' in out
     assert 'aragog: test-build' in out, (
         'inspect summary must include the aragog_version attribute.'
     )
@@ -326,6 +336,10 @@ def test_inspect_json_emits_valid_machine_readable_document(tmp_path):
     assert {'path', 'dimensions', 'attrs', 'scalars', 'profiles'} <= set(payload)
     assert payload['scalars']['T_magma'] == pytest.approx(3500.0)
     assert payload['scalars']['status'] == pytest.approx(0)
+    assert payload['scalars']['cvode_flag'] == pytest.approx(-1)
+    assert payload['scalars']['tcore_change_max'] == pytest.approx(200.0)
+    assert payload['scalars']['tcore_change_exceeded'] == pytest.approx(1)
+    assert payload['attrs']['cvode_flag_name'] == 'TOO_MUCH_WORK'
     # Profiles min/max must be numeric, not None, on a fresh snapshot.
     assert payload['profiles']['S_final']['n_finite'] == 5
 

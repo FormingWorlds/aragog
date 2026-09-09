@@ -403,6 +403,50 @@ def test_entropy_solver_solve_cvode_path_short_run_completes(shared_eos):
     assert float(np.max(final_y)) < 5500.0
 
 
+def test_get_state_maps_cvode_flag_and_tcore_excursion_fields(shared_eos):
+    """``get_state`` must copy the four post-solve diagnostic fields onto
+    the returned SolverOutput: cvode_flag, cvode_flag_name,
+    tcore_change_max, tcore_change_exceeded.
+
+    A regression that stops mapping any of them leaves the SolverOutput
+    default in place (the excursion pair falls back to 0.0/False, the flag
+    name to 'N/A'). The CVODE path is used so a successful solve names a
+    real StatusEnum member: a dropped cvode_flag_name mapping would then
+    read 'N/A', which the radau default path cannot distinguish. Each
+    field is re-derived from the same solution get_state reads.
+    """
+    import aragog.solver.entropy_solver as es
+
+    pytest.importorskip('scikits_odes_sundials')
+    parameters = _build_parameters(
+        core_bc='quasi_steady',
+        solver_method='cvode',
+        n_nodes=15,
+        end_time=20.0,
+        use_jax_jacobian=False,  # FD Jacobian to avoid JAX path
+    )
+    solver, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+
+    # cvode_flag / cvode_flag_name are read off the solution object.
+    assert isinstance(out.cvode_flag, int)
+    assert isinstance(out.cvode_flag_name, str)
+    assert out.cvode_flag == int(getattr(solver._solution, 'cvode_flag', 0))
+    assert out.cvode_flag_name == str(getattr(solver._solution, 'cvode_flag_name', 'N/A'))
+    assert out.cvode_flag_name != 'N/A'
+    assert out.cvode_flag_name == es._cvode_flag_name(out.cvode_flag)
+
+    # The excursion pair is re-derived from the same solution get_state
+    # measured, so equality proves get_state routed the measure onto the
+    # output rather than leaving the 0.0/False default.
+    exp_max, exp_exceeded = solver._core_temperature_excursion(solver._solution)
+    assert isinstance(out.tcore_change_max, float)
+    assert isinstance(out.tcore_change_exceeded, bool)
+    assert out.tcore_change_max == exp_max
+    assert out.tcore_change_exceeded == exp_exceeded
+    assert np.isfinite(out.tcore_change_max)
+    assert out.tcore_change_max >= 0.0
+
+
 # ---- CLI IC-derivation against the live EOS --------------------------------
 
 

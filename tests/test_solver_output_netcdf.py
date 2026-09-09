@@ -101,6 +101,13 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         step_dE_state_heat_J=-7.0e21,
         dt_actual=dt,
         status=status,
+        # Distinctive non-default values for the four diagnostic fields so
+        # the round-trip test catches a dtype typo (e.g. an int flag
+        # written as f8) or a dropped field.
+        cvode_flag=-1,
+        cvode_flag_name='TOO_MUCH_WORK',
+        tcore_change_max=4321.5,
+        tcore_change_exceeded=True,
     )
 
 
@@ -174,6 +181,20 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
         # Status: integer field (i4)
         assert int(ds['status'][...]) == out.status
         assert ds['status'].dtype == np.int32
+
+        # CVODE diagnostics: the raw flag and the exceeded flag are i4
+        # integers, the change is an f8 float, and the flag name is a
+        # global attribute. A regression that wrote the flag as f8 would
+        # fail the dtype assertions.
+        assert int(ds['cvode_flag'][...]) == out.cvode_flag
+        assert ds['cvode_flag'].dtype == np.int32
+        assert ds.cvode_flag_name == out.cvode_flag_name
+        np.testing.assert_allclose(
+            float(ds['tcore_change_max'][...]), out.tcore_change_max, rtol=1e-15, atol=0.0
+        )
+        assert ds['tcore_change_max'].dtype == np.float64
+        assert int(ds['tcore_change_exceeded'][...]) == int(out.tcore_change_exceeded)
+        assert ds['tcore_change_exceeded'].dtype == np.int32
 
         # Arrays: full bit-exact match. Distinct dim per array enforces
         # that the writer didn't silently swap basic-vs-staggered.

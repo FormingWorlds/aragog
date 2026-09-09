@@ -57,6 +57,7 @@ from aragog.solver.entropy_state import EntropyState
 try:
     from scikits_odes_sundials.cvode import CVODE as _scikits_cvode
     from scikits_odes_sundials.cvode import CV_RootFunction as _CV_RootFunction
+    from scikits_odes_sundials.cvode import StatusEnum as _CV_StatusEnum
 
     _CVODE_AVAILABLE = True
     _CV_ROOTFN_AVAILABLE = True
@@ -65,11 +66,38 @@ except ImportError:  # pragma: no cover
     _CV_ROOTFN_AVAILABLE = False
     _scikits_cvode = None  # type: ignore[assignment]
     _CV_RootFunction = object  # type: ignore[misc,assignment]
+    _CV_StatusEnum = None  # type: ignore[assignment]
 
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
 from scipy import constants as _sp_constants
 
 SECS_PER_YEAR: float = _sp_constants.Julian_year
+
+
+def _cvode_flag_name(flag: int) -> str:
+    """Map a raw CVODE return flag to its status-enum name.
+
+    Parameters
+    ----------
+    flag : int
+        Raw CVODE return flag as stored on the solver result, e.g. ``0``,
+        ``-1`` (step budget exhausted), ``-4`` (nonlinear-solver failure).
+
+    Returns
+    -------
+    str
+        The ``scikits_odes_sundials`` ``StatusEnum`` member name for the
+        flag (e.g. ``'SUCCESS'``, ``'TOO_MUCH_WORK'``, ``'CONV_FAILURE'``),
+        or ``'FLAG_<flag>'`` when the flag is unknown or the enum is
+        unavailable.
+    """
+    if _CV_StatusEnum is not None:
+        try:
+            return _CV_StatusEnum(flag).name
+        except ValueError:
+            pass
+    return f'FLAG_{flag}'
+
 
 logger = logging.getLogger('fwl.' + __name__)
 
@@ -701,6 +729,21 @@ class SolverOutput:
     dt_actual: float  # actual integration time [yr]
     status: int  # solver status (0 = success)
 
+    # Raw CVODE return flag, surfaced distinctly from the scipy-compatible
+    # ``status`` so a caller can tell CV_TOO_MUCH_WORK (step budget) from
+    # CV_CONV_FAILURE. Defaults describe the scipy ``solve_ivp`` fallback,
+    # which runs no CVODE integration: flag 0 and name 'N/A'.
+    cvode_flag: int = 0
+    cvode_flag_name: str = 'N/A'
+
+    # Per-solve core-temperature excursion: the largest absolute change of
+    # the core temperature from its solve-entry value over the returned
+    # grid [K]. The flag is set when that change exceeds ``tcore_change_limit``
+    # (a phase-boundary crossing within one step) or when any sampled core
+    # temperature is non-finite (a corrupted solve), independent of the limit.
+    tcore_change_max: float = 0.0
+    tcore_change_exceeded: bool = False
+
     # ── NetCDF output ──────────────────────────────────────────────
     def to_netcdf(
         self,
@@ -899,6 +942,27 @@ class SolverOutput:
             )
             _scalar('dt_actual', self.dt_actual, 'yr', 'Actual integration time of this step')
             _scalar('status', int(self.status), '1', 'Solver status code (0 = success)')
+            _scalar(
+                'cvode_flag',
+                int(self.cvode_flag),
+                '1',
+                'Raw CVODE return flag (0 SUCCESS, -1 TOO_MUCH_WORK, '
+                '-4 CONV_FAILURE); scipy solve_ivp path reports 0',
+            )
+            ds.cvode_flag_name = self.cvode_flag_name
+            _scalar(
+                'tcore_change_max',
+                float(self.tcore_change_max),
+                'K',
+                'Largest per-solve core-temperature change from solve entry',
+            )
+            _scalar(
+                'tcore_change_exceeded',
+                int(self.tcore_change_exceeded),
+                '1',
+                'Flag (0/1): per-solve core-temperature change exceeds the '
+                'limit, or a sampled core temperature is non-finite',
+            )
 
             # ── Staggered-node profiles ─────────────────────────────
             _arr('r_stag', self.r_stag, 'staggered', 'm', 'Radius at staggered nodes')
@@ -992,6 +1056,16 @@ class EntropySolver:
         # shift stays near rtol, below any physical signal. Only the
         # non-root path uses it; a phi-step-cap root stops the call early.
         self._cvode_output_points = self.parameters.solver.cvode_output_points
+        # Maximum internal CVODE steps per solve; exceeding it returns
+        # CV_TOO_MUCH_WORK. Configurable so a stiff phase-change window
+        # can request a larger budget than the default.
+        self._max_steps = self.parameters.solver.max_steps
+        # Optional per-solve core-temperature change limit [K]. When set,
+        # a solve whose core temperature moves by more than this from the
+        # solve-entry value at any point on the returned grid raises a flag
+        # on the result. The flag is also raised, independent of this
+        # limit, whenever any sampled core temperature is non-finite.
+        self._tcore_change_limit = self.parameters.solver.tcore_change_limit
         # Compression work [J] from the most recent structure re-solve.
         # When the planet contracts, the static pressure at each frozen
         # mass element rises, so the mantle enthalpy gains the adiabatic
@@ -2402,6 +2476,10 @@ class EntropySolver:
             result.nfev = 0
             result.status = 0
             result.message = 'zero-span solve, returned initial state'
+            # No CVODE integration ran; report the success sentinel so the
+            # flag attributes are always present on a _solve_cvode result.
+            result.cvode_flag = 0
+            result.cvode_flag_name = _cvode_flag_name(0)
             return result
 
         # Wrap the RHS into the in-place (t, y, ydot) -> int signature
@@ -2465,7 +2543,7 @@ class EntropySolver:
             'atol': atol_cvode,
             'lmm_type': 'BDF',
             'nonlinsolver': 'newton',
-            'max_steps': 100000,  # per-solve cap; scipy used unlimited
+            'max_steps': self._max_steps,  # per-solve cap; scipy used unlimited
             # Maximum BDF order. BDF orders 1-2 are A-stable
             # (unconditionally stable for stiff problems on stable
             # systems); orders 3-5 are only "stiffly stable" with
@@ -2655,6 +2733,12 @@ class EntropySolver:
 
         result.nfev = nfev_box[0]
         result.message = getattr(cvode_sol, 'message', '')
+        # Surface the raw CVODE flag distinctly from result.status: status
+        # stays scipy-compatible (0 success, -1 failure), while these two
+        # let a caller tell CV_TOO_MUCH_WORK (step budget exhausted) apart
+        # from CV_CONV_FAILURE (nonlinear-solver failure).
+        result.cvode_flag = flag
+        result.cvode_flag_name = _cvode_flag_name(flag)
         # CVODE flag 0 = success, 2 = root found (tstop), negative = failure.
         if flag == 0 or flag == 2:
             result.status = 0
@@ -3486,6 +3570,136 @@ class EntropySolver:
             kwargs['description'] = description
         self.get_state().to_netcdf(path, time=time, **kwargs)
 
+    def _core_temperature_from_column(self, y_col: npt.NDArray) -> float:
+        """Return the core-mantle-boundary temperature for one state column.
+
+        Reproduces the scalar ``T_core`` mapping ``get_state`` applies to
+        the final state, for an arbitrary column of the CVODE trajectory.
+        Reading it per column lets the solver measure how far the core
+        temperature moves within a single solve.
+
+        Parameters
+        ----------
+        y_col : ndarray
+            One column of ``sol.y``: the full ODE state vector at one time.
+
+        Returns
+        -------
+        float
+            Core-mantle-boundary temperature [K] (bottom staggered cell), or
+            NaN when the raw bottom-node entropy read from ``y_col`` is
+            itself non-finite, ahead of any EOS lookup that could mask it.
+
+        Notes
+        -----
+        The EOS temperature lookup is pointwise, so this evaluates the table
+        at the single bottom node rather than across all ``n_stag`` nodes,
+        making the per-column cost O(1) for bower2018, energy_balance and
+        quasi_steady. The gradient mode is the exception: it must reconstruct
+        the staggered entropy from the basic-node state through
+        ``_reconstruct_entropy`` before it can read the bottom cell, so its
+        per-column cost stays O(n_stag). Sweeping the excursion measure over
+        the full trajectory is therefore O(n_col) for the other three modes
+        and O(n_col * n_stag) for gradient.
+        """
+        n_stag = self._n_stag
+        core_bc = self._core_bc
+        # bower2018 carries the core temperature as an explicit ODE state
+        # at index n_stag, so read it directly.
+        if core_bc == 'bower2018':
+            return float(y_col[n_stag])
+        # Only the bottom (CMB) staggered cell is needed, and it is index 0
+        # in every mode. gradient reconstructs the staggered entropy from the
+        # basic-node state first; energy_balance and quasi_steady already hold
+        # the CMB entropy at y_col[0].
+        if core_bc == 'gradient':
+            n_basic = n_stag + 1
+            # _reconstruct_entropy's backward recurrence never reads
+            # dSdr_basic[0] (the CMB gradient) when building S_stag[0]: that
+            # entry feeds only the discarded S_basic[0]. A non-finite
+            # y_col[0] would therefore slip past a finiteness check on
+            # S_bottom alone, so the whole reconstruction input is checked
+            # up front instead.
+            if not np.all(np.isfinite(y_col[: n_basic + 1])):
+                return float('nan')
+            S_stag, _ = self._reconstruct_entropy(y_col[:n_basic], float(y_col[n_basic]))
+            S_bottom = float(np.asarray(S_stag).ravel()[0])
+        else:
+            S_bottom = float(np.asarray(y_col).ravel()[0])
+        if not np.isfinite(S_bottom):
+            # A real EntropyEOS phase blend masks a non-finite entropy to a
+            # finite value (NaN -> 0.0 K, +-inf -> a clamped table value), so
+            # the corrupted-solve signal is caught here, before the lookup.
+            return float('nan')
+        eos = self.entropy_eos
+        if eos is not None:
+            # Evaluate the EOS at the single bottom node. The table lookup
+            # is pointwise, so this matches ``temperature(P_stag, S_stag)[0]``
+            # while avoiding a full n_stag-node lookup per trajectory column.
+            P_bottom = float(np.asarray(self._P_stag_flat).ravel()[0])
+            T_bottom = np.asarray(
+                eos.temperature(np.array([P_bottom]), np.array([S_bottom]))
+            ).ravel()[0]
+            return float(T_bottom)
+        pm = self.parameters.phase_mixed
+        return float(pm.const_T_ref * np.exp((S_bottom - pm.const_S_ref) / pm.const_Cp))
+
+    def _core_temperature_excursion(self, sol) -> tuple[float, bool]:
+        """Measure the largest core-temperature change within one solve.
+
+        Walks the columns of the returned solution and returns the maximum
+        absolute change of the core temperature from its solve-entry value.
+        The columns are the solver's returned sample grid: on the CVODE path
+        this is the ``cvode_output_points`` dense-output grid rather than
+        CVODE's internal accepted-step sequence, and on the scipy path it is
+        ``solve_ivp``'s own accepted-step output. It therefore catches a jump
+        that persists to a sampled point, including the end-state jump a
+        budget-exhausted solve returns; a transient jump that both starts and
+        ends between two samples can be missed. When ``self._tcore_change_limit``
+        is set, also returns whether the change exceeds the limit. A larger
+        step budget lets CVODE keep integrating and accept a step across a
+        phase boundary, so the returned core temperature can jump; the
+        measure lets a caller reject such a solve.
+
+        A non-finite core temperature (NaN or infinite) is itself a
+        corrupted-solve signal: an ordered comparison against NaN is always
+        False, so a plain running maximum would report such a solve as a
+        zero change. This method flags any non-finite core temperature as
+        exceeded, independent of whether a limit is set, and reports the
+        change as infinite.
+
+        Parameters
+        ----------
+        sol : object
+            Solver result with a 2-D ``y`` array (state rows, time columns).
+
+        Returns
+        -------
+        tcore_change_max : float
+            Maximum absolute core-temperature change over the grid [K], or
+            infinity when any sampled core temperature is non-finite.
+        tcore_change_exceeded : bool
+            ``True`` when a limit is set and the change exceeds it, or when
+            any sampled core temperature is non-finite.
+        """
+        y = np.asarray(sol.y)
+        if y.ndim != 2 or y.shape[1] == 0:
+            return 0.0, False
+        t0 = self._core_temperature_from_column(y[:, 0])
+        if not np.isfinite(t0):
+            return float('inf'), True
+        tcore_change_max = 0.0
+        for i in range(y.shape[1]):
+            ti = self._core_temperature_from_column(y[:, i])
+            if not np.isfinite(ti):
+                return float('inf'), True
+            change = abs(ti - t0)
+            if change > tcore_change_max:
+                tcore_change_max = change
+        limit = self._tcore_change_limit
+        exceeded = bool(limit is not None and tcore_change_max > limit)
+        return float(tcore_change_max), exceeded
+
     def get_state(self) -> SolverOutput:
         """Extract the solver state as a clean output dataclass.
 
@@ -3604,10 +3818,12 @@ class EntropySolver:
         # rather than evaluating T at the CMB basic node avoids a
         # systematic ~10 K offset from the half-cell pressure
         # difference and matches SPIDER's definition.
-        if bower:
-            T_core = extra_final  # bower2018: T_core integrated as ODE state
-        else:
-            T_core = float(T_stag[0])
+        T_core = self._core_temperature_from_column(sol.y[:, -1])
+        # Per-solve core-temperature excursion: the largest change of the
+        # core temperature from its solve-entry value over the returned
+        # grid, with a flag set when it exceeds the configured limit or
+        # when any sampled core temperature is non-finite.
+        tcore_change_max, tcore_change_exceeded = self._core_temperature_excursion(sol)
         # Mass-weighted melt fraction = M_mantle_liquid / M_mantle.
         # MUST be mass-weighted, not volume-weighted, when
         # ``mass_coordinates = true``: the mesh is uniform in mass
@@ -3763,6 +3979,10 @@ class EntropySolver:
             step_dE_state_heat_J=step_integrals['state_heat'],
             dt_actual=float(sol.t[-1] - sol.t[0]),
             status=sol.status,
+            cvode_flag=int(getattr(sol, 'cvode_flag', 0)),
+            cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
+            tcore_change_max=tcore_change_max,
+            tcore_change_exceeded=tcore_change_exceeded,
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,

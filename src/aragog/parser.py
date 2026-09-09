@@ -363,6 +363,17 @@ class _SolverParameters:
     # so the step count and final state shift weakly with it (state near
     # rtol, below any physical signal).
     cvode_output_points: int = 65
+    # Maximum number of internal CVODE steps per solve call. CVODE
+    # returns CV_TOO_MUCH_WORK and stops once a single solve reaches
+    # this count; raise it when a stiff phase-change window needs more
+    # internal steps than the default budget.
+    max_steps: int = 100000
+    # Optional per-solve core-temperature change limit [K]. When set, the
+    # solver flags a solve whose core temperature moves by more than this
+    # from the solve-entry value at any point on the returned grid. The
+    # flag is also set, independent of this limit, whenever any sampled
+    # core temperature is non-finite; the measured change is always reported.
+    tcore_change_limit: float | None = None
 
     def __post_init__(self):
         if not isinstance(self.cvode_output_points, int):
@@ -374,6 +385,27 @@ class _SolverParameters:
             raise ValueError(
                 f'cvode_output_points must be >= 2, got {self.cvode_output_points!r}'
             )
+        if isinstance(self.max_steps, bool) or not isinstance(self.max_steps, int):
+            raise TypeError(
+                f'max_steps must be an integer, got {type(self.max_steps).__name__}'
+            )
+        if self.max_steps < 1:
+            raise ValueError(f'max_steps must be >= 1, got {self.max_steps!r}')
+        if self.tcore_change_limit is not None:
+            if isinstance(self.tcore_change_limit, bool) or not isinstance(
+                self.tcore_change_limit, (int, float)
+            ):
+                raise TypeError(
+                    f'tcore_change_limit must be a number or None, '
+                    f'got {type(self.tcore_change_limit).__name__}'
+                )
+            # ``not (x > 0)`` rejects NaN as well as zero and negatives,
+            # matching the SolverConfig ``gt(0.0)`` validator; a plain
+            # ``x <= 0`` is False for NaN and would let it disarm the limit.
+            if not self.tcore_change_limit > 0:
+                raise ValueError(
+                    f'tcore_change_limit must be > 0 or None, got {self.tcore_change_limit!r}'
+                )
 
 
 @dataclass(kw_only=True)

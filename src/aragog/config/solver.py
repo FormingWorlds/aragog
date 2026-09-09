@@ -27,6 +27,12 @@ class SolverConfig:
         Maximum surface temperature change per step [K].
     cvode_output_points : int
         Number of points on the CVODE dense output grid.
+    max_steps : int
+        Maximum number of internal CVODE steps per solve call.
+    tcore_change_limit : float or None
+        Optional per-solve core-temperature change limit [K]. The flag is
+        also set, independent of this limit, when any sampled core
+        temperature is non-finite.
     """
 
     start_time: float
@@ -41,5 +47,23 @@ class SolverConfig:
         validator=attrs.validators.and_(
             attrs.validators.instance_of(int),
             attrs.validators.ge(2),
+        ),
+    )
+    max_steps: int = attrs.field(
+        default=100000,
+        validator=attrs.validators.and_(
+            attrs.validators.not_(attrs.validators.instance_of(bool)),
+            attrs.validators.instance_of(int),
+            attrs.validators.ge(1),
+        ),
+    )
+    tcore_change_limit: float | None = attrs.field(
+        default=None,
+        validator=attrs.validators.optional(
+            attrs.validators.and_(
+                attrs.validators.not_(attrs.validators.instance_of(bool)),
+                attrs.validators.instance_of((int, float)),
+                attrs.validators.gt(0.0),
+            )
         ),
     )
