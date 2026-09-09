@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import bisect
 import logging
+import math
 from pathlib import Path
 
 import numpy as np
@@ -343,12 +344,19 @@ class EntropyEOS:
     ----------
     eos_dir : Path or str
         Directory containing the SPIDER-format P-S table files.
+    strict_range : bool, default False
+        If True, raise a ``RuntimeError`` when a lookup entropy falls
+        outside a phase table's own S range (or is non-finite),
+        instead of only logging a warning and clamping to the table
+        edge.
     """
 
-    def __init__(self, eos_dir: Path | str):
+    def __init__(self, eos_dir: Path | str, strict_range: bool = False):
         eos_dir = Path(eos_dir)
         if not eos_dir.is_dir():
             raise FileNotFoundError(f'EOS directory not found: {eos_dir}')
+
+        self.strict_range = strict_range
 
         logger.info('Loading entropy EOS from %s', eos_dir)
 
@@ -385,13 +393,16 @@ class EntropyEOS:
         self._solidus = _load_spider_phase_boundary(eos_dir / 'solidus_P-S.dat')
         self._liquidus = _load_spider_phase_boundary(eos_dir / 'liquidus_P-S.dat')
 
-        # Store P and S ranges (union of solid and melt tables)
+        # Store P and S ranges. P uses the temperature tables only (grid
+        # shape reference for callers). S is the union across every
+        # loaded table, so a value outside [S_min, S_max] is guaranteed
+        # to be clamped by at least one table lookup below.
         ref_melt = self._tables['temperature_melt']
         ref_solid = self._tables['temperature_solid']
         self.P_min = float(min(ref_melt['P'][0], ref_solid['P'][0]))
         self.P_max = float(max(ref_melt['P'][-1], ref_solid['P'][-1]))
-        self.S_min = float(min(ref_melt['S'][0], ref_solid['S'][0]))
-        self.S_max = float(max(ref_melt['S'][-1], ref_solid['S'][-1]))
+        self.S_min = float(min(tbl['S'][0] for tbl in self._tables.values()))
+        self.S_max = float(max(tbl['S'][-1] for tbl in self._tables.values()))
 
         logger.info(
             'Entropy EOS loaded: P=[%.2e, %.2e] Pa, S=[%.0f, %.0f] J/kg/K, %d x %d grid (melt)',
@@ -498,9 +509,9 @@ class EntropyEOS:
 
         Bilinear interpolation on the precomputed table built in
         ``_build_enthalpy_table``. Inputs outside the table P or S
-        range are clamped to the nearest table edge so the lookup
-        never returns NaN; callers querying out-of-range states
-        receive the boundary value instead of an exception.
+        range are clamped to the nearest table edge and logged as a
+        warning; pass ``strict_range=True`` to the constructor to raise
+        a ``RuntimeError`` instead of returning the clamped value.
 
         Parameters
         ----------
@@ -516,6 +527,12 @@ class EntropyEOS:
         """
         P = np.asarray(P, dtype=float)
         S = np.asarray(S, dtype=float)
+        self._check_entropy_range(
+            S,
+            self._h_grid_S[0],
+            self._h_grid_S[-1],
+            'specific_enthalpy',
+        )
         P_clamped = np.clip(P, self._h_grid_P[0], self._h_grid_P[-1])
         S_clamped = np.clip(S, self._h_grid_S[0], self._h_grid_S[-1])
         pts = np.column_stack([P_clamped.ravel(), S_clamped.ravel()])
@@ -528,6 +545,12 @@ class EntropyEOS:
         ndarray-to-scalar conversion. Same pattern as
         ``temperature_scalar``.
         """
+        self._check_entropy_range(
+            S,
+            self._h_grid_S[0],
+            self._h_grid_S[-1],
+            'specific_enthalpy_scalar',
+        )
         return _interp_bilinear_scalar(
             self._h_grid_P_list,
             self._h_grid_S_list,
@@ -584,7 +607,17 @@ class EntropyEOS:
         )
 
     def _melt_fraction_scalar(self, P: float, S: float) -> float:
-        """Melt fraction at a single (P, S) point, pure Python."""
+        """Melt fraction at a single (P, S) point, pure Python.
+
+        ``max(0.0, min(1.0, phi))`` silently maps a NaN ``phi`` to
+        exactly 1.0 (Python's min/max keep the first non-NaN operand),
+        so NaN must be caught before that clip, not after. A +-inf S
+        does not need this early return: its phi is already +-inf, and
+        min/max resolve that to 1.0/0.0 like any other out-of-range
+        value, matching the vectorized ``melt_fraction`` clip.
+        """
+        if math.isnan(S):
+            return math.nan
         S_sol = self._solidus_entropy_scalar(P)
         S_liq = self._liquidus_entropy_scalar(P)
         dS = max(S_liq - S_sol, 1e-10)
@@ -658,6 +691,25 @@ class EntropyEOS:
             S_for_solid = S
             S_for_melt = S
 
+        # Only check a branch's S where it actually has nonzero weight
+        # in the blend below (phi < 1.0 for solid, phi > 0.0 for melt).
+        # Written as "not phi >= ..." so a NaN phi (comparisons always
+        # False) still passes through the check instead of being masked.
+        solid_used = not (phi >= 1.0)
+        melt_used = not (phi <= 0.0)
+        self._check_entropy_range(
+            S_for_solid if solid_used else solid_table['S_list'][0],
+            solid_table['S_list'][0],
+            solid_table['S_list'][-1],
+            'temperature_scalar (solid table lookup)',
+        )
+        self._check_entropy_range(
+            S_for_melt if melt_used else melt_table['S_list'][0],
+            melt_table['S_list'][0],
+            melt_table['S_list'][-1],
+            'temperature_scalar (melt table lookup)',
+        )
+
         # Clamp to each table's own range
         S_sol_clamped = max(
             solid_table['S_list'][0], min(S_for_solid, solid_table['S_list'][-1])
@@ -681,7 +733,11 @@ class EntropyEOS:
             S_melt_clamped,
         )
 
-        # NaN-safe phase-weighted blend
+        # NaN-safe phase-weighted blend. phi > 0.0 and phi < 1.0 are both
+        # False when phi is NaN, so without this check a NaN phi would
+        # silently fall through to result = 0.0 instead of NaN.
+        if math.isnan(phi):
+            return math.nan
         result = 0.0
         if phi > 0.0:
             result += phi * val_melt
@@ -701,6 +757,43 @@ class EntropyEOS:
         dS = np.maximum(S_liq - S_sol, 1e-10)
         phi = np.clip((S - S_sol) / dS, 0.0, 1.0)
         return phi
+
+    def _check_entropy_range(
+        self,
+        S: npt.NDArray,
+        S_min: float,
+        S_max: float,
+        context: str,
+    ) -> None:
+        """Flag entropy that a table-edge clamp would otherwise hide.
+
+        A non-finite or far-out-of-range S still produces a finite
+        property value once it is clamped to the table edge. Warn
+        always, and raise when ``self.strict_range`` is set, so this
+        does not silently pass as a valid table-edge temperature.
+        """
+        S = np.asarray(S)
+        non_finite = ~np.isfinite(S)
+        out_of_range = np.isfinite(S) & ((S < S_min) | (S > S_max))
+        n_non_finite = int(np.count_nonzero(non_finite))
+        n_out_of_range = int(np.count_nonzero(out_of_range))
+        if not n_non_finite and not n_out_of_range:
+            return
+        logger.warning(
+            '%s: %d non-finite and %d out-of-range entropy value(s) '
+            '(table range [%.6g, %.6g])',
+            context,
+            n_non_finite,
+            n_out_of_range,
+            S_min,
+            S_max,
+        )
+        if self.strict_range:
+            raise RuntimeError(
+                f'{context}: {n_non_finite} non-finite and {n_out_of_range} '
+                f'out-of-range entropy value(s) outside table range '
+                f'[{S_min:.6g}, {S_max:.6g}]'
+            )
 
     def _lookup_at_phase_boundary(
         self,
@@ -724,6 +817,12 @@ class EntropyEOS:
         else:
             S_boundary = self.liquidus_entropy(P)
 
+        self._check_entropy_range(
+            S_boundary,
+            table['S'][0],
+            table['S'][-1],
+            f'{prop_name} (phase-boundary {phase} table lookup)',
+        )
         S_clamped = np.clip(S_boundary, table['S'][0], table['S'][-1])
         pts = np.column_stack([P_clamped.ravel(), S_clamped.ravel()])
         return table['interp'](pts).reshape(P.shape)
@@ -767,6 +866,25 @@ class EntropyEOS:
         S_for_solid = np.where((phi > 0) & (phi < 1), S_sol, S)
         S_for_melt = np.where((phi > 0) & (phi < 1), S_liq, S)
 
+        # Only check a branch's S where it actually has nonzero weight
+        # in the blend below (phi < 1 for solid, phi > 0 for melt).
+        # Written as a negated >=/<= so a NaN phi (comparisons always
+        # False) still passes through the check instead of being masked.
+        solid_used = ~(phi >= 1)
+        melt_used = ~(phi <= 0)
+        self._check_entropy_range(
+            np.where(solid_used, S_for_solid, solid_table['S'][0]),
+            solid_table['S'][0],
+            solid_table['S'][-1],
+            f'{prop_name} (solid table lookup)',
+        )
+        self._check_entropy_range(
+            np.where(melt_used, S_for_melt, melt_table['S'][0]),
+            melt_table['S'][0],
+            melt_table['S'][-1],
+            f'{prop_name} (melt table lookup)',
+        )
+
         # Clamp to each table's own range
         S_solid_clamped = np.clip(S_for_solid, solid_table['S'][0], solid_table['S'][-1])
         S_melt_clamped = np.clip(S_for_melt, melt_table['S'][0], melt_table['S'][-1])
@@ -783,6 +901,10 @@ class EntropyEOS:
         result = np.where(phi > 0, phi * val_melt, 0.0) + np.where(
             phi < 1, (1.0 - phi) * val_solid, 0.0
         )
+        # phi is NaN whenever S is NaN (clip propagates NaN), and NaN
+        # comparisons are always False, so both np.where branches above
+        # fall through to 0.0 and mask away the NaN instead of raising it.
+        result = np.where(np.isnan(phi), np.nan, result)
         return result
 
     def temperature(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
@@ -816,7 +938,27 @@ class EntropyEOS:
         )
         rho_mushy = 1.0 / np.maximum(inv_rho_mushy, 1e-30)
 
-        # Single-phase: evaluate at actual S (clamped to table range)
+        # Single-phase: evaluate at actual S (clamped to table range),
+        # selected below by phi >= 0.5. Mushy-zone points never reach
+        # this branch (they use rho_mushy instead), and a non-mushy
+        # point only actually uses the branch its own selector picks,
+        # so mask each check to the points where that branch is used
+        # to avoid a false positive on the discarded branch.
+        melt_selected = phi >= 0.5
+        solid_used = ~mushy & ~melt_selected
+        melt_used = ~mushy & melt_selected
+        self._check_entropy_range(
+            np.where(solid_used, S, solid_table['S'][0]),
+            solid_table['S'][0],
+            solid_table['S'][-1],
+            'density (solid table lookup)',
+        )
+        self._check_entropy_range(
+            np.where(melt_used, S, melt_table['S'][0]),
+            melt_table['S'][0],
+            melt_table['S'][-1],
+            'density (melt table lookup)',
+        )
         S_solid_clamped = np.clip(S, solid_table['S'][0], solid_table['S'][-1])
         S_melt_clamped = np.clip(S, melt_table['S'][0], melt_table['S'][-1])
         P_solid_clamped = np.clip(P, solid_table['P'][0], solid_table['P'][-1])
