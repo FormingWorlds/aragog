@@ -939,11 +939,9 @@ class EntropyEOS:
         rho_mushy = 1.0 / np.maximum(inv_rho_mushy, 1e-30)
 
         # Single-phase: evaluate at actual S (clamped to table range),
-        # selected below by phi >= 0.5. Mushy-zone points never reach
-        # this branch (they use rho_mushy instead), and a non-mushy
-        # point only actually uses the branch its own selector picks,
-        # so mask each check to the points where that branch is used
-        # to avoid a false positive on the discarded branch.
+        # selected below by phi >= 0.5. Mushy points use rho_mushy, and
+        # each non-mushy point uses only the branch its selector picks,
+        # so mask each range check to the points that use that branch.
         melt_selected = phi >= 0.5
         solid_used = ~mushy & ~melt_selected
         melt_used = ~mushy & melt_selected

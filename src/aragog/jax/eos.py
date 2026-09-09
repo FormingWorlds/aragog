@@ -27,29 +27,6 @@ jax.config.update('jax_enable_x64', True)
 
 logger = logging.getLogger('fwl.' + __name__)
 
-# Per-context occurrence counts for the out-of-range entropy warning below.
-# Keyed by the ``context`` string passed to ``_check_entropy_range``, a
-# small fixed set of call-site labels, not per-cell or per-value data.
-_RANGE_WARNING_COUNTS: dict[str, int] = {}
-_RANGE_WARNING_LOG_EVERY = 100
-
-
-def reset_range_warning_counts() -> None:
-    """Clear the per-context occurrence counts for the entropy range warning.
-
-    The counts are process-lifetime state, not owned by any
-    ``EntropyEOS_JAX`` instance or solve. Nothing in aragog calls this
-    function on its own: the JAX CVODE factory that builds each
-    ``EntropyEOS_JAX`` instance (registered externally through
-    ``EntropySolver.set_jax_cvode_factory``) is responsible for calling
-    it at the start of a solve, if that solve should log its own first
-    out-of-range occurrence rather than inherit a count left over from
-    an earlier solve in the same process. Test suites that reuse the
-    same context strings across independent tests must call it too.
-    """
-    _RANGE_WARNING_COUNTS.clear()
-
-
 # ---------------------------------------------------------------------------
 # SPIDER-parity combined phase state (mirrors numpy EntropyPhaseEvaluator
 # ._update_eos: single-pass evaluation, all properties derived from one
@@ -335,15 +312,31 @@ class EntropyEOS_JAX(eqx.Module):
     ----------
     eos_dir : Path or str
         Directory containing the SPIDER-format P-S table files.
-    strict_range : bool, default False
-        Raise ``RuntimeError`` instead of only warning when a lookup
-        entropy is non-finite or outside the table range. Set by whichever
-        code constructs this class; aragog's own ``Parameters`` schema has
-        no field for it, and no code path in aragog itself sets it. A
-        production PROTEUS run gets the default (warn-only) unless the
-        external JAX CVODE factory that builds this instance passes
-        ``strict_range=True`` explicitly. Useful for tests and interactive
-        debugging.
+
+    Notes
+    -----
+    A non-finite input entropy (NaN, +inf or -inf) propagates as NaN
+    through every entropy-derived output of ``compute_phase_state`` and
+    the property methods below, keyed on the input entropy via
+    ``jnp.isfinite(S)``, instead of raising or clamping to a finite
+    value. ``latent_heat`` takes only pressure and stays finite. This
+    keeps the lookups pure and safe under ``jax.jit`` and ``jax.vmap``,
+    where a Python raise is not possible. A finite entropy outside the
+    table domain still clamps to the table edge; only non-finite entropy
+    becomes NaN.
+
+    The numpy reference EOS handles non-finite entropy at two different
+    entry points. The direct property lookups in ``aragog.eos.entropy``
+    (``EntropyEOS.temperature`` and the others) never raise: a NaN
+    entropy returns NaN and +-inf or a finite out-of-domain entropy
+    clamps to the table edge, each with a log warning
+    (``strict_range`` defaults to False). The phase evaluator
+    ``EntropyPhaseEvaluator._update_eos`` in ``aragog.eos.entropy_phase``
+    has an eager NaN backstop that raises ``RuntimeError`` when a lookup
+    yields NaN, so a NaN entropy raises there while +-inf and finite
+    out-of-domain entropy clamp to the edge. The JAX path uses NaN as the
+    single sentinel across both, because it cannot raise under a
+    transform.
     """
 
     # Property tables (4 properties x 2 phases = 8 tables)
@@ -366,10 +359,7 @@ class EntropyEOS_JAX(eqx.Module):
     S_min: float
     S_max: float
 
-    strict_range: bool
-
-    def __init__(self, eos_dir: Path | str, strict_range: bool = False):
-        self.strict_range = strict_range
+    def __init__(self, eos_dir: Path | str):
         eos_dir = Path(eos_dir)
         if not eos_dir.is_dir():
             raise FileNotFoundError(f'EOS directory not found: {eos_dir}')
@@ -468,7 +458,8 @@ class EntropyEOS_JAX(eqx.Module):
         S_sol = self.solidus_entropy(P)
         S_liq = self.liquidus_entropy(P)
         dS = jnp.maximum(S_liq - S_sol, 1e-10)
-        return jnp.clip((S - S_sol) / dS, 0.0, 1.0)
+        phi = jnp.clip((S - S_sol) / dS, 0.0, 1.0)
+        return jnp.where(jnp.isfinite(S), phi, jnp.nan)
 
     # ------------------------------------------------------------------
     # Internal lookup helpers
@@ -479,70 +470,6 @@ class EntropyEOS_JAX(eqx.Module):
         solid = getattr(self, f'_{prop_name}_solid')
         melt = getattr(self, f'_{prop_name}_melt')
         return solid, melt
-
-    def _check_entropy_range(
-        self,
-        S: jax.Array,
-        S_min: float,
-        S_max: float,
-        context: str,
-    ) -> None:
-        """Flag entropy that a table-edge clamp would otherwise hide.
-
-        JIT-safe mirror of ``EntropyEOS._check_entropy_range``
-        (aragog.eos.entropy) using ``jax.debug.callback``: a non-finite
-        or far-out-of-range S still produces a finite property value
-        once it is clamped to the table edge. Warn always, and raise
-        when ``self.strict_range`` is set, so this does not silently
-        pass as a valid table-edge value.
-
-        The host callback only fires when there is something to report:
-        it sits behind a ``lax.cond`` on the in-range path, since a host
-        round trip on every call is the dominant cost of this check on
-        the CVODE right-hand side and every step is in range once the
-        solve is past its initial transient.
-
-        Once triggered, the warning itself is rate-limited per call site
-        (``context``): logged on the first occurrence and then every
-        ``_RANGE_WARNING_LOG_EVERY`` occurrences after, so a solve stuck
-        with persistently out-of-range entropy logs a bounded number of
-        lines instead of one per RHS evaluation. A ``strict_range`` raise
-        is unaffected by the throttle: it still fires on every occurrence.
-        """
-        non_finite = jnp.sum(~jnp.isfinite(S))
-        out_of_range = jnp.sum(jnp.isfinite(S) & ((S < S_min) | (S > S_max)))
-        has_issue = (non_finite > 0) | (out_of_range > 0)
-
-        def _report(n_non_finite: jax.Array, n_out_of_range: jax.Array) -> None:
-            n_non_finite = int(n_non_finite)
-            n_out_of_range = int(n_out_of_range)
-            count = _RANGE_WARNING_COUNTS.get(context, 0) + 1
-            _RANGE_WARNING_COUNTS[context] = count
-            if count == 1 or count % _RANGE_WARNING_LOG_EVERY == 0:
-                logger.warning(
-                    '%s: %d non-finite and %d out-of-range entropy value(s) '
-                    '(table range [%.6g, %.6g]), occurrence %d',
-                    context,
-                    n_non_finite,
-                    n_out_of_range,
-                    S_min,
-                    S_max,
-                    count,
-                )
-            if self.strict_range:
-                raise RuntimeError(
-                    f'{context}: {n_non_finite} non-finite and {n_out_of_range} '
-                    f'out-of-range entropy value(s) outside table range '
-                    f'[{S_min:.6g}, {S_max:.6g}]'
-                )
-
-        def _report_branch(n_non_finite: jax.Array, n_out_of_range: jax.Array) -> None:
-            jax.debug.callback(_report, n_non_finite, n_out_of_range)
-
-        def _no_op_branch(n_non_finite: jax.Array, n_out_of_range: jax.Array) -> None:
-            del n_non_finite, n_out_of_range
-
-        jax.lax.cond(has_issue, _report_branch, _no_op_branch, non_finite, out_of_range)
 
     def _lookup_phase_weighted(
         self,
@@ -575,34 +502,16 @@ class EntropyEOS_JAX(eqx.Module):
         S_for_solid = jnp.where(mushy, S_sol, S)
         S_for_melt = jnp.where(mushy, S_liq, S)
 
-        # Only check a branch's S where it actually has nonzero weight in
-        # the blend below (phi < 1 for solid, phi > 0 for melt). Written
-        # as a negated >=/<= so a NaN phi (comparisons always False)
-        # still passes through the check instead of being masked.
-        solid_used = ~(phi >= 1)
-        melt_used = ~(phi <= 0)
-        self._check_entropy_range(
-            jnp.where(solid_used, S_for_solid, solid_table.S_min),
-            solid_table.S_min,
-            solid_table.S_max,
-            f'{prop_name} (solid table lookup)',
-        )
-        self._check_entropy_range(
-            jnp.where(melt_used, S_for_melt, melt_table.S_min),
-            melt_table.S_min,
-            melt_table.S_max,
-            f'{prop_name} (melt table lookup)',
-        )
-
         val_solid = solid_table(P, S_for_solid)
         val_melt = melt_table(P, S_for_melt)
 
         result = jnp.where(phi > 0, phi * val_melt, 0.0) + jnp.where(
             phi < 1, (1.0 - phi) * val_solid, 0.0
         )
-        # NaN phi (NaN S) makes both comparisons above False, which would
-        # otherwise mask a NaN input into a false 0.0 result.
-        return jnp.where(jnp.isnan(phi), jnp.nan, result)
+        # A non-finite S (NaN or +-inf) would otherwise be masked to a
+        # finite value by phi's clip and the tables' own edge-clamping;
+        # propagate it as NaN instead of letting it pass as a valid result.
+        return jnp.where(jnp.isfinite(S), result, jnp.nan)
 
     def _lookup_at_phase_boundary(
         self,
@@ -622,12 +531,6 @@ class EntropyEOS_JAX(eqx.Module):
         else:
             table = melt_table
             S_boundary = self.liquidus_entropy(P)
-        self._check_entropy_range(
-            S_boundary,
-            table.S_min,
-            table.S_max,
-            f'{prop_name} (phase-boundary {phase} table lookup)',
-        )
         return table(P, S_boundary)
 
     # ------------------------------------------------------------------
@@ -672,31 +575,13 @@ class EntropyEOS_JAX(eqx.Module):
         # fraction (RCMF). The RCMF lives in
         # ``EntropyPhaseEvaluator._phi_rheo`` / ``PhaseParams.phi_rheo``
         # and drives the viscosity tanh blend separately.
-        # Single-phase branch check: mask each side to the points where
-        # that branch is actually used (mushy points use rho_mushy
-        # instead, and phi >= 0.5 picks melt over solid), to avoid a
-        # false positive on the discarded branch.
-        melt_selected = phi >= 0.5
-        solid_used = ~mushy & ~melt_selected
-        melt_used = ~mushy & melt_selected
-        self._check_entropy_range(
-            jnp.where(solid_used, S, solid_table.S_min),
-            solid_table.S_min,
-            solid_table.S_max,
-            'density (solid table lookup)',
-        )
-        self._check_entropy_range(
-            jnp.where(melt_used, S, melt_table.S_min),
-            melt_table.S_min,
-            melt_table.S_max,
-            'density (melt table lookup)',
-        )
-
         rho_solid_single = solid_table(P, S)
         rho_melt_single = melt_table(P, S)
         rho_single = jnp.where(phi >= 0.5, rho_melt_single, rho_solid_single)
 
-        return jnp.where(mushy, rho_mushy, rho_single)
+        # A non-finite S is otherwise masked to a finite value by the
+        # table's edge-clamping; propagate it as NaN instead.
+        return jnp.where(jnp.isfinite(S), jnp.where(mushy, rho_mushy, rho_single), jnp.nan)
 
     def heat_capacity(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Specific heat capacity Cp(P, S) [J/kg/K]."""
@@ -762,11 +647,6 @@ class EntropyEOS_JAX(eqx.Module):
         PhaseState
             All blended properties and shared intermediates.
         """
-        # Root-cause check: catch entropy outside the EOS table domain
-        # here, before any table lookup, mirroring numpy
-        # ``EntropyPhaseEvaluator._update_eos`` (entropy_phase.py:210).
-        self._check_entropy_range(S, self.S_min, self.S_max, 'entropy_phase (composite domain)')
-
         # ── Step 1: phase boundaries (computed ONCE) ────────────────
         S_sol = self.solidus_entropy(P)
         S_liq = self.liquidus_entropy(P)
@@ -836,20 +716,6 @@ class EntropyEOS_JAX(eqx.Module):
         # melt fraction; see ``PhaseParams.phi_rheo`` for the RCMF.
         def _table_lookup_blend(prop_name: str) -> jax.Array:
             solid_tbl, melt_tbl = self._get_tables(prop_name)
-            solid_used = ~(gphi > 0.5)
-            melt_used = gphi > 0.5
-            self._check_entropy_range(
-                jnp.where(solid_used, S_for_solid, solid_tbl.S_min),
-                solid_tbl.S_min,
-                solid_tbl.S_max,
-                f'{prop_name} (single-phase solid table lookup)',
-            )
-            self._check_entropy_range(
-                jnp.where(melt_used, S_for_melt, melt_tbl.S_min),
-                melt_tbl.S_min,
-                melt_tbl.S_max,
-                f'{prop_name} (single-phase melt table lookup)',
-            )
             v_sol = solid_tbl(P, S_for_solid)
             v_mel = melt_tbl(P, S_for_melt)
             return jnp.where(gphi > 0.5, v_mel, v_sol)
@@ -881,54 +747,20 @@ class EntropyEOS_JAX(eqx.Module):
 
         latent_heat = self.latent_heat(P)
 
-        # Unconditional NaN backstop, independent of self.strict_range:
-        # mirrors numpy's pre-existing downstream guard at the end of
-        # EntropyPhaseEvaluator._update_eos (entropy_phase.py:384-400),
-        # which always raises on NaN regardless of strict_range. Keeps
-        # this backend's fault-handling contract identical to numpy's
-        # for entropy that produces NaN after the composite-domain
-        # check has already warned (or raised, under strict_range).
-        #
-        # The raise always fires when temperature has a NaN; only the
-        # host round trip is skipped on the clean path, since a
-        # jax.debug.callback dispatch is the dominant cost of this
-        # check on the CVODE right-hand side (same reasoning as
-        # ``_check_entropy_range`` above).
-        def _raise_on_nan(temperature: np.ndarray, S: np.ndarray) -> None:
-            n_nan = int(np.sum(np.isnan(temperature)))
-            logger.error(
-                'NaN from EOS lookup at %d nodes. S range: [%.0f, %.0f], '
-                'table domain: [%.0f, %.0f] J/kg/K',
-                n_nan,
-                float(np.nanmin(S)),
-                float(np.nanmax(S)),
-                self.S_min,
-                self.S_max,
-            )
-            raise RuntimeError(
-                f'Entropy out of EOS table domain at {n_nan} nodes. '
-                f'S range [{np.nanmin(S):.0f}, {np.nanmax(S):.0f}] vs '
-                f'table [{self.S_min:.0f}, {self.S_max:.0f}]'
-            )
-
-        def _raise_branch(temperature: jax.Array, S: jax.Array) -> None:
-            jax.debug.callback(_raise_on_nan, temperature, S)
-
-        def _no_op_nan_branch(temperature: jax.Array, S: jax.Array) -> None:
-            del temperature, S
-
-        has_nan = jnp.any(~jnp.isfinite(temperature))
-        jax.lax.cond(has_nan, _raise_branch, _no_op_nan_branch, temperature, S)
-
+        # A non-finite input entropy is otherwise masked to a finite value
+        # by phi's clip and the tables' own edge-clamping. Propagate it as
+        # NaN on every S-derived output instead. latent_heat takes only P,
+        # so it stays finite.
+        finite_S = jnp.isfinite(S)
         return PhaseState(
-            temperature=temperature,
-            density=density,
-            heat_capacity=heat_capacity,
-            thermal_expansivity=thermal_expansivity,
-            dTdPs=dTdPs_val,
-            thermal_conductivity=thermal_conductivity,
-            melt_fraction=phi_arr,
-            gphi=gphi,
-            smth=smth,
+            temperature=jnp.where(finite_S, temperature, jnp.nan),
+            density=jnp.where(finite_S, density, jnp.nan),
+            heat_capacity=jnp.where(finite_S, heat_capacity, jnp.nan),
+            thermal_expansivity=jnp.where(finite_S, thermal_expansivity, jnp.nan),
+            dTdPs=jnp.where(finite_S, dTdPs_val, jnp.nan),
+            thermal_conductivity=jnp.where(finite_S, thermal_conductivity, jnp.nan),
+            melt_fraction=jnp.where(finite_S, phi_arr, jnp.nan),
+            gphi=jnp.where(finite_S, gphi, jnp.nan),
+            smth=jnp.where(finite_S, smth, jnp.nan),
             latent_heat=latent_heat,
         )

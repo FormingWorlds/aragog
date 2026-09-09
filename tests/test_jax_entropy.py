@@ -6,7 +6,7 @@ Tier 3: JAX-specific (JIT, vmap, grad)
 Tier 4: Constant-property analytical (no EOS tables needed)
 Tier 5: Solver integration (grey-body cooling, energy conservation)
 Tier 6: Solver parity (JAX diffrax vs scipy BDF on identical problem)
-Tier 7: Entropy table-domain range check (eager and JIT call paths)
+Tier 7: Non-finite entropy propagates as NaN (eager, JIT, vmap)
 
 All tests marked @pytest.mark.unit (fast) or @pytest.mark.smoke (solver).
 Table-dependent tests use the @needs_eos skip marker.
@@ -14,7 +14,6 @@ Table-dependent tests use the @needs_eos skip marker.
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
 
@@ -76,16 +75,6 @@ def default_params():
     from aragog.jax.phase import PhaseParams
 
     return PhaseParams()
-
-
-@pytest.fixture(scope='module')
-def jax_eos_strict():
-    """Module-scoped EntropyEOS_JAX instance with strict_range=True."""
-    if not EOS_DIR.exists():
-        pytest.skip(f'EOS tables not found: {EOS_DIR}')
-    from aragog.jax.eos import EntropyEOS_JAX
-
-    return EntropyEOS_JAX(EOS_DIR, strict_range=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1988,429 +1977,159 @@ class TestBoundaryCopies:
 
 
 # ---------------------------------------------------------------------------
-# Tier 7: Entropy table-domain range check (JAX mirror of
-# test_entropy_range_check.py). ``_check_entropy_range`` uses
-# jax.debug.callback so it always logs a warning naming the non-finite
-# and out-of-range counts, and raises RuntimeError instead when
-# strict_range is set on the EOS. Under @jax.jit the raised exception
-# surfaces as jax.errors.JaxRuntimeError, a RuntimeError subclass; and
-# when a call site checks two branches (solid, melt) in the same
-# jit-compiled trace, which branch's callback fires first is not
-# guaranteed, so JIT-mode assertions below use a branch-independent
-# match. compute_phase_state has a single check site, so its JIT-mode
-# raise is deterministic and can use the precise context string.
+# Tier 7: Non-finite entropy propagates as NaN (JAX path).
+#
+# A non-finite input entropy (NaN, +inf or -inf) becomes NaN on every
+# entropy-derived output; a finite out-of-domain entropy still clamps to the
+# table edge. The lookups stay pure and vmap-safe: a clean batch never trips a
+# false NaN, and a single bad element taints only its own row. The numpy
+# reference contract is in tests/test_entropy_range_check.py.
 # ---------------------------------------------------------------------------
 
+_P_NODE = 5.0e10
+_NONFINITE = [float('nan'), float('inf'), float('-inf')]
+_CPS_KW = dict(k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01)
+# The default sharp mode (smooth width 0) and the tanh-smoothed mode take
+# different code paths for smth, so exercise both.
+_CPS_KW_SHARP = dict(k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.0)
+_CPS_MODES = [_CPS_KW, _CPS_KW_SHARP]
+_LOOKUP_METHODS = ['temperature', 'density', 'heat_capacity', 'dTdPs', 'thermal_expansivity']
+_PHYS_FIELDS = [
+    'temperature',
+    'density',
+    'heat_capacity',
+    'thermal_expansivity',
+    'dTdPs',
+    'thermal_conductivity',
+]
+# Phase-blend fields derived from the input entropy; guarded like the
+# physical fields. latent_heat takes only P and stays finite, so it is
+# excluded from the NaN assertions.
+_PHASE_FIELDS = ['melt_fraction', 'gphi', 'smth']
+
 
 @needs_eos
 @pytest.mark.unit
-class TestEntropyRangeCheckJAX:
-    """_check_entropy_range direct tests (eager only)."""
+class TestEntropyNonFinitePropagatesJAX:
+    """Non-finite entropy -> NaN across the public JAX EOS lookups."""
 
-    def test_check_entropy_range_in_domain_is_silent(self, jax_eos, caplog):
-        """A finite S well inside [S_min, S_max] must not warn."""
+    @pytest.mark.parametrize('bad', _NONFINITE)
+    @pytest.mark.parametrize('method', _LOOKUP_METHODS)
+    def test_lookup_nonfinite_propagates(self, jax_eos, method, bad):
+        """NaN or +-inf S makes every property lookup return NaN."""
+        P = jnp.array([_P_NODE])
+        out = getattr(jax_eos, method)(P, jnp.array([bad]))
+        assert bool(jnp.all(jnp.isnan(out))), f'{method} must return NaN for non-finite S'
+
+    @pytest.mark.parametrize('method', _LOOKUP_METHODS)
+    def test_lookup_in_domain_is_finite(self, jax_eos, method):
+        """A mid-domain S must give a finite result on every lookup."""
+        P = jnp.array([_P_NODE])
         S = jnp.array([0.5 * (jax_eos.S_min + jax_eos.S_max)])
-        with caplog.at_level(logging.WARNING):
-            jax_eos._check_entropy_range(S, jax_eos.S_min, jax_eos.S_max, 'test-context')
-        assert not any('test-context' in r.message for r in caplog.records)
+        out = getattr(jax_eos, method)(P, S)
+        assert bool(jnp.all(jnp.isfinite(out)))
 
-    def test_check_entropy_range_warns_on_nan(self, jax_eos, caplog):
-        """A NaN entry must warn with the non-finite count and the context."""
-        S = jnp.array([jnp.nan])
-        with caplog.at_level(logging.WARNING):
-            jax_eos._check_entropy_range(S, jax_eos.S_min, jax_eos.S_max, 'test-context')
-        matches = [r.message for r in caplog.records if 'test-context' in r.message]
-        assert matches, 'expected a warning naming test-context'
-        assert '1 non-finite' in matches[0]
-        assert '0 out-of-range' in matches[0]
-
-    def test_check_entropy_range_warns_on_out_of_range(self, jax_eos, caplog):
-        """A finite S past S_max must warn with the out-of-range count,
-        not the non-finite count."""
-        S = jnp.array([jax_eos.S_max + 1.0e5])
-        with caplog.at_level(logging.WARNING):
-            jax_eos._check_entropy_range(S, jax_eos.S_min, jax_eos.S_max, 'test-context')
-        matches = [r.message for r in caplog.records if 'test-context' in r.message]
-        assert matches
-        assert '0 non-finite' in matches[0]
-        assert '1 out-of-range' in matches[0]
-
-    def test_check_entropy_range_strict_raises_runtime_error(self, jax_eos_strict, caplog):
-        """With strict_range=True the same out-of-range input raises
-        RuntimeError instead of only warning."""
-        S = jnp.array([jax_eos_strict.S_max + 1.0e5])
-        with caplog.at_level(logging.WARNING):
-            with pytest.raises(RuntimeError, match='out-of-range'):
-                jax_eos_strict._check_entropy_range(
-                    S, jax_eos_strict.S_min, jax_eos_strict.S_max, 'test-context'
-                )
-
-    def test_check_entropy_range_strict_in_domain_does_not_raise(self, jax_eos_strict):
-        """strict_range=True must not raise on in-domain input."""
-        S = jnp.array([0.5 * (jax_eos_strict.S_min + jax_eos_strict.S_max)])
-        jax_eos_strict._check_entropy_range(
-            S, jax_eos_strict.S_min, jax_eos_strict.S_max, 'test-context'
-        )
-
-    def test_check_entropy_range_warning_rate_limited_at_1_and_100(self, jax_eos, caplog):
-        """The warning must log on occurrence 1 and every 100th occurrence
-        after, not on the occurrences in between."""
-        S = jnp.array([jax_eos.S_max + 1.0e5])
-        logged_at = []
-        with caplog.at_level(logging.WARNING):
-            for occurrence in range(1, 102):
-                before = len(caplog.records)
-                jax_eos._check_entropy_range(
-                    S, jax_eos.S_min, jax_eos.S_max, 'rate-limit-context'
-                )
-                if len(caplog.records) > before:
-                    logged_at.append(occurrence)
-        assert logged_at == [1, 100]
-
-    def test_check_entropy_range_strict_raises_every_occurrence(self, jax_eos_strict):
-        """strict_range=True must raise on every occurrence, not only
-        the throttled logging occurrences."""
-        S = jnp.array([jax_eos_strict.S_max + 1.0e5])
-        for _ in range(5):
-            with pytest.raises(RuntimeError, match='out-of-range'):
-                jax_eos_strict._check_entropy_range(
-                    S, jax_eos_strict.S_min, jax_eos_strict.S_max, 'strict-every-occurrence'
-                )
-
-    def test_reset_range_warning_counts_restarts_occurrence_numbering(self, jax_eos, caplog):
-        """reset_range_warning_counts() must restart the per-context
-        occurrence count, so the next call logs occurrence 1 again."""
-        from aragog.jax.eos import reset_range_warning_counts
-
-        S = jnp.array([jax_eos.S_max + 1.0e5])
-        with caplog.at_level(logging.WARNING):
-            for _ in range(3):
-                jax_eos._check_entropy_range(S, jax_eos.S_min, jax_eos.S_max, 'reset-context')
-            reset_range_warning_counts()
-            caplog.clear()
-            jax_eos._check_entropy_range(S, jax_eos.S_min, jax_eos.S_max, 'reset-context')
-        matches = [r.message for r in caplog.records if 'reset-context' in r.message]
-        assert matches
-        assert 'occurrence 1' in matches[0]
-
-
-@needs_eos
-@pytest.mark.unit
-class TestTemperatureRangeCheckJAX:
-    """temperature() via _lookup_phase_weighted (eager call path)."""
-
-    def test_temperature_nan_warns_on_both_branch_contexts(self, jax_eos, caplog):
-        """A NaN S makes both the solid_used and melt_used masks pass
-        through, so both the solid and melt table-lookup contexts warn."""
-        P = jnp.array([5.0e10])
-        with caplog.at_level(logging.WARNING):
-            T = jax_eos.temperature(P, jnp.array([jnp.nan]))
-        assert bool(jnp.all(jnp.isnan(T)))
-        messages = [r.message for r in caplog.records]
-        assert any('temperature (solid table lookup)' in m for m in messages)
-        assert any('temperature (melt table lookup)' in m for m in messages)
-
-    def test_temperature_out_of_range_low_warns_solid_context_only(self, jax_eos, caplog):
-        """S far below S_min only pushes the solid-branch lookup out of
-        its table range; the melt context must stay silent."""
-        P = jnp.array([5.0e10])
-        with caplog.at_level(logging.WARNING):
-            T = jax_eos.temperature(P, jnp.array([jax_eos.S_min - 1.0e5]))
+    @pytest.mark.parametrize('S_off', [1.0e5, -1.0e5])
+    def test_finite_out_of_range_stays_clamped(self, jax_eos, S_off):
+        """A finite S outside [S_min, S_max] is not non-finite, so it must
+        clamp to the table edge and stay finite, never become NaN. Only
+        non-finite S propagates as NaN."""
+        P = jnp.array([_P_NODE])
+        edge = jax_eos.S_max if S_off > 0 else jax_eos.S_min
+        T = jax_eos.temperature(P, jnp.array([edge + S_off]))
         assert bool(jnp.all(jnp.isfinite(T)))
-        messages = [r.message for r in caplog.records]
-        assert any('temperature (solid table lookup)' in m for m in messages)
-        assert not any('temperature (melt table lookup)' in m for m in messages)
-
-    def test_temperature_out_of_range_high_warns_melt_context_only(self, jax_eos, caplog):
-        """S far above S_max only pushes the melt-branch lookup out of
-        its table range; the solid context must stay silent."""
-        P = jnp.array([5.0e10])
-        with caplog.at_level(logging.WARNING):
-            T = jax_eos.temperature(P, jnp.array([jax_eos.S_max + 1.0e5]))
-        assert bool(jnp.all(jnp.isfinite(T)))
-        messages = [r.message for r in caplog.records]
-        assert any('temperature (melt table lookup)' in m for m in messages)
-        assert not any('temperature (solid table lookup)' in m for m in messages)
-
-    def test_temperature_deep_in_phase_does_not_warn(self, jax_eos, caplog):
-        """A comfortable margin below the solidus or above the liquidus
-        must not trip either branch's range check."""
-        P = jnp.array([5.0e10])
-        S_sol = float(jax_eos.solidus_entropy(P)[0])
-        S_liq = float(jax_eos.liquidus_entropy(P)[0])
-        with caplog.at_level(logging.WARNING):
-            jax_eos.temperature(P, jnp.array([S_sol - 500.0]))
-            jax_eos.temperature(P, jnp.array([S_liq + 500.0]))
-        assert not any('table lookup' in r.message for r in caplog.records)
-
-    def test_temperature_strict_raises_on_nan_eager(self, jax_eos_strict):
-        """Eager strict_range=True converts the NaN warning into a
-        plain RuntimeError naming a table-lookup context."""
-        P = jnp.array([5.0e10])
-        with pytest.raises(RuntimeError, match='temperature .* table lookup'):
-            jax_eos_strict.temperature(P, jnp.array([jnp.nan]))
-
-    def test_temperature_strict_raises_on_nan_under_jit(self, jax_eos_strict):
-        """Under @jax.jit the raise surfaces as jax.errors.JaxRuntimeError,
-        a RuntimeError subclass. Which of the two branches (solid, melt)
-        fires first is not guaranteed under JIT, so match only the
-        branch-independent substring both contexts share."""
-
-        @jax.jit
-        def fn(P, S):
-            return jax_eos_strict.temperature(P, S)
-
-        P = jnp.array([5.0e10])
-        with pytest.raises(RuntimeError, match='table lookup'):
-            jax.block_until_ready(fn(P, jnp.array([jnp.nan])))
 
 
 @needs_eos
 @pytest.mark.unit
-class TestDensityRangeCheckJAX:
-    """density() (eager call path). Unlike temperature, density selects
-    a single branch by phi >= 0.5 rather than masking both branches."""
+class TestComputePhaseStateNonFinitePropagatesJAX:
+    """compute_phase_state: non-finite S -> NaN on every physical field."""
 
-    def test_density_nan_warns_solid_context_only(self, jax_eos, caplog):
-        """For NaN input phi's comparison resolves to the solid branch
-        only, unlike temperature's dual-branch mask."""
-        P = jnp.array([5.0e10])
-        with caplog.at_level(logging.WARNING):
-            rho = jax_eos.density(P, jnp.array([jnp.nan]))
-        assert bool(jnp.all(jnp.isnan(rho)))
-        messages = [r.message for r in caplog.records]
-        assert any('density (solid table lookup)' in m for m in messages)
-        assert not any('density (melt table lookup)' in m for m in messages)
+    @pytest.mark.parametrize('kw', _CPS_MODES)
+    @pytest.mark.parametrize('bad', _NONFINITE)
+    def test_all_physical_fields_nan(self, jax_eos, bad, kw):
+        """Every entropy-derived field of the PhaseState is NaN when the
+        input entropy is non-finite, in both the sharp and smoothed mode.
+        latent_heat takes only P and must stay finite."""
+        P = jnp.array([_P_NODE])
+        state = jax_eos.compute_phase_state(P, jnp.array([bad]), **kw)
+        for field in _PHYS_FIELDS + _PHASE_FIELDS:
+            v = getattr(state, field)
+            assert bool(jnp.all(jnp.isnan(v))), f'{field} must be NaN for non-finite S'
+        assert bool(jnp.all(jnp.isfinite(state.latent_heat)))
 
-    def test_density_out_of_range_low_warns_solid_context_only(self, jax_eos, caplog):
-        """S far below S_min: only the solid-branch density lookup is
-        out of range."""
-        P = jnp.array([5.0e10])
-        with caplog.at_level(logging.WARNING):
-            rho = jax_eos.density(P, jnp.array([jax_eos.S_min - 1.0e5]))
-        assert bool(jnp.all(jnp.isfinite(rho)))
-        messages = [r.message for r in caplog.records]
-        assert any('density (solid table lookup)' in m for m in messages)
-        assert not any('density (melt table lookup)' in m for m in messages)
-
-    def test_density_out_of_range_high_warns_melt_context_only(self, jax_eos, caplog):
-        """S far above S_max: only the melt-branch density lookup is
-        out of range."""
-        P = jnp.array([5.0e10])
-        with caplog.at_level(logging.WARNING):
-            rho = jax_eos.density(P, jnp.array([jax_eos.S_max + 1.0e5]))
-        assert bool(jnp.all(jnp.isfinite(rho)))
-        messages = [r.message for r in caplog.records]
-        assert any('density (melt table lookup)' in m for m in messages)
-        assert not any('density (solid table lookup)' in m for m in messages)
-
-    def test_density_deep_in_phase_does_not_warn(self, jax_eos, caplog):
-        """A comfortable margin below the solidus or above the liquidus
-        must not trip density's range check either."""
-        P = jnp.array([5.0e10])
-        S_sol = float(jax_eos.solidus_entropy(P)[0])
-        S_liq = float(jax_eos.liquidus_entropy(P)[0])
-        with caplog.at_level(logging.WARNING):
-            jax_eos.density(P, jnp.array([S_sol - 500.0]))
-            jax_eos.density(P, jnp.array([S_liq + 500.0]))
-        assert not any('table lookup' in r.message for r in caplog.records)
-
-    def test_density_strict_raises_on_out_of_range_eager(self, jax_eos_strict):
-        """Eager strict_range=True converts the out-of-range warning
-        into a plain RuntimeError for density too."""
-        P = jnp.array([5.0e10])
-        with pytest.raises(RuntimeError, match='density .* table lookup'):
-            jax_eos_strict.density(P, jnp.array([jax_eos_strict.S_min - 1.0e5]))
-
-
-@needs_eos
-@pytest.mark.unit
-class TestDensityPhaseBoundaryNarrowedTableJAX:
-    """density()'s phase-boundary table-edge clamp (JAX mirror of
-    test_entropy_range_check.py::test_density_phase_boundary_narrowed_table_warns
-    / _strict_raises). density() always evaluates the phase-boundary
-    lookup (solidus/liquidus entropy against the table's own S_min/
-    S_max) to build the mushy-zone harmonic mean, even for a deep
-    single-phase query, so narrowing a table's edge below its own
-    solidus/liquidus entropy trips this check independently of the
-    single-phase branch check."""
-
-    def test_density_phase_boundary_narrowed_table_warns(self, jax_eos, caplog):
-        """Narrowing the solid density table's upper S bound below the
-        solidus entropy must warn via the phase-boundary lookup
-        context only, and still return a finite clamped density."""
-        P = jnp.array([5.0e10])
-        S_sol = float(jax_eos.solidus_entropy(P)[0])
-        narrowed_tbl = eqx.tree_at(lambda t: t.S_max, jax_eos._density_solid, S_sol - 500.0)
-        narrowed_eos = eqx.tree_at(lambda e: e._density_solid, jax_eos, narrowed_tbl)
-        with caplog.at_level(logging.WARNING):
-            rho = narrowed_eos.density(P, jnp.array([S_sol - 1000.0]))
-        assert bool(jnp.all(jnp.isfinite(rho)))
-        messages = [r.message for r in caplog.records]
-        assert any('density (phase-boundary solid table lookup)' in m for m in messages)
-        assert not any('density (phase-boundary melt table lookup)' in m for m in messages)
-        assert not any('density (solid table lookup)' in m for m in messages)
-
-    def test_density_phase_boundary_strict_raises(self, jax_eos_strict):
-        """strict_range=True on the same narrowed table raises instead
-        of warning, naming the phase-boundary context."""
-        P = jnp.array([5.0e10])
-        S_sol = float(jax_eos_strict.solidus_entropy(P)[0])
-        narrowed_tbl = eqx.tree_at(
-            lambda t: t.S_max, jax_eos_strict._density_solid, S_sol - 500.0
-        )
-        narrowed_eos = eqx.tree_at(lambda e: e._density_solid, jax_eos_strict, narrowed_tbl)
-        with pytest.raises(RuntimeError, match=r'density \(phase-boundary solid table lookup\)'):
-            narrowed_eos.density(P, jnp.array([S_sol - 1000.0]))
-
-
-@needs_eos
-@pytest.mark.unit
-class TestComputePhaseStateRangeCheckJAX:
-    """compute_phase_state composite-domain check (JAX mirror of numpy's
-    EntropyPhaseEvaluator._update_eos composite-domain tests). Unlike
-    numpy's entropy_phase.py, compute_phase_state has no separate
-    downstream NaN guard, so NaN and out-of-range-but-finite behave the
-    same way here: warn-only unless strict_range, no other raise path."""
-
-    def test_compute_phase_state_mid_domain_does_not_warn(self, jax_eos, caplog):
-        """A mid-domain entropy must not trip the composite-domain check."""
-        P = jnp.array([5.0e10])
+    @pytest.mark.parametrize('kw', _CPS_MODES)
+    def test_mid_domain_all_fields_finite(self, jax_eos, kw):
+        """A mid-domain S must give finite values on every field."""
+        P = jnp.array([_P_NODE])
         S = jnp.array([0.5 * (jax_eos.S_min + jax_eos.S_max)])
-        with caplog.at_level(logging.WARNING):
-            state = jax_eos.compute_phase_state(
-                P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01
-            )
-        assert not any('entropy_phase (composite domain)' in r.message for r in caplog.records)
-        assert bool(jnp.all(jnp.isfinite(state.temperature)))
+        state = jax_eos.compute_phase_state(P, S, **kw)
+        for field in _PHYS_FIELDS + _PHASE_FIELDS + ['latent_heat']:
+            assert bool(jnp.all(jnp.isfinite(getattr(state, field))))
 
-    def test_compute_phase_state_out_of_range_finite_warns_and_returns_clamped(
-        self, jax_eos, caplog
-    ):
-        """An out-of-range but finite entropy must warn (root-cause
-        diagnostic) and still return a finite, clamped temperature."""
-        P = jnp.array([5.0e10])
+    def test_finite_out_of_range_stays_clamped(self, jax_eos):
+        """A finite out-of-range S must still clamp to finite outputs,
+        not NaN, on every entropy-derived field."""
+        P = jnp.array([_P_NODE])
         S = jnp.array([jax_eos.S_max + 1.0e5])
-        with caplog.at_level(logging.WARNING):
-            state = jax_eos.compute_phase_state(
-                P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01
+        state = jax_eos.compute_phase_state(P, S, **_CPS_KW)
+        for field in _PHYS_FIELDS + _PHASE_FIELDS:
+            assert bool(jnp.all(jnp.isfinite(getattr(state, field)))), (
+                f'{field} must clamp, not NaN, for finite out-of-range S'
             )
-        messages = [r.message for r in caplog.records]
-        assert any('entropy_phase (composite domain)' in m for m in messages)
-        assert bool(jnp.all(jnp.isfinite(state.temperature))), (
-            'clamped out-of-range entropy must still yield a finite T'
-        )
-
-    def test_compute_phase_state_nan_warns_via_new_check_and_raises_via_backstop(
-        self, jax_eos, caplog
-    ):
-        """NaN entropy always raises for compute_phase_state, strict or
-        not, but through two different mechanisms, matching numpy's
-        EntropyPhaseEvaluator._update_eos contract.
-
-        Non-strict: the composite-domain check only warns (strict_range
-        is False, so it does not raise); the unconditional downstream
-        NaN backstop is what actually raises, once the blended
-        temperature comes out NaN. Assert both: the new check's warning
-        is present, and a RuntimeError is raised regardless.
-        """
-        P = jnp.array([5.0e10])
-        S = jnp.array([jnp.nan])
-        with caplog.at_level(logging.WARNING):
-            with pytest.raises(RuntimeError):
-                jax_eos.compute_phase_state(
-                    P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01
-                )
-        messages = [r.message for r in caplog.records]
-        assert any('entropy_phase (composite domain)' in m for m in messages), (
-            'the new composite-domain check must still warn on NaN even '
-            'though the backstop is what raises here'
-        )
-
-    def test_compute_phase_state_out_of_range_finite_strict_raises_eager(self, jax_eos_strict):
-        """Eager strict_range=True raises before any table lookup."""
-        P = jnp.array([5.0e10])
-        S = jnp.array([jax_eos_strict.S_max + 1.0e5])
-        with pytest.raises(RuntimeError, match=r'entropy_phase \(composite domain\)'):
-            jax_eos_strict.compute_phase_state(
-                P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01
-            )
-
-    def test_compute_phase_state_nan_strict_raises_eager(self, jax_eos_strict):
-        """Eager strict_range=True raises on NaN too, via the same
-        composite-domain check (no separate NaN guard needed for JAX)."""
-        P = jnp.array([5.0e10])
-        S = jnp.array([jnp.nan])
-        with pytest.raises(RuntimeError, match=r'entropy_phase \(composite domain\)'):
-            jax_eos_strict.compute_phase_state(
-                P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01
-            )
-
-    def test_compute_phase_state_strict_raises_under_jit(self, jax_eos_strict):
-        """Under @jax.jit the raise surfaces as jax.errors.JaxRuntimeError,
-        a RuntimeError subclass. compute_phase_state has a single check
-        site (the composite-domain check runs before any table lookup),
-        so unlike temperature/density this context string is
-        deterministic even under JIT."""
-
-        @jax.jit
-        def fn(P, S):
-            return jax_eos_strict.compute_phase_state(
-                P, S, k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01
-            )
-
-        P = jnp.array([5.0e10])
-        S = jnp.array([jnp.nan])
-        with pytest.raises(RuntimeError, match=r'entropy_phase \(composite domain\)'):
-            jax.block_until_ready(fn(P, S))
 
 
 @needs_eos
 @pytest.mark.unit
-class TestComputePhaseStateSinglePhaseNarrowedTableJAX:
-    """compute_phase_state()'s single-phase heat_capacity table-edge
-    clamp (JAX mirror of
-    test_entropy_range_check.py::test_phase_evaluator_single_phase_solid_narrowed_table_warns
-    / _strict_raises). The composite-domain check at the top of
-    compute_phase_state uses the EOS-wide S_min/S_max, which is
-    unaffected by narrowing a single table's field, so a deep-solid
-    query stays inside the composite domain and only the single-phase
-    heat_capacity lookup (which reads the narrowed table) trips."""
+class TestNonFiniteUnderJitAndVmapJAX:
+    """The pure lookups are safe under jit and vmap: a clean batch never
+    trips a false NaN, and a single non-finite element taints only its own
+    row. A predicate-gated host-callback raise could not provide this,
+    because a cond predicate lowers to a select under vmap and would fire
+    the raise branch on a clean batch."""
 
-    def test_heat_capacity_single_phase_solid_narrowed_table_warns(self, jax_eos, caplog):
-        """Narrowing the solid heat_capacity table's lower S bound
-        above a deep-solid query entropy must warn via the
-        single-phase solid lookup context only, and still return a
-        finite temperature."""
-        P = jnp.array([5.0e10])
-        S_sol = float(jax_eos.solidus_entropy(P)[0])
-        S_arr = S_sol - 1000.0
-        narrowed_tbl = eqx.tree_at(lambda t: t.S_min, jax_eos._heat_capacity_solid, S_arr + 500.0)
-        narrowed_eos = eqx.tree_at(lambda e: e._heat_capacity_solid, jax_eos, narrowed_tbl)
-        with caplog.at_level(logging.WARNING):
-            state = narrowed_eos.compute_phase_state(
-                P, jnp.array([S_arr]), k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01
-            )
-        assert bool(jnp.all(jnp.isfinite(state.temperature)))
-        messages = [r.message for r in caplog.records]
-        assert any('heat_capacity (single-phase solid table lookup)' in m for m in messages)
-        assert not any('heat_capacity (single-phase melt table lookup)' in m for m in messages)
-        assert not any('entropy_phase (composite domain)' in m for m in messages)
-        assert not any('phase-boundary' in m for m in messages)
+    @staticmethod
+    def _call(eos, P, S):
+        return eos.compute_phase_state(P, S, **_CPS_KW)
 
-    def test_heat_capacity_single_phase_strict_raises(self, jax_eos_strict):
-        """strict_range=True on the same narrowed table raises instead
-        of warning, naming the single-phase solid context."""
-        P = jnp.array([5.0e10])
-        S_sol = float(jax_eos_strict.solidus_entropy(P)[0])
-        S_arr = S_sol - 1000.0
-        narrowed_tbl = eqx.tree_at(
-            lambda t: t.S_min, jax_eos_strict._heat_capacity_solid, S_arr + 500.0
-        )
-        narrowed_eos = eqx.tree_at(lambda e: e._heat_capacity_solid, jax_eos_strict, narrowed_tbl)
-        with pytest.raises(
-            RuntimeError, match=r'heat_capacity \(single-phase solid table lookup\)'
-        ):
-            narrowed_eos.compute_phase_state(
-                P, jnp.array([S_arr]), k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01
-            )
+    @staticmethod
+    def _clean_batch(eos, B, N):
+        P = jnp.full((B, N), _P_NODE)
+        base = jnp.linspace(eos.S_min + 1.0, eos.S_max - 1.0, N)
+        S = jnp.tile(base, (B, 1)) + jnp.arange(B)[:, None] * 1.0
+        return P, S
+
+    def test_jit_clean_is_finite(self, jax_eos):
+        N = 8
+        P = jnp.full(N, _P_NODE)
+        S = jnp.linspace(jax_eos.S_min + 1.0, jax_eos.S_max - 1.0, N)
+        fn = jax.jit(lambda P, S: self._call(jax_eos, P, S))
+        state = fn(P, S)
+        jax.block_until_ready(state)
+        assert int(jnp.sum(jnp.isnan(state.temperature))) == 0
+
+    def test_jit_nan_propagates(self, jax_eos):
+        N = 8
+        P = jnp.full(N, _P_NODE)
+        S = jnp.linspace(jax_eos.S_min + 1.0, jax_eos.S_max - 1.0, N).at[3].set(jnp.nan)
+        fn = jax.jit(lambda P, S: self._call(jax_eos, P, S))
+        state = fn(P, S)
+        jax.block_until_ready(state)
+        mask = np.asarray(jnp.isnan(state.temperature))
+        assert mask[3] and mask.sum() == 1
+
+    def test_vmap_clean_batch_does_not_raise_or_nan(self, jax_eos):
+        P, S = self._clean_batch(jax_eos, 4, 8)
+        vfn = jax.vmap(lambda P, S: self._call(jax_eos, P, S), in_axes=(0, 0))
+        state = vfn(P, S)
+        jax.block_until_ready(state)
+        assert int(jnp.sum(jnp.isnan(state.temperature))) == 0
+
+    def test_vmap_single_nan_taints_only_its_row(self, jax_eos):
+        P, S = self._clean_batch(jax_eos, 4, 8)
+        S = S.at[2, 5].set(jnp.nan)
+        vfn = jax.vmap(lambda P, S: self._call(jax_eos, P, S), in_axes=(0, 0))
+        state = vfn(P, S)
+        jax.block_until_ready(state)
+        mask = np.asarray(jnp.isnan(state.temperature))
+        assert mask[2, 5] and mask.sum() == 1
