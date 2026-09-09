@@ -737,3 +737,78 @@ def test_f_cmb_closure_holds_on_phi_step_cap_two_point_trajectory(shared_eos):
     assert np.isclose(reported, 1.0e4, rtol=1e-6), (
         f'step-average F_cmb={reported:.6e} != prescribed 1e4 W/m^2'
     )
+
+
+# ---- mantle liquid/solid mass split at a partial-melt state ----------------
+
+
+@pytest.mark.physics_invariant
+def test_mantle_mass_split_at_partial_melt_discriminates_solid_coefficient(shared_eos):
+    """The melt/solid split must reproduce ``(1 - Phi_global) * M_mantle``
+    for the solid mass and ``Phi_global * M_mantle`` for the liquid mass at
+    a genuine partial-melt state, not only the bounds and the sum.
+
+    The companion const-properties test forces ``Phi_global == 1``, so the
+    solid coefficient collapses to zero there and a sign flip or off-by-one
+    in ``(1 - Phi_global)`` passes unseen. A real SPIDER state at
+    ``S_init = 3050`` settles at an intermediate ``Phi_global`` near 0.25,
+    where the solid mass is the larger of the two. A flipped coefficient
+    ``(Phi_global - 1)`` drives the solid mass negative, and an off-by-one
+    that copies the liquid coefficient breaks the value check against the
+    reported ``Phi_global`` and ``M_mantle``.
+    """
+    from aragog.solver import entropy_solver
+
+    # The split lives in entropy_solver.get_state(); an editable install can
+    # resolve the import to a different tree, which would silence a mutation
+    # check. Confirm the module under test is the one in this worktree.
+    module_path = Path(entropy_solver.__file__).resolve()
+    assert _REPO_ROOT in module_path.parents, (
+        f'entropy_solver resolved to {module_path}, outside the worktree at '
+        f'{_REPO_ROOT}; a mutation check here would not be trustworthy.'
+    )
+
+    parameters = _build_parameters(core_bc='quasi_steady', n_nodes=15, end_time=50.0)
+    _, out = _run_solver(parameters, shared_eos, S_init=3050.0)
+
+    phi = float(out.Phi_global)
+    m_mantle = float(out.M_mantle)
+    m_liquid = float(out.M_mantle_liquid)
+    m_solid = float(out.M_mantle_solid)
+
+    assert m_mantle > 0.0, 'M_mantle must be positive for this check to be meaningful'
+    assert 0.01 < phi < 0.99, (
+        f'Phi_global={phi:.6f} is not a partial-melt state; the solid '
+        'coefficient is not exercised and this test cannot discriminate it.'
+    )
+
+    assert 0.0 <= m_liquid <= m_mantle, (
+        f'M_mantle_liquid={m_liquid:.6e} escaped [0, M_mantle={m_mantle:.6e}].'
+    )
+    assert 0.0 <= m_solid <= m_mantle, (
+        f'M_mantle_solid={m_solid:.6e} escaped [0, M_mantle={m_mantle:.6e}]; '
+        'a flipped solid coefficient drives this negative.'
+    )
+    np.testing.assert_allclose(
+        m_liquid + m_solid,
+        m_mantle,
+        rtol=1e-10,
+        err_msg='M_mantle_liquid + M_mantle_solid must equal the reported M_mantle',
+    )
+
+    # Value check: recompute both masses from the reported Phi_global and
+    # M_mantle and compare to the reported split. This is what a sign flip or
+    # an off-by-one in the solid coefficient breaks; the bounds and the sum
+    # alone do not.
+    np.testing.assert_allclose(
+        m_solid,
+        (1.0 - phi) * m_mantle,
+        rtol=1e-10,
+        err_msg='M_mantle_solid must equal (1 - Phi_global) * M_mantle',
+    )
+    np.testing.assert_allclose(
+        m_liquid,
+        phi * m_mantle,
+        rtol=1e-10,
+        err_msg='M_mantle_liquid must equal Phi_global * M_mantle',
+    )

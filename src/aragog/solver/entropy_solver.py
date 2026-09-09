@@ -3785,12 +3785,12 @@ class EntropySolver:
         rho_basic_diag = self.state.rho_basic_diag.copy()
 
         # Scalar quantities.
-        # M_mantle uses the analytic A-W mass integral (matching
-        # SPIDER's EOSAdamsWilliamson_GetMassWithinShell) when
-        # eos_method=1. The discrete sum (rho_stag * vol) has O(h^2)
-        # quadrature error vs the analytic integral, causing the
-        # structure root finder to converge to a different R_int.
-        # For eos_method=2 (external mesh), fall back to discrete sum.
+        # M_mantle uses the analytic A-W mass integral (SPIDER's
+        # EOSAdamsWilliamson_GetMassWithinShell) for eos_method=1, which
+        # avoids the O(h^2) quadrature error of a discrete sum. For
+        # eos_method=2 it sums the structural effective density
+        # (rho_struct_stag * vol), a different field from the PALEOS
+        # rho_stag used just below for per-cell output.
         mesh = self.evaluator.mesh
         if hasattr(mesh.eos, 'get_mass_within_radii'):
             r_cmb = float(self._r_basic_flat[0])
