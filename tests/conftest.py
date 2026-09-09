@@ -41,3 +41,22 @@ class Helper:
 @pytest.fixture(scope='module')
 def helper():
     return Helper()
+
+
+@pytest.fixture(autouse=True)
+def _reset_range_warning_counts():
+    """Give each test its own count of the entropy range warning.
+
+    ``_check_entropy_range`` throttles this warning per context string
+    across the life of the process; without a reset, an earlier test
+    sharing a context would suppress a later test's first occurrence.
+    JAX is optional, so this is a no-op when it is not installed.
+    """
+    try:
+        from aragog.jax.eos import reset_range_warning_counts
+    except ImportError:
+        yield
+        return
+
+    reset_range_warning_counts()
+    yield

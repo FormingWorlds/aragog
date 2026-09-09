@@ -27,6 +27,28 @@ jax.config.update('jax_enable_x64', True)
 
 logger = logging.getLogger('fwl.' + __name__)
 
+# Per-context occurrence counts for the out-of-range entropy warning below.
+# Keyed by the ``context`` string passed to ``_check_entropy_range``, a
+# small fixed set of call-site labels, not per-cell or per-value data.
+_RANGE_WARNING_COUNTS: dict[str, int] = {}
+_RANGE_WARNING_LOG_EVERY = 100
+
+
+def reset_range_warning_counts() -> None:
+    """Clear the per-context occurrence counts for the entropy range warning.
+
+    The counts are process-lifetime state, not owned by any
+    ``EntropyEOS_JAX`` instance or solve. Nothing in aragog calls this
+    function on its own: the JAX CVODE factory that builds each
+    ``EntropyEOS_JAX`` instance (registered externally through
+    ``EntropySolver.set_jax_cvode_factory``) is responsible for calling
+    it at the start of a solve, if that solve should log its own first
+    out-of-range occurrence rather than inherit a count left over from
+    an earlier solve in the same process. Test suites that reuse the
+    same context strings across independent tests must call it too.
+    """
+    _RANGE_WARNING_COUNTS.clear()
+
 
 # ---------------------------------------------------------------------------
 # SPIDER-parity combined phase state (mirrors numpy EntropyPhaseEvaluator
@@ -315,7 +337,13 @@ class EntropyEOS_JAX(eqx.Module):
         Directory containing the SPIDER-format P-S table files.
     strict_range : bool, default False
         Raise ``RuntimeError`` instead of only warning when a lookup
-        entropy is non-finite or outside the table range.
+        entropy is non-finite or outside the table range. Set by whichever
+        code constructs this class; aragog's own ``Parameters`` schema has
+        no field for it, and no code path in aragog itself sets it. A
+        production PROTEUS run gets the default (warn-only) unless the
+        external JAX CVODE factory that builds this instance passes
+        ``strict_range=True`` explicitly. Useful for tests and interactive
+        debugging.
     """
 
     # Property tables (4 properties x 2 phases = 8 tables)
@@ -467,24 +495,40 @@ class EntropyEOS_JAX(eqx.Module):
         once it is clamped to the table edge. Warn always, and raise
         when ``self.strict_range`` is set, so this does not silently
         pass as a valid table-edge value.
+
+        The host callback only fires when there is something to report:
+        it sits behind a ``lax.cond`` on the in-range path, since a host
+        round trip on every call is the dominant cost of this check on
+        the CVODE right-hand side and every step is in range once the
+        solve is past its initial transient.
+
+        Once triggered, the warning itself is rate-limited per call site
+        (``context``): logged on the first occurrence and then every
+        ``_RANGE_WARNING_LOG_EVERY`` occurrences after, so a solve stuck
+        with persistently out-of-range entropy logs a bounded number of
+        lines instead of one per RHS evaluation. A ``strict_range`` raise
+        is unaffected by the throttle: it still fires on every occurrence.
         """
         non_finite = jnp.sum(~jnp.isfinite(S))
         out_of_range = jnp.sum(jnp.isfinite(S) & ((S < S_min) | (S > S_max)))
+        has_issue = (non_finite > 0) | (out_of_range > 0)
 
         def _report(n_non_finite: jax.Array, n_out_of_range: jax.Array) -> None:
             n_non_finite = int(n_non_finite)
             n_out_of_range = int(n_out_of_range)
-            if not n_non_finite and not n_out_of_range:
-                return
-            logger.warning(
-                '%s: %d non-finite and %d out-of-range entropy value(s) '
-                '(table range [%.6g, %.6g])',
-                context,
-                n_non_finite,
-                n_out_of_range,
-                S_min,
-                S_max,
-            )
+            count = _RANGE_WARNING_COUNTS.get(context, 0) + 1
+            _RANGE_WARNING_COUNTS[context] = count
+            if count == 1 or count % _RANGE_WARNING_LOG_EVERY == 0:
+                logger.warning(
+                    '%s: %d non-finite and %d out-of-range entropy value(s) '
+                    '(table range [%.6g, %.6g]), occurrence %d',
+                    context,
+                    n_non_finite,
+                    n_out_of_range,
+                    S_min,
+                    S_max,
+                    count,
+                )
             if self.strict_range:
                 raise RuntimeError(
                     f'{context}: {n_non_finite} non-finite and {n_out_of_range} '
@@ -492,7 +536,13 @@ class EntropyEOS_JAX(eqx.Module):
                     f'[{S_min:.6g}, {S_max:.6g}]'
                 )
 
-        jax.debug.callback(_report, non_finite, out_of_range)
+        def _report_branch(n_non_finite: jax.Array, n_out_of_range: jax.Array) -> None:
+            jax.debug.callback(_report, n_non_finite, n_out_of_range)
+
+        def _no_op_branch(n_non_finite: jax.Array, n_out_of_range: jax.Array) -> None:
+            del n_non_finite, n_out_of_range
+
+        jax.lax.cond(has_issue, _report_branch, _no_op_branch, non_finite, out_of_range)
 
     def _lookup_phase_weighted(
         self,
@@ -838,10 +888,14 @@ class EntropyEOS_JAX(eqx.Module):
         # this backend's fault-handling contract identical to numpy's
         # for entropy that produces NaN after the composite-domain
         # check has already warned (or raised, under strict_range).
+        #
+        # The raise always fires when temperature has a NaN; only the
+        # host round trip is skipped on the clean path, since a
+        # jax.debug.callback dispatch is the dominant cost of this
+        # check on the CVODE right-hand side (same reasoning as
+        # ``_check_entropy_range`` above).
         def _raise_on_nan(temperature: np.ndarray, S: np.ndarray) -> None:
             n_nan = int(np.sum(np.isnan(temperature)))
-            if not n_nan:
-                return
             logger.error(
                 'NaN from EOS lookup at %d nodes. S range: [%.0f, %.0f], '
                 'table domain: [%.0f, %.0f] J/kg/K',
@@ -857,7 +911,14 @@ class EntropyEOS_JAX(eqx.Module):
                 f'table [{self.S_min:.0f}, {self.S_max:.0f}]'
             )
 
-        jax.debug.callback(_raise_on_nan, temperature, S)
+        def _raise_branch(temperature: jax.Array, S: jax.Array) -> None:
+            jax.debug.callback(_raise_on_nan, temperature, S)
+
+        def _no_op_nan_branch(temperature: jax.Array, S: jax.Array) -> None:
+            del temperature, S
+
+        has_nan = jnp.any(~jnp.isfinite(temperature))
+        jax.lax.cond(has_nan, _raise_branch, _no_op_nan_branch, temperature, S)
 
         return PhaseState(
             temperature=temperature,

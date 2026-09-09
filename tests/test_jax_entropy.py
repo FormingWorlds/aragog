@@ -2052,6 +2052,47 @@ class TestEntropyRangeCheckJAX:
             S, jax_eos_strict.S_min, jax_eos_strict.S_max, 'test-context'
         )
 
+    def test_check_entropy_range_warning_rate_limited_at_1_and_100(self, jax_eos, caplog):
+        """The warning must log on occurrence 1 and every 100th occurrence
+        after, not on the occurrences in between."""
+        S = jnp.array([jax_eos.S_max + 1.0e5])
+        logged_at = []
+        with caplog.at_level(logging.WARNING):
+            for occurrence in range(1, 102):
+                before = len(caplog.records)
+                jax_eos._check_entropy_range(
+                    S, jax_eos.S_min, jax_eos.S_max, 'rate-limit-context'
+                )
+                if len(caplog.records) > before:
+                    logged_at.append(occurrence)
+        assert logged_at == [1, 100]
+
+    def test_check_entropy_range_strict_raises_every_occurrence(self, jax_eos_strict):
+        """strict_range=True must raise on every occurrence, not only
+        the throttled logging occurrences."""
+        S = jnp.array([jax_eos_strict.S_max + 1.0e5])
+        for _ in range(5):
+            with pytest.raises(RuntimeError, match='out-of-range'):
+                jax_eos_strict._check_entropy_range(
+                    S, jax_eos_strict.S_min, jax_eos_strict.S_max, 'strict-every-occurrence'
+                )
+
+    def test_reset_range_warning_counts_restarts_occurrence_numbering(self, jax_eos, caplog):
+        """reset_range_warning_counts() must restart the per-context
+        occurrence count, so the next call logs occurrence 1 again."""
+        from aragog.jax.eos import reset_range_warning_counts
+
+        S = jnp.array([jax_eos.S_max + 1.0e5])
+        with caplog.at_level(logging.WARNING):
+            for _ in range(3):
+                jax_eos._check_entropy_range(S, jax_eos.S_min, jax_eos.S_max, 'reset-context')
+            reset_range_warning_counts()
+            caplog.clear()
+            jax_eos._check_entropy_range(S, jax_eos.S_min, jax_eos.S_max, 'reset-context')
+        matches = [r.message for r in caplog.records if 'reset-context' in r.message]
+        assert matches
+        assert 'occurrence 1' in matches[0]
+
 
 @needs_eos
 @pytest.mark.unit
