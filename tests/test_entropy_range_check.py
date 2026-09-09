@@ -4,9 +4,10 @@ A non-finite or far-out-of-table-range entropy still produces a
 finite property once ``_lookup_phase_weighted`` / ``density`` clamp
 it to the table edge, or once ``_update_eos`` blends the clamped
 branch values. ``_check_entropy_range`` (aragog.eos.entropy) is the
-root-cause guard against that: it always logs a warning naming the
-non-finite and out-of-range counts, and raises ``RuntimeError``
-instead when ``strict_range`` is set on the EOS.
+root-cause guard against that: it logs a warning naming the
+non-finite and out-of-range counts, throttled per context to
+occurrences 1, 10, 100, ..., and raises ``RuntimeError`` on every
+offending call when ``strict_range`` is set on the EOS.
 
 These tests target ``_check_entropy_range`` directly, its wiring into
 ``temperature``/``density`` (per-branch masked check against each
@@ -68,6 +69,18 @@ def eos_strict():
     from aragog.eos.entropy import EntropyEOS
 
     return EntropyEOS(EOS_DIR, strict_range=True)
+
+
+@pytest.fixture(autouse=True)
+def _reset_range_warning_counts(eos, eos_strict):
+    """Clear the per-context warning throttle before each test.
+
+    The EOS instances are module-scoped, so their throttle counters
+    would otherwise carry across tests and silence a later warning that
+    a test expects to see.
+    """
+    eos._range_warning_counts.clear()
+    eos_strict._range_warning_counts.clear()
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -133,7 +146,9 @@ def test_check_entropy_range_strict_raises_runtime_error(eos_strict, caplog):
     S = np.array([eos_strict.S_max + 1.0e5])
     with caplog.at_level(logging.WARNING):
         with pytest.raises(RuntimeError, match='out-of-range'):
-            eos_strict._check_entropy_range(S, eos_strict.S_min, eos_strict.S_max, 'test-context')
+            eos_strict._check_entropy_range(
+                S, eos_strict.S_min, eos_strict.S_max, 'test-context'
+            )
 
 
 @needs_eos
@@ -519,7 +534,9 @@ def test_phase_evaluator_single_phase_strict_raises(eos_strict, monkeypatch):
     phase = _make_phase_evaluator(eos_strict)
     phase.set_pressure(P)
     phase.set_entropy(np.array([S_arr]))
-    with pytest.raises(RuntimeError, match='heat_capacity \\(single-phase solid table lookup\\)'):
+    with pytest.raises(
+        RuntimeError, match='heat_capacity \\(single-phase solid table lookup\\)'
+    ):
         phase.update()
 
 
@@ -699,3 +716,81 @@ def test_melt_fraction_strict_raises_on_nonfinite(eos_strict):
     P = np.array([5.0e10])
     with pytest.raises(RuntimeError, match='melt_fraction'):
         eos_strict.melt_fraction(P, np.array([np.inf]))
+
+
+# ──────────────────────────────────────────────────────────────────────
+#                       warning throttle (per context)
+# ──────────────────────────────────────────────────────────────────────
+
+
+@needs_eos
+def test_warning_is_throttled_on_repeated_out_of_range(eos, caplog):
+    """A numpy run that leaves the table calls the check every RHS step,
+    so the warning must be bounded, not one per call.
+
+    Discriminator: the check runs 120 times on one context. An
+    unthrottled logger.warning would emit 120 records; the throttle emits
+    only occurrences 1, 10 and 100, so exactly 3 records must appear while
+    the internal counter still records all 120 hits.
+    """
+    S = np.array([eos.S_max + 1.0e5])
+    n_calls = 120
+    with caplog.at_level(logging.WARNING):
+        for _ in range(n_calls):
+            eos._check_entropy_range(S, eos.S_min, eos.S_max, 'throttle-probe')
+
+    matches = [r.message for r in caplog.records if 'throttle-probe' in r.message]
+    assert len(matches) == 3
+    assert eos._range_warning_counts['throttle-probe'] == n_calls
+    assert all('throttle-probe' in m for m in matches)
+
+
+@needs_eos
+def test_strict_raises_every_call_while_warning_stays_throttled(eos_strict, caplog):
+    """The throttle bounds the log line only; strict_range must still
+    raise on every offending call.
+
+    Discriminator: 30 out-of-range calls each raise (a throttle that
+    skipped the raise on a suppressed occurrence would drop below 30),
+    while the warning line appears only at occurrences 1 and 10.
+    """
+    S = np.array([eos_strict.S_max + 1.0e5])
+    n_calls = 30
+    raises = 0
+    with caplog.at_level(logging.WARNING):
+        for _ in range(n_calls):
+            try:
+                eos_strict._check_entropy_range(
+                    S, eos_strict.S_min, eos_strict.S_max, 'throttle-strict'
+                )
+            except RuntimeError:
+                raises += 1
+
+    assert raises == n_calls
+    matches = [r.message for r in caplog.records if 'throttle-strict' in r.message]
+    assert len(matches) == 2
+
+
+@needs_eos
+def test_fresh_instance_warns_again(eos, caplog):
+    """The throttle counter lives on the instance, so a fresh solve
+    (a new EntropyEOS) surfaces the problem again from occurrence one.
+    """
+    from aragog.eos import entropy as entropy_mod
+    from aragog.eos.entropy import EntropyEOS
+
+    module_path = Path(entropy_mod.__file__).resolve()
+    assert _REPO_ROOT in module_path.parents, (
+        f'entropy module resolved to {module_path}, outside the worktree at '
+        f'{_REPO_ROOT}; a warning-count check here would not be trustworthy.'
+    )
+
+    S = np.array([eos.S_max + 1.0e5])
+    for _ in range(15):
+        eos._check_entropy_range(S, eos.S_min, eos.S_max, 'fresh-probe')
+
+    fresh = EntropyEOS(EOS_DIR)
+    assert fresh._range_warning_counts == {}
+    with caplog.at_level(logging.WARNING):
+        fresh._check_entropy_range(S, fresh.S_min, fresh.S_max, 'fresh-probe')
+    assert any('fresh-probe' in r.message for r in caplog.records)

@@ -334,6 +334,15 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
     }
 
 
+def _is_power_of_ten(n: int) -> bool:
+    """Return True when n is 1, 10, 100, ... (a positive power of ten)."""
+    if n < 1:
+        return False
+    while n % 10 == 0:
+        n //= 10
+    return n == 1
+
+
 class EntropyEOS:
     """Entropy-based EOS from PALEOS P-S tables.
 
@@ -357,6 +366,11 @@ class EntropyEOS:
             raise FileNotFoundError(f'EOS directory not found: {eos_dir}')
 
         self.strict_range = strict_range
+
+        # Per-context out-of-range warning counts, reset per instance so a
+        # fresh solve warns again. The RHS calls _check_entropy_range every
+        # step, so the log line is throttled to powers of ten; the raise is not.
+        self._range_warning_counts: dict[str, int] = {}
 
         logger.info('Loading entropy EOS from %s', eos_dir)
 
@@ -782,9 +796,12 @@ class EntropyEOS:
         """Flag entropy that a table-edge clamp would otherwise hide.
 
         A non-finite or far-out-of-range S still produces a finite
-        property value once it is clamped to the table edge. Warn
-        always, and raise when ``self.strict_range`` is set, so this
-        does not silently pass as a valid table-edge temperature.
+        property value once it is clamped to the table edge. The RHS
+        calls this every solver step, so an out-of-table run would flood
+        the log. Warn on the 1st, 10th, 100th, ... offending call per
+        ``context`` to keep the signal without the flood. Raise on every
+        offending call when ``self.strict_range`` is set; the raise is
+        never throttled.
         """
         S = np.asarray(S)
         non_finite = ~np.isfinite(S)
@@ -793,15 +810,19 @@ class EntropyEOS:
         n_out_of_range = int(np.count_nonzero(out_of_range))
         if not n_non_finite and not n_out_of_range:
             return
-        logger.warning(
-            '%s: %d non-finite and %d out-of-range entropy value(s) '
-            '(table range [%.6g, %.6g])',
-            context,
-            n_non_finite,
-            n_out_of_range,
-            S_min,
-            S_max,
-        )
+        count = self._range_warning_counts.get(context, 0) + 1
+        self._range_warning_counts[context] = count
+        if _is_power_of_ten(count):
+            logger.warning(
+                '%s: %d non-finite and %d out-of-range entropy value(s) '
+                '(table range [%.6g, %.6g]) (occurrence %d)',
+                context,
+                n_non_finite,
+                n_out_of_range,
+                S_min,
+                S_max,
+                count,
+            )
         if self.strict_range:
             raise RuntimeError(
                 f'{context}: {n_non_finite} non-finite and {n_out_of_range} '
