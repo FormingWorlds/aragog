@@ -3586,7 +3586,9 @@ class EntropySolver:
         Returns
         -------
         float
-            Core-mantle-boundary temperature [K] (bottom staggered cell).
+            Core-mantle-boundary temperature [K] (bottom staggered cell), or
+            NaN when the raw bottom-node entropy read from ``y_col`` is
+            itself non-finite, ahead of any EOS lookup that could mask it.
 
         Notes
         -----
@@ -3612,10 +3614,23 @@ class EntropySolver:
         # the CMB entropy at y_col[0].
         if core_bc == 'gradient':
             n_basic = n_stag + 1
+            # _reconstruct_entropy's backward recurrence never reads
+            # dSdr_basic[0] (the CMB gradient) when building S_stag[0]: that
+            # entry feeds only the discarded S_basic[0]. A non-finite
+            # y_col[0] would therefore slip past a finiteness check on
+            # S_bottom alone, so the whole reconstruction input is checked
+            # up front instead.
+            if not np.all(np.isfinite(y_col[: n_basic + 1])):
+                return float('nan')
             S_stag, _ = self._reconstruct_entropy(y_col[:n_basic], float(y_col[n_basic]))
             S_bottom = float(np.asarray(S_stag).ravel()[0])
         else:
             S_bottom = float(np.asarray(y_col).ravel()[0])
+        if not np.isfinite(S_bottom):
+            # A real EntropyEOS phase blend masks a non-finite entropy to a
+            # finite value (NaN -> 0.0 K, +-inf -> a clamped table value), so
+            # the corrupted-solve signal is caught here, before the lookup.
+            return float('nan')
         eos = self.entropy_eos
         if eos is not None:
             # Evaluate the EOS at the single bottom node. The table lookup

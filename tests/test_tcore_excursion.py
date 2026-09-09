@@ -4,11 +4,16 @@ These tests build a bare ``EntropySolver`` via ``__new__`` and set only
 the attributes the excursion path reads, so they run without the FWL data
 tables. A fake entropy EOS returns the entropy unchanged, which makes the
 core temperature equal to the bottom staggered entropy and keeps the
-expected excursion trivial to compute by hand.
+expected excursion trivial to compute by hand. A separate group of tests
+uses the real, table-backed ``EntropyEOS``: its phase-weighted blend
+masks a non-finite input entropy to a finite temperature, so the
+non-finite guard has to fire on the raw entropy, not on the EOS output.
 """
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -17,6 +22,23 @@ import pytest
 from aragog.solver.entropy_solver import EntropySolver
 
 pytestmark = pytest.mark.unit
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_FWL_DATA = os.environ.get('FWL_DATA')
+_CANDIDATES = [
+    os.environ.get('ARAGOG_TEST_EOS_DIR'),
+    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
+    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
+]
+EOS_DIR = next(
+    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
+    Path(_CANDIDATES[-1]),
+)
+
+needs_eos = pytest.mark.skipif(
+    not EOS_DIR.exists(),
+    reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
+)
 
 
 class _FakeEOS:
@@ -216,3 +238,68 @@ def test_helper_const_eos_uses_analytic_formula():
     )
     y_col = np.array([1000.0, 1100.0, 1200.0, 1300.0])
     assert solver._core_temperature_from_column(y_col) == pytest.approx(300.0)
+
+
+@pytest.fixture(scope='module')
+def real_eos():
+    """Module-scoped, table-backed ``EntropyEOS`` instance."""
+    if not EOS_DIR.exists():
+        pytest.skip('EOS unavailable')
+    from aragog.eos.entropy import EntropyEOS
+
+    return EntropyEOS(EOS_DIR)
+
+
+@needs_eos
+@pytest.mark.parametrize('bad_entropy', [np.nan, np.inf, -np.inf])
+def test_real_eos_helper_returns_nan_for_nonfinite_entropy(real_eos, bad_entropy):
+    """The real EOS masks a non-finite entropy to a finite temperature
+    (NaN -> 0 K, +-inf -> a clamped table value), so ``np.isfinite`` on
+    its output cannot detect the corruption. The helper must catch it on
+    the raw entropy it reads from the column, before the EOS lookup.
+    """
+    solver = _make_solver(n_stag=4, core_bc='quasi_steady')
+    solver.entropy_eos = real_eos
+    y_col = np.array([bad_entropy, 1900.0, 1800.0, 1700.0])
+    assert not np.isfinite(solver._core_temperature_from_column(y_col))
+
+
+@needs_eos
+@pytest.mark.parametrize('bad_entropy', [np.nan, np.inf, -np.inf])
+def test_real_eos_helper_gradient_returns_nan_for_nonfinite_cmb_state(real_eos, bad_entropy):
+    """``_reconstruct_entropy``'s backward recurrence never lets ``y_col[0]``
+    (the CMB dS/dr) influence ``S_stag[0]``: that entry only feeds the
+    discarded ``S_basic[0]``. Without an explicit check on the full basic
+    state, a non-finite ``y_col[0]`` alone reconstructs to a finite (wrong)
+    ``S_stag[0]`` and reaches the EOS undetected. This test runs the real
+    reconstruction, not a stub, so it needs real node radii.
+    """
+    solver = _make_solver(n_stag=4, core_bc='gradient')
+    solver.entropy_eos = real_eos
+    r_basic = np.linspace(0.0, 1.0, 5)
+    solver._r_basic_flat = r_basic
+    solver._r_stag_flat = 0.5 * (r_basic[:-1] + r_basic[1:])
+    y_col = np.array([bad_entropy, 1900.0, 1800.0, 1700.0, 1600.0, 2000.0])
+    assert not np.isfinite(solver._core_temperature_from_column(y_col))
+
+
+@needs_eos
+@pytest.mark.parametrize('bad_entropy', [np.nan, np.inf, -np.inf])
+def test_real_eos_excursion_flags_nonfinite_entropy_at_entry(real_eos, bad_entropy):
+    solver = _make_solver(limit=None)
+    solver.entropy_eos = real_eos
+    sol = _quasi_steady_grid([bad_entropy, 1000.0, 1000.0, 1000.0])
+    change_max, exceeded = solver._core_temperature_excursion(sol)
+    assert exceeded is True
+    assert not np.isfinite(change_max)
+
+
+@needs_eos
+@pytest.mark.parametrize('bad_entropy', [np.nan, np.inf, -np.inf])
+def test_real_eos_excursion_flags_nonfinite_entropy_mid_column(real_eos, bad_entropy):
+    solver = _make_solver(limit=None)
+    solver.entropy_eos = real_eos
+    sol = _quasi_steady_grid([1000.0, 1000.0, bad_entropy, 1000.0])
+    change_max, exceeded = solver._core_temperature_excursion(sol)
+    assert exceeded is True
+    assert not np.isfinite(change_max)
