@@ -3785,12 +3785,12 @@ class EntropySolver:
         rho_basic_diag = self.state.rho_basic_diag.copy()
 
         # Scalar quantities.
-        # M_mantle uses the analytic A-W mass integral (matching
-        # SPIDER's EOSAdamsWilliamson_GetMassWithinShell) when
-        # eos_method=1. The discrete sum (rho_stag * vol) has O(h^2)
-        # quadrature error vs the analytic integral, causing the
-        # structure root finder to converge to a different R_int.
-        # For eos_method=2 (external mesh), fall back to discrete sum.
+        # M_mantle uses the analytic A-W mass integral (SPIDER's
+        # EOSAdamsWilliamson_GetMassWithinShell) for eos_method=1, which
+        # avoids the O(h^2) quadrature error of a discrete sum. For
+        # eos_method=2 it sums the structural effective density
+        # (rho_struct_stag * vol), a different field from the PALEOS
+        # rho_stag used just below for per-cell output.
         mesh = self.evaluator.mesh
         if hasattr(mesh.eos, 'get_mass_within_radii'):
             r_cmb = float(self._r_basic_flat[0])
@@ -3801,8 +3801,8 @@ class EntropySolver:
             ).item()
         else:
             rho_struct_stag = np.asarray(mesh.staggered_effective_density).ravel()
-            mass_stag = rho_struct_stag * vol
-            M_mantle = float(np.sum(mass_stag))
+            mass_struct_stag = rho_struct_stag * vol
+            M_mantle = float(np.sum(mass_struct_stag))
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
         # T_magma = top basic-node temperature, evaluated at
         # r = outer_boundary where P = surface_pressure. This matches
@@ -3952,8 +3952,8 @@ class EntropySolver:
             Phi_global=Phi_global,
             Phi_global_vol=Phi_global_vol,
             M_mantle=M_mantle,
-            M_mantle_liquid=float(np.sum(phi_stag * mass_stag)),
-            M_mantle_solid=float(M_mantle - np.sum(phi_stag * mass_stag)),
+            M_mantle_liquid=float(Phi_global * M_mantle),
+            M_mantle_solid=float((1.0 - Phi_global) * M_mantle),
             RF_depth=RF_depth,
             E_th=E_th,
             E_state=E_state,
