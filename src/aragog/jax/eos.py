@@ -27,7 +27,6 @@ jax.config.update('jax_enable_x64', True)
 
 logger = logging.getLogger('fwl.' + __name__)
 
-
 # ---------------------------------------------------------------------------
 # SPIDER-parity combined phase state (mirrors numpy EntropyPhaseEvaluator
 # ._update_eos: single-pass evaluation, all properties derived from one
@@ -313,6 +312,31 @@ class EntropyEOS_JAX(eqx.Module):
     ----------
     eos_dir : Path or str
         Directory containing the SPIDER-format P-S table files.
+
+    Notes
+    -----
+    A non-finite input entropy (NaN, +inf or -inf) propagates as NaN
+    through every entropy-derived output of ``compute_phase_state`` and
+    the property methods below, keyed on the input entropy via
+    ``jnp.isfinite(S)``, instead of raising or clamping to a finite
+    value. ``latent_heat`` takes only pressure and stays finite. This
+    keeps the lookups pure and safe under ``jax.jit`` and ``jax.vmap``,
+    where a Python raise is not possible. A finite entropy outside the
+    table domain still clamps to the table edge; only non-finite entropy
+    becomes NaN.
+
+    The numpy reference EOS handles non-finite entropy at two different
+    entry points. The direct property lookups in ``aragog.eos.entropy``
+    (``EntropyEOS.temperature`` and the others) never raise: a NaN
+    entropy returns NaN and +-inf or a finite out-of-domain entropy
+    clamps to the table edge, each with a log warning
+    (``strict_range`` defaults to False). The phase evaluator
+    ``EntropyPhaseEvaluator._update_eos`` in ``aragog.eos.entropy_phase``
+    has an eager NaN backstop that raises ``RuntimeError`` when a lookup
+    yields NaN, so a NaN entropy raises there while +-inf and finite
+    out-of-domain entropy clamp to the edge. The JAX path uses NaN as the
+    single sentinel across both, because it cannot raise under a
+    transform.
     """
 
     # Property tables (4 properties x 2 phases = 8 tables)
@@ -366,11 +390,32 @@ class EntropyEOS_JAX(eqx.Module):
         self._solidus = _PhaseBoundary1D(sol['P'], sol['S'])
         self._liquidus = _PhaseBoundary1D(liq['P'], liq['S'])
 
-        # Domain bounds
+        # Domain bounds. P uses the temperature tables only (grid shape
+        # reference for callers). S is the union across every loaded
+        # table, so a value outside [S_min, S_max] is guaranteed to be
+        # clamped by at least one table lookup below.
         self.P_min = min(self._temperature_solid.P_min, self._temperature_melt.P_min)
         self.P_max = max(self._temperature_solid.P_max, self._temperature_melt.P_max)
-        self.S_min = min(self._temperature_solid.S_min, self._temperature_melt.S_min)
-        self.S_max = max(self._temperature_solid.S_max, self._temperature_melt.S_max)
+        self.S_min = min(
+            self._temperature_solid.S_min,
+            self._temperature_melt.S_min,
+            self._density_solid.S_min,
+            self._density_melt.S_min,
+            self._heat_capacity_solid.S_min,
+            self._heat_capacity_melt.S_min,
+            self._dTdPs_solid.S_min,
+            self._dTdPs_melt.S_min,
+        )
+        self.S_max = max(
+            self._temperature_solid.S_max,
+            self._temperature_melt.S_max,
+            self._density_solid.S_max,
+            self._density_melt.S_max,
+            self._heat_capacity_solid.S_max,
+            self._heat_capacity_melt.S_max,
+            self._dTdPs_solid.S_max,
+            self._dTdPs_melt.S_max,
+        )
 
         logger.info(
             'JAX EOS loaded: P=[%.2e, %.2e] Pa, S=[%.0f, %.0f] J/kg/K',
@@ -413,7 +458,8 @@ class EntropyEOS_JAX(eqx.Module):
         S_sol = self.solidus_entropy(P)
         S_liq = self.liquidus_entropy(P)
         dS = jnp.maximum(S_liq - S_sol, 1e-10)
-        return jnp.clip((S - S_sol) / dS, 0.0, 1.0)
+        phi = jnp.clip((S - S_sol) / dS, 0.0, 1.0)
+        return jnp.where(jnp.isfinite(S), phi, jnp.nan)
 
     # ------------------------------------------------------------------
     # Internal lookup helpers
@@ -462,7 +508,10 @@ class EntropyEOS_JAX(eqx.Module):
         result = jnp.where(phi > 0, phi * val_melt, 0.0) + jnp.where(
             phi < 1, (1.0 - phi) * val_solid, 0.0
         )
-        return result
+        # A non-finite S (NaN or +-inf) would otherwise be masked to a
+        # finite value by phi's clip and the tables' own edge-clamping;
+        # propagate it as NaN instead of letting it pass as a valid result.
+        return jnp.where(jnp.isfinite(S), result, jnp.nan)
 
     def _lookup_at_phase_boundary(
         self,
@@ -530,7 +579,9 @@ class EntropyEOS_JAX(eqx.Module):
         rho_melt_single = melt_table(P, S)
         rho_single = jnp.where(phi >= 0.5, rho_melt_single, rho_solid_single)
 
-        return jnp.where(mushy, rho_mushy, rho_single)
+        # A non-finite S is otherwise masked to a finite value by the
+        # table's edge-clamping; propagate it as NaN instead.
+        return jnp.where(jnp.isfinite(S), jnp.where(mushy, rho_mushy, rho_single), jnp.nan)
 
     def heat_capacity(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Specific heat capacity Cp(P, S) [J/kg/K]."""
@@ -696,15 +747,20 @@ class EntropyEOS_JAX(eqx.Module):
 
         latent_heat = self.latent_heat(P)
 
+        # A non-finite input entropy is otherwise masked to a finite value
+        # by phi's clip and the tables' own edge-clamping. Propagate it as
+        # NaN on every S-derived output instead. latent_heat takes only P,
+        # so it stays finite.
+        finite_S = jnp.isfinite(S)
         return PhaseState(
-            temperature=temperature,
-            density=density,
-            heat_capacity=heat_capacity,
-            thermal_expansivity=thermal_expansivity,
-            dTdPs=dTdPs_val,
-            thermal_conductivity=thermal_conductivity,
-            melt_fraction=phi_arr,
-            gphi=gphi,
-            smth=smth,
+            temperature=jnp.where(finite_S, temperature, jnp.nan),
+            density=jnp.where(finite_S, density, jnp.nan),
+            heat_capacity=jnp.where(finite_S, heat_capacity, jnp.nan),
+            thermal_expansivity=jnp.where(finite_S, thermal_expansivity, jnp.nan),
+            dTdPs=jnp.where(finite_S, dTdPs_val, jnp.nan),
+            thermal_conductivity=jnp.where(finite_S, thermal_conductivity, jnp.nan),
+            melt_fraction=jnp.where(finite_S, phi_arr, jnp.nan),
+            gphi=jnp.where(finite_S, gphi, jnp.nan),
+            smth=jnp.where(finite_S, smth, jnp.nan),
             latent_heat=latent_heat,
         )

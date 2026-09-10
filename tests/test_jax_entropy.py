@@ -6,6 +6,7 @@ Tier 3: JAX-specific (JIT, vmap, grad)
 Tier 4: Constant-property analytical (no EOS tables needed)
 Tier 5: Solver integration (grey-body cooling, energy conservation)
 Tier 6: Solver parity (JAX diffrax vs scipy BDF on identical problem)
+Tier 7: Non-finite entropy propagates as NaN (eager, JIT, vmap)
 
 All tests marked @pytest.mark.unit (fast) or @pytest.mark.smoke (solver).
 Table-dependent tests use the @needs_eos skip marker.
@@ -1973,3 +1974,162 @@ class TestBoundaryCopies:
                 'rows should produce identical fluxes after the copy.'
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# Tier 7: Non-finite entropy propagates as NaN (JAX path).
+#
+# A non-finite input entropy (NaN, +inf or -inf) becomes NaN on every
+# entropy-derived output; a finite out-of-domain entropy still clamps to the
+# table edge. The lookups stay pure and vmap-safe: a clean batch never trips a
+# false NaN, and a single bad element taints only its own row. The numpy
+# reference contract is in tests/test_entropy_range_check.py.
+# ---------------------------------------------------------------------------
+
+_P_NODE = 5.0e10
+_NONFINITE = [float('nan'), float('inf'), float('-inf')]
+_CPS_KW = dict(k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01)
+# The default sharp mode (smooth width 0) and the tanh-smoothed mode take
+# different code paths for smth, so exercise both.
+_CPS_KW_SHARP = dict(k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.0)
+_CPS_MODES = [_CPS_KW, _CPS_KW_SHARP]
+_LOOKUP_METHODS = ['temperature', 'density', 'heat_capacity', 'dTdPs', 'thermal_expansivity']
+_PHYS_FIELDS = [
+    'temperature',
+    'density',
+    'heat_capacity',
+    'thermal_expansivity',
+    'dTdPs',
+    'thermal_conductivity',
+]
+# Phase-blend fields derived from the input entropy; guarded like the
+# physical fields. latent_heat takes only P and stays finite, so it is
+# excluded from the NaN assertions.
+_PHASE_FIELDS = ['melt_fraction', 'gphi', 'smth']
+
+
+@needs_eos
+@pytest.mark.unit
+class TestEntropyNonFinitePropagatesJAX:
+    """Non-finite entropy -> NaN across the public JAX EOS lookups."""
+
+    @pytest.mark.parametrize('bad', _NONFINITE)
+    @pytest.mark.parametrize('method', _LOOKUP_METHODS)
+    def test_lookup_nonfinite_propagates(self, jax_eos, method, bad):
+        """NaN or +-inf S makes every property lookup return NaN."""
+        P = jnp.array([_P_NODE])
+        out = getattr(jax_eos, method)(P, jnp.array([bad]))
+        assert bool(jnp.all(jnp.isnan(out))), f'{method} must return NaN for non-finite S'
+
+    @pytest.mark.parametrize('method', _LOOKUP_METHODS)
+    def test_lookup_in_domain_is_finite(self, jax_eos, method):
+        """A mid-domain S must give a finite result on every lookup."""
+        P = jnp.array([_P_NODE])
+        S = jnp.array([0.5 * (jax_eos.S_min + jax_eos.S_max)])
+        out = getattr(jax_eos, method)(P, S)
+        assert bool(jnp.all(jnp.isfinite(out)))
+
+    @pytest.mark.parametrize('S_off', [1.0e5, -1.0e5])
+    def test_finite_out_of_range_stays_clamped(self, jax_eos, S_off):
+        """A finite S outside [S_min, S_max] is not non-finite, so it must
+        clamp to the table edge and stay finite, never become NaN. Only
+        non-finite S propagates as NaN."""
+        P = jnp.array([_P_NODE])
+        edge = jax_eos.S_max if S_off > 0 else jax_eos.S_min
+        T = jax_eos.temperature(P, jnp.array([edge + S_off]))
+        assert bool(jnp.all(jnp.isfinite(T)))
+
+
+@needs_eos
+@pytest.mark.unit
+class TestComputePhaseStateNonFinitePropagatesJAX:
+    """compute_phase_state: non-finite S -> NaN on every physical field."""
+
+    @pytest.mark.parametrize('kw', _CPS_MODES)
+    @pytest.mark.parametrize('bad', _NONFINITE)
+    def test_all_physical_fields_nan(self, jax_eos, bad, kw):
+        """Every entropy-derived field of the PhaseState is NaN when the
+        input entropy is non-finite, in both the sharp and smoothed mode.
+        latent_heat takes only P and must stay finite."""
+        P = jnp.array([_P_NODE])
+        state = jax_eos.compute_phase_state(P, jnp.array([bad]), **kw)
+        for field in _PHYS_FIELDS + _PHASE_FIELDS:
+            v = getattr(state, field)
+            assert bool(jnp.all(jnp.isnan(v))), f'{field} must be NaN for non-finite S'
+        assert bool(jnp.all(jnp.isfinite(state.latent_heat)))
+
+    @pytest.mark.parametrize('kw', _CPS_MODES)
+    def test_mid_domain_all_fields_finite(self, jax_eos, kw):
+        """A mid-domain S must give finite values on every field."""
+        P = jnp.array([_P_NODE])
+        S = jnp.array([0.5 * (jax_eos.S_min + jax_eos.S_max)])
+        state = jax_eos.compute_phase_state(P, S, **kw)
+        for field in _PHYS_FIELDS + _PHASE_FIELDS + ['latent_heat']:
+            assert bool(jnp.all(jnp.isfinite(getattr(state, field))))
+
+    def test_finite_out_of_range_stays_clamped(self, jax_eos):
+        """A finite out-of-range S must still clamp to finite outputs,
+        not NaN, on every entropy-derived field."""
+        P = jnp.array([_P_NODE])
+        S = jnp.array([jax_eos.S_max + 1.0e5])
+        state = jax_eos.compute_phase_state(P, S, **_CPS_KW)
+        for field in _PHYS_FIELDS + _PHASE_FIELDS:
+            assert bool(jnp.all(jnp.isfinite(getattr(state, field)))), (
+                f'{field} must clamp, not NaN, for finite out-of-range S'
+            )
+
+
+@needs_eos
+@pytest.mark.unit
+class TestNonFiniteUnderJitAndVmapJAX:
+    """The pure lookups are safe under jit and vmap: a clean batch never
+    trips a false NaN, and a single non-finite element taints only its own
+    row. A predicate-gated host-callback raise could not provide this,
+    because a cond predicate lowers to a select under vmap and would fire
+    the raise branch on a clean batch."""
+
+    @staticmethod
+    def _call(eos, P, S):
+        return eos.compute_phase_state(P, S, **_CPS_KW)
+
+    @staticmethod
+    def _clean_batch(eos, B, N):
+        P = jnp.full((B, N), _P_NODE)
+        base = jnp.linspace(eos.S_min + 1.0, eos.S_max - 1.0, N)
+        S = jnp.tile(base, (B, 1)) + jnp.arange(B)[:, None] * 1.0
+        return P, S
+
+    def test_jit_clean_is_finite(self, jax_eos):
+        N = 8
+        P = jnp.full(N, _P_NODE)
+        S = jnp.linspace(jax_eos.S_min + 1.0, jax_eos.S_max - 1.0, N)
+        fn = jax.jit(lambda P, S: self._call(jax_eos, P, S))
+        state = fn(P, S)
+        jax.block_until_ready(state)
+        assert int(jnp.sum(jnp.isnan(state.temperature))) == 0
+
+    def test_jit_nan_propagates(self, jax_eos):
+        N = 8
+        P = jnp.full(N, _P_NODE)
+        S = jnp.linspace(jax_eos.S_min + 1.0, jax_eos.S_max - 1.0, N).at[3].set(jnp.nan)
+        fn = jax.jit(lambda P, S: self._call(jax_eos, P, S))
+        state = fn(P, S)
+        jax.block_until_ready(state)
+        mask = np.asarray(jnp.isnan(state.temperature))
+        assert mask[3] and mask.sum() == 1
+
+    def test_vmap_clean_batch_does_not_raise_or_nan(self, jax_eos):
+        P, S = self._clean_batch(jax_eos, 4, 8)
+        vfn = jax.vmap(lambda P, S: self._call(jax_eos, P, S), in_axes=(0, 0))
+        state = vfn(P, S)
+        jax.block_until_ready(state)
+        assert int(jnp.sum(jnp.isnan(state.temperature))) == 0
+
+    def test_vmap_single_nan_taints_only_its_row(self, jax_eos):
+        P, S = self._clean_batch(jax_eos, 4, 8)
+        S = S.at[2, 5].set(jnp.nan)
+        vfn = jax.vmap(lambda P, S: self._call(jax_eos, P, S), in_axes=(0, 0))
+        state = vfn(P, S)
+        jax.block_until_ready(state)
+        mask = np.asarray(jnp.isnan(state.temperature))
+        assert mask[2, 5] and mask.sum() == 1

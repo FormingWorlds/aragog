@@ -203,6 +203,14 @@ class EntropyPhaseEvaluator:
         eos = self._eos
         smw = self._matprop_smooth_width
 
+        # Root-cause check: catch entropy outside the EOS table domain
+        # here, before any table lookup, instead of only detecting the
+        # NaN it produces downstream (see the guard at the end of this
+        # method).
+        eos._check_entropy_range(
+            S_arr, eos.S_min, eos.S_max, 'entropy_phase (composite domain)'
+        )
+
         # ── Step 1: phase boundaries (computed ONCE) ────────────────
         S_sol = eos.solidus_entropy(P_arr)
         S_liq = eos.liquidus_entropy(P_arr)
@@ -287,6 +295,20 @@ class EntropyPhaseEvaluator:
         def _table_lookup(prop_name):
             solid_tbl = eos._tables[f'{prop_name}_solid']
             melt_tbl = eos._tables[f'{prop_name}_melt']
+            solid_used = ~(gphi > 0.5)
+            melt_used = gphi > 0.5
+            eos._check_entropy_range(
+                np.where(solid_used, S_for_solid, solid_tbl['S'][0]),
+                solid_tbl['S'][0],
+                solid_tbl['S'][-1],
+                f'{prop_name} (single-phase solid table lookup)',
+            )
+            eos._check_entropy_range(
+                np.where(melt_used, S_for_melt, melt_tbl['S'][0]),
+                melt_tbl['S'][0],
+                melt_tbl['S'][-1],
+                f'{prop_name} (single-phase melt table lookup)',
+            )
             S_s_c = np.clip(S_for_solid, solid_tbl['S'][0], solid_tbl['S'][-1])
             S_m_c = np.clip(S_for_melt, melt_tbl['S'][0], melt_tbl['S'][-1])
             P_s_c = np.clip(P_arr, solid_tbl['P'][0], solid_tbl['P'][-1])
