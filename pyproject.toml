@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "1-D interior dynamics of rocky mantles that are solid, liquid, or mixed phase"
 readme = "README.md"
 requires-python = ">=3.12"
-license = {text = "GPL-3.0-or-later"}
+license = {text = "Apache 2.0 License"}
 authors = [
     {name="Dan J. Bower",            email="dbower@ethz.ch"},
     {name="Mariana Sastre",          email="m.c.villamil.sastre@rug.nl"},
@@ -21,7 +21,7 @@ authors = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
