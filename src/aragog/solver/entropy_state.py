@@ -670,14 +670,12 @@ class EntropyState:
             lid_base_mode = getattr(self.phase_basic, 'lid_base_mode', 'fixed')
             t_lid_base = getattr(self.phase_basic, 'lid_base_temperature', 1400.0)
             if lid_base_mode == 'rheological':
-                t_m = np.max(T)
-                p_lid = np.asarray(self.phase_basic.pressure).ravel()[-1]
+                t_m = float(np.max(T))
+                p_lid = float(np.asarray(self.phase_basic.pressure).ravel()[-1])
                 e_a = float(getattr(self.phase_basic, '_activation_energy', 300e3))
                 v_a = float(getattr(self.phase_basic, '_activation_volume', 5e-6))
-                e_eff = e_a + p_lid * v_a
-                dt_rh = 8.314 * t_m**2 / max(e_eff, 1.0)
                 lid_contrast_coeff = float(getattr(self.phase_basic, 'lid_contrast_coeff', 2.2))
-                t_lid_base = t_m - lid_contrast_coeff * dt_rh
+                t_lid_base = compute_t_lid_base(t_m, p_lid, e_a, v_a, lid_contrast_coeff)
 
             strain_rate = stress_closure(
                 mode=mode,
