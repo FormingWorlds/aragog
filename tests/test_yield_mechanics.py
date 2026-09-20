@@ -1,4 +1,4 @@
-"""Verification Tier E: Yield Mechanics (Stagnant to Mobile Lid Transition).
+"""Verification test for Yield Mechanics.
 
 Sweeps Byerlee yield stress parameters to explicitly verify the transition
 from a stagnant lid to a mobile lid.
@@ -10,9 +10,9 @@ import pytest
 
 from aragog.rheology import compute_yield_stress, eta_eff, stress_closure, eta_diff
 
-@pytest.mark.physics_invariant
-@pytest.mark.slow
-def test_mobile_to_stagnant_lid_transition():
+pytestmark = [pytest.mark.physics_invariant, pytest.mark.slow, pytest.mark.timeout(300)]
+
+def test_yield_stress_transition():
     """Verify that lowering the yield stress transitions the system from a
     stagnant lid (high effective viscosity, low strain rate) to a mobile lid
     (yielding, low effective viscosity, high strain rate).
@@ -41,8 +41,9 @@ def test_mobile_to_stagnant_lid_transition():
     sr_stagnant = stress_closure('global', v_visc, radius=r, temperature=t, t_lid_base=1400.0)
     eta_eff_stagnant = eta_eff(eta_d, tau_stagnant, sr_stagnant, smooth=True)
 
-    # Mobile lid case: extremely low yield stress
-    tau_mobile = compute_yield_stress(p, yield_stress_c=1.0e6, yield_stress_mu=0.001, yield_stress_max=500.0e6)
+    # Mobile lid case: low yield stress cohesion, moderate friction (mu=0.01)
+    # Yields the cold, low-pressure lid, but preserves the high-pressure unyielded interior.
+    tau_mobile = compute_yield_stress(p, yield_stress_c=1.0e6, yield_stress_mu=0.01, yield_stress_max=500.0e6)
     sr_mobile = stress_closure('global', v_visc, radius=r, temperature=t, t_lid_base=1400.0)
     eta_eff_mobile = eta_eff(eta_d, tau_mobile, sr_mobile, smooth=True)
 
@@ -50,6 +51,6 @@ def test_mobile_to_stagnant_lid_transition():
     lid_idx = -2
     assert eta_eff_mobile[lid_idx] < 1e-1 * eta_eff_stagnant[lid_idx]
 
-    # The deep interior (hot, ductile) should be largely unaffected
+    # The deep interior (hot, ductile, high pressure) should be completely unaffected
     mid_idx = n_nodes // 2
-    assert eta_eff_mobile[mid_idx] == pytest.approx(eta_eff_stagnant[mid_idx], rel=0.1)
+    assert eta_eff_mobile[mid_idx] == pytest.approx(eta_eff_stagnant[mid_idx], rel=1e-8)

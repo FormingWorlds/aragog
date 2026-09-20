@@ -1,102 +1,90 @@
-"""Verification Tier F: JAX/NumPy float64 parity.
+"""JAX and NumPy float64 parity.
 
-Exhaustively pins float64 parity between JAX and NumPy backends in both
-unsaturated (exact) and saturated (approximate) regimes.
+Exhaustively pins float64 numerical parity between JAX and NumPy backends
+for the mixing length theory (MLT) closure.
 """
 from __future__ import annotations
+import sys
+import os
 import numpy as np
 import pytest
 
-from aragog.jax.phase import compute_mlt as jax_compute_mlt, MeshArrays, PhaseProperties, PhaseParams
-from aragog.solver.entropy_state import EntropyState, RE_CRIT
+pytestmark = [pytest.mark.slow, pytest.mark.timeout(3600), pytest.mark.physics_invariant]
+pytest.importorskip('jax')
 
-@pytest.mark.physics_invariant
+from aragog.jax.phase import compute_mlt as jax_compute_mlt
+
 def test_jax_numpy_float64_parity():
     """Verify that JAX and NumPy yield exactly the same numerical results
     for the mixing length theory (MLT) closure and effective viscosity.
     """
-    pytest.importorskip('jax')
     import jax
     jax.config.update("jax_enable_x64", True)
     import jax.numpy as jnp
     
-    n_basic = 50
-    n = n_basic - 1
-    r_basic = jnp.linspace(3.48e6, 6.371e6, n_basic)
-    r_stag = 0.5 * (r_basic[1:] + r_basic[:-1])
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_convection_scaling import _make_mesh, _make_state
     
-    mesh = MeshArrays(
-        d_dr_matrix=jnp.zeros((n_basic, n)),
-        quantity_matrix=jnp.zeros((n_basic, n)),
-        area=jnp.ones(n_basic),
-        volume=jnp.ones(n_basic),
-        radii_basic=r_basic,
-        radii_stag=r_stag,
-        mixing_length=jnp.full(n_basic, 1.0e5),
-        mixing_length_sq=jnp.full(n_basic, 1.0e10),
-        mixing_length_cu=jnp.full(n_basic, 1.0e15),
-        P_stag=jnp.zeros(n),
-        P_basic=jnp.zeros(n_basic),
-        dP_dr_basic=jnp.zeros(n_basic),
-        gravity=jnp.full(n_basic, 9.81),
+    mesh = _make_mesh(n=50)
+    state = _make_state(mesh, log10visc=20.0)
+    
+    ds_dr = -1e-6
+    rs = np.asarray(mesh.staggered.radii).ravel()
+    entropy = 3000.0 + ds_dr * (rs - rs.mean())
+    state.update(entropy, 0.0)
+    
+    kappa_numpy = np.array(state.eddy_diffusivity).ravel()
+    
+    # Execute in JAX
+    from aragog.jax.phase import MeshArrays, PhaseProperties, PhaseParams
+    
+    n_basic = len(mesh.basic.radii)
+    n_stag = len(mesh.staggered.radii)
+    
+    mesh_jax = MeshArrays(
+        d_dr_matrix=jnp.array(np.zeros((n_basic, n_stag))),
+        quantity_matrix=jnp.array(np.zeros((n_basic, n_stag))),
+        area=jnp.array(mesh.basic.area).ravel(),
+        volume=jnp.array(mesh.basic.volume).ravel(),
+        radii_basic=jnp.array(mesh.basic.radii).ravel(),
+        radii_stag=jnp.array(mesh.staggered.radii).ravel(),
+        mixing_length=jnp.array(state._mixing_length).ravel(),
+        mixing_length_sq=jnp.array(state._mixing_length_sq).ravel(),
+        mixing_length_cu=jnp.array(state._mixing_length_cu).ravel(),
+        P_stag=jnp.array(state.phase_staggered.pressure).ravel(),
+        P_basic=jnp.array(state.phase_basic.pressure).ravel(),
+        dP_dr_basic=jnp.array(state._dP_dr_basic).ravel(),
+        gravity=jnp.array(state.phase_basic.gravitational_acceleration()).ravel(),
     )
     
-    ones = jnp.ones(n_basic)
-    phase = PhaseProperties(
-        temperature=ones * 2000.0,
-        density=ones * 4000.0,
-        heat_capacity=ones * 1200.0,
-        thermal_expansivity=ones * 3e-5,
-        dTdPs=ones,
-        melt_fraction=ones * 0.0,
-        viscosity=ones * 1.0e21,
-        kinematic_viscosity=ones * 1.0e21 / 4000.0,
-        thermal_conductivity=ones * 4.0,
-        latent_heat=ones,
-        capacitance=ones * 4000.0 * 2000.0,
-        eta_diff=ones * 1.0e21,
-        tau_y=ones * 1.0e9, visc_solid_weight=ones * 1.0,
+    phase_jax = PhaseProperties(
+        temperature=jnp.array(state.T_basic_diag).ravel(),
+        density=jnp.array(state.rho_basic_diag).ravel(),
+        heat_capacity=jnp.array(state.cp_basic_diag).ravel(),
+        thermal_expansivity=jnp.array(state.phase_basic.thermal_expansivity()).ravel(),
+        dTdPs=jnp.array(state._dS_liq_dP_basic).ravel(),
+        melt_fraction=jnp.array(state.phi_basic_diag).ravel(),
+        viscosity=jnp.array(state.phase_basic.viscosity()).ravel(),
+        kinematic_viscosity=jnp.array(state.phase_basic.viscosity() / state.rho_basic_diag).ravel(),
+        thermal_conductivity=jnp.array(state.phase_basic.thermal_conductivity()).ravel(),
+        latent_heat=jnp.array(state.phase_basic.latent_heat()).ravel(),
+        capacitance=jnp.array(state.cp_basic_diag * state.rho_basic_diag).ravel(),
+        eta_diff=jnp.array(state.phase_basic.eta_diff).ravel(),
+        tau_y=jnp.array(state.phase_basic.tau_y).ravel(),
+        visc_solid_weight=jnp.array(np.ones_like(state.rho_basic_diag)).ravel(),
     )
     
     params = PhaseParams(
         kappah_floor=0.0,
-        stress_closure_mode='explicit',
-        lid_base_mode='fixed',
-        lid_base_temperature=1400.0,
+        stress_closure_mode='local',
+        lid_base_mode='rheological',
         lid_contrast_coeff=2.2,
         activation_energy=300e3,
         activation_volume=1.5e-6,
     )
     
-    ds_dr_array = -np.logspace(-8, -2, 4)
+    ds_dr_jax = jnp.array(state._dSdr).ravel()
+    k_h_jax, _ = jax_compute_mlt(ds_dr_jax, phase_jax, mesh_jax, params)
     
-    for ds_dr in ds_dr_array:
-        ds_dr_full = jnp.full(n_basic, float(ds_dr))
-        # JAX execution
-        k_h_jax, _ = jax_compute_mlt(ds_dr_full, phase, mesh, params)
-        
-        # NumPy execution matching JAX's MLT calculation exactly
-        alpha = phase.thermal_expansivity
-        T = phase.temperature
-        Cp = phase.heat_capacity
-        nu = phase.kinematic_viscosity
-        
-        eps_abs = 1.0e-30
-        abs_dSdr_safe = 0.5 * (np.abs(ds_dr_full) + np.sqrt(ds_dr_full**2 + eps_abs**2))
-        effective_superadiabatic = alpha * T * abs_dSdr_safe / np.maximum(Cp, 1.0)
-        velocity_prefactor = mesh.gravity * effective_superadiabatic
-        
-        eta_bulk_unyielded = phase.viscosity
-        nu_unyielded = eta_bulk_unyielded / phase.density
-        visc_v_unyielded = velocity_prefactor * mesh.mixing_length_cu / (18.0 * np.maximum(nu_unyielded, 1e-30))
-        
-        N_sq = (alpha * mesh.gravity / Cp) * abs_dSdr_safe * T
-        
-        # JAX closure is in jax_compute_mlt. Wait! I shouldn't duplicate it.
-        # JAX uses jax_compute_mlt. In numpy, this is equivalent to exactly the math in jax_compute_mlt.
-        # But wait! I can just compile jax_compute_mlt and check if it runs!
-        pass
-        # I actually just want to verify JAX runs float64 cleanly.
-        assert k_h_jax.dtype == jnp.float64
-        assert not jnp.isnan(k_h_jax).any()
-
+    assert k_h_jax.dtype == jnp.float64
+    np.testing.assert_allclose(np.array(k_h_jax), kappa_numpy, rtol=1e-8, atol=1e-30)
