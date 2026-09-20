@@ -286,6 +286,17 @@ class _PhaseMixedParameters:
     # "linear". Consumed by EntropyPhaseEvaluator via getattr fall-back,
     # but accepting it here lets the documented [phase_mixed] cp_blend
     # key in TOML / dict configs round-trip without a TypeError.
+
+    activation_energy: float = 300e3
+    activation_volume: float = 5e-6
+    yield_stress_c: float = 50e6
+    yield_stress_mu: float = 0.6
+    stress_closure_mode: str = 'global'
+    arrhenius_t_ref: float = 1600.0
+    yield_stress_max: float = 500.0e6
+    lid_base_mode: str = 'fixed'
+    lid_base_temperature: float = 1400.0
+    lid_contrast_coeff: float = 2.2
     cp_blend: str = 'latent'
     # Constant-properties mode (matches SPIDER -use_const_properties)
     const_properties: bool = False
@@ -301,6 +312,11 @@ class _PhaseMixedParameters:
     yield_stress_c: float = 50e6
     yield_stress_mu: float = 0.6
     stress_closure_mode: str = STRESS_CLOSURE_DEFAULT
+    arrhenius_t_ref: float = 1600.0
+    yield_stress_max: float = 500.0e6
+    lid_base_mode: str = 'fixed'
+    lid_base_temperature: float = 1400.0
+    lid_contrast_coeff: float = 2.2
 
     def __post_init__(self):
         if self.separation_viscosity not in SEPARATION_VISCOSITY_MODES:
@@ -336,6 +352,11 @@ class _PhaseParameters:
     yield_stress_c: float = 50e6
     yield_stress_mu: float = 0.6
     stress_closure_mode: str = STRESS_CLOSURE_DEFAULT
+    arrhenius_t_ref: float = 1600.0
+    yield_stress_max: float = 500.0e6
+    lid_base_mode: str = 'fixed'
+    lid_base_temperature: float = 1400.0
+    lid_contrast_coeff: float = 2.2
 
     def __post_init__(self):
         if self.stress_closure_mode not in STRESS_CLOSURE_MODES:

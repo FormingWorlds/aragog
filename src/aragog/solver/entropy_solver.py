@@ -1354,6 +1354,23 @@ class EntropySolver:
             getattr(self.parameters.phase_solid, 'stress_closure_mode', 'local')
         )
 
+        phase_kwargs['arrhenius_t_ref'] = float(
+            getattr(self.parameters.phase_solid, 'arrhenius_t_ref', 1600.0)
+        )
+        phase_kwargs['yield_stress_max'] = float(
+            getattr(self.parameters.phase_solid, 'yield_stress_max', 500.0e6)
+        )
+        phase_kwargs['lid_base_mode'] = str(
+            getattr(self.parameters.phase_solid, 'lid_base_mode', 'fixed')
+        )
+        phase_kwargs['lid_base_temperature'] = float(
+            getattr(self.parameters.phase_solid, 'lid_base_temperature', 1400.0)
+        )
+        phase_kwargs['lid_contrast_coeff'] = float(
+            getattr(self.parameters.phase_solid, 'lid_contrast_coeff', 2.2)
+        )
+
+
         # Constant-properties mode (SPIDER -use_const_properties parity)
         _const = getattr(self.parameters.phase_mixed, 'const_properties', False)
         if _const:

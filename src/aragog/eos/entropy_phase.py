@@ -89,6 +89,11 @@ class EntropyPhaseEvaluator:
         yield_stress_c: float = 50e6,
         yield_stress_mu: float = 0.6,
         stress_closure_mode: str = STRESS_CLOSURE_DEFAULT,
+        arrhenius_t_ref: float = 1600.0,
+        yield_stress_max: float = 500.0e6,
+        lid_base_mode: str = 'fixed',
+        lid_base_temperature: float = 1400.0,
+        lid_contrast_coeff: float = 2.2,
     ):
         self._eos = entropy_eos
         self._g = gravitational_acceleration
@@ -110,6 +115,11 @@ class EntropyPhaseEvaluator:
                 f'got {stress_closure_mode!r}'
             )
         self._stress_closure_mode = stress_closure_mode
+        self._arrhenius_t_ref = arrhenius_t_ref
+        self._yield_stress_max = yield_stress_max
+        self._lid_base_mode = lid_base_mode
+        self._lid_base_temperature = lid_base_temperature
+        self._lid_contrast_coeff = lid_contrast_coeff
         # Constant-properties mode (matches SPIDER -use_const_properties)
         self._const_properties = const_properties
         self._const_rho = const_rho
@@ -413,7 +423,7 @@ class EntropyPhaseEvaluator:
                 viscosity_solid=self._visc_solid,
                 activation_energy=self._activation_energy,
                 activation_volume=self._activation_volume,
-                t_ref=1600.0,
+                t_ref=self.arrhenius_t_ref,
                 r_gas=8.314,
             ),
             dtype=float,
@@ -449,7 +459,7 @@ class EntropyPhaseEvaluator:
         # Stage 2: combine_matprop with cached smth
         log_visc = smth * log_visc_mixed + (1.0 - smth) * log_visc_single
         is_scalar = np.ndim(self._melt_fraction) == 0
-        
+
         visc_solid_weight = smth * (1.0 - w) + (1.0 - smth) * np.where(phi_arr > 0.5, 0.0, 1.0)
         self._visc_solid_weight = visc_solid_weight.item() if is_scalar else visc_solid_weight
         self._viscosity_val = 10.0 ** (log_visc.item() if is_scalar else log_visc)
@@ -537,6 +547,26 @@ class EntropyPhaseEvaluator:
     def visc_solid_weight(self) -> FloatOrArray:
         """Weight of the solid viscosity in the final blended log viscosity."""
         return self._visc_solid_weight
+
+    @property
+    def arrhenius_t_ref(self) -> float:
+        return float(getattr(self, '_arrhenius_t_ref', 1600.0))
+
+    @property
+    def yield_stress_max(self) -> float:
+        return float(getattr(self, '_yield_stress_max', 500.0e6))
+
+    @property
+    def lid_base_mode(self) -> str:
+        return str(getattr(self, '_lid_base_mode', 'fixed'))
+
+    @property
+    def lid_base_temperature(self) -> float:
+        return float(getattr(self, '_lid_base_temperature', 1400.0))
+
+    @property
+    def lid_contrast_coeff(self) -> float:
+        return float(getattr(self, '_lid_contrast_coeff', 2.2))
 
     @property
     def stress_closure_mode(self) -> str:

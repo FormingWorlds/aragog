@@ -105,11 +105,16 @@ class PhaseParams(eqx.Module):
     grain_size: float
     E_a: float
     V_a: float
-    activation_energy: float
-    activation_volume: float
-    yield_stress_c: float
-    yield_stress_mu: float
-    strain_rate: float
+    activation_energy: float = 300e3
+    activation_volume: float = 5e-6
+    yield_stress_c: float = 50e6
+    yield_stress_mu: float = 0.6
+    strain_rate: float = 0.0
+    arrhenius_t_ref: float = 1600.0
+    yield_stress_max: float = 500.0e6
+    lid_base_mode: str = eqx.field(default='fixed', static=True)
+    lid_base_temperature: float = 1400.0
+    lid_contrast_coeff: float = 2.2
     stress_closure_mode: str = eqx.field(static=True)
 
     # Thermal conductivity
@@ -182,6 +187,11 @@ class PhaseParams(eqx.Module):
         stress_closure_mode: str = 'local',
         activation_energy: float | None = None,
         activation_volume: float | None = None,
+        arrhenius_t_ref: float = 1600.0,
+        yield_stress_max: float = 500.0e6,
+        lid_base_mode: str = 'fixed',
+        lid_base_temperature: float = 1400.0,
+        lid_contrast_coeff: float = 2.2,
     ):
         if activation_energy is not None:
             E_a = activation_energy
@@ -201,6 +211,11 @@ class PhaseParams(eqx.Module):
         self.yield_stress_mu = float(yield_stress_mu)
         self.strain_rate = float(strain_rate)
         self.stress_closure_mode = str(stress_closure_mode)
+        self.arrhenius_t_ref = float(arrhenius_t_ref)
+        self.yield_stress_max = float(yield_stress_max)
+        self.lid_base_mode = str(lid_base_mode)
+        self.lid_base_temperature = float(lid_base_temperature)
+        self.lid_contrast_coeff = float(lid_contrast_coeff)
         self.k_solid = k_solid
         self.k_liquid = k_liquid
         self.matprop_smooth_width = matprop_smooth_width
@@ -669,14 +684,18 @@ def evaluate_phase(
         params.viscosity_solid,
         params.E_a,
         params.V_a,
+        T_ref=params.arrhenius_t_ref,
     )
     # Apply yield max ceiling to match numpy
-    tau_y = jnp.minimum(compute_yield_stress(
-        P,
-        params.yield_stress_c,
-        params.yield_stress_mu,
-    ), 500.0e6)
-    
+    tau_y = jnp.minimum(
+        compute_yield_stress(
+            P,
+            params.yield_stress_c,
+            params.yield_stress_mu,
+        ),
+        params.yield_stress_max,
+    )
+
     # We delay effective viscosity (eta_eff) to compute_mlt to break the circularity.
     log10_visc_solid = jnp.log10(jnp.maximum(eta_diff, 1e-10))
 
@@ -693,7 +712,9 @@ def evaluate_phase(
         log10_visc_solid,
     )
     log_visc = state.smth * log_visc_mixed + (1.0 - state.smth) * log_visc_single
-    visc_solid_weight = state.smth * (1.0 - w) + (1.0 - state.smth) * jnp.where(phi > 0.5, 0.0, 1.0)
+    visc_solid_weight = state.smth * (1.0 - w) + (1.0 - state.smth) * jnp.where(
+        phi > 0.5, 0.0, 1.0
+    )
     viscosity = 10.0**log_visc
     kinematic_viscosity = viscosity / state.density
 
@@ -847,46 +868,59 @@ def compute_mlt(
     eta_diff = phase_basic.eta_diff
     tau_y = phase_basic.tau_y
     rho = phase_basic.density
-    
+
     # 1. Compute conservative velocity from unyielded baseline
     eta_bulk_unyielded = phase_basic.viscosity
     nu_unyielded = eta_bulk_unyielded / rho
-    visc_v_unyielded = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu_unyielded, 1e-30))) * conv_mask
-    
+    visc_v_unyielded = (
+        velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu_unyielded, 1e-30))
+    ) * conv_mask
+
     # 2. Compute strain rate proxy
     if params.stress_closure_mode == 'global':
-        is_hot = T > 1400.0
+        if params.lid_base_mode == 'rheological':
+            t_m = jnp.max(T)
+            e_eff = params.activation_energy + mesh.P_basic[-1] * params.activation_volume
+            dt_rh = R_GAS * t_m**2 / jnp.maximum(e_eff, 1.0)
+            t_lid_base = t_m - params.lid_contrast_coeff * dt_rh
+        else:
+            t_lid_base = params.lid_base_temperature
+        is_hot = T > t_lid_base
         has_hot = jnp.any(is_hot)
         r_lid_base = jnp.max(jnp.where(is_hot, mesh.radii_basic, 0.0))
         d_lid_hot = jnp.maximum(mesh.radii_basic[-1] - r_lid_base, 1e-15)
         d_lid_cold = jnp.maximum(mesh.radii_basic[-1] - mesh.radii_basic[0], 1e-15)
         d_lid = jnp.where(has_hot, d_lid_hot, d_lid_cold)
-        
+
         interior_mask = mesh.radii_basic <= (mesh.radii_basic[-1] - d_lid)
         has_interior = jnp.any(interior_mask)
         v_abs = jnp.abs(visc_v_unyielded)
         v_int_masked = jnp.max(jnp.where(interior_mask, v_abs, 0.0))
         v_int = jnp.where(has_interior, v_int_masked, jnp.max(v_abs))
-        
+
         strain_rate = v_int / d_lid
     else:
         # local
         strain_rate = jnp.abs(visc_v_unyielded) / jnp.maximum(mesh.mixing_length, 1e-15)
-        
+
     sr_safe = jnp.maximum(strain_rate, 1e-30)
-    
+
     # 3. Compute yielded solid viscosity
     tau_y_term = tau_y / (2.0 * sr_safe)
     eta_effective = (eta_diff * tau_y_term) / (eta_diff + tau_y_term)
-    
+
     # 4. Re-apply phase blend linearly in log space exactly as EOS does
     log_eta_unyielded = jnp.log10(jnp.maximum(eta_bulk_unyielded, 1e-30))
     log_eta_d = jnp.log10(jnp.maximum(eta_diff, 1e-30))
     log_eta_eff = jnp.log10(jnp.maximum(eta_effective, 1e-30))
-    
-    log_visc_final = log_eta_unyielded + phase_basic.visc_solid_weight * (log_eta_eff - log_eta_d)
+
+    log_visc_final = log_eta_unyielded + phase_basic.visc_solid_weight * (
+        log_eta_eff - log_eta_d
+    )
     nu = (10.0**log_visc_final) / rho
-    viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu, 1e-30))) * conv_mask
+    viscous_velocity = (
+        velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu, 1e-30))
+    ) * conv_mask
 
     # Inviscid velocity (Re > Re_crit). ``jnp.sqrt(jnp.maximum(x, 0))`` is
     # the textbook NaN-safe forward, but its backward gradient at x=0 is

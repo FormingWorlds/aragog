@@ -650,47 +650,66 @@ class EntropyState:
             tau_y = np.asarray(tau_y).ravel()
             mode = str(getattr(self.phase_basic, 'stress_closure_mode', 'local'))
             r_basic = np.asarray(self._evaluator.mesh.basic.radii).ravel()
-            
-            from aragog.rheology import stress_closure, eta_eff
-            
+
+            from aragog.rheology import eta_eff, stress_closure
+
             # Baseline unyielded state from EOS (perfect phase blend)
             eta_bulk_unyielded = np.asarray(self.phase_basic.viscosity()).ravel()
             rho_basic = np.asarray(self.phase_basic.density()).ravel()
-            
+
             # 1. Compute conservative velocity from unyielded baseline
             nu_unyielded = eta_bulk_unyielded / rho_basic
-            visc_v_unyielded = velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu_unyielded, 1e-30))
-            
+            visc_v_unyielded = (
+                velocity_prefactor
+                * mixing_length_cubed
+                / (18.0 * np.maximum(nu_unyielded, 1e-30))
+            )
+
             # 2. Compute strain rate proxy
+
+            lid_base_mode = getattr(self.phase_basic, 'lid_base_mode', 'fixed')
+            t_lid_base = getattr(self.phase_basic, 'lid_base_temperature', 1400.0)
+            if lid_base_mode == 'rheological':
+                t_m = np.max(T)
+                p_lid = np.asarray(self.phase_basic.pressure).ravel()[-1]
+                e_a = float(getattr(self.phase_basic, '_activation_energy', 300e3))
+                v_a = float(getattr(self.phase_basic, '_activation_volume', 5e-6))
+                e_eff = e_a + p_lid * v_a
+                dt_rh = 8.314 * t_m**2 / max(e_eff, 1.0)
+                lid_contrast_coeff = float(getattr(self.phase_basic, 'lid_contrast_coeff', 2.2))
+                t_lid_base = t_m - lid_contrast_coeff * dt_rh
+
             strain_rate = stress_closure(
                 mode=mode,
                 viscous_velocity=visc_v_unyielded,
                 mixing_length=mixing_length,
                 radius=r_basic,
                 temperature=T,
-                t_lid_base=1400.0,
+                t_lid_base=t_lid_base,
                 eps=1.0e-15,
             )
-            
+
             # 3. Compute yielded solid viscosity
             eta_effective = eta_eff(eta_d, tau_y, strain_rate, smooth=True)
-            
+
             # 4. Re-apply phase blend linearly in log space exactly as EOS does
             visc_solid_weight = getattr(self.phase_basic, 'visc_solid_weight', None)
             if callable(visc_solid_weight):
                 visc_solid_weight = visc_solid_weight()
             visc_solid_weight = np.asarray(visc_solid_weight).ravel()
-            
+
             log_eta_unyielded = np.log10(np.maximum(eta_bulk_unyielded, 1e-30))
             log_eta_d = np.log10(np.maximum(eta_d, 1e-30))
             log_eta_eff = np.log10(np.maximum(eta_effective, 1e-30))
-            
+
             log_eta_bulk = log_eta_unyielded + visc_solid_weight * (log_eta_eff - log_eta_d)
             eta_bulk = 10.0**log_eta_bulk
-            
+
             self._viscosity_basic = eta_bulk
             nu = eta_bulk / rho_basic
-            viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
+            viscous_velocity = (
+                velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
+            )
         else:
             viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * nu)
             self._viscosity_basic = np.asarray(self.phase_basic.viscosity()).ravel()
