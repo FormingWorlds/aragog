@@ -77,6 +77,11 @@ melt_fraction = 0.0
 thermal_conductivity = 4.0
 thermal_expansivity = 1.0e-5
 viscosity = 1.0e21
+activation_energy = 300.0e3        # J/mol
+activation_volume = 5.0e-6         # m^3/mol
+yield_stress_c = 50.0e6            # Pa
+yield_stress_mu = 0.6              # friction coefficient
+stress_closure_mode = "local"      # "local" or "global"
 
 [phase_liquid]
 density = "data/lookup/density_melt.dat"
@@ -161,11 +166,11 @@ Spatial discretisation and pressure-density profile.
 | `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below) |
 | `mixing_length_constant_fraction` | -- | Fraction of mantle thickness used as the mixing length when `mixing_length_profile = "constant"`. Ignored otherwise. Default 0.25 |
 | `core_density` | kg/m³ | Mean core density |
-| `eos_method` | int | `1` = analytic Adams–Williamson; `2` = external file (`eos_file`) |
+| `eos_method` | int | `1` = analytic Adams-Williamson; `2` = external file (`eos_file`) |
 | `surface_density` | kg/m³ | Surface mantle density (Adams-Williamson). Default 4078.95095544 (PROTEUS production; SPIDER `-adams_williamson_rhos`) |
-| `gravitational_acceleration` | m/s² | Scalar gravity for Adams–Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. Default 9.81 |
-| `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams–Williamson. Default 260e9 |
-| `adams_williamson_beta` | -- | A–W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
+| `gravitational_acceleration` | m/s² | Scalar gravity for Adams-Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. Default 9.81 |
+| `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams-Williamson. Default 260e9 |
+| `adams_williamson_beta` | -- | A-W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
 | `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |
 | `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default true (PROTEUS production); set false for uniform spacing in radius |
 | `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. |
@@ -218,6 +223,11 @@ End-member phase properties. Float values mean a constant; string values are fil
 | `thermal_conductivity` | W/m/K | Thermal conductivity |
 | `thermal_expansivity` | 1/K | Thermal expansivity |
 | `entropy` | J/kg/K | Optional reference entropy |
+| `activation_energy` | J/mol | Arrhenius activation energy for solid-state diffusion creep. Default 300e3 |
+| `activation_volume` | m³/mol | Arrhenius activation volume. Default 5e-6 |
+| `yield_stress_c` | Pa | Byerlee plastic yield stress cohesion intercept. Default 50e6 |
+| `yield_stress_mu` | -- | Byerlee friction coefficient. Default 0.6 |
+| `stress_closure_mode` | str | Explicit strain rate closure mode. `"local"` limits yielding node-by-node; `"global"` enforces bulk yielding. Default `"local"` |
 
 In the production PROTEUS path the per-phase keys are not consumed for material properties; the EOS tables provide $\rho$, $c_p$, $\alpha$, $k$, and $T$ as functions of $(P, S)$. The values are kept for the standalone constant-properties path (see `const_properties` below).
 

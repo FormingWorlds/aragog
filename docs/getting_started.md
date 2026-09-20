@@ -39,6 +39,10 @@
 
     [Go to model overview](Explanations/model.md)
 
+-   :material-layers: **Solid-state convection**
+
+    [Go to solid-state convection](Explanations/solid_state_convection.md)
+
 -   :material-code-braces: **Browse the API**
 
     [Go to API reference](Reference/api/index.md)
