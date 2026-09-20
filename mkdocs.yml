@@ -56,6 +56,7 @@ nav:
           - EOS sanity checks: Explanations/eos_sanity_checks.md
           - Energy diagnostics: Explanations/energy_diagnostics.md
           - First-principles verification: Explanations/verification.md
+          - Solid-state convection: Explanations/verification_ssc.md
 
   - Reference:
       - API reference:
