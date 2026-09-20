@@ -65,6 +65,9 @@ def _phase(n_basic: int, melt_fraction) -> PhaseProperties:
         thermal_conductivity=ones * 4.0,
         latent_heat=ones * 4.0e5,
         capacitance=ones * 4500.0 * 4000.0,
+        eta_diff=ones * 4500.0 * 4000.0,
+        tau_y=ones * 4500.0 * 4000.0,
+        visc_solid_weight=ones * 4500.0 * 4000.0,
     )
 
 

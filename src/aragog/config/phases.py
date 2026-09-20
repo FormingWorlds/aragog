@@ -14,6 +14,9 @@ logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 SEPARATION_VISCOSITY_MODES: tuple[str, str] = ('melt', 'mixture')
 SEPARATION_VISCOSITY_DEFAULT: str = 'melt'
 
+STRESS_CLOSURE_MODES: tuple[str, str] = ('local', 'global')
+STRESS_CLOSURE_DEFAULT: str = 'local'
+
 
 @attrs.define
 class PhaseConfig:
@@ -38,6 +41,16 @@ class PhaseConfig:
         Dynamic viscosity [Pa s] or path to lookup.
     entropy : float or str
         Entropy [J/(kg K)] or path to lookup. Empty string means unused.
+    activation_energy : float
+        Arrhenius activation energy [J/mol]. Default 300e3.
+    activation_volume : float
+        Arrhenius activation volume [m^3/mol]. Default 5e-6.
+    yield_stress_c : float
+        Cohesion for yield stress [Pa]. Default 50e6.
+    yield_stress_mu : float
+        Friction coefficient for yield stress [-]. Default 0.6.
+    stress_closure_mode : str
+        Stress closure mode ('local' or 'global'). Default 'local'.
     """
 
     density: float | str
@@ -47,6 +60,14 @@ class PhaseConfig:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
+    activation_energy: float = 300e3
+    activation_volume: float = 5e-6
+    yield_stress_c: float = 50e6
+    yield_stress_mu: float = 0.6
+    stress_closure_mode: str = attrs.field(
+        default=STRESS_CLOSURE_DEFAULT,
+        validator=attrs.validators.in_(STRESS_CLOSURE_MODES),
+    )
 
 
 @attrs.define
@@ -135,3 +156,11 @@ class MixedPhaseConfig:
     const_log10visc: float = 2.0
     const_T_ref: float = 3500.0
     const_S_ref: float = 3000.0
+    activation_energy: float = 300e3
+    activation_volume: float = 5e-6
+    yield_stress_c: float = 50e6
+    yield_stress_mu: float = 0.6
+    stress_closure_mode: str = attrs.field(
+        default=STRESS_CLOSURE_DEFAULT,
+        validator=attrs.validators.in_(STRESS_CLOSURE_MODES),
+    )

@@ -29,6 +29,10 @@ jax.config.update('jax_enable_x64', True)
 # Critical Reynolds number, Abe (1995) via Bower et al. (2018) section 2.1
 RE_CRIT = 9.0 / 8.0
 
+# Arrhenius rheology reference constants
+T_REF_ARRHENIUS: float = 1600.0  # Reference temperature [K]
+R_GAS: float = 8.314  # Universal gas constant [J/mol/K]
+
 
 # ---------------------------------------------------------------------------
 # Output containers (NamedTuples are JAX pytrees by default)
@@ -49,6 +53,9 @@ class PhaseProperties(NamedTuple):
     thermal_conductivity: jax.Array  # [W/m/K]
     latent_heat: jax.Array  # [J/kg]
     capacitance: jax.Array  # rho * T [kg K / m^3]
+    eta_diff: jax.Array  # Base Arrhenius viscosity [Pa s]
+    tau_y: jax.Array  # Yield stress [Pa]
+    visc_solid_weight: jax.Array  # Linear weight of solid log-viscosity in blend
 
 
 class FluxOutput(NamedTuple):
@@ -92,9 +99,18 @@ class PhaseParams(eqx.Module):
     # Rheology
     phi_rheo: float
     phi_width: float
+    viscosity_solid: float
     log10_visc_solid: float
     log10_visc_liquid: float
     grain_size: float
+    E_a: float
+    V_a: float
+    activation_energy: float
+    activation_volume: float
+    yield_stress_c: float
+    yield_stress_mu: float
+    strain_rate: float
+    stress_closure_mode: str = eqx.field(static=True)
 
     # Thermal conductivity
     k_solid: float
@@ -158,12 +174,33 @@ class PhaseParams(eqx.Module):
         phase_smoothing: str = 'tanh',
         phase_smoothing_width: float = 0.01,
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
+        E_a: float = 0.0,
+        V_a: float = 0.0,
+        yield_stress_c: float = 1e8,
+        yield_stress_mu: float = 0.0,
+        strain_rate: float = 0.0,
+        stress_closure_mode: str = 'local',
+        activation_energy: float | None = None,
+        activation_volume: float | None = None,
     ):
+        if activation_energy is not None:
+            E_a = activation_energy
+        if activation_volume is not None:
+            V_a = activation_volume
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
+        self.viscosity_solid = float(viscosity_solid)
         self.log10_visc_solid = jnp.log10(viscosity_solid)
         self.log10_visc_liquid = jnp.log10(viscosity_liquid)
         self.grain_size = grain_size
+        self.E_a = float(E_a)
+        self.V_a = float(V_a)
+        self.activation_energy = float(E_a)
+        self.activation_volume = float(V_a)
+        self.yield_stress_c = float(yield_stress_c)
+        self.yield_stress_mu = float(yield_stress_mu)
+        self.strain_rate = float(strain_rate)
+        self.stress_closure_mode = str(stress_closure_mode)
         self.k_solid = k_solid
         self.k_liquid = k_liquid
         self.matprop_smooth_width = matprop_smooth_width
@@ -466,6 +503,124 @@ def phase_boundary_smoothing(
 
 
 # ---------------------------------------------------------------------------
+# Arrhenius viscosity and yield stress rheology
+# ---------------------------------------------------------------------------
+
+
+def compute_arrhenius_viscosity(
+    T: jax.Array,
+    P: jax.Array,
+    viscosity_solid: float = 1.0e21,
+    E_a: float = 0.0,
+    V_a: float = 0.0,
+    T_ref: float = T_REF_ARRHENIUS,
+    R: float = R_GAS,
+    activation_energy: float | None = None,
+    activation_volume: float | None = None,
+) -> jax.Array:
+    """Compute continuous Arrhenius diffusion-creep viscosity [Pa s].
+
+    Parameters
+    ----------
+    T : jax.Array
+        Temperature [K].
+    P : jax.Array
+        Pressure [Pa].
+    viscosity_solid : float, default 1.0e21
+        Reference solid viscosity [Pa s].
+    E_a : float, default 0.0
+        Activation energy [J/mol].
+    V_a : float, default 0.0
+        Activation volume [m^3/mol].
+    T_ref : float, default 1600.0
+        Reference temperature [K].
+    R : float, default 8.314
+        Universal gas constant [J/mol/K].
+    activation_energy : float or None
+        Alias for E_a.
+    activation_volume : float or None
+        Alias for V_a.
+
+    Returns
+    -------
+    jax.Array
+        Arrhenius diffusion-creep viscosity eta_diff [Pa s].
+    """
+    if activation_energy is not None:
+        E_a = activation_energy
+    if activation_volume is not None:
+        V_a = activation_volume
+    T_safe = jnp.maximum(T, 1.0)
+    arg = (E_a + P * V_a) / (R * T_safe) - E_a / (R * T_ref)
+    # Smooth bound on exponent to prevent overflow while preserving C^infty gradients
+    arg_bounded = 700.0 - jax.nn.softplus(700.0 - arg)
+    arg_bounded = -700.0 + jax.nn.softplus(arg_bounded + 700.0)
+    return viscosity_solid * jnp.exp(arg_bounded)
+
+
+def compute_yield_stress(
+    P: jax.Array,
+    yield_stress_c: float = 50.0e6,
+    yield_stress_mu: float = 0.6,
+) -> jax.Array:
+    """Compute plastic yield stress with smooth softplus regularization [Pa].
+
+    tau_y = yield_stress_c + yield_stress_mu * P, regularized via
+    jax.nn.softplus to remain strictly positive and C^infty differentiable.
+
+    Parameters
+    ----------
+    P : jax.Array
+        Pressure [Pa].
+    yield_stress_c : float, default 50.0e6
+        Cohesion yield stress [Pa].
+    yield_stress_mu : float, default 0.6
+        Friction coefficient [-].
+
+    Returns
+    -------
+    jax.Array
+        Yield stress tau_y [Pa].
+    """
+    tau_raw = yield_stress_c + yield_stress_mu * P
+    return jax.nn.softplus(tau_raw) + 1e-10
+
+
+def compute_effective_viscosity(
+    eta_diff: jax.Array,
+    tau_y: jax.Array,
+    strain_rate: float,
+) -> jax.Array:
+    """Compute effective solid viscosity via harmonic blend with plastic yield [Pa s].
+
+    eta_eff = 1.0 / (1.0 / eta_diff + 2 * strain_rate / tau_y)
+
+    Parameters
+    ----------
+    eta_diff : jax.Array
+        Arrhenius diffusion creep viscosity [Pa s].
+    tau_y : jax.Array
+        Plastic yield stress [Pa].
+    strain_rate : float
+        Strain rate [1/s].
+
+    Returns
+    -------
+    jax.Array
+        Effective solid viscosity eta_eff [Pa s].
+    """
+    inv_eta_diff = 1.0 / jnp.maximum(eta_diff, 1e-10)
+    plastic_term = 2.0 * strain_rate / jnp.maximum(tau_y, 1e-10)
+    inv_eta_eff = inv_eta_diff + plastic_term
+    return 1.0 / jnp.maximum(inv_eta_eff, 1e-100)
+
+
+# Parity aliases matching numpy aragog.rheology
+eta_diff = compute_arrhenius_viscosity
+eta_eff = compute_effective_viscosity
+
+
+# ---------------------------------------------------------------------------
 # Phase evaluation (replaces EntropyPhaseEvaluator.update)
 # ---------------------------------------------------------------------------
 
@@ -507,19 +662,38 @@ def evaluate_phase(
     )
     phi = state.melt_fraction
 
+    # Solid mantle rheology: continuous Arrhenius diffusion creep and plastic yielding
+    eta_diff = compute_arrhenius_viscosity(
+        state.temperature,
+        P,
+        params.viscosity_solid,
+        params.E_a,
+        params.V_a,
+    )
+    # Apply yield max ceiling to match numpy
+    tau_y = jnp.minimum(compute_yield_stress(
+        P,
+        params.yield_stress_c,
+        params.yield_stress_mu,
+    ), 500.0e6)
+    
+    # We delay effective viscosity (eta_eff) to compute_mlt to break the circularity.
+    log10_visc_solid = jnp.log10(jnp.maximum(eta_diff, 1e-10))
+
     # Viscosity: two-stage blend mirroring numpy entropy_phase.py:311-327
     # (used downstream by MLT -> kappa_c -> Jmix, which is why both stages
     # matter). Stage 1: tanh blend at phi_rheo (SPIDER util.c:255-259).
     # Stage 2: combine_matprop with the cached matprop_smooth_width smth
     # that compute_phase_state also uses for T/rho/Cp/alpha/k.
     w = tanh_weight(phi, params.phi_rheo, params.phi_width)
-    log_visc_mixed = (1.0 - w) * params.log10_visc_solid + w * params.log10_visc_liquid
+    log_visc_mixed = (1.0 - w) * log10_visc_solid + w * params.log10_visc_liquid
     log_visc_single = jnp.where(
         phi > 0.5,
         params.log10_visc_liquid,
-        params.log10_visc_solid,
+        log10_visc_solid,
     )
     log_visc = state.smth * log_visc_mixed + (1.0 - state.smth) * log_visc_single
+    visc_solid_weight = state.smth * (1.0 - w) + (1.0 - state.smth) * jnp.where(phi > 0.5, 0.0, 1.0)
     viscosity = 10.0**log_visc
     kinematic_viscosity = viscosity / state.density
 
@@ -538,6 +712,9 @@ def evaluate_phase(
         thermal_conductivity=state.thermal_conductivity,
         latent_heat=state.latent_heat,
         capacitance=capacitance,
+        eta_diff=eta_diff,
+        tau_y=tau_y,
+        visc_solid_weight=visc_solid_weight,
     )
 
 
@@ -666,8 +843,50 @@ def compute_mlt(
     # avoiding spurious convection from a soft sigmoid.
     conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
 
-    # Viscous velocity (Re <= Re_crit)
-    viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)) * conv_mask
+    # 1D stress closure and effective viscosity capping (Option B: Explicit Closure)
+    eta_diff = phase_basic.eta_diff
+    tau_y = phase_basic.tau_y
+    rho = phase_basic.density
+    
+    # 1. Compute conservative velocity from unyielded baseline
+    eta_bulk_unyielded = phase_basic.viscosity
+    nu_unyielded = eta_bulk_unyielded / rho
+    visc_v_unyielded = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu_unyielded, 1e-30))) * conv_mask
+    
+    # 2. Compute strain rate proxy
+    if params.stress_closure_mode == 'global':
+        is_hot = T > 1400.0
+        has_hot = jnp.any(is_hot)
+        r_lid_base = jnp.max(jnp.where(is_hot, mesh.radii_basic, 0.0))
+        d_lid_hot = jnp.maximum(mesh.radii_basic[-1] - r_lid_base, 1e-15)
+        d_lid_cold = jnp.maximum(mesh.radii_basic[-1] - mesh.radii_basic[0], 1e-15)
+        d_lid = jnp.where(has_hot, d_lid_hot, d_lid_cold)
+        
+        interior_mask = mesh.radii_basic <= (mesh.radii_basic[-1] - d_lid)
+        has_interior = jnp.any(interior_mask)
+        v_abs = jnp.abs(visc_v_unyielded)
+        v_int_masked = jnp.max(jnp.where(interior_mask, v_abs, 0.0))
+        v_int = jnp.where(has_interior, v_int_masked, jnp.max(v_abs))
+        
+        strain_rate = v_int / d_lid
+    else:
+        # local
+        strain_rate = jnp.abs(visc_v_unyielded) / jnp.maximum(mesh.mixing_length, 1e-15)
+        
+    sr_safe = jnp.maximum(strain_rate, 1e-30)
+    
+    # 3. Compute yielded solid viscosity
+    tau_y_term = tau_y / (2.0 * sr_safe)
+    eta_effective = (eta_diff * tau_y_term) / (eta_diff + tau_y_term)
+    
+    # 4. Re-apply phase blend linearly in log space exactly as EOS does
+    log_eta_unyielded = jnp.log10(jnp.maximum(eta_bulk_unyielded, 1e-30))
+    log_eta_d = jnp.log10(jnp.maximum(eta_diff, 1e-30))
+    log_eta_eff = jnp.log10(jnp.maximum(eta_effective, 1e-30))
+    
+    log_visc_final = log_eta_unyielded + phase_basic.visc_solid_weight * (log_eta_eff - log_eta_d)
+    nu = (10.0**log_visc_final) / rho
+    viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu, 1e-30))) * conv_mask
 
     # Inviscid velocity (Re > Re_crit). ``jnp.sqrt(jnp.maximum(x, 0))`` is
     # the textbook NaN-safe forward, but its backward gradient at x=0 is

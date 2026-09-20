@@ -252,6 +252,7 @@ class EntropyState:
         self._heat_flux = np.zeros(n_basic)
         self._mass_flux = np.zeros(n_basic)
         self._is_convective = np.zeros(n_basic, dtype=bool)
+        self._viscosity_basic = np.zeros(n_basic)
 
         # Per-component flux decomposition at basic nodes for diagnostic
         # output. These mirror the accumulations into ``_heat_flux`` below
@@ -637,8 +638,62 @@ class EntropyState:
         mixing_length_cubed = self._mixing_length_cu
         mixing_length_squared = self._mixing_length_sq
         nu = np.asarray(self.phase_basic.kinematic_viscosity()).ravel()
-
-        viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * nu)
+        # 1D stress closure and effective viscosity capping (Option B: Explicit Closure)
+        eta_d = getattr(self.phase_basic, 'eta_diff', None)
+        if eta_d is not None and np.size(eta_d) > 0:
+            if callable(eta_d):
+                eta_d = eta_d()
+            eta_d = np.asarray(eta_d).ravel()
+            tau_y = getattr(self.phase_basic, 'tau_y', None)
+            if callable(tau_y):
+                tau_y = tau_y()
+            tau_y = np.asarray(tau_y).ravel()
+            mode = str(getattr(self.phase_basic, 'stress_closure_mode', 'local'))
+            r_basic = np.asarray(self._evaluator.mesh.basic.radii).ravel()
+            
+            from aragog.rheology import stress_closure, eta_eff
+            
+            # Baseline unyielded state from EOS (perfect phase blend)
+            eta_bulk_unyielded = np.asarray(self.phase_basic.viscosity()).ravel()
+            rho_basic = np.asarray(self.phase_basic.density()).ravel()
+            
+            # 1. Compute conservative velocity from unyielded baseline
+            nu_unyielded = eta_bulk_unyielded / rho_basic
+            visc_v_unyielded = velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu_unyielded, 1e-30))
+            
+            # 2. Compute strain rate proxy
+            strain_rate = stress_closure(
+                mode=mode,
+                viscous_velocity=visc_v_unyielded,
+                mixing_length=mixing_length,
+                radius=r_basic,
+                temperature=T,
+                t_lid_base=1400.0,
+                eps=1.0e-15,
+            )
+            
+            # 3. Compute yielded solid viscosity
+            eta_effective = eta_eff(eta_d, tau_y, strain_rate, smooth=True)
+            
+            # 4. Re-apply phase blend linearly in log space exactly as EOS does
+            visc_solid_weight = getattr(self.phase_basic, 'visc_solid_weight', None)
+            if callable(visc_solid_weight):
+                visc_solid_weight = visc_solid_weight()
+            visc_solid_weight = np.asarray(visc_solid_weight).ravel()
+            
+            log_eta_unyielded = np.log10(np.maximum(eta_bulk_unyielded, 1e-30))
+            log_eta_d = np.log10(np.maximum(eta_d, 1e-30))
+            log_eta_eff = np.log10(np.maximum(eta_effective, 1e-30))
+            
+            log_eta_bulk = log_eta_unyielded + visc_solid_weight * (log_eta_eff - log_eta_d)
+            eta_bulk = 10.0**log_eta_bulk
+            
+            self._viscosity_basic = eta_bulk
+            nu = eta_bulk / rho_basic
+            viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
+        else:
+            viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * nu)
+            self._viscosity_basic = np.asarray(self.phase_basic.viscosity()).ravel()
 
         # Inviscid velocity (Re > Re_crit). Add a tiny eps^2 inside the
         # sqrt to avoid the sqrt-kink at velocity_sq = 0; the value is
@@ -1062,3 +1117,8 @@ class EntropyState:
         """Temperature gradient at basic nodes (from T profile, for BCs)."""
         T_stag = self.phase_staggered.temperature()
         return self._evaluator.mesh.d_dr_at_basic_nodes(T_stag)
+
+    @property
+    def viscosity_basic(self) -> npt.NDArray:
+        """Effective dynamic viscosity at basic nodes [Pa s]."""
+        return self._viscosity_basic

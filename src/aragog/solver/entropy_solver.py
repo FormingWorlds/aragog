@@ -1337,6 +1337,23 @@ class EntropySolver:
         if cond_l is not None:
             phase_kwargs['thermal_conductivity_liquid'] = cond_l
 
+        # Rheology parameters for Arrhenius viscosity and yield stress closure
+        phase_kwargs['activation_energy'] = float(
+            getattr(self.parameters.phase_solid, 'activation_energy', 300e3)
+        )
+        phase_kwargs['activation_volume'] = float(
+            getattr(self.parameters.phase_solid, 'activation_volume', 5e-6)
+        )
+        phase_kwargs['yield_stress_c'] = float(
+            getattr(self.parameters.phase_solid, 'yield_stress_c', 50e6)
+        )
+        phase_kwargs['yield_stress_mu'] = float(
+            getattr(self.parameters.phase_solid, 'yield_stress_mu', 0.6)
+        )
+        phase_kwargs['stress_closure_mode'] = str(
+            getattr(self.parameters.phase_solid, 'stress_closure_mode', 'local')
+        )
+
         # Constant-properties mode (SPIDER -use_const_properties parity)
         _const = getattr(self.parameters.phase_mixed, 'const_properties', False)
         if _const:

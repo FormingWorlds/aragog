@@ -22,7 +22,12 @@ import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
 
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.config.phases import (
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+    STRESS_CLOSURE_DEFAULT,
+    STRESS_CLOSURE_MODES,
+)
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -291,12 +296,22 @@ class _PhaseMixedParameters:
     const_log10visc: float = 2.0
     const_T_ref: float = 3500.0
     const_S_ref: float = 3000.0
+    activation_energy: float = 300e3
+    activation_volume: float = 5e-6
+    yield_stress_c: float = 50e6
+    yield_stress_mu: float = 0.6
+    stress_closure_mode: str = STRESS_CLOSURE_DEFAULT
 
     def __post_init__(self):
         if self.separation_viscosity not in SEPARATION_VISCOSITY_MODES:
             raise ValueError(
                 'separation_viscosity must be one of '
                 f'{SEPARATION_VISCOSITY_MODES}, got {self.separation_viscosity!r}'
+            )
+        if self.stress_closure_mode not in STRESS_CLOSURE_MODES:
+            raise ValueError(
+                f'stress_closure_mode must be one of {STRESS_CLOSURE_MODES}, '
+                f'got {self.stress_closure_mode!r}'
             )
 
 
@@ -316,6 +331,18 @@ class _PhaseParameters:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
+    activation_energy: float = 300e3
+    activation_volume: float = 5e-6
+    yield_stress_c: float = 50e6
+    yield_stress_mu: float = 0.6
+    stress_closure_mode: str = STRESS_CLOSURE_DEFAULT
+
+    def __post_init__(self):
+        if self.stress_closure_mode not in STRESS_CLOSURE_MODES:
+            raise ValueError(
+                f'stress_closure_mode must be one of {STRESS_CLOSURE_MODES}, '
+                f'got {self.stress_closure_mode!r}'
+            )
 
 
 @dataclass
