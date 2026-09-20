@@ -10,7 +10,7 @@ import pytest
 
 from aragog.rheology import compute_yield_stress, eta_eff, stress_closure, eta_diff
 
-pytestmark = [pytest.mark.physics_invariant, pytest.mark.slow, pytest.mark.timeout(300)]
+pytestmark = [pytest.mark.physics_invariant, pytest.mark.smoke, pytest.mark.timeout(60)]
 
 def test_yield_stress_transition():
     """Verify that lowering the yield stress transitions the system from a

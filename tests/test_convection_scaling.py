@@ -40,7 +40,7 @@ import pytest
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.solver.entropy_state import RE_CRIT, EntropyState
 
-pytestmark = [pytest.mark.slow, pytest.mark.timeout(3600)]
+pytestmark = [pytest.mark.smoke, pytest.mark.timeout(60)]
 
 # Layer geometry and constant material properties. A deep mantle shell so the
 # mixing length (distance to nearest boundary) spans ~1e6 m in the interior.
@@ -270,10 +270,10 @@ def test_reynolds_regime_separates_viscous_from_inviscid():
     assert jc_unstable > 1.0
 
 @pytest.mark.physics_invariant
-@pytest.mark.slow
+@pytest.mark.smoke
 
 @pytest.mark.physics_invariant
-@pytest.mark.slow
+@pytest.mark.smoke
 def test_jax_compute_mlt_convection_scaling():
     """Verify that the JAX MLT kernel obeys the inviscid (free-fall) and viscous Nu-Ra scaling exponents."""
     pytest.importorskip('jax')

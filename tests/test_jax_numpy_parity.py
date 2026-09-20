@@ -9,7 +9,7 @@ import os
 import numpy as np
 import pytest
 
-pytestmark = [pytest.mark.slow, pytest.mark.timeout(3600), pytest.mark.physics_invariant]
+pytestmark = [pytest.mark.smoke, pytest.mark.timeout(60), pytest.mark.physics_invariant]
 pytest.importorskip('jax')
 
 from aragog.jax.phase import compute_mlt as jax_compute_mlt
