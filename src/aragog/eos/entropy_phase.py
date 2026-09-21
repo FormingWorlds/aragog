@@ -205,8 +205,31 @@ class EntropyPhaseEvaluator:
         self._dTdPs_val = (
             self._const_alpha * self._temperature / (self._const_rho * self._const_Cp)
         )
-        self._viscosity_val = np.full_like(S, 10.0**self._const_log10visc)
-        self._eta_diff = np.copy(self._viscosity_val)
+        
+        # In const_properties mode, we STILL compute temperature-dependent Arrhenius viscosity
+        # if activation_energy > 0, to support 0D Stagnant Lid models.
+        if self._activation_energy > 0.0:
+            from aragog.rheology import eta_diff as calc_eta_diff
+            
+            t_arr = np.maximum(self._temperature, 1.0)
+            p_arr = np.zeros_like(S) if np.size(self.pressure) == 0 else np.atleast_1d(np.asarray(self.pressure, dtype=float))
+            
+            self._eta_diff = np.asarray(
+                calc_eta_diff(
+                    temperature=t_arr,
+                    pressure=p_arr,
+                    viscosity_solid=10.0**self._const_log10visc,
+                    activation_energy=self._activation_energy,
+                    activation_volume=self._activation_volume,
+                    t_ref=self._arrhenius_t_ref,
+                    r_gas=8.31446261815324
+                ),
+                dtype=float,
+            )
+        else:
+            self._eta_diff = np.full_like(S, 10.0**self._const_log10visc)
+            
+        self._viscosity_val = np.copy(self._eta_diff)
         if np.size(self.pressure) > 0:
             P_arr = np.atleast_1d(np.asarray(self.pressure, dtype=float))
             self._tau_y = np.asarray(
