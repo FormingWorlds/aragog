@@ -55,7 +55,7 @@ def test_tosi_thermal_evolution_parity():
     tb.Q0 = 0.0
 
     # 10 Myr integration
-    end_time_yr = 1.0e8
+    end_time_yr = 1.0e7
     tb.maxtime = end_time_yr * tb.yrs
     tb.dt = 1000.0 * tb.yrs
     tb.n_steps = int(tb.maxtime / tb.dt)
