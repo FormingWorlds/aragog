@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from aragog.cli import _derive_initial_entropy_from_config
 from aragog.solver.entropy_solver import EntropySolver
 from tests.test_entropy_solver_integration import _build_parameters
 
@@ -77,9 +75,9 @@ def test_tosi_thermal_evolution_parity():
     parameters.boundary_conditions.outer_boundary_condition = 1  # Grey body
     parameters.boundary_conditions.equilibrium_temperature = tb.Ts
     parameters.boundary_conditions.emissivity = 1.0
-    
+
     parameters.boundary_conditions.inner_boundary_condition = 1  # Core cooling
-    parameters.boundary_conditions.inner_boundary_value = 0.0    # Insulating
+    parameters.boundary_conditions.inner_boundary_value = 0.0  # Insulating
 
     parameters.energy.kappah_floor = 0.0
 
@@ -96,11 +94,11 @@ def test_tosi_thermal_evolution_parity():
     parameters.phase_mixed.arrhenius_t_ref = tb.Tref
     parameters.phase_mixed.activation_energy = tb.E
     parameters.phase_mixed.activation_volume = tb.V
-    
+
     # Cap yielding to avoid infinite viscosity at 300K
     parameters.phase_mixed.yield_stress_max = 1e30
     parameters.phase_mixed.yield_stress_c = 1e30
-    
+
     parameters.phase_solid.arrhenius_t_ref = tb.Tref
     parameters.phase_solid.activation_energy = tb.E
     parameters.phase_solid.activation_volume = tb.V

@@ -36,7 +36,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from aragog.rheology import compute_strain_rate_global, compute_t_lid_base, eta_diff, stress_closure
+from aragog.rheology import (
+    compute_strain_rate_global,
+    compute_t_lid_base,
+    eta_diff,
+    stress_closure,
+)
 
 pytestmark = [pytest.mark.slow, pytest.mark.timeout(3600)]
 

@@ -76,7 +76,7 @@ jobs:
 
       - name: Install pip-only test deps (scikits-odes-sundials builds against conda SUNDIALS)
         run: |
-          pip install pytest pytest-xdist pytest-dependency ruff
+          pip install pytest pytest-xdist pytest-dependency ruff "pytest-timeout>=2.3"
           # Install scikits-odes-sundials directly (skip the scikits-odes
           # metapackage). This avoids scikits-odes-daepack, which is a
           # transitive Fortran dep with f2py incompatibility with numpy

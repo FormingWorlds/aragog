@@ -13,7 +13,6 @@ import numpy.typing as npt
 FloatOrArray = float | npt.NDArray[np.floating]
 
 
-
 def compute_t_lid_base(
     t_m: float,
     p_lid: float,
@@ -23,13 +22,14 @@ def compute_t_lid_base(
     r_gas: float = 8.314,
 ) -> float:
     """Compute the stagnant lid base temperature (Solomatov & Moresi 2000).
-    
+
     The rheological temperature scale is dT_rh = R T_m^2 / (E_a + P V_a).
     The lid base is defined as t_m - lid_contrast_coeff * dT_rh.
     """
     e_eff = e_a + p_lid * v_a
     dt_rh = r_gas * t_m**2 / max(e_eff, 1.0)
     return t_m - lid_contrast_coeff * dt_rh
+
 
 def eta_diff(
     temperature: FloatOrArray,

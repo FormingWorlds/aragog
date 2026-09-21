@@ -105,6 +105,7 @@ class PhaseParams(eqx.Module):
     grain_size: float
     E_a: float
     V_a: float
+    enabled: bool = eqx.field(static=True)
     activation_energy: float = 300e3
     activation_volume: float = 5e-6
     yield_stress_c: float = 50e6
@@ -191,6 +192,7 @@ class PhaseParams(eqx.Module):
         yield_stress_max: float = 500.0e6,
         lid_base_mode: str = 'fixed',
         lid_base_temperature: float = 1400.0,
+        enabled: bool = False,
         lid_contrast_coeff: float = 2.2,
     ):
         if activation_energy is not None:
@@ -203,6 +205,7 @@ class PhaseParams(eqx.Module):
         self.log10_visc_solid = jnp.log10(viscosity_solid)
         self.log10_visc_liquid = jnp.log10(viscosity_liquid)
         self.grain_size = grain_size
+        self.enabled = bool(enabled)
         self.E_a = float(E_a)
         self.V_a = float(V_a)
         self.activation_energy = float(E_a)
@@ -678,26 +681,30 @@ def evaluate_phase(
     phi = state.melt_fraction
 
     # Solid mantle rheology: continuous Arrhenius diffusion creep and plastic yielding
-    eta_diff = compute_arrhenius_viscosity(
-        state.temperature,
-        P,
-        params.viscosity_solid,
-        params.E_a,
-        params.V_a,
-        T_ref=params.arrhenius_t_ref,
-    )
-    # Apply yield max ceiling to match numpy
-    tau_y = jnp.minimum(
-        compute_yield_stress(
+    if params.enabled:
+        eta_diff = compute_arrhenius_viscosity(
+            state.temperature,
             P,
-            params.yield_stress_c,
-            params.yield_stress_mu,
-        ),
-        params.yield_stress_max,
-    )
-
-    # We delay effective viscosity (eta_eff) to compute_mlt to break the circularity.
-    log10_visc_solid = jnp.log10(jnp.maximum(eta_diff, 1e-10))
+            params.viscosity_solid,
+            params.E_a,
+            params.V_a,
+            T_ref=params.arrhenius_t_ref,
+        )
+        # Apply yield max ceiling to match numpy
+        tau_y = jnp.minimum(
+            compute_yield_stress(
+                P,
+                params.yield_stress_c,
+                params.yield_stress_mu,
+            ),
+            params.yield_stress_max,
+        )
+        # We delay effective viscosity (eta_eff) to compute_mlt to break the circularity.
+        log10_visc_solid = jnp.log10(jnp.maximum(eta_diff, 1e-10))
+    else:
+        eta_diff = None
+        tau_y = jnp.inf
+        log10_visc_solid = params.log10_visc_solid
 
     # Viscosity: two-stage blend mirroring numpy entropy_phase.py:311-327
     # (used downstream by MLT -> kappa_c -> Jmix, which is why both stages
@@ -906,21 +913,25 @@ def compute_mlt(
     sr_safe = jnp.maximum(strain_rate, 1e-30)
 
     # 3. Compute yielded solid viscosity
-    tau_y_term = tau_y / (2.0 * sr_safe)
-    eta_effective = (eta_diff * tau_y_term) / (eta_diff + tau_y_term)
+    if params.enabled:
+        tau_y_term = tau_y / (2.0 * sr_safe)
+        eta_effective = (eta_diff * tau_y_term) / (eta_diff + tau_y_term)
 
-    # 4. Re-apply phase blend linearly in log space exactly as EOS does
-    log_eta_unyielded = jnp.log10(jnp.maximum(eta_bulk_unyielded, 1e-30))
-    log_eta_d = jnp.log10(jnp.maximum(eta_diff, 1e-30))
-    log_eta_eff = jnp.log10(jnp.maximum(eta_effective, 1e-30))
+        # 4. Re-apply phase blend linearly in log space exactly as EOS does
+        log_eta_unyielded = jnp.log10(jnp.maximum(eta_bulk_unyielded, 1e-30))
+        log_eta_d = jnp.log10(jnp.maximum(eta_diff, 1e-30))
+        log_eta_eff = jnp.log10(jnp.maximum(eta_effective, 1e-30))
 
-    log_visc_final = log_eta_unyielded + phase_basic.visc_solid_weight * (
-        log_eta_eff - log_eta_d
-    )
-    nu = (10.0**log_visc_final) / rho
-    viscous_velocity = (
-        velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu, 1e-30))
-    ) * conv_mask
+        log_visc_final = log_eta_unyielded + phase_basic.visc_solid_weight * (
+            log_eta_eff - log_eta_d
+        )
+        nu = (10.0**log_visc_final) / rho
+        viscous_velocity = (
+            velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu, 1e-30))
+        ) * conv_mask
+    else:
+        nu = nu_unyielded
+        viscous_velocity = visc_v_unyielded
 
     # Inviscid velocity (Re > Re_crit). ``jnp.sqrt(jnp.maximum(x, 0))`` is
     # the textbook NaN-safe forward, but its backward gradient at x=0 is

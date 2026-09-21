@@ -77,6 +77,7 @@ class EntropyPhaseEvaluator:
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
         matprop_smooth_width: float = 0.0,
         const_properties: bool = False,
+        enabled: bool = False,
         const_rho: float = 4000.0,
         const_Cp: float = 1000.0,
         const_alpha: float = 1e-5,
@@ -116,6 +117,7 @@ class EntropyPhaseEvaluator:
             )
         self._stress_closure_mode = stress_closure_mode
         self._arrhenius_t_ref = arrhenius_t_ref
+        self._enabled = enabled
         self._yield_stress_max = yield_stress_max
         self._lid_base_mode = lid_base_mode
         self._lid_base_temperature = lid_base_temperature
@@ -205,15 +207,19 @@ class EntropyPhaseEvaluator:
         self._dTdPs_val = (
             self._const_alpha * self._temperature / (self._const_rho * self._const_Cp)
         )
-        
+
         # In const_properties mode, we STILL compute temperature-dependent Arrhenius viscosity
-        # if activation_energy > 0, to support 0D Stagnant Lid models.
-        if self._activation_energy > 0.0:
+        # if enabled, to support 0D Stagnant Lid models.
+        if self._enabled:
             from aragog.rheology import eta_diff as calc_eta_diff
-            
+
             t_arr = np.maximum(self._temperature, 1.0)
-            p_arr = np.zeros_like(S) if np.size(self.pressure) == 0 else np.atleast_1d(np.asarray(self.pressure, dtype=float))
-            
+            p_arr = (
+                np.zeros_like(S)
+                if np.size(self.pressure) == 0
+                else np.atleast_1d(np.asarray(self.pressure, dtype=float))
+            )
+
             self._eta_diff = np.asarray(
                 calc_eta_diff(
                     temperature=t_arr,
@@ -222,26 +228,32 @@ class EntropyPhaseEvaluator:
                     activation_energy=self._activation_energy,
                     activation_volume=self._activation_volume,
                     t_ref=self._arrhenius_t_ref,
-                    r_gas=8.31446261815324
+                    r_gas=8.31446261815324,
                 ),
                 dtype=float,
             )
         else:
-            self._eta_diff = np.full_like(S, 10.0**self._const_log10visc)
-            
-        self._viscosity_val = np.copy(self._eta_diff)
-        if np.size(self.pressure) > 0:
-            P_arr = np.atleast_1d(np.asarray(self.pressure, dtype=float))
-            self._tau_y = np.asarray(
-                compute_yield_stress(
-                    pressure=P_arr,
-                    yield_stress_c=self._yield_stress_c,
-                    yield_stress_mu=self._yield_stress_mu,
-                ),
-                dtype=float,
-            )
+            self._eta_diff = None
+
+        if self._enabled:
+            self._viscosity_val = np.copy(self._eta_diff)
         else:
-            self._tau_y = np.full_like(S, self._yield_stress_c)
+            self._viscosity_val = np.full_like(S, 10.0**self._const_log10visc)
+        if self._enabled:
+            if np.size(self.pressure) > 0:
+                P_arr = np.atleast_1d(np.asarray(self.pressure, dtype=float))
+                self._tau_y = np.asarray(
+                    compute_yield_stress(
+                        pressure=P_arr,
+                        yield_stress_c=self._yield_stress_c,
+                        yield_stress_mu=self._yield_stress_mu,
+                    ),
+                    dtype=float,
+                )
+            else:
+                self._tau_y = np.full_like(S, self._yield_stress_c)
+        else:
+            self._tau_y = None
         self._visc_solid_weight = np.ones_like(S)
         self._thermal_conductivity_val = np.full_like(S, self._const_cond)
         self._latent_heat_val = np.zeros_like(S)
@@ -261,7 +273,9 @@ class EntropyPhaseEvaluator:
                 '_tau_y',
                 '_visc_solid_weight',
             ):
-                setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
+                val = getattr(self, attr)
+                if val is not None:
+                    setattr(self, attr, np.asarray(val).ravel())
 
     def _update_eos(self) -> None:
         """EOS-based evaluation mirroring SPIDER EOSEval_Composite_TwoPhase.
@@ -438,33 +452,38 @@ class EntropyPhaseEvaluator:
 
         # ── Step 6: viscosity (two-stage, reuses cached gphi/smth) ──
         # Solid-phase Arrhenius diffusion creep viscosity and Byerlee yield stress
-        t_arr = np.maximum(self._temperature, 1.0)
-        eta_diff_arr = np.asarray(
-            calc_eta_diff(
-                temperature=t_arr,
-                pressure=P_arr,
-                viscosity_solid=self._visc_solid,
-                activation_energy=self._activation_energy,
-                activation_volume=self._activation_volume,
-                t_ref=self.arrhenius_t_ref,
-                r_gas=8.314,
-            ),
-            dtype=float,
-        )
-        tau_y_arr = np.asarray(
-            compute_yield_stress(
-                pressure=P_arr,
-                yield_stress_c=self._yield_stress_c,
-                yield_stress_mu=self._yield_stress_mu,
-            ),
-            dtype=float,
-        )
-        if np.ndim(P) == 0:
-            self._eta_diff = eta_diff_arr.ravel()
-            self._tau_y = tau_y_arr.ravel()
+        if self._enabled:
+            t_arr = np.maximum(self._temperature, 1.0)
+            eta_diff_arr = np.asarray(
+                calc_eta_diff(
+                    temperature=t_arr,
+                    pressure=P_arr,
+                    viscosity_solid=self._visc_solid,
+                    activation_energy=self._activation_energy,
+                    activation_volume=self._activation_volume,
+                    t_ref=self.arrhenius_t_ref,
+                    r_gas=8.314,
+                ),
+                dtype=float,
+            )
+            tau_y_arr = np.asarray(
+                compute_yield_stress(
+                    pressure=P_arr,
+                    yield_stress_c=self._yield_stress_c,
+                    yield_stress_mu=self._yield_stress_mu,
+                ),
+                dtype=float,
+            )
+            if np.ndim(P) == 0:
+                self._eta_diff = eta_diff_arr.ravel()
+                self._tau_y = tau_y_arr.ravel()
+            else:
+                self._eta_diff = eta_diff_arr
+                self._tau_y = tau_y_arr
         else:
-            self._eta_diff = eta_diff_arr
-            self._tau_y = tau_y_arr
+            self._eta_diff = None
+            self._tau_y = None
+            eta_diff_arr = np.full_like(P_arr, self._visc_solid)
 
         # Stage 1: tanh blend at phi_rheo (SPIDER lines 255-259)
         w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)

@@ -269,15 +269,16 @@ def test_reynolds_regime_separates_viscous_from_inviscid():
     _, jc_unstable = _probe(1.0, -1.0e-6)
     assert jc_unstable > 1.0
 
+
 @pytest.mark.physics_invariant
 @pytest.mark.smoke
 def test_jax_compute_mlt_convection_scaling():
     """Verify that the JAX MLT kernel obeys the inviscid (free-fall) and viscous Nu-Ra scaling exponents."""
     pytest.importorskip('jax')
     import jax.numpy as jnp
+
     from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
-    from aragog.solver.entropy_state import RE_CRIT
-    
+
     n_basic = 20
     n = n_basic - 1
     # Create simple mesh with mixing length = 1.0e5
@@ -298,7 +299,7 @@ def test_jax_compute_mlt_convection_scaling():
         dP_dr_basic=jnp.zeros(n_basic),
         gravity=jnp.full(n_basic, 9.81),
     )
-    
+
     ones = jnp.ones(n_basic)
     phase = PhaseProperties(
         temperature=ones * 2000.0,
@@ -313,36 +314,37 @@ def test_jax_compute_mlt_convection_scaling():
         latent_heat=ones,
         capacitance=ones * 4000.0 * 2000.0,
         eta_diff=ones * 1.0e21,
-        tau_y=ones * 1.0e9, visc_solid_weight=ones * 1.0,
+        tau_y=ones * 1.0e9,
+        visc_solid_weight=ones * 1.0,
     )
-    
+
     # Varied superadiabatic gradient
     ds_dr_array = -jnp.logspace(-8, -2, 10)
-    
+
     # First, inviscid:
-    phase_inv = phase._replace(
-        viscosity=ones * 1.0e10, 
-        kinematic_viscosity=ones * 1.0e10 / 4000.0
-    )
+    phase_inv = phase._replace(viscosity=ones * 1.0e10, kinematic_viscosity=ones * 1.0e10 / 4000.0)
     k_inv = []
     for ds_dr in ds_dr_array:
-        k_h, _ = compute_mlt(jnp.full(n_basic, ds_dr), phase_inv, mesh, PhaseParams(kappah_floor=0.0))
+        k_h, _ = compute_mlt(
+            jnp.full(n_basic, ds_dr), phase_inv, mesh, PhaseParams(enabled=True, kappah_floor=0.0)
+        )
         k_inv.append(float(k_h[10]))
-    
+
     # In free-fall, F_conv ~ (-dS/dr)^{1.5}, so k_h ~ (-dS/dr)^{0.5}
     beta_inv = np.polyfit(np.log10(-ds_dr_array), np.log10(k_inv), 1)[0]
     assert beta_inv == pytest.approx(0.5, abs=0.05)
-    
+
     # Now viscous:
     phase_visc = phase._replace(
-        viscosity=ones * 1.0e21, 
-        kinematic_viscosity=ones * 1.0e21 / 4000.0
+        viscosity=ones * 1.0e21, kinematic_viscosity=ones * 1.0e21 / 4000.0
     )
     k_visc = []
     for ds_dr in ds_dr_array:
-        k_h, _ = compute_mlt(jnp.full(n_basic, ds_dr), phase_visc, mesh, PhaseParams(kappah_floor=0.0))
+        k_h, _ = compute_mlt(
+            jnp.full(n_basic, ds_dr), phase_visc, mesh, PhaseParams(enabled=True, kappah_floor=0.0)
+        )
         k_visc.append(float(k_h[10]))
-    
+
     # In viscous, F_conv ~ (-dS/dr)^{2}, so k_h ~ (-dS/dr)^{1.0}
     beta_visc = np.polyfit(np.log10(-ds_dr_array), np.log10(k_visc), 1)[0]
     assert beta_visc == pytest.approx(1.0, abs=0.05)

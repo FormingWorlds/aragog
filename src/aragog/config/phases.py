@@ -41,6 +41,8 @@ class PhaseConfig:
         Dynamic viscosity [Pa s] or path to lookup.
     entropy : float or str
         Entropy [J/(kg K)] or path to lookup. Empty string means unused.
+    enabled : bool
+        If True, use Arrhenius viscosity and plastic yielding. If False, bypass them. Default False.
     activation_energy : float
         Arrhenius activation energy [J/mol]. Default 300e3.
     activation_volume : float
@@ -60,6 +62,7 @@ class PhaseConfig:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
+    enabled: bool = False
     activation_energy: float = 300e3
     activation_volume: float = 5e-6
     yield_stress_c: float = 50e6

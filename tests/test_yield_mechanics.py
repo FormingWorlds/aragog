@@ -3,14 +3,16 @@
 Sweeps Byerlee yield stress parameters to explicitly verify the transition
 from a stagnant lid to a mobile lid.
 """
+
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from aragog.rheology import compute_yield_stress, eta_eff, stress_closure, eta_diff
+from aragog.rheology import compute_yield_stress, eta_diff, eta_eff, stress_closure
 
 pytestmark = [pytest.mark.physics_invariant, pytest.mark.unit, pytest.mark.timeout(60)]
+
 
 def test_yield_stress_transition():
     """Verify that lowering the yield stress transitions the system from a
@@ -37,13 +39,17 @@ def test_yield_stress_transition():
     eta_d = eta_diff(t, p, viscosity_solid=1.0e21, activation_volume=1.5e-6)
 
     # Stagnant lid case: high yield stress (unyielding)
-    tau_stagnant = compute_yield_stress(p, yield_stress_c=500.0e6, yield_stress_mu=0.6, yield_stress_max=10.0e9)
+    tau_stagnant = compute_yield_stress(
+        p, yield_stress_c=500.0e6, yield_stress_mu=0.6, yield_stress_max=10.0e9
+    )
     sr_stagnant = stress_closure('global', v_visc, radius=r, temperature=t, t_lid_base=1400.0)
     eta_eff_stagnant = eta_eff(eta_d, tau_stagnant, sr_stagnant, smooth=True)
 
     # Mobile lid case: low yield stress cohesion, moderate friction (mu=0.01)
     # Yields the cold, low-pressure lid, but preserves the high-pressure unyielded interior.
-    tau_mobile = compute_yield_stress(p, yield_stress_c=1.0e6, yield_stress_mu=0.01, yield_stress_max=10.0e9)
+    tau_mobile = compute_yield_stress(
+        p, yield_stress_c=1.0e6, yield_stress_mu=0.01, yield_stress_max=10.0e9
+    )
     sr_mobile = stress_closure('global', v_visc, radius=r, temperature=t, t_lid_base=1400.0)
     eta_eff_mobile = eta_eff(eta_d, tau_mobile, sr_mobile, smooth=True)
 

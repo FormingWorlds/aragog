@@ -65,7 +65,7 @@ jobs:
 
       - name: Install pip-only test deps (scikits-odes-sundials builds against conda SUNDIALS)
         run: |
-          pip install pytest pytest-cov pytest-xdist pytest-dependency
+          pip install pytest pytest-cov pytest-xdist pytest-dependency "pytest-timeout>=2.3"
           # Direct install of scikits-odes-sundials only; aragog imports
           # CVODE directly from scikits_odes_sundials.cvode and skips the
           # daepack-pulling metapackage. See ci_tests.yml for details.

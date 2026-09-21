@@ -290,7 +290,9 @@ def test_full_profile_mock_and_effective_viscosity_invariants():
     # Check yielding activation:
     # In mid-mantle (warm, ductile), yielding is inactive (eta_eff ~= eta_d)
     mid_idx = n_nodes // 2
-    assert eta_effective[mid_idx] == pytest.approx(eta_d[mid_idx], rel=0.05)  # Harmonic mean reduces it slightly
+    assert eta_effective[mid_idx] == pytest.approx(
+        eta_d[mid_idx], rel=0.05
+    )  # Harmonic mean reduces it slightly
 
     # In cold near-surface lid (nodes 73 to 78), yielding caps the viscosity
     # by multiple orders of magnitude down to physically realistic lithospheric values
