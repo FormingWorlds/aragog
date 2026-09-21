@@ -1,6 +1,6 @@
 """JAX and NumPy float64 parity.
 
-Exhaustively pins float64 numerical parity between JAX and NumPy backends
+Pins float64 numerical parity at a stiff, no-yield operating point between JAX and NumPy backends
 for the mixing length theory (MLT) closure.
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ pytest.importorskip('jax')
 from aragog.jax.phase import compute_mlt as jax_compute_mlt
 
 def test_jax_numpy_float64_parity():
-    """Verify that JAX and NumPy yield exactly the same numerical results
+    """Verify that JAX and NumPy yield identical numerical results within a relative tolerance of 1e-8
     for the mixing length theory (MLT) closure and effective viscosity.
     """
     import jax

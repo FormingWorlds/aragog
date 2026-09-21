@@ -22,6 +22,6 @@ In the inviscid limit (molten rock), the closure recovers the classical free-fal
 
 ### Key Features Reproduced
 
-1. **Analytical Exponents:** The internal solver recovers the theoretical flux-gradient exponents for both the molten and solid limits precisely, matching the expected power laws.
+1. **Analytical Exponents:** The internal solver recovers the theoretical flux-gradient exponents for both the molten and solid limits within an absolute tolerance of 0.02.
 2. **Mobile Lid Transition:** The explicit yield surface smoothly transitions the boundary layer from a rigid stagnant lid to a mobile lid without numerical instability.
-3. **Implementation Parity:** Rigorous verification ensures exact float64 numerical parity between the JAX PDE kernels and the explicit NumPy reference closures in the full parameter space.
+3. **Implementation Parity:** Rigorous verification ensures float64 numerical parity between the JAX PDE kernels and the explicit NumPy reference closures at a stiff, no-yield operating point.

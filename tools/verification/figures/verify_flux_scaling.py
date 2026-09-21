@@ -49,9 +49,9 @@ def _make_mesh(n=60):
             d2surf = _R_SURF - r_basic
             d2cmb = r_basic - _R_CMB
             self.basic.mixing_length = np.minimum(d2surf, d2cmb)
+            self.basic.mixing_length[0] = self.basic.mixing_length[-1] = 1.0
             self.basic.mixing_length_squared = self.basic.mixing_length**2
             self.basic.mixing_length_cubed = self.basic.mixing_length**3
-            self.basic.mixing_length[0] = self.basic.mixing_length[-1] = 1.0
 
         def quantity_at_basic_nodes(self, x):
             res = np.zeros(self.n_cells + 1)

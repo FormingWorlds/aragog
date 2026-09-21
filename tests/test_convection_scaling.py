@@ -40,7 +40,7 @@ import pytest
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.solver.entropy_state import RE_CRIT, EntropyState
 
-pytestmark = [pytest.mark.smoke, pytest.mark.timeout(60)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
 # Layer geometry and constant material properties. A deep mantle shell so the
 # mixing length (distance to nearest boundary) spans ~1e6 m in the interior.
@@ -268,9 +268,6 @@ def test_reynolds_regime_separates_viscous_from_inviscid():
     # near-zero above is a real shutdown, not a dead probe.
     _, jc_unstable = _probe(1.0, -1.0e-6)
     assert jc_unstable > 1.0
-
-@pytest.mark.physics_invariant
-@pytest.mark.smoke
 
 @pytest.mark.physics_invariant
 @pytest.mark.smoke
