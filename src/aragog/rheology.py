@@ -238,13 +238,20 @@ def compute_strain_rate_global(
     t = np.asarray(temperature, dtype=float)
     v = np.asarray(viscous_velocity, dtype=float)
 
+    is_colder = t <= t_lid_base
+    if not np.any(is_colder):
+        return 0.0
+
     r_surf = r[-1]
     is_hot = t > t_lid_base
     if np.any(is_hot):
         r_lid_base = float(np.max(r[is_hot]))
-        d_lid = max(r_surf - r_lid_base, eps)
+        d_lid = r_surf - r_lid_base
     else:
-        d_lid = max(r_surf - r[0], eps)
+        d_lid = r_surf - r[0]
+
+    dr_min = r[-1] - r[-2] if len(r) > 1 else eps
+    d_lid = max(d_lid, dr_min)
 
     interior_mask = r <= (r_surf - d_lid)
     if np.any(interior_mask):

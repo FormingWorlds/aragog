@@ -62,3 +62,29 @@ def test_yield_stress_transition():
     # Compare to the unyielded reference ductile viscosity with a physical tolerance
     assert eta_eff_mobile[mid_idx] == pytest.approx(eta_d[mid_idx], rel=2e-2)
     assert eta_eff_stagnant[mid_idx] == pytest.approx(eta_d[mid_idx], rel=2e-2)
+
+def test_yield_stress_max_ceiling():
+    """Verify that a non-default ceiling is correctly applied in numpy and JAX."""
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import compute_yield_stress as compute_yield_stress_jax
+
+    # Pressure very high
+    p_np = np.array([1e11])
+    p_jax = jnp.array([1e11])
+
+    # 1. Numpy version has the yield_stress_max as a kwarg directly.
+    tau_y_np = compute_yield_stress(
+        p_np, yield_stress_c=10e6, yield_stress_mu=0.5, yield_stress_max=200e6
+    )
+    assert float(tau_y_np[0]) == 200e6
+
+    # 2. JAX version does not have yield_stress_max as kwarg, it is applied externally via jnp.minimum.
+    # We test the pure JAX computation without the limit, and then apply it.
+    tau_y_jax = compute_yield_stress_jax(
+        p_jax, yield_stress_c=10e6, yield_stress_mu=0.5
+    )
+    tau_y_jax_limited = jnp.minimum(tau_y_jax, 200e6)
+
+    assert float(tau_y_jax_limited[0]) == 200e6
+

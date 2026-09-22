@@ -247,6 +247,7 @@ class EntropyPhaseEvaluator:
                         pressure=P_arr,
                         yield_stress_c=self._yield_stress_c,
                         yield_stress_mu=self._yield_stress_mu,
+                        yield_stress_max=self._yield_stress_max,
                     ),
                     dtype=float,
                 )

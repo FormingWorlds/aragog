@@ -892,12 +892,18 @@ def compute_mlt(
             t_lid_base = t_m - params.lid_contrast_coeff * dt_rh
         else:
             t_lid_base = params.lid_base_temperature
+        is_colder = T <= t_lid_base
+        has_colder = jnp.any(is_colder)
+
         is_hot = T > t_lid_base
         has_hot = jnp.any(is_hot)
         r_lid_base = jnp.max(jnp.where(is_hot, mesh.radii_basic, 0.0))
-        d_lid_hot = jnp.maximum(mesh.radii_basic[-1] - r_lid_base, 1e-15)
-        d_lid_cold = jnp.maximum(mesh.radii_basic[-1] - mesh.radii_basic[0], 1e-15)
-        d_lid = jnp.where(has_hot, d_lid_hot, d_lid_cold)
+        d_lid_hot = mesh.radii_basic[-1] - r_lid_base
+        d_lid_cold = mesh.radii_basic[-1] - mesh.radii_basic[0]
+        d_lid_raw = jnp.where(has_hot, d_lid_hot, d_lid_cold)
+
+        dr_min = jnp.where(mesh.radii_basic.size > 1, mesh.radii_basic[-1] - mesh.radii_basic[-2], 1e-15)
+        d_lid = jnp.maximum(d_lid_raw, dr_min)
 
         interior_mask = mesh.radii_basic <= (mesh.radii_basic[-1] - d_lid)
         has_interior = jnp.any(interior_mask)
@@ -905,7 +911,8 @@ def compute_mlt(
         v_int_masked = jnp.max(jnp.where(interior_mask, v_abs, 0.0))
         v_int = jnp.where(has_interior, v_int_masked, jnp.max(v_abs))
 
-        strain_rate = v_int / d_lid
+        strain_rate_raw = v_int / d_lid
+        strain_rate = jnp.where(has_colder, strain_rate_raw, 0.0)
     else:
         # local
         strain_rate = jnp.abs(visc_v_unyielded) / jnp.maximum(mesh.mixing_length, 1e-15)

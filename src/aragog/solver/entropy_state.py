@@ -651,7 +651,7 @@ class EntropyState:
             mode = str(getattr(self.phase_basic, 'stress_closure_mode', 'local'))
             r_basic = np.asarray(self._evaluator.mesh.basic.radii).ravel()
 
-            from aragog.rheology import eta_eff, stress_closure
+            from aragog.rheology import compute_t_lid_base, eta_eff, stress_closure
 
             # Baseline unyielded state from EOS (perfect phase blend)
             eta_bulk_unyielded = np.asarray(self.phase_basic.viscosity()).ravel()
