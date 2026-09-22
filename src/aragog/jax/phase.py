@@ -191,6 +191,7 @@ class PhaseParams(eqx.Module):
         activation_volume: float | None = None,
         arrhenius_t_ref: float = 1600.0,
         yield_stress_max: float = 500.0e6,
+        viscosity_max_log10: float = 40.0,
         lid_base_mode: str = 'fixed',
         lid_base_temperature: float = 1400.0,
         enabled: bool = False,
@@ -221,6 +222,7 @@ class PhaseParams(eqx.Module):
         self.stress_closure_mode = str(stress_closure_mode)
         self.arrhenius_t_ref = float(arrhenius_t_ref)
         self.yield_stress_max = float(yield_stress_max)
+        self.viscosity_max_log10 = float(viscosity_max_log10)
         if str(lid_base_mode) not in ('fixed', 'rheological'):
             raise ValueError(
                 f"Unknown lid_base_mode {lid_base_mode!r}; expected 'fixed' or 'rheological'"
@@ -706,6 +708,7 @@ def evaluate_phase(
             params.E_a,
             params.V_a,
             T_ref=params.arrhenius_t_ref,
+            viscosity_max_log10=params.viscosity_max_log10,
         )
         # Apply yield max ceiling to match numpy
         tau_y = jnp.minimum(
