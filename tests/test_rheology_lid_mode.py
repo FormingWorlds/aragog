@@ -45,8 +45,12 @@ def test_rheological_lid_mode_runs_numpy_mlt():
     # Verify state update with rheological lid base mode
     state.update(S, time=0.0)
 
-    # If we got here, it didn't crash
-    assert np.all(np.isfinite(state.phase_basic.viscosity()))
+    visc = state.phase_basic.viscosity()
+    assert np.all(np.isfinite(visc))
+    assert np.all(visc > 0.0)
+    assert hasattr(state, 'viscosity_basic')
+    assert np.all(state.viscosity_basic <= state.phase_basic.eta_diff * (1.0 + 1e-12))
+    assert np.any(state.viscosity_basic < state.phase_basic.eta_diff)
 
 
 @pytest.mark.unit
@@ -67,5 +71,34 @@ def test_strain_rate_zero_when_no_lid():
     tau_y = np.full(20, 1e6)
 
     # Since strain rate is 0, stress closure should return eta_diff
-    eta_eff = eta_eff(eta_diff, tau_y, sr)
-    np.testing.assert_allclose(eta_eff, eta_diff)
+    eta_eff_val = eta_eff(eta_diff, tau_y, sr)
+    np.testing.assert_allclose(eta_eff_val, eta_diff)
+
+
+@pytest.mark.unit
+def test_strain_rate_zero_when_inverted_profile():
+    """Verify that a profile with a hot surface overlying a cooler interior yields zero strain rate."""
+    from aragog.rheology import compute_strain_rate_global
+
+    r = np.linspace(1e6, 2e6, 50)
+    T = np.full(50, 1200.0)
+    T[-1] = 1800.0  # Hot surface above t_lid_base (1400 K)
+    v = np.full(50, 1e-9)
+
+    sr = compute_strain_rate_global(r, T, v, t_lid_base=1400.0)
+    assert sr == 0.0
+
+
+@pytest.mark.unit
+def test_strain_rate_all_cold_profile():
+    """Verify that an entirely cold column uses full layer thickness as lid depth."""
+    from aragog.rheology import compute_strain_rate_global
+
+    r = np.linspace(1e6, 2e6, 50)
+    T = np.full(50, 1000.0)  # All below t_lid_base (1400 K)
+    v = np.full(50, 1e-9)
+
+    sr = compute_strain_rate_global(r, T, v, t_lid_base=1400.0)
+    expected_d_lid = r[-1] - r[0]
+    expected_sr = 1e-9 / expected_d_lid
+    np.testing.assert_allclose(sr, expected_sr)

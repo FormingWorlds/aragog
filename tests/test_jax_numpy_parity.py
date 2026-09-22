@@ -99,3 +99,124 @@ def test_jax_numpy_float64_parity():
 
     assert k_h_jax.dtype == jnp.float64
     np.testing.assert_allclose(np.array(k_h_jax), kappa_numpy, rtol=1e-8, atol=1e-30)
+
+
+def test_jax_numpy_float64_parity_global_rheological():
+    """Verify JAX and NumPy float64 numerical parity for global stress closure
+    with rheological lid base mode on a convective column with a cold lid.
+    """
+    import jax
+
+    jax.config.update('jax_enable_x64', True)
+    import jax.numpy as jnp
+
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_convection_scaling import _make_mesh
+
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+    from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties
+    from aragog.solver.entropy_state import EntropyState
+
+    mesh = _make_mesh(n=50)
+
+    def _evaluator(pressure):
+        ev = EntropyPhaseEvaluator(
+            entropy_eos=None,
+            gravitational_acceleration=9.81,
+            const_properties=True,
+            const_rho=4000.0,
+            const_Cp=1000.0,
+            const_alpha=3e-5,
+            const_cond=4.0,
+            const_log10visc=21.0,
+            const_T_ref=2000.0,
+            const_S_ref=3000.0,
+            yield_stress_c=50e6,
+            yield_stress_mu=0.6,
+            yield_stress_max=500e6,
+            stress_closure_mode='global',
+            lid_base_mode='rheological',
+            lid_contrast_coeff=2.2,
+            activation_energy=300e3,
+            activation_volume=5e-6,
+            enabled=True,
+        )
+        ev.set_pressure(pressure)
+        return ev
+
+    class _Eval:
+        pass
+
+    evaluator = _Eval()
+    evaluator.mesh = mesh
+
+    state = EntropyState(
+        evaluator=evaluator,
+        phase_staggered=_evaluator(mesh.staggered.pressure),
+        phase_basic=_evaluator(mesh.basic.pressure),
+        conduction=True,
+        convection=True,
+    )
+
+    rs = np.asarray(mesh.staggered.radii).ravel()
+    entropy = np.linspace(3500.0, 2500.0, len(rs))
+    state.update(entropy, 0.0)
+
+    kappa_numpy = np.array(state.eddy_diffusivity).ravel()
+
+    n_basic = len(mesh.basic.radii)
+    n_stag = len(mesh.staggered.radii)
+    mesh_jax = MeshArrays(
+        d_dr_matrix=jnp.array(np.zeros((n_basic, n_stag))),
+        quantity_matrix=jnp.array(np.zeros((n_basic, n_stag))),
+        area=jnp.array(mesh.basic.area).ravel(),
+        volume=jnp.array(mesh.basic.volume).ravel(),
+        radii_basic=jnp.array(mesh.basic.radii).ravel(),
+        radii_stag=jnp.array(mesh.staggered.radii).ravel(),
+        mixing_length=jnp.array(state._mixing_length).ravel(),
+        mixing_length_sq=jnp.array(state._mixing_length_sq).ravel(),
+        mixing_length_cu=jnp.array(state._mixing_length_cu).ravel(),
+        P_stag=jnp.array(state.phase_staggered.pressure).ravel(),
+        P_basic=jnp.array(state.phase_basic.pressure).ravel(),
+        dP_dr_basic=jnp.array(state._dP_dr_basic).ravel(),
+        gravity=jnp.array(state.phase_basic.gravitational_acceleration()).ravel(),
+    )
+
+    phase_jax = PhaseProperties(
+        temperature=jnp.array(state.T_basic_diag).ravel(),
+        density=jnp.array(state.rho_basic_diag).ravel(),
+        heat_capacity=jnp.array(state.cp_basic_diag).ravel(),
+        thermal_expansivity=jnp.array(state.phase_basic.thermal_expansivity()).ravel(),
+        dTdPs=jnp.array(state._dS_liq_dP_basic).ravel(),
+        melt_fraction=jnp.array(state.phi_basic_diag).ravel(),
+        viscosity=jnp.array(state.phase_basic.viscosity()).ravel(),
+        kinematic_viscosity=jnp.array(
+            state.phase_basic.viscosity() / state.rho_basic_diag
+        ).ravel(),
+        thermal_conductivity=jnp.array(state.phase_basic.thermal_conductivity()).ravel(),
+        latent_heat=jnp.array(state.phase_basic.latent_heat()).ravel(),
+        capacitance=jnp.array(state.cp_basic_diag * state.rho_basic_diag).ravel(),
+        eta_diff=jnp.array(state.phase_basic.eta_diff).ravel()
+        if state.phase_basic.eta_diff is not None
+        else None,
+        tau_y=jnp.array(state.phase_basic.tau_y).ravel()
+        if state.phase_basic.tau_y is not None
+        else None,
+        visc_solid_weight=jnp.array(np.ones_like(state.rho_basic_diag)).ravel(),
+    )
+
+    params = PhaseParams(
+        enabled=True,
+        kappah_floor=0.0,
+        stress_closure_mode='global',
+        lid_base_mode='rheological',
+        lid_contrast_coeff=2.2,
+        activation_energy=300e3,
+        activation_volume=5e-6,
+    )
+
+    ds_dr_jax = jnp.array(state._dSdr).ravel()
+    k_h_jax, _ = jax_compute_mlt(ds_dr_jax, phase_jax, mesh_jax, params)
+
+    assert k_h_jax.dtype == jnp.float64
+    np.testing.assert_allclose(np.array(k_h_jax), kappa_numpy, rtol=1e-8, atol=1e-30)

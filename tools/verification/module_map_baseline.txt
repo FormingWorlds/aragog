@@ -1,6 +1,8 @@
 Module: aragog
   Imports:
     __future__.annotations
+    _version.__version__
+    _version.__version_tuple__
     aragog.solver.EntropySolver
     importlib.resources
     importlib.resources.abc.Traversable
@@ -18,15 +20,28 @@ Module: aragog.cli
   Imports:
     __future__.annotations
     aragog.__version__
+    aragog.aragog_file_logger
+    aragog.config.Config
+    aragog.eos.entropy.EntropyEOS
+    aragog.parser.Parameters
+    aragog.solver.EntropySolver
     click
+    copy
+    dataclasses
     importlib
     importlib.resources
     importlib.resources.abc.Traversable
     importlib.util
+    json
     logging
+    netCDF4
+    numpy
     os
     pathlib.Path
+    scipy.optimize.brentq
     sys
+    tomli
+    tomllib
   __all__: []
 Module: aragog.config
   Imports:
@@ -39,8 +54,20 @@ Module: aragog.config
     aragog.config.phases.PhaseConfig
     aragog.config.radionuclides.RadionuclideConfig
     aragog.config.solver.SolverConfig
+    aragog.parser.Parameters
+    aragog.parser._BoundaryConditionsParameters
+    aragog.parser._EnergyParameters
+    aragog.parser._InitialConditionParameters
+    aragog.parser._MeshParameters
+    aragog.parser._PhaseMixedParameters
+    aragog.parser._PhaseParameters
+    aragog.parser._Radionuclide
+    aragog.parser._SolverParameters
     logging
+    pathlib.Path
     sys
+    tomli
+    tomllib
     typing.Any
     typing.TYPE_CHECKING
   __all__: ['BoundaryConfig', 'Config', 'EnergyConfig', 'InitialConditionConfig', 'MeshConfig', 'MixedPhaseConfig', 'PhaseConfig', 'RadionuclideConfig', 'SolverConfig']
@@ -97,12 +124,6 @@ Module: aragog.eos
     aragog.eos.entropy.EntropyEOS
     aragog.eos.entropy_phase.EntropyPhaseEvaluator
   __all__: ['EntropyEOS', 'EntropyPhaseEvaluator']
-Module: aragog.eos
-  Imports:
-    __future__.annotations
-    aragog.eos.entropy.EntropyEOS
-    aragog.eos.entropy_phase.EntropyPhaseEvaluator
-  __all__: ['EntropyEOS', 'EntropyPhaseEvaluator']
 Module: aragog.eos.entropy
   Imports:
     __future__.annotations
@@ -113,38 +134,13 @@ Module: aragog.eos.entropy
     numpy.typing
     pathlib.Path
     scipy.interpolate.RegularGridInterpolator
-  __all__: []
-Module: aragog.eos.entropy
-  Imports:
-    __future__.annotations
-    bisect
-    logging
-    math
-    numpy
-    numpy.typing
-    pathlib.Path
-    scipy.interpolate.RegularGridInterpolator
+    scipy.interpolate.interp1d
+    scipy.optimize.brentq
   __all__: []
 Module: aragog.eos.entropy_phase
   Imports:
     __future__.annotations
-    aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
-    aragog.config.phases.SEPARATION_VISCOSITY_MODES
-    aragog.config.phases.STRESS_CLOSURE_DEFAULT
-    aragog.config.phases.STRESS_CLOSURE_MODES
-    aragog.eos.entropy.EntropyEOS
-    aragog.rheology.R_GAS
-    aragog.rheology.compute_yield_stress
-    aragog.rheology.eta_diff
-    aragog.utilities.FloatOrArray
-    aragog.utilities.tanh_weight
-    logging
-    numpy
-    numpy.typing
-  __all__: []
-Module: aragog.eos.entropy_phase
-  Imports:
-    __future__.annotations
+    aragog.config.phases.LID_BASE_MODES
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.config.phases.SEPARATION_VISCOSITY_MODES
     aragog.config.phases.STRESS_CLOSURE_DEFAULT
@@ -180,38 +176,6 @@ Module: aragog.jax
     aragog.jax.solver.BoundaryParams
     aragog.jax.solver.SolveResult
   __all__: ['BoundaryParams', 'EntropyEOS_JAX', 'FluxOutput', 'MeshArrays', 'NonDimScales', 'PhaseParams', 'PhaseProperties', 'PhaseState', 'SolveResult', 'compute_arrhenius_viscosity', 'compute_effective_viscosity', 'compute_fluxes', 'compute_mlt', 'compute_yield_stress', 'eta_diff', 'eta_eff', 'evaluate_phase']
-Module: aragog.jax
-  Imports:
-    __future__.annotations
-    aragog.jax.eos.EntropyEOS_JAX
-    aragog.jax.eos.PhaseState
-    aragog.jax.nondim.NonDimScales
-    aragog.jax.phase.FluxOutput
-    aragog.jax.phase.MeshArrays
-    aragog.jax.phase.PhaseParams
-    aragog.jax.phase.PhaseProperties
-    aragog.jax.phase.compute_arrhenius_viscosity
-    aragog.jax.phase.compute_effective_viscosity
-    aragog.jax.phase.compute_fluxes
-    aragog.jax.phase.compute_mlt
-    aragog.jax.phase.compute_yield_stress
-    aragog.jax.phase.eta_diff
-    aragog.jax.phase.eta_eff
-    aragog.jax.phase.evaluate_phase
-    aragog.jax.solver.BoundaryParams
-    aragog.jax.solver.SolveResult
-  __all__: ['BoundaryParams', 'EntropyEOS_JAX', 'FluxOutput', 'MeshArrays', 'NonDimScales', 'PhaseParams', 'PhaseProperties', 'PhaseState', 'SolveResult', 'compute_arrhenius_viscosity', 'compute_effective_viscosity', 'compute_fluxes', 'compute_mlt', 'compute_yield_stress', 'eta_diff', 'eta_eff', 'evaluate_phase']
-Module: aragog.jax.eos
-  Imports:
-    __future__.annotations
-    equinox
-    jax
-    jax.numpy
-    logging
-    numpy
-    pathlib.Path
-    typing.NamedTuple
-  __all__: []
 Module: aragog.jax.eos
   Imports:
     __future__.annotations
@@ -231,33 +195,13 @@ Module: aragog.jax.nondim
     numpy
     numpy.typing
   __all__: []
-Module: aragog.jax.nondim
-  Imports:
-    __future__.annotations
-    dataclasses.dataclass
-    dataclasses.field
-    numpy
-    numpy.typing
-  __all__: []
 Module: aragog.jax.phase
   Imports:
     __future__.annotations
+    aragog.config.phases.LID_BASE_MODES
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.config.phases.SEPARATION_VISCOSITY_MODES
-    aragog.jax.eos.EntropyEOS_JAX
-    aragog.rheology.R_GAS
-    equinox
-    jax
-    jax.numpy
-    numpy
-    scipy.interpolate.PchipInterpolator
-    typing.NamedTuple
-  __all__: []
-Module: aragog.jax.phase
-  Imports:
-    __future__.annotations
-    aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
-    aragog.config.phases.SEPARATION_VISCOSITY_MODES
+    aragog.config.phases.STRESS_CLOSURE_MODES
     aragog.jax.eos.EntropyEOS_JAX
     aragog.rheology.R_GAS
     equinox
@@ -275,21 +219,7 @@ Module: aragog.jax.solver
     aragog.jax.phase.PhaseParams
     aragog.jax.phase.compute_fluxes
     aragog.jax.phase.evaluate_phase
-    equinox
-    jax
-    jax.numpy
-    logging
-    numpy
-    typing.NamedTuple
-  __all__: []
-Module: aragog.jax.solver
-  Imports:
-    __future__.annotations
-    aragog.jax.eos.EntropyEOS_JAX
-    aragog.jax.phase.MeshArrays
-    aragog.jax.phase.PhaseParams
-    aragog.jax.phase.compute_fluxes
-    aragog.jax.phase.evaluate_phase
+    diffrax
     equinox
     jax
     jax.numpy
@@ -355,6 +285,7 @@ Module: aragog.output.diagnostics
 Module: aragog.parser
   Imports:
     __future__.annotations
+    aragog.config.phases.LID_BASE_MODES
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.config.phases.SEPARATION_VISCOSITY_MODES
     aragog.config.phases.STRESS_CLOSURE_DEFAULT
@@ -385,29 +316,6 @@ Module: aragog.solver
     aragog.solver.entropy_state.EntropyState
     scipy.constants
   __all__: ['BoundaryConditions', 'EntropySolver', 'EntropyState', 'SECS_PER_YEAR', 'SolverOutput']
-Module: aragog.solver
-  Imports:
-    __future__.annotations
-    aragog.solver.boundary.BoundaryConditions
-    aragog.solver.entropy_solver.EntropySolver
-    aragog.solver.entropy_solver.SolverOutput
-    aragog.solver.entropy_state.EntropyState
-    scipy.constants
-  __all__: ['BoundaryConditions', 'EntropySolver', 'EntropyState', 'SECS_PER_YEAR', 'SolverOutput']
-Module: aragog.solver.boundary
-  Imports:
-    __future__.annotations
-    aragog.mesh.Mesh
-    aragog.parser.Parameters
-    aragog.parser._BoundaryConditionsParameters
-    dataclasses.dataclass
-    logging
-    numpy
-    numpy.typing
-    scipy.constants
-    typing.Any
-    typing.TYPE_CHECKING
-  __all__: []
 Module: aragog.solver.boundary
   Imports:
     __future__.annotations
@@ -425,23 +333,18 @@ Module: aragog.solver.boundary
 Module: aragog.solver.cvode_jax
   Imports:
     __future__.annotations
+    aragog.jax.nondim.NonDimScales
     aragog.jax.phase.compute_arrhenius_viscosity
     aragog.jax.phase.compute_effective_viscosity
     aragog.jax.phase.compute_yield_stress
     aragog.jax.phase.eta_diff
     aragog.jax.phase.eta_eff
-    logging
-    numpy
-    typing.Callable
-  __all__: ['build_jax_rhs_and_jacobian', 'compute_arrhenius_viscosity', 'compute_effective_viscosity', 'compute_yield_stress', 'eta_diff', 'eta_eff', 'verify_jax_vs_numpy_rhs']
-Module: aragog.solver.cvode_jax
-  Imports:
-    __future__.annotations
-    aragog.jax.phase.compute_arrhenius_viscosity
-    aragog.jax.phase.compute_effective_viscosity
-    aragog.jax.phase.compute_yield_stress
-    aragog.jax.phase.eta_diff
-    aragog.jax.phase.eta_eff
+    aragog.jax.solver._no_radio
+    aragog.jax.solver.dSdt
+    aragog.jax.solver.dSdt_energy_balance
+    aragog.jax.solver.make_radio_heating_fn
+    jax
+    jax.numpy
     logging
     numpy
     typing.Callable
@@ -449,62 +352,47 @@ Module: aragog.solver.cvode_jax
 Module: aragog.solver.entropy_solver
   Imports:
     __future__.annotations
+    aragog.__version__
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.eos.entropy.EntropyEOS
     aragog.eos.entropy_phase.EntropyPhaseEvaluator
+    aragog.jax.nondim.NonDimScales
+    aragog.mesh.Mesh
+    aragog.output.diagnostics.total_enthalpy
     aragog.parser.Parameters
     aragog.solver.boundary.BoundaryConditions
     aragog.solver.entropy_state.EntropyState
+    collections.abc.Callable
     dataclasses.dataclass
+    datetime.datetime
+    datetime.timezone
     logging
+    netCDF4
     numpy
     numpy.typing
     pathlib.Path
+    scikits_odes_sundials.cvode.CVODE
+    scikits_odes_sundials.cvode.CV_RootFunction
+    scikits_odes_sundials.cvode.StatusEnum
     scipy
     scipy.constants
     scipy.constants.Stefan_Boltzmann
     scipy.integrate.solve_ivp
     scipy.interpolate.PchipInterpolator
     scipy.optimize.OptimizeResult
-    typing.TYPE_CHECKING
-  __all__: []
-Module: aragog.solver.entropy_solver
-  Imports:
-    __future__.annotations
-    aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
-    aragog.eos.entropy.EntropyEOS
-    aragog.eos.entropy_phase.EntropyPhaseEvaluator
-    aragog.parser.Parameters
-    aragog.solver.boundary.BoundaryConditions
-    aragog.solver.entropy_state.EntropyState
-    dataclasses.dataclass
-    logging
-    numpy
-    numpy.typing
-    pathlib.Path
-    scipy
-    scipy.constants
-    scipy.constants.Stefan_Boltzmann
-    scipy.integrate.solve_ivp
-    scipy.interpolate.PchipInterpolator
-    scipy.optimize.OptimizeResult
+    scipy.sparse.lil_matrix
     typing.TYPE_CHECKING
   __all__: []
 Module: aragog.solver.entropy_state
   Imports:
     __future__.annotations
     aragog.eos.entropy_phase.EntropyPhaseEvaluator
+    aragog.rheology.compute_t_lid_base
+    aragog.rheology.eta_eff
+    aragog.rheology.stress_closure
+    aragog.solver.evaluator.Evaluator
     aragog.utilities.FloatOrArray
-    logging
-    numpy
-    numpy.typing
-    typing.TYPE_CHECKING
-  __all__: []
-Module: aragog.solver.entropy_state
-  Imports:
-    __future__.annotations
-    aragog.eos.entropy_phase.EntropyPhaseEvaluator
-    aragog.utilities.FloatOrArray
+    aragog.utilities.tanh_weight
     logging
     numpy
     numpy.typing

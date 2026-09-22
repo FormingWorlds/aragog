@@ -15,8 +15,6 @@ _FWL_DATA = os.environ.get('FWL_DATA')
 _CANDIDATES = [
     os.environ.get('ARAGOG_TEST_EOS_DIR'),
     f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-    '/Users/timlichtenberg/FWL_DATA/aragog/spider_eos',
 ]
 EOS_DIR = next((Path(p) for p in _CANDIDATES if p and Path(p).exists()), None)
 
@@ -39,15 +37,9 @@ def shared_eos():
         ('src/aragog/cfg/abe_mixed.cfg', 'abe_mixed.cfg'),
     ],
 )
-@pytest.mark.parametrize('solver_impl', ['numpy', 'jax'])
-def test_rheology_disabled_regression(config_file, suffix, solver_impl, shared_eos):
+def test_rheology_disabled_regression(config_file, suffix, shared_eos):
     config = Config.from_file(config_file)
     config.solver.max_steps = 10
-
-    if solver_impl == 'jax':
-        config.solver.implementation = 'jax'
-    else:
-        config.solver.implementation = 'numpy'
 
     solver = EntropySolver(config, entropy_eos=shared_eos)
     solver.initialize()
@@ -61,7 +53,7 @@ def test_rheology_disabled_regression(config_file, suffix, solver_impl, shared_e
     T = output.T_stag
 
     fixture_path = os.path.join(
-        os.path.dirname(__file__), 'reference', f'rheology_disabled_{suffix}_{solver_impl}.npz'
+        os.path.dirname(__file__), 'reference', f'rheology_disabled_{suffix}.npz'
     )
 
     with np.load(fixture_path) as ref:

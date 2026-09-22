@@ -257,6 +257,8 @@ def compute_strain_rate_global(
     if np.any(is_hot):
         r_lid_base = float(np.max(r[is_hot]))
         d_lid = r_surf - r_lid_base
+        if d_lid <= 0.0:
+            return 0.0
     else:
         d_lid = r_surf - r[0]
 

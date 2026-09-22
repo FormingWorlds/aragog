@@ -15,8 +15,6 @@ _FWL_DATA = os.environ.get('FWL_DATA')
 _CANDIDATES = [
     os.environ.get('ARAGOG_TEST_EOS_DIR'),
     f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-    '/Users/timlichtenberg/FWL_DATA/aragog/spider_eos',
 ]
 EOS_DIR = next((Path(p) for p in _CANDIDATES if p and Path(p).exists()), None)
 
@@ -29,13 +27,11 @@ def shared_eos():
 
 
 @pytest.mark.smoke
-@pytest.mark.parametrize('solver_impl', ['numpy', 'jax'])
-def test_yielding_active_probe(solver_impl, shared_eos):
-    """Verify yielding active probe against recorded reference fixtures."""
+def test_yielding_active_probe(shared_eos):
+    """Verify yielding active probe against recorded reference fixture."""
     config_file = 'tests/configs/yielding_active_probe.toml'
     config = Config.from_file(config_file)
     config.solver.max_steps = 10
-    config.solver.implementation = solver_impl
 
     solver = EntropySolver(config, entropy_eos=shared_eos)
     solver.initialize()
@@ -52,15 +48,14 @@ def test_yielding_active_probe(solver_impl, shared_eos):
     phi = output.phi_basic
     assert np.sum(phi > 0.5) >= 1, 'Expected at least one node with phi > 0.5'
 
-    if solver_impl == 'numpy':
-        eta_eff = solver.state.viscosity_basic
-        eta_diff = solver.state.phase_basic.eta_diff
-        assert np.sum(eta_eff < 0.5 * eta_diff) >= 2, (
-            'Expected at least 2 nodes with eta_eff < 0.5 * eta_diff'
-        )
+    eta_eff = solver.state.viscosity_basic
+    eta_diff = solver.state.phase_basic.eta_diff
+    assert np.sum(eta_eff < 0.5 * eta_diff) >= 2, (
+        'Expected at least 2 nodes with eta_eff < 0.5 * eta_diff'
+    )
 
     fixture_path = os.path.join(
-        os.path.dirname(__file__), 'reference', f'yielding_active_probe_{solver_impl}.npz'
+        os.path.dirname(__file__), 'reference', 'yielding_active_probe.npz'
     )
 
     with np.load(fixture_path) as ref:

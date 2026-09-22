@@ -562,3 +562,37 @@ def test_arrhenius_t_ref_positivity_validation():
             viscosity=1e21,
             arrhenius_t_ref=0.0,
         )
+
+
+@pytest.mark.unit
+def test_phase_config_rheological_lid_requires_positive_activation_energy():
+    """Verify PhaseConfig and MixedPhaseConfig reject zero activation energy with rheological lid."""
+    from aragog.config.phases import MixedPhaseConfig, PhaseConfig
+
+    with pytest.raises(ValueError, match='requires non-zero activation_energy'):
+        PhaseConfig(
+            density=3000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=2e-5,
+            viscosity=1e21,
+            enabled=True,
+            lid_base_mode='rheological',
+            activation_energy=0.0,
+        )
+
+    with pytest.raises(ValueError, match='requires non-zero activation_energy'):
+        MixedPhaseConfig(
+            latent_heat_of_fusion=4e6,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus='dummy',
+            liquidus='dummy',
+            phase='mixed',
+            phase_transition_width=0.01,
+            grain_size=1e-3,
+            enabled=True,
+            lid_base_mode='rheological',
+            activation_energy=0.0,
+        )

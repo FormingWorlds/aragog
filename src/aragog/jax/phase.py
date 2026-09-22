@@ -949,7 +949,8 @@ def compute_mlt(
         v_int = jnp.where(has_interior, v_int_masked, jnp.max(v_abs))
 
         strain_rate_raw = v_int / d_lid
-        strain_rate = jnp.where(has_colder, strain_rate_raw, 0.0)
+        has_lid = has_colder & (d_lid_raw > 0.0)
+        strain_rate = jnp.where(has_lid, strain_rate_raw, 0.0)
     else:
         # local
         strain_rate = jnp.abs(visc_v_unyielded) / jnp.maximum(mesh.mixing_length, 1e-15)

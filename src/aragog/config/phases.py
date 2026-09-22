@@ -86,6 +86,14 @@ class PhaseConfig:
     )
     lid_contrast_coeff: float = attrs.field(default=2.2, validator=attrs.validators.gt(0.0))
 
+    def __attrs_post_init__(self):
+        if self.enabled:
+            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
+                raise ValueError(
+                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
+                    f'activation_energy, but activation_energy={self.activation_energy}'
+                )
+
 
 @attrs.define
 class MixedPhaseConfig:
@@ -193,3 +201,11 @@ class MixedPhaseConfig:
         default=1400.0, validator=attrs.validators.gt(0.0)
     )
     lid_contrast_coeff: float = attrs.field(default=2.2, validator=attrs.validators.gt(0.0))
+
+    def __attrs_post_init__(self):
+        if self.enabled:
+            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
+                raise ValueError(
+                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
+                    f'activation_energy, but activation_energy={self.activation_energy}'
+                )

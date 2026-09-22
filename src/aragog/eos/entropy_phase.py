@@ -597,17 +597,17 @@ class EntropyPhaseEvaluator:
         return self._viscosity_val
 
     @property
-    def eta_diff(self) -> FloatOrArray:
+    def eta_diff(self) -> FloatOrArray | None:
         """Diffusion creep viscosity from Arrhenius law [Pa s]."""
         return self._eta_diff
 
     @property
-    def tau_y(self) -> FloatOrArray:
+    def tau_y(self) -> FloatOrArray | None:
         """Byerlee yield stress [Pa]."""
         return self._tau_y
 
     @property
-    def visc_solid_weight(self) -> FloatOrArray:
+    def visc_solid_weight(self) -> FloatOrArray | None:
         """Weight of the solid viscosity in the final blended log viscosity."""
         return self._visc_solid_weight
 

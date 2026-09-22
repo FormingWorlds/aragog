@@ -252,3 +252,6 @@ def test_entropy_state_mlt_viscosity_capping_global():
     assert np.all(visc_eff > 0.0)
     assert np.all(np.isfinite(visc_eff))
     assert np.all(visc_eff <= phase_basic.eta_diff * (1.0 + 1e-12))
+    convective_mask = state.is_convective
+    if np.any(convective_mask):
+        assert np.any(visc_eff[convective_mask] < 1e25)
