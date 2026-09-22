@@ -11,7 +11,7 @@ from aragog.solver.entropy_state import EntropyState
 def test_rheological_lid_mode_runs_numpy_mlt():
     from tests.test_convection_scaling import _make_mesh
     mesh = _make_mesh()
-    n = mesh.basic.radii.size
+
 
     def _evaluator(pressure):
         ev = EntropyPhaseEvaluator(
@@ -40,8 +40,8 @@ def test_rheological_lid_mode_runs_numpy_mlt():
         phase_basic=_evaluator(mesh.basic.pressure)
     )
 
-    T = np.linspace(3000, 300, n)
-    P = np.linspace(1e10, 1e5, n)
+
+
     S = np.linspace(3000, 2000, mesh.staggered.radii.size)
 
     # Pre-fix this raises NameError: name 'compute_t_lid_base' is not defined

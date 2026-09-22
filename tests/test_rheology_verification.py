@@ -35,7 +35,7 @@ _ETA0 = 1.0e21
 _E_A = 300.0e3
 _V_A = 5.0e-6
 _T_REF = 1600.0
-_R = 8.314
+_R = 8.314462618
 
 # Byerlee reference: cohesion 50 MPa, friction 0.6, ceiling 500 MPa.
 _TAU_C = 50.0e6
@@ -223,3 +223,30 @@ def test_numpy_jax_rheology_float64_parity():
     tau_np_lin = compute_yield_stress(p_lin, _TAU_C, _TAU_MU, _TAU_MAX)
     tau_jx_lin = float(jnp.minimum(jax_tau(jnp.asarray(p_lin), _TAU_C, _TAU_MU), _TAU_MAX))
     assert tau_jx_lin == pytest.approx(tau_np_lin, rel=1e-9)
+
+def test_viscosity_max_log10_clipping():
+    from aragog.rheology import eta_diff, eta_eff
+    
+    T = 40.0
+    P = 0.0
+    eta_d = eta_diff(
+        temperature=T,
+        pressure=P,
+        viscosity_solid=1.0e21,
+        activation_energy=300e3,
+        activation_volume=5e-6,
+        t_ref=1600.0,
+        r_gas=8.314462618,
+        viscosity_max_log10=40.0
+    )
+    
+    import pytest; assert eta_d == pytest.approx(1e40, rel=1e-12)
+    
+    # Check eta_eff
+    eta_e = eta_eff(
+        visc_diff=eta_d,
+        tau_y=50e6,
+        strain_rate=1e-15,
+    )
+    
+    assert np.isfinite(eta_e)

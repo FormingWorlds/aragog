@@ -10,6 +10,8 @@ from __future__ import annotations
 import numpy as np
 import numpy.typing as npt
 
+R_GAS = 8.314462618
+
 FloatOrArray = float | npt.NDArray[np.floating]
 
 
@@ -19,7 +21,7 @@ def compute_t_lid_base(
     e_a: float = 300.0e3,
     v_a: float = 5.0e-6,
     lid_contrast_coeff: float = 2.2,
-    r_gas: float = 8.314,
+    r_gas: float = R_GAS,
 ) -> float:
     """Compute the stagnant lid base temperature (Solomatov & Moresi 2000).
 
@@ -38,7 +40,8 @@ def eta_diff(
     activation_energy: float = 300.0e3,
     activation_volume: float = 5.0e-6,
     t_ref: float = 1600.0,
-    r_gas: float = 8.314,
+    r_gas: float = R_GAS,
+    viscosity_max_log10: float = 40.0,
 ) -> FloatOrArray:
     r"""Compute temperature- and pressure-dependent Arrhenius viscosity.
 
@@ -56,6 +59,7 @@ def eta_diff(
         pressure : float or numpy.ndarray
             Pressure :math:`P` [Pa].
         viscosity_solid : float, default 1.0e21
+        viscosity_max_log10 : float, default 40.0
             Reference solid-state dynamic viscosity :math:`\eta_0` [Pa s] at
             reference conditions :math:`(T_\mathrm{ref}, P=0)`.
         activation_energy : float, default 300.0e3
@@ -64,7 +68,7 @@ def eta_diff(
             Molar activation volume :math:`V_a` [m^3/mol].
         t_ref : float, default 1600.0
             Reference temperature :math:`T_\mathrm{ref}` [K].
-        r_gas : float, default 8.314
+        r_gas : float, default 8.314462618
             Universal gas constant :math:`R` [J/(mol K)].
 
         Returns
@@ -77,7 +81,8 @@ def eta_diff(
     exponent = (activation_energy + p * activation_volume) / (r_gas * t) - activation_energy / (
         r_gas * t_ref
     )
-    clipped_exp = np.clip(exponent, -700.0, 700.0)
+    max_exponent = (viscosity_max_log10 - np.log10(viscosity_solid)) * np.log(10.0)
+    clipped_exp = np.clip(exponent, -700.0, max_exponent)
     result = viscosity_solid * np.exp(clipped_exp)
     if np.ndim(temperature) == 0 and np.ndim(pressure) == 0:
         return float(result.item())

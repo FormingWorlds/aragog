@@ -22,6 +22,7 @@ from scipy.interpolate import PchipInterpolator
 
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 from aragog.jax.eos import EntropyEOS_JAX
+from aragog.rheology import R_GAS
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
@@ -31,7 +32,6 @@ RE_CRIT = 9.0 / 8.0
 
 # Arrhenius rheology reference constants
 T_REF_ARRHENIUS: float = 1600.0  # Reference temperature [K]
-R_GAS: float = 8.314  # Universal gas constant [J/mol/K]
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +113,7 @@ class PhaseParams(eqx.Module):
     strain_rate: float = 0.0
     arrhenius_t_ref: float = 1600.0
     yield_stress_max: float = 500.0e6
+    viscosity_max_log10: float = 40.0
     lid_base_mode: str = eqx.field(default='fixed', static=True)
     lid_base_temperature: float = 1400.0
     lid_contrast_coeff: float = 2.2
@@ -216,6 +217,8 @@ class PhaseParams(eqx.Module):
         self.stress_closure_mode = str(stress_closure_mode)
         self.arrhenius_t_ref = float(arrhenius_t_ref)
         self.yield_stress_max = float(yield_stress_max)
+        if str(lid_base_mode) not in ('fixed', 'rheological'):
+            raise ValueError(f"Unknown lid_base_mode {lid_base_mode!r}; expected 'fixed' or 'rheological'")
         self.lid_base_mode = str(lid_base_mode)
         self.lid_base_temperature = float(lid_base_temperature)
         self.lid_contrast_coeff = float(lid_contrast_coeff)
@@ -535,6 +538,7 @@ def compute_arrhenius_viscosity(
     R: float = R_GAS,
     activation_energy: float | None = None,
     activation_volume: float | None = None,
+    viscosity_max_log10: float = 40.0,
 ) -> jax.Array:
     """Compute continuous Arrhenius diffusion-creep viscosity [Pa s].
 
@@ -552,7 +556,7 @@ def compute_arrhenius_viscosity(
         Activation volume [m^3/mol].
     T_ref : float, default 1600.0
         Reference temperature [K].
-    R : float, default 8.314
+    R : float, default 8.314462618
         Universal gas constant [J/mol/K].
     activation_energy : float or None
         Alias for E_a.
@@ -570,8 +574,9 @@ def compute_arrhenius_viscosity(
         V_a = activation_volume
     T_safe = jnp.maximum(T, 1.0)
     arg = (E_a + P * V_a) / (R * T_safe) - E_a / (R * T_ref)
+    max_exponent = (viscosity_max_log10 - jnp.log10(viscosity_solid)) * jnp.log(10.0)
     # Smooth bound on exponent to prevent overflow while preserving C^infty gradients
-    arg_bounded = 700.0 - jax.nn.softplus(700.0 - arg)
+    arg_bounded = max_exponent - jax.nn.softplus(max_exponent - arg)
     arg_bounded = -700.0 + jax.nn.softplus(arg_bounded + 700.0)
     return viscosity_solid * jnp.exp(arg_bounded)
 

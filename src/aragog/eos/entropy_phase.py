@@ -23,7 +23,7 @@ from aragog.config.phases import (
     STRESS_CLOSURE_MODES,
 )
 from aragog.eos.entropy import EntropyEOS
-from aragog.rheology import compute_yield_stress
+from aragog.rheology import R_GAS, compute_yield_stress
 from aragog.rheology import eta_diff as calc_eta_diff
 from aragog.utilities import FloatOrArray, tanh_weight
 
@@ -92,6 +92,7 @@ class EntropyPhaseEvaluator:
         stress_closure_mode: str = STRESS_CLOSURE_DEFAULT,
         arrhenius_t_ref: float = 1600.0,
         yield_stress_max: float = 500.0e6,
+        viscosity_max_log10: float = 40.0,
         lid_base_mode: str = 'fixed',
         lid_base_temperature: float = 1400.0,
         lid_contrast_coeff: float = 2.2,
@@ -119,6 +120,7 @@ class EntropyPhaseEvaluator:
         self._arrhenius_t_ref = arrhenius_t_ref
         self._enabled = enabled
         self._yield_stress_max = yield_stress_max
+        self._viscosity_max_log10 = viscosity_max_log10
         self._lid_base_mode = lid_base_mode
         self._lid_base_temperature = lid_base_temperature
         self._lid_contrast_coeff = lid_contrast_coeff
@@ -228,7 +230,7 @@ class EntropyPhaseEvaluator:
                     activation_energy=self._activation_energy,
                     activation_volume=self._activation_volume,
                     t_ref=self._arrhenius_t_ref,
-                    r_gas=8.31446261815324,
+                    r_gas=R_GAS,
                 ),
                 dtype=float,
             )
@@ -463,7 +465,7 @@ class EntropyPhaseEvaluator:
                     activation_energy=self._activation_energy,
                     activation_volume=self._activation_volume,
                     t_ref=self.arrhenius_t_ref,
-                    r_gas=8.314,
+                    r_gas=R_GAS,
                 ),
                 dtype=float,
             )

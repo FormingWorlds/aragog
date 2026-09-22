@@ -305,6 +305,7 @@ class _PhaseMixedParameters:
     stress_closure_mode: str = STRESS_CLOSURE_DEFAULT
     arrhenius_t_ref: float = 1600.0
     yield_stress_max: float = 500.0e6
+    viscosity_max_log10: float = 40.0
     lid_base_mode: str = 'fixed'
     lid_base_temperature: float = 1400.0
     lid_contrast_coeff: float = 2.2
@@ -346,6 +347,7 @@ class _PhaseParameters:
     stress_closure_mode: str = STRESS_CLOSURE_DEFAULT
     arrhenius_t_ref: float = 1600.0
     yield_stress_max: float = 500.0e6
+    viscosity_max_log10: float = 40.0
     lid_base_mode: str = 'fixed'
     lid_base_temperature: float = 1400.0
     lid_contrast_coeff: float = 2.2

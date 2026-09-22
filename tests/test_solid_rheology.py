@@ -38,7 +38,7 @@ def test_arrhenius_viscosity_scaling():
     e_a = 300.0e3
     v_a = 5.0e-6
     t_ref = 1600.0
-    r_gas = 8.314
+    r_gas = 8.314462618
 
     # 1. Reference condition pin: T = T_ref, P = 0 Pa -> eta == eta_0
     eta_ref = eta_diff(

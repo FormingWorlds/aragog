@@ -45,7 +45,7 @@ from aragog.rheology import (
 
 pytestmark = [pytest.mark.slow, pytest.mark.timeout(3600)]
 
-_R_GAS = 8.314  # matches aragog.rheology default
+_R_GAS = 8.314462618  # matches aragog.rheology default
 _R_SURF = 6.371e6
 _R_CMB = 3.480e6
 _E_A = 300.0e3
