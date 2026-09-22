@@ -23,6 +23,7 @@ import numpy.typing as npt
 from typed_configparser import ConfigParser
 
 from aragog.config.phases import (
+    LID_BASE_MODES,
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
     STRESS_CLOSURE_DEFAULT,
@@ -321,9 +322,15 @@ class _PhaseMixedParameters:
                 f'stress_closure_mode must be one of {STRESS_CLOSURE_MODES}, '
                 f'got {self.stress_closure_mode!r}'
             )
-        if self.lid_base_mode not in ('fixed', 'rheological'):
+        if self.lid_base_mode not in LID_BASE_MODES:
             raise ValueError(
-                f"Unknown lid_base_mode {self.lid_base_mode!r}; expected 'fixed' or 'rheological'"
+                f'Unknown lid_base_mode {self.lid_base_mode!r}; expected {LID_BASE_MODES}'
+            )
+        if self.arrhenius_t_ref <= 0.0:
+            raise ValueError(f'arrhenius_t_ref must be positive, got {self.arrhenius_t_ref}')
+        if self.viscosity_max_log10 <= 0.0:
+            raise ValueError(
+                f'viscosity_max_log10 must be positive, got {self.viscosity_max_log10}'
             )
         if self.enabled:
             if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
@@ -368,9 +375,15 @@ class _PhaseParameters:
                 f'stress_closure_mode must be one of {STRESS_CLOSURE_MODES}, '
                 f'got {self.stress_closure_mode!r}'
             )
-        if self.lid_base_mode not in ('fixed', 'rheological'):
+        if self.lid_base_mode not in LID_BASE_MODES:
             raise ValueError(
-                f"Unknown lid_base_mode {self.lid_base_mode!r}; expected 'fixed' or 'rheological'"
+                f'Unknown lid_base_mode {self.lid_base_mode!r}; expected {LID_BASE_MODES}'
+            )
+        if self.arrhenius_t_ref <= 0.0:
+            raise ValueError(f'arrhenius_t_ref must be positive, got {self.arrhenius_t_ref}')
+        if self.viscosity_max_log10 <= 0.0:
+            raise ValueError(
+                f'viscosity_max_log10 must be positive, got {self.viscosity_max_log10}'
             )
         if self.enabled:
             if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:

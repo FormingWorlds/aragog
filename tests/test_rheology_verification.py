@@ -457,3 +457,108 @@ def test_entropy_phase_evaluator_yield_stress_max_and_viscosity_max():
     assert np.all(evaluator.tau_y <= 10.0e6)
     assert evaluator.eta_diff is not None
     assert np.all(evaluator.eta_diff <= 10.0**25.0)
+
+
+@pytest.mark.physics_invariant
+def test_numpy_jax_crossover_sweep_parity():
+    """Verify numpy and JAX Arrhenius viscosity match across the viscosity_max_log10 cap."""
+    import jax
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import compute_arrhenius_viscosity
+    from aragog.rheology import eta_diff
+
+    jax.config.update('jax_enable_x64', True)
+
+    temperatures = np.linspace(400.0, 700.0, 31)
+    for t_val in temperatures:
+        eta_np = eta_diff(
+            temperature=t_val,
+            pressure=0.0,
+            viscosity_solid=_ETA0,
+            activation_energy=_E_A,
+            activation_volume=_V_A,
+            t_ref=_T_REF,
+            r_gas=_R,
+            viscosity_max_log10=40.0,
+        )
+        eta_jx = float(
+            compute_arrhenius_viscosity(
+                jnp.asarray(t_val),
+                jnp.asarray(0.0),
+                _ETA0,
+                _E_A,
+                _V_A,
+                T_ref=_T_REF,
+                R=_R,
+                viscosity_max_log10=40.0,
+            )
+        )
+        assert eta_jx == pytest.approx(eta_np, rel=1e-11)
+
+
+@pytest.mark.physics_invariant
+def test_compute_effective_viscosity_infinite_yield_stress_jax():
+    """Verify compute_effective_viscosity handles infinite yield stress in JAX."""
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import compute_effective_viscosity
+
+    visc_diff = 1.0e21
+    tau_y_inf = jnp.inf
+    sr = 1.0e-15
+
+    eta_eff_val = compute_effective_viscosity(jnp.asarray(visc_diff), tau_y_inf, sr)
+    assert jnp.isfinite(eta_eff_val)
+    assert float(eta_eff_val) == pytest.approx(visc_diff, rel=1.0e-12)
+
+
+@pytest.mark.unit
+def test_empty_pressure_yield_stress_capped():
+    """Verify yield_stress_max is respected in _update_const when pressure is empty."""
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
+    evaluator = EntropyPhaseEvaluator(
+        entropy_eos=None,
+        gravitational_acceleration=None,
+        rheological_transition_melt_fraction=0.4,
+        rheological_transition_width=0.1,
+        viscosity_solid=1e21,
+        viscosity_liquid=1e2,
+        grain_size=1e-3,
+        thermal_conductivity_solid=4.0,
+        thermal_conductivity_liquid=2.0,
+        matprop_smooth_width=0.0,
+        const_properties=True,
+        enabled=True,
+        yield_stress_c=600e6,
+        yield_stress_max=500e6,
+    )
+    evaluator.set_entropy(np.array([2500.0, 2600.0]))
+    evaluator.update()
+    assert evaluator.tau_y is not None
+    assert np.all(evaluator.tau_y == 500e6)
+
+
+@pytest.mark.unit
+def test_arrhenius_t_ref_positivity_validation():
+    """Verify non-positive arrhenius_t_ref is rejected."""
+    from aragog.config.phases import PhaseConfig
+    from aragog.rheology import eta_diff
+
+    with pytest.raises(ValueError, match='t_ref must be positive'):
+        eta_diff(temperature=1600.0, pressure=0.0, t_ref=0.0)
+
+    with pytest.raises(ValueError, match='t_ref must be positive'):
+        eta_diff(temperature=1600.0, pressure=0.0, t_ref=-100.0)
+
+    with pytest.raises(ValueError):
+        PhaseConfig(
+            density=3000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=2e-5,
+            viscosity=1e21,
+            arrhenius_t_ref=0.0,
+        )

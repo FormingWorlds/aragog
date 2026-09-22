@@ -28,10 +28,10 @@ def shared_eos():
     return EntropyEOS(EOS_DIR)
 
 
-# Fixtures recorded from aragog origin/main at aa3c94d (2026-09-21)
+# Reference fixtures for the rheology-disabled code path.
 
 
-@pytest.mark.unit
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     'config_file,suffix',
     [
@@ -39,7 +39,6 @@ def shared_eos():
         ('src/aragog/cfg/abe_mixed.cfg', 'abe_mixed.cfg'),
     ],
 )
-@pytest.mark.unit
 @pytest.mark.parametrize('solver_impl', ['numpy', 'jax'])
 def test_rheology_disabled_regression(config_file, suffix, solver_impl, shared_eos):
     config = Config.from_file(config_file)
@@ -56,17 +55,10 @@ def test_rheology_disabled_regression(config_file, suffix, solver_impl, shared_e
     if initial_entropy is not None:
         solver.set_initial_entropy(initial_entropy)
 
-    try:
-        ret = solver.solve()
-    except Exception:
-        ret = None
-
-    if ret is None:
-        output = solver.get_state()
-        S = output.S_final
-        T = output.T_stag
-    else:
-        S, T, output = ret
+    solver.solve()
+    output = solver.get_state()
+    S = output.S_final
+    T = output.T_stag
 
     fixture_path = os.path.join(
         os.path.dirname(__file__), 'reference', f'rheology_disabled_{suffix}_{solver_impl}.npz'

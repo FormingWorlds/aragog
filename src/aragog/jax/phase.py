@@ -20,7 +20,12 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.config.phases import (
+    LID_BASE_MODES,
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+    STRESS_CLOSURE_MODES,
+)
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.rheology import R_GAS
 
@@ -215,17 +220,21 @@ class PhaseParams(eqx.Module):
         self.yield_stress_c = float(yield_stress_c)
         self.yield_stress_mu = float(yield_stress_mu)
         self.strain_rate = float(strain_rate)
-        if str(stress_closure_mode) not in ('local', 'global'):
+        if str(stress_closure_mode) not in STRESS_CLOSURE_MODES:
             raise ValueError(
-                f"Unknown stress_closure_mode {stress_closure_mode!r}; expected 'local' or 'global'"
+                f'Unknown stress_closure_mode {stress_closure_mode!r}; expected {STRESS_CLOSURE_MODES}'
             )
         self.stress_closure_mode = str(stress_closure_mode)
+        if float(arrhenius_t_ref) <= 0.0:
+            raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
         self.arrhenius_t_ref = float(arrhenius_t_ref)
         self.yield_stress_max = float(yield_stress_max)
+        if float(viscosity_max_log10) <= 0.0:
+            raise ValueError(f'viscosity_max_log10 must be positive, got {viscosity_max_log10}')
         self.viscosity_max_log10 = float(viscosity_max_log10)
-        if str(lid_base_mode) not in ('fixed', 'rheological'):
+        if str(lid_base_mode) not in LID_BASE_MODES:
             raise ValueError(
-                f"Unknown lid_base_mode {lid_base_mode!r}; expected 'fixed' or 'rheological'"
+                f'Unknown lid_base_mode {lid_base_mode!r}; expected {LID_BASE_MODES}'
             )
         self.lid_base_mode = str(lid_base_mode)
         if self.enabled:
@@ -587,11 +596,12 @@ def compute_arrhenius_viscosity(
     if activation_volume is not None:
         V_a = activation_volume
     T_safe = jnp.maximum(T, 1.0)
-    arg = (E_a + P * V_a) / (R * T_safe) - E_a / (R * T_ref)
-    max_exponent = (viscosity_max_log10 - jnp.log10(viscosity_solid)) * jnp.log(10.0)
-    # Smooth bound on exponent to prevent overflow while preserving C^infty gradients
-    arg_bounded = max_exponent - jax.nn.softplus(max_exponent - arg)
-    arg_bounded = -700.0 + jax.nn.softplus(arg_bounded + 700.0)
+    T_ref_safe = jnp.maximum(T_ref, 1e-10)
+    arg = (E_a + P * V_a) / (R * T_safe) - E_a / (R * T_ref_safe)
+    max_exponent = (
+        viscosity_max_log10 - jnp.log10(jnp.maximum(viscosity_solid, 1e-300))
+    ) * jnp.log(10.0)
+    arg_bounded = jnp.clip(arg, -700.0, max_exponent)
     return viscosity_solid * jnp.exp(arg_bounded)
 
 

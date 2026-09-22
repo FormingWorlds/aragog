@@ -49,7 +49,7 @@ def test_eos_and_jax_do_not_import_solver():
 
 @pytest.mark.unit
 def test_cvode_jax_all_exports():
-    """cvode_jax.__all__ equals the literal set retained in Phase 0."""
+    """cvode_jax.__all__ matches the fixed set of public re-exports."""
     from aragog.solver import cvode_jax
 
     expected = {
@@ -82,7 +82,6 @@ def test_top_level_modules_list():
     """Literal list of top-level modules in aragog."""
     expected_modules = {
         '__init__.py',
-        '_version.py',
         'cfg',
         'cli.py',
         'config',
@@ -98,6 +97,6 @@ def test_top_level_modules_list():
     actual = {
         p.name
         for p in SRC_ROOT.iterdir()
-        if p.name != '__pycache__' and not p.name.startswith('.')
+        if p.name not in ('__pycache__', '_version.py') and not p.name.startswith('.')
     }
     assert actual == expected_modules

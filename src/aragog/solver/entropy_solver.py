@@ -1340,6 +1340,34 @@ class EntropySolver:
         # Rheology parameters for Arrhenius viscosity and yield stress closure
         solid_p = self.parameters.phase_solid
         mixed_p = getattr(self.parameters, 'phase_mixed', None)
+        if (
+            getattr(solid_p, 'enabled', False)
+            and mixed_p is not None
+            and getattr(mixed_p, 'enabled', False)
+        ):
+            rheo_fields = (
+                'activation_energy',
+                'activation_volume',
+                'yield_stress_c',
+                'yield_stress_mu',
+                'stress_closure_mode',
+                'arrhenius_t_ref',
+                'yield_stress_max',
+                'viscosity_max_log10',
+                'lid_base_mode',
+                'lid_base_temperature',
+                'lid_contrast_coeff',
+            )
+            for fld in rheo_fields:
+                val_s = getattr(solid_p, fld, None)
+                val_m = getattr(mixed_p, fld, None)
+                if val_s != val_m:
+                    logger.warning(
+                        "Rheology parameter '%s' differs between phase_solid (%r) and phase_mixed (%r); using phase_solid",
+                        fld,
+                        val_s,
+                        val_m,
+                    )
         p_src = (
             solid_p
             if getattr(solid_p, 'enabled', False)

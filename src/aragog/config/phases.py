@@ -17,6 +17,9 @@ SEPARATION_VISCOSITY_DEFAULT: str = 'melt'
 STRESS_CLOSURE_MODES: tuple[str, str] = ('local', 'global')
 STRESS_CLOSURE_DEFAULT: str = 'local'
 
+LID_BASE_MODES: tuple[str, str] = ('fixed', 'rheological')
+LID_BASE_DEFAULT: str = 'fixed'
+
 
 @attrs.define
 class PhaseConfig:
@@ -63,20 +66,25 @@ class PhaseConfig:
     viscosity: float | str
     entropy: float | str = ''
     enabled: bool = False
-    activation_energy: float = 300e3
-    activation_volume: float = 5e-6
-    yield_stress_c: float = 50e6
-    yield_stress_mu: float = 0.6
+    activation_energy: float = attrs.field(default=300e3, validator=attrs.validators.ge(0.0))
+    activation_volume: float = attrs.field(default=5e-6, validator=attrs.validators.ge(0.0))
+    yield_stress_c: float = attrs.field(default=50e6, validator=attrs.validators.ge(0.0))
+    yield_stress_mu: float = attrs.field(default=0.6, validator=attrs.validators.ge(0.0))
     stress_closure_mode: str = attrs.field(
         default=STRESS_CLOSURE_DEFAULT,
         validator=attrs.validators.in_(STRESS_CLOSURE_MODES),
     )
-    arrhenius_t_ref: float = 1600.0
-    yield_stress_max: float = 500.0e6
-    viscosity_max_log10: float = 40.0
-    lid_base_mode: str = 'fixed'
-    lid_base_temperature: float = 1400.0
-    lid_contrast_coeff: float = 2.2
+    arrhenius_t_ref: float = attrs.field(default=1600.0, validator=attrs.validators.gt(0.0))
+    yield_stress_max: float = attrs.field(default=500.0e6, validator=attrs.validators.ge(0.0))
+    viscosity_max_log10: float = attrs.field(default=40.0, validator=attrs.validators.gt(0.0))
+    lid_base_mode: str = attrs.field(
+        default=LID_BASE_DEFAULT,
+        validator=attrs.validators.in_(LID_BASE_MODES),
+    )
+    lid_base_temperature: float = attrs.field(
+        default=1400.0, validator=attrs.validators.gt(0.0)
+    )
+    lid_contrast_coeff: float = attrs.field(default=2.2, validator=attrs.validators.gt(0.0))
 
 
 @attrs.define
@@ -166,17 +174,22 @@ class MixedPhaseConfig:
     const_T_ref: float = 3500.0
     const_S_ref: float = 3000.0
     enabled: bool = False
-    activation_energy: float = 300e3
-    activation_volume: float = 5e-6
-    yield_stress_c: float = 50e6
-    yield_stress_mu: float = 0.6
+    activation_energy: float = attrs.field(default=300e3, validator=attrs.validators.ge(0.0))
+    activation_volume: float = attrs.field(default=5e-6, validator=attrs.validators.ge(0.0))
+    yield_stress_c: float = attrs.field(default=50e6, validator=attrs.validators.ge(0.0))
+    yield_stress_mu: float = attrs.field(default=0.6, validator=attrs.validators.ge(0.0))
     stress_closure_mode: str = attrs.field(
         default=STRESS_CLOSURE_DEFAULT,
         validator=attrs.validators.in_(STRESS_CLOSURE_MODES),
     )
-    arrhenius_t_ref: float = 1600.0
-    yield_stress_max: float = 500.0e6
-    viscosity_max_log10: float = 40.0
-    lid_base_mode: str = 'fixed'
-    lid_base_temperature: float = 1400.0
-    lid_contrast_coeff: float = 2.2
+    arrhenius_t_ref: float = attrs.field(default=1600.0, validator=attrs.validators.gt(0.0))
+    yield_stress_max: float = attrs.field(default=500.0e6, validator=attrs.validators.ge(0.0))
+    viscosity_max_log10: float = attrs.field(default=40.0, validator=attrs.validators.gt(0.0))
+    lid_base_mode: str = attrs.field(
+        default=LID_BASE_DEFAULT,
+        validator=attrs.validators.in_(LID_BASE_MODES),
+    )
+    lid_base_temperature: float = attrs.field(
+        default=1400.0, validator=attrs.validators.gt(0.0)
+    )
+    lid_contrast_coeff: float = attrs.field(default=2.2, validator=attrs.validators.gt(0.0))

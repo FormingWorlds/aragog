@@ -28,7 +28,7 @@ def shared_eos():
     return EntropyEOS(EOS_DIR)
 
 
-@pytest.mark.unit
+@pytest.mark.smoke
 @pytest.mark.parametrize('solver_impl', ['numpy', 'jax'])
 def test_yielding_active_probe(solver_impl, shared_eos):
     """Verify yielding active probe against recorded reference fixtures."""
@@ -43,17 +43,10 @@ def test_yielding_active_probe(solver_impl, shared_eos):
     if initial_entropy is not None:
         solver.set_initial_entropy(initial_entropy)
 
-    try:
-        ret = solver.solve()
-    except Exception:
-        ret = None
-
-    if ret is None:
-        output = solver.get_state()
-        S = output.S_final
-        T = output.T_stag
-    else:
-        S, T, output = ret
+    solver.solve()
+    output = solver.get_state()
+    S = output.S_final
+    T = output.T_stag
 
     # Check yielding active invariants
     phi = output.phi_basic

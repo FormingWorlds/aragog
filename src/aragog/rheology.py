@@ -75,12 +75,16 @@ def eta_diff(
         float or numpy.ndarray
             Dynamic diffusion creep viscosity :math:`\eta_\mathrm{diff}` [Pa s].
     """
+    if t_ref <= 0.0:
+        raise ValueError(f't_ref must be positive, got {t_ref}')
     t = np.asarray(temperature, dtype=float)
     p = np.asarray(pressure, dtype=float)
     exponent = (activation_energy + p * activation_volume) / (r_gas * t) - activation_energy / (
         r_gas * t_ref
     )
-    max_exponent = (viscosity_max_log10 - np.log10(viscosity_solid)) * np.log(10.0)
+    max_exponent = (
+        viscosity_max_log10 - np.log10(np.maximum(viscosity_solid, 1e-300))
+    ) * np.log(10.0)
     clipped_exp = np.clip(exponent, -700.0, max_exponent)
     result = viscosity_solid * np.exp(clipped_exp)
     if np.ndim(temperature) == 0 and np.ndim(pressure) == 0:

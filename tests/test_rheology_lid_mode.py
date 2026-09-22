@@ -42,7 +42,7 @@ def test_rheological_lid_mode_runs_numpy_mlt():
 
     S = np.linspace(3000, 2000, mesh.staggered.radii.size)
 
-    # Pre-fix this raises NameError: name 'compute_t_lid_base' is not defined
+    # Verify state update with rheological lid base mode
     state.update(S, time=0.0)
 
     # If we got here, it didn't crash

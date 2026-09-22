@@ -17,6 +17,7 @@ import numpy as np
 import numpy.typing as npt
 
 from aragog.config.phases import (
+    LID_BASE_MODES,
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
     STRESS_CLOSURE_DEFAULT,
@@ -117,13 +118,17 @@ class EntropyPhaseEvaluator:
                 f'got {stress_closure_mode!r}'
             )
         self._stress_closure_mode = stress_closure_mode
+        if arrhenius_t_ref <= 0.0:
+            raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
         self._arrhenius_t_ref = arrhenius_t_ref
         self._enabled = enabled
         self._yield_stress_max = yield_stress_max
+        if float(viscosity_max_log10) <= 0.0:
+            raise ValueError(f'viscosity_max_log10 must be positive, got {viscosity_max_log10}')
         self._viscosity_max_log10 = float(viscosity_max_log10)
-        if lid_base_mode not in ('fixed', 'rheological'):
+        if lid_base_mode not in LID_BASE_MODES:
             raise ValueError(
-                f"Unknown lid_base_mode {lid_base_mode!r}; expected 'fixed' or 'rheological'"
+                f'Unknown lid_base_mode {lid_base_mode!r}; expected {LID_BASE_MODES}'
             )
         if enabled:
             if lid_base_mode == 'rheological' and self._activation_energy <= 0:
@@ -265,7 +270,7 @@ class EntropyPhaseEvaluator:
                     dtype=float,
                 )
             else:
-                self._tau_y = np.full_like(S, self._yield_stress_c)
+                self._tau_y = np.full_like(S, min(self._yield_stress_c, self._yield_stress_max))
         else:
             self._tau_y = None
         self._visc_solid_weight = np.ones_like(S)
