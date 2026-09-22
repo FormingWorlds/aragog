@@ -214,12 +214,24 @@ class PhaseParams(eqx.Module):
         self.yield_stress_c = float(yield_stress_c)
         self.yield_stress_mu = float(yield_stress_mu)
         self.strain_rate = float(strain_rate)
+        if str(stress_closure_mode) not in ('local', 'global'):
+            raise ValueError(
+                f"Unknown stress_closure_mode {stress_closure_mode!r}; expected 'local' or 'global'"
+            )
         self.stress_closure_mode = str(stress_closure_mode)
         self.arrhenius_t_ref = float(arrhenius_t_ref)
         self.yield_stress_max = float(yield_stress_max)
         if str(lid_base_mode) not in ('fixed', 'rheological'):
-            raise ValueError(f"Unknown lid_base_mode {lid_base_mode!r}; expected 'fixed' or 'rheological'")
+            raise ValueError(
+                f"Unknown lid_base_mode {lid_base_mode!r}; expected 'fixed' or 'rheological'"
+            )
         self.lid_base_mode = str(lid_base_mode)
+        if self.enabled:
+            if self.lid_base_mode == 'rheological' and self.activation_energy == 0:
+                raise ValueError(
+                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
+                    f'activation_energy, but activation_energy={self.activation_energy}'
+                )
         self.lid_base_temperature = float(lid_base_temperature)
         self.lid_contrast_coeff = float(lid_contrast_coeff)
         self.k_solid = k_solid
@@ -893,7 +905,7 @@ def compute_mlt(
         if params.lid_base_mode == 'rheological':
             t_m = jnp.max(T)
             e_eff = params.activation_energy + mesh.P_basic[-1] * params.activation_volume
-            dt_rh = R_GAS * t_m**2 / jnp.maximum(e_eff, 1.0)
+            dt_rh = R_GAS * t_m**2 / e_eff
             t_lid_base = t_m - params.lid_contrast_coeff * dt_rh
         else:
             t_lid_base = params.lid_base_temperature
@@ -907,7 +919,9 @@ def compute_mlt(
         d_lid_cold = mesh.radii_basic[-1] - mesh.radii_basic[0]
         d_lid_raw = jnp.where(has_hot, d_lid_hot, d_lid_cold)
 
-        dr_min = jnp.where(mesh.radii_basic.size > 1, mesh.radii_basic[-1] - mesh.radii_basic[-2], 1e-15)
+        dr_min = jnp.where(
+            mesh.radii_basic.size > 1, mesh.radii_basic[-1] - mesh.radii_basic[-2], 1e-15
+        )
         d_lid = jnp.maximum(d_lid_raw, dr_min)
 
         interior_mask = mesh.radii_basic <= (mesh.radii_basic[-1] - d_lid)

@@ -154,6 +154,8 @@ def test_effective_viscosity_yield_capping():
         'Deviatoric stress must never exceed yield stress'
     )
     assert np.all(eta_eff_arr <= visc_diff), 'Effective viscosity must never exceed eta_diff'
+    yield_regime = (tau_y / (2.0 * strain_rates)) < visc_diff
+    assert np.all(eta_eff_arr[yield_regime] < 0.5 * visc_diff)
     # At extreme strain rate, stress should approach tau_y asymptotically
     assert stresses[-1] == pytest.approx(tau_y, rel=1.0e-4)
 
@@ -161,6 +163,8 @@ def test_effective_viscosity_yield_capping():
     eta_sharp = eta_eff(visc_diff, tau_y, strain_rates, smooth=False)
     # Harmonic mean is strictly smaller than or equal to sharp min
     assert np.all(eta_eff_arr <= eta_sharp + 1.0e-10)
+    assert np.all(eta_sharp[yield_regime] < visc_diff)
+    assert np.all(eta_sharp[~yield_regime] == pytest.approx(visc_diff))
 
 
 @pytest.mark.unit

@@ -224,9 +224,10 @@ def test_numpy_jax_rheology_float64_parity():
     tau_jx_lin = float(jnp.minimum(jax_tau(jnp.asarray(p_lin), _TAU_C, _TAU_MU), _TAU_MAX))
     assert tau_jx_lin == pytest.approx(tau_np_lin, rel=1e-9)
 
+
 def test_viscosity_max_log10_clipping():
     from aragog.rheology import eta_diff, eta_eff
-    
+
     T = 40.0
     P = 0.0
     eta_d = eta_diff(
@@ -237,16 +238,118 @@ def test_viscosity_max_log10_clipping():
         activation_volume=5e-6,
         t_ref=1600.0,
         r_gas=8.314462618,
-        viscosity_max_log10=40.0
+        viscosity_max_log10=40.0,
     )
-    
-    import pytest; assert eta_d == pytest.approx(1e40, rel=1e-12)
-    
+
+    assert eta_d == pytest.approx(1e40, rel=1e-12)
+
     # Check eta_eff
     eta_e = eta_eff(
         visc_diff=eta_d,
         tau_y=50e6,
         strain_rate=1e-15,
     )
-    
+
     assert np.isfinite(eta_e)
+
+
+def test_lid_base_mode_and_stress_closure_validation():
+    """Verify validation of lid_base_mode, stress_closure_mode, and the N10 invalid combination."""
+    import pytest
+
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+    from aragog.jax.phase import PhaseParams
+    from aragog.parser import _PhaseMixedParameters, _PhaseParameters
+
+    # 1. JAX PhaseParams stress_closure_mode validation
+    with pytest.raises(ValueError, match="Unknown stress_closure_mode 'invalid'"):
+        PhaseParams(stress_closure_mode='invalid')
+
+    # 2. JAX PhaseParams lid_base_mode validation
+    with pytest.raises(ValueError, match="Unknown lid_base_mode 'invalid'"):
+        PhaseParams(lid_base_mode='invalid')
+
+    # 3. JAX PhaseParams rejects enabled=True with activation_energy=0 and lid_base_mode='rheological'
+    with pytest.raises(ValueError, match='lid_base_mode.*activation_energy'):
+        PhaseParams(enabled=True, activation_energy=0.0, lid_base_mode='rheological')
+
+    # 4. JAX PhaseParams accepts enabled=False with activation_energy=0 and lid_base_mode='rheological'
+    p = PhaseParams(enabled=False, activation_energy=0.0, lid_base_mode='rheological')
+    assert p.lid_base_mode == 'rheological'
+
+    # 5. EntropyPhaseEvaluator lid_base_mode validation
+    with pytest.raises(ValueError, match="Unknown lid_base_mode 'invalid'"):
+        EntropyPhaseEvaluator(
+            entropy_eos=None,
+            gravitational_acceleration=None,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.1,
+            viscosity_solid=1e21,
+            viscosity_liquid=1e2,
+            grain_size=1e-3,
+            thermal_conductivity_solid=4.0,
+            thermal_conductivity_liquid=2.0,
+            matprop_smooth_width=0.0,
+            lid_base_mode='invalid',
+        )
+
+    # 6. EntropyPhaseEvaluator rejects enabled=True with activation_energy=0 and lid_base_mode='rheological'
+    with pytest.raises(ValueError, match='lid_base_mode.*activation_energy'):
+        EntropyPhaseEvaluator(
+            entropy_eos=None,
+            gravitational_acceleration=None,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.1,
+            viscosity_solid=1e21,
+            viscosity_liquid=1e2,
+            grain_size=1e-3,
+            thermal_conductivity_solid=4.0,
+            thermal_conductivity_liquid=2.0,
+            matprop_smooth_width=0.0,
+            enabled=True,
+            activation_energy=0.0,
+            lid_base_mode='rheological',
+        )
+
+    # 7. Parser dataclasses validation
+    mixed_kwargs = dict(
+        latent_heat_of_fusion=4.0e5,
+        rheological_transition_melt_fraction=0.4,
+        rheological_transition_width=0.15,
+        solidus='solidus.dat',
+        liquidus='liquidus.dat',
+        phase='mixed',
+        phase_transition_width=0.01,
+        grain_size=1.0e-3,
+    )
+    with pytest.raises(ValueError, match="Unknown lid_base_mode 'invalid'"):
+        _PhaseMixedParameters(**mixed_kwargs, lid_base_mode='invalid')
+
+    with pytest.raises(ValueError, match='lid_base_mode.*activation_energy'):
+        _PhaseMixedParameters(
+            **mixed_kwargs, enabled=True, activation_energy=0.0, lid_base_mode='rheological'
+        )
+
+    with pytest.raises(ValueError, match="Unknown lid_base_mode 'invalid'"):
+        _PhaseParameters(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=2e-5,
+            viscosity=1e21,
+            lid_base_mode='invalid',
+        )
+
+    with pytest.raises(ValueError, match='lid_base_mode.*activation_energy'):
+        _PhaseParameters(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=2e-5,
+            viscosity=1e21,
+            enabled=True,
+            activation_energy=0.0,
+            lid_base_mode='rheological',
+        )

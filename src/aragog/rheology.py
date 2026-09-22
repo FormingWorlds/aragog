@@ -29,7 +29,7 @@ def compute_t_lid_base(
     The lid base is defined as t_m - lid_contrast_coeff * dT_rh.
     """
     e_eff = e_a + p_lid * v_a
-    dt_rh = r_gas * t_m**2 / max(e_eff, 1.0)
+    dt_rh = r_gas * t_m**2 / e_eff
     return t_m - lid_contrast_coeff * dt_rh
 
 
@@ -45,15 +45,14 @@ def eta_diff(
 ) -> FloatOrArray:
     r"""Compute temperature- and pressure-dependent Arrhenius viscosity.
 
-        Implements the solid-state diffusion creep viscosity law:
-        .. math::
-            \eta_\mathrm{diff}(T, P) = \eta_0 \exp\left(
-                rac{E_a + P V_a}{R T} - rac{E_a}{R T_\mathrm{ref}}
+    Implements the solid-state diffusion creep viscosity law:
+    .. math::
+        \eta_\mathrm{diff}(T, P) = \eta_0 \exp\left(
+            \frac{E_a + P V_a}{R T} - \frac{E_a}{R T_\mathrm{ref}}
+        \right)
 
-    ight)
-
-        Parameters
-        ----------
+    Parameters
+    ----------
         temperature : float or numpy.ndarray
             Temperature :math:`T` [K].
         pressure : float or numpy.ndarray
@@ -98,7 +97,7 @@ def compute_yield_stress(
     r"""Compute Byerlee frictional yield stress.
 
     .. math::
-                au_y(P) = c + \mu P
+        \tau_y(P) = c + \mu P
 
     Parameters
     ----------
@@ -112,7 +111,7 @@ def compute_yield_stress(
     Returns
     -------
     float or numpy.ndarray
-        Yield stress :math:`	au_y` [Pa].
+        Yield stress :math:`\tau_y` [Pa].
     """
     p = np.asarray(pressure, dtype=float)
     tau_y = np.minimum(yield_stress_c + yield_stress_mu * p, yield_stress_max)
@@ -130,33 +129,32 @@ def eta_eff(
 ) -> FloatOrArray:
     r"""Compute effective viscosity with plastic yielding cap.
 
-        The plastic yielding branch limits the deviatoric stress to :math:`	au_y`:
-        .. math::
-            \eta_\mathrm{yield} = rac{	au_y}{2 \dot{\epsilon}}
+    The plastic yielding branch limits the deviatoric stress to :math:`\tau_y`:
+    .. math::
+        \eta_\mathrm{yield} = \frac{\tau_y}{2 \dot{\epsilon}}
 
-        Under smooth harmonic blending (continuous pseudoplastic formulation):
-        .. math::
-            \eta_\mathrm{eff} = rac{\eta_\mathrm{diff} \eta_\mathrm{yield}}{\eta_\mathrm{diff} + \eta_\mathrm{yield}}
-            = \left( rac{1}{\eta_\mathrm{diff}} + rac{2 \dot{\epsilon}}{	au_y}
-    ight)^{-1}
+    Under smooth harmonic blending (continuous pseudoplastic formulation):
+    .. math::
+        \eta_\mathrm{eff} = \frac{\eta_\mathrm{diff} \eta_\mathrm{yield}}{\eta_\mathrm{diff} + \eta_\mathrm{yield}}
+        = \left( \frac{1}{\eta_\mathrm{diff}} + \frac{2 \dot{\epsilon}}{\tau_y} \right)^{-1}
 
-        Parameters
-        ----------
-        visc_diff : float or numpy.ndarray
-            Ductile / diffusion creep viscosity :math:`\eta_\mathrm{diff}` [Pa s].
-        tau_y : float or numpy.ndarray
-            Yield stress :math:`	au_y` [Pa].
-        strain_rate : float or numpy.ndarray
-            Second invariant of deviatoric strain rate :math:`\dot{\epsilon}` [1/s].
-        smooth : bool, default True
-            If True, use harmonic mean smooth minimum. If False, use sharp minimum.
-        eps : float, default 1.0e-30
-            Small regularization to prevent division by zero at zero strain rate.
+    Parameters
+    ----------
+    visc_diff : float or numpy.ndarray
+        Ductile / diffusion creep viscosity :math:`\eta_\mathrm{diff}` [Pa s].
+    tau_y : float or numpy.ndarray
+        Yield stress :math:`\tau_y` [Pa].
+    strain_rate : float or numpy.ndarray
+        Second invariant of deviatoric strain rate :math:`\dot{\epsilon}` [1/s].
+    smooth : bool, default True
+        If True, use harmonic mean smooth minimum. If False, use sharp minimum.
+    eps : float, default 1.0e-30
+        Small regularization to prevent division by zero at zero strain rate.
 
-        Returns
-        -------
-        float or numpy.ndarray
-            Effective dynamic viscosity :math:`\eta_\mathrm{eff}` [Pa s].
+    Returns
+    -------
+    float or numpy.ndarray
+        Effective dynamic viscosity :math:`\eta_\mathrm{eff}` [Pa s].
     """
     eta_d = np.asarray(visc_diff, dtype=float)
     ty = np.asarray(tau_y, dtype=float)
@@ -181,7 +179,7 @@ def compute_strain_rate_local(
     r"""Compute local convective strain rate from MLT state variables.
 
     .. math::
-        \dot{\epsilon}_\mathrm{local} = rac{v}{\max(l_\mathrm{mix}, \epsilon)}
+        \dot{\epsilon}_\mathrm{local} = \frac{v}{\max(l_\mathrm{mix}, \epsilon)}
 
     Parameters
     ----------
@@ -219,7 +217,7 @@ def compute_strain_rate_global(
     evaluates lid thickness :math:`d_\mathrm{lid} = R_\mathrm{surf} - r_\mathrm{base}`,
     and uses the peak convective velocity below the lid as interior velocity :math:`v_\mathrm{int}`:
     .. math::
-        \dot{\epsilon}_\mathrm{global} = rac{v_\mathrm{int}}{\max(d_\mathrm{lid}, \epsilon)}
+        \dot{\epsilon}_\mathrm{global} = \frac{v_\mathrm{int}}{\max(d_\mathrm{lid}, \epsilon)}
 
     Parameters
     ----------

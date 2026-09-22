@@ -1,0 +1,102 @@
+# Aragog test configuration: active yielding probe
+# All units are SI unless otherwise specified.
+
+[solver]
+start_time = 0
+end_time = 100
+atol = 1e-6
+rtol = 1e-6
+tsurf_poststep_change = 30
+max_steps = 10
+
+[boundary_conditions]
+outer_boundary_condition = 1
+outer_boundary_value = 1800
+inner_boundary_condition = 3
+inner_boundary_value = 2500
+emissivity = 1
+equilibrium_temperature = 273
+core_heat_capacity = 880
+
+[mesh]
+outer_radius = 6371000
+inner_radius = 5371000
+number_of_nodes = 50
+mixing_length_profile = "constant"
+core_density = 10738.332568062382
+surface_density = 4090
+gravitational_acceleration = 9.81
+adiabatic_bulk_modulus = 260E9
+
+[energy]
+conduction = true
+convection = true
+gravitational_separation = false
+mixing = false
+radionuclides = false
+tidal = false
+
+[initial_condition]
+surface_temperature = 2000
+basal_temperature = 2500
+
+[phase_liquid]
+density = 4000
+viscosity = 1E2
+heat_capacity = 1000
+melt_fraction = 1
+thermal_conductivity = 4
+thermal_expansivity = 1.0E-5
+
+[phase_solid]
+density = 4200
+viscosity = 1E21
+heat_capacity = 1000
+melt_fraction = 0
+thermal_conductivity = 4
+thermal_expansivity = 1.0E-5
+enabled = true
+stress_closure_mode = "local"
+activation_energy = 300e3
+activation_volume = 5e-6
+yield_stress_c = 1e5
+yield_stress_mu = 0.05
+yield_stress_max = 1e6
+arrhenius_t_ref = 1600.0
+viscosity_max_log10 = 40.0
+lid_base_mode = "fixed"
+lid_base_temperature = 1400.0
+lid_contrast_coeff = 2.2
+
+[phase_mixed]
+latent_heat_of_fusion = 4e6
+rheological_transition_melt_fraction = 0.4
+rheological_transition_width = 0.15
+solidus = "data/test/solidus_1d_lookup.dat"
+liquidus = "data/test/liquidus_1d_lookup.dat"
+phase = "mixed"
+phase_transition_width = 0.1
+grain_size = 1e-3
+separation_viscosity = "melt"
+cp_blend = "latent"
+matprop_smooth_width = 0.0
+const_properties = false
+const_rho = 4000.0
+const_Cp = 1000.0
+const_alpha = 1e-5
+const_cond = 4.0
+const_log10visc = 2.0
+const_T_ref = 3500.0
+const_S_ref = 3000.0
+enabled = true
+stress_closure_mode = "local"
+activation_energy = 300e3
+activation_volume = 5e-6
+yield_stress_c = 1e5
+yield_stress_mu = 0.05
+yield_stress_max = 1e6
+arrhenius_t_ref = 1600.0
+viscosity_max_log10 = 40.0
+lid_base_mode = "fixed"
+lid_base_temperature = 1400.0
+lid_contrast_coeff = 2.2

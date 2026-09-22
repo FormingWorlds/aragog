@@ -321,6 +321,16 @@ class _PhaseMixedParameters:
                 f'stress_closure_mode must be one of {STRESS_CLOSURE_MODES}, '
                 f'got {self.stress_closure_mode!r}'
             )
+        if self.lid_base_mode not in ('fixed', 'rheological'):
+            raise ValueError(
+                f"Unknown lid_base_mode {self.lid_base_mode!r}; expected 'fixed' or 'rheological'"
+            )
+        if self.enabled:
+            if self.lid_base_mode == 'rheological' and self.activation_energy == 0:
+                raise ValueError(
+                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
+                    f'activation_energy, but activation_energy={self.activation_energy}'
+                )
 
 
 @dataclass
@@ -358,6 +368,16 @@ class _PhaseParameters:
                 f'stress_closure_mode must be one of {STRESS_CLOSURE_MODES}, '
                 f'got {self.stress_closure_mode!r}'
             )
+        if self.lid_base_mode not in ('fixed', 'rheological'):
+            raise ValueError(
+                f"Unknown lid_base_mode {self.lid_base_mode!r}; expected 'fixed' or 'rheological'"
+            )
+        if self.enabled:
+            if self.lid_base_mode == 'rheological' and self.activation_energy == 0:
+                raise ValueError(
+                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
+                    f'activation_energy, but activation_energy={self.activation_energy}'
+                )
 
 
 @dataclass

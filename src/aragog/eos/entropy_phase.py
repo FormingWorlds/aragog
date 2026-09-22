@@ -120,7 +120,16 @@ class EntropyPhaseEvaluator:
         self._arrhenius_t_ref = arrhenius_t_ref
         self._enabled = enabled
         self._yield_stress_max = yield_stress_max
-        self._viscosity_max_log10 = viscosity_max_log10
+        if lid_base_mode not in ('fixed', 'rheological'):
+            raise ValueError(
+                f"Unknown lid_base_mode {lid_base_mode!r}; expected 'fixed' or 'rheological'"
+            )
+        if enabled:
+            if lid_base_mode == 'rheological' and self._activation_energy == 0:
+                raise ValueError(
+                    f'Invalid combination: lid_base_mode={lid_base_mode!r} requires non-zero '
+                    f'activation_energy, but activation_energy={self._activation_energy}'
+                )
         self._lid_base_mode = lid_base_mode
         self._lid_base_temperature = lid_base_temperature
         self._lid_contrast_coeff = lid_contrast_coeff
