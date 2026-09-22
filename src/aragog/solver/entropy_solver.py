@@ -1338,38 +1338,31 @@ class EntropySolver:
             phase_kwargs['thermal_conductivity_liquid'] = cond_l
 
         # Rheology parameters for Arrhenius viscosity and yield stress closure
-        phase_kwargs['enabled'] = bool(getattr(self.parameters.phase_solid, 'enabled', False))
-        phase_kwargs['activation_energy'] = float(
-            getattr(self.parameters.phase_solid, 'activation_energy', 300e3)
-        )
-        phase_kwargs['activation_volume'] = float(
-            getattr(self.parameters.phase_solid, 'activation_volume', 5e-6)
-        )
-        phase_kwargs['yield_stress_c'] = float(
-            getattr(self.parameters.phase_solid, 'yield_stress_c', 50e6)
-        )
-        phase_kwargs['yield_stress_mu'] = float(
-            getattr(self.parameters.phase_solid, 'yield_stress_mu', 0.6)
-        )
-        phase_kwargs['stress_closure_mode'] = str(
-            getattr(self.parameters.phase_solid, 'stress_closure_mode', 'local')
+        solid_p = self.parameters.phase_solid
+        mixed_p = getattr(self.parameters, 'phase_mixed', None)
+        p_src = (
+            solid_p
+            if getattr(solid_p, 'enabled', False)
+            else (mixed_p if getattr(mixed_p, 'enabled', False) else solid_p)
         )
 
-        phase_kwargs['arrhenius_t_ref'] = float(
-            getattr(self.parameters.phase_solid, 'arrhenius_t_ref', 1600.0)
+        phase_kwargs['enabled'] = bool(getattr(p_src, 'enabled', False))
+        phase_kwargs['activation_energy'] = float(getattr(p_src, 'activation_energy', 300e3))
+        phase_kwargs['activation_volume'] = float(getattr(p_src, 'activation_volume', 5e-6))
+        phase_kwargs['yield_stress_c'] = float(getattr(p_src, 'yield_stress_c', 50e6))
+        phase_kwargs['yield_stress_mu'] = float(getattr(p_src, 'yield_stress_mu', 0.6))
+        phase_kwargs['stress_closure_mode'] = str(
+            getattr(p_src, 'stress_closure_mode', 'local')
         )
-        phase_kwargs['yield_stress_max'] = float(
-            getattr(self.parameters.phase_solid, 'yield_stress_max', 500.0e6)
-        )
-        phase_kwargs['lid_base_mode'] = str(
-            getattr(self.parameters.phase_solid, 'lid_base_mode', 'fixed')
-        )
+
+        phase_kwargs['arrhenius_t_ref'] = float(getattr(p_src, 'arrhenius_t_ref', 1600.0))
+        phase_kwargs['yield_stress_max'] = float(getattr(p_src, 'yield_stress_max', 500.0e6))
+        phase_kwargs['viscosity_max_log10'] = float(getattr(p_src, 'viscosity_max_log10', 40.0))
+        phase_kwargs['lid_base_mode'] = str(getattr(p_src, 'lid_base_mode', 'fixed'))
         phase_kwargs['lid_base_temperature'] = float(
-            getattr(self.parameters.phase_solid, 'lid_base_temperature', 1400.0)
+            getattr(p_src, 'lid_base_temperature', 1400.0)
         )
-        phase_kwargs['lid_contrast_coeff'] = float(
-            getattr(self.parameters.phase_solid, 'lid_contrast_coeff', 2.2)
-        )
+        phase_kwargs['lid_contrast_coeff'] = float(getattr(p_src, 'lid_contrast_coeff', 2.2))
 
         # Constant-properties mode (SPIDER -use_const_properties parity)
         _const = getattr(self.parameters.phase_mixed, 'const_properties', False)

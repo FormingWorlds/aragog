@@ -671,7 +671,10 @@ class EntropyState:
             t_lid_base = getattr(self.phase_basic, 'lid_base_temperature', 1400.0)
             if lid_base_mode == 'rheological':
                 t_m = float(np.max(T))
-                p_lid = float(np.asarray(self.phase_basic.pressure).ravel()[-1])
+                p_arr = np.asarray(getattr(self.phase_basic, 'pressure', None))
+                p_lid = (
+                    float(p_arr.ravel()[-1]) if p_arr is not None and p_arr.size > 0 else 0.0
+                )
                 e_a = float(getattr(self.phase_basic, '_activation_energy', 300e3))
                 v_a = float(getattr(self.phase_basic, '_activation_volume', 5e-6))
                 lid_contrast_coeff = float(getattr(self.phase_basic, 'lid_contrast_coeff', 2.2))
@@ -709,7 +712,9 @@ class EntropyState:
                 velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
             )
         else:
-            viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * nu)
+            viscous_velocity = (
+                velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
+            )
             self._viscosity_basic = np.asarray(self.phase_basic.viscosity()).ravel()
 
         # Inviscid velocity (Re > Re_crit). Add a tiny eps^2 inside the

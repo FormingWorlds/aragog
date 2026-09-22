@@ -120,12 +120,13 @@ class EntropyPhaseEvaluator:
         self._arrhenius_t_ref = arrhenius_t_ref
         self._enabled = enabled
         self._yield_stress_max = yield_stress_max
+        self._viscosity_max_log10 = float(viscosity_max_log10)
         if lid_base_mode not in ('fixed', 'rheological'):
             raise ValueError(
                 f"Unknown lid_base_mode {lid_base_mode!r}; expected 'fixed' or 'rheological'"
             )
         if enabled:
-            if lid_base_mode == 'rheological' and self._activation_energy == 0:
+            if lid_base_mode == 'rheological' and self._activation_energy <= 0:
                 raise ValueError(
                     f'Invalid combination: lid_base_mode={lid_base_mode!r} requires non-zero '
                     f'activation_energy, but activation_energy={self._activation_energy}'
@@ -240,6 +241,7 @@ class EntropyPhaseEvaluator:
                     activation_volume=self._activation_volume,
                     t_ref=self._arrhenius_t_ref,
                     r_gas=R_GAS,
+                    viscosity_max_log10=self._viscosity_max_log10,
                 ),
                 dtype=float,
             )
@@ -475,6 +477,7 @@ class EntropyPhaseEvaluator:
                     activation_volume=self._activation_volume,
                     t_ref=self.arrhenius_t_ref,
                     r_gas=R_GAS,
+                    viscosity_max_log10=self._viscosity_max_log10,
                 ),
                 dtype=float,
             )
@@ -483,6 +486,7 @@ class EntropyPhaseEvaluator:
                     pressure=P_arr,
                     yield_stress_c=self._yield_stress_c,
                     yield_stress_mu=self._yield_stress_mu,
+                    yield_stress_max=self._yield_stress_max,
                 ),
                 dtype=float,
             )

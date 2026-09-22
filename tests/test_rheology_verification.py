@@ -350,6 +350,110 @@ def test_lid_base_mode_and_stress_closure_validation():
             thermal_expansivity=2e-5,
             viscosity=1e21,
             enabled=True,
-            activation_energy=0.0,
+            activation_energy=-100.0,
             lid_base_mode='rheological',
         )
+
+
+@pytest.mark.physics_invariant
+def test_eta_eff_infinite_yield_stress():
+    """Verify eta_eff handles infinite yield stress without NaN evaluation."""
+    from aragog.rheology import eta_eff
+
+    visc_diff = 1.0e21
+    tau_y_inf = np.inf
+    sr = 1.0e-15
+
+    # Smooth harmonic blend
+    eta_smooth = eta_eff(visc_diff, tau_y_inf, sr, smooth=True)
+    assert not np.isnan(eta_smooth)
+    assert eta_smooth == pytest.approx(visc_diff, rel=1.0e-12)
+
+    # Sharp min
+    eta_sharp = eta_eff(visc_diff, tau_y_inf, sr, smooth=False)
+    assert not np.isnan(eta_sharp)
+    assert eta_sharp == pytest.approx(visc_diff, rel=1.0e-12)
+
+
+@pytest.mark.physics_invariant
+def test_compute_t_lid_base_zero_or_negative_activation_energy():
+    """Verify compute_t_lid_base does not divide by zero when effective energy is <= 0."""
+    from aragog.rheology import compute_t_lid_base
+
+    # Zero effective energy
+    t_lid = compute_t_lid_base(t_m=1600.0, p_lid=0.0, e_a=0.0, v_a=0.0)
+    assert np.isfinite(t_lid)
+
+    # Negative effective energy
+    t_lid_neg = compute_t_lid_base(t_m=1600.0, p_lid=1e8, e_a=-1e5, v_a=0.0)
+    assert np.isfinite(t_lid_neg)
+
+
+@pytest.mark.unit
+def test_entropy_phase_evaluator_yield_stress_max_and_viscosity_max():
+    """Verify yield_stress_max and viscosity_max_log10 are stored and honored."""
+    from aragog.config import MixedPhaseConfig, PhaseConfig
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+
+    # Verify config classes accept all rheology fields
+    p_cfg = PhaseConfig(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=2e-5,
+        viscosity=1e21,
+        enabled=True,
+        arrhenius_t_ref=1500.0,
+        yield_stress_max=200.0e6,
+        viscosity_max_log10=28.0,
+    )
+    assert p_cfg.yield_stress_max == 200.0e6
+    assert p_cfg.viscosity_max_log10 == 28.0
+
+    m_cfg = MixedPhaseConfig(
+        latent_heat_of_fusion=4e5,
+        rheological_transition_melt_fraction=0.4,
+        rheological_transition_width=0.15,
+        solidus='solidus.dat',
+        liquidus='liquidus.dat',
+        phase='mixed',
+        phase_transition_width=0.01,
+        grain_size=1e-3,
+        enabled=True,
+        yield_stress_max=150.0e6,
+        viscosity_max_log10=30.0,
+    )
+    assert m_cfg.yield_stress_max == 150.0e6
+    assert m_cfg.viscosity_max_log10 == 30.0
+
+    # Evaluator in const_properties mode
+    evaluator = EntropyPhaseEvaluator(
+        entropy_eos=None,
+        gravitational_acceleration=None,
+        rheological_transition_melt_fraction=0.4,
+        rheological_transition_width=0.1,
+        viscosity_solid=1e21,
+        viscosity_liquid=1e2,
+        grain_size=1e-3,
+        thermal_conductivity_solid=4.0,
+        thermal_conductivity_liquid=2.0,
+        matprop_smooth_width=0.0,
+        const_properties=True,
+        enabled=True,
+        yield_stress_max=10.0e6,
+        viscosity_max_log10=25.0,
+    )
+    assert evaluator._yield_stress_max == 10.0e6
+    assert evaluator._viscosity_max_log10 == 25.0
+
+    # Update with low temperature to test viscosity cap
+    S = np.array([2500.0])
+    P = np.array([1.0e9])  # 1 GPa: without cap tau_y = 50e6 + 0.6*1e9 = 650 MPa
+    evaluator.set_pressure(P)
+    evaluator.set_entropy(S)
+    evaluator.update()
+    assert evaluator.tau_y is not None
+    assert np.all(evaluator.tau_y <= 10.0e6)
+    assert evaluator.eta_diff is not None
+    assert np.all(evaluator.eta_diff <= 10.0**25.0)

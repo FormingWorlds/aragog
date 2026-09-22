@@ -63,6 +63,7 @@ def test_yield_stress_transition():
     assert eta_eff_mobile[mid_idx] == pytest.approx(eta_d[mid_idx], rel=2e-2)
     assert eta_eff_stagnant[mid_idx] == pytest.approx(eta_d[mid_idx], rel=2e-2)
 
+
 def test_yield_stress_max_ceiling():
     """Verify that a non-default ceiling is correctly applied in numpy and JAX."""
     import jax.numpy as jnp
@@ -81,10 +82,7 @@ def test_yield_stress_max_ceiling():
 
     # 2. JAX version does not have yield_stress_max as kwarg, it is applied externally via jnp.minimum.
     # We test the pure JAX computation without the limit, and then apply it.
-    tau_y_jax = compute_yield_stress_jax(
-        p_jax, yield_stress_c=10e6, yield_stress_mu=0.5
-    )
+    tau_y_jax = compute_yield_stress_jax(p_jax, yield_stress_c=10e6, yield_stress_mu=0.5)
     tau_y_jax_limited = jnp.minimum(tau_y_jax, 200e6)
 
     assert float(tau_y_jax_limited[0]) == 200e6
-

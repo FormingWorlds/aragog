@@ -229,7 +229,7 @@ class PhaseParams(eqx.Module):
             )
         self.lid_base_mode = str(lid_base_mode)
         if self.enabled:
-            if self.lid_base_mode == 'rheological' and self.activation_energy == 0:
+            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
                 raise ValueError(
                     f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
                     f'activation_energy, but activation_energy={self.activation_energy}'
@@ -647,7 +647,9 @@ def compute_effective_viscosity(
         Effective solid viscosity eta_eff [Pa s].
     """
     inv_eta_diff = 1.0 / jnp.maximum(eta_diff, 1e-10)
-    plastic_term = 2.0 * strain_rate / jnp.maximum(tau_y, 1e-10)
+    plastic_term = jnp.where(
+        jnp.isinf(tau_y), 0.0, 2.0 * strain_rate / jnp.maximum(tau_y, 1e-10)
+    )
     inv_eta_eff = inv_eta_diff + plastic_term
     return 1.0 / jnp.maximum(inv_eta_eff, 1e-100)
 
@@ -907,7 +909,10 @@ def compute_mlt(
     if params.stress_closure_mode == 'global':
         if params.lid_base_mode == 'rheological':
             t_m = jnp.max(T)
-            e_eff = params.activation_energy + mesh.P_basic[-1] * params.activation_volume
+            e_eff = jnp.maximum(
+                params.activation_energy + mesh.P_basic[-1] * params.activation_volume,
+                1e-6,
+            )
             dt_rh = R_GAS * t_m**2 / e_eff
             t_lid_base = t_m - params.lid_contrast_coeff * dt_rh
         else:
@@ -944,7 +949,10 @@ def compute_mlt(
     # 3. Compute yielded solid viscosity
     if params.enabled:
         tau_y_term = tau_y / (2.0 * sr_safe)
-        eta_effective = (eta_diff * tau_y_term) / (eta_diff + tau_y_term)
+        is_inf = jnp.isinf(tau_y_term)
+        safe_ty_term = jnp.where(is_inf, 1.0, tau_y_term)
+        eta_effective = (eta_diff * safe_ty_term) / (eta_diff + safe_ty_term)
+        eta_effective = jnp.where(is_inf, eta_diff, eta_effective)
 
         # 4. Re-apply phase blend linearly in log space exactly as EOS does
         log_eta_unyielded = jnp.log10(jnp.maximum(eta_bulk_unyielded, 1e-30))

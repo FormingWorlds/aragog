@@ -28,7 +28,7 @@ def compute_t_lid_base(
     The rheological temperature scale is dT_rh = R T_m^2 / (E_a + P V_a).
     The lid base is defined as t_m - lid_contrast_coeff * dT_rh.
     """
-    e_eff = e_a + p_lid * v_a
+    e_eff = max(float(e_a + p_lid * v_a), 1e-6)
     dt_rh = r_gas * t_m**2 / e_eff
     return t_m - lid_contrast_coeff * dt_rh
 
@@ -162,7 +162,10 @@ def eta_eff(
 
     tau_y_term = ty / (2.0 * sr)
     if smooth:
-        result = (eta_d * tau_y_term) / (eta_d + tau_y_term)
+        is_inf = np.isinf(tau_y_term)
+        safe_ty_term = np.where(is_inf, 1.0, tau_y_term)
+        result = (eta_d * safe_ty_term) / (eta_d + safe_ty_term)
+        result = np.where(is_inf, eta_d, result)
     else:
         result = np.minimum(eta_d, tau_y_term)
 

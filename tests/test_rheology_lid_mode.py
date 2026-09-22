@@ -10,8 +10,8 @@ from aragog.solver.entropy_state import EntropyState
 @pytest.mark.unit
 def test_rheological_lid_mode_runs_numpy_mlt():
     from tests.test_convection_scaling import _make_mesh
-    mesh = _make_mesh()
 
+    mesh = _make_mesh()
 
     def _evaluator(pressure):
         ev = EntropyPhaseEvaluator(
@@ -21,7 +21,7 @@ def test_rheological_lid_mode_runs_numpy_mlt():
             const_rho=4000.0,
             enabled=True,
             stress_closure_mode='global',
-            lid_base_mode='rheological'
+            lid_base_mode='rheological',
         )
         ev.pressure = pressure
         ev.entropy = np.full_like(pressure, 2000.0)
@@ -37,10 +37,8 @@ def test_rheological_lid_mode_runs_numpy_mlt():
     state = EntropyState(
         evaluator=evaluator,
         phase_staggered=_evaluator(mesh.staggered.pressure),
-        phase_basic=_evaluator(mesh.basic.pressure)
+        phase_basic=_evaluator(mesh.basic.pressure),
     )
-
-
 
     S = np.linspace(3000, 2000, mesh.staggered.radii.size)
 
@@ -50,14 +48,16 @@ def test_rheological_lid_mode_runs_numpy_mlt():
     # If we got here, it didn't crash
     assert np.all(np.isfinite(state.phase_basic.viscosity()))
 
+
 @pytest.mark.unit
 def test_strain_rate_zero_when_no_lid():
     # Test that a column hotter than t_lid_base everywhere has strain rate 0
     # and effective viscosity == eta_diff
     from aragog.rheology import compute_strain_rate_global, eta_eff
+
     r = np.linspace(1e6, 2e6, 20)
     T = np.full(20, 1900.0)
-    v = np.full(20, 1e-9) # Some velocity
+    v = np.full(20, 1e-9)  # Some velocity
 
     # 1900 K is hotter than 1400 K (default t_lid_base)
     sr = compute_strain_rate_global(r, T, v, t_lid_base=1400.0)

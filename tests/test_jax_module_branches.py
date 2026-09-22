@@ -114,9 +114,10 @@ def eos_jax_fixture():
 
     return EntropyEOS_JAX(EOS_DIR)
 
+
 def test_phase_params_lid_base_mode_validation():
     """PhaseParams(lid_base_mode='bogus') must raise ValueError."""
     from aragog.jax.phase import PhaseParams
-    
+
     with pytest.raises(ValueError, match="Unknown lid_base_mode 'bogus'"):
         PhaseParams(lid_base_mode='bogus')

@@ -71,6 +71,12 @@ class PhaseConfig:
         default=STRESS_CLOSURE_DEFAULT,
         validator=attrs.validators.in_(STRESS_CLOSURE_MODES),
     )
+    arrhenius_t_ref: float = 1600.0
+    yield_stress_max: float = 500.0e6
+    viscosity_max_log10: float = 40.0
+    lid_base_mode: str = 'fixed'
+    lid_base_temperature: float = 1400.0
+    lid_contrast_coeff: float = 2.2
 
 
 @attrs.define
@@ -159,6 +165,7 @@ class MixedPhaseConfig:
     const_log10visc: float = 2.0
     const_T_ref: float = 3500.0
     const_S_ref: float = 3000.0
+    enabled: bool = False
     activation_energy: float = 300e3
     activation_volume: float = 5e-6
     yield_stress_c: float = 50e6
@@ -167,3 +174,9 @@ class MixedPhaseConfig:
         default=STRESS_CLOSURE_DEFAULT,
         validator=attrs.validators.in_(STRESS_CLOSURE_MODES),
     )
+    arrhenius_t_ref: float = 1600.0
+    yield_stress_max: float = 500.0e6
+    viscosity_max_log10: float = 40.0
+    lid_base_mode: str = 'fixed'
+    lid_base_temperature: float = 1400.0
+    lid_contrast_coeff: float = 2.2

@@ -323,11 +323,16 @@ def test_jax_compute_mlt_convection_scaling():
     ds_dr_array = -jnp.logspace(-8, -2, 10)
 
     # First, inviscid:
-    phase_inv = phase._replace(viscosity=ones * 1.0e10, kinematic_viscosity=ones * 1.0e10 / 4000.0)
+    phase_inv = phase._replace(
+        viscosity=ones * 1.0e10, kinematic_viscosity=ones * 1.0e10 / 4000.0
+    )
     k_inv = []
     for ds_dr in ds_dr_array:
         k_h, _ = compute_mlt(
-            jnp.full(n_basic, ds_dr), phase_inv, mesh, PhaseParams(enabled=True, kappah_floor=0.0)
+            jnp.full(n_basic, ds_dr),
+            phase_inv,
+            mesh,
+            PhaseParams(enabled=True, kappah_floor=0.0),
         )
         k_inv.append(float(k_h[10]))
 
@@ -342,7 +347,10 @@ def test_jax_compute_mlt_convection_scaling():
     k_visc = []
     for ds_dr in ds_dr_array:
         k_h, _ = compute_mlt(
-            jnp.full(n_basic, ds_dr), phase_visc, mesh, PhaseParams(enabled=True, kappah_floor=0.0)
+            jnp.full(n_basic, ds_dr),
+            phase_visc,
+            mesh,
+            PhaseParams(enabled=True, kappah_floor=0.0),
         )
         k_visc.append(float(k_h[10]))
 

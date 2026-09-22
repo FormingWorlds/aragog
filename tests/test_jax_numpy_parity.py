@@ -76,8 +76,12 @@ def test_jax_numpy_float64_parity():
         thermal_conductivity=jnp.array(state.phase_basic.thermal_conductivity()).ravel(),
         latent_heat=jnp.array(state.phase_basic.latent_heat()).ravel(),
         capacitance=jnp.array(state.cp_basic_diag * state.rho_basic_diag).ravel(),
-        eta_diff=jnp.array(state.phase_basic.eta_diff).ravel() if state.phase_basic.eta_diff is not None else None,
-        tau_y=jnp.array(state.phase_basic.tau_y).ravel() if state.phase_basic.tau_y is not None else None,
+        eta_diff=jnp.array(state.phase_basic.eta_diff).ravel()
+        if state.phase_basic.eta_diff is not None
+        else None,
+        tau_y=jnp.array(state.phase_basic.tau_y).ravel()
+        if state.phase_basic.tau_y is not None
+        else None,
         visc_solid_weight=jnp.array(np.ones_like(state.rho_basic_diag)).ravel(),
     )
 

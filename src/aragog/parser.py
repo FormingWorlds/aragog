@@ -326,7 +326,7 @@ class _PhaseMixedParameters:
                 f"Unknown lid_base_mode {self.lid_base_mode!r}; expected 'fixed' or 'rheological'"
             )
         if self.enabled:
-            if self.lid_base_mode == 'rheological' and self.activation_energy == 0:
+            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
                 raise ValueError(
                     f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
                     f'activation_energy, but activation_energy={self.activation_energy}'
@@ -373,7 +373,7 @@ class _PhaseParameters:
                 f"Unknown lid_base_mode {self.lid_base_mode!r}; expected 'fixed' or 'rheological'"
             )
         if self.enabled:
-            if self.lid_base_mode == 'rheological' and self.activation_energy == 0:
+            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
                 raise ValueError(
                     f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
                     f'activation_energy, but activation_energy={self.activation_energy}'
