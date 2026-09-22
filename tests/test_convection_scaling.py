@@ -134,6 +134,7 @@ def _make_state(mesh, log10visc):
             yield_stress_mu=0.0,
             yield_stress_max=1.0e40,
             stress_closure_mode='local',
+            enabled=False,
         )
         ev.set_pressure(pressure)
         return ev

@@ -638,7 +638,7 @@ class EntropyState:
         mixing_length_cubed = self._mixing_length_cu
         mixing_length_squared = self._mixing_length_sq
         nu = np.asarray(self.phase_basic.kinematic_viscosity()).ravel()
-        # 1D stress closure and effective viscosity capping (Option B: Explicit Closure)
+        # 1D stress closure and effective viscosity capping
         eta_d = getattr(self.phase_basic, 'eta_diff', None)
         if eta_d is not None and np.size(eta_d) > 0:
             if callable(eta_d):

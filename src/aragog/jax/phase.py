@@ -888,7 +888,7 @@ def compute_mlt(
     # avoiding spurious convection from a soft sigmoid.
     conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
 
-    # 1D stress closure and effective viscosity capping (Option B: Explicit Closure)
+    # 1D stress closure and effective viscosity capping
     eta_diff = phase_basic.eta_diff
     tau_y = phase_basic.tau_y
     rho = phase_basic.density

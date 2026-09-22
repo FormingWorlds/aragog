@@ -130,7 +130,7 @@ def build_jax_rhs_and_jacobian(
         )
     except ImportError as exc:
         raise RuntimeError(
-            'Option Z (JAX RHS + Jacobian) requires JAX and the '
+            'JAX RHS and Jacobian integration requires JAX and the '
             f'aragog.jax module. Original error: {exc}'
         ) from exc
 
