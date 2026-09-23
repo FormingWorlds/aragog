@@ -37,6 +37,7 @@ RE_CRIT = 9.0 / 8.0
 
 # Arrhenius rheology reference constants
 T_REF_ARRHENIUS: float = 1600.0  # Reference temperature [K]
+_DEFAULT_RHEOLOGY = SolidRheologyParams()
 
 
 # ---------------------------------------------------------------------------
@@ -203,24 +204,33 @@ class PhaseParams(eqx.Module):
         rheology: SolidRheologyParams | None = None,
     ):
         if rheology is not None:
-            enabled = rheology.enabled
-            activation_energy = rheology.activation_energy
-            activation_volume = rheology.activation_volume
-            activation_volume_decay_pressure = rheology.activation_volume_decay_pressure
-            arrhenius_t_ref = rheology.arrhenius_t_ref
-            viscosity_max_log10 = rheology.viscosity_max_log10
-            water_prefactor = rheology.water_prefactor
-            yield_stress_c = rheology.yield_stress_c
-            yield_stress_mu = rheology.yield_stress_mu
-            yield_stress_max = rheology.yield_stress_max
-            yield_switch_width = rheology.yield_switch_width
-            stress_closure_mode = rheology.stress_closure_mode
-            interior_flux_fraction = rheology.interior_flux_fraction
-            lid_base_mode = rheology.lid_base_mode
-            lid_base_temperature = rheology.lid_base_temperature
-            lid_contrast_coeff = rheology.lid_contrast_coeff
-            lid_mask_width_cells = rheology.lid_mask_width_cells
-            phi_visc_single = rheology.phi_visc_single
+
+            def _choose(name, kwarg_val):
+                default_val = getattr(_DEFAULT_RHEOLOGY, name)
+                if kwarg_val != default_val:
+                    return kwarg_val
+                return getattr(rheology, name)
+
+            enabled = _choose('enabled', enabled)
+            activation_energy = _choose('activation_energy', activation_energy)
+            activation_volume = _choose('activation_volume', activation_volume)
+            activation_volume_decay_pressure = _choose(
+                'activation_volume_decay_pressure', activation_volume_decay_pressure
+            )
+            arrhenius_t_ref = _choose('arrhenius_t_ref', arrhenius_t_ref)
+            viscosity_max_log10 = _choose('viscosity_max_log10', viscosity_max_log10)
+            water_prefactor = _choose('water_prefactor', water_prefactor)
+            yield_stress_c = _choose('yield_stress_c', yield_stress_c)
+            yield_stress_mu = _choose('yield_stress_mu', yield_stress_mu)
+            yield_stress_max = _choose('yield_stress_max', yield_stress_max)
+            yield_switch_width = _choose('yield_switch_width', yield_switch_width)
+            stress_closure_mode = _choose('stress_closure_mode', stress_closure_mode)
+            interior_flux_fraction = _choose('interior_flux_fraction', interior_flux_fraction)
+            lid_base_mode = _choose('lid_base_mode', lid_base_mode)
+            lid_base_temperature = _choose('lid_base_temperature', lid_base_temperature)
+            lid_contrast_coeff = _choose('lid_contrast_coeff', lid_contrast_coeff)
+            lid_mask_width_cells = _choose('lid_mask_width_cells', lid_mask_width_cells)
+            phi_visc_single = _choose('phi_visc_single', phi_visc_single)
 
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -235,8 +245,8 @@ class PhaseParams(eqx.Module):
         if float(arrhenius_t_ref) <= 0.0:
             raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
         self.arrhenius_t_ref = float(arrhenius_t_ref)
-        if float(viscosity_max_log10) <= 0.0:
-            raise ValueError(f'viscosity_max_log10 must be positive, got {viscosity_max_log10}')
+        if float(viscosity_max_log10) <= 20.0:
+            raise ValueError(f'viscosity_max_log10 must be > 20, got {viscosity_max_log10}')
         self.viscosity_max_log10 = float(viscosity_max_log10)
         self.water_prefactor = float(water_prefactor)
         self.yield_stress_c = float(yield_stress_c)
@@ -650,7 +660,9 @@ def compute_arrhenius_viscosity(
         viscosity_max_log10 - jnp.log10(jnp.maximum(viscosity_solid, 1e-300))
     ) * jnp.log(10.0)
     arg_bounded = jnp.clip(arg, -700.0, max_exponent)
-    return water_prefactor * viscosity_solid * jnp.exp(arg_bounded)
+    return jnp.minimum(
+        water_prefactor * viscosity_solid * jnp.exp(arg_bounded), 10.0**viscosity_max_log10
+    )
 
 
 def compute_yield_stress(

@@ -150,3 +150,84 @@ def test_custom_solid_rheology_params_propagation():
     assert jax_p.rheology == custom_rheo
     assert jax_p.water_prefactor == 0.5
     assert jax_p.phi_visc_single == 0.6
+
+
+def test_solid_rheology_params_unconditional_bounds_validation():
+    """Verify bounds validation runs unconditionally even when enabled=False."""
+    with pytest.raises(ValueError, match='phi_visc_single'):
+        SolidRheologyParams(enabled=False, phi_visc_single=-0.1)
+
+    with pytest.raises(ValueError, match='activation_energy'):
+        SolidRheologyParams(enabled=False, activation_energy=-100.0)
+
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        SolidRheologyParams(enabled=False, viscosity_max_log10=15.0)
+
+
+def test_phase_parameters_merge_precedence():
+    """Verify _PhaseParameters preserves custom rheology when flat kwargs are provided."""
+    custom = SolidRheologyParams(
+        enabled=True,
+        activation_energy=250e3,
+        yield_stress_c=40e6,
+        water_prefactor=0.5,
+    )
+    p = _PhaseParameters(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=2e-5,
+        viscosity=1e21,
+        rheology=custom,
+        lid_contrast_coeff=3.0,
+    )
+    assert p.rheology.enabled is True
+    assert p.rheology.activation_energy == 250e3
+    assert p.rheology.yield_stress_c == 40e6
+    assert p.rheology.water_prefactor == 0.5
+    assert p.rheology.lid_contrast_coeff == 3.0
+    assert p.lid_contrast_coeff == 3.0
+
+
+def test_phase_params_jax_merge_precedence():
+    """Verify JAX PhaseParams preserves custom rheology when flat kwargs are provided."""
+    custom = SolidRheologyParams(
+        enabled=True,
+        activation_energy=250e3,
+        yield_stress_c=40e6,
+        water_prefactor=0.5,
+    )
+    p = PhaseParams(rheology=custom, lid_contrast_coeff=3.0)
+    assert p.rheology.enabled is True
+    assert p.rheology.activation_energy == 250e3
+    assert p.rheology.yield_stress_c == 40e6
+    assert p.rheology.water_prefactor == 0.5
+    assert p.rheology.lid_contrast_coeff == 3.0
+
+
+def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
+    """Verify water_prefactor > 1 does not exceed viscosity_max_log10 cap."""
+    import numpy as np
+
+    from aragog.jax.phase import compute_arrhenius_viscosity as jax_arrhenius
+    from aragog.rheology import eta_diff as np_arrhenius
+
+    T = 200.0  # Cold temperature giving huge exponent
+    P = 1e9
+    cap_log10 = 35.0
+    expected_cap = 10.0**cap_log10
+
+    # NumPy
+    res_np = np_arrhenius(
+        T, P, viscosity_solid=1e21, viscosity_max_log10=cap_log10, water_prefactor=100.0
+    )
+    assert np.isclose(res_np, expected_cap)
+    assert res_np <= expected_cap
+
+    # JAX
+    res_jax = jax_arrhenius(
+        T, P, viscosity_solid=1e21, viscosity_max_log10=cap_log10, water_prefactor=100.0
+    )
+    assert np.isclose(float(res_jax), expected_cap)
+    assert float(res_jax) <= expected_cap

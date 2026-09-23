@@ -345,33 +345,15 @@ class _PhaseParameters:
     rheology: SolidRheologyParams = field(default=_DEFAULT_RHEOLOGY)
 
     def __post_init__(self) -> None:
-        if self.rheology is _DEFAULT_RHEOLOGY or any(
-            getattr(self, f.name) != getattr(_DEFAULT_RHEOLOGY, f.name)
-            for f in fields(SolidRheologyParams)
-        ):
-            self.rheology = SolidRheologyParams(
-                enabled=self.enabled,
-                activation_energy=self.activation_energy,
-                activation_volume=self.activation_volume,
-                activation_volume_decay_pressure=self.activation_volume_decay_pressure,
-                arrhenius_t_ref=self.arrhenius_t_ref,
-                viscosity_max_log10=self.viscosity_max_log10,
-                water_prefactor=self.water_prefactor,
-                yield_stress_c=self.yield_stress_c,
-                yield_stress_mu=self.yield_stress_mu,
-                yield_stress_max=self.yield_stress_max,
-                yield_switch_width=self.yield_switch_width,
-                stress_closure_mode=self.stress_closure_mode,
-                interior_flux_fraction=self.interior_flux_fraction,
-                lid_base_mode=self.lid_base_mode,
-                lid_base_temperature=self.lid_base_temperature,
-                lid_contrast_coeff=self.lid_contrast_coeff,
-                lid_mask_width_cells=self.lid_mask_width_cells,
-                phi_visc_single=self.phi_visc_single,
-            )
-        else:
-            for f in fields(SolidRheologyParams):
-                setattr(self, f.name, getattr(self.rheology, f.name))
+        base = self.rheology
+        d = {f.name: getattr(base, f.name) for f in fields(SolidRheologyParams)}
+        for f in fields(SolidRheologyParams):
+            val = getattr(self, f.name)
+            if val != getattr(_DEFAULT_RHEOLOGY, f.name):
+                d[f.name] = val
+        self.rheology = SolidRheologyParams(**d)
+        for f in fields(SolidRheologyParams):
+            setattr(self, f.name, getattr(self.rheology, f.name))
 
 
 @dataclass

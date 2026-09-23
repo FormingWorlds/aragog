@@ -32,7 +32,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_cvode_jax_no_reexports():
-    """cvode_jax does not re-export rheology functions (N6)."""
+    """Verify cvode_jax does not re-export rheology functions."""
     import aragog.solver.cvode_jax as cvode_mod
 
     assert not hasattr(cvode_mod, 'compute_arrhenius_viscosity')
