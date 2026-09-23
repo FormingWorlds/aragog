@@ -37,11 +37,11 @@ where:
 - $V_0$ is the zero-pressure activation volume (`activation_volume`, default $5 \times 10^{-6}\text{ m}^3\text{ mol}^{-1}$).
 - $P_\text{decay}$ is the characteristic pressure scale for activation volume decay (`activation_volume_decay_pressure`, default $\infty$).
 
-When $P_\text{decay} \to \infty$, $H(P)$ reduces to the linear form $H(P) = E_a + P V_0$. When $V_0 = 0$, $H(P)$ reduces to the temperature-only Arrhenius law $H(P) = E_a$.
+When $P_\text{decay} \to \infty$, $H(P)$ reduces to the linear form $H(P) = E_a + P V_0$. When $V_0 = 0$, $H(P)$ reduces to the temperature-only Arrhenius law $H(P) = E_a$. The default $P_\text{decay} = \infty$ preserves compatibility with linear activation volume baselines; setting $P_\text{decay} \approx 60\text{ GPa}$ is recommended for deep mantle convection studies.
 
 ### Numerical Evaluation
 
-Evaluating the expression $V_0 P_\text{decay} (1 - \exp(-P / P_\text{decay}))$ directly when $P_\text{decay} = \infty$ yields an indeterminate $\infty \times 0$ form. In numerical kernels, the enthalpy is evaluated using the vectorized array-level form:
+Evaluating the expression $V_0 P_\text{decay} (1 - \exp(-P / P_\text{decay}))$ directly when $P_\text{decay} = \infty$ yields an indeterminate $\infty \times 0$ form. In numerical kernels, the enthalpy is evaluated using the vectorised array-level form:
 
 $$
 H(P) = E_a + V_0 \cdot \operatorname{where}(\operatorname{isinf}(P_\text{decay}), P, -P_\text{safe} \cdot \operatorname{expm1}(-P / P_\text{safe}))
@@ -64,7 +64,7 @@ Geophysical inversions of post-glacial rebound, geoid anomalies, and mantle conv
 - With $P_\text{decay} = 60\text{ GPa}$, the saturating law yields $\eta_\text{diff}(135\text{ GPa}) / \eta_\text{diff}(5\text{ GPa}) \approx 29.1$, consistent with geodynamic constraints.
 - With $P_\text{decay} = \infty$, the constant-$V_a$ law yields a contrast of $4.00 \times 10^{9}$, which overestimates lower-mantle viscosity by seven orders of magnitude.
 
-The model rheology is single-phase and does not include discontinuous jumps from phase changes (such as the ringwoodite to bridgmanite plus ferropericlase transition). The continuous model contrast along the adiabat must therefore remain below the total observed contrast to leave room for phase transition increments (Tackley, 1996). The formulation acts as a Newtonian diffusion-creep proxy at fixed water content and fixed grain size (both absorbed into $\eta_\text{solid}$). Defaults reflect dry olivine diffusion creep (Hirth and Kohlstedt, 2003).
+The model rheology is single-phase and does not include discontinuous jumps from phase changes (such as the ringwoodite to bridgmanite plus ferropericlase transition). Solid-solid phase transformations introduce an estimated factor of 3 to 10 increase in lower-mantle viscosity (Tackley, 1996; Yamazaki and Karato, 2001). The continuous model contrast along the adiabat must therefore remain below the total observed contrast to leave room for phase transition increments. The formulation acts as a Newtonian diffusion-creep proxy at fixed water content and fixed grain size (both absorbed into $\eta_\text{solid}$). Baseline parameters ($E_a = 300\text{ kJ mol}^{-1}$, $V_0 = 5 \times 10^{-6}\text{ m}^3\text{ mol}^{-1}$) reflect dry olivine diffusion creep (Karato and Wu, 1993; Hirth and Kohlstedt, 2003).
 
 ## 2. Plastic Yielding Criterion
 
@@ -108,13 +108,25 @@ In a vigorously convecting interior beneath a cold surface, convective heat tran
 
 ### Interior Convective State
 
-Aragog identifies the convecting mantle region from the convective heat flux. The interior temperature $T_i$ and pressure $P_{T_i}$ are defined through a smooth sigmoid selection on the convective flux fraction $f_k = (F_\text{conv} / F_\text{tot})_k$ relative to the interior flux threshold $f_\text{conv,min}$ (`interior_flux_fraction`, default $0.05$). The transition weight:
+Aragog identifies the convecting mantle region from the convective heat flux. The interior temperature $T_i$ and pressure $P_{T_i}$ are defined through a smooth sigmoid selection on the convective flux fraction $f_k = (F_\text{conv} / F_\text{tot})_k$ relative to the interior flux threshold $f_\text{conv,min}$ (`interior_flux_fraction`, default $0.05$). For radial cells indexed $k = 1, \dots, N$ from surface to core-mantle boundary, the local convective weight is:
 
 $$
 w_{\text{conv}, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - f_\text{conv,min}}{w_\text{conv}} \right) \right)
 $$
 
-uses a transition width $w_\text{conv} = \Delta f_\text{cell}$ corresponding to the flux fraction variation across one cell. This smooth formulation isolates $T_i$ at the shallowest convecting node while guaranteeing finite derivatives and exact differentiability for automatic differentiation (`jacrev`). If $f_k < f_\text{conv,min}$ throughout the column, no convective interior exists, no lid is delimited, and yielding remains inactive.
+with transition width $w_\text{conv} = \max(\Delta f_\text{cell}, 10^{-4})$ floored to maintain a finite non-zero width in uniform flux regions. The shallowest convective boundary is isolated by the cumulative product indicator:
+
+$$
+W_k = w_{\text{conv}, k} \prod_{j < k} (1 - w_{\text{conv}, j})
+$$
+
+Normalising by the sum $\sum_m W_m$ yields the boundary distribution $\tilde{W}_k = W_k / (\sum_m W_m + 10^{-12})$, from which interior state variables are evaluated smoothly:
+
+$$
+T_i = \sum_{k=1}^N \tilde{W}_k T_k, \quad P_{T_i} = \sum_{k=1}^N \tilde{W}_k P_k
+$$
+
+An overall convective activity weight $w_\text{active} = \frac{1}{2}(1 + \tanh((\sum_k w_{\text{conv}, k} - 1.0) / 0.5))$ modulates the closure. If $f_k < f_\text{conv,min}$ throughout the mantle, $w_\text{active} \to 0$, no lid is delimited, and yielding remains inactive.
 
 ### Rheological Temperature Scale
 
@@ -140,7 +152,9 @@ The true Arrhenius viscosity contrast $\eta_\text{diff}(T_\text{surf}, P_\text{s
 
 ### Lid Base and Sublayer Thickness
 
-The diagnostic temperature marking the base of the stagnant lid is:
+The parameter `lid_base_mode` governs the definition of the stagnant lid base temperature $T_\text{lid}$:
+- `'fixed'`: The lid base is defined by a user-specified isotherm $T_\text{lid} = T_\text{base}$ set by `lid_base_temperature` (default $1400.0\text{ K}$).
+- `'rheological'`: The lid base is evaluated dynamically from the Frank-Kamenetskii temperature scale:
 
 $$
 T_\text{lid} = T_i - a \Delta T_\text{rh}
@@ -171,11 +185,11 @@ $$
 w_\text{lid} = \frac{1}{2} \left( 1 - \tanh\left( \frac{T - T_\text{lid}}{w_\text{mask} \Delta T_\text{cell}} \right) \right)
 $$
 
-where $w_\text{mask}$ is the mask width parameter (`lid_mask_width_cells`, default $1.0$), and $\Delta T_\text{cell}$ is the local temperature step between adjacent radial nodes. Inside the cold lid ($T < T_\text{lid}$), $w_\text{lid} \to 1$. In the warm convecting interior ($T > T_\text{lid}$), $w_\text{lid} \to 0$.
+where $w_\text{mask}$ is the mask width parameter (`lid_mask_width_cells`, default $1.0$), and $\Delta T_\text{cell} = \max(|T_{k+1} - T_k|, 1.0\text{ K})$ is the local temperature step floored at $1\text{ K}$. Inside the cold lid ($T < T_\text{lid}$), $w_\text{lid} \to 1$. In the warm convecting interior ($T > T_\text{lid}$), $w_\text{lid} \to 0$.
 
 ## 4. Convective Driving Stress
 
-Convective flow beneath the lid exerts a driving shear stress on the rheological sublayer at the lid base. In mixing-length theory, the convective velocity scales as $v \sim l^3 / \nu$, where $\nu = \eta / \rho$ is kinematic viscosity. The convective strain rate is $\dot{\epsilon} = v / (2 l)$. Consequently, the product $2 \eta \dot{\epsilon} \sim \rho v l$ is determined by convective buoyancy and is independent of viscosity. The convective driving stress $\tau_d$ is therefore stress-controlled:
+Convective flow beneath the lid exerts a driving shear stress on the rheological sublayer at the lid base. In mixing-length theory under viscous dissipation balance, convective velocity scales as $v \sim g \alpha \Delta T l^2 / \nu$, where $\nu = \eta / \rho$ is kinematic viscosity. The convective strain rate is $\dot{\epsilon} = v / (2 l) \sim g \alpha \Delta T l / (2 \nu)$. Consequently, convective stress $2 \eta \dot{\epsilon} \sim \rho g \alpha \Delta T l$ is determined directly by convective buoyancy and is independent of viscosity. The convective driving stress $\tau_d$ is therefore stress-controlled:
 
 $$
 \tau_d = \frac{\eta_i v_i}{\delta_\text{rh}}
@@ -183,13 +197,13 @@ $$
 
 where $\eta_i = \eta_\text{diff}(T_i, P_{T_i})$ is the interior solid viscosity, and $v_i$ is the convective velocity representative of the upper convecting mantle.
 
-To prevent localised spikes or lower boundary layer velocities from contaminating $v_i$, Aragog evaluates $v_i$ as a smooth log-sum-exp maximum of the mixing-length velocity over the upper half of the convecting region (from the $T_i$ node to mid-depth of the convective domain):
+To prevent localised spikes or lower boundary layer velocities from contaminating $v_i$, Aragog evaluates $v_i$ as a numerically stable, shifted soft-maximum of the mixing-length velocity over the upper half of the convecting region (from the $T_i$ node to mid-depth of the convective domain, containing $N_\text{upper}$ nodes):
 
 $$
-v_i = T_v \ln\left( \sum_{k \in \text{upper}} \exp\left( \frac{v_k}{T_v} \right) \right)
+v_i = v_\text{max} + T_v \ln\left( \frac{1}{N_\text{upper}} \sum_{k \in \text{upper}} \exp\left( \frac{v_k - v_\text{max}}{T_v} \right) \right)
 $$
 
-with velocity smoothing scale $T_v = 1.0\text{ cm yr}^{-1} \approx 3.17 \times 10^{-10}\text{ m s}^{-1}$.
+where $v_\text{max} = \max_{k \in \text{upper}} v_k$ prevents numerical overflow, and $T_v = 0.1\text{ mm yr}^{-1} \approx 3.17 \times 10^{-12}\text{ m s}^{-1}$ is the velocity smoothing scale. This normalized formulation evaluates to zero when all $v_k \to 0$ and converges to the maximum convective velocity when velocities exceed $T_v$.
 
 The model also records the alternative stress scale evaluated over the full lid thickness $d_\text{lid}$:
 
@@ -205,7 +219,7 @@ $$
 \tau_\text{buoy} = \rho g \alpha \Delta T_\text{rh} \delta_\text{rh}
 $$
 
-For an Earth-like reference state ($\rho = 3300\text{ kg m}^{-3}$, $g = 9.81\text{ m s}^{-2}$, $\alpha = 3 \times 10^{-5}\text{ K}^{-1}$, $T_i = 1600\text{ K}$, $P_{T_i} = 3\text{ GPa}$, $\Delta T_\text{rh} \approx 68\text{ K}$, $\delta_\text{rh} \approx 6.8\text{ km}$), the sublayer buoyancy stress evaluates to $\tau_\text{buoy} \approx 0.45\text{ MPa}$. With interior viscosity $\eta_i = 10^{20}\text{ Pa s}$ and convective velocity $v_i \approx 2.5\text{ cm yr}^{-1}$ ($7.9 \times 10^{-10}\text{ m s}^{-1}$), the driving stress evaluates to $\tau_d \approx 1.16\text{ MPa}$. The resulting stress ratio:
+For an Earth-like reference state ($\rho = 3300\text{ kg m}^{-3}$, $g = 9.81\text{ m s}^{-2}$, $\alpha = 3 \times 10^{-5}\text{ K}^{-1}$, $T_i = 1600\text{ K}$, $P_{T_i} = 3\text{ GPa}$, $\Delta T_\text{rh} \approx 68\text{ K}$, $\delta_\text{rh} \approx 6.8\text{ km}$), the sublayer buoyancy stress evaluates to $\tau_\text{buoy} \approx 0.45\text{ MPa}$. With interior viscosity $\eta_i = 10^{20}\text{ Pa s}$ and convective velocity $v_i \approx 2.5\text{ mm yr}^{-1}$ ($7.92 \times 10^{-11}\text{ m s}^{-1}$), the driving stress evaluates to $\tau_d \approx 1.16\text{ MPa}$. The resulting stress ratio:
 
 $$
 \frac{\tau_d}{\tau_\text{buoy}} \approx 2.6
@@ -231,13 +245,17 @@ This expression possesses no positive real root when $\tau_d \ge \tau_{y,\text{l
 
 ### Two-Branch Regime Switch
 
-To resolve this limitation, Aragog formulates yielding as a regime switch between a stagnant lid and a mobile convective lid:
-
-1. **Sub-yield branch ($\tau_d < \tau_{y,\text{lid}}$):**
-   The effective viscosity follows the closed harmonic form, floored at the mobile-lid viscosity $\eta_\text{lid}$ to maintain strict positivity and continuity:
+To resolve this limitation, Aragog formulates yielding as a regime switch between a stagnant lid and a mobile convective lid. To guarantee that yielding never stiffens the mantle above its diffusion-creep viscosity, the plastic viscosity is bounded by the diffusion-creep viscosity:
 
 $$
-\eta_\text{below} = \max\left( \eta_\text{diff} \left( 1 - \frac{\tau_d}{\tau_{y,\text{lid}}} \right), \eta_\text{lid} \right)
+\eta_y = \min(\eta_\text{lid}, \eta_\text{diff})
+$$
+
+1. **Sub-yield branch ($\tau_d < \tau_{y,\text{lid}}$):**
+   The effective viscosity follows the closed harmonic form, floored at $\eta_y$ to maintain strict positivity, continuity, and adherence to the pure diffusion-creep limit as $\tau_d \to 0$:
+
+$$
+\eta_\text{below} = \max\left( \eta_\text{diff} \left( 1 - \frac{\tau_d}{\tau_{y,\text{lid}}} \right), \eta_y \right)
 $$
 
 2. **Yielded branch ($\tau_d \ge \tau_{y,\text{lid}}$):**
@@ -247,7 +265,11 @@ $$
 \eta_\text{lid} = \frac{\tau_{y,\text{lid}}}{2 \dot{\epsilon}_i} = \frac{\tau_{y,\text{lid}} \delta_\text{rh}}{v_i}
 $$
 
-At exact yield ($\tau_d = \tau_{y,\text{lid}}$), substituting $\tau_d = \eta_i v_i / \delta_\text{rh}$ yields $\eta_\text{lid} = \eta_i$. The lid viscosity matches the interior viscosity at the transition.
+$$
+\eta_\text{yielded} = \min(\eta_\text{lid}, \eta_\text{diff})
+$$
+
+At exact yield ($\tau_d = \tau_{y,\text{lid}}$), substituting $\tau_d = \eta_i v_i / \delta_\text{rh}$ yields $\eta_\text{lid} = \eta_i$. Since $\eta_i \le \eta_\text{diff}$ throughout the cold lid, $\eta_\text{yielded} = \eta_i$. Both branches evaluate to $\eta_i$ at yield, guaranteeing continuous transitions.
 
 ### Continuous Regime Blend
 
@@ -258,16 +280,24 @@ w_y = \frac{1}{2} \left( 1 + \tanh\left( \frac{\tau_d / \tau_{y,\text{lid}} - 1}
 $$
 
 $$
-\log_{10} \eta_\text{eff} = (1 - w_y) \log_{10} \eta_\text{below} + w_y \log_{10} \eta_\text{lid}
+\log_{10} \eta_\text{eff} = (1 - w_y) \log_{10} \eta_\text{below} + w_y \log_{10} \eta_\text{yielded}
 $$
 
 where $w_\text{yield}$ is the transition width parameter (`yield_switch_width`, default $0.1$).
 
-Because both branches evaluate to $\eta_\text{lid}$ at yield, $\eta_\text{eff}(\tau_d)$ is continuous, everywhere finite, and monotonically non-increasing over the full range $\tau_d / \tau_{y,\text{lid}} \in [0, 10]$. Plastic yielding is applied exclusively to nodes within the stagnant lid ($w_\text{lid} > 0$). In one dimension, a mobile lid represents convective lid thinning at the interior strain rate rather than horizontal plate subduction.
+The effective solid viscosity across the radial column is then determined by blending the closure viscosity with the baseline diffusion-creep viscosity using the smooth lid mask:
 
-When convective vigor ceases ($v_i \to 0$), convective heat transport drops below $f_\text{conv,min}$. In this limit, no convective interior is delimited, the lid closure remains inactive, and no division by zero occurs.
+$$
+\log_{10} \eta_\text{solid} = w_\text{lid} \log_{10} \eta_\text{eff} + (1 - w_\text{lid}) \log_{10} \eta_\text{diff}
+$$
 
-The closure is explicit and non-iterative, guaranteeing deterministic evaluation and exact differentiability in numerical solvers.
+Inside the cold lid ($w_\text{lid} \to 1$), $\eta_\text{solid} \to \eta_\text{eff}$. In the warm convective interior ($w_\text{lid} \to 0$), $\eta_\text{solid} \to \eta_\text{diff}$. This formulation prevents lid yielding from altering the interior convective mantle.
+
+Because both branches evaluate to $\eta_i$ at yield, $\eta_\text{eff}(\tau_d)$ is continuous, everywhere finite, and monotonically non-increasing over the full range $\tau_d / \tau_{y,\text{lid}} \in [0, 10]$. In one dimension, a mobile lid represents convective lid thinning at the interior strain rate rather than horizontal plate subduction.
+
+When convective vigor ceases ($v_i \to 0$), convective heat transport drops below $f_\text{conv,min}$. In this limit, $w_\text{active} \to 0$, the lid closure remains inactive, and no division by zero occurs.
+
+The closure is explicit and non-iterative, guaranteeing deterministic evaluation and stable derivatives in numerical solvers.
 
 ## 6. Interaction with the Eddy-Diffusivity Floor
 
@@ -304,9 +334,9 @@ $$
 
   Because unyielded Arrhenius viscosity inside a cold lid is very high, $v_\text{unyielded} \approx 0$ and $\dot{\epsilon}_\text{local} \approx 0$. Consequently, `local` mode cannot yield the cold lithosphere and operates solely as an interior weakening mechanism in vigorously convecting deep regions.
 - `global`:
-  Obsolete mode. Configuration validation rejects `global` and instructs users to specify `lid`.
+  Unsupported mode. Configuration validation rejects `global` and instructs users to specify `lid`.
 
-In the baseline parameter schema, `stress_closure_mode` defaults to `'local'`; upon enabling the boundary-layer convective closure, `'lid'` is the operational mode.
+In the baseline parameter schema, `stress_closure_mode` defaults to `'local'` for backwards compatibility with unyielded baseline runs. Setting `stress_closure_mode = 'lid'` activates the boundary-layer convective closure for stagnant-lid and mobile-lid regimes.
 
 ## 8. Two-Stage Viscosity Blending
 
@@ -339,26 +369,30 @@ $$
 \log_{10} \eta_\text{final} = w_\text{smth} \log_{10} \eta_\text{mixed} + (1 - w_\text{smth}) \log_{10} \eta_\text{single}
 $$
 
-The parameter `phi_visc_single` (default $0.5$) governs the single-phase cutoff threshold. It is isolated to this viscosity blending routine and is distinct from the other twelve $\phi > 0.5$ sites in equation-of-state tables and thermal conductivity models, which remain untouched.
+The two-stage logarithmic mixing rule originates from SPIDER numerical rheology formulation (`util.c`; Solomatov, 1995) to ensure smooth interpolation across mushy aggregate transitions.
+
+The parameter `phi_visc_single` (default $0.5$) governs the single-phase cutoff threshold. It is strictly isolated to this viscosity blending routine (`entropy_phase.py:477`, `:486` and `jax/phase.py:710-716`). All twelve other $\phi > 0.5$ sites in the codebase remain unchanged at their independent physical thresholds:
+- Equation-of-state and thermodynamic phase lookups: `eos/entropy.py:1098`, `:1178`; `entropy_phase.py:302`, `:373-374`, `:397`, `:408`; `jax/eos.py:662`, `:721`, `:729`; `jax/phase.py:497`.
+- Convective mixing-flux factors: `solver/entropy_state.py:167`; `jax/phase.py:571`.
 
 ### Mass Fraction versus Volume Fraction Conventions
 
-In Aragog, the melt fraction $\phi$ is tracked as a mass fraction ($w_\text{melt}$). In contrast, laboratory and geodynamic literature commonly parameterise the rheological transition in terms of melt volume fraction ($\phi_v$). For a 10% density contrast between solid matrix ($\rho_s \approx 3300\text{ kg m}^{-3}$) and basaltic melt ($\rho_l \approx 2800\text{ kg m}^{-3}$), a volume fraction of $\phi_v = 0.30$ corresponds to a mass fraction of $\phi_m \approx 0.28$:
+In Aragog, the melt fraction $\phi$ is tracked as a mass fraction ($w_\text{melt}$). In contrast, laboratory and geodynamic literature commonly parameterise the rheological transition in terms of melt volume fraction ($\phi_v$). For a 15% density contrast between solid matrix ($\rho_s \approx 3300\text{ kg m}^{-3}$) and basaltic melt ($\rho_l \approx 2800\text{ kg m}^{-3}$), a volume fraction of $\phi_v = 0.30$ corresponds to a mass fraction of $\phi_m \approx 0.267$:
 
 $$
 \phi_m = \frac{\phi_v \rho_l}{\phi_v \rho_l + (1 - \phi_v) \rho_s}
 $$
 
-The nominal threshold $\phi_\text{rheo} = 0.40$ in Aragog is defined directly in solver mass fraction.
+(or $\phi_m \approx 0.28$ for an idealised 10% contrast where $\rho_l = 0.9 \rho_s$). The nominal threshold $\phi_\text{rheo} = 0.40$ in Aragog is defined directly in solver mass fraction.
 
 ## 9. Asymptotic Limits
 
 The closure satisfies the following asymptotic limits:
 
 1. **Zero driving stress ($\tau_d \to 0$):**
-   $\tau_d / \tau_{y,\text{lid}} = 0 \implies w_y = 0$ and $\eta_\text{eff} = \eta_\text{diff}$. The system exhibits pure Arrhenius conduction without yielding.
+   $\tau_d / \tau_{y,\text{lid}} \to 0 \implies \eta_y = \eta_\text{diff}$, $\eta_\text{below} = \eta_\text{diff}$, $w_y = 0$, and $\eta_\text{eff} = \eta_\text{diff}$. The system exhibits pure Arrhenius diffusion creep without plastic weakening.
 2. **Infinite yield stress ($\tau_y \to \infty$):**
-   $\tau_d / \tau_{y,\text{lid}} \to 0$, yielding never activates, and the lid remains permanently stagnant.
+   $\tau_d / \tau_{y,\text{lid}} \to 0 \implies \eta_y = \eta_\text{diff}$, $\eta_\text{below} = \eta_\text{diff}$, yielding never activates, and the lid remains permanently stagnant at diffusion-creep viscosity.
 3. **Zero activation volume ($V_0 = 0$):**
    $H(P) = E_a$, recovering purely temperature-dependent Arrhenius creep.
 4. **Infinite decay pressure ($P_\text{decay} \to \infty$):**
@@ -366,13 +400,13 @@ The closure satisfies the following asymptotic limits:
 5. **Infinite Frank-Kamenetskii contrast ($\theta \to \infty$):**
    Recovers the asymptotic stagnant-lid regime of Solomatov (1995).
 6. **No convective interior ($F_\text{conv} / F_\text{tot} < f_\text{conv,min}$ everywhere):**
-   No interior node $T_i$ is found; no stagnant lid is delimited, and yielding remains inactive throughout the column.
+   $w_\text{active} \to 0$, no interior node $T_i$ is delimited, and yielding remains inactive throughout the column.
 7. **Wholly molten mantle ($\phi > \phi_\text{rheo}$ everywhere):**
    The mantle resides in the liquid regime; solid rheology and yielding are inactive.
 8. **Disabled rheology (`enabled = false`):**
    Solvers bypass Arrhenius creep and plastic yielding, using constant solid viscosity $\eta_\text{solid} = 10^{\text{log10\_visc\_solid}}$.
 9. **Extreme driving stress ($\tau_d / \tau_{y,\text{lid}} \gg 1$):**
-   $w_y \to 1$ and $\eta_\text{eff} \to \eta_\text{lid} = \tau_{y,\text{lid}} / (2 \dot{\epsilon}_i)$, transitioning the column into fully mobile convective thinning.
+   $w_y \to 1$ and $\eta_\text{eff} \to \eta_\text{yielded} = \min(\eta_\text{lid}, \eta_\text{diff})$, transitioning the column into fully mobile convective thinning.
 
 ## 10. Output Diagnostics and Conservation
 
@@ -382,33 +416,38 @@ The table below reconciles diagnostic quantities across model helpfiles and NetC
 
 | Diagnostic Column | Description | Unit | Definition |
 |:---|:---|:---:|:---|
-| `T_pot` | Mantle potential temperature | K | Mass-weighted convective interior temperature |
-| `boundary_layer_thickness` | Thermal boundary layer thickness | m | Depth where conductive geotherm meets interior adiabat |
+| `T_pot` | Mantle potential temperature | K | Staggered temperature at shallowest node where $J_\text{conv} > J_\text{cond}$ |
+| `boundary_layer_thickness` | Configured boundary layer thickness | m | Static configured surface boundary layer thickness (`surface_d`) |
 | `RF_depth` | Rheological front depth | - | Dimensionless depth ($1 - r_\text{rf} / R_\text{outer}$) where melt fraction equals $\phi_\text{rheo} = 0.4$ |
-| `visc_stag` | Stagnant lid viscosity profile | Pa s | Radial viscosity profile on staggered nodes (recorded as `log10visc_s`; surface value reflects cold lid) |
+| `visc_stag` | Staggered viscosity profile | Pa s | Radial viscosity profile on staggered nodes (recorded as `log10visc_s`) |
 | `lid_thickness` | Diagnostic lid thickness | m | Physical thickness of the stagnant lid $d_\text{lid}$ |
 | `lid_base_temperature` | Lid base temperature | K | Temperature $T_\text{lid}$ at the base of the stagnant lid |
-| `lid_regime` | Convective regime indicator | - | $0.0$ for stagnant lid, $1.0$ for mobile lid |
+| `lid_regime` | Convective regime indicator | - | $0.0$ for no lid (or liquid surface), $1.0$ for stagnant lid, $2.0$ for mobile lid |
 | `tau_d` | Convective driving stress | Pa | Shear stress $\tau_d$ acting on the lid base |
 | `tau_y_lid` | Lid base yield stress | Pa | Effective Byerlee yield stress $\tau_{y,\text{lid}}$ |
+| `theta` | Frank-Kamenetskii contrast | - | Temperature contrast parameter $H(P_{T_i})(T_i - T_\text{surf}) / (R T_i^2)$ |
+| `eta_contrast` | True Arrhenius contrast | - | Ratio $\eta_\text{diff}(T_\text{surf}, P_\text{surf}) / \eta_\text{diff}(T_i, P_{T_i})$ |
+| `interior_temperature` | Interior convective temperature | K | Representative interior temperature $T_i$ |
+| `lid_cell_count` | Numerical lid resolution | - | Integer count of discrete radial cells spanning $d_\text{lid}$ |
+| `energy_residual` | Energy conservation residual | J | Cumulative discrete energy balance check across mantle volume |
 
-Established columns (`T_pot`, `boundary_layer_thickness`, and `RF_depth`) map to existing helpfile scan tables. Convective closure variables are exported unconditionally in NetCDF snapshot files (`_int.nc`) for model verification. When rheology is disabled, the basic diffusion creep diagnostic array $\eta_\text{diff\_b}$ reports $10^{\text{log10\_visc\_solid}}$ at all nodes.
+Established columns (`T_pot`, `boundary_layer_thickness`, and `RF_depth`) map to existing helpfile scan tables. The diagnostic `lid_thickness` denotes the physical stagnant lid thickness $d_\text{lid}$ dynamically determined from the rheological isotherm $T_\text{lid}$, solidus, or rheological front, differing from the static configured parameter `boundary_layer_thickness`. Convective closure variables are exported unconditionally in NetCDF snapshot files (`_int.nc`) for model verification. When rheology is disabled, the basic diffusion creep diagnostic array $\eta_\text{diff\_b}$ reports $10^{\text{log10\_visc\_solid}}$ at all nodes.
 
 ### Energy Conservation
 
 Aragog integrates the energy equation in entropy formulation. The discrete energy balance residual:
 
 $$
-\Delta E_\text{res} = \int \rho T \frac{\partial S}{\partial t} dV - (H_\text{rad} - F_\text{surf} A_\text{surf} + F_\text{cmb} A_\text{cmb})
+\Delta E_\text{res} = \int \rho T \frac{\partial S}{\partial t} dV - (H_\text{rad} + H_\text{tidal} - F_\text{surf} A_\text{surf} + F_\text{cmb} A_\text{cmb})
 $$
 
-telescopes to machine precision over finite-volume cells. Mixing-length theory does not incorporate viscous or plastic dissipation heating terms. Dissipation heating is therefore omitted from the thermal energy budget.
+is a numerical bookkeeping check. The entropy derivative $\partial S / \partial t$ is taken directly from the governing right-hand-side evaluations rather than discrete time differencing. Mixing-length theory does not incorporate viscous or plastic dissipation heating terms. Dissipation heating is therefore omitted from the thermal energy budget.
 
 The diagnostic $\eta_\text{diff\_b}$ reflects pure solid diffusion creep and does not account for matrix breakdown or melt-lubricated granular flow occurring in partially molten aggregates.
 
 ## 11. Interface Boundary
 
-Aragog exports `eta_diff_b` and accepts `water_prefactor` as runtime arrays on the basic numerical mesh. These interfaces describe current physical state variables and maintain strict independence from external coupling modules.
+Aragog defines explicit interfaces for solid-state rheological exchange: `eta_diff_b` is exported as a runtime radial array on the basic mesh, and `water_prefactor` is accepted as an optional radial array. These interfaces represent current physical fields and maintain strict modular separation from external atmospheric and volatile ledgers.
 
 ## 12. Rheology Parameters
 
