@@ -11,6 +11,7 @@ $$
 $$
 
 where:
+
 - $\eta_\text{solid}$ is the reference solid viscosity at temperature $T_\text{ref} = 1600\text{ K}$ and zero pressure (`viscosity_solid`, default $10^{21}\text{ Pa s}$).
 - $f_\text{water}$ is the hydration weakening prefactor (`water_prefactor`, default $1.0$).
 - $R = 8.314462618\text{ J mol}^{-1}\text{ K}^{-1}$ is the universal gas constant.
@@ -33,6 +34,7 @@ H(P) = E_a + V_0 P_\text{decay} \left( 1 - \exp\left( -\frac{P}{P_\text{decay}} 
 $$
 
 where:
+
 - $E_a$ is the zero-pressure activation energy (`activation_energy`, default $300\text{ kJ mol}^{-1}$).
 - $V_0$ is the zero-pressure activation volume (`activation_volume`, default $5 \times 10^{-6}\text{ m}^3\text{ mol}^{-1}$).
 - $P_\text{decay}$ is the characteristic pressure scale for activation volume decay (`activation_volume_decay_pressure`, default $\infty$).
@@ -61,6 +63,7 @@ The table below reports activation enthalpy $H(P)$ and normalised viscosity $\et
 | 135 | 568.4 | $5.775 \times 10^{8}$ | $1.266 \times 10^{0}$ | $4.882 \times 10^{-2}$ | 975.0 | $1.087 \times 10^{22}$ | $1.521 \times 10^{7}$ | $5.715 \times 10^{4}$ |
 
 Geophysical inversions of post-glacial rebound, geoid anomalies, and mantle convection constrain the radial viscosity contrast throughout the whole mantle to a factor of approximately 10 to 100 between the upper mantle and the deep lower mantle (Mitrovica and Forte, 2004; Rudolph et al., 2015; Lau et al., 2016). Along an Earth-like mantle geotherm from $(P = 5\text{ GPa}, T = 1700\text{ K})$ to $(P = 135\text{ GPa}, T = 2600\text{ K})$:
+
 - With $P_\text{decay} = 60\text{ GPa}$, the saturating law yields $\eta_\text{diff}(135\text{ GPa}) / \eta_\text{diff}(5\text{ GPa}) \approx 29.1$, consistent with geodynamic constraints.
 - With $P_\text{decay} = \infty$, the constant-$V_a$ law yields a contrast of $4.00 \times 10^{9}$, which overestimates lower-mantle viscosity by seven orders of magnitude.
 
@@ -75,6 +78,7 @@ $$
 $$
 
 where:
+
 - $c$ is the lithospheric cohesion (`yield_stress_c`, default $50\text{ MPa}$).
 - $\mu$ is the friction coefficient (`yield_stress_mu`, default $0.6$).
 - $P$ is the lithostatic pressure.
@@ -141,28 +145,31 @@ This scale is evaluated at the pressure $P_{T_i}$ of the interior node to avoid 
 ### Asymptotic Validity Conditions
 
 Boundary-layer stagnant lid scaling requires two asymptotic conditions (Solomatov, 1995):
+
 1. Small temperature scale relative to interior temperature: $R T_i / E_a \ll 1$ (typically $\approx 0.1$ at $3500\text{ K}$).
 2. Viscosity contrast through the lithosphere exceeding $10^4$, quantified by the Frank-Kamenetskii contrast parameter:
 
-$$
-\theta = \frac{H(P_{T_i}) (T_i - T_\text{surf})}{R T_i^2} \ge 9
-$$
+    $$
+    \theta = \frac{H(P_{T_i}) (T_i - T_\text{surf})}{R T_i^2} \ge 9
+    $$
 
 The true Arrhenius viscosity contrast $\eta_\text{diff}(T_\text{surf}, P_\text{surf}) / \eta_\text{diff}(T_i, P_{T_i})$ is substantially larger than $\exp(\theta)$ because of non-linear Arrhenius curvature. Aragog reports both $\theta$ and the true contrast. If $\theta < 9$, the convective regime sits outside the asymptotic stagnant-lid window.
 
 ### Lid Base and Sublayer Thickness
 
 The parameter `lid_base_mode` governs the definition of the stagnant lid base temperature $T_\text{lid}$:
+
 - `'fixed'`: The lid base is defined by a user-specified isotherm $T_\text{lid} = T_\text{base}$ set by `lid_base_temperature` (default $1400.0\text{ K}$).
 - `'rheological'`: The lid base is evaluated dynamically from the Frank-Kamenetskii temperature scale:
 
-$$
-T_\text{lid} = T_i - a \Delta T_\text{rh}
-$$
+    $$
+    T_\text{lid} = T_i - a \Delta T_\text{rh}
+    $$
 
-where $a = 2.2$ is the lid contrast coefficient (`lid_contrast_coeff`). This coefficient is derived from boundary-layer theory for steady-state Newtonian convection with exponential temperature-dependent viscosity in the asymptotic limit $\theta \gg 1$ (Solomatov, 1995; Tackley, 2000).
+    where $a = 2.2$ is the lid contrast coefficient (`lid_contrast_coeff`). This coefficient is derived from boundary-layer theory for steady-state Newtonian convection with exponential temperature-dependent viscosity in the asymptotic limit $\theta \gg 1$ (Solomatov, 1995; Tackley, 2000).
 
 The physical lid base location is identified as the shallowest depth among:
+
 1. The rheological isotherm where $T = T_\text{lid}$.
 2. The intersection of the geotherm with the mantle solidus.
 3. The rheological crystallisation front where $\phi = \phi_\text{rheo} = 0.4$.
@@ -252,22 +259,22 @@ $$
 $$
 
 1. **Sub-yield branch ($\tau_d < \tau_{y,\text{lid}}$):**
-   The effective viscosity follows the closed harmonic form, floored at $\eta_y$ to maintain strict positivity, continuity, and adherence to the pure diffusion-creep limit as $\tau_d \to 0$:
+    The effective viscosity follows the closed harmonic form, floored at $\eta_y$ to maintain strict positivity, continuity, and adherence to the pure diffusion-creep limit as $\tau_d \to 0$:
 
-$$
-\eta_\text{below} = \max\left( \eta_\text{diff} \left( 1 - \frac{\tau_d}{\tau_{y,\text{lid}}} \right), \eta_y \right)
-$$
+    $$
+    \eta_\text{below} = \max\left( \eta_\text{diff} \left( 1 - \frac{\tau_d}{\tau_{y,\text{lid}}} \right), \eta_y \right)
+    $$
 
 2. **Yielded branch ($\tau_d \ge \tau_{y,\text{lid}}$):**
-   When the driving stress reaches or exceeds the yield stress, the lid yields plastically and deforms at the interior convective strain rate $\dot{\epsilon}_i = v_i / (2 \delta_\text{rh})$. The yielded lid viscosity is:
+    When the driving stress reaches or exceeds the yield stress, the lid yields plastically and deforms at the interior convective strain rate $\dot{\epsilon}_i = v_i / (2 \delta_\text{rh})$. The yielded lid viscosity is:
 
-$$
-\eta_\text{lid} = \frac{\tau_{y,\text{lid}}}{2 \dot{\epsilon}_i} = \frac{\tau_{y,\text{lid}} \delta_\text{rh}}{v_i}
-$$
+    $$
+    \eta_\text{lid} = \frac{\tau_{y,\text{lid}}}{2 \dot{\epsilon}_i} = \frac{\tau_{y,\text{lid}} \delta_\text{rh}}{v_i}
+    $$
 
-$$
-\eta_\text{yielded} = \min(\eta_\text{lid}, \eta_\text{diff})
-$$
+    $$
+    \eta_\text{yielded} = \min(\eta_\text{lid}, \eta_\text{diff})
+    $$
 
 At exact yield ($\tau_d = \tau_{y,\text{lid}}$), substituting $\tau_d = \eta_i v_i / \delta_\text{rh}$ yields $\eta_\text{lid} = \eta_i$. Since $\eta_i \le \eta_\text{diff}$ throughout the cold lid, $\eta_\text{yielded} = \eta_i$. Both branches evaluate to $\eta_i$ at yield, guaranteeing continuous transitions.
 
@@ -324,17 +331,19 @@ Inside the cold lid ($w_\text{lid} \to 1$), the floor is completely suppressed, 
 The geometry of the strain rate closure is controlled by `stress_closure_mode`:
 
 - `lid`:
-  Boundary-layer stress closure. The driving stress $\tau_d = \eta_i v_i / \delta_\text{rh}$ is evaluated on the rheological sublayer. Yielding mobilises the lid nodes when convective vigor is sufficient.
+    Boundary-layer stress closure. The driving stress $\tau_d = \eta_i v_i / \delta_\text{rh}$ is evaluated on the rheological sublayer. Yielding mobilises the lid nodes when convective vigor is sufficient.
+
 - `local`:
-  Local mixing-length strain rate closure. The strain rate is evaluated directly from local cell velocity and mixing length using the second invariant convention:
+    Local mixing-length strain rate closure. The strain rate is evaluated directly from local cell velocity and mixing length using the second invariant convention:
 
-$$
-\dot{\epsilon}_\text{local}(r) = \frac{|v_\text{unyielded}(r)|}{2 l(r)}
-$$
+    $$
+    \dot{\epsilon}_\text{local}(r) = \frac{|v_\text{unyielded}(r)|}{2 l(r)}
+    $$
 
-  Because unyielded Arrhenius viscosity inside a cold lid is very high, $v_\text{unyielded} \approx 0$ and $\dot{\epsilon}_\text{local} \approx 0$. Consequently, `local` mode cannot yield the cold lithosphere and operates solely as an interior weakening mechanism in vigorously convecting deep regions.
+    Because unyielded Arrhenius viscosity inside a cold lid is very high, $v_\text{unyielded} \approx 0$ and $\dot{\epsilon}_\text{local} \approx 0$. Consequently, `local` mode cannot yield the cold lithosphere and operates solely as an interior weakening mechanism in vigorously convecting deep regions.
+
 - `global`:
-  Unsupported mode. Configuration validation rejects `global` and instructs users to specify `lid`.
+    Unsupported mode. Configuration validation rejects `global` and instructs users to specify `lid`.
 
 In the baseline parameter schema, `stress_closure_mode` defaults to `'local'` for backwards compatibility with unyielded baseline runs. Setting `stress_closure_mode = 'lid'` activates the boundary-layer convective closure for stagnant-lid and mobile-lid regimes.
 
@@ -343,35 +352,36 @@ In the baseline parameter schema, `stress_closure_mode` defaults to `'local'` fo
 In partially molten regions ($0 < \phi < \phi_\text{rheo}$), Aragog evaluates viscosity in two stages:
 
 1. **Stage 1 (Melt fraction blend):**
-   The effective solid viscosity $\eta_\text{eff}$ is blended smoothly with the liquid melt viscosity $\eta_\text{liquid}$ across the rheological transition threshold ($\phi_\text{rheo} = 0.4$) with transition width $\phi_\text{width}$ using a hyperbolic tangent weight:
+    The effective solid viscosity $\eta_\text{eff}$ is blended smoothly with the liquid melt viscosity $\eta_\text{liquid}$ across the rheological transition threshold ($\phi_\text{rheo} = 0.4$) with transition width $\phi_\text{width}$ using a hyperbolic tangent weight:
 
-$$
-w = \frac{1}{2} \left( 1 + \tanh\left( \frac{\phi - \phi_\text{rheo}}{\phi_\text{width}} \right) \right)
-$$
+    $$
+    w = \frac{1}{2} \left( 1 + \tanh\left( \frac{\phi - \phi_\text{rheo}}{\phi_\text{width}} \right) \right)
+    $$
 
-$$
-\log_{10} \eta_\text{mixed} = (1 - w) \log_{10} \eta_\text{eff} + w \log_{10} \eta_\text{liquid}
-$$
+    $$
+    \log_{10} \eta_\text{mixed} = (1 - w) \log_{10} \eta_\text{eff} + w \log_{10} \eta_\text{liquid}
+    $$
 
 2. **Stage 2 (Material property smoothing):**
-   The mixed viscosity is combined with the single-phase branch:
+    The mixed viscosity is combined with the single-phase branch:
 
-$$
-\log_{10} \eta_\text{single} = \begin{cases}
-\log_{10} \eta_\text{liquid}, & \text{if } \phi > \phi_\text{visc\_single} \\
-\log_{10} \eta_\text{eff}, & \text{otherwise}
-\end{cases}
-$$
+    $$
+    \log_{10} \eta_\text{single} = \begin{cases}
+    \log_{10} \eta_\text{liquid}, & \text{if } \phi > \phi_\text{visc\_single} \\
+    \log_{10} \eta_\text{eff}, & \text{otherwise}
+    \end{cases}
+    $$
 
-   using the equation-of-state smoothing weight $w_\text{smth}$:
+    using the equation-of-state smoothing weight $w_\text{smth}$:
 
-$$
-\log_{10} \eta_\text{final} = w_\text{smth} \log_{10} \eta_\text{mixed} + (1 - w_\text{smth}) \log_{10} \eta_\text{single}
-$$
+    $$
+    \log_{10} \eta_\text{final} = w_\text{smth} \log_{10} \eta_\text{mixed} + (1 - w_\text{smth}) \log_{10} \eta_\text{single}
+    $$
 
 The two-stage logarithmic mixing rule originates from SPIDER numerical rheology formulation (`util.c`; Solomatov, 1995) to ensure smooth interpolation across mushy aggregate transitions.
 
 The parameter `phi_visc_single` (default $0.5$) governs the single-phase cutoff threshold. It is strictly isolated to this viscosity blending routine (`entropy_phase.py:477`, `:486` and `jax/phase.py:710-716`). All twelve other $\phi > 0.5$ sites in the codebase remain unchanged at their independent physical thresholds:
+
 - Equation-of-state and thermodynamic phase lookups: `eos/entropy.py:1098`, `:1178`; `entropy_phase.py:302`, `:373-374`, `:397`, `:408`; `jax/eos.py:662`, `:721`, `:729`; `jax/phase.py:497`.
 - Convective mixing-flux factors: `solver/entropy_state.py:167`; `jax/phase.py:571`.
 
