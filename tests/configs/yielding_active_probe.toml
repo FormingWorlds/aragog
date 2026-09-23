@@ -88,15 +88,4 @@ const_cond = 4.0
 const_log10visc = 2.0
 const_T_ref = 3500.0
 const_S_ref = 3000.0
-enabled = true
-stress_closure_mode = "local"
-activation_energy = 300e3
-activation_volume = 5e-6
-yield_stress_c = 1e5
-yield_stress_mu = 0.05
-yield_stress_max = 1e6
-arrhenius_t_ref = 1600.0
-viscosity_max_log10 = 40.0
-lid_base_mode = "fixed"
-lid_base_temperature = 1400.0
-lid_contrast_coeff = 2.2
+

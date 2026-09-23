@@ -112,18 +112,6 @@ class EntropyPhaseEvaluator:
         else:
             self.rheology = SolidRheologyParams()
 
-        self._enabled = self.rheology.enabled
-        self._activation_energy = self.rheology.activation_energy
-        self._activation_volume = self.rheology.activation_volume
-        self._yield_stress_c = self.rheology.yield_stress_c
-        self._yield_stress_mu = self.rheology.yield_stress_mu
-        self._stress_closure_mode = self.rheology.stress_closure_mode
-        self._arrhenius_t_ref = self.rheology.arrhenius_t_ref
-        self._yield_stress_max = self.rheology.yield_stress_max
-        self._viscosity_max_log10 = self.rheology.viscosity_max_log10
-        self._lid_base_mode = self.rheology.lid_base_mode
-        self._lid_base_temperature = self.rheology.lid_base_temperature
-        self._lid_contrast_coeff = self.rheology.lid_contrast_coeff
         # Constant-properties mode (matches SPIDER -use_const_properties)
         self._const_properties = const_properties
         self._const_rho = const_rho
@@ -288,7 +276,7 @@ class EntropyPhaseEvaluator:
 
         # In const_properties mode, we STILL compute temperature-dependent Arrhenius viscosity
         # if enabled, to support 0D Stagnant Lid models.
-        if self._enabled:
+        if self.rheology.enabled:
             from aragog.rheology import eta_diff as calc_eta_diff
 
             t_arr = np.maximum(self._temperature, 1.0)
@@ -303,11 +291,11 @@ class EntropyPhaseEvaluator:
                     temperature=t_arr,
                     pressure=p_arr,
                     viscosity_solid=10.0**self._const_log10visc,
-                    activation_energy=self._activation_energy,
-                    activation_volume=self._activation_volume,
-                    t_ref=self._arrhenius_t_ref,
+                    activation_energy=self.rheology.activation_energy,
+                    activation_volume=self.rheology.activation_volume,
+                    t_ref=self.rheology.arrhenius_t_ref,
                     r_gas=R_GAS,
-                    viscosity_max_log10=self._viscosity_max_log10,
+                    viscosity_max_log10=self.rheology.viscosity_max_log10,
                     water_prefactor=self.rheology.water_prefactor,
                 ),
                 dtype=float,
@@ -315,24 +303,26 @@ class EntropyPhaseEvaluator:
         else:
             self._eta_diff = None
 
-        if self._enabled:
+        if self.rheology.enabled:
             self._viscosity_val = np.copy(self._eta_diff)
         else:
             self._viscosity_val = np.full_like(S, 10.0**self._const_log10visc)
-        if self._enabled:
+        if self.rheology.enabled:
             if np.size(self.pressure) > 0:
                 P_arr = np.atleast_1d(np.asarray(self.pressure, dtype=float))
                 self._tau_y = np.asarray(
                     compute_yield_stress(
                         pressure=P_arr,
-                        yield_stress_c=self._yield_stress_c,
-                        yield_stress_mu=self._yield_stress_mu,
-                        yield_stress_max=self._yield_stress_max,
+                        yield_stress_c=self.rheology.yield_stress_c,
+                        yield_stress_mu=self.rheology.yield_stress_mu,
+                        yield_stress_max=self.rheology.yield_stress_max,
                     ),
                     dtype=float,
                 )
             else:
-                self._tau_y = np.full_like(S, min(self._yield_stress_c, self._yield_stress_max))
+                self._tau_y = np.full_like(
+                    S, min(self.rheology.yield_stress_c, self.rheology.yield_stress_max)
+                )
         else:
             self._tau_y = None
         self._visc_solid_weight = np.ones_like(S)
@@ -533,18 +523,18 @@ class EntropyPhaseEvaluator:
 
         # ── Step 6: viscosity (two-stage, reuses cached gphi/smth) ──
         # Solid-phase Arrhenius diffusion creep viscosity and Byerlee yield stress
-        if self._enabled:
+        if self.rheology.enabled:
             t_arr = np.maximum(self._temperature, 1.0)
             eta_diff_arr = np.asarray(
                 calc_eta_diff(
                     temperature=t_arr,
                     pressure=P_arr,
                     viscosity_solid=self._visc_solid,
-                    activation_energy=self._activation_energy,
-                    activation_volume=self._activation_volume,
-                    t_ref=self.arrhenius_t_ref,
+                    activation_energy=self.rheology.activation_energy,
+                    activation_volume=self.rheology.activation_volume,
+                    t_ref=self.rheology.arrhenius_t_ref,
                     r_gas=R_GAS,
-                    viscosity_max_log10=self._viscosity_max_log10,
+                    viscosity_max_log10=self.rheology.viscosity_max_log10,
                     water_prefactor=self.rheology.water_prefactor,
                 ),
                 dtype=float,
@@ -552,9 +542,9 @@ class EntropyPhaseEvaluator:
             tau_y_arr = np.asarray(
                 compute_yield_stress(
                     pressure=P_arr,
-                    yield_stress_c=self._yield_stress_c,
-                    yield_stress_mu=self._yield_stress_mu,
-                    yield_stress_max=self._yield_stress_max,
+                    yield_stress_c=self.rheology.yield_stress_c,
+                    yield_stress_mu=self.rheology.yield_stress_mu,
+                    yield_stress_max=self.rheology.yield_stress_max,
                 ),
                 dtype=float,
             )

@@ -231,3 +231,51 @@ def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
     )
     assert np.isclose(float(res_jax), expected_cap)
     assert float(res_jax) <= expected_cap
+
+
+def test_solid_rheology_params_rejects_nan():
+    """Verify SolidRheologyParams rejects NaN for all numeric parameters."""
+    from dataclasses import fields
+
+    nan = float('nan')
+    for f in fields(SolidRheologyParams):
+        if f.type in ('float', float):
+            with pytest.raises(ValueError):
+                SolidRheologyParams(**{f.name: nan})
+
+
+def test_merge_precedence_explicit_default_value():
+    """Verify explicit keyword argument matching default overrides base rheology."""
+    custom = SolidRheologyParams(enabled=True, activation_energy=250e3)
+
+    # JAX PhaseParams
+    jp = PhaseParams(rheology=custom, activation_energy=300e3, enabled=False)
+    assert jp.activation_energy == 300e3
+    assert jp.enabled is False
+
+    # NumPy _PhaseParameters
+    np_p = _PhaseParameters(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=2e-5,
+        viscosity=1e21,
+        rheology=custom,
+        activation_energy=300e3,
+        enabled=False,
+    )
+    assert np_p.activation_energy == 300e3
+    assert np_p.enabled is False
+
+
+def test_phase_params_jax_immediate_validation():
+    """Verify JAX PhaseParams validates bounds immediately upon instantiation."""
+    with pytest.raises(ValueError, match='water_prefactor'):
+        PhaseParams(water_prefactor=-1.0)
+
+    with pytest.raises(ValueError, match='activation_energy'):
+        PhaseParams(activation_energy=-100.0)
+
+    with pytest.raises(ValueError, match='phi_visc_single'):
+        PhaseParams(phi_visc_single=1.5)

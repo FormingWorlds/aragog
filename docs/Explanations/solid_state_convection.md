@@ -69,15 +69,19 @@ The interior velocity $v_\text{interior}$ and lid thickness $d_\text{lid}$ are e
 
 ## Configuration
 
-In `PROTEUS` `config.toml`, you can set these parameters under the `[phase_solid]` block:
+In `PROTEUS` `config.toml`, configure rheology under the `[interior_energetics.aragog.rheology]` table:
 
 ```toml
-[phase_solid]
+[interior_energetics.aragog.rheology]
+enabled = true
 activation_energy = 300e3      # [J/mol]
 activation_volume = 5e-6       # [m^3/mol]
 yield_stress_c = 50e6          # [Pa] Cohesion
 yield_stress_mu = 0.6          # Friction coefficient
-stress_closure_mode = "global" # "local" or "global"
+stress_closure_mode = "local"  # "local" or "global"
 ```
 
+In standalone `aragog.toml`, set these parameters under the `[phase_solid]` table.
+
 These parameters are identically passed to both the NumPy and JAX CVODE solvers. This preserves float64 parity to within ULP between evaluations.
+

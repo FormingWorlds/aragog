@@ -29,6 +29,7 @@ from aragog.config.phases import (
 from aragog.rheology import SolidRheologyParams
 
 _DEFAULT_RHEOLOGY = SolidRheologyParams()
+_UNSET: Any = object()
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -324,24 +325,24 @@ class _PhaseParameters:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
-    enabled: bool = _DEFAULT_RHEOLOGY.enabled
-    activation_energy: float = _DEFAULT_RHEOLOGY.activation_energy
-    activation_volume: float = _DEFAULT_RHEOLOGY.activation_volume
-    activation_volume_decay_pressure: float = _DEFAULT_RHEOLOGY.activation_volume_decay_pressure
-    arrhenius_t_ref: float = _DEFAULT_RHEOLOGY.arrhenius_t_ref
-    viscosity_max_log10: float = _DEFAULT_RHEOLOGY.viscosity_max_log10
-    water_prefactor: float = _DEFAULT_RHEOLOGY.water_prefactor
-    yield_stress_c: float = _DEFAULT_RHEOLOGY.yield_stress_c
-    yield_stress_mu: float = _DEFAULT_RHEOLOGY.yield_stress_mu
-    yield_stress_max: float = _DEFAULT_RHEOLOGY.yield_stress_max
-    yield_switch_width: float = _DEFAULT_RHEOLOGY.yield_switch_width
-    stress_closure_mode: str = _DEFAULT_RHEOLOGY.stress_closure_mode
-    interior_flux_fraction: float = _DEFAULT_RHEOLOGY.interior_flux_fraction
-    lid_base_mode: str = _DEFAULT_RHEOLOGY.lid_base_mode
-    lid_base_temperature: float = _DEFAULT_RHEOLOGY.lid_base_temperature
-    lid_contrast_coeff: float = _DEFAULT_RHEOLOGY.lid_contrast_coeff
-    lid_mask_width_cells: float = _DEFAULT_RHEOLOGY.lid_mask_width_cells
-    phi_visc_single: float = _DEFAULT_RHEOLOGY.phi_visc_single
+    enabled: Any = _UNSET
+    activation_energy: Any = _UNSET
+    activation_volume: Any = _UNSET
+    activation_volume_decay_pressure: Any = _UNSET
+    arrhenius_t_ref: Any = _UNSET
+    viscosity_max_log10: Any = _UNSET
+    water_prefactor: Any = _UNSET
+    yield_stress_c: Any = _UNSET
+    yield_stress_mu: Any = _UNSET
+    yield_stress_max: Any = _UNSET
+    yield_switch_width: Any = _UNSET
+    stress_closure_mode: Any = _UNSET
+    interior_flux_fraction: Any = _UNSET
+    lid_base_mode: Any = _UNSET
+    lid_base_temperature: Any = _UNSET
+    lid_contrast_coeff: Any = _UNSET
+    lid_mask_width_cells: Any = _UNSET
+    phi_visc_single: Any = _UNSET
     rheology: SolidRheologyParams = field(default=_DEFAULT_RHEOLOGY)
 
     def __post_init__(self) -> None:
@@ -349,7 +350,7 @@ class _PhaseParameters:
         d = {f.name: getattr(base, f.name) for f in fields(SolidRheologyParams)}
         for f in fields(SolidRheologyParams):
             val = getattr(self, f.name)
-            if val != getattr(_DEFAULT_RHEOLOGY, f.name):
+            if val is not _UNSET:
                 d[f.name] = val
         self.rheology = SolidRheologyParams(**d)
         for f in fields(SolidRheologyParams):

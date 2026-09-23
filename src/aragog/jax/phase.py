@@ -12,6 +12,7 @@ Dependencies: jax, equinox (already in PROTEUS ecosystem via atmodeller).
 
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import Any, NamedTuple
 
 import equinox as eqx
@@ -21,10 +22,8 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from aragog.config.phases import (
-    LID_BASE_MODES,
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
-    STRESS_CLOSURE_MODES,
 )
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.rheology import R_GAS, SolidRheologyParams
@@ -38,6 +37,7 @@ RE_CRIT = 9.0 / 8.0
 # Arrhenius rheology reference constants
 T_REF_ARRHENIUS: float = 1600.0  # Reference temperature [K]
 _DEFAULT_RHEOLOGY = SolidRheologyParams()
+_UNSET: Any = object()
 
 
 # ---------------------------------------------------------------------------
@@ -183,54 +183,56 @@ class PhaseParams(eqx.Module):
         phase_smoothing_width: float = 0.01,
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
         *,
-        enabled: bool = False,
-        activation_energy: float = 300e3,
-        activation_volume: float = 5e-6,
-        activation_volume_decay_pressure: float = float('inf'),
-        arrhenius_t_ref: float = 1600.0,
-        viscosity_max_log10: float = 40.0,
-        water_prefactor: float = 1.0,
-        yield_stress_c: float = 50e6,
-        yield_stress_mu: float = 0.6,
-        yield_stress_max: float = 500e6,
-        yield_switch_width: float = 0.1,
-        stress_closure_mode: str = 'local',
-        interior_flux_fraction: float = 0.05,
-        lid_base_mode: str = 'fixed',
-        lid_base_temperature: float = 1400.0,
-        lid_contrast_coeff: float = 2.2,
-        lid_mask_width_cells: float = 1.0,
-        phi_visc_single: float = 0.5,
+        enabled: Any = _UNSET,
+        activation_energy: Any = _UNSET,
+        activation_volume: Any = _UNSET,
+        activation_volume_decay_pressure: Any = _UNSET,
+        arrhenius_t_ref: Any = _UNSET,
+        viscosity_max_log10: Any = _UNSET,
+        water_prefactor: Any = _UNSET,
+        yield_stress_c: Any = _UNSET,
+        yield_stress_mu: Any = _UNSET,
+        yield_stress_max: Any = _UNSET,
+        yield_switch_width: Any = _UNSET,
+        stress_closure_mode: Any = _UNSET,
+        interior_flux_fraction: Any = _UNSET,
+        lid_base_mode: Any = _UNSET,
+        lid_base_temperature: Any = _UNSET,
+        lid_contrast_coeff: Any = _UNSET,
+        lid_mask_width_cells: Any = _UNSET,
+        phi_visc_single: Any = _UNSET,
         rheology: SolidRheologyParams | None = None,
     ):
-        if rheology is not None:
-
-            def _choose(name, kwarg_val):
-                default_val = getattr(_DEFAULT_RHEOLOGY, name)
-                if kwarg_val != default_val:
-                    return kwarg_val
-                return getattr(rheology, name)
-
-            enabled = _choose('enabled', enabled)
-            activation_energy = _choose('activation_energy', activation_energy)
-            activation_volume = _choose('activation_volume', activation_volume)
-            activation_volume_decay_pressure = _choose(
-                'activation_volume_decay_pressure', activation_volume_decay_pressure
+        base_rheo = rheology if rheology is not None else _DEFAULT_RHEOLOGY
+        explicit_kwargs = {
+            'enabled': enabled,
+            'activation_energy': activation_energy,
+            'activation_volume': activation_volume,
+            'activation_volume_decay_pressure': activation_volume_decay_pressure,
+            'arrhenius_t_ref': arrhenius_t_ref,
+            'viscosity_max_log10': viscosity_max_log10,
+            'water_prefactor': water_prefactor,
+            'yield_stress_c': yield_stress_c,
+            'yield_stress_mu': yield_stress_mu,
+            'yield_stress_max': yield_stress_max,
+            'yield_switch_width': yield_switch_width,
+            'stress_closure_mode': stress_closure_mode,
+            'interior_flux_fraction': interior_flux_fraction,
+            'lid_base_mode': lid_base_mode,
+            'lid_base_temperature': lid_base_temperature,
+            'lid_contrast_coeff': lid_contrast_coeff,
+            'lid_mask_width_cells': lid_mask_width_cells,
+            'phi_visc_single': phi_visc_single,
+        }
+        resolved = {
+            f.name: (
+                explicit_kwargs[f.name]
+                if explicit_kwargs[f.name] is not _UNSET
+                else getattr(base_rheo, f.name)
             )
-            arrhenius_t_ref = _choose('arrhenius_t_ref', arrhenius_t_ref)
-            viscosity_max_log10 = _choose('viscosity_max_log10', viscosity_max_log10)
-            water_prefactor = _choose('water_prefactor', water_prefactor)
-            yield_stress_c = _choose('yield_stress_c', yield_stress_c)
-            yield_stress_mu = _choose('yield_stress_mu', yield_stress_mu)
-            yield_stress_max = _choose('yield_stress_max', yield_stress_max)
-            yield_switch_width = _choose('yield_switch_width', yield_switch_width)
-            stress_closure_mode = _choose('stress_closure_mode', stress_closure_mode)
-            interior_flux_fraction = _choose('interior_flux_fraction', interior_flux_fraction)
-            lid_base_mode = _choose('lid_base_mode', lid_base_mode)
-            lid_base_temperature = _choose('lid_base_temperature', lid_base_temperature)
-            lid_contrast_coeff = _choose('lid_contrast_coeff', lid_contrast_coeff)
-            lid_mask_width_cells = _choose('lid_mask_width_cells', lid_mask_width_cells)
-            phi_visc_single = _choose('phi_visc_single', phi_visc_single)
+            for f in fields(SolidRheologyParams)
+        }
+        rheo_obj = SolidRheologyParams(**resolved)
 
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -238,42 +240,24 @@ class PhaseParams(eqx.Module):
         self.log10_visc_solid = jnp.log10(viscosity_solid)
         self.log10_visc_liquid = jnp.log10(viscosity_liquid)
         self.grain_size = grain_size
-        self.enabled = bool(enabled)
-        self.activation_energy = float(activation_energy)
-        self.activation_volume = float(activation_volume)
-        self.activation_volume_decay_pressure = float(activation_volume_decay_pressure)
-        if float(arrhenius_t_ref) <= 0.0:
-            raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
-        self.arrhenius_t_ref = float(arrhenius_t_ref)
-        if float(viscosity_max_log10) <= 20.0:
-            raise ValueError(f'viscosity_max_log10 must be > 20, got {viscosity_max_log10}')
-        self.viscosity_max_log10 = float(viscosity_max_log10)
-        self.water_prefactor = float(water_prefactor)
-        self.yield_stress_c = float(yield_stress_c)
-        self.yield_stress_mu = float(yield_stress_mu)
-        self.yield_stress_max = float(yield_stress_max)
-        self.yield_switch_width = float(yield_switch_width)
-        if str(stress_closure_mode) not in STRESS_CLOSURE_MODES:
-            raise ValueError(
-                f'Unknown stress_closure_mode {stress_closure_mode!r}; expected {STRESS_CLOSURE_MODES}'
-            )
-        self.stress_closure_mode = str(stress_closure_mode)
-        self.interior_flux_fraction = float(interior_flux_fraction)
-        if str(lid_base_mode) not in LID_BASE_MODES:
-            raise ValueError(
-                f'Unknown lid_base_mode {lid_base_mode!r}; expected {LID_BASE_MODES}'
-            )
-        self.lid_base_mode = str(lid_base_mode)
-        if self.enabled:
-            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0.0:
-                raise ValueError(
-                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
-                    f'activation_energy, but activation_energy={self.activation_energy}'
-                )
-        self.lid_base_temperature = float(lid_base_temperature)
-        self.lid_contrast_coeff = float(lid_contrast_coeff)
-        self.lid_mask_width_cells = float(lid_mask_width_cells)
-        self.phi_visc_single = float(phi_visc_single)
+        self.enabled = bool(rheo_obj.enabled)
+        self.activation_energy = float(rheo_obj.activation_energy)
+        self.activation_volume = float(rheo_obj.activation_volume)
+        self.activation_volume_decay_pressure = float(rheo_obj.activation_volume_decay_pressure)
+        self.arrhenius_t_ref = float(rheo_obj.arrhenius_t_ref)
+        self.viscosity_max_log10 = float(rheo_obj.viscosity_max_log10)
+        self.water_prefactor = float(rheo_obj.water_prefactor)
+        self.yield_stress_c = float(rheo_obj.yield_stress_c)
+        self.yield_stress_mu = float(rheo_obj.yield_stress_mu)
+        self.yield_stress_max = float(rheo_obj.yield_stress_max)
+        self.yield_switch_width = float(rheo_obj.yield_switch_width)
+        self.stress_closure_mode = str(rheo_obj.stress_closure_mode)
+        self.interior_flux_fraction = float(rheo_obj.interior_flux_fraction)
+        self.lid_base_mode = str(rheo_obj.lid_base_mode)
+        self.lid_base_temperature = float(rheo_obj.lid_base_temperature)
+        self.lid_contrast_coeff = float(rheo_obj.lid_contrast_coeff)
+        self.lid_mask_width_cells = float(rheo_obj.lid_mask_width_cells)
+        self.phi_visc_single = float(rheo_obj.phi_visc_single)
 
         self.k_solid = k_solid
         self.k_liquid = k_liquid

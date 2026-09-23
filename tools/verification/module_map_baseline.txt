@@ -199,13 +199,12 @@ Module: aragog.jax.nondim
 Module: aragog.jax.phase
   Imports:
     __future__.annotations
-    aragog.config.phases.LID_BASE_MODES
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.config.phases.SEPARATION_VISCOSITY_MODES
-    aragog.config.phases.STRESS_CLOSURE_MODES
     aragog.jax.eos.EntropyEOS_JAX
     aragog.rheology.R_GAS
     aragog.rheology.SolidRheologyParams
+    dataclasses.fields
     equinox
     jax
     jax.numpy

@@ -56,58 +56,61 @@ class SolidRheologyParams:
                 f'Unknown lid_base_mode {self.lid_base_mode!r}; '
                 f"expected 'fixed' or 'rheological'"
             )
-        if self.arrhenius_t_ref <= 0.0:
+        if not math.isfinite(self.arrhenius_t_ref) or self.arrhenius_t_ref <= 0.0:
             raise ValueError(f'arrhenius_t_ref must be positive, got {self.arrhenius_t_ref}')
-        if self.activation_energy < 0.0:
+        if not math.isfinite(self.activation_energy) or self.activation_energy < 0.0:
             raise ValueError(
                 f'activation_energy must be non-negative, got {self.activation_energy}'
             )
-        if self.activation_volume < 0.0:
+        if not math.isfinite(self.activation_volume) or self.activation_volume < 0.0:
             raise ValueError(
                 f'activation_volume must be non-negative, got {self.activation_volume}'
             )
-        if self.activation_volume_decay_pressure <= 0.0 and not math.isinf(
-            self.activation_volume_decay_pressure
+        if math.isnan(self.activation_volume_decay_pressure) or (
+            self.activation_volume_decay_pressure <= 0.0
+            and not math.isinf(self.activation_volume_decay_pressure)
         ):
             raise ValueError(
                 'activation_volume_decay_pressure must be positive or inf, '
                 f'got {self.activation_volume_decay_pressure}'
             )
-        if self.viscosity_max_log10 <= 20.0:
+        if not math.isfinite(self.viscosity_max_log10) or self.viscosity_max_log10 <= 20.0:
             raise ValueError(
                 f'viscosity_max_log10 must be > 20, got {self.viscosity_max_log10}'
             )
-        if self.water_prefactor <= 0.0:
+        if not math.isfinite(self.water_prefactor) or self.water_prefactor <= 0.0:
             raise ValueError(f'water_prefactor must be positive, got {self.water_prefactor}')
-        if self.yield_stress_c < 0.0:
+        if not math.isfinite(self.yield_stress_c) or self.yield_stress_c < 0.0:
             raise ValueError(f'yield_stress_c must be non-negative, got {self.yield_stress_c}')
-        if self.yield_stress_mu < 0.0:
+        if not math.isfinite(self.yield_stress_mu) or self.yield_stress_mu < 0.0:
             raise ValueError(
                 f'yield_stress_mu must be non-negative, got {self.yield_stress_mu}'
             )
-        if self.yield_stress_max <= 0.0:
+        if not math.isfinite(self.yield_stress_max) or self.yield_stress_max <= 0.0:
             raise ValueError(f'yield_stress_max must be positive, got {self.yield_stress_max}')
-        if self.yield_switch_width <= 0.0:
+        if not math.isfinite(self.yield_switch_width) or self.yield_switch_width <= 0.0:
             raise ValueError(
                 f'yield_switch_width must be positive, got {self.yield_switch_width}'
             )
-        if not (0.0 < self.interior_flux_fraction < 1.0):
+        if not math.isfinite(self.interior_flux_fraction) or not (
+            0.0 < self.interior_flux_fraction < 1.0
+        ):
             raise ValueError(
                 f'interior_flux_fraction must be in (0, 1), got {self.interior_flux_fraction}'
             )
-        if self.lid_base_temperature <= 0.0:
+        if not math.isfinite(self.lid_base_temperature) or self.lid_base_temperature <= 0.0:
             raise ValueError(
                 f'lid_base_temperature must be positive, got {self.lid_base_temperature}'
             )
-        if self.lid_contrast_coeff <= 0.0:
+        if not math.isfinite(self.lid_contrast_coeff) or self.lid_contrast_coeff <= 0.0:
             raise ValueError(
                 f'lid_contrast_coeff must be positive, got {self.lid_contrast_coeff}'
             )
-        if self.lid_mask_width_cells <= 0.0:
+        if not math.isfinite(self.lid_mask_width_cells) or self.lid_mask_width_cells <= 0.0:
             raise ValueError(
                 f'lid_mask_width_cells must be positive, got {self.lid_mask_width_cells}'
             )
-        if not (0.0 < self.phi_visc_single < 1.0):
+        if not math.isfinite(self.phi_visc_single) or not (0.0 < self.phi_visc_single < 1.0):
             raise ValueError(f'phi_visc_single must be in (0, 1), got {self.phi_visc_single}')
         if (
             self.enabled
@@ -159,29 +162,30 @@ def eta_diff(
 
     Parameters
     ----------
-        temperature : float or numpy.ndarray
-            Temperature :math:`T` [K].
-        pressure : float or numpy.ndarray
-            Pressure :math:`P` [Pa].
-        viscosity_solid : float, default 1.0e21
-        viscosity_max_log10 : float, default 40.0
-            Reference solid-state dynamic viscosity :math:`\eta_0` [Pa s] at
-            reference conditions :math:`(T_\mathrm{ref}, P=0)`.
-        activation_energy : float, default 300.0e3
-            Molar activation energy :math:`E_a` [J/mol].
-        activation_volume : float, default 5.0e-6
-            Molar activation volume :math:`V_a` [m^3/mol].
-        t_ref : float, default 1600.0
-            Reference temperature :math:`T_\mathrm{ref}` [K].
-        r_gas : float, default 8.314462618
-            Universal gas constant :math:`R` [J/(mol K)].
-        water_prefactor : float or numpy.ndarray, default 1.0
-            Multiplicative prefactor for hydration weakening. Must be positive.
+    temperature : float or numpy.ndarray
+        Temperature :math:`T` [K].
+    pressure : float or numpy.ndarray
+        Pressure :math:`P` [Pa].
+    viscosity_solid : float, default 1.0e21
+        Reference solid-state dynamic viscosity :math:`\eta_0` [Pa s] at
+        reference conditions :math:`(T_\mathrm{ref}, P=0)`.
+    activation_energy : float, default 300.0e3
+        Molar activation energy :math:`E_a` [J/mol].
+    activation_volume : float, default 5.0e-6
+        Molar activation volume :math:`V_a` [m^3/mol].
+    t_ref : float, default 1600.0
+        Reference temperature :math:`T_\mathrm{ref}` [K].
+    r_gas : float, default 8.314462618
+        Universal gas constant :math:`R` [J/(mol K)].
+    viscosity_max_log10 : float, default 40.0
+        Upper bound on log10 dynamic viscosity [log10(Pa s)].
+    water_prefactor : float or numpy.ndarray, default 1.0
+        Multiplicative prefactor for hydration weakening. Must be positive.
 
-        Returns
-        -------
-        float or numpy.ndarray
-            Dynamic diffusion creep viscosity :math:`\eta_\mathrm{diff}` [Pa s].
+    Returns
+    -------
+    float or numpy.ndarray
+        Dynamic diffusion creep viscosity :math:`\eta_\mathrm{diff}` [Pa s].
     """
     if t_ref <= 0.0:
         raise ValueError(f't_ref must be positive, got {t_ref}')
