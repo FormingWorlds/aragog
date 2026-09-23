@@ -56,8 +56,8 @@ def test_config_rheology_defaults():
         phase_transition_width=0.01,
         grain_size=1e-3,
     )
-    assert mpc.activation_energy == 300e3
-    assert mpc.stress_closure_mode == 'local'
+    assert not hasattr(mpc, 'activation_energy')
+    assert not hasattr(mpc, 'stress_closure_mode')
 
 
 @pytest.mark.unit

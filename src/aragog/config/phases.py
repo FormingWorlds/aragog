@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import fields
+from typing import Any
 
 import attrs
+
+from aragog.rheology import SolidRheologyParams
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -21,41 +25,12 @@ LID_BASE_MODES: tuple[str, str] = ('fixed', 'rheological')
 LID_BASE_DEFAULT: str = 'fixed'
 
 
-@attrs.define
+@attrs.define(init=False)
 class PhaseConfig:
     """Single-phase (solid or liquid) material properties.
 
     Each property can be a float (constant value) or a str (path to
-    a lookup table file).
-
-    Parameters
-    ----------
-    density : float or str
-        Density [kg/m^3] or path to lookup.
-    heat_capacity : float or str
-        Heat capacity [J/(kg K)] or path to lookup.
-    melt_fraction : float
-        Melt fraction (0 for solid, 1 for liquid).
-    thermal_conductivity : float or str
-        Thermal conductivity [W/(m K)] or path to lookup.
-    thermal_expansivity : float or str
-        Thermal expansivity [1/K] or path to lookup.
-    viscosity : float or str
-        Dynamic viscosity [Pa s] or path to lookup.
-    entropy : float or str
-        Entropy [J/(kg K)] or path to lookup. Empty string means unused.
-    enabled : bool
-        If True, use Arrhenius viscosity and plastic yielding. If False, bypass them. Default False.
-    activation_energy : float
-        Arrhenius activation energy [J/mol]. Default 300e3.
-    activation_volume : float
-        Arrhenius activation volume [m^3/mol]. Default 5e-6.
-    yield_stress_c : float
-        Cohesion for yield stress [Pa]. Default 50e6.
-    yield_stress_mu : float
-        Friction coefficient for yield stress [-]. Default 0.6.
-    stress_closure_mode : str
-        Stress closure mode ('local' or 'global'). Default 'local'.
+    a lookup table file). Rheology parameters are owned by ``SolidRheologyParams``.
     """
 
     density: float | str
@@ -65,34 +40,112 @@ class PhaseConfig:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
-    enabled: bool = False
-    activation_energy: float = attrs.field(default=300e3, validator=attrs.validators.ge(0.0))
-    activation_volume: float = attrs.field(default=5e-6, validator=attrs.validators.ge(0.0))
-    yield_stress_c: float = attrs.field(default=50e6, validator=attrs.validators.ge(0.0))
-    yield_stress_mu: float = attrs.field(default=0.6, validator=attrs.validators.ge(0.0))
-    stress_closure_mode: str = attrs.field(
-        default=STRESS_CLOSURE_DEFAULT,
-        validator=attrs.validators.in_(STRESS_CLOSURE_MODES),
-    )
-    arrhenius_t_ref: float = attrs.field(default=1600.0, validator=attrs.validators.gt(0.0))
-    yield_stress_max: float = attrs.field(default=500.0e6, validator=attrs.validators.ge(0.0))
-    viscosity_max_log10: float = attrs.field(default=40.0, validator=attrs.validators.gt(0.0))
-    lid_base_mode: str = attrs.field(
-        default=LID_BASE_DEFAULT,
-        validator=attrs.validators.in_(LID_BASE_MODES),
-    )
-    lid_base_temperature: float = attrs.field(
-        default=1400.0, validator=attrs.validators.gt(0.0)
-    )
-    lid_contrast_coeff: float = attrs.field(default=2.2, validator=attrs.validators.gt(0.0))
+    rheology: SolidRheologyParams = attrs.field(factory=SolidRheologyParams)
 
-    def __attrs_post_init__(self):
-        if self.enabled:
-            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
-                raise ValueError(
-                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
-                    f'activation_energy, but activation_energy={self.activation_energy}'
-                )
+    def __init__(
+        self,
+        density: float | str,
+        heat_capacity: float | str,
+        melt_fraction: float,
+        thermal_conductivity: float | str,
+        thermal_expansivity: float | str,
+        viscosity: float | str,
+        entropy: float | str = '',
+        rheology: SolidRheologyParams | None = None,
+        **flat_rheo: Any,
+    ):
+        self.density = density
+        self.heat_capacity = heat_capacity
+        self.melt_fraction = melt_fraction
+        self.thermal_conductivity = thermal_conductivity
+        self.thermal_expansivity = thermal_expansivity
+        self.viscosity = viscosity
+        self.entropy = entropy
+        if rheology is not None:
+            if flat_rheo:
+                params_dict = {
+                    f.name: getattr(rheology, f.name) for f in fields(SolidRheologyParams)
+                }
+                params_dict.update(flat_rheo)
+                self.rheology = SolidRheologyParams(**params_dict)
+            else:
+                self.rheology = rheology
+        elif flat_rheo:
+            self.rheology = SolidRheologyParams(**flat_rheo)
+        else:
+            self.rheology = SolidRheologyParams()
+
+    @property
+    def enabled(self) -> bool:
+        return self.rheology.enabled
+
+    @property
+    def activation_energy(self) -> float:
+        return self.rheology.activation_energy
+
+    @property
+    def activation_volume(self) -> float:
+        return self.rheology.activation_volume
+
+    @property
+    def activation_volume_decay_pressure(self) -> float:
+        return self.rheology.activation_volume_decay_pressure
+
+    @property
+    def arrhenius_t_ref(self) -> float:
+        return self.rheology.arrhenius_t_ref
+
+    @property
+    def viscosity_max_log10(self) -> float:
+        return self.rheology.viscosity_max_log10
+
+    @property
+    def water_prefactor(self) -> float:
+        return self.rheology.water_prefactor
+
+    @property
+    def yield_stress_c(self) -> float:
+        return self.rheology.yield_stress_c
+
+    @property
+    def yield_stress_mu(self) -> float:
+        return self.rheology.yield_stress_mu
+
+    @property
+    def yield_stress_max(self) -> float:
+        return self.rheology.yield_stress_max
+
+    @property
+    def yield_switch_width(self) -> float:
+        return self.rheology.yield_switch_width
+
+    @property
+    def stress_closure_mode(self) -> str:
+        return self.rheology.stress_closure_mode
+
+    @property
+    def interior_flux_fraction(self) -> float:
+        return self.rheology.interior_flux_fraction
+
+    @property
+    def lid_base_mode(self) -> str:
+        return self.rheology.lid_base_mode
+
+    @property
+    def lid_base_temperature(self) -> float:
+        return self.rheology.lid_base_temperature
+
+    @property
+    def lid_contrast_coeff(self) -> float:
+        return self.rheology.lid_contrast_coeff
+
+    @property
+    def lid_mask_width_cells(self) -> float:
+        return self.rheology.lid_mask_width_cells
+
+    @property
+    def phi_visc_single(self) -> float:
+        return self.rheology.phi_visc_single
 
 
 @attrs.define
@@ -181,31 +234,3 @@ class MixedPhaseConfig:
     const_log10visc: float = 2.0
     const_T_ref: float = 3500.0
     const_S_ref: float = 3000.0
-    enabled: bool = False
-    activation_energy: float = attrs.field(default=300e3, validator=attrs.validators.ge(0.0))
-    activation_volume: float = attrs.field(default=5e-6, validator=attrs.validators.ge(0.0))
-    yield_stress_c: float = attrs.field(default=50e6, validator=attrs.validators.ge(0.0))
-    yield_stress_mu: float = attrs.field(default=0.6, validator=attrs.validators.ge(0.0))
-    stress_closure_mode: str = attrs.field(
-        default=STRESS_CLOSURE_DEFAULT,
-        validator=attrs.validators.in_(STRESS_CLOSURE_MODES),
-    )
-    arrhenius_t_ref: float = attrs.field(default=1600.0, validator=attrs.validators.gt(0.0))
-    yield_stress_max: float = attrs.field(default=500.0e6, validator=attrs.validators.ge(0.0))
-    viscosity_max_log10: float = attrs.field(default=40.0, validator=attrs.validators.gt(0.0))
-    lid_base_mode: str = attrs.field(
-        default=LID_BASE_DEFAULT,
-        validator=attrs.validators.in_(LID_BASE_MODES),
-    )
-    lid_base_temperature: float = attrs.field(
-        default=1400.0, validator=attrs.validators.gt(0.0)
-    )
-    lid_contrast_coeff: float = attrs.field(default=2.2, validator=attrs.validators.gt(0.0))
-
-    def __attrs_post_init__(self):
-        if self.enabled:
-            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
-                raise ValueError(
-                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
-                    f'activation_energy, but activation_energy={self.activation_energy}'
-                )

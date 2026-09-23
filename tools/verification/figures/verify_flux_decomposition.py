@@ -135,7 +135,6 @@ def main():
             activation_volume=params0.activation_volume,
             yield_stress_c=params0.yield_stress_c,
             yield_stress_mu=params0.yield_stress_mu,
-            strain_rate=params0.strain_rate,
             stress_closure_mode=params0.stress_closure_mode,
             arrhenius_t_ref=params0.arrhenius_t_ref,
             yield_stress_max=params0.yield_stress_max,

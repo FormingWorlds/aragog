@@ -35,6 +35,7 @@ from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
+from aragog.rheology import SolidRheologyParams
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
 
@@ -1339,58 +1340,7 @@ class EntropySolver:
 
         # Rheology parameters for Arrhenius viscosity and yield stress closure
         solid_p = self.parameters.phase_solid
-        mixed_p = getattr(self.parameters, 'phase_mixed', None)
-        if (
-            getattr(solid_p, 'enabled', False)
-            and mixed_p is not None
-            and getattr(mixed_p, 'enabled', False)
-        ):
-            rheo_fields = (
-                'activation_energy',
-                'activation_volume',
-                'yield_stress_c',
-                'yield_stress_mu',
-                'stress_closure_mode',
-                'arrhenius_t_ref',
-                'yield_stress_max',
-                'viscosity_max_log10',
-                'lid_base_mode',
-                'lid_base_temperature',
-                'lid_contrast_coeff',
-            )
-            for fld in rheo_fields:
-                val_s = getattr(solid_p, fld, None)
-                val_m = getattr(mixed_p, fld, None)
-                if val_s != val_m:
-                    logger.warning(
-                        "Rheology parameter '%s' differs between phase_solid (%r) and phase_mixed (%r); using phase_solid",
-                        fld,
-                        val_s,
-                        val_m,
-                    )
-        p_src = (
-            solid_p
-            if getattr(solid_p, 'enabled', False)
-            else (mixed_p if getattr(mixed_p, 'enabled', False) else solid_p)
-        )
-
-        phase_kwargs['enabled'] = bool(getattr(p_src, 'enabled', False))
-        phase_kwargs['activation_energy'] = float(getattr(p_src, 'activation_energy', 300e3))
-        phase_kwargs['activation_volume'] = float(getattr(p_src, 'activation_volume', 5e-6))
-        phase_kwargs['yield_stress_c'] = float(getattr(p_src, 'yield_stress_c', 50e6))
-        phase_kwargs['yield_stress_mu'] = float(getattr(p_src, 'yield_stress_mu', 0.6))
-        phase_kwargs['stress_closure_mode'] = str(
-            getattr(p_src, 'stress_closure_mode', 'local')
-        )
-
-        phase_kwargs['arrhenius_t_ref'] = float(getattr(p_src, 'arrhenius_t_ref', 1600.0))
-        phase_kwargs['yield_stress_max'] = float(getattr(p_src, 'yield_stress_max', 500.0e6))
-        phase_kwargs['viscosity_max_log10'] = float(getattr(p_src, 'viscosity_max_log10', 40.0))
-        phase_kwargs['lid_base_mode'] = str(getattr(p_src, 'lid_base_mode', 'fixed'))
-        phase_kwargs['lid_base_temperature'] = float(
-            getattr(p_src, 'lid_base_temperature', 1400.0)
-        )
-        phase_kwargs['lid_contrast_coeff'] = float(getattr(p_src, 'lid_contrast_coeff', 2.2))
+        phase_kwargs['rheology'] = getattr(solid_p, 'rheology', None) or SolidRheologyParams()
 
         # Constant-properties mode (SPIDER -use_const_properties parity)
         _const = getattr(self.parameters.phase_mixed, 'const_properties', False)

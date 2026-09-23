@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Self
 
@@ -23,12 +23,12 @@ import numpy.typing as npt
 from typed_configparser import ConfigParser
 
 from aragog.config.phases import (
-    LID_BASE_MODES,
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
-    STRESS_CLOSURE_DEFAULT,
-    STRESS_CLOSURE_MODES,
 )
+from aragog.rheology import SolidRheologyParams
+
+_DEFAULT_RHEOLOGY = SolidRheologyParams()
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -298,18 +298,6 @@ class _PhaseMixedParameters:
     const_log10visc: float = 2.0
     const_T_ref: float = 3500.0
     const_S_ref: float = 3000.0
-    enabled: bool = False
-    activation_energy: float = 300e3
-    activation_volume: float = 5e-6
-    yield_stress_c: float = 50e6
-    yield_stress_mu: float = 0.6
-    stress_closure_mode: str = STRESS_CLOSURE_DEFAULT
-    arrhenius_t_ref: float = 1600.0
-    yield_stress_max: float = 500.0e6
-    viscosity_max_log10: float = 40.0
-    lid_base_mode: str = 'fixed'
-    lid_base_temperature: float = 1400.0
-    lid_contrast_coeff: float = 2.2
 
     def __post_init__(self):
         if self.separation_viscosity not in SEPARATION_VISCOSITY_MODES:
@@ -317,27 +305,6 @@ class _PhaseMixedParameters:
                 'separation_viscosity must be one of '
                 f'{SEPARATION_VISCOSITY_MODES}, got {self.separation_viscosity!r}'
             )
-        if self.stress_closure_mode not in STRESS_CLOSURE_MODES:
-            raise ValueError(
-                f'stress_closure_mode must be one of {STRESS_CLOSURE_MODES}, '
-                f'got {self.stress_closure_mode!r}'
-            )
-        if self.lid_base_mode not in LID_BASE_MODES:
-            raise ValueError(
-                f'Unknown lid_base_mode {self.lid_base_mode!r}; expected {LID_BASE_MODES}'
-            )
-        if self.arrhenius_t_ref <= 0.0:
-            raise ValueError(f'arrhenius_t_ref must be positive, got {self.arrhenius_t_ref}')
-        if self.viscosity_max_log10 <= 0.0:
-            raise ValueError(
-                f'viscosity_max_log10 must be positive, got {self.viscosity_max_log10}'
-            )
-        if self.enabled:
-            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
-                raise ValueError(
-                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
-                    f'activation_energy, but activation_energy={self.activation_energy}'
-                )
 
 
 @dataclass
@@ -347,6 +314,7 @@ class _PhaseParameters:
     This is used to store settings from phase_liquid and phase_solid.
     Float-valued fields are stored verbatim; string-valued fields are
     interpreted as paths to lookup tables by ``EntropyPhaseEvaluator``.
+    Rheology fields and defaults are owned by ``SolidRheologyParams``.
     """
 
     density: float | str
@@ -356,41 +324,54 @@ class _PhaseParameters:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
-    enabled: bool = False
-    activation_energy: float = 300e3
-    activation_volume: float = 5e-6
-    yield_stress_c: float = 50e6
-    yield_stress_mu: float = 0.6
-    stress_closure_mode: str = STRESS_CLOSURE_DEFAULT
-    arrhenius_t_ref: float = 1600.0
-    yield_stress_max: float = 500.0e6
-    viscosity_max_log10: float = 40.0
-    lid_base_mode: str = 'fixed'
-    lid_base_temperature: float = 1400.0
-    lid_contrast_coeff: float = 2.2
+    enabled: bool = _DEFAULT_RHEOLOGY.enabled
+    activation_energy: float = _DEFAULT_RHEOLOGY.activation_energy
+    activation_volume: float = _DEFAULT_RHEOLOGY.activation_volume
+    activation_volume_decay_pressure: float = _DEFAULT_RHEOLOGY.activation_volume_decay_pressure
+    arrhenius_t_ref: float = _DEFAULT_RHEOLOGY.arrhenius_t_ref
+    viscosity_max_log10: float = _DEFAULT_RHEOLOGY.viscosity_max_log10
+    water_prefactor: float = _DEFAULT_RHEOLOGY.water_prefactor
+    yield_stress_c: float = _DEFAULT_RHEOLOGY.yield_stress_c
+    yield_stress_mu: float = _DEFAULT_RHEOLOGY.yield_stress_mu
+    yield_stress_max: float = _DEFAULT_RHEOLOGY.yield_stress_max
+    yield_switch_width: float = _DEFAULT_RHEOLOGY.yield_switch_width
+    stress_closure_mode: str = _DEFAULT_RHEOLOGY.stress_closure_mode
+    interior_flux_fraction: float = _DEFAULT_RHEOLOGY.interior_flux_fraction
+    lid_base_mode: str = _DEFAULT_RHEOLOGY.lid_base_mode
+    lid_base_temperature: float = _DEFAULT_RHEOLOGY.lid_base_temperature
+    lid_contrast_coeff: float = _DEFAULT_RHEOLOGY.lid_contrast_coeff
+    lid_mask_width_cells: float = _DEFAULT_RHEOLOGY.lid_mask_width_cells
+    phi_visc_single: float = _DEFAULT_RHEOLOGY.phi_visc_single
+    rheology: SolidRheologyParams = field(default=_DEFAULT_RHEOLOGY)
 
-    def __post_init__(self):
-        if self.stress_closure_mode not in STRESS_CLOSURE_MODES:
-            raise ValueError(
-                f'stress_closure_mode must be one of {STRESS_CLOSURE_MODES}, '
-                f'got {self.stress_closure_mode!r}'
+    def __post_init__(self) -> None:
+        if self.rheology is _DEFAULT_RHEOLOGY or any(
+            getattr(self, f.name) != getattr(_DEFAULT_RHEOLOGY, f.name)
+            for f in fields(SolidRheologyParams)
+        ):
+            self.rheology = SolidRheologyParams(
+                enabled=self.enabled,
+                activation_energy=self.activation_energy,
+                activation_volume=self.activation_volume,
+                activation_volume_decay_pressure=self.activation_volume_decay_pressure,
+                arrhenius_t_ref=self.arrhenius_t_ref,
+                viscosity_max_log10=self.viscosity_max_log10,
+                water_prefactor=self.water_prefactor,
+                yield_stress_c=self.yield_stress_c,
+                yield_stress_mu=self.yield_stress_mu,
+                yield_stress_max=self.yield_stress_max,
+                yield_switch_width=self.yield_switch_width,
+                stress_closure_mode=self.stress_closure_mode,
+                interior_flux_fraction=self.interior_flux_fraction,
+                lid_base_mode=self.lid_base_mode,
+                lid_base_temperature=self.lid_base_temperature,
+                lid_contrast_coeff=self.lid_contrast_coeff,
+                lid_mask_width_cells=self.lid_mask_width_cells,
+                phi_visc_single=self.phi_visc_single,
             )
-        if self.lid_base_mode not in LID_BASE_MODES:
-            raise ValueError(
-                f'Unknown lid_base_mode {self.lid_base_mode!r}; expected {LID_BASE_MODES}'
-            )
-        if self.arrhenius_t_ref <= 0.0:
-            raise ValueError(f'arrhenius_t_ref must be positive, got {self.arrhenius_t_ref}')
-        if self.viscosity_max_log10 <= 0.0:
-            raise ValueError(
-                f'viscosity_max_log10 must be positive, got {self.viscosity_max_log10}'
-            )
-        if self.enabled:
-            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
-                raise ValueError(
-                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
-                    f'activation_energy, but activation_energy={self.activation_energy}'
-                )
+        else:
+            for f in fields(SolidRheologyParams):
+                setattr(self, f.name, getattr(self.rheology, f.name))
 
 
 @dataclass

@@ -28,8 +28,6 @@ from aragog.jax.phase import (
     compute_fluxes,
     compute_mlt,
     compute_yield_stress,
-    eta_diff,
-    eta_eff,
     evaluate_phase,
 )
 from aragog.jax.solver import BoundaryParams, SolveResult
@@ -47,8 +45,6 @@ __all__ = [
     'compute_fluxes',
     'compute_mlt',
     'compute_yield_stress',
-    'eta_diff',
-    'eta_eff',
     'evaluate_phase',
     'BoundaryParams',
     'SolveResult',

@@ -54,11 +54,6 @@ def test_cvode_jax_all_exports():
 
     expected = {
         'build_jax_rhs_and_jacobian',
-        'compute_arrhenius_viscosity',
-        'compute_effective_viscosity',
-        'compute_yield_stress',
-        'eta_diff',
-        'eta_eff',
         'verify_jax_vs_numpy_rhs',
     }
     assert set(cvode_jax.__all__) == expected

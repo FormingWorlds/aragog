@@ -12,7 +12,7 @@ Dependencies: jax, equinox (already in PROTEUS ecosystem via atmodeller).
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -27,7 +27,7 @@ from aragog.config.phases import (
     STRESS_CLOSURE_MODES,
 )
 from aragog.jax.eos import EntropyEOS_JAX
-from aragog.rheology import R_GAS
+from aragog.rheology import R_GAS, SolidRheologyParams
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
@@ -101,28 +101,34 @@ class PhaseParams(eqx.Module):
     functions. All fields are scalars or 1D JAX arrays.
     """
 
-    # Rheology
+    # Rheology - 18 fields matching SolidRheologyParams
+    enabled: bool = eqx.field(static=True)
+    stress_closure_mode: str = eqx.field(static=True)
+    lid_base_mode: str = eqx.field(static=True)
+
+    activation_energy: float
+    activation_volume: float
+    activation_volume_decay_pressure: float
+    arrhenius_t_ref: float
+    viscosity_max_log10: float
+    water_prefactor: float
+    yield_stress_c: float
+    yield_stress_mu: float
+    yield_stress_max: float
+    yield_switch_width: float
+    interior_flux_fraction: float
+    lid_base_temperature: float
+    lid_contrast_coeff: float
+    lid_mask_width_cells: float
+    phi_visc_single: float
+
+    # Phase transition & reference properties
     phi_rheo: float
     phi_width: float
     viscosity_solid: float
     log10_visc_solid: float
     log10_visc_liquid: float
     grain_size: float
-    E_a: float
-    V_a: float
-    enabled: bool = eqx.field(static=True)
-    activation_energy: float = 300e3
-    activation_volume: float = 5e-6
-    yield_stress_c: float = 50e6
-    yield_stress_mu: float = 0.6
-    strain_rate: float = 0.0
-    arrhenius_t_ref: float = 1600.0
-    yield_stress_max: float = 500.0e6
-    viscosity_max_log10: float = 40.0
-    lid_base_mode: str = eqx.field(default='fixed', static=True)
-    lid_base_temperature: float = 1400.0
-    lid_contrast_coeff: float = 2.2
-    stress_closure_mode: str = eqx.field(static=True)
 
     # Thermal conductivity
     k_solid: float
@@ -144,25 +150,14 @@ class PhaseParams(eqx.Module):
     eddy_diff_chemical: float
     kappah_floor: float
 
-    # SPIDER-analogue bottom-up gate for Jgrav. Stored as float for JAX
-    # tracing (1.0 = smoothing on, 0.0 = raw un-smoothed flux). Keep ON
-    # for production runs; setting this to 0.0 reproduces the pre-fix
-    # CMB drain and is only useful for regression tests.
+    # SPIDER-analogue bottom-up gate for Jgrav.
     bottom_up_grav_sep: float
 
     # Phase-boundary smoothing selection for Jgrav and Jmix.
-    # phase_smoothing_tanh: 1.0 -> use SPIDER's two-branch tanh
-    # (_spider_get_smoothing); 0.0 -> use cubic Hermite 16*g^2*(1-g)^2.
-    # phase_smoothing_width: tanh transition width in gphi units
-    # (ignored when phase_smoothing_tanh == 0.0). SPIDER's
-    # ``matprop_smooth_width`` defaults to 0.01.
     phase_smoothing_tanh: float
     phase_smoothing_width: float
 
-    # separation_viscosity_mixture: 1.0 -> gravitational-separation drag
-    # uses the rheological-transition-blended mixture viscosity; 0.0 ->
-    # the fixed single-phase liquid viscosity (SPIDER's
-    # GetGravitationalHeatFlux convention).
+    # Separation viscosity mode
     separation_viscosity_mixture: float
 
     def __init__(
@@ -186,26 +181,47 @@ class PhaseParams(eqx.Module):
         phase_smoothing: str = 'tanh',
         phase_smoothing_width: float = 0.01,
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
-        E_a: float = 0.0,
-        V_a: float = 0.0,
-        yield_stress_c: float = 1e8,
-        yield_stress_mu: float = 0.0,
-        strain_rate: float = 0.0,
-        stress_closure_mode: str = 'local',
-        activation_energy: float | None = None,
-        activation_volume: float | None = None,
+        *,
+        enabled: bool = False,
+        activation_energy: float = 300e3,
+        activation_volume: float = 5e-6,
+        activation_volume_decay_pressure: float = float('inf'),
         arrhenius_t_ref: float = 1600.0,
-        yield_stress_max: float = 500.0e6,
         viscosity_max_log10: float = 40.0,
+        water_prefactor: float = 1.0,
+        yield_stress_c: float = 50e6,
+        yield_stress_mu: float = 0.6,
+        yield_stress_max: float = 500e6,
+        yield_switch_width: float = 0.1,
+        stress_closure_mode: str = 'local',
+        interior_flux_fraction: float = 0.05,
         lid_base_mode: str = 'fixed',
         lid_base_temperature: float = 1400.0,
-        enabled: bool = False,
         lid_contrast_coeff: float = 2.2,
+        lid_mask_width_cells: float = 1.0,
+        phi_visc_single: float = 0.5,
+        rheology: SolidRheologyParams | None = None,
     ):
-        if activation_energy is not None:
-            E_a = activation_energy
-        if activation_volume is not None:
-            V_a = activation_volume
+        if rheology is not None:
+            enabled = rheology.enabled
+            activation_energy = rheology.activation_energy
+            activation_volume = rheology.activation_volume
+            activation_volume_decay_pressure = rheology.activation_volume_decay_pressure
+            arrhenius_t_ref = rheology.arrhenius_t_ref
+            viscosity_max_log10 = rheology.viscosity_max_log10
+            water_prefactor = rheology.water_prefactor
+            yield_stress_c = rheology.yield_stress_c
+            yield_stress_mu = rheology.yield_stress_mu
+            yield_stress_max = rheology.yield_stress_max
+            yield_switch_width = rheology.yield_switch_width
+            stress_closure_mode = rheology.stress_closure_mode
+            interior_flux_fraction = rheology.interior_flux_fraction
+            lid_base_mode = rheology.lid_base_mode
+            lid_base_temperature = rheology.lid_base_temperature
+            lid_contrast_coeff = rheology.lid_contrast_coeff
+            lid_mask_width_cells = rheology.lid_mask_width_cells
+            phi_visc_single = rheology.phi_visc_single
+
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
         self.viscosity_solid = float(viscosity_solid)
@@ -213,38 +229,42 @@ class PhaseParams(eqx.Module):
         self.log10_visc_liquid = jnp.log10(viscosity_liquid)
         self.grain_size = grain_size
         self.enabled = bool(enabled)
-        self.E_a = float(E_a)
-        self.V_a = float(V_a)
-        self.activation_energy = float(E_a)
-        self.activation_volume = float(V_a)
+        self.activation_energy = float(activation_energy)
+        self.activation_volume = float(activation_volume)
+        self.activation_volume_decay_pressure = float(activation_volume_decay_pressure)
+        if float(arrhenius_t_ref) <= 0.0:
+            raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
+        self.arrhenius_t_ref = float(arrhenius_t_ref)
+        if float(viscosity_max_log10) <= 0.0:
+            raise ValueError(f'viscosity_max_log10 must be positive, got {viscosity_max_log10}')
+        self.viscosity_max_log10 = float(viscosity_max_log10)
+        self.water_prefactor = float(water_prefactor)
         self.yield_stress_c = float(yield_stress_c)
         self.yield_stress_mu = float(yield_stress_mu)
-        self.strain_rate = float(strain_rate)
+        self.yield_stress_max = float(yield_stress_max)
+        self.yield_switch_width = float(yield_switch_width)
         if str(stress_closure_mode) not in STRESS_CLOSURE_MODES:
             raise ValueError(
                 f'Unknown stress_closure_mode {stress_closure_mode!r}; expected {STRESS_CLOSURE_MODES}'
             )
         self.stress_closure_mode = str(stress_closure_mode)
-        if float(arrhenius_t_ref) <= 0.0:
-            raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
-        self.arrhenius_t_ref = float(arrhenius_t_ref)
-        self.yield_stress_max = float(yield_stress_max)
-        if float(viscosity_max_log10) <= 0.0:
-            raise ValueError(f'viscosity_max_log10 must be positive, got {viscosity_max_log10}')
-        self.viscosity_max_log10 = float(viscosity_max_log10)
+        self.interior_flux_fraction = float(interior_flux_fraction)
         if str(lid_base_mode) not in LID_BASE_MODES:
             raise ValueError(
                 f'Unknown lid_base_mode {lid_base_mode!r}; expected {LID_BASE_MODES}'
             )
         self.lid_base_mode = str(lid_base_mode)
         if self.enabled:
-            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0:
+            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0.0:
                 raise ValueError(
                     f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
                     f'activation_energy, but activation_energy={self.activation_energy}'
                 )
         self.lid_base_temperature = float(lid_base_temperature)
         self.lid_contrast_coeff = float(lid_contrast_coeff)
+        self.lid_mask_width_cells = float(lid_mask_width_cells)
+        self.phi_visc_single = float(phi_visc_single)
+
         self.k_solid = k_solid
         self.k_liquid = k_liquid
         self.matprop_smooth_width = matprop_smooth_width
@@ -267,14 +287,45 @@ class PhaseParams(eqx.Module):
                 f'separation_viscosity must be one of {SEPARATION_VISCOSITY_MODES}, '
                 f'got {separation_viscosity!r}'
             )
-        # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
-        # must fail here rather than silently fall back to 'melt'.
         if separation_viscosity == 'mixture':
             self.separation_viscosity_mixture = 1.0
         elif separation_viscosity == 'melt':
             self.separation_viscosity_mixture = 0.0
         else:
             raise ValueError(f'unhandled separation_viscosity {separation_viscosity!r}')
+
+    @classmethod
+    def from_rheology_params(
+        cls,
+        rheology: SolidRheologyParams,
+        **kwargs: Any,
+    ) -> PhaseParams:
+        """Construct PhaseParams with rheology fields from SolidRheologyParams."""
+        return cls(rheology=rheology, **kwargs)
+
+    @property
+    def rheology(self) -> SolidRheologyParams:
+        """Return SolidRheologyParams view of the rheology parameters."""
+        return SolidRheologyParams(
+            enabled=self.enabled,
+            activation_energy=self.activation_energy,
+            activation_volume=self.activation_volume,
+            activation_volume_decay_pressure=self.activation_volume_decay_pressure,
+            arrhenius_t_ref=self.arrhenius_t_ref,
+            viscosity_max_log10=self.viscosity_max_log10,
+            water_prefactor=self.water_prefactor,
+            yield_stress_c=self.yield_stress_c,
+            yield_stress_mu=self.yield_stress_mu,
+            yield_stress_max=self.yield_stress_max,
+            yield_switch_width=self.yield_switch_width,
+            stress_closure_mode=self.stress_closure_mode,
+            interior_flux_fraction=self.interior_flux_fraction,
+            lid_base_mode=self.lid_base_mode,
+            lid_base_temperature=self.lid_base_temperature,
+            lid_contrast_coeff=self.lid_contrast_coeff,
+            lid_mask_width_cells=self.lid_mask_width_cells,
+            phi_visc_single=self.phi_visc_single,
+        )
 
 
 class MeshArrays(eqx.Module):
@@ -555,13 +606,12 @@ def compute_arrhenius_viscosity(
     T: jax.Array,
     P: jax.Array,
     viscosity_solid: float = 1.0e21,
-    E_a: float = 0.0,
-    V_a: float = 0.0,
+    activation_energy: float = 300.0e3,
+    activation_volume: float = 5.0e-6,
     T_ref: float = T_REF_ARRHENIUS,
     R: float = R_GAS,
-    activation_energy: float | None = None,
-    activation_volume: float | None = None,
     viscosity_max_log10: float = 40.0,
+    water_prefactor: float | jax.Array = 1.0,
 ) -> jax.Array:
     """Compute continuous Arrhenius diffusion-creep viscosity [Pa s].
 
@@ -573,36 +623,34 @@ def compute_arrhenius_viscosity(
         Pressure [Pa].
     viscosity_solid : float, default 1.0e21
         Reference solid viscosity [Pa s].
-    E_a : float, default 0.0
+    activation_energy : float, default 300.0e3
         Activation energy [J/mol].
-    V_a : float, default 0.0
+    activation_volume : float, default 5.0e-6
         Activation volume [m^3/mol].
     T_ref : float, default 1600.0
         Reference temperature [K].
     R : float, default 8.314462618
         Universal gas constant [J/mol/K].
-    activation_energy : float or None
-        Alias for E_a.
-    activation_volume : float or None
-        Alias for V_a.
+    viscosity_max_log10 : float, default 40.0
+        Log10 viscosity maximum cap.
+    water_prefactor : float or jax.Array, default 1.0
+        Water fugacity / hydration prefactor multiplying viscosity.
 
     Returns
     -------
     jax.Array
         Arrhenius diffusion-creep viscosity eta_diff [Pa s].
     """
-    if activation_energy is not None:
-        E_a = activation_energy
-    if activation_volume is not None:
-        V_a = activation_volume
     T_safe = jnp.maximum(T, 1.0)
     T_ref_safe = jnp.maximum(T_ref, 1e-10)
-    arg = (E_a + P * V_a) / (R * T_safe) - E_a / (R * T_ref_safe)
+    arg = (activation_energy + P * activation_volume) / (R * T_safe) - activation_energy / (
+        R * T_ref_safe
+    )
     max_exponent = (
         viscosity_max_log10 - jnp.log10(jnp.maximum(viscosity_solid, 1e-300))
     ) * jnp.log(10.0)
     arg_bounded = jnp.clip(arg, -700.0, max_exponent)
-    return viscosity_solid * jnp.exp(arg_bounded)
+    return water_prefactor * viscosity_solid * jnp.exp(arg_bounded)
 
 
 def compute_yield_stress(
@@ -664,11 +712,6 @@ def compute_effective_viscosity(
     return 1.0 / jnp.maximum(inv_eta_eff, 1e-100)
 
 
-# Parity aliases matching numpy aragog.rheology
-eta_diff = compute_arrhenius_viscosity
-eta_eff = compute_effective_viscosity
-
-
 # ---------------------------------------------------------------------------
 # Phase evaluation (replaces EntropyPhaseEvaluator.update)
 # ---------------------------------------------------------------------------
@@ -679,6 +722,7 @@ def evaluate_phase(
     params: PhaseParams,
     P: jax.Array,
     S: jax.Array,
+    water_prefactor: float | jax.Array | None = None,
 ) -> PhaseProperties:
     """Compute all material properties at (P, S) nodes.
 
@@ -692,6 +736,8 @@ def evaluate_phase(
         Pressure [Pa], 1D.
     S : jax.Array
         Entropy [J/kg/K], 1D.
+    water_prefactor : float or jax.Array or None, optional
+        Water fugacity / hydration prefactor. If None, uses params.water_prefactor.
 
     Returns
     -------
@@ -711,16 +757,19 @@ def evaluate_phase(
     )
     phi = state.melt_fraction
 
+    wp = params.water_prefactor if water_prefactor is None else water_prefactor
+
     # Solid mantle rheology: continuous Arrhenius diffusion creep and plastic yielding
     if params.enabled:
         eta_diff = compute_arrhenius_viscosity(
             state.temperature,
             P,
             params.viscosity_solid,
-            params.E_a,
-            params.V_a,
+            activation_energy=params.activation_energy,
+            activation_volume=params.activation_volume,
             T_ref=params.arrhenius_t_ref,
             viscosity_max_log10=params.viscosity_max_log10,
+            water_prefactor=wp,
         )
         # Apply yield max ceiling to match numpy
         tau_y = jnp.minimum(
@@ -746,13 +795,13 @@ def evaluate_phase(
     w = tanh_weight(phi, params.phi_rheo, params.phi_width)
     log_visc_mixed = (1.0 - w) * log10_visc_solid + w * params.log10_visc_liquid
     log_visc_single = jnp.where(
-        phi > 0.5,
+        phi > params.phi_visc_single,
         params.log10_visc_liquid,
         log10_visc_solid,
     )
     log_visc = state.smth * log_visc_mixed + (1.0 - state.smth) * log_visc_single
     visc_solid_weight = state.smth * (1.0 - w) + (1.0 - state.smth) * jnp.where(
-        phi > 0.5, 0.0, 1.0
+        phi > params.phi_visc_single, 0.0, 1.0
     )
     viscosity = 10.0**log_visc
     kinematic_viscosity = viscosity / state.density
@@ -915,50 +964,50 @@ def compute_mlt(
         velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu_unyielded, 1e-30))
     ) * conv_mask
 
-    # 2. Compute strain rate proxy
-    if params.stress_closure_mode == 'global':
-        if params.lid_base_mode == 'rheological':
-            t_m = jnp.max(T)
-            e_eff = jnp.maximum(
-                params.activation_energy + mesh.P_basic[-1] * params.activation_volume,
-                1e-6,
-            )
-            dt_rh = R_GAS * t_m**2 / e_eff
-            t_lid_base = t_m - params.lid_contrast_coeff * dt_rh
-        else:
-            t_lid_base = params.lid_base_temperature
-        is_colder = T <= t_lid_base
-        has_colder = jnp.any(is_colder)
-
-        is_hot = T > t_lid_base
-        has_hot = jnp.any(is_hot)
-        r_lid_base = jnp.max(jnp.where(is_hot, mesh.radii_basic, 0.0))
-        d_lid_hot = mesh.radii_basic[-1] - r_lid_base
-        d_lid_cold = mesh.radii_basic[-1] - mesh.radii_basic[0]
-        d_lid_raw = jnp.where(has_hot, d_lid_hot, d_lid_cold)
-
-        dr_min = jnp.where(
-            mesh.radii_basic.size > 1, mesh.radii_basic[-1] - mesh.radii_basic[-2], 1e-15
-        )
-        d_lid = jnp.maximum(d_lid_raw, dr_min)
-
-        interior_mask = mesh.radii_basic <= (mesh.radii_basic[-1] - d_lid)
-        has_interior = jnp.any(interior_mask)
-        v_abs = jnp.abs(visc_v_unyielded)
-        v_int_masked = jnp.max(jnp.where(interior_mask, v_abs, 0.0))
-        v_int = jnp.where(has_interior, v_int_masked, jnp.max(v_abs))
-
-        strain_rate_raw = v_int / d_lid
-        has_lid = has_colder & (d_lid_raw > 0.0)
-        strain_rate = jnp.where(has_lid, strain_rate_raw, 0.0)
-    else:
-        # local
-        strain_rate = jnp.abs(visc_v_unyielded) / jnp.maximum(mesh.mixing_length, 1e-15)
-
-    sr_safe = jnp.maximum(strain_rate, 1e-30)
-
-    # 3. Compute yielded solid viscosity
     if params.enabled:
+        # 2. Compute strain rate proxy
+        if params.stress_closure_mode == 'global':
+            if params.lid_base_mode == 'rheological':
+                t_m = jnp.max(T)
+                e_eff = jnp.maximum(
+                    params.activation_energy + mesh.P_basic[-1] * params.activation_volume,
+                    1e-6,
+                )
+                dt_rh = R_GAS * t_m**2 / e_eff
+                t_lid_base = t_m - params.lid_contrast_coeff * dt_rh
+            else:
+                t_lid_base = params.lid_base_temperature
+            is_colder = T <= t_lid_base
+            has_colder = jnp.any(is_colder)
+
+            is_hot = T > t_lid_base
+            has_hot = jnp.any(is_hot)
+            r_lid_base = jnp.max(jnp.where(is_hot, mesh.radii_basic, 0.0))
+            d_lid_hot = mesh.radii_basic[-1] - r_lid_base
+            d_lid_cold = mesh.radii_basic[-1] - mesh.radii_basic[0]
+            d_lid_raw = jnp.where(has_hot, d_lid_hot, d_lid_cold)
+
+            dr_min = jnp.where(
+                mesh.radii_basic.size > 1, mesh.radii_basic[-1] - mesh.radii_basic[-2], 1e-15
+            )
+            d_lid = jnp.maximum(d_lid_raw, dr_min)
+
+            interior_mask = mesh.radii_basic <= (mesh.radii_basic[-1] - d_lid)
+            has_interior = jnp.any(interior_mask)
+            v_abs = jnp.abs(visc_v_unyielded)
+            v_int_masked = jnp.max(jnp.where(interior_mask, v_abs, 0.0))
+            v_int = jnp.where(has_interior, v_int_masked, jnp.max(v_abs))
+
+            strain_rate_raw = v_int / d_lid
+            has_lid = has_colder & (d_lid_raw > 0.0)
+            strain_rate = jnp.where(has_lid, strain_rate_raw, 0.0)
+        else:
+            # local
+            strain_rate = jnp.abs(visc_v_unyielded) / jnp.maximum(mesh.mixing_length, 1e-15)
+
+        sr_safe = jnp.maximum(strain_rate, 1e-30)
+
+        # 3. Compute yielded solid viscosity
         tau_y_term = tau_y / (2.0 * sr_safe)
         is_inf = jnp.isinf(tau_y_term)
         safe_ty_term = jnp.where(is_inf, 1.0, tau_y_term)

@@ -101,8 +101,11 @@ Module: aragog.config.mesh
 Module: aragog.config.phases
   Imports:
     __future__.annotations
+    aragog.rheology.SolidRheologyParams
     attrs
+    dataclasses.fields
     logging
+    typing.Any
   __all__: []
 Module: aragog.config.radionuclides
   Imports:
@@ -140,20 +143,20 @@ Module: aragog.eos.entropy
 Module: aragog.eos.entropy_phase
   Imports:
     __future__.annotations
-    aragog.config.phases.LID_BASE_MODES
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.config.phases.SEPARATION_VISCOSITY_MODES
-    aragog.config.phases.STRESS_CLOSURE_DEFAULT
-    aragog.config.phases.STRESS_CLOSURE_MODES
     aragog.eos.entropy.EntropyEOS
     aragog.rheology.R_GAS
+    aragog.rheology.SolidRheologyParams
     aragog.rheology.compute_yield_stress
     aragog.rheology.eta_diff
     aragog.utilities.FloatOrArray
     aragog.utilities.tanh_weight
+    dataclasses.fields
     logging
     numpy
     numpy.typing
+    typing.Any
   __all__: []
 Module: aragog.jax
   Imports:
@@ -170,12 +173,10 @@ Module: aragog.jax
     aragog.jax.phase.compute_fluxes
     aragog.jax.phase.compute_mlt
     aragog.jax.phase.compute_yield_stress
-    aragog.jax.phase.eta_diff
-    aragog.jax.phase.eta_eff
     aragog.jax.phase.evaluate_phase
     aragog.jax.solver.BoundaryParams
     aragog.jax.solver.SolveResult
-  __all__: ['BoundaryParams', 'EntropyEOS_JAX', 'FluxOutput', 'MeshArrays', 'NonDimScales', 'PhaseParams', 'PhaseProperties', 'PhaseState', 'SolveResult', 'compute_arrhenius_viscosity', 'compute_effective_viscosity', 'compute_fluxes', 'compute_mlt', 'compute_yield_stress', 'eta_diff', 'eta_eff', 'evaluate_phase']
+  __all__: ['BoundaryParams', 'EntropyEOS_JAX', 'FluxOutput', 'MeshArrays', 'NonDimScales', 'PhaseParams', 'PhaseProperties', 'PhaseState', 'SolveResult', 'compute_arrhenius_viscosity', 'compute_effective_viscosity', 'compute_fluxes', 'compute_mlt', 'compute_yield_stress', 'evaluate_phase']
 Module: aragog.jax.eos
   Imports:
     __future__.annotations
@@ -204,11 +205,13 @@ Module: aragog.jax.phase
     aragog.config.phases.STRESS_CLOSURE_MODES
     aragog.jax.eos.EntropyEOS_JAX
     aragog.rheology.R_GAS
+    aragog.rheology.SolidRheologyParams
     equinox
     jax
     jax.numpy
     numpy
     scipy.interpolate.PchipInterpolator
+    typing.Any
     typing.NamedTuple
   __all__: []
 Module: aragog.jax.solver
@@ -285,13 +288,12 @@ Module: aragog.output.diagnostics
 Module: aragog.parser
   Imports:
     __future__.annotations
-    aragog.config.phases.LID_BASE_MODES
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.config.phases.SEPARATION_VISCOSITY_MODES
-    aragog.config.phases.STRESS_CLOSURE_DEFAULT
-    aragog.config.phases.STRESS_CLOSURE_MODES
+    aragog.rheology.SolidRheologyParams
     dataclasses.dataclass
     dataclasses.field
+    dataclasses.fields
     logging
     numpy
     numpy.typing
@@ -304,6 +306,8 @@ Module: aragog.parser
 Module: aragog.rheology
   Imports:
     __future__.annotations
+    dataclasses.dataclass
+    math
     numpy
     numpy.typing
   __all__: []
@@ -334,11 +338,6 @@ Module: aragog.solver.cvode_jax
   Imports:
     __future__.annotations
     aragog.jax.nondim.NonDimScales
-    aragog.jax.phase.compute_arrhenius_viscosity
-    aragog.jax.phase.compute_effective_viscosity
-    aragog.jax.phase.compute_yield_stress
-    aragog.jax.phase.eta_diff
-    aragog.jax.phase.eta_eff
     aragog.jax.solver._no_radio
     aragog.jax.solver.dSdt
     aragog.jax.solver.dSdt_energy_balance
@@ -348,7 +347,7 @@ Module: aragog.solver.cvode_jax
     logging
     numpy
     typing.Callable
-  __all__: ['build_jax_rhs_and_jacobian', 'compute_arrhenius_viscosity', 'compute_effective_viscosity', 'compute_yield_stress', 'eta_diff', 'eta_eff', 'verify_jax_vs_numpy_rhs']
+  __all__: ['build_jax_rhs_and_jacobian', 'verify_jax_vs_numpy_rhs']
 Module: aragog.solver.entropy_solver
   Imports:
     __future__.annotations
@@ -360,6 +359,7 @@ Module: aragog.solver.entropy_solver
     aragog.mesh.Mesh
     aragog.output.diagnostics.total_enthalpy
     aragog.parser.Parameters
+    aragog.rheology.SolidRheologyParams
     aragog.solver.boundary.BoundaryConditions
     aragog.solver.entropy_state.EntropyState
     collections.abc.Callable

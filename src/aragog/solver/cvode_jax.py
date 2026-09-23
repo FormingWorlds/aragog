@@ -37,23 +37,10 @@ from typing import Callable
 
 import numpy as np
 
-from aragog.jax.phase import (
-    compute_arrhenius_viscosity,
-    compute_effective_viscosity,
-    compute_yield_stress,
-    eta_diff,
-    eta_eff,
-)
-
 logger = logging.getLogger('fwl.' + __name__)
 
 __all__ = [
     'build_jax_rhs_and_jacobian',
-    'compute_arrhenius_viscosity',
-    'compute_effective_viscosity',
-    'compute_yield_stress',
-    'eta_diff',
-    'eta_eff',
     'verify_jax_vs_numpy_rhs',
 ]
 

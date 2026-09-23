@@ -43,7 +43,7 @@ from aragog.rheology import (
     stress_closure,
 )
 
-pytestmark = [pytest.mark.slow, pytest.mark.timeout(3600)]
+pytestmark = pytest.mark.unit
 
 _R_GAS = 8.314462618  # matches aragog.rheology default
 _R_SURF = 6.371e6

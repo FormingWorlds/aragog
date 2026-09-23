@@ -17,6 +17,7 @@ import numpy as np
 import numpy.typing as npt
 
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+from aragog.rheology import compute_t_lid_base, eta_eff, stress_closure
 from aragog.utilities import FloatOrArray
 
 if TYPE_CHECKING:
@@ -638,6 +639,9 @@ class EntropyState:
         mixing_length_cubed = self._mixing_length_cu
         mixing_length_squared = self._mixing_length_sq
         nu = np.asarray(self.phase_basic.kinematic_viscosity()).ravel()
+        visc_v_unyielded = (
+            velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
+        )
         # 1D stress closure and effective viscosity capping
         eta_d = getattr(self.phase_basic, 'eta_diff', None)
         if eta_d is not None and np.size(eta_d) > 0:
@@ -648,36 +652,26 @@ class EntropyState:
             if callable(tau_y):
                 tau_y = tau_y()
             tau_y = np.asarray(tau_y).ravel()
-            mode = str(getattr(self.phase_basic, 'stress_closure_mode', 'local'))
+            rheo = self.phase_basic.rheology
+            mode = rheo.stress_closure_mode
             r_basic = np.asarray(self._evaluator.mesh.basic.radii).ravel()
-
-            from aragog.rheology import compute_t_lid_base, eta_eff, stress_closure
 
             # Baseline unyielded state from EOS (perfect phase blend)
             eta_bulk_unyielded = np.asarray(self.phase_basic.viscosity()).ravel()
             rho_basic = np.asarray(self.phase_basic.density()).ravel()
 
-            # 1. Compute conservative velocity from unyielded baseline
-            nu_unyielded = eta_bulk_unyielded / rho_basic
-            visc_v_unyielded = (
-                velocity_prefactor
-                * mixing_length_cubed
-                / (18.0 * np.maximum(nu_unyielded, 1e-30))
-            )
-
             # 2. Compute strain rate proxy
-
-            lid_base_mode = getattr(self.phase_basic, 'lid_base_mode', 'fixed')
-            t_lid_base = getattr(self.phase_basic, 'lid_base_temperature', 1400.0)
+            lid_base_mode = rheo.lid_base_mode
+            t_lid_base = rheo.lid_base_temperature
             if lid_base_mode == 'rheological':
                 t_m = float(np.max(T))
                 p_arr = np.asarray(getattr(self.phase_basic, 'pressure', None))
                 p_lid = (
                     float(p_arr.ravel()[-1]) if p_arr is not None and p_arr.size > 0 else 0.0
                 )
-                e_a = float(getattr(self.phase_basic, '_activation_energy', 300e3))
-                v_a = float(getattr(self.phase_basic, '_activation_volume', 5e-6))
-                lid_contrast_coeff = float(getattr(self.phase_basic, 'lid_contrast_coeff', 2.2))
+                e_a = float(self.phase_basic.activation_energy)
+                v_a = float(self.phase_basic.activation_volume)
+                lid_contrast_coeff = float(rheo.lid_contrast_coeff)
                 t_lid_base = compute_t_lid_base(t_m, p_lid, e_a, v_a, lid_contrast_coeff)
 
             strain_rate = stress_closure(
@@ -712,9 +706,7 @@ class EntropyState:
                 velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
             )
         else:
-            viscous_velocity = (
-                velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
-            )
+            viscous_velocity = visc_v_unyielded
             self._viscosity_basic = np.asarray(self.phase_basic.viscosity()).ravel()
 
         # Inviscid velocity (Re > Re_crit). Add a tiny eps^2 inside the

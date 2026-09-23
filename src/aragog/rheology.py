@@ -7,12 +7,123 @@ models (local MLT and global boundary-layer closures).
 
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+
 import numpy as np
 import numpy.typing as npt
 
 R_GAS = 8.314462618
 
 FloatOrArray = float | npt.NDArray[np.floating]
+
+
+@dataclass(frozen=True, eq=True)
+class SolidRheologyParams:
+    """Parameters for solid-state mantle rheology and stagnant lid scaling.
+
+    This class is the single source of truth for rheology parameter defaults
+    and bounds validation across Aragog and PROTEUS.
+    """
+
+    enabled: bool = False
+    activation_energy: float = 300e3
+    activation_volume: float = 5e-6
+    activation_volume_decay_pressure: float = float('inf')
+    arrhenius_t_ref: float = 1600.0
+    viscosity_max_log10: float = 40.0
+    water_prefactor: float = 1.0
+    yield_stress_c: float = 50e6
+    yield_stress_mu: float = 0.6
+    yield_stress_max: float = 500e6
+    yield_switch_width: float = 0.1
+    stress_closure_mode: str = 'local'
+    interior_flux_fraction: float = 0.05
+    lid_base_mode: str = 'fixed'
+    lid_base_temperature: float = 1400.0
+    lid_contrast_coeff: float = 2.2
+    lid_mask_width_cells: float = 1.0
+    phi_visc_single: float = 0.5
+
+    def __post_init__(self) -> None:
+        if self.stress_closure_mode not in ('global', 'local'):
+            raise ValueError(
+                f'Unknown stress_closure_mode {self.stress_closure_mode!r}; '
+                f"expected 'local' or 'global'"
+            )
+        if self.lid_base_mode not in ('fixed', 'rheological'):
+            raise ValueError(
+                f'Unknown lid_base_mode {self.lid_base_mode!r}; '
+                f"expected 'fixed' or 'rheological'"
+            )
+        if self.arrhenius_t_ref <= 0.0:
+            raise ValueError(f'arrhenius_t_ref must be positive, got {self.arrhenius_t_ref}')
+        if self.enabled:
+            if self.activation_energy < 0.0:
+                raise ValueError(
+                    f'activation_energy must be non-negative, got {self.activation_energy}'
+                )
+            if self.activation_volume < 0.0:
+                raise ValueError(
+                    f'activation_volume must be non-negative, got {self.activation_volume}'
+                )
+            if self.activation_volume_decay_pressure <= 0.0 and not math.isinf(
+                self.activation_volume_decay_pressure
+            ):
+                raise ValueError(
+                    'activation_volume_decay_pressure must be positive or inf, '
+                    f'got {self.activation_volume_decay_pressure}'
+                )
+            if self.viscosity_max_log10 <= 20.0:
+                raise ValueError(
+                    f'viscosity_max_log10 must be > 20, got {self.viscosity_max_log10}'
+                )
+            if self.water_prefactor <= 0.0:
+                raise ValueError(
+                    f'water_prefactor must be positive, got {self.water_prefactor}'
+                )
+            if self.yield_stress_c < 0.0:
+                raise ValueError(
+                    f'yield_stress_c must be non-negative, got {self.yield_stress_c}'
+                )
+            if self.yield_stress_mu < 0.0:
+                raise ValueError(
+                    f'yield_stress_mu must be non-negative, got {self.yield_stress_mu}'
+                )
+            if self.yield_stress_max <= 0.0:
+                raise ValueError(
+                    f'yield_stress_max must be positive, got {self.yield_stress_max}'
+                )
+            if self.yield_switch_width <= 0.0:
+                raise ValueError(
+                    f'yield_switch_width must be positive, got {self.yield_switch_width}'
+                )
+            if not (0.0 < self.interior_flux_fraction < 1.0):
+                raise ValueError(
+                    'interior_flux_fraction must be in (0, 1), '
+                    f'got {self.interior_flux_fraction}'
+                )
+            if self.lid_base_temperature <= 0.0:
+                raise ValueError(
+                    f'lid_base_temperature must be positive, got {self.lid_base_temperature}'
+                )
+            if self.lid_contrast_coeff <= 0.0:
+                raise ValueError(
+                    f'lid_contrast_coeff must be positive, got {self.lid_contrast_coeff}'
+                )
+            if self.lid_mask_width_cells <= 0.0:
+                raise ValueError(
+                    f'lid_mask_width_cells must be positive, got {self.lid_mask_width_cells}'
+                )
+            if not (0.0 < self.phi_visc_single < 1.0):
+                raise ValueError(
+                    f'phi_visc_single must be in (0, 1), got {self.phi_visc_single}'
+                )
+            if self.lid_base_mode == 'rheological' and self.activation_energy <= 0.0:
+                raise ValueError(
+                    f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
+                    f'activation_energy, but activation_energy={self.activation_energy}'
+                )
 
 
 def compute_t_lid_base(
@@ -42,6 +153,7 @@ def eta_diff(
     t_ref: float = 1600.0,
     r_gas: float = R_GAS,
     viscosity_max_log10: float = 40.0,
+    water_prefactor: FloatOrArray = 1.0,
 ) -> FloatOrArray:
     r"""Compute temperature- and pressure-dependent Arrhenius viscosity.
 
@@ -69,6 +181,8 @@ def eta_diff(
             Reference temperature :math:`T_\mathrm{ref}` [K].
         r_gas : float, default 8.314462618
             Universal gas constant :math:`R` [J/(mol K)].
+        water_prefactor : float or numpy.ndarray, default 1.0
+            Multiplicative prefactor for hydration weakening. Must be positive.
 
         Returns
         -------
@@ -77,6 +191,9 @@ def eta_diff(
     """
     if t_ref <= 0.0:
         raise ValueError(f't_ref must be positive, got {t_ref}')
+    wp = np.asarray(water_prefactor, dtype=float)
+    if np.any(wp <= 0.0):
+        raise ValueError(f'water_prefactor must be positive, got {water_prefactor}')
     t = np.asarray(temperature, dtype=float)
     p = np.asarray(pressure, dtype=float)
     exponent = (activation_energy + p * activation_volume) / (r_gas * t) - activation_energy / (
@@ -86,8 +203,8 @@ def eta_diff(
         viscosity_max_log10 - np.log10(np.maximum(viscosity_solid, 1e-300))
     ) * np.log(10.0)
     clipped_exp = np.clip(exponent, -700.0, max_exponent)
-    result = viscosity_solid * np.exp(clipped_exp)
-    if np.ndim(temperature) == 0 and np.ndim(pressure) == 0:
+    result = viscosity_solid * wp * np.exp(clipped_exp)
+    if np.ndim(temperature) == 0 and np.ndim(pressure) == 0 and np.ndim(water_prefactor) == 0:
         return float(result.item())
     return result
 

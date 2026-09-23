@@ -25,26 +25,21 @@ from aragog.jax.phase import (
 from aragog.solver.cvode_jax import (
     build_jax_rhs_and_jacobian,
 )
-from aragog.solver.cvode_jax import (
-    compute_arrhenius_viscosity as cvode_arrhenius,
-)
-from aragog.solver.cvode_jax import (
-    compute_effective_viscosity as cvode_effective,
-)
-from aragog.solver.cvode_jax import (
-    compute_yield_stress as cvode_yield,
-)
 
 jax.config.update('jax_enable_x64', True)
 
 pytestmark = pytest.mark.unit
 
 
-def test_cvode_jax_reexports():
-    """cvode_jax re-exports the rheology functions for API parity."""
-    assert cvode_arrhenius is compute_arrhenius_viscosity
-    assert cvode_yield is compute_yield_stress
-    assert cvode_effective is compute_effective_viscosity
+def test_cvode_jax_no_reexports():
+    """cvode_jax does not re-export rheology functions (N6)."""
+    import aragog.solver.cvode_jax as cvode_mod
+
+    assert not hasattr(cvode_mod, 'compute_arrhenius_viscosity')
+    assert not hasattr(cvode_mod, 'compute_yield_stress')
+    assert not hasattr(cvode_mod, 'compute_effective_viscosity')
+    assert not hasattr(cvode_mod, 'eta_diff')
+    assert not hasattr(cvode_mod, 'eta_eff')
 
 
 def test_arrhenius_reference_state():
@@ -203,11 +198,10 @@ def test_cvode_jax_analytic_jacobian_finite_differences():
     # PhaseParams with active Arrhenius and Yield Stress parameters
     params = PhaseParams(
         viscosity_solid=1.0e21,
-        E_a=3.0e5,
-        V_a=1.5e-5,
+        activation_energy=3.0e5,
+        activation_volume=1.5e-5,
         yield_stress_c=1.0e8,
         yield_stress_mu=0.1,
-        strain_rate=1.0e-15,
         convection=True,
         conduction=True,
     )

@@ -322,13 +322,8 @@ def test_lid_base_mode_and_stress_closure_validation():
         phase_transition_width=0.01,
         grain_size=1.0e-3,
     )
-    with pytest.raises(ValueError, match="Unknown lid_base_mode 'invalid'"):
+    with pytest.raises(TypeError, match='unexpected keyword argument'):
         _PhaseMixedParameters(**mixed_kwargs, lid_base_mode='invalid')
-
-    with pytest.raises(ValueError, match='lid_base_mode.*activation_energy'):
-        _PhaseMixedParameters(
-            **mixed_kwargs, enabled=True, activation_energy=0.0, lid_base_mode='rheological'
-        )
 
     with pytest.raises(ValueError, match="Unknown lid_base_mode 'invalid'"):
         _PhaseParameters(
@@ -350,7 +345,7 @@ def test_lid_base_mode_and_stress_closure_validation():
             thermal_expansivity=2e-5,
             viscosity=1e21,
             enabled=True,
-            activation_energy=-100.0,
+            activation_energy=0.0,
             lid_base_mode='rheological',
         )
 
@@ -411,21 +406,20 @@ def test_entropy_phase_evaluator_yield_stress_max_and_viscosity_max():
     assert p_cfg.yield_stress_max == 200.0e6
     assert p_cfg.viscosity_max_log10 == 28.0
 
-    m_cfg = MixedPhaseConfig(
-        latent_heat_of_fusion=4e5,
-        rheological_transition_melt_fraction=0.4,
-        rheological_transition_width=0.15,
-        solidus='solidus.dat',
-        liquidus='liquidus.dat',
-        phase='mixed',
-        phase_transition_width=0.01,
-        grain_size=1e-3,
-        enabled=True,
-        yield_stress_max=150.0e6,
-        viscosity_max_log10=30.0,
-    )
-    assert m_cfg.yield_stress_max == 150.0e6
-    assert m_cfg.viscosity_max_log10 == 30.0
+    with pytest.raises(TypeError, match='unexpected keyword argument'):
+        MixedPhaseConfig(
+            latent_heat_of_fusion=4e5,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.15,
+            solidus='solidus.dat',
+            liquidus='liquidus.dat',
+            phase='mixed',
+            phase_transition_width=0.01,
+            grain_size=1e-3,
+            enabled=True,
+            yield_stress_max=150.0e6,
+            viscosity_max_log10=30.0,
+        )
 
     # Evaluator in const_properties mode
     evaluator = EntropyPhaseEvaluator(
@@ -582,7 +576,7 @@ def test_phase_config_rheological_lid_requires_positive_activation_energy():
             activation_energy=0.0,
         )
 
-    with pytest.raises(ValueError, match='requires non-zero activation_energy'):
+    with pytest.raises(TypeError, match='unexpected keyword argument'):
         MixedPhaseConfig(
             latent_heat_of_fusion=4e6,
             rheological_transition_melt_fraction=0.4,
@@ -596,3 +590,64 @@ def test_phase_config_rheological_lid_requires_positive_activation_energy():
             lid_base_mode='rheological',
             activation_energy=0.0,
         )
+
+
+@pytest.mark.unit
+def test_water_prefactor_scalar_and_array_parity():
+    """Verify water_prefactor scales viscosity linearly for scalar and array in numpy and JAX."""
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import compute_arrhenius_viscosity as jax_arrhenius
+    from aragog.rheology import eta_diff
+
+    t = np.array([1600.0, 1800.0])
+    p = np.array([0.0, 1e9])
+
+    # 1. Scalar prefactor
+    eta_dry = eta_diff(t, p, water_prefactor=1.0)
+    eta_wet_scalar = eta_diff(t, p, water_prefactor=0.1)
+    np.testing.assert_allclose(eta_wet_scalar, 0.1 * eta_dry, rtol=1e-12)
+
+    # 2. Array prefactor
+    wp_arr = np.array([0.5, 0.2])
+    eta_wet_arr = eta_diff(t, p, water_prefactor=wp_arr)
+    np.testing.assert_allclose(eta_wet_arr, wp_arr * eta_dry, rtol=1e-12)
+
+    # 3. JAX parity with numpy
+    t_j = jnp.asarray(t)
+    p_j = jnp.asarray(p)
+    eta_j_dry = jax_arrhenius(t_j, p_j, water_prefactor=1.0)
+    eta_j_wet_scalar = jax_arrhenius(t_j, p_j, water_prefactor=0.1)
+    eta_j_wet_arr = jax_arrhenius(t_j, p_j, water_prefactor=jnp.asarray(wp_arr))
+
+    np.testing.assert_allclose(np.asarray(eta_j_dry), eta_dry, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(eta_j_wet_scalar), eta_wet_scalar, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(eta_j_wet_arr), eta_wet_arr, rtol=1e-12)
+
+    # 4. Error on non-positive
+    with pytest.raises(ValueError, match='water_prefactor must be positive'):
+        eta_diff(t, p, water_prefactor=0.0)
+    with pytest.raises(ValueError, match='water_prefactor must be positive'):
+        eta_diff(t, p, water_prefactor=-0.5)
+
+
+@pytest.mark.unit
+def test_phi_visc_single_parameter_control():
+    """Verify phi_visc_single controls the single-phase transition threshold."""
+    from aragog.rheology import SolidRheologyParams
+
+    # Default is 0.5
+    default_p = SolidRheologyParams()
+    assert default_p.phi_visc_single == 0.5
+
+    # Valid in (0, 1)
+    custom_p = SolidRheologyParams(phi_visc_single=0.7)
+    assert custom_p.phi_visc_single == 0.7
+
+    # Bounds validation when enabled
+    with pytest.raises(ValueError, match='phi_visc_single must be in'):
+        SolidRheologyParams(enabled=True, phi_visc_single=0.0)
+    with pytest.raises(ValueError, match='phi_visc_single must be in'):
+        SolidRheologyParams(enabled=True, phi_visc_single=1.0)
+    with pytest.raises(ValueError, match='phi_visc_single must be in'):
+        SolidRheologyParams(enabled=True, phi_visc_single=-0.1)

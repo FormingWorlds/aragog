@@ -12,19 +12,18 @@ phi = (S - S_sol) / (S_liq - S_sol), no root-finding needed.
 from __future__ import annotations
 
 import logging
+from dataclasses import fields
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
 from aragog.config.phases import (
-    LID_BASE_MODES,
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
-    STRESS_CLOSURE_DEFAULT,
-    STRESS_CLOSURE_MODES,
 )
 from aragog.eos.entropy import EntropyEOS
-from aragog.rheology import R_GAS, compute_yield_stress
+from aragog.rheology import R_GAS, SolidRheologyParams, compute_yield_stress
 from aragog.rheology import eta_diff as calc_eta_diff
 from aragog.utilities import FloatOrArray, tanh_weight
 
@@ -78,7 +77,6 @@ class EntropyPhaseEvaluator:
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
         matprop_smooth_width: float = 0.0,
         const_properties: bool = False,
-        enabled: bool = False,
         const_rho: float = 4000.0,
         const_Cp: float = 1000.0,
         const_alpha: float = 1e-5,
@@ -86,17 +84,8 @@ class EntropyPhaseEvaluator:
         const_log10visc: float = 2.0,
         const_T_ref: float = 3500.0,
         const_S_ref: float = 3000.0,
-        activation_energy: float = 300e3,
-        activation_volume: float = 5e-6,
-        yield_stress_c: float = 50e6,
-        yield_stress_mu: float = 0.6,
-        stress_closure_mode: str = STRESS_CLOSURE_DEFAULT,
-        arrhenius_t_ref: float = 1600.0,
-        yield_stress_max: float = 500.0e6,
-        viscosity_max_log10: float = 40.0,
-        lid_base_mode: str = 'fixed',
-        lid_base_temperature: float = 1400.0,
-        lid_contrast_coeff: float = 2.2,
+        rheology: SolidRheologyParams | None = None,
+        **flat_rheo: Any,
     ):
         self._eos = entropy_eos
         self._g = gravitational_acceleration
@@ -108,37 +97,33 @@ class EntropyPhaseEvaluator:
         self._k_solid = thermal_conductivity_solid
         self._k_liquid = thermal_conductivity_liquid
         self._matprop_smooth_width = matprop_smooth_width
-        self._activation_energy = float(activation_energy)
-        self._activation_volume = float(activation_volume)
-        self._yield_stress_c = float(yield_stress_c)
-        self._yield_stress_mu = float(yield_stress_mu)
-        if stress_closure_mode not in STRESS_CLOSURE_MODES:
-            raise ValueError(
-                f'stress_closure_mode must be one of {STRESS_CLOSURE_MODES}, '
-                f'got {stress_closure_mode!r}'
-            )
-        self._stress_closure_mode = stress_closure_mode
-        if arrhenius_t_ref <= 0.0:
-            raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
-        self._arrhenius_t_ref = arrhenius_t_ref
-        self._enabled = enabled
-        self._yield_stress_max = yield_stress_max
-        if float(viscosity_max_log10) <= 0.0:
-            raise ValueError(f'viscosity_max_log10 must be positive, got {viscosity_max_log10}')
-        self._viscosity_max_log10 = float(viscosity_max_log10)
-        if lid_base_mode not in LID_BASE_MODES:
-            raise ValueError(
-                f'Unknown lid_base_mode {lid_base_mode!r}; expected {LID_BASE_MODES}'
-            )
-        if enabled:
-            if lid_base_mode == 'rheological' and self._activation_energy <= 0:
-                raise ValueError(
-                    f'Invalid combination: lid_base_mode={lid_base_mode!r} requires non-zero '
-                    f'activation_energy, but activation_energy={self._activation_energy}'
-                )
-        self._lid_base_mode = lid_base_mode
-        self._lid_base_temperature = lid_base_temperature
-        self._lid_contrast_coeff = lid_contrast_coeff
+
+        if rheology is not None:
+            if flat_rheo:
+                params_dict = {
+                    f.name: getattr(rheology, f.name) for f in fields(SolidRheologyParams)
+                }
+                params_dict.update(flat_rheo)
+                self.rheology = SolidRheologyParams(**params_dict)
+            else:
+                self.rheology = rheology
+        elif flat_rheo:
+            self.rheology = SolidRheologyParams(**flat_rheo)
+        else:
+            self.rheology = SolidRheologyParams()
+
+        self._enabled = self.rheology.enabled
+        self._activation_energy = self.rheology.activation_energy
+        self._activation_volume = self.rheology.activation_volume
+        self._yield_stress_c = self.rheology.yield_stress_c
+        self._yield_stress_mu = self.rheology.yield_stress_mu
+        self._stress_closure_mode = self.rheology.stress_closure_mode
+        self._arrhenius_t_ref = self.rheology.arrhenius_t_ref
+        self._yield_stress_max = self.rheology.yield_stress_max
+        self._viscosity_max_log10 = self.rheology.viscosity_max_log10
+        self._lid_base_mode = self.rheology.lid_base_mode
+        self._lid_base_temperature = self.rheology.lid_base_temperature
+        self._lid_contrast_coeff = self.rheology.lid_contrast_coeff
         # Constant-properties mode (matches SPIDER -use_const_properties)
         self._const_properties = const_properties
         self._const_rho = const_rho
@@ -176,6 +161,82 @@ class EntropyPhaseEvaluator:
         self._eta_diff: npt.NDArray = np.array([])
         self._tau_y: npt.NDArray = np.array([])
         self._visc_solid_weight: npt.NDArray = np.array([])
+
+    # ── Rheology properties (delegating to SolidRheologyParams) ───────
+
+    @property
+    def activation_energy(self) -> float:
+        """Molar activation energy [J/mol]."""
+        return self.rheology.activation_energy
+
+    @property
+    def activation_volume(self) -> float:
+        """Molar activation volume [m^3/mol]."""
+        return self.rheology.activation_volume
+
+    @property
+    def enabled(self) -> bool:
+        return self.rheology.enabled
+
+    @property
+    def activation_volume_decay_pressure(self) -> float:
+        return self.rheology.activation_volume_decay_pressure
+
+    @property
+    def arrhenius_t_ref(self) -> float:
+        return self.rheology.arrhenius_t_ref
+
+    @property
+    def viscosity_max_log10(self) -> float:
+        return self.rheology.viscosity_max_log10
+
+    @property
+    def water_prefactor(self) -> float:
+        return self.rheology.water_prefactor
+
+    @property
+    def yield_stress_c(self) -> float:
+        return self.rheology.yield_stress_c
+
+    @property
+    def yield_stress_mu(self) -> float:
+        return self.rheology.yield_stress_mu
+
+    @property
+    def yield_stress_max(self) -> float:
+        return self.rheology.yield_stress_max
+
+    @property
+    def yield_switch_width(self) -> float:
+        return self.rheology.yield_switch_width
+
+    @property
+    def stress_closure_mode(self) -> str:
+        return self.rheology.stress_closure_mode
+
+    @property
+    def interior_flux_fraction(self) -> float:
+        return self.rheology.interior_flux_fraction
+
+    @property
+    def lid_base_mode(self) -> str:
+        return self.rheology.lid_base_mode
+
+    @property
+    def lid_base_temperature(self) -> float:
+        return self.rheology.lid_base_temperature
+
+    @property
+    def lid_contrast_coeff(self) -> float:
+        return self.rheology.lid_contrast_coeff
+
+    @property
+    def lid_mask_width_cells(self) -> float:
+        return self.rheology.lid_mask_width_cells
+
+    @property
+    def phi_visc_single(self) -> float:
+        return self.rheology.phi_visc_single
 
     # ── State setters (match PhaseEvaluatorProtocol interface) ────────
 
@@ -247,6 +308,7 @@ class EntropyPhaseEvaluator:
                     t_ref=self._arrhenius_t_ref,
                     r_gas=R_GAS,
                     viscosity_max_log10=self._viscosity_max_log10,
+                    water_prefactor=self.rheology.water_prefactor,
                 ),
                 dtype=float,
             )
@@ -483,6 +545,7 @@ class EntropyPhaseEvaluator:
                     t_ref=self.arrhenius_t_ref,
                     r_gas=R_GAS,
                     viscosity_max_log10=self._viscosity_max_log10,
+                    water_prefactor=self.rheology.water_prefactor,
                 ),
                 dtype=float,
             )
@@ -514,7 +577,7 @@ class EntropyPhaseEvaluator:
 
         # Single-phase viscosity (Arrhenius for solid, constant for liquid)
         log_visc_single = np.where(
-            phi_arr > 0.5,
+            phi_arr > self.rheology.phi_visc_single,
             log_visc_liquid,
             log_visc_solid,
         )
@@ -523,7 +586,9 @@ class EntropyPhaseEvaluator:
         log_visc = smth * log_visc_mixed + (1.0 - smth) * log_visc_single
         is_scalar = np.ndim(self._melt_fraction) == 0
 
-        visc_solid_weight = smth * (1.0 - w) + (1.0 - smth) * np.where(phi_arr > 0.5, 0.0, 1.0)
+        visc_solid_weight = smth * (1.0 - w) + (1.0 - smth) * np.where(
+            phi_arr > self.rheology.phi_visc_single, 0.0, 1.0
+        )
         self._visc_solid_weight = visc_solid_weight.item() if is_scalar else visc_solid_weight
         self._viscosity_val = 10.0 ** (log_visc.item() if is_scalar else log_visc)
 
@@ -610,31 +675,6 @@ class EntropyPhaseEvaluator:
     def visc_solid_weight(self) -> FloatOrArray | None:
         """Weight of the solid viscosity in the final blended log viscosity."""
         return self._visc_solid_weight
-
-    @property
-    def arrhenius_t_ref(self) -> float:
-        return float(getattr(self, '_arrhenius_t_ref', 1600.0))
-
-    @property
-    def yield_stress_max(self) -> float:
-        return float(getattr(self, '_yield_stress_max', 500.0e6))
-
-    @property
-    def lid_base_mode(self) -> str:
-        return str(getattr(self, '_lid_base_mode', 'fixed'))
-
-    @property
-    def lid_base_temperature(self) -> float:
-        return float(getattr(self, '_lid_base_temperature', 1400.0))
-
-    @property
-    def lid_contrast_coeff(self) -> float:
-        return float(getattr(self, '_lid_contrast_coeff', 2.2))
-
-    @property
-    def stress_closure_mode(self) -> str:
-        """Stress closure mode ('local' or 'global')."""
-        return self._stress_closure_mode
 
     def relative_velocity(self) -> FloatOrArray:
         """Melt-solid relative velocity for gravitational separation [m/s].
