@@ -438,8 +438,8 @@ def test_entropy_phase_evaluator_yield_stress_max_and_viscosity_max():
         yield_stress_max=10.0e6,
         viscosity_max_log10=25.0,
     )
-    assert evaluator._yield_stress_max == 10.0e6
-    assert evaluator._viscosity_max_log10 == 25.0
+    assert evaluator.yield_stress_max == 10.0e6
+    assert evaluator.viscosity_max_log10 == 25.0
 
     # Update with low temperature to test viscosity cap
     S = np.array([2500.0])
