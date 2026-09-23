@@ -11,7 +11,7 @@ $$
 $$
 
 where:
-- $\eta_\text{solid}$ is the reference solid viscosity at temperature $T_\text{ref} = 1600\text{ K}$ and zero pressure (`viscosity_solid`, default $10^{20}\text{ Pa s}$).
+- $\eta_\text{solid}$ is the reference solid viscosity at temperature $T_\text{ref} = 1600\text{ K}$ and zero pressure (`viscosity_solid`, default $10^{21}\text{ Pa s}$).
 - $f_\text{water}$ is the hydration weakening prefactor (`water_prefactor`, default $1.0$).
 - $R = 8.314462618\text{ J mol}^{-1}\text{ K}^{-1}$ is the universal gas constant.
 - $H(P)$ is the activation enthalpy.
@@ -108,13 +108,13 @@ In a vigorously convecting interior beneath a cold surface, convective heat tran
 
 ### Interior Convective State
 
-Aragog identifies the convecting mantle region from the convective heat flux. The interior temperature $T_i$ and pressure $P_{T_i}$ are defined at the shallowest radial node where the convective heat flux exceeds a prescribed fraction of the total heat flux:
+Aragog identifies the convecting mantle region from the convective heat flux. The interior temperature $T_i$ and pressure $P_{T_i}$ are defined through a smooth sigmoid selection on the convective flux fraction $f_k = (F_\text{conv} / F_\text{tot})_k$ relative to the interior flux threshold $f_\text{conv,min}$ (`interior_flux_fraction`, default $0.05$). The transition weight:
 
 $$
-\frac{F_\text{conv}}{F_\text{tot}} \ge f_\text{conv,min}
+w_{\text{conv}, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - f_\text{conv,min}}{w_\text{conv}} \right) \right)
 $$
 
-where $f_\text{conv,min}$ is the interior flux fraction (`interior_flux_fraction`, default $0.05$). If no node satisfies this condition, no convective interior exists, no lid is delimited, and yielding remains inactive.
+uses a transition width $w_\text{conv} = \Delta f_\text{cell}$ corresponding to the flux fraction variation across one cell. This smooth formulation isolates $T_i$ at the shallowest convecting node while guaranteeing finite derivatives and exact differentiability for automatic differentiation (`jacrev`). If $f_k < f_\text{conv,min}$ throughout the column, no convective interior exists, no lid is delimited, and yielding remains inactive.
 
 ### Rheological Temperature Scale
 
@@ -183,7 +183,13 @@ $$
 
 where $\eta_i = \eta_\text{diff}(T_i, P_{T_i})$ is the interior solid viscosity, and $v_i$ is the convective velocity representative of the upper convecting mantle.
 
-To prevent localised spikes or lower boundary layer velocities from contaminating $v_i$, Aragog evaluates $v_i$ as a smooth log-sum-exp maximum of the mixing-length velocity over the upper half of the convecting region (from the $T_i$ node to mid-depth of the convective domain).
+To prevent localised spikes or lower boundary layer velocities from contaminating $v_i$, Aragog evaluates $v_i$ as a smooth log-sum-exp maximum of the mixing-length velocity over the upper half of the convecting region (from the $T_i$ node to mid-depth of the convective domain):
+
+$$
+v_i = T_v \ln\left( \sum_{k \in \text{upper}} \exp\left( \frac{v_k}{T_v} \right) \right)
+$$
+
+with velocity smoothing scale $T_v = 1.0\text{ cm yr}^{-1} \approx 3.17 \times 10^{-10}\text{ m s}^{-1}$.
 
 The model also records the alternative stress scale evaluated over the full lid thickness $d_\text{lid}$:
 
@@ -191,13 +197,21 @@ $$
 \tau_{d,\text{lid}} = \frac{\eta_i v_i}{d_\text{lid}}
 $$
 
-along with the sublayer buoyancy stress:
+yielding a geometric ratio $\tau_d / \tau_{d,\text{lid}} = d_\text{lid} / \delta_\text{rh} \approx 10$ for typical Earth conditions ($d_\text{lid} \approx 70\text{ km}$, $\delta_\text{rh} \approx 6.8\text{ km}$).
+
+The sublayer buoyancy stress driving convective deformation is:
 
 $$
 \tau_\text{buoy} = \rho g \alpha \Delta T_\text{rh} \delta_\text{rh}
 $$
 
-The ratio $\tau_d / \tau_\text{buoy}$ is tracked as a diagnostic indicator of convective force balance.
+For an Earth-like reference state ($\rho = 3300\text{ kg m}^{-3}$, $g = 9.81\text{ m s}^{-2}$, $\alpha = 3 \times 10^{-5}\text{ K}^{-1}$, $T_i = 1600\text{ K}$, $P_{T_i} = 3\text{ GPa}$, $\Delta T_\text{rh} \approx 68\text{ K}$, $\delta_\text{rh} \approx 6.8\text{ km}$), the sublayer buoyancy stress evaluates to $\tau_\text{buoy} \approx 0.45\text{ MPa}$. With interior viscosity $\eta_i = 10^{20}\text{ Pa s}$ and convective velocity $v_i \approx 2.5\text{ cm yr}^{-1}$ ($7.9 \times 10^{-10}\text{ m s}^{-1}$), the driving stress evaluates to $\tau_d \approx 1.16\text{ MPa}$. The resulting stress ratio:
+
+$$
+\frac{\tau_d}{\tau_\text{buoy}} \approx 2.6
+$$
+
+falls within the expected boundary-layer balance range $[0.1, 10]$ and is tracked as a diagnostic indicator of convective force balance.
 
 ## 5. Stress Closure and Over-Yield Regime Switch
 
@@ -327,6 +341,16 @@ $$
 
 The parameter `phi_visc_single` (default $0.5$) governs the single-phase cutoff threshold. It is isolated to this viscosity blending routine and is distinct from the other twelve $\phi > 0.5$ sites in equation-of-state tables and thermal conductivity models, which remain untouched.
 
+### Mass Fraction versus Volume Fraction Conventions
+
+In Aragog, the melt fraction $\phi$ is tracked as a mass fraction ($w_\text{melt}$). In contrast, laboratory and geodynamic literature commonly parameterise the rheological transition in terms of melt volume fraction ($\phi_v$). For a 10% density contrast between solid matrix ($\rho_s \approx 3300\text{ kg m}^{-3}$) and basaltic melt ($\rho_l \approx 2800\text{ kg m}^{-3}$), a volume fraction of $\phi_v = 0.30$ corresponds to a mass fraction of $\phi_m \approx 0.28$:
+
+$$
+\phi_m = \frac{\phi_v \rho_l}{\phi_v \rho_l + (1 - \phi_v) \rho_s}
+$$
+
+The nominal threshold $\phi_\text{rheo} = 0.40$ in Aragog is defined directly in solver mass fraction.
+
 ## 9. Asymptotic Limits
 
 The closure satisfies the following asymptotic limits:
@@ -360,8 +384,8 @@ The table below reconciles diagnostic quantities across model helpfiles and NetC
 |:---|:---|:---:|:---|
 | `T_pot` | Mantle potential temperature | K | Mass-weighted convective interior temperature |
 | `boundary_layer_thickness` | Thermal boundary layer thickness | m | Depth where conductive geotherm meets interior adiabat |
-| `RF_depth` | Rheological front depth | m | Depth where melt fraction equals $\phi_\text{rheo} = 0.4$ |
-| `visc_stag` | Stagnant lid viscosity | Pa s | Viscosity at the cold surface lid (recorded as `log10visc_s`) |
+| `RF_depth` | Rheological front depth | - | Dimensionless depth ($1 - r_\text{rf} / R_\text{outer}$) where melt fraction equals $\phi_\text{rheo} = 0.4$ |
+| `visc_stag` | Stagnant lid viscosity profile | Pa s | Radial viscosity profile on staggered nodes (recorded as `log10visc_s`; surface value reflects cold lid) |
 | `lid_thickness` | Diagnostic lid thickness | m | Physical thickness of the stagnant lid $d_\text{lid}$ |
 | `lid_base_temperature` | Lid base temperature | K | Temperature $T_\text{lid}$ at the base of the stagnant lid |
 | `lid_regime` | Convective regime indicator | - | $0.0$ for stagnant lid, $1.0$ for mobile lid |
