@@ -162,14 +162,8 @@ def test_stress_closure_error_contract_and_dispatch():
         stress_closure('teleportation', viscous_velocity=v)
     with pytest.raises(ValueError):
         stress_closure('local', viscous_velocity=v)  # missing mixing_length
-    with pytest.raises(ValueError):
-        stress_closure('global', viscous_velocity=v)  # missing radius/temperature
-
-    # Valid global dispatch returns a positive, finite strain rate.
-    strain = stress_closure(
-        'global', viscous_velocity=v, radius=r, temperature=t, t_lid_base=1400.0
-    )
-    assert np.isfinite(strain) and strain > 0.0
+    with pytest.raises(ValueError, match="use 'lid'"):
+        stress_closure('global', viscous_velocity=v, radius=r, temperature=t, t_lid_base=1400.0)
     # Valid local dispatch scales as v / l: doubling the mixing length halves it.
     sr_l = stress_closure('local', viscous_velocity=1.0e-9, mixing_length=1.0e5)
     sr_l2 = stress_closure('local', viscous_velocity=1.0e-9, mixing_length=2.0e5)
