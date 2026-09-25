@@ -26,12 +26,13 @@ def _probe_text(width: float, enabled: bool = True) -> str:
     return text
 
 
-@pytest.mark.parametrize('width', [0.0, -0.01])
+@pytest.mark.parametrize('width', [0.0, -0.01, float('nan')])
 def test_rheology_rejects_non_positive_width(width, tmp_path):
+    text = _probe_text(width)
     with pytest.raises(ValueError, match='matprop_smooth_width > 0'):
-        Config.from_dict(tomllib.loads(_probe_text(width)))
+        Config.from_dict(tomllib.loads(text))
     path = tmp_path / 'probe.toml'
-    path.write_text(_probe_text(width))
+    path.write_text(text)
     with pytest.raises(ValueError, match='matprop_smooth_width > 0'):
         Parameters.from_file(path)
 

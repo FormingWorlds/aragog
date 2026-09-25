@@ -502,10 +502,11 @@ class Parameters:
                 )
 
         # With a zero width the solid-rheology right-hand side jumps at the solidus edge.
-        if self.phase_solid.rheology.enabled and self.phase_mixed.matprop_smooth_width <= 0.0:
+        width = self.phase_mixed.matprop_smooth_width
+        if self.phase_solid.rheology.enabled and not width > 0.0:
             raise ValueError(
                 '[phase_solid] enabled = true requires [phase_mixed] matprop_smooth_width > 0 '
-                f'(got {self.phase_mixed.matprop_smooth_width}); PROTEUS passes 0.01'
+                f'(got {width}); PROTEUS passes 0.01'
             )
 
         # Convert radionuclide concentration from ppm to mass fraction.
