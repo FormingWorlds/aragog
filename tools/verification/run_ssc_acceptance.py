@@ -1,10 +1,10 @@
 """Acceptance verification run for solid-state convection to 4.5 Gyr.
 
-Executes the long-term Earth-like cooling run specified in Step 6 of Phase 2b
-(tools/verification/configs/ssc_earth_4p5gyr.toml) to 4.5 Gyr with:
-- 100 mesh nodes with surface resolution
+Executes the long-term Earth-like cooling run of
+tools/verification/configs/ssc_earth_4p5gyr.toml to 4.5 Gyr with:
+- 100 mesh nodes
 - Radiogenic heating enabled
-- CVODE solver with JAX RHS and analytic Jacobian (Option Z)
+- CVODE with the JAX right-hand side and analytic Jacobian
 - Stagnant lid stress closure and diagnostics
 
 Verifies:
@@ -51,6 +51,21 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+def cvode_counts(sol) -> tuple[int, int, int, float]:
+    """Return CVODE's steps, error-test failures, Jacobian setups and last step [yr].
+
+    ``sol.t`` is the output grid, not the CVODE step sequence, so the counts come from
+    the ``cvode_info`` that ``EntropySolver`` attaches to a CVODE solution.
+    """
+    info = sol.get('cvode_info', {})
+    return (
+        int(info.get('NumSteps', 0)),
+        int(info.get('NumErrTestFails', 0)),
+        int(info.get('NumLinSolvSetups', 0)),
+        float(sol.get('cvode_last_step', np.nan)),
+    )
+
+
 def run_acceptance(
     config_path: Path,
     eos_dir: Path,
@@ -90,15 +105,13 @@ def run_acceptance(
         grain_size=p.phase_mixed.grain_size,
         k_solid=p.phase_solid.thermal_conductivity,
         k_liquid=p.phase_liquid.thermal_conductivity,
-        matprop_smooth_width=getattr(p.phase_mixed, 'matprop_smooth_width', 0.0),
+        matprop_smooth_width=p.phase_mixed.matprop_smooth_width,
         conduction=p.energy.conduction,
         convection=p.energy.convection,
         grav_sep=p.energy.gravitational_separation,
         mixing=p.energy.mixing,
-        eddy_diff_thermal=getattr(p.energy, 'eddy_diff_thermal', 1.0),
-        eddy_diff_chemical=getattr(p.energy, 'eddy_diff_chemical', 1.0),
-        kappah_floor=getattr(p.energy, 'kappah_floor', 0.0),
-        rheology=getattr(p.phase_solid, 'rheology', None),
+        kappah_floor=p.energy.kappah_floor,
+        rheology=p.phase_solid.rheology,
     )
 
     _cached_cvode = None
@@ -120,15 +133,15 @@ def run_acceptance(
             inner_bc_value=bc_cfg.inner_boundary_value,
             core_density=solver.parameters.mesh.core_density,
             core_heat_capacity=bc_cfg.core_heat_capacity,
-            tfac_core_avg=getattr(bc_cfg, 'tfac_core_avg', 1.147),
-            cmb_area=float(getattr(solver, '_cmb_area', 0.0)),
-            core_M=float(getattr(solver, '_core_M', 0.0)),
-            cmb_dr_cmb=float(getattr(solver, '_cmb_dr_cmb', 0.0)),
-            param_utbl=bool(getattr(bc_cfg, 'param_utbl', False)),
-            param_utbl_const=float(getattr(bc_cfg, 'param_utbl_const', 0.0)),
+            tfac_core_avg=bc_cfg.tfac_core_avg,
+            cmb_area=float(solver._cmb_area),
+            core_M=float(solver._core_M),
+            cmb_dr_cmb=float(solver._cmb_dr_cmb),
+            param_utbl=bool(bc_cfg.param_utbl),
+            param_utbl_const=float(bc_cfg.param_utbl_const),
         )
         heating_static = jnp.zeros(n_stag)
-        radionuclides = getattr(solver.parameters, 'radionuclides', [])
+        radionuclides = solver.parameters.radionuclides
         if radionuclides:
             radio_isotope_params = (
                 np.array([float(r.heat_production) for r in radionuclides]),
@@ -206,14 +219,16 @@ def run_acceptance(
         'energy_residual': [],
         'relative_residual': [],
         'cvode_steps': [],
-        'dt_min': [],
+        'cvode_err_test_fails': [],
+        'cvode_jac_setups': [],
+        'cvode_last_step_min': [],
     }
 
     ckpt_path = output_dir / 'acceptance_checkpoint.npz'
     t_start_wall = time.perf_counter()
     t_cur = 0.0
     total_cvode_steps = 0
-    global_dt_min = np.inf
+    global_last_step_min = np.inf
     solidification_time_yr = None
     start_idx = 0
     st = None
@@ -227,7 +242,7 @@ def run_acceptance(
         t_cur = float(ckpt_data['t_cur'])
         solver.set_initial_entropy(ckpt_data['S_current'])
         total_cvode_steps = int(ckpt_data['total_cvode_steps'])
-        global_dt_min = float(ckpt_data['global_dt_min'])
+        global_last_step_min = float(ckpt_data['global_last_step_min'])
         sol_time = float(ckpt_data['solidification_time_yr'])
         solidification_time_yr = sol_time if sol_time > 0.0 else None
         start_idx = int(ckpt_data['checkpoint_idx']) + 1
@@ -240,7 +255,7 @@ def run_acceptance(
 
     print(
         f'{"Idx":>3} {"Time [yr]":>11} {"Phi_glob":>9} {"T_int [K]":>10} {"d_lid [km]":>11} '
-        f'{"Regime":>7} {"F_surf [W/m2]":>14} {"Rel Resid":>11} {"Steps":>7} {"dt_min [yr]":>12}',
+        f'{"Regime":>7} {"F_surf [W/m2]":>14} {"Rel Resid":>11} {"Steps":>7} {"h_last_min [yr]":>15}',
         flush=True,
     )
     print('-' * 105, flush=True)
@@ -249,8 +264,8 @@ def run_acceptance(
         if i < start_idx or t_target <= t_cur + 1.0e-6 * max(t_cur, 1.0):
             continue
 
-        interval_steps = 0
-        interval_dt_min = np.inf
+        interval_steps = interval_netf = interval_setups = 0
+        interval_last_step_min = np.inf
 
         while t_cur < (t_target - 1.0e-6 * max(t_target, 1.0)):
             dt_rem = t_target - t_cur
@@ -291,12 +306,11 @@ def run_acceptance(
 
             st = solver.get_state()
 
-            dt_steps = np.diff(sol.t) if len(sol.t) > 1 else np.array([t_actual - t_cur])
-            if len(dt_steps) > 0:
-                dt_min_step = float(np.min(dt_steps))
-                interval_dt_min = min(interval_dt_min, dt_min_step)
-            n_steps_step = len(sol.t) - 1
-            interval_steps += n_steps_step
+            nst, netf, nsetups, h_last = cvode_counts(sol)
+            interval_steps += nst
+            interval_netf += netf
+            interval_setups += nsetups
+            interval_last_step_min = min(interval_last_step_min, h_last)
 
             t_cur = t_actual
             solver.set_initial_entropy(st.S_final)
@@ -320,8 +334,7 @@ def run_acceptance(
         rel_resid = abs(e_resid) / denom
 
         total_cvode_steps += interval_steps
-        if interval_dt_min < global_dt_min:
-            global_dt_min = interval_dt_min
+        global_last_step_min = min(global_last_step_min, interval_last_step_min)
 
         if solidification_time_yr is None and phi_glob < 0.05:
             solidification_time_yr = t_cur
@@ -342,17 +355,20 @@ def run_acceptance(
         results['energy_residual'].append(e_resid)
         results['relative_residual'].append(rel_resid)
         results['cvode_steps'].append(interval_steps)
-        results['dt_min'].append(interval_dt_min)
+        results['cvode_err_test_fails'].append(interval_netf)
+        results['cvode_jac_setups'].append(interval_setups)
+        results['cvode_last_step_min'].append(interval_last_step_min)
 
         print(
             f'{i:3d} {t_cur:11.2e} {phi_glob:9.4f} {t_int:10.1f} {d_lid / 1e3:11.2f} '
-            f'{regime:7.0f} {f_surf:14.3e} {rel_resid:11.2e} {interval_steps:7d} {interval_dt_min:12.3e}',
+            f'{regime:7.0f} {f_surf:14.3e} {rel_resid:11.2e} {interval_steps:7d} {interval_last_step_min:15.3e}',
             flush=True,
         )
 
         logger.info(
             'Checkpoint %d: t=%.2e yr, Phi_glob=%.4f, T_int=%.1f K, d_lid=%.1f km, '
-            'regime=%.0f, F_surf=%.2e W/m2, rel_resid=%.2e, steps=%d, dt_min=%.2e yr',
+            'regime=%.0f, F_surf=%.2e W/m2, rel_resid=%.2e, CVODE steps=%d, '
+            'error-test fails=%d, Jacobian setups=%d, min last step=%.2e yr',
             i,
             t_cur,
             phi_glob,
@@ -362,7 +378,9 @@ def run_acceptance(
             f_surf,
             rel_resid,
             interval_steps,
-            interval_dt_min,
+            interval_netf,
+            interval_setups,
+            interval_last_step_min,
         )
 
         # Save intermediate checkpoint
@@ -370,7 +388,7 @@ def run_acceptance(
         save_dict['S_current'] = st.S_final
         save_dict['t_cur'] = t_cur
         save_dict['total_cvode_steps'] = total_cvode_steps
-        save_dict['global_dt_min'] = global_dt_min
+        save_dict['global_last_step_min'] = global_last_step_min
         save_dict['solidification_time_yr'] = (
             solidification_time_yr if solidification_time_yr is not None else -1.0
         )
@@ -386,7 +404,7 @@ def run_acceptance(
         results[k] = np.asarray(results[k])
 
     results['total_cvode_steps'] = total_cvode_steps
-    results['global_dt_min'] = global_dt_min
+    results['global_last_step_min'] = global_last_step_min
     results['solidification_time_yr'] = (
         solidification_time_yr if solidification_time_yr is not None else -1.0
     )
@@ -544,7 +562,7 @@ def main() -> None:
     print(f'Total simulated time: {results["time_yr"][-1]:.2e} yr')
     print(f'Solidification time (Phi < 0.05): {results["solidification_time_yr"]:.2e} yr')
     print(f'Total CVODE steps: {results["total_cvode_steps"]}')
-    print(f'Global dt_min: {results["global_dt_min"]:.3e} yr')
+    print(f'Minimum last CVODE step: {results["global_last_step_min"]:.3e} yr')
     print(f'Max relative energy residual: {np.max(results["relative_residual"]):.3e}')
 
     # Check 1: Completes to 4.5 Gyr

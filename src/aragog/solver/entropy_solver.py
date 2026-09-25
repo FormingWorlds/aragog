@@ -2801,6 +2801,7 @@ class EntropySolver:
         if cvode_info is not None and 'NumSteps' in cvode_info and 'NumRhsEvals' in cvode_info:
             result.cvode_nst = int(cvode_info['NumSteps'])
             result.cvode_nfe = int(cvode_info['NumRhsEvals'])
+            result.cvode_info = dict(cvode_info)  # counters; step sizes in nondim time
         # ``scikits.odes`` rootfn-fire idiosyncrasy: when CVODE's rootfn
         # fires (flag=2), ``cvode_sol.values.t`` contains ONLY the start
         # time (the integration progress to the root is dropped), while
@@ -3261,6 +3262,8 @@ class EntropySolver:
         sol = self._solution
         if sol.t is not None:
             sol.t = np.asarray(sol.t, dtype=float) * t_ref
+        if 'cvode_info' in sol:
+            sol.cvode_last_step = float(sol.cvode_info.get('LastStep', np.nan)) * t_ref
         if sol.y is not None:
             sol_y = np.asarray(sol.y, dtype=float)
             if sol_y.ndim == 2:
