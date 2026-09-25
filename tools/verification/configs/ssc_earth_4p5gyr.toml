@@ -8,6 +8,9 @@ atol = 1e-6
 rtol = 1e-6
 tsurf_poststep_change = 30
 max_steps = 500000
+# The acceptance runner reads only the solver residual of the per-call energy integrals,
+# which is round-off at any point count, so 9 dense-output points suffice.
+cvode_output_points = 9
 
 [boundary_conditions]
 outer_boundary_condition = 1

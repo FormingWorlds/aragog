@@ -1,7 +1,7 @@
 """CVODE counters reported by the solid-state acceptance runner.
 
 The runner's per-interval step counts and step sizes must come from CVODE's own
-counters, not from the dense output grid of ``sol.t`` (65 points per solve).
+counters, not from the dense output grid of ``sol.t``.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ def test_runner_counts_come_from_cvode(tmp_path, monkeypatch):
     config = _REPO / 'tools' / 'verification' / 'configs' / 'ssc_earth_4p5gyr.toml'
     res = run_acceptance(config, EOS_DIR, tmp_path, checkpoints=(1.0, 2.0))
 
+    assert all(s.t.size == 9 for _, s in sols)
     h_mins = []
     for i, t_end in enumerate((1.0, 2.0)):
         interval = [s for t, s in sols if t_end - 1.0 < t <= t_end]
