@@ -66,3 +66,26 @@ def test_runner_counts_come_from_cvode(tmp_path, monkeypatch):
     np.savez(ckpt, **data)
     with pytest.raises(ValueError, match='without resume'):
         run_acceptance(config, EOS_DIR, tmp_path, resume=True, checkpoints=(1.0, 2.0, 3.0))
+
+
+@pytest.mark.skipif(EOS_DIR is None, reason='EOS_DIR not found')
+def test_runner_mushy_solve_length(tmp_path, monkeypatch):
+    """While Phi_global >= 0.01 each solve call spans ``MUSHY_SOLVE_YR``, the last the remainder."""
+    pytest.importorskip('jax')
+    pytest.importorskip('scikits_odes_sundials')
+    monkeypatch.syspath_prepend(str(_REPO / 'tools'))
+    from verification import run_ssc_acceptance as rsa
+
+    assert rsa.MUSHY_SOLVE_YR == 1000.0
+    monkeypatch.setattr(rsa, 'MUSHY_SOLVE_YR', 0.4)
+    spans = []
+    solve = EntropySolver.solve
+
+    def recording_solve(self):
+        spans.append(self.parameters.solver.end_time - self.parameters.solver.start_time)
+        solve(self)
+
+    monkeypatch.setattr(EntropySolver, 'solve', recording_solve)
+    config = _REPO / 'tools' / 'verification' / 'configs' / 'ssc_earth_4p5gyr.toml'
+    rsa.run_acceptance(config, EOS_DIR, tmp_path, checkpoints=(1.0,))
+    assert spans == pytest.approx([0.4, 0.4, 0.2])

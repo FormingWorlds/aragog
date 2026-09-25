@@ -79,6 +79,9 @@ CHECKPOINTS_YR = (
     4.5e9,
 )
 
+# Solve-call length [yr] while Phi_global >= 0.01.
+MUSHY_SOLVE_YR = 1000.0
+
 
 def cvode_counts(sol) -> tuple[int, int, int, float]:
     """Return CVODE's steps, error-test failures, Jacobian setups and last step [yr].
@@ -272,18 +275,15 @@ def run_acceptance(
 
         while t_cur < (t_target - 1.0e-6 * max(t_target, 1.0)):
             dt_rem = t_target - t_cur
-            # Adaptive sub-step sizing:
-            # During magma ocean and mushy layer crystallization (Phi_global >= 0.01),
-            # take sub-steps of at most 100 yr so CVODE resolves front crossings cleanly
-            # without multiple coupled phase boundary transitions in one solve call.
-            # Once mantle is solid (Phi_global < 0.01), take macro steps.
+            # Solve length only: the phase-boundary clamp in solve() sets the CVODE step
+            # while any cell is near a phase boundary.
             if st is not None and st.Phi_global < 0.01:
                 if t_cur < 1.0e8:
                     dt_sub = min(dt_rem, 1.0e6)
                 else:
                     dt_sub = min(dt_rem, 1.0e8)
             else:
-                dt_sub = min(dt_rem, 100.0)
+                dt_sub = min(dt_rem, MUSHY_SOLVE_YR)
 
             t_sub_target = t_cur + dt_sub
             solver.parameters.solver.start_time = t_cur
