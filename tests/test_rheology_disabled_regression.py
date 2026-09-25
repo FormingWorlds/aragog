@@ -62,9 +62,7 @@ def test_rheology_disabled_regression(config_file, suffix, shared_eos):
         np.testing.assert_array_equal(S, ref['S'])
         np.testing.assert_array_equal(T, ref['T'])
 
-        out_dict = output.__dict__
-        for k in ref.files:
-            if k in ['S', 'T']:
-                continue
-            if k in out_dict:
-                np.testing.assert_array_equal(out_dict[k], ref[k], err_msg=f'Mismatch in {k}')
+        for k in set(ref.files) - {'S', 'T', 'recorded_from_commit', 'recorded_numpy_version'}:
+            np.testing.assert_array_equal(
+                output.__dict__[k], ref[k], err_msg=f'Mismatch in {k}'
+            )

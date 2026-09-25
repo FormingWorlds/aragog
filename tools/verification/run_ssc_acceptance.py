@@ -237,13 +237,15 @@ def run_acceptance(
     if resume and ckpt_path.is_file():
         logger.info('Found existing checkpoint at %s, resuming...', ckpt_path)
         ckpt_data = np.load(ckpt_path)
+        missing = [k for k in (*results, 'global_last_step_min') if k not in ckpt_data]
+        if missing:
+            raise ValueError(f'{ckpt_path} lacks {missing}; start the run without resume')
         for k in results:
-            if k in ckpt_data:
-                results[k] = list(ckpt_data[k])
+            results[k] = list(ckpt_data[k])
         t_cur = float(ckpt_data['t_cur'])
         solver.set_initial_entropy(ckpt_data['S_current'])
         total_cvode_steps = int(ckpt_data['total_cvode_steps'])
-        global_last_step_min = float(ckpt_data.get('global_last_step_min', np.inf))
+        global_last_step_min = float(ckpt_data['global_last_step_min'])
         sol_time = float(ckpt_data['solidification_time_yr'])
         solidification_time_yr = sol_time if sol_time > 0.0 else None
         start_idx = int(ckpt_data['checkpoint_idx']) + 1
