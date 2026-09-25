@@ -51,18 +51,47 @@ logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+# Checkpoint times [yr]: dense during magma ocean solidification, sparser in secular cooling.
+CHECKPOINTS_YR = (
+    10.0,
+    30.0,
+    100.0,
+    300.0,
+    1000.0,
+    3000.0,
+    10000.0,
+    30000.0,
+    100000.0,
+    300000.0,
+    1.0e6,
+    3.0e6,
+    1.0e7,
+    3.0e7,
+    1.0e8,
+    3.0e8,
+    1.0e9,
+    1.5e9,
+    2.0e9,
+    2.5e9,
+    3.0e9,
+    3.5e9,
+    4.0e9,
+    4.5e9,
+)
+
+
 def cvode_counts(sol) -> tuple[int, int, int, float]:
     """Return CVODE's steps, error-test failures, Jacobian setups and last step [yr].
 
     ``sol.t`` is the output grid, not the CVODE step sequence, so the counts come from
     the ``cvode_info`` that ``EntropySolver`` attaches to a CVODE solution.
     """
-    info = sol.get('cvode_info', {})
+    info = sol['cvode_info']
     return (
-        int(info.get('NumSteps', 0)),
-        int(info.get('NumErrTestFails', 0)),
-        int(info.get('NumLinSolvSetups', 0)),
-        float(sol.get('cvode_last_step', np.nan)),
+        int(info['NumSteps']),
+        int(info['NumErrTestFails']),
+        int(info['NumLinSolvSetups']),
+        float(sol['cvode_last_step']),
     )
 
 
@@ -71,6 +100,7 @@ def run_acceptance(
     eos_dir: Path,
     output_dir: Path,
     resume: bool = False,
+    checkpoints: tuple[float, ...] = CHECKPOINTS_YR,
 ) -> dict:
     """Run 4.5 Gyr acceptance integration with JAX CVODE factory."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -168,35 +198,6 @@ def run_acceptance(
 
     solver.set_jax_cvode_factory(cvode_factory)
 
-    # Checkpoint timeline: dense during magma ocean solidification,
-    # sparser during 4.5 Gyr secular cooling
-    checkpoints = [
-        10.0,
-        30.0,
-        100.0,
-        300.0,
-        1000.0,
-        3000.0,
-        10000.0,
-        30000.0,
-        100000.0,
-        300000.0,
-        1.0e6,
-        3.0e6,
-        1.0e7,
-        3.0e7,
-        1.0e8,
-        3.0e8,
-        1.0e9,
-        1.5e9,
-        2.0e9,
-        2.5e9,
-        3.0e9,
-        3.5e9,
-        4.0e9,
-        4.5e9,
-    ]
-
     r_basic = np.asarray(solver.evaluator.mesh.basic.radii).ravel()
     r_surf = r_basic[-1]
     a_surf = 4.0 * np.pi * r_surf**2
@@ -242,7 +243,7 @@ def run_acceptance(
         t_cur = float(ckpt_data['t_cur'])
         solver.set_initial_entropy(ckpt_data['S_current'])
         total_cvode_steps = int(ckpt_data['total_cvode_steps'])
-        global_last_step_min = float(ckpt_data['global_last_step_min'])
+        global_last_step_min = float(ckpt_data.get('global_last_step_min', np.inf))
         sol_time = float(ckpt_data['solidification_time_yr'])
         solidification_time_yr = sol_time if sol_time > 0.0 else None
         start_idx = int(ckpt_data['checkpoint_idx']) + 1
