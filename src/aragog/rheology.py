@@ -717,9 +717,6 @@ def stress_closure(
     mode: str,
     viscous_velocity: FloatOrArray,
     mixing_length: FloatOrArray | None = None,
-    radius: npt.NDArray[np.floating] | None = None,
-    temperature: npt.NDArray[np.floating] | None = None,
-    t_lid_base: float = 1400.0,
     eps: float = 1.0e-15,
 ) -> FloatOrArray:
     r"""Calculate strain rate dispatching on stress closure mode."""

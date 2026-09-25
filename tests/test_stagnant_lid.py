@@ -29,8 +29,6 @@ from aragog.rheology import (
 pytestmark = pytest.mark.unit
 
 _R_GAS = 8.314462618  # matches aragog.rheology default
-_R_SURF = 6.371e6
-_R_CMB = 3.480e6
 _E_A = 300.0e3
 _V_A = 0.0  # pin the pure-temperature Frank-Kamenetskii scale (P term off)
 _ETA0 = 1.0e21
@@ -87,8 +85,6 @@ def test_stress_closure_error_contract_and_dispatch():
     Exercises the documented error contract: an unknown mode and each missing-
     argument path must raise ``ValueError`` and compute nothing.
     """
-    r = np.linspace(_R_CMB, _R_SURF, 50)
-    t = np.linspace(1800.0, 300.0, 50)
     v = np.full(50, 1.0e-9)
 
     with pytest.raises(ValueError):
@@ -96,7 +92,7 @@ def test_stress_closure_error_contract_and_dispatch():
     with pytest.raises(ValueError):
         stress_closure('local', viscous_velocity=v)  # missing mixing_length
     with pytest.raises(ValueError, match="use 'lid'"):
-        stress_closure('global', viscous_velocity=v, radius=r, temperature=t, t_lid_base=1400.0)
+        stress_closure('global', viscous_velocity=v)
     # Valid local dispatch scales as v / l: doubling the mixing length halves it.
     sr_l = stress_closure('local', viscous_velocity=1.0e-9, mixing_length=1.0e5)
     sr_l2 = stress_closure('local', viscous_velocity=1.0e-9, mixing_length=2.0e5)

@@ -43,16 +43,15 @@ def test_yield_stress_transition():
         p, yield_stress_c=500.0e6, yield_stress_mu=0.6, yield_stress_max=10.0e9
     )
     l_mix = np.minimum(r - r_cmb, r_surf - r) + 1.0
-    sr_stagnant = stress_closure('local', v_visc, mixing_length=l_mix)
-    eta_eff_stagnant = eta_eff(eta_d, tau_stagnant, sr_stagnant, smooth=True)
+    sr = stress_closure('local', v_visc, mixing_length=l_mix)
+    eta_eff_stagnant = eta_eff(eta_d, tau_stagnant, sr, smooth=True)
 
     # Mobile lid case: low yield stress cohesion, moderate friction (mu=0.01)
     # Yields the cold, low-pressure lid, but preserves the high-pressure unyielded interior.
     tau_mobile = compute_yield_stress(
         p, yield_stress_c=1.0e6, yield_stress_mu=0.01, yield_stress_max=10.0e9
     )
-    sr_mobile = stress_closure('local', v_visc, mixing_length=l_mix)
-    eta_eff_mobile = eta_eff(eta_d, tau_mobile, sr_mobile, smooth=True)
+    eta_eff_mobile = eta_eff(eta_d, tau_mobile, sr, smooth=True)
 
     # In the lid (cold, near surface), the mobile effective viscosity must be dramatically lower
     lid_idx = -2
