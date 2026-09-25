@@ -370,20 +370,6 @@ def test_eta_eff_infinite_yield_stress():
     assert eta_sharp == pytest.approx(visc_diff, rel=1.0e-12)
 
 
-@pytest.mark.physics_invariant
-def test_compute_t_lid_base_zero_or_negative_activation_energy():
-    """Verify compute_t_lid_base does not divide by zero when effective energy is <= 0."""
-    from aragog.rheology import compute_t_lid_base
-
-    # Zero effective energy
-    t_lid = compute_t_lid_base(t_m=1600.0, p_lid=0.0, e_a=0.0, v_a=0.0)
-    assert np.isfinite(t_lid)
-
-    # Negative effective energy
-    t_lid_neg = compute_t_lid_base(t_m=1600.0, p_lid=1e8, e_a=-1e5, v_a=0.0)
-    assert np.isfinite(t_lid_neg)
-
-
 @pytest.mark.unit
 def test_entropy_phase_evaluator_yield_stress_max_and_viscosity_max():
     """Verify yield_stress_max and viscosity_max_log10 are stored and honored."""

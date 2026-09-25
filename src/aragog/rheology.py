@@ -164,51 +164,6 @@ def compute_arrhenius_enthalpy(
     return h
 
 
-def compute_t_lid_base(
-    t_m: float,
-    p_lid: float,
-    e_a: float = 300.0e3,
-    v_a: float = 5.0e-6,
-    lid_contrast_coeff: float = 2.2,
-    r_gas: float = R_GAS,
-    p_decay: float = float('inf'),
-) -> float:
-    """Compute the stagnant lid base temperature (Solomatov & Moresi 2000).
-
-    Parameters
-    ----------
-    t_m : float
-        Mantle interior temperature [K].
-    p_lid : float
-        Pressure at lid base [Pa].
-    e_a : float, default 300.0e3
-        Activation energy [J/mol].
-    v_a : float, default 5.0e-6
-        Activation volume [m^3/mol].
-    lid_contrast_coeff : float, default 2.2
-        Contrast coefficient.
-    r_gas : float, default 8.314462618
-        Gas constant.
-    p_decay : float, default inf
-        Activation volume decay pressure [Pa].
-
-    Returns
-    -------
-    float
-        Lid base temperature [K].
-    """
-    h_eff = compute_arrhenius_enthalpy(
-        pressure=p_lid,
-        activation_energy=e_a,
-        activation_volume=v_a,
-        activation_volume_decay_pressure=p_decay,
-        xp=np,
-    )
-    e_eff = max(float(h_eff), 1e-6)
-    dt_rh = r_gas * t_m**2 / e_eff
-    return t_m - lid_contrast_coeff * dt_rh
-
-
 def compute_arrhenius_viscosity(
     temperature: FloatOrArray,
     pressure: FloatOrArray,
@@ -445,44 +400,6 @@ def compute_strain_rate_local(
     if xp is np and np.ndim(viscous_velocity) == 0 and np.ndim(mixing_length) == 0:
         return float(res.item())
     return res
-
-
-def compute_strain_rate_global(
-    radius: npt.NDArray[np.floating],
-    temperature: npt.NDArray[np.floating],
-    viscous_velocity: npt.NDArray[np.floating],
-    t_lid_base: float = 1400.0,
-    eps: float = 1.0e-15,
-) -> FloatOrArray:
-    r"""Compute global boundary-layer lithospheric strain rate proxy."""
-    r = np.asarray(radius, dtype=float)
-    t = np.asarray(temperature, dtype=float)
-    v = np.asarray(viscous_velocity, dtype=float)
-
-    is_colder = t <= t_lid_base
-    if not np.any(is_colder):
-        return 0.0
-
-    r_surf = r[-1]
-    is_hot = t > t_lid_base
-    if np.any(is_hot):
-        r_lid_base = float(np.max(r[is_hot]))
-        d_lid = r_surf - r_lid_base
-        if d_lid <= 0.0:
-            return 0.0
-    else:
-        d_lid = r_surf - r[0]
-
-    dr_min = r[-1] - r[-2] if len(r) > 1 else eps
-    d_lid = max(d_lid, dr_min)
-
-    interior_mask = r <= (r_surf - d_lid)
-    if np.any(interior_mask):
-        v_int = float(np.max(np.abs(v[interior_mask])))
-    else:
-        v_int = float(np.max(np.abs(v)))
-
-    return v_int / d_lid
 
 
 def compute_stagnant_lid_state(
