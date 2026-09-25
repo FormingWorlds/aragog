@@ -25,6 +25,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+from scipy.constants import Stefan_Boltzmann
 
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.jax.phase import (
@@ -46,8 +47,8 @@ logger = logging.getLogger('fwl.' + __name__)
 # Seconds per Julian year (matches scipy.constants.Julian_year)
 SECS_PER_YEAR: float = 31557600.0
 
-# Stefan-Boltzmann constant [W/m^2/K^4]
-SIGMA_SB: float = 5.670374419e-8
+# Stefan-Boltzmann constant [W/m^2/K^4], the value of the numpy solver
+SIGMA_SB: float = Stefan_Boltzmann
 
 # log(2) constant used by the radiogenic decay term. Cached as a
 # module-level Python float so the JAX trace bakes it in cleanly.
