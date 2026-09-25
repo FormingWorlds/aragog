@@ -19,6 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy.constants import Stefan_Boltzmann
 
 # EOS directory (same as test_entropy_pytest.py)
 EOS_DIR = Path(
@@ -41,7 +42,7 @@ eqx = pytest.importorskip('equinox')
 jax.config.update('jax_enable_x64', True)
 
 SECS_PER_YEAR = 31557600.0
-SIGMA_SB = 5.670374419e-8
+SIGMA_SB = Stefan_Boltzmann
 
 
 # ---------------------------------------------------------------------------
