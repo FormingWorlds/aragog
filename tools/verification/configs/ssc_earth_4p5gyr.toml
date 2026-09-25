@@ -1,11 +1,11 @@
-# end_time = 4.5e9, number_of_nodes = 100, atol = 1e-6, rtol = 1e-6, enabled = true, stress_closure_mode = 'lid'
+# end_time = 4.5e9, number_of_nodes = 100, atol = 1e-8, rtol = 1e-8, enabled = true, stress_closure_mode = 'lid'
 # All units are SI unless otherwise specified.
 
 [solver]
 start_time = 0
 end_time = 4.5e9
-atol = 1e-6
-rtol = 1e-6
+atol = 1e-8
+rtol = 1e-8
 tsurf_poststep_change = 30
 max_steps = 500000
 # The acceptance runner reads only the solver residual of the per-call energy integrals,

@@ -367,13 +367,15 @@ def test_parameters_from_file_toml_reads_cvode_output_points(tmp_path):
     )
 
 
-def test_ssc_long_run_config_sets_nine_output_points():
-    """The long-run solid-state config samples 9 dense-output points per solve call."""
+def test_ssc_long_run_config_solver_settings():
+    """The long-run solid-state config: 9 dense-output points, rtol = atol = 1e-8."""
     cfg = (
         Path(__file__).resolve().parent.parent
         / 'tools/verification/configs/ssc_earth_4p5gyr.toml'
     )
-    assert Parameters.from_file(cfg).solver.cvode_output_points == 9
+    solver = Parameters.from_file(cfg).solver
+    assert solver.cvode_output_points == 9
+    assert solver.rtol == solver.atol == 1e-8
 
 
 def test_parameters_from_file_strict_rejects_scalings_section(tmp_path):
