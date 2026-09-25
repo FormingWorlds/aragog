@@ -57,6 +57,8 @@ def test_rheology_disabled_regression(config_file, suffix, shared_eos):
     )
 
     with np.load(fixture_path) as ref:
+        # Fixtures are recorded from aragog main, so equality here is identity with main.
+        assert 'recorded_from_commit' in ref.files
         np.testing.assert_array_equal(S, ref['S'])
         np.testing.assert_array_equal(T, ref['T'])
 
