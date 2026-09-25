@@ -2657,12 +2657,6 @@ class EntropySolver:
         # banded structure because the extra state row couples to
         # far-away entropy nodes, so fall back to dense for those modes.
 
-        if (
-            hasattr(self.parameters.solver, 'max_steps')
-            and self.parameters.solver.max_steps is not None
-        ):
-            self._max_steps = int(self.parameters.solver.max_steps)
-
         cvode_options = {
             'old_api': False,
             'rtol': float(rtol),

@@ -238,8 +238,6 @@ def run_acceptance(
             results['phi_global'][-1] if results['phi_global'] else -1.0,
         )
 
-    solver.parameters.solver.max_steps = 500000
-
     print(
         f'{"Idx":>3} {"Time [yr]":>11} {"Phi_glob":>9} {"T_int [K]":>10} {"d_lid [km]":>11} '
         f'{"Regime":>7} {"F_surf [W/m2]":>14} {"Rel Resid":>11} {"Steps":>7} {"dt_min [yr]":>12}',
