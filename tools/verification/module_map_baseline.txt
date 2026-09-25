@@ -9,10 +9,6 @@ Module: aragog
     logging
     os
   __all__: []
-Module: aragog._version
-  Imports:
-    __future__.annotations
-  __all__: ['__commit_id__', '__version__', '__version_tuple__', 'commit_id', 'version', 'version_tuple']
 Module: aragog.cfg
   Imports:
   __all__: []
@@ -202,7 +198,10 @@ Module: aragog.jax.phase
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.config.phases.SEPARATION_VISCOSITY_MODES
     aragog.jax.eos.EntropyEOS_JAX
-    aragog.rheology.R_GAS
+    aragog.jax.rheology.compute_arrhenius_viscosity
+    aragog.jax.rheology.compute_effective_viscosity
+    aragog.jax.rheology.compute_stagnant_lid_state
+    aragog.jax.rheology.compute_yield_stress
     aragog.rheology.SolidRheologyParams
     dataclasses.fields
     equinox
@@ -212,6 +211,13 @@ Module: aragog.jax.phase
     scipy.interpolate.PchipInterpolator
     typing.Any
     typing.NamedTuple
+  __all__: []
+Module: aragog.jax.rheology
+  Imports:
+    __future__.annotations
+    aragog.rheology
+    jax.numpy
+    typing.Any
   __all__: []
 Module: aragog.jax.solver
   Imports:
@@ -309,6 +315,7 @@ Module: aragog.rheology
     math
     numpy
     numpy.typing
+    typing.Any
   __all__: []
 Module: aragog.solver
   Imports:
@@ -386,9 +393,9 @@ Module: aragog.solver.entropy_state
   Imports:
     __future__.annotations
     aragog.eos.entropy_phase.EntropyPhaseEvaluator
-    aragog.rheology.compute_t_lid_base
-    aragog.rheology.eta_eff
-    aragog.rheology.stress_closure
+    aragog.rheology.compute_effective_viscosity
+    aragog.rheology.compute_stagnant_lid_state
+    aragog.rheology.compute_strain_rate_local
     aragog.solver.evaluator.Evaluator
     aragog.utilities.FloatOrArray
     aragog.utilities.tanh_weight

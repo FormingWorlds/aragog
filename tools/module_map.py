@@ -71,7 +71,7 @@ def main():
             continue
         for root, _, files in os.walk(pkg_dir):
             for file in sorted(files):
-                if file.endswith('.py'):
+                if file.endswith('.py') and file != '_version.py':  # generated at install
                     modules.add(Path(root) / file)
 
     lines = []
