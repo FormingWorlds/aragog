@@ -23,6 +23,7 @@ jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
 from aragog.jax.solver import (  # noqa: E402
+    SIGMA_SB,
     BoundaryParams,
     _apply_surface_bc,
     _utbl_tsurf_jax,
@@ -97,7 +98,6 @@ def test_apply_surface_bc_grey_off_utbl():
     heat_flux = jnp.zeros((3,))
     out = _apply_surface_bc(heat_flux, bc, T_basic)
 
-    SIGMA_SB = 5.670374419e-8  # CODATA, matches solver SIGMA_SB
     T_surf = 3000.0  # T_basic[-1], no UTBL correction
     expected = SIGMA_SB * (T_surf**4 - 200.0**4)
     assert float(out[-1]) == pytest.approx(expected, rel=1e-10)
@@ -125,7 +125,6 @@ def test_apply_surface_bc_grey_on_utbl():
     heat_flux = jnp.zeros((3,))
     out = _apply_surface_bc(heat_flux, bc, T_basic)
 
-    SIGMA_SB = 5.670374419e-8
     T_surf = float(_utbl_tsurf_jax(jnp.asarray(T_interior), jnp.asarray(b)))
     expected = SIGMA_SB * (T_surf**4 - 200.0**4)
     assert float(out[-1]) == pytest.approx(expected, rel=1e-10)
@@ -145,3 +144,35 @@ def test_apply_surface_bc_grey_on_utbl():
     )
     out_no_utbl = _apply_surface_bc(heat_flux, out_no_utbl_bc, T_basic)
     assert float(out[-1]) < float(out_no_utbl[-1])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('T_interior', [320.0, 1500.0, 3500.0])
+def test_grey_body_flux_matches_numpy_boundary(T_interior):
+    """The JAX grey-body flux equals the numpy ``BoundaryConditions.grey_body`` flux to round-off."""
+    from types import SimpleNamespace
+
+    from aragog.solver.boundary import BoundaryConditions
+
+    numpy_bc = BoundaryConditions.__new__(BoundaryConditions)
+    numpy_bc._settings = SimpleNamespace(
+        param_utbl=False, emissivity=0.9, equilibrium_temperature=273.0
+    )
+    state = SimpleNamespace(top_temperature=np.array([T_interior]), heat_flux=np.zeros((3, 1)))
+    numpy_bc.grey_body(state)
+
+    bc = BoundaryParams(
+        outer_bc_type=1,
+        outer_bc_value=0.0,
+        emissivity=0.9,
+        T_eq=273.0,
+        inner_bc_type=1,
+        inner_bc_value=0.0,
+        core_density=8000.0,
+        core_heat_capacity=800.0,
+        tfac_core_avg=1.147,
+        param_utbl=False,
+        param_utbl_const=0.0,
+    )
+    out = _apply_surface_bc(jnp.zeros((3,)), bc, jnp.asarray([2000.0, 2500.0, T_interior]))
+    assert float(out[-1]) == pytest.approx(float(state.heat_flux[-1, 0]), rel=1e-15, abs=0.0)
