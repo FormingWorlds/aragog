@@ -73,6 +73,13 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         T_basic=3400.0 + basic(70.0),
         cp_basic=1500.0 + basic(50.0),
         rho_basic=4500.0 + basic(150.0),
+        # Solid-state rheology and stagnant lid diagnostics (basic)
+        visc_eff_b=10 ** (19.0 + basic(1.0)),
+        eta_diff_b=10 ** (20.0 + basic(1.0)),
+        strain_rate_b=basic(1e-15),
+        tau_y_b=basic(1e8),
+        lid_mask_b=np.clip(0.5 + 0.4 * basic(1.0), 0.0, 1.0),
+        yield_switch_b=np.clip(0.5 + 0.4 * basic(1.0), 0.0, 1.0),
         # Scalars (each chosen to be distinctive)
         T_magma=2950.123,
         T_core=4000.456,
@@ -108,6 +115,14 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         cvode_flag_name='TOO_MUCH_WORK',
         tcore_change_max=4321.5,
         tcore_change_exceeded=True,
+        # Solid-state rheology and stagnant lid scalar diagnostics
+        lid_thickness=123456.7,
+        lid_base_temperature=1550.5,
+        interior_temperature=2100.2,
+        lid_stress=45.6e6,
+        theta=12.34,
+        lid_regime=1.0,
+        energy_residual=7890.1,
     )
 
 
@@ -164,6 +179,13 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             'step_dE_compression_J': out.step_dE_compression_J,
             'step_dE_state_heat_J': out.step_dE_state_heat_J,
             'dt_actual': out.dt_actual,
+            'lid_thickness': out.lid_thickness,
+            'lid_base_temperature': out.lid_base_temperature,
+            'interior_temperature': out.interior_temperature,
+            'lid_stress': out.lid_stress,
+            'theta': out.theta,
+            'lid_regime': out.lid_regime,
+            'energy_residual': out.energy_residual,
         }
         for name, expected in scalars_to_check.items():
             assert name in ds.variables, f'missing scalar {name!r}'
@@ -233,6 +255,12 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             'T_basic': out.T_basic,
             'cp_basic': out.cp_basic,
             'rho_basic': out.rho_basic,
+            'visc_eff_b': out.visc_eff_b,
+            'eta_diff_b': out.eta_diff_b,
+            'strain_rate_b': out.strain_rate_b,
+            'tau_y_b': out.tau_y_b,
+            'lid_mask_b': out.lid_mask_b,
+            'yield_switch_b': out.yield_switch_b,
         }
         for name, expected in basic_arrays.items():
             v = ds[name]
@@ -311,6 +339,12 @@ def test_to_netcdf_rejects_unphysical_negative_node_count() -> None:
     out.T_basic = np.linspace(0.0, 1.0, 3)
     out.cp_basic = np.linspace(0.0, 1.0, 3)
     out.rho_basic = np.linspace(0.0, 1.0, 3)
+    out.visc_eff_b = np.linspace(0.0, 1.0, 3)
+    out.eta_diff_b = np.linspace(0.0, 1.0, 3)
+    out.strain_rate_b = np.linspace(0.0, 1.0, 3)
+    out.tau_y_b = np.linspace(0.0, 1.0, 3)
+    out.lid_mask_b = np.linspace(0.0, 1.0, 3)
+    out.yield_switch_b = np.linspace(0.0, 1.0, 3)
 
     import tempfile
 

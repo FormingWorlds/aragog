@@ -20,7 +20,7 @@ def test_rheological_lid_mode_runs_numpy_mlt():
             const_properties=True,
             const_rho=4000.0,
             enabled=True,
-            stress_closure_mode='global',
+            stress_closure_mode='lid',
             lid_base_mode='rheological',
         )
         ev.pressure = pressure

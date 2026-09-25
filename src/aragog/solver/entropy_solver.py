@@ -626,6 +626,14 @@ class SolverOutput:
     cp_basic: npt.NDArray  # heat capacity at basic nodes [J/kg/K]
     rho_basic: npt.NDArray  # density at basic nodes [kg/m^3]
 
+    # Solid-state rheology and stagnant lid diagnostics at basic nodes
+    visc_eff_b: npt.NDArray  # effective dynamic viscosity at basic nodes [Pa s]
+    eta_diff_b: npt.NDArray  # Arrhenius diffusion creep viscosity at basic nodes [Pa s]
+    strain_rate_b: npt.NDArray  # convective strain rate at basic nodes [1/s]
+    tau_y_b: npt.NDArray  # plastic yield stress at basic nodes [Pa]
+    lid_mask_b: npt.NDArray  # stagnant lid indicator mask at basic nodes [0..1]
+    yield_switch_b: npt.NDArray  # regime switch indicator at basic nodes [0..1]
+
     # Scalar quantities
     T_magma: float  # surface temperature [K]
     T_core: float  # CMB temperature [K]
@@ -744,6 +752,15 @@ class SolverOutput:
     # temperature is non-finite (a corrupted solve), independent of the limit.
     tcore_change_max: float = 0.0
     tcore_change_exceeded: bool = False
+
+    # Solid-state rheology and stagnant lid scalar diagnostics
+    lid_thickness: float = 0.0  # physical stagnant lid thickness d_lid [m]
+    lid_base_temperature: float = 0.0  # temperature at base of stagnant lid [K]
+    interior_temperature: float = 0.0  # representative convective interior temperature T_i [K]
+    lid_stress: float = 0.0  # convective driving shear stress tau_d [Pa]
+    theta: float = 0.0  # Frank-Kamenetskii rheological contrast parameter [-]
+    lid_regime: float = 0.0  # lid regime indicator: 0 = none / molten, 1 = stagnant, 2 = mobile
+    energy_residual: float = 0.0  # discrete energy conservation residual rate [W]
 
     # ── NetCDF output ──────────────────────────────────────────────
     def to_netcdf(
@@ -964,6 +981,48 @@ class SolverOutput:
                 'Flag (0/1): per-solve core-temperature change exceeds the '
                 'limit, or a sampled core temperature is non-finite',
             )
+            _scalar(
+                'lid_thickness',
+                float(self.lid_thickness),
+                'm',
+                'Physical stagnant lid thickness',
+            )
+            _scalar(
+                'lid_base_temperature',
+                float(self.lid_base_temperature),
+                'K',
+                'Temperature at base of stagnant lid',
+            )
+            _scalar(
+                'interior_temperature',
+                float(self.interior_temperature),
+                'K',
+                'Representative convective interior temperature T_i',
+            )
+            _scalar(
+                'lid_stress',
+                float(self.lid_stress),
+                'Pa',
+                'Convective driving shear stress tau_d',
+            )
+            _scalar(
+                'theta',
+                float(self.theta),
+                '1',
+                'Frank-Kamenetskii rheological contrast parameter',
+            )
+            _scalar(
+                'lid_regime',
+                float(self.lid_regime),
+                '1',
+                'Lid regime indicator (0 none, 1 stagnant, 2 mobile)',
+            )
+            _scalar(
+                'energy_residual',
+                float(self.energy_residual),
+                'W',
+                'Discrete energy conservation residual rate',
+            )
 
             # ── Staggered-node profiles ─────────────────────────────
             _arr('r_stag', self.r_stag, 'staggered', 'm', 'Radius at staggered nodes')
@@ -1015,6 +1074,48 @@ class SolverOutput:
                 'Heat capacity at basic nodes',
             )
             _arr('rho_basic', self.rho_basic, 'basic', 'kg m-3', 'Density at basic nodes')
+            _arr(
+                'visc_eff_b',
+                self.visc_eff_b,
+                'basic',
+                'Pa s',
+                'Effective dynamic viscosity at basic nodes',
+            )
+            _arr(
+                'eta_diff_b',
+                self.eta_diff_b,
+                'basic',
+                'Pa s',
+                'Arrhenius diffusion creep viscosity at basic nodes',
+            )
+            _arr(
+                'strain_rate_b',
+                self.strain_rate_b,
+                'basic',
+                's-1',
+                'Convective strain rate at basic nodes',
+            )
+            _arr(
+                'tau_y_b',
+                self.tau_y_b,
+                'basic',
+                'Pa',
+                'Plastic yield stress at basic nodes',
+            )
+            _arr(
+                'lid_mask_b',
+                self.lid_mask_b,
+                'basic',
+                '1',
+                'Stagnant lid indicator mask at basic nodes',
+            )
+            _arr(
+                'yield_switch_b',
+                self.yield_switch_b,
+                'basic',
+                '1',
+                'Regime switch indicator at basic nodes',
+            )
 
 
 class EntropySolver:
@@ -1545,6 +1646,7 @@ class EntropySolver:
         self._outer_bc_value = float(bc.outer_boundary_value)
         self._outer_bc_emiss = float(bc.emissivity)
         self._outer_bc_T_eq = float(bc.equilibrium_temperature)
+        self._surf_dr_half = float(self._r_basic_flat[-1] - self._r_stag_flat[-1])
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
 
@@ -2037,6 +2139,19 @@ class EntropySolver:
             # so re-read from the live BC object instead of the cache.
             self.state._heat_flux[-1] = float(
                 self.evaluator.boundary_conditions._settings.outer_boundary_value
+            )
+        elif self._outer_bc_kind == 5:
+            # Prescribed surface temperature
+            k_surf = float(
+                np.asarray(self.state.phase_basic.thermal_conductivity()).ravel()[-1]
+            )
+            T_cell = float(np.asarray(self.state.phase_staggered.temperature()).ravel()[-1])
+            self.state._heat_flux[-1] = (
+                k_surf * (T_cell - self._outer_bc_value) / self._surf_dr_half
+            )
+        else:
+            raise ValueError(
+                f'EntropySolver: unknown outer_boundary_condition = {self._outer_bc_kind}'
             )
 
         # CMB boundary condition
@@ -2542,6 +2657,12 @@ class EntropySolver:
         # banded structure because the extra state row couples to
         # far-away entropy nodes, so fall back to dense for those modes.
 
+        if (
+            hasattr(self.parameters.solver, 'max_steps')
+            and self.parameters.solver.max_steps is not None
+        ):
+            self._max_steps = int(self.parameters.solver.max_steps)
+
         cvode_options = {
             'old_api': False,
             'rtol': float(rtol),
@@ -2772,6 +2893,10 @@ class EntropySolver:
 
     def solve(self) -> None:
         """Run the BDF time integration."""
+        if not hasattr(self, '_S0') or self._S0 is None:
+            raise RuntimeError(
+                'Initial entropy is not set. Call set_initial_entropy() before solve().'
+            )
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
@@ -3937,6 +4062,58 @@ class EntropySolver:
         area_surf = 4 * np.pi * float(r_basic[-1]) ** 2
         F_heat_total = float(np.dot(heating, mass_stag)) / area_surf
 
+        # Solid-state rheology and stagnant lid diagnostics
+        visc_eff_b = np.asarray(
+            getattr(self.state, '_visc_eff', self.state.viscosity_basic)
+        ).ravel()
+        if visc_eff_b.size == 0:
+            visc_eff_b = np.asarray(self.state.viscosity_basic).ravel()
+
+        eta_d = getattr(self.state.phase_basic, 'eta_diff', None)
+        if callable(eta_d):
+            eta_d = eta_d()
+        rheo_obj = getattr(self.state.phase_basic, 'rheology', None)
+        if (
+            eta_d is not None
+            and np.size(eta_d) > 0
+            and rheo_obj is not None
+            and rheo_obj.enabled
+        ):
+            eta_diff_b = np.asarray(eta_d).ravel()
+        else:
+            log10_s = getattr(self.parameters.phase_solid, 'log10_visc_solid', 21.0)
+            eta_diff_b = np.full_like(r_basic, 10.0**log10_s)
+
+        strain_rate_b = np.asarray(
+            getattr(self.state, '_strain_rate_basic', np.zeros_like(r_basic))
+        ).ravel()
+        tau_y_b = np.asarray(
+            getattr(self.state, '_tau_y_basic', np.full_like(r_basic, 500e6))
+        ).ravel()
+
+        lid_st = getattr(self.state, '_lid_state', None)
+        if lid_st is not None:
+            lid_mask_b = np.asarray(lid_st['w_lid']).ravel()
+            yield_switch_b = np.full_like(r_basic, float(lid_st['w_y']))
+            lid_thickness = float(lid_st['d_lid'])
+            lid_base_temperature = float(lid_st['T_lid'])
+            interior_temperature = float(lid_st['T_i'])
+            lid_stress = float(lid_st['tau_d'])
+            theta_val = float(lid_st['theta'])
+            lid_regime = float(np.round(lid_st['lid_regime']))
+        else:
+            lid_mask_b = np.zeros_like(r_basic)
+            yield_switch_b = np.zeros_like(r_basic)
+            lid_thickness = 0.0
+            lid_base_temperature = 0.0
+            interior_temperature = float(T_magma)
+            lid_stress = 0.0
+            theta_val = 0.0
+            lid_regime = 0.0
+
+        dt_s = float(sol.t[-1] - sol.t[0]) * 365.25 * 86400.0
+        energy_residual = float(step_integrals['solver_residual']) / dt_s if dt_s > 0.0 else 0.0
+
         return SolverOutput(
             S_final=S_final,
             T_stag=T_stag,
@@ -3997,4 +4174,17 @@ class EntropySolver:
             T_basic=T_basic_diag,
             cp_basic=cp_basic_diag,
             rho_basic=rho_basic_diag,
+            visc_eff_b=visc_eff_b,
+            eta_diff_b=eta_diff_b,
+            strain_rate_b=strain_rate_b,
+            tau_y_b=tau_y_b,
+            lid_mask_b=lid_mask_b,
+            yield_switch_b=yield_switch_b,
+            lid_thickness=lid_thickness,
+            lid_base_temperature=lid_base_temperature,
+            interior_temperature=interior_temperature,
+            lid_stress=lid_stress,
+            theta=theta_val,
+            lid_regime=lid_regime,
+            energy_residual=energy_residual,
         )

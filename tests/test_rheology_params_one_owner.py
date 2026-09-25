@@ -125,8 +125,8 @@ def test_custom_solid_rheology_params_propagation():
         activation_volume=4e-6,
         water_prefactor=0.5,
         yield_stress_c=40e6,
-        stress_closure_mode='global',
-        lid_base_mode='rheological',
+        stress_closure_mode='local',
+        lid_base_mode='fixed',
         lid_base_temperature=1350.0,
         phi_visc_single=0.6,
     )

@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from aragog.rheology import (
+    SolidRheologyParams,
     compute_strain_rate_local,
     compute_yield_stress,
     eta_diff,
@@ -171,11 +172,11 @@ def test_effective_viscosity_yield_capping():
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
 def test_stress_closure_modes():
-    r"""Assert stress closure correctly handles local and global closure modes.
+    r"""Assert stress closure correctly handles local mode and rejects global mode.
 
     Physics invariants:
-    1. 'local' mode: strain rate scales inversely with mixing length and linearly with velocity.
-    2. 'global' mode: strain rate scales as v_int / d_lid based on lithospheric lid depth.
+    1. 'local' mode: strain rate scales as |v| / (2 * l) from simple shear definition.
+    2. 'global' mode: rejected with ValueError (superseded by boundary-layer 'lid' mode).
     3. Input validation: raises ValueError on unknown mode or missing required mode arguments.
 
     Reference:
@@ -186,7 +187,7 @@ def test_stress_closure_modes():
     v_local = 1.0e-8  # m/s
     l_mix = 1.0e5  # 100 km
     sr_local = stress_closure('local', viscous_velocity=v_local, mixing_length=l_mix)
-    assert sr_local == pytest.approx(v_local / l_mix, rel=1.0e-12)
+    assert sr_local == pytest.approx(v_local / (2.0 * l_mix), rel=1.0e-12)
 
     # Scaling: doubling velocity doubles strain rate
     sr_double_v = stress_closure('local', viscous_velocity=2.0 * v_local, mixing_length=l_mix)
@@ -201,34 +202,17 @@ def test_stress_closure_modes():
     assert np.isfinite(sr_zero_l)
     assert sr_zero_l > 0.0
 
-    # ── Test global mode ──
-    # Synthetic planet: R_cmb = 3480 km, R_surf = 6371 km
-    r_grid = np.linspace(3480.0e3, 6371.0e3, 50)
-    # Cold lid down to 6000 km (depth = 371 km), interior at 1800 K
-    t_profile = np.where(r_grid > 6000.0e3, 1000.0, 1800.0)
-    # Convective velocity: zero in lid, 0.03 m/yr (~1.0e-9 m/s) in interior
-    v_profile = np.where(r_grid > 6000.0e3, 0.0, 1.0e-9)
+    # ── Test global mode rejection ──
+    with pytest.raises(ValueError, match="Unknown stress closure mode 'global'"):
+        stress_closure('global', viscous_velocity=v_local)
 
-    sr_global = stress_closure(
-        'global',
-        viscous_velocity=v_profile,
-        radius=r_grid,
-        temperature=t_profile,
-        t_lid_base=1400.0,
-    )
-    # Expected lid thickness: 6371 km - 6000 km = 371 km
-    expected_d_lid = 6371.0e3 - 6000.0e3
-    expected_v_int = 1.0e-9
-    assert sr_global == pytest.approx(expected_v_int / expected_d_lid, rel=0.05)
+    with pytest.raises(ValueError, match="Unknown stress_closure_mode 'global'"):
+        SolidRheologyParams(stress_closure_mode='global')
 
     # ── Error contract validation ──
     # Missing mixing_length in local mode
     with pytest.raises(ValueError, match='mixing_length must be provided'):
         stress_closure('local', viscous_velocity=v_local)
-
-    # Missing radius/temperature in global mode
-    with pytest.raises(ValueError, match='radius and temperature must be provided'):
-        stress_closure('global', viscous_velocity=v_profile)
 
     # Unrecognized mode
     with pytest.raises(ValueError, match='Unknown stress closure mode'):

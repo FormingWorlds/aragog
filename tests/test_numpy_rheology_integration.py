@@ -30,7 +30,7 @@ def test_config_rheology_defaults():
     assert pc.activation_volume == 5e-6
     assert pc.yield_stress_c == 50e6
     assert pc.yield_stress_mu == 0.6
-    assert pc.stress_closure_mode == 'local'
+    assert pc.stress_closure_mode == 'lid'
 
     pp = _PhaseParameters(
         density=4200.0,
@@ -240,9 +240,9 @@ def test_entropy_state_mlt_viscosity_capping_local():
 
 
 @pytest.mark.unit
-def test_entropy_state_mlt_viscosity_capping_global():
-    """Verify global stress closure updates viscosity_basic and caps effective viscosity."""
-    state, phase_basic = _build_test_entropy_state(mode='global')
+def test_entropy_state_mlt_viscosity_capping_lid():
+    """Verify lid stress closure updates viscosity_basic and caps effective viscosity."""
+    state, phase_basic = _build_test_entropy_state(mode='lid')
 
     n_stag = len(state._entropy_staggered)
     s_stag = np.linspace(3200.0, 2800.0, n_stag)

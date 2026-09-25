@@ -101,8 +101,8 @@ def test_jax_numpy_float64_parity():
     np.testing.assert_allclose(np.array(k_h_jax), kappa_numpy, rtol=1e-8, atol=1e-30)
 
 
-def test_jax_numpy_float64_parity_global_rheological():
-    """Verify JAX and NumPy float64 numerical parity for global stress closure
+def test_jax_numpy_float64_parity_lid_rheological():
+    """Verify JAX and NumPy float64 numerical parity for lid stress closure
     with rheological lid base mode on a convective column with a cold lid.
     """
     import jax
@@ -134,7 +134,7 @@ def test_jax_numpy_float64_parity_global_rheological():
             yield_stress_c=50e6,
             yield_stress_mu=0.6,
             yield_stress_max=500e6,
-            stress_closure_mode='global',
+            stress_closure_mode='lid',
             lid_base_mode='rheological',
             lid_contrast_coeff=2.2,
             activation_energy=300e3,
@@ -208,7 +208,7 @@ def test_jax_numpy_float64_parity_global_rheological():
     params = PhaseParams(
         enabled=True,
         kappah_floor=0.0,
-        stress_closure_mode='global',
+        stress_closure_mode='lid',
         lid_base_mode='rheological',
         lid_contrast_coeff=2.2,
         activation_energy=300e3,
