@@ -245,7 +245,7 @@ Mixed-phase (mushy) parameters and the optional constant-properties analytical m
 | `phase` | str | -- | Phase label |
 | `phase_transition_width` | -- | -- | Legacy smoothing width |
 | `grain_size` | m | `1.0e-3` | Grain size $a$ in the melt-solid mobility $F(\zeta)=K(\zeta)/\zeta$ |
-| `matprop_smooth_width` | -- | 0.0 | SPIDER-parity blending width across phase boundaries |
+| `matprop_smooth_width` | -- | 0.0 | SPIDER-parity blending width across phase boundaries; must be > 0 when the solid rheology is enabled (PROTEUS passes 0.01) |
 | `separation_viscosity` | str | `"melt"` | Drag viscosity in $v_\mathrm{rel} = \lvert\Delta\rho\rvert g F(\phi)/\eta$: `"melt"` (fixed single-phase liquid viscosity, SPIDER parity) keeps separation active below `phi_rheo`, which collapses the CMB temperature in coupled caps-off runs; `"mixture"` (rheological-transition-blended bulk viscosity) locks separation up below `phi_rheo` and avoids that collapse, which is why PROTEUS defaults to `"mixture"` |
 | `cp_blend` | str | `"latent"` | `"latent"` (SPIDER parity) or `"linear"` for the mushy $C_p$ rule |
 | `const_properties` | bool | false | Enable the analytic constant-properties path (no EOS tables needed) |

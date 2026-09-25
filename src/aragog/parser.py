@@ -501,6 +501,13 @@ class Parameters:
                     f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
 
+        # With a zero width the solid-rheology right-hand side jumps at the solidus edge.
+        if self.phase_solid.rheology.enabled and self.phase_mixed.matprop_smooth_width <= 0.0:
+            raise ValueError(
+                '[phase_solid] enabled = true requires [phase_mixed] matprop_smooth_width > 0 '
+                f'(got {self.phase_mixed.matprop_smooth_width}); PROTEUS passes 0.01'
+            )
+
         # Convert radionuclide concentration from ppm to mass fraction.
         for r in self.radionuclides:
             r.concentration *= 1e-6
