@@ -542,21 +542,20 @@ def test_derive_initial_entropy_skips_when_ic_method_is_2(shared_eos):
 # ---- F_cmb output column: conserved step-average ---------------------------
 
 
-def test_f_cmb_column_is_conserved_step_average_not_end_of_step_snapshot(shared_eos):
+@pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance'])
+def test_f_cmb_column_is_conserved_step_average_not_end_of_step_flux(shared_eos, core_bc):
     """The reported F_cmb column is the conserved step-average, not the
     end-of-step CMB flux ``heat_flux[0]``.
 
-    With the quasi_steady core BC the applied CMB flux changes within the
-    step as the mantle cools from an entropy that rises with depth, so the
-    step-average and the end-of-step value differ (by about 1.5 % here).
-
-    Discriminator: the closure ``F_cmb * A_cmb * dt == step_dE_F_cmb_J``
-    holds only for the step-average, and it constrains the ``A_cmb * dt``
-    divisor because the flux is nonzero. A column that reported the
-    end-of-step value would fail the closure and the inequality below.
+    With a core BC whose flux follows the state, the CMB flux changes within
+    the step as the mantle cools from an entropy that rises with depth
+    (quasi_steady by about 1.5 %, energy_balance, with its extended state
+    vector, by about 8 %). The closure ``F_cmb * A_cmb * dt ==
+    step_dE_F_cmb_J`` holds only for the step-average and, the flux being
+    nonzero, constrains the ``A_cmb * dt`` divisor.
     """
     parameters = _build_parameters(
-        core_bc='quasi_steady', n_nodes=15, end_time=50.0, inner_boundary_condition=1
+        core_bc=core_bc, n_nodes=15, end_time=50.0, inner_boundary_condition=1
     )
     _, out = _run_solver_graded(parameters, shared_eos)
 
@@ -609,41 +608,21 @@ def test_f_cmb_column_reports_bc_consistent_zero_for_insulating_core(shared_eos)
     assert snapshot == 0.0, f'output heat_flux[0]={snapshot:.6e} is not the applied zero flux'
 
 
-def test_f_cmb_column_is_conserved_step_average_energy_balance_core(shared_eos):
-    """The conserved step-average column also holds under
-    ``core_bc='energy_balance'``, the SPIDER-parity production mode.
-
-    Energy-balance mode integrates the extended state vector
-    [S_0, ..., S_{N-1}, dSdr_cmb] of length N+1, so ``get_state`` and the
-    step-energy integrator take the ``is_extended`` reconstruction branch
-    that the quasi_steady tests never exercise. The CMB flux follows the
-    state-tracked gradient and falls within the step (by about 8 % here).
-
-    Discriminator: the closure ``F_cmb * A_cmb * dt == step_dE_F_cmb_J``
-    holds only for the step-average, and it constrains the ``A_cmb * dt``
-    divisor because the flux is nonzero. A column that reported the
-    end-of-step value would fail the closure and the inequality below.
-    """
+@pytest.mark.parametrize('core_bc', ['gradient', 'bower2018'])
+def test_step_surface_energy_is_the_prescribed_flux(shared_eos, core_bc):
+    """With a prescribed surface flux the step surface energy and the output
+    surface flux are that flux, also for the gradient and bower2018 layouts."""
     parameters = _build_parameters(
-        core_bc='energy_balance', n_nodes=15, end_time=50.0, inner_boundary_condition=1
+        core_bc=core_bc, n_nodes=15, end_time=50.0, inner_boundary_condition=1
     )
+    parameters.boundary_conditions.outer_boundary_condition = 4
+    parameters.boundary_conditions.outer_boundary_value = 0.05
     _, out = _run_solver_graded(parameters, shared_eos)
 
-    a_cmb = 4.0 * np.pi * float(out.r_basic[0]) ** 2
+    a_surf = 4.0 * np.pi * float(out.r_basic[-1]) ** 2
     dt_s = float(out.dt_actual) * Julian_year
-    reported = float(out.F_cmb)
-    end_of_step = float(out.heat_flux[0])
-    integral = float(out.step_dE_F_cmb_J)
-
-    assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0), (
-        f'F_cmb={reported:.6e} * A_cmb * dt does not reconstruct '
-        f'step_dE_F_cmb_J={integral:.6e}; column is not the conserved average'
-    )
-    assert reported > 0.0
-    assert not np.isclose(reported, end_of_step, rtol=1e-3), (
-        f'F_cmb={reported:.6e} equals the end-of-step heat_flux[0]={end_of_step:.6e}; '
-        'the fixture no longer separates the two'
-    )
+    assert float(out.step_dE_F_int_J) == pytest.approx(-0.05 * a_surf * dt_s, rel=1e-9)
+    assert float(out.heat_flux[-1]) == 0.05
 
 
 # ---- F_cmb closure on the melt-fraction step-cap degenerate path -----------

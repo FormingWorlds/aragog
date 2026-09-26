@@ -606,7 +606,9 @@ class SolverOutput:
     mass_stag: npt.NDArray  # mass per shell [kg]
 
     # Fluxes and heating (at basic / staggered nodes)
-    heat_flux: npt.NDArray  # total heat flux at basic nodes [W/m^2]
+    heat_flux: (
+        npt.NDArray
+    )  # total heat flux at basic nodes [W/m^2], applied BC flux at both ends
     heating: npt.NDArray  # internal heating at staggered nodes [W/kg]
     eddy_diff: npt.NDArray  # eddy diffusivity at basic nodes [m^2/s]
     cap_stag: npt.NDArray  # capacitance rho*T at staggered nodes
@@ -615,6 +617,7 @@ class SolverOutput:
     # output. Populated from the final EntropyState after integration;
     # only consumers that set ``write_flux_diagnostics = true`` in the
     # PROTEUS config read these.
+    # Flux components from the state; at the end nodes they omit the boundary conditions.
     jcond_b: npt.NDArray  # conductive flux [W/m^2]
     jconv_b: npt.NDArray  # convective flux [W/m^2]
     jgrav_b: npt.NDArray  # grav-sep contribution to heat flux [W/m^2]
@@ -3350,7 +3353,7 @@ class EntropySolver:
                 n_basic = n_stag + 1
                 dSdr_i = y_col[:n_basic]
                 S_surf_i = float(y_col[n_basic])
-                S_i, S_basic_i = self._reconstruct_entropy(dSdr_i, S_surf_i)
+                S_i, _ = self._reconstruct_entropy(dSdr_i, S_surf_i)
             elif is_ext:
                 S_i = y_col[:n_stag]
             else:
@@ -3375,10 +3378,9 @@ class EntropySolver:
                 dSdt_full = np.asarray(self.dSdt(t_i, y_col)).ravel()
                 dSdt_stag_i = dSdt_full[:n_stag] / SECS_PER_YEAR  # /yr -> /s
             else:
-                # Gradient mode: state.update with reconstructed
-                # entropy + dSdr. Skip dSdt return value (state-vec
-                # layout differs).
-                self.state.update(S_i, t_i, dSdr=dSdr_i, entropy_basic=S_basic_i)
+                # Gradient mode: the RHS applies the BCs; its return value has
+                # the gradient-state layout, so the solver residual is skipped.
+                self._dSdt_single(t_i, y_col)
                 dSdt_stag_i = None  # signals: skip solver-residual
 
             # Read boundary fluxes AFTER dSdt has applied the BCs.

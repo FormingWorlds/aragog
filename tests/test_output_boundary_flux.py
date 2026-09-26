@@ -38,7 +38,13 @@ def _solver(outer, inner, core_bc='quasi_steady', *, end_time=1.0, mass_coordina
 BCS = [
     (outer, inner, core_bc)
     for outer in (1, 4, 5)
-    for inner, core_bc in ((1, 'quasi_steady'), (1, 'energy_balance'), (2, None), (3, None))
+    for inner, core_bc in (
+        (1, 'quasi_steady'),
+        (1, 'energy_balance'),
+        (1, 'gradient'),
+        (2, None),
+        (3, None),
+    )
 ]
 
 
@@ -86,19 +92,14 @@ def test_get_state_between_solves_changes_nothing(core_bc):
 
 @pytest.mark.parametrize('mass_coordinates', [True, False])
 def test_d_dr_at_both_end_nodes(mass_coordinates):
-    """A linear field gives its slope at both end basic nodes: exactly on a uniform mesh, to the
-    second-order stencil error on the mass-coordinate mesh, where r is not linear in xi."""
+    """The d/dr stencil is exact at both end basic nodes for a field quadratic in the mesh
+    coordinate xi (mass radius or radius), which is uniformly spaced."""
     mesh = _solver(4, 2, mass_coordinates=mass_coordinates).evaluator.mesh
-    r_stag = np.asarray(mesh.staggered.radii).ravel()
-    r_basic = np.asarray(mesh.basic.radii).ravel()
-    grad = mesh.d_dr_at_basic_nodes(np.atleast_2d(2.0 + 1e-3 * r_stag).T).ravel()
-    np.testing.assert_allclose(grad[[0, -1]], 1e-3, rtol=1e-2 if mass_coordinates else 1e-9)
-    if (
-        not mass_coordinates
-    ):  # the 3-point extrapolation is exact for a quadratic on a uniform mesh
-        x = r_stag / 1e6
-        grad = mesh.d_dr_at_basic_nodes(np.atleast_2d(x**2).T).ravel()
-        np.testing.assert_allclose(grad[[0, -1]], 2.0 * r_basic[[0, -1]] / 1e12, rtol=1e-9)
+    xi_stag = np.asarray(mesh.staggered.mass_radii).ravel() / 1e6
+    xi_basic = np.asarray(mesh.basic.mass_radii).ravel() / 1e6
+    grad = mesh.d_dr_at_basic_nodes(np.atleast_2d(xi_stag**2).T).ravel()
+    exact = 2.0 * xi_basic * np.asarray(mesh._dxidr).ravel() / 1e6
+    np.testing.assert_allclose(grad[[0, -1]], exact[[0, -1]], rtol=1e-12)
 
 
 @pytest.mark.parametrize('outer', [1, 4])
