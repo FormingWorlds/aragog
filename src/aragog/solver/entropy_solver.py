@@ -606,18 +606,13 @@ class SolverOutput:
     mass_stag: npt.NDArray  # mass per shell [kg]
 
     # Fluxes and heating (at basic / staggered nodes)
-    heat_flux: (
-        npt.NDArray
-    )  # total heat flux at basic nodes [W/m^2], applied BC flux at both ends
+    heat_flux: npt.NDArray  # total heat flux at basic nodes [W/m^2], BC flux at the ends
     heating: npt.NDArray  # internal heating at staggered nodes [W/kg]
     eddy_diff: npt.NDArray  # eddy diffusivity at basic nodes [m^2/s]
     cap_stag: npt.NDArray  # capacitance rho*T at staggered nodes
 
-    # Per-component flux decomposition at basic nodes for diagnostic
-    # output. Populated from the final EntropyState after integration;
-    # only consumers that set ``write_flux_diagnostics = true`` in the
-    # PROTEUS config read these.
-    # Flux components from the state; at the end nodes they omit the boundary conditions.
+    # Flux components at basic nodes from the final state, for diagnostic output (PROTEUS
+    # write_flux_diagnostics); at the end nodes they omit the boundary conditions.
     jcond_b: npt.NDArray  # conductive flux [W/m^2]
     jconv_b: npt.NDArray  # convective flux [W/m^2]
     jgrav_b: npt.NDArray  # grav-sep contribution to heat flux [W/m^2]
