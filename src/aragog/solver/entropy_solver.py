@@ -3357,26 +3357,11 @@ class EntropySolver:
             if i == 0:
                 S_traj_start = np.asarray(S_i, dtype=float).copy()
 
-            # Evaluate the ODE RHS at this accepted state. ``self.dSdt``
-            # internally calls ``state.update`` AND applies the BC
-            # dispatch (entropy_solver.py:1107-1153), populating
-            # ``state._heat_flux[-1]`` and ``[0]`` with the values that
-            # were actually used to compute dS/dt. Calling dSdt FIRST
-            # (before reading F_int/F_cmb at lines below) ensures the
-            # boundary fluxes we integrate are consistent with the
-            # ones the entropy ODE saw, so the LHS-RHS check at the
-            # bottom of this loop is meaningful. ``dSdt`` returns
-            # derivatives in [/yr] to match the integrator's time axis
-            # (entropy_solver.py:1172), so divide by SECS_PER_YEAR to
-            # align with per-second flux units in the RHS.
-            if not gradient_mode:
-                dSdt_full = np.asarray(self.dSdt(t_i, y_col)).ravel()
-                dSdt_stag_i = dSdt_full[:n_stag] / SECS_PER_YEAR  # /yr -> /s
-            else:
-                # Gradient mode: the RHS applies the BCs; its return value has
-                # the gradient-state layout, so the solver residual is skipped.
-                self._dSdt_single(t_i, y_col)
-                dSdt_stag_i = None  # signals: skip solver-residual
+            # The RHS at this accepted state applies the BCs, so the boundary fluxes read below
+            # are the ones the entropy ODE saw. Its rates are per yr; the gradient layout has no
+            # per-cell entropy rates, so the solver residual is skipped there.
+            dSdt_full = np.asarray(self._dSdt_single(t_i, y_col)).ravel()
+            dSdt_stag_i = None if gradient_mode else dSdt_full[:n_stag] / SECS_PER_YEAR
 
             # Read boundary fluxes AFTER dSdt has applied the BCs.
             F_int_i = float(self.state._heat_flux[-1])

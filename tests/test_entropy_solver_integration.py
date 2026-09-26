@@ -608,10 +608,10 @@ def test_f_cmb_column_reports_bc_consistent_zero_for_insulating_core(shared_eos)
     assert snapshot == 0.0, f'output heat_flux[0]={snapshot:.6e} is not the applied zero flux'
 
 
-@pytest.mark.parametrize('core_bc', ['gradient', 'bower2018'])
-def test_step_surface_energy_is_the_prescribed_flux(shared_eos, core_bc):
-    """With a prescribed surface flux the step surface energy and the output
-    surface flux are that flux, also for the gradient and bower2018 layouts."""
+@pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance', 'gradient', 'bower2018'])
+def test_step_surface_energy_integrates_the_prescribed_flux(shared_eos, core_bc):
+    """With a prescribed surface flux F the step surface energy is -F A dt and the
+    output surface flux is F, for every core_bc state layout."""
     parameters = _build_parameters(
         core_bc=core_bc, n_nodes=15, end_time=50.0, inner_boundary_condition=1
     )
