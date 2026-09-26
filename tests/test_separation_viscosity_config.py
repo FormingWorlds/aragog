@@ -259,24 +259,24 @@ def _build_solver_params(separation_viscosity):
         thermal_expansivity=3e-5,
         viscosity=1e21,
     )
-    pm_kwargs = dict(
-        latent_heat_of_fusion=4.0e5,
-        rheological_transition_melt_fraction=0.4,
-        rheological_transition_width=0.15,
-        solidus='solidus.dat',
-        liquidus='liquidus.dat',
-        phase='mixed',
-        phase_transition_width=0.01,
-        grain_size=1.0e-3,
-        const_properties=True,
-        const_rho=4000.0,
-        const_Cp=1000.0,
-        const_alpha=3.0e-5,
-        const_cond=4.0,
-        const_log10visc=2.0,
-        const_T_ref=3000.0,
-        const_S_ref=3000.0,
-    )
+    pm_kwargs = {
+        'latent_heat_of_fusion': 4.0e5,
+        'rheological_transition_melt_fraction': 0.4,
+        'rheological_transition_width': 0.15,
+        'solidus': 'solidus.dat',
+        'liquidus': 'liquidus.dat',
+        'phase': 'mixed',
+        'phase_transition_width': 0.01,
+        'grain_size': 1.0e-3,
+        'const_properties': True,
+        'const_rho': 4000.0,
+        'const_Cp': 1000.0,
+        'const_alpha': 3.0e-5,
+        'const_cond': 4.0,
+        'const_log10visc': 2.0,
+        'const_T_ref': 3000.0,
+        'const_S_ref': 3000.0,
+    }
     if separation_viscosity is not None:
         pm_kwargs['separation_viscosity'] = separation_viscosity
     pm = _PhaseMixedParameters(**pm_kwargs)

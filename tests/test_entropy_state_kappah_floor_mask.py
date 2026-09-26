@@ -66,12 +66,12 @@ _KAPPAH_FLOOR = 10.0
 _PHI_RHEO = 0.4
 _PHI_WIDTH = 0.15
 _PHI_MUSH = 0.40  # mushy cell sits at the rheological transition (phi_rheo)
-_PARAMS = dict(
-    kappah_floor=_KAPPAH_FLOOR,
-    phi_rheo=_PHI_RHEO,
-    phi_width=_PHI_WIDTH,
-    eddy_diff_thermal=1.0,
-)
+_PARAMS = {
+    'kappah_floor': _KAPPAH_FLOOR,
+    'phi_rheo': _PHI_RHEO,
+    'phi_width': _PHI_WIDTH,
+    'eddy_diff_thermal': 1.0,
+}
 
 
 def _mesh(n_basic: int) -> MeshArrays:

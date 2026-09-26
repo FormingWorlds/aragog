@@ -475,7 +475,7 @@ def main():
         ha='right',
         va='bottom',
         fontsize=10,
-        bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8),
+        bbox={'boxstyle': 'round', 'facecolor': 'lightyellow', 'alpha': 0.8},
     )
 
     # ── Panel (d): Core cooling: F_CMB and T_CMB ─────────────────────
@@ -507,7 +507,7 @@ def main():
         ha='left',
         va='bottom',
         fontsize=8,
-        bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8),
+        bbox={'boxstyle': 'round', 'facecolor': 'lightyellow', 'alpha': 0.8},
     )
 
     fig.suptitle(

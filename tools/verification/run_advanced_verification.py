@@ -294,7 +294,7 @@ def main():
         r_an / 1e3, analytical_T(r_an), 'k-', linewidth=2.5, label='Analytical $T = A/r + B$'
     )
     colors_cond = {25: '#CC6677', 50: '#DDCC77', 100: '#88CCEE', 200: '#44AA99'}
-    for N, (r, T_ss, T_final, Q_prof, Q_err) in cond_results.items():
+    for N, (r, T_ss, T_final, _Q_prof, _Q_err) in cond_results.items():
         max_drift = np.max(np.abs(T_final - T_ss))
         ax.plot(
             r / 1e3,
@@ -311,7 +311,7 @@ def main():
 
     # Inset: flux uniformity (relative error in Q = F*4pi*r^2)
     ax_ins = ax.inset_axes([0.18, 0.18, 0.45, 0.35])
-    for N, (r, T_ss, T_final, Q_prof, Q_err) in cond_results.items():
+    for N, (_r, _T_ss, _T_final, _Q_prof, Q_err) in cond_results.items():
         r_basic_km = np.linspace(R_INNER, R_OUTER, N + 1) / 1e3
         ax_ins.plot(
             r_basic_km[1:-1],

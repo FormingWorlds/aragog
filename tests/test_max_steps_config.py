@@ -26,13 +26,13 @@ pytestmark = pytest.mark.unit
 def _solver_parameters(**overrides):
     from aragog.parser import _SolverParameters
 
-    kwargs = dict(
-        start_time=0.0,
-        end_time=1.0,
-        atol=1.0e-6,
-        rtol=1.0e-6,
-        tsurf_poststep_change=30.0,
-    )
+    kwargs = {
+        'start_time': 0.0,
+        'end_time': 1.0,
+        'atol': 1.0e-6,
+        'rtol': 1.0e-6,
+        'tsurf_poststep_change': 30.0,
+    }
     kwargs.update(overrides)
     return _SolverParameters(**kwargs)
 
@@ -40,7 +40,7 @@ def _solver_parameters(**overrides):
 def _solver_config(**overrides):
     from aragog.config.solver import SolverConfig
 
-    kwargs = dict(start_time=0.0, end_time=1.0, atol=1.0e-6, rtol=1.0e-6)
+    kwargs = {'start_time': 0.0, 'end_time': 1.0, 'atol': 1.0e-6, 'rtol': 1.0e-6}
     kwargs.update(overrides)
     return SolverConfig(**kwargs)
 
@@ -193,15 +193,15 @@ def _run_capture(*, max_steps, with_jacfn):
         solver._max_steps = max_steps
 
         y0 = np.array([2.0, 0.0])
-        kwargs = dict(
-            start_time=0.0,
-            end_time=1.0,
-            y0=y0,
-            atol=1.0e-8,
-            rtol=1.0e-10,
-            max_step=np.inf,
-            rhs=lambda t, y: y,
-        )
+        kwargs = {
+            'start_time': 0.0,
+            'end_time': 1.0,
+            'y0': y0,
+            'atol': 1.0e-8,
+            'rtol': 1.0e-10,
+            'max_step': np.inf,
+            'rhs': lambda t, y: y,
+        }
         if with_jacfn:
             kwargs['cvode_jacfn'] = lambda t, y, fy, J, user_data=None: 0
         solver._solve_cvode(**kwargs)

@@ -1301,18 +1301,18 @@ class EntropySolver:
         )
         logger.info('Gravitational separation drag viscosity: %s', separation_viscosity)
 
-        phase_kwargs = dict(
-            entropy_eos=self.entropy_eos,
-            rheological_transition_melt_fraction=(
+        phase_kwargs = {
+            'entropy_eos': self.entropy_eos,
+            'rheological_transition_melt_fraction': (
                 self.parameters.phase_mixed.rheological_transition_melt_fraction
             ),
-            rheological_transition_width=(
+            'rheological_transition_width': (
                 self.parameters.phase_mixed.rheological_transition_width
             ),
-            grain_size=self.parameters.phase_mixed.grain_size,
-            cp_blend=cp_blend,
-            separation_viscosity=separation_viscosity,
-        )
+            'grain_size': self.parameters.phase_mixed.grain_size,
+            'cp_blend': cp_blend,
+            'separation_viscosity': separation_viscosity,
+        }
 
         # Get viscosity and thermal conductivity from config.
         # Values can be plain floats (from PROTEUS) or string expressions
@@ -3021,20 +3021,20 @@ class EntropySolver:
         if phi_cap_anchor is not None:
             a = phi_cap_anchor
             try:
-                cap_kw = dict(
-                    eos=self.entropy_eos,
-                    P_stag=self._P_stag_flat,
-                    volume=self._volume_flat,
-                    n_stag=self._n_stag,
-                    phi0_global=a['phi0_global'],
-                    cap=a['cap_phi'],
-                    state_scale=_state_scale,
-                    phi0_per_cell=a['phi0_cell'],
-                    cap_temperature=a['cap_T'],
-                    T0_per_cell=a['T0_cell'],
-                    cap_entropy=a['cap_S'],
-                    S0_per_cell=a['S0_cell'],
-                )
+                cap_kw = {
+                    'eos': self.entropy_eos,
+                    'P_stag': self._P_stag_flat,
+                    'volume': self._volume_flat,
+                    'n_stag': self._n_stag,
+                    'phi0_global': a['phi0_global'],
+                    'cap': a['cap_phi'],
+                    'state_scale': _state_scale,
+                    'phi0_per_cell': a['phi0_cell'],
+                    'cap_temperature': a['cap_T'],
+                    'T0_per_cell': a['T0_cell'],
+                    'cap_entropy': a['cap_S'],
+                    'S0_per_cell': a['S0_cell'],
+                }
                 phi_cap_rootfn = _PhiCapRootFunction(**cap_kw)
                 events = [_phi_cap_event_factory(**cap_kw)]
             except Exception as exc:

@@ -109,7 +109,7 @@ def main():
         ls=':',
         label=r'$T_\mathrm{surf}=T_\mathrm{interior}$ ($b\to 0$)',
     )
-    for b, c in zip(b_vals, colors):
+    for b, c in zip(b_vals, colors, strict=False):
         ax.plot(T_int, results_np[b], color=c, lw=1.6, label=rf'numpy, $b={b:g}$ K$^{{-2}}$')
         ax.plot(
             T_int,
@@ -129,7 +129,7 @@ def main():
 
     # (b) Cubic residual to verify the root: b T_surf^3 + T_surf - T_int = 0
     ax = axes[1]
-    for b, c in zip(b_vals, colors):
+    for b, c in zip(b_vals, colors, strict=False):
         T_s = results_np[b]
         residual = b * T_s**3 + T_s - T_int
         ax.plot(
@@ -161,7 +161,7 @@ def main():
         va='bottom',
         ha='right',
         fontsize=8,
-        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2),
+        bbox={'facecolor': 'white', 'edgecolor': 'gray', 'alpha': 0.85, 'pad': 2},
     )
     panel_label(ax, '(b)', loc='upper right')
 

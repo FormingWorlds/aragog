@@ -287,17 +287,17 @@ def run_aragog_flux(F_surf, t_end_yr):
     N = N_NODES - 1
     mesh = make_aragog_mesh(N, R_CORE, R_SURF)
 
-    phase_kwargs = dict(
-        entropy_eos=eos,
-        gravitational_acceleration=G,
-        rheological_transition_melt_fraction=0.4,
-        rheological_transition_width=0.15,
-        grain_size=1e-3,
-        viscosity_solid=1e21,
-        viscosity_liquid=1e2,
-        thermal_conductivity_solid=4.0,
-        thermal_conductivity_liquid=4.0,
-    )
+    phase_kwargs = {
+        'entropy_eos': eos,
+        'gravitational_acceleration': G,
+        'rheological_transition_melt_fraction': 0.4,
+        'rheological_transition_width': 0.15,
+        'grain_size': 1e-3,
+        'viscosity_solid': 1e21,
+        'viscosity_liquid': 1e2,
+        'thermal_conductivity_solid': 4.0,
+        'thermal_conductivity_liquid': 4.0,
+    }
     phase_stag = EntropyPhaseEvaluator(**phase_kwargs)
     phase_stag.set_pressure(mesh.staggered.pressure)
     phase_basic = EntropyPhaseEvaluator(**phase_kwargs)

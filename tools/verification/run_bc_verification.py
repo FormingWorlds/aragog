@@ -304,7 +304,7 @@ def main():
         transform=ax.transAxes,
         fontsize=8,
         va='bottom',
-        bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8),
+        bbox={'boxstyle': 'round', 'facecolor': 'lightyellow', 'alpha': 0.8},
     )
 
     # -- Panel (b): Neumann BCs --------------------------------------------
@@ -332,11 +332,11 @@ def main():
         transform=ax.transAxes,
         fontsize=9,
         va='bottom',
-        bbox=dict(
-            boxstyle='round',
-            facecolor='lightgreen' if rel_res < 0.05 else 'lightyellow',
-            alpha=0.8,
-        ),
+        bbox={
+            'boxstyle': 'round',
+            'facecolor': 'lightgreen' if rel_res < 0.05 else 'lightyellow',
+            'alpha': 0.8,
+        },
     )
 
     # -- Panel (c): Mixed BCs ----------------------------------------------

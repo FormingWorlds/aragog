@@ -65,13 +65,13 @@ OUT.mkdir(parents=True, exist_ok=True)
 # Production-CHILI radionuclide cocktail (abe_mixed_init.cfg, Ruedas 2017
 # + Turcotte & Schubert 2014). Used here only to add a non-zero radio
 # contribution to the heat-source bar in panel (b).
-RADIO = dict(
-    hp=np.array([2.8761e-5, 2.6368e-5, 5.68402e-4, 9.4946e-5]),
-    ab=np.array([1.1668e-4, 1.0, 7.2045e-3, 0.9927955]),
-    cc=np.array([310.0e-6, 0.124e-6, 0.031e-6, 0.031e-6]),
-    t0=np.array([4.55e9] * 4),
-    hl=np.array([1.248e9, 14.0e9, 0.704e9, 4.468e9]),
-)
+RADIO = {
+    'hp': np.array([2.8761e-5, 2.6368e-5, 5.68402e-4, 9.4946e-5]),
+    'ab': np.array([1.1668e-4, 1.0, 7.2045e-3, 0.9927955]),
+    'cc': np.array([310.0e-6, 0.124e-6, 0.031e-6, 0.031e-6]),
+    't0': np.array([4.55e9] * 4),
+    'hl': np.array([1.248e9, 14.0e9, 0.704e9, 4.468e9]),
+}
 
 
 def main():

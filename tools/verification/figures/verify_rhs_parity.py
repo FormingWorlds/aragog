@@ -87,7 +87,7 @@ def parity_one_state(solver, args, state, label):
     is_noise = (np.abs(f_np) < NOISE_FLOOR) & (np.abs(f_jx) < NOISE_FLOOR)
     denom = np.where(is_noise, 1.0, np.maximum(np.abs(f_np), 1e-30))
     rel_err = np.where(is_noise, 0.0, abs_err / denom)
-    return dict(label=label, f_np=f_np, f_jax=f_jx, abs_err=abs_err, rel_err=rel_err)
+    return {'label': label, 'f_np': f_np, 'f_jax': f_jx, 'abs_err': abs_err, 'rel_err': rel_err}
 
 
 def main():
@@ -188,7 +188,7 @@ def main():
             va='bottom',
             ha='right',
             fontsize=7.5,
-            bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2),
+            bbox={'facecolor': 'white', 'edgecolor': 'gray', 'alpha': 0.85, 'pad': 2},
         )
         panel_label(ax, f'({panel_letters[col]})', loc='upper left')
         ax.set_title(f'{kind}', fontsize=9)
@@ -232,7 +232,7 @@ def main():
             va='bottom',
             ha='right',
             fontsize=7.5,
-            bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2),
+            bbox={'facecolor': 'white', 'edgecolor': 'gray', 'alpha': 0.85, 'pad': 2},
         )
         panel_label(ax, f'({panel_letters[3 + col]})', loc='upper left')
 

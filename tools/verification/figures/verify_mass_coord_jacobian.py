@@ -163,7 +163,7 @@ def main():
         va='bottom',
         ha='center',
         fontsize=6.5,
-        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2),
+        bbox={'facecolor': 'white', 'edgecolor': 'gray', 'alpha': 0.85, 'pad': 2},
     )
     panel_label(ax, '(a)', loc='upper left')
 
@@ -205,7 +205,7 @@ def main():
         va='bottom',
         ha='center',
         fontsize=6.5,
-        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2),
+        bbox={'facecolor': 'white', 'edgecolor': 'gray', 'alpha': 0.85, 'pad': 2},
     )
     panel_label(ax, '(b)', loc='upper left')
 

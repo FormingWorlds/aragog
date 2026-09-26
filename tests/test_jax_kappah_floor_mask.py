@@ -68,7 +68,7 @@ def _phase(n_basic: int, melt_fraction) -> PhaseProperties:
     )
 
 
-_PARAMS = dict(kappah_floor=10.0, phi_rheo=0.4, phi_width=0.15, eddy_diff_thermal=1.0)
+_PARAMS = {'kappah_floor': 10.0, 'phi_rheo': 0.4, 'phi_width': 0.15, 'eddy_diff_thermal': 1.0}
 
 
 def test_kappah_floor_off_in_stable_mushy_cell():

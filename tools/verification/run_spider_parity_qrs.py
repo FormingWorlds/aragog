@@ -323,17 +323,17 @@ def run_aragog(
     N = N_NODES - 1
     mesh = make_aragog_mesh(N, R_core, R_surf, g_surf)
 
-    phase_kwargs = dict(
-        entropy_eos=eos,
-        gravitational_acceleration=g_surf,
-        rheological_transition_melt_fraction=0.4,
-        rheological_transition_width=0.15,
-        grain_size=1e-3,
-        viscosity_solid=1e21,
-        viscosity_liquid=1e2,
-        thermal_conductivity_solid=4.0,
-        thermal_conductivity_liquid=4.0,
-    )
+    phase_kwargs = {
+        'entropy_eos': eos,
+        'gravitational_acceleration': g_surf,
+        'rheological_transition_melt_fraction': 0.4,
+        'rheological_transition_width': 0.15,
+        'grain_size': 1e-3,
+        'viscosity_solid': 1e21,
+        'viscosity_liquid': 1e2,
+        'thermal_conductivity_solid': 4.0,
+        'thermal_conductivity_liquid': 4.0,
+    }
     phase_stag = EntropyPhaseEvaluator(**phase_kwargs)
     phase_stag.set_pressure(mesh.staggered.pressure)
     phase_basic = EntropyPhaseEvaluator(**phase_kwargs)
@@ -597,7 +597,7 @@ def main():
     mass_list = sorted(q_results.keys())
     for M_ME in mass_list:
         r = q_results[M_ME]
-        for solver, data, arr in [
+        for _solver, data, arr in [
             ('spider', r['spider'], spider_tsol),
             ('aragog', r['aragog'], aragog_tsol),
         ]:

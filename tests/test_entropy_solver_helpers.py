@@ -890,13 +890,13 @@ def test_max_step_clamp_entropy_margin_is_configurable():
 
     from aragog.solver.entropy_solver import _phase_boundary_max_step_clamp
 
-    common = dict(
-        near_liq=False,
-        near_sol=False,
-        in_mushy=False,
-        cmb_margin_to_liq=-300.0,  # 300 below liquidus
-        cmb_margin_to_sol=-100.0,  # and below solidus -> not mushy
-    )
+    common = {
+        'near_liq': False,
+        'near_sol': False,
+        'in_mushy': False,
+        'cmb_margin_to_liq': -300.0,  # 300 below liquidus
+        'cmb_margin_to_sol': -100.0,  # and below solidus -> not mushy
+    }
     assert _phase_boundary_max_step_clamp(**common, entropy_margin=200.0) is False
     assert _phase_boundary_max_step_clamp(**common, entropy_margin=400.0) is True
     # The margin has no default: the production caller always resolves and

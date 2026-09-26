@@ -73,39 +73,54 @@ from aragog.jax.solver import make_radio_heating_fn  # noqa: E402
 # within a few tens of Myr, leaving the long-lived nuclides to carry
 # the heat budget for the rest of the Solar System lifetime.
 ISOTOPES = {
-    'K40': dict(
-        t0=4.55e9, ab=1.1668e-4, conc_ppm=310.0, hp=2.8761e-5, hl=1.248e9, color=PALETTE['K40']
-    ),
-    'Th232': dict(
-        t0=4.55e9, ab=1.0, conc_ppm=0.124, hp=2.6368e-5, hl=14.0e9, color=PALETTE['Th232']
-    ),
-    'U235': dict(
-        t0=4.55e9,
-        ab=7.2045e-3,
-        conc_ppm=0.031,
-        hp=5.68402e-4,
-        hl=0.704e9,
-        color=PALETTE['U235'],
-    ),
-    'U238': dict(
-        t0=4.55e9, ab=0.9927955, conc_ppm=0.031, hp=9.4946e-5, hl=4.468e9, color=PALETTE['U238']
-    ),
-    'Al26': dict(
-        t0=0.0,
-        ab=5.25e-5,
-        conc_ppm=23600.0,
-        hp=0.3583,
-        hl=7.17e5,
-        color=PALETTE.get('Al26', '#d62728'),
-    ),
-    'Fe60': dict(
-        t0=0.0,
-        ab=1.0e-8,
-        conc_ppm=62600.0,
-        hp=3.6579e-2,
-        hl=2.62e6,
-        color=PALETTE.get('Fe60', '#9467bd'),
-    ),
+    'K40': {
+        't0': 4.55e9,
+        'ab': 1.1668e-4,
+        'conc_ppm': 310.0,
+        'hp': 2.8761e-5,
+        'hl': 1.248e9,
+        'color': PALETTE['K40'],
+    },
+    'Th232': {
+        't0': 4.55e9,
+        'ab': 1.0,
+        'conc_ppm': 0.124,
+        'hp': 2.6368e-5,
+        'hl': 14.0e9,
+        'color': PALETTE['Th232'],
+    },
+    'U235': {
+        't0': 4.55e9,
+        'ab': 7.2045e-3,
+        'conc_ppm': 0.031,
+        'hp': 5.68402e-4,
+        'hl': 0.704e9,
+        'color': PALETTE['U235'],
+    },
+    'U238': {
+        't0': 4.55e9,
+        'ab': 0.9927955,
+        'conc_ppm': 0.031,
+        'hp': 9.4946e-5,
+        'hl': 4.468e9,
+        'color': PALETTE['U238'],
+    },
+    'Al26': {
+        't0': 0.0,
+        'ab': 5.25e-5,
+        'conc_ppm': 23600.0,
+        'hp': 0.3583,
+        'hl': 7.17e5,
+        'color': PALETTE.get('Al26', '#d62728'),
+    },
+    'Fe60': {
+        't0': 0.0,
+        'ab': 1.0e-8,
+        'conc_ppm': 62600.0,
+        'hp': 3.6579e-2,
+        'hl': 2.62e6,
+        'color': PALETTE.get('Fe60', '#9467bd'),
+    },
 }
 
 LOG2 = np.log(2.0)
@@ -209,7 +224,7 @@ def main():
         va='top',
         ha='left',
         fontsize=8,
-        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.8, pad=2),
+        bbox={'facecolor': 'white', 'edgecolor': 'gray', 'alpha': 0.8, 'pad': 2},
     )
     panel_label(ax, '(b)', loc='upper left')
 

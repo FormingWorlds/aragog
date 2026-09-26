@@ -214,7 +214,7 @@ def main():
         va='top',
         ha='left',
         fontsize=8,
-        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.8, pad=2),
+        bbox={'facecolor': 'white', 'edgecolor': 'gray', 'alpha': 0.8, 'pad': 2},
     )
     panel_label(ax, '(b)', loc='upper left')
 

@@ -76,7 +76,7 @@ def panel_label(ax, text, loc='upper left', fontsize=10):
         va=va,
         fontsize=fontsize,
         fontweight='bold',
-        bbox=dict(facecolor='white', edgecolor='none', alpha=0.85, pad=1.5),
+        bbox={'facecolor': 'white', 'edgecolor': 'none', 'alpha': 0.85, 'pad': 1.5},
     )
 
 

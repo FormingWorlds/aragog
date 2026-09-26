@@ -466,14 +466,14 @@ def test_phase_boundary_entropy_margin_default_matches_across_config_layers():
     """
     from aragog.parser import _EnergyParameters
 
-    kw = dict(
-        conduction=True,
-        convection=True,
-        gravitational_separation=False,
-        mixing=False,
-        radionuclides=False,
-        tidal=False,
-    )
+    kw = {
+        'conduction': True,
+        'convection': True,
+        'gravitational_separation': False,
+        'mixing': False,
+        'radionuclides': False,
+        'tidal': False,
+    }
     attrs_default = EnergyConfig(**kw).phase_boundary_entropy_margin
     parser_default = _EnergyParameters(**kw).phase_boundary_entropy_margin
     assert attrs_default == pytest.approx(200.0, rel=1e-12)

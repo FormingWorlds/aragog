@@ -9,11 +9,12 @@ dataclass-based ``Parameters`` object defined in ``aragog.parser``;
 from __future__ import annotations
 
 import logging
-import sys
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from aragog.parser import Parameters
+
+import tomllib
 
 from aragog.config.boundary import BoundaryConfig
 from aragog.config.energy import EnergyConfig
@@ -22,11 +23,6 @@ from aragog.config.mesh import MeshConfig
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
 from aragog.config.radionuclides import RadionuclideConfig
 from aragog.config.solver import SolverConfig
-
-if sys.version_info < (3, 11):
-    import tomli as tomllib
-else:
-    import tomllib
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 

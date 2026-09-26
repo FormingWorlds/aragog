@@ -1666,11 +1666,11 @@ class TestEnergyBalanceCoreBC:
         self._wire_cached_constants(solver)
 
         # Pin dSdt_s_cmb_per_s to 0 so the rhs is purely F-driven.
-        base_inputs = dict(
-            dSdt_s_cmb_per_s=0.0,
-            T_cmb_basic=4100.0,
-            cp_cmb_basic=1280.0,
-        )
+        base_inputs = {
+            'dSdt_s_cmb_per_s': 0.0,
+            'T_cmb_basic': 4100.0,
+            'cp_cmb_basic': 1280.0,
+        }
         rhs1 = solver._energy_balance_rhs_per_s(F_cmb_basic=1.5e4, **base_inputs)
         rhs2 = solver._energy_balance_rhs_per_s(F_cmb_basic=3.0e4, **base_inputs)
         rhs3 = solver._energy_balance_rhs_per_s(F_cmb_basic=6.0e4, **base_inputs)

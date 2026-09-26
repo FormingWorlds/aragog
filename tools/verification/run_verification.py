@@ -185,7 +185,7 @@ def main():
     # enthalpy change: dH = sum(rho_i * Cp_i * dT_i * V_i) between steps.
     n_samples = 500
     sample_times = np.linspace(0, sol2.t[-1], n_samples)
-    _trapz = getattr(np, 'trapezoid', np.trapz)
+    _trapz = np.trapezoid
     A_surf = mesh.basic.area[-1]
 
     # Compute T, rho, Cp, F at each sample time
@@ -335,7 +335,7 @@ def main():
         transform=ax.transAxes,
         ha='right',
         va='top',
-        bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8),
+        bbox={'boxstyle': 'round', 'facecolor': 'lightgreen', 'alpha': 0.8},
     )
 
     # Panel (b): Energy budget (incremental enthalpy vs integrated flux)
@@ -357,7 +357,7 @@ def main():
             transform=ax.transAxes,
             ha='right',
             va='bottom',
-            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8),
+            bbox={'boxstyle': 'round', 'facecolor': 'lightyellow', 'alpha': 0.8},
         )
 
     # Panel (c): Cooling trajectory
@@ -404,11 +404,11 @@ def main():
     ax = axes[2, 0]
     n_tp = len(tp_profiles)
     colors_tp = plt.cm.plasma(np.linspace(0.1, 0.9, n_tp))
-    for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles.items()):
+    for i, (t, (T_t, _S_t, _phi_t, P_GPa)) in enumerate(tp_profiles.items()):
         lbl = f't = {t / 1e3:.0f} kyr' if t >= 1000 else f't = {t} yr'
         ax.plot(T_t, P_GPa, color=colors_tp[i], linewidth=1.8, label=lbl)
     # Overlay N=100 as thin dashed
-    for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles_hi.items()):
+    for i, (_t, (T_t, _S_t, _phi_t, P_GPa)) in enumerate(tp_profiles_hi.items()):
         ax.plot(T_t, P_GPa, color=colors_tp[i], linewidth=0.8, ls='--', alpha=0.6)
     ax.plot(T_sol, P_range_GPa, 'k--', linewidth=1.5, label='Solidus')
     ax.plot(T_liq, P_range_GPa, 'k-', linewidth=1.5, label='Liquidus')
@@ -421,10 +421,10 @@ def main():
 
     # Panel (f): P-S profiles (both resolutions)
     ax = axes[2, 1]
-    for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles.items()):
+    for i, (t, (_T_t, S_t, _phi_t, P_GPa)) in enumerate(tp_profiles.items()):
         lbl = f't = {t / 1e3:.0f} kyr' if t >= 1000 else f't = {t} yr'
         ax.plot(S_t, P_GPa, color=colors_tp[i], linewidth=1.8, label=lbl)
-    for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles_hi.items()):
+    for i, (_t, (_T_t, S_t, _phi_t, P_GPa)) in enumerate(tp_profiles_hi.items()):
         ax.plot(S_t, P_GPa, color=colors_tp[i], linewidth=0.8, ls='--', alpha=0.6)
     ax.plot(S_sol, P_range_GPa, 'k--', linewidth=1.5, label='Solidus')
     ax.plot(S_liq, P_range_GPa, 'k-', linewidth=1.5, label='Liquidus')

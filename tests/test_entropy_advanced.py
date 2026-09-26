@@ -529,7 +529,7 @@ class TestBoundaryLayer:
         # Filter out NaN entries
         valid = [
             (v, d, r)
-            for v, d, r in zip(viscosities, bl_thicknesses, Ra_vals)
+            for v, d, r in zip(viscosities, bl_thicknesses, Ra_vals, strict=False)
             if not np.isnan(d)
         ]
         assert len(valid) >= 4, (

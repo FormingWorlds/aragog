@@ -47,14 +47,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1] / 'src' / 'aragog'
 
 
 def _make_energy(**overrides):
-    base = dict(
-        conduction=True,
-        convection=True,
-        gravitational_separation=True,
-        mixing=True,
-        radionuclides=True,
-        tidal=False,
-    )
+    base = {
+        'conduction': True,
+        'convection': True,
+        'gravitational_separation': True,
+        'mixing': True,
+        'radionuclides': True,
+        'tidal': False,
+    }
     base.update(overrides)
     return _EnergyParameters(**base)
 

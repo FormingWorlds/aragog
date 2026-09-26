@@ -252,14 +252,14 @@ def test_energy_parameters_does_not_accept_dilatation_kwarg():
     """
     from aragog.parser import _EnergyParameters
 
-    base_kwargs = dict(
-        conduction=True,
-        convection=True,
-        gravitational_separation=False,
-        mixing=False,
-        radionuclides=False,
-        tidal=False,
-    )
+    base_kwargs = {
+        'conduction': True,
+        'convection': True,
+        'gravitational_separation': False,
+        'mixing': False,
+        'radionuclides': False,
+        'tidal': False,
+    }
     for forbidden in ('dilatation', 'Phi_vol', 'Phi_vol_active', 'phi_vol'):
         with pytest.raises(TypeError, match='unexpected keyword'):
             _EnergyParameters(**base_kwargs, **{forbidden: False})  # type: ignore[arg-type]

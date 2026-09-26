@@ -1989,10 +1989,10 @@ class TestBoundaryCopies:
 
 _P_NODE = 5.0e10
 _NONFINITE = [float('nan'), float('inf'), float('-inf')]
-_CPS_KW = dict(k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.01)
+_CPS_KW = {'k_solid': 4.0, 'k_liquid': 2.0, 'matprop_smooth_width': 0.01}
 # The default sharp mode (smooth width 0) and the tanh-smoothed mode take
 # different code paths for smth, so exercise both.
-_CPS_KW_SHARP = dict(k_solid=4.0, k_liquid=2.0, matprop_smooth_width=0.0)
+_CPS_KW_SHARP = {'k_solid': 4.0, 'k_liquid': 2.0, 'matprop_smooth_width': 0.0}
 _CPS_MODES = [_CPS_KW, _CPS_KW_SHARP]
 _LOOKUP_METHODS = ['temperature', 'density', 'heat_capacity', 'dTdPs', 'thermal_expansivity']
 _PHYS_FIELDS = [

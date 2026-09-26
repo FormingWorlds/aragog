@@ -17,13 +17,13 @@ pytestmark = pytest.mark.unit
 def _solver_parameters(**overrides):
     from aragog.parser import _SolverParameters
 
-    kwargs = dict(
-        start_time=0.0,
-        end_time=1.0,
-        atol=1.0e-6,
-        rtol=1.0e-6,
-        tsurf_poststep_change=30.0,
-    )
+    kwargs = {
+        'start_time': 0.0,
+        'end_time': 1.0,
+        'atol': 1.0e-6,
+        'rtol': 1.0e-6,
+        'tsurf_poststep_change': 30.0,
+    }
     kwargs.update(overrides)
     return _SolverParameters(**kwargs)
 
@@ -31,7 +31,7 @@ def _solver_parameters(**overrides):
 def _solver_config(**overrides):
     from aragog.config.solver import SolverConfig
 
-    kwargs = dict(start_time=0.0, end_time=1.0, atol=1.0e-6, rtol=1.0e-6)
+    kwargs = {'start_time': 0.0, 'end_time': 1.0, 'atol': 1.0e-6, 'rtol': 1.0e-6}
     kwargs.update(overrides)
     return SolverConfig(**kwargs)
 
