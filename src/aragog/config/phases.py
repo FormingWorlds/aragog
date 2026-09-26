@@ -147,6 +147,14 @@ class PhaseConfig:
     def phi_visc_single(self) -> float:
         return self.rheology.phi_visc_single
 
+    @property
+    def mlt_top_slope(self) -> float:
+        return self.rheology.mlt_top_slope
+
+    @property
+    def mlt_bottom_slope(self) -> float:
+        return self.rheology.mlt_bottom_slope
+
 
 @attrs.define
 class MixedPhaseConfig:

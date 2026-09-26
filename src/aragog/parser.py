@@ -354,6 +354,8 @@ class _PhaseParameters:
     lid_contrast_coeff: Any = _UNSET
     lid_mask_width_cells: Any = _UNSET
     phi_visc_single: Any = _UNSET
+    mlt_top_slope: Any = _UNSET
+    mlt_bottom_slope: Any = _UNSET
     rheology: SolidRheologyParams = field(default=_DEFAULT_RHEOLOGY)
 
     def __post_init__(self) -> None:

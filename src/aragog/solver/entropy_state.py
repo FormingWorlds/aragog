@@ -251,6 +251,7 @@ class EntropyState:
         self._mixing_length = np.asarray(mesh.basic.mixing_length).ravel()
         self._mixing_length_sq = np.asarray(mesh.basic.mixing_length_squared).ravel()
         self._mixing_length_cu = np.asarray(mesh.basic.mixing_length_cubed).ravel()
+        self._visc_ml_factor = self._viscous_mixing_length_factor(mesh)
 
         # Allocate state arrays (all 1D).
         self._entropy_staggered = np.zeros(n_staggered)
@@ -426,6 +427,31 @@ class EntropyState:
         L_basic = np.asarray(eos.latent_heat(P_basic)).ravel()
         self._T_fus_basic = L_basic / self._dS_phase_basic
         self._P_basic_cached_id = id(pressure_obj)
+
+    def _viscous_mixing_length_factor(self, mesh) -> npt.NDArray | None:
+        """Per-node factor ``(l_v / l)^4`` of the calibrated viscous mixing length.
+
+        Returns None (the Abe profile, no multiplication) unless the rheology is
+        enabled and a slope differs from 1; the calibration is defined for the
+        ``'nearest_boundary'`` profile only.
+        """
+        rheo = getattr(self.phase_basic, 'rheology', None)
+        if rheo is None or not rheo.enabled:
+            return None
+        if rheo.mlt_top_slope == 1.0 and rheo.mlt_bottom_slope == 1.0:
+            return None
+        if mesh.settings.mixing_length_profile != 'nearest_boundary':
+            raise ValueError(
+                'mlt_top_slope and mlt_bottom_slope need '
+                "mixing_length_profile = 'nearest_boundary', got "
+                f'{mesh.settings.mixing_length_profile!r}'
+            )
+        from aragog.rheology import viscous_mixing_length_factor
+
+        r = np.asarray(mesh.basic.radii).ravel()
+        return viscous_mixing_length_factor(
+            r, r[0], r[-1], self._mixing_length, rheo.mlt_top_slope, rheo.mlt_bottom_slope
+        )
 
     def _maybe_warn_cp_floor(
         self,
@@ -655,6 +681,11 @@ class EntropyState:
         visc_v_unyielded = (
             velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
         )
+        # Calibrated viscous length: kappa_v scales by q, the branch switch by q^2
+        # (Re / Re_crit = (kappa_v / kappa_i)^2), so the switch stays at kappa_v = kappa_i.
+        q = self._visc_ml_factor
+        if q is not None:
+            visc_v_unyielded = q * visc_v_unyielded
         # 1D stress closure and effective viscosity capping
         eta_d = getattr(self.phase_basic, 'eta_diff', None)
         rheo = getattr(self.phase_basic, 'rheology', None)
@@ -678,6 +709,8 @@ class EntropyState:
                 inviscid_velocity_sq = velocity_prefactor * mixing_length_squared / 16.0
                 inviscid_velocity = np.sqrt(inviscid_velocity_sq + 1.0e-20)
                 reynolds_unyielded = visc_v_unyielded * mixing_length / np.maximum(nu, 1e-30)
+                if q is not None:
+                    reynolds_unyielded = q * reynolds_unyielded
                 blend_width = 0.01 * RE_CRIT
                 inviscid_weight_unyielded = 0.5 * (
                     1.0 + np.tanh((reynolds_unyielded - RE_CRIT) / max(blend_width, 1e-30))
@@ -779,6 +812,8 @@ class EntropyState:
             viscous_velocity = (
                 velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
             )
+            if q is not None:
+                viscous_velocity = q * viscous_velocity
         else:
             self._lid_state = None
             viscous_velocity = visc_v_unyielded
@@ -805,6 +840,8 @@ class EntropyState:
 
         # Reynolds number
         reynolds = viscous_velocity * mixing_length / nu
+        if q is not None:
+            reynolds = q * reynolds
 
         # Smooth blend between regimes (tanh transition at Re_crit).
         # blend_width = 0.01 * RE_CRIT: at Re ≪ RE_CRIT (solid regime,

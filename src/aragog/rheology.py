@@ -45,8 +45,16 @@ class SolidRheologyParams:
     lid_contrast_coeff: float = 2.2
     lid_mask_width_cells: float = 1.0
     phi_visc_single: float = 0.5
+    # Slopes of the viscous-branch mixing length at the top and bottom boundary,
+    # l_v = min(bottom (r - r_in), top (r_out - r)); 1 and 1 give the Abe profile.
+    mlt_top_slope: float = 1.0
+    mlt_bottom_slope: float = 1.0
 
     def __post_init__(self) -> None:
+        for name in ('mlt_top_slope', 'mlt_bottom_slope'):
+            val = getattr(self, name)
+            if not math.isfinite(val) or val <= 0.0:
+                raise ValueError(f'{name} must be positive and finite, got {val}')
         if self.stress_closure_mode not in ('lid', 'local'):
             raise ValueError(
                 f'Unknown stress_closure_mode {self.stress_closure_mode!r}; '
@@ -122,6 +130,39 @@ class SolidRheologyParams:
                 f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
                 f'activation_energy, but activation_energy={self.activation_energy}'
             )
+
+
+def viscous_mixing_length_factor(
+    radii, r_in, r_out, mixing_length, top_slope, bottom_slope, xp=np
+):
+    """Factor on the viscous MLT velocity that replaces the Abe length by the calibrated one.
+
+    The viscous eddy diffusivity scales as ``l^4``, so with
+    ``l_v = min(bottom_slope (r - r_in), top_slope (r_out - r))`` (Wagner et al.
+    2019, eq. 11, written with the two boundary slopes) it is multiplied by
+    ``(l_v / l)^4``; the inviscid branch keeps ``l``.
+
+    Parameters
+    ----------
+    radii : array
+        Basic-node radii [m].
+    r_in, r_out : float
+        Inner and outer radius of the mantle [m].
+    mixing_length : array
+        Abe mixing length ``l`` at the basic nodes [m].
+    top_slope, bottom_slope : float
+        Slopes of ``l_v`` at the surface and at the CMB.
+    xp : module
+        Array namespace.
+
+    Returns
+    -------
+    array
+        ``(l_v / l)^4``, and 1 where ``l`` is 0 (the boundary nodes).
+    """
+    l_v = xp.minimum(bottom_slope * (radii - r_in), top_slope * (r_out - radii))
+    positive = mixing_length > 0.0
+    return xp.where(positive, (l_v / xp.where(positive, mixing_length, 1.0)) ** 4, 1.0)
 
 
 def compute_arrhenius_enthalpy(

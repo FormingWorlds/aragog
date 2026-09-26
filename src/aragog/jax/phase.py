@@ -32,7 +32,7 @@ from aragog.jax.rheology import (
     compute_stagnant_lid_state,
     compute_yield_stress,
 )
-from aragog.rheology import SolidRheologyParams
+from aragog.rheology import SolidRheologyParams, viscous_mixing_length_factor
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
@@ -128,6 +128,8 @@ class PhaseParams(eqx.Module):
     lid_contrast_coeff: float
     lid_mask_width_cells: float
     phi_visc_single: float
+    mlt_top_slope: float
+    mlt_bottom_slope: float
 
     # Phase transition & reference properties
     phi_rheo: float
@@ -207,6 +209,8 @@ class PhaseParams(eqx.Module):
         lid_contrast_coeff: Any = _UNSET,
         lid_mask_width_cells: Any = _UNSET,
         phi_visc_single: Any = _UNSET,
+        mlt_top_slope: Any = _UNSET,
+        mlt_bottom_slope: Any = _UNSET,
         rheology: SolidRheologyParams | None = None,
     ):
         base_rheo = rheology if rheology is not None else _DEFAULT_RHEOLOGY
@@ -229,6 +233,8 @@ class PhaseParams(eqx.Module):
             'lid_contrast_coeff': lid_contrast_coeff,
             'lid_mask_width_cells': lid_mask_width_cells,
             'phi_visc_single': phi_visc_single,
+            'mlt_top_slope': mlt_top_slope,
+            'mlt_bottom_slope': mlt_bottom_slope,
         }
         resolved = {
             f.name: (
@@ -264,6 +270,8 @@ class PhaseParams(eqx.Module):
         self.lid_contrast_coeff = float(rheo_obj.lid_contrast_coeff)
         self.lid_mask_width_cells = float(rheo_obj.lid_mask_width_cells)
         self.phi_visc_single = float(rheo_obj.phi_visc_single)
+        self.mlt_top_slope = float(rheo_obj.mlt_top_slope)
+        self.mlt_bottom_slope = float(rheo_obj.mlt_bottom_slope)
 
         self.k_solid = k_solid
         self.k_liquid = k_liquid
@@ -325,6 +333,8 @@ class PhaseParams(eqx.Module):
             lid_contrast_coeff=self.lid_contrast_coeff,
             lid_mask_width_cells=self.lid_mask_width_cells,
             phi_visc_single=self.phi_visc_single,
+            mlt_top_slope=self.mlt_top_slope,
+            mlt_bottom_slope=self.mlt_bottom_slope,
         )
 
 
@@ -846,6 +856,20 @@ def compute_mlt(
     visc_v_unyielded = (
         velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu_unyielded, 1e-30))
     ) * conv_mask
+    # Calibrated viscous length (numpy twin: EntropyState._viscous_mixing_length_factor).
+    q = None
+    if params.enabled and (params.mlt_top_slope != 1.0 or params.mlt_bottom_slope != 1.0):
+        r = mesh.radii_basic
+        q = viscous_mixing_length_factor(
+            r,
+            r[0],
+            r[-1],
+            mesh.mixing_length,
+            params.mlt_top_slope,
+            params.mlt_bottom_slope,
+            xp=jnp,
+        )
+        visc_v_unyielded = q * visc_v_unyielded
 
     if params.enabled:
         if params.stress_closure_mode == 'lid':
@@ -858,6 +882,8 @@ def compute_mlt(
             reynolds_unyielded = (
                 visc_v_unyielded * mesh.mixing_length / jnp.maximum(nu_unyielded, 1e-30)
             )
+            if q is not None:
+                reynolds_unyielded = q * reynolds_unyielded
             blend_width = 0.01 * RE_CRIT
             inviscid_weight_unyielded = 0.5 * (
                 1.0 + jnp.tanh((reynolds_unyielded - RE_CRIT) / jnp.maximum(blend_width, 1e-30))
@@ -926,6 +952,8 @@ def compute_mlt(
         viscous_velocity = (
             velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu, 1e-30))
         ) * conv_mask
+        if q is not None:
+            viscous_velocity = q * viscous_velocity
     else:
         w_lid = jnp.zeros_like(T)
         nu = nu_unyielded
@@ -944,6 +972,8 @@ def compute_mlt(
 
     # Reynolds number
     reynolds = viscous_velocity * mesh.mixing_length / nu
+    if q is not None:
+        reynolds = q * reynolds
 
     # Smooth blend between viscous and inviscid regimes. The narrow
     # blend_width (0.01 * RE_CRIT) keeps inviscid k_h confined to the
