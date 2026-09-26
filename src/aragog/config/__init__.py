@@ -74,7 +74,7 @@ class Config:
     """
 
     @staticmethod
-    def from_toml(filename: str) -> 'Parameters':
+    def from_toml(filename: str) -> Parameters:
         """Load configuration from a TOML file and return a Parameters object.
 
         Parameters
@@ -95,7 +95,7 @@ class Config:
         return Config.from_dict(data)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> 'Parameters':
+    def from_dict(data: dict[str, Any]) -> Parameters:
         """Construct a Parameters object from a nested dictionary.
 
         This is the primary construction path used by the PROTEUS wrapper.
@@ -161,7 +161,7 @@ class Config:
         )
 
     @staticmethod
-    def from_file(*filenames: str) -> 'Parameters':
+    def from_file(*filenames: str) -> Parameters:
         """Load from a file, auto-detecting format (TOML or INI).
 
         Parameters

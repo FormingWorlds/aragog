@@ -20,6 +20,7 @@ Run:
     conda activate proteus
     python tools/verification/figures/verify_permeability.py
 """
+
 from __future__ import annotations
 
 import os
@@ -27,6 +28,7 @@ import sys
 from pathlib import Path
 
 import jax
+
 jax.config.update('jax_enable_x64', True)  # match production aragog precision
 import jax.numpy as jnp  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
@@ -119,11 +121,16 @@ def main():
     # Save data
     np.savez(
         DATA / 'fig_04_permeability.npz',
-        zeta=zeta, F_BKC=f_b, F_RG=f_r, F_Stokes=f_s,
-        F_blended_numpy=f_np, F_blended_jax=f_jx,
+        zeta=zeta,
+        F_BKC=f_b,
+        F_RG=f_r,
+        F_Stokes=f_s,
+        F_blended_numpy=f_np,
+        F_blended_jax=f_jx,
         max_rel_err_numpy_vs_jax=max_rel_err,
         max_abs_err_numpy_vs_jax=max_abs_err,
-        zeta_BKC_RG=ZETA_BKC_RG, zeta_RG_Stokes=ZETA_RG_STOKES,
+        zeta_BKC_RG=ZETA_BKC_RG,
+        zeta_RG_Stokes=ZETA_RG_STOKES,
     )
 
     # ── Plot ──────────────────────────────────────────────────────────
@@ -131,32 +138,66 @@ def main():
 
     # (a) Linear-y zoomed view of the three branches + blend
     ax = axes[0]
-    ax.plot(zeta, f_b, color=PALETTE['bkc'],    lw=1.1, ls='--', label='BKC branch')
-    ax.plot(zeta, f_r, color=PALETTE['rg'],     lw=1.1, ls='--', label='RG branch')
+    ax.plot(zeta, f_b, color=PALETTE['bkc'], lw=1.1, ls='--', label='BKC branch')
+    ax.plot(zeta, f_r, color=PALETTE['rg'], lw=1.1, ls='--', label='RG branch')
     ax.plot(zeta, f_s, color=PALETTE['stokes'], lw=1.1, ls='--', label='Stokes branch')
     ax.plot(zeta, f_np, color='k', lw=1.8, label='Blended F (numpy)')
     ax.plot(zeta, f_jx, color=PALETTE['jax'], lw=1.0, ls=':', label='Blended F (JAX)')
-    ax.axvline(ZETA_BKC_RG,    color='gray', lw=0.6, ls=':')
+    ax.axvline(ZETA_BKC_RG, color='gray', lw=0.6, ls=':')
     ax.axvline(ZETA_RG_STOKES, color='gray', lw=0.6, ls=':')
     ax.set_xlabel(r'Porosity  $\zeta$')
     ax.set_ylabel(r'$F(\zeta) / a^2$ (dimensionless)')
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 0.32)
     ax.legend(loc='upper left', fontsize=7.5)
-    ax.text(ZETA_BKC_RG, 0.30,    fr'$\zeta_1={ZETA_BKC_RG}$',
-            rotation=90, va='top', ha='right', fontsize=7.5, color='dimgray')
-    ax.text(ZETA_RG_STOKES, 0.30, fr'$\zeta_2={ZETA_RG_STOKES}$',
-            rotation=90, va='top', ha='right', fontsize=7.5, color='dimgray')
+    ax.text(
+        ZETA_BKC_RG,
+        0.30,
+        rf'$\zeta_1={ZETA_BKC_RG}$',
+        rotation=90,
+        va='top',
+        ha='right',
+        fontsize=7.5,
+        color='dimgray',
+    )
+    ax.text(
+        ZETA_RG_STOKES,
+        0.30,
+        rf'$\zeta_2={ZETA_RG_STOKES}$',
+        rotation=90,
+        va='top',
+        ha='right',
+        fontsize=7.5,
+        color='dimgray',
+    )
     panel_label(ax, '(a)', loc='upper right')
 
     # (b) Log-log view spanning the BKC vanishingly-small regime
     ax = axes[1]
-    ax.plot(zeta, np.maximum(f_b, 1e-30), color=PALETTE['bkc'],    lw=1.1, ls='--', label='BKC branch')
-    ax.plot(zeta, np.maximum(f_r, 1e-30), color=PALETTE['rg'],     lw=1.1, ls='--', label='RG branch')
-    ax.plot(zeta, np.maximum(f_s, 1e-30), color=PALETTE['stokes'], lw=1.1, ls='--', label='Stokes branch')
+    ax.plot(
+        zeta, np.maximum(f_b, 1e-30), color=PALETTE['bkc'], lw=1.1, ls='--', label='BKC branch'
+    )
+    ax.plot(
+        zeta, np.maximum(f_r, 1e-30), color=PALETTE['rg'], lw=1.1, ls='--', label='RG branch'
+    )
+    ax.plot(
+        zeta,
+        np.maximum(f_s, 1e-30),
+        color=PALETTE['stokes'],
+        lw=1.1,
+        ls='--',
+        label='Stokes branch',
+    )
     ax.plot(zeta, np.maximum(f_np, 1e-30), color='k', lw=1.8, label='Blended F (numpy)')
-    ax.plot(zeta, np.maximum(f_jx, 1e-30), color=PALETTE['jax'], lw=1.0, ls=':', label='Blended F (JAX)')
-    ax.axvline(ZETA_BKC_RG,    color='gray', lw=0.6, ls=':')
+    ax.plot(
+        zeta,
+        np.maximum(f_jx, 1e-30),
+        color=PALETTE['jax'],
+        lw=1.0,
+        ls=':',
+        label='Blended F (JAX)',
+    )
+    ax.axvline(ZETA_BKC_RG, color='gray', lw=0.6, ls=':')
     ax.axvline(ZETA_RG_STOKES, color='gray', lw=0.6, ls=':')
     ax.set_xscale('log')
     ax.set_yscale('log')
@@ -165,15 +206,23 @@ def main():
     ax.set_xlim(1e-3, 1)
     ax.set_ylim(1e-12, 1.0)
     ax.legend(loc='lower right', fontsize=7.5)
-    ax.text(0.04, 0.95,
-            f'max |JAX-numpy|\n= {max_abs_err:.2e}\n(float64 epsilon)',
-            transform=ax.transAxes, va='top', ha='left', fontsize=8,
-            bbox=dict(facecolor='white', edgecolor='gray', alpha=0.8, pad=2))
+    ax.text(
+        0.04,
+        0.95,
+        f'max |JAX-numpy|\n= {max_abs_err:.2e}\n(float64 epsilon)',
+        transform=ax.transAxes,
+        va='top',
+        ha='left',
+        fontsize=8,
+        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.8, pad=2),
+    )
     panel_label(ax, '(b)', loc='upper left')
 
     fig.tight_layout()
     save(fig, OUT / 'fig_04_permeability.pdf')
-    print(f'fig_04 saved; max_abs_err={max_abs_err:.3e}, max_rel_err(floor1e-12)={max_rel_err:.3e}')
+    print(
+        f'fig_04 saved; max_abs_err={max_abs_err:.3e}, max_rel_err(floor1e-12)={max_rel_err:.3e}'
+    )
 
 
 if __name__ == '__main__':

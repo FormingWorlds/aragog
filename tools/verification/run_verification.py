@@ -12,11 +12,11 @@ Requires PALEOS P-S tables.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,12 +34,20 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 EOS_DIR = Path('/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos')
 SECS_PER_YEAR = 31557600.0
 
-plt.rcParams.update({
-    'font.size': 14, 'axes.labelsize': 16, 'axes.titlesize': 16,
-    'legend.fontsize': 10, 'xtick.labelsize': 13, 'ytick.labelsize': 13,
-    'lines.linewidth': 2.0, 'lines.markersize': 7,
-    'savefig.bbox': 'tight', 'savefig.dpi': 200,
-})
+plt.rcParams.update(
+    {
+        'font.size': 14,
+        'axes.labelsize': 16,
+        'axes.titlesize': 16,
+        'legend.fontsize': 10,
+        'xtick.labelsize': 13,
+        'ytick.labelsize': 13,
+        'lines.linewidth': 2.0,
+        'lines.markersize': 7,
+        'savefig.bbox': 'tight',
+        'savefig.dpi': 200,
+    }
+)
 
 
 def make_mesh(N=50, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5):
@@ -54,8 +62,10 @@ def make_mesh(N=50, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5):
 
     class Mesh:
         pass
+
     class SubMesh:
         pass
+
     mesh = Mesh()
     mesh.basic = SubMesh()
     mesh.staggered = SubMesh()
@@ -101,10 +111,16 @@ def make_state(mesh, eos, conduction=True, convection=True):
 
     class Eval:
         pass
+
     evaluator = Eval()
     evaluator.mesh = mesh
-    return EntropyState(evaluator=evaluator, phase_staggered=phase_stag,
-                        phase_basic=phase_basic, conduction=conduction, convection=convection)
+    return EntropyState(
+        evaluator=evaluator,
+        phase_staggered=phase_stag,
+        phase_basic=phase_basic,
+        conduction=conduction,
+        convection=convection,
+    )
 
 
 def compute_thermal_energy(S, mesh, eos):
@@ -134,8 +150,7 @@ def run_solver(state, mesh, S0, t_end, surface_bc='greybody', T_eq=255.0):
         cap = state.capacitance_staggered() * mesh.basic.volume
         return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-    sol = solve_ivp(dSdt, (0, t_end), S0, method='BDF',
-                    atol=0.5, rtol=1e-5, dense_output=True)
+    sol = solve_ivp(dSdt, (0, t_end), S0, method='BDF', atol=0.5, rtol=1e-5, dense_output=True)
     return sol, np.array(time_log), np.array(flux_log)
 
 
@@ -183,7 +198,7 @@ def main():
         T_all[i] = eos.temperature(mesh.staggered.pressure, S_t)
         rho_all[i] = eos.density(mesh.staggered.pressure, S_t)
         Cp_all[i] = eos.heat_capacity(mesh.staggered.pressure, S_t)
-        F_history[i] = Stefan_Boltzmann * (T_all[i, -1]**4 - 255.0**4)
+        F_history[i] = Stefan_Boltzmann * (T_all[i, -1] ** 4 - 255.0**4)
 
     # Incremental energy change using dH = rho * T * dS * V
     # (the natural energy measure for the entropy equation)
@@ -193,18 +208,15 @@ def main():
 
     dH_cumul = np.zeros(n_samples)
     for i in range(1, n_samples):
-        dS = S_all[i] - S_all[i-1]
-        rho_mid = 0.5 * (rho_all[i] + rho_all[i-1])
-        T_mid = 0.5 * (T_all[i] + T_all[i-1])
-        dH_cumul[i] = dH_cumul[i-1] + np.sum(rho_mid * T_mid * dS * mesh.basic.volume)
+        dS = S_all[i] - S_all[i - 1]
+        rho_mid = 0.5 * (rho_all[i] + rho_all[i - 1])
+        T_mid = 0.5 * (T_all[i] + T_all[i - 1])
+        dH_cumul[i] = dH_cumul[i - 1] + np.sum(rho_mid * T_mid * dS * mesh.basic.volume)
 
     # Cumulative surface flux loss
     Q_cumul = np.zeros(n_samples)
     for i in range(1, n_samples):
-        Q_cumul[i] = _trapz(
-            F_history[:i+1] * A_surf,
-            sample_times[:i+1] * SECS_PER_YEAR
-        )
+        Q_cumul[i] = _trapz(F_history[: i + 1] * A_surf, sample_times[: i + 1] * SECS_PER_YEAR)
 
     # ── Test 3: Grey-body cooling trajectory ─────────────────────────
     print('Test 3: Grey-body cooling trajectory (10 kyr)...')
@@ -269,8 +281,8 @@ def main():
     # Extract T-P and P-S profiles at several times from both resolutions
     print('Extracting T-P and P-S profiles...')
     tp_times = [0, 500, 1000, 2000, 5000, 10000]
-    tp_profiles = {}       # N=50: {t: (T, S, phi, P_GPa)}
-    tp_profiles_hi = {}    # N=100
+    tp_profiles = {}  # N=50: {t: (T, S, phi, P_GPa)}
+    tp_profiles_hi = {}  # N=100
     for t in tp_times:
         if t <= sol3.t[-1]:
             S_t = sol3.sol(t)
@@ -292,8 +304,8 @@ def main():
     PALEOS_P0 = 2.551686137257537  # GPa crossover
     T_liq = np.where(
         P_GPa < PALEOS_P0,
-        1831.0 * (1.0 + P_GPa / 4.6)**0.33,
-        6000.0 * (P_GPa / 140.0)**0.26,
+        1831.0 * (1.0 + P_GPa / 4.6) ** 0.33,
+        6000.0 * (P_GPa / 140.0) ** 0.26,
     )
     T_liq = np.where(P_range > 0, T_liq, 0.0)
     # Cryoscopic solidus: T_sol = T_liq / (1 - ln(x0)) with x0=0.79
@@ -316,28 +328,49 @@ def main():
     ax.set_title('(a) Entropy conservation (insulating, no conduction)')
     ax.axhline(1.0, color='r', ls=':', lw=1, alpha=0.5, label='1 J/kg/K threshold')
     ax.legend(fontsize=9)
-    ax.text(0.95, 0.95, f'Drift < {max(max_drift):.2e} J/kg/K',
-            transform=ax.transAxes, ha='right', va='top',
-            bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8))
+    ax.text(
+        0.95,
+        0.95,
+        f'Drift < {max(max_drift):.2e} J/kg/K',
+        transform=ax.transAxes,
+        ha='right',
+        va='top',
+        bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.8),
+    )
 
     # Panel (b): Energy budget (incremental enthalpy vs integrated flux)
     ax = axes[0, 1]
     ax.plot(sample_times, dH_cumul, 'b-', label=r'$\Delta H$ (incremental)', linewidth=2)
-    ax.plot(sample_times, -Q_cumul, 'r--', label=r'$-\int F_\mathrm{surf} A \, dt$', linewidth=2)
+    ax.plot(
+        sample_times, -Q_cumul, 'r--', label=r'$-\int F_\mathrm{surf} A \, dt$', linewidth=2
+    )
     ax.set_xlabel('Time [yr]')
     ax.set_ylabel('Energy change [J]')
     ax.set_title('(b) Energy budget (grey-body cooling)')
     ax.legend()
     if abs(Q_cumul[-1]) > 0:
         residual = abs(dH_cumul[-1] + Q_cumul[-1]) / abs(Q_cumul[-1])
-        ax.text(0.95, 0.05, f'Residual: {residual:.1%}',
-                transform=ax.transAxes, ha='right', va='bottom',
-                bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+        ax.text(
+            0.95,
+            0.05,
+            f'Residual: {residual:.1%}',
+            transform=ax.transAxes,
+            ha='right',
+            va='bottom',
+            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8),
+        )
 
     # Panel (c): Cooling trajectory
     ax = axes[1, 0]
     ax.plot(sample_times3, T_surfs, 'b-', label='N=50', linewidth=2)
-    ax.plot(sample_times3[:len(T_surfs_hi)], T_surfs_hi, 'b--', label='N=100', linewidth=1.5, alpha=0.7)
+    ax.plot(
+        sample_times3[: len(T_surfs_hi)],
+        T_surfs_hi,
+        'b--',
+        label='N=100',
+        linewidth=1.5,
+        alpha=0.7,
+    )
     ax.set_xlabel('Time [yr]')
     ax.set_ylabel(r'$T_\mathrm{surf}$ [K]')
     ax.set_title(r'(c) Grey-body cooling ($S_0 = 10{,}000$ J/kg/K)')
@@ -346,7 +379,7 @@ def main():
     # Add phi on twin axis
     ax2 = ax.twinx()
     ax2.plot(sample_times3, phi_surfs, 'g-', alpha=0.5, linewidth=1.5)
-    ax2.plot(sample_times3[:len(phi_surfs_hi)], phi_surfs_hi, 'g--', alpha=0.3, linewidth=1.5)
+    ax2.plot(sample_times3[: len(phi_surfs_hi)], phi_surfs_hi, 'g--', alpha=0.3, linewidth=1.5)
     ax2.set_ylabel(r'$\phi_\mathrm{surf}$', color='green')
     ax2.tick_params(axis='y', labelcolor='green')
     ax2.set_ylim(0, 1.05)
@@ -358,9 +391,9 @@ def main():
         if t >= 1:
             lbl = f't = {t:.0f} yr'
         elif t >= 0.01:
-            lbl = f't = {t*365:.0f} d'
+            lbl = f't = {t * 365:.0f} d'
         else:
-            lbl = f't = {t*365*24:.0f} h'
+            lbl = f't = {t * 365 * 24:.0f} h'
         ax.plot(r_stag_km, S, color=colors[i], label=lbl, linewidth=2)
     ax.set_xlabel('Radius [km]')
     ax.set_ylabel('Entropy [J/kg/K]')
@@ -372,7 +405,7 @@ def main():
     n_tp = len(tp_profiles)
     colors_tp = plt.cm.plasma(np.linspace(0.1, 0.9, n_tp))
     for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles.items()):
-        lbl = f't = {t/1e3:.0f} kyr' if t >= 1000 else f't = {t} yr'
+        lbl = f't = {t / 1e3:.0f} kyr' if t >= 1000 else f't = {t} yr'
         ax.plot(T_t, P_GPa, color=colors_tp[i], linewidth=1.8, label=lbl)
     # Overlay N=100 as thin dashed
     for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles_hi.items()):
@@ -389,7 +422,7 @@ def main():
     # Panel (f): P-S profiles (both resolutions)
     ax = axes[2, 1]
     for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles.items()):
-        lbl = f't = {t/1e3:.0f} kyr' if t >= 1000 else f't = {t} yr'
+        lbl = f't = {t / 1e3:.0f} kyr' if t >= 1000 else f't = {t} yr'
         ax.plot(S_t, P_GPa, color=colors_tp[i], linewidth=1.8, label=lbl)
     for i, (t, (T_t, S_t, phi_t, P_GPa)) in enumerate(tp_profiles_hi.items()):
         ax.plot(S_t, P_GPa, color=colors_tp[i], linewidth=0.8, ls='--', alpha=0.6)
@@ -416,9 +449,13 @@ def main():
     print(f'  (a) Entropy drift: {max(max_drift):.2f} J/kg/K (pass: < 1.0)')
     if abs(Q_cumul[-1]) > 0:
         print(f'  (b) Energy residual: {residual:.1%} (pass: < 10%)')
-    print(f'  (c) T_surf: {T_surfs[0]:.0f} -> {T_surfs[-1]:.0f} K (monotonic: {np.all(np.diff(T_surfs) <= 1.0)})')
-    print(f'  (d) S spread: {S0_gradient.max()-S0_gradient.min():.0f} -> '
-          f'{profiles[max(profiles.keys())].max()-profiles[max(profiles.keys())].min():.0f} J/kg/K')
+    print(
+        f'  (c) T_surf: {T_surfs[0]:.0f} -> {T_surfs[-1]:.0f} K (monotonic: {np.all(np.diff(T_surfs) <= 1.0)})'
+    )
+    print(
+        f'  (d) S spread: {S0_gradient.max() - S0_gradient.min():.0f} -> '
+        f'{profiles[max(profiles.keys())].max() - profiles[max(profiles.keys())].min():.0f} J/kg/K'
+    )
     print('=' * 60)
 
 

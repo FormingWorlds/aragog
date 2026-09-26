@@ -73,7 +73,7 @@ NOISE_FLOOR = 1.0e-3  # J/kg/K/yr -- below this the entropy ODE is at machine ep
 
 
 def parity_one_state(solver, args, state, label):
-    from aragog.jax.solver import dSdt_energy_balance, _no_radio  # noqa: WPS433
+    from aragog.jax.solver import _no_radio, dSdt_energy_balance  # noqa: WPS433
 
     # z02 helper returns a 5-tuple (eos, params, mesh, bc, heating); the
     # current dSdt_energy_balance signature expects a 6-tuple with a

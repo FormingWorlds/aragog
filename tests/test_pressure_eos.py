@@ -95,8 +95,8 @@ def test_density_increases_monotonically_with_depth():
     rho_cmb = float(eos.basic_density[0])
     rho_surf = float(eos.basic_density[-1])
     assert rho_cmb > rho_surf, (
-        'Density at CMB ({:.1f} kg/m^3) is not greater than surface '
-        '({:.1f}); exponent sign is wrong.'.format(rho_cmb, rho_surf)
+        f'Density at CMB ({rho_cmb:.1f} kg/m^3) is not greater than surface '
+        f'({rho_surf:.1f}); exponent sign is wrong.'
     )
 
 

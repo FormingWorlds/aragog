@@ -290,7 +290,7 @@ class MeshArrays(eqx.Module):
         self.gravity_stag = jnp.asarray(gravity_stag)
 
     @staticmethod
-    def from_numpy_mesh(mesh) -> 'MeshArrays':
+    def from_numpy_mesh(mesh) -> MeshArrays:
         """Build from a numpy Aragog Mesh object."""
         P_basic_arr = np.asarray(mesh.basic_pressure).ravel()
         r_basic_arr = np.asarray(mesh.basic.radii).ravel()
@@ -334,7 +334,7 @@ class MeshArrays(eqx.Module):
 # ---------------------------------------------------------------------------
 
 
-def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
+def _build_gravity_array(mesh, r_stag: bool = False) -> jax.Array:
     """Return the per-node gravity array for a numpy Aragog mesh.
 
     Per-node profile is preferred when the external mesh file (eos_method=2,

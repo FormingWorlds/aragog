@@ -26,17 +26,24 @@ Run:
     conda activate proteus
     python tools/verification/figures/verify_flux_decomposition.py
 """
+
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
 
-for var in ['OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'OMP_NUM_THREADS',
-            'NUMEXPR_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS']:
+for var in [
+    'OPENBLAS_NUM_THREADS',
+    'MKL_NUM_THREADS',
+    'OMP_NUM_THREADS',
+    'NUMEXPR_NUM_THREADS',
+    'VECLIB_MAXIMUM_THREADS',
+]:
     os.environ.setdefault(var, '1')
 
 import jax
+
 jax.config.update('jax_enable_x64', True)
 import jax.numpy as jnp  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
@@ -59,17 +66,18 @@ OUT.mkdir(parents=True, exist_ok=True)
 # + Turcotte & Schubert 2014). Used here only to add a non-zero radio
 # contribution to the heat-source bar in panel (b).
 RADIO = dict(
-    hp = np.array([2.8761e-5, 2.6368e-5, 5.68402e-4, 9.4946e-5]),
-    ab = np.array([1.1668e-4, 1.0,        7.2045e-3, 0.9927955]),
-    cc = np.array([310.0e-6, 0.124e-6, 0.031e-6, 0.031e-6]),
-    t0 = np.array([4.55e9] * 4),
-    hl = np.array([1.248e9, 14.0e9, 0.704e9, 4.468e9]),
+    hp=np.array([2.8761e-5, 2.6368e-5, 5.68402e-4, 9.4946e-5]),
+    ab=np.array([1.1668e-4, 1.0, 7.2045e-3, 0.9927955]),
+    cc=np.array([310.0e-6, 0.124e-6, 0.031e-6, 0.031e-6]),
+    t0=np.array([4.55e9] * 4),
+    hl=np.array([1.248e9, 14.0e9, 0.704e9, 4.468e9]),
 )
 
 
 def main():
     apply_rc()
     from z02_parity_multi_state import build_solver_and_jax_args  # noqa: WPS433
+
     from aragog.jax.phase import PhaseParams, compute_fluxes
     from aragog.jax.solver import make_radio_heating_fn
 
@@ -86,14 +94,18 @@ def main():
     P_stag = mesh.P_stag
     S_sol = eos.solidus_entropy(P_stag)
     S_liq = eos.liquidus_entropy(P_stag)
-    S_mid_phi = 0.5 * (S_sol + S_liq)        # phi ~ 0.5 everywhere
+    S_mid_phi = 0.5 * (S_sol + S_liq)  # phi ~ 0.5 everywhere
     delta_S = jnp.linspace(0.0, 60.0, n_stag)  # surface 60 J/kg/K hotter
     S_stag = S_mid_phi + delta_S
 
     # Static radio (uniform per cell). We add it manually below to the
     # H_dil decomposition; compute_fluxes does NOT mix radio in.
     H_radio_fn = make_radio_heating_fn(
-        RADIO['hp'], RADIO['ab'], RADIO['cc'], RADIO['t0'], RADIO['hl'],
+        RADIO['hp'],
+        RADIO['ab'],
+        RADIO['cc'],
+        RADIO['t0'],
+        RADIO['hl'],
     )
     H_radio_per_cell = float(H_radio_fn(jnp.asarray(0.0)))
     heating_radio = jnp.full(n_stag, H_radio_per_cell)
@@ -110,8 +122,11 @@ def main():
             k_solid=params0.k_solid,
             k_liquid=params0.k_liquid,
             matprop_smooth_width=params0.matprop_smooth_width,
-            conduction=cond, convection=conv,
-            grav_sep=grav, mixing=mix, dilatation=dil,
+            conduction=cond,
+            convection=conv,
+            grav_sep=grav,
+            mixing=mix,
+            dilatation=dil,
             eddy_diff_thermal=params0.eddy_diff_thermal,
             eddy_diff_chemical=params0.eddy_diff_chemical,
             kappah_floor=params0.kappah_floor,
@@ -119,28 +134,62 @@ def main():
         )
 
     # Per-component isolation
-    F_cond = np.asarray(compute_fluxes(
-        S_stag, 0.0, eos, with_flags(cond=True), mesh, jnp.zeros(n_stag),
-    ).heat_flux)
-    F_conv = np.asarray(compute_fluxes(
-        S_stag, 0.0, eos, with_flags(conv=True), mesh, jnp.zeros(n_stag),
-    ).heat_flux)
-    F_grav = np.asarray(compute_fluxes(
-        S_stag, 0.0, eos, with_flags(grav=True), mesh, jnp.zeros(n_stag),
-    ).heat_flux)
-    F_mix = np.asarray(compute_fluxes(
-        S_stag, 0.0, eos, with_flags(mix=True), mesh, jnp.zeros(n_stag),
-    ).heat_flux)
-    F_total = np.asarray(compute_fluxes(
-        S_stag, 0.0, eos,
-        with_flags(cond=True, conv=True, grav=True, mix=True),
-        mesh, jnp.zeros(n_stag),
-    ).heat_flux)
+    F_cond = np.asarray(
+        compute_fluxes(
+            S_stag,
+            0.0,
+            eos,
+            with_flags(cond=True),
+            mesh,
+            jnp.zeros(n_stag),
+        ).heat_flux
+    )
+    F_conv = np.asarray(
+        compute_fluxes(
+            S_stag,
+            0.0,
+            eos,
+            with_flags(conv=True),
+            mesh,
+            jnp.zeros(n_stag),
+        ).heat_flux
+    )
+    F_grav = np.asarray(
+        compute_fluxes(
+            S_stag,
+            0.0,
+            eos,
+            with_flags(grav=True),
+            mesh,
+            jnp.zeros(n_stag),
+        ).heat_flux
+    )
+    F_mix = np.asarray(
+        compute_fluxes(
+            S_stag,
+            0.0,
+            eos,
+            with_flags(mix=True),
+            mesh,
+            jnp.zeros(n_stag),
+        ).heat_flux
+    )
+    F_total = np.asarray(
+        compute_fluxes(
+            S_stag,
+            0.0,
+            eos,
+            with_flags(cond=True, conv=True, grav=True, mix=True),
+            mesh,
+            jnp.zeros(n_stag),
+        ).heat_flux
+    )
 
     # Sum of components
     F_sum = F_cond + F_conv + F_grav + F_mix
-    component_residual = float(np.max(np.abs(F_total - F_sum)) /
-                               max(np.max(np.abs(F_total)), 1e-30))
+    component_residual = float(
+        np.max(np.abs(F_total - F_sum)) / max(np.max(np.abs(F_total)), 1e-30)
+    )
     print(f'component sum vs total: max rel diff = {component_residual:.3e}')
 
     # Internal heating (per-staggered-node) decomposition
@@ -149,14 +198,20 @@ def main():
     # Dilatation: difference between heating_with_dil (all flags on,
     # dilatation ON) and heating_with_dil (all flags on, dilatation OFF).
     out_with_dil = compute_fluxes(
-        S_stag, 0.0, eos,
+        S_stag,
+        0.0,
+        eos,
         with_flags(cond=True, conv=True, grav=True, mix=True, dil=True),
-        mesh, jnp.zeros(n_stag),
+        mesh,
+        jnp.zeros(n_stag),
     )
     out_no_dil = compute_fluxes(
-        S_stag, 0.0, eos,
+        S_stag,
+        0.0,
+        eos,
         with_flags(cond=True, conv=True, grav=True, mix=True, dil=False),
-        mesh, jnp.zeros(n_stag),
+        mesh,
+        jnp.zeros(n_stag),
     )
     H_dil_arr = np.asarray(out_with_dil.heating - out_no_dil.heating)
     # Tidal: zero in this run (no tidal_array). Plot as zero baseline.
@@ -166,12 +221,19 @@ def main():
     # Save raw data
     np.savez(
         DATA / 'fig_02_flux_decomposition.npz',
-        r_basic=r_basic, P_basic=P_basic,
+        r_basic=r_basic,
+        P_basic=P_basic,
         S_stag=np.asarray(S_stag),
-        F_cond=F_cond, F_conv=F_conv, F_grav=F_grav, F_mix=F_mix,
-        F_total=F_total, F_sum=F_sum,
+        F_cond=F_cond,
+        F_conv=F_conv,
+        F_grav=F_grav,
+        F_mix=F_mix,
+        F_total=F_total,
+        F_sum=F_sum,
         component_residual=component_residual,
-        H_radio=H_radio_arr, H_dil=H_dil_arr, H_tidal=H_tidal_arr,
+        H_radio=H_radio_arr,
+        H_dil=H_dil_arr,
+        H_tidal=H_tidal_arr,
         H_total=H_total,
         n_stag=n_stag,
     )
@@ -193,50 +255,82 @@ def main():
         # solid line and overlay open circles wherever y is negative
         # so signed information survives the log y-axis.
         absy = np.abs(y)
-        ax.plot(x_km, np.maximum(absy, 1e-30),
-                color=color, lw=lw, ls=ls, label=label)
+        ax.plot(x_km, np.maximum(absy, 1e-30), color=color, lw=lw, ls=ls, label=label)
         neg = y < 0
         if neg.any():
-            ax.plot(x_km[neg], np.maximum(absy[neg], 1e-30),
-                    color=color, lw=0, marker='v', markersize=3.5,
-                    markerfacecolor='white', markeredgecolor=color,
-                    markeredgewidth=0.7)
+            ax.plot(
+                x_km[neg],
+                np.maximum(absy[neg], 1e-30),
+                color=color,
+                lw=0,
+                marker='v',
+                markersize=3.5,
+                markerfacecolor='white',
+                markeredgecolor=color,
+                markeredgewidth=0.7,
+            )
 
     # (a) Heat flux components
     ax = axes[0]
-    plot_signed_log(ax, depth_km, F_cond, PALETTE['cond'],
-                    r'$|F_\mathrm{cond}|$  (conduction)')
-    plot_signed_log(ax, depth_km, F_conv, PALETTE['conv'],
-                    r'$|F_\mathrm{conv}|$  (MLT convection)')
-    plot_signed_log(ax, depth_km, F_grav, PALETTE['grav'],
-                    r'$|F_\mathrm{grav}|$  (gravitational separation)')
-    plot_signed_log(ax, depth_km, F_mix, PALETTE['mix'],
-                    r'$|F_\mathrm{mix}|$  (chemical mixing)')
-    plot_signed_log(ax, depth_km, F_total, PALETTE['total'],
-                    r'$|F_\mathrm{tot}|$  = sum',
-                    lw=2.0, ls='--')
+    plot_signed_log(ax, depth_km, F_cond, PALETTE['cond'], r'$|F_\mathrm{cond}|$  (conduction)')
+    plot_signed_log(
+        ax, depth_km, F_conv, PALETTE['conv'], r'$|F_\mathrm{conv}|$  (MLT convection)'
+    )
+    plot_signed_log(
+        ax,
+        depth_km,
+        F_grav,
+        PALETTE['grav'],
+        r'$|F_\mathrm{grav}|$  (gravitational separation)',
+    )
+    plot_signed_log(
+        ax, depth_km, F_mix, PALETTE['mix'], r'$|F_\mathrm{mix}|$  (chemical mixing)'
+    )
+    plot_signed_log(
+        ax, depth_km, F_total, PALETTE['total'], r'$|F_\mathrm{tot}|$  = sum', lw=2.0, ls='--'
+    )
     ax.set_yscale('log')
     ax.set_ylabel(r'$|F|$  (W m$^{-2}$)')
     ax.set_ylim(1e-2, 1e13)
     ax.set_xlim(0, depth_km[0])
     ax.legend(loc='center right', fontsize=7.5, ncol=1, framealpha=0.92)
     ax.grid(alpha=0.3, which='both')
-    ax.set_title(r'Heat flux decomposition  (mushy state, $\phi\approx 0.5$).'
-                 r'  Open triangles mark cells where the signed flux is negative.')
+    ax.set_title(
+        r'Heat flux decomposition  (mushy state, $\phi\approx 0.5$).'
+        r'  Open triangles mark cells where the signed flux is negative.'
+    )
     panel_label(ax, '(a)', loc='lower left')
 
     # (b) Internal heating sources
     ax = axes[1]
-    plot_signed_log(ax, depth_km_stag, H_radio_arr, PALETTE['radio'],
-                    r'$|H_\mathrm{radio}|$  (4-isotope cocktail at $t=0$)')
-    plot_signed_log(ax, depth_km_stag, H_dil_arr, PALETTE['dil'],
-                    r'$|H_\mathrm{dil}|$  (PdV term)')
+    plot_signed_log(
+        ax,
+        depth_km_stag,
+        H_radio_arr,
+        PALETTE['radio'],
+        r'$|H_\mathrm{radio}|$  (4-isotope cocktail at $t=0$)',
+    )
+    plot_signed_log(
+        ax, depth_km_stag, H_dil_arr, PALETTE['dil'], r'$|H_\mathrm{dil}|$  (PdV term)'
+    )
     # Tidal is identically zero in this config; show as floored line for legend.
-    ax.plot(depth_km_stag, np.full(n_stag, 1e-20), color=PALETTE['tidal'],
-            lw=1.0, ls=':', label=r'$H_\mathrm{tidal}$ (= 0 in this run)')
-    plot_signed_log(ax, depth_km_stag, H_total, PALETTE['total'],
-                    r'$|H_\mathrm{tot}|$  = sum',
-                    lw=2.0, ls='--')
+    ax.plot(
+        depth_km_stag,
+        np.full(n_stag, 1e-20),
+        color=PALETTE['tidal'],
+        lw=1.0,
+        ls=':',
+        label=r'$H_\mathrm{tidal}$ (= 0 in this run)',
+    )
+    plot_signed_log(
+        ax,
+        depth_km_stag,
+        H_total,
+        PALETTE['total'],
+        r'$|H_\mathrm{tot}|$  = sum',
+        lw=2.0,
+        ls='--',
+    )
     ax.set_yscale('log')
     ax.set_xlabel('Depth from surface (km)')
     ax.set_ylabel(r'$|H|$  (W kg$^{-1}$)')

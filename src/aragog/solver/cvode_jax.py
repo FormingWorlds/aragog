@@ -33,7 +33,7 @@ Status: PROTOTYPE for the supported modes; fallback for the rest.
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 

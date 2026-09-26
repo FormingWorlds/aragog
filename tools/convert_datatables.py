@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 
-"""The original SPIDER C code uses lookup data for the material properties of MgSiO3 for both a 
+"""The original SPIDER C code uses lookup data for the material properties of MgSiO3 for both a
 solid and liquid phase, and then combines these data to construct the properties in the mixed
 phase region. The SPIDER C code uses entropy as an independent variable, but this Python version
 requires temperature instead.
 
-Hence this script converts the original lookup data in (pressure, entropy) coordinates to 
+Hence this script converts the original lookup data in (pressure, entropy) coordinates to
 (pressure, temperature) coordinates. The lookup data file format is also slightly different for
 this Python version.
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,8 +25,10 @@ from scipy import interpolate
 from aragog import debug_logger
 
 # Paths should not usually be hard-coded, but the data conversion is only done once
-entropy_data: Path = Path("/Users/dan/Programs/pyspider/data/1TPa-dK09-elec-free/entropy")
-temperature_data: Path = Path("/Users/dan/Programs/pyspider/data/1TPa-dK09-elec-free/temperature")
+entropy_data: Path = Path('/Users/dan/Programs/pyspider/data/1TPa-dK09-elec-free/entropy')
+temperature_data: Path = Path(
+    '/Users/dan/Programs/pyspider/data/1TPa-dK09-elec-free/temperature'
+)
 
 logger: logging.Logger = debug_logger()
 
@@ -38,7 +41,7 @@ class DataFile:
     Y: npt.NDArray
     Z: npt.NDArray
     _: KW_ONLY
-    ylabel: str = "Entropy (J/kg/K)"
+    ylabel: str = 'Entropy (J/kg/K)'
     contour_start: float | None = None
     contour_step: float | None = None
     temperature_datafile: DataFile | None = None
@@ -111,7 +114,7 @@ class DataFile:
             self.X,
             Y_temperature,
             self.Z,
-            ylabel="Temperature (K)",
+            ylabel='Temperature (K)',
             contour_start=self.contour_start,
             contour_step=self.contour_step,
             # Quantity will have Z data already converted
@@ -130,9 +133,9 @@ class DataFile:
     @property
     def title(self) -> str:
         """Plot title"""
-        title: str = f"{self.name} ({self.phase})"
+        title: str = f'{self.name} ({self.phase})'
         if self.log:
-            title += ", log10"
+            title += ', log10'
         return title
 
     @property
@@ -176,7 +179,7 @@ class DataFile:
         quantity_scaling: float = 1,
         **kwargs,
     ) -> DataFile:
-        logger.info("Loading data from %s", file_path)
+        logger.info('Loading data from %s', file_path)
         xs, ys, zs = np.loadtxt(file_path, unpack=True)
         reshape: tuple[int, int] = (number_coordinate_points, number_pressure_points)
         X: npt.NDArray = xs.reshape(reshape) * cls.to_GPa(pressure_scaling)
@@ -186,16 +189,16 @@ class DataFile:
         return cls(name, phase, X, Y, Z, **kwargs)
 
     def plot(self, ax: Axes | None = None, show: bool = False) -> None:
-        logger.info("Plotting %s (%s)", self.name, self.phase)
+        logger.info('Plotting %s (%s)', self.name, self.phase)
         if ax is None:
             fig, ax = plt.subplots()
         assert ax is not None
 
         im = ax.imshow(
             self.Z,
-            interpolation="bilinear",
-            cmap="plasma",
-            origin="lower",
+            interpolation='bilinear',
+            cmap='plasma',
+            origin='lower',
             extent=self.extent,
             vmax=self.zmax,
             vmin=self.zmin,
@@ -203,11 +206,16 @@ class DataFile:
         )
         if self.is_contour:
             contour = ax.contour(
-                self.X, self.Y, self.Z, levels=self.contour_levels, colors="white", linewidths=0.5
+                self.X,
+                self.Y,
+                self.Z,
+                levels=self.contour_levels,
+                colors='white',
+                linewidths=0.5,
             )
-            ax.clabel(contour, inline=True, fontsize=8, colors="white")
+            ax.clabel(contour, inline=True, fontsize=8, colors='white')
         ax.set_title(self.title)
-        ax.set_xlabel("Pressure (GPa)")
+        ax.set_xlabel('Pressure (GPa)')
         ax.set_ylabel(self.ylabel)
         plt.colorbar(im, ax=ax)
         if show:
@@ -222,9 +230,9 @@ ENTROPY_SCALING: float = 4805046.659407042  # J/kg/K
 
 # The temperature data is used to interpolate from entropy to temperature
 temperature_melt: DataFile = DataFile.load_data(
-    Path(entropy_data, "temperature_melt.dat"),
-    "temperature",
-    "melt",
+    Path(entropy_data, 'temperature_melt.dat'),
+    'temperature',
+    'melt',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -235,9 +243,9 @@ temperature_melt: DataFile = DataFile.load_data(
 )
 
 adiabat_temp_grad_melt: DataFile = DataFile.load_data(
-    Path(entropy_data, "adiabat_temp_grad_melt.dat"),
-    "adiabatic temperature gradient",
-    "melt",
+    Path(entropy_data, 'adiabat_temp_grad_melt.dat'),
+    'adiabatic temperature gradient',
+    'melt',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -248,9 +256,9 @@ adiabat_temp_grad_melt: DataFile = DataFile.load_data(
 )
 
 density_melt: DataFile = DataFile.load_data(
-    Path(entropy_data, "density_melt.dat"),
-    "density",
-    "melt",
+    Path(entropy_data, 'density_melt.dat'),
+    'density',
+    'melt',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -262,9 +270,9 @@ density_melt: DataFile = DataFile.load_data(
 )
 
 heat_capacity_melt: DataFile = DataFile.load_data(
-    Path(entropy_data, "heat_capacity_melt.dat"),
-    "heat capacity",
-    "melt",
+    Path(entropy_data, 'heat_capacity_melt.dat'),
+    'heat capacity',
+    'melt',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -276,9 +284,9 @@ heat_capacity_melt: DataFile = DataFile.load_data(
 )
 
 thermal_exp_melt: DataFile = DataFile.load_data(
-    Path(entropy_data, "thermal_exp_melt.dat"),
-    "thermal expansion",
-    "melt",
+    Path(entropy_data, 'thermal_exp_melt.dat'),
+    'thermal expansion',
+    'melt',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -298,9 +306,9 @@ ENTROPY_SCALING: float = 4824266.84604467  # J/kg/K
 
 # The temperature data is used to interpolate from entropy to temperature
 temperature_solid: DataFile = DataFile.load_data(
-    Path(entropy_data, "temperature_solid.dat"),
-    "temperature",
-    "solid",
+    Path(entropy_data, 'temperature_solid.dat'),
+    'temperature',
+    'solid',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -311,9 +319,9 @@ temperature_solid: DataFile = DataFile.load_data(
 )
 
 adiabat_temp_grad_solid: DataFile = DataFile.load_data(
-    Path(entropy_data, "adiabat_temp_grad_solid.dat"),
-    "adiabatic temperature gradient",
-    "solid",
+    Path(entropy_data, 'adiabat_temp_grad_solid.dat'),
+    'adiabatic temperature gradient',
+    'solid',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -324,9 +332,9 @@ adiabat_temp_grad_solid: DataFile = DataFile.load_data(
 )
 
 density_solid: DataFile = DataFile.load_data(
-    Path(entropy_data, "density_solid.dat"),
-    "density",
-    "solid",
+    Path(entropy_data, 'density_solid.dat'),
+    'density',
+    'solid',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -338,9 +346,9 @@ density_solid: DataFile = DataFile.load_data(
 )
 
 heat_capacity_solid: DataFile = DataFile.load_data(
-    Path(entropy_data, "heat_capacity_solid.dat"),
-    "heat capacity",
-    "solid",
+    Path(entropy_data, 'heat_capacity_solid.dat'),
+    'heat capacity',
+    'solid',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -352,9 +360,9 @@ heat_capacity_solid: DataFile = DataFile.load_data(
 )
 
 thermal_exp_solid: DataFile = DataFile.load_data(
-    Path(entropy_data, "thermal_exp_solid.dat"),
-    "thermal expansion",
-    "solid",
+    Path(entropy_data, 'thermal_exp_solid.dat'),
+    'thermal expansion',
+    'solid',
     NUMBER_PRESSURE_POINTS,
     NUMBER_COORDINATE_POINTS,
     PRESSURE_SCALING,
@@ -369,19 +377,19 @@ thermal_exp_solid: DataFile = DataFile.load_data(
 
 def plot_melt_eos_entropy() -> None:
     """Plot MgSiO3 RTPress melt EOS"""
-    fig, ax = plt.subplots(3, 2, figsize=(11, 13), gridspec_kw={"hspace": 0.3})
+    fig, ax = plt.subplots(3, 2, figsize=(11, 13), gridspec_kw={'hspace': 0.3})
     adiabat_temp_grad_melt.plot(ax[0][0])
     density_melt.plot(ax[0][1])
     heat_capacity_melt.plot(ax[1][0])
     temperature_melt.plot(ax[1][1])
     thermal_exp_melt.plot(ax[2][0])
     ax[2][1].remove()
-    fig.suptitle("MgSiO3 melt (RTPress) EOS, entropy space")
+    fig.suptitle('MgSiO3 melt (RTPress) EOS, entropy space')
 
 
 def plot_melt_eos_temperature() -> None:
     """Plot MgSiO3 RTPress melt EOS"""
-    fig, ax = plt.subplots(3, 2, figsize=(11, 13), gridspec_kw={"hspace": 0.3})
+    fig, ax = plt.subplots(3, 2, figsize=(11, 13), gridspec_kw={'hspace': 0.3})
     adiabat_temp_grad_melt_temp = adiabat_temp_grad_melt.to_temperature()
     adiabat_temp_grad_melt_temp.plot(ax[0][0])
     density_melt_temp = density_melt.to_temperature()
@@ -393,19 +401,19 @@ def plot_melt_eos_temperature() -> None:
     thermal_exp_melt_temp = thermal_exp_melt.to_temperature()
     thermal_exp_melt_temp.plot(ax[2][0])
     ax[2][1].remove()
-    fig.suptitle("MgSiO3 melt (RTPress) EOS, temperature space")
+    fig.suptitle('MgSiO3 melt (RTPress) EOS, temperature space')
 
 
 def plot_solid_eos_entropy() -> None:
     """Plot MgSiO3 solid EOS"""
-    fig, ax = plt.subplots(3, 2, figsize=(11, 13), gridspec_kw={"hspace": 0.3})
+    fig, ax = plt.subplots(3, 2, figsize=(11, 13), gridspec_kw={'hspace': 0.3})
     adiabat_temp_grad_solid.plot(ax[0][0])
     density_solid.plot(ax[0][1])
     heat_capacity_solid.plot(ax[1][0])
     temperature_solid.plot(ax[1][1])
     thermal_exp_solid.plot(ax[2][0])
     ax[2][1].remove()
-    fig.suptitle("MgSiO3 solid EOS, entropy space")
+    fig.suptitle('MgSiO3 solid EOS, entropy space')
 
 
 def main():
@@ -420,7 +428,7 @@ def main():
     plt.show()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
 
 

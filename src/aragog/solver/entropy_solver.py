@@ -69,6 +69,8 @@ except ImportError:  # pragma: no cover
     _CV_StatusEnum = None  # type: ignore[assignment]
 
 # Import SECS_PER_YEAR directly to avoid circular import with solver/__init__.py
+from datetime import UTC
+
 from scipy import constants as _sp_constants
 
 SECS_PER_YEAR: float = _sp_constants.Julian_year
@@ -793,7 +795,7 @@ class SolverOutput:
           ``xarray.open_dataset(path)`` both work; the file follows the
           CF-1.8 attribute convention.
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         import netCDF4 as nc
 
@@ -805,7 +807,7 @@ class SolverOutput:
         with nc.Dataset(path, mode='w') as ds:
             ds.description = description
             ds.aragog_version = __version__
-            ds.created_utc = datetime.now(timezone.utc).isoformat(timespec='seconds')
+            ds.created_utc = datetime.now(UTC).isoformat(timespec='seconds')
             ds.Conventions = 'CF-1.8'
 
             n_stag = int(np.asarray(self.S_final).size)
@@ -1104,7 +1106,7 @@ class EntropySolver:
         """
         self._jax_cvode_factory = factory
 
-    def _build_nondim_scales(self) -> 'NonDimScales':
+    def _build_nondim_scales(self) -> NonDimScales:
         """Construct the per-component NonDimScales for the active state.
 
         Single source of truth for state and RHS scaling. Mirrors the
@@ -1147,7 +1149,7 @@ class EntropySolver:
         return NonDimScales(state_scale=ss, t_ref=float(t_ref))
 
     @classmethod
-    def from_file(cls, filename: str, eos_dir: str, root: str = '') -> 'EntropySolver':
+    def from_file(cls, filename: str, eos_dir: str, root: str = '') -> EntropySolver:
         """Create EntropySolver from a config file and EOS directory.
 
         Parameters
@@ -2360,7 +2362,7 @@ class EntropySolver:
         pm = self.parameters.phase_mixed
         return pm.const_T_ref * np.exp((S - pm.const_S_ref) / pm.const_Cp)
 
-    def _build_jac_sparsity(self) -> 'scipy.sparse.spmatrix':
+    def _build_jac_sparsity(self) -> scipy.sparse.spmatrix:
         """Build the Jacobian sparsity pattern for the BDF solver.
 
         The entropy equation couples node i to its nearest neighbours
@@ -2425,11 +2427,11 @@ class EntropySolver:
         atol: float | npt.NDArray,
         rtol: float,
         max_step: float,
-        rhs: 'Callable | None' = None,
-        cvode_rhs_fn_override: 'Callable | None' = None,
-        cvode_jacfn: 'Callable | None' = None,
-        phi_cap_rootfn: 'Callable | None' = None,
-    ) -> 'OptimizeResult':
+        rhs: Callable | None = None,
+        cvode_rhs_fn_override: Callable | None = None,
+        cvode_jacfn: Callable | None = None,
+        phi_cap_rootfn: Callable | None = None,
+    ) -> OptimizeResult:
         """Integrate the entropy equation using SUNDIALS CVODE.
 
         Returns a scipy.integrate.OdeResult-compatible OptimizeResult

@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
@@ -43,23 +44,34 @@ from aragog.solver.entropy_state import EntropyState
 
 OUT_DIR = Path(__file__).resolve().parent.parent.parent / 'output' / 'entropy_verification'
 OUT_DIR.mkdir(parents=True, exist_ok=True)
-EOS_DIR = Path(os.environ.get(
-    'ARAGOG_TEST_EOS_DIR',
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-))
+EOS_DIR = Path(
+    os.environ.get(
+        'ARAGOG_TEST_EOS_DIR',
+        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
+    )
+)
 SECS_PER_YEAR = 31557600.0
 
-plt.rcParams.update({
-    'font.size': 14, 'axes.labelsize': 16, 'axes.titlesize': 16,
-    'legend.fontsize': 10, 'xtick.labelsize': 13, 'ytick.labelsize': 13,
-    'lines.linewidth': 2.0, 'lines.markersize': 7,
-    'savefig.bbox': 'tight', 'savefig.dpi': 200,
-})
+plt.rcParams.update(
+    {
+        'font.size': 14,
+        'axes.labelsize': 16,
+        'axes.titlesize': 16,
+        'legend.fontsize': 10,
+        'xtick.labelsize': 13,
+        'ytick.labelsize': 13,
+        'lines.linewidth': 2.0,
+        'lines.markersize': 7,
+        'savefig.bbox': 'tight',
+        'savefig.dpi': 200,
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Shared infrastructure (matches run_verification.py and test_entropy_verification.py)
 # ---------------------------------------------------------------------------
+
 
 def make_mesh(N=30, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5):
     """Build a simple radial mesh for verification tests."""
@@ -73,8 +85,10 @@ def make_mesh(N=30, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5):
 
     class Mesh:
         pass
+
     class SubMesh:
         pass
+
     mesh = Mesh()
     mesh.basic = SubMesh()
     mesh.staggered = SubMesh()
@@ -114,25 +128,29 @@ def make_mesh(N=30, R_cmb=3480e3, R_surf=6371e3, P_cmb=135e9, P_surf=1e5):
 
 def make_state(mesh, eos, conduction=True, convection=True):
     """Build EntropyState from mesh and EOS."""
-    phase_stag = EntropyPhaseEvaluator(
-        entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_stag = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
     phase_stag.set_pressure(mesh.staggered.pressure)
-    phase_basic = EntropyPhaseEvaluator(
-        entropy_eos=eos, gravitational_acceleration=10.0)
+    phase_basic = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
     phase_basic.set_pressure(mesh.basic.pressure)
 
     class Eval:
         pass
+
     evaluator = Eval()
     evaluator.mesh = mesh
     return EntropyState(
-        evaluator=evaluator, phase_staggered=phase_stag,
-        phase_basic=phase_basic, conduction=conduction, convection=convection)
+        evaluator=evaluator,
+        phase_staggered=phase_stag,
+        phase_basic=phase_basic,
+        conduction=conduction,
+        convection=convection,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Panel (a) and (b): IC sweep
 # ---------------------------------------------------------------------------
+
 
 def run_ic_sweep(eos):
     """Run grey-body cooling from 4 different initial entropy values.
@@ -164,11 +182,11 @@ def run_ic_sweep(eos):
             cap = _s.capacitance_staggered() * _m.basic.volume
             return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-        sol = solve_ivp(dSdt, (0, t_end), S0, method='BDF',
-                        atol=0.5, rtol=1e-5, dense_output=True)
+        sol = solve_ivp(
+            dSdt, (0, t_end), S0, method='BDF', atol=0.5, rtol=1e-5, dense_output=True
+        )
         if sol.status != 0:
-            print(f'    WARNING: solver failed for S0={S0_val} '
-                  f'(status={sol.status})')
+            print(f'    WARNING: solver failed for S0={S0_val} (status={sol.status})')
 
         t_final = min(t_end, sol.t[-1])
         times = np.linspace(0, t_final, n_samples)
@@ -191,8 +209,9 @@ def run_ic_sweep(eos):
             'T_surf': T_surf_arr,
             'phi_global': phi_global_arr,
         }
-        print(f'    T_surf: {T_surf_arr[0]:.0f} -> {T_surf_arr[-1]:.0f} K '
-              f'over {t_final:.0f} yr')
+        print(
+            f'    T_surf: {T_surf_arr[0]:.0f} -> {T_surf_arr[-1]:.0f} K over {t_final:.0f} yr'
+        )
 
     return results
 
@@ -200,6 +219,7 @@ def run_ic_sweep(eos):
 # ---------------------------------------------------------------------------
 # Panel (c): Radiogenic heating
 # ---------------------------------------------------------------------------
+
 
 def run_radiogenic_heating(eos):
     """Insulating box with radiogenic heating: <S>(t).
@@ -238,13 +258,11 @@ def run_radiogenic_heating(eos):
         cap = _s.capacitance_staggered() * _m.basic.volume
         dsdt = -np.diff(energy_flux) / cap * SECS_PER_YEAR
         # Add radiogenic heating: dS/dt += H / T (units: J/kg/K/yr)
-        T_stag = _eos.temperature(_m.staggered.pressure,
-                                  np.asarray(S).flatten())
+        T_stag = _eos.temperature(_m.staggered.pressure, np.asarray(S).flatten())
         dsdt += H_rate / np.maximum(T_stag, 1.0) * SECS_PER_YEAR
         return dsdt
 
-    sol = solve_ivp(dSdt, (0, t_end), S0, method='BDF',
-                    atol=0.01, rtol=1e-8, dense_output=True)
+    sol = solve_ivp(dSdt, (0, t_end), S0, method='BDF', atol=0.01, rtol=1e-8, dense_output=True)
     if sol.status != 0:
         print(f'    WARNING: solver status={sol.status}')
 
@@ -265,6 +283,7 @@ def run_radiogenic_heating(eos):
 # ---------------------------------------------------------------------------
 # Panel (d): Core cooling
 # ---------------------------------------------------------------------------
+
 
 def run_core_cooling(eos):
     """Grey-body + core cooling BC: F_CMB and T_CMB vs time.
@@ -288,8 +307,8 @@ def run_core_cooling(eos):
     n_samples = 80
 
     # Core parameters (Bower+2018)
-    core_density = 12000.0   # kg/m^3
-    core_cp = 800.0          # J/kg/K
+    core_density = 12000.0  # kg/m^3
+    core_cp = 800.0  # J/kg/K
     tfac = 1.147
     r_cmb = float(np.asarray(mesh.basic.radii).flat[0])
     r_above = float(np.asarray(mesh.basic.radii).flat[1])
@@ -302,22 +321,18 @@ def run_core_cooling(eos):
         T_top = _s.top_temperature.item()
         _s._heat_flux[-1] = Stefan_Boltzmann * (T_top**4 - 255.0**4)
         # Core cooling at CMB (Bower+2018 Eq. 37)
-        rho_first = float(np.asarray(
-            _s.phase_staggered.density()).flat[0])
-        cp_first = float(np.asarray(
-            _s.phase_staggered.heat_capacity()).flat[0])
+        rho_first = float(np.asarray(_s.phase_staggered.density()).flat[0])
+        cp_first = float(np.asarray(_s.phase_staggered.heat_capacity()).flat[0])
         vol_first = float(np.asarray(_m.basic.volume).flat[0])
         cell_cap = vol_first * rho_first * cp_first
-        alpha_core = (r_above / r_cmb)**2 / (
-            cell_cap / (core_cap * tfac) + 1.0)
+        alpha_core = (r_above / r_cmb) ** 2 / (cell_cap / (core_cap * tfac) + 1.0)
         _s._heat_flux[0] = alpha_core * _s._heat_flux[1]
 
         energy_flux = _s.heat_flux * _m.basic.area
         cap = _s.capacitance_staggered() * _m.basic.volume
         return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-    sol = solve_ivp(dSdt, (0, t_end), S0, method='BDF',
-                    atol=0.5, rtol=1e-5, dense_output=True)
+    sol = solve_ivp(dSdt, (0, t_end), S0, method='BDF', atol=0.5, rtol=1e-5, dense_output=True)
     if sol.status != 0:
         print(f'    WARNING: solver status={sol.status}')
 
@@ -330,14 +345,11 @@ def run_core_cooling(eos):
         S_t = sol.sol(t)
         state.update(S_t, t)
         # Recompute CMB flux with the same BC formula
-        rho_first = float(np.asarray(
-            state.phase_staggered.density()).flat[0])
-        cp_first = float(np.asarray(
-            state.phase_staggered.heat_capacity()).flat[0])
+        rho_first = float(np.asarray(state.phase_staggered.density()).flat[0])
+        cp_first = float(np.asarray(state.phase_staggered.heat_capacity()).flat[0])
         vol_first = float(np.asarray(mesh.basic.volume).flat[0])
         cell_cap = vol_first * rho_first * cp_first
-        alpha_core = (r_above / r_cmb)**2 / (
-            cell_cap / (core_cap * tfac) + 1.0)
+        alpha_core = (r_above / r_cmb) ** 2 / (cell_cap / (core_cap * tfac) + 1.0)
         F_cmb_arr[i] = alpha_core * state._heat_flux[1]
         # T at CMB node (innermost staggered node)
         state.phase_staggered.set_entropy(S_t)
@@ -353,6 +365,7 @@ def run_core_cooling(eos):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main():
     if not EOS_DIR.exists():
@@ -396,8 +409,13 @@ def main():
     # ── Panel (a): T_surf(t) for different S0 ────────────────────────
     ax = axes[0, 0]
     for S0_val, data in ic_results.items():
-        ax.plot(data['times'], data['T_surf'],
-                color=colors[S0_val], label=labels[S0_val], linewidth=2)
+        ax.plot(
+            data['times'],
+            data['T_surf'],
+            color=colors[S0_val],
+            label=labels[S0_val],
+            linewidth=2,
+        )
     ax.set_xlabel('Time [yr]')
     ax.set_ylabel(r'$T_\mathrm{surf}$ [K]')
     ax.set_title('(a) IC sweep: surface temperature')
@@ -408,8 +426,13 @@ def main():
     # ── Panel (b): Phi_global(t) for different S0 ────────────────────
     ax = axes[0, 1]
     for S0_val, data in ic_results.items():
-        ax.plot(data['times'], data['phi_global'],
-                color=colors[S0_val], label=labels[S0_val], linewidth=2)
+        ax.plot(
+            data['times'],
+            data['phi_global'],
+            color=colors[S0_val],
+            label=labels[S0_val],
+            linewidth=2,
+        )
     ax.set_xlabel('Time [yr]')
     ax.set_ylabel(r'$\Phi_\mathrm{global}$ (volume-weighted)')
     ax.set_title('(b) IC sweep: global melt fraction')
@@ -419,39 +442,53 @@ def main():
 
     # ── Panel (c): Radiogenic heating ────────────────────────────────
     ax = axes[1, 0]
-    ax.plot(heat_times / 1e6, heat_S_mean, 'b-', linewidth=2,
-            label=r'$\langle S \rangle(t)$ (solver)')
+    ax.plot(
+        heat_times / 1e6,
+        heat_S_mean,
+        'b-',
+        linewidth=2,
+        label=r'$\langle S \rangle(t)$ (solver)',
+    )
     # Overlay expected linear increase
     S0_mean = heat_S_mean[0]
     S_expected = S0_mean + heat_dSdt_exp * heat_times
-    ax.plot(heat_times / 1e6, S_expected, 'r--', linewidth=1.5, alpha=0.7,
-            label=r'$S_0 + (H/\langle T \rangle) \cdot t$')
+    ax.plot(
+        heat_times / 1e6,
+        S_expected,
+        'r--',
+        linewidth=1.5,
+        alpha=0.7,
+        label=r'$S_0 + (H/\langle T \rangle) \cdot t$',
+    )
     ax.set_xlabel('Time [Myr]')
     ax.set_ylabel(r'$\langle S \rangle$ [J/kg/K]')
     ax.set_title('(c) Radiogenic heating (insulating box)')
     ax.legend(fontsize=9)
     ax.set_xlim(left=0)
     # Annotate the heating rate
-    ax.text(0.95, 0.05,
-            f'H = $10^{{-11}}$ W/kg\n'
-            fr'$\Delta S$ = {heat_S_mean[-1] - heat_S_mean[0]:.3f} J/kg/K',
-            transform=ax.transAxes, ha='right', va='bottom',
-            fontsize=10,
-            bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
+    ax.text(
+        0.95,
+        0.05,
+        f'H = $10^{{-11}}$ W/kg\n'
+        rf'$\Delta S$ = {heat_S_mean[-1] - heat_S_mean[0]:.3f} J/kg/K',
+        transform=ax.transAxes,
+        ha='right',
+        va='bottom',
+        fontsize=10,
+        bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8),
+    )
 
     # ── Panel (d): Core cooling: F_CMB and T_CMB ─────────────────────
     ax_left = axes[1, 1]
     ax_right = ax_left.twinx()
 
-    ln1 = ax_left.plot(core_times, core_F_cmb, 'b-', linewidth=2,
-                       label=r'$F_\mathrm{CMB}$')
+    ln1 = ax_left.plot(core_times, core_F_cmb, 'b-', linewidth=2, label=r'$F_\mathrm{CMB}$')
     ax_left.set_xlabel('Time [yr]')
     ax_left.set_ylabel(r'$F_\mathrm{CMB}$ [W/m$^2$]', color='#2166ac')
     ax_left.tick_params(axis='y', labelcolor='#2166ac')
     ax_left.set_xlim(left=0)
 
-    ln2 = ax_right.plot(core_times, core_T_cmb, 'r-', linewidth=2,
-                        label=r'$T_\mathrm{CMB}$')
+    ln2 = ax_right.plot(core_times, core_T_cmb, 'r-', linewidth=2, label=r'$T_\mathrm{CMB}$')
     ax_right.set_ylabel(r'$T_\mathrm{CMB}$ [K]', color='#e41a1c')
     ax_right.tick_params(axis='y', labelcolor='#e41a1c')
 
@@ -461,16 +498,21 @@ def main():
     ax_left.legend(lns, labs, loc='center right', fontsize=10)
     ax_left.set_title('(d) Core cooling (Bower+2018 BC)')
     # Annotate core parameters
-    ax_left.text(0.02, 0.05,
-                 r'$\rho_\mathrm{core}$ = 12000 kg/m$^3$, '
-                 r'$c_p$ = 800 J/kg/K, $f$ = 1.147',
-                 transform=ax_left.transAxes, ha='left', va='bottom',
-                 fontsize=8,
-                 bbox=dict(boxstyle='round', facecolor='lightyellow',
-                           alpha=0.8))
+    ax_left.text(
+        0.02,
+        0.05,
+        r'$\rho_\mathrm{core}$ = 12000 kg/m$^3$, '
+        r'$c_p$ = 800 J/kg/K, $f$ = 1.147',
+        transform=ax_left.transAxes,
+        ha='left',
+        va='bottom',
+        fontsize=8,
+        bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8),
+    )
 
-    fig.suptitle('Aragog entropy solver: IC sensitivity and heating verification',
-                 fontsize=16, y=1.005)
+    fig.suptitle(
+        'Aragog entropy solver: IC sensitivity and heating verification', fontsize=16, y=1.005
+    )
     fig.tight_layout()
 
     # Save
@@ -508,13 +550,19 @@ def main():
         T0, Tf = data['T_surf'][0], data['T_surf'][-1]
         phi0, phif = data['phi_global'][0], data['phi_global'][-1]
         mono = np.all(np.diff(data['T_surf']) <= 5.0)
-        print(f'  S0={S0_val:6.0f}: T_surf {T0:6.0f} -> {Tf:6.0f} K, '
-              f'Phi {phi0:.3f} -> {phif:.3f}, monotonic={mono}')
+        print(
+            f'  S0={S0_val:6.0f}: T_surf {T0:6.0f} -> {Tf:6.0f} K, '
+            f'Phi {phi0:.3f} -> {phif:.3f}, monotonic={mono}'
+        )
     dS = heat_S_mean[-1] - heat_S_mean[0]
-    print(f'  Heating: dS_mean = {dS:.4f} J/kg/K '
-          f'(expected ~ {heat_dSdt_exp * heat_times[-1]:.4f})')
-    print(f'  Core: F_CMB {core_F_cmb[0]:.2e} -> {core_F_cmb[-1]:.2e} W/m^2, '
-          f'T_CMB {core_T_cmb[0]:.0f} -> {core_T_cmb[-1]:.0f} K')
+    print(
+        f'  Heating: dS_mean = {dS:.4f} J/kg/K '
+        f'(expected ~ {heat_dSdt_exp * heat_times[-1]:.4f})'
+    )
+    print(
+        f'  Core: F_CMB {core_F_cmb[0]:.2e} -> {core_F_cmb[-1]:.2e} W/m^2, '
+        f'T_CMB {core_T_cmb[0]:.0f} -> {core_T_cmb[-1]:.0f} K'
+    )
     print('=' * 65)
 
 

@@ -15,6 +15,7 @@ Run:
     conda activate proteus  # or your aragog env
     python tools/verification/figures/verify_radio_decay.py
 """
+
 from __future__ import annotations
 
 import os
@@ -72,12 +73,39 @@ from aragog.jax.solver import make_radio_heating_fn  # noqa: E402
 # within a few tens of Myr, leaving the long-lived nuclides to carry
 # the heat budget for the rest of the Solar System lifetime.
 ISOTOPES = {
-    'K40':   dict(t0=4.55e9, ab=1.1668e-4, conc_ppm=310.0,    hp=2.8761e-5, hl=1.248e9, color=PALETTE['K40']),
-    'Th232': dict(t0=4.55e9, ab=1.0,        conc_ppm=0.124,    hp=2.6368e-5, hl=14.0e9,  color=PALETTE['Th232']),
-    'U235':  dict(t0=4.55e9, ab=7.2045e-3, conc_ppm=0.031,    hp=5.68402e-4, hl=0.704e9, color=PALETTE['U235']),
-    'U238':  dict(t0=4.55e9, ab=0.9927955, conc_ppm=0.031,    hp=9.4946e-5, hl=4.468e9, color=PALETTE['U238']),
-    'Al26':  dict(t0=0.0,    ab=5.25e-5,    conc_ppm=23600.0,  hp=0.3583,    hl=7.17e5,  color=PALETTE.get('Al26', '#d62728')),
-    'Fe60':  dict(t0=0.0,    ab=1.0e-8,     conc_ppm=62600.0,  hp=3.6579e-2, hl=2.62e6,  color=PALETTE.get('Fe60', '#9467bd')),
+    'K40': dict(
+        t0=4.55e9, ab=1.1668e-4, conc_ppm=310.0, hp=2.8761e-5, hl=1.248e9, color=PALETTE['K40']
+    ),
+    'Th232': dict(
+        t0=4.55e9, ab=1.0, conc_ppm=0.124, hp=2.6368e-5, hl=14.0e9, color=PALETTE['Th232']
+    ),
+    'U235': dict(
+        t0=4.55e9,
+        ab=7.2045e-3,
+        conc_ppm=0.031,
+        hp=5.68402e-4,
+        hl=0.704e9,
+        color=PALETTE['U235'],
+    ),
+    'U238': dict(
+        t0=4.55e9, ab=0.9927955, conc_ppm=0.031, hp=9.4946e-5, hl=4.468e9, color=PALETTE['U238']
+    ),
+    'Al26': dict(
+        t0=0.0,
+        ab=5.25e-5,
+        conc_ppm=23600.0,
+        hp=0.3583,
+        hl=7.17e5,
+        color=PALETTE.get('Al26', '#d62728'),
+    ),
+    'Fe60': dict(
+        t0=0.0,
+        ab=1.0e-8,
+        conc_ppm=62600.0,
+        hp=3.6579e-2,
+        hl=2.62e6,
+        color=PALETTE.get('Fe60', '#9467bd'),
+    ),
 }
 
 LOG2 = np.log(2.0)
@@ -122,10 +150,14 @@ def main():
     np.savez(
         DATA / 'fig_06_radio_decay.npz',
         t_yr=t_yr,
-        H_K40=H_per['K40'], H_Th232=H_per['Th232'],
-        H_U235=H_per['U235'], H_U238=H_per['U238'],
-        H_Al26=H_per['Al26'], H_Fe60=H_per['Fe60'],
-        H_total_numpy=H_total_np, H_total_jax=H_total_jax,
+        H_K40=H_per['K40'],
+        H_Th232=H_per['Th232'],
+        H_U235=H_per['U235'],
+        H_U238=H_per['U238'],
+        H_Al26=H_per['Al26'],
+        H_Fe60=H_per['Fe60'],
+        H_total_numpy=H_total_np,
+        H_total_jax=H_total_jax,
         max_rel_err_numpy_vs_jax=max_rel_err,
     )
 
@@ -136,12 +168,9 @@ def main():
     ax = axes[0]
     t_myr = t_yr / 1.0e6
     for name, p in ISOTOPES.items():
-        ax.plot(t_myr, H_per[name],
-                color=p['color'], lw=1.4, label=name)
-    ax.plot(t_myr, H_total_np,
-            color='k', lw=2.0, ls='-', label='Total (numpy)')
-    ax.plot(t_myr, H_total_jax,
-            color=PALETTE['jax'], lw=1.0, ls='--', label='Total (JAX)')
+        ax.plot(t_myr, H_per[name], color=p['color'], lw=1.4, label=name)
+    ax.plot(t_myr, H_total_np, color='k', lw=2.0, ls='-', label='Total (numpy)')
+    ax.plot(t_myr, H_total_jax, color=PALETTE['jax'], lw=1.0, ls='--', label='Total (JAX)')
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('Time since formation (Myr)')
@@ -156,10 +185,14 @@ def main():
 
     # (b) Numpy-vs-JAX relative error
     ax = axes[1]
-    ax.plot(t_myr, np.maximum(rel_err, 1e-18),
-            color=PALETTE['jax'], lw=1.2)
-    ax.axhline(np.finfo(np.float64).eps, color='k', lw=0.8, ls=':',
-               label=r'$\epsilon_\mathrm{mach}$ (float64)')
+    ax.plot(t_myr, np.maximum(rel_err, 1e-18), color=PALETTE['jax'], lw=1.2)
+    ax.axhline(
+        np.finfo(np.float64).eps,
+        color='k',
+        lw=0.8,
+        ls=':',
+        label=r'$\epsilon_\mathrm{mach}$ (float64)',
+    )
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlabel('Time since formation (Myr)')
@@ -168,11 +201,16 @@ def main():
     ax.set_ylim(1e-18, 1e-12)
     ax.grid(alpha=0.3)
     ax.legend(loc='upper right')
-    ax.text(0.05, 0.95,
-            f'max rel. err.\n= {max_rel_err:.2e}',
-            transform=ax.transAxes, va='top', ha='left',
-            fontsize=8,
-            bbox=dict(facecolor='white', edgecolor='gray', alpha=0.8, pad=2))
+    ax.text(
+        0.05,
+        0.95,
+        f'max rel. err.\n= {max_rel_err:.2e}',
+        transform=ax.transAxes,
+        va='top',
+        ha='left',
+        fontsize=8,
+        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.8, pad=2),
+    )
     panel_label(ax, '(b)', loc='upper left')
 
     fig.tight_layout()

@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
@@ -29,13 +30,13 @@ from scipy.integrate import solve_ivp
 SCRIPT_DIR = Path(__file__).resolve().parent
 ARAGOG_ROOT = SCRIPT_DIR.parent.parent
 PROTEUS_ROOT = ARAGOG_ROOT.parent
-SPIDER_DIR = PROTEUS_ROOT / "SPIDER"
-SPIDER_BIN = SPIDER_DIR / "spider"
-EOS_DIR = PROTEUS_ROOT / "output" / "coupled_parity" / "spider" / "data" / "spider_eos"
-OUT_DIR = ARAGOG_ROOT / "output" / "entropy_verification"
+SPIDER_DIR = PROTEUS_ROOT / 'SPIDER'
+SPIDER_BIN = SPIDER_DIR / 'spider'
+EOS_DIR = PROTEUS_ROOT / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'
+OUT_DIR = ARAGOG_ROOT / 'output' / 'entropy_verification'
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-sys.path.insert(0, str(ARAGOG_ROOT / "src"))
+sys.path.insert(0, str(ARAGOG_ROOT / 'src'))
 
 # Physics parameters
 R_SURF = 6.371e6
@@ -48,34 +49,43 @@ SECS_PER_YEAR = 31557600.0
 
 # Flux cases: {flux_W_m2: (t_end_yr, dt_macro_yr)}
 FLUX_CASES = {
-    1e2:  (50000, 500),
-    1e4:  (5000,  50),
-    1e6:  (500,   5),
-    1e8:  (50,    0.5),
+    1e2: (50000, 500),
+    1e4: (5000, 50),
+    1e6: (500, 5),
+    1e8: (50, 0.5),
 }
 
-plt.rcParams.update({
-    'font.size': 12, 'axes.labelsize': 13, 'axes.titlesize': 13,
-    'legend.fontsize': 8, 'xtick.labelsize': 11, 'ytick.labelsize': 11,
-    'lines.linewidth': 1.8, 'savefig.bbox': 'tight', 'savefig.dpi': 200,
-})
+plt.rcParams.update(
+    {
+        'font.size': 12,
+        'axes.labelsize': 13,
+        'axes.titlesize': 13,
+        'legend.fontsize': 8,
+        'xtick.labelsize': 11,
+        'ytick.labelsize': 11,
+        'lines.linewidth': 1.8,
+        'savefig.bbox': 'tight',
+        'savefig.dpi': 200,
+    }
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
+
 def get_spider_array(data_dict, key):
     entry = data_dict[key]
-    vals = np.array([float(v) for v in entry["values"]])
-    return vals * float(entry["scaling"])
+    vals = np.array([float(v) for v in entry['values']])
+    return vals * float(entry['scaling'])
 
 
 def read_spider_json(fpath):
     with open(fpath) as f:
         data = json.load(f)
-    t_yr = float(data.get("time_years", 0))
-    d = data["data"]
-    out = {"t_yr": t_yr}
-    for key in ["temp_s", "S_s", "radius_s", "radius_b", "phi_s", "Jtot_b"]:
+    t_yr = float(data.get('time_years', 0))
+    d = data['data']
+    out = {'t_yr': t_yr}
+    for key in ['temp_s', 'S_s', 'radius_s', 'radius_b', 'phi_s', 'Jtot_b']:
         try:
             out[key] = get_spider_array(d, key)
         except (KeyError, TypeError):
@@ -89,12 +99,12 @@ def generate_spider_mesh(outpath):
     P_basic = rho_ref * G * (R_SURF - r_basic)
     r_stag = 0.5 * (r_basic[:-1] + r_basic[1:])
     P_stag = rho_ref * G * (R_SURF - r_stag)
-    with open(outpath, "w") as f:
-        f.write(f"# {N_NODES} {N_NODES - 1}\n")
+    with open(outpath, 'w') as f:
+        f.write(f'# {N_NODES} {N_NODES - 1}\n')
         for i in range(N_NODES):
-            f.write(f"{r_basic[i]:.10e} {P_basic[i]:.10e} {rho_ref:.10e} {-G:.10e}\n")
+            f.write(f'{r_basic[i]:.10e} {P_basic[i]:.10e} {rho_ref:.10e} {-G:.10e}\n')
         for i in range(N_NODES - 1):
-            f.write(f"{r_stag[i]:.10e} {P_stag[i]:.10e} {rho_ref:.10e} {-G:.10e}\n")
+            f.write(f'{r_stag[i]:.10e} {P_stag[i]:.10e} {rho_ref:.10e} {-G:.10e}\n')
 
 
 def make_aragog_mesh(N, R_cmb, R_surf, P_cmb=135e9, P_surf=1e5):
@@ -109,8 +119,10 @@ def make_aragog_mesh(N, R_cmb, R_surf, P_cmb=135e9, P_surf=1e5):
 
     class SubMesh:
         pass
+
     class Mesh:
         pass
+
     mesh = Mesh()
     mesh.basic = SubMesh()
     mesh.staggered = SubMesh()
@@ -147,12 +159,13 @@ def make_aragog_mesh(N, R_cmb, R_surf, P_cmb=135e9, P_surf=1e5):
 
 # ── SPIDER run ────────────────────────────────────────────────────────
 
+
 def run_spider_flux(F_surf, t_end_yr, dt_macro_yr):
-    tag = f"F{F_surf:.0e}"
-    spider_out = OUT_DIR / f"spider_flux_{tag}"
+    tag = f'F{F_surf:.0e}'
+    spider_out = OUT_DIR / f'spider_flux_{tag}'
     spider_out.mkdir(parents=True, exist_ok=True)
 
-    mesh_path = spider_out / "mesh.dat"
+    mesh_path = spider_out / 'mesh.dat'
     generate_spider_mesh(mesh_path)
     n_steps = max(int(t_end_yr / dt_macro_yr), 10)
 
@@ -210,28 +223,32 @@ def run_spider_flux(F_surf, t_end_yr, dt_macro_yr):
 -core_bc_value 0.0
 -outputDirectory {spider_out}
 """
-    opts_path = spider_out / f"spider_{tag}.opts"
-    with open(opts_path, "w") as f:
+    opts_path = spider_out / f'spider_{tag}.opts'
+    with open(opts_path, 'w') as f:
         f.write(opts)
 
     env = os.environ.copy()
-    petsc_dir = PROTEUS_ROOT / "petsc"
+    petsc_dir = PROTEUS_ROOT / 'petsc'
     if petsc_dir.exists():
-        env["PETSC_DIR"] = str(petsc_dir)
-        env["PETSC_ARCH"] = "arch-darwin-c-opt"
+        env['PETSC_DIR'] = str(petsc_dir)
+        env['PETSC_ARCH'] = 'arch-darwin-c-opt'
 
     result = subprocess.run(
-        [str(SPIDER_BIN), "-options_file", str(opts_path)],
-        env=env, capture_output=True, text=True,
-        cwd=str(SPIDER_DIR), timeout=600)
+        [str(SPIDER_BIN), '-options_file', str(opts_path)],
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd=str(SPIDER_DIR),
+        timeout=600,
+    )
     if result.returncode != 0:
-        print(f"    SPIDER FAILED: {result.stderr[-300:]}")
+        print(f'    SPIDER FAILED: {result.stderr[-300:]}')
         return None
 
     json_files = sorted(
-        [f for f in spider_out.iterdir() if f.suffix == ".json"],
-        key=lambda f: float(f.stem))
-    print(f"    SPIDER: {len(json_files)} files")
+        [f for f in spider_out.iterdir() if f.suffix == '.json'], key=lambda f: float(f.stem)
+    )
+    print(f'    SPIDER: {len(json_files)} files')
 
     # Read ALL snapshots (for T-P profiles and Phi)
     snapshots = []
@@ -239,27 +256,27 @@ def run_spider_flux(F_surf, t_end_yr, dt_macro_yr):
         snapshots.append(read_spider_json(jf))
 
     # SPIDER arrays: index 0 = surface, index -1 = CMB
-    times = np.array([s["t_yr"] for s in snapshots])
-    phi_global = np.array([np.mean(s["phi_s"]) if "phi_s" in s else np.nan
-                           for s in snapshots])
+    times = np.array([s['t_yr'] for s in snapshots])
+    phi_global = np.array([np.mean(s['phi_s']) if 'phi_s' in s else np.nan for s in snapshots])
 
     # Pressure from radius (simple hydrostatic)
     rho_ref = 4000.0
-    if "radius_s" in snapshots[0]:
-        r_s = snapshots[0]["radius_s"]
+    if 'radius_s' in snapshots[0]:
+        r_s = snapshots[0]['radius_s']
         P_s = rho_ref * G * (R_SURF - r_s)  # surface=0, CMB=max
     else:
         P_s = None
 
     return {
-        "times": times,
-        "phi_global": phi_global,
-        "snapshots": snapshots,
-        "P_s_GPa": P_s / 1e9 if P_s is not None else None,
+        'times': times,
+        'phi_global': phi_global,
+        'snapshots': snapshots,
+        'P_s_GPa': P_s / 1e9 if P_s is not None else None,
     }
 
 
 # ── Aragog run ────────────────────────────────────────────────────────
+
 
 def run_aragog_flux(F_surf, t_end_yr):
     from aragog.eos.entropy import EntropyEOS
@@ -271,11 +288,16 @@ def run_aragog_flux(F_surf, t_end_yr):
     mesh = make_aragog_mesh(N, R_CORE, R_SURF)
 
     phase_kwargs = dict(
-        entropy_eos=eos, gravitational_acceleration=G,
+        entropy_eos=eos,
+        gravitational_acceleration=G,
         rheological_transition_melt_fraction=0.4,
-        rheological_transition_width=0.15, grain_size=1e-3,
-        viscosity_solid=1e21, viscosity_liquid=1e2,
-        thermal_conductivity_solid=4.0, thermal_conductivity_liquid=4.0)
+        rheological_transition_width=0.15,
+        grain_size=1e-3,
+        viscosity_solid=1e21,
+        viscosity_liquid=1e2,
+        thermal_conductivity_solid=4.0,
+        thermal_conductivity_liquid=4.0,
+    )
     phase_stag = EntropyPhaseEvaluator(**phase_kwargs)
     phase_stag.set_pressure(mesh.staggered.pressure)
     phase_basic = EntropyPhaseEvaluator(**phase_kwargs)
@@ -283,17 +305,26 @@ def run_aragog_flux(F_surf, t_end_yr):
 
     class _Eval:
         pass
+
     evaluator = _Eval()
     evaluator.mesh = mesh
     evaluator.radionuclides = []
 
     state = EntropyState(
-        evaluator=evaluator, phase_staggered=phase_stag,
-        phase_basic=phase_basic, conduction=True, convection=True,
-        gravitational_separation=False, mixing=False,
-        radionuclides=False, tidal=False, tidal_array=[0.0],
-        eddy_diffusivity_thermal=1.0, eddy_diffusivity_chemical=1.0,
-        kappah_floor=0.0)
+        evaluator=evaluator,
+        phase_staggered=phase_stag,
+        phase_basic=phase_basic,
+        conduction=True,
+        convection=True,
+        gravitational_separation=False,
+        mixing=False,
+        radionuclides=False,
+        tidal=False,
+        tidal_array=[0.0],
+        eddy_diffusivity_thermal=1.0,
+        eddy_diffusivity_chemical=1.0,
+        kappah_floor=0.0,
+    )
 
     S0 = np.full(N, S_INIT)
 
@@ -305,12 +336,13 @@ def run_aragog_flux(F_surf, t_end_yr):
         cap = state.capacitance_staggered() * mesh.basic.volume
         return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
-    sol = solve_ivp(dSdt, (0, t_end_yr), S0, method='BDF',
-                    atol=0.5, rtol=1e-5, dense_output=True)
+    sol = solve_ivp(
+        dSdt, (0, t_end_yr), S0, method='BDF', atol=0.5, rtol=1e-5, dense_output=True
+    )
     if sol.status != 0:
-        print(f"    Aragog FAILED: {sol.message}")
+        print(f'    Aragog FAILED: {sol.message}')
         return None
-    print(f"    Aragog: {sol.t[-1]:.0f} yr, {len(sol.t)} steps")
+    print(f'    Aragog: {sol.t[-1]:.0f} yr, {len(sol.t)} steps')
 
     # Sample at 5 profile times + 100 points for Phi(t)
     t_actual = min(t_end_yr, sol.t[-1])
@@ -323,8 +355,7 @@ def run_aragog_flux(F_surf, t_end_yr):
     for t in profile_times:
         S_t = sol.sol(t)
         T_t = eos.temperature(mesh.staggered.pressure, S_t)
-        profiles.append({"t_yr": t, "T": np.asarray(T_t).flatten(),
-                         "P_GPa": P_stag_GPa})
+        profiles.append({'t_yr': t, 'T': np.asarray(T_t).flatten(), 'P_GPa': P_stag_GPa})
 
     n_phi = 100
     phi_times = np.linspace(0, t_actual, n_phi)
@@ -336,41 +367,52 @@ def run_aragog_flux(F_surf, t_end_yr):
         phi_global.append(np.dot(phi, mesh.basic.volume) / np.sum(mesh.basic.volume))
 
     return {
-        "times": phi_times,
-        "phi_global": np.array(phi_global),
-        "profiles": profiles,
+        'times': phi_times,
+        'phi_global': np.array(phi_global),
+        'profiles': profiles,
     }
 
 
 # ── Main ──────────────────────────────────────────────────────────────
 
+
 def main():
-    print("SPIDER vs Aragog: prescribed-flux parity sweep")
-    print("=" * 60)
+    print('SPIDER vs Aragog: prescribed-flux parity sweep')
+    print('=' * 60)
 
     if not SPIDER_BIN.exists():
-        print(f"SPIDER binary not found: {SPIDER_BIN}"); return
+        print(f'SPIDER binary not found: {SPIDER_BIN}')
+        return
     if not EOS_DIR.exists():
-        print(f"PALEOS EOS not found: {EOS_DIR}"); return
+        print(f'PALEOS EOS not found: {EOS_DIR}')
+        return
 
     results = {}
     for F_val, (t_end, dt_macro) in FLUX_CASES.items():
-        print(f"\n  F = {F_val:.0e} W/m^2 (t_end = {t_end} yr)")
+        print(f'\n  F = {F_val:.0e} W/m^2 (t_end = {t_end} yr)')
         spider = run_spider_flux(F_val, t_end, dt_macro)
         aragog = run_aragog_flux(F_val, t_end)
-        results[F_val] = {"spider": spider, "aragog": aragog}
+        results[F_val] = {'spider': spider, 'aragog': aragog}
 
     # ── Compute solidus/liquidus in T-P space for mush zone shading ──
-    from aragog.eos.entropy import EntropyEOS
     from scipy.signal import savgol_filter
+
+    from aragog.eos.entropy import EntropyEOS
+
     eos = EntropyEOS(EOS_DIR)
     P_curve = np.linspace(1e5, 135e9, 500)
-    T_sol_raw = np.array([eos.temperature(np.array([p]),
-                           np.array([eos.solidus_entropy(p)])).item()
-                           for p in P_curve])
-    T_liq_raw = np.array([eos.temperature(np.array([p]),
-                           np.array([eos.liquidus_entropy(p)])).item()
-                           for p in P_curve])
+    T_sol_raw = np.array(
+        [
+            eos.temperature(np.array([p]), np.array([eos.solidus_entropy(p)])).item()
+            for p in P_curve
+        ]
+    )
+    T_liq_raw = np.array(
+        [
+            eos.temperature(np.array([p]), np.array([eos.liquidus_entropy(p)])).item()
+            for p in P_curve
+        ]
+    )
     # Smooth kinks from bilinear interpolation on 500x200 P-S grid.
     window = min(51, len(P_curve) // 4 * 2 + 1)
     T_sol = savgol_filter(T_sol_raw, window, 3)
@@ -389,42 +431,42 @@ def main():
         row, col = divmod(idx, 2)
         ax = axes[row, col]
         r = results[F_val]
-        sp = r["spider"]
-        ar = r["aragog"]
+        sp = r['spider']
+        ar = r['aragog']
 
         # Mush zone shading (between solidus and liquidus)
-        ax.fill_betweenx(P_curve_GPa, T_sol, T_liq,
-                         color='#cccccc', alpha=0.4, zorder=0)
+        ax.fill_betweenx(P_curve_GPa, T_sol, T_liq, color='#cccccc', alpha=0.4, zorder=0)
         ax.plot(T_sol, P_curve_GPa, 'k-', linewidth=0.7, alpha=0.5)
         ax.plot(T_liq, P_curve_GPa, 'k-', linewidth=0.7, alpha=0.5)
 
         # SPIDER snapshots
-        if sp is not None and sp["snapshots"]:
-            snaps = sp["snapshots"]
+        if sp is not None and sp['snapshots']:
+            snaps = sp['snapshots']
             n_snap = len(snaps)
-            snap_idxs = [0] + [int(f * (n_snap - 1))
-                                for f in [0.1, 0.3, 0.6, 1.0]]
+            snap_idxs = [0] + [int(f * (n_snap - 1)) for f in [0.1, 0.3, 0.6, 1.0]]
             snap_idxs = sorted(set(snap_idxs))
 
             cmap_s = cm.Blues
             for i, si in enumerate(snap_idxs):
                 s = snaps[si]
-                if "temp_s" not in s or sp["P_s_GPa"] is None:
+                if 'temp_s' not in s or sp['P_s_GPa'] is None:
                     continue
-                t_yr = s["t_yr"]
+                t_yr = s['t_yr']
                 color = cmap_s(0.3 + 0.7 * i / max(len(snap_idxs) - 1, 1))
-                label = f'S: {t_yr:.0f} yr' if i in [0, len(snap_idxs)-1] else None
-                ax.plot(s["temp_s"], sp["P_s_GPa"], '-',
-                        color=color, linewidth=1.5, label=label)
+                label = f'S: {t_yr:.0f} yr' if i in [0, len(snap_idxs) - 1] else None
+                ax.plot(
+                    s['temp_s'], sp['P_s_GPa'], '-', color=color, linewidth=1.5, label=label
+                )
 
         # Aragog profiles
-        if ar is not None and ar["profiles"]:
+        if ar is not None and ar['profiles']:
             cmap_a = cm.Reds
-            for i, prof in enumerate(ar["profiles"]):
-                color = cmap_a(0.3 + 0.7 * i / max(len(ar["profiles"]) - 1, 1))
-                label = f'A: {prof["t_yr"]:.0f} yr' if i in [0, len(ar["profiles"])-1] else None
-                ax.plot(prof["T"], prof["P_GPa"], '--',
-                        color=color, linewidth=1.5, label=label)
+            for i, prof in enumerate(ar['profiles']):
+                color = cmap_a(0.3 + 0.7 * i / max(len(ar['profiles']) - 1, 1))
+                label = (
+                    f'A: {prof["t_yr"]:.0f} yr' if i in [0, len(ar['profiles']) - 1] else None
+                )
+                ax.plot(prof['T'], prof['P_GPa'], '--', color=color, linewidth=1.5, label=label)
 
         ax.set_xlabel('Temperature [K]')
         ax.set_ylabel('Pressure [GPa]')
@@ -439,12 +481,24 @@ def main():
         r = results[F_val]
         c = colors[F_val]
         lbl = f'$10^{{{int(np.log10(F_val))}}}$'
-        if r["spider"] is not None:
-            ax.plot(r["spider"]["times"], r["spider"]["phi_global"],
-                    '-', color=c, linewidth=2, label=f'S: {lbl}')
-        if r["aragog"] is not None:
-            ax.plot(r["aragog"]["times"], r["aragog"]["phi_global"],
-                    '--', color=c, linewidth=2, label=f'A: {lbl}')
+        if r['spider'] is not None:
+            ax.plot(
+                r['spider']['times'],
+                r['spider']['phi_global'],
+                '-',
+                color=c,
+                linewidth=2,
+                label=f'S: {lbl}',
+            )
+        if r['aragog'] is not None:
+            ax.plot(
+                r['aragog']['times'],
+                r['aragog']['phi_global'],
+                '--',
+                color=c,
+                linewidth=2,
+                label=f'A: {lbl}',
+            )
     ax.set_xlabel('Time [yr]')
     ax.set_ylabel('$\\Phi_\\mathrm{global}$')
     ax.set_title('(e) Global melt fraction')
@@ -457,16 +511,18 @@ def main():
     for F_val in flux_list:
         r = results[F_val]
         c = colors[F_val]
-        sp, ar = r["spider"], r["aragog"]
+        sp, ar = r['spider'], r['aragog']
         if sp is None or ar is None:
             continue
         from scipy.interpolate import interp1d
-        t_common = sp["times"][sp["times"] > 0]
+
+        t_common = sp['times'][sp['times'] > 0]
         if len(t_common) < 3:
             continue
-        f_phi = interp1d(ar["times"], ar["phi_global"],
-                         bounds_error=False, fill_value="extrapolate")
-        phi_s = np.interp(t_common, sp["times"], sp["phi_global"])
+        f_phi = interp1d(
+            ar['times'], ar['phi_global'], bounds_error=False, fill_value='extrapolate'
+        )
+        phi_s = np.interp(t_common, sp['times'], sp['phi_global'])
         phi_a = f_phi(t_common)
         # Absolute difference (Phi is already 0-1)
         abs_diff = np.abs(phi_a - phi_s)
@@ -481,29 +537,34 @@ def main():
     ax.set_ylim(0, 0.35)
     ax.legend(fontsize=8)
 
-    fig.suptitle('SPIDER vs Aragog: prescribed-flux parity (T-P profiles + $\\Phi$)',
-                 fontsize=15, y=1.005)
+    fig.suptitle(
+        'SPIDER vs Aragog: prescribed-flux parity (T-P profiles + $\\Phi$)',
+        fontsize=15,
+        y=1.005,
+    )
     fig.tight_layout()
 
-    fname = OUT_DIR / "verify_spider_parity_flux.pdf"
+    fname = OUT_DIR / 'verify_spider_parity_flux.pdf'
     fig.savefig(fname)
     fig.savefig(str(fname).replace('.pdf', '.png'))
     plt.close(fig)
-    print(f"\nSaved: {fname}")
+    print(f'\nSaved: {fname}')
 
     # Summary
-    print("\n" + "=" * 60)
-    print("Parity Summary:")
+    print('\n' + '=' * 60)
+    print('Parity Summary:')
     for F_val in flux_list:
         r = results[F_val]
-        sp, ar = r["spider"], r["aragog"]
-        phi_s_f = sp["phi_global"][-1] if sp is not None else np.nan
-        phi_a_f = ar["phi_global"][-1] if ar is not None else np.nan
+        sp, ar = r['spider'], r['aragog']
+        phi_s_f = sp['phi_global'][-1] if sp is not None else np.nan
+        phi_a_f = ar['phi_global'][-1] if ar is not None else np.nan
         dphi = abs(phi_a_f - phi_s_f)
-        print(f"  F={F_val:.0e}: SPIDER Phi_final={phi_s_f:.3f}, "
-              f"Aragog Phi_final={phi_a_f:.3f}, |dPhi|={dphi:.3f}")
-    print("=" * 60)
+        print(
+            f'  F={F_val:.0e}: SPIDER Phi_final={phi_s_f:.3f}, '
+            f'Aragog Phi_final={phi_a_f:.3f}, |dPhi|={dphi:.3f}'
+        )
+    print('=' * 60)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

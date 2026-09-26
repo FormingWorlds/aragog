@@ -40,17 +40,24 @@ Run:
     conda activate proteus
     python tools/verification/figures/verify_mass_coord_jacobian.py
 """
+
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
 
-for var in ['OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'OMP_NUM_THREADS',
-            'NUMEXPR_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS']:
+for var in [
+    'OPENBLAS_NUM_THREADS',
+    'MKL_NUM_THREADS',
+    'OMP_NUM_THREADS',
+    'NUMEXPR_NUM_THREADS',
+    'VECLIB_MAXIMUM_THREADS',
+]:
     os.environ.setdefault(var, '1')
 
 import jax
+
 jax.config.update('jax_enable_x64', True)
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
@@ -77,21 +84,21 @@ def main():
     mesh = solver.evaluator.mesh
 
     # Pull spatial radii, mass radii, and per-node pseudo-density.
-    r_basic   = np.asarray(mesh.basic.radii).ravel()        # spatial radii at basic nodes
-    xi_basic  = np.asarray(mesh.basic.mass_radii).ravel()   # mass coord at basic nodes
+    r_basic = np.asarray(mesh.basic.radii).ravel()  # spatial radii at basic nodes
+    xi_basic = np.asarray(mesh.basic.mass_radii).ravel()  # mass coord at basic nodes
     rho_basic = np.asarray(mesh.eos.basic_density).ravel()  # pseudo-density at basic nodes
-    dxidr_arg = np.asarray(mesh.dxidr).ravel()              # transform Jacobian from mesh
+    dxidr_arg = np.asarray(mesh.dxidr).ravel()  # transform Jacobian from mesh
 
     # Recompute dxi/dr from the analytic Jacobian directly. This must
     # match mesh.dxidr to numerical noise.
-    rho_planet = float(getattr(mesh, '_planet_density'))
+    rho_planet = float(mesh._planet_density)
     dxidr_recompute = (rho_basic / rho_planet) * (r_basic / xi_basic) ** 2
     abs_err_jac = float(np.abs(dxidr_arg - dxidr_recompute).max())
 
     # Verify the transform invariants ─────────────────────────────────
     # SPIDER mass-coordinate convention used here: xi_cmb = r_core,
     # xi_top = r_top.
-    inv_cmb = float(xi_basic[0]  - r_basic[0])
+    inv_cmb = float(xi_basic[0] - r_basic[0])
     inv_top = float(xi_basic[-1] - r_basic[-1])
     rho_core = float(getattr(mesh.settings, 'core_density', np.nan))
     # (iii) trapezoid integral of dxi/dr from r_cmb to r_top reproduces
@@ -103,10 +110,13 @@ def main():
     # Save raw arrays
     np.savez(
         DATA / 'fig_07_mass_coord_jacobian.npz',
-        r_basic=r_basic, xi_basic=xi_basic,
-        rho_basic=rho_basic, rho_planet=rho_planet,
+        r_basic=r_basic,
+        xi_basic=xi_basic,
+        rho_basic=rho_basic,
+        rho_planet=rho_planet,
         rho_core=rho_core,
-        dxidr_mesh=dxidr_arg, dxidr_recompute=dxidr_recompute,
+        dxidr_mesh=dxidr_arg,
+        dxidr_recompute=dxidr_recompute,
         abs_err_jac=abs_err_jac,
         inv_xi_cmb_minus_r_cmb=inv_cmb,
         inv_xi_top_minus_r_top=inv_top,
@@ -122,39 +132,62 @@ def main():
 
     # (a) dxi/dr along radius, with rho*/rho_planet overlay
     ax = axes[0]
-    ax.plot(depth_km, dxidr_arg,
-            color=PALETTE['numpy'], lw=1.6,
-            label=r'$d\xi/dr$  from $\mathtt{mesh.dxidr}$')
-    ax.plot(depth_km, dxidr_recompute,
-            color=PALETTE['jax'], lw=0.9, ls='--',
-            label=r'$(\rho^*/\rho^*_\mathrm{planet})\,(r/\xi)^2$  (analytic)')
+    ax.plot(
+        depth_km,
+        dxidr_arg,
+        color=PALETTE['numpy'],
+        lw=1.6,
+        label=r'$d\xi/dr$  from $\mathtt{mesh.dxidr}$',
+    )
+    ax.plot(
+        depth_km,
+        dxidr_recompute,
+        color=PALETTE['jax'],
+        lw=0.9,
+        ls='--',
+        label=r'$(\rho^*/\rho^*_\mathrm{planet})\,(r/\xi)^2$  (analytic)',
+    )
     ax.invert_xaxis()
     ax.set_xlabel('Depth from surface (km)')
     ax.set_ylabel(r'$d\xi/dr$  (dimensionless)')
     ax.legend(loc='upper right', fontsize=8)
     ax.grid(alpha=0.3)
     ax.set_title('Transform Jacobian')
-    ax.text(0.5, 0.05,
-            f'$|\\mathtt{{mesh.dxidr}} - \\mathrm{{analytic}}|_\\infty$ = {abs_err_jac:.2e};  '
-            fr'$\xi_\mathrm{{cmb}} - r_\mathrm{{cmb}} = {inv_cmb:+.1e}$ m;  '
-            fr'$\xi_\mathrm{{top}} - r_\mathrm{{top}} = {inv_top:+.1e}$ m',
-            transform=ax.transAxes, va='bottom', ha='center', fontsize=6.5,
-            bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2))
+    ax.text(
+        0.5,
+        0.05,
+        f'$|\\mathtt{{mesh.dxidr}} - \\mathrm{{analytic}}|_\\infty$ = {abs_err_jac:.2e};  '
+        rf'$\xi_\mathrm{{cmb}} - r_\mathrm{{cmb}} = {inv_cmb:+.1e}$ m;  '
+        rf'$\xi_\mathrm{{top}} - r_\mathrm{{top}} = {inv_top:+.1e}$ m',
+        transform=ax.transAxes,
+        va='bottom',
+        ha='center',
+        fontsize=6.5,
+        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2),
+    )
     panel_label(ax, '(a)', loc='upper left')
 
     # (b) Cumulative integral of dxi/dr vs analytic xi(r) - xi_cmb
     ax = axes[1]
     # numerical cumulative trapezoid of dxi/dr against r
     cumtrapz = np.zeros_like(r_basic)
-    cumtrapz[1:] = np.cumsum(0.5 * (dxidr_arg[1:] + dxidr_arg[:-1])
-                             * np.diff(r_basic))
+    cumtrapz[1:] = np.cumsum(0.5 * (dxidr_arg[1:] + dxidr_arg[:-1]) * np.diff(r_basic))
     xi_minus_cmb_analytic = xi_basic - xi_basic[0]
-    ax.plot(depth_km, xi_minus_cmb_analytic / 1000.0,
-            color=PALETTE['analytic'], lw=2.0,
-            label=r'$\xi(r) - \xi_\mathrm{cmb}$  (mesh)')
-    ax.plot(depth_km, cumtrapz / 1000.0,
-            color=PALETTE['jax'], lw=1.0, ls='--',
-            label=r'$\int_{r_\mathrm{cmb}}^{r}\,d\xi/dr\,dr$  (trapezoid)')
+    ax.plot(
+        depth_km,
+        xi_minus_cmb_analytic / 1000.0,
+        color=PALETTE['analytic'],
+        lw=2.0,
+        label=r'$\xi(r) - \xi_\mathrm{cmb}$  (mesh)',
+    )
+    ax.plot(
+        depth_km,
+        cumtrapz / 1000.0,
+        color=PALETTE['jax'],
+        lw=1.0,
+        ls='--',
+        label=r'$\int_{r_\mathrm{cmb}}^{r}\,d\xi/dr\,dr$  (trapezoid)',
+    )
     ax.invert_xaxis()
     ax.set_xlabel('Depth from surface (km)')
     ax.set_ylabel(r'$\xi - \xi_\mathrm{cmb}$  (km)')
@@ -162,17 +195,23 @@ def main():
     ax.grid(alpha=0.3)
     ax.set_title('Integral consistency')
     rel_int_err = abs((xi_diff_integral - xi_diff_analytic) / max(xi_diff_analytic, 1.0))
-    ax.text(0.5, 0.05,
-            f'trapezoid $-$ mesh $= {(xi_diff_integral - xi_diff_analytic):+.1e}$ m '
-            f'({rel_int_err*100:.2f}% of mantle; '
-            fr'$O(\Delta r^2)$, $N={len(r_basic)}$ cells)',
-            transform=ax.transAxes, va='bottom', ha='center', fontsize=6.5,
-            bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2))
+    ax.text(
+        0.5,
+        0.05,
+        f'trapezoid $-$ mesh $= {(xi_diff_integral - xi_diff_analytic):+.1e}$ m '
+        f'({rel_int_err * 100:.2f}% of mantle; '
+        rf'$O(\Delta r^2)$, $N={len(r_basic)}$ cells)',
+        transform=ax.transAxes,
+        va='bottom',
+        ha='center',
+        fontsize=6.5,
+        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2),
+    )
     panel_label(ax, '(b)', loc='upper left')
 
     fig.tight_layout()
     save(fig, OUT / 'fig_07_mass_coord_jacobian.pdf')
-    print(f'fig_07 saved.')
+    print('fig_07 saved.')
     print(f'  rho_planet = {rho_planet:.3e} kg/m^3, rho_core = {rho_core:.3e} kg/m^3')
     print(f'  |mesh.dxidr - recompute| max = {abs_err_jac:.3e}')
     print(f'  invariants: xi_cmb-r_cmb = {inv_cmb:+.2e} m, xi_top-r_top = {inv_top:+.2e} m')

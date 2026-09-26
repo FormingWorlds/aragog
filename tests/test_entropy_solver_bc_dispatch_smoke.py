@@ -188,8 +188,8 @@ def test_bower2018_with_inner_bc_kind_1_one_sided_conduction(shared_eos):
     solver.set_initial_entropy(3050.0)
     solver.solve()
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
-    assert len(final_y) == solver._n_stag + 1, 'bower2018 state must be N+1; got {}'.format(
-        len(final_y)
+    assert len(final_y) == solver._n_stag + 1, (
+        f'bower2018 state must be N+1; got {len(final_y)}'
     )
 
 

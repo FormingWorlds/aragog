@@ -30,6 +30,7 @@ Run:
     conda activate proteus
     python tools/verification/figures/verify_utbl_cardano.py
 """
+
 from __future__ import annotations
 
 import os
@@ -37,6 +38,7 @@ import sys
 from pathlib import Path
 
 import jax
+
 jax.config.update('jax_enable_x64', True)
 import jax.numpy as jnp  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
@@ -99,13 +101,24 @@ def main():
 
     # (a) T_surf vs T_interior at three b values, with diagonal reference
     ax = axes[0]
-    ax.plot(T_int, T_int, color='k', lw=0.8, ls=':',
-            label=r'$T_\mathrm{surf}=T_\mathrm{interior}$ ($b\to 0$)')
+    ax.plot(
+        T_int,
+        T_int,
+        color='k',
+        lw=0.8,
+        ls=':',
+        label=r'$T_\mathrm{surf}=T_\mathrm{interior}$ ($b\to 0$)',
+    )
     for b, c in zip(b_vals, colors):
-        ax.plot(T_int, results_np[b], color=c, lw=1.6,
-                label=fr'numpy, $b={b:g}$ K$^{{-2}}$')
-        ax.plot(T_int, results_jx[b], color=c, lw=0.8, ls='--',
-                label=fr'JAX,   $b={b:g}$ K$^{{-2}}$')
+        ax.plot(T_int, results_np[b], color=c, lw=1.6, label=rf'numpy, $b={b:g}$ K$^{{-2}}$')
+        ax.plot(
+            T_int,
+            results_jx[b],
+            color=c,
+            lw=0.8,
+            ls='--',
+            label=rf'JAX,   $b={b:g}$ K$^{{-2}}$',
+        )
     ax.set_xlabel(r'Interior surface temperature  $T_\mathrm{interior}$ (K)')
     ax.set_ylabel(r'Radiating surface temperature  $T_\mathrm{surf}$ (K)')
     ax.set_xlim(T_int[0], T_int[-1])
@@ -119,11 +132,20 @@ def main():
     for b, c in zip(b_vals, colors):
         T_s = results_np[b]
         residual = b * T_s**3 + T_s - T_int
-        ax.plot(T_int, np.maximum(np.abs(residual), 1e-30),
-                color=c, lw=1.4, label=fr'$b={b:g}$ K$^{{-2}}$')
-    ax.axhline(np.finfo(np.float64).eps * T_int.max(), color='k',
-               lw=0.8, ls=':',
-               label=r'$\epsilon_\mathrm{mach}\cdot T_\mathrm{max}$')
+        ax.plot(
+            T_int,
+            np.maximum(np.abs(residual), 1e-30),
+            color=c,
+            lw=1.4,
+            label=rf'$b={b:g}$ K$^{{-2}}$',
+        )
+    ax.axhline(
+        np.finfo(np.float64).eps * T_int.max(),
+        color='k',
+        lw=0.8,
+        ls=':',
+        label=r'$\epsilon_\mathrm{mach}\cdot T_\mathrm{max}$',
+    )
     ax.set_yscale('log')
     ax.set_xlabel(r'$T_\mathrm{interior}$ (K)')
     ax.set_ylabel(r'$|b\,T_\mathrm{surf}^{3} + T_\mathrm{surf} - T_\mathrm{interior}|$  (K)')
@@ -131,10 +153,16 @@ def main():
     ax.set_ylim(1e-15, 1e-9)
     ax.legend(loc='upper left', fontsize=7.5)
     ax.grid(alpha=0.3, which='both')
-    ax.text(0.97, 0.05,
-            f'max |numpy-JAX|\n= {max_abs_err:.2e} K',
-            transform=ax.transAxes, va='bottom', ha='right', fontsize=8,
-            bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2))
+    ax.text(
+        0.97,
+        0.05,
+        f'max |numpy-JAX|\n= {max_abs_err:.2e} K',
+        transform=ax.transAxes,
+        va='bottom',
+        ha='right',
+        fontsize=8,
+        bbox=dict(facecolor='white', edgecolor='gray', alpha=0.85, pad=2),
+    )
     panel_label(ax, '(b)', loc='upper right')
 
     fig.tight_layout()
