@@ -99,3 +99,38 @@ def test_d_dr_at_both_end_nodes(mass_coordinates):
         x = r_stag / 1e6
         grad = mesh.d_dr_at_basic_nodes(np.atleast_2d(x**2).T).ravel()
         np.testing.assert_allclose(grad[[0, -1]], 2.0 * r_basic[[0, -1]] / 1e12, rtol=1e-9)
+
+
+@pytest.mark.parametrize('outer', [1, 4])
+def test_jax_boundary_conditions_give_the_output_fluxes(outer):
+    """The JAX BC functions, fed the numpy output state, return the output boundary fluxes."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import MeshArrays
+    from aragog.jax.solver import BoundaryParams, _apply_cmb_bc, _apply_surface_bc
+
+    s = _solver(outer, 1)
+    s.solve()
+    out = s.get_state()
+    bc = BoundaryParams(
+        outer_bc_type=outer,
+        outer_bc_value=F_TOP,
+        emissivity=1.0,
+        T_eq=300.0,
+        inner_bc_type=1,
+        inner_bc_value=0.0,
+        core_density=s._core_density,
+        core_heat_capacity=s._core_cp,
+        tfac_core_avg=s._core_tfac,
+    )
+    mesh = MeshArrays.from_numpy_mesh(s.evaluator.mesh)
+    rho = jnp.asarray(np.asarray(s.state.phase_staggered.density()).ravel())
+    cp = jnp.asarray(np.asarray(s.state.phase_staggered.heat_capacity()).ravel())
+    flux = jnp.asarray(np.asarray(out.heat_flux).ravel())
+    T_basic = jnp.asarray(np.asarray(out.T_basic).ravel())
+    jax_flux = _apply_cmb_bc(_apply_surface_bc(flux, bc, T_basic), bc, mesh, rho, cp)
+    np.testing.assert_allclose(
+        np.asarray(jax_flux)[[0, -1]], np.asarray(flux)[[0, -1]], rtol=1e-12
+    )
