@@ -35,22 +35,39 @@ R_OUT, R_IN = 6.371e6, 3.48e6
 T_END_YR = 1.0e7  # diffusion length sqrt(pi kappa t) = 31.5 km
 
 
-def _fluxes(cell_km):
-    common = dict(density=RHO, heat_capacity=CP, thermal_conductivity=K, thermal_expansivity=3e-5)
-    p = Parameters(
+def _params(
+    cell_km,
+    *,
+    outer_bc=6,
+    T_top=T_EQ,
+    T_cmb=T_C,
+    T0=T0,
+    r_in=R_IN,
+    r_out=R_OUT,
+    n=100,
+    t_end_yr=T_END_YR,
+    convection=False,
+    log10visc=2.0,
+):
+    """Constant-property shell, fixed CMB temperature; outer BC 6 (skin at T_top)
+    or 5 (fixed T_top)."""
+    common = dict(
+        density=RHO, heat_capacity=CP, thermal_conductivity=K, thermal_expansivity=3e-5
+    )
+    return Parameters(
         boundary_conditions=_BoundaryConditionsParameters(
-            outer_boundary_condition=6,
-            outer_boundary_value=0.0,
+            outer_boundary_condition=outer_bc,
+            outer_boundary_value=T_top,
             inner_boundary_condition=3,
-            inner_boundary_value=T_C,
+            inner_boundary_value=T_cmb,
             emissivity=1.0,
-            equilibrium_temperature=T_EQ,
+            equilibrium_temperature=T_top,
             core_heat_capacity=880.0,
             core_bc='quasi_steady',
         ),
         energy=_EnergyParameters(
             conduction=True,
-            convection=False,
+            convection=convection,
             gravitational_separation=False,
             mixing=False,
             radionuclides=False,
@@ -62,9 +79,9 @@ def _fluxes(cell_km):
             initial_condition=1, surface_temperature=T0, basal_temperature=T0
         ),
         mesh=_MeshParameters(
-            outer_radius=R_OUT,
-            inner_radius=R_IN,
-            number_of_nodes=100,
+            outer_radius=r_out,
+            inner_radius=r_in,
+            number_of_nodes=n,
             mixing_length_profile='nearest_boundary',
             core_density=RHO,
             surface_density=RHO,
@@ -88,11 +105,16 @@ def _fluxes(cell_km):
             const_Cp=CP,
             const_cond=K,
             const_T_ref=T0,
+            const_log10visc=log10visc,
             const_S_ref=3000.0,
         ),
         radionuclides=[],
-        solver=_SolverParameters(start_time=0.0, end_time=T_END_YR, atol=1e-8, rtol=1e-8),
+        solver=_SolverParameters(start_time=0.0, end_time=t_end_yr, atol=1e-8, rtol=1e-8),
     )
+
+
+def _fluxes(cell_km):
+    p = _params(cell_km)
     s = EntropySolver(p, entropy_eos=None)
     s.initialize()
     s._phi_rheo = 1.2  # const mode reports melt fraction 1: take the solid-skin branch

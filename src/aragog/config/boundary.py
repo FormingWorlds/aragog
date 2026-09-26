@@ -41,6 +41,12 @@ class BoundaryConfig:
         ``0.5 (1 + tanh((S_top - S_edge - 100) / 30))`` so the top cell stays
         above the lower entropy edge ``S_edge`` of the solid table. Always on
         for outer BC 6; opt-in for outer BC 4.
+    cmb_flux_law : str
+        'none' (default) or 'deschamps_sotin_2000': the CMB heat flux from the
+        lower thermal boundary layer law of Deschamps and Sotin (2000, eqs. 32
+        and 33), with the CMB temperature and the interior temperature on the
+        isentrope of the mid-mantle entropy (``aragog.cmb_boundary_layer``).
+        Needs ``core_bc = 'quasi_steady'`` and inner BC 1 or 3.
     """
 
     outer_boundary_condition: int
@@ -87,3 +93,4 @@ class BoundaryConfig:
     # must set core_bc='quasi_steady' explicitly.
     core_bc: str = 'energy_balance'
     table_edge_cutoff: bool = False
+    cmb_flux_law: str = 'none'

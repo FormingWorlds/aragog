@@ -27,6 +27,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.constants import Stefan_Boltzmann
 
+from aragog.cmb_boundary_layer import cmb_flux
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.jax.phase import (
     MeshArrays,
@@ -154,6 +155,11 @@ class BoundaryParams(eqx.Module):
     S_table_edge: jax.Array
     phi_rheo: jax.Array
 
+    # CMB flux law (aragog.cmb_boundary_layer) and its interior cells (1 = middle
+    # half of the mantle depth, 0 elsewhere), for inner BC types 1 and 3.
+    cmb_flux_law: bool = eqx.field(static=True)
+    cmb_law_interior: jax.Array
+
     # CMB
     inner_bc_type: int = eqx.field(static=True)
     inner_bc_value: (
@@ -192,6 +198,8 @@ class BoundaryParams(eqx.Module):
         table_edge_cutoff=False,
         S_table_edge=-1.0e30,
         phi_rheo=0.4,
+        cmb_flux_law=False,
+        cmb_law_interior=0.0,
     ):
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
@@ -210,6 +218,8 @@ class BoundaryParams(eqx.Module):
         self.table_edge_cutoff = bool(table_edge_cutoff) or outer_bc_type == 6
         self.S_table_edge = jnp.asarray(S_table_edge, dtype=jnp.float64)
         self.phi_rheo = jnp.asarray(phi_rheo, dtype=jnp.float64)
+        self.cmb_flux_law = bool(cmb_flux_law)
+        self.cmb_law_interior = jnp.asarray(cmb_law_interior, dtype=jnp.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +328,28 @@ def _apply_surface_bc(
     return heat_flux.at[-1].set(F_surf)
 
 
+def _cmb_law_flux(bc, mesh, eos, phase_stag, S, T_top, *, T_c, face):
+    """JAX counterpart of ``EntropySolver._cmb_law_flux``."""
+    w = mesh.volume * phase_stag.density * bc.cmb_law_interior
+    S_int = jnp.sum(w * S) / jnp.sum(w)
+    eta = jnp.exp(jnp.sum(w * jnp.log(phase_stag.viscosity)) / jnp.sum(w))
+    T_m = eos.temperature(mesh.P_basic[face : face + 1], S_int[None])[0]
+    rho, k = phase_stag.density[0], phase_stag.thermal_conductivity[0]
+    return cmb_flux(
+        T_c,
+        T_m,
+        T_top,
+        mesh.radii_basic[-1] - mesh.radii_basic[0],
+        rho,
+        mesh.gravity[face],
+        phase_stag.thermal_expansivity[0],
+        k / (rho * phase_stag.heat_capacity[0]),
+        k,
+        eta,
+        xp=jnp,
+    )
+
+
 def _apply_cmb_bc(
     heat_flux: jax.Array,
     bc: BoundaryParams,
@@ -326,13 +358,19 @@ def _apply_cmb_bc(
     phase_stag_Cp: jax.Array,
     phase_stag_T: jax.Array | None = None,
     phase_stag_k: jax.Array | None = None,
+    law_inputs: tuple | None = None,
 ) -> jax.Array:
     """Apply the CMB boundary condition to the heat flux array.
 
     ``phase_stag_T`` and ``phase_stag_k`` are required for
     ``inner_bc_type == 3``: the prescribed CMB temperature sets the flux by
-    conduction across the bottom half cell.
+    conduction across the bottom half cell. With ``bc.cmb_flux_law``,
+    ``law_inputs = (eos, phase_stag, S, T_top)`` and the law sets the flux of
+    face 1 (type 1) or face 0 (type 3), as in the numpy solver.
     """
+    if bc.cmb_flux_law and bc.inner_bc_type == 1:
+        q = _cmb_law_flux(bc, mesh, *law_inputs, T_c=phase_stag_T[0], face=1)
+        heat_flux = heat_flux.at[1].set(q)
     if bc.inner_bc_type == 1:
         # Core cooling (Bower+2018 Eq. 37)
         r_cmb = mesh.radii_basic[0]
@@ -348,6 +386,8 @@ def _apply_cmb_bc(
     elif bc.inner_bc_type == 2:
         # Prescribed flux
         F_cmb = bc.inner_bc_value
+    elif bc.inner_bc_type == 3 and bc.cmb_flux_law:
+        F_cmb = _cmb_law_flux(bc, mesh, *law_inputs, T_c=bc.inner_bc_value, face=0)
     elif bc.inner_bc_type == 3:
         dr_half = 0.5 * (mesh.radii_basic[1] - mesh.radii_basic[0])
         F_cmb = phase_stag_k[0] * (bc.inner_bc_value - phase_stag_T[0]) / dr_half
@@ -423,6 +463,7 @@ def dSdt(
         phase_stag.heat_capacity,
         phase_stag.temperature,
         phase_stag.thermal_conductivity,
+        law_inputs=(eos, phase_stag, S, phase_basic_T[-1]),
     )
 
     # Flux divergence at staggered nodes

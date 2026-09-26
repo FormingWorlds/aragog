@@ -79,6 +79,7 @@ def test_top_level_modules_list():
         '__init__.py',
         'cfg',
         'cli.py',
+        'cmb_boundary_layer.py',
         'config',
         'eos',
         'jax',

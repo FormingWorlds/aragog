@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from aragog.jax.nondim import NonDimScales
 
+from aragog.cmb_boundary_layer import cmb_flux
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
@@ -1420,6 +1421,7 @@ class EntropySolver:
                 'external eos_gravity not available',
                 g_scalar,
             )
+        self._g_basic_flat = np.asarray(g_basic, dtype=float).ravel()
 
         # Create entropy phase evaluators for staggered and basic nodes.
         # cp_blend selects how Cp is computed in the mushy zone:
@@ -1693,6 +1695,15 @@ class EntropySolver:
         )
         self._surface_flux_nominal = 0.0
         self._surface_skin = (np.nan, np.nan, 0.0)
+
+        # CMB flux law: face 1 (quasi_steady core unit = core + cell 0) or 0 (fixed T_cmb);
+        # the interior is the middle half of the mantle depth.
+        self._cmb_law = getattr(bc, 'cmb_flux_law', 'none') != 'none'
+        self._cmb_law_face = 1 if self._inner_bc_kind == 1 else 0
+        depth_frac = (self._r_basic_flat[-1] - self._r_stag_flat) / (
+            self._r_basic_flat[-1] - self._r_basic_flat[0]
+        )
+        self._cmb_law_interior = (depth_frac >= 0.25) & (depth_frac <= 0.75)
 
     def reset(self) -> None:
         """Reset for a new integration (PROTEUS coupling loop).
@@ -2103,6 +2114,53 @@ class EntropySolver:
             surface_solid_weight=s,
         )
 
+    def _cmb_law_flux(self, entropy: npt.NDArray) -> float:
+        """CMB flux from ``aragog.cmb_boundary_layer.cmb_flux`` at the current state.
+
+        ``T_c`` is the prescribed CMB temperature (inner BC 3) or the core-unit
+        temperature (cell 0, quasi_steady). ``T_m`` lies on the isentrope of the
+        mass-weighted entropy of the middle half of the mantle, at the pressure of
+        the law's face; the viscosity is the mass-weighted log mean over those cells.
+        Layer properties are those of the bottom cell, gravity that of the face.
+        """
+        ps = self.state.phase_staggered
+        rho = np.asarray(ps.density()).ravel()
+        k = float(np.asarray(ps.thermal_conductivity()).ravel()[0])
+        cp = float(np.asarray(ps.heat_capacity()).ravel()[0])
+        m = self._cmb_law_interior
+        w = self._volume_flat[m] * rho[m]
+        S_int = float(np.sum(w * np.asarray(entropy)[m]) / np.sum(w))
+        eta = float(
+            np.exp(np.sum(w * np.log(np.asarray(ps.viscosity()).ravel()[m])) / np.sum(w))
+        )
+        face = self._cmb_law_face
+        if self.entropy_eos is not None:
+            T_m = float(
+                self.entropy_eos.temperature_scalar(float(self._P_basic_flat[face]), S_int)
+            )
+        else:
+            pm = self.parameters.phase_mixed
+            T_m = pm.const_T_ref * np.exp((S_int - pm.const_S_ref) / pm.const_Cp)
+        T_c = (
+            self._inner_bc_value
+            if self._inner_bc_kind == 3
+            else float(np.asarray(ps.temperature()).ravel()[0])
+        )
+        return float(
+            cmb_flux(
+                T_c,
+                T_m,
+                float(self.state.top_temperature.item()),
+                float(self._r_basic_flat[-1] - self._r_basic_flat[0]),
+                float(rho[0]),
+                float(self._g_basic_flat[face]),
+                float(np.asarray(ps.thermal_expansivity()).ravel()[0]),
+                k / (float(rho[0]) * cp),
+                k,
+                eta,
+            )
+        )
+
     def _skin_surface_flux(self) -> float:
         """Surface flux of outer BC 6: grey body blended to the conductive skin.
 
@@ -2277,12 +2335,16 @@ class EntropySolver:
                 rho_first = float(np.asarray(self.state.phase_staggered.density()).flat[0])
                 cp_first = float(np.asarray(self.state.phase_staggered.heat_capacity()).flat[0])
                 cell_cap = self._cmb_vol_first * rho_first * cp_first  # J/K
+                if self._cmb_law:
+                    self.state._heat_flux[1] = self._cmb_law_flux(entropy)
                 alpha = self._cmb_radius_ratio_sq / (
                     cell_cap / (self._core_cap * self._core_tfac) + 1.0
                 )
                 self.state._heat_flux[0] = alpha * self.state._heat_flux[1]
         elif self._inner_bc_kind == 2:
             self.state._heat_flux[0] = self._inner_bc_value
+        elif self._inner_bc_kind == 3 and self._cmb_law:
+            self.state._heat_flux[0] = self._cmb_law_flux(entropy)
         elif self._inner_bc_kind == 3:
             # Prescribed CMB temperature: conduction across the bottom half cell.
             T_first = float(np.asarray(self.state.phase_staggered.temperature()).flat[0])
@@ -3313,6 +3375,11 @@ class EntropySolver:
                 getattr(self.parameters.energy, 'use_jax_jacobian', False)
                 and self._jax_cvode_factory is not None
             )
+            if use_jax_jac and self._cmb_law:
+                raise ValueError(
+                    'cmb_flux_law is not passed to the JAX CVODE factory; '
+                    'run with use_jax_jacobian = false'
+                )
             if use_jax_jac:
                 try:
                     # Pass the NonDimScales instance, which bundles

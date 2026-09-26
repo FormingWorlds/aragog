@@ -23,6 +23,7 @@ import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
 
+from aragog.cmb_boundary_layer import CMB_FLUX_LAWS
 from aragog.config.phases import (
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
@@ -81,6 +82,8 @@ class _BoundaryConditionsParameters:
     # Scale the outgoing surface flux down near the lower entropy edge of the
     # solid table (always on for outer BC 6; opt-in for outer BC 4).
     table_edge_cutoff: bool = False
+    # CMB flux from a lower thermal boundary layer law (aragog.cmb_boundary_layer)
+    cmb_flux_law: str = 'none'
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -106,6 +109,22 @@ class _BoundaryConditionsParameters:
             self.param_utbl_const = 0.0
         self._normalize_inner_boundary_condition()
         self._normalize_outer_boundary_condition()
+        self._check_cmb_flux_law()
+
+    def _check_cmb_flux_law(self) -> None:
+        """The CMB flux law replaces the face flux of inner BC 1 (quasi_steady) or 3."""
+        if self.cmb_flux_law not in CMB_FLUX_LAWS:
+            raise ValueError(
+                f'cmb_flux_law must be one of {CMB_FLUX_LAWS}, got {self.cmb_flux_law!r}'
+            )
+        if self.cmb_flux_law != 'none' and (
+            self.core_bc != 'quasi_steady' or self.inner_boundary_condition not in (1, 3)
+        ):
+            raise ValueError(
+                f"cmb_flux_law = {self.cmb_flux_law!r} needs core_bc = 'quasi_steady' and "
+                f'inner_boundary_condition 1 or 3; got core_bc = {self.core_bc!r}, '
+                f'inner_boundary_condition = {self.inner_boundary_condition}'
+            )
 
     def _normalize_inner_boundary_condition(self) -> None:
         """Normalise the inner boundary value.
