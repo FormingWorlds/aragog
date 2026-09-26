@@ -67,6 +67,7 @@ viscosity_max_log10 = 40.0
 lid_base_mode = "rheological"
 lid_base_temperature = 1400.0
 lid_contrast_coeff = 2.2
+mlt_top_slope = 1.0
 
 [phase_mixed]
 latent_heat_of_fusion = 4e6

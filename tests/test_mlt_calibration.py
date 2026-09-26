@@ -106,8 +106,10 @@ def test_viscous_branch_scales_and_inviscid_branch_is_unchanged():
 
 def test_default_slopes_and_rheology_off_keep_the_abe_path():
     """Slopes of 1, or any slopes with the rheology off, leave no factor (the code
-    path of the Abe closure); calibrated slopes need the nearest-boundary profile."""
+    path of the Abe closure); calibrated slopes (the default top slope is the B1
+    fit) need the nearest-boundary profile."""
     assert _state(21.0)._visc_ml_factor is None
+    assert SolidRheologyParams().mlt_top_slope == 0.161
     assert _state(21.0, top=0.5, enabled=False)._visc_ml_factor is None
     with pytest.raises(ValueError, match='nearest_boundary'):
         _state(21.0, top=0.5, profile='constant')
@@ -179,7 +181,7 @@ def test_jax_compute_mlt_applies_the_same_factor():
         enabled=True, kappah_floor=0.0, stress_closure_mode='local', yield_stress_c=1e30
     )
     grad = jnp.full(n_basic, -1e-6)
-    k1, _ = compute_mlt(grad, phase, mesh, PhaseParams(**common))
+    k1, _ = compute_mlt(grad, phase, mesh, PhaseParams(mlt_top_slope=1.0, **common))
     k2, _ = compute_mlt(grad, phase, mesh, PhaseParams(mlt_top_slope=0.5, **common))
     q = viscous_mixing_length_factor(r, r[0], r[-1], ml, 0.5, 1.0)
     interior = slice(2, -2)

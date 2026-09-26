@@ -85,6 +85,7 @@ def _make_mesh(n=60):
     mesh.basic.volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
     ml = np.maximum(np.minimum(r_basic - _R_CMB, _R_SURF - r_basic), 1.0)
     mesh.basic.mixing_length = ml
+    mesh.settings = type('Settings', (), {'mixing_length_profile': 'nearest_boundary'})()
     mesh.basic.mixing_length_squared = ml**2
     mesh.basic.mixing_length_cubed = ml**3
     mesh.basic.pressure = p_basic

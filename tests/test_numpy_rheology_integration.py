@@ -136,6 +136,7 @@ def _build_test_entropy_state(mode: str = 'local'):
     mesh.basic.volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
     ml = np.minimum(r_basic - r_cmb, r_surf - r_basic)
     mesh.basic.mixing_length = np.maximum(ml, 1.0)
+    mesh.settings = type('Settings', (), {'mixing_length_profile': 'nearest_boundary'})()
     mesh.basic.mixing_length_squared = mesh.basic.mixing_length**2
     mesh.basic.mixing_length_cubed = mesh.basic.mixing_length**3
     mesh.basic.pressure = p_basic
