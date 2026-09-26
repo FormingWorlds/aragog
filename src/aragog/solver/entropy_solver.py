@@ -3735,14 +3735,11 @@ class EntropySolver:
             n_basic = n_stag + 1
             dSdr_final = sol.y[:n_basic, -1]
             S_surf_final = float(sol.y[n_basic, -1])
-            S_final, S_basic_final = self._reconstruct_entropy(dSdr_final, S_surf_final)
-            extra_final = None
+            S_final, _ = self._reconstruct_entropy(dSdr_final, S_surf_final)
         elif is_ext:
             S_final = sol.y[:n_stag, -1]
-            extra_final = float(sol.y[n_stag, -1])
         else:
             S_final = sol.y[:, -1]
-            extra_final = None
 
         P_stag = self._P_stag_flat
         r_basic = self._r_basic_flat
@@ -3760,13 +3757,9 @@ class EntropySolver:
             phi_stag = np.ones_like(S_final)
             rho_stag = np.full_like(S_final, pm.const_rho)
 
-        # Refresh the state at the final entropy for derived quantities.
-        if gradient_mode:
-            self.state.update(S_final, sol.t[-1], dSdr=dSdr_final, entropy_basic=S_basic_final)
-        elif energy_balance:
-            self.state.update(S_final, sol.t[-1], dSdr_cmb=extra_final)
-        else:
-            self.state.update(S_final, sol.t[-1])
+        # Refresh the state at the final entropy through the RHS, so the boundary
+        # fluxes are the ones the integrator applied.
+        self._dSdt_single(sol.t[-1], sol.y[:, -1])
         visc_stag = np.asarray(self.state.phase_staggered.viscosity()).ravel()
         heat_flux = self.state.heat_flux.copy()
         heating = self.state.heating.copy()

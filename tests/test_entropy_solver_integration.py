@@ -77,6 +77,7 @@ def _build_parameters(
     n_nodes: int = 15,
     use_jax_jacobian: bool = False,
     inner_boundary_value: float = 0.0,
+    inner_boundary_condition: int = 2,
 ):
     """Build an in-memory Parameters object for a short solver run.
 
@@ -100,7 +101,7 @@ def _build_parameters(
     bc = _BoundaryConditionsParameters(
         outer_boundary_condition=1,  # grey body
         outer_boundary_value=1500.0,
-        inner_boundary_condition=2,  # prescribed core flux
+        inner_boundary_condition=inner_boundary_condition,  # 2: prescribed core flux
         inner_boundary_value=inner_boundary_value,  # W/m^2 at the CMB (0 = insulating)
         emissivity=1.0,
         equilibrium_temperature=255.0,
@@ -196,6 +197,18 @@ def _run_solver(parameters, eos, S_init: float = 3300.0):
     solver.solve()
     out = solver.get_state()
     return solver, out
+
+
+def _run_solver_graded(parameters, eos, dS: float = 150.0):
+    """As ``_run_solver``, from an entropy that rises by ``dS`` from surface to CMB."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    solver = EntropySolver(parameters, entropy_eos=eos)
+    solver.initialize()
+    r = np.asarray(solver._r_stag_flat)
+    solver.set_initial_entropy(3050.0 + dS * (r[-1] - r) / (r[-1] - r[0]))
+    solver.solve()
+    return solver, solver.get_state()
 
 
 def _S_init_below_liquidus(parameters) -> float:
@@ -531,46 +544,37 @@ def test_derive_initial_entropy_skips_when_ic_method_is_2(shared_eos):
 
 def test_f_cmb_column_is_conserved_step_average_not_end_of_step_snapshot(shared_eos):
     """The reported F_cmb column is the conserved step-average, not the
-    end-of-step basic-node-0 snapshot.
+    end-of-step CMB flux ``heat_flux[0]``.
 
-    A prescribed nonzero core flux (inner BC 2, 1e4 W/m^2) forces the CMB
-    flux to that value at every sub-step, so the trapezoidal step-average
-    equals it. The final state refresh does not re-impose the BC, so the
-    retained snapshot ``heat_flux[0]`` drifts to the un-constrained
-    gradient. The two therefore diverge by a known, controlled amount.
+    With the quasi_steady core BC the applied CMB flux changes within the
+    step as the mantle cools from an entropy that rises with depth, so the
+    step-average and the end-of-step value differ (by about 1.5 % here).
 
     Discriminator: the closure ``F_cmb * A_cmb * dt == step_dE_F_cmb_J``
-    holds only for the step-average. If the column reverted to the
-    snapshot, the reconstruction would miss the conserved integral by the
-    snapshot-vs-average ratio, and the closure assertion would fail.
+    holds only for the step-average, and it constrains the ``A_cmb * dt``
+    divisor because the flux is nonzero. A column that reported the
+    end-of-step value would fail the closure and the inequality below.
     """
     parameters = _build_parameters(
-        core_bc='quasi_steady', n_nodes=15, end_time=50.0, inner_boundary_value=1.0e4
+        core_bc='quasi_steady', n_nodes=15, end_time=50.0, inner_boundary_condition=1
     )
-    _, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+    _, out = _run_solver_graded(parameters, shared_eos)
 
     a_cmb = 4.0 * np.pi * float(out.r_basic[0]) ** 2
     dt_s = float(out.dt_actual) * Julian_year
     reported = float(out.F_cmb)
-    snapshot = float(out.heat_flux[0])
+    end_of_step = float(out.heat_flux[0])
     integral = float(out.step_dE_F_cmb_J)
 
-    # Closure: the reported column reconstructs the conserved integral.
     assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0), (
         f'F_cmb={reported:.6e} * A_cmb * dt does not reconstruct '
         f'step_dE_F_cmb_J={integral:.6e}; column is not the conserved average'
     )
-    # The step-average equals the prescribed flux (guards a stuck-at-zero column).
-    assert np.isclose(reported, 1.0e4, rtol=1e-6), (
-        f'step-average F_cmb={reported:.6e} != prescribed 1e4 W/m^2'
+    assert reported > 0.0
+    assert not np.isclose(reported, end_of_step, rtol=1e-3), (
+        f'F_cmb={reported:.6e} equals the end-of-step heat_flux[0]={end_of_step:.6e}; '
+        'the fixture no longer separates the two'
     )
-    # The snapshot differs, so this is genuinely not the end-of-step value.
-    assert not np.isclose(reported, snapshot, rtol=1e-3), (
-        f'F_cmb={reported:.6e} equals snapshot heat_flux[0]={snapshot:.6e}; '
-        'the column reports the end-of-step snapshot, not the step-average'
-    )
-    # The raw snapshot stays available for callers that need it.
-    assert np.isfinite(snapshot)
 
 
 def test_f_cmb_column_reports_bc_consistent_zero_for_insulating_core(shared_eos):
@@ -579,12 +583,7 @@ def test_f_cmb_column_reports_bc_consistent_zero_for_insulating_core(shared_eos)
 
     The zero-flux BC is imposed inside the RHS at every sub-step, so the
     conserved flux integral is zero and the step-average is zero. The
-    final state refresh omits the BC, leaving ``heat_flux[0]`` at a
-    nonzero gradient value.
-
-    Discriminator: the column must read 0. A column that reported the
-    snapshot would carry the nonzero gradient and violate the prescribed
-    zero-flux boundary condition.
+    output ``heat_flux[0]`` is the applied flux and reads 0 as well.
     """
     parameters = _build_parameters(
         core_bc='quasi_steady', n_nodes=15, end_time=50.0, inner_boundary_value=0.0
@@ -607,63 +606,44 @@ def test_f_cmb_column_reports_bc_consistent_zero_for_insulating_core(shared_eos)
     # divisor-scaling regression is caught by the nonzero closure tests, not
     # this one; this assertion documents self-consistency at zero flux.
     assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0)
-    # The snapshot is nonzero, confirming the column is not the snapshot.
-    assert snapshot != 0.0, (
-        'expected a nonzero un-constrained snapshot to make this test '
-        'discriminate; fixture no longer exercises the BC-consistency gap'
-    )
+    assert snapshot == 0.0, f'output heat_flux[0]={snapshot:.6e} is not the applied zero flux'
 
 
 def test_f_cmb_column_is_conserved_step_average_energy_balance_core(shared_eos):
     """The conserved step-average column also holds under
-    ``core_bc='energy_balance'``, the SPIDER-parity production mode and the
-    setting of the reported CMB-flux artifact.
+    ``core_bc='energy_balance'``, the SPIDER-parity production mode.
 
     Energy-balance mode integrates the extended state vector
     [S_0, ..., S_{N-1}, dSdr_cmb] of length N+1, so ``get_state`` and the
     step-energy integrator take the ``is_extended`` reconstruction branch
-    that the quasi_steady tests never exercise. A prescribed nonzero core
-    flux (inner BC 2, 1e4 W/m^2) is imposed at every sub-step, so the
-    trapezoidal step-average equals it. The final state refresh does not
-    re-impose the BC, so the retained snapshot ``heat_flux[0]`` drifts to
-    the un-constrained gradient, here even to the wrong sign (flux into the
-    core): the reported step-average removes that artifact.
+    that the quasi_steady tests never exercise. The CMB flux follows the
+    state-tracked gradient and falls within the step (by about 8 % here).
 
     Discriminator: the closure ``F_cmb * A_cmb * dt == step_dE_F_cmb_J``
     holds only for the step-average, and it constrains the ``A_cmb * dt``
-    divisor because the reported value is nonzero. A column that reverted
-    to the snapshot would be negative here, failing both the closure and
-    the prescribed-value assertion.
+    divisor because the flux is nonzero. A column that reported the
+    end-of-step value would fail the closure and the inequality below.
     """
     parameters = _build_parameters(
-        core_bc='energy_balance', n_nodes=15, end_time=50.0, inner_boundary_value=1.0e4
+        core_bc='energy_balance', n_nodes=15, end_time=50.0, inner_boundary_condition=1
     )
-    _, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
+    _, out = _run_solver_graded(parameters, shared_eos)
 
     a_cmb = 4.0 * np.pi * float(out.r_basic[0]) ** 2
     dt_s = float(out.dt_actual) * Julian_year
     reported = float(out.F_cmb)
-    snapshot = float(out.heat_flux[0])
+    end_of_step = float(out.heat_flux[0])
     integral = float(out.step_dE_F_cmb_J)
 
-    # Closure: the reported column reconstructs the conserved integral, and
-    # because it is nonzero the identity constrains the A_cmb * dt divisor.
     assert np.isclose(reported * a_cmb * dt_s, integral, rtol=1e-9, atol=0.0), (
         f'F_cmb={reported:.6e} * A_cmb * dt does not reconstruct '
         f'step_dE_F_cmb_J={integral:.6e}; column is not the conserved average'
     )
-    # The step-average equals the prescribed flux (guards a stuck-at-zero column).
-    assert np.isclose(reported, 1.0e4, rtol=1e-6), (
-        f'step-average F_cmb={reported:.6e} != prescribed 1e4 W/m^2'
+    assert reported > 0.0
+    assert not np.isclose(reported, end_of_step, rtol=1e-3), (
+        f'F_cmb={reported:.6e} equals the end-of-step heat_flux[0]={end_of_step:.6e}; '
+        'the fixture no longer separates the two'
     )
-    # The retained snapshot is the un-constrained gradient flux, below the
-    # true CMB flux and here of the wrong sign: the artifact the average removes.
-    assert reported > 0.0 and snapshot < reported, (
-        f'expected snapshot={snapshot:.6e} below the conserved average '
-        f'{reported:.6e}; fixture no longer exercises the artifact'
-    )
-    # The raw snapshot stays available for callers that need it.
-    assert np.isfinite(snapshot)
 
 
 # ---- F_cmb closure on the melt-fraction step-cap degenerate path -----------

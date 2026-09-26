@@ -497,10 +497,10 @@ class Mesh:
         outer_delta_ratio: float = (
             self.basic.delta_mesh[-2].item() / self.basic.delta_mesh[-1].item()
         )
-        transform[-1, -1] = -(outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
-        transform[-1, -2] = (outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
-        transform[-1, -2] += outer_delta_ratio / self.staggered.delta_mesh[-2].item()
-        transform[-1, -3] = -outer_delta_ratio / self.staggered.delta_mesh[-2].item()
+        transform[-1, -1] = (outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
+        transform[-1, -2] = -(outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
+        transform[-1, -2] -= outer_delta_ratio / self.staggered.delta_mesh[-2].item()
+        transform[-1, -3] = outer_delta_ratio / self.staggered.delta_mesh[-2].item()
 
         # Scale the transform matrix by dxi/dr at basic nodes
         for i in range(self.settings.number_of_nodes - 1):
