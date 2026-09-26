@@ -625,6 +625,35 @@ def test_step_surface_energy_integrates_the_prescribed_flux(shared_eos, core_bc)
     assert float(out.heat_flux[-1]) == 0.05
 
 
+def test_gradient_mode_solver_residual_is_measured(shared_eos):
+    """The gradient-layout solver residual is computed, not set to zero.
+
+    After the solve, the RHS is wrapped to add ``delta`` [J/kg/K/yr] to the rate of
+    S_surf. Every cell entropy rate then shifts by ``delta``, so the residual shifts
+    by about ``delta * sum(m T) * dt`` and linearly in ``delta``; the trajectory and
+    the boundary fluxes stay as integrated.
+    """
+    parameters = _build_parameters(
+        core_bc='gradient', n_nodes=15, end_time=50.0, inner_boundary_condition=1
+    )
+    solver, out = _run_solver_graded(parameters, shared_eos)
+    base = float(out.step_solver_residual_J)
+    rhs, n_basic = solver._dSdt_single, solver._n_stag + 1
+
+    def residual_with(delta):
+        bump = np.zeros(n_basic + 1)
+        bump[n_basic] = delta
+        solver._dSdt_single = lambda t, y: rhs(t, y) + bump
+        return float(solver.get_state().step_solver_residual_J)
+
+    shift = residual_with(1e-3) - base
+    dt_s = float(out.dt_actual) * Julian_year
+    expected = 1e-3 / Julian_year * float(np.sum(out.mass_stag * out.T_stag)) * dt_s
+    assert abs(base) < 1e-12 * abs(float(out.step_dE_F_int_J))
+    assert shift == pytest.approx(expected, rel=5e-2)
+    assert residual_with(2e-3) - base == pytest.approx(2.0 * shift, rel=1e-6)
+
+
 # ---- F_cmb closure on the melt-fraction step-cap degenerate path -----------
 
 

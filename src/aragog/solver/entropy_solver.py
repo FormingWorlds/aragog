@@ -3358,10 +3358,15 @@ class EntropySolver:
                 S_traj_start = np.asarray(S_i, dtype=float).copy()
 
             # The RHS at this accepted state applies the BCs, so the boundary fluxes read below
-            # are the ones the entropy ODE saw. Its rates are per yr; the gradient layout has no
-            # per-cell entropy rates, so the solver residual is skipped there.
-            dSdt_full = np.asarray(self._dSdt_single(t_i, y_col)).ravel()
-            dSdt_stag_i = None if gradient_mode else dSdt_full[:n_stag] / SECS_PER_YEAR
+            # are the ones the entropy ODE saw. In the gradient layout the reconstruction is
+            # linear in (dS/dr, S_surf), so it maps their rates to the cell entropy rates.
+            dSdt_full = np.asarray(self._dSdt_single(t_i, y_col)).ravel() / SECS_PER_YEAR
+            if gradient_mode:
+                dSdt_stag_i, _ = self._reconstruct_entropy(
+                    dSdt_full[:n_basic], float(dSdt_full[n_basic])
+                )
+            else:
+                dSdt_stag_i = dSdt_full[:n_stag]
 
             # Read boundary fluxes AFTER dSdt has applied the BCs.
             F_int_i = float(self.state._heat_flux[-1])
@@ -3398,25 +3403,20 @@ class EntropySolver:
             # against a ~1e16 W flux divergence). With the consistent
             # weighting the interior fluxes telescope and the residual is
             # machine-zero.
-            if dSdt_stag_i is not None:
-                cap_i = np.asarray(self.state.capacitance_staggered()).ravel()
-                T_phase_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
-                # The RHS adds heating as ``H / max(T, 1)`` (the floor the
-                # solver applies at line ~1493), so weight the source powers
-                # by the matching ``rho_phase * T / max(T, 1) * V`` to keep
-                # the identity exact down to the temperature floor.
-                heat_mass_i = (
-                    np.asarray(self.state.phase_staggered.density()).ravel()
-                    * vol
-                    * (T_phase_i / np.maximum(T_phase_i, 1.0))
-                )
-                lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
-                Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
-                Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
-                rhs_i = P_F_int[i] + P_F_cmb[i] + Q_radio_resid + Q_tidal_resid
-                P_resid_solver[i] = lhs_i - rhs_i
-            else:
-                P_resid_solver[i] = 0.0
+            cap_i = np.asarray(self.state.capacitance_staggered()).ravel()
+            T_phase_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
+            # The RHS adds heating as ``H / max(T, 1)``, so the source powers are weighted by
+            # ``rho_phase * T / max(T, 1) * V`` to keep the identity exact at the T floor.
+            heat_mass_i = (
+                np.asarray(self.state.phase_staggered.density()).ravel()
+                * vol
+                * (T_phase_i / np.maximum(T_phase_i, 1.0))
+            )
+            lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
+            Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
+            Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
+            rhs_i = P_F_int[i] + P_F_cmb[i] + Q_radio_resid + Q_tidal_resid
+            P_resid_solver[i] = lhs_i - rhs_i
 
         dt_s = np.diff(np.asarray(sol.t, dtype=float)) * SECS_PER_YEAR
 
