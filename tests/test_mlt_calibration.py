@@ -106,10 +106,10 @@ def test_viscous_branch_scales_and_inviscid_branch_is_unchanged():
 
 def test_default_slopes_and_rheology_off_keep_the_abe_path():
     """Slopes of 1, or any slopes with the rheology off, leave no factor (the code
-    path of the Abe closure); calibrated slopes (the default top slope is the B1
-    fit) need the nearest-boundary profile."""
+    path of the Abe closure); calibrated slopes (the default top slope is the joint
+    B1 and B3 fit) need the nearest-boundary profile."""
     assert _state(21.0)._visc_ml_factor is None
-    assert SolidRheologyParams().mlt_top_slope == 0.161
+    assert SolidRheologyParams().mlt_top_slope == 0.22
     assert _state(21.0, top=0.5, enabled=False)._visc_ml_factor is None
     with pytest.raises(ValueError, match='nearest_boundary'):
         _state(21.0, top=0.5, profile='constant')

@@ -47,8 +47,8 @@ class SolidRheologyParams:
     phi_visc_single: float = 0.5
     # Slopes of the viscous-branch mixing length at the top and bottom boundary,
     # l_v = min(bottom (r - r_in), top (r_out - r)); 1 and 1 give the Abe profile.
-    # The top slope is fit to the stagnant-lid Nusselt numbers of Korenaga (2009).
-    mlt_top_slope: float = 0.161
+    # The top slope is fit jointly to Korenaga (2009) and Deschamps and Vilella (2021).
+    mlt_top_slope: float = 0.22
     mlt_bottom_slope: float = 1.0
 
     def __post_init__(self) -> None:
