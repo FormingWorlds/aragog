@@ -13,6 +13,7 @@ strict-rejected at load time. Remove the section.
 from __future__ import annotations
 
 import logging
+import math
 import tomllib  # noqa: F401
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -257,6 +258,22 @@ class _MeshParameters:
     # Fraction of mantle thickness used as the mixing length when
     # ``mixing_length_profile = 'constant'``. Ignored otherwise.
     mixing_length_constant_fraction: float = 0.25
+    # Thickness [m] of the outermost and innermost basic cell; 0 leaves that end at the
+    # spacing of the uniform grid (radius or mass coordinate). See aragog.mesh.stretching.
+    surface_cell_thickness: float = 0.0
+    cmb_cell_thickness: float = 0.0
+
+    def __post_init__(self):
+        for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
+            val = getattr(self, name)
+            if val == 0.0:
+                continue
+            uniform = (self.outer_radius - self.inner_radius) / (self.number_of_nodes - 1)
+            if not (math.isfinite(val) and 0.0 < val < uniform):
+                raise ValueError(
+                    f'mesh.{name} must be 0 (off) or in (0, {uniform:.6g}) m, the uniform '
+                    f'radial cell; got {val}'
+                )
 
 
 @dataclass

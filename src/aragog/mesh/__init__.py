@@ -17,6 +17,7 @@ from aragog.mesh.pressure_eos import (
     AdamsWilliamsonEOS,
     UserDefinedEOS,
 )
+from aragog.mesh.stretching import stretched_unit_grid
 from aragog.parser import Parameters, _MeshParameters
 
 __all__ = [
@@ -93,6 +94,7 @@ def _radius_for_mass_coordinate(
     r_lo: float,
     r_hi: float,
     node: int | None = None,
+    xtol: float = 1.0,
 ) -> float:
     """Solve ``xi_of_r(r) == xi_target`` for ``r`` in ``[r_lo, r_hi]``.
 
@@ -119,6 +121,8 @@ def _radius_for_mass_coordinate(
         Bracket endpoints [m], ``r_lo < r_hi``.
     node : int, optional
         Node index, used only in the clamp warning message.
+    xtol : float, optional
+        Absolute radius tolerance of the root [m].
 
     Returns
     -------
@@ -137,7 +141,7 @@ def _radius_for_mass_coordinate(
     if f_hi == 0.0:
         return r_hi
     if f_lo * f_hi < 0.0:
-        return float(brentq(_f, r_lo, r_hi, xtol=1.0, rtol=1e-12))
+        return float(brentq(_f, r_lo, r_hi, xtol=xtol, rtol=1e-12))
 
     clamped = r_lo if f_lo > 0.0 else r_hi
     logger.warning(
@@ -233,6 +237,17 @@ class Mesh:
                 M_shell = M_shell_4pi / (4.0 * np.pi)
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
+            if self._refined:
+                span = xi_max - xi_min
+                basic_mass_coordinates = xi_min + span * self._refined_unit_grid(
+                    (_xi_of_r(r_core + self.settings.cmb_cell_thickness) - xi_min) / span
+                    if self.settings.cmb_cell_thickness
+                    else 0.0,
+                    (xi_max - _xi_of_r(r_surf - self.settings.surface_cell_thickness)) / span
+                    if self.settings.surface_cell_thickness
+                    else 0.0,
+                ).reshape(-1, 1)
+
             basic_coordinates = np.empty_like(basic_mass_coordinates)
             basic_coordinates[0, 0] = r_core  # CMB: exact
             basic_coordinates[-1, 0] = r_surf  # surface: exact
@@ -243,7 +258,7 @@ class Mesh:
             for j in range(1, self.settings.number_of_nodes - 1):
                 xi_target = float(basic_mass_coordinates[j, 0])
                 basic_coordinates[j, 0] = _radius_for_mass_coordinate(
-                    _xi_of_r, xi_target, r_lo, r_hi, node=j
+                    _xi_of_r, xi_target, r_lo, r_hi, node=j, xtol=1e-3 if self._refined else 1.0
                 )
             # The mesh must be strictly increasing in radius: zero-width cells
             # divide by zero in the finite-volume gradient operators. If two or
@@ -260,6 +275,12 @@ class Mesh:
             logger.debug('Basic mass coordinates (uniform) = %s', basic_mass_coordinates)
             logger.debug('Basic spatial coordinates (non-uniform) = %s', basic_coordinates)
         else:
+            if self._refined:
+                r_in, r_out = self.settings.inner_radius, self.settings.outer_radius
+                initial_spatial = r_in + (r_out - r_in) * self._refined_unit_grid(
+                    self.settings.cmb_cell_thickness / (r_out - r_in),
+                    self.settings.surface_cell_thickness / (r_out - r_in),
+                ).reshape(-1, 1)
             basic_coordinates = initial_spatial
             basic_mass_coordinates = initial_spatial
 
@@ -454,6 +475,25 @@ class Mesh:
         )
 
         return dxidr
+
+    @property
+    def _refined(self) -> bool:
+        return bool(
+            getattr(self.settings, 'surface_cell_thickness', 0.0)
+            or getattr(self.settings, 'cmb_cell_thickness', 0.0)
+        )
+
+    def _refined_unit_grid(self, first: float, last: float) -> npt.NDArray:
+        """Stretched unit grid for ``mesh.cmb_cell_thickness`` and
+        ``mesh.surface_cell_thickness``, as fractions of the coordinate span."""
+        try:
+            return stretched_unit_grid(self.settings.number_of_nodes, first, last)
+        except ValueError as exc:
+            raise ValueError(
+                f'mesh.cmb_cell_thickness = {self.settings.cmb_cell_thickness} m and '
+                f'mesh.surface_cell_thickness = {self.settings.surface_cell_thickness} m '
+                f'give no refined grid of {self.settings.number_of_nodes} nodes: {exc}'
+            ) from exc
 
     def get_constant_spacing(self) -> npt.NDArray:
         """Constant radius spacing across the mantle
