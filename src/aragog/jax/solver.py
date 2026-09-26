@@ -271,7 +271,7 @@ def _apply_cmb_bc(
     mesh: MeshArrays,
     phase_stag_rho: jax.Array,
     phase_stag_Cp: jax.Array,
-    heating_first: jax.Array | float = 0.0,
+    heating_first: jax.Array | float,
 ) -> jax.Array:
     """Apply the CMB boundary condition to the heat flux array.
 
@@ -290,8 +290,7 @@ def _apply_cmb_bc(
         r_above = mesh.radii_basic[1]
         radius_ratio = r_above / r_cmb
         alpha = radius_ratio**2 / (cell_cap / (core_cap * bc.tfac_core_avg) + 1.0)
-        F_net = heat_flux[1] - heating_first * rho_first * vol_first / mesh.area[1]
-        F_cmb = alpha * F_net
+        F_cmb = alpha * (heat_flux[1] - heating_first * rho_first * vol_first / mesh.area[1])
     elif bc.inner_bc_type == 2:
         # Prescribed flux
         F_cmb = bc.inner_bc_value

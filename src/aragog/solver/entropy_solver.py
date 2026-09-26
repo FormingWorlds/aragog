@@ -1523,7 +1523,6 @@ class EntropySolver:
         self._cmb_dr_cmb = r_above - r_cmb  # basic-node spacing at CMB
         self._cmb_dr_half = 0.5 * self._cmb_dr_cmb  # basic-to-staggered half-spacing
         self._cmb_area = 4.0 * np.pi * r_cmb**2
-        self._cmb_area_above = 4.0 * np.pi * r_above**2
         self._cmb_vol_first = float(self._volume_flat[0])
 
         # Core properties (constant in time)
@@ -2064,8 +2063,9 @@ class EntropySolver:
                 )
                 Q_first = float(np.asarray(self.state.heating).flat[0]) * rho_first
                 Q_first *= self._cmb_vol_first  # W, heating of the bottom cell
-                F_net = self.state._heat_flux[1] - Q_first / self._cmb_area_above
-                self.state._heat_flux[0] = alpha * F_net
+                self.state._heat_flux[0] = alpha * (
+                    self.state._heat_flux[1] - Q_first / self._area_flat[1]
+                )
         elif self._inner_bc_kind == 2:
             self.state._heat_flux[0] = self._inner_bc_value
         elif self._inner_bc_kind == 3:

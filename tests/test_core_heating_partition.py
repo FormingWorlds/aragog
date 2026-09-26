@@ -53,9 +53,8 @@ def test_core_temperature_follows_the_cmb_flux(core_bc, heating):
         T = float(np.asarray(solver.state.phase_staggered.temperature()).flat[0])
         dS_core = dy[0]
     else:
-        r_b = np.asarray(solver._r_basic_flat)
         T = float(np.asarray(solver.state.phase_basic.temperature()).flat[0])
-        dS_core = dy[0] + (r_b[0] - 0.5 * (r_b[0] + r_b[1])) * dy[n]
+        dS_core = dy[0] - solver._cmb_dr_half * dy[n]
     core_rate = T / cp * dS_core
     balance = (
         -solver.state._heat_flux[0] * solver._cmb_area / (solver._core_cap * solver._core_tfac)
@@ -76,6 +75,25 @@ def test_lumped_reservoir_conserves_energy():
     gain = (C_cell + C_core) * T / cp * dy[0]
     expected = -solver.state._heat_flux[1] * solver._area_flat[1] + H_CELL * m_cell
     assert gain == pytest.approx(expected, rel=1e-9, abs=0.0)
+
+
+@pytest.mark.unit
+def test_jax_lumped_partition_takes_the_cell_heating_from_the_outflow():
+    """JAX _apply_cmb_bc, type 1: F_cmb A_cmb (1 + C_cell / C') = F_1 A_1 - Q_0."""
+    jnp = pytest.importorskip('jax.numpy')
+    from aragog.jax.solver import _apply_cmb_bc
+    from tests.test_jax_dsdt_energy_balance import _make_bc, _make_const_property_mesh
+
+    mesh, bc = _make_const_property_mesh(N=8), _make_bc(inner_bc_type=1)
+    rho, cp, H = 4000.0, 1000.0, 1.0e-3  # H large enough to change the sign of F_cmb
+    heat_flux = jnp.zeros(mesh.area.size).at[1].set(0.05)
+    F_cmb = float(_apply_cmb_bc(heat_flux, bc, mesh, jnp.full(8, rho), jnp.full(8, cp), H)[0])
+    r_cmb, vol, area = float(mesh.radii_basic[0]), float(mesh.volume[0]), np.asarray(mesh.area)
+    C_core = 4.0 / 3.0 * np.pi * r_cmb**3 * bc.core_density * bc.core_heat_capacity
+    C_core *= bc.tfac_core_avg
+    lhs = F_cmb * area[0] * (1.0 + vol * rho * cp / C_core)
+    assert lhs == pytest.approx(0.05 * area[1] - H * rho * vol, rel=1e-9, abs=0.0)
+    assert F_cmb < 0.0
 
 
 @pytest.mark.smoke
@@ -118,6 +136,7 @@ def test_jax_core_temperature_follows_the_cmb_flux(monkeypatch):
     phase = evaluate_phase(eos, params, mesh.P_stag, S)
     T, cp = float(phase.temperature[0]), float(phase.heat_capacity[0])
     r_cmb = float(mesh.radii_basic[0])
-    C_core = 4.0 / 3.0 * np.pi * r_cmb**3 * 10500.0 * 880.0 * 1.147
+    C_core = 4.0 / 3.0 * np.pi * r_cmb**3 * bc.core_density * bc.core_heat_capacity
+    C_core *= bc.tfac_core_avg
     balance = -float(flux['F'][0]) * float(mesh.area[0]) / C_core
     assert T / cp * dS[0] == pytest.approx(balance, rel=1e-9, abs=0.0)

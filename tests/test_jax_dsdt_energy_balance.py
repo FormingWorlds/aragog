@@ -128,7 +128,7 @@ def test_apply_cmb_bc_prescribed_flux_overrides_heat_flux():
     heat_flux = jnp.full(mesh.area.size, 9.0e6)
     rho_stag = jnp.full(8, 4000.0)
     cp_stag = jnp.full(8, 1000.0)
-    out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag)
+    out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag, 0.0)
     assert float(out[0]) == pytest.approx(1234.5, rel=1e-12)
     # Other entries unchanged.
     np.testing.assert_allclose(np.asarray(out[1:]), 9.0e6, rtol=1e-12, atol=0.0)
@@ -150,7 +150,7 @@ def test_apply_cmb_bc_prescribed_temperature_preserves_conduction_flux():
     heat_flux = jnp.full(mesh.area.size, sentinel)
     rho_stag = jnp.full(8, 4000.0)
     cp_stag = jnp.full(8, 1000.0)
-    out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag)
+    out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag, 0.0)
     assert float(out[0]) == pytest.approx(sentinel, rel=1e-12), (
         'inner_bc_type=3 must preserve the conduction-derived flux at the CMB; '
         f'got {float(out[0]):.3e}, expected {sentinel:.3e}.'
@@ -171,7 +171,7 @@ def test_apply_cmb_bc_insulating_zeros_heat_flux_at_cmb():
     heat_flux = jnp.full(mesh.area.size, 7.0e5)
     rho_stag = jnp.full(8, 4000.0)
     cp_stag = jnp.full(8, 1000.0)
-    out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag)
+    out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag, 0.0)
     assert float(out[0]) == 0.0
 
 
@@ -210,7 +210,7 @@ def test_apply_cmb_bc_core_cooling_uses_alpha_factor_partition():
     heat_flux = heat_flux.at[1].set(1.0e6)  # positive flux at first interior basic node
     rho_stag = jnp.full(8, 4000.0)
     cp_stag = jnp.full(8, 1000.0)
-    out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag)
+    out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag, 0.0)
 
     # F_cmb must be a finite scalar with the same sign as heat_flux[1].
     F_cmb = float(out[0])
