@@ -42,7 +42,7 @@ for var in [
 ]:
     os.environ.setdefault(var, '1')
 
-import jax
+import jax  # noqa: E402
 
 jax.config.update('jax_enable_x64', True)
 import jax.numpy as jnp  # noqa: E402
@@ -108,7 +108,6 @@ def main():
         RADIO['hl'],
     )
     H_radio_per_cell = float(H_radio_fn(jnp.asarray(0.0)))
-    heating_radio = jnp.full(n_stag, H_radio_per_cell)
 
     # Build component-isolated PhaseParams. Reuse the production
     # rheology/viscosity, only flip the transport flags.

@@ -358,7 +358,6 @@ def main():
         # Nu = 1 conductive limit
         ax.axhline(1.0, color='gray', ls=':', alpha=0.6, label='Nu = 1 (conduction)')
         # Annotate regimes
-        Ra_min, Ra_max = nura_Ra.min(), nura_Ra.max()
         # Shade inviscid plateau
         Nu_plateau = np.median(nura_Nu[nura_Nu > 5])
         if np.isfinite(Nu_plateau):

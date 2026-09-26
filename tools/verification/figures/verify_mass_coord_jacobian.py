@@ -56,7 +56,7 @@ for var in [
 ]:
     os.environ.setdefault(var, '1')
 
-import jax
+import jax  # noqa: E402
 
 jax.config.update('jax_enable_x64', True)
 import matplotlib.pyplot as plt  # noqa: E402

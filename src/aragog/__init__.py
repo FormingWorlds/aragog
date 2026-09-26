@@ -69,8 +69,12 @@ def debug_logger() -> logging.Logger:
     return package_logger
 
 
+# The working directory at import time is the default log directory.
+_DEFAULT_LOG_DIR = os.getcwd()
+
+
 def aragog_file_logger(
-    console_level=logging.INFO, file_level=logging.DEBUG, log_dir=os.getcwd()
+    console_level=logging.INFO, file_level=logging.DEBUG, log_dir=_DEFAULT_LOG_DIR
 ) -> logging.Logger:
     """Sets up console logging and file logging according to arguments.
 

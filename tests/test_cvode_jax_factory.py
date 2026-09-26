@@ -13,6 +13,8 @@ pytrees and a tiny heating array; no solver integration is performed.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -195,7 +197,7 @@ def test_nondim_scales_rhs_scale_auto_derived():
 def test_nondim_scales_immutable():
     """NonDimScales is frozen — direct field mutation must raise."""
     sc = _make_scales(np.full(3, 3.0e3), 1.0)
-    with pytest.raises(Exception):  # FrozenInstanceError on dataclasses
+    with pytest.raises(dataclasses.FrozenInstanceError):
         sc.t_ref = 2.0  # type: ignore[misc]
 
 

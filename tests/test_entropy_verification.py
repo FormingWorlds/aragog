@@ -1125,8 +1125,8 @@ class TestInitialEntropySweep:
                 F_surf = 5.670374419e-8 * (T_top**4 - 255.0**4)
                 _s._heat_flux[-1] = F_surf
                 _s._heat_flux[0] = 0.0
-                energy_flux = _s.heat_flux * mesh.basic.area
-                cap = _s.capacitance_staggered() * mesh.basic.volume
+                energy_flux = _s.heat_flux * mesh.basic.area  # noqa: B023
+                cap = _s.capacitance_staggered() * mesh.basic.volume  # noqa: B023
                 return -np.diff(energy_flux) / cap * SECS_PER_YEAR
 
             sol = solve_ivp(

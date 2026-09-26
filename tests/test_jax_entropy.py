@@ -1849,7 +1849,7 @@ class TestBoundaryCopies:
 
             def kh_sum(S_arg):
                 ph_arg = evaluate_phase(jax_eos, params, P_basic, S_arg)
-                kh, _ = compute_mlt(dSdr, ph_arg, mesh, params)
+                kh, _ = compute_mlt(dSdr, ph_arg, mesh, params)  # noqa: B023
                 return kh.sum()
 
             grad = jax.grad(kh_sum)(S_basic)
