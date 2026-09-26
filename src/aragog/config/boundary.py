@@ -16,7 +16,8 @@ class BoundaryConfig:
     Parameters
     ----------
     outer_boundary_condition : int
-        1: Grey-body, 2: Zahnle, 3: Atmodeller, 4: Prescribed flux, 5: Prescribed T
+        1: Grey-body, 2: Zahnle, 3: Atmodeller, 4: Prescribed flux, 5: Prescribed T,
+        6: Grey body with a conductive skin across the top half cell
     outer_boundary_value : float
         Value for outer BC (flux in W/m^2 or T in K, depending on type).
     inner_boundary_condition : int
@@ -35,6 +36,11 @@ class BoundaryConfig:
         Enable upper thermal boundary layer parameterization.
     param_utbl_const : float
         UTBL constant.
+    table_edge_cutoff : bool
+        Scale the outgoing surface flux by
+        ``0.5 (1 + tanh((S_top - S_edge - 100) / 30))`` so the top cell stays
+        above the lower entropy edge ``S_edge`` of the solid table. Always on
+        for outer BC 6; opt-in for outer BC 4.
     """
 
     outer_boundary_condition: int
@@ -80,3 +86,4 @@ class BoundaryConfig:
     # Standalone callers that want the legacy alpha-factor behaviour
     # must set core_bc='quasi_steady' explicitly.
     core_bc: str = 'energy_balance'
+    table_edge_cutoff: bool = False

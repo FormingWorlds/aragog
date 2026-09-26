@@ -430,6 +430,11 @@ class EntropyEOS:
 
         self._build_enthalpy_table()
 
+    @property
+    def S_min_solid(self) -> float:
+        """Lower entropy edge of the solid temperature table [J/kg/K]."""
+        return float(self._tables['temperature_solid']['S'][0])
+
     def _build_enthalpy_table(self) -> None:
         """Precompute specific enthalpy h(P, S) on the table grid.
 

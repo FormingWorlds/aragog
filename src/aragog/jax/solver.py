@@ -34,6 +34,7 @@ from aragog.jax.phase import (
     compute_fluxes,
     evaluate_phase,
 )
+from aragog.surface_skin import skin_temperature, solid_weight, table_edge_factor
 
 # diffrax is imported lazily inside `solve_entropy` so that the rest
 # of this module (dSdt, BoundaryParams, BC helpers) can be used by
@@ -114,6 +115,8 @@ class BoundaryParams(eqx.Module):
     Surface BC types:
         1 = grey-body (F = emissivity * sigma * (T^4 - T_eq^4))
         4 = prescribed flux (from atmosphere module)
+        6 = grey body with a conductive skin across the top half cell
+            (``aragog.surface_skin``); always with the table-edge cutoff
 
     CMB BC types:
         0 = insulating (F = 0)
@@ -145,6 +148,11 @@ class BoundaryParams(eqx.Module):
     # used by SPIDER-parity test runs.
     param_utbl: bool = eqx.field(static=True)
     param_utbl_const: jax.Array
+    # Table-edge cutoff on the outgoing flux (type 6 always, type 4 on request),
+    # the solid-table entropy edge it uses, and the rheological transition of the skin weight.
+    table_edge_cutoff: bool = eqx.field(static=True)
+    S_table_edge: jax.Array
+    phi_rheo: jax.Array
 
     # CMB
     inner_bc_type: int = eqx.field(static=True)
@@ -179,6 +187,9 @@ class BoundaryParams(eqx.Module):
         cmb_dr_cmb=0.0,
         param_utbl=False,
         param_utbl_const=0.0,
+        table_edge_cutoff=False,
+        S_table_edge=-1.0e30,
+        phi_rheo=0.4,
     ):
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
@@ -194,6 +205,9 @@ class BoundaryParams(eqx.Module):
         self.cmb_dr_cmb = jnp.asarray(cmb_dr_cmb, dtype=jnp.float64)
         self.param_utbl = bool(param_utbl)
         self.param_utbl_const = jnp.asarray(param_utbl_const, dtype=jnp.float64)
+        self.table_edge_cutoff = bool(table_edge_cutoff) or outer_bc_type == 6
+        self.S_table_edge = jnp.asarray(S_table_edge, dtype=jnp.float64)
+        self.phi_rheo = jnp.asarray(phi_rheo, dtype=jnp.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -230,14 +244,40 @@ def _utbl_tsurf_jax(T_interior: jax.Array, b: jax.Array) -> jax.Array:
     return jnp.cbrt(-q / 2.0 + sqrt_disc) + jnp.cbrt(-q / 2.0 - sqrt_disc)
 
 
+@jax.custom_jvp
+def _skin_temperature_jax(T_top, G, emissivity, T_eq):
+    """``surface_skin.skin_temperature`` in JAX with an implicit derivative."""
+    return skin_temperature(T_top, G, emissivity, T_eq, SIGMA_SB, xp=jnp)
+
+
+@_skin_temperature_jax.defjvp
+def _skin_temperature_jvp(primals, tangents):
+    T_top, G, emissivity, T_eq = primals
+    dT_top, dG, demissivity, dT_eq = tangents
+    T_s = _skin_temperature_jax(T_top, G, emissivity, T_eq)
+    es = emissivity * SIGMA_SB
+    dT_s = (
+        G * dT_top
+        + (T_top - T_s) * dG
+        + 4.0 * es * T_eq**3 * dT_eq
+        - SIGMA_SB * (T_s**4 - T_eq**4) * demissivity
+    ) / (4.0 * es * T_s**3 + G)
+    return T_s, dT_s
+
+
 def _apply_surface_bc(
     heat_flux: jax.Array,
     bc: BoundaryParams,
     phase_basic_T: jax.Array,
+    phase_stag=None,
+    S_top: jax.Array | None = None,
+    mesh: MeshArrays | None = None,
 ) -> jax.Array:
     """Apply the surface boundary condition to the heat flux array.
 
-    Uses jnp.where for JAX traceability (no Python if-statements).
+    ``phase_stag``, ``S_top`` and ``mesh`` are required for type 6 and for
+    the table-edge cutoff: the top staggered cell's temperature,
+    conductivity and melt fraction, its entropy, and the half spacing.
     """
     T_interior = phase_basic_T[-1]
 
@@ -259,8 +299,19 @@ def _apply_surface_bc(
     # Select based on BC type (static, so this traces correctly)
     if bc.outer_bc_type == 1:
         F_surf = F_grey
+    elif bc.outer_bc_type == 6:
+        dr_half = 0.5 * (mesh.radii_basic[-1] - mesh.radii_basic[-2])
+        T_top = phase_stag.temperature[-1]
+        G = phase_stag.thermal_conductivity[-1] / dr_half
+        s = solid_weight(phase_stag.melt_fraction[-1], bc.phi_rheo, xp=jnp)
+        T_s = _skin_temperature_jax(T_top, G, bc.emissivity, bc.T_eq)
+        F_surf = (1.0 - s) * F_grey + s * G * (T_top - T_s)
     else:  # type 4 (prescribed)
         F_surf = F_prescribed
+
+    if bc.table_edge_cutoff:
+        factor = table_edge_factor(S_top, bc.S_table_edge, xp=jnp)
+        F_surf = jnp.where(F_surf > 0.0, F_surf * factor, F_surf)
 
     return heat_flux.at[-1].set(F_surf)
 
@@ -354,7 +405,7 @@ def dSdt(
     ).temperature
 
     # Apply boundary conditions
-    heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic_T)
+    heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic_T, phase_stag, S[-1], mesh)
     heat_flux = _apply_cmb_bc(
         heat_flux,
         bc,
@@ -465,7 +516,9 @@ def dSdt_energy_balance(
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
     # Surface BC
-    heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
+    heat_flux = _apply_surface_bc(
+        heat_flux, bc, phase_basic.temperature, phase_stag, S[-1], mesh
+    )
 
     # CMB BC: heat_flux[0] is already correctly computed by
     # compute_fluxes using the dSdr_cmb override. No additional

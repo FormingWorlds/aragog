@@ -70,6 +70,9 @@ class _BoundaryConditionsParameters:
     # See aragog/config/boundary.py docstring for details.
     # Default 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'
+    # Scale the outgoing surface flux down near the lower entropy edge of the
+    # solid table (always on for outer BC 6; opt-in for outer BC 4).
+    table_edge_cutoff: bool = False
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -120,8 +123,9 @@ class _BoundaryConditionsParameters:
             2: Zahnle steam atmosphere (not implemented)
             4: Prescribed surface heat flux (atmosphere coupling)
             5: Prescribed surface temperature
+            6: Grey body with a conductive skin across the top half cell
         """
-        if self.outer_boundary_condition in (1, 2, 4, 5):
+        if self.outer_boundary_condition in (1, 2, 4, 5, 6):
             pass
         else:
             msg: str = f'outer_boundary_condition = {self.outer_boundary_condition} is unknown'
