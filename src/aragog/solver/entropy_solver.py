@@ -38,6 +38,7 @@ from aragog.parser import Parameters
 from aragog.rheology import SolidRheologyParams
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
+from aragog.surface_skin import skin_temperature, solid_weight, table_edge_factor
 
 # SUNDIALS CVODE via scikits-odes-sundials. Same underlying solver SPIDER
 # uses (SUNDIALS CVODE BDF with modified-Newton nonlinear iteration and
@@ -761,6 +762,14 @@ class SolverOutput:
     theta: float = 0.0  # Frank-Kamenetskii rheological contrast parameter [-]
     lid_regime: float = 0.0  # lid regime indicator: 0 = none / molten, 1 = stagnant, 2 = mobile
     energy_residual: float = 0.0  # discrete energy conservation residual rate [W]
+    # Surface half cell at the final state: skin temperature (outer BC 6), top-cell
+    # temperature, conductance k_top / dr_half, and solid weight of the top cell.
+    T_surface_skin: float = float('nan')
+    T_top_cell: float = float('nan')
+    surface_half_cell_conductance: float = float('nan')
+    surface_solid_weight: float = 0.0
+    # Energy held back by the table-edge cutoff over the call [J], >= 0 when it acts.
+    step_dE_surface_cutoff_J: float = 0.0
 
     # ── NetCDF output ──────────────────────────────────────────────
     def to_netcdf(
@@ -957,6 +966,31 @@ class SolverOutput:
                 self.step_dE_state_heat_J,
                 'J',
                 'Per-call entropy-transported heat content change (EOS quadrature)',
+            )
+            _scalar(
+                'step_dE_surface_cutoff_J',
+                self.step_dE_surface_cutoff_J,
+                'J',
+                'Per-call surface energy held back by the table-edge cutoff',
+            )
+            _scalar(
+                'T_surface_skin',
+                self.T_surface_skin,
+                'K',
+                'Skin surface temperature (outer BC 6)',
+            )
+            _scalar('T_top_cell', self.T_top_cell, 'K', 'Temperature of the top staggered cell')
+            _scalar(
+                'surface_half_cell_conductance',
+                self.surface_half_cell_conductance,
+                'W m-2 K-1',
+                'Conductance k_top / dr_half of the top half cell',
+            )
+            _scalar(
+                'surface_solid_weight',
+                self.surface_solid_weight,
+                '1',
+                'Solid weight of the top cell',
             )
             _scalar('dt_actual', self.dt_actual, 'yr', 'Actual integration time of this step')
             _scalar('status', int(self.status), '1', 'Solver status code (0 = success)')
@@ -1650,6 +1684,16 @@ class EntropySolver:
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
 
+        # Surface skin (outer BC 6) and the table-edge cutoff (BC 6, or BC 4 on request)
+        self._top_dr_half = 0.5 * float(self._r_basic_flat[-1] - self._r_basic_flat[-2])
+        self._phi_rheo = float(self.parameters.phase_mixed.rheological_transition_melt_fraction)
+        self._table_edge_cutoff = self._outer_bc_kind == 6 or bool(bc.table_edge_cutoff)
+        self._S_table_edge = (
+            self.entropy_eos.S_min_solid if self.entropy_eos is not None else -np.inf
+        )
+        self._surface_flux_nominal = 0.0
+        self._surface_skin = (np.nan, np.nan, 0.0)
+
     def reset(self) -> None:
         """Reset for a new integration (PROTEUS coupling loop).
 
@@ -2033,6 +2077,53 @@ class EntropySolver:
             return None
         return float(prev_sol.y[n_stag, -1])
 
+    def _surface_half_cell_diagnostics(self) -> dict[str, float]:
+        """Top half-cell quantities at the current state, for the output.
+
+        Returns
+        -------
+        dict
+            ``T_top_cell``, ``surface_half_cell_conductance`` (``k_top / dr_half``),
+            ``surface_solid_weight`` and ``T_surface_skin`` (the root of the skin
+            balance with the grey-body inputs).
+        """
+        ps = self.state.phase_staggered
+        T_top = float(np.asarray(ps.temperature()).flat[-1])
+        G = float(np.asarray(ps.thermal_conductivity()).flat[-1]) / self._top_dr_half
+        s = float(solid_weight(float(np.asarray(ps.melt_fraction()).flat[-1]), self._phi_rheo))
+        T_s = float(
+            skin_temperature(
+                T_top, G, self._outer_bc_emiss, self._outer_bc_T_eq, Stefan_Boltzmann
+            )
+        )
+        return dict(
+            T_surface_skin=T_s,
+            T_top_cell=T_top,
+            surface_half_cell_conductance=G,
+            surface_solid_weight=s,
+        )
+
+    def _skin_surface_flux(self) -> float:
+        """Surface flux of outer BC 6: grey body blended to the conductive skin.
+
+        Returns
+        -------
+        float
+            ``(1 - s) F_grey(T_basic_top) + s G (T_top - T_s)`` [W/m^2] with
+            ``G = k_top / dr_half``, ``T_s`` from ``skin_temperature`` and
+            ``s`` the solid weight of the top staggered cell.
+        """
+        emiss, T_eq = self._outer_bc_emiss, self._outer_bc_T_eq
+        T_basic_top = self.state.top_temperature.item()
+        F_grey = emiss * Stefan_Boltzmann * (T_basic_top**4 - T_eq**4)
+        ps = self.state.phase_staggered
+        T_top = float(np.asarray(ps.temperature()).flat[-1])
+        G = float(np.asarray(ps.thermal_conductivity()).flat[-1]) / self._top_dr_half
+        s = float(solid_weight(float(np.asarray(ps.melt_fraction()).flat[-1]), self._phi_rheo))
+        T_s = float(skin_temperature(T_top, G, emiss, T_eq, Stefan_Boltzmann))
+        self._surface_skin = (T_s, G, s)
+        return (1.0 - s) * F_grey + s * G * (T_top - T_s)
+
     def dSdt(
         self,
         time: npt.NDArray | float,
@@ -2149,10 +2240,19 @@ class EntropySolver:
             self.state._heat_flux[-1] = (
                 k_surf * (T_cell - self._outer_bc_value) / self._surf_dr_half
             )
+        elif self._outer_bc_kind == 6:
+            self.state._heat_flux[-1] = self._skin_surface_flux()
         else:
             raise ValueError(
                 f'EntropySolver: unknown outer_boundary_condition = {self._outer_bc_kind}'
             )
+        if self._table_edge_cutoff:
+            F_out = float(self.state._heat_flux[-1])
+            self._surface_flux_nominal = F_out
+            if F_out > 0.0:
+                self.state._heat_flux[-1] = F_out * table_edge_factor(
+                    float(entropy[-1]), self._S_table_edge
+                )
 
         # CMB boundary condition
         if self._inner_bc_kind == 1:
@@ -3417,6 +3517,7 @@ class EntropySolver:
             'F_int': 0.0,
             'F_cmb': 0.0,
             'F_cmb_step_avg': None,
+            'surface_cutoff': 0.0,
             'Q_radio': 0.0,
             'Q_tidal': 0.0,
             'Q_radio_cons': 0.0,
@@ -3467,6 +3568,7 @@ class EntropySolver:
         # time-integration error. The time-integration quality is carried
         # by ``E_residual_cons_frac`` on the coupler side.
         P_resid_solver = np.zeros(n_steps)
+        P_cutoff = np.zeros(n_steps)
 
         for i in range(n_steps):
             t_i = float(sol.t[i])
@@ -3511,6 +3613,8 @@ class EntropySolver:
             # Read boundary fluxes AFTER dSdt has applied the BCs.
             F_int_i = float(self.state._heat_flux[-1])
             F_cmb_i = float(self.state._heat_flux[0])
+            if self._table_edge_cutoff and not gradient_mode:
+                P_cutoff[i] = (self._surface_flux_nominal - F_int_i) * A_int
 
             rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
             mass_i = rho_i * vol
@@ -3588,6 +3692,7 @@ class EntropySolver:
 
         return {
             'F_int': trap(P_F_int),
+            'surface_cutoff': trap(P_cutoff),
             'F_cmb': step_dE_F_cmb,
             'F_cmb_step_avg': f_cmb_step_avg,
             'Q_radio': trap(P_radio),
@@ -3856,6 +3961,11 @@ class EntropySolver:
         # the end-of-call snapshot (heat_flux, heating arrays, etc.)
         # consistent with what callers see in the rest of get_state().
         step_integrals = self._compute_step_energy_integrals()
+        if step_integrals['surface_cutoff'] > 0.0:
+            logger.info(
+                'Table-edge cutoff held back %.4e J of surface energy in this call',
+                step_integrals['surface_cutoff'],
+            )
 
         # Slice the final state vector.
         if gradient_mode:
@@ -4162,6 +4272,8 @@ class EntropySolver:
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
             tcore_change_max=tcore_change_max,
             tcore_change_exceeded=tcore_change_exceeded,
+            step_dE_surface_cutoff_J=step_integrals['surface_cutoff'],
+            **self._surface_half_cell_diagnostics(),
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,
