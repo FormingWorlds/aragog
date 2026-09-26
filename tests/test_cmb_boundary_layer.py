@@ -317,3 +317,49 @@ def test_steady_basal_heating_carries_the_law_flux_to_the_surface(monkeypatch):
     assert F[0] == pytest.approx(
         s._cmb_law_flux(np.asarray(st.S_final, float).ravel()), rel=1e-12
     )
+
+
+@pytest.mark.physics_invariant
+def test_fixed_surface_temperature_sets_the_rayleigh_number():
+    """Outer BC 5 (surface held at 273 K) with a uniform 1200 K mantle: the top node
+    still reads 1200 K, but the law uses the prescribed 273 K; an isothermal start at
+    T_c gives zero flux, not a division by zero."""
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_mesh_refinement_halfspace import _params
+
+    def face0(T0):
+        p = _params(
+            0.0,
+            outer_bc=5,
+            T_top=273.0,
+            T_cmb=1273.0,
+            T0=T0,
+            n=40,
+            convection=True,
+            log10visc=20.5,
+        )
+        p.boundary_conditions.cmb_flux_law = 'deschamps_sotin_2000'
+        s = EntropySolver(p, entropy_eos=None)
+        s.initialize()
+        y = np.full(s._n_stag, 3000.0)
+        s.set_initial_entropy(y)
+        s.dSdt(0.0, y)
+        return s, float(np.asarray(s.state.heat_flux).ravel()[0])
+
+    s, q = face0(1200.0)
+    ps = s.state.phase_staggered
+    args = dict(
+        T_c=1273.0,
+        T_m=1200.0,
+        depth=float(s._r_basic_flat[-1] - s._r_basic_flat[0]),
+        rho=4000.0,
+        g=float(s._g_basic_flat[0]),
+        alpha=float(np.asarray(ps.thermal_expansivity()).ravel()[0]),
+        kappa=1e-6,
+        k=4.0,
+        eta=float(np.asarray(ps.viscosity()).ravel()[0]),
+    )
+    assert float(s.state.top_temperature.item()) == pytest.approx(1200.0, rel=1e-12)
+    assert q == pytest.approx(cmb_flux(T_s=273.0, **args), rel=1e-12)
+    assert abs(cmb_flux(T_s=1199.0, **args) / q - 1.0) > 0.1
+    assert abs(face0(1273.0)[1]) < 1e-15

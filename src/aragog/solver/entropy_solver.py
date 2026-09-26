@@ -2122,6 +2122,8 @@ class EntropySolver:
         mass-weighted entropy of the middle half of the mantle, at the pressure of
         the law's face; the viscosity is the mass-weighted log mean over those cells.
         Layer properties are those of the bottom cell, gravity that of the face.
+        ``T_s`` is the prescribed surface temperature for outer BC 5, else the
+        temperature of the top basic node.
         """
         ps = self.state.phase_staggered
         rho = np.asarray(ps.density()).ravel()
@@ -2141,6 +2143,12 @@ class EntropySolver:
         else:
             pm = self.parameters.phase_mixed
             T_m = pm.const_T_ref * np.exp((S_int - pm.const_S_ref) / pm.const_Cp)
+        # The surface temperature is the prescribed one for outer BC 5, else the top node's.
+        T_s = (
+            self._outer_bc_value
+            if self._outer_bc_kind == 5
+            else float(self.state.top_temperature.item())
+        )
         T_c = (
             self._inner_bc_value
             if self._inner_bc_kind == 3
@@ -2150,7 +2158,7 @@ class EntropySolver:
             cmb_flux(
                 T_c,
                 T_m,
-                float(self.state.top_temperature.item()),
+                T_s,
                 float(self._r_basic_flat[-1] - self._r_basic_flat[0]),
                 float(rho[0]),
                 float(self._g_basic_flat[face]),
