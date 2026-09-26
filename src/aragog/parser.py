@@ -116,6 +116,13 @@ class _BoundaryConditionsParameters:
         """
         if self.inner_boundary_condition == 1:
             self.inner_boundary_value = 0
+        elif self.inner_boundary_condition == 3 and self.core_bc != 'quasi_steady':
+            # The other core_bc modes evolve a core-side state that a fixed CMB T ignores.
+            msg = (
+                'inner_boundary_condition = 3 (prescribed CMB temperature) needs '
+                f"core_bc = 'quasi_steady'; got core_bc = {self.core_bc!r}"
+            )
+            raise ValueError(msg)
         elif self.inner_boundary_condition in (2, 3):
             pass
         else:

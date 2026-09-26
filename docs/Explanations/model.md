@@ -168,7 +168,7 @@ Three outer BC modes are implemented in the entropy solver:
 |------|-------------|
 | 1 | Core cooling: flux determined by the selected `core_bc` formulation |
 | 2 | Prescribed flux |
-| 3 | Prescribed temperature |
+| 3 | Prescribed temperature $T_\mathrm{cmb}$: $F_\mathrm{cmb} = k_0 (T_\mathrm{cmb} - T_0) / \Delta r_{1/2}$, conduction across the half cell between the CMB and the bottom staggered node ($T_0$, $k_0$ at that node) |
 
 The `core_bc` selector chooses how the core energy balance is closed when `inner_boundary_condition = 1`:
 

@@ -156,7 +156,9 @@ class BoundaryParams(eqx.Module):
 
     # CMB
     inner_bc_type: int = eqx.field(static=True)
-    inner_bc_value: jax.Array  # prescribed flux [W/m^2] (type 2)
+    inner_bc_value: (
+        jax.Array
+    )  # prescribed flux [W/m^2] (type 2) or CMB temperature [K] (type 3)
     core_density: jax.Array  # [kg/m^3]
     core_heat_capacity: jax.Array  # [J/kg/K]
     tfac_core_avg: jax.Array  # T_avg/T_cmb ratio
@@ -322,8 +324,15 @@ def _apply_cmb_bc(
     mesh: MeshArrays,
     phase_stag_rho: jax.Array,
     phase_stag_Cp: jax.Array,
+    phase_stag_T: jax.Array | None = None,
+    phase_stag_k: jax.Array | None = None,
 ) -> jax.Array:
-    """Apply the CMB boundary condition to the heat flux array."""
+    """Apply the CMB boundary condition to the heat flux array.
+
+    ``phase_stag_T`` and ``phase_stag_k`` are required for
+    ``inner_bc_type == 3``: the prescribed CMB temperature sets the flux by
+    conduction across the bottom half cell.
+    """
     if bc.inner_bc_type == 1:
         # Core cooling (Bower+2018 Eq. 37)
         r_cmb = mesh.radii_basic[0]
@@ -340,8 +349,8 @@ def _apply_cmb_bc(
         # Prescribed flux
         F_cmb = bc.inner_bc_value
     elif bc.inner_bc_type == 3:
-        # Prescribed T: keep conduction-derived flux from compute_fluxes
-        F_cmb = heat_flux[0]
+        dr_half = 0.5 * (mesh.radii_basic[1] - mesh.radii_basic[0])
+        F_cmb = phase_stag_k[0] * (bc.inner_bc_value - phase_stag_T[0]) / dr_half
     else:
         # Insulating (type 0)
         F_cmb = 0.0
@@ -412,6 +421,8 @@ def dSdt(
         mesh,
         phase_stag.density,
         phase_stag.heat_capacity,
+        phase_stag.temperature,
+        phase_stag.thermal_conductivity,
     )
 
     # Flux divergence at staggered nodes
