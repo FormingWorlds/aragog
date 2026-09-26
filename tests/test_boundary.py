@@ -51,6 +51,7 @@ def _build_parameters(
     tfac_core_avg: float = 1.147,
     param_utbl: bool = False,
     param_utbl_const: float = 1.0e-7,
+    core_bc: str = 'energy_balance',
 ) -> Parameters:
     """Build a Parameters instance with sensible defaults; only BC fields
     are exposed as kwargs for tests to flex.
@@ -66,6 +67,7 @@ def _build_parameters(
         tfac_core_avg=tfac_core_avg,
         param_utbl=param_utbl,
         param_utbl_const=param_utbl_const,
+        core_bc=core_bc,
     )
     return Parameters(
         boundary_conditions=bc,
@@ -177,7 +179,10 @@ def test_inner_bc_type_3_is_pass_through():
     field would silently inject a phantom temperature-as-flux.
     """
     p = _build_parameters(
-        inner_boundary_condition=3, inner_boundary_value=4200.0, param_utbl_const=0.0
+        inner_boundary_condition=3,
+        inner_boundary_value=4200.0,
+        param_utbl_const=0.0,
+        core_bc='quasi_steady',
     )
     bc = BoundaryConditions(p, _build_mock_mesh())
     state = _build_mock_state()
@@ -410,7 +415,10 @@ def test_apply_temperature_bc_inner_3_writes_cmb_and_dTdr():
     the temperature-set assertion but mis-set the gradient.
     """
     p = _build_parameters(
-        inner_boundary_condition=3, inner_boundary_value=4200.0, param_utbl_const=0.0
+        inner_boundary_condition=3,
+        inner_boundary_value=4200.0,
+        param_utbl_const=0.0,
+        core_bc='quasi_steady',
     )
     mesh = MagicMock()
     mesh.basic.delta_mesh = np.array([1.0e5, 1.0e5, 1.0e5])
@@ -485,7 +493,10 @@ def test_apply_temperature_bc_melt_inner_3_recomputes_dphidr():
     dphidr[0, :] from the melt-fraction interior values.
     """
     p = _build_parameters(
-        inner_boundary_condition=3, inner_boundary_value=4200.0, param_utbl_const=0.0
+        inner_boundary_condition=3,
+        inner_boundary_value=4200.0,
+        param_utbl_const=0.0,
+        core_bc='quasi_steady',
     )
     mesh = MagicMock()
     mesh.basic.delta_mesh = np.array([1.0e5, 1.0e5, 1.0e5])

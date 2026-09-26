@@ -2066,7 +2066,9 @@ class EntropySolver:
         elif self._inner_bc_kind == 3:
             # Prescribed CMB temperature: conduction across the bottom half cell.
             T_first = float(np.asarray(self.state.phase_staggered.temperature()).flat[0])
-            k_first = float(np.asarray(self.state.phase_staggered.thermal_conductivity()).flat[0])
+            k_first = float(
+                np.asarray(self.state.phase_staggered.thermal_conductivity()).flat[0]
+            )
             self.state._heat_flux[0] = (
                 k_first * (self._inner_bc_value - T_first) / self._cmb_dr_half
             )

@@ -434,7 +434,9 @@ def test_dsdt_prescribed_temperature_equals_prescribed_flux_of_same_value():
             core_heat_capacity=880.0,
             tfac_core_avg=1.147,
         )
-        return np.asarray(dSdt(0.0, S, (eos_jax, params, mesh, bc, jnp.zeros(n_stag), _no_radio)))
+        return np.asarray(
+            dSdt(0.0, S, (eos_jax, params, mesh, bc, jnp.zeros(n_stag), _no_radio))
+        )
 
     rhs_T = rhs(3, T_cmb)
     np.testing.assert_allclose(rhs_T, rhs(2, F_expected), rtol=1e-12, atol=0.0)

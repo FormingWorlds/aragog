@@ -219,7 +219,9 @@ def test_inner_bc_kind_3_prescribed_temperature_conducts(shared_eos):
     solver.dSdt(0.0, y0)
     r_b = np.asarray(solver._r_basic_flat)
     expected = k_0 * 500.0 / (0.5 * (r_b[1] - r_b[0]))
-    assert float(np.asarray(solver.state.heat_flux).flat[0]) == pytest.approx(expected, rel=1e-12)
+    assert float(np.asarray(solver.state.heat_flux).flat[0]) == pytest.approx(
+        expected, rel=1e-12
+    )
     solver.solve()
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     assert np.all(np.isfinite(final_y))

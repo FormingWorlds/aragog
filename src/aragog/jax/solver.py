@@ -148,7 +148,9 @@ class BoundaryParams(eqx.Module):
 
     # CMB
     inner_bc_type: int = eqx.field(static=True)
-    inner_bc_value: jax.Array  # prescribed flux [W/m^2] (type 2) or CMB temperature [K] (type 3)
+    inner_bc_value: (
+        jax.Array
+    )  # prescribed flux [W/m^2] (type 2) or CMB temperature [K] (type 3)
     core_density: jax.Array  # [kg/m^3]
     core_heat_capacity: jax.Array  # [J/kg/K]
     tfac_core_avg: jax.Array  # T_avg/T_cmb ratio
