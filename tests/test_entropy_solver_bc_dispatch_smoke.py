@@ -9,7 +9,7 @@ leaving these CMB / surface dispatch branches uncovered:
   flux partition, lines 1462-1471).
 * inner_bc_kind = 1 with bower2018 (one-sided Fourier conduction,
   lines 1451-1461).
-* inner_bc_kind = 3 (prescribed CMB temperature, line 1474).
+* inner_bc_kind = 3 (prescribed CMB temperature: half-cell conduction).
 * outer_bc_kind = 4 (prescribed surface flux, line 1437-1441).
 
 Three short integrations cover all four. None depend on the CVODE
@@ -193,23 +193,33 @@ def test_bower2018_with_inner_bc_kind_1_one_sided_conduction(shared_eos):
     )
 
 
-def test_inner_bc_kind_3_prescribed_temperature_no_op(shared_eos):
-    """``inner_boundary_condition=3`` (prescribed CMB temperature)
-    is a no-op in the flux dispatcher (entropy_solver.py:1474-1475);
-    the heat_flux[0] left by the conduction pipeline is preserved.
+def test_inner_bc_kind_3_prescribed_temperature_conducts(shared_eos):
+    """``inner_boundary_condition=3`` sets the CMB flux to conduction from
+    the prescribed temperature across the bottom half cell,
+    ``k_0 (T_cmb - T_0) / dr_half``, on every RHS call.
 
-    Discriminator: with both BCs set to "pass-through", the
-    integrator should still advance and produce a finite final
-    state. A regression that overwrote heat_flux[0] with a default
-    value would surface as either NaN (uninitialised) or a
-    non-physical fixed flux.
+    Discriminator: the prescribed temperature is 500 K above the bottom
+    cell, so the flux is positive and of order k * 500 K / dr_half; the
+    conduction pipeline alone leaves a value set by the entropy gradient.
     """
     from aragog.solver.entropy_solver import EntropySolver
 
-    parameters = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=3, end_time=1.0)
+    parameters = _build(
+        core_bc='quasi_steady', outer_bc=1, inner_bc=3, end_time=1.0, inner_bc_value=0.0
+    )
     solver = EntropySolver(parameters, entropy_eos=shared_eos)
     solver.initialize()
     solver.set_initial_entropy(3050.0)
+    y0 = np.full(solver._n_stag, 3050.0)
+    solver.dSdt(0.0, y0)
+    T_0 = float(np.asarray(solver.state.phase_staggered.temperature()).flat[0])
+    k_0 = float(np.asarray(solver.state.phase_staggered.thermal_conductivity()).flat[0])
+    T_cmb = T_0 + 500.0
+    solver._inner_bc_value = T_cmb
+    solver.dSdt(0.0, y0)
+    r_b = np.asarray(solver._r_basic_flat)
+    expected = k_0 * 500.0 / (0.5 * (r_b[1] - r_b[0]))
+    assert float(np.asarray(solver.state.heat_flux).flat[0]) == pytest.approx(expected, rel=1e-12)
     solver.solve()
     final_y = solver._solution.y[:, -1] if solver._solution.y.ndim == 2 else solver._solution.y
     assert np.all(np.isfinite(final_y))

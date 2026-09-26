@@ -134,27 +134,30 @@ def test_apply_cmb_bc_prescribed_flux_overrides_heat_flux():
     np.testing.assert_allclose(np.asarray(out[1:]), 9.0e6, rtol=1e-12, atol=0.0)
 
 
-def test_apply_cmb_bc_prescribed_temperature_preserves_conduction_flux():
-    """``inner_bc_type == 3`` (prescribed T) keeps the conduction-derived
-    heat_flux[0] from compute_fluxes; the BC dispatcher is a pass-through.
+def test_apply_cmb_bc_prescribed_temperature_conducts_across_half_cell():
+    """``inner_bc_type == 3`` sets heat_flux[0] to conduction from the
+    prescribed CMB temperature across the bottom half cell,
+    ``k_0 (T_cmb - T_0) / dr_half``, positive outward.
 
-    Discriminator: a regression that overwrote heat_flux[0] with zero
-    or with inner_bc_value would surface here as either 0 or whatever
-    inner_bc_value was passed.
+    Discriminator: the sentinel 5.5e6 W/m^2 in heat_flux[0] must be
+    replaced; a CMB colder than the bottom cell must give a negative flux.
     """
     from aragog.jax.solver import _apply_cmb_bc
 
     mesh = _make_const_property_mesh(N=8)
-    bc = _make_bc(inner_bc_type=3, inner_bc_value=999.0)  # value unused
-    sentinel = 5.5e6
-    heat_flux = jnp.full(mesh.area.size, sentinel)
+    dr_half = 0.5 * float(mesh.radii_basic[1] - mesh.radii_basic[0])
+    heat_flux = jnp.full(mesh.area.size, 5.5e6)
     rho_stag = jnp.full(8, 4000.0)
     cp_stag = jnp.full(8, 1000.0)
-    out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag)
-    assert float(out[0]) == pytest.approx(sentinel, rel=1e-12), (
-        'inner_bc_type=3 must preserve the conduction-derived flux at the CMB; '
-        f'got {float(out[0]):.3e}, expected {sentinel:.3e}.'
-    )
+    T_stag = jnp.full(8, 3700.0).at[1].set(9999.0)
+    k_stag = jnp.full(8, 4.0).at[1].set(99.0)
+    for T_cmb in (4000.0, 3500.0):
+        bc = _make_bc(inner_bc_type=3, inner_bc_value=T_cmb)
+        out = _apply_cmb_bc(heat_flux, bc, mesh, rho_stag, cp_stag, T_stag, k_stag)
+        expected = 4.0 * (T_cmb - 3700.0) / dr_half
+        assert float(out[0]) == pytest.approx(expected, rel=1e-12)
+        assert np.sign(float(out[0])) == np.sign(T_cmb - 3700.0)
+        np.testing.assert_allclose(np.asarray(out[1:]), 5.5e6, rtol=0.0, atol=0.0)
 
 
 def test_apply_cmb_bc_insulating_zeros_heat_flux_at_cmb():
@@ -391,3 +394,48 @@ def test_dsdt_energy_balance_responds_to_dSdr_cmb_perturbation():
         f'rhs[0] is invariant under dSdr_cmb perturbation; got {rhs_a[0]:.3e} '
         f'vs {rhs_b[0]:.3e}. The CMB BC is decoupled from the flux pipeline.'
     )
+
+
+@needs_eos
+def test_dsdt_prescribed_temperature_equals_prescribed_flux_of_same_value():
+    """``dSdt`` with ``inner_bc_type == 3`` equals ``dSdt`` with
+    ``inner_bc_type == 2`` at the flux ``k_0 (T_cmb - T_0) / dr_half``
+    evaluated from the same state.
+
+    Discriminator: this checks the call site that hands the bottom-cell
+    temperature and conductivity to ``_apply_cmb_bc``; a swapped or missing
+    argument changes the bottom-cell derivative by orders of magnitude.
+    """
+    from aragog.jax.eos import EntropyEOS_JAX
+    from aragog.jax.phase import PhaseParams, evaluate_phase
+    from aragog.jax.solver import BoundaryParams, _no_radio, dSdt
+
+    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    params = PhaseParams()
+    mesh = _make_const_property_mesh(N=12)
+    n_stag = int(mesh.P_stag.shape[0])
+    S = jnp.linspace(3100.0, 2900.0, n_stag)
+    phase = evaluate_phase(eos_jax, params, mesh.P_stag, S)
+    T_0 = float(phase.temperature[0])
+    k_0 = float(phase.thermal_conductivity[0])
+    dr_half = 0.5 * float(mesh.radii_basic[1] - mesh.radii_basic[0])
+    T_cmb = T_0 + 400.0
+    F_expected = k_0 * (T_cmb - T_0) / dr_half
+
+    def rhs(inner_type, inner_value):
+        bc = BoundaryParams(
+            outer_bc_type=4,
+            outer_bc_value=0.1,
+            emissivity=1.0,
+            T_eq=255.0,
+            inner_bc_type=inner_type,
+            inner_bc_value=inner_value,
+            core_density=10500.0,
+            core_heat_capacity=880.0,
+            tfac_core_avg=1.147,
+        )
+        return np.asarray(dSdt(0.0, S, (eos_jax, params, mesh, bc, jnp.zeros(n_stag), _no_radio)))
+
+    rhs_T = rhs(3, T_cmb)
+    np.testing.assert_allclose(rhs_T, rhs(2, F_expected), rtol=1e-12, atol=0.0)
+    assert abs(rhs_T[0] - rhs(2, 0.0)[0]) > 1e-6 * abs(rhs_T[0])
