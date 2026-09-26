@@ -85,14 +85,15 @@ def test_jax_lumped_partition_takes_the_cell_heating_from_the_outflow():
     from tests.test_jax_dsdt_energy_balance import _make_bc, _make_const_property_mesh
 
     mesh, bc = _make_const_property_mesh(N=8), _make_bc(inner_bc_type=1)
-    rho, cp, H = 4000.0, 1000.0, 1.0e-3  # H large enough to change the sign of F_cmb
-    heat_flux = jnp.zeros(mesh.area.size).at[1].set(0.05)
-    F_cmb = float(_apply_cmb_bc(heat_flux, bc, mesh, jnp.full(8, rho), jnp.full(8, cp), H)[0])
+    rho, cp, F1 = 4000.0, 1000.0, 0.05
     r_cmb, vol, area = float(mesh.radii_basic[0]), float(mesh.volume[0]), np.asarray(mesh.area)
+    H = 2.0 * F1 * area[1] / (rho * vol)  # Q_0 = 2 F_1 A_1: both terms count, F_cmb < 0
+    heat_flux = jnp.zeros(mesh.area.size).at[1].set(F1)
+    F_cmb = float(_apply_cmb_bc(heat_flux, bc, mesh, jnp.full(8, rho), jnp.full(8, cp), H)[0])
     C_core = 4.0 / 3.0 * np.pi * r_cmb**3 * bc.core_density * bc.core_heat_capacity
     C_core *= bc.tfac_core_avg
     lhs = F_cmb * area[0] * (1.0 + vol * rho * cp / C_core)
-    assert lhs == pytest.approx(0.05 * area[1] - H * rho * vol, rel=1e-9, abs=0.0)
+    assert lhs == pytest.approx(F1 * area[1] - H * rho * vol, rel=1e-9, abs=0.0)
     assert F_cmb < 0.0
 
 
