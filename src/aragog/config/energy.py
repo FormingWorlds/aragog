@@ -98,6 +98,12 @@ class EnergyConfig:
         reaches the boundary yet narrow enough to leave the deep-solid
         thermal history on unrestricted steps. A non-finite or non-positive
         value falls back to the default.
+    phase_boundary_cap : str
+        How ``max_step`` is set while a cell is near or inside the two-phase
+        band. ``'fixed'`` (default) uses 1 yr. ``'rate'`` uses 0.1 of the
+        shortest time any such cell needs to reach the next phase boundary in
+        the direction it moves, from dS/dt at the start of the call, clipped
+        to [1, 100] yr. The gradient core keeps 1 yr in both modes.
     tidal_array : ndarray
         Tidal heating per unit mass [W/kg] at each layer.
     """
@@ -119,4 +125,7 @@ class EnergyConfig:
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
     phase_boundary_entropy_margin: float = 200.0
+    phase_boundary_cap: str = attrs.field(
+        default='fixed', validator=attrs.validators.in_(('fixed', 'rate'))
+    )
     tidal_array: npt.NDArray = attrs.Factory(lambda: np.array([0.0], dtype=float))

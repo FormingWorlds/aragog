@@ -215,8 +215,17 @@ class _EnergyParameters:
     # entropy (S_liquidus - S_solidus); a non-finite or non-positive value
     # falls back to the default.
     phase_boundary_entropy_margin: float = 200.0
+    # max_step near a phase boundary: 'fixed' (1 yr) or 'rate' (0.1 of the
+    # shortest time to the next boundary, clipped to [1, 100] yr).
+    phase_boundary_cap: str = 'fixed'
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
+
+    def __post_init__(self):
+        if self.phase_boundary_cap not in ('fixed', 'rate'):
+            raise ValueError(
+                f'phase_boundary_cap must be fixed or rate, got {self.phase_boundary_cap!r}'
+            )
 
 
 @dataclass

@@ -296,6 +296,53 @@ def _phase_boundary_max_step_clamp(
     return bool(near_liq or near_sol or in_mushy or cmb_near_liq or cmb_in_mushy)
 
 
+def _rate_phase_boundary_max_step(
+    S: npt.NDArray,
+    dSdt: npt.NDArray,
+    S_liq: npt.NDArray,
+    S_sol: npt.NDArray,
+    entropy_margin: float,
+    fraction: float = 0.1,
+    bounds: tuple[float, float] = (1.0, 100.0),
+) -> float:
+    """``max_step`` [yr] from the rate at which cells approach a phase boundary.
+
+    A cell counts when it is within ``entropy_margin`` of the solidus or
+    liquidus or inside the two-phase band. Its time to the next boundary in the
+    direction it moves is ``|S - S_b| / |dS/dt|``; a cell with no boundary
+    ahead (below the solidus and cooling, above the liquidus and heating) or
+    with ``dS/dt = 0`` does not count.
+
+    Parameters
+    ----------
+    S, dSdt : npt.NDArray
+        Staggered entropy [J/kg/K] and its rate [J/kg/K/yr] at the call start.
+    S_liq, S_sol : npt.NDArray
+        Liquidus and solidus entropy at the staggered pressures [J/kg/K].
+    entropy_margin : float
+        Proximity band [J/kg/K], as for the fixed clamp.
+    fraction : float
+        Fraction of the shortest time to a boundary used as ``max_step``.
+    bounds : tuple of float
+        Lower and upper clip [yr].
+
+    Returns
+    -------
+    float
+        ``fraction * min(t_c)`` clipped to ``bounds``; the upper bound when no
+        cell counts.
+    """
+    near = (np.abs(S - S_liq) < entropy_margin) | (np.abs(S - S_sol) < entropy_margin)
+    near |= (S < S_liq) & (S > S_sol)
+    down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
+    up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
+    target = np.where(dSdt < 0.0, down, up)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t_c = np.abs(target - S) / np.abs(dSdt)
+    t_c = t_c[near & np.isfinite(t_c)]
+    return float(np.clip(fraction * t_c.min(), *bounds)) if t_c.size else bounds[1]
+
+
 def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
     """Normalised mass coordinate for a staggered mass-radius array.
 
@@ -2850,7 +2897,19 @@ class EntropySolver:
                 cmb_margin_to_sol=S0_block_cmb - S_sol,
                 entropy_margin=entropy_margin,
             ):
-                max_step = 1.0
+                cap_mode = getattr(self.parameters.energy, 'phase_boundary_cap', 'fixed')
+                if cap_mode != 'rate' or self._core_bc == 'gradient':
+                    max_step = 1.0
+                else:
+                    dSdt0 = np.asarray(self._dSdt_single(start_time, self._S0)).ravel()[
+                        : S_arr_stag.size
+                    ]
+                    max_step = min(
+                        max_step,
+                        _rate_phase_boundary_max_step(
+                            S_arr_stag, dSdt0, S_liq_stag, S_sol_stag, entropy_margin
+                        ),
+                    )
 
             # Per-call step caps as a SUNDIALS root function. Build the
             # anchor metadata here (per-cell melt fraction, temperature and
