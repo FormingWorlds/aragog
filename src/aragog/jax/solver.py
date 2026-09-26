@@ -271,10 +271,16 @@ def _apply_cmb_bc(
     mesh: MeshArrays,
     phase_stag_rho: jax.Array,
     phase_stag_Cp: jax.Array,
+    heating_first: jax.Array | float = 0.0,
 ) -> jax.Array:
-    """Apply the CMB boundary condition to the heat flux array."""
+    """Apply the CMB boundary condition to the heat flux array.
+
+    ``heating_first`` is the internal heating [W/kg] of the bottom mantle cell; the
+    core-cooling BC (type 1) removes it from the power it splits with the core.
+    """
     if bc.inner_bc_type == 1:
-        # Core cooling (Bower+2018 Eq. 37)
+        # Core cooling (Bower+2018 Eq. 37): the bottom cell and the core share one T, so
+        # the cell's net power (outflow minus its heating) is split by capacity.
         r_cmb = mesh.radii_basic[0]
         core_cap = 4.0 / 3.0 * jnp.pi * r_cmb**3 * bc.core_density * bc.core_heat_capacity
         rho_first = phase_stag_rho[0]
@@ -284,7 +290,8 @@ def _apply_cmb_bc(
         r_above = mesh.radii_basic[1]
         radius_ratio = r_above / r_cmb
         alpha = radius_ratio**2 / (cell_cap / (core_cap * bc.tfac_core_avg) + 1.0)
-        F_cmb = alpha * heat_flux[1]
+        F_net = heat_flux[1] - heating_first * rho_first * vol_first / mesh.area[1]
+        F_cmb = alpha * F_net
     elif bc.inner_bc_type == 2:
         # Prescribed flux
         F_cmb = bc.inner_bc_value
@@ -361,6 +368,7 @@ def dSdt(
         mesh,
         phase_stag.density,
         phase_stag.heat_capacity,
+        flux_out.heating[0],
     )
 
     # Flux divergence at staggered nodes

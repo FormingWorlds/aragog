@@ -1523,6 +1523,7 @@ class EntropySolver:
         self._cmb_dr_cmb = r_above - r_cmb  # basic-node spacing at CMB
         self._cmb_dr_half = 0.5 * self._cmb_dr_cmb  # basic-to-staggered half-spacing
         self._cmb_area = 4.0 * np.pi * r_cmb**2
+        self._cmb_area_above = 4.0 * np.pi * r_above**2
         self._cmb_vol_first = float(self._volume_flat[0])
 
         # Core properties (constant in time)
@@ -2052,15 +2053,19 @@ class EntropySolver:
                 F_cmb = -k_above * (T_above - extra) / max(self._cmb_dr_half, 1.0)
                 self.state._heat_flux[0] = F_cmb
             else:
-                # quasi_steady BC: alpha-factor flux partition between
-                # the bottom mantle cell and the core.
+                # quasi_steady BC: the bottom mantle cell and the core share one T, so the
+                # cell's net power (outflow minus its internal heating) is split by capacity;
+                # the core then changes only through F_cmb.
                 rho_first = float(np.asarray(self.state.phase_staggered.density()).flat[0])
                 cp_first = float(np.asarray(self.state.phase_staggered.heat_capacity()).flat[0])
                 cell_cap = self._cmb_vol_first * rho_first * cp_first  # J/K
                 alpha = self._cmb_radius_ratio_sq / (
                     cell_cap / (self._core_cap * self._core_tfac) + 1.0
                 )
-                self.state._heat_flux[0] = alpha * self.state._heat_flux[1]
+                Q_first = float(np.asarray(self.state.heating).flat[0]) * rho_first
+                Q_first *= self._cmb_vol_first  # W, heating of the bottom cell
+                F_net = self.state._heat_flux[1] - Q_first / self._cmb_area_above
+                self.state._heat_flux[0] = alpha * F_net
         elif self._inner_bc_kind == 2:
             self.state._heat_flux[0] = self._inner_bc_value
         elif self._inner_bc_kind == 3:
