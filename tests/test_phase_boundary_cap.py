@@ -289,8 +289,11 @@ def test_rate_cap_slow_cell_moving_away_uses_nearer_boundary_when_floored():
         np.array([1.0, 1.0]),
         delta=10.0,
         rate_floor=True,
+        bounds=(0.0, 100.0),
     )
-    assert res == pytest.approx(1.0)
+    floor = (0.01 + 10.0) / 2.0
+    expected = 0.1 * 50.0 / floor
+    assert res == pytest.approx(expected)
 
 
 @needs_eos
@@ -315,7 +318,7 @@ def test_rate_cap_scipy_fallback_warns_and_runs_at_one_year(shared_eos, caplog):
 def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, monkeypatch):
     """Each CVODE segment must re-anchor its root function to the segment start state."""
     s = _solver(shared_eos, 'rate', end_time=200.0)
-    anchored_states = []
+    anchored_roots = []
 
     orig_solve_segments = s._solve_cvode_segments
 
@@ -323,8 +326,9 @@ def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, mon
         real_roots = kw['roots_at']
 
         def tracking_roots(y_nd, inside):
-            anchored_states.append(np.asarray(y_nd).copy())
-            return real_roots(y_nd, inside)
+            r = real_roots(y_nd, inside)
+            anchored_roots.append(r.S0.copy())
+            return r
 
         kw['roots_at'] = tracking_roots
         return orig_solve_segments(*args, **kw)
@@ -332,9 +336,9 @@ def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, mon
     monkeypatch.setattr(s, '_solve_cvode_segments', wrapped_solve_segments)
     s.solve()
 
-    assert len(anchored_states) >= 2, 'Expected multiple segments in 200 yr run'
-    assert not np.allclose(anchored_states[0], anchored_states[1]), (
-        'Segment 1 was not re-anchored!'
+    assert len(anchored_roots) >= 2, 'Expected multiple segments in 200 yr run'
+    assert not np.allclose(anchored_roots[0], anchored_roots[1]), (
+        'Segment 1 root function was not re-anchored to the segment state!'
     )
 
 
