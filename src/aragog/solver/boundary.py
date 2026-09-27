@@ -187,12 +187,13 @@ class BoundaryConditions:
             state: The state to apply the boundary conditions to
 
         Equivalent to CORE_BC in C code.
-            1: Simple core cooling
+            1: Core cooling (EntropySolver only; raises here)
             2: Prescribed heat flux
             3: Prescribed temperature
         """
         if self._settings.inner_boundary_condition == 1:
-            self.core_cooling(state)
+            msg = 'inner_boundary_condition = 1 (core cooling) is applied by EntropySolver'
+            raise NotImplementedError(msg)
         elif self._settings.inner_boundary_condition == 2:
             state.heat_flux[0, :] = self._settings.inner_boundary_value
         elif self._settings.inner_boundary_condition == 3:
@@ -201,46 +202,3 @@ class BoundaryConditions:
         else:
             msg: str = f'inner_boundary_condition = {self._settings.inner_boundary_condition} is unknown'
             raise ValueError(msg)
-
-    def core_cooling(self, state: State) -> None:
-        """Applies a core cooling heat flux according to Eq. (37) of Bower et al., 2018.
-
-        The core is modelled as a well-mixed reservoir with an effective
-        temperature T_core = tfac_core_avg * T_cmb. The factor tfac_core_avg
-        accounts for the adiabatic temperature gradient within the core
-        (mass-weighted average core temperature / CMB temperature).
-        Default 1.147 is for Earth-like parameters (Bower+2018, Table 2).
-
-        Parameters
-        ----------
-        state : State
-            The state to apply the boundary condition to.
-        """
-        # Core thermal capacity: C_core = rho_core * cp_core * V_core
-        r_cmb = np.asarray(self._mesh.basic.radii).flat[0]
-        core_capacity = (
-            4
-            / 3
-            * np.pi
-            * r_cmb**3
-            * self._mesh.settings.core_density
-            * self._settings.core_heat_capacity
-        )
-
-        # First mantle cell thermal capacity: C_cell = rho * cp * V_cell
-        cap_stag = state.capacitance_staggered()  # rho * cp, may be float or array
-        cap_first = np.asarray(cap_stag).flat[0]
-        cell_capacity = np.asarray(self._mesh.basic.volume).flat[0] * cap_first
-
-        # Geometric correction: area ratio between first interior face and CMB
-        r_above = np.asarray(self._mesh.basic.radii).flat[1]
-        radius_ratio = r_above / r_cmb
-
-        # Core buffering factor (Bower+2018 Eq. 37):
-        # alpha = (R_1/R_0)^2 / (1 + C_cell / (C_core * tfac))
-        # When C_core >> C_cell: alpha -> (R_1/R_0)^2 (core tracks mantle)
-        # When C_core << C_cell: alpha -> 0 (core absorbs all heat)
-        tfac = self._settings.tfac_core_avg
-        alpha = radius_ratio**2 / (cell_capacity / (core_capacity * tfac) + 1)
-
-        state.heat_flux[0, :] = alpha * state.heat_flux[1, :]

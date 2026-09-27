@@ -9,7 +9,7 @@ caught at parse time rather than mid-run.
 
 State is mocked because the production State carries the entire
 entropy/temperature buffer; for BC dispatch we only need ``heat_flux``,
-``top_temperature`` and ``capacitance_staggered()``.
+``top_temperature`` and ``temperature_basic``.
 """
 
 from __future__ import annotations
@@ -137,19 +137,17 @@ def _build_mock_state(
     n_columns: int = 1,
     top_temperature: float = 3500.0,
     flux_above_cmb: float = 1.0e2,
-    capacitance_staggered: float = 4.0e6,
 ):
     """Build a State-like mock with mutable heat_flux and the methods
     the BoundaryConditions class actually calls.
     """
     state = SimpleNamespace()
     state.heat_flux = np.zeros((n_basic, n_columns))
-    state.heat_flux[1, :] = flux_above_cmb  # above-CMB flux for core_cooling
+    state.heat_flux[1, :] = flux_above_cmb
     state.top_temperature = np.array([top_temperature])
     # apply_flux_boundary_conditions logs state.temperature_basic at DEBUG;
     # python evaluates the arg even when the log filter drops it.
     state.temperature_basic = np.zeros((n_basic, n_columns))
-    state.capacitance_staggered = lambda: np.full(n_basic - 1, capacitance_staggered)
     return state
 
 
@@ -370,33 +368,21 @@ def test_utbl_tsurf_array_input_returns_array():
     assert np.all(diffs > 0), 'UTBL surface T is not monotonic in interior T'
 
 
-# ---- core_cooling (IBC=1) --------------------------------------------------
+# ---- IBC=1 is EntropySolver-only -------------------------------------------
 
 
-def test_core_cooling_writes_alpha_times_flux_above_to_cmb():
-    """IBC=1 calls core_cooling, which writes
-    state.heat_flux[0,:] = alpha * state.heat_flux[1,:].
-
-    With reasonable Earth-mantle inputs alpha must be in (0, 1) and
-    bounded above by (R_above/R_cmb)^2 = (4.45/3.48)^2 ≈ 1.63.
-
-    Use a non-zero flux above the CMB to discriminate against a
-    silent zeroing.
+def test_inner_bc_type_1_raises_and_leaves_cmb_flux_untouched():
+    """IBC=1 (core cooling) is applied inside EntropySolver; the
+    flux dispatcher must raise rather than write a CMB flux.
     """
     p = _build_parameters(
         inner_boundary_condition=1, inner_boundary_value=0.0, param_utbl_const=0.0
     )
-    flux_above = 5.0e3
-    state = _build_mock_state(flux_above_cmb=flux_above, capacitance_staggered=4.0e6)
+    state = _build_mock_state(flux_above_cmb=5.0e3)
     bc = BoundaryConditions(p, _build_mock_mesh())
-    bc.apply_flux_inner_boundary_condition(state)
-    cmb_flux = float(state.heat_flux[0, 0])
-    radius_ratio_sq = (4.45e6 / 3.480e6) ** 2
-    # Strict bound: alpha is in (0, ratio_sq).
-    assert 0.0 < cmb_flux < radius_ratio_sq * flux_above, (
-        f'core_cooling alpha out of expected range: '
-        f'cmb={cmb_flux}, upper bound={radius_ratio_sq * flux_above}'
-    )
+    with pytest.raises(NotImplementedError, match='EntropySolver'):
+        bc.apply_flux_inner_boundary_condition(state)
+    assert float(state.heat_flux[0, 0]) == 0.0
 
 
 def test_apply_temperature_bc_inner_3_writes_cmb_and_dTdr():
@@ -570,33 +556,4 @@ def test_grey_body_with_utbl_correction_yields_lower_flux():
     assert float(state_b.heat_flux[-1, 0]) < float(state_a.heat_flux[-1, 0]), (
         'UTBL grey-body radiated flux is not lower than no-UTBL baseline; '
         'the Cardano-corrected T_surf is not being used in the Stefan-Boltzmann formula.'
-    )
-
-
-def test_core_cooling_alpha_grows_when_core_capacity_dominates_cell_capacity():
-    """Property: when C_core >> C_cell (large core_density and core
-    heat capacity), alpha tends to (R_above/R_cmb)^2 — the geometric
-    upper bound. Discriminator: an inverted ratio would push alpha
-    toward 0 in this regime.
-    """
-    flux_above = 1.0e3
-    # Configuration A: small core, default heat capacity.
-    p_low = _build_parameters(
-        inner_boundary_condition=1, core_heat_capacity=100.0, param_utbl_const=0.0
-    )
-    state_low = _build_mock_state(flux_above_cmb=flux_above, capacitance_staggered=1.0e7)
-    BoundaryConditions(
-        p_low, _build_mock_mesh(core_density=2000.0)
-    ).apply_flux_inner_boundary_condition(state_low)
-    # Configuration B: heavier core + larger heat capacity, fixed geometry.
-    p_high = _build_parameters(
-        inner_boundary_condition=1, core_heat_capacity=5000.0, param_utbl_const=0.0
-    )
-    state_high = _build_mock_state(flux_above_cmb=flux_above, capacitance_staggered=1.0e7)
-    BoundaryConditions(
-        p_high, _build_mock_mesh(core_density=15000.0)
-    ).apply_flux_inner_boundary_condition(state_high)
-    assert float(state_high.heat_flux[0, 0]) > float(state_low.heat_flux[0, 0]), (
-        'alpha did not grow when core thermal capacity grew; '
-        'Bower+2018 Eq. 37 ratio is inverted.'
     )
