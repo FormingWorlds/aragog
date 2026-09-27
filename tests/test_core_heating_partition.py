@@ -59,7 +59,7 @@ def test_core_temperature_follows_the_cmb_flux(core_bc, heating):
     n = solver._n_stag
     dy = solver._dSdt_single(0.0, np.asarray(solver._S0, dtype=float).ravel()) / SECS_PER_YEAR
     H = np.asarray(solver.state.heating).ravel()
-    assert H == pytest.approx(np.broadcast_to(_expected_heating(heating), H.shape), rel=1e-12)
+    assert H == pytest.approx(_expected_heating(heating), rel=1e-12)
     cp = 1000.0  # const_Cp: dT/dS = T / Cp
     if core_bc == 'quasi_steady':
         T = float(np.asarray(solver.state.phase_staggered.temperature()).flat[0])
@@ -88,7 +88,7 @@ def test_lumped_reservoir_conserves_energy(heating):
     m = rho * np.asarray(solver._volume_flat)
     C_core = solver._core_cap * solver._core_tfac
     gain = np.sum(m * T * dy) + C_core * T[0] / cp * dy[0]
-    H = np.broadcast_to(_expected_heating(heating), m.shape)
+    H = _expected_heating(heating)
     expected = -solver.state._heat_flux[-1] * solver._area_flat[-1] + np.sum(H * m)
     # Interior powers (up to ~1e24 W) cancel in the sum; bound round-off by their scale.
     scale = np.abs(solver.state._heat_flux * solver._area_flat).max()

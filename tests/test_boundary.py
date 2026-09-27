@@ -2,10 +2,9 @@
 
 The legacy T-form boundary dispatcher routes inner_boundary_condition
 (CORE_BC) and outer_boundary_condition (SURFACE_BC) integer codes to
-their physical implementations. The integration test harness exercises
-it indirectly via full solver runs, but the dispatch logic itself
-deserves a dedicated unit suite so that an unknown-code regression is
-caught at parse time rather than mid-run.
+their physical implementations. EntropySolver reads its settings but
+applies the flux BCs itself, so this unit suite is the only coverage of
+the dispatch logic.
 
 State is mocked because the production State carries the entire
 entropy/temperature buffer; for BC dispatch we only need ``heat_flux``,
