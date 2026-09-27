@@ -28,6 +28,7 @@ def _cap(S, dSdt, **kw):
     )
 
 
+@pytest.mark.unit
 def test_rate_cap_uses_next_boundary_in_the_direction_of_motion():
     """Cooling above the liquidus aims at the liquidus, inside the band at the solidus, heating at the liquidus."""
     assert _cap([1350.0], [-10.0], fraction=1.0, bounds=(0.0, 1e9)) == pytest.approx(5.0)
@@ -39,6 +40,7 @@ def test_rate_cap_uses_next_boundary_in_the_direction_of_motion():
     ) == pytest.approx(5.0)
 
 
+@pytest.mark.unit
 def test_rate_cap_ignores_cells_moving_away_stationary_or_far():
     """Below the solidus and cooling, above the liquidus and heating, dS/dt = 0, or outside the margin: upper bound."""
     S = [950.0, 1350.0, 1200.0, 2000.0, 500.0]
@@ -46,12 +48,14 @@ def test_rate_cap_ignores_cells_moving_away_stationary_or_far():
     assert _cap(S, dSdt) == 100.0
 
 
+@pytest.mark.unit
 def test_rate_cap_applies_fraction_and_clip():
     assert _cap([1200.0], [-1.0]) == pytest.approx(20.0)
     assert _cap([1350.0], [-10.0]) == 1.0
     assert _cap([1200.0], [-1e-3]) == 100.0
 
 
+@pytest.mark.unit
 def test_parser_rejects_unknown_phase_boundary_cap():
     kw = dict(
         conduction=True,
