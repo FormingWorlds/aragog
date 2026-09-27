@@ -92,12 +92,12 @@ class EnergyConfig:
         a physics threshold. Lowering it can under-resolve a real phase
         crossing and shift the converged state by more than the nominal
         tolerance, because CVODE's local error control can accept an
-        over-large step across the near-discontinuous two-phase RHS. Default 200.0, a fraction of a
-        typical silicate fusion entropy (S_liquidus - S_solidus), wide
-        enough to arm the tighter stepping before a cell reaches the
-        boundary yet narrow enough to leave the deep-solid thermal history
-        on unrestricted steps. A non-finite or non-positive value falls back
-        to the default.
+        over-large step across the near-discontinuous two-phase RHS.
+        Default 200.0, a fraction of a typical silicate fusion entropy
+        (S_liquidus - S_solidus), wide enough to arm the tighter stepping
+        before a cell reaches the boundary yet narrow enough to leave
+        the deep-solid thermal history on unrestricted steps. A non-finite
+        or non-positive value falls back to the default.
     phase_boundary_cap : str
         How ``max_step`` is set while a cell is near or inside the two-phase
         band. ``'fixed'`` (default) uses 1 yr. ``'rate'`` uses event-driven
