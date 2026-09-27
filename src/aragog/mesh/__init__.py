@@ -483,8 +483,8 @@ class Mesh:
         transform[1:-1:, 1:] += np.diagflat(1 / self.staggered.delta_mesh)  # k=1 diagonal
 
         # End rows extrapolate the gradient from the two nearest interior basic nodes. They set
-        # the initial end values of dS/dr in gradient mode; the flux computations copy the
-        # adjacent interior gradient to the end nodes instead.
+        # the initial end values of dS/dr in gradient mode; the flux computations replace the
+        # end values with the adjacent interior gradient or a boundary state variable.
 
         # Extrapolation of gradient at inner radius
         inner_delta_ratio = self.basic.delta_mesh[1].item() / self.basic.delta_mesh[0].item()
