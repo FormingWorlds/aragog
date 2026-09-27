@@ -271,6 +271,66 @@ def test_rate_cap_segment_ceiling_falls_back_to_one_year(shared_eos, monkeypatch
     assert s._solution.segments[-1][2] == pytest.approx(1.0)
 
 
+@pytest.mark.unit
+def test_rate_cap_slow_cell_moving_away_uses_nearer_boundary_when_floored():
+    """A slow cell whose dS/dt moves away from boundary uses the nearer boundary when below floor."""
+    res = _rate_phase_boundary_max_step(
+        np.array([1350.0, 1500.0]),
+        np.array([0.01, -10.0]),
+        np.array([1300.0, 1300.0]),
+        np.array([1000.0, 1000.0]),
+        np.array([1.0, 1.0]),
+        delta=10.0,
+        rate_floor=True,
+    )
+    assert res == pytest.approx(1.0)
+
+
+@needs_eos
+@pytest.mark.unit
+def test_rate_cap_scipy_fallback_warns_and_runs_at_one_year(shared_eos, caplog):
+    """When scipy is used with rate cap, it warns and keeps max_step at 1 yr."""
+    p = _build_mushy_parameters(solver_method='bdf', n_nodes=12, end_time=2.0)
+    p.energy = dataclasses.replace(p.energy, phase_boundary_cap='rate', phi_step_cap=None)
+    s = EntropySolver(p, entropy_eos=shared_eos)
+    s.initialize()
+    s.set_initial_entropy(_pick_mushy_S(shared_eos))
+    with caplog.at_level('WARNING'):
+        s.solve()
+    assert any(
+        'phase_boundary_cap="rate" needs CVODE; max_step 1 yr with scipy' in rec.message
+        for rec in caplog.records
+    )
+
+
+@needs_eos
+@pytest.mark.unit
+def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, monkeypatch):
+    """Each CVODE segment must re-anchor its root function to the segment start state."""
+    s = _solver(shared_eos, 'rate', end_time=200.0)
+    anchored_states = []
+
+    orig_solve_segments = s._solve_cvode_segments
+
+    def wrapped_solve_segments(*args, **kw):
+        real_roots = kw['roots_at']
+
+        def tracking_roots(y_nd, inside):
+            anchored_states.append(np.asarray(y_nd).copy())
+            return real_roots(y_nd, inside)
+
+        kw['roots_at'] = tracking_roots
+        return orig_solve_segments(*args, **kw)
+
+    monkeypatch.setattr(s, '_solve_cvode_segments', wrapped_solve_segments)
+    s.solve()
+
+    assert len(anchored_states) >= 2, 'Expected multiple segments in 200 yr run'
+    assert not np.allclose(anchored_states[0], anchored_states[1]), (
+        'Segment 1 was not re-anchored!'
+    )
+
+
 @pytest.fixture(scope='module')
 def shared_eos():
     from aragog.eos.entropy import EntropyEOS
