@@ -85,13 +85,14 @@ class EnergyConfig:
         in the root function. ``None`` (the default) disables the cap.
     phase_boundary_entropy_margin : float
         Proximity band [J/kg/K] within which a staggered cell counts as
-        "near" a phase boundary, tightening the integrator ``max_step`` to
-        1 yr so CVODE resolves the stiff RHS across the solidus/liquidus.
-        This is a solver-accuracy control, not a physics threshold.
-        Lowering it can under-resolve a real phase crossing and shift the
-        converged state by more than the nominal tolerance, because
-        CVODE's local error control can accept an over-large step across the
-        near-discontinuous two-phase RHS. Default 200.0, a fraction of a
+        "near" a phase boundary, tightening the integrator ``max_step`` so
+        CVODE resolves the stiff RHS across the solidus/liquidus (reduced
+        to 1 yr under ``phase_boundary_cap = 'fixed'``, or adaptive
+        segments under ``'rate'``). This is a solver-accuracy control, not
+        a physics threshold. Lowering it can under-resolve a real phase
+        crossing and shift the converged state by more than the nominal
+        tolerance, because CVODE's local error control can accept an
+        over-large step across the near-discontinuous two-phase RHS. Default 200.0, a fraction of a
         typical silicate fusion entropy (S_liquidus - S_solidus), wide
         enough to arm the tighter stepping before a cell reaches the
         boundary yet narrow enough to leave the deep-solid thermal history
