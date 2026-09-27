@@ -357,14 +357,12 @@ def _rate_phase_boundary_max_step(
         to ``bounds``; the upper bound when no entry has a finite ``t_c``.
     """
     dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
-    if np.any(dist < delta):
-        return bounds[0]
     rate = np.abs(dSdt)
     floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
     down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
     up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
     ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
-    d = np.where(rate < floor, dist, ahead)
+    d = np.where((dist < delta) | (rate < floor), dist, ahead)
     with np.errstate(divide='ignore', invalid='ignore'):
         t_c = d / np.maximum(rate, floor)
     t_c = t_c[np.isfinite(t_c)]
@@ -3278,14 +3276,14 @@ class EntropySolver:
         y0 : npt.NDArray
             Nondimensional start state.
         h_at : callable
-            ``h_at(t, y) -> max_step`` (nondimensional) outside the stiff zone.
+            ``h_at(t, y) -> max_step`` (nondimensional).
         roots_at : callable
             ``roots_at(y, inside) -> _PhaseBoundarySegmentRoot`` anchored at
             ``y``; ``inside=None`` decides from ``y``.
         t_ref : float
             Time scale [yr] for the log.
         h_min : float
-            Nondimensional ``max_step`` inside the stiff zone.
+            Nondimensional ``max_step`` fallback for the segment ceiling.
         max_segments : int
             Segment ceiling; the rest of the call then runs at ``h_min``
             with only the step cap armed.
@@ -3308,7 +3306,7 @@ class EntropySolver:
             last = k == max_segments
             roots = None if last else roots_at(y, inside)
             inside = False if last else roots.inside
-            h = h_min if (inside or last) else h_at(t, y)
+            h = h_min if last else h_at(t, y)
             log.append((t * t_ref, trigger, h * t_ref))
             logger.debug(
                 'rate cap segment %d: t=%.6e yr trigger=%s max_step=%.3g yr',

@@ -55,10 +55,17 @@ def test_rate_cap_counts_far_cells_and_ignores_cells_without_a_boundary_ahead():
 
 @pytest.mark.unit
 def test_rate_cap_stiff_zone_sets_the_lower_bound_in_any_direction():
-    """Within delta of a boundary the cap is the lower bound, also for a cell moving away."""
+    """Fast motion within delta of a boundary hits the lower bound in either direction."""
     assert _cap([1305.0], [5.0]) == 1.0
     assert _cap([995.0], [-5.0]) == 1.0
     assert _cap([1315.0], [5.0]) == 100.0
+
+
+@pytest.mark.unit
+def test_rate_cap_stiff_zone_scales_with_rate_for_slow_cells():
+    """Inside the stiff zone a slow cell uses d_near / r_used and is not clamped to 1 yr."""
+    assert _cap([1305.0], [0.01], fraction=0.1, bounds=(1.0, 100.0)) == pytest.approx(50.0)
+    assert _cap([995.0], [-0.01], fraction=0.1, bounds=(1.0, 100.0)) == pytest.approx(50.0)
 
 
 @pytest.mark.unit
