@@ -1,7 +1,8 @@
 """Boundary fluxes in ``get_state`` output and the d/dr transform at the mesh ends.
 
 The output heat flux at the CMB and surface basic nodes must be the flux the
-right-hand side applied at the final state, for every boundary condition kind.
+right-hand side applied at the final state, for every boundary condition the
+right-hand side imposes (it does not impose inner BC 3 or outer BC 5).
 """
 
 from __future__ import annotations
@@ -16,15 +17,19 @@ from tests.test_entropy_solver_const_properties_smoke import _build_const_proper
 pytestmark = pytest.mark.unit
 
 F_TOP, F_CMB = 0.05, -0.0115  # prescribed fluxes [W/m^2], distinct from any state flux
+B_UTBL = 1.0e-7  # UTBL constant [K^-2]: T_surf well below T_top at ~1800 K
 
 
-def _solver(outer, inner, core_bc='quasi_steady', *, end_time=1.0, mass_coordinates=True):
+def _solver(
+    outer, inner, core_bc='quasi_steady', *, end_time=1.0, mass_coordinates=True, utbl=False
+):
     p = _build_const_properties_parameters(n_nodes=40, end_time=end_time)
     b = p.boundary_conditions
     b.outer_boundary_condition, b.inner_boundary_condition, b.core_bc = outer, inner, core_bc
     b.emissivity, b.equilibrium_temperature = 1.0, 300.0
-    b.outer_boundary_value = {4: F_TOP, 5: 1500.0}.get(outer, 0.0)
-    b.inner_boundary_value = {2: F_CMB, 3: 4000.0}.get(inner, 0.0)
+    b.param_utbl, b.param_utbl_const = utbl, B_UTBL if utbl else 0.0
+    b.outer_boundary_value = F_TOP if outer == 4 else 0.0
+    b.inner_boundary_value = F_CMB if inner == 2 else 0.0
     p.mesh.mass_coordinates = mass_coordinates
     s = EntropySolver(p, entropy_eos=None)
     s.initialize()
@@ -37,13 +42,12 @@ def _solver(outer, inner, core_bc='quasi_steady', *, end_time=1.0, mass_coordina
 
 BCS = [
     (outer, inner, core_bc)
-    for outer in (1, 4, 5)
+    for outer in (1, 4)
     for inner, core_bc in (
         (1, 'quasi_steady'),
         (1, 'energy_balance'),
         (1, 'gradient'),
         (2, None),
-        (3, None),
     )
 ]
 
@@ -62,19 +66,25 @@ def test_output_boundary_flux_equals_applied(outer, inner, core_bc):
         T_top = float(np.asarray(out.T_basic).ravel()[-1])
         assert flux[-1] == pytest.approx(Stefan_Boltzmann * (T_top**4 - 300.0**4), rel=1e-12)
     elif outer == 4:
-        assert flux[-1] == F_TOP
+        assert flux[-1] == pytest.approx(F_TOP, rel=1e-12)
     if inner == 2:
-        assert flux[0] == F_CMB
+        assert flux[0] == pytest.approx(F_CMB, rel=1e-12)
+    elif core_bc == 'quasi_steady':
+        rho, cp = 4000.0, 1000.0  # const_rho, const_Cp; no internal heating
+        alpha = s._cmb_radius_ratio_sq / (
+            rho * cp * s._cmb_vol_first / (s._core_cap * s._core_tfac) + 1
+        )
+        assert flux[0] == pytest.approx(alpha * flux[1], rel=1e-12)
 
 
 def test_f_cmb_without_eos_is_the_applied_flux():
     """Without an EOS the step integrals are skipped and F_cmb falls back to heat_flux[0]."""
     s = _solver(4, 2)
     s.solve()
-    assert s.get_state().F_cmb == F_CMB
+    assert s.get_state().F_cmb == pytest.approx(F_CMB, rel=1e-12)
 
 
-@pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance'])
+@pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance', 'gradient'])
 def test_get_state_between_solves_changes_nothing(core_bc):
     """A get_state call between two coupled solves leaves the second solve unchanged."""
     finals = []
@@ -102,8 +112,8 @@ def test_d_dr_at_both_end_nodes(mass_coordinates):
     np.testing.assert_allclose(grad[[0, -1]], exact[[0, -1]], rtol=1e-12)
 
 
-@pytest.mark.parametrize('outer', [1, 4])
-def test_jax_boundary_conditions_give_the_output_fluxes(outer):
+@pytest.mark.parametrize('outer,utbl', [(1, False), (4, False), (1, True)])
+def test_jax_boundary_conditions_give_the_output_fluxes(outer, utbl):
     """The JAX BC functions, fed the numpy output state, return the output boundary fluxes."""
     jax = pytest.importorskip('jax')
     jax.config.update('jax_enable_x64', True)
@@ -112,7 +122,7 @@ def test_jax_boundary_conditions_give_the_output_fluxes(outer):
     from aragog.jax.phase import MeshArrays
     from aragog.jax.solver import BoundaryParams, _apply_cmb_bc, _apply_surface_bc
 
-    s = _solver(outer, 1)
+    s = _solver(outer, 1, utbl=utbl)
     s.solve()
     out = s.get_state()
     bc = BoundaryParams(
@@ -125,6 +135,8 @@ def test_jax_boundary_conditions_give_the_output_fluxes(outer):
         core_density=s._core_density,
         core_heat_capacity=s._core_cp,
         tfac_core_avg=s._core_tfac,
+        param_utbl=utbl,
+        param_utbl_const=B_UTBL if utbl else 0.0,
     )
     mesh = MeshArrays.from_numpy_mesh(s.evaluator.mesh)
     rho = jnp.asarray(np.asarray(s.state.phase_staggered.density()).ravel())
@@ -135,3 +147,6 @@ def test_jax_boundary_conditions_give_the_output_fluxes(outer):
     np.testing.assert_allclose(
         np.asarray(jax_flux)[[0, -1]], np.asarray(flux)[[0, -1]], rtol=1e-12
     )
+    if utbl:
+        T_top = float(T_basic[-1])
+        assert flux[-1] < 0.9 * Stefan_Boltzmann * (T_top**4 - 300.0**4)

@@ -606,7 +606,9 @@ class SolverOutput:
     mass_stag: npt.NDArray  # mass per shell [kg]
 
     # Fluxes and heating (at basic / staggered nodes)
-    heat_flux: npt.NDArray  # total heat flux at basic nodes [W/m^2], BC flux at the ends
+    # Total heat flux at basic nodes [W/m^2]; the end values are the applied BC fluxes,
+    # except for inner BC 3 and outer BC 5, which the RHS does not impose.
+    heat_flux: npt.NDArray
     heating: npt.NDArray  # internal heating at staggered nodes [W/kg]
     eddy_diff: npt.NDArray  # eddy diffusivity at basic nodes [m^2/s]
     cap_stag: npt.NDArray  # capacitance rho*T at staggered nodes
@@ -1538,6 +1540,7 @@ class EntropySolver:
         self._outer_bc_value = float(bc.outer_boundary_value)
         self._outer_bc_emiss = float(bc.emissivity)
         self._outer_bc_T_eq = float(bc.equilibrium_temperature)
+        self._outer_bc_utbl = bool(bc.param_utbl)
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
 
@@ -2019,8 +2022,10 @@ class EntropySolver:
 
         # Surface: grey-body or prescribed flux
         if self._outer_bc_kind == 1:
-            # Grey-body: F = emissivity * sigma * (T_surf^4 - T_eq^4)
+            # Grey-body: F = emissivity * sigma * (T_surf^4 - T_eq^4), T_surf UTBL-reduced if set
             T_surf = self.state.top_temperature.item()
+            if self._outer_bc_utbl:
+                T_surf = float(self.evaluator.boundary_conditions._utbl_tsurf(T_surf))
             self.state._heat_flux[-1] = (
                 self._outer_bc_emiss * Stefan_Boltzmann * (T_surf**4 - self._outer_bc_T_eq**4)
             )
