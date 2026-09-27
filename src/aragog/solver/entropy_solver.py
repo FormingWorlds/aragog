@@ -296,51 +296,174 @@ def _phase_boundary_max_step_clamp(
     return bool(near_liq or near_sol or in_mushy or cmb_near_liq or cmb_in_mushy)
 
 
+# Rate-cap stiff-zone half-width floor [J/kg/K] and the rate floor switch.
+_RATE_CAP_MIN_DELTA = 10.0
+_RATE_CAP_FLOOR = True
+_NO_CAP_ATTRS = {
+    'evals': 0,
+    'binding_cap': None,
+    'cap': 0.0,
+    'cap_T': 0.0,
+    'cap_S': 0.0,
+    'phi0': 0.0,
+}
+
+
 def _rate_phase_boundary_max_step(
     S: npt.NDArray,
     dSdt: npt.NDArray,
     S_liq: npt.NDArray,
     S_sol: npt.NDArray,
-    entropy_margin: float,
+    mass: npt.NDArray,
+    delta: float,
     fraction: float = 0.1,
     bounds: tuple[float, float] = (1.0, 100.0),
+    rate_floor: bool = True,
 ) -> float:
     """``max_step`` [yr] from the rate at which cells approach a phase boundary.
 
-    A cell counts when it is within ``entropy_margin`` of the solidus or
-    liquidus or inside the two-phase band. Its time to the next boundary in the
-    direction it moves is ``|S - S_b| / |dS/dt|``; a cell with no boundary
-    ahead (below the solidus and cooling, above the liquidus and heating) or
-    with ``dS/dt = 0`` does not count.
+    Any cell within ``delta`` of the solidus or liquidus sets the lower bound.
+    Otherwise every cell with a boundary ahead counts: its time to the next
+    boundary in the direction it moves is ``|S - S_b| / |dS/dt|``. The rate is
+    floored at the mass-weighted mean ``|dS/dt|``; a cell slower than the floor
+    has no reliable direction, so it uses the nearer boundary on either side.
+    The floor covers an isentropic start, where interior cells have almost no
+    rate until the thermal boundary layers form.
 
     Parameters
     ----------
     S, dSdt : npt.NDArray
-        Staggered entropy [J/kg/K] and its rate [J/kg/K/yr] at the call start.
+        Entropy [J/kg/K] and its rate [J/kg/K/yr].
     S_liq, S_sol : npt.NDArray
-        Liquidus and solidus entropy at the staggered pressures [J/kg/K].
-    entropy_margin : float
-        Proximity band [J/kg/K], as for the fixed clamp.
+        Liquidus and solidus entropy at each entry's pressure [J/kg/K].
+    mass : npt.NDArray
+        Weight of each entry in the rate floor [kg]; zero excludes an entry.
+    delta : float
+        Half-width of the stiff zone around each boundary [J/kg/K].
     fraction : float
         Fraction of the shortest time to a boundary used as ``max_step``.
     bounds : tuple of float
         Lower and upper clip [yr].
+    rate_floor : bool
+        Apply the mass-weighted rate floor.
 
     Returns
     -------
     float
-        ``fraction * min(t_c)`` clipped to ``bounds``; the upper bound when no
-        cell counts.
+        ``bounds[0]`` inside a stiff zone, else ``fraction * min(t_c)`` clipped
+        to ``bounds``; the upper bound when no entry has a finite ``t_c``.
     """
-    near = (np.abs(S - S_liq) < entropy_margin) | (np.abs(S - S_sol) < entropy_margin)
-    near |= (S < S_liq) & (S > S_sol)
+    dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
+    if np.any(dist < delta):
+        return bounds[0]
+    rate = np.abs(dSdt)
+    floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
     down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
     up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
-    target = np.where(dSdt < 0.0, down, up)
+    ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
+    d = np.where(rate < floor, dist, ahead)
     with np.errstate(divide='ignore', invalid='ignore'):
-        t_c = np.abs(target - S) / np.abs(dSdt)
-    t_c = t_c[near & np.isfinite(t_c)]
+        t_c = d / np.maximum(rate, floor)
+    t_c = t_c[np.isfinite(t_c)]
     return float(np.clip(fraction * t_c.min(), *bounds)) if t_c.size else bounds[1]
+
+
+class _PhaseBoundarySegmentRoot(_CV_RootFunction):
+    """CVODE root components that end one segment of a rate-cap call.
+
+    Entropies are the staggered cells plus the CMB cell against the
+    boundaries at the CMB pressure. Components, anchored at the segment start:
+
+    - ``cap``: the per-call step caps (``_PhiCapRootFunction``), when armed;
+      it ends the call.
+    - ``stiff``: the smallest distance to a boundary minus ``delta`` outside
+      the stiff zone, minus ``2 delta`` inside it (hysteresis).
+    - ``progress``: outside the stiff zone only, ``alpha`` times each entry's
+      start distance to its nearer boundary minus the distance it has moved.
+
+    Parameters
+    ----------
+    S_liq, S_sol : npt.NDArray
+        Boundary entropies for the extended entries [J/kg/K].
+    y0 : npt.NDArray
+        Nondimensional state at the segment start.
+    delta : float
+        Stiff-zone half-width [J/kg/K].
+    inside : bool
+        Whether the segment starts inside the stiff zone.
+    state_scale : npt.NDArray
+        Nondimensional state scale; the first ``n_stag`` entries are entropy.
+    n_stag : int
+        Number of staggered cells.
+    cap : _PhiCapRootFunction or None
+        Step-cap root function to include as the first component.
+    alpha : float
+        Fraction of the start distance that ends a segment.
+    """
+
+    def __init__(
+        self, S_liq, S_sol, y0, delta, inside, state_scale, n_stag, cap=None, alpha=0.5
+    ):
+        self.S_liq, self.S_sol = S_liq, S_sol
+        self.scale = np.asarray(state_scale, dtype=float).ravel()[:n_stag]
+        self.n_stag, self.delta, self.inside, self.step_cap, self.alpha = (
+            int(n_stag),
+            float(delta),
+            bool(inside),
+            cap,
+            float(alpha),
+        )
+        self.S0 = self._entropy(y0)
+        self.d0 = self._dist(self.S0)
+        self.names = (
+            (['cap'] if cap is not None else []) + ['stiff'] + ([] if inside else ['progress'])
+        )
+        self.n_roots = len(self.names)
+
+    def _entropy(self, y):
+        S = np.asarray(y, dtype=float)[: self.n_stag] * self.scale
+        return np.append(S, S[0])
+
+    def _dist(self, S):
+        return np.minimum(np.abs(S - self.S_liq), np.abs(S - self.S_sol))
+
+    def components(self, t, y):
+        """Root component values at nondimensional ``(t, y)``."""
+        g = []
+        if self.step_cap is not None:
+            gc = np.zeros(1)
+            self.step_cap.evaluate(t, y, gc)
+            g.append(float(gc[0]))
+        S = self._entropy(y)
+        g.append(float(self._dist(S).min()) - (2.0 if self.inside else 1.0) * self.delta)
+        if not self.inside:
+            g.append(float(np.min(self.alpha * self.d0 - np.abs(S - self.S0))))
+        g = np.asarray(g, dtype=float)
+        return np.where(np.isfinite(g), g, 1.0)
+
+    def evaluate(self, t, y, g, userdata=None):
+        for i, v in enumerate(self.components(t, y)):
+            g[i] = v
+        return 0
+
+    def fired(self, t, y):
+        """Name of the component closest to zero at the root ``(t, y)``."""
+        scale = [self.delta] * len(self.names)
+        if self.step_cap is not None:
+            scale[0] = max(self.step_cap.cap, self.step_cap.cap_T, self.step_cap.cap_S)
+        if 'progress' in self.names:
+            scale[-1] = max(float(np.min(self.alpha * self.d0)), 1e-12)
+        g = np.abs(self.components(t, y)) / np.asarray(scale)
+        return self.names[int(np.argmin(g))]
+
+    def __getattr__(self, name):
+        # Step-cap attributes read by ``_solve_cvode`` on a root; neutral without a cap.
+        step_cap = self.__dict__.get('step_cap')
+        if step_cap is not None:
+            return getattr(step_cap, name)
+        if name in _NO_CAP_ATTRS:
+            return _NO_CAP_ATTRS[name]
+        raise AttributeError(name)
 
 
 def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
@@ -2464,6 +2587,23 @@ class EntropySolver:
 
         return J.tocsc()
 
+    def _output_grid(self, start_time: float, end_time: float) -> npt.NDArray:
+        """CVODE output times for one call.
+
+        Intermediate points let the per-call energy integrals resolve the
+        within-call flux decay; they also feed back into CVODE stepping, so the
+        step count and final state shift weakly with them (state near rtol).
+        The grid is quadratic, dense near the start, because each call relaxes
+        toward the new boundary state and the flux changes fastest early; a few
+        dozen points resolve the F_int integral to ~0.1 percent, where a
+        uniform grid of the same size leaves ~10 percent.
+        """
+        n_out = self._cvode_output_points
+        if n_out > 2 and float(end_time) > float(start_time):
+            x = np.linspace(0.0, 1.0, n_out) ** 2
+            return float(start_time) + (float(end_time) - float(start_time)) * x
+        return np.array([start_time, end_time], dtype=float)
+
     def _solve_cvode(
         self,
         start_time: float,
@@ -2476,6 +2616,8 @@ class EntropySolver:
         cvode_rhs_fn_override: 'Callable | None' = None,
         cvode_jacfn: 'Callable | None' = None,
         phi_cap_rootfn: 'Callable | None' = None,
+        tspan: 'npt.NDArray | None' = None,
+        keep_points_before_root: bool = False,
     ) -> 'OptimizeResult':
         """Integrate the entropy equation using SUNDIALS CVODE.
 
@@ -2508,6 +2650,11 @@ class EntropySolver:
             callback so CVODE uses this analytic Jacobian instead of
             its default finite-difference approximation. Signature:
             ``jacfn(t, y, fy, J, user_data=None) -> int``.
+        tspan : ndarray or None
+            Output times; ``None`` uses ``_output_grid(start_time, end_time)``.
+        keep_points_before_root : bool
+            On a root, keep the output points reached before it; otherwise the
+            result holds only the start and the root.
         """
         # Zero-span edge case: scipy's solve_ivp accepts
         # `t_span = (t0, t0)` and returns the initial state trivially,
@@ -2633,7 +2780,7 @@ class EntropySolver:
         # treats flag==2 as success.
         if phi_cap_rootfn is not None:
             cvode_options['rootfn'] = phi_cap_rootfn
-            cvode_options['nr_rootfns'] = 1
+            cvode_options['nr_rootfns'] = int(getattr(phi_cap_rootfn, 'n_roots', 1))
 
         # Option Z: install the analytic Jacobian callback. When
         # provided, CVODE's Newton iteration uses this instead of the
@@ -2656,24 +2803,8 @@ class EntropySolver:
                 'CVODE options in use: %s',
                 {k: v for k, v in cvode_options.items() if k != 'old_api'},
             )
-        # Request intermediate output points so the per-call energy
-        # integrals resolve the within-call flux decay. This grid feeds
-        # back into CVODE stepping, so the step count and final state
-        # shift weakly with it (state near rtol). The root path below
-        # handles a phi-step-cap fire, where these points are inert.
-        #
-        # The grid is front-loaded (quadratic spacing, dense near the call
-        # start) because each macro-step is a relaxation toward the new
-        # boundary state, so the boundary flux changes fastest just after
-        # the start and flattens later. A quadratic grid resolves the
-        # F_int integral to ~0.1 percent with a few dozen points, where a
-        # uniform grid of the same size leaves ~10 percent.
-        n_out = self._cvode_output_points
-        if n_out > 2 and float(end_time) > float(start_time):
-            x = np.linspace(0.0, 1.0, n_out) ** 2
-            tspan = float(start_time) + (float(end_time) - float(start_time)) * x
-        else:
-            tspan = np.array([start_time, end_time], dtype=float)
+        if tspan is None:
+            tspan = self._output_grid(start_time, end_time)
         cvode_sol = solver.solve(
             tspan,
             np.asarray(y0, dtype=float).ravel(),
@@ -2760,6 +2891,14 @@ class EntropySolver:
             y_root_col = np.asarray(y_root, dtype=float).reshape(-1, 1)
             result.t = np.array([float(start_time), t_root], dtype=float)
             result.y = np.concatenate((y0_col, y_root_col), axis=1)
+            values = getattr(cvode_sol, 'values', None)
+            if keep_points_before_root and values is not None and values.t is not None:
+                t_pre = np.asarray(values.t, dtype=float).ravel()
+                y_pre = np.asarray(values.y, dtype=float).reshape(t_pre.size, -1).T
+                keep = t_pre < t_root
+                if keep.any():
+                    result.t = np.append(t_pre[keep], t_root)
+                    result.y = np.concatenate((y_pre[:, keep], y_root_col), axis=1)
             used_roots = True
 
         if not used_roots:
@@ -2812,6 +2951,119 @@ class EntropySolver:
                 result.message = f'CVODE failed with flag {flag}'
         return result
 
+    def _solve_cvode_segments(
+        self,
+        start_time: float,
+        end_time: float,
+        y0: npt.NDArray,
+        h_at: 'Callable',
+        roots_at: 'Callable',
+        t_ref: float,
+        h_min: float,
+        max_segments: int = 10000,
+        **cvode_kw,
+    ) -> 'OptimizeResult':
+        """Integrate one rate-cap call as CVODE segments with their own ``max_step``.
+
+        CVODE cannot change ``max_step`` during a run, so each segment is a new
+        CVODE solve from the previous segment's end. A segment ends at the call
+        end, at a ``_PhaseBoundarySegmentRoot`` component (stiff-zone entry or
+        exit, progress toward a boundary), or at the step cap, which ends the
+        call. The call trajectory is the concatenation of the segments, with
+        each segment end as a trajectory point, so the per-call energy
+        integrals span every segment.
+
+        Parameters
+        ----------
+        start_time, end_time : float
+            Nondimensional call span.
+        y0 : npt.NDArray
+            Nondimensional start state.
+        h_at : callable
+            ``h_at(t, y) -> max_step`` (nondimensional) outside the stiff zone.
+        roots_at : callable
+            ``roots_at(y, inside) -> _PhaseBoundarySegmentRoot`` anchored at
+            ``y``; ``inside=None`` decides from ``y``.
+        t_ref : float
+            Time scale [yr] for the log.
+        h_min : float
+            Nondimensional ``max_step`` inside the stiff zone.
+        max_segments : int
+            Segment ceiling; the rest of the call then runs at ``h_min``
+            with only the step cap armed.
+        **cvode_kw
+            Passed to ``_solve_cvode``.
+
+        Returns
+        -------
+        OptimizeResult
+            As ``_solve_cvode``, plus ``segments``: ``(t [yr], trigger,
+            max_step [yr])`` per segment.
+        """
+        grid = self._output_grid(start_time, end_time)
+        cap = cvode_kw.pop('phi_cap_rootfn', None)
+        t, y, inside = float(start_time), np.asarray(y0, dtype=float).ravel(), None
+        ts, ys, log = [np.array([t])], [y.reshape(-1, 1)], []
+        nfev = nst = nfe = 0
+        trigger = 'start'
+        for k in range(max_segments + 1):
+            last = k == max_segments
+            roots = None if last else roots_at(y, inside)
+            inside = False if last else roots.inside
+            h = h_min if (inside or last) else h_at(t, y)
+            log.append((t * t_ref, trigger, h * t_ref))
+            logger.debug(
+                'rate cap segment %d: t=%.6e yr trigger=%s max_step=%.3g yr',
+                k,
+                t * t_ref,
+                trigger,
+                h * t_ref,
+            )
+            if last:
+                logger.warning(
+                    'rate cap: %d segments in one call; max_step %.3g yr for the rest',
+                    max_segments,
+                    h * t_ref,
+                )
+            tspan = np.concatenate(([t], grid[grid > t + 1e-12 * abs(end_time)]))
+            res = self._solve_cvode(
+                start_time=t,
+                end_time=end_time,
+                y0=y,
+                max_step=h,
+                phi_cap_rootfn=cap if last else roots,
+                tspan=tspan,
+                keep_points_before_root=True,
+                **cvode_kw,
+            )
+            ts.append(np.asarray(res.t, dtype=float)[1:])
+            ys.append(np.asarray(res.y, dtype=float)[:, 1:])
+            nfev += int(res.nfev)
+            nst += int(res.get('cvode_nst', 0))
+            nfe += int(res.get('cvode_nfe', 0))
+            if res.status != 0 or res.cvode_flag != 2 or last:
+                break
+            t, y = float(res.t[-1]), np.asarray(res.y[:, -1], dtype=float)
+            trigger = roots.fired(t, y)
+            if trigger == 'cap':
+                break
+            for key in ('cap_fired', 'cap_evals', 'cap_label', 'cap_value', 'cap_phi0'):
+                res.pop(key, None)
+            if trigger == 'stiff':
+                inside = not roots.inside
+            if not t < end_time:
+                break
+        res.t = np.concatenate(ts)
+        res.y = np.concatenate(ys, axis=1)
+        res.nfev, res.cvode_nst, res.cvode_nfe, res.segments = nfev, nst, nfe, log
+        logger.info(
+            'rate cap: %d segment(s), nst=%d, triggers %s',
+            len(log),
+            nst,
+            {n: sum(1 for e in log if e[1] == n) for n in {e[1] for e in log}},
+        )
+        return res
+
     def solve(self) -> None:
         """Run the BDF time integration."""
         start_time = self.parameters.solver.start_time
@@ -2857,6 +3109,7 @@ class EntropySolver:
         # UnboundLocalError when the EOS branch below is skipped (e.g. the
         # const_properties path with no EOS).
         phi_cap_anchor = None
+        rate_mode = False
 
         # Tighten max_step when ANY cell is near a phase boundary and arm the
         # step caps. Runs whenever the entropy EOS is loaded, independent of
@@ -2898,17 +3151,16 @@ class EntropySolver:
                 entropy_margin=entropy_margin,
             ):
                 cap_mode = getattr(self.parameters.energy, 'phase_boundary_cap', 'fixed')
-                if cap_mode != 'rate' or self._core_bc == 'gradient':
-                    max_step = 1.0
-                else:
-                    dSdt0 = np.asarray(self._dSdt_single(start_time, self._S0)).ravel()[
-                        : S_arr_stag.size
-                    ]
-                    max_step = min(
-                        max_step,
-                        _rate_phase_boundary_max_step(
-                            S_arr_stag, dSdt0, S_liq_stag, S_sol_stag, entropy_margin
-                        ),
+                rate_mode = cap_mode == 'rate' and self._core_bc != 'gradient'
+                rate_ceiling = max_step
+                max_step = 1.0
+                if rate_mode:
+                    # Staggered cells plus the CMB cell at the CMB-pressure boundaries.
+                    rate_liq = np.append(S_liq_stag, S_liq)
+                    rate_sol = np.append(S_sol_stag, S_sol)
+                    w = float(getattr(self.parameters.phase_mixed, 'matprop_smooth_width', 0.0))
+                    rate_delta = max(
+                        3.0 * w * float(np.max(rate_liq - rate_sol)), _RATE_CAP_MIN_DELTA
                     )
 
             # Per-call step caps as a SUNDIALS root function. Build the
@@ -3163,21 +3415,80 @@ class EntropySolver:
 
             if cvode_rhs_override is None:
                 logger.info('EntropySolver: using CVODE (solver_method=cvode)')
-            self._solution = self._solve_cvode(
-                start_time=start_nd,
-                end_time=end_nd,
-                y0=S0_nd,
+            cvode_kw = dict(
                 atol=atol_nd,
                 rtol=rtol,
-                max_step=max_step_nd,
                 rhs=_rhs_nondim,
                 cvode_rhs_fn_override=cvode_rhs_override,
                 cvode_jacfn=cvode_jacfn,
                 phi_cap_rootfn=phi_cap_rootfn,
             )
+            if rate_mode:
+
+                def _rate_h(t_nd, y_nd):
+                    try:
+                        y = np.asarray(y_nd, dtype=float) * _state_scale
+                        S = y[:n_s]
+                        dSdt = np.asarray(self._dSdt_single(t_nd * t_ref, y)).ravel()[:n_s]
+                        rho = np.asarray(self.entropy_eos.density(self._P_stag_flat, S)).ravel()
+                        h = _rate_phase_boundary_max_step(
+                            np.append(S, S[0]),
+                            np.append(dSdt, dSdt[0]),
+                            rate_liq,
+                            rate_sol,
+                            np.append(rho * self._volume_flat, 0.0),
+                            rate_delta,
+                            rate_floor=_RATE_CAP_FLOOR,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            'rate cap: dS/dt evaluation failed (%s); max_step 1 yr', exc
+                        )
+                        h = 1.0
+                    return min(h, rate_ceiling) / t_ref
+
+                def _rate_roots(y_nd, inside):
+                    if inside is None:
+                        S = np.asarray(y_nd, dtype=float)[:n_s] * _state_scale[:n_s]
+                        S = np.append(S, S[0])
+                        dist = np.minimum(np.abs(S - rate_liq), np.abs(S - rate_sol))
+                        inside = bool(np.any(dist < rate_delta))
+                    return _PhaseBoundarySegmentRoot(
+                        rate_liq,
+                        rate_sol,
+                        y_nd,
+                        rate_delta,
+                        inside,
+                        _state_scale,
+                        n_s,
+                        cap=phi_cap_rootfn,
+                    )
+
+                self._solution = self._solve_cvode_segments(
+                    start_time=start_nd,
+                    end_time=end_nd,
+                    y0=S0_nd,
+                    h_at=_rate_h,
+                    roots_at=_rate_roots,
+                    t_ref=t_ref,
+                    h_min=1.0 / t_ref,
+                    **cvode_kw,
+                )
+            else:
+                self._solution = self._solve_cvode(
+                    start_time=start_nd,
+                    end_time=end_nd,
+                    y0=S0_nd,
+                    max_step=max_step_nd,
+                    **cvode_kw,
+                )
         else:
             method = 'Radau' if solver_method != 'bdf' else 'BDF'
             logger.info('EntropySolver: using scipy %s', method)
+            if rate_mode:
+                logger.warning(
+                    'phase_boundary_cap="rate" needs CVODE; max_step 1 yr with scipy'
+                )
             self._solution = solve_ivp(
                 _rhs_nondim,
                 (start_nd, end_nd),
