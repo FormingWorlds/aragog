@@ -227,6 +227,50 @@ def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     assert np.abs(T_r - T_f).max() <= 0.1
 
 
+@needs_eos
+@pytest.mark.unit
+def test_rate_cap_exception_fallback_returns_one_year(shared_eos, monkeypatch, caplog):
+    """When dS/dt evaluation raises an exception during rate cap evaluation, fall back to 1 yr."""
+    s = _solver(shared_eos, 'rate', end_time=10.0)
+
+    calls = 0
+    real_dSdt = s._dSdt_single
+
+    def faulty_dSdt(t, y):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError('simulated dS/dt failure')
+        return real_dSdt(t, y)
+
+    monkeypatch.setattr(s, '_dSdt_single', faulty_dSdt)
+    with caplog.at_level('WARNING'):
+        s.solve()
+    assert any('rate cap: dS/dt evaluation failed' in rec.message for rec in caplog.records)
+    assert s._solution.segments[0][2] == pytest.approx(1.0)
+
+
+@needs_eos
+@pytest.mark.unit
+def test_rate_cap_segment_ceiling_falls_back_to_one_year(shared_eos, monkeypatch, caplog):
+    """Reaching the segment count ceiling warns and falls back to 1 yr for the remaining call."""
+    s = _solver(shared_eos, 'rate', end_time=200.0)
+    orig_segments = s._solve_cvode_segments
+
+    def capped_segments(**kw):
+        return orig_segments(**{**kw, 'max_segments': 1})
+
+    monkeypatch.setattr(s, '_solve_cvode_segments', capped_segments)
+    with caplog.at_level('WARNING'):
+        s.solve()
+    assert any(
+        'segments in one call; max_step 1 yr for the rest' in rec.message
+        for rec in caplog.records
+    )
+    assert len(s._solution.segments) == 2
+    assert s._solution.segments[-1][2] == pytest.approx(1.0)
+
+
 @pytest.fixture(scope='module')
 def shared_eos():
     from aragog.eos.entropy import EntropyEOS
