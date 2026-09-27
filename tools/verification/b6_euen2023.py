@@ -28,8 +28,12 @@ import numpy as np
 
 import aragog
 
-assert 'wt-a-b6' in aragog.__file__, f'Target worktree assertion failed: {aragog.__file__}'
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+assert Path(aragog.__file__).resolve().is_relative_to(_REPO_ROOT), (
+    f'aragog imported from unexpected location: {aragog.__file__}'
+)
 
+from aragog import rheology  # noqa: E402
 from aragog.parser import (  # noqa: E402
     Parameters,
     _BoundaryConditionsParameters,
@@ -40,21 +44,24 @@ from aragog.parser import (  # noqa: E402
     _PhaseParameters,
     _SolverParameters,
 )
+from aragog.solver import SECS_PER_YEAR  # noqa: E402
 from aragog.solver import entropy_solver as es_mod  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
+
+_ORIG_CVODE = es_mod.EntropySolver._solve_cvode
+_ORIG_ARRHENIUS = rheology.compute_arrhenius_viscosity
 
 FK: dict[str, Any] = {}
 
 
 def _install_fk() -> None:
     """Install Frank-Kamenetskii viscosity benchmark patch."""
-    from aragog import rheology
-
-    _orig = rheology.compute_arrhenius_viscosity
+    if getattr(rheology.compute_arrhenius_viscosity, '_is_fk_patch', False):
+        return
 
     def fk(temperature: Any, pressure: Any, *a: Any, xp: Any = np, **k: Any) -> Any:
         if not FK:
-            return _orig(temperature, pressure, *a, xp=xp, **k)
+            return _ORIG_ARRHENIUS(temperature, pressure, *a, xp=xp, **k)
         res = FK['eta0'] * xp.exp(
             -FK['gamma'] * (xp.asarray(temperature, dtype=float) - FK['T0'])
         ) + 0.0 * xp.asarray(pressure, dtype=float)
@@ -62,18 +69,31 @@ def _install_fk() -> None:
             return float(res)
         return res
 
+    fk._is_fk_patch = True
     rheology.compute_arrhenius_viscosity = fk
+
+
+def restore_fk() -> None:
+    """Restore the unpatched Arrhenius viscosity function."""
+    rheology.compute_arrhenius_viscosity = _ORIG_ARRHENIUS
+    FK.clear()
 
 
 def lift_step_cap(max_step_yr: float) -> None:
     """Lift the CVODE step cap in constant-properties mode."""
-    orig = es_mod.EntropySolver._solve_cvode
+    restore_step_cap()
 
     def patched(self: Any, *a: Any, **k: Any) -> Any:
         k['max_step'] = max_step_yr / self._t_ref_yr if np.isfinite(max_step_yr) else np.inf
-        return orig(self, *a, **k)
+        return _ORIG_CVODE(self, *a, **k)
 
+    patched._is_lifted_patch = True
     es_mod.EntropySolver._solve_cvode = patched
+
+
+def restore_step_cap() -> None:
+    """Restore the unpatched EntropySolver._solve_cvode method."""
+    es_mod.EntropySolver._solve_cvode = _ORIG_CVODE
 
 
 # Benchmark reference values from Euen et al. (2023) Tables 5, 7, 8, 9, 10
@@ -163,14 +183,17 @@ def build_parameters(
     law_on: bool = True,
     convection_on: bool = True,
     t_end_yr: float = 2.0e11,
+    ra_override: float | None = None,
+    alpha_override: float | None = None,
 ) -> tuple[Parameters, float]:
     """Build aragog configuration parameters for a benchmark case."""
     info = BENCHMARK_CASES[case_name]
-    ra = info['Ra']
+    ra = ra_override if ra_override is not None else info['Ra']
     e_val = info['E']
+    alpha_val = alpha_override if alpha_override is not None else ALPHA
 
     # Viscosity at T=0.5
-    eta_mid = (RHO * ALPHA * GRAV * DELTA_T * SHELL_D**3) / (KAPPA * ra)
+    eta_mid = (RHO * alpha_val * GRAV * DELTA_T * SHELL_D**3) / (KAPPA * ra)
     FK.clear()
     FK.update(eta0=eta_mid, gamma=e_val / DELTA_T, T0=T_MID)
 
@@ -212,7 +235,10 @@ def build_parameters(
         mass_coordinates=False,
     )
     common = dict(
-        density=RHO, heat_capacity=CP, thermal_conductivity=K_COND, thermal_expansivity=ALPHA
+        density=RHO,
+        heat_capacity=CP,
+        thermal_conductivity=K_COND,
+        thermal_expansivity=alpha_val,
     )
     pl = _PhaseParameters(melt_fraction=1.0, viscosity=1.0e2, **common)
     ps = _PhaseParameters(
@@ -239,7 +265,7 @@ def build_parameters(
         const_properties=True,
         const_rho=RHO,
         const_Cp=CP,
-        const_alpha=ALPHA,
+        const_alpha=alpha_val,
         const_cond=K_COND,
         const_log10visc=float(np.log10(eta_mid)),
         const_T_ref=T_MID,
@@ -270,6 +296,8 @@ def run_simulation(
     convection_on: bool = True,
     t_end_yr: float = 2.0e11,
     n_chunks: int = 10,
+    ra_override: float | None = None,
+    alpha_override: float | None = None,
 ) -> dict[str, Any]:
     """Run a single benchmark case to steady state with chunked progression."""
     _install_fk()
@@ -281,6 +309,8 @@ def run_simulation(
         law_on=law_on,
         convection_on=convection_on,
         t_end_yr=t_end_yr,
+        ra_override=ra_override,
+        alpha_override=alpha_override,
     )
     s = EntropySolver(p, entropy_eos=None)
     s.initialize()
@@ -307,11 +337,12 @@ def run_simulation(
     wall_s = time.time() - t0
     final_st = s.get_state()
 
-    # Steady-state check 1: relative change of mean T over last 10%
-    rel_dt_last10 = abs(mean_t_history[-1] - mean_t_history[-2]) / mean_t_history[-1]
+    # Steady-state check 1: relative change of nondimensional mean T over last 10%
+    mean_t_nd_history = [(t - T_SURF) / DELTA_T for t in mean_t_history]
+    rel_dt_last10 = abs(mean_t_nd_history[-1] - mean_t_nd_history[-2]) / mean_t_nd_history[-1]
 
     # Non-dimensional mean temperature
-    mean_t_nd = (mean_t_history[-1] - T_SURF) / DELTA_T
+    mean_t_nd = mean_t_nd_history[-1]
 
     # Rheology verification: fk_check
     vs = np.asarray(final_st.visc_stag, float)
@@ -331,20 +362,24 @@ def run_simulation(
     nu_top_inst = f_top_inst / f_cond_top
     nu_bot_inst = f_bot_inst / f_cond_bot
 
-    # (b) Time-integrated flux over final chunk trajectory
+    # (b) Time-integrated flux over final chunk trajectory via dual-flux energy integrals
     sol = s._solution
-    if sol is not None and sol.t is not None and len(sol.t) >= 2:
-        f_top_traj = []
-        f_bot_traj = []
-        for ti, yi in zip(sol.t, sol.y.T):
-            s._dSdt_single(float(ti), np.asarray(yi, dtype=float))
-            f_top_traj.append(float(s.state._heat_flux[-1]))
-            f_bot_traj.append(float(s.state._heat_flux[0]))
-        f_top_avg = float(np.trapezoid(f_top_traj, sol.t) / (sol.t[-1] - sol.t[0]))
-        f_bot_avg = float(np.trapezoid(f_bot_traj, sol.t) / (sol.t[-1] - sol.t[0]))
+    rb = np.asarray(final_st.r_basic, float)
+    a_int = 4.0 * np.pi * float(rb[-1]) ** 2
+    a_cmb = 4.0 * np.pi * float(rb[0]) ** 2
+    dt_chunk_s = (
+        float(sol.t[-1] - sol.t[0]) * SECS_PER_YEAR
+        if sol is not None and sol.t is not None and len(sol.t) >= 2
+        else 0.0
+    )
+    if dt_chunk_s > 0.0 and final_st.step_dE_F_int_J != 0.0:
+        f_top_avg = -float(final_st.step_dE_F_int_J) / (a_int * dt_chunk_s)
+        f_bot_avg = float(final_st.step_dE_F_cmb_J) / (a_cmb * dt_chunk_s)
         nu_top_int = f_top_avg / f_cond_top
         nu_bot_int = f_bot_avg / f_cond_bot
     else:
+        f_top_avg = f_top_inst
+        f_bot_avg = f_bot_inst
         nu_top_int = nu_top_inst
         nu_bot_int = nu_bot_inst
 
@@ -371,6 +406,10 @@ def run_simulation(
         'convection_on': convection_on,
         'mean_T_nd': mean_t_nd,
         'mean_T_K': mean_t_history[-1],
+        'f_top_inst': f_top_inst,
+        'f_bot_inst': f_bot_inst,
+        'f_top_avg': f_top_avg,
+        'f_bot_avg': f_bot_avg,
         'Nu_top': nu_top_inst,
         'Nu_bottom': nu_bot_inst,
         'Nu_top_integral': nu_top_int,
@@ -392,10 +431,10 @@ def run_canaries(out_dir: Path) -> dict[str, Any]:
     """Execute verification canaries and save b6_canary.json."""
     print('=== Running Verification Canaries ===')
 
-    # 1. Conduction limit canary
-    print('1. Conduction limit canary...')
+    # 1. Conduction limit canary: sub-critical buoyancy with MLT on recovers pure conduction
+    print('1. Conduction limit canary (small buoyancy limit with convection ON)...')
     res_cond = run_simulation(
-        'A1', n_nodes=100, law_on=False, convection_on=False, t_end_yr=2.0e11
+        'A1', n_nodes=100, law_on=False, convection_on=True, t_end_yr=2.0e11, ra_override=1.0
     )
     analytical_mean_t = 77.0 / 247.0
     mean_t_diff = abs(res_cond['mean_T_nd'] - analytical_mean_t)
@@ -410,13 +449,11 @@ def run_canaries(out_dir: Path) -> dict[str, Any]:
         f'{"PASS" if cond_pass else "FAIL"}'
     )
 
-    # 2. Negative canary: planar flux formula on spherical conduction
-    print('2. Negative canary (planar flux normalization)...')
+    # 2. Negative canary: planar flux formula on actual spherical conduction fluxes
+    print('2. Negative canary (planar flux normalization on simulation fluxes)...')
     f_planar = K_COND * DELTA_T / SHELL_D
-    f_top_inst = res_cond['Nu_top'] * (K_COND * DELTA_T / SHELL_D) * (RB_ND / RT_ND)
-    f_bot_inst = res_cond['Nu_bottom'] * (K_COND * DELTA_T / SHELL_D) * (RT_ND / RB_ND)
-    nu_top_planar = f_top_inst / f_planar
-    nu_bot_planar = f_bot_inst / f_planar
+    nu_top_planar = res_cond['f_top_inst'] / f_planar
+    nu_bot_planar = res_cond['f_bot_inst'] / f_planar
     planar_failed = (abs(nu_top_planar - 1.0) > 0.1) and (abs(nu_bot_planar - 1.0) > 0.1)
     print(
         f'   Planar Nu_top={nu_top_planar:.4f}, Nu_bot={nu_bot_planar:.4f} '
@@ -424,40 +461,40 @@ def run_canaries(out_dir: Path) -> dict[str, Any]:
     )
 
     # 3. Step-cap lift canary
-    print('3. Step-cap lift canary...')
-    orig_solve_cvode = es_mod.EntropySolver._solve_cvode
+    print('3. Step-cap lift canary (step count discrimination and solution invariance)...')
 
-    def run_interval(lift: bool) -> float:
+    def run_interval(lift: bool) -> tuple[int, float]:
         if lift:
-
-            def patched(self: Any, *a: Any, **k: Any) -> Any:
-                k['max_step'] = np.inf
-                return orig_solve_cvode(self, *a, **k)
-
-            es_mod.EntropySolver._solve_cvode = patched
+            lift_step_cap(np.inf)
         else:
-            es_mod.EntropySolver._solve_cvode = orig_solve_cvode
+            restore_step_cap()
+        try:
+            p, _ = build_parameters(
+                'A1', n_nodes=50, law_on=True, convection_on=True, t_end_yr=20000.0
+            )
+            s = EntropySolver(p, entropy_eos=None)
+            s.initialize()
+            s.set_initial_entropy(3000.0)
+            s.solve()
+            st = s.get_state()
+            steps = int(s._solution.get('cvode_nst', 0))
+            ts = np.asarray(st.T_stag, float)
+            rb = np.asarray(st.r_basic, float)
+            vols = np.diff(rb**3)
+            mean_t = float(np.sum(ts * vols) / np.sum(vols))
+            return steps, mean_t
+        finally:
+            restore_step_cap()
 
-        p, _ = build_parameters(
-            'A1', n_nodes=50, law_on=True, convection_on=True, t_end_yr=500.0
-        )
-        s = EntropySolver(p, entropy_eos=None)
-        s.initialize()
-        s.set_initial_entropy(3000.0)
-        s.solve()
-        st = s.get_state()
-        ts = np.asarray(st.T_stag, float)
-        rb = np.asarray(st.r_basic, float)
-        vols = np.diff(rb**3)
-        return float(np.sum(ts * vols) / np.sum(vols))
-
-    tm_lifted = run_interval(True)
-    tm_default = run_interval(False)
+    steps_lifted, tm_lifted = run_interval(True)
+    steps_default, tm_default = run_interval(False)
     lift_rel_diff = abs(tm_lifted - tm_default) / tm_default
-    lift_pass = lift_rel_diff <= 1.0e-4
+    step_reduction_pass = steps_default > steps_lifted
+    lift_pass = (lift_rel_diff <= 1.0e-4) and step_reduction_pass
     print(
-        f'   Lifted Tm={tm_lifted:.8f} K, Default Tm={tm_default:.8f} K, rel_diff={lift_rel_diff:.2e} -> '
-        f'{"PASS" if lift_pass else "FAIL"}'
+        f'   Lifted Tm={tm_lifted:.8f} K ({steps_lifted} steps), '
+        f'Default Tm={tm_default:.8f} K ({steps_default} steps), '
+        f'rel_diff={lift_rel_diff:.2e} -> {"PASS" if lift_pass else "FAIL"}'
     )
 
     canary_data = {
@@ -478,6 +515,8 @@ def run_canaries(out_dir: Path) -> dict[str, Any]:
         },
         'step_cap_lift_canary': {
             'status': 'PASS' if lift_pass else 'FAIL',
+            'steps_lifted': steps_lifted,
+            'steps_default': steps_default,
             'tm_lifted_K': tm_lifted,
             'tm_default_K': tm_default,
             'rel_diff': lift_rel_diff,
@@ -488,6 +527,8 @@ def run_canaries(out_dir: Path) -> dict[str, Any]:
     with open(out_dir / 'b6_canary.json', 'w') as f:
         json.dump(canary_data, f, indent=2)
     print(f'Wrote {out_dir / "b6_canary.json"}')
+    restore_fk()
+    restore_step_cap()
     return canary_data
 
 
@@ -505,7 +546,7 @@ def compute_richardson(values: dict[int, float]) -> tuple[float, float]:
         if diff21 != 0.0 and (diff32 / diff21) > 0.0:
             p = math.log(abs(diff32 / diff21)) / math.log(2.0)
             if 0.5 <= p <= 4.0:
-                extrap = f1 + diff21 / (2.0**p - 1.0)
+                extrap = f1 + (f1 - f2) / (2.0**p - 1.0)
                 return extrap, p
         # Default to second order (p = 2) if monotonic ratio is unavailable
         extrap = f1 + (f1 - f2) / 3.0
@@ -571,7 +612,7 @@ def run_benchmark_suite(out_dir: Path) -> None:
         'Ra_ds2000',
     ]
     with open(csv_path, 'w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
         for r in runs_records:
             writer.writerow(r)
@@ -650,6 +691,8 @@ def run_benchmark_suite(out_dir: Path) -> None:
         for r in conv_records:
             writer.writerow(r)
     print(f'Wrote {conv_path}')
+    restore_fk()
+    restore_step_cap()
 
 
 def main() -> None:

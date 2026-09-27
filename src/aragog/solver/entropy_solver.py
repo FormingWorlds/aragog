@@ -3612,7 +3612,9 @@ class EntropySolver:
         }
         sol = self._solution
         eos = self.entropy_eos
-        if eos is None or sol is None or sol.t is None or sol.y is None:
+        if sol is None or sol.t is None or sol.y is None:
+            return zero
+        if eos is None and not getattr(self.parameters.phase_mixed, 'const_properties', False):
             return zero
         n_steps = int(sol.t.size)
         if n_steps < 2:
@@ -3690,7 +3692,10 @@ class EntropySolver:
             if self._table_edge_cutoff and not gradient_mode:
                 P_cutoff[i] = (self._surface_flux_nominal - F_int_i) * A_int
 
-            rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
+            if eos is not None:
+                rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
+            else:
+                rho_i = np.asarray(self.state.phase_staggered.density()).ravel()
             mass_i = rho_i * vol
             heating_radio_i = np.asarray(self.state.heating_radio).ravel()
             heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
