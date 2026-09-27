@@ -342,6 +342,46 @@ def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, mon
     )
 
 
+@pytest.mark.unit
+def test_solve_cvode_segments_inside_stiff_zone_uses_approach_step():
+    """Inside the stiff zone, _solve_cvode_segments passes h_at, not h_min."""
+    from unittest.mock import MagicMock
+
+    from scipy.optimize import OptimizeResult
+
+    s = EntropySolver.__new__(EntropySolver)
+    s._output_grid = lambda t0, t1: np.array([t0, t1])
+    passed_max_step = []
+
+    def mock_solve_cvode(**kw):
+        passed_max_step.append(kw['max_step'])
+        res = OptimizeResult()
+        res.t = np.array([kw['start_time'], kw['end_time']])
+        res.y = np.ones((2, 2))
+        res.nfev = res.cvode_nst = res.cvode_nfe = 1
+        res.status = 0
+        res.cvode_flag = 0
+        res.t_events = [None]
+        return res
+
+    s._solve_cvode = mock_solve_cvode
+    mock_roots = MagicMock()
+    mock_roots.inside = True
+
+    res = s._solve_cvode_segments(
+        start_time=0.0,
+        end_time=1.0,
+        y0=np.array([1.0, 1.0]),
+        roots_at=lambda y, inside: mock_roots,
+        h_at=lambda t, y: 15.0,
+        t_ref=1.0,
+        h_min=1.0,
+        max_segments=5,
+    )
+    assert passed_max_step[0] == 15.0
+    assert res.segments[0][2] == 15.0
+
+
 @pytest.fixture(scope='module')
 def shared_eos():
     from aragog.eos.entropy import EntropyEOS
