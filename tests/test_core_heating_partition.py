@@ -16,20 +16,27 @@ from tests.test_entropy_solver_const_properties_smoke import _build_const_proper
 
 SECS_PER_YEAR = 3.15576e7
 H_CELL = 5.0e-11  # W/kg
+N_NODES = 40
+H_PROFILE = np.linspace(3e-10, 1e-11, N_NODES - 1)  # W/kg per cell, bottom cell hottest
 
 
 def _const_solver(core_bc, heating):
-    """40-node const-properties mantle (T = T_ref exp((S - S_ref) / Cp)), core-cooling BC."""
+    """40-node const-properties mantle (T = T_ref exp((S - S_ref) / Cp)), core-cooling BC.
+
+    ``heating`` is None, 'uniform' (H_CELL in every cell) or 'profile' (H_PROFILE).
+    """
     from aragog.parser import _Radionuclide
     from aragog.solver.entropy_solver import EntropySolver
 
-    p = _build_const_properties_parameters(n_nodes=40)
+    p = _build_const_properties_parameters(n_nodes=N_NODES)
     bc = p.boundary_conditions
     bc.inner_boundary_condition, bc.core_bc = 1, core_bc
     bc.outer_boundary_condition, bc.outer_boundary_value = 4, 0.05
-    p.energy.radionuclides = heating
+    p.energy.radionuclides = heating == 'uniform'
     # One isotope with an effectively infinite half-life: constant H_CELL.
     p.radionuclides = [_Radionuclide('X', 0.0, 1.0, 1.0, H_CELL, 1e20)] if heating else []
+    p.energy.tidal = heating == 'profile'
+    p.energy.tidal_array = H_PROFILE
     solver = EntropySolver(p, entropy_eos=None)
     solver.initialize()
     if core_bc == 'energy_balance':
@@ -39,15 +46,20 @@ def _const_solver(core_bc, heating):
     return solver
 
 
+def _expected_heating(heating):
+    return {None: 0.0, 'uniform': H_CELL, 'profile': H_PROFILE}[heating]
+
+
 @pytest.mark.unit
-@pytest.mark.parametrize('heating', [False, True])
+@pytest.mark.parametrize('heating', [None, 'uniform', 'profile'])
 @pytest.mark.parametrize('core_bc', ['quasi_steady', 'energy_balance'])
 def test_core_temperature_follows_the_cmb_flux(core_bc, heating):
     """numpy RHS: the core's temperature rate is -F_cmb A_cmb / C', heating on or off."""
     solver = _const_solver(core_bc, heating)
     n = solver._n_stag
     dy = solver._dSdt_single(0.0, np.asarray(solver._S0, dtype=float).ravel()) / SECS_PER_YEAR
-    assert float(np.asarray(solver.state.heating).flat[0]) == (H_CELL if heating else 0.0)
+    H = np.asarray(solver.state.heating).ravel()
+    assert H == pytest.approx(np.broadcast_to(_expected_heating(heating), H.shape), rel=1e-12)
     cp = 1000.0  # const_Cp: dT/dS = T / Cp
     if core_bc == 'quasi_steady':
         T = float(np.asarray(solver.state.phase_staggered.temperature()).flat[0])
@@ -64,17 +76,23 @@ def test_core_temperature_follows_the_cmb_flux(core_bc, heating):
 
 
 @pytest.mark.unit
-def test_lumped_reservoir_conserves_energy():
-    """numpy quasi_steady: bottom cell plus core gain the cell's heating minus its outflow."""
-    solver = _const_solver('quasi_steady', True)
-    dy = solver._dSdt_single(0.0, np.asarray(solver._S0, dtype=float).ravel()) / SECS_PER_YEAR
+@pytest.mark.parametrize('heating', ['uniform', 'profile'])
+def test_lumped_reservoir_conserves_energy(heating):
+    """numpy quasi_steady: mantle plus core gain the total heating minus the surface outflow."""
+    solver = _const_solver('quasi_steady', heating)
+    n = solver._n_stag
+    dy = solver._dSdt_single(0.0, np.asarray(solver._S0, dtype=float).ravel())[:n]
+    dy /= SECS_PER_YEAR
     rho, cp = 4000.0, 1000.0  # const_rho, const_Cp
-    T = float(np.asarray(solver.state.phase_staggered.temperature()).flat[0])
-    m_cell = rho * solver._cmb_vol_first
-    C_cell, C_core = m_cell * cp, solver._core_cap * solver._core_tfac
-    gain = (C_cell + C_core) * T / cp * dy[0]
-    expected = -solver.state._heat_flux[1] * solver._area_flat[1] + H_CELL * m_cell
-    assert gain == pytest.approx(expected, rel=1e-9, abs=0.0)
+    T = np.asarray(solver.state.phase_staggered.temperature()).ravel()
+    m = rho * np.asarray(solver._volume_flat)
+    C_core = solver._core_cap * solver._core_tfac
+    gain = np.sum(m * T * dy) + C_core * T[0] / cp * dy[0]
+    H = np.broadcast_to(_expected_heating(heating), m.shape)
+    expected = -solver.state._heat_flux[-1] * solver._area_flat[-1] + np.sum(H * m)
+    # Interior powers (up to ~1e24 W) cancel in the sum; bound round-off by their scale.
+    scale = np.abs(solver.state._heat_flux * solver._area_flat).max()
+    assert gain == pytest.approx(expected, rel=0.0, abs=1e-14 * scale)
 
 
 @pytest.mark.unit
@@ -95,6 +113,56 @@ def test_jax_lumped_partition_takes_the_cell_heating_from_the_outflow():
     lhs = F_cmb * area[0] * (1.0 + vol * rho * cp / C_core)
     assert lhs == pytest.approx(F1 * area[1] - H * rho * vol, rel=1e-9, abs=0.0)
     assert F_cmb < 0.0
+
+
+@pytest.mark.unit
+def test_jax_dsdt_conserves_energy_with_a_heating_profile(monkeypatch):
+    """JAX dSdt, quasi_steady, no EOS tables: mantle plus core gain the total heating minus
+    the surface outflow, with the bottom cell heated more than the rest."""
+    jnp = pytest.importorskip('jax.numpy')
+    import aragog.jax.solver as js
+    from aragog.jax.phase import FluxOutput, PhaseParams, PhaseProperties
+    from tests.test_jax_dsdt_energy_balance import _make_const_property_mesh
+
+    N, rho, cp = 8, 4000.0, 1000.0
+    mesh = _make_const_property_mesh(N=N)
+
+    def phase(eos, params, P, S):
+        T = 2000.0 * jnp.exp((S - 3000.0) / cp)
+        one = jnp.ones_like(S)
+        return PhaseProperties(
+            T, rho * one, cp * one, *(0.0 * one,) * 3, 1.0 * one, *(0.0 * one,) * 3, rho * T
+        )
+
+    def fluxes(S, t, eos, params, mesh, heating):
+        z = jnp.zeros(N + 1)
+        return FluxOutput(jnp.linspace(0.08, 0.02, N + 1), z, z, heating, z)
+
+    monkeypatch.setattr(js, 'evaluate_phase', phase)
+    monkeypatch.setattr(js, 'compute_fluxes', fluxes)
+    bc = js.BoundaryParams(
+        outer_bc_type=4,
+        outer_bc_value=0.05,
+        emissivity=1.0,
+        T_eq=255.0,
+        inner_bc_type=1,
+        inner_bc_value=0.0,
+        core_density=10500.0,
+        core_heat_capacity=880.0,
+        tfac_core_avg=1.147,
+    )
+    H = np.linspace(3e-10, 1e-11, N)
+    S = jnp.linspace(3100.0, 3000.0, N)
+    args = (None, PhaseParams(), mesh, bc, jnp.asarray(H), js._no_radio)
+    dS = np.asarray(js.dSdt(0.0, S, args)) / SECS_PER_YEAR
+    T = np.asarray(phase(None, None, None, S).temperature)
+    m = rho * np.asarray(mesh.volume)
+    r_cmb = float(mesh.radii_basic[0])
+    C_core = 4.0 / 3.0 * np.pi * r_cmb**3 * bc.core_density * bc.core_heat_capacity
+    C_core *= bc.tfac_core_avg
+    gain = np.sum(m * T * dS) + C_core * T[0] / cp * dS[0]
+    expected = -0.05 * float(mesh.area[-1]) + np.sum(H * m)
+    assert gain == pytest.approx(expected, rel=1e-9, abs=0.0)
 
 
 @pytest.mark.smoke
