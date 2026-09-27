@@ -322,13 +322,12 @@ def _rate_phase_boundary_max_step(
 ) -> float:
     """``max_step`` [yr] from the rate at which cells approach a phase boundary.
 
-    Any cell within ``delta`` of the solidus or liquidus sets the lower bound.
-    Otherwise every cell with a boundary ahead counts: its time to the next
-    boundary in the direction it moves is ``|S - S_b| / |dS/dt|``. The rate is
-    floored at the mass-weighted mean ``|dS/dt|``; a cell slower than the floor
-    has no reliable direction, so it uses the nearer boundary on either side.
-    The floor covers an isentropic start, where interior cells have almost no
-    rate until the thermal boundary layers form.
+    Every cell with a boundary ahead counts: its time to the next boundary in
+    the direction it moves is ``|S - S_b| / |dS/dt|``. A cell inside the stiff
+    zone (within ``delta`` of either boundary) or slower than the mass-weighted
+    mean ``|dS/dt|`` rate floor uses the distance to the nearer boundary on
+    either side. The floor covers an isentropic start, where interior cells
+    have almost no rate until the thermal boundary layers form.
 
     Parameters
     ----------
@@ -350,8 +349,8 @@ def _rate_phase_boundary_max_step(
     Returns
     -------
     float
-        ``bounds[0]`` inside a stiff zone, else ``fraction * min(t_c)`` clipped
-        to ``bounds``; the upper bound when no entry has a finite ``t_c``.
+        ``fraction * min(t_c)`` clipped to ``bounds``; ``bounds[1]`` when no
+        entry has a finite ``t_c``.
     """
     dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
     rate = np.abs(dSdt)
@@ -3109,16 +3108,8 @@ class EntropySolver:
         phi_cap_anchor = None
         rate_mode = False
 
-        # Tighten max_step when ANY cell is near a phase boundary and arm the
-        # step caps. Runs whenever the entropy EOS is loaded, independent of
-        # the mean melt fraction: the temperature and entropy caps must stay
-        # active in the deep-solid regime (mean melt fraction below 0.01),
-        # where a cell can still cool on the solid adiabat well below the
-        # solidus and the melt-fraction cap is blind. When a cell's entropy is
-        # within the configured phase-boundary entropy margin (default
-        # 200 J/kg/K) of either phase boundary, OR sits inside the mushy band,
-        # max_step is reduced to 1 yr to give CVODE enough resolution to
-        # handle the phase-boundary stiffness gradually.
+        # Tighten max_step near phase boundaries or in the mushy band.
+        # 'fixed' uses 1 yr; 'rate' uses event-driven CVODE segments.
         if self.entropy_eos is not None:
             entropy_margin = _resolve_entropy_margin(
                 getattr(self.parameters.energy, 'phase_boundary_entropy_margin', None)

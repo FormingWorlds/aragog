@@ -87,23 +87,23 @@ class EnergyConfig:
         Proximity band [J/kg/K] within which a staggered cell counts as
         "near" a phase boundary, tightening the integrator ``max_step`` to
         1 yr so CVODE resolves the stiff RHS across the solidus/liquidus.
-        This is a solver-accuracy control, not a physics threshold. At the
-        default it reproduces the previous fixed band, so the converged
-        trajectory is unchanged; lowering it can under-resolve a real phase
-        crossing and shift the converged state by more than the nominal
-        tolerance, because CVODE's local error control can accept an
-        over-large step across the near-discontinuous two-phase RHS. Default
-        200.0, a fraction of a typical silicate fusion entropy (S_liquidus -
-        S_solidus), wide enough to arm the tighter stepping before a cell
-        reaches the boundary yet narrow enough to leave the deep-solid
-        thermal history on unrestricted steps. A non-finite or non-positive
-        value falls back to the default.
+        This is a solver-accuracy control, not a physics threshold.
+        Lowering it can under-resolve a real phase crossing and shift the
+        converged state by more than the nominal tolerance, because
+        CVODE's local error control can accept an over-large step across the
+        near-discontinuous two-phase RHS. Default 200.0, a fraction of a
+        typical silicate fusion entropy (S_liquidus - S_solidus), wide
+        enough to arm the tighter stepping before a cell reaches the
+        boundary yet narrow enough to leave the deep-solid thermal history
+        on unrestricted steps. A non-finite or non-positive value falls back
+        to the default.
     phase_boundary_cap : str
         How ``max_step`` is set while a cell is near or inside the two-phase
-        band. ``'fixed'`` (default) uses 1 yr. ``'rate'`` uses 0.1 of the
-        shortest time any such cell needs to reach the next phase boundary in
-        the direction it moves, from dS/dt at the start of the call, clipped
-        to [1, 100] yr. The gradient core keeps 1 yr in both modes.
+        band. ``'fixed'`` (default) uses 1 yr. ``'rate'`` uses event-driven
+        CVODE segments with ``max_step`` set to 0.1 of the shortest time to
+        reach a phase boundary, clipped to [1, 100] yr. Inside the stiff zone
+        or below the rate floor, the estimate uses the distance to the nearer
+        boundary. The gradient core keeps 1 yr in both modes.
     tidal_array : ndarray
         Tidal heating per unit mass [W/kg] at each layer.
     """
