@@ -385,13 +385,16 @@ def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, mon
 
 @needs_eos
 @pytest.mark.smoke
-def test_rate_mode_zero_span_call_returns_the_start_state(shared_eos):
-    """A call with start_time == end_time (PROTEUS setup) runs in rate mode like 'fixed'."""
+@pytest.mark.parametrize(('t0', 'span', 'status'), [(0.0, 0.0, 0), (1.0e9, 1.0e-4, -1)])
+def test_rate_mode_zero_span_call_returns_the_start_state(shared_eos, t0, span, status):
+    """A zero-span call (PROTEUS setup) or one shorter than the grid tolerance runs in
+    rate mode like 'fixed': the same status and the start state."""
     ends = []
     for mode in ('fixed', 'rate'):
-        s = _solver(shared_eos, mode, end_time=0.0)
+        s = _solver(shared_eos, mode)
+        s.parameters.solver.start_time, s.parameters.solver.end_time = t0, t0 + span
         s.solve()
-        assert s._solution.status == 0
+        assert s._solution.status == status
         ends.append(np.asarray(s._solution.y)[:, -1])
     np.testing.assert_array_equal(ends[1], ends[0])
 
