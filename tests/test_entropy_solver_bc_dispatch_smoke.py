@@ -151,14 +151,12 @@ def shared_eos():
 def test_quasi_steady_with_inner_bc_kind_1_alpha_factor(shared_eos):
     """``inner_boundary_condition=1`` with ``core_bc='quasi_steady'``
     triggers the alpha-factor flux partition between the bottom
-    mantle cell and the core (entropy_solver.py:1462-1471).
+    mantle cell and the core, F_cmb = alpha (F_1 - Q_0 / A_1) with
+    Q_0 the bottom cell's heating power.
 
-    Discriminator: F_cmb in the post-solve snapshot must equal
-    ``alpha * heat_flux[1]`` to within numerical tolerance, where
-    alpha is the cell-capacity-weighted ratio Bower 2018 uses. We
-    can't compute alpha exactly without re-deriving SPIDER's
-    formula, so the test settles for finiteness + same-sign as
-    heat_flux[1] (positive: heat from core into mantle).
+    This smoke test runs the partition through a full solve and checks
+    that F_cmb is finite; tests/test_core_heating_partition.py checks
+    the partition and the energy budget.
     """
     from aragog.solver.entropy_solver import EntropySolver
 
