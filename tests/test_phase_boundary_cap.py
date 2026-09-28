@@ -298,19 +298,26 @@ def test_rate_cap_slow_cell_moving_away_uses_nearer_boundary_when_floored():
 
 @needs_eos
 @pytest.mark.unit
-def test_rate_cap_scipy_fallback_warns_and_runs_at_one_year(shared_eos, caplog):
+def test_rate_cap_scipy_fallback_warns_and_runs_at_one_year(shared_eos, caplog, monkeypatch):
     """When scipy is used with rate cap, it warns and keeps max_step at 1 yr."""
     p = _build_mushy_parameters(solver_method='bdf', n_nodes=12, end_time=2.0)
     p.energy = dataclasses.replace(p.energy, phase_boundary_cap='rate', phi_step_cap=None)
     s = EntropySolver(p, entropy_eos=shared_eos)
     s.initialize()
     s.set_initial_entropy(_pick_mushy_S(shared_eos))
+    import aragog.solver.entropy_solver as es
+
+    seen, real = [], es.solve_ivp
+    monkeypatch.setattr(
+        es, 'solve_ivp', lambda *a, **k: seen.append(k['max_step']) or real(*a, **k)
+    )
     with caplog.at_level('WARNING'):
         s.solve()
     assert any(
         'phase_boundary_cap="rate" needs CVODE; max_step 1 yr with scipy' in rec.message
         for rec in caplog.records
     )
+    assert seen[0] * s._build_nondim_scales().t_ref == pytest.approx(1.0)
 
 
 @needs_eos
@@ -431,3 +438,48 @@ def test_get_state_between_calls_leaves_the_next_rate_call_unchanged(shared_eos)
     a, b = _two_calls(shared_eos, True), _two_calls(shared_eos, False)
     assert a.segments == b.segments and len(a.segments) >= 1
     np.testing.assert_array_equal(a.y, b.y)
+
+
+@needs_eos
+@pytest.mark.unit
+def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeypatch):
+    """The cap sees every staggered cell plus the bottom cell at the CMB-pressure boundaries, with the rate floor on."""
+    import aragog.solver.entropy_solver as es
+
+    seen, real = [], es._rate_phase_boundary_max_step
+    monkeypatch.setattr(
+        es,
+        '_rate_phase_boundary_max_step',
+        lambda *a, **k: seen.append((a, k)) or real(*a, **k),
+    )
+    s = _solver(shared_eos, 'rate', end_time=2.0)
+    s.solve()
+    (S, _, S_liq, S_sol, mass, _), kw = seen[0]
+    assert kw['rate_floor'] is True
+    P_cmb = np.array([s._P_basic_flat[0]])
+    assert S.size == s._n_stag + 1 and S[-1] == S[0] and mass[-1] == 0.0
+    assert S_liq[-1] == pytest.approx(float(shared_eos.liquidus_entropy(P_cmb).item()))
+    assert S_sol[-1] == pytest.approx(float(shared_eos.solidus_entropy(P_cmb).item()))
+
+
+@needs_eos
+@pytest.mark.unit
+def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
+    shared_eos, monkeypatch
+):
+    """A start with one cell 1 J/kg/K above its liquidus opens the call with a stiff-zone segment (no progress root)."""
+    s = _solver(shared_eos, 'rate', end_time=2.0)
+    S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
+    S0 = np.full(s._n_stag, S_liq[5] + 1.0)
+    assert np.abs(S0 - S_liq).min() < 10.0
+    s.set_initial_entropy(S0)
+    first, real = [], s._solve_cvode_segments
+
+    def wrapped(*args, **kw):
+        roots_at = kw['roots_at']
+        kw['roots_at'] = lambda y, inside: first.append(roots_at(y, inside)) or first[-1]
+        return real(*args, **kw)
+
+    monkeypatch.setattr(s, '_solve_cvode_segments', wrapped)
+    s.solve()
+    assert first[0].inside and 'progress' not in first[0].names
