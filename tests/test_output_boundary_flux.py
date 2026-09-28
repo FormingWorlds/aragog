@@ -143,7 +143,10 @@ def test_jax_boundary_conditions_give_the_output_fluxes(outer, utbl):
     cp = jnp.asarray(np.asarray(s.state.phase_staggered.heat_capacity()).ravel())
     flux = jnp.asarray(np.asarray(out.heat_flux).ravel())
     T_basic = jnp.asarray(np.asarray(out.T_basic).ravel())
-    jax_flux = _apply_cmb_bc(_apply_surface_bc(flux, bc, T_basic), bc, mesh, rho, cp)
+    heating_first = float(np.asarray(s.state.heating).flat[0])
+    jax_flux = _apply_cmb_bc(
+        _apply_surface_bc(flux, bc, T_basic), bc, mesh, rho, cp, heating_first
+    )
     np.testing.assert_allclose(
         np.asarray(jax_flux)[[0, -1]], np.asarray(flux)[[0, -1]], rtol=1e-12
     )
