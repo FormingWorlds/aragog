@@ -89,3 +89,31 @@ def test_runner_mushy_solve_length(tmp_path, monkeypatch):
     config = _REPO / 'tools' / 'verification' / 'configs' / 'ssc_earth_4p5gyr.toml'
     rsa.run_acceptance(config, EOS_DIR, tmp_path, checkpoints=(1.0,))
     assert spans == pytest.approx([0.4, 0.4, 0.2])
+
+
+@pytest.mark.skipif(EOS_DIR is None, reason='EOS_DIR not found')
+def test_runner_step_count_on_10yr_run_equals_cvode_numsteps(tmp_path, monkeypatch):
+    """On a 10 yr run the reported step count equals CVODE NumSteps."""
+    pytest.importorskip('jax')
+    pytest.importorskip('scikits_odes_sundials')
+    monkeypatch.syspath_prepend(str(_REPO / 'tools'))
+    from verification.run_ssc_acceptance import run_acceptance
+
+    sols = []
+    solve = EntropySolver.solve
+
+    def recording_solve(self):
+        solve(self)
+        sols.append(self._solution)
+
+    monkeypatch.setattr(EntropySolver, 'solve', recording_solve)
+    config = _REPO / 'tools' / 'verification' / 'configs' / 'ssc_earth_4p5gyr.toml'
+    res = run_acceptance(config, EOS_DIR, tmp_path, checkpoints=(10.0,))
+
+    assert len(sols) == 1
+    sol = sols[0]
+    expected_steps = sol.cvode_info['NumSteps']
+    assert sol.t.size == 9
+    assert res['cvode_steps'][0] == expected_steps
+    assert res['total_cvode_steps'] == expected_steps
+    assert res['total_cvode_steps'] > 50
