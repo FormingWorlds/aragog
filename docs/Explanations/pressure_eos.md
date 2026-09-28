@@ -107,13 +107,14 @@ This guards against an undersized external mesh silently clamping or extrapolati
 ## Mass coordinates
 
 When `mesh.mass_coordinates = true` the basic-node radii are spaced uniformly in mass coordinate $\xi$ rather than radius $r$.
-The mass coordinate is
+The mass coordinate has units of length and follows SPIDER,
 
 $$
-\xi(r) = \frac{m(r) - m(R_\mathrm{cmb})}{m(R_\mathrm{surf}) - m(R_\mathrm{cmb})}
+\xi(r)^3 = R_\mathrm{cmb}^3 + \frac{3\,[m(r) - m(R_\mathrm{cmb})]}{4\pi\,\bar{\rho}},
 $$
 
-with $m(r)$ the cumulative mass enclosed by radius $r$.
+with $m(r)$ the cumulative mass enclosed by radius $r$ and $\bar{\rho}$ the mean mantle density, so $\xi$ runs from $R_\mathrm{cmb}$ to $R_\mathrm{surf}$.
+The mass of a shell is linear in $\xi^3$, so cells of equal $\xi$ width are not cells of equal mass.
 For the Adams-Williamson EOS the antiderivative is closed-form:
 
 $$

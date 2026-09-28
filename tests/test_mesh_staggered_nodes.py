@@ -79,6 +79,7 @@ def test_staggered_nodes_lie_in_their_cell_at_their_mass_coordinate(mesh):
     np.testing.assert_allclose(xi_back, xs, atol=5.0)
 
 
+@pytest.mark.physics_invariant
 def test_staggered_pressure_positive_and_decreasing_outwards(mesh):
     """The staggered pressure stays positive up to the top cell and falls with radius."""
     pressure = np.asarray(mesh.eos.staggered_pressure).ravel()
@@ -88,7 +89,7 @@ def test_staggered_pressure_positive_and_decreasing_outwards(mesh):
 
 @pytest.mark.physics_invariant
 def test_cell_masses_equal_the_shell_integral(mesh):
-    """Effective density times cell volume is the mass of each cell and of the mantle."""
+    """Effective density times cell volume is the mass of each cell."""
     rb = mesh.basic.radii[:, 0]
     cell_mass = np.asarray(mesh.staggered_effective_density).ravel() * (
         4.0 / 3.0 * np.pi * np.diff(rb**3)
@@ -98,7 +99,6 @@ def test_cell_masses_equal_the_shell_integral(mesh):
         [4.0 * np.pi * quad(lambda x: x * x * rho(x), a, b)[0] for a, b in zip(rb[:-1], rb[1:])]
     )
     np.testing.assert_allclose(cell_mass, exact, rtol=1e-6)
-    np.testing.assert_allclose(cell_mass.sum(), exact.sum(), rtol=1e-6)
 
 
 @pytest.mark.parametrize('case', ['aw', 'user'])

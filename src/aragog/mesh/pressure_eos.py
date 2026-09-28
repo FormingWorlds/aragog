@@ -47,7 +47,8 @@ class EOS(ABC):
     ) -> None: ...
 
     @abstractmethod
-    def get_mass_within_radii(self, radii: FloatOrArray) -> npt.NDArray: ...
+    def get_mass_within_radii(self, radii: FloatOrArray) -> npt.NDArray:
+        """Cumulative mass [kg] inside ``radii`` from a class-specific zero point."""
 
     def set_staggered_effective_density(self, basic_radii: npt.NDArray) -> None:
         """Set each cell's effective density to its mass over its volume.
