@@ -92,7 +92,7 @@ def _radius_for_mass_coordinate(
     xi_target: float,
     r_lo: float,
     r_hi: float,
-    node: int | None = None,
+    node: int | str | None = None,
 ) -> float:
     """Solve ``xi_of_r(r) == xi_target`` for ``r`` in ``[r_lo, r_hi]``.
 
@@ -106,7 +106,8 @@ def _radius_for_mass_coordinate(
     loaded entropy field shifts the EOS mass distribution so a near-boundary
     node on the uniform mass grid falls just outside the achievable range; a
     bare ``brentq`` raises ``ValueError`` ("f(a) and f(b) must have different
-    signs") there and aborts the resume.
+    signs") there and aborts the resume. A staggered node whose cell has a
+    clamped basic node can then fall outside its own cell bracket too.
 
     Parameters
     ----------
@@ -117,8 +118,8 @@ def _radius_for_mass_coordinate(
         Target mass coordinate for this node.
     r_lo, r_hi : float
         Bracket endpoints [m], ``r_lo < r_hi``.
-    node : int, optional
-        Node index, used only in the clamp warning message.
+    node : int or str, optional
+        Node index or label, used only in the clamp warning message.
 
     Returns
     -------
@@ -219,6 +220,7 @@ class Mesh:
             r_core = float(initial_spatial[0, 0])
             r_surf = float(initial_spatial[-1, 0])
             rho_avg = self._planet_density
+            M_core = self.eos.get_mass_within_radii(np.array([r_core])).item()
 
             def _xi_of_r(r: float) -> float:
                 """Mass coordinate xi(r) matching SPIDER's definition.
@@ -229,7 +231,7 @@ class Mesh:
                 match SPIDER, since rho_avg was also computed without
                 4pi (from staggered_effective_density * delta_r^3).
                 """
-                M_shell_4pi = self.eos.get_mass_within_radii(np.array([r])).item()
+                M_shell_4pi = self.eos.get_mass_within_radii(np.array([r])).item() - M_core
                 M_shell = M_shell_4pi / (4.0 * np.pi)
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
@@ -275,18 +277,21 @@ class Mesh:
         # The density refresh keeps get_dxidr_basic consistent with the mesh.
         self.eos.set_basic_pressure(self.basic.radii)
         self.eos.set_basic_density(self.basic.radii)
-        if parameters.mesh.mass_coordinates:
-            self.eos.set_staggered_effective_density(self.basic.radii)
 
         # STEP 2: Set up the staggered mesh
         staggered_mass_coordinates: npt.NDArray = (
             self.basic.mass_radii[:-1] + 0.5 * self.basic.delta_mesh
         )
         if parameters.mesh.mass_coordinates:
+            self.eos.set_staggered_effective_density(self.basic.radii)
             rb = self.basic.radii[:, 0]
             staggered_coordinates = np.array(
                 [
-                    [_radius_for_mass_coordinate(_xi_of_r, float(xi), rb[i], rb[i + 1], node=i)]
+                    [
+                        _radius_for_mass_coordinate(
+                            _xi_of_r, float(xi), rb[i], rb[i + 1], node=f'staggered {i}'
+                        )
+                    ]
                     for i, xi in enumerate(staggered_mass_coordinates[:, 0])
                 ]
             )

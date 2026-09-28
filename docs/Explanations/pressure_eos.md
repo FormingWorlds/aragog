@@ -129,7 +129,7 @@ brentq is preferred over Newton because $M(r)$ is strictly monotonic and the bra
 For the user-defined path (`eos_method = 2`) the cumulative mass is built from the supplied $\rho(r)$ via `cumulative_trapezoid`, then PCHIP-interpolated; the same brentq inversion gives uniformly $\xi$-spaced radii.
 
 Each staggered node is at the $\xi$ midpoint of its cell, and its radius comes from the same brentq inversion, bracketed by the two basic nodes of that cell.
-The per-cell effective density is then the exact cell mass over the cell volume on these final radii, so the cell masses sum to the mantle mass.
+The per-cell effective density is the cell mass over the cell volume between the final basic radii, so the cell masses sum to the mantle mass.
 
 ## Picking a configuration
 
