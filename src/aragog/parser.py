@@ -32,6 +32,7 @@ from aragog.rheology import SolidRheologyParams
 
 _DEFAULT_RHEOLOGY = SolidRheologyParams()
 _UNSET: Any = object()
+_RHEOLOGY_FIELD_NAMES: frozenset[str] = frozenset(f.name for f in fields(SolidRheologyParams))
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -680,6 +681,12 @@ class Parameters:
         for section in parser.sections():
             if section.lower() == 'scalings':
                 raise ValueError(_SCALINGS_REMOVED_MSG)
+            for option in parser.options(section):
+                if option.lower() in _RHEOLOGY_FIELD_NAMES:
+                    raise ValueError(
+                        f"Rheology field '{option}' in [{section}] is not supported in legacy INI / .cfg format. "
+                        f"Use a TOML configuration file with '[phase_solid] {option}' instead."
+                    )
 
         init_dict: dict[str, Any] = {}
         for section_name, dataclass_ in _get_dataclass_from_section_name().items():
