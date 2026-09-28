@@ -927,7 +927,8 @@ class TestCvodeEnergyOutputGrid:
         d2 = s2._compute_step_energy_integrals()
         err_2pt = abs(d2['F_int'] / f_ref - 1.0)
 
-        sN = self._build_greybody_solver('cvode', n_out=65)
+        # The flux has a sharp feature near 2.6 kyr that 65 points under-resolve.
+        sN = self._build_greybody_solver('cvode', n_out=1025)
         sN.solve()
         dN = sN._compute_step_energy_integrals()
         err_dense = abs(dN['F_int'] / f_ref - 1.0)
