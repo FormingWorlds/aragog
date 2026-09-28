@@ -353,13 +353,13 @@ def _rate_phase_boundary_max_step(
     -------
     float
         ``fraction * min(t_c)`` clipped to ``bounds``; ``bounds[1]`` when no
-        entry has a finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt`` or the
-        floor is not finite.
+        entry has a finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt``, the
+        boundaries or the floor are not finite.
     """
     dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
     rate = np.abs(dSdt)
     floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
-    if not (np.isfinite(S).all() and np.isfinite(rate).all() and np.isfinite(floor)):
+    if not all(np.isfinite(a).all() for a in (S, rate, floor, S_liq, S_sol)):
         return bounds[0]
     down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
     up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
@@ -384,8 +384,7 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
     - ``entry``: inside the stiff zone only, the smallest distance minus
       ``delta`` over the entries that start outside it.
     - ``progress``: ``alpha`` times each entry's start distance to its nearer
-      boundary minus the distance it has moved, over the entries that start
-      outside the stiff zone.
+      boundary, at least ``delta``, minus the distance it has moved.
 
     Parameters
     ----------
@@ -416,12 +415,13 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         self.d0 = self._dist(self.S0)
         self.inside = bool(np.any(self.d0 < delta)) if inside is None else inside
         self.watch = (self.d0 >= delta) if self.inside else np.isfinite(self.d0)
-        watched = bool(self.watch.any())
+        self.moving = np.isfinite(self.d0)
+        self.reach = self.alpha * np.maximum(self.d0, delta)
         self.names = (
             (['cap'] if cap is not None else [])
             + ['stiff']
-            + (['entry'] if self.inside and watched else [])
-            + (['progress'] if watched else [])
+            + (['entry'] if self.inside and self.watch.any() else [])
+            + (['progress'] if self.moving.any() else [])
         )
         self.n_roots = len(self.names)
 
@@ -445,8 +445,8 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         if 'entry' in self.names:
             g.append(float(d[self.watch].min()) - self.delta)
         if 'progress' in self.names:
-            moved = np.abs(S - self.S0)[self.watch]
-            g.append(float(np.min(self.alpha * self.d0[self.watch] - moved)))
+            moved = np.abs(S - self.S0)[self.moving]
+            g.append(float(np.min(self.reach[self.moving] - moved)))
         g = np.asarray(g, dtype=float)
         return np.where(np.isfinite(g), g, 1.0)
 
@@ -464,7 +464,7 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
             by_cap = {'phi': c.cap, 'temperature': c.cap_T, 'entropy': c.cap_S}
             scale['cap'] = by_cap.get(c.binding_cap) or max(c.cap, c.cap_T, c.cap_S)
         if 'progress' in self.names:
-            scale['progress'] = max(float(np.min(self.alpha * self.d0[self.watch])), 1e-12)
+            scale['progress'] = float(np.min(self.reach[self.moving]))
         g = g / np.array([scale[n] for n in self.names])
         return self.names[int(np.argmin(g))]
 
@@ -3027,7 +3027,12 @@ class EntropySolver:
         ts, ys, log = [np.array([t])], [y.reshape(-1, 1)], []
         nfev = nst = nfe = 0
         trigger = 'start'
+        res = None
         for k in range(max_segments + 1):
+            tspan = np.concatenate(([t], grid[grid > t + 1e-12 * abs(end_time)]))
+            if tspan.size < 2:  # a root at the call end: the call is complete
+                res.cvode_flag, res.cvode_flag_name = 0, _cvode_flag_name(0)
+                break
             last = k == max_segments
             roots = None if last else roots_at(y, inside)
             inside = False if last else roots.inside
@@ -3046,7 +3051,6 @@ class EntropySolver:
                     max_segments,
                     h * t_ref,
                 )
-            tspan = np.concatenate(([t], grid[grid > t + 1e-12 * abs(end_time)]))
             res = self._solve_cvode(
                 start_time=t,
                 end_time=end_time,
@@ -3072,8 +3076,6 @@ class EntropySolver:
                 res.pop(key, None)
             if trigger == 'stiff':
                 inside = not roots.inside
-            if end_time - t <= 1e-12 * abs(end_time):
-                break
         res.t = np.concatenate(ts)
         res.y = np.concatenate(ys, axis=1)
         res.nfev, res.cvode_nst, res.cvode_nfe, res.segments = nfev, nst, nfe, log

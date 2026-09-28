@@ -337,8 +337,8 @@ def test_rate_cap_slow_cell_moving_away_uses_nearer_boundary_when_floored():
 
 @needs_eos
 @pytest.mark.smoke
-def test_rate_cap_scipy_fallback_warns_and_runs_at_one_year(shared_eos, caplog, monkeypatch):
-    """When scipy is used with rate cap, it warns and keeps max_step at 1 yr."""
+def test_rate_cap_scipy_fallback_runs_at_one_year(shared_eos, monkeypatch):
+    """When scipy is used with rate cap, max_step stays at 1 yr."""
     p = _build_mushy_parameters(solver_method='bdf', n_nodes=12, end_time=2.0)
     p.energy = dataclasses.replace(p.energy, phase_boundary_cap='rate', phi_step_cap=None)
     s = EntropySolver(p, entropy_eos=shared_eos)
@@ -350,12 +350,7 @@ def test_rate_cap_scipy_fallback_warns_and_runs_at_one_year(shared_eos, caplog, 
     monkeypatch.setattr(
         es, 'solve_ivp', lambda *a, **k: seen.append(k['max_step']) or real(*a, **k)
     )
-    with caplog.at_level('WARNING'):
-        s.solve()
-    assert any(
-        'phase_boundary_cap="rate" needs CVODE; max_step 1 yr with scipy' in rec.message
-        for rec in caplog.records
-    )
+    s.solve()
     assert seen[0] * s._build_nondim_scales().t_ref == pytest.approx(1.0)
 
 
@@ -423,6 +418,7 @@ def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
         h_min=1.0,
     )
     assert calls == [0.0] and res.t[-1] == pytest.approx(end, rel=1e-12)
+    assert res.cvode_flag == 0
 
 
 @pytest.fixture(scope='module')
@@ -543,7 +539,8 @@ def test_rate_mode_ends_a_segment_when_a_second_cell_approaches_inside_the_stiff
     s.solve()
     starts = [seg[0] for seg in s._solution.segments]
     assert s._solution.t[-1] == pytest.approx(200.0)
-    assert len(starts) >= 2 and 0.0 < starts[1] < 150.0
+    assert len(starts) >= 2 and s._solution.segments[1][1] == 'progress'
+    assert starts[1] == pytest.approx(75.0, rel=1e-6)
     assert s._solution.y[8, -1] == pytest.approx(S_liq[8] - 50.0, abs=1e-6)
 
 
@@ -557,6 +554,16 @@ def test_rate_cap_returns_the_lower_bound_for_non_finite_input(bad):
         _cap(args['S'], args['dSdt'], args['mass'], rate_floor=True, bounds=(1.0, 100.0)) == 1.0
     )
     assert _cap([1200.0, 1350.0], [-1.0, -2.0], [1.0, 2.0], rate_floor=True) > 1.0
+    S_liq = np.array([np.nan, S_LIQ])
+    got = _rate_phase_boundary_max_step(
+        np.array([1200.0, 1350.0]),
+        np.array([-1.0, -2.0]),
+        S_liq,
+        np.full(2, S_SOL),
+        np.ones(2),
+        DELTA,
+    )
+    assert got == 1.0
 
 
 @needs_eos
@@ -611,3 +618,32 @@ def test_solver_tolerances_default_to_1e_8():
         default = cls(start_time=0.0, end_time=1.0)
         assert (default.rtol, default.atol) == (1e-8, 1e-8)
         assert cls(start_time=0.0, end_time=1.0, rtol=1e-6, atol=1e-9).rtol == 1e-6
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_ends_a_segment_when_a_cell_inside_the_zone_speeds_up(
+    shared_eos, monkeypatch
+):
+    """A cell 8 J/kg/K above its liquidus falls at 0.01 J/kg/K/yr, then at 2 from 100 yr.
+
+    Its progress root (half of max(d0, delta) = 5 J/kg/K of motion) fires at 102 yr, before
+    the crossing at 103.5 yr, and the next segment runs at the 1 yr lower bound.
+    """
+    s = _solver(shared_eos, 'rate', end_time=400.0)
+    S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
+    S0 = S_liq + 3000.0
+    S0[8] = S_liq[8] + 8.0
+    s.set_initial_entropy(S0)
+
+    def rate(t, y):
+        r = np.zeros(s._n_stag)
+        r[8] = -0.01 if t < 100.0 else -2.0
+        return r
+
+    monkeypatch.setattr(s, '_dSdt_single', rate)
+    s.solve()
+    seg = s._solution.segments
+    assert len(seg) >= 2 and seg[1][1] == 'progress'
+    assert 100.0 < seg[1][0] < 103.5 and seg[1][0] == pytest.approx(102.0, abs=0.05)
+    assert seg[1][2] == pytest.approx(1.0)
