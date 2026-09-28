@@ -848,7 +848,6 @@ class TestCvodeEnergyOutputGrid:
             use_jax_jacobian=False,
             eddy_diffusivity_thermal=1.0,
             kappah_floor=10.0,
-            phase_boundary_cap='fixed',  # one CVODE solve, so the output grid is the trajectory
         )
         ic = IC(initial_condition=1, surface_temperature=3000.0, basal_temperature=4000.0)
         mesh = MESHP(
