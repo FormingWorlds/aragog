@@ -385,18 +385,70 @@ def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, mon
 
 @needs_eos
 @pytest.mark.smoke
-@pytest.mark.parametrize(('t0', 'span', 'status'), [(0.0, 0.0, 0), (1.0e9, 1.0e-4, -1)])
-def test_rate_mode_zero_span_call_returns_the_start_state(shared_eos, t0, span, status):
-    """A zero-span call (PROTEUS setup) or one shorter than the grid tolerance runs in
-    rate mode like 'fixed': the same status and the start state."""
+def test_rate_mode_zero_span_call_returns_the_start_state(shared_eos):
+    """A call with start_time == end_time (PROTEUS setup) runs in rate mode like 'fixed'."""
     ends = []
     for mode in ('fixed', 'rate'):
+        s = _solver(shared_eos, mode, end_time=0.0)
+        S0 = np.array(s._S0, dtype=float)
+        s.solve()
+        assert s._solution.status == 0
+        ends.append(np.asarray(s._solution.y)[:, -1])
+        np.testing.assert_array_equal(ends[-1][: S0.size], S0)
+    np.testing.assert_array_equal(ends[1], ends[0])
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_short_call_matches_fixed_over_the_same_span(shared_eos):
+    """A call shorter than the grid tolerance (1e-4 yr at 1 Gyr) completes in rate mode and
+    equals 'fixed' on a 2-point grid; 'fixed' on its default grid stops with status -1."""
+    ends = {}
+    for mode, n_out, status in (('fixed', None, -1), ('fixed', 2, 0), ('rate', None, 0)):
         s = _solver(shared_eos, mode)
-        s.parameters.solver.start_time, s.parameters.solver.end_time = t0, t0 + span
+        s.parameters.solver.start_time, s.parameters.solver.end_time = 1.0e9, 1.0e9 + 1.0e-4
+        if n_out:
+            s._cvode_output_points = n_out
+        S0 = np.array(s._S0, dtype=float)
         s.solve()
         assert s._solution.status == status
-        ends.append(np.asarray(s._solution.y)[:, -1])
-    np.testing.assert_array_equal(ends[1], ends[0])
+        ends[(mode, n_out)] = np.asarray(s._solution.y)[: S0.size, -1]
+    np.testing.assert_array_equal(ends[('fixed', None)], S0)
+    np.testing.assert_array_equal(ends[('rate', None)], ends[('fixed', 2)])
+    assert np.max(np.abs(ends[('rate', None)] - S0)) > 0.0
+
+
+@pytest.mark.unit
+def test_solve_cvode_segments_gives_a_short_call_its_end_time():
+    """A call shorter than the grid tolerance is one solve over [start, end]."""
+    from unittest.mock import MagicMock
+
+    from scipy.optimize import OptimizeResult
+
+    start, end = 1.0e9, 1.0e9 + 1.0e-4
+    s = EntropySolver.__new__(EntropySolver)
+    s._output_grid = lambda t0, t1: np.linspace(t0, t1, 65)
+    spans = []
+
+    def fake_solve_cvode(**kw):
+        spans.append(np.asarray(kw['tspan']))
+        res = OptimizeResult(t=np.asarray(kw['tspan']), y=np.ones((2, 2)))
+        res.nfev = res.cvode_nst = res.cvode_nfe = res.status = 0
+        res.cvode_flag = 0
+        return res
+
+    s._solve_cvode = fake_solve_cvode
+    res = s._solve_cvode_segments(
+        start_time=start,
+        end_time=end,
+        y0=np.ones(2),
+        roots_at=lambda y, inside: MagicMock(inside=False),
+        h_at=lambda t, y: 15.0,
+        t_ref=1.0,
+        h_min=1.0,
+    )
+    assert len(spans) == 1 and spans[0].tolist() == [start, end]
+    assert res.t[-1] == end
 
 
 @pytest.mark.unit

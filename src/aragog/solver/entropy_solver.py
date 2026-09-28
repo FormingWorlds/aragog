@@ -300,7 +300,7 @@ def _phase_boundary_max_step_clamp(
 # Rate-cap stiff-zone half-width floor [J/kg/K] and the rate floor switch.
 _RATE_CAP_MIN_DELTA = 10.0
 _RATE_CAP_FLOOR = True
-# Loosest rtol for which the rate cap is accepted; looser rtol logs one warning.
+# rtol above which the rate cap logs one warning (its accuracy is verified at 1e-8).
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
 _NO_CAP_ATTRS = {
     'evals': 0,
@@ -3034,7 +3034,7 @@ class EntropySolver:
                 if res is not None:  # a root at the call end: complete
                     res.cvode_flag, res.cvode_flag_name = 0, _cvode_flag_name(0)
                     break
-                tspan = grid  # a call shorter than the grid tolerance: one solve, as fixed
+                tspan = np.array([t, end_time])  # a call shorter than the grid tolerance
             last = k == max_segments
             roots = None if last else roots_at(y, inside)
             inside = False if last else roots.inside
