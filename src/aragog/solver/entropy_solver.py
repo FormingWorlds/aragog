@@ -609,8 +609,7 @@ class SolverOutput:
     mass_stag: npt.NDArray  # mass per shell [kg]
 
     # Fluxes and heating (at basic / staggered nodes)
-    # Total heat flux at basic nodes [W/m^2]; the end values are the applied BC fluxes,
-    # except for inner BC 3 and outer BC 5, which the RHS does not impose.
+    # Total heat flux at basic nodes [W/m^2]; the end values are the applied BC fluxes.
     heat_flux: npt.NDArray
     heating: npt.NDArray  # internal heating at staggered nodes [W/kg]
     eddy_diff: npt.NDArray  # eddy diffusivity at basic nodes [m^2/s]

@@ -19,7 +19,7 @@ Dependencies: jax, equinox, diffrax, lineax (transitive via diffrax).
 from __future__ import annotations
 
 import logging
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -364,14 +364,31 @@ def _apply_cmb_bc(
 ) -> jax.Array:
     """Apply the CMB boundary condition to the heat flux array.
 
-    ``heating_first`` is the internal heating [W/kg] of the bottom mantle cell; the
-    core-cooling BC (type 1) removes it from the power it splits with the core.
-
-    ``phase_stag_T`` and ``phase_stag_k`` are required for
-    ``inner_bc_type == 3``: the prescribed CMB temperature sets the flux by
-    conduction across the bottom half cell. With ``bc.cmb_flux_law``,
-    ``law_inputs = (eos, phase_stag, S, T_top)`` and the law sets the flux of
-    face 1 (type 1) or face 0 (type 3), as in the numpy solver.
+    Parameters
+    ----------
+    heat_flux : jax.Array
+        Heat flux array at basic nodes [W/m^2].
+    bc : BoundaryParams
+        Boundary condition parameters.
+    mesh : MeshArrays
+        Spatial mesh arrays.
+    phase_stag_rho, phase_stag_Cp : jax.Array
+        Density [kg/m^3] and heat capacity [J/kg/K] at staggered nodes.
+    *args : Any
+        Positional arguments for backward compatibility:
+        - 1 arg: ``heating_first``
+        - 2 args: ``phase_stag_T``, ``phase_stag_k``
+        - 3 args: ``heating_first``, ``phase_stag_T``, ``phase_stag_k``
+        - 4 args: ``heating_first``, ``phase_stag_T``, ``phase_stag_k``, ``law_inputs``
+    heating_first : jax.Array | float, default=0.0
+        Internal heating [W/kg] of bottom mantle cell; subtracted in type 1.
+    phase_stag_T : jax.Array | None, default=None
+        Temperature [K] at staggered nodes. Required for type 3 conduction and
+        for type 1 when ``bc.cmb_flux_law`` is active (sets core temperature).
+    phase_stag_k : jax.Array | None, default=None
+        Conductivity [W/m/K] at staggered nodes. Required for type 3 conduction.
+    law_inputs : tuple | None, default=None
+        Tuple of ``(eos, phase_stag, S, T_top)`` for CMB flux laws.
     """
     if len(args) == 1:
         heating_first = args[0]
