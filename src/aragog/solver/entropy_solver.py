@@ -3030,7 +3030,7 @@ class EntropySolver:
         res = None
         for k in range(max_segments + 1):
             tspan = np.concatenate(([t], grid[grid > t + 1e-12 * abs(end_time)]))
-            if tspan.size < 2:  # a root at the call end: the call is complete
+            if tspan.size < 2 and res is not None:  # a root at the call end: complete
                 res.cvode_flag, res.cvode_flag_name = 0, _cvode_flag_name(0)
                 break
             last = k == max_segments

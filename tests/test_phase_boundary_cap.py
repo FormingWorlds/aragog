@@ -383,6 +383,19 @@ def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, mon
     )
 
 
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_zero_span_call_returns_the_start_state(shared_eos):
+    """A call with start_time == end_time (PROTEUS setup) runs in rate mode like 'fixed'."""
+    ends = []
+    for mode in ('fixed', 'rate'):
+        s = _solver(shared_eos, mode, end_time=0.0)
+        s.solve()
+        assert s._solution.status == 0
+        ends.append(np.asarray(s._solution.y)[:, -1])
+    np.testing.assert_array_equal(ends[1], ends[0])
+
+
 @pytest.mark.unit
 def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
     """A root within 1e-12 of the call end ends the call; no segment gets a one-point tspan."""
