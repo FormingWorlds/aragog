@@ -19,7 +19,7 @@ Dependencies: jax, equinox, diffrax, lineax (transitive via diffrax).
 from __future__ import annotations
 
 import logging
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import equinox as eqx
 import jax
@@ -356,8 +356,8 @@ def _apply_cmb_bc(
     mesh: MeshArrays,
     phase_stag_rho: jax.Array,
     phase_stag_Cp: jax.Array,
-    *args: Any,
-    heating_first: jax.Array | float = 0.0,
+    heating_first: jax.Array | float,
+    *,
     phase_stag_T: jax.Array | None = None,
     phase_stag_k: jax.Array | None = None,
     law_inputs: tuple | None = None,
@@ -374,13 +374,7 @@ def _apply_cmb_bc(
         Spatial mesh arrays.
     phase_stag_rho, phase_stag_Cp : jax.Array
         Density [kg/m^3] and heat capacity [J/kg/K] at staggered nodes.
-    *args : Any
-        Positional arguments for backward compatibility:
-        - 1 arg: ``heating_first``
-        - 2 args: ``phase_stag_T``, ``phase_stag_k``
-        - 3 args: ``heating_first``, ``phase_stag_T``, ``phase_stag_k``
-        - 4 args: ``heating_first``, ``phase_stag_T``, ``phase_stag_k``, ``law_inputs``
-    heating_first : jax.Array | float, default=0.0
+    heating_first : jax.Array | float
         Internal heating [W/kg] of bottom mantle cell; subtracted in type 1.
     phase_stag_T : jax.Array | None, default=None
         Temperature [K] at staggered nodes. Required for type 3 conduction and
@@ -390,15 +384,6 @@ def _apply_cmb_bc(
     law_inputs : tuple | None, default=None
         Tuple of ``(eos, phase_stag, S, T_top)`` for CMB flux laws.
     """
-    if len(args) == 1:
-        heating_first = args[0]
-    elif len(args) == 2:
-        phase_stag_T, phase_stag_k = args
-    elif len(args) == 3:
-        heating_first, phase_stag_T, phase_stag_k = args
-    elif len(args) >= 4:
-        heating_first, phase_stag_T, phase_stag_k, law_inputs = args[:4]
-
     if bc.cmb_flux_law and bc.inner_bc_type == 1:
         q = _cmb_law_flux(bc, mesh, *law_inputs, T_c=phase_stag_T[0], face=1)
         heat_flux = heat_flux.at[1].set(q)
@@ -414,9 +399,7 @@ def _apply_cmb_bc(
         r_above = mesh.radii_basic[1]
         radius_ratio = r_above / r_cmb
         alpha = radius_ratio**2 / (cell_cap / (core_cap * bc.tfac_core_avg) + 1.0)
-        mesh_area = getattr(mesh, 'area', None)
-        area_1 = mesh_area[1] if mesh_area is not None else 4.0 * jnp.pi * r_above**2
-        F_cmb = alpha * (heat_flux[1] - heating_first * rho_first * vol_first / area_1)
+        F_cmb = alpha * (heat_flux[1] - heating_first * rho_first * vol_first / mesh.area[1])
     elif bc.inner_bc_type == 2:
         # Prescribed flux
         F_cmb = bc.inner_bc_value
@@ -496,8 +479,8 @@ def dSdt(
         phase_stag.density,
         phase_stag.heat_capacity,
         flux_out.heating[0],
-        phase_stag.temperature,
-        phase_stag.thermal_conductivity,
+        phase_stag_T=phase_stag.temperature,
+        phase_stag_k=phase_stag.thermal_conductivity,
         law_inputs=(eos, phase_stag, S, phase_basic_T[-1]),
     )
 

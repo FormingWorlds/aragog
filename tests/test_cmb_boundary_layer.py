@@ -205,6 +205,7 @@ def test_jax_face_flux_equals_numpy_and_has_a_finite_exact_gradient():
             temperature=arr(ps.temperature),
         )
         mesh = SimpleNamespace(
+            area=jnp.asarray(s._area_flat),
             volume=jnp.asarray(s._volume_flat),
             P_basic=jnp.asarray(s._P_basic_flat),
             radii_basic=jnp.asarray(s._r_basic_flat),
@@ -237,8 +238,9 @@ def test_jax_face_flux_equals_numpy_and_has_a_finite_exact_gradient():
                 mesh,
                 ph.density,
                 ph.heat_capacity,
-                ph.temperature,
-                ph.thermal_conductivity,
+                0.0,
+                phase_stag_T=ph.temperature,
+                phase_stag_k=ph.thermal_conductivity,
                 law_inputs=(eos, ph, jnp.asarray(y), T_top),
             )
             return out[face]
@@ -363,3 +365,117 @@ def test_fixed_surface_temperature_sets_the_rayleigh_number():
     assert q == pytest.approx(cmb_flux(T_s=273.0, **args), rel=1e-12)
     assert abs(cmb_flux(T_s=1199.0, **args) / q - 1.0) > 0.1
     assert abs(face0(1273.0)[1]) < 1e-15
+
+
+@needs_eos
+@pytest.mark.physics_invariant
+def test_quasi_steady_law_with_bottom_cell_heating_matches_numpy_and_closed_form():
+    """Inner BC 1 with the DS2000 law and bottom-cell internal heating.
+
+    The numpy and JAX CMB fluxes agree (rtol <= 1e-10) and both match the closed-form
+    alpha * (q_law - Q_first / A_1) evaluated from input state quantities.
+    """
+    jax = pytest.importorskip('jax')
+    from types import SimpleNamespace
+
+    import jax.numpy as jnp
+
+    from aragog.eos.entropy import EntropyEOS
+    from aragog.jax.eos import EntropyEOS_JAX
+    from aragog.jax.solver import BoundaryParams, _apply_cmb_bc
+    from aragog.solver.entropy_solver import EntropySolver
+
+    jax.config.update('jax_enable_x64', True)
+
+    p = _build(core_bc='quasi_steady', outer_bc=1, inner_bc=1, n_nodes=20)
+    p.boundary_conditions.cmb_flux_law = 'deschamps_sotin_2000'
+    h_0 = 5.0e-11
+    p.energy.tidal = True
+    p.energy.tidal_array = np.full(20 - 1, h_0)
+    s = EntropySolver(p, entropy_eos=EntropyEOS(EOS_DIR))
+    s.initialize()
+    y = np.full(s._n_stag, 2400.0)
+    y[:3] = [2600.0, 2550.0, 2450.0]
+    s.set_initial_entropy(y)
+    s.dSdt(0.0, y)
+
+    ps = s.state.phase_staggered
+    arr = lambda f: jnp.asarray(np.asarray(f()).ravel())  # noqa: E731
+    phase = SimpleNamespace(
+        density=arr(ps.density),
+        heat_capacity=arr(ps.heat_capacity),
+        thermal_conductivity=arr(ps.thermal_conductivity),
+        thermal_expansivity=arr(ps.thermal_expansivity),
+        viscosity=arr(ps.viscosity),
+        temperature=arr(ps.temperature),
+    )
+    mesh = SimpleNamespace(
+        area=jnp.asarray(s._area_flat),
+        volume=jnp.asarray(s._volume_flat),
+        P_basic=jnp.asarray(s._P_basic_flat),
+        radii_basic=jnp.asarray(s._r_basic_flat),
+        gravity=jnp.asarray(s._g_basic_flat),
+    )
+    t_top = float(s.state.top_temperature.item())
+    bc = BoundaryParams(
+        outer_bc_type=1,
+        outer_bc_value=0.0,
+        emissivity=1.0,
+        T_eq=255.0,
+        inner_bc_type=1,
+        inner_bc_value=0.0,
+        core_density=10500.0,
+        core_heat_capacity=880.0,
+        tfac_core_avg=1.147,
+        cmb_flux_law=True,
+        cmb_law_interior=s._cmb_law_interior.astype(float),
+    )
+
+    hf = jnp.asarray(np.asarray(s.state.heat_flux).ravel()).at[:2].set(0.0)
+    heating_first = float(np.asarray(s.state.heating).flat[0])
+    out = _apply_cmb_bc(
+        hf,
+        bc,
+        mesh,
+        phase.density,
+        phase.heat_capacity,
+        heating_first,
+        phase_stag_T=phase.temperature,
+        phase_stag_k=phase.thermal_conductivity,
+        law_inputs=(EntropyEOS_JAX(EOS_DIR), phase, jnp.asarray(y), t_top),
+    )
+
+    f_numpy = float(np.asarray(s.state.heat_flux).ravel()[0])
+    f_jax = float(out[0])
+
+    r_cmb = float(s._r_basic_flat[0])
+    r_above = float(s._r_basic_flat[1])
+    vol_0 = float(s._volume_flat[0])
+    rho_0 = float(np.asarray(s.state.phase_staggered.density()).flat[0])
+    cp_0 = float(np.asarray(s.state.phase_staggered.heat_capacity()).flat[0])
+    c_cell = vol_0 * rho_0 * cp_0
+    c_core = (4.0 / 3.0) * np.pi * r_cmb**3 * 10500.0 * 880.0
+    alpha = (r_above / r_cmb) ** 2 / (c_cell / (c_core * 1.147) + 1.0)
+    q_law = float(_expected(s, float(phase.temperature[0]), 1))
+    a_1 = float(s._area_flat[1])
+    q_first = heating_first * rho_0 * vol_0
+    f_analytical = alpha * (q_law - q_first / a_1)
+
+    assert f_jax == pytest.approx(f_numpy, rel=1e-10)
+    assert f_jax == pytest.approx(f_analytical, rel=1e-10)
+    assert f_numpy == pytest.approx(f_analytical, rel=1e-10)
+
+    # Canary: omitting Q_first from the JAX path must shift the flux and fail.
+    out_canary = _apply_cmb_bc(
+        hf,
+        bc,
+        mesh,
+        phase.density,
+        phase.heat_capacity,
+        0.0,
+        phase_stag_T=phase.temperature,
+        phase_stag_k=phase.thermal_conductivity,
+        law_inputs=(EntropyEOS_JAX(EOS_DIR), phase, jnp.asarray(y), t_top),
+    )
+    f_canary = float(out_canary[0])
+    assert abs(f_canary - f_analytical) > 1.0e-3
