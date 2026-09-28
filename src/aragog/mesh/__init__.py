@@ -228,8 +228,9 @@ class Mesh:
             if np.any(np.diff(basic_coordinates[:, 0]) <= 0.0):
                 raise ValueError(
                     'Non-monotonic basic mesh after mass-coordinate solve '
-                    '(duplicate node radii): the EOS mass integral is not '
-                    'increasing in radius; check the structure profile.'
+                    '(duplicate node radii): nodes clamped to the same bracket end, '
+                    'or an EOS mass integral that does not increase with radius; '
+                    'check the structure profile.'
                 )
             logger.debug('Basic mass coordinates (uniform) = %s', basic_mass_coordinates)
             logger.debug('Basic spatial coordinates (non-uniform) = %s', basic_coordinates)
