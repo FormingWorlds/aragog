@@ -47,7 +47,13 @@ class EOS(ABC):
     ) -> None: ...
 
     def set_staggered_effective_density(self, basic_radii: npt.NDArray) -> None:
-        """Set each cell's effective density to its mass over its volume."""
+        """Set each cell's effective density to its mass over its volume.
+
+        Parameters
+        ----------
+        basic_radii : npt.NDArray
+            Basic-node radii [m], shape (n, 1), the faces of the cells.
+        """
         mass = np.diff(self.get_mass_within_radii(basic_radii), axis=0)
         volume = 4.0 / 3.0 * np.pi * np.diff(np.power(basic_radii, 3.0), axis=0)
         self._staggered_effective_density = mass / volume
