@@ -275,16 +275,20 @@ class Mesh:
         # The density refresh keeps get_dxidr_basic consistent with the mesh.
         self.eos.set_basic_pressure(self.basic.radii)
         self.eos.set_basic_density(self.basic.radii)
+        if parameters.mesh.mass_coordinates:
+            self.eos.set_staggered_effective_density(self.basic.radii)
 
         # STEP 2: Set up the staggered mesh
         staggered_mass_coordinates: npt.NDArray = (
             self.basic.mass_radii[:-1] + 0.5 * self.basic.delta_mesh
         )
         if parameters.mesh.mass_coordinates:
-            staggered_coordinates: npt.NDArray = (
-                self.get_staggered_spatial_coordinates_from_mass_coordinates(
-                    staggered_mass_coordinates
-                )
+            rb = self.basic.radii[:, 0]
+            staggered_coordinates = np.array(
+                [
+                    [_radius_for_mass_coordinate(_xi_of_r, float(xi), rb[i], rb[i + 1], node=i)]
+                    for i, xi in enumerate(staggered_mass_coordinates[:, 0])
+                ]
             )
         else:
             staggered_coordinates = staggered_mass_coordinates
@@ -310,7 +314,7 @@ class Mesh:
         """dxi/dr at basic nodes"""
         return self._dxidr
 
-    @cached_property
+    @property
     def staggered_effective_density(self) -> npt.NDArray:
         return self.eos.staggered_effective_density
 
@@ -399,49 +403,6 @@ class Mesh:
             )
 
         return np.power(basic_mass_coordinates, 1.0 / 3.0)
-
-    def get_staggered_spatial_coordinates_from_mass_coordinates(
-        self, staggered_mass_coordinates: npt.NDArray
-    ) -> npt.NDArray:
-        """Computes the staggered spatial coordinates from staggered mass coordinates.
-
-        Args:
-            Staggered mass coordinates
-
-        Returns:
-            Staggered spatial coordinates
-        """
-
-        # Initialise the staggered spatial coordinate to the inner boundary
-        staggered_coordinates = np.ones_like(staggered_mass_coordinates) * np.power(
-            self.settings.inner_radius, 3.0
-        )
-
-        # Add first half cell contribution
-        staggered_coordinates += (
-            self._planet_density
-            * (
-                np.power(staggered_mass_coordinates[0, :], 3.0)
-                - np.power(self.basic.mass_radii[0, :], 3.0)
-            )
-            / self.staggered_effective_density[0, :]
-        )
-
-        # Get spatial coordinates by adding individual cell contributions to the mantle mass
-        shell_effective_density = 0.5 * (
-            self.staggered_effective_density[1:, :] + self.staggered_effective_density[:-1, :]
-        )
-        shell_mass_volumes = np.power(staggered_mass_coordinates[1:, :], 3.0) - np.power(
-            staggered_mass_coordinates[:-1, :], 3.0
-        )
-        for i in range(1, self.settings.number_of_nodes - 1):
-            staggered_coordinates[i:, :] += (
-                self._planet_density
-                * shell_mass_volumes[i - 1, :]
-                / shell_effective_density[i - 1, :]
-            )
-
-        return np.power(staggered_coordinates, 1.0 / 3.0)
 
     def get_dxidr_basic(self) -> npt.NDArray:
         """Computes dxidr at basic nodes."""
