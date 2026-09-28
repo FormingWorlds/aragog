@@ -457,12 +457,15 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
 
     def fired(self, t, y):
         """Name of the component closest to zero at the root ``(t, y)``."""
+        g = np.abs(self.components(t, y))
         scale = {'stiff': self.delta, 'entry': self.delta}
         if self.step_cap is not None:
-            scale['cap'] = max(self.step_cap.cap, self.step_cap.cap_T, self.step_cap.cap_S)
+            c = self.step_cap  # scaled by the cap that binds, in that cap's own unit
+            by_cap = {'phi': c.cap, 'temperature': c.cap_T, 'entropy': c.cap_S}
+            scale['cap'] = by_cap.get(c.binding_cap) or max(c.cap, c.cap_T, c.cap_S)
         if 'progress' in self.names:
             scale['progress'] = max(float(np.min(self.alpha * self.d0[self.watch])), 1e-12)
-        g = np.abs(self.components(t, y)) / np.array([scale[n] for n in self.names])
+        g = g / np.array([scale[n] for n in self.names])
         return self.names[int(np.argmin(g))]
 
     def __getattr__(self, name):

@@ -141,6 +141,22 @@ class _FakeCap:
 
 
 @pytest.mark.unit
+def test_segment_root_scales_the_cap_by_the_cap_that_binds():
+    """A phi cap 0.015 short of firing is not taken for the stiff root at 0.01 when a 20 K cap is also armed."""
+
+    class _TwoCaps(_FakeCap):
+        cap_T = 20.0
+
+    r = _roots([1350.0, 1500.0], inside=False, cap=_TwoCaps(0.015))
+    at_stiff = [1310.01, 1500.0]
+    assert r.components(0.0, at_stiff)[1] == pytest.approx(0.01)
+    assert r.fired(0.0, at_stiff) == 'stiff'
+    assert (
+        _roots([1350.0, 1500.0], inside=False, cap=_TwoCaps(1e-6)).fired(0.0, at_stiff) == 'cap'
+    )
+
+
+@pytest.mark.unit
 def test_segment_root_puts_the_step_cap_first_and_forwards_its_attributes():
     """The step cap is component 0, names 'cap' when it is at zero, and its attributes reach _solve_cvode."""
     r = _roots([1200.0, 1500.0], inside=False, cap=_FakeCap(0.0))
