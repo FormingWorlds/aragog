@@ -193,17 +193,12 @@ class Mesh:
             raise ValueError(msg)
 
         if parameters.mesh.mass_coordinates:
-            # Compute planet density and mass coordinates from the initial spatial grid
             self._planet_density: float = self.get_planet_density(initial_spatial)
-            initial_mass_coordinates: npt.NDArray = (
-                self.get_basic_mass_coordinates_from_spatial_coordinates(initial_spatial)
-            )
-
-            # Create UNIFORM mass coordinate grid (this is the key change)
-            xi_min = initial_mass_coordinates[0, 0]
-            xi_max = initial_mass_coordinates[-1, 0]
+            r_core = float(initial_spatial[0, 0])
+            r_surf = float(initial_spatial[-1, 0])
+            # xi runs from r_core to r_surf exactly, by construction of the mean density.
             basic_mass_coordinates = np.linspace(
-                xi_min, xi_max, self.settings.number_of_nodes
+                r_core, r_surf, self.settings.number_of_nodes
             ).reshape(-1, 1)
 
             # Derive NON-UNIFORM spatial coordinates from the uniform xi grid
@@ -217,8 +212,6 @@ class Mesh:
             # of a PCHIP fit; on an N-point grid that error accumulated
             # to ~3% node position offsets, large enough to perturb the
             # Adams-Williamson reference state.
-            r_core = float(initial_spatial[0, 0])
-            r_surf = float(initial_spatial[-1, 0])
             rho_avg = self._planet_density
             M_core = self.eos.get_mass_within_radii(np.array([r_core])).item()
 
@@ -365,49 +358,6 @@ class Mesh:
         mantle_volume_no4pi = (np.power(r_surf, 3.0) - np.power(r_core, 3.0)) / 3.0
         mantle_avg_density = M_no4pi / mantle_volume_no4pi
         return float(mantle_avg_density)
-
-    def get_basic_mass_coordinates_from_spatial_coordinates(
-        self, basic_coordinates: npt.NDArray
-    ) -> npt.NDArray:
-        """Computes mass coordinates matching SPIDER's definition.
-
-        SPIDER's mass coordinate (eos_adamswilliamson.c:296-311):
-
-            xi(r)^3 = r_core^3 + 3 * M_AW(r_core, r) / rho_avg_mantle
-
-        where M_AW is the A-W mass integral from r_core to r (without
-        4pi), and rho_avg_mantle is the mantle-only average density.
-        At the CMB: xi = r_core. At the surface: xi = r_surface
-        (by construction of rho_avg_mantle).
-
-        Args:
-            Basic spatial coordinates
-
-        Returns:
-            Basic mass coordinates
-        """
-        r_core = basic_coordinates[0, 0]
-
-        # xi^3 at CMB = r_core^3
-        basic_mass_coordinates = np.zeros_like(basic_coordinates)
-        basic_mass_coordinates[:, :] = np.power(r_core, 3.0)
-
-        # Cumulative mantle mass contribution.
-        # staggered_effective_density * (r^3_outer - r^3_inner) gives
-        # mass_shell / (4/3*pi). Dividing by rho_avg (which is
-        # M_no4pi / V_no4pi = M_no4pi / ((r_s^3-r_c^3)/3)) gives
-        # the correct xi^3 increment: 3 * M_shell_no4pi / rho_avg.
-        basic_volumes = np.power(basic_coordinates[1:, 0], 3.0) - np.power(
-            basic_coordinates[:-1, 0], 3.0
-        )
-        for i in range(1, self.settings.number_of_nodes):
-            basic_mass_coordinates[i:, :] += (
-                self.staggered_effective_density[i - 1, :]
-                * basic_volumes[i - 1]
-                / self._planet_density
-            )
-
-        return np.power(basic_mass_coordinates, 1.0 / 3.0)
 
     def get_dxidr_basic(self) -> npt.NDArray:
         """Computes dxidr at basic nodes."""

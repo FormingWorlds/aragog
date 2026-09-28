@@ -1729,13 +1729,6 @@ class TestMassCoordinates:
         Re-evaluating ``xi(r)`` at the resulting basic radii via the
         same formula must reproduce the input uniform-xi grid to
         Newton xtol (~1 m on a 3 Mm mantle, < 1e-6 relative).
-
-        The discrete-shell helper
-        ``get_basic_mass_coordinates_from_spatial_coordinates`` uses a
-        shell-by-shell Riemann sum that has its own discretisation
-        error and is NOT the inverse of the Newton solve; comparing
-        against it would produce a meaningless ~0.5% gap (verified
-        before the round-trip was rewritten).
         """
         from aragog.mesh import Mesh
 

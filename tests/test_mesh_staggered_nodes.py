@@ -65,18 +65,28 @@ def _density(mesh):
     return _rho
 
 
+def _xi_back(mesh, radii):
+    """Mass coordinate of each radius by quadrature of the density from the CMB."""
+    rho = _density(mesh)
+    shell = np.array([quad(lambda x: x * x * rho(x), R_CORE, r)[0] for r in radii])
+    return np.cbrt(R_CORE**3 + 3.0 * shell / mesh._planet_density)
+
+
+def test_basic_nodes_are_uniform_in_xi_from_cmb_to_surface(mesh):
+    """The xi grid runs from R_cmb to R_surf and every basic node maps back to its xi."""
+    xb = mesh.basic.mass_radii[:, 0]
+    np.testing.assert_allclose(xb, np.linspace(R_CORE, R_SURF, xb.size), rtol=1e-14)
+    np.testing.assert_allclose(_xi_back(mesh, mesh.basic.radii[:, 0]), xb, atol=5.0)
+
+
 def test_staggered_nodes_lie_in_their_cell_at_their_mass_coordinate(mesh):
     """Each staggered node is inside its basic cell at the xi midpoint of that cell."""
     rb, xb = mesh.basic.radii[:, 0], mesh.basic.mass_radii[:, 0]
     rs, xs = mesh.staggered.radii[:, 0], mesh.staggered.mass_radii[:, 0]
     np.testing.assert_allclose(xs, 0.5 * (xb[:-1] + xb[1:]), rtol=1e-14)
     assert np.all((rs > rb[:-1]) & (rs < rb[1:]))
-
-    rho = _density(mesh)
-    shell = np.array([quad(lambda x: x * x * rho(x), R_CORE, r)[0] for r in rs])
-    xi_back = np.cbrt(R_CORE**3 + 3.0 * shell / mesh._planet_density)
     # 1 m brentq tolerance in r, plus the trapezoid error of the user profile.
-    np.testing.assert_allclose(xi_back, xs, atol=5.0)
+    np.testing.assert_allclose(_xi_back(mesh, rs), xs, atol=5.0)
 
 
 @pytest.mark.physics_invariant
