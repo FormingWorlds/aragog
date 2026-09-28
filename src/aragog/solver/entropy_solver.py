@@ -353,11 +353,14 @@ def _rate_phase_boundary_max_step(
     -------
     float
         ``fraction * min(t_c)`` clipped to ``bounds``; ``bounds[1]`` when no
-        entry has a finite ``t_c``.
+        entry has a finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt`` or the
+        floor is not finite.
     """
     dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
     rate = np.abs(dSdt)
     floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
+    if not (np.isfinite(S).all() and np.isfinite(rate).all() and np.isfinite(floor)):
+        return bounds[0]
     down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
     up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
     ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
@@ -377,9 +380,12 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
     - ``cap``: the per-call step caps (``_PhiCapRootFunction``), when armed;
       it ends the call.
     - ``stiff``: the smallest distance to a boundary minus ``delta`` outside
-      the stiff zone, minus ``2 delta`` inside it (hysteresis).
-    - ``progress``: outside the stiff zone only, ``alpha`` times each entry's
-      start distance to its nearer boundary minus the distance it has moved.
+      the stiff zone (entry), minus ``2 delta`` inside it (exit, hysteresis).
+    - ``entry``: inside the stiff zone only, the smallest distance minus
+      ``delta`` over the entries that start outside it.
+    - ``progress``: ``alpha`` times each entry's start distance to its nearer
+      boundary minus the distance it has moved, over the entries that start
+      outside the stiff zone.
 
     Parameters
     ----------
@@ -389,34 +395,33 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         Nondimensional state at the segment start.
     delta : float
         Stiff-zone half-width [J/kg/K].
-    inside : bool
-        Whether the segment starts inside the stiff zone.
+    inside : bool or None
+        Whether the segment starts inside the stiff zone; ``None`` decides
+        from ``y0`` (any entry within ``delta`` of a boundary).
     state_scale : npt.NDArray
         Nondimensional state scale; the first ``n_stag`` entries are entropy.
     n_stag : int
         Number of staggered cells.
     cap : _PhiCapRootFunction or None
         Step-cap root function to include as the first component.
-    alpha : float
-        Fraction of the start distance that ends a segment.
     """
 
-    def __init__(
-        self, S_liq, S_sol, y0, delta, inside, state_scale, n_stag, cap=None, alpha=0.5
-    ):
-        self.S_liq, self.S_sol = S_liq, S_sol
+    alpha = 0.5  # fraction of the start distance that ends a segment
+
+    def __init__(self, S_liq, S_sol, y0, delta, inside, state_scale, n_stag, cap=None):
+        self.S_liq, self.S_sol, self.delta, self.step_cap = S_liq, S_sol, delta, cap
         self.scale = np.asarray(state_scale, dtype=float).ravel()[:n_stag]
-        self.n_stag, self.delta, self.inside, self.step_cap, self.alpha = (
-            int(n_stag),
-            float(delta),
-            bool(inside),
-            cap,
-            float(alpha),
-        )
+        self.n_stag = n_stag
         self.S0 = self._entropy(y0)
         self.d0 = self._dist(self.S0)
+        self.inside = bool(np.any(self.d0 < delta)) if inside is None else inside
+        self.watch = (self.d0 >= delta) if self.inside else np.isfinite(self.d0)
+        watched = bool(self.watch.any())
         self.names = (
-            (['cap'] if cap is not None else []) + ['stiff'] + ([] if inside else ['progress'])
+            (['cap'] if cap is not None else [])
+            + ['stiff']
+            + (['entry'] if self.inside and watched else [])
+            + (['progress'] if watched else [])
         )
         self.n_roots = len(self.names)
 
@@ -428,16 +433,20 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         return np.minimum(np.abs(S - self.S_liq), np.abs(S - self.S_sol))
 
     def components(self, t, y):
-        """Root component values at nondimensional ``(t, y)``."""
+        """Root component values at nondimensional ``(t, y)``, in ``names`` order."""
         g = []
         if self.step_cap is not None:
             gc = np.zeros(1)
             self.step_cap.evaluate(t, y, gc)
             g.append(float(gc[0]))
         S = self._entropy(y)
-        g.append(float(self._dist(S).min()) - (2.0 if self.inside else 1.0) * self.delta)
-        if not self.inside:
-            g.append(float(np.min(self.alpha * self.d0 - np.abs(S - self.S0))))
+        d = self._dist(S)
+        g.append(float(d.min()) - (2.0 if self.inside else 1.0) * self.delta)
+        if 'entry' in self.names:
+            g.append(float(d[self.watch].min()) - self.delta)
+        if 'progress' in self.names:
+            moved = np.abs(S - self.S0)[self.watch]
+            g.append(float(np.min(self.alpha * self.d0[self.watch] - moved)))
         g = np.asarray(g, dtype=float)
         return np.where(np.isfinite(g), g, 1.0)
 
@@ -448,12 +457,12 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
 
     def fired(self, t, y):
         """Name of the component closest to zero at the root ``(t, y)``."""
-        scale = [self.delta] * len(self.names)
+        scale = {'stiff': self.delta, 'entry': self.delta}
         if self.step_cap is not None:
-            scale[0] = max(self.step_cap.cap, self.step_cap.cap_T, self.step_cap.cap_S)
+            scale['cap'] = max(self.step_cap.cap, self.step_cap.cap_T, self.step_cap.cap_S)
         if 'progress' in self.names:
-            scale[-1] = max(float(np.min(self.alpha * self.d0)), 1e-12)
-        g = np.abs(self.components(t, y)) / np.asarray(scale)
+            scale['progress'] = max(float(np.min(self.alpha * self.d0[self.watch])), 1e-12)
+        g = np.abs(self.components(t, y)) / np.array([scale[n] for n in self.names])
         return self.names[int(np.argmin(g))]
 
     def __getattr__(self, name):
@@ -1208,7 +1217,7 @@ class EntropySolver:
         self.state: EntropyState
         self._solution: OptimizeResult
         self.stop_early: bool = False
-        self._rate_rtol_warned = False
+        self._warned: set[str] = set()
         # Optional factory that builds JAX-derived CVODE callbacks.
         # Signature: factory(scales, core_bc_mode) -> (rhs_fn, jac_fn)
         # where ``scales`` is an aragog.jax.nondim.NonDimScales
@@ -3060,7 +3069,7 @@ class EntropySolver:
                 res.pop(key, None)
             if trigger == 'stiff':
                 inside = not roots.inside
-            if not t < end_time:
+            if end_time - t <= 1e-12 * abs(end_time):
                 break
         res.t = np.concatenate(ts)
         res.y = np.concatenate(ys, axis=1)
@@ -3072,6 +3081,12 @@ class EntropySolver:
             {n: sum(1 for e in log if e[1] == n) for n in {e[1] for e in log}},
         )
         return res
+
+    def _warn_once(self, key: str, message: str) -> None:
+        """Log ``message`` as a warning the first time ``key`` is seen by this solver."""
+        if key not in self._warned:
+            self._warned.add(key)
+            logger.warning(message)
 
     def solve(self) -> None:
         """Run the BDF time integration."""
@@ -3155,13 +3170,11 @@ class EntropySolver:
                 rate_mode = cap_mode == 'rate' and self._core_bc != 'gradient'
                 rate_ceiling = max_step
                 max_step = 1.0
-                if rate_mode and rtol > _RATE_CAP_RTOL_LIMIT and not self._rate_rtol_warned:
-                    self._rate_rtol_warned = True
-                    logger.warning(
-                        'phase_boundary_cap="rate" at rtol %.1e: its accuracy is verified '
-                        'for rtol <= %.0e',
-                        rtol,
-                        _RATE_CAP_RTOL_LIMIT,
+                if cap_mode == 'rate' and not rate_mode:
+                    self._warn_once(
+                        'gradient',
+                        'phase_boundary_cap="rate" is not used by the gradient core; '
+                        'max_step 1 yr',
                     )
                 if rate_mode:
                     # Staggered cells plus the CMB cell at the CMB-pressure boundaries.
@@ -3433,6 +3446,12 @@ class EntropySolver:
                 phi_cap_rootfn=phi_cap_rootfn,
             )
             if rate_mode:
+                if rtol > _RATE_CAP_RTOL_LIMIT:
+                    self._warn_once(
+                        'rtol',
+                        f'phase_boundary_cap="rate" at rtol {rtol:.1e}: its accuracy is verified '
+                        f'for rtol <= {_RATE_CAP_RTOL_LIMIT:.0e}',
+                    )
 
                 def _rate_h(t_nd, y_nd):
                     try:
@@ -3457,11 +3476,6 @@ class EntropySolver:
                     return min(h, rate_ceiling) / t_ref
 
                 def _rate_roots(y_nd, inside):
-                    if inside is None:
-                        S = np.asarray(y_nd, dtype=float)[:n_s] * _state_scale[:n_s]
-                        S = np.append(S, S[0])
-                        dist = np.minimum(np.abs(S - rate_liq), np.abs(S - rate_sol))
-                        inside = bool(np.any(dist < rate_delta))
                     return _PhaseBoundarySegmentRoot(
                         rate_liq,
                         rate_sol,
@@ -3495,8 +3509,8 @@ class EntropySolver:
             method = 'Radau' if solver_method != 'bdf' else 'BDF'
             logger.info('EntropySolver: using scipy %s', method)
             if rate_mode:
-                logger.warning(
-                    'phase_boundary_cap="rate" needs CVODE; max_step 1 yr with scipy'
+                self._warn_once(
+                    'scipy', 'phase_boundary_cap="rate" needs CVODE; max_step 1 yr with scipy'
                 )
             self._solution = solve_ivp(
                 _rhs_nondim,

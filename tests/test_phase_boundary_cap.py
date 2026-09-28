@@ -115,14 +115,18 @@ def test_segment_root_is_anchored_at_the_segment_start_and_fires_on_progress():
 
 @pytest.mark.unit
 def test_segment_root_stiff_zone_entry_and_exit_with_hysteresis():
-    """Outside, entry at delta fires 'stiff'; inside, the root sits at 2 delta and progress is off."""
+    """Outside, entry at delta fires 'stiff'; inside, exit sits at 2 delta and the other cells keep entry and progress."""
     out = _roots([1350.0, 1500.0], inside=False)
     assert out.components(0.0, [1310.0, 1500.0])[0] == pytest.approx(0.0)
     assert out.fired(0.0, [1310.0, 1500.0]) == 'stiff'
     ins = _roots([1305.0, 1500.0], inside=True)
-    assert ins.names == ['stiff']
+    assert ins.names == ['stiff', 'entry', 'progress']
     assert ins.components(0.0, [1305.0, 1500.0])[0] == pytest.approx(-15.0)
     assert ins.components(0.0, [1320.0, 1500.0])[0] == pytest.approx(0.0)
+    assert ins.components(0.0, [1305.0, 1400.0])[2] == pytest.approx(0.0)
+    assert ins.fired(0.0, [1305.0, 1400.0]) == 'progress'
+    assert ins.components(0.0, [1305.0, 1310.0])[1] == pytest.approx(0.0)
+    assert ins.fired(0.0, [1305.0, 1310.0]) == 'entry'
 
 
 class _FakeCap:
@@ -194,7 +198,7 @@ def test_fixed_and_gradient_keep_one_year_without_segments(shared_eos, monkeypat
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_joins_segments_into_one_call_trajectory(shared_eos):
-    """Segments cover the call; each segment start is a trajectory point and time strictly increases."""
+    """Segments cover the call with every output point; each segment start is a point; time increases."""
     s = _solver(shared_eos, 'rate', end_time=200.0)
     s.solve()
     sol = s._solution
@@ -202,6 +206,7 @@ def test_rate_mode_joins_segments_into_one_call_trajectory(shared_eos):
     assert len(starts) >= 2 and sol.t[0] == 0.0 and sol.t[-1] == pytest.approx(200.0)
     assert np.all(np.diff(sol.t) > 0.0) and sol.y.shape[1] == sol.t.size
     assert all(np.any(np.isclose(sol.t, t0, rtol=1e-12, atol=1e-9)) for t0 in starts)
+    assert sol.t.size >= s._cvode_output_points + len(starts) - 1
 
 
 def _isentropic_end(eos, mode, tol, core_bc='quasi_steady'):
@@ -235,7 +240,7 @@ def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
 
 
 @needs_eos
-@pytest.mark.unit
+@pytest.mark.smoke
 def test_rate_cap_exception_fallback_returns_one_year(shared_eos, monkeypatch, caplog):
     """When dS/dt evaluation raises an exception during rate cap evaluation, fall back to 1 yr."""
     s = _solver(shared_eos, 'rate', end_time=10.0)
@@ -258,7 +263,7 @@ def test_rate_cap_exception_fallback_returns_one_year(shared_eos, monkeypatch, c
 
 
 @needs_eos
-@pytest.mark.unit
+@pytest.mark.smoke
 def test_rate_cap_segment_ceiling_falls_back_to_one_year(shared_eos, monkeypatch, caplog):
     """Reaching the segment count ceiling warns and falls back to 1 yr for the remaining call."""
     s = _solver(shared_eos, 'rate', end_time=200.0)
@@ -297,7 +302,7 @@ def test_rate_cap_slow_cell_moving_away_uses_nearer_boundary_when_floored():
 
 
 @needs_eos
-@pytest.mark.unit
+@pytest.mark.smoke
 def test_rate_cap_scipy_fallback_warns_and_runs_at_one_year(shared_eos, caplog, monkeypatch):
     """When scipy is used with rate cap, it warns and keeps max_step at 1 yr."""
     p = _build_mushy_parameters(solver_method='bdf', n_nodes=12, end_time=2.0)
@@ -321,7 +326,7 @@ def test_rate_cap_scipy_fallback_warns_and_runs_at_one_year(shared_eos, caplog, 
 
 
 @needs_eos
-@pytest.mark.unit
+@pytest.mark.smoke
 def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, monkeypatch):
     """Each CVODE segment must re-anchor its root function to the segment start state."""
     s = _solver(shared_eos, 'rate', end_time=200.0)
@@ -350,43 +355,40 @@ def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, mon
 
 
 @pytest.mark.unit
-def test_solve_cvode_segments_inside_stiff_zone_uses_approach_step():
-    """Inside the stiff zone, _solve_cvode_segments passes h_at, not h_min."""
+def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
+    """A root within 1e-12 of the call end ends the call; no segment gets a one-point tspan."""
     from unittest.mock import MagicMock
 
     from scipy.optimize import OptimizeResult
 
+    end = 1.0e6
     s = EntropySolver.__new__(EntropySolver)
-    s._output_grid = lambda t0, t1: np.array([t0, t1])
-    passed_max_step = []
+    s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
+    calls = []
 
-    def mock_solve_cvode(**kw):
-        passed_max_step.append(kw['max_step'])
-        res = OptimizeResult()
-        res.t = np.array([kw['start_time'], kw['end_time']])
-        res.y = np.ones((2, 2))
-        res.nfev = res.cvode_nst = res.cvode_nfe = 1
-        res.status = 0
-        res.cvode_flag = 0
-        res.t_events = [None]
+    def fake_solve_cvode(**kw):
+        assert len(kw['tspan']) >= 2, 'CVODE needs at least 2 output times'
+        calls.append(kw['start_time'])
+        res = OptimizeResult(
+            t=np.array([kw['start_time'], end * (1.0 - 1e-13)]), y=np.ones((2, 2))
+        )
+        res.nfev = res.cvode_nst = res.cvode_nfe = res.status = 0
+        res.cvode_flag = 2
         return res
 
-    s._solve_cvode = mock_solve_cvode
-    mock_roots = MagicMock()
-    mock_roots.inside = True
-
+    s._solve_cvode = fake_solve_cvode
+    roots = MagicMock(inside=False)
+    roots.fired.return_value = 'progress'
     res = s._solve_cvode_segments(
         start_time=0.0,
-        end_time=1.0,
-        y0=np.array([1.0, 1.0]),
-        roots_at=lambda y, inside: mock_roots,
+        end_time=end,
+        y0=np.ones(2),
+        roots_at=lambda y, inside: roots,
         h_at=lambda t, y: 15.0,
         t_ref=1.0,
         h_min=1.0,
-        max_segments=5,
     )
-    assert passed_max_step[0] == 15.0
-    assert res.segments[0][2] == 15.0
+    assert calls == [0.0] and res.t[-1] == pytest.approx(end, rel=1e-12)
 
 
 @pytest.fixture(scope='module')
@@ -403,7 +405,7 @@ def _rtol_warnings(caplog):
 
 
 @needs_eos
-@pytest.mark.unit
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ('mode', 'tol', 'expected'), [('rate', 1e-6, 1), ('rate', 1e-8, 0), ('fixed', 1e-6, 0)]
 )
@@ -441,7 +443,7 @@ def test_get_state_between_calls_leaves_the_next_rate_call_unchanged(shared_eos)
 
 
 @needs_eos
-@pytest.mark.unit
+@pytest.mark.smoke
 def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeypatch):
     """The cap sees every staggered cell plus the bottom cell at the CMB-pressure boundaries, with the rate floor on."""
     import aragog.solver.entropy_solver as es
@@ -463,11 +465,11 @@ def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeyp
 
 
 @needs_eos
-@pytest.mark.unit
+@pytest.mark.smoke
 def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
     shared_eos, monkeypatch
 ):
-    """A start with one cell 1 J/kg/K above its liquidus opens the call with a stiff-zone segment (no progress root)."""
+    """A start with one cell 1 J/kg/K above its liquidus opens an inside segment that watches every other entry."""
     s = _solver(shared_eos, 'rate', end_time=2.0)
     S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
     S0 = np.full(s._n_stag, S_liq[5] + 1.0)
@@ -482,4 +484,81 @@ def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
 
     monkeypatch.setattr(s, '_solve_cvode_segments', wrapped)
     s.solve()
-    assert first[0].inside and 'progress' not in first[0].names
+    assert first[0].inside and first[0].names == ['stiff', 'entry', 'progress']
+    assert not first[0].watch[5] and first[0].watch.sum() == s._n_stag
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_ends_a_segment_when_a_second_cell_approaches_inside_the_stiff_zone(
+    shared_eos, monkeypatch
+):
+    """Cell A rests 1 J/kg/K above its liquidus; cell B falls from 150 J/kg/K above its own at 1 J/kg/K/yr.
+
+    The call starts inside the stiff zone because of A, so only B's progress and stiff-zone entry
+    can end a segment; one must fire before B crosses at 150 yr.
+    """
+    s = _solver(shared_eos, 'rate', end_time=200.0)
+    S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
+    S0 = S_liq + 500.0
+    S0[2], S0[8] = S_liq[2] + 1.0, S_liq[8] + 150.0
+    s.set_initial_entropy(S0)
+    rate = np.zeros(s._n_stag)
+    rate[8] = -1.0
+    monkeypatch.setattr(s, '_dSdt_single', lambda t, y: rate.copy())
+    s.solve()
+    starts = [seg[0] for seg in s._solution.segments]
+    assert s._solution.t[-1] == pytest.approx(200.0)
+    assert len(starts) >= 2 and 0.0 < starts[1] < 150.0
+    assert s._solution.y[8, -1] == pytest.approx(S_liq[8] - 50.0, abs=1e-6)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('bad', ['S', 'dSdt', 'mass'])
+def test_rate_cap_returns_the_lower_bound_for_non_finite_input(bad):
+    """A NaN entropy, rate or mass gives the 1 yr lower bound, not the 100 yr ceiling."""
+    args = dict(S=[1200.0, 1350.0], dSdt=[-1.0, -2.0], mass=[1.0, 2.0])
+    args[bad] = [np.nan, args[bad][1]]
+    assert (
+        _cap(args['S'], args['dSdt'], args['mass'], rate_floor=True, bounds=(1.0, 100.0)) == 1.0
+    )
+    assert _cap([1200.0, 1350.0], [-1.0, -2.0], [1.0, 2.0], rate_floor=True) > 1.0
+
+
+@needs_eos
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    ('core_bc', 'method', 'message'),
+    [
+        ('gradient', 'cvode', 'not used by the gradient core'),
+        ('quasi_steady', 'bdf', 'needs CVODE'),
+    ],
+)
+def test_rate_mode_fallback_warns_once_and_skips_the_rtol_warning(
+    shared_eos, caplog, core_bc, method, message
+):
+    """Where 'rate' falls back to 1 yr, one warning names the reason over two solves; no rtol warning."""
+    p = _build_mushy_parameters(solver_method=method, n_nodes=12, end_time=2.0)
+    p.energy = dataclasses.replace(p.energy, phase_boundary_cap='rate', phi_step_cap=None)
+    p.boundary_conditions.core_bc = core_bc
+    p.solver.rtol = p.solver.atol = 1e-6
+    s = EntropySolver(p, entropy_eos=shared_eos)
+    s.initialize()
+    s.set_initial_entropy(_pick_mushy_S(shared_eos))
+    with caplog.at_level('WARNING'):
+        s.solve()
+        s.solve()
+    assert sum(message in r.getMessage() for r in caplog.records) == 1
+    assert not _rtol_warnings(caplog)
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_ends_the_call_at_a_real_phi_step_cap(shared_eos):
+    """With phi_step_cap armed, the rate segments stop the call at the phi cap before the call end."""
+    s = _solver(shared_eos, 'rate', end_time=2000.0)
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, phi_step_cap=0.05)
+    s.solve()
+    sol = s._solution
+    assert getattr(sol, 'cap_fired', False) and sol.t[-1] < 2000.0
+    assert sol.cap_label == 'phi' and sol.cap_value == pytest.approx(0.05)
