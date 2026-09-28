@@ -20,9 +20,10 @@ class SolverConfig:
     end_time : float
         End time [years].
     atol : float
-        Absolute tolerance for BDF solver.
+        Absolute tolerance for BDF solver. Default 1e-8.
     rtol : float
-        Relative tolerance for BDF solver.
+        Relative tolerance for BDF solver. Default 1e-8, the loosest value at
+        which ``phase_boundary_cap = 'rate'`` is verified.
     tsurf_poststep_change : float
         Maximum surface temperature change per step [K].
     cvode_output_points : int
@@ -37,8 +38,8 @@ class SolverConfig:
 
     start_time: float
     end_time: float
-    atol: float
-    rtol: float
+    atol: float = 1e-8
+    rtol: float = 1e-8
     tsurf_poststep_change: float = 30.0
     # Not the live config path: runtime validation uses
     # aragog.parser._SolverParameters, not this attrs schema.

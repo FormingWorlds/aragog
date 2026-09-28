@@ -3085,11 +3085,11 @@ class EntropySolver:
         )
         return res
 
-    def _warn_once(self, key: str, message: str) -> None:
-        """Log ``message`` as a warning the first time ``key`` is seen by this solver."""
+    def _warn_once(self, key: str, message: str, level: int = logging.WARNING) -> None:
+        """Log ``message`` at ``level`` the first time ``key`` is seen by this solver."""
         if key not in self._warned:
             self._warned.add(key)
-            logger.warning(message)
+            logger.log(level, message)
 
     def solve(self) -> None:
         """Run the BDF time integration."""
@@ -3169,7 +3169,8 @@ class EntropySolver:
                 cmb_margin_to_sol=S0_block_cmb - S_sol,
                 entropy_margin=entropy_margin,
             ):
-                cap_mode = getattr(self.parameters.energy, 'phase_boundary_cap', 'fixed')
+                cap_set = getattr(self.parameters.energy, 'phase_boundary_cap', None)
+                cap_mode = cap_set or 'rate'
                 rate_mode = cap_mode == 'rate' and self._core_bc != 'gradient'
                 rate_ceiling = max_step
                 max_step = 1.0
@@ -3178,6 +3179,7 @@ class EntropySolver:
                         'gradient',
                         'phase_boundary_cap="rate" is not used by the gradient core; '
                         'max_step 1 yr',
+                        logging.WARNING if cap_set else logging.INFO,
                     )
                 if rate_mode:
                     # Staggered cells plus the CMB cell at the CMB-pressure boundaries.
@@ -3513,7 +3515,9 @@ class EntropySolver:
             logger.info('EntropySolver: using scipy %s', method)
             if rate_mode:
                 self._warn_once(
-                    'scipy', 'phase_boundary_cap="rate" needs CVODE; max_step 1 yr with scipy'
+                    'scipy',
+                    'phase_boundary_cap="rate" needs CVODE; max_step 1 yr with scipy',
+                    logging.WARNING if cap_set else logging.INFO,
                 )
             self._solution = solve_ivp(
                 _rhs_nondim,

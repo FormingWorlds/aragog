@@ -98,15 +98,17 @@ class EnergyConfig:
         before a cell reaches the boundary yet narrow enough to leave
         the deep-solid thermal history on unrestricted steps. A non-finite
         or non-positive value falls back to the default.
-    phase_boundary_cap : str
+    phase_boundary_cap : str or None
         How ``max_step`` is set while a cell is near or inside the two-phase
-        band. ``'fixed'`` (default) uses 1 yr. ``'rate'`` uses event-driven
-        CVODE segments with ``max_step`` set to 0.1 of the shortest time to
-        reach a phase boundary, clipped to [1, 100] yr. Inside the stiff zone
+        band. ``None`` (default) means ``'rate'``. ``'fixed'`` uses 1 yr.
+        ``'rate'`` uses event-driven CVODE segments with ``max_step`` set to
+        0.1 of the shortest time to reach a phase boundary, clipped to
+        [1, 100] yr. Inside the stiff zone
         or below the rate floor, the estimate uses the distance to the nearer
-        boundary. The gradient core and the scipy integrators keep 1 yr. The
-        accuracy of ``'rate'`` is verified for rtol <= 1e-7; a looser rtol logs
-        one warning per solver.
+        boundary. The gradient core and the scipy integrators keep 1 yr, with one
+        log line per solver (INFO when the mode is the default, WARNING when
+        ``'rate'`` is set). The accuracy of ``'rate'`` is verified for
+        rtol <= 1e-7; a looser rtol logs one warning per solver.
     tidal_array : ndarray
         Tidal heating per unit mass [W/kg] at each layer.
     """
@@ -128,7 +130,8 @@ class EnergyConfig:
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
     phase_boundary_entropy_margin: float = 200.0
-    phase_boundary_cap: str = attrs.field(
-        default='fixed', validator=attrs.validators.in_(('fixed', 'rate'))
+    phase_boundary_cap: str | None = attrs.field(
+        default=None,
+        validator=attrs.validators.optional(attrs.validators.in_(('fixed', 'rate'))),
     )
     tidal_array: npt.NDArray = attrs.Factory(lambda: np.array([0.0], dtype=float))

@@ -207,13 +207,14 @@ class _EnergyParameters:
     # Proximity band [J/kg/K] within which a cell counts as near a phase boundary.
     # Tightens max_step to resolve stiff RHS across the solidus/liquidus.
     phase_boundary_entropy_margin: float = 200.0
-    # Step-size cap near phase boundaries: 'fixed' (1 yr) or 'rate' (event-driven segments).
-    phase_boundary_cap: str = 'fixed'
+    # Step-size cap near phase boundaries: 'fixed' (1 yr) or 'rate' (event-driven segments);
+    # None, the default, runs 'rate' and logs its fallbacks at INFO.
+    phase_boundary_cap: str | None = None
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
 
     def __post_init__(self):
-        if self.phase_boundary_cap not in ('fixed', 'rate'):
+        if self.phase_boundary_cap not in (None, 'fixed', 'rate'):
             raise ValueError(
                 f'phase_boundary_cap must be fixed or rate, got {self.phase_boundary_cap!r}'
             )
@@ -354,8 +355,8 @@ class _SolverParameters:
 
     start_time: float
     end_time: float
-    atol: float
-    rtol: float
+    atol: float = 1e-8
+    rtol: float = 1e-8
     tsurf_poststep_change: float = 30.0
     # Number of points on the CVODE dense output grid, quadratically
     # front-loaded over each macro-step. Raising it sharpens the F_int

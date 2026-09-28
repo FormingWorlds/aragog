@@ -179,9 +179,27 @@ def test_parser_rejects_unknown_phase_boundary_cap():
         radionuclides=False,
         tidal=False,
     )
-    assert _EnergyParameters(**kw).phase_boundary_cap == 'fixed'
+    assert _EnergyParameters(**kw).phase_boundary_cap is None
     with pytest.raises(ValueError, match='phase_boundary_cap'):
         _EnergyParameters(**kw, phase_boundary_cap='adaptive')
+    from aragog.config import EnergyConfig
+
+    assert EnergyConfig(**kw).phase_boundary_cap is None
+    assert EnergyConfig(**kw, phase_boundary_cap='fixed').phase_boundary_cap == 'fixed'
+    with pytest.raises(ValueError, match='phase_boundary_cap'):
+        EnergyConfig(**kw, phase_boundary_cap='adaptive')
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_unset_phase_boundary_cap_runs_rate_segments(shared_eos):
+    """With the key unset the solver runs the rate segments, like an explicit 'rate'."""
+    unset = _solver(shared_eos, None, end_time=200.0)
+    rate = _solver(shared_eos, 'rate', end_time=200.0)
+    unset.solve()
+    rate.solve()
+    assert len(unset._solution.segments) >= 2
+    np.testing.assert_array_equal(unset._solution.y, rate._solution.y)
 
 
 def _solver(eos, mode, core_bc='quasi_steady', n_nodes=12, end_time=2.0, S=None, tol=None):
@@ -543,6 +561,7 @@ def test_rate_cap_returns_the_lower_bound_for_non_finite_input(bad):
 
 @needs_eos
 @pytest.mark.smoke
+@pytest.mark.parametrize('cap', ['rate', None])
 @pytest.mark.parametrize(
     ('core_bc', 'method', 'message'),
     [
@@ -550,21 +569,23 @@ def test_rate_cap_returns_the_lower_bound_for_non_finite_input(bad):
         ('quasi_steady', 'bdf', 'needs CVODE'),
     ],
 )
-def test_rate_mode_fallback_warns_once_and_skips_the_rtol_warning(
-    shared_eos, caplog, core_bc, method, message
+def test_rate_mode_fallback_logs_once_and_skips_the_rtol_warning(
+    shared_eos, caplog, core_bc, method, message, cap
 ):
-    """Where 'rate' falls back to 1 yr, one warning names the reason over two solves; no rtol warning."""
+    """Where 'rate' falls back to 1 yr, one line names the reason over two solves: WARNING when
+    'rate' is set, INFO when it is the default; no rtol warning."""
     p = _build_mushy_parameters(solver_method=method, n_nodes=12, end_time=2.0)
-    p.energy = dataclasses.replace(p.energy, phase_boundary_cap='rate', phi_step_cap=None)
+    p.energy = dataclasses.replace(p.energy, phase_boundary_cap=cap, phi_step_cap=None)
     p.boundary_conditions.core_bc = core_bc
     p.solver.rtol = p.solver.atol = 1e-6
     s = EntropySolver(p, entropy_eos=shared_eos)
     s.initialize()
     s.set_initial_entropy(_pick_mushy_S(shared_eos))
-    with caplog.at_level('WARNING'):
+    with caplog.at_level('INFO'):
         s.solve()
         s.solve()
-    assert sum(message in r.getMessage() for r in caplog.records) == 1
+    hits = [r for r in caplog.records if message in r.getMessage()]
+    assert len(hits) == 1 and hits[0].levelname == ('WARNING' if cap else 'INFO')
     assert not _rtol_warnings(caplog)
 
 
@@ -578,3 +599,15 @@ def test_rate_mode_ends_the_call_at_a_real_phi_step_cap(shared_eos):
     sol = s._solution
     assert getattr(sol, 'cap_fired', False) and sol.t[-1] < 2000.0
     assert sol.cap_label == 'phi' and sol.cap_value == pytest.approx(0.05)
+
+
+@pytest.mark.unit
+def test_solver_tolerances_default_to_1e_8():
+    """rtol and atol default to 1e-8 in both solver schemas; explicit values are kept."""
+    from aragog.config.solver import SolverConfig
+    from aragog.parser import _SolverParameters
+
+    for cls in (_SolverParameters, SolverConfig):
+        default = cls(start_time=0.0, end_time=1.0)
+        assert (default.rtol, default.atol) == (1e-8, 1e-8)
+        assert cls(start_time=0.0, end_time=1.0, rtol=1e-6, atol=1e-9).rtol == 1e-6
