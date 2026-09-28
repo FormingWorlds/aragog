@@ -444,7 +444,7 @@ def shared_eos():
 
 
 def _rtol_warnings(caplog):
-    return [r for r in caplog.records if 'accuracy is verified for rtol' in r.getMessage()]
+    return [r for r in caplog.records if 'accuracy is verified at rtol' in r.getMessage()]
 
 
 @needs_eos

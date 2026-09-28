@@ -685,9 +685,7 @@ def test_config_from_dict_strict_rejects_scalings_key(key):
 
 
 def test_solver_config_required_fields_and_defaults():
-    """The 4 tolerance/time fields are required; ``tsurf_poststep_change``
-    defaults to 30 K.
-    """
+    """``tsurf_poststep_change`` defaults to 30 K."""
     s = SolverConfig(
         start_time=0.0,
         end_time=1.0e6,

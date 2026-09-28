@@ -3457,7 +3457,7 @@ class EntropySolver:
                     self._warn_once(
                         'rtol',
                         f'phase_boundary_cap="rate" at rtol {rtol:.1e}: its accuracy is verified '
-                        f'for rtol <= {_RATE_CAP_RTOL_LIMIT:.0e}',
+                        'at rtol 1e-8',
                     )
 
                 def _rate_h(t_nd, y_nd):

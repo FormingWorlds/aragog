@@ -22,8 +22,8 @@ class SolverConfig:
     atol : float
         Absolute tolerance for BDF solver. Default 1e-8.
     rtol : float
-        Relative tolerance for BDF solver. Default 1e-8, the loosest value at
-        which ``phase_boundary_cap = 'rate'`` is verified.
+        Relative tolerance for BDF solver. Default 1e-8, the value at which
+        ``phase_boundary_cap = 'rate'`` is verified.
     tsurf_poststep_change : float
         Maximum surface temperature change per step [K].
     cvode_output_points : int
