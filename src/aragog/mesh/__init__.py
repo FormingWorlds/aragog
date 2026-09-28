@@ -102,12 +102,8 @@ def _radius_for_mass_coordinate(
 
     When the bracket does not straddle, ``xi_target`` lies outside
     ``[xi_of_r(r_lo), xi_of_r(r_hi)]`` and the node is clamped to the nearest
-    in-domain endpoint. This path is reached only on a resumed run, where a
-    loaded entropy field shifts the EOS mass distribution so a near-boundary
-    node on the uniform mass grid falls just outside the achievable range; a
-    bare ``brentq`` raises ``ValueError`` ("f(a) and f(b) must have different
-    signs") there and aborts the resume. A staggered node whose cell has a
-    clamped basic node can then fall outside its own cell bracket too.
+    endpoint instead of letting ``brentq`` raise. This guards against rounding
+    at the 1 m bracket insets next to the core-mantle boundary and the surface.
 
     Parameters
     ----------
@@ -143,8 +139,7 @@ def _radius_for_mass_coordinate(
     clamped = r_lo if f_lo > 0.0 else r_hi
     logger.warning(
         'Mesh mass-coordinate bracket failed for node %s '
-        '(xi_target=%.6e outside [%.6e, %.6e]); clamping radius to %.3f m. '
-        'Expected only on resume with a loaded entropy field.',
+        '(xi_target=%.6e outside [%.6e, %.6e]); clamping radius to %.3f m.',
         'unknown' if node is None else node,
         xi_target,
         xi_of_r(r_lo),
@@ -201,17 +196,8 @@ class Mesh:
                 r_core, r_surf, self.settings.number_of_nodes
             ).reshape(-1, 1)
 
-            # Derive NON-UNIFORM spatial coordinates from the uniform xi grid
-            # by solving the mass-coordinate equation at each node via Newton
-            # iteration, matching SPIDER's GetRadiusFromMassCoordinate.
-            #
-            # SPIDER's equation (eos_adamswilliamson.c:296-311):
-            #   f(r) = (r_core^3 + 3*M_AW(r_core, r)/rho_avg)^(1/3) - xi = 0
-            #
-            # Newton-via-brentq avoids the O(h^4) interpolation error
-            # of a PCHIP fit; on an N-point grid that error accumulated
-            # to ~3% node position offsets, large enough to perturb the
-            # Adams-Williamson reference state.
+            # Each node radius solves xi(r) = xi_target with brentq, as SPIDER's
+            # GetRadiusFromMassCoordinate does with Newton (eos_adamswilliamson.c:296-311).
             rho_avg = self._planet_density
             M_core = self.eos.get_mass_within_radii(np.array([r_core])).item()
 
@@ -237,17 +223,13 @@ class Mesh:
                 basic_coordinates[j, 0] = _radius_for_mass_coordinate(
                     _xi_of_r, xi_target, r_lo, r_hi, node=j
                 )
-            # The mesh must be strictly increasing in radius: zero-width cells
-            # divide by zero in the finite-volume gradient operators. If two or
-            # more near-boundary nodes clamped to the same endpoint (only
-            # reachable on a resume with a badly-shifted entropy field), fail
-            # loudly here rather than propagate NaNs into the entropy RHS.
+            # Zero-width cells divide by zero in the gradient operators, so two
+            # nodes clamped to the same endpoint must fail here.
             if np.any(np.diff(basic_coordinates[:, 0]) <= 0.0):
                 raise ValueError(
                     'Non-monotonic basic mesh after mass-coordinate solve '
-                    '(duplicate node radii). The loaded entropy field shifted '
-                    'the EOS mass distribution too far for the fixed bracket; '
-                    're-run the structure module to regenerate the mesh.'
+                    '(duplicate node radii): the EOS mass integral is not '
+                    'increasing in radius; check the structure profile.'
                 )
             logger.debug('Basic mass coordinates (uniform) = %s', basic_mass_coordinates)
             logger.debug('Basic spatial coordinates (non-uniform) = %s', basic_coordinates)
@@ -277,14 +259,12 @@ class Mesh:
             rb = self.basic.radii[:, 0]
             staggered_coordinates = np.array(
                 [
-                    [
-                        _radius_for_mass_coordinate(
-                            _xi_of_r, float(xi), rb[i], rb[i + 1], node=f'staggered {i}'
-                        )
-                    ]
+                    _radius_for_mass_coordinate(
+                        _xi_of_r, float(xi), rb[i], rb[i + 1], node=f'staggered {i}'
+                    )
                     for i, xi in enumerate(staggered_mass_coordinates[:, 0])
                 ]
-            )
+            ).reshape(-1, 1)
         else:
             staggered_coordinates = staggered_mass_coordinates
         self.staggered: FixedMesh = FixedMesh(
