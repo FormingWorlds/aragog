@@ -39,6 +39,11 @@ import numpy as np
 
 logger = logging.getLogger('fwl.' + __name__)
 
+__all__ = [
+    'build_jax_rhs_and_jacobian',
+    'verify_jax_vs_numpy_rhs',
+]
+
 
 def build_jax_rhs_and_jacobian(
     eos_jax,
@@ -112,7 +117,7 @@ def build_jax_rhs_and_jacobian(
         )
     except ImportError as exc:
         raise RuntimeError(
-            'Option Z (JAX RHS + Jacobian) requires JAX and the '
+            'JAX RHS and Jacobian integration requires JAX and the '
             f'aragog.jax module. Original error: {exc}'
         ) from exc
 

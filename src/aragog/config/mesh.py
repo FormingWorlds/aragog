@@ -53,6 +53,12 @@ class MeshConfig:
         SPIDER's mesh. Default True matches the PROTEUS production path.
     eos_file : str
         Path to user-defined EOS file.
+    surface_cell_thickness, cmb_cell_thickness : float
+        Radial thickness [m] of the outermost and innermost basic cell. 0 (default)
+        keeps the uniform grid at that end; a positive value, below the uniform radial
+        cell, refines towards that boundary with a tanh stretching (both ends: the
+        two-sided Vinokur form). In mass-coordinate mode the stretching acts on the
+        mass coordinate and the end cells still have the given radial thickness.
     """
 
     outer_radius: float
@@ -69,3 +75,5 @@ class MeshConfig:
     mass_coordinates: bool = True
     eos_file: str = ''
     mixing_length_constant_fraction: float = 0.25
+    surface_cell_thickness: float = 0.0
+    cmb_cell_thickness: float = 0.0

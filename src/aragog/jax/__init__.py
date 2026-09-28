@@ -23,8 +23,11 @@ from aragog.jax.phase import (
     MeshArrays,
     PhaseParams,
     PhaseProperties,
+    compute_arrhenius_viscosity,
+    compute_effective_viscosity,
     compute_fluxes,
     compute_mlt,
+    compute_yield_stress,
     evaluate_phase,
 )
 from aragog.jax.solver import BoundaryParams, SolveResult
@@ -37,8 +40,11 @@ __all__ = [
     'MeshArrays',
     'PhaseParams',
     'PhaseProperties',
+    'compute_arrhenius_viscosity',
+    'compute_effective_viscosity',
     'compute_fluxes',
     'compute_mlt',
+    'compute_yield_stress',
     'evaluate_phase',
     'BoundaryParams',
     'SolveResult',

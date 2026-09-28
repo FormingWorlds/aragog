@@ -76,14 +76,21 @@ Variables are named verbatim after the `SolverOutput` field names, with their un
 | `T_basic` | `T_basic` | K | Temperature at basic nodes |
 | `cp_basic` | `cp_basic` | J kg⁻¹ K⁻¹ | Heat capacity at basic nodes |
 | `rho_basic` | `rho_basic` | kg m⁻³ | Density at basic nodes |
+| `visc_eff_b` | `visc_eff_b` | Pa s | Effective dynamic viscosity at basic nodes |
+| `eta_diff_b` | `eta_diff_b` | Pa s | Arrhenius diffusion creep viscosity at basic nodes |
+| `strain_rate_b` | `strain_rate_b` | s⁻¹ | Convective strain rate at basic nodes |
+| `tau_y_b` | `tau_y_b` | Pa | Yield stress at basic nodes |
+| `lid_mask_b` | `lid_mask_b` | -- | Radial lid mask weight ($w_\text{lid}$) |
+| `yield_switch_b` | `yield_switch_b` | -- | Yielding regime switch weight ($w_y$) |
 
 #### Scalars
 
-Time, surface and CMB temperatures, both averaging conventions of the global melt fraction, the energy-balance integrals, the solver status code, the raw CVODE return flag, and the per-solve core-temperature excursion:
+Time, surface and CMB temperatures, both averaging conventions of the global melt fraction, the energy-balance integrals, the solver status code, the raw CVODE return flag, the per-solve core-temperature excursion, and solid-state mantle convection diagnostics:
 
-`time`, `T_magma`, `T_core`, `Phi_global`, `Phi_global_vol`, `M_mantle`, `M_mantle_liquid`, `M_mantle_solid`, `RF_depth`, `E_th`, `E_state`, `E_state_cons`, `Cp_eff`, `F_heat_total`, `F_cmb`, `Q_radio_total`, `Q_tidal_total`, `step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`, `step_dE_Q_radio_cons_J`, `step_dE_Q_tidal_cons_J`, `step_solver_residual_J`, `dt_actual`, `status` (i4), `cvode_flag` (i4), `tcore_change_max` (f8), `tcore_change_exceeded` (i4).
+`time`, `T_magma`, `T_core`, `Phi_global`, `Phi_global_vol`, `M_mantle`, `M_mantle_liquid`, `M_mantle_solid`, `RF_depth`, `E_th`, `E_state`, `E_state_cons`, `Cp_eff`, `F_heat_total`, `F_cmb`, `Q_radio_total`, `Q_tidal_total`, `step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`, `step_dE_Q_radio_cons_J`, `step_dE_Q_tidal_cons_J`, `step_solver_residual_J`, `dt_actual`, `status` (i4), `cvode_flag` (i4), `tcore_change_max` (f8), `tcore_change_exceeded` (i4), `lid_thickness` (f8), `lid_base_temperature` (f8), `interior_temperature` (f8), `lid_stress` (f8), `theta` (f8), `lid_regime` (f8), `energy_residual` (f8).
 
 `status` is the normalised solve outcome (0 success, negative failure). `cvode_flag` is the raw integer flag CVODE returned for the same solve, kept distinct from `status` so that a `CV_TOO_MUCH_WORK` (-1) step-budget stop is told apart from a `CV_CONV_FAILURE` (-4) convergence failure; the scipy `solve_ivp` path reports 0. Its name is written as the string global attribute `cvode_flag_name`. `tcore_change_max` is the largest change of the core temperature from the solve-entry value over the returned grid [K]; `tcore_change_exceeded` is 1 when `tcore_change_limit` is set and that change exceeds it, or when any sampled core temperature is non-finite (a corrupted-solve signal, independent of the limit), else 0.
+The solid-state convection scalars capture stagnant lid properties: `lid_thickness` [m] is the physical stagnant lid thickness; `lid_base_temperature` [K] is the temperature at the base of the lid; `interior_temperature` [K] is the representative convective interior temperature $T_i$; `lid_stress` [Pa] is the convective driving shear stress $\tau_d$; `theta` is the Frank-Kamenetskii rheological contrast parameter; `lid_regime` is the lid regime indicator (0 none, 1 stagnant, 2 mobile); `energy_residual` [W] is the discrete energy conservation residual rate.
 
 ## Inspecting a snapshot
 
@@ -160,8 +167,21 @@ Always written:
 | `Htotal_s` | `heating` | W kg⁻¹ | Per-node internal heating |
 | `radius_b` | `r_basic / 1e3` | km | Basic-node radii (km) |
 | `Ftotal_b` | `heat_flux` | W m⁻² | Total radial heat flux |
+| `visc_eff_b` | `visc_eff_b` | Pa s | Effective dynamic viscosity at basic nodes |
+| `eta_diff_b` | `eta_diff_b` | Pa s | Arrhenius diffusion creep viscosity at basic nodes |
+| `strain_rate_b` | `strain_rate_b` | s⁻¹ | Convective strain rate at basic nodes |
+| `tau_y_b` | `tau_y_b` | Pa | Yield stress at basic nodes |
+| `lid_mask_b` | `lid_mask_b` | -- | Radial lid mask weight ($w_\text{lid}$) |
+| `yield_switch_b` | `yield_switch_b` | -- | Yielding regime switch weight ($w_y$) |
 | `time` | -- | yr | Snapshot time |
 | `phi_global` | `Phi_global` | -- | Mass-weighted mean melt fraction |
+| `lid_thickness` | `lid_thickness` | m | Physical stagnant lid thickness |
+| `lid_base_temperature` | `lid_base_temperature` | K | Lid-base temperature |
+| `interior_temperature` | `interior_temperature` | K | Representative interior convective temperature |
+| `lid_stress` | `lid_stress` | Pa | Convective driving shear stress |
+| `theta` | `theta` | -- | Frank-Kamenetskii rheological contrast parameter |
+| `lid_regime` | `lid_regime` | -- | Lid regime indicator (0 none, 1 stagnant, 2 mobile) |
+| `energy_residual` | `energy_residual` | W | Discrete energy conservation residual rate |
 
 Written only when `interior_energetics.write_flux_diagnostics = true`:
 

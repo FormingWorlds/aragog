@@ -12,7 +12,8 @@ Dependencies: jax, equinox (already in PROTEUS ecosystem via atmodeller).
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from dataclasses import fields
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -20,14 +21,29 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.config.phases import (
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+)
 from aragog.jax.eos import EntropyEOS_JAX
+from aragog.jax.rheology import (
+    compute_arrhenius_viscosity,
+    compute_effective_viscosity,
+    compute_stagnant_lid_state,
+    compute_yield_stress,
+)
+from aragog.rheology import SolidRheologyParams, viscous_mixing_length_factor
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
 
 # Critical Reynolds number, Abe (1995) via Bower et al. (2018) section 2.1
 RE_CRIT = 9.0 / 8.0
+
+# Arrhenius rheology reference constants
+T_REF_ARRHENIUS: float = 1600.0  # Reference temperature [K]
+_DEFAULT_RHEOLOGY = SolidRheologyParams()
+_UNSET: Any = object()
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +65,9 @@ class PhaseProperties(NamedTuple):
     thermal_conductivity: jax.Array  # [W/m/K]
     latent_heat: jax.Array  # [J/kg]
     capacitance: jax.Array  # rho * T [kg K / m^3]
+    eta_diff: jax.Array  # Base Arrhenius viscosity [Pa s]
+    tau_y: jax.Array  # Yield stress [Pa]
+    visc_solid_weight: jax.Array  # Linear weight of solid log-viscosity in blend
 
 
 class FluxOutput(NamedTuple):
@@ -89,9 +108,33 @@ class PhaseParams(eqx.Module):
     functions. All fields are scalars or 1D JAX arrays.
     """
 
-    # Rheology
+    # Rheology - 18 fields matching SolidRheologyParams
+    enabled: bool = eqx.field(static=True)
+    stress_closure_mode: str = eqx.field(static=True)
+    lid_base_mode: str = eqx.field(static=True)
+
+    activation_energy: float
+    activation_volume: float
+    activation_volume_decay_pressure: float
+    arrhenius_t_ref: float
+    viscosity_max_log10: float
+    water_prefactor: float
+    yield_stress_c: float
+    yield_stress_mu: float
+    yield_stress_max: float
+    yield_switch_width: float
+    interior_flux_fraction: float
+    lid_base_temperature: float
+    lid_contrast_coeff: float
+    lid_mask_width_cells: float
+    phi_visc_single: float
+    mlt_top_slope: float
+    mlt_bottom_slope: float
+
+    # Phase transition & reference properties
     phi_rheo: float
     phi_width: float
+    viscosity_solid: float
     log10_visc_solid: float
     log10_visc_liquid: float
     grain_size: float
@@ -116,25 +159,14 @@ class PhaseParams(eqx.Module):
     eddy_diff_chemical: float
     kappah_floor: float
 
-    # SPIDER-analogue bottom-up gate for Jgrav. Stored as float for JAX
-    # tracing (1.0 = smoothing on, 0.0 = raw un-smoothed flux). Keep ON
-    # for production runs; setting this to 0.0 reproduces the pre-fix
-    # CMB drain and is only useful for regression tests.
+    # SPIDER-analogue bottom-up gate for Jgrav.
     bottom_up_grav_sep: float
 
     # Phase-boundary smoothing selection for Jgrav and Jmix.
-    # phase_smoothing_tanh: 1.0 -> use SPIDER's two-branch tanh
-    # (_spider_get_smoothing); 0.0 -> use cubic Hermite 16*g^2*(1-g)^2.
-    # phase_smoothing_width: tanh transition width in gphi units
-    # (ignored when phase_smoothing_tanh == 0.0). SPIDER's
-    # ``matprop_smooth_width`` defaults to 0.01.
     phase_smoothing_tanh: float
     phase_smoothing_width: float
 
-    # separation_viscosity_mixture: 1.0 -> gravitational-separation drag
-    # uses the rheological-transition-blended mixture viscosity; 0.0 ->
-    # the fixed single-phase liquid viscosity (SPIDER's
-    # GetGravitationalHeatFlux convention).
+    # Separation viscosity mode
     separation_viscosity_mixture: float
 
     def __init__(
@@ -158,12 +190,89 @@ class PhaseParams(eqx.Module):
         phase_smoothing: str = 'tanh',
         phase_smoothing_width: float = 0.01,
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
+        *,
+        enabled: Any = _UNSET,
+        activation_energy: Any = _UNSET,
+        activation_volume: Any = _UNSET,
+        activation_volume_decay_pressure: Any = _UNSET,
+        arrhenius_t_ref: Any = _UNSET,
+        viscosity_max_log10: Any = _UNSET,
+        water_prefactor: Any = _UNSET,
+        yield_stress_c: Any = _UNSET,
+        yield_stress_mu: Any = _UNSET,
+        yield_stress_max: Any = _UNSET,
+        yield_switch_width: Any = _UNSET,
+        stress_closure_mode: Any = _UNSET,
+        interior_flux_fraction: Any = _UNSET,
+        lid_base_mode: Any = _UNSET,
+        lid_base_temperature: Any = _UNSET,
+        lid_contrast_coeff: Any = _UNSET,
+        lid_mask_width_cells: Any = _UNSET,
+        phi_visc_single: Any = _UNSET,
+        mlt_top_slope: Any = _UNSET,
+        mlt_bottom_slope: Any = _UNSET,
+        rheology: SolidRheologyParams | None = None,
     ):
+        base_rheo = rheology if rheology is not None else _DEFAULT_RHEOLOGY
+        explicit_kwargs = {
+            'enabled': enabled,
+            'activation_energy': activation_energy,
+            'activation_volume': activation_volume,
+            'activation_volume_decay_pressure': activation_volume_decay_pressure,
+            'arrhenius_t_ref': arrhenius_t_ref,
+            'viscosity_max_log10': viscosity_max_log10,
+            'water_prefactor': water_prefactor,
+            'yield_stress_c': yield_stress_c,
+            'yield_stress_mu': yield_stress_mu,
+            'yield_stress_max': yield_stress_max,
+            'yield_switch_width': yield_switch_width,
+            'stress_closure_mode': stress_closure_mode,
+            'interior_flux_fraction': interior_flux_fraction,
+            'lid_base_mode': lid_base_mode,
+            'lid_base_temperature': lid_base_temperature,
+            'lid_contrast_coeff': lid_contrast_coeff,
+            'lid_mask_width_cells': lid_mask_width_cells,
+            'phi_visc_single': phi_visc_single,
+            'mlt_top_slope': mlt_top_slope,
+            'mlt_bottom_slope': mlt_bottom_slope,
+        }
+        resolved = {
+            f.name: (
+                explicit_kwargs[f.name]
+                if explicit_kwargs[f.name] is not _UNSET
+                else getattr(base_rheo, f.name)
+            )
+            for f in fields(SolidRheologyParams)
+        }
+        rheo_obj = SolidRheologyParams(**resolved)
+
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
+        self.viscosity_solid = float(viscosity_solid)
         self.log10_visc_solid = jnp.log10(viscosity_solid)
         self.log10_visc_liquid = jnp.log10(viscosity_liquid)
         self.grain_size = grain_size
+        self.enabled = bool(rheo_obj.enabled)
+        self.activation_energy = float(rheo_obj.activation_energy)
+        self.activation_volume = float(rheo_obj.activation_volume)
+        self.activation_volume_decay_pressure = float(rheo_obj.activation_volume_decay_pressure)
+        self.arrhenius_t_ref = float(rheo_obj.arrhenius_t_ref)
+        self.viscosity_max_log10 = float(rheo_obj.viscosity_max_log10)
+        self.water_prefactor = float(rheo_obj.water_prefactor)
+        self.yield_stress_c = float(rheo_obj.yield_stress_c)
+        self.yield_stress_mu = float(rheo_obj.yield_stress_mu)
+        self.yield_stress_max = float(rheo_obj.yield_stress_max)
+        self.yield_switch_width = float(rheo_obj.yield_switch_width)
+        self.stress_closure_mode = str(rheo_obj.stress_closure_mode)
+        self.interior_flux_fraction = float(rheo_obj.interior_flux_fraction)
+        self.lid_base_mode = str(rheo_obj.lid_base_mode)
+        self.lid_base_temperature = float(rheo_obj.lid_base_temperature)
+        self.lid_contrast_coeff = float(rheo_obj.lid_contrast_coeff)
+        self.lid_mask_width_cells = float(rheo_obj.lid_mask_width_cells)
+        self.phi_visc_single = float(rheo_obj.phi_visc_single)
+        self.mlt_top_slope = float(rheo_obj.mlt_top_slope)
+        self.mlt_bottom_slope = float(rheo_obj.mlt_bottom_slope)
+
         self.k_solid = k_solid
         self.k_liquid = k_liquid
         self.matprop_smooth_width = matprop_smooth_width
@@ -186,14 +295,47 @@ class PhaseParams(eqx.Module):
                 f'separation_viscosity must be one of {SEPARATION_VISCOSITY_MODES}, '
                 f'got {separation_viscosity!r}'
             )
-        # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
-        # must fail here rather than silently fall back to 'melt'.
         if separation_viscosity == 'mixture':
             self.separation_viscosity_mixture = 1.0
         elif separation_viscosity == 'melt':
             self.separation_viscosity_mixture = 0.0
         else:
             raise ValueError(f'unhandled separation_viscosity {separation_viscosity!r}')
+
+    @classmethod
+    def from_rheology_params(
+        cls,
+        rheology: SolidRheologyParams,
+        **kwargs: Any,
+    ) -> PhaseParams:
+        """Construct PhaseParams with rheology fields from SolidRheologyParams."""
+        return cls(rheology=rheology, **kwargs)
+
+    @property
+    def rheology(self) -> SolidRheologyParams:
+        """Return SolidRheologyParams view of the rheology parameters."""
+        return SolidRheologyParams(
+            enabled=self.enabled,
+            activation_energy=self.activation_energy,
+            activation_volume=self.activation_volume,
+            activation_volume_decay_pressure=self.activation_volume_decay_pressure,
+            arrhenius_t_ref=self.arrhenius_t_ref,
+            viscosity_max_log10=self.viscosity_max_log10,
+            water_prefactor=self.water_prefactor,
+            yield_stress_c=self.yield_stress_c,
+            yield_stress_mu=self.yield_stress_mu,
+            yield_stress_max=self.yield_stress_max,
+            yield_switch_width=self.yield_switch_width,
+            stress_closure_mode=self.stress_closure_mode,
+            interior_flux_fraction=self.interior_flux_fraction,
+            lid_base_mode=self.lid_base_mode,
+            lid_base_temperature=self.lid_base_temperature,
+            lid_contrast_coeff=self.lid_contrast_coeff,
+            lid_mask_width_cells=self.lid_mask_width_cells,
+            phi_visc_single=self.phi_visc_single,
+            mlt_top_slope=self.mlt_top_slope,
+            mlt_bottom_slope=self.mlt_bottom_slope,
+        )
 
 
 class MeshArrays(eqx.Module):
@@ -475,6 +617,7 @@ def evaluate_phase(
     params: PhaseParams,
     P: jax.Array,
     S: jax.Array,
+    water_prefactor: float | jax.Array | None = None,
 ) -> PhaseProperties:
     """Compute all material properties at (P, S) nodes.
 
@@ -488,6 +631,8 @@ def evaluate_phase(
         Pressure [Pa], 1D.
     S : jax.Array
         Entropy [J/kg/K], 1D.
+    water_prefactor : float or jax.Array or None, optional
+        Water fugacity / hydration prefactor. If None, uses params.water_prefactor.
 
     Returns
     -------
@@ -507,19 +652,50 @@ def evaluate_phase(
     )
     phi = state.melt_fraction
 
+    wp = params.water_prefactor if water_prefactor is None else water_prefactor
+
+    # Solid mantle rheology: continuous Arrhenius diffusion creep and plastic yielding
+    if params.enabled:
+        eta_diff = compute_arrhenius_viscosity(
+            state.temperature,
+            P,
+            params.viscosity_solid,
+            activation_energy=params.activation_energy,
+            activation_volume=params.activation_volume,
+            activation_volume_decay_pressure=params.activation_volume_decay_pressure,
+            arrhenius_t_ref=params.arrhenius_t_ref,
+            viscosity_max_log10=params.viscosity_max_log10,
+            water_prefactor=wp,
+        )
+        tau_y = compute_yield_stress(
+            P,
+            yield_stress_c=params.yield_stress_c,
+            yield_stress_mu=params.yield_stress_mu,
+            yield_stress_max=params.yield_stress_max,
+        )
+        # We delay effective viscosity (eta_eff) to compute_mlt to break the circularity.
+        log10_visc_solid = jnp.log10(jnp.maximum(eta_diff, 1e-10))
+    else:
+        eta_diff = None
+        tau_y = jnp.inf
+        log10_visc_solid = params.log10_visc_solid
+
     # Viscosity: two-stage blend mirroring numpy entropy_phase.py:311-327
     # (used downstream by MLT -> kappa_c -> Jmix, which is why both stages
     # matter). Stage 1: tanh blend at phi_rheo (SPIDER util.c:255-259).
     # Stage 2: combine_matprop with the cached matprop_smooth_width smth
     # that compute_phase_state also uses for T/rho/Cp/alpha/k.
     w = tanh_weight(phi, params.phi_rheo, params.phi_width)
-    log_visc_mixed = (1.0 - w) * params.log10_visc_solid + w * params.log10_visc_liquid
+    log_visc_mixed = (1.0 - w) * log10_visc_solid + w * params.log10_visc_liquid
     log_visc_single = jnp.where(
-        phi > 0.5,
+        phi > params.phi_visc_single,
         params.log10_visc_liquid,
-        params.log10_visc_solid,
+        log10_visc_solid,
     )
     log_visc = state.smth * log_visc_mixed + (1.0 - state.smth) * log_visc_single
+    visc_solid_weight = state.smth * (1.0 - w) + (1.0 - state.smth) * jnp.where(
+        phi > params.phi_visc_single, 0.0, 1.0
+    )
     viscosity = 10.0**log_visc
     kinematic_viscosity = viscosity / state.density
 
@@ -538,6 +714,9 @@ def evaluate_phase(
         thermal_conductivity=state.thermal_conductivity,
         latent_heat=state.latent_heat,
         capacitance=capacitance,
+        eta_diff=eta_diff,
+        tau_y=tau_y,
+        visc_solid_weight=visc_solid_weight,
     )
 
 
@@ -666,8 +845,119 @@ def compute_mlt(
     # avoiding spurious convection from a soft sigmoid.
     conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
 
-    # Viscous velocity (Re <= Re_crit)
-    viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)) * conv_mask
+    # 1D stress closure and effective viscosity capping
+    eta_diff = phase_basic.eta_diff
+    tau_y = phase_basic.tau_y
+    rho = phase_basic.density
+
+    # 1. Compute conservative velocity from unyielded baseline
+    eta_bulk_unyielded = phase_basic.viscosity
+    nu_unyielded = eta_bulk_unyielded / rho
+    visc_v_unyielded = (
+        velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu_unyielded, 1e-30))
+    ) * conv_mask
+    # Calibrated viscous length (numpy twin: EntropyState._viscous_mixing_length_factor).
+    q = None
+    if params.enabled and (params.mlt_top_slope != 1.0 or params.mlt_bottom_slope != 1.0):
+        r = mesh.radii_basic
+        q = viscous_mixing_length_factor(
+            r,
+            r[0],
+            r[-1],
+            mesh.mixing_length,
+            params.mlt_top_slope,
+            params.mlt_bottom_slope,
+            xp=jnp,
+        )
+        visc_v_unyielded = q * visc_v_unyielded
+
+    if params.enabled:
+        if params.stress_closure_mode == 'lid':
+            eps_sqrt = 1.0e-20
+            inviscid_velocity_sq = (
+                velocity_prefactor * mesh.mixing_length_sq / 16.0
+            ) * conv_mask
+            inviscid_velocity = jnp.sqrt(inviscid_velocity_sq + eps_sqrt)
+
+            reynolds_unyielded = (
+                visc_v_unyielded * mesh.mixing_length / jnp.maximum(nu_unyielded, 1e-30)
+            )
+            if q is not None:
+                reynolds_unyielded = q * reynolds_unyielded
+            blend_width = 0.01 * RE_CRIT
+            inviscid_weight_unyielded = 0.5 * (
+                1.0 + jnp.tanh((reynolds_unyielded - RE_CRIT) / jnp.maximum(blend_width, 1e-30))
+            )
+            kh_raw_unyielded = (
+                (1.0 - inviscid_weight_unyielded) * visc_v_unyielded
+                + inviscid_weight_unyielded * inviscid_velocity
+            ) * mesh.mixing_length
+            kappa_h_unyielded = jnp.where(
+                params.eddy_diff_thermal > 0,
+                params.eddy_diff_thermal * kh_raw_unyielded,
+                jnp.full_like(kh_raw_unyielded, -params.eddy_diff_thermal),
+            )
+            F_conv_unyielded = rho * T * kappa_h_unyielded * (-dSdr) * conv_mask
+
+            Cp_safe = jnp.maximum(Cp, 100.0)
+            superadiabatic = (T / Cp_safe) * dSdr
+            dT_dr_adiabat = phase_basic.dTdPs * mesh.dP_dr_basic
+            F_cond = params.conduction * (
+                -phase_basic.thermal_conductivity * (superadiabatic + dT_dr_adiabat)
+            )
+            F_tot_unyielded = F_cond + params.convection * F_conv_unyielded
+
+            lid_state = compute_stagnant_lid_state(
+                radii=mesh.radii_basic,
+                temperature=T,
+                pressure=mesh.P_basic,
+                convective_flux=F_conv_unyielded,
+                total_flux=F_tot_unyielded,
+                solidus_temperature=None,
+                melt_fraction=phase_basic.melt_fraction,
+                params=params,
+                unyielded_velocity=visc_v_unyielded,
+            )
+            w_lid = lid_state['w_lid']
+            eta_effective = compute_effective_viscosity(
+                eta_diff=eta_diff,
+                tau_d=lid_state['tau_d'],
+                tau_y_lid=lid_state['tau_y_lid'],
+                v_i=lid_state['v_i'],
+                delta_rh=lid_state['delta_rh'],
+                eta_i=lid_state['eta_i'],
+                yield_switch_width=params.yield_switch_width,
+                stress_closure_mode='lid',
+                w_lid=w_lid,
+            )
+        else:
+            w_lid = jnp.zeros_like(T)
+            eta_effective = compute_effective_viscosity(
+                eta_diff=eta_diff,
+                stress_closure_mode='local',
+                unyielded_velocity=visc_v_unyielded,
+                mixing_length=mesh.mixing_length,
+                tau_y_profile=tau_y,
+            )
+
+        # Re-apply phase blend linearly in log space exactly as EOS does
+        log_eta_unyielded = jnp.log10(jnp.maximum(eta_bulk_unyielded, 1e-30))
+        log_eta_d = jnp.log10(jnp.maximum(eta_diff, 1e-30))
+        log_eta_eff = jnp.log10(jnp.maximum(eta_effective, 1e-30))
+
+        log_visc_final = log_eta_unyielded + phase_basic.visc_solid_weight * (
+            log_eta_eff - log_eta_d
+        )
+        nu = (10.0**log_visc_final) / rho
+        viscous_velocity = (
+            velocity_prefactor * mesh.mixing_length_cu / (18.0 * jnp.maximum(nu, 1e-30))
+        ) * conv_mask
+        if q is not None:
+            viscous_velocity = q * viscous_velocity
+    else:
+        w_lid = jnp.zeros_like(T)
+        nu = nu_unyielded
+        viscous_velocity = visc_v_unyielded
 
     # Inviscid velocity (Re > Re_crit). ``jnp.sqrt(jnp.maximum(x, 0))`` is
     # the textbook NaN-safe forward, but its backward gradient at x=0 is
@@ -682,6 +972,8 @@ def compute_mlt(
 
     # Reynolds number
     reynolds = viscous_velocity * mesh.mixing_length / nu
+    if q is not None:
+        reynolds = q * reynolds
 
     # Smooth blend between viscous and inviscid regimes. The narrow
     # blend_width (0.01 * RE_CRIT) keeps inviscid k_h confined to the
@@ -712,23 +1004,11 @@ def compute_mlt(
     )
 
     # kappa_h floor (phase-dependent, modulated by melt fraction), gated to
-    # convectively-unstable cells. Production PROTEUS runs use
-    # kappah_floor = 10 m^2/s; the phi-modulated f_floor ramps from 0 in
-    # solid layers to ~1 in mushy/liquid layers, where MLT can otherwise
-    # numerically freeze when the entropy gradient gets small. The
-    # ``conv_mask`` gate confines the floor to cells that are actually
-    # convecting (dS/dr < 0): a stably-stratified, just-frozen mushy cell at
-    # the crystallisation front must NOT receive a floored eddy diffusivity,
-    # because the signed convective flux rho*T*kappa_h*(-dS/dr) would then
-    # inject a spurious sign-flipped flux that pins the cell sub-solidus.
-    # SPIDER has no kappa_h floor, so floor = 0 in stratified layers is the
-    # SPIDER-consistent limit. The transition is anchored on the rheological
-    # critical melt fraction (``params.phi_rheo``, default 0.4) with width
-    # ``params.phi_width`` (default 0.15). See solver/entropy_state.py for
-    # the numpy twin.
+    # convectively-unstable cells. Masked out inside the lid when rheology is enabled.
     phi_basic = phase_basic.melt_fraction
     f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
-    kh_floor = params.kappah_floor * f_floor * conv_mask
+    lid_mask = 1.0 - w_lid if params.enabled else 1.0
+    kh_floor = params.kappah_floor * f_floor * conv_mask * lid_mask
     kappa_h = jnp.maximum(kappa_h, kh_floor)
 
     # SPIDER energy.c:220-223 CMB fix: use kappa_h from the first interior

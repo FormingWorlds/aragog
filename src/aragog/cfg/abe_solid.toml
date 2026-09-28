@@ -16,6 +16,7 @@ inner_boundary_value = 4000
 emissivity = 1
 equilibrium_temperature = 273
 core_heat_capacity = 880
+core_bc = "quasi_steady"
 
 [mesh]
 outer_radius = 6371000
