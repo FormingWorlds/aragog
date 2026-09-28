@@ -179,6 +179,31 @@ class EntropyPhaseEvaluator:
         return self.rheology.viscosity_max_log10
 
     @property
+    def const_properties(self) -> bool:
+        """Whether constant properties mode is active."""
+        return self._const_properties
+
+    @property
+    def const_log10visc(self) -> float:
+        """Log10 base viscosity for constant properties mode [Pa s]."""
+        return self._const_log10visc
+
+    @property
+    def phi_rheo(self) -> float:
+        """Rheological transition melt fraction."""
+        return self._phi_rheo
+
+    @property
+    def phi_width(self) -> float:
+        """Rheological transition width in melt fraction."""
+        return self._phi_width
+
+    @property
+    def matprop_smooth_width(self) -> float:
+        """Smoothing width for material property transitions."""
+        return self._matprop_smooth_width
+
+    @property
     def water_prefactor(self) -> float:
         return self.rheology.water_prefactor
 

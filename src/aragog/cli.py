@@ -238,7 +238,7 @@ def _derive_initial_entropy_from_config(solver) -> float | None:
     eos = getattr(solver, 'entropy_eos', None) or getattr(solver, 'eos', None)
     if eos is None:
         return None
-    tables = getattr(eos, '_tables', None)
+    tables = getattr(eos, 'tables', None)
     if not tables or 'temperature_solid' not in tables or 'temperature_melt' not in tables:
         return None
 

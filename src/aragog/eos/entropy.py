@@ -435,6 +435,21 @@ class EntropyEOS:
         """Lower entropy edge of the solid temperature table [J/kg/K]."""
         return float(self._tables['temperature_solid']['S'][0])
 
+    @property
+    def tables(self) -> dict[str, dict]:
+        """Dictionary of loaded thermodynamic tables."""
+        return self._tables
+
+    @property
+    def solidus(self) -> dict:
+        """Loaded solidus phase boundary dictionary."""
+        return self._solidus
+
+    @property
+    def liquidus(self) -> dict:
+        """Loaded liquidus phase boundary dictionary."""
+        return self._liquidus
+
     def _build_enthalpy_table(self) -> None:
         """Precompute specific enthalpy h(P, S) on the table grid.
 

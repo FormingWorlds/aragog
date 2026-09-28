@@ -97,3 +97,32 @@ def test_top_level_modules_list():
         if p.name not in ('__pycache__', '_version.py') and not p.name.startswith('.')
     }
     assert actual == expected_modules
+
+
+@pytest.mark.unit
+def test_no_cross_object_private_getattr():
+    """Ensure no cross-object getattr reads of private attributes across aragog."""
+    violations = []
+    for py_file in SRC_ROOT.rglob('*.py'):
+        tree = ast.parse(py_file.read_text(encoding='utf-8'), filename=str(py_file))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == 'getattr'
+                and len(node.args) >= 2
+            ):
+                target = node.args[0]
+                attr_arg = node.args[1]
+                if isinstance(attr_arg, ast.Constant) and isinstance(attr_arg.value, str):
+                    attr_name = attr_arg.value
+                    if attr_name.startswith('_') and not attr_name.startswith('__'):
+                        if not (isinstance(target, ast.Name) and target.id in ('self', 'cls')):
+                            rel_path = py_file.relative_to(SRC_ROOT.parent)
+                            violations.append(
+                                f"{rel_path}:{node.lineno}: getattr({ast.unparse(target)}, '{attr_name}')"
+                            )
+
+    assert not violations, (
+        f'Found {len(violations)} cross-object private getattr calls:\n' + '\n'.join(violations)
+    )

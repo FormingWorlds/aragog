@@ -1377,7 +1377,7 @@ class EntropySolver:
             float(
                 getattr(
                     mesh.eos,
-                    '_gravitational_acceleration',
+                    'gravitational_acceleration',
                     self.parameters.mesh.gravitational_acceleration,
                 )
             )
@@ -1601,8 +1601,8 @@ class EntropySolver:
                 'tables.',
                 cp_min,
             )
-        sol_dict = getattr(eos, '_solidus', None)
-        liq_dict = getattr(eos, '_liquidus', None)
+        sol_dict = getattr(eos, 'solidus', None)
+        liq_dict = getattr(eos, 'liquidus', None)
         if sol_dict is not None and liq_dict is not None:
             sol_P = np.asarray(sol_dict.get('P', []), dtype=float).ravel()
             sol_S = np.asarray(sol_dict.get('S', []), dtype=float).ravel()
@@ -4237,7 +4237,7 @@ class EntropySolver:
 
         # Solid-state rheology and stagnant lid diagnostics
         visc_eff_b = np.asarray(
-            getattr(self.state, '_visc_eff', self.state.viscosity_basic)
+            getattr(self.state, 'visc_eff', self.state.viscosity_basic)
         ).ravel()
         if visc_eff_b.size == 0:
             visc_eff_b = np.asarray(self.state.viscosity_basic).ravel()
@@ -4258,13 +4258,13 @@ class EntropySolver:
             eta_diff_b = np.full_like(r_basic, 10.0**log10_s)
 
         strain_rate_b = np.asarray(
-            getattr(self.state, '_strain_rate_basic', np.zeros_like(r_basic))
+            getattr(self.state, 'strain_rate_basic', np.zeros_like(r_basic))
         ).ravel()
         tau_y_b = np.asarray(
-            getattr(self.state, '_tau_y_basic', np.full_like(r_basic, 500e6))
+            getattr(self.state, 'tau_y_basic', np.full_like(r_basic, 500e6))
         ).ravel()
 
-        lid_st = getattr(self.state, '_lid_state', None)
+        lid_st = getattr(self.state, 'lid_state', None)
         if lid_st is not None:
             lid_mask_b = np.asarray(lid_st['w_lid']).ravel()
             yield_switch_b = np.full_like(r_basic, float(lid_st['w_y']))

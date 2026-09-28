@@ -546,7 +546,7 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
     # raise instead of defaulting to Earth gravity, since silently using
     # 9.81 m/s^2 on a non-Earth planet produces wrong physics.
     settings_src = getattr(mesh, 'settings', None) or getattr(mesh, 'parameters', None) or mesh
-    _eos_g = getattr(mesh.eos, '_gravitational_acceleration', None)
+    _eos_g = getattr(mesh.eos, 'gravitational_acceleration', None)
     if _eos_g is None:
         _eos_g = getattr(settings_src, 'gravitational_acceleration', None)
     if _eos_g is None:

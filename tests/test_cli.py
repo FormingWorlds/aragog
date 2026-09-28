@@ -1228,6 +1228,10 @@ class _StubEOS:
             'temperature_melt': {'S_list': [S_lo, S_hi]},
         }
 
+    @property
+    def tables(self):
+        return self._tables
+
     def temperature_scalar(self, P: float, S: float) -> float:
         return self._slope * S + self._intercept
 
