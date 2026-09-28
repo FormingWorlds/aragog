@@ -482,10 +482,9 @@ class Mesh:
         transform[1:-1, :-1] += np.diagflat(-1 / self.staggered.delta_mesh)  # k=0 diagonal
         transform[1:-1:, 1:] += np.diagflat(1 / self.staggered.delta_mesh)  # k=1 diagonal
 
-        # Gradient at boundaries can be extrapolated from the first two closests basic nodes
-        # This only affects the estimation of indivual components of heat fluxes when working
-        # with flux boundary conditions. Gradient at boundaries are overwritten when using
-        # temperature boundary conditions.
+        # End rows extrapolate the gradient from the two nearest interior basic nodes. They set
+        # the initial end values of dS/dr in gradient mode; the flux computations replace the
+        # end values with the adjacent interior gradient or a boundary state variable.
 
         # Extrapolation of gradient at inner radius
         inner_delta_ratio = self.basic.delta_mesh[1].item() / self.basic.delta_mesh[0].item()
@@ -497,10 +496,10 @@ class Mesh:
         outer_delta_ratio: float = (
             self.basic.delta_mesh[-2].item() / self.basic.delta_mesh[-1].item()
         )
-        transform[-1, -1] = -(outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
-        transform[-1, -2] = (outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
-        transform[-1, -2] += outer_delta_ratio / self.staggered.delta_mesh[-2].item()
-        transform[-1, -3] = -outer_delta_ratio / self.staggered.delta_mesh[-2].item()
+        transform[-1, -1] = (outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
+        transform[-1, -2] = -(outer_delta_ratio + 1) / self.staggered.delta_mesh[-1].item()
+        transform[-1, -2] -= outer_delta_ratio / self.staggered.delta_mesh[-2].item()
+        transform[-1, -3] = outer_delta_ratio / self.staggered.delta_mesh[-2].item()
 
         # Scale the transform matrix by dxi/dr at basic nodes
         for i in range(self.settings.number_of_nodes - 1):

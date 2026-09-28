@@ -606,15 +606,15 @@ class SolverOutput:
     mass_stag: npt.NDArray  # mass per shell [kg]
 
     # Fluxes and heating (at basic / staggered nodes)
-    heat_flux: npt.NDArray  # total heat flux at basic nodes [W/m^2]
+    # Total heat flux at basic nodes [W/m^2]; the end values are the applied BC fluxes,
+    # except for inner BC 3 and outer BC 5, which the RHS does not impose.
+    heat_flux: npt.NDArray
     heating: npt.NDArray  # internal heating at staggered nodes [W/kg]
     eddy_diff: npt.NDArray  # eddy diffusivity at basic nodes [m^2/s]
     cap_stag: npt.NDArray  # capacitance rho*T at staggered nodes
 
-    # Per-component flux decomposition at basic nodes for diagnostic
-    # output. Populated from the final EntropyState after integration;
-    # only consumers that set ``write_flux_diagnostics = true`` in the
-    # PROTEUS config read these.
+    # Flux components at basic nodes from the final state, for diagnostic output (PROTEUS
+    # write_flux_diagnostics); at the end nodes they omit the boundary conditions.
     jcond_b: npt.NDArray  # conductive flux [W/m^2]
     jconv_b: npt.NDArray  # convective flux [W/m^2]
     jgrav_b: npt.NDArray  # grav-sep contribution to heat flux [W/m^2]
@@ -1540,6 +1540,7 @@ class EntropySolver:
         self._outer_bc_value = float(bc.outer_boundary_value)
         self._outer_bc_emiss = float(bc.emissivity)
         self._outer_bc_T_eq = float(bc.equilibrium_temperature)
+        self._outer_bc_utbl = bool(bc.param_utbl)
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
 
@@ -2021,8 +2022,10 @@ class EntropySolver:
 
         # Surface: grey-body or prescribed flux
         if self._outer_bc_kind == 1:
-            # Grey-body: F = emissivity * sigma * (T_surf^4 - T_eq^4)
+            # Grey-body: F = emissivity * sigma * (T_surf^4 - T_eq^4), T_surf UTBL-reduced if set
             T_surf = self.state.top_temperature.item()
+            if self._outer_bc_utbl:
+                T_surf = float(self.evaluator.boundary_conditions._utbl_tsurf(T_surf))
             self.state._heat_flux[-1] = (
                 self._outer_bc_emiss * Stefan_Boltzmann * (T_surf**4 - self._outer_bc_T_eq**4)
             )
@@ -3355,7 +3358,7 @@ class EntropySolver:
                 n_basic = n_stag + 1
                 dSdr_i = y_col[:n_basic]
                 S_surf_i = float(y_col[n_basic])
-                S_i, S_basic_i = self._reconstruct_entropy(dSdr_i, S_surf_i)
+                S_i, _ = self._reconstruct_entropy(dSdr_i, S_surf_i)
             elif is_ext:
                 S_i = y_col[:n_stag]
             else:
@@ -3364,27 +3367,16 @@ class EntropySolver:
             if i == 0:
                 S_traj_start = np.asarray(S_i, dtype=float).copy()
 
-            # Evaluate the ODE RHS at this accepted state. ``self.dSdt``
-            # internally calls ``state.update`` AND applies the BC
-            # dispatch (entropy_solver.py:1107-1153), populating
-            # ``state._heat_flux[-1]`` and ``[0]`` with the values that
-            # were actually used to compute dS/dt. Calling dSdt FIRST
-            # (before reading F_int/F_cmb at lines below) ensures the
-            # boundary fluxes we integrate are consistent with the
-            # ones the entropy ODE saw, so the LHS-RHS check at the
-            # bottom of this loop is meaningful. ``dSdt`` returns
-            # derivatives in [/yr] to match the integrator's time axis
-            # (entropy_solver.py:1172), so divide by SECS_PER_YEAR to
-            # align with per-second flux units in the RHS.
-            if not gradient_mode:
-                dSdt_full = np.asarray(self.dSdt(t_i, y_col)).ravel()
-                dSdt_stag_i = dSdt_full[:n_stag] / SECS_PER_YEAR  # /yr -> /s
+            # The RHS at this accepted state applies the BCs, so the boundary fluxes read below
+            # are the ones the entropy ODE saw. In the gradient layout the reconstruction is
+            # linear in (dS/dr, S_surf), so it maps their rates to the cell entropy rates.
+            dSdt_full = np.asarray(self._dSdt_single(t_i, y_col)).ravel() / SECS_PER_YEAR
+            if gradient_mode:
+                dSdt_stag_i, _ = self._reconstruct_entropy(
+                    dSdt_full[:n_basic], float(dSdt_full[n_basic])
+                )
             else:
-                # Gradient mode: state.update with reconstructed
-                # entropy + dSdr. Skip dSdt return value (state-vec
-                # layout differs).
-                self.state.update(S_i, t_i, dSdr=dSdr_i, entropy_basic=S_basic_i)
-                dSdt_stag_i = None  # signals: skip solver-residual
+                dSdt_stag_i = dSdt_full[:n_stag]
 
             # Read boundary fluxes AFTER dSdt has applied the BCs.
             F_int_i = float(self.state._heat_flux[-1])
@@ -3421,25 +3413,20 @@ class EntropySolver:
             # against a ~1e16 W flux divergence). With the consistent
             # weighting the interior fluxes telescope and the residual is
             # machine-zero.
-            if dSdt_stag_i is not None:
-                cap_i = np.asarray(self.state.capacitance_staggered()).ravel()
-                T_phase_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
-                # The RHS adds heating as ``H / max(T, 1)`` (the floor the
-                # solver applies at line ~1493), so weight the source powers
-                # by the matching ``rho_phase * T / max(T, 1) * V`` to keep
-                # the identity exact down to the temperature floor.
-                heat_mass_i = (
-                    np.asarray(self.state.phase_staggered.density()).ravel()
-                    * vol
-                    * (T_phase_i / np.maximum(T_phase_i, 1.0))
-                )
-                lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
-                Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
-                Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
-                rhs_i = P_F_int[i] + P_F_cmb[i] + Q_radio_resid + Q_tidal_resid
-                P_resid_solver[i] = lhs_i - rhs_i
-            else:
-                P_resid_solver[i] = 0.0
+            cap_i = np.asarray(self.state.capacitance_staggered()).ravel()
+            T_phase_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
+            # The RHS adds heating as ``H / max(T, 1)``, so the source powers are weighted by
+            # ``rho_phase * T / max(T, 1) * V`` to keep the identity exact at the T floor.
+            heat_mass_i = (
+                np.asarray(self.state.phase_staggered.density()).ravel()
+                * vol
+                * (T_phase_i / np.maximum(T_phase_i, 1.0))
+            )
+            lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
+            Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
+            Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
+            rhs_i = P_F_int[i] + P_F_cmb[i] + Q_radio_resid + Q_tidal_resid
+            P_resid_solver[i] = lhs_i - rhs_i
 
         dt_s = np.diff(np.asarray(sol.t, dtype=float)) * SECS_PER_YEAR
 
@@ -3740,14 +3727,11 @@ class EntropySolver:
             n_basic = n_stag + 1
             dSdr_final = sol.y[:n_basic, -1]
             S_surf_final = float(sol.y[n_basic, -1])
-            S_final, S_basic_final = self._reconstruct_entropy(dSdr_final, S_surf_final)
-            extra_final = None
+            S_final, _ = self._reconstruct_entropy(dSdr_final, S_surf_final)
         elif is_ext:
             S_final = sol.y[:n_stag, -1]
-            extra_final = float(sol.y[n_stag, -1])
         else:
             S_final = sol.y[:, -1]
-            extra_final = None
 
         P_stag = self._P_stag_flat
         r_basic = self._r_basic_flat
@@ -3765,13 +3749,9 @@ class EntropySolver:
             phi_stag = np.ones_like(S_final)
             rho_stag = np.full_like(S_final, pm.const_rho)
 
-        # Refresh the state at the final entropy for derived quantities.
-        if gradient_mode:
-            self.state.update(S_final, sol.t[-1], dSdr=dSdr_final, entropy_basic=S_basic_final)
-        elif energy_balance:
-            self.state.update(S_final, sol.t[-1], dSdr_cmb=extra_final)
-        else:
-            self.state.update(S_final, sol.t[-1])
+        # Refresh the state at the final entropy through the RHS, so the boundary
+        # fluxes are the ones the integrator applied.
+        self._dSdt_single(sol.t[-1], sol.y[:, -1])
         visc_stag = np.asarray(self.state.phase_staggered.viscosity()).ravel()
         heat_flux = self.state.heat_flux.copy()
         heating = self.state.heating.copy()
