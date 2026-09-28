@@ -99,7 +99,7 @@ def test_staggered_pressure_positive_and_decreasing_outwards(mesh):
 
 @pytest.mark.physics_invariant
 def test_cell_masses_equal_the_shell_integral(mesh):
-    """Effective density times cell volume is the mass of each cell."""
+    """Effective density times cell volume is the mass of each cell, summing to M_mantle."""
     rb = mesh.basic.radii[:, 0]
     cell_mass = np.asarray(mesh.staggered_effective_density).ravel() * (
         4.0 / 3.0 * np.pi * np.diff(rb**3)
@@ -109,6 +109,8 @@ def test_cell_masses_equal_the_shell_integral(mesh):
         [4.0 * np.pi * quad(lambda x: x * x * rho(x), a, b)[0] for a, b in zip(rb[:-1], rb[1:])]
     )
     np.testing.assert_allclose(cell_mass, exact, rtol=1e-6)
+    m_mantle = np.diff(mesh.eos.get_mass_within_radii(rb[[0, -1]]))[0]
+    np.testing.assert_allclose(cell_mass.sum(), m_mantle, rtol=1e-12)
 
 
 @pytest.mark.parametrize('case', ['aw', 'user'])

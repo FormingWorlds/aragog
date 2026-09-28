@@ -218,11 +218,8 @@ class Mesh:
             def _xi_of_r(r: float) -> float:
                 """Mass coordinate xi(r) matching SPIDER's definition.
 
-                SPIDER's mass integral is WITHOUT 4pi (convention in
-                SPIDER, see eos_adamswilliamson.c:185). Aragog's
-                get_mass_within_radii includes 4pi. Divide by 4pi to
-                match SPIDER, since rho_avg was also computed without
-                4pi (from staggered_effective_density * delta_r^3).
+                SPIDER's mass integral is WITHOUT 4pi (eos_adamswilliamson.c:185);
+                get_mass_within_radii includes it, so divide by 4pi to match rho_avg.
                 """
                 M_shell_4pi = self.eos.get_mass_within_radii(np.array([r])).item() - M_core
                 M_shell = M_shell_4pi / (4.0 * np.pi)

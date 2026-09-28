@@ -3773,12 +3773,9 @@ class EntropySolver:
         # and the surface from the EOS mass integral, not the PALEOS rho_stag
         # used just below for per-cell output.
         mesh = self.evaluator.mesh
-        r_cmb = float(self._r_basic_flat[0])
-        r_surf = float(self._r_basic_flat[-1])
-        M_mantle = (
-            mesh.eos.get_mass_within_radii(np.array([r_surf]))
-            - mesh.eos.get_mass_within_radii(np.array([r_cmb]))
-        ).item()
+        M_mantle = float(
+            np.diff(mesh.eos.get_mass_within_radii(self._r_basic_flat[[0, -1]]))[0]
+        )
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
         # T_magma = top basic-node temperature, evaluated at
         # r = outer_boundary where P = surface_pressure. This matches
