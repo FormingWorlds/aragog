@@ -204,19 +204,19 @@ class _EnergyParameters:
     # disables each.
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
-    # Proximity band [J/kg/K] within which a staggered cell counts as near a
-    # phase boundary, tightening the integrator max_step to 1 yr so CVODE
-    # resolves the stiff RHS across the solidus/liquidus. Solver-accuracy
-    # control, not a physics threshold: at the default the converged trajectory
-    # is unchanged, but lowering it can under-resolve a real crossing and shift
-    # the converged state beyond the nominal tolerance (CVODE's local error
-    # control can accept an over-large step across the near-discontinuous
-    # two-phase RHS). Default 200.0, a fraction of a typical silicate fusion
-    # entropy (S_liquidus - S_solidus); a non-finite or non-positive value
-    # falls back to the default.
+    # Proximity band [J/kg/K] within which a cell counts as near a phase boundary.
+    # Tightens max_step to resolve stiff RHS across the solidus/liquidus.
     phase_boundary_entropy_margin: float = 200.0
+    # Step-size cap near phase boundaries: 'fixed' (1 yr) or 'rate' (event-driven segments).
+    phase_boundary_cap: str = 'fixed'
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
+
+    def __post_init__(self):
+        if self.phase_boundary_cap not in ('fixed', 'rate'):
+            raise ValueError(
+                f'phase_boundary_cap must be fixed or rate, got {self.phase_boundary_cap!r}'
+            )
 
 
 @dataclass
