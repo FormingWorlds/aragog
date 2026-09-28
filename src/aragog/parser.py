@@ -462,6 +462,7 @@ class _SolverParameters:
     # flag is also set, independent of this limit, whenever any sampled
     # core temperature is non-finite; the measured change is always reported.
     tcore_change_limit: float | None = None
+    max_step_const_mode: float = 100.0
 
     def __post_init__(self):
         if not isinstance(self.cvode_output_points, int):
@@ -494,6 +495,23 @@ class _SolverParameters:
                 raise ValueError(
                     f'tcore_change_limit must be > 0 or None, got {self.tcore_change_limit!r}'
                 )
+        if isinstance(self.max_step_const_mode, str):
+            try:
+                self.max_step_const_mode = float(self.max_step_const_mode)
+            except ValueError:
+                raise TypeError(
+                    f'max_step_const_mode must be a float, got {self.max_step_const_mode!r}'
+                )
+        if isinstance(self.max_step_const_mode, bool) or not isinstance(
+            self.max_step_const_mode, (int, float)
+        ):
+            raise TypeError(
+                f'max_step_const_mode must be a float, got {type(self.max_step_const_mode).__name__}'
+            )
+        if not self.max_step_const_mode > 0:
+            raise ValueError(
+                f'max_step_const_mode must be > 0, got {self.max_step_const_mode!r}'
+            )
 
 
 @dataclass(kw_only=True)

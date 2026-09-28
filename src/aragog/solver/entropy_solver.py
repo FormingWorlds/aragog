@@ -3106,7 +3106,14 @@ class EntropySolver:
         except Exception:
             phi0 = 1.0
 
-        if phi0 > 0.01:
+        _const = (
+            getattr(self.parameters.phase_mixed, 'const_properties', False)
+            or self.entropy_eos is None
+        )
+        if _const:
+            atol_scale = 1.0
+            max_step = float(getattr(self.parameters.solver, 'max_step_const_mode', 100.0))
+        elif phi0 > 0.01:
             atol_scale = 1.0
             max_step = 100.0  # years
         else:
