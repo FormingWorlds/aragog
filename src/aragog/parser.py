@@ -343,7 +343,7 @@ class _Radionuclide:
         arg: npt.NDArray | float = np.log(2) * (self.t0_years - time) / self.half_life_years
         amplitude = self.heat_production * self.abundance * self.concentration
         # A zero-amplitude isotope contributes 0, also where exp(arg) overflows.
-        return amplitude * np.exp(arg) if amplitude else 0.0 * arg
+        return amplitude * np.exp(arg) if amplitude else np.zeros_like(arg, dtype=float)[()]
 
 
 @dataclass
@@ -466,13 +466,18 @@ class Parameters:
         if self.energy.radionuclides:
             t_start = self.solver.start_time
             for r in self.radionuclides:
+                if not r.half_life_years > 0.0:
+                    raise ValueError(
+                        f'Radionuclide {r.name}: half_life_years must be positive, '
+                        f'got {r.half_life_years}'
+                    )
                 with np.errstate(over='ignore'):
                     finite = np.isfinite(r.get_heating(t_start))
                 if not finite:
                     raise ValueError(
                         f'Radionuclide {r.name}: heating is not finite at the start time '
                         f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
-                        f'{r.half_life_years}); exp(ln2 (t0 - t) / half_life) overflows'
+                        f'{r.half_life_years}); check the amplitude and t0_years'
                     )
 
     @classmethod

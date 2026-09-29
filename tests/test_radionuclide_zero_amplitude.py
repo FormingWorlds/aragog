@@ -49,6 +49,8 @@ def test_zero_amplitude_isotope_heats_zero_where_exp_overflows(cls):
     r = cls(**AL26_ZERO)
     assert r.get_heating(0.0) == 0.0
     np.testing.assert_array_equal(r.get_heating(np.array([0.0, 1e3])), [0.0, 0.0])
+    with np.errstate(divide='ignore'):
+        assert cls(**{**AL26_ZERO, 'half_life_years': 0.0}).get_heating(0.0) == 0.0
 
 
 @pytest.mark.unit
@@ -57,6 +59,16 @@ def test_bundled_lookup_cfg_heating_is_finite():
     heat = {r.name: r.get_heating(p.solver.start_time) for r in p.radionuclides}
     assert heat.pop('Al26') == heat.pop('Fe60') == 0.0
     assert all(np.isfinite(h) and h > 0.0 for h in heat.values())
+
+
+@pytest.mark.unit
+def test_non_positive_half_life_raises(tmp_path):
+    cfg = _lookup_cfg(tmp_path)
+    cfg.write_text(
+        cfg.read_text().replace('half_life_years = 0.717E6', 'half_life_years = -0.717E6')
+    )
+    with pytest.raises(ValueError, match='Al26: half_life_years must be positive'):
+        Parameters.from_file(str(cfg))
 
 
 @pytest.mark.unit
