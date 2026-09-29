@@ -4280,7 +4280,7 @@ class EntropySolver:
             interior_temperature = float(lid_st['T_i'])
             lid_stress = float(lid_st['tau_d'])
             theta_val = float(lid_st['theta'])
-            lid_regime = float(np.round(lid_st['lid_regime']))
+            lid_regime = float(lid_st['lid_regime'])
         else:
             lid_mask_b = np.zeros_like(r_basic)
             yield_switch_b = np.zeros_like(r_basic)

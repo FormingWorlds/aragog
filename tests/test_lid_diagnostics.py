@@ -157,3 +157,40 @@ def test_low_theta_regime_warning(caplog):
 
     assert solver.get_state().theta < 9.0
     assert any('below 9.0' in r.message for r in caplog.records)
+
+
+@pytest.mark.unit
+def test_continuous_lid_regime_output():
+    """Verify that lid_regime in SolverOutput is continuous and not rounded."""
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_entropy_solver_const_properties_smoke import (
+        _build_const_properties_parameters,
+    )
+
+    params = _build_const_properties_parameters(n_nodes=20, end_time=1.0)
+    params.phase_solid.rheology = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        lid_base_mode='rheological',
+        yield_stress_c=1e12,
+        yield_stress_max=1e12,
+    )
+
+    solver = EntropySolver(params, entropy_eos=None)
+    solver.initialize()
+    phi_arr = np.zeros(20)
+    phi_arr[-1] = 0.012
+    solver.state.phase_basic.melt_fraction = lambda: phi_arr
+    solver.state.phase_staggered.melt_fraction = lambda: np.zeros(19)
+
+    s_init = np.linspace(3000.0, 1200.0, 19)
+    solver.set_initial_entropy(s_init)
+    solver.solve()
+    output = solver.get_state()
+
+    assert 0.05 < output.lid_regime < 0.95, (
+        f'lid_regime must be continuous float; got {output.lid_regime}'
+    )
+    assert not float(output.lid_regime).is_integer(), (
+        f'lid_regime must not be rounded to integer; got {output.lid_regime}'
+    )
