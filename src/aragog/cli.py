@@ -210,7 +210,8 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
                 )
             target = target[k]
         value = _coerce_value(raw_value)
-        if keys in (['mesh', 'eos_file'], ['initial_condition', 'init_file']) and value:
+        path_key = keys in (['mesh', 'eos_file'], ['initial_condition', 'init_file'])
+        if path_key and isinstance(value, str) and value:
             value = str(Path.cwd() / str(value))  # command-line paths are CWD-relative
         target[keys[-1]] = value
     return out
@@ -850,16 +851,20 @@ _DEFAULT_TEMPLATE = 'abe_solid'
 def new(name: str, template: str, force: bool) -> None:
     """Scaffold a new config in the cwd by copying a bundled template.
 
-    NAME is the destination filename (with or without the template's
-    `.toml` or `.cfg` extension, which the copy keeps). The file is
+    NAME is the destination filename. A `.toml` or `.cfg` suffix selects
+    that form of the template; without one the template's suffix is
+    appended (`.toml` when both forms exist). The file is
     written to the current working directory, with relative data file
     paths of the template made absolute.
     """
     cfg_dir = _bundled_cfg_dir()
 
-    # Prefer .toml over .cfg when both exist for the same stem; .cfg
-    # is the legacy INI flavour and is not recommended for new files.
-    candidates = [f'{template}.toml', f'{template}.cfg']
+    # A NAME ending in .toml or .cfg selects that format; otherwise prefer
+    # .toml over .cfg (the legacy INI flavour) when both exist.
+    requested = Path(name).suffix if Path(name).suffix in ('.toml', '.cfg') else ''
+    candidates = (
+        [template + requested] if requested else [f'{template}.toml', f'{template}.cfg']
+    )
     src: Traversable | None = None
     for candidate in candidates:
         entry = cfg_dir.joinpath(candidate)
@@ -871,11 +876,10 @@ def new(name: str, template: str, force: bool) -> None:
             p.name for p in cfg_dir.iterdir() if p.name.endswith(('.toml', '.cfg'))
         )
         raise click.UsageError(
-            f"unknown template '{template}'. Available templates: {', '.join(available)}."
+            f"unknown template '{template}{requested}'. Available templates: {', '.join(available)}."
         )
 
-    suffix = Path(src.name).suffix  # keep the template's format: TOML or INI
-    dest_name = name if name.endswith(suffix) else f'{name}{suffix}'
+    dest_name = name if requested else name + Path(src.name).suffix
     dest = Path.cwd() / dest_name
     if dest.exists() and not force:
         raise click.UsageError(
@@ -894,7 +898,7 @@ def _absolute_template_paths(text: str, template_dir: Path) -> str:
         path = template_dir / m.group(3)
         if Path(m.group(3)).is_absolute() or not path.is_file():
             return m.group(0)
-        return f'{m.group(1)}{m.group(2)}{path.resolve()}{m.group(2)}'
+        return f'{m.group(1)}{m.group(2)}{path.resolve().as_posix()}{m.group(2)}'
 
     return re.sub(r'(?m)^(\s*\w+\s*=\s*)(["\']?)([^"\'\s#]+)\2', fix, text)
 

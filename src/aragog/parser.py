@@ -37,11 +37,10 @@ def _resolve_data_paths(config_dir, mesh, initial_condition) -> None:
     for obj, name in ((mesh, 'eos_file'), (initial_condition, 'init_file')):
         path = getattr(obj, name)
         if path and not Path(path).is_absolute():
-            hit = next(
-                (d / path for d in (Path(config_dir), Path.cwd()) if (d / path).is_file()), None
-            )
-            if hit is not None:
-                setattr(obj, name, str(hit.resolve()))
+            for d in (Path(config_dir), Path.cwd()):
+                if (d / path).is_file():
+                    setattr(obj, name, str((d / path).resolve()))
+                    break
 
 
 def _get_dataclass_from_section_name() -> dict[str, Any]:

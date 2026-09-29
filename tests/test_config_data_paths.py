@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import shutil
+import tomllib
 from pathlib import Path
 
 import numpy as np
 import pytest
+from click.testing import CliRunner
 
+from aragog.cli import _apply_overrides, cli
 from aragog.config import Config
 from aragog.parser import Parameters
 
@@ -87,8 +90,9 @@ def test_toml_eos_file_resolves_against_config_dir(tmp_path, monkeypatch, loader
     assert params.mesh.eos_file == str(cfg_dir.resolve() / 'eos.dat')
 
 
-def _toml_with_eos(cfg_dir: Path) -> Path:
-    shutil.copy(EOS_TEST, cfg_dir / 'eos.dat')
+def _toml_with_eos(cfg_dir: Path, copy: bool = True) -> Path:
+    if copy:
+        shutil.copy(EOS_TEST, cfg_dir / 'eos.dat')
     toml = cfg_dir / 'run.toml'
     text = (CFG_DIR / 'abe_solid.toml').read_text()
     toml.write_text(
@@ -98,8 +102,6 @@ def _toml_with_eos(cfg_dir: Path) -> Path:
 
 
 def test_from_dict_without_config_dir_leaves_path_as_given(tmp_path, monkeypatch):
-    import tomllib
-
     toml = _toml_with_eos(tmp_path)
     monkeypatch.chdir(tmp_path)
     params = Config.from_dict(tomllib.loads(toml.read_text()))
@@ -108,10 +110,6 @@ def test_from_dict_without_config_dir_leaves_path_as_given(tmp_path, monkeypatch
 
 def _cli_parameters(monkeypatch, toml: Path, cwd: Path, *overrides: str):
     """Run ``aragog run TOML --set ...`` from ``cwd`` with a stub solver; return its Parameters."""
-    from click.testing import CliRunner
-
-    from aragog.cli import cli
-
     captured = {}
 
     class _Solver:
@@ -155,10 +153,6 @@ def test_cli_set_path_value_resolves_against_cwd(tmp_path, monkeypatch):
     'template, suffix', [('abe_mixed_init', '.cfg'), ('abe_solid', '.toml')]
 )
 def test_new_keeps_template_format_and_data_paths(tmp_path, monkeypatch, template, suffix):
-    from click.testing import CliRunner
-
-    from aragog.cli import cli
-
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(cli, ['new', 'copy', '--from', template])
     assert result.exit_code == 0, result.output
@@ -167,3 +161,49 @@ def test_new_keeps_template_format_and_data_paths(tmp_path, monkeypatch, templat
     if template == 'abe_mixed_init':
         assert Path(params.mesh.eos_file) == EOS_TEST
         np.testing.assert_array_equal(params.mesh.eos_radius, np.loadtxt(EOS_TEST)[:, 0])
+
+
+def test_toml_cwd_fallback_and_missing_file(tmp_path, monkeypatch):
+    cfg_dir, cwd = tmp_path / 'cfg', tmp_path / 'cwd'
+    cfg_dir.mkdir()
+    cwd.mkdir()
+    toml = _toml_with_eos(cfg_dir, copy=False)
+    monkeypatch.chdir(cwd)
+    with pytest.raises(FileNotFoundError, match='eos.dat'):
+        Config.from_toml(str(toml))
+    shutil.copy(EOS_TEST, cwd / 'eos.dat')
+    assert Config.from_toml(str(toml)).mesh.eos_file == str(cwd.resolve() / 'eos.dat')
+
+
+def test_cli_set_init_file_resolves_against_cwd_and_non_strings_stay(tmp_path, monkeypatch):
+    cfg_dir, cwd = tmp_path / 'cfg', tmp_path / 'cwd'
+    cfg_dir.mkdir()
+    cwd.mkdir()
+    for d in (cfg_dir, cwd):
+        np.savetxt(d / 'T.dat', [[5.4e6, 3000.0], [6.3e6, 2000.0]])
+    toml = _toml_with_eos(cfg_dir)
+    ic = ('initial_condition.initial_condition=2', 'initial_condition.init_file=T.dat')
+    params = _cli_parameters(monkeypatch, toml, cwd, *ic)
+    assert params.initial_condition.init_file == str(cwd.resolve() / 'T.dat')
+    assert _apply_overrides({'mesh': {}}, ('mesh.eos_file=1',)) == {'mesh': {'eos_file': 1}}
+
+
+@pytest.mark.parametrize(
+    'name, template, written',
+    [
+        ('bar.cfg', 'abe_solid', 'bar.cfg'),
+        ('bar', 'abe_solid', 'bar.toml'),
+        ('foo.toml', 'abe_mixed_init', None),
+    ],
+)
+def test_new_name_suffix_selects_template_form(tmp_path, monkeypatch, name, template, written):
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli, ['new', name, '--from', template])
+    assert [p.name for p in tmp_path.iterdir()] == ([written] if written else [])
+    if written:
+        assert result.exit_code == 0, result.output
+        Parameters.from_file(str(tmp_path / written))
+    else:
+        assert (
+            result.exit_code != 0 and "unknown template 'abe_mixed_init.toml'" in result.output
+        )

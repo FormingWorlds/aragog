@@ -36,7 +36,7 @@ aragog new <name> [--from <template>] [--force]
 Copies a bundled `cfg/abe_*.{toml,cfg}` template to the cwd as `<name>.toml` or `<name>.cfg`, keeping the template's format.
 Relative data file paths in the template that name an existing file are written as absolute paths, so the copy runs from any directory.
 Default template is `abe_solid` (the canonical solid-phase cooling smoke); use `--from abe_mixed` (or any other name from `aragog list-configs`) to pick a different starting point.
-The suffix is appended automatically when omitted.
+A `<name>` ending in `.toml` or `.cfg` selects that form of the template; without a suffix, the template's own suffix is appended (`.toml` when both forms exist).
 Refuses to overwrite an existing destination unless `--force` is passed.
 
 ```bash
