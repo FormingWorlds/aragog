@@ -582,13 +582,20 @@ def _phi_cap_event_factory(
     return _event
 
 
+def _status_failed(status: int) -> bool:
+    """Whether a solver status is a failure: 0 (success) and 1 (step-cap stop) are not."""
+    return status not in (0, 1)
+
+
 @dataclass
 class SolverOutput:
     """Complete output from one EntropySolver integration step.
 
     This dataclass is the public contract between Aragog and PROTEUS.
     All quantities needed by the coupling wrapper are included here,
-    so callers never need to reach into solver internals.
+    so callers never need to reach into solver internals. ``status`` 0 (success)
+    and 1 (stop at a step-cap event) are successful runs, a negative status is a
+    failure; ``failed`` tells the two apart.
     """
 
     # Profiles at staggered nodes
@@ -727,7 +734,7 @@ class SolverOutput:
     step_dE_state_heat_J: float
 
     dt_actual: float  # actual integration time [yr]
-    status: int  # solver status (0 = success)
+    status: int  # 0 success, 1 stop at a step-cap event, negative failure
 
     # Raw CVODE return flag, surfaced distinctly from the scipy-compatible
     # ``status`` so a caller can tell CV_TOO_MUCH_WORK (step budget) from
@@ -745,6 +752,11 @@ class SolverOutput:
     tcore_change_exceeded: bool = False
 
     # ── NetCDF output ──────────────────────────────────────────────
+    @property
+    def failed(self) -> bool:
+        """Whether the integration failed (a status other than 0 and 1)."""
+        return _status_failed(self.status)
+
     def to_netcdf(
         self,
         path: str | Path,
@@ -3244,25 +3256,26 @@ class EntropySolver:
             self.state._pb_cache_hits = 0
             self.state._pb_cache_misses = 0
 
-        if self._solution.status == 0:
+        self._log_solution_outcome(end_time)
+
+    def _log_solution_outcome(self, end_time: float) -> None:
+        """Log the outcome of the last integration and set ``stop_early`` on a failure."""
+        sol = self._solution
+        self.stop_early = _status_failed(sol.status)
+        if sol.status == 0:
             logger.info('EntropySolver: integration completed successfully.')
-            self.stop_early = False
-        elif self._solution.status == 1:
+        elif sol.status == 1:
             # Terminal step-cap event (scipy fallback); the integration succeeded up to it.
-            t_event = self._solution.t[-1]
+            t_event = sol.t[-1]
             logger.info(
                 'EntropySolver: step-cap event at t=%.2e yr (stopped %.1f yr before end_time).',
                 t_event,
                 end_time - t_event,
             )
-            self.stop_early = False
         else:
             logger.error(
-                'EntropySolver: integration failed (status=%d): %s',
-                self._solution.status,
-                self._solution.message,
+                'EntropySolver: integration failed (status=%d): %s', sol.status, sol.message
             )
-            self.stop_early = True
 
     def _compute_step_energy_integrals(self) -> dict[str, float | None]:
         """Compute per-call energy contributions [J] over the CVODE

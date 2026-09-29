@@ -405,6 +405,9 @@ def run(
         solver.set_initial_entropy(...)
         solver.solve()
         solver.get_state().to_netcdf(...)
+
+    The command writes the snapshot and then exits 1 when the solver status is
+    negative (a failed integration); the Python API only sets the status.
     """
     from aragog import aragog_file_logger
     from aragog.solver import EntropySolver
@@ -501,9 +504,10 @@ def run(
         description=f'Aragog run from {config.name}',
     )
     click.echo(f'wrote {out_path}')
-    if state.status < 0:
+    if state.failed:
         raise click.ClickException(
-            f'integration failed (status={state.status}): {solver.solution.message}; '
+            f'integration failed (status={state.status}): '
+            f'{getattr(solver.solution, "message", "")}; '
             'wrote the state at the last successful output time (the initial state if the '
             f'solver fails before the first output) to {out_path}'
         )

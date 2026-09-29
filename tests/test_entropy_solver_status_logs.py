@@ -1,20 +1,14 @@
-"""Tests for ``EntropySolver.solve()`` post-status logging branches
-and the ``write_netcdf`` convenience wrapper.
+"""Tests for ``EntropySolver._log_solution_outcome`` (the post-status logging that
+``solve()`` runs) and the ``write_netcdf`` convenience wrapper.
 
-Targets:
+* status 1: the integrator stopped on a terminal step-cap event; the solver logs
+  the event time and leaves ``stop_early = False``.
+* status -1: the integrator failed; the solver logs an error and sets
+  ``stop_early = True``.
+* ``write_netcdf`` forwards ``description`` only when supplied, so the wrapper and
+  ``SolverOutput.to_netcdf`` stamp the same ``description`` attribute.
 
-* status=1 branch (lines 2528-2536): the integrator stopped on a
-  terminal step-cap event. The solver must log a
-  message naming the event time and set ``stop_early = False``.
-* status=-1 branch (lines 2538-2543): the integrator failed. The
-  solver must log an error and set ``stop_early = True``.
-* ``write_netcdf`` wrapper (lines 2737-2740): forwards
-  ``description`` only when supplied so the two entry points
-  (wrapper vs ``SolverOutput.to_netcdf``) stamp identical
-  ``description`` attributes.
-
-These exercise post-solve handling using a stub ``_solution``
-attribute so we don't need a real integration.
+The status tests use a stub ``_solution``, so no integration runs.
 """
 
 from __future__ import annotations
@@ -27,15 +21,11 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
+LOGGER = 'fwl.aragog.solver.entropy_solver'
+
 
 def _make_solver_with_solution(*, status: int, t_end: float, n_stag: int = 5):
-    """Construct an EntropySolver with a stub ``_solution`` so the
-    status-dispatch block at the end of ``solve()`` can be exercised
-    without a real integration.
-
-    The stub avoids the cost of the full solve path; only the few
-    attributes read by the post-status branch are populated.
-    """
+    """An EntropySolver with a stub ``_solution`` holding what the status logging reads."""
     from aragog.solver.entropy_solver import EntropySolver
 
     solver = EntropySolver.__new__(EntropySolver)
@@ -49,85 +39,30 @@ def _make_solver_with_solution(*, status: int, t_end: float, n_stag: int = 5):
     return solver, fake_sol
 
 
-def test_solve_status_1_log_path_sets_stop_early_false(caplog):
-    """The post-solve dispatcher: when the integrator returned
-    ``status == 1`` (termination event), the solver must emit an
-    informational log naming the event time and leave
-    ``stop_early = False``.
-
-    Discriminator: a regression that swapped the status semantics
-    (``0`` and ``1``) would surface here as ``stop_early=True``,
-    aborting the next coupling step. The check uses status=1 with a
-    nontrivial event time so the log message must contain that float.
-    """
-    # Inline the post-solve block (entropy_solver.py:2522-2543) by
-    # extracting just the dispatch logic. The real solve() runs many
-    # other steps before reaching this point that we don't want to
-    # exercise here. Instead, we rebuild the dispatcher's I/O contract
-    # in-place and assert on the same observable side effects: a log
-    # line and the ``stop_early`` flag.
-    from aragog.solver.entropy_solver import logger as _logger  # noqa: F401
-
-    solver, sol = _make_solver_with_solution(status=1, t_end=2.5e3, n_stag=5)
-    # Mimic the end_time the real solve() reads from parameters.
-    end_time = 1.0e4
-
-    # Replicate the dispatcher block.
-    with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
-        if solver._solution.status == 0:
-            solver.stop_early = False
-        elif solver._solution.status == 1:
-            t_event = solver._solution.t[-1]
-            _logger.info(
-                'EntropySolver: step-cap event at t=%.2e yr (stopped %.1f yr before end_time).',
-                t_event,
-                end_time - t_event,
-            )
-            solver.stop_early = False
-        else:
-            solver.stop_early = True
-
-    assert solver.stop_early is False, (
-        f'status=1 must set stop_early=False; got {solver.stop_early}'
-    )
-    msgs = [r.message for r in caplog.records]
-    assert any('step-cap event' in m for m in msgs), (
-        f'expected step-cap log; got messages={msgs}'
-    )
+@pytest.mark.parametrize('status', [0, 1])
+def test_successful_status_logs_and_keeps_running(caplog, status):
+    solver, _ = _make_solver_with_solution(status=status, t_end=2.5e3)
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        solver._log_solution_outcome(end_time=1.0e4)
+    assert solver.stop_early is False
+    expected = {
+        0: 'EntropySolver: integration completed successfully.',
+        1: 'EntropySolver: step-cap event at t=2.50e+03 yr (stopped 7500.0 yr before end_time).',
+    }[status]
+    assert expected in [r.getMessage() for r in caplog.records]
 
 
-def test_solve_status_minus_one_sets_stop_early_true(caplog):
-    """When status is negative, the solver must log an error and set
-    ``stop_early = True`` so PROTEUS's coupling loop skips the next
-    step.
-
-    Discriminator: a regression that swallowed the failure (e.g.
-    set stop_early=False on -1) would let a broken interior trajectory
-    bleed into the atmosphere step.
-    """
-    from aragog.solver.entropy_solver import logger as _logger  # noqa: F401
-
-    solver, sol = _make_solver_with_solution(status=-1, t_end=1.0e3, n_stag=5)
+@pytest.mark.parametrize('status', [-1, 2])
+def test_failed_status_logs_error_and_stops(caplog, status):
+    solver, sol = _make_solver_with_solution(status=status, t_end=1.0e3)
     sol.message = 'CVODE failed with flag -4'
-
-    with caplog.at_level(logging.ERROR, logger='fwl.aragog.solver.entropy_solver'):
-        if solver._solution.status == 0:
-            solver.stop_early = False
-        elif solver._solution.status == 1:
-            solver.stop_early = False
-        else:
-            _logger.error(
-                'EntropySolver: integration failed (status=%d): %s',
-                solver._solution.status,
-                solver._solution.message,
-            )
-            solver.stop_early = True
-
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        solver._log_solution_outcome(end_time=1.0e4)
     assert solver.stop_early is True
-    msgs = [r.message for r in caplog.records if r.levelno >= logging.ERROR]
-    assert any('integration failed' in m for m in msgs), (
-        f'expected integration-failed error log; got {msgs}'
-    )
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert errors == [
+        f'EntropySolver: integration failed (status={status}): CVODE failed with flag -4'
+    ]
 
 
 def test_write_netcdf_forwards_description_only_when_supplied(tmp_path):

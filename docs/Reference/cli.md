@@ -94,7 +94,7 @@ aragog run <config.toml> --eos-dir <path> [--initial-entropy <S0>] [options]
 ```
 
 Solves a configured run in full and writes a NetCDF snapshot.
-If the integration fails (solver status below 0), the command writes the state at the last successful output time (the initial state if the solver fails before the first output) and exits with status 1. A run stopped early by a per-call step cap (`energy.phi_step_cap`, `energy.temperature_step_cap` or `energy.entropy_step_cap`) exits 0, with the snapshot at the stop time.
+Solver status 0 (success) and 1 (stop at a step-cap event) are successful runs, a negative status is a failure (`SolverOutput.failed`). If the integration fails, the command writes the state at the last successful output time (the initial state if the solver fails before the first output) and exits with status 1. A run stopped early by a per-call step cap (`energy.phi_step_cap`, `energy.temperature_step_cap` or `energy.entropy_step_cap`) exits 0, with the snapshot at the stop time.
 Mirrors the Python recipe in [Tutorials: First run](../Tutorials/firstrun.md): load `Parameters`, initialise the solver, set the initial-condition state vector, solve, and call `SolverOutput.to_netcdf`.
 
 `--initial-entropy` is optional when the config's `[initial_condition]` block sets `surface_temperature > 0` and `initial_condition` is 1 (linear) or 3 (adiabatic); the CLI then derives $S_0$ by inverting $T(P_\mathrm{surf}, S) = $ `surface_temperature` against the loaded EOS. The bundled `cfg/abe_*.{toml,cfg}` configs all set `surface_temperature`, so they run without the flag. Pass `--initial-entropy` explicitly to override the derivation.
