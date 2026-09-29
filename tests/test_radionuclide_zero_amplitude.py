@@ -116,29 +116,62 @@ def test_bundled_lookup_cfg_runs_with_finite_state(tmp_path):
         assert np.isfinite(float(d['T_magma'][:]))
 
 
+K40_PPM = dict(
+    name='K40',
+    t0_years=4.55e9,
+    abundance=1.1668e-4,
+    concentration=310.0,
+    heat_production=2.8761e-5,
+    half_life_years=1248e6,
+)
+
+
+def _with(p, *isotopes):
+    """``p`` rebuilt with new ``_Radionuclide`` objects (concentrations in ppm)."""
+    rs = [_Radionuclide(**r) for r in isotopes]
+    return replace(p, radionuclides=rs), rs
+
+
 @pytest.mark.unit
 def test_rejected_parameters_leave_the_isotopes_unscaled():
     p = Parameters.from_file(str(BUNDLED_LOOKUP))
-    rs = [replace(r) for r in p.radionuclides]
-    ppm = {r.name: r.concentration for r in rs}
-    al26 = next(r for r in rs if r.name == 'Al26')
-    al26.abundance, al26.concentration = 1.0, 1.0
+    rs = [
+        _Radionuclide(**K40_PPM),
+        _Radionuclide(**{**AL26_ZERO, 'abundance': 1.0, 'concentration': 1.0}),
+    ]
     with pytest.raises(ValueError, match='Al26'):
         replace(p, radionuclides=rs)
-    assert {r.name: r.concentration for r in rs} == {**ppm, 'Al26': 1.0}
-    al26.abundance, al26.concentration = 0.0, 0.0
+    assert [r.concentration for r in rs] == [310.0, 1.0]
+    rs[1].abundance, rs[1].concentration = 0.0, 0.0
     replace(p, radionuclides=rs)
-    assert {r.name: r.concentration for r in rs} == {k: v * 1e-6 for k, v in ppm.items()}
+    assert [r.concentration for r in rs] == [310.0 * 1e-6, 0.0]
 
 
 @pytest.mark.unit
-def test_negative_amplitude_raises(tmp_path):
-    cfg = _lookup_cfg(tmp_path)
-    text = cfg.read_text()
-    assert text.count('heat_production = 2.8761E-5') == 1
-    cfg.write_text(text.replace('heat_production = 2.8761E-5', 'heat_production = -2.8761E-5'))
-    with pytest.raises(ValueError, match='K40: .* must not be negative'):
-        Parameters.from_file(str(cfg))
+def test_negative_factors_raise():
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    two_negative = {**K40_PPM, 'heat_production': -2.8761e-5, 'concentration': -310.0}
+    with pytest.raises(ValueError, match=r'K40: heat_production \(-2.8761e-05\).*-310.0 ppm'):
+        _with(p, two_negative)
+
+
+@pytest.mark.unit
+def test_finiteness_is_checked_on_the_mass_fraction():
+    # exp(arg) ~ 1e305: 1e4 ppm overflows unconverted (1e309) but not as a mass fraction (1e303).
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    t0 = np.log(1e305) / np.log(2) * 1e6
+    big = dict(
+        name='X',
+        t0_years=t0,
+        abundance=1.0,
+        concentration=1e4,
+        heat_production=1.0,
+        half_life_years=1e6,
+    )
+    q, (r,) = _with(p, big)
+    assert r.concentration == pytest.approx(1e-2) and np.isfinite(
+        r.get_heating(q.solver.start_time)
+    )
 
 
 @pytest.mark.unit

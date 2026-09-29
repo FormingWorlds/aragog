@@ -341,6 +341,9 @@ class _PhaseParameters:
     entropy: float | str = ''
 
 
+_PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
+
+
 @dataclass
 class _Radionuclide:
     """Stores the settings in a radionuclide section in the configuration data."""
@@ -483,33 +486,33 @@ class Parameters:
                     f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
 
-        # Validate before the in-place ppm scaling, so a rejected call leaves the objects unchanged.
+        # Validate ppm-scaled copies and write back only on success, so a rejected call leaves
+        # the caller's objects unchanged.
+        scaled = [replace(r, concentration=r.concentration * _PPM) for r in self.radionuclides]
         if self.energy.radionuclides:
             t_start = self.solver.start_time
-            for r in self.radionuclides:
+            for r in scaled:
                 if not r.half_life_years > 0.0:
                     raise ValueError(
                         f'Radionuclide {r.name}: half_life_years must be positive, '
                         f'got {r.half_life_years}'
                     )
-                if r.heat_production * r.abundance * r.concentration < 0.0:
+                if min(r.heat_production, r.abundance, r.concentration) < 0.0:
                     raise ValueError(
-                        f'Radionuclide {r.name}: heat_production * abundance * concentration '
-                        'must not be negative'
+                        f'Radionuclide {r.name}: heat_production ({r.heat_production}), '
+                        f'abundance ({r.abundance}) and concentration '
+                        f'({r.concentration / _PPM} ppm) must not be negative'
                     )
                 with np.errstate(over='ignore'):
-                    finite = np.isfinite(
-                        replace(r, concentration=r.concentration * 1e-6).get_heating(t_start)
-                    )
+                    finite = np.isfinite(r.get_heating(t_start))
                 if not finite:
                     raise ValueError(
                         f'Radionuclide {r.name}: heating is not finite at the start time '
                         f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
                         f'{r.half_life_years}); check the amplitude and t0_years'
                     )
-        # Convert radionuclide concentration from ppm to mass fraction.
-        for r in self.radionuclides:
-            r.concentration *= 1e-6
+        for r, r_scaled in zip(self.radionuclides, scaled):
+            r.concentration = r_scaled.concentration
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
