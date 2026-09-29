@@ -37,16 +37,22 @@ def main() -> None:
     cfg_path = repo_root / 'tools' / 'verification' / 'configs' / 'ssc_earth_4p5gyr.toml'
     cfg = Parameters.from_file(str(cfg_path))
 
+    acc_dir = Path(
+        os.environ.get(
+            'ARAGOG_ACC_STATES_DIR',
+            '/Users/timlichtenberg/work/ssc-speed-dev3/acc_states',
+        )
+    )
     states = [
         (
             '175 kyr',
             175000.0,
-            Path('/Users/timlichtenberg/work/ssc-speed-dev3/acc_states/state_175000yr.npz'),
+            acc_dir / 'state_175000yr.npz',
         ),
         (
             '283 kyr (phi <= 0.05)',
             282900.0,
-            Path('/Users/timlichtenberg/work/ssc-speed-dev3/acc_states/state_283kyr_ref.npz'),
+            acc_dir / 'state_283kyr_ref.npz',
         ),
     ]
 

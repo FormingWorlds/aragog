@@ -3137,7 +3137,7 @@ class EntropySolver:
         # 200 J/kg/K) of either phase boundary, OR sits inside the mushy band,
         # max_step is reduced to 1 yr to give CVODE enough resolution to
         # handle the phase-boundary stiffness gradually.
-        if self.entropy_eos is not None:
+        if self.entropy_eos is not None and not _const:
             entropy_margin = _resolve_entropy_margin(
                 getattr(self.parameters.energy, 'phase_boundary_entropy_margin', None)
             )

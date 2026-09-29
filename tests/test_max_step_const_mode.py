@@ -77,7 +77,7 @@ def test_solver_parameters_max_step_const_mode_validation():
 
 
 def _build_const_mode_params(
-    max_step_const_mode: float = 100.0, end_time: float = 1000.0
+    max_step_const_mode: float | None = None, end_time: float = 1000.0
 ) -> Parameters:
     """Build a minimal constant-properties simulation parameter set."""
     bc = _BoundaryConditionsParameters(
@@ -153,13 +153,15 @@ def _build_const_mode_params(
         const_T_ref=1600.0,
         const_S_ref=3000.0,
     )
-    sv = _SolverParameters(
+    solver_kwargs = dict(
         start_time=0.0,
         end_time=end_time,
         atol=1e-6,
         rtol=1e-6,
-        max_step_const_mode=max_step_const_mode,
     )
+    if max_step_const_mode is not None:
+        solver_kwargs['max_step_const_mode'] = max_step_const_mode
+    sv = _SolverParameters(**solver_kwargs)
     return Parameters(
         boundary_conditions=bc,
         energy=en,
@@ -206,7 +208,8 @@ def test_const_mode_respects_max_step_const_mode():
 @pytest.mark.unit
 def test_default_path_bitwise_unchanged_with_default_max_step():
     """Verify solver output with default max_step_const_mode=100.0 is bitwise identical."""
-    p1 = _build_const_mode_params(max_step_const_mode=100.0, end_time=100.0)
+    p1 = _build_const_mode_params(max_step_const_mode=None, end_time=100.0)
+    assert p1.solver.max_step_const_mode == 100.0
     s1 = EntropySolver(p1, entropy_eos=None)
     s1.initialize()
     s1.set_initial_entropy(3000.0)

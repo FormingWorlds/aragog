@@ -185,7 +185,7 @@ class EntropyPhaseEvaluator:
 
     @property
     def const_log10visc(self) -> float:
-        """Log10 base viscosity for constant properties mode [Pa s]."""
+        """Log10 base viscosity for constant properties mode [log10(Pa s)]."""
         return self._const_log10visc
 
     @property

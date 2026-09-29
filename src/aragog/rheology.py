@@ -450,3 +450,10 @@ def __getattr__(name: str) -> Any:
 
         return getattr(_lid, name)
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+
+
+def __dir__() -> list[str]:
+    return sorted(
+        list(globals().keys())
+        + ['compute_stagnant_lid_state', 'compute_effective_viscosity', 'stress_closure']
+    )

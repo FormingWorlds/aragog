@@ -685,7 +685,7 @@ class Parameters:
                 if option.lower() in _RHEOLOGY_FIELD_NAMES:
                     raise ValueError(
                         f"Rheology field '{option}' in [{section}] is not supported in legacy INI / .cfg format. "
-                        f"Use a TOML configuration file with '[phase_solid] {option}' instead."
+                        f"Use a TOML configuration file with 'phase_solid.{option}' instead."
                     )
 
         init_dict: dict[str, Any] = {}

@@ -22,6 +22,9 @@ _FWL_DATA = os.environ.get('FWL_DATA')
 _CANDIDATES = [
     os.environ.get('ARAGOG_TEST_EOS_DIR'),
     f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
+    '/tmp/aragog-test-data/spider_eos',
+    '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos',
+    str(_REPO.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
 ]
 EOS_DIR = next((Path(p) for p in _CANDIDATES if p and Path(p).exists()), None)
 

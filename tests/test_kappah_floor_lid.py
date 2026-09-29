@@ -152,6 +152,8 @@ def test_kappah_floor_lid_masking_tables_mode():
             entropy_eos=eos,
             gravitational_acceleration=9.8,
             const_properties=False,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.2,
             enabled=enabled,
             rheology=params if enabled else SolidRheologyParams(enabled=False),
             stress_closure_mode='lid' if enabled else 'local',
@@ -178,8 +180,6 @@ def test_kappah_floor_lid_masking_tables_mode():
         phase_basic=ev_basic_on,
         kappah_floor=10.0,
     )
-    state_on.phase_basic._phi_rheo = 0.4
-    state_on.phase_basic._phi_width = 0.2
 
     ev_basic_off = _build_evaluator(enabled=False)
     ev_stag_off = _build_evaluator(enabled=False)
@@ -191,15 +191,14 @@ def test_kappah_floor_lid_masking_tables_mode():
         phase_basic=ev_basic_off,
         kappah_floor=10.0,
     )
-    state_off.phase_basic._phi_rheo = 0.4
-    state_off.phase_basic._phi_width = 0.2
 
     # Cold conductive lid profile (S=0 at surface, S=3500 in deep mantle)
     S = np.linspace(3500.0, 0.0, mesh.staggered.radii.size)
     state_on.update(S, time=0.0)
     state_off.update(S, time=0.0)
 
-    w_lid = state_on._lid_state['w_lid']
+    assert state_on.lid_state is not None
+    w_lid = state_on.lid_state['w_lid']
     kh_on = state_on.eddy_diffusivity
     kh_off = state_off.eddy_diffusivity
 

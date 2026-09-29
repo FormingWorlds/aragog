@@ -7,8 +7,6 @@ that names the TOML key to use instead.
 
 from __future__ import annotations
 
-import tempfile
-
 import pytest
 
 from aragog.parser import Parameters
@@ -97,29 +95,29 @@ rtol = 1e-6
         ('mlt_top_slope', '0.22'),
     ],
 )
-def test_ini_rejects_rheology_field_with_clear_toml_guidance(field_name: str, field_val: str):
+def test_ini_rejects_rheology_field_with_clear_toml_guidance(
+    tmp_path, field_name: str, field_val: str
+):
     """Verify that setting any rheology field in INI raises an error naming the TOML key."""
     ini_text = _MINIMAL_BASE_INI.replace(
         '[phase_solid]\n',
         f'[phase_solid]\n{field_name} = {field_val}\n',
     )
-    with tempfile.NamedTemporaryFile(suffix='.cfg', mode='w') as f:
-        f.write(ini_text)
-        f.flush()
-        with pytest.raises(ValueError) as excinfo:
-            Parameters.from_file(f.name)
+    cfg_file = tmp_path / f'{field_name}.cfg'
+    cfg_file.write_text(ini_text, encoding='utf-8')
+    with pytest.raises(ValueError) as excinfo:
+        Parameters.from_file(str(cfg_file))
 
-        msg = str(excinfo.value)
-        assert field_name in msg
-        assert 'TOML' in msg or 'toml' in msg
-        assert f'[phase_solid] {field_name}' in msg or f'phase_solid.{field_name}' in msg
+    msg = str(excinfo.value)
+    assert field_name in msg
+    assert 'TOML' in msg or 'toml' in msg
+    assert f'[phase_solid] {field_name}' in msg or f'phase_solid.{field_name}' in msg
 
 
 @pytest.mark.unit
-def test_ini_without_rheology_fields_loads_cleanly():
+def test_ini_without_rheology_fields_loads_cleanly(tmp_path):
     """Verify that a valid INI config without rheology fields continues to load."""
-    with tempfile.NamedTemporaryFile(suffix='.cfg', mode='w') as f:
-        f.write(_MINIMAL_BASE_INI)
-        f.flush()
-        p = Parameters.from_file(f.name)
-        assert p.mesh.number_of_nodes == 20
+    cfg_file = tmp_path / 'clean.cfg'
+    cfg_file.write_text(_MINIMAL_BASE_INI, encoding='utf-8')
+    p = Parameters.from_file(str(cfg_file))
+    assert p.mesh.number_of_nodes == 20

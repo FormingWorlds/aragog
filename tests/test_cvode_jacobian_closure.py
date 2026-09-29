@@ -39,19 +39,16 @@ DOWNLOADED_EOS_DIR = _find_candidate(
 )
 
 TABLE_CASES: list[tuple[str, Path]] = []
-if PINNED_EOS_DIR is not None:
-    TABLE_CASES.append(('pinned_v1', PINNED_EOS_DIR))
-if DOWNLOADED_EOS_DIR is not None and DOWNLOADED_EOS_DIR != PINNED_EOS_DIR:
-    TABLE_CASES.append(('proteus_download', DOWNLOADED_EOS_DIR))
+if os.environ.get('ARAGOG_TEST_EOS_DIR'):
+    _override = Path(os.environ['ARAGOG_TEST_EOS_DIR'])
+    if _override.exists():
+        TABLE_CASES.append(('env_override', _override))
+
 if not TABLE_CASES:
-    _fallback = _find_candidate(
-        [
-            os.environ.get('ARAGOG_TEST_EOS_DIR'),
-            '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-        ]
-    )
-    if _fallback is not None:
-        TABLE_CASES.append(('fallback', _fallback))
+    if PINNED_EOS_DIR is not None:
+        TABLE_CASES.append(('pinned_v1', PINNED_EOS_DIR))
+    if DOWNLOADED_EOS_DIR is not None and DOWNLOADED_EOS_DIR != PINNED_EOS_DIR:
+        TABLE_CASES.append(('proteus_download', DOWNLOADED_EOS_DIR))
 
 needs_eos = pytest.mark.skipif(
     len(TABLE_CASES) == 0,

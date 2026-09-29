@@ -1255,7 +1255,7 @@ class EntropyState:
 
     @property
     def visc_eff(self) -> npt.NDArray:
-        """Effective dynamic viscosity on basic nodes [Pa s]."""
+        """Solid-phase effective dynamic viscosity on basic nodes [Pa s]."""
         return self._visc_eff
 
     @property
