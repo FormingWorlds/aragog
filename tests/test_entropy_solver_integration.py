@@ -264,6 +264,7 @@ def test_entropy_solver_get_state_returns_solver_output_with_required_fields(sha
     expected_fields = {
         'step_dE_F_int_J',
         'step_dE_F_cmb_J',
+        'step_dE_core_J',
         'step_dE_Q_radio_J',
         'step_dE_Q_tidal_J',
     }
@@ -284,6 +285,7 @@ def test_entropy_solver_solidified_run_records_finite_diagnostics(shared_eos):
     for fld in (
         'step_dE_F_int_J',
         'step_dE_F_cmb_J',
+        'step_dE_core_J',
         'step_dE_Q_radio_J',
         'step_dE_Q_tidal_J',
     ):

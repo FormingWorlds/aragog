@@ -259,6 +259,8 @@ def test_core_module_core_cools_through_the_state_derived_flux(shared_eos):
     dE_booked = float(out.step_dE_F_cmb_J)
     assert dE_booked > 0.0
     assert dE_from_T == pytest.approx(dE_booked, rel=0.10)
+    assert out.step_dE_core_J < 0.0
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) / out.step_dE_F_cmb_J < 0.05
 
 
 def test_core_module_legacy_capacity_matches_energy_balance(shared_eos):

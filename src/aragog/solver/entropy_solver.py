@@ -686,6 +686,7 @@ class SolverOutput:
     # to the atmosphere).
     step_dE_F_int_J: float  # = -∫ F_int * A_int dt [J]
     step_dE_F_cmb_J: float  # = +∫ F_cmb * A_cmb dt [J]
+    step_dE_core_J: float  # = ∫ C_eff dT [J] (negative during core cooling)
     step_dE_Q_radio_J: float  # = +∫ Q_radio_total dt [J] (state-dependent mass)
     step_dE_Q_tidal_J: float  # = +∫ Q_tidal_total dt [J] (state-dependent mass)
     # Frozen-mass variants for the conservation-grade budget. Identical
@@ -918,6 +919,7 @@ class SolverOutput:
             _scalar(
                 'step_dE_F_cmb_J', self.step_dE_F_cmb_J, 'J', 'Per-call CMB heat-gain energy'
             )
+            _scalar('step_dE_core_J', self.step_dE_core_J, 'J', 'Per-call core energy change')
             _scalar(
                 'step_dE_Q_radio_J', self.step_dE_Q_radio_J, 'J', 'Per-call radiogenic energy'
             )
@@ -3507,6 +3509,7 @@ class EntropySolver:
             'Q_tidal_cons': 0.0,
             'solver_residual': 0.0,
             'state_heat': 0.0,
+            'core': 0.0,
         }
         sol = self._solution
         eos = self.entropy_eos
@@ -3654,6 +3657,47 @@ class EntropySolver:
         denom = A_cmb * float(np.sum(dt_s))
         f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
 
+        # Core energy content change over the call [J] from closed-form C_eff.
+        step_dE_core = 0.0
+        y_arr = np.atleast_2d(sol.y)
+        if (
+            self._core_bc == 'core_module'
+            and getattr(self, '_core_module_budget', None) is not None
+        ):
+            budget = self._core_module_budget
+            t_core_traj = np.asarray(y_arr[n_stag + 1, :], dtype=float)
+            if not budget.stratification:
+                T_start = float(t_core_traj[0])
+                T_end = float(t_core_traj[-1])
+                gl_nodes, gl_weights = np.polynomial.legendre.leggauss(32)
+                half_t = 0.5 * (T_end - T_start)
+                mid_t = 0.5 * (T_end + T_start)
+                T_quad = mid_t + half_t * gl_nodes
+                c_eff_vals = np.array(
+                    [float(budget.effective_capacity(float(t_k))) for t_k in T_quad]
+                )
+                step_dE_core = float(half_t * np.sum(gl_weights * c_eff_vals))
+            else:
+                c_eff_vals = np.array(
+                    [
+                        float(budget.effective_capacity(float(t_k), float(q_k)))
+                        for t_k, q_k in zip(t_core_traj, P_F_cmb)
+                    ]
+                )
+                dT_core = np.diff(t_core_traj)
+                step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
+        elif bower:
+            C_core = getattr(self, '_core_cap', None)
+            if C_core is None:
+                p = self.parameters
+                rho_c = float(p.mesh.core_density)
+                cp_c = float(p.boundary_conditions.core_heat_capacity)
+                vol_c = 4.0 / 3.0 * np.pi * float(self._r_basic_flat[0]) ** 3
+                C_core = vol_c * rho_c * cp_c
+            t_start = float(y_arr[n_stag, 0])
+            t_end = float(y_arr[n_stag, -1])
+            step_dE_core = float(C_core * (t_end - t_start))
+
         return {
             'F_int': trap(P_F_int),
             'F_cmb': step_dE_F_cmb,
@@ -3664,6 +3708,7 @@ class EntropySolver:
             'Q_tidal_cons': trap(P_tidal_cons),
             'solver_residual': trap(P_resid_solver),
             'state_heat': state_heat,
+            'core': step_dE_core,
         }
 
     def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int = 16) -> float:
@@ -4155,6 +4200,7 @@ class EntropySolver:
             Q_tidal_total=Q_tidal_total,
             step_dE_F_int_J=step_integrals['F_int'],
             step_dE_F_cmb_J=step_integrals['F_cmb'],
+            step_dE_core_J=step_integrals['core'],
             step_dE_Q_radio_J=step_integrals['Q_radio'],
             step_dE_Q_tidal_J=step_integrals['Q_tidal'],
             step_dE_Q_radio_cons_J=step_integrals['Q_radio_cons'],
