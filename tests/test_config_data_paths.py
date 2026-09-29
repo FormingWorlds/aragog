@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from click.testing import CliRunner
 
-from aragog.cli import _apply_overrides, cli
+from aragog.cli import _absolute_template_paths, _apply_overrides, cli
 from aragog.config import Config
 from aragog.parser import Parameters
 
@@ -175,7 +175,7 @@ def test_toml_cwd_fallback_and_missing_file(tmp_path, monkeypatch):
     assert Config.from_toml(str(toml)).mesh.eos_file == str(cwd.resolve() / 'eos.dat')
 
 
-def test_cli_set_init_file_resolves_against_cwd_and_non_strings_stay(tmp_path, monkeypatch):
+def test_cli_set_init_file_and_numeric_names_resolve_against_cwd(tmp_path, monkeypatch):
     cfg_dir, cwd = tmp_path / 'cfg', tmp_path / 'cwd'
     cfg_dir.mkdir()
     cwd.mkdir()
@@ -185,7 +185,9 @@ def test_cli_set_init_file_resolves_against_cwd_and_non_strings_stay(tmp_path, m
     ic = ('initial_condition.initial_condition=2', 'initial_condition.init_file=T.dat')
     params = _cli_parameters(monkeypatch, toml, cwd, *ic)
     assert params.initial_condition.init_file == str(cwd.resolve() / 'T.dat')
-    assert _apply_overrides({'mesh': {}}, ('mesh.eos_file=1',)) == {'mesh': {'eos_file': 1}}
+    assert _apply_overrides({'mesh': {}}, ('mesh.eos_file=1',)) == {
+        'mesh': {'eos_file': str(Path.cwd() / '1')}
+    }
 
 
 @pytest.mark.parametrize(
@@ -193,6 +195,7 @@ def test_cli_set_init_file_resolves_against_cwd_and_non_strings_stay(tmp_path, m
     [
         ('bar.cfg', 'abe_solid', 'bar.cfg'),
         ('bar', 'abe_solid', 'bar.toml'),
+        ('x.TOML', 'abe_solid', 'x.TOML'),
         ('foo.toml', 'abe_mixed_init', None),
     ],
 )
@@ -207,3 +210,43 @@ def test_new_name_suffix_selects_template_form(tmp_path, monkeypatch, name, temp
         assert (
             result.exit_code != 0 and "unknown template 'abe_mixed_init.toml'" in result.output
         )
+
+
+def test_cli_set_missing_cwd_file_is_a_usage_error(tmp_path, monkeypatch):
+    cfg_dir, cwd = tmp_path / 'cfg', tmp_path / 'cwd'
+    cfg_dir.mkdir()
+    cwd.mkdir()
+    monkeypatch.setattr('aragog.eos.entropy.EntropyEOS', lambda *a, **k: object())
+    monkeypatch.chdir(cwd)
+    args = [
+        'run',
+        str(_toml_with_eos(cfg_dir)),
+        '--eos-dir',
+        str(cwd),
+        '--initial-entropy',
+        '2900',
+    ]
+    result = CliRunner().invoke(cli, args + ['--set', 'mesh.eos_file=eos.dat'])
+    assert result.exit_code == 2
+    assert 'resolved config is invalid' in result.output and 'eos.dat' in result.output
+
+
+def test_absolute_template_paths_rewrites_only_existing_relative_files(tmp_path):
+    (tmp_path / 'a.dat').write_text('1')
+    target = (tmp_path / 'a.dat').resolve().as_posix()
+    text = (
+        'eos_file = a.dat  # inline comment\n'
+        '# eos_file = a.dat\n'
+        'missing = b.dat\n'
+        'absolute = "/x/a.dat"\n'
+        'quoted = "a.dat"\n'
+        'number = 3\n'
+    )
+    assert _absolute_template_paths(text, tmp_path).splitlines() == [
+        f'eos_file = {target}  # inline comment',
+        '# eos_file = a.dat',
+        'missing = b.dat',
+        'absolute = "/x/a.dat"',
+        f'quoted = "{target}"',
+        'number = 3',
+    ]

@@ -209,10 +209,10 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
                     'config or is not a section.'
                 )
             target = target[k]
-        value = _coerce_value(raw_value)
         path_key = keys in (['mesh', 'eos_file'], ['initial_condition', 'init_file'])
-        if path_key and isinstance(value, str) and value:
-            value = str(Path.cwd() / str(value))  # command-line paths are CWD-relative
+        value = raw_value if path_key else _coerce_value(raw_value)
+        if path_key and value:
+            value = str(Path.cwd() / value)  # command-line paths are CWD-relative
         target[keys[-1]] = value
     return out
 
@@ -435,7 +435,7 @@ def run(
         data = _apply_overrides(data, set_overrides)
         try:
             parameters = Config.from_dict(data, config_dir=config.resolve().parent)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OSError) as exc:
             raise click.UsageError(
                 f'after applying --set overrides, the resolved config is invalid: {exc}.'
             ) from exc
@@ -839,7 +839,8 @@ _DEFAULT_TEMPLATE = 'abe_solid'
     help=(
         'Bundled template to copy. Run `aragog list-configs` to see '
         'available templates. Match by stem (without the .toml/.cfg '
-        'suffix); .toml is preferred when both exist.'
+        'suffix); a NAME ending in .toml or .cfg selects that form, '
+        'otherwise .toml is preferred when both exist.'
     ),
 )
 @click.option(
@@ -861,16 +862,10 @@ def new(name: str, template: str, force: bool) -> None:
 
     # A NAME ending in .toml or .cfg selects that format; otherwise prefer
     # .toml over .cfg (the legacy INI flavour) when both exist.
-    requested = Path(name).suffix if Path(name).suffix in ('.toml', '.cfg') else ''
-    candidates = (
-        [template + requested] if requested else [f'{template}.toml', f'{template}.cfg']
-    )
-    src: Traversable | None = None
-    for candidate in candidates:
-        entry = cfg_dir.joinpath(candidate)
-        if entry.is_file():
-            src = entry
-            break
+    requested = Path(name).suffix.lower()
+    requested = requested if requested in ('.toml', '.cfg') else ''
+    suffixes = [requested] if requested else ['.toml', '.cfg']
+    src = next((e for s in suffixes if (e := cfg_dir.joinpath(template + s)).is_file()), None)
     if src is None:
         available = sorted(
             p.name for p in cfg_dir.iterdir() if p.name.endswith(('.toml', '.cfg'))
