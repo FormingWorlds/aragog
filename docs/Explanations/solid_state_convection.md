@@ -182,6 +182,8 @@ $$
 
 where $\Delta r_\text{half} = 0.5 (r_{N-1} - r_{N-2})$ and $\sigma = 5.670374419 \times 10^{-8}\text{ W m}^{-2}\text{ K}^{-4}$.
 
+Evaluating this condition on a uniform radial grid ($N = 100$, uniform cell $\approx 29\text{ km}$, $\Delta r_\text{half} \approx 14.5\text{ km}$) severely chokes the conductive flux ($0.21\text{ W m}^{-2}$ during magma ocean cooling). The configuration loader strictly enforces opt-in surface refinement (`mesh.surface_cell_thickness > 0`) whenever outer BC 6 is selected (`src/aragog/parser.py:Parameters.__post_init__`). This requirement guarantees that the skin layer is physically resolved.
+
 To prevent surface cells from leaving the lower temperature bound of tabulated equations of state ($T \approx 320\text{ K}$ in SPIDER solid P-S tables), the outward flux is scaled near the table edge:
 
 $$
