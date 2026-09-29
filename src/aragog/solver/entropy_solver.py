@@ -1560,6 +1560,12 @@ class EntropySolver:
             self._core_module_budget = build_core_module_budget(
                 params, r_cmb=r_cmb, p_cmb_fallback=float(self._P_stag_flat[0])
             )
+            try:
+                import jax
+
+                self._core_module_budget_dtcmb_dt = jax.jit(self._core_module_budget.dtcmb_dt)
+            except Exception:
+                self._core_module_budget_dtcmb_dt = self._core_module_budget.dtcmb_dt
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
@@ -2445,8 +2451,11 @@ class EntropySolver:
         # idiom as the T_cmb_basic clamp below): the melting curve and
         # adiabat are undefined at non-positive temperature, and a
         # transient integrator excursion must not evaluate them there.
+        dtcmb_fn = getattr(
+            self, '_core_module_budget_dtcmb_dt', self._core_module_budget.dtcmb_dt
+        )
         dT_core_dt = float(
-            self._core_module_budget.dtcmb_dt(
+            dtcmb_fn(
                 max(float(t_core), 1.0),
                 q_cmb,
                 q_sources=self._core_module_q_radio,
@@ -3673,17 +3682,35 @@ class EntropySolver:
                 half_t = 0.5 * (T_end - T_start)
                 mid_t = 0.5 * (T_end + T_start)
                 T_quad = mid_t + half_t * gl_nodes
-                c_eff_vals = np.array(
-                    [float(budget.effective_capacity(float(t_k))) for t_k in T_quad]
-                )
+                try:
+                    c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
+                    if c_eff_fn is None:
+                        import jax
+
+                        c_eff_fn = jax.jit(jax.vmap(budget.effective_capacity))
+                        budget._vmap_effective_capacity = c_eff_fn
+                    c_eff_vals = np.asarray(c_eff_fn(T_quad))
+                except Exception:
+                    c_eff_vals = np.array(
+                        [float(budget.effective_capacity(float(t_k))) for t_k in T_quad]
+                    )
                 step_dE_core = float(half_t * np.sum(gl_weights * c_eff_vals))
             else:
-                c_eff_vals = np.array(
-                    [
-                        float(budget.effective_capacity(float(t_k), float(q_k)))
-                        for t_k, q_k in zip(t_core_traj, P_F_cmb)
-                    ]
-                )
+                try:
+                    c_eff_fn = getattr(budget, '_vmap_effective_capacity_strat', None)
+                    if c_eff_fn is None:
+                        import jax
+
+                        c_eff_fn = jax.jit(jax.vmap(budget.effective_capacity))
+                        budget._vmap_effective_capacity_strat = c_eff_fn
+                    c_eff_vals = np.asarray(c_eff_fn(t_core_traj, P_F_cmb))
+                except Exception:
+                    c_eff_vals = np.array(
+                        [
+                            float(budget.effective_capacity(float(t_k), float(q_k)))
+                            for t_k, q_k in zip(t_core_traj, P_F_cmb)
+                        ]
+                    )
                 dT_core = np.diff(t_core_traj)
                 step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
         elif bower:
