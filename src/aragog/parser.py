@@ -341,11 +341,9 @@ class _Radionuclide:
                 with a single time in the time array.
         """
         arg: npt.NDArray | float = np.log(2) * (self.t0_years - time) / self.half_life_years
-        heating: npt.NDArray | float = (
-            self.heat_production * self.abundance * self.concentration * np.exp(arg)
-        )
-
-        return heating
+        amplitude = self.heat_production * self.abundance * self.concentration
+        # A zero-amplitude isotope contributes 0, also where exp(arg) overflows.
+        return amplitude * np.exp(arg) if amplitude else 0.0 * arg
 
 
 @dataclass
@@ -465,6 +463,17 @@ class Parameters:
         # Convert radionuclide concentration from ppm to mass fraction.
         for r in self.radionuclides:
             r.concentration *= 1e-6
+        if self.energy.radionuclides:
+            t_start = self.solver.start_time
+            for r in self.radionuclides:
+                with np.errstate(over='ignore'):
+                    finite = np.isfinite(r.get_heating(t_start))
+                if not finite:
+                    raise ValueError(
+                        f'Radionuclide {r.name}: heating is not finite at the start time '
+                        f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
+                        f'{r.half_life_years}); exp(ln2 (t0 - t) / half_life) overflows'
+                    )
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
