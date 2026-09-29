@@ -383,6 +383,10 @@ def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, mon
     assert not np.allclose(anchored_roots[0], anchored_roots[1]), (
         'Segment 1 root function was not re-anchored to the segment state!'
     )
+    # The joined energy trace spans the whole call at internal-step resolution.
+    t_tr, _ = s._solution.energy_trace
+    assert t_tr[0] == s._solution.t[0] and t_tr[-1] == s._solution.t[-1]
+    assert np.all(np.diff(t_tr) > 0.0) and t_tr.size > s._solution.t.size
 
 
 @needs_eos
