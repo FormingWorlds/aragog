@@ -169,7 +169,7 @@ Spatial discretisation and pressure-density profile.
 | `adams_williamson_beta` | -- | A–W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
 | `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |
 | `mass_coordinates` | bool | If true, use a SPIDER-parity mass-coordinate grid with Newton-solved spatial radii. Default true (PROTEUS production); set false for uniform spacing in radius |
-| `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. |
+| `eos_file` | str | Path to a four-column file (`r [m]`, `P [Pa]`, `rho [kg/m³]`, `g [m/s²]`) used when `eos_method = 2`. PROTEUS supplies a Zalmoxis-generated file via this key. A relative path resolves against the directory of the config file first, then the working directory. |
 
 ### `[energy]`
 
@@ -203,7 +203,7 @@ Initial entropy profile (mapped from the temperature inputs via the EOS).
 | `initial_condition` | int | `1` = linear T(r) profile (default), `2` = read from `init_file`, `3` = adiabatic |
 | `surface_temperature` | K | Top temperature for modes `1` and `3` |
 | `basal_temperature` | K | Bottom temperature for mode `1` |
-| `init_file` | str | Path to a two-column `r, T` (or `r, S`) file used when `initial_condition = 2` |
+| `init_file` | str | Path to a two-column `r, T` (or `r, S`) file used when `initial_condition = 2`. A relative path resolves against the directory of the config file first, then the working directory. |
 
 When the PROTEUS wrapper drives Aragog the initial entropy is supplied directly via `EntropySolver.set_initial_entropy()`; the section keys are still parsed but the values are overridden by the call.
 

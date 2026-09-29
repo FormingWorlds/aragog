@@ -36,7 +36,7 @@ The full standalone walkthrough is in [Tutorials: First run](../Tutorials/firstr
 
 The standalone CLI exposes the `aragog` console entry point with seven subcommands:
 
-- `aragog new` scaffolds a new TOML config from a bundled template.
+- `aragog new` scaffolds a new config from a bundled template, in the template's format (TOML or INI).
 - `aragog list-configs` enumerates the bundled `cfg/abe_*.{toml,cfg}` examples.
 - `aragog validate` parses a config and reports errors without solving.
 - `aragog show-config` dumps the resolved `Parameters` tree as JSON.
