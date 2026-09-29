@@ -27,6 +27,29 @@ from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOS
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
+# The data file fields the solver loads, as (section, key).
+DATA_PATH_FIELDS = (('mesh', 'eos_file'), ('initial_condition', 'init_file'))
+
+
+def _resolve_data_paths(config_dir, mesh, initial_condition) -> None:
+    """Resolve relative ``eos_file`` and ``init_file`` against ``config_dir``, then the CWD.
+
+    A relative path that names a file in ``config_dir`` or else in the working
+    directory becomes that absolute path; otherwise it is left as given.
+    Absolute paths are unchanged.
+    """
+    sections = {'mesh': mesh, 'initial_condition': initial_condition}
+    for section, name in DATA_PATH_FIELDS:
+        path = getattr(sections[section], name)
+        if path and not Path(path).is_absolute():
+            for d in (Path(config_dir), Path.cwd()):
+                if (d / path).is_file():
+                    resolved = str((d / path).resolve())
+                    setattr(sections[section], name, resolved)
+                    logger.info('%s.%s %s resolved to %s', section, name, path, resolved)
+                    break
+
+
 def _get_dataclass_from_section_name() -> dict[str, Any]:
     """Maps the section names in the configuration data to the dataclasses that stores the data."""
     mapping: dict[str, Any] = {
@@ -567,6 +590,9 @@ class Parameters:
                     ) from exc
 
         init_dict['radionuclides'] = radionuclides
+        _resolve_data_paths(
+            path.resolve().parent, init_dict['mesh'], init_dict['initial_condition']
+        )
         return cls(**init_dict)  # pylint: disable=E1125
 
     @classmethod
@@ -593,6 +619,11 @@ class Parameters:
             )
             radionuclides.append(radionuclide)
         init_dict['radionuclides'] = radionuclides
+        _resolve_data_paths(
+            Path(filenames[0]).resolve().parent,
+            init_dict['mesh'],
+            init_dict['initial_condition'],
+        )
         return cls(**init_dict)  # pylint: disable=E1125
 
     @staticmethod
