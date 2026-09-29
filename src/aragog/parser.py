@@ -27,6 +27,10 @@ from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOS
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
+# The data file fields the solver loads, as (section, key).
+DATA_PATH_FIELDS = (('mesh', 'eos_file'), ('initial_condition', 'init_file'))
+
+
 def _resolve_data_paths(config_dir, mesh, initial_condition) -> None:
     """Resolve relative ``eos_file`` and ``init_file`` against ``config_dir``, then the CWD.
 
@@ -34,12 +38,15 @@ def _resolve_data_paths(config_dir, mesh, initial_condition) -> None:
     directory becomes that absolute path; otherwise it is left as given.
     Absolute paths are unchanged.
     """
-    for obj, name in ((mesh, 'eos_file'), (initial_condition, 'init_file')):
-        path = getattr(obj, name)
+    sections = {'mesh': mesh, 'initial_condition': initial_condition}
+    for section, name in DATA_PATH_FIELDS:
+        path = getattr(sections[section], name)
         if path and not Path(path).is_absolute():
             for d in (Path(config_dir), Path.cwd()):
                 if (d / path).is_file():
-                    setattr(obj, name, str((d / path).resolve()))
+                    resolved = str((d / path).resolve())
+                    setattr(sections[section], name, resolved)
+                    logger.info('%s.%s %s resolved to %s', section, name, path, resolved)
                     break
 
 

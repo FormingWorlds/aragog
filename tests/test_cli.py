@@ -10,8 +10,6 @@ override mechanic.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import click
 import pytest
 from click.testing import CliRunner
@@ -980,14 +978,9 @@ def test_new_scaffolds_default_template(tmp_path, monkeypatch):
         .joinpath('cfg/abe_solid.toml')
         .read_text(encoding='utf-8')
     )
-    cfg_dir = Path(str(importlib.resources.files('aragog').joinpath('cfg')))
-    copied, original = dest.read_text(encoding='utf-8').splitlines(), template.splitlines()
-    assert len(copied) == len(original)
-    changed = [(c, o) for c, o in zip(copied, original) if c != o]
-    assert len(changed) == 2, changed  # solidus and liquidus data paths
-    for c, o in changed:
-        rel, absolute = o.split('"')[1], c.split('"')[1]
-        assert Path(absolute) == (cfg_dir / rel).resolve() and Path(absolute).is_file()
+    assert dest.read_text(encoding='utf-8') == template, (
+        'scaffolded file diverges from the bundled template; the copy is broken.'
+    )
 
 
 def test_new_appends_toml_suffix_when_missing(tmp_path, monkeypatch):

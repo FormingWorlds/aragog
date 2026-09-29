@@ -118,6 +118,17 @@ def _vnv_figures_dir() -> Path:
     return repo_root / 'tools' / 'verification' / 'figures'
 
 
+def _unquote(raw: str) -> str:
+    """Return ``raw`` without one layer of JSON double quotes, else unchanged."""
+    import json
+
+    try:
+        value = json.loads(raw) if raw.startswith('"') else raw
+    except json.JSONDecodeError:
+        return raw
+    return value if isinstance(value, str) else raw
+
+
 def _coerce_value(raw: str):
     """Coerce a CLI override string to a Python value.
 
@@ -178,6 +189,8 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
     """
     import copy
 
+    from aragog.parser import DATA_PATH_FIELDS
+
     out = copy.deepcopy(data)
     for spec in overrides:
         if '=' not in spec:
@@ -209,8 +222,8 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
                     'config or is not a section.'
                 )
             target = target[k]
-        path_key = keys in (['mesh', 'eos_file'], ['initial_condition', 'init_file'])
-        value = raw_value if path_key else _coerce_value(raw_value)
+        path_key = tuple(keys) in DATA_PATH_FIELDS
+        value = _unquote(raw_value) if path_key else _coerce_value(raw_value)
         if path_key and value:
             value = str(Path.cwd() / value)  # command-line paths are CWD-relative
         target[keys[-1]] = value
@@ -435,10 +448,13 @@ def run(
         data = _apply_overrides(data, set_overrides)
         try:
             parameters = Config.from_dict(data, config_dir=config.resolve().parent)
-        except (TypeError, ValueError, OSError) as exc:
+        except (TypeError, ValueError) as exc:
             raise click.UsageError(
-                f'after applying --set overrides, the resolved config is invalid: {exc}.'
+                f'after applying --set overrides, the resolved config is invalid: '
+                f'{str(exc).rstrip(".")}.'
             ) from exc
+        except OSError as exc:
+            raise click.UsageError(_unreadable_data_file(exc)) from exc
         entropy_eos = EntropyEOS(Path(eos_dir))
         solver = EntropySolver(parameters, entropy_eos)
         logger.info(
@@ -447,7 +463,10 @@ def run(
             config.name,
         )
     else:
-        solver = EntropySolver.from_file(filename=str(config), eos_dir=str(eos_dir))
+        try:
+            solver = EntropySolver.from_file(filename=str(config), eos_dir=str(eos_dir))
+        except OSError as exc:
+            raise click.UsageError(_unreadable_data_file(exc)) from exc
     solver.initialize()
 
     core_bc = getattr(solver.parameters.boundary_conditions, 'core_bc', 'energy_balance')
@@ -855,8 +874,9 @@ def new(name: str, template: str, force: bool) -> None:
     NAME is the destination filename. A `.toml` or `.cfg` suffix selects
     that form of the template; without one the template's suffix is
     appended (`.toml` when both forms exist). The file is
-    written to the current working directory, with relative data file
-    paths of the template made absolute.
+    written to the current working directory, with a relative eos_file or
+    init_file of the template made absolute (source checkouts only: the
+    bundled data files are not package data).
     """
     cfg_dir = _bundled_cfg_dir()
 
@@ -886,8 +906,16 @@ def new(name: str, template: str, force: bool) -> None:
     click.echo(f'wrote {dest} (from template {template})')
 
 
+def _unreadable_data_file(exc: OSError) -> str:
+    """Usage-error text for a data file that could not be read."""
+    return f'could not read a data file: {str(exc).rstrip(".")}.'
+
+
 def _absolute_template_paths(text: str, template_dir: Path) -> str:
-    """Rewrite relative values that name a file in ``template_dir`` as absolute paths."""
+    """Rewrite relative data file values that name a file in ``template_dir`` as absolute."""
+    from aragog.parser import DATA_PATH_FIELDS
+
+    keys = '|'.join(name for _, name in DATA_PATH_FIELDS)
 
     def fix(m: re.Match) -> str:
         path = template_dir / m.group(3)
@@ -895,7 +923,7 @@ def _absolute_template_paths(text: str, template_dir: Path) -> str:
             return m.group(0)
         return f'{m.group(1)}{m.group(2)}{path.resolve().as_posix()}{m.group(2)}'
 
-    return re.sub(r'(?m)^(\s*\w+\s*=\s*)(["\']?)([^"\'\s#]+)\2', fix, text)
+    return re.sub(rf'(?m)^(\s*(?:{keys})\s*=\s*)(["\']?)([^"\'\s#]+)\2', fix, text)
 
 
 # ---------------------------------------------------------------------------
