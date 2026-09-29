@@ -1927,14 +1927,47 @@ class EntropySolver:
         logger.info('Cold-start dSdr_cmb from FD: %.3e J/kg/K/m', dSdr_cmb_init)
         return dSdr_cmb_init
 
-    def set_initial_core_temperature(self, T_core_init: float) -> None:
+    def set_initial_core_temperature(self, T_core_init: float | None) -> None:
         """Set the initial core temperature (``bower2018`` / ``core_module``).
 
         Must be called BEFORE ``set_initial_entropy``. If not called,
-        the initial T_core defaults to the bottom-cell mantle
-        temperature derived from S_init via the EOS.
+        the initial T_core defaults to the previous solution's final value
+        (if any), else to the bottom-cell mantle temperature derived from
+        S_init via the EOS.
+
+        Pass ``None`` to clear a previously-set override, restoring
+        the hot-start behaviour on the next call to ``set_initial_entropy``.
         """
-        self._T_core_init = float(T_core_init)
+        self._T_core_init = None if T_core_init is None else float(T_core_init)
+
+    def get_current_core_temperature(self) -> float | None:
+        """Return the most recent core temperature from the solver state.
+
+        Reads ``self._solution.y[T_core_slot, -1]`` (the final T_core from the
+        last accepted solve). Returns ``None`` when no solution exists yet,
+        or when the state vector lacks the T_core slot (core_bc other than
+        ``bower2018`` or ``core_module``).
+
+        Used by PROTEUS's retry ladder to snapshot the pre-solve
+        T_core before a sequence of retry attempts and restore it on
+        each retry, mirroring ``get_current_dSdr_cmb``.
+        """
+        n_stag = getattr(self, '_n_stag', None)
+        prev_sol = getattr(self, '_solution', None)
+        core_bc = getattr(self, '_core_bc', None)
+        if core_bc is None and getattr(self, 'parameters', None) is not None:
+            core_bc = getattr(self.parameters.boundary_conditions, 'core_bc', None)
+        slots = EXTRA_STATE_SLOTS.get(core_bc, ())
+        if (
+            n_stag is None
+            or 'T_core' not in slots
+            or prev_sol is None
+            or getattr(prev_sol, 'y', None) is None
+            or prev_sol.y.size == 0
+            or prev_sol.y.shape[0] != n_stag + len(slots)
+        ):
+            return None
+        return float(prev_sol.y[n_stag + slots.index('T_core'), -1])
 
     def set_initial_dSdr_cmb(self, dSdr_cmb_init: float | None) -> None:
         """Set the initial CMB entropy gradient (energy_balance / core_module).

@@ -191,3 +191,42 @@ def test_r4_core_temperature_from_column_reads_slot(shared_eos):
 
     reported_t = solver._core_temperature_from_column(y_col)
     assert reported_t == pytest.approx(6543.21, rel=1e-6)
+
+
+def test_r6_retry_snapshot_restore_t_core(shared_eos):
+    """R6: get_current_core_temperature snapshots T_core and set_initial restores it.
+
+    Ensures that a failed solve attempt does not leave T_core at the failed state
+    and can be restored on retry.
+    """
+
+    class _Sol:
+        pass
+
+    solver = _build_solver(core_bc='core_module', shared_eos=shared_eos)
+    solver.initialize()
+    n_stag = solver._n_stag
+    sol = _Sol()
+    sol.y = np.zeros((n_stag + 2, 3))
+    sol.y[n_stag, -1] = -1.5e-4
+    sol.y[n_stag + 1, -1] = 5925.5
+    solver._solution = sol
+
+    # Snapshot current core temperature
+    assert hasattr(solver, 'get_current_core_temperature')
+    t_core_snap = solver.get_current_core_temperature()
+    assert t_core_snap == pytest.approx(5925.5)
+
+    # When core_bc is energy_balance, returns None
+    eb_solver = _build_solver(core_bc='energy_balance', shared_eos=shared_eos)
+    eb_solver.initialize()
+    sol_eb = _Sol()
+    sol_eb.y = np.zeros((eb_solver._n_stag + 1, 3))
+    sol_eb.y[eb_solver._n_stag, -1] = -1.5e-4
+    eb_solver._solution = sol_eb
+    assert eb_solver.get_current_core_temperature() is None
+
+    # Simulate retry: restore from snapshot
+    solver.set_initial_core_temperature(t_core_snap)
+    solver.set_initial_entropy(np.full(n_stag, 2900.0))
+    assert solver._S0[n_stag + 1] == pytest.approx(5925.5)
