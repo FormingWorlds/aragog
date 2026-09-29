@@ -17,7 +17,7 @@ The `--versions` block is the recommended attachment for any bug report.
 
 | Subcommand | Purpose |
 |---|---|
-| `aragog new` | Scaffold a new TOML config from a bundled template. |
+| `aragog new` | Scaffold a new config from a bundled template, in the template's format (TOML or INI). |
 | `aragog list-configs` | Enumerate the bundled `cfg/abe_*.{toml,cfg}` examples. |
 | `aragog validate` | Parse a config and report errors without solving. |
 | `aragog show-config` | Dump the resolved `Parameters` tree as JSON. |
@@ -33,9 +33,10 @@ Each subcommand is described below.
 aragog new <name> [--from <template>] [--force]
 ```
 
-Copies a bundled `cfg/abe_*.{toml,cfg}` template to the cwd as `<name>.toml`.
+Copies a bundled `cfg/abe_*.{toml,cfg}` template to the cwd as `<name>.toml` or `<name>.cfg`, keeping the template's format.
+Relative data file paths in the template that name an existing file are written as absolute paths, so the copy runs from any directory.
 Default template is `abe_solid` (the canonical solid-phase cooling smoke); use `--from abe_mixed` (or any other name from `aragog list-configs`) to pick a different starting point.
-The `.toml` suffix is appended automatically when omitted.
+The suffix is appended automatically when omitted.
 Refuses to overwrite an existing destination unless `--force` is passed.
 
 ```bash
@@ -132,6 +133,7 @@ aragog run earth_smoke.toml \
 Constraints:
 
 - `--set` requires a `.toml` config (uses `tomllib`); legacy `.cfg` INI is rejected with a clear error.
+- A relative `mesh.eos_file` or `initial_condition.init_file` value given with `--set` resolves against the working directory; the same keys inside the config file resolve against the config file's directory first.
 - Unknown intermediate sections (e.g. `--set atmos.X=...`) raise immediately, before any solver construction.
 - Unknown leaf keys (e.g. `--set energy.kapaha_floor=...` with the typo) surface as `UsageError: after applying --set overrides, the resolved config has unknown / mismatched fields: ...`.
 

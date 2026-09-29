@@ -106,15 +106,12 @@ def test_from_dict_without_config_dir_leaves_path_as_given(tmp_path, monkeypatch
     assert params.mesh.eos_file == 'eos.dat'
 
 
-def test_cli_set_resolves_against_config_dir(tmp_path, monkeypatch):
+def _cli_parameters(monkeypatch, toml: Path, cwd: Path, *overrides: str):
+    """Run ``aragog run TOML --set ...`` from ``cwd`` with a stub solver; return its Parameters."""
     from click.testing import CliRunner
 
     from aragog.cli import cli
 
-    cfg_dir, cwd = tmp_path / 'cfg', tmp_path / 'cwd'
-    cfg_dir.mkdir()
-    cwd.mkdir()
-    toml = _toml_with_eos(cfg_dir)
     captured = {}
 
     class _Solver:
@@ -130,7 +127,43 @@ def test_cli_set_resolves_against_config_dir(tmp_path, monkeypatch):
     monkeypatch.setattr('aragog.solver.EntropySolver', _Solver)
     monkeypatch.setattr('aragog.eos.entropy.EntropyEOS', lambda *a, **k: object())
     monkeypatch.chdir(cwd)
-    args = ['run', str(toml), '--eos-dir', str(tmp_path), '--initial-entropy', '2900']
-    result = CliRunner().invoke(cli, args + ['--set', 'solver.atol=1e-12'])
+    args = ['run', str(toml), '--eos-dir', str(cwd), '--initial-entropy', '2900']
+    result = CliRunner().invoke(cli, args + [a for o in overrides for a in ('--set', o)])
     assert result.exit_code == 0, result.output
-    assert captured['p'].mesh.eos_file == str(cfg_dir.resolve() / 'eos.dat')
+    return captured['p']
+
+
+def test_cli_set_resolves_against_config_dir(tmp_path, monkeypatch):
+    cfg_dir, cwd = tmp_path / 'cfg', tmp_path / 'cwd'
+    cfg_dir.mkdir()
+    cwd.mkdir()
+    params = _cli_parameters(monkeypatch, _toml_with_eos(cfg_dir), cwd, 'solver.atol=1e-12')
+    assert params.mesh.eos_file == str(cfg_dir.resolve() / 'eos.dat')
+
+
+def test_cli_set_path_value_resolves_against_cwd(tmp_path, monkeypatch):
+    cfg_dir, cwd = tmp_path / 'cfg', tmp_path / 'cwd'
+    cfg_dir.mkdir()
+    cwd.mkdir()
+    toml = _toml_with_eos(cfg_dir)
+    shutil.copy(EOS_TEST, cwd / 'eos.dat')
+    params = _cli_parameters(monkeypatch, toml, cwd, 'mesh.eos_file=eos.dat')
+    assert params.mesh.eos_file == str(cwd.resolve() / 'eos.dat')
+
+
+@pytest.mark.parametrize(
+    'template, suffix', [('abe_mixed_init', '.cfg'), ('abe_solid', '.toml')]
+)
+def test_new_keeps_template_format_and_data_paths(tmp_path, monkeypatch, template, suffix):
+    from click.testing import CliRunner
+
+    from aragog.cli import cli
+
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli, ['new', 'copy', '--from', template])
+    assert result.exit_code == 0, result.output
+    assert [p.name for p in tmp_path.iterdir()] == [f'copy{suffix}']
+    params = Parameters.from_file(str(tmp_path / f'copy{suffix}'))
+    if template == 'abe_mixed_init':
+        assert Path(params.mesh.eos_file) == EOS_TEST
+        np.testing.assert_array_equal(params.mesh.eos_radius, np.loadtxt(EOS_TEST)[:, 0])

@@ -33,6 +33,7 @@ import importlib.resources
 import importlib.util
 import logging
 import os
+import re
 import sys
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -171,7 +172,9 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
     missing or non-dict in the input. Does NOT validate the leaf
     key against the dataclass schema; an unknown leaf key surfaces
     later as a TypeError at ``Config.from_dict`` construction
-    time, which the caller wraps with a clearer message.
+    time, which the caller wraps with a clearer message. A relative
+    ``mesh.eos_file`` or ``initial_condition.init_file`` value becomes
+    absolute against the working directory.
     """
     import copy
 
@@ -206,7 +209,10 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
                     'config or is not a section.'
                 )
             target = target[k]
-        target[keys[-1]] = _coerce_value(raw_value)
+        value = _coerce_value(raw_value)
+        if keys in (['mesh', 'eos_file'], ['initial_condition', 'init_file']) and value:
+            value = str(Path.cwd() / str(value))  # command-line paths are CWD-relative
+        target[keys[-1]] = value
     return out
 
 
@@ -842,10 +848,12 @@ _DEFAULT_TEMPLATE = 'abe_solid'
     help='Overwrite the destination if it already exists.',
 )
 def new(name: str, template: str, force: bool) -> None:
-    """Scaffold a new TOML config in the cwd by copying a bundled template.
+    """Scaffold a new config in the cwd by copying a bundled template.
 
-    NAME is the destination filename (with or without a `.toml`
-    extension). The file is written to the current working directory.
+    NAME is the destination filename (with or without the template's
+    `.toml` or `.cfg` extension, which the copy keeps). The file is
+    written to the current working directory, with relative data file
+    paths of the template made absolute.
     """
     cfg_dir = _bundled_cfg_dir()
 
@@ -866,15 +874,29 @@ def new(name: str, template: str, force: bool) -> None:
             f"unknown template '{template}'. Available templates: {', '.join(available)}."
         )
 
-    dest_name = name if name.endswith('.toml') else f'{name}.toml'
+    suffix = Path(src.name).suffix  # keep the template's format: TOML or INI
+    dest_name = name if name.endswith(suffix) else f'{name}{suffix}'
     dest = Path.cwd() / dest_name
     if dest.exists() and not force:
         raise click.UsageError(
             f'{dest} already exists. Pass --force to overwrite, or pick a different name.'
         )
 
-    dest.write_text(src.read_text(encoding='utf-8'), encoding='utf-8')
+    text = _absolute_template_paths(src.read_text(encoding='utf-8'), Path(str(src)).parent)
+    dest.write_text(text, encoding='utf-8')
     click.echo(f'wrote {dest} (from template {template})')
+
+
+def _absolute_template_paths(text: str, template_dir: Path) -> str:
+    """Rewrite relative values that name a file in ``template_dir`` as absolute paths."""
+
+    def fix(m: re.Match) -> str:
+        path = template_dir / m.group(3)
+        if Path(m.group(3)).is_absolute() or not path.is_file():
+            return m.group(0)
+        return f'{m.group(1)}{m.group(2)}{path.resolve()}{m.group(2)}'
+
+    return re.sub(r'(?m)^(\s*\w+\s*=\s*)(["\']?)([^"\'\s#]+)\2', fix, text)
 
 
 # ---------------------------------------------------------------------------
