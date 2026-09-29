@@ -196,3 +196,22 @@ def test_live_isotope_is_checked_at_the_start_time(tmp_path):
     p = Parameters.from_file(str(cfg))
     al26 = next(r for r in p.radionuclides if r.name == 'Al26')
     assert np.isfinite(al26.get_heating(4.549e9)) and al26.get_heating(4.549e9) > 0.0
+
+
+@pytest.mark.unit
+def test_live_isotope_overflowing_only_at_the_start_time_raises(tmp_path):
+    # With t0 = 1e8 yr the heating is finite at t = 0 and overflows at the start time -2e9 yr.
+    cfg = _lookup_cfg(tmp_path, al26_live=True)
+    text = cfg.read_text()
+    head, al26 = text.split('[radionuclide_Al26]')
+    al26, n = re.subn(r'(?m)^t0_years = .*$', 't0_years = 1e8', al26, count=1)
+    assert n == 1
+    text = (head + '[radionuclide_Al26]' + al26).replace(
+        'start_time = 0\n', 'start_time = -2e9\n'
+    )
+    assert 'start_time = -2e9\n' in text
+    cfg.write_text(text)
+    with pytest.raises(ValueError, match=r'Al26.*start time -2000000000.0'):
+        Parameters.from_file(str(cfg))
+    cfg.write_text(text.replace('start_time = -2e9\n', 'start_time = 0\n'))
+    Parameters.from_file(str(cfg))
