@@ -3767,9 +3767,11 @@ class EntropySolver:
         n_stag = self._n_stag
         core_bc = self._core_bc
         # bower2018 carries the core temperature as an explicit ODE state
-        # at index n_stag, so read it directly.
+        # at index n_stag, and core_module carries it at index n_stag + 1.
         if core_bc == 'bower2018':
             return float(y_col[n_stag])
+        if core_bc == 'core_module':
+            return float(y_col[n_stag + 1])
         # Only the bottom (CMB) staggered cell is needed, and it is index 0
         # in every mode. gradient reconstructs the staggered entropy from the
         # basic-node state first; energy_balance and quasi_steady already hold
