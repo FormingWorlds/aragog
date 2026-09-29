@@ -156,6 +156,14 @@ def test_negative_factors_raise():
 
 
 @pytest.mark.unit
+def test_tiny_negative_concentration_raises():
+    # -1e-320 ppm scales to -0.0, so the sign is checked on the ppm input.
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    with pytest.raises(ValueError, match='K40: .*must not be negative'):
+        _with(p, {**K40_PPM, 'concentration': -1e-320})
+
+
+@pytest.mark.unit
 def test_finiteness_is_checked_on_the_mass_fraction():
     # exp(arg) ~ 1e305: 1e4 ppm overflows unconverted (1e309) but not as a mass fraction (1e303).
     p = Parameters.from_file(str(BUNDLED_LOOKUP))

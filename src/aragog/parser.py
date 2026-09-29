@@ -491,17 +491,18 @@ class Parameters:
         scaled = [replace(r, concentration=r.concentration * _PPM) for r in self.radionuclides]
         if self.energy.radionuclides:
             t_start = self.solver.start_time
-            for r in scaled:
+            for r, r_ppm in zip(scaled, self.radionuclides):
                 if not r.half_life_years > 0.0:
                     raise ValueError(
                         f'Radionuclide {r.name}: half_life_years must be positive, '
                         f'got {r.half_life_years}'
                     )
-                if min(r.heat_production, r.abundance, r.concentration) < 0.0:
+                # On the ppm input: scaling can round a tiny negative value to -0.0.
+                if min(r_ppm.heat_production, r_ppm.abundance, r_ppm.concentration) < 0.0:
                     raise ValueError(
-                        f'Radionuclide {r.name}: heat_production ({r.heat_production}), '
-                        f'abundance ({r.abundance}) and concentration '
-                        f'({r.concentration / _PPM} ppm) must not be negative'
+                        f'Radionuclide {r.name}: heat_production ({r_ppm.heat_production}), '
+                        f'abundance ({r_ppm.abundance}) and concentration '
+                        f'({r_ppm.concentration} ppm) must not be negative'
                     )
                 with np.errstate(over='ignore'):
                     finite = np.isfinite(r.get_heating(t_start))
