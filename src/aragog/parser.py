@@ -68,7 +68,8 @@ class _BoundaryConditionsParameters:
     #               'bower2018' (unrecommended; T_core as ODE state,
     #               retained for parity testing only),
     #               'core_module' (staged core-evolution budget from
-    #               aragog.core; T_cmb as ODE state, length N+1).
+    #               aragog.core; dSdr_cmb and T_core as ODE states,
+    #               length N+2).
     # See aragog/config/boundary.py docstring for details.
     # Default 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'

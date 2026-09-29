@@ -76,6 +76,9 @@ class BoundaryConfig:
     #     by orders of magnitude; this mode is retained for parity
     #     testing only and is not recommended for production.
     #
+    #   'core_module' = staged core-evolution budget from aragog.core;
+    #     dSdr_cmb and T_core as ODE states. State vector length N+2.
+    #
     # Default 'energy_balance' matches the PROTEUS production path.
     # Standalone callers that want the legacy alpha-factor behaviour
     # must set core_bc='quasi_steady' explicitly.
