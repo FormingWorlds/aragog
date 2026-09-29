@@ -475,11 +475,10 @@ def run(
         description=f'Aragog run from {config.name}',
     )
     click.echo(f'wrote {out_path}')
-    sol = solver._solution
-    if sol.status < 0:
+    if state.status < 0:
         raise click.ClickException(
-            f'integration failed (status={sol.status}): {sol.message}; '
-            f'the state at t={sol.t[-1]:.6g} yr was written'
+            f'integration failed (status={state.status}): {solver.solution.message}; '
+            f'partial state written to {out_path}'
         )
 
 

@@ -638,6 +638,8 @@ def test_run_set_overrides_reach_parameters(tmp_path, monkeypatch):
 
         def get_state(self):
             class _Out:
+                status = 0
+
                 def to_netcdf(self, *a, **kw):
                     pass
 
@@ -1203,6 +1205,8 @@ def _build_ic_derivation_stub(
             stub_self = self
 
             class _State:
+                status = 0
+
                 def to_netcdf(self, path, **_kwargs):
                     stub_self._netcdf_path = str(path)
 
