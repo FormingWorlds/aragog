@@ -52,6 +52,7 @@ def _build(
     end_time: float = 1.0,
     inner_bc_value: float = 0.0,
     outer_bc_value: float = 1500.0,
+    surface_cell_thickness: float = 0.0,
 ):
     from aragog.parser import (
         Parameters,
@@ -94,6 +95,7 @@ def _build(
         mixing_length_profile='nearest_boundary',
         core_density=10500.0,
         eos_method=1,
+        surface_cell_thickness=surface_cell_thickness,
     )
     pl = _PhaseParameters(
         density=4000.0,

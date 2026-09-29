@@ -87,7 +87,13 @@ def _solver(outer_bc, S_top, table_edge_cutoff=False, T_eq=273.0):
     from aragog.eos.entropy import EntropyEOS
     from aragog.solver.entropy_solver import EntropySolver
 
-    p = _build(core_bc='quasi_steady', outer_bc=outer_bc, inner_bc=2, inner_bc_value=0.0)
+    p = _build(
+        core_bc='quasi_steady',
+        outer_bc=outer_bc,
+        inner_bc=2,
+        inner_bc_value=0.0,
+        surface_cell_thickness=1000.0,
+    )
     p.boundary_conditions.equilibrium_temperature = T_eq
     p.boundary_conditions.table_edge_cutoff = table_edge_cutoff
     s = EntropySolver(p, entropy_eos=EntropyEOS(EOS_DIR))

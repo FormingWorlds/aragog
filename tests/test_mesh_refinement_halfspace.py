@@ -113,8 +113,8 @@ def _params(
     )
 
 
-def _fluxes(cell_km):
-    p = _params(cell_km)
+def _fluxes(cell_km, *, outer_bc=6):
+    p = _params(cell_km, outer_bc=outer_bc)
     s = EntropySolver(p, entropy_eos=None)
     s.initialize()
     s._phi_rheo = 1.2  # const mode reports melt fraction 1: take the solid-skin branch
@@ -125,7 +125,7 @@ def _fluxes(cell_km):
     s.dSdt(s._solution.t[-1], np.asarray(st.S_final, float).ravel())
     F = np.asarray(s.state.heat_flux, float).ravel()
     L = np.sqrt(np.pi * K / (RHO * CP) * T_END_YR * YR)
-    T_s = float(st.T_surface_skin)
+    T_s = float(st.T_surface_skin) if outer_bc == 6 else T_EQ
     ref_top = K * (T0 - T_s) * (1.0 / L - 1.0 / R_OUT)
     ref_bot = K * (T_C - T0) * (1.0 / L + 1.0 / R_IN)
     return F[-1] / ref_top - 1.0, F[0] / ref_bot - 1.0
@@ -133,11 +133,20 @@ def _fluxes(cell_km):
 
 @pytest.mark.physics_invariant
 def test_boundary_fluxes_converge_to_the_half_space_flux_with_refinement():
-    """N 100 (uniform cell 29 km): the uniform mesh overestimates both fluxes by
-    about 17 %; end cells of 8, 4 and 1 km bring the error down monotonically to
-    below 0.3 % at both boundaries (N 200 takes it below 0.03 %)."""
-    err = {c: _fluxes(c) for c in (0.0, 8.0, 4.0, 1.0)}
-    assert err[0.0][0] > 0.1 and err[0.0][1] > 0.1
+    """N 100 (uniform cell 29 km): uniform mesh overestimates both fluxes by
+    about 17 % under outer BC 5 (fixed surface temperature); uniform mesh with
+    outer BC 6 is rejected by the loader rule; end cells of 8, 4 and 1 km bring
+    the outer BC 6 and inner BC 3 errors down monotonically to below 0.3 % at both
+    boundaries (N 200 takes it below 0.03 %)."""
+    with pytest.raises(
+        ValueError, match=r'outer_boundary_condition = 6.*surface_cell_thickness > 0'
+    ):
+        _params(0.0, outer_bc=6)
+
+    err_uniform = _fluxes(0.0, outer_bc=5)
+    assert err_uniform[0] > 0.1 and err_uniform[1] > 0.1
+
+    err = {c: _fluxes(c, outer_bc=6) for c in (8.0, 4.0, 1.0)}
     for end in (0, 1):
         assert abs(err[8.0][end]) > abs(err[4.0][end])
         assert abs(err[4.0][end]) < 0.005

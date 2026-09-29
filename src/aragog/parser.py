@@ -302,7 +302,8 @@ class _MeshParameters:
 
     def __post_init__(self):
         for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
-            val = getattr(self, name)
+            val = float(getattr(self, name))
+            setattr(self, name, val)
             if val == 0.0:
                 continue
             uniform = (self.outer_radius - self.inner_radius) / (self.number_of_nodes - 1)
@@ -557,6 +558,15 @@ class Parameters:
                 '[phase_solid] enabled = true requires [phase_mixed] matprop_smooth_width > 0 '
                 f'(got {width}); PROTEUS passes 0.01'
             )
+
+        # Outer BC 6 (conductive surface skin) requires opt-in surface cell refinement.
+        if self.boundary_conditions.outer_boundary_condition == 6:
+            if not (self.mesh.surface_cell_thickness > 0.0):
+                raise ValueError(
+                    '[boundary_conditions] outer_boundary_condition = 6 (conductive surface skin) '
+                    f'requires [mesh] surface_cell_thickness > 0 (got {self.mesh.surface_cell_thickness}); '
+                    'set surface_cell_thickness (e.g. 1000.0 m) to resolve the surface skin layer'
+                )
 
         # Convert radionuclide concentration from ppm to mass fraction.
         for r in self.radionuclides:
