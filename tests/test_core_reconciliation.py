@@ -230,3 +230,60 @@ def test_r6_retry_snapshot_restore_t_core(shared_eos):
     solver.set_initial_core_temperature(t_core_snap)
     solver.set_initial_entropy(np.full(n_stag, 2900.0))
     assert solver._S0[n_stag + 1] == pytest.approx(5925.5)
+
+
+def test_r5_core_module_heating_counted_once(shared_eos):
+    """R5: core_module counts bottom-cell radiogenic heating in the mantle once.
+
+    Verifies that bottom cell heating enters the mantle cell's dSdt once and is
+    not added to or subtracted from the CMB heat flux or core cooling rate.
+    """
+    from aragog.parser import _Radionuclide
+
+    solver = _build_solver(core_bc='core_module', shared_eos=shared_eos)
+    solver.parameters.energy.radionuclides = False
+    solver.initialize()
+    n_stag = solver._n_stag
+    y_col = np.zeros(n_stag + 2)
+    y_col[:n_stag] = 2900.0
+    y_col[n_stag] = -1.0e-5  # dSdr_cmb
+    y_col[n_stag + 1] = 5800.0  # T_core
+
+    dy_no_heat = solver._dSdt_single(0.0, y_col)
+    flux_no_heat = float(solver.state.heat_flux[0])
+    dT_core_no_heat = float(dy_no_heat[n_stag + 1])
+
+    # Now create solver with uniform radiogenic heating H_0 = 1e-10 W/kg
+    H_0 = 1.0e-10
+    solver_heat = _build_solver(core_bc='core_module', shared_eos=shared_eos)
+    solver_heat.parameters.energy.radionuclides = True
+    solver_heat.parameters.radionuclides = [_Radionuclide('X', 0.0, 1.0, 1.0, H_0, 1e20)]
+    solver_heat.initialize()
+
+    dy_heat = solver_heat._dSdt_single(0.0, y_col)
+    flux_heat = float(solver_heat.state.heat_flux[0])
+    dT_core_heat = float(dy_heat[n_stag + 1])
+
+    # 1. CMB heat flux is purely state-derived (from dSdr_cmb), unchanged by mantle heating
+    assert flux_heat == pytest.approx(flux_no_heat, rel=1e-12)
+
+    # 2. Core cooling rate dT_core/dt is unchanged by mantle heating
+    assert dT_core_heat == pytest.approx(dT_core_no_heat, rel=1e-12)
+
+    # 3. Mantle bottom cell dS/dt increases by exactly H_0 / T_0 per second
+    T_0 = float(np.asarray(solver_heat.state.phase_staggered.temperature()).flat[0])
+    sec_per_yr = 3.15576e7
+    dSdt_diff = (dy_heat[0] - dy_no_heat[0]) / sec_per_yr
+    assert dSdt_diff == pytest.approx(H_0 / T_0, rel=1e-6)
+
+    # Canary: if bottom cell heating Q_0 were incorrectly subtracted from or added
+    # to the CMB flux (as quasi_steady does with alpha*(F_1 - Q_0/A_1)), the CMB flux
+    # would change by ~Q_0/A_cmb and dT_core/dt would change by ~Q_0/C_eff.
+    vol_0 = float(solver_heat._volume_flat[0])
+    rho_0 = float(np.asarray(solver_heat.state.phase_staggered.density()).flat[0])
+    Q_0 = H_0 * rho_0 * vol_0
+    A_cmb = float(solver_heat._cmb_area)
+    double_count_flux_shift = Q_0 / A_cmb
+    assert double_count_flux_shift > 0.01  # Significant shift (> 10 mW/m^2)
+    # Confirm that actual flux differs from double-counted flux
+    assert abs(flux_heat - (flux_no_heat - double_count_flux_shift)) > 0.005
