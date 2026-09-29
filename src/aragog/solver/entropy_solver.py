@@ -582,6 +582,11 @@ def _phi_cap_event_factory(
     return _event
 
 
+_STATUS_DESCRIPTION = (
+    'Solver status (0 success, 1 stop at a step-cap event, other values failure)'
+)
+
+
 def _status_failed(status: int) -> bool:
     """Whether a solver status is a failure: 0 (success) and 1 (step-cap stop) are not."""
     return status not in (0, 1)
@@ -594,7 +599,7 @@ class SolverOutput:
     This dataclass is the public contract between Aragog and PROTEUS.
     All quantities needed by the coupling wrapper are included here,
     so callers never need to reach into solver internals. ``status`` 0 (success)
-    and 1 (stop at a step-cap event) are successful runs, a negative status is a
+    and 1 (stop at a step-cap event) are successful runs, any other status is a
     failure; ``failed`` tells the two apart.
     """
 
@@ -734,7 +739,7 @@ class SolverOutput:
     step_dE_state_heat_J: float
 
     dt_actual: float  # actual integration time [yr]
-    status: int  # 0 success, 1 stop at a step-cap event, negative failure
+    status: int  # 0 success, 1 stop at a step-cap event, any other value failure
 
     # Raw CVODE return flag, surfaced distinctly from the scipy-compatible
     # ``status`` so a caller can tell CV_TOO_MUCH_WORK (step budget) from
@@ -953,7 +958,7 @@ class SolverOutput:
                 'Per-call entropy-transported heat content change (EOS quadrature)',
             )
             _scalar('dt_actual', self.dt_actual, 'yr', 'Actual integration time of this step')
-            _scalar('status', int(self.status), '1', 'Solver status code (0 = success)')
+            _scalar('status', int(self.status), '1', _STATUS_DESCRIPTION)
             _scalar(
                 'cvode_flag',
                 int(self.cvode_flag),
