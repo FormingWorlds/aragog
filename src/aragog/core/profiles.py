@@ -137,7 +137,7 @@ class GaussianCoreProfiles:
         return 4.0 * jnp.pi * self.rho_cen * integral
 
     def gravity(self, r):
-        """Gravitational acceleration [m s-2] at radius ``r``, positive outward-pull.
+        """Gravitational acceleration magnitude [m s-2] at radius ``r``.
 
         Exact for the Gaussian density: ``G M(r) / r^2``, with the removable
         singularity at the centre replaced by its analytic limit

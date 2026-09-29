@@ -14,6 +14,6 @@ The `aragog.core` package carries the staged core-evolution module: the core as 
 | `crystallization_regime` | Diagnostic flag from the superheat profile: fully liquid, bottom-up, top-down, snow, or fully frozen (taxonomy of Breuer et al. 2015). |
 | `adiabatic_ratio`, `stratification_depth` | Subadiabatic-onset ratio and the equilibrium thickness of the stably stratified sub-CMB layer from conductive matching. |
 
-The budget terms are cross-validated against the open-source Leeds `thermal_history` implementation (secular exact, boundary terms to 0.5%), and the profile and melting machinery is pinned against Nimmo (2015) Table 2 (adiabatic length scales, ICB temperatures, melting gradients, adiabatic heat flows). This stage assumes bottom-up crystallization; parameter sets whose melting curve dips below the adiabat at the CMB (a top-down or snow topology) shut off the boundary terms rather than emitting heat from an ill-defined boundary.
+The budget terms are cross-validated against the open-source Leeds `thermal_history` implementation (secular exact, boundary terms to 0.5%), and the profile and melting machinery is pinned against Nimmo (2015) Table 2 (adiabatic length scales, ICB temperatures, melting gradients, adiabatic heat flows). This stage assumes bottom-up crystallization; parameter sets whose melting curve rises above the adiabat at the CMB (a top-down or snow topology) shut off the boundary terms rather than emitting heat from an ill-defined boundary.
 
 ::: aragog.core

@@ -68,6 +68,6 @@ With `stratification = true` in the module parameters, a stably stratified layer
 | Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
 | Reproducing pre-2026 results | `bower2018` (legacy) |
-| Core evolution with inner-core growth, dynamo diagnostics, or a core temperature decoupled from basal-node phase snaps | `core_module` |
+| Core evolution with inner-core growth, or a core temperature decoupled from basal-node phase snaps | `core_module` |
 
 The state-vector layout for each mode is documented in [`solver/entropy_solver.py`](https://github.com/FormingWorlds/aragog/blob/main/src/aragog/solver/entropy_solver.py) at the `_build_jac_sparsity` and `set_initial_entropy` methods; the test class `TestEnergyBalanceCoreBC` in `tests/test_entropy_pytest.py` exercises the `energy_balance` mode directly.

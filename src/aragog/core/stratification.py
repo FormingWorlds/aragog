@@ -5,11 +5,11 @@ adiabat, the top of the core stops convecting and a stably stratified
 layer grows. Two ODE-cost quantities describe the state. The adiabatic
 ratio ``ADR = Q_cmb / Q_k`` (the actual-to-adiabatic CMB gradient ratio,
 as defined in the Leeds ``thermal_history`` stable-layer model) is the
-onset criterion: below one, stratification grows. The equilibrium
-stratification depth is the radius where the adiabatic conducted flow
-``Q_ad(r) = 4 pi r^2 k |dT_a/dr|`` matches the CMB heat flow: above it
-conduction alone carries the load, below it convection must. The full
-time-dependent layer (diffusive profile, entrainment) is a
+onset criterion: below one, stratification grows. The equilibrium stratification depth is the layer thickness
+``r_cmb - r_s``, where ``r_s`` is the radius where the adiabatic
+conducted flow ``Q_ad(r) = 4 pi r^2 k |dT_a/dr|`` matches the CMB heat
+flow: above it conduction alone carries the load, below it convection
+must. The full time-dependent layer (diffusive profile, entrainment) is a
 partial-differential problem outside this stage's cost budget; the
 budgets couple to these diagnostics through
 ``CoreEnergyBudget.convecting_radius``, which reduces the convecting
@@ -127,7 +127,7 @@ def stratification_depth(entropy: 'CoreEntropyBudget', t_cmb, q_cmb):
     """Equilibrium thickness [m] of the stably stratified sub-CMB layer.
 
     Solves ``Q_ad(r_s) = Q_cmb`` for the layer base ``r_s`` by fixed
-    bisection on the outer branch of ``Q_ad(r) = (8 pi k / D^2) r^3
+    bisection on the inner rising branch of ``Q_ad(r) = (8 pi k / D^2) r^3
     T_a(r)``, which peaks at ``r_peak = D sqrt(3/2)`` and decreases
     beyond it; the thickness is ``r_cmb - r_s``. For Earth-scale cores
     the peak sits outside the CMB and the branch spans the whole core;

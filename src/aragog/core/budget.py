@@ -42,8 +42,8 @@ class CoreEnergyBudget:
     ----------
     profiles : GaussianCoreProfiles
         Radial structure the budget integrates over.
-    melting_curve : IronMeltingCurve
-        Alloy melting curve; its light-element fraction is the alloy state.
+    melting_curve : IronMeltingCurve or QuadraticMeltingCurve
+        Alloy melting curve; sets the freezing point profile T_m(P).
     ds_fusion : float
         Entropy of fusion at the inner-core boundary [J kg-1 K-1]; sets the
         latent heat per unit mass as ``T_icb * ds_fusion``.
@@ -405,10 +405,9 @@ class CoreEnergyBudget:
         """Total dQ/d(dT_cmb/dt) [J/K]: secular plus latent plus
         gravitational (profile mode).
 
-        With stratification enabled and a heat flow supplied, the
-        volume integrals run to the convecting radius rather than the
-        CMB, so a subadiabatic flow shrinks the capacity; without a
-        flow (or with stratification off) the full core participates.
+        With stratification enabled, a heat flow must be supplied and
+        the volume integrals run to the convecting radius rather than the
+        CMB; with stratification off the full core participates.
         """
         if self.capacity_mode == 'legacy':
             return self.secular_capacity()
