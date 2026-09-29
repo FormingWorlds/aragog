@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -2425,6 +2426,75 @@ class EntropySolver:
 
         return J.tocsc()
 
+    def _cvode_solve_stepwise(
+        self,
+        solver: object,
+        tspan: npt.NDArray,
+        y0: npt.NDArray,
+        scale: tuple[float, float | npt.NDArray] = (1.0, 1.0),
+    ) -> tuple[SimpleNamespace, tuple[npt.NDArray, npt.NDArray] | None]:
+        """Integrate over ``tspan`` one CVODE internal step at a time.
+
+        Returns ``(sol, trace)``. ``sol`` carries what ``solver.solve(tspan, y0)``
+        returns (``flag``, ``message``, the outputs at ``tspan`` as ``values``, a root
+        as ``roots``). Each output time inside the last step is filled by a
+        normal-mode call, which interpolates without stepping, so the step sequence
+        and the outputs equal those of ``solver.solve``; on a root, the outputs
+        inside the root step are not filled.
+
+        ``trace`` is ``(t, P)`` with ``P[i] = _step_powers(t[i], y)`` at the start,
+        at every accepted internal step and at the end of the call (the last output
+        or the root), so the per-call energy integrals resolve flux features that
+        fall between output points. It is None when no entropy EOS is attached.
+        ``scale = (t_ref, state_scale)`` maps the integrator's time and state to
+        physical units [yr] for the powers and the trace times.
+        """
+        y0 = np.asarray(y0, dtype=float).ravel()
+        t_ref, state_scale = scale
+        if self.entropy_eos is None:
+            powers = None
+        else:
+
+            def powers(t, y):
+                return self._step_powers(t * t_ref, y * state_scale)
+
+        solver.init_step(float(tspan[0]), y0)
+        ts, ys, tp = [float(tspan[0])], [y0.copy()], [float(tspan[0])]
+        pp = [powers(tp[0], y0)] if powers else []
+        roots, flag, message, k = None, 0, '', 1
+        while k < len(tspan) and flag >= 0 and roots is None:
+            solver.set_options(one_step_compute=True)
+            r = solver.step(float(tspan[k]))
+            flag, message = int(r.flag), r.message
+            if flag < 0:
+                break
+            tn, yn = float(r.values.t), np.array(r.values.y, dtype=float)
+            if flag == 2:
+                roots = SimpleNamespace(t=np.array([tn]), y=yn.reshape(1, -1))
+            if tp[-1] < tn < float(tspan[-1]) or roots is not None:
+                tp.append(tn)
+                if powers:
+                    pp.append(powers(tn, yn))
+            solver.set_options(one_step_compute=False)
+            while roots is None and k < len(tspan) and float(tspan[k]) <= tn:
+                r = solver.step(float(tspan[k]))
+                flag, message = int(r.flag), r.message
+                if flag < 0:
+                    break
+                ts.append(float(r.values.t))
+                ys.append(np.array(r.values.y, dtype=float))
+                k += 1
+        if powers and roots is None and flag >= 0 and ts[-1] > tp[-1]:
+            tp.append(ts[-1])
+            pp.append(powers(ts[-1], ys[-1]))
+        sol = SimpleNamespace(
+            flag=flag,
+            message=message,
+            values=SimpleNamespace(t=np.array(ts), y=np.array(ys)),
+            roots=roots,
+        )
+        return sol, ((np.array(tp) * t_ref, np.array(pp)) if powers else None)
+
     def _solve_cvode(
         self,
         start_time: float,
@@ -2437,6 +2507,7 @@ class EntropySolver:
         cvode_rhs_fn_override: 'Callable | None' = None,
         cvode_jacfn: 'Callable | None' = None,
         phi_cap_rootfn: 'Callable | None' = None,
+        scale: tuple[float, float | npt.NDArray] = (1.0, 1.0),
     ) -> 'OptimizeResult':
         """Integrate the entropy equation using SUNDIALS CVODE.
 
@@ -2635,10 +2706,7 @@ class EntropySolver:
             tspan = float(start_time) + (float(end_time) - float(start_time)) * x
         else:
             tspan = np.array([start_time, end_time], dtype=float)
-        cvode_sol = solver.solve(
-            tspan,
-            np.asarray(y0, dtype=float).ravel(),
-        )
+        cvode_sol, energy_trace = self._cvode_solve_stepwise(solver, tspan, y0, scale)
 
         # Dump CVODE's internal counters. These expose what scipy hides
         # from us and let us discriminate Newton thrash from step-size
@@ -2740,6 +2808,7 @@ class EntropySolver:
                 result.y = np.asarray(y0, dtype=float).reshape(-1, 1)
 
         result.nfev = nfev_box[0]
+        result.energy_trace = energy_trace
         result.message = getattr(cvode_sol, 'message', '')
         # Surface the raw CVODE flag distinctly from result.status: status
         # stays scipy-compatible (0 success, -1 failure), while these two
@@ -3123,6 +3192,7 @@ class EntropySolver:
                 cvode_rhs_fn_override=cvode_rhs_override,
                 cvode_jacfn=cvode_jacfn,
                 phi_cap_rootfn=phi_cap_rootfn,
+                scale=(t_ref, _state_scale),
             )
         else:
             method = 'Radau' if solver_method != 'bdf' else 'BDF'
@@ -3313,134 +3383,28 @@ class EntropySolver:
         if n_steps < 2:
             return zero
 
-        n_stag = self._n_stag
-        energy_balance = self._core_bc == 'energy_balance'
-        bower = self._core_bc == 'bower2018'
-        gradient_mode = self._core_bc == 'gradient'
-        is_ext = energy_balance or bower
-
-        P_stag = self._P_stag_flat
-        vol = self._volume_flat
-        r_basic = self._r_basic_flat
-        A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
-        A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
-
-        # Frozen structural mass per shell, set once from the mesh's
-        # equilibrium structure. Used for the conservation-grade
-        # mass-integrated heating powers (Q_*_cons). Stays constant
-        # across the CVODE trajectory so the integrated budget closes
-        # against ``E_state_cons`` (also frozen-mass weighted).
-        rho_struct = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel()
-        mass_struct = rho_struct * vol
-
-        P_F_int = np.zeros(n_steps)
-        P_F_cmb = np.zeros(n_steps)
-        P_radio = np.zeros(n_steps)
-        P_tidal = np.zeros(n_steps)
-        P_radio_cons = np.zeros(n_steps)
-        P_tidal_cons = np.zeros(n_steps)
-        # Per-substep entropy-equation self-consistency integrand
-        # (LHS - RHS) [W]. LHS = Σ capacitance (dS/dt) V at the substep
-        # state; RHS = -F_int A_int + F_cmb A_cmb + Q_radio + Q_tidal.
-        # The discrete divergence telescopes to the boundary fluxes, so
-        # this is machine-zero by construction at every state; a non-zero
-        # value flags a bug in the flux-divergence assembly, not a
-        # time-integration error. The time-integration quality is carried
-        # by ``E_residual_cons_frac`` on the coupler side.
-        P_resid_solver = np.zeros(n_steps)
-
-        for i in range(n_steps):
-            t_i = float(sol.t[i])
-            y_col = sol.y[:, i] if sol.y.ndim == 2 else sol.y
-
-            # Reconstruct S_i for EOS lookups, regardless of mode.
-            if gradient_mode:
-                n_basic = n_stag + 1
-                dSdr_i = y_col[:n_basic]
-                S_surf_i = float(y_col[n_basic])
-                S_i, _ = self._reconstruct_entropy(dSdr_i, S_surf_i)
-            elif is_ext:
-                S_i = y_col[:n_stag]
-            else:
-                S_i = y_col
-
-            if i == 0:
-                S_traj_start = np.asarray(S_i, dtype=float).copy()
-
-            # The RHS at this accepted state applies the BCs, so the boundary fluxes read below
-            # are the ones the entropy ODE saw. In the gradient layout the reconstruction is
-            # linear in (dS/dr, S_surf), so it maps their rates to the cell entropy rates.
-            dSdt_full = np.asarray(self._dSdt_single(t_i, y_col)).ravel() / SECS_PER_YEAR
-            if gradient_mode:
-                dSdt_stag_i, _ = self._reconstruct_entropy(
-                    dSdt_full[:n_basic], float(dSdt_full[n_basic])
-                )
-            else:
-                dSdt_stag_i = dSdt_full[:n_stag]
-
-            # Read boundary fluxes AFTER dSdt has applied the BCs.
-            F_int_i = float(self.state._heat_flux[-1])
-            F_cmb_i = float(self.state._heat_flux[0])
-
-            rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
-            mass_i = rho_i * vol
-            heating_radio_i = np.asarray(self.state.heating_radio).ravel()
-            heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
-            Q_radio_i = float(np.dot(heating_radio_i, mass_i))
-            Q_tidal_i = float(np.dot(heating_tidal_i, mass_i))
-            # Frozen-mass variants for the conservation-grade budget
-            Q_radio_cons_i = float(np.dot(heating_radio_i, mass_struct))
-            Q_tidal_cons_i = float(np.dot(heating_tidal_i, mass_struct))
-
-            P_F_int[i] = -F_int_i * A_int
-            P_F_cmb[i] = +F_cmb_i * A_cmb
-            P_radio[i] = Q_radio_i
-            P_tidal[i] = Q_tidal_i
-            P_radio_cons[i] = Q_radio_cons_i
-            P_tidal_cons[i] = Q_tidal_cons_i
-
-            # Solver residual: the discrete entropy equation gives
-            # ``Σ capacitance (dS/dt) V == -F_int*A + F_cmb*A + Q_radio +
-            # Q_tidal`` at every accepted substep. The LHS must be
-            # weighted by the SAME capacitance (``rho_phase * T``) that
-            # the RHS used to form ``dS/dt``, and the source powers in the
-            # RHS by the same phase density. Re-deriving the cell mass
-            # from the hard-masked table density (``eos.density``) instead
-            # of the tanh-blended phase density leaves a spurious residual
-            # equal to the local flux divergence times the fractional
-            # density mismatch, concentrated in the phase-transition band
-            # (it reaches ~1e23 J for a sub-percent density difference
-            # against a ~1e16 W flux divergence). With the consistent
-            # weighting the interior fluxes telescope and the residual is
-            # machine-zero.
-            cap_i = np.asarray(self.state.capacitance_staggered()).ravel()
-            T_phase_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
-            # The RHS adds heating as ``H / max(T, 1)``, so the source powers are weighted by
-            # ``rho_phase * T / max(T, 1) * V`` to keep the identity exact at the T floor.
-            heat_mass_i = (
-                np.asarray(self.state.phase_staggered.density()).ravel()
-                * vol
-                * (T_phase_i / np.maximum(T_phase_i, 1.0))
+        trace = sol.get('energy_trace')
+        if trace is None:
+            t_pts = np.asarray(sol.t, dtype=float)
+            y_pts = sol.y if sol.y.ndim == 2 else sol.y.reshape(-1, 1)
+            P = np.array(
+                [self._step_powers(float(t_pts[i]), y_pts[:, i]) for i in range(n_steps)]
             )
-            lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
-            Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
-            Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
-            rhs_i = P_F_int[i] + P_F_cmb[i] + Q_radio_resid + Q_tidal_resid
-            P_resid_solver[i] = lhs_i - rhs_i
+        else:
+            t_pts, P = trace
+        P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
 
-        dt_s = np.diff(np.asarray(sol.t, dtype=float)) * SECS_PER_YEAR
+        dt_s = np.diff(np.asarray(t_pts, dtype=float)) * SECS_PER_YEAR
 
         def trap(p):
             return float(np.sum(0.5 * (p[:-1] + p[1:]) * dt_s))
 
-        # Entropy-transported heat content change over the call, evaluated by
-        # EOS quadrature of ``rho(P,S) T(P,S) dS`` along each cell's entropy
-        # path from the start-of-call state to the final state ``S_i``. This
-        # is independent of the flux trajectory above, so its cumulative sum
-        # provides a genuine conservation check against the boundary-flux
-        # budget rather than reproducing the divergence telescoping.
+        # Heat content change from the start and end states alone (EOS quadrature of
+        # rho T dS), independent of the flux trajectory, so it checks the flux budget.
+        y_first = sol.y[:, 0] if sol.y.ndim == 2 else sol.y
+        y_last = sol.y[:, -1] if sol.y.ndim == 2 else sol.y
         state_heat = self._step_heat_content(
-            S_traj_start, np.asarray(S_i, dtype=float).ravel()[:n_stag]
+            self._stag_entropy(y_first), self._stag_entropy(y_last)[: self._n_stag]
         )
 
         # Energy-conserving step-average CMB heat flux: the trapezoidal
@@ -3448,6 +3412,7 @@ class EntropySolver:
         # equals step_dE_F_cmb by construction. None on a zero-duration or
         # zero-area call, so the caller keeps the end-of-step snapshot.
         step_dE_F_cmb = trap(P_F_cmb)
+        A_cmb = 4.0 * np.pi * float(self._r_basic_flat[0]) ** 2
         denom = A_cmb * float(np.sum(dt_s))
         f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
 
@@ -3462,6 +3427,86 @@ class EntropySolver:
             'solver_residual': trap(P_resid_solver),
             'state_heat': state_heat,
         }
+
+    def _stag_entropy(self, y_col: npt.NDArray) -> npt.NDArray:
+        """Staggered-node entropy of one solver state, in any state layout."""
+        if self._core_bc == 'gradient':
+            n_basic = self._n_stag + 1
+            S, _ = self._reconstruct_entropy(y_col[:n_basic], float(y_col[n_basic]))
+            return np.asarray(S, dtype=float)
+        if self._core_bc in ('energy_balance', 'bower2018'):
+            return np.asarray(y_col[: self._n_stag], dtype=float)
+        return np.asarray(y_col, dtype=float)
+
+    def _step_powers(self, t_i: float, y_col: npt.NDArray) -> npt.NDArray:
+        """Powers [W] at one solver state, for the per-call energy integrals.
+
+        Returns ``[-F_int A_int, F_cmb A_cmb, Q_radio, Q_tidal, Q_radio_cons,
+        Q_tidal_cons, solver residual]``: the boundary heat flows, the source powers
+        with live and frozen (structural) cell mass, and the entropy-equation
+        self-consistency residual (LHS - RHS), which is machine-zero by construction
+        at every state; a non-zero value flags a flux-divergence assembly bug.
+        """
+        eos = self.entropy_eos
+        n_stag = self._n_stag
+        gradient_mode = self._core_bc == 'gradient'
+        n_basic = n_stag + 1
+        P_stag = self._P_stag_flat
+        vol = self._volume_flat
+        r_basic = self._r_basic_flat
+        A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
+        A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
+        # Frozen structural mass per shell, for the conservation-grade Q_*_cons.
+        mass_struct = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel() * vol
+        S_i = self._stag_entropy(y_col)
+
+        # The RHS at this accepted state applies the BCs, so the boundary fluxes read below
+        # are the ones the entropy ODE saw. In the gradient layout the reconstruction is
+        # linear in (dS/dr, S_surf), so it maps their rates to the cell entropy rates.
+        dSdt_full = np.asarray(self._dSdt_single(t_i, y_col)).ravel() / SECS_PER_YEAR
+        if gradient_mode:
+            dSdt_stag_i, _ = self._reconstruct_entropy(
+                dSdt_full[:n_basic], float(dSdt_full[n_basic])
+            )
+        else:
+            dSdt_stag_i = dSdt_full[:n_stag]
+
+        # Read boundary fluxes AFTER dSdt has applied the BCs.
+        F_int_i = float(self.state._heat_flux[-1])
+        F_cmb_i = float(self.state._heat_flux[0])
+
+        rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
+        mass_i = rho_i * vol
+        heating_radio_i = np.asarray(self.state.heating_radio).ravel()
+        heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
+        Q_radio_i = float(np.dot(heating_radio_i, mass_i))
+        Q_tidal_i = float(np.dot(heating_tidal_i, mass_i))
+        # Frozen-mass variants for the conservation-grade budget
+        Q_radio_cons_i = float(np.dot(heating_radio_i, mass_struct))
+        Q_tidal_cons_i = float(np.dot(heating_tidal_i, mass_struct))
+
+        p_int = -F_int_i * A_int
+        p_cmb = +F_cmb_i * A_cmb
+
+        # The LHS uses the capacitance (rho_phase * T) and phase density the RHS used; the
+        # hard-masked table density (eos.density) would leave a spurious residual of up to
+        # ~1e23 J in the phase-transition band.
+        cap_i = np.asarray(self.state.capacitance_staggered()).ravel()
+        T_phase_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
+        # The RHS adds heating as ``H / max(T, 1)``, so the source powers are weighted by
+        # ``rho_phase * T / max(T, 1) * V`` to keep the identity exact at the T floor.
+        heat_mass_i = (
+            np.asarray(self.state.phase_staggered.density()).ravel()
+            * vol
+            * (T_phase_i / np.maximum(T_phase_i, 1.0))
+        )
+        lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
+        Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
+        Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
+        rhs_i = p_int + p_cmb + Q_radio_resid + Q_tidal_resid
+        return np.array(
+            [p_int, p_cmb, Q_radio_i, Q_tidal_i, Q_radio_cons_i, Q_tidal_cons_i, lhs_i - rhs_i]
+        )
 
     def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int = 16) -> float:
         """Entropy-transported heat content change over one solver call [J].
