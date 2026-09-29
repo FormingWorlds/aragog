@@ -90,7 +90,6 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     t0 = jnp.asarray(t0_years, dtype=jnp.float64)
     hl = jnp.asarray(half_life_years, dtype=jnp.float64)
     amp = hp * ab * cn
-    live = amp != 0.0
 
     def _h(t_yr):
         # exp(log(2) · (t0 − t) / half_life) per isotope, then weighted
@@ -99,8 +98,8 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
         # 1e-10 yr only guards against a literal-zero denominator; any
         # physical isotope has half_life >> 1e-10 yr.
         arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1e-10)
-        # Mask the argument too, so the Jacobian of a zero-amplitude isotope is 0, not 0*inf.
-        per_iso = jnp.where(live, amp * jnp.exp(jnp.where(live, arg, 0.0)), 0.0)
+        # Mask the argument, so a zero-amplitude isotope and its Jacobian are 0, not 0*inf.
+        per_iso = amp * jnp.exp(jnp.where(amp != 0.0, arg, 0.0))
         return jnp.sum(per_iso)
 
     return _h

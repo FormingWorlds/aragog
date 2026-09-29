@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +14,7 @@ from aragog.cli import cli
 from aragog.config.radionuclides import RadionuclideConfig
 from aragog.parser import Parameters, _Radionuclide
 
-from .test_phi_step_cap_armed_smoke import EOS_DIR, needs_eos
+from .conftest import EOS_DIR, needs_eos
 
 BUNDLED_LOOKUP = Path(__file__).resolve().parents[1] / 'src/aragog/cfg/abe_mixed_lookup.cfg'
 AL26_ZERO = dict(
@@ -113,3 +114,52 @@ def test_bundled_lookup_cfg_runs_with_finite_state(tmp_path):
     with netCDF4.Dataset(out) as d:
         assert float(d['time'][:]) == pytest.approx(1.0)
         assert np.isfinite(float(d['T_magma'][:]))
+
+
+@pytest.mark.unit
+def test_rejected_parameters_leave_the_isotopes_unscaled():
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    rs = [replace(r) for r in p.radionuclides]
+    ppm = {r.name: r.concentration for r in rs}
+    al26 = next(r for r in rs if r.name == 'Al26')
+    al26.abundance, al26.concentration = 1.0, 1.0
+    with pytest.raises(ValueError, match='Al26'):
+        replace(p, radionuclides=rs)
+    assert {r.name: r.concentration for r in rs} == {**ppm, 'Al26': 1.0}
+    al26.abundance, al26.concentration = 0.0, 0.0
+    replace(p, radionuclides=rs)
+    assert {r.name: r.concentration for r in rs} == {k: v * 1e-6 for k, v in ppm.items()}
+
+
+@pytest.mark.unit
+def test_negative_amplitude_raises(tmp_path):
+    cfg = _lookup_cfg(tmp_path)
+    text = cfg.read_text()
+    assert text.count('heat_production = 2.8761E-5') == 1
+    cfg.write_text(text.replace('heat_production = 2.8761E-5', 'heat_production = -2.8761E-5'))
+    with pytest.raises(ValueError, match='K40: .* must not be negative'):
+        Parameters.from_file(str(cfg))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('on', [True, False])
+def test_checks_run_only_with_radionuclides_on(tmp_path, on):
+    cfg = _lookup_cfg(tmp_path)
+    text = cfg.read_text().replace('half_life_years = 0.717E6', 'half_life_years = -1')
+    if not on:
+        text = text.replace('radionuclides = True', 'radionuclides = False')
+    cfg.write_text(text)
+    if on:
+        with pytest.raises(ValueError, match='half_life_years must be positive'):
+            Parameters.from_file(str(cfg))
+    else:
+        Parameters.from_file(str(cfg))
+
+
+@pytest.mark.unit
+def test_live_isotope_is_checked_at_the_start_time(tmp_path):
+    cfg = _lookup_cfg(tmp_path, al26_live=True)
+    cfg.write_text(cfg.read_text().replace('start_time = 0\n', 'start_time = 4.549e9\n'))
+    p = Parameters.from_file(str(cfg))
+    al26 = next(r for r in p.radionuclides if r.name == 'Al26')
+    assert np.isfinite(al26.get_heating(4.549e9)) and al26.get_heating(4.549e9) > 0.0

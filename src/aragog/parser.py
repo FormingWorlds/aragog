@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Self
 
@@ -366,7 +366,7 @@ class _Radionuclide:
         arg: npt.NDArray | float = np.log(2) * (self.t0_years - time) / self.half_life_years
         amplitude = self.heat_production * self.abundance * self.concentration
         # A zero-amplitude isotope contributes 0, also where exp(arg) overflows.
-        return amplitude * np.exp(arg) if amplitude else np.zeros_like(arg, dtype=float)[()]
+        return amplitude * np.exp(np.where(amplitude, arg, 0.0))
 
 
 @dataclass
@@ -483,9 +483,7 @@ class Parameters:
                     f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
 
-        # Convert radionuclide concentration from ppm to mass fraction.
-        for r in self.radionuclides:
-            r.concentration *= 1e-6
+        # Validate before the in-place ppm scaling, so a rejected call leaves the objects unchanged.
         if self.energy.radionuclides:
             t_start = self.solver.start_time
             for r in self.radionuclides:
@@ -494,14 +492,24 @@ class Parameters:
                         f'Radionuclide {r.name}: half_life_years must be positive, '
                         f'got {r.half_life_years}'
                     )
+                if r.heat_production * r.abundance * r.concentration < 0.0:
+                    raise ValueError(
+                        f'Radionuclide {r.name}: heat_production * abundance * concentration '
+                        'must not be negative'
+                    )
                 with np.errstate(over='ignore'):
-                    finite = np.isfinite(r.get_heating(t_start))
+                    finite = np.isfinite(
+                        replace(r, concentration=r.concentration * 1e-6).get_heating(t_start)
+                    )
                 if not finite:
                     raise ValueError(
                         f'Radionuclide {r.name}: heating is not finite at the start time '
                         f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
                         f'{r.half_life_years}); check the amplitude and t0_years'
                     )
+        # Convert radionuclide concentration from ppm to mass fraction.
+        for r in self.radionuclides:
+            r.concentration *= 1e-6
 
     @classmethod
     def from_file(cls, *filenames) -> Self:

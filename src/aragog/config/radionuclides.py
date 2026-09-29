@@ -53,4 +53,4 @@ class RadionuclideConfig:
         """
         arg = np.log(2) * (self.t0_years - time) / self.half_life_years
         amplitude = self.heat_production * self.abundance * self.concentration
-        return amplitude * np.exp(arg) if amplitude else np.zeros_like(arg, dtype=float)[()]
+        return amplitude * np.exp(np.where(amplitude, arg, 0.0))
