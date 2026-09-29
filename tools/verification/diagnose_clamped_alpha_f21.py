@@ -1,4 +1,4 @@
-"""Diagnostic of clamped thermal expansivity alpha nodes (F21).
+"""Diagnostic of clamped thermal expansivity alpha nodes.
 
 Evaluates the count and radial distribution of nodes carrying clamped alpha
 (negative raw alpha smoothed to ~1e-13 1/K by the eps_a = 1e-8 guard)
@@ -50,7 +50,9 @@ def main() -> None:
         ),
     ]
 
-    out_dir = Path('/Users/timlichtenberg/work/stream-ssc-step1/data/A4')
+    out_dir = Path(
+        os.environ.get('ARAGOG_DIAGNOSTIC_DIR', repo_root / 'output' / 'diagnostics')
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     summary_records = []

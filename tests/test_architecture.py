@@ -87,6 +87,7 @@ def test_top_level_modules_list():
         'output',
         'parser.py',
         'rheology.py',
+        'rheology_lid.py',
         'surface_skin.py',
         'solver',
         'utilities.py',

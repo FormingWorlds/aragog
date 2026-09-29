@@ -39,6 +39,12 @@ Module: aragog.cli
     tomli
     tomllib
   __all__: []
+Module: aragog.cmb_boundary_layer
+  Imports:
+    __future__.annotations
+    numpy
+    typing.Any
+  __all__: []
 Module: aragog.config
   Imports:
     __future__.annotations
@@ -203,6 +209,7 @@ Module: aragog.jax.phase
     aragog.jax.rheology.compute_stagnant_lid_state
     aragog.jax.rheology.compute_yield_stress
     aragog.rheology.SolidRheologyParams
+    aragog.rheology.viscous_mixing_length_factor
     dataclasses.fields
     equinox
     jax
@@ -222,17 +229,22 @@ Module: aragog.jax.rheology
 Module: aragog.jax.solver
   Imports:
     __future__.annotations
+    aragog.cmb_boundary_layer.cmb_flux
     aragog.jax.eos.EntropyEOS_JAX
     aragog.jax.phase.MeshArrays
     aragog.jax.phase.PhaseParams
     aragog.jax.phase.compute_fluxes
     aragog.jax.phase.evaluate_phase
+    aragog.surface_skin.skin_temperature
+    aragog.surface_skin.solid_weight
+    aragog.surface_skin.table_edge_factor
     diffrax
     equinox
     jax
     jax.numpy
     logging
     numpy
+    scipy.constants.Stefan_Boltzmann
     typing.NamedTuple
   __all__: []
 Module: aragog.mesh
@@ -242,6 +254,7 @@ Module: aragog.mesh
     aragog.mesh.pressure_eos.AdamsWilliamsonEOS
     aragog.mesh.pressure_eos.EOS
     aragog.mesh.pressure_eos.UserDefinedEOS
+    aragog.mesh.stretching.stretched_unit_grid
     aragog.parser.Parameters
     aragog.parser._MeshParameters
     collections.abc.Callable
@@ -275,6 +288,14 @@ Module: aragog.mesh.pressure_eos
     scipy.integrate.cumulative_trapezoid
     scipy.interpolate.PchipInterpolator
   __all__: []
+Module: aragog.mesh.stretching
+  Imports:
+    __future__.annotations
+    numpy
+    numpy.typing
+    scipy.optimize.brentq
+    scipy.optimize.fsolve
+  __all__: []
 Module: aragog.output
   Imports:
     __future__.annotations
@@ -293,6 +314,7 @@ Module: aragog.output.diagnostics
 Module: aragog.parser
   Imports:
     __future__.annotations
+    aragog.cmb_boundary_layer.CMB_FLUX_LAWS
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.config.phases.SEPARATION_VISCOSITY_MODES
     aragog.rheology.SolidRheologyParams
@@ -300,6 +322,7 @@ Module: aragog.parser
     dataclasses.field
     dataclasses.fields
     logging
+    math
     numpy
     numpy.typing
     pathlib.Path
@@ -311,12 +334,25 @@ Module: aragog.parser
 Module: aragog.rheology
   Imports:
     __future__.annotations
+    aragog.rheology_lid
     dataclasses.dataclass
     math
     numpy
     numpy.typing
     typing.Any
   __all__: []
+Module: aragog.rheology_lid
+  Imports:
+    __future__.annotations
+    aragog.rheology.FloatOrArray
+    aragog.rheology.R_GAS
+    aragog.rheology.compute_arrhenius_enthalpy
+    aragog.rheology.compute_arrhenius_viscosity
+    aragog.rheology.compute_strain_rate_local
+    aragog.rheology.compute_yield_stress
+    numpy
+    typing.Any
+  __all__: ['compute_effective_viscosity', 'compute_stagnant_lid_state', 'stress_closure']
 Module: aragog.solver
   Imports:
     __future__.annotations
@@ -358,6 +394,7 @@ Module: aragog.solver.entropy_solver
   Imports:
     __future__.annotations
     aragog.__version__
+    aragog.cmb_boundary_layer.cmb_flux
     aragog.config.phases.SEPARATION_VISCOSITY_DEFAULT
     aragog.eos.entropy.EntropyEOS
     aragog.eos.entropy_phase.EntropyPhaseEvaluator
@@ -368,6 +405,9 @@ Module: aragog.solver.entropy_solver
     aragog.rheology.SolidRheologyParams
     aragog.solver.boundary.BoundaryConditions
     aragog.solver.entropy_state.EntropyState
+    aragog.surface_skin.skin_temperature
+    aragog.surface_skin.solid_weight
+    aragog.surface_skin.table_edge_factor
     collections.abc.Callable
     dataclasses.dataclass
     datetime.datetime
@@ -396,6 +436,7 @@ Module: aragog.solver.entropy_state
     aragog.rheology.compute_effective_viscosity
     aragog.rheology.compute_stagnant_lid_state
     aragog.rheology.compute_strain_rate_local
+    aragog.rheology.viscous_mixing_length_factor
     aragog.solver.evaluator.Evaluator
     aragog.utilities.FloatOrArray
     aragog.utilities.tanh_weight
@@ -403,6 +444,11 @@ Module: aragog.solver.entropy_state
     numpy
     numpy.typing
     typing.TYPE_CHECKING
+  __all__: []
+Module: aragog.surface_skin
+  Imports:
+    __future__.annotations
+    numpy
   __all__: []
 Module: aragog.utilities
   Imports:

@@ -26,7 +26,6 @@ PINNED_EOS_DIR = _find_candidate(
         os.environ.get('ARAGOG_PINNED_EOS_DIR'),
         '/tmp/aragog-test-data/spider_eos',
         '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos',
-        '/Users/timlichtenberg/work/ssc-step1-dev2/test-data/spider_eos',
     ]
 )
 
@@ -175,9 +174,9 @@ def test_analytic_jacobian_matches_finite_differences_lid(table_name, table_dir)
         viscosity_solid=1.0e21,
     )
 
-    # Assert yield branch is active only in step 2 (F19 boundary)
+    # Verify the stagnant lid regime remains on the unyielded branch
     assert np.all(np.array(lid_state['w_y']) < 0.01), (
-        'Yield branch active in step 1; plastic yielding Jacobian is reserved for step 2'
+        'Yield branch active; plastic yielding is not supported for this test configuration'
     )
 
     w_lid_basic = np.array(lid_state['w_lid'])

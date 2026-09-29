@@ -137,7 +137,7 @@ def test_kappah_floor_lid_masking():
 @pytest.mark.physics_invariant
 @needs_eos
 def test_kappah_floor_lid_masking_tables_mode():
-    """Verify kappah floor is masked in lid in tables mode (F19)."""
+    """Verify kappah floor is masked in lid in tables mode."""
     eos = EntropyEOS(EOS_DIR)
     mesh = _make_mesh()
 

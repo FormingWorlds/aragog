@@ -1,8 +1,8 @@
-"""Tests for rejection of rheology fields in legacy INI / .cfg files (F26 / Ruling 5).
+"""Tests for rejection of rheology fields in legacy INI / .cfg files.
 
-Ruling 5: TOML-only. The rheology fields are not typed for the INI path.
-If an INI config sets any of them, loading raises a clear error that names
-the TOML key to use instead.
+Rheology fields are supported in TOML configuration only.
+If an INI configuration sets any rheology field, loading raises an error
+that names the TOML key to use instead.
 """
 
 from __future__ import annotations

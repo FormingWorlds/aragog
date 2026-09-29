@@ -1,4 +1,4 @@
-"""Tests for solver option max_step_const_mode (F33).
+"""Tests for solver option max_step_const_mode.
 
 Verifies:
 1. _SolverParameters has max_step_const_mode option (default 100.0 years).
