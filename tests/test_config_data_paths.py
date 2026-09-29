@@ -46,14 +46,14 @@ def test_config_dir_wins_over_cwd(tmp_path, monkeypatch):
     assert params.mesh.eos_file == str(cfg_dir.resolve() / 'eos.dat')
 
 
-def test_cwd_fallback_keeps_relative_path(tmp_path, monkeypatch):
+def test_cwd_fallback_becomes_absolute(tmp_path, monkeypatch):
     cfg_dir, cwd = tmp_path / 'cfg', tmp_path / 'cwd'
     cfg_dir.mkdir()
     cwd.mkdir()
     shutil.copy(EOS_TEST, cwd / 'eos.dat')
     monkeypatch.chdir(cwd)
     params = Parameters.from_file(str(_ini_with(cfg_dir, 'eos.dat')))
-    assert params.mesh.eos_file == 'eos.dat'
+    assert params.mesh.eos_file == str(cwd.resolve() / 'eos.dat')
     assert params.mesh.eos_radius.size == np.loadtxt(EOS_TEST).shape[0]
 
 
@@ -80,11 +80,57 @@ def test_init_file_resolves_against_config_dir(tmp_path, monkeypatch):
 def test_toml_eos_file_resolves_against_config_dir(tmp_path, monkeypatch, loader):
     cfg_dir = tmp_path / 'cfg'
     cfg_dir.mkdir()
-    shutil.copy(EOS_TEST, cfg_dir / 'eos.dat')
-    text = (CFG_DIR / 'abe_solid.toml').read_text()
-    toml = cfg_dir / 'run.toml'
-    toml.write_text(text.replace('[mesh]\n', '[mesh]\neos_method = 2\neos_file = "eos.dat"\n', 1))
+    toml = _toml_with_eos(cfg_dir)
     monkeypatch.chdir(tmp_path)
     load = Parameters.from_file if loader == 'parser' else Config.from_toml
     params = load(str(toml))
     assert params.mesh.eos_file == str(cfg_dir.resolve() / 'eos.dat')
+
+
+def _toml_with_eos(cfg_dir: Path) -> Path:
+    shutil.copy(EOS_TEST, cfg_dir / 'eos.dat')
+    toml = cfg_dir / 'run.toml'
+    text = (CFG_DIR / 'abe_solid.toml').read_text()
+    toml.write_text(
+        text.replace('[mesh]\n', '[mesh]\neos_method = 2\neos_file = "eos.dat"\n', 1)
+    )
+    return toml
+
+
+def test_from_dict_without_config_dir_leaves_path_as_given(tmp_path, monkeypatch):
+    import tomllib
+
+    toml = _toml_with_eos(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    params = Config.from_dict(tomllib.loads(toml.read_text()))
+    assert params.mesh.eos_file == 'eos.dat'
+
+
+def test_cli_set_resolves_against_config_dir(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+
+    from aragog.cli import cli
+
+    cfg_dir, cwd = tmp_path / 'cfg', tmp_path / 'cwd'
+    cfg_dir.mkdir()
+    cwd.mkdir()
+    toml = _toml_with_eos(cfg_dir)
+    captured = {}
+
+    class _Solver:
+        def __init__(self, parameters, entropy_eos):
+            self.parameters = captured['p'] = parameters
+
+        def solve(self):
+            raise SystemExit(0)
+
+        def __getattr__(self, name):
+            return lambda *a, **k: None
+
+    monkeypatch.setattr('aragog.solver.EntropySolver', _Solver)
+    monkeypatch.setattr('aragog.eos.entropy.EntropyEOS', lambda *a, **k: object())
+    monkeypatch.chdir(cwd)
+    args = ['run', str(toml), '--eos-dir', str(tmp_path), '--initial-entropy', '2900']
+    result = CliRunner().invoke(cli, args + ['--set', 'solver.atol=1e-12'])
+    assert result.exit_code == 0, result.output
+    assert captured['p'].mesh.eos_file == str(cfg_dir.resolve() / 'eos.dat')

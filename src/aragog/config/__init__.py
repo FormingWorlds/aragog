@@ -88,8 +88,6 @@ class Config:
         Parameters
             Legacy Parameters object, ready for Solver.
         """
-        from pathlib import Path
-
         with Path(filename).open('rb') as f:
             data = tomllib.load(f)
 
@@ -124,8 +122,8 @@ class Config:
             _PhaseMixedParameters,
             _PhaseParameters,
             _Radionuclide,
-            _SolverParameters,
             _resolve_data_paths,
+            _SolverParameters,
         )
 
         # Case-insensitive scalings reject: keep parity with
@@ -155,7 +153,7 @@ class Config:
                 radionuclides.append(_Radionuclide(**val))
 
         if config_dir is not None:
-            _resolve_data_paths([Path(config_dir)], mesh, initial_condition)
+            _resolve_data_paths(config_dir, mesh, initial_condition)
         return Parameters(
             boundary_conditions=boundary_conditions,
             energy=energy,

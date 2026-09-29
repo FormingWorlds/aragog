@@ -27,17 +27,19 @@ from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOS
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
-def _resolve_data_paths(config_dirs, mesh, initial_condition) -> None:
-    """Resolve relative ``eos_file`` and ``init_file`` against the config directories.
+def _resolve_data_paths(config_dir, mesh, initial_condition) -> None:
+    """Resolve relative ``eos_file`` and ``init_file`` against ``config_dir``, then the CWD.
 
-    A relative path that names a file in one of ``config_dirs`` (searched in
-    order) becomes that absolute path; otherwise it is left as given and
-    resolves against the working directory. Absolute paths are unchanged.
+    A relative path that names a file in ``config_dir`` or else in the working
+    directory becomes that absolute path; otherwise it is left as given.
+    Absolute paths are unchanged.
     """
     for obj, name in ((mesh, 'eos_file'), (initial_condition, 'init_file')):
         path = getattr(obj, name)
         if path and not Path(path).is_absolute():
-            hit = next((d / path for d in config_dirs if (d / path).is_file()), None)
+            hit = next(
+                (d / path for d in (Path(config_dir), Path.cwd()) if (d / path).is_file()), None
+            )
             if hit is not None:
                 setattr(obj, name, str(hit.resolve()))
 
@@ -569,7 +571,7 @@ class Parameters:
 
         init_dict['radionuclides'] = radionuclides
         _resolve_data_paths(
-            [path.resolve().parent], init_dict['mesh'], init_dict['initial_condition']
+            path.resolve().parent, init_dict['mesh'], init_dict['initial_condition']
         )
         return cls(**init_dict)  # pylint: disable=E1125
 
@@ -597,9 +599,8 @@ class Parameters:
             )
             radionuclides.append(radionuclide)
         init_dict['radionuclides'] = radionuclides
-        # Later files override earlier ones, so their directories are searched first.
         _resolve_data_paths(
-            [Path(f).resolve().parent for f in reversed(filenames)],
+            Path(filenames[0]).resolve().parent,
             init_dict['mesh'],
             init_dict['initial_condition'],
         )
