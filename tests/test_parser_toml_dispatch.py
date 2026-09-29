@@ -75,8 +75,8 @@ def test_toml_path_string_fields_have_no_quote_artefacts(loaded_toml):
     out as relative paths the file system can resolve, not strings
     with surrounding quotes.
     """
-    assert loaded_toml.phase_mixed.solidus == 'data/test/solidus_1d_lookup.dat'
-    assert loaded_toml.phase_mixed.liquidus == 'data/test/liquidus_1d_lookup.dat'
+    assert loaded_toml.phase_mixed.solidus == '../../../data/test/solidus_1d_lookup.dat'
+    assert loaded_toml.phase_mixed.liquidus == '../../../data/test/liquidus_1d_lookup.dat'
     assert loaded_toml.phase_mixed.phase == 'solid'
 
 

@@ -427,7 +427,7 @@ def run(
             data = tomllib.load(fh)
         data = _apply_overrides(data, set_overrides)
         try:
-            parameters = Config.from_dict(data)
+            parameters = Config.from_dict(data, config_dir=config.resolve().parent)
         except (TypeError, ValueError) as exc:
             raise click.UsageError(
                 f'after applying --set overrides, the resolved config is invalid: {exc}.'
