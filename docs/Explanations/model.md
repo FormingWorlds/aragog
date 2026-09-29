@@ -90,6 +90,18 @@ $$
 
 with a narrow blend width $\Delta = 0.01\,Re_\mathrm{crit}$. A configurable floor `kappah_floor` sets a phase-modulated lower bound on $\kappa_h$. Mixing lengths are either the distance to the nearest boundary (`mixing_length_profile = "nearest_boundary"`) or a constant fraction of the mantle thickness.
 
+### Solid-state rheology
+
+In the fully solid regime, the dynamic viscosity follows an Arrhenius diffusion creep law limited by Byerlee plastic yielding. The Arrhenius viscosity is:
+
+$$
+\eta_\mathrm{diff} = \eta_\mathrm{ref} \exp\left( \frac{E_a + P V_a}{R T} - \frac{E_a}{R T_\mathrm{ref}} \right),
+$$
+
+where $E_a$ is the activation energy, $V_a$ is the activation volume, and the reference state is set by the `[phase_solid]` `viscosity` parameter. 
+
+The effective viscosity is capped by Byerlee yielding to prevent unphysically large stresses in the cold lithosphere. The yield stress is $Y = C + \mu P$, with cohesion $C$ and friction coefficient $\mu$. An explicit single-pass strain rate closure calculates the yielded viscosity. The closure operates in two modes: `"local"` limits the stress node-by-node based on the local strain rate, while `"global"` enforces a bulk yielding criterion across the entire solid domain.
+
 ### Gravitational separation of melt
 
 In the partially molten regime, melt and solid separate vertically by gravity. The separation mass flux is
@@ -156,7 +168,7 @@ Three outer BC modes are implemented in the entropy solver:
 |------|-------------|
 | 1 | Core cooling: flux determined by the selected `core_bc` formulation |
 | 2 | Prescribed flux |
-| 3 | Prescribed temperature |
+| 3 | Prescribed temperature $T_\mathrm{cmb}$: $F_\mathrm{cmb} = k_0 (T_\mathrm{cmb} - T_0) / \Delta r_{1/2}$, conduction across the half cell between the CMB and the bottom staggered node ($T_0$, $k_0$ at that node) |
 
 The `core_bc` selector chooses how the core energy balance is closed when `inner_boundary_condition = 1`:
 

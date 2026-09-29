@@ -42,6 +42,7 @@ def _build_bc(
     outer_boundary_value: float = 1500.0,
     param_utbl: bool = False,
     param_utbl_const: float = 1.0e-7,
+    core_bc: str = 'energy_balance',
 ) -> _BoundaryConditionsParameters:
     return _BoundaryConditionsParameters(
         outer_boundary_condition=outer_boundary_condition,
@@ -53,6 +54,7 @@ def _build_bc(
         core_heat_capacity=880.0,
         param_utbl=param_utbl,
         param_utbl_const=param_utbl_const,
+        core_bc=core_bc,
     )
 
 
@@ -190,10 +192,25 @@ def test_boundary_inner_bc_type_2_keeps_value():
 
 
 def test_boundary_inner_bc_type_3_keeps_value():
-    """IBC 3 (prescribed temperature): value passes through unchanged."""
-    bc = _build_bc(inner_boundary_condition=3, inner_boundary_value=4200.0)
+    """IBC 3 (prescribed temperature) with the quasi_steady core: value passes through."""
+    bc = _build_bc(
+        inner_boundary_condition=3, inner_boundary_value=4200.0, core_bc='quasi_steady'
+    )
     bc.normalize()
     assert bc.inner_boundary_value == pytest.approx(4200.0, rel=1e-12)
+    assert bc.core_bc == 'quasi_steady'
+
+
+@pytest.mark.parametrize('core_bc', ['energy_balance', 'gradient', 'bower2018'])
+def test_boundary_inner_bc_type_3_rejects_a_core_state(core_bc):
+    """IBC 3 with a core_bc that evolves a core-side state fails at load: the
+    prescribed CMB temperature would leave that state without effect."""
+    bc = _build_bc(inner_boundary_condition=3, inner_boundary_value=4200.0, core_bc=core_bc)
+    with pytest.raises(ValueError, match="needs core_bc = 'quasi_steady'"):
+        bc.normalize()
+    ok = _build_bc(inner_boundary_condition=2, inner_boundary_value=0.1, core_bc=core_bc)
+    ok.normalize()
+    assert ok.inner_boundary_value == pytest.approx(0.1, rel=1e-12)
 
 
 def test_boundary_inner_bc_unknown_code_raises_value_error():
@@ -365,6 +382,17 @@ def test_parameters_from_file_toml_reads_cvode_output_points(tmp_path):
         f'TOML [solver] cvode_output_points did not reach the solver params; '
         f'got {p.solver.cvode_output_points}.'
     )
+
+
+def test_ssc_long_run_config_solver_settings():
+    """The long-run solid-state config: 9 dense-output points, rtol = atol = 1e-8."""
+    cfg = (
+        Path(__file__).resolve().parent.parent
+        / 'tools/verification/configs/ssc_earth_4p5gyr.toml'
+    )
+    solver = Parameters.from_file(cfg).solver
+    assert solver.cvode_output_points == 9
+    assert solver.rtol == solver.atol == 1e-8
 
 
 def test_parameters_from_file_strict_rejects_scalings_section(tmp_path):

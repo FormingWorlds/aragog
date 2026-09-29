@@ -13,8 +13,9 @@ strict-rejected at load time. Remove the section.
 from __future__ import annotations
 
 import logging
+import math
 import tomllib  # noqa: F401
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Self
 
@@ -22,7 +23,15 @@ import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
 
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.cmb_boundary_layer import CMB_FLUX_LAWS
+from aragog.config.phases import (
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+)
+from aragog.rheology import SolidRheologyParams
+
+_DEFAULT_RHEOLOGY = SolidRheologyParams()
+_UNSET: Any = object()
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -70,6 +79,11 @@ class _BoundaryConditionsParameters:
     # See aragog/config/boundary.py docstring for details.
     # Default 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'
+    # Scale the outgoing surface flux down near the lower entropy edge of the
+    # solid table (always on for outer BC 6; opt-in for outer BC 4).
+    table_edge_cutoff: bool = False
+    # CMB flux from a lower thermal boundary layer law (aragog.cmb_boundary_layer)
+    cmb_flux_law: str = 'none'
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -95,6 +109,22 @@ class _BoundaryConditionsParameters:
             self.param_utbl_const = 0.0
         self._normalize_inner_boundary_condition()
         self._normalize_outer_boundary_condition()
+        self._check_cmb_flux_law()
+
+    def _check_cmb_flux_law(self) -> None:
+        """The CMB flux law replaces the face flux of inner BC 1 (quasi_steady) or 3."""
+        if self.cmb_flux_law not in CMB_FLUX_LAWS:
+            raise ValueError(
+                f'cmb_flux_law must be one of {CMB_FLUX_LAWS}, got {self.cmb_flux_law!r}'
+            )
+        if self.cmb_flux_law != 'none' and (
+            self.core_bc != 'quasi_steady' or self.inner_boundary_condition not in (1, 3)
+        ):
+            raise ValueError(
+                f"cmb_flux_law = {self.cmb_flux_law!r} needs core_bc = 'quasi_steady' and "
+                f'inner_boundary_condition 1 or 3; got core_bc = {self.core_bc!r}, '
+                f'inner_boundary_condition = {self.inner_boundary_condition}'
+            )
 
     def _normalize_inner_boundary_condition(self) -> None:
         """Normalise the inner boundary value.
@@ -106,6 +136,13 @@ class _BoundaryConditionsParameters:
         """
         if self.inner_boundary_condition == 1:
             self.inner_boundary_value = 0
+        elif self.inner_boundary_condition == 3 and self.core_bc != 'quasi_steady':
+            # The other core_bc modes evolve a core-side state that a fixed CMB T ignores.
+            msg = (
+                'inner_boundary_condition = 3 (prescribed CMB temperature) needs '
+                f"core_bc = 'quasi_steady'; got core_bc = {self.core_bc!r}"
+            )
+            raise ValueError(msg)
         elif self.inner_boundary_condition in (2, 3):
             pass
         else:
@@ -120,8 +157,9 @@ class _BoundaryConditionsParameters:
             2: Zahnle steam atmosphere (not implemented)
             4: Prescribed surface heat flux (atmosphere coupling)
             5: Prescribed surface temperature
+            6: Grey body with a conductive skin across the top half cell
         """
-        if self.outer_boundary_condition in (1, 2, 4, 5):
+        if self.outer_boundary_condition in (1, 2, 4, 5, 6):
             pass
         else:
             msg: str = f'outer_boundary_condition = {self.outer_boundary_condition} is unknown'
@@ -257,6 +295,22 @@ class _MeshParameters:
     # Fraction of mantle thickness used as the mixing length when
     # ``mixing_length_profile = 'constant'``. Ignored otherwise.
     mixing_length_constant_fraction: float = 0.25
+    # Thickness [m] of the outermost and innermost basic cell; 0 leaves that end at the
+    # spacing of the uniform grid (radius or mass coordinate). See aragog.mesh.stretching.
+    surface_cell_thickness: float = 0.0
+    cmb_cell_thickness: float = 0.0
+
+    def __post_init__(self):
+        for name in ('surface_cell_thickness', 'cmb_cell_thickness'):
+            val = getattr(self, name)
+            if val == 0.0:
+                continue
+            uniform = (self.outer_radius - self.inner_radius) / (self.number_of_nodes - 1)
+            if not (math.isfinite(val) and 0.0 < val < uniform):
+                raise ValueError(
+                    f'mesh.{name} must be 0 (off) or in (0, {uniform:.6g}) m, the uniform '
+                    f'radial cell; got {val}'
+                )
 
 
 @dataclass
@@ -281,6 +335,7 @@ class _PhaseMixedParameters:
     # "linear". Consumed by EntropyPhaseEvaluator via getattr fall-back,
     # but accepting it here lets the documented [phase_mixed] cp_blend
     # key in TOML / dict configs round-trip without a TypeError.
+
     cp_blend: str = 'latent'
     # Constant-properties mode (matches SPIDER -use_const_properties)
     const_properties: bool = False
@@ -307,6 +362,7 @@ class _PhaseParameters:
     This is used to store settings from phase_liquid and phase_solid.
     Float-valued fields are stored verbatim; string-valued fields are
     interpreted as paths to lookup tables by ``EntropyPhaseEvaluator``.
+    Rheology fields and defaults are owned by ``SolidRheologyParams``.
     """
 
     density: float | str
@@ -316,6 +372,38 @@ class _PhaseParameters:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
+    enabled: Any = _UNSET
+    activation_energy: Any = _UNSET
+    activation_volume: Any = _UNSET
+    activation_volume_decay_pressure: Any = _UNSET
+    arrhenius_t_ref: Any = _UNSET
+    viscosity_max_log10: Any = _UNSET
+    water_prefactor: Any = _UNSET
+    yield_stress_c: Any = _UNSET
+    yield_stress_mu: Any = _UNSET
+    yield_stress_max: Any = _UNSET
+    yield_switch_width: Any = _UNSET
+    stress_closure_mode: Any = _UNSET
+    interior_flux_fraction: Any = _UNSET
+    lid_base_mode: Any = _UNSET
+    lid_base_temperature: Any = _UNSET
+    lid_contrast_coeff: Any = _UNSET
+    lid_mask_width_cells: Any = _UNSET
+    phi_visc_single: Any = _UNSET
+    mlt_top_slope: Any = _UNSET
+    mlt_bottom_slope: Any = _UNSET
+    rheology: SolidRheologyParams = field(default=_DEFAULT_RHEOLOGY)
+
+    def __post_init__(self) -> None:
+        base = self.rheology
+        d = {f.name: getattr(base, f.name) for f in fields(SolidRheologyParams)}
+        for f in fields(SolidRheologyParams):
+            val = getattr(self, f.name)
+            if val is not _UNSET:
+                d[f.name] = val
+        self.rheology = SolidRheologyParams(**d)
+        for f in fields(SolidRheologyParams):
+            setattr(self, f.name, getattr(self.rheology, f.name))
 
 
 @dataclass
@@ -461,6 +549,14 @@ class Parameters:
                     f'EOS: [{self.mesh.eos_radius[0]:.3e}, {self.mesh.eos_radius[-1]:.3e}], '
                     f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
+
+        # With a zero width the solid-rheology right-hand side jumps at the solidus edge.
+        width = self.phase_mixed.matprop_smooth_width
+        if self.phase_solid.rheology.enabled and not width > 0.0:
+            raise ValueError(
+                '[phase_solid] enabled = true requires [phase_mixed] matprop_smooth_width > 0 '
+                f'(got {width}); PROTEUS passes 0.01'
+            )
 
         # Convert radionuclide concentration from ppm to mass fraction.
         for r in self.radionuclides:

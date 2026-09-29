@@ -17,6 +17,10 @@ import numpy as np
 import numpy.typing as npt
 
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+from aragog.rheology import (
+    compute_effective_viscosity,
+    compute_stagnant_lid_state,
+)
 from aragog.utilities import FloatOrArray
 
 if TYPE_CHECKING:
@@ -63,6 +67,7 @@ def apply_kappah_floor(
     kappah_floor: float,
     f_floor: npt.NDArray,
     is_convective: npt.NDArray,
+    w_lid: npt.NDArray | None = None,
 ) -> npt.NDArray:
     """Floor the eddy diffusivity in convecting cells only.
 
@@ -75,7 +80,8 @@ def apply_kappah_floor(
     ``rho*T*kappa_h*(-dS/dr)`` would then inject a spurious sign-flipped
     flux that pins the cell sub-solidus. SPIDER carries no kappa_h floor,
     so floor = 0 in stratified layers is the SPIDER-consistent limit.
-    Mirrors the JAX twin ``aragog.jax.phase.compute_mlt``.
+    When stagnant lid rheology is enabled, the floor is masked inside the lid
+    by ``(1 - w_lid)``. Mirrors the JAX twin ``aragog.jax.phase.compute_mlt``.
 
     Parameters
     ----------
@@ -89,6 +95,8 @@ def apply_kappah_floor(
         phi_width)``, ~0 in solid layers and ~1 in mushy/liquid layers.
     is_convective : numpy.ndarray
         Boolean mask, True where ``dS/dr < 0`` (convectively unstable).
+    w_lid : numpy.ndarray, optional
+        Smooth stagnant lid mask in [0, 1].
 
     Returns
     -------
@@ -96,7 +104,8 @@ def apply_kappah_floor(
         Eddy diffusivity floored in convecting cells only; stratified cells
         keep their raw value.
     """
-    kh_floor = kappah_floor * f_floor * is_convective
+    lid_mask = 1.0 if w_lid is None else (1.0 - w_lid)
+    kh_floor = kappah_floor * f_floor * is_convective * lid_mask
     return np.maximum(eddy_diffusivity, kh_floor)
 
 
@@ -242,6 +251,7 @@ class EntropyState:
         self._mixing_length = np.asarray(mesh.basic.mixing_length).ravel()
         self._mixing_length_sq = np.asarray(mesh.basic.mixing_length_squared).ravel()
         self._mixing_length_cu = np.asarray(mesh.basic.mixing_length_cubed).ravel()
+        self._visc_ml_factor = self._viscous_mixing_length_factor(mesh)
 
         # Allocate state arrays (all 1D).
         self._entropy_staggered = np.zeros(n_staggered)
@@ -252,6 +262,7 @@ class EntropyState:
         self._heat_flux = np.zeros(n_basic)
         self._mass_flux = np.zeros(n_basic)
         self._is_convective = np.zeros(n_basic, dtype=bool)
+        self._viscosity_basic = np.zeros(n_basic)
 
         # Per-component flux decomposition at basic nodes for diagnostic
         # output. These mirror the accumulations into ``_heat_flux`` below
@@ -275,6 +286,11 @@ class EntropyState:
         self._T_basic_diag = np.zeros(n_basic)
         self._cp_basic_diag = np.zeros(n_basic)
         self._rho_basic_diag = np.zeros(n_basic)
+        self._lid_state = None
+        self._low_theta_warned = False
+        self._visc_eff = np.zeros(n_basic)
+        self._strain_rate_basic = np.zeros(n_basic)
+        self._tau_y_basic = np.zeros(n_basic)
 
         # Phase-boundary entropy cache at staggered nodes. P_stag is
         # fixed for the lifetime of the solve, so S_sol(P_stag) and
@@ -411,6 +427,31 @@ class EntropyState:
         L_basic = np.asarray(eos.latent_heat(P_basic)).ravel()
         self._T_fus_basic = L_basic / self._dS_phase_basic
         self._P_basic_cached_id = id(pressure_obj)
+
+    def _viscous_mixing_length_factor(self, mesh) -> npt.NDArray | None:
+        """Per-node factor ``(l_v / l)^4`` of the calibrated viscous mixing length.
+
+        Returns None (the Abe profile, no multiplication) unless the rheology is
+        enabled and a slope differs from 1; the calibration is defined for the
+        ``'nearest_boundary'`` profile only.
+        """
+        rheo = getattr(self.phase_basic, 'rheology', None)
+        if rheo is None or not rheo.enabled:
+            return None
+        if rheo.mlt_top_slope == 1.0 and rheo.mlt_bottom_slope == 1.0:
+            return None
+        if mesh.settings.mixing_length_profile != 'nearest_boundary':
+            raise ValueError(
+                'mlt_top_slope and mlt_bottom_slope need '
+                "mixing_length_profile = 'nearest_boundary', got "
+                f'{mesh.settings.mixing_length_profile!r}'
+            )
+        from aragog.rheology import viscous_mixing_length_factor
+
+        r = np.asarray(mesh.basic.radii).ravel()
+        return viscous_mixing_length_factor(
+            r, r[0], r[-1], self._mixing_length, rheo.mlt_top_slope, rheo.mlt_bottom_slope
+        )
 
     def _maybe_warn_cp_floor(
         self,
@@ -637,8 +678,158 @@ class EntropyState:
         mixing_length_cubed = self._mixing_length_cu
         mixing_length_squared = self._mixing_length_sq
         nu = np.asarray(self.phase_basic.kinematic_viscosity()).ravel()
+        visc_v_unyielded = (
+            velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
+        )
+        # Calibrated viscous length: kappa_v scales by q, the branch switch by q^2
+        # (Re / Re_crit = (kappa_v / kappa_i)^2), so the switch stays at kappa_v = kappa_i.
+        q = self._visc_ml_factor
+        if q is not None:
+            visc_v_unyielded = q * visc_v_unyielded
+        # 1D stress closure and effective viscosity capping
+        eta_d = getattr(self.phase_basic, 'eta_diff', None)
+        rheo = getattr(self.phase_basic, 'rheology', None)
+        if eta_d is not None and np.size(eta_d) > 0 and rheo is not None and rheo.enabled:
+            if callable(eta_d):
+                eta_d = eta_d()
+            eta_d = np.asarray(eta_d).ravel()
+            tau_y = getattr(self.phase_basic, 'tau_y', None)
+            if callable(tau_y):
+                tau_y = tau_y()
+            tau_y = np.asarray(tau_y).ravel()
+            self._tau_y_basic = tau_y
+            mode = rheo.stress_closure_mode
+            r_basic = np.asarray(self._evaluator.mesh.basic.radii).ravel()
 
-        viscous_velocity = velocity_prefactor * mixing_length_cubed / (18.0 * nu)
+            # Baseline unyielded state from EOS (perfect phase blend)
+            eta_bulk_unyielded = np.asarray(self.phase_basic.viscosity()).ravel()
+            rho_basic = np.asarray(self.phase_basic.density()).ravel()
+
+            if mode == 'lid':
+                inviscid_velocity_sq = velocity_prefactor * mixing_length_squared / 16.0
+                inviscid_velocity = np.sqrt(inviscid_velocity_sq + 1.0e-20)
+                reynolds_unyielded = visc_v_unyielded * mixing_length / np.maximum(nu, 1e-30)
+                if q is not None:
+                    reynolds_unyielded = q * reynolds_unyielded
+                blend_width = 0.01 * RE_CRIT
+                inviscid_weight_unyielded = 0.5 * (
+                    1.0 + np.tanh((reynolds_unyielded - RE_CRIT) / max(blend_width, 1e-30))
+                )
+                kh_raw_unyielded = (
+                    (1.0 - inviscid_weight_unyielded) * visc_v_unyielded
+                    + inviscid_weight_unyielded * inviscid_velocity
+                ) * mixing_length
+                kappa_h_unyielded = (
+                    self._eddy_diff_thermal * kh_raw_unyielded
+                    if self._eddy_diff_thermal > 0
+                    else np.full_like(kh_raw_unyielded, -self._eddy_diff_thermal)
+                )
+                conv_mask = np.where(self._is_convective, 1.0, 0.0)
+                F_conv_unyielded = rho_basic * T * kappa_h_unyielded * (-self._dSdr) * conv_mask
+
+                if self._dP_dr_basic is None:
+                    self._ensure_basic_phase_boundary_cache()
+                Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
+                k = np.asarray(self.phase_basic.thermal_conductivity()).ravel()
+                Cp_safe = np.maximum(Cp, 100.0)
+                superadiabatic = (T / Cp_safe) * self._dSdr
+                dTdPs = np.asarray(self.phase_basic.dTdPs()).ravel()
+                dTdrs_ad = dTdPs * self._dP_dr_basic
+                F_cond = (
+                    (-k * (superadiabatic + dTdrs_ad)) if self._conduction else np.zeros_like(T)
+                )
+                F_tot_unyielded = F_cond + (
+                    F_conv_unyielded if self._convection else np.zeros_like(T)
+                )
+
+                P_basic = np.asarray(self.phase_basic.pressure).ravel()
+                visc_solid = 10.0 ** getattr(self.phase_basic, '_const_log10visc', 21.0)
+                lid_state = compute_stagnant_lid_state(
+                    radii=r_basic,
+                    temperature=T,
+                    pressure=P_basic,
+                    convective_flux=F_conv_unyielded,
+                    total_flux=F_tot_unyielded,
+                    solidus_temperature=None,
+                    melt_fraction=np.asarray(self.phase_basic.melt_fraction()).ravel(),
+                    params=rheo,
+                    unyielded_velocity=visc_v_unyielded,
+                    viscosity_solid=visc_solid,
+                    xp=np,
+                )
+                self._lid_state = lid_state
+                if (
+                    not self._low_theta_warned
+                    and lid_state['w_active'] > 0.5
+                    and lid_state['theta'] < 9.0
+                ):
+                    logger.warning(
+                        'Frank-Kamenetskii parameter theta = %.2f is below 9.0; '
+                        'rheological contrast is below stagnant lid threshold.',
+                        float(lid_state['theta']),
+                    )
+                    self._low_theta_warned = True
+                w_lid = lid_state['w_lid']
+                eta_effective = compute_effective_viscosity(
+                    eta_diff=eta_d,
+                    tau_d=lid_state['tau_d'],
+                    tau_y_lid=lid_state['tau_y_lid'],
+                    v_i=lid_state['v_i'],
+                    delta_rh=lid_state['delta_rh'],
+                    eta_i=lid_state['eta_i'],
+                    yield_switch_width=rheo.yield_switch_width,
+                    stress_closure_mode='lid',
+                    w_lid=w_lid,
+                    xp=np,
+                )
+            else:
+                self._lid_state = None
+                eta_effective = compute_effective_viscosity(
+                    eta_diff=eta_d,
+                    stress_closure_mode='local',
+                    unyielded_velocity=visc_v_unyielded,
+                    mixing_length=mixing_length,
+                    tau_y_profile=tau_y,
+                    xp=np,
+                )
+
+            # Re-apply phase blend linearly in log space exactly as EOS does
+            visc_solid_weight = getattr(self.phase_basic, 'visc_solid_weight', None)
+            if callable(visc_solid_weight):
+                visc_solid_weight = visc_solid_weight()
+            visc_solid_weight = np.asarray(visc_solid_weight).ravel()
+
+            log_eta_unyielded = np.log10(np.maximum(eta_bulk_unyielded, 1e-30))
+            log_eta_d = np.log10(np.maximum(eta_d, 1e-30))
+            log_eta_eff = np.log10(np.maximum(eta_effective, 1e-30))
+
+            log_eta_bulk = log_eta_unyielded + visc_solid_weight * (log_eta_eff - log_eta_d)
+            eta_bulk = 10.0**log_eta_bulk
+
+            self._viscosity_basic = eta_bulk
+            self._visc_eff = eta_effective
+            nu = eta_bulk / rho_basic
+            viscous_velocity = (
+                velocity_prefactor * mixing_length_cubed / (18.0 * np.maximum(nu, 1e-30))
+            )
+            if q is not None:
+                viscous_velocity = q * viscous_velocity
+        else:
+            self._lid_state = None
+            viscous_velocity = visc_v_unyielded
+            self._viscosity_basic = np.asarray(self.phase_basic.viscosity()).ravel()
+            self._visc_eff = self._viscosity_basic
+            tau_y = getattr(self.phase_basic, 'tau_y', None)
+            if tau_y is not None:
+                if callable(tau_y):
+                    tau_y = tau_y()
+                self._tau_y_basic = np.asarray(tau_y).ravel()
+            else:
+                self._tau_y_basic = np.full_like(self._viscosity_basic, 500e6)
+
+        from aragog.rheology import compute_strain_rate_local
+
+        self._strain_rate_basic = compute_strain_rate_local(viscous_velocity, mixing_length)
 
         # Inviscid velocity (Re > Re_crit). Add a tiny eps^2 inside the
         # sqrt to avoid the sqrt-kink at velocity_sq = 0; the value is
@@ -649,6 +840,8 @@ class EntropyState:
 
         # Reynolds number
         reynolds = viscous_velocity * mixing_length / nu
+        if q is not None:
+            reynolds = q * reynolds
 
         # Smooth blend between regimes (tanh transition at Re_crit).
         # blend_width = 0.01 * RE_CRIT: at Re ≪ RE_CRIT (solid regime,
@@ -690,21 +883,7 @@ class EntropyState:
             self._kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
 
         # kappa_h floor (phase-dependent, modulated by melt fraction), gated
-        # to convectively-unstable cells. Production PROTEUS runs use
-        # kappah_floor = 10 m^2/s (PROTEUS schema default). The phi-modulated
-        # floor f_floor = tanh_weight(phi, phi_rheo, phi_width) ramps from 0
-        # in solid layers to ~1 in mushy/liquid layers, where MLT can
-        # otherwise numerically freeze when the entropy gradient gets small.
-        # The ``self._is_convective`` (dS/dr < 0) gate confines the floor to
-        # cells that are actually convecting: a stably-stratified, just-frozen
-        # mushy cell at the crystallisation front must NOT receive a floored
-        # eddy diffusivity, because the signed convective flux
-        # rho*T*kappa_h*(-dS/dr) would then inject a spurious sign-flipped
-        # flux that pins the cell sub-solidus. SPIDER has no kappa_h floor, so
-        # floor = 0 in stratified layers is the SPIDER-consistent limit. The
-        # transition is anchored on the rheological critical melt fraction so
-        # the floor turns on where Costa-blended viscosity drops. Mirrored in
-        # the JAX twin jax/phase.py.
+        # to convectively-unstable cells. Masked out inside the lid when rheology is enabled.
         if self._kappah_floor > 0.0:
             phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             from aragog.utilities import tanh_weight
@@ -712,11 +891,17 @@ class EntropyState:
             phi_rheo = float(getattr(self.phase_basic, '_phi_rheo', 0.4))
             phi_width = float(getattr(self.phase_basic, '_phi_width', 0.15))
             f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
+            w_lid = (
+                self._lid_state['w_lid']
+                if (hasattr(self, '_lid_state') and self._lid_state is not None)
+                else None
+            )
             self._eddy_diffusivity = apply_kappah_floor(
                 self._eddy_diffusivity,
                 self._kappah_floor,
                 f_floor,
                 self._is_convective,
+                w_lid=w_lid,
             )
 
         # Mirror SPIDER energy.c:220-223: at the CMB basic node, use
@@ -1062,3 +1247,8 @@ class EntropyState:
         """Temperature gradient at basic nodes (from T profile, for BCs)."""
         T_stag = self.phase_staggered.temperature()
         return self._evaluator.mesh.d_dr_at_basic_nodes(T_stag)
+
+    @property
+    def viscosity_basic(self) -> npt.NDArray:
+        """Effective dynamic viscosity at basic nodes [Pa s]."""
+        return self._viscosity_basic

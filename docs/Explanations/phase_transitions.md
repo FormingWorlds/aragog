@@ -1,6 +1,6 @@
 # Phase transitions
 
-Aragog handles solid, liquid, and mixed (partially molten) phases through the `EntropyPhaseEvaluator`, a single phase-aware wrapper around the loaded `EntropyEOS`. The phase state at each radial node is determined by the local entropy relative to the solidus and liquidus entropies at that pressure, with smooth blending across the phase boundaries.
+Aragog handles solid, liquid, and mixed (partially molten) phases through the `EntropyPhaseEvaluator`, a single phase-aware wrapper around the loaded `EntropyEOS`. The local entropy determines the phase state at each radial node. It compares the state to the solidus and liquidus entropies at that pressure. Blending over the phase boundaries is smooth.
 
 ## Melt fraction
 
@@ -31,8 +31,8 @@ There is no separate `SinglePhaseEvaluator` / `MixedPhaseEvaluator` / `Composite
 
 For each cell at $(P, S)$, the phase evaluator computes a blending weight in two stages:
 
-1. **Stage 1 - mushy band weight $\mathrm{smth}(\phi)$.** The phase-boundary smoothing function from [Heat transport](heat_transport.md) defines the weight of the mixed-phase contribution (tanh in the production setting, cubic-Hermite as the fallback). Outside the mushy band $\mathrm{smth}(\phi) = 0$, and the property reduces to the relevant single-phase value.
-2. **Stage 2 - SPIDER `combine_matprop`.** Inside the band the property is a smooth combination of the mixed (lever-rule) value and the corresponding single-phase value, weighted by the cached `matprop_smooth_width`. This is the SPIDER-parity blend `smth*mixed + (1-smth)*single` that ensures continuity across the solidus and liquidus.
+1. **Stage 1 - mushy band weight $\mathrm{smth}(\phi)$.** The phase-boundary smoothing function from [Heat transport](heat_transport.md) defines the weight of the mixed-phase contribution (tanh in the production setting, cubic-Hermite as the fallback). Outside the mushy band $\mathrm{smth}(\phi) = 0$. The property then reduces to the single-phase value.
+2. **Stage 2 - SPIDER `combine_matprop`.** Inside the band the property is a smooth combination of the mixed (lever-rule) value and the corresponding single-phase value, weighted by the cached `matprop_smooth_width`. This is the SPIDER-parity blend `smth*mixed + (1-smth)*single` that ensures continuity over the solidus and liquidus.
 
 The same two-stage blend is applied to density, heat capacity, thermal expansivity, isentropic temperature gradient, and thermal conductivity. The resulting per-cell properties are used by the conduction, convection, gravitational-separation, and mixing fluxes on the same RHS evaluation.
 
@@ -62,13 +62,13 @@ The latent heat of fusion enters the entropy equation in two places:
 
 ## Solidus and liquidus curves
 
-The solidus and liquidus are loaded from two-column $(P, S)$ files named `solidus_P-S.dat` and `liquidus_P-S.dat` in the EOS-table directory. These are not P-T tables: in PROTEUS coupled runs the wrapper derives them from the configured solid-melt P-T file via the EOS, ensuring the P-S curves used by the solver are exactly consistent with the tabulated $T(P, S)$.
+The solidus and liquidus are loaded from two-column $(P, S)$ files named `solidus_P-S.dat` and `liquidus_P-S.dat` in the EOS-table directory. These are not P-T tables. In PROTEUS coupled runs the wrapper derives them from the solid-melt P-T file via the EOS. This keeps the P-S curves consistent, as they exactly match the tabulated $T(P, S)$.
 
 The pressure dependence of the curves determines where the mushy zone sits at each depth and, indirectly, the cooling timescale of the mantle: a shallow solidus produces a thin mushy band at high pressure; a steep solidus broadens the band and prolongs cooling.
 
 ## Rheological transition
 
-The mantle viscosity changes dramatically (many orders of magnitude) across the rheological transition at the critical melt fraction $\phi_\mathrm{rheo}$. The transition is parameterised as a smooth $\tanh$ in log-viscosity space:
+The mantle viscosity changes dramatically (many orders of magnitude) at the rheological transition at the critical melt fraction $\phi_\mathrm{rheo}$. The transition is parameterised as a smooth $\tanh$ in log-viscosity space:
 
 $$
 \log_{10}\eta(\phi) = \log_{10}\eta_s + (\log_{10}\eta_m - \log_{10}\eta_s)\,w(\phi),\qquad
@@ -76,6 +76,8 @@ w(\phi) = \tfrac{1}{2}\Big[1 + \tanh\!\big((\phi - \phi_\mathrm{rheo})/\Delta_\m
 $$
 
 with `rheological_transition_melt_fraction` setting $\phi_\mathrm{rheo}$ and `rheological_transition_width` setting the blend width $\Delta_\mathrm{rheo}$. Below the transition the solid viscosity dominates and convection is sluggish; above it the melt viscosity takes over and convection becomes vigorous, which is what triggers magma-ocean convective overturn.
+
+In the fully solid regime ($\phi < \phi_\mathrm{rheo}$), the solid viscosity $\eta_s$ follows an Arrhenius diffusion creep law limited by Byerlee plastic yielding. See [Solid-state convection](solid_state_convection.md) for details.
 
 ## Constant-properties analytical mode
 

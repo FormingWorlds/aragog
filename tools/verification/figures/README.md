@@ -7,8 +7,10 @@ Each script is a self-contained verification of one numerical or physical aspect
 
 | Script | Verifies | Output figure |
 |---|---|---|
+| `verify_arrhenius_yield.py` | Byerlee yield stress mechanics transition from stagnant to mobile lid. | `arrhenius_yielding` |
 | `verify_eos_bilinear_jacobian.py` | JAX-traced bilinear interpolation of the EOS table reproduces the numpy reference and supplies finite, non-zero derivatives via `jax.jacrev`. | `fig_03_eos_bilinear_jacobian` |
 | `verify_flux_decomposition.py` | Per-cell heat flux components ($F_\text{cond}$, $F_\text{conv}$, $F_\text{grav}$, $F_\text{mix}$) reconstruct the total heat flux to floating-point round-off. | `fig_02_flux_decomposition` |
+| `verify_flux_scaling.py` | Flux-gradient exponent limits for viscous (solid) and inviscid (molten) regimes. | `flux_gradient_scaling` |
 | `verify_mass_coord_jacobian.py` | The mesh-internal mass-coordinate transform Jacobian $d\xi/dr$ matches the analytic form $(\rho^* / \rho^*_\mathrm{planet})\,(r/\xi)^2$. | `fig_07_mass_coord_jacobian` |
 | `verify_permeability.py` | Three-regime gravitational-separation permeability $F(\zeta)$ implements the Abe (1995), Bower et al. (2018) section 2.1 Stokes / Rumpf-Gupte / Blake-Kozeny-Carman blend with the documented critical porosities. | `fig_04_permeability` |
 | `verify_radio_decay.py` | `aragog.jax.solver.make_radio_heating_fn` reproduces the analytical exponential-decay law for the four long-lived isotopes plus Al-26 and Fe-60 at canonical Solar-System-initial abundances. | `fig_06_radio_decay` |
@@ -19,13 +21,15 @@ Each script is a self-contained verification of one numerical or physical aspect
 
 ## Running
 
-All seven scripts depend on the production aragog environment (numpy, JAX, equinox, scipy; the JAX path uses `jax.config.update('jax_enable_x64', True)` so float64 is required):
+All nine scripts depend on the production aragog environment (numpy, JAX, equinox, scipy; the JAX path uses `jax.config.update('jax_enable_x64', True)` so float64 is required):
 
 ```sh
 conda activate proteus    # or your aragog env
 
 # Self-contained scripts (no external fixture needed):
+python tools/verification/figures/verify_arrhenius_yield.py
 python tools/verification/figures/verify_eos_bilinear_jacobian.py
+python tools/verification/figures/verify_flux_scaling.py
 python tools/verification/figures/verify_permeability.py
 python tools/verification/figures/verify_radio_decay.py
 python tools/verification/figures/verify_utbl_cardano.py

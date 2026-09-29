@@ -31,12 +31,15 @@ if TYPE_CHECKING:
 
     from aragog.jax.nondim import NonDimScales
 
+from aragog.cmb_boundary_layer import cmb_flux
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
+from aragog.rheology import SolidRheologyParams
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
+from aragog.surface_skin import skin_temperature, solid_weight, table_edge_factor
 
 # SUNDIALS CVODE via scikits-odes-sundials. Same underlying solver SPIDER
 # uses (SUNDIALS CVODE BDF with modified-Newton nonlinear iteration and
@@ -606,8 +609,7 @@ class SolverOutput:
     mass_stag: npt.NDArray  # mass per shell [kg]
 
     # Fluxes and heating (at basic / staggered nodes)
-    # Total heat flux at basic nodes [W/m^2]; the end values are the applied BC fluxes,
-    # except for inner BC 3 and outer BC 5, which the RHS does not impose.
+    # Total heat flux at basic nodes [W/m^2]; the end values are the applied BC fluxes.
     heat_flux: npt.NDArray
     heating: npt.NDArray  # internal heating at staggered nodes [W/kg]
     eddy_diff: npt.NDArray  # eddy diffusivity at basic nodes [m^2/s]
@@ -624,6 +626,14 @@ class SolverOutput:
     T_basic: npt.NDArray  # temperature at basic nodes [K]
     cp_basic: npt.NDArray  # heat capacity at basic nodes [J/kg/K]
     rho_basic: npt.NDArray  # density at basic nodes [kg/m^3]
+
+    # Solid-state rheology and stagnant lid diagnostics at basic nodes
+    visc_eff_b: npt.NDArray  # effective dynamic viscosity at basic nodes [Pa s]
+    eta_diff_b: npt.NDArray  # Arrhenius diffusion creep viscosity at basic nodes [Pa s]
+    strain_rate_b: npt.NDArray  # convective strain rate at basic nodes [1/s]
+    tau_y_b: npt.NDArray  # plastic yield stress at basic nodes [Pa]
+    lid_mask_b: npt.NDArray  # stagnant lid indicator mask at basic nodes [0..1]
+    yield_switch_b: npt.NDArray  # regime switch indicator at basic nodes [0..1]
 
     # Scalar quantities
     T_magma: float  # surface temperature [K]
@@ -743,6 +753,23 @@ class SolverOutput:
     # temperature is non-finite (a corrupted solve), independent of the limit.
     tcore_change_max: float = 0.0
     tcore_change_exceeded: bool = False
+
+    # Solid-state rheology and stagnant lid scalar diagnostics
+    lid_thickness: float = 0.0  # physical stagnant lid thickness d_lid [m]
+    lid_base_temperature: float = 0.0  # temperature at base of stagnant lid [K]
+    interior_temperature: float = 0.0  # representative convective interior temperature T_i [K]
+    lid_stress: float = 0.0  # convective driving shear stress tau_d [Pa]
+    theta: float = 0.0  # Frank-Kamenetskii rheological contrast parameter [-]
+    lid_regime: float = 0.0  # lid regime indicator: 0 = none / molten, 1 = stagnant, 2 = mobile
+    energy_residual: float = 0.0  # discrete energy conservation residual rate [W]
+    # Surface half cell at the final state: skin temperature (outer BC 6), top-cell
+    # temperature, conductance k_top / dr_half, and solid weight of the top cell.
+    T_surface_skin: float = float('nan')
+    T_top_cell: float = float('nan')
+    surface_half_cell_conductance: float = float('nan')
+    surface_solid_weight: float = 0.0
+    # Energy held back by the table-edge cutoff over the call [J], >= 0 when it acts.
+    step_dE_surface_cutoff_J: float = 0.0
 
     # ── NetCDF output ──────────────────────────────────────────────
     def to_netcdf(
@@ -940,6 +967,31 @@ class SolverOutput:
                 'J',
                 'Per-call entropy-transported heat content change (EOS quadrature)',
             )
+            _scalar(
+                'step_dE_surface_cutoff_J',
+                self.step_dE_surface_cutoff_J,
+                'J',
+                'Per-call surface energy held back by the table-edge cutoff',
+            )
+            _scalar(
+                'T_surface_skin',
+                self.T_surface_skin,
+                'K',
+                'Skin surface temperature (outer BC 6)',
+            )
+            _scalar('T_top_cell', self.T_top_cell, 'K', 'Temperature of the top staggered cell')
+            _scalar(
+                'surface_half_cell_conductance',
+                self.surface_half_cell_conductance,
+                'W m-2 K-1',
+                'Conductance k_top / dr_half of the top half cell',
+            )
+            _scalar(
+                'surface_solid_weight',
+                self.surface_solid_weight,
+                '1',
+                'Solid weight of the top cell',
+            )
             _scalar('dt_actual', self.dt_actual, 'yr', 'Actual integration time of this step')
             _scalar('status', int(self.status), '1', 'Solver status code (0 = success)')
             _scalar(
@@ -962,6 +1014,48 @@ class SolverOutput:
                 '1',
                 'Flag (0/1): per-solve core-temperature change exceeds the '
                 'limit, or a sampled core temperature is non-finite',
+            )
+            _scalar(
+                'lid_thickness',
+                float(self.lid_thickness),
+                'm',
+                'Physical stagnant lid thickness',
+            )
+            _scalar(
+                'lid_base_temperature',
+                float(self.lid_base_temperature),
+                'K',
+                'Temperature at base of stagnant lid',
+            )
+            _scalar(
+                'interior_temperature',
+                float(self.interior_temperature),
+                'K',
+                'Representative convective interior temperature T_i',
+            )
+            _scalar(
+                'lid_stress',
+                float(self.lid_stress),
+                'Pa',
+                'Convective driving shear stress tau_d',
+            )
+            _scalar(
+                'theta',
+                float(self.theta),
+                '1',
+                'Frank-Kamenetskii rheological contrast parameter',
+            )
+            _scalar(
+                'lid_regime',
+                float(self.lid_regime),
+                '1',
+                'Lid regime indicator (0 none, 1 stagnant, 2 mobile)',
+            )
+            _scalar(
+                'energy_residual',
+                float(self.energy_residual),
+                'W',
+                'Discrete energy conservation residual rate',
             )
 
             # ── Staggered-node profiles ─────────────────────────────
@@ -1014,6 +1108,48 @@ class SolverOutput:
                 'Heat capacity at basic nodes',
             )
             _arr('rho_basic', self.rho_basic, 'basic', 'kg m-3', 'Density at basic nodes')
+            _arr(
+                'visc_eff_b',
+                self.visc_eff_b,
+                'basic',
+                'Pa s',
+                'Effective dynamic viscosity at basic nodes',
+            )
+            _arr(
+                'eta_diff_b',
+                self.eta_diff_b,
+                'basic',
+                'Pa s',
+                'Arrhenius diffusion creep viscosity at basic nodes',
+            )
+            _arr(
+                'strain_rate_b',
+                self.strain_rate_b,
+                'basic',
+                's-1',
+                'Convective strain rate at basic nodes',
+            )
+            _arr(
+                'tau_y_b',
+                self.tau_y_b,
+                'basic',
+                'Pa',
+                'Plastic yield stress at basic nodes',
+            )
+            _arr(
+                'lid_mask_b',
+                self.lid_mask_b,
+                'basic',
+                '1',
+                'Stagnant lid indicator mask at basic nodes',
+            )
+            _arr(
+                'yield_switch_b',
+                self.yield_switch_b,
+                'basic',
+                '1',
+                'Regime switch indicator at basic nodes',
+            )
 
 
 class EntropySolver:
@@ -1284,6 +1420,7 @@ class EntropySolver:
                 'external eos_gravity not available',
                 g_scalar,
             )
+        self._g_basic_flat = np.asarray(g_basic, dtype=float).ravel()
 
         # Create entropy phase evaluators for staggered and basic nodes.
         # cp_blend selects how Cp is computed in the mushy zone:
@@ -1336,6 +1473,10 @@ class EntropySolver:
         cond_l = _phase_prop_float(self.parameters.phase_liquid.thermal_conductivity, None)
         if cond_l is not None:
             phase_kwargs['thermal_conductivity_liquid'] = cond_l
+
+        # Rheology parameters for Arrhenius viscosity and yield stress closure
+        solid_p = self.parameters.phase_solid
+        phase_kwargs['rheology'] = getattr(solid_p, 'rheology', None) or SolidRheologyParams()
 
         # Constant-properties mode (SPIDER -use_const_properties parity)
         _const = getattr(self.parameters.phase_mixed, 'const_properties', False)
@@ -1541,8 +1682,28 @@ class EntropySolver:
         self._outer_bc_emiss = float(bc.emissivity)
         self._outer_bc_T_eq = float(bc.equilibrium_temperature)
         self._outer_bc_utbl = bool(bc.param_utbl)
+        self._surf_dr_half = float(self._r_basic_flat[-1] - self._r_stag_flat[-1])
         self._inner_bc_kind = int(bc.inner_boundary_condition)
         self._inner_bc_value = float(bc.inner_boundary_value)
+
+        # Surface skin (outer BC 6) and the table-edge cutoff (BC 6, or BC 4 on request)
+        self._top_dr_half = 0.5 * float(self._r_basic_flat[-1] - self._r_basic_flat[-2])
+        self._phi_rheo = float(self.parameters.phase_mixed.rheological_transition_melt_fraction)
+        self._table_edge_cutoff = self._outer_bc_kind == 6 or bool(bc.table_edge_cutoff)
+        self._S_table_edge = (
+            self.entropy_eos.S_min_solid if self.entropy_eos is not None else -np.inf
+        )
+        self._surface_flux_nominal = 0.0
+        self._surface_skin = (np.nan, np.nan, 0.0)
+
+        # CMB flux law: face 1 (quasi_steady core unit = core + cell 0) or 0 (fixed T_cmb);
+        # the interior is the middle half of the mantle depth.
+        self._cmb_law = getattr(bc, 'cmb_flux_law', 'none') != 'none'
+        self._cmb_law_face = 1 if self._inner_bc_kind == 1 else 0
+        depth_frac = (self._r_basic_flat[-1] - self._r_stag_flat) / (
+            self._r_basic_flat[-1] - self._r_basic_flat[0]
+        )
+        self._cmb_law_interior = (depth_frac >= 0.25) & (depth_frac <= 0.75)
 
     def reset(self) -> None:
         """Reset for a new integration (PROTEUS coupling loop).
@@ -1927,6 +2088,108 @@ class EntropySolver:
             return None
         return float(prev_sol.y[n_stag, -1])
 
+    def _surface_half_cell_diagnostics(self) -> dict[str, float]:
+        """Top half-cell quantities at the current state, for the output.
+
+        Returns
+        -------
+        dict
+            ``T_top_cell``, ``surface_half_cell_conductance`` (``k_top / dr_half``),
+            ``surface_solid_weight`` and ``T_surface_skin`` (the root of the skin
+            balance with the grey-body inputs).
+        """
+        ps = self.state.phase_staggered
+        T_top = float(np.asarray(ps.temperature()).flat[-1])
+        G = float(np.asarray(ps.thermal_conductivity()).flat[-1]) / self._top_dr_half
+        s = float(solid_weight(float(np.asarray(ps.melt_fraction()).flat[-1]), self._phi_rheo))
+        T_s = float(
+            skin_temperature(
+                T_top, G, self._outer_bc_emiss, self._outer_bc_T_eq, Stefan_Boltzmann
+            )
+        )
+        return dict(
+            T_surface_skin=T_s,
+            T_top_cell=T_top,
+            surface_half_cell_conductance=G,
+            surface_solid_weight=s,
+        )
+
+    def _cmb_law_flux(self, entropy: npt.NDArray) -> float:
+        """CMB flux from ``aragog.cmb_boundary_layer.cmb_flux`` at the current state.
+
+        ``T_c`` is the prescribed CMB temperature (inner BC 3) or the core-unit
+        temperature (cell 0, quasi_steady). ``T_m`` lies on the isentrope of the
+        mass-weighted entropy of the middle half of the mantle, at the pressure of
+        the law's face; the viscosity is the mass-weighted log mean over those cells.
+        Layer properties are those of the bottom cell, gravity that of the face.
+        ``T_s`` is the prescribed surface temperature for outer BC 5, else the
+        temperature of the top basic node.
+        """
+        ps = self.state.phase_staggered
+        rho = np.asarray(ps.density()).ravel()
+        k = float(np.asarray(ps.thermal_conductivity()).ravel()[0])
+        cp = float(np.asarray(ps.heat_capacity()).ravel()[0])
+        m = self._cmb_law_interior
+        w = self._volume_flat[m] * rho[m]
+        S_int = float(np.sum(w * np.asarray(entropy)[m]) / np.sum(w))
+        eta = float(
+            np.exp(np.sum(w * np.log(np.asarray(ps.viscosity()).ravel()[m])) / np.sum(w))
+        )
+        face = self._cmb_law_face
+        if self.entropy_eos is not None:
+            T_m = float(
+                self.entropy_eos.temperature_scalar(float(self._P_basic_flat[face]), S_int)
+            )
+        else:
+            pm = self.parameters.phase_mixed
+            T_m = pm.const_T_ref * np.exp((S_int - pm.const_S_ref) / pm.const_Cp)
+        # The surface temperature is the prescribed one for outer BC 5, else the top node's.
+        T_s = (
+            self._outer_bc_value
+            if self._outer_bc_kind == 5
+            else float(self.state.top_temperature.item())
+        )
+        T_c = (
+            self._inner_bc_value
+            if self._inner_bc_kind == 3
+            else float(np.asarray(ps.temperature()).ravel()[0])
+        )
+        return float(
+            cmb_flux(
+                T_c,
+                T_m,
+                T_s,
+                float(self._r_basic_flat[-1] - self._r_basic_flat[0]),
+                float(rho[0]),
+                float(self._g_basic_flat[face]),
+                float(np.asarray(ps.thermal_expansivity()).ravel()[0]),
+                k / (float(rho[0]) * cp),
+                k,
+                eta,
+            )
+        )
+
+    def _skin_surface_flux(self) -> float:
+        """Surface flux of outer BC 6: grey body blended to the conductive skin.
+
+        Returns
+        -------
+        float
+            ``(1 - s) F_grey(T_basic_top) + s G (T_top - T_s)`` [W/m^2] with
+            ``G = k_top / dr_half``, ``T_s`` from ``skin_temperature`` and
+            ``s`` the solid weight of the top staggered cell.
+        """
+        emiss, T_eq = self._outer_bc_emiss, self._outer_bc_T_eq
+        T_basic_top = self.state.top_temperature.item()
+        F_grey = emiss * Stefan_Boltzmann * (T_basic_top**4 - T_eq**4)
+        ps = self.state.phase_staggered
+        T_top = float(np.asarray(ps.temperature()).flat[-1])
+        G = float(np.asarray(ps.thermal_conductivity()).flat[-1]) / self._top_dr_half
+        s = float(solid_weight(float(np.asarray(ps.melt_fraction()).flat[-1]), self._phi_rheo))
+        T_s = float(skin_temperature(T_top, G, emiss, T_eq, Stefan_Boltzmann))
+        self._surface_skin = (T_s, G, s)
+        return (1.0 - s) * F_grey + s * G * (T_top - T_s)
+
     def dSdt(
         self,
         time: npt.NDArray | float,
@@ -2036,6 +2299,28 @@ class EntropySolver:
             self.state._heat_flux[-1] = float(
                 self.evaluator.boundary_conditions._settings.outer_boundary_value
             )
+        elif self._outer_bc_kind == 5:
+            # Prescribed surface temperature
+            k_surf = float(
+                np.asarray(self.state.phase_basic.thermal_conductivity()).ravel()[-1]
+            )
+            T_cell = float(np.asarray(self.state.phase_staggered.temperature()).ravel()[-1])
+            self.state._heat_flux[-1] = (
+                k_surf * (T_cell - self._outer_bc_value) / self._surf_dr_half
+            )
+        elif self._outer_bc_kind == 6:
+            self.state._heat_flux[-1] = self._skin_surface_flux()
+        else:
+            raise ValueError(
+                f'EntropySolver: unknown outer_boundary_condition = {self._outer_bc_kind}'
+            )
+        if self._table_edge_cutoff:
+            F_out = float(self.state._heat_flux[-1])
+            self._surface_flux_nominal = F_out
+            if F_out > 0.0:
+                self.state._heat_flux[-1] = F_out * table_edge_factor(
+                    float(entropy[-1]), self._S_table_edge
+                )
 
         # CMB boundary condition
         if self._inner_bc_kind == 1:
@@ -2061,6 +2346,8 @@ class EntropySolver:
                 rho_first = float(np.asarray(self.state.phase_staggered.density()).flat[0])
                 cp_first = float(np.asarray(self.state.phase_staggered.heat_capacity()).flat[0])
                 cell_cap = self._cmb_vol_first * rho_first * cp_first  # J/K
+                if self._cmb_law:
+                    self.state._heat_flux[1] = self._cmb_law_flux(entropy)
                 alpha = self._cmb_radius_ratio_sq / (
                     cell_cap / (self._core_cap * self._core_tfac) + 1.0
                 )
@@ -2071,8 +2358,17 @@ class EntropySolver:
                 )
         elif self._inner_bc_kind == 2:
             self.state._heat_flux[0] = self._inner_bc_value
+        elif self._inner_bc_kind == 3 and self._cmb_law:
+            self.state._heat_flux[0] = self._cmb_law_flux(entropy)
         elif self._inner_bc_kind == 3:
-            pass  # prescribed T
+            # Prescribed CMB temperature: conduction across the bottom half cell.
+            T_first = float(np.asarray(self.state.phase_staggered.temperature()).flat[0])
+            k_first = float(
+                np.asarray(self.state.phase_staggered.thermal_conductivity()).flat[0]
+            )
+            self.state._heat_flux[0] = (
+                k_first * (self._inner_bc_value - T_first) / self._cmb_dr_half
+            )
         else:
             self.state._heat_flux[0] = 0.0  # insulating
 
@@ -2689,6 +2985,7 @@ class EntropySolver:
         if cvode_info is not None and 'NumSteps' in cvode_info and 'NumRhsEvals' in cvode_info:
             result.cvode_nst = int(cvode_info['NumSteps'])
             result.cvode_nfe = int(cvode_info['NumRhsEvals'])
+            result.cvode_info = dict(cvode_info)  # counters; step sizes in nondim time
         # ``scikits.odes`` rootfn-fire idiosyncrasy: when CVODE's rootfn
         # fires (flag=2), ``cvode_sol.values.t`` contains ONLY the start
         # time (the integration progress to the root is dropped), while
@@ -2775,6 +3072,10 @@ class EntropySolver:
 
     def solve(self) -> None:
         """Run the BDF time integration."""
+        if not hasattr(self, '_S0') or self._S0 is None:
+            raise RuntimeError(
+                'Initial entropy is not set. Call set_initial_entropy() before solve().'
+            )
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
@@ -3089,6 +3390,11 @@ class EntropySolver:
                 getattr(self.parameters.energy, 'use_jax_jacobian', False)
                 and self._jax_cvode_factory is not None
             )
+            if use_jax_jac and self._cmb_law:
+                raise ValueError(
+                    'cmb_flux_law is not passed to the JAX CVODE factory; '
+                    'run with use_jax_jacobian = false'
+                )
             if use_jax_jac:
                 try:
                     # Pass the NonDimScales instance, which bundles
@@ -3145,6 +3451,8 @@ class EntropySolver:
         sol = self._solution
         if sol.t is not None:
             sol.t = np.asarray(sol.t, dtype=float) * t_ref
+        if 'cvode_info' in sol:
+            sol.cvode_last_step = float(sol.cvode_info.get('LastStep', np.nan)) * t_ref
         if sol.y is not None:
             sol_y = np.asarray(sol.y, dtype=float)
             if sol_y.ndim == 2:
@@ -3298,6 +3606,7 @@ class EntropySolver:
             'F_int': 0.0,
             'F_cmb': 0.0,
             'F_cmb_step_avg': None,
+            'surface_cutoff': 0.0,
             'Q_radio': 0.0,
             'Q_tidal': 0.0,
             'Q_radio_cons': 0.0,
@@ -3348,6 +3657,7 @@ class EntropySolver:
         # time-integration error. The time-integration quality is carried
         # by ``E_residual_cons_frac`` on the coupler side.
         P_resid_solver = np.zeros(n_steps)
+        P_cutoff = np.zeros(n_steps)
 
         for i in range(n_steps):
             t_i = float(sol.t[i])
@@ -3381,6 +3691,8 @@ class EntropySolver:
             # Read boundary fluxes AFTER dSdt has applied the BCs.
             F_int_i = float(self.state._heat_flux[-1])
             F_cmb_i = float(self.state._heat_flux[0])
+            if self._table_edge_cutoff and not gradient_mode:
+                P_cutoff[i] = (self._surface_flux_nominal - F_int_i) * A_int
 
             rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
             mass_i = rho_i * vol
@@ -3453,6 +3765,7 @@ class EntropySolver:
 
         return {
             'F_int': trap(P_F_int),
+            'surface_cutoff': trap(P_cutoff),
             'F_cmb': step_dE_F_cmb,
             'F_cmb_step_avg': f_cmb_step_avg,
             'Q_radio': trap(P_radio),
@@ -3721,6 +4034,11 @@ class EntropySolver:
         # the end-of-call snapshot (heat_flux, heating arrays, etc.)
         # consistent with what callers see in the rest of get_state().
         step_integrals = self._compute_step_energy_integrals()
+        if step_integrals['surface_cutoff'] > 0.0:
+            logger.info(
+                'Table-edge cutoff held back %.4e J of surface energy in this call',
+                step_integrals['surface_cutoff'],
+            )
 
         # Slice the final state vector.
         if gradient_mode:
@@ -3905,6 +4223,58 @@ class EntropySolver:
         area_surf = 4 * np.pi * float(r_basic[-1]) ** 2
         F_heat_total = float(np.dot(heating, mass_stag)) / area_surf
 
+        # Solid-state rheology and stagnant lid diagnostics
+        visc_eff_b = np.asarray(
+            getattr(self.state, '_visc_eff', self.state.viscosity_basic)
+        ).ravel()
+        if visc_eff_b.size == 0:
+            visc_eff_b = np.asarray(self.state.viscosity_basic).ravel()
+
+        eta_d = getattr(self.state.phase_basic, 'eta_diff', None)
+        if callable(eta_d):
+            eta_d = eta_d()
+        rheo_obj = getattr(self.state.phase_basic, 'rheology', None)
+        if (
+            eta_d is not None
+            and np.size(eta_d) > 0
+            and rheo_obj is not None
+            and rheo_obj.enabled
+        ):
+            eta_diff_b = np.asarray(eta_d).ravel()
+        else:
+            log10_s = getattr(self.parameters.phase_solid, 'log10_visc_solid', 21.0)
+            eta_diff_b = np.full_like(r_basic, 10.0**log10_s)
+
+        strain_rate_b = np.asarray(
+            getattr(self.state, '_strain_rate_basic', np.zeros_like(r_basic))
+        ).ravel()
+        tau_y_b = np.asarray(
+            getattr(self.state, '_tau_y_basic', np.full_like(r_basic, 500e6))
+        ).ravel()
+
+        lid_st = getattr(self.state, '_lid_state', None)
+        if lid_st is not None:
+            lid_mask_b = np.asarray(lid_st['w_lid']).ravel()
+            yield_switch_b = np.full_like(r_basic, float(lid_st['w_y']))
+            lid_thickness = float(lid_st['d_lid'])
+            lid_base_temperature = float(lid_st['T_lid'])
+            interior_temperature = float(lid_st['T_i'])
+            lid_stress = float(lid_st['tau_d'])
+            theta_val = float(lid_st['theta'])
+            lid_regime = float(np.round(lid_st['lid_regime']))
+        else:
+            lid_mask_b = np.zeros_like(r_basic)
+            yield_switch_b = np.zeros_like(r_basic)
+            lid_thickness = 0.0
+            lid_base_temperature = 0.0
+            interior_temperature = float(T_magma)
+            lid_stress = 0.0
+            theta_val = 0.0
+            lid_regime = 0.0
+
+        dt_s = float(sol.t[-1] - sol.t[0]) * 365.25 * 86400.0
+        energy_residual = float(step_integrals['solver_residual']) / dt_s if dt_s > 0.0 else 0.0
+
         return SolverOutput(
             S_final=S_final,
             T_stag=T_stag,
@@ -3956,6 +4326,8 @@ class EntropySolver:
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
             tcore_change_max=tcore_change_max,
             tcore_change_exceeded=tcore_change_exceeded,
+            step_dE_surface_cutoff_J=step_integrals['surface_cutoff'],
+            **self._surface_half_cell_diagnostics(),
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,
@@ -3965,4 +4337,17 @@ class EntropySolver:
             T_basic=T_basic_diag,
             cp_basic=cp_basic_diag,
             rho_basic=rho_basic_diag,
+            visc_eff_b=visc_eff_b,
+            eta_diff_b=eta_diff_b,
+            strain_rate_b=strain_rate_b,
+            tau_y_b=tau_y_b,
+            lid_mask_b=lid_mask_b,
+            yield_switch_b=yield_switch_b,
+            lid_thickness=lid_thickness,
+            lid_base_temperature=lid_base_temperature,
+            interior_temperature=interior_temperature,
+            lid_stress=lid_stress,
+            theta=theta_val,
+            lid_regime=lid_regime,
+            energy_residual=energy_residual,
         )

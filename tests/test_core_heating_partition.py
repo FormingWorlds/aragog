@@ -131,7 +131,16 @@ def test_jax_dsdt_conserves_energy_with_a_heating_profile(monkeypatch):
         T = 2000.0 * jnp.exp((S - 3000.0) / cp)
         one = jnp.ones_like(S)
         return PhaseProperties(
-            T, rho * one, cp * one, *(0.0 * one,) * 3, 1.0 * one, *(0.0 * one,) * 3, rho * T
+            T,
+            rho * one,
+            cp * one,
+            *(0.0 * one,) * 3,
+            1.0 * one,
+            *(0.0 * one,) * 3,
+            rho * T,
+            0.0 * one,
+            0.0 * one,
+            one,
         )
 
     def fluxes(S, t, eos, params, mesh, heating):

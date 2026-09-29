@@ -10,7 +10,7 @@ The `aragog.config` package provides the modern `attrs`-based configuration clas
 | `InitialConditionConfig` | IC type (linear, user-defined, adiabatic), surface and basal temperatures, init-file path. |
 | `MeshConfig` | Mesh geometry, EOS method (Adams-Williamson or user-defined), surface density, gravity, bulk modulus, mass-coordinate flag, surface pressure. |
 | `MixedPhaseConfig` | Mushy-zone parameters: latent heat, rheological transition, smoothing widths, solidus/liquidus paths, `cp_blend` strategy, `separation_viscosity` drag source. |
-| `PhaseConfig` | Single-phase (solid or liquid) properties: density, heat capacity, conductivity, expansivity, viscosity, optional entropy lookup. Each property accepts a float or a path-string lookup. |
+| `PhaseConfig` | Single-phase (solid or liquid) properties: density, heat capacity, conductivity, expansivity, viscosity, optional entropy lookup. The solid phase accepts solid-state convection parameters (`activation_energy`, `activation_volume`, `yield_stress_c`, `yield_stress_mu`, `stress_closure_mode`). Each property accepts a float or a path-string lookup. |
 | `RadionuclideConfig` | One radioisotope: name, reference time, abundance, concentration, heat production, half-life. Provides `get_heating(time)` (W/kg). |
 | `SolverConfig` | ODE driver settings: `start_time`, `end_time`, `atol`, `rtol`, surface-T step cap. |
 
