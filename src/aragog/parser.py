@@ -210,8 +210,8 @@ class _EnergyParameters:
     # falls back to FD Jacobian when no factory is available.
     use_jax_jacobian: bool = True
 
-    # Per-call cap on mass-weighted |ΔΦ_global| (armed when a cell is near the mushy band):
-    # the call ends early (status 0) so PROTEUS can shorten dt before a step straddles the
+    # Per-call cap on mass-weighted |ΔΦ_global| near the mushy band: the call ends early (status 0
+    # under CVODE, 1 under scipy, both successful) so PROTEUS can shorten dt before the
     # rheological transition. 0.05 suits 1 M⊕ runs; None or a non-positive value disables it.
     phi_step_cap: float | None = None
     # Per-cell temperature and entropy step caps [K] and [J/kg/K]. Like the
