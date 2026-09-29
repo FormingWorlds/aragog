@@ -65,6 +65,7 @@ def test_cvode_failure_exits_non_zero(tmp_path):
     pytest.importorskip('scikits_odes_sundials')  # max_steps acts on the CVODE path only
     result = _run(tmp_path, 'solver.max_steps=5')
     assert result.exit_code == 1, result.output
+    assert 'integration failed (status=-1)' in result.output
     assert 'partial state written to' in result.output
     assert (tmp_path / 'o.nc').is_file()
 
