@@ -14,6 +14,8 @@ Two surfaces are covered:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -160,18 +162,16 @@ class _CapturingCVODE:
         self._rhs = rhs
         return self
 
-    def solve(self, tspan, y0):
-        class _V:
-            t = np.asarray(tspan, dtype=float)
-            y = np.tile(np.asarray(y0, dtype=float).reshape(-1, 1), (1, len(t)))
+    def init_step(self, t0, y0):
+        self._y0 = np.asarray(y0, dtype=float)
 
-        class _Sol:
-            flag = 0
-            message = 'success'
-            roots = None
-            values = _V()
+    def set_options(self, **opts):
+        pass
 
-        return _Sol()
+    def step(self, t):
+        return SimpleNamespace(
+            flag=0, message='success', values=SimpleNamespace(t=t, y=self._y0)
+        )
 
     def get_info(self):
         return {}
@@ -188,6 +188,7 @@ def _run_capture(*, max_steps, with_jacfn):
     es._scikits_cvode = _CapturingCVODE(captured)
     try:
         solver = EntropySolver.__new__(EntropySolver)
+        solver.entropy_eos = None
         solver._core_bc = 'quasi_steady'
         solver._cvode_output_points = 4
         solver._max_steps = max_steps

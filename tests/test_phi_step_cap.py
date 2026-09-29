@@ -695,13 +695,13 @@ def test_solve_cvode_uses_cvode_roots_when_flag_2():
     mock_cvode_sol.message = 'root found'
 
     mock_solver = MagicMock()
-    mock_solver.solve.return_value = mock_cvode_sol
     mock_solver.get_info.return_value = {}
 
     start_time = 0.1
     end_time = 1.0
     y0 = np.linspace(0.0, 1.0, n_state)
     instance = MagicMock(spec=EntropySolver)
+    instance._cvode_solve_stepwise.return_value = (mock_cvode_sol, None)
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
     instance._cvode_output_points = 65
@@ -762,10 +762,10 @@ def test_solve_cvode_falls_back_to_values_when_no_roots_on_flag_2():
     mock_cvode_sol.message = ''
 
     mock_solver = MagicMock()
-    mock_solver.solve.return_value = mock_cvode_sol
     mock_solver.get_info.return_value = {}
 
     instance = MagicMock(spec=EntropySolver)
+    instance._cvode_solve_stepwise.return_value = (mock_cvode_sol, None)
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
     instance._cvode_output_points = 65
@@ -821,10 +821,10 @@ def test_solve_cvode_uses_values_on_normal_completion_flag_0():
     mock_cvode_sol.message = ''
 
     mock_solver = MagicMock()
-    mock_solver.solve.return_value = mock_cvode_sol
     mock_solver.get_info.return_value = {}
 
     instance = MagicMock(spec=EntropySolver)
+    instance._cvode_solve_stepwise.return_value = (mock_cvode_sol, None)
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
     instance._cvode_output_points = 65
@@ -879,13 +879,13 @@ def test_solve_cvode_reads_step_counts_from_correct_handle():
     mock_cvode_sol.message = ''
 
     mock_solver = MagicMock()
-    mock_solver.solve.return_value = mock_cvode_sol
     # Correct handle carries the true CVODE counters.
     mock_solver.get_info.return_value = {'NumSteps': 1234, 'NumRhsEvals': 5678}
     # Wrong handle carries decoy values that must not reach the result.
     mock_solver._integrator.get_info.return_value = {'NumSteps': 11, 'NumRhsEvals': 22}
 
     instance = MagicMock(spec=EntropySolver)
+    instance._cvode_solve_stepwise.return_value = (mock_cvode_sol, None)
     instance.dSdt = lambda t, y: np.zeros_like(y)
     instance._core_bc = 'energy_balance'
     instance._cvode_output_points = 65
