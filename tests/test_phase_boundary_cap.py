@@ -432,7 +432,10 @@ def test_solve_cvode_segments_gives_a_short_call_its_end_time():
 
     def fake_solve_cvode(**kw):
         spans.append(np.asarray(kw['tspan']))
-        return OptimizeResult(t=spans[-1], y=np.ones((2, 2)), nfev=0, status=0, cvode_flag=0)
+        res = OptimizeResult(t=np.asarray(kw['tspan']), y=np.ones((2, 2)))
+        res.nfev = res.cvode_nst = res.cvode_nfe = res.status = 0
+        res.cvode_flag = 0
+        return res
 
     s._solve_cvode = fake_solve_cvode
     res = s._solve_cvode_segments(
