@@ -52,4 +52,5 @@ class RadionuclideConfig:
             Heat production [W/kg].
         """
         arg = np.log(2) * (self.t0_years - time) / self.half_life_years
-        return self.heat_production * self.abundance * self.concentration * np.exp(arg)
+        amplitude = self.heat_production * self.abundance * self.concentration
+        return amplitude * np.exp(arg) if amplitude else 0.0 * arg

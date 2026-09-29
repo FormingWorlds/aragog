@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from aragog.cli import cli
+from aragog.config.radionuclides import RadionuclideConfig
 from aragog.parser import Parameters, _Radionuclide
 
 from .test_phi_step_cap_armed_smoke import EOS_DIR, needs_eos
@@ -43,8 +44,9 @@ def _lookup_cfg(tmp_path, *, end_time=None, al26_live=False) -> Path:
 
 
 @pytest.mark.unit
-def test_zero_amplitude_isotope_heats_zero_where_exp_overflows():
-    r = _Radionuclide(**AL26_ZERO)
+@pytest.mark.parametrize('cls', [_Radionuclide, RadionuclideConfig])
+def test_zero_amplitude_isotope_heats_zero_where_exp_overflows(cls):
+    r = cls(**AL26_ZERO)
     assert r.get_heating(0.0) == 0.0
     np.testing.assert_array_equal(r.get_heating(np.array([0.0, 1e3])), [0.0, 0.0])
 
