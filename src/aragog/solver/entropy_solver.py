@@ -3769,25 +3769,13 @@ class EntropySolver:
         cp_basic_diag = self.state.cp_basic_diag.copy()
         rho_basic_diag = self.state.rho_basic_diag.copy()
 
-        # Scalar quantities.
-        # M_mantle uses the analytic A-W mass integral (SPIDER's
-        # EOSAdamsWilliamson_GetMassWithinShell) for eos_method=1, which
-        # avoids the O(h^2) quadrature error of a discrete sum. For
-        # eos_method=2 it sums the structural effective density
-        # (rho_struct_stag * vol), a different field from the PALEOS
-        # rho_stag used just below for per-cell output.
+        # Scalar quantities. M_mantle is the structural mass between the CMB
+        # and the surface from the EOS mass integral, not the PALEOS rho_stag
+        # used just below for per-cell output.
         mesh = self.evaluator.mesh
-        if hasattr(mesh.eos, 'get_mass_within_radii'):
-            r_cmb = float(self._r_basic_flat[0])
-            r_surf = float(self._r_basic_flat[-1])
-            M_mantle = (
-                mesh.eos.get_mass_within_radii(np.array([r_surf]))
-                - mesh.eos.get_mass_within_radii(np.array([r_cmb]))
-            ).item()
-        else:
-            rho_struct_stag = np.asarray(mesh.staggered_effective_density).ravel()
-            mass_struct_stag = rho_struct_stag * vol
-            M_mantle = float(np.sum(mass_struct_stag))
+        M_mantle = float(
+            np.diff(mesh.eos.get_mass_within_radii(self._r_basic_flat[[0, -1]]))[0]
+        )
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
         # T_magma = top basic-node temperature, evaluated at
         # r = outer_boundary where P = surface_pressure. This matches
