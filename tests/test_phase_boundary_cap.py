@@ -18,6 +18,8 @@ from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_
 
 S_SOL, S_LIQ, DELTA = 1000.0, 1300.0, 10.0
 WIDE = (0.0, 1e9)
+# Long enough for the mushy fixture to reach a progress root after the start segment.
+_SEGMENT_SPAN_YR = 400.0
 
 
 def _cap(S, dSdt, mass=None, **kw):
@@ -194,8 +196,8 @@ def test_parser_rejects_unknown_phase_boundary_cap():
 @pytest.mark.smoke
 def test_unset_phase_boundary_cap_runs_rate_segments(shared_eos):
     """With the key unset the solver runs the rate segments, like an explicit 'rate'."""
-    unset = _solver(shared_eos, None, end_time=200.0)
-    rate = _solver(shared_eos, 'rate', end_time=200.0)
+    unset = _solver(shared_eos, None, end_time=_SEGMENT_SPAN_YR)
+    rate = _solver(shared_eos, 'rate', end_time=_SEGMENT_SPAN_YR)
     unset.solve()
     rate.solve()
     assert len(unset._solution.segments) >= 2
@@ -233,11 +235,11 @@ def test_fixed_and_gradient_keep_one_year_without_segments(shared_eos, monkeypat
 @pytest.mark.smoke
 def test_rate_mode_joins_segments_into_one_call_trajectory(shared_eos):
     """Segments cover the call with every output point; each segment start is a point; time increases."""
-    s = _solver(shared_eos, 'rate', end_time=200.0)
+    s = _solver(shared_eos, 'rate', end_time=_SEGMENT_SPAN_YR)
     s.solve()
     sol = s._solution
     starts = np.array([seg[0] for seg in sol.segments])
-    assert len(starts) >= 2 and sol.t[0] == 0.0 and sol.t[-1] == pytest.approx(200.0)
+    assert len(starts) >= 2 and sol.t[0] == 0.0 and sol.t[-1] == pytest.approx(_SEGMENT_SPAN_YR)
     assert np.all(np.diff(sol.t) > 0.0) and sol.y.shape[1] == sol.t.size
     assert all(np.any(np.isclose(sol.t, t0, rtol=1e-12, atol=1e-9)) for t0 in starts)
     assert sol.t.size >= s._cvode_output_points + len(starts) - 1
@@ -300,7 +302,7 @@ def test_rate_cap_exception_fallback_returns_one_year(shared_eos, monkeypatch, c
 @pytest.mark.smoke
 def test_rate_cap_segment_ceiling_falls_back_to_one_year(shared_eos, monkeypatch, caplog):
     """Reaching the segment count ceiling warns and falls back to 1 yr for the remaining call."""
-    s = _solver(shared_eos, 'rate', end_time=200.0)
+    s = _solver(shared_eos, 'rate', end_time=_SEGMENT_SPAN_YR)
     orig_segments = s._solve_cvode_segments
 
     def capped_segments(**kw):
@@ -358,7 +360,7 @@ def test_rate_cap_scipy_fallback_runs_at_one_year(shared_eos, monkeypatch):
 @pytest.mark.smoke
 def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, monkeypatch):
     """Each CVODE segment must re-anchor its root function to the segment start state."""
-    s = _solver(shared_eos, 'rate', end_time=200.0)
+    s = _solver(shared_eos, 'rate', end_time=_SEGMENT_SPAN_YR)
     anchored_roots = []
 
     orig_solve_segments = s._solve_cvode_segments
@@ -377,7 +379,7 @@ def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, mon
     monkeypatch.setattr(s, '_solve_cvode_segments', wrapped_solve_segments)
     s.solve()
 
-    assert len(anchored_roots) >= 2, 'Expected multiple segments in 200 yr run'
+    assert len(anchored_roots) >= 2, 'Expected multiple segments in the run'
     assert not np.allclose(anchored_roots[0], anchored_roots[1]), (
         'Segment 1 root function was not re-anchored to the segment state!'
     )
