@@ -62,10 +62,11 @@ def test_bundled_lookup_cfg_heating_is_finite():
 
 
 @pytest.mark.unit
-def test_non_positive_half_life_raises(tmp_path):
+@pytest.mark.parametrize('half_life', ['-0.717E6', '0'])
+def test_non_positive_half_life_raises(tmp_path, half_life):
     cfg = _lookup_cfg(tmp_path)
     cfg.write_text(
-        cfg.read_text().replace('half_life_years = 0.717E6', 'half_life_years = -0.717E6')
+        cfg.read_text().replace('half_life_years = 0.717E6', f'half_life_years = {half_life}')
     )
     with pytest.raises(ValueError, match='Al26: half_life_years must be positive'):
         Parameters.from_file(str(cfg))
