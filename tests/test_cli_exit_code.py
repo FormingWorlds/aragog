@@ -56,7 +56,10 @@ def test_exit_code_follows_solver_status(tmp_path, monkeypatch, status, code):
     )
     assert result.exit_code == code, result.output
     assert written == [tmp_path / 'o.nc']
-    assert ('stub message; partial state written to' in result.output) == (code == 1)
+    failed = (
+        'integration failed (status=-1): stub message; wrote the state at the last successful'
+    )
+    assert (failed in result.output) == (code == 1)
 
 
 @pytest.mark.smoke
@@ -66,7 +69,7 @@ def test_cvode_failure_exits_non_zero(tmp_path):
     result = _run(tmp_path, 'solver.max_steps=5')
     assert result.exit_code == 1, result.output
     assert 'integration failed (status=-1)' in result.output
-    assert 'partial state written to' in result.output
+    assert 'last successful output time' in result.output
     assert (tmp_path / 'o.nc').is_file()
 
 
@@ -76,3 +79,15 @@ def test_successful_run_exits_zero(tmp_path):
     result = _run(tmp_path, 'solver.end_time=1.0')
     assert result.exit_code == 0, result.output
     assert 'integration failed' not in result.output
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_step_cap_stop_exits_zero_with_early_snapshot(tmp_path):
+    import netCDF4
+
+    result = _run(tmp_path, 'solver.end_time=1000.0', 'energy.phi_step_cap=0.01')
+    assert result.exit_code == 0, result.output
+    with netCDF4.Dataset(tmp_path / 'o.nc') as d:
+        assert int(d['status'][:]) == 0
+        assert 0.0 < float(d['time'][:]) < 1000.0

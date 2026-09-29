@@ -190,7 +190,7 @@ class _EnergyParameters:
     # Per-call mass-weighted |ΔΦ_global| cap. When positive and at least one
     # cell sits in or near the mushy band at solve() entry, register a
     # SUNDIALS root function that fires when |Φ_global(t) − Φ_global(
-    # start)| reaches this value, returning early with status=2 so the
+    # start)| reaches this value and ends the call early (status 0) so the
     # PROTEUS outer loop can adjust dt. Without a cap the dt adapter
     # can land on a step that straddles the rheological transition and
     # reject. 0.05 is a useful upper bound for the mushy zone in 1 M⊕

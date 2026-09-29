@@ -4,7 +4,7 @@ and the ``write_netcdf`` convenience wrapper.
 Targets:
 
 * status=1 branch (lines 2528-2536): the integrator stopped on a
-  termination event (e.g. liquidus crossing). The solver must log a
+  terminal step-cap event. The solver must log a
   message naming the event time and set ``stop_early = False``.
 * status=-1 branch (lines 2538-2543): the integrator failed. The
   solver must log an error and set ``stop_early = True``.
@@ -79,9 +79,7 @@ def test_solve_status_1_log_path_sets_stop_early_false(caplog):
         elif solver._solution.status == 1:
             t_event = solver._solution.t[-1]
             _logger.info(
-                'EntropySolver: liquidus-crossing event at t=%.2e yr '
-                '(stopped %.1f yr before end_time). Bottom cell reached '
-                'onset of crystallization.',
+                'EntropySolver: step-cap event at t=%.2e yr (stopped %.1f yr before end_time).',
                 t_event,
                 end_time - t_event,
             )
@@ -93,8 +91,8 @@ def test_solve_status_1_log_path_sets_stop_early_false(caplog):
         f'status=1 must set stop_early=False; got {solver.stop_early}'
     )
     msgs = [r.message for r in caplog.records]
-    assert any('liquidus-crossing event' in m for m in msgs), (
-        f'expected liquidus-crossing log; got messages={msgs}'
+    assert any('step-cap event' in m for m in msgs), (
+        f'expected step-cap log; got messages={msgs}'
     )
 
 

@@ -478,7 +478,8 @@ def run(
     if state.status < 0:
         raise click.ClickException(
             f'integration failed (status={state.status}): {solver.solution.message}; '
-            f'partial state written to {out_path}'
+            'wrote the state at the last successful output time (the initial state if the '
+            f'solver fails before the first output) to {out_path}'
         )
 
 

@@ -3248,13 +3248,10 @@ class EntropySolver:
             logger.info('EntropySolver: integration completed successfully.')
             self.stop_early = False
         elif self._solution.status == 1:
-            # Termination event (liquidus crossing at CMB cell).
-            # Integration succeeded up to the event time.
+            # Terminal step-cap event (scipy fallback); the integration succeeded up to it.
             t_event = self._solution.t[-1]
             logger.info(
-                'EntropySolver: liquidus-crossing event at t=%.2e yr '
-                '(stopped %.1f yr before end_time). Bottom cell reached '
-                'onset of crystallization.',
+                'EntropySolver: step-cap event at t=%.2e yr (stopped %.1f yr before end_time).',
                 t_event,
                 end_time - t_event,
             )
