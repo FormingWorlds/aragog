@@ -80,3 +80,6 @@ class BoundaryConfig:
     # Standalone callers that want the legacy alpha-factor behaviour
     # must set core_bc='quasi_steady' explicitly.
     core_bc: str = 'energy_balance'
+    # Flat parameter dict for core_bc='core_module'; keys documented in
+    # aragog.core.module.build_core_module_budget (plus 'q_radio' [W]).
+    core_module_params: dict | None = None

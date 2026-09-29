@@ -196,6 +196,74 @@ def test_run_warns_when_initial_dsdr_cmb_set_without_initial_entropy(tmp_path, m
     assert '--initial-entropy is required' in (result.output or '')
 
 
+@pytest.mark.parametrize('core_bc', ['energy_balance', 'core_module'])
+def test_run_dispatches_initial_dsdr_cmb_for_gradient_state_modes(
+    tmp_path, monkeypatch, core_bc
+):
+    """Both modes that carry dSdr_cmb as a state variable must receive
+    the ``--initial-dsdr-cmb`` value through ``set_initial_dSdr_cmb``;
+    a quasi_steady solver must not (and gets the warning instead).
+
+    Discriminator: a dispatch gated on the literal 'energy_balance'
+    string silently drops the user's cold-start gradient for
+    core_module while logging a warning that misdescribes the state
+    contract.
+    """
+    from click.testing import CliRunner
+
+    from aragog.cli import cli
+
+    cfg = tmp_path / 'cfg.toml'
+    cfg.write_text('# minimal stub\n')
+    eos = tmp_path / 'eos'
+    eos.mkdir()
+
+    received = []
+
+    class _RecordingSolver:
+        parameters = type(
+            'P',
+            (),
+            {
+                'boundary_conditions': type('BC', (), {'core_bc': core_bc})(),
+                'initial_condition': type(
+                    'IC',
+                    (),
+                    {'initial_condition': 2, 'surface_temperature': 0.0},
+                )(),
+                'mesh': type('M', (), {'surface_pressure': 0.0})(),
+            },
+        )()
+        eos = None
+
+        def initialize(self):
+            pass
+
+        def set_initial_dSdr_cmb(self, value):
+            received.append(value)
+
+    import aragog.solver as _solver_mod
+
+    monkeypatch.setattr(
+        _solver_mod.EntropySolver,
+        'from_file',
+        classmethod(lambda cls, **kw: _RecordingSolver()),
+        raising=True,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ['run', str(cfg), '--eos-dir', str(eos), '--initial-dsdr-cmb', '-1.5e-4'],
+    )
+    # The invocation still dies later on the missing --initial-entropy;
+    # what matters here is that the dispatch already happened.
+    assert result.exit_code != 0
+    assert received == [-1.5e-4], (
+        f'{core_bc} must receive the CLI dSdr_cmb override; got {received}'
+    )
+
+
 # ──────────────────────────────────────────────────────────────────────
 #                  list_configs comment-scan branches
 # ──────────────────────────────────────────────────────────────────────

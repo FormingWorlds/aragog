@@ -65,6 +65,7 @@ nav:
           - Mesh: Reference/api/aragog.mesh.md
           - Output: Reference/api/aragog.output.md
           - JAX backend: Reference/api/aragog.jax.md
+          - Core evolution: Reference/api/aragog.core.md
       - CLI: Reference/cli.md
       - Data: Reference/data.md
       - Publications: Reference/publications.md
