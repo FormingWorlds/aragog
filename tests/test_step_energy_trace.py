@@ -18,11 +18,6 @@ def _pulse(t: float) -> float:
     return np.exp(-(((t - T_PULSE) / WIDTH) ** 2))
 
 
-def _rhs(t, y, ydot):
-    ydot[0] = -AMP * _pulse(t)
-    return 0
-
-
 def _solve(n_out=2, rootfn=None):
     """Integrate y' = -AMP pulse(t) over [0, 1] through ``_solve_cvode``."""
     s = es.EntropySolver.__new__(es.EntropySolver)

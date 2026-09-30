@@ -3365,15 +3365,13 @@ class EntropySolver:
             'state_heat': 0.0,
         }
         sol = self._solution
-        eos = self.entropy_eos
-        if eos is None or sol is None or sol.t is None or sol.y is None:
+        if self.entropy_eos is None or sol is None or sol.t is None or sol.y is None:
             return zero
-        n_steps = int(sol.t.size)
-        if n_steps < 2:
+        if sol.t.size < 2:
             return zero
 
         t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
-        P = np.array([self._step_powers(float(t), y_pts[:, i]) for i, t in enumerate(t_pts)])
+        P = np.array([self._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
         P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
 
         dt_s = np.diff(np.asarray(t_pts, dtype=float)) * SECS_PER_YEAR
@@ -3438,15 +3436,12 @@ class EntropySolver:
         self-consistency residual (LHS - RHS), which is machine-zero by construction
         at every state; a non-zero value flags a flux-divergence assembly bug.
         """
-        eos = self.entropy_eos
-        P_stag = self._P_stag_flat
         vol = self._volume_flat
         r_basic = self._r_basic_flat
         A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
         A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
         # Frozen structural mass per shell, for the conservation-grade Q_*_cons.
         mass_struct = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel() * vol
-        S_i = self._stag_entropy(y_col)
 
         # The RHS at this accepted state applies the BCs, so the boundary fluxes read below
         # are the ones the entropy ODE saw. In the gradient layout the reconstruction is
@@ -3455,11 +3450,11 @@ class EntropySolver:
         dSdt_stag_i = self._stag_entropy(dSdt_full)
 
         # Read boundary fluxes AFTER dSdt has applied the BCs.
-        F_int_i = float(self.state._heat_flux[-1])
-        F_cmb_i = float(self.state._heat_flux[0])
+        p_int = -float(self.state._heat_flux[-1]) * A_int
+        p_cmb = float(self.state._heat_flux[0]) * A_cmb
 
-        rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
-        mass_i = rho_i * vol
+        S_i = self._stag_entropy(y_col)
+        mass_i = np.asarray(self.entropy_eos.density(self._P_stag_flat, S_i)).ravel() * vol
         heating_radio_i = np.asarray(self.state.heating_radio).ravel()
         heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
         Q_radio_i = float(np.dot(heating_radio_i, mass_i))
@@ -3467,9 +3462,6 @@ class EntropySolver:
         # Frozen-mass variants for the conservation-grade budget
         Q_radio_cons_i = float(np.dot(heating_radio_i, mass_struct))
         Q_tidal_cons_i = float(np.dot(heating_tidal_i, mass_struct))
-
-        p_int = -F_int_i * A_int
-        p_cmb = +F_cmb_i * A_cmb
 
         # The LHS uses the capacitance (rho_phase * T) and phase density the RHS used; the
         # hard-masked table density (eos.density) would leave a spurious residual of up to
