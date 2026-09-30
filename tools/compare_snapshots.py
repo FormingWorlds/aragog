@@ -2,10 +2,10 @@
 
 usage: python tools/compare_snapshots.py A.nc B.nc [--ignore NAME[,NAME...]]
 
-Prints each variable that differs (bitwise, NaN equal to NaN) with its largest relative
-difference against A over the positions where both values are finite and the number of other
-differing positions (NaN or infinity against another value), and each variable present in
-one file only; a variable named in ``--ignore`` is marked ``(ignored)``.
+Prints each variable whose values differ (NaN equals NaN, -0.0 equals 0.0) with its largest
+relative difference against A over the positions where both values are finite and the number
+of other differing positions (NaN or infinity against another value); integer variables are
+compared exactly. Also prints each variable present in one file only; a variable named in ``--ignore`` is marked ``(ignored)``.
 Exits 0 when nothing outside ``--ignore`` differs, 1 when something does, and 2 when a file
 cannot be read.
 """
@@ -33,6 +33,9 @@ def compare(path_a: str, path_b: str) -> tuple[dict[str, str], set[str]]:
             elif x.dtype.kind not in 'fiu' or y.dtype.kind not in 'fiu':
                 if not np.array_equal(x, y):
                     diff[name] = 'values differ'
+            elif x.dtype.kind in 'iu' and y.dtype.kind in 'iu':
+                if not np.array_equal(x, y):
+                    diff[name] = f'integer values differ at {int(np.sum(x != y))} points'
             elif not np.array_equal(x, y, equal_nan=True):
                 x, y = x.astype(float), y.astype(float)
                 fin = np.isfinite(x) & np.isfinite(y)
@@ -44,7 +47,7 @@ def compare(path_a: str, path_b: str) -> tuple[dict[str, str], set[str]]:
                 parts = [f'max relative difference {rel.max():.3g}'] if np.any(rel) else []
                 if other:
                     parts.append(f'non-finite mismatch at {other} points')
-                diff[name] = ', '.join(parts)
+                diff[name] = ', '.join(parts) or 'values differ'
     return diff, only
 
 

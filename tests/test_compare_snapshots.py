@@ -18,12 +18,13 @@ cs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cs)
 
 
-def _write(path, floats, labels, extra=(), scalar=0.0):
+def _write(path, floats, labels, extra=(), scalar=0.0, counts=(0, 0, 0)):
     with netCDF4.Dataset(path, 'w') as f:
         f.createDimension('n', 3)
         for name, values in floats.items():
             f.createVariable(name, 'f8', ('n',))[:] = values
         f.createVariable('scalar', 'f8', (), fill_value=np.nan).assignValue(scalar)
+        f.createVariable('count', 'i8', ('n',))[:] = counts
         f.createVariable('label', str, ('n',))[:] = np.array(labels, dtype=object)
         for name in extra:
             f.createVariable(name, 'f8', ('n',))[:] = 0.0
@@ -34,15 +35,19 @@ def pair(tmp_path):
     a, b = tmp_path / 'a.nc', tmp_path / 'b.nc'
     _write(
         a,
-        {'same': [1, 2, 3], 'E': [1, 2, 4], 'nan': [1, np.nan, 3], 'inf': [np.inf, 1, 2]},
+        {'same': [1, 2, 3], 'E': [1, 2, 4], 'nan': [1, np.nan, 3], 'inf': [np.inf, 1, 2]}
+        | {'mixed': [np.inf, 2, np.nan], 'zero': [0.0, 1, 1]},
         ['x', 'y', 'z'],
         ['only_a'],
         scalar=np.nan,
+        counts=(2**60, 0, 0),
     )
     _write(
         b,
-        {'same': [1, 2, 3], 'E': [1, 2, 5], 'nan': [1, 2, 3], 'inf': [-np.inf, 1, 3]},
+        {'same': [1, 2, 3], 'E': [1, 2, 5], 'nan': [1, 2, 3], 'inf': [-np.inf, 1, 3]}
+        | {'mixed': [np.inf, 3, np.nan], 'zero': [-0.0, 1, 1]},
         ['x', 'y', 'w'],
+        counts=(2**60 + 1, 0, 0),
     )
     return str(a), str(b)
 
@@ -54,6 +59,8 @@ def test_differences_are_described(pair):
         'nan': 'non-finite mismatch at 1 points',
         'inf': 'max relative difference 0.5, non-finite mismatch at 1 points',
         'scalar': 'non-finite mismatch at 1 points',
+        'mixed': 'max relative difference 0.5',
+        'count': 'integer values differ at 1 points',
         'label': 'values differ',
     }
     assert only == {'only_a'}
@@ -61,8 +68,11 @@ def test_differences_are_described(pair):
 
 def test_exit_code_follows_the_ignore_list(pair, capsys):
     assert cs.main([*pair]) == 1
-    assert cs.main([*pair, '--ignore', 'E,nan,inf,scalar,label']) == 1
-    assert cs.main(['--ignore', 'E,nan,inf', '--ignore', 'scalar,label,only_a', *pair]) == 0
+    assert cs.main([*pair, '--ignore', 'E,nan,inf,mixed,count,scalar,label']) == 1
+    assert (
+        cs.main(['--ignore', 'E,nan,inf,mixed,count', '--ignore', 'scalar,label,only_a', *pair])
+        == 0
+    )
     out = capsys.readouterr().out
     assert (
         'only_a: in one file only (ignored)' in out and 'label: values differ (ignored)' in out

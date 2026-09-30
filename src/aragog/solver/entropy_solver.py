@@ -2830,8 +2830,8 @@ class EntropySolver:
 
         result.nfev = nfev_box[0]
         result.energy_trace = self._energy_trace(nodes, result.t, result.y)
-        # A completed call gives a node per accepted step, except steps where t + h rounds to
-        # t; a large shortfall means those dominate or the root function missed steps.
+        # CVODE calls the root function once per accepted step, so a completed call keeps
+        # about one node per step.
         nst, n_nodes = int(result.get('cvode_nst', 0)), len(result.energy_trace[0])
         if flag in (0, 2) and n_nodes + max(10, nst // 100) < nst:
             logger.warning('energy quadrature: %d nodes for %d CVODE steps', n_nodes, nst)
@@ -3489,7 +3489,6 @@ class EntropySolver:
         vol, r_basic = self._volume_flat, self._r_basic_flat
         A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
         A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
-        # Frozen structural mass per shell, for the conservation-grade Q_*_cons.
         mass_struct = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel() * vol
 
         # The RHS at this accepted state applies the BCs, so the boundary fluxes read below

@@ -228,8 +228,7 @@ def test_recording_leaves_the_solution_bitwise_unchanged(monkeypatch, cap):
 def _fake_solver(sol):
     s = es.EntropySolver.__new__(es.EntropySolver)
     s._solution, s.entropy_eos = sol, object()
-    s._volume_flat, s._r_basic_flat = np.ones(1), np.array([1.0, 2.0])
-    s.evaluator = SimpleNamespace(mesh=SimpleNamespace(staggered_effective_density=np.ones(1)))
+    s._r_basic_flat = np.array([1.0, 2.0])
     s.state = SimpleNamespace(_pb_cache_hits=3, _pb_cache_misses=4)
     s._stag_entropy, s._step_heat_content = (lambda y: y), (lambda a, b: 0.0)
     seen = []
@@ -296,10 +295,10 @@ def _heated_bower_call(tidal_rate=None, **source):
     assert (s.state._pb_cache_hits, s.state._pb_cache_misses) == (0, 0)
     d, t = s._solution.energy_integrals, s._solution.t
     mass = float(np.dot(np.ravel(s.evaluator.mesh.staggered_effective_density), s._volume_flat))
-    # The heat the RHS adds follows the live cell mass, so the budget closes with Q_radio
-    # and Q_tidal (8e-5 measured); without the source it is off by a factor of about 6.
+    # The heat the RHS adds follows the live cell mass, so the budget closes with Q_radio and
+    # Q_tidal (measured 6.7e-5 radiogenic, 8.5e-5 tidal); the source is 6.5x |state_heat|.
     heat = d['Q_radio'] + d['Q_tidal']
-    assert abs(heat) > 1.0 * abs(d['state_heat'])
+    assert abs(heat) > 3.0 * abs(d['state_heat'])
     assert d['F_int'] + d['F_cmb'] + heat == pytest.approx(d['state_heat'], rel=5e-4)
     assert abs(d['solver_residual']) < 1e-9 * abs(d['F_int'])
     return d, float(t[0]), float(t[-1]), mass
@@ -348,9 +347,20 @@ def test_tidal_energy_follows_a_time_varying_rate():
 @pytest.mark.unit
 def test_a_one_node_trace_integrates_to_zero():
     sol = OptimizeResult(t=np.array([0.0, 2.0]), y=np.ones((1, 2)))
-    sol.energy_trace = (np.array([0.0]), np.ones((1, 1)))
-    out = _fake_solver(sol)[0]._compute_step_energy_integrals()
-    assert out['F_int'] == out['solver_residual'] == 0.0
+    sol.energy_trace = (np.array([3.0]), np.ones((1, 1)))
+    s, seen = _fake_solver(sol)
+    out = s._compute_step_energy_integrals()
+    assert len(seen) == 1 and out['F_cmb_step_avg'] is None
+    keys = [
+        'F_int',
+        'F_cmb',
+        'Q_radio',
+        'Q_tidal',
+        'Q_radio_cons',
+        'Q_tidal_cons',
+        'solver_residual',
+    ]
+    assert [out[k] for k in keys] == [0.0] * 7
 
 
 @pytest.mark.unit
@@ -432,14 +442,56 @@ def test_a_failed_solve_reports_zero_integrals(monkeypatch):
 
 
 @pytest.mark.unit
-def test_nodes_that_round_to_one_year_keep_the_last():
+def test_physical_trace_keeps_the_last_of_equal_times():
     t_ref = 0.003168808781402895
-    a = b = 1e8 / t_ref
-    while b * t_ref != a * t_ref or a == b:  # neighbouring floats that round to one year
-        a, b = b, np.nextafter(b, np.inf)
-    t_nd = np.array([a - 1e6, a, b, a + 1e6])
+    t_nd = _colliding_times(t_ref)
     assert np.diff(t_nd * t_ref).min() == 0.0
     y_nd = np.array([[1.0, 2.0, 3.0, 4.0]])
     t, y = es.EntropySolver._physical_trace((t_nd, y_nd), t_ref, np.array([10.0]))
     assert np.all(np.diff(t) > 0) and t[-1] == t_nd[-1] * t_ref
     np.testing.assert_array_equal(y, [[10.0, 30.0, 40.0]])
+
+
+def _colliding_times(t_ref, t_yr=1e8):
+    """Nondimensional times around ``t_yr`` whose middle two round to one year."""
+    a = b = t_yr / t_ref
+    while b * t_ref != a * t_ref or a == b:
+        a, b = b, np.nextafter(b, np.inf)
+    return np.array([a - 1e6, a, b, a + 1e6])
+
+
+@pytest.mark.unit
+def test_solve_returns_strictly_increasing_physical_nodes(monkeypatch):
+    s = _const_properties_solver()
+    scales = s._build_nondim_scales()
+    t_nd = _colliding_times(scales.t_ref)
+    y_nd = np.outer(np.ones(len(scales.state_scale)), [1.0, 2.0, 3.0, 4.0])
+
+    def fake_cvode(**kw):
+        r = OptimizeResult(t=t_nd[[0, -1]], y=y_nd[:, [0, -1]], nfev=0, status=0, message='')
+        r.energy_trace = (t_nd, y_nd)
+        return r
+
+    monkeypatch.setattr(s, '_solve_cvode', fake_cvode)
+    s.solve()
+    t, y = s._solution.energy_trace
+    assert np.all(np.diff(t) > 0) and t[-1] == t_nd[-1] * scales.t_ref
+    np.testing.assert_array_equal(
+        y, y_nd[:, [0, 2, 3]] * np.reshape(scales.state_scale, (-1, 1))
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('case', ['2 outputs', '65 outputs', 'fired root'])
+def test_a_complete_call_does_not_warn_about_the_trace(caplog, case):
+    def root(t, y, g):
+        g[0] = y[0] + 0.5 * AMP * np.sqrt(np.pi) * WIDTH
+
+    root.phi0 = 0.0
+    with caplog.at_level('WARNING', logger=es.logger.name):
+        res = _solve(
+            n_out=65 if case == '65 outputs' else 2,
+            rootfn=root if case == 'fired root' else None,
+        )
+    assert res.cvode_flag == (2 if case == 'fired root' else 0)
+    assert not any('CVODE steps' in r.message for r in caplog.records)
