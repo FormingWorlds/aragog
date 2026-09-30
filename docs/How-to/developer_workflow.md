@@ -9,7 +9,7 @@ python tools/compare_snapshots.py A.nc B.nc --ignore NAME[,NAME...]
 ```
 
 The comparison is bitwise, with NaN equal to NaN.
-For each variable that differs the tool prints the largest relative difference against `A.nc` and the number of positions where only one file holds NaN; string variables are reported as differing values.
+For each variable that differs the tool prints the largest relative difference against `A.nc` over the positions where both values are finite, and the number of other differing positions (NaN or infinity against another value); string variables are reported as differing values.
 It also lists each variable present in one file only.
 Variables named in `--ignore` (comma-separated, repeatable) are marked `(ignored)`.
 

@@ -3,8 +3,9 @@
 usage: python tools/compare_snapshots.py A.nc B.nc [--ignore NAME[,NAME...]]
 
 Prints each variable that differs (bitwise, NaN equal to NaN) with its largest relative
-difference against A and the number of positions where only one file holds NaN, and each
-variable present in one file only; a variable named in ``--ignore`` is marked ``(ignored)``.
+difference against A over the positions where both values are finite and the number of other
+differing positions (NaN or infinity against another value), and each variable present in
+one file only; a variable named in ``--ignore`` is marked ``(ignored)``.
 Exits 0 when nothing outside ``--ignore`` differs, 1 when something does, and 2 when a file
 cannot be read.
 """
@@ -21,6 +22,8 @@ import numpy as np
 def compare(path_a: str, path_b: str) -> tuple[dict[str, str], set[str]]:
     """Return ``{name: description}`` for differing variables, and the names in one file only."""
     with netCDF4.Dataset(path_a) as a, netCDF4.Dataset(path_b) as b:
+        a.set_auto_mask(False)
+        b.set_auto_mask(False)
         only = set(a.variables) ^ set(b.variables)
         diff = {}
         for name in sorted(set(a.variables) & set(b.variables)):
@@ -32,15 +35,15 @@ def compare(path_a: str, path_b: str) -> tuple[dict[str, str], set[str]]:
                     diff[name] = 'values differ'
             elif not np.array_equal(x, y, equal_nan=True):
                 x, y = x.astype(float), y.astype(float)
-                nan_x, nan_y = np.isnan(x), np.isnan(y)
-                both = ~(nan_x | nan_y)
-                with np.errstate(over='ignore', invalid='ignore'):
-                    rel = np.abs(x[both] - y[both]) / np.maximum(
-                        np.abs(x[both]), np.finfo(float).tiny
+                fin = np.isfinite(x) & np.isfinite(y)
+                with np.errstate(over='ignore'):
+                    rel = np.abs(x[fin] - y[fin]) / np.maximum(
+                        np.abs(x[fin]), np.finfo(float).tiny
                     )
+                other = int(np.sum(~fin & (x != y) & ~(np.isnan(x) & np.isnan(y))))
                 parts = [f'max relative difference {rel.max():.3g}'] if np.any(rel) else []
-                if np.any(nan_x != nan_y):
-                    parts.append(f'NaN in one file at {int(np.sum(nan_x != nan_y))} points')
+                if other:
+                    parts.append(f'non-finite mismatch at {other} points')
                 diff[name] = ', '.join(parts)
     return diff, only
 
