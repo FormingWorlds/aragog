@@ -38,7 +38,7 @@ jobs:
   nightly:
     name: Aragog-nightly (ubuntu-latest)
     runs-on: ubuntu-latest
-    # The full suite takes 100-113 min on the 2-vCPU runner with coverage
+    # The full suite takes 83-113 min on the 2-vCPU runner with coverage
     # and xdist; 150 min leaves headroom for JAX warmup, conda cache
     # misses, and runner-to-runner timing variance.
     timeout-minutes: 150
