@@ -377,7 +377,7 @@ class _SolverParameters:
     rtol: float
     tsurf_poststep_change: float = 30.0
     # Points on the CVODE output grid per macro-step. It feeds back weakly into
-    # CVODE stepping (final state near rtol) and adds nodes to the energy integrals.
+    # CVODE stepping and adds nodes to the energy integrals.
     cvode_output_points: int = 65
     # Maximum number of internal CVODE steps per solve call. CVODE
     # returns CV_TOO_MUCH_WORK and stops once a single solve reaches

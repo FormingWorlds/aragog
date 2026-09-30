@@ -2440,14 +2440,31 @@ class EntropySolver:
         y: npt.NDArray,
         scale: tuple[float, float | npt.NDArray],
     ) -> tuple[npt.NDArray, npt.NDArray]:
-        """Quadrature nodes ``(t [yr], y (n_state, n))`` of one CVODE call.
+        """Quadrature nodes of one CVODE call.
 
-        ``nodes`` are the ``(t, y)`` pairs the root function saw. Nodes past the call end
-        and nodes not later than the previous kept node are dropped; the rest are bracketed
-        by the call's first and last output points. At a fired root the step end lies past
-        the call end, so the increasing root-search iterates below the root stay; these
-        iterates are interpolated states of the accepted step.
-        ``scale = (t_ref, state_scale)`` maps nondimensional time and state to physical.
+        Nodes past the call end and nodes not later than the previous kept node are
+        dropped; the rest are bracketed by the call's start and end states (the root on a
+        fired call). At a fired root the step end lies past the call end, so the increasing
+        root-search iterates below the root stay; these iterates are interpolated states of
+        the accepted step.
+
+        Parameters
+        ----------
+        nodes : list of tuple
+            ``(t, y)`` pairs the root function saw, nondimensional.
+        t : ndarray
+            Result times of the call, nondimensional.
+        y : ndarray, shape (n_state, n_t)
+            Result states of the call, nondimensional.
+        scale : tuple
+            ``(t_ref, state_scale)``: time scale [yr] and state scale (scalar or per row).
+
+        Returns
+        -------
+        t_nodes : ndarray
+            Node times [yr].
+        y_nodes : ndarray, shape (n_state, n_nodes)
+            Node states in physical units.
         """
         t_end = float(t[-1])
         ts, ys = [float(t[0])], [y[:, 0]]
@@ -2736,15 +2753,9 @@ class EntropySolver:
         if cvode_info is not None and 'NumSteps' in cvode_info and 'NumRhsEvals' in cvode_info:
             result.cvode_nst = int(cvode_info['NumSteps'])
             result.cvode_nfe = int(cvode_info['NumRhsEvals'])
-        # ``scikits.odes`` rootfn-fire idiosyncrasy: when CVODE's rootfn
-        # fires (flag=2), ``cvode_sol.values.t`` contains ONLY the start
-        # time (the integration progress to the root is dropped), while
-        # the actual root location is exposed via ``cvode_sol.roots.t``
-        # / ``cvode_sol.roots.y``. Reading from ``values.t`` here would
-        # give ``dt_actual = sol.t[-1] - sol.t[0] = 0`` and PROTEUS's
-        # wrapper would fall back to ``dtswitch`` while Aragog's state
-        # had actually advanced to the root, locking the coupled run
-        # at a fixed point.
+        # When the root function fires (flag 2), ``cvode_sol.values`` holds only the outputs
+        # before the root and the root is in ``cvode_sol.roots``, so the result is
+        # [start, root] and ``dt_actual`` covers the integration up to the root.
         flag = int(getattr(cvode_sol, 'flag', -1))
         roots_obj = getattr(cvode_sol, 'roots', None)
         used_roots = False
@@ -3401,6 +3412,16 @@ class EntropySolver:
         """Staggered-node entropy of one solver state, in any state layout.
 
         The map is linear, so it also maps a state rate to the entropy rates.
+
+        Parameters
+        ----------
+        y_col : ndarray
+            One solver state (or state rate) in the layout of ``self._core_bc``.
+
+        Returns
+        -------
+        ndarray, shape (n_stag,)
+            Entropy [J/kg/K] (or its rate) at the staggered nodes.
         """
         if self._core_bc == 'gradient':
             n_basic = self._n_stag + 1
