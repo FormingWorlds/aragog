@@ -2483,6 +2483,33 @@ class EntropySolver:
             ys.append(y[:, -1])
         return np.array(ts), np.array(ys).T
 
+    @staticmethod
+    def _physical_trace(
+        trace: tuple[npt.NDArray, npt.NDArray], t_ref: float, state_scale: npt.NDArray
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Energy quadrature nodes in years and physical units, strictly increasing in time.
+
+        Distinct nondimensional times can round to the same year at large t; of each run of
+        equal times the last node is kept, so the call's end state stays the last node.
+
+        Parameters
+        ----------
+        trace : tuple of ndarray
+            Nondimensional node times and states, shape (n,) and (n_state, n).
+        t_ref : float
+            Time scale [yr].
+        state_scale : ndarray
+            State scale per row (or scalar).
+
+        Returns
+        -------
+        tuple of ndarray
+            Node times [yr] and node states in physical units.
+        """
+        t, y = trace[0] * t_ref, trace[1] * np.reshape(state_scale, (-1, 1))
+        keep = np.append(np.diff(t) > 0, True)
+        return t[keep], y[:, keep]
+
     def _solve_cvode(
         self,
         start_time: float,
@@ -3229,7 +3256,7 @@ class EntropySolver:
                 sol.y = sol_y * _state_scale
         trace = getattr(sol, 'energy_trace', None)
         if trace is not None:
-            sol.energy_trace = (trace[0] * t_ref, trace[1] * np.reshape(_state_scale, (-1, 1)))
+            sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale)
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
         # above) and naming whichever margin actually bound: read from

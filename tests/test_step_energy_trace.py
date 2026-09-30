@@ -429,3 +429,17 @@ def test_a_failed_solve_reports_zero_integrals(monkeypatch):
     out = s.get_state()
     assert s.stop_early and not calls
     assert [getattr(out, f) for k, f in _FIELDS.items() if k != 'F_cmb_step_avg'] == [0.0] * 8
+
+
+@pytest.mark.unit
+def test_nodes_that_round_to_one_year_keep_the_last():
+    t_ref = 0.003168808781402895
+    a = b = 1e8 / t_ref
+    while b * t_ref != a * t_ref or a == b:  # neighbouring floats that round to one year
+        a, b = b, np.nextafter(b, np.inf)
+    t_nd = np.array([a - 1e6, a, b, a + 1e6])
+    assert np.diff(t_nd * t_ref).min() == 0.0
+    y_nd = np.array([[1.0, 2.0, 3.0, 4.0]])
+    t, y = es.EntropySolver._physical_trace((t_nd, y_nd), t_ref, np.array([10.0]))
+    assert np.all(np.diff(t) > 0) and t[-1] == t_nd[-1] * t_ref
+    np.testing.assert_array_equal(y, [[10.0, 30.0, 40.0]])
