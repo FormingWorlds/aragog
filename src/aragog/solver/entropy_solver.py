@@ -676,14 +676,9 @@ class SolverOutput:
     Q_radio_total: float  # mantle-integrated radiogenic power [W]
     Q_tidal_total: float  # mantle-integrated tidal power [W]
 
-    # Per-call energy-balance contributions [J] integrated over the
-    # CVODE sub-step trajectory. Replaces end-of-step instantaneous
-    # capture as the conservation primitive: PROTEUS just cumulatively
-    # sums these across calls instead of trapezoidal-interpolating
-    # between possibly-transient end-of-step F_cmb snapshots. Sign
-    # convention: positive = energy ADDED to the mantle over the call
-    # (so step_dE_F_int_J is negative when the mantle is losing heat
-    # to the atmosphere).
+    # Per-call energy contributions [J], integrated over the call's quadrature nodes; the
+    # caller sums them across calls. Positive adds energy to the mantle (step_dE_F_int_J
+    # is negative while the mantle loses heat to the atmosphere).
     step_dE_F_int_J: float  # = -∫ F_int * A_int dt [J]
     step_dE_F_cmb_J: float  # = +∫ F_cmb * A_cmb dt [J]
     step_dE_Q_radio_J: float  # = +∫ Q_radio_total dt [J] (state-dependent mass)
@@ -2438,9 +2433,8 @@ class EntropySolver:
         nodes: list,
         t: npt.NDArray,
         y: npt.NDArray,
-        scale: tuple[float, float | npt.NDArray],
     ) -> tuple[npt.NDArray, npt.NDArray]:
-        """Quadrature nodes of one CVODE call.
+        """Quadrature nodes of one CVODE call, in the solver's nondimensional units.
 
         Nodes past the call end and nodes not later than the previous kept node are
         dropped; the rest are bracketed by the call's start and end states (the root on a
@@ -2456,15 +2450,13 @@ class EntropySolver:
             Result times of the call, nondimensional.
         y : ndarray, shape (n_state, n_t)
             Result states of the call, nondimensional.
-        scale : tuple
-            ``(t_ref, state_scale)``: time scale [yr] and state scale (scalar or per row).
 
         Returns
         -------
         t_nodes : ndarray
-            Node times [yr].
+            Node times.
         y_nodes : ndarray, shape (n_state, n_nodes)
-            Node states in physical units.
+            Node states.
         """
         t_end = float(t[-1])
         ts, ys = [float(t[0])], [y[:, 0]]
@@ -2475,8 +2467,7 @@ class EntropySolver:
         if ts[-1] < t_end:
             ts.append(t_end)
             ys.append(y[:, -1])
-        t_ref, state_scale = scale
-        return np.array(ts) * t_ref, np.array(ys).T * np.reshape(state_scale, (-1, 1))
+        return np.array(ts), np.array(ys).T
 
     def _solve_cvode(
         self,
@@ -2490,7 +2481,6 @@ class EntropySolver:
         cvode_rhs_fn_override: 'Callable | None' = None,
         cvode_jacfn: 'Callable | None' = None,
         phi_cap_rootfn: 'Callable | None' = None,
-        scale: tuple[float, float | npt.NDArray] = (1.0, 1.0),
     ) -> 'OptimizeResult':
         """Integrate the entropy equation using SUNDIALS CVODE.
 
@@ -2523,10 +2513,12 @@ class EntropySolver:
             callback so CVODE uses this analytic Jacobian instead of
             its default finite-difference approximation. Signature:
             ``jacfn(t, y, fy, J, user_data=None) -> int``.
-        scale : tuple
-            ``(t_ref, state_scale)`` mapping nondimensional time and state to years
-            and physical units for ``result.energy_trace``, the ``(t, y)`` quadrature
-            nodes of the per-call energy integrals (see ``_energy_trace``).
+
+        Returns
+        -------
+        OptimizeResult
+            Also carries ``energy_trace``, the nondimensional ``(t, y)`` quadrature nodes of
+            the per-call energy integrals (see ``_energy_trace``).
         """
         # Zero-span edge case: scipy's solve_ivp accepts
         # `t_span = (t0, t0)` and returns the initial state trivially,
@@ -2666,9 +2658,9 @@ class EntropySolver:
             cvode_options.pop('lband', None)
             cvode_options.pop('uband', None)
 
-        # CVODE evaluates the root function at every accepted step end and every output
-        # point, so recording its calls gives the per-call energy quadrature nodes; with
-        # no user root function a never-firing one records.
+        # CVODE calls the root function at t0, every accepted step end, every output and,
+        # on a fired root, the root-search points; _energy_trace keeps the increasing ones up
+        # to the call end as quadrature nodes. Without a user root function a g=1 one records.
         nodes, user_rootfn = [], cvode_options.get('rootfn')
         user_rootfn = getattr(user_rootfn, 'evaluate', user_rootfn)
 
@@ -2798,7 +2790,7 @@ class EntropySolver:
                 result.y = np.asarray(y0, dtype=float).reshape(-1, 1)
 
         result.nfev = nfev_box[0]
-        result.energy_trace = self._energy_trace(nodes, result.t, result.y, scale)
+        result.energy_trace = self._energy_trace(nodes, result.t, result.y)
         result.message = getattr(cvode_sol, 'message', '')
         # Surface the raw CVODE flag distinctly from result.status: status
         # stays scipy-compatible (0 success, -1 failure), while these two
@@ -3182,7 +3174,6 @@ class EntropySolver:
                 cvode_rhs_fn_override=cvode_rhs_override,
                 cvode_jacfn=cvode_jacfn,
                 phi_cap_rootfn=phi_cap_rootfn,
-                scale=(t_ref, _state_scale),
             )
         else:
             method = 'Radau' if solver_method != 'bdf' else 'BDF'
@@ -3211,6 +3202,9 @@ class EntropySolver:
                 sol.y = sol_y * _state_scale[:, np.newaxis]
             else:
                 sol.y = sol_y * _state_scale
+        trace = getattr(sol, 'energy_trace', None)
+        if trace is not None:
+            sol.energy_trace = (trace[0] * t_ref, trace[1] * np.reshape(_state_scale, (-1, 1)))
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
         # above) and naming whichever margin actually bound: read from
@@ -3326,32 +3320,26 @@ class EntropySolver:
             )
 
     def _compute_step_energy_integrals(self) -> dict[str, float | None]:
-        """Compute per-call energy contributions [J] over the CVODE
-        sub-step trajectory, replacing end-of-step instantaneous capture.
+        """Per-call energy contributions [J] of the last solve.
 
-        At each node of ``sol.energy_trace`` (every accepted CVODE step end
-        and every output point of the call; the output points alone when
-        there is no trace), refresh the EntropyState and read
-        the instantaneous powers (F_cmb*A_cmb, F_int*A_int, mass-
-        integrated radio/tidal). Trapezoidal-integrate over the
-        physical-time trajectory to obtain per-source energy J. This
-        is correct against transient phase-boundary snapshots that
-        contaminate single end-of-step values: a spike in one CVODE
-        sub-step is bounded by the small dt to its neighbour rather
-        than propagated as a step-mean over the whole call.
-
-        Sign convention: positive = energy ADDED to mantle.
+        The quadrature nodes are ``sol.energy_trace`` on the CVODE path (the call start,
+        every accepted step end, every output point and, on a fired root, the increasing
+        root-search points below the root) and the returned ``sol.t`` on the scipy path,
+        whose points are the accepted steps. ``_step_powers`` evaluates the powers at each
+        node and the trapezoidal rule integrates them over physical time, so a transient
+        between two outputs is resolved by the steps inside it. Sign convention: positive
+        adds energy to the mantle.
 
         Returns
         -------
         dict[str, float | None]
-            Keys ``F_int``, ``F_cmb``, ``Q_radio``, ``Q_tidal``, each
-            mapping to the per-call integral in J, plus
-            ``F_cmb_step_avg``, the step-average CMB flux in W/m^2
-            (``F_cmb`` divided by ``A_cmb`` and the call duration). When
-            no entropy_eos is attached or the trajectory has fewer than
-            2 points (cannot integrate), the J-integral keys are zero
-            and ``F_cmb_step_avg`` is None (no flux to report).
+            ``F_int``, ``F_cmb``, ``Q_radio``, ``Q_tidal`` (live cell mass),
+            ``Q_radio_cons``, ``Q_tidal_cons`` (frozen structural mass) and
+            ``solver_residual`` are node integrals [J]; ``state_heat`` [J] is the heat
+            content change from the start and end states alone; ``F_cmb_step_avg`` is
+            ``F_cmb`` divided by ``A_cmb`` and the call duration [W/m^2]. Without an
+            entropy EOS or with fewer than 2 output points the integrals are zero and
+            ``F_cmb_step_avg`` is None.
         """
         zero = {
             'F_int': 0.0,
@@ -3430,11 +3418,23 @@ class EntropySolver:
     def _step_powers(self, t_i: float, y_col: npt.NDArray) -> npt.NDArray:
         """Powers [W] at one solver state, for the per-call energy integrals.
 
-        Returns ``[-F_int A_int, F_cmb A_cmb, Q_radio, Q_tidal, Q_radio_cons,
-        Q_tidal_cons, solver residual]``: the boundary heat flows, the source powers
-        with live and frozen (structural) cell mass, and the entropy-equation
-        self-consistency residual (LHS - RHS), which is machine-zero by construction
-        at every state; a non-zero value flags a flux-divergence assembly bug.
+        Evaluates the RHS at the state, which refreshes ``self.state``.
+
+        Parameters
+        ----------
+        t_i : float
+            Node time [yr].
+        y_col : ndarray
+            Node state in physical units, in the layout of ``self._core_bc``.
+
+        Returns
+        -------
+        ndarray, shape (7,)
+            ``[-F_int A_int, F_cmb A_cmb, Q_radio, Q_tidal, Q_radio_cons, Q_tidal_cons,
+            solver residual]``: the boundary heat flows, the source powers with live and
+            frozen (structural) cell mass, and the entropy-equation residual (LHS - RHS),
+            which is machine-zero at every state; a non-zero value flags a
+            flux-divergence assembly bug.
         """
         vol = self._volume_flat
         r_basic = self._r_basic_flat

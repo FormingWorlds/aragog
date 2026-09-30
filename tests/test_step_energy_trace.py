@@ -40,12 +40,12 @@ def _trap(t, p):
 
 
 @pytest.mark.unit
-def test_trace_filters_nodes_and_scales_to_physical_units():
+def test_trace_filters_nodes():
     t, y = np.array([0.0, 1.0]), np.array([[1.0, 5.0], [2.0, 6.0]])
     nodes = [(0.3, [1.1, 2.1]), (0.2, [9, 9]), (0.5, [1.2, 2.2]), (0.5, [9, 9]), (1.5, [9, 9])]
-    ts, ys = es.EntropySolver._energy_trace(nodes, t, y, (2.0, np.array([10.0, 100.0])))
-    np.testing.assert_allclose(ts, [0.0, 0.6, 1.0, 2.0])
-    np.testing.assert_allclose(ys, [[10, 11, 12, 50], [200, 210, 220, 600]])
+    ts, ys = es.EntropySolver._energy_trace(nodes, t, y)
+    np.testing.assert_array_equal(ts, [0.0, 0.3, 0.5, 1.0])
+    np.testing.assert_array_equal(ys, [[1, 1.1, 1.2, 5], [2, 2.1, 2.2, 6]])
 
 
 @pytest.mark.unit
