@@ -159,7 +159,7 @@ For a coupled walkthrough (atmosphere + interior + outgassing), see the PROTEUS 
 
 ## 7. Troubleshooting
 
-**`status = -1` from `solve()`.** The solver hit an integration failure: typically the integrator collapsed its step size at a phase boundary or the EOS table was queried outside its $(P, S)$ domain. PROTEUS handles these via a retry ladder that calls `set_initial_dSdr_cmb` and a tolerance-relaxation knob. In standalone use, inspect `aragog.log` for the warning trail and consider enabling the SUNDIALS CVODE path with `solver_method = "cvode"` if `scikits.odes` is installed.
+**`status = -1` from `solve()`.** The solver hit an integration failure: typically the integrator collapsed its step size at a phase boundary or the EOS table was queried outside its $(P, S)$ domain. PROTEUS handles these via a retry ladder that calls `set_initial_dSdr_cmb` and a tolerance-relaxation setting. In standalone use, inspect `aragog.log` for the warning trail and consider enabling the SUNDIALS CVODE path with `solver_method = "cvode"` if `scikits.odes` is installed. `aragog run` writes the snapshot and exits 1 on this status; the Python API only sets it, and `SolverOutput.failed` is true.
 
 **Slow integration.** Loosen tolerances (`atol = 1e-5`, `rtol = 1e-5`), reduce `number_of_nodes` to 40-80 for first runs, or shorten the time window. The phase-aware `max_step` cap activates automatically near solidus and liquidus crossings.
 

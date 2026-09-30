@@ -210,14 +210,9 @@ class _EnergyParameters:
     # falls back to FD Jacobian when no factory is available.
     use_jax_jacobian: bool = True
 
-    # Per-call mass-weighted |ΔΦ_global| cap. When positive and at least one
-    # cell sits in or near the mushy band at solve() entry, register a
-    # SUNDIALS root function that fires when |Φ_global(t) − Φ_global(
-    # start)| reaches this value, returning early with status=2 so the
-    # PROTEUS outer loop can adjust dt. Without a cap the dt adapter
-    # can land on a step that straddles the rheological transition and
-    # reject. 0.05 is a useful upper bound for the mushy zone in 1 M⊕
-    # runs; None (the default) disables the cap, as does any non-positive value.
+    # Per-call cap on mass-weighted |ΔΦ_global| near the mushy band: the call ends early (status 0
+    # under CVODE, 1 under scipy, both successful) so PROTEUS can shorten dt before the
+    # rheological transition. 0.05 suits 1 M⊕ runs; None or a non-positive value disables it.
     phi_step_cap: float | None = None
     # Per-cell temperature and entropy step caps [K] and [J/kg/K]. Like the
     # melt-fraction cap, but the root function fires on the maximum
