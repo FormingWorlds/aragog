@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.resources
+import os
 from contextlib import AbstractContextManager
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -10,6 +11,22 @@ from pathlib import Path
 import pytest
 
 from aragog import CFG_DATA
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_FWL_DATA = os.environ.get('FWL_DATA')
+_CANDIDATES = [
+    os.environ.get('ARAGOG_TEST_EOS_DIR'),
+    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
+    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
+]
+EOS_DIR = next(
+    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
+    Path(_CANDIDATES[-1]),
+)
+needs_eos = pytest.mark.skipif(
+    not EOS_DIR.exists(),
+    reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
+)
 
 
 class Helper:
