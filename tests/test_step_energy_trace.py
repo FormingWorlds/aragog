@@ -271,8 +271,11 @@ def test_a_trace_short_of_the_steps_warns(monkeypatch, caplog):
     assert any(f'2 nodes for {res.cvode_nst} CVODE steps' in r.message for r in caplog.records)
 
 
-def _heated_bower_call(**source):
-    """Solve a 500-yr bower2018 grey-body call with one heat source; check the budget."""
+def _heated_bower_call(tidal_rate=None, **source):
+    """Solve a 500-yr bower2018 grey-body call with one heat source; check the budget.
+
+    ``tidal_rate(t)`` [W/kg] replaces the constant tidal rate at every RHS evaluation.
+    """
     from .test_entropy_verification import EOS_DIR, TestCvodeEnergyOutputGrid
 
     if not EOS_DIR.exists():
@@ -281,17 +284,22 @@ def _heated_bower_call(**source):
         'cvode', n_out=2, core_bc='bower2018', **source
     )
     s.parameters.solver.end_time = 500.0
+    if tidal_rate is not None:
+        update = s.state.update
+
+        def timed_update(entropy, time, **kw):
+            s.state._tidal_array = [tidal_rate(float(time))]
+            return update(entropy, time, **kw)
+
+        s.state.update = timed_update
     s.solve()
     d, t = s._solution.energy_integrals, s._solution.t
-    mass = float(
-        np.sum(
-            np.asarray(s.evaluator.mesh.staggered_effective_density).ravel() * s._volume_flat
-        )
-    )
-    # state_heat reads the table density, the flux budget the phase capacitance: 5e-4 apart here.
-    assert d['F_int'] + d['F_cmb'] + d['Q_radio_cons'] + d['Q_tidal_cons'] == pytest.approx(
-        d['state_heat'], rel=2e-3
-    )
+    mass = float(np.dot(np.ravel(s.evaluator.mesh.staggered_effective_density), s._volume_flat))
+    # The heat the RHS adds follows the live cell mass, so the budget closes with Q_radio
+    # and Q_tidal (8e-5 measured); without the source it is off by a factor of about 6.
+    heat = d['Q_radio'] + d['Q_tidal']
+    assert abs(heat) > 1.0 * abs(d['state_heat'])
+    assert d['F_int'] + d['F_cmb'] + heat == pytest.approx(d['state_heat'], rel=5e-4)
     assert abs(d['solver_residual']) < 1e-9 * abs(d['F_int'])
     return d, float(t[0]), float(t[-1]), mass
 
@@ -305,24 +313,35 @@ def test_radiogenic_energy_matches_the_decay_integral():
         'X',
         t0_years=0.0,
         abundance=1.0,
-        concentration=1.0,
+        concentration=1e3,
         heat_production=1.0,
         half_life_years=3e4,
     )
     d, t0, t1, mass = _heated_bower_call(radionuclides=[iso])
     k = np.log(2) / 3e4
-    exact = mass * 1e-6 / k * (np.exp(-k * t0) - np.exp(-k * t1)) * es.SECS_PER_YEAR
+    exact = mass * 1e-3 / k * (np.exp(-k * t0) - np.exp(-k * t1)) * es.SECS_PER_YEAR
     assert d['Q_radio_cons'] == pytest.approx(exact, rel=1e-8)
-    assert d['Q_radio'] > 0.0 and d['Q_tidal'] == d['Q_tidal_cons'] == 0.0
+    assert d['Q_tidal'] == d['Q_tidal_cons'] == 0.0
 
 
 @pytest.mark.smoke
-def test_tidal_energy_is_the_constant_power_over_the_call():
-    d, t0, t1, mass = _heated_bower_call(tidal=1e-6)
-    assert d['Q_tidal_cons'] == pytest.approx(
-        1e-6 * mass * (t1 - t0) * es.SECS_PER_YEAR, rel=1e-12
+def test_tidal_energy_follows_a_time_varying_rate():
+    """A 70-yr oscillation in the tidal rate integrates to the analytic value over the nodes.
+
+    The trapezoid over the call's two endpoints misses it by 19 percent.
+    """
+    w = 2.0 * np.pi / 70.0
+    d, t0, t1, mass = _heated_bower_call(
+        tidal=1e-3, tidal_rate=lambda t: 1e-3 * (1 + 0.5 * np.sin(w * t))
     )
-    assert d['Q_tidal'] > 0.0 and d['Q_radio'] == d['Q_radio_cons'] == 0.0
+    exact = (
+        mass
+        * 1e-3
+        * ((t1 - t0) + 0.5 * (np.cos(w * t0) - np.cos(w * t1)) / w)
+        * es.SECS_PER_YEAR
+    )
+    assert d['Q_tidal_cons'] == pytest.approx(exact, rel=1e-5)
+    assert d['Q_radio'] == d['Q_radio_cons'] == 0.0
 
 
 @pytest.mark.unit
