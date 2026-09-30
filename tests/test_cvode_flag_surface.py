@@ -9,8 +9,6 @@ records the raw CVODE flag as ``result.cvode_flag`` and its enum name as
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 
@@ -40,7 +38,7 @@ def test_flag_name_falls_back_on_unknown_flag():
 
 
 class _FlaggingCVODE:
-    """Fake CVODE whose step returns a configurable return flag.
+    """Fake CVODE whose solve returns a configurable return flag.
 
     Lets a test drive ``_solve_cvode`` down its flag-handling branch with
     a chosen flag without running a real integration.
@@ -53,18 +51,21 @@ class _FlaggingCVODE:
         self._rhs = rhs
         return self
 
-    def init_step(self, t0, y0):
-        self._y0 = np.asarray(y0, dtype=float)
+    def solve(self, tspan, y0):
+        flag = self._flag
 
-    def set_options(self, **opts):
-        pass
+        class _V:
+            t = np.asarray(tspan, dtype=float)
+            y = np.tile(np.asarray(y0, dtype=float).reshape(-1, 1), (1, len(t)))
 
-    def step(self, t):
-        return SimpleNamespace(
-            flag=self._flag,
-            message=f'stopped with flag {self._flag}',
-            values=SimpleNamespace(t=t, y=self._y0),
-        )
+        class _Sol:
+            def __init__(self):
+                self.flag = flag
+                self.message = f'stopped with flag {flag}'
+                self.roots = None
+                self.values = _V()
+
+        return _Sol()
 
     def get_info(self):
         return {}
@@ -79,7 +80,6 @@ def _run_with_flag(flag: int):
     es._scikits_cvode = _FlaggingCVODE(flag)
     try:
         solver = EntropySolver.__new__(EntropySolver)
-        solver.entropy_eos = None
         solver._core_bc = 'quasi_steady'
         solver._cvode_output_points = 4
         solver._max_steps = 100000
@@ -128,7 +128,6 @@ def test_zero_span_reports_success_sentinel():
     es._scikits_cvode = _FlaggingCVODE(-1)  # must never be called
     try:
         solver = EntropySolver.__new__(EntropySolver)
-        solver.entropy_eos = None
         solver._core_bc = 'quasi_steady'
         solver._cvode_output_points = 4
         solver._max_steps = 100000
