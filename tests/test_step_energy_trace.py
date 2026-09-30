@@ -271,16 +271,6 @@ def test_a_trace_short_of_the_steps_warns(monkeypatch, caplog):
     assert any(f'2 nodes for {res.cvode_nst} CVODE steps' in r.message for r in caplog.records)
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize(('t0', 'warns'), [(1e6, True), (0.0, False)])
-def test_node_spacing_near_the_float_resolution_warns(caplog, t0, warns):
-    t = t0 + np.array([0.0, 1e-9, 1.0])
-    s, _ = _fake_solver(OptimizeResult(t=t, y=np.ones((1, 3))))
-    with caplog.at_level('WARNING', logger=es.logger.name):
-        s._compute_step_energy_integrals()
-    assert any('within 1e3 ulp' in r.message for r in caplog.records) == warns
-
-
 def _heated_bower_call(**source):
     """Solve a 500-yr bower2018 grey-body call with one heat source; check the budget."""
     from .test_entropy_verification import EOS_DIR, TestCvodeEnergyOutputGrid
@@ -333,3 +323,11 @@ def test_tidal_energy_is_the_constant_power_over_the_call():
         1e-6 * mass * (t1 - t0) * es.SECS_PER_YEAR, rel=1e-12
     )
     assert d['Q_tidal'] > 0.0 and d['Q_radio'] == d['Q_radio_cons'] == 0.0
+
+
+@pytest.mark.unit
+def test_a_one_node_trace_integrates_to_zero():
+    sol = OptimizeResult(t=np.array([0.0, 2.0]), y=np.ones((1, 2)))
+    sol.energy_trace = (np.array([0.0]), np.ones((1, 1)))
+    out = _fake_solver(sol)[0]._compute_step_energy_integrals()
+    assert out['F_int'] == out['solver_residual'] == 0.0

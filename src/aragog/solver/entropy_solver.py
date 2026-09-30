@@ -3399,15 +3399,7 @@ class EntropySolver:
         self.state._pb_cache_hits, self.state._pb_cache_misses = counters
         P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
 
-        dt_yr = np.diff(np.asarray(t_pts, dtype=float))
-        dt_s = dt_yr * SECS_PER_YEAR
-        # Weights from absolute times keep few significant digits once a step nears ulp(t).
-        if dt_yr.min() < 1e3 * np.spacing(abs(float(t_pts[-1]))):
-            logger.warning(
-                'energy quadrature: node spacing %.2e yr at t = %.6e yr is within 1e3 ulp',
-                dt_yr.min(),
-                float(t_pts[-1]),
-            )
+        dt_s = np.diff(np.asarray(t_pts, dtype=float)) * SECS_PER_YEAR
 
         def trap(p):
             return float(np.sum(0.5 * (p[:-1] + p[1:]) * dt_s))
