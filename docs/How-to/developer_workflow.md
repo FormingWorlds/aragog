@@ -15,3 +15,10 @@ Variables named in `--ignore` (comma-separated, repeatable) are marked `(ignored
 
 The exit code is 0 when nothing outside `--ignore` differs, 1 when something does, and 2 when a file cannot be read.
 To check that a change leaves the solver trajectory unchanged, run the same configuration from both checkouts with a short end time, and pass the variables the change is meant to alter to `--ignore`.
+A change to the per-call energy integrals, for example, alters only the energy diagnostics:
+
+```console
+python tools/compare_snapshots.py main.nc branch.nc \
+    --ignore F_cmb,step_solver_residual_J,step_dE_F_int_J,step_dE_F_cmb_J \
+    --ignore step_dE_Q_radio_J,step_dE_Q_tidal_J,step_dE_Q_radio_cons_J,step_dE_Q_tidal_cons_J
+```
