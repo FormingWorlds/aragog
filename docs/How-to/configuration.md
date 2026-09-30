@@ -110,6 +110,8 @@ half_life_years = 1.248e9
 ```
 
 Any number of `[radionuclide_*]` sections can be added; each section name must start with `radionuclide_`.
+Each isotope heats at `heat_production * abundance * 1e-6 * concentration * 2**((t0_years - t) / half_life_years)` per kg, with `concentration` in ppm; an isotope whose amplitude is zero contributes no heating at any time.
+With `radionuclides = true`, loading raises a `ValueError` when a half-life is not positive, when `heat_production`, `abundance` or `concentration` is negative, or when an isotope's heating is not finite at `start_time`.
 
 ## Configuration sections
 
