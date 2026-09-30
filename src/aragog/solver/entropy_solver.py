@@ -2506,6 +2506,10 @@ class EntropySolver:
             callback so CVODE uses this analytic Jacobian instead of
             its default finite-difference approximation. Signature:
             ``jacfn(t, y, fy, J, user_data=None) -> int``.
+        scale : tuple
+            ``(t_ref, state_scale)`` mapping nondimensional time and state to years
+            and physical units for ``result.energy_trace``, the ``(t, y)`` quadrature
+            nodes of the per-call energy integrals (see ``_energy_trace``).
         """
         # Zero-span edge case: scipy's solve_ivp accepts
         # `t_span = (t0, t0)` and returns the initial state trivially,
@@ -2645,9 +2649,9 @@ class EntropySolver:
             cvode_options.pop('lband', None)
             cvode_options.pop('uband', None)
 
-        # CVODE evaluates the root function at the end of every accepted step (at the
-        # output instead when the step passes one), so recording its calls gives the
-        # per-call energy quadrature nodes; with no root function a never-firing one records.
+        # CVODE evaluates the root function at every accepted step end and every output
+        # point, so recording its calls gives the per-call energy quadrature nodes; with
+        # no user root function a never-firing one records.
         nodes, user_rootfn = [], cvode_options.get('rootfn')
         user_rootfn = getattr(user_rootfn, 'evaluate', user_rootfn)
 
@@ -2671,7 +2675,7 @@ class EntropySolver:
                 {k: v for k, v in cvode_options.items() if k != 'old_api'},
             )
         # Output grid, quadratic so it samples the call start densely; the core-temperature
-        # check reads these samples. It feeds back weakly into CVODE stepping (state near rtol).
+        # check reads these samples when no root fires. It feeds back weakly into CVODE stepping.
         n_out = self._cvode_output_points
         if n_out > 2 and float(end_time) > float(start_time):
             x = np.linspace(0.0, 1.0, n_out) ** 2
@@ -3394,7 +3398,10 @@ class EntropySolver:
         }
 
     def _stag_entropy(self, y_col: npt.NDArray) -> npt.NDArray:
-        """Staggered-node entropy of one solver state, in any state layout."""
+        """Staggered-node entropy of one solver state, in any state layout.
+
+        The map is linear, so it also maps a state rate to the entropy rates.
+        """
         if self._core_bc == 'gradient':
             n_basic = self._n_stag + 1
             S, _ = self._reconstruct_entropy(y_col[:n_basic], float(y_col[n_basic]))
