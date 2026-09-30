@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Self
 
@@ -210,14 +210,9 @@ class _EnergyParameters:
     # falls back to FD Jacobian when no factory is available.
     use_jax_jacobian: bool = True
 
-    # Per-call mass-weighted |ΔΦ_global| cap. When positive and at least one
-    # cell sits in or near the mushy band at solve() entry, register a
-    # SUNDIALS root function that fires when |Φ_global(t) − Φ_global(
-    # start)| reaches this value, returning early with status=2 so the
-    # PROTEUS outer loop can adjust dt. Without a cap the dt adapter
-    # can land on a step that straddles the rheological transition and
-    # reject. 0.05 is a useful upper bound for the mushy zone in 1 M⊕
-    # runs; None (the default) disables the cap, as does any non-positive value.
+    # Per-call cap on mass-weighted |ΔΦ_global| near the mushy band: the call ends early (status 0
+    # under CVODE, 1 under scipy, both successful) so PROTEUS can shorten dt before the
+    # rheological transition. 0.05 suits 1 M⊕ runs; None or a non-positive value disables it.
     phi_step_cap: float | None = None
     # Per-cell temperature and entropy step caps [K] and [J/kg/K]. Like the
     # melt-fraction cap, but the root function fires on the maximum
@@ -342,6 +337,9 @@ class _PhaseParameters:
     entropy: float | str = ''
 
 
+_PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
+
+
 @dataclass
 class _Radionuclide:
     """Stores the settings in a radionuclide section in the configuration data."""
@@ -365,11 +363,9 @@ class _Radionuclide:
                 with a single time in the time array.
         """
         arg: npt.NDArray | float = np.log(2) * (self.t0_years - time) / self.half_life_years
-        heating: npt.NDArray | float = (
-            self.heat_production * self.abundance * self.concentration * np.exp(arg)
-        )
-
-        return heating
+        amplitude = self.heat_production * self.abundance * self.concentration
+        # A zero-amplitude isotope contributes 0, also where exp(arg) overflows.
+        return amplitude * np.exp(np.where(amplitude, arg, 0.0))
 
 
 @dataclass
@@ -486,9 +482,34 @@ class Parameters:
                     f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
 
-        # Convert radionuclide concentration from ppm to mass fraction.
-        for r in self.radionuclides:
-            r.concentration *= 1e-6
+        # Validate ppm-scaled copies and write back only on success, so a rejected call leaves
+        # the caller's objects unchanged.
+        scaled = [replace(r, concentration=r.concentration * _PPM) for r in self.radionuclides]
+        if self.energy.radionuclides:
+            t_start = self.solver.start_time
+            for r, r_ppm in zip(scaled, self.radionuclides):
+                if not r.half_life_years > 0.0:
+                    raise ValueError(
+                        f'Radionuclide {r.name}: half_life_years must be positive, '
+                        f'got {r.half_life_years}'
+                    )
+                # On the ppm input: scaling can round a tiny negative value to -0.0.
+                if min(r_ppm.heat_production, r_ppm.abundance, r_ppm.concentration) < 0.0:
+                    raise ValueError(
+                        f'Radionuclide {r.name}: heat_production ({r_ppm.heat_production}), '
+                        f'abundance ({r_ppm.abundance}) and concentration '
+                        f'({r_ppm.concentration} ppm) must not be negative'
+                    )
+                with np.errstate(over='ignore'):
+                    finite = np.isfinite(r.get_heating(t_start))
+                if not finite:
+                    raise ValueError(
+                        f'Radionuclide {r.name}: heating is not finite at the start time '
+                        f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
+                        f'{r.half_life_years}); check the amplitude and t0_years'
+                    )
+        for r, r_scaled in zip(self.radionuclides, scaled):
+            r.concentration = r_scaled.concentration
 
     @classmethod
     def from_file(cls, *filenames) -> Self:

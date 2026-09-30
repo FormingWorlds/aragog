@@ -405,6 +405,9 @@ def run(
         solver.set_initial_entropy(...)
         solver.solve()
         solver.get_state().to_netcdf(...)
+
+    The command writes the snapshot and then exits 1 when the integration fails
+    (a status other than 0 and 1); the Python API only sets the status.
     """
     from aragog import aragog_file_logger
     from aragog.solver import EntropySolver
@@ -501,6 +504,12 @@ def run(
         description=f'Aragog run from {config.name}',
     )
     click.echo(f'wrote {out_path}')
+    if state.failed:
+        raise click.ClickException(
+            f'integration failed (status={state.status}): {solver.solution.message}; '
+            'wrote the state at the last successful output time (the initial state if the '
+            f'solver fails before the first output) to {out_path}'
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -556,7 +565,7 @@ def _first_comment_line(entry: Traversable) -> str:
 # output: status first (so a failed run is impossible to miss), then
 # the dominant state variables, then heat-balance terms.
 _INSPECT_SCALARS: tuple[tuple[str, str], ...] = (
-    ('status', 'solver status (0 = success)'),
+    ('status', 'solver status (0 success, 1 step-cap stop, other failure)'),
     ('cvode_flag', 'raw CVODE return flag (0 = success, -1 = too much work)'),
     ('time', 'simulation time [yr]'),
     ('dt_actual', 'integration interval [yr]'),
