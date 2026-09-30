@@ -34,9 +34,10 @@ def compare(path_a: str, path_b: str) -> tuple[dict[str, str], set[str]]:
                 x, y = x.astype(float), y.astype(float)
                 nan_x, nan_y = np.isnan(x), np.isnan(y)
                 both = ~(nan_x | nan_y)
-                rel = np.abs(x[both] - y[both]) / np.maximum(
-                    np.abs(x[both]), np.finfo(float).tiny
-                )
+                with np.errstate(over='ignore', invalid='ignore'):
+                    rel = np.abs(x[both] - y[both]) / np.maximum(
+                        np.abs(x[both]), np.finfo(float).tiny
+                    )
                 parts = [f'max relative difference {rel.max():.3g}'] if np.any(rel) else []
                 if np.any(nan_x != nan_y):
                     parts.append(f'NaN in one file at {int(np.sum(nan_x != nan_y))} points')
