@@ -371,3 +371,60 @@ def test_a_failed_call_does_not_warn_about_the_trace(monkeypatch, caplog):
         )
     assert res.cvode_flag < 0 and res.cvode_nst >= 200
     assert not any('CVODE steps' in r.message for r in caplog.records)
+
+
+def _const_properties_solver(max_steps=100000):
+    """10-node const-properties solver on CVODE; no EOS tables, one solve takes ~10 ms."""
+    from .test_entropy_solver_const_properties_smoke import _build_const_properties_parameters
+
+    p = _build_const_properties_parameters(n_nodes=10, end_time=5.0)
+    p.energy.solver_method, p.solver.max_steps = 'cvode', max_steps
+    s = es.EntropySolver(p, entropy_eos=None)
+    s.initialize()
+    s.set_initial_entropy(3050.0)
+    return s
+
+
+_FIELDS = {
+    'F_int': 'step_dE_F_int_J',
+    'F_cmb': 'step_dE_F_cmb_J',
+    'F_cmb_step_avg': 'F_cmb',
+    'Q_radio': 'step_dE_Q_radio_J',
+    'Q_tidal': 'step_dE_Q_tidal_J',
+    'Q_radio_cons': 'step_dE_Q_radio_cons_J',
+    'Q_tidal_cons': 'step_dE_Q_tidal_cons_J',
+    'solver_residual': 'step_solver_residual_J',
+    'state_heat': 'step_dE_state_heat_J',
+}
+
+
+@pytest.mark.unit
+def test_get_state_reports_the_integrals_of_one_solve(monkeypatch):
+    values = {key: float(i + 1) for i, key in enumerate(_FIELDS)}
+    traces = []
+
+    def integrals(self):
+        traces.append(self._solution.energy_trace[0].copy())
+        return dict(values)
+
+    monkeypatch.setattr(es.EntropySolver, '_compute_step_energy_integrals', integrals)
+    s = _const_properties_solver()
+    s.solve()
+    first, second = s.get_state(), s.get_state()
+    assert len(traces) == 1
+    np.testing.assert_array_equal(traces[0][[0, -1]], [0.0, 5.0])
+    for key, field in _FIELDS.items():
+        assert getattr(first, field) == getattr(second, field) == values[key]
+
+
+@pytest.mark.unit
+def test_a_failed_solve_reports_zero_integrals(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        es.EntropySolver, '_compute_step_energy_integrals', lambda self: calls.append(1) or {}
+    )
+    s = _const_properties_solver(max_steps=1)
+    s.solve()
+    out = s.get_state()
+    assert s.stop_early and not calls
+    assert [getattr(out, f) for k, f in _FIELDS.items() if k != 'F_cmb_step_avg'] == [0.0] * 8
