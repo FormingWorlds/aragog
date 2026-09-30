@@ -21,7 +21,7 @@ Every call to `EntropySolver.solve()` returns a [`SolverOutput`](../Reference/ap
 | `step_dE_Q_tidal_cons_J` | $+\int Q_\text{tidal}\,dt$ (frozen mass) | Non-negative; uses fixed $\rho_\text{struct}\,V$ |
 | `step_solver_residual_J` | $\int (\text{LHS} - \text{RHS})\,dt$ | $\sim 0$ at machine precision |
 
-All integrals use the trapezoidal rule on the integrator's accepted sub-steps and output points. Integrating over the actual CVODE trajectory rather than between end-of-step snapshots is required because a single CVODE phase-boundary spike on a coarse end-of-step interpolation can shift the integral by orders of magnitude.
+All integrals use the trapezoidal rule on the integrator's accepted sub-steps and output points. They are evaluated once at the end of each successful solver call, at every node, so their cost follows the number of accepted CVODE steps, not `cvode_output_points`; a failed call reports zero. Integrating over the actual CVODE trajectory rather than between end-of-step snapshots is required because a single CVODE phase-boundary spike on a coarse end-of-step interpolation can shift the integral by orders of magnitude.
 
 The two surface-flux integrals (`step_dE_F_int_J` and `step_dE_F_cmb_J`) are area-weighted only and have no mass-weighting variant. The volumetric source integrals come in two flavours, distinguished by the mass weighting on $Q_\text{radio} = \rho\,h_\text{radio}\,V$ and $Q_\text{tidal} = \rho\,h_\text{tidal}\,V$:
 

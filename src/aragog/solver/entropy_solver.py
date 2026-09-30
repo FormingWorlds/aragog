@@ -14,6 +14,7 @@ finite-volume mesh.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -585,6 +586,19 @@ def _phi_cap_event_factory(
 _STATUS_DESCRIPTION = (
     'Solver status (0 success, 1 stop at a step-cap event, other values failure)'
 )
+
+
+_ZERO_ENERGY_INTEGRALS = {
+    'F_int': 0.0,
+    'F_cmb': 0.0,
+    'F_cmb_step_avg': None,
+    'Q_radio': 0.0,
+    'Q_tidal': 0.0,
+    'Q_radio_cons': 0.0,
+    'Q_tidal_cons': 0.0,
+    'solver_residual': 0.0,
+    'state_heat': 0.0,
+}
 
 
 def _status_failed(status: int) -> bool:
@@ -2825,7 +2839,13 @@ class EntropySolver:
         return result
 
     def solve(self) -> None:
-        """Run the BDF time integration."""
+        """Run the BDF time integration.
+
+        A successful solve also stores the per-call energy integrals on the result as
+        ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
+        zeros.
+        """
+        wall_start = time.perf_counter()
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
@@ -3299,6 +3319,17 @@ class EntropySolver:
             self.state._pb_cache_misses = 0
 
         self._log_solution_outcome(end_time)
+        if self.stop_early:
+            sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
+            return
+        wall_solve = time.perf_counter() - wall_start
+        wall_start = time.perf_counter()
+        sol.energy_integrals = self._compute_step_energy_integrals()
+        logger.info(
+            'EntropySolver: energy integrals in %.2f s (solve %.2f s)',
+            time.perf_counter() - wall_start,
+            wall_solve,
+        )
 
     def _log_solution_outcome(self, end_time: float) -> None:
         """Log the outcome of the last integration and set ``stop_early`` on a failure."""
@@ -3341,25 +3372,23 @@ class EntropySolver:
             entropy EOS or with fewer than 2 output points the integrals are zero and
             ``F_cmb_step_avg`` is None.
         """
-        zero = {
-            'F_int': 0.0,
-            'F_cmb': 0.0,
-            'F_cmb_step_avg': None,
-            'Q_radio': 0.0,
-            'Q_tidal': 0.0,
-            'Q_radio_cons': 0.0,
-            'Q_tidal_cons': 0.0,
-            'solver_residual': 0.0,
-            'state_heat': 0.0,
-        }
         sol = self._solution
         if self.entropy_eos is None or sol is None or sol.t is None or sol.y is None:
-            return zero
+            return dict(_ZERO_ENERGY_INTEGRALS)
         if sol.t.size < 2:
-            return zero
+            return dict(_ZERO_ENERGY_INTEGRALS)
 
         t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
-        P = np.array([self._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
+        vol, r_basic = self._volume_flat, self._r_basic_flat
+        geom = (
+            4.0 * np.pi * float(r_basic[-1]) ** 2,
+            4.0 * np.pi * float(r_basic[0]) ** 2,
+            np.asarray(self.evaluator.mesh.staggered_effective_density).ravel() * vol,
+        )
+        # The replay refreshes self.state at every node; keep the solve's cache statistics.
+        counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
+        P = np.array([self._step_powers(float(t), y, geom) for t, y in zip(t_pts, y_pts.T)])
+        self.state._pb_cache_hits, self.state._pb_cache_misses = counters
         P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
 
         dt_s = np.diff(np.asarray(t_pts, dtype=float)) * SECS_PER_YEAR
@@ -3378,8 +3407,7 @@ class EntropySolver:
         # equals step_dE_F_cmb by construction. None on a zero-duration or
         # zero-area call, so the caller keeps the end-of-step snapshot.
         step_dE_F_cmb = trap(P_F_cmb)
-        A_cmb = 4.0 * np.pi * float(self._r_basic_flat[0]) ** 2
-        denom = A_cmb * float(np.sum(dt_s))
+        denom = geom[1] * float(np.sum(dt_s))
         f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
 
         return {
@@ -3415,7 +3443,7 @@ class EntropySolver:
             return np.asarray(S, dtype=float)
         return np.asarray(y_col[: self._n_stag], dtype=float)
 
-    def _step_powers(self, t_i: float, y_col: npt.NDArray) -> npt.NDArray:
+    def _step_powers(self, t_i: float, y_col: npt.NDArray, geom: tuple) -> npt.NDArray:
         """Powers [W] at one solver state, for the per-call energy integrals.
 
         Evaluates the RHS at the state, which refreshes ``self.state``.
@@ -3426,6 +3454,9 @@ class EntropySolver:
             Node time [yr].
         y_col : ndarray
             Node state in physical units, in the layout of ``self._core_bc``.
+        geom : tuple
+            ``(A_int, A_cmb, mass_struct)``: surface and CMB areas [m^2] and the frozen
+            structural mass per cell [kg].
 
         Returns
         -------
@@ -3436,12 +3467,8 @@ class EntropySolver:
             which is machine-zero at every state; a non-zero value flags a
             flux-divergence assembly bug.
         """
+        A_int, A_cmb, mass_struct = geom
         vol = self._volume_flat
-        r_basic = self._r_basic_flat
-        A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
-        A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
-        # Frozen structural mass per shell, for the conservation-grade Q_*_cons.
-        mass_struct = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel() * vol
 
         # The RHS at this accepted state applies the BCs, so the boundary fluxes read below
         # are the ones the entropy ODE saw. In the gradient layout the reconstruction is
@@ -3734,13 +3761,11 @@ class EntropySolver:
         gradient_mode = self._core_bc == 'gradient'
         is_ext = energy_balance or bower
 
-        # Compute per-call energy integrals BEFORE refreshing state at
-        # the final entropy. ``_compute_step_energy_integrals`` walks
-        # the CVODE trajectory and calls state.update() at each
-        # accepted sub-step; doing it before the final refresh keeps
-        # the end-of-call snapshot (heat_flux, heating arrays, etc.)
-        # consistent with what callers see in the rest of get_state().
-        step_integrals = self._compute_step_energy_integrals()
+        # solve() stores the integrals; a result set without solve() gets them here, before
+        # the final-state refresh below that the rest of get_state() reads.
+        step_integrals = getattr(sol, 'energy_integrals', None)
+        if step_integrals is None:
+            step_integrals = self._compute_step_energy_integrals()
 
         # Slice the final state vector.
         if gradient_mode:
