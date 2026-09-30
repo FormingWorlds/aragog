@@ -293,6 +293,7 @@ def _heated_bower_call(tidal_rate=None, **source):
 
         s.state.update = timed_update
     s.solve()
+    assert (s.state._pb_cache_hits, s.state._pb_cache_misses) == (0, 0)
     d, t = s._solution.energy_integrals, s._solution.t
     mass = float(np.dot(np.ravel(s.evaluator.mesh.staggered_effective_density), s._volume_flat))
     # The heat the RHS adds follows the live cell mass, so the budget closes with Q_radio
