@@ -234,7 +234,7 @@ def _fake_solver(sol):
     s._stag_entropy, s._step_heat_content = (lambda y: y), (lambda a, b: 0.0)
     seen = []
 
-    def powers(t, y, geom):
+    def powers(t, y):
         seen.append((t, y.copy()))
         s.state._pb_cache_hits += 1
         return np.array([t, 2 * t, 3 * t, 4 * t, 5 * t, 6 * t, 7 * t])
