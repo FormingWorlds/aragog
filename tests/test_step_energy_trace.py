@@ -269,3 +269,13 @@ def test_a_trace_short_of_the_steps_warns(monkeypatch, caplog):
     with caplog.at_level('WARNING', logger=es.logger.name):
         res = _solve()
     assert any(f'2 nodes for {res.cvode_nst} CVODE steps' in r.message for r in caplog.records)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(('t0', 'warns'), [(1e6, True), (0.0, False)])
+def test_node_spacing_near_the_float_resolution_warns(caplog, t0, warns):
+    t = t0 + np.array([0.0, 1e-9, 1.0])
+    s, _ = _fake_solver(OptimizeResult(t=t, y=np.ones((1, 3))))
+    with caplog.at_level('WARNING', logger=es.logger.name):
+        s._compute_step_energy_integrals()
+    assert any('within 1e3 ulp' in r.message for r in caplog.records) == warns
