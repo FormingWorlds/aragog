@@ -279,3 +279,57 @@ def test_node_spacing_near_the_float_resolution_warns(caplog, t0, warns):
     with caplog.at_level('WARNING', logger=es.logger.name):
         s._compute_step_energy_integrals()
     assert any('within 1e3 ulp' in r.message for r in caplog.records) == warns
+
+
+def _heated_bower_call(**source):
+    """Solve a 500-yr bower2018 grey-body call with one heat source; check the budget."""
+    from .test_entropy_verification import EOS_DIR, TestCvodeEnergyOutputGrid
+
+    if not EOS_DIR.exists():
+        pytest.skip(f'SPIDER P-S tables not found at {EOS_DIR}')
+    s = TestCvodeEnergyOutputGrid._build_greybody_solver(
+        'cvode', n_out=2, core_bc='bower2018', **source
+    )
+    s.parameters.solver.end_time = 500.0
+    s.solve()
+    d, t = s._solution.energy_integrals, s._solution.t
+    mass = float(
+        np.sum(
+            np.asarray(s.evaluator.mesh.staggered_effective_density).ravel() * s._volume_flat
+        )
+    )
+    # state_heat reads the table density, the flux budget the phase capacitance: 5e-4 apart here.
+    assert d['F_int'] + d['F_cmb'] + d['Q_radio_cons'] + d['Q_tidal_cons'] == pytest.approx(
+        d['state_heat'], rel=2e-3
+    )
+    assert abs(d['solver_residual']) < 1e-9 * abs(d['F_int'])
+    return d, float(t[0]), float(t[-1]), mass
+
+
+@pytest.mark.smoke
+def test_radiogenic_energy_matches_the_decay_integral():
+    """A source decaying by 1.2 percent over the call integrates to the analytic value."""
+    from aragog.parser import _Radionuclide
+
+    iso = _Radionuclide(
+        'X',
+        t0_years=0.0,
+        abundance=1.0,
+        concentration=1.0,
+        heat_production=1.0,
+        half_life_years=3e4,
+    )
+    d, t0, t1, mass = _heated_bower_call(radionuclides=[iso])
+    k = np.log(2) / 3e4
+    exact = mass * 1e-6 / k * (np.exp(-k * t0) - np.exp(-k * t1)) * es.SECS_PER_YEAR
+    assert d['Q_radio_cons'] == pytest.approx(exact, rel=1e-8)
+    assert d['Q_radio'] > 0.0 and d['Q_tidal'] == d['Q_tidal_cons'] == 0.0
+
+
+@pytest.mark.smoke
+def test_tidal_energy_is_the_constant_power_over_the_call():
+    d, t0, t1, mass = _heated_bower_call(tidal=1e-6)
+    assert d['Q_tidal_cons'] == pytest.approx(
+        1e-6 * mass * (t1 - t0) * es.SECS_PER_YEAR, rel=1e-12
+    )
+    assert d['Q_tidal'] > 0.0 and d['Q_radio'] == d['Q_radio_cons'] == 0.0
