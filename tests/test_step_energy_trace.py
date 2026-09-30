@@ -148,7 +148,7 @@ def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
     """A temperature cap ends the call at a root after a steep grey-body flux decay.
 
     The kept nodes increase in time and give the surface integral of a dense-output
-    run over the same span; the two-point trajectory alone misses it by 25 percent.
+    run over the same span; the call's two endpoints alone miss it by 25 percent.
     """
     from .test_entropy_verification import EOS_DIR, TestCvodeEnergyOutputGrid
 
@@ -159,7 +159,7 @@ def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
     s.solve()
     sol = s._solution
     t = sol.energy_trace[0]
-    assert sol.cap_label == 'temperature' and sol.t.size == 2 and t[-1] == sol.t[-1]
+    assert sol.cap_label == 'temperature' and t[-1] == sol.t[-1]
     assert t.size > 100 and np.all(np.diff(t) > 0)
     ref = TestCvodeEnergyOutputGrid._build_greybody_solver('cvode', n_out=1025)
     ref.parameters.solver.end_time = float(sol.t[-1])
@@ -167,5 +167,5 @@ def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
     ref._solution.energy_trace = None
     F_ref = ref._compute_step_energy_integrals()['F_int']
     assert s._compute_step_energy_integrals()['F_int'] == pytest.approx(F_ref, rel=1e-5)
-    sol.energy_trace = None
+    sol.energy_trace = (sol.t[[0, -1]], sol.y[:, [0, -1]])
     assert abs(s._compute_step_energy_integrals()['F_int'] / F_ref - 1.0) > 0.1
