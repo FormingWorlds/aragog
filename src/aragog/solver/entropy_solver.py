@@ -2805,6 +2805,11 @@ class EntropySolver:
 
         result.nfev = nfev_box[0]
         result.energy_trace = self._energy_trace(nodes, result.t, result.y)
+        # Every accepted step should give a node; a large shortfall means the root-function
+        # recording no longer sees them and the integrals fall back toward the output grid.
+        nst, n_nodes = int(result.get('cvode_nst', 0)), len(result.energy_trace[0])
+        if n_nodes + max(10, nst // 100) < nst:
+            logger.warning('energy quadrature: %d nodes for %d CVODE steps', n_nodes, nst)
         result.message = getattr(cvode_sol, 'message', '')
         # Surface the raw CVODE flag distinctly from result.status: status
         # stays scipy-compatible (0 success, -1 failure), while these two
@@ -3378,7 +3383,10 @@ class EntropySolver:
         if sol.t.size < 2:
             return dict(_ZERO_ENERGY_INTEGRALS)
 
-        t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
+        trace = sol.get('energy_trace')
+        if trace is None:  # scipy path: solve_ivp returns its accepted steps as sol.t
+            trace = (sol.t, sol.y)
+        t_pts, y_pts = trace
         vol, r_basic = self._volume_flat, self._r_basic_flat
         geom = (
             4.0 * np.pi * float(r_basic[-1]) ** 2,

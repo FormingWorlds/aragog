@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
+from scipy.optimize import OptimizeResult
 
 from aragog.solver import entropy_solver as es
 
@@ -177,3 +180,92 @@ def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
     assert s._compute_step_energy_integrals()['F_int'] == pytest.approx(F_ref, rel=1e-5)
     sol.energy_trace = (sol.t[[0, -1]], sol.y[:, [0, -1]])
     assert abs(s._compute_step_energy_integrals()['F_int'] / F_ref - 1.0) > 0.1
+
+
+class _Cap:
+    """Root function object in the step-cap shape: CVODE reaches it through ``evaluate``."""
+
+    phi0, binding_cap, cap, evals = 0.0, 'phi', 0.5, 0
+
+    def evaluate(self, t, y, g, userdata=None):
+        g[0] = y[0] + 0.5 * AMP * np.sqrt(np.pi) * WIDTH
+        return 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('cap', [None, _Cap()])
+def test_recording_leaves_the_solution_bitwise_unchanged(monkeypatch, cap):
+    real, spies = es._scikits_cvode, []
+
+    class Spy:
+        def __init__(self, rhs, **opts):
+            self.rhs, self.opts, self._s = rhs, opts, real(rhs, **opts)
+            spies.append(self)
+
+        def solve(self, tspan, y0):
+            self.args = (np.array(tspan), np.array(y0))
+            return self._s.solve(tspan, y0)
+
+        def __getattr__(self, name):
+            return getattr(self._s, name)
+
+    monkeypatch.setattr(es, '_scikits_cvode', Spy)
+    res = _solve(n_out=9, rootfn=cap)
+    opts = dict(spies[0].opts)
+    if cap is None:
+        del opts['rootfn'], opts['nr_rootfns']
+    else:
+        opts['rootfn'] = cap.evaluate
+    ref = real(spies[0].rhs, **opts).solve(*spies[0].args)
+    if cap is None:
+        assert ref.flag == 0 and res.cvode_flag == 0
+        assert np.array_equal(res.t, ref.values.t) and np.array_equal(res.y, ref.values.y.T)
+    else:
+        assert ref.flag == 2 and res.cvode_flag == 2 and res.cap_fired
+        assert res.t[-1] == ref.roots.t[-1] and np.array_equal(res.y[:, -1], ref.roots.y[-1])
+
+
+def _fake_solver(sol):
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution, s.entropy_eos = sol, object()
+    s._volume_flat, s._r_basic_flat = np.ones(1), np.array([1.0, 2.0])
+    s.evaluator = SimpleNamespace(mesh=SimpleNamespace(staggered_effective_density=np.ones(1)))
+    s.state = SimpleNamespace(_pb_cache_hits=3, _pb_cache_misses=4)
+    s._stag_entropy, s._step_heat_content = (lambda y: y), (lambda a, b: 0.0)
+    seen = []
+
+    def powers(t, y, geom):
+        seen.append((t, y.copy()))
+        s.state._pb_cache_hits += 1
+        return np.array([t, 2 * t, 3 * t, 4 * t, 5 * t, 6 * t, 7 * t])
+
+    s._step_powers = powers
+    return s, seen
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('traced', [True, False])
+def test_integrals_evaluate_the_powers_at_every_node(traced):
+    sol = OptimizeResult(t=np.array([0.0, 2.0]), y=np.array([[1.0, 3.0]]))
+    if traced:
+        sol.energy_trace = (np.array([0.0, 0.5, 2.0]), np.array([[1.0, 1.5, 3.0]]))
+    nodes_t, nodes_y = sol.energy_trace if traced else (sol.t, sol.y)
+    s, seen = _fake_solver(sol)
+    out = s._compute_step_energy_integrals()
+    assert [t for t, _ in seen] == list(nodes_t)
+    assert all(np.array_equal(y, nodes_y[:, i]) for i, (_, y) in enumerate(seen))
+    t_int = _trap(nodes_t, nodes_t) * es.SECS_PER_YEAR
+    keys = ['F_int', 'F_cmb', 'Q_radio', 'Q_tidal', 'Q_radio_cons', 'Q_tidal_cons']
+    for k, key in enumerate(keys + ['solver_residual'], start=1):
+        assert out[key] == pytest.approx(k * t_int, rel=1e-12)
+    assert (s.state._pb_cache_hits, s.state._pb_cache_misses) == (3, 4)
+
+
+@pytest.mark.unit
+def test_a_trace_short_of_the_steps_warns(monkeypatch, caplog):
+    monkeypatch.setattr(
+        es.EntropySolver, '_energy_trace', staticmethod(lambda nodes, t, y: (t, y))
+    )
+    with caplog.at_level('WARNING', logger=es.logger.name):
+        res = _solve()
+    assert any(f'2 nodes for {res.cvode_nst} CVODE steps' in r.message for r in caplog.records)
