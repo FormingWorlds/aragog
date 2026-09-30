@@ -96,7 +96,7 @@ jobs:
           # the end of the run; without it --quiet suppresses the
           # FAILED list entirely if there are no other final messages,
           # making post-mortem on cancelled runs near-impossible.
-          pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra \
+          pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra --durations=30 \
             --cov=aragog --cov-report=term-missing --cov-report=xml \
             --cov-fail-under=90
 
