@@ -1,8 +1,6 @@
-"""Per-call energy integrals over CVODE's accepted internal steps (``_cvode_solve_stepwise``)."""
+"""Per-call energy quadrature over CVODE's accepted internal steps (``EntropySolver._energy_trace``)."""
 
 from __future__ import annotations
-
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -26,25 +24,20 @@ def _rhs(t, y, ydot):
     return 0
 
 
-def _cvode(**extra):
+def _solve(n_out=2, rootfn=None):
+    """Integrate y' = -AMP pulse(t) over [0, 1] through ``_solve_cvode``."""
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._core_bc, s._cvode_output_points, s._max_steps = 'quasi_steady', n_out, 100000
     # A time-only pulse has no state signature, so a step cap makes CVODE step through it.
-    return es._scikits_cvode(
-        _rhs,
-        old_api=False,
-        rtol=1e-10,
+    return s._solve_cvode(
+        start_time=0.0,
+        end_time=1.0,
+        y0=np.array([0.0]),
         atol=1e-14,
-        lmm_type='BDF',
-        max_steps=100000,
-        max_step_size=0.01,
-        **extra,
-    )
-
-
-def _stub():
-    """The two attributes ``_cvode_solve_stepwise`` reads: the power is y' itself."""
-    return SimpleNamespace(
-        entropy_eos=object(),
-        _step_powers=lambda t, y: np.array([-AMP * _pulse(t)]),
+        rtol=1e-10,
+        max_step=0.01,
+        rhs=lambda t, y: np.array([-AMP * _pulse(t)]),
+        phi_cap_rootfn=rootfn,
     )
 
 
@@ -53,23 +46,18 @@ def _trap(t, p):
 
 
 def test_pulse_between_outputs_is_integrated():
-    tspan = np.array([0.0, 1.0])
-    sol, (t, P) = es.EntropySolver._cvode_solve_stepwise(_stub(), _cvode(), tspan, [0.0])
+    res = _solve()
+    t, y = res.energy_trace
     exact = -AMP * np.sqrt(np.pi) * WIDTH
-    assert sol.flag == 0 and t[0] == 0.0 and t[-1] == 1.0
-    assert abs(_trap(t, P[:, 0]) / exact - 1.0) < 1e-3
-    assert abs(_trap(tspan, np.array([_pulse(0.0), _pulse(1.0)])) * -AMP / exact) < 1e-6
+    assert res.t.size == 2 and t[0] == 0.0 and t[-1] == 1.0 and np.all(np.diff(t) > 0)
+    assert np.array_equal(y[:, -1], res.y[:, -1])
+    assert abs(_trap(t, -AMP * _pulse(t)) / exact - 1.0) < 1e-3
+    assert abs(_trap(res.t, -AMP * _pulse(res.t)) / exact) < 1e-6
 
 
-def test_outputs_and_steps_equal_normal_mode():
-    tspan = np.linspace(0.0, 1.0, 9) ** 2
-    ref_solver = _cvode()
-    ref = ref_solver.solve(tspan, np.array([0.0]))
-    solver = _cvode()
-    sol, _ = es.EntropySolver._cvode_solve_stepwise(_stub(), solver, tspan, [0.0])
-    assert np.array_equal(sol.values.t, np.asarray(ref.values.t))
-    assert np.array_equal(sol.values.y, np.asarray(ref.values.y))
-    assert solver.get_info()['NumSteps'] == ref_solver.get_info()['NumSteps']
+def test_trace_holds_every_output():
+    res = _solve(n_out=9)
+    assert np.all(np.isin(res.t, res.energy_trace[0]))
 
 
 def test_trace_ends_at_the_root():
@@ -78,20 +66,63 @@ def test_trace_ends_at_the_root():
     def root(t, y, g):
         g[0] = y[0] - half
 
-    sol, (t, P) = es.EntropySolver._cvode_solve_stepwise(
-        _stub(), _cvode(rootfn=root, nr_rootfns=1), np.array([0.0, 1.0]), [0.0]
-    )
-    assert sol.flag == 2 and t[-1] == pytest.approx(T_PULSE, abs=1e-6)
-    assert t[-1] == sol.roots.t[0]
-    assert abs(_trap(t, P[:, 0]) / half - 1.0) < 1e-3
+    root.phi0 = 0.0  # read when a cap root fires
+    res = _solve(n_out=65, rootfn=root)
+    t, y = res.energy_trace
+    assert res.cvode_flag == 2 and t[-1] == res.t[-1] == pytest.approx(T_PULSE, abs=1e-6)
+    assert np.all(np.diff(t) > 0) and y[0, -1] == res.y[0, -1]
+    assert abs(_trap(t, -AMP * _pulse(t)) / half - 1.0) < 1e-3
 
 
-def test_no_trace_without_eos():
-    stub = SimpleNamespace(entropy_eos=None, _step_powers=None)
-    sol, trace = es.EntropySolver._cvode_solve_stepwise(
-        stub, _cvode(), np.array([0.0, 1.0]), [0.0]
-    )
-    assert trace is None and sol.flag == 0 and sol.values.t[-1] == 1.0
+def test_a_never_firing_root_leaves_the_solution_unchanged():
+    """The recording root function relies on this CVODE property."""
+
+    def rhs(t, y, ydot):
+        ydot[0] = -AMP * _pulse(t) - 0.1 * y[0]
+        return 0
+
+    def never(t, y, g):
+        g[0] = 1.0
+
+    def run(**extra):
+        s = es._scikits_cvode(
+            rhs, old_api=False, rtol=1e-10, atol=1e-14, max_step_size=0.01, **extra
+        )
+        return s.solve(np.linspace(0.0, 1.0, 9) ** 2, np.array([0.0])), s.get_info()
+
+    (ref, ref_info), (sol, info) = run(), run(rootfn=never, nr_rootfns=1)
+    assert np.array_equal(ref.values.t, sol.values.t)
+    assert np.array_equal(ref.values.y, sol.values.y)
+    assert ref_info['NumSteps'] == info['NumSteps']
+
+
+def test_recording_a_firing_root_leaves_the_solution_unchanged():
+    """Outputs before the root and the root time match an unwrapped root function."""
+
+    def rhs(t, y, ydot):
+        ydot[0] = -np.cos(t)
+        return 0
+
+    def root(t, y, g):
+        g[0] = y[0] + 0.5
+
+    seen = []
+
+    def recorded(t, y, g):
+        seen.append(t)
+        return root(t, y, g)
+
+    def run(fn):
+        s = es._scikits_cvode(
+            rhs, old_api=False, rtol=1e-10, atol=1e-14, rootfn=fn, nr_rootfns=1
+        )
+        # Smooth y, so the step that holds the root at pi/6 also holds the output at 0.52.
+        return s.solve(np.array([0.0, 0.45, 0.52, 1.0]), np.array([0.0]))
+
+    ref, sol = run(root), run(recorded)
+    assert sol.flag == 2 and np.array_equal(sol.values.t, [0.0, 0.45, 0.52])
+    assert np.array_equal(ref.values.y, sol.values.y) and ref.roots.t[0] == sol.roots.t[0]
+    assert np.any(np.diff(seen) < 0), 'the root search must revisit earlier times'
 
 
 @pytest.mark.smoke
@@ -110,3 +141,31 @@ def test_cmb_energy_matches_the_core_energy_change():
     core = -s._core_cap * float(s._solution.y[-1, -1] - s._solution.y[-1, 0])
     assert abs(core) > 1e24, 'the core must exchange a non-trivial amount of heat'
     assert s._compute_step_energy_integrals()['F_cmb'] == pytest.approx(core, rel=1e-6)
+
+
+@pytest.mark.smoke
+def test_integral_up_to_a_fired_cap_matches_a_dense_reference():
+    """A temperature cap ends the call at a root after a steep grey-body flux decay.
+
+    The kept nodes increase in time and give the surface integral of a dense-output
+    run over the same span; the two-point trajectory alone misses it by 25 percent.
+    """
+    from .test_entropy_verification import EOS_DIR, TestCvodeEnergyOutputGrid
+
+    if not EOS_DIR.exists():
+        pytest.skip(f'SPIDER P-S tables not found at {EOS_DIR}')
+    s = TestCvodeEnergyOutputGrid._build_greybody_solver('cvode', n_out=65)
+    s.parameters.energy.temperature_step_cap = 1000.0
+    s.solve()
+    sol = s._solution
+    t = sol.energy_trace[0]
+    assert sol.cap_label == 'temperature' and sol.t.size == 2 and t[-1] == sol.t[-1]
+    assert t.size > 100 and np.all(np.diff(t) > 0)
+    ref = TestCvodeEnergyOutputGrid._build_greybody_solver('cvode', n_out=1025)
+    ref.parameters.solver.end_time = float(sol.t[-1])
+    ref.solve()
+    ref._solution.energy_trace = None
+    F_ref = ref._compute_step_energy_integrals()['F_int']
+    assert s._compute_step_energy_integrals()['F_int'] == pytest.approx(F_ref, rel=1e-5)
+    sol.energy_trace = None
+    assert abs(s._compute_step_energy_integrals()['F_int'] / F_ref - 1.0) > 0.1

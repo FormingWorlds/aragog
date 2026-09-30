@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -2624,74 +2623,31 @@ class EntropySolver:
             return float(start_time) + (float(end_time) - float(start_time)) * x
         return np.array([start_time, end_time], dtype=float)
 
-    def _cvode_solve_stepwise(
-        self,
-        solver: object,
-        tspan: npt.NDArray,
-        y0: npt.NDArray,
-        scale: tuple[float, float | npt.NDArray] = (1.0, 1.0),
-    ) -> tuple[SimpleNamespace, tuple[npt.NDArray, npt.NDArray] | None]:
-        """Integrate over ``tspan`` one CVODE internal step at a time.
+    @staticmethod
+    def _energy_trace(
+        nodes: list,
+        t: npt.NDArray,
+        y: npt.NDArray,
+        scale: tuple[float, float | npt.NDArray],
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Quadrature nodes ``(t [yr], y (n_state, n))`` of one CVODE call.
 
-        Returns ``(sol, trace)``. ``sol`` carries what ``solver.solve(tspan, y0)``
-        returns (``flag``, ``message``, the outputs at ``tspan`` as ``values``, a root
-        as ``roots``). Each output time inside the last step is filled by a
-        normal-mode call, which interpolates without stepping, so the step sequence
-        and the outputs equal those of ``solver.solve``; on a root, the outputs
-        inside the root step are not filled.
-
-        ``trace`` is ``(t, P)`` with ``P[i] = _step_powers(t[i], y)`` at the start,
-        at every accepted internal step and at the end of the call (the last output
-        or the root), so the per-call energy integrals resolve flux features that
-        fall between output points. It is None when no entropy EOS is attached.
-        ``scale = (t_ref, state_scale)`` maps the integrator's time and state to
-        physical units [yr] for the powers and the trace times.
+        ``nodes`` are the ``(t, y)`` pairs the root function saw. The increasing ones
+        inside the call's span are kept (root-search iterates fall behind the step end
+        seen before them), bracketed by the call's first and last output points.
+        ``scale = (t_ref, state_scale)`` maps nondimensional time and state to physical.
         """
-        y0 = np.asarray(y0, dtype=float).ravel()
+        t_end = float(t[-1])
+        ts, ys = [float(t[0])], [y[:, 0]]
+        for tn, yn in nodes:
+            if ts[-1] < tn <= t_end:
+                ts.append(tn)
+                ys.append(yn)
+        if ts[-1] < t_end:
+            ts.append(t_end)
+            ys.append(y[:, -1])
         t_ref, state_scale = scale
-        if self.entropy_eos is None:
-            powers = None
-        else:
-
-            def powers(t, y):
-                return self._step_powers(t * t_ref, y * state_scale)
-
-        solver.init_step(float(tspan[0]), y0)
-        ts, ys, tp = [float(tspan[0])], [y0.copy()], [float(tspan[0])]
-        pp = [powers(tp[0], y0)] if powers else []
-        roots, flag, message, k = None, 0, '', 1
-        while k < len(tspan) and flag >= 0 and roots is None:
-            solver.set_options(one_step_compute=True)
-            r = solver.step(float(tspan[k]))
-            flag, message = int(r.flag), r.message
-            if flag < 0:
-                break
-            tn, yn = float(r.values.t), np.array(r.values.y, dtype=float)
-            if flag == 2:
-                roots = SimpleNamespace(t=np.array([tn]), y=yn.reshape(1, -1))
-            if tp[-1] < tn < float(tspan[-1]) or roots is not None:
-                tp.append(tn)
-                if powers:
-                    pp.append(powers(tn, yn))
-            solver.set_options(one_step_compute=False)
-            while roots is None and k < len(tspan) and float(tspan[k]) <= tn:
-                r = solver.step(float(tspan[k]))
-                flag, message = int(r.flag), r.message
-                if flag < 0:
-                    break
-                ts.append(float(r.values.t))
-                ys.append(np.array(r.values.y, dtype=float))
-                k += 1
-        if powers and roots is None and flag >= 0 and ts[-1] > tp[-1]:
-            tp.append(ts[-1])
-            pp.append(powers(ts[-1], ys[-1]))
-        sol = SimpleNamespace(
-            flag=flag,
-            message=message,
-            values=SimpleNamespace(t=np.array(ts), y=np.array(ys)),
-            roots=roots,
-        )
-        return sol, ((np.array(tp) * t_ref, np.array(pp)) if powers else None)
+        return np.array(ts) * t_ref, np.array(ys).T * np.reshape(state_scale, (-1, 1))
 
     def _solve_cvode(
         self,
@@ -2884,6 +2840,22 @@ class EntropySolver:
             cvode_options.pop('lband', None)
             cvode_options.pop('uband', None)
 
+        # CVODE evaluates the root function at the end of every accepted step (at the
+        # output instead when the step passes one), so recording its calls gives the
+        # per-call energy quadrature nodes; with no root function a never-firing one records.
+        nodes, user_rootfn = [], cvode_options.get('rootfn')
+        user_rootfn = getattr(user_rootfn, 'evaluate', user_rootfn)
+
+        def rootfn(t, y, g):
+            nodes.append((float(t), np.array(y, dtype=float)))
+            if user_rootfn is None:
+                g[0] = 1.0
+                return 0
+            return user_rootfn(t, y, g)
+
+        cvode_options['rootfn'] = rootfn
+        cvode_options.setdefault('nr_rootfns', 1)
+
         solver = _scikits_cvode(rhs_fn, **cvode_options)
         # One-time debug print of the CVODE options actually in effect.
         # This helps verify banded linsolver dispatch vs silent fallback.
@@ -2895,7 +2867,10 @@ class EntropySolver:
             )
         if tspan is None:
             tspan = self._output_grid(start_time, end_time)
-        cvode_sol, energy_trace = self._cvode_solve_stepwise(solver, tspan, y0, scale)
+        cvode_sol = solver.solve(
+            tspan,
+            np.asarray(y0, dtype=float).ravel(),
+        )
 
         # Dump CVODE's internal counters. These expose what scipy hides
         # from us and let us discriminate Newton thrash from step-size
@@ -3005,7 +2980,7 @@ class EntropySolver:
                 result.y = np.asarray(y0, dtype=float).reshape(-1, 1)
 
         result.nfev = nfev_box[0]
-        result.energy_trace = energy_trace
+        result.energy_trace = self._energy_trace(nodes, result.t, result.y, scale)
         result.message = getattr(cvode_sol, 'message', '')
         # Surface the raw CVODE flag distinctly from result.status: status
         # stays scipy-compatible (0 success, -1 failure), while these two
@@ -3134,10 +3109,9 @@ class EntropySolver:
             )
             ts.append(np.asarray(res.t, dtype=float)[1:])
             ys.append(np.asarray(res.y, dtype=float)[:, 1:])
-            if res.get('energy_trace') is not None:
-                traces.append(
-                    res.energy_trace if not traces else tuple(a[1:] for a in res.energy_trace)
-                )
+            tr = res.get('energy_trace')
+            if tr is not None:
+                traces.append(tr if not traces else (tr[0][1:], tr[1][:, 1:]))
             nfev += int(res.nfev)
             nst += int(res.get('cvode_nst', 0))
             nfe += int(res.get('cvode_nfe', 0))
@@ -3154,7 +3128,10 @@ class EntropySolver:
         res.t = np.concatenate(ts)
         res.y = np.concatenate(ys, axis=1)
         res.energy_trace = (
-            (np.concatenate([tr[0] for tr in traces]), np.concatenate([tr[1] for tr in traces]))
+            (
+                np.concatenate([tr[0] for tr in traces]),
+                np.concatenate([tr[1] for tr in traces], axis=1),
+            )
             if traces
             else None
         )
@@ -3746,8 +3723,9 @@ class EntropySolver:
         """Compute per-call energy contributions [J] over the CVODE
         sub-step trajectory, replacing end-of-step instantaneous capture.
 
-        For each accepted internal step in the integration trajectory
-        ``(sol.t[i], sol.y[:, i])``, refresh the EntropyState and read
+        At each node of ``sol.energy_trace`` (every accepted CVODE step end
+        and every output point of the call; the output points alone when
+        there is no trace), refresh the EntropyState and read
         the instantaneous powers (F_cmb*A_cmb, F_int*A_int, mass-
         integrated radio/dil/tidal). Trapezoidal-integrate over the
         physical-time trajectory to obtain per-source energy J. This
@@ -3790,13 +3768,9 @@ class EntropySolver:
 
         trace = sol.get('energy_trace')
         if trace is None:
-            t_pts = np.asarray(sol.t, dtype=float)
-            y_pts = sol.y if sol.y.ndim == 2 else sol.y.reshape(-1, 1)
-            P = np.array(
-                [self._step_powers(float(t_pts[i]), y_pts[:, i]) for i in range(n_steps)]
-            )
-        else:
-            t_pts, P = trace
+            trace = (sol.t, sol.y if sol.y.ndim == 2 else sol.y.reshape(-1, 1))
+        t_pts, y_pts = trace
+        P = np.array([self._step_powers(float(t), y_pts[:, i]) for i, t in enumerate(t_pts)])
         P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
 
         dt_s = np.diff(np.asarray(t_pts, dtype=float)) * SECS_PER_YEAR
