@@ -2805,10 +2805,10 @@ class EntropySolver:
 
         result.nfev = nfev_box[0]
         result.energy_trace = self._energy_trace(nodes, result.t, result.y)
-        # Every accepted step should give a node; a large shortfall means the root-function
-        # recording no longer sees them and the integrals fall back toward the output grid.
+        # A completed call gives a node per accepted step, except steps where t + h rounds to
+        # t; a large shortfall means those dominate or the root function missed steps.
         nst, n_nodes = int(result.get('cvode_nst', 0)), len(result.energy_trace[0])
-        if n_nodes + max(10, nst // 100) < nst:
+        if flag in (0, 2) and n_nodes + max(10, nst // 100) < nst:
             logger.warning('energy quadrature: %d nodes for %d CVODE steps', n_nodes, nst)
         result.message = getattr(cvode_sol, 'message', '')
         # Surface the raw CVODE flag distinctly from result.status: status

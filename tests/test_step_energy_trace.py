@@ -331,3 +331,24 @@ def test_a_one_node_trace_integrates_to_zero():
     sol.energy_trace = (np.array([0.0]), np.ones((1, 1)))
     out = _fake_solver(sol)[0]._compute_step_energy_integrals()
     assert out['F_int'] == out['solver_residual'] == 0.0
+
+
+@pytest.mark.unit
+def test_a_failed_call_does_not_warn_about_the_trace(monkeypatch, caplog):
+    monkeypatch.setattr(
+        es.EntropySolver, '_energy_trace', staticmethod(lambda nodes, t, y: (t, y))
+    )
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._core_bc, s._cvode_output_points, s._max_steps = 'quasi_steady', 2, 200
+    with caplog.at_level('WARNING', logger=es.logger.name):
+        res = s._solve_cvode(
+            start_time=0.0,
+            end_time=1.0,
+            y0=np.array([0.0]),
+            atol=1e-14,
+            rtol=1e-10,
+            max_step=0.01,
+            rhs=lambda t, y: np.array([-AMP * _pulse(t)]),
+        )
+    assert res.cvode_flag < 0 and res.cvode_nst >= 200
+    assert not any('CVODE steps' in r.message for r in caplog.records)
