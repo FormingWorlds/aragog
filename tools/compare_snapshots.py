@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     for name in sorted(only):
         print(f'{name}: in one file only')
-    return int(bool(only or set(diff) - set(args.ignore)))
+    return int(bool((only | set(diff)) - set(args.ignore)))
 
 
 if __name__ == '__main__':

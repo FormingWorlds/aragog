@@ -376,11 +376,8 @@ class _SolverParameters:
     atol: float
     rtol: float
     tsurf_poststep_change: float = 30.0
-    # Number of points on the CVODE dense output grid, quadratically
-    # front-loaded over each macro-step. Raising it sharpens the F_int
-    # trapezoidation diagnostic; it also feeds back into CVODE stepping,
-    # so the step count and final state shift weakly with it (state near
-    # rtol, below any physical signal).
+    # Points on the CVODE output grid per macro-step. It feeds back weakly into
+    # CVODE stepping (final state near rtol); the energy integrals do not use it.
     cvode_output_points: int = 65
     # Maximum number of internal CVODE steps per solve call. CVODE
     # returns CV_TOO_MUCH_WORK and stops once a single solve reaches

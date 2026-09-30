@@ -8,7 +8,6 @@ import pytest
 from aragog.solver import entropy_solver as es
 
 pytestmark = [
-    pytest.mark.unit,
     pytest.mark.skipif(es._scikits_cvode is None, reason='scikits-odes-sundials not installed'),
 ]
 
@@ -45,6 +44,16 @@ def _trap(t, p):
     return float(np.sum(0.5 * (p[:-1] + p[1:]) * np.diff(t)))
 
 
+@pytest.mark.unit
+def test_trace_filters_nodes_and_scales_to_physical_units():
+    t, y = np.array([0.0, 1.0]), np.array([[1.0, 5.0], [2.0, 6.0]])
+    nodes = [(0.3, [1.1, 2.1]), (0.2, [9, 9]), (0.5, [1.2, 2.2]), (0.5, [9, 9]), (1.5, [9, 9])]
+    ts, ys = es.EntropySolver._energy_trace(nodes, t, y, (2.0, np.array([10.0, 100.0])))
+    np.testing.assert_allclose(ts, [0.0, 0.6, 1.0, 2.0])
+    np.testing.assert_allclose(ys, [[10, 11, 12, 50], [200, 210, 220, 600]])
+
+
+@pytest.mark.unit
 def test_pulse_between_outputs_is_integrated():
     res = _solve()
     t, y = res.energy_trace
@@ -55,11 +64,13 @@ def test_pulse_between_outputs_is_integrated():
     assert abs(_trap(res.t, -AMP * _pulse(res.t)) / exact) < 1e-6
 
 
+@pytest.mark.unit
 def test_trace_holds_every_output():
     res = _solve(n_out=9)
     assert np.all(np.isin(res.t, res.energy_trace[0]))
 
 
+@pytest.mark.unit
 def test_trace_ends_at_the_root():
     half = -0.5 * AMP * np.sqrt(np.pi) * WIDTH
 
@@ -74,6 +85,7 @@ def test_trace_ends_at_the_root():
     assert abs(_trap(t, -AMP * _pulse(t)) / half - 1.0) < 1e-3
 
 
+@pytest.mark.unit
 def test_a_never_firing_root_leaves_the_solution_unchanged():
     """The recording root function relies on this CVODE property."""
 
@@ -96,6 +108,7 @@ def test_a_never_firing_root_leaves_the_solution_unchanged():
     assert ref_info['NumSteps'] == info['NumSteps']
 
 
+@pytest.mark.unit
 def test_recording_a_firing_root_leaves_the_solution_unchanged():
     """Outputs before the root and the root time match an unwrapped root function."""
 

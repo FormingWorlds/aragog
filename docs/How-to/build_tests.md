@@ -313,7 +313,7 @@ OUTPUT:
 A change that must leave the solver trajectory unchanged is checked by running the same configuration with `aragog run` from a checkout of `main` and from the branch, then comparing the two snapshots:
 
 ```console
-python tools/compare_snapshots.py main.nc branch.nc --ignore step_dE_F_int_J step_dE_F_cmb_J
+python tools/compare_snapshots.py main.nc branch.nc --ignore NAME [NAME ...]
 ```
 
-The tool prints each variable that differs with its largest relative difference and exits 1 when a variable outside `--ignore` differs or exists in one file only. Run it on several bundled configurations with short end times; it catches changes that the unit tests do not, such as a diagnostic evaluated in the wrong units.
+Pass the variables the change is meant to alter to `--ignore` (an energy-diagnostic change alters `F_cmb`, `step_solver_residual_J` and the `step_dE_*` variables). The tool prints each variable that differs with its largest relative difference and exits 1 when a variable outside `--ignore` differs or exists in one file only. Run it on several bundled configurations with short end times; it catches changes that the unit tests do not, such as a diagnostic evaluated in the wrong units.
