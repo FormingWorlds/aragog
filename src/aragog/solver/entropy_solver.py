@@ -1062,8 +1062,7 @@ class EntropySolver:
         # registered by PROTEUS via ``set_jax_cvode_factory()`` when
         # ``config.interior_energetics.aragog.use_jax_jacobian`` is True.
         self._jax_cvode_factory = None
-        # Output points CVODE returns per macro-step solve. The grid feeds back
-        # weakly into CVODE stepping (final state near rtol); a root ends the call early.
+        # Output points CVODE returns per macro-step solve; a root ends the call early.
         self._cvode_output_points = self.parameters.solver.cvode_output_points
         # Maximum internal CVODE steps per solve; exceeding it returns
         # CV_TOO_MUCH_WORK. Configurable so a stiff phase-change window
@@ -2443,11 +2442,11 @@ class EntropySolver:
     ) -> tuple[npt.NDArray, npt.NDArray]:
         """Quadrature nodes ``(t [yr], y (n_state, n))`` of one CVODE call.
 
-        ``nodes`` are the ``(t, y)`` pairs the root function saw. The increasing ones
-        inside the call's span are kept, bracketed by the call's first and last output
-        points. Root-search iterates behind a step end are dropped; at a fired root the
-        step end lies past the call end, so the increasing iterates below the root stay.
-        They are interpolated states of the accepted step.
+        ``nodes`` are the ``(t, y)`` pairs the root function saw. Nodes past the call end
+        and nodes not later than the previous kept node are dropped; the rest are bracketed
+        by the call's first and last output points. At a fired root the step end lies past
+        the call end, so the increasing root-search iterates below the root stay; these
+        iterates are interpolated states of the accepted step.
         ``scale = (t_ref, state_scale)`` maps nondimensional time and state to physical.
         """
         t_end = float(t[-1])
@@ -2671,8 +2670,8 @@ class EntropySolver:
                 'CVODE options in use: %s',
                 {k: v for k, v in cvode_options.items() if k != 'old_api'},
             )
-        # Output grid, quadratic so it is dense near the call start where the boundary
-        # flux changes fastest. It feeds back weakly into CVODE stepping (state near rtol).
+        # Output grid, quadratic so it samples the call start densely; the core-temperature
+        # check reads these samples. It feeds back weakly into CVODE stepping (state near rtol).
         n_out = self._cvode_output_points
         if n_out > 2 and float(end_time) > float(start_time):
             x = np.linspace(0.0, 1.0, n_out) ** 2
@@ -3412,9 +3411,6 @@ class EntropySolver:
         at every state; a non-zero value flags a flux-divergence assembly bug.
         """
         eos = self.entropy_eos
-        n_stag = self._n_stag
-        gradient_mode = self._core_bc == 'gradient'
-        n_basic = n_stag + 1
         P_stag = self._P_stag_flat
         vol = self._volume_flat
         r_basic = self._r_basic_flat
@@ -3428,12 +3424,7 @@ class EntropySolver:
         # are the ones the entropy ODE saw. In the gradient layout the reconstruction is
         # linear in (dS/dr, S_surf), so it maps their rates to the cell entropy rates.
         dSdt_full = np.asarray(self._dSdt_single(t_i, y_col)).ravel() / SECS_PER_YEAR
-        if gradient_mode:
-            dSdt_stag_i, _ = self._reconstruct_entropy(
-                dSdt_full[:n_basic], float(dSdt_full[n_basic])
-            )
-        else:
-            dSdt_stag_i = dSdt_full[:n_stag]
+        dSdt_stag_i = self._stag_entropy(dSdt_full)
 
         # Read boundary fluxes AFTER dSdt has applied the BCs.
         F_int_i = float(self.state._heat_flux[-1])

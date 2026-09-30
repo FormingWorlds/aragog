@@ -46,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
             + (' (ignored)' if name in args.ignore else '')
         )
     for name in sorted(only):
-        print(f'{name}: in one file only')
+        print(f'{name}: in one file only' + (' (ignored)' if name in args.ignore else ''))
     return int(bool((only | set(diff)) - set(args.ignore)))
 
 
