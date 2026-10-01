@@ -254,8 +254,8 @@ def test_rate_mode_joins_segments_into_one_call_trajectory(shared_eos):
     assert sol.t.size >= s._cvode_output_points + len(starts) - 1
 
 
-def _isentropic_end(eos, mode, tol, core_bc='quasi_steady'):
-    s = _solver(eos, mode, core_bc, n_nodes=24, end_time=200.0, S=8182.3, tol=tol)
+def _isentropic_end(eos, mode, tol, core_bc='quasi_steady', end_time=200.0):
+    s = _solver(eos, mode, core_bc, n_nodes=24, end_time=end_time, S=8182.3, tol=tol)
     s.solve()
     S = s._solution.y[: s._n_stag, -1]
     return s, np.asarray(eos.temperature(s._P_stag_flat, S)).ravel()
@@ -263,11 +263,13 @@ def _isentropic_end(eos, mode, tol, core_bc='quasi_steady'):
 
 @needs_eos
 @pytest.mark.smoke
-def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos):
-    """Uniform start with most cells in or near the band: rate within 0.1 K of fixed at 1e-9, a stiff-zone segment, no empty segment."""
-    _, T_ref = _isentropic_end(shared_eos, 'fixed', 1e-9)
-    s, T = _isentropic_end(shared_eos, 'rate', 1e-6)
-    assert np.abs(T - T_ref).max() <= 0.1
+@pytest.mark.parametrize('end_time', [200.0, 1000.0])
+def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos, end_time):
+    """Uniform start with most cells in or near the band: rate at tol 1e-8 within 0.01 K of
+    fixed at 1e-9 over 200 and 1000 yr, a stiff-zone segment, no empty segment."""
+    _, T_ref = _isentropic_end(shared_eos, 'fixed', 1e-9, end_time=end_time)
+    s, T = _isentropic_end(shared_eos, 'rate', 1e-8, end_time=end_time)
+    assert np.abs(T - T_ref).max() <= 0.01
     starts = [seg[0] for seg in s._solution.segments]
     assert 'stiff' in [seg[1] for seg in s._solution.segments]
     assert np.all(np.diff(starts) > 1e-6)
@@ -598,7 +600,8 @@ def test_get_state_between_calls_leaves_the_next_rate_call_unchanged(shared_eos)
 @needs_eos
 @pytest.mark.smoke
 def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeypatch):
-    """The cap sees every staggered cell plus the bottom cell at the CMB-pressure boundaries, with the rate floor on."""
+    """The cap sees every staggered cell plus the bottom cell at the CMB-pressure boundaries;
+    the CMB entry copies the bottom cell's entropy and rate, and each cell's mass is rho V."""
     import aragog.solver.entropy_solver as es
 
     seen, real = [], es._rate_phase_boundary_max_step
@@ -609,10 +612,12 @@ def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeyp
     )
     s = _solver(shared_eos, 'rate', end_time=2.0)
     s.solve()
-    (S, _, S_liq, S_sol, mass, _), kw = seen[0]
-    assert kw['rate_floor'] is True
+    (S, dSdt, S_liq, S_sol, mass, _), kw = seen[0]
     P_cmb = np.array([s._P_basic_flat[0]])
     assert S.size == s._n_stag + 1 and S[-1] == S[0] and mass[-1] == 0.0
+    assert dSdt[-1] == dSdt[0] and dSdt[0] != dSdt[1]
+    rho = np.asarray(shared_eos.density(s._P_stag_flat, S[:-1])).ravel()
+    np.testing.assert_allclose(mass[:-1], rho * s._volume_flat, rtol=1e-12)
     assert S_liq[-1] == pytest.approx(float(shared_eos.liquidus_entropy(P_cmb).item()))
     assert S_sol[-1] == pytest.approx(float(shared_eos.solidus_entropy(P_cmb).item()))
 
@@ -748,7 +753,7 @@ def test_solver_tolerances_default_to_1e_8():
 def test_rate_mode_ends_a_segment_when_a_cell_inside_the_zone_speeds_up(
     shared_eos, monkeypatch
 ):
-    """A cell 8 J/kg/K above its liquidus falls at 0.01 J/kg/K/yr, then at 2 from 100 yr.
+    """A cell 8 J/kg/K above its liquidus falls at 0.01 J/kg/K/yr, at 2 from 100 to 300 yr.
 
     Its progress root (half of max(d0, delta) = 5 J/kg/K of motion) fires at 102 yr, before
     the crossing at 103.5 yr, and the next segment runs at the 1 yr lower bound.
@@ -761,7 +766,7 @@ def test_rate_mode_ends_a_segment_when_a_cell_inside_the_zone_speeds_up(
 
     def rate(t, y):
         r = np.zeros(s._n_stag)
-        r[8] = -0.01 if t < 100.0 else -2.0
+        r[8] = -2.0 if 100.0 <= t < 300.0 else -0.01  # bounded: the rate reads physical time
         return r
 
     _fake_rate(monkeypatch, s, rate)
@@ -770,3 +775,197 @@ def test_rate_mode_ends_a_segment_when_a_cell_inside_the_zone_speeds_up(
     assert len(seg) >= 2 and seg[1][1] == 'progress'
     assert 100.0 < seg[1][0] < 103.5 and seg[1][0] == pytest.approx(102.0, abs=0.05)
     assert seg[1][2] == pytest.approx(1.0)
+
+
+def _cooling_above_liquidus(eos, width, gap=230.0, end_time=100.0, tol=1e-6):
+    """A rate solver whose cells all start ``gap`` above the liquidus, with smoothing ``width``."""
+    s = _solver(eos, 'rate', end_time=end_time, tol=tol)
+    s.parameters.phase_mixed = dataclasses.replace(
+        s.parameters.phase_mixed, matprop_smooth_width=width
+    )
+    S_liq = np.asarray(eos.liquidus_entropy(s._P_stag_flat)).ravel()
+    S_sol = np.asarray(eos.solidus_entropy(s._P_stag_flat)).ravel()
+    s.set_initial_entropy(S_liq + gap)
+    return s, S_liq, S_sol
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_arms_for_a_cell_inside_a_stiff_zone_wider_than_the_margin(
+    shared_eos, monkeypatch
+):
+    """With width 0.01 the stiff zone (3 w (S_liq - S_sol)) is wider than the 200 J/kg/K margin:
+    cells 230 above the liquidus arm the rate segments; with width 0 (10 J/kg/K zone) they do not."""
+    import aragog.solver.entropy_solver as es
+
+    deltas = []
+    real = es._PhaseBoundarySegmentRoot.__init__
+
+    def spy(self, *args, **kwargs):
+        real(self, *args, **kwargs)
+        deltas.append(self.delta)
+
+    monkeypatch.setattr(es._PhaseBoundarySegmentRoot, '__init__', spy)
+    s, S_liq, S_sol = _cooling_above_liquidus(shared_eos, 0.01)
+    s.solve()
+    P_cmb = np.array([s._P_basic_flat[0]])
+    gap_cmb = float(shared_eos.liquidus_entropy(P_cmb).item()) - float(
+        shared_eos.solidus_entropy(P_cmb).item()
+    )
+    expected = 3.0 * 0.01 * max(float(np.max(S_liq - S_sol)), gap_cmb)
+    assert 230.0 < expected and len(s._solution.segments) >= 2
+    assert deltas and all(d == pytest.approx(expected, rel=1e-12) for d in deltas)
+
+    s0, _, _ = _cooling_above_liquidus(shared_eos, 0.0)
+    s0.solve()
+    assert not s0._solution.get('segments')
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_flips_the_stiff_zone_side_only_on_a_stiff_trigger(shared_eos, monkeypatch):
+    """A segment starts inside the stiff zone when the call arms there; each 'stiff' trigger
+    flips the side of the next segment and every other trigger keeps it."""
+    import aragog.solver.entropy_solver as es
+
+    inside = []
+    real = es._PhaseBoundarySegmentRoot.__init__
+
+    def spy(self, *args, **kwargs):
+        real(self, *args, **kwargs)
+        inside.append(self.inside)
+
+    monkeypatch.setattr(es._PhaseBoundarySegmentRoot, '__init__', spy)
+    s, _, _ = _cooling_above_liquidus(shared_eos, 0.01, end_time=1000.0)
+    s.solve()
+    triggers = [seg[1] for seg in s._solution.segments]
+    assert inside[0] is True and triggers.count('stiff') >= 2
+    for k in range(1, len(inside)):
+        assert inside[k] is (not inside[k - 1] if triggers[k] == 'stiff' else inside[k - 1])
+
+
+@pytest.mark.unit
+def test_solve_cvode_segments_spend_one_step_budget_across_the_call():
+    """Each segment gets the call budget minus the steps already taken; a segment that runs
+    out returns CV_TOO_MUCH_WORK and ends the call with it."""
+    from unittest.mock import MagicMock
+
+    from scipy.optimize import OptimizeResult
+
+    s = EntropySolver.__new__(EntropySolver)
+    s._max_steps = 100
+    s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
+    budgets, plan = [], iter([(4.0, 30, 2, 0), (8.0, 70, -1, -1)])
+
+    def fake_solve_cvode(**kw):
+        t_end, nst, flag, status = next(plan)
+        budgets.append(kw['max_steps'])
+        res = OptimizeResult(t=np.array([kw['start_time'], t_end]), y=np.ones((2, 2)))
+        res.nfev = res.cvode_nfe = 0
+        res.cvode_nst, res.cvode_flag, res.status = nst, flag, status
+        return res
+
+    s._solve_cvode = fake_solve_cvode
+    roots = MagicMock(inside=False)
+    roots.fired.return_value = 'progress'
+    res = s._solve_cvode_segments(
+        start_time=0.0,
+        end_time=10.0,
+        y0=np.ones(2),
+        roots_at=lambda y, inside: roots,
+        h_at=lambda t, y: 15.0,
+        t_ref=1.0,
+        h_min=1.0,
+    )
+    assert budgets == [100, 70]
+    assert (res.status, res.cvode_flag, res.cvode_nst) == (-1, -1, 100)
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_call_fails_when_its_segments_together_exceed_max_steps(shared_eos):
+    """About 3000 steps over about 20 segments, none above 500: max_steps 500 stops the call
+    with CV_TOO_MUCH_WORK, as a single solve over the same span would."""
+    s, _, _ = _cooling_above_liquidus(shared_eos, 0.01, tol=1e-8)
+    s._max_steps = 500
+    s.solve()
+    assert s._solution.status != 0 and s._solution.cvode_flag == -1
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_ceiling_segment_keeps_the_phi_step_cap(shared_eos, monkeypatch):
+    """With one segment allowed, the ceiling segment that runs the rest of the call still
+    carries the phi step cap, which then ends the call."""
+    s = _solver(shared_eos, 'rate', end_time=2000.0)
+    # 0.3: a progress root ends the first segment before the cap fires (0.05 fires in it).
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, phi_step_cap=0.3)
+    real = s._solve_cvode_segments
+    monkeypatch.setattr(
+        s, '_solve_cvode_segments', lambda *a, **k: real(*a, **{**k, 'max_segments': 1})
+    )
+    s.solve()
+    sol = s._solution
+    assert len(sol.segments) == 2, 'the call must reach the ceiling segment'
+    assert getattr(sol, 'cap_fired', False) and sol.cap_label == 'phi' and sol.t[-1] < 2000.0
+
+
+@needs_eos
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    ('field', 'label', 'value'),
+    [('temperature_step_cap', 'temperature', 20.0), ('entropy_step_cap', 'entropy', 20.0)],
+)
+def test_rate_mode_ends_the_call_at_a_temperature_or_entropy_step_cap(
+    shared_eos, field, label, value
+):
+    """The temperature and entropy step caps also end a rate-segmented call, named and valued."""
+    s = _solver(shared_eos, 'rate', end_time=2000.0)
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, **{field: value})
+    s.solve()
+    sol = s._solution
+    assert sol.segments and getattr(sol, 'cap_fired', False) and sol.t[-1] < 2000.0
+    assert sol.cap_label == label and sol.cap_value == pytest.approx(value)
+
+
+def _tidal_cmb_flux_run(eos, mode):
+    """Cells 230 above the liquidus (width 0.01), tidal heating and a 50 W/m^2 CMB flux, tol 1e-10."""
+    p = _build_mushy_parameters(solver_method='cvode', n_nodes=12, end_time=100.0)
+    # tidal_array is read at initialize(), so it is set before the solver is built.
+    p.energy = dataclasses.replace(
+        p.energy,
+        phase_boundary_cap=mode,
+        phi_step_cap=None,
+        tidal=True,
+        tidal_array=np.full(11, 1e-9),
+    )
+    p.boundary_conditions = dataclasses.replace(
+        p.boundary_conditions, inner_boundary_value=50.0
+    )
+    p.phase_mixed = dataclasses.replace(p.phase_mixed, matprop_smooth_width=0.01)
+    p.solver.rtol = p.solver.atol = 1e-10
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(np.asarray(eos.liquidus_entropy(s._P_stag_flat)).ravel() + 230.0)
+    s.solve()
+    return s._solution
+
+
+@needs_eos
+@pytest.mark.slow
+def test_rate_segments_keep_every_energy_integral_of_a_tight_fixed_run(shared_eos):
+    """Across many segments the per-call integrals (F_int, F_cmb, Q_tidal, state_heat) match a
+    fixed run at tol 1e-10, and the energy closure is the fixed run's closure."""
+    fixed, rate = (
+        _tidal_cmb_flux_run(shared_eos, 'fixed'),
+        _tidal_cmb_flux_run(shared_eos, 'rate'),
+    )
+    fi, ri = fixed.energy_integrals, rate.energy_integrals
+    assert len(rate.segments) >= 5 and fi['F_cmb'] != 0.0 and fi['Q_tidal'] != 0.0
+    for key in ('F_int', 'F_cmb', 'Q_tidal', 'state_heat'):
+        assert ri[key] == pytest.approx(fi[key], rel=1e-5), key
+
+    def closure(e):
+        return e['F_int'] + e['F_cmb'] + e['Q_tidal'] - e['state_heat']
+
+    assert abs(closure(ri) - closure(fi)) <= 1e-5 * abs(fi['state_heat'])
