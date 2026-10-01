@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from scipy.optimize import OptimizeResult
 
+import aragog.solver.entropy_solver as es
+from aragog.config import EnergyConfig
 from aragog.parser import _EnergyParameters
 from aragog.solver.entropy_solver import (
     _ZERO_ENERGY_INTEGRALS,
@@ -185,8 +189,6 @@ def test_parser_rejects_unknown_phase_boundary_cap():
     assert _EnergyParameters(**kw).phase_boundary_cap is None
     with pytest.raises(ValueError, match='phase_boundary_cap'):
         _EnergyParameters(**kw, phase_boundary_cap='adaptive')
-    from aragog.config import EnergyConfig
-
     assert EnergyConfig(**kw).phase_boundary_cap is None
     assert EnergyConfig(**kw, phase_boundary_cap='fixed').phase_boundary_cap == 'fixed'
     with pytest.raises(ValueError, match='phase_boundary_cap'):
@@ -357,8 +359,6 @@ def test_rate_cap_scipy_fallback_runs_at_one_year(shared_eos, monkeypatch):
     s = EntropySolver(p, entropy_eos=shared_eos)
     s.initialize()
     s.set_initial_entropy(_pick_mushy_S(shared_eos))
-    import aragog.solver.entropy_solver as es
-
     seen, real = [], es.solve_ivp
     monkeypatch.setattr(
         es, 'solve_ivp', lambda *a, **k: seen.append(k['max_step']) or real(*a, **k)
@@ -438,10 +438,6 @@ def test_rate_mode_short_call_matches_fixed_over_the_same_span(shared_eos):
 @pytest.mark.unit
 def test_solve_cvode_segments_gives_a_short_call_its_end_time():
     """A call shorter than the grid tolerance is one solve over [start, end]."""
-    from unittest.mock import MagicMock
-
-    from scipy.optimize import OptimizeResult
-
     start, end = 1.0e9, 1.0e9 + 1.0e-4
     s = EntropySolver.__new__(EntropySolver)
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 65)
@@ -471,10 +467,6 @@ def test_solve_cvode_segments_gives_a_short_call_its_end_time():
 @pytest.mark.unit
 def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
     """A root within 1e-12 of the call end ends the call; no segment gets a one-point tspan."""
-    from unittest.mock import MagicMock
-
-    from scipy.optimize import OptimizeResult
-
     end = 1.0e6
     s = EntropySolver.__new__(EntropySolver)
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
@@ -509,10 +501,6 @@ def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
 @pytest.mark.unit
 def test_solve_cvode_segments_joins_the_energy_traces_without_repeating_a_segment_end():
     """Each later segment's trace starts at the previous root; the joined trace keeps it once."""
-    from unittest.mock import MagicMock
-
-    from scipy.optimize import OptimizeResult
-
     s = EntropySolver.__new__(EntropySolver)
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
     segs = iter([(np.array([0.0, 1.0, 2.5, 4.0]), 2), (np.array([4.0, 6.0, 10.0]), 0)])
@@ -556,7 +544,7 @@ def shared_eos():
 
 
 def _rtol_warnings(caplog):
-    return [r for r in caplog.records if 'accuracy is verified at rtol' in r.getMessage()]
+    return [r for r in caplog.records if 'accuracy is measured at rtol' in r.getMessage()]
 
 
 @needs_eos
@@ -602,8 +590,6 @@ def test_get_state_between_calls_leaves_the_next_rate_call_unchanged(shared_eos)
 def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeypatch):
     """The cap sees every staggered cell plus the bottom cell at the CMB-pressure boundaries;
     the CMB entry copies the bottom cell's entropy and rate, and each cell's mass is rho V."""
-    import aragog.solver.entropy_solver as es
-
     seen, real = [], es._rate_phase_boundary_max_step
     monkeypatch.setattr(
         es,
@@ -796,8 +782,6 @@ def test_rate_mode_arms_for_a_cell_inside_a_stiff_zone_wider_than_the_margin(
 ):
     """With width 0.01 the stiff zone (3 w (S_liq - S_sol)) is wider than the 200 J/kg/K margin:
     cells 230 above the liquidus arm the rate segments; with width 0 (10 J/kg/K zone) they do not."""
-    import aragog.solver.entropy_solver as es
-
     deltas = []
     real = es._PhaseBoundarySegmentRoot.__init__
 
@@ -826,8 +810,6 @@ def test_rate_mode_arms_for_a_cell_inside_a_stiff_zone_wider_than_the_margin(
 def test_rate_mode_flips_the_stiff_zone_side_only_on_a_stiff_trigger(shared_eos, monkeypatch):
     """A segment starts inside the stiff zone when the call arms there; each 'stiff' trigger
     flips the side of the next segment and every other trigger keeps it."""
-    import aragog.solver.entropy_solver as es
-
     inside = []
     real = es._PhaseBoundarySegmentRoot.__init__
 
@@ -848,10 +830,6 @@ def test_rate_mode_flips_the_stiff_zone_side_only_on_a_stiff_trigger(shared_eos,
 def test_solve_cvode_segments_spend_one_step_budget_across_the_call():
     """Each segment gets the call budget minus the steps already taken; a segment that runs
     out returns CV_TOO_MUCH_WORK and ends the call with it."""
-    from unittest.mock import MagicMock
-
-    from scipy.optimize import OptimizeResult
-
     s = EntropySolver.__new__(EntropySolver)
     s._max_steps = 100
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)

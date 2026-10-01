@@ -107,8 +107,9 @@ class EnergyConfig:
         or below the rate floor, the estimate uses the distance to the nearer
         boundary. The gradient core and the scipy integrators keep 1 yr, with one
         log line per solver (INFO when the mode is the default, WARNING when
-        ``'rate'`` is set). The accuracy of ``'rate'`` is verified at
-        rtol 1e-8; an rtol above 1e-7 logs one warning per solver.
+        ``'rate'`` is set). At rtol 1e-8 ``'rate'`` stayed within 1.3e-4 K of a
+        ``'fixed'`` run at 1e-10 in calls of 1000 to 1e4 yr (docs: energy equation);
+        an rtol above 1e-7 logs one warning per solver.
     tidal_array : ndarray
         Tidal heating per unit mass [W/kg] at each layer.
     """

@@ -300,7 +300,7 @@ def _phase_boundary_max_step_clamp(
 
 # Rate-cap stiff-zone half-width floor [J/kg/K].
 _RATE_CAP_MIN_DELTA = 10.0
-# rtol above which the rate cap logs one warning (its accuracy is verified at 1e-8).
+# rtol above which the rate cap logs one warning (its accuracy is measured at 1e-8).
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
 
 
@@ -2616,14 +2616,10 @@ class EntropySolver:
         return J.tocsc()
 
     def _output_grid(self, start_time: float, end_time: float) -> npt.NDArray:
-        """CVODE output times for one call.
+        """CVODE output times for one call: a quadratic grid, dense near the start.
 
-        The first output time sets CVODE's initial step estimate, so the step count
-        and final state shift weakly with the grid (state near rtol); the per-call
-        energy integrals run over CVODE's internal steps and do not depend on it.
-        The grid is quadratic, dense near the start, where each call relaxes toward
-        the new boundary state.
-        The core-temperature check reads these samples when no root fires.
+        The first output time sets CVODE's initial step estimate, so the step count and the
+        final state shift weakly with the grid; the core-temperature check reads these samples.
         """
         n_out = self._cvode_output_points
         if n_out > 2 and float(end_time) > float(start_time):
@@ -3083,14 +3079,10 @@ class EntropySolver:
     ) -> 'OptimizeResult':
         """Integrate one rate-cap call as CVODE segments with their own ``max_step``.
 
-        CVODE cannot change ``max_step`` during a run, so each segment is a new
-        CVODE solve from the previous segment's end. A segment ends at the call
-        end, at a ``_PhaseBoundarySegmentRoot`` component (stiff-zone entry or
-        exit, progress toward a boundary), or at the step cap, which ends the
-        call. The call trajectory is the concatenation of the segments, with
-        each segment end as a trajectory point; the segments' energy traces are
-        joined the same way, so the per-call energy integrals span every segment
-        at internal-step resolution.
+        Each segment is a new CVODE solve from the previous segment's end. A segment ends at
+        the call end, at a ``_PhaseBoundarySegmentRoot`` component, or at the step cap, which
+        ends the call. The segments' trajectories and energy traces are joined, and the
+        segments share the call's ``max_steps`` budget.
 
         Parameters
         ----------
@@ -3573,7 +3565,7 @@ class EntropySolver:
                 if rtol > _RATE_CAP_RTOL_LIMIT:
                     self._warn_once(
                         'rtol',
-                        f'phase_boundary_cap="rate" at rtol {rtol:.1e}: its accuracy is verified '
+                        f'phase_boundary_cap="rate" at rtol {rtol:.1e}: its accuracy is measured '
                         'at rtol 1e-8',
                     )
 
