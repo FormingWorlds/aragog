@@ -29,7 +29,7 @@ class SolverConfig:
     cvode_output_points : int
         Number of points on the CVODE dense output grid.
     max_steps : int
-        Maximum number of internal CVODE steps per solve call.
+        Maximum number of internal CVODE steps per output interval (SUNDIALS mxstep).
     tcore_change_limit : float or None
         Optional per-solve core-temperature change limit [K]. The flag is
         also set, independent of this limit, when any sampled core

@@ -107,7 +107,7 @@ See the dedicated [`phi_step_cap` how-to](phi-step-cap.md) for tuning guidance.
 
 ## Phase-boundary step control
 
-PROTEUS does not set Aragog's `energy.phase_boundary_cap`, so a coupled run uses the Aragog default `"rate"`: a call near a phase boundary is integrated as CVODE segments (see [energy equation](../Explanations/energy_equation.md)). A PROTEUS option `interior_energetics.aragog.phase_boundary_cap` that selects `"fixed"` (`max_step` 1 yr) is pending in PROTEUS.
+PROTEUS does not set Aragog's `energy.phase_boundary_cap`, so a coupled run uses the Aragog default `"rate"`: a call near a phase boundary is integrated as CVODE segments (see [energy equation](../Explanations/energy_equation.md)).
 
 ---
 

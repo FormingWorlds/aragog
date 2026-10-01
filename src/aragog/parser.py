@@ -381,10 +381,8 @@ class _SolverParameters:
     # Points on the CVODE output grid per macro-step. It feeds back weakly into
     # CVODE stepping and adds nodes to the energy integrals.
     cvode_output_points: int = 65
-    # Maximum number of internal CVODE steps per solve call. CVODE
-    # returns CV_TOO_MUCH_WORK and stops once a single solve reaches
-    # this count; raise it when a stiff phase-change window needs more
-    # internal steps than the default budget.
+    # Maximum internal CVODE steps per output interval (SUNDIALS mxstep); CVODE
+    # returns CV_TOO_MUCH_WORK once one interval reaches it.
     max_steps: int = 100000
     # Optional per-solve core-temperature change limit [K]. When set, the
     # solver flags a solve whose core temperature moves by more than this

@@ -1260,9 +1260,8 @@ class EntropySolver:
         self._jax_cvode_factory = None
         # Output points CVODE returns per macro-step solve; a root ends the call early.
         self._cvode_output_points = self.parameters.solver.cvode_output_points
-        # Maximum internal CVODE steps per solve; exceeding it returns
-        # CV_TOO_MUCH_WORK. Configurable so a stiff phase-change window
-        # can request a larger budget than the default.
+        # Maximum internal CVODE steps per output interval (SUNDIALS mxstep); exceeding it
+        # returns CV_TOO_MUCH_WORK.
         self._max_steps = self.parameters.solver.max_steps
         # Optional per-solve core-temperature change limit [K]. When set,
         # a solve whose core temperature moves by more than this from the
@@ -2846,7 +2845,7 @@ class EntropySolver:
             'atol': atol_cvode,
             'lmm_type': 'BDF',
             'nonlinsolver': 'newton',
-            'max_steps': self._max_steps,  # per-solve cap; scipy used unlimited
+            'max_steps': self._max_steps,  # per output interval (SUNDIALS mxstep)
             # Maximum BDF order. BDF orders 1-2 are A-stable
             # (unconditionally stable for stiff problems on stable
             # systems); orders 3-5 are only "stiffly stable" with

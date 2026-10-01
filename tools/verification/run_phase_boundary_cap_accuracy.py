@@ -1,6 +1,6 @@
 """Accuracy of ``phase_boundary_cap = 'rate'`` against a tight ``'fixed'`` run.
 
-Regenerates the accuracy table in ``docs/Explanations/energy_equation.md``.
+Computes the numbers in the accuracy table of ``docs/Explanations/energy_equation.md``.
 Each case integrates one solver call with the CVODE entropy solver on the
 test EOS (``ARAGOG_TEST_EOS_DIR``) and compares the cell temperatures at the
 call end against ``'fixed'`` at rtol = atol = 1e-10:
@@ -21,7 +21,10 @@ parameters are those of ``_build_mushy_parameters`` in
 ``tests/test_phi_step_cap_armed_smoke.py`` with ``phi_step_cap`` off and
 ``max_steps`` 1e7. Run from the repository root::
 
-    ARAGOG_TEST_EOS_DIR=<dir> python tools/verification/run_phase_boundary_cap_accuracy.py [A B C D]
+    ARAGOG_TEST_EOS_DIR=<dir> python tools/verification/run_phase_boundary_cap_accuracy.py [--check] [A B C D]
+
+``--check`` exits with status 1 when ``'rate'`` at 1e-8 is more than ``RATE_BOUND_K``
+from the reference in any case.
 """
 
 from __future__ import annotations
@@ -45,6 +48,7 @@ CASES = {
     'D': dict(core='energy_balance', end=3000.0, flux=1e4, width=0.01, start='mushy', n=16),
 }
 RUNS = (('fixed', 1e-8), ('rate', 1e-8), ('rate', 1e-10))
+RATE_BOUND_K = 1.3e-4  # the bound the energy-equation docs state for 'rate' at 1e-8
 
 
 def run_case(eos, case, mode, tol):
@@ -74,13 +78,20 @@ def run_case(eos, case, mode, tol):
     return T, int(sol.get('cvode_nst') or 0)
 
 
-def main(names):
-    """Print one markdown table row per case."""
-    eos = EntropyEOS(os.environ['ARAGOG_TEST_EOS_DIR'])
+def main(names, check=False):
+    """Print one markdown table row per case; return 1 when ``check`` and a bound fails."""
+    eos_dir = os.environ.get('ARAGOG_TEST_EOS_DIR')
+    if not eos_dir:
+        sys.exit(
+            'ARAGOG_TEST_EOS_DIR is not set: point it at the test EOS (SPIDER P-S tables).'
+        )
+    eos = EntropyEOS(eos_dir)
     print(
-        '| Case | Call [yr] | steps fixed / rate at 1e-8 | max |dT| fixed 1e-8 | rate 1e-8 | rate 1e-10 |'
+        r'| Case | Call [yr] | steps fixed / rate at 1e-8 | max \|dT\| fixed 1e-8 | rate 1e-8 '
+        '| rate 1e-10 |'
     )
     print('|---|---|---|---|---|---|')
+    failed = []
     for name in names:
         case = CASES[name]
         T_ref, _ = run_case(eos, case, 'fixed', 1e-10)
@@ -95,7 +106,14 @@ def main(names):
             + ' |',
             flush=True,
         )
+        if dT[1] > RATE_BOUND_K:
+            failed.append(name)
+    if check and failed:
+        print(f'rate at 1e-8 exceeds {RATE_BOUND_K:g} K in case(s) {", ".join(failed)}')
+        return 1
+    return 0
 
 
 if __name__ == '__main__':
-    main(sys.argv[1:] or list(CASES))
+    args = [a for a in sys.argv[1:] if a != '--check']
+    sys.exit(main(args or list(CASES), check='--check' in sys.argv[1:]))

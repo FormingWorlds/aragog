@@ -21,6 +21,9 @@ from aragog.solver.entropy_solver import (
 
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S, needs_eos
 
+needs_cvode = pytest.mark.skipif(
+    not es._CVODE_AVAILABLE, reason='scikits.odes CVODE not installed'
+)
 S_SOL, S_LIQ, DELTA = 1000.0, 1300.0, 10.0
 WIDE = (0.0, 1e9)
 # Long enough for the mushy fixture to reach a progress root after the start segment.
@@ -944,6 +947,7 @@ def test_segment_root_takes_the_cmb_entry_from_the_bottom_cell():
     assert root.d0[-1] == pytest.approx(min(abs(S0[0] - 1250.0), abs(S0[0] - S_SOL)))
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_fixed_gradient_and_scipy_keep_the_margin_for_a_stiff_zone_beyond_it(
@@ -970,15 +974,64 @@ def test_fixed_gradient_and_scipy_keep_the_margin_for_a_stiff_zone_beyond_it(
     assert steps and steps[0] * s._build_nondim_scales().t_ref > 1.0 + 1e-9
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
-def test_rate_arms_the_step_caps_like_fixed_for_a_stiff_zone_beyond_the_margin(shared_eos):
-    """The wider stiff zone arms rate segments only: with phi_step_cap 0.05 and cells 230 above
-    the liquidus (beyond the 200 margin) neither rate nor fixed arms the caps."""
-    for mode in ('rate', 'fixed'):
-        s, _, _ = _cooling_above_liquidus(shared_eos, 0.01, mode=mode)
-        s.parameters.energy = dataclasses.replace(s.parameters.energy, phi_step_cap=0.05)
+@pytest.mark.parametrize('method', ['bdf', 'radau'])
+def test_scipy_methods_keep_the_margin_with_cvode_installed(shared_eos, monkeypatch, method):
+    """solver_method 'bdf' or 'radau' with CVODE installed keeps the margin: cells between the
+    200 margin and the ~252 stiff zone leave the scipy max_step above 1 yr."""
+    s, _, _ = _cooling_above_liquidus(shared_eos, 0.01)
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, solver_method=method)
+    steps, real_ivp = [], es.solve_ivp
+    monkeypatch.setattr(
+        es, 'solve_ivp', lambda *a, **k: steps.append(k['max_step']) or real_ivp(*a, **k)
+    )
+    s.solve()
+    assert steps and steps[0] * s._build_nondim_scales().t_ref > 1.0 + 1e-9
+
+
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
+def test_max_steps_counts_per_output_interval_in_both_modes(shared_eos):
+    """max_steps is SUNDIALS mxstep, counted per output interval: at 48 the 16-node mushy
+    200 yr call completes in both modes with more CVODE steps than that, rate in segments."""
+    for mode in ('fixed', 'rate'):
+        s = _solver(shared_eos, mode, n_nodes=16, end_time=200.0)
+        s._max_steps = 48
         s.solve()
         sol = s._solution
-        assert not getattr(sol, 'cap_fired', False) and sol.t[-1] == pytest.approx(100.0), mode
-        assert (len(sol.get('segments') or []) >= 2) is (mode == 'rate')
+        assert sol.status == 0 and sol.t[-1] == pytest.approx(200.0), mode
+        assert sol.cvode_nst > 48 and (len(sol.get('segments') or []) >= 2) is (mode == 'rate')
+
+
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
+def test_rate_arms_the_step_caps_like_fixed_for_a_stiff_zone_beyond_the_margin(
+    shared_eos, monkeypatch
+):
+    """The wider stiff zone arms rate segments only: with phi_step_cap 0.05 and cells 230 above
+    the liquidus (beyond the 200 margin) neither rate nor fixed builds the cap root; at 150
+    (within the margin) both build it."""
+    built, real = [], es._PhiCapRootFunction.__init__
+
+    def spy(self, *args, **kwargs):
+        built.append(1)
+        real(self, *args, **kwargs)
+
+    monkeypatch.setattr(es._PhiCapRootFunction, '__init__', spy)
+    for mode in ('rate', 'fixed'):
+        for gap, armed in ((230.0, False), (150.0, True)):
+            built.clear()
+            s, _, _ = _cooling_above_liquidus(shared_eos, 0.01, gap=gap, mode=mode)
+            s.parameters.energy = dataclasses.replace(s.parameters.energy, phi_step_cap=0.05)
+            s.solve()
+            assert bool(built) is armed, (mode, gap)
+            if not armed:
+                sol = s._solution
+                assert not getattr(sol, 'cap_fired', False) and sol.t[-1] == pytest.approx(
+                    100.0
+                )
+                assert (len(sol.get('segments') or []) >= 2) is (mode == 'rate')
