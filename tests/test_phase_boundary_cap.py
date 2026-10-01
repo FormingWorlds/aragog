@@ -167,7 +167,7 @@ def test_segment_root_puts_the_step_cap_first_and_forwards_its_attributes():
     assert r.fired(0.0, [1200.0, 1500.0]) == 'cap'
     assert (r.evals, r.binding_cap, r.phi0) == (7, 'phi', 0.3)
     bare = _roots([1200.0, 1500.0], inside=False)
-    assert (bare.evals, bare.binding_cap, bare.cap, bare.phi0) == (0, None, 0.0, 0.0)
+    assert bare.phi0 == 0.0
     with pytest.raises(AttributeError):
         bare.not_an_attribute
 
@@ -258,15 +258,15 @@ def _isentropic_end(eos, mode, tol, core_bc='quasi_steady'):
     s = _solver(eos, mode, core_bc, n_nodes=24, end_time=200.0, S=8182.3, tol=tol)
     s.solve()
     S = s._solution.y[: s._n_stag, -1]
-    return s, np.asarray(eos.temperature(s._P_stag_flat, S)).ravel(), S
+    return s, np.asarray(eos.temperature(s._P_stag_flat, S)).ravel()
 
 
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos):
     """Uniform start with most cells in or near the band: rate within 0.1 K of fixed at 1e-9, a stiff-zone segment, no empty segment."""
-    _, T_ref, _ = _isentropic_end(shared_eos, 'fixed', 1e-9)
-    s, T, _ = _isentropic_end(shared_eos, 'rate', 1e-6)
+    _, T_ref = _isentropic_end(shared_eos, 'fixed', 1e-9)
+    s, T = _isentropic_end(shared_eos, 'rate', 1e-6)
     assert np.abs(T - T_ref).max() <= 0.1
     starts = [seg[0] for seg in s._solution.segments]
     assert 'stiff' in [seg[1] for seg in s._solution.segments]
@@ -277,8 +277,8 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
 @pytest.mark.smoke
 def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     """With the extended energy_balance state, rate mode segments on the entropy block and keeps the CMB entry."""
-    s_f, T_f, _ = _isentropic_end(shared_eos, 'fixed', 1e-6, 'energy_balance')
-    s_r, T_r, _ = _isentropic_end(shared_eos, 'rate', 1e-6, 'energy_balance')
+    s_f, T_f = _isentropic_end(shared_eos, 'fixed', 1e-6, 'energy_balance')
+    s_r, T_r = _isentropic_end(shared_eos, 'rate', 1e-6, 'energy_balance')
     assert s_r._solution.y.shape[0] == s_f._solution.y.shape[0] == s_r._n_stag + 1
     assert len(s_r._solution.segments) >= 2 and np.isfinite(s_r._solution.y[-1, -1])
     assert np.abs(T_r - T_f).max() <= 0.1

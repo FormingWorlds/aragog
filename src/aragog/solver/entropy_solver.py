@@ -303,14 +303,6 @@ _RATE_CAP_MIN_DELTA = 10.0
 _RATE_CAP_FLOOR = True
 # rtol above which the rate cap logs one warning (its accuracy is verified at 1e-8).
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
-_NO_CAP_ATTRS = {
-    'evals': 0,
-    'binding_cap': None,
-    'cap': 0.0,
-    'cap_T': 0.0,
-    'cap_S': 0.0,
-    'phi0': 0.0,
-}
 
 
 def _rate_phase_boundary_max_step(
@@ -452,8 +444,7 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         return np.where(np.isfinite(g), g, 1.0)
 
     def evaluate(self, t, y, g, userdata=None):
-        for i, v in enumerate(self.components(t, y)):
-            g[i] = v
+        g[:] = self.components(t, y)
         return 0
 
     def fired(self, t, y):
@@ -470,12 +461,12 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         return self.names[int(np.argmin(g))]
 
     def __getattr__(self, name):
-        # Step-cap attributes read by ``_solve_cvode`` on a root; neutral without a cap.
+        # Step-cap attributes read by ``_solve_cvode`` on a root; ``phi0`` is 0 without a cap.
         step_cap = self.__dict__.get('step_cap')
         if step_cap is not None:
             return getattr(step_cap, name)
-        if name in _NO_CAP_ATTRS:
-            return _NO_CAP_ATTRS[name]
+        if name == 'phi0':
+            return 0.0
         raise AttributeError(name)
 
 
@@ -3130,7 +3121,7 @@ class EntropySolver:
         cap = cvode_kw.pop('phi_cap_rootfn', None)
         t, y, inside = float(start_time), np.asarray(y0, dtype=float).ravel(), None
         ts, ys, log = [np.array([t])], [y.reshape(-1, 1)], []
-        traces = []
+        et, ey = [], []
         nfev = nst = nfe = 0
         trigger = 'start'
         res = None
@@ -3173,7 +3164,9 @@ class EntropySolver:
             ys.append(np.asarray(res.y, dtype=float)[:, 1:])
             tr = res.get('energy_trace')
             if tr is not None:
-                traces.append(tr if not traces else (tr[0][1:], tr[1][:, 1:]))
+                skip = 1 if et else 0  # a later segment's first node repeats the join point
+                et.append(tr[0][skip:])
+                ey.append(tr[1][:, skip:])
             nfev += int(res.nfev)
             nst += int(res.get('cvode_nst', 0))
             nfe += int(res.get('cvode_nfe', 0))
@@ -3189,14 +3182,7 @@ class EntropySolver:
                 inside = not roots.inside
         res.t = np.concatenate(ts)
         res.y = np.concatenate(ys, axis=1)
-        res.energy_trace = (
-            (
-                np.concatenate([tr[0] for tr in traces]),
-                np.concatenate([tr[1] for tr in traces], axis=1),
-            )
-            if traces
-            else None
-        )
+        res.energy_trace = (np.concatenate(et), np.concatenate(ey, axis=1)) if et else None
         res.nfev, res.cvode_nst, res.cvode_nfe, res.segments = nfev, nst, nfe, log
         logger.info(
             'rate cap: %d segment(s), nst=%d, triggers %s',
