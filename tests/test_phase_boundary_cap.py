@@ -504,6 +504,46 @@ def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
     assert res.cvode_flag == 0
 
 
+@pytest.mark.unit
+def test_solve_cvode_segments_joins_the_energy_traces_without_repeating_a_segment_end():
+    """Each later segment's trace starts at the previous root; the joined trace keeps it once."""
+    from unittest.mock import MagicMock
+
+    from scipy.optimize import OptimizeResult
+
+    s = EntropySolver.__new__(EntropySolver)
+    s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
+    segs = iter([(np.array([0.0, 1.0, 2.5, 4.0]), 2), (np.array([4.0, 6.0, 10.0]), 0)])
+
+    def fake_solve_cvode(**kw):
+        t_nodes, flag = next(segs)
+        assert kw['start_time'] == t_nodes[0]
+        res = OptimizeResult(
+            t=t_nodes[[0, -1]], y=np.vstack([t_nodes[[0, -1]], -t_nodes[[0, -1]]])
+        )
+        res.energy_trace = (t_nodes, np.vstack([t_nodes, -t_nodes]))
+        res.nfev = res.cvode_nst = res.cvode_nfe = res.status = 0
+        res.cvode_flag = flag
+        return res
+
+    s._solve_cvode = fake_solve_cvode
+    roots = MagicMock(inside=False)
+    roots.fired.return_value = 'progress'
+    res = s._solve_cvode_segments(
+        start_time=0.0,
+        end_time=10.0,
+        y0=np.array([0.0, 0.0]),
+        roots_at=lambda y, inside: roots,
+        h_at=lambda t, y: 15.0,
+        t_ref=1.0,
+        h_min=1.0,
+    )
+    t_tr, y_tr = res.energy_trace
+    np.testing.assert_array_equal(t_tr, [0.0, 1.0, 2.5, 4.0, 6.0, 10.0])
+    np.testing.assert_array_equal(y_tr, np.vstack([t_tr, -t_tr]))
+    np.testing.assert_array_equal(res.t, [0.0, 4.0, 10.0])
+
+
 @pytest.fixture(scope='module')
 def shared_eos():
     from aragog.eos.entropy import EntropyEOS

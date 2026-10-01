@@ -16,7 +16,7 @@ atol = 1e-9
 rtol = 1e-9
 tsurf_poststep_change = 30
 cvode_output_points = 65          # dense-output grid per CVODE macro-step
-max_steps = 100000                # internal CVODE step budget per solve
+max_steps = 100000                # internal CVODE step budget per CVODE solve
 # tcore_change_limit = 3000       # optional; flag a per-solve core-T change above this [K] (off by default)
 
 [boundary_conditions]
@@ -131,7 +131,7 @@ Time-integration controls.
 | `rtol` | -- | Relative tolerance, default $10^{-8}$, the value at which `phase_boundary_cap = "rate"` is verified |
 | `tsurf_poststep_change` | K | Maximum allowed surface-temperature change per coupling step (PROTEUS use) |
 | `cvode_output_points` | -- | Number of points on the CVODE dense-output grid returned per macro-step (default 65, minimum 2). The per-call energy integrals take CVODE's accepted internal steps and these output points as nodes, so a coarse grid does not under-resolve them, and their cost follows the number of accepted steps, not this grid. The core-temperature change check (`tcore_change_limit`) reads only the output points. The grid feeds back into CVODE stepping, so the accepted step count and the final state shift weakly with it. Used only when `solver_method = "cvode"`. |
-| `max_steps` | -- | Maximum number of internal CVODE steps taken in a single solve call (default 100000, minimum 1). CVODE returns `CV_TOO_MUCH_WORK` and stops once one solve reaches this count. A stiff phase-change window can need more internal steps than the default budget; raise this value to let such a solve complete. Used only when `solver_method = "cvode"`. |
+| `max_steps` | -- | Maximum number of internal CVODE steps taken in a single CVODE solve (default 100000, minimum 1). CVODE returns `CV_TOO_MUCH_WORK` and stops once one solve reaches this count. With `phase_boundary_cap = "rate"` a call runs as several CVODE segments, and each segment has its own budget. A stiff phase-change window can need more internal steps than the default budget; raise this value to let such a solve complete. Used only when `solver_method = "cvode"`. |
 | `tcore_change_limit` | K | Optional limit on the per-solve core-temperature change (unset by default; must be positive when set). Aragog always measures the largest change of the core temperature from the solve-entry value over the returned grid and reports it as `tcore_change_max`. When this limit is set and that change exceeds it, Aragog sets the `tcore_change_exceeded` flag on the result; the flag is also set whenever any sampled core temperature is non-finite, independent of whether a limit is set, since that signals a corrupted solve. The solve never raises. A caller can use the flag to reject a solve whose core temperature jumps as it crosses a phase boundary in a single accepted step, or whose core temperature is non-finite. |
 
 ### `[boundary_conditions]`
