@@ -440,6 +440,7 @@ def test_solve_cvode_segments_gives_a_short_call_its_end_time():
     """A call shorter than the grid tolerance is one solve over [start, end]."""
     start, end = 1.0e9, 1.0e9 + 1.0e-4
     s = EntropySolver.__new__(EntropySolver)
+    s._max_steps = 100000
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 65)
     spans = []
 
@@ -469,6 +470,7 @@ def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
     """A root within 1e-12 of the call end ends the call; no segment gets a one-point tspan."""
     end = 1.0e6
     s = EntropySolver.__new__(EntropySolver)
+    s._max_steps = 100000
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
     calls = []
 
@@ -502,6 +504,7 @@ def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
 def test_solve_cvode_segments_joins_the_energy_traces_without_repeating_a_segment_end():
     """Each later segment's trace starts at the previous root; the joined trace keeps it once."""
     s = EntropySolver.__new__(EntropySolver)
+    s._max_steps = 100000
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
     segs = iter([(np.array([0.0, 1.0, 2.5, 4.0]), 2), (np.array([4.0, 6.0, 10.0]), 0)])
 
