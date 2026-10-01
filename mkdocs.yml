@@ -27,6 +27,7 @@ nav:
           - Build tests: How-to/build_tests.md
       - Maintenance:
           - Releasing: How-to/releasing.md
+          - Developer workflow: How-to/developer_workflow.md
 
   - Tutorials:
       - First run: Tutorials/firstrun.md

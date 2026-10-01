@@ -780,22 +780,21 @@ class TestCvodeEnergyOutputGrid:
     """The per-call energy integrals must resolve the within-call flux decay.
 
     A CVODE macro-step solve returns the solution only at the times in the
-    requested tspan. With just the two call endpoints, the trapezoidal
-    integral of a steeply-decaying boundary flux is tens of percent wrong,
-    which is the dominant term in ``E_residual_cons_frac``. ``EntropySolver``
-    requests ``_cvode_output_points`` intermediate points (front-loaded) so
-    the integral resolves the decay; that grid feeds back into CVODE
-    stepping, so the step count and final state shift weakly with it
-    (state near rtol, below any physical signal).
+    requested tspan; with just the two call endpoints, a trapezoidal integral
+    of a steeply-decaying boundary flux over those points is tens of percent
+    wrong. ``EntropySolver`` integrates the boundary powers over CVODE's
+    accepted internal steps instead, so the integral does not depend on the
+    output grid. The output grid still sets CVODE's initial step estimate, so
+    the step count and final state shift weakly with it (state near rtol).
 
-    Verifies that the dense grid recovers the flux integral to within a
-    small tolerance of a high-resolution scipy reference, with a
-    discrimination guard that the two-point grid is an order of magnitude
-    worse. See docs/How-to/test_infrastructure.md.
+    Verifies that 2 and 65 output points both recover the flux integral of a
+    high-resolution scipy reference and agree with each other.
     """
 
     @staticmethod
-    def _build_greybody_solver(method, n_out=None):
+    def _build_greybody_solver(
+        method, n_out=None, core_bc='quasi_steady', radionuclides=(), tidal=None
+    ):
         """Grey-body surface cooling: the surface flux ~ sigma T_top^4 decays
         steeply within the call, the regime that breaks a 2-point integral."""
         from aragog.eos.entropy import EntropyEOS
@@ -830,20 +829,20 @@ class TestCvodeEnergyOutputGrid:
         bc = BC(
             outer_boundary_condition=1,  # grey-body radiative surface
             outer_boundary_value=0.0,
-            inner_boundary_condition=2,
+            inner_boundary_condition=1 if core_bc == 'bower2018' else 2,
             inner_boundary_value=0.0,
             emissivity=1.0,
             equilibrium_temperature=255.0,
             core_heat_capacity=880.0,
-            core_bc='quasi_steady',
+            core_bc=core_bc,
         )
         en = EN(
             conduction=True,
             convection=True,
             gravitational_separation=False,
             mixing=False,
-            radionuclides=False,
-            tidal=False,
+            radionuclides=bool(radionuclides),
+            tidal=tidal is not None,
             solver_method=method,
             use_jax_jacobian=False,
             eddy_diffusivity_thermal=1.0,
@@ -900,9 +899,11 @@ class TestCvodeEnergyOutputGrid:
             phase_solid=ps,
             phase_liquid=pl,
             phase_mixed=pm,
-            radionuclides=[],
+            radionuclides=list(radionuclides),
             solver=sv,
         )
+        if tidal is not None:
+            params.energy.tidal_array = np.array([tidal])
         s = EntropySolver(params, entropy_eos=eos)
         s.initialize()
         if n_out is not None:
@@ -913,9 +914,8 @@ class TestCvodeEnergyOutputGrid:
         return s
 
     def test_dense_output_recovers_flux_integral(self):
-        """The dense front-loaded grid recovers F_int to within 2 percent of
-        a high-resolution scipy reference, while the 2-point grid is at least
-        an order of magnitude worse and ``dt_actual`` is unchanged."""
+        """F_int over the internal steps matches a high-resolution scipy reference
+        with 2 or 65 output points alike, and ``dt_actual`` is unchanged."""
         ref = self._build_greybody_solver('bdf')
         ref.solve()
         f_ref = ref._compute_step_energy_integrals()['F_int']
@@ -932,15 +932,9 @@ class TestCvodeEnergyOutputGrid:
         dN = sN._compute_step_energy_integrals()
         err_dense = abs(dN['F_int'] / f_ref - 1.0)
 
-        # The dense grid must recover the integral; the 2-point grid must not.
-        assert err_dense < 2e-2, (
-            f'dense-grid F_int off by {err_dense:.2e} from the reference; '
-            f'the front-loaded output grid must resolve the flux decay'
-        )
-        assert err_2pt > 10.0 * err_dense, (
-            f'discrimination guard: 2-point F_int error ({err_2pt:.2e}) must '
-            f'dwarf the dense-grid error ({err_dense:.2e})'
-        )
+        # An output-point integral misses the in-call decay at 2 points (~0.66 error).
+        assert err_2pt < 1e-4 and err_dense < 1e-4, (err_2pt, err_dense)
+        assert d2['F_int'] == pytest.approx(dN['F_int'], rel=1e-5)
         # The output grid must not perturb the integration window.
         dt_ref = float(ref._solution.t[-1] - ref._solution.t[0])
         dt_dense = float(sN._solution.t[-1] - sN._solution.t[0])
