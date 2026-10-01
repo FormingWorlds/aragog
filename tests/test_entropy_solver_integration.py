@@ -644,7 +644,7 @@ def test_gradient_mode_solver_residual_is_measured(shared_eos):
         bump = np.zeros(n_basic + 1)
         bump[n_basic] = delta
         solver._dSdt_single = lambda t, y: rhs(t, y) + bump
-        return float(solver.get_state().step_solver_residual_J)
+        return solver._compute_step_energy_integrals()['solver_residual']
 
     shift = residual_with(1e-3) - base
     dt_s = float(out.dt_actual) * Julian_year

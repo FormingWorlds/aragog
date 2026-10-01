@@ -792,7 +792,9 @@ class TestCvodeEnergyOutputGrid:
     """
 
     @staticmethod
-    def _build_greybody_solver(method, n_out=None, core_bc='quasi_steady'):
+    def _build_greybody_solver(
+        method, n_out=None, core_bc='quasi_steady', radionuclides=(), tidal=None
+    ):
         """Grey-body surface cooling: the surface flux ~ sigma T_top^4 decays
         steeply within the call, the regime that breaks a 2-point integral."""
         from aragog.eos.entropy import EntropyEOS
@@ -839,8 +841,8 @@ class TestCvodeEnergyOutputGrid:
             convection=True,
             gravitational_separation=False,
             mixing=False,
-            radionuclides=False,
-            tidal=False,
+            radionuclides=bool(radionuclides),
+            tidal=tidal is not None,
             solver_method=method,
             use_jax_jacobian=False,
             eddy_diffusivity_thermal=1.0,
@@ -897,9 +899,11 @@ class TestCvodeEnergyOutputGrid:
             phase_solid=ps,
             phase_liquid=pl,
             phase_mixed=pm,
-            radionuclides=[],
+            radionuclides=list(radionuclides),
             solver=sv,
         )
+        if tidal is not None:
+            params.energy.tidal_array = np.array([tidal])
         s = EntropySolver(params, entropy_eos=eos)
         s.initialize()
         if n_out is not None:
