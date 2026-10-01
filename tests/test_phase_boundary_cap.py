@@ -440,7 +440,6 @@ def test_solve_cvode_segments_gives_a_short_call_its_end_time():
     """A call shorter than the grid tolerance is one solve over [start, end]."""
     start, end = 1.0e9, 1.0e9 + 1.0e-4
     s = EntropySolver.__new__(EntropySolver)
-    s._max_steps = 100000
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 65)
     spans = []
 
@@ -470,7 +469,6 @@ def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
     """A root within 1e-12 of the call end ends the call; no segment gets a one-point tspan."""
     end = 1.0e6
     s = EntropySolver.__new__(EntropySolver)
-    s._max_steps = 100000
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
     calls = []
 
@@ -504,7 +502,6 @@ def test_solve_cvode_segments_stops_at_a_root_just_below_the_call_end():
 def test_solve_cvode_segments_joins_the_energy_traces_without_repeating_a_segment_end():
     """Each later segment's trace starts at the previous root; the joined trace keeps it once."""
     s = EntropySolver.__new__(EntropySolver)
-    s._max_steps = 100000
     s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
     segs = iter([(np.array([0.0, 1.0, 2.5, 4.0]), 2), (np.array([4.0, 6.0, 10.0]), 0)])
 
@@ -600,10 +597,11 @@ def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeyp
         lambda *a, **k: seen.append((a, k)) or real(*a, **k),
     )
     s = _solver(shared_eos, 'rate', end_time=2.0)
+    s.set_initial_entropy(_pick_mushy_S(shared_eos) + np.linspace(0.0, 30.0, s._n_stag))
     s.solve()
     (S, dSdt, S_liq, S_sol, mass, _), kw = seen[0]
     P_cmb = np.array([s._P_basic_flat[0]])
-    assert S.size == s._n_stag + 1 and S[-1] == S[0] and mass[-1] == 0.0
+    assert S.size == s._n_stag + 1 and S[-1] == S[0] != S[-2] and mass[-1] == 0.0
     assert dSdt[-1] == dSdt[0] and dSdt[0] != dSdt[1]
     rho = np.asarray(shared_eos.density(s._P_stag_flat, S[:-1])).ravel()
     np.testing.assert_allclose(mass[:-1], rho * s._volume_flat, rtol=1e-12)
@@ -766,9 +764,11 @@ def test_rate_mode_ends_a_segment_when_a_cell_inside_the_zone_speeds_up(
     assert seg[1][2] == pytest.approx(1.0)
 
 
-def _cooling_above_liquidus(eos, width, gap=230.0, end_time=100.0, tol=1e-6):
-    """A rate solver whose cells all start ``gap`` above the liquidus, with smoothing ``width``."""
-    s = _solver(eos, 'rate', end_time=end_time, tol=tol)
+def _cooling_above_liquidus(
+    eos, width, gap=230.0, end_time=100.0, tol=1e-6, mode='rate', core_bc='quasi_steady'
+):
+    """A solver whose cells all start ``gap`` above the liquidus, with smoothing ``width``."""
+    s = _solver(eos, mode, core_bc, end_time=end_time, tol=tol)
     s.parameters.phase_mixed = dataclasses.replace(
         s.parameters.phase_mixed, matprop_smooth_width=width
     )
@@ -827,50 +827,6 @@ def test_rate_mode_flips_the_stiff_zone_side_only_on_a_stiff_trigger(shared_eos,
     assert inside[0] is True and triggers.count('stiff') >= 2
     for k in range(1, len(inside)):
         assert inside[k] is (not inside[k - 1] if triggers[k] == 'stiff' else inside[k - 1])
-
-
-@pytest.mark.unit
-def test_solve_cvode_segments_spend_one_step_budget_across_the_call():
-    """Each segment gets the call budget minus the steps already taken; a segment that runs
-    out returns CV_TOO_MUCH_WORK and ends the call with it."""
-    s = EntropySolver.__new__(EntropySolver)
-    s._max_steps = 100
-    s._output_grid = lambda t0, t1: np.linspace(t0, t1, 5)
-    budgets, plan = [], iter([(4.0, 30, 2, 0), (8.0, 70, -1, -1)])
-
-    def fake_solve_cvode(**kw):
-        t_end, nst, flag, status = next(plan)
-        budgets.append(kw['max_steps'])
-        res = OptimizeResult(t=np.array([kw['start_time'], t_end]), y=np.ones((2, 2)))
-        res.nfev = res.cvode_nfe = 0
-        res.cvode_nst, res.cvode_flag, res.status = nst, flag, status
-        return res
-
-    s._solve_cvode = fake_solve_cvode
-    roots = MagicMock(inside=False)
-    roots.fired.return_value = 'progress'
-    res = s._solve_cvode_segments(
-        start_time=0.0,
-        end_time=10.0,
-        y0=np.ones(2),
-        roots_at=lambda y, inside: roots,
-        h_at=lambda t, y: 15.0,
-        t_ref=1.0,
-        h_min=1.0,
-    )
-    assert budgets == [100, 70]
-    assert (res.status, res.cvode_flag, res.cvode_nst) == (-1, -1, 100)
-
-
-@needs_eos
-@pytest.mark.smoke
-def test_rate_mode_call_fails_when_its_segments_together_exceed_max_steps(shared_eos):
-    """About 3000 steps over about 20 segments, none above 500: max_steps 500 stops the call
-    with CV_TOO_MUCH_WORK, as a single solve over the same span would."""
-    s, _, _ = _cooling_above_liquidus(shared_eos, 0.01, tol=1e-8)
-    s._max_steps = 500
-    s.solve()
-    assert s._solution.status != 0 and s._solution.cvode_flag == -1
 
 
 @needs_eos
@@ -950,3 +906,79 @@ def test_rate_segments_keep_every_energy_integral_of_a_tight_fixed_run(shared_eo
         return e['F_int'] + e['F_cmb'] + e['Q_tidal'] - e['state_heat']
 
     assert abs(closure(ri) - closure(fi)) <= 1e-5 * abs(fi['state_heat'])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('delta', 'cap_mode', 'core_bc', 'use_cvode', 'expected'),
+    [
+        (10.0, 'rate', 'quasi_steady', True, 200.0),  # delta below the margin: margin kept
+        (252.0, 'rate', 'energy_balance', True, 252.0),  # wider stiff zone arms rate segments
+        (252.0, 'fixed', 'quasi_steady', True, 200.0),
+        (252.0, 'rate', 'quasi_steady', False, 200.0),
+        (252.0, 'rate', 'gradient', True, 200.0),
+    ],
+)
+def test_segment_arming_margin_widens_only_a_cvode_rate_call(
+    delta, cap_mode, core_bc, use_cvode, expected
+):
+    """Only a 'rate' call on CVODE with a non-gradient core arms within the stiff zone when it
+    is wider than the margin; fixed, scipy and the gradient core keep the margin."""
+    assert es._segment_arming_margin(200.0, delta, cap_mode, core_bc, use_cvode) == expected
+
+
+@pytest.mark.unit
+def test_segment_root_takes_the_cmb_entry_from_the_bottom_cell():
+    """The CMB entry is the bottom cell's entropy against the CMB-pressure boundaries."""
+    S0 = np.array([1200.0, 1270.0])
+    root = _PhaseBoundarySegmentRoot(
+        np.array([S_LIQ, S_LIQ, 1250.0]),
+        np.full(3, S_SOL),
+        S0,
+        DELTA,
+        None,
+        np.ones(2),
+        2,
+    )
+    assert root.S0[-1] == S0[0]
+    assert root.d0[-1] == pytest.approx(min(abs(S0[0] - 1250.0), abs(S0[0] - S_SOL)))
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_fixed_gradient_and_scipy_keep_the_margin_for_a_stiff_zone_beyond_it(
+    shared_eos, monkeypatch
+):
+    """Cells 230 above the liquidus with width 0.01 (stiff zone ~252 > margin 200) leave fixed,
+    the gradient core and a scipy fallback unclamped (max_step above 1 yr), as on main."""
+    for mode, core_bc in (('fixed', 'quasi_steady'), ('rate', 'gradient')):
+        s, _, _ = _cooling_above_liquidus(shared_eos, 0.01, mode=mode, core_bc=core_bc)
+        seen, real = [], s._solve_cvode
+        monkeypatch.setattr(
+            s, '_solve_cvode', lambda **kw: seen.append(kw['max_step']) or real(**kw)
+        )
+        s.solve()
+        assert seen and seen[0] * s._build_nondim_scales().t_ref > 1.0 + 1e-9, (mode, core_bc)
+
+    s, _, _ = _cooling_above_liquidus(shared_eos, 0.01)
+    monkeypatch.setattr(es, '_CVODE_AVAILABLE', False)
+    steps, real_ivp = [], es.solve_ivp
+    monkeypatch.setattr(
+        es, 'solve_ivp', lambda *a, **k: steps.append(k['max_step']) or real_ivp(*a, **k)
+    )
+    s.solve()
+    assert steps and steps[0] * s._build_nondim_scales().t_ref > 1.0 + 1e-9
+
+
+@needs_eos
+@pytest.mark.smoke
+def test_rate_arms_the_step_caps_like_fixed_for_a_stiff_zone_beyond_the_margin(shared_eos):
+    """The wider stiff zone arms rate segments only: with phi_step_cap 0.05 and cells 230 above
+    the liquidus (beyond the 200 margin) neither rate nor fixed arms the caps."""
+    for mode in ('rate', 'fixed'):
+        s, _, _ = _cooling_above_liquidus(shared_eos, 0.01, mode=mode)
+        s.parameters.energy = dataclasses.replace(s.parameters.energy, phi_step_cap=0.05)
+        s.solve()
+        sol = s._solution
+        assert not getattr(sol, 'cap_fired', False) and sol.t[-1] == pytest.approx(100.0), mode
+        assert (len(sol.get('segments') or []) >= 2) is (mode == 'rate')

@@ -223,7 +223,8 @@ class _EnergyParameters:
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
     # Proximity band [J/kg/K] within which a cell counts as near a phase boundary.
-    # Tightens max_step to resolve stiff RHS across the solidus/liquidus.
+    # Tightens max_step to resolve stiff RHS across the solidus/liquidus; a 'rate' call on
+    # CVODE also arms its segments within the stiff zone when that is wider.
     phase_boundary_entropy_margin: float = 200.0
     # Step-size cap near phase boundaries: 'fixed' (1 yr) or 'rate' (event-driven segments);
     # None, the default, runs 'rate' and logs its fallbacks at INFO.

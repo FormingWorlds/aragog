@@ -107,7 +107,7 @@ See the dedicated [`phi_step_cap` how-to](phi-step-cap.md) for tuning guidance.
 
 ## Phase-boundary step control
 
-PROTEUS passes `interior_energetics.aragog.phase_boundary_cap` (default `"rate"`) to Aragog's `energy.phase_boundary_cap`. `"rate"` integrates a call near a phase boundary as CVODE segments; `"fixed"` caps `max_step` at 1 yr instead. An Aragog without the field runs `"fixed"`.
+PROTEUS does not set Aragog's `energy.phase_boundary_cap`, so a coupled run uses the Aragog default `"rate"`: a call near a phase boundary is integrated as CVODE segments (see [energy equation](../Explanations/energy_equation.md)). A PROTEUS option `interior_energetics.aragog.phase_boundary_cap` that selects `"fixed"` (`max_step` 1 yr) is pending in PROTEUS.
 
 ---
 
@@ -285,7 +285,7 @@ When set to `true`, all atmosphere modules and termination checks enforce a `T_m
 
 ### 6. `interior_energetics.{rtol, atol}` and `interior_energetics.aragog.atol_temperature_equivalent`
 
-**Defaults**: an unset `rtol` resolves to `1e-8` for Aragog (`1e-10` for SPIDER), `atol = 1e-10`, `atol_temperature_equivalent = 1e-8`.
+**Defaults**: `rtol = 1e-10`, `atol = 1e-10`, `atol_temperature_equivalent = 1e-8`.
 **Recommendation**: keep production defaults.
 
 Loosening to `1e-7` re-introduces the CVODE marginal-stability bifurcation at iter $\sim 9$ and silent drift across the rheological transition; above `1e-7` the rate phase-boundary cap also logs a warning. Tightening below `1e-10` has diminishing returns.
@@ -311,8 +311,7 @@ Uniform spacing in mass-coordinate space gives larger cells at the surface where
 | `interior_energetics.aragog.core_bc` | `"energy_balance"` | `"energy_balance"` | SPIDER bit-parity; correct T_core. |
 | `interior_energetics.aragog.phi_step_cap` | `0.0` | `0.05` | SUNDIALS rootfn caps per-call $|\Delta\Phi|$ excursion. |
 | `planet.prevent_warming` | `false` | `false` | The clamp is energy-non-conserving in warming sub-steps. |
-| `interior_energetics.rtol` / `atol` | `rtol` unset: `1e-8` (Aragog), `1e-10` (SPIDER); `atol` `1e-10` | default | `1e-8` is the tolerance of the rate cap's accuracy table ([energy equation](../Explanations/energy_equation.md)); do not loosen beyond `1e-7`. |
-| `interior_energetics.aragog.phase_boundary_cap` | `"rate"` | `"rate"` | CVODE segments near phase boundaries; `"fixed"` selects the 1 yr step. |
+| `interior_energetics.rtol` / `atol` | `1e-10` | `1e-10` | Schema default; avoids CVODE marginal-stability bifurcation. Production CHILI runs occasionally relax `rtol` to `1e-8`; do not loosen further. |
 | `interior_energetics.aragog.atol_temperature_equivalent` | `1e-8` | `1e-8` | Matches SPIDER `atol = rtol = 1e-8`. |
 | `interior_energetics.num_levels` | `80` | `80` | SPIDER reference resolution. |
 | `interior_energetics.aragog.mass_coordinates` | `true` | `true` | Required by `energy_balance` core BC. |

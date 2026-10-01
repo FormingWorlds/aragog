@@ -304,6 +304,20 @@ _RATE_CAP_MIN_DELTA = 10.0
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
 
 
+def _segment_arming_margin(
+    margin: float, delta: float, cap_mode: str, core_bc: str, use_cvode: bool
+) -> float:
+    """Entropy margin [J/kg/K] within which a call arms the phase-boundary step control.
+
+    A ``'rate'`` call on CVODE (not the gradient core) also arms for a cell inside the stiff
+    zone, whose half-width ``delta`` can exceed ``margin``; every other call, and the step
+    caps, use ``margin``.
+    """
+    if cap_mode == 'rate' and core_bc != 'gradient' and use_cvode:
+        return max(margin, delta)
+    return margin
+
+
 def _rate_phase_boundary_max_step(
     S: npt.NDArray,
     dSdt: npt.NDArray,
@@ -2707,7 +2721,6 @@ class EntropySolver:
         phi_cap_rootfn: 'Callable | None' = None,
         tspan: 'npt.NDArray | None' = None,
         keep_points_before_root: bool = False,
-        max_steps: int | None = None,
     ) -> 'OptimizeResult':
         """Integrate the entropy equation using SUNDIALS CVODE.
 
@@ -2745,8 +2758,6 @@ class EntropySolver:
         keep_points_before_root : bool
             On a root, keep the output points reached before it; otherwise the
             result holds only the start and the root.
-        max_steps : int or None
-            CVODE step budget; ``None`` uses ``solver.max_steps``.
 
         Returns
         -------
@@ -2835,7 +2846,7 @@ class EntropySolver:
             'atol': atol_cvode,
             'lmm_type': 'BDF',
             'nonlinsolver': 'newton',
-            'max_steps': self._max_steps if max_steps is None else max_steps,
+            'max_steps': self._max_steps,  # per-solve cap; scipy used unlimited
             # Maximum BDF order. BDF orders 1-2 are A-stable
             # (unconditionally stable for stiff problems on stable
             # systems); orders 3-5 are only "stiffly stable" with
@@ -3081,8 +3092,7 @@ class EntropySolver:
 
         Each segment is a new CVODE solve from the previous segment's end. A segment ends at
         the call end, at a ``_PhaseBoundarySegmentRoot`` component, or at the step cap, which
-        ends the call. The segments' trajectories and energy traces are joined, and the
-        segments share the call's ``max_steps`` budget.
+        ends the call. The segments' trajectories and energy traces are joined.
 
         Parameters
         ----------
@@ -3152,7 +3162,6 @@ class EntropySolver:
                 phi_cap_rootfn=cap if last else roots,
                 tspan=tspan,
                 keep_points_before_root=True,
-                max_steps=max(self._max_steps - nst, 1),  # the call's step budget
                 **cvode_kw,
             )
             ts.append(np.asarray(res.t, dtype=float)[1:])
@@ -3246,8 +3255,9 @@ class EntropySolver:
         phi_cap_anchor = None
         rate_mode = False
 
-        # Tighten max_step near phase boundaries or in the mushy band.
-        # 'fixed' uses 1 yr; 'rate' uses event-driven CVODE segments.
+        # Runs whenever the entropy EOS is loaded: the T and S caps stay armed in the deep solid,
+        # where the phi cap is blind. A cell within the margin of a boundary or in the mushy band
+        # tightens max_step: 1 yr for 'fixed', CVODE segments for 'rate'.
         if self.entropy_eos is not None:
             entropy_margin = _resolve_entropy_margin(
                 getattr(self.parameters.energy, 'phase_boundary_entropy_margin', None)
@@ -3258,23 +3268,6 @@ class EntropySolver:
             P_stag = self._P_stag_flat
             S_liq_stag = np.asarray(self.entropy_eos.liquidus_entropy(P_stag)).ravel()
             S_sol_stag = np.asarray(self.entropy_eos.solidus_entropy(P_stag)).ravel()
-            P_cmb = float(self._P_basic_flat[0])
-            S_liq = float(self.entropy_eos.liquidus_entropy(np.array([P_cmb])).item())
-            S_sol = float(self.entropy_eos.solidus_entropy(np.array([P_cmb])).item())
-            cap_set = getattr(self.parameters.energy, 'phase_boundary_cap', None)
-            cap_mode = cap_set or 'rate'
-            rate_capable = cap_mode == 'rate' and self._core_bc != 'gradient'
-            # Staggered cells plus the CMB cell at the CMB-pressure boundaries.
-            rate_liq = np.append(S_liq_stag, S_liq)
-            rate_sol = np.append(S_sol_stag, S_sol)
-            w = float(getattr(self.parameters.phase_mixed, 'matprop_smooth_width', 0.0))
-            rate_delta = max(3.0 * w * float(np.max(rate_liq - rate_sol)), _RATE_CAP_MIN_DELTA)
-            # A CVODE rate call also arms for a cell inside the stiff zone, which can be wider.
-            if (
-                rate_capable
-                and getattr(self.parameters.energy, 'solver_method', 'cvode') == 'cvode'
-            ):
-                entropy_margin = max(entropy_margin, rate_delta)
             S_arr_stag = np.asarray(S0_block).ravel()
             margin_to_liq = S_arr_stag - S_liq_stag  # > 0 means above liquidus
             margin_to_sol = S_arr_stag - S_sol_stag  # > 0 means above solidus
@@ -3282,16 +3275,39 @@ class EntropySolver:
             near_sol = np.any(np.abs(margin_to_sol) < entropy_margin)
             in_mushy = np.any((margin_to_liq < 0.0) & (margin_to_sol > 0.0))
             # Keep the original CMB-only check too as a backstop
+            P_cmb = float(self._P_basic_flat[0])
+            S_liq = float(self.entropy_eos.liquidus_entropy(np.array([P_cmb])).item())
+            S_sol = float(self.entropy_eos.solidus_entropy(np.array([P_cmb])).item())
             S0_block_cmb = float(S0_block[0])
-            if _phase_boundary_max_step_clamp(
-                near_liq,
-                near_sol,
-                in_mushy,
-                cmb_margin_to_liq=S0_block_cmb - S_liq,
-                cmb_margin_to_sol=S0_block_cmb - S_sol,
-                entropy_margin=entropy_margin,
+            cap_set = getattr(self.parameters.energy, 'phase_boundary_cap', None)
+            cap_mode = cap_set or 'rate'
+            # Staggered cells plus the CMB cell at the CMB-pressure boundaries.
+            rate_liq = np.append(S_liq_stag, S_liq)
+            rate_sol = np.append(S_sol_stag, S_sol)
+            w = float(getattr(self.parameters.phase_mixed, 'matprop_smooth_width', 0.0))
+            rate_delta = max(3.0 * w * float(np.max(rate_liq - rate_sol)), _RATE_CAP_MIN_DELTA)
+            use_cvode = (
+                getattr(self.parameters.energy, 'solver_method', 'cvode') == 'cvode'
+                and _CVODE_AVAILABLE
+            )
+            segment_margin = _segment_arming_margin(
+                entropy_margin, rate_delta, cap_mode, self._core_bc, use_cvode
+            )
+
+            def clamps(margin):
+                return _phase_boundary_max_step_clamp(
+                    np.any(np.abs(margin_to_liq) < margin),
+                    np.any(np.abs(margin_to_sol) < margin),
+                    in_mushy,
+                    cmb_margin_to_liq=S0_block_cmb - S_liq,
+                    cmb_margin_to_sol=S0_block_cmb - S_sol,
+                    entropy_margin=margin,
+                )
+
+            if clamps(entropy_margin) or (
+                segment_margin > entropy_margin and clamps(segment_margin)
             ):
-                rate_mode = rate_capable
+                rate_mode = cap_mode == 'rate' and self._core_bc != 'gradient'
                 max_step = 1.0
                 if cap_mode == 'rate' and not rate_mode:
                     self._warn_once(
