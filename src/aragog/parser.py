@@ -222,19 +222,21 @@ class _EnergyParameters:
     # disables each.
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
-    # Proximity band [J/kg/K] within which a staggered cell counts as near a
-    # phase boundary, tightening the integrator max_step to 1 yr so CVODE
-    # resolves the stiff RHS across the solidus/liquidus. Solver-accuracy
-    # control, not a physics threshold: at the default the converged trajectory
-    # is unchanged, but lowering it can under-resolve a real crossing and shift
-    # the converged state beyond the nominal tolerance (CVODE's local error
-    # control can accept an over-large step across the near-discontinuous
-    # two-phase RHS). Default 200.0, a fraction of a typical silicate fusion
-    # entropy (S_liquidus - S_solidus); a non-finite or non-positive value
-    # falls back to the default.
+    # Proximity band [J/kg/K] within which a cell counts as near a phase boundary.
+    # Tightens max_step to resolve stiff RHS across the solidus/liquidus; a 'rate' call on
+    # CVODE also arms its segments within the stiff zone when that is wider.
     phase_boundary_entropy_margin: float = 200.0
+    # Step-size cap near phase boundaries: 'fixed' (1 yr) or 'rate' (event-driven segments);
+    # None, the default, runs 'rate' and logs its fallbacks at INFO.
+    phase_boundary_cap: str | None = None
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
+
+    def __post_init__(self):
+        if self.phase_boundary_cap not in (None, 'fixed', 'rate'):
+            raise ValueError(
+                f'phase_boundary_cap must be fixed or rate, got {self.phase_boundary_cap!r}'
+            )
 
 
 @dataclass
@@ -373,16 +375,14 @@ class _SolverParameters:
 
     start_time: float
     end_time: float
-    atol: float
-    rtol: float
+    atol: float = 1e-8
+    rtol: float = 1e-8
     tsurf_poststep_change: float = 30.0
     # Points on the CVODE output grid per macro-step. It feeds back weakly into
     # CVODE stepping and adds nodes to the energy integrals.
     cvode_output_points: int = 65
-    # Maximum number of internal CVODE steps per solve call. CVODE
-    # returns CV_TOO_MUCH_WORK and stops once a single solve reaches
-    # this count; raise it when a stiff phase-change window needs more
-    # internal steps than the default budget.
+    # Maximum internal CVODE steps per output interval (SUNDIALS mxstep); CVODE
+    # returns CV_TOO_MUCH_WORK once one interval reaches it.
     max_steps: int = 100000
     # Optional per-solve core-temperature change limit [K]. When set, the
     # solver flags a solve whose core temperature moves by more than this

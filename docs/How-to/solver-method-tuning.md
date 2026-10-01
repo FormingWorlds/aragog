@@ -35,9 +35,9 @@ CVODE also accepts a SUNDIALS root function for melt-fraction step capping; see 
 
 ## Radau and BDF specifics
 
-Both scipy paths use `solve_ivp` with `dense_output=False` and a `max_step` cap that the solver shrinks adaptively near phase boundaries. They do not support the JAX-traced Jacobian; a Jacobian is computed by scipy via finite differences when needed.
+Both scipy paths use `solve_ivp` with `dense_output=False` and a 1 yr `max_step` near phase boundaries. They do not support the JAX-traced Jacobian; a Jacobian is computed by scipy via finite differences when needed.
 
-The `phase-aware max_step` reduction activates at the same trigger conditions on all three integrators; it is independent of the integrator class.
+With `phase_boundary_cap = "fixed"` the 1 yr `max_step` activates at the same trigger on all three integrators. The default `"rate"` runs only on CVODE: it arms within the larger of `phase_boundary_entropy_margin` and the stiff-zone half-width and integrates the call in segments; the scipy paths fall back to the 1 yr step.
 
 ## Cross-references
 

@@ -16,7 +16,7 @@ atol = 1e-9
 rtol = 1e-9
 tsurf_poststep_change = 30
 cvode_output_points = 65          # dense-output grid per CVODE macro-step
-max_steps = 100000                # internal CVODE step budget per solve
+max_steps = 100000                # internal CVODE steps per output interval
 # tcore_change_limit = 3000       # optional; flag a per-solve core-T change above this [K] (off by default)
 
 [boundary_conditions]
@@ -58,6 +58,7 @@ eddy_diffusivity_thermal = 1.0
 eddy_diffusivity_chemical = 1.0
 kappah_floor = 10.0                # PROTEUS production default; 0.0 = textbook MLT
 phi_step_cap = 0.0                 # 0 = disabled; 0.05 caps per-call melt-fraction change in mushy band
+phase_boundary_cap = "rate"        # "rate" (default) or "fixed" (1 yr step near a phase boundary)
 bottom_up_grav_sep = true
 phase_smoothing = "tanh"           # "tanh" (default, SPIDER-parity) or "cubic_hermite"
 solver_method = "cvode"            # "cvode" | "radau" | "bdf"
@@ -126,11 +127,11 @@ Time-integration controls.
 |-----|------|-------------|
 | `start_time` | yr | Start of integration |
 | `end_time` | yr | End of integration |
-| `atol` | -- | Absolute tolerance (floored at $10^{-8}$) |
-| `rtol` | -- | Relative tolerance |
+| `atol` | -- | Absolute tolerance, default $10^{-8}$ (floored at $10^{-8}$) |
+| `rtol` | -- | Relative tolerance, default $10^{-8}$, the value at which `phase_boundary_cap = "rate"` is verified |
 | `tsurf_poststep_change` | K | Maximum allowed surface-temperature change per coupling step (PROTEUS use) |
 | `cvode_output_points` | -- | Number of points on the CVODE dense-output grid returned per macro-step (default 65, minimum 2). The per-call energy integrals take CVODE's accepted internal steps and these output points as nodes, so a coarse grid does not under-resolve them, and their cost follows the number of accepted steps, not this grid. The core-temperature change check (`tcore_change_limit`) reads only the output points. The grid feeds back into CVODE stepping, so the accepted step count and the final state shift weakly with it. Used only when `solver_method = "cvode"`. |
-| `max_steps` | -- | Maximum number of internal CVODE steps taken in a single solve call (default 100000, minimum 1). CVODE returns `CV_TOO_MUCH_WORK` and stops once one solve reaches this count. A stiff phase-change window can need more internal steps than the default budget; raise this value to let such a solve complete. Used only when `solver_method = "cvode"`. |
+| `max_steps` | -- | Maximum number of internal CVODE steps between two consecutive output times (SUNDIALS `mxstep`; default 100000, minimum 1). CVODE returns `CV_TOO_MUCH_WORK` and stops once one output interval reaches this count. With `phase_boundary_cap = "rate"` each CVODE segment applies the same per-interval limit. A stiff phase-change window can need more internal steps than the default budget; raise this value to let such a solve complete. Used only when `solver_method = "cvode"`. |
 | `tcore_change_limit` | K | Optional limit on the per-solve core-temperature change (unset by default; must be positive when set). Aragog always measures the largest change of the core temperature from the solve-entry value over the returned grid and reports it as `tcore_change_max`. When this limit is set and that change exceeds it, Aragog sets the `tcore_change_exceeded` flag on the result; the flag is also set whenever any sampled core temperature is non-finite, independent of whether a limit is set, since that signals a corrupted solve. The solve never raises. A caller can use the flag to reject a solve whose core temperature jumps as it crosses a phase boundary in a single accepted step, or whose core temperature is non-finite. |
 
 ### `[boundary_conditions]`
@@ -188,6 +189,7 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |
 | `kappah_floor` | m²/s | 10.0 | Phase-modulated lower bound on $\kappa_h$. Default 10.0 (PROTEUS production); set 0.0 for textbook MLT |
 | `phi_step_cap` | -- | 0.0 | Per-call $\Delta\Phi_\mathrm{global}$ cap. When `> 0` and the mantle straddles the rheological transition, a SUNDIALS root function fires at the step where the mass-weighted global melt fraction $\Phi_\mathrm{global}$ has changed by `cap` from its value at `solve()` entry. `0.05` is a useful upper bound for 1 M$_\oplus$ runs. Default `0.0` (disabled). |
+| `phase_boundary_cap` | str | `"rate"` | Step-size cap near or inside the two-phase band. `"fixed"` uses 1 yr. `"rate"`, the default (also when unset), uses event-driven CVODE segments with `max_step` set to 0.1 of the shortest time to reach a phase boundary, clipped to `[1, 100]` yr. Inside the stiff zone ($\delta = \max(3w \max_j(S_{\mathrm{liq},j}-S_{\mathrm{sol},j}), 10\ \mathrm{J\,kg^{-1}\,K^{-1}})$, with $w = \mathtt{matprop\_smooth\_width}$) or below the rate floor, the estimate uses the distance to the nearer boundary. The gradient core and the scipy integrators use 1 yr in both modes. On CVODE the segments of a `"rate"` call arm within the larger of `phase_boundary_entropy_margin` and $\delta$; the step caps, `"fixed"`, the gradient core and the scipy integrators use `phase_boundary_entropy_margin`. At the default `rtol` $= 10^{-8}$, `"rate"` stays within $1.3 \times 10^{-4}$ K of a `"fixed"` run at $10^{-10}$ in the cases on the [energy equation](../Explanations/energy_equation.md) page; an `rtol` above $10^{-7}$ logs one warning. |
 | `bottom_up_grav_sep` | bool | true | Apply SPIDER's bottom-up gating on the gravitational-separation flux |
 | `phase_smoothing` | str | `"tanh"` | Phase-boundary smoothing. `"tanh"` (default) is SPIDER's two-branch `get_smoothing` with width `matprop_smooth_width = 0.01`; `"cubic_hermite"` is the fallback $16\,g\phi^2(1-g\phi)^2$ form. |
 | `solver_method` | str | `"cvode"` | ODE integrator. `"cvode"` selects SUNDIALS CVODE via `scikits.odes` (default); `"radau"` and `"bdf"` use scipy `solve_ivp`. When `scikits.odes` is not installed the solver falls back to Radau with a warning. |
