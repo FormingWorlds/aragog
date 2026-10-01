@@ -9,6 +9,7 @@ import pytest
 
 from aragog.parser import _EnergyParameters
 from aragog.solver.entropy_solver import (
+    _ZERO_ENERGY_INTEGRALS,
     EntropySolver,
     _PhaseBoundarySegmentRoot,
     _rate_phase_boundary_max_step,
@@ -214,6 +215,14 @@ def _solver(eos, mode, core_bc='quasi_steady', n_nodes=12, end_time=2.0, S=None,
     s.initialize()
     s.set_initial_entropy(_pick_mushy_S(eos) if S is None else np.full(s._n_stag, S))
     return s
+
+
+def _fake_rate(monkeypatch, s, rate):
+    """Drive ``s`` with ``rate(t, y)``; its energy integrals are zero, as the fake has no physics."""
+    monkeypatch.setattr(s, '_dSdt_single', rate)
+    monkeypatch.setattr(
+        s, '_compute_step_energy_integrals', lambda: dict(_ZERO_ENERGY_INTEGRALS)
+    )
 
 
 @needs_eos
@@ -609,7 +618,7 @@ def test_rate_mode_ends_a_segment_when_a_second_cell_approaches_inside_the_stiff
     s.set_initial_entropy(S0)
     rate = np.zeros(s._n_stag)
     rate[8] = -1.0
-    monkeypatch.setattr(s, '_dSdt_single', lambda t, y: rate.copy())
+    _fake_rate(monkeypatch, s, lambda t, y: rate.copy())
     s.solve()
     starts = [seg[0] for seg in s._solution.segments]
     assert s._solution.t[-1] == pytest.approx(200.0)
@@ -715,7 +724,7 @@ def test_rate_mode_ends_a_segment_when_a_cell_inside_the_zone_speeds_up(
         r[8] = -0.01 if t < 100.0 else -2.0
         return r
 
-    monkeypatch.setattr(s, '_dSdt_single', rate)
+    _fake_rate(monkeypatch, s, rate)
     s.solve()
     seg = s._solution.segments
     assert len(seg) >= 2 and seg[1][1] == 'progress'
