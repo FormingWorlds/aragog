@@ -275,7 +275,132 @@ def test_reynolds_regime_separates_viscous_from_inviscid():
 @pytest.mark.physics_invariant
 @pytest.mark.smoke
 def test_jax_compute_mlt_convection_scaling():
-    """Verify that the JAX MLT kernel obeys the inviscid (free-fall) and viscous Nu-Ra scaling exponents."""
+    """Verify that the JAX MLT kernel obeys inviscid and viscous scaling exponents.
+
+    In the inviscid free-fall regime (Re >= 10 * RE_CRIT), buoyancy balances inertia,
+    giving F_conv ~ (-dS/dr)^{1.5} and kappa_h ~ (-dS/dr)^{0.5}.
+    In the viscous regime (Re <= 0.1 * RE_CRIT), buoyancy balances viscous drag
+    (Biermann 1932; Böhm-Vitense 1958; SPIDER energy.c:165-175), yielding
+    v_visc ~ (-dS/dr)^1 and kappa_h ~ (-dS/dr)^{1.0}.
+    The transition between regimes is smoothed over a narrow tanh blend width of
+    0.01 * RE_CRIT (aragog.jax.phase.compute_mlt), which is excluded from both fit ranges.
+    """
+    pytest.importorskip('jax')
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import RE_CRIT, MeshArrays, PhaseParams, PhaseProperties, compute_mlt
+
+    n_basic = 20
+    n = n_basic - 1
+    # Create simple mesh with mixing length = 1.0e5
+    r_basic = jnp.linspace(3.48e6, 6.371e6, n_basic)
+    r_stag = 0.5 * (r_basic[1:] + r_basic[:-1])
+    mesh = MeshArrays(
+        d_dr_matrix=jnp.zeros((n_basic, n)),
+        quantity_matrix=jnp.zeros((n_basic, n)),
+        area=jnp.ones(n_basic),
+        volume=jnp.ones(n_basic),
+        radii_basic=r_basic,
+        radii_stag=r_stag,
+        mixing_length=jnp.full(n_basic, 1.0e5),
+        mixing_length_sq=jnp.full(n_basic, 1.0e10),
+        mixing_length_cu=jnp.full(n_basic, 1.0e15),
+        P_stag=jnp.zeros(n),
+        P_basic=jnp.zeros(n_basic),
+        dP_dr_basic=jnp.zeros(n_basic),
+        gravity=jnp.full(n_basic, 9.81),
+    )
+
+    ones = jnp.ones(n_basic)
+    phase_base = PhaseProperties(
+        temperature=ones * 2000.0,
+        density=ones * 4000.0,
+        heat_capacity=ones * 1200.0,
+        thermal_expansivity=ones * 3e-5,
+        dTdPs=ones,
+        melt_fraction=ones * 0.0,
+        viscosity=ones * 1.0e21,
+        kinematic_viscosity=ones * 1.0e21 / 4000.0,
+        thermal_conductivity=ones * 4.0,
+        latent_heat=ones,
+        capacitance=ones * 4000.0 * 2000.0,
+        eta_diff=ones * 1.0e21,
+        tau_y=ones * 1.0e9,
+        visc_solid_weight=ones * 1.0,
+    )
+
+    node_k = 10
+    re_crit_val = float(RE_CRIT)
+
+    def _eval_re(phase_obj, ds_dr_val):
+        v_pref = float(mesh.gravity[node_k]) * (
+            float(phase_obj.thermal_expansivity[node_k])
+            * float(phase_obj.temperature[node_k])
+            * (-float(ds_dr_val))
+            / float(phase_obj.heat_capacity[node_k])
+        )
+        nu_val = float(phase_obj.viscosity[node_k] / phase_obj.density[node_k])
+        l_val = float(mesh.mixing_length[node_k])
+        v_visc = v_pref * (l_val**3) / (18.0 * nu_val)
+        return v_visc * l_val / nu_val
+
+    # Varied superadiabatic gradient
+    ds_dr_array = -jnp.logspace(-8, -2, 10)
+
+    # 1. Inviscid regime: low viscosity ensures Re >= 10 * RE_CRIT across gradient sweep
+    phase_inv = phase_base._replace(
+        viscosity=ones * 1.0e2,
+        kinematic_viscosity=ones * 1.0e2 / 4000.0,
+        eta_diff=ones * 1.0e2,
+    )
+    k_inv = []
+    for ds_dr in ds_dr_array:
+        re_pt = _eval_re(phase_inv, ds_dr)
+        assert re_pt >= 10.0 * re_crit_val, (
+            f'Sample point ds_dr={float(ds_dr):.2e} has Re={re_pt:.4e} < 10*RE_CRIT ({10.0 * re_crit_val:.4e})'
+        )
+        # Isolate MLT kernel from stagnant-lid closure (params.enabled=False)
+        k_h, _ = compute_mlt(
+            jnp.full(n_basic, ds_dr),
+            phase_inv,
+            mesh,
+            PhaseParams(enabled=False, kappah_floor=0.0),
+        )
+        k_inv.append(float(k_h[node_k]))
+
+    # In free-fall, F_conv ~ (-dS/dr)^{1.5}, so k_h ~ (-dS/dr)^{0.5}
+    beta_inv = np.polyfit(np.log10(-ds_dr_array), np.log10(k_inv), 1)[0]
+    assert beta_inv == pytest.approx(0.5, abs=0.05)
+
+    # 2. Viscous regime: high viscosity ensures Re <= 0.1 * RE_CRIT across gradient sweep
+    phase_visc = phase_base._replace(
+        viscosity=ones * 1.0e21,
+        kinematic_viscosity=ones * 1.0e21 / 4000.0,
+        eta_diff=ones * 1.0e21,
+    )
+    k_visc = []
+    for ds_dr in ds_dr_array:
+        re_pt = _eval_re(phase_visc, ds_dr)
+        assert re_pt <= 0.1 * re_crit_val, (
+            f'Sample point ds_dr={float(ds_dr):.2e} has Re={re_pt:.4e} > 0.1*RE_CRIT ({0.1 * re_crit_val:.4e})'
+        )
+        k_h, _ = compute_mlt(
+            jnp.full(n_basic, ds_dr),
+            phase_visc,
+            mesh,
+            PhaseParams(enabled=False, kappah_floor=0.0),
+        )
+        k_visc.append(float(k_h[node_k]))
+
+    # In viscous, F_conv ~ (-dS/dr)^{2}, so k_h ~ (-dS/dr)^{1.0}
+    beta_visc = np.polyfit(np.log10(-ds_dr_array), np.log10(k_visc), 1)[0]
+    assert beta_visc == pytest.approx(1.0, abs=0.05)
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.smoke
+def test_jax_stagnant_lid_closure_scaling():
+    """Verify that stagnant-lid closure modulates convection when enabled."""
     pytest.importorskip('jax')
     import jax.numpy as jnp
 
@@ -283,7 +408,6 @@ def test_jax_compute_mlt_convection_scaling():
 
     n_basic = 20
     n = n_basic - 1
-    # Create simple mesh with mixing length = 1.0e5
     r_basic = jnp.linspace(3.48e6, 6.371e6, n_basic)
     r_stag = 0.5 * (r_basic[1:] + r_basic[:-1])
     mesh = MeshArrays(
@@ -320,41 +444,19 @@ def test_jax_compute_mlt_convection_scaling():
         visc_solid_weight=ones * 1.0,
     )
 
-    # Varied superadiabatic gradient
-    ds_dr_array = -jnp.logspace(-8, -2, 10)
-
-    # First, inviscid:
-    phase_inv = phase._replace(
-        viscosity=ones * 1.0e10, kinematic_viscosity=ones * 1.0e10 / 4000.0
+    ds_dr = -1.0e-5
+    k_h_lid, _ = compute_mlt(
+        jnp.full(n_basic, ds_dr),
+        phase,
+        mesh,
+        PhaseParams(enabled=True, stress_closure_mode='lid', kappah_floor=0.0),
     )
-    k_inv = []
-    for ds_dr in ds_dr_array:
-        k_h, _ = compute_mlt(
-            jnp.full(n_basic, ds_dr),
-            phase_inv,
-            mesh,
-            PhaseParams(enabled=True, kappah_floor=0.0),
-        )
-        k_inv.append(float(k_h[10]))
-
-    # In free-fall, F_conv ~ (-dS/dr)^{1.5}, so k_h ~ (-dS/dr)^{0.5}
-    beta_inv = np.polyfit(np.log10(-ds_dr_array), np.log10(k_inv), 1)[0]
-    assert beta_inv == pytest.approx(0.5, abs=0.05)
-
-    # Now viscous:
-    phase_visc = phase._replace(
-        viscosity=ones * 1.0e21, kinematic_viscosity=ones * 1.0e21 / 4000.0
+    k_h_iso, _ = compute_mlt(
+        jnp.full(n_basic, ds_dr),
+        phase,
+        mesh,
+        PhaseParams(enabled=False, kappah_floor=0.0),
     )
-    k_visc = []
-    for ds_dr in ds_dr_array:
-        k_h, _ = compute_mlt(
-            jnp.full(n_basic, ds_dr),
-            phase_visc,
-            mesh,
-            PhaseParams(enabled=True, kappah_floor=0.0),
-        )
-        k_visc.append(float(k_h[10]))
-
-    # In viscous, F_conv ~ (-dS/dr)^{2}, so k_h ~ (-dS/dr)^{1.0}
-    beta_visc = np.polyfit(np.log10(-ds_dr_array), np.log10(k_visc), 1)[0]
-    assert beta_visc == pytest.approx(1.0, abs=0.05)
+    assert np.isfinite(float(k_h_lid[10]))
+    assert float(k_h_lid[10]) > 0.0
+    assert float(k_h_iso[10]) > 0.0
