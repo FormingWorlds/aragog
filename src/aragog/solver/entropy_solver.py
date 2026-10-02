@@ -2272,6 +2272,17 @@ class EntropySolver:
         """
         return self._dSdt_single(time, state_vec)
 
+    def _decode_core_temperature(self, val: float) -> float:
+        """Decode core temperature state slot value into physical temperature [K].
+
+        When offset representation is active during integration, ``val`` is an offset
+        Delta T_core from ``self._T_core_0``. Otherwise, ``val`` is physical T_core.
+        """
+        if getattr(self, '_t_core_offset_active', False):
+            t_core_0 = getattr(self, '_T_core_0', 0.0)
+            return float(t_core_0 + val)
+        return float(val)
+
     def _dSdt_single(
         self,
         time: npt.NDArray | float,
@@ -2322,12 +2333,7 @@ class EntropySolver:
             entropy = state_vec[:n_stag]
             extra = float(state_vec[n_stag])
             if core_mod:
-                val = float(state_vec[n_stag + 1])
-                t_core_0 = getattr(self, '_T_core_0', None)
-                if t_core_0 is not None and abs(val) < 0.5 * t_core_0:
-                    t_core = t_core_0 + val
-                else:
-                    t_core = val
+                t_core = self._decode_core_temperature(float(state_vec[n_stag + 1]))
         else:
             entropy = state_vec
             extra = None
@@ -3659,6 +3665,9 @@ class EntropySolver:
 
         if self._core_bc == 'core_module':
             self._T_core_0 = float(self._S0[n_s + 1])
+            self._t_core_offset_active = True
+        else:
+            self._t_core_offset_active = False
         S0_nd = self._S0 / _state_scale
         if self._core_bc == 'core_module':
             S0_nd[n_s + 1] = 0.0
@@ -3887,6 +3896,7 @@ class EntropySolver:
                 max_step=max_step_nd,
                 events=events,
             )
+        self._t_core_offset_active = False
 
         # ── Restore physical units ──
         sol = self._solution

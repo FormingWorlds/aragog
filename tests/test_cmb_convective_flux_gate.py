@@ -1,10 +1,11 @@
-"""Tests for CMB convective flux sign gate and core temperature offset under Ruling 35.
+"""Tests for CMB convective flux sign gate and core temperature offset under Ruling 35 and 36.
 
-Ruling 35 requires:
+Ruling 35/36 requires:
 1. Core closure converges at 65/257/1025 for case 5b (fails before fix).
 2. A convecting case bitwise unchanged in every flux column.
 3. A stable-CMB case where the CMB flux equals the conductive value (fails before fix).
 4. T_core offset test across rtol 1e-6..1e-12 yielding -3.818 mK (fails before fix).
+5. T_core offset decode with a large offset (0.6 * T_core_0) gives T_core_0 + offset.
 """
 
 from __future__ import annotations
@@ -181,7 +182,7 @@ def test_stable_cmb_boundary_convective_flux_vanishes(shared_eos):
     # Eddy diffusivity is borrowed from node 1 (which convects)
     assert solver.state.eddy_diffusivity[0] > 0.0
 
-    # Under Ruling 35, convective flux must be gated to 0 where dS/dr >= 0
+    # Convective flux must be gated to 0 where dS/dr >= 0
     assert solver.state.jconv[0] == 0.0, (
         f'jconv[0] must vanish when dSdr[0] >= 0; got {solver.state.jconv[0]:.6e}'
     )
@@ -273,3 +274,32 @@ def test_case5b_stratified_core_closure_converges(shared_eos):
     assert r_cores[2] <= 1.0e-8 or (
         r_cores[0] / r_cores[1] >= 8.0 and r_cores[1] / r_cores[2] >= 8.0
     ), f'r_core failed convergence: {r_cores}'
+
+
+def test_core_module_tcore_offset_large_offset_decode(shared_eos):
+    """Decoding a large offset (0.6 * T_core_0) must return T_core_0 + offset when active."""
+    from aragog.solver import EntropySolver
+
+    params = _build_case5b_params(rtol=1e-8, atol=1e-8, cvode_output_points=65)
+    solver = EntropySolver(params, entropy_eos=shared_eos)
+    solver.initialize()
+
+    t_core_0 = 5800.0
+    solver.set_initial_core_temperature(t_core_0)
+    solver.set_initial_dSdr_cmb(0.0)
+    solver.set_initial_entropy(np.full(solver._n_stag, 3000.0))
+
+    # Activate offset representation as during solve
+    solver._T_core_0 = t_core_0
+    solver._t_core_offset_active = True
+
+    offset = 0.6 * t_core_0
+    decoded = solver._decode_core_temperature(offset)
+    expected = t_core_0 + offset
+    assert decoded == pytest.approx(expected), (
+        f'Large offset decode failed: expected {expected}, got {decoded}'
+    )
+
+    # Inactive offset representation returns value directly
+    solver._t_core_offset_active = False
+    assert solver._decode_core_temperature(5700.0) == pytest.approx(5700.0)
