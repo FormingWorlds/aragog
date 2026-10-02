@@ -775,3 +775,39 @@ def test_config_rejects_yield_switch_width():
             Parameters.from_file(toml_path)
     finally:
         toml_path.unlink()
+
+
+def test_diagnostics_reference_viscosity_unification():
+    """Verify get_state and const_properties use phase_solid reference viscosity."""
+    from aragog.rheology import SolidRheologyParams
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_output_boundary_flux import _build_const_properties_parameters
+
+    # 1. Rheology disabled: eta_diff_b in get_state matches configured viscosity
+    p = _build_const_properties_parameters(n_nodes=40, end_time=1.0)
+    p.phase_solid.viscosity = 5.0e22
+    s = EntropySolver(p, entropy_eos=None)
+    s.initialize()
+
+    class DummySol(dict):
+        t = np.array([0.0])
+        y = np.full((39, 1), 3000.0)
+        status = 0
+        message = 'ok'
+        cvode_nst = 1
+
+    s._solution = DummySol()
+    out = s.get_state()
+    assert float(out.eta_diff_b[0]) == pytest.approx(5.0e22, rel=1e-12)
+
+    # 2. const_properties with rheology: phase_basic uses viscosity_solid
+    p2 = _build_const_properties_parameters(n_nodes=40, end_time=1.0)
+    p2.phase_solid.viscosity = 1.0e21
+    p2.phase_solid.rheology = SolidRheologyParams(
+        enabled=True, arrhenius_t_ref=1600.0, activation_energy=300e3
+    )
+    s2 = EntropySolver(p2, entropy_eos=None)
+    s2.initialize()
+    s2._solution = DummySol()
+    out2 = s2.get_state()
+    assert out2.eta_diff_b[0] > 1.0e20

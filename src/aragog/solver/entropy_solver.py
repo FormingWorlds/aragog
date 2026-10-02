@@ -4749,8 +4749,12 @@ class EntropySolver:
         ):
             eta_diff_b = np.asarray(eta_d).ravel()
         else:
-            log10_s = getattr(self.parameters.phase_solid, 'log10_visc_solid', 21.0)
-            eta_diff_b = np.full_like(r_basic, 10.0**log10_s)
+            visc_s = getattr(self.state.phase_basic, 'viscosity_solid', None)
+            if visc_s is None:
+                visc_s = _phase_prop_float(
+                    getattr(self.parameters.phase_solid, 'viscosity', 1e21), 1e21
+                )
+            eta_diff_b = np.full_like(r_basic, float(visc_s))
 
         strain_rate_b = np.asarray(
             getattr(self.state, 'strain_rate_basic', np.zeros_like(r_basic))

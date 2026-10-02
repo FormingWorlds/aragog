@@ -322,7 +322,7 @@ class EntropyPhaseEvaluator:
                 calc_eta_diff(
                     temperature=t_arr,
                     pressure=p_arr,
-                    viscosity_solid=10.0**self._const_log10visc,
+                    viscosity_solid=self._visc_solid,
                     activation_energy=self.rheology.activation_energy,
                     activation_volume=self.rheology.activation_volume,
                     activation_volume_decay_pressure=self.rheology.activation_volume_decay_pressure,
