@@ -1,4 +1,4 @@
-"""Compute freezing front trapping diagnostics for Step 5 (PROTEUS issue 519).
+"""Compute freezing front trapping diagnostics.
 
 Computes eta_diff_b, tau_s = eta_diff_b / (delta_rho * g * L_front),
 tau_s ratio, and w_rel at three points along the freezing front
@@ -25,7 +25,6 @@ def compute_front_trapping_table() -> None:
     candidates = [
         eos_dir_env,
         f'{fwl_data}/aragog/spider_eos' if fwl_data else None,
-        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
     ]
     eos_path = next((Path(p) for p in candidates if p and Path(p).exists()), None)
     if eos_path is None:

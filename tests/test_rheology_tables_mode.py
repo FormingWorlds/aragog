@@ -1,4 +1,4 @@
-"""Verification test for solid rheology in tables mode (Step 3).
+"""Verification test for solid rheology in tables mode.
 
 Verifies that EntropySolver with EOS lookup tables (const_properties=False),
 solid-state rheology enabled in 'lid' stress closure mode, runs for 1 Myr

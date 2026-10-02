@@ -1,4 +1,4 @@
-"""Verification test for stagnant lid eddy-diffusivity floor masking (Decision X).
+"""Verification test for stagnant lid eddy-diffusivity floor masking.
 
 Verifies that the PROTEUS eddy-diffusivity floor (kappah_floor * f(phi)) is masked
 inside the stagnant lid by (1 - w_lid) when solid-state rheology is enabled,
@@ -25,8 +25,6 @@ _CANDIDATES = [
     os.environ.get('ARAGOG_TEST_EOS_DIR'),
     f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
     str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-    '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos',
 ]
 EOS_DIR = next((Path(p) for p in _CANDIDATES if p and Path(p).exists()), None)
 needs_eos = pytest.mark.skipif(EOS_DIR is None, reason='SPIDER P-S tables not found')
@@ -35,7 +33,7 @@ needs_eos = pytest.mark.skipif(EOS_DIR is None, reason='SPIDER P-S tables not fo
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_kappah_floor_lid_masking():
-    """Verify kappah floor is masked in lid when rheology enabled (Decision X).
+    """Verify kappah floor is masked in lid when rheology enabled.
 
     On a conductive-lid profile with rheology enabled:
     - kappa_h < 10 * kappa at lid surface nodes.
@@ -84,7 +82,7 @@ def test_kappah_floor_lid_masking():
     state_on.phase_basic.melt_fraction = lambda: np.zeros(mesh.basic.radii.size)
     state_on.phase_staggered.melt_fraction = lambda: np.zeros(mesh.staggered.radii.size)
 
-    # Configure state with rheology OFF (Decision A opt-in parity)
+    # Configure state with rheology disabled for baseline comparison
     ev_basic_off = _build_evaluator(enabled=False)
     ev_stag_off = _build_evaluator(enabled=False)
     ev_stag_off.pressure = mesh.staggered.pressure

@@ -1,4 +1,4 @@
-"""Verification test for thermal boundary layer half-space cooling (Step 3).
+"""Verification test for thermal boundary layer half-space cooling.
 
 Verifies that pure heat conduction into a semi-infinite solid mantle matches the
 analytical error-function solution:

@@ -551,7 +551,6 @@ def main() -> None:
                 / 'data'
                 / 'spider_eos'
             ),
-            '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
         ]
         eos_dir = next((Path(p) for p in candidates if p and Path(p).is_dir()), None)
 

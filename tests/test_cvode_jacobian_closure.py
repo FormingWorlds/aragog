@@ -25,7 +25,6 @@ PINNED_EOS_DIR = _find_candidate(
     [
         os.environ.get('ARAGOG_PINNED_EOS_DIR'),
         '/tmp/aragog-test-data/spider_eos',
-        '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos',
     ]
 )
 
@@ -34,7 +33,6 @@ DOWNLOADED_EOS_DIR = _find_candidate(
         os.environ.get('ARAGOG_DOWNLOADED_EOS_DIR'),
         f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
         str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
-        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
     ]
 )
 
