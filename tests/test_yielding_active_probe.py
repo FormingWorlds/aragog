@@ -31,7 +31,6 @@ def test_yielding_active_probe(shared_eos):
     """Verify yielding active probe against recorded reference fixture."""
     config_file = 'tests/configs/yielding_active_probe.toml'
     config = Config.from_file(config_file)
-    config.solver.max_steps = 10
 
     solver = EntropySolver(config, entropy_eos=shared_eos)
     solver.initialize()
@@ -43,6 +42,9 @@ def test_yielding_active_probe(shared_eos):
     output = solver.get_state()
     S = output.S_final
     T = output.T_stag
+
+    assert output.status == 0, f'Expected status 0, got {output.status}'
+    assert output.dt_actual == 100.0, f'Expected dt 100.0, got {output.dt_actual}'
 
     # Check yielding active invariants
     phi = output.phi_basic
@@ -59,12 +61,23 @@ def test_yielding_active_probe(shared_eos):
     )
 
     with np.load(fixture_path) as ref:
+        assert 'eos_hash' in ref.files
+        assert (
+            str(ref['eos_hash'])
+            == 'e4b9b50ef5b3519761a6b0a67409918b02c611b662716cf6c97a7491c0907d41'
+        )
         np.testing.assert_array_equal(S, ref['S'])
         np.testing.assert_array_equal(T, ref['T'])
 
         out_dict = output.__dict__
         for k in ref.files:
-            if k in ['S', 'T']:
+            if k in [
+                'S',
+                'T',
+                'eos_hash',
+                'recorded_from_commit',
+                'recorded_numpy_version',
+            ]:
                 continue
             if k in out_dict:
                 np.testing.assert_array_equal(out_dict[k], ref[k], err_msg=f'Mismatch in {k}')

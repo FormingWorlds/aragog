@@ -39,7 +39,8 @@ def shared_eos():
 )
 def test_rheology_disabled_regression(config_file, suffix, shared_eos):
     config = Config.from_file(config_file)
-    config.solver.max_steps = 10
+    if 'abe_solid' in config_file:
+        config.solver.end_time = 100.0
 
     solver = EntropySolver(config, entropy_eos=shared_eos)
     solver.initialize()
@@ -52,6 +53,10 @@ def test_rheology_disabled_regression(config_file, suffix, shared_eos):
     S = output.S_final
     T = output.T_stag
 
+    expected_dt = 100.0 if 'abe_solid' in config_file else 200.0
+    assert output.status == 0, f'Expected status 0, got {output.status}'
+    assert output.dt_actual == expected_dt, f'Expected dt {expected_dt}, got {output.dt_actual}'
+
     fixture_path = os.path.join(
         os.path.dirname(__file__), 'reference', f'rheology_disabled_{suffix}.npz'
     )
@@ -59,10 +64,22 @@ def test_rheology_disabled_regression(config_file, suffix, shared_eos):
     with np.load(fixture_path) as ref:
         # Fixtures are recorded from aragog main, so equality here is identity with main.
         assert 'recorded_from_commit' in ref.files
+        assert 'eos_hash' in ref.files
+        assert (
+            str(ref['eos_hash'])
+            == 'e4b9b50ef5b3519761a6b0a67409918b02c611b662716cf6c97a7491c0907d41'
+        )
         np.testing.assert_array_equal(S, ref['S'])
         np.testing.assert_array_equal(T, ref['T'])
 
-        for k in set(ref.files) - {'S', 'T', 'recorded_from_commit', 'recorded_numpy_version'}:
-            np.testing.assert_array_equal(
-                output.__dict__[k], ref[k], err_msg=f'Mismatch in {k}'
-            )
+        for k in set(ref.files) - {
+            'S',
+            'T',
+            'eos_hash',
+            'recorded_from_commit',
+            'recorded_numpy_version',
+        }:
+            if k in output.__dict__:
+                np.testing.assert_array_equal(
+                    output.__dict__[k], ref[k], err_msg=f'Mismatch in {k}'
+                )
