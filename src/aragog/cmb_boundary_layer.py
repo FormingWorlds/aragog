@@ -6,8 +6,11 @@ Rayleigh number of the lower thermal boundary layer, ``Ra_delta = rho g alpha dT
 ``Ra = rho g alpha (T_c - T_s) D^3 / (kappa eta)``. Both use the viscosity of the
 well-mixed interior. Convective onset follows Chandrasekhar (1961, Hydrodynamic
 and Hydromagnetic Stability, Oxford: Clarendon Press) with free-free boundary conditions
-giving critical Rayleigh number ``Ra_c = 27 pi^4 / 4``. Below onset or when local buoyancy
-is insufficient, heat transport is conductive across mantle depth ``D``.
+giving critical Rayleigh number ``Ra_c = 27 pi^4 / 4``. Below onset, the boundary-layer
+law is extrapolated with ``Nu >= 1`` rather than switching to pure conduction across depth ``D``;
+at onset ``Nu(Ra_c) = (Ra_l / Ra_dc(Ra_c))^(1/3)`` (bounded by approximately 8.44 when
+``Ra_l = Ra_c``), and the absolute heat flux remains small because it scales with the small
+temperature contrast ``dT_c = T_c - T_m``.
 """
 
 from __future__ import annotations

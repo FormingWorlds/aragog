@@ -207,6 +207,55 @@ def test_flux_finite_and_continuous_at_tc_equals_ts():
     assert diffs[2] < 1e-6
 
 
+@pytest.mark.physics_invariant
+def test_nu_equals_one_exactly_at_ra_l_equals_ra_dc_of_ra_c():
+    """At Ra_l = Ra_dc(Ra_c), Nu = 1 exactly and heat flux equals pure conduction."""
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    buoyancy = rho * g * alpha / (kappa * eta)
+    ra_dc_crit = RA_CRIT_PREFACTOR * RA_C**RA_CRIT_EXPONENT
+    dT_c = ra_dc_crit / (buoyancy * depth**3)
+    T_s = MARS['T_s']
+    T_c = T_s + 0.5 * RA_C / (buoyancy * depth**3)
+    T_m = T_c - dT_c
+    q = cmb_flux(T_c, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+    q_cond = k * dT_c / depth
+    assert q == pytest.approx(q_cond, rel=1e-10)
+
+
+@pytest.mark.physics_invariant
+def test_nu_monotonic_in_ra():
+    """Nu is monotonically non-decreasing in Ra from below onset to well above onset."""
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    T_s = MARS['T_s']
+    dT_vals = np.linspace(1e-6, 1000.0, 500)
+    nus = []
+    for dt in dT_vals:
+        T_c = T_s + dt
+        q = cmb_flux(T_c, T_s, T_s, depth, rho, g, alpha, kappa, k, eta)
+        q_cond = k * dt / depth
+        nus.append(q / q_cond)
+    nus = np.array(nus)
+    diffs = np.diff(nus)
+    assert np.all(diffs >= -1e-12)
+    assert np.all(nus >= 1.0 - 1e-8)
+
+
 def test_loader_needs_quasi_steady_with_inner_bc_1_or_3():
     from aragog.parser import _BoundaryConditionsParameters
 
