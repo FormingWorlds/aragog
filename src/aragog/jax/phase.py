@@ -858,7 +858,9 @@ def compute_fluxes(
     heat_flux = heat_flux + params.conduction * (-k * (superadiabatic + dT_dr_adiabat))
 
     # Convection: F_conv = rho * T * kappa_h * (-dS/dr)
-    heat_flux = heat_flux + params.convection * (rho * T * kappa_h * (-dSdr))
+    # No convective flux where dS/dr >= 0 (stable stratification).
+    jconv = jnp.where(dSdr >= 0.0, 0.0, rho * T * kappa_h * (-dSdr))
+    heat_flux = heat_flux + params.convection * jconv
 
     # Mass flux for gravitational separation and mixing
     mass_flux = jnp.zeros_like(S_basic)

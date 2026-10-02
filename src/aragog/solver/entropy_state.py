@@ -793,6 +793,8 @@ class EntropyState:
             # F_conv = rho * T * kappa_h * (-dS/dr)
             # This is the entropy flux: positive when dS/dr < 0 (unstable)
             self._jconv = rho * T * self._eddy_diffusivity * (-self._dSdr)
+            # No convective flux where dS/dr >= 0 (stable stratification).
+            self._jconv[self._dSdr >= 0.0] = 0.0
             self._heat_flux += self._jconv
 
         if self._grav_sep:
