@@ -95,7 +95,7 @@ def test_mesh_gravity_prefers_eos_attribute_when_available():
     eos_g = 7.977
     settings_g = 1.234
     mesh = _StubMesh(configured_g=settings_g)
-    mesh.eos._gravitational_acceleration = eos_g
+    mesh.eos.gravitational_acceleration = eos_g
     mesh_jax = MeshArrays.from_numpy_mesh(mesh)
     gravity = np.asarray(mesh_jax.gravity)
     assert np.allclose(gravity, eos_g, atol=0.0, rtol=1e-12), (
@@ -143,7 +143,7 @@ def test_mesh_gravity_profile_beats_eos_scalar_attribute():
     import types
 
     mesh = _StubMesh(configured_g=9.81)
-    mesh.eos._gravitational_acceleration = 5.0  # scalar intentionally wrong
+    mesh.eos.gravitational_acceleration = 5.0  # scalar intentionally wrong
     mesh.parameters = types.SimpleNamespace()
     mesh.parameters.eos_radius = np.linspace(3.48e6, 6.37e6, 30)
     mesh.parameters.eos_gravity = np.linspace(8.0, 10.0, 30)
