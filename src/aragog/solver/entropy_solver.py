@@ -4695,7 +4695,7 @@ class EntropySolver:
             Q_tidal_total=Q_tidal_total,
             step_dE_F_int_J=step_integrals['F_int'],
             step_dE_F_cmb_J=step_integrals['F_cmb'],
-            step_dE_core_J=float(step_integrals.get('core', 0.0)),
+            step_dE_core_J=step_integrals['core'],
             step_dE_Q_radio_J=step_integrals['Q_radio'],
             step_dE_Q_tidal_J=step_integrals['Q_tidal'],
             step_dE_Q_radio_cons_J=step_integrals['Q_radio_cons'],

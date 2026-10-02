@@ -1035,3 +1035,31 @@ def test_rate_arms_the_step_caps_like_fixed_for_a_stiff_zone_beyond_the_margin(
                     100.0
                 )
                 assert (len(sol.get('segments') or []) >= 2) is (mode == 'rate')
+
+
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
+def test_rate_mode_arms_and_completes_for_core_module(shared_eos, caplog):
+    """A core_module run with phase_boundary_cap 'rate' arms the cap and completes without warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        s, _, _ = _cooling_above_liquidus(
+            shared_eos,
+            width=0.01,
+            gap=50.0,
+            end_time=10.0,
+            tol=1e-8,
+            mode='rate',
+            core_bc='core_module',
+        )
+        s.solve()
+
+    sol = s._solution
+    assert sol.status == 0
+    assert sol.t[-1] == pytest.approx(10.0)
+    assert len(getattr(sol, 'segments', [])) >= 2
+    # The two trailing slots dSdr_cmb and T_core must be preserved
+    assert sol.y.shape[0] == s._n_stag + 2
+    assert not any('dS/dt evaluation failed' in r.getMessage() for r in caplog.records)
