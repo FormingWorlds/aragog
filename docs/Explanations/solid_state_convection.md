@@ -287,7 +287,6 @@ The table below lists all configuration parameters for solid-state convection in
 | `yield_stress_c` | `float` | `50.0e6` | $\text{Pa}$ | Cohesion intercept for Byerlee plastic yield stress |
 | `yield_stress_mu` | `float` | `0.6` | dimensionless | Friction coefficient for Byerlee plastic yield stress |
 | `yield_stress_max` | `float` | `500.0e6` | $\text{Pa}$ | Maximum ceiling on Byerlee plastic yield stress |
-| `yield_switch_width` | `float` | `0.1` | dimensionless | Smoothing transition width for plastic yielding |
 | `stress_closure_mode` | `str` | `'lid'` | string | Stress closure mode (`'lid'` or `'local'`) |
 | `lid_base_mode` | `str` | `'rheological'` | string | Lid base selection mode (`'rheological'` or `'fixed'`) |
 | `lid_base_temperature` | `float` | `1400.0` | $\text{K}$ | Fixed isotherm temperature for lid base when mode is `'fixed'` |
@@ -299,4 +298,4 @@ The table below lists all configuration parameters for solid-state convection in
 | `mlt_bottom_slope` | `float` | `1.0` | dimensionless | Near-CMB slope of viscous-branch mixing length $l_v$ |
 | `max_step_const_mode` | `float` | `100.0` | $\text{yr}$ | Maximum solver time step in constant-properties mode |
 
-*Note: Plastic yielding parameters (`yield_stress_c`, `yield_stress_mu`, `yield_stress_max`, `yield_switch_width`) govern lithospheric yielding and are deferred to Step 2.*
+*Note: Plastic yielding parameters (`yield_stress_c`, `yield_stress_mu`, `yield_stress_max`) govern lithospheric yielding and are deferred to Step 2.*

@@ -225,10 +225,6 @@ class EntropyPhaseEvaluator:
         return self.rheology.yield_stress_max
 
     @property
-    def yield_switch_width(self) -> float:
-        return self.rheology.yield_switch_width
-
-    @property
     def stress_closure_mode(self) -> str:
         return self.rheology.stress_closure_mode
 

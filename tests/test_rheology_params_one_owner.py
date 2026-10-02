@@ -18,7 +18,7 @@ from aragog.rheology import SolidRheologyParams
 
 pytestmark = pytest.mark.unit
 
-EXPECTED_20_FIELDS = {
+EXPECTED_19_FIELDS = {
     'enabled',
     'activation_energy',
     'activation_volume',
@@ -29,7 +29,6 @@ EXPECTED_20_FIELDS = {
     'yield_stress_c',
     'yield_stress_mu',
     'yield_stress_max',
-    'yield_switch_width',
     'stress_closure_mode',
     'interior_flux_fraction',
     'lid_base_mode',
@@ -42,11 +41,11 @@ EXPECTED_20_FIELDS = {
 }
 
 
-def test_solid_rheology_params_has_exact_20_fields():
-    """Verify SolidRheologyParams declares exactly the expected 20 fields."""
+def test_solid_rheology_params_has_exact_19_fields():
+    """Verify SolidRheologyParams declares exactly the expected 19 fields."""
     field_names = {f.name for f in dataclasses.fields(SolidRheologyParams)}
-    assert field_names == EXPECTED_20_FIELDS
-    assert len(field_names) == 20
+    assert field_names == EXPECTED_19_FIELDS
+    assert len(field_names) == 19
 
 
 def test_phase_config_rheology_defaults_match():
@@ -61,7 +60,7 @@ def test_phase_config_rheology_defaults_match():
         viscosity=1e21,
     )
     assert p_cfg.rheology == default_rheo
-    for name in EXPECTED_20_FIELDS:
+    for name in EXPECTED_19_FIELDS:
         assert getattr(p_cfg, name) == getattr(default_rheo, name)
 
 
@@ -77,7 +76,7 @@ def test_phase_parameters_rheology_defaults_match():
         viscosity=1e21,
     )
     assert p_params.rheology == default_rheo
-    for name in EXPECTED_20_FIELDS:
+    for name in EXPECTED_19_FIELDS:
         assert getattr(p_params, name) == getattr(default_rheo, name)
 
 
@@ -86,7 +85,7 @@ def test_phase_params_jax_rheology_defaults_match():
     default_rheo = SolidRheologyParams()
     jax_params = PhaseParams()
     assert jax_params.rheology == default_rheo
-    for name in EXPECTED_20_FIELDS:
+    for name in EXPECTED_19_FIELDS:
         assert getattr(jax_params, name) == getattr(default_rheo, name)
 
 
@@ -102,7 +101,7 @@ def test_mixed_phase_classes_have_no_rheology_fields():
         phase_transition_width=0.01,
         grain_size=1e-3,
     )
-    for name in EXPECTED_20_FIELDS:
+    for name in EXPECTED_19_FIELDS:
         assert not hasattr(mixed_cfg, name)
 
     mixed_params = _PhaseMixedParameters(
@@ -115,7 +114,7 @@ def test_mixed_phase_classes_have_no_rheology_fields():
         phase_transition_width=0.01,
         grain_size=1e-3,
     )
-    for name in EXPECTED_20_FIELDS:
+    for name in EXPECTED_19_FIELDS:
         assert not hasattr(mixed_params, name)
 
 

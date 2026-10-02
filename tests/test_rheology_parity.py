@@ -226,7 +226,6 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         v_i=state_np['v_i'],
         delta_rh=state_np['delta_rh'],
         eta_i=state_np['eta_i'],
-        yield_switch_width=params.yield_switch_width,
         stress_closure_mode='lid',
         w_lid=state_np['w_lid'],
         xp=np,
@@ -239,7 +238,6 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         v_i=state_jx['v_i'],
         delta_rh=state_jx['delta_rh'],
         eta_i=state_jx['eta_i'],
-        yield_switch_width=params.yield_switch_width,
         stress_closure_mode='lid',
         w_lid=state_jx['w_lid'],
     )
@@ -297,7 +295,6 @@ def test_jax_jacrev_closure_differentiability():
             v_i=lid_st['v_i'],
             delta_rh=lid_st['delta_rh'],
             eta_i=lid_st['eta_i'],
-            yield_switch_width=params.yield_switch_width,
             stress_closure_mode='lid',
             w_lid=lid_st['w_lid'],
         )

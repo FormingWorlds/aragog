@@ -122,7 +122,6 @@ class PhaseParams(eqx.Module):
     yield_stress_c: float
     yield_stress_mu: float
     yield_stress_max: float
-    yield_switch_width: float
     interior_flux_fraction: float
     lid_base_temperature: float
     lid_contrast_coeff: float
@@ -201,7 +200,6 @@ class PhaseParams(eqx.Module):
         yield_stress_c: Any = _UNSET,
         yield_stress_mu: Any = _UNSET,
         yield_stress_max: Any = _UNSET,
-        yield_switch_width: Any = _UNSET,
         stress_closure_mode: Any = _UNSET,
         interior_flux_fraction: Any = _UNSET,
         lid_base_mode: Any = _UNSET,
@@ -225,7 +223,6 @@ class PhaseParams(eqx.Module):
             'yield_stress_c': yield_stress_c,
             'yield_stress_mu': yield_stress_mu,
             'yield_stress_max': yield_stress_max,
-            'yield_switch_width': yield_switch_width,
             'stress_closure_mode': stress_closure_mode,
             'interior_flux_fraction': interior_flux_fraction,
             'lid_base_mode': lid_base_mode,
@@ -262,7 +259,6 @@ class PhaseParams(eqx.Module):
         self.yield_stress_c = float(rheo_obj.yield_stress_c)
         self.yield_stress_mu = float(rheo_obj.yield_stress_mu)
         self.yield_stress_max = float(rheo_obj.yield_stress_max)
-        self.yield_switch_width = float(rheo_obj.yield_switch_width)
         self.stress_closure_mode = str(rheo_obj.stress_closure_mode)
         self.interior_flux_fraction = float(rheo_obj.interior_flux_fraction)
         self.lid_base_mode = str(rheo_obj.lid_base_mode)
@@ -325,7 +321,6 @@ class PhaseParams(eqx.Module):
             yield_stress_c=self.yield_stress_c,
             yield_stress_mu=self.yield_stress_mu,
             yield_stress_max=self.yield_stress_max,
-            yield_switch_width=self.yield_switch_width,
             stress_closure_mode=self.stress_closure_mode,
             interior_flux_fraction=self.interior_flux_fraction,
             lid_base_mode=self.lid_base_mode,
@@ -925,7 +920,6 @@ def compute_mlt(
                 v_i=lid_state['v_i'],
                 delta_rh=lid_state['delta_rh'],
                 eta_i=lid_state['eta_i'],
-                yield_switch_width=params.yield_switch_width,
                 stress_closure_mode='lid',
                 w_lid=w_lid,
             )

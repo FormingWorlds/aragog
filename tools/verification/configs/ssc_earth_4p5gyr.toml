@@ -68,7 +68,6 @@ water_prefactor = 1.0
 yield_stress_c = 50e6
 yield_stress_mu = 0.6
 yield_stress_max = 500e6
-yield_switch_width = 0.1
 stress_closure_mode = "lid"
 interior_flux_fraction = 0.05
 lid_base_mode = "rheological"

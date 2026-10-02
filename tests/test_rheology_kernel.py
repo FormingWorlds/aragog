@@ -114,7 +114,6 @@ def test_limit_extreme_yielding():
         v_i=v_i,
         delta_rh=delta_rh,
         eta_i=eta_i,
-        yield_switch_width=0.05,
         stress_closure_mode='lid',
     )
     expected_yielded = min((tau_y_lid * delta_rh) / v_i, eta_diff)
@@ -124,61 +123,91 @@ def test_limit_extreme_yielding():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_exact_yield_match():
-    """Verify log-tanh blend midpoint at exact yield when tau_d = tau_y_lid."""
-    eta_diff = 1.0e24
-    tau_y_lid = 20.0e6
-    v_i = 1.0e-9
-    delta_rh = 1.0e4
-    eta_i = (tau_y_lid * delta_rh) / v_i  # 2.0e20 Pa s
-    tau_d = tau_y_lid
+    """Verify harmonic mean yields eta_d / 2 when eta_y = eta_d.
 
-    eta_eff = compute_effective_viscosity(
+    References
+    ----------
+    Tackley (2000), doi:10.1029/2000GC000036
+    Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
+    Foley & Bercovici (2014), sec. 8.2, p. 600, doi:10.1093/gji/ggu316
+    """
+    eta_diff = 1.0e22
+    tau_y = 1.0e8
+
+    # Local mode: strain_rate chosen so eta_y = tau_y / (2 * strain_rate) == eta_diff
+    strain_rate_match = tau_y / (2.0 * eta_diff)
+    eta_eff_local = compute_effective_viscosity(
         eta_diff=eta_diff,
-        tau_d=tau_d,
-        tau_y_lid=tau_y_lid,
-        v_i=v_i,
+        tau_y=tau_y,
+        strain_rate=strain_rate_match,
+        stress_closure_mode='local',
+    )
+    assert eta_eff_local == pytest.approx(eta_diff / 2.0, rel=1.0e-12)
+
+    # Stagnant lid mode: v_i chosen so eta_y = (tau_y_lid * delta_rh) / v_i == eta_diff
+    delta_rh = 1.0e4
+    v_i_match = (tau_y * delta_rh) / eta_diff
+    eta_eff_lid = compute_effective_viscosity(
+        eta_diff=eta_diff,
+        tau_d=tau_y,
+        tau_y_lid=tau_y,
+        v_i=v_i_match,
         delta_rh=delta_rh,
-        eta_i=eta_i,
-        yield_switch_width=0.1,
         stress_closure_mode='lid',
     )
-    expected_midpoint = np.sqrt(eta_diff * eta_i)
-    assert eta_eff == pytest.approx(expected_midpoint, rel=1.0e-6)
+    assert eta_eff_lid == pytest.approx(eta_diff / 2.0, rel=1.0e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_harmonic_mean_asymptotic_limits():
+    """Verify harmonic mean limits eta_y >> eta_d gives eta_d and eta_y << eta_d gives eta_y within 1%."""
+    eta_d = 1.0e22
+    tau_y = 1.0e8
+
+    # Limit 1: eta_y >> eta_d (low strain rate)
+    sr_low = 1.0e-18
+    eta_y_high = tau_y / (2.0 * sr_low)  # 5e25
+    assert eta_y_high > 100.0 * eta_d
+    eta_eff_high = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_y=tau_y,
+        strain_rate=sr_low,
+    )
+    assert eta_eff_high == pytest.approx(eta_d, rel=0.01)
+
+    # Limit 2: eta_y << eta_d (high strain rate)
+    sr_high = 5.0e-11
+    eta_y_low = tau_y / (2.0 * sr_high)  # 1e18
+    eta_eff_low = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_y=tau_y,
+        strain_rate=sr_high,
+    )
+    assert eta_eff_low == pytest.approx(eta_y_low, rel=0.01)
 
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_monotonicity_and_continuity_across_yield():
     """Verify effective viscosity is monotonic non-increasing and continuous."""
-    n_pts = 10000
-    tau_y_lid = 50.0e6
-    v_i = 1.0e-9
-    delta_rh = 2.0e4
-    eta_i = 1.0e21
+    n_pts = 1000
+    tau_y = 50.0e6
     eta_diff = 1.0e25
 
-    stress_ratios = np.linspace(0.0, 10.0, n_pts)
-    tau_d_values = stress_ratios * tau_y_lid
-
+    strain_rates = np.logspace(-18.0, -10.0, n_pts)
     eta_eff_vals = compute_effective_viscosity(
         eta_diff=eta_diff,
-        tau_d=tau_d_values,
-        tau_y_lid=tau_y_lid,
-        v_i=v_i,
-        delta_rh=delta_rh,
-        eta_i=eta_i,
-        yield_switch_width=0.1,
-        stress_closure_mode='lid',
+        tau_y=tau_y,
+        strain_rate=strain_rates,
         xp=np,
     )
 
     diffs = np.diff(eta_eff_vals)
-    assert np.all(diffs <= 1.0e-12 * eta_eff_vals[:-1]), (
-        'Effective viscosity must not increase with stress'
-    )
+    assert np.all(diffs <= 0.0), 'Effective viscosity must not increase with strain rate'
 
     log_diffs = np.abs(np.diff(np.log10(eta_eff_vals)))
-    assert np.all(log_diffs < 0.5), 'Effective viscosity in log-space must be continuous'
+    assert np.all(log_diffs < 0.1), 'Effective viscosity in log-space must be continuous'
 
 
 @pytest.mark.unit

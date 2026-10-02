@@ -777,7 +777,6 @@ class EntropyState:
                     v_i=lid_state['v_i'],
                     delta_rh=lid_state['delta_rh'],
                     eta_i=lid_state['eta_i'],
-                    yield_switch_width=rheo.yield_switch_width,
                     stress_closure_mode='lid',
                     w_lid=w_lid,
                     xp=np,
