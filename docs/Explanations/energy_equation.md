@@ -88,7 +88,21 @@ with $S_\mathrm{ref} = 2993.025\ \mathrm{J\,kg^{-1}\,K^{-1}}$ and $t_\mathrm{ref
 
 ### Phase-aware step-size control
 
-Whenever any cell sits within $200\ \mathrm{J\,kg^{-1}\,K^{-1}}$ of a phase boundary, or inside the mushy band, `max_step` is reduced to one year. Once the mantle is fully solid (mean $\phi < 0.01$), the absolute tolerance is relaxed by a factor of ten so the integrator does not stall on a stiff but unimportant residual. These controls activate automatically; they are not user-configurable.
+Whenever any cell sits within `phase_boundary_entropy_margin` (default $200\ \mathrm{J\,kg^{-1}\,K^{-1}}$) of a phase boundary, or inside the mushy band, step-size tightening activates; a `rate` call on CVODE also activates it within the stiff-zone half-width $\delta$ defined below. The step cap is configured via `phase_boundary_cap`:
+
+- `fixed`: `max_step` is reduced to one year.
+- `rate` (default, also when the key is unset): the call is integrated as event-driven CVODE segments. At the start of each segment, `max_step` is set to $0.1 \min_i t_{c,i}$, clipped to $[1, 100]\ \mathrm{yr}$, where $t_{c,i} = d_i / r_{\mathrm{used},i}$ with rate $r_{\mathrm{used},i} = \max(|\dot{S}_i|, r_{\mathrm{floor}})$ and mass-weighted rate floor $r_{\mathrm{floor}}$. For cells outside the stiff zone, $d_i$ is the distance to the boundary ahead; for cells inside the stiff zone ($\delta = \max(3w \max_j(S_{\mathrm{liq},j}-S_{\mathrm{sol},j}), 10\ \mathrm{J\,kg^{-1}\,K^{-1}})$, with $w = \mathtt{matprop\_smooth\_width}$) or moving slower than the rate floor, $d_i$ is the distance to the nearer boundary on either side. A root function ends a segment when an entry that started the segment outside the stiff zone enters it, when all entries have left it (hysteresis $2\delta$), or when an entry has moved half its start distance to the nearer boundary, and at least $\delta/2$; the per-call step caps end the call. The segments of a `rate` call on CVODE arm when a cell is within the larger of `phase_boundary_entropy_margin` and $\delta$; the per-call step caps, `fixed`, the gradient core and the scipy integrators use `phase_boundary_entropy_margin` only. The table below compares `rate` and `fixed` against `fixed` at $10^{-10}$; `tools/verification/run_phase_boundary_cap_accuracy.py` defines the cases in full and computes the numbers in the table. At `rtol` $= 10^{-8}$, the default, `rate` is within $1.3 \times 10^{-4}$ K of that reference in every case; above $10^{-7}$ the solver logs one warning. `rate` needs CVODE; the scipy integrators use 1 yr.
+
+| Case (test EOS, 24 nodes unless noted) | Call | CVODE steps, `fixed` / `rate` at $10^{-8}$ | max $\lvert\Delta T\rvert$, `fixed` $10^{-8}$ | `rate` $10^{-8}$ | `rate` $10^{-10}$ |
+|---|---|---|---|---|---|
+| `quasi_steady`, mushy start, $F = 10^4$ W m$^{-2}$, $w = 0.01$ | 1000 yr | 1260 / 308 | $1.2 \times 10^{-7}$ K | $6.9 \times 10^{-6}$ K | 0 |
+| `quasi_steady`, 230 J kg$^{-1}$ K$^{-1}$ above the liquidus, $F = 10^5$ W m$^{-2}$, $w = 0.01$ | $10^4$ yr | 2040 / 4238 | $1.9 \times 10^{-4}$ K | $1.3 \times 10^{-4}$ K | $2.7 \times 10^{-6}$ K |
+| `quasi_steady`, mushy start, $F = 10^4$ W m$^{-2}$, $w = 0$ | 2000 yr | 2948 / 115 | $1.0 \times 10^{-7}$ K | $1.0 \times 10^{-5}$ K | 0 |
+| `energy_balance`, mushy start, $F = 10^4$ W m$^{-2}$, $w = 0.01$, 16 nodes | 3000 yr | 3048 / 83 | $2.5 \times 10^{-8}$ K | $2.8 \times 10^{-5}$ K | $1.6 \times 10^{-7}$ K |
+
+$\Delta T$ is the largest cell difference at the call end against `fixed` at $10^{-10}$; $F$ is the prescribed surface flux. In the second case `fixed` does not arm (the cells start beyond the 200 J kg$^{-1}$ K$^{-1}$ margin) and takes fewer steps.
+
+The gradient core and the scipy integrators use 1 yr in both modes; `rate` then logs one line per solver, at INFO when it is the default and at WARNING when it is set. Once the mantle is fully solid (mean $\phi < 0.01$), the absolute tolerance is relaxed by a factor of ten so the integrator does not stall on a stiff residual.
 
 ### Retry ladder hooks
 

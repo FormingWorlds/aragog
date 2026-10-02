@@ -46,6 +46,25 @@ class EOS(ABC):
         basic_radii: npt.NDArray,
     ) -> None: ...
 
+    @abstractmethod
+    def get_mass_within_radii(self, radii: FloatOrArray) -> npt.NDArray:
+        """Cumulative mass [kg] inside ``radii`` from a class-specific zero point.
+
+        The result has the same shape as ``radii``.
+        """
+
+    def set_staggered_effective_density(self, basic_radii: npt.NDArray) -> None:
+        """Set each cell's effective density to its mass over its volume.
+
+        Parameters
+        ----------
+        basic_radii : npt.NDArray
+            Basic-node radii [m], shape (n, 1), the faces of the cells.
+        """
+        mass = np.diff(self.get_mass_within_radii(basic_radii), axis=0)
+        volume = 4.0 / 3.0 * np.pi * np.diff(np.power(basic_radii, 3.0), axis=0)
+        self._staggered_effective_density = mass / volume
+
 
 class AdamsWilliamsonEOS(EOS):
     r"""Adams-Williamson equation of state (EOS).
