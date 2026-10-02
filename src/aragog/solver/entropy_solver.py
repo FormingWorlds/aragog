@@ -1358,7 +1358,13 @@ class EntropySolver:
             ss[nb] = S_ref
         else:
             for i, slot in enumerate(EXTRA_STATE_SLOTS.get(self._core_bc, ())):
-                ss[n_s + i] = dSdr_ref if slot == 'dSdr_cmb' else self._T_ref
+                if slot == 'dSdr_cmb':
+                    scale = dSdr_ref
+                elif slot == 'T_core' and self._core_bc == 'core_module':
+                    scale = 1.0  # Offset state Delta T_core scale [K]
+                else:
+                    scale = self._T_ref
+                ss[n_s + i] = scale
         return NonDimScales(state_scale=ss, t_ref=float(t_ref))
 
     @classmethod
@@ -2316,7 +2322,12 @@ class EntropySolver:
             entropy = state_vec[:n_stag]
             extra = float(state_vec[n_stag])
             if core_mod:
-                t_core = float(state_vec[n_stag + 1])
+                val = float(state_vec[n_stag + 1])
+                t_core_0 = getattr(self, '_T_core_0', None)
+                if t_core_0 is not None and abs(val) < 0.5 * t_core_0:
+                    t_core = t_core_0 + val
+                else:
+                    t_core = val
         else:
             entropy = state_vec
             extra = None
@@ -3646,7 +3657,11 @@ class EntropySolver:
         _state_scale = scales.state_scale
         _rhs_scale = scales.rhs_scale
 
+        if self._core_bc == 'core_module':
+            self._T_core_0 = float(self._S0[n_s + 1])
         S0_nd = self._S0 / _state_scale
+        if self._core_bc == 'core_module':
+            S0_nd[n_s + 1] = 0.0
         start_nd = start_time / t_ref
         end_nd = end_time / t_ref
         max_step_nd = max_step / t_ref if np.isfinite(max_step) else max_step
@@ -3886,6 +3901,18 @@ class EntropySolver:
         trace = sol.get('energy_trace')
         if trace is not None:
             sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale)
+
+        if self._core_bc == 'core_module' and getattr(self, '_T_core_0', None) is not None:
+            slot = n_s + 1
+            if sol.y is not None:
+                if sol.y.ndim == 2:
+                    sol.y[slot, :] += self._T_core_0
+                else:
+                    sol.y[slot] += self._T_core_0
+            trace = sol.get('energy_trace')
+            if trace is not None:
+                t_tr, y_tr = trace
+                y_tr[slot, :] += self._T_core_0
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
         # above) and naming whichever margin actually bound: read from

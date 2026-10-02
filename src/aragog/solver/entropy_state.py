@@ -791,8 +791,10 @@ class EntropyState:
 
         if self._convection:
             # F_conv = rho * T * kappa_h * (-dS/dr)
-            # This is the entropy flux: positive when dS/dr < 0 (unstable)
+            # This is the entropy flux: positive when dS/dr < 0 (unstable).
+            # Gate convective flux where dS/dr >= 0 (SPIDER fc08d72c energy.c:219-235).
             self._jconv = rho * T * self._eddy_diffusivity * (-self._dSdr)
+            self._jconv[self._dSdr >= 0.0] = 0.0
             self._heat_flux += self._jconv
 
         if self._grav_sep:

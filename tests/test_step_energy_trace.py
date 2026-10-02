@@ -406,6 +406,7 @@ _FIELDS = {
     'Q_tidal_cons': 'step_dE_Q_tidal_cons_J',
     'solver_residual': 'step_solver_residual_J',
     'state_heat': 'step_dE_state_heat_J',
+    'core': 'step_dE_core_J',
 }
 
 
@@ -438,7 +439,7 @@ def test_a_failed_solve_reports_zero_integrals(monkeypatch):
     s.solve()
     out = s.get_state()
     assert s.stop_early and not calls
-    assert [getattr(out, f) for k, f in _FIELDS.items() if k != 'F_cmb_step_avg'] == [0.0] * 8
+    assert [getattr(out, f) for k, f in _FIELDS.items() if k != 'F_cmb_step_avg'] == [0.0] * 9
 
 
 @pytest.mark.unit
