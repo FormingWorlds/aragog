@@ -189,6 +189,11 @@ class EntropyPhaseEvaluator:
         return self._const_log10visc
 
     @property
+    def viscosity_solid(self) -> float:
+        """Reference solid-state dynamic viscosity [Pa s]."""
+        return self._visc_solid
+
+    @property
     def phi_rheo(self) -> float:
         """Rheological transition melt fraction."""
         return self._phi_rheo

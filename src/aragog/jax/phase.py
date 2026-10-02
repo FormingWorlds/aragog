@@ -917,6 +917,7 @@ def compute_mlt(
                 melt_fraction=phase_basic.melt_fraction,
                 params=params,
                 unyielded_velocity=visc_v_unyielded,
+                viscosity_solid=params.viscosity_solid,
             )
             w_lid = lid_state['w_lid']
             eta_effective = compute_effective_viscosity(

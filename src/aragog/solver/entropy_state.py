@@ -743,7 +743,9 @@ class EntropyState:
                 )
 
                 P_basic = np.asarray(self.phase_basic.pressure).ravel()
-                visc_solid = 10.0 ** getattr(self.phase_basic, 'const_log10visc', 21.0)
+                visc_solid = getattr(self.phase_basic, 'viscosity_solid', None)
+                if visc_solid is None:
+                    visc_solid = getattr(rheo, 'viscosity_solid', 1.0e21)
                 lid_state = compute_stagnant_lid_state(
                     radii=r_basic,
                     temperature=T,
