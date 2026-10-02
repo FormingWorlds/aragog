@@ -118,6 +118,7 @@ class BoundaryParams(eqx.Module):
     Surface BC types:
         1 = grey-body (F = emissivity * sigma * (T^4 - T_eq^4))
         4 = prescribed flux (from atmosphere module)
+        5 = prescribed temperature (conductive flux across top half cell)
         6 = grey body with a conductive skin across the top half cell
             (``aragog.surface_skin``); always with the table-edge cutoff
 
@@ -203,6 +204,10 @@ class BoundaryParams(eqx.Module):
         cmb_flux_law=False,
         cmb_law_interior=0.0,
     ):
+        if outer_bc_type not in (1, 4, 5, 6):
+            raise ValueError(
+                f'Unsupported outer_bc_type: {outer_bc_type}; expected 1, 4, 5, or 6'
+            )
         self.outer_bc_type = outer_bc_type
         self.outer_bc_value = jnp.asarray(outer_bc_value, dtype=jnp.float64)
         self.emissivity = jnp.asarray(emissivity, dtype=jnp.float64)
@@ -289,9 +294,8 @@ def _apply_surface_bc(
 ) -> jax.Array:
     """Apply the surface boundary condition to the heat flux array.
 
-    ``phase_stag``, ``S_top`` and ``mesh`` are required for type 6 and for
-    the table-edge cutoff: the top staggered cell's temperature,
-    conductivity and melt fraction, its entropy, and the half spacing.
+    ``phase_stag`` and ``mesh`` are required for types 5 and 6, and ``S_top``
+    is required for type 6 and for the table-edge cutoff.
     """
     T_interior = phase_basic_T[-1]
 
@@ -313,15 +317,26 @@ def _apply_surface_bc(
     # Select based on BC type (static, so this traces correctly)
     if bc.outer_bc_type == 1:
         F_surf = F_grey
+    elif bc.outer_bc_type == 5:
+        if mesh is None or phase_stag is None:
+            raise ValueError('phase_stag and mesh are required for outer_bc_type == 5')
+        surf_dr_half = mesh.radii_basic[-1] - mesh.radii_stag[-1]
+        T_cell = phase_stag.temperature[-1]
+        k_surf = phase_stag.thermal_conductivity[-1]
+        F_surf = k_surf * (T_cell - bc.outer_bc_value) / surf_dr_half
     elif bc.outer_bc_type == 6:
+        if mesh is None or phase_stag is None:
+            raise ValueError('phase_stag and mesh are required for outer_bc_type == 6')
         dr_half = 0.5 * (mesh.radii_basic[-1] - mesh.radii_basic[-2])
         T_top = phase_stag.temperature[-1]
         G = phase_stag.thermal_conductivity[-1] / dr_half
         s = solid_weight(phase_stag.melt_fraction[-1], bc.phi_rheo, xp=jnp)
         T_s = _skin_temperature_jax(T_top, G, bc.emissivity, bc.T_eq)
         F_surf = (1.0 - s) * F_grey + s * G * (T_top - T_s)
-    else:  # type 4 (prescribed)
+    elif bc.outer_bc_type == 4:
         F_surf = F_prescribed
+    else:
+        raise ValueError(f'Unsupported outer_bc_type: {bc.outer_bc_type}')
 
     if bc.table_edge_cutoff:
         factor = table_edge_factor(S_top, bc.S_table_edge, xp=jnp)
