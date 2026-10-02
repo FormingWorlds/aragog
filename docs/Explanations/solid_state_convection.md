@@ -14,7 +14,7 @@ $$
 
 where:
 
-- $\eta_\text{solid}$ is the reference solid viscosity at temperature $T_\text{ref} = 1600\text{ K}$ and zero pressure (`viscosity_solid`, default $10^{21}\text{ Pa s}$; source: `src/aragog/parser.py:_PhaseParameters`).
+- $\eta_\text{solid}$ is the reference solid viscosity at temperature $T_\text{ref} = 1600\text{ K}$ and zero pressure (`viscosity` in `[phase_solid]`, default $10^{21}\text{ Pa s}$; source: `src/aragog/parser.py:_PhaseParameters`).
 - $f_\text{water}$ is the hydration weakening prefactor (`water_prefactor`, default $1.0$; source: `src/aragog/rheology.py:compute_diffusion_creep_viscosity`).
 - $R = 8.314462618\text{ J mol}^{-1}\text{ K}^{-1}$ is the universal gas constant (source: `scipy.constants.R`).
 - $H(P)$ is the activation enthalpy.
@@ -196,7 +196,7 @@ This cutoff holds the top cell on the valid equation-of-state domain while maint
 
 At the core-mantle boundary, Aragog couples mantle heat loss to core energetics:
 
-- Inner BC 1 (`quasi_steady`): Solves core thermal evolution with single-cell heating partitioning. In this boundary condition, bottom-cell radiogenic heating is accounted for once in the boundary layer flux without spurious double-counting (source: `src/aragog/solver/entropy_solver.py:2326-2360`).
+- Inner BC 1 (`quasi_steady`): Solves core thermal evolution with single-cell heating partitioning. In this boundary condition, bottom-cell radiogenic heating is accounted for once in the boundary layer flux without spurious double-counting (source: `src/aragog/solver/entropy_solver.py:_step_dE_components`).
 - Inner BC 3 (Fixed CMB temperature): Implements conductive heat transfer through the inner half-cell from a specified CMB temperature $T_\text{cmb}$:
   $$
   F_\text{cmb} = \frac{k_\text{bot}}{\Delta r_\text{half,bot}} (T_\text{cell,0} - T_\text{cmb})
@@ -219,9 +219,9 @@ The table below describes solid-state convection diagnostics recorded in NetCDF 
 | `lid_thickness` | m | Physical thickness of the stagnant lid $d_\text{lid}$ | `src/aragog/rheology_lid.py` |
 | `lid_base_temperature` | K | Temperature $T_\text{lid}$ at the base of the lid | `src/aragog/rheology_lid.py` |
 | `interior_temperature` | K | Representative convective interior temperature $T_m$ or $T_i$ | `src/aragog/rheology_lid.py` |
+| `lid_stress` | Pa | Convective driving shear stress $\tau_d$ | `src/aragog/rheology_lid.py` |
 | `theta` | - | Frank-Kamenetskii contrast parameter $\theta$ | `src/aragog/rheology.py` |
-| `eta_contrast` | - | True Arrhenius viscosity contrast $\eta(T_\text{surf}) / \eta(T_i)$ | `src/aragog/rheology.py` |
-| `lid_cell_count` | - | Integer count of discrete radial cells within the lid | `src/aragog/output/netcdf.py` |
+| `lid_regime` | - | Lid regime indicator (0 none, 1 stagnant, 2 mobile) | `src/aragog/rheology_lid.py` |
 | `energy_residual` | W | Global discrete energy conservation residual | `src/aragog/solver/entropy_solver.py` |
 
 ---
@@ -284,12 +284,19 @@ The table below lists all configuration parameters for solid-state convection in
 | `arrhenius_t_ref` | `float` | `1600.0` | $\text{K}$ | Reference temperature $T_\text{ref}$ for diffusion creep |
 | `viscosity_max_log10` | `float` | `40.0` | $\log_{10}(\text{Pa s})$ | Numerical ceiling on solid mantle viscosity |
 | `water_prefactor` | `float` | `1.0` | dimensionless | Hydration weakening multiplier $f_\text{water}$ |
-| `lid_base_mode` | `str` | `'fixed'` | string | Lid base selection mode (`'fixed'` or `'rheological'`) |
+| `yield_stress_c` | `float` | `50.0e6` | $\text{Pa}$ | Cohesion intercept for Byerlee plastic yield stress |
+| `yield_stress_mu` | `float` | `0.6` | dimensionless | Friction coefficient for Byerlee plastic yield stress |
+| `yield_stress_max` | `float` | `500.0e6` | $\text{Pa}$ | Maximum ceiling on Byerlee plastic yield stress |
+| `yield_switch_width` | `float` | `0.1` | dimensionless | Smoothing transition width for plastic yielding |
+| `stress_closure_mode` | `str` | `'lid'` | string | Stress closure mode (`'lid'` or `'local'`) |
+| `lid_base_mode` | `str` | `'rheological'` | string | Lid base selection mode (`'rheological'` or `'fixed'`) |
 | `lid_base_temperature` | `float` | `1400.0` | $\text{K}$ | Fixed isotherm temperature for lid base when mode is `'fixed'` |
 | `lid_contrast_coeff` | `float` | `2.2` | dimensionless | Rheological contrast coefficient $a_\text{rh}$ for lid base |
 | `lid_mask_width_cells` | `float` | `1.0` | cells | Smoothing width for hyperbolic tangent lid mask |
 | `interior_flux_fraction` | `float` | `0.05` | dimensionless | Threshold convective flux fraction defining interior boundary |
 | `phi_visc_single` | `float` | `0.5` | dimensionless | Single-phase cutoff melt fraction in mushy viscosity blending |
+| `mlt_top_slope` | `float` | `0.22` | dimensionless | Near-surface slope of viscous-branch mixing length $l_v$ |
+| `mlt_bottom_slope` | `float` | `1.0` | dimensionless | Near-CMB slope of viscous-branch mixing length $l_v$ |
 | `max_step_const_mode` | `float` | `100.0` | $\text{yr}$ | Maximum solver time step in constant-properties mode |
 
 *Note: Plastic yielding parameters (`yield_stress_c`, `yield_stress_mu`, `yield_stress_max`, `yield_switch_width`) govern lithospheric yielding and are deferred to Step 2.*
