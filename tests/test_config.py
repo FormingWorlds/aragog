@@ -685,9 +685,7 @@ def test_config_from_dict_strict_rejects_scalings_key(key):
 
 
 def test_solver_config_required_fields_and_defaults():
-    """The 4 tolerance/time fields are required; ``tsurf_poststep_change``
-    defaults to 30 K.
-    """
+    """``tsurf_poststep_change`` defaults to 30 K."""
     s = SolverConfig(
         start_time=0.0,
         end_time=1.0e6,
@@ -697,10 +695,10 @@ def test_solver_config_required_fields_and_defaults():
     assert s.tsurf_poststep_change == pytest.approx(30.0, abs=1e-12)
 
 
-def test_solver_config_rejects_missing_tolerances():
-    """Edge case: omitting atol or rtol raises TypeError at construct."""
-    with pytest.raises(TypeError):
-        SolverConfig(start_time=0.0, end_time=1.0e6, rtol=1.0e-6)
+def test_solver_config_defaults_a_missing_tolerance_to_1e_8():
+    """An omitted atol takes the 1e-8 default; the rtol given is kept."""
+    s = SolverConfig(start_time=0.0, end_time=1.0e6, rtol=1.0e-6)
+    assert (s.atol, s.rtol) == (1.0e-8, 1.0e-6)
 
 
 def test_solver_config_cvode_output_points_default():

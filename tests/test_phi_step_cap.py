@@ -482,10 +482,10 @@ def test_source_anchors_cap_to_phi_global_at_start():
 
 
 def test_source_wires_rootfn_into_cvode_options():
-    """``_solve_cvode`` must register the rootfn with nr_rootfns=1."""
+    """``_solve_cvode`` must register the rootfn with its component count (1 for the step cap)."""
     src = (REPO_ROOT / 'solver' / 'entropy_solver.py').read_text()
     assert "cvode_options['rootfn']" in src
-    assert "cvode_options['nr_rootfns'] = 1" in src
+    assert "cvode_options['nr_rootfns'] = int(getattr(phi_cap_rootfn, 'n_roots', 1))" in src
     # The cap must be gated; the rootfn is only installed when armed.
     m = re.search(
         r"if phi_cap_rootfn is not None:\s*\n\s*cvode_options\['rootfn'\]",
