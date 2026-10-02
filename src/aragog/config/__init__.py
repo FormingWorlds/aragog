@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -87,15 +88,13 @@ class Config:
         Parameters
             Legacy Parameters object, ready for Solver.
         """
-        from pathlib import Path
-
         with Path(filename).open('rb') as f:
             data = tomllib.load(f)
 
-        return Config.from_dict(data)
+        return Config.from_dict(data, config_dir=Path(filename).resolve().parent)
 
     @staticmethod
-    def from_dict(data: dict[str, Any]) -> 'Parameters':
+    def from_dict(data: dict[str, Any], config_dir=None) -> 'Parameters':
         """Construct a Parameters object from a nested dictionary.
 
         This is the primary construction path used by the PROTEUS wrapper.
@@ -104,6 +103,10 @@ class Config:
         ----------
         data : dict
             Nested dictionary with section names as keys.
+        config_dir : path-like, optional
+            Directory of the file ``data`` came from. Relative ``eos_file``
+            and ``init_file`` resolve against it first, then the working
+            directory.
 
         Returns
         -------
@@ -119,6 +122,7 @@ class Config:
             _PhaseMixedParameters,
             _PhaseParameters,
             _Radionuclide,
+            _resolve_data_paths,
             _SolverParameters,
         )
 
@@ -148,6 +152,8 @@ class Config:
             if key.startswith('radionuclide_'):
                 radionuclides.append(_Radionuclide(**val))
 
+        if config_dir is not None:
+            _resolve_data_paths(config_dir, mesh, initial_condition)
         return Parameters(
             boundary_conditions=boundary_conditions,
             energy=energy,
