@@ -93,7 +93,7 @@ def _radius_for_mass_coordinate(
     xi_target: float,
     r_lo: float,
     r_hi: float,
-    node: int | None = None,
+    node: int | str | None = None,
     xtol: float = 1.0,
 ) -> float:
     """Solve ``xi_of_r(r) == xi_target`` for ``r`` in ``[r_lo, r_hi]``.
@@ -104,11 +104,8 @@ def _radius_for_mass_coordinate(
 
     When the bracket does not straddle, ``xi_target`` lies outside
     ``[xi_of_r(r_lo), xi_of_r(r_hi)]`` and the node is clamped to the nearest
-    in-domain endpoint. This path is reached only on a resumed run, where a
-    loaded entropy field shifts the EOS mass distribution so a near-boundary
-    node on the uniform mass grid falls just outside the achievable range; a
-    bare ``brentq`` raises ``ValueError`` ("f(a) and f(b) must have different
-    signs") there and aborts the resume.
+    endpoint instead of letting ``brentq`` raise. This guards against rounding
+    at the 1 m bracket insets next to the core-mantle boundary and the surface.
 
     Parameters
     ----------
@@ -119,8 +116,8 @@ def _radius_for_mass_coordinate(
         Target mass coordinate for this node.
     r_lo, r_hi : float
         Bracket endpoints [m], ``r_lo < r_hi``.
-    node : int, optional
-        Node index, used only in the clamp warning message.
+    node : int or str, optional
+        Node index or label, used only in the clamp warning message.
     xtol : float, optional
         Absolute radius tolerance of the root [m].
 
@@ -146,8 +143,7 @@ def _radius_for_mass_coordinate(
     clamped = r_lo if f_lo > 0.0 else r_hi
     logger.warning(
         'Mesh mass-coordinate bracket failed for node %s '
-        '(xi_target=%.6e outside [%.6e, %.6e]); clamping radius to %.3f m. '
-        'Expected only on resume with a loaded entropy field.',
+        '(xi_target=%.6e outside [%.6e, %.6e]); clamping radius to %.3f m.',
         'unknown' if node is None else node,
         xi_target,
         xi_of_r(r_lo),
@@ -196,44 +192,26 @@ class Mesh:
             raise ValueError(msg)
 
         if parameters.mesh.mass_coordinates:
-            # Compute planet density and mass coordinates from the initial spatial grid
             self._planet_density: float = self.get_planet_density(initial_spatial)
-            initial_mass_coordinates: npt.NDArray = (
-                self.get_basic_mass_coordinates_from_spatial_coordinates(initial_spatial)
-            )
-
-            # Create UNIFORM mass coordinate grid (this is the key change)
-            xi_min = initial_mass_coordinates[0, 0]
-            xi_max = initial_mass_coordinates[-1, 0]
-            basic_mass_coordinates = np.linspace(
-                xi_min, xi_max, self.settings.number_of_nodes
-            ).reshape(-1, 1)
-
-            # Derive NON-UNIFORM spatial coordinates from the uniform xi grid
-            # by solving the mass-coordinate equation at each node via Newton
-            # iteration, matching SPIDER's GetRadiusFromMassCoordinate.
-            #
-            # SPIDER's equation (eos_adamswilliamson.c:296-311):
-            #   f(r) = (r_core^3 + 3*M_AW(r_core, r)/rho_avg)^(1/3) - xi = 0
-            #
-            # Newton-via-brentq avoids the O(h^4) interpolation error
-            # of a PCHIP fit; on an N-point grid that error accumulated
-            # to ~3% node position offsets, large enough to perturb the
-            # Adams-Williamson reference state.
             r_core = float(initial_spatial[0, 0])
             r_surf = float(initial_spatial[-1, 0])
+            # xi runs from r_core to r_surf exactly, by construction of the mean density.
+            basic_mass_coordinates = np.linspace(
+                r_core, r_surf, self.settings.number_of_nodes
+            ).reshape(-1, 1)
+
+            # Each node radius solves xi(r) = xi_target with brentq, as SPIDER's
+            # GetRadiusFromMassCoordinate does with Newton (eos_adamswilliamson.c:296-311).
             rho_avg = self._planet_density
+            M_core = self.eos.get_mass_within_radii(np.array([r_core])).item()
 
             def _xi_of_r(r: float) -> float:
                 """Mass coordinate xi(r) matching SPIDER's definition.
 
-                SPIDER's mass integral is WITHOUT 4pi (convention in
-                SPIDER, see eos_adamswilliamson.c:185). Aragog's
-                get_mass_within_radii includes 4pi. Divide by 4pi to
-                match SPIDER, since rho_avg was also computed without
-                4pi (from staggered_effective_density * delta_r^3).
+                SPIDER's mass integral is WITHOUT 4pi (eos_adamswilliamson.c:185);
+                get_mass_within_radii includes it, so divide by 4pi to match rho_avg.
                 """
-                M_shell_4pi = self.eos.get_mass_within_radii(np.array([r])).item()
+                M_shell_4pi = self.eos.get_mass_within_radii(np.array([r])).item() - M_core
                 M_shell = M_shell_4pi / (4.0 * np.pi)
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
@@ -260,17 +238,14 @@ class Mesh:
                 basic_coordinates[j, 0] = _radius_for_mass_coordinate(
                     _xi_of_r, xi_target, r_lo, r_hi, node=j, xtol=1e-3 if self._refined else 1.0
                 )
-            # The mesh must be strictly increasing in radius: zero-width cells
-            # divide by zero in the finite-volume gradient operators. If two or
-            # more near-boundary nodes clamped to the same endpoint (only
-            # reachable on a resume with a badly-shifted entropy field), fail
-            # loudly here rather than propagate NaNs into the entropy RHS.
+            # Zero-width cells divide by zero in the gradient operators, so two
+            # nodes clamped to the same endpoint must fail here.
             if np.any(np.diff(basic_coordinates[:, 0]) <= 0.0):
                 raise ValueError(
                     'Non-monotonic basic mesh after mass-coordinate solve '
-                    '(duplicate node radii). The loaded entropy field shifted '
-                    'the EOS mass distribution too far for the fixed bracket; '
-                    're-run the structure module to regenerate the mesh.'
+                    '(duplicate node radii): nodes clamped to the same bracket end, '
+                    'or an EOS mass integral that does not increase with radius; '
+                    'check the structure profile.'
                 )
             logger.debug('Basic mass coordinates (uniform) = %s', basic_mass_coordinates)
             logger.debug('Basic spatial coordinates (non-uniform) = %s', basic_coordinates)
@@ -302,11 +277,16 @@ class Mesh:
             self.basic.mass_radii[:-1] + 0.5 * self.basic.delta_mesh
         )
         if parameters.mesh.mass_coordinates:
-            staggered_coordinates: npt.NDArray = (
-                self.get_staggered_spatial_coordinates_from_mass_coordinates(
-                    staggered_mass_coordinates
-                )
-            )
+            self.eos.set_staggered_effective_density(self.basic.radii)
+            rb = self.basic.radii[:, 0]
+            staggered_coordinates = np.array(
+                [
+                    _radius_for_mass_coordinate(
+                        _xi_of_r, float(xi), rb[i], rb[i + 1], node=f'staggered {i}'
+                    )
+                    for i, xi in enumerate(staggered_mass_coordinates[:, 0])
+                ]
+            ).reshape(-1, 1)
         else:
             staggered_coordinates = staggered_mass_coordinates
         self.staggered: FixedMesh = FixedMesh(
@@ -331,7 +311,7 @@ class Mesh:
         """dxi/dr at basic nodes"""
         return self._dxidr
 
-    @cached_property
+    @property
     def staggered_effective_density(self) -> npt.NDArray:
         return self.eos.staggered_effective_density
 
@@ -377,92 +357,6 @@ class Mesh:
         mantle_volume_no4pi = (np.power(r_surf, 3.0) - np.power(r_core, 3.0)) / 3.0
         mantle_avg_density = M_no4pi / mantle_volume_no4pi
         return float(mantle_avg_density)
-
-    def get_basic_mass_coordinates_from_spatial_coordinates(
-        self, basic_coordinates: npt.NDArray
-    ) -> npt.NDArray:
-        """Computes mass coordinates matching SPIDER's definition.
-
-        SPIDER's mass coordinate (eos_adamswilliamson.c:296-311):
-
-            xi(r)^3 = r_core^3 + 3 * M_AW(r_core, r) / rho_avg_mantle
-
-        where M_AW is the A-W mass integral from r_core to r (without
-        4pi), and rho_avg_mantle is the mantle-only average density.
-        At the CMB: xi = r_core. At the surface: xi = r_surface
-        (by construction of rho_avg_mantle).
-
-        Args:
-            Basic spatial coordinates
-
-        Returns:
-            Basic mass coordinates
-        """
-        r_core = basic_coordinates[0, 0]
-
-        # xi^3 at CMB = r_core^3
-        basic_mass_coordinates = np.zeros_like(basic_coordinates)
-        basic_mass_coordinates[:, :] = np.power(r_core, 3.0)
-
-        # Cumulative mantle mass contribution.
-        # staggered_effective_density * (r^3_outer - r^3_inner) gives
-        # mass_shell / (4/3*pi). Dividing by rho_avg (which is
-        # M_no4pi / V_no4pi = M_no4pi / ((r_s^3-r_c^3)/3)) gives
-        # the correct xi^3 increment: 3 * M_shell_no4pi / rho_avg.
-        basic_volumes = np.power(basic_coordinates[1:, 0], 3.0) - np.power(
-            basic_coordinates[:-1, 0], 3.0
-        )
-        for i in range(1, self.settings.number_of_nodes):
-            basic_mass_coordinates[i:, :] += (
-                self.staggered_effective_density[i - 1, :]
-                * basic_volumes[i - 1]
-                / self._planet_density
-            )
-
-        return np.power(basic_mass_coordinates, 1.0 / 3.0)
-
-    def get_staggered_spatial_coordinates_from_mass_coordinates(
-        self, staggered_mass_coordinates: npt.NDArray
-    ) -> npt.NDArray:
-        """Computes the staggered spatial coordinates from staggered mass coordinates.
-
-        Args:
-            Staggered mass coordinates
-
-        Returns:
-            Staggered spatial coordinates
-        """
-
-        # Initialise the staggered spatial coordinate to the inner boundary
-        staggered_coordinates = np.ones_like(staggered_mass_coordinates) * np.power(
-            self.settings.inner_radius, 3.0
-        )
-
-        # Add first half cell contribution
-        staggered_coordinates += (
-            self._planet_density
-            * (
-                np.power(staggered_mass_coordinates[0, :], 3.0)
-                - np.power(self.basic.mass_radii[0, :], 3.0)
-            )
-            / self.staggered_effective_density[0, :]
-        )
-
-        # Get spatial coordinates by adding individual cell contributions to the mantle mass
-        shell_effective_density = 0.5 * (
-            self.staggered_effective_density[1:, :] + self.staggered_effective_density[:-1, :]
-        )
-        shell_mass_volumes = np.power(staggered_mass_coordinates[1:, :], 3.0) - np.power(
-            staggered_mass_coordinates[:-1, :], 3.0
-        )
-        for i in range(1, self.settings.number_of_nodes - 1):
-            staggered_coordinates[i:, :] += (
-                self._planet_density
-                * shell_mass_volumes[i - 1, :]
-                / shell_effective_density[i - 1, :]
-            )
-
-        return np.power(staggered_coordinates, 1.0 / 3.0)
 
     def get_dxidr_basic(self) -> npt.NDArray:
         """Computes dxidr at basic nodes."""
