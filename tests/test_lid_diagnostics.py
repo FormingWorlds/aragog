@@ -54,9 +54,55 @@ def test_lid_base_solidus_clipping():
         xp=np,
     )
 
-    # Lid thickness must be bounded and physically consistent
-    assert state['d_lid'] >= 0.0
-    assert state['d_lid'] <= (radii[-1] - radii[0])
+    # 1. Molten surface: when surface temperature exceeds solidus, lid formation is suppressed
+    assert state['d_lid'] < 1.0, (
+        f'Expected d_lid ~ 0 when surface is above solidus, got {state["d_lid"]}'
+    )
+    assert state['lid_regime'] < 1.0e-3, (
+        f'Expected regime ~ 0 (no lid), got {state["lid_regime"]}'
+    )
+
+    # 2. Subsolidus surface with hot isotherm: lid base must be clipped by solidus
+    temp_cold = np.linspace(3000.0, 1000.0, n_nodes)
+    solidus_prof = np.linspace(2500.0, 1400.0, n_nodes)
+    flux_conv = 100.0 * np.sin(np.pi * (radii - radii[0]) / (radii[-1] - radii[0]))
+
+    params_hot = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        lid_base_mode='fixed',
+        lid_base_temperature=2000.0,
+    )
+    state_clipped = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_cold,
+        pressure=pressure,
+        convective_flux=flux_conv,
+        total_flux=flux_conv + 10.0,
+        solidus_temperature=solidus_prof,
+        melt_fraction=melt_frac,
+        params=params_hot,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        viscosity_solid=1.0e21,
+        xp=np,
+    )
+    state_unclipped = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_cold,
+        pressure=pressure,
+        convective_flux=flux_conv,
+        total_flux=flux_conv + 10.0,
+        solidus_temperature=None,
+        melt_fraction=melt_frac,
+        params=params_hot,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        viscosity_solid=1.0e21,
+        xp=np,
+    )
+
+    # Solidus clipping must strictly reduce lid thickness to keep lid subsolidus
+    assert state_clipped['d_lid'] < state_unclipped['d_lid'] - 1.0e4
+    assert state_clipped['T_lid'] < state_unclipped['T_lid']
 
 
 @pytest.mark.unit

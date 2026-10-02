@@ -310,8 +310,6 @@ class EntropyPhaseEvaluator:
         # In const_properties mode, we STILL compute temperature-dependent Arrhenius viscosity
         # if enabled, to support 0D Stagnant Lid models.
         if self.rheology.enabled:
-            from aragog.rheology import eta_diff as calc_eta_diff
-
             t_arr = np.maximum(self._temperature, 1.0)
             p_arr = (
                 np.zeros_like(S)

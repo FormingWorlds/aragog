@@ -243,7 +243,7 @@ def test_cvode_jax_analytic_jacobian_finite_differences():
     assert np.any(J_analytic != 0.0)
 
     # Finite difference check of Jacobian
-    eps_fd = 1.0e-7
+    eps_fd = 1.0e-11
     J_fd = np.zeros((N, N))
     for j in range(N):
         y_plus = y_nd.copy()
@@ -259,6 +259,6 @@ def test_cvode_jax_analytic_jacobian_finite_differences():
         J_fd[:, j] = (ydot_plus - ydot_minus) / (2.0 * eps_fd)
 
     # Verify analytic Jacobian matches finite differences where non-negligible
-    mask = np.abs(J_analytic) > 1.0e-5
-    if np.any(mask):
-        np.testing.assert_allclose(J_analytic[mask], J_fd[mask], rtol=5.0e-3, atol=1.0e-4)
+    mask = np.maximum(np.abs(J_analytic), np.abs(J_fd)) > 1.0e-14
+    assert np.any(mask), 'At least some non-negligible Jacobian entries must be tested'
+    np.testing.assert_allclose(J_analytic[mask], J_fd[mask], rtol=1.0e-2, atol=1.0e-13)

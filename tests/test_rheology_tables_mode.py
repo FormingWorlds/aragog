@@ -81,3 +81,42 @@ def test_rheology_tables_mode_1myr_solve():
     # Verify monotonic variation in depth (from CMB to surface, eta_diff decreases)
     diffs = np.diff(eta_diff)
     assert np.all(diffs <= 0.0), f'eta_diff_b is not monotonic with depth: diffs={diffs}'
+
+
+@pytest.mark.smoke
+def test_rheology_tables_mode_convective_lid_solve():
+    """Verify convective lid formation and effective viscosity in tables mode.
+
+    With surface heat loss (BC 1, T_surf=300 K), a cold thermal boundary
+    layer forms, driving stagnant lid formation and modifying effective
+    viscosity via lid closure.
+    """
+    eos = EntropyEOS(EOS_DIR)
+    params = _build_parameters(end_time=1.0e4, n_nodes=15)
+    params.phase_solid.rheology = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
+    params.boundary_conditions.outer_boundary_condition = 1
+    params.boundary_conditions.outer_boundary_value = 300.0  # cold surface boundary
+
+    solver = EntropySolver(params, entropy_eos=eos)
+    solver.initialize()
+    solver.set_initial_entropy(400.0)
+    solver.solve()
+
+    sol = solver._solution
+    assert sol.status == 0, (
+        f'Integration failed with status {sol.status}: {getattr(sol, "message", None)}'
+    )
+
+    state = solver.get_state()
+    # Convective cooling must form a non-zero stagnant lid
+    assert state.lid_thickness > 1.0e3, (
+        f'Expected stagnant lid formation > 1 km, got {state.lid_thickness}'
+    )
+    assert state.lid_base_temperature > 300.0
+
+    eta_diff = state.eta_diff_b
+    visc_eff = state.visc_eff_b
+    assert np.all(np.isfinite(eta_diff))
+    assert np.all(np.isfinite(visc_eff))
+    assert np.all(visc_eff > 0.0)
+    assert np.all(visc_eff <= eta_diff * (1.0 + 1.0e-12))

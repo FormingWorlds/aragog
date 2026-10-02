@@ -97,19 +97,25 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
     if regime == 'unyielded':
         temperature = np.linspace(3000.0, 1800.0, n_nodes)
         conv_flux = np.linspace(0.0, 50.0, n_nodes)
+        conv_flux[-8:] = 0.0
         v_unyielded = np.linspace(0.0, 1.0e-10, n_nodes)
+        v_unyielded[-8:] = 0.0
         melt_frac = np.zeros(n_nodes)
         tau_y_max = 500.0e6
     elif regime == 'yielding':
         temperature = np.linspace(3200.0, 1600.0, n_nodes)
         conv_flux = np.linspace(0.0, 200.0, n_nodes)
+        conv_flux[-8:] = 0.0
         v_unyielded = np.linspace(0.0, 1.0e-9, n_nodes)
+        v_unyielded[-8:] = 0.0
         melt_frac = np.zeros(n_nodes)
         tau_y_max = 50.0e6
     elif regime == 'mobile':
         temperature = np.linspace(3400.0, 1400.0, n_nodes)
         conv_flux = np.linspace(0.0, 1000.0, n_nodes)
+        conv_flux[-8:] = 0.0
         v_unyielded = np.linspace(0.0, 1.0e-8, n_nodes)
+        v_unyielded[-8:] = 0.0
         melt_frac = np.zeros(n_nodes)
         tau_y_max = 10.0e6
     elif regime == 'no_lid':
@@ -121,7 +127,9 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
     elif regime == 'mushy':
         temperature = np.linspace(3200.0, 2000.0, n_nodes)
         conv_flux = np.linspace(10.0, 500.0, n_nodes)
+        conv_flux[-8:] = 0.0
         v_unyielded = np.linspace(1.0e-11, 1.0e-9, n_nodes)
+        v_unyielded[-8:] = 0.0
         melt_frac = np.linspace(0.6, 0.1, n_nodes)
         tau_y_max = 50.0e6
     else:
@@ -183,6 +191,10 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             atol=1.0e-12,
             err_msg=f'Mismatch in diagnostic {key} for regime {regime}',
         )
+
+    if regime in ('unyielded', 'yielding', 'mobile'):
+        assert state_np['d_lid'] > 1.0e4, f'{regime} must form stagnant lid > 10 km'
+        assert state_np['w_active'] > 0.5, f'{regime} must have active lid closure'
 
     # Compare w_lid profile
     np.testing.assert_allclose(

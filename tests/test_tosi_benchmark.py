@@ -22,7 +22,7 @@ def test_tosi_thermal_evolution_parity():
     the insulating core BC. We use const_properties to match Tosi's
     material properties, with Arrhenius viscosity enabled.
     """
-    import interior_evolution as heat_budget
+    heat_budget = pytest.importorskip('interior_evolution')
 
     tb = heat_budget.interior_evolution(body='Earth')
     tb.tectonics = 'SL'

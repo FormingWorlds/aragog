@@ -35,7 +35,6 @@ def _make_mesh(n=60):
             self.radii = r
             self.pressure = p
             self.mass_radii = r
-            self.mass_radii = r
             self.area = 4 * np.pi * r**2
             self.volume = np.ones_like(r) * 1e20
 
