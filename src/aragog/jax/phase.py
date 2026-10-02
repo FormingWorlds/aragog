@@ -877,6 +877,8 @@ def compute_mlt(
             reynolds_unyielded = (
                 visc_v_unyielded * mesh.mixing_length / jnp.maximum(nu_unyielded, 1e-30)
             )
+            if q is not None:
+                reynolds_unyielded = q * reynolds_unyielded
             blend_width = 0.01 * RE_CRIT
             inviscid_weight_unyielded = 0.5 * (
                 1.0 + jnp.tanh((reynolds_unyielded - RE_CRIT) / jnp.maximum(blend_width, 1e-30))
@@ -965,6 +967,8 @@ def compute_mlt(
 
     # Reynolds number
     reynolds = viscous_velocity * mesh.mixing_length / nu
+    if q is not None:
+        reynolds = q * reynolds
 
     # Smooth blend between viscous and inviscid regimes. The narrow
     # blend_width (0.01 * RE_CRIT) keeps inviscid k_h confined to the

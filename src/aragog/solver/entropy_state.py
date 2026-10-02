@@ -709,6 +709,8 @@ class EntropyState:
                 inviscid_velocity_sq = velocity_prefactor * mixing_length_squared / 16.0
                 inviscid_velocity = np.sqrt(inviscid_velocity_sq + 1.0e-20)
                 reynolds_unyielded = visc_v_unyielded * mixing_length / np.maximum(nu, 1e-30)
+                if q is not None:
+                    reynolds_unyielded = q * reynolds_unyielded
                 blend_width = 0.01 * RE_CRIT
                 inviscid_weight_unyielded = 0.5 * (
                     1.0 + np.tanh((reynolds_unyielded - RE_CRIT) / max(blend_width, 1e-30))
@@ -839,6 +841,8 @@ class EntropyState:
 
         # Reynolds number
         reynolds = viscous_velocity * mixing_length / nu
+        if q is not None:
+            reynolds = q * reynolds
 
         # Smooth blend between regimes (tanh transition at Re_crit).
         # blend_width = 0.01 * RE_CRIT: at Re ≪ RE_CRIT (solid regime,
