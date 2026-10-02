@@ -220,11 +220,11 @@ def compute_stagnant_lid_state(
         N_upper = xp.sum(w_upper) + 1e-12
 
         v_abs = xp.abs(unyielded_velocity)
-        v_max = xp.max(xp.where(w_upper > 0.05, v_abs, 0.0))
-        v_diff = xp.where(w_upper > 0.001, (v_abs - v_max) / T_v, -100.0)
-        exp_term = xp.exp(xp.clip(v_diff, -100.0, 50.0))
+        v_shift = xp.max(v_abs)
+        v_diff = (v_abs - v_shift) / T_v
+        exp_term = xp.exp(xp.clip(v_diff, -500.0, 0.0))
         sum_exp = xp.sum(w_upper * exp_term)
-        v_i_raw = v_max + T_v * xp.log(xp.maximum(sum_exp / N_upper, 1e-300))
+        v_i_raw = v_shift + T_v * xp.log(xp.maximum(sum_exp / N_upper, 1e-300))
         v_i = xp.maximum(v_i_raw, 0.0) * w_active
     else:
         v_i = 0.0

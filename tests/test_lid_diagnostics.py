@@ -293,3 +293,45 @@ def test_continuous_lid_regime_output():
     assert not float(output.lid_regime).is_integer(), (
         f'lid_regime must not be rounded to integer; got {output.lid_regime}'
     )
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_lid_velocity_scale_continuity():
+    """Verify convective velocity scale v_i is continuous across front shifts."""
+    params = SolidRheologyParams(
+        enabled=True,
+        lid_base_mode='rheological',
+        activation_energy=300e3,
+        activation_volume=5e-6,
+        arrhenius_t_ref=1600.0,
+        interior_flux_fraction=0.05,
+    )
+
+    r = np.linspace(3.4e6, 6.371e6, 60)
+    T = 3000.0 - 1500.0 * ((r - r[0]) / (r[-1] - r[0])) ** 2
+    P = 1.3e11 * (1.0 - (r - r[0]) / (r[-1] - r[0]))
+    v = 1e-9 * np.sin(np.pi * (r - r[0]) / (r[-1] - r[0]))
+
+    rc_vals = np.linspace(5.0e6, 5.5e6, 200)
+    v_is = []
+    for rc in rc_vals:
+        f_conv = 0.5 * (1.0 + np.tanh((rc - r) / 50e3))
+        out = compute_stagnant_lid_state(
+            r,
+            T,
+            P,
+            f_conv,
+            np.ones_like(r),
+            None,
+            np.zeros_like(r),
+            params,
+            unyielded_velocity=v,
+            viscosity_solid=1e21,
+        )
+        v_is.append(out['v_i'])
+
+    v_is = np.array(v_is)
+    rel_jumps = np.abs(np.diff(v_is)) / np.maximum(v_is[:-1], 1e-30)
+    assert np.max(rel_jumps) < 1e-4
+    assert np.all(v_is > 0.0)
