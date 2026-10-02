@@ -179,6 +179,36 @@ class EntropyPhaseEvaluator:
         return self.rheology.viscosity_max_log10
 
     @property
+    def const_properties(self) -> bool:
+        """Whether constant properties mode is active."""
+        return self._const_properties
+
+    @property
+    def const_log10visc(self) -> float:
+        """Log10 base viscosity for constant properties mode [log10(Pa s)]."""
+        return self._const_log10visc
+
+    @property
+    def viscosity_solid(self) -> float:
+        """Reference solid-state dynamic viscosity [Pa s]."""
+        return self._visc_solid
+
+    @property
+    def phi_rheo(self) -> float:
+        """Rheological transition melt fraction."""
+        return self._phi_rheo
+
+    @property
+    def phi_width(self) -> float:
+        """Rheological transition width in melt fraction."""
+        return self._phi_width
+
+    @property
+    def matprop_smooth_width(self) -> float:
+        """Smoothing width for material property transitions."""
+        return self._matprop_smooth_width
+
+    @property
     def water_prefactor(self) -> float:
         return self.rheology.water_prefactor
 
@@ -285,8 +315,6 @@ class EntropyPhaseEvaluator:
         # In const_properties mode, we STILL compute temperature-dependent Arrhenius viscosity
         # if enabled, to support 0D Stagnant Lid models.
         if self.rheology.enabled:
-            from aragog.rheology import eta_diff as calc_eta_diff
-
             t_arr = np.maximum(self._temperature, 1.0)
             p_arr = (
                 np.zeros_like(S)

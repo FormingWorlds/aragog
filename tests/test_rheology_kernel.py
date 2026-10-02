@@ -124,7 +124,7 @@ def test_limit_extreme_yielding():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_exact_yield_match():
-    """Verify both branches equal eta_i at exact yield when tau_d = tau_y_lid."""
+    """Verify log-tanh blend midpoint at exact yield when tau_d = tau_y_lid."""
     eta_diff = 1.0e24
     tau_y_lid = 20.0e6
     v_i = 1.0e-9
@@ -142,7 +142,8 @@ def test_exact_yield_match():
         yield_switch_width=0.1,
         stress_closure_mode='lid',
     )
-    assert eta_eff == pytest.approx(eta_i, rel=1.0e-6)
+    expected_midpoint = np.sqrt(eta_diff * eta_i)
+    assert eta_eff == pytest.approx(expected_midpoint, rel=1.0e-6)
 
 
 @pytest.mark.unit
@@ -172,7 +173,9 @@ def test_monotonicity_and_continuity_across_yield():
     )
 
     diffs = np.diff(eta_eff_vals)
-    assert np.all(diffs <= 1.0e-12), 'Effective viscosity must not increase with stress'
+    assert np.all(diffs <= 1.0e-12 * eta_eff_vals[:-1]), (
+        'Effective viscosity must not increase with stress'
+    )
 
     log_diffs = np.abs(np.diff(np.log10(eta_eff_vals)))
     assert np.all(log_diffs < 0.5), 'Effective viscosity in log-space must be continuous'

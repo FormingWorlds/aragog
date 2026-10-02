@@ -103,12 +103,12 @@ def _make_minimal_state(
     phase_stag = SimpleNamespace(
         pressure=P_stag.copy(),
         _eos=eos_stub,
-        _const_properties=False,
+        const_properties=False,
     )
     phase_basic = SimpleNamespace(
         pressure=P_basic.copy(),
         _eos=eos_stub,
-        _const_properties=False,
+        const_properties=False,
     )
 
     mesh_basic = SimpleNamespace(
@@ -436,8 +436,8 @@ def test_phase_boundary_cache_populators_skip_in_const_properties_mode():
     state = _make_minimal_state()
     # Flip the const-properties flag on both phase evaluators after
     # construction; the populators check this flag first.
-    state.phase_staggered._const_properties = True
-    state.phase_basic._const_properties = True
+    state.phase_staggered.const_properties = True
+    state.phase_basic.const_properties = True
 
     state._ensure_phase_boundary_cache()
     state._ensure_basic_phase_boundary_cache()

@@ -1581,7 +1581,7 @@ class EntropySolver:
             float(
                 getattr(
                     mesh.eos,
-                    '_gravitational_acceleration',
+                    'gravitational_acceleration',
                     self.parameters.mesh.gravitational_acceleration,
                 )
             )
@@ -1805,8 +1805,8 @@ class EntropySolver:
                 'tables.',
                 cp_min,
             )
-        sol_dict = getattr(eos, '_solidus', None)
-        liq_dict = getattr(eos, '_liquidus', None)
+        sol_dict = getattr(eos, 'solidus', None)
+        liq_dict = getattr(eos, 'liquidus', None)
         if sol_dict is not None and liq_dict is not None:
             sol_P = np.asarray(sol_dict.get('P', []), dtype=float).ravel()
             sol_S = np.asarray(sol_dict.get('S', []), dtype=float).ravel()
@@ -3541,7 +3541,14 @@ class EntropySolver:
         except Exception:
             phi0 = 1.0
 
-        if phi0 > 0.01:
+        _const = (
+            getattr(self.parameters.phase_mixed, 'const_properties', False)
+            or self.entropy_eos is None
+        )
+        if _const:
+            atol_scale = 1.0
+            max_step = float(getattr(self.parameters.solver, 'max_step_const_mode', 100.0))
+        elif phi0 > 0.01:
             atol_scale = 1.0
             max_step = 100.0  # years
         else:
@@ -3559,7 +3566,7 @@ class EntropySolver:
         # Runs whenever the entropy EOS is loaded: the T and S caps stay armed in the deep solid,
         # where the phi cap is blind. A cell within the margin of a boundary or in the mushy band
         # tightens max_step: 1 yr for 'fixed', CVODE segments for 'rate'.
-        if self.entropy_eos is not None:
+        if self.entropy_eos is not None and not _const:
             entropy_margin = _resolve_entropy_margin(
                 getattr(self.parameters.energy, 'phase_boundary_entropy_margin', None)
             )
@@ -4725,7 +4732,7 @@ class EntropySolver:
 
         # Solid-state rheology and stagnant lid diagnostics
         visc_eff_b = np.asarray(
-            getattr(self.state, '_visc_eff', self.state.viscosity_basic)
+            getattr(self.state, 'visc_eff', self.state.viscosity_basic)
         ).ravel()
         if visc_eff_b.size == 0:
             visc_eff_b = np.asarray(self.state.viscosity_basic).ravel()
@@ -4746,13 +4753,13 @@ class EntropySolver:
             eta_diff_b = np.full_like(r_basic, 10.0**log10_s)
 
         strain_rate_b = np.asarray(
-            getattr(self.state, '_strain_rate_basic', np.zeros_like(r_basic))
+            getattr(self.state, 'strain_rate_basic', np.zeros_like(r_basic))
         ).ravel()
         tau_y_b = np.asarray(
-            getattr(self.state, '_tau_y_basic', np.full_like(r_basic, 500e6))
+            getattr(self.state, 'tau_y_basic', np.full_like(r_basic, 500e6))
         ).ravel()
 
-        lid_st = getattr(self.state, '_lid_state', None)
+        lid_st = getattr(self.state, 'lid_state', None)
         if lid_st is not None:
             lid_mask_b = np.asarray(lid_st['w_lid']).ravel()
             yield_switch_b = np.full_like(r_basic, float(lid_st['w_y']))
@@ -4761,7 +4768,7 @@ class EntropySolver:
             interior_temperature = float(lid_st['T_i'])
             lid_stress = float(lid_st['tau_d'])
             theta_val = float(lid_st['theta'])
-            lid_regime = float(np.round(lid_st['lid_regime']))
+            lid_regime = float(lid_st['lid_regime'])
         else:
             lid_mask_b = np.zeros_like(r_basic)
             yield_switch_b = np.zeros_like(r_basic)

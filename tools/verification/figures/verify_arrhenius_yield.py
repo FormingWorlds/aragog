@@ -29,18 +29,20 @@ def main():
 
     eta_d = eta_diff(t, p, viscosity_solid=1.0e21, activation_volume=1.5e-6)
 
+    l_mix = np.minimum(r - r_cmb, r_surf - r) + 1.0
+
     # Stagnant lid
     tau_stagnant = compute_yield_stress(
         p, yield_stress_c=500.0e6, yield_stress_mu=0.6, yield_stress_max=500.0e6
     )
-    sr_stagnant = stress_closure('global', v_visc, radius=r, temperature=t, t_lid_base=1400.0)
+    sr_stagnant = stress_closure('local', v_visc, mixing_length=l_mix)
     eta_eff_stagnant = eta_eff(eta_d, tau_stagnant, sr_stagnant, smooth=True)
 
     # Mobile lid
     tau_mobile = compute_yield_stress(
         p, yield_stress_c=1.0e6, yield_stress_mu=0.01, yield_stress_max=500.0e6
     )
-    sr_mobile = stress_closure('global', v_visc, radius=r, temperature=t, t_lid_base=1400.0)
+    sr_mobile = stress_closure('local', v_visc, mixing_length=l_mix)
     eta_eff_mobile = eta_eff(eta_d, tau_mobile, sr_mobile, smooth=True)
 
     try:

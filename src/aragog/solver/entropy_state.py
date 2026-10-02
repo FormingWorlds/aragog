@@ -346,7 +346,7 @@ class EntropyState:
         is the same object (by Python id) as the one seen on the last
         call, or when const_properties mode is active (no phase boundaries).
         """
-        if getattr(self.phase_staggered, '_const_properties', False):
+        if getattr(self.phase_staggered, 'const_properties', False):
             return  # no phase boundaries in const_properties mode
         pressure_obj = self.phase_staggered.pressure
         if id(pressure_obj) == self._P_stag_cached_id:
@@ -391,7 +391,7 @@ class EntropyState:
         ``dS/dr − [φ dS_liq/dP + (1−φ) dS_sol/dP] dP/dr`` from
         ``energy.c::GetMixingHeatFlux`` lines 307-314.
         """
-        if getattr(self.phase_basic, '_const_properties', False):
+        if getattr(self.phase_basic, 'const_properties', False):
             return  # no phase boundaries in const_properties mode
         pressure_obj = self.phase_basic.pressure
         if id(pressure_obj) == self._P_basic_cached_id:
@@ -709,8 +709,6 @@ class EntropyState:
                 inviscid_velocity_sq = velocity_prefactor * mixing_length_squared / 16.0
                 inviscid_velocity = np.sqrt(inviscid_velocity_sq + 1.0e-20)
                 reynolds_unyielded = visc_v_unyielded * mixing_length / np.maximum(nu, 1e-30)
-                if q is not None:
-                    reynolds_unyielded = q * reynolds_unyielded
                 blend_width = 0.01 * RE_CRIT
                 inviscid_weight_unyielded = 0.5 * (
                     1.0 + np.tanh((reynolds_unyielded - RE_CRIT) / max(blend_width, 1e-30))
@@ -743,7 +741,9 @@ class EntropyState:
                 )
 
                 P_basic = np.asarray(self.phase_basic.pressure).ravel()
-                visc_solid = 10.0 ** getattr(self.phase_basic, '_const_log10visc', 21.0)
+                visc_solid = getattr(self.phase_basic, 'viscosity_solid', None)
+                if visc_solid is None:
+                    visc_solid = getattr(rheo, 'viscosity_solid', 1.0e21)
                 lid_state = compute_stagnant_lid_state(
                     radii=r_basic,
                     temperature=T,
@@ -840,8 +840,6 @@ class EntropyState:
 
         # Reynolds number
         reynolds = viscous_velocity * mixing_length / nu
-        if q is not None:
-            reynolds = q * reynolds
 
         # Smooth blend between regimes (tanh transition at Re_crit).
         # blend_width = 0.01 * RE_CRIT: at Re ≪ RE_CRIT (solid regime,
@@ -888,8 +886,8 @@ class EntropyState:
             phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             from aragog.utilities import tanh_weight
 
-            phi_rheo = float(getattr(self.phase_basic, '_phi_rheo', 0.4))
-            phi_width = float(getattr(self.phase_basic, '_phi_width', 0.15))
+            phi_rheo = float(getattr(self.phase_basic, 'phi_rheo', 0.4))
+            phi_width = float(getattr(self.phase_basic, 'phi_width', 0.15))
             f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
             w_lid = (
                 self._lid_state['w_lid']
@@ -1035,7 +1033,7 @@ class EntropyState:
                     # phase evaluator when configured non-zero so a single
                     # config knob drives both EOS and Jgrav/Jmix smoothing.
                     smw = (
-                        float(getattr(self.phase_basic, '_matprop_smooth_width', 0.0)) or 1.0e-2
+                        float(getattr(self.phase_basic, 'matprop_smooth_width', 0.0)) or 1.0e-2
                     )
                     smth_stag = _spider_get_smoothing(gphi_stag, smooth_width=smw)
                 else:
@@ -1085,7 +1083,7 @@ class EntropyState:
                 # Same matprop_smooth_width as the Jgrav site above; one
                 # config knob drives both inline smoothings to keep them
                 # consistent across the mass-flux assembly.
-                smw = float(getattr(self.phase_basic, '_matprop_smooth_width', 0.0)) or 1.0e-2
+                smw = float(getattr(self.phase_basic, 'matprop_smooth_width', 0.0)) or 1.0e-2
                 smth_basic_mix = _spider_get_smoothing(gphi_basic, smooth_width=smw)
             else:
                 gphi_basic_clip = _smooth_clip(gphi_basic, 0.0, 1.0, eps=1.0e-3)
@@ -1252,3 +1250,23 @@ class EntropyState:
     def viscosity_basic(self) -> npt.NDArray:
         """Effective dynamic viscosity at basic nodes [Pa s]."""
         return self._viscosity_basic
+
+    @property
+    def visc_eff(self) -> npt.NDArray:
+        """Solid-phase effective dynamic viscosity on basic nodes [Pa s]."""
+        return self._visc_eff
+
+    @property
+    def strain_rate_basic(self) -> npt.NDArray:
+        """Strain rate on basic nodes [1/s]."""
+        return self._strain_rate_basic
+
+    @property
+    def tau_y_basic(self) -> npt.NDArray:
+        """Yield stress on basic nodes [Pa]."""
+        return self._tau_y_basic
+
+    @property
+    def lid_state(self) -> dict | None:
+        """Stagnant lid diagnostic state dictionary, or None."""
+        return self._lid_state

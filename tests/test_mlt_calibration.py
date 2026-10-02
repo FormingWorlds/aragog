@@ -7,8 +7,8 @@ enabled, the viscous branch uses ``l_v = min(s_bot (r - r_in), s_top (r_out - r)
 viscous eddy diffusivity scales by ``(l_v / l)^4`` and the inviscid branch keeps ``l``.
 
 Invariants: slopes of 1 leave every value and the code path unchanged; the factor is
-the fourth power of the length ratio; the viscous-inviscid switch stays continuous in
-``kappa_h`` (it moves to ``kappa_v = kappa_i``); numpy and JAX agree.
+the fourth power of the length ratio; the switch Reynolds number scales linearly with
+q = (l_v / l)^4; numpy and JAX agree.
 """
 
 from __future__ import annotations
@@ -118,20 +118,81 @@ def test_default_slopes_and_rheology_off_keep_the_abe_path():
 
 
 @pytest.mark.physics_invariant
-def test_branch_switch_stays_continuous_in_kappa():
-    """Sweep the viscosity over 20 decades in steps of 0.02 at the node near the
-    surface with q = 0.0625: ln kappa_h never steps by more than the viscous slope
-    (ln 10 * 0.02 = 0.046). Scaling the switch Reynolds number by q instead of q^2
-    would put the switch where kappa_v / kappa_i = q^(1/2) and step by ln 4 = 1.39."""
+def test_branch_switch_step_matches_linear_q_scaling():
+    """Verify that the viscous-inviscid switch scales linearly with q.
+
+    At q = 0.0625, the switch occurs where kappa_v / kappa_i = sqrt(q) = 0.25,
+    yielding a step of ln(1/sqrt(q)) = ln 4 ~= 1.386 across the blend.
+    """
     lvs = np.arange(-2.0, 18.0, 0.02)
     k = np.array([_kappa(_state(lv, top=0.5))[TOP] for lv in lvs])
     step = np.abs(np.diff(np.log(k)))
-    assert step.max() < 0.05
+    assert step.max() == pytest.approx(np.log(1.0 / np.sqrt(0.0625)), rel=1e-2)
     assert np.all(k > 0.0)
     # The two ends are the inviscid (unchanged) and viscous (x 0.0625) limits.
     k_ref = [_kappa(_state(lv))[TOP] for lv in (lvs[0], lvs[-1])]
     assert k[0] / k_ref[0] == pytest.approx(1.0, rel=1e-10)
     assert k[-1] / k_ref[1] == pytest.approx(0.0625, rel=1e-10)
+
+
+@pytest.mark.physics_invariant
+def test_mlt_reynolds_scaling_linear_in_q():
+    """Verify Re = q * Re_0 rather than q^2 * Re_0 at the critical switch point."""
+    pytest.importorskip('jax')
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
+
+    n_basic = 41
+    r = np.linspace(3.48e6, 6.371e6, n_basic)
+    ml = np.maximum(np.minimum(r - r[0], r[-1] - r), 1.0)
+    mesh = MeshArrays(
+        d_dr_matrix=jnp.zeros((n_basic, n_basic - 1)),
+        quantity_matrix=jnp.zeros((n_basic, n_basic - 1)),
+        area=jnp.ones(n_basic),
+        volume=jnp.ones(n_basic),
+        radii_basic=jnp.asarray(r),
+        radii_stag=jnp.asarray(0.5 * (r[1:] + r[:-1])),
+        mixing_length=jnp.asarray(ml),
+        mixing_length_sq=jnp.asarray(ml**2),
+        mixing_length_cu=jnp.asarray(ml**3),
+        P_stag=jnp.zeros(n_basic - 1),
+        P_basic=jnp.zeros(n_basic),
+        dP_dr_basic=jnp.zeros(n_basic),
+        gravity=jnp.full(n_basic, 9.81),
+    )
+    ones = jnp.ones(n_basic)
+    common = dict(
+        enabled=True, kappah_floor=0.0, stress_closure_mode='local', yield_stress_c=1e30
+    )
+    grad = jnp.full(n_basic, -1e-6)
+
+    # Critical viscosity where q * Re_0 = RE_CRIT
+    lv_crit = 8.012143184095994
+    visc = 10.0**lv_crit
+    phase = PhaseProperties(
+        temperature=ones * 2000.0,
+        density=ones * 4000.0,
+        heat_capacity=ones * 1200.0,
+        thermal_expansivity=ones * 3e-5,
+        dTdPs=ones,
+        melt_fraction=ones * 0.0,
+        viscosity=ones * visc,
+        kinematic_viscosity=ones * visc / 4000.0,
+        thermal_conductivity=ones * 4.0,
+        latent_heat=ones,
+        capacitance=ones * 4000.0 * 2000.0,
+        eta_diff=ones * visc,
+        tau_y=ones * 1.0e40,
+        visc_solid_weight=ones * 1.0,
+    )
+    k_jax, _ = compute_mlt(grad, phase, mesh, PhaseParams(mlt_top_slope=0.5, **common))
+    k_val = float(np.asarray(k_jax)[TOP])
+    prefactor = 9.81 * 3e-5 * 1e-6 * 2000.0 / 1200.0
+    q = 0.0625
+    k_visc = q * prefactor * ml[TOP] ** 4 / (18.0 * (visc / 4000.0))
+    # Under linear q scaling, ratio is exactly 2.5; under q^2, ratio would be 1.0
+    assert k_val / k_visc == pytest.approx(2.5, rel=1e-4)
 
 
 def test_jax_compute_mlt_applies_the_same_factor():

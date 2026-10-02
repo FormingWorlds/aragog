@@ -34,6 +34,8 @@ class SolverConfig:
         Optional per-solve core-temperature change limit [K]. The flag is
         also set, independent of this limit, when any sampled core
         temperature is non-finite.
+    max_step_const_mode : float
+        Maximum CVODE step size in constant-properties mode [years].
     """
 
     start_time: float
@@ -66,5 +68,13 @@ class SolverConfig:
                 attrs.validators.instance_of((int, float)),
                 attrs.validators.gt(0.0),
             )
+        ),
+    )
+    max_step_const_mode: float = attrs.field(
+        default=100.0,
+        validator=attrs.validators.and_(
+            attrs.validators.not_(attrs.validators.instance_of(bool)),
+            attrs.validators.instance_of((int, float)),
+            attrs.validators.gt(0.0),
         ),
     )

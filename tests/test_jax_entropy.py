@@ -1615,7 +1615,7 @@ class TestSPIDERConductionDecomposition:
             basic_pressure=P_basic_np,
             _d_dr_transform=np.zeros((n_basic, n_stag)),
             _quantity_transform=np.zeros((n_basic, n_stag)),
-            eos=SimpleNamespace(_gravitational_acceleration=9.81),
+            eos=SimpleNamespace(gravitational_acceleration=9.81),
         )
         jax_mesh = MeshArrays.from_numpy_mesh(mesh)
         # Field must exist and have the right shape

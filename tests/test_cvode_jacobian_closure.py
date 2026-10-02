@@ -15,19 +15,43 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
-_CANDIDATES = [
-    os.environ.get('ARAGOG_TEST_EOS_DIR'),
-    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
-    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-]
-EOS_DIR = next(
-    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
-    None,
+
+
+def _find_candidate(candidates: list[str | None]) -> Path | None:
+    return next((Path(p) for p in candidates if p and Path(p).exists()), None)
+
+
+PINNED_EOS_DIR = _find_candidate(
+    [
+        os.environ.get('ARAGOG_PINNED_EOS_DIR'),
+        '/tmp/aragog-test-data/spider_eos',
+        '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos',
+    ]
 )
 
+DOWNLOADED_EOS_DIR = _find_candidate(
+    [
+        os.environ.get('ARAGOG_DOWNLOADED_EOS_DIR'),
+        f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
+        str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
+        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
+    ]
+)
+
+TABLE_CASES: list[tuple[str, Path]] = []
+if os.environ.get('ARAGOG_TEST_EOS_DIR'):
+    _override = Path(os.environ['ARAGOG_TEST_EOS_DIR'])
+    if _override.exists():
+        TABLE_CASES.append(('env_override', _override))
+
+if not TABLE_CASES:
+    if PINNED_EOS_DIR is not None:
+        TABLE_CASES.append(('pinned_v1', PINNED_EOS_DIR))
+    if DOWNLOADED_EOS_DIR is not None and DOWNLOADED_EOS_DIR != PINNED_EOS_DIR:
+        TABLE_CASES.append(('proteus_download', DOWNLOADED_EOS_DIR))
+
 needs_eos = pytest.mark.skipif(
-    EOS_DIR is None,
+    len(TABLE_CASES) == 0,
     reason='SPIDER P-S tables not found',
 )
 
@@ -42,18 +66,13 @@ from aragog.jax.phase import MeshArrays, PhaseParams  # noqa: E402
 from aragog.jax.solver import BoundaryParams, _no_radio, dSdt  # noqa: E402
 
 
-@pytest.fixture(scope='module')
-def shared_eos_jax():
-    if EOS_DIR is None:
-        pytest.skip('EOS_DIR not found')
-    return EntropyEOS_JAX(EOS_DIR)
-
-
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 @needs_eos
-def test_analytic_jacobian_matches_finite_differences_lid(shared_eos_jax):
+@pytest.mark.parametrize('table_name,table_dir', TABLE_CASES)
+def test_analytic_jacobian_matches_finite_differences_lid(table_name, table_dir):
     """Verify analytic Jacobian matches central finite differences row-by-row in lid."""
+    eos_jax = EntropyEOS_JAX(table_dir)
     n_stag = 20
     n_basic = n_stag + 1
 
@@ -117,7 +136,7 @@ def test_analytic_jacobian_matches_finite_differences_lid(shared_eos_jax):
     )
 
     entropy = jnp.linspace(3200.0, 2600.0, n_stag)
-    args = (shared_eos_jax, params, mesh, bc, jnp.zeros(n_stag), _no_radio)
+    args = (eos_jax, params, mesh, bc, jnp.zeros(n_stag), _no_radio)
 
     def _rhs(s):
         return dSdt(0.0, s, args)
@@ -125,8 +144,8 @@ def test_analytic_jacobian_matches_finite_differences_lid(shared_eos_jax):
     j_analytic = jax.jacrev(_rhs)(entropy)
     assert jnp.all(jnp.isfinite(j_analytic)), 'Analytic Jacobian must be finite'
 
-    # Compute central finite differences
-    eps = 1.0e-4
+    # Compute central finite differences (step size 1e-3 from step-size sweep)
+    eps = 1.0e-3
     j_fd = np.zeros_like(j_analytic)
     for j in range(n_stag):
         s_plus = np.array(entropy)
@@ -151,6 +170,12 @@ def test_analytic_jacobian_matches_finite_differences_lid(shared_eos_jax):
         unyielded_velocity=jnp.array(v_dummy),
         viscosity_solid=1.0e21,
     )
+
+    # Verify the stagnant lid regime remains on the unyielded branch
+    assert np.all(np.array(lid_state['w_y']) < 0.01), (
+        'Yield branch active; plastic yielding is not supported for this test configuration'
+    )
+
     w_lid_basic = np.array(lid_state['w_lid'])
     # Map basic lid mask to staggered rows
     w_lid_stag = 0.5 * (w_lid_basic[:-1] + w_lid_basic[1:])
@@ -163,6 +188,6 @@ def test_analytic_jacobian_matches_finite_differences_lid(shared_eos_jax):
         row_fd = j_fd[row, :]
         scale = np.maximum(np.abs(row_fd), 1.0e-10)
         rel_diff = np.abs(row_an - row_fd) / scale
-        assert np.max(rel_diff) < 1.0e-4, (
+        assert np.max(rel_diff) < 1.0e-6, (
             f'Jacobian mismatch in lid row {row}: max rel diff {np.max(rel_diff)}'
         )

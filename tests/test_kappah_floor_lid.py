@@ -7,12 +7,29 @@ preventing artificial convective heat transport in the cold conductive lid.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+from aragog.rheology import SolidRheologyParams
 from aragog.solver.entropy_state import EntropyState
 from tests.test_convection_scaling import _make_mesh
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_FWL_DATA = os.environ.get('FWL_DATA')
+_CANDIDATES = [
+    os.environ.get('ARAGOG_TEST_EOS_DIR'),
+    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
+    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
+    '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
+    '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos',
+]
+EOS_DIR = next((Path(p) for p in _CANDIDATES if p and Path(p).exists()), None)
+needs_eos = pytest.mark.skipif(EOS_DIR is None, reason='SPIDER P-S tables not found')
 
 
 @pytest.mark.unit
@@ -114,3 +131,87 @@ def test_kappah_floor_lid_masking():
     # 4. In deep interior (well below lid), kh_on has full convective value
     assert kh_on[2] > 1.0e4
     assert np.isclose(kh_on[2], kh_off[2], rtol=0.2)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@needs_eos
+def test_kappah_floor_lid_masking_tables_mode():
+    """Verify kappah floor is masked in lid in tables mode."""
+    eos = EntropyEOS(EOS_DIR)
+    mesh = _make_mesh()
+
+    params = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        lid_base_mode='rheological',
+    )
+
+    def _build_evaluator(enabled: bool):
+        ev = EntropyPhaseEvaluator(
+            entropy_eos=eos,
+            gravitational_acceleration=9.8,
+            const_properties=False,
+            rheological_transition_melt_fraction=0.4,
+            rheological_transition_width=0.2,
+            enabled=enabled,
+            rheology=params if enabled else SolidRheologyParams(enabled=False),
+            stress_closure_mode='lid' if enabled else 'local',
+            lid_base_mode='rheological',
+        )
+        ev.pressure = mesh.basic.pressure
+        ev.entropy = np.full_like(mesh.basic.pressure, 2000.0)
+        ev.update()
+        return ev
+
+    class _EvaluatorHolder:
+        pass
+
+    eval_holder = _EvaluatorHolder()
+    eval_holder.mesh = mesh
+
+    ev_basic_on = _build_evaluator(enabled=True)
+    ev_stag_on = _build_evaluator(enabled=True)
+    ev_stag_on.pressure = mesh.staggered.pressure
+
+    state_on = EntropyState(
+        evaluator=eval_holder,
+        phase_staggered=ev_stag_on,
+        phase_basic=ev_basic_on,
+        kappah_floor=10.0,
+    )
+
+    ev_basic_off = _build_evaluator(enabled=False)
+    ev_stag_off = _build_evaluator(enabled=False)
+    ev_stag_off.pressure = mesh.staggered.pressure
+
+    state_off = EntropyState(
+        evaluator=eval_holder,
+        phase_staggered=ev_stag_off,
+        phase_basic=ev_basic_off,
+        kappah_floor=10.0,
+    )
+
+    # Cold conductive lid profile (S=0 at surface, S=3500 in deep mantle)
+    S = np.linspace(3500.0, 0.0, mesh.staggered.radii.size)
+    state_on.update(S, time=0.0)
+    state_off.update(S, time=0.0)
+
+    assert state_on.lid_state is not None
+    w_lid = state_on.lid_state['w_lid']
+    kh_on = state_on.eddy_diffusivity
+    kh_off = state_off.eddy_diffusivity
+
+    # 1. At lid surface node, lid mask w_lid is near 1
+    assert w_lid[-1] > 0.95
+
+    # 2. At lid surface node, masked eddy diffusivity is suppressed by (1 - w_lid)
+    assert kh_on[-1] < 1.0e-4
+
+    # 3. With rheology disabled, floor is unmasked
+    assert kh_off[-1] > 0.1
+    assert kh_off[-1] > 1000.0 * kh_on[-1]
+
+    # 4. In convective interior, both paths match
+    assert kh_on[2] > 1.0
+    assert np.isclose(kh_on[2], kh_off[2], rtol=1e-6)

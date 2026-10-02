@@ -80,10 +80,11 @@ def test_yield_stress_values_and_smoothness():
     tau_pos = compute_yield_stress(P_pos, c, mu)
     np.testing.assert_allclose(float(tau_pos), c + mu * 1.0e9, rtol=1e-12)
 
-    # At zero cohesion and zero pressure, softplus floor keeps it strictly positive
+    # At zero cohesion and zero pressure, tau_y is zero and compute_effective_viscosity stays finite
     tau_zero = compute_yield_stress(jnp.asarray(0.0), 0.0, 0.0)
-    assert float(tau_zero) > 0.0
-    assert np.isfinite(float(tau_zero))
+    assert float(tau_zero) == 0.0
+    eta_zero = compute_effective_viscosity(1.0e21, tau_y=tau_zero, strain_rate=1.0e-15)
+    assert np.isfinite(float(eta_zero))
 
     # Gradient with respect to P is smooth
     dtau_dP = jax.grad(compute_yield_stress, argnums=0)(P_pos, c, mu)
@@ -96,13 +97,13 @@ def test_effective_viscosity_limits():
     tau_y = jnp.asarray(1.0e8)
 
     # Zero strain rate -> pure diffusion creep
-    eta_zero_strain = compute_effective_viscosity(eta_diff, tau_y, strain_rate=0.0)
+    eta_zero_strain = compute_effective_viscosity(eta_diff, tau_y=tau_y, strain_rate=0.0)
     np.testing.assert_allclose(float(eta_zero_strain), float(eta_diff), rtol=1e-12)
 
     # High strain rate / low yield stress -> yielding limit eta_plast = tau_y / (2 * strain_rate)
     strain_rate_high = 1.0e-12
     eta_plast = float(tau_y) / (2.0 * strain_rate_high)  # 5e19
-    eta_eff = compute_effective_viscosity(eta_diff, tau_y, strain_rate=strain_rate_high)
+    eta_eff = compute_effective_viscosity(eta_diff, tau_y=tau_y, strain_rate=strain_rate_high)
     # Harmonic mean of 1e22 and 5e19 is within 1% of 5e19
     np.testing.assert_allclose(float(eta_eff), eta_plast, rtol=0.01)
 
@@ -119,7 +120,7 @@ def test_effective_viscosity_smooth_gradients():
     def eta_total(T_val, P_val):
         eta_d = compute_arrhenius_viscosity(T_val, P_val, visc_solid, E_a, V_a)
         tau = compute_yield_stress(P_val, c, mu)
-        return compute_effective_viscosity(eta_d, tau, strain_rate)
+        return compute_effective_viscosity(eta_d, tau_y=tau, strain_rate=strain_rate)
 
     grad_fn = jax.jit(jax.grad(eta_total, argnums=(0, 1)))
 
@@ -243,7 +244,7 @@ def test_cvode_jax_analytic_jacobian_finite_differences():
     assert np.any(J_analytic != 0.0)
 
     # Finite difference check of Jacobian
-    eps_fd = 1.0e-7
+    eps_fd = 1.0e-11
     J_fd = np.zeros((N, N))
     for j in range(N):
         y_plus = y_nd.copy()
@@ -259,6 +260,6 @@ def test_cvode_jax_analytic_jacobian_finite_differences():
         J_fd[:, j] = (ydot_plus - ydot_minus) / (2.0 * eps_fd)
 
     # Verify analytic Jacobian matches finite differences where non-negligible
-    mask = np.abs(J_analytic) > 1.0e-5
-    if np.any(mask):
-        np.testing.assert_allclose(J_analytic[mask], J_fd[mask], rtol=5.0e-3, atol=1.0e-4)
+    mask = np.maximum(np.abs(J_analytic), np.abs(J_fd)) > 1.0e-14
+    assert np.any(mask), 'At least some non-negligible Jacobian entries must be tested'
+    np.testing.assert_allclose(J_analytic[mask], J_fd[mask], rtol=1.0e-2, atol=1.0e-13)

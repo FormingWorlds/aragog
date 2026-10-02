@@ -112,6 +112,11 @@ class AdamsWilliamsonEOS(EOS):
         self._staggered_effective_density = self.get_effective_density(basic_radii)
 
     @property
+    def gravitational_acceleration(self) -> float:
+        """Gravitational acceleration [m/s^2]."""
+        return self._gravitational_acceleration
+
+    @property
     def basic_pressure(self) -> npt.NDArray:
         """Pressure at basic nodes"""
         return self._basic_pressure

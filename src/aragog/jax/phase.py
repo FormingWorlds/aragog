@@ -546,7 +546,7 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
     # raise instead of defaulting to Earth gravity, since silently using
     # 9.81 m/s^2 on a non-Earth planet produces wrong physics.
     settings_src = getattr(mesh, 'settings', None) or getattr(mesh, 'parameters', None) or mesh
-    _eos_g = getattr(mesh.eos, '_gravitational_acceleration', None)
+    _eos_g = getattr(mesh.eos, 'gravitational_acceleration', None)
     if _eos_g is None:
         _eos_g = getattr(settings_src, 'gravitational_acceleration', None)
     if _eos_g is None:
@@ -882,8 +882,6 @@ def compute_mlt(
             reynolds_unyielded = (
                 visc_v_unyielded * mesh.mixing_length / jnp.maximum(nu_unyielded, 1e-30)
             )
-            if q is not None:
-                reynolds_unyielded = q * reynolds_unyielded
             blend_width = 0.01 * RE_CRIT
             inviscid_weight_unyielded = 0.5 * (
                 1.0 + jnp.tanh((reynolds_unyielded - RE_CRIT) / jnp.maximum(blend_width, 1e-30))
@@ -917,6 +915,7 @@ def compute_mlt(
                 melt_fraction=phase_basic.melt_fraction,
                 params=params,
                 unyielded_velocity=visc_v_unyielded,
+                viscosity_solid=params.viscosity_solid,
             )
             w_lid = lid_state['w_lid']
             eta_effective = compute_effective_viscosity(
@@ -972,8 +971,6 @@ def compute_mlt(
 
     # Reynolds number
     reynolds = viscous_velocity * mesh.mixing_length / nu
-    if q is not None:
-        reynolds = q * reynolds
 
     # Smooth blend between viscous and inviscid regimes. The narrow
     # blend_width (0.01 * RE_CRIT) keeps inviscid k_h confined to the
