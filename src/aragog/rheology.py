@@ -370,9 +370,7 @@ def compute_yield_stress(
         Yield stress tau_y [Pa].
     """
     p = xp.asarray(pressure, dtype=float)
-    val = yield_stress_c + yield_stress_mu * p
-    val_pos = xp.where(val > 40.0, val, xp.log1p(xp.exp(xp.clip(val, -50.0, 40.0))))
-    tau_y = xp.minimum(val_pos, yield_stress_max)
+    tau_y = xp.minimum(yield_stress_c + yield_stress_mu * p, yield_stress_max)
     if xp is np and np.ndim(pressure) == 0:
         return float(tau_y.item())
     return tau_y

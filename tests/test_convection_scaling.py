@@ -284,6 +284,8 @@ def test_jax_compute_mlt_convection_scaling():
     v_visc ~ (-dS/dr)^1 and kappa_h ~ (-dS/dr)^{1.0}.
     The transition between regimes is smoothed over a narrow tanh blend width of
     0.01 * RE_CRIT (aragog.jax.phase.compute_mlt), which is excluded from both fit ranges.
+    The sample points are far from the transition (Re/RE_CRIT ~ 4e10-4e16 and
+    4e-28-4e-22), so the blend is not tested here.
     """
     pytest.importorskip('jax')
     import jax.numpy as jnp
@@ -354,6 +356,7 @@ def test_jax_compute_mlt_convection_scaling():
         eta_diff=ones * 1.0e2,
     )
     k_inv = []
+    l_val = float(mesh.mixing_length[node_k])
     for ds_dr in ds_dr_array:
         re_pt = _eval_re(phase_inv, ds_dr)
         assert re_pt >= 10.0 * re_crit_val, (
@@ -366,7 +369,16 @@ def test_jax_compute_mlt_convection_scaling():
             mesh,
             PhaseParams(enabled=False, kappah_floor=0.0),
         )
-        k_inv.append(float(k_h[node_k]))
+        kh_val = float(k_h[node_k])
+        v_pref = float(mesh.gravity[node_k]) * (
+            float(phase_inv.thermal_expansivity[node_k])
+            * float(phase_inv.temperature[node_k])
+            * (-float(ds_dr))
+            / float(phase_inv.heat_capacity[node_k])
+        )
+        k_inv_pure = np.sqrt(v_pref * l_val**2 / 16.0) * l_val
+        assert kh_val == pytest.approx(k_inv_pure, rel=1e-12)
+        k_inv.append(kh_val)
 
     # In free-fall, F_conv ~ (-dS/dr)^{1.5}, so k_h ~ (-dS/dr)^{0.5}
     beta_inv = np.polyfit(np.log10(-ds_dr_array), np.log10(k_inv), 1)[0]
@@ -379,6 +391,7 @@ def test_jax_compute_mlt_convection_scaling():
         eta_diff=ones * 1.0e21,
     )
     k_visc = []
+    nu_visc = float(phase_visc.viscosity[node_k] / phase_visc.density[node_k])
     for ds_dr in ds_dr_array:
         re_pt = _eval_re(phase_visc, ds_dr)
         assert re_pt <= 0.1 * re_crit_val, (
@@ -390,7 +403,16 @@ def test_jax_compute_mlt_convection_scaling():
             mesh,
             PhaseParams(enabled=False, kappah_floor=0.0),
         )
-        k_visc.append(float(k_h[node_k]))
+        kh_val = float(k_h[node_k])
+        v_pref = float(mesh.gravity[node_k]) * (
+            float(phase_visc.thermal_expansivity[node_k])
+            * float(phase_visc.temperature[node_k])
+            * (-float(ds_dr))
+            / float(phase_visc.heat_capacity[node_k])
+        )
+        k_visc_pure = (v_pref * l_val**4) / (18.0 * nu_visc)
+        assert kh_val == pytest.approx(k_visc_pure, rel=1e-12)
+        k_visc.append(kh_val)
 
     # In viscous, F_conv ~ (-dS/dr)^{2}, so k_h ~ (-dS/dr)^{1.0}
     beta_visc = np.polyfit(np.log10(-ds_dr_array), np.log10(k_visc), 1)[0]
