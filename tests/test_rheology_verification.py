@@ -777,13 +777,13 @@ def test_config_rejects_yield_switch_width():
         toml_path.unlink()
 
 
-def test_diagnostics_reference_viscosity_unification():
-    """Verify get_state and const_properties use phase_solid reference viscosity."""
+def test_diagnostics_report_nan_when_rheology_disabled():
+    """Verify get_state reports NaN for eta_diff_b and tau_y_b when rheology is disabled."""
     from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver
     from tests.test_output_boundary_flux import _build_const_properties_parameters
 
-    # 1. Rheology disabled: eta_diff_b in get_state matches configured viscosity
+    # 1. Rheology disabled: eta_diff_b and tau_y_b are NaN
     p = _build_const_properties_parameters(n_nodes=40, end_time=1.0)
     p.phase_solid.viscosity = 5.0e22
     s = EntropySolver(p, entropy_eos=None)
@@ -798,9 +798,14 @@ def test_diagnostics_reference_viscosity_unification():
 
     s._solution = DummySol()
     out = s.get_state()
-    assert float(out.eta_diff_b[0]) == pytest.approx(5.0e22, rel=1e-12)
+    assert np.all(np.isnan(out.eta_diff_b))
+    assert np.all(np.isnan(out.tau_y_b))
 
-    # 2. const_properties with rheology: phase_basic uses viscosity_solid
+    # Canary: ensure they are not filled with legacy fabricated values 1e21 or 500e6
+    assert not np.any(np.isclose(out.eta_diff_b, 1.0e21))
+    assert not np.any(np.isclose(out.tau_y_b, 500.0e6))
+
+    # 2. const_properties with rheology enabled: eta_diff_b is real and uses reference viscosity
     p2 = _build_const_properties_parameters(n_nodes=40, end_time=1.0)
     p2.phase_solid.viscosity = 1.0e21
     p2.phase_solid.rheology = SolidRheologyParams(
@@ -810,4 +815,5 @@ def test_diagnostics_reference_viscosity_unification():
     s2.initialize()
     s2._solution = DummySol()
     out2 = s2.get_state()
+    assert np.all(np.isfinite(out2.eta_diff_b))
     assert out2.eta_diff_b[0] > 1.0e20

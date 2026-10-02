@@ -828,7 +828,7 @@ class EntropyState:
                     tau_y = tau_y()
                 self._tau_y_basic = np.asarray(tau_y).ravel()
             else:
-                self._tau_y_basic = np.full_like(self._viscosity_basic, 500e6)
+                self._tau_y_basic = np.full_like(self._viscosity_basic, np.nan)
 
         from aragog.rheology import compute_strain_rate_local
 
