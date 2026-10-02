@@ -216,6 +216,8 @@ class Mesh:
                 return (r_core**3 + 3.0 * M_shell / rho_avg) ** (1.0 / 3.0)
 
             if self._refined:
+                xi_min = r_core
+                xi_max = r_surf
                 span = xi_max - xi_min
                 basic_mass_coordinates = xi_min + span * self._refined_unit_grid(
                     (_xi_of_r(r_core + self.settings.cmb_cell_thickness) - xi_min) / span
