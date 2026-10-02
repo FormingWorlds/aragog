@@ -16,10 +16,14 @@ from aragog.rheology import (
 )
 
 __all__ = [
+    'LID_REGIME_LABEL_WIDTH',
     'compute_stagnant_lid_state',
     'compute_effective_viscosity',
     'stress_closure',
 ]
+
+# Transition smoothing width that sets the lid_regime diagnostic label only.
+LID_REGIME_LABEL_WIDTH: float = 0.1
 
 
 def compute_stagnant_lid_state(
@@ -225,7 +229,7 @@ def compute_stagnant_lid_state(
     )
 
     ratio = tau_d / xp.maximum(tau_y_lid, 1e-10)
-    w_y = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / 0.1))
+    w_y = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH))
     lid_cell_count = xp.sum(w_lid)
     w_solid_surf = 0.5 * (1.0 - xp.tanh((phi[-1] - 0.01) / 0.002))
     w_has_lid = 0.5 * (1.0 + xp.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf
