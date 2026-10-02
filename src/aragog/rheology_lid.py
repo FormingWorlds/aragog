@@ -225,7 +225,7 @@ def compute_stagnant_lid_state(
     )
 
     ratio = tau_d / xp.maximum(tau_y_lid, 1e-10)
-    w_y = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / params.yield_switch_width))
+    w_y = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / 0.1))
     lid_cell_count = xp.sum(w_lid)
     w_solid_surf = 0.5 * (1.0 - xp.tanh((phi[-1] - 0.01) / 0.002))
     w_has_lid = 0.5 * (1.0 + xp.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf
@@ -264,7 +264,6 @@ def compute_effective_viscosity(
     v_i: FloatOrArray | None = None,
     delta_rh: FloatOrArray | None = None,
     eta_i: FloatOrArray | None = None,
-    yield_switch_width: float = 0.1,
     stress_closure_mode: str = 'lid',
     unyielded_velocity: FloatOrArray | None = None,
     mixing_length: FloatOrArray | None = None,
@@ -276,14 +275,16 @@ def compute_effective_viscosity(
 ) -> FloatOrArray:
     r"""Compute effective dynamic viscosity with boundary-layer or local stress closure.
 
-    In stagnant lid mode, the effective viscosity caps diffusion creep by the
-    plastic yielding value min(eta_diff, tau_y / (2 * strain_rate)) through
-    a smooth log-tanh blend across tau_d / tau_y = 1.
+    In stagnant lid mode and local stress closure mode, the effective viscosity
+    is the harmonic mean of diffusion creep and plastic yield viscosities:
+        eta_eff = (eta_d * eta_y) / (eta_d + eta_y)
+        eta_y = tau_y / (2 * strain_rate)
 
     References
     ----------
-    Moresi & Solomatov (1998), doi:10.1046/j.1365-246x.1998.00521.x
     Tackley (2000), doi:10.1029/2000GC000036
+    Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
+    Foley & Bercovici (2014), sec. 8.2, p. 600, doi:10.1093/gji/ggu316
     """
     if v_i is None and delta_rh is None and tau_d is not None and tau_y_lid is not None:
         tau_y = tau_d
@@ -315,27 +316,25 @@ def compute_effective_viscosity(
         return xp.where(is_inf, eta_d, res)
 
     eta_d = xp.asarray(eta_diff, dtype=float)
-    td = xp.asarray(tau_d, dtype=float)
     ty_lid = xp.asarray(tau_y_lid, dtype=float)
     vi = xp.asarray(v_i, dtype=float)
     drh = xp.asarray(delta_rh, dtype=float)
 
+    # In stagnant lid boundary layer scaling, eps_II = vi / (2 * drh),
+    # so eta_y = ty_lid / (2 * eps_II) = (ty_lid * drh) / vi.
     eta_lid = (ty_lid * drh) / xp.maximum(vi, 1e-30)
-    eta_y = xp.minimum(eta_lid, eta_d)
-
-    ratio = td / xp.maximum(ty_lid, 1e-10)
-    eta_below = eta_d
-    eta_yielded = eta_y
-
-    w_y = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / yield_switch_width))
-    log_below = xp.log10(xp.maximum(eta_below, 1e-30))
-    log_yielded = xp.log10(xp.maximum(eta_yielded, 1e-30))
-    log_eff = (1.0 - w_y) * log_below + w_y * log_yielded
-    eta_eff_val = 10.0**log_eff
+    is_inf = xp.isinf(eta_lid) | (vi <= 0.0) | xp.isinf(ty_lid)
+    if tau_d is not None:
+        td = xp.asarray(tau_d, dtype=float)
+        is_inf = is_inf | (td <= 0.0)
+    safe_eta_lid = xp.where(is_inf, 1.0, eta_lid)
+    res = (eta_d * safe_eta_lid) / (eta_d + safe_eta_lid)
+    eta_eff_val = xp.where(is_inf, eta_d, res)
 
     if w_lid is not None:
         wl = xp.asarray(w_lid, dtype=float)
         log_diff = xp.log10(xp.maximum(eta_d, 1e-30))
+        log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
         log_solid = wl * log_eff + (1.0 - wl) * log_diff
         return 10.0**log_solid
 

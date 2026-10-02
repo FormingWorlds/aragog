@@ -403,7 +403,6 @@ class _PhaseParameters:
     yield_stress_c: Any = _UNSET
     yield_stress_mu: Any = _UNSET
     yield_stress_max: Any = _UNSET
-    yield_switch_width: Any = _UNSET
     stress_closure_mode: Any = _UNSET
     interior_flux_fraction: Any = _UNSET
     lid_base_mode: Any = _UNSET
@@ -679,6 +678,13 @@ class Parameters:
             if section.lower() == 'scalings':
                 raise ValueError(_SCALINGS_REMOVED_MSG)
 
+        for sec_name, sec_data in data.items():
+            if isinstance(sec_data, dict) and 'yield_switch_width' in sec_data:
+                raise ValueError(
+                    f"Rheology field 'yield_switch_width' in [{sec_name}] is no longer supported. "
+                    'Effective viscosity uses the harmonic mean yield closure.'
+                )
+
         init_dict: dict[str, Any] = {}
         for section_name, dataclass_ in _get_dataclass_from_section_name().items():
             section = data.get(section_name)
@@ -726,6 +732,11 @@ class Parameters:
             if section.lower() == 'scalings':
                 raise ValueError(_SCALINGS_REMOVED_MSG)
             for option in parser.options(section):
+                if option.lower() == 'yield_switch_width':
+                    raise ValueError(
+                        f"Rheology field '{option}' in [{section}] is no longer supported. "
+                        'Effective viscosity uses the harmonic mean yield closure.'
+                    )
                 if option.lower() in _RHEOLOGY_FIELD_NAMES:
                     raise ValueError(
                         f"Rheology field '{option}' in [{section}] is not supported in legacy INI / .cfg format. "

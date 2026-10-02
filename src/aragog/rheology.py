@@ -37,7 +37,6 @@ class SolidRheologyParams:
     yield_stress_c: float = 50e6
     yield_stress_mu: float = 0.6
     yield_stress_max: float = 500e6
-    yield_switch_width: float = 0.1
     stress_closure_mode: str = 'lid'
     interior_flux_fraction: float = 0.05
     lid_base_mode: str = 'rheological'
@@ -98,10 +97,6 @@ class SolidRheologyParams:
             )
         if not math.isfinite(self.yield_stress_max) or self.yield_stress_max <= 0.0:
             raise ValueError(f'yield_stress_max must be positive, got {self.yield_stress_max}')
-        if not math.isfinite(self.yield_switch_width) or self.yield_switch_width <= 0.0:
-            raise ValueError(
-                f'yield_switch_width must be positive, got {self.yield_switch_width}'
-            )
         if not math.isfinite(self.interior_flux_fraction) or not (
             0.0 < self.interior_flux_fraction < 1.0
         ):

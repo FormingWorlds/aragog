@@ -642,61 +642,136 @@ def test_phi_visc_single_parameter_control():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_effective_viscosity_unyielded_and_yielded_limits():
-    """Verify effective viscosity limits in stagnant lid mode without premature softening.
+    """Verify effective viscosity limits in stagnant lid mode with harmonic mean closure.
 
     References
     ----------
-    Moresi & Solomatov (1998), doi:10.1046/j.1365-246x.1998.00521.x
     Tackley (2000), doi:10.1029/2000GC000036
+    Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
+    Foley & Bercovici (2014), sec. 8.2, p. 600, doi:10.1093/gji/ggu316
     """
     from aragog.rheology_lid import compute_effective_viscosity
 
     eta_d = 1.0e21
     tau_y = 1.0e8
-    v_i = 1.0e-9
     delta_rh = 1.0e3
-    eta_plastic = (tau_y * delta_rh) / v_i
 
-    # Below yield stress: returns diffusion creep viscosity within blend tolerance
+    # Exact yield match: eta_y = eta_d gives eta_d / 2
+    v_i_match = (tau_y * delta_rh) / eta_d
+    eta_match = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_y_lid=tau_y,
+        v_i=v_i_match,
+        delta_rh=delta_rh,
+    )
+    assert eta_match == pytest.approx(eta_d / 2.0, rel=1.0e-12)
+
+    # Low strain rate (eta_y >> eta_d): returns diffusion creep within 1%
+    v_i_low = 1.0e-14
     eta_below = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_d=0.8 * tau_y,
         tau_y_lid=tau_y,
-        v_i=v_i,
+        v_i=v_i_low,
         delta_rh=delta_rh,
     )
-    assert eta_below == pytest.approx(eta_d, rel=0.05)
+    assert eta_below == pytest.approx(eta_d, rel=0.01)
 
-    # Above yield stress: matches plastic yield viscosity within blend tolerance
+    # High strain rate (eta_y << eta_d): matches plastic yield viscosity within 1%
+    v_i_high = 1.0e-6
+    eta_plastic = (tau_y * delta_rh) / v_i_high
     eta_yielded = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_d=1.2 * tau_y,
         tau_y_lid=tau_y,
-        v_i=v_i,
+        v_i=v_i_high,
         delta_rh=delta_rh,
     )
-    assert eta_yielded == pytest.approx(eta_plastic, rel=0.05)
+    assert eta_yielded == pytest.approx(eta_plastic, rel=0.01)
 
     # JAX parity check
     pytest.importorskip('jax')
     import jax.numpy as jnp
 
-    eta_below_jax = compute_effective_viscosity(
+    eta_match_jax = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_d=0.8 * tau_y,
         tau_y_lid=tau_y,
-        v_i=v_i,
+        v_i=v_i_match,
         delta_rh=delta_rh,
         xp=jnp,
     )
-    assert float(eta_below_jax) == pytest.approx(eta_d, rel=0.05)
+    assert float(eta_match_jax) == pytest.approx(eta_d / 2.0, rel=1.0e-12)
+
+    eta_below_jax = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_y_lid=tau_y,
+        v_i=v_i_low,
+        delta_rh=delta_rh,
+        xp=jnp,
+    )
+    assert float(eta_below_jax) == pytest.approx(eta_d, rel=0.01)
 
     eta_yielded_jax = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_d=1.2 * tau_y,
         tau_y_lid=tau_y,
-        v_i=v_i,
+        v_i=v_i_high,
         delta_rh=delta_rh,
         xp=jnp,
     )
-    assert float(eta_yielded_jax) == pytest.approx(eta_plastic, rel=0.05)
+    assert float(eta_yielded_jax) == pytest.approx(eta_plastic, rel=0.01)
+
+
+@pytest.mark.unit
+def test_config_rejects_yield_switch_width():
+    """Verify configuration parser rejects removed parameter yield_switch_width."""
+    import tempfile
+    from pathlib import Path
+
+    from aragog.parser import Parameters
+
+    with tempfile.NamedTemporaryFile('w', suffix='.toml', delete=False) as f:
+        f.write('[mesh]\n')
+        f.write('grid_size = 10\n')
+        f.write('radius_inner = 3.48e6\n')
+        f.write('radius_outer = 6.371e6\n')
+        f.write('delta_t = 1e5\n')
+        f.write('end_time = 1e6\n')
+        f.write('time_step_method = "fixed"\n')
+        f.write('output_interval = 1e5\n')
+        f.write('conduction = true\n')
+        f.write('convection = true\n')
+        f.write('[initial_condition]\n')
+        f.write('type = "entropy"\n')
+        f.write('value = 3000.0\n')
+        f.write('[phase_mixed]\n')
+        f.write('latent_heat_of_fusion = 4e5\n')
+        f.write('rheological_transition_melt_fraction = 0.4\n')
+        f.write('rheological_transition_width = 0.05\n')
+        f.write('solidus = "test"\n')
+        f.write('liquidus = "test"\n')
+        f.write('phase = "test"\n')
+        f.write('phase_transition_width = 1.0\n')
+        f.write('grain_size = 1e-3\n')
+        f.write('[phase_liquid]\n')
+        f.write('density = 4000.0\n')
+        f.write('heat_capacity = 1000.0\n')
+        f.write('melt_fraction = 1.0\n')
+        f.write('thermal_conductivity = 4.0\n')
+        f.write('thermal_expansivity = 2e-5\n')
+        f.write('viscosity = 1.0\n')
+        f.write('[phase_solid]\n')
+        f.write('density = 4000.0\n')
+        f.write('heat_capacity = 1000.0\n')
+        f.write('melt_fraction = 0.0\n')
+        f.write('thermal_conductivity = 4.0\n')
+        f.write('thermal_expansivity = 2e-5\n')
+        f.write('viscosity = 1e21\n')
+        f.write('yield_switch_width = 0.1\n')
+        toml_path = Path(f.name)
+
+    try:
+        with pytest.raises(
+            ValueError,
+            match="Rheology field 'yield_switch_width' in \\[phase_solid\\] is no longer supported",
+        ):
+            Parameters.from_file(toml_path)
+    finally:
+        toml_path.unlink()
