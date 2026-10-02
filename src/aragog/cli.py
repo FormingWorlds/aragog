@@ -33,6 +33,7 @@ import importlib.resources
 import importlib.util
 import logging
 import os
+import re
 import sys
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -117,6 +118,17 @@ def _vnv_figures_dir() -> Path:
     return repo_root / 'tools' / 'verification' / 'figures'
 
 
+def _unquote(raw: str) -> str:
+    """Return ``raw`` without one layer of JSON double quotes, else unchanged."""
+    import json
+
+    try:
+        value = json.loads(raw) if raw.startswith('"') else raw
+    except json.JSONDecodeError:
+        return raw
+    return value if isinstance(value, str) else raw
+
+
 def _coerce_value(raw: str):
     """Coerce a CLI override string to a Python value.
 
@@ -171,9 +183,13 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
     missing or non-dict in the input. Does NOT validate the leaf
     key against the dataclass schema; an unknown leaf key surfaces
     later as a TypeError at ``Config.from_dict`` construction
-    time, which the caller wraps with a clearer message.
+    time, which the caller wraps with a clearer message. A relative
+    ``mesh.eos_file`` or ``initial_condition.init_file`` value becomes
+    absolute against the working directory.
     """
     import copy
+
+    from aragog.parser import DATA_PATH_FIELDS
 
     out = copy.deepcopy(data)
     for spec in overrides:
@@ -206,7 +222,11 @@ def _apply_overrides(data: dict, overrides: tuple[str, ...]) -> dict:
                     'config or is not a section.'
                 )
             target = target[k]
-        target[keys[-1]] = _coerce_value(raw_value)
+        path_key = tuple(keys) in DATA_PATH_FIELDS
+        value = _unquote(raw_value) if path_key else _coerce_value(raw_value)
+        if path_key and value:
+            value = str(Path.cwd() / value)  # command-line paths are CWD-relative
+        target[keys[-1]] = value
     return out
 
 
@@ -385,6 +405,9 @@ def run(
         solver.set_initial_entropy(...)
         solver.solve()
         solver.get_state().to_netcdf(...)
+
+    The command writes the snapshot and then exits 1 when the integration fails
+    (a status other than 0 and 1); the Python API only sets the status.
     """
     from aragog import aragog_file_logger
     from aragog.solver import EntropySolver
@@ -427,11 +450,14 @@ def run(
             data = tomllib.load(fh)
         data = _apply_overrides(data, set_overrides)
         try:
-            parameters = Config.from_dict(data)
+            parameters = Config.from_dict(data, config_dir=config.resolve().parent)
         except (TypeError, ValueError) as exc:
             raise click.UsageError(
-                f'after applying --set overrides, the resolved config is invalid: {exc}.'
+                f'after applying --set overrides, the resolved config is invalid: '
+                f'{str(exc).rstrip(".")}.'
             ) from exc
+        except OSError as exc:
+            raise click.UsageError(_unreadable_data_file(exc)) from exc
         entropy_eos = EntropyEOS(Path(eos_dir))
         solver = EntropySolver(parameters, entropy_eos)
         logger.info(
@@ -440,7 +466,10 @@ def run(
             config.name,
         )
     else:
-        solver = EntropySolver.from_file(filename=str(config), eos_dir=str(eos_dir))
+        try:
+            solver = EntropySolver.from_file(filename=str(config), eos_dir=str(eos_dir))
+        except OSError as exc:
+            raise click.UsageError(_unreadable_data_file(exc)) from exc
     solver.initialize()
 
     core_bc = getattr(solver.parameters.boundary_conditions, 'core_bc', 'energy_balance')
@@ -476,6 +505,12 @@ def run(
         description=f'Aragog run from {config.name}',
     )
     click.echo(f'wrote {out_path}')
+    if state.failed:
+        raise click.ClickException(
+            f'integration failed (status={state.status}): {solver.solution.message}; '
+            'wrote the state at the last successful output time (the initial state if the '
+            f'solver fails before the first output) to {out_path}'
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +566,7 @@ def _first_comment_line(entry: Traversable) -> str:
 # output: status first (so a failed run is impossible to miss), then
 # the dominant state variables, then heat-balance terms.
 _INSPECT_SCALARS: tuple[tuple[str, str], ...] = (
-    ('status', 'solver status (0 = success)'),
+    ('status', 'solver status (0 success, 1 step-cap stop, other failure)'),
     ('cvode_flag', 'raw CVODE return flag (0 = success, -1 = too much work)'),
     ('time', 'simulation time [yr]'),
     ('dt_actual', 'integration interval [yr]'),
@@ -833,7 +868,8 @@ _DEFAULT_TEMPLATE = 'abe_solid'
     help=(
         'Bundled template to copy. Run `aragog list-configs` to see '
         'available templates. Match by stem (without the .toml/.cfg '
-        'suffix); .toml is preferred when both exist.'
+        'suffix); a NAME ending in .toml or .cfg selects that form, '
+        'otherwise .toml is preferred when both exist.'
     ),
 )
 @click.option(
@@ -843,39 +879,61 @@ _DEFAULT_TEMPLATE = 'abe_solid'
     help='Overwrite the destination if it already exists.',
 )
 def new(name: str, template: str, force: bool) -> None:
-    """Scaffold a new TOML config in the cwd by copying a bundled template.
+    """Scaffold a new config in the cwd by copying a bundled template.
 
-    NAME is the destination filename (with or without a `.toml`
-    extension). The file is written to the current working directory.
+    NAME is the destination filename. A `.toml` or `.cfg` suffix selects
+    that form of the template; without one the template's suffix is
+    appended (`.toml` when both forms exist). The file is
+    written to the current working directory, with a relative eos_file or
+    init_file of the template made absolute (source checkouts only: the
+    bundled data files are not package data).
     """
     cfg_dir = _bundled_cfg_dir()
 
-    # Prefer .toml over .cfg when both exist for the same stem; .cfg
-    # is the legacy INI flavour and is not recommended for new files.
-    candidates = [f'{template}.toml', f'{template}.cfg']
-    src: Traversable | None = None
-    for candidate in candidates:
-        entry = cfg_dir.joinpath(candidate)
-        if entry.is_file():
-            src = entry
-            break
+    # A NAME ending in .toml or .cfg selects that format; otherwise prefer
+    # .toml over .cfg (the legacy INI flavour) when both exist.
+    requested = Path(name).suffix.lower()
+    requested = requested if requested in ('.toml', '.cfg') else ''
+    suffixes = [requested] if requested else ['.toml', '.cfg']
+    src = next((e for s in suffixes if (e := cfg_dir.joinpath(template + s)).is_file()), None)
     if src is None:
         available = sorted(
             p.name for p in cfg_dir.iterdir() if p.name.endswith(('.toml', '.cfg'))
         )
         raise click.UsageError(
-            f"unknown template '{template}'. Available templates: {', '.join(available)}."
+            f"unknown template '{template}{requested}'. Available templates: {', '.join(available)}."
         )
 
-    dest_name = name if name.endswith('.toml') else f'{name}.toml'
+    dest_name = name if requested else name + Path(src.name).suffix
     dest = Path.cwd() / dest_name
     if dest.exists() and not force:
         raise click.UsageError(
             f'{dest} already exists. Pass --force to overwrite, or pick a different name.'
         )
 
-    dest.write_text(src.read_text(encoding='utf-8'), encoding='utf-8')
+    text = _absolute_template_paths(src.read_text(encoding='utf-8'), Path(str(src)).parent)
+    dest.write_text(text, encoding='utf-8')
     click.echo(f'wrote {dest} (from template {template})')
+
+
+def _unreadable_data_file(exc: OSError) -> str:
+    """Usage-error text for a data file that could not be read."""
+    return f'could not read a data file: {str(exc).rstrip(".")}.'
+
+
+def _absolute_template_paths(text: str, template_dir: Path) -> str:
+    """Rewrite relative data file values that name a file in ``template_dir`` as absolute."""
+    from aragog.parser import DATA_PATH_FIELDS
+
+    keys = '|'.join(name for _, name in DATA_PATH_FIELDS)
+
+    def fix(m: re.Match) -> str:
+        path = template_dir / m.group(3)
+        if Path(m.group(3)).is_absolute() or not path.is_file():
+            return m.group(0)
+        return f'{m.group(1)}{m.group(2)}{path.resolve().as_posix()}{m.group(2)}'
+
+    return re.sub(rf'(?m)^(\s*(?:{keys})\s*=\s*)(["\']?)([^"\'\s#]+)\2', fix, text)
 
 
 # ---------------------------------------------------------------------------

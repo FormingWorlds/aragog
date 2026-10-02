@@ -17,7 +17,7 @@ The `--versions` block is the recommended attachment for any bug report.
 
 | Subcommand | Purpose |
 |---|---|
-| `aragog new` | Scaffold a new TOML config from a bundled template. |
+| `aragog new` | Scaffold a new config from a bundled template, in the template's format (TOML or INI). |
 | `aragog list-configs` | Enumerate the bundled `cfg/abe_*.{toml,cfg}` examples. |
 | `aragog validate` | Parse a config and report errors without solving. |
 | `aragog show-config` | Dump the resolved `Parameters` tree as JSON. |
@@ -33,9 +33,10 @@ Each subcommand is described below.
 aragog new <name> [--from <template>] [--force]
 ```
 
-Copies a bundled `cfg/abe_*.{toml,cfg}` template to the cwd as `<name>.toml`.
+Copies a bundled `cfg/abe_*.{toml,cfg}` template to the cwd as `<name>.toml` or `<name>.cfg`, keeping the template's format.
+A relative `eos_file` or `init_file` in the template that names an existing file is written as an absolute path, so the copy runs from any directory. The bundled data files live in the repository's `data/` directory, which is not installed as package data, so this works from a source checkout only.
 Default template is `abe_solid` (the canonical solid-phase cooling smoke); use `--from abe_mixed` (or any other name from `aragog list-configs`) to pick a different starting point.
-The `.toml` suffix is appended automatically when omitted.
+A `<name>` ending in `.toml` or `.cfg` selects that form of the template; without a suffix, the template's own suffix is appended (`.toml` when both forms exist).
 Refuses to overwrite an existing destination unless `--force` is passed.
 
 ```bash
@@ -93,6 +94,7 @@ aragog run <config.toml> --eos-dir <path> [--initial-entropy <S0>] [options]
 ```
 
 Solves a configured run in full and writes a NetCDF snapshot.
+Solver status 0 (success) and 1 (stop at a step-cap event) are successful runs, any other status is a failure (`SolverOutput.failed`). If the integration fails, the command writes the state at the last successful output time (the initial state if the solver fails before the first output) and exits with status 1. A run stopped early by a per-call step cap (`energy.phi_step_cap`, `energy.temperature_step_cap` or `energy.entropy_step_cap`) exits 0, with the snapshot at the stop time.
 Mirrors the Python recipe in [Tutorials: First run](../Tutorials/firstrun.md): load `Parameters`, initialise the solver, set the initial-condition state vector, solve, and call `SolverOutput.to_netcdf`.
 
 `--initial-entropy` is optional when the config's `[initial_condition]` block sets `surface_temperature > 0` and `initial_condition` is 1 (linear) or 3 (adiabatic); the CLI then derives $S_0$ by inverting $T(P_\mathrm{surf}, S) = $ `surface_temperature` against the loaded EOS. The bundled `cfg/abe_*.{toml,cfg}` configs all set `surface_temperature`, so they run without the flag. Pass `--initial-entropy` explicitly to override the derivation.
@@ -132,6 +134,7 @@ aragog run earth_smoke.toml \
 Constraints:
 
 - `--set` requires a `.toml` config (uses `tomllib`); legacy `.cfg` INI is rejected with a clear error.
+- A relative `mesh.eos_file` or `initial_condition.init_file` value given with `--set` resolves against the working directory; the same keys inside the config file resolve against the config file's directory first.
 - Unknown intermediate sections (e.g. `--set atmos.X=...`) raise immediately, before any solver construction.
 - Unknown leaf keys (e.g. `--set energy.kapaha_floor=...` with the typo) surface as `UsageError: after applying --set overrides, the resolved config has unknown / mismatched fields: ...`.
 
@@ -153,7 +156,7 @@ snapshot: out.nc
   cvode_flag_name: SUCCESS
   dimensions: staggered=120, basic=121
 
-  status                               0  solver status (0 = success)
+  status                               0  solver status (0 success, 1 step-cap stop, other failure)
   cvode_flag                           0  raw CVODE return flag (0 = success, -1 = too much work)
   time                        1.0000e+06  simulation time [yr]
   dt_actual                   1.0000e+06  integration interval [yr]

@@ -646,7 +646,7 @@ def test_gradient_mode_solver_residual_is_measured(shared_eos):
         bump = np.zeros(n_basic + 1)
         bump[n_basic] = delta
         solver._dSdt_single = lambda t, y: rhs(t, y) + bump
-        return float(solver.get_state().step_solver_residual_J)
+        return solver._compute_step_energy_integrals()['solver_residual']
 
     shift = residual_with(1e-3) - base
     dt_s = float(out.dt_actual) * Julian_year
@@ -659,7 +659,8 @@ def test_gradient_mode_solver_residual_is_measured(shared_eos):
 # ---- F_cmb closure on the melt-fraction step-cap degenerate path -----------
 
 
-def test_f_cmb_closure_holds_on_phi_step_cap_two_point_trajectory(shared_eos):
+@pytest.mark.parametrize('cap', ['fixed', 'rate'])
+def test_f_cmb_closure_holds_on_phi_step_cap_two_point_trajectory(shared_eos, cap):
     """The F_cmb closure survives the melt-fraction step-cap degenerate
     path: a CVODE call truncated to a two-point trajectory at a phi root.
 
@@ -681,7 +682,9 @@ def test_f_cmb_closure_holds_on_phi_step_cap_two_point_trajectory(shared_eos):
     exercises the truncated path and not an ordinary full call.
 
     Skipped if scikits.odes is not installed; the two-point truncation is
-    the CVODE path, so the radau backend cannot reproduce it.
+    the CVODE path, so the radau backend cannot reproduce it. The rate cap
+    keeps the output points before the root, so its trajectory is longer and
+    the same closure must hold on it.
     """
     pytest.importorskip('scikits_odes_sundials')
 
@@ -694,6 +697,7 @@ def test_f_cmb_closure_holds_on_phi_step_cap_two_point_trajectory(shared_eos):
         use_jax_jacobian=False,
     )
     parameters.energy.phi_step_cap = 0.005
+    parameters.energy.phase_boundary_cap = cap
     solver, out = _run_solver(parameters, shared_eos, S_init=_S_init_below_liquidus(parameters))
 
     sol = solver._solution
@@ -703,8 +707,8 @@ def test_f_cmb_closure_holds_on_phi_step_cap_two_point_trajectory(shared_eos):
     assert getattr(sol, 'cap_label', None) == 'phi', (
         f"cap_label={getattr(sol, 'cap_label', None)!r}, expected 'phi'"
     )
-    assert sol.t.size == 2, (
-        f'expected a two-point trajectory at the phi root, got sol.t.size={sol.t.size}'
+    assert (sol.t.size == 2) if cap == 'fixed' else (sol.t.size > 2), (
+        f'unexpected trajectory length {sol.t.size} at the phi root for cap={cap!r}'
     )
     # The call ended at the root, well before end_time.
     assert float(out.dt_actual) < 50.0, (

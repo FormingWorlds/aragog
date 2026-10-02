@@ -105,6 +105,12 @@ See the dedicated [`phi_step_cap` how-to](phi-step-cap.md) for tuning guidance.
 
 ---
 
+## Phase-boundary step control
+
+PROTEUS does not set Aragog's `energy.phase_boundary_cap`, so a coupled run uses the Aragog default `"rate"`: a call near a phase boundary is integrated as CVODE segments (see [energy equation](../Explanations/energy_equation.md)).
+
+---
+
 ## Tolerances
 
 Tolerances are set in two places: `interior_energetics.{rtol, atol}` (the integrator side) and `interior_energetics.aragog.atol_temperature_equivalent` (the temperature-scaled absolute tolerance Aragog converts internally to entropy units via $C_p / T$).
@@ -282,7 +288,7 @@ When set to `true`, all atmosphere modules and termination checks enforce a `T_m
 **Defaults**: `rtol = 1e-10`, `atol = 1e-10`, `atol_temperature_equivalent = 1e-8`.
 **Recommendation**: keep production defaults.
 
-Loosening to `1e-7` re-introduces the CVODE marginal-stability bifurcation at iter $\sim 9$ and silent drift across the rheological transition. Tightening below `1e-10` has diminishing returns.
+Loosening to `1e-7` re-introduces the CVODE marginal-stability bifurcation at iter $\sim 9$ and silent drift across the rheological transition; above `1e-7` the rate phase-boundary cap also logs a warning. Tightening below `1e-10` has diminishing returns.
 
 ### 7. `interior_energetics.num_levels`
 
@@ -298,7 +304,7 @@ Uniform spacing in mass-coordinate space gives larger cells at the surface where
 
 #### Summary table
 
-| Knob | Default | Recommended | Why it matters |
+| Setting | Default | Recommended | Why it matters |
 |---|---|---|---|
 | `interior_energetics.module` | `"aragog"` | `"aragog"` | CVODE + JAX analytic Jacobian, robust at production tolerances. |
 | `interior_energetics.aragog.backend` | `"jax"` | `"jax"` | Eliminates FD-Jacobian noise at the rheological transition. |

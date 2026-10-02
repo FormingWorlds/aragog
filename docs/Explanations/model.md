@@ -188,7 +188,7 @@ The default integrator is SUNDIALS CVODE via `scikits.odes` (`solver_method = "c
 
 The state and time are nondimensionalised internally before being passed to the integrator (entropy reference $S_\mathrm{ref}$ and time reference $t_\mathrm{ref}$) to avoid precision loss in the BDF tolerance control. Physical units are restored on output.
 
-A phase-aware step-size policy reduces `max_step` to one year whenever any cell is within $200~\mathrm{J\,kg^{-1}\,K^{-1}}$ of a phase boundary or sits inside the mushy band; once the mantle is fully solid (mean $\phi < 0.01$) the absolute tolerance is relaxed by a factor of ten to avoid integrator stalling.
+A phase-aware step-size policy adjusts `max_step` whenever any cell is within `phase_boundary_entropy_margin` (default $200~\mathrm{J\,kg^{-1}\,K^{-1}}$) of a phase boundary or sits inside the mushy band. Under `phase_boundary_cap = "fixed"`, `max_step` is tightened to one year. Under `phase_boundary_cap = "rate"`, the default, the integration runs in event-driven segments with `max_step` scaled by the time cells require to approach phase boundaries, clipped to $[1, 100]~\mathrm{yr}$; with CVODE these segments also start when a cell is within the stiff-zone half-width of a boundary and that half-width exceeds the margin. Once the mantle is fully solid (mean $\phi < 0.01$), the absolute tolerance is relaxed by a factor of ten to avoid integrator stalling.
 
 ### Initial condition
 

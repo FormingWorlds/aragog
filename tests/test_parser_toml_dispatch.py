@@ -390,3 +390,27 @@ def test_from_file_no_arguments_raises():
 
     with pytest.raises(ValueError, match='at least one configuration filename'):
         Parameters.from_file()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('cfg', ['abe_solid.toml', 'abe_mixed.cfg'])
+@pytest.mark.parametrize('value', ['fixed', 'rate', 'bogus'])
+def test_phase_boundary_cap_reaches_energy_through_both_loaders(tmp_path, cfg, value):
+    """[energy] phase_boundary_cap loads through the TOML and the INI path; an unknown
+    value is rejected with ValueError."""
+    from aragog.parser import Parameters
+
+    src = importlib.resources.files('aragog').joinpath(f'cfg/{cfg}').read_text()
+    line = (
+        f'phase_boundary_cap = "{value}"'
+        if cfg.endswith('.toml')
+        else f'phase_boundary_cap = {value}'
+    )
+    assert src.count('[energy]\n') == 1
+    path = tmp_path / cfg
+    path.write_text(src.replace('[energy]\n', f'[energy]\n{line}\n'))
+    if value == 'bogus':
+        with pytest.raises(ValueError, match='phase_boundary_cap'):
+            Parameters.from_file(path)
+    else:
+        assert Parameters.from_file(path).energy.phase_boundary_cap == value

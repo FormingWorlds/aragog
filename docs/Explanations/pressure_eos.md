@@ -107,13 +107,14 @@ This guards against an undersized external mesh silently clamping or extrapolati
 ## Mass coordinates
 
 When `mesh.mass_coordinates = true` the basic-node radii are spaced uniformly in mass coordinate $\xi$ rather than radius $r$.
-The mass coordinate is
+The mass coordinate has units of length and follows SPIDER,
 
 $$
-\xi(r) = \frac{m(r) - m(R_\mathrm{cmb})}{m(R_\mathrm{surf}) - m(R_\mathrm{cmb})}
+\xi(r)^3 = R_\mathrm{cmb}^3 + \frac{3\,[m(r) - m(R_\mathrm{cmb})]}{4\pi\,\bar{\rho}},
 $$
 
-with $m(r)$ the cumulative mass enclosed by radius $r$.
+with $m(r)$ the cumulative mass enclosed by radius $r$ and $\bar{\rho}$ the mean mantle density, so $\xi$ runs from $R_\mathrm{cmb}$ to $R_\mathrm{surf}$.
+The mass of a shell is linear in $\xi^3$, so cells of equal $\xi$ width are not cells of equal mass.
 For the Adams-Williamson EOS the antiderivative is closed-form:
 
 $$
@@ -127,6 +128,9 @@ For uniformly spaced $\xi$, the corresponding $r$ values are found by inverting 
 brentq is preferred over Newton because $M(r)$ is strictly monotonic and the bracketed root is guaranteed.
 
 For the user-defined path (`eos_method = 2`) the cumulative mass is built from the supplied $\rho(r)$ via `cumulative_trapezoid`, then PCHIP-interpolated; the same brentq inversion gives uniformly $\xi$-spaced radii.
+
+Each staggered node is at the $\xi$ midpoint of its cell, and its radius comes from the same brentq inversion, bracketed by the two basic nodes of that cell.
+The per-cell effective density is the cell mass over the cell volume between the final basic radii, so the cell masses sum to the mantle mass.
 
 ## Picking a configuration
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Self
 
@@ -25,6 +25,29 @@ from typed_configparser import ConfigParser
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
+
+
+# The data file fields the solver loads, as (section, key).
+DATA_PATH_FIELDS = (('mesh', 'eos_file'), ('initial_condition', 'init_file'))
+
+
+def _resolve_data_paths(config_dir, mesh, initial_condition) -> None:
+    """Resolve relative ``eos_file`` and ``init_file`` against ``config_dir``, then the CWD.
+
+    A relative path that names a file in ``config_dir`` or else in the working
+    directory becomes that absolute path; otherwise it is left as given.
+    Absolute paths are unchanged.
+    """
+    sections = {'mesh': mesh, 'initial_condition': initial_condition}
+    for section, name in DATA_PATH_FIELDS:
+        path = getattr(sections[section], name)
+        if path and not Path(path).is_absolute():
+            for d in (Path(config_dir), Path.cwd()):
+                if (d / path).is_file():
+                    resolved = str((d / path).resolve())
+                    setattr(sections[section], name, resolved)
+                    logger.info('%s.%s %s resolved to %s', section, name, path, resolved)
+                    break
 
 
 def _get_dataclass_from_section_name() -> dict[str, Any]:
@@ -193,14 +216,9 @@ class _EnergyParameters:
     # falls back to FD Jacobian when no factory is available.
     use_jax_jacobian: bool = True
 
-    # Per-call mass-weighted |ΔΦ_global| cap. When positive and at least one
-    # cell sits in or near the mushy band at solve() entry, register a
-    # SUNDIALS root function that fires when |Φ_global(t) − Φ_global(
-    # start)| reaches this value, returning early with status=2 so the
-    # PROTEUS outer loop can adjust dt. Without a cap the dt adapter
-    # can land on a step that straddles the rheological transition and
-    # reject. 0.05 is a useful upper bound for the mushy zone in 1 M⊕
-    # runs; None (the default) disables the cap, as does any non-positive value.
+    # Per-call cap on mass-weighted |ΔΦ_global| near the mushy band: the call ends early (status 0
+    # under CVODE, 1 under scipy, both successful) so PROTEUS can shorten dt before the
+    # rheological transition. 0.05 suits 1 M⊕ runs; None or a non-positive value disables it.
     phi_step_cap: float | None = None
     # Per-cell temperature and entropy step caps [K] and [J/kg/K]. Like the
     # melt-fraction cap, but the root function fires on the maximum
@@ -210,19 +228,21 @@ class _EnergyParameters:
     # disables each.
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
-    # Proximity band [J/kg/K] within which a staggered cell counts as near a
-    # phase boundary, tightening the integrator max_step to 1 yr so CVODE
-    # resolves the stiff RHS across the solidus/liquidus. Solver-accuracy
-    # control, not a physics threshold: at the default the converged trajectory
-    # is unchanged, but lowering it can under-resolve a real crossing and shift
-    # the converged state beyond the nominal tolerance (CVODE's local error
-    # control can accept an over-large step across the near-discontinuous
-    # two-phase RHS). Default 200.0, a fraction of a typical silicate fusion
-    # entropy (S_liquidus - S_solidus); a non-finite or non-positive value
-    # falls back to the default.
+    # Proximity band [J/kg/K] within which a cell counts as near a phase boundary.
+    # Tightens max_step to resolve stiff RHS across the solidus/liquidus; a 'rate' call on
+    # CVODE also arms its segments within the stiff zone when that is wider.
     phase_boundary_entropy_margin: float = 200.0
+    # Step-size cap near phase boundaries: 'fixed' (1 yr) or 'rate' (event-driven segments);
+    # None, the default, runs 'rate' and logs its fallbacks at INFO.
+    phase_boundary_cap: str | None = None
 
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
+
+    def __post_init__(self):
+        if self.phase_boundary_cap not in (None, 'fixed', 'rate'):
+            raise ValueError(
+                f'phase_boundary_cap must be fixed or rate, got {self.phase_boundary_cap!r}'
+            )
 
 
 @dataclass
@@ -324,6 +344,9 @@ class _PhaseParameters:
     entropy: float | str = ''
 
 
+_PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
+
+
 @dataclass
 class _Radionuclide:
     """Stores the settings in a radionuclide section in the configuration data."""
@@ -347,11 +370,9 @@ class _Radionuclide:
                 with a single time in the time array.
         """
         arg: npt.NDArray | float = np.log(2) * (self.t0_years - time) / self.half_life_years
-        heating: npt.NDArray | float = (
-            self.heat_production * self.abundance * self.concentration * np.exp(arg)
-        )
-
-        return heating
+        amplitude = self.heat_production * self.abundance * self.concentration
+        # A zero-amplitude isotope contributes 0, also where exp(arg) overflows.
+        return amplitude * np.exp(np.where(amplitude, arg, 0.0))
 
 
 @dataclass
@@ -360,19 +381,14 @@ class _SolverParameters:
 
     start_time: float
     end_time: float
-    atol: float
-    rtol: float
+    atol: float = 1e-8
+    rtol: float = 1e-8
     tsurf_poststep_change: float = 30.0
-    # Number of points on the CVODE dense output grid, quadratically
-    # front-loaded over each macro-step. Raising it sharpens the F_int
-    # trapezoidation diagnostic; it also feeds back into CVODE stepping,
-    # so the step count and final state shift weakly with it (state near
-    # rtol, below any physical signal).
+    # Points on the CVODE output grid per macro-step. It feeds back weakly into
+    # CVODE stepping and adds nodes to the energy integrals.
     cvode_output_points: int = 65
-    # Maximum number of internal CVODE steps per solve call. CVODE
-    # returns CV_TOO_MUCH_WORK and stops once a single solve reaches
-    # this count; raise it when a stiff phase-change window needs more
-    # internal steps than the default budget.
+    # Maximum internal CVODE steps per output interval (SUNDIALS mxstep); CVODE
+    # returns CV_TOO_MUCH_WORK once one interval reaches it.
     max_steps: int = 100000
     # Optional per-solve core-temperature change limit [K]. When set, the
     # solver flags a solve whose core temperature moves by more than this
@@ -468,9 +484,34 @@ class Parameters:
                     f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
 
-        # Convert radionuclide concentration from ppm to mass fraction.
-        for r in self.radionuclides:
-            r.concentration *= 1e-6
+        # Validate ppm-scaled copies and write back only on success, so a rejected call leaves
+        # the caller's objects unchanged.
+        scaled = [replace(r, concentration=r.concentration * _PPM) for r in self.radionuclides]
+        if self.energy.radionuclides:
+            t_start = self.solver.start_time
+            for r, r_ppm in zip(scaled, self.radionuclides):
+                if not r.half_life_years > 0.0:
+                    raise ValueError(
+                        f'Radionuclide {r.name}: half_life_years must be positive, '
+                        f'got {r.half_life_years}'
+                    )
+                # On the ppm input: scaling can round a tiny negative value to -0.0.
+                if min(r_ppm.heat_production, r_ppm.abundance, r_ppm.concentration) < 0.0:
+                    raise ValueError(
+                        f'Radionuclide {r.name}: heat_production ({r_ppm.heat_production}), '
+                        f'abundance ({r_ppm.abundance}) and concentration '
+                        f'({r_ppm.concentration} ppm) must not be negative'
+                    )
+                with np.errstate(over='ignore'):
+                    finite = np.isfinite(r.get_heating(t_start))
+                if not finite:
+                    raise ValueError(
+                        f'Radionuclide {r.name}: heating is not finite at the start time '
+                        f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
+                        f'{r.half_life_years}); check the amplitude and t0_years'
+                    )
+        for r, r_scaled in zip(self.radionuclides, scaled):
+            r.concentration = r_scaled.concentration
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
@@ -559,6 +600,9 @@ class Parameters:
                     ) from exc
 
         init_dict['radionuclides'] = radionuclides
+        _resolve_data_paths(
+            path.resolve().parent, init_dict['mesh'], init_dict['initial_condition']
+        )
         return cls(**init_dict)  # pylint: disable=E1125
 
     @classmethod
@@ -585,6 +629,11 @@ class Parameters:
             )
             radionuclides.append(radionuclide)
         init_dict['radionuclides'] = radionuclides
+        _resolve_data_paths(
+            Path(filenames[0]).resolve().parent,
+            init_dict['mesh'],
+            init_dict['initial_condition'],
+        )
         return cls(**init_dict)  # pylint: disable=E1125
 
     @staticmethod
