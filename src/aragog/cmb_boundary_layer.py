@@ -38,7 +38,7 @@ def cmb_flux(
     ----------
     T_c, T_m, T_s : float or array
         CMB temperature, interior temperature above the layer, and surface
-        temperature [K]; ``T_c > T_s``.
+        temperature [K].
     depth : float
         Mantle depth [m].
     rho, g, alpha, kappa, k : float or array
@@ -52,11 +52,18 @@ def cmb_flux(
     Returns
     -------
     float or array
-        ``q = k dT_c / delta`` with ``delta = (Ra_crit kappa eta / (rho g alpha
-        |dT_c|))^(1/3)``, ``dT_c = T_c - T_m``; positive out of the core, odd in
-        ``dT_c`` and differentiable at ``dT_c = 0``.
+        For ``T_c > T_s``, ``q = k dT_c / delta`` with ``delta = (Ra_crit kappa eta /
+        (rho g alpha |dT_c|))^(1/3)``, ``dT_c = T_c - T_m``. For ``T_c <= T_s``,
+        the layer is stably stratified and returns conductive flux ``k (T_c - T_s) / depth``.
     """
     buoyancy = rho * g * alpha / (kappa * eta)
-    ra_crit = RA_CRIT_PREFACTOR * (buoyancy * (T_c - T_s) * depth**3) ** RA_CRIT_EXPONENT
+    is_convective = T_c > T_s
+    safe_dT_cs = xp.where(is_convective, T_c - T_s, 1.0)
+    ra_crit = RA_CRIT_PREFACTOR * (buoyancy * safe_dT_cs * depth**3) ** RA_CRIT_EXPONENT
     dT = T_c - T_m
-    return k * xp.sign(dT) * xp.abs(dT) ** (4.0 / 3.0) * (buoyancy / ra_crit) ** (1.0 / 3.0)
+    q_conv = k * xp.sign(dT) * xp.abs(dT) ** (4.0 / 3.0) * (buoyancy / ra_crit) ** (1.0 / 3.0)
+    q_cond = k * (T_c - T_s) / depth
+    result = xp.where(is_convective, q_conv, q_cond)
+    if xp is np and np.ndim(T_c) == 0 and np.ndim(T_s) == 0 and np.ndim(T_m) == 0:
+        return float(result.item() if hasattr(result, 'item') else result)
+    return result

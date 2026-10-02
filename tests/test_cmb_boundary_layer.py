@@ -59,6 +59,29 @@ def test_flux_is_odd_in_the_temperature_jump_and_zero_without_it():
     assert ratio == pytest.approx(0.5 ** (4.0 / 3.0), rel=1e-12)
 
 
+@pytest.mark.physics_invariant
+def test_flux_stable_when_tc_le_ts():
+    """Verify layer flux behavior for Tc > Ts, Tc == Ts, and Tc < Ts.
+
+    When Tc <= Ts, the mantle is stably stratified; cmb_flux must return the
+    conductive flux across the mantle depth k * (Tc - Ts) / depth (negative or zero),
+    continuous at Tc = Ts, without raising exceptions or producing NaNs.
+    """
+    # 1. Tc > Ts: convective boundary layer flux
+    q_conv = _mars_flux(T_c=2250.0)
+    assert q_conv > 0.0
+
+    # 2. Tc == Ts: conductive flux is zero
+    q_zero = _mars_flux(T_c=250.0)
+    assert q_zero == pytest.approx(0.0, abs=1e-15)
+
+    # 3. Tc < Ts: conductive flux is negative
+    q_neg = _mars_flux(T_c=200.0)
+    expected_cond = 4.0 * (200.0 - 250.0) / 1.7e6
+    assert q_neg == pytest.approx(expected_cond, rel=1e-12)
+    assert q_neg < 0.0
+
+
 def test_loader_needs_quasi_steady_with_inner_bc_1_or_3():
     from aragog.parser import _BoundaryConditionsParameters
 
