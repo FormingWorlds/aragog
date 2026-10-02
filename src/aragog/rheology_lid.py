@@ -275,11 +275,12 @@ def compute_effective_viscosity(
     xp: Any = np,
 ) -> FloatOrArray:
     r"""Compute effective dynamic viscosity with boundary-layer or local stress closure."""
-    if v_i is None and delta_rh is None and tau_d is not None and tau_y_lid is not None:
+    if v_i is None and delta_rh is None and tau_d is not None and tau_y is None:
         tau_y = tau_d
-        strain_rate = tau_y_lid
         tau_d = None
-        tau_y_lid = None
+        if strain_rate is None and tau_y_lid is not None:
+            strain_rate = tau_y_lid
+            tau_y_lid = None
 
     if stress_closure_mode == 'global':
         raise ValueError(

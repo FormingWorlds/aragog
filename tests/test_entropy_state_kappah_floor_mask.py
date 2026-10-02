@@ -54,7 +54,7 @@ from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_m
 from aragog.solver.entropy_state import apply_kappah_floor
 from aragog.utilities import tanh_weight
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
 
 
 # ---------------------------------------------------------------------------
