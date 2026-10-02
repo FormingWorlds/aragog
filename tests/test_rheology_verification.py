@@ -637,3 +637,66 @@ def test_phi_visc_single_parameter_control():
         SolidRheologyParams(enabled=True, phi_visc_single=1.0)
     with pytest.raises(ValueError, match='phi_visc_single must be in'):
         SolidRheologyParams(enabled=True, phi_visc_single=-0.1)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_effective_viscosity_unyielded_and_yielded_limits():
+    """Verify effective viscosity limits in stagnant lid mode without premature softening.
+
+    References
+    ----------
+    Moresi & Solomatov (1998), doi:10.1046/j.1365-246x.1998.00521.x
+    Tackley (2000), doi:10.1029/2000GC000036
+    """
+    from aragog.rheology_lid import compute_effective_viscosity
+
+    eta_d = 1.0e21
+    tau_y = 1.0e8
+    v_i = 1.0e-9
+    delta_rh = 1.0e3
+    eta_plastic = (tau_y * delta_rh) / v_i
+
+    # Below yield stress: returns diffusion creep viscosity within blend tolerance
+    eta_below = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_d=0.8 * tau_y,
+        tau_y_lid=tau_y,
+        v_i=v_i,
+        delta_rh=delta_rh,
+    )
+    assert eta_below == pytest.approx(eta_d, rel=0.05)
+
+    # Above yield stress: matches plastic yield viscosity within blend tolerance
+    eta_yielded = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_d=1.2 * tau_y,
+        tau_y_lid=tau_y,
+        v_i=v_i,
+        delta_rh=delta_rh,
+    )
+    assert eta_yielded == pytest.approx(eta_plastic, rel=0.05)
+
+    # JAX parity check
+    pytest.importorskip('jax')
+    import jax.numpy as jnp
+
+    eta_below_jax = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_d=0.8 * tau_y,
+        tau_y_lid=tau_y,
+        v_i=v_i,
+        delta_rh=delta_rh,
+        xp=jnp,
+    )
+    assert float(eta_below_jax) == pytest.approx(eta_d, rel=0.05)
+
+    eta_yielded_jax = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_d=1.2 * tau_y,
+        tau_y_lid=tau_y,
+        v_i=v_i,
+        delta_rh=delta_rh,
+        xp=jnp,
+    )
+    assert float(eta_yielded_jax) == pytest.approx(eta_plastic, rel=0.05)

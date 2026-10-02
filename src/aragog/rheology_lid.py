@@ -274,7 +274,17 @@ def compute_effective_viscosity(
     tau_y: FloatOrArray | None = None,
     xp: Any = np,
 ) -> FloatOrArray:
-    r"""Compute effective dynamic viscosity with boundary-layer or local stress closure."""
+    r"""Compute effective dynamic viscosity with boundary-layer or local stress closure.
+
+    In stagnant lid mode, the effective viscosity caps diffusion creep by the
+    plastic yielding value min(eta_diff, tau_y / (2 * strain_rate)) through
+    a smooth log-tanh blend across tau_d / tau_y = 1.
+
+    References
+    ----------
+    Moresi & Solomatov (1998), doi:10.1046/j.1365-246x.1998.00521.x
+    Tackley (2000), doi:10.1029/2000GC000036
+    """
     if v_i is None and delta_rh is None and tau_d is not None and tau_y_lid is not None:
         tau_y = tau_d
         strain_rate = tau_y_lid
@@ -314,7 +324,7 @@ def compute_effective_viscosity(
     eta_y = xp.minimum(eta_lid, eta_d)
 
     ratio = td / xp.maximum(ty_lid, 1e-10)
-    eta_below = xp.maximum(eta_d * (1.0 - ratio), eta_y)
+    eta_below = eta_d
     eta_yielded = eta_y
 
     w_y = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / yield_switch_width))
