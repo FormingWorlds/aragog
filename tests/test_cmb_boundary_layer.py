@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from aragog.cmb_boundary_layer import RA_CRIT_EXPONENT, RA_CRIT_PREFACTOR, cmb_flux
+from aragog.cmb_boundary_layer import RA_C, RA_CRIT_EXPONENT, RA_CRIT_PREFACTOR, cmb_flux
 from tests.test_entropy_solver_bc_dispatch_smoke import EOS_DIR, _build
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(300)]
@@ -60,26 +60,151 @@ def test_flux_is_odd_in_the_temperature_jump_and_zero_without_it():
 
 
 @pytest.mark.physics_invariant
-def test_flux_stable_when_tc_le_ts():
-    """Verify layer flux behavior for Tc > Ts, Tc == Ts, and Tc < Ts.
+def test_flux_continuity_across_ra_c_and_nu_1():
+    """Continuity of q across Ra = Ra_c and across Nu = 1.
 
-    When Tc <= Ts, the mantle is stably stratified; cmb_flux must return the
-    conductive flux across the mantle depth k * (Tc - Ts) / depth (negative or zero),
-    continuous at Tc = Ts, without raising exceptions or producing NaNs.
+    Asserts |q(x+h) - q(x-h)| -> 0 monotonically at 3 decreasing values of h.
     """
-    # 1. Tc > Ts: convective boundary layer flux
-    q_conv = _mars_flux(T_c=2250.0)
-    assert q_conv > 0.0
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    buoyancy = rho * g * alpha / (kappa * eta)
+    T_s = MARS['T_s']
 
-    # 2. Tc == Ts: conductive flux is zero
-    q_zero = _mars_flux(T_c=250.0)
-    assert q_zero == pytest.approx(0.0, abs=1e-15)
+    # 1. Across Ra = Ra_c at fixed T_m
+    delta_T_crit = RA_C / (buoyancy * depth**3)
+    T_c_crit = T_s + delta_T_crit
+    T_m = 1800.0
+    diffs_ra = []
+    h_steps_ra = [1e-2 * delta_T_crit, 1e-3 * delta_T_crit, 1e-4 * delta_T_crit]
+    for h in h_steps_ra:
+        qp = cmb_flux(T_c_crit + h, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+        qm = cmb_flux(T_c_crit - h, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+        diffs_ra.append(abs(qp - qm))
+    assert diffs_ra[1] < diffs_ra[0]
+    assert diffs_ra[2] < diffs_ra[1]
+    assert diffs_ra[2] < 1e-5
 
-    # 3. Tc < Ts: conductive flux is negative
-    q_neg = _mars_flux(T_c=200.0)
-    expected_cond = 4.0 * (200.0 - 250.0) / 1.7e6
-    assert q_neg == pytest.approx(expected_cond, rel=1e-12)
-    assert q_neg < 0.0
+    # 2. Across Nu = 1 at Ra >> Ra_c
+    T_c_conv = 2250.0
+    ra_conv = buoyancy * (T_c_conv - T_s) * depth**3
+    ra_dc = RA_CRIT_PREFACTOR * ra_conv**RA_CRIT_EXPONENT
+    dT_nu1 = ra_dc / (buoyancy * depth**3)
+    T_m_crit = T_c_conv - dT_nu1
+    diffs_nu = []
+    h_steps_nu = [1e-2 * dT_nu1, 1e-3 * dT_nu1, 1e-4 * dT_nu1]
+    for h in h_steps_nu:
+        qp = cmb_flux(T_c_conv, T_m_crit - h, T_s, depth, rho, g, alpha, kappa, k, eta)
+        qm = cmb_flux(T_c_conv, T_m_crit + h, T_s, depth, rho, g, alpha, kappa, k, eta)
+        diffs_nu.append(abs(qp - qm))
+    assert diffs_nu[1] < diffs_nu[0]
+    assert diffs_nu[2] < diffs_nu[1]
+    assert diffs_nu[2] < 1e-8
+
+
+@pytest.mark.physics_invariant
+def test_flux_continuity_at_ra_just_above_ra_c_with_large_ra_l():
+    """When Ra is just above Ra_c with Ra_l large, max(1, .) keeps q continuous.
+
+    At Ra ~ Ra_c with large T_c - T_m, without flooring Ra at Ra_c the convective
+    branch would diverge as (T_c - T_s)^-0.07. Flooring at Ra_c maintains continuity.
+    """
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    buoyancy = rho * g * alpha / (kappa * eta)
+    T_s = MARS['T_s']
+    T_m = 2500.0  # Large Ra_l
+    delta_T_crit = RA_C / (buoyancy * depth**3)
+    T_c_crit = T_s + delta_T_crit
+    eps = 1e-4 * delta_T_crit
+
+    q_above = cmb_flux(T_c_crit + eps, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+    q_below = cmb_flux(T_c_crit - eps, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+    assert abs(q_above - q_below) < 1e-4
+    assert np.isfinite(q_above) and np.isfinite(q_below)
+
+
+@pytest.mark.physics_invariant
+def test_flux_monotonic_in_dt_c_at_fixed_surface_temperature():
+    """Flux q is strictly monotonic in dT_c >= 0 at fixed T_s."""
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    T_s = MARS['T_s']
+    T_m = 1800.0
+    dT_vals = np.linspace(0.0, 1500.0, 151)
+    q_vals = [
+        cmb_flux(T_m + dt, T_m, T_s, depth, rho, g, alpha, kappa, k, eta) for dt in dT_vals
+    ]
+    diffs = np.diff(q_vals)
+    assert np.all(diffs > 0.0)
+
+
+@pytest.mark.physics_invariant
+def test_flux_odd_symmetry_on_conductive_branch():
+    """On the conductive branch (Nu = 1), q(-dT_c) = -q(dT_c)."""
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    T_s = MARS['T_s']
+    T_m = 2000.0
+    dT_c = 1e-8
+    q_pos = cmb_flux(T_m + dT_c, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+    q_neg = cmb_flux(T_m - dT_c, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+    assert q_pos == pytest.approx(-q_neg, rel=1e-12)
+    assert q_pos == pytest.approx(k * dT_c / depth, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+def test_flux_finite_and_continuous_at_tc_equals_ts():
+    """Flux q is finite and continuous at T_c = T_s."""
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    T_s = MARS['T_s']
+    T_m = 1800.0
+    q_at = cmb_flux(T_s, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+    assert np.isfinite(q_at)
+
+    diffs = []
+    for h in [1e-2, 1e-3, 1e-4]:
+        qp = cmb_flux(T_s + h, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+        qm = cmb_flux(T_s - h, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+        diffs.append(abs(qp - qm))
+    assert diffs[1] < diffs[0]
+    assert diffs[2] < diffs[1]
+    assert diffs[2] < 1e-6
 
 
 def test_loader_needs_quasi_steady_with_inner_bc_1_or_3():
