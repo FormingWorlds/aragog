@@ -49,14 +49,98 @@ def test_flux_is_the_published_law_at_the_mars_start():
 
 
 @pytest.mark.physics_invariant
-def test_flux_is_odd_in_the_temperature_jump_and_zero_without_it():
-    """A core colder than the interior draws heat in with the same magnitude; the
-    flux grows as dT_c^(4/3) (Ra_delta fixed, delta ~ dT_c^(-1/3))."""
-    up, down = _mars_flux(T_m=1800.0), _mars_flux(T_m=2700.0)
-    assert down == pytest.approx(-up, rel=1e-12)
-    assert _mars_flux(T_m=2250.0) == 0.0
-    ratio = _mars_flux(T_m=2025.0) / up  # dT_c 225 against 450 K
-    assert ratio == pytest.approx(0.5 ** (4.0 / 3.0), rel=1e-12)
+def test_nu_equals_one_exactly_for_negative_dt_c():
+    """For dT_c < 0 (core colder than mantle base), the layer is stable and Nu = 1 exactly."""
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    T_s = MARS['T_s']
+    T_m = 2500.0
+    for dT in [-1e-4, -1.0, -50.0, -450.0]:
+        T_c = T_m + dT
+        q = cmb_flux(T_c, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+        q_cond = k * (T_c - T_m) / depth
+        assert q == pytest.approx(q_cond, rel=1e-12)
+        assert q / q_cond == pytest.approx(1.0, rel=1e-12)
+
+
+@pytest.mark.physics_invariant
+def test_nu_continuous_at_dt_c_zero():
+    """Nu is continuous at dT_c = 0 across left and right limits."""
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    buoyancy = rho * g * alpha / (kappa * eta)
+    T_s = MARS['T_s']
+    T_m = 2000.0
+    ra_eff = max(buoyancy * (T_m - T_s) * depth**3, RA_C)
+    ra_dc = RA_CRIT_PREFACTOR * ra_eff**RA_CRIT_EXPONENT
+    dT_onset = ra_dc / (buoyancy * depth**3)
+
+    # Approach zero from left and right within the sub-critical window
+    h_steps = [0.5 * dT_onset, 0.1 * dT_onset, 0.01 * dT_onset]
+    diffs = []
+    for h in h_steps:
+        q_pos = cmb_flux(T_m + h, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+        q_neg = cmb_flux(T_m - h, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+        dT_pos = (T_m + h) - T_m
+        dT_neg = (T_m - h) - T_m
+        nu_pos = q_pos / (k * dT_pos / depth)
+        nu_neg = q_neg / (k * dT_neg / depth)
+        diffs.append(abs(nu_pos - nu_neg))
+    assert diffs[0] == pytest.approx(0.0, abs=1e-10)
+    assert diffs[1] == pytest.approx(0.0, abs=1e-10)
+    assert diffs[2] == pytest.approx(0.0, abs=1e-10)
+
+
+@pytest.mark.physics_invariant
+def test_nu_greater_than_one_only_for_positive_dt_c_above_onset():
+    """Nu > 1 only for dT_c > 0 above onset."""
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    buoyancy = rho * g * alpha / (kappa * eta)
+    T_s = MARS['T_s']
+    T_c = 2250.0
+    ra_eff = max(buoyancy * (T_c - T_s) * depth**3, RA_C)
+    ra_dc = RA_CRIT_PREFACTOR * ra_eff**RA_CRIT_EXPONENT
+    dT_onset = ra_dc / (buoyancy * depth**3)
+
+    # Sub-critical positive dT_c: Nu == 1
+    T_m_sub = T_c - 0.5 * dT_onset
+    q_sub = cmb_flux(T_c, T_m_sub, T_s, depth, rho, g, alpha, kappa, k, eta)
+    nu_sub = q_sub / (k * (T_c - T_m_sub) / depth)
+    assert nu_sub == pytest.approx(1.0, rel=1e-8)
+
+    # Super-critical positive dT_c: Nu > 1
+    T_m_super = T_c - 2.0 * dT_onset
+    q_super = cmb_flux(T_c, T_m_super, T_s, depth, rho, g, alpha, kappa, k, eta)
+    nu_super = q_super / (k * (T_c - T_m_super) / depth)
+    assert nu_super > 1.05
+
+    # Negative dT_c: Nu == 1
+    T_m_neg = T_c + 2.0 * dT_onset
+    q_neg = cmb_flux(T_c, T_m_neg, T_s, depth, rho, g, alpha, kappa, k, eta)
+    nu_neg = q_neg / (k * (T_c - T_m_neg) / depth)
+    assert nu_neg == pytest.approx(1.0, rel=1e-8)
 
 
 @pytest.mark.physics_invariant
