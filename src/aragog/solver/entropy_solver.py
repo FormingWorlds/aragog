@@ -4144,20 +4144,16 @@ class EntropySolver:
         counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
         P = np.array([self._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
         self.state._pb_cache_hits, self.state._pb_cache_misses = counters
-        if P.shape[1] == 8:
-            (
-                P_F_int,
-                P_F_cmb,
-                P_radio,
-                P_tidal,
-                P_radio_cons,
-                P_tidal_cons,
-                P_resid_solver,
-                P_cutoff,
-            ) = P.T
-        else:
-            P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
-            P_cutoff = np.zeros(len(t_pts))
+        (
+            P_F_int,
+            P_F_cmb,
+            P_radio,
+            P_tidal,
+            P_radio_cons,
+            P_tidal_cons,
+            P_resid_solver,
+            P_cutoff,
+        ) = P.T
 
         dt_s = np.diff(np.asarray(t_pts, dtype=float)) * SECS_PER_YEAR
 
@@ -4545,7 +4541,7 @@ class EntropySolver:
         # solve() stores the integrals; a result set without solve() gets them here, before
         # the final-state refresh below that the rest of get_state() reads.
         step_integrals = sol.get('energy_integrals') or self._compute_step_energy_integrals()
-        if step_integrals.get('surface_cutoff', 0.0) > 0.0:
+        if step_integrals['surface_cutoff'] > 0.0:
             logger.info(
                 'Table-edge cutoff held back %.4e J of surface energy in this call',
                 step_integrals['surface_cutoff'],
@@ -4837,7 +4833,7 @@ class EntropySolver:
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
             tcore_change_max=tcore_change_max,
             tcore_change_exceeded=tcore_change_exceeded,
-            step_dE_surface_cutoff_J=float(step_integrals.get('surface_cutoff', 0.0) or 0.0),
+            step_dE_surface_cutoff_J=float(step_integrals['surface_cutoff']),
             **self._surface_half_cell_diagnostics(),
             jcond_b=jcond_b,
             jconv_b=jconv_b,
