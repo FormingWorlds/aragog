@@ -236,7 +236,7 @@ def _fake_solver(sol):
     def powers(t, y):
         seen.append((t, y.copy()))
         s.state._pb_cache_hits += 1
-        return np.array([t, 2 * t, 3 * t, 4 * t, 5 * t, 6 * t, 7 * t])
+        return np.array([t, 2 * t, 3 * t, 4 * t, 5 * t, 6 * t, 7 * t, 0.0])
 
     s._step_powers = powers
     return s, seen
@@ -405,6 +405,7 @@ _FIELDS = {
     'Q_radio_cons': 'step_dE_Q_radio_cons_J',
     'Q_tidal_cons': 'step_dE_Q_tidal_cons_J',
     'solver_residual': 'step_solver_residual_J',
+    'surface_cutoff': 'step_dE_surface_cutoff_J',
     'state_heat': 'step_dE_state_heat_J',
 }
 
@@ -438,7 +439,7 @@ def test_a_failed_solve_reports_zero_integrals(monkeypatch):
     s.solve()
     out = s.get_state()
     assert s.stop_early and not calls
-    assert [getattr(out, f) for k, f in _FIELDS.items() if k != 'F_cmb_step_avg'] == [0.0] * 8
+    assert [getattr(out, f) for k, f in _FIELDS.items() if k != 'F_cmb_step_avg'] == [0.0] * 9
 
 
 @pytest.mark.unit
