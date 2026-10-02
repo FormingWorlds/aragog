@@ -145,6 +145,58 @@ def test_lid_base_rheological_front_clipping():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
+def test_lid_base_parameterized_phi_rheo():
+    """Verify lid base clipping respects parameterized phi_rheo."""
+    n_nodes = 50
+    radii = np.linspace(3.48e6, 6.371e6, n_nodes)
+    pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
+    temp_cold = np.linspace(3000.0, 1000.0, n_nodes)
+    flux_conv = 100.0 * np.sin(np.pi * (radii - radii[0]) / (radii[-1] - radii[0]))
+    solidus_prof = np.linspace(2500.0, 1400.0, n_nodes)
+
+    params = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        lid_base_mode='fixed',
+        lid_base_temperature=2000.0,
+    )
+
+    melt_frac = np.zeros(n_nodes)
+    melt_frac[35:45] = 0.5
+
+    state_default = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_cold,
+        pressure=pressure,
+        convective_flux=flux_conv,
+        total_flux=flux_conv + 10.0,
+        solidus_temperature=solidus_prof,
+        melt_fraction=melt_frac,
+        params=params,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        xp=np,
+    )
+    state_high = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_cold,
+        pressure=pressure,
+        convective_flux=flux_conv,
+        total_flux=flux_conv + 10.0,
+        solidus_temperature=solidus_prof,
+        melt_fraction=melt_frac,
+        params=params,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.6,
+        xp=np,
+    )
+    assert state_default['d_lid'] < state_high['d_lid']
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
 def test_frank_kamenetskii_contrast_scaling():
     """Verify theta scales monotonically with surface temperature drop."""
     n_nodes = 40
@@ -214,6 +266,7 @@ def test_continuous_lid_regime_output():
     )
 
     params = _build_const_properties_parameters(n_nodes=20, end_time=1.0)
+    params.phase_solid.viscosity = 100.0
     params.phase_solid.rheology = SolidRheologyParams(
         enabled=True,
         stress_closure_mode='lid',

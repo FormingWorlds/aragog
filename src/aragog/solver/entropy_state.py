@@ -746,6 +746,7 @@ class EntropyState:
                 visc_solid = getattr(self.phase_basic, 'viscosity_solid', None)
                 if visc_solid is None:
                     visc_solid = getattr(rheo, 'viscosity_solid', 1.0e21)
+                phi_rheo = float(getattr(self.phase_basic, 'phi_rheo', 0.4))
                 lid_state = compute_stagnant_lid_state(
                     radii=r_basic,
                     temperature=T,
@@ -757,6 +758,7 @@ class EntropyState:
                     params=rheo,
                     unyielded_velocity=visc_v_unyielded,
                     viscosity_solid=visc_solid,
+                    phi_rheo=phi_rheo,
                     xp=np,
                 )
                 self._lid_state = lid_state

@@ -17,6 +17,8 @@ from aragog.rheology import (
 
 __all__ = [
     'LID_REGIME_LABEL_WIDTH',
+    'SOLIDUS_MELT_FRACTION_THRESHOLD',
+    'SOLIDUS_MELT_FRACTION_WIDTH',
     'compute_stagnant_lid_state',
     'compute_effective_viscosity',
     'stress_closure',
@@ -24,6 +26,11 @@ __all__ = [
 
 # Transition smoothing width that sets the lid_regime diagnostic label only.
 LID_REGIME_LABEL_WIDTH: float = 0.1
+
+# Melt fraction threshold marking solidus crossing / surface crust solidification.
+# This 1% threshold is distinct from phi_rheo (~0.4), the rheological transition.
+SOLIDUS_MELT_FRACTION_THRESHOLD: float = 0.01
+SOLIDUS_MELT_FRACTION_WIDTH: float = 0.002
 
 
 def compute_stagnant_lid_state(
@@ -37,6 +44,7 @@ def compute_stagnant_lid_state(
     params: Any,
     unyielded_velocity: FloatOrArray | None = None,
     viscosity_solid: float | None = None,
+    phi_rheo: float | None = None,
     xp: Any = np,
 ) -> dict[str, Any]:
     r"""Compute stagnant lid boundary-layer indicators and convective driving stress.
@@ -162,13 +170,18 @@ def compute_stagnant_lid_state(
     w_mask = params.lid_mask_width_cells
     scale = w_mask * dT_cell
 
+    phi_rheo_val = phi_rheo if phi_rheo is not None else getattr(params, 'phi_rheo', 0.4)
+    phi_width_val = getattr(params, 'phi_width', 0.05)
+
     w_hot_iso = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale))
     if solidus_temperature is not None:
         T_sol = xp.asarray(solidus_temperature, dtype=float)
         w_hot_sol = 0.5 * (1.0 + xp.tanh((T - T_sol) / scale))
     else:
-        w_hot_sol = 0.5 * (1.0 + xp.tanh((phi - 0.01) / 0.002))
-    w_hot_phi = 0.5 * (1.0 + xp.tanh((phi - 0.4) / 0.05))
+        w_hot_sol = 0.5 * (
+            1.0 + xp.tanh((phi - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
+        )
+    w_hot_phi = 0.5 * (1.0 + xp.tanh((phi - phi_rheo_val) / phi_width_val))
 
     w_interior = xp.maximum(xp.maximum(w_hot_iso, w_hot_sol), w_hot_phi)
     w_lid = (1.0 - w_interior) * w_active
@@ -231,7 +244,9 @@ def compute_stagnant_lid_state(
     ratio = tau_d / xp.maximum(tau_y_lid, 1e-10)
     w_y = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH))
     lid_cell_count = xp.sum(w_lid)
-    w_solid_surf = 0.5 * (1.0 - xp.tanh((phi[-1] - 0.01) / 0.002))
+    w_solid_surf = 0.5 * (
+        1.0 - xp.tanh((phi[-1] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
+    )
     w_has_lid = 0.5 * (1.0 + xp.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf
     lid_regime = w_active * w_has_lid * (1.0 + w_y)
 
