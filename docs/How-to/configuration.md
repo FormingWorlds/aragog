@@ -82,7 +82,7 @@ activation_energy = 300.0e3        # J/mol
 activation_volume = 5.0e-6         # m^3/mol
 yield_stress_c = 50.0e6            # Pa
 yield_stress_mu = 0.6              # friction coefficient
-stress_closure_mode = "local"      # "local" or "global"
+stress_closure_mode = "lid"        # "lid" (boundary-layer convective closure) or "local"
 
 [phase_liquid]
 density = "data/lookup/density_melt.dat"
@@ -231,7 +231,7 @@ End-member phase properties. Float values mean a constant; string values are fil
 | `activation_volume` | m³/mol | Arrhenius activation volume. Default 5e-6 |
 | `yield_stress_c` | Pa | Byerlee plastic yield stress cohesion intercept. Default 50e6 |
 | `yield_stress_mu` | -- | Byerlee friction coefficient. Default 0.6 |
-| `stress_closure_mode` | str | Explicit strain rate closure mode. `"local"` limits yielding node-by-node; `"global"` enforces bulk yielding. Default `"local"` |
+| `stress_closure_mode` | str | Explicit strain rate closure mode. `"lid"` activates stagnant-lid and mobile-lid convective boundary-layer closure; `"local"` limits yielding node-by-node. Default `"lid"` |
 
 In the production PROTEUS path the per-phase keys are not consumed for material properties; the EOS tables provide $\rho$, $c_p$, $\alpha$, $k$, and $T$ as functions of $(P, S)$. The values are kept for the standalone constant-properties path (see `const_properties` below).
 

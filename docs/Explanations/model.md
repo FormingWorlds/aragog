@@ -100,7 +100,7 @@ $$
 
 where $E_a$ is the activation energy, $V_a$ is the activation volume, and the reference state is set by the `[phase_solid]` `viscosity` parameter. 
 
-The effective viscosity is capped by Byerlee yielding to prevent unphysically large stresses in the cold lithosphere. The yield stress is $Y = C + \mu P$, with cohesion $C$ and friction coefficient $\mu$. An explicit single-pass strain rate closure calculates the yielded viscosity. The closure operates in two modes: `"local"` limits the stress node-by-node based on the local strain rate, while `"global"` enforces a bulk yielding criterion across the entire solid domain.
+The effective viscosity is capped by Byerlee yielding to prevent unphysically large stresses in the cold lithosphere. The yield stress is $Y = C + \mu P$, with cohesion $C$ and friction coefficient $\mu$. An explicit single-pass strain rate closure calculates the yielded viscosity. The default closure mode `"lid"` activates boundary-layer convective closure for stagnant-lid and mobile-lid regimes. An alternative mode `"local"` limits yielding node-by-node based on the local convective strain rate.
 
 ### Gravitational separation of melt
 

@@ -341,7 +341,7 @@ The geometry of the strain rate closure is controlled by `stress_closure_mode`:
 - `global`:
     Unsupported mode. Configuration validation rejects `global` and instructs users to specify `lid`.
 
-In the baseline parameter schema, `stress_closure_mode` defaults to `'local'` for backwards compatibility with unyielded baseline runs. Setting `stress_closure_mode = 'lid'` activates the boundary-layer convective closure for stagnant-lid and mobile-lid regimes.
+In the baseline parameter schema, `stress_closure_mode` defaults to `'lid'` to activate the boundary-layer convective closure for stagnant-lid and mobile-lid regimes. Setting `stress_closure_mode = 'local'` limits yielding node-by-node based on the local convective strain rate.
 
 ## 8. Two-Stage Viscosity Blending
 
@@ -471,7 +471,7 @@ All solid-state convection parameters are managed by `SolidRheologyParams` in Ar
 | `yield_stress_c` | Pa | `50000000.0` | `[phase_solid].yield_stress_c` | `[interior_energetics.aragog.rheology].yield_stress_c` |
 | `yield_stress_mu` | - | `0.6` | `[phase_solid].yield_stress_mu` | `[interior_energetics.aragog.rheology].yield_stress_mu` |
 | `yield_stress_max` | Pa | `500000000.0` | `[phase_solid].yield_stress_max` | `[interior_energetics.aragog.rheology].yield_stress_max` |
-| `stress_closure_mode` | - | `'local'` | `[phase_solid].stress_closure_mode` | `[interior_energetics.aragog.rheology].stress_closure_mode` |
+| `stress_closure_mode` | - | `'lid'` | `[phase_solid].stress_closure_mode` | `[interior_energetics.aragog.rheology].stress_closure_mode` |
 | `interior_flux_fraction` | - | `0.05` | `[phase_solid].interior_flux_fraction` | `[interior_energetics.aragog.rheology].interior_flux_fraction` |
 | `lid_base_mode` | - | `'fixed'` | `[phase_solid].lid_base_mode` | `[interior_energetics.aragog.rheology].lid_base_mode` |
 | `lid_base_temperature` | K | `1400.0` | `[phase_solid].lid_base_temperature` | `[interior_energetics.aragog.rheology].lid_base_temperature` |
