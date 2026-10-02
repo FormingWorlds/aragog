@@ -14,6 +14,7 @@ finite-volume mesh.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -257,7 +258,7 @@ def _phase_boundary_max_step_clamp(
     cmb_margin_to_sol: float,
     entropy_margin: float,
 ) -> bool:
-    """Whether ``max_step`` should be tightened to 1 yr for phase-boundary stiffness.
+    """Whether the phase-boundary step control applies (``phase_boundary_cap``).
 
     The clamp resolves the stiff RHS a cell sees while crossing the
     solidus/liquidus. It fires when any staggered cell is within
@@ -292,11 +293,197 @@ def _phase_boundary_max_step_clamp(
     Returns
     -------
     bool
-        True when ``max_step`` should be reduced to 1 yr.
+        True when ``max_step`` is 1 yr (``'fixed'``) or set by the rate segments
+        (``'rate'``).
     """
     cmb_near_liq = abs(cmb_margin_to_liq) < entropy_margin
     cmb_in_mushy = cmb_margin_to_liq < 0.0 and cmb_margin_to_sol > 0.0
     return bool(near_liq or near_sol or in_mushy or cmb_near_liq or cmb_in_mushy)
+
+
+# Rate-cap stiff-zone half-width floor [J/kg/K].
+_RATE_CAP_MIN_DELTA = 10.0
+# rtol above which the rate cap logs one warning (its accuracy is measured at 1e-8).
+_RATE_CAP_RTOL_LIMIT = 1.0e-7
+
+
+def _segment_arming_margin(
+    margin: float, delta: float, cap_mode: str, core_bc: str, use_cvode: bool
+) -> float:
+    """Entropy margin [J/kg/K] within which a call arms the phase-boundary step control.
+
+    A ``'rate'`` call on CVODE (not the gradient core) also arms for a cell inside the stiff
+    zone, whose half-width ``delta`` can exceed ``margin``; every other call, and the step
+    caps, use ``margin``.
+    """
+    if cap_mode == 'rate' and core_bc != 'gradient' and use_cvode:
+        return max(margin, delta)
+    return margin
+
+
+def _rate_phase_boundary_max_step(
+    S: npt.NDArray,
+    dSdt: npt.NDArray,
+    S_liq: npt.NDArray,
+    S_sol: npt.NDArray,
+    mass: npt.NDArray,
+    delta: float,
+    fraction: float = 0.1,
+    bounds: tuple[float, float] = (1.0, 100.0),
+    rate_floor: bool = True,
+) -> float:
+    """``max_step`` [yr] from the rate at which cells approach a phase boundary.
+
+    Every cell with a boundary ahead counts: its time to the next boundary in
+    the direction it moves is ``|S - S_b| / |dS/dt|``. A cell inside the stiff
+    zone (within ``delta`` of either boundary) or slower than the mass-weighted
+    mean ``|dS/dt|`` rate floor uses the distance to the nearer boundary on
+    either side. The floor covers an isentropic start, where interior cells
+    have almost no rate until the thermal boundary layers form.
+
+    Parameters
+    ----------
+    S, dSdt : npt.NDArray
+        Entropy [J/kg/K] and its rate [J/kg/K/yr].
+    S_liq, S_sol : npt.NDArray
+        Liquidus and solidus entropy at each entry's pressure [J/kg/K].
+    mass : npt.NDArray
+        Weight of each entry in the rate floor [kg]; zero excludes an entry.
+    delta : float
+        Half-width of the stiff zone around each boundary [J/kg/K].
+    fraction : float
+        Fraction of the shortest time to a boundary used as ``max_step``.
+    bounds : tuple of float
+        Lower and upper clip [yr].
+    rate_floor : bool
+        Apply the mass-weighted rate floor.
+
+    Returns
+    -------
+    float
+        ``fraction * min(t_c)`` clipped to ``bounds``; ``bounds[1]`` when no
+        entry has a finite ``t_c``; ``bounds[0]`` when ``S``, ``dSdt``, the
+        boundaries or the floor are not finite.
+    """
+    dist = np.minimum(np.abs(S - S_liq), np.abs(S - S_sol))
+    rate = np.abs(dSdt)
+    floor = float(np.sum(mass * rate) / np.sum(mass)) if rate_floor else 0.0
+    if not all(np.isfinite(a).all() for a in (S, rate, floor, S_liq, S_sol)):
+        return bounds[0]
+    down = np.where(S > S_liq, S_liq, np.where(S > S_sol, S_sol, np.nan))
+    up = np.where(S < S_sol, S_sol, np.where(S < S_liq, S_liq, np.nan))
+    ahead = np.abs(np.where(dSdt < 0.0, down, up) - S)
+    d = np.where((dist < delta) | (rate < floor), dist, ahead)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        t_c = d / np.maximum(rate, floor)
+    t_c = t_c[np.isfinite(t_c)]
+    return float(np.clip(fraction * t_c.min(), *bounds)) if t_c.size else bounds[1]
+
+
+class _PhaseBoundarySegmentRoot(_CV_RootFunction):
+    """CVODE root components that end one segment of a rate-cap call.
+
+    Entropies are the staggered cells plus the CMB cell against the
+    boundaries at the CMB pressure. Components, anchored at the segment start:
+
+    - ``cap``: the per-call step caps (``_PhiCapRootFunction``), when armed;
+      it ends the call.
+    - ``stiff``: the smallest distance to a boundary minus ``delta`` outside
+      the stiff zone (entry), minus ``2 delta`` inside it (exit, hysteresis).
+    - ``entry``: inside the stiff zone only, the smallest distance minus
+      ``delta`` over the entries that start outside it.
+    - ``progress``: ``alpha`` times each entry's start distance to its nearer
+      boundary, at least ``delta``, minus the distance it has moved.
+
+    Parameters
+    ----------
+    S_liq, S_sol : npt.NDArray
+        Boundary entropies for the extended entries [J/kg/K].
+    y0 : npt.NDArray
+        Nondimensional state at the segment start.
+    delta : float
+        Stiff-zone half-width [J/kg/K].
+    inside : bool or None
+        Whether the segment starts inside the stiff zone; ``None`` decides
+        from ``y0`` (any entry within ``delta`` of a boundary).
+    state_scale : npt.NDArray
+        Nondimensional state scale; the first ``n_stag`` entries are entropy.
+    n_stag : int
+        Number of staggered cells.
+    cap : _PhiCapRootFunction or None
+        Step-cap root function to include as the first component.
+    """
+
+    alpha = 0.5  # fraction of the start distance that ends a segment
+
+    def __init__(self, S_liq, S_sol, y0, delta, inside, state_scale, n_stag, cap=None):
+        self.S_liq, self.S_sol, self.delta, self.step_cap = S_liq, S_sol, delta, cap
+        self.scale = np.asarray(state_scale, dtype=float).ravel()[:n_stag]
+        self.n_stag = n_stag
+        self.S0 = self._entropy(y0)
+        self.d0 = self._dist(self.S0)
+        self.inside = bool(np.any(self.d0 < delta)) if inside is None else inside
+        self.watch = (self.d0 >= delta) if self.inside else np.isfinite(self.d0)
+        self.moving = np.isfinite(self.d0)
+        self.reach = self.alpha * np.maximum(self.d0, delta)
+        self.names = (
+            (['cap'] if cap is not None else [])
+            + ['stiff']
+            + (['entry'] if self.inside and self.watch.any() else [])
+            + (['progress'] if self.moving.any() else [])
+        )
+        self.n_roots = len(self.names)
+
+    def _entropy(self, y):
+        S = np.asarray(y, dtype=float)[: self.n_stag] * self.scale
+        return np.append(S, S[0])
+
+    def _dist(self, S):
+        return np.minimum(np.abs(S - self.S_liq), np.abs(S - self.S_sol))
+
+    def components(self, t, y):
+        """Root component values at nondimensional ``(t, y)``, in ``names`` order."""
+        g = []
+        if self.step_cap is not None:
+            gc = np.zeros(1)
+            self.step_cap.evaluate(t, y, gc)
+            g.append(float(gc[0]))
+        S = self._entropy(y)
+        d = self._dist(S)
+        g.append(float(d.min()) - (2.0 if self.inside else 1.0) * self.delta)
+        if 'entry' in self.names:
+            g.append(float(d[self.watch].min()) - self.delta)
+        if 'progress' in self.names:
+            moved = np.abs(S - self.S0)[self.moving]
+            g.append(float(np.min(self.reach[self.moving] - moved)))
+        g = np.asarray(g, dtype=float)
+        return np.where(np.isfinite(g), g, 1.0)
+
+    def evaluate(self, t, y, g, userdata=None):
+        g[:] = self.components(t, y)
+        return 0
+
+    def fired(self, t, y):
+        """Name of the component closest to zero at the root ``(t, y)``."""
+        g = np.abs(self.components(t, y))
+        scale = {'stiff': self.delta, 'entry': self.delta}
+        if self.step_cap is not None:
+            c = self.step_cap  # scaled by the cap that binds, in that cap's own unit
+            by_cap = {'phi': c.cap, 'temperature': c.cap_T, 'entropy': c.cap_S}
+            scale['cap'] = by_cap.get(c.binding_cap) or max(c.cap, c.cap_T, c.cap_S)
+        if 'progress' in self.names:
+            scale['progress'] = float(np.min(self.reach[self.moving]))
+        g = g / np.array([scale[n] for n in self.names])
+        return self.names[int(np.argmin(g))]
+
+    def __getattr__(self, name):
+        # Step-cap attributes read by ``_solve_cvode`` on a root; ``phi0`` is 0 without a cap.
+        step_cap = self.__dict__.get('step_cap')
+        if step_cap is not None:
+            return getattr(step_cap, name)
+        if name == 'phi0':
+            return 0.0
+        raise AttributeError(name)
 
 
 def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
@@ -585,13 +772,39 @@ def _phi_cap_event_factory(
     return _event
 
 
+_STATUS_DESCRIPTION = (
+    'Solver status (0 success, 1 stop at a step-cap event, other values failure)'
+)
+
+
+_ZERO_ENERGY_INTEGRALS = {
+    'F_int': 0.0,
+    'F_cmb': 0.0,
+    'F_cmb_step_avg': None,
+    'surface_cutoff': 0.0,
+    'Q_radio': 0.0,
+    'Q_tidal': 0.0,
+    'Q_radio_cons': 0.0,
+    'Q_tidal_cons': 0.0,
+    'solver_residual': 0.0,
+    'state_heat': 0.0,
+}
+
+
+def _status_failed(status: int) -> bool:
+    """Whether a solver status is a failure: 0 (success) and 1 (step-cap stop) are not."""
+    return status not in (0, 1)
+
+
 @dataclass
 class SolverOutput:
     """Complete output from one EntropySolver integration step.
 
     This dataclass is the public contract between Aragog and PROTEUS.
     All quantities needed by the coupling wrapper are included here,
-    so callers never need to reach into solver internals.
+    so callers never need to reach into solver internals. ``status`` 0 (success)
+    and 1 (stop at a step-cap event) are successful runs, any other status is a
+    failure; ``failed`` tells the two apart.
     """
 
     # Profiles at staggered nodes
@@ -674,14 +887,9 @@ class SolverOutput:
     Q_radio_total: float  # mantle-integrated radiogenic power [W]
     Q_tidal_total: float  # mantle-integrated tidal power [W]
 
-    # Per-call energy-balance contributions [J] integrated over the
-    # CVODE sub-step trajectory. Replaces end-of-step instantaneous
-    # capture as the conservation primitive: PROTEUS just cumulatively
-    # sums these across calls instead of trapezoidal-interpolating
-    # between possibly-transient end-of-step F_cmb snapshots. Sign
-    # convention: positive = energy ADDED to the mantle over the call
-    # (so step_dE_F_int_J is negative when the mantle is losing heat
-    # to the atmosphere).
+    # Per-call energy contributions [J], integrated over the call's quadrature nodes; the
+    # caller sums them across calls. Positive adds energy to the mantle (step_dE_F_int_J
+    # is negative while the mantle loses heat to the atmosphere).
     step_dE_F_int_J: float  # = -∫ F_int * A_int dt [J]
     step_dE_F_cmb_J: float  # = +∫ F_cmb * A_cmb dt [J]
     step_dE_Q_radio_J: float  # = +∫ Q_radio_total dt [J] (state-dependent mass)
@@ -737,7 +945,7 @@ class SolverOutput:
     step_dE_state_heat_J: float
 
     dt_actual: float  # actual integration time [yr]
-    status: int  # solver status (0 = success)
+    status: int  # 0 success, 1 stop at a step-cap event, any other value failure
 
     # Raw CVODE return flag, surfaced distinctly from the scipy-compatible
     # ``status`` so a caller can tell CV_TOO_MUCH_WORK (step budget) from
@@ -772,6 +980,11 @@ class SolverOutput:
     step_dE_surface_cutoff_J: float = 0.0
 
     # ── NetCDF output ──────────────────────────────────────────────
+    @property
+    def failed(self) -> bool:
+        """Whether the integration failed (a status other than 0 and 1)."""
+        return _status_failed(self.status)
+
     def to_netcdf(
         self,
         path: str | Path,
@@ -993,7 +1206,7 @@ class SolverOutput:
                 'Solid weight of the top cell',
             )
             _scalar('dt_actual', self.dt_actual, 'yr', 'Actual integration time of this step')
-            _scalar('status', int(self.status), '1', 'Solver status code (0 = success)')
+            _scalar('status', int(self.status), '1', _STATUS_DESCRIPTION)
             _scalar(
                 'cvode_flag',
                 int(self.cvode_flag),
@@ -1174,6 +1387,7 @@ class EntropySolver:
         self.state: EntropyState
         self._solution: OptimizeResult
         self.stop_early: bool = False
+        self._warned: set[str] = set()
         # Optional factory that builds JAX-derived CVODE callbacks.
         # Signature: factory(scales, core_bc_mode) -> (rhs_fn, jac_fn)
         # where ``scales`` is an aragog.jax.nondim.NonDimScales
@@ -1181,20 +1395,10 @@ class EntropySolver:
         # registered by PROTEUS via ``set_jax_cvode_factory()`` when
         # ``config.interior_energetics.aragog.use_jax_jacobian`` is True.
         self._jax_cvode_factory = None
-        # Number of output points CVODE returns per macro-step solve.
-        # The per-call energy integrals trapezoidate the boundary fluxes
-        # over this grid; the surface flux decays steeply within a long
-        # call, so two endpoints under-resolve it (the F_int integral can
-        # be tens of percent wrong over a multi-kyr step, which is the
-        # dominant term in ``E_residual_cons_frac``). The requested output
-        # grid feeds back into CVODE stepping, so a finer grid weakly
-        # shifts the accepted step count and the final state; the state
-        # shift stays near rtol, below any physical signal. Only the
-        # non-root path uses it; a phi-step-cap root stops the call early.
+        # Output points CVODE returns per macro-step solve; a root ends the call early.
         self._cvode_output_points = self.parameters.solver.cvode_output_points
-        # Maximum internal CVODE steps per solve; exceeding it returns
-        # CV_TOO_MUCH_WORK. Configurable so a stiff phase-change window
-        # can request a larger budget than the default.
+        # Maximum internal CVODE steps per output interval (SUNDIALS mxstep); exceeding it
+        # returns CV_TOO_MUCH_WORK.
         self._max_steps = self.parameters.solver.max_steps
         # Optional per-solve core-temperature change limit [K]. When set,
         # a solve whose core temperature moves by more than this from the
@@ -2721,6 +2925,84 @@ class EntropySolver:
 
         return J.tocsc()
 
+    def _output_grid(self, start_time: float, end_time: float) -> npt.NDArray:
+        """CVODE output times for one call: a quadratic grid, dense near the start.
+
+        The first output time sets CVODE's initial step estimate, so the step count and the
+        final state shift weakly with the grid; the core-temperature check reads these samples.
+        """
+        n_out = self._cvode_output_points
+        if n_out > 2 and float(end_time) > float(start_time):
+            x = np.linspace(0.0, 1.0, n_out) ** 2
+            return float(start_time) + (float(end_time) - float(start_time)) * x
+        return np.array([start_time, end_time], dtype=float)
+
+    @staticmethod
+    def _energy_trace(
+        nodes: list, t: npt.NDArray, y: npt.NDArray
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Quadrature nodes of one CVODE call, in the solver's nondimensional units.
+
+        Nodes past the call end and nodes not later than the previous kept node are
+        dropped; the rest are bracketed by the call's start and end states (the root on a
+        fired call). At a fired root the step end lies past the call end, so the increasing
+        root-search iterates below the root stay; these iterates are interpolated states of
+        the accepted step.
+
+        Parameters
+        ----------
+        nodes : list of tuple
+            ``(t, y)`` pairs the root function saw, nondimensional.
+        t : ndarray
+            Result times of the call, nondimensional.
+        y : ndarray, shape (n_state, n_t)
+            Result states of the call, nondimensional.
+
+        Returns
+        -------
+        t_nodes : ndarray
+            Node times.
+        y_nodes : ndarray, shape (n_state, n_nodes)
+            Node states.
+        """
+        t_end = float(t[-1])
+        ts, ys = [float(t[0])], [y[:, 0]]
+        for tn, yn in nodes:
+            if ts[-1] < tn <= t_end:
+                ts.append(tn)
+                ys.append(yn)
+        if ts[-1] < t_end:
+            ts.append(t_end)
+            ys.append(y[:, -1])
+        return np.array(ts), np.array(ys).T
+
+    @staticmethod
+    def _physical_trace(
+        trace: tuple[npt.NDArray, npt.NDArray], t_ref: float, state_scale: npt.NDArray
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Energy quadrature nodes in years and physical units, strictly increasing in time.
+
+        Distinct nondimensional times can round to the same year at large t; of each run of
+        equal times the last node is kept, so the call's end state stays the last node.
+
+        Parameters
+        ----------
+        trace : tuple of ndarray
+            Nondimensional node times and states, shape (n,) and (n_state, n).
+        t_ref : float
+            Time scale [yr].
+        state_scale : ndarray
+            State scale per row (or scalar).
+
+        Returns
+        -------
+        tuple of ndarray
+            Node times [yr] and node states in physical units.
+        """
+        t, y = trace[0] * t_ref, trace[1] * np.reshape(state_scale, (-1, 1))
+        keep = np.append(np.diff(t) > 0, True)
+        return t[keep], y[:, keep]
+
     def _solve_cvode(
         self,
         start_time: float,
@@ -2733,6 +3015,8 @@ class EntropySolver:
         cvode_rhs_fn_override: 'Callable | None' = None,
         cvode_jacfn: 'Callable | None' = None,
         phi_cap_rootfn: 'Callable | None' = None,
+        tspan: 'npt.NDArray | None' = None,
+        keep_points_before_root: bool = False,
     ) -> 'OptimizeResult':
         """Integrate the entropy equation using SUNDIALS CVODE.
 
@@ -2765,6 +3049,17 @@ class EntropySolver:
             callback so CVODE uses this analytic Jacobian instead of
             its default finite-difference approximation. Signature:
             ``jacfn(t, y, fy, J, user_data=None) -> int``.
+        tspan : ndarray or None
+            Output times; ``None`` uses ``_output_grid(start_time, end_time)``.
+        keep_points_before_root : bool
+            On a root, keep the output points reached before it; otherwise the
+            result holds only the start and the root.
+
+        Returns
+        -------
+        OptimizeResult
+            Also carries ``energy_trace``, the nondimensional ``(t, y)`` quadrature nodes of
+            the per-call energy integrals (see ``_energy_trace``).
         """
         # Zero-span edge case: scipy's solve_ivp accepts
         # `t_span = (t0, t0)` and returns the initial state trivially,
@@ -2847,7 +3142,7 @@ class EntropySolver:
             'atol': atol_cvode,
             'lmm_type': 'BDF',
             'nonlinsolver': 'newton',
-            'max_steps': self._max_steps,  # per-solve cap; scipy used unlimited
+            'max_steps': self._max_steps,  # per output interval (SUNDIALS mxstep)
             # Maximum BDF order. BDF orders 1-2 are A-stable
             # (unconditionally stable for stiff problems on stable
             # systems); orders 3-5 are only "stiffly stable" with
@@ -2890,7 +3185,7 @@ class EntropySolver:
         # treats flag==2 as success.
         if phi_cap_rootfn is not None:
             cvode_options['rootfn'] = phi_cap_rootfn
-            cvode_options['nr_rootfns'] = 1
+            cvode_options['nr_rootfns'] = int(getattr(phi_cap_rootfn, 'n_roots', 1))
 
         # Option Z: install the analytic Jacobian callback. When
         # provided, CVODE's Newton iteration uses this instead of the
@@ -2904,6 +3199,22 @@ class EntropySolver:
             cvode_options.pop('lband', None)
             cvode_options.pop('uband', None)
 
+        # CVODE calls the root function at t0, every accepted step end, every output and,
+        # on a fired root, the root-search points; _energy_trace keeps the increasing ones up
+        # to the call end as quadrature nodes. Without a user root function a g=1 one records.
+        nodes, user_rootfn = [], cvode_options.get('rootfn')
+        user_rootfn = getattr(user_rootfn, 'evaluate', user_rootfn)
+
+        def rootfn(t, y, g):
+            nodes.append((float(t), np.array(y, dtype=float)))
+            if user_rootfn is None:
+                g[0] = 1.0
+                return 0
+            return user_rootfn(t, y, g)
+
+        cvode_options['rootfn'] = rootfn
+        cvode_options.setdefault('nr_rootfns', 1)
+
         solver = _scikits_cvode(rhs_fn, **cvode_options)
         # One-time debug print of the CVODE options actually in effect.
         # This helps verify banded linsolver dispatch vs silent fallback.
@@ -2913,24 +3224,8 @@ class EntropySolver:
                 'CVODE options in use: %s',
                 {k: v for k, v in cvode_options.items() if k != 'old_api'},
             )
-        # Request intermediate output points so the per-call energy
-        # integrals resolve the within-call flux decay. This grid feeds
-        # back into CVODE stepping, so the step count and final state
-        # shift weakly with it (state near rtol). The root path below
-        # handles a phi-step-cap fire, where these points are inert.
-        #
-        # The grid is front-loaded (quadratic spacing, dense near the call
-        # start) because each macro-step is a relaxation toward the new
-        # boundary state, so the boundary flux changes fastest just after
-        # the start and flattens later. A quadratic grid resolves the
-        # F_int integral to ~0.1 percent with a few dozen points, where a
-        # uniform grid of the same size leaves ~10 percent.
-        n_out = self._cvode_output_points
-        if n_out > 2 and float(end_time) > float(start_time):
-            x = np.linspace(0.0, 1.0, n_out) ** 2
-            tspan = float(start_time) + (float(end_time) - float(start_time)) * x
-        else:
-            tspan = np.array([start_time, end_time], dtype=float)
+        if tspan is None:
+            tspan = self._output_grid(start_time, end_time)
         cvode_sol = solver.solve(
             tspan,
             np.asarray(y0, dtype=float).ravel(),
@@ -2986,15 +3281,9 @@ class EntropySolver:
             result.cvode_nst = int(cvode_info['NumSteps'])
             result.cvode_nfe = int(cvode_info['NumRhsEvals'])
             result.cvode_info = dict(cvode_info)  # counters; step sizes in nondim time
-        # ``scikits.odes`` rootfn-fire idiosyncrasy: when CVODE's rootfn
-        # fires (flag=2), ``cvode_sol.values.t`` contains ONLY the start
-        # time (the integration progress to the root is dropped), while
-        # the actual root location is exposed via ``cvode_sol.roots.t``
-        # / ``cvode_sol.roots.y``. Reading from ``values.t`` here would
-        # give ``dt_actual = sol.t[-1] - sol.t[0] = 0`` and PROTEUS's
-        # wrapper would fall back to ``dtswitch`` while Aragog's state
-        # had actually advanced to the root, locking the coupled run
-        # at a fixed point.
+        # When the root function fires (flag 2), ``cvode_sol.values`` holds only the outputs
+        # before the root and the root is in ``cvode_sol.roots``, so the result is
+        # [start, root] and ``dt_actual`` covers the integration up to the root.
         flag = int(getattr(cvode_sol, 'flag', -1))
         roots_obj = getattr(cvode_sol, 'roots', None)
         used_roots = False
@@ -3018,6 +3307,14 @@ class EntropySolver:
             y_root_col = np.asarray(y_root, dtype=float).reshape(-1, 1)
             result.t = np.array([float(start_time), t_root], dtype=float)
             result.y = np.concatenate((y0_col, y_root_col), axis=1)
+            values = getattr(cvode_sol, 'values', None)
+            if keep_points_before_root and values is not None and values.t is not None:
+                t_pre = np.asarray(values.t, dtype=float).ravel()
+                y_pre = np.asarray(values.y, dtype=float).reshape(t_pre.size, -1).T
+                keep = t_pre < t_root
+                if keep.any():
+                    result.t = np.append(t_pre[keep], t_root)
+                    result.y = np.concatenate((y_pre[:, keep], y_root_col), axis=1)
             used_roots = True
 
         if not used_roots:
@@ -3037,6 +3334,12 @@ class EntropySolver:
                 result.y = np.asarray(y0, dtype=float).reshape(-1, 1)
 
         result.nfev = nfev_box[0]
+        result.energy_trace = self._energy_trace(nodes, result.t, result.y)
+        # CVODE calls the root function once per accepted step, so a completed call keeps
+        # about one node per step.
+        nst, n_nodes = int(result.get('cvode_nst', 0)), len(result.energy_trace[0])
+        if flag in (0, 2) and n_nodes + max(10, nst // 100) < nst:
+            logger.warning('energy quadrature: %d nodes for %d CVODE steps', n_nodes, nst)
         result.message = getattr(cvode_sol, 'message', '')
         # Surface the raw CVODE flag distinctly from result.status: status
         # stays scipy-compatible (0 success, -1 failure), while these two
@@ -3070,12 +3373,144 @@ class EntropySolver:
                 result.message = f'CVODE failed with flag {flag}'
         return result
 
+    def _solve_cvode_segments(
+        self,
+        start_time: float,
+        end_time: float,
+        y0: npt.NDArray,
+        h_at: 'Callable',
+        roots_at: 'Callable',
+        t_ref: float,
+        h_min: float,
+        max_segments: int = 10000,
+        **cvode_kw,
+    ) -> 'OptimizeResult':
+        """Integrate one rate-cap call as CVODE segments with their own ``max_step``.
+
+        Each segment is a new CVODE solve from the previous segment's end. A segment ends at
+        the call end, at a ``_PhaseBoundarySegmentRoot`` component, or at the step cap, which
+        ends the call. The segments' trajectories and energy traces are joined.
+
+        Parameters
+        ----------
+        start_time, end_time : float
+            Nondimensional call span.
+        y0 : npt.NDArray
+            Nondimensional start state.
+        h_at : callable
+            ``h_at(t, y) -> max_step`` (nondimensional).
+        roots_at : callable
+            ``roots_at(y, inside) -> _PhaseBoundarySegmentRoot`` anchored at
+            ``y``; ``inside=None`` decides from ``y``.
+        t_ref : float
+            Time scale [yr] for the log.
+        h_min : float
+            Nondimensional ``max_step`` fallback for the segment ceiling.
+        max_segments : int
+            Segment ceiling; the rest of the call then runs at ``h_min``
+            with only the step cap armed.
+        **cvode_kw
+            Passed to ``_solve_cvode``.
+
+        Returns
+        -------
+        OptimizeResult
+            As ``_solve_cvode``, plus ``segments``: ``(t [yr], trigger,
+            max_step [yr])`` per segment.
+        """
+        grid = self._output_grid(start_time, end_time)
+        cap = cvode_kw.pop('phi_cap_rootfn', None)
+        t, y, inside = float(start_time), np.asarray(y0, dtype=float).ravel(), None
+        ts, ys, log = [np.array([t])], [y.reshape(-1, 1)], []
+        et, ey = [], []
+        nfev = nst = nfe = 0
+        trigger = 'start'
+        res = None
+        for k in range(max_segments + 1):
+            tspan = np.concatenate(([t], grid[grid > t + 1e-12 * abs(end_time)]))
+            if tspan.size < 2:
+                if res is not None:  # a root at the call end: complete
+                    res.cvode_flag, res.cvode_flag_name = 0, _cvode_flag_name(0)
+                    break
+                tspan = np.array([t, end_time])  # a call shorter than the grid tolerance
+            last = k == max_segments
+            roots = None if last else roots_at(y, inside)
+            inside = False if last else roots.inside
+            h = h_min if last else h_at(t, y)
+            log.append((t * t_ref, trigger, h * t_ref))
+            logger.debug(
+                'rate cap segment %d: t=%.6e yr trigger=%s max_step=%.3g yr',
+                k,
+                t * t_ref,
+                trigger,
+                h * t_ref,
+            )
+            if last:
+                logger.warning(
+                    'rate cap: %d segments in one call; max_step %.3g yr for the rest',
+                    max_segments,
+                    h * t_ref,
+                )
+            res = self._solve_cvode(
+                start_time=t,
+                end_time=end_time,
+                y0=y,
+                max_step=h,
+                phi_cap_rootfn=cap if last else roots,
+                tspan=tspan,
+                keep_points_before_root=True,
+                **cvode_kw,
+            )
+            ts.append(np.asarray(res.t, dtype=float)[1:])
+            ys.append(np.asarray(res.y, dtype=float)[:, 1:])
+            tr = res.get('energy_trace')
+            if tr is not None:
+                skip = 1 if et else 0  # a later segment's first node repeats the join point
+                et.append(tr[0][skip:])
+                ey.append(tr[1][:, skip:])
+            nfev += int(res.nfev)
+            nst += int(res.get('cvode_nst', 0))
+            nfe += int(res.get('cvode_nfe', 0))
+            if res.status != 0 or res.cvode_flag != 2 or last:
+                break
+            t, y = float(res.t[-1]), np.asarray(res.y[:, -1], dtype=float)
+            trigger = roots.fired(t, y)
+            if trigger == 'cap':
+                break
+            for key in ('cap_fired', 'cap_evals', 'cap_label', 'cap_value', 'cap_phi0'):
+                res.pop(key, None)
+            if trigger == 'stiff':
+                inside = not roots.inside
+        res.t = np.concatenate(ts)
+        res.y = np.concatenate(ys, axis=1)
+        res.energy_trace = (np.concatenate(et), np.concatenate(ey, axis=1)) if et else None
+        res.nfev, res.cvode_nst, res.cvode_nfe, res.segments = nfev, nst, nfe, log
+        logger.info(
+            'rate cap: %d segment(s), nst=%d, triggers %s',
+            len(log),
+            nst,
+            {n: sum(1 for e in log if e[1] == n) for n in {e[1] for e in log}},
+        )
+        return res
+
+    def _warn_once(self, key: str, message: str, level: int = logging.WARNING) -> None:
+        """Log ``message`` at ``level`` the first time ``key`` is seen by this solver."""
+        if key not in self._warned:
+            self._warned.add(key)
+            logger.log(level, message)
+
     def solve(self) -> None:
-        """Run the BDF time integration."""
+        """Run the BDF time integration.
+
+        A successful solve also stores the per-call energy integrals on the result as
+        ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
+        zeros.
+        """
         if not hasattr(self, '_S0') or self._S0 is None:
             raise RuntimeError(
                 'Initial entropy is not set. Call set_initial_entropy() before solve().'
             )
+        wall_start = time.perf_counter()
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
@@ -3119,17 +3554,11 @@ class EntropySolver:
         # UnboundLocalError when the EOS branch below is skipped (e.g. the
         # const_properties path with no EOS).
         phi_cap_anchor = None
+        rate_mode = False
 
-        # Tighten max_step when ANY cell is near a phase boundary and arm the
-        # step caps. Runs whenever the entropy EOS is loaded, independent of
-        # the mean melt fraction: the temperature and entropy caps must stay
-        # active in the deep-solid regime (mean melt fraction below 0.01),
-        # where a cell can still cool on the solid adiabat well below the
-        # solidus and the melt-fraction cap is blind. When a cell's entropy is
-        # within the configured phase-boundary entropy margin (default
-        # 200 J/kg/K) of either phase boundary, OR sits inside the mushy band,
-        # max_step is reduced to 1 yr to give CVODE enough resolution to
-        # handle the phase-boundary stiffness gradually.
+        # Runs whenever the entropy EOS is loaded: the T and S caps stay armed in the deep solid,
+        # where the phi cap is blind. A cell within the margin of a boundary or in the mushy band
+        # tightens max_step: 1 yr for 'fixed', CVODE segments for 'rate'.
         if self.entropy_eos is not None:
             entropy_margin = _resolve_entropy_margin(
                 getattr(self.parameters.energy, 'phase_boundary_entropy_margin', None)
@@ -3151,15 +3580,43 @@ class EntropySolver:
             S_liq = float(self.entropy_eos.liquidus_entropy(np.array([P_cmb])).item())
             S_sol = float(self.entropy_eos.solidus_entropy(np.array([P_cmb])).item())
             S0_block_cmb = float(S0_block[0])
-            if _phase_boundary_max_step_clamp(
-                near_liq,
-                near_sol,
-                in_mushy,
-                cmb_margin_to_liq=S0_block_cmb - S_liq,
-                cmb_margin_to_sol=S0_block_cmb - S_sol,
-                entropy_margin=entropy_margin,
+            cap_set = getattr(self.parameters.energy, 'phase_boundary_cap', None)
+            cap_mode = cap_set or 'rate'
+            # Staggered cells plus the CMB cell at the CMB-pressure boundaries.
+            rate_liq = np.append(S_liq_stag, S_liq)
+            rate_sol = np.append(S_sol_stag, S_sol)
+            w = float(getattr(self.parameters.phase_mixed, 'matprop_smooth_width', 0.0))
+            rate_delta = max(3.0 * w * float(np.max(rate_liq - rate_sol)), _RATE_CAP_MIN_DELTA)
+            use_cvode = (
+                getattr(self.parameters.energy, 'solver_method', 'cvode') == 'cvode'
+                and _CVODE_AVAILABLE
+            )
+            segment_margin = _segment_arming_margin(
+                entropy_margin, rate_delta, cap_mode, self._core_bc, use_cvode
+            )
+
+            def clamps(margin):
+                return _phase_boundary_max_step_clamp(
+                    np.any(np.abs(margin_to_liq) < margin),
+                    np.any(np.abs(margin_to_sol) < margin),
+                    in_mushy,
+                    cmb_margin_to_liq=S0_block_cmb - S_liq,
+                    cmb_margin_to_sol=S0_block_cmb - S_sol,
+                    entropy_margin=margin,
+                )
+
+            if clamps(entropy_margin) or (
+                segment_margin > entropy_margin and clamps(segment_margin)
             ):
+                rate_mode = cap_mode == 'rate' and self._core_bc != 'gradient'
                 max_step = 1.0
+                if cap_mode == 'rate' and not rate_mode:
+                    self._warn_once(
+                        'gradient',
+                        'phase_boundary_cap="rate" is not used by the gradient core; '
+                        'max_step 1 yr',
+                        logging.WARNING if cap_set else logging.INFO,
+                    )
 
             # Per-call step caps as a SUNDIALS root function. Build the
             # anchor metadata here (per-cell melt fraction, temperature and
@@ -3418,21 +3875,82 @@ class EntropySolver:
 
             if cvode_rhs_override is None:
                 logger.info('EntropySolver: using CVODE (solver_method=cvode)')
-            self._solution = self._solve_cvode(
-                start_time=start_nd,
-                end_time=end_nd,
-                y0=S0_nd,
+            cvode_kw = dict(
                 atol=atol_nd,
                 rtol=rtol,
-                max_step=max_step_nd,
                 rhs=_rhs_nondim,
                 cvode_rhs_fn_override=cvode_rhs_override,
                 cvode_jacfn=cvode_jacfn,
                 phi_cap_rootfn=phi_cap_rootfn,
             )
+            if rate_mode:
+                if rtol > _RATE_CAP_RTOL_LIMIT:
+                    self._warn_once(
+                        'rtol',
+                        f'phase_boundary_cap="rate" at rtol {rtol:.1e}: its accuracy is measured '
+                        'at rtol 1e-8',
+                    )
+
+                def _rate_h(t_nd, y_nd):
+                    try:
+                        y = np.asarray(y_nd, dtype=float) * _state_scale
+                        S = y[:n_s]
+                        dSdt = np.asarray(self._dSdt_single(t_nd * t_ref, y)).ravel()[:n_s]
+                        rho = np.asarray(self.entropy_eos.density(self._P_stag_flat, S)).ravel()
+                        h = _rate_phase_boundary_max_step(
+                            np.append(S, S[0]),
+                            np.append(dSdt, dSdt[0]),
+                            rate_liq,
+                            rate_sol,
+                            np.append(rho * self._volume_flat, 0.0),
+                            rate_delta,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            'rate cap: dS/dt evaluation failed (%s); max_step 1 yr', exc
+                        )
+                        h = 1.0
+                    return h / t_ref
+
+                def _rate_roots(y_nd, inside):
+                    return _PhaseBoundarySegmentRoot(
+                        rate_liq,
+                        rate_sol,
+                        y_nd,
+                        rate_delta,
+                        inside,
+                        _state_scale,
+                        n_s,
+                        cap=phi_cap_rootfn,
+                    )
+
+                self._solution = self._solve_cvode_segments(
+                    start_time=start_nd,
+                    end_time=end_nd,
+                    y0=S0_nd,
+                    h_at=_rate_h,
+                    roots_at=_rate_roots,
+                    t_ref=t_ref,
+                    h_min=1.0 / t_ref,
+                    **cvode_kw,
+                )
+            else:
+                self._solution = self._solve_cvode(
+                    start_time=start_nd,
+                    end_time=end_nd,
+                    y0=S0_nd,
+                    max_step=max_step_nd,
+                    **cvode_kw,
+                )
         else:
             method = 'Radau' if solver_method != 'bdf' else 'BDF'
             logger.info('EntropySolver: using scipy %s', method)
+            if rate_mode:
+                self._warn_once(
+                    'scipy',
+                    'phase_boundary_cap="rate" needs CVODE; max_step 1 yr with scipy',
+                    logging.WARNING if cap_set else logging.INFO,
+                )
             self._solution = solve_ivp(
                 _rhs_nondim,
                 (start_nd, end_nd),
@@ -3459,6 +3977,9 @@ class EntropySolver:
                 sol.y = sol_y * _state_scale[:, np.newaxis]
             else:
                 sol.y = sol_y * _state_scale
+        trace = sol.get('energy_trace')
+        if trace is not None:
+            sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale)
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
         # above) and naming whichever margin actually bound: read from
@@ -3552,207 +4073,94 @@ class EntropySolver:
             self.state._pb_cache_hits = 0
             self.state._pb_cache_misses = 0
 
-        if self._solution.status == 0:
+        self._log_solution_outcome(end_time)
+        if self.stop_early:
+            sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
+            return
+        t_solved = time.perf_counter()
+        sol.energy_integrals = self._compute_step_energy_integrals()
+        logger.info(
+            'EntropySolver: energy integrals in %.2f s (solve %.2f s)',
+            time.perf_counter() - t_solved,
+            t_solved - wall_start,
+        )
+
+    def _log_solution_outcome(self, end_time: float) -> None:
+        """Log the outcome of the last integration and set ``stop_early`` on a failure."""
+        sol = self._solution
+        self.stop_early = _status_failed(sol.status)
+        if sol.status == 0:
             logger.info('EntropySolver: integration completed successfully.')
-            self.stop_early = False
-        elif self._solution.status == 1:
-            # Termination event (liquidus crossing at CMB cell).
-            # Integration succeeded up to the event time.
-            t_event = self._solution.t[-1]
+        elif sol.status == 1:
+            # Terminal step-cap event (scipy fallback); the integration succeeded up to it.
+            t_event = sol.t[-1]
             logger.info(
-                'EntropySolver: liquidus-crossing event at t=%.2e yr '
-                '(stopped %.1f yr before end_time). Bottom cell reached '
-                'onset of crystallization.',
+                'EntropySolver: step-cap event at t=%.2e yr (stopped %.1f yr before end_time).',
                 t_event,
                 end_time - t_event,
             )
-            self.stop_early = False
         else:
             logger.error(
-                'EntropySolver: integration failed (status=%d): %s',
-                self._solution.status,
-                self._solution.message,
+                'EntropySolver: integration failed (status=%d): %s', sol.status, sol.message
             )
-            self.stop_early = True
 
     def _compute_step_energy_integrals(self) -> dict[str, float | None]:
-        """Compute per-call energy contributions [J] over the CVODE
-        sub-step trajectory, replacing end-of-step instantaneous capture.
+        """Per-call energy contributions [J] of the last solve.
 
-        For each accepted internal step in the integration trajectory
-        ``(sol.t[i], sol.y[:, i])``, refresh the EntropyState and read
-        the instantaneous powers (F_cmb*A_cmb, F_int*A_int, mass-
-        integrated radio/dil/tidal). Trapezoidal-integrate over the
-        physical-time trajectory to obtain per-source energy J. This
-        is correct against transient phase-boundary snapshots that
-        contaminate single end-of-step values: a spike in one CVODE
-        sub-step is bounded by the small dt to its neighbour rather
-        than propagated as a step-mean over the whole call.
-
-        Sign convention: positive = energy ADDED to mantle.
+        The quadrature nodes are ``sol.energy_trace`` on the CVODE path (the call start,
+        every accepted step end, every output point and, on a fired root, the increasing
+        root-search points below the root) and the returned ``sol.t`` on the scipy path,
+        whose points are the accepted steps. ``_step_powers`` evaluates the powers at each
+        node and the trapezoidal rule integrates them over physical time, so a transient
+        between two outputs is resolved by the steps inside it. Sign convention: positive
+        adds energy to the mantle.
 
         Returns
         -------
         dict[str, float | None]
-            Keys ``F_int``, ``F_cmb``, ``Q_radio``, ``Q_tidal``, each
-            mapping to the per-call integral in J, plus
-            ``F_cmb_step_avg``, the step-average CMB flux in W/m^2
-            (``F_cmb`` divided by ``A_cmb`` and the call duration). When
-            no entropy_eos is attached or the trajectory has fewer than
-            2 points (cannot integrate), the J-integral keys are zero
-            and ``F_cmb_step_avg`` is None (no flux to report).
+            ``F_int``, ``F_cmb``, ``Q_radio``, ``Q_tidal`` (live cell mass),
+            ``Q_radio_cons``, ``Q_tidal_cons`` (frozen structural mass) and
+            ``solver_residual`` are node integrals [J]; ``state_heat`` [J] is the heat
+            content change from the start and end states alone; ``F_cmb_step_avg`` is
+            ``F_cmb`` divided by ``A_cmb`` and the call duration [W/m^2]. Without an
+            entropy EOS or with fewer than 2 output points the integrals are zero and
+            ``F_cmb_step_avg`` is None.
         """
-        zero = {
-            'F_int': 0.0,
-            'F_cmb': 0.0,
-            'F_cmb_step_avg': None,
-            'surface_cutoff': 0.0,
-            'Q_radio': 0.0,
-            'Q_tidal': 0.0,
-            'Q_radio_cons': 0.0,
-            'Q_tidal_cons': 0.0,
-            'solver_residual': 0.0,
-            'state_heat': 0.0,
-        }
+
         sol = self._solution
-        eos = self.entropy_eos
-        if eos is None or sol is None or sol.t is None or sol.y is None:
-            return zero
-        n_steps = int(sol.t.size)
-        if n_steps < 2:
-            return zero
+        if self.entropy_eos is None or sol is None or sol.t.size < 2:
+            return dict(_ZERO_ENERGY_INTEGRALS)
 
-        n_stag = self._n_stag
-        energy_balance = self._core_bc == 'energy_balance'
-        bower = self._core_bc == 'bower2018'
-        gradient_mode = self._core_bc == 'gradient'
-        is_ext = energy_balance or bower
+        # On the scipy path solve_ivp returns its accepted steps as sol.t.
+        t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
+        # The replay refreshes self.state at every node; keep the solve's cache statistics.
+        counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
+        P = np.array([self._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
+        self.state._pb_cache_hits, self.state._pb_cache_misses = counters
+        if P.shape[1] == 8:
+            (
+                P_F_int,
+                P_F_cmb,
+                P_radio,
+                P_tidal,
+                P_radio_cons,
+                P_tidal_cons,
+                P_resid_solver,
+                P_cutoff,
+            ) = P.T
+        else:
+            P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
+            P_cutoff = np.zeros(len(t_pts))
 
-        P_stag = self._P_stag_flat
-        vol = self._volume_flat
-        r_basic = self._r_basic_flat
-        A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
-        A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
-
-        # Frozen structural mass per shell, set once from the mesh's
-        # equilibrium structure. Used for the conservation-grade
-        # mass-integrated heating powers (Q_*_cons). Stays constant
-        # across the CVODE trajectory so the integrated budget closes
-        # against ``E_state_cons`` (also frozen-mass weighted).
-        rho_struct = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel()
-        mass_struct = rho_struct * vol
-
-        P_F_int = np.zeros(n_steps)
-        P_F_cmb = np.zeros(n_steps)
-        P_radio = np.zeros(n_steps)
-        P_tidal = np.zeros(n_steps)
-        P_radio_cons = np.zeros(n_steps)
-        P_tidal_cons = np.zeros(n_steps)
-        # Per-substep entropy-equation self-consistency integrand
-        # (LHS - RHS) [W]. LHS = Σ capacitance (dS/dt) V at the substep
-        # state; RHS = -F_int A_int + F_cmb A_cmb + Q_radio + Q_tidal.
-        # The discrete divergence telescopes to the boundary fluxes, so
-        # this is machine-zero by construction at every state; a non-zero
-        # value flags a bug in the flux-divergence assembly, not a
-        # time-integration error. The time-integration quality is carried
-        # by ``E_residual_cons_frac`` on the coupler side.
-        P_resid_solver = np.zeros(n_steps)
-        P_cutoff = np.zeros(n_steps)
-
-        for i in range(n_steps):
-            t_i = float(sol.t[i])
-            y_col = sol.y[:, i] if sol.y.ndim == 2 else sol.y
-
-            # Reconstruct S_i for EOS lookups, regardless of mode.
-            if gradient_mode:
-                n_basic = n_stag + 1
-                dSdr_i = y_col[:n_basic]
-                S_surf_i = float(y_col[n_basic])
-                S_i, _ = self._reconstruct_entropy(dSdr_i, S_surf_i)
-            elif is_ext:
-                S_i = y_col[:n_stag]
-            else:
-                S_i = y_col
-
-            if i == 0:
-                S_traj_start = np.asarray(S_i, dtype=float).copy()
-
-            # The RHS at this accepted state applies the BCs, so the boundary fluxes read below
-            # are the ones the entropy ODE saw. In the gradient layout the reconstruction is
-            # linear in (dS/dr, S_surf), so it maps their rates to the cell entropy rates.
-            dSdt_full = np.asarray(self._dSdt_single(t_i, y_col)).ravel() / SECS_PER_YEAR
-            if gradient_mode:
-                dSdt_stag_i, _ = self._reconstruct_entropy(
-                    dSdt_full[:n_basic], float(dSdt_full[n_basic])
-                )
-            else:
-                dSdt_stag_i = dSdt_full[:n_stag]
-
-            # Read boundary fluxes AFTER dSdt has applied the BCs.
-            F_int_i = float(self.state._heat_flux[-1])
-            F_cmb_i = float(self.state._heat_flux[0])
-            if self._table_edge_cutoff and not gradient_mode:
-                P_cutoff[i] = (self._surface_flux_nominal - F_int_i) * A_int
-
-            rho_i = np.asarray(eos.density(P_stag, S_i)).ravel()
-            mass_i = rho_i * vol
-            heating_radio_i = np.asarray(self.state.heating_radio).ravel()
-            heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
-            Q_radio_i = float(np.dot(heating_radio_i, mass_i))
-            Q_tidal_i = float(np.dot(heating_tidal_i, mass_i))
-            # Frozen-mass variants for the conservation-grade budget
-            Q_radio_cons_i = float(np.dot(heating_radio_i, mass_struct))
-            Q_tidal_cons_i = float(np.dot(heating_tidal_i, mass_struct))
-
-            P_F_int[i] = -F_int_i * A_int
-            P_F_cmb[i] = +F_cmb_i * A_cmb
-            P_radio[i] = Q_radio_i
-            P_tidal[i] = Q_tidal_i
-            P_radio_cons[i] = Q_radio_cons_i
-            P_tidal_cons[i] = Q_tidal_cons_i
-
-            # Solver residual: the discrete entropy equation gives
-            # ``Σ capacitance (dS/dt) V == -F_int*A + F_cmb*A + Q_radio +
-            # Q_tidal`` at every accepted substep. The LHS must be
-            # weighted by the SAME capacitance (``rho_phase * T``) that
-            # the RHS used to form ``dS/dt``, and the source powers in the
-            # RHS by the same phase density. Re-deriving the cell mass
-            # from the hard-masked table density (``eos.density``) instead
-            # of the tanh-blended phase density leaves a spurious residual
-            # equal to the local flux divergence times the fractional
-            # density mismatch, concentrated in the phase-transition band
-            # (it reaches ~1e23 J for a sub-percent density difference
-            # against a ~1e16 W flux divergence). With the consistent
-            # weighting the interior fluxes telescope and the residual is
-            # machine-zero.
-            cap_i = np.asarray(self.state.capacitance_staggered()).ravel()
-            T_phase_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
-            # The RHS adds heating as ``H / max(T, 1)``, so the source powers are weighted by
-            # ``rho_phase * T / max(T, 1) * V`` to keep the identity exact at the T floor.
-            heat_mass_i = (
-                np.asarray(self.state.phase_staggered.density()).ravel()
-                * vol
-                * (T_phase_i / np.maximum(T_phase_i, 1.0))
-            )
-            lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
-            Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
-            Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
-            rhs_i = P_F_int[i] + P_F_cmb[i] + Q_radio_resid + Q_tidal_resid
-            P_resid_solver[i] = lhs_i - rhs_i
-
-        dt_s = np.diff(np.asarray(sol.t, dtype=float)) * SECS_PER_YEAR
+        dt_s = np.diff(np.asarray(t_pts, dtype=float)) * SECS_PER_YEAR
 
         def trap(p):
             return float(np.sum(0.5 * (p[:-1] + p[1:]) * dt_s))
 
-        # Entropy-transported heat content change over the call, evaluated by
-        # EOS quadrature of ``rho(P,S) T(P,S) dS`` along each cell's entropy
-        # path from the start-of-call state to the final state ``S_i``. This
-        # is independent of the flux trajectory above, so its cumulative sum
-        # provides a genuine conservation check against the boundary-flux
-        # budget rather than reproducing the divergence telescoping.
+        # Heat content change from the start and end states alone (EOS quadrature of
+        # rho T dS), independent of the flux trajectory, so it checks the flux budget.
         state_heat = self._step_heat_content(
-            S_traj_start, np.asarray(S_i, dtype=float).ravel()[:n_stag]
+            self._stag_entropy(sol.y[:, 0]), self._stag_entropy(sol.y[:, -1])
         )
 
         # Energy-conserving step-average CMB heat flux: the trapezoidal
@@ -3760,7 +4168,7 @@ class EntropySolver:
         # equals step_dE_F_cmb by construction. None on a zero-duration or
         # zero-area call, so the caller keeps the end-of-step snapshot.
         step_dE_F_cmb = trap(P_F_cmb)
-        denom = A_cmb * float(np.sum(dt_s))
+        denom = 4.0 * np.pi * float(self._r_basic_flat[0]) ** 2 * float(np.sum(dt_s))
         f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
 
         return {
@@ -3775,6 +4183,106 @@ class EntropySolver:
             'solver_residual': trap(P_resid_solver),
             'state_heat': state_heat,
         }
+
+    def _stag_entropy(self, y_col: npt.NDArray) -> npt.NDArray:
+        """Staggered-node entropy of one solver state, in any state layout.
+
+        The map is linear, so it also maps a state rate to the entropy rates.
+
+        Parameters
+        ----------
+        y_col : ndarray
+            One solver state (or state rate) in the layout of ``self._core_bc``.
+
+        Returns
+        -------
+        ndarray, shape (n_stag,)
+            Entropy [J/kg/K] (or its rate) at the staggered nodes.
+        """
+        if self._core_bc == 'gradient':
+            n_basic = self._n_stag + 1
+            S, _ = self._reconstruct_entropy(y_col[:n_basic], float(y_col[n_basic]))
+            return np.asarray(S, dtype=float)
+        return np.asarray(y_col[: self._n_stag], dtype=float)
+
+    def _step_powers(self, t_i: float, y_col: npt.NDArray) -> npt.NDArray:
+        """Powers [W] at one solver state, for the per-call energy integrals.
+
+        Evaluates the RHS at the state, which refreshes ``self.state``.
+
+        Parameters
+        ----------
+        t_i : float
+            Node time [yr].
+        y_col : ndarray
+            Node state in physical units, in the layout of ``self._core_bc``.
+
+        Returns
+        -------
+        ndarray, shape (7,)
+            ``[-F_int A_int, F_cmb A_cmb, Q_radio, Q_tidal, Q_radio_cons, Q_tidal_cons,
+            solver residual]``: the boundary heat flows, the source powers with live and
+            frozen (structural) cell mass, and the entropy-equation residual (LHS - RHS),
+            which is machine-zero at every state; a non-zero value flags a
+            flux-divergence assembly bug.
+        """
+        vol, r_basic = self._volume_flat, self._r_basic_flat
+        A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
+        A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
+        mass_struct = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel() * vol
+
+        # The RHS at this accepted state applies the BCs, so the boundary fluxes read below
+        # are the ones the entropy ODE saw. In the gradient layout the reconstruction is
+        # linear in (dS/dr, S_surf), so it maps their rates to the cell entropy rates.
+        dSdt_full = np.asarray(self._dSdt_single(t_i, y_col)).ravel() / SECS_PER_YEAR
+        dSdt_stag_i = self._stag_entropy(dSdt_full)
+
+        p_int = -float(self.state._heat_flux[-1]) * A_int
+        p_cmb = float(self.state._heat_flux[0]) * A_cmb
+
+        S_i = self._stag_entropy(y_col)
+        mass_i = np.asarray(self.entropy_eos.density(self._P_stag_flat, S_i)).ravel() * vol
+        heating_radio_i = np.asarray(self.state.heating_radio).ravel()
+        heating_tidal_i = np.asarray(self.state.heating_tidal).ravel()
+        Q_radio_i = float(np.dot(heating_radio_i, mass_i))
+        Q_tidal_i = float(np.dot(heating_tidal_i, mass_i))
+        # Frozen-mass variants for the conservation-grade budget
+        Q_radio_cons_i = float(np.dot(heating_radio_i, mass_struct))
+        Q_tidal_cons_i = float(np.dot(heating_tidal_i, mass_struct))
+
+        # The LHS uses the capacitance (rho_phase * T) and phase density the RHS used; the
+        # hard-masked table density (eos.density) would leave a spurious residual of up to
+        # ~1e23 J in the phase-transition band.
+        cap_i = np.asarray(self.state.capacitance_staggered()).ravel()
+        T_phase_i = np.asarray(self.state.phase_staggered.temperature()).ravel()
+        # The RHS adds heating as ``H / max(T, 1)``, so the source powers are weighted by
+        # ``rho_phase * T / max(T, 1) * V`` to keep the identity exact at the T floor.
+        heat_mass_i = (
+            np.asarray(self.state.phase_staggered.density()).ravel()
+            * vol
+            * (T_phase_i / np.maximum(T_phase_i, 1.0))
+        )
+        lhs_i = float(np.sum(cap_i * dSdt_stag_i * vol))
+        Q_radio_resid = float(np.dot(heating_radio_i, heat_mass_i))
+        Q_tidal_resid = float(np.dot(heating_tidal_i, heat_mass_i))
+        rhs_i = p_int + p_cmb + Q_radio_resid + Q_tidal_resid
+        p_cutoff = (
+            (self._surface_flux_nominal - float(self.state._heat_flux[-1])) * A_int
+            if (self._table_edge_cutoff and not (self._core_bc == 'gradient'))
+            else 0.0
+        )
+        return np.array(
+            [
+                p_int,
+                p_cmb,
+                Q_radio_i,
+                Q_tidal_i,
+                Q_radio_cons_i,
+                Q_tidal_cons_i,
+                lhs_i - rhs_i,
+                p_cutoff,
+            ]
+        )
 
     def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int = 16) -> float:
         """Entropy-transported heat content change over one solver call [J].
@@ -4027,14 +4535,10 @@ class EntropySolver:
         gradient_mode = self._core_bc == 'gradient'
         is_ext = energy_balance or bower
 
-        # Compute per-call energy integrals BEFORE refreshing state at
-        # the final entropy. ``_compute_step_energy_integrals`` walks
-        # the CVODE trajectory and calls state.update() at each
-        # accepted sub-step; doing it before the final refresh keeps
-        # the end-of-call snapshot (heat_flux, heating arrays, etc.)
-        # consistent with what callers see in the rest of get_state().
-        step_integrals = self._compute_step_energy_integrals()
-        if step_integrals['surface_cutoff'] > 0.0:
+        # solve() stores the integrals; a result set without solve() gets them here, before
+        # the final-state refresh below that the rest of get_state() reads.
+        step_integrals = sol.get('energy_integrals') or self._compute_step_energy_integrals()
+        if step_integrals.get('surface_cutoff', 0.0) > 0.0:
             logger.info(
                 'Table-edge cutoff held back %.4e J of surface energy in this call',
                 step_integrals['surface_cutoff'],
@@ -4087,25 +4591,13 @@ class EntropySolver:
         cp_basic_diag = self.state.cp_basic_diag.copy()
         rho_basic_diag = self.state.rho_basic_diag.copy()
 
-        # Scalar quantities.
-        # M_mantle uses the analytic A-W mass integral (SPIDER's
-        # EOSAdamsWilliamson_GetMassWithinShell) for eos_method=1, which
-        # avoids the O(h^2) quadrature error of a discrete sum. For
-        # eos_method=2 it sums the structural effective density
-        # (rho_struct_stag * vol), a different field from the PALEOS
-        # rho_stag used just below for per-cell output.
+        # Scalar quantities. M_mantle is the structural mass between the CMB
+        # and the surface from the EOS mass integral, not the PALEOS rho_stag
+        # used just below for per-cell output.
         mesh = self.evaluator.mesh
-        if hasattr(mesh.eos, 'get_mass_within_radii'):
-            r_cmb = float(self._r_basic_flat[0])
-            r_surf = float(self._r_basic_flat[-1])
-            M_mantle = (
-                mesh.eos.get_mass_within_radii(np.array([r_surf]))
-                - mesh.eos.get_mass_within_radii(np.array([r_cmb]))
-            ).item()
-        else:
-            rho_struct_stag = np.asarray(mesh.staggered_effective_density).ravel()
-            mass_struct_stag = rho_struct_stag * vol
-            M_mantle = float(np.sum(mass_struct_stag))
+        M_mantle = float(
+            np.diff(mesh.eos.get_mass_within_radii(self._r_basic_flat[[0, -1]]))[0]
+        )
         mass_stag = rho_stag * vol  # PALEOS density for per-cell output
         # T_magma = top basic-node temperature, evaluated at
         # r = outer_boundary where P = surface_pressure. This matches
@@ -4338,7 +4830,7 @@ class EntropySolver:
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
             tcore_change_max=tcore_change_max,
             tcore_change_exceeded=tcore_change_exceeded,
-            step_dE_surface_cutoff_J=step_integrals['surface_cutoff'],
+            step_dE_surface_cutoff_J=float(step_integrals.get('surface_cutoff', 0.0) or 0.0),
             **self._surface_half_cell_diagnostics(),
             jcond_b=jcond_b,
             jconv_b=jconv_b,
