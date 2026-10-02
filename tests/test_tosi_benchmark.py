@@ -88,6 +88,7 @@ def test_tosi_thermal_evolution_parity():
     parameters.phase_mixed.yield_stress_max = 1e30
     parameters.phase_mixed.yield_stress_c = 1e30
 
+    parameters.phase_solid.enabled = True
     parameters.phase_solid.arrhenius_t_ref = tb.Tref
     parameters.phase_solid.activation_energy = tb.E
     parameters.phase_solid.activation_volume = tb.V

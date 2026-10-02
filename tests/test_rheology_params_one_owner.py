@@ -280,3 +280,35 @@ def test_phase_params_jax_immediate_validation():
 
     with pytest.raises(ValueError, match='phi_visc_single'):
         PhaseParams(phi_visc_single=1.5)
+
+
+def test_phase_parameters_synchronizes_rheology_on_assignment():
+    """Verify modifying rheology fields on _PhaseParameters updates .rheology."""
+    phase = _PhaseParameters(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=2e-5,
+        viscosity=1e21,
+    )
+    assert phase.activation_energy == 300e3
+    assert phase.rheology.activation_energy == 300e3
+
+    # Updating flat field must update .rheology
+    phase.activation_energy = 123.0
+    assert phase.activation_energy == 123.0
+    assert phase.rheology.activation_energy == 123.0
+
+    # Updating .rheology must update flat fields
+    new_rheo = SolidRheologyParams(enabled=True, activation_energy=450e3)
+    phase.rheology = new_rheo
+    assert phase.activation_energy == 450e3
+    assert phase.enabled is True
+    assert phase.rheology.activation_energy == 450e3
+
+    # Invalid assignments must raise and preserve prior state
+    with pytest.raises(ValueError, match='activation_energy'):
+        phase.activation_energy = -10.0
+    assert phase.activation_energy == 450e3
+    assert phase.rheology.activation_energy == 450e3

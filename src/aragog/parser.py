@@ -413,6 +413,7 @@ class _PhaseParameters:
     mlt_top_slope: Any = _UNSET
     mlt_bottom_slope: Any = _UNSET
     rheology: SolidRheologyParams = field(default=_DEFAULT_RHEOLOGY)
+    _initialized: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         base = self.rheology
@@ -421,9 +422,33 @@ class _PhaseParameters:
             val = getattr(self, f.name)
             if val is not _UNSET:
                 d[f.name] = val
-        self.rheology = SolidRheologyParams(**d)
+        super().__setattr__('rheology', SolidRheologyParams(**d))
         for f in fields(SolidRheologyParams):
-            setattr(self, f.name, getattr(self.rheology, f.name))
+            super().__setattr__(f.name, getattr(self.rheology, f.name))
+        super().__setattr__('_initialized', True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if not getattr(self, '_initialized', False):
+            super().__setattr__(name, value)
+            return
+
+        if name == 'rheology':
+            if isinstance(value, SolidRheologyParams):
+                super().__setattr__('rheology', value)
+                for f in fields(SolidRheologyParams):
+                    super().__setattr__(f.name, getattr(value, f.name))
+            else:
+                super().__setattr__(name, value)
+            return
+
+        if name in _RHEOLOGY_FIELD_NAMES:
+            current = getattr(self, 'rheology', None)
+            if isinstance(current, SolidRheologyParams):
+                super().__setattr__('rheology', replace(current, **{name: value}))
+            super().__setattr__(name, value)
+            return
+
+        super().__setattr__(name, value)
 
 
 _PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
