@@ -786,6 +786,7 @@ def test_diagnostics_report_nan_when_rheology_disabled():
     # 1. Rheology disabled: eta_diff_b and tau_y_b are NaN
     p = _build_const_properties_parameters(n_nodes=40, end_time=1.0)
     p.phase_solid.viscosity = 5.0e22
+    p.phase_mixed.const_log10visc = float(np.log10(5.0e22))
     s = EntropySolver(p, entropy_eos=None)
     s.initialize()
 
@@ -811,6 +812,7 @@ def test_diagnostics_report_nan_when_rheology_disabled():
     # 2. const_properties with rheology enabled: eta_diff_b is real and uses reference viscosity
     p2 = _build_const_properties_parameters(n_nodes=40, end_time=1.0)
     p2.phase_solid.viscosity = 1.0e21
+    p2.phase_mixed.const_log10visc = 21.0
     p2.phase_solid.rheology = SolidRheologyParams(
         enabled=True, arrhenius_t_ref=1600.0, activation_energy=300e3
     )

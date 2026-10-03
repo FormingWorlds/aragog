@@ -177,10 +177,17 @@ def compute_stagnant_lid_state(
         T_sol = xp.asarray(solidus_temperature, dtype=float)
         w_hot_sol = 0.5 * (1.0 + xp.tanh((T - T_sol) / scale))
     else:
-        w_hot_sol = 0.5 * (
+        w_raw_sol = 0.5 * (
             1.0 + xp.tanh((phi - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
         )
-    w_hot_phi = 0.5 * (1.0 + xp.tanh((phi - phi_rheo_val) / phi_width_val))
+        w_zero_sol = 0.5 * (
+            1.0 + xp.tanh(-SOLIDUS_MELT_FRACTION_THRESHOLD / SOLIDUS_MELT_FRACTION_WIDTH)
+        )
+        w_hot_sol = xp.clip((w_raw_sol - w_zero_sol) / (1.0 - w_zero_sol), 0.0, 1.0)
+
+    w_raw_phi = 0.5 * (1.0 + xp.tanh((phi - phi_rheo_val) / phi_width_val))
+    w_zero_phi = 0.5 * (1.0 + xp.tanh(-phi_rheo_val / phi_width_val))
+    w_hot_phi = xp.clip((w_raw_phi - w_zero_phi) / (1.0 - w_zero_phi), 0.0, 1.0)
 
     w_interior = xp.maximum(xp.maximum(w_hot_iso, w_hot_sol), w_hot_phi)
     w_lid = (1.0 - w_interior) * w_active
