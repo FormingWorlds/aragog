@@ -351,7 +351,6 @@ def test_continuous_lid_regime_output():
     )
 
     params = _build_const_properties_parameters(n_nodes=20, end_time=1.0)
-    params.phase_solid.viscosity = 100.0
     params.phase_solid.rheology = SolidRheologyParams(
         enabled=True,
         stress_closure_mode='lid',
