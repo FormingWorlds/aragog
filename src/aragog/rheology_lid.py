@@ -63,7 +63,8 @@ def compute_stagnant_lid_state(
     total_flux : float or array-like
         Total heat flux profile F_tot [W/m^2].
     solidus_temperature : float or array-like or None
-        Solidus temperature profile T_sol [K].
+        Solidus temperature profile T_sol [K]. When None, solidus crossing is
+        evaluated using SOLIDUS_MELT_FRACTION_THRESHOLD (0.01 melt fraction).
     melt_fraction : float or array-like
         Melt mass fraction profile phi [-].
     params : SolidRheologyParams
@@ -79,6 +80,14 @@ def compute_stagnant_lid_state(
     -------
     dict[str, Any]
         Dictionary of boundary layer state diagnostics.
+
+    Notes
+    -----
+    When ``solidus_temperature`` is None, the solidus crossing indicator ``w_hot_sol``
+    is evaluated from melt fraction using ``SOLIDUS_MELT_FRACTION_THRESHOLD`` (0.01).
+    Because ``w_interior`` takes the maximum of isothermal, solidus, and rheological
+    indicators, layers with melt fraction exceeding 0.01 are treated as non-lid interior
+    by ``w_hot_sol``, rendering the lid boundary position independent of ``phi_rheo``.
     """
     r = xp.asarray(radii, dtype=float)
     T = xp.asarray(temperature, dtype=float)

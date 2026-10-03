@@ -197,6 +197,91 @@ def test_lid_base_parameterized_phi_rheo():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
+def test_lid_base_without_solidus_governed_by_solidus_melt_threshold():
+    """Verify lid base without solidus profile is governed by SOLIDUS_MELT_FRACTION_THRESHOLD."""
+    n_nodes = 50
+    radii = np.linspace(3.48e6, 6.371e6, n_nodes)
+    pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
+    temp_cold = np.linspace(3000.0, 1000.0, n_nodes)
+    flux_conv = 100.0 * np.sin(np.pi * (radii - radii[0]) / (radii[-1] - radii[0]))
+
+    params = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        lid_base_mode='fixed',
+        lid_base_temperature=2000.0,
+    )
+
+    melt_frac = np.zeros(n_nodes)
+    melt_frac[35:45] = 0.5
+
+    state_04 = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_cold,
+        pressure=pressure,
+        convective_flux=flux_conv,
+        total_flux=flux_conv + 10.0,
+        solidus_temperature=None,
+        melt_fraction=melt_frac,
+        params=params,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        xp=np,
+    )
+    state_06 = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_cold,
+        pressure=pressure,
+        convective_flux=flux_conv,
+        total_flux=flux_conv + 10.0,
+        solidus_temperature=None,
+        melt_fraction=melt_frac,
+        params=params,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.6,
+        xp=np,
+    )
+    state_09 = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_cold,
+        pressure=pressure,
+        convective_flux=flux_conv,
+        total_flux=flux_conv + 10.0,
+        solidus_temperature=None,
+        melt_fraction=melt_frac,
+        params=params,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.9,
+        xp=np,
+    )
+    assert state_04['d_lid'] == pytest.approx(state_06['d_lid'], rel=1e-12)
+    assert state_04['d_lid'] == pytest.approx(state_09['d_lid'], rel=1e-12)
+
+    # Melt fraction below SOLIDUS_MELT_FRACTION_THRESHOLD (0.01) leaves lid unclipped
+    melt_frac_sub = np.zeros(n_nodes)
+    melt_frac_sub[35:45] = 0.005
+    state_sub = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_cold,
+        pressure=pressure,
+        convective_flux=flux_conv,
+        total_flux=flux_conv + 10.0,
+        solidus_temperature=None,
+        melt_fraction=melt_frac_sub,
+        params=params,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        xp=np,
+    )
+    assert state_sub['d_lid'] > state_04['d_lid']
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
 def test_frank_kamenetskii_contrast_scaling():
     """Verify theta scales monotonically with surface temperature drop."""
     n_nodes = 40
