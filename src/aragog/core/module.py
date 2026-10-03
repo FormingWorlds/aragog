@@ -108,15 +108,10 @@ def build_core_module_budget(
     if unknown:
         raise ValueError(f'unrecognised core_module_params keys: {sorted(unknown)}')
 
-    if m_core is None:
-        m_core = params.pop('m_core', None)
-    else:
-        params.pop('m_core', None)
-    if p_cen is None:
-        p_cen = params.pop('p_cen', None)
-    else:
-        params.pop('p_cen', None)
-    fit_profile = params.pop('fit_profile', None)
+    cfg = {k: params.pop(k, None) for k in ('m_core', 'p_cen', 'fit_profile')}
+    m_core = cfg['m_core'] if m_core is None else m_core
+    p_cen = cfg['p_cen'] if p_cen is None else p_cen
+    fit_profile = cfg['fit_profile']
 
     profile_kwargs = {k: params[k] for k in profile_keys if k in params}
     profile_kwargs['r_cmb'] = r_cmb
@@ -124,13 +119,9 @@ def build_core_module_budget(
 
     if fit_profile is not False and m_core is not None and p_cen is not None:
         profiles = GaussianCoreProfiles.from_structure(
-            m_core=float(m_core),
-            p_cen=float(p_cen),
-            r_cmb=r_cmb,
-            p_cmb=float(profile_kwargs['p_cmb']),
-            alpha=float(profile_kwargs['alpha']),
-            c_p=float(profile_kwargs['c_p']),
-            pressure_mode=profile_kwargs.get('pressure_mode', 'quadrature'),
+            m_core=m_core,
+            p_cen=p_cen,
+            **{k: v for k, v in profile_kwargs.items() if k not in ('rho_cen', 'length_scale')},
         )
     else:
         profiles = GaussianCoreProfiles(**profile_kwargs)

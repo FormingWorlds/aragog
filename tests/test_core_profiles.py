@@ -292,52 +292,23 @@ def test_fit_gaussian_core_profiles_reproduces_structure_constraints_on_exoplane
 def test_fit_gaussian_core_profiles_error_contract_and_non_convergence(recwarn):
     """The solver raises ValueError without warnings when parameters are invalid or unbracketed."""
     ref = GaussianCoreProfiles(**EARTH)
-    m_core = float(ref.enclosed_mass(ref.r_cmb))
-    p_cen = float(ref.pressure(0.0))
-
-    # Central pressure at or below CMB pressure
-    with pytest.raises(ValueError, match='must exceed p_cmb'):
-        fit_gaussian_core_profiles(
-            m_core=m_core,
-            p_cen=ref.p_cmb,
-            r_cmb=ref.r_cmb,
-            p_cmb=ref.p_cmb,
-            alpha=ref.alpha,
-            c_p=ref.c_p,
-        )
-
-    # Central pressure below uniform density incompressible sphere
-    with pytest.raises(ValueError, match='incompressible central pressure'):
-        fit_gaussian_core_profiles(
-            m_core=m_core,
-            p_cen=ref.p_cmb + 1e6,
-            r_cmb=ref.r_cmb,
-            p_cmb=ref.p_cmb,
-            alpha=ref.alpha,
-            c_p=ref.c_p,
-        )
-
-    # Central pressure exceeding 3 length-scale limit
-    with pytest.raises(ValueError, match='valid Gaussian regime'):
-        fit_gaussian_core_profiles(
-            m_core=m_core,
-            p_cen=p_cen * 20.0,
-            r_cmb=ref.r_cmb,
-            p_cmb=ref.p_cmb,
-            alpha=ref.alpha,
-            c_p=ref.c_p,
-        )
-
-    # Non-positive arguments
-    with pytest.raises(ValueError, match='must be positive'):
-        fit_gaussian_core_profiles(
-            m_core=-1.0,
-            p_cen=p_cen,
-            r_cmb=ref.r_cmb,
-            p_cmb=ref.p_cmb,
-            alpha=ref.alpha,
-            c_p=ref.c_p,
-        )
+    ok = dict(
+        m_core=float(ref.enclosed_mass(ref.r_cmb)),
+        p_cen=float(ref.pressure(0.0)),
+        r_cmb=ref.r_cmb,
+        p_cmb=ref.p_cmb,
+        alpha=ref.alpha,
+        c_p=ref.c_p,
+    )
+    cases = [
+        ('must exceed p_cmb', {'p_cen': ref.p_cmb}),
+        ('incompressible central pressure', {'p_cen': ref.p_cmb + 1e6}),
+        ('valid Gaussian regime', {'p_cen': ok['p_cen'] * 20.0}),
+        ('must be positive', {'m_core': -1.0}),
+    ]
+    for match, override in cases:
+        with pytest.raises(ValueError, match=match):
+            fit_gaussian_core_profiles(**{**ok, **override})
 
     # Strict contract: no warnings emitted, raise only
     assert len(recwarn) == 0

@@ -292,19 +292,8 @@ class GaussianCoreProfiles:
                 f'({p_incomp:.4e} Pa)'
             )
 
-        def residual(length: float) -> float:
-            p_unit = cls(
-                rho_cen=1.0,
-                length_scale=length,
-                r_cmb=r_cmb,
-                p_cmb=p_cmb,
-                alpha=alpha,
-                c_p=c_p,
-                pressure_mode=pressure_mode,
-            )
-            i_m = float(p_unit.enclosed_mass(r_cmb))
-            rho_c = m_core / i_m
-            p_cand = cls(
+        def build(rho_c: float, length: float) -> GaussianCoreProfiles:
+            return cls(
                 rho_cen=rho_c,
                 length_scale=length,
                 r_cmb=r_cmb,
@@ -313,7 +302,12 @@ class GaussianCoreProfiles:
                 c_p=c_p,
                 pressure_mode=pressure_mode,
             )
-            return float(p_cand.pressure(0.0)) - p_cen
+
+        def rho_for(length: float) -> float:
+            return float(m_core / float(build(1.0, length).enclosed_mass(r_cmb)))
+
+        def residual(length: float) -> float:
+            return float(build(rho_for(length), length).pressure(0.0)) - p_cen
 
         # Enforce the Gaussian family validity regime (r_cmb < 3 * length_scale).
         l_min = r_cmb / 2.999
@@ -346,67 +340,7 @@ class GaussianCoreProfiles:
             )
 
         l_fit = float(sol.root)
-        p_unit = cls(
-            rho_cen=1.0,
-            length_scale=l_fit,
-            r_cmb=r_cmb,
-            p_cmb=p_cmb,
-            alpha=alpha,
-            c_p=c_p,
-            pressure_mode=pressure_mode,
-        )
-        rho_fit = float(m_core / float(p_unit.enclosed_mass(r_cmb)))
-        return cls(
-            rho_cen=rho_fit,
-            length_scale=l_fit,
-            r_cmb=r_cmb,
-            p_cmb=p_cmb,
-            alpha=alpha,
-            c_p=c_p,
-            pressure_mode=pressure_mode,
-        )
+        return build(rho_for(l_fit), l_fit)
 
 
-def fit_gaussian_core_profiles(
-    *,
-    m_core: float,
-    p_cen: float,
-    r_cmb: float,
-    p_cmb: float,
-    alpha: float,
-    c_p: float,
-    pressure_mode: str = 'quadrature',
-) -> GaussianCoreProfiles:
-    """Fit a :class:`GaussianCoreProfiles` instance to core mass and central pressure.
-
-    Parameters
-    ----------
-    m_core : float
-        Total core mass [kg], positive.
-    p_cen : float
-        Central pressure [Pa], must exceed ``p_cmb``.
-    r_cmb : float
-        Core-mantle boundary radius [m], positive.
-    p_cmb : float
-        Pressure at the core-mantle boundary [Pa], positive.
-    alpha : float
-        Thermal expansion coefficient [K-1], positive.
-    c_p : float
-        Isobaric specific heat capacity [J kg-1 K-1], positive.
-    pressure_mode : str, optional
-        Pressure mode: ``'quadrature'`` (default) or ``'labrosse'``.
-
-    Returns
-    -------
-    GaussianCoreProfiles
-        Profile instance with fitted ``rho_cen`` and ``length_scale``.
-    """
-    return GaussianCoreProfiles.from_structure(
-        m_core=m_core,
-        p_cen=p_cen,
-        r_cmb=r_cmb,
-        p_cmb=p_cmb,
-        alpha=alpha,
-        c_p=c_p,
-        pressure_mode=pressure_mode,
-    )
+fit_gaussian_core_profiles = GaussianCoreProfiles.from_structure

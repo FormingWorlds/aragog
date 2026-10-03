@@ -2049,46 +2049,27 @@ class EntropySolver:
                 dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag, n_extra)
 
             T_bottom_eos = None
-            needs_eos = (T_core_init is None) or (core_bc == 'core_module')
-            if needs_eos and self.entropy_eos is not None:
+            if (
+                T_core_init is None or core_bc == 'core_module'
+            ) and self.entropy_eos is not None:
+                P_bot, S_bot = float(self._P_stag_flat[0]), float(S_arr[0])
                 if 'dSdr_cmb' in slots:
-                    P_cmb = (
-                        float(self._P_basic_flat[0])
-                        if hasattr(self, '_P_basic_flat') and len(self._P_basic_flat) > 0
-                        else float(self._P_stag_flat[0])
+                    P_bot = float(getattr(self, '_P_basic_flat', self._P_stag_flat)[0])
+                    radii = getattr(
+                        getattr(getattr(self.evaluator, 'mesh', None), 'basic', None),
+                        'radii',
+                        None,
                     )
-                    mesh = (
-                        getattr(self.evaluator, 'mesh', None)
-                        if self.evaluator is not None
-                        else None
-                    )
-                    if (
-                        mesh is not None
-                        and hasattr(mesh, 'basic')
-                        and hasattr(mesh.basic, 'radii')
-                    ):
-                        r_basic = np.asarray(mesh.basic.radii).ravel()
-                        r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
-                        dr_offset = r_basic[0] - r_stag_0
-                    else:
-                        dr_offset = 0.0
-                    S_basic_cmb = float(S_arr[0]) + float(dSdr_cmb_init) * dr_offset
-                    T_bottom_eos = float(
-                        np.asarray(
-                            self.entropy_eos.temperature(
-                                np.array([P_cmb]), np.array([S_basic_cmb])
-                            )
-                        ).item()
-                    )
-                else:
-                    P_bottom = float(self._P_stag_flat[0])
-                    T_bottom_eos = float(
-                        np.asarray(
-                            self.entropy_eos.temperature(
-                                np.array([P_bottom]), np.array([S_arr[0]])
-                            )
-                        ).item()
-                    )
+                    if radii is not None:
+                        r_basic = np.asarray(radii).ravel()
+                        S_bot += float(dSdr_cmb_init) * (
+                            r_basic[0] - 0.5 * (r_basic[0] + r_basic[1])
+                        )
+                T_bottom_eos = float(
+                    np.asarray(
+                        self.entropy_eos.temperature(np.array([P_bot]), np.array([S_bot]))
+                    ).item()
+                )
 
             if T_core_init is None:
                 if T_bottom_eos is not None:
@@ -4132,33 +4113,17 @@ class EntropySolver:
                 T_end = float(t_core_traj[-1])
                 gl_nodes, gl_weights = np.polynomial.legendre.leggauss(32)
 
-                # Split interval at inner-core onset and freeze-out to avoid cusp quadrature error.
-                t_lo = min(T_start, T_end)
-                t_hi = max(T_start, T_end)
-                cuts = []
-                for cand in (
-                    budget.t_onset,
-                    budget.t_freeze,
-                ):
-                    if cand is not None:
-                        c_val = float(cand)
-                        if t_lo + 1e-6 < c_val < t_hi - 1e-6:
-                            cuts.append(c_val)
-
-                if T_start > T_end:
-                    boundaries = [T_start] + sorted(cuts, reverse=True) + [T_end]
-                else:
-                    boundaries = [T_start] + sorted(cuts) + [T_end]
+                t_onset, t_freeze = float(budget.t_onset), float(budget.t_freeze)
+                t_lo, t_hi = sorted((T_start, T_end))
+                cuts = [c for c in (t_onset, t_freeze) if t_lo + 1e-6 < c < t_hi - 1e-6]
+                boundaries = [T_start, *sorted(cuts, reverse=T_start > T_end), T_end]
 
                 t_quad_list = []
                 weight_list = []
-                t_onset = float(budget.t_onset) if budget.t_onset is not None else None
-                t_freeze = float(budget.t_freeze) if budget.t_freeze is not None else 0.0
                 for ta, tb in zip(boundaries[:-1], boundaries[1:]):
                     # Generalized u-substitution removes the (T_onset - T)^(-1/2) cusp.
                     is_nucleation_sub = (
-                        t_onset is not None
-                        and max(ta, tb) <= t_onset + 1e-6
+                        max(ta, tb) <= t_onset + 1e-6
                         and min(ta, tb) >= t_freeze - 1e-6
                         and abs(ta - tb) > 1e-9
                     )
