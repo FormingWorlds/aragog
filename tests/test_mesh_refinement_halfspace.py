@@ -89,7 +89,7 @@ def _params(
             surface_cell_thickness=cell_km * 1e3,
             cmb_cell_thickness=cell_km * 1e3,
         ),
-        phase_solid=_PhaseParameters(melt_fraction=0.0, viscosity=1e21, **common),
+        phase_solid=_PhaseParameters(melt_fraction=0.0, **common),
         phase_liquid=_PhaseParameters(melt_fraction=1.0, viscosity=1e2, **common),
         phase_mixed=_PhaseMixedParameters(
             latent_heat_of_fusion=4.0e5,
