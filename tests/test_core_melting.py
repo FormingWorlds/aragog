@@ -44,26 +44,43 @@ def test_pure_iron_pins_against_the_paleos_source():
     assert np.all(t > 0.0) and np.all(np.diff(t) > 0.0)
 
 
-def test_branch_switch_is_continuous():
-    """The Simon-Glatzel branches blend continuously across 98.5 GPa.
-
-    The unblended Anzellini fit carries a ~0.73 K discontinuity at the
-    triple point (98.5 GPa). Blending the branches over a 1.0 GPa pressure
-    band removes the discontinuity (jump < 1e-6 K) while shifting temperature
-    by at most 0.37 K.
-    """
+@pytest.mark.physics_invariant
+def test_branch_switch_matches_unblended_outside_transition():
+    """Outside [95.5, 101.5] GPa, t_melt_pure matches unblended branches to float precision."""
     tm = IronMeltingCurve.t_melt_pure
-    below = float(tm(98.5e9 - 1.0))
-    above = float(tm(98.5e9 + 1.0))
-    assert abs(below - above) < 1e-6
+    # Low-pressure branch: P <= 95.5 GPa
+    p_low = np.linspace(10e9, 95.5e9, 100)
+    p_low_gpa = p_low / 1e9
+    low_exact = 1991.0 * ((p_low_gpa - 5.2) / 27.39 + 1.0) ** (1.0 / 2.38)
+    np.testing.assert_allclose(np.asarray(tm(p_low)), low_exact, rtol=1e-15)
 
-    p = np.linspace(90e9, 110e9, 1000)
-    p_gpa = p / 1e9
-    low = 1991.0 * ((p_gpa - 5.2) / 27.39 + 1.0) ** (1.0 / 2.38)
-    high = 3712.0 * ((p_gpa - 98.5) / 161.2 + 1.0) ** (1.0 / 1.72)
-    t_blended = np.asarray(tm(p))
+    # High-pressure branch: P >= 101.5 GPa
+    p_high = np.linspace(101.5e9, 300e9, 100)
+    p_high_gpa = p_high / 1e9
+    high_exact = 3712.0 * ((p_high_gpa - 98.5) / 161.2 + 1.0) ** (1.0 / 1.72)
+    np.testing.assert_allclose(np.asarray(tm(p_high)), high_exact, rtol=1e-15)
+
+
+def test_branch_switch_deviation_and_c1_continuity():
+    """Inside [95.5, 101.5] GPa, maximum deviation from unblended branches is <= 0.4 K,
+    and the derivative dT/dP is C1 continuous at 95.5, 98.5, and 101.5 GPa."""
+    tm = IronMeltingCurve.t_melt_pure
+    p_trans = np.linspace(95.5e9, 101.5e9, 10000)
+    p_trans_gpa = p_trans / 1e9
+    low = 1991.0 * ((p_trans_gpa - 5.2) / 27.39 + 1.0) ** (1.0 / 2.38)
+    high = 3712.0 * ((p_trans_gpa - 98.5) / 161.2 + 1.0) ** (1.0 / 1.72)
+    t_blended = np.asarray(tm(p_trans))
     dev = np.minimum(np.abs(t_blended - low), np.abs(t_blended - high))
-    assert np.max(dev) < 0.37
+    assert np.max(dev) <= 0.363
+    assert np.max(dev) < 0.4
+
+    # C1 continuity of derivative at 95.5, 98.5, 101.5 GPa
+    grad_tm = jax.grad(tm)
+    for p_boundary in [95.5e9, 98.5e9, 101.5e9]:
+        dp = 1e3
+        d_left = float(grad_tm(p_boundary - dp))
+        d_right = float(grad_tm(p_boundary + dp))
+        assert abs(d_left - d_right) / d_left < 1e-4
 
 
 @pytest.mark.physics_invariant

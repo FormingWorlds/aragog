@@ -4,9 +4,10 @@ The pure-iron curve is the PALEOS prescription (``paleos.iron_eos.T_melt_Fe``),
 the two-branch Simon-Glatzel fit of Anzellini et al. (2013, Science 340, 464):
 anchored at (5.2 GPa, 1991 K), switching branches at the gamma-epsilon-liquid
 triple point (98.5 GPa, 3712 K). The piecewise fit carries a ~0.73 K jump
-at the branch switch, which is blended smoothly over a 1.0 GPa pressure band
-around 98.5 GPa to ensure continuous core boundary sensitivities and exact
-energy conservation across the triple point with at most 0.37 K adjustment.
+at the branch switch, which is blended smoothly using a C2 smootherstep over
+a 3.0 GPa half-width around 98.5 GPa to ensure continuous core boundary
+sensitivities and exact branch equality outside [95.5, 101.5] GPa with at
+most 0.37 K adjustment.
 
 Light elements depress the melting point multiplicatively,
 ``T_m(P, x) = T_m_Fe(P) * (1 - depression * x)``, with the mole fraction
@@ -31,7 +32,9 @@ _DP_LOW = 27.39  # low-branch pressure scale [GPa]
 _DP_HIGH = 161.2  # high-branch pressure scale [GPa]
 _EXP_LOW = 1.0 / 2.38
 _EXP_HIGH = 1.0 / 1.72
-_BLEND_WIDTH_PA = 1.0e9  # 1.0 GPa blending scale around triple point
+# Half-width of smootherstep blend between Simon-Glatzel branches around 98.5 GPa;
+# bounds maximum deviation to 0.363 K while preserving exact branch equality outside.
+IRON_MELTING_BRANCH_BLEND_HALF_WIDTH_PA = 3.0e9
 
 
 class IronMeltingCurve:
@@ -54,6 +57,8 @@ class IronMeltingCurve:
         combined depression factor would reach zero or below.
     """
 
+    BLEND_HALF_WIDTH_PA = IRON_MELTING_BRANCH_BLEND_HALF_WIDTH_PA
+
     def __init__(self, *, light_element_fraction: float = 0.0, depression: float = 0.0):
         x = float(light_element_fraction)
         dep = float(depression)
@@ -74,16 +79,22 @@ class IronMeltingCurve:
         """Pure-iron melting temperature [K] at ``pressure`` [Pa].
 
         Blends the low-pressure and high-pressure Simon-Glatzel branches of
-        Anzellini et al. (2013) across the 98.5 GPa triple point over a
-        1.0 GPa pressure band. The unblended piecewise fit carries a ~0.73 K
-        discontinuity; blending removes the jump while keeping maximum
-        temperature deviation below 0.37 K.
+        Anzellini et al. (2013) around the 98.5 GPa triple point using a C2
+        smootherstep over a 3.0 GPa half-width. The unblended piecewise fit
+        carries a ~0.73 K discontinuity; blending removes the jump while
+        preserving exact branch values outside [95.5, 101.5] GPa and keeping
+        maximum temperature deviation below 0.37 K.
         """
         p = jnp.asarray(pressure)
         p_gpa = p / 1e9
         low = _T0 * ((p_gpa - _P0 / 1e9) / _DP_LOW + 1.0) ** _EXP_LOW
         high = _TT * ((p_gpa - _PT / 1e9) / _DP_HIGH + 1.0) ** _EXP_HIGH
-        w = 0.5 * (1.0 + jnp.tanh((p - _PT) / _BLEND_WIDTH_PA))
+        u = jnp.clip(
+            0.5 * ((p - _PT) / IRON_MELTING_BRANCH_BLEND_HALF_WIDTH_PA + 1.0),
+            0.0,
+            1.0,
+        )
+        w = u * u * u * (u * (u * 6.0 - 15.0) + 10.0)
         return (1.0 - w) * low + w * high
 
     def t_melt(self, pressure, light_element_fraction=None):
