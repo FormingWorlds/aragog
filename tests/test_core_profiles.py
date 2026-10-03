@@ -179,8 +179,8 @@ def test_constructor_error_contract_and_jit_compatibility():
 
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('mode', ['quadrature', 'labrosse'])
-def test_fit_gaussian_core_profiles_recovers_earth_defaults(mode):
-    """The root solve reproduces the Earth parameters and constraints to 1e-6."""
+def test_fit_gaussian_core_profiles_round_trip_recovers_earth_defaults(mode):
+    """The root solve reproduces the Earth parameters and constraints to 1e-6 in a round trip."""
     ref = GaussianCoreProfiles(**EARTH, pressure_mode=mode)
     m_core = float(ref.enclosed_mass(ref.r_cmb))
     p_cen = float(ref.pressure(0.0))
@@ -201,23 +201,91 @@ def test_fit_gaussian_core_profiles_recovers_earth_defaults(mode):
 
 
 @pytest.mark.physics_invariant
-def test_fit_gaussian_core_profiles_reproduces_structure_constraints_on_exoplanet():
-    """Fitted profiles match arbitrary planetary core masses and pressures to 1e-6."""
-    m_target = 4.5e24
-    p_target = 850e9
-    r_cmb = 4200e3
-    p_cmb = 210e9
+def test_fit_gaussian_core_profiles_zalmoxis_earth_structure():
+    """Fitted profile reproduces real Zalmoxis Earth structure and quantifies C_eff change."""
+    # Real Zalmoxis tutorial_earth structure output
+    m_core_zal = 1.8915686024e24
+    p_cen_zal = 341392448890.0
+    r_cmb_zal = 3409138.308
+    p_cmb_zal = 102988393650.0
+
+    ref_default = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=136e9,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+    m_core_old = float(ref_default.enclosed_mass(ref_default.r_cmb))
+    ratio = m_core_old / m_core_zal
+    assert ratio == pytest.approx(1.018653, rel=1e-5)
 
     fitted = fit_gaussian_core_profiles(
-        m_core=m_target,
-        p_cen=p_target,
-        r_cmb=r_cmb,
-        p_cmb=p_cmb,
-        alpha=1.2e-5,
-        c_p=800.0,
+        m_core=m_core_zal,
+        p_cen=p_cen_zal,
+        r_cmb=r_cmb_zal,
+        p_cmb=p_cmb_zal,
+        alpha=1.35e-5,
+        c_p=840.0,
     )
-    assert float(fitted.enclosed_mass(r_cmb)) == pytest.approx(m_target, rel=1e-6)
-    assert float(fitted.pressure(0.0)) == pytest.approx(p_target, rel=1e-6)
+    assert fitted.rho_cen == pytest.approx(13559.7897, rel=1e-4)
+    assert fitted.length_scale == pytest.approx(6281399.14, rel=1e-4)
+    assert float(fitted.enclosed_mass(r_cmb_zal)) == pytest.approx(m_core_zal, rel=1e-6)
+    assert float(fitted.pressure(0.0)) == pytest.approx(p_cen_zal, rel=1e-6)
+
+    # Effective capacity comparison at T_cmb = 4000 K
+    from aragog.core.budget import CoreEnergyBudget
+    from aragog.core.melting import QuadraticMeltingCurve
+
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget_old = CoreEnergyBudget(
+        ref_default,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=750e3,
+        alpha_c=1.0,
+        c_light=560.0 / 12150.0,
+    )
+    budget_new = CoreEnergyBudget(
+        fitted,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=750e3,
+        alpha_c=1.0,
+        c_light=560.0 / 12150.0,
+    )
+    c_eff_old = float(budget_old.effective_capacity(4000.0))
+    c_eff_new = float(budget_new.effective_capacity(4000.0))
+    # At 4000 K, old budget is nucleating (t_onset=4058 K) while fitted budget is liquid (t_onset=3954 K)
+    assert c_eff_old == pytest.approx(7.322507e27, rel=1e-5)
+    assert c_eff_new == pytest.approx(1.852134e27, rel=1e-5)
+    rel_change = (c_eff_new - c_eff_old) / c_eff_old
+    assert rel_change == pytest.approx(-0.747063, rel=1e-4)
+
+
+@pytest.mark.physics_invariant
+def test_fit_gaussian_core_profiles_reproduces_structure_constraints_on_exoplanet():
+    """Fitted profiles match real Zalmoxis structure output from zalmoxis_resume_mesh to 1e-6."""
+    m_exo = 9.8365400909e23
+    p_cen_exo = 184117858870.0
+    r_cmb_exo = 2867012.4963
+    p_cmb_exo = 54848888186.0
+
+    fitted = fit_gaussian_core_profiles(
+        m_core=m_exo,
+        p_cen=p_cen_exo,
+        r_cmb=r_cmb_exo,
+        p_cmb=p_cmb_exo,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+    assert fitted.rho_cen == pytest.approx(11902.885, rel=1e-4)
+    assert fitted.length_scale == pytest.approx(5221789.65, rel=1e-4)
+    assert float(fitted.enclosed_mass(r_cmb_exo)) == pytest.approx(m_exo, rel=1e-6)
+    assert float(fitted.pressure(0.0)) == pytest.approx(p_cen_exo, rel=1e-6)
 
 
 def test_fit_gaussian_core_profiles_error_contract_and_non_convergence(recwarn):
