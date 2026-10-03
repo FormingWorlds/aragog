@@ -4055,6 +4055,7 @@ class EntropySolver:
 
         # Heat content change from the start and end states alone (EOS quadrature of
         # rho T dS), independent of the flux trajectory, so it checks the flux budget.
+        # Uses default n_quad=512 to resolve the integral across the solidus kink.
         state_heat = self._step_heat_content(
             self._stag_entropy(sol.y[:, 0]), self._stag_entropy(sol.y[:, -1])
         )
@@ -4222,7 +4223,7 @@ class EntropySolver:
             [p_int, p_cmb, Q_radio_i, Q_tidal_i, Q_radio_cons_i, Q_tidal_cons_i, lhs_i - rhs_i]
         )
 
-    def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int = 16) -> float:
+    def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int = 512) -> float:
         """Entropy-transported heat content change over one solver call [J].
 
         Evaluates ``Sum_i V_i integral_{S0_i}^{Sf_i} rho(P_i, S) T(P_i, S) dS``
@@ -4250,8 +4251,8 @@ class EntropySolver:
             Staggered specific entropy at the start and end of the call
             [J/kg/K], length ``n_stag``.
         n_quad : int
-            Quadrature points along each cell's entropy path. The per-call
-            entropy change is small, so a modest count resolves the integral.
+            Quadrature points along each cell's entropy path. Default is 512,
+            resolving the integral across the solidus kink without aliasing.
 
         Returns
         -------
