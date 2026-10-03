@@ -1764,6 +1764,11 @@ class EntropySolver:
             self._core_module_budget = build_core_module_budget(
                 params, r_cmb=r_cmb, p_cmb_fallback=float(self._P_basic_flat[0])
             )
+            logger.info(
+                'Aragog core_module Gaussian profile: rho_cen=%.2f kg/m3, length_scale=%.1f km',
+                float(self._core_module_budget.profiles.rho_cen),
+                float(self._core_module_budget.profiles.length_scale) / 1e3,
+            )
             try:
                 import jax
 
