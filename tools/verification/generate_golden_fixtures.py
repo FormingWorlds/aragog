@@ -78,6 +78,20 @@ def get_mixed_phase_mush_initial_entropy(mesh) -> np.ndarray:
     return 5050.0 - 100.0 * (r_stag - r_cmb) / d
 
 
+def get_partly_locked_column_initial_entropy(mesh) -> np.ndarray:
+    """Return initial entropy profile for partly locked column fixture.
+
+    Upper part has melt fraction phi < phi_rheo (0.4) forming a locked lid,
+    while the interior remains in the mushy regime (phi >= 0.4).
+    """
+    r_stag = np.asarray(mesh.staggered.radii).ravel()
+    r_basic = np.asarray(mesh.basic.radii).ravel()
+    r_cmb = float(r_basic[0])
+    r_surf = float(r_basic[-1])
+    d = r_surf - r_cmb
+    return 5100.0 - 2600.0 * (r_stag - r_cmb) / d
+
+
 def record_fixture(
     name: str,
     config_file: str,
@@ -182,6 +196,20 @@ def main() -> None:
         eos_hash=eos_hash,
         commit=commit,
         initial_entropy=mush_s0,
+    )
+    locked_config = Config.from_file('tests/configs/partly_locked_column.toml')
+    locked_solver = EntropySolver(locked_config, entropy_eos=eos)
+    locked_solver.initialize()
+    locked_s0 = get_partly_locked_column_initial_entropy(locked_solver.evaluator.mesh)
+    record_fixture(
+        name='partly_locked_column',
+        config_file='tests/configs/partly_locked_column.toml',
+        fixture='partly_locked_column.npz',
+        expected_dt=0.10,
+        eos=eos,
+        eos_hash=eos_hash,
+        commit=commit,
+        initial_entropy=locked_s0,
     )
     print('All golden fixtures recorded successfully.')
 
