@@ -424,3 +424,92 @@ def test_write_netcdf_default_description_matches_to_netcdf(tmp_path: Path) -> N
         # The default lives in to_netcdf; assert it's the canonical
         # 'Aragog SolverOutput snapshot' string we documented.
         assert ds.description == 'Aragog SolverOutput snapshot'
+
+
+def test_to_netcdf_omits_rheology_fields_when_rheology_disabled(tmp_path: Path) -> None:
+    """Guard: NetCDF writer omits non-finite rheology fields when disabled.
+
+    When solid-state rheology is disabled, ``eta_diff_b`` and ``tau_y_b``
+    are NaN arrays, and the six stagnant-lid scalars are NaN. The writer
+    must omit all eight fields so the exported dataset contains only
+    finite variables. ``energy_residual`` must remain present.
+    """
+    out = _make_output()
+    out.eta_diff_b = np.full(_N_BASIC, np.nan)
+    out.tau_y_b = np.full(_N_BASIC, np.nan)
+    out.lid_thickness = float('nan')
+    out.lid_base_temperature = float('nan')
+    out.interior_temperature = float('nan')
+    out.lid_stress = float('nan')
+    out.theta = float('nan')
+    out.lid_regime = float('nan')
+
+    f = tmp_path / 'rheology_disabled.nc'
+    out.to_netcdf(f)
+
+    with nc.Dataset(f, mode='r') as ds:
+        omitted_fields = [
+            'eta_diff_b',
+            'tau_y_b',
+            'lid_thickness',
+            'lid_base_temperature',
+            'interior_temperature',
+            'lid_stress',
+            'theta',
+            'lid_regime',
+        ]
+        for name in omitted_fields:
+            assert name not in ds.variables, (
+                f'Field {name!r} should be omitted when rheology is disabled'
+            )
+
+        # energy_residual is a global energy conservation rate, not a lid scalar
+        assert 'energy_residual' in ds.variables, 'energy_residual should be present'
+        assert float(ds['energy_residual'][...]) == pytest.approx(
+            out.energy_residual, rel=1e-15
+        )
+
+
+def test_to_netcdf_omits_lid_scalars_in_local_stress_closure_mode(tmp_path: Path) -> None:
+    """Guard: NetCDF writer omits stagnant-lid scalars in local mode.
+
+    When solid rheology is enabled with ``stress_closure_mode = 'local'``,
+    the basic-node profiles ``eta_diff_b`` and ``tau_y_b`` are finite and
+    must be exported. However, the six stagnant-lid scalars do not exist
+    in local mode (they are NaN) and must be omitted from the dataset.
+    """
+    out = _make_output()
+    # Rheology profiles are finite
+    out.eta_diff_b = np.full(_N_BASIC, 1.0e20)
+    out.tau_y_b = np.full(_N_BASIC, 5.0e7)
+    # Stagnant lid scalars are NaN in local mode
+    out.lid_thickness = float('nan')
+    out.lid_base_temperature = float('nan')
+    out.interior_temperature = float('nan')
+    out.lid_stress = float('nan')
+    out.theta = float('nan')
+    out.lid_regime = float('nan')
+
+    f = tmp_path / 'local_mode.nc'
+    out.to_netcdf(f)
+
+    with nc.Dataset(f, mode='r') as ds:
+        assert 'eta_diff_b' in ds.variables, 'eta_diff_b must be exported in local mode'
+        assert 'tau_y_b' in ds.variables, 'tau_y_b must be exported in local mode'
+
+        lid_scalars = [
+            'lid_thickness',
+            'lid_base_temperature',
+            'interior_temperature',
+            'lid_stress',
+            'theta',
+            'lid_regime',
+        ]
+        for name in lid_scalars:
+            assert name not in ds.variables, (
+                f'Lid scalar {name!r} should be omitted in local mode'
+            )
+
+        assert 'energy_residual' in ds.variables, (
+            'energy_residual must be present in local mode'
+        )
