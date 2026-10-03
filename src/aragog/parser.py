@@ -391,7 +391,7 @@ class _PhaseParameters:
     melt_fraction: float
     thermal_conductivity: float | str
     thermal_expansivity: float | str
-    viscosity: float | str
+    viscosity: float | str | None = None
     entropy: float | str = ''
     enabled: Any = _UNSET
     activation_energy: Any = _UNSET

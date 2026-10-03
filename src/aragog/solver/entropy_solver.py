@@ -1708,10 +1708,8 @@ class EntropySolver:
             solid_visc_raw = getattr(self.parameters.phase_solid, 'viscosity', None)
             if solid_visc_raw is not None:
                 solid_visc_val = _phase_prop_float(solid_visc_raw, None)
-                if (
-                    solid_visc_val is not None
-                    and solid_visc_val != 1e21
-                    and not np.isclose(solid_visc_val, const_visc, rtol=1e-5)
+                if solid_visc_val is not None and not np.isclose(
+                    solid_visc_val, const_visc, rtol=1e-5
                 ):
                     raise ValueError(
                         f'Conflicting solid viscosities in const-properties mode: '

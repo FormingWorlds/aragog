@@ -59,7 +59,7 @@ class PhaseConfig:
     melt_fraction: float
     thermal_conductivity: float | str
     thermal_expansivity: float | str
-    viscosity: float | str
+    viscosity: float | str | None = None
     entropy: float | str = ''
     rheology: SolidRheologyParams = attrs.field(factory=SolidRheologyParams)
 
@@ -70,7 +70,7 @@ class PhaseConfig:
         melt_fraction: float,
         thermal_conductivity: float | str,
         thermal_expansivity: float | str,
-        viscosity: float | str,
+        viscosity: float | str | None = None,
         entropy: float | str = '',
         rheology: SolidRheologyParams | None = None,
         **flat_rheo: Any,

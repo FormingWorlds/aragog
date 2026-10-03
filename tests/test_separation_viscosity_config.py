@@ -257,7 +257,6 @@ def _build_solver_params(separation_viscosity):
         melt_fraction=0.0,
         thermal_conductivity=4.0,
         thermal_expansivity=3e-5,
-        viscosity=1e21,
     )
     pm_kwargs = dict(
         latent_heat_of_fusion=4.0e5,

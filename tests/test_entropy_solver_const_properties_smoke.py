@@ -84,7 +84,6 @@ def _build_const_properties_parameters(*, n_nodes: int = 10, end_time: float = 5
         melt_fraction=0.0,
         thermal_conductivity=4.0,
         thermal_expansivity=3e-5,
-        viscosity=1e21,
     )
     pm = _PhaseMixedParameters(
         latent_heat_of_fusion=4.0e5,
@@ -208,13 +207,14 @@ def test_const_properties_reference_viscosity_unified():
     )
 
 
-def test_const_properties_rejects_conflicting_viscosity():
+@pytest.mark.parametrize('conflicting_visc', [5.0e20, 1.0e21, '1e21', '1E21'])
+def test_const_properties_rejects_conflicting_viscosity(conflicting_visc):
     """Verify conflicting explicit solid viscosity in const-properties mode raises ValueError."""
     from aragog.solver.entropy_solver import EntropySolver
 
     parameters = _build_const_properties_parameters(n_nodes=10, end_time=1.0)
     parameters.phase_mixed.const_log10visc = 2.0
-    parameters.phase_solid.viscosity = 5.0e20
+    parameters.phase_solid.viscosity = conflicting_visc
 
     solver = EntropySolver(parameters, entropy_eos=None)
     with pytest.raises(
