@@ -1181,3 +1181,19 @@ def test_step_dE_core_bower2018():
     vol_c = 4.0 / 3.0 * np.pi * (3.48e6**3)
     c_core = vol_c * 7000.0 * 800.0
     assert out['core'] == pytest.approx(c_core * (4800.0 - 5000.0))
+
+
+@pytest.mark.parametrize('mode', ['bower2018', 'core_module'])
+def test_set_initial_entropy_no_eos_and_no_override_raises(mode):
+    """Raise ValueError when no entropy EOS and no core temperature override exist.
+
+    Setting initial entropy without an EOS and without an explicit core temperature
+    cannot determine the core temperature and must raise ValueError rather than
+    substituting the raw entropy value in Kelvin.
+    """
+    s = _build_minimal_solver(core_bc=mode)
+    s.initialize()
+    s.entropy_eos = None
+    s._T_core_init = None
+    with pytest.raises(ValueError, match='entropy EOS is not available'):
+        s.set_initial_entropy(2900.0)

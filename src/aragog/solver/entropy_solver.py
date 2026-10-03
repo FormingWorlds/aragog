@@ -2089,7 +2089,13 @@ class EntropySolver:
                     )
 
             if T_core_init is None:
-                T_core_init = T_bottom_eos if T_bottom_eos is not None else float(S_arr[0])
+                if T_bottom_eos is not None:
+                    T_core_init = T_bottom_eos
+                else:
+                    raise ValueError(
+                        f"Cannot initialize core temperature for core_bc='{core_bc}': "
+                        'entropy EOS is not available and no initial core temperature was provided.'
+                    )
             if (
                 core_bc == 'core_module'
                 and T_bottom_eos is not None
