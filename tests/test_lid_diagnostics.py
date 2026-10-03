@@ -335,3 +335,67 @@ def test_lid_velocity_scale_continuity():
     rel_jumps = np.abs(np.diff(v_is)) / np.maximum(v_is[:-1], 1e-30)
     assert np.max(rel_jumps) < 1e-4
     assert np.all(v_is > 0.0)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_lid_velocity_scale_deep_velocity_insensitivity():
+    """Convective velocity scale and lid regime are insensitive to deep mantle velocities."""
+    params = SolidRheologyParams(
+        enabled=True,
+        lid_base_mode='rheological',
+        activation_energy=300e3,
+        activation_volume=5e-6,
+        arrhenius_t_ref=1600.0,
+        interior_flux_fraction=0.05,
+    )
+
+    r = np.linspace(3.4e6, 6.371e6, 100)
+    x = (r - r[0]) / (r[-1] - r[0])
+    T = 3000.0 - 1500.0 * x**2
+    P = 1.3e11 * (1.0 - x)
+    v0 = 1.4e-9 * np.ones_like(r)
+    f_conv = 0.5 * (1.0 + np.tanh((6.25e6 - r) / 50e3))
+
+    out_base = compute_stagnant_lid_state(
+        r,
+        T,
+        P,
+        f_conv,
+        np.ones_like(r),
+        None,
+        np.zeros_like(r),
+        params,
+        unyielded_velocity=v0,
+        viscosity_solid=1e21,
+    )
+
+    v_i_base = float(out_base['v_i'])
+    regime_base = float(out_base['lid_regime'])
+    tau_d_base = float(out_base['tau_d'])
+
+    assert v_i_base > 0.0
+
+    for v_deep in [1e-8, 1e-5, 1e-3]:
+        v_pert = v0.copy()
+        # Perturb deep mantle nodes far below the upper convective window
+        v_pert[x < 0.2] = v_deep
+        out_pert = compute_stagnant_lid_state(
+            r,
+            T,
+            P,
+            f_conv,
+            np.ones_like(r),
+            None,
+            np.zeros_like(r),
+            params,
+            unyielded_velocity=v_pert,
+            viscosity_solid=1e21,
+        )
+        v_i_pert = float(out_pert['v_i'])
+        regime_pert = float(out_pert['lid_regime'])
+        tau_d_pert = float(out_pert['tau_d'])
+
+        assert v_i_pert == pytest.approx(v_i_base, rel=1e-10)
+        assert regime_pert == pytest.approx(regime_base, rel=1e-10)
+        assert tau_d_pert == pytest.approx(tau_d_base, rel=1e-10)

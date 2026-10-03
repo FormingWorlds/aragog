@@ -204,11 +204,12 @@ def compute_stagnant_lid_state(
         N_upper = xp.sum(w_upper) + 1e-12
 
         v_abs = xp.abs(unyielded_velocity)
-        v_shift = xp.max(v_abs)
-        v_diff = (v_abs - v_shift) / T_v
-        exp_term = xp.exp(xp.clip(v_diff, -500.0, 0.0))
-        sum_exp = xp.sum(w_upper * exp_term)
-        v_i_raw = v_shift + T_v * xp.log(xp.maximum(sum_exp / N_upper, 1e-300))
+        log_w = xp.log(xp.maximum(w_upper, 1e-300))
+        # Weighted log-sum-exp soft maximum restricted to the upper convective layer
+        a = xp.where(w_upper > 1e-30, v_abs / T_v + log_w, -1e30)
+        m = xp.max(a)
+        sum_exp = xp.sum(xp.exp(a - m))
+        v_i_raw = T_v * (m + xp.log(xp.maximum(sum_exp, 1e-300)) - xp.log(N_upper))
         v_i = xp.maximum(v_i_raw, 0.0) * w_active
     else:
         v_i = 0.0
