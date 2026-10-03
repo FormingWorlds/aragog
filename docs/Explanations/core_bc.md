@@ -42,7 +42,7 @@ Treats the core temperature as an ODE state variable, with the CMB heat flux com
 
 ## `core_module`
 
-State vector length: $N + 2$ (with the CMB entropy gradient $dS/dr|_\text{cmb}$ and $T_\text{cmb}$ as the extra states; the temperature is driven by the staged core-evolution budget of [`aragog.core`](../Reference/api/aragog.core.md)).
+State vector length: $N + 2$ (with the CMB entropy gradient $dS/dr|_\text{cmb}$ and $T_\text{cmb}$ as the extra states; the temperature is driven by the core evolution budget of [`aragog.core`](../Reference/api/aragog.core.md)).
 
 The core carries its own physics instead of an isothermal reservoir: the CMB temperature evolves through an effective heat capacity
 
@@ -56,7 +56,7 @@ Two properties matter for coupled stability. The reported core temperature is th
 
 The CMB heat flux is the state-derived physical flux: the boundary entropy gradient is its own ODE state, exactly as in `energy_balance`, and the full conductive-plus-convective flux assembly is evaluated from it at the CMB basic node. The boundary-gradient equation is the same SPIDER balance with the isothermal-reservoir factor replaced by $\tilde{C}(T_\text{cmb})$, so the basal mantle boundary can only change entropy as fast as the core's true thermal inertia allows. With the budget in legacy capacity mode (the reservoir constants), the mantle trajectory reproduces `energy_balance` to solver tolerance, which is the mode's regression anchor; the core-side energy booking closes against $\tilde{C}\,\Delta T_\text{cmb}$, which is the guard against a decoupled boundary.
 
-The coupling is rate-continuous, not value-continuous: the flux is set by the mantle-side transport at the boundary, so cooling is mantle-limited and the flux carries no dependence on $T_\text{cmb}$ itself, exactly as in the SPIDER balance it generalises. An initial offset between the core state and the basal cell's EOS temperature therefore persists through the run rather than relaxing, and since the melting curve is evaluated at the core state, the offset shifts inner-core nucleation timing by the corresponding interval. The solver warns at initialisation when the supplied core temperature differs from the basal-cell EOS value by more than 20 percent; keep the two consistent unless the offset is an intended model choice (for example a superheated core after a giant impact).
+The coupling is rate-continuous, not value-continuous: the flux is set by the mantle-side transport at the boundary, so cooling is mantle-limited and the flux carries no dependence on $T_\text{cmb}$ itself, exactly as in the SPIDER balance it generalises. An initial offset between the core state and the basal cell's EOS temperature therefore persists through the run rather than relaxing, and since the melting curve is evaluated at the core state, the offset shifts inner-core nucleation timing by the corresponding interval. The solver warns at initialisation when the supplied core temperature differs from the basal-node EOS value by more than 20 percent; keep the two consistent unless the offset is an intended model choice (for example a superheated core after a giant impact).
 
 With `stratification = true` in the module parameters, a stably stratified layer forms under the CMB whenever the heat flow drops below what conduction carries along the adiabat. The layer sits at its equilibrium conductive-matching depth (the radius where the adiabatic conducted flow equals the CMB heat flow, the criterion of the Leeds `thermal_history` stable-layer model), and the convecting volume in the energy and entropy budgets shrinks to the layer base: the capacity integrals, the entropy sources, and the conduction sink all run over the convecting region, so a subadiabatic core cools faster and its dynamo margin reflects the smaller convecting shell. The closure is quasi-static: the layer conducts the CMB heat flow without storing it, its own thermal evolution is not resolved, and its heat content is excluded from the budget, an error of order the layer's volume fraction of the secular term, so thin layers are the regime the closure serves. The depth solve carries an implicit-function sensitivity so the analytic-Jacobian path sees the layer move with the state. The convecting radius is floored at 10 percent of the CMB radius so a fully stratified transient cannot collapse the budget volume to zero; at that floor the effective thermal inertia sits orders of magnitude below the full core's, which keeps the ODE finite but is not a physical regime, and results there should not be interpreted. A layer reaching below the inner-core boundary closes the gravitational term gracefully to zero (no convecting shell remains to mix light elements).
 
@@ -82,15 +82,17 @@ When `core_bc = "core_module"`, the module options are specified under `[boundar
 - `length_scale`: Core Gaussian density length scale [m]. Default $7.272\times 10^6$.
 - `alpha`: Thermal expansivity [K$^{-1}$]. Default $1.35\times 10^{-5}$.
 - `c_p`: Specific heat capacity [J kg$^{-1}$ K$^{-1}$]. Default $840.0$.
-- `melting_curve`: Iron melting curve parameterisation (`"iron"` for PALEOS/Anzellini et al. 2013 or `"nimmo"` for Nimmo 2015 quadratic).
-- `light_element_fraction`: Initial mass fraction of light elements (e.g. sulfur, silicon, oxygen). Default $0.1$.
-- `depression`: Liquidus depression per light element fraction [K]. Default $1.2$.
-- `t_m0`, `t_m1`, `t_m2`: Melting temperature polynomial coefficients.
-- `ds_fusion`: Entropy of fusion [J kg$^{-1}$ K$^{-1}$]. Default $172.8$.
-- `icn_width`: Inner core nucleation smoothing width [K]. Default $10.0$.
-- `alpha_c`: Compositional expansivity coefficient. Default $1.0$.
-- `c_light`: Light element concentration partitioning coefficient. Default $0.046$.
-- `q_radio`: Core radiogenic heat production rate [W kg$^{-1}$]. Default $0.0$.
+- `melting_curve`: Iron melting curve parameterisation (`"iron"` for PALEOS / Anzellini et al. 2013 or `"quadratic"` for Nimmo 2015 polynomial). Choices: `"iron"`, `"quadratic"`. Default `"iron"`.
+- `light_element_fraction`: Initial mole fraction of light elements depressing the iron melting curve. Default $0.0$.
+- `depression`: Melting-point depression per unit mole fraction [dimensionless]. Default $0.0$.
+- `t_m0`: Polynomial prefactor for the quadratic melting curve [K]. Default $2677.0$.
+- `t_m1`: Linear coefficient for the quadratic melting curve [Pa$^{-1}$]. Default $2.95\times 10^{-12}$.
+- `t_m2`: Quadratic coefficient for the quadratic melting curve [Pa$^{-2}$]. Default $8.37\times 10^{-25}$.
+- `ds_fusion`: Entropy of fusion at the inner-core boundary [J kg$^{-1}$ K$^{-1}$]. Default $172.8$.
+- `icn_width`: Temperature width of the smoothed inner-core-nucleation switch [K]. Default $10.0$.
+- `alpha_c`: Compositional expansivity of the outer-core alloy [dimensionless]. Default $0.0$.
+- `c_light`: Light-element mass fraction of the outer core [dimensionless]. Default $0.0$.
+- `q_radio`: Core radiogenic power [W]. Default $0.0$.
 - `stratification`: Boolean flag enabling stable layer tracking under subadiabatic conditions. Default `false`.
 - `k_core`: Core thermal conductivity [W m$^{-1}$ K$^{-1}$]. Default $130.0$.
 - `f_ohm`: Ohmic dissipation fraction for dynamo dissipation. Default $1.0$.
@@ -99,16 +101,16 @@ When `core_bc = "core_module"`, the module options are specified under `[boundar
 
 In coupled simulations, the core module exports six physical diagnostics to the output helpfile:
 
-1. `core_strat_depth`: Stable layer thickness beneath the CMB [m]. Evaluates to $0.0$ when the core is superadiabatic.
-2. `core_dynamo_margin`: Net power available to drive a magnetic dynamo [W]. Positive values indicate active dynamo generation.
-3. `core_B_rms`: Root-mean-square magnetic field strength at the CMB [T] estimated from convective buoyancy power.
-4. `core_regime`: Physical core regime label (`"fully_convective"`, `"stratified"`, `"crystallising"`).
+1. `core_strat_depth`: Stable layer thickness beneath the CMB [m]. Evaluates to $0.0$ when stratification is disabled or when the core is superadiabatic.
+2. `core_dynamo_margin`: Net entropy production rate available to drive a magnetic dynamo [W K$^{-1}$]. Positive values indicate active dynamo generation.
+3. `core_B_rms`: Root-mean-square magnetic field strength averaged over the core volume [T], estimated from convective buoyancy power.
+4. `core_regime`: Physical core regime integer code: 0 = fully liquid, 1 = bottom-up, 2 = top-down, 3 = snow, 4 = fully frozen.
 5. `core_C_eff`: Total effective heat capacity $\tilde{C}(T_\text{cmb})$ [J K$^{-1}$], including secular, latent, and gravitational components.
 6. `core_r_icb`: Radius of the solid inner core boundary [m]. Evaluates to $0.0$ before nucleation.
 
-In aragog `StepResult`, the per-call core energy change is recorded in `step_dE_core_J` [J], evaluating $\int \tilde{C} dT_\text{cmb}$ across the call.
+In aragog `SolverOutput`, the per-call core energy change is recorded in `step_dE_core_J` [J], evaluating $\int \tilde{C} dT_\text{cmb}$ over the call.
 
-## Energy conservation and core closure (E1)
+## Energy conservation and core closure
 
 The core energy closure residual evaluates energy conservation between core internal heat change and CMB heat transport:
 
@@ -118,19 +120,17 @@ $$
 
 where $\Delta E(F_\text{cmb}) = \int F_\text{cmb} A_\text{cmb} dt$ and $\Delta E_\text{core} = \int \tilde{C} dT_\text{core}$.
 
-In strongly stratified regimes (subadiabatic heat flow where $F_\text{cmb} \sim 10^{-3}\text{ W m}^{-2}$ and core cooling is on the order of millikelvins), the closure metric $r_\text{core}$ is not testable on the standard aragog solver branch. Under `energy_balance` and `core_module`, the CMB basic node copies eddy diffusivity from the interior cell ($\kappa_h[0] = \kappa_h[1] \sim 10^7\text{ m}^2\text{ s}^{-1}$), enforcing an infinite-conductance restoring boundary condition with a stiff coupling eigenvalue $\lambda \approx -0.1\text{ s}^{-1}$ (a 10-second physical timescale).
+In strongly stratified regimes with subadiabatic heat flow ($F_\text{cmb} \sim 10^{-3}\text{ W m}^{-2}$), core cooling during an integration call is on the order of millikelvins. Relative error control on the absolute core temperature ($T_\text{core} \approx 5800\text{ K}$) admits a numerical truncation noise floor of $\text{rtol} \times T_\text{core} \approx 0.058\text{ mK}$ per step at $\text{rtol} = 10^{-8}$. In a multi-step call, accumulated truncation noise can reach tens of millikelvins, exceeding the physical cooling signal.
 
-Because CVODE applies relative error control to the absolute core temperature state ($T_\text{core} \approx 5800\text{ K}$), an integration tolerance of $\text{rtol} = 10^{-8}$ admits a local truncation noise floor of $\text{rtol} \times 5800\text{ K} = 0.058\text{ mK}$ per step. Over an integration call, cumulative truncation noise of $\sim 33\text{ mK}$ swamps a physical cooling signal of $3.5\text{ mK}$. Tightening $\text{rtol}$ to $10^{-12}$ resolves the copied eddy diffusivity, causing un-gated convective flux to chatter and diverge. Formulating the core state as an offset $\Delta T_\text{core} = T_\text{core} - T_\text{core}(0)$ with an absolute tolerance of $10\text{ nK}$ collapses the CVODE step size below 3 seconds at $t = 0.078\text{ yr}$ as the solver attempts to resolve the 10-second thermal feedback, triggering linear system setup failure.
-
-Therefore, the core energy closure (E1) acceptance is defined on testable physical regimes where core cooling per integration window satisfies:
+Therefore, core energy closure verification applies to physical regimes where core cooling per integration window satisfies:
 
 $$
 |\Delta T_\text{core}| \ge 10^3 \times \text{rtol} \times T_\text{core}
 $$
 
-The factor $10^3$ is a derived margin that requires physical cooling to exceed the local truncation noise floor $\text{rtol} \times T_\text{core}$ by three orders of magnitude, rather than a tuned empirical threshold. This margin ensures that discretization and quadrature errors dominate over numerical floating-point noise. For standard tolerances ($\text{rtol} = 10^{-8}$) and core temperatures ($T_\text{core} \approx 5800\text{ K}$), this corresponds to $|\Delta T_\text{core}| \ge 58\text{ mK}$ per call window. Convective regimes with active heat extraction and inner-core growth exhibit cooling rates of $|\Delta T_\text{core}| \approx 8\text{ to } 15\text{ K}$ per window, exceeding the derived margin by more than two orders of magnitude. In convective regimes at standard tolerance ($\text{rtol} = 10^{-8}$), spatial refinement reduces the residual until it reaches a numerical floor of $1.3\text{--}1.8\times 10^{-6}$ ($1.30\times 10^{-6}$ at 1025 points and $1.80\times 10^{-6}$ at 4097 points); during inner core growth with active latent heat release, $r_\text{core}$ drops to $1.8\times 10^{-7}$. At tighter integrator tolerances ($\text{rtol} \le 10^{-10}$), $r_\text{core}$ drops to $8.0\text{--}9.1\times 10^{-8}$; this confirms that the residual scales directly with integrator tolerance.
+The factor $10^3$ is a derived margin requiring physical cooling to exceed the local truncation noise floor by three orders of magnitude; this requirement ensures that spatial discretization and quadrature errors dominate over numerical truncation noise. For standard tolerances ($\text{rtol} = 10^{-8}$) and core temperatures ($T_\text{core} \approx 5800\text{ K}$), this corresponds to $|\Delta T_\text{core}| \ge 58\text{ mK}$ per call window. Convective regimes with active heat extraction and inner-core growth exhibit cooling rates of $|\Delta T_\text{core}| \approx 8\text{ to } 15\text{ K}$ per window, exceeding the derived margin by more than two orders of magnitude. In convective regimes at standard tolerance ($\text{rtol} = 10^{-8}$), spatial refinement reduces the residual to a numerical floor of $1.3\times 10^{-6}$ to $1.8\times 10^{-6}$; during inner core growth with active latent heat release, $r_\text{core}$ reaches $1.8\times 10^{-7}$. At tighter integrator tolerances ($\text{rtol} \le 10^{-10}$), $r_\text{core}$ drops to $8.0\times 10^{-8}$ to $9.1\times 10^{-8}$, confirming that the residual scales directly with integrator tolerance.
 
-Quadrature in the diagnostic core energy integral uses 32-point Gauss-Legendre quadrature in $T_\text{core}$, which is independent of mantle state-heat quadrature (core term $n_\text{quad} = 16$, unchanged). For whole-planet energy closure (E2), mantle state-heat quadrature aliases over the solidus kink below $n_\text{quad} = 256$, producing non-monotonic residuals ($1.64\times 10^{-6}$ at $n_\text{quad} = 64$ and $5.68\times 10^{-6}$ at $n_\text{quad} = 128$ at 1025 output points). Evaluating mantle state-heat quadrature with $n_\text{quad} = 512$ provides margin above the aliasing boundary, reducing $r_\text{planet}$ to $1.80\times 10^{-7} \le 1.0\times 10^{-6}$ at an added quadrature cost of $\sim 140\text{ ms}$ ($\sim 0.3\%$ of run wall time). An exact split of the quadrature interval at the solidus kink remains an optional follow-up optimization.
+Diagnostic core energy integration uses 32-point Gauss-Legendre quadrature in $T_\text{core}$. For whole-planet energy closure, mantle state-heat quadrature aliases over the solidus kink below $n_\text{quad} = 256$, producing non-monotonic residuals ($1.64\times 10^{-6}$ at $n_\text{quad} = 64$ and $5.68\times 10^{-6}$ at $n_\text{quad} = 128$ at 1025 output points). Evaluating mantle state-heat quadrature with $n_\text{quad} = 512$ provides margin above the aliasing boundary, reducing $r_\text{planet}$ below $2.2\times 10^{-7} \le 1.0\times 10^{-6}$ in all physical cases.
 
 ## References
 

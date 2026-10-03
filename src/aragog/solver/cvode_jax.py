@@ -21,7 +21,7 @@ Supported ``core_bc_mode`` values:
   production PROTEUS path.
 - ``core_module``: state vector is N+2 (entropy + dSdr_cmb +
   T_core); RHS is ``jax.solver.dSdt_core_module``, closed by the
-  staged core-evolution budget passed as ``core_module_budget``.
+  core evolution budget passed as ``core_module_budget``.
 
 Unsupported (factory raises ``ValueError`` and the calling solver
 falls back to numpy RHS + FD Jacobian after logging a warning):
@@ -90,7 +90,7 @@ def build_jax_rhs_and_jacobian(
         the heating reflects in-step decay. Empty default disables
         radio heating.
     core_module_budget : CoreEnergyBudget, optional
-        The staged core-evolution budget whose ``dtcmb_dt`` closes the
+        The core evolution budget whose ``dtcmb_dt`` closes the
         boundary for ``core_bc_mode='core_module'``; required in that
         mode, ignored otherwise. Its methods are pure JAX, so the
         Jacobian differentiates through it (the boundary solve carries

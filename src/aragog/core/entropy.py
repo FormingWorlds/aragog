@@ -18,9 +18,9 @@ efficiency factors ``F = 0.88 alpha g_cmb r_cmb / c_p`` (constant total
 convected flux) or ``0.45 ...`` (flux vanishing at the outer boundary).
 The reference flux ``q_o`` here is the superadiabatic part of the CMB heat
 flow spread over the CMB area; compositional enhancement of the effective
-buoyancy flux is not folded in at this stage, so subadiabatic
-compositionally-driven dynamos get a conservative (low) field estimate
-while the criterion itself still comes from the full entropy margin.
+buoyancy flux is omitted, so subadiabatic compositionally-driven dynamos
+get a conservative (low) field estimate while the criterion itself still
+comes from the full entropy margin.
 """
 
 from __future__ import annotations

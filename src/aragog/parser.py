@@ -90,7 +90,7 @@ class _BoundaryConditionsParameters:
     #               length N+2),
     #               'bower2018' (unrecommended; T_core as ODE state,
     #               retained for parity testing only),
-    #               'core_module' (staged core-evolution budget from
+    #               'core_module' (core evolution budget from
     #               aragog.core; dSdr_cmb and T_core as ODE states,
     #               length N+2).
     # See aragog/config/boundary.py docstring for details.

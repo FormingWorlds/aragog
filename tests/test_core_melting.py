@@ -1,9 +1,9 @@
 """Unit tests for ``aragog.core.melting.IronMeltingCurve``.
 
 The pure-iron branch must agree with the PALEOS source function it ports
-(``paleos/iron_eos.py`` ``T_melt_Fe`` at 66ac273), so the pins below are
-values computed from that function directly, including the ~0.7 K branch
-discontinuity at the triple point that the published piecewise fit carries.
+(``paleos.iron_eos.T_melt_Fe``), so the pins below are values computed from
+that function directly, including the ~0.7 K branch discontinuity at the
+triple point that the published piecewise fit carries.
 The depression factor is checked against its algebraic definition and its
 error contract, and the whole surface must be jit-safe.
 """
@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.mark.physics_invariant
 def test_pure_iron_pins_against_the_paleos_source():
-    """Values pinned from paleos.iron_eos.T_melt_Fe (SHA 66ac273): the two
+    """Values pinned from paleos.iron_eos.T_melt_Fe: the two
     anchors are exact by construction, interior points to float precision;
     the curve rises monotonically over the whole planetary pressure range."""
     tm = IronMeltingCurve.t_melt_pure

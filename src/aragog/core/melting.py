@@ -1,13 +1,12 @@
 """Iron melting curve with light-element depression.
 
-The pure-iron curve is the PALEOS prescription (``paleos/iron_eos.py``,
-``T_melt_Fe`` at 66ac273 / v1.0.0), the two-branch Simon-Glatzel fit of
-Anzellini et al. (2013, Science 340, 464): anchored at (5.2 GPa, 1991 K),
-switching branches at the gamma-epsilon-liquid triple point (98.5 GPa,
-3712 K). Sharing this prescription with the structure side keeps one iron
-thermodynamics across the stack. The piecewise fit carries a ~0.7 K jump at
-the branch switch, reproduced verbatim here so the module and PALEOS agree
-bitwise in each branch.
+The pure-iron curve is the PALEOS prescription (``paleos.iron_eos.T_melt_Fe``),
+the two-branch Simon-Glatzel fit of Anzellini et al. (2013, Science 340, 464):
+anchored at (5.2 GPa, 1991 K), switching branches at the gamma-epsilon-liquid
+triple point (98.5 GPa, 3712 K). Sharing this prescription with the structure
+side keeps one iron thermodynamics across the stack. The piecewise fit carries
+a ~0.7 K jump at the branch switch, reproduced verbatim here so the module and
+PALEOS agree bitwise in each branch.
 
 Light elements depress the melting point multiplicatively,
 ``T_m(P, x) = T_m_Fe(P) * (1 - depression * x)``, with the mole fraction
@@ -81,9 +80,8 @@ class IronMeltingCurve:
         """Alloy melting temperature [K] at ``pressure`` [Pa].
 
         ``light_element_fraction`` overrides the instance value when given,
-        which is the hook the volatile-dissolution stage uses to evolve the
-        alloy without rebuilding the curve. A concrete override is held to
-        the constructor's contract (the depressed curve must stay
+        which allows callers to evolve the alloy composition without
+        rebuilding the curve. A concrete override is held to the
         positive); a traced override is the caller's responsibility, since
         a trace cannot raise on data.
 

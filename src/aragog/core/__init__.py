@@ -1,9 +1,9 @@
-"""Staged core-evolution module.
+"""Core evolution module.
 
 Replaces the isothermal-reservoir core boundary condition with a core that
-carries its own state: energy budget with inner-core nucleation (B1), entropy
-budget and dynamo diagnostics (B2), and stable stratification with
-crystallization-regime flags (B3). The module receives the CMB heat flow and
+carries its own state: energy budget with inner-core nucleation, entropy
+budget and dynamo diagnostics, and stable stratification with
+crystallization-regime flags. The module receives the CMB heat flow and
 returns the CMB temperature; with every feature disabled it reproduces the
 isothermal-reservoir closure, which is the regression anchor.
 

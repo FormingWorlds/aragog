@@ -17,8 +17,6 @@ Contract clauses exercised here:
   both arguments), so the analytic-Jacobian path sees the layer move;
 - the entropy margin's volume terms shrink together with the energy
   side, and the constructor rejects the meaningless configurations.
-
-See docs/How-to/testing.md and docs/Explanations/test_framework.md.
 """
 
 from __future__ import annotations

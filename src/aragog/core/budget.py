@@ -60,8 +60,7 @@ class CoreEnergyBudget:
         gravitational-energy term. Zero disables the term.
     c_light : float, optional
         Light-element mass fraction of the outer core, rejected entirely
-        by the solid on freezing (the complete-rejection limit; the
-        volatile-dissolution stage refines the partitioning). Zero
+        by the solid on freezing (the complete-rejection limit). Zero
         disables the gravitational term.
     capacity_mode : str
         ``'profile'`` integrates the secular capacity over the Gaussian

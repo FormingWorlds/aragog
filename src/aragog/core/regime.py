@@ -8,8 +8,8 @@ scenario per body from the local slope comparison (the taxonomy of Breuer,
 Rueckriemen & Spohn 2015); here the regime is read off the superheat
 profile itself on a fixed radial grid and reported as a diagnostic flag,
 so a run announces when it leaves the bottom-up regime the budget's
-boundary terms assume. Classification only; the multi-zone energetics of
-non-bottom-up regimes is deliberately out of scope for this stage.
+boundary terms assume. Classification only; multi-zone energetics of
+non-bottom-up regimes is out of scope.
 """
 
 from __future__ import annotations

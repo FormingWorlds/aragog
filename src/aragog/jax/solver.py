@@ -536,7 +536,7 @@ def dSdt_core_module(
     Mirrors the numpy ``EntropySolver._core_module_rhs_per_s`` closure:
     the boundary entropy gradient evolves by the same SPIDER balance as
     ``dSdt_energy_balance``, with the isothermal-reservoir factor
-    replaced by the staged core-evolution budget's effective heat
+    replaced by the core evolution budget's effective heat
     capacity, and T_core integrates the same cooling rate. State layout:
 
         state_ext[0:N] = S at staggered nodes [J/kg/K]

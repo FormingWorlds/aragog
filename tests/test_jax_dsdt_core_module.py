@@ -14,8 +14,6 @@ of the isothermal-reservoir factor. The contract clauses exercised here:
 - the analytic Jacobian is finite and carries the boundary couplings
   the FD path resolves (the custom JVP through the inner-core bisection
   must survive ``jacrev``).
-
-See docs/How-to/testing.md and docs/Explanations/test_framework.md.
 """
 
 from __future__ import annotations

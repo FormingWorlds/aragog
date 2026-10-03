@@ -274,7 +274,7 @@ def test_baseline_scenario_reproduces_chapter_headline():
 def test_model1_printed_parameters_break_bottom_up_topology():
     """Model 1's negative T_m1 curve dips below the T_c = 4180 K adiabat at
     the CMB (melting temperature 5367 K there), a top-down/snow topology
-    outside the bottom-up assumption of this budget stage; the budget
+    outside the bottom-up assumption of the budget; the budget
     reports it via the freeze-out guard rather than emitting latent heat
     from an ill-defined boundary."""
     prof = _profiles(1)

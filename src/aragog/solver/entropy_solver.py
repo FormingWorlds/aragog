@@ -1750,7 +1750,7 @@ class EntropySolver:
         # Quasi-steady BC alpha factor uses (R_above/R_cmb)^2
         self._cmb_radius_ratio_sq = (r_above / r_cmb) ** 2
 
-        # core_module: build the staged core-evolution budget once. The
+        # core_module: build the core evolution budget once. The
         # params dict is validated by the aragog.core constructors; the
         # CMB radius always comes from the mesh so the budget and the
         # solver cannot disagree on geometry.
@@ -2021,7 +2021,7 @@ class EntropySolver:
             # state = [S, dSdr_cmb, T_core]; the boundary entropy
             # gradient evolves like energy_balance's (so the CMB flux
             # is the state-derived physical flux) and T_cmb is the
-            # staged core-evolution budget's integrated state rather
+            # core evolution budget's integrated state rather
             # than the basal node's EOS read-off.
             slots = EXTRA_STATE_SLOTS[core_bc]
             n_extra = len(slots)
@@ -2305,7 +2305,7 @@ class EntropySolver:
         - 'core_module': state = [S, dSdr_cmb, T_core], length N+2.
           The boundary entropy gradient evolves as in energy_balance,
           so F_cmb is the state-derived physical flux; T_core is
-          integrated by the staged core-evolution budget's effective
+          integrated by the core evolution budget's effective
           heat capacity, replacing the isothermal-reservoir factor.
         """
         n_stag = self._n_stag
@@ -2624,7 +2624,7 @@ class EntropySolver:
         """Boundary-state derivatives for ``core_bc='core_module'``.
 
         The same balance as ``_energy_balance_rhs_per_s``, with the
-        isothermal-reservoir factor replaced by the staged core-evolution
+        isothermal-reservoir factor replaced by the core evolution
         budget's effective heat capacity:
 
             dT_core/dt   = (q_radio - F_cmb * A_cmb) / C_eff(T_core)

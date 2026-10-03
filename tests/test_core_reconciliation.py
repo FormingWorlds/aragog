@@ -1,6 +1,7 @@
 """Tests for core-evolution reconciliation with aragog main.
 
-Exercises reconciliation items R3, R4, R5, R6, R7 from stream plan section 4.1.
+Verifies boundary flux reporting, core temperature slot extraction, retry snapshots,
+and radiogenic heating accounting.
 """
 
 from __future__ import annotations
@@ -158,8 +159,8 @@ def _build_solver(
     return EntropySolver(params, entropy_eos=shared_eos)
 
 
-def test_r3_reported_cmb_flux_matches_rhs_applied(shared_eos):
-    """R3: get_state() reports the CMB flux that the RHS integrated."""
+def test_reported_cmb_flux_matches_rhs_applied(shared_eos):
+    """get_state() reports the CMB flux that the RHS integrated."""
     solver = _build_solver(core_bc='core_module', shared_eos=shared_eos)
     solver.initialize()
     s_init = np.linspace(2950.0, 2600.0, solver._n_stag)
@@ -176,8 +177,8 @@ def test_r3_reported_cmb_flux_matches_rhs_applied(shared_eos):
     assert out.heat_flux[0] == pytest.approx(flux_rhs, rel=1e-12)
 
 
-def test_r4_core_temperature_from_column_reads_slot(shared_eos):
-    """R4: _core_temperature_from_column reads T_core slot for core_module.
+def test_core_temperature_from_column_reads_slot(shared_eos):
+    """_core_temperature_from_column reads T_core slot for core_module.
 
     Guards against fallback to basal EOS temperature when T_core differs.
     """
@@ -193,8 +194,8 @@ def test_r4_core_temperature_from_column_reads_slot(shared_eos):
     assert reported_t == pytest.approx(6543.21, rel=1e-6)
 
 
-def test_r6_retry_snapshot_restore_t_core(shared_eos):
-    """R6: get_current_core_temperature snapshots T_core and set_initial restores it.
+def test_retry_snapshot_restore_t_core(shared_eos):
+    """get_current_core_temperature snapshots T_core and set_initial restores it.
 
     Ensures that a failed solve attempt does not leave T_core at the failed state
     and can be restored on retry.
@@ -232,8 +233,8 @@ def test_r6_retry_snapshot_restore_t_core(shared_eos):
     assert solver._S0[n_stag + 1] == pytest.approx(5925.5)
 
 
-def test_r5_core_module_heating_counted_once(shared_eos):
-    """R5: core_module counts bottom-cell radiogenic heating in the mantle once.
+def test_core_module_heating_counted_once(shared_eos):
+    """core_module counts bottom-cell radiogenic heating in the mantle once.
 
     Verifies that bottom cell heating enters the mantle cell's dSdt once and is
     not added to or subtracted from the CMB heat flux or core cooling rate.

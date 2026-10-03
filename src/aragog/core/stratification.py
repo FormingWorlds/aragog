@@ -10,7 +10,7 @@ onset criterion: below one, stratification grows. The equilibrium stratification
 conducted flow ``Q_ad(r) = 4 pi r^2 k |dT_a/dr|`` matches the CMB heat
 flow: above it conduction alone carries the load, below it convection
 must. The full time-dependent layer (diffusive profile, entrainment) is a
-partial-differential problem outside this stage's cost budget; the
+partial-differential problem outside this model's scope; the
 budgets couple to these diagnostics through
 ``CoreEnergyBudget.convecting_radius``, which reduces the convecting
 volume in the energy and entropy integrals when stratification is
