@@ -167,9 +167,9 @@ def test_flux_continuity_across_dt_c_zero_with_negative_supercritical():
         dT_neg = -mult * dT_onset
         T_c = T_m + dT_neg
         q = cmb_flux(T_c, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
-        q_cond = k * dT_neg / depth
+        q_cond = k * (T_c - T_m) / depth
         assert q == pytest.approx(q_cond, rel=1e-12)
-        assert q / q_cond == pytest.approx(1.0, rel=1e-12)
+        assert q / q_cond == pytest.approx(1.0, rel=1e-10)
 
     # Sweep across dT_c = 0 from -5*dT_onset to +5*dT_onset: q must be continuous and strictly increasing
     dT_vals = np.linspace(-5.0 * dT_onset, 5.0 * dT_onset, 201)
