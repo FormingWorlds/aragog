@@ -4138,14 +4138,32 @@ class EntropySolver:
                     boundaries = [T_start] + sorted(cuts) + [T_end]
 
                 t_quad_list = []
-                half_list = []
+                weight_list = []
+                t_onset = float(budget.t_onset) if budget.t_onset is not None else None
                 for ta, tb in zip(boundaries[:-1], boundaries[1:]):
-                    h = 0.5 * (tb - ta)
-                    m = 0.5 * (tb + ta)
-                    t_quad_list.append(m + h * gl_nodes)
-                    half_list.append(h)
+                    is_onset_sub = (
+                        t_onset is not None
+                        and max(ta, tb) <= t_onset + 1e-6
+                        and min(abs(ta - t_onset), abs(tb - t_onset)) < 1e-6
+                        and abs(ta - tb) > 1e-9
+                    )
+                    if is_onset_sub:
+                        t_other = tb if abs(ta - t_onset) < 1e-6 else ta
+                        u_max = np.sqrt(max(0.0, t_onset - t_other))
+                        u_nodes = 0.5 * u_max * (1.0 + gl_nodes)
+                        t_sub = t_onset - u_nodes**2
+                        direction = np.sign(tb - ta)
+                        w_sub = direction * u_max * gl_weights * u_nodes
+                    else:
+                        h = 0.5 * (tb - ta)
+                        m = 0.5 * (tb + ta)
+                        t_sub = m + h * gl_nodes
+                        w_sub = h * gl_weights
+                    t_quad_list.append(t_sub)
+                    weight_list.append(w_sub)
 
                 T_quad_all = np.concatenate(t_quad_list)
+                weights_all = np.concatenate(weight_list)
                 try:
                     c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
                     if c_eff_fn is None:
@@ -4159,10 +4177,7 @@ class EntropySolver:
                         [float(budget.effective_capacity(float(t_k))) for t_k in T_quad_all]
                     )
 
-                step_dE_core = 0.0
-                for i, h in enumerate(half_list):
-                    c_sub = c_eff_vals[i * 32 : (i + 1) * 32]
-                    step_dE_core += float(h * np.sum(gl_weights * c_sub))
+                step_dE_core = float(np.sum(weights_all * c_eff_vals))
             else:
                 try:
                     c_eff_fn = getattr(budget, '_vmap_effective_capacity_strat', None)

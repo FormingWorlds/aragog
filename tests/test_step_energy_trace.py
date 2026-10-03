@@ -307,14 +307,23 @@ def test_integrals_split_quadrature_at_inner_core_onset():
     assert budget._superheat(0.0, t_onset) == pytest.approx(0.0, abs=1e-6)
     assert budget._superheat(prof.r_cmb, budget.t_freeze) == pytest.approx(0.0, abs=1e-6)
 
-    # Reference integral via fine-grid trapezoidal integration across onset
+    # Reference integral via high-order substitution quadrature across onset:
+    # 128-point GL in T on [t_onset + 25, t_onset] and 128-point GL in u = sqrt(t_onset - T)
+    # on [t_onset, t_onset - 25].
     c_eff_vmap = jax.jit(jax.vmap(budget.effective_capacity))
-    t1 = np.linspace(t_onset + 25.0, t_onset, 10000)
-    t2 = np.linspace(t_onset, t_onset - 25.0, 10000)
-    i_ref = float(
-        np.trapezoid(np.asarray(c_eff_vmap(t1)), t1)
-        + np.trapezoid(np.asarray(c_eff_vmap(t2)), t2)
+    ref_nodes, ref_weights = np.polynomial.legendre.leggauss(128)
+    h1 = 0.5 * (-25.0)
+    m1 = 0.5 * (2.0 * t_onset + 25.0)
+    ref_t1 = m1 + h1 * ref_nodes
+    ref_dE1 = float(h1 * np.sum(ref_weights * np.asarray(c_eff_vmap(ref_t1))))
+
+    u_max = np.sqrt(25.0)
+    ref_u_nodes = 0.5 * u_max * (1.0 + ref_nodes)
+    ref_t2 = t_onset - ref_u_nodes**2
+    ref_dE2 = float(
+        -np.sum(0.5 * u_max * ref_weights * 2.0 * ref_u_nodes * np.asarray(c_eff_vmap(ref_t2)))
     )
+    i_ref = ref_dE1 + ref_dE2
 
     sol = OptimizeResult(
         t=np.array([0.0, 1.0]),
@@ -328,9 +337,16 @@ def test_integrals_split_quadrature_at_inner_core_onset():
     out = s._compute_step_energy_integrals()
     dE_core = out['core']
     rel_err = abs(dE_core - i_ref) / abs(i_ref)
-    # Without the split, error is ~5e-4. With the split, 32-point GL resolves the
-    # sharp sqrt(Delta T) geometric cusp across the 25 K step to < 2e-6.
-    assert rel_err < 2e-6
+    assert rel_err < 1e-10
+
+    # No-split mutant: single 32-point Gauss-Legendre quadrature across onset
+    h_mut = 0.5 * (-50.0)
+    m_mut = 0.5 * (2.0 * t_onset)
+    mut_nodes, mut_weights = np.polynomial.legendre.leggauss(32)
+    t_mut = m_mut + h_mut * mut_nodes
+    dE_mut = float(h_mut * np.sum(mut_weights * np.asarray(c_eff_vmap(t_mut))))
+    mut_err = abs(dE_mut - i_ref) / abs(i_ref)
+    assert mut_err > 1e-4
 
 
 @pytest.mark.unit

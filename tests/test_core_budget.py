@@ -241,7 +241,7 @@ def test_freeze_out_factor_is_smooth_and_bounded(prof):
 def test_latent_and_gravitational_energy_conservation(prof):
     """Integrals of latent and gravitational capacities over the core freezing
     must equal the exact geometric latent heat and spatial gravitational energy
-    to relative error < 1e-6 (Ruling 58, 64)."""
+    to relative error < 1e-6."""
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     budget = CoreEnergyBudget(
         prof,
