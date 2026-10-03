@@ -37,7 +37,7 @@ def shared_eos():
 
 @pytest.mark.smoke
 def test_cold_top_lid_fixture(shared_eos):
-    """Verify cold top lid fixture against recorded reference fixture.
+    """Verify top lid weight test fixture on a coarse mesh against recorded reference fixture.
 
     Parameters
     ----------
@@ -111,7 +111,7 @@ def test_cold_top_lid_fixture(shared_eos):
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
             # Tolerance tier: 10x max(1-ulp noise floor across 5 seeds).
-            # Measured 1-ulp noise floor: S 4.93e-8 J/kg/K, T 5.12e-9 K, flux 164.1 W/m2, lid_stress 3.41e11 Pa.
+            # Measured 1-ulp noise floor across 5 seeds: S 1.22e-8 J/kg/K, T 1.27e-9 K, flux 43.6 W/m2, lid_stress 3.41e11 Pa.
             np.testing.assert_allclose(S, ref['S'], atol=1.0e-6)
             np.testing.assert_allclose(T, ref['T'], atol=1.0e-7)
             for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):

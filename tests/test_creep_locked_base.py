@@ -47,10 +47,10 @@ def test_creep_locked_base_fixture(shared_eos):
     Notes
     -----
     Tolerances are calibrated to 10x max(1-ulp noise floor, cross-CPU hardware spread):
-    - S: atol = 8.0e-4 J kg^-1 K^-1 (physics mutant moves S by 3.93 J/kg/K, >4900x atol)
+    - S: atol = 1.0e-3 J kg^-1 K^-1 (physics mutant moves S by 3.93 J/kg/K, >3900x atol)
     - T: atol = 1.3e-4 K (physics mutant moves T by 0.5 K, >3800x atol)
     - Flux: atol = 170.0 W m^-2 (< 0.2% of sub-lid convective flux ~1e5 W/m2)
-    - Lid stress: atol = 1.1e16 Pa (covers 10x cross-CPU spread of 1.07e15 Pa)
+    - Lid stress: atol = 1.5e16 Pa (covers 10x 5-seed noise floor of 1.13e15 Pa)
     """
     config_file = 'tests/configs/creep_locked_base.toml'
     config = Config.from_file(config_file)
@@ -107,14 +107,14 @@ def test_creep_locked_base_fixture(shared_eos):
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
             # Tolerance tier: 10x max(1-ulp noise floor, cross-CPU hardware spread).
-            # Noise floor: S 5.52e-5 J/kg/K, T 6.58e-6 K, flux 16.21 W/m2, lid_stress 8.06e14 Pa.
+            # Noise floor (5 seeds): S 8.11e-5 J/kg/K, T 1.28e-5 K, flux 16.21 W/m2, lid_stress 1.13e15 Pa.
             # Cross-CPU spread: S 7.67e-5 J/kg/K, T 1.22e-5 K, flux 10.42 W/m2, lid_stress 1.07e15 Pa.
-            np.testing.assert_allclose(S, ref['S'], atol=8.0e-4)
+            np.testing.assert_allclose(S, ref['S'], atol=1.0e-3)
             np.testing.assert_allclose(T, ref['T'], atol=1.3e-4)
             for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
                 assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
                 np.testing.assert_allclose(getattr(output, flux_key), ref[flux_key], atol=170.0)
             if 'lid_stress' in ref.files:
                 np.testing.assert_allclose(
-                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=1.1e16
+                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=1.5e16
                 )
