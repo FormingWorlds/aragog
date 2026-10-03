@@ -8,7 +8,7 @@ and two-branch regime switching for stagnant and mobile convective lids.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import Any
 
 import numpy as np
@@ -126,6 +126,21 @@ class SolidRheologyParams:
                 f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
                 f'activation_energy, but activation_energy={self.activation_energy}'
             )
+
+
+def merge_rheology(
+    rheology: SolidRheologyParams | None, overrides: dict[str, Any]
+) -> SolidRheologyParams:
+    """Return ``rheology`` (default parameters when None) with field ``overrides`` applied."""
+    base = SolidRheologyParams() if rheology is None else rheology
+    return replace(base, **overrides) if overrides else base
+
+
+def delegate_rheology(cls):
+    """Class decorator exposing SolidRheologyParams fields as read-only properties reading self.rheology."""
+    for f in fields(SolidRheologyParams):
+        setattr(cls, f.name, property(lambda self, n=f.name: getattr(self.rheology, n)))
+    return cls
 
 
 def viscous_mixing_length_factor(

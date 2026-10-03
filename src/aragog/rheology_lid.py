@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -127,17 +128,10 @@ def compute_stagnant_lid_state(
 
     eta_0 = viscosity_solid
     if eta_0 is None:
-        eta_0 = getattr(params, 'viscosity_solid', None)
-    if eta_0 is None and hasattr(params, 'solid_log10visc'):
-        eta_0 = 10.0**params.solid_log10visc
-    if eta_0 is None and hasattr(params, 'log10_visc_solid'):
-        eta_0 = 10.0**params.log10_visc_solid
-    if eta_0 is None:
-        eta_0 = 1.0e21
+        eta_0 = getattr(params, 'viscosity_solid', 1.0e21)
 
-    eta_surf = compute_arrhenius_viscosity(
-        T_surf,
-        P_surf,
+    arrhenius = partial(
+        compute_arrhenius_viscosity,
         viscosity_solid=eta_0,
         activation_energy=params.activation_energy,
         activation_volume=params.activation_volume,
@@ -147,18 +141,8 @@ def compute_stagnant_lid_state(
         viscosity_max_log10=params.viscosity_max_log10,
         xp=xp,
     )
-    eta_i = compute_arrhenius_viscosity(
-        T_i,
-        P_T_i,
-        viscosity_solid=eta_0,
-        activation_energy=params.activation_energy,
-        activation_volume=params.activation_volume,
-        activation_volume_decay_pressure=params.activation_volume_decay_pressure,
-        arrhenius_t_ref=params.arrhenius_t_ref,
-        r_gas=R_GAS,
-        viscosity_max_log10=params.viscosity_max_log10,
-        xp=xp,
-    )
+    eta_surf = arrhenius(T_surf, P_surf)
+    eta_i = arrhenius(T_i, P_T_i)
     eta_contrast = eta_surf / xp.maximum(eta_i, 1e-30)
 
     if params.lid_base_mode == 'fixed':

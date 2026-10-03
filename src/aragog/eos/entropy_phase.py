@@ -12,7 +12,6 @@ phi = (S - S_sol) / (S_liq - S_sol), no root-finding needed.
 from __future__ import annotations
 
 import logging
-from dataclasses import fields
 from typing import Any
 
 import numpy as np
@@ -23,13 +22,20 @@ from aragog.config.phases import (
     SEPARATION_VISCOSITY_MODES,
 )
 from aragog.eos.entropy import EntropyEOS
-from aragog.rheology import R_GAS, SolidRheologyParams, compute_yield_stress
+from aragog.rheology import (
+    R_GAS,
+    SolidRheologyParams,
+    compute_yield_stress,
+    delegate_rheology,
+    merge_rheology,
+)
 from aragog.rheology import eta_diff as calc_eta_diff
 from aragog.utilities import FloatOrArray, tanh_weight
 
 logger = logging.getLogger('fwl.' + __name__)
 
 
+@delegate_rheology
 class EntropyPhaseEvaluator:
     """Phase evaluator using entropy as the state variable.
 
@@ -103,19 +109,7 @@ class EntropyPhaseEvaluator:
         self._k_liquid = thermal_conductivity_liquid
         self._matprop_smooth_width = matprop_smooth_width
 
-        if rheology is not None:
-            if flat_rheo:
-                params_dict = {
-                    f.name: getattr(rheology, f.name) for f in fields(SolidRheologyParams)
-                }
-                params_dict.update(flat_rheo)
-                self.rheology = SolidRheologyParams(**params_dict)
-            else:
-                self.rheology = rheology
-        elif flat_rheo:
-            self.rheology = SolidRheologyParams(**flat_rheo)
-        else:
-            self.rheology = SolidRheologyParams()
+        self.rheology = merge_rheology(rheology, flat_rheo)
 
         # Constant-properties mode (matches SPIDER -use_const_properties)
         self._const_properties = const_properties
@@ -155,34 +149,6 @@ class EntropyPhaseEvaluator:
         self._tau_y: npt.NDArray = np.array([])
         self._visc_solid_weight: npt.NDArray = np.array([])
 
-    # ── Rheology properties (delegating to SolidRheologyParams) ───────
-
-    @property
-    def activation_energy(self) -> float:
-        """Molar activation energy [J/mol]."""
-        return self.rheology.activation_energy
-
-    @property
-    def activation_volume(self) -> float:
-        """Molar activation volume [m^3/mol]."""
-        return self.rheology.activation_volume
-
-    @property
-    def enabled(self) -> bool:
-        return self.rheology.enabled
-
-    @property
-    def activation_volume_decay_pressure(self) -> float:
-        return self.rheology.activation_volume_decay_pressure
-
-    @property
-    def arrhenius_t_ref(self) -> float:
-        return self.rheology.arrhenius_t_ref
-
-    @property
-    def viscosity_max_log10(self) -> float:
-        return self.rheology.viscosity_max_log10
-
     @property
     def const_properties(self) -> bool:
         """Whether constant properties mode is active."""
@@ -212,58 +178,6 @@ class EntropyPhaseEvaluator:
     def matprop_smooth_width(self) -> float:
         """Smoothing width for material property transitions."""
         return self._matprop_smooth_width
-
-    @property
-    def water_prefactor(self) -> float:
-        return self.rheology.water_prefactor
-
-    @property
-    def yield_stress_c(self) -> float:
-        return self.rheology.yield_stress_c
-
-    @property
-    def yield_stress_mu(self) -> float:
-        return self.rheology.yield_stress_mu
-
-    @property
-    def yield_stress_max(self) -> float:
-        return self.rheology.yield_stress_max
-
-    @property
-    def stress_closure_mode(self) -> str:
-        return self.rheology.stress_closure_mode
-
-    @property
-    def interior_flux_fraction(self) -> float:
-        return self.rheology.interior_flux_fraction
-
-    @property
-    def lid_base_mode(self) -> str:
-        return self.rheology.lid_base_mode
-
-    @property
-    def lid_base_temperature(self) -> float:
-        return self.rheology.lid_base_temperature
-
-    @property
-    def lid_contrast_coeff(self) -> float:
-        return self.rheology.lid_contrast_coeff
-
-    @property
-    def lid_mask_width_cells(self) -> float:
-        return self.rheology.lid_mask_width_cells
-
-    @property
-    def phi_visc_single(self) -> float:
-        return self.rheology.phi_visc_single
-
-    @property
-    def mlt_top_slope(self) -> float:
-        return self.rheology.mlt_top_slope
-
-    @property
-    def mlt_bottom_slope(self) -> float:
-        return self.rheology.mlt_bottom_slope
 
     # ── State setters (match PhaseEvaluatorProtocol interface) ────────
 

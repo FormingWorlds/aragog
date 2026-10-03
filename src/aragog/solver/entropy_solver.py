@@ -1898,7 +1898,6 @@ class EntropySolver:
             self.entropy_eos.S_min_solid if self.entropy_eos is not None else -np.inf
         )
         self._surface_flux_nominal = 0.0
-        self._surface_skin = (np.nan, np.nan, 0.0)
 
         # CMB flux law: face 1 (quasi_steady core unit = core + cell 0) or 0 (fixed T_cmb);
         # the interior is the middle half of the mantle depth.
@@ -2292,6 +2291,19 @@ class EntropySolver:
             return None
         return float(prev_sol.y[n_stag, -1])
 
+    def _skin_state(self) -> tuple[float, float, float, float]:
+        """Top half-cell quantities: (T_top, G, s, T_s)."""
+        ps = self.state.phase_staggered
+        T_top = float(np.asarray(ps.temperature()).flat[-1])
+        G = float(np.asarray(ps.thermal_conductivity()).flat[-1]) / self._top_dr_half
+        s = float(solid_weight(float(np.asarray(ps.melt_fraction()).flat[-1]), self._phi_rheo))
+        T_s = float(
+            skin_temperature(
+                T_top, G, self._outer_bc_emiss, self._outer_bc_T_eq, Stefan_Boltzmann
+            )
+        )
+        return T_top, G, s, T_s
+
     def _surface_half_cell_diagnostics(self) -> dict[str, float]:
         """Top half-cell quantities at the current state, for the output.
 
@@ -2302,15 +2314,7 @@ class EntropySolver:
             ``surface_solid_weight`` and ``T_surface_skin`` (the root of the skin
             balance with the grey-body inputs).
         """
-        ps = self.state.phase_staggered
-        T_top = float(np.asarray(ps.temperature()).flat[-1])
-        G = float(np.asarray(ps.thermal_conductivity()).flat[-1]) / self._top_dr_half
-        s = float(solid_weight(float(np.asarray(ps.melt_fraction()).flat[-1]), self._phi_rheo))
-        T_s = float(
-            skin_temperature(
-                T_top, G, self._outer_bc_emiss, self._outer_bc_T_eq, Stefan_Boltzmann
-            )
-        )
+        T_top, G, s, T_s = self._skin_state()
         return dict(
             T_surface_skin=T_s,
             T_top_cell=T_top,
@@ -2386,12 +2390,7 @@ class EntropySolver:
         emiss, T_eq = self._outer_bc_emiss, self._outer_bc_T_eq
         T_basic_top = self.state.top_temperature.item()
         F_grey = emiss * Stefan_Boltzmann * (T_basic_top**4 - T_eq**4)
-        ps = self.state.phase_staggered
-        T_top = float(np.asarray(ps.temperature()).flat[-1])
-        G = float(np.asarray(ps.thermal_conductivity()).flat[-1]) / self._top_dr_half
-        s = float(solid_weight(float(np.asarray(ps.melt_fraction()).flat[-1]), self._phi_rheo))
-        T_s = float(skin_temperature(T_top, G, emiss, T_eq, Stefan_Boltzmann))
-        self._surface_skin = (T_s, G, s)
+        T_top, G, s, T_s = self._skin_state()
         return (1.0 - s) * F_grey + s * G * (T_top - T_s)
 
     def dSdt(
@@ -4752,19 +4751,10 @@ class EntropySolver:
         visc_eff_b = np.asarray(
             getattr(self.state, 'visc_eff', self.state.viscosity_basic)
         ).ravel()
-        if visc_eff_b.size == 0:
-            visc_eff_b = np.asarray(self.state.viscosity_basic).ravel()
-
-        eta_d = getattr(self.state.phase_basic, 'eta_diff', None)
-        if callable(eta_d):
-            eta_d = eta_d()
-        rheo_obj = getattr(self.state.phase_basic, 'rheology', None)
-        if (
-            eta_d is not None
-            and np.size(eta_d) > 0
-            and rheo_obj is not None
-            and rheo_obj.enabled
-        ):
+        phase_b = self.state.phase_basic
+        rheo = getattr(phase_b, 'rheology', None)
+        eta_d = getattr(phase_b, 'eta_diff', None)
+        if rheo is not None and rheo.enabled and eta_d is not None and np.size(eta_d) > 0:
             eta_diff_b = np.asarray(eta_d).ravel()
         else:
             eta_diff_b = np.full_like(r_basic, np.nan)

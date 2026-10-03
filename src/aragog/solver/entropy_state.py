@@ -20,6 +20,8 @@ from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.rheology import (
     compute_effective_viscosity,
     compute_stagnant_lid_state,
+    compute_strain_rate_local,
+    viscous_mixing_length_factor,
 )
 from aragog.utilities import FloatOrArray
 
@@ -446,7 +448,6 @@ class EntropyState:
                 "mixing_length_profile = 'nearest_boundary', got "
                 f'{mesh.settings.mixing_length_profile!r}'
             )
-        from aragog.rheology import viscous_mixing_length_factor
 
         r = np.asarray(mesh.basic.radii).ravel()
         return viscous_mixing_length_factor(
@@ -687,16 +688,11 @@ class EntropyState:
         if q is not None:
             visc_v_unyielded = q * visc_v_unyielded
         # 1D stress closure and effective viscosity capping
-        eta_d = getattr(self.phase_basic, 'eta_diff', None)
         rheo = getattr(self.phase_basic, 'rheology', None)
-        if eta_d is not None and np.size(eta_d) > 0 and rheo is not None and rheo.enabled:
-            if callable(eta_d):
-                eta_d = eta_d()
+        eta_d = getattr(self.phase_basic, 'eta_diff', None)
+        if rheo is not None and rheo.enabled and eta_d is not None and np.size(eta_d) > 0:
             eta_d = np.asarray(eta_d).ravel()
-            tau_y = getattr(self.phase_basic, 'tau_y', None)
-            if callable(tau_y):
-                tau_y = tau_y()
-            tau_y = np.asarray(tau_y).ravel()
+            tau_y = np.asarray(getattr(self.phase_basic, 'tau_y', None)).ravel()
             self._tau_y_basic = tau_y
             mode = rheo.stress_closure_mode
             r_basic = np.asarray(self._evaluator.mesh.basic.radii).ravel()
@@ -743,10 +739,7 @@ class EntropyState:
                 )
 
                 P_basic = np.asarray(self.phase_basic.pressure).ravel()
-                visc_solid = getattr(self.phase_basic, 'viscosity_solid', None)
-                if visc_solid is None:
-                    visc_solid = getattr(rheo, 'viscosity_solid', 1.0e21)
-                phi_rheo = float(getattr(self.phase_basic, 'phi_rheo', 0.4))
+                phi_rheo = float(self.phase_basic.phi_rheo)
                 lid_state = compute_stagnant_lid_state(
                     radii=r_basic,
                     temperature=T,
@@ -757,7 +750,7 @@ class EntropyState:
                     melt_fraction=np.asarray(self.phase_basic.melt_fraction()).ravel(),
                     params=rheo,
                     unyielded_velocity=visc_v_unyielded,
-                    viscosity_solid=visc_solid,
+                    viscosity_solid=self.phase_basic.viscosity_solid,
                     phi_rheo=phi_rheo,
                     xp=np,
                 )
@@ -797,10 +790,7 @@ class EntropyState:
                 )
 
             # Re-apply phase blend linearly in log space exactly as EOS does
-            visc_solid_weight = getattr(self.phase_basic, 'visc_solid_weight', None)
-            if callable(visc_solid_weight):
-                visc_solid_weight = visc_solid_weight()
-            visc_solid_weight = np.asarray(visc_solid_weight).ravel()
+            visc_solid_weight = np.asarray(self.phase_basic.visc_solid_weight).ravel()
 
             log_eta_unyielded = np.log10(np.maximum(eta_bulk_unyielded, 1e-30))
             log_eta_d = np.log10(np.maximum(eta_d, 1e-30))
@@ -824,13 +814,9 @@ class EntropyState:
             self._visc_eff = self._viscosity_basic
             tau_y = getattr(self.phase_basic, 'tau_y', None)
             if tau_y is not None:
-                if callable(tau_y):
-                    tau_y = tau_y()
                 self._tau_y_basic = np.asarray(tau_y).ravel()
             else:
                 self._tau_y_basic = np.full_like(self._viscosity_basic, np.nan)
-
-        from aragog.rheology import compute_strain_rate_local
 
         self._strain_rate_basic = compute_strain_rate_local(viscous_velocity, mixing_length)
 

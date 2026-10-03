@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import fields
 from typing import Any
 
 import attrs
 
-from aragog.rheology import SolidRheologyParams
+from aragog.rheology import SolidRheologyParams, delegate_rheology, merge_rheology
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -25,6 +24,7 @@ LID_BASE_MODES: tuple[str, str] = ('fixed', 'rheological')
 LID_BASE_DEFAULT: str = 'rheological'
 
 
+@delegate_rheology
 @attrs.define(init=False)
 class PhaseConfig:
     """Single-phase (solid or liquid) material properties.
@@ -82,95 +82,7 @@ class PhaseConfig:
         self.thermal_expansivity = thermal_expansivity
         self.viscosity = viscosity
         self.entropy = entropy
-        if rheology is not None:
-            if flat_rheo:
-                params_dict = {
-                    f.name: getattr(rheology, f.name) for f in fields(SolidRheologyParams)
-                }
-                params_dict.update(flat_rheo)
-                self.rheology = SolidRheologyParams(**params_dict)
-            else:
-                self.rheology = rheology
-        elif flat_rheo:
-            self.rheology = SolidRheologyParams(**flat_rheo)
-        else:
-            self.rheology = SolidRheologyParams()
-
-    @property
-    def enabled(self) -> bool:
-        return self.rheology.enabled
-
-    @property
-    def activation_energy(self) -> float:
-        return self.rheology.activation_energy
-
-    @property
-    def activation_volume(self) -> float:
-        return self.rheology.activation_volume
-
-    @property
-    def activation_volume_decay_pressure(self) -> float:
-        return self.rheology.activation_volume_decay_pressure
-
-    @property
-    def arrhenius_t_ref(self) -> float:
-        return self.rheology.arrhenius_t_ref
-
-    @property
-    def viscosity_max_log10(self) -> float:
-        return self.rheology.viscosity_max_log10
-
-    @property
-    def water_prefactor(self) -> float:
-        return self.rheology.water_prefactor
-
-    @property
-    def yield_stress_c(self) -> float:
-        return self.rheology.yield_stress_c
-
-    @property
-    def yield_stress_mu(self) -> float:
-        return self.rheology.yield_stress_mu
-
-    @property
-    def yield_stress_max(self) -> float:
-        return self.rheology.yield_stress_max
-
-    @property
-    def stress_closure_mode(self) -> str:
-        return self.rheology.stress_closure_mode
-
-    @property
-    def interior_flux_fraction(self) -> float:
-        return self.rheology.interior_flux_fraction
-
-    @property
-    def lid_base_mode(self) -> str:
-        return self.rheology.lid_base_mode
-
-    @property
-    def lid_base_temperature(self) -> float:
-        return self.rheology.lid_base_temperature
-
-    @property
-    def lid_contrast_coeff(self) -> float:
-        return self.rheology.lid_contrast_coeff
-
-    @property
-    def lid_mask_width_cells(self) -> float:
-        return self.rheology.lid_mask_width_cells
-
-    @property
-    def phi_visc_single(self) -> float:
-        return self.rheology.phi_visc_single
-
-    @property
-    def mlt_top_slope(self) -> float:
-        return self.rheology.mlt_top_slope
-
-    @property
-    def mlt_bottom_slope(self) -> float:
-        return self.rheology.mlt_bottom_slope
+        self.rheology = merge_rheology(rheology, flat_rheo)
 
 
 @attrs.define

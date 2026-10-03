@@ -28,7 +28,7 @@ from aragog.config.phases import (
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
 )
-from aragog.rheology import SolidRheologyParams
+from aragog.rheology import SolidRheologyParams, merge_rheology
 
 _DEFAULT_RHEOLOGY = SolidRheologyParams()
 _UNSET: Any = object()
@@ -416,13 +416,12 @@ class _PhaseParameters:
     _initialized: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        base = self.rheology
-        d = {f.name: getattr(base, f.name) for f in fields(SolidRheologyParams)}
-        for f in fields(SolidRheologyParams):
-            val = getattr(self, f.name)
-            if val is not _UNSET:
-                d[f.name] = val
-        super().__setattr__('rheology', SolidRheologyParams(**d))
+        overrides = {
+            f.name: getattr(self, f.name)
+            for f in fields(SolidRheologyParams)
+            if getattr(self, f.name) is not _UNSET
+        }
+        super().__setattr__('rheology', merge_rheology(self.rheology, overrides))
         for f in fields(SolidRheologyParams):
             super().__setattr__(f.name, getattr(self.rheology, f.name))
         super().__setattr__('_initialized', True)

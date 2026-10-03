@@ -75,5 +75,5 @@ def cmb_flux(
     nu = xp.where(dT_c > 0.0, nu_conv, 1.0)
     q = (k * dT_c / depth) * nu
     if xp is np and np.ndim(T_c) == 0 and np.ndim(T_s) == 0 and np.ndim(T_m) == 0:
-        return float(q.item() if hasattr(q, 'item') else q)
+        return float(q)
     return q
