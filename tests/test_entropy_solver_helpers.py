@@ -914,3 +914,270 @@ def test_max_step_clamp_entropy_margin_is_configurable():
     # could silently drift away from the config default it must track.
     sig = inspect.signature(_phase_boundary_max_step_clamp)
     assert sig.parameters['entropy_margin'].default is inspect.Parameter.empty
+
+
+def test_setup_solver_core_module_budget_jit_fallback(monkeypatch):
+    """When jax.jit fails, cache_bc_constants falls back to unjitted dtcmb_dt."""
+    import jax
+
+    s = _build_minimal_solver(core_bc='core_module')
+    s.initialize()
+    s._r_basic_flat = np.array([3.48e6, 4e6])
+    s._P_basic_flat = np.array([136e9, 100e9])
+
+    monkeypatch.setattr(
+        jax, 'jit', MagicMock(side_effect=RuntimeError('simulated jit failure'))
+    )
+    s._cache_bc_constants()
+    assert s._core_module_budget_dtcmb_dt is not None
+    assert s._core_module_budget_dtcmb_dt == s._core_module_budget.dtcmb_dt
+
+
+def test_set_initial_entropy_gradient_mode():
+    """Initial entropy in gradient mode sets S0 with gradients and surface entropy."""
+    s = _build_minimal_solver(core_bc='gradient')
+    s.initialize()
+    s.set_initial_entropy(3000.0)
+    assert hasattr(s, '_S0')
+    assert len(s._S0) == s.parameters.mesh.number_of_nodes + 1
+
+
+def test_set_initial_entropy_core_module_with_and_without_mesh():
+    """Initial entropy resolution for core_module exercises offset with and without mesh."""
+    from types import SimpleNamespace
+
+    mock_eos = MagicMock()
+    mock_eos.temperature.return_value = np.array([4500.0])
+
+    # Case A: with mesh basic radii
+    s_a = _build_minimal_solver(core_bc='core_module')
+    s_a.initialize()
+    s_a.entropy_eos = mock_eos
+    s_a._P_basic_flat = np.array([136e9])
+    s_a._P_stag_flat = np.array([135e9])
+    mesh_mock = SimpleNamespace(basic=SimpleNamespace(radii=np.linspace(3.48e6, 6.371e6, 10)))
+    s_a.evaluator = SimpleNamespace(mesh=mesh_mock)
+    s_a.set_initial_entropy(3000.0)
+    assert s_a._S0[10] == pytest.approx(4500.0)
+
+    # Case B: without mesh (evaluator is None)
+    s_b = _build_minimal_solver(core_bc='core_module')
+    s_b.initialize()
+    s_b.entropy_eos = mock_eos
+    s_b._P_basic_flat = np.array([136e9])
+    s_b.evaluator = None
+    s_b._dSdr_cmb_init = 0.0
+    s_b.set_initial_entropy(3000.0)
+    assert s_b._S0[10] == pytest.approx(4500.0)
+
+    # Case C: bower2018 with no initial core temperature (resolves from EOS at P_stag)
+    s_c = _build_minimal_solver(core_bc='bower2018')
+    s_c.initialize()
+    s_c.entropy_eos = mock_eos
+    s_c._P_stag_flat = np.array([135e9])
+    s_c._T_core_init = None
+    s_c.set_initial_entropy(3000.0)
+    assert s_c._S0[9] == pytest.approx(4500.0)
+
+
+def test_step_energy_stratified_core_module_and_fallback():
+    """Stratified core_module integrates step_dE_core along trajectory and handles jit fallback."""
+    from types import SimpleNamespace
+
+    from scipy.optimize import OptimizeResult
+
+    import aragog.solver.entropy_solver as es
+
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[2000.0, 2000.0], [4500.0, 4400.0]]),
+    )
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution, s.entropy_eos = sol, object()
+    s._r_basic_flat = np.array([1.0, 2.0])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy = lambda y: y
+    s._step_heat_content = lambda a, b: 0.0
+    s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
+    s._core_bc = 'core_module'
+    s._n_stag = 0
+
+    mock_budget = SimpleNamespace(
+        stratification=True,
+        effective_capacity=lambda t, q: 2e27,
+    )
+    s._core_module_budget = mock_budget
+
+    # JIT / standard execution
+    out = s._compute_step_energy_integrals()
+    assert out['core'] == pytest.approx(2e27 * (4400.0 - 4500.0))
+
+    # Exception fallback branch
+    def fail_vmap(*args):
+        raise RuntimeError('simulated vmap failure')
+
+    mock_budget._vmap_effective_capacity_strat = fail_vmap
+    out2 = s._compute_step_energy_integrals()
+    assert out2['core'] == pytest.approx(2e27 * (4400.0 - 4500.0))
+
+
+def test_solver_output_to_netcdf_step_dE_core_J(tmp_path):
+    """SolverOutput.to_netcdf writes step_dE_core_J to netCDF."""
+    import netCDF4 as nc
+
+    from tests.test_solver_output_netcdf import _make_output
+
+    out = _make_output()
+    p = tmp_path / 'test.nc'
+    out.to_netcdf(p)
+    with nc.Dataset(p) as ds:
+        assert float(ds['step_dE_core_J'][...]) == pytest.approx(out.step_dE_core_J)
+
+
+def test_get_current_core_temperature():
+    """get_current_core_temperature returns None or the last T_core state value."""
+    from scipy.optimize import OptimizeResult
+
+    s = _build_minimal_solver(core_bc='core_module')
+    s.initialize()
+
+    # None cases: no solution, shape mismatch, or core_bc without T_core
+    assert s.get_current_core_temperature() is None
+
+    s._solution = OptimizeResult(y=np.array([]))
+    assert s.get_current_core_temperature() is None
+
+    # Shape mismatch (e.g. wrong number of rows)
+    s._solution = OptimizeResult(y=np.ones((5, 2)))
+    assert s.get_current_core_temperature() is None
+
+    # core_bc with no T_core slot
+    s._core_bc = 'gradient'
+    assert s.get_current_core_temperature() is None
+
+    # Valid core_module case: n_stag + 2 slots (dSdr_cmb, T_core)
+    s._core_bc = 'core_module'
+    n_stag = s._n_stag
+    y = np.zeros((n_stag + 2, 3))
+    y[n_stag + 1, -1] = 5234.5
+    s._solution = OptimizeResult(y=y)
+    assert s.get_current_core_temperature() == pytest.approx(5234.5)
+
+    # Fallback to parameters.boundary_conditions.core_bc when _core_bc is None
+    s._core_bc = None
+    assert s.get_current_core_temperature() == pytest.approx(5234.5)
+
+
+def test_set_initial_entropy_warm_restart_and_warnings(caplog):
+    """Warm restart preserves T_core and dSdr_cmb; large offsets trigger warning."""
+    import logging
+
+    from scipy.optimize import OptimizeResult
+
+    s = _build_minimal_solver(core_bc='core_module')
+    s.initialize()
+    n_stag = s._n_stag
+
+    # Mock previous solution for warm restart
+    y_prev = np.zeros((n_stag + 2, 4))
+    y_prev[n_stag, -1] = 1.5e-4
+    y_prev[n_stag + 1, -1] = 3000.0
+    s._solution = OptimizeResult(y=y_prev)
+
+    mock_eos = MagicMock()
+    mock_eos.temperature.return_value = np.array([5000.0])
+    s.entropy_eos = mock_eos
+    s._P_basic_flat = np.array([136e9])
+
+    with caplog.at_level(logging.WARNING):
+        s.set_initial_entropy(3000.0)
+
+    # Solution preserved from previous solve
+    assert s._S0[n_stag] == pytest.approx(1.5e-4)
+    assert s._S0[n_stag + 1] == pytest.approx(3000.0)
+    assert any(
+        'differs from the basal-node EOS temperature' in r.message for r in caplog.records
+    )
+
+    # Test n_stag < 2 fallback for dSdr_cmb_init
+    s2 = _build_minimal_solver(core_bc='core_module')
+    s2.initialize()
+    s2._n_stag = 1
+    assert s2._resolve_dSdr_cmb_init(np.array([3000.0]), 1, 2) == 0.0
+
+
+def test_step_dE_core_heating_and_exception_fallback():
+    """Unstratified step_dE_core supports heating across onset and handles jit fallback."""
+    from types import SimpleNamespace
+
+    from scipy.optimize import OptimizeResult
+
+    import aragog.solver.entropy_solver as es
+
+    # Heating: T_start=5000 < T_end=5300 crossing onset=5150
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[2000.0, 2000.0], [5000.0, 5300.0]]),
+    )
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution = sol
+    s.entropy_eos = object()
+    s._r_basic_flat = np.array([1.0, 2.0])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy = lambda y: y
+    s._step_heat_content = lambda a, b: 0.0
+    s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
+    s._core_bc = 'core_module'
+    s._n_stag = 0
+
+    mock_budget = SimpleNamespace(
+        stratification=False,
+        t_onset=5150.0,
+        t_freeze=4000.0,
+        effective_capacity=lambda t: 2.0e27,
+    )
+    s._core_module_budget = mock_budget
+
+    out = s._compute_step_energy_integrals()
+    assert out['core'] == pytest.approx(2.0e27 * (5300.0 - 5000.0), rel=1e-5)
+
+    # Exception fallback branch
+    def fail_vmap(*args):
+        raise RuntimeError('simulated vmap failure')
+
+    mock_budget._vmap_effective_capacity = fail_vmap
+    out2 = s._compute_step_energy_integrals()
+    assert out2['core'] == pytest.approx(2.0e27 * (5300.0 - 5000.0), rel=1e-5)
+
+
+def test_step_dE_core_bower2018():
+    """Bower2018 core energy change integrates constant core capacity."""
+    from types import SimpleNamespace
+
+    from scipy.optimize import OptimizeResult
+
+    import aragog.solver.entropy_solver as es
+
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[5000.0, 4800.0]]),
+    )
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution = sol
+    s.entropy_eos = object()
+    s._r_basic_flat = np.array([3.48e6, 4.0e6])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy = lambda y: y
+    s._step_heat_content = lambda a, b: 0.0
+    s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
+    s._core_bc = 'bower2018'
+    s._n_stag = 0
+    s.parameters = SimpleNamespace(
+        mesh=SimpleNamespace(core_density=7000.0),
+        boundary_conditions=SimpleNamespace(core_heat_capacity=800.0),
+    )
+
+    out = s._compute_step_energy_integrals()
+    vol_c = 4.0 / 3.0 * np.pi * (3.48e6**3)
+    c_core = vol_c * 7000.0 * 800.0
+    assert out['core'] == pytest.approx(c_core * (4800.0 - 5000.0))
