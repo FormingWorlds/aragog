@@ -798,6 +798,9 @@ def test_diagnostics_report_nan_when_rheology_disabled():
 
     s._solution = DummySol()
     out = s.get_state()
+    assert out.eta_diff_b.size == out.r_basic.size
+    assert out.tau_y_b.size == out.r_basic.size
+    assert out.eta_diff_b.size > 0
     assert np.all(np.isnan(out.eta_diff_b))
     assert np.all(np.isnan(out.tau_y_b))
 
@@ -815,5 +818,7 @@ def test_diagnostics_report_nan_when_rheology_disabled():
     s2.initialize()
     s2._solution = DummySol()
     out2 = s2.get_state()
+    assert out2.eta_diff_b.size == out2.r_basic.size
+    assert out2.tau_y_b.size == out2.r_basic.size
     assert np.all(np.isfinite(out2.eta_diff_b))
     assert out2.eta_diff_b[0] > 1.0e20
