@@ -72,7 +72,7 @@ def test_depression_factor_algebra_and_error_contract():
     np.testing.assert_allclose(
         np.asarray(alloy.t_melt(p)), factor * np.asarray(pure.t_melt_pure(p)), rtol=1e-14
     )
-    # The per-call override hook used by the volatile-dissolution stage.
+    # Per-call light element fraction override evaluated at specified pressure.
     assert float(alloy.t_melt(330e9, light_element_fraction=0.0)) == pytest.approx(
         6229.183781, rel=1e-9
     )

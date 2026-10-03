@@ -468,6 +468,16 @@ def test_step_heat_content_zero_when_no_eos():
     assert EntropySolver._step_heat_content(fake, np.ones(3), np.zeros(3)) == 0.0
 
 
+def test_step_heat_content_default_quadrature_points():
+    """Default quadrature in _step_heat_content uses 512 points."""
+    import inspect
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    sig = inspect.signature(EntropySolver._step_heat_content)
+    assert sig.parameters['n_quad'].default == 512
+
+
 def test_remap_entropy_handles_missing_xi_pre_resolve():
     """The per-parcel entropy remap must not raise when the pre-resolve mass
     grid was never cached.

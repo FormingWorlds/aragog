@@ -1313,7 +1313,7 @@ def _wire_cached_constants(
 
     We hand-wire these instead of calling _initialize_internals to
     avoid pulling in the full mesh/BC builder. The values mirror
-    the R8 reference Earth config (r_cmb=3480 km, dr_cmb=100 km,
+    an Earth core configuration (r_cmb=3480 km, dr_cmb=100 km,
     core_density=10738 kg/m^3, core_cp=880 J/(kg K), core_tfac=1.147).
     """
     solver._cmb_r_cmb = r_cmb

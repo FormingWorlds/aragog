@@ -288,3 +288,48 @@ def test_core_module_heating_counted_once(shared_eos):
     assert double_count_flux_shift > 0.01  # Significant shift (> 10 mW/m^2)
     # Confirm that actual flux differs from double-counted flux
     assert abs(flux_heat - (flux_no_heat - double_count_flux_shift)) > 0.005
+
+
+def test_core_module_hot_start_reads_t_core_slot(shared_eos):
+    """Automatic hot-start from prev_sol reads T_core slot (n_stag + 1), not dSdr_cmb."""
+    from types import SimpleNamespace
+
+    solver = _build_solver(core_bc='core_module', shared_eos=shared_eos)
+    solver.initialize()
+    n_stag = solver._n_stag
+    sol = SimpleNamespace()
+    sol.y = np.zeros((n_stag + 2, 3))
+    sol.y[n_stag, -1] = -1.5e-4
+    sol.y[n_stag + 1, -1] = 5925.5
+    solver._solution = sol
+    solver._T_core_init = None
+    solver.set_initial_entropy(np.full(n_stag, 2900.0))
+    assert solver._S0[n_stag + 1] == pytest.approx(5925.5)
+
+
+def test_core_module_rhs_evaluates_at_t_core_state_not_t_cmb_basic(shared_eos):
+    """_dSdt_single passes state t_core to core RHS, not T_cmb_basic."""
+    solver = _build_solver(core_bc='core_module', shared_eos=shared_eos)
+    solver.initialize()
+    n_stag = solver._n_stag
+    y_col = np.zeros(n_stag + 2)
+    y_col[:n_stag] = 2600.0
+    y_col[n_stag] = -1.0e-5
+    y_col[n_stag + 1] = 4000.0  # t_core in partially frozen regime
+    dy = solver._dSdt_single(0.0, y_col)
+    dT_dt_actual = float(dy[n_stag + 1])
+
+    T_cmb_basic = float(np.asarray(solver.state.phase_basic.temperature()).flat[0])
+    assert abs(T_cmb_basic - 4000.0) > 500.0
+
+    cap_at_t_core = float(solver._core_module_budget.effective_capacity(4000.0))
+    cap_at_t_cmb = float(solver._core_module_budget.effective_capacity(T_cmb_basic))
+    assert abs(cap_at_t_core - cap_at_t_cmb) > 1e27
+
+    sec_per_yr = 3.15576e7
+    F_cmb = float(solver.state.heat_flux[0])
+    area = float(solver._core_module_budget.profiles.r_cmb**2 * 4.0 * np.pi)
+    dT_dt_expected = -F_cmb * area / cap_at_t_core * sec_per_yr
+    dT_dt_mutant = -F_cmb * area / cap_at_t_cmb * sec_per_yr
+    assert dT_dt_actual == pytest.approx(dT_dt_expected, rel=1e-3)
+    assert abs(dT_dt_actual - dT_dt_mutant) > 1e-3 * abs(dT_dt_actual)

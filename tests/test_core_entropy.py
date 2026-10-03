@@ -175,3 +175,12 @@ def test_error_contract_and_jit(ent):
     assert float(jax.jit(ent.b_rms_core)(T_C, 17e12)) == pytest.approx(
         float(ent.b_rms_core(T_C, 17e12)), rel=1e-12
     )
+
+
+def test_b_rms_core_scales_with_f_ohm(ent):
+    """Core rms magnetic field scales with sqrt(f_ohm)."""
+    ent_quarter = CoreEntropyBudget(ent.budget, k_core=130.0, f_ohm=0.25)
+    b_full = float(ent.b_rms_core(T_C, 17e12))
+    b_quarter = float(ent_quarter.b_rms_core(T_C, 17e12))
+    assert b_full > 0.0
+    assert b_quarter == pytest.approx(0.5 * b_full, rel=1e-12)

@@ -261,6 +261,22 @@ def test_integrals_evaluate_the_powers_at_every_node(traced):
 
 
 @pytest.mark.unit
+def test_integrals_compute_bower2018_core_energy():
+    """bower2018 records C_core * Delta T_core in the step integrals."""
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[2000.0, 2000.0], [4000.0, 3900.0]]),
+    )
+    s, _ = _fake_solver(sol)
+    s._core_bc = 'bower2018'
+    s._n_stag = 1
+    s._core_cap = 1.5e27
+    out = s._compute_step_energy_integrals()
+    assert out['core'] == pytest.approx(1.5e27 * (3900.0 - 4000.0))
+    assert out['core'] != 0.0
+
+
+@pytest.mark.unit
 def test_a_trace_short_of_the_steps_warns(monkeypatch, caplog):
     monkeypatch.setattr(
         es.EntropySolver, '_energy_trace', staticmethod(lambda nodes, t, y: (t, y))
