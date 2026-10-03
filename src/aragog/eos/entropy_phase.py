@@ -510,15 +510,12 @@ class EntropyPhaseEvaluator:
 
         Where the tabulated solid and melt densities cross so that the
         melt is locally the denser phase (``rho_s < rho_l``), the porosity
-        denominator ``rho_s - rho_l`` is floored at a small positive value.
-        This keeps the porosity near zero at those nodes, so the
-        permeability factor ``F`` and the settling velocity stay small
-        there. The separation direction is fixed independently by the
-        non-negative density contrast ``|rho_l - rho_s|`` in ``v_rel``,
-        which is non-negative by construction and cannot reverse; the
-        floor suppresses the settling magnitude, not the direction. The
-        suppression stays local to that shallow region and does not change
-        the macroscopic front evolution.
+        denominator ``rho_s - rho_l`` is floored at about 1 kg/m^3, so the
+        porosity goes to a clip limit there: near 0 where the node density
+        exceeds ``rho_s`` (settling suppressed), near 1 where it is below
+        (``F`` at the Stokes value). The separation direction is fixed by the
+        non-negative contrast ``|rho_l - rho_s|`` in ``v_rel`` and cannot
+        reverse.
         """
         if self._const_properties:
             return np.zeros_like(self._density)
@@ -562,9 +559,10 @@ class EntropyPhaseEvaluator:
         """Melt volume fraction from the node density and the phase-boundary densities [1].
 
         This is the porosity :meth:`relative_velocity` uses. It is soft-clipped
-        to [0, 1] with a width of 1e-3, so its range is [-2.5e-7, 1] and in a
-        solid column it is within 2.5e-7 of zero, either sign. Under ``const_properties`` there is no phase
-        contrast and the mantle counts as fully liquid, so it is one everywhere.
+        to [0, 1] with a width of 1e-3, so its range is [-2.5e-7, 1]; below the
+        solidus it lies in [-2.5e-7, 5e-4], with 5e-4 at the solidus. Under
+        ``const_properties`` there is no phase contrast and the mantle counts as
+        fully liquid, so it is one everywhere.
         """
         if self._const_properties:
             return np.ones_like(self._density)
