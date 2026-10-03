@@ -1,0 +1,87 @@
+name: Abe Mixed Main Repro
+
+on:
+  push:
+    branches: [tl/ssc-step1-abe-mixed-main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repro:
+    name: repro-ubuntu (rep ${{ matrix.rep }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rep: [1, 2]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up conda env (sundials from conda-forge)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: aragog-repro
+          create-args: >-
+            python=3.12
+            sundials
+          condarc: |
+            channels:
+              - conda-forge
+
+      - name: Install pip test dependencies
+        run: |
+          pip install pytest pytest-cov pytest-xdist pytest-dependency
+          pip install scikits-odes-sundials jax equinox diffrax
+
+      - name: Install aragog
+        run: |
+          pip install -e .
+
+      - name: Fetch SPIDER EOS test data
+        run: |
+          mkdir -p /tmp/aragog-test-data
+          curl -sL -o /tmp/spider_eos.tar.gz \
+            https://github.com/FormingWorlds/aragog/releases/download/test-data-v1/spider_eos_test_data.tar.gz
+          tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
+          echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
+
+      - name: Print environment and hardware diagnostics
+        run: |
+          echo "=== CPU INFO ==="
+          lscpu
+          echo "=== PACKAGE VERSIONS ==="
+          python -c "import numpy, jax, scikits_odes_sundials, sys; print('numpy:', numpy.__version__, 'jax:', jax.__version__, 'scikits.odes:', getattr(scikits_odes_sundials, '__version__', 'unknown'), 'platform:', sys.platform)"
+
+      - name: Run abe_mixed with NumPy solver
+        run: |
+          mkdir -p output
+          python tools/verification/run_abe_mixed.py \
+            --aragog-dir . \
+            --solver numpy \
+            --end-time 100.0 \
+            --output-npz output/main_numpy_rep${{ matrix.rep }}.npz \
+            --run-id rep${{ matrix.rep }}
+
+      - name: Run abe_mixed with JAX solver
+        run: |
+          python tools/verification/run_abe_mixed.py \
+            --aragog-dir . \
+            --solver jax \
+            --end-time 100.0 \
+            --output-npz output/main_jax_rep${{ matrix.rep }}.npz \
+            --run-id rep${{ matrix.rep }}
+
+      - name: Upload repro artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-repro-rep${{ matrix.rep }}
+          path: output/*.npz
