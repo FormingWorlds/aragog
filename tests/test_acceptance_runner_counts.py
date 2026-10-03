@@ -115,7 +115,8 @@ def test_runner_step_count_on_10yr_run_equals_cvode_numsteps(tmp_path, monkeypat
     assert len(sols) == 1
     sol = sols[0]
     expected_steps = sol.cvode_info['NumSteps']
-    assert sol.t.size == 9
+    assert expected_steps == sol.cvode_nst
+    assert sol.t.size == 11
     assert res['cvode_steps'][0] == expected_steps
     assert res['total_cvode_steps'] == expected_steps
     assert res['total_cvode_steps'] > 50

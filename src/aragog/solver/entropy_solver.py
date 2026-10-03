@@ -3424,6 +3424,9 @@ class EntropySolver:
         ts, ys, log = [np.array([t])], [y.reshape(-1, 1)], []
         et, ey = [], []
         nfev = nst = nfe = 0
+        num_err_test_fails = 0
+        num_lin_solv_setups = 0
+        min_last_step = float('inf')
         trigger = 'start'
         res = None
         for k in range(max_segments + 1):
@@ -3471,6 +3474,13 @@ class EntropySolver:
             nfev += int(res.nfev)
             nst += int(res.get('cvode_nst', 0))
             nfe += int(res.get('cvode_nfe', 0))
+            seg_info = res.get('cvode_info')
+            if seg_info:
+                num_err_test_fails += int(seg_info.get('NumErrTestFails', 0))
+                num_lin_solv_setups += int(seg_info.get('NumLinSolvSetups', 0))
+                last_step = seg_info.get('LastStep')
+                if last_step is not None and not np.isnan(last_step):
+                    min_last_step = min(min_last_step, float(last_step))
             if res.status != 0 or res.cvode_flag != 2 or last:
                 break
             t, y = float(res.t[-1]), np.asarray(res.y[:, -1], dtype=float)
@@ -3485,6 +3495,14 @@ class EntropySolver:
         res.y = np.concatenate(ys, axis=1)
         res.energy_trace = (np.concatenate(et), np.concatenate(ey, axis=1)) if et else None
         res.nfev, res.cvode_nst, res.cvode_nfe, res.segments = nfev, nst, nfe, log
+        if hasattr(res, 'cvode_info') and res.cvode_info is not None:
+            res.cvode_info = dict(res.cvode_info)
+            res.cvode_info['NumSteps'] = nst
+            res.cvode_info['NumRhsEvals'] = nfe
+            res.cvode_info['NumErrTestFails'] = num_err_test_fails
+            res.cvode_info['NumLinSolvSetups'] = num_lin_solv_setups
+            if min_last_step != float('inf'):
+                res.cvode_info['LastStep'] = min_last_step
         logger.info(
             'rate cap: %d segment(s), nst=%d, triggers %s',
             len(log),

@@ -90,8 +90,9 @@ def cvode_counts(sol) -> tuple[int, int, int, float]:
     the ``cvode_info`` that ``EntropySolver`` attaches to a CVODE solution.
     """
     info = sol['cvode_info']
+    nst = int(sol.get('cvode_nst', info['NumSteps']))
     return (
-        int(info['NumSteps']),
+        nst,
         int(info['NumErrTestFails']),
         int(info['NumLinSolvSetups']),
         float(sol['cvode_last_step']),
