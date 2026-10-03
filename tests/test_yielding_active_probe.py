@@ -4,16 +4,17 @@ import os
 import sys
 from pathlib import Path
 
-import jax
 import numpy as np
 import pytest
-import scikits.odes
 
 from aragog.cli import _derive_initial_entropy_from_config
 from aragog.config import Config
 from aragog.eos.entropy import EntropyEOS
 from aragog.solver.entropy_solver import EntropySolver
 from tools.verification.generate_golden_fixtures import compute_eos_hash, get_sundials_version
+
+jax = pytest.importorskip('jax')
+scikits_odes = pytest.importorskip('scikits.odes')
 
 _FWL_DATA = os.environ.get('FWL_DATA')
 _CANDIDATES = [
@@ -75,7 +76,7 @@ def test_yielding_active_probe(shared_eos):
         version_checks = {
             'recorded_numpy_version': np.__version__,
             'recorded_jax_version': getattr(jax, '__version__', None),
-            'recorded_scikits_odes_version': getattr(scikits.odes, '__version__', None),
+            'recorded_scikits_odes_version': getattr(scikits_odes, '__version__', None),
             'recorded_sundials_version': get_sundials_version(),
             'recorded_platform': sys.platform,
         }
