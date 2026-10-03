@@ -78,8 +78,8 @@ The state-vector layout for each mode is documented in [`solver/entropy_solver.p
 
 When `core_bc = "core_module"`, the module options are specified under `[boundary_conditions.core_module_params]`:
 
-- `rho_cen`: Core central density [kg m$^{-3}$]. Default $12500.0$.
-- `length_scale`: Core Gaussian density length scale [m]. Default $7.272\times 10^6$.
+- `rho_cen`: Core central density [kg m$^{-3}$]. Default $12500.0$. When structure constraints ($M_\text{core}$ and $P_\text{center}$) are supplied, central density and length scale are fitted to the interior structure constraints; the fit can move the onset temperature by $\sim 165\text{ K}$ for Earth ($4119\text{ K}$ to $3954\text{ K}$ as $P_\text{cen}$ falls from $358\text{ GPa}$ to $341\text{ GPa}$).
+- `length_scale`: Core Gaussian density length scale [m]. Default $7.272\times 10^6$. Fitted jointly with `rho_cen` when structure constraints are supplied.
 - `alpha`: Thermal expansivity [K$^{-1}$]. Default $1.35\times 10^{-5}$.
 - `c_p`: Specific heat capacity [J kg$^{-1}$ K$^{-1}$]. Default $840.0$.
 - `melting_curve`: Iron melting curve parameterisation (`"iron"` for PALEOS / Anzellini et al. 2013 or `"quadratic"` for Nimmo 2015 polynomial). Choices: `"iron"`, `"quadratic"`. Default `"iron"`.
