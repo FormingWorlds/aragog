@@ -14,7 +14,7 @@ import jax
 import numpy as np
 import pytest
 
-from aragog.core.melting import IronMeltingCurve
+from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 
 pytestmark = pytest.mark.unit
 
@@ -95,3 +95,17 @@ def test_jit_matches_eager():
     np.testing.assert_allclose(
         np.asarray(jax.jit(alloy.t_melt)(p)), np.asarray(alloy.t_melt(p)), rtol=1e-15
     )
+
+
+def test_melting_curve_runtime_overrides_and_validation():
+    """t_melt validates runtime light_element_fraction bounds, and QuadraticMeltingCurve checks t_m0."""
+    alloy = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    with pytest.raises(ValueError, match='light_element_fraction must be in'):
+        alloy.t_melt(100e9, light_element_fraction=-0.05)
+    with pytest.raises(ValueError, match='light_element_fraction must be in'):
+        alloy.t_melt(100e9, light_element_fraction=1.0)
+    with pytest.raises(ValueError, match='reaches 1'):
+        alloy.t_melt(100e9, light_element_fraction=0.9)
+
+    with pytest.raises(ValueError, match='t_m0 must be positive'):
+        QuadraticMeltingCurve(t_m0=-1000.0, t_m1=1e-12, t_m2=1e-24)

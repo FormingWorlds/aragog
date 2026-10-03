@@ -161,6 +161,8 @@ def test_constructor_error_contract_and_jit_compatibility():
     tail['length_scale'] = EARTH['r_cmb'] / 4.0  # r_cmb > 3 L: far Gaussian tail
     with pytest.raises(ValueError, match='length scales'):
         GaussianCoreProfiles(**tail)
+    with pytest.raises(ValueError, match='unknown pressure_mode'):
+        GaussianCoreProfiles(**EARTH, pressure_mode='invalid')
 
     prof = GaussianCoreProfiles(**EARTH)
     r = np.linspace(0.0, prof.r_cmb, 17)

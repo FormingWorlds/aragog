@@ -238,3 +238,14 @@ def test_freeze_out_factor_is_smooth_and_bounded(prof):
     caps = np.array([float(budget.effective_capacity(x)) for x in t])
     rel_step = np.max(np.abs(np.diff(caps))) / np.max(caps)
     assert rel_step < 0.05  # the former hard cutoff moved 55% in one step
+
+
+def test_budget_input_validation(prof):
+    """Constructor validates that latent_heat is positive and expansivities non-negative."""
+    curve = IronMeltingCurve()
+    with pytest.raises(ValueError, match='latent_heat must be positive'):
+        CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, latent_heat=-500.0)
+    with pytest.raises(ValueError, match='alpha_c and c_light must be non-negative'):
+        CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=-0.5)
+    with pytest.raises(ValueError, match='alpha_c and c_light must be non-negative'):
+        CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, c_light=-0.05)

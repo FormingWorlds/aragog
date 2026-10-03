@@ -184,3 +184,11 @@ def test_b_rms_core_scales_with_f_ohm(ent):
     b_quarter = float(ent_quarter.b_rms_core(T_C, 17e12))
     assert b_full > 0.0
     assert b_quarter == pytest.approx(0.5 * b_full, rel=1e-12)
+
+
+def test_quad_0_rcmb_matches_analytic_integral(ent):
+    """_quad_0_rcmb evaluates Gauss-Legendre quadrature from 0 to r_cmb."""
+    r_cmb = float(ent.budget.profiles.r_cmb)
+    result = float(ent._quad_0_rcmb(lambda r: r**2))
+    expected = (r_cmb**3) / 3.0
+    assert result == pytest.approx(expected, rel=1e-6)

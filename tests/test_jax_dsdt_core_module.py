@@ -49,7 +49,7 @@ needs_eos = pytest.mark.skipif(
 # Module tier: the real-EOS parity and Jacobian solves are smoke; the
 # two factory-contract tests additionally carry the unit marker so the
 # PR lane still runs them (they need no external data).
-pytestmark = [pytest.mark.smoke, pytest.mark.timeout(300)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(300)]
 
 
 def _tiny_budget(r_cmb: float = 3.48e6):
