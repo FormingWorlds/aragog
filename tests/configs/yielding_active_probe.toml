@@ -4,8 +4,8 @@
 [solver]
 start_time = 0
 end_time = 100
-atol = 1e-6
-rtol = 1e-6
+atol = 1e-8
+rtol = 1e-8
 tsurf_poststep_change = 30
 
 [boundary_conditions]
