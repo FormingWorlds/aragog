@@ -100,9 +100,8 @@ def test_mixed_phase_mush_fixture(shared_eos):
                 assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
                 np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
         else:
-            # Tolerance tier: 10x max(1-ulp noise floor across 5 seeds, measured spread).
-            # Measured 1-ulp noise floor: S 0.046 J/kg/K, T 0.00455 K, flux 6290 W/m2.
-            # Measured Linux-Darwin spread: S 7.89e-4 J/kg/K, T 8.67e-5 K, flux 76.5 W/m2.
+            # Tolerance tier: 10x max(5-seed 1-ulp noise floor, Linux-Darwin spread).
+            # Measured: S 0.046 J/kg/K, T 0.00455 K, flux 6290 W/m2; spread 76.5 W/m2.
             # Flux tolerance 6.5e4 W/m2 is 5.2 % of peak mantle flux (1.24e6 W/m2).
             np.testing.assert_allclose(S, ref['S'], atol=0.5)
             np.testing.assert_allclose(T, ref['T'], atol=0.05)

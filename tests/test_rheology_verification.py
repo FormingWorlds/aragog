@@ -27,10 +27,8 @@ from aragog.rheology import compute_yield_stress, eta_diff
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
-# Reference rheology point used across the pins. Olivine-like diffusion
-# creep: E_a = 300 kJ/mol, V_a = 5 cm^3/mol, eta_0 = 1e21 Pa s at
-# T_ref = 1600 K. These are the aragog defaults and let the closed-form
-# exponent be evaluated by hand.
+# Reference rheology point: olivine-like diffusion creep (E_a = 300 kJ/mol,
+# V_a = 5 cm^3/mol, eta_0 = 1e21 Pa s at T_ref = 1600 K).
 _ETA0 = 1.0e21
 _E_A = 300.0e3
 _V_A = 5.0e-6
@@ -76,12 +74,9 @@ def test_arrhenius_viscosity_collapses_to_reference_at_t_ref():
     assert eta_hot < _ETA0 < eta_cold
     assert eta_hot > 0.0
 
-    # Edge case (high-temperature bounded limit): as T grows without bound the
-    # temperature term vanishes and, at P = 0, the exponent floors at the
-    # negative constant -E_a/(R T_ref). The viscosity therefore saturates to a
-    # finite, strictly positive floor eta_0 * exp(-E_a/(R T_ref)) rather than
-    # collapsing to zero.
-    # T = 1e15 K so the residual E_a/(R T) ~ 4e-11 term sits below rtol.
+    # High-T limit: at P = 0, exponent floors at -E_a/(R T_ref).
+    # Viscosity saturates to floor eta_0 * exp(-E_a/(R T_ref)) > 0.
+    # T = 1e15 K keeps residual E_a/(R T) below rtol.
     eta_hot_limit = eta_diff(1.0e15, 0.0, _ETA0, _E_A, _V_A, _T_REF, _R)
     floor = _ETA0 * np.exp(-_E_A / (_R * _T_REF))
     assert eta_hot_limit == pytest.approx(floor, rel=1e-9)
