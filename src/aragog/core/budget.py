@@ -322,7 +322,7 @@ class CoreEnergyBudget:
         return root
 
     def nucleation_factor(self, t_cmb):
-        """Smoothed activation in [0, 1]: sigmoid of centre subcooling."""
+        """Diagnostic activation in [0, 1]: sigmoid of centre subcooling."""
         return jax.nn.sigmoid(-self._superheat(0.0, t_cmb) / self.icn_width)
 
     def _boundary_sensitivity(self, t_cmb):
@@ -342,12 +342,12 @@ class CoreEnergyBudget:
         return jnp.where(interior, jnp.abs(-d_dt / safe), 0.0)
 
     def freeze_out_factor(self, t_cmb):
-        """Smoothed survival of the liquid outer core, in [0, 1].
+        """Diagnostic survival of the liquid outer core, in [0, 1].
 
         Sigmoid of the CMB superheat over the nucleation width: one while
         liquid remains at the CMB, falling to zero as the last liquid
-        freezes, so the boundary terms wind down smoothly instead of
-        stepping. The same width parameter governs onset and completion.
+        freezes. The effective heat capacity steps discontinuously at full
+        freeze-out; this factor is diagnostic only.
         """
         return jax.nn.sigmoid(self._superheat(self.profiles.r_cmb, t_cmb) / self.icn_width)
 

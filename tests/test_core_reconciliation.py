@@ -330,6 +330,6 @@ def test_core_module_rhs_evaluates_at_t_core_state_not_t_cmb_basic(shared_eos):
     F_cmb = float(solver.state.heat_flux[0])
     area = float(solver._core_module_budget.profiles.r_cmb**2 * 4.0 * np.pi)
     dT_dt_expected = -F_cmb * area / cap_at_t_core * sec_per_yr
-    dT_dt_mutant = -F_cmb * area / cap_at_t_cmb * sec_per_yr
+    dT_dt_at_t_cmb = -F_cmb * area / cap_at_t_cmb * sec_per_yr
     assert dT_dt_actual == pytest.approx(dT_dt_expected, rel=1e-3)
-    assert abs(dT_dt_actual - dT_dt_mutant) > 1e-3 * abs(dT_dt_actual)
+    assert abs(dT_dt_actual - dT_dt_at_t_cmb) > 1e-3 * abs(dT_dt_actual)

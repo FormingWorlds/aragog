@@ -88,9 +88,9 @@ When `core_bc = "core_module"`, the module options are specified under `[boundar
 - `melting_curve`: Iron melting curve parameterisation (`"iron"` for PALEOS / Anzellini et al. 2013 or `"quadratic"` for Nimmo 2015 polynomial). Choices: `"iron"`, `"quadratic"`. Default `"iron"`. The iron curve incorporates a C^2 smootherstep transition around the 98.5 GPa triple point over a 3.0 GPa half-width, removing the published 0.73 K step discontinuity while bounding deviation to 0.363 K, well within the experimental uncertainty (+/- 100 K scatter, 200 K melt-detection threshold; Anzellini et al. 2013).
 - `light_element_fraction`: Initial mole fraction of light elements depressing the iron melting curve. Default $0.0$.
 - `depression`: Melting-point depression per unit mole fraction [dimensionless]. Default $0.0$.
-- `t_m0`: Polynomial prefactor for the quadratic melting curve [K]. Default $2677.0$.
-- `t_m1`: Linear coefficient for the quadratic melting curve [Pa$^{-1}$]. Default $2.95\times 10^{-12}$.
-- `t_m2`: Quadratic coefficient for the quadratic melting curve [Pa$^{-2}$]. Default $8.37\times 10^{-25}$.
+- `t_m0`: Polynomial prefactor for the quadratic melting curve [K]. Default $2677.0$ in PROTEUS configuration; required parameter in aragog constructor.
+- `t_m1`: Linear coefficient for the quadratic melting curve [Pa$^{-1}$]. Default $2.95\times 10^{-12}$ in PROTEUS configuration; required parameter in aragog constructor.
+- `t_m2`: Quadratic coefficient for the quadratic melting curve [Pa$^{-2}$]. Default $8.37\times 10^{-25}$ in PROTEUS configuration; required parameter in aragog constructor.
 - `ds_fusion`: Entropy of fusion at the inner-core boundary [J kg$^{-1}$ K$^{-1}$]. Default $172.8$.
 - `icn_width`: Temperature width of the inner-core nucleation diagnostic sigmoid [K]. Diagnostic only; does not affect the effective heat capacity. Default $10.0$.
 - `alpha_c`: Compositional expansivity of the outer-core alloy [dimensionless]. Default $0.0$.

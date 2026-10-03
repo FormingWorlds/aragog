@@ -339,7 +339,7 @@ def test_integrals_split_quadrature_at_inner_core_onset():
     rel_err = abs(dE_core - i_ref) / abs(i_ref)
     assert rel_err < 1e-10
 
-    # No-split mutant: single 32-point Gauss-Legendre quadrature across onset
+    # Unsplit comparison: standard 32-point Gauss-Legendre quadrature across onset
     h_mut = 0.5 * (-50.0)
     m_mut = 0.5 * (2.0 * t_onset)
     mut_nodes, mut_weights = np.polynomial.legendre.leggauss(32)

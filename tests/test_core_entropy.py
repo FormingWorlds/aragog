@@ -132,7 +132,7 @@ def test_field_scaling_bounds_and_earth_magnitude(ent):
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
 def test_dynamo_threshold_and_margin(ent):
-    """The heat flow where the entropy margin vanishes sits at 5.31 TW,
+    """The heat flow where the entropy margin vanishes sits at 5.298 TW,
     consistent with (below) Nimmo's statement that model-2 flows under
     6.5 TW cannot drive a dynamo; the margin rises monotonically with heat
     flow, and radiogenic heating at FIXED flow lowers it (Nimmo 2015,
