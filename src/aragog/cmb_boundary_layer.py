@@ -8,8 +8,7 @@ well-mixed interior. Convective onset follows Chandrasekhar (1961, Hydrodynamic
 and Hydromagnetic Stability, Oxford: Clarendon Press) with free-free boundary conditions
 giving critical Rayleigh number ``Ra_c = 27 pi^4 / 4``. For dT_c <= 0 (core at or below the
 mantle base) the bottom layer is stable: Nu = 1, q = k dT_c / D (conductive for a stable
-layer, into the core). This is the same physics as stream B's conclusion (a stable CMB
-layer is conductive). For dT_c > 0 the boundary-layer law is extrapolated with Nu >= 1
+layer, into the core). For dT_c > 0 the boundary-layer law is extrapolated with Nu >= 1
 rather than switching to pure conduction across depth D; at onset
 Nu(Ra_c) = (Ra_l / Ra_dc(Ra_c))^(1/3) (bounded by approximately 8.44 when Ra_l = Ra_c),
 and the absolute heat flux remains small because it scales with the small temperature

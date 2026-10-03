@@ -164,7 +164,7 @@ def test_jax_numpy_float64_parity_lid_rheological():
     entropy = np.linspace(3500.0, 2500.0, len(rs))
     state.update(entropy, 0.0)
 
-    # Assert stagnant lid forms with effective viscosity reduction below diffusion creep (Ruling 64c)
+    # Assert stagnant lid forms with effective viscosity reduction below diffusion creep
     assert state._lid_state is not None, 'EntropyState must evaluate stagnant lid state'
     assert np.max(state._lid_state['w_lid']) > 0.5, 'Stagnant lid must form with w_lid > 0.5'
     assert np.any(state._visc_eff < state.phase_basic.eta_diff), (

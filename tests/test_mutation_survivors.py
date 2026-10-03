@@ -1,14 +1,13 @@
-"""Regression tests killing mutant survivors from adversarial review.
+"""Tests for calibration constants, boundary condition limits, and invariants.
 
-These tests pin calibration constants and boundary condition behaviors that
-were flagged as surviving mutations in adversarial review (Ruling 64 e):
-1. lid_contrast_coeff default 2.2 -> 3.0 in SolidRheologyParams / rheology_lid.
-2. interior_flux_fraction default 0.05 -> 0.1 in SolidRheologyParams / rheology_lid.
-3. T_v velocity soft-max scale 3.17e-12 -> 3.17e-10 in rheology_lid.
-4. JAX lid_mask = 1 - w_lid replaced by 1.0 in kappah_floor computation.
-5. NumPy p_cutoff forced to 0 in _step_powers and _compute_step_energy_integrals.
-6. JAX table-edge cutoff removed in _apply_surface_bc.
-7. Critical Rayleigh number RA_C = 27 pi^4 / 4 doubled in cmb_boundary_layer.
+These tests pin calibration constants and boundary condition behaviors:
+1. lid_contrast_coeff default 2.2 in SolidRheologyParams / rheology_lid.
+2. interior_flux_fraction default 0.05 in SolidRheologyParams / rheology_lid.
+3. T_v velocity soft-max scale 3.17e-12 in rheology_lid.
+4. JAX lid_mask = 1 - w_lid in kappah_floor computation.
+5. NumPy p_cutoff in _step_powers and _compute_step_energy_integrals.
+6. JAX table-edge cutoff in _apply_surface_bc.
+7. Critical Rayleigh number RA_C = 27 pi^4 / 4 in cmb_boundary_layer.
 """
 
 from __future__ import annotations
@@ -28,11 +27,8 @@ from aragog.surface_skin import table_edge_factor
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
 
-def test_kill_mutant_lid_contrast_coeff():
-    """Verify default lid_contrast_coeff is 2.2 and pins T_lid_iso.
-
-    Mutant: lid_contrast_coeff 2.2 -> 3.0.
-    """
+def test_lid_contrast_coefficient_scaling():
+    """Verify default lid_contrast_coeff is 2.2 and sets T_lid_iso."""
     params = SolidRheologyParams(enabled=True)
     assert params.lid_contrast_coeff == pytest.approx(2.2, rel=1e-12)
 
@@ -61,11 +57,8 @@ def test_kill_mutant_lid_contrast_coeff():
     assert out['T_lid_iso'] == pytest.approx(expected_T_lid_iso, rel=1e-12)
 
 
-def test_kill_mutant_interior_flux_fraction():
-    """Verify interior_flux_fraction threshold gates convective activity.
-
-    Mutant: interior_flux_fraction 0.05 -> 0.10.
-    """
+def test_interior_flux_fraction_activation_threshold():
+    """Verify interior_flux_fraction threshold gates convective activity."""
     params = SolidRheologyParams(enabled=True)
     assert params.interior_flux_fraction == pytest.approx(0.05, rel=1e-12)
 
@@ -93,11 +86,8 @@ def test_kill_mutant_interior_flux_fraction():
     assert out['w_active'] > 0.9
 
 
-def test_kill_mutant_tv_velocity_scale():
-    """Verify soft-max scale T_v pins convective interior velocity v_i.
-
-    Mutant: T_v 3.17e-12 -> 3.17e-10.
-    """
+def test_tv_velocity_scale_calibration():
+    """Verify soft-max scale T_v sets convective interior velocity v_i."""
     params = SolidRheologyParams(enabled=True)
     n = 50
     radii = np.linspace(3.48e6, 6.371e6, n)
@@ -124,11 +114,8 @@ def test_kill_mutant_tv_velocity_scale():
     assert out['v_i'] == pytest.approx(expected_vi, rel=1e-6)
 
 
-def test_kill_mutant_jax_lid_mask_in_kappah_floor():
-    """Verify JAX kappa_h floor is suppressed inside the stagnant lid.
-
-    Mutant: lid_mask = 1 - w_lid replaced by 1.0 in JAX compute_mlt.
-    """
+def test_jax_lid_mask_in_kappah_floor():
+    """Verify JAX kappa_h floor is suppressed inside the stagnant lid."""
     n_basic = 10
     r_basic = jnp.linspace(3.5e6, 6.371e6, n_basic)
     r_stag = 0.5 * (r_basic[1:] + r_basic[:-1])
@@ -184,11 +171,8 @@ def test_kill_mutant_jax_lid_mask_in_kappah_floor():
     assert float(kh[-1]) < 1.0
 
 
-def test_kill_mutant_numpy_p_cutoff_energy_integral():
-    """Verify NumPy p_cutoff and energy integrals capture surface cutoff.
-
-    Mutant: p_cutoff forced to 0.0 in _step_powers.
-    """
+def test_numpy_p_cutoff_energy_integral():
+    """Verify NumPy p_cutoff and energy integrals capture surface cutoff."""
     solver = EntropySolver.__new__(EntropySolver)
     solver._table_edge_cutoff = True
     solver._core_bc = 'quasi_steady'
@@ -257,11 +241,8 @@ def test_kill_mutant_numpy_p_cutoff_energy_integral():
     assert integrals['surface_cutoff'] == pytest.approx(expected_integral, rel=1e-12)
 
 
-def test_kill_mutant_jax_table_edge_cutoff():
-    """Verify JAX table-edge cutoff reduces surface flux at table edge.
-
-    Mutant: JAX table-edge cutoff block removed in _apply_surface_bc.
-    """
+def test_jax_table_edge_cutoff():
+    """Verify JAX table-edge cutoff reduces surface flux at table edge."""
     bc = BoundaryParams(
         outer_bc_type=4,
         outer_bc_value=1000.0,
@@ -291,11 +272,8 @@ def test_kill_mutant_jax_table_edge_cutoff():
     assert float(out_flux[-1]) == pytest.approx(500.0, rel=1e-12)
 
 
-def test_kill_mutant_ra_c_literal_value():
-    """Verify critical Rayleigh number RA_C matches Chandrasekhar onset value.
-
-    Mutant: RA_C = 27 pi^4 / 4 doubled to 27 pi^4 / 2.
-    """
+def test_ra_c_literal_value():
+    """Verify critical Rayleigh number RA_C matches Chandrasekhar onset value."""
     expected_ra_c = 27.0 * (np.pi**4) / 4.0
     assert expected_ra_c == pytest.approx(657.5113644795163, rel=1e-12)
     assert RA_C == pytest.approx(657.5113644795163, rel=1e-12)

@@ -391,7 +391,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
             err_msg=f'Mismatch in diagnostic {key} on checkpoint profile',
         )
 
-    # Assert stagnant lid formation on checkpoint profile (Ruling 64c)
+    # Assert stagnant lid formation on checkpoint profile
     assert np.max(state_np['w_lid']) > 0.5, (
         'NumPy state must form stagnant lid with w_lid > 0.5'
     )

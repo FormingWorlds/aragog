@@ -801,7 +801,7 @@ def test_diagnostics_report_nan_when_rheology_disabled():
     assert np.all(np.isnan(out.eta_diff_b))
     assert np.all(np.isnan(out.tau_y_b))
 
-    # Canary: ensure they are not filled with legacy fabricated values 1e21 or 500e6
+    # Canary: ensure they are not filled with fallback constants 1e21 or 500e6
     assert not np.any(np.isclose(out.eta_diff_b, 1.0e21))
     assert not np.any(np.isclose(out.tau_y_b, 500.0e6))
 
