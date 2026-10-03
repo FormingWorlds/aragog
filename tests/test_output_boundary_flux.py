@@ -69,7 +69,7 @@ def test_output_boundary_flux_equals_applied(outer, inner, core_bc):
         assert flux[-1] == pytest.approx(F_TOP, rel=1e-12)
     elif outer == 5:
         dr = float(s._surf_dr_half)
-        k = float(np.asarray(s.state.phase_basic.thermal_conductivity()).ravel()[-1])
+        k = float(np.asarray(s.state.phase_staggered.thermal_conductivity()).ravel()[-1])
         T_cell = float(np.asarray(s.state.phase_staggered.temperature()).ravel()[-1])
         assert flux[-1] == pytest.approx(k * (T_cell - 1800.0) / dr, rel=1e-12)
     if inner == 2:
@@ -190,3 +190,59 @@ def test_boundary_params_unsupported_outer_bc_type_raises():
             core_heat_capacity=800.0,
             tfac_core_avg=1.0,
         )
+
+
+def test_jax_numpy_outer_bc_5_phase_dependent_k_parity():
+    """Verify JAX and NumPy outer BC 5 fluxes match when conductivity varies across the cell."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import MeshArrays
+    from aragog.jax.solver import BoundaryParams, _apply_surface_bc
+
+    s = _solver(5, 1)
+    s.solve()
+    out = s.get_state()
+    mesh = MeshArrays.from_numpy_mesh(s.evaluator.mesh)
+
+    k_stag_val = 3.5
+    k_basic_val = 5.2
+
+    s.state.phase_staggered.set_entropy = lambda S: None
+    s.state.phase_basic.set_entropy = lambda S: None
+    s.state.phase_staggered.thermal_conductivity = lambda: np.full((39, 1), k_stag_val)
+    s.state.phase_basic.thermal_conductivity = lambda: np.full((40, 1), k_basic_val)
+
+    s._dSdt_single(float(s._solution.t[-1]), np.asarray(s._solution.y[:, -1], dtype=float))
+    numpy_flux = float(s.state._heat_flux[-1])
+
+    class _MockPhaseStagJAX:
+        temperature = jnp.asarray(np.asarray(s.state.phase_staggered.temperature()).ravel())
+        thermal_conductivity = jnp.full(39, k_stag_val)
+        melt_fraction = jnp.zeros(39)
+
+    bc = BoundaryParams(
+        outer_bc_type=5,
+        outer_bc_value=1800.0,
+        emissivity=1.0,
+        T_eq=300.0,
+        inner_bc_type=1,
+        inner_bc_value=0.0,
+        core_density=s._core_density,
+        core_heat_capacity=s._core_cp,
+        tfac_core_avg=s._core_tfac,
+        param_utbl=False,
+        param_utbl_const=0.0,
+    )
+    flux = jnp.zeros(40)
+    T_basic = jnp.asarray(np.asarray(out.T_basic).ravel())
+    jax_flux = _apply_surface_bc(flux, bc, T_basic, phase_stag=_MockPhaseStagJAX(), mesh=mesh)
+
+    assert numpy_flux == pytest.approx(float(jax_flux[-1]), rel=1e-12)
+    expected_old_flux = (
+        k_basic_val
+        * (float(np.asarray(s.state.phase_staggered.temperature()).flat[-1]) - 1800.0)
+        / float(s._surf_dr_half)
+    )
+    assert not np.isclose(numpy_flux, expected_old_flux)
