@@ -222,13 +222,13 @@ Because both $\mathrm{Ra}_\text{eff}$ and $\theta$ scale linearly with the total
 
 The $2/3$ velocity scaling law applies to bottom-heated stagnant-lid convection (Dumoulin et al. 1999; Foley and Bercovici 2014, p. 587, lines 850-855). In planetary evolution, cooling terrestrial planets start with a superheated core, creating a large core-mantle boundary temperature difference that drives strong basal heating during early post-magma-ocean evolution (Thiriet et al. 2019, pp. 139-140, sec. 1).
 
-As the core cools, and radiogenic heating decays, the mantle heating regime transitions from bottom-dominated to predominantly internal heating (Thiriet et al. 2019, p. 140). For purely internally heated convection, Solomatov and Moresi (2000, p. 21804, eq. 28; p. 21805, Table 8) obtain a $1/2$ velocity scaling exponent:
+As the core cools, and radiogenic heating decays, the mantle heating regime transitions from bottom-dominated to predominantly internal heating (Thiriet et al. 2019, p. 140). For purely internally heated convection, Solomatov and Moresi (2000, p. 21804, eq. 13; p. 21805, Table 8) obtain a $1/2$ velocity scaling exponent:
 
 $$
-v_m = a_u \frac{\kappa}{d} \left( \frac{\mathrm{Ra}_i}{\theta} \right)^{1/2}
+v_m = a_u \frac{\kappa}{d} \left( \frac{\mathrm{Ra}_i a_\text{rh}}{\theta} \right)^{1/2}
 $$
 
-with $a_u = 0.385 \pm 0.003$, for $n = 1$, and $a_\text{rh} = 2.4$. For an Earth reference state, with a sublayer temperature drop $\Delta T_\text{sub} = 130\text{ K}$, the internally heated scaling predicts $\tau_d \approx 0.012\text{ MPa}$, approximately four times lower than the bottom-heated estimate ($0.050\text{ MPa}$). Consequently, evaluating $\tau_d$ with the bottom-heated $2/3$ scaling represents an upper estimate on convective shear stress during later, internally heated epochs.
+with $a_u = 0.385 \pm 0.057$, for $n = 1$, and $a_\text{rh} = 2.4 \pm 0.2$. In both the bottom-heated and internally heated scalings, the temperature contrast $\Delta T$ enters the definitions of Rayleigh number and Frank-Kamenetskii parameter symmetrically, cancelling in the ratio $\mathrm{Ra} / \theta$. For an Earth reference state, the internally heated scaling predicts convective driving shear stress $\tau_d \approx 0.058\text{ MPa}$ (or $0.038\text{ MPa}$ with unscaled $a_\text{rh} = 1.0$), approximately four times lower than the bottom-heated estimate ($0.232\text{ MPa}$). Consequently, evaluating $\tau_d$ with the bottom-heated $2/3$ scaling represents an upper estimate on convective shear stress during later, internally heated epochs.
 
 ### 4.2 Validated Parameter Ranges and Mushy Extrapolation
 
