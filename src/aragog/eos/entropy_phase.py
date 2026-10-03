@@ -511,9 +511,9 @@ class EntropyPhaseEvaluator:
         Where the tabulated solid and melt densities cross so that the
         melt is locally the denser phase (``rho_s < rho_l``), the porosity
         denominator ``rho_s - rho_l`` is floored at about 1 kg/m^3, so the
-        porosity goes to a clip limit there: near 0 where the node density
-        exceeds ``rho_s`` (settling suppressed), near 1 where it is below
-        (``F`` at the Stokes value). The separation direction is fixed by the
+        porosity there is ``(rho_s - rho) / (1 kg/m^3)`` clipped to [0, 1]: 0
+        where the node density exceeds ``rho_s`` by more than 1 kg/m^3, 1 where
+        it is below by more, and intermediate in between. The separation direction is fixed by the
         non-negative contrast ``|rho_l - rho_s|`` in ``v_rel`` and cannot
         reverse.
         """
@@ -556,11 +556,13 @@ class EntropyPhaseEvaluator:
         return rho_s, rho_l
 
     def porosity(self) -> FloatOrArray:
-        """Melt volume fraction from the node density and the phase-boundary densities [1].
+        """Density-derived porosity ``(rho_s - rho) / (rho_s - rho_l)`` [1].
 
-        This is the porosity :meth:`relative_velocity` uses. It is soft-clipped
-        to [0, 1] with a width of 1e-3, so its range is [-2.5e-7, 1]; below the
-        solidus it lies in [-2.5e-7, 5e-4], with 5e-4 at the solidus. Under
+        This is the porosity :meth:`relative_velocity` uses, soft-clipped to [0, 1]
+        with a width of 1e-3: its range is [-2.5e-7, 1] and it is 4.9975e-4 where
+        the node density equals ``rho_s``. It is not the melt fraction: a solid
+        node whose density is below ``rho_s``, and a node where the melt is denser
+        (see :meth:`relative_velocity`), can give any value. Under
         ``const_properties`` there is no phase contrast and the mantle counts as
         fully liquid, so it is one everywhere.
         """

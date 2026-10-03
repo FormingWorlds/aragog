@@ -7,12 +7,15 @@ import dataclasses
 import netCDF4 as nc
 import numpy as np
 import pytest
+from scipy.interpolate import PchipInterpolator
 
-from aragog.eos.entropy_phase import mobility_function
+from aragog.eos.entropy_phase import EntropyPhaseEvaluator, mobility_function
 from aragog.solver.entropy_solver import EntropySolver
 from tests.conftest import EOS_DIR, needs_eos
 from tests.test_entropy_solver_const_properties_smoke import _build_const_properties_parameters
 from tests.test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S
+
+pytestmark = pytest.mark.unit
 
 D = 1.0e-3  # grain size [m]
 
@@ -49,7 +52,6 @@ def _blend(lo, hi, phi, centre, width):
     return (1.0 - w) * lo + w * hi
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize(
     'phi,expected',
     [
@@ -67,7 +69,6 @@ def test_mobility_function_reduces_to_each_regime(phi, expected):
     np.testing.assert_allclose(mobility_function(np.array([phi]), D), [expected], rtol=1e-3)
 
 
-@pytest.mark.unit
 def test_mobility_function_rises_to_a_bounded_stokes_plateau():
     """``F`` is non-negative and rises up to porosity 0.805, where the Rumpf-Gupte tail
     overshoots the Stokes value by 4.4 percent, and ends at the Stokes value."""
@@ -80,7 +81,6 @@ def test_mobility_function_rises_to_a_bounded_stokes_plateau():
 
 
 @needs_eos
-@pytest.mark.smoke
 @pytest.mark.parametrize('mode', ['melt', 'mixture'])
 def test_relative_velocity_is_built_from_the_exported_quantities(shared_eos, mode):
     """``v_rel = |rho_l - rho_s| g F(porosity) / eta`` with the evaluator's public pieces."""
@@ -94,7 +94,6 @@ def test_relative_velocity_is_built_from_the_exported_quantities(shared_eos, mod
 
 
 @needs_eos
-@pytest.mark.smoke
 def test_exports_are_the_final_state_and_reach_the_netcdf(shared_eos, tmp_path):
     """The four arrays describe the returned final state, not the last RHS call, and are written."""
     s = _solve(shared_eos, _pick_mushy_S(shared_eos))
@@ -125,22 +124,37 @@ def test_exports_are_the_final_state_and_reach_the_netcdf(shared_eos, tmp_path):
 
 
 @needs_eos
-@pytest.mark.smoke
-def test_porosity_below_the_solidus_stays_in_its_documented_range(shared_eos):
-    """Below the solidus porosity lies in [-2.5e-7, 5e-4]; the upper end is reached at the solidus."""
+def test_porosity_is_the_clip_value_at_the_solidus(shared_eos):
+    """Where the node density equals ``rho_s`` (at the solidus) porosity is the clip value 4.9975e-4."""
     s = _solve(shared_eos, 1800.0)
     out = s.get_state()
-    assert np.max(out.phi_basic) == 0.0
-    assert np.max(out.porosity_b) <= 5e-4 and np.min(out.porosity_b) >= -2.5e-7
+    assert np.max(out.phi_basic) == 0.0 and np.min(out.porosity_b) >= -2.5e-7
     ph = s.state.phase_basic
-    ph.entropy = shared_eos.solidus_entropy(np.asarray(ph.pressure)) - 1.0
+    ph.entropy = shared_eos.solidus_entropy(np.asarray(ph.pressure))
     ph.update()
-    assert np.max(ph.melt_fraction()) == 0.0
-    assert 4e-4 < np.max(ph.porosity()) <= 5e-4
+    np.testing.assert_allclose(
+        ph.porosity(), 1.0 - (0.9995 + np.sqrt(0.9995**2 + 1e-6)) / 2, rtol=1e-6
+    )
+
+
+@pytest.mark.parametrize(
+    'rho_s,rho_l,rho,expected',
+    [
+        (3300.0, 2800.0, 3150.0, 0.3),  # mush: (rho_s - rho) / (rho_s - rho_l)
+        (3300.0, 2800.0, 4.0e5, -2.5e-7),  # far below raw 0: the lower clip limit
+        (3000.0, 3200.0, 2999.7, 0.3),  # denser melt: denominator floored at 1 kg/m^3
+        (3000.0, 3200.0, 2990.0, 1.0),
+        (3000.0, 3200.0, 3010.0, 0.0),
+    ],
+)
+def test_porosity_formula_and_its_dense_melt_band(rho_s, rho_l, rho, expected):
+    """The documented porosity: the density ratio, and with denser melt a 1 kg/m^3 wide band."""
+    ph = EntropyPhaseEvaluator(entropy_eos=None, gravitational_acceleration=10.0)
+    ph._density = np.array([rho])
+    np.testing.assert_allclose(ph._porosity_from(rho_s, rho_l), [expected], rtol=0.0, atol=1e-5)
 
 
 @needs_eos
-@pytest.mark.smoke
 def test_dense_melt_keeps_the_sign_of_the_density_contrast(shared_eos, monkeypatch):
     """Where the melt is denser the exports keep ``rho_solid_b < rho_melt_b``; a mushy node
     there is denser than ``rho_solid_b``, so its porosity sits at the lower clip limit."""
@@ -165,21 +179,16 @@ def test_dense_melt_keeps_the_sign_of_the_density_contrast(shared_eos, monkeypat
 
 
 @needs_eos
-@pytest.mark.smoke
 def test_gravity_export_follows_an_external_profile(shared_eos):
     """``g_b`` is the external gravity profile interpolated to the basic nodes, not a scalar."""
-    from scipy.interpolate import PchipInterpolator
-
     r = np.linspace(3.480e6, 6.371e6, 50)
-    g = np.linspace(11.0, 9.0, 50)
+    g = 9.0 + 2.0 * ((r[-1] - r) / (r[-1] - r[0])) ** 3
     out = _solve(
         shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g}
     ).get_state()
-    np.testing.assert_array_equal(out.g_b, PchipInterpolator(r, g)(out.r_basic))
-    assert out.g_b[0] > out.g_b[-1] + 1.5
+    np.testing.assert_allclose(out.g_b, PchipInterpolator(r, g)(out.r_basic), rtol=1e-12)
 
 
-@pytest.mark.smoke
 def test_const_properties_exports():
     """Without phase contrast: porosity one, both densities ``const_rho``, gravity the mesh value."""
     p = _build_const_properties_parameters(n_nodes=12, end_time=1.0)

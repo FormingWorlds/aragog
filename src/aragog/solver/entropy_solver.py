@@ -836,7 +836,7 @@ class SolverOutput:
     T_basic: npt.NDArray  # temperature at basic nodes [K]
     cp_basic: npt.NDArray  # heat capacity at basic nodes [J/kg/K]
     rho_basic: npt.NDArray  # density at basic nodes [kg/m^3]
-    porosity_b: npt.NDArray  # melt volume fraction at basic nodes [-]
+    porosity_b: npt.NDArray  # density-derived porosity at basic nodes [-]
     rho_solid_b: npt.NDArray  # solid density at the phase boundary, basic nodes [kg/m^3]
     rho_melt_b: npt.NDArray  # melt density at the phase boundary, basic nodes [kg/m^3]
     g_b: npt.NDArray  # gravitational acceleration at basic nodes [m/s^2]
@@ -1235,7 +1235,7 @@ class SolverOutput:
                 self.porosity_b,
                 'basic',
                 '1',
-                'Melt volume fraction at basic nodes',
+                'Density-derived porosity at basic nodes',
             )
             _arr(
                 'rho_solid_b',
