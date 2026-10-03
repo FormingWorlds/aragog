@@ -1762,7 +1762,7 @@ class EntropySolver:
             params = dict(getattr(bc, 'core_module_params', None) or {})
             self._core_module_q_radio = float(params.pop('q_radio', 0.0))
             self._core_module_budget = build_core_module_budget(
-                params, r_cmb=r_cmb, p_cmb_fallback=float(self._P_stag_flat[0])
+                params, r_cmb=r_cmb, p_cmb_fallback=float(self._P_basic_flat[0])
             )
             try:
                 import jax
@@ -2026,12 +2026,24 @@ class EntropySolver:
             slots = EXTRA_STATE_SLOTS[core_bc]
             n_extra = len(slots)
             T_core_slot = n_stag + slots.index('T_core')
-            P_bottom = float(self._P_stag_flat[0])
-            T_bottom_eos = float(
-                np.asarray(
-                    self.entropy_eos.temperature(np.array([P_bottom]), np.array([S_arr[0]]))
-                ).item()
-            )
+            P_cmb = float(self._P_basic_flat[0])
+            dSdr_cmb_init = None
+            if 'dSdr_cmb' in slots:
+                dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag, n_extra)
+                r_basic = np.asarray(self.evaluator.mesh.basic.radii).ravel()
+                r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
+                dr_offset = r_basic[0] - r_stag_0
+                S_basic_cmb = float(S_arr[0]) + float(dSdr_cmb_init) * dr_offset
+            else:
+                mesh = self.evaluator.mesh
+                S_basic_cmb = float(mesh.quantity_at_basic_nodes(S_arr)[0])
+            T_bottom_eos = None
+            if self.entropy_eos is not None:
+                T_bottom_eos = float(
+                    np.asarray(
+                        self.entropy_eos.temperature(np.array([P_cmb]), np.array([S_basic_cmb]))
+                    ).item()
+                )
             T_core_init = getattr(self, '_T_core_init', None)
             if T_core_init is None:
                 prev_sol = getattr(self, '_solution', None)
@@ -2043,16 +2055,17 @@ class EntropySolver:
                 ):
                     T_core_init = float(prev_sol.y[T_core_slot, -1])
             if T_core_init is None:
-                T_core_init = T_bottom_eos
-            if core_bc == 'core_module' and abs(T_core_init - T_bottom_eos) > 0.2 * max(
-                T_bottom_eos, 1.0
+                T_core_init = T_bottom_eos if T_bottom_eos is not None else float(S_arr[0])
+            if (
+                core_bc == 'core_module'
+                and T_bottom_eos is not None
+                and abs(T_core_init - T_bottom_eos) > 0.2 * max(T_bottom_eos, 1.0)
             ):
-                # The core_module flux is mantle-state-derived and carries
-                # no restoring force toward T_core, so an inconsistent
-                # initial offset persists and shifts nucleation timing.
+                # Inconsistent initial core offset persists because core_module flux
+                # carries no restoring force toward T_core, shifting nucleation timing.
                 logger.warning(
                     'core_module: initial T_core=%.0f K differs from the '
-                    'basal-cell EOS temperature %.0f K by more than 20%%; '
+                    'basal-node EOS temperature %.0f K by more than 20%%; '
                     'the offset persists through the run and shifts '
                     'inner-core nucleation timing accordingly.',
                     T_core_init,
@@ -2062,9 +2075,7 @@ class EntropySolver:
             self._S0[:n_stag] = S_arr
             self._S0[T_core_slot] = T_core_init
             if 'dSdr_cmb' in slots:
-                self._S0[n_stag + slots.index('dSdr_cmb')] = self._resolve_dSdr_cmb_init(
-                    S_arr, n_stag, n_extra
-                )
+                self._S0[n_stag + slots.index('dSdr_cmb')] = float(dSdr_cmb_init)
             logger.info(
                 'Initial state (%s): S_min=%.0f, S_max=%.0f, T_core_init=%.0f K',
                 core_bc,

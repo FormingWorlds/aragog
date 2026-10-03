@@ -319,7 +319,9 @@ def test_core_module_against_quasi_steady_baseline(shared_eos):
     assert np.isfinite(t_legacy) and np.isfinite(t_module)
     # Outgoing driven flux: the integrated core state must cool.
     assert float(y[n_stag + 1, -1]) < float(y[n_stag + 1, 0])
-    assert abs(t_module - t_legacy) < 50.0
+    t_legacy_cmb = float(legacy.state.phase_basic.temperature()[0])
+    assert abs(t_module - t_legacy_cmb) < 5.0
+    assert abs(t_module - t_legacy) < 100.0
 
 
 def test_core_module_missing_params_still_builds_with_defaults(shared_eos):
@@ -486,3 +488,44 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
     dT_fd = float(y_fd[n_stag + 1] - fd._solution.y[n_stag + 1, 0])
     assert dT_z < 0.0  # the core cools under the driven flux
     assert dT_z == pytest.approx(dT_fd, rel=0.05)
+
+
+def test_nucleation_temperature_independent_of_mesh_resolution(shared_eos):
+    """Core profile and initial core temperature anchor at the CMB basic node.
+
+    Asserts that the core hydrostatic pressure and inner-core nucleation
+    temperature do not vary with mantle mesh resolution, and that default
+    initial core temperature matches the CMB basic node temperature.
+    """
+    s10 = _build('core_module', shared_eos, CORE_MODULE_PARAMS, n_nodes=10)
+    s10.initialize()
+    s60 = _build('core_module', shared_eos, CORE_MODULE_PARAMS, n_nodes=60)
+    s60.initialize()
+
+    b10 = s10._core_module_budget
+    b60 = s60._core_module_budget
+
+    p10 = b10.profiles
+    p60 = b60.profiles
+
+    t_nuc_10 = float(b10.melting_curve.t_melt(p10.pressure(0.0)) / p10.adiabat(0.0, 1.0))
+    t_nuc_60 = float(b60.melting_curve.t_melt(p60.pressure(0.0)) / p60.adiabat(0.0, 1.0))
+
+    assert abs(t_nuc_10 - t_nuc_60) < 1.0
+
+    s_init_10 = np.linspace(2950.0, 2600.0, s10._n_stag)
+    s_init_60 = np.linspace(2950.0, 2600.0, s60._n_stag)
+    s10.set_initial_entropy(s_init_10)
+    s60.set_initial_entropy(s_init_60)
+
+    t_core_10 = float(s10._S0[s10._n_stag + 1])
+    t_core_60 = float(s60._S0[s60._n_stag + 1])
+
+    s10.state.update(s_init_10, 0.0, dSdr_cmb=float(s10._S0[s10._n_stag]))
+    s60.state.update(s_init_60, 0.0, dSdr_cmb=float(s60._S0[s60._n_stag]))
+
+    t_cmb_node_10 = float(s10.state.phase_basic.temperature()[0])
+    t_cmb_node_60 = float(s60.state.phase_basic.temperature()[0])
+
+    assert t_core_10 == pytest.approx(t_cmb_node_10, abs=1e-6)
+    assert t_core_60 == pytest.approx(t_cmb_node_60, abs=1e-6)
