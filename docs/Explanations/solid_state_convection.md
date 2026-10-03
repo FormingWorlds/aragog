@@ -234,67 +234,29 @@ $$
 
 falls within the expected boundary-layer balance range $[0.1, 10]$ and is tracked as a diagnostic indicator of convective force balance.
 
-## 5. Stress Closure and Over-Yield Regime Switch
+## 5. Harmonic Mean Yield Closure
 
-In a stress-controlled system, the effective viscosity cannot be determined by an unconstrained harmonic mean. With prescribed driving stress $\tau_d$ and strain rate $\dot{\epsilon} = \tau_d / (2 \eta_\text{eff})$, substituting into the traditional harmonic blend gives:
-
-$$
-\frac{1}{\eta_\text{eff}} = \frac{1}{\eta_\text{diff}} + \frac{2 \dot{\epsilon}}{\tau_{y,\text{lid}}} = \frac{1}{\eta_\text{diff}} + \frac{\tau_d}{\eta_\text{eff} \tau_{y,\text{lid}}}
-$$
-
-Rearranging terms:
-
-$$
-\frac{1}{\eta_\text{eff}} \left( 1 - \frac{\tau_d}{\tau_{y,\text{lid}}} \right) = \frac{1}{\eta_\text{diff}} \implies \eta_\text{eff} = \eta_\text{diff} \left( 1 - \frac{\tau_d}{\tau_{y,\text{lid}}} \right)
-$$
-
-This expression possesses no positive real root when $\tau_d \ge \tau_{y,\text{lid}}$. Traditional iterative solvers diverge above yield not because of slow convergence, but because no solution exists to the equation.
-
-### Two-Branch Regime Switch
-
-To resolve this limitation, Aragog formulates yielding as a regime switch between a stagnant lid and a mobile convective lid. To guarantee that yielding never stiffens the mantle above its diffusion-creep viscosity, the plastic viscosity is bounded by the diffusion-creep viscosity:
-
-$$
-\eta_y = \min(\eta_\text{lid}, \eta_\text{diff})
-$$
-
-1. **Sub-yield branch ($\tau_d < \tau_{y,\text{lid}}$):**
-    The effective viscosity follows the closed harmonic form, floored at $\eta_y$ to maintain strict positivity, continuity, and adherence to the pure diffusion-creep limit as $\tau_d \to 0$:
-
-    $$
-    \eta_\text{below} = \max\left( \eta_\text{diff} \left( 1 - \frac{\tau_d}{\tau_{y,\text{lid}}} \right), \eta_y \right)
-    $$
-
-2. **Yielded branch ($\tau_d \ge \tau_{y,\text{lid}}$):**
-    When the driving stress reaches or exceeds the yield stress, the lid yields plastically and deforms at the interior convective strain rate $\dot{\epsilon}_i = v_i / (2 \delta_\text{rh})$. The yielded lid viscosity is:
-
-    $$
-    \eta_\text{lid} = \frac{\tau_{y,\text{lid}}}{2 \dot{\epsilon}_i} = \frac{\tau_{y,\text{lid}} \delta_\text{rh}}{v_i}
-    $$
-
-    $$
-    \eta_\text{yielded} = \min(\eta_\text{lid}, \eta_\text{diff})
-    $$
-
-At exact yield ($\tau_d = \tau_{y,\text{lid}}$), substituting $\tau_d = \eta_i v_i / \delta_\text{rh}$ yields $\eta_\text{lid} = \eta_i$. Since $\eta_i \le \eta_\text{diff}$ throughout the cold lid, $\eta_\text{yielded} = \eta_i$. Both branches evaluate to $\eta_i$ at yield, guaranteeing continuous transitions.
-
-### Harmonic Mean Yield Closure
-
-The effective viscosity combines diffusion creep and plastic yielding through the harmonic mean formulation (Tackley 2000; Foley and Becker 2009, eqs. 7-8; Foley and Bercovici 2014, sec. 8.2):
+The effective solid viscosity combines diffusion creep and plastic yielding through the harmonic mean formulation implemented at `src/aragog/rheology_lid.py:344-365` (Tackley 2000; Foley and Becker 2009, eqs. 7-8; Foley and Bercovici 2014, sec. 8.2):
 
 $$
 \eta_\text{eff} = \frac{\eta_\text{diff} \eta_y}{\eta_\text{diff} + \eta_y}
 $$
 
-where $\eta_y = \tau_y / (2 \dot{\epsilon})$ is the plastic yielding viscosity. In stagnant lid mode, $\dot{\epsilon}_\text{eff} = v_i / (2 \delta_\text{rh})$, which gives $\eta_y = (\tau_{y,\text{lid}} \delta_\text{rh}) / v_i$.
+where $\eta_y = \tau_y / (2 \dot{\epsilon})$ is the plastic yielding viscosity. In stagnant lid mode, the effective deformation strain rate is $\dot{\epsilon}_\text{eff} = v_i / (2 \delta_\text{rh})$, which gives:
 
-The effective solid viscosity across the radial column is then determined by applying the closure viscosity within the cold boundary layer using the smooth lid mask:
+$$
+\eta_y = \frac{\tau_{y,\text{lid}} \delta_\text{rh}}{v_i}
+$$
+
+The effective solid viscosity across the radial column is determined by applying the closure viscosity within the cold boundary layer using the smooth lid mask:
 
 $$
 \log_{10} \eta_\text{solid} = w_\text{lid} \log_{10} \eta_\text{eff} + (1 - w_\text{lid}) \log_{10} \eta_\text{diff}
 $$
 
 Inside the cold lid ($w_\text{lid} \to 1$), $\eta_\text{solid} \to \eta_\text{eff}$. In the warm convective interior ($w_\text{lid} \to 0$), $\eta_\text{solid} \to \eta_\text{diff}$. This formulation prevents lid yielding from altering the interior convective mantle (Foley and Becker 2009, sec. 3.2.2).
+
+The rheological temperature scale $\Delta T_\text{rh} = a R T_i^2 / E$ governs the sublayer temperature drop and thickness. Aragog sets the default lid contrast coefficient to $a = 2.2$ (Solomatov 1995; Tackley 2000). While Foley and Bercovici (2014) adopt $a_\text{rh} = 1.3$ to $1.82$ to account for dynamic grain damage softening, and parameterised models such as Foley and Smye (2018) use $a_\text{rh} = 2.5$, the value $a = 2.2$ represents the standard asymptotic coefficient for Newtonian diffusion creep without grain damage.
 
 Because the harmonic mean evaluates smoothly for all positive viscosities, $\eta_\text{eff}$ is continuous, everywhere finite, and strictly non-increasing with strain rate. In one dimension, a mobile lid represents convective lid thinning at the interior strain rate rather than horizontal plate subduction.
 
@@ -475,7 +437,6 @@ All solid-state convection parameters are managed by `SolidRheologyParams` in Ar
 | `stress_closure_mode` | - | `'lid'` | `[phase_solid].stress_closure_mode` | `[interior_energetics.aragog.rheology].stress_closure_mode` |
 | `interior_flux_fraction` | - | `0.05` | `[phase_solid].interior_flux_fraction` | `[interior_energetics.aragog.rheology].interior_flux_fraction` |
 | `lid_base_mode` | - | `'rheological'` | `[phase_solid].lid_base_mode` | `[interior_energetics.aragog.rheology].lid_base_mode` |
-
 | `lid_base_temperature` | K | `1400.0` | `[phase_solid].lid_base_temperature` | `[interior_energetics.aragog.rheology].lid_base_temperature` |
 | `lid_contrast_coeff` | - | `2.2` | `[phase_solid].lid_contrast_coeff` | `[interior_energetics.aragog.rheology].lid_contrast_coeff` |
 | `lid_mask_width_cells` | - | `1.0` | `[phase_solid].lid_mask_width_cells` | `[interior_energetics.aragog.rheology].lid_mask_width_cells` |

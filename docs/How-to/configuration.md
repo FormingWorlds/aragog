@@ -173,7 +173,6 @@ Spatial discretisation and pressure-density profile.
 | `cmb_cell_thickness` | m | Target thickness of the bottom basic cell when using boundary-refined meshes (default 0.0, uniform spacing) |
 | `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below) |
 | `mixing_length_constant_fraction` | -- | Fraction of mantle thickness used as the mixing length when `mixing_length_profile = "constant"`. Ignored otherwise. Default 0.25 |
-
 | `core_density` | kg/m³ | Mean core density |
 | `eos_method` | int | `1` = analytic Adams-Williamson; `2` = external file (`eos_file`) |
 | `surface_density` | kg/m³ | Surface mantle density (Adams-Williamson). Default 4078.95095544 (PROTEUS production; SPIDER `-adams_williamson_rhos`) |
