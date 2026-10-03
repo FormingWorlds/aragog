@@ -170,7 +170,7 @@ def compute_stagnant_lid_state(
     scale = w_mask * dT_cell
 
     phi_rheo_val = phi_rheo if phi_rheo is not None else getattr(params, 'phi_rheo', 0.4)
-    phi_width_val = phi_width if phi_width is not None else getattr(params, 'phi_width', 0.05)
+    phi_width_val = phi_width if phi_width is not None else getattr(params, 'phi_width', 0.15)
 
     w_hot_iso = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale))
     if solidus_temperature is not None:
