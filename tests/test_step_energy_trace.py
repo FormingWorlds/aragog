@@ -277,6 +277,61 @@ def test_integrals_compute_bower2018_core_energy():
 
 
 @pytest.mark.unit
+def test_integrals_split_quadrature_at_inner_core_onset():
+    """step_dE_core splits Gauss-Legendre quadrature across inner-core onset."""
+    import jax
+
+    from aragog.core.budget import CoreEnergyBudget
+    from aragog.core.melting import QuadraticMeltingCurve
+    from aragog.core.profiles import GaussianCoreProfiles
+
+    prof = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=136e9,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=750e3,
+        alpha_c=1.0,
+        c_light=560.0 / 12150.0,
+    )
+    t_onset = float(budget.t_onset)
+    assert budget._superheat(0.0, t_onset) == pytest.approx(0.0, abs=1e-6)
+    assert budget._superheat(prof.r_cmb, budget.t_freeze) == pytest.approx(0.0, abs=1e-6)
+
+    # Reference integral via fine-grid trapezoidal integration across onset
+    c_eff_vmap = jax.jit(jax.vmap(budget.effective_capacity))
+    t1 = np.linspace(t_onset + 25.0, t_onset, 10000)
+    t2 = np.linspace(t_onset, t_onset - 25.0, 10000)
+    i_ref = float(
+        np.trapezoid(np.asarray(c_eff_vmap(t1)), t1)
+        + np.trapezoid(np.asarray(c_eff_vmap(t2)), t2)
+    )
+
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[2000.0, 2000.0], [t_onset + 25.0, t_onset - 25.0]]),
+    )
+    s, _ = _fake_solver(sol)
+    s._core_bc = 'core_module'
+    s._n_stag = 0
+    s._core_module_budget = budget
+
+    out = s._compute_step_energy_integrals()
+    dE_core = out['core']
+    rel_err = abs(dE_core - i_ref) / abs(i_ref)
+    assert rel_err < 1e-6
+
+
+@pytest.mark.unit
 def test_a_trace_short_of_the_steps_warns(monkeypatch, caplog):
     monkeypatch.setattr(
         es.EntropySolver, '_energy_trace', staticmethod(lambda nodes, t, y: (t, y))

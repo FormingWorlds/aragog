@@ -4118,9 +4118,34 @@ class EntropySolver:
                 T_start = float(t_core_traj[0])
                 T_end = float(t_core_traj[-1])
                 gl_nodes, gl_weights = np.polynomial.legendre.leggauss(32)
-                half_t = 0.5 * (T_end - T_start)
-                mid_t = 0.5 * (T_end + T_start)
-                T_quad = mid_t + half_t * gl_nodes
+
+                # Split interval at inner-core onset and freeze-out to avoid cusp quadrature error.
+                t_lo = min(T_start, T_end)
+                t_hi = max(T_start, T_end)
+                cuts = []
+                for cand in (
+                    getattr(budget, 't_onset', None),
+                    getattr(budget, 't_freeze', None),
+                ):
+                    if cand is not None:
+                        c_val = float(cand)
+                        if t_lo + 1e-6 < c_val < t_hi - 1e-6:
+                            cuts.append(c_val)
+
+                if T_start > T_end:
+                    boundaries = [T_start] + sorted(cuts, reverse=True) + [T_end]
+                else:
+                    boundaries = [T_start] + sorted(cuts) + [T_end]
+
+                t_quad_list = []
+                half_list = []
+                for ta, tb in zip(boundaries[:-1], boundaries[1:]):
+                    h = 0.5 * (tb - ta)
+                    m = 0.5 * (tb + ta)
+                    t_quad_list.append(m + h * gl_nodes)
+                    half_list.append(h)
+
+                T_quad_all = np.concatenate(t_quad_list)
                 try:
                     c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
                     if c_eff_fn is None:
@@ -4128,12 +4153,16 @@ class EntropySolver:
 
                         c_eff_fn = jax.jit(jax.vmap(budget.effective_capacity))
                         budget._vmap_effective_capacity = c_eff_fn
-                    c_eff_vals = np.asarray(c_eff_fn(T_quad))
+                    c_eff_vals = np.asarray(c_eff_fn(T_quad_all))
                 except Exception:
                     c_eff_vals = np.array(
-                        [float(budget.effective_capacity(float(t_k))) for t_k in T_quad]
+                        [float(budget.effective_capacity(float(t_k))) for t_k in T_quad_all]
                     )
-                step_dE_core = float(half_t * np.sum(gl_weights * c_eff_vals))
+
+                step_dE_core = 0.0
+                for i, h in enumerate(half_list):
+                    c_sub = c_eff_vals[i * 32 : (i + 1) * 32]
+                    step_dE_core += float(h * np.sum(gl_weights * c_sub))
             else:
                 try:
                     c_eff_fn = getattr(budget, '_vmap_effective_capacity_strat', None)

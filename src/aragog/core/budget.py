@@ -237,6 +237,21 @@ class CoreEnergyBudget:
 
     # -- inner core ----------------------------------------------------------
 
+    @property
+    def t_onset(self) -> float:
+        """CMB temperature [K] for inner-core nucleation onset at the centre."""
+        p = self.profiles
+        p_cen = float(p.pressure(0.0))
+        adiabat_factor = float(p.adiabat(0.0, 1.0))
+        return float(self.melting_curve.t_melt(p_cen)) / adiabat_factor
+
+    @property
+    def t_freeze(self) -> float:
+        """CMB temperature [K] for full core freeze-out at the CMB."""
+        p = self.profiles
+        p_cmb = float(p.p_cmb)
+        return float(self.melting_curve.t_melt(p_cmb))
+
     def _superheat(self, r, t_cmb):
         """Adiabat minus melting curve [K] at radius ``r``; positive = liquid."""
         p = self.profiles
