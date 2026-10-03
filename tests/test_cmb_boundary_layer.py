@@ -106,8 +106,8 @@ def test_nu_continuous_at_dt_c_zero():
 
 
 @pytest.mark.physics_invariant
-def test_nu_greater_than_one_only_for_positive_dt_c_above_onset():
-    """Nu > 1 only for dT_c > 0 above onset."""
+def test_nu_greater_than_one_only_for_positive_dt_c_above_ra_dc():
+    """Nu > 1 only for positive dT_c when Ra_l > Ra_dc."""
     rho, g, alpha, kappa, eta, k, depth = (
         MARS['rho'],
         MARS['g'],
@@ -144,8 +144,46 @@ def test_nu_greater_than_one_only_for_positive_dt_c_above_onset():
 
 
 @pytest.mark.physics_invariant
-def test_flux_continuity_across_ra_c_and_nu_1():
-    """Continuity of q across Ra = Ra_c and across Nu = 1.
+def test_flux_continuity_across_dt_c_zero_with_negative_supercritical():
+    """Continuity of q across dT_c = 0 with |dT_c| well above onset on negative side."""
+    rho, g, alpha, kappa, eta, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        MARS_ETA,
+        4.0,
+        MARS['depth'],
+    )
+    buoyancy = rho * g * alpha / (kappa * eta)
+    T_s = MARS['T_s']
+    T_m = 2000.0
+    ra_eff = max(buoyancy * (T_m - T_s) * depth**3, RA_C)
+    ra_dc = RA_CRIT_PREFACTOR * ra_eff**RA_CRIT_EXPONENT
+    dT_onset = ra_dc / (buoyancy * depth**3)
+
+    # On negative side with |dT_c| well above onset: Nu must be exactly 1.0
+    for mult in [2.0, 5.0, 10.0]:
+        dT_neg = -mult * dT_onset
+        T_c = T_m + dT_neg
+        q = cmb_flux(T_c, T_m, T_s, depth, rho, g, alpha, kappa, k, eta)
+        q_cond = k * dT_neg / depth
+        assert q == pytest.approx(q_cond, rel=1e-12)
+        assert q / q_cond == pytest.approx(1.0, rel=1e-12)
+
+    # Sweep across dT_c = 0 from -5*dT_onset to +5*dT_onset: q must be continuous and strictly increasing
+    dT_vals = np.linspace(-5.0 * dT_onset, 5.0 * dT_onset, 201)
+    q_vals = [
+        cmb_flux(T_m + dt, T_m, T_s, depth, rho, g, alpha, kappa, k, eta) for dt in dT_vals
+    ]
+    diffs = np.diff(q_vals)
+    assert np.all(diffs > 0.0)
+    assert q_vals[100] == pytest.approx(0.0, abs=1e-12)
+
+
+@pytest.mark.physics_invariant
+def test_flux_continuity_across_ra_c_and_ra_dc():
+    """Continuity of q across Ra = Ra_c and across Ra_l = Ra_dc.
 
     Asserts |q(x+h) - q(x-h)| -> 0 monotonically at 3 decreasing values of h.
     """
@@ -338,6 +376,36 @@ def test_nu_monotonic_in_ra():
     diffs = np.diff(nus)
     assert np.all(diffs >= -1e-12)
     assert np.all(nus >= 1.0 - 1e-8)
+
+
+@pytest.mark.physics_invariant
+def test_flux_monotonic_in_ra_at_fixed_dt_c():
+    """At fixed dT_c, heat flux q is monotonic in Rayleigh number Ra."""
+    rho, g, alpha, kappa, k, depth = (
+        MARS['rho'],
+        MARS['g'],
+        MARS['alpha'],
+        1e-6,
+        4.0,
+        MARS['depth'],
+    )
+    T_s = MARS['T_s']
+    T_m = 1800.0
+
+    # 1. Positive super-critical dT_c: increasing Ra (decreasing eta) monotonically increases q
+    dT_c_pos = 100.0
+    T_c_pos = T_m + dT_c_pos
+    etas = np.logspace(25, 17, 100)  # decreasing eta -> increasing Ra
+    q_pos = [cmb_flux(T_c_pos, T_m, T_s, depth, rho, g, alpha, kappa, k, eta) for eta in etas]
+    diffs_pos = np.diff(q_pos)
+    assert np.all(diffs_pos >= 0.0)
+
+    # 2. Negative dT_c: layer is stable (Nu = 1), q is constant and does not develop unphysical convection
+    dT_c_neg = -50.0
+    T_c_neg = T_m + dT_c_neg
+    q_neg = [cmb_flux(T_c_neg, T_m, T_s, depth, rho, g, alpha, kappa, k, eta) for eta in etas]
+    q_cond_neg = k * dT_c_neg / depth
+    assert np.allclose(q_neg, q_cond_neg, rtol=1e-12)
 
 
 def test_loader_needs_quasi_steady_with_inner_bc_1_or_3():

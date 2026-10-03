@@ -1,18 +1,9 @@
-"""Lower thermal boundary layer law for the CMB heat flux.
+"""Lower thermal boundary layer law for CMB heat flux after Deschamps and Sotin (2000).
 
-Deschamps and Sotin (2000, GJI 143, 204-218, doi:10.1046/j.1365-246x.2000.00228.x): the
-Rayleigh number of the lower thermal boundary layer, ``Ra_delta = rho g alpha dT_c delta^3 /
-(kappa eta)``, scales as ``0.28 Ra^0.21``, with the mantle Rayleigh number
-``Ra = rho g alpha (T_c - T_s) D^3 / (kappa eta)``. Both use the viscosity of the
-well-mixed interior. Convective onset follows Chandrasekhar (1961, Hydrodynamic
-and Hydromagnetic Stability, Oxford: Clarendon Press) with free-free boundary conditions
-giving critical Rayleigh number ``Ra_c = 27 pi^4 / 4``. For dT_c <= 0 (core at or below the
-mantle base) the bottom layer is stable: Nu = 1, q = k dT_c / D (conductive for a stable
-layer, into the core). For dT_c > 0 the boundary-layer law is extrapolated with Nu >= 1
-rather than switching to pure conduction across depth D; at onset
-Nu(Ra_c) = (Ra_l / Ra_dc(Ra_c))^(1/3) (bounded by approximately 8.44 when Ra_l = Ra_c),
-and the absolute heat flux remains small because it scales with the small temperature
-contrast dT_c = T_c - T_m.
+The convective Nusselt number satisfies Nu > 1 when local Rayleigh number
+Ra_l exceeds critical threshold Ra_dc(Ra_c) with critical Rayleigh number
+Ra_c = 27 pi^4 / 4. For negative temperature contrasts dT_c <= 0, the layer
+is conductive and stable with Nu = 1.
 """
 
 from __future__ import annotations
