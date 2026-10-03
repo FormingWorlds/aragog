@@ -36,7 +36,7 @@ def mobility_function(porosity: FloatOrArray, grain_size: float) -> FloatOrArray
     Parameters
     ----------
     porosity : float or array
-        Melt volume fraction [1].
+        Porosity [1], as :meth:`EntropyPhaseEvaluator.porosity` returns it.
     grain_size : float
         Grain size [m].
 
@@ -493,7 +493,7 @@ class EntropyPhaseEvaluator:
 
         Uses the Abe (1995) gravitational separation velocity with the
         three-regime permeability of Bower et al. (2018) section 2.1, based
-        on porosity (volume fraction of melt, not mass fraction), matching
+        on the density-derived porosity (see :meth:`porosity`), matching
         SPIDER's GetGravitationalHeatFlux in energy.c.
 
         Regimes (F = K/porosity, the quantity multiplying delta_rho*g/eta):
@@ -508,12 +508,12 @@ class EntropyPhaseEvaluator:
         up through the same phi_rheo transition that sets the bulk
         rheology.
 
-        Where the tabulated solid and melt densities cross so that the
-        melt is locally the denser phase (``rho_s < rho_l``), the porosity
-        denominator ``rho_s - rho_l`` is floored at about 1 kg/m^3, so the
-        porosity there is ``(rho_s - rho) / (1 kg/m^3)`` clipped to [0, 1]: 0
-        where the node density exceeds ``rho_s`` by more than 1 kg/m^3, 1 where
-        it is below by more, and intermediate in between. The separation direction is fixed by the
+        The porosity denominator ``rho_s - rho_l`` is floored at about 1 kg/m^3,
+        which acts where the tabulated densities cross (the melt locally denser
+        or lighter by less than 1 kg/m^3). There the porosity is
+        ``(rho_s - rho) / (1 kg/m^3)`` clipped to [0, 1]: about 0 where the node
+        density is at or above ``rho_s``, 1 where it is more than 1 kg/m^3
+        below, and intermediate in between. The separation direction is fixed by the
         non-negative contrast ``|rho_l - rho_s|`` in ``v_rel`` and cannot
         reverse.
         """
