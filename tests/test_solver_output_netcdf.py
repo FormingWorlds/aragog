@@ -250,6 +250,14 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
                 np.asarray(expected, dtype=np.float64).ravel(),
                 err_msg=f'basic array {name} did not round-trip exactly',
             )
+        units = {
+            'porosity_b': '1',
+            'rho_solid_b': 'kg m-3',
+            'rho_melt_b': 'kg m-3',
+            'g_b': 'm s-2',
+        }
+        for name, unit in units.items():
+            assert ds[name].units == unit, f'{name} units {ds[name].units!r}'
 
 
 def test_to_netcdf_default_time_falls_back_to_dt_actual(tmp_path: Path) -> None:

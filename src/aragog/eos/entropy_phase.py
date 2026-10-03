@@ -31,14 +31,17 @@ def mobility_function(porosity: FloatOrArray, grain_size: float) -> FloatOrArray
     Eqs. 13a-c). The regimes are blended with tanh weights centred on the
     equal-density-ratio crossings 0.0769452 (Blake-Kozeny-Carman to
     Rumpf-Gupte) and 0.771462 (Rumpf-Gupte to Stokes settling); the blend
-    widths 0.02 and 0.05 are numerical smoothing, not physics.
+    widths 0.02 and 0.05 are numerical smoothing, not physics. Inside the upper
+    blend ``F`` exceeds the Stokes value by up to 4.4 percent (at porosity 0.805).
 
     Parameters
     ----------
     porosity : float or array
         Porosity [1], as :meth:`EntropyPhaseEvaluator.porosity` returns it.
     grain_size : float
-        Grain size [m].
+        Grain size ``a`` [m]. It enters as ``a**2`` with the Stokes prefactor 2/9
+        (Abe 1995, Eq. 39; Bower et al. 2018, Eqs. 12 and 13a), which is Stokes' law
+        for a sphere of radius ``a``, so it acts as the grain radius.
 
     Returns
     -------
@@ -550,7 +553,7 @@ class EntropyPhaseEvaluator:
         the node density.
         """
         if self._const_properties:
-            return self._density, self._density
+            return self._density.copy(), self._density.copy()
         rho_s = self._eos._lookup_at_phase_boundary('density', self.pressure, 'solid')
         rho_l = self._eos._lookup_at_phase_boundary('density', self.pressure, 'melt')
         return rho_s, rho_l
@@ -558,13 +561,15 @@ class EntropyPhaseEvaluator:
     def porosity(self) -> FloatOrArray:
         """Density-derived porosity ``(rho_s - rho) / (rho_s - rho_l)`` [1].
 
-        This is the porosity :meth:`relative_velocity` uses, soft-clipped to [0, 1]
-        with a width of 1e-3: its range is [-2.5e-7, 1] and it is 4.9975e-4 where
-        the node density equals ``rho_s``. It is not the melt fraction: a solid
-        node whose density is below ``rho_s``, and a node where the melt is denser
-        (see :meth:`relative_velocity`), can give any value. Under
-        ``const_properties`` there is no phase contrast and the mantle counts as
-        fully liquid, so it is one everywhere.
+        This is the porosity :meth:`relative_velocity` uses, except under
+        ``const_properties``, where there is no phase contrast, the mantle counts as
+        fully liquid so this is one everywhere, and :meth:`relative_velocity` is zero.
+        It is soft-clipped to [0, 1] with a width of 1e-3: its range is [-2.5e-7, 1]
+        and it is 4.9975e-4 where the node density equals ``rho_s``. It is not the
+        melt fraction: a solid node whose density is below ``rho_s`` can give any
+        value, and where ``rho_s <= rho_l`` a mush is denser than ``rho_s``, so this
+        is about 0 although the node holds melt. Do not use it for melt drainage
+        where ``rho_s <= rho_l``: test the sign of the contrast first.
         """
         if self._const_properties:
             return np.ones_like(self._density)

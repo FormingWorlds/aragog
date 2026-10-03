@@ -16,6 +16,31 @@ from tests.test_entropy_solver_const_properties_smoke import _build_const_proper
 from tests.test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S
 
 D = 1.0e-3  # grain size [m]
+CLIP0 = 1.0 - (0.9995 + np.sqrt(0.9995**2 + 1e-6)) / 2  # soft-clipped porosity at raw 0
+
+
+class _StubEOS:
+    """Constant phase-boundary densities, so the evaluator runs without tables."""
+
+    def __init__(self, rho_s, rho_l):
+        self._rho = {'solid': rho_s, 'melt': rho_l}
+
+    def _lookup_at_phase_boundary(self, prop, P, phase):
+        return np.full(np.shape(P), self._rho[phase])
+
+
+def _stub_evaluator(rho_s, rho_l, rho, mode='melt'):
+    ev = EntropyPhaseEvaluator(
+        entropy_eos=_StubEOS(rho_s, rho_l),
+        gravitational_acceleration=np.full(len(rho), 9.81),
+        grain_size=D,
+        viscosity_liquid=0.1,
+        separation_viscosity=mode,
+    )
+    ev.set_pressure(np.full(len(rho), 5e9))
+    ev._density = np.array(rho)
+    ev._viscosity_val = np.array([1e3, 10.0, 0.2])
+    return ev
 
 
 @pytest.fixture(scope='module')
@@ -80,6 +105,63 @@ def test_mobility_function_rises_to_a_bounded_stokes_plateau():
     assert F[-1] == pytest.approx(stokes, rel=1e-3)
 
 
+@pytest.mark.unit
+def test_mobility_function_is_finite_for_the_negative_clip_values():
+    """``porosity()`` reaches -2.5e-7; ``F`` there stays finite and non-negative."""
+    F = mobility_function(np.array([-2.5e-7, -1e-9, 0.0]), D)
+    assert np.all(np.isfinite(F)) and np.all(F >= 0.0)
+
+
+@pytest.mark.unit
+def test_phase_boundary_densities_and_porosity_without_tables():
+    """With a stub EOS the densities are (solid, melt) in that order and porosity is the ratio."""
+    ev = _stub_evaluator(3300.0, 2800.0, [3290.0, 3150.0, 2810.0])
+    rho_s, rho_l = ev.phase_boundary_densities()
+    np.testing.assert_array_equal(rho_s, np.full(3, 3300.0))
+    np.testing.assert_array_equal(rho_l, np.full(3, 2800.0))
+    np.testing.assert_allclose(ev.porosity()[1], 0.3, atol=1e-5)
+
+
+@pytest.mark.unit
+def test_const_properties_densities_are_independent_copies():
+    """Under ``const_properties`` both densities are copies of the node density, porosity is one."""
+    ev = EntropyPhaseEvaluator(
+        entropy_eos=None, gravitational_acceleration=10.0, const_properties=True
+    )
+    ev._density = np.full(3, 4000.0)
+    rho_s, rho_l = ev.phase_boundary_densities()
+    np.testing.assert_array_equal(rho_s, ev._density)
+    assert not np.shares_memory(rho_s, rho_l) and not np.shares_memory(rho_s, ev._density)
+    np.testing.assert_array_equal(ev.porosity(), np.ones(3))
+
+
+NORMAL = (3300.0, 2800.0, [3290.0, 3150.0, 2810.0])
+DENSE = (3000.0, 3200.0, [3010.0, 2999.5, 2990.0])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'case,mode,golden',
+    [
+        (NORMAL, 'melt', [2.038850617665734e-08, 0.00015543897295293668, 0.010905029141010332]),
+        (
+            NORMAL,
+            'mixture',
+            [2.038850617665734e-12, 1.554389729529367e-06, 0.005452514570505166],
+        ),
+        (DENSE, 'melt', [1.7305046284832315e-16, 0.0006194217469480419, 0.004361034099523181]),
+        (
+            DENSE,
+            'mixture',
+            [1.7305046284832316e-20, 6.194217469480419e-06, 0.0021805170497615906],
+        ),
+    ],
+)
+def test_relative_velocity_matches_values_frozen_before_the_extraction(case, mode, golden):
+    """``relative_velocity`` bit for bit equal to values computed with aragog 3b3628e6."""
+    np.testing.assert_array_equal(_stub_evaluator(*case, mode).relative_velocity(), golden)
+
+
 @pytest.mark.smoke
 @needs_eos
 @pytest.mark.parametrize('mode', ['melt', 'mixture'])
@@ -132,9 +214,7 @@ def test_porosity_is_the_clip_value_at_the_solidus(shared_eos):
     ph = _solve(shared_eos, 1800.0).state.phase_basic
     ph.entropy = shared_eos.solidus_entropy(np.asarray(ph.pressure))
     ph.update()
-    np.testing.assert_allclose(
-        ph.porosity(), 1.0 - (0.9995 + np.sqrt(0.9995**2 + 1e-6)) / 2, rtol=1e-6
-    )
+    np.testing.assert_allclose(ph.porosity(), CLIP0, rtol=1e-6)
 
 
 @pytest.mark.unit
@@ -146,7 +226,9 @@ def test_porosity_is_the_clip_value_at_the_solidus(shared_eos):
         (3000.0, 3200.0, 2999.5, 0.5, 1e-5),  # denser melt: denominator floored at 1 kg/m^3
         (3000.0, 3200.0, 2998.0, 1.0, 1e-5),
         (3000.0, 3200.0, 3000.5, 0.0, 1e-6),  # the band lies below rho_s only
-        (3000.0, 3000.5, 2999.75, 0.25, 1e-5),  # lighter melt by < 1 kg/m^3: floored too
+        (3000.0, 3000.5, 2999.75, 0.25, 1e-5),  # melt denser by 0.5 kg/m^3
+        (3000.5, 3000.0, 2999.75, 0.75, 1e-5),  # melt lighter by 0.5 kg/m^3: floored too
+        (3000.5, 3000.0, 3000.5, CLIP0, 1e-12),
     ],
 )
 def test_porosity_formula_and_its_dense_melt_band(rho_s, rho_l, rho, expected, atol):
@@ -207,3 +289,9 @@ def test_const_properties_exports():
     np.testing.assert_array_equal(out.rho_solid_b, np.full(n, 4000.0))
     np.testing.assert_array_equal(out.rho_melt_b, np.full(n, 4000.0))
     np.testing.assert_array_equal(out.g_b, np.full(n, abs(p.mesh.gravitational_acceleration)))
+    ph = s.state.phase_basic
+    assert not np.shares_memory(out.g_b, ph.gravitational_acceleration())
+    assert not np.shares_memory(out.rho_solid_b, out.rho_melt_b)
+    rho_s, rho_l = ph.phase_boundary_densities()
+    assert not np.shares_memory(rho_s, rho_l) and not np.shares_memory(rho_s, ph._density)
+    np.testing.assert_array_equal(ph.relative_velocity(), np.zeros(n))
