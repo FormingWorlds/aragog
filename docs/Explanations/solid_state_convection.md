@@ -236,11 +236,16 @@ falls within the expected boundary-layer balance range $[0.1, 10]$ and is tracke
 
 ## 5. Harmonic Mean Yield Closure
 
-The effective solid viscosity combines diffusion creep and plastic yielding through the harmonic mean formulation implemented at `src/aragog/rheology_lid.py:344-365` (Tackley 2000; Foley and Becker 2009, eqs. 7-8; Foley and Bercovici 2014, sec. 8.2):
+The effective solid viscosity combines diffusion creep and plastic yielding through the harmonic mean formulation implemented at `src/aragog/rheology_lid.py:344-365` (Foley and Becker 2009, eqs. 7-8, p. 3; Foley and Bercovici 2014, sec. 8.2; contrasting with the minimum-form viscosity cap of Tackley 2000, eq. 8, p. 4):
 
 $$
 \eta_\text{eff} = \frac{\eta_\text{diff} \eta_y}{\eta_\text{diff} + \eta_y}
 $$
+where Foley and Becker (2009, eqs. 7-8, p. 3) define:
+$$
+\eta_y = \frac{\sigma_y}{2 \dot{\epsilon}_\mathrm{II}}, \quad \eta_\text{eff} = \frac{\eta \eta_y}{\eta + \eta_y}
+$$
+In Tackley (2000, eq. 8, p. 4), yielding is instead formulated as a direct minimum cutoff $\eta_\text{eff} = \min[\eta(z, T), \sigma_y / (2 \dot{\epsilon})]$.
 
 where $\eta_y = \tau_y / (2 \dot{\epsilon})$ is the plastic yielding viscosity. In stagnant lid mode, the effective deformation strain rate is $\dot{\epsilon}_\text{eff} = v_i / (2 \delta_\text{rh})$, which gives:
 

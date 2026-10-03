@@ -307,9 +307,11 @@ def compute_effective_viscosity(
 
     References
     ----------
-    Tackley (2000), doi:10.1029/2000GC000036
     Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
+        (harmonic mean eta_eff = eta * eta_y / (eta + eta_y))
     Foley & Bercovici (2014), sec. 8.2, p. 600, doi:10.1093/gji/ggu316
+    Tackley (2000), eq. 8, p. 4, doi:10.1029/2000GC000036
+        (viscosity cap / minimum form eta_eff = min[eta, sigma_y / (2 e_dot)])
     """
     if v_i is None and delta_rh is None and tau_d is not None and tau_y_lid is not None:
         tau_y = tau_d
