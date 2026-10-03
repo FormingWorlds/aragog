@@ -129,6 +129,7 @@ def test_jax_numpy_float64_parity_lid_rheological():
             const_alpha=3e-5,
             const_cond=4.0,
             const_log10visc=21.0,
+            viscosity_solid=1.0e21,
             const_T_ref=2000.0,
             const_S_ref=3000.0,
             yield_stress_c=50e6,
@@ -138,10 +139,11 @@ def test_jax_numpy_float64_parity_lid_rheological():
             lid_base_mode='rheological',
             lid_contrast_coeff=2.2,
             activation_energy=300e3,
-            activation_volume=5e-6,
+            activation_volume=1.5e-6,
             enabled=True,
         )
         ev.set_pressure(pressure)
+        ev.melt_fraction = lambda: np.zeros(len(pressure))
         return ev
 
     class _Eval:
@@ -161,6 +163,13 @@ def test_jax_numpy_float64_parity_lid_rheological():
     rs = np.asarray(mesh.staggered.radii).ravel()
     entropy = np.linspace(3500.0, 2500.0, len(rs))
     state.update(entropy, 0.0)
+
+    # Assert stagnant lid forms with effective viscosity reduction below diffusion creep (Ruling 64c)
+    assert state._lid_state is not None, 'EntropyState must evaluate stagnant lid state'
+    assert np.max(state._lid_state['w_lid']) > 0.5, 'Stagnant lid must form with w_lid > 0.5'
+    assert np.any(state._visc_eff < state.phase_basic.eta_diff), (
+        'Effective viscosity must fall below diffusion creep in yielding lid'
+    )
 
     kappa_numpy = np.array(state.eddy_diffusivity).ravel()
 
@@ -187,7 +196,7 @@ def test_jax_numpy_float64_parity_lid_rheological():
         density=jnp.array(state.rho_basic_diag).ravel(),
         heat_capacity=jnp.array(state.cp_basic_diag).ravel(),
         thermal_expansivity=jnp.array(state.phase_basic.thermal_expansivity()).ravel(),
-        dTdPs=jnp.array(state._dS_liq_dP_basic).ravel(),
+        dTdPs=jnp.array(state.phase_basic.dTdPs()).ravel(),
         melt_fraction=jnp.array(state.phi_basic_diag).ravel(),
         viscosity=jnp.array(state.phase_basic.viscosity()).ravel(),
         kinematic_viscosity=jnp.array(
@@ -207,12 +216,16 @@ def test_jax_numpy_float64_parity_lid_rheological():
 
     params = PhaseParams(
         enabled=True,
+        conduction=1.0,
+        convection=1.0,
         kappah_floor=0.0,
         stress_closure_mode='lid',
         lid_base_mode='rheological',
         lid_contrast_coeff=2.2,
         activation_energy=300e3,
-        activation_volume=5e-6,
+        activation_volume=1.5e-6,
+        viscosity_solid=1.0e21,
+        phi_width=0.05,
     )
 
     ds_dr_jax = jnp.array(state._dSdr).ravel()

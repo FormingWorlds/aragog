@@ -390,3 +390,62 @@ def test_stagnant_lid_checkpoint_profile_parity():
             atol=1.0e-12,
             err_msg=f'Mismatch in diagnostic {key} on checkpoint profile',
         )
+
+    # Assert stagnant lid formation on checkpoint profile (Ruling 64c)
+    assert np.max(state_np['w_lid']) > 0.5, (
+        'NumPy state must form stagnant lid with w_lid > 0.5'
+    )
+    assert np.max(state_jx['w_lid']) > 0.5, 'JAX state must form stagnant lid with w_lid > 0.5'
+    np.testing.assert_allclose(
+        np.array(state_jx['w_lid']),
+        state_np['w_lid'],
+        rtol=1.0e-9,
+        atol=1.0e-12,
+        err_msg='Mismatch in w_lid on checkpoint profile',
+    )
+
+    eta_diff_np = compute_arrhenius_viscosity(
+        T_basic,
+        P_basic,
+        viscosity_solid=visc_solid,
+        activation_energy=params.activation_energy,
+        activation_volume=params.activation_volume,
+        arrhenius_t_ref=params.arrhenius_t_ref,
+        xp=np,
+    )
+    eta_diff_jx = jnp.array(eta_diff_np)
+
+    eta_eff_np = compute_effective_viscosity(
+        eta_diff=eta_diff_np,
+        tau_d=state_np['tau_d'],
+        tau_y_lid=state_np['tau_y_lid'],
+        v_i=state_np['v_i'],
+        delta_rh=state_np['delta_rh'],
+        eta_i=state_np['eta_i'],
+        stress_closure_mode='lid',
+        w_lid=state_np['w_lid'],
+        xp=np,
+    )
+    eta_eff_jx = jax_rheo.compute_effective_viscosity(
+        eta_diff=eta_diff_jx,
+        tau_d=state_jx['tau_d'],
+        tau_y_lid=state_jx['tau_y_lid'],
+        v_i=state_jx['v_i'],
+        delta_rh=state_jx['delta_rh'],
+        eta_i=state_jx['eta_i'],
+        stress_closure_mode='lid',
+        w_lid=state_jx['w_lid'],
+    )
+    assert np.any(eta_eff_np < eta_diff_np), (
+        'Effective viscosity must fall below diffusion creep in yielding lid'
+    )
+    assert np.any(eta_eff_jx < eta_diff_jx), (
+        'JAX effective viscosity must fall below diffusion creep in yielding lid'
+    )
+    np.testing.assert_allclose(
+        np.array(eta_eff_jx),
+        eta_eff_np,
+        rtol=1.0e-9,
+        atol=1.0e-12,
+        err_msg='Mismatch in eta_eff on checkpoint profile',
+    )
