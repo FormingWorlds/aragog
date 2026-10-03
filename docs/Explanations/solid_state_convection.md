@@ -474,7 +474,8 @@ All solid-state convection parameters are managed by `SolidRheologyParams` in Ar
 | `yield_stress_max` | Pa | `500000000.0` | `[phase_solid].yield_stress_max` | `[interior_energetics.aragog.rheology].yield_stress_max` |
 | `stress_closure_mode` | - | `'lid'` | `[phase_solid].stress_closure_mode` | `[interior_energetics.aragog.rheology].stress_closure_mode` |
 | `interior_flux_fraction` | - | `0.05` | `[phase_solid].interior_flux_fraction` | `[interior_energetics.aragog.rheology].interior_flux_fraction` |
-| `lid_base_mode` | - | `'fixed'` | `[phase_solid].lid_base_mode` | `[interior_energetics.aragog.rheology].lid_base_mode` |
+| `lid_base_mode` | - | `'rheological'` | `[phase_solid].lid_base_mode` | `[interior_energetics.aragog.rheology].lid_base_mode` |
+
 | `lid_base_temperature` | K | `1400.0` | `[phase_solid].lid_base_temperature` | `[interior_energetics.aragog.rheology].lid_base_temperature` |
 | `lid_contrast_coeff` | - | `2.2` | `[phase_solid].lid_contrast_coeff` | `[interior_energetics.aragog.rheology].lid_contrast_coeff` |
 | `lid_mask_width_cells` | - | `1.0` | `[phase_solid].lid_mask_width_cells` | `[interior_energetics.aragog.rheology].lid_mask_width_cells` |
