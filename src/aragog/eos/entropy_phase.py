@@ -23,6 +23,43 @@ from aragog.utilities import FloatOrArray, tanh_weight
 logger = logging.getLogger('fwl.' + __name__)
 
 
+def mobility_function(porosity: FloatOrArray, grain_size: float) -> FloatOrArray:
+    """Three-regime permeability over porosity, ``F = k(phi) / phi`` [m^2].
+
+    The melt-solid relative velocity of gravitational separation is
+    ``|delta_rho| g F / eta`` (Abe 1995; Bower et al. 2018, section 2.1,
+    Eqs. 13a-c). The regimes are blended with tanh weights centred on the
+    equal-density-ratio crossings 0.0769452 (Blake-Kozeny-Carman to
+    Rumpf-Gupte) and 0.771462 (Rumpf-Gupte to Stokes settling); the blend
+    widths 0.02 and 0.05 are numerical smoothing, not physics.
+
+    Parameters
+    ----------
+    porosity : float or array
+        Melt volume fraction [1].
+    grain_size : float
+        Grain size [m].
+
+    Returns
+    -------
+    float or array
+        ``F`` [m^2], non-negative: ``d^2 phi^2 / (1000 (1 - phi)^2)`` at low
+        porosity, ``(5/7) d^2 phi^4.5`` at intermediate porosity and
+        ``(2/9) d^2`` at high porosity, with ``d`` the grain size.
+    """
+    d = grain_size
+    por = np.maximum(porosity, 1e-20)
+    one_m_por = np.maximum(1.0 - porosity, 1e-20)
+    F_bkc = d**2 * por**2 / (one_m_por**2 * 1000.0)
+    F_rg = d**2 * por**4.5 * (5.0 / 7.0)
+    F_stokes = d**2 * 2.0 / 9.0
+    # zeta_1 sits 1.7e-5 below the exact BKC-RG crossing (0.02 percent); zeta_2 is exact.
+    w_rg = tanh_weight(porosity, 0.0769452, 0.02)
+    w_stokes = tanh_weight(porosity, 0.771462, 0.05)
+    F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
+    return np.maximum(F, 0.0)
+
+
 class EntropyPhaseEvaluator:
     """Phase evaluator using entropy as the state variable.
 
@@ -485,11 +522,9 @@ class EntropyPhaseEvaluator:
         """
         if self._const_properties:
             return np.zeros_like(self._density)
-        rho_s = self._eos._lookup_at_phase_boundary('density', self.pressure, 'solid')
-        rho_l = self._eos._lookup_at_phase_boundary('density', self.pressure, 'melt')
+        rho_s, rho_l = self.phase_boundary_densities()
         delta_rho = rho_l - rho_s  # typically negative (melt lighter)
         g = self._g
-        d = self._grain_size
         # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
         # must fail here rather than silently fall back to 'melt'.
         if self._separation_viscosity == 'mixture':
@@ -499,44 +534,8 @@ class EntropyPhaseEvaluator:
         else:
             raise ValueError(f'unhandled separation_viscosity {self._separation_viscosity!r}')
 
-        # Porosity (volume fraction of melt) from densities. Smoothed
-        # with sqrt-based soft clip + soft max so the CVODE BDF
-        # predictor sees a C^infty RHS (previous np.clip + np.maximum
-        # had two derivative jumps that locked the solver at order 1).
-        rho = self._density
-        drho = rho_s - rho_l
-        eps = 1.0e-3  # kg/m^3; far below any physical density contrast
-        drho_smoothmax = 0.5 * (drho + 1.0 + np.sqrt((drho - 1.0) ** 2 + eps * eps))
-        porosity_raw = (rho_s - rho) / drho_smoothmax
-        # smooth_clip(porosity_raw, 0, 1) via two soft-max operations
-        eps_p = 1.0e-3  # dimensionless; invisible except near [0,1] edges
-        p_lo = 0.5 * (porosity_raw + np.sqrt(porosity_raw * porosity_raw + eps_p * eps_p))
-        hi_u = 1.0 - p_lo
-        porosity = 1.0 - 0.5 * (hi_u + np.sqrt(hi_u * hi_u + eps_p * eps_p))
-
-        # Three-regime permeability / porosity (Abe 1995, Bower et al. 2018
-        # section 2.1; SPIDER convention).
-        # F = permeability(porosity) / porosity. The relative velocity is
-        # v = |delta_rho| * g * F / eta_liquid.
-        por = np.maximum(porosity, 1e-20)
-        one_m_por = np.maximum(1.0 - porosity, 1e-20)
-
-        # Blake-Kozeny-Carman (low porosity): K/por = d^2 por^2 / ((1-por)^2 * 1000)
-        F_bkc = d**2 * por**2 / (one_m_por**2 * 1000.0)
-        # Rumpf-Gupte (intermediate): K/por = d^2 por^4.5 * 5/7
-        F_rg = d**2 * por**4.5 * (5.0 / 7.0)
-        # Stokes settling (high porosity): K/por = d^2 * 2/9
-        F_stokes = d**2 * 2.0 / 9.0
-
-        # Regime switching at the equal-density-ratio crossings zeta_1 =
-        # 0.0769452 (BKC = RG) and zeta_2 = 0.771462 (RG = Stokes),
-        # Bower et al. 2018 Eqs. 13a-c. zeta_2 is exact; zeta_1 sits
-        # 1.7e-5 below the exact BKC-RG crossing (0.02 percent). Blend
-        # widths (0.02, 0.05) are numerical-smoothing tunables, not physics.
-        w_rg = tanh_weight(porosity, 0.0769452, 0.02)
-        w_stokes = tanh_weight(porosity, 0.771462, 0.05)
-        F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
-        F = np.maximum(F, 0.0)
+        porosity = self._porosity_from(rho_s, rho_l)
+        F = mobility_function(porosity, self._grain_size)
 
         # Relative velocity: v = |delta_rho| * g * F / eta_liquid
         # Sign convention: positive = outward (melt rising, solid sinking)
@@ -546,6 +545,43 @@ class EntropyPhaseEvaluator:
         v_rel = abs_drho * g * F / np.maximum(eta_l, 1e-10)
 
         return v_rel
+
+    def phase_boundary_densities(self) -> tuple[FloatOrArray, FloatOrArray]:
+        """Solid and melt densities at the phase boundary at the node pressure [kg/m^3].
+
+        Under ``const_properties`` there is no phase contrast and both equal
+        the node density.
+        """
+        if self._const_properties:
+            return self._density, self._density
+        rho_s = self._eos._lookup_at_phase_boundary('density', self.pressure, 'solid')
+        rho_l = self._eos._lookup_at_phase_boundary('density', self.pressure, 'melt')
+        return rho_s, rho_l
+
+    def porosity(self) -> FloatOrArray:
+        """Melt volume fraction from the node density and the phase-boundary densities [1].
+
+        This is the porosity :meth:`relative_velocity` uses. It is soft-clipped
+        to [0, 1] with a width of 1e-3, so its range is [-2.5e-7, 1] and in a
+        solid column it is within 2.5e-7 of zero, either sign. Under ``const_properties`` there is no phase
+        contrast and the mantle counts as fully liquid, so it is one everywhere.
+        """
+        if self._const_properties:
+            return np.ones_like(self._density)
+        return self._porosity_from(*self.phase_boundary_densities())
+
+    def _porosity_from(self, rho_s: FloatOrArray, rho_l: FloatOrArray) -> FloatOrArray:
+        """Density-derived porosity, smoothed so the CVODE predictor sees a C-infinity RHS."""
+        rho = self._density
+        drho = rho_s - rho_l
+        eps = 1.0e-3  # kg/m^3; far below any physical density contrast
+        drho_smoothmax = 0.5 * (drho + 1.0 + np.sqrt((drho - 1.0) ** 2 + eps * eps))
+        porosity_raw = (rho_s - rho) / drho_smoothmax
+        # smooth_clip(porosity_raw, 0, 1) via two soft-max operations
+        eps_p = 1.0e-3  # dimensionless; invisible except near [0,1] edges
+        p_lo = 0.5 * (porosity_raw + np.sqrt(porosity_raw * porosity_raw + eps_p * eps_p))
+        hi_u = 1.0 - p_lo
+        return 1.0 - 0.5 * (hi_u + np.sqrt(hi_u * hi_u + eps_p * eps_p))
 
     def delta_specific_volume(self) -> FloatOrArray:
         """Specific volume difference between solid and liquid [m^3/kg]."""
