@@ -482,3 +482,5 @@ def test_jax_stagnant_lid_closure_scaling():
     assert np.isfinite(float(k_h_lid[10]))
     assert float(k_h_lid[10]) > 0.0
     assert float(k_h_iso[10]) > 0.0
+    # Convective stress closure modulates interior mixing diffusivity by orders of magnitude
+    assert float(k_h_lid[10]) > 10.0 * float(k_h_iso[10])

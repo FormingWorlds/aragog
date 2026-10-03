@@ -154,13 +154,14 @@ The volumetric work associated with phase segregation is carried implicitly by t
 
 ### Outer (surface) boundary
 
-Three outer BC modes are implemented in the entropy solver:
+Four outer BC modes are implemented in the entropy solver:
 
 | Mode | Description |
 |------|-------------|
 | 1 | Grey-body atmosphere: $F_\mathrm{top} = \varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$ with optional UTBL correction |
 | 4 | Prescribed flux, updated per coupling step from the helpfile |
 | 5 | Prescribed temperature |
+| 6 | Conductive skin: $F_\mathrm{top} = (1 - s) F_\mathrm{grey} + s G (T_\mathrm{top} - T_s)$ with half-cell conductance $G = k / \Delta r_{1/2}$ and solid weight $s$ |
 
 ### Inner (CMB) boundary
 

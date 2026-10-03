@@ -57,7 +57,43 @@ def test_solver_parameters_max_step_const_mode_validation():
     )
     assert sp_custom.max_step_const_mode == 500.0
 
-    with pytest.raises((ValueError, TypeError)):
+    sp_str = _SolverParameters(
+        start_time=0.0,
+        end_time=1.0,
+        atol=1e-6,
+        rtol=1e-6,
+        max_step_const_mode='250.0',
+    )
+    assert sp_str.max_step_const_mode == 250.0
+
+    with pytest.raises(TypeError, match='max_step_const_mode must be a float'):
+        _SolverParameters(
+            start_time=0.0,
+            end_time=1.0,
+            atol=1e-6,
+            rtol=1e-6,
+            max_step_const_mode='abc',
+        )
+
+    with pytest.raises(TypeError, match='max_step_const_mode must be a float'):
+        _SolverParameters(
+            start_time=0.0,
+            end_time=1.0,
+            atol=1e-6,
+            rtol=1e-6,
+            max_step_const_mode=True,
+        )
+
+    with pytest.raises(ValueError, match='max_step_const_mode must be > 0'):
+        _SolverParameters(
+            start_time=0.0,
+            end_time=1.0,
+            atol=1e-6,
+            rtol=1e-6,
+            max_step_const_mode=float('nan'),
+        )
+
+    with pytest.raises(ValueError, match='max_step_const_mode must be > 0'):
         _SolverParameters(
             start_time=0.0,
             end_time=1.0,
@@ -66,7 +102,7 @@ def test_solver_parameters_max_step_const_mode_validation():
             max_step_const_mode=0.0,
         )
 
-    with pytest.raises((ValueError, TypeError)):
+    with pytest.raises(ValueError, match='max_step_const_mode must be > 0'):
         _SolverParameters(
             start_time=0.0,
             end_time=1.0,

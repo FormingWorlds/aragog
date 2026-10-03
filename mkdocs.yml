@@ -57,7 +57,7 @@ nav:
           - EOS sanity checks: Explanations/eos_sanity_checks.md
           - Energy diagnostics: Explanations/energy_diagnostics.md
           - First-principles verification: Explanations/verification.md
-          - Solid-state convection: Explanations/verification_ssc.md
+          - Solid-state convection verification: Explanations/verification_ssc.md
 
   - Reference:
       - API reference:
@@ -66,8 +66,14 @@ nav:
           - Solver: Reference/api/aragog.solver.md
           - EOS package: Reference/api/aragog.eos.md
           - Mesh: Reference/api/aragog.mesh.md
+          - Mesh stretching: Reference/api/aragog.mesh.stretching.md
+          - Rheology: Reference/api/aragog.rheology.md
+          - Stagnant lid rheology: Reference/api/aragog.rheology_lid.md
+          - Surface skin: Reference/api/aragog.surface_skin.md
+          - CMB boundary layer: Reference/api/aragog.cmb_boundary_layer.md
           - Output: Reference/api/aragog.output.md
           - JAX backend: Reference/api/aragog.jax.md
+          - JAX rheology: Reference/api/aragog.jax.rheology.md
       - CLI: Reference/cli.md
       - Data: Reference/data.md
       - Publications: Reference/publications.md

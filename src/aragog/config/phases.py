@@ -31,6 +31,27 @@ class PhaseConfig:
 
     Each property can be a float (constant value) or a str (path to
     a lookup table file). Rheology parameters are owned by ``SolidRheologyParams``.
+
+    Parameters
+    ----------
+    density : float or str
+        Reference density [kg/m^3] or path to lookup table.
+    heat_capacity : float or str
+        Specific heat capacity [J/kg/K] or path to lookup table.
+    melt_fraction : float
+        Melt fraction (0 for solid, 1 for liquid).
+    thermal_conductivity : float or str
+        Thermal conductivity [W/m/K] or path to lookup table.
+    thermal_expansivity : float or str
+        Thermal expansivity [1/K] or path to lookup table.
+    viscosity : float or str
+        Dynamic viscosity [Pa s] or path to lookup table.
+    entropy : float or str, optional
+        Reference entropy [J/kg/K] or path to lookup table.
+    rheology : SolidRheologyParams, optional
+        Solid-state rheology parameters container.
+    **flat_rheo : Any
+        Flat rheology attributes forwarded to rheology container.
     """
 
     density: float | str

@@ -236,8 +236,8 @@ def test_entropy_state_mlt_viscosity_capping_local():
     assert np.all(visc_eff <= phase_basic.eta_diff * (1.0 + 1e-12))
     # At active convective cells, yielding caps below the extreme 1e26 Pa s
     convective_mask = state.is_convective
-    if np.any(convective_mask):
-        assert np.any(visc_eff[convective_mask] < 1e25)
+    assert np.any(convective_mask)
+    assert np.any(visc_eff[convective_mask] < 1e25)
 
 
 @pytest.mark.unit
@@ -254,5 +254,5 @@ def test_entropy_state_mlt_viscosity_capping_lid():
     assert np.all(np.isfinite(visc_eff))
     assert np.all(visc_eff <= phase_basic.eta_diff * (1.0 + 1e-12))
     convective_mask = state.is_convective
-    if np.any(convective_mask):
-        assert np.any(visc_eff[convective_mask] < 1e25)
+    assert np.any(convective_mask)
+    assert np.any(visc_eff[convective_mask] < 1e25)
