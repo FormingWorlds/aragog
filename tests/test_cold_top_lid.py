@@ -46,6 +46,11 @@ def test_cold_top_lid_fixture(shared_eos):
 
     Notes
     -----
+    In the unmodified fixture configuration, ``yield_stress_max = 1.0e6 Pa``
+    (1.0 MPa) caps ``tau_y_lid`` at 1.0 MPa because Byerlee friction at the lid
+    base pressure (4.19 GPa) evaluates to ~209.6 MPa. Because convective driving
+    stress (0.865 MPa) is below 1.0 MPa, the lid does not yield in this fixture.
+
     Tolerances are calibrated to 10x max(1-ulp perturbation noise floor across 5 seeds):
     - S: atol = 1.0e-6 J kg^-1 K^-1 (< 0.0001% of mantle entropy ~3500 J/kg/K)
     - T: atol = 1.0e-7 K (< 0.00001% of mantle temperature ~2000 K)
