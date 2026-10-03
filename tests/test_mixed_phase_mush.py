@@ -89,12 +89,12 @@ def test_mixed_phase_mush_fixture(shared_eos):
                 if flux_key in ref.files:
                     np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
         else:
-            # Tolerance tier across different platforms and dependency versions
-            # Measured from cross-runner noise and platform spread
-            np.testing.assert_allclose(S, ref['S'], atol=0.4)
-            np.testing.assert_allclose(T, ref['T'], atol=0.05)
+            # Tolerance tier per Ruling 75/77. Source: run 37108391411
+            # Measured Linux-Darwin spread: dS=7.89e-4 J/kg/K, dT=8.67e-5 K, flux=76.5 W/m2
+            np.testing.assert_allclose(S, ref['S'], atol=0.01)
+            np.testing.assert_allclose(T, ref['T'], atol=0.001)
             for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
                 if flux_key in ref.files:
                     np.testing.assert_allclose(
-                        getattr(output, flux_key), ref[flux_key], atol=2.5e4
+                        getattr(output, flux_key), ref[flux_key], atol=800.0
                     )
