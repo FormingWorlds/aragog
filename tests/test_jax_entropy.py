@@ -666,7 +666,7 @@ class TestJAXSolverIntegration:
         heating = jnp.full(N, 1e-8)  # W/kg
 
         bc = BoundaryParams(
-            outer_bc_type=0,  # insulating
+            outer_bc_type=4,  # insulating (prescribed heat flux = 0)
             outer_bc_value=0.0,
             emissivity=1.0,
             T_eq=255.0,
@@ -788,7 +788,7 @@ class TestEnergyConservation:
         heating = jnp.zeros(N)
 
         bc = BoundaryParams(
-            outer_bc_type=0,  # insulating (F=0 at surface is equivalent to type 0)
+            outer_bc_type=4,  # insulating (prescribed heat flux = 0)
             outer_bc_value=0.0,
             emissivity=1.0,
             T_eq=255.0,
@@ -852,7 +852,7 @@ class TestEnergyConservation:
         heating = jnp.full(N, H)
 
         bc = BoundaryParams(
-            outer_bc_type=0,  # insulating
+            outer_bc_type=4,  # insulating (prescribed heat flux = 0)
             outer_bc_value=0.0,
             emissivity=1.0,
             T_eq=255.0,
