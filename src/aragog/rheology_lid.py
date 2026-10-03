@@ -47,6 +47,12 @@ def compute_stagnant_lid_state(
     viscosity_solid: float | None = None,
     phi_rheo: float | None = None,
     phi_width: float | None = None,
+    density: FloatOrArray = 3300.0,
+    gravity: FloatOrArray = 9.81,
+    thermal_expansivity: FloatOrArray = 3.0e-5,
+    thermal_diffusivity: FloatOrArray = 1.0e-6,
+    a_rh_fb: float = 1.3,
+    C4: float = 0.125,
     xp: Any = np,
 ) -> dict[str, Any]:
     r"""Compute stagnant lid boundary-layer indicators and convective driving stress.
@@ -78,6 +84,18 @@ def compute_stagnant_lid_state(
         Critical melt fraction for rheological transition. Defaults to 0.4.
     phi_width : float, optional
         Transition width for rheological melt fraction indicator. Defaults to 0.15.
+    density : float or array-like, default 3300.0
+        Mantle density rho [kg/m^3].
+    gravity : float or array-like, default 9.81
+        Gravitational acceleration g [m/s^2].
+    thermal_expansivity : float or array-like, default 3.0e-5
+        Thermal expansivity alpha [1/K].
+    thermal_diffusivity : float or array-like, default 1.0e-6
+        Thermal diffusivity kappa [m^2/s].
+    a_rh_fb : float, default 1.3
+        Rheological sublayer parameter fitted with C4 in FB2014 (p. 589).
+    C4 : float, default 0.125
+        Convective velocity prefactor in FB2014 (Eq. 26, p. 586-587; p. 589).
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
 
@@ -234,9 +252,24 @@ def compute_stagnant_lid_state(
         v_i = 0.0
         w_upper = xp.zeros_like(r)
 
-    tau_d = (eta_i * v_i) / xp.maximum(delta_rh, 1e-6)
-    tau_d = tau_d * w_active
-    tau_d_lid = (eta_i * v_i) / xp.maximum(d_lid, 1e-6)
+    d_conv = xp.maximum(r[-1] - r[0], 1.0)
+    rho_i = xp.mean(xp.asarray(density, dtype=float))
+    g_i = xp.mean(xp.asarray(gravity, dtype=float))
+    alpha_i = xp.mean(xp.asarray(thermal_expansivity, dtype=float))
+    kappa_i = xp.mean(xp.asarray(thermal_diffusivity, dtype=float))
+    DeltaT_conv = xp.maximum(T_i - T[-1], 1e-6)
+    eta_i_safe = xp.maximum(eta_i, 1e-30)
+
+    # Convective interior velocity and lid driving stress (Foley & Bercovici 2014, eqs. 26, 28).
+    Ra_eff = (rho_i * g_i * alpha_i * DeltaT_conv * (d_conv**3)) / (kappa_i * eta_i_safe)
+    theta_safe = xp.maximum(theta, 1e-6)
+    Ra_rh = (Ra_eff * a_rh_fb) / theta_safe
+    v_m = (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 0.0) ** (2.0 / 3.0))
+
+    tau_d = (2.0 * eta_i * v_m / d_conv) * w_active
+    tau_d_lid = (2.0 * eta_i * v_m) / xp.maximum(d_lid, 1e-6)
+    tau_buoy = rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active
+    tau_d_over_tau_buoy = tau_d / xp.maximum(tau_buoy, 1e-30)
 
     tau_y_lid = compute_yield_stress(
         P_lid_base,
@@ -269,9 +302,14 @@ def compute_stagnant_lid_state(
         'P_lid_base': P_lid_base,
         'delta_rh': delta_rh,
         'v_i': v_i,
+        'v_m': v_m,
+        'Ra_eff': Ra_eff,
+        'Ra_rh': Ra_rh,
         'w_upper': w_upper,
         'tau_d': tau_d,
         'tau_d_lid': tau_d_lid,
+        'tau_buoy': tau_buoy,
+        'tau_d_over_tau_buoy': tau_d_over_tau_buoy,
         'tau_y_lid': tau_y_lid,
         'w_lid': w_lid,
         'w_y': w_y,
@@ -347,13 +385,18 @@ def compute_effective_viscosity(
     vi = xp.asarray(v_i, dtype=float)
     drh = xp.asarray(delta_rh, dtype=float)
 
-    # In stagnant lid boundary layer scaling, eps_II = vi / (2 * drh),
-    # so eta_y = ty_lid / (2 * eps_II) = (ty_lid * drh) / vi.
-    eta_lid = (ty_lid * drh) / xp.maximum(vi, 1e-30)
-    is_inf = xp.isinf(eta_lid) | (vi <= 0.0) | xp.isinf(ty_lid)
-    if tau_d is not None:
+    # Foley & Bercovici (2014) stagnant lid plastic viscosity eta_y = (tau_y * eta_i) / tau_d.
+    if tau_d is not None and eta_i is not None:
         td = xp.asarray(tau_d, dtype=float)
-        is_inf = is_inf | (td <= 0.0)
+        ei = xp.asarray(eta_i, dtype=float)
+        eta_lid = (ty_lid * ei) / xp.maximum(td, 1e-30)
+        is_inf = xp.isinf(eta_lid) | (td <= 0.0) | xp.isinf(ty_lid)
+    else:
+        eta_lid = (ty_lid * drh) / xp.maximum(vi, 1e-30)
+        is_inf = xp.isinf(eta_lid) | (vi <= 0.0) | xp.isinf(ty_lid)
+        if tau_d is not None:
+            td = xp.asarray(tau_d, dtype=float)
+            is_inf = is_inf | (td <= 0.0)
     safe_eta_lid = xp.where(is_inf, 1.0, eta_lid)
     res = (eta_d * safe_eta_lid) / (eta_d + safe_eta_lid)
     eta_eff_val = xp.where(is_inf, eta_d, res)

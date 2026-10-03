@@ -196,43 +196,63 @@ where $w_\text{mask}$ is the mask width parameter (`lid_mask_width_cells`, defau
 
 ## 4. Convective Driving Stress
 
-Convective flow beneath the lid exerts a driving shear stress on the rheological sublayer at the lid base. In mixing-length theory under viscous dissipation balance, convective velocity scales as $v \sim g \alpha \Delta T l^2 / \nu$, where $\nu = \eta / \rho$ is kinematic viscosity. The convective strain rate is $\dot{\epsilon} = v / (2 l) \sim g \alpha \Delta T l / (2 \nu)$. Consequently, convective stress $2 \eta \dot{\epsilon} \sim \rho g \alpha \Delta T l$ is determined directly by convective buoyancy and is independent of viscosity. The convective driving stress $\tau_d$ is therefore stress-controlled:
+Convective flow beneath the stagnant lid exerts a driving shear stress on the base of the lid. Aragog implements the stagnant-lid convective shear stress scaling of Foley and Bercovici (2014, eqs. 26 and 28, pp. 586-588):
 
 $$
-\tau_d = \frac{\eta_i v_i}{\delta_\text{rh}}
+\tau_d = \frac{2 \mu_i v_m}{d}
 $$
 
-where $\eta_i = \eta_\text{diff}(T_i, P_{T_i})$ is the interior solid viscosity, and $v_i$ is the convective velocity representative of the upper convecting mantle.
+where $d = r_\text{outer} - r_\text{inner}$ is the convective layer thickness, and $\mu_i = \eta_\text{diff}(T_i, P_{T_i})$ is the interior dynamic viscosity, evaluated at the representative convective interior temperature $T_i$, and pressure $P_{T_i}$. The factor of 2 arises from horizontal shear between the lid base ($u = v_m$), and mid-depth ($u = 0$ at $z = d/2$), as derived by Foley and Bercovici (2014, p. 584, lines 410-412; p. 588, lines 871-872).
 
-To prevent localised spikes or lower boundary layer velocities from contaminating $v_i$, Aragog evaluates $v_i$ as a numerically stable, shifted soft-maximum of the mixing-length velocity over the upper half of the convecting region (from the $T_i$ node to mid-depth of the convective domain, containing $N_\text{upper}$ nodes):
-
-$$
-v_i = v_\text{max} + T_v \ln\left( \frac{1}{N_\text{upper}} \sum_{k \in \text{upper}} \exp\left( \frac{v_k - v_\text{max}}{T_v} \right) \right)
-$$
-
-where $v_\text{max} = \max_{k \in \text{upper}} v_k$ prevents numerical overflow, and $T_v = 0.1\text{ mm yr}^{-1} \approx 3.17 \times 10^{-12}\text{ m s}^{-1}$ is the velocity smoothing scale. This normalized formulation evaluates to zero when all $v_k \to 0$ and converges to the maximum convective velocity when velocities exceed $T_v$.
-
-The model also records the alternative stress scale evaluated over the full lid thickness $d_\text{lid}$:
+The interior convective velocity $v_m$ follows the boundary-layer scaling for bottom-heated stagnant-lid convection (Dumoulin et al. 1999, p. 12760, sec. 2; Foley and Bercovici 2014, p. 586-587, eq. 26):
 
 $$
-\tau_{d,\text{lid}} = \frac{\eta_i v_i}{d_\text{lid}}
+v_m = \frac{\kappa}{d} C_4 \left( \frac{\mathrm{Ra}_\text{eff} a_\text{rh}}{\theta} \right)^{2/3}
 $$
 
-yielding a geometric ratio $\tau_d / \tau_{d,\text{lid}} = d_\text{lid} / \delta_\text{rh} \approx 10$ for typical Earth conditions ($d_\text{lid} \approx 70\text{ km}$, $\delta_\text{rh} \approx 6.8\text{ km}$).
+where $C_4 = 0.125$ is the empirical prefactor calibrated by Foley and Bercovici (2014, sec. 4.2, p. 589, line 1080), $\kappa = k / (\rho C_p)$ is the thermal diffusivity, evaluated at convective interior conditions, and $\theta = E (T_i - T_\text{surf}) / (R T_i^2)$ is the effective Frank-Kamenetskii parameter (Foley and Bercovici 2014, sec. 2.2, p. 582, line 287). The effective Rayleigh number is defined at the interior viscosity $\mu_i$:
 
-The sublayer buoyancy stress driving convective deformation is:
+$$
+\mathrm{Ra}_\text{eff} = \frac{\rho g \alpha (T_i - T_\text{surf}) d^3}{\kappa \mu_i}
+$$
+
+Because both $\mathrm{Ra}_\text{eff}$ and $\theta$ scale linearly with the total temperature drop $\Delta T = T_i - T_\text{surf}$, the ratio $\mathrm{Ra}_\text{eff} a_\text{rh} / \theta$ depends only on the rheological temperature scale $\Delta T_\text{rh} = a_\text{rh} R T_i^2 / E$. This dependence produces scale invariance with respect to the total layer temperature contrast.
+
+### 4.1 Heating Mode and Evolutionary Context
+
+The $2/3$ velocity scaling law applies to bottom-heated stagnant-lid convection (Dumoulin et al. 1999; Foley and Bercovici 2014, p. 587, lines 850-855). In planetary evolution, cooling terrestrial planets start with a superheated core, creating a large core-mantle boundary temperature difference that drives strong basal heating during early post-magma-ocean evolution (Thiriet et al. 2019, pp. 139-140, sec. 1).
+
+As the core cools, and radiogenic heating decays, the mantle heating regime transitions from bottom-dominated to predominantly internal heating (Thiriet et al. 2019, p. 140). For purely internally heated convection, Solomatov and Moresi (2000, p. 21804, eq. 28; p. 21805, Table 8) obtain a $1/2$ velocity scaling exponent:
+
+$$
+v_m = a_u \frac{\kappa}{d} \left( \frac{\mathrm{Ra}_i}{\theta} \right)^{1/2}
+$$
+
+with $a_u = 0.385 \pm 0.003$, for $n = 1$, and $a_\text{rh} = 2.4$. For an Earth reference state, with a sublayer temperature drop $\Delta T_\text{sub} = 130\text{ K}$, the internally heated scaling predicts $\tau_d \approx 0.012\text{ MPa}$, approximately four times lower than the bottom-heated estimate ($0.050\text{ MPa}$). Consequently, evaluating $\tau_d$ with the bottom-heated $2/3$ scaling represents an upper estimate on convective shear stress during later, internally heated epochs.
+
+### 4.2 Validated Parameter Ranges and Mushy Extrapolation
+
+Foley and Bercovici (2014, sec. 4.2, p. 589; Table 2, p. 593; Table 3, p. 594; Figs. 8-9) calibrate and validate the scaling laws over:
+
+$$
+\mathrm{Ra}_0 \in [10^5, 5 \times 10^7]
+$$
+
+In a partially molten, or mushy mantle, where bulk viscosity drops to $\eta_\text{bulk} \sim 10^2 - 10^7\text{ Pa s}$, the effective Rayleigh number reaches $\mathrm{Ra}_\text{eff} \sim 10^{19} - 10^{25}$, well above the numerical calibration domain of solid-state boundary-layer theory. Applying the scaling to mushy interiors represents an extrapolation, and Solomatov and Moresi (2000, sec. 5.3, p. 21803) note that the velocity scaling law can change at very high Rayleigh numbers, when convective plumes disconnect from the lid base.
+
+### 4.3 Rheological Parameter Calibration
+
+In the velocity scaling, $a_\text{rh} = 1.3$ is the empirical calibration constant, fitted jointly with $C_4 = 0.125$ by Foley and Bercovici (2014, sec. 4.2, p. 589, line 1080) for constant healing rate ($E_h = 0$). For models with temperature-dependent healing, Foley and Bercovici (2014, sec. 5.2, p. 595, line 2871) find $a_\text{rh} \approx 1.82$. This parameter enters the interior convective velocity $v_m$, and differs on purpose from the configured `lid_contrast_coeff` ($a = 2.2$; Solomatov 1995; Solomatov and Moresi 2000, sec. 5.1, p. 21800), which defines the thermal boundary isotherm of the rigid lid ($T_\text{lid} = T_i - a \Delta T_\text{rh}$).
+
+### 4.4 Diagnostic Quantities and Force Balance
+
+The model outputs the rheological sublayer buoyancy stress as a diagnostic:
 
 $$
 \tau_\text{buoy} = \rho g \alpha \Delta T_\text{rh} \delta_\text{rh}
 $$
 
-For an Earth-like reference state ($\rho = 3300\text{ kg m}^{-3}$, $g = 9.81\text{ m s}^{-2}$, $\alpha = 3 \times 10^{-5}\text{ K}^{-1}$, $T_i = 1600\text{ K}$, $P_{T_i} = 3\text{ GPa}$, $\Delta T_\text{rh} \approx 68\text{ K}$, $\delta_\text{rh} \approx 6.8\text{ km}$), the sublayer buoyancy stress evaluates to $\tau_\text{buoy} \approx 0.45\text{ MPa}$. With interior viscosity $\eta_i = 10^{20}\text{ Pa s}$ and convective velocity $v_i \approx 2.5\text{ mm yr}^{-1}$ ($7.92 \times 10^{-11}\text{ m s}^{-1}$), the driving stress evaluates to $\tau_d \approx 1.16\text{ MPa}$. The resulting stress ratio:
-
-$$
-\frac{\tau_d}{\tau_\text{buoy}} \approx 2.6
-$$
-
-falls within the expected boundary-layer balance range $[0.1, 10]$ and is tracked as a diagnostic indicator of convective force balance.
+where $\delta_\text{rh}$ is the rheological sublayer thickness. The ratio $\tau_d / \tau_\text{buoy}$ is tracked in the output diagnostics, as a measure of boundary-layer force balance. In addition, the shifted soft-maximum convective velocity $v_i$, evaluated over the upper mantle, is retained as a diagnostic profile quantity.
 
 ## 5. Harmonic Mean Yield Closure
 
@@ -247,13 +267,13 @@ $$
 $$
 In Tackley (2000, eq. 8, p. 4), yielding is instead formulated as a direct minimum cutoff $\eta_\text{eff} = \min[\eta(z, T), \sigma_y / (2 \dot{\epsilon})]$.
 
-where $\eta_y = \tau_y / (2 \dot{\epsilon})$ is the plastic yielding viscosity. In stagnant lid mode, the effective deformation strain rate is $\dot{\epsilon}_\text{eff} = v_i / (2 \delta_\text{rh})$, which gives:
+where $\eta_y = \tau_y / (2 \dot{\epsilon})$ is the plastic yielding viscosity. In stagnant lid mode, the effective strain rate under driving shear stress $\tau_d$ is $\dot{\epsilon}_\text{eff} = \tau_d / (2 \eta_i)$, which gives:
 
 $$
-\eta_y = \frac{\tau_{y,\text{lid}} \delta_\text{rh}}{v_i}
+\eta_y = \frac{\tau_{y,\text{lid}} \eta_i}{\tau_d}
 $$
 
-The effective solid viscosity across the radial column is determined by applying the closure viscosity within the cold boundary layer using the smooth lid mask:
+The effective solid viscosity through the radial column is determined by applying the closure viscosity within the cold boundary layer using the smooth lid mask:
 
 $$
 \log_{10} \eta_\text{solid} = w_\text{lid} \log_{10} \eta_\text{eff} + (1 - w_\text{lid}) \log_{10} \eta_\text{diff}

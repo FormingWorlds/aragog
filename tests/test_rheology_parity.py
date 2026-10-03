@@ -180,7 +180,11 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         'theta',
         'd_lid',
         'v_i',
+        'v_m',
         'tau_d',
+        'tau_buoy',
+        'tau_d_over_tau_buoy',
+        'Ra_eff',
         'tau_y_lid',
         'w_active',
     ]:
@@ -382,7 +386,18 @@ def test_stagnant_lid_checkpoint_profile_parity():
         viscosity_solid=1.0e21,
     )
 
-    for key in ['eta_i', 'tau_d', 'd_lid', 'theta', 'v_i', 'delta_rh']:
+    for key in [
+        'eta_i',
+        'tau_d',
+        'd_lid',
+        'theta',
+        'v_i',
+        'v_m',
+        'tau_buoy',
+        'tau_d_over_tau_buoy',
+        'Ra_eff',
+        'delta_rh',
+    ]:
         np.testing.assert_allclose(
             float(state_np[key]),
             float(state_jx[key]),

@@ -903,6 +903,10 @@ def compute_mlt(
             )
             F_tot_unyielded = F_cond + params.convection * F_conv_unyielded
 
+            rho_jax = phase_basic.density
+            Cp_jax = phase_basic.heat_capacity
+            k_jax = phase_basic.thermal_conductivity
+            kappa_jax = k_jax / (jnp.maximum(rho_jax, 1.0) * jnp.maximum(Cp_jax, 100.0))
             lid_state = compute_stagnant_lid_state(
                 radii=mesh.radii_basic,
                 temperature=T,
@@ -914,6 +918,10 @@ def compute_mlt(
                 params=params,
                 unyielded_velocity=visc_v_unyielded,
                 viscosity_solid=params.viscosity_solid,
+                density=rho_jax,
+                gravity=mesh.gravity,
+                thermal_expansivity=phase_basic.thermal_expansivity,
+                thermal_diffusivity=kappa_jax,
             )
             w_lid = lid_state['w_lid']
             eta_effective = compute_effective_viscosity(

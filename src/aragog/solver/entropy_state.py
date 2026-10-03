@@ -745,6 +745,14 @@ class EntropyState:
                 P_basic = np.asarray(self.phase_basic.pressure).ravel()
                 phi_rheo = float(self.phase_basic.phi_rheo)
                 phi_width = float(getattr(self.phase_basic, 'phi_width', 0.15))
+                rho_basic = np.asarray(self.phase_basic.density()).ravel()
+                g_basic = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
+                alpha_basic = np.asarray(self.phase_basic.thermal_expansivity()).ravel()
+                Cp_basic = np.asarray(self.phase_basic.heat_capacity()).ravel()
+                k_basic = np.asarray(self.phase_basic.thermal_conductivity()).ravel()
+                kappa_basic = k_basic / (
+                    np.maximum(rho_basic, 1.0) * np.maximum(Cp_basic, 100.0)
+                )
                 lid_state = compute_stagnant_lid_state(
                     radii=r_basic,
                     temperature=T,
@@ -758,6 +766,10 @@ class EntropyState:
                     viscosity_solid=self.phase_basic.viscosity_solid,
                     phi_rheo=phi_rheo,
                     phi_width=phi_width,
+                    density=rho_basic,
+                    gravity=g_basic,
+                    thermal_expansivity=alpha_basic,
+                    thermal_diffusivity=kappa_basic,
                     xp=np,
                 )
 
