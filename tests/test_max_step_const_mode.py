@@ -10,8 +10,6 @@ Verifies:
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pytest
 
@@ -36,80 +34,36 @@ def test_solver_parameters_max_step_const_mode_default():
     assert sp.max_step_const_mode == 100.0
 
 
+def _solver_params(value):
+    return _SolverParameters(
+        start_time=0.0, end_time=1.0, atol=1e-6, rtol=1e-6, max_step_const_mode=value
+    )
+
+
 @pytest.mark.unit
-def test_solver_parameters_max_step_const_mode_validation():
-    """Verify validation of max_step_const_mode for infinity and invalid values."""
-    sp_inf = _SolverParameters(
-        start_time=0.0,
-        end_time=1.0,
-        atol=1e-6,
-        rtol=1e-6,
-        max_step_const_mode=float('inf'),
-    )
-    assert math.isinf(sp_inf.max_step_const_mode)
+@pytest.mark.parametrize(
+    ('value', 'expected'), [(500.0, 500.0), ('250.0', 250.0), (float('inf'), float('inf'))]
+)
+def test_solver_parameters_max_step_const_mode_accepts(value, expected):
+    """Verify max_step_const_mode accepts floats, numeric strings and infinity."""
+    assert _solver_params(value).max_step_const_mode == expected
 
-    sp_custom = _SolverParameters(
-        start_time=0.0,
-        end_time=1.0,
-        atol=1e-6,
-        rtol=1e-6,
-        max_step_const_mode=500.0,
-    )
-    assert sp_custom.max_step_const_mode == 500.0
 
-    sp_str = _SolverParameters(
-        start_time=0.0,
-        end_time=1.0,
-        atol=1e-6,
-        rtol=1e-6,
-        max_step_const_mode='250.0',
-    )
-    assert sp_str.max_step_const_mode == 250.0
-
-    with pytest.raises(TypeError, match='max_step_const_mode must be a float'):
-        _SolverParameters(
-            start_time=0.0,
-            end_time=1.0,
-            atol=1e-6,
-            rtol=1e-6,
-            max_step_const_mode='abc',
-        )
-
-    with pytest.raises(TypeError, match='max_step_const_mode must be a float'):
-        _SolverParameters(
-            start_time=0.0,
-            end_time=1.0,
-            atol=1e-6,
-            rtol=1e-6,
-            max_step_const_mode=True,
-        )
-
-    with pytest.raises(ValueError, match='max_step_const_mode must be > 0'):
-        _SolverParameters(
-            start_time=0.0,
-            end_time=1.0,
-            atol=1e-6,
-            rtol=1e-6,
-            max_step_const_mode=float('nan'),
-        )
-
-    with pytest.raises(ValueError, match='max_step_const_mode must be > 0'):
-        _SolverParameters(
-            start_time=0.0,
-            end_time=1.0,
-            atol=1e-6,
-            rtol=1e-6,
-            max_step_const_mode=0.0,
-        )
-
-    with pytest.raises(ValueError, match='max_step_const_mode must be > 0'):
-        _SolverParameters(
-            start_time=0.0,
-            end_time=1.0,
-            atol=1e-6,
-            rtol=1e-6,
-            max_step_const_mode=-10.0,
-        )
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('value', 'exc', 'match'),
+    [
+        ('abc', TypeError, 'max_step_const_mode must be a float'),
+        (True, TypeError, 'max_step_const_mode must be a float'),
+        (float('nan'), ValueError, 'max_step_const_mode must be > 0'),
+        (0.0, ValueError, 'max_step_const_mode must be > 0'),
+        (-10.0, ValueError, 'max_step_const_mode must be > 0'),
+    ],
+)
+def test_solver_parameters_max_step_const_mode_rejects(value, exc, match):
+    """Verify max_step_const_mode rejects non-numeric, boolean, NaN and non-positive values."""
+    with pytest.raises(exc, match=match):
+        _solver_params(value)
 
 
 def _build_const_mode_params(

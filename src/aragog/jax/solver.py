@@ -314,19 +314,18 @@ def _apply_surface_bc(
     # Prescribed flux
     F_prescribed = bc.outer_bc_value
 
+    if bc.outer_bc_type in (5, 6) and (mesh is None or phase_stag is None):
+        raise ValueError('phase_stag and mesh are required for outer_bc_type 5 and 6')
+
     # Select based on BC type (static, so this traces correctly)
     if bc.outer_bc_type == 1:
         F_surf = F_grey
     elif bc.outer_bc_type == 5:
-        if mesh is None or phase_stag is None:
-            raise ValueError('phase_stag and mesh are required for outer_bc_type == 5')
         surf_dr_half = mesh.radii_basic[-1] - mesh.radii_stag[-1]
         T_cell = phase_stag.temperature[-1]
         k_surf = phase_stag.thermal_conductivity[-1]
         F_surf = k_surf * (T_cell - bc.outer_bc_value) / surf_dr_half
     elif bc.outer_bc_type == 6:
-        if mesh is None or phase_stag is None:
-            raise ValueError('phase_stag and mesh are required for outer_bc_type == 6')
         dr_half = 0.5 * (mesh.radii_basic[-1] - mesh.radii_basic[-2])
         T_top = phase_stag.temperature[-1]
         G = phase_stag.thermal_conductivity[-1] / dr_half

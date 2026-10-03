@@ -427,26 +427,14 @@ class _PhaseParameters:
         super().__setattr__('_initialized', True)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if not getattr(self, '_initialized', False):
-            super().__setattr__(name, value)
-            return
-
-        if name == 'rheology':
-            if isinstance(value, SolidRheologyParams):
-                super().__setattr__('rheology', value)
+        if getattr(self, '_initialized', False):
+            if name == 'rheology' and isinstance(value, SolidRheologyParams):
                 for f in fields(SolidRheologyParams):
                     super().__setattr__(f.name, getattr(value, f.name))
-            else:
-                super().__setattr__(name, value)
-            return
-
-        if name in _RHEOLOGY_FIELD_NAMES:
-            current = getattr(self, 'rheology', None)
-            if isinstance(current, SolidRheologyParams):
-                super().__setattr__('rheology', replace(current, **{name: value}))
-            super().__setattr__(name, value)
-            return
-
+            elif name in _RHEOLOGY_FIELD_NAMES and isinstance(
+                getattr(self, 'rheology', None), SolidRheologyParams
+            ):
+                super().__setattr__('rheology', replace(self.rheology, **{name: value}))
         super().__setattr__(name, value)
 
 

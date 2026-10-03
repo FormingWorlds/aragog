@@ -58,11 +58,8 @@ def cmb_flux(
     ra_eff = xp.maximum(ra, RA_C)
     ra_dc = RA_CRIT_PREFACTOR * ra_eff**RA_CRIT_EXPONENT
     dT_c = T_c - T_m
-    pos_dT_c = xp.maximum(dT_c, 0.0)
-    ra_l = buoyancy * pos_dT_c * depth**3
-    safe_ra_l = xp.maximum(ra_l, ra_dc)
-    nu_conv = (safe_ra_l / ra_dc) ** (1.0 / 3.0)
-    nu = xp.where(dT_c > 0.0, nu_conv, 1.0)
+    ra_l = buoyancy * xp.maximum(dT_c, 0.0) * depth**3
+    nu = (xp.maximum(ra_l, ra_dc) / ra_dc) ** (1.0 / 3.0)
     q = (k * dT_c / depth) * nu
     if xp is np and np.ndim(T_c) == 0 and np.ndim(T_s) == 0 and np.ndim(T_m) == 0:
         return float(q)
