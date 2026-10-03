@@ -95,15 +95,15 @@ def test_partly_locked_column_fixture(shared_eos):
         else:
             # Tolerance tier per Ruling 85: 10x max(1-ulp noise floor, measured spread).
             # Measured 1-ulp noise floor: S 5.52e-5 J/kg/K, T 6.58e-6 K, flux 16.21 W/m2, lid_stress 8.06e14 Pa.
-            # Initial provisional atol set to 10x noise floor until Linux spread is measured.
-            np.testing.assert_allclose(S, ref['S'], atol=6.0e-4)
-            np.testing.assert_allclose(T, ref['T'], atol=7.0e-5)
+            # Measured spread (GHA run 37113539272): S 7.67e-5 J/kg/K, T 1.22e-5 K, flux 10.42 W/m2, lid_stress 1.07e15 Pa.
+            np.testing.assert_allclose(S, ref['S'], atol=8.0e-4)
+            np.testing.assert_allclose(T, ref['T'], atol=1.3e-4)
             for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
                 if flux_key in ref.files:
                     np.testing.assert_allclose(
-                        getattr(output, flux_key), ref[flux_key], atol=200.0
+                        getattr(output, flux_key), ref[flux_key], atol=170.0
                     )
             if 'lid_stress' in ref.files:
                 np.testing.assert_allclose(
-                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=1.0e16
+                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=1.1e16
                 )
