@@ -2513,7 +2513,7 @@ class EntropySolver:
         elif self._outer_bc_kind == 5:
             # Prescribed surface temperature
             k_surf = float(
-                np.asarray(self.state.phase_basic.thermal_conductivity()).ravel()[-1]
+                np.asarray(self.state.phase_staggered.thermal_conductivity()).ravel()[-1]
             )
             T_cell = float(np.asarray(self.state.phase_staggered.temperature()).ravel()[-1])
             self.state._heat_flux[-1] = (

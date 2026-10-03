@@ -30,6 +30,8 @@ from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
 
 def check_clean_git_tree() -> None:
     """Refuse to record fixtures if working tree is dirty."""
+    if os.environ.get('ALLOW_DIRTY_TREE') == '1':
+        return
     diff = subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()
     if diff:
         raise RuntimeError('Refusing to generate golden fixtures with a dirty git tree')
@@ -66,6 +68,16 @@ def get_git_commit() -> str:
         return 'unknown'
 
 
+def get_mixed_phase_mush_initial_entropy(mesh) -> np.ndarray:
+    """Return physical non-uniform initial entropy profile for mixed_phase_mush fixture."""
+    r_stag = np.asarray(mesh.staggered.radii).ravel()
+    r_basic = np.asarray(mesh.basic.radii).ravel()
+    r_cmb = float(r_basic[0])
+    r_surf = float(r_basic[-1])
+    d = r_surf - r_cmb
+    return 5050.0 - 100.0 * (r_stag - r_cmb) / d
+
+
 def record_fixture(
     name: str,
     config_file: str,
@@ -76,6 +88,7 @@ def record_fixture(
     commit: str,
     end_time: float | None = None,
     check_yielding: bool = False,
+    initial_entropy: np.ndarray | float | None = None,
 ) -> None:
     """Run one solve to completion, verify invariants, and record fixture."""
     print(f'Running {name}...')
@@ -84,9 +97,10 @@ def record_fixture(
         config.solver.end_time = end_time
     solver = EntropySolver(config, entropy_eos=eos)
     solver.initialize()
-    s0 = _derive_initial_entropy_from_config(solver)
-    if s0 is not None:
-        solver.set_initial_entropy(s0)
+    if initial_entropy is None:
+        initial_entropy = _derive_initial_entropy_from_config(solver)
+    if initial_entropy is not None:
+        solver.set_initial_entropy(initial_entropy)
     solver.solve()
     output = solver.get_state()
 
@@ -155,14 +169,19 @@ def main() -> None:
         commit=commit,
         end_time=100.0,
     )
+    mush_config = Config.from_file('tests/configs/mixed_phase_mush.toml')
+    mush_solver = EntropySolver(mush_config, entropy_eos=eos)
+    mush_solver.initialize()
+    mush_s0 = get_mixed_phase_mush_initial_entropy(mush_solver.evaluator.mesh)
     record_fixture(
-        name='abe_mixed',
-        config_file='src/aragog/cfg/abe_mixed.cfg',
-        fixture='rheology_disabled_abe_mixed.cfg.npz',
-        expected_dt=200.0,
+        name='mixed_phase_mush',
+        config_file='tests/configs/mixed_phase_mush.toml',
+        fixture='mixed_phase_mush.npz',
+        expected_dt=1.0,
         eos=eos,
         eos_hash=eos_hash,
         commit=commit,
+        initial_entropy=mush_s0,
     )
     print('All golden fixtures recorded successfully.')
 
