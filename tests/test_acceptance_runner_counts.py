@@ -129,18 +129,68 @@ def test_runner_step_count_on_10yr_run_equals_cvode_numsteps(tmp_path, monkeypat
 
 def test_cvode_info_distinguishes_final_segment_and_minimum_last_step():
     """Verify LastStep retains final segment value while MinLastStep records multi-segment minimum."""
-    info = {
-        'NumSteps': 50,
-        'NumRhsEvals': 120,
-        'NumErrTestFails': 3,
-        'NumLinSolvSetups': 10,
-        'LastStep': 15.0,
-        'MinLastStep': 2.0,
-    }
-    t_ref = 2.0
-    last_step_phys = float(info['LastStep']) * t_ref
-    min_last_step_phys = float(info['MinLastStep']) * t_ref
+    from unittest.mock import MagicMock
 
-    assert last_step_phys == 30.0
-    assert min_last_step_phys == 4.0
-    assert min_last_step_phys < last_step_phys
+    from aragog.config import Config
+
+    solver = object.__new__(EntropySolver)
+    solver.parameters = Config()
+    solver._output_grid = MagicMock(return_value=np.array([1.0]))
+
+    seg1 = OptimizeResult(
+        t=np.array([0.0, 0.5]),
+        y=np.ones((5, 2)),
+        status=0,
+        cvode_flag=2,
+        nfev=20,
+        cvode_nst=10,
+        cvode_nfe=20,
+        cvode_info={
+            'NumSteps': 10,
+            'NumRhsEvals': 20,
+            'NumErrTestFails': 1,
+            'NumLinSolvSetups': 2,
+            'LastStep': 1.5,
+        },
+    )
+
+    seg2 = OptimizeResult(
+        t=np.array([0.5, 1.0]),
+        y=np.ones((5, 2)),
+        status=0,
+        cvode_flag=0,
+        nfev=30,
+        cvode_nst=15,
+        cvode_nfe=30,
+        cvode_info={
+            'NumSteps': 15,
+            'NumRhsEvals': 30,
+            'NumErrTestFails': 2,
+            'NumLinSolvSetups': 3,
+            'LastStep': 15.0,
+        },
+    )
+
+    solver._solve_cvode = MagicMock(side_effect=[seg1, seg2])
+    solver._nondimensional_rhs = MagicMock()
+
+    roots = MagicMock()
+    roots.fired = MagicMock(return_value='step')
+    roots.inside = False
+
+    res = solver._solve_cvode_segments(
+        start_time=0.0,
+        end_time=1.0,
+        y0=np.ones(5),
+        h_at=lambda t, y: 1.0,
+        roots_at=lambda y, inside: roots,
+        t_ref=1.0,
+        h_min=1.0,
+        max_segments=2,
+    )
+
+    assert res.cvode_info['LastStep'] == 15.0
+    assert res.cvode_info['MinLastStep'] == 1.5
+    assert res.cvode_info['MinLastStep'] < res.cvode_info['LastStep']
+    assert res.cvode_info['NumSteps'] == 25
+    assert res.cvode_info['NumRhsEvals'] == 50

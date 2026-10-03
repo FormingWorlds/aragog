@@ -3553,8 +3553,8 @@ class EntropySolver:
           ``NumErrTestFails``, and ``NumLinSolvSetups``.
         - Final-segment values: ``LastStep``, ``CurrentStep``, ``LastOrder``,
           and ``CurrentOrder``.
-        - Multi-segment minimum: ``MinLastStep`` records the minimum step size taken
-          across all segment boundaries.
+        - Multi-segment minimum: ``MinLastStep`` records the minimum of the
+          segments' final steps across all segment boundaries.
         """
         if not hasattr(self, '_S0') or self._S0 is None:
             raise RuntimeError(
