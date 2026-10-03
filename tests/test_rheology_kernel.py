@@ -116,7 +116,7 @@ def test_limit_extreme_yielding():
         eta_i=eta_i,
         stress_closure_mode='lid',
     )
-    expected_yielded = min((tau_y_lid * delta_rh) / v_i, eta_diff)
+    expected_yielded = min((tau_y_lid * eta_i) / tau_d, eta_diff)
     assert eta_eff == pytest.approx(expected_yielded, rel=1.0e-3)
 
 
@@ -237,7 +237,11 @@ def test_limit_no_convection_lid_diagnostics():
     )
 
     assert state['w_active'] < 0.02
-    assert state['tau_d'] == pytest.approx(0.0, abs=1.0e-10)
+    expected_tau_d = float(
+        state['w_active'] * 2.0 * state['eta_i'] * state['v_m'] / (radii[-1] - radii[0])
+    )
+    assert state['tau_d'] == pytest.approx(expected_tau_d, rel=1.0e-5)
+    assert state['tau_d'] < 2.0e5
     assert state['d_lid'] < 0.01 * (radii[-1] - radii[0])
 
 
