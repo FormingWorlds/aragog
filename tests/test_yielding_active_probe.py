@@ -97,9 +97,9 @@ def test_yielding_active_probe(shared_eos):
         if exact_match:
             np.testing.assert_array_equal(S, ref['S'])
             np.testing.assert_array_equal(T, ref['T'])
-            for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
-                if flux_key in ref.files:
-                    np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
+            for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
+                assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
+                np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
             if 'lid_stress' in ref.files:
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
@@ -107,11 +107,9 @@ def test_yielding_active_probe(shared_eos):
             # Measured noise floor: S 5.56e-5 J/kg/K; measured spread (run 37117288868): S 7.70e-5 J/kg/K.
             np.testing.assert_allclose(S, ref['S'], atol=8.0e-4)
             np.testing.assert_allclose(T, ref['T'], atol=1.3e-4)
-            for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
-                if flux_key in ref.files:
-                    np.testing.assert_allclose(
-                        getattr(output, flux_key), ref[flux_key], atol=500.0
-                    )
+            for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
+                assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
+                np.testing.assert_allclose(getattr(output, flux_key), ref[flux_key], atol=500.0)
             if 'lid_stress' in ref.files:
                 np.testing.assert_allclose(
                     getattr(output, 'lid_stress'), ref['lid_stress'], atol=3.5e17

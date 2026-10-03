@@ -86,15 +86,15 @@ def test_rheology_disabled_regression(shared_eos):
         if exact_match:
             np.testing.assert_array_equal(S, ref['S'])
             np.testing.assert_array_equal(T, ref['T'])
-            for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
-                if flux_key in ref.files:
-                    np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
+            for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
+                assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
+                np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
         else:
             # Tolerance tier per Ruling 75/77. Source: run 37098861445
             np.testing.assert_allclose(S, ref['S'], atol=3e-4)
             np.testing.assert_allclose(T, ref['T'], atol=1e-4)
-            for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
-                if flux_key in ref.files:
-                    np.testing.assert_allclose(
-                        getattr(output, flux_key), ref[flux_key], atol=1100.0
-                    )
+            for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
+                assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
+                np.testing.assert_allclose(
+                    getattr(output, flux_key), ref[flux_key], atol=1100.0
+                )

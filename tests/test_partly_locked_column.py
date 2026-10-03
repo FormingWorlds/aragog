@@ -88,9 +88,9 @@ def test_partly_locked_column_fixture(shared_eos):
         if exact_match:
             np.testing.assert_array_equal(S, ref['S'])
             np.testing.assert_array_equal(T, ref['T'])
-            for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
-                if flux_key in ref.files:
-                    np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
+            for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
+                assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
+                np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
             if 'lid_stress' in ref.files:
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
@@ -99,11 +99,9 @@ def test_partly_locked_column_fixture(shared_eos):
             # Measured spread (GHA run 37113539272): S 7.67e-5 J/kg/K, T 1.22e-5 K, flux 10.42 W/m2, lid_stress 1.07e15 Pa.
             np.testing.assert_allclose(S, ref['S'], atol=8.0e-4)
             np.testing.assert_allclose(T, ref['T'], atol=1.3e-4)
-            for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
-                if flux_key in ref.files:
-                    np.testing.assert_allclose(
-                        getattr(output, flux_key), ref[flux_key], atol=170.0
-                    )
+            for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
+                assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
+                np.testing.assert_allclose(getattr(output, flux_key), ref[flux_key], atol=170.0)
             if 'lid_stress' in ref.files:
                 np.testing.assert_allclose(
                     getattr(output, 'lid_stress'), ref['lid_stress'], atol=1.1e16
