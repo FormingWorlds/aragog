@@ -46,6 +46,7 @@ def compute_stagnant_lid_state(
     unyielded_velocity: FloatOrArray | None = None,
     viscosity_solid: float | None = None,
     phi_rheo: float | None = None,
+    phi_width: float | None = None,
     xp: Any = np,
 ) -> dict[str, Any]:
     r"""Compute stagnant lid boundary-layer indicators and convective driving stress.
@@ -73,8 +74,13 @@ def compute_stagnant_lid_state(
         Unyielded convective velocity profile v [m/s].
     viscosity_solid : float, optional
         Reference solid mantle viscosity [Pa s]. Defaults to 1e21 if unspecified.
+    phi_rheo : float, optional
+        Critical melt fraction for rheological transition. Defaults to 0.4.
+    phi_width : float, optional
+        Transition width for rheological melt fraction indicator. Defaults to 0.15.
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
+
 
     Returns
     -------
@@ -164,7 +170,7 @@ def compute_stagnant_lid_state(
     scale = w_mask * dT_cell
 
     phi_rheo_val = phi_rheo if phi_rheo is not None else getattr(params, 'phi_rheo', 0.4)
-    phi_width_val = getattr(params, 'phi_width', 0.05)
+    phi_width_val = phi_width if phi_width is not None else getattr(params, 'phi_width', 0.05)
 
     w_hot_iso = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale))
     if solidus_temperature is not None:

@@ -225,7 +225,6 @@ def test_jax_numpy_float64_parity_lid_rheological():
         activation_energy=300e3,
         activation_volume=1.5e-6,
         viscosity_solid=1.0e21,
-        phi_width=0.05,
     )
 
     ds_dr_jax = jnp.array(state._dSdr).ravel()
