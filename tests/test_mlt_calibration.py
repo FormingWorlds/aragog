@@ -192,3 +192,207 @@ def test_jax_compute_mlt_applies_the_same_factor():
     )
     assert q[TOP] == pytest.approx(0.0625, rel=1e-12)
     assert np.all(np.asarray(k1)[interior] > 0.0)
+
+
+@pytest.mark.physics_invariant
+def test_jax_branch_switch_stays_continuous_in_kappa():
+    """Sweep viscosity over transition in JAX compute_mlt.
+
+    Scaling switch Reynolds number by q preserves continuity in kappa_h
+    with maximum logarithmic step below 0.05 across the blend.
+    """
+    pytest.importorskip('jax')
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
+
+    n_basic = 41
+    r = np.linspace(3.48e6, 6.371e6, n_basic)
+    ml = np.maximum(np.minimum(r - r[0], r[-1] - r), 1.0)
+    mesh = MeshArrays(
+        d_dr_matrix=jnp.zeros((n_basic, n_basic - 1)),
+        quantity_matrix=jnp.zeros((n_basic, n_basic - 1)),
+        area=jnp.ones(n_basic),
+        volume=jnp.ones(n_basic),
+        radii_basic=jnp.asarray(r),
+        radii_stag=jnp.asarray(0.5 * (r[1:] + r[:-1])),
+        mixing_length=jnp.asarray(ml),
+        mixing_length_sq=jnp.asarray(ml**2),
+        mixing_length_cu=jnp.asarray(ml**3),
+        P_stag=jnp.zeros(n_basic - 1),
+        P_basic=jnp.zeros(n_basic),
+        dP_dr_basic=jnp.zeros(n_basic),
+        gravity=jnp.full(n_basic, 9.81),
+    )
+    ones = jnp.ones(n_basic)
+    grad = jnp.full(n_basic, -1e-6)
+    lvs = np.arange(6.0, 12.0, 0.02)
+
+    for top_slope, q_expected in [(0.5, 0.0625), (0.22, 0.22**4)]:
+        params = PhaseParams(
+            enabled=True,
+            kappah_floor=0.0,
+            stress_closure_mode='local',
+            yield_stress_c=1e30,
+            mlt_top_slope=top_slope,
+            mlt_bottom_slope=1.0,
+        )
+        k_vals = []
+        for lv in lvs:
+            visc = 10.0**lv
+            phase = PhaseProperties(
+                temperature=ones * 2000.0,
+                density=ones * 4000.0,
+                heat_capacity=ones * 1200.0,
+                thermal_expansivity=ones * 3e-5,
+                dTdPs=ones,
+                melt_fraction=ones * 0.0,
+                viscosity=ones * visc,
+                kinematic_viscosity=ones * visc / 4000.0,
+                thermal_conductivity=ones * 4.0,
+                latent_heat=ones,
+                capacitance=ones * 4000.0 * 2000.0,
+                eta_diff=ones * visc,
+                tau_y=ones * 1.0e40,
+                visc_solid_weight=ones * 1.0,
+            )
+            k_jax, _ = compute_mlt(grad, phase, mesh, params)
+            k_vals.append(float(np.asarray(k_jax)[TOP]))
+        k = np.array(k_vals)
+        step = np.abs(np.diff(np.log(k)))
+        assert step.max() < 0.05
+        assert np.all(k > 0.0)
+
+
+@pytest.mark.physics_invariant
+def test_numpy_lid_mode_unyielded_flux_continuity():
+    """Sweep viscosity over transition in NumPy lid mode.
+
+    Scaling unyielded switch Reynolds number by q preserves continuity in
+    F_conv_unyielded with maximum logarithmic step below 0.05.
+    """
+    lvs = np.arange(6.0, 12.0, 0.02)
+    for top_slope in (0.5, 0.22):
+        f_vals = []
+        for lv in lvs:
+            mesh = _make_mesh()
+            mesh.settings = type(
+                'Settings', (), {'mixing_length_profile': 'nearest_boundary'}
+            )()
+            rheo = SolidRheologyParams(
+                enabled=True,
+                yield_stress_c=1e30,
+                yield_stress_mu=0.0,
+                yield_stress_max=1e40,
+                stress_closure_mode='lid',
+                lid_base_mode='rheological',
+                mlt_top_slope=top_slope,
+                mlt_bottom_slope=1.0,
+            )
+
+            def phase(pressure):
+                ev = EntropyPhaseEvaluator(
+                    entropy_eos=None,
+                    gravitational_acceleration=_G,
+                    const_properties=True,
+                    const_rho=_RHO,
+                    const_Cp=_CP,
+                    const_alpha=_ALPHA,
+                    const_cond=_K,
+                    const_log10visc=lv,
+                    const_T_ref=_T_REF,
+                    const_S_ref=_S_REF,
+                    rheology=rheo,
+                )
+                ev.set_pressure(pressure)
+                return ev
+
+            evaluator = type('Evaluator', (), {})()
+            evaluator.mesh = mesh
+            state = EntropyState(
+                evaluator=evaluator,
+                phase_staggered=phase(mesh.staggered.pressure),
+                phase_basic=phase(mesh.basic.pressure),
+                conduction=True,
+                convection=True,
+            )
+            rs = np.asarray(mesh.staggered.radii).ravel()
+            state.update(_S_REF - 1e-6 * (rs - rs.mean()), 0.0)
+            assert state.F_conv_unyielded is not None
+            f_vals.append(float(state.F_conv_unyielded[TOP]))
+        f = np.array(f_vals)
+        step = np.abs(np.diff(np.log(f)))
+        assert step.max() < 0.05
+        assert np.all(f > 0.0)
+
+
+@pytest.mark.physics_invariant
+def test_jax_lid_mode_unyielded_flux_continuity():
+    """Sweep viscosity over transition in JAX lid mode.
+
+    Scaling unyielded switch Reynolds number by q preserves continuity in
+    F_conv_unyielded with maximum logarithmic step below 0.05.
+    """
+    pytest.importorskip('jax')
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
+
+    n_basic = 41
+    r = np.linspace(3.48e6, 6.371e6, n_basic)
+    ml = np.maximum(np.minimum(r - r[0], r[-1] - r), 1.0)
+    mesh = MeshArrays(
+        d_dr_matrix=jnp.zeros((n_basic, n_basic - 1)),
+        quantity_matrix=jnp.zeros((n_basic, n_basic - 1)),
+        area=jnp.ones(n_basic),
+        volume=jnp.ones(n_basic),
+        radii_basic=jnp.asarray(r),
+        radii_stag=jnp.asarray(0.5 * (r[1:] + r[:-1])),
+        mixing_length=jnp.asarray(ml),
+        mixing_length_sq=jnp.asarray(ml**2),
+        mixing_length_cu=jnp.asarray(ml**3),
+        P_stag=jnp.zeros(n_basic - 1),
+        P_basic=jnp.linspace(135e9, 0.0, n_basic),
+        dP_dr_basic=jnp.full(n_basic, -135e9 / (r[-1] - r[0])),
+        gravity=jnp.full(n_basic, 9.81),
+    )
+    ones = jnp.ones(n_basic)
+    grad = jnp.full(n_basic, -1e-6)
+    lvs = np.arange(6.0, 12.0, 0.02)
+
+    for top_slope in (0.5, 0.22):
+        params = PhaseParams(
+            enabled=True,
+            kappah_floor=0.0,
+            stress_closure_mode='lid',
+            lid_base_mode='rheological',
+            mlt_top_slope=top_slope,
+            mlt_bottom_slope=1.0,
+            conduction=1.0,
+            convection=1.0,
+        )
+        f_vals = []
+        for lv in lvs:
+            visc = 10.0**lv
+            phase = PhaseProperties(
+                temperature=ones * 2000.0,
+                density=ones * 4000.0,
+                heat_capacity=ones * 1200.0,
+                thermal_expansivity=ones * 3e-5,
+                dTdPs=ones * 1e-8,
+                melt_fraction=ones * 0.0,
+                viscosity=ones * visc,
+                kinematic_viscosity=ones * visc / 4000.0,
+                thermal_conductivity=ones * 4.0,
+                latent_heat=ones,
+                capacitance=ones * 4000.0 * 2000.0,
+                eta_diff=ones * visc,
+                tau_y=ones * 1.0e40,
+                visc_solid_weight=ones * 1.0,
+            )
+            _, _, f_unyielded = compute_mlt(grad, phase, mesh, params, return_unyielded=True)
+            f_vals.append(float(np.asarray(f_unyielded)[TOP]))
+        f = np.array(f_vals)
+        step = np.abs(np.diff(np.log(f)))
+        assert step.max() < 0.05
+        assert np.all(f > 0.0)

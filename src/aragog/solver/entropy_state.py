@@ -338,6 +338,7 @@ class EntropyState:
         # call inside the mushy band.
         self._cp_floor_warned: bool = False  # conduction Cp >= 100 J/kg/K
         self._cp_mlt_floor_warned: bool = False  # MLT Cp >= 1 J/kg/K
+        self._F_conv_unyielded: npt.NDArray | None = None
         self._dS_phase_stag_floor_warned: bool = False  # S_liq - S_sol >= 1 J/kg/K (staggered)
         self._dS_phase_basic_floor_warned: bool = False  # S_liq - S_sol >= 1 J/kg/K (basic)
 
@@ -722,6 +723,7 @@ class EntropyState:
                 )
                 conv_mask = np.where(self._is_convective, 1.0, 0.0)
                 F_conv_unyielded = rho_basic * T * kappa_h_unyielded * (-self._dSdr) * conv_mask
+                self._F_conv_unyielded = F_conv_unyielded
 
                 if self._dP_dr_basic is None:
                     self._ensure_basic_phase_boundary_cache()
@@ -1261,3 +1263,8 @@ class EntropyState:
     def lid_state(self) -> dict | None:
         """Stagnant lid diagnostic state dictionary, or None."""
         return self._lid_state
+
+    @property
+    def F_conv_unyielded(self) -> npt.NDArray | None:
+        """Unyielded convective flux profile [W/m^2] from the most recent update."""
+        return self._F_conv_unyielded

@@ -793,7 +793,8 @@ def compute_mlt(
     phase_basic: PhaseProperties,
     mesh: MeshArrays,
     params: PhaseParams,
-) -> tuple[jax.Array, jax.Array]:
+    return_unyielded: bool = False,
+) -> tuple[jax.Array, jax.Array] | tuple[jax.Array, jax.Array, jax.Array]:
     """Compute MLT eddy diffusivity from the entropy gradient.
 
     Parameters
@@ -1011,6 +1012,11 @@ def compute_mlt(
     # dSdr and the boundary extrapolation can over- or under-estimate it
     # relative to the interior value. Mirrors numpy entropy_state.py:533.
     kappa_h = kappa_h.at[0].set(kappa_h[1])
+
+    if return_unyielded:
+        if not (params.enabled and params.stress_closure_mode == 'lid'):
+            F_conv_unyielded = rho * T * kappa_h * (-dSdr) * conv_mask
+        return kappa_h, kappa_c, F_conv_unyielded
 
     return kappa_h, kappa_c
 

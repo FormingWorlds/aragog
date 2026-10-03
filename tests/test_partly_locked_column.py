@@ -12,7 +12,7 @@ from aragog.eos.entropy import EntropyEOS
 from aragog.solver.entropy_solver import EntropySolver
 from tools.verification.generate_golden_fixtures import (
     compute_eos_hash,
-    get_mixed_phase_mush_initial_entropy,
+    get_partly_locked_column_initial_entropy,
     get_sundials_version,
 )
 
@@ -35,14 +35,14 @@ def shared_eos():
 
 
 @pytest.mark.smoke
-def test_mixed_phase_mush_fixture(shared_eos):
-    """Verify mixed-phase mush fixture against recorded reference fixture."""
-    config_file = 'tests/configs/mixed_phase_mush.toml'
+def test_partly_locked_column_fixture(shared_eos):
+    """Verify partly locked column fixture against recorded reference fixture."""
+    config_file = 'tests/configs/partly_locked_column.toml'
     config = Config.from_file(config_file)
 
     solver = EntropySolver(config, entropy_eos=shared_eos)
     solver.initialize()
-    s0 = get_mixed_phase_mush_initial_entropy(solver.evaluator.mesh)
+    s0 = get_partly_locked_column_initial_entropy(solver.evaluator.mesh)
     solver.set_initial_entropy(s0)
 
     solver.solve()
@@ -51,14 +51,16 @@ def test_mixed_phase_mush_fixture(shared_eos):
     T = output.T_stag
 
     assert output.status == 0, f'Expected status 0, got {output.status}'
-    assert output.dt_actual == 1.0, f'Expected dt 1.0, got {output.dt_actual}'
+    assert output.dt_actual == 0.10, f'Expected dt 0.10, got {output.dt_actual}'
 
-    # Check mixed-phase active invariants: mantle in mushy region
+    # Check partly locked column active invariants: lid and mushy interior
     phi = output.phi_basic
-    assert np.all(phi >= 0.45), 'Expected entire mantle in mixed/mushy region'
-    assert np.sum(phi >= 0.5) >= 30, 'Expected at least 30 nodes with phi >= 0.5'
+    assert np.sum(phi < 0.4) >= 5, 'Expected upper cells in locked lid regime (phi < 0.4)'
+    assert np.sum(phi >= 0.4) >= 5, 'Expected lower cells in mushy regime (phi >= 0.4)'
 
-    fixture_path = os.path.join(os.path.dirname(__file__), 'reference', 'mixed_phase_mush.npz')
+    fixture_path = os.path.join(
+        os.path.dirname(__file__), 'reference', 'partly_locked_column.npz'
+    )
 
     with np.load(fixture_path) as ref:
         assert 'recorded_from_commit' in ref.files
@@ -91,18 +93,17 @@ def test_mixed_phase_mush_fixture(shared_eos):
             if 'lid_stress' in ref.files:
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
-            # Tolerance tier per Ruling 84/85: 10x max(1-ulp noise floor, measured spread).
-            # Measured 1-ulp noise floor: S 0.0396 J/kg/K, T 0.00452 K, flux 2099.4 W/m2, lid_stress 2.03e18 Pa.
-            # Measured Linux-Darwin spread: S 7.89e-4 J/kg/K, T 8.67e-5 K, flux 76.5 W/m2.
-            # Flux tolerance 2.1e4 W/m2 is 1.7 % of peak mantle flux (1.24e6 W/m2).
-            np.testing.assert_allclose(S, ref['S'], atol=0.4)
-            np.testing.assert_allclose(T, ref['T'], atol=0.05)
+            # Tolerance tier per Ruling 85: 10x max(1-ulp noise floor, measured spread).
+            # Measured 1-ulp noise floor: S 5.52e-5 J/kg/K, T 6.58e-6 K, flux 16.21 W/m2, lid_stress 8.06e14 Pa.
+            # Initial provisional atol set to 10x noise floor until Linux spread is measured.
+            np.testing.assert_allclose(S, ref['S'], atol=6.0e-4)
+            np.testing.assert_allclose(T, ref['T'], atol=7.0e-5)
             for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
                 if flux_key in ref.files:
                     np.testing.assert_allclose(
-                        getattr(output, flux_key), ref[flux_key], atol=2.1e4
+                        getattr(output, flux_key), ref[flux_key], atol=200.0
                     )
             if 'lid_stress' in ref.files:
                 np.testing.assert_allclose(
-                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=2.0e19
+                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=1.0e16
                 )
