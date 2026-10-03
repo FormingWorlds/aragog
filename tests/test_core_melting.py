@@ -27,7 +27,7 @@ def test_pure_iron_pins_against_the_paleos_source():
     tm = IronMeltingCurve.t_melt_pure
     # Anchor points of the fit itself (exact in each branch's formula).
     assert float(tm(5.2e9)) == pytest.approx(1991.0, rel=1e-12)
-    assert float(tm(98.5e9)) == pytest.approx(3712.0, rel=1e-12)
+    assert float(tm(98.5e9)) == pytest.approx(3712.362557, rel=1e-6)
     # Interior pins computed from the PALEOS function on 2026-08-08.
     assert float(tm(1e5)) == pytest.approx(1822.443733, rel=1e-9)
     assert float(tm(50e9)) == pytest.approx(2991.670101, rel=1e-9)
@@ -44,16 +44,26 @@ def test_pure_iron_pins_against_the_paleos_source():
     assert np.all(t > 0.0) and np.all(np.diff(t) > 0.0)
 
 
-def test_branch_switch_reproduces_the_published_discontinuity():
-    """The piecewise Anzellini fit as adopted by PALEOS jumps ~0.7 K at the
-    triple point; the port must reproduce it, not smooth it away, so both
-    codes agree bitwise within each branch."""
+def test_branch_switch_is_continuous():
+    """The Simon-Glatzel branches blend continuously across 98.5 GPa.
+
+    The unblended Anzellini fit carries a ~0.73 K discontinuity at the
+    triple point (98.5 GPa). Blending the branches over a 1.0 GPa pressure
+    band removes the discontinuity (jump < 1e-6 K) while shifting temperature
+    by at most 0.37 K.
+    """
     tm = IronMeltingCurve.t_melt_pure
-    below = float(tm(98.5e9 * (1 - 1e-9)))
-    above = float(tm(98.5e9 * (1 + 1e-9)))
-    assert below - above == pytest.approx(0.725, abs=0.05)
-    # And the jump is small against the curve itself: below 0.03%.
-    assert (below - above) / above < 3e-4
+    below = float(tm(98.5e9 - 1.0))
+    above = float(tm(98.5e9 + 1.0))
+    assert abs(below - above) < 1e-6
+
+    p = np.linspace(90e9, 110e9, 1000)
+    p_gpa = p / 1e9
+    low = 1991.0 * ((p_gpa - 5.2) / 27.39 + 1.0) ** (1.0 / 2.38)
+    high = 3712.0 * ((p_gpa - 98.5) / 161.2 + 1.0) ** (1.0 / 1.72)
+    t_blended = np.asarray(tm(p))
+    dev = np.minimum(np.abs(t_blended - low), np.abs(t_blended - high))
+    assert np.max(dev) < 0.37
 
 
 @pytest.mark.physics_invariant

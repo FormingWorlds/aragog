@@ -41,6 +41,21 @@ def prof():
 
 
 @pytest.fixture(scope='module')
+def exoplanet_prof():
+    """Zalmoxis exoplanet core structure spanning the 98.5 GPa triple point."""
+    from aragog.core.profiles import fit_gaussian_core_profiles
+
+    return fit_gaussian_core_profiles(
+        m_core=9.8365400909e23,
+        p_cen=184117858870.0,
+        r_cmb=2867012.4963,
+        p_cmb=54848888186.0,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+
+
+@pytest.fixture(scope='module')
 def alloy_budget(prof):
     """Alloy-curve budget in the partial-inner-core regime (onset ~4054 K)."""
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
@@ -246,13 +261,15 @@ def test_freeze_out_capacity_jump(prof):
 
 
 @pytest.mark.physics_invariant
-def test_latent_and_gravitational_energy_conservation(prof):
+@pytest.mark.parametrize('profile_fixture', ['prof', 'exoplanet_prof'])
+def test_latent_and_gravitational_energy_conservation(profile_fixture, request):
     """Integrals of latent and gravitational capacities over the core freezing
     must equal the exact geometric latent heat and spatial gravitational energy
     to relative error < 1e-6."""
+    core_profile = request.getfixturevalue(profile_fixture)
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     budget = CoreEnergyBudget(
-        prof,
+        core_profile,
         curve,
         ds_fusion=DS_FUSION,
         icn_width=10.0,
@@ -262,7 +279,7 @@ def test_latent_and_gravitational_energy_conservation(prof):
     )
     t_onset = float(budget.t_onset)
     t_freeze = float(budget.t_freeze)
-    gl_nodes, gl_weights = np.polynomial.legendre.leggauss(512)
+    gl_nodes, gl_weights = np.polynomial.legendre.leggauss(1024)
     t_nodes = 0.5 * (t_onset - t_freeze) * gl_nodes + 0.5 * (t_onset + t_freeze)
     t_weights = 0.5 * (t_onset - t_freeze) * gl_weights
 
@@ -276,25 +293,37 @@ def test_latent_and_gravitational_energy_conservation(prof):
     int_grav = float(np.sum(t_weights * grav_vals))
 
     # Analytical targets
-    m_core, _ = quad(lambda s: float(prof.density(s)) * 4.0 * np.pi * s**2, 0.0, prof.r_cmb)
+    m_core, _ = quad(
+        lambda s: float(core_profile.density(s)) * 4.0 * np.pi * s**2,
+        0.0,
+        core_profile.r_cmb,
+    )
     target_lat = budget.latent_heat * m_core
 
     def grav_density(r):
-        if r <= 0.0 or r >= prof.r_cmb:
+        if r <= 0.0 or r >= core_profile.r_cmb:
             return 0.0
         rho_psi, _ = quad(
-            lambda s: float(prof.density(s)) * float(prof.potential(s)) * 4.0 * np.pi * s**2,
+            lambda s: (
+                float(core_profile.density(s))
+                * float(core_profile.potential(s))
+                * 4.0
+                * np.pi
+                * s**2
+            ),
             r,
-            prof.r_cmb,
+            core_profile.r_cmb,
         )
-        mass_oc, _ = quad(lambda s: float(prof.density(s)) * 4.0 * np.pi * s**2, r, prof.r_cmb)
+        mass_oc, _ = quad(
+            lambda s: float(core_profile.density(s)) * 4.0 * np.pi * s**2, r, core_profile.r_cmb
+        )
         if mass_oc <= 0.0:
             return 0.0
-        potential_moment = rho_psi - mass_oc * float(prof.potential(r))
-        enrichment = 4.0 * np.pi * r**2 * float(prof.density(r)) * budget.c_light
+        potential_moment = rho_psi - mass_oc * float(core_profile.potential(r))
+        enrichment = 4.0 * np.pi * r**2 * float(core_profile.density(r)) * budget.c_light
         return potential_moment * budget.alpha_c * (enrichment / mass_oc)
 
-    target_grav, _ = quad(grav_density, 0.0, prof.r_cmb)
+    target_grav, _ = quad(grav_density, 0.0, core_profile.r_cmb)
 
     assert abs(int_lat - target_lat) / target_lat < 1e-6
     assert abs(int_grav - target_grav) / target_grav < 1e-6
