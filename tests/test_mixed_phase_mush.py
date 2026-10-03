@@ -87,14 +87,11 @@ def test_mixed_phase_mush_fixture(shared_eos):
             'recorded_platform': sys.platform,
         }
         exact_match = True
-        mismatches = []
         for ver_key, cur_ver in version_checks.items():
             if ver_key in ref.files and cur_ver is not None:
                 if str(ref[ver_key]) != str(cur_ver):
                     exact_match = False
-                    mismatches.append(
-                        f'{ver_key}: recorded {ref[ver_key]} vs current {cur_ver}'
-                    )
+                    break
 
         if exact_match:
             np.testing.assert_array_equal(S, ref['S'])

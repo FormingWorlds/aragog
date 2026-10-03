@@ -81,7 +81,6 @@ def compute_stagnant_lid_state(
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
 
-
     Returns
     -------
     dict[str, Any]

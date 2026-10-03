@@ -1034,6 +1034,10 @@ class SolverOutput:
           (``lid_thickness``, ``lid_base_temperature``, ``interior_temperature``,
           ``lid_stress``, ``theta``, ``lid_regime``) are omitted so all
           exported variables remain finite.
+        - When solid rheology is enabled with ``stress_closure_mode = 'local'``,
+          the profiles ``eta_diff_b`` and ``tau_y_b`` are exported, but the
+          six stagnant lid diagnostics are omitted because local mode does
+          not define a stagnant lid boundary layer.
         - Reading back: ``netCDF4.Dataset(path)`` or
           ``xarray.open_dataset(path)`` both work; the file follows the
           CF-1.8 attribute convention.

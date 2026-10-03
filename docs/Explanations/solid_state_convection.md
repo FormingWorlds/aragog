@@ -323,7 +323,6 @@ In partially molten regions ($0 < \phi < \phi_\text{rheo}$), Aragog evaluates vi
 2. **Material property smoothing:**
     The mixed viscosity is combined with the single-phase branch:
 
-
     $$
     \log_{10} \eta_\text{single} = \begin{cases}
     \log_{10} \eta_\text{liquid}, & \text{if } \phi > \phi_\text{visc\_single} \\

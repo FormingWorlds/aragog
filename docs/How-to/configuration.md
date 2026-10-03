@@ -241,7 +241,6 @@ End-member phase properties. Float values mean a constant; string values are fil
 | `mlt_top_slope` | float | Linear slope factor for mixing length near upper boundary. Default 0.22 |
 | `mlt_bottom_slope` | float | Linear slope factor for mixing length near lower boundary. Default 1.0 |
 
-
 In the production PROTEUS path the per-phase keys are not consumed for material properties; the EOS tables provide $\rho$, $c_p$, $\alpha$, $k$, and $T$ as functions of $(P, S)$. The values are kept for the standalone constant-properties path (see `const_properties` below).
 
 ### `[phase_mixed]`

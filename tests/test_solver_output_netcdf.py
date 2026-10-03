@@ -513,3 +513,43 @@ def test_to_netcdf_omits_lid_scalars_in_local_stress_closure_mode(tmp_path: Path
         assert 'energy_residual' in ds.variables, (
             'energy_residual must be present in local mode'
         )
+
+
+def test_write_netcdf_omits_inactive_rheology_from_solver_solve(tmp_path: Path) -> None:
+    """Guard: NetCDF writer omits non-finite rheology fields from real solve.
+
+    When solid-state rheology is disabled, a real solve produces a
+    SolverOutput where eta_diff_b and tau_y_b are all-NaN arrays, and the
+    six stagnant lid diagnostics are NaN. The writer must omit all eight
+    fields so the exported dataset contains only finite variables.
+    """
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_entropy_solver_const_properties_smoke import (
+        _build_const_properties_parameters,
+    )
+
+    params = _build_const_properties_parameters(n_nodes=10, end_time=1.0)
+    solver = EntropySolver(parameters=params, entropy_eos=None)
+    solver.initialize()
+    solver.set_initial_entropy(2900.0)
+    solver.solve()
+
+    f = tmp_path / 'real_solve_rheology_disabled.nc'
+    solver.write_netcdf(f)
+
+    with nc.Dataset(f, mode='r') as ds:
+        omitted_fields = [
+            'eta_diff_b',
+            'tau_y_b',
+            'lid_thickness',
+            'lid_base_temperature',
+            'interior_temperature',
+            'lid_stress',
+            'theta',
+            'lid_regime',
+        ]
+        for name in omitted_fields:
+            assert name not in ds.variables, (
+                f'Field {name!r} should be omitted when rheology is disabled'
+            )
+        assert 'energy_residual' in ds.variables

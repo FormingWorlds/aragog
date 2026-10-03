@@ -27,7 +27,9 @@ TOP = -3  # a node near the surface, where the top slope sets l_v
 BOTTOM = 3  # a node near the CMB, where the bottom slope sets l_v
 
 
-def _state(log10visc, top=1.0, bottom=1.0, enabled=True, profile='nearest_boundary'):
+def _state(
+    log10visc, top=1.0, bottom=1.0, enabled=True, profile='nearest_boundary', mode='local'
+):
     mesh = _make_mesh()
     mesh.settings = type('Settings', (), {'mixing_length_profile': profile})()
     rheo = SolidRheologyParams(
@@ -35,7 +37,7 @@ def _state(log10visc, top=1.0, bottom=1.0, enabled=True, profile='nearest_bounda
         yield_stress_c=1e30,
         yield_stress_mu=0.0,
         yield_stress_max=1e40,
-        stress_closure_mode='local',
+        stress_closure_mode=mode,
         mlt_top_slope=top,
         mlt_bottom_slope=bottom,
     )
@@ -273,54 +275,9 @@ def test_numpy_lid_mode_unyielded_flux_continuity():
     """
     lvs = np.arange(6.0, 12.0, 0.02)
     for top_slope in (0.5, 0.22):
-        f_vals = []
-        for lv in lvs:
-            mesh = _make_mesh()
-            mesh.settings = type(
-                'Settings', (), {'mixing_length_profile': 'nearest_boundary'}
-            )()
-            rheo = SolidRheologyParams(
-                enabled=True,
-                yield_stress_c=1e30,
-                yield_stress_mu=0.0,
-                yield_stress_max=1e40,
-                stress_closure_mode='lid',
-                lid_base_mode='rheological',
-                mlt_top_slope=top_slope,
-                mlt_bottom_slope=1.0,
-            )
-
-            def phase(pressure):
-                ev = EntropyPhaseEvaluator(
-                    entropy_eos=None,
-                    gravitational_acceleration=_G,
-                    const_properties=True,
-                    const_rho=_RHO,
-                    const_Cp=_CP,
-                    const_alpha=_ALPHA,
-                    const_cond=_K,
-                    const_log10visc=lv,
-                    const_T_ref=_T_REF,
-                    const_S_ref=_S_REF,
-                    rheology=rheo,
-                )
-                ev.set_pressure(pressure)
-                return ev
-
-            evaluator = type('Evaluator', (), {})()
-            evaluator.mesh = mesh
-            state = EntropyState(
-                evaluator=evaluator,
-                phase_staggered=phase(mesh.staggered.pressure),
-                phase_basic=phase(mesh.basic.pressure),
-                conduction=True,
-                convection=True,
-            )
-            rs = np.asarray(mesh.staggered.radii).ravel()
-            state.update(_S_REF - 1e-6 * (rs - rs.mean()), 0.0)
-            assert state.F_conv_unyielded is not None
-            f_vals.append(float(state.F_conv_unyielded[TOP]))
-        f = np.array(f_vals)
+        f = np.array(
+            [_state(lv, top=top_slope, mode='lid').F_conv_unyielded[TOP] for lv in lvs]
+        )
         step = np.abs(np.diff(np.log(f)))
         assert step.max() < 0.05
         assert np.all(f > 0.0)

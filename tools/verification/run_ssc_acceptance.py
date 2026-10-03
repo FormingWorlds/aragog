@@ -91,12 +91,7 @@ def cvode_counts(sol) -> tuple[int, int, int, float]:
     """
     info = sol['cvode_info']
     nst = int(sol.get('cvode_nst', info['NumSteps']))
-    min_step = float(
-        sol.get(
-            'cvode_min_last_step',
-            sol.get('cvode_last_step', info.get('MinLastStep', info.get('LastStep', np.nan))),
-        )
-    )
+    min_step = float(sol.get('cvode_min_last_step', sol['cvode_last_step']))
     return (
         nst,
         int(info['NumErrTestFails']),
