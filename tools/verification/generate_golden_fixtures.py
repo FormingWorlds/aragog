@@ -7,7 +7,7 @@ state SHA-256 hash and package versions.
 
 from __future__ import annotations
 
-import hashlib
+import importlib.metadata
 import os
 import subprocess
 import sys
@@ -20,12 +20,17 @@ if str(_SRC_DIR) not in sys.path:
 
 import jax  # noqa: E402
 import numpy as np  # noqa: E402
-import scikits.odes  # noqa: E402
 
 from aragog.cli import _derive_initial_entropy_from_config  # noqa: E402
 from aragog.config import Config  # noqa: E402
 from aragog.eos.entropy import EntropyEOS  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
+from tests.fixture_helpers import (  # noqa: E402
+    compute_eos_hash,
+    get_mixed_phase_mush_initial_entropy,
+    get_partly_locked_column_initial_entropy,
+    get_sundials_version,
+)
 
 
 def check_clean_git_tree() -> None:
@@ -37,28 +42,6 @@ def check_clean_git_tree() -> None:
         raise RuntimeError('Refusing to generate golden fixtures with a dirty git tree')
 
 
-def get_sundials_version() -> str:
-    """Return SUNDIALS version string from conda environment metadata."""
-    env_dir = Path(sys.executable).parents[1]
-    conda_meta = env_dir / 'conda-meta'
-    if conda_meta.exists():
-        for f in conda_meta.glob('sundials-*.json'):
-            parts = f.stem.split('-')
-            if len(parts) >= 2:
-                return parts[1]
-    return 'unknown'
-
-
-def compute_eos_hash(eos_dir: Path) -> str:
-    """Compute recursive SHA-256 hash over directory files using relative paths."""
-    h = hashlib.sha256()
-    for p in sorted(eos_dir.rglob('*')):
-        if p.is_file():
-            h.update(p.relative_to(eos_dir).as_posix().encode('utf-8'))
-            h.update(p.read_bytes())
-    return h.hexdigest()
-
-
 def get_git_commit() -> str:
     """Get current git commit hash."""
     try:
@@ -66,30 +49,6 @@ def get_git_commit() -> str:
         return out
     except Exception:
         return 'unknown'
-
-
-def get_mixed_phase_mush_initial_entropy(mesh) -> np.ndarray:
-    """Return physical non-uniform initial entropy profile for mixed_phase_mush fixture."""
-    r_stag = np.asarray(mesh.staggered.radii).ravel()
-    r_basic = np.asarray(mesh.basic.radii).ravel()
-    r_cmb = float(r_basic[0])
-    r_surf = float(r_basic[-1])
-    d = r_surf - r_cmb
-    return 5050.0 - 100.0 * (r_stag - r_cmb) / d
-
-
-def get_partly_locked_column_initial_entropy(mesh) -> np.ndarray:
-    """Return initial entropy profile for partly locked column fixture.
-
-    Upper part has melt fraction phi < phi_rheo (0.4) forming a locked lid,
-    while the interior remains in the mushy regime (phi >= 0.4).
-    """
-    r_stag = np.asarray(mesh.staggered.radii).ravel()
-    r_basic = np.asarray(mesh.basic.radii).ravel()
-    r_cmb = float(r_basic[0])
-    r_surf = float(r_basic[-1])
-    d = r_surf - r_cmb
-    return 5100.0 - 2600.0 * (r_stag - r_cmb) / d
 
 
 def record_fixture(
@@ -133,7 +92,11 @@ def record_fixture(
         'recorded_from_commit': commit,
         'recorded_numpy_version': np.__version__,
         'recorded_jax_version': getattr(jax, '__version__', 'unknown'),
-        'recorded_scikits_odes_version': getattr(scikits.odes, '__version__', 'unknown'),
+        'recorded_scikits_odes_version': (
+            importlib.metadata.version('scikits-odes-sundials')
+            if 'scikits-odes-sundials' in [d.name for d in importlib.metadata.distributions()]
+            else 'unknown'
+        ),
         'recorded_sundials_version': get_sundials_version(),
         'recorded_platform': sys.platform,
     }

@@ -7,17 +7,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytest.importorskip('scikits_odes_sundials')
+pytest.importorskip('jax')
+
 from aragog.config import Config
 from aragog.eos.entropy import EntropyEOS
 from aragog.solver.entropy_solver import EntropySolver
-from tools.verification.generate_golden_fixtures import (
+from tests.fixture_helpers import (
     compute_eos_hash,
     get_mixed_phase_mush_initial_entropy,
+    get_package_version,
     get_sundials_version,
 )
-
-jax = pytest.importorskip('jax')
-scikits_odes = pytest.importorskip('scikits.odes')
 
 _FWL_DATA = os.environ.get('FWL_DATA')
 _CANDIDATES = [
@@ -67,8 +68,8 @@ def test_mixed_phase_mush_fixture(shared_eos):
 
         version_checks = {
             'recorded_numpy_version': np.__version__,
-            'recorded_jax_version': getattr(jax, '__version__', None),
-            'recorded_scikits_odes_version': getattr(scikits_odes, '__version__', None),
+            'recorded_jax_version': get_package_version('jax'),
+            'recorded_scikits_odes_version': get_package_version('scikits-odes-sundials'),
             'recorded_sundials_version': get_sundials_version(),
             'recorded_platform': sys.platform,
         }
