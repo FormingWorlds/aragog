@@ -604,6 +604,17 @@ class Parameters:
                 f'(got {width}); PROTEUS passes 0.01'
             )
 
+        rheo = self.phase_solid.rheology
+        if rheo.enabled and (rheo.mlt_top_slope != 1.0 or rheo.mlt_bottom_slope != 1.0):
+            if self.mesh.mixing_length_profile != 'nearest_boundary':
+                raise ValueError(
+                    '[phase_solid] enabled = true with calibrated mixing length slopes '
+                    f'(mlt_top_slope = {rheo.mlt_top_slope}, mlt_bottom_slope = {rheo.mlt_bottom_slope}) '
+                    f"requires [mesh] mixing_length_profile = 'nearest_boundary' "
+                    f'(got {self.mesh.mixing_length_profile!r}); set mixing_length_profile = '
+                    "'nearest_boundary' or set both slopes to 1.0"
+                )
+
         # Validate ppm-scaled copies and write back only on success, so a rejected call leaves
         # the caller's objects unchanged.
         scaled = [replace(r, concentration=r.concentration * _PPM) for r in self.radionuclides]

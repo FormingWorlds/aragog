@@ -445,9 +445,11 @@ class EntropyState:
             return None
         if mesh.settings.mixing_length_profile != 'nearest_boundary':
             raise ValueError(
-                'mlt_top_slope and mlt_bottom_slope need '
-                "mixing_length_profile = 'nearest_boundary', got "
-                f'{mesh.settings.mixing_length_profile!r}'
+                '[phase_solid] enabled = true with calibrated mixing length slopes '
+                f'(mlt_top_slope = {rheo.mlt_top_slope}, mlt_bottom_slope = {rheo.mlt_bottom_slope}) '
+                f"requires [mesh] mixing_length_profile = 'nearest_boundary' "
+                f'(got {mesh.settings.mixing_length_profile!r}); set mixing_length_profile = '
+                "'nearest_boundary' or set both slopes to 1.0"
             )
 
         r = np.asarray(mesh.basic.radii).ravel()

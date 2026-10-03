@@ -581,3 +581,19 @@ def test_solver_parameters_rejects_bool_cvode_output_points(bad_value):
             rtol=1e-6,
             cvode_output_points=bad_value,
         )
+
+
+def test_calibrated_mlt_slopes_reject_constant_mixing_length_profile():
+    """Calibrated slopes with rheology enabled require nearest_boundary profile."""
+    kwargs = _build_minimal_parameters_kwargs()
+    kwargs['mesh'].mixing_length_profile = 'constant'
+    kwargs['phase_solid'].enabled = True
+    kwargs['phase_mixed'].matprop_smooth_width = 0.01
+
+    with pytest.raises(ValueError, match='calibrated mixing length slopes'):
+        Parameters(**kwargs)
+
+    kwargs['phase_solid'].mlt_top_slope = 1.0
+    kwargs['phase_solid'].mlt_bottom_slope = 1.0
+    p = Parameters(**kwargs)
+    assert p.mesh.mixing_length_profile == 'constant'
