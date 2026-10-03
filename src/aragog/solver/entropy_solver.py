@@ -4153,20 +4153,21 @@ class EntropySolver:
                 t_quad_list = []
                 weight_list = []
                 t_onset = float(budget.t_onset) if budget.t_onset is not None else None
+                t_freeze = float(budget.t_freeze) if budget.t_freeze is not None else 0.0
                 for ta, tb in zip(boundaries[:-1], boundaries[1:]):
-                    is_onset_sub = (
+                    # Generalized u-substitution removes the (T_onset - T)^(-1/2) cusp.
+                    is_nucleation_sub = (
                         t_onset is not None
                         and max(ta, tb) <= t_onset + 1e-6
-                        and min(abs(ta - t_onset), abs(tb - t_onset)) < 1e-6
+                        and min(ta, tb) >= t_freeze - 1e-6
                         and abs(ta - tb) > 1e-9
                     )
-                    if is_onset_sub:
-                        t_other = tb if abs(ta - t_onset) < 1e-6 else ta
-                        u_max = np.sqrt(max(0.0, t_onset - t_other))
-                        u_nodes = 0.5 * u_max * (1.0 + gl_nodes)
+                    if is_nucleation_sub:
+                        ua = np.sqrt(max(0.0, t_onset - ta))
+                        ub = np.sqrt(max(0.0, t_onset - tb))
+                        u_nodes = 0.5 * (ua + ub) + 0.5 * (ub - ua) * gl_nodes
                         t_sub = t_onset - u_nodes**2
-                        direction = np.sign(tb - ta)
-                        w_sub = direction * u_max * gl_weights * u_nodes
+                        w_sub = (ua - ub) * gl_weights * u_nodes
                     else:
                         h = 0.5 * (tb - ta)
                         m = 0.5 * (tb + ta)
