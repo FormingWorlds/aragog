@@ -46,10 +46,9 @@ needs_eos = pytest.mark.skipif(
     reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
 )
 
-# Module tier: the real-EOS parity and Jacobian solves are smoke; the
-# two factory-contract tests additionally carry the unit marker so the
-# PR lane still runs them (they need no external data).
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(300)]
+# Module tier: the real-EOS parity and Jacobian solves are smoke and slow;
+# the two factory-contract tests carry the unit marker so the PR lane still runs them.
+pytestmark = [pytest.mark.timeout(300)]
 
 
 def _tiny_budget(r_cmb: float = 3.48e6):
@@ -197,6 +196,8 @@ def _build_jax_pieces(solver):
     return args
 
 
+@pytest.mark.smoke
+@pytest.mark.slow
 @needs_eos
 def test_rhs_parity_with_numpy_on_driven_state():
     """The JAX RHS matches the numpy RHS component-by-component on the
@@ -270,6 +271,8 @@ def test_rhs_parity_with_numpy_on_driven_state():
     )
 
 
+@pytest.mark.smoke
+@pytest.mark.slow
 @needs_eos
 def test_jacobian_carries_boundary_couplings():
     """``jacrev`` through the RHS (budget custom-JVP included) yields a
@@ -323,6 +326,8 @@ def test_jacobian_carries_boundary_couplings():
     assert abs(J[0, n_stag]) > 0.0
 
 
+@pytest.mark.smoke
+@pytest.mark.slow
 @needs_eos
 def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
     """The stratified reduction reaches the coupled RHS on both paths:
