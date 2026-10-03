@@ -12,9 +12,11 @@ These tests pin calibration constants and boundary condition behaviors:
 
 from __future__ import annotations
 
-import jax.numpy as jnp
 import numpy as np
 import pytest
+
+pytest.importorskip('jax')
+import jax.numpy as jnp
 
 from aragog.cmb_boundary_layer import RA_C
 from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
@@ -58,7 +60,7 @@ def test_lid_contrast_coefficient_scaling():
 
 
 def test_interior_flux_fraction_activation_threshold():
-    """Verify interior_flux_fraction threshold gates convective activity."""
+    """Verify interior_flux_fraction threshold determines convective activity."""
     params = SolidRheologyParams(enabled=True)
     assert params.interior_flux_fraction == pytest.approx(0.05, rel=1e-12)
 
