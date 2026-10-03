@@ -1220,6 +1220,27 @@ class TestBowerCoreBC:
         solver.set_initial_entropy(S_init)
         assert solver._S0[-1] == pytest.approx(7500.0)
 
+    def test_bower2018_no_entropy_eos_with_initial_core_temperature(self):
+        """Initial core temperature override succeeds without an entropy EOS.
+
+        When initial core temperature is set explicitly on bower2018, the
+        solver does not evaluate the basal EOS temperature.
+        """
+        from aragog.solver.entropy_solver import EntropySolver
+
+        solver = EntropySolver.__new__(EntropySolver)
+        solver.entropy_eos = None
+        solver.parameters = None
+        solver.evaluator = None
+        solver._P_stag_flat = np.linspace(135e9, 1e5, 30)
+        solver._n_stag = 30
+        solver._core_bc = 'bower2018'
+
+        solver.set_initial_core_temperature(4000.0)
+        S_init = np.full(30, 2900.0)
+        solver.set_initial_entropy(S_init)
+        assert solver._S0[-1] == pytest.approx(4000.0)
+
 
 def _make_bare_solver(
     entropy_eos,
@@ -1246,6 +1267,7 @@ def _make_bare_solver(
     solver.entropy_eos = entropy_eos
     solver.parameters = None
     solver._P_stag_flat = np.linspace(P_cmb, P_surf, n_stag)
+    solver._P_basic_flat = np.linspace(P_cmb, P_surf, n_stag + 1)
     solver._n_stag = n_stag
     solver._core_bc = core_bc
 
@@ -1263,6 +1285,9 @@ def _make_bare_solver(
     r_basic = np.linspace(R_cmb, R_surf, n_stag + 1)
     mesh.basic.radii = r_basic
     mesh.staggered.radii = 0.5 * (r_basic[:-1] + r_basic[1:])
+    mesh.quantity_at_basic_nodes = lambda arr: np.interp(
+        mesh.basic.radii, mesh.staggered.radii, arr
+    )
     evaluator = _MeshStub()
     evaluator.mesh = mesh
     solver.evaluator = evaluator

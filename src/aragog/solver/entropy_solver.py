@@ -2026,24 +2026,6 @@ class EntropySolver:
             slots = EXTRA_STATE_SLOTS[core_bc]
             n_extra = len(slots)
             T_core_slot = n_stag + slots.index('T_core')
-            P_cmb = float(self._P_basic_flat[0])
-            dSdr_cmb_init = None
-            if 'dSdr_cmb' in slots:
-                dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag, n_extra)
-                r_basic = np.asarray(self.evaluator.mesh.basic.radii).ravel()
-                r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
-                dr_offset = r_basic[0] - r_stag_0
-                S_basic_cmb = float(S_arr[0]) + float(dSdr_cmb_init) * dr_offset
-            else:
-                mesh = self.evaluator.mesh
-                S_basic_cmb = float(mesh.quantity_at_basic_nodes(S_arr)[0])
-            T_bottom_eos = None
-            if self.entropy_eos is not None:
-                T_bottom_eos = float(
-                    np.asarray(
-                        self.entropy_eos.temperature(np.array([P_cmb]), np.array([S_basic_cmb]))
-                    ).item()
-                )
             T_core_init = getattr(self, '_T_core_init', None)
             if T_core_init is None:
                 prev_sol = getattr(self, '_solution', None)
@@ -2054,6 +2036,53 @@ class EntropySolver:
                     and prev_sol.y.shape[0] == n_stag + n_extra
                 ):
                     T_core_init = float(prev_sol.y[T_core_slot, -1])
+
+            dSdr_cmb_init = None
+            if 'dSdr_cmb' in slots:
+                dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag, n_extra)
+
+            T_bottom_eos = None
+            needs_eos = (T_core_init is None) or (core_bc == 'core_module')
+            if needs_eos and self.entropy_eos is not None:
+                if 'dSdr_cmb' in slots:
+                    P_cmb = (
+                        float(self._P_basic_flat[0])
+                        if hasattr(self, '_P_basic_flat') and len(self._P_basic_flat) > 0
+                        else float(self._P_stag_flat[0])
+                    )
+                    mesh = (
+                        getattr(self.evaluator, 'mesh', None)
+                        if self.evaluator is not None
+                        else None
+                    )
+                    if (
+                        mesh is not None
+                        and hasattr(mesh, 'basic')
+                        and hasattr(mesh.basic, 'radii')
+                    ):
+                        r_basic = np.asarray(mesh.basic.radii).ravel()
+                        r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
+                        dr_offset = r_basic[0] - r_stag_0
+                    else:
+                        dr_offset = 0.0
+                    S_basic_cmb = float(S_arr[0]) + float(dSdr_cmb_init) * dr_offset
+                    T_bottom_eos = float(
+                        np.asarray(
+                            self.entropy_eos.temperature(
+                                np.array([P_cmb]), np.array([S_basic_cmb])
+                            )
+                        ).item()
+                    )
+                else:
+                    P_bottom = float(self._P_stag_flat[0])
+                    T_bottom_eos = float(
+                        np.asarray(
+                            self.entropy_eos.temperature(
+                                np.array([P_bottom]), np.array([S_arr[0]])
+                            )
+                        ).item()
+                    )
+
             if T_core_init is None:
                 T_core_init = T_bottom_eos if T_bottom_eos is not None else float(S_arr[0])
             if (
