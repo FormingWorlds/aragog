@@ -18,7 +18,7 @@ from aragog.core.budget import CoreEnergyBudget
 from aragog.core.entropy import CoreEntropyBudget
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.module import CoreModule, build_core_module_budget
-from aragog.core.profiles import GaussianCoreProfiles
+from aragog.core.profiles import GaussianCoreProfiles, fit_gaussian_core_profiles
 from aragog.core.regime import REGIME_NAMES, crystallization_regime, regime_name
 from aragog.core.stratification import adiabatic_ratio, stratification_depth
 
@@ -27,6 +27,7 @@ __all__ = [
     'CoreEntropyBudget',
     'CoreModule',
     'GaussianCoreProfiles',
+    'fit_gaussian_core_profiles',
     'IronMeltingCurve',
     'QuadraticMeltingCurve',
     'build_core_module_budget',

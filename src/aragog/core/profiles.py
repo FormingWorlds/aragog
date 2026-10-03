@@ -25,6 +25,7 @@ import jax.numpy as jnp
 import numpy as _np
 from jax.scipy.special import erf
 from scipy import constants as sp_constants
+from scipy.optimize import root_scalar
 
 jax.config.update('jax_enable_x64', True)
 
@@ -215,3 +216,197 @@ class GaussianCoreProfiles:
     def t_cen(self, t_cmb):
         """Centre temperature [K] on the adiabat anchored at ``t_cmb``."""
         return self.adiabat(0.0, t_cmb)
+
+    @classmethod
+    def from_structure(
+        cls,
+        *,
+        m_core: float,
+        p_cen: float,
+        r_cmb: float,
+        p_cmb: float,
+        alpha: float,
+        c_p: float,
+        pressure_mode: str = 'quadrature',
+    ) -> GaussianCoreProfiles:
+        """Fit central density and length scale to core mass and central pressure.
+
+        Parameters
+        ----------
+        m_core : float
+            Total core mass [kg], positive.
+        p_cen : float
+            Central pressure [Pa], must exceed ``p_cmb``.
+        r_cmb : float
+            Core-mantle boundary radius [m], positive.
+        p_cmb : float
+            Pressure at the core-mantle boundary [Pa], positive.
+        alpha : float
+            Thermal expansion coefficient [K-1], positive.
+        c_p : float
+            Isobaric specific heat capacity [J kg-1 K-1], positive.
+        pressure_mode : str, optional
+            Pressure mode: ``'quadrature'`` (default) or ``'labrosse'``.
+
+        Returns
+        -------
+        GaussianCoreProfiles
+            Profile instance with fitted ``rho_cen`` and ``length_scale``.
+
+        Raises
+        ------
+        ValueError
+            If parameters are non-positive, if ``p_cen <= p_cmb``, if the
+            central pressure is below the incompressible sphere limit, or if the
+            root solve does not converge within the Gaussian family regime.
+        """
+        params = {
+            'm_core': m_core,
+            'p_cen': p_cen,
+            'r_cmb': r_cmb,
+            'p_cmb': p_cmb,
+            'alpha': alpha,
+            'c_p': c_p,
+        }
+        for name, value in params.items():
+            if not float(value) > 0.0:
+                raise ValueError(f'{name} must be positive, got {value}')
+
+        m_core = float(m_core)
+        p_cen = float(p_cen)
+        r_cmb = float(r_cmb)
+        p_cmb = float(p_cmb)
+        alpha = float(alpha)
+        c_p = float(c_p)
+
+        if p_cen <= p_cmb:
+            raise ValueError(f'p_cen ({p_cen:.4e} Pa) must exceed p_cmb ({p_cmb:.4e} Pa)')
+
+        # Uniform density sphere has lowest central pressure for given mass.
+        vol = 4.0 / 3.0 * _np.pi * r_cmb**3
+        rho_avg = m_core / vol
+        p_incomp = p_cmb + (2.0 / 3.0) * _np.pi * G * rho_avg**2 * r_cmb**2
+        if p_cen < p_incomp:
+            raise ValueError(
+                f'p_cen ({p_cen:.4e} Pa) is below the incompressible central pressure '
+                f'({p_incomp:.4e} Pa)'
+            )
+
+        def residual(length: float) -> float:
+            p_unit = cls(
+                rho_cen=1.0,
+                length_scale=length,
+                r_cmb=r_cmb,
+                p_cmb=p_cmb,
+                alpha=alpha,
+                c_p=c_p,
+                pressure_mode=pressure_mode,
+            )
+            i_m = float(p_unit.enclosed_mass(r_cmb))
+            rho_c = m_core / i_m
+            p_cand = cls(
+                rho_cen=rho_c,
+                length_scale=length,
+                r_cmb=r_cmb,
+                p_cmb=p_cmb,
+                alpha=alpha,
+                c_p=c_p,
+                pressure_mode=pressure_mode,
+            )
+            return float(p_cand.pressure(0.0)) - p_cen
+
+        # Enforce the Gaussian family validity regime (r_cmb < 3 * length_scale).
+        l_min = r_cmb / 2.999
+        l_max = 100.0 * r_cmb
+
+        res_min = residual(l_min)
+        res_max = residual(l_max)
+        if res_min < 0.0:
+            p_max = float(p_cen + res_min)
+            raise ValueError(
+                f'p_cen ({p_cen:.4e} Pa) exceeds maximum central pressure ({p_max:.4e} Pa) '
+                'achievable within valid Gaussian regime (r_cmb < 3 L)'
+            )
+        if res_min * res_max > 0.0:
+            raise ValueError(
+                f'Gaussian core profile fit did not bracket a root for m_core={m_core:.4e} kg, '
+                f'p_cen={p_cen:.4e} Pa (residual span [{res_min:.4e}, {res_max:.4e}])'
+            )
+
+        sol = root_scalar(
+            residual,
+            bracket=[l_min, l_max],
+            method='brentq',
+            xtol=1e-8,
+            rtol=1e-10,
+        )
+        if not sol.converged:
+            raise ValueError(
+                'Gaussian core profile fit to M_core and P_cen did not converge: ' + str(sol)
+            )
+
+        l_fit = float(sol.root)
+        p_unit = cls(
+            rho_cen=1.0,
+            length_scale=l_fit,
+            r_cmb=r_cmb,
+            p_cmb=p_cmb,
+            alpha=alpha,
+            c_p=c_p,
+            pressure_mode=pressure_mode,
+        )
+        rho_fit = float(m_core / float(p_unit.enclosed_mass(r_cmb)))
+        return cls(
+            rho_cen=rho_fit,
+            length_scale=l_fit,
+            r_cmb=r_cmb,
+            p_cmb=p_cmb,
+            alpha=alpha,
+            c_p=c_p,
+            pressure_mode=pressure_mode,
+        )
+
+
+def fit_gaussian_core_profiles(
+    *,
+    m_core: float,
+    p_cen: float,
+    r_cmb: float,
+    p_cmb: float,
+    alpha: float,
+    c_p: float,
+    pressure_mode: str = 'quadrature',
+) -> GaussianCoreProfiles:
+    """Fit a :class:`GaussianCoreProfiles` instance to core mass and central pressure.
+
+    Parameters
+    ----------
+    m_core : float
+        Total core mass [kg], positive.
+    p_cen : float
+        Central pressure [Pa], must exceed ``p_cmb``.
+    r_cmb : float
+        Core-mantle boundary radius [m], positive.
+    p_cmb : float
+        Pressure at the core-mantle boundary [Pa], positive.
+    alpha : float
+        Thermal expansion coefficient [K-1], positive.
+    c_p : float
+        Isobaric specific heat capacity [J kg-1 K-1], positive.
+    pressure_mode : str, optional
+        Pressure mode: ``'quadrature'`` (default) or ``'labrosse'``.
+
+    Returns
+    -------
+    GaussianCoreProfiles
+        Profile instance with fitted ``rho_cen`` and ``length_scale``.
+    """
+    return GaussianCoreProfiles.from_structure(
+        m_core=m_core,
+        p_cen=p_cen,
+        r_cmb=r_cmb,
+        p_cmb=p_cmb,
+        alpha=alpha,
+        c_p=c_p,
+        pressure_mode=pressure_mode,
+    )

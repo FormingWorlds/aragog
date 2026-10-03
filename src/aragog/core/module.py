@@ -38,20 +38,30 @@ _FACTORY_DEFAULTS = {
 
 
 def build_core_module_budget(
-    params: dict, *, r_cmb: float, p_cmb_fallback: float
+    params: dict,
+    *,
+    r_cmb: float,
+    p_cmb_fallback: float,
+    m_core: float | None = None,
+    p_cen: float | None = None,
 ) -> CoreEnergyBudget:
     """Build a :class:`CoreEnergyBudget` from a flat config dict.
 
     Recognised keys: profile parameters (``rho_cen``, ``length_scale``,
-    ``p_cmb``, ``alpha``, ``c_p``, ``pressure_mode``), the melting-curve
-    selector ``melting_curve`` (``'iron'`` with ``light_element_fraction``
-    and ``depression``, or ``'quadratic'`` with ``t_m0``/``t_m1``/``t_m2``),
+    ``p_cmb``, ``alpha``, ``c_p``, ``pressure_mode``, ``m_core``,
+    ``p_cen``, ``fit_profile``), the melting-curve selector
+    ``melting_curve`` (``'iron'`` with ``light_element_fraction`` and
+    ``depression``, or ``'quadratic'`` with ``t_m0``/``t_m1``/``t_m2``),
     and the budget parameters (``ds_fusion``, ``icn_width``,
     ``latent_heat``, ``alpha_c``, ``c_light``, ``capacity_mode``,
     ``legacy_rho_core``, ``legacy_tfac``, ``stratification``,
     ``k_core``). The CMB radius comes from the caller (the solver's
     mesh), never from the dict, and ``p_cmb`` falls back to the
     caller's value when absent.
+
+    When both ``m_core`` and ``p_cen`` are provided (and ``fit_profile`` is
+    not ``False``), ``rho_cen`` and ``length_scale`` are fitted to the
+    structure constraints via :meth:`GaussianCoreProfiles.from_structure`.
 
     Raises
     ------
@@ -60,7 +70,17 @@ def build_core_module_budget(
         an unknown melting-curve selector or unrecognised key.
     """
     params = {**_FACTORY_DEFAULTS, **params}
-    profile_keys = {'rho_cen', 'length_scale', 'p_cmb', 'alpha', 'c_p', 'pressure_mode'}
+    profile_keys = {
+        'rho_cen',
+        'length_scale',
+        'p_cmb',
+        'alpha',
+        'c_p',
+        'pressure_mode',
+        'm_core',
+        'p_cen',
+        'fit_profile',
+    }
     curve_kind = params.pop('melting_curve', 'iron')
     curve_keys = {
         'iron': {'light_element_fraction', 'depression'},
@@ -88,10 +108,32 @@ def build_core_module_budget(
     if unknown:
         raise ValueError(f'unrecognised core_module_params keys: {sorted(unknown)}')
 
+    if m_core is None:
+        m_core = params.pop('m_core', None)
+    else:
+        params.pop('m_core', None)
+    if p_cen is None:
+        p_cen = params.pop('p_cen', None)
+    else:
+        params.pop('p_cen', None)
+    fit_profile = params.pop('fit_profile', None)
+
     profile_kwargs = {k: params[k] for k in profile_keys if k in params}
     profile_kwargs['r_cmb'] = r_cmb
     profile_kwargs.setdefault('p_cmb', p_cmb_fallback)
-    profiles = GaussianCoreProfiles(**profile_kwargs)
+
+    if fit_profile is not False and m_core is not None and p_cen is not None:
+        profiles = GaussianCoreProfiles.from_structure(
+            m_core=float(m_core),
+            p_cen=float(p_cen),
+            r_cmb=r_cmb,
+            p_cmb=float(profile_kwargs['p_cmb']),
+            alpha=float(profile_kwargs['alpha']),
+            c_p=float(profile_kwargs['c_p']),
+            pressure_mode=profile_kwargs.get('pressure_mode', 'quadrature'),
+        )
+    else:
+        profiles = GaussianCoreProfiles(**profile_kwargs)
 
     curve_kwargs = {k: params[k] for k in curve_keys[curve_kind] if k in params}
     if curve_kind == 'iron':

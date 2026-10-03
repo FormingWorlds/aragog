@@ -180,3 +180,31 @@ def test_factory_geometry_override_and_error_contract():
         CoreModule(_alloy_budget(), t_cmb=4000.0, n_substeps=0)
     with pytest.raises(ValueError, match='dt'):
         CoreModule(_alloy_budget(), t_cmb=4000.0).step(1e12, 0.0)
+
+
+def test_build_core_module_budget_fits_profile_from_structure():
+    """The factory fits the Gaussian profile when m_core and p_cen are provided."""
+    params = dict(
+        alpha=1.35e-5,
+        c_p=840.0,
+        melting_curve='iron',
+        light_element_fraction=0.1,
+        depression=1.2,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        m_core=1.9268511797e24,
+        p_cen=3.5758588038e11,
+    )
+    budget = build_core_module_budget(params, r_cmb=3480e3, p_cmb_fallback=136e9)
+    assert budget.profiles.rho_cen == pytest.approx(12500.0, rel=1e-6)
+    assert budget.profiles.length_scale == pytest.approx(7272e3, rel=1e-6)
+    assert float(budget.profiles.enclosed_mass(3480e3)) == pytest.approx(
+        1.9268511797e24, rel=1e-6
+    )
+    assert float(budget.profiles.pressure(0.0)) == pytest.approx(3.5758588038e11, rel=1e-6)
+
+    # Disabling fit_profile uses explicit rho_cen and length_scale
+    explicit = dict(params, fit_profile=False, rho_cen=11000.0, length_scale=8000e3)
+    budget_explicit = build_core_module_budget(explicit, r_cmb=3480e3, p_cmb_fallback=136e9)
+    assert budget_explicit.profiles.rho_cen == pytest.approx(11000.0)
+    assert budget_explicit.profiles.length_scale == pytest.approx(8000e3)

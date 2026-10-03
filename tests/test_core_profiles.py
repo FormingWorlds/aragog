@@ -17,7 +17,7 @@ import pytest
 from scipy import constants as sp_constants
 from scipy.integrate import quad
 
-from aragog.core import GaussianCoreProfiles
+from aragog.core import GaussianCoreProfiles, fit_gaussian_core_profiles
 
 pytestmark = pytest.mark.unit
 
@@ -175,3 +175,100 @@ def test_constructor_error_contract_and_jit_compatibility():
         np.asarray(prof.adiabat(r, 4000.0)),
         rtol=1e-12,
     )
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('mode', ['quadrature', 'labrosse'])
+def test_fit_gaussian_core_profiles_recovers_earth_defaults(mode):
+    """The root solve reproduces the Earth parameters and constraints to 1e-6."""
+    ref = GaussianCoreProfiles(**EARTH, pressure_mode=mode)
+    m_core = float(ref.enclosed_mass(ref.r_cmb))
+    p_cen = float(ref.pressure(0.0))
+
+    fitted = fit_gaussian_core_profiles(
+        m_core=m_core,
+        p_cen=p_cen,
+        r_cmb=ref.r_cmb,
+        p_cmb=ref.p_cmb,
+        alpha=ref.alpha,
+        c_p=ref.c_p,
+        pressure_mode=mode,
+    )
+    assert fitted.rho_cen == pytest.approx(EARTH['rho_cen'], rel=1e-6)
+    assert fitted.length_scale == pytest.approx(EARTH['length_scale'], rel=1e-6)
+    assert float(fitted.enclosed_mass(fitted.r_cmb)) == pytest.approx(m_core, rel=1e-6)
+    assert float(fitted.pressure(0.0)) == pytest.approx(p_cen, rel=1e-6)
+
+
+@pytest.mark.physics_invariant
+def test_fit_gaussian_core_profiles_reproduces_structure_constraints_on_exoplanet():
+    """Fitted profiles match arbitrary planetary core masses and pressures to 1e-6."""
+    m_target = 4.5e24
+    p_target = 850e9
+    r_cmb = 4200e3
+    p_cmb = 210e9
+
+    fitted = fit_gaussian_core_profiles(
+        m_core=m_target,
+        p_cen=p_target,
+        r_cmb=r_cmb,
+        p_cmb=p_cmb,
+        alpha=1.2e-5,
+        c_p=800.0,
+    )
+    assert float(fitted.enclosed_mass(r_cmb)) == pytest.approx(m_target, rel=1e-6)
+    assert float(fitted.pressure(0.0)) == pytest.approx(p_target, rel=1e-6)
+
+
+def test_fit_gaussian_core_profiles_error_contract_and_non_convergence(recwarn):
+    """The solver raises ValueError without warnings when parameters are invalid or unbracketed."""
+    ref = GaussianCoreProfiles(**EARTH)
+    m_core = float(ref.enclosed_mass(ref.r_cmb))
+    p_cen = float(ref.pressure(0.0))
+
+    # Central pressure at or below CMB pressure
+    with pytest.raises(ValueError, match='must exceed p_cmb'):
+        fit_gaussian_core_profiles(
+            m_core=m_core,
+            p_cen=ref.p_cmb,
+            r_cmb=ref.r_cmb,
+            p_cmb=ref.p_cmb,
+            alpha=ref.alpha,
+            c_p=ref.c_p,
+        )
+
+    # Central pressure below uniform density incompressible sphere
+    with pytest.raises(ValueError, match='incompressible central pressure'):
+        fit_gaussian_core_profiles(
+            m_core=m_core,
+            p_cen=ref.p_cmb + 1e6,
+            r_cmb=ref.r_cmb,
+            p_cmb=ref.p_cmb,
+            alpha=ref.alpha,
+            c_p=ref.c_p,
+        )
+
+    # Central pressure exceeding 3 length-scale limit
+    with pytest.raises(ValueError, match='valid Gaussian regime'):
+        fit_gaussian_core_profiles(
+            m_core=m_core,
+            p_cen=p_cen * 20.0,
+            r_cmb=ref.r_cmb,
+            p_cmb=ref.p_cmb,
+            alpha=ref.alpha,
+            c_p=ref.c_p,
+        )
+
+    # Non-positive arguments
+    with pytest.raises(ValueError, match='must be positive'):
+        fit_gaussian_core_profiles(
+            m_core=-1.0,
+            p_cen=p_cen,
+            r_cmb=ref.r_cmb,
+            p_cmb=ref.p_cmb,
+            alpha=ref.alpha,
+            c_p=ref.c_p,
+        )
+
+    # Strict contract: no warnings emitted, raise only
+    assert len(recwarn) == 0
