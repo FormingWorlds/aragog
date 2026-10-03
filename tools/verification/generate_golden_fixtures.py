@@ -10,14 +10,27 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 from pathlib import Path
 
-import numpy as np
+# Ensure repository src is first on sys.path before importing aragog
+_SRC_DIR = Path(__file__).resolve().parents[2] / 'src'
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
-from aragog.cli import _derive_initial_entropy_from_config
-from aragog.config import Config
-from aragog.eos.entropy import EntropyEOS
-from aragog.solver.entropy_solver import EntropySolver
+import numpy as np  # noqa: E402
+
+from aragog.cli import _derive_initial_entropy_from_config  # noqa: E402
+from aragog.config import Config  # noqa: E402
+from aragog.eos.entropy import EntropyEOS  # noqa: E402
+from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
+
+
+def check_clean_git_tree() -> None:
+    """Refuse to record fixtures if working tree is dirty."""
+    diff = subprocess.check_output(['git', 'status', '--porcelain'], text=True).strip()
+    if diff:
+        raise RuntimeError('Refusing to generate golden fixtures with a dirty git tree')
 
 
 def compute_eos_hash(eos_dir: Path) -> str:
@@ -135,6 +148,7 @@ def record_rheology_disabled_mixed(eos: EntropyEOS, eos_hash: str, commit: str) 
 
 
 def main() -> None:
+    check_clean_git_tree()
     fwl_data = os.environ.get('FWL_DATA')
     candidates = [
         os.environ.get('ARAGOG_TEST_EOS_DIR'),

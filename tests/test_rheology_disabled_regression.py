@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -17,6 +18,16 @@ _CANDIDATES = [
     f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
 ]
 EOS_DIR = next((Path(p) for p in _CANDIDATES if p and Path(p).exists()), None)
+
+
+def compute_eos_hash(eos_dir: Path) -> str:
+    """Compute recursive SHA-256 hash over directory files."""
+    h = hashlib.sha256()
+    for p in sorted(eos_dir.rglob('*')):
+        if p.is_file():
+            h.update(p.name.encode('utf-8'))
+            h.update(p.read_bytes())
+    return h.hexdigest()
 
 
 @pytest.fixture(scope='module')
@@ -62,13 +73,10 @@ def test_rheology_disabled_regression(config_file, suffix, shared_eos):
     )
 
     with np.load(fixture_path) as ref:
-        # Fixtures are recorded from aragog main, so equality here is identity with main.
+        # Reference fixtures record the expected regression state for the disabled rheology path.
         assert 'recorded_from_commit' in ref.files
         assert 'eos_hash' in ref.files
-        assert (
-            str(ref['eos_hash'])
-            == 'e4b9b50ef5b3519761a6b0a67409918b02c611b662716cf6c97a7491c0907d41'
-        )
+        assert str(ref['eos_hash']) == compute_eos_hash(EOS_DIR)
         np.testing.assert_array_equal(S, ref['S'])
         np.testing.assert_array_equal(T, ref['T'])
 
