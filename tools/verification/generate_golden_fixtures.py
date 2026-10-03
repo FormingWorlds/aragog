@@ -13,10 +13,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Ensure repository src is first on sys.path before importing aragog
-_SRC_DIR = Path(__file__).resolve().parents[2] / 'src'
+# Ensure repository src and root are on sys.path before importing aragog and tests
+_REPO_DIR = Path(__file__).resolve().parents[2]
+_SRC_DIR = _REPO_DIR / 'src'
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
+if str(_REPO_DIR) not in sys.path:
+    sys.path.insert(1, str(_REPO_DIR))
 
 import jax  # noqa: E402
 import numpy as np  # noqa: E402
