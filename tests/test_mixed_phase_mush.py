@@ -37,7 +37,21 @@ def shared_eos():
 
 @pytest.mark.smoke
 def test_mixed_phase_mush_fixture(shared_eos):
-    """Verify mixed-phase mush fixture against recorded reference fixture."""
+    """Verify mixed-phase mush fixture against recorded reference fixture.
+
+    Parameters
+    ----------
+    shared_eos : EntropyEOS
+        Shared equation of state evaluator.
+
+    Notes
+    -----
+    Tolerances are calibrated to 10x max(1-ulp perturbation noise floor, measured spread):
+    - S: atol = 0.4 J kg^-1 K^-1 (< 0.01% of mantle entropy ~3500 J/kg/K)
+    - T: atol = 0.05 K (< 0.003% of mantle temperature ~2000 K)
+    - Flux: atol = 2.1e4 W m^-2 (~1.7% of peak mantle flux ~1.24e6 W/m^2)
+    - Lid stress: atol = 2.0e19 Pa
+    """
     config_file = 'tests/configs/mixed_phase_mush.toml'
     config = Config.from_file(config_file)
 
@@ -92,7 +106,7 @@ def test_mixed_phase_mush_fixture(shared_eos):
             if 'lid_stress' in ref.files:
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
-            # Tolerance tier per Ruling 84/85: 10x max(1-ulp noise floor, measured spread).
+            # Tolerance tier: 10x max(1-ulp noise floor, measured hardware spread).
             # Measured 1-ulp noise floor: S 0.0396 J/kg/K, T 0.00452 K, flux 2099.4 W/m2, lid_stress 2.03e18 Pa.
             # Measured Linux-Darwin spread: S 7.89e-4 J/kg/K, T 8.67e-5 K, flux 76.5 W/m2.
             # Flux tolerance 2.1e4 W/m2 is 1.7 % of peak mantle flux (1.24e6 W/m2).

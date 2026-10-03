@@ -40,6 +40,20 @@ def shared_eos():
 
 @pytest.mark.smoke
 def test_rheology_disabled_regression(shared_eos):
+    """Verify solver output against reference fixture with rheology disabled.
+
+    Parameters
+    ----------
+    shared_eos : EntropyEOS
+        Shared equation of state evaluator.
+
+    Notes
+    -----
+    Tolerances are calibrated to 10x cross-platform hardware spread:
+    - S: atol = 3e-4 J kg^-1 K^-1 (< 0.0001% of mantle entropy ~3500 J/kg/K)
+    - T: atol = 1e-4 K (< 0.00001% of mantle temperature ~2000 K)
+    - Flux: atol = 1100.0 W m^-2 (< 0.1% of peak boundary heat flux)
+    """
     config_file = 'src/aragog/cfg/abe_solid.toml'
     config = Config.from_file(config_file)
     config.solver.end_time = 100.0
@@ -62,7 +76,7 @@ def test_rheology_disabled_regression(shared_eos):
         os.path.dirname(__file__), 'reference', 'rheology_disabled_abe_solid.toml.npz'
     )
 
-    # Rheology-off fixtures differ from main because this branch applies inner BC 3 as half-cell conduction to the prescribed temperature.
+    # Rheology-off fixtures apply inner BC 3 as half-cell conduction to the prescribed temperature.
     with np.load(fixture_path) as ref:
         assert 'recorded_from_commit' in ref.files
         assert 'eos_hash' in ref.files
@@ -90,7 +104,7 @@ def test_rheology_disabled_regression(shared_eos):
                 assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
                 np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
         else:
-            # Tolerance tier per Ruling 75/77. Source: run 37098861445
+            # Tolerance tier: calibrated to 10x cross-platform hardware spread.
             np.testing.assert_allclose(S, ref['S'], atol=3e-4)
             np.testing.assert_allclose(T, ref['T'], atol=1e-4)
             for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):

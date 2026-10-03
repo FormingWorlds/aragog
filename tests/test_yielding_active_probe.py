@@ -40,7 +40,21 @@ def shared_eos():
 
 @pytest.mark.smoke
 def test_yielding_active_probe(shared_eos):
-    """Verify yielding active probe against recorded reference fixture."""
+    """Verify yielding active probe against recorded reference fixture.
+
+    Parameters
+    ----------
+    shared_eos : EntropyEOS
+        Shared equation of state evaluator.
+
+    Notes
+    -----
+    Tolerances are calibrated to 10x max(1-ulp perturbation noise floor, measured spread):
+    - S: atol = 8.0e-4 J kg^-1 K^-1 (< 0.0001% of mantle entropy ~3500 J/kg/K)
+    - T: atol = 1.3e-4 K (< 0.00001% of mantle temperature ~2000 K)
+    - Flux: atol = 500.0 W m^-2 (< 0.05% of peak mantle flux)
+    - Lid stress: atol = 3.5e17 Pa
+    """
     config_file = 'tests/configs/yielding_active_probe.toml'
     config = Config.from_file(config_file)
 
@@ -104,7 +118,7 @@ def test_yielding_active_probe(shared_eos):
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
             # Tolerance tier: 10x max(1-ulp noise floor, measured hardware spread).
-            # Measured noise floor: S 5.56e-5 J/kg/K; measured spread (run 37117288868): S 7.70e-5 J/kg/K.
+            # Measured noise floor: S 5.56e-5 J/kg/K; measured cross-CPU hardware spread: S 7.70e-5 J/kg/K.
             np.testing.assert_allclose(S, ref['S'], atol=8.0e-4)
             np.testing.assert_allclose(T, ref['T'], atol=1.3e-4)
             for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):

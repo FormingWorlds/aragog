@@ -37,7 +37,21 @@ def shared_eos():
 
 @pytest.mark.smoke
 def test_cold_top_lid_fixture(shared_eos):
-    """Verify cold top lid fixture against recorded reference fixture."""
+    """Verify cold top lid fixture against recorded reference fixture.
+
+    Parameters
+    ----------
+    shared_eos : EntropyEOS
+        Shared equation of state evaluator.
+
+    Notes
+    -----
+    Tolerances are calibrated to 10x max(1-ulp perturbation noise floor across 5 seeds):
+    - S: atol = 1.0e-6 J kg^-1 K^-1 (< 0.0001% of mantle entropy ~3500 J/kg/K)
+    - T: atol = 1.0e-7 K (< 0.00001% of mantle temperature ~2000 K)
+    - Flux: atol = 2000.0 W m^-2 (< 1.8% of surface radiative flux ~1.12e5 W/m^2)
+    - Lid stress: atol = 5.0e12 Pa
+    """
     config_file = 'tests/configs/cold_top_lid.toml'
     config = Config.from_file(config_file)
 
