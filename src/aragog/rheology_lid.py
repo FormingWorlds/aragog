@@ -204,15 +204,14 @@ def compute_stagnant_lid_state(
         N_upper = xp.sum(w_upper) + 1e-12
 
         v_abs = xp.abs(unyielded_velocity)
-        log_w = xp.log(xp.maximum(w_upper, 1e-300))
-        # Weighted log-sum-exp soft maximum restricted to the upper convective layer
-        a = xp.where(w_upper > 1e-30, v_abs / T_v + log_w, -1e30)
-        m = xp.max(a)
-        sum_exp = xp.sum(xp.exp(a - m))
-        v_i_raw = T_v * (m + xp.log(xp.maximum(sum_exp, 1e-300)) - xp.log(N_upper))
+        u = w_upper * v_abs
+        u_shift = xp.max(u)
+        sum_w_exp = xp.sum(w_upper * xp.exp((u - u_shift) / T_v))
+        v_i_raw = u_shift + T_v * (xp.log(xp.maximum(sum_w_exp, 1e-300)) - xp.log(N_upper))
         v_i = xp.maximum(v_i_raw, 0.0) * w_active
     else:
         v_i = 0.0
+        w_upper = xp.zeros_like(r)
 
     tau_d = (eta_i * v_i) / xp.maximum(delta_rh, 1e-6)
     tau_d = tau_d * w_active
@@ -249,6 +248,7 @@ def compute_stagnant_lid_state(
         'P_lid_base': P_lid_base,
         'delta_rh': delta_rh,
         'v_i': v_i,
+        'w_upper': w_upper,
         'tau_d': tau_d,
         'tau_d_lid': tau_d_lid,
         'tau_y_lid': tau_y_lid,

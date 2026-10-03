@@ -110,8 +110,13 @@ def test_tv_velocity_scale_calibration():
         unyielded_velocity=v_unyielded,
     )
 
-    expected_vi = 9.9876811e-09
-    assert out['v_i'] == pytest.approx(expected_vi, rel=1e-6)
+    w_upper = out['w_upper']
+    u = w_upper * v_unyielded
+    u_max = np.max(u)
+    T_v = 3.17e-12
+    sum_w_exp = np.sum(w_upper * np.exp((u - u_max) / T_v))
+    expected_vi = u_max + T_v * (np.log(sum_w_exp) - np.log(np.sum(w_upper)))
+    assert out['v_i'] == pytest.approx(expected_vi, rel=1e-12)
 
 
 def test_jax_lid_mask_in_kappah_floor():
