@@ -59,11 +59,21 @@ jobs:
           echo "=== CPU INFO ==="
           lscpu
           echo "=== PACKAGE VERSIONS ==="
-          python -c "import numpy, jax, scikits.odes, sys; print('numpy:', numpy.__version__, 'jax:', jax.__version__, 'scikits.odes:', getattr(scikits.odes, '__version__', 'unknown'), 'platform:', sys.platform)"
+          python -c "import numpy, jax, scikits_odes_sundials, sys; print('numpy:', numpy.__version__, 'jax:', jax.__version__, 'scikits.odes:', getattr(scikits_odes_sundials, '__version__', 'unknown'), 'platform:', sys.platform)"
 
       - name: Generate golden fixtures
         run: |
-          python -c "import tools.verification.generate_golden_fixtures as g; g.check_clean_git_tree = lambda: None; g.main()"
+          python -c "
+          import sys, types
+          import scikits_odes_sundials
+          scikits = types.ModuleType('scikits')
+          scikits.odes = scikits_odes_sundials
+          sys.modules['scikits'] = scikits
+          sys.modules['scikits.odes'] = scikits_odes_sundials
+          import tools.verification.generate_golden_fixtures as g
+          g.check_clean_git_tree = lambda: None
+          g.main()
+          "
           mkdir -p output_fixtures
           cp tests/reference/*.npz output_fixtures/
 
