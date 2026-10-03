@@ -84,18 +84,24 @@ MUSHY_SOLVE_YR = 1000.0
 
 
 def cvode_counts(sol) -> tuple[int, int, int, float]:
-    """Return CVODE's steps, error-test failures, Jacobian setups and last step [yr].
+    """Return CVODE's steps, error-test failures, Jacobian setups and minimum last step [yr].
 
     ``sol.t`` is the output grid, not the CVODE step sequence, so the counts come from
     the ``cvode_info`` that ``EntropySolver`` attaches to a CVODE solution.
     """
     info = sol['cvode_info']
     nst = int(sol.get('cvode_nst', info['NumSteps']))
+    min_step = float(
+        sol.get(
+            'cvode_min_last_step',
+            sol.get('cvode_last_step', info.get('MinLastStep', info.get('LastStep', np.nan))),
+        )
+    )
     return (
         nst,
         int(info['NumErrTestFails']),
         int(info['NumLinSolvSetups']),
-        float(sol['cvode_last_step']),
+        min_step,
     )
 
 

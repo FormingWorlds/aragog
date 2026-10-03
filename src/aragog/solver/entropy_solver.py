@@ -3288,6 +3288,8 @@ class EntropySolver:
             result.cvode_nst = int(cvode_info['NumSteps'])
             result.cvode_nfe = int(cvode_info['NumRhsEvals'])
             result.cvode_info = dict(cvode_info)  # counters; step sizes in nondim time
+            if 'LastStep' in cvode_info:
+                result.cvode_info['MinLastStep'] = float(cvode_info['LastStep'])
         # When the root function fires (flag 2), ``cvode_sol.values`` holds only the outputs
         # before the root and the root is in ``cvode_sol.roots``, so the result is
         # [start, root] and ``dt_actual`` covers the integration up to the root.
@@ -3509,7 +3511,7 @@ class EntropySolver:
             res.cvode_info['NumErrTestFails'] = num_err_test_fails
             res.cvode_info['NumLinSolvSetups'] = num_lin_solv_setups
             if min_last_step != float('inf'):
-                res.cvode_info['LastStep'] = min_last_step
+                res.cvode_info['MinLastStep'] = min_last_step
         logger.info(
             'rate cap: %d segment(s), nst=%d, triggers %s',
             len(log),
@@ -3530,6 +3532,16 @@ class EntropySolver:
         A successful solve also stores the per-call energy integrals on the result as
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
         zeros.
+
+        Notes
+        -----
+        For CVODE solutions, ``self._solution.cvode_info`` records solver diagnostics:
+        - Totals accumulated across segments: ``NumSteps``, ``NumRhsEvals``,
+          ``NumErrTestFails``, and ``NumLinSolvSetups``.
+        - Final-segment values: ``LastStep``, ``CurrentStep``, ``LastOrder``,
+          and ``CurrentOrder``.
+        - Multi-segment minimum: ``MinLastStep`` records the minimum step size taken
+          across all segment boundaries.
         """
         if not hasattr(self, '_S0') or self._S0 is None:
             raise RuntimeError(
@@ -4003,6 +4015,8 @@ class EntropySolver:
             sol.t = np.asarray(sol.t, dtype=float) * t_ref
         if 'cvode_info' in sol:
             sol.cvode_last_step = float(sol.cvode_info.get('LastStep', np.nan)) * t_ref
+            if 'MinLastStep' in sol.cvode_info:
+                sol.cvode_min_last_step = float(sol.cvode_info['MinLastStep']) * t_ref
         if sol.y is not None:
             sol_y = np.asarray(sol.y, dtype=float)
             if sol_y.ndim == 2:

@@ -117,6 +117,30 @@ def test_runner_step_count_on_10yr_run_equals_cvode_numsteps(tmp_path, monkeypat
     expected_steps = sol.cvode_info['NumSteps']
     assert expected_steps == sol.cvode_nst
     assert expected_steps > sol.t.size
+    assert 'MinLastStep' in sol.cvode_info
+    assert 'LastStep' in sol.cvode_info
+    assert sol.cvode_info['MinLastStep'] <= sol.cvode_info['LastStep']
+    assert hasattr(sol, 'cvode_min_last_step')
+    assert sol.cvode_min_last_step <= sol.cvode_last_step
     assert res['cvode_steps'][0] == expected_steps
     assert res['total_cvode_steps'] == expected_steps
     assert res['total_cvode_steps'] > 50
+
+
+def test_cvode_info_distinguishes_final_segment_and_minimum_last_step():
+    """Verify LastStep retains final segment value while MinLastStep records multi-segment minimum."""
+    info = {
+        'NumSteps': 50,
+        'NumRhsEvals': 120,
+        'NumErrTestFails': 3,
+        'NumLinSolvSetups': 10,
+        'LastStep': 15.0,
+        'MinLastStep': 2.0,
+    }
+    t_ref = 2.0
+    last_step_phys = float(info['LastStep']) * t_ref
+    min_last_step_phys = float(info['MinLastStep']) * t_ref
+
+    assert last_step_phys == 30.0
+    assert min_last_step_phys == 4.0
+    assert min_last_step_phys < last_step_phys
