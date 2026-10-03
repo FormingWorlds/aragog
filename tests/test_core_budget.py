@@ -18,7 +18,7 @@ import pytest
 from scipy.integrate import quad
 
 from aragog.core.budget import CoreEnergyBudget
-from aragog.core.melting import IronMeltingCurve
+from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 
 pytestmark = pytest.mark.unit
@@ -217,24 +217,32 @@ def test_gravitational_capacity_scales_linearly_in_alpha_c(prof):
 
 
 @pytest.mark.physics_invariant
-def test_freeze_out_factor_is_smooth_and_bounded(prof):
-    """The freeze-out factor spans (0, 1) smoothly across the completion
-    band instead of stepping: the factor transitions smoothly across 0.5 K
-    increments, and is exactly one half where the CMB sits on the melting curve."""
-    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
-    budget = CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0)
-    # CMB melting temperature of this alloy: freeze-out midpoint.
-    t_complete = float(curve.t_melt(prof.pressure(prof.r_cmb)))
-    assert float(budget.freeze_out_factor(t_complete)) == pytest.approx(0.5, abs=1e-9)
-    # Sign discrimination: the factor must be ~1 ABOVE completion (liquid
-    # remains) and ~0 below; a flipped sigmoid argument passes the
-    # midpoint and smoothness checks but not this ordering.
-    assert float(budget.freeze_out_factor(t_complete + 30.0)) > 0.9
-    assert float(budget.freeze_out_factor(t_complete - 30.0)) < 0.1
-    t = np.linspace(t_complete - 40.0, t_complete + 40.0, 161)
-    factors = np.array([float(budget.freeze_out_factor(x)) for x in t])
-    rel_step = np.max(np.abs(np.diff(factors)))
-    assert rel_step < 0.05
+def test_freeze_out_capacity_jump(prof):
+    """Effective capacity drops discontinuously at full core freeze-out.
+
+    When the CMB reaches the melting curve, inner-core growth completes
+    and latent heat release ceases abruptly. For the quadratic melting
+    curve, effective capacity drops by a factor of 4.46 on the default Earth
+    geometry (or 4.87 under the Nimmo 2015 parameter set). For the iron alloy
+    curve, effective capacity drops by 55.2% (from 4.17e27 J/K to 1.87e27 J/K).
+    """
+    quad_curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    b_quad = CoreEnergyBudget(prof, quad_curve, ds_fusion=DS_FUSION, icn_width=10.0)
+    t_f_quad = float(b_quad.t_freeze)
+    sec_quad = float(b_quad.secular_capacity())
+    c_above_quad = float(b_quad.effective_capacity(t_f_quad + 1e-4))
+    c_below_quad = float(b_quad.effective_capacity(t_f_quad - 1e-4))
+    assert c_below_quad == pytest.approx(sec_quad, rel=1e-12)
+    assert c_above_quad / c_below_quad == pytest.approx(4.4598, rel=1e-3)
+
+    iron_curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    b_iron = CoreEnergyBudget(prof, iron_curve, ds_fusion=DS_FUSION, icn_width=10.0)
+    t_f_iron = float(b_iron.t_freeze)
+    sec_iron = float(b_iron.secular_capacity())
+    c_above_iron = float(b_iron.effective_capacity(t_f_iron + 1e-4))
+    c_below_iron = float(b_iron.effective_capacity(t_f_iron - 1e-4))
+    assert c_below_iron == pytest.approx(sec_iron, rel=1e-12)
+    assert (c_below_iron - c_above_iron) / c_above_iron == pytest.approx(-0.5522, rel=1e-3)
 
 
 @pytest.mark.physics_invariant

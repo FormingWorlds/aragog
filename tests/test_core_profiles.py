@@ -259,7 +259,8 @@ def test_fit_gaussian_core_profiles_zalmoxis_earth_structure():
     )
     c_eff_old = float(budget_old.effective_capacity(4000.0))
     c_eff_new = float(budget_new.effective_capacity(4000.0))
-    # At 4000 K, old budget is nucleating (t_onset=4058 K) while fitted budget is liquid (t_onset=3954 K)
+    # At 4000 K, old Earth geometry is nucleating (4119 K) while Zalmoxis geometry is liquid (3954 K).
+    # Geometry shift causes -76%; fit at equal Zalmoxis geometry gives +5.3% and shifts onset +53 K.
     assert c_eff_old == pytest.approx(7.322507e27, rel=1e-5)
     assert c_eff_new == pytest.approx(1.852134e27, rel=1e-5)
     rel_change = (c_eff_new - c_eff_old) / c_eff_old

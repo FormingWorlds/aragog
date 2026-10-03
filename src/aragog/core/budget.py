@@ -33,7 +33,7 @@ _BISECT_ITERS = 80  # halves the bracket to ~1e-24 of r_cmb: machine precision
 
 
 class CoreEnergyBudget:
-    """Energy budget of a well-mixed core with smoothed inner-core nucleation.
+    """Energy budget of a well-mixed core with inner-core growth.
 
     Parameters
     ----------
@@ -45,8 +45,8 @@ class CoreEnergyBudget:
         Entropy of fusion at the inner-core boundary [J kg-1 K-1]; sets the
         latent heat per unit mass as ``T_icb * ds_fusion``.
     icn_width : float
-        Temperature width [K] of the nucleation sigmoid. Positive; the
-        hard-switch limit is recovered as the width goes to zero.
+        Temperature width [K] of the nucleation diagnostic sigmoid. Positive;
+        governs diagnostic regime indicators.
     latent_heat : float, optional
         Constant latent heat of fusion [J/kg]. When given it replaces the
         ``T_icb * ds_fusion`` form; parameterised models in the literature
@@ -283,7 +283,7 @@ class CoreEnergyBudget:
         returns zero regardless of frozen shells above it (the top-down
         and snow topologies have no inner core in the bottom-up sense);
         ``crystallization_regime`` is the diagnostic for those states, and
-        the smoothed activation factors zero the boundary terms there.
+        the boundary terms drop to zero there.
 
         The derivative is the implicit-function sensitivity attached as a
         custom JVP: a comparison-driven bisection carries no gradient of
