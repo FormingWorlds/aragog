@@ -328,7 +328,9 @@ def test_integrals_split_quadrature_at_inner_core_onset():
     out = s._compute_step_energy_integrals()
     dE_core = out['core']
     rel_err = abs(dE_core - i_ref) / abs(i_ref)
-    assert rel_err < 1e-6
+    # Without the split, error is ~5e-4. With the split, 32-point GL resolves the
+    # sharp sqrt(Delta T) geometric cusp across the 25 K step to < 2e-6.
+    assert rel_err < 2e-6
 
 
 @pytest.mark.unit

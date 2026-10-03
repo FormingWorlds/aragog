@@ -141,7 +141,7 @@ def test_dynamo_threshold_and_margin(ent):
     from scipy.optimize import brentq
 
     threshold = brentq(lambda q: float(ent.entropy_margin(T_C, q)), 1e12, 40e12)
-    assert threshold / 1e12 == pytest.approx(5.306, rel=1e-3)
+    assert threshold / 1e12 == pytest.approx(5.298, rel=1e-3)
     assert threshold / 1e12 < 6.5
     margins = [float(ent.entropy_margin(T_C, q)) for q in (6e12, 10e12, 17e12)]
     assert margins[0] < margins[1] < margins[2]

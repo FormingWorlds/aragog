@@ -4124,8 +4124,8 @@ class EntropySolver:
                 t_hi = max(T_start, T_end)
                 cuts = []
                 for cand in (
-                    getattr(budget, 't_onset', None),
-                    getattr(budget, 't_freeze', None),
+                    budget.t_onset,
+                    budget.t_freeze,
                 ):
                     if cand is not None:
                         c_val = float(cand)

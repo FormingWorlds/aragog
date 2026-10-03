@@ -5,11 +5,8 @@ effective heat capacity: ``Q_cmb = -C_eff(T_cmb) dT_cmb/dt + Q_sources``.
 ``C_eff`` carries the secular term (the mass-weighted adiabat integral over
 the Gaussian profiles) plus, once the centre adiabat reaches the melting
 curve, the latent heat and light-element gravitational energy of inner-core
-growth. Nucleation activates through a sigmoid of the centre superheat and
-winds down through a matching sigmoid of the CMB superheat at freeze-out
-completion, so the budget is differentiable through both ends of inner-core
-growth; zero width recovers the hard switches. Radiogenic or tidal powers
-enter as per-call source terms supplied by the caller.
+growth, governed by the inner-core boundary geometry. Radiogenic or tidal
+powers enter as per-call source terms supplied by the caller.
 
 The ``legacy`` capacity mode reproduces the isothermal-reservoir closure
 (Bower et al. 2018, Eq. 37 constants: uniform core density and a fixed
@@ -341,7 +338,8 @@ class CoreEnergyBudget:
         d_dr = jax.grad(self._superheat, argnums=0)(radius, t_cmb)
         d_dt = jax.grad(self._superheat, argnums=1)(radius, t_cmb)
         safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
-        return jnp.abs(-d_dt / safe)
+        interior = (radius > 0.0) & (radius < self.profiles.r_cmb) & self._liquid_remains(t_cmb)
+        return jnp.where(interior, jnp.abs(-d_dt / safe), 0.0)
 
     def freeze_out_factor(self, t_cmb):
         """Smoothed survival of the liquid outer core, in [0, 1].
@@ -362,8 +360,8 @@ class CoreEnergyBudget:
 
         ``L rho(r_icb) 4 pi r_icb^2 |dr_icb/dT_cmb|`` with the latent heat
         per unit mass ``L`` either the prescribed constant or
-        ``T_icb * ds_fusion``, scaled by the nucleation factor and shut off
-        at freeze-out completion when no liquid remains.
+        ``T_icb * ds_fusion``. Zero before nucleation onset and after
+        freeze-out completion when the boundary is pinned.
         """
         p = self.profiles
         radius = self.r_icb(t_cmb)
@@ -372,8 +370,7 @@ class CoreEnergyBudget:
         else:
             heat = p.adiabat(radius, t_cmb) * self.ds_fusion
         area_mass = p.density(radius) * 4.0 * jnp.pi * radius**2
-        capacity = heat * area_mass * self._boundary_sensitivity(t_cmb)
-        return self.freeze_out_factor(t_cmb) * self.nucleation_factor(t_cmb) * capacity
+        return heat * area_mass * self._boundary_sensitivity(t_cmb)
 
     def gravitational_capacity(self, t_cmb, upper=None):
         """Gravitational contribution to the effective heat capacity [J/K].
@@ -413,13 +410,12 @@ class CoreEnergyBudget:
 
         enrichment = 4.0 * jnp.pi * radius**2 * p.density(radius) * self.c_light
         safe_mass = jnp.where(mass_oc > 0.0, mass_oc, 1.0)
-        capacity = (
+        return (
             potential_moment
             * self.alpha_c
             * (enrichment / safe_mass)
             * self._boundary_sensitivity(t_cmb)
         )
-        return self.freeze_out_factor(t_cmb) * self.nucleation_factor(t_cmb) * capacity
 
     # -- assembled budget ----------------------------------------------------
 

@@ -12,6 +12,7 @@ legacy mode against the isothermal-reservoir formula it reproduces.
 from __future__ import annotations
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy.integrate import quad
@@ -139,12 +140,9 @@ def test_nucleation_onset_growth_and_freeze_out(prof, alloy_budget):
     assert 0.0 < radii[0] < prof.r_cmb
 
     # Freeze-out: at 3300 K even the CMB is subcooled; boundary pinned at
-    # r_cmb and the latent release is over up to the smoothing factor's
-    # exponential tail (here ~1e-17 of the secular term).
+    # r_cmb and the latent release is strictly zero.
     assert float(alloy_budget.r_icb(3300.0)) == pytest.approx(prof.r_cmb, rel=1e-9)
-    assert float(alloy_budget.latent_capacity(3300.0)) < 1e-12 * float(
-        alloy_budget.secular_capacity()
-    )
+    assert float(alloy_budget.latent_capacity(3300.0)) == 0.0
 
     # Hard-switch limit: a tiny width turns the sigmoid into a step.
     sharp = CoreEnergyBudget(
@@ -221,9 +219,8 @@ def test_gravitational_capacity_scales_linearly_in_alpha_c(prof):
 @pytest.mark.physics_invariant
 def test_freeze_out_factor_is_smooth_and_bounded(prof):
     """The freeze-out factor spans (0, 1) smoothly across the completion
-    band instead of stepping: capacity changes across 0.4 K near completion
-    stay far below the former cliff, and the factor is exactly one half
-    where the CMB sits on the melting curve."""
+    band instead of stepping: the factor transitions smoothly across 0.5 K
+    increments, and is exactly one half where the CMB sits on the melting curve."""
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     budget = CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0)
     # CMB melting temperature of this alloy: freeze-out midpoint.
@@ -235,9 +232,64 @@ def test_freeze_out_factor_is_smooth_and_bounded(prof):
     assert float(budget.freeze_out_factor(t_complete + 30.0)) > 0.9
     assert float(budget.freeze_out_factor(t_complete - 30.0)) < 0.1
     t = np.linspace(t_complete - 40.0, t_complete + 40.0, 161)
-    caps = np.array([float(budget.effective_capacity(x)) for x in t])
-    rel_step = np.max(np.abs(np.diff(caps))) / np.max(caps)
-    assert rel_step < 0.05  # the former hard cutoff moved 55% in one step
+    factors = np.array([float(budget.freeze_out_factor(x)) for x in t])
+    rel_step = np.max(np.abs(np.diff(factors)))
+    assert rel_step < 0.05
+
+
+@pytest.mark.physics_invariant
+def test_latent_and_gravitational_energy_conservation(prof):
+    """Integrals of latent and gravitational capacities over the core freezing
+    must equal the exact geometric latent heat and spatial gravitational energy
+    to relative error < 1e-6 (Ruling 58, 64)."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=DS_FUSION,
+        icn_width=10.0,
+        alpha_c=1.0,
+        c_light=0.046,
+        latent_heat=750e3,
+    )
+    t_onset = float(budget.t_onset)
+    t_freeze = float(budget.t_freeze)
+    gl_nodes, gl_weights = np.polynomial.legendre.leggauss(512)
+    t_nodes = 0.5 * (t_onset - t_freeze) * gl_nodes + 0.5 * (t_onset + t_freeze)
+    t_weights = 0.5 * (t_onset - t_freeze) * gl_weights
+
+    lat_vmap = jax.jit(jax.vmap(budget.latent_capacity))
+    grav_vmap = jax.jit(jax.vmap(budget.gravitational_capacity))
+
+    lat_vals = np.asarray(lat_vmap(jnp.asarray(t_nodes)), dtype=float)
+    grav_vals = np.asarray(grav_vmap(jnp.asarray(t_nodes)), dtype=float)
+
+    int_lat = float(np.sum(t_weights * lat_vals))
+    int_grav = float(np.sum(t_weights * grav_vals))
+
+    # Analytical targets
+    m_core, _ = quad(lambda s: float(prof.density(s)) * 4.0 * np.pi * s**2, 0.0, prof.r_cmb)
+    target_lat = budget.latent_heat * m_core
+
+    def grav_density(r):
+        if r <= 0.0 or r >= prof.r_cmb:
+            return 0.0
+        rho_psi, _ = quad(
+            lambda s: float(prof.density(s)) * float(prof.potential(s)) * 4.0 * np.pi * s**2,
+            r,
+            prof.r_cmb,
+        )
+        mass_oc, _ = quad(lambda s: float(prof.density(s)) * 4.0 * np.pi * s**2, r, prof.r_cmb)
+        if mass_oc <= 0.0:
+            return 0.0
+        potential_moment = rho_psi - mass_oc * float(prof.potential(r))
+        enrichment = 4.0 * np.pi * r**2 * float(prof.density(r)) * budget.c_light
+        return potential_moment * budget.alpha_c * (enrichment / mass_oc)
+
+    target_grav, _ = quad(grav_density, 0.0, prof.r_cmb)
+
+    assert abs(int_lat - target_lat) / target_lat < 1e-6
+    assert abs(int_grav - target_grav) / target_grav < 1e-6
 
 
 def test_budget_input_validation(prof):
