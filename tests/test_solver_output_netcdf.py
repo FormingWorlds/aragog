@@ -73,6 +73,10 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         T_basic=3400.0 + basic(70.0),
         cp_basic=1500.0 + basic(50.0),
         rho_basic=4500.0 + basic(150.0),
+        porosity_b=np.clip(0.3 + 0.2 * basic(1.0), 0.0, 1.0),
+        rho_solid_b=4800.0 + basic(120.0),
+        rho_melt_b=4300.0 + basic(110.0),
+        g_b=9.0 + basic(0.5),
         # Scalars (each chosen to be distinctive)
         T_magma=2950.123,
         T_core=4000.456,
@@ -233,6 +237,10 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             'T_basic': out.T_basic,
             'cp_basic': out.cp_basic,
             'rho_basic': out.rho_basic,
+            'porosity_b': out.porosity_b,
+            'rho_solid_b': out.rho_solid_b,
+            'rho_melt_b': out.rho_melt_b,
+            'g_b': out.g_b,
         }
         for name, expected in basic_arrays.items():
             v = ds[name]
@@ -242,6 +250,14 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
                 np.asarray(expected, dtype=np.float64).ravel(),
                 err_msg=f'basic array {name} did not round-trip exactly',
             )
+        units = {
+            'porosity_b': '1',
+            'rho_solid_b': 'kg m-3',
+            'rho_melt_b': 'kg m-3',
+            'g_b': 'm s-2',
+        }
+        for name, unit in units.items():
+            assert ds[name].units == unit, f'{name} units {ds[name].units!r}'
 
 
 def test_to_netcdf_default_time_falls_back_to_dt_actual(tmp_path: Path) -> None:
@@ -311,6 +327,10 @@ def test_to_netcdf_rejects_unphysical_negative_node_count() -> None:
     out.T_basic = np.linspace(0.0, 1.0, 3)
     out.cp_basic = np.linspace(0.0, 1.0, 3)
     out.rho_basic = np.linspace(0.0, 1.0, 3)
+    out.porosity_b = np.linspace(0.0, 1.0, 3)
+    out.rho_solid_b = np.linspace(0.0, 1.0, 3)
+    out.rho_melt_b = np.linspace(0.0, 1.0, 3)
+    out.g_b = np.linspace(0.0, 1.0, 3)
 
     import tempfile
 
