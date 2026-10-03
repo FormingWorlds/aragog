@@ -107,9 +107,9 @@ In a single-material model, the convective layer viscosity at $T_i$ is $\mu_i = 
 Foley & Bercovici (2014, p. 587, Section 4.1) compare the velocity exponents:
 > "Solomatov & Moresi (2000) find that $v \sim (\mathrm{Ra}_\mathrm{eff}/\theta)^{1/2}$ for their internally heated results. However, they also state that (26) fits the bottom heated experiments of Dumoulin et al. (1999), and that the 1/2 power-law scaling may be a transitional regime found at low Rayleigh numbers. We find that (26) is the correct scaling for our results."
 
-**Application to a cooling post-magma-ocean mantle**:
-- A solidifying mantle experiences strong bottom heating from the core ($Q_\mathrm{cmb}$) and crystallization from the core-mantle boundary outward.
-- The Rayleigh number of a post-magma ocean mantle ($\mathrm{Ra} \sim 10^8 - 10^{10}$) is far above the transitional low-$\mathrm{Ra}$ regime ($\mathrm{Ra} \lesssim 10^5$).
+**Application to a cooling post-magma-ocean mantle (estimates)**:
+- In models of magma ocean solidification, basal crystallization transfers primordial core heat into the base of the newly formed solid mantle (e.g. Solomatov 2000, 2007; estimate).
+- The estimated thermal Rayleigh number of the newly solidified mantle ($\mathrm{Ra} \sim 10^7 - 10^9$, order-of-magnitude estimate from mantle thickness $d \approx 2890\mathrm{\ km}$, $\Delta T \approx 1000 - 1500\mathrm{\ K}$, and initial solid viscosity $\eta \approx 10^{20} - 10^{21}\mathrm{\ Pa\ s}$) is well above the transitional low-$\mathrm{Ra}$ regime ($\mathrm{Ra} \lesssim 10^5$, Solomatov & Moresi 2000).
 - Therefore, the $2/3$ exponent ($v_m \propto \mathrm{Ra}^{2/3}$, Dumoulin et al. 1999; FB2014 Eq. 26) applies to a cooling post-magma-ocean mantle.
 
 ---
@@ -152,13 +152,11 @@ with $a_\mathrm{rh} \approx 2.2$ for Newtonian convection with strongly temperat
 The sub-lid non-dimensional shear stress in Table 2 (p. 593) ranges from $\tau'_{xz} = 165$ to $1253$. For Earth mantle scales ($\mu_m = 10^{20}\mathrm{\ Pa\ s}$, $d = 2890\mathrm{\ km}$, $\kappa = 10^{-6}\mathrm{\ m^2/s}$, stress unit $\mu_m \kappa / d^2 = 11.97\mathrm{\ Pa}$), dimensional convective stresses are $0.002$ to $0.015\mathrm{\ MPa}$ for laminar models, and reach $0.02$ to $2.0\mathrm{\ MPa}$ at higher $\mathrm{Ra}_0$ and damage in Figures 8(c) and 9(c) (p. 588-589).
 
 ### 2.5 Laboratory Rock Yield Stresses
-- Byerlee (1978, Pure Appl. Geophys. 116, p. 615, Eq. 2):
-  $$\tau = 50\mathrm{\ MPa} + 0.6 \bar{\sigma} \quad (200 \le \bar{\sigma} \le 1700\mathrm{\ MPa})$$
-  At lithospheric depths $z = 10 - 20\mathrm{\ km}$, lithostatic confining pressure is $P = \rho g z \approx 300 - 600\mathrm{\ MPa}$ (with $\rho \approx 3000\mathrm{\ kg/m^3}$ and $g = 9.81\mathrm{\ m/s^2}$). Byerlee's law gives yield stresses of $\tau_y \approx 230 - 410\mathrm{\ MPa}$ (commonly quoted as $200 - 500\mathrm{\ MPa}$).
-- Foley et al. (2012, EPSL 331-332, p. 281, Sec. 1.1):
-  > "Laboratory measurements of rock friction (Byerlee, 1978) give yield stresses of hundreds of megapascals for the lithosphere (e.g. Kohlstedt et al., 1995), while numerical convection models with pseudoplastic rheology require yield stresses below ~50-100 MPa to produce plate tectonics."
-- Foley & Bercovici (2014, GJI 199, p. 581, Sec. 1):
-  > "viscoplastic yield stress rheology ... requires yield stresses below 100 MPa, well below laboratory measurements (Kohlstedt et al. 1995)."
+- Byerlee (1978, Pure Appl. Geophys. 116, pp. 615, 624-625; Eq. 2 on p. 625):
+  $$\tau = 50\mathrm{\ MPa} + 0.6 \bar{\sigma}_n \quad (200 < \bar{\sigma}_n \le 1700\mathrm{\ MPa})$$
+  At lithospheric depths $z = 10 - 20\mathrm{\ km}$, lithostatic confining pressure is $P = \rho g z \approx 300 - 600\mathrm{\ MPa}$ (with $\rho \approx 3000\mathrm{\ kg/m^3}$ and $g = 9.81\mathrm{\ m/s^2}$). Byerlee's law gives yield stresses of $\tau_y \approx 230 - 410\mathrm{\ MPa}$ (commonly quoted as $200 - 500\mathrm{\ MPa}$; Byerlee 1978, p. 625; Kohlstedt et al. 1995).
+- Foley et al. (2012, EPSL 331-332, pp. 281-282, Sec. 1.1):
+  > "there is a large mismatch between experimentally determined lithospheric strength and convective stress, meaning that unrealistically low yield stress values are necessary to produce convection with a mobile plate-like surface (e.g. Moresi and Solomatov, 1998; Tackley, 2000b)."
 
 ### 2.6 Model Closure Statement
 No published paper writes the lid driving stress as $\tau_d = \rho g \alpha \Delta T_\mathrm{rh} \delta_\mathrm{rh}$ directly.
@@ -170,14 +168,14 @@ Option (c) is an Aragog model closure balancing the negative thermal buoyancy fo
 
 1. **Convective Stress vs Laboratory Strength**:
    - Convective driving stresses are $\tau_\mathrm{buoy} \approx 0.45\mathrm{\ MPa}$ (Earth) and $1.31\mathrm{\ MPa}$ (fixture).
-   - Laboratory yield stresses from Byerlee (1978, p. 615) are $200 - 500\mathrm{\ MPa}$.
+   - Laboratory rock yield stresses from Byerlee (1978, p. 625, Eq. 2) are $200 - 500\mathrm{\ MPa}$ at lithospheric confining pressures ($200 - 1700\mathrm{\ MPa}$).
    - The ratio is:
      $$\frac{\tau_\mathrm{buoy}}{\tau_{y,\mathrm{lab}}} \sim \frac{1\mathrm{\ MPa}}{300\mathrm{\ MPa}} \approx 0.003 \ll 1$$
 
 2. **Regime Switch Assessment**:
-   - Under realistic laboratory yield stresses ($\tau_y \ge 100\mathrm{\ MPa}$), the ratio $\tau_d / \tau_y$ never reaches unity in stagnant lid mantle convection.
+   - Under realistic laboratory rock yield stresses ($\tau_y \ge 100\mathrm{\ MPa}$; Byerlee 1978, p. 625; Kohlstedt et al. 1995), convective driving stress $\tau_d$ in a stagnant lid is orders of magnitude below $\tau_y$.
    - The Step 1 plastic yielding regime switch can **never fire** for laboratory rock yield stresses.
-   - The regime switch fires only when an artificially reduced yield stress is specified ($\tau_y \lesssim 1.5\mathrm{\ MPa}$ for the fixture, or $\tau_y \lesssim 1.0\mathrm{\ MPa}$ for Earth).
+   - The regime switch fires only when an artificially reduced pseudoplastic yield stress is specified ($\tau_y \lesssim 1.5\mathrm{\ MPa}$ for the fixture, or $\tau_y \lesssim 1.0\mathrm{\ MPa}$ for Earth), consistent with the qualitative finding of Foley et al. (2012, pp. 281-282) that pseudoplastic models require unrealistically low yield stresses.
 
 ---
 
@@ -210,7 +208,30 @@ The top 3 basic face radii are:
      $w_\mathrm{lid} = 1.0000$, $\kappa_h = 1.7681 \times 10^5\mathrm{\ m^2/s}$, $j_\mathrm{cond} = 0.00247\mathrm{\ W/m^2}$, $j_\mathrm{conv} = 1.7876 \times 10^5\mathrm{\ W/m^2}$, $j_\mathrm{mix} = 0.0\mathrm{\ W/m^2}$.
      Imposed surface boundary flux: $F_\mathrm{surf} = 1.1200 \times 10^5\mathrm{\ W/m^2}$.
 
-### 4.2 Origin of the $\sim 10^5\mathrm{\ W/m^2}$ Surface Heat Flux
+### 4.2 Sanity Verification of Lid Conduction ($j_\mathrm{cond} \approx 0.005\mathrm{\ W/m^2}$)
+
+The conductive heat flux of $j_\mathrm{cond} \approx 0.00525\mathrm{\ W/m^2}$ ($5.25\mathrm{\ mW/m^2}$) at Face [-2] appears low compared to mature terrestrial lithosphere ($40 - 80\mathrm{\ mW/m^2}$). We verify the exact numerical and physical components:
+
+1. **Bracketing Staggered Nodes for Face [-2]** ($r_\mathrm{face} = 6314550.51\mathrm{\ m}$):
+   - Inner Node (Node [-2]): $r = 6286484.58\mathrm{\ m}$ ($6286.48\mathrm{\ km}$), $T = 1253.96\mathrm{\ K}$
+   - Outer Node (Node [-1]): $r = 6342722.40\mathrm{\ m}$ ($6342.72\mathrm{\ km}$), $T = 1180.44\mathrm{\ K}$
+   - Node spacing: $\Delta r = r[-1] - r[-2] = 56237.83\mathrm{\ m}$ ($56.24\mathrm{\ km}$)
+   - Temperature drop: $\Delta T = T[-1] - T[-2] = -73.53\mathrm{\ K}$
+   - Temperature gradient:
+     $$\left| \frac{dT}{dr} \right| = \frac{73.53\mathrm{\ K}}{56237.83\mathrm{\ m}} = 1.3074 \times 10^{-3}\mathrm{\ K/m} \quad (1.307\mathrm{\ K/km})$$
+
+2. **Conductive Heat Flux Calculation**:
+   - Thermal conductivity: $k = 4.016\mathrm{\ W/(m\ K)}$ (config parameter `thermal_conductivity = 4.0` in `phase_solid` and `phase_liquid`)
+   - The conductive heat flux evaluates to:
+     $$j_\mathrm{cond} = k \left| \frac{dT}{dr} \right| = 4.016\mathrm{\ W/(m\ K)} \times 1.3074 \times 10^{-3}\mathrm{\ K/m} = 0.00525\mathrm{\ W/m^2} \quad (5.25\mathrm{\ mW/m^2})$$
+
+3. **Physical Explanation**:
+   - The 20-node uniform radial grid across a $1000\mathrm{\ km}$ mantle gives coarse cells of thickness $\Delta r \approx 56.24\mathrm{\ km}$.
+   - At $t = 0.10\mathrm{\ yr}$, a thin conductive skin has not yet steepened the interior geothermal gradient across the $56\mathrm{\ km}$ cell; the temperature drop between the two uppermost coarse nodes is only $73.53\mathrm{\ K}$, corresponding to a gradient of only $1.31\mathrm{\ K/km}$ (compared to $20 - 30\mathrm{\ K/km}$ in a thin $10\mathrm{\ km}$ terrestrial lid).
+   - Conduction through rock ($k \approx 4\mathrm{\ W/(m\ K)}$) over $56.24\mathrm{\ km}$ with $\Delta T = 73.53\mathrm{\ K}$ physically yields $0.00525\mathrm{\ W/m^2}$.
+   - The large surface heat flux ($9.64 \times 10^4\mathrm{\ W/m^2}$) is the grey-body radiation boundary condition ($F_\mathrm{surf} = \epsilon \sigma (T_\mathrm{surf}^4 - T_\mathrm{eq}^4)$) radiating directly into space from the hot outermost cell ($T_\mathrm{surf} \approx 1180\mathrm{\ K}$), not conductive throughput across the entire lid thickness.
+
+### 4.3 Origin of the $\sim 10^5\mathrm{\ W/m^2}$ Surface Heat Flux
 
 In `tests/configs/cold_top_lid.toml`, the boundary configuration specifies:
 ```toml

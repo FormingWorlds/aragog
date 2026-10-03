@@ -526,8 +526,8 @@ plt.loglog(eta_bulk_sweep, tau_opt_b_prime_sm_solid_list, color='purple', linest
 # Reference Yield Stresses
 plt.axhline(1.0e5, color='gray', linestyle='--', alpha=0.7, label=r'$\tau_y = 10^5$ Pa (test fixture)')
 plt.axhline(1.0e6, color='gray', linestyle=':', alpha=0.7, label=r'$\tau_y = 10^6$ Pa (1 MPa model)')
-plt.axhline(5.0e7, color='black', linestyle='-.', alpha=0.7, label=r'$\tau_y = 50$ MPa (convective max, Foley 2014)')
-plt.axhline(2.0e8, color='black', linestyle='-', alpha=0.7, label=r'$\tau_y = 200$ MPa (laboratory rock strength)')
+plt.axhline(5.0e7, color='black', linestyle='-.', alpha=0.7, label=r'$\tau_y = 50$ MPa (pseudoplastic model threshold)')
+plt.axhline(2.0e8, color='black', linestyle='-', alpha=0.7, label=r'$\tau_y = 200$ MPa (laboratory rock strength, Byerlee 1978)')
 
 plt.xlabel(r'Sub-Lid Interior Bulk Viscosity $\eta_\mathrm{bulk}$ [Pa s]', fontsize=12)
 plt.ylabel(r'Lid Driving Stress $\tau_d$ [Pa]', fontsize=12)
