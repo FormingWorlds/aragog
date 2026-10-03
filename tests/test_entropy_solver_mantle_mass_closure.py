@@ -90,7 +90,7 @@ def _build_mismatched_density_parameters(*, n_nodes: int = 10, end_time: float =
         melt_fraction=0.0,
         thermal_conductivity=4.0,
         thermal_expansivity=3e-5,
-        viscosity=1e21,
+        viscosity=100.0,
     )
     pm = _PhaseMixedParameters(
         latent_heat_of_fusion=4.0e5,
