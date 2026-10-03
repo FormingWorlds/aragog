@@ -2,7 +2,7 @@
 
 Executes test simulations to completion (status 0, full dt_actual),
 verifies invariants, and records .npz fixtures storing the equation of
-state SHA-256 hash.
+state SHA-256 hash and package versions.
 """
 
 from __future__ import annotations
@@ -18,7 +18,9 @@ _SRC_DIR = Path(__file__).resolve().parents[2] / 'src'
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
+import jax  # noqa: E402
 import numpy as np  # noqa: E402
+import scikits.odes  # noqa: E402
 
 from aragog.cli import _derive_initial_entropy_from_config  # noqa: E402
 from aragog.config import Config  # noqa: E402
@@ -33,12 +35,24 @@ def check_clean_git_tree() -> None:
         raise RuntimeError('Refusing to generate golden fixtures with a dirty git tree')
 
 
+def get_sundials_version() -> str:
+    """Return SUNDIALS version string from conda environment metadata."""
+    env_dir = Path(sys.executable).parents[1]
+    conda_meta = env_dir / 'conda-meta'
+    if conda_meta.exists():
+        for f in conda_meta.glob('sundials-*.json'):
+            parts = f.stem.split('-')
+            if len(parts) >= 2:
+                return parts[1]
+    return 'unknown'
+
+
 def compute_eos_hash(eos_dir: Path) -> str:
-    """Compute recursive SHA-256 hash over directory files."""
+    """Compute recursive SHA-256 hash over directory files using relative paths."""
     h = hashlib.sha256()
     for p in sorted(eos_dir.rglob('*')):
         if p.is_file():
-            h.update(p.name.encode('utf-8'))
+            h.update(p.relative_to(eos_dir).as_posix().encode('utf-8'))
             h.update(p.read_bytes())
     return h.hexdigest()
 
@@ -52,10 +66,22 @@ def get_git_commit() -> str:
         return 'unknown'
 
 
-def record_yielding_active_probe(eos: EntropyEOS, eos_hash: str, commit: str) -> None:
-    """Record yielding active probe fixture."""
-    print('Running yielding_active_probe...')
-    config = Config.from_file('tests/configs/yielding_active_probe.toml')
+def record_fixture(
+    name: str,
+    config_file: str,
+    fixture: str,
+    expected_dt: float,
+    eos: EntropyEOS,
+    eos_hash: str,
+    commit: str,
+    end_time: float | None = None,
+    check_yielding: bool = False,
+) -> None:
+    """Run one solve to completion, verify invariants, and record fixture."""
+    print(f'Running {name}...')
+    config = Config.from_file(config_file)
+    if end_time is not None:
+        config.solver.end_time = end_time
     solver = EntropySolver(config, entropy_eos=eos)
     solver.initialize()
     s0 = _derive_initial_entropy_from_config(solver)
@@ -65,84 +91,29 @@ def record_yielding_active_probe(eos: EntropyEOS, eos_hash: str, commit: str) ->
     output = solver.get_state()
 
     assert output.status == 0, f'Expected status 0, got {output.status}'
-    assert output.dt_actual == 100.0, f'Expected dt 100.0, got {output.dt_actual}'
-    assert np.sum(output.phi_basic > 0.5) >= 1
-    eta_eff = solver.state.viscosity_basic
-    eta_diff = solver.state.phase_basic.eta_diff
-    assert np.sum(eta_eff < 0.5 * eta_diff) >= 2
+    assert output.dt_actual == expected_dt, f'Expected dt {expected_dt}, got {output.dt_actual}'
+    if check_yielding:
+        assert np.sum(output.phi_basic > 0.5) >= 1
+        eta_eff = solver.state.viscosity_basic
+        eta_diff = solver.state.phase_basic.eta_diff
+        assert np.sum(eta_eff < 0.5 * eta_diff) >= 2
 
-    fixture_path = Path('tests/reference/yielding_active_probe.npz')
     data = {
         'S': output.S_final,
         'T': output.T_stag,
         'eos_hash': eos_hash,
         'recorded_from_commit': commit,
         'recorded_numpy_version': np.__version__,
+        'recorded_jax_version': getattr(jax, '__version__', 'unknown'),
+        'recorded_scikits_odes_version': getattr(scikits.odes, '__version__', 'unknown'),
+        'recorded_sundials_version': get_sundials_version(),
+        'recorded_platform': sys.platform,
     }
     for k, v in output.__dict__.items():
         if isinstance(v, (np.ndarray, float, int, str, bool, np.generic)):
             data[k] = v
-    np.savez(fixture_path, **data)
-    print(f'Wrote {fixture_path}')
 
-
-def record_rheology_disabled_solid(eos: EntropyEOS, eos_hash: str, commit: str) -> None:
-    """Record rheology disabled abe_solid fixture."""
-    print('Running abe_solid...')
-    config = Config.from_file('src/aragog/cfg/abe_solid.toml')
-    config.solver.end_time = 100.0
-    solver = EntropySolver(config, entropy_eos=eos)
-    solver.initialize()
-    s0 = _derive_initial_entropy_from_config(solver)
-    if s0 is not None:
-        solver.set_initial_entropy(s0)
-    solver.solve()
-    output = solver.get_state()
-
-    assert output.status == 0, f'Expected status 0, got {output.status}'
-    assert output.dt_actual == 100.0, f'Expected dt 100.0, got {output.dt_actual}'
-
-    fixture_path = Path('tests/reference/rheology_disabled_abe_solid.toml.npz')
-    data = {
-        'S': output.S_final,
-        'T': output.T_stag,
-        'eos_hash': eos_hash,
-        'recorded_from_commit': commit,
-        'recorded_numpy_version': np.__version__,
-    }
-    for k, v in output.__dict__.items():
-        if isinstance(v, (np.ndarray, float, int, str, bool, np.generic)):
-            data[k] = v
-    np.savez(fixture_path, **data)
-    print(f'Wrote {fixture_path}')
-
-
-def record_rheology_disabled_mixed(eos: EntropyEOS, eos_hash: str, commit: str) -> None:
-    """Record rheology disabled abe_mixed fixture."""
-    print('Running abe_mixed...')
-    config = Config.from_file('src/aragog/cfg/abe_mixed.cfg')
-    solver = EntropySolver(config, entropy_eos=eos)
-    solver.initialize()
-    s0 = _derive_initial_entropy_from_config(solver)
-    if s0 is not None:
-        solver.set_initial_entropy(s0)
-    solver.solve()
-    output = solver.get_state()
-
-    assert output.status == 0, f'Expected status 0, got {output.status}'
-    assert output.dt_actual == 200.0, f'Expected dt 200.0, got {output.dt_actual}'
-
-    fixture_path = Path('tests/reference/rheology_disabled_abe_mixed.cfg.npz')
-    data = {
-        'S': output.S_final,
-        'T': output.T_stag,
-        'eos_hash': eos_hash,
-        'recorded_from_commit': commit,
-        'recorded_numpy_version': np.__version__,
-    }
-    for k, v in output.__dict__.items():
-        if isinstance(v, (np.ndarray, float, int, str, bool, np.generic)):
-            data[k] = v
+    fixture_path = Path('tests/reference') / fixture
     np.savez(fixture_path, **data)
     print(f'Wrote {fixture_path}')
 
@@ -164,9 +135,35 @@ def main() -> None:
     print(f'Commit: {commit}')
 
     eos = EntropyEOS(eos_dir)
-    record_yielding_active_probe(eos, eos_hash, commit)
-    record_rheology_disabled_solid(eos, eos_hash, commit)
-    record_rheology_disabled_mixed(eos, eos_hash, commit)
+    record_fixture(
+        name='yielding_active_probe',
+        config_file='tests/configs/yielding_active_probe.toml',
+        fixture='yielding_active_probe.npz',
+        expected_dt=100.0,
+        eos=eos,
+        eos_hash=eos_hash,
+        commit=commit,
+        check_yielding=True,
+    )
+    record_fixture(
+        name='abe_solid',
+        config_file='src/aragog/cfg/abe_solid.toml',
+        fixture='rheology_disabled_abe_solid.toml.npz',
+        expected_dt=100.0,
+        eos=eos,
+        eos_hash=eos_hash,
+        commit=commit,
+        end_time=100.0,
+    )
+    record_fixture(
+        name='abe_mixed',
+        config_file='src/aragog/cfg/abe_mixed.cfg',
+        fixture='rheology_disabled_abe_mixed.cfg.npz',
+        expected_dt=200.0,
+        eos=eos,
+        eos_hash=eos_hash,
+        commit=commit,
+    )
     print('All golden fixtures recorded successfully.')
 
 

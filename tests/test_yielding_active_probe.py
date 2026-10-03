@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-import hashlib
 import os
+import sys
 from pathlib import Path
 
+import jax
 import numpy as np
 import pytest
+import scikits.odes
 
 from aragog.cli import _derive_initial_entropy_from_config
 from aragog.config import Config
 from aragog.eos.entropy import EntropyEOS
 from aragog.solver.entropy_solver import EntropySolver
+from tools.verification.generate_golden_fixtures import compute_eos_hash, get_sundials_version
 
 _FWL_DATA = os.environ.get('FWL_DATA')
 _CANDIDATES = [
@@ -20,21 +23,14 @@ _CANDIDATES = [
 EOS_DIR = next((Path(p) for p in _CANDIDATES if p and Path(p).exists()), None)
 
 
-def compute_eos_hash(eos_dir: Path) -> str:
-    """Compute recursive SHA-256 hash over directory files."""
-    h = hashlib.sha256()
-    for p in sorted(eos_dir.rglob('*')):
-        if p.is_file():
-            h.update(p.name.encode('utf-8'))
-            h.update(p.read_bytes())
-    return h.hexdigest()
-
-
 @pytest.fixture(scope='module')
 def shared_eos():
     if EOS_DIR is None:
         pytest.skip('EOS_DIR not found')
     return EntropyEOS(EOS_DIR)
+
+
+# Reference fixture for yielding active regression.
 
 
 @pytest.mark.smoke
@@ -72,20 +68,39 @@ def test_yielding_active_probe(shared_eos):
     )
 
     with np.load(fixture_path) as ref:
+        assert 'recorded_from_commit' in ref.files
         assert 'eos_hash' in ref.files
         assert str(ref['eos_hash']) == compute_eos_hash(EOS_DIR)
+
+        version_checks = {
+            'recorded_numpy_version': np.__version__,
+            'recorded_jax_version': getattr(jax, '__version__', None),
+            'recorded_scikits_odes_version': getattr(scikits.odes, '__version__', None),
+            'recorded_sundials_version': get_sundials_version(),
+            'recorded_platform': sys.platform,
+        }
+        for ver_key, cur_ver in version_checks.items():
+            if ver_key in ref.files and cur_ver is not None:
+                assert str(ref[ver_key]) == str(cur_ver), (
+                    f'Fixture {ver_key} mismatch: recorded {ref[ver_key]}, current {cur_ver}'
+                )
+
         np.testing.assert_array_equal(S, ref['S'])
         np.testing.assert_array_equal(T, ref['T'])
 
-        out_dict = output.__dict__
-        for k in ref.files:
-            if k in [
-                'S',
-                'T',
-                'eos_hash',
-                'recorded_from_commit',
-                'recorded_numpy_version',
-            ]:
-                continue
-            if k in out_dict:
-                np.testing.assert_array_equal(out_dict[k], ref[k], err_msg=f'Mismatch in {k}')
+        metadata_keys = {
+            'S',
+            'T',
+            'eos_hash',
+            'recorded_from_commit',
+            'recorded_numpy_version',
+            'recorded_jax_version',
+            'recorded_scikits_odes_version',
+            'recorded_sundials_version',
+            'recorded_platform',
+        }
+        for k in set(ref.files) - metadata_keys:
+            assert k in output.__dict__, f'Reference key {k} missing from solver output'
+            np.testing.assert_array_equal(
+                output.__dict__[k], ref[k], err_msg=f'Mismatch in {k}'
+            )
