@@ -88,13 +88,21 @@ def test_mixed_phase_mush_fixture(shared_eos):
             for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
                 if flux_key in ref.files:
                     np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
+            if 'lid_stress' in ref.files:
+                np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
-            # Tolerance tier per Ruling 75/77. Source: run 37108391411
-            # Measured Linux-Darwin spread: dS=7.89e-4 J/kg/K, dT=8.67e-5 K, flux=76.5 W/m2
-            np.testing.assert_allclose(S, ref['S'], atol=0.01)
-            np.testing.assert_allclose(T, ref['T'], atol=0.001)
+            # Tolerance tier per Ruling 84/85: 10x max(1-ulp noise floor, measured spread).
+            # Measured 1-ulp noise floor: S 0.0396 J/kg/K, T 0.00452 K, flux 2099.4 W/m2, lid_stress 2.03e18 Pa.
+            # Measured Linux-Darwin spread: S 7.89e-4 J/kg/K, T 8.67e-5 K, flux 76.5 W/m2.
+            # Flux tolerance 2.1e4 W/m2 is 1.7 % of peak mantle flux (1.24e6 W/m2).
+            np.testing.assert_allclose(S, ref['S'], atol=0.4)
+            np.testing.assert_allclose(T, ref['T'], atol=0.05)
             for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
                 if flux_key in ref.files:
                     np.testing.assert_allclose(
-                        getattr(output, flux_key), ref[flux_key], atol=800.0
+                        getattr(output, flux_key), ref[flux_key], atol=2.1e4
                     )
+            if 'lid_stress' in ref.files:
+                np.testing.assert_allclose(
+                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=2.0e19
+                )
