@@ -766,3 +766,163 @@ def test_solver_config_rejects_bool_cvode_output_points(bad_value):
             rtol=1.0e-6,
             cvode_output_points=bad_value,
         )
+
+
+def test_config_from_file_loads_all_documented_keys(tmp_path):
+    """Verify that Config.from_file parses and populates all documented configuration keys.
+
+    Parameters
+    ----------
+    tmp_path : pathlib.Path
+        Pytest fixture providing a temporary directory path.
+    """
+    from aragog.config import Config
+
+    toml_content = """
+[solver]
+start_time = 0.0
+end_time = 10.0
+atol = 1e-6
+rtol = 1e-6
+tsurf_poststep_change = 30.0
+cvode_output_points = 65
+max_steps = 100000
+max_step_const_mode = 100.0
+tcore_change_limit = 50.0
+
+[boundary_conditions]
+outer_boundary_condition = 1
+outer_boundary_value = 250.0
+inner_boundary_condition = 1
+inner_boundary_value = 4000.0
+emissivity = 1.0
+equilibrium_temperature = 255.0
+table_edge_cutoff = true
+cmb_flux_law = "deschamps_sotin_2000"
+core_heat_capacity = 880.0
+tfac_core_avg = 1.147
+param_utbl = false
+param_utbl_const = 1e-7
+core_bc = "quasi_steady"
+
+[mesh]
+outer_radius = 6.371e6
+inner_radius = 3.48e6
+number_of_nodes = 50
+surface_cell_thickness = 1000.0
+cmb_cell_thickness = 1000.0
+mixing_length_profile = "nearest_boundary"
+mixing_length_constant_fraction = 0.25
+core_density = 10500.0
+eos_method = 1
+surface_density = 4078.95
+gravitational_acceleration = 9.81
+adiabatic_bulk_modulus = 260e9
+adams_williamson_beta = 0.0
+surface_pressure = 0.0
+mass_coordinates = true
+
+[energy]
+conduction = true
+convection = true
+gravitational_separation = false
+mixing = false
+radionuclides = false
+tidal = false
+eddy_diffusivity_thermal = 1.0
+eddy_diffusivity_chemical = 1.0
+kappah_floor = 10.0
+phi_step_cap = 0.0
+phase_boundary_cap = "rate"
+bottom_up_grav_sep = true
+phase_smoothing = "tanh"
+solver_method = "cvode"
+use_jax_jacobian = true
+tidal_array = [0.0]
+
+[initial_condition]
+initial_condition = 1
+surface_temperature = 3000.0
+basal_temperature = 4000.0
+
+[phase_liquid]
+density = 4000.0
+viscosity = 0.1
+heat_capacity = 1000.0
+melt_fraction = 1.0
+thermal_conductivity = 4.0
+thermal_expansivity = 3e-5
+entropy = 3000.0
+
+[phase_solid]
+density = 4000.0
+viscosity = 1e21
+heat_capacity = 1000.0
+melt_fraction = 0.0
+thermal_conductivity = 4.0
+thermal_expansivity = 3e-5
+entropy = 2500.0
+enabled = true
+activation_energy = 300e3
+activation_volume = 5e-6
+activation_volume_decay_pressure = 1e11
+yield_stress_c = 50e6
+yield_stress_mu = 0.6
+yield_stress_max = 500e6
+stress_closure_mode = "lid"
+lid_base_mode = "rheological"
+lid_base_temperature = 1400.0
+lid_contrast_coeff = 2.2
+interior_flux_fraction = 0.05
+mlt_top_slope = 0.22
+mlt_bottom_slope = 1.0
+
+[phase_mixed]
+latent_heat_of_fusion = 4e5
+rheological_transition_melt_fraction = 0.4
+rheological_transition_width = 0.15
+solidus = "dummy_solidus"
+liquidus = "dummy_liquidus"
+phase = "mixed"
+phase_transition_width = 0.01
+grain_size = 1e-3
+matprop_smooth_width = 0.01
+separation_viscosity = "mixture"
+cp_blend = "latent"
+const_properties = false
+const_rho = 4000.0
+const_Cp = 1000.0
+const_alpha = 1e-5
+const_cond = 4.0
+const_log10visc = 2.0
+const_T_ref = 3500.0
+const_S_ref = 3000.0
+"""
+    cfg_file = tmp_path / 'all_documented_keys.toml'
+    cfg_file.write_text(toml_content)
+
+    params = Config.from_file(str(cfg_file))
+
+    assert params.solver.end_time == 10.0
+    assert params.solver.max_steps == 100000
+    assert params.solver.max_step_const_mode == 100.0
+    assert params.solver.tcore_change_limit == 50.0
+
+    assert params.boundary_conditions.cmb_flux_law == 'deschamps_sotin_2000'
+    assert params.boundary_conditions.core_bc == 'quasi_steady'
+    assert params.boundary_conditions.table_edge_cutoff is True
+
+    assert params.mesh.outer_radius == 6.371e6
+    assert params.mesh.surface_cell_thickness == 1000.0
+    assert params.mesh.cmb_cell_thickness == 1000.0
+
+    assert params.energy.phase_boundary_cap == 'rate'
+    assert params.energy.kappah_floor == 10.0
+
+    assert params.phase_solid.mlt_top_slope == pytest.approx(0.22, rel=1e-12)
+    assert params.phase_solid.mlt_bottom_slope == pytest.approx(1.0, rel=1e-12)
+    assert params.phase_solid.lid_base_mode == 'rheological'
+    assert params.phase_solid.stress_closure_mode == 'lid'
+
+    assert params.phase_mixed.separation_viscosity == 'mixture'
+    assert params.phase_mixed.cp_blend == 'latent'

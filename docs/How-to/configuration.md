@@ -152,7 +152,7 @@ Thermal boundary conditions at the surface and CMB.
 | `inner_boundary_value` | W/m² or K | CMB flux (modes `1`, `2`) or temperature (mode `3`) |
 | `emissivity` | -- | Surface emissivity (used in mode `1` and `6`) |
 | `equilibrium_temperature` | K | Radiative equilibrium temperature (modes `1`, `6`) |
-| `table_edge_cutoff` | bool | Apply smooth cutoff factor to outgoing surface flux near lower entropy table edge (default true for mode `6`, false otherwise) |
+| `table_edge_cutoff` | bool | Apply smooth cutoff factor to outgoing surface flux near lower entropy table edge. Forced on for outer boundary condition 6; optional (default false) for other modes. |
 | `cmb_flux_law` | str | Core-mantle boundary convective layer flux law: `"none"` (default) or `"deschamps_sotin_2000"` |
 | `core_heat_capacity` | J/kg/K | Core specific heat capacity |
 | `tfac_core_avg` | -- | Core adiabat correction factor (default 1.147; Bower+2018 Table 2) |
@@ -171,9 +171,9 @@ Spatial discretisation and pressure-density profile.
 | `number_of_nodes` | -- | Number of basic-grid nodes (cell faces) |
 | `surface_cell_thickness` | m | Target thickness of the top basic cell when using boundary-refined meshes (default 0.0, uniform spacing) |
 | `cmb_cell_thickness` | m | Target thickness of the bottom basic cell when using boundary-refined meshes (default 0.0, uniform spacing) |
-| `mesh_stretching` | str | Mesh stretching mode: `"uniform"` (default) or `"geometric"` |
 | `mixing_length_profile` | str | `"nearest_boundary"` (distance to nearer mesh boundary) or `"constant"` (a fixed fraction of mantle thickness; see `mixing_length_constant_fraction` below) |
 | `mixing_length_constant_fraction` | -- | Fraction of mantle thickness used as the mixing length when `mixing_length_profile = "constant"`. Ignored otherwise. Default 0.25 |
+
 | `core_density` | kg/m³ | Mean core density |
 | `eos_method` | int | `1` = analytic Adams-Williamson; `2` = external file (`eos_file`) |
 | `surface_density` | kg/m³ | Surface mantle density (Adams-Williamson). Default 4078.95095544 (PROTEUS production; SPIDER `-adams_williamson_rhos`) |
@@ -198,8 +198,6 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `tidal` | bool | -- | Tidal heating from `tidal_array` |
 | `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
 | `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |
-| `mlt_top_slope` | float | 1.0 | Linear slope factor for mixing length near upper boundary |
-| `mlt_bottom_slope` | float | 1.0 | Linear slope factor for mixing length near lower boundary |
 | `kappah_floor` | m²/s | 10.0 | Phase-modulated lower bound on $\kappa_h$. Default 10.0 (PROTEUS production); set 0.0 for textbook MLT |
 | `phi_step_cap` | -- | 0.0 | Per-call $\Delta\Phi_\mathrm{global}$ cap. When `> 0` and the mantle straddles the rheological transition, a SUNDIALS root function fires at the step where the mass-weighted global melt fraction $\Phi_\mathrm{global}$ has changed by `cap` from its value at `solve()` entry. `0.05` is a useful upper bound for 1 M$_\oplus$ runs. Default `0.0` (disabled). |
 | `phase_boundary_cap` | str | `"rate"` | Step-size cap near or inside the two-phase band. `"fixed"` uses 1 yr. `"rate"`, the default (also when unset), uses event-driven CVODE segments with `max_step` set to 0.1 of the shortest time to reach a phase boundary, clipped to `[1, 100]` yr. Inside the stiff zone ($\delta = \max(3w \max_j(S_{\mathrm{liq},j}-S_{\mathrm{sol},j}), 10\ \mathrm{J\,kg^{-1}\,K^{-1}})$, with $w = \mathtt{matprop\_smooth\_width}$) or below the rate floor, the estimate uses the distance to the nearer boundary. The gradient core and the scipy integrators use 1 yr in both modes. On CVODE the segments of a `"rate"` call arm within the larger of `phase_boundary_entropy_margin` and $\delta$; the step caps, `"fixed"`, the gradient core and the scipy integrators use `phase_boundary_entropy_margin`. At the default `rtol` $= 10^{-8}$, `"rate"` stays within $1.3 \times 10^{-4}$ K of a `"fixed"` run at $10^{-10}$ in the cases on the [energy equation](../Explanations/energy_equation.md) page; an `rtol` above $10^{-7}$ logs one warning. |
@@ -240,6 +238,10 @@ End-member phase properties. Float values mean a constant; string values are fil
 | `yield_stress_c` | Pa | Byerlee plastic yield stress cohesion intercept. Default 50e6 |
 | `yield_stress_mu` | -- | Byerlee friction coefficient. Default 0.6 |
 | `stress_closure_mode` | str | Explicit strain rate closure mode. `"lid"` activates stagnant-lid and mobile-lid convective boundary-layer closure; `"local"` limits yielding node-by-node. Default `"lid"` |
+| `lid_base_mode` | str | Stagnant lid base temperature definition mode: `"rheological"` (Frank-Kamenetskii scale, default) or `"fixed"` |
+| `mlt_top_slope` | float | Linear slope factor for mixing length near upper boundary. Default 0.22 |
+| `mlt_bottom_slope` | float | Linear slope factor for mixing length near lower boundary. Default 1.0 |
+
 
 In the production PROTEUS path the per-phase keys are not consumed for material properties; the EOS tables provide $\rho$, $c_p$, $\alpha$, $k$, and $T$ as functions of $(P, S)$. The values are kept for the standalone constant-properties path (see `const_properties` below).
 

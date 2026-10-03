@@ -27,12 +27,13 @@ The production EOS path uses a single evaluator class:
 
 There is no separate `SinglePhaseEvaluator` / `MixedPhaseEvaluator` / `CompositePhaseEvaluator` hierarchy in the production path: the EOS table itself spans all three regimes, and the per-cell evaluator selects between solid, mixed, and liquid branches via a smooth two-stage blend (described next).
 
-## Two-stage SPIDER-parity blend
+## SPIDER-parity material property blend
 
-For each cell at $(P, S)$, the phase evaluator computes a blending weight in two stages:
+For each cell at $(P, S)$, the phase evaluator computes a blending weight in two steps:
 
-1. **Stage 1 - mushy band weight $\mathrm{smth}(\phi)$.** The phase-boundary smoothing function from [Heat transport](heat_transport.md) defines the weight of the mixed-phase contribution (tanh in the production setting, cubic-Hermite as the fallback). Outside the mushy band $\mathrm{smth}(\phi) = 0$. The property then reduces to the single-phase value.
-2. **Stage 2 - SPIDER `combine_matprop`.** Inside the band the property is a smooth combination of the mixed (lever-rule) value and the corresponding single-phase value, weighted by the cached `matprop_smooth_width`. This is the SPIDER-parity blend `smth*mixed + (1-smth)*single` that ensures continuity over the solidus and liquidus.
+1. **Mushy band weight $\mathrm{smth}(\phi)$.** The phase-boundary smoothing function from [Heat transport](heat_transport.md) defines the weight of the mixed-phase contribution (tanh in the production setting, cubic-Hermite as the fallback). Outside the mushy band $\mathrm{smth}(\phi) = 0$. The property then reduces to the single-phase value.
+2. **Property combination via `combine_matprop`.** Inside the band the property is a smooth combination of the mixed (lever-rule) value and the corresponding single-phase value, weighted by the cached `matprop_smooth_width`. This is the SPIDER-parity blend `smth*mixed + (1-smth)*single` that ensures continuity over the solidus and liquidus.
+
 
 The same two-stage blend is applied to density, heat capacity, thermal expansivity, isentropic temperature gradient, and thermal conductivity. The resulting per-cell properties are used by the conduction, convection, gravitational-separation, and mixing fluxes on the same RHS evaluation.
 

@@ -742,6 +742,7 @@ class EntropyState:
 
                 P_basic = np.asarray(self.phase_basic.pressure).ravel()
                 phi_rheo = float(self.phase_basic.phi_rheo)
+                phi_width = float(getattr(self.phase_basic, 'phi_width', 0.15))
                 lid_state = compute_stagnant_lid_state(
                     radii=r_basic,
                     temperature=T,
@@ -754,8 +755,10 @@ class EntropyState:
                     unyielded_velocity=visc_v_unyielded,
                     viscosity_solid=self.phase_basic.viscosity_solid,
                     phi_rheo=phi_rheo,
+                    phi_width=phi_width,
                     xp=np,
                 )
+
                 self._lid_state = lid_state
                 if (
                     not self._low_theta_warned

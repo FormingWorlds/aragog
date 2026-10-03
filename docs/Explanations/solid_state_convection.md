@@ -343,11 +343,11 @@ The geometry of the strain rate closure is controlled by `stress_closure_mode`:
 
 In the baseline parameter schema, `stress_closure_mode` defaults to `'lid'` to activate the boundary-layer convective closure for stagnant-lid and mobile-lid regimes. Setting `stress_closure_mode = 'local'` limits yielding node-by-node based on the local convective strain rate.
 
-## 8. Two-Stage Viscosity Blending
+## 8. Viscosity Blending
 
-In partially molten regions ($0 < \phi < \phi_\text{rheo}$), Aragog evaluates viscosity in two stages:
+In partially molten regions ($0 < \phi < \phi_\text{rheo}$), Aragog evaluates viscosity in two steps:
 
-1. **Stage 1 (Melt fraction blend):**
+1. **Melt fraction blend:**
     The effective solid viscosity $\eta_\text{eff}$ is blended smoothly with the liquid melt viscosity $\eta_\text{liquid}$ across the rheological transition threshold ($\phi_\text{rheo} = 0.4$) with transition width $\phi_\text{width}$ using a hyperbolic tangent weight:
 
     $$
@@ -358,8 +358,9 @@ In partially molten regions ($0 < \phi < \phi_\text{rheo}$), Aragog evaluates vi
     \log_{10} \eta_\text{mixed} = (1 - w) \log_{10} \eta_\text{eff} + w \log_{10} \eta_\text{liquid}
     $$
 
-2. **Stage 2 (Material property smoothing):**
+2. **Material property smoothing:**
     The mixed viscosity is combined with the single-phase branch:
+
 
     $$
     \log_{10} \eta_\text{single} = \begin{cases}
@@ -473,7 +474,8 @@ All solid-state convection parameters are managed by `SolidRheologyParams` in Ar
 | `yield_stress_max` | Pa | `500000000.0` | `[phase_solid].yield_stress_max` | `[interior_energetics.aragog.rheology].yield_stress_max` |
 | `stress_closure_mode` | - | `'lid'` | `[phase_solid].stress_closure_mode` | `[interior_energetics.aragog.rheology].stress_closure_mode` |
 | `interior_flux_fraction` | - | `0.05` | `[phase_solid].interior_flux_fraction` | `[interior_energetics.aragog.rheology].interior_flux_fraction` |
-| `lid_base_mode` | - | `'fixed'` | `[phase_solid].lid_base_mode` | `[interior_energetics.aragog.rheology].lid_base_mode` |
+| `lid_base_mode` | - | `'rheological'` | `[phase_solid].lid_base_mode` | `[interior_energetics.aragog.rheology].lid_base_mode` |
+
 | `lid_base_temperature` | K | `1400.0` | `[phase_solid].lid_base_temperature` | `[interior_energetics.aragog.rheology].lid_base_temperature` |
 | `lid_contrast_coeff` | - | `2.2` | `[phase_solid].lid_contrast_coeff` | `[interior_energetics.aragog.rheology].lid_contrast_coeff` |
 | `lid_mask_width_cells` | - | `1.0` | `[phase_solid].lid_mask_width_cells` | `[interior_energetics.aragog.rheology].lid_mask_width_cells` |

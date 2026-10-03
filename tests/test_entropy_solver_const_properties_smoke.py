@@ -189,3 +189,35 @@ def test_const_properties_smoke_completes_without_eos():
     assert float(out.T_magma) < pm.const_T_ref * np.exp(
         (3050.0 - pm.const_S_ref) / pm.const_Cp
     ), 'T_magma did not drop below the IC; the grey-body BC must remove heat over 5 yr.'
+
+
+def test_const_properties_reference_viscosity_unified():
+    """Verify reference solid viscosity in const-properties mode derives from const_log10visc."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    parameters = _build_const_properties_parameters(n_nodes=10, end_time=1.0)
+    parameters.phase_mixed.const_log10visc = 3.5
+
+    solver = EntropySolver(parameters, entropy_eos=None)
+    solver.initialize()
+
+    expected_visc = 10.0**3.5
+    assert solver.state.phase_basic.viscosity_solid == pytest.approx(expected_visc, rel=1e-12)
+    assert solver.state.phase_staggered.viscosity_solid == pytest.approx(
+        expected_visc, rel=1e-12
+    )
+
+
+def test_const_properties_rejects_conflicting_viscosity():
+    """Verify conflicting explicit solid viscosity in const-properties mode raises ValueError."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    parameters = _build_const_properties_parameters(n_nodes=10, end_time=1.0)
+    parameters.phase_mixed.const_log10visc = 2.0
+    parameters.phase_solid.viscosity = 5.0e20
+
+    solver = EntropySolver(parameters, entropy_eos=None)
+    with pytest.raises(
+        ValueError, match='Conflicting solid viscosities in const-properties mode'
+    ):
+        solver.initialize()

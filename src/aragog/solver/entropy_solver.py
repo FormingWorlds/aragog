@@ -1704,6 +1704,21 @@ class EntropySolver:
                 'const_S_ref',
             ):
                 phase_kwargs[k] = float(getattr(self.parameters.phase_mixed, k))
+            const_visc = 10.0 ** phase_kwargs['const_log10visc']
+            solid_visc_raw = getattr(self.parameters.phase_solid, 'viscosity', None)
+            if solid_visc_raw is not None:
+                solid_visc_val = _phase_prop_float(solid_visc_raw, None)
+                if (
+                    solid_visc_val is not None
+                    and solid_visc_val != 1e21
+                    and not np.isclose(solid_visc_val, const_visc, rtol=1e-5)
+                ):
+                    raise ValueError(
+                        f'Conflicting solid viscosities in const-properties mode: '
+                        f'phase_solid.viscosity={solid_visc_val} disagrees with '
+                        f'10^const_log10visc={const_visc}.'
+                    )
+            phase_kwargs['viscosity_solid'] = const_visc
 
         phase_stag = EntropyPhaseEvaluator(
             gravitational_acceleration=g_stag,
