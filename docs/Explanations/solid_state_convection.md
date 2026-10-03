@@ -437,7 +437,7 @@ The table below reconciles diagnostic quantities across model helpfiles and NetC
 | `lid_cell_count` | Numerical lid resolution | - | Integer count of discrete radial cells spanning $d_\text{lid}$ |
 | `energy_residual` | Energy conservation residual | J | Cumulative discrete energy balance check across mantle volume |
 
-Established columns (`T_pot`, `boundary_layer_thickness`, and `RF_depth`) map to existing helpfile scan tables. The diagnostic `lid_thickness` denotes the physical stagnant lid thickness $d_\text{lid}$ dynamically determined from the rheological isotherm $T_\text{lid}$, solidus, or rheological front, differing from the static configured parameter `boundary_layer_thickness`. Convective closure variables are exported unconditionally in NetCDF snapshot files (`_int.nc`) for model verification. When rheology is disabled, the basic diffusion creep diagnostic array $\eta_\text{diff\_b}$ reports $10^{\text{log10\_visc\_solid}}$ at all nodes.
+Established columns (`T_pot`, `boundary_layer_thickness`, and `RF_depth`) map to existing helpfile scan tables. The diagnostic `lid_thickness` denotes the physical stagnant lid thickness $d_\text{lid}$ dynamically determined from the rheological isotherm $T_\text{lid}$, solidus, or rheological front, differing from the static configured parameter `boundary_layer_thickness`. In-memory diagnostics report NaN for inactive rheology and stagnant lid quantities. When rheology is disabled, the rheological profiles ($\eta_\text{diff\_b}$, $\tau_\text{y\_b}$) and stagnant lid diagnostics ($d_\text{lid}$, $T_\text{lid}$, $T_i$, $\tau_d$, $\theta$, $\text{lid\_regime}$) are omitted from NetCDF snapshot files (`_int.nc`) so that inactive modules export only finite variables.
 
 ### Energy Conservation
 

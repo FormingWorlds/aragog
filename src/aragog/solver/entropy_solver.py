@@ -1029,6 +1029,11 @@ class SolverOutput:
           xarray import to keep startup lean.
         - All array fields are written as ``f8`` (float64). The
           integer ``status`` field is stored as ``i4``.
+        - When solid-state rheology is disabled, rheological profiles
+          (``eta_diff_b``, ``tau_y_b``) and stagnant lid diagnostics
+          (``lid_thickness``, ``lid_base_temperature``, ``interior_temperature``,
+          ``lid_stress``, ``theta``, ``lid_regime``) are omitted so all
+          exported variables remain finite.
         - Reading back: ``netCDF4.Dataset(path)`` or
           ``xarray.open_dataset(path)`` both work; the file follows the
           CF-1.8 attribute convention.
@@ -1228,42 +1233,43 @@ class SolverOutput:
                 'Flag (0/1): per-solve core-temperature change exceeds the '
                 'limit, or a sampled core temperature is non-finite',
             )
-            _scalar(
-                'lid_thickness',
-                float(self.lid_thickness),
-                'm',
-                'Physical stagnant lid thickness',
-            )
-            _scalar(
-                'lid_base_temperature',
-                float(self.lid_base_temperature),
-                'K',
-                'Temperature at base of stagnant lid',
-            )
-            _scalar(
-                'interior_temperature',
-                float(self.interior_temperature),
-                'K',
-                'Representative convective interior temperature T_i',
-            )
-            _scalar(
-                'lid_stress',
-                float(self.lid_stress),
-                'Pa',
-                'Convective driving shear stress tau_d',
-            )
-            _scalar(
-                'theta',
-                float(self.theta),
-                '1',
-                'Frank-Kamenetskii rheological contrast parameter',
-            )
-            _scalar(
-                'lid_regime',
-                float(self.lid_regime),
-                '1',
-                'Lid regime indicator (0 none, 1 stagnant, 2 mobile)',
-            )
+            if not np.isnan(float(self.lid_thickness)):
+                _scalar(
+                    'lid_thickness',
+                    float(self.lid_thickness),
+                    'm',
+                    'Physical stagnant lid thickness',
+                )
+                _scalar(
+                    'lid_base_temperature',
+                    float(self.lid_base_temperature),
+                    'K',
+                    'Temperature at base of stagnant lid',
+                )
+                _scalar(
+                    'interior_temperature',
+                    float(self.interior_temperature),
+                    'K',
+                    'Representative convective interior temperature T_i',
+                )
+                _scalar(
+                    'lid_stress',
+                    float(self.lid_stress),
+                    'Pa',
+                    'Convective driving shear stress tau_d',
+                )
+                _scalar(
+                    'theta',
+                    float(self.theta),
+                    '1',
+                    'Frank-Kamenetskii rheological contrast parameter',
+                )
+                _scalar(
+                    'lid_regime',
+                    float(self.lid_regime),
+                    '1',
+                    'Lid regime indicator (0 none, 1 stagnant, 2 mobile)',
+                )
             _scalar(
                 'energy_residual',
                 float(self.energy_residual),
@@ -1328,13 +1334,14 @@ class SolverOutput:
                 'Pa s',
                 'Effective dynamic viscosity at basic nodes',
             )
-            _arr(
-                'eta_diff_b',
-                self.eta_diff_b,
-                'basic',
-                'Pa s',
-                'Arrhenius diffusion creep viscosity at basic nodes',
-            )
+            if not np.all(np.isnan(self.eta_diff_b)):
+                _arr(
+                    'eta_diff_b',
+                    self.eta_diff_b,
+                    'basic',
+                    'Pa s',
+                    'Arrhenius diffusion creep viscosity at basic nodes',
+                )
             _arr(
                 'strain_rate_b',
                 self.strain_rate_b,
@@ -1342,13 +1349,14 @@ class SolverOutput:
                 's-1',
                 'Convective strain rate at basic nodes',
             )
-            _arr(
-                'tau_y_b',
-                self.tau_y_b,
-                'basic',
-                'Pa',
-                'Plastic yield stress at basic nodes',
-            )
+            if not np.all(np.isnan(self.tau_y_b)):
+                _arr(
+                    'tau_y_b',
+                    self.tau_y_b,
+                    'basic',
+                    'Pa',
+                    'Plastic yield stress at basic nodes',
+                )
             _arr(
                 'lid_mask_b',
                 self.lid_mask_b,
@@ -4779,12 +4787,12 @@ class EntropySolver:
         else:
             lid_mask_b = np.zeros_like(r_basic)
             yield_switch_b = np.zeros_like(r_basic)
-            lid_thickness = 0.0
-            lid_base_temperature = 0.0
-            interior_temperature = float(T_magma)
-            lid_stress = 0.0
-            theta_val = 0.0
-            lid_regime = 0.0
+            lid_thickness = np.nan
+            lid_base_temperature = np.nan
+            interior_temperature = np.nan
+            lid_stress = np.nan
+            theta_val = np.nan
+            lid_regime = np.nan
 
         dt_s = float(sol.t[-1] - sol.t[0]) * 365.25 * 86400.0
         energy_residual = float(step_integrals['solver_residual']) / dt_s if dt_s > 0.0 else 0.0
