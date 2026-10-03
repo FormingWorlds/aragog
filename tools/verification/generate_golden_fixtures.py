@@ -27,6 +27,7 @@ from aragog.eos.entropy import EntropyEOS  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
 from tests.fixture_helpers import (  # noqa: E402
     compute_eos_hash,
+    get_cold_top_lid_initial_entropy,
     get_creep_locked_base_initial_entropy,
     get_mixed_phase_mush_initial_entropy,
     get_sundials_version,
@@ -173,6 +174,20 @@ def main() -> None:
         eos_hash=eos_hash,
         commit=commit,
         initial_entropy=locked_s0,
+    )
+    cold_config = Config.from_file('tests/configs/cold_top_lid.toml')
+    cold_solver = EntropySolver(cold_config, entropy_eos=eos)
+    cold_solver.initialize()
+    cold_s0 = get_cold_top_lid_initial_entropy(cold_solver.evaluator.mesh)
+    record_fixture(
+        name='cold_top_lid',
+        config_file='tests/configs/cold_top_lid.toml',
+        fixture='cold_top_lid.npz',
+        expected_dt=0.10,
+        eos=eos,
+        eos_hash=eos_hash,
+        commit=commit,
+        initial_entropy=cold_s0,
     )
     print('All golden fixtures recorded successfully.')
 

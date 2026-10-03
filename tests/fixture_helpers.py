@@ -115,3 +115,29 @@ def get_creep_locked_base_initial_entropy(mesh: object) -> np.ndarray:
 
 
 get_partly_locked_column_initial_entropy = get_creep_locked_base_initial_entropy
+
+
+def get_cold_top_lid_initial_entropy(mesh: object) -> np.ndarray:
+    """Return initial entropy profile for cold top lid fixture.
+
+    Parameters
+    ----------
+    mesh : object
+        Mesh object carrying staggered and basic radii arrays.
+
+    Returns
+    -------
+    np.ndarray
+        Initial entropy array on staggered nodes [J kg^-1 K^-1].
+    """
+    r_stag = np.asarray(mesh.staggered.radii).ravel()
+    r_basic = np.asarray(mesh.basic.radii).ravel()
+    r_cmb = float(r_basic[0])
+    r_surf = float(r_basic[-1])
+    d = r_surf - r_cmb
+    x = (r_stag - r_cmb) / d
+    r_top_base = r_surf - 150000.0
+    s_int = 4200.0 - 500.0 * x
+    s_surf = 150.0
+    w_surf_blend = 0.5 * (1.0 + np.tanh((r_stag - r_top_base) / 30000.0))
+    return (1.0 - w_surf_blend) * s_int + w_surf_blend * s_surf
