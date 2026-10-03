@@ -68,7 +68,7 @@ class EntropyPhaseEvaluator:
         gravitational_acceleration: FloatOrArray,
         rheological_transition_melt_fraction: float = 0.4,
         rheological_transition_width: float = 0.15,
-        viscosity_solid: float = 1e21,
+        viscosity_solid: float | None = None,
         viscosity_liquid: float = 1e-1,
         grain_size: float = 1e-3,
         thermal_conductivity_solid: float = 4.0,
@@ -91,7 +91,12 @@ class EntropyPhaseEvaluator:
         self._g = gravitational_acceleration
         self._phi_rheo = rheological_transition_melt_fraction
         self._phi_width = rheological_transition_width
-        self._visc_solid = viscosity_solid
+        if viscosity_solid is not None:
+            self._visc_solid = float(viscosity_solid)
+        elif const_properties:
+            self._visc_solid = 10.0**const_log10visc
+        else:
+            self._visc_solid = 1e21
         self._visc_liquid = viscosity_liquid
         self._grain_size = grain_size
         self._k_solid = thermal_conductivity_solid
