@@ -87,6 +87,14 @@ def make_thickness_fn(profiles, k_core: float):
     in the clamped regimes (superadiabatic, fully stratified, past-peak)
     where the primal does not move.
     """
+    r_peak = float(profiles.d_scale) * (1.5**0.5)
+    if r_peak < float(profiles.r_cmb):
+        raise ValueError(
+            f'stratification requires r_peak >= r_cmb (got r_peak={r_peak:.3e} m '
+            f'< r_cmb={float(profiles.r_cmb):.3e} m); the conductive matching '
+            f'model has a thickness discontinuity when the conducted flow peaks '
+            f'inside the core'
+        )
 
     @jax.custom_jvp
     def thickness(t_cmb, q_cmb):

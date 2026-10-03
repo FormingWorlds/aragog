@@ -224,6 +224,23 @@ def test_constructor_rejects_meaningless_configurations():
             stratification=True,
             k_core=K_CORE,
         )
+    prof_large = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=9000e3,
+        p_cmb=300e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+    )
+    with pytest.raises(ValueError, match='r_peak'):
+        CoreEnergyBudget(
+            prof_large,
+            curve,
+            ds_fusion=170.0,
+            icn_width=10.0,
+            stratification=True,
+            k_core=K_CORE,
+        )
 
 
 def test_factory_threads_the_stratification_keys():

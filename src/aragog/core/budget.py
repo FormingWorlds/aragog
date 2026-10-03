@@ -127,6 +127,14 @@ class CoreEnergyBudget:
                 )
             if k_core is None or not float(k_core) > 0.0:
                 raise ValueError(f'stratification needs a positive k_core, got {k_core}')
+            r_peak = float(profiles.d_scale) * (1.5**0.5)
+            if r_peak < float(profiles.r_cmb):
+                raise ValueError(
+                    f'stratification requires r_peak >= r_cmb (got r_peak={r_peak:.3e} m '
+                    f'< r_cmb={float(profiles.r_cmb):.3e} m); the conductive matching '
+                    f'model has a thickness discontinuity when the conducted flow peaks '
+                    f'inside the core'
+                )
         self.profiles = profiles
         self.melting_curve = melting_curve
         self.ds_fusion = float(ds_fusion)
