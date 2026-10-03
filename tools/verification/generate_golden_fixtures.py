@@ -27,8 +27,8 @@ from aragog.eos.entropy import EntropyEOS  # noqa: E402
 from aragog.solver.entropy_solver import EntropySolver  # noqa: E402
 from tests.fixture_helpers import (  # noqa: E402
     compute_eos_hash,
+    get_creep_locked_base_initial_entropy,
     get_mixed_phase_mush_initial_entropy,
-    get_partly_locked_column_initial_entropy,
     get_sundials_version,
 )
 
@@ -160,14 +160,14 @@ def main() -> None:
         commit=commit,
         initial_entropy=mush_s0,
     )
-    locked_config = Config.from_file('tests/configs/partly_locked_column.toml')
+    locked_config = Config.from_file('tests/configs/creep_locked_base.toml')
     locked_solver = EntropySolver(locked_config, entropy_eos=eos)
     locked_solver.initialize()
-    locked_s0 = get_partly_locked_column_initial_entropy(locked_solver.evaluator.mesh)
+    locked_s0 = get_creep_locked_base_initial_entropy(locked_solver.evaluator.mesh)
     record_fixture(
-        name='partly_locked_column',
-        config_file='tests/configs/partly_locked_column.toml',
-        fixture='partly_locked_column.npz',
+        name='creep_locked_base',
+        config_file='tests/configs/creep_locked_base.toml',
+        fixture='creep_locked_base.npz',
         expected_dt=0.10,
         eos=eos,
         eos_hash=eos_hash,

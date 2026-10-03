@@ -93,8 +93,8 @@ def get_mixed_phase_mush_initial_entropy(mesh: object) -> np.ndarray:
     return 5050.0 - 100.0 * (r_stag - r_cmb) / d
 
 
-def get_partly_locked_column_initial_entropy(mesh: object) -> np.ndarray:
-    """Return initial entropy profile for partly locked column fixture.
+def get_creep_locked_base_initial_entropy(mesh: object) -> np.ndarray:
+    """Return initial entropy profile for creep locked base fixture.
 
     Parameters
     ----------
@@ -112,3 +112,6 @@ def get_partly_locked_column_initial_entropy(mesh: object) -> np.ndarray:
     r_surf = float(r_basic[-1])
     d = r_surf - r_cmb
     return 5100.0 - 2600.0 * (r_stag - r_cmb) / d
+
+
+get_partly_locked_column_initial_entropy = get_creep_locked_base_initial_entropy

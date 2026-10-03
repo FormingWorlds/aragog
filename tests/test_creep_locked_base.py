@@ -15,8 +15,8 @@ from aragog.eos.entropy import EntropyEOS
 from aragog.solver.entropy_solver import EntropySolver
 from tests.fixture_helpers import (
     compute_eos_hash,
+    get_creep_locked_base_initial_entropy,
     get_package_version,
-    get_partly_locked_column_initial_entropy,
     get_sundials_version,
 )
 
@@ -36,14 +36,14 @@ def shared_eos():
 
 
 @pytest.mark.smoke
-def test_partly_locked_column_fixture(shared_eos):
-    """Verify partly locked column fixture against recorded reference fixture."""
-    config_file = 'tests/configs/partly_locked_column.toml'
+def test_creep_locked_base_fixture(shared_eos):
+    """Verify creep locked base fixture against recorded reference fixture."""
+    config_file = 'tests/configs/creep_locked_base.toml'
     config = Config.from_file(config_file)
 
     solver = EntropySolver(config, entropy_eos=shared_eos)
     solver.initialize()
-    s0 = get_partly_locked_column_initial_entropy(solver.evaluator.mesh)
+    s0 = get_creep_locked_base_initial_entropy(solver.evaluator.mesh)
     solver.set_initial_entropy(s0)
 
     solver.solve()
@@ -54,14 +54,12 @@ def test_partly_locked_column_fixture(shared_eos):
     assert output.status == 0, f'Expected status 0, got {output.status}'
     assert output.dt_actual == 0.10, f'Expected dt 0.10, got {output.dt_actual}'
 
-    # Check partly locked column active invariants: lid and mushy interior
+    # Check creep locked base active invariants: creep locked lower cells and mushy upper cells
     phi = output.phi_basic
-    assert np.sum(phi < 0.4) >= 5, 'Expected upper cells in locked lid regime (phi < 0.4)'
-    assert np.sum(phi >= 0.4) >= 5, 'Expected lower cells in mushy regime (phi >= 0.4)'
+    assert np.sum(phi < 0.4) >= 5, 'Expected lower cells in creep locked regime (phi < 0.4)'
+    assert np.sum(phi >= 0.4) >= 5, 'Expected upper cells in mushy regime (phi >= 0.4)'
 
-    fixture_path = os.path.join(
-        os.path.dirname(__file__), 'reference', 'partly_locked_column.npz'
-    )
+    fixture_path = os.path.join(os.path.dirname(__file__), 'reference', 'creep_locked_base.npz')
 
     with np.load(fixture_path) as ref:
         assert 'recorded_from_commit' in ref.files

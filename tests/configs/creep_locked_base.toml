@@ -1,4 +1,4 @@
-# Aragog test configuration: partly locked column regression fixture
+# Aragog test configuration: creep locked base regression fixture
 # All units are SI unless otherwise specified.
 
 [solver]
