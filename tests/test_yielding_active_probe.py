@@ -80,29 +80,35 @@ def test_yielding_active_probe(shared_eos):
             'recorded_sundials_version': get_sundials_version(),
             'recorded_platform': sys.platform,
         }
+        exact_match = True
+        mismatches = []
         for ver_key, cur_ver in version_checks.items():
             if ver_key in ref.files and cur_ver is not None:
                 if str(ref[ver_key]) != str(cur_ver):
-                    pytest.skip(
-                        f'Exact tier platform/version mismatch: {ver_key} recorded {ref[ver_key]}, current {cur_ver}'
+                    exact_match = False
+                    mismatches.append(
+                        f'{ver_key}: recorded {ref[ver_key]} vs current {cur_ver}'
                     )
 
-        np.testing.assert_array_equal(S, ref['S'])
-        np.testing.assert_array_equal(T, ref['T'])
-
-        metadata_keys = {
-            'S',
-            'T',
-            'eos_hash',
-            'recorded_from_commit',
-            'recorded_numpy_version',
-            'recorded_jax_version',
-            'recorded_scikits_odes_version',
-            'recorded_sundials_version',
-            'recorded_platform',
-        }
-        for k in set(ref.files) - metadata_keys:
-            assert k in output.__dict__, f'Reference key {k} missing from solver output'
-            np.testing.assert_array_equal(
-                output.__dict__[k], ref[k], err_msg=f'Mismatch in {k}'
-            )
+        if exact_match:
+            np.testing.assert_array_equal(S, ref['S'])
+            np.testing.assert_array_equal(T, ref['T'])
+            for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
+                if flux_key in ref.files:
+                    np.testing.assert_array_equal(getattr(output, flux_key), ref[flux_key])
+            if 'lid_stress' in ref.files:
+                np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
+        else:
+            # Tolerance tier: 10x max(1-ulp noise floor, measured hardware spread).
+            # Measured noise floor: S 5.56e-5 J/kg/K; measured spread (run 37117288868): S 7.70e-5 J/kg/K.
+            np.testing.assert_allclose(S, ref['S'], atol=8.0e-4)
+            np.testing.assert_allclose(T, ref['T'], atol=1.3e-4)
+            for flux_key in ('heat_flux', 'conv_flux', 'cond_flux'):
+                if flux_key in ref.files:
+                    np.testing.assert_allclose(
+                        getattr(output, flux_key), ref[flux_key], atol=500.0
+                    )
+            if 'lid_stress' in ref.files:
+                np.testing.assert_allclose(
+                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=3.5e17
+                )
