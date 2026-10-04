@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import functools
 import importlib.resources
 import os
+import warnings
 from contextlib import AbstractContextManager
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -34,8 +34,19 @@ needs_eos = pytest.mark.skipif(
 
 
 @functools.cache
+def _parse(eos_class: type, eos_dir: str):
+    try:
+        return eos_class(eos_dir), None
+    except Exception as exc:
+        return None, exc
+
+
 def _parsed(eos_class: type, eos_dir: str):
-    return eos_class(eos_dir)
+    """Return the cached parse of ``eos_dir``; a failed parse re-raises without a retry."""
+    eos, exc = _parse(eos_class, eos_dir)
+    if exc is not None:
+        raise exc
+    return eos
 
 
 def entropy_eos_copy(eos_dir: Path | str = EOS_DIR, strict_range: bool = False) -> EntropyEOS:
@@ -64,15 +75,17 @@ def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
 def pytest_collection_finish(session):
     """Parse the tables before the first test, outside every per-test timeout.
 
-    A failed parse is left to the tests that need the tables, which report it.
+    A failed parse is reported as a warning and re-raised in each test that needs the tables.
     """
     if session.config.option.collectonly or not EOS_DIR.exists():
         return
     modules = {getattr(item, 'module', None) for item in session.items}
     for helper in (entropy_eos_copy, entropy_eos_jax):
         if any(hasattr(m, helper.__name__) for m in modules):
-            with contextlib.suppress(Exception):
-                helper()
+            try:
+                helper(EOS_DIR)
+            except Exception as exc:
+                warnings.warn(f'EOS table warm-up failed: {exc!r}', stacklevel=1)
 
 
 class Helper:
