@@ -55,7 +55,7 @@ from aragog.solver.entropy_state import apply_kappah_floor
 from aragog.utilities import tanh_weight
 from tests.conftest import entropy_eos_copy
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30, method='signal')]
 
 
 # ---------------------------------------------------------------------------

@@ -9,27 +9,32 @@ import numpy as np
 import pytest
 
 from aragog.eos.entropy import EntropyEOS
-from tests.conftest import EOS_DIR, _parsed, entropy_eos_copy, needs_eos
+from tests.conftest import EOS_DIR, _parsed, entropy_eos_copy, entropy_eos_jax, needs_eos
 
 
-def _mutables(obj, path='eos', seen=None):
-    """Yield (path, value) for each array, dict and list reachable from ``obj``."""
-    seen = set() if seen is None else seen
-    if id(obj) in seen or isinstance(obj, types.FunctionType):
-        return
-    seen.add(id(obj))
-    if isinstance(obj, (np.ndarray, dict, list)):
-        yield path, obj
-    if isinstance(obj, dict):
-        items = obj.items()
-    elif isinstance(obj, list):
-        items = enumerate(obj)
-    elif isinstance(obj, np.ndarray) or not hasattr(obj, '__dict__'):
-        items = ()
-    else:
-        items = vars(obj).items()
-    for key, value in items:
-        yield from _mutables(value, f'{path}[{key!r}]', seen)
+def _reachable(root):
+    """Return {id: path} for each mutable object reachable from ``root``.
+
+    The walk follows dicts, lists, tuples, instance attributes and closure cells.
+    """
+    found, seen, stack = {}, set(), [(root, 'eos')]
+    while stack:
+        obj, path = stack.pop()
+        if id(obj) in seen:
+            continue
+        seen.add(id(obj))
+        if isinstance(obj, (np.ndarray, dict, list, set)) or hasattr(obj, '__dict__'):
+            found[id(obj)] = path
+        if isinstance(obj, dict):
+            stack += [(v, f'{path}[{k!r}]') for k, v in obj.items()]
+        elif isinstance(obj, (list, tuple)):
+            stack += [(v, f'{path}[{i}]') for i, v in enumerate(obj)]
+        elif isinstance(obj, types.FunctionType):
+            found.pop(id(obj))
+            stack += [(c.cell_contents, f'{path}.<closure>') for c in obj.__closure__ or ()]
+        elif not isinstance(obj, (np.ndarray, type)) and hasattr(obj, '__dict__'):
+            stack += [(v, f'{path}.{k}') for k, v in vars(obj).items()]
+    return found
 
 
 @pytest.mark.smoke
@@ -56,20 +61,25 @@ def test_mutating_one_copy_leaves_the_next_copy_pristine(caplog):
 
 @pytest.mark.smoke
 @needs_eos
-def test_a_copy_shares_no_array_dict_or_list_with_the_cached_parse():
+def test_a_copy_shares_only_the_phase_boundary_functions_with_the_cached_parse():
     cached = _parsed(EntropyEOS, str(EOS_DIR))
     strict = entropy_eos_copy(strict_range=True)
-    copied = dict(_mutables(strict))
-    assert len(copied) > 50
-    shared = [
-        path
-        for path, value in _mutables(cached)
-        if path in copied
-        and (
-            copied[path] is value
-            or isinstance(value, np.ndarray)
-            and np.shares_memory(value, copied[path])
-        )
-    ]
-    assert shared == []
+    in_cached, in_copy = _reachable(cached), _reachable(strict)
+    boundary = {
+        i
+        for b in (cached._solidus, cached._liquidus)
+        for f in ('interp', 'dinterp')
+        for i in _reachable(b[f])
+    }
+    assert len(in_copy) > 50
+    assert [path for i, path in in_copy.items() if i in in_cached and i not in boundary] == []
     assert strict.strict_range and not cached.strict_range
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_the_shared_jax_eos_holds_no_mutable_array():
+    jax = pytest.importorskip('jax')
+    leaves = jax.tree_util.tree_leaves(entropy_eos_jax())
+    assert entropy_eos_jax() is entropy_eos_jax()
+    assert leaves and not any(isinstance(leaf, np.ndarray) for leaf in leaves)

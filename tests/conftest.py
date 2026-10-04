@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import functools
 import importlib.resources
@@ -41,8 +42,9 @@ def entropy_eos_copy(eos_dir: Path | str = EOS_DIR, strict_range: bool = False) 
     """Return an independent copy of ``EntropyEOS(eos_dir, strict_range)``.
 
     The tables are parsed once per process and each call returns a deep copy,
-    which starts in the state of a fresh build. Tests of the constructor itself
-    build ``EntropyEOS`` directly.
+    which starts in the state of a fresh build; only the read-only solidus and
+    liquidus interpolation functions are shared. Tests of the constructor
+    itself build ``EntropyEOS`` directly.
     """
     eos = copy.deepcopy(_parsed(EntropyEOS, str(eos_dir)))
     eos.strict_range = strict_range
@@ -52,7 +54,7 @@ def entropy_eos_copy(eos_dir: Path | str = EOS_DIR, strict_range: bool = False) 
 def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
     """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process.
 
-    The instance is a frozen equinox module, so callers share it.
+    The instance is a frozen equinox module of JAX arrays, so callers share it.
     """
     from aragog.jax.eos import EntropyEOS_JAX
 
@@ -60,14 +62,17 @@ def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
 
 
 def pytest_collection_finish(session):
-    """Parse the tables before the first test, outside every per-test timeout."""
-    if not EOS_DIR.exists():
+    """Parse the tables before the first test, outside every per-test timeout.
+
+    A failed parse is left to the tests that need the tables, which report it.
+    """
+    if session.config.option.collectonly or not EOS_DIR.exists():
         return
     modules = {getattr(item, 'module', None) for item in session.items}
-    if any(hasattr(m, 'entropy_eos_copy') for m in modules):
-        entropy_eos_copy()
-    if any(hasattr(m, 'entropy_eos_jax') for m in modules):
-        entropy_eos_jax()
+    for helper in (entropy_eos_copy, entropy_eos_jax):
+        if any(hasattr(m, helper.__name__) for m in modules):
+            with contextlib.suppress(Exception):
+                helper()
 
 
 class Helper:

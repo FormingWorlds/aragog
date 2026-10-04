@@ -23,7 +23,7 @@ from scipy.optimize import brentq
 
 from aragog.mesh import _radius_for_mass_coordinate
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30, method='signal')]
 
 # Monotonically increasing mass coordinate used throughout: xi(r) = r**3.
 # Nonlinear so the recovered root is a non-trivial cube root, not an
