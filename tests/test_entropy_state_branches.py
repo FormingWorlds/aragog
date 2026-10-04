@@ -24,6 +24,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_copy
+
 pytestmark = pytest.mark.unit
 
 
@@ -157,9 +159,8 @@ def test_negative_eddy_diff_thermal_uses_constant_kappa(caplog):
     the negative sentinel would scale the constant by kh_raw and
     surface as a non-uniform profile.
     """
-    from aragog.eos.entropy import EntropyEOS
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     K_const = 5.0  # m^2/s
     state, mesh = _build_state(
         eos,
@@ -188,9 +189,8 @@ def test_phase_smoothing_cubic_hermite_path_runs_without_errors():
     the heat_flux array's finiteness; a regression that mis-typed the
     cubic mask would produce NaN/inf on out-of-mushy nodes.
     """
-    from aragog.eos.entropy import EntropyEOS
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     state, mesh = _build_state(
         eos,
         gravitational_separation=True,
@@ -214,9 +214,8 @@ def test_tidal_array_with_bad_length_falls_back_to_zero():
     n_stag=30 would either raise inside numpy or pad with garbage,
     producing a state-dependent heating profile.
     """
-    from aragog.eos.entropy import EntropyEOS
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     # Bad length: 3 != 1 != n_stag (30). Triggers the fallback branch.
     state, mesh = _build_state(
         eos,
@@ -237,9 +236,8 @@ def test_dTdr_accessor_returns_basic_node_temperature_gradient():
     surface as a sign-flipped or order-of-magnitude-off result. We
     cross-check against numpy diff applied to the same staggered T.
     """
-    from aragog.eos.entropy import EntropyEOS
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     state, mesh = _build_state(eos)
     S0 = np.linspace(3500.0, 2800.0, mesh.N)  # decreasing toward surface
     state.update(S0, time=0.0)

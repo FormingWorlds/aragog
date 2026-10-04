@@ -29,6 +29,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_copy
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
 _CANDIDATES = [
@@ -162,9 +164,8 @@ def _build_parameters_eos_method_2(eos_file: str, n_nodes: int = 12, end_time: f
 
 @pytest.fixture(scope='module')
 def shared_eos():
-    from aragog.eos.entropy import EntropyEOS
 
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 def test_solver_loads_external_mesh_with_eos_method_2(shared_eos, tmp_path_factory):

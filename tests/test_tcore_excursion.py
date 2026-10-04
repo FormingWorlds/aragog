@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from aragog.solver.entropy_solver import EntropySolver
+from tests.conftest import entropy_eos_copy
 
 pytestmark = pytest.mark.unit
 
@@ -245,9 +246,8 @@ def real_eos():
     """Module-scoped, table-backed ``EntropyEOS`` instance."""
     if not EOS_DIR.exists():
         pytest.skip('EOS unavailable')
-    from aragog.eos.entropy import EntropyEOS
 
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 @needs_eos

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import functools
 import importlib.resources
 import os
 from contextlib import AbstractContextManager
@@ -27,6 +29,24 @@ needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
     reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
 )
+
+
+@functools.cache
+def _built_entropy_eos(eos_dir: str, strict_range: bool):
+    from aragog.eos.entropy import EntropyEOS
+
+    return EntropyEOS(eos_dir, strict_range=strict_range)
+
+
+def entropy_eos_copy(eos_dir: Path | str = EOS_DIR, strict_range: bool = False):
+    """Return an independent copy of ``EntropyEOS(eos_dir, strict_range)``.
+
+    The tables are parsed once per process and each call returns a deep copy,
+    which starts in the state of a fresh build. One parse reads about a million
+    table lines and takes minutes under coverage. Tests of the constructor
+    itself build ``EntropyEOS`` directly.
+    """
+    return copy.deepcopy(_built_entropy_eos(str(eos_dir), strict_range))
 
 
 class Helper:

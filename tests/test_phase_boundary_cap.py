@@ -18,6 +18,7 @@ from aragog.solver.entropy_solver import (
     _PhaseBoundarySegmentRoot,
     _rate_phase_boundary_max_step,
 )
+from tests.conftest import entropy_eos_copy
 
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S, needs_eos
 
@@ -539,11 +540,10 @@ def test_solve_cvode_segments_joins_the_energy_traces_without_repeating_a_segmen
 
 @pytest.fixture(scope='module')
 def shared_eos():
-    from aragog.eos.entropy import EntropyEOS
 
     from .test_phi_step_cap_armed_smoke import EOS_DIR
 
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 def _rtol_warnings(caplog):

@@ -24,6 +24,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_copy
+
 EOS_DIR = Path(
     os.environ.get(
         'ARAGOG_TEST_EOS_DIR',
@@ -42,9 +44,8 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(scope='module')
 def eos():
     """Load the EntropyEOS once per module (the h-table build takes a few seconds)."""
-    from aragog.eos import EntropyEOS
 
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 # ── Anchor and table structure ──────────────────────────────────────────

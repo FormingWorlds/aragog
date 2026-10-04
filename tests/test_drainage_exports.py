@@ -11,7 +11,7 @@ from scipy.interpolate import PchipInterpolator
 
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator, mobility_function
 from aragog.solver.entropy_solver import EntropySolver
-from tests.conftest import EOS_DIR, needs_eos
+from tests.conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from tests.test_entropy_solver_const_properties_smoke import _build_const_properties_parameters
 from tests.test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S
 
@@ -45,9 +45,8 @@ def _stub_evaluator(rho_s, rho_l, rho, mode='melt'):
 
 @pytest.fixture(scope='module')
 def shared_eos():
-    from aragog.eos.entropy import EntropyEOS
 
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 def _solve(eos, S0, mesh=None, **phase_mixed):

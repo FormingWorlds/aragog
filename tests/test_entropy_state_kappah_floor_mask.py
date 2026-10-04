@@ -53,6 +53,7 @@ import pytest
 from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
 from aragog.solver.entropy_state import apply_kappah_floor
 from aragog.utilities import tanh_weight
+from tests.conftest import entropy_eos_copy
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
@@ -375,9 +376,8 @@ def test_numpy_entropy_state_floor_gated_end_to_end():
     leaves the SAME node at its raw MLT value (orders of magnitude smaller).
     An un-gated floor would floor both, collapsing the contrast.
     """
-    from aragog.eos.entropy import EntropyEOS
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     state, mesh = _build_state(eos, kappah_floor=_KAPPAH_FLOOR)
 
     # Put the WHOLE staggered profile in the mushy window at phi = phi_rheo so

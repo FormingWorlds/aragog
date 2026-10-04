@@ -35,6 +35,8 @@ import numpy as np
 import pytest
 from scipy.constants import Julian_year
 
+from tests.conftest import entropy_eos_copy
+
 # EOS path is environment-driven for portability across machines.
 # Resolution order:
 #   1. ``ARAGOG_TEST_EOS_DIR`` -- explicit override
@@ -182,9 +184,8 @@ def shared_eos():
     and reusing it across the 8 integration tests cuts ~10-15 s of
     redundant disk + interpolator setup on the 2-vCPU runner.
     """
-    from aragog.eos.entropy import EntropyEOS
 
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 def _run_solver(parameters, eos, S_init: float = 3300.0):

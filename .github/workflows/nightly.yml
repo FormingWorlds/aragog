@@ -64,7 +64,7 @@ jobs:
 
       - name: Install pip-only test deps (scikits-odes-sundials builds against conda SUNDIALS)
         run: |
-          pip install pytest pytest-cov pytest-xdist pytest-dependency
+          pip install pytest pytest-cov pytest-xdist pytest-dependency pytest-timeout
           # Direct install of scikits-odes-sundials only; aragog imports
           # CVODE directly from scikits_odes_sundials.cvode and skips the
           # daepack-pulling metapackage. See ci_tests.yml for details.
@@ -97,6 +97,7 @@ jobs:
           # FAILED list entirely if there are no other final messages,
           # making post-mortem on cancelled runs near-impossible.
           pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra \
+            --timeout=1800 --durations=30 \
             --cov=aragog --cov-report=term-missing --cov-report=xml \
             --cov-fail-under=90
 
