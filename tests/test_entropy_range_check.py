@@ -794,3 +794,12 @@ def test_fresh_instance_warns_again(eos, caplog):
     with caplog.at_level(logging.WARNING):
         fresh._check_entropy_range(S, fresh.S_min, fresh.S_max, 'fresh-probe')
     assert any('fresh-probe' in r.message for r in caplog.records)
+
+
+@needs_eos
+def test_strict_construction_does_not_trip_the_range_check():
+    """A strict EntropyEOS builds its tables without leaving the entropy range."""
+    from aragog.eos.entropy import EntropyEOS
+
+    strict = EntropyEOS(EOS_DIR, strict_range=True)
+    assert strict.strict_range and strict._range_warning_counts == {}

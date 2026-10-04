@@ -148,3 +148,18 @@ def test_a_failed_parse_warns_once_and_re_raises_without_a_retry(monkeypatch, tm
         with pytest.raises(FileNotFoundError):
             entropy_eos_copy(tmp_path)
     assert calls == [str(tmp_path)]
+
+
+@pytest.mark.unit
+def test_a_cached_parse_failure_keeps_its_traceback_from_growing(tmp_path):
+    class Broken:
+        def __init__(self, eos_dir):
+            raise FileNotFoundError(eos_dir)
+
+    depths = []
+    for _ in range(3):
+        with pytest.raises(FileNotFoundError) as info:
+            _parsed(Broken, str(tmp_path))
+        depths.append(len(info.traceback))
+        assert info.traceback[-1].name == '__init__'
+    assert depths[0] == depths[1] == depths[2]

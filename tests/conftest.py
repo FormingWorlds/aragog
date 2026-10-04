@@ -36,16 +36,16 @@ needs_eos = pytest.mark.skipif(
 @functools.cache
 def _parse(eos_class: type, eos_dir: str):
     try:
-        return eos_class(eos_dir), None
+        return eos_class(eos_dir), None, None
     except Exception as exc:
-        return None, exc
+        return None, exc, exc.__traceback__
 
 
 def _parsed(eos_class: type, eos_dir: str):
     """Return the cached parse of ``eos_dir``; a failed parse re-raises without a retry."""
-    eos, exc = _parse(eos_class, eos_dir)
+    eos, exc, traceback = _parse(eos_class, eos_dir)
     if exc is not None:
-        raise exc
+        raise exc.with_traceback(traceback)
     return eos
 
 
