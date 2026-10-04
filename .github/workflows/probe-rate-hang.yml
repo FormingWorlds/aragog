@@ -80,6 +80,7 @@ jobs:
         env:
           PYTHONPATH: /tmp/probe
         run: |
+          set +e
           for i in 1 2; do
             start=$(date +%s)
             pytest tests/test_phase_boundary_cap.py -o "addopts=" -p hangdump -p no:xdist -q \
