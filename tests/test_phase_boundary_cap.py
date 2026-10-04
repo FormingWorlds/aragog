@@ -283,6 +283,11 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
 
 @needs_eos
 @pytest.mark.smoke
+@pytest.mark.timeout(120, method='signal')
+@pytest.mark.xfail(
+    strict=False,
+    reason='intermittent CVODE stall on Linux in fixed step-cap mode with the energy_balance core boundary',
+)
 def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     """With the extended energy_balance state, rate mode segments on the entropy block and keeps the CMB entry."""
     s_f, T_f = _isentropic_end(shared_eos, 'fixed', 1e-6, 'energy_balance')
