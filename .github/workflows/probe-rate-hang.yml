@@ -1,0 +1,96 @@
+name: Probe rate-mode hang
+
+on:
+  push:
+    branches: [tl/probe-rate-hang-main, tl/probe-rate-hang-branch]
+
+permissions:
+  contents: read
+
+jobs:
+  module:
+    name: module repeat shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up conda env (sundials from conda-forge)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: aragog-probe
+          create-args: >-
+            python=3.12
+            sundials
+          condarc: |
+            channels:
+              - conda-forge
+
+      - name: Install test deps
+        run: |
+          pip install pytest pytest-cov pytest-xdist pytest-dependency pytest-timeout
+          pip install scikits-odes-sundials jax equinox diffrax
+          pip install -e .
+
+      - name: Fetch SPIDER EOS test data
+        run: |
+          mkdir -p /tmp/aragog-test-data
+          curl -sL -o /tmp/spider_eos.tar.gz \
+            https://github.com/FormingWorlds/aragog/releases/download/test-data-v1/spider_eos_test_data.tar.gz
+          tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
+          echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
+
+      - name: Record the runner and library versions
+        run: |
+          mkdir -p /tmp/probe
+          {
+            echo "commit $(git rev-parse HEAD)"; uname -a; python --version
+            micromamba list sundials | tail -n +3
+            pip show jax jaxlib equinox diffrax scikits-odes-sundials numpy scipy 2>/dev/null | grep -E '^(Name|Version):'
+          } | tee /tmp/probe/versions.txt
+
+      - name: Write the stack-dump plugin
+        run: |
+          mkdir -p /tmp/probe
+          cat > /tmp/probe/hangdump.py <<'EOF'
+          import faulthandler, os, pytest
+          _out = []
+          @pytest.hookimpl(hookwrapper=True)
+          def pytest_runtest_protocol(item, nextitem):
+              if not _out:
+                  worker = os.environ.get('PYTEST_XDIST_WORKER', 'main')
+                  _out.append(open(f'/tmp/probe/stack-{worker}-{os.getpid()}.log', 'a'))
+              _out[0].write(f'START {item.nodeid}\n'); _out[0].flush()
+              faulthandler.dump_traceback_later(600, file=_out[0])
+              yield
+              faulthandler.cancel_dump_traceback_later()
+          EOF
+
+      - name: Run the module twice
+        env:
+          PYTHONPATH: /tmp/probe
+        run: |
+          for i in 1 2; do
+            start=$(date +%s)
+            pytest tests/test_phase_boundary_cap.py -o "addopts=" -p hangdump -p no:xdist -q \
+              --timeout=1200 --timeout-method=thread --durations=5 \
+              --cov=aragog --cov-report= --cov-fail-under=0 > /tmp/probe/run-$i.log 2>&1
+            echo "shard ${{ matrix.shard }} repeat $i exit $? wall $(( $(date +%s) - start ))s $(grep -E 'passed|failed' /tmp/probe/run-$i.log | tail -1)" | tee -a /tmp/probe/summary.txt
+          done
+
+      - name: Upload stacks and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-shard-${{ matrix.shard }}
+          path: /tmp/probe/*
