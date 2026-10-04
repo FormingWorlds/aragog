@@ -179,12 +179,7 @@ def _build_parameters(
 
 @pytest.fixture(scope='module')
 def shared_eos():
-    """Build EntropyEOS once per module: PCHIP table construction
-    over multiple .dat files dominates wall time (~1-2 s on Linux CI),
-    and reusing it across the 8 integration tests cuts ~10-15 s of
-    redundant disk + interpolator setup on the 2-vCPU runner.
-    """
-
+    """Share one EntropyEOS copy across the integration tests of this module."""
     return entropy_eos_copy(EOS_DIR)
 
 

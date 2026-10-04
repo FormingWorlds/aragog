@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from aragog import CFG_DATA
+from aragog.eos.entropy import EntropyEOS
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
@@ -32,21 +33,41 @@ needs_eos = pytest.mark.skipif(
 
 
 @functools.cache
-def _built_entropy_eos(eos_dir: str, strict_range: bool):
-    from aragog.eos.entropy import EntropyEOS
-
-    return EntropyEOS(eos_dir, strict_range=strict_range)
+def _parsed(eos_class: type, eos_dir: str):
+    return eos_class(eos_dir)
 
 
-def entropy_eos_copy(eos_dir: Path | str = EOS_DIR, strict_range: bool = False):
+def entropy_eos_copy(eos_dir: Path | str = EOS_DIR, strict_range: bool = False) -> EntropyEOS:
     """Return an independent copy of ``EntropyEOS(eos_dir, strict_range)``.
 
     The tables are parsed once per process and each call returns a deep copy,
-    which starts in the state of a fresh build. One parse reads about a million
-    table lines and takes minutes under coverage. Tests of the constructor
-    itself build ``EntropyEOS`` directly.
+    which starts in the state of a fresh build. Tests of the constructor itself
+    build ``EntropyEOS`` directly.
     """
-    return copy.deepcopy(_built_entropy_eos(str(eos_dir), strict_range))
+    eos = copy.deepcopy(_parsed(EntropyEOS, str(eos_dir)))
+    eos.strict_range = strict_range
+    return eos
+
+
+def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
+    """Return the ``EntropyEOS_JAX`` of ``eos_dir``, parsed once per process.
+
+    The instance is a frozen equinox module, so callers share it.
+    """
+    from aragog.jax.eos import EntropyEOS_JAX
+
+    return _parsed(EntropyEOS_JAX, str(eos_dir))
+
+
+def pytest_collection_finish(session):
+    """Parse the tables before the first test, outside every per-test timeout."""
+    if not EOS_DIR.exists():
+        return
+    modules = {getattr(item, 'module', None) for item in session.items}
+    if any(hasattr(m, 'entropy_eos_copy') for m in modules):
+        entropy_eos_copy()
+    if any(hasattr(m, 'entropy_eos_jax') for m in modules):
+        entropy_eos_jax()
 
 
 class Helper:

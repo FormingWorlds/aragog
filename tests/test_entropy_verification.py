@@ -187,7 +187,6 @@ class TestEntropyConservation:
         (a) the entropy profile actually changes (not a zero-RHS test),
         (b) the mass-weighted enthalpy integral sum(rho*T*S*V) is conserved.
         """
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -234,7 +233,6 @@ class TestEntropyConservation:
         NOT sum(S*V). We check both the correct integral and that
         the profile homogenizes.
         """
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -292,7 +290,6 @@ class TestEnergyConservation:
         integral while the WRONG integral drifts, confirming the entropy
         formulation is working as intended.
         """
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -361,7 +358,6 @@ class TestEnergyConservation:
         body radiating from 5500 K can drop T by ~20 % within hundreds
         of years. Use the integrated entropy power balance directly.
         """
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -972,7 +968,6 @@ class TestGreyBodyCooling:
 
     def test_surface_cools_monotonically(self):
         """T_surface must decrease monotonically during grey-body cooling."""
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -1033,7 +1028,6 @@ class TestGreyBodyCooling:
         the still-isentropic interior; that is the expected physics
         and is checked by separate tests on long-time runs.
         """
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -1097,7 +1091,6 @@ class TestInitialEntropySweep:
 
     def test_all_ics_cool_monotonically(self):
         """Grey-body cooling from 4 different S0 values: T_surf always decreases."""
-
         eos = entropy_eos_copy(EOS_DIR)
 
         for S0_val in [2500.0, 3200.0, 5000.0]:
@@ -1136,7 +1129,6 @@ class TestInitialEntropySweep:
 
     def test_higher_s0_starts_hotter(self):
         """Higher initial entropy should produce higher initial surface T."""
-
         eos = entropy_eos_copy(EOS_DIR)
 
         T_surfs = {}
@@ -1169,7 +1161,6 @@ class TestRadiogenicHeating:
 
     def test_heating_increases_entropy(self):
         """Zero-flux BCs + constant heating: entropy rises monotonically."""
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -1213,7 +1204,6 @@ class TestCoreCooling:
 
     def test_core_heats_mantle(self):
         """With core cooling BC, CMB flux should be positive (core to mantle)."""
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
@@ -1277,7 +1267,6 @@ class TestMeshConvergence:
 
     def test_convergence_with_resolution(self):
         """T_surf at t=500 yr should converge as N increases."""
-
         eos = entropy_eos_copy(EOS_DIR)
 
         T_surfs = {}
@@ -1431,7 +1420,6 @@ class TestNoExplicitPhiVolSource:
         H_dil scale, so any reintroduction of even a fractional copy
         would flip this test.
         """
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = _make_test_mesh_with_staggered_interp(N=N)
@@ -1475,7 +1463,6 @@ class TestNoExplicitPhiVolSource:
         attractor at F_dil/(-F_int) = -1.000 came from exactly this
         source. Post-deletion: zero.
         """
-
         eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = _make_test_mesh_with_staggered_interp(N=N)

@@ -146,7 +146,6 @@ def _build_gradient_parameters(*, n_nodes: int = 12, end_time: float = 5.0):
 @pytest.fixture(scope='module')
 def shared_eos():
     """Module-level EntropyEOS reuse, matching the integration suite."""
-
     return entropy_eos_copy(EOS_DIR)
 
 

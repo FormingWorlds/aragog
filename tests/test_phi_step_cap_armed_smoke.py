@@ -136,7 +136,6 @@ def _pick_mushy_S(eos, P_min: float = 1.0e9, P_max: float = 1.4e11) -> float:
 
 @pytest.fixture(scope='module')
 def shared_eos():
-
     return entropy_eos_copy(EOS_DIR)
 
 

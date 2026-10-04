@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tests.conftest import entropy_eos_copy
+from tests.conftest import entropy_eos_copy, entropy_eos_jax
 from tests.test_entropy_solver_const_properties_smoke import _build_const_properties_parameters
 
 SECS_PER_YEAR = 3.15576e7
@@ -175,14 +175,13 @@ def test_jax_core_temperature_follows_the_cmb_flux(monkeypatch):
         pytest.skip(f'SPIDER P-S tables not found at {EOS_DIR}')
     jnp = pytest.importorskip('jax.numpy')
     import aragog.jax.solver as js
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import MeshArrays, PhaseParams, evaluate_phase
     from aragog.solver.entropy_solver import EntropySolver
 
     solver = EntropySolver(_build_parameters(n_nodes=12), entropy_eos=entropy_eos_copy(EOS_DIR))
     solver.initialize()
     mesh = MeshArrays.from_numpy_mesh(solver.evaluator.mesh)
-    eos, params = EntropyEOS_JAX(EOS_DIR), PhaseParams()
+    eos, params = entropy_eos_jax(EOS_DIR), PhaseParams()
     bc = js.BoundaryParams(
         outer_bc_type=4,
         outer_bc_value=0.05,

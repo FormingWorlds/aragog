@@ -23,6 +23,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_jax
+
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
@@ -104,11 +106,10 @@ def test_no_phi_vol_added_in_mushy_zone_jax():
     against any regression that re-introduces even a fractional copy
     of Φ_vol on the JAX path.
     """
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import PhaseParams, compute_fluxes
 
     r_stag, P_stag, mesh_jax = _build_synthetic_mesh(N=24)
-    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    eos_jax = entropy_eos_jax(EOS_DIR)
 
     # Mushy IC: between solidus and liquidus, with a slight gradient
     # to drive convective instability so jgrav and jmix are non-trivial.
@@ -147,11 +148,10 @@ def test_radio_only_heating_in_mushy_zone_jax():
     unconditional Φ_vol: such a regression would add ~1e-8 W/kg in
     the mushy zone, breaking the radio-only equality.
     """
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import PhaseParams, compute_fluxes
 
     r_stag, P_stag, mesh_jax = _build_synthetic_mesh(N=24)
-    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    eos_jax = entropy_eos_jax(EOS_DIR)
     S_sol = np.asarray(eos_jax.solidus_entropy(jnp.asarray(P_stag)))
     S_liq = np.asarray(eos_jax.liquidus_entropy(jnp.asarray(P_stag)))
     S_init = 0.45 * S_sol + 0.55 * S_liq

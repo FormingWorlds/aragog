@@ -145,7 +145,6 @@ def _build(
 
 @pytest.fixture(scope='module')
 def shared_eos():
-
     return entropy_eos_copy(EOS_DIR)
 
 

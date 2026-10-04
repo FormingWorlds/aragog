@@ -37,7 +37,6 @@ needs_eos = pytest.mark.skipif(
 @pytest.fixture
 def entropy_eos():
     """Load EntropyEOS from SPIDER tables."""
-
     return entropy_eos_copy(EOS_DIR)
 
 

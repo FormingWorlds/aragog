@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.conftest import entropy_eos_copy
+from tests.conftest import entropy_eos_copy, entropy_eos_jax
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _FWL_DATA = os.environ.get('FWL_DATA')
@@ -164,7 +164,6 @@ def test_solve_with_option_z_factory_registered_completes():
     silently use FD Jacobian (which still works, but the
     ``info['jac_calls']`` counter on the factory side stays 0).
     """
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import MeshArrays, PhaseParams
     from aragog.jax.solver import BoundaryParams
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
@@ -172,7 +171,7 @@ def test_solve_with_option_z_factory_registered_completes():
 
     parameters = _build_parameters(n_nodes=12, end_time=2.0)
     eos = entropy_eos_copy(EOS_DIR)
-    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    eos_jax = entropy_eos_jax(EOS_DIR)
 
     solver = EntropySolver(parameters, entropy_eos=eos)
     solver.initialize()

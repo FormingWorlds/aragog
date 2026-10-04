@@ -164,7 +164,6 @@ def _build_parameters_eos_method_2(eos_file: str, n_nodes: int = 12, end_time: f
 
 @pytest.fixture(scope='module')
 def shared_eos():
-
     return entropy_eos_copy(EOS_DIR)
 
 

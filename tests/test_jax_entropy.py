@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from scipy.constants import Stefan_Boltzmann
 
-from tests.conftest import entropy_eos_copy
+from tests.conftest import entropy_eos_copy, entropy_eos_jax
 
 # EOS directory (same as test_entropy_pytest.py)
 EOS_DIR = Path(
@@ -57,9 +57,8 @@ def jax_eos():
     """Load JAX EOS from SPIDER tables."""
     if not EOS_DIR.exists():
         pytest.skip(f'EOS tables not found: {EOS_DIR}')
-    from aragog.jax.eos import EntropyEOS_JAX
 
-    return EntropyEOS_JAX(EOS_DIR)
+    return entropy_eos_jax(EOS_DIR)
 
 
 @pytest.fixture(scope='module')

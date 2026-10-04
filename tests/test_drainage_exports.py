@@ -45,7 +45,6 @@ def _stub_evaluator(rho_s, rho_l, rho, mode='melt'):
 
 @pytest.fixture(scope='module')
 def shared_eos():
-
     return entropy_eos_copy(EOS_DIR)
 
 

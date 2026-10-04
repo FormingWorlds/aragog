@@ -142,7 +142,6 @@ def test_update_with_healthy_EOS_emits_no_clamp_warnings(caplog):
     sign-flip in the trigger or a misnamed flag attribute that would
     fire the warning every step.
     """
-
     eos = entropy_eos_copy(EOS_DIR)
     state, _mesh, _ = _build_state_for_update(eos)
     S0 = np.linspace(3400.0, 3000.0, _mesh.N)
@@ -168,7 +167,6 @@ def test_update_fires_conduction_and_mlt_cp_warnings_when_Cp_below_floor(caplog)
     verified by a second update() that emits no further warnings even
     though the same low-Cp condition still holds.
     """
-
     eos = entropy_eos_copy(EOS_DIR)
     state, mesh, phase_basic = _build_state_for_update(eos)
     S0 = np.linspace(3400.0, 3000.0, mesh.N)

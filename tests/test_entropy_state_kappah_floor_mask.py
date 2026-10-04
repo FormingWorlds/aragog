@@ -376,7 +376,6 @@ def test_numpy_entropy_state_floor_gated_end_to_end():
     leaves the SAME node at its raw MLT value (orders of magnitude smaller).
     An un-gated floor would floor both, collapsing the contrast.
     """
-
     eos = entropy_eos_copy(EOS_DIR)
     state, mesh = _build_state(eos, kappah_floor=_KAPPAH_FLOOR)
 

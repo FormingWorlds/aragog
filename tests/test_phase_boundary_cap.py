@@ -540,7 +540,6 @@ def test_solve_cvode_segments_joins_the_energy_traces_without_repeating_a_segmen
 
 @pytest.fixture(scope='module')
 def shared_eos():
-
     from .test_phi_step_cap_armed_smoke import EOS_DIR
 
     return entropy_eos_copy(EOS_DIR)

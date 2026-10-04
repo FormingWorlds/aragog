@@ -43,8 +43,7 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(scope='module')
 def eos():
-    """Load the EntropyEOS once per module (the h-table build takes a few seconds)."""
-
+    """Share one EntropyEOS copy across the tests of this module."""
     return entropy_eos_copy(EOS_DIR)
 
 
