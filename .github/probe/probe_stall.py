@@ -41,6 +41,10 @@ from tests.conftest import EOS_DIR  # noqa: E402
 
 eos = EntropyEOS(EOS_DIR)
 import aragog.solver.entropy_state as _est
+_JEPS = [None]
+if a.variant.startswith('jaceps'):
+    _sab0 = _est._smooth_abs_neg
+    _est._smooth_abs_neg = lambda x, eps=0.0: _sab0(x, eps=_JEPS[0] if _JEPS[0] else eps)
 if a.variant.startswith('eps'):
     _eps = float(a.variant[3:])
     _sab = _est._smooth_abs_neg
@@ -84,9 +88,18 @@ def _cv(rhs, **opts):
         return rf(t, y, g)
 
     opts['rootfn'] = rf2
+    if a.variant.startswith('ms'):
+        opts['max_step_size'] = float(a.variant[2:]) / 3.168808781402895e-3
+    if a.variant == 'stald5':
+        opts['order'] = 5
+        opts['bdf_stability_detection'] = True
+    if a.variant.startswith('ncc'):
+        opts['nonlin_conv_coef'] = float(a.variant[3:])
+    if a.variant == 'order1':
+        opts['order'] = 1
     if a.variant == 'order5':
         opts['order'] = 5
-    if a.variant in ('jacacc', 'jacpred'):
+    if a.variant in ('jacacc', 'jacpred') or a.variant.startswith('jaceps'):
         n = len(s._S0)
         atol = np.asarray(opts['atol'], float) * np.ones(n)
         rtol = opts['rtol']
@@ -97,6 +110,8 @@ def _cv(rhs, **opts):
                 t0, y0 = steps[-1][0], steps[-1][1:].copy()
             else:
                 t0, y0 = t, np.array(y, float)
+            if a.variant.startswith('jaceps'):
+                _JEPS[0] = float(a.variant[6:])
             f0 = np.empty(n)
             rhs(t0, y0, f0)
             for j in range(n):
@@ -104,6 +119,7 @@ def _cv(rhs, **opts):
                 yj = y0.copy(); yj[j] += inc
                 rhs(t0, yj, fbuf)
                 J[:, j] = (fbuf - f0) / inc
+            _JEPS[0] = None
             return 0
 
         opts['jacfn'] = jac
@@ -126,8 +142,11 @@ def dump(final):
     np.save(f'{a.out}/{tag}_trace.npy', tr)
     if os.environ.get('PROBE_FULL'):
         np.save(f'{a.out}/{tag}_full.npy', np.array(full))
-    np.save(f'{a.out}/{tag}_steps.npy', np.array(steps[1:]))
-    np.save(f'{a.out}/{tag}_atol.npy', steps[0])
+    try:
+        np.save(f'{a.out}/{tag}_steps.npy', np.array(steps[1:]))
+        np.save(f'{a.out}/{tag}_atol.npy', steps[0])
+    except ValueError:
+        pass
     summ = dict(tag=tag, final=final, wall=time.time() - t0w, nrhs=len(trace),
                 t_last=float(tr[-1, 1]) if len(tr) else None)
     if len(tr) > 50:
