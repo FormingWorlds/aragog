@@ -1019,11 +1019,10 @@ def test_scipy_methods_keep_the_margin_with_cvode_installed(shared_eos, monkeypa
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
+@pytest.mark.timeout(120, method='signal')
 def test_max_steps_counts_per_output_interval_in_both_modes(shared_eos):
-    """max_steps is SUNDIALS mxstep, counted per output interval: with half the steps the
-    16-node mushy 200 yr call takes without a limit, it completes in both modes on the same
-    steps, rate in segments, while a budget of 1 stops it. The budget follows the measured
-    count because that count depends on the SUNDIALS build."""
+    """max_steps is SUNDIALS mxstep per output interval: half the unlimited step count (a
+    SUNDIALS-build-dependent measure) completes on the same steps, a budget of 1 fails."""
     for mode in ('fixed', 'rate'):
         runs = {}
         for label, budget in (('free', 10**6), ('half', None), ('one', 1)):
@@ -1034,7 +1033,7 @@ def test_max_steps_counts_per_output_interval_in_both_modes(shared_eos):
         free, half = runs['free'], runs['half']
         assert free.status == half.status == 0 and half.t[-1] == pytest.approx(200.0), mode
         assert half.cvode_nst == free.cvode_nst > 2, mode
-        assert runs['one'].status != 0, mode
+        assert runs['one'].cvode_flag_name == 'TOO_MUCH_WORK', mode
         assert (len(half.get('segments') or []) >= 2) is (mode == 'rate'), mode
 
 

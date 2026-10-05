@@ -39,7 +39,7 @@ cd aragog
 pip install -e ".[jax,test,docs]"
 ```
 
-The optional extras are: `jax` (JAX, equinox, scikits-odes-sundials for the production CVODE+JAX path), `test` (pytest with xdist + cov), `docs` (Zensical + mkdocstrings for building the doc site). Plain `pip install -e .` works for an inspection-only install.
+The optional extras are: `jax` (JAX, equinox, scikits-odes-sundials for the production CVODE+JAX path), `test` (pytest with xdist, cov, dependency and timeout), `docs` (Zensical + mkdocstrings for building the doc site). Plain `pip install -e .` works for an inspection-only install.
 
 A PyPI release is available as `fwl-aragog`:
 
