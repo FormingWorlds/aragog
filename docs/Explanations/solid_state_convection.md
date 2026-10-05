@@ -210,13 +210,13 @@ $$
 v_m = \frac{\kappa}{d} C_4 \left( \frac{\mathrm{Ra}_\text{eff} a_\text{rh}}{\theta} \right)^{2/3}
 $$
 
-where $C_4 = 0.125$ is the empirical prefactor calibrated by Foley and Bercovici (2014, sec. 4.2, p. 589, line 1080), $\kappa = k / (\rho C_p)$ is the thermal diffusivity, evaluated at convective interior conditions, and $\theta = E (T_i - T_\text{surf}) / (R T_i^2)$ is the effective Frank-Kamenetskii parameter (Foley and Bercovici 2014, sec. 2.2, p. 582, line 287). The effective Rayleigh number is defined at the interior viscosity $\mu_i$:
+where $C_4 = 0.125$ is the empirical prefactor calibrated by Foley and Bercovici (2014, sec. 4.2, p. 589, line 1080), $\kappa = k / (\rho C_p)$ is the thermal diffusivity, and $\theta = H(P_{T_i}) (T_i - T_\text{surf}) / (R T_i^2)$ is the effective Frank-Kamenetskii parameter (Foley and Bercovici 2014, sec. 2.2, p. 582, line 287) evaluated with activation enthalpy $H(P_{T_i}) = E_a + P_{T_i} V_a$. In the numerical implementation, the thermodynamic properties $\rho$, $g$, $\alpha$, and $\kappa$ are evaluated as column-averaged layer quantities. The effective Rayleigh number is defined at the interior viscosity $\mu_i$:
 
 $$
 \mathrm{Ra}_\text{eff} = \frac{\rho g \alpha (T_i - T_\text{surf}) d^3}{\kappa \mu_i}
 $$
 
-Because both $\mathrm{Ra}_\text{eff}$ and $\theta$ scale linearly with the total temperature drop $\Delta T = T_i - T_\text{surf}$, the ratio $\mathrm{Ra}_\text{eff} a_\text{rh} / \theta$ depends only on the rheological temperature scale $\Delta T_\text{rh} = a_\text{rh} R T_i^2 / E$. This dependence produces scale invariance with respect to the total layer temperature contrast.
+Because both $\mathrm{Ra}_\text{eff}$ and $\theta$ scale linearly with the total temperature drop $\Delta T = T_i - T_\text{surf}$, the ratio $\mathrm{Ra}_\text{eff} a_\text{rh} / \theta$ depends only on the rheological temperature scale $\Delta T_\text{rh} = a_\text{rh} R T_i^2 / H(P_{T_i})$. This dependence produces scale invariance with respect to the total layer temperature contrast. Consequently, convective driving stress $\tau_d$ does not vanish through $\Delta T \to 0$ alone; instead, it is modulated by the convective activity indicator $w_\text{active}$.
 
 ### 4.1 Heating Mode and Evolutionary Context
 
@@ -282,6 +282,8 @@ Inside the cold lid ($w_\text{lid} \to 1$), $\eta_\text{solid} \to \eta_\text{ef
 The rheological temperature scale $\Delta T_\text{rh} = a R T_i^2 / E$ governs the sublayer temperature drop and thickness. Aragog sets the default lid contrast coefficient to $a = 2.2$ (Solomatov 1995; Tackley 2000). While Foley and Bercovici (2014) adopt $a_\text{rh} = 1.3$ to $1.82$ to account for dynamic grain damage softening, and parameterised models such as Foley and Smye (2018) use $a_\text{rh} = 2.5$, the value $a = 2.2$ represents the standard asymptotic coefficient for Newtonian diffusion creep without grain damage.
 
 Because the minimum closure is continuous at $\tau_d = \tau_{y,\text{lid}}$, $\eta_\text{eff}$ is everywhere finite and strictly non-increasing with driving stress. In one dimension, a mobile lid represents convective lid thinning at the interior strain rate rather than horizontal plate subduction.
+
+With the lid creep strain rate, a yielded lid weakens only by the factor $\tau_{y,\text{lid}} / \tau_d$. Consequently, plastic yielding produces a negligible effect on the thermal solution for moderate convective driving stresses. In the `cold_top_lid` test fixture, the top node viscosity decreases from $8.3 \times 10^{24}\text{ Pa s}$ to $6.9 \times 10^{24}\text{ Pa s}$ when $\tau_d / \tau_{y,\text{lid}}$ increases up to $1.2$. Across stress ratios between $0.8$ and $1.2$, the maximum absolute entropy change $\max |\Delta S|$ is $0\text{ J kg}^{-1}\text{ K}^{-1}$ over $0.1\text{ yr}$. Mobilising a cold lid with diffusion creep viscosity $\eta_\text{diff} \sim 10^{24}\text{ Pa s}$ requires a stress ratio $\tau_d / \tau_{y,\text{lid}}$ of order $10^6$ (an estimate).
 
 When convective vigor ceases ($v_i \to 0$), convective heat transport drops below $f_\text{conv,min}$. In this limit, $w_\text{active} \to 0$, the lid closure remains inactive, and no division by zero occurs.
 
