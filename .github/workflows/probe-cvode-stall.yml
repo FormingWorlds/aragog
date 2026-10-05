@@ -59,35 +59,33 @@ jobs:
           } > /tmp/probe/env.txt 2>&1
           head -5 /tmp/probe/env.txt
 
-      - name: Direct solve probes (default, no AVX512, no AVX512/AVX2/FMA3)
+      - name: Direct solve probes (default, OpenBLAS Haswell, OpenBLAS SkylakeX)
         env:
           ARAGOG_TESTS_PARENT: .
         run: |
           set +e
-          FEAT=$(python -c "import numpy._core._multiarray_umath as m; print(' '.join(x for x in m.__cpu_dispatch__ if m.__cpu_features__.get(x)))")
-          A512=$(echo $FEAT | tr ' ' '\n' | grep '^AVX512' | tr '\n' ' ')
-          AV2=$(echo $FEAT | tr ' ' '\n' | grep -E '^(AVX512|AVX2|FMA3)' | tr '\n' ' ')
-          echo "dispatch on: $FEAT" | tee -a /tmp/probe/summary.txt
+          grep -q avx512f /proc/cpuinfo && AVX512=1 || AVX512=0
+          echo "avx512f $AVX512" | tee -a /tmp/probe/summary.txt
           run() {
             tag=$1; shift
             start=$(date +%s)
             env "$@" python .github/probe/probe_stall.py --limit 240 --out /tmp/probe/$tag > /tmp/probe/$tag.out 2>&1
-            echo "shard ${{ matrix.shard }} $tag exit $? wall $(( $(date +%s) - start ))s $(tail -1 /tmp/probe/$tag.out | cut -c1-160)" | tee -a /tmp/probe/summary.txt
+            echo "shard ${{ matrix.shard }} $tag exit $? wall $(( $(date +%s) - start ))s $(tail -1 /tmp/probe/$tag.out | cut -c1-120)" | tee -a /tmp/probe/summary.txt
           }
           run default A=1
-          run default2 A=1
-          run noavx512 NPY_DISABLE_CPU_FEATURES="$A512"
-          run noavx2 NPY_DISABLE_CPU_FEATURES="$AV2"
+          run haswell OPENBLAS_CORETYPE=Haswell
+          [ $AVX512 = 1 ] && run skylakex OPENBLAS_CORETYPE=SkylakeX
+          OPENBLAS_CORETYPE=Haswell python -c "from threadpoolctl import threadpool_info as t; print([d.get('architecture') for d in t()])" | tee -a /tmp/probe/summary.txt
 
       - name: Test module once (coverage, no xdist)
         run: |
           set +e
           start=$(date +%s)
-          pytest tests/test_phase_boundary_cap.py -o "addopts=" -p no:xdist -q \
+          OPENBLAS_CORETYPE=Haswell pytest tests/test_phase_boundary_cap.py -o "addopts=" -p no:xdist -q \
             -k test_rate_mode_keeps_the_energy_balance_state \
             --timeout=400 --timeout-method=thread \
             --cov=aragog --cov-report= --cov-fail-under=0 > /tmp/probe/pytest.log 2>&1
-          echo "shard ${{ matrix.shard }} pytest exit $? wall $(( $(date +%s) - start ))s $(grep -E 'passed|failed' /tmp/probe/pytest.log | tail -1)" | tee -a /tmp/probe/summary.txt
+          echo "shard ${{ matrix.shard }} pytest-haswell exit $? wall $(( $(date +%s) - start ))s $(grep -E 'passed|failed' /tmp/probe/pytest.log | tail -1)" | tee -a /tmp/probe/summary.txt
 
       - name: Upload
         if: always()
