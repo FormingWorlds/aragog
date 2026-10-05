@@ -614,7 +614,9 @@ def test_cvode_warns_once_per_solver_when_rtol_is_above_1e_8(
     assert len(hits) == expected
     assert all(('configured solver.atol' in m) == atol_clause for m in hits)
     assert all(
-        f'solver.rtol {rtol:.1e}: an rtol above 1e-8' in m and 'Use rtol 1e-8' in m
+        f'solver.rtol {rtol:.1e}: an rtol above 1e-8' in m
+        and 'with atol = rtol: 46 % at 1e-5' in m
+        and 'Use 1e-8, the Aragog default, for rtol and atol' in m
         for m in hits
     )
     scale = np.asarray(s._build_nondim_scales().state_scale)

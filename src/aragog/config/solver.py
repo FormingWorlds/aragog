@@ -24,7 +24,8 @@ class SolverConfig:
     rtol : float
         Relative tolerance. Default 1e-8, the value at which
         ``phase_boundary_cap = 'rate'`` is verified. Above 1e-8 a CVODE run logs one
-        warning: a loose rtol can lock CVODE at the convective switch dS/dr = 0.
+        warning: a loose rtol can lock CVODE at the switch dS/dr = 0 (the convective mask
+        and the kappa_h floor).
     tsurf_poststep_change : float
         Maximum surface temperature change per step [K].
     cvode_output_points : int

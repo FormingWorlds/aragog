@@ -285,10 +285,10 @@ When set to `true`, all atmosphere modules and termination checks enforce a `T_m
 
 ### 6. `interior_energetics.{rtol, atol}` and `interior_energetics.aragog.atol_temperature_equivalent`
 
-**Defaults**: `rtol = 1e-10`, `atol = 1e-10`, `atol_temperature_equivalent = 1e-8`.
+**Defaults**: `rtol = 1e-8` for Aragog when unset (`1e-10` for SPIDER), `atol = 1e-10` (not used by Aragog), `atol_temperature_equivalent = 1e-8` (the atol Aragog receives).
 **Recommendation**: keep production defaults.
 
-In coupled runs, loosening to `1e-7` brings back the CVODE marginal-stability bifurcation at iteration $\sim 9$ and silent drift across the rheological transition; this coupled-run observation is separate from the CVODE lock at the switch $dS/dr = 0$ (the convective mask and the $\kappa_h$ floor), for which Aragog logs one warning when `rtol` is above `1e-8`. On the isentropic test case of `tests/test_phase_boundary_cap.py` (24 nodes, 200 yr, relative noise of $10^{-15}$ on the initial entropy), CVODE locked in 46 % of runs with `rtol` = `atol` = `1e-5`, in about 0.5 % with both at `1e-6`, in 0 of 105 with both at `1e-7` (too few runs to show it safe) and in 0 of 2000 per mode with both at `1e-8`; on CI the AVX-512 numpy path makes that test lock at `1e-6`. Above `rtol` `1e-7` the rate phase-boundary cap also logs a warning. The `CV_TOO_MUCH_WORK` retry ladder can relax `rtol` above `1e-8` (from a base of `1e-8` to `2e-8`, `5e-8` and `1e-7`); the warning then names the relaxed value, not the configured one. Tightening below `1e-10` has diminishing returns.
+In coupled runs, loosening to `1e-7` brings back the CVODE marginal-stability bifurcation at iteration $\sim 9$ and silent drift across the rheological transition; this coupled-run observation is separate from the CVODE lock at the switch $dS/dr = 0$ (the convective mask and the $\kappa_h$ floor), for which Aragog logs one warning when `rtol` is above `1e-8`. On the energy_balance isentropic start of `tests/test_phase_boundary_cap.py` (24 nodes, 200 yr) with a relative noise of $10^{-15}$ added to the initial entropy, CVODE locked in 46 % of runs with `rtol` = `atol` = `1e-5`, in about 0.5 % with both at `1e-6` and in 0 of 105 with both at `1e-7` (too few runs to show it safe); with both at `1e-8` it locked in 0 of 2000 runs for each of three setups (fixed and rate cap on the energy_balance core, fixed cap on quasi_steady). On CI the AVX-512 numpy path makes the energy_balance case lock at `1e-6`. Above `rtol` `1e-7` the rate phase-boundary cap also logs a warning. With `rtol` at `1e-8`, the `CV_TOO_MUCH_WORK` retry ladder relaxes it to `2e-8`, `5e-8` and `1e-7`, above the limit; the warning is logged once per solver, so it names the first relaxed value and later rungs stay silent. Tightening below `1e-10` has diminishing returns.
 
 ### 7. `interior_energetics.num_levels`
 
@@ -311,7 +311,7 @@ Uniform spacing in mass-coordinate space gives larger cells at the surface where
 | `interior_energetics.aragog.core_bc` | `"energy_balance"` | `"energy_balance"` | SPIDER bit-parity; correct T_core. |
 | `interior_energetics.aragog.phi_step_cap` | `0.0` | `0.05` | SUNDIALS rootfn caps per-call $|\Delta\Phi|$ excursion. |
 | `planet.prevent_warming` | `false` | `false` | The clamp is energy-non-conserving in warming sub-steps. |
-| `interior_energetics.rtol` / `atol` | `1e-10` | `1e-10` | Schema default; avoids CVODE marginal-stability bifurcation. Production CHILI runs occasionally relax `rtol` to `1e-8`; do not loosen further. |
+| `interior_energetics.rtol` / `atol` | `1e-8` / `1e-10` | `1e-8` / `1e-10` | Defaults for Aragog; the `atol` key is not used, Aragog takes its atol from `atol_temperature_equivalent` (`1e-8`). Do not loosen `rtol` above `1e-8`. |
 | `interior_energetics.aragog.atol_temperature_equivalent` | `1e-8` | `1e-8` | Matches SPIDER `atol = rtol = 1e-8`. |
 | `interior_energetics.num_levels` | `80` | `80` | SPIDER reference resolution. |
 | `interior_energetics.aragog.mass_coordinates` | `true` | `true` | Required by `energy_balance` core BC. |
