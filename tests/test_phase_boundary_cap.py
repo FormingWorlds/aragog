@@ -288,7 +288,7 @@ def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     s_r, T_r = _isentropic_end(shared_eos, 'rate', 1e-8, 'energy_balance')
     assert s_r._solution.y.shape[0] == s_f._solution.y.shape[0] == s_r._n_stag + 1
     assert len(s_r._solution.segments) >= 2 and np.isfinite(s_r._solution.y[-1, -1])
-    assert np.abs(T_r - T_f).max() <= 0.1
+    assert np.abs(T_r - T_f).max() <= 0.01
 
 
 @needs_eos
@@ -567,21 +567,36 @@ def test_rate_mode_warns_once_per_solver_when_rtol_is_loose(
 
 
 @needs_eos
+@needs_cvode
 @pytest.mark.smoke
 @pytest.mark.parametrize(
-    ('rtol', 'atol', 'expected'), [(1e-6, 1e-8, 1), (1e-8, 1e-6, 1), (1e-7, 1e-7, 0), (1e-8, 1e-8, 0)]
+    ('mode', 'rtol', 'atol', 'end_time', 'expected'),
+    [
+        ('fixed', 1e-6, 1e-8, 2.0, 1),
+        ('fixed', 1e-8, 1e-6, 2.0, 1),
+        ('rate', 1e-6, 1e-8, 2.0, 1),
+        ('fixed', 1e-7, 1e-7, 2.0, 0),
+        ('fixed', 1e-8, 1e-8, 2.0, 0),
+        ('fixed', 1e-6, 1e-6, 0.0, 0),
+    ],
 )
 def test_cvode_warns_once_per_solver_when_a_tolerance_is_above_1e_7(
-    shared_eos, caplog, rtol, atol, expected
+    shared_eos, caplog, monkeypatch, mode, rtol, atol, end_time, expected
 ):
-    """CVODE warns once over two solve() calls when rtol or atol exceeds 1e-7; never at or below."""
-    s = _solver(shared_eos, 'fixed', end_time=2.0)
+    """Above 1e-7 CVODE warns once over two solve() calls and keeps the caller's tolerances;
+    never at or below 1e-7 or on a zero-span call."""
+    s = _solver(shared_eos, mode, end_time=end_time)
     s.parameters.solver.rtol, s.parameters.solver.atol = rtol, atol
+    seen, real = [], s._solve_cvode
+    monkeypatch.setattr(s, '_solve_cvode', lambda **kw: seen.append(kw) or real(**kw))
     with caplog.at_level('WARNING'):
         s.solve()
         s.solve()
-    hits = [r for r in caplog.records if 'can lock CVODE at the convective switch' in r.getMessage()]
+    hits = [r for r in caplog.records if 'can lock CVODE' in r.getMessage()]
     assert len(hits) == expected
+    scale = np.asarray(s._build_nondim_scales().state_scale)
+    assert all(kw['rtol'] == rtol for kw in seen) and len(seen) >= 2
+    assert all(np.min(kw['atol'] * scale) >= max(atol, 1e-8) * (1 - 1e-12) for kw in seen)
 
 
 def _two_calls(eos, with_state):

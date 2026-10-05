@@ -3605,13 +3605,13 @@ class EntropySolver:
                 phi_cap_rootfn=phi_cap_rootfn,
             )
             atol_cfg = self.parameters.solver.atol
-            if max(rtol, atol_cfg) > _CVODE_TOL_LIMIT:
+            if end_time > start_time and max(rtol, atol_cfg) > _CVODE_TOL_LIMIT:
                 self._warn_once(
                     'cvode_tol',
-                    f'CVODE at solver.rtol {rtol:.1e}, solver.atol {atol_cfg:.1e}: tolerances '
-                    f'above {_CVODE_TOL_LIMIT:.0e} can lock CVODE at the convective switch '
-                    'dS/dr = 0, with the step held at its explicit stability limit; set both '
-                    f'at or below {_CVODE_TOL_LIMIT:.0e}',
+                    f'CVODE at solver.rtol {rtol:.1e}, solver.atol {atol_cfg:.1e}: an rtol above '
+                    '1e-7 can lock CVODE at the convective switch dS/dr = 0, with the step held '
+                    'near the stability limit of the convective mode; a loose atol adds to this '
+                    'with the energy_balance core. Use 1e-8, the default, for both',
                 )
             if rate_mode:
                 if rtol > _RATE_CAP_RTOL_LIMIT:

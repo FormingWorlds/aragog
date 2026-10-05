@@ -25,7 +25,7 @@ The relevant keys are `solver.atol` (absolute) and `solver.rtol` (relative); bot
 | Standalone smoke test | `1e-7` | `1e-7` | Lets the integrator march through the rheological transition in seconds. Acceptable for first-run sanity checks; not for paper plots. |
 | Tight verification or parity test | `1e-10` | `1e-10` | The floor; useful for SPIDER bit-parity diagnostics. Wall time roughly doubles. |
 
-When the integrator stalls (status code -1, `dt_actual` short of `end_time`), loosen `atol`/`rtol` first. If the stall persists, the issue is usually a sharp solidus/liquidus crossing, not the integrator class; consider enabling [`phi_step_cap`](phi-step-cap.md).
+When the integrator stalls (status code -1, `dt_actual` short of `end_time`), do not loosen `rtol` above `1e-7`: at loose tolerances CVODE can lock at the convective switch $dS/dr = 0$, with the step held near the stability limit of the convective mode, and the solver logs one warning when `solver.rtol` or `solver.atol` is above `1e-7`. If the stall persists at `1e-8`, the issue is usually a sharp solidus/liquidus crossing, not the integrator class; consider enabling [`phi_step_cap`](phi-step-cap.md).
 
 ## CVODE specifics
 
