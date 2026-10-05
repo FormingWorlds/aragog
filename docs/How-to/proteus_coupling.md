@@ -288,7 +288,7 @@ When set to `true`, all atmosphere modules and termination checks enforce a `T_m
 **Defaults**: `rtol = 1e-10`, `atol = 1e-10`, `atol_temperature_equivalent = 1e-8`.
 **Recommendation**: keep production defaults.
 
-Loosening to `1e-7` re-introduces the CVODE marginal-stability bifurcation at iter $\sim 9$ and silent drift across the rheological transition; above `1e-7` the rate phase-boundary cap also logs a warning, and Aragog logs one warning that a loose `rtol` can lock CVODE at the convective switch. Tightening below `1e-10` has diminishing returns.
+Loosening to `1e-7` re-introduces the CVODE marginal-stability bifurcation at iter $\sim 9$ and silent drift across the rheological transition, although no warning fires at `1e-7`; above `1e-7` the rate phase-boundary cap also logs a warning, and Aragog logs one warning that a loose `rtol` can lock CVODE at the convective switch. Tightening below `1e-10` has diminishing returns.
 
 ### 7. `interior_energetics.num_levels`
 

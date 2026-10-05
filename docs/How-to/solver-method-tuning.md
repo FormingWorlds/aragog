@@ -17,15 +17,15 @@ If `solver_method = "cvode"` is selected and `scikits_odes` is missing, the solv
 
 ## Picking tolerances
 
-The relevant keys are `solver.atol` (absolute) and `solver.rtol` (relative); both are floored at $10^{-8}$ inside the solver. Suggested starting points:
+The relevant keys are `solver.atol` (absolute) and `solver.rtol` (relative); `atol` is floored at $10^{-8}$ inside the solver, and `rtol` is used as given. Suggested starting points:
 
 | Regime | `atol` | `rtol` | Notes |
 |--------|--------|--------|-------|
 | Production coupled run, CVODE + JAX | `1e-10` | `1e-10` | Matches the PROTEUS schema default in `proteus.config._interior`. Tight enough that energy-conservation checks close. |
 | Standalone smoke test | `1e-7` | `1e-7` | Lets the integrator march through the rheological transition in seconds. Acceptable for first-run sanity checks; not for paper plots. |
-| Tight verification or parity test | `1e-10` | `1e-10` | The floor; useful for SPIDER bit-parity diagnostics. Wall time roughly doubles. |
+| Tight verification or parity test | `1e-10` | `1e-10` | Useful for SPIDER bit-parity diagnostics; `atol` acts at its floor of `1e-8`. Wall time roughly doubles. |
 
-When the integrator stalls (status code -1, `dt_actual` short of `end_time`), first check that `rtol` is `1e-8` or tighter: at looser `rtol` CVODE can lock at the convective switch $dS/dr = 0$ (seen at `1e-6` and `1e-5`, not at `1e-8`), and Aragog logs one warning when `solver.rtol` or `solver.atol` is above `1e-7`. If the stall persists at `1e-8`, the issue is usually a sharp solidus/liquidus crossing, not the integrator class; consider enabling [`phi_step_cap`](phi-step-cap.md).
+When the integrator stalls (status code -1, `dt_actual` short of `end_time`), first check `rtol`: CVODE was seen to lock at the convective switch $dS/dr = 0$ at `rtol` `1e-6` and `1e-5`, not at `1e-8` (`1e-7` is not measured), and Aragog logs one warning when `solver.rtol` is above `1e-7`. If the stall persists at `1e-8`, the issue is usually a sharp solidus/liquidus crossing, not the integrator class; consider enabling [`phi_step_cap`](phi-step-cap.md).
 
 ## CVODE specifics
 
