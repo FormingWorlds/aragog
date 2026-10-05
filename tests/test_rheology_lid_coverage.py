@@ -51,15 +51,14 @@ def test_compute_effective_viscosity_contracts():
     eta_diff = np.array([1.0e20, 1.0e20])
     eta_blend = rlid.compute_effective_viscosity(
         eta_diff=eta_diff,
-        tau_d=np.array([1.0e5, 1.0e5]),
+        tau_d=np.array([2.0e5, 2.0e5]),
         tau_y_lid=np.array([1.0e5, 1.0e5]),
         v_i=1.0,
         delta_rh=100.0,
-        eta_i=1.0e19,
         w_lid=np.array([0.0, 1.0]),
     )
     assert np.isclose(eta_blend[0], 1.0e20, rtol=1e-12)
-    assert np.isclose(eta_blend[1], 9.09090909e18, rtol=1e-6)
+    assert np.isclose(eta_blend[1], 5.0e19, rtol=1e-12)
 
 
 @pytest.mark.unit

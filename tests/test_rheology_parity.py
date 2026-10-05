@@ -452,18 +452,53 @@ def test_stagnant_lid_checkpoint_profile_parity():
         stress_closure_mode='lid',
         w_lid=state_jx['w_lid'],
     )
-    assert np.any(eta_eff_np < eta_diff_np), (
-        'Effective viscosity must fall below diffusion creep in yielding lid'
-    )
-    assert np.any(eta_eff_jx < eta_diff_jx), (
-        'JAX effective viscosity must fall below diffusion creep in yielding lid'
+    # Sub-yield branch (tau_d ~ 72.9 MPa < tau_y_lid = 500 MPa):
+    # Under Moresi & Solomatov (1998) min closure, eta_eff == eta_diff exactly
+    np.testing.assert_array_equal(
+        eta_eff_np,
+        eta_diff_np,
+        err_msg='Effective viscosity must match diffusion creep exactly in sub-yield lid',
     )
     np.testing.assert_allclose(
         np.array(eta_eff_jx),
         eta_eff_np,
         rtol=1.0e-9,
         atol=1.0e-12,
-        err_msg='Mismatch in eta_eff on checkpoint profile',
+        err_msg='Mismatch in eta_eff on checkpoint profile (sub-yield)',
+    )
+
+    # Yielding branch (tau_y_lid = 50 MPa < tau_d ~ 72.9 MPa):
+    # Effective viscosity must soften below diffusion creep in yielding lid
+    eta_eff_np_yield = compute_effective_viscosity(
+        eta_diff=eta_diff_np,
+        tau_d=state_np['tau_d'],
+        tau_y_lid=50.0e6,
+        v_i=state_np['v_i'],
+        delta_rh=state_np['delta_rh'],
+        eta_i=state_np['eta_i'],
+        stress_closure_mode='lid',
+        w_lid=state_np['w_lid'],
+        xp=np,
+    )
+    eta_eff_jx_yield = jax_rheo.compute_effective_viscosity(
+        eta_diff=eta_diff_jx,
+        tau_d=state_jx['tau_d'],
+        tau_y_lid=50.0e6,
+        v_i=state_jx['v_i'],
+        delta_rh=state_jx['delta_rh'],
+        eta_i=state_jx['eta_i'],
+        stress_closure_mode='lid',
+        w_lid=state_jx['w_lid'],
+    )
+    assert np.any(eta_eff_np_yield < eta_diff_np), (
+        'Effective viscosity must fall below diffusion creep in yielding lid'
+    )
+    np.testing.assert_allclose(
+        np.array(eta_eff_jx_yield),
+        eta_eff_np_yield,
+        rtol=1.0e-9,
+        atol=1.0e-12,
+        err_msg='Mismatch in eta_eff on checkpoint profile (yielding)',
     )
 
 

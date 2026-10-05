@@ -90,8 +90,8 @@ def compute_stagnant_lid_state(
     viscosity_mixture : float or array-like, optional
         Effective mixture viscosity profile [Pa s] of the convecting layer (in mush,
         the blended two-phase viscosity used by the solver). When provided, mu_i
-        is evaluated from this profile; otherwise falls back to pure solid
-        Arrhenius viscosity at (T_i, P_T_i).
+        is evaluated as the W_tilde-weighted log mean using the same boundary layer
+        weights as T_i; otherwise falls back to pure solid Arrhenius viscosity.
     phi_rheo : float, optional
         Critical melt fraction for rheological transition. Defaults to 0.4.
     phi_width : float, optional
@@ -194,6 +194,7 @@ def compute_stagnant_lid_state(
         else:
             log_visc = xp.log10(xp.maximum(xp.ravel(visc_mix), 1e-30))
             mu_i_mix = 10.0 ** xp.sum(W_tilde * log_visc)
+            # Uniform weights corrupt mu_i with cold surface viscosity when convection is inactive.
             mu_i = xp.where(W_sum > 1e-6, mu_i_mix, eta_arr_i)
     else:
         mu_i = eta_arr_i
@@ -363,31 +364,30 @@ def compute_effective_viscosity(
 ) -> FloatOrArray:
     r"""Compute effective dynamic viscosity with boundary-layer or local stress closure.
 
-    In stagnant lid mode and local stress closure mode, the effective viscosity
-    is the harmonic mean of diffusion creep and plastic yield viscosities:
+    In stagnant lid mode, the effective viscosity uses the minimum closure
+    of diffusion creep and plastic yield viscosity:
+        eta_eff = min(eta_diff, eta_y) = eta_diff * min(1, tau_y / tau_d)
+    where edot_lid = tau_d / (2 * eta_diff) and eta_y = tau_y * eta_diff / tau_d.
+
+    In local stress closure mode, the effective viscosity is the harmonic mean:
         eta_eff = (eta_d * eta_y) / (eta_d + eta_y)
         eta_y = tau_y / (2 * strain_rate)
 
     References
     ----------
-    Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
-        (harmonic mean eta_eff = eta * eta_y / (eta + eta_y))
-    Foley & Bercovici (2014), sec. 8.2, p. 600, doi:10.1093/gji/ggu316
+    Moresi & Solomatov (1998), p. 672, eqs. 13-14, doi:10.1046/j.1365-246X.1998.00531.x
+        (viscosity switch / minimum form eta_eff = min(eta_creep, eta_yield))
     Tackley (2000), eq. 8, p. 4, doi:10.1029/2000GC000036
         (viscosity cap / minimum form eta_eff = min[eta, sigma_y / (2 e_dot)])
+    Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
+        (alternative harmonic mean formulation)
     """
-    if v_i is None and delta_rh is None and tau_d is not None and tau_y_lid is not None:
-        tau_y = tau_d
-        strain_rate = tau_y_lid
-        tau_d = None
-        tau_y_lid = None
-
     if stress_closure_mode == 'global':
         raise ValueError(
             "Unknown stress_closure_mode 'global'; expected 'lid' or 'local'. "
             "'global' mode is unsupported; use 'lid'."
         )
-    if stress_closure_mode == 'local' or strain_rate is not None:
+    if stress_closure_mode == 'local' or strain_rate is not None or tau_y is not None:
         if strain_rate is None:
             if unyielded_velocity is None or mixing_length is None:
                 raise ValueError(
@@ -406,32 +406,32 @@ def compute_effective_viscosity(
         return xp.where(is_inf, eta_d, res)
 
     eta_d = xp.asarray(eta_diff, dtype=float)
-    ty_lid = xp.asarray(tau_y_lid, dtype=float)
-    vi = xp.asarray(v_i, dtype=float)
-    drh = xp.asarray(delta_rh, dtype=float)
 
-    # Foley & Bercovici (2014) stagnant lid plastic viscosity eta_y = (tau_y * eta_i) / tau_d.
-    if tau_d is not None and eta_i is not None:
+    # Moresi & Solomatov (1998) Eq. 13-14 min closure:
+    # eta_eff = min(eta_diff, eta_y) = eta_diff * min(1, tau_y / tau_d)
+    if tau_d is not None and tau_y_lid is not None:
         td = xp.asarray(tau_d, dtype=float)
-        ei = xp.asarray(eta_i, dtype=float)
-        eta_lid = (ty_lid * ei) / xp.maximum(td, 1e-30)
-        is_inf = xp.isinf(eta_lid) | (td <= 0.0) | xp.isinf(ty_lid)
-    else:
+        ty_lid = xp.asarray(tau_y_lid, dtype=float)
+        ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
+        ratio = xp.where(xp.isnan(ratio) | xp.isinf(ty_lid), 1.0, ratio)
+        ratio_eff = xp.clip(ratio, 0.0, 1.0)
+        eta_eff_val = xp.where(ratio_eff >= 1.0, eta_d, eta_d * ratio_eff)
+    elif v_i is not None and delta_rh is not None and tau_y_lid is not None:
+        vi = xp.asarray(v_i, dtype=float)
+        drh = xp.asarray(delta_rh, dtype=float)
+        ty_lid = xp.asarray(tau_y_lid, dtype=float)
         eta_lid = (ty_lid * drh) / xp.maximum(vi, 1e-30)
-        is_inf = xp.isinf(eta_lid) | (vi <= 0.0) | xp.isinf(ty_lid)
-        if tau_d is not None:
-            td = xp.asarray(tau_d, dtype=float)
-            is_inf = is_inf | (td <= 0.0)
-    safe_eta_lid = xp.where(is_inf, 1.0, eta_lid)
-    res = (eta_d * safe_eta_lid) / (eta_d + safe_eta_lid)
-    eta_eff_val = xp.where(is_inf, eta_d, res)
+        eta_eff_val = xp.minimum(eta_d, eta_lid)
+    else:
+        eta_eff_val = eta_d
 
     if w_lid is not None:
         wl = xp.asarray(w_lid, dtype=float)
         log_diff = xp.log10(xp.maximum(eta_d, 1e-30))
         log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
         log_solid = wl * log_eff + (1.0 - wl) * log_diff
-        return 10.0**log_solid
+        res = 10.0**log_solid
+        return xp.where((wl == 0.0) | (eta_eff_val == eta_d), eta_d, res)
 
     return eta_eff_val
 

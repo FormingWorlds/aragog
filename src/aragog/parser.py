@@ -705,7 +705,7 @@ class Parameters:
             if isinstance(sec_data, dict) and 'yield_switch_width' in sec_data:
                 raise ValueError(
                     f"Rheology field 'yield_switch_width' in [{sec_name}] is no longer supported. "
-                    'Effective viscosity uses the harmonic mean yield closure.'
+                    'Effective viscosity uses the minimum yield closure.'
                 )
 
         init_dict: dict[str, Any] = {}
@@ -758,7 +758,7 @@ class Parameters:
                 if option.lower() == 'yield_switch_width':
                     raise ValueError(
                         f"Rheology field '{option}' in [{section}] is no longer supported. "
-                        'Effective viscosity uses the harmonic mean yield closure.'
+                        'Effective viscosity uses the minimum yield closure.'
                     )
                 if option.lower() in _RHEOLOGY_FIELD_NAMES:
                     raise ValueError(

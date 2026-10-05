@@ -242,7 +242,11 @@ In a partially molten, or mushy mantle, where bulk viscosity drops to $\eta_\tex
 
 ### 4.3 Rheological Parameter Calibration
 
-In the velocity scaling, $a_\text{rh} = 1.3$ is the empirical calibration constant, fitted jointly with $C_4 = 0.125$ by Foley and Bercovici (2014, sec. 4.2, p. 589, line 1080) for constant healing rate ($E_h = 0$). For models with temperature-dependent healing, Foley and Bercovici (2014, sec. 5.2, p. 595, line 2871) find $a_\text{rh} \approx 1.82$. This parameter enters the interior convective velocity $v_m$, and differs on purpose from the configured `lid_contrast_coeff` ($a = 2.2$; Solomatov 1995; Solomatov and Moresi 2000, sec. 5.1, p. 21800), which defines the thermal boundary isotherm of the rigid lid ($T_\text{lid} = T_i - a \Delta T_\text{rh}$).
+In the velocity scaling, $a_\text{rh} = 1.3$ and $C_4 = 0.125$ are the empirical calibration constants fitted jointly by Foley and Bercovici (2014, sec. 4.2, p. 589, line 1080) for their theory-curve constant-healing ($E_h = 0$) damage models. Every numerical model in Foley and Bercovici (2014) includes dynamic grain damage; FB2014 provides no pure damage-free numerical fit. The calibrated constant $a_\text{rh} = 1.3$ is lower than the standard stagnant-lid value ($a_\text{rh} \approx 2$; Solomatov and Moresi 2000; Korenaga 2009, cited in Foley and Bercovici 2014, p. 586) because less effective damage means less of the high-viscosity lid participates in convection (Foley and Bercovici 2014, p. 586). For temperature-dependent healing, Foley and Bercovici (2014, sec. 5.2, p. 594-595) find $a_\text{rh} \approx 1.82$.
+
+Aragog adopts $C_4 = 0.125$ and $a_\text{rh} = 1.3$ as a unified parameter package calibrated against sub-lid stresses. In the Foley and Bercovici (2014) theory, grain damage enters solely through the effective viscosity $\mu_\text{eff} = \mu_i (A_i / A_0)^{-m}$, which reduces to the single-phase or mixture viscosity when damage is absent ($A_i = A_0$). The convective interior velocity scaling thus holds without damage mechanics. The sensitivity to $a_\text{rh}$ is moderate: adopting $a_\text{rh} = 2.0$ instead of $1.3$ would increase convective velocity $v_m$ and driving stress $\tau_d$ by a factor of $(2.0 / 1.3)^{2/3} \approx 1.33$.
+
+This parameter enters the interior convective velocity $v_m$, and differs on purpose from the configured `lid_contrast_coeff` ($a = 2.2$; Solomatov 1995; Solomatov and Moresi 2000, sec. 5.1, p. 21800), which defines the thermal boundary isotherm of the rigid lid ($T_\text{lid} = T_i - a \Delta T_\text{rh}$).
 
 ### 4.4 Diagnostic Quantities and Force Balance
 
@@ -254,24 +258,18 @@ $$
 
 where $\delta_\text{rh}$ is the rheological sublayer thickness. The ratio $\tau_d / \tau_\text{buoy}$ is tracked in the output diagnostics, as a measure of boundary-layer force balance. In addition, the shifted soft-maximum convective velocity $v_i$, evaluated over the upper mantle, is retained as a diagnostic profile quantity.
 
-## 5. Harmonic Mean Yield Closure
+## 5. Minimum Yield Closure
 
-The effective solid viscosity combines diffusion creep and plastic yielding through the harmonic mean formulation implemented at `src/aragog/rheology_lid.py:344-365` (Foley and Becker 2009, eqs. 7-8, p. 3; Foley and Bercovici 2014, sec. 8.2; contrasting with the minimum-form viscosity cap of Tackley 2000, eq. 8, p. 4):
-
-$$
-\eta_\text{eff} = \frac{\eta_\text{diff} \eta_y}{\eta_\text{diff} + \eta_y}
-$$
-where Foley and Becker (2009, eqs. 7-8, p. 3) define:
-$$
-\eta_y = \frac{\sigma_y}{2 \dot{\epsilon}_\mathrm{II}}, \quad \eta_\text{eff} = \frac{\eta \eta_y}{\eta + \eta_y}
-$$
-In Tackley (2000, eq. 8, p. 4), yielding is instead formulated as a direct minimum cutoff $\eta_\text{eff} = \min[\eta(z, T), \sigma_y / (2 \dot{\epsilon})]$.
-
-where $\eta_y = \tau_y / (2 \dot{\epsilon})$ is the plastic yielding viscosity. In stagnant lid mode, the effective strain rate under driving shear stress $\tau_d$ is $\dot{\epsilon}_\text{eff} = \tau_d / (2 \eta_i)$, which gives:
+The effective solid viscosity combines diffusion creep and plastic yielding through the minimum formulation implemented at `src/aragog/rheology_lid.py:348-436` (Moresi and Solomatov 1998, eqs. 13-14, p. 672; Tackley 2000, eq. 8, p. 4):
 
 $$
-\eta_y = \frac{\tau_{y,\text{lid}} \eta_i}{\tau_d}
+\eta_\text{eff} = \min(\eta_\text{diff}, \eta_y) = \eta_\text{diff} \min\left(1, \frac{\tau_{y,\text{lid}}}{\tau_d}\right)
 $$
+where Moresi and Solomatov (1998, eqs. 13-14, p. 672) define:
+$$
+\eta_\text{yield} = \frac{\tau_\text{yield}}{D}, \quad \eta = \begin{cases} \eta_\text{creep}, & \tau_\text{creep} < \tau_\text{yield} \\ \eta_\text{yield}, & \tau_\text{creep} \ge \tau_\text{yield} \end{cases}
+$$
+Here $D = 2 \dot{\epsilon}_\text{lid} = \tau_d / \eta_\text{diff}$ is the convective strain-rate invariant of the lid, giving $\eta_y = \tau_{y,\text{lid}} \eta_\text{diff} / \tau_d$. Below yield ($\tau_d < \tau_{y,\text{lid}}$), $\eta_\text{eff} = \eta_\text{diff}$ exactly, preserving rigid stagnant-lid strength. Above yield ($\tau_d \ge \tau_{y,\text{lid}}$), the lid softens in proportion to $\tau_{y,\text{lid}} / \tau_d$. An alternative harmonic-mean formulation $\eta_\text{eff} = \eta_\text{diff} \eta_y / (\eta_\text{diff} + \eta_y)$ was investigated by Foley and Becker (2009, eqs. 7-8, p. 3) and Foley and Bercovici (2014, sec. 8.2).
 
 The effective solid viscosity through the radial column is determined by applying the closure viscosity within the cold boundary layer using the smooth lid mask:
 
@@ -283,7 +281,7 @@ Inside the cold lid ($w_\text{lid} \to 1$), $\eta_\text{solid} \to \eta_\text{ef
 
 The rheological temperature scale $\Delta T_\text{rh} = a R T_i^2 / E$ governs the sublayer temperature drop and thickness. Aragog sets the default lid contrast coefficient to $a = 2.2$ (Solomatov 1995; Tackley 2000). While Foley and Bercovici (2014) adopt $a_\text{rh} = 1.3$ to $1.82$ to account for dynamic grain damage softening, and parameterised models such as Foley and Smye (2018) use $a_\text{rh} = 2.5$, the value $a = 2.2$ represents the standard asymptotic coefficient for Newtonian diffusion creep without grain damage.
 
-Because the harmonic mean evaluates smoothly for all positive viscosities, $\eta_\text{eff}$ is continuous, everywhere finite, and strictly non-increasing with strain rate. In one dimension, a mobile lid represents convective lid thinning at the interior strain rate rather than horizontal plate subduction.
+Because the minimum closure is continuous at $\tau_d = \tau_{y,\text{lid}}$, $\eta_\text{eff}$ is everywhere finite and strictly non-increasing with driving stress. In one dimension, a mobile lid represents convective lid thinning at the interior strain rate rather than horizontal plate subduction.
 
 When convective vigor ceases ($v_i \to 0$), convective heat transport drops below $f_\text{conv,min}$. In this limit, $w_\text{active} \to 0$, the lid closure remains inactive, and no division by zero occurs.
 
@@ -419,7 +417,7 @@ The table below reconciles diagnostic quantities across model helpfiles and NetC
 | `tau_d` | Convective driving stress | Pa | Shear stress $\tau_d$ acting on the lid base |
 | `tau_y_lid` | Lid base yield stress | Pa | Effective Byerlee yield stress $\tau_{y,\text{lid}}$ |
 | `theta` | Frank-Kamenetskii contrast | - | Temperature contrast parameter $H(P_{T_i})(T_i - T_\text{surf}) / (R T_i^2)$ |
-| `eta_contrast` | True Arrhenius contrast | - | Ratio $\eta_\text{diff}(T_\text{surf}, P_\text{surf}) / \eta_\text{diff}(T_i, P_{T_i})$ |
+| `eta_contrast` | True Arrhenius contrast | - | Ratio $\eta_\text{surf} / \mu_i$ of surface Arrhenius viscosity to interior convecting viscosity $\mu_i$ |
 | `interior_temperature` | Interior convective temperature | K | Representative interior temperature $T_i$ |
 | `lid_cell_count` | Numerical lid resolution | - | Integer count of discrete radial cells spanning $d_\text{lid}$ |
 | `energy_residual` | Energy conservation residual | J | Cumulative discrete energy balance check across mantle volume |

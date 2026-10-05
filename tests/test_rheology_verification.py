@@ -483,7 +483,9 @@ def test_compute_effective_viscosity_infinite_yield_stress_jax():
     tau_y_inf = jnp.inf
     sr = 1.0e-15
 
-    eta_eff_val = compute_effective_viscosity(jnp.asarray(visc_diff), tau_y_inf, sr)
+    eta_eff_val = compute_effective_viscosity(
+        jnp.asarray(visc_diff), tau_y=tau_y_inf, strain_rate=sr
+    )
     assert jnp.isfinite(eta_eff_val)
     assert float(eta_eff_val) == pytest.approx(visc_diff, rel=1.0e-12)
 
@@ -637,13 +639,12 @@ def test_phi_visc_single_parameter_control():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_effective_viscosity_unyielded_and_yielded_limits():
-    """Verify effective viscosity limits in stagnant lid mode with harmonic mean closure.
+    """Verify effective viscosity limits in stagnant lid mode with min closure.
 
     References
     ----------
-    Tackley (2000), doi:10.1029/2000GC000036
-    Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
-    Foley & Bercovici (2014), sec. 8.2, p. 600, doi:10.1093/gji/ggu316
+    Moresi & Solomatov (1998), p. 672, eqs. 13-14, doi:10.1046/j.1365-246X.1998.00531.x
+    Tackley (2000), eq. 8, p. 4, doi:10.1029/2000GC000036
     """
     from aragog.rheology_lid import compute_effective_viscosity
 
@@ -651,7 +652,7 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
     tau_y = 1.0e8
     delta_rh = 1.0e3
 
-    # Exact yield match: eta_y = eta_d gives eta_d / 2
+    # Exact yield match: tau_d == tau_y gives eta_eff == eta_d under min closure
     v_i_match = (tau_y * delta_rh) / eta_d
     eta_match = compute_effective_viscosity(
         eta_diff=eta_d,
@@ -659,9 +660,9 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
         v_i=v_i_match,
         delta_rh=delta_rh,
     )
-    assert eta_match == pytest.approx(eta_d / 2.0, rel=1.0e-12)
+    assert eta_match == pytest.approx(eta_d, rel=1.0e-12)
 
-    # Low strain rate (eta_y >> eta_d): returns diffusion creep within 1%
+    # Low strain rate (eta_y >> eta_d): below yield returns diffusion creep exactly
     v_i_low = 1.0e-14
     eta_below = compute_effective_viscosity(
         eta_diff=eta_d,
@@ -669,7 +670,7 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
         v_i=v_i_low,
         delta_rh=delta_rh,
     )
-    assert eta_below == pytest.approx(eta_d, rel=0.01)
+    assert eta_below == pytest.approx(eta_d, rel=1.0e-12)
 
     # High strain rate (eta_y << eta_d): matches plastic yield viscosity within 1%
     v_i_high = 1.0e-6
@@ -693,7 +694,7 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
         delta_rh=delta_rh,
         xp=jnp,
     )
-    assert float(eta_match_jax) == pytest.approx(eta_d / 2.0, rel=1.0e-12)
+    assert float(eta_match_jax) == pytest.approx(eta_d, rel=1.0e-12)
 
     eta_below_jax = compute_effective_viscosity(
         eta_diff=eta_d,
@@ -702,7 +703,7 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
         delta_rh=delta_rh,
         xp=jnp,
     )
-    assert float(eta_below_jax) == pytest.approx(eta_d, rel=0.01)
+    assert float(eta_below_jax) == pytest.approx(eta_d, rel=1.0e-12)
 
     eta_yielded_jax = compute_effective_viscosity(
         eta_diff=eta_d,
@@ -712,6 +713,56 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
         xp=jnp,
     )
     assert float(eta_yielded_jax) == pytest.approx(eta_plastic, rel=0.01)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_moresi_solomatov_min_closure_exact_contract():
+    """Verify Moresi & Solomatov (1998) min closure exact contracts per Ruling 112."""
+    from aragog.rheology_lid import compute_effective_viscosity
+
+    eta_d = 8.3e24
+    tau_y = 1.0e6
+
+    # 1. Below yield (tau_d < tau_y): eta_eff == eta_diff exactly
+    td_below = 8.645e5
+    eta_eff_below = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_d=td_below,
+        tau_y_lid=tau_y,
+    )
+    assert eta_eff_below == eta_d
+
+    # 2. Above yield (tau_d >= tau_y): eta_eff / eta_diff == tau_y / tau_d to round-off
+    td_above = 2.0e6
+    eta_eff_above = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_d=td_above,
+        tau_y_lid=tau_y,
+    )
+    expected_ratio = tau_y / td_above
+    assert (eta_eff_above / eta_d) == pytest.approx(expected_ratio, rel=1.0e-14)
+
+    # 3. Continuous at tau_d = tau_y
+    eps = 1.0e-6
+    eta_left = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_d=tau_y - eps,
+        tau_y_lid=tau_y,
+    )
+    eta_mid = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_d=tau_y,
+        tau_y_lid=tau_y,
+    )
+    eta_right = compute_effective_viscosity(
+        eta_diff=eta_d,
+        tau_d=tau_y + eps,
+        tau_y_lid=tau_y,
+    )
+    assert eta_left == eta_d
+    assert eta_mid == eta_d
+    assert eta_right == pytest.approx(eta_d, rel=1.0e-11)
 
 
 @pytest.mark.unit

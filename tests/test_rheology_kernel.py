@@ -116,7 +116,7 @@ def test_limit_extreme_yielding():
         eta_i=eta_i,
         stress_closure_mode='lid',
     )
-    expected_yielded = min((tau_y_lid * eta_i) / tau_d, eta_diff)
+    expected_yielded = min((tau_y_lid * eta_diff) / tau_d, eta_diff)
     assert eta_eff == pytest.approx(expected_yielded, rel=1.0e-3)
 
 
@@ -144,7 +144,7 @@ def test_exact_yield_match():
     )
     assert eta_eff_local == pytest.approx(eta_diff / 2.0, rel=1.0e-12)
 
-    # Stagnant lid mode: v_i chosen so eta_y = (tau_y_lid * delta_rh) / v_i == eta_diff
+    # Stagnant lid mode: under min closure, tau_d == tau_y yields eta_eff == eta_diff
     delta_rh = 1.0e4
     v_i_match = (tau_y * delta_rh) / eta_diff
     eta_eff_lid = compute_effective_viscosity(
@@ -155,7 +155,7 @@ def test_exact_yield_match():
         delta_rh=delta_rh,
         stress_closure_mode='lid',
     )
-    assert eta_eff_lid == pytest.approx(eta_diff / 2.0, rel=1.0e-12)
+    assert eta_eff_lid == pytest.approx(eta_diff, rel=1.0e-12)
 
 
 @pytest.mark.unit
