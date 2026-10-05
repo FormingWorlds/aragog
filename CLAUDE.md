@@ -43,7 +43,7 @@ python tools/verification/figures/verify_rhs_parity.py
 - `FWL_DATA` may point at the SPIDER P-S EOS-table cache for standalone runs. PROTEUS-coupled runs do not need it; Zalmoxis writes the tables on the fly.
 - Optional install groups (`pyproject.toml`):
   - `[jax]` — `scikits-odes-sundials`, `jax`, `equinox`. **Required for the production solver path.** A bare `pip install -e .` falls back to scipy `Radau`/`BDF` with a finite-difference Jacobian, which is correct for short tests but step-size-fragile on multi-Myr cooling runs.
-  - `[test]` — `pytest`, `pytest-xdist`, `pytest-dependency`, `pytest-timeout`.
+  - `[test]` — `pytest`, `pytest-cov`, `pytest-xdist`, `pytest-dependency`, `pytest-timeout`.
   - `[docs]` — `zensical`, `mkdocstrings[python]`, `pymdown-extensions`, `mkdocs-material`, `markdown-include`.
 
 ## Project layout
