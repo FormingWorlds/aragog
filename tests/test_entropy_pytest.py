@@ -13,6 +13,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_copy
+
 EOS_DIR = Path(
     os.environ.get(
         'ARAGOG_TEST_EOS_DIR',
@@ -35,9 +37,7 @@ needs_eos = pytest.mark.skipif(
 @pytest.fixture
 def entropy_eos():
     """Load EntropyEOS from SPIDER tables."""
-    from aragog.eos.entropy import EntropyEOS
-
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 # ── Tier 1: EOS unit tests ──────────────────────────────────────────

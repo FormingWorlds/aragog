@@ -21,6 +21,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_jax
+
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 eqx = pytest.importorskip('equinox')
@@ -120,12 +122,11 @@ def test_factory_rhs_fn_writes_finite_ydot_in_place():
     silently make zero progress. ``rhs_calls`` counter must increment
     so the diagnostic logger reports realistic counts.
     """
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.nondim import NonDimScales
     from aragog.jax.phase import PhaseParams
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
-    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    eos_jax = entropy_eos_jax(EOS_DIR)
     params = PhaseParams()
     mesh = _make_const_property_mesh(N=10)
     bc = _make_bc()
@@ -175,12 +176,11 @@ def test_factory_jacfn_writes_finite_jacobian_in_place():
     argnums) would either return a non-square Jacobian or zero out
     the matrix.
     """
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.nondim import NonDimScales
     from aragog.jax.phase import PhaseParams
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
-    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    eos_jax = entropy_eos_jax(EOS_DIR)
     params = PhaseParams()
     mesh = _make_const_property_mesh(N=8)
     bc = _make_bc()

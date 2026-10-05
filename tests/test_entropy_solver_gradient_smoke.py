@@ -22,6 +22,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_copy
+
 # Mirror the EOS-resolution policy of ``test_entropy_solver_integration``:
 # accept ``ARAGOG_TEST_EOS_DIR`` first, then ``$FWL_DATA/aragog/spider_eos``,
 # then a legacy dev-machine fallback. Skip if none resolves.
@@ -144,9 +146,7 @@ def _build_gradient_parameters(*, n_nodes: int = 12, end_time: float = 5.0):
 @pytest.fixture(scope='module')
 def shared_eos():
     """Module-level EntropyEOS reuse, matching the integration suite."""
-    from aragog.eos.entropy import EntropyEOS
-
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 def test_entropy_solver_gradient_mode_short_run_completes(shared_eos):
