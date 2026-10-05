@@ -18,7 +18,6 @@ of the isothermal-reservoir factor. The contract clauses exercised here:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import numpy as np
@@ -30,21 +29,8 @@ pytest.importorskip('equinox')
 
 jax.config.update('jax_enable_x64', True)
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_FWL_DATA = os.environ.get('FWL_DATA')
-_CANDIDATES = [
-    os.environ.get('ARAGOG_TEST_EOS_DIR'),
-    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
-]
-EOS_DIR = next(
-    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
-    Path(_CANDIDATES[-1]),
-)
-needs_eos = pytest.mark.skipif(
-    not EOS_DIR.exists(),
-    reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
-)
+from aragog.jax.solver import dSdt_core_module  # noqa: E402
+from tests.conftest import entropy_eos_copy, entropy_eos_jax, needs_eos  # noqa: E402
 
 # Module tier: the real-EOS parity and Jacobian solves are smoke and slow;
 # the two factory-contract tests carry the unit marker so the PR lane still runs them.
@@ -138,11 +124,10 @@ def _build_numpy_solver(shared_eos):
 
 def _build_jax_pieces(solver):
     """JAX pytrees mirroring the numpy solver's mesh, phases, and BC."""
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import MeshArrays, PhaseParams
     from aragog.jax.solver import BoundaryParams, _no_radio
 
-    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    eos_jax = entropy_eos_jax()
     mesh_jax = MeshArrays.from_numpy_mesh(solver.evaluator.mesh)
     pm = solver.parameters.phase_mixed
     pl = solver.parameters.phase_liquid
@@ -197,7 +182,6 @@ def _build_jax_pieces(solver):
 
 
 @pytest.mark.smoke
-@pytest.mark.physics_invariant
 @needs_eos
 def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     """Direct evaluation of dSdt_core_module asserts shape, bounds, and excursion safety.
@@ -208,15 +192,15 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
        heating is absent, the core cooling rate dT_core/dt is strictly negative.
     3. Transient excursion protection: when an integrator excursion drives
        T_core non-positive (e.g. -50 K), the 1.0 K floor inside dSdt_core_module
-       prevents passing unphysical non-positive temperatures to the budget,
-       guaranteeing finite derivative evaluation.
+       prevents passing non-positive temperatures to the budget, ensuring the
+       RHS evaluates at the 1 K floor value and remains finite.
     4. Gradient sensitivity: perturbing dSdr_cmb changes the CMB heat flux
-       and modifies the cooling rate dT_core/dt.
+       and modifies the cooling rate dT_core/dt with the physical sign and
+       linear symmetry under +-1e-5 perturbations.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.jax.solver import dSdt_core_module
 
-    solver = _build_numpy_solver(EntropyEOS(EOS_DIR))
+    solver = _build_numpy_solver(entropy_eos_copy())
     args = _build_jax_pieces(solver)
     n_stag = solver._n_stag
     y0 = np.asarray(solver._S0, dtype=float)
@@ -228,7 +212,7 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     # Core cooling rate must be negative under positive CMB heat flow
     assert f0[n_stag + 1] < 0.0
 
-    # Excursion test: downstream budget enforces the T_core >= 1.0 K contract
+    # Excursion test: stub budget returns NaN for T < 1 K to verify the floor guard
     class GuardedBudget:
         def __init__(self, inner):
             self.inner = inner
@@ -241,22 +225,39 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
             )
 
     args_guarded = (*args[:6], GuardedBudget(args[6]), args[7])
+    y_floor = y0.copy()
+    y_floor[n_stag + 1] = 1.0
+    f_floor = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_floor), args_guarded)).ravel()
+    assert np.all(np.isfinite(f_floor))
+
     y_excursion = y0.copy()
     y_excursion[n_stag + 1] = -50.0
     f_exc = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_excursion), args_guarded)).ravel()
     assert f_exc.shape == (n_stag + 2,)
     assert np.all(np.isfinite(f_exc))
-    assert f_exc[n_stag + 1] < 0.0
+    assert f_exc[n_stag + 1] == pytest.approx(f_floor[n_stag + 1], rel=1e-12)
 
-    # Sensitivity test: perturbing dSdr_cmb changes cooling rate
-    y_pert = y0.copy()
-    y_pert[n_stag] += 10.0
-    f_pert = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_pert), args)).ravel()
-    assert abs(f_pert[n_stag + 1] - f0[n_stag + 1]) > 1e-6
+    # Sensitivity test: perturbing dSdr_cmb changes cooling rate physically
+    delta_s = 1e-5
+    y_plus = y0.copy()
+    y_plus[n_stag] += delta_s
+    f_plus = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_plus), args)).ravel()
+    y_minus = y0.copy()
+    y_minus[n_stag] -= delta_s
+    f_minus = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_minus), args)).ravel()
+
+    delta_plus = float(f_plus[n_stag + 1] - f0[n_stag + 1])
+    delta_minus = float(f_minus[n_stag + 1] - f0[n_stag + 1])
+    # A less negative gradient (+delta) gives slower cooling: Delta(dT_core/dt) > 0
+    assert delta_plus > 0.0
+    assert delta_minus < 0.0
+    # Symmetry within a few percent
+    assert abs(delta_plus + delta_minus) / abs(delta_plus) < 0.05
 
 
 @pytest.mark.smoke
 @pytest.mark.slow
+@pytest.mark.reference_pinned
 @needs_eos
 def test_rhs_parity_with_numpy_on_driven_state():
     """The JAX RHS matches the numpy RHS component-by-component on the
@@ -270,10 +271,9 @@ def test_rhs_parity_with_numpy_on_driven_state():
     drags C_eff away from its secular value, exercising the capacity
     swap on both sides.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.jax.solver import dSdt_core_module
 
-    solver = _build_numpy_solver(EntropyEOS(EOS_DIR))
+    solver = _build_numpy_solver(entropy_eos_copy())
     args = _build_jax_pieces(solver)
     n_stag = solver._n_stag
 
@@ -340,10 +340,7 @@ def test_jacobian_carries_boundary_couplings():
     boundary balance). A zero cross-coupling here means the custom JVP
     was lost and CVODE's Newton would iterate on wrong derivatives.
     """
-    from aragog.eos.entropy import EntropyEOS
-    from aragog.jax.solver import dSdt_core_module
-
-    solver = _build_numpy_solver(EntropyEOS(EOS_DIR))
+    solver = _build_numpy_solver(entropy_eos_copy())
     args = _build_jax_pieces(solver)
     n_stag = solver._n_stag
     y0 = np.asarray(solver._S0, dtype=float)
@@ -401,10 +398,9 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
 
-    from aragog.eos.entropy import EntropyEOS
     from aragog.jax.solver import dSdt_core_module
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy()
     strat_params = dict(CORE_MODULE_PARAMS) | {'stratification': True, 'k_core': 130.0}
     strat = _build('core_module', eos, strat_params)  # uniform isentrope
     plain = _build('core_module', eos, CORE_MODULE_PARAMS)

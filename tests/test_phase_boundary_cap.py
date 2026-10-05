@@ -1044,6 +1044,7 @@ def test_rate_arms_the_step_caps_like_fixed_for_a_stiff_zone_beyond_the_margin(
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
+@pytest.mark.timeout(120, method='signal')
 def test_rate_mode_arms_and_completes_for_core_module(shared_eos, caplog):
     """A core_module run with phase_boundary_cap 'rate' arms the cap and completes without warning."""
     import logging

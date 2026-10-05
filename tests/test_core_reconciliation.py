@@ -6,34 +6,15 @@ and radiogenic heating accounting.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-pytestmark = [pytest.mark.unit]
-
-_FWL_DATA = os.environ.get('FWL_DATA')
-_CANDIDATES = [
-    os.environ.get('ARAGOG_TEST_EOS_DIR'),
-    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-]
-EOS_DIR = next(
-    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
-    None,
-)
+from tests.conftest import entropy_eos_copy, needs_eos
 
 
 @pytest.fixture(scope='module')
 def shared_eos():
-    if EOS_DIR is None or not EOS_DIR.exists():
-        pytest.skip(
-            f'SPIDER EOS tables not found. ARAGOG_TEST_EOS_DIR={os.environ.get("ARAGOG_TEST_EOS_DIR")}'
-        )
-    from aragog.eos.entropy import EntropyEOS
-
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy()
 
 
 CORE_MODULE_PARAMS = {
@@ -159,6 +140,8 @@ def _build_solver(
     return EntropySolver(params, entropy_eos=shared_eos)
 
 
+@pytest.mark.smoke
+@needs_eos
 def test_reported_cmb_flux_matches_rhs_applied(shared_eos):
     """get_state() reports the CMB flux that the RHS integrated."""
     solver = _build_solver(core_bc='core_module', shared_eos=shared_eos)
@@ -177,6 +160,8 @@ def test_reported_cmb_flux_matches_rhs_applied(shared_eos):
     assert out.heat_flux[0] == pytest.approx(flux_rhs, rel=1e-12)
 
 
+@pytest.mark.unit
+@needs_eos
 def test_core_temperature_from_column_reads_slot(shared_eos):
     """_core_temperature_from_column reads T_core slot for core_module.
 
@@ -194,6 +179,8 @@ def test_core_temperature_from_column_reads_slot(shared_eos):
     assert reported_t == pytest.approx(6543.21, rel=1e-6)
 
 
+@pytest.mark.unit
+@needs_eos
 def test_retry_snapshot_restore_t_core(shared_eos):
     """get_current_core_temperature snapshots T_core and set_initial restores it.
 
@@ -233,6 +220,8 @@ def test_retry_snapshot_restore_t_core(shared_eos):
     assert solver._S0[n_stag + 1] == pytest.approx(5925.5)
 
 
+@pytest.mark.unit
+@needs_eos
 def test_core_module_heating_counted_once(shared_eos):
     """core_module counts bottom-cell radiogenic heating in the mantle once.
 
@@ -290,6 +279,8 @@ def test_core_module_heating_counted_once(shared_eos):
     assert abs(flux_heat - (flux_no_heat - double_count_flux_shift)) > 0.005
 
 
+@pytest.mark.unit
+@needs_eos
 def test_core_module_hot_start_reads_t_core_slot(shared_eos):
     """Automatic hot-start from prev_sol reads T_core slot (n_stag + 1), not dSdr_cmb."""
     from types import SimpleNamespace
@@ -307,6 +298,8 @@ def test_core_module_hot_start_reads_t_core_slot(shared_eos):
     assert solver._S0[n_stag + 1] == pytest.approx(5925.5)
 
 
+@pytest.mark.unit
+@needs_eos
 def test_core_module_rhs_evaluates_at_t_core_state_not_t_cmb_basic(shared_eos):
     """_dSdt_single passes state t_core to core RHS, not T_cmb_basic."""
     solver = _build_solver(core_bc='core_module', shared_eos=shared_eos)

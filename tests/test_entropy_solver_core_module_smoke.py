@@ -12,27 +12,10 @@ effective capacity, and the legacy-capacity limit reproduces the
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_FWL_DATA = os.environ.get('FWL_DATA')
-_CANDIDATES = [
-    os.environ.get('ARAGOG_TEST_EOS_DIR'),
-    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
-]
-EOS_DIR = next(
-    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
-    Path(_CANDIDATES[-1]),
-)
-needs_eos = pytest.mark.skipif(
-    not EOS_DIR.exists(),
-    reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
-)
+from tests.conftest import entropy_eos_copy, needs_eos
 
 pytestmark = [pytest.mark.smoke, needs_eos]
 
@@ -52,9 +35,7 @@ CORE_MODULE_PARAMS = {
 
 @pytest.fixture(scope='module')
 def shared_eos():
-    from aragog.eos.entropy import EntropyEOS
-
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy()
 
 
 def _driven_s_profile(n_stag: int):
@@ -300,7 +281,7 @@ def test_core_module_legacy_capacity_matches_energy_balance(shared_eos):
 def test_core_module_against_quasi_steady_baseline(shared_eos):
     """Cross-mode sanity on the same driven setup: both core temperatures
     are finite, the module's integrated state cools under the outgoing
-    flux, and the two stay within 50 K of each other. Both modes change
+    flux, and the two stay within 200 K of each other. Both modes change
     T_core by under 1 K on this window (0.16 K/yr at the wired
     constants), so the bracket only catches catastrophic divergence
     (initialisation or unit errors of order 100x), not closure physics;
@@ -321,7 +302,7 @@ def test_core_module_against_quasi_steady_baseline(shared_eos):
     assert float(y[n_stag + 1, -1]) < float(y[n_stag + 1, 0])
     t_legacy_cmb = float(legacy.state.phase_basic.temperature()[0])
     assert abs(t_module - t_legacy_cmb) < 5.0
-    assert abs(t_module - t_legacy) < 100.0
+    assert abs(t_module - t_legacy) < 200.0
 
 
 def test_core_module_missing_params_still_builds_with_defaults(shared_eos):

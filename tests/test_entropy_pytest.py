@@ -2080,6 +2080,15 @@ class TestCoreModuleCoreBC:
         solver = self._make_bare_solver(entropy_eos, n_stag=30, core_bc='core_module')
         self._wire_cached_constants(solver)
         self._wire_budget(solver, capacity_mode='profile')
+        real_budget = solver._core_module_budget
+
+        class _GuardedBudget:
+            def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
+                if t_cmb < 1.0:
+                    return float('nan')
+                return real_budget.dtcmb_dt(t_cmb, q_cmb, q_sources=q_sources)
+
+        solver._core_module_budget = _GuardedBudget()
         for t_bad in (-500.0, 0.0, 1.0):
             grad, dT = solver._core_module_rhs_per_s(
                 F_cmb_basic=2.0e4,
