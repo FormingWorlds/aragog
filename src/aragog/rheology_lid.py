@@ -156,6 +156,7 @@ def compute_stagnant_lid_state(
     r_i = xp.sum(W_tilde * r)
 
     w_active = 0.5 * (1.0 + xp.tanh((xp.sum(w_conv) - 1.0) / 0.5))
+    is_convecting = (W_sum > 1e-6) & (w_active > 0.05)
 
     H_T_i = compute_arrhenius_enthalpy(
         P_T_i,
@@ -247,7 +248,7 @@ def compute_stagnant_lid_state(
     r_lid_base = xp.sum(W_base_tilde * r)
     P_lid_base = xp.sum(W_base_tilde * P)
     T_lid = xp.sum(W_base_tilde * T)
-    d_lid = xp.maximum(r[-1] - r_lid_base, 0.0) * w_active
+    d_lid = xp.where(is_convecting, xp.maximum(r[-1] - r_lid_base, 0.0) * w_active, 0.0)
 
     dT_dr = xp.abs(xp.gradient(T, r))
     dr_min = xp.min(xp.abs(r[1:] - r[:-1]))
@@ -271,7 +272,7 @@ def compute_stagnant_lid_state(
         u_shift = xp.max(u)
         sum_w_exp = xp.sum(w_upper * xp.exp((u - u_shift) / T_v))
         v_i_raw = u_shift + T_v * (xp.log(xp.maximum(sum_w_exp, 1e-300)) - xp.log(N_upper))
-        v_i = xp.maximum(v_i_raw, 0.0) * w_active
+        v_i = xp.where(is_convecting, xp.maximum(v_i_raw, 0.0) * w_active, 0.0)
     else:
         v_i = 0.0
         w_upper = xp.zeros_like(r)
@@ -292,15 +293,39 @@ def compute_stagnant_lid_state(
     eta_i_safe = xp.maximum(eta_i, 1e-30)
 
     # Convective interior velocity and lid driving stress (Foley & Bercovici 2014, eqs. 26, 28).
-    Ra_eff = (rho_i * g_i * alpha_i * DeltaT_conv * (d_conv**3)) / (kappa_i * eta_i_safe)
+    Ra_eff = xp.where(
+        is_convecting,
+        (rho_i * g_i * alpha_i * DeltaT_conv * (d_conv**3)) / (kappa_i * eta_i_safe),
+        0.0,
+    )
     theta_safe = xp.maximum(theta, 1e-6)
-    Ra_rh = (Ra_eff * a_rh_fb) / theta_safe
-    v_m = (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 0.0) ** FB2014_VELOCITY_EXPONENT)
+    Ra_rh = xp.where(is_convecting, (Ra_eff * a_rh_fb) / theta_safe, 0.0)
+    v_m = xp.where(
+        is_convecting,
+        (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 0.0) ** FB2014_VELOCITY_EXPONENT),
+        0.0,
+    )
 
-    tau_d = (FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active
-    tau_d_lid = (FB2014_STRESS_FACTOR * eta_i * v_m) / xp.maximum(d_lid, 1e-6)
-    tau_buoy = rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active
-    tau_d_over_tau_buoy = tau_d / xp.maximum(tau_buoy, 1e-30)
+    tau_d = xp.where(
+        is_convecting,
+        (FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active,
+        0.0,
+    )
+    tau_d_lid = xp.where(
+        is_convecting,
+        (FB2014_STRESS_FACTOR * eta_i * v_m) / xp.maximum(d_lid, 1e-6),
+        0.0,
+    )
+    tau_buoy = xp.where(
+        is_convecting,
+        rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active,
+        0.0,
+    )
+    tau_d_over_tau_buoy = xp.where(
+        is_convecting,
+        tau_d / xp.maximum(tau_buoy, 1e-30),
+        0.0,
+    )
 
     tau_y_lid = compute_yield_stress(
         P_lid_base,
@@ -317,7 +342,7 @@ def compute_stagnant_lid_state(
         1.0 - xp.tanh((phi[-1] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
     )
     w_has_lid = 0.5 * (1.0 + xp.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf
-    lid_regime = w_active * w_has_lid * (1.0 + w_y)
+    lid_regime = xp.where(is_convecting, w_active * w_has_lid * (1.0 + w_y), 0.0)
 
     return {
         'T_i': T_i,

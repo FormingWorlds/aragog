@@ -88,7 +88,7 @@ def test_yield_stress_parity_float64():
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize(
     'regime',
-    ['unyielded', 'yielding', 'mobile', 'no_lid', 'mushy'],
+    ['unyielded', 'yielding', 'mobile', 'no_lid', 'mushy', 'inactive_convection'],
 )
 def test_lid_state_and_effective_viscosity_parity(regime: str):
     """Verify lid diagnostics and effective viscosity match between NumPy and JAX."""
@@ -134,6 +134,12 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         v_unyielded[-8:] = 0.0
         melt_frac = np.linspace(0.6, 0.1, n_nodes)
         tau_y_max = 50.0e6
+    elif regime == 'inactive_convection':
+        temperature = np.linspace(3000.0, 1800.0, n_nodes)
+        conv_flux = np.zeros(n_nodes)
+        v_unyielded = np.zeros(n_nodes)
+        melt_frac = np.zeros(n_nodes)
+        tau_y_max = 500.0e6
     else:
         raise ValueError(f'Unknown regime: {regime}')
 

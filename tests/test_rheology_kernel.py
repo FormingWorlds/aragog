@@ -232,12 +232,47 @@ def test_limit_no_convection_lid_diagnostics():
     )
 
     assert state['w_active'] < 0.02
-    expected_tau_d = float(
-        state['w_active'] * 2.0 * state['eta_i'] * state['v_m'] / (radii[-1] - radii[0])
+    assert float(state['tau_d']) == 0.0
+    assert float(state['tau_d_lid']) == 0.0
+    assert float(state['tau_buoy']) == 0.0
+    assert float(state['v_m']) == 0.0
+    assert float(state['Ra_eff']) == 0.0
+    assert float(state['d_lid']) == 0.0
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_inactive_convection_yield_viscosity_unyielded():
+    """Verify effective viscosity remains unyielded when convection is inactive."""
+    n_nodes = 30
+    radii = np.linspace(3.48e6, 6.371e6, n_nodes)
+    temperature = np.linspace(3500.0, 1600.0, n_nodes)
+    pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
+    conv_flux = np.zeros(n_nodes)
+    total_flux = np.full(n_nodes, 0.05)
+    params = SolidRheologyParams(enabled=True, stress_closure_mode='lid', yield_stress_c=1.0e4)
+
+    state = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temperature,
+        pressure=pressure,
+        convective_flux=conv_flux,
+        total_flux=total_flux,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=params,
+        xp=np,
     )
-    assert state['tau_d'] == pytest.approx(expected_tau_d, rel=1.0e-5)
-    assert state['tau_d'] < 2.0e5
-    assert state['d_lid'] < 0.01 * (radii[-1] - radii[0])
+    assert float(state['tau_d']) == 0.0
+    eta_diff = np.full(n_nodes, 1.0e24)
+    eta_eff = compute_effective_viscosity(
+        eta_diff=eta_diff,
+        tau_d=state['tau_d'],
+        tau_y_lid=state['tau_y_lid'],
+        stress_closure_mode='lid',
+        xp=np,
+    )
+    np.testing.assert_allclose(eta_eff, eta_diff)
 
 
 @pytest.mark.unit
