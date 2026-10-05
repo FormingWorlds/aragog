@@ -1021,24 +1021,21 @@ def test_scipy_methods_keep_the_margin_with_cvode_installed(shared_eos, monkeypa
 @pytest.mark.smoke
 def test_max_steps_counts_per_output_interval_in_both_modes(shared_eos):
     """max_steps is SUNDIALS mxstep, counted per output interval: with half the steps the
-    16-node mushy 200 yr call takes unlimited, it completes in both modes, rate in segments.
-
-    The budget follows the measured count because that count depends on the SUNDIALS build;
-    the smallest budget that completed was at most 0.21 of it on two builds.
-    """
+    16-node mushy 200 yr call takes without a limit, it completes in both modes on the same
+    steps, rate in segments, while a budget of 1 stops it. The budget follows the measured
+    count because that count depends on the SUNDIALS build."""
     for mode in ('fixed', 'rate'):
-        free = _solver(shared_eos, mode, n_nodes=16, end_time=200.0)
-        free._max_steps = 10**6
-        free.solve()
-        budget = free._solution.cvode_nst // 2
-        s = _solver(shared_eos, mode, n_nodes=16, end_time=200.0)
-        s._max_steps = budget
-        s.solve()
-        sol = s._solution
-        assert sol.status == 0 and sol.t[-1] == pytest.approx(200.0), mode
-        assert sol.cvode_nst > budget and (len(sol.get('segments') or []) >= 2) is (
-            mode == 'rate'
-        )
+        runs = {}
+        for label, budget in (('free', 10**6), ('half', None), ('one', 1)):
+            s = _solver(shared_eos, mode, n_nodes=16, end_time=200.0)
+            s._max_steps = budget or runs['free'].cvode_nst // 2
+            s.solve()
+            runs[label] = s._solution
+        free, half = runs['free'], runs['half']
+        assert free.status == half.status == 0 and half.t[-1] == pytest.approx(200.0), mode
+        assert half.cvode_nst == free.cvode_nst > 2, mode
+        assert runs['one'].status != 0, mode
+        assert (len(half.get('segments') or []) >= 2) is (mode == 'rate'), mode
 
 
 @needs_cvode
