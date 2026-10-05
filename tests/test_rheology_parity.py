@@ -388,6 +388,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
 
     for key in [
         'eta_i',
+        'mu_i',
         'tau_d',
         'd_lid',
         'theta',
@@ -464,3 +465,83 @@ def test_stagnant_lid_checkpoint_profile_parity():
         atol=1.0e-12,
         err_msg='Mismatch in eta_eff on checkpoint profile',
     )
+
+
+def test_convecting_layer_viscosity_mixture_parity():
+    """Verify mu_i evaluated from mixture viscosity matches between NumPy and JAX."""
+    params = SolidRheologyParams()
+    r = np.linspace(5.371e6, 6.371e6, 30)
+    T = np.linspace(3500.0, 1400.0, 30)
+    P = np.linspace(1.3e11, 1.0e5, 30)
+    conv_flux = np.ones(30) * 1.0e5
+    conv_flux[-4:] = 0.0
+    tot_flux = np.ones(30) * 1.0e5
+    phi = np.zeros(30)
+    phi[:20] = 0.35
+
+    # Viscosity profile representing mush in convective interior and cold solid in lid
+    visc_mix_np = np.full(30, 1.0e11)
+    visc_mix_np[-4:] = 1.0e23
+    visc_mix_jx = jnp.array(visc_mix_np)
+
+    # 1. Fallback when viscosity_mixture is None: mu_i == arrhenius(T_i, P_T_i)
+    st_none_np = compute_stagnant_lid_state(
+        radii=r,
+        temperature=T,
+        pressure=P,
+        convective_flux=conv_flux,
+        total_flux=tot_flux,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_solid=1.0e21,
+        viscosity_mixture=None,
+        xp=np,
+    )
+    st_none_jx = jax_rheo.compute_stagnant_lid_state(
+        radii=jnp.array(r),
+        temperature=jnp.array(T),
+        pressure=jnp.array(P),
+        convective_flux=jnp.array(conv_flux),
+        total_flux=jnp.array(tot_flux),
+        solidus_temperature=None,
+        melt_fraction=jnp.array(phi),
+        params=params,
+        viscosity_solid=1.0e21,
+        viscosity_mixture=None,
+    )
+    np.testing.assert_allclose(float(st_none_np['mu_i']), float(st_none_jx['mu_i']), rtol=1e-12)
+    assert st_none_np['mu_i'] == st_none_np['eta_i']
+
+    # 2. When viscosity_mixture is provided: mu_i is evaluated from the mixture viscosity
+    st_mix_np = compute_stagnant_lid_state(
+        radii=r,
+        temperature=T,
+        pressure=P,
+        convective_flux=conv_flux,
+        total_flux=tot_flux,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_solid=1.0e21,
+        viscosity_mixture=visc_mix_np,
+        xp=np,
+    )
+    st_mix_jx = jax_rheo.compute_stagnant_lid_state(
+        radii=jnp.array(r),
+        temperature=jnp.array(T),
+        pressure=jnp.array(P),
+        convective_flux=jnp.array(conv_flux),
+        total_flux=jnp.array(tot_flux),
+        solidus_temperature=None,
+        melt_fraction=jnp.array(phi),
+        params=params,
+        viscosity_solid=1.0e21,
+        viscosity_mixture=visc_mix_jx,
+    )
+    np.testing.assert_allclose(float(st_mix_np['mu_i']), float(st_mix_jx['mu_i']), rtol=1e-12)
+    np.testing.assert_allclose(float(st_mix_np['tau_d']), float(st_mix_jx['tau_d']), rtol=1e-12)
+    np.testing.assert_allclose(
+        float(st_mix_np['Ra_eff']), float(st_mix_jx['Ra_eff']), rtol=1e-12
+    )
+    assert st_mix_np['mu_i'] < st_none_np['mu_i']

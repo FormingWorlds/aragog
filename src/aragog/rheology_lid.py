@@ -51,6 +51,7 @@ def compute_stagnant_lid_state(
     params: Any,
     unyielded_velocity: FloatOrArray | None = None,
     viscosity_solid: float | None = None,
+    viscosity_mixture: FloatOrArray | None = None,
     phi_rheo: float | None = None,
     phi_width: float | None = None,
     density: FloatOrArray = 3300.0,
@@ -86,6 +87,11 @@ def compute_stagnant_lid_state(
         Unyielded convective velocity profile v [m/s].
     viscosity_solid : float, optional
         Reference solid mantle viscosity [Pa s]. Defaults to 1e21 if unspecified.
+    viscosity_mixture : float or array-like, optional
+        Effective mixture viscosity profile [Pa s] of the convecting layer (in mush,
+        the blended two-phase viscosity used by the solver). When provided, mu_i
+        is evaluated from this profile; otherwise falls back to pure solid
+        Arrhenius viscosity at (T_i, P_T_i).
     phi_rheo : float, optional
         Critical melt fraction for rheological transition. Defaults to 0.4.
     phi_width : float, optional
@@ -180,7 +186,18 @@ def compute_stagnant_lid_state(
         xp=xp,
     )
     eta_surf = arrhenius(T_surf, P_surf)
-    eta_i = arrhenius(T_i, P_T_i)
+    eta_arr_i = arrhenius(T_i, P_T_i)
+    if viscosity_mixture is not None:
+        visc_mix = xp.asarray(viscosity_mixture, dtype=float)
+        if xp.ndim(visc_mix) == 0:
+            mu_i = visc_mix
+        else:
+            log_visc = xp.log10(xp.maximum(xp.ravel(visc_mix), 1e-30))
+            mu_i_mix = 10.0 ** xp.sum(W_tilde * log_visc)
+            mu_i = xp.where(W_sum > 1e-6, mu_i_mix, eta_arr_i)
+    else:
+        mu_i = eta_arr_i
+    eta_i = mu_i
     eta_contrast = eta_surf / xp.maximum(eta_i, 1e-30)
 
     if params.lid_base_mode == 'fixed':
@@ -323,6 +340,8 @@ def compute_stagnant_lid_state(
         'lid_regime': lid_regime,
         'lid_cell_count': lid_cell_count,
         'eta_i': eta_i,
+        'mu_i': mu_i,
+        'eta_solid_arrhenius': eta_arr_i,
     }
 
 

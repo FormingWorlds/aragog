@@ -918,6 +918,7 @@ def compute_mlt(
                 params=params,
                 unyielded_velocity=visc_v_unyielded,
                 viscosity_solid=params.viscosity_solid,
+                viscosity_mixture=eta_bulk_unyielded,
                 density=rho_jax,
                 gravity=mesh.gravity,
                 thermal_expansivity=phase_basic.thermal_expansivity,

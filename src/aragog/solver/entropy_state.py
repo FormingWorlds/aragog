@@ -764,6 +764,7 @@ class EntropyState:
                     params=rheo,
                     unyielded_velocity=visc_v_unyielded,
                     viscosity_solid=self.phase_basic.viscosity_solid,
+                    viscosity_mixture=eta_bulk_unyielded,
                     phi_rheo=phi_rheo,
                     phi_width=phi_width,
                     density=rho_basic,
