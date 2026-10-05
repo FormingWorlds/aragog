@@ -288,7 +288,7 @@ When set to `true`, all atmosphere modules and termination checks enforce a `T_m
 **Defaults**: `rtol = 1e-10`, `atol = 1e-10`, `atol_temperature_equivalent = 1e-8`.
 **Recommendation**: keep production defaults.
 
-Loosening to `1e-7` re-introduces the CVODE marginal-stability bifurcation at iter $\sim 9$ and silent drift across the rheological transition. Above `rtol` `1e-7` the rate phase-boundary cap also logs a warning, and Aragog logs one warning that a loose `rtol` can lock CVODE at the convective switch; at `1e-7` itself neither warning fires. Tightening below `1e-10` has diminishing returns.
+In coupled runs, loosening to `1e-7` brings back the CVODE marginal-stability bifurcation at iteration $\sim 9$ and silent drift across the rheological transition; this coupled-run observation is separate from the CVODE lock at the switch $dS/dr = 0$ (the convective mask and the $\kappa_h$ floor), for which Aragog logs one warning when `rtol` is above `1e-8`. On the isentropic test case of `tests/test_phase_boundary_cap.py` (24 nodes, 200 yr, relative noise of $10^{-15}$ on the initial entropy), CVODE locked in 46 % of runs with `rtol` = `atol` = `1e-5`, in about 0.5 % with both at `1e-6`, in 0 of 105 with both at `1e-7` (too few runs to show it safe) and in 0 of 2000 per mode with both at `1e-8`; on CI the AVX-512 numpy path makes that test lock at `1e-6`. Above `rtol` `1e-7` the rate phase-boundary cap also logs a warning. The `CV_TOO_MUCH_WORK` retry ladder can relax `rtol` above `1e-8` (from a base of `1e-8` to `2e-8`, `5e-8` and `1e-7`); the warning then names the relaxed value, not the configured one. Tightening below `1e-10` has diminishing returns.
 
 ### 7. `interior_energetics.num_levels`
 

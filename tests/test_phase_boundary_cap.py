@@ -586,21 +586,23 @@ def test_rate_mode_warns_once_per_solver_when_rtol_is_loose(
         ('fixed', 'quasi_steady', 1e-6, 1e-8, 2.0, 1, False),
         ('fixed', 'energy_balance', 1e-6, 1e-6, 0.01, 1, True),
         ('fixed', 'energy_balance', 1e-6, 1e-8, 0.01, 1, False),
+        ('fixed', 'energy_balance', 1e-6, 2e-8, 0.01, 1, True),
         ('fixed', 'quasi_steady', 1e-6, 1e-6, 2.0, 1, False),
         ('rate', 'quasi_steady', 1e-6, 1e-8, 2.0, 1, False),
         ('fixed', 'quasi_steady', 1e-8, 1e-6, 2.0, 0, False),
         ('fixed', 'energy_balance', 1e-8, 1e-6, 0.01, 0, False),
         ('fixed', 'quasi_steady', 1e-10, 1e-10, 0.01, 0, False),
-        ('fixed', 'quasi_steady', 1e-7, 1e-7, 2.0, 0, False),
+        ('fixed', 'quasi_steady', 1e-7, 1e-7, 2.0, 1, False),
+        ('fixed', 'quasi_steady', 2e-8, 1e-8, 2.0, 1, False),
         ('fixed', 'quasi_steady', 1e-6, 1e-6, 0.0, 0, False),
     ],
 )
-def test_cvode_warns_once_per_solver_when_rtol_is_above_1e_7(
+def test_cvode_warns_once_per_solver_when_rtol_is_above_1e_8(
     shared_eos, caplog, monkeypatch, mode, core, rtol, atol, end_time, expected, atol_clause
 ):
-    """Above rtol 1e-7 Aragog warns once over two solve() calls, naming a loose atol only on the
-    energy_balance core; never for atol alone, at 1e-7 or on a zero-span call. CVODE gets the
-    caller's rtol and the atol floored at 1e-8."""
+    """Above rtol 1e-8 Aragog warns once over two solve() calls, naming a configured atol above
+    1e-8 only on the energy_balance core; never for atol alone, at 1e-8 or on a zero-span call.
+    CVODE gets the caller's rtol and the atol floored at 1e-8."""
     s = _solver(shared_eos, mode, core, end_time=end_time)
     s.parameters.solver.rtol, s.parameters.solver.atol = rtol, atol
     seen, real = [], s._solve_cvode
@@ -610,9 +612,9 @@ def test_cvode_warns_once_per_solver_when_rtol_is_above_1e_7(
         s.solve()
     hits = [r.getMessage() for r in caplog.records if 'can lock CVODE' in r.getMessage()]
     assert len(hits) == expected
-    assert all(('loose solver.atol' in m) == atol_clause for m in hits)
+    assert all(('configured solver.atol' in m) == atol_clause for m in hits)
     assert all(
-        f'solver.rtol {rtol:.1e}: an rtol above 1e-7' in m and 'Use rtol 1e-8' in m
+        f'solver.rtol {rtol:.1e}: an rtol above 1e-8' in m and 'Use rtol 1e-8' in m
         for m in hits
     )
     scale = np.asarray(s._build_nondim_scales().state_scale)

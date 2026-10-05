@@ -302,8 +302,8 @@ def _phase_boundary_max_step_clamp(
 _RATE_CAP_MIN_DELTA = 10.0
 # rtol above which the rate cap logs one warning (its accuracy is measured at 1e-8).
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
-# solver.rtol above which Aragog logs one warning: a looser rtol can lock CVODE.
-_CVODE_TOL_LIMIT = 1.0e-7
+# solver.rtol above which Aragog logs one warning: a looser rtol can lock CVODE (clean at 1e-8).
+_CVODE_TOL_LIMIT = 1.0e-8
 
 
 def _segment_arming_margin(
@@ -3608,12 +3608,15 @@ class EntropySolver:
             if spans and rtol > _CVODE_TOL_LIMIT:
                 atol_cfg = self.parameters.solver.atol
                 loose = atol_cfg > _CVODE_TOL_LIMIT and self._core_bc == 'energy_balance'
-                note = f'; the loose solver.atol {atol_cfg:.1e} adds to this' if loose else ''
-                lim = f'{_CVODE_TOL_LIMIT:.0e}'.replace('e-0', 'e-')
+                note = (
+                    f'; the configured solver.atol {atol_cfg:.1e} adds to this' if loose else ''
+                )
                 self._warn_once(
                     'cvode_tol',
-                    f'CVODE at solver.rtol {rtol:.1e}: an rtol above {lim} can lock CVODE at the '
-                    f'convective switch dS/dr = 0{note}. Use rtol 1e-8, the Aragog default, or tighter',
+                    f'CVODE at solver.rtol {rtol:.1e}: an rtol above 1e-8 can lock CVODE '
+                    'at the convective switch dS/dr = 0 (in test runs: 46 % at 1e-5, about '
+                    f'0.5 % at 1e-6, none at 1e-8; see the solver tuning docs){note}. Use '
+                    'rtol 1e-8, the Aragog default, or tighter',
                 )
             if rate_mode:
                 if spans and rtol > _RATE_CAP_RTOL_LIMIT:
