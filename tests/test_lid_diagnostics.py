@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from aragog.rheology import (
+    R_GAS,
     SolidRheologyParams,
     compute_stagnant_lid_state,
 )
@@ -316,6 +317,39 @@ def test_frank_kamenetskii_contrast_scaling():
     assert np.all(diffs > 0.0), 'Theta must increase as surface cools'
     assert thetas[0] < 9.0, 'Hot surface must yield small Frank-Kamenetskii parameter'
     assert thetas[-1] > 20.0, 'Cold surface must yield large Frank-Kamenetskii parameter'
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_frank_kamenetskii_theta_definition_activation_energy():
+    """Verify theta matches Foley & Bercovici (2014) definition using activation energy E."""
+    n_nodes = 30
+    radii = np.linspace(3.48e6, 6.371e6, n_nodes)
+    pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
+    temperature = np.linspace(3000.0, 1500.0, n_nodes)
+    conv_flux = np.linspace(100.0, 0.0, n_nodes)
+    total_flux = np.full(n_nodes, 120.0)
+    params = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        activation_energy=300.0e3,
+        activation_volume=1.0e-5,
+    )
+    st = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temperature,
+        pressure=pressure,
+        convective_flux=conv_flux,
+        total_flux=total_flux,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=params,
+        xp=np,
+    )
+    expected_theta = (params.activation_energy * (st['T_i'] - temperature[-1])) / (
+        R_GAS * st['T_i'] ** 2
+    )
+    assert st['theta'] == pytest.approx(expected_theta, rel=1.0e-12)
 
 
 @pytest.mark.unit

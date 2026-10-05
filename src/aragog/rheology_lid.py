@@ -118,6 +118,15 @@ def compute_stagnant_lid_state(
 
     Notes
     -----
+    The Frank-Kamenetskii parameter follows Foley & Bercovici (2014, p. 582):
+    ``theta = params.activation_energy * (T_i - T_surf) / (R_GAS * T_i**2)``,
+    using activation energy E rather than enthalpy H = E + P V.
+
+    When convective layer weights place interior temperature T_i below lid base
+    temperature T_lid (for example in cold_top_lid where T_i < T_lid), the solver
+    evaluates theta and driving stress directly from the convective layer state T_i
+    without clamping T_i to T_lid.
+
     When ``solidus_temperature`` is None, the solidus crossing indicator ``w_hot_sol``
     is evaluated from melt fraction using ``SOLIDUS_MELT_FRACTION_THRESHOLD`` (0.01).
     Because ``w_interior`` takes the maximum of isothermal, solidus, and rheological
@@ -169,7 +178,8 @@ def compute_stagnant_lid_state(
     dT_rh = (R_GAS * T_i**2) / H_safe
     T_surf = T[-1]
     P_surf = P[-1]
-    theta = (H_T_i * (T_i - T_surf)) / (R_GAS * T_i**2)
+    # Foley & Bercovici (2014) p. 582: theta = E * DeltaT / (R * T_i**2).
+    theta = (params.activation_energy * (T_i - T_surf)) / (R_GAS * T_i**2)
 
     eta_0 = viscosity_solid
     if eta_0 is None:
