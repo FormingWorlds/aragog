@@ -284,6 +284,7 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
 @needs_eos
 @needs_cvode
 @pytest.mark.smoke
+@pytest.mark.timeout(120, method='signal')
 def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     """With the extended energy_balance state, rate mode segments on the entropy block and keeps the CMB entry."""
     s_f, T_f = _isentropic_end(shared_eos, 'fixed', 1e-8, 'energy_balance')
