@@ -277,10 +277,17 @@ def compute_stagnant_lid_state(
         w_upper = xp.zeros_like(r)
 
     d_conv = xp.maximum(r[-1] - r[0], 1.0)
-    rho_i = xp.mean(xp.asarray(density, dtype=float))
-    g_i = xp.mean(xp.asarray(gravity, dtype=float))
-    alpha_i = xp.mean(xp.asarray(thermal_expansivity, dtype=float))
-    kappa_i = xp.mean(xp.asarray(thermal_diffusivity, dtype=float))
+
+    def _weighted_mean(val):
+        arr = xp.asarray(val, dtype=float)
+        if xp.ndim(arr) == 0:
+            return arr
+        return xp.sum(W_tilde * arr)
+
+    rho_i = _weighted_mean(density)
+    g_i = _weighted_mean(gravity)
+    alpha_i = _weighted_mean(thermal_expansivity)
+    kappa_i = _weighted_mean(thermal_diffusivity)
     DeltaT_conv = xp.maximum(T_i - T[-1], 1e-6)
     eta_i_safe = xp.maximum(eta_i, 1e-30)
 

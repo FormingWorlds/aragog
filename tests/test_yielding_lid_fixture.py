@@ -40,7 +40,7 @@ def shared_eos():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('mode,tau_y_val', [('yielding', 8.0e4), ('sub_yield', 2.0e5)])
+@pytest.mark.parametrize('mode,tau_y_val', [('yielding', 1.0e4), ('sub_yield', 5.0e4)])
 def test_stagnant_lid_yielding_fixture(shared_eos, mode, tau_y_val):
     """Verify stagnant lid yielding active and sub-yield contracts in integrated solve.
 
