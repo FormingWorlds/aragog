@@ -923,6 +923,32 @@ const_S_ref = 3000.0
     assert params.phase_solid.mlt_bottom_slope == pytest.approx(1.0, rel=1e-12)
     assert params.phase_solid.lid_base_mode == 'rheological'
     assert params.phase_solid.stress_closure_mode == 'lid'
-
     assert params.phase_mixed.separation_viscosity == 'mixture'
     assert params.phase_mixed.cp_blend == 'latent'
+
+
+def test_phase_liquid_requires_explicit_viscosity(tmp_path):
+    """Verify that omitting viscosity in [phase_liquid] raises ValueError."""
+    from pathlib import Path
+
+    from aragog.config import Config
+
+    base_text = Path('tests/configs/cold_top_lid.toml').read_text()
+    # Remove viscosity from [phase_liquid]
+    lines = base_text.splitlines()
+    filtered = []
+    in_liquid = False
+    for line in lines:
+        if line.strip() == '[phase_liquid]':
+            in_liquid = True
+        elif line.strip().startswith('['):
+            in_liquid = False
+        if in_liquid and line.strip().startswith('viscosity ='):
+            continue
+        filtered.append(line)
+
+    cfg_file = tmp_path / 'missing_liquid_visc.toml'
+    cfg_file.write_text('\n'.join(filtered))
+
+    with pytest.raises(ValueError, match=r'\[phase_liquid\] requires viscosity'):
+        Config.from_file(str(cfg_file))

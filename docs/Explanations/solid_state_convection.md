@@ -228,7 +228,7 @@ $$
 v_m = a_u \frac{\kappa}{d} \left( \frac{\mathrm{Ra}_i a_\text{rh}}{\theta} \right)^{1/2}
 $$
 
-with $a_u = 0.385 \pm 0.057$, for $n = 1$, and $a_\text{rh} = 2.4 \pm 0.2$. In both the bottom-heated and internally heated scalings, the temperature contrast $\Delta T$ enters the definitions of Rayleigh number and Frank-Kamenetskii parameter symmetrically, cancelling in the ratio $\mathrm{Ra} / \theta$. For an Earth reference state, the internally heated scaling predicts convective driving shear stress $\tau_d \approx 0.058\text{ MPa}$ (or $0.038\text{ MPa}$ with unscaled $a_\text{rh} = 1.0$), approximately four times lower than the bottom-heated estimate ($0.232\text{ MPa}$). Consequently, evaluating $\tau_d$ with the bottom-heated $2/3$ scaling represents an upper estimate on convective shear stress during later, internally heated epochs.
+with $a_u = 0.385 \pm 0.003$, for $n = 1$, and $a_\text{rh} = 2.4 \pm 0.2$. In both the bottom-heated and internally heated scalings, the temperature contrast $\Delta T$ enters the definitions of Rayleigh number and Frank-Kamenetskii parameter symmetrically, cancelling in the ratio $\mathrm{Ra} / \theta$. For an Earth reference state, the internally heated scaling predicts convective driving shear stress $\tau_d \approx 0.058\text{ MPa}$ (or $0.038\text{ MPa}$ with unscaled $a_\text{rh} = 1.0$), approximately four times lower than the bottom-heated estimate ($0.232\text{ MPa}$). Consequently, evaluating $\tau_d$ with the bottom-heated $2/3$ scaling represents an upper estimate on convective shear stress during later, internally heated epochs.
 
 ### 4.2 Validated Parameter Ranges and Mushy Extrapolation
 
@@ -256,11 +256,11 @@ $$
 \tau_\text{buoy} = \rho g \alpha \Delta T_\text{rh} \delta_\text{rh}
 $$
 
-where $\delta_\text{rh}$ is the rheological sublayer thickness. The ratio $\tau_d / \tau_\text{buoy}$ is tracked in the output diagnostics, as a measure of boundary-layer force balance. In addition, the shifted soft-maximum convective velocity $v_i$, evaluated over the upper mantle, is retained as a diagnostic profile quantity.
+where $\delta_\text{rh}$ is the rheological sublayer thickness. The sublayer buoyancy stress $\tau_\text{buoy}$ and the force-balance ratio $\tau_d / \tau_\text{buoy}$ are tracked in the stagnant lid diagnostic state dictionary `lid_state`. For the Earth reference state ($\rho = 3300\text{ kg m}^{-3}$, $g = 9.81\text{ m s}^{-2}$, $\alpha = 3 \times 10^{-5}\text{ K}^{-1}$, $T_i = 1600\text{ K}$, $\Delta T_\text{rh} \approx 71\text{ K}$, $\delta_\text{rh} \approx 30.8\text{ km}$), $\tau_\text{buoy} \approx 2.12\text{ MPa}$, $\tau_d \approx 0.232\text{ MPa}$, and $\tau_d / \tau_\text{buoy} \approx 0.11$. In addition, the shifted soft-maximum convective velocity $v_i$, evaluated over the upper mantle, is retained as a diagnostic profile quantity.
 
 ## 5. Minimum Yield Closure
 
-The effective solid viscosity combines diffusion creep and plastic yielding through the minimum formulation implemented at `src/aragog/rheology_lid.py:348-436` (Moresi and Solomatov 1998, eqs. 13-14, p. 672; Tackley 2000, eq. 8, p. 4):
+The effective solid viscosity combines diffusion creep and plastic yielding through the minimum formulation implemented in `aragog.rheology_lid.compute_effective_viscosity` (Moresi and Solomatov 1998, eqs. 13-14, p. 672; Tackley 2000, eq. 8, p. 4):
 
 $$
 \eta_\text{eff} = \min(\eta_\text{diff}, \eta_y) = \eta_\text{diff} \min\left(1, \frac{\tau_{y,\text{lid}}}{\tau_d}\right)

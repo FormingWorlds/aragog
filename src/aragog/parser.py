@@ -615,6 +615,9 @@ class Parameters:
                     "'nearest_boundary' or set both slopes to 1.0"
                 )
 
+        if self.phase_liquid.viscosity is None:
+            raise ValueError('[phase_liquid] requires viscosity to be explicitly specified')
+
         # Validate ppm-scaled copies and write back only on success, so a rejected call leaves
         # the caller's objects unchanged.
         scaled = [replace(r, concentration=r.concentration * _PPM) for r in self.radionuclides]

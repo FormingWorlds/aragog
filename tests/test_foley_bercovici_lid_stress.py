@@ -81,9 +81,9 @@ def test_fb2014_earth_reference_state():
     - Ra_rh = 2.162191e7
     - v_m = 3.356924e-9 m/s (0.106 m/yr)
     - tau_d = 2.323131e5 Pa (0.232313 MPa)
-    - delta_rh = 6800.0 m
-    - tau_buoy = 4.490783e5 Pa (0.449078 MPa)
-    - tau_d / tau_buoy = 0.517311
+    - delta_rh = 30791.06 m (30.8 km)
+    - tau_buoy = 2.121689e6 Pa (2.12 MPa)
+    - tau_d / tau_buoy = 0.109494
     """
     state = compute_stagnant_lid_state(**_make_earth_reference_inputs())
 
