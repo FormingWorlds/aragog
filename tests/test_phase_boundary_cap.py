@@ -284,8 +284,8 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
 @pytest.mark.smoke
 def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     """With the extended energy_balance state, rate mode segments on the entropy block and keeps the CMB entry."""
-    s_f, T_f = _isentropic_end(shared_eos, 'fixed', 1e-6, 'energy_balance')
-    s_r, T_r = _isentropic_end(shared_eos, 'rate', 1e-6, 'energy_balance')
+    s_f, T_f = _isentropic_end(shared_eos, 'fixed', 1e-8, 'energy_balance')
+    s_r, T_r = _isentropic_end(shared_eos, 'rate', 1e-8, 'energy_balance')
     assert s_r._solution.y.shape[0] == s_f._solution.y.shape[0] == s_r._n_stag + 1
     assert len(s_r._solution.segments) >= 2 and np.isfinite(s_r._solution.y[-1, -1])
     assert np.abs(T_r - T_f).max() <= 0.1
@@ -564,6 +564,24 @@ def test_rate_mode_warns_once_per_solver_when_rtol_is_loose(
         s.solve()
         s.solve()
     assert len(_rtol_warnings(caplog)) == expected
+
+
+@needs_eos
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    ('rtol', 'atol', 'expected'), [(1e-6, 1e-8, 1), (1e-8, 1e-6, 1), (1e-7, 1e-7, 0), (1e-8, 1e-8, 0)]
+)
+def test_cvode_warns_once_per_solver_when_a_tolerance_is_above_1e_7(
+    shared_eos, caplog, rtol, atol, expected
+):
+    """CVODE warns once over two solve() calls when rtol or atol exceeds 1e-7; never at or below."""
+    s = _solver(shared_eos, 'fixed', end_time=2.0)
+    s.parameters.solver.rtol, s.parameters.solver.atol = rtol, atol
+    with caplog.at_level('WARNING'):
+        s.solve()
+        s.solve()
+    hits = [r for r in caplog.records if 'can lock CVODE at the convective switch' in r.getMessage()]
+    assert len(hits) == expected
 
 
 def _two_calls(eos, with_state):

@@ -302,6 +302,8 @@ def _phase_boundary_max_step_clamp(
 _RATE_CAP_MIN_DELTA = 10.0
 # rtol above which the rate cap logs one warning (its accuracy is measured at 1e-8).
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
+# solver.rtol or solver.atol above which CVODE logs one warning: looser tolerances can lock it.
+_CVODE_TOL_LIMIT = 1.0e-7
 
 
 def _segment_arming_margin(
@@ -3602,6 +3604,15 @@ class EntropySolver:
                 cvode_jacfn=cvode_jacfn,
                 phi_cap_rootfn=phi_cap_rootfn,
             )
+            atol_cfg = self.parameters.solver.atol
+            if max(rtol, atol_cfg) > _CVODE_TOL_LIMIT:
+                self._warn_once(
+                    'cvode_tol',
+                    f'CVODE at solver.rtol {rtol:.1e}, solver.atol {atol_cfg:.1e}: tolerances '
+                    f'above {_CVODE_TOL_LIMIT:.0e} can lock CVODE at the convective switch '
+                    'dS/dr = 0, with the step held at its explicit stability limit; set both '
+                    f'at or below {_CVODE_TOL_LIMIT:.0e}',
+                )
             if rate_mode:
                 if rtol > _RATE_CAP_RTOL_LIMIT:
                     self._warn_once(
