@@ -6,6 +6,7 @@ The `aragog.eos` package provides the pressure-entropy equation of state used by
 |------|------|
 | `EntropyEOS` | P-S table loader and bilinear interpolator. Provides `temperature(P, S)`, `density(P, S)`, `melt_fraction(P, S)`, `solidus_entropy(P)`, `liquidus_entropy(P)`, `latent_heat(P)`, `solidus_entropy_dP(P)`, `liquidus_entropy_dP(P)`. |
 | `EntropyPhaseEvaluator` | Wraps `EntropyEOS` with the SPIDER-parity two-stage phase blend, viscosity tanh transition, gravitational-separation velocity, and the per-cell property cache. |
+| `mobility_function` | Three-regime permeability over porosity $F(\phi)$ [m²] that the gravitational-separation velocity uses, from the porosity and the grain size. |
 
 For the file format expected by `EntropyEOS`, see [Reference: data](../data.md).
 

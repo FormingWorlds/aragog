@@ -66,7 +66,7 @@ $$
 
 The tabulated densities can cross so that the melt is locally the denser phase in a shallow region.
 The absolute value $\lvert\rho_\mathrm{liq} - \rho_\mathrm{sol}\rvert$ keeps $v_\mathrm{rel}$ non-negative there, so the separation direction stays fixed (melt up, solid down).
-Aragog floors the porosity denominator at a small positive value in that region, which keeps the porosity near zero, so $F(\phi)$ and the settling flux stay small; the suppression is local and does not change the macroscopic front evolution.
+Aragog floors the porosity denominator $\rho_\mathrm{sol} - \rho_\mathrm{liq}$ at about 1 kg m⁻³ in that region, so the porosity there is $(\rho_\mathrm{sol} - \rho)/(1\ \mathrm{kg\,m^{-3}})$ clipped to $[0, 1]$: about 0 where the node density is at or above $\rho_\mathrm{sol}$, and up to 1 below it. The flux $j_\mathrm{grav}$ carries the factor $\phi(1-\phi)$ of the melt fraction, so it vanishes in solid and fully molten nodes whatever the porosity.
 
 $\eta_\mathrm{mix}$ is the drag viscosity selected by `separation_viscosity`.
 The default, `"melt"`, is the fixed liquid viscosity $\eta_\mathrm{liq}$, matching SPIDER's `GetGravitationalHeatFlux`.

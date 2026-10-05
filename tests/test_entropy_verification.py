@@ -21,6 +21,8 @@ import pytest
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 
+from tests.conftest import entropy_eos_copy
+
 EOS_DIR = Path(
     os.environ.get(
         'ARAGOG_TEST_EOS_DIR',
@@ -185,9 +187,7 @@ class TestEntropyConservation:
         (a) the entropy profile actually changes (not a zero-RHS test),
         (b) the mass-weighted enthalpy integral sum(rho*T*S*V) is conserved.
         """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
         state = make_state(mesh, eos, conduction=True, convection=True)
@@ -233,9 +233,7 @@ class TestEntropyConservation:
         NOT sum(S*V). We check both the correct integral and that
         the profile homogenizes.
         """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
         state = make_state(mesh, eos, conduction=False, convection=True)
@@ -292,9 +290,7 @@ class TestEnergyConservation:
         integral while the WRONG integral drifts, confirming the entropy
         formulation is working as intended.
         """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
         state = make_state(mesh, eos, conduction=True, convection=True)
@@ -362,9 +358,7 @@ class TestEnergyConservation:
         body radiating from 5500 K can drop T by ~20 % within hundreds
         of years. Use the integrated entropy power balance directly.
         """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
         state = make_state(mesh, eos, conduction=True, convection=True)
@@ -460,7 +454,6 @@ class TestSolverResidualTelescoping:
         """A small PALEOS-table solver whose stratified IC straddles the
         solidus, so part of the mantle sits in the mushy band where the two
         density routines diverge."""
-        from aragog.eos.entropy import EntropyEOS
         from aragog.parser import (
             Parameters,
         )
@@ -487,7 +480,7 @@ class TestSolverResidualTelescoping:
         )
         from aragog.solver.entropy_solver import EntropySolver
 
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         rhos = 4078.95095544
         bc = BC(
             outer_boundary_condition=4,
@@ -797,7 +790,6 @@ class TestCvodeEnergyOutputGrid:
     ):
         """Grey-body surface cooling: the surface flux ~ sigma T_top^4 decays
         steeply within the call, the regime that breaks a 2-point integral."""
-        from aragog.eos.entropy import EntropyEOS
         from aragog.parser import (
             Parameters,
         )
@@ -824,7 +816,7 @@ class TestCvodeEnergyOutputGrid:
         )
         from aragog.solver.entropy_solver import EntropySolver
 
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         rhos = 4078.95095544
         bc = BC(
             outer_boundary_condition=1,  # grey-body radiative surface
@@ -976,9 +968,7 @@ class TestGreyBodyCooling:
 
     def test_surface_cools_monotonically(self):
         """T_surface must decrease monotonically during grey-body cooling."""
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
         state = make_state(mesh, eos, conduction=True, convection=True)
@@ -1038,9 +1028,7 @@ class TestGreyBodyCooling:
         the still-isentropic interior; that is the expected physics
         and is checked by separate tests on long-time runs.
         """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
         state = make_state(mesh, eos, conduction=True, convection=True)
@@ -1103,9 +1091,7 @@ class TestInitialEntropySweep:
 
     def test_all_ics_cool_monotonically(self):
         """Grey-body cooling from 4 different S0 values: T_surf always decreases."""
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
 
         for S0_val in [2500.0, 3200.0, 5000.0]:
             N = 30
@@ -1143,9 +1129,7 @@ class TestInitialEntropySweep:
 
     def test_higher_s0_starts_hotter(self):
         """Higher initial entropy should produce higher initial surface T."""
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
 
         T_surfs = {}
         for S0_val in [2500.0, 3200.0, 5000.0]:
@@ -1177,9 +1161,7 @@ class TestRadiogenicHeating:
 
     def test_heating_increases_entropy(self):
         """Zero-flux BCs + constant heating: entropy rises monotonically."""
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
         state = make_state(mesh, eos, conduction=True, convection=True)
@@ -1222,9 +1204,7 @@ class TestCoreCooling:
 
     def test_core_heats_mantle(self):
         """With core cooling BC, CMB flux should be positive (core to mantle)."""
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = make_mesh(N=N)
         state = make_state(mesh, eos, conduction=True, convection=True)
@@ -1287,9 +1267,7 @@ class TestMeshConvergence:
 
     def test_convergence_with_resolution(self):
         """T_surf at t=500 yr should converge as N increases."""
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
 
         T_surfs = {}
         for N in [25, 50, 100]:
@@ -1442,9 +1420,7 @@ class TestNoExplicitPhiVolSource:
         H_dil scale, so any reintroduction of even a fractional copy
         would flip this test.
         """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = _make_test_mesh_with_staggered_interp(N=N)
         state = _make_phi_vol_test_state(
@@ -1487,9 +1463,7 @@ class TestNoExplicitPhiVolSource:
         attractor at F_dil/(-F_int) = -1.000 came from exactly this
         source. Post-deletion: zero.
         """
-        from aragog.eos.entropy import EntropyEOS
-
-        eos = EntropyEOS(EOS_DIR)
+        eos = entropy_eos_copy(EOS_DIR)
         N = 30
         mesh = _make_test_mesh_with_staggered_interp(N=N)
         state = _make_phi_vol_test_state(

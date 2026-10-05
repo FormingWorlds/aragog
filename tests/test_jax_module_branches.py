@@ -18,6 +18,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_jax
+
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
@@ -110,9 +112,8 @@ def eos_jax_fixture():
     fixture in test_jax_entropy.py to avoid collision)."""
     if not EOS_DIR.exists():
         pytest.skip(f'EOS unavailable at {EOS_DIR}')
-    from aragog.jax.eos import EntropyEOS_JAX
 
-    return EntropyEOS_JAX(EOS_DIR)
+    return entropy_eos_jax(EOS_DIR)
 
 
 def test_phase_params_lid_base_mode_validation():

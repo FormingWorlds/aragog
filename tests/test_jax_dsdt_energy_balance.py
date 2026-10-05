@@ -22,6 +22,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_jax
+
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 eqx = pytest.importorskip('equinox')
@@ -282,11 +284,10 @@ def test_dsdt_energy_balance_returns_extended_state_derivative():
     cooling Earth-like mantle in the mushy regime — bounded but
     non-trivial.
     """
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import PhaseParams
     from aragog.jax.solver import _no_radio, dSdt_energy_balance
 
-    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    eos_jax = entropy_eos_jax(EOS_DIR)
     params = PhaseParams()
     mesh = _make_const_property_mesh(N=12)
     n_stag = int(mesh.P_stag.shape[0])
@@ -358,11 +359,10 @@ def test_dsdt_energy_balance_responds_to_dSdr_cmb_perturbation():
     making the CMB BC a no-op. The two evaluations must differ by
     more than a numerical-noise tolerance.
     """
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import PhaseParams
     from aragog.jax.solver import BoundaryParams, _no_radio, dSdt_energy_balance
 
-    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    eos_jax = entropy_eos_jax(EOS_DIR)
     params = PhaseParams()
     mesh = _make_const_property_mesh(N=12)
     n_stag = int(mesh.P_stag.shape[0])

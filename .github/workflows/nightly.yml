@@ -97,6 +97,7 @@ jobs:
           # FAILED list entirely if there are no other final messages,
           # making post-mortem on cancelled runs near-impossible.
           pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra \
+            --timeout=2700 --timeout-method=thread --durations=30 \
             --cov=aragog --cov-report=term-missing --cov-report=xml \
             --cov-fail-under=90
 

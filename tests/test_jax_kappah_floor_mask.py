@@ -22,7 +22,7 @@ import pytest
 from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
 from aragog.utilities import tanh_weight
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30, method='signal')]
 
 
 def _mesh(n_basic: int) -> MeshArrays:
