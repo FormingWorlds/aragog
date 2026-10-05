@@ -3607,17 +3607,13 @@ class EntropySolver:
             spans = end_time > start_time
             if spans and rtol > _CVODE_TOL_LIMIT:
                 atol_cfg = self.parameters.solver.atol
-                loose_atol = atol_cfg > _CVODE_TOL_LIMIT and self._core_bc == 'energy_balance'
+                loose = atol_cfg > _CVODE_TOL_LIMIT and self._core_bc == 'energy_balance'
+                note = f'; the loose solver.atol {atol_cfg:.1e} adds to this' if loose else ''
+                lim = f'{_CVODE_TOL_LIMIT:.0e}'.replace('e-0', 'e-')
                 self._warn_once(
                     'cvode_tol',
-                    f'CVODE at solver.rtol {rtol:.1e}: an rtol above 1e-7 can lock CVODE at the '
-                    'convective switch dS/dr = 0'
-                    + (
-                        f'; the loose solver.atol {atol_cfg:.1e} adds to this'
-                        if loose_atol
-                        else ''
-                    )
-                    + '. Use rtol 1e-8, the Aragog default, or tighter',
+                    f'CVODE at solver.rtol {rtol:.1e}: an rtol above {lim} can lock CVODE at the '
+                    f'convective switch dS/dr = 0{note}. Use rtol 1e-8, the Aragog default, or tighter',
                 )
             if rate_mode:
                 if spans and rtol > _RATE_CAP_RTOL_LIMIT:
