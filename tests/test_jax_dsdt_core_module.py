@@ -46,8 +46,8 @@ needs_eos = pytest.mark.skipif(
     reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
 )
 
-# Module tier: factory contracts and RHS parity checks run in the unit tier;
-# reverse-mode autodiff Jacobian checks run in the slow tier.
+# Module tier: the real-EOS parity and Jacobian solves are smoke and slow;
+# the two factory-contract tests carry the unit marker so the PR lane still runs them.
 pytestmark = [pytest.mark.timeout(300)]
 
 
@@ -196,7 +196,7 @@ def _build_jax_pieces(solver):
     return args
 
 
-@pytest.mark.unit
+@pytest.mark.smoke
 @pytest.mark.physics_invariant
 @needs_eos
 def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
@@ -208,8 +208,8 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
        heating is absent, the core cooling rate dT_core/dt is strictly negative.
     3. Transient excursion protection: when an integrator excursion drives
        T_core non-positive (e.g. -50 K), the 1.0 K floor inside dSdt_core_module
-       prevents evaluating undefined melting curves or adiabats, returning
-       a finite derivative.
+       prevents passing unphysical non-positive temperatures to the budget,
+       guaranteeing finite derivative evaluation.
     4. Gradient sensitivity: perturbing dSdr_cmb changes the CMB heat flux
        and modifies the cooling rate dT_core/dt.
     """
@@ -228,10 +228,22 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     # Core cooling rate must be negative under positive CMB heat flow
     assert f0[n_stag + 1] < 0.0
 
-    # Excursion test: negative T_core
+    # Excursion test: downstream budget enforces the T_core >= 1.0 K contract
+    class GuardedBudget:
+        def __init__(self, inner):
+            self.inner = inner
+
+        def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
+            return jnp.where(
+                t_cmb < 1.0,
+                jnp.nan,
+                self.inner.dtcmb_dt(t_cmb, q_cmb, q_sources=q_sources),
+            )
+
+    args_guarded = (*args[:6], GuardedBudget(args[6]), args[7])
     y_excursion = y0.copy()
     y_excursion[n_stag + 1] = -50.0
-    f_exc = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_excursion), args)).ravel()
+    f_exc = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_excursion), args_guarded)).ravel()
     assert f_exc.shape == (n_stag + 2,)
     assert np.all(np.isfinite(f_exc))
     assert f_exc[n_stag + 1] < 0.0
@@ -243,8 +255,8 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     assert abs(f_pert[n_stag + 1] - f0[n_stag + 1]) > 1e-6
 
 
-@pytest.mark.unit
-@pytest.mark.physics_invariant
+@pytest.mark.smoke
+@pytest.mark.slow
 @needs_eos
 def test_rhs_parity_with_numpy_on_driven_state():
     """The JAX RHS matches the numpy RHS component-by-component on the
