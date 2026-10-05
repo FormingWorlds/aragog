@@ -17,6 +17,8 @@ from aragog.rheology import (
 )
 
 __all__ = [
+    'FB2014_STRESS_FACTOR',
+    'FB2014_VELOCITY_EXPONENT',
     'LID_REGIME_LABEL_WIDTH',
     'SOLIDUS_MELT_FRACTION_THRESHOLD',
     'SOLIDUS_MELT_FRACTION_WIDTH',
@@ -24,6 +26,10 @@ __all__ = [
     'compute_effective_viscosity',
     'stress_closure',
 ]
+
+# Foley & Bercovici (2014) scaling parameters (Eq. 26 and Eq. 28).
+FB2014_VELOCITY_EXPONENT: float = 2.0 / 3.0
+FB2014_STRESS_FACTOR: float = 2.0
 
 # Transition smoothing width that sets the lid_regime diagnostic label only.
 LID_REGIME_LABEL_WIDTH: float = 0.1
@@ -264,10 +270,10 @@ def compute_stagnant_lid_state(
     Ra_eff = (rho_i * g_i * alpha_i * DeltaT_conv * (d_conv**3)) / (kappa_i * eta_i_safe)
     theta_safe = xp.maximum(theta, 1e-6)
     Ra_rh = (Ra_eff * a_rh_fb) / theta_safe
-    v_m = (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 0.0) ** (2.0 / 3.0))
+    v_m = (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 0.0) ** FB2014_VELOCITY_EXPONENT)
 
-    tau_d = (2.0 * eta_i * v_m / d_conv) * w_active
-    tau_d_lid = (2.0 * eta_i * v_m) / xp.maximum(d_lid, 1e-6)
+    tau_d = (FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active
+    tau_d_lid = (FB2014_STRESS_FACTOR * eta_i * v_m) / xp.maximum(d_lid, 1e-6)
     tau_buoy = rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active
     tau_d_over_tau_buoy = tau_d / xp.maximum(tau_buoy, 1e-30)
 
