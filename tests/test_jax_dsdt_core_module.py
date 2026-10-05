@@ -182,6 +182,7 @@ def _build_jax_pieces(solver):
 
 
 @pytest.mark.smoke
+@pytest.mark.physics_invariant
 @needs_eos
 def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     """Direct evaluation of dSdt_core_module asserts shape, bounds, and excursion safety.
@@ -198,7 +199,6 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
        and modifies the cooling rate dT_core/dt with the physical sign and
        linear symmetry under +-1e-5 perturbations.
     """
-    from aragog.jax.solver import dSdt_core_module
 
     solver = _build_numpy_solver(entropy_eos_copy())
     args = _build_jax_pieces(solver)
@@ -235,7 +235,7 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     f_exc = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_excursion), args_guarded)).ravel()
     assert f_exc.shape == (n_stag + 2,)
     assert np.all(np.isfinite(f_exc))
-    assert f_exc[n_stag + 1] == pytest.approx(f_floor[n_stag + 1], rel=1e-12)
+    np.testing.assert_allclose(np.asarray(f_exc), np.asarray(f_floor), rtol=1e-12)
 
     # Sensitivity test: perturbing dSdr_cmb changes cooling rate physically
     delta_s = 1e-5
@@ -255,7 +255,6 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     assert abs(delta_plus + delta_minus) / abs(delta_plus) < 0.05
 
 
-@pytest.mark.smoke
 @pytest.mark.slow
 @pytest.mark.reference_pinned
 @needs_eos
@@ -271,7 +270,6 @@ def test_rhs_parity_with_numpy_on_driven_state():
     drags C_eff away from its secular value, exercising the capacity
     swap on both sides.
     """
-    from aragog.jax.solver import dSdt_core_module
 
     solver = _build_numpy_solver(entropy_eos_copy())
     args = _build_jax_pieces(solver)
@@ -397,8 +395,6 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
-
-    from aragog.jax.solver import dSdt_core_module
 
     eos = entropy_eos_copy()
     strat_params = dict(CORE_MODULE_PARAMS) | {'stratification': True, 'k_core': 130.0}

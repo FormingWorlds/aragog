@@ -1122,4 +1122,5 @@ def test_rate_mode_arms_and_completes_for_core_module(shared_eos, caplog):
     assert len(getattr(sol, 'segments', [])) >= 2
     # The two trailing slots dSdr_cmb and T_core must be preserved
     assert sol.y.shape[0] == s._n_stag + 2
-    assert not any('dS/dt evaluation failed' in r.getMessage() for r in caplog.records)
+    messages = [r.getMessage() for r in caplog.records]
+    assert not any('dS/dt evaluation failed' in m or 'can lock CVODE' in m for m in messages)

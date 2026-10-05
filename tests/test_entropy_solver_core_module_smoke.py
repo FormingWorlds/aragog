@@ -132,8 +132,9 @@ def _build(
     sv = _SolverParameters(
         start_time=0.0,
         end_time=end_time,
-        atol=1.0e-6,
-        rtol=1.0e-6,
+        # CVODE at the Aragog default 1e-8; a looser rtol can lock it at dS/dr = 0.
+        atol=1.0e-8 if solver_method == 'cvode' else 1.0e-6,
+        rtol=1.0e-8 if solver_method == 'cvode' else 1.0e-6,
         tsurf_poststep_change=30.0,
     )
     params = Parameters(
@@ -281,11 +282,11 @@ def test_core_module_legacy_capacity_matches_energy_balance(shared_eos):
 def test_core_module_against_quasi_steady_baseline(shared_eos):
     """Cross-mode sanity on the same driven setup: both core temperatures
     are finite, the module's integrated state cools under the outgoing
-    flux, and the two stay within 200 K of each other. Both modes change
-    T_core by under 1 K on this window (0.16 K/yr at the wired
-    constants), so the bracket only catches catastrophic divergence
-    (initialisation or unit errors of order 100x), not closure physics;
-    the closure discrimination lives in the flux-continuity test."""
+    flux, and it sits within 5 K of the quasi_steady CMB basic node. The
+    quasi_steady T_core is read at the bottom staggered cell, half a cell
+    above the CMB node, so the two differ by 86 K on this mesh; the 100 K
+    bracket only catches catastrophic divergence (initialisation or unit
+    errors), and the closure discrimination lives in the flux-continuity test."""
     legacy = _build('quasi_steady', shared_eos, s_init='driven')
     legacy.solve()
     t_legacy = legacy.get_state().T_core
@@ -302,7 +303,7 @@ def test_core_module_against_quasi_steady_baseline(shared_eos):
     assert float(y[n_stag + 1, -1]) < float(y[n_stag + 1, 0])
     t_legacy_cmb = float(legacy.state.phase_basic.temperature()[0])
     assert abs(t_module - t_legacy_cmb) < 5.0
-    assert abs(t_module - t_legacy) < 200.0
+    assert abs(t_module - t_legacy) < 100.0
 
 
 def test_core_module_missing_params_still_builds_with_defaults(shared_eos):
@@ -321,8 +322,8 @@ def test_core_module_missing_params_still_builds_with_defaults(shared_eos):
 
 def test_core_module_solves_through_cvode(shared_eos):
     """core_module completes a driven solve through the CVODE production
-    integrator (FD Jacobian; the JAX factory rejects the mode and the
-    solver falls back) and lands on the Radau twin's answer. Guards the
+    integrator (FD Jacobian; no analytic-Jacobian factory is registered
+    here) and lands on the Radau twin's answer. Guards the
     production path PROTEUS actually runs, which the scipy-only tests
     never touch, including the N+2 sparsity and nondim scales under
     CVODE."""

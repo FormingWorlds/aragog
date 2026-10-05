@@ -237,9 +237,9 @@ def test_freeze_out_capacity_jump(prof):
 
     When the CMB reaches the melting curve, inner-core growth completes
     and latent heat release ceases abruptly. For the quadratic melting
-    curve, effective capacity drops by a factor of 4.46 on the default Earth
-    geometry (or 4.87 under the Nimmo 2015 parameter set). For the iron alloy
-    curve, effective capacity drops by 55.2% (from 4.17e27 J/K to 1.87e27 J/K).
+    curve, effective capacity drops by a factor of 4.46 on the EARTH profile
+    (length scale 7200 km, CMB radius 3480 km, ds_fusion 170 J/kg/K). For the iron
+    alloy curve, effective capacity drops by 55.2% (from 4.17e27 J/K to 1.87e27 J/K).
     """
     quad_curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
     b_quad = CoreEnergyBudget(prof, quad_curve, ds_fusion=DS_FUSION, icn_width=10.0)
