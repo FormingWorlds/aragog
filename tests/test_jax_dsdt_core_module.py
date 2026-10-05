@@ -46,8 +46,8 @@ needs_eos = pytest.mark.skipif(
     reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
 )
 
-# Module tier: the real-EOS parity and Jacobian solves are smoke and slow;
-# the two factory-contract tests carry the unit marker so the PR lane still runs them.
+# Module tier: factory contracts and RHS parity checks run in the unit tier;
+# reverse-mode autodiff Jacobian checks run in the slow tier.
 pytestmark = [pytest.mark.timeout(300)]
 
 
@@ -196,8 +196,55 @@ def _build_jax_pieces(solver):
     return args
 
 
-@pytest.mark.smoke
-@pytest.mark.slow
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@needs_eos
+def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
+    """Direct evaluation of dSdt_core_module asserts shape, bounds, and excursion safety.
+
+    Exercises:
+    1. Shape contract: d(state_ext)/dt has shape (N+2,).
+    2. Cooling direction: when CMB heat flux is positive and radioactive
+       heating is absent, the core cooling rate dT_core/dt is strictly negative.
+    3. Transient excursion protection: when an integrator excursion drives
+       T_core non-positive (e.g. -50 K), the 1.0 K floor inside dSdt_core_module
+       prevents evaluating undefined melting curves or adiabats, returning
+       a finite derivative.
+    4. Gradient sensitivity: perturbing dSdr_cmb changes the CMB heat flux
+       and modifies the cooling rate dT_core/dt.
+    """
+    from aragog.eos.entropy import EntropyEOS
+    from aragog.jax.solver import dSdt_core_module
+
+    solver = _build_numpy_solver(EntropyEOS(EOS_DIR))
+    args = _build_jax_pieces(solver)
+    n_stag = solver._n_stag
+    y0 = np.asarray(solver._S0, dtype=float)
+
+    # Base evaluation
+    f0 = np.asarray(dSdt_core_module(0.0, jnp.asarray(y0), args)).ravel()
+    assert f0.shape == (n_stag + 2,)
+    assert np.all(np.isfinite(f0))
+    # Core cooling rate must be negative under positive CMB heat flow
+    assert f0[n_stag + 1] < 0.0
+
+    # Excursion test: negative T_core
+    y_excursion = y0.copy()
+    y_excursion[n_stag + 1] = -50.0
+    f_exc = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_excursion), args)).ravel()
+    assert f_exc.shape == (n_stag + 2,)
+    assert np.all(np.isfinite(f_exc))
+    assert f_exc[n_stag + 1] < 0.0
+
+    # Sensitivity test: perturbing dSdr_cmb changes cooling rate
+    y_pert = y0.copy()
+    y_pert[n_stag] += 10.0
+    f_pert = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_pert), args)).ravel()
+    assert abs(f_pert[n_stag + 1] - f0[n_stag + 1]) > 1e-6
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
 @needs_eos
 def test_rhs_parity_with_numpy_on_driven_state():
     """The JAX RHS matches the numpy RHS component-by-component on the
@@ -271,7 +318,6 @@ def test_rhs_parity_with_numpy_on_driven_state():
     )
 
 
-@pytest.mark.smoke
 @pytest.mark.slow
 @needs_eos
 def test_jacobian_carries_boundary_couplings():
@@ -326,7 +372,6 @@ def test_jacobian_carries_boundary_couplings():
     assert abs(J[0, n_stag]) > 0.0
 
 
-@pytest.mark.smoke
 @pytest.mark.slow
 @needs_eos
 def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
