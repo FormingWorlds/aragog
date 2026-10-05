@@ -53,7 +53,7 @@ def test_yielding_active_probe(shared_eos):
     - S: atol = 8.0e-4 J kg^-1 K^-1 (< 0.0001% of mantle entropy ~3500 J/kg/K)
     - T: atol = 1.3e-4 K (< 0.00001% of mantle temperature ~2000 K)
     - Flux: atol = 500.0 W m^-2 (< 0.05% of peak mantle flux)
-    - Lid stress: atol = 3.5e17 Pa
+    - Lid stress: atol = 3.0e-3 Pa (measured 1-ulp noise floor: 2.99e-4 Pa)
     """
     config_file = 'tests/configs/yielding_active_probe.toml'
     config = Config.from_file(config_file)
@@ -115,7 +115,7 @@ def test_yielding_active_probe(shared_eos):
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
             # Tolerance tier: 10x max(1-ulp noise floor, measured hardware spread).
-            # Measured noise floor: S 5.56e-5 J/kg/K; measured cross-CPU hardware spread: S 7.70e-5 J/kg/K.
+            # Measured 1-ulp noise floor: S 4.83e-5 J/kg/K, T 8.51e-6 K, flux 9.66 W/m2, lid_stress 2.99e-4 Pa.
             np.testing.assert_allclose(S, ref['S'], atol=8.0e-4)
             np.testing.assert_allclose(T, ref['T'], atol=1.3e-4)
             for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
@@ -123,5 +123,5 @@ def test_yielding_active_probe(shared_eos):
                 np.testing.assert_allclose(getattr(output, flux_key), ref[flux_key], atol=500.0)
             if 'lid_stress' in ref.files:
                 np.testing.assert_allclose(
-                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=3.5e17
+                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=3.0e-3
                 )
