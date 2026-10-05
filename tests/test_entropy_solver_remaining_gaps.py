@@ -19,6 +19,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_copy
+
 # Default marker is ``smoke`` (most tests below need EOS data and
 # call ``solve()``).
 pytestmark = pytest.mark.smoke
@@ -147,11 +149,10 @@ def test_energy_balance_with_inner_bc_kind_1_takes_pass_branch():
     final dSdr_cmb (the trailing extra-state component) is in a
     plausible range for a bottom-heated mantle.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.solver.entropy_solver import EntropySolver
 
     parameters = _build_params(inner_bc=1, core_bc='energy_balance')
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     solver = EntropySolver(parameters, entropy_eos=eos)
     solver.initialize()
     solver.set_initial_entropy(3050.0)
@@ -175,11 +176,10 @@ def test_set_initial_entropy_falls_back_to_mesh_when_n_stag_not_cached():
     ``mesh.staggered.radii`` and write it back as ``self._n_stag``.
     The set call must not raise even though _n_stag was never set.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.solver.entropy_solver import EntropySolver
 
     parameters = _build_params(inner_bc=2, core_bc='quasi_steady')
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     solver = EntropySolver(parameters, entropy_eos=eos)
 
     # _initialize_internals normally writes _n_stag and _core_bc; it
@@ -223,10 +223,9 @@ def test_entropy_staggered_and_temperature_staggered_accessors_for_extended_stat
     slice would surface as a length-N+1 array where N+1 includes
     the trailing dSdr_cmb / T_core component; the slice must drop it.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.solver.entropy_solver import EntropySolver
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
 
     # ── Energy-balance: extended state (length N+1) ─────────────
     parameters = _build_params(inner_bc=2, core_bc='energy_balance')
@@ -305,10 +304,9 @@ def test_solve_with_fully_solid_initial_state_uses_relaxed_atol(caplog):
     """
     import logging
 
-    from aragog.eos.entropy import EntropyEOS
     from aragog.solver.entropy_solver import EntropySolver
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     parameters = _build_params(inner_bc=2, core_bc='quasi_steady')
     solver = EntropySolver(parameters, entropy_eos=eos)
     solver.initialize()
@@ -353,11 +351,10 @@ def test_phi_global_falls_back_to_mean_when_mass_total_zero():
     surface here as a ``RuntimeWarning`` plus NaN in Phi_global.
     The fallback returns a finite mean instead.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.solver.entropy_solver import EntropySolver
 
     parameters = _build_params(inner_bc=2, core_bc='quasi_steady')
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     solver = EntropySolver(parameters, entropy_eos=eos)
     solver.initialize()
     solver.set_initial_entropy(3050.0)
