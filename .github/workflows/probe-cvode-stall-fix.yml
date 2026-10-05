@@ -1,0 +1,70 @@
+name: Probe CVODE stall fix
+
+on:
+  push:
+    branches: [tl/probe-cvode-stall-fix2]
+
+permissions:
+  contents: read
+
+jobs:
+  module:
+    name: module shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up conda env (sundials from conda-forge)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: aragog-probe
+          create-args: >-
+            python=3.12
+            sundials
+          condarc: |
+            channels:
+              - conda-forge
+
+      - name: Install test deps
+        run: |
+          pip install pytest pytest-cov pytest-xdist pytest-dependency pytest-timeout
+          pip install scikits-odes-sundials jax equinox diffrax
+          pip install -e .
+
+      - name: Fetch SPIDER EOS test data
+        run: |
+          mkdir -p /tmp/aragog-test-data
+          curl -sL -o /tmp/spider_eos.tar.gz \
+            https://github.com/FormingWorlds/aragog/releases/download/test-data-v1/spider_eos_test_data.tar.gz
+          tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
+          echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
+
+      - name: Run the module twice (coverage, no xdist)
+        run: |
+          set +e
+          mkdir -p /tmp/probe
+          ON=$(python -c "import numpy._core._multiarray_umath as m; print(' '.join(x for x in m.__cpu_dispatch__ if m.__cpu_features__.get(x)))")
+          echo "shard ${{ matrix.shard }} commit $(git rev-parse --short HEAD) cpu $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2) | dispatch on: $ON" | tee -a /tmp/probe/summary.txt
+          for i in 1 2; do
+            start=$(date +%s)
+            pytest tests/test_phase_boundary_cap.py -o "addopts=" -p no:xdist -q \
+              --timeout=600 --timeout-method=thread --durations=3 \
+              --cov=aragog --cov-report= --cov-fail-under=0 > /tmp/probe/run-$i.log 2>&1
+            echo "shard ${{ matrix.shard }} repeat $i exit $? wall $(( $(date +%s) - start ))s $(grep -E 'passed|failed' /tmp/probe/run-$i.log | tail -1)" | tee -a /tmp/probe/summary.txt
+            grep -E "test_rate_mode_keeps_the_energy_balance_state" /tmp/probe/run-$i.log | head -2 | tee -a /tmp/probe/summary.txt
+          done
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-fix-shard-${{ matrix.shard }}
+          path: /tmp/probe/
