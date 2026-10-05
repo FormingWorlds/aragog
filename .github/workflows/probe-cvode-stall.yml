@@ -59,37 +59,23 @@ jobs:
           } > /tmp/probe/env.txt 2>&1
           head -5 /tmp/probe/env.txt
 
-      - name: Direct solve probes (numpy dispatch above X86_V3 off; X86_V2 baseline only)
+      - name: Direct solve probes (tol 1e-6 marker, then tol 1e-8 in fixed, rate, quasi_steady)
         env:
           ARAGOG_TESTS_PARENT: .
         run: |
           set +e
           ON=$(python -c "import numpy._core._multiarray_umath as m; print(' '.join(x for x in m.__cpu_dispatch__ if m.__cpu_features__.get(x)))")
-          ABOVE_V3=$(echo $ON | tr ' ' '\n' | grep -v '^X86_V3$' | tr '\n' ' ')
-          echo "dispatch on: $ON | above V3: $ABOVE_V3" | tee -a /tmp/probe/summary.txt
+          echo "shard ${{ matrix.shard }} cpu $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2) | dispatch on: $ON" | tee -a /tmp/probe/summary.txt
           run() {
-            tag=$1; shift
+            tag=$1; lim=$2; shift 2
             start=$(date +%s)
-            env "$@" python .github/probe/probe_stall.py --limit 240 --out /tmp/probe/$tag > /tmp/probe/$tag.out 2>&1
+            python .github/probe/probe_stall.py --limit $lim --out /tmp/probe/$tag "$@" > /tmp/probe/$tag.out 2>&1
             echo "shard ${{ matrix.shard }} $tag exit $? wall $(( $(date +%s) - start ))s $(tail -1 /tmp/probe/$tag.out | cut -c1-120)" | tee -a /tmp/probe/summary.txt
           }
-          if [ -n "$ABOVE_V3" ]; then
-            NPY_DISABLE_CPU_FEATURES="$ABOVE_V3" python -c "import numpy._core._multiarray_umath as m; print('check novx4 on:', [x for x in m.__cpu_dispatch__ if m.__cpu_features__.get(x)])" 2>&1 | tee -a /tmp/probe/summary.txt
-            run novx4 NPY_DISABLE_CPU_FEATURES="$ABOVE_V3"
-          fi
-          NPY_DISABLE_CPU_FEATURES="$ON" python -c "import numpy._core._multiarray_umath as m; print('check v2 on:', [x for x in m.__cpu_dispatch__ if m.__cpu_features__.get(x)])" 2>&1 | tee -a /tmp/probe/summary.txt
-          run v2only NPY_DISABLE_CPU_FEATURES="$ON"
-          echo "ABOVE_V3=$ABOVE_V3" >> $GITHUB_ENV
-
-      - name: Test module once (coverage, no xdist, numpy dispatch above X86_V3 off)
-        run: |
-          set +e
-          start=$(date +%s)
-          NPY_DISABLE_CPU_FEATURES="$ABOVE_V3" pytest tests/test_phase_boundary_cap.py -o "addopts=" -p no:xdist -q \
-            -k test_rate_mode_keeps_the_energy_balance_state \
-            --timeout=400 --timeout-method=thread \
-            --cov=aragog --cov-report= --cov-fail-under=0 > /tmp/probe/pytest.log 2>&1
-          echo "shard ${{ matrix.shard }} pytest-novx4 exit $? wall $(( $(date +%s) - start ))s $(grep -E 'passed|failed' /tmp/probe/pytest.log | tail -1)" | tee -a /tmp/probe/summary.txt
+          run fixed_1e-6 120 --tol 1e-6
+          run fixed_1e-8 300 --tol 1e-8
+          run rate_1e-8 300 --tol 1e-8 --mode rate
+          run qs_1e-8 300 --tol 1e-8 --core quasi_steady
 
       - name: Upload
         if: always()
