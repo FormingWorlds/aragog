@@ -20,8 +20,7 @@ In a PROTEUS TOML config, set Aragog as the energetics module with:
 [interior_energetics]
 module           = "aragog"
 num_levels       = 80
-rtol             = 1e-10
-atol             = 1e-10
+rtol             = 1e-8
 trans_conduction = true
 trans_convection = true
 trans_grav_sep   = true
@@ -113,12 +112,11 @@ PROTEUS does not set Aragog's `energy.phase_boundary_cap`, so a coupled run uses
 
 ## Tolerances
 
-Tolerances are set in two places: `interior_energetics.{rtol, atol}` (the integrator side) and `interior_energetics.aragog.atol_temperature_equivalent` (the temperature-scaled absolute tolerance Aragog converts internally to entropy units via $C_p / T$).
+Tolerances are set in two places: `interior_energetics.rtol` (the integrator side; Aragog does not use `interior_energetics.atol`) and `interior_energetics.aragog.atol_temperature_equivalent` (the temperature-scaled absolute tolerance Aragog converts internally to entropy units via $C_p / T$).
 
 ```toml
 [interior_energetics]
-rtol = 1e-10
-atol = 1e-10
+rtol = 1e-8
 
 [interior_energetics.aragog]
 atol_temperature_equivalent = 1e-8
@@ -220,8 +218,7 @@ dry_mantle           = true
 [interior_energetics]
 module           = "aragog"
 num_levels       = 80
-rtol             = 1e-10
-atol             = 1e-10
+rtol             = 1e-8
 trans_conduction = true
 trans_convection = true
 trans_grav_sep   = true
