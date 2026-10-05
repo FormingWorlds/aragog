@@ -199,6 +199,7 @@ def test_parser_rejects_unknown_phase_boundary_cap():
         EnergyConfig(**kw, phase_boundary_cap='adaptive')
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_unset_phase_boundary_cap_runs_rate_segments(shared_eos):
@@ -231,6 +232,7 @@ def _fake_rate(monkeypatch, s, rate):
     )
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_fixed_and_gradient_keep_one_year_without_segments(shared_eos, monkeypatch):
@@ -246,6 +248,7 @@ def test_fixed_and_gradient_keep_one_year_without_segments(shared_eos, monkeypat
         assert len(seen) == 1 and seen[0] * s._build_nondim_scales().t_ref == pytest.approx(1.0)
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_joins_segments_into_one_call_trajectory(shared_eos):
@@ -267,6 +270,7 @@ def _isentropic_end(eos, mode, tol, core_bc='quasi_steady', end_time=200.0):
     return s, np.asarray(eos.temperature(s._P_stag_flat, S)).ravel()
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 @pytest.mark.parametrize('end_time', [200.0, 1000.0])
@@ -281,6 +285,7 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
     assert np.all(np.diff(starts) > 1e-6)
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 @pytest.mark.timeout(120, method='signal')
@@ -297,6 +302,7 @@ def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     assert np.abs(T_r - T_f).max() <= 0.1
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_cap_exception_fallback_returns_one_year(shared_eos, monkeypatch, caplog):
@@ -320,6 +326,7 @@ def test_rate_cap_exception_fallback_returns_one_year(shared_eos, monkeypatch, c
     assert s._solution.segments[0][2] == pytest.approx(1.0)
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_cap_segment_ceiling_falls_back_to_one_year(shared_eos, monkeypatch, caplog):
@@ -376,6 +383,7 @@ def test_rate_cap_scipy_fallback_runs_at_one_year(shared_eos, monkeypatch):
     assert seen[0] * s._build_nondim_scales().t_ref == pytest.approx(1.0)
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_segments_reanchor_state_at_each_segment_start(shared_eos, monkeypatch):
@@ -424,6 +432,7 @@ def test_rate_mode_zero_span_call_returns_the_start_state(shared_eos):
     np.testing.assert_array_equal(ends[1], ends[0])
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_short_call_matches_fixed_over_the_same_span(shared_eos):
@@ -554,6 +563,7 @@ def _rtol_warnings(caplog):
     return [r for r in caplog.records if 'accuracy is measured at rtol' in r.getMessage()]
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 @pytest.mark.parametrize(
@@ -583,6 +593,7 @@ def _two_calls(eos, with_state):
     return s._solution
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_get_state_between_calls_leaves_the_next_rate_call_unchanged(shared_eos):
@@ -592,6 +603,7 @@ def test_get_state_between_calls_leaves_the_next_rate_call_unchanged(shared_eos)
     np.testing.assert_array_equal(a.y, b.y)
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeypatch):
@@ -616,6 +628,7 @@ def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeyp
     assert S_sol[-1] == pytest.approx(float(shared_eos.solidus_entropy(P_cmb).item()))
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
@@ -640,6 +653,7 @@ def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
     assert not first[0].watch[5] and first[0].watch.sum() == s._n_stag
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_ends_a_segment_when_a_second_cell_approaches_inside_the_stiff_zone(
@@ -718,6 +732,7 @@ def test_rate_mode_fallback_logs_once_and_skips_the_rtol_warning(
     assert not _rtol_warnings(caplog)
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_ends_the_call_at_a_real_phi_step_cap(shared_eos):
@@ -742,6 +757,7 @@ def test_solver_tolerances_default_to_1e_8():
         assert cls(start_time=0.0, end_time=1.0, rtol=1e-6, atol=1e-9).rtol == 1e-6
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_ends_a_segment_when_a_cell_inside_the_zone_speeds_up(
@@ -785,6 +801,7 @@ def _cooling_above_liquidus(
     return s, S_liq, S_sol
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_arms_for_a_cell_inside_a_stiff_zone_wider_than_the_margin(
@@ -815,6 +832,7 @@ def test_rate_mode_arms_for_a_cell_inside_a_stiff_zone_wider_than_the_margin(
     assert not s0._solution.get('segments')
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_flips_the_stiff_zone_side_only_on_a_stiff_trigger(shared_eos, monkeypatch):
@@ -836,6 +854,7 @@ def test_rate_mode_flips_the_stiff_zone_side_only_on_a_stiff_trigger(shared_eos,
         assert inside[k] is (not inside[k - 1] if triggers[k] == 'stiff' else inside[k - 1])
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 def test_rate_mode_ceiling_segment_keeps_the_phi_step_cap(shared_eos, monkeypatch):
@@ -854,6 +873,7 @@ def test_rate_mode_ceiling_segment_keeps_the_phi_step_cap(shared_eos, monkeypatc
     assert getattr(sol, 'cap_fired', False) and sol.cap_label == 'phi' and sol.t[-1] < 2000.0
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.smoke
 @pytest.mark.parametrize(
@@ -895,6 +915,7 @@ def _tidal_cmb_flux_run(eos, mode):
     return s._solution
 
 
+@needs_cvode
 @needs_eos
 @pytest.mark.slow
 def test_rate_segments_keep_every_energy_integral_of_a_tight_fixed_run(shared_eos):
@@ -999,15 +1020,25 @@ def test_scipy_methods_keep_the_margin_with_cvode_installed(shared_eos, monkeypa
 @needs_eos
 @pytest.mark.smoke
 def test_max_steps_counts_per_output_interval_in_both_modes(shared_eos):
-    """max_steps is SUNDIALS mxstep, counted per output interval: at 48 the 16-node mushy
-    200 yr call completes in both modes with more CVODE steps than that, rate in segments."""
+    """max_steps is SUNDIALS mxstep, counted per output interval: with half the steps the
+    16-node mushy 200 yr call takes unlimited, it completes in both modes, rate in segments.
+
+    The budget follows the measured count because that count depends on the SUNDIALS build;
+    the smallest budget that completed was at most 0.21 of it on two builds.
+    """
     for mode in ('fixed', 'rate'):
+        free = _solver(shared_eos, mode, n_nodes=16, end_time=200.0)
+        free._max_steps = 10**6
+        free.solve()
+        budget = free._solution.cvode_nst // 2
         s = _solver(shared_eos, mode, n_nodes=16, end_time=200.0)
-        s._max_steps = 48
+        s._max_steps = budget
         s.solve()
         sol = s._solution
         assert sol.status == 0 and sol.t[-1] == pytest.approx(200.0), mode
-        assert sol.cvode_nst > 48 and (len(sol.get('segments') or []) >= 2) is (mode == 'rate')
+        assert sol.cvode_nst > budget and (len(sol.get('segments') or []) >= 2) is (
+            mode == 'rate'
+        )
 
 
 @needs_cvode
