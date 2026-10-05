@@ -26,6 +26,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_copy
+
 pytestmark = pytest.mark.unit
 
 
@@ -122,10 +124,9 @@ def test_eos_backed_delta_specific_volume_returns_finite_difference():
     convention has melt less dense than solid, so v_l > v_s, hence
     (1/rho_l - 1/rho_s) > 0.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     ev = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
     P = np.array([5.0e10])
     ev.set_pressure(P)
@@ -149,10 +150,9 @@ def test_eos_backed_dTdrs_returns_finite_negative_in_solid():
     surface as a positive dT/dr along the adiabat, breaking the
     superadiabatic-temperature flux sign in conduction.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     ev = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
     P = np.array([5.0e10])
     S_sol = float(eos.solidus_entropy(P).item())
@@ -172,10 +172,9 @@ def test_eos_update_with_scalar_input_flattens_arrays():
     flatten branch at lines 313-322. ``temperature()`` must still
     be 1-D.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     ev = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
     ev.set_pressure(5.0e10)  # scalar
     ev.entropy = 3300.0  # scalar
@@ -192,10 +191,9 @@ def test_eos_update_alpha_fallback_when_thermal_exp_tables_missing(monkeypatch):
     keys via monkeypatch forces the fallback; the resulting alpha
     must be finite and positive.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     # Drop the thermal_exp tables so the fallback fires.
     tables_no_alpha = {k: v for k, v in eos._tables.items() if not k.startswith('thermal_exp_')}
     monkeypatch.setattr(eos, '_tables', tables_no_alpha)
@@ -227,10 +225,9 @@ def test_eos_update_alpha_fallback_under_linear_cp_blend(monkeypatch):
     fallback would surface as a NaN or as the result silently
     coming from the cp_blend='latent' path.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     # Drop the thermal_exp tables to force the dTdPs-based fallback.
     tables_no_alpha = {k: v for k, v in eos._tables.items() if not k.startswith('thermal_exp_')}
     monkeypatch.setattr(eos, '_tables', tables_no_alpha)
@@ -263,10 +260,9 @@ def test_eos_update_raises_runtime_error_on_out_of_table_entropy(monkeypatch):
     pipeline, producing a silent integrator stall rather than a
     clear domain error at the EOS layer.
     """
-    from aragog.eos.entropy import EntropyEOS
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 
-    eos = EntropyEOS(EOS_DIR)
+    eos = entropy_eos_copy(EOS_DIR)
     ev = EntropyPhaseEvaluator(entropy_eos=eos, gravitational_acceleration=10.0)
 
     # Inject NaN at both the boundary and phase-weighted temperature

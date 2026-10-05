@@ -76,6 +76,12 @@ Variables are named verbatim after the `SolverOutput` field names, with their un
 | `T_basic` | `T_basic` | K | Temperature at basic nodes |
 | `cp_basic` | `cp_basic` | J kg⁻¹ K⁻¹ | Heat capacity at basic nodes |
 | `rho_basic` | `rho_basic` | kg m⁻³ | Density at basic nodes |
+| `porosity_b` | `porosity_b` | -- | Density-derived porosity at basic nodes |
+| `rho_solid_b` | `rho_solid_b` | kg m⁻³ | Solid density at the phase boundary, at the node pressure |
+| `rho_melt_b` | `rho_melt_b` | kg m⁻³ | Melt density at the phase boundary, at the node pressure |
+| `g_b` | `g_b` | m s⁻² | Gravitational acceleration at basic nodes: the magnitude of the mesh gravity, or an external `eos_gravity` profile as given |
+
+The last four rows are for consumers that compute melt drainage. `porosity_b` is the porosity the gravitational-separation velocity uses, $\phi = (\rho_s - \rho)/(\rho_s - \rho_l)$, smoothly clipped to $[0, 1]$ with a width of $10^{-3}$. Its range is $[-2.5 \times 10^{-7}, 1]$ and it is $5.0 \times 10^{-4}$ where $\rho = \rho_s$. It can be negative, so floor it before a logarithm or a power. It is not the melt fraction: in a solid node it is near zero where the solid density is at least $\rho_s$, and tables whose solid density rises with entropy towards the solidus give larger values there, up to 1. Use `phi_basic` to decide whether a node holds melt. Where `rho_solid_b <= rho_melt_b` a mush is denser than `rho_solid_b`, so `porosity_b` is about 0 although the node holds melt: do not use it for melt drainage there, and test the sign of the contrast first. `Phi_global_vol` counts that melt, because it uses the unfloored ratio, hard-clipped, at the staggered nodes, with $\rho$ built from the melt fraction. The permeability over porosity that goes with it is `aragog.eos.mobility_function(porosity, grain_size)`, which floors it internally. The denominator of $\phi$ is floored at about 1 kg m⁻³, which acts where `rho_solid_b - rho_melt_b` is below that, including where the tables give a melt denser than the solid (the difference is negative). There `porosity_b` is $(\rho_s - \rho)/(1\ \mathrm{kg\,m^{-3}})$ clipped to $[0, 1]$: about 0 where `rho_basic` is at or above `rho_solid_b`, 1 where it is more than 1 kg m⁻³ below, and intermediate in between. With `const_properties` there is no phase contrast: `porosity_b` is 1 and both densities equal the constant density.
 
 #### Scalars
 

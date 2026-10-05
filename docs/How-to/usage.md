@@ -80,6 +80,10 @@ print(f"F_heat_total:     {out.F_heat_total:.3e} W/m^2")
 | `T_basic` | K | Temperature at basic nodes |
 | `cp_basic` | J/kg/K | Heat capacity at basic nodes |
 | `rho_basic` | kg/m³ | Density at basic nodes |
+| `porosity_b` | -- | Density-derived porosity at basic nodes, not the melt fraction (see [NetCDF output](netcdf.md)) |
+| `rho_solid_b` | kg/m³ | Solid density at the phase boundary at basic nodes |
+| `rho_melt_b` | kg/m³ | Melt density at the phase boundary at basic nodes |
+| `g_b` | m/s² | Gravitational acceleration at basic nodes |
 | `heat_flux` | W/m² | Total heat flux at basic nodes |
 | `heating` | W/kg | Internal heating at staggered nodes (length $N$) |
 | `eddy_diff` | m²/s | Thermal eddy diffusivity at basic nodes |

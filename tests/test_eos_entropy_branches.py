@@ -35,6 +35,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_copy
+
 pytestmark = pytest.mark.unit
 
 
@@ -61,9 +63,8 @@ def eos():
     """Module-scoped EntropyEOS instance."""
     if not EOS_DIR.exists():
         pytest.skip('EOS unavailable')
-    from aragog.eos.entropy import EntropyEOS
 
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 # ──────────────────────────────────────────────────────────────────────

@@ -23,6 +23,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_jax
+
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
@@ -197,7 +199,6 @@ def test_dSdt_uses_live_radio_at_different_t():
     (the pre-A2 behaviour) would give identical dS/dt at both times
     on the same entropy state.
     """
-    from aragog.jax.eos import EntropyEOS_JAX
     from aragog.jax.phase import MeshArrays, PhaseParams
     from aragog.jax.solver import (
         BoundaryParams,
@@ -251,7 +252,7 @@ def test_dSdt_uses_live_radio_at_different_t():
         gravity_stag=jnp.full(r_stag.shape, g),
     )
 
-    eos_jax = EntropyEOS_JAX(EOS_DIR)
+    eos_jax = entropy_eos_jax(EOS_DIR)
 
     # Mushy IC, modest gradient so the FD chain produces non-trivial
     # baseline dS/dt that the radio increment will perturb.

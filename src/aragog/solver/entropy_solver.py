@@ -849,6 +849,10 @@ class SolverOutput:
     T_basic: npt.NDArray  # temperature at basic nodes [K]
     cp_basic: npt.NDArray  # heat capacity at basic nodes [J/kg/K]
     rho_basic: npt.NDArray  # density at basic nodes [kg/m^3]
+    porosity_b: npt.NDArray  # density-derived porosity at basic nodes [-]
+    rho_solid_b: npt.NDArray  # solid density at the phase boundary, basic nodes [kg/m^3]
+    rho_melt_b: npt.NDArray  # melt density at the phase boundary, basic nodes [kg/m^3]
+    g_b: npt.NDArray  # gravitational acceleration at basic nodes [m/s^2]
 
     # Scalar quantities
     T_magma: float  # surface temperature [K]
@@ -1241,6 +1245,28 @@ class SolverOutput:
                 'Heat capacity at basic nodes',
             )
             _arr('rho_basic', self.rho_basic, 'basic', 'kg m-3', 'Density at basic nodes')
+            _arr(
+                'porosity_b',
+                self.porosity_b,
+                'basic',
+                '1',
+                'Density-derived porosity at basic nodes',
+            )
+            _arr(
+                'rho_solid_b',
+                self.rho_solid_b,
+                'basic',
+                'kg m-3',
+                'Solid density at the phase boundary at basic nodes',
+            )
+            _arr(
+                'rho_melt_b',
+                self.rho_melt_b,
+                'basic',
+                'kg m-3',
+                'Melt density at the phase boundary at basic nodes',
+            )
+            _arr('g_b', self.g_b, 'basic', 'm s-2', 'Gravitational acceleration at basic nodes')
 
 
 class EntropySolver:
@@ -4589,6 +4615,16 @@ class EntropySolver:
         T_basic_diag = self.state.T_basic_diag.copy()
         cp_basic_diag = self.state.cp_basic_diag.copy()
         rho_basic_diag = self.state.rho_basic_diag.copy()
+        # Phase-boundary quantities at the basic nodes, for consumers that compute melt drainage.
+        ph = self.state.phase_basic
+        porosity_b, rho_solid_b, rho_melt_b, g_b = (
+            np.array(x, dtype=float).ravel()
+            for x in (
+                ph.porosity(),
+                *ph.phase_boundary_densities(),
+                ph.gravitational_acceleration(),
+            )
+        )
 
         # Scalar quantities. M_mantle is the structural mass between the CMB
         # and the surface from the EOS mass integral, not the PALEOS rho_stag
@@ -4787,4 +4823,8 @@ class EntropySolver:
             T_basic=T_basic_diag,
             cp_basic=cp_basic_diag,
             rho_basic=rho_basic_diag,
+            porosity_b=porosity_b,
+            rho_solid_b=rho_solid_b,
+            rho_melt_b=rho_melt_b,
+            g_b=g_b,
         )

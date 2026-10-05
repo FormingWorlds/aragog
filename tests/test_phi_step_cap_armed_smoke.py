@@ -18,6 +18,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.conftest import entropy_eos_copy
+
 from .conftest import EOS_DIR, needs_eos
 
 pytestmark = [pytest.mark.smoke, needs_eos]
@@ -134,9 +136,7 @@ def _pick_mushy_S(eos, P_min: float = 1.0e9, P_max: float = 1.4e11) -> float:
 
 @pytest.fixture(scope='module')
 def shared_eos():
-    from aragog.eos.entropy import EntropyEOS
-
-    return EntropyEOS(EOS_DIR)
+    return entropy_eos_copy(EOS_DIR)
 
 
 def test_phi_step_cap_arms_scipy_event_when_starting_in_mushy_band(shared_eos):
