@@ -3604,17 +3604,23 @@ class EntropySolver:
                 cvode_jacfn=cvode_jacfn,
                 phi_cap_rootfn=phi_cap_rootfn,
             )
-            atol_cfg = self.parameters.solver.atol
-            if end_time > start_time and max(rtol, atol_cfg) > _CVODE_TOL_LIMIT:
+            atol_cfg, spans = self.parameters.solver.atol, end_time > start_time
+            if spans and max(rtol, atol_cfg) > _CVODE_TOL_LIMIT:
+                lim = f'{_CVODE_TOL_LIMIT:.0e}'
+                cause = (
+                    f'an rtol above {lim} can lock CVODE at the convective switch dS/dr = 0, '
+                    'and a loose atol adds to this with the energy_balance core'
+                    if rtol > _CVODE_TOL_LIMIT
+                    else f'an atol above {lim} alone was not seen to lock CVODE at the '
+                    'convective switch, but it adds to a loose rtol with the energy_balance core'
+                )
                 self._warn_once(
                     'cvode_tol',
-                    f'CVODE at solver.rtol {rtol:.1e}, solver.atol {atol_cfg:.1e}: an rtol above '
-                    '1e-7 can lock CVODE at the convective switch dS/dr = 0, with the step held '
-                    'near the stability limit of the convective mode; a loose atol adds to this '
-                    'with the energy_balance core. Use 1e-8, the default, for both',
+                    f'CVODE at solver.rtol {rtol:.1e}, solver.atol {atol_cfg:.1e}: {cause}. '
+                    'Use 1e-8 (the Aragog default) or tighter for both',
                 )
             if rate_mode:
-                if rtol > _RATE_CAP_RTOL_LIMIT:
+                if spans and rtol > _RATE_CAP_RTOL_LIMIT:
                     self._warn_once(
                         'rtol',
                         f'phase_boundary_cap="rate" at rtol {rtol:.1e}: its accuracy is measured '

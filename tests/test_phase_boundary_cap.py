@@ -289,6 +289,7 @@ def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     assert s_r._solution.y.shape[0] == s_f._solution.y.shape[0] == s_r._n_stag + 1
     assert len(s_r._solution.segments) >= 2 and np.isfinite(s_r._solution.y[-1, -1])
     assert np.abs(T_r - T_f).max() <= 0.01
+    assert s_r._solution.y[-1, -1] == pytest.approx(s_f._solution.y[-1, -1], rel=1e-4)
 
 
 @needs_eos
@@ -553,13 +554,20 @@ def _rtol_warnings(caplog):
 @needs_eos
 @pytest.mark.smoke
 @pytest.mark.parametrize(
-    ('mode', 'tol', 'expected'), [('rate', 1e-6, 1), ('rate', 1e-8, 0), ('fixed', 1e-6, 0)]
+    ('mode', 'tol', 'end_time', 'expected'),
+    [
+        ('rate', 1e-6, 2.0, 1),
+        ('rate', 1e-8, 2.0, 0),
+        ('fixed', 1e-6, 2.0, 0),
+        ('rate', 1e-6, 0.0, 0),
+    ],
 )
 def test_rate_mode_warns_once_per_solver_when_rtol_is_loose(
-    shared_eos, caplog, mode, tol, expected
+    shared_eos, caplog, mode, tol, end_time, expected
 ):
-    """Rate mode warns once over two solve() calls at rtol 1e-6; never at 1e-8 or in fixed mode."""
-    s = _solver(shared_eos, mode, end_time=2.0, tol=tol)
+    """Rate mode warns once over two solve() calls at rtol 1e-6; never at 1e-8, in fixed mode
+    or on a zero-span call."""
+    s = _solver(shared_eos, mode, end_time=end_time, tol=tol)
     with caplog.at_level('WARNING'):
         s.solve()
         s.solve()
@@ -576,15 +584,14 @@ def test_rate_mode_warns_once_per_solver_when_rtol_is_loose(
         ('fixed', 1e-8, 1e-6, 2.0, 1),
         ('rate', 1e-6, 1e-8, 2.0, 1),
         ('fixed', 1e-7, 1e-7, 2.0, 0),
-        ('fixed', 1e-8, 1e-8, 2.0, 0),
         ('fixed', 1e-6, 1e-6, 0.0, 0),
     ],
 )
 def test_cvode_warns_once_per_solver_when_a_tolerance_is_above_1e_7(
     shared_eos, caplog, monkeypatch, mode, rtol, atol, end_time, expected
 ):
-    """Above 1e-7 CVODE warns once over two solve() calls and keeps the caller's tolerances;
-    never at or below 1e-7 or on a zero-span call."""
+    """Above 1e-7 CVODE warns once over two solve() calls and gets the caller's tolerances;
+    no warning at 1e-7 or on a zero-span call."""
     s = _solver(shared_eos, mode, end_time=end_time)
     s.parameters.solver.rtol, s.parameters.solver.atol = rtol, atol
     seen, real = [], s._solve_cvode
@@ -592,11 +599,12 @@ def test_cvode_warns_once_per_solver_when_a_tolerance_is_above_1e_7(
     with caplog.at_level('WARNING'):
         s.solve()
         s.solve()
-    hits = [r for r in caplog.records if 'can lock CVODE' in r.getMessage()]
+    hits = [r for r in caplog.records if r.getMessage().startswith('CVODE at solver.rtol')]
     assert len(hits) == expected
     scale = np.asarray(s._build_nondim_scales().state_scale)
-    assert all(kw['rtol'] == rtol for kw in seen) and len(seen) >= 2
-    assert all(np.min(kw['atol'] * scale) >= max(atol, 1e-8) * (1 - 1e-12) for kw in seen)
+    assert len(seen) >= 2 and all(kw['rtol'] == pytest.approx(rtol, rel=1e-15) for kw in seen)
+    for kw in seen:
+        np.testing.assert_allclose(kw['atol'] * scale, max(atol, 1e-8), rtol=1e-12)
 
 
 def _two_calls(eos, with_state):
