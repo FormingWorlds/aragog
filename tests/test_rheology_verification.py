@@ -639,7 +639,7 @@ def test_phi_visc_single_parameter_control():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_effective_viscosity_unyielded_and_yielded_limits():
-    """Verify effective viscosity limits in stagnant lid mode with min closure.
+    """Verify effective viscosity limits in local stress closure mode with min closure.
 
     References
     ----------
@@ -650,69 +650,71 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
 
     eta_d = 1.0e21
     tau_y = 1.0e8
-    delta_rh = 1.0e3
 
-    # Exact yield match: tau_d == tau_y gives eta_eff == eta_d under min closure
-    v_i_match = (tau_y * delta_rh) / eta_d
+    # Exact yield match: eta_y == eta_d gives eta_eff == eta_d under min closure
+    sr_match = tau_y / (2.0 * eta_d)
     eta_match = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_y_lid=tau_y,
-        v_i=v_i_match,
-        delta_rh=delta_rh,
+        tau_y=tau_y,
+        strain_rate=sr_match,
+        stress_closure_mode='local',
     )
     assert eta_match == pytest.approx(eta_d, rel=1.0e-12)
 
     # Low strain rate (eta_y >> eta_d): below yield returns diffusion creep exactly
-    v_i_low = 1.0e-14
+    sr_low = 1.0e-18
     eta_below = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_y_lid=tau_y,
-        v_i=v_i_low,
-        delta_rh=delta_rh,
+        tau_y=tau_y,
+        strain_rate=sr_low,
+        stress_closure_mode='local',
     )
-    assert eta_below == pytest.approx(eta_d, rel=1.0e-12)
+    assert eta_below == eta_d
 
-    # High strain rate (eta_y << eta_d): matches plastic yield viscosity within 1%
-    v_i_high = 1.0e-6
-    eta_plastic = (tau_y * delta_rh) / v_i_high
+    # High strain rate (eta_y << eta_d): returns plastic yield viscosity exactly
+    sr_high = 1.0e-10
+    eta_plastic = tau_y / (2.0 * sr_high)
     eta_yielded = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_y_lid=tau_y,
-        v_i=v_i_high,
-        delta_rh=delta_rh,
+        tau_y=tau_y,
+        strain_rate=sr_high,
+        stress_closure_mode='local',
     )
-    assert eta_yielded == pytest.approx(eta_plastic, rel=0.01)
+    assert eta_yielded == eta_plastic
 
     # JAX parity check
     pytest.importorskip('jax')
+    import jax
     import jax.numpy as jnp
+
+    jax.config.update('jax_enable_x64', True)
 
     eta_match_jax = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_y_lid=tau_y,
-        v_i=v_i_match,
-        delta_rh=delta_rh,
+        tau_y=tau_y,
+        strain_rate=sr_match,
+        stress_closure_mode='local',
         xp=jnp,
     )
     assert float(eta_match_jax) == pytest.approx(eta_d, rel=1.0e-12)
 
     eta_below_jax = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_y_lid=tau_y,
-        v_i=v_i_low,
-        delta_rh=delta_rh,
+        tau_y=tau_y,
+        strain_rate=sr_low,
+        stress_closure_mode='local',
         xp=jnp,
     )
     assert float(eta_below_jax) == pytest.approx(eta_d, rel=1.0e-12)
 
     eta_yielded_jax = compute_effective_viscosity(
         eta_diff=eta_d,
-        tau_y_lid=tau_y,
-        v_i=v_i_high,
-        delta_rh=delta_rh,
+        tau_y=tau_y,
+        strain_rate=sr_high,
+        stress_closure_mode='local',
         xp=jnp,
     )
-    assert float(eta_yielded_jax) == pytest.approx(eta_plastic, rel=0.01)
+    assert float(eta_yielded_jax) == pytest.approx(eta_plastic, rel=1.0e-12)
 
 
 @pytest.mark.unit

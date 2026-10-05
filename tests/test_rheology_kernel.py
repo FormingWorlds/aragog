@@ -123,13 +123,12 @@ def test_limit_extreme_yielding():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_exact_yield_match():
-    """Verify harmonic mean yields eta_d / 2 when eta_y = eta_d.
+    """Verify minimum closure yields eta_d when eta_y = eta_d.
 
     References
     ----------
-    Tackley (2000), doi:10.1029/2000GC000036
-    Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
-    Foley & Bercovici (2014), sec. 8.2, p. 600, doi:10.1093/gji/ggu316
+    Moresi & Solomatov (1998), p. 672, eqs. 13-14, doi:10.1046/j.1365-246X.1998.00531.x
+    Tackley (2000), eq. 8, p. 4, doi:10.1029/2000GC000036
     """
     eta_diff = 1.0e22
     tau_y = 1.0e8
@@ -142,17 +141,13 @@ def test_exact_yield_match():
         strain_rate=strain_rate_match,
         stress_closure_mode='local',
     )
-    assert eta_eff_local == pytest.approx(eta_diff / 2.0, rel=1.0e-12)
+    assert eta_eff_local == pytest.approx(eta_diff, rel=1.0e-12)
 
     # Stagnant lid mode: under min closure, tau_d == tau_y yields eta_eff == eta_diff
-    delta_rh = 1.0e4
-    v_i_match = (tau_y * delta_rh) / eta_diff
     eta_eff_lid = compute_effective_viscosity(
         eta_diff=eta_diff,
         tau_d=tau_y,
         tau_y_lid=tau_y,
-        v_i=v_i_match,
-        delta_rh=delta_rh,
         stress_closure_mode='lid',
     )
     assert eta_eff_lid == pytest.approx(eta_diff, rel=1.0e-12)
@@ -160,12 +155,12 @@ def test_exact_yield_match():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_harmonic_mean_asymptotic_limits():
-    """Verify harmonic mean limits eta_y >> eta_d gives eta_d and eta_y << eta_d gives eta_y within 1%."""
+def test_min_closure_local_asymptotic_limits():
+    """Verify local min closure limits: eta_y >= eta_d gives eta_d and eta_y < eta_d gives eta_y."""
     eta_d = 1.0e22
     tau_y = 1.0e8
 
-    # Limit 1: eta_y >> eta_d (low strain rate)
+    # Limit 1: eta_y >> eta_d (low strain rate, sub-yield)
     sr_low = 1.0e-18
     eta_y_high = tau_y / (2.0 * sr_low)  # 5e25
     assert eta_y_high > 100.0 * eta_d
@@ -174,9 +169,9 @@ def test_harmonic_mean_asymptotic_limits():
         tau_y=tau_y,
         strain_rate=sr_low,
     )
-    assert eta_eff_high == pytest.approx(eta_d, rel=0.01)
+    assert eta_eff_high == eta_d
 
-    # Limit 2: eta_y << eta_d (high strain rate)
+    # Limit 2: eta_y << eta_d (high strain rate, yielding)
     sr_high = 5.0e-11
     eta_y_low = tau_y / (2.0 * sr_high)  # 1e18
     eta_eff_low = compute_effective_viscosity(
@@ -184,7 +179,7 @@ def test_harmonic_mean_asymptotic_limits():
         tau_y=tau_y,
         strain_rate=sr_high,
     )
-    assert eta_eff_low == pytest.approx(eta_y_low, rel=0.01)
+    assert eta_eff_low == eta_y_low
 
 
 @pytest.mark.unit

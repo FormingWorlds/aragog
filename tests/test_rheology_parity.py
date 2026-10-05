@@ -580,3 +580,47 @@ def test_convecting_layer_viscosity_mixture_parity():
         float(st_mix_np['Ra_eff']), float(st_mix_jx['Ra_eff']), rtol=1e-12
     )
     assert st_mix_np['mu_i'] < st_none_np['mu_i']
+
+
+@pytest.mark.unit
+def test_local_stress_closure_min_form_parity():
+    """Verify local mode minimum closure parity between NumPy and JAX."""
+    eta_diff = np.array([1.0e21, 1.0e22, 1.0e23, 1.0e24])
+    tau_y = np.array([1.0e7, 1.0e7, 1.0e7, 1.0e7])
+    # strain rates: sub-yield (low), exact switch, yielding (high), and zero strain rate
+    sr = np.array([1.0e-18, 1.0e7 / (2.0 * 1.0e22), 1.0e-10, 0.0])
+
+    eta_eff_np = compute_effective_viscosity(
+        eta_diff=eta_diff,
+        tau_y=tau_y,
+        strain_rate=sr,
+        stress_closure_mode='local',
+        xp=np,
+    )
+    eta_eff_jx = jax_rheo.compute_effective_viscosity(
+        eta_diff=jnp.array(eta_diff),
+        tau_y=jnp.array(tau_y),
+        strain_rate=jnp.array(sr),
+        stress_closure_mode='local',
+    )
+
+    # 1. Parity between NumPy and JAX
+    np.testing.assert_allclose(
+        np.array(eta_eff_jx),
+        eta_eff_np,
+        rtol=1.0e-12,
+        err_msg='Mismatch in local mode eta_eff between NumPy and JAX',
+    )
+
+    # 2. Below yield (sr[0]): eta_eff == eta_d exactly
+    assert eta_eff_np[0] == eta_diff[0]
+
+    # 3. Exact switch (sr[1]): eta_eff == eta_d exactly
+    assert eta_eff_np[1] == pytest.approx(eta_diff[1], rel=1.0e-12)
+
+    # 4. Above yield (sr[2]): eta_eff == eta_y exactly
+    expected_eta_y = tau_y[2] / (2.0 * sr[2])
+    assert eta_eff_np[2] == pytest.approx(expected_eta_y, rel=1.0e-12)
+
+    # 5. Zero strain rate (sr[3] == 0.0): eta_eff == eta_d exactly
+    assert eta_eff_np[3] == eta_diff[3]

@@ -364,13 +364,16 @@ def compute_effective_viscosity(
 ) -> FloatOrArray:
     r"""Compute effective dynamic viscosity with boundary-layer or local stress closure.
 
-    In stagnant lid mode, the effective viscosity uses the minimum closure
-    of diffusion creep and plastic yield viscosity:
-        eta_eff = min(eta_diff, eta_y) = eta_diff * min(1, tau_y / tau_d)
+    Both stagnant lid mode and local stress closure mode use the minimum closure
+    of diffusion creep and plastic yield viscosity per Moresi & Solomatov (1998):
+        eta_eff = min(eta_diff, eta_y)
+
+    In stagnant lid mode:
+        eta_eff = eta_diff * min(1, tau_y / tau_d)
     where edot_lid = tau_d / (2 * eta_diff) and eta_y = tau_y * eta_diff / tau_d.
 
-    In local stress closure mode, the effective viscosity is the harmonic mean:
-        eta_eff = (eta_d * eta_y) / (eta_d + eta_y)
+    In local stress closure mode:
+        eta_eff = min(eta_diff, eta_y)
         eta_y = tau_y / (2 * strain_rate)
 
     References
@@ -398,12 +401,13 @@ def compute_effective_viscosity(
             sr = xp.asarray(strain_rate, dtype=float)
         ty = xp.asarray(tau_y if tau_y is not None else tau_y_profile, dtype=float)
         eta_d = xp.asarray(eta_diff, dtype=float)
-        sr_safe = xp.maximum(sr, 1e-30)
-        tau_y_term = ty / (2.0 * sr_safe)
-        is_inf = xp.isinf(tau_y_term)
-        safe_ty_term = xp.where(is_inf, 1.0, tau_y_term)
-        res = (eta_d * safe_ty_term) / (eta_d + safe_ty_term)
-        return xp.where(is_inf, eta_d, res)
+        safe_ty = xp.maximum(ty, 0.0)
+        sr_safe = xp.where(sr > 0.0, sr, 1.0)
+        tau_y_term = safe_ty / (2.0 * sr_safe)
+        is_unyielded = (sr <= 0.0) | xp.isinf(tau_y_term) | xp.isnan(tau_y_term)
+        safe_ty_term = xp.where(is_unyielded, eta_d, tau_y_term)
+        res = xp.minimum(eta_d, safe_ty_term)
+        return xp.where(is_unyielded, eta_d, res)
 
     eta_d = xp.asarray(eta_diff, dtype=float)
 
@@ -416,12 +420,6 @@ def compute_effective_viscosity(
         ratio = xp.where(xp.isnan(ratio) | xp.isinf(ty_lid), 1.0, ratio)
         ratio_eff = xp.clip(ratio, 0.0, 1.0)
         eta_eff_val = xp.where(ratio_eff >= 1.0, eta_d, eta_d * ratio_eff)
-    elif v_i is not None and delta_rh is not None and tau_y_lid is not None:
-        vi = xp.asarray(v_i, dtype=float)
-        drh = xp.asarray(delta_rh, dtype=float)
-        ty_lid = xp.asarray(tau_y_lid, dtype=float)
-        eta_lid = (ty_lid * drh) / xp.maximum(vi, 1e-30)
-        eta_eff_val = xp.minimum(eta_d, eta_lid)
     else:
         eta_eff_val = eta_d
 
