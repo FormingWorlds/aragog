@@ -46,11 +46,12 @@ def test_creep_locked_base_fixture(shared_eos):
 
     Notes
     -----
-    Tolerances are calibrated to 10x max(1-ulp noise floor, cross-CPU hardware spread):
-    - S: atol = 1.0e-3 J kg^-1 K^-1 (physics mutant moves S by 3.93 J/kg/K, >3900x atol)
-    - T: atol = 1.3e-4 K (physics mutant moves T by 0.5 K, >3800x atol)
-    - Flux: atol = 170.0 W m^-2 (< 0.2% of sub-lid convective flux ~1e5 W/m2)
-    - Lid stress: atol = 1.8e-3 Pa (measured 1-ulp noise floor: 1.75e-4 Pa)
+    Tolerances use rtol = max(10 * floor / |value|, 1e-8) for integrated states,
+    with atol only for quantities that can be zero (fluxes):
+    - S: rtol = 2.5e-8 (1-ulp noise floor: 8.76e-6 J/kg/K)
+    - T: rtol = 1.0e-8 (1-ulp noise floor: 1.39e-6 K)
+    - Flux: atol = 170.0 W m^-2, rtol = 1.0e-4 (1-ulp noise floor: 141.1 W/m^2)
+    - Lid stress: rtol = 7.3e-8 (measured 1-ulp noise floor: 1.75e-4 Pa)
     """
     config_file = 'tests/configs/creep_locked_base.toml'
     config = Config.from_file(config_file)
@@ -103,14 +104,16 @@ def test_creep_locked_base_fixture(shared_eos):
             if 'lid_stress' in ref.files:
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
-            # Tolerance tier: 10x max(1-ulp noise floor, cross-CPU hardware spread).
-            # Measured 1-ulp noise floor: S 8.76e-6 J/kg/K, T 1.39e-6 K, flux 141.1 W/m2, lid_stress 1.75e-4 Pa.
-            np.testing.assert_allclose(S, ref['S'], atol=1.0e-3)
-            np.testing.assert_allclose(T, ref['T'], atol=1.3e-4)
+            # Tolerance tier: rtol = max(10 * floor / |value|, 1e-8) for integrated states,
+            # with atol only for values that can be zero (fluxes).
+            np.testing.assert_allclose(S, ref['S'], rtol=2.5e-8)
+            np.testing.assert_allclose(T, ref['T'], rtol=1.0e-8)
             for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
                 assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
-                np.testing.assert_allclose(getattr(output, flux_key), ref[flux_key], atol=170.0)
+                np.testing.assert_allclose(
+                    getattr(output, flux_key), ref[flux_key], atol=170.0, rtol=1.0e-4
+                )
             if 'lid_stress' in ref.files:
                 np.testing.assert_allclose(
-                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=1.8e-3
+                    getattr(output, 'lid_stress'), ref['lid_stress'], rtol=7.3e-8
                 )

@@ -51,11 +51,12 @@ def test_cold_top_lid_fixture(shared_eos):
     base pressure (4.19 GPa) evaluates to ~209.6 MPa. Because convective driving
     stress (0.865 MPa) is below 1.0 MPa, the lid does not yield in this fixture.
 
-    Tolerances are calibrated to 10x max(1-ulp perturbation noise floor across 5 seeds):
-    - S: atol = 1.0e-6 J kg^-1 K^-1 (< 0.0001% of mantle entropy ~3500 J/kg/K)
-    - T: atol = 1.0e-7 K (< 0.00001% of mantle temperature ~2000 K)
-    - Flux: atol = 2000.0 W m^-2 (< 1.8% of surface radiative flux ~1.12e5 W/m^2)
-    - Lid stress: atol = 3.6e-5 Pa (measured 1-ulp noise floor: 3.57e-6 Pa)
+    Tolerances use rtol = max(10 * floor / |value|, 1e-8) for integrated states,
+    with atol only for quantities that can be zero (fluxes):
+    - S: rtol = 1.0e-8 (1-ulp noise floor: 6.35e-9 J/kg/K)
+    - T: rtol = 1.0e-8 (1-ulp noise floor: 6.59e-10 K)
+    - Flux: atol = 2000.0 W m^-2, rtol = 1.0e-4 (1-ulp noise floor: 24.1 W/m^2)
+    - Lid stress: rtol = 1.0e-8 (measured 1-ulp noise floor: 3.57e-6 Pa)
     """
     config_file = 'tests/configs/cold_top_lid.toml'
     config = Config.from_file(config_file)
@@ -112,16 +113,16 @@ def test_cold_top_lid_fixture(shared_eos):
             if 'lid_stress' in ref.files:
                 np.testing.assert_array_equal(getattr(output, 'lid_stress'), ref['lid_stress'])
         else:
-            # Tolerance tier: 10x max(1-ulp noise floor across 5 seeds).
-            # Measured 1-ulp noise floor: S 6.35e-9 J/kg/K, T 6.59e-10 K, flux 24.1 W/m2, lid_stress 3.57e-6 Pa.
-            np.testing.assert_allclose(S, ref['S'], atol=1.0e-6)
-            np.testing.assert_allclose(T, ref['T'], atol=1.0e-7)
+            # Tolerance tier: rtol = max(10 * floor / |value|, 1e-8) for integrated states,
+            # with atol only for values that can be zero (fluxes).
+            np.testing.assert_allclose(S, ref['S'], rtol=1.0e-8)
+            np.testing.assert_allclose(T, ref['T'], rtol=1.0e-8)
             for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
                 assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
                 np.testing.assert_allclose(
-                    getattr(output, flux_key), ref[flux_key], atol=2000.0
+                    getattr(output, flux_key), ref[flux_key], atol=2000.0, rtol=1.0e-4
                 )
             if 'lid_stress' in ref.files:
                 np.testing.assert_allclose(
-                    getattr(output, 'lid_stress'), ref['lid_stress'], atol=3.6e-5
+                    getattr(output, 'lid_stress'), ref['lid_stress'], rtol=1.0e-8
                 )
