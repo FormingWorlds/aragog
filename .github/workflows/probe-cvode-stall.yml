@@ -1,0 +1,97 @@
+name: Probe CVODE stall
+
+on:
+  push:
+    branches: [tl/probe-cvode-stall]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: probe shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up conda env (sundials from conda-forge)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: aragog-probe
+          create-args: >-
+            python=3.12
+            sundials
+          condarc: |
+            channels:
+              - conda-forge
+
+      - name: Install test deps
+        run: |
+          pip install pytest pytest-cov pytest-xdist pytest-dependency pytest-timeout threadpoolctl
+          pip install scikits-odes-sundials jax equinox diffrax
+          pip install -e .
+
+      - name: Fetch SPIDER EOS test data
+        run: |
+          mkdir -p /tmp/aragog-test-data
+          curl -sL -o /tmp/spider_eos.tar.gz \
+            https://github.com/FormingWorlds/aragog/releases/download/test-data-v1/spider_eos_test_data.tar.gz
+          tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
+          echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
+
+      - name: Record the runner CPU, numpy dispatch and BLAS
+        run: |
+          mkdir -p /tmp/probe
+          {
+            echo "commit $(git rev-parse HEAD)"; uname -a; python --version
+            grep -m1 'model name' /proc/cpuinfo; grep -m1 '^flags' /proc/cpuinfo
+            micromamba list sundials | tail -n +3
+            pip show jax jaxlib scikits-odes-sundials numpy scipy 2>/dev/null | grep -E '^(Name|Version):'
+            python .github/probe/env_report.py
+          } > /tmp/probe/env.txt 2>&1
+          head -5 /tmp/probe/env.txt
+
+      - name: Direct solve probes (default, no AVX512, no AVX512/AVX2/FMA3)
+        env:
+          ARAGOG_TESTS_PARENT: .
+        run: |
+          set +e
+          FEAT=$(python -c "import numpy._core._multiarray_umath as m; print(' '.join(x for x in m.__cpu_dispatch__ if m.__cpu_features__.get(x)))")
+          A512=$(echo $FEAT | tr ' ' '\n' | grep '^AVX512' | tr '\n' ' ')
+          AV2=$(echo $FEAT | tr ' ' '\n' | grep -E '^(AVX512|AVX2|FMA3)' | tr '\n' ' ')
+          echo "dispatch on: $FEAT" | tee -a /tmp/probe/summary.txt
+          run() {
+            tag=$1; shift
+            start=$(date +%s)
+            env "$@" python .github/probe/probe_stall.py --limit 240 --out /tmp/probe/$tag > /tmp/probe/$tag.out 2>&1
+            echo "shard ${{ matrix.shard }} $tag exit $? wall $(( $(date +%s) - start ))s $(tail -1 /tmp/probe/$tag.out | cut -c1-160)" | tee -a /tmp/probe/summary.txt
+          }
+          run default A=1
+          run default2 A=1
+          run noavx512 NPY_DISABLE_CPU_FEATURES="$A512"
+          run noavx2 NPY_DISABLE_CPU_FEATURES="$AV2"
+
+      - name: Test module once (coverage, no xdist)
+        run: |
+          set +e
+          start=$(date +%s)
+          pytest tests/test_phase_boundary_cap.py -o "addopts=" -p no:xdist -q \
+            -k test_rate_mode_keeps_the_energy_balance_state \
+            --timeout=400 --timeout-method=thread \
+            --cov=aragog --cov-report= --cov-fail-under=0 > /tmp/probe/pytest.log 2>&1
+          echo "shard ${{ matrix.shard }} pytest exit $? wall $(( $(date +%s) - start ))s $(grep -E 'passed|failed' /tmp/probe/pytest.log | tail -1)" | tee -a /tmp/probe/summary.txt
+
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-shard-${{ matrix.shard }}
+          path: /tmp/probe/
