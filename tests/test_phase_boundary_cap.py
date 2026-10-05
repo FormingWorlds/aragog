@@ -282,19 +282,17 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
 
 
 @needs_eos
+@needs_cvode
 @pytest.mark.smoke
 @pytest.mark.timeout(120, method='signal')
-@pytest.mark.xfail(
-    strict=False,
-    reason='intermittent CVODE stall on Linux in fixed step-cap mode with the energy_balance core boundary',
-)
 def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     """With the extended energy_balance state, rate mode segments on the entropy block and keeps the CMB entry."""
-    s_f, T_f = _isentropic_end(shared_eos, 'fixed', 1e-6, 'energy_balance')
-    s_r, T_r = _isentropic_end(shared_eos, 'rate', 1e-6, 'energy_balance')
+    s_f, T_f = _isentropic_end(shared_eos, 'fixed', 1e-8, 'energy_balance')
+    s_r, T_r = _isentropic_end(shared_eos, 'rate', 1e-8, 'energy_balance')
     assert s_r._solution.y.shape[0] == s_f._solution.y.shape[0] == s_r._n_stag + 1
-    assert len(s_r._solution.segments) >= 2 and np.isfinite(s_r._solution.y[-1, -1])
-    assert np.abs(T_r - T_f).max() <= 0.1
+    assert len(s_r._solution.segments) >= 2
+    assert np.abs(T_r - T_f).max() <= 0.01
+    assert s_r._solution.y[-1, -1] == pytest.approx(s_f._solution.y[-1, -1], rel=1e-4)
 
 
 @needs_eos
@@ -555,19 +553,76 @@ def _rtol_warnings(caplog):
 
 
 @needs_eos
+@needs_cvode
 @pytest.mark.smoke
 @pytest.mark.parametrize(
-    ('mode', 'tol', 'expected'), [('rate', 1e-6, 1), ('rate', 1e-8, 0), ('fixed', 1e-6, 0)]
+    ('mode', 'tol', 'end_time', 'expected'),
+    [
+        ('rate', 1e-6, 2.0, 1),
+        ('rate', 1e-7, 2.0, 0),
+        ('rate', 1e-8, 2.0, 0),
+        ('fixed', 1e-6, 2.0, 0),
+        ('rate', 1e-6, 0.0, 0),
+    ],
 )
 def test_rate_mode_warns_once_per_solver_when_rtol_is_loose(
-    shared_eos, caplog, mode, tol, expected
+    shared_eos, caplog, mode, tol, end_time, expected
 ):
-    """Rate mode warns once over two solve() calls at rtol 1e-6; never at 1e-8 or in fixed mode."""
-    s = _solver(shared_eos, mode, end_time=2.0, tol=tol)
+    """Rate mode warns once over two solve() calls at rtol 1e-6; never at 1e-7 or 1e-8, in fixed
+    mode or on a zero-span call."""
+    s = _solver(shared_eos, mode, end_time=end_time, tol=tol)
     with caplog.at_level('WARNING'):
         s.solve()
         s.solve()
     assert len(_rtol_warnings(caplog)) == expected
+
+
+@needs_eos
+@needs_cvode
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    ('mode', 'core', 'rtol', 'atol', 'end_time', 'expected', 'atol_clause'),
+    [
+        ('fixed', 'quasi_steady', 1e-6, 1e-8, 2.0, 1, False),
+        ('fixed', 'energy_balance', 1e-6, 1e-6, 0.01, 1, True),
+        ('fixed', 'energy_balance', 1e-6, 1e-8, 0.01, 1, False),
+        ('fixed', 'energy_balance', 1e-6, 2e-8, 0.01, 1, True),
+        ('fixed', 'quasi_steady', 1e-6, 1e-6, 2.0, 1, False),
+        ('rate', 'quasi_steady', 1e-6, 1e-8, 2.0, 1, False),
+        ('fixed', 'quasi_steady', 1e-8, 1e-6, 2.0, 0, False),
+        ('fixed', 'energy_balance', 1e-8, 1e-6, 0.01, 0, False),
+        ('fixed', 'quasi_steady', 1e-10, 1e-10, 0.01, 0, False),
+        ('fixed', 'quasi_steady', 1e-7, 1e-7, 2.0, 1, False),
+        ('fixed', 'quasi_steady', 2e-8, 1e-8, 2.0, 1, False),
+        ('fixed', 'quasi_steady', 1e-6, 1e-6, 0.0, 0, False),
+    ],
+)
+def test_cvode_warns_once_per_solver_when_rtol_is_above_1e_8(
+    shared_eos, caplog, monkeypatch, mode, core, rtol, atol, end_time, expected, atol_clause
+):
+    """Above rtol 1e-8 Aragog warns once over two solve() calls, naming a configured atol above
+    1e-8 only on the energy_balance core; never for atol alone, at 1e-8 or on a zero-span call.
+    CVODE gets the caller's rtol and the atol floored at 1e-8."""
+    s = _solver(shared_eos, mode, core, end_time=end_time)
+    s.parameters.solver.rtol, s.parameters.solver.atol = rtol, atol
+    seen, real = [], s._solve_cvode
+    monkeypatch.setattr(s, '_solve_cvode', lambda **kw: seen.append(kw) or real(**kw))
+    with caplog.at_level('WARNING'):
+        s.solve()
+        s.solve()
+    hits = [r.getMessage() for r in caplog.records if 'can lock CVODE' in r.getMessage()]
+    assert len(hits) == expected
+    assert all(('configured solver.atol' in m) == atol_clause for m in hits)
+    assert all(
+        f'solver.rtol {rtol:.1e}: an rtol above 1e-8' in m
+        and 'with atol = rtol: 46 % at 1e-5' in m
+        and 'Use 1e-8, the Aragog default, for rtol and atol' in m
+        for m in hits
+    )
+    scale = np.asarray(s._build_nondim_scales().state_scale)
+    assert len(seen) >= 2 and all(kw['rtol'] == rtol for kw in seen)
+    for kw in seen:
+        np.testing.assert_allclose(kw['atol'] * scale, max(atol, 1e-8), rtol=1e-12)
 
 
 def _two_calls(eos, with_state):

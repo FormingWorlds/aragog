@@ -109,7 +109,7 @@ class EnergyConfig:
         or below the rate floor, the estimate uses the distance to the nearer
         boundary. The gradient core and the scipy integrators keep 1 yr, with one
         log line per solver (INFO when the mode is the default, WARNING when
-        ``'rate'`` is set). An rtol above 1e-7 logs one warning per solver. The
+        ``'rate'`` is set). An rtol above 1e-7 logs one rate-cap warning per solver. The
         accuracy of ``'rate'`` against ``'fixed'`` is tabulated in the energy-equation
         docs and computed by ``tools/verification/run_phase_boundary_cap_accuracy.py``.
     tidal_array : ndarray
