@@ -285,8 +285,8 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
     assert np.all(np.diff(starts) > 1e-6)
 
 
-@needs_cvode
 @needs_eos
+@needs_cvode
 @pytest.mark.smoke
 @pytest.mark.timeout(120, method='signal')
 def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
@@ -560,8 +560,8 @@ def _rtol_warnings(caplog):
     return [r for r in caplog.records if 'accuracy is measured at rtol' in r.getMessage()]
 
 
-@needs_cvode
 @needs_eos
+@needs_cvode
 @pytest.mark.smoke
 @pytest.mark.parametrize(
     ('mode', 'tol', 'end_time', 'expected'),
