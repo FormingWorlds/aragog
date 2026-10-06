@@ -669,3 +669,120 @@ def test_local_stress_closure_min_form_parity():
 
     # 5. Zero strain rate (sr[3] == 0.0): eta_eff == eta_d exactly
     assert eta_eff_np[3] == eta_diff[3]
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_jax_phase_convecting_layer_viscosity_mixture_wiring_parity():
+    """Verify JAX compute_mlt wires mixture viscosity to mu_i with NumPy parity."""
+    from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
+
+    n = 30
+    r = np.linspace(3.48e6, 6.371e6, n)
+    ml = np.maximum(np.minimum(r - r[0], r[-1] - r), 1.0)
+    mesh = MeshArrays(
+        d_dr_matrix=jnp.zeros((n, n - 1)),
+        quantity_matrix=jnp.zeros((n, n - 1)),
+        area=jnp.ones(n),
+        volume=jnp.ones(n),
+        radii_basic=jnp.asarray(r),
+        radii_stag=jnp.asarray(0.5 * (r[1:] + r[:-1])),
+        mixing_length=jnp.asarray(ml),
+        mixing_length_sq=jnp.asarray(ml**2),
+        mixing_length_cu=jnp.asarray(ml**3),
+        P_stag=jnp.linspace(1.3e11, 1e5, n - 1),
+        P_basic=jnp.linspace(1.3e11, 1e5, n),
+        dP_dr_basic=jnp.full(n, -9.81 * 4000.0),
+        gravity=jnp.full(n, 9.81),
+    )
+
+    T = np.linspace(3000.0, 1400.0, n)
+    visc = np.full(n, 1.0e23)
+    visc[:25] = 1.0e12
+    phi = np.zeros(n)
+    phi[:25] = 0.35
+
+    phase = PhaseProperties(
+        temperature=jnp.asarray(T),
+        density=jnp.full(n, 4000.0),
+        heat_capacity=jnp.full(n, 1200.0),
+        thermal_expansivity=jnp.full(n, 3e-5),
+        dTdPs=jnp.full(n, 1e-8),
+        melt_fraction=jnp.asarray(phi),
+        viscosity=jnp.asarray(visc),
+        kinematic_viscosity=jnp.asarray(visc / 4000.0),
+        thermal_conductivity=jnp.full(n, 4.0),
+        latent_heat=jnp.full(n, 4e5),
+        capacitance=jnp.full(n, 4000.0 * 1200.0),
+        eta_diff=jnp.full(n, 1.0e22),
+        tau_y=jnp.full(n, 1.0e4),
+        visc_solid_weight=jnp.ones(n),
+    )
+
+    params = PhaseParams(
+        enabled=True,
+        conduction=1.0,
+        convection=1.0,
+        kappah_floor=0.0,
+        stress_closure_mode='lid',
+        lid_base_mode='fixed',
+        lid_base_temperature=1800.0,
+        yield_stress_c=1.0e4,
+        yield_stress_mu=0.0,
+        yield_stress_max=1.0e4,
+        activation_energy=300e3,
+        activation_volume=1.5e-6,
+        viscosity_solid=1.0e21,
+    )
+
+    # Convective interior with stable lid (nodes 27..29)
+    grad = jnp.full(n, -1.0e-5).at[-3:].set(1.0e-5)
+    kh, _, f_un = compute_mlt(grad, phase, mesh, params, return_unyielded=True)
+
+    # 1. Parity between NumPy and JAX on the mush profile
+    st_np = compute_stagnant_lid_state(
+        radii=np.array(mesh.radii_basic),
+        temperature=np.array(phase.temperature),
+        pressure=np.array(mesh.P_basic),
+        convective_flux=np.array(f_un),
+        total_flux=np.array(jnp.maximum(f_un, 1e3)),
+        solidus_temperature=None,
+        melt_fraction=np.array(phase.melt_fraction),
+        params=params,
+        viscosity_solid=params.viscosity_solid,
+        viscosity_mixture=np.array(phase.viscosity),
+        xp=np,
+    )
+    st_jx = jax_rheo.compute_stagnant_lid_state(
+        radii=mesh.radii_basic,
+        temperature=phase.temperature,
+        pressure=mesh.P_basic,
+        convective_flux=f_un,
+        total_flux=jnp.maximum(f_un, 1e3),
+        solidus_temperature=None,
+        melt_fraction=phase.melt_fraction,
+        params=params,
+        viscosity_solid=params.viscosity_solid,
+        viscosity_mixture=phase.viscosity,
+    )
+    np.testing.assert_allclose(float(st_np['mu_i']), float(st_jx['mu_i']), rtol=1e-12)
+
+    # 2. Discriminate against unmixed Arrhenius fallback (mu_i must reflect mush viscosity)
+    st_unmixed = jax_rheo.compute_stagnant_lid_state(
+        radii=mesh.radii_basic,
+        temperature=phase.temperature,
+        pressure=mesh.P_basic,
+        convective_flux=f_un,
+        total_flux=jnp.maximum(f_un, 1e3),
+        solidus_temperature=None,
+        melt_fraction=phase.melt_fraction,
+        params=params,
+        viscosity_solid=params.viscosity_solid,
+        viscosity_mixture=None,
+    )
+    assert float(st_unmixed['mu_i']) / float(st_jx['mu_i']) > 1.0e4
+
+    # 3. Verify compute_mlt output in the yielding lid transition nodes (nodes 25..26)
+    # If viscosity_mixture is omitted in jax/phase.py, kh in these cells differs by >30x.
+    assert np.all(kh[25:27] > 0.0)
+    assert kh[25] < 1.0e-8
