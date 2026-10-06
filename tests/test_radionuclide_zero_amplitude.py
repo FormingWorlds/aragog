@@ -230,17 +230,23 @@ def test_live_isotope_overflowing_only_at_the_start_time_raises(tmp_path):
 
 @pytest.mark.unit
 def test_replace_converts_each_concentration_from_ppm_once():
-    """dataclasses.replace reruns Parameters.__post_init__ without a second ppm scaling,
-    and an isotope replaced with a new ppm value is scaled once."""
+    """Each concentration becomes a mass fraction once: dataclasses.replace on Parameters or
+    on an isotope (other fields changed) keeps it, a new ppm value (replace or assignment)
+    is converted. A missed or a second conversion is a factor 1e6."""
     p = Parameters.from_file(str(BUNDLED_LOOKUP))
     k40 = next(r for r in p.radionuclides if r.name == 'K40')
     assert k40.concentration == pytest.approx(310.0e-6, rel=1e-15)
     first = [r.concentration for r in p.radionuclides]
     q = replace(replace(p), solver=p.solver)
     assert [r.concentration for r in q.radionuclides] == first
+    longer = replace(k40, half_life_years=2.0 * k40.half_life_years)
     new = replace(k40, concentration=200.0)
-    replace(p, radionuclides=[new])
+    replace(p, radionuclides=[longer, new])
+    assert longer.concentration == pytest.approx(310.0e-6, rel=1e-15)
     assert new.concentration == pytest.approx(200.0e-6, rel=1e-15)
+    k40.concentration = 150.0
+    replace(p)
+    assert k40.concentration == pytest.approx(150.0e-6, rel=1e-15)
     assert new.get_heating(k40.t0_years) == pytest.approx(
         new.heat_production * new.abundance * 200.0e-6, rel=1e-15
     )

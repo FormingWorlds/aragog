@@ -36,15 +36,6 @@ from scipy.constants import Julian_year
 
 from tests.conftest import EOS_DIR, entropy_eos_copy
 
-# EOS path is environment-driven for portability across machines.
-# Resolution order:
-#   1. ``ARAGOG_TEST_EOS_DIR`` -- explicit override
-#   2. ``$FWL_DATA/aragog/spider_eos`` -- canonical PROTEUS data location
-#   3. ``$REPO/output/coupled_parity/spider/data/spider_eos`` -- legacy
-#      Mac Studio dev path; kept as a last-resort fallback so the test
-#      still runs locally for whoever generated those tables once.
-# Tests are skipped if none of these resolve; CI nightly populates the
-# canonical location via ``proteus offline`` before the smoke run.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 needs_eos = pytest.mark.skipif(
@@ -791,7 +782,8 @@ def test_mantle_mass_split_at_partial_melt_discriminates_solid_coefficient(share
     )
 
 
-def test_solve_from_a_nonzero_start_writes_the_end_time(tmp_path: Path) -> None:
+@pytest.mark.parametrize('method', ['bdf', 'cvode'])
+def test_solve_from_a_nonzero_start_writes_the_end_time(tmp_path: Path, method: str) -> None:
     """A run from 100 to 101 yr stores time = 101 yr in the snapshot and the
     call duration dt_actual = 1 yr, the case of a duration written as the time."""
     import netCDF4 as nc
@@ -801,7 +793,9 @@ def test_solve_from_a_nonzero_start_writes_the_end_time(tmp_path: Path) -> None:
     from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S
 
     eos = entropy_eos_copy()
-    p = _build_mushy_parameters(solver_method='bdf', n_nodes=12, end_time=101.0)
+    if method == 'cvode':
+        pytest.importorskip('scikits_odes_sundials')
+    p = _build_mushy_parameters(solver_method=method, n_nodes=12, end_time=101.0)
     p.solver.start_time = 100.0
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()

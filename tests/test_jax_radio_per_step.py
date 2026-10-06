@@ -289,6 +289,34 @@ def test_dSdt_uses_live_radio_at_different_t():
     )
 
 
+@pytest.mark.parametrize('field', [0, 1, 2, 3])
+@pytest.mark.parametrize('bad', [np.nan, np.inf])
+def test_radio_heating_rejects_a_non_finite_input(field, bad):
+    """A NaN or infinite heat production, abundance, concentration or t0 is rejected at
+    build time, where it would otherwise give a NaN or infinite heating."""
+    from aragog.jax.solver import make_radio_heating_fn
+
+    args = [np.array([1.0]) for _ in range(5)]
+    args[field] = np.array([bad])
+    with pytest.raises(ValueError, match='must be finite'):
+        make_radio_heating_fn(*args)
+
+
+def test_radio_heating_checks_every_broadcast_isotope():
+    """A bad half-life at a later isotope is found when the other inputs broadcast from one
+    value, and a build under jax.jit (traced inputs) still works."""
+    import jax
+
+    from aragog.jax.solver import make_radio_heating_fn
+
+    one = np.array([1.0])
+    with pytest.raises(ValueError, match=r'#1: half_life_years must be positive'):
+        make_radio_heating_fn(one, one, one, one, np.array([1.0e9, -1.0]))
+    jitted = jax.jit(lambda c: make_radio_heating_fn(one, one, c, 0.0 * one, 1.0e9 * one)(1.0))
+    assert float(jitted(np.ones(1))) == pytest.approx(2.0 ** (-1.0e-9), rel=1e-12)
+    assert float(jitted(np.full(1, 2.0))) == pytest.approx(2.0 * 2.0 ** (-1.0e-9), rel=1e-12)
+
+
 def test_jax_heating_matches_the_numpy_decay_law():
     """make_radio_heating_fn sums aragog.parser.radionuclide_heating over the isotopes.
 

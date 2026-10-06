@@ -379,12 +379,18 @@ def validate_radionuclide(
         ppm: Whether ``concentration`` is in ppm.
 
     Raises:
-        ValueError: for a half-life that is not positive, a negative heat production,
-            abundance or concentration, or a heating that is not finite at ``start_time``.
+        ValueError: for a half-life that is not positive, a heat production, abundance,
+            concentration or t0_years that is negative or not finite, or a heating that is not
+            finite at ``start_time``.
     """
     if not half_life_years > 0.0:
         raise ValueError(
             f'Radionuclide {name}: half_life_years must be positive, got {half_life_years}'
+        )
+    if not np.all(np.isfinite([heat_production, abundance, concentration, t0_years])):
+        raise ValueError(
+            f'Radionuclide {name}: heat_production ({heat_production}), abundance ({abundance}), '
+            f'concentration ({concentration}) and t0_years ({t0_years}) must be finite'
         )
     unit = ' ppm' if ppm else ''
     # On the input value: ppm scaling can round a tiny negative value to -0.0.
@@ -398,10 +404,8 @@ def validate_radionuclide(
         return
     amplitude = heat_production * abundance * (concentration * _PPM if ppm else concentration)
     with np.errstate(over='ignore'):
-        finite = np.isfinite(
-            radionuclide_heating(start_time, amplitude, t0_years, half_life_years)
-        )
-    if not finite:
+        heating = radionuclide_heating(start_time, amplitude, t0_years, half_life_years)
+    if not np.isfinite(heating):
         raise ValueError(
             f'Radionuclide {name}: heating is not finite at the start time '
             f'{start_time} yr (t0_years = {t0_years}, half_life_years = '
@@ -414,9 +418,9 @@ class _Radionuclide:
     """Stores the settings in a radionuclide section in the configuration data.
 
     ``concentration`` is read in ppm and becomes a mass fraction in
-    ``Parameters.__post_init__``, once: ``_ppm_scaled`` records the conversion, and as a
-    non-init field it is reset by ``dataclasses.replace``, so a replaced isotope with a new
-    ppm value is converted again.
+    ``Parameters.__post_init__``. ``_ppm`` keeps the ppm value it came from and is copied by
+    ``dataclasses.replace``, so a concentration still equal to ``_ppm * 1e-6`` is not scaled
+    again, and any other value (a new ppm value, by replace or by assignment) is converted.
     """
 
     name: str
@@ -425,7 +429,11 @@ class _Radionuclide:
     concentration: float
     heat_production: float
     half_life_years: float
-    _ppm_scaled: bool = field(default=False, init=False, repr=False, compare=False)
+    _ppm: float | None = field(default=None, repr=False, compare=False)
+
+    def _is_mass_fraction(self) -> bool:
+        """Whether ``concentration`` is the mass fraction converted from ``_ppm``."""
+        return self._ppm is not None and self.concentration == self._ppm * _PPM
 
     def get_heating(self, time: npt.NDArray | float) -> npt.NDArray | float:
         """Radiogenic heating
@@ -563,12 +571,12 @@ class Parameters:
                     r.t0_years,
                     r.half_life_years,
                     start_time=self.solver.start_time,
-                    ppm=not r._ppm_scaled,
+                    ppm=not r._is_mass_fraction(),
                 )
         for r in self.radionuclides:
-            if not r._ppm_scaled:
+            if not r._is_mass_fraction():
+                r._ppm = r.concentration
                 r.concentration *= _PPM
-                r._ppm_scaled = True
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
