@@ -4827,14 +4827,6 @@ class EntropySolver:
             getattr(self.state, 'visc_eff', self.state.viscosity_basic)
         ).ravel()
         phase_b = self.state.phase_basic
-        porosity_b, rho_solid_b, rho_melt_b, g_b = (
-            np.array(x, dtype=float).ravel()
-            for x in (
-                phase_b.porosity(),
-                *phase_b.phase_boundary_densities(),
-                phase_b.gravitational_acceleration(),
-            )
-        )
         rheo = getattr(phase_b, 'rheology', None)
         eta_d = getattr(phase_b, 'eta_diff', None)
         if rheo is not None and rheo.enabled and eta_d is not None and np.size(eta_d) > 0:
