@@ -139,11 +139,9 @@ def test_model2_adiabatic_heat_flow_matches_printed_qk():
     assert qk1 / 1e12 == pytest.approx(7.5, rel=8e-3)
 
 
-# thermal_history cross-check constants: computed 2026-08-08 by evaluating
-# the Leeds routines (energy.secular_cool, .latent_heat, .gravitational) on
-# the model-2 state below (labrosse pressure, T_cmb = 4180 K, self-consistent
-# r_icb = 967.0 km, 8000-point radial grid). Their trapezoid discretisation
-# accounts for the 0.5% offset of the two boundary terms.
+# Leeds thermal_history values (energy.secular_cool, .latent_heat, .gravitational) on the
+# model-2 state below (labrosse pressure, T_cmb 4180 K, r_icb 967.0 km, 8000-point grid);
+# their trapezoid grid gives the 0.5 % offset of the two boundary terms.
 TH_SECULAR = 1.851452e27  # J/K, ratio to aragog 1.000000
 TH_LATENT = 1.376655e27  # J/K, ratio 0.99493
 TH_GRAV = 8.825415e26  # J/K, ratio 0.99493
@@ -169,10 +167,9 @@ def test_budget_terms_match_thermal_history_cross_check():
     assert float(budget.secular_capacity()) == pytest.approx(TH_SECULAR, rel=1e-4)
     assert float(budget.latent_capacity(T_C)) == pytest.approx(TH_LATENT, rel=0.01)
     assert float(budget.gravitational_capacity(T_C)) == pytest.approx(TH_GRAV, rel=0.01)
-    # Printed lumped value, band only (see module docstring): the state the
-    # chapter evaluates at (r_icb = 1221 km) is built on unprinted pressure
-    # machinery, so the 35% band covers the state difference, not term
-    # errors; the three 1% per-term pins above carry the discrimination.
+    # Printed lumped value, band only: the chapter's state (r_icb 1221 km) uses unprinted
+    # pressure machinery, so the 35 % band covers the state difference; the three 1 %
+    # per-term pins above carry the discrimination.
     assert float(budget.effective_capacity(T_C)) == pytest.approx(MODELS[2]['qt'], rel=0.35)
 
 

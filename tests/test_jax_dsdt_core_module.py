@@ -302,12 +302,9 @@ def test_rhs_parity_with_numpy_on_driven_state(monkeypatch):
         assert rel[n_stag] < 1e-8 and rel[n_stag + 1] < 1e-8, (
             f'state {k}: boundary-slot parity {rel[n_stag]:.3e} / {rel[n_stag + 1]:.3e}'
         )
-        # Interior entropy nodes: 4e-4 at two mid-mantle nodes is the
-        # pre-existing numpy-vs-JAX difference, measured identically on
-        # the production energy_balance RHS at this exact state, so the
-        # bound documents the shared flux assembly rather than this
-        # mode. Tightening it below 1e-3 requires fixing that shared
-        # difference first.
+        # Interior nodes: 4e-4 at two mid-mantle nodes is the numpy-vs-JAX difference of the
+        # shared flux assembly, the same on the energy_balance RHS at this state; a bound
+        # below 1e-3 needs that difference fixed first.
         assert rel.max() < 1e-3, (
             f'state {k}: max rel err {rel.max():.3e} at component {rel.argmax()} '
             f'(numpy {f_np[rel.argmax()]:.6e} vs jax {f_jax[rel.argmax()]:.6e})'
@@ -316,10 +313,8 @@ def test_rhs_parity_with_numpy_on_driven_state(monkeypatch):
         # the driven profile cools the core through a real flux.
         assert f_np[n_stag + 1] < 0.0
 
-    # q_radio path: both sides receive the same nonzero core source and
-    # must still agree on the boundary slots; the offset must shift the
-    # cooling rate in the warming direction by a resolvable amount
-    # (edge case: a source comparable to the CMB heat flow).
+    # q_radio path: with the same nonzero core source both sides agree on the boundary
+    # slots, and a source comparable to the CMB heat flow warms the cooling rate.
     f_jax_base = np.asarray(dSdt_core_module(0.0, jnp.asarray(y0), args)).ravel()
     q_radio = 5.0e12
     solver._core_module_q_radio = q_radio
@@ -366,12 +361,9 @@ def test_jacobian_carries_boundary_couplings():
     n_stag = solver._n_stag
     y0 = np.asarray(solver._S0, dtype=float)
 
-    # Pin T_core inside the nucleation-active band, found by scanning the
-    # budget itself: outside the band the latent term is exactly zero and
-    # d(C_eff)/dT_core is a TRUE zero, so the self-coupling assertion
-    # below would fail regardless of the JVP rule. The EOS tables set the
-    # default T_core, so without this pin the test's premise depends on
-    # which table cache the environment resolves.
+    # Pin T_core inside the nucleation-active band (scanned from the budget): outside it
+    # d(C_eff)/dT_core is exactly zero and the self-coupling assertion would fail for any
+    # JVP rule; the default T_core depends on the EOS tables in use.
     budget = solver._core_module_budget
     secular = float(budget.secular_capacity())
     scan = np.linspace(3200.0, 6000.0, 281)

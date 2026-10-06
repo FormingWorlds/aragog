@@ -176,12 +176,9 @@ class CoreModule:
         self.last_times: jnp.ndarray | None = None
         self.last_t_cmb: jnp.ndarray | None = None
         self.last_q_cmb: jnp.ndarray | None = None
-        # One compiled RHS per instance: the RK4 loop calls it hundreds of
-        # times per step, and the eager path re-traces the boundary
-        # bisection on every call. q_radio is a traced argument, not a
-        # closure capture: jit freezes closed-over Python values at first
-        # trace, so a later mutation of the attribute would silently keep
-        # the old power.
+        # One compiled RHS per instance (RK4 calls it hundreds of times per step); q_radio
+        # is a traced argument, since jit freezes closed-over values at the first trace
+        # and a later change of the attribute would keep the old power.
         self._rhs = jax.jit(
             lambda temp, q, q_radio: self.budget.dtcmb_dt(temp, q, q_sources=q_radio)
         )

@@ -35,6 +35,24 @@ class BoundaryConfig:
         Enable upper thermal boundary layer parameterization.
     param_utbl_const : float
         UTBL constant.
+    core_bc : str
+        Core boundary formulation for ``inner_boundary_condition = 1``:
+        'quasi_steady' (alpha-factor heat-flux partition between the bottom
+        cell and the core by heat-capacity ratio; state length N; stable but
+        underestimates the CMB heat loss against a SPIDER-parity reference),
+        'energy_balance' (default, the PROTEUS production path: SPIDER-parity
+        BC with the CMB entropy gradient as an extra state, integrated by
+        SPIDER's ``bc.c:76-131`` formula
+        d/dt(dSdr_cmb) = (2/dr) ((-F_cmb area_cmb) fac_cmb - dSdt_s[0]),
+        fac_cmb = cp_cmb / (cp_core T_cmb tfac M_core); state length N+1),
+        'gradient' (entropy gradient as the primary state, S rebuilt by
+        integration from the surface; state length N+2),
+        'bower2018' (T_core as a state with F_cmb from conduction across the
+        bottom half cell, orders of magnitude below the true heat loss;
+        parity testing only) or 'core_module' (the aragog.core evolution
+        budget with dSdr_cmb and T_core as states; state length N+2).
+        Standalone callers that want the alpha-factor behaviour set
+        'quasi_steady' explicitly.
     """
 
     outer_boundary_condition: int
@@ -47,41 +65,7 @@ class BoundaryConfig:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
-    # Core boundary condition mode. Selects the formulation used
-    # when ``inner_boundary_condition = 1`` (core cooling).
-    #
-    #   'quasi_steady' = alpha-factor heat-flux partition between
-    #     the bottom mantle cell and the core, weighted by heat
-    #     capacity ratio. State vector length N (entropy only).
-    #     Default; produces stable cooling but underestimates the
-    #     true CMB heat loss relative to a SPIDER-parity reference.
-    #
-    #   'energy_balance' = SPIDER-parity core BC. The entropy
-    #     gradient at the CMB basic node is added as an extra state
-    #     variable (mirror of SPIDER's ``dSdxi[ind_cmb]``) and its
-    #     time derivative is integrated via SPIDER's ``bc.c:76-131``
-    #     formula:
-    #         d/dt(dSdr_cmb) = (2/dr) * ((-F_cmb*area_cmb)*fac_cmb
-    #                                    - dSdt_s[0])
-    #     where ``fac_cmb = cp_cmb / (cp_core*T_cmb*tfac*M_core)``.
-    #     State vector length N+1.
-    #
-    #   'gradient' = entropy gradient as the primary state field;
-    #     S is reconstructed by cumulative integration from the
-    #     surface. State vector length N+2.
-    #
-    #   'bower2018' = T_core as an ODE state variable with F_cmb
-    #     from conduction across the bottom half-cell. The
-    #     conduction-only flux underestimates true core heat loss
-    #     by orders of magnitude; this mode is retained for parity
-    #     testing only and is not recommended for production.
-    #
-    #   'core_module' = core evolution budget from aragog.core;
-    #     dSdr_cmb and T_core as ODE states. State vector length N+2.
-    #
-    # Default 'energy_balance' matches the PROTEUS production path.
-    # Standalone callers that want the legacy alpha-factor behaviour
-    # must set core_bc='quasi_steady' explicitly.
+    # Core boundary mode for inner_boundary_condition = 1 (see the class docstring).
     core_bc: str = 'energy_balance'
     # Flat parameter dict for core_bc='core_module'; keys documented in
     # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').

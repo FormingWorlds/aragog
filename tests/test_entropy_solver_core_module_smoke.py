@@ -511,10 +511,8 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
     )
     fd.solve()
     y_fd = fd._solution.y[:, -1]
-    # Same physics through both Jacobian paths. The interior parity
-    # carries the pre-existing numpy-vs-JAX RHS difference (~4e-4 at
-    # two mid-mantle nodes), so the trajectories agree at that level,
-    # not at integrator tolerance.
+    # Same physics through both Jacobian paths, to the shared numpy-vs-JAX RHS difference
+    # (about 4e-4 at two mid-mantle nodes), not to integrator tolerance.
     np.testing.assert_allclose(y_z[:n_stag], y_fd[:n_stag], rtol=5e-3)
     dT_z = float(y_z[n_stag + 1] - sol.y[n_stag + 1, 0])
     dT_fd = float(y_fd[n_stag + 1] - fd._solution.y[n_stag + 1, 0])

@@ -626,11 +626,8 @@ def dSdt_core_module(
     dSdt_per_s = dSdt_per_s + flux_out.heating / jnp.maximum(phase_stag.temperature, 1.0)
     dSdt_per_yr = dSdt_per_s * SECS_PER_YEAR
 
-    # ── boundary closure with the capacity swap ──
-    # dT_core/dt = (q_radio - F_cmb * A_cmb) / C_eff(T_core), with the
-    # 1 K floor mirroring the numpy path: the melting curve and adiabat
-    # are undefined at non-positive temperature and a transient
-    # integrator excursion must not evaluate them there.
+    # dT_core/dt = (q_radio - F_cmb A_cmb) / C_eff(T_core); the 1 K floor mirrors the numpy
+    # path, since the melting curve and adiabat are undefined at non-positive temperature.
     E_tot_cmb = heat_flux[0] * bc.cmb_area
     dT_core_dt_per_s = core_budget.dtcmb_dt(
         jnp.maximum(t_core, 1.0),

@@ -81,20 +81,8 @@ class _BoundaryConditionsParameters:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
-    # Core BC mode selector, threaded from config/boundary.py.
-    # Valid values: 'quasi_steady' (alpha-factor flux partition,
-    #               state vector length N),
-    #               'energy_balance' (SPIDER-parity dSdr_cmb evolution,
-    #               state vector length N+1),
-    #               'gradient' (entropy gradient as primary state,
-    #               length N+2),
-    #               'bower2018' (unrecommended; T_core as ODE state,
-    #               retained for parity testing only),
-    #               'core_module' (core evolution budget from
-    #               aragog.core; dSdr_cmb and T_core as ODE states,
-    #               length N+2).
-    # See aragog/config/boundary.py docstring for details.
-    # Default 'energy_balance' matches the PROTEUS production path.
+    # Core BC mode, threaded from config/boundary.py (modes and state lengths in the
+    # BoundaryConfig docstring); 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'
     # Flat parameter dict for core_bc='core_module'; keys documented in
     # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').

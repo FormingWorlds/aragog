@@ -100,11 +100,9 @@ def _cvode_flag_name(flag: int) -> str:
     return f'FLAG_{flag}'
 
 
-# Extra trailing ODE states appended after the N staggered entropies, in
-# slot order, per core_bc mode. The single authority for the extended
-# state layout: sizing, packing, and slot lookups derive from this map.
-# 'gradient' replaces the whole state vector (N+1 gradients plus S_surf)
-# instead of appending extras, so it is deliberately absent.
+# Extra ODE states after the N staggered entropies, in slot order, per core_bc mode: the
+# one authority for the extended layout. 'gradient' replaces the whole state vector
+# (N+1 gradients plus S_surf) instead of appending, so it is absent.
 EXTRA_STATE_SLOTS: dict[str, tuple[str, ...]] = {
     'quasi_steady': (),
     'energy_balance': ('dSdr_cmb',),
@@ -1779,10 +1777,8 @@ class EntropySolver:
         # Quasi-steady BC alpha factor uses (R_above/R_cmb)^2
         self._cmb_radius_ratio_sq = (r_above / r_cmb) ** 2
 
-        # core_module: build the core evolution budget once. The
-        # params dict is validated by the aragog.core constructors; the
-        # CMB radius always comes from the mesh so the budget and the
-        # solver cannot disagree on geometry.
+        # core_module: build the core budget once; the aragog.core constructors validate
+        # the params and the CMB radius comes from the mesh, so the geometries agree.
         if getattr(self, '_core_bc', None) == 'core_module' or (
             getattr(bc, 'core_bc', None) == 'core_module'
         ):
@@ -2376,10 +2372,8 @@ class EntropySolver:
             entropy = state_vec
             extra = None
 
-        # In energy_balance and core_module modes the first extra state
-        # IS the entropy gradient, and we pass it through to
-        # state.update() so the flux operator at the CMB basic node
-        # uses the boundary value rather than the FD-derived estimate.
+        # In energy_balance and core_module the first extra state is the CMB entropy
+        # gradient, passed to state.update() in place of the FD estimate at that node.
         if gradient_mode:
             pass  # state.update already called above with dSdr
         elif energy_balance or core_mod:
@@ -2417,10 +2411,8 @@ class EntropySolver:
             elif core_mod:
                 self.state._heat_flux[0] = self._core_module_cmb_flux(t_core, entropy[0])
             elif bower:
-                # bower2018 BC: F_cmb from one-sided Fourier conduction
-                # across the bottom half-cell with molecular
-                # conductivity. Orders of magnitude below convective
-                # transport; parity testing only.
+                # bower2018: F_cmb from molecular conduction across the bottom half cell,
+                # orders of magnitude below convective transport; parity testing only.
                 T_above = float(np.asarray(self.state.phase_staggered.temperature()).flat[0])
                 k_above = (
                     float(np.asarray(self.state.phase_staggered.thermal_conductivity()).flat[0])
@@ -2536,10 +2528,9 @@ class EntropySolver:
             return np.concatenate([dSdt, [d_dSdr_cmb_dt]])
 
         if core_mod:
-            # [S, dSdr_cmb, T_core]: the boundary gradient evolves by the
-            # energy_balance formula with the module's effective heat
-            # capacity in place of the isothermal-reservoir factor, and
-            # T_core integrates the same cooling rate.
+            # [S, dSdr_cmb, T_core]: the gradient evolves by the energy_balance formula with
+            # the module's effective capacity in place of the reservoir factor, and T_core
+            # integrates the same cooling rate.
             F_cmb_basic = float(self.state._heat_flux[0])
             T_cmb_basic = float(np.asarray(self.state.phase_basic.temperature()).flat[0])
             cp_cmb_basic = float(np.asarray(self.state.phase_basic.heat_capacity()).flat[0])
@@ -2747,10 +2738,8 @@ class EntropySolver:
             caller applies the per-year conversion.
         """
         q_cmb = F_cmb_basic * self._cmb_area
-        # Floor the integrated state before the budget sees it (same
-        # idiom as the T_cmb_basic clamp below): the melting curve and
-        # adiabat are undefined at non-positive temperature, and a
-        # transient integrator excursion must not evaluate them there.
+        # Floor the state before the budget sees it (as the T_cmb_basic clamp below): the
+        # melting curve and adiabat are undefined at non-positive temperature.
         dtcmb_fn = getattr(
             self, '_core_module_budget_dtcmb_dt', self._core_module_budget.dtcmb_dt
         )

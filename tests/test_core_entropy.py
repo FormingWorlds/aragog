@@ -26,12 +26,9 @@ pytestmark = pytest.mark.unit
 T_C = 4180.0
 SHARED = dict(rho_cen=12500.0, r_cmb=3480e3, p_cmb=136e9, c_p=840.0, length_scale=7272e3)
 
-# thermal_history cross-check constants, computed 2026-08-08 on the Nimmo
-# model-2 state (labrosse pressure, T_cmb = 4180 K, r_icb = 967.0 km,
-# 8000-point grid; energy.secular_cool/.latent_heat/.gravitational/
-# .cond_entropy/.radiogenic_heating with the numba-identity and
-# scipy-trapezoid shims). Es, Ek, Er agree exactly; the two boundary terms
-# carry the same 0.5% trapezoid-grid factor as the energy side.
+# thermal_history (energy.*) values on the Nimmo model-2 state (labrosse pressure, T_cmb
+# 4180 K, r_icb 967.0 km, 8000-point grid): Es, Ek, Er agree exactly; the two boundary
+# terms carry the 0.5 % trapezoid-grid factor of the energy side.
 TH_ES = 5.571710e22  # J/K^2, ratio to aragog 1.000000
 TH_EL = 8.305058e22  # J/K^2, ratio 0.99493
 TH_EG = 2.111343e23  # J/K^2, ratio 0.99493

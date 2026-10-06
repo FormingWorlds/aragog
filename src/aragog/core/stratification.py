@@ -42,11 +42,8 @@ def _thickness_primal(profiles, k_core, t_cmb, q_cmb):
     """Equilibrium layer thickness [m] by bisection; see the wrapper."""
     p = profiles
 
-    # Q_ad rises from the centre to its peak at D sqrt(3/2) and falls
-    # beyond; the layer base always sits on the rising branch, so the
-    # search runs on [0, min(r_peak, r_cmb)] where the profile is
-    # monotone. For Earth-scale cores the peak lies outside the CMB and
-    # this is the whole core.
+    # Q_ad peaks at D sqrt(3/2); the layer base sits on the rising branch, so the search
+    # runs on the monotone [0, min(r_peak, r_cmb)], the whole core for Earth-scale cores.
     r_peak = p.d_scale * jnp.sqrt(1.5)
     upper = jnp.minimum(r_peak, p.r_cmb)
 

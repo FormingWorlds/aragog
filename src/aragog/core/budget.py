@@ -390,11 +390,9 @@ class CoreEnergyBudget:
         p = self.profiles
         radius = self.r_icb(t_cmb)
         top = p.r_cmb if upper is None else upper
-        # A stratified layer reaching below the ICB leaves no convecting
-        # outer-core shell: clamp the top at the ICB so the integral
-        # closes gracefully to zero instead of flipping orientation
-        # (a negative half-width would negate both moments and defeat
-        # the mass guard below with a wrong-sign capacity).
+        # A layer below the ICB leaves no convecting shell: clamp the top at the ICB so the
+        # integral closes to zero rather than flipping sign (a negative half-width would
+        # negate both moments and pass the mass guard with a wrong-sign capacity).
         top = jnp.maximum(top, radius)
 
         def integrand(r):
