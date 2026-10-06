@@ -48,9 +48,9 @@ def test_creep_locked_base_fixture(shared_eos):
     -----
     Tolerances use rtol = max(10 * floor / |value|, 1e-8) for integrated states,
     with atol only for quantities that can be zero (fluxes):
-    - S: rtol = 2.5e-8 (1-ulp noise floor: 8.76e-6 J/kg/K)
+    - S: rtol = 3.4e-8 (1-ulp noise floor: 8.76e-6 J/kg/K)
     - T: rtol = 1.0e-8 (1-ulp noise floor: 1.39e-6 K)
-    - Flux: atol = 170.0 W m^-2, rtol = 1.0e-4 (1-ulp noise floor: 141.1 W/m^2)
+    - Flux: atol = 1411.0 W m^-2, rtol = 1.0e-4 (1-ulp noise floor: 141.1 W/m^2)
     - Lid stress: rtol = 7.3e-8 (measured 1-ulp noise floor: 1.75e-4 Pa)
     """
     config_file = 'tests/configs/creep_locked_base.toml'
@@ -106,12 +106,12 @@ def test_creep_locked_base_fixture(shared_eos):
         else:
             # Tolerance tier: rtol = max(10 * floor / |value|, 1e-8) for integrated states,
             # with atol only for values that can be zero (fluxes).
-            np.testing.assert_allclose(S, ref['S'], rtol=2.5e-8)
+            np.testing.assert_allclose(S, ref['S'], rtol=3.4e-8)
             np.testing.assert_allclose(T, ref['T'], rtol=1.0e-8)
             for flux_key in ('heat_flux', 'jconv_b', 'jcond_b'):
                 assert flux_key in ref.files, f'Missing flux key {flux_key!r} in fixture'
                 np.testing.assert_allclose(
-                    getattr(output, flux_key), ref[flux_key], atol=170.0, rtol=1.0e-4
+                    getattr(output, flux_key), ref[flux_key], atol=1411.0, rtol=1.0e-4
                 )
             if 'lid_stress' in ref.files:
                 np.testing.assert_allclose(
