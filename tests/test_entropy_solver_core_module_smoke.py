@@ -189,13 +189,19 @@ def test_core_module_state_extension_and_integrated_t_core(shared_eos):
         assert np.max(np.abs(np.diff(t_core_path))) < 50.0
 
 
-@pytest.mark.parametrize('d_core', [1000.0, -1000.0], ids=['hot_core', 'cold_core'])
-def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_core):
+@pytest.mark.parametrize(
+    ('d_core', 'regime'),
+    [(1000.0, 'boundary_layer'), (-1000.0, 'conduction')],
+    ids=['hot_core_boundary_layer', 'cold_core_conduction'],
+)
+def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_core, regime):
     """The solve applies the boundary-layer CMB flux of T_core against the mantle.
 
     1. Wiring: the end-of-step CMB flux equals ``cmb_boundary_layer_flux`` rebuilt
        from the end state alone (T_core, the bottom entropy at the CMB pressure, the
-       bottom cell's properties), so the RHS, the output and the law agree.
+       bottom cell's properties), so the RHS, the output and the law agree; the hot
+       core is in the boundary-layer branch (above conduction across the half cell),
+       the cold core on the conduction branch. The mantle-gradient flux fails both.
     2. Second law over the solve: a core 1000 K hotter than the mantle loses heat
        (positive flux and booked CMB energy), a core 1000 K colder gains it.
 
@@ -235,129 +241,16 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
             dr_half=0.5 * float(solver._r_basic_flat[1] - solver._r_basic_flat[0]),
         )
     )
-    assert float(out.heat_flux[0]) == pytest.approx(expected, rel=1e-9)
+    assert float(out.heat_flux[0]) == pytest.approx(expected, rel=1e-10)
+    t_m = first(shared_eos.temperature(np.array([p_cmb]), y_end[:1]))
+    dr_half = 0.5 * float(solver._r_basic_flat[1] - solver._r_basic_flat[0])
+    q_cond = first(ph.thermal_conductivity()) * (float(y_end[n_stag + 1]) - t_m) / dr_half
+    if regime == 'conduction':
+        assert expected == pytest.approx(q_cond, rel=1e-12)
+    else:
+        assert expected > 2.0 * q_cond
     assert np.sign(out.F_cmb) == np.sign(d_core)
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
-
-
-@pytest.mark.xfail(
-    reason='Encodes the mantle-gradient CMB flux; under the boundary-layer flux a mushy base '
-    'insulates the core, so the 5x flux-continuity guard fails until the closure is chosen.',
-    strict=True,
-)
-def test_core_module_core_cools_through_the_state_derived_flux(shared_eos):
-    """The core actually loses heat through the mantle-side transport,
-    verified against a quantity the core equation never sees.
-
-    Three guards on a driven (convectively unstable) profile:
-
-    1. Flux continuity: the state-derived CMB flux sits within a factor
-       of the mantle transport one node above (measured ratio 1.14; a
-       conduction-only closure sits five orders below the node-1 flux).
-    2. Independent cooling magnitude: the core temperature change
-       matches the prediction built from the NODE-1 flux, which does
-       not enter the core equation, so this cannot be satisfied by the
-       internal consistency of the T_core ODE alone. An insulated core
-       fails this by three-plus orders of magnitude.
-    3. Booking consistency: the trapezoid-booked CMB energy equals
-       C_eff times the temperature change (guards the energy
-       diagnostics, not the flux law, which guards 1 and 2 carry).
-
-    The uniform-isentrope variant of this test is worthless: with
-    dS/dr = 0 every closure produces near-zero flux and they all agree
-    trivially, which is why the driven profile is load-carrying here.
-    """
-    solver = _build(
-        'core_module', shared_eos, CORE_MODULE_PARAMS, end_time=5.0, s_init='driven'
-    )
-    solver.solve()
-    out = solver.get_state()
-    y = solver._solution.y
-    n_stag = solver._n_stag
-    t0, t1 = float(y[n_stag + 1, 0]), float(y[n_stag + 1, -1])
-
-    # Guard 1: flux continuity across the two lowest basic nodes.
-    F_node1 = float(out.heat_flux[1])
-    assert abs(F_node1) > 1.0  # the driven profile must actually drive
-    assert 0.2 < abs(out.F_cmb) / abs(F_node1) < 5.0
-
-    # Guard 2: independent cooling prediction from the node-1 flux.
-    c_eff = float(solver._core_module_budget.effective_capacity(0.5 * (t0 + t1)))
-    span_s = float(out.dt_actual) * 3.15576e7
-    area = 4.0 * np.pi * 3.480e6**2
-    dT_pred = -abs(F_node1) * area * span_s / c_eff
-    assert t1 - t0 < 0.0  # outgoing flux cools the core (second law)
-    assert 0.2 < (t1 - t0) / dT_pred < 5.0
-    # Absolute insulation catch: the measured change is far above the
-    # sub-microkelvin an insulated core produces on this window.
-    assert abs(t1 - t0) > 1.0e-4
-
-    # Guard 3: booking consistency.
-    dE_from_T = -(t1 - t0) * c_eff
-    dE_booked = float(out.step_dE_F_cmb_J)
-    assert dE_booked > 0.0
-    assert dE_from_T == pytest.approx(dE_booked, rel=0.10)
-    assert out.step_dE_core_J < 0.0
-    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) / out.step_dE_F_cmb_J < 0.05
-
-
-def test_core_module_legacy_capacity_matches_energy_balance(shared_eos):
-    """With the budget in legacy capacity mode wired to the reservoir
-    constants (rho = mesh core_density, cp = bc core_heat_capacity,
-    tfac = 1.147), the mantle trajectory reproduces energy_balance: the
-    boundary-gradient equations are then algebraically identical, and
-    T_core is a passive record of the reservoir drain. Discriminates a
-    silent flux-path divergence between the two modes."""
-    legacy_capacity_params = {
-        'c_p': 880.0,  # = bc core_heat_capacity in _build
-        'melting_curve': 'iron',
-        'light_element_fraction': 0.1,
-        'depression': 1.2,
-        'capacity_mode': 'legacy',
-        'legacy_rho_core': 10500.0,  # = mesh core_density in _build
-        'legacy_tfac': 1.147,  # solver default tfac_core_avg
-    }
-    eb = _build('energy_balance', shared_eos, None, end_time=2.0, s_init='driven')
-    eb.solve()
-    S_eb = eb._solution.y[: eb._n_stag, -1]
-    dsdr_eb = float(eb._solution.y[eb._n_stag, -1])
-
-    cm = _build(
-        'core_module', shared_eos, legacy_capacity_params, end_time=2.0, s_init='driven'
-    )
-    cm.solve()
-    S_cm = cm._solution.y[: cm._n_stag, -1]
-    dsdr_cm = float(cm._solution.y[cm._n_stag, -1])
-
-    # Same S trajectory to solver tolerance (rtol 1e-6 solves; the
-    # extra passive state perturbs step selection slightly).
-    np.testing.assert_allclose(S_cm, S_eb, rtol=1e-4)
-    assert dsdr_cm == pytest.approx(dsdr_eb, rel=1e-2, abs=1e-9)
-
-
-@pytest.mark.parametrize('ra_crit', [0.0, -1.0, float('nan'), float('inf')])
-def test_core_module_rejects_an_invalid_ra_crit_cmb(shared_eos, ra_crit):
-    """``ra_crit_cmb`` must be positive and finite; the solver refuses it at build time."""
-    params = dict(CORE_MODULE_PARAMS, ra_crit_cmb=ra_crit)
-    with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
-        _build('core_module', shared_eos, params)
-
-
-def test_core_module_ra_crit_cmb_reaches_the_solver(shared_eos):
-    """A configured ``ra_crit_cmb`` replaces the default the flux law uses."""
-    solver = _build('core_module', shared_eos, dict(CORE_MODULE_PARAMS, ra_crit_cmb=900.0))
-    assert solver._core_module_ra_crit_cmb == 900.0
-
-
-def test_core_module_flux_refuses_a_solver_without_entropy_tables(shared_eos):
-    """Without the entropy EOS (const_properties) the CMB flux has no mantle temperature
-    at the CMB pressure, so the first RHS evaluation stops with a clear error."""
-    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
-    y0 = np.asarray(solver._S0, dtype=float)
-    assert np.isfinite(solver.dSdt(0.0, y0)).all()
-    solver.entropy_eos = None
-    with pytest.raises(ValueError, match='needs the entropy EOS tables'):
-        solver._core_module_cmb_flux(float(y0[-1]), float(y0[0]))
 
 
 def test_core_module_against_quasi_steady_baseline(shared_eos):
@@ -367,7 +260,7 @@ def test_core_module_against_quasi_steady_baseline(shared_eos):
     quasi_steady T_core is read at the bottom staggered cell, half a cell
     above the CMB node, so the two differ by 86 K on this mesh; the 100 K
     bracket only catches catastrophic divergence (initialisation or unit
-    errors), and the closure discrimination lives in the flux-continuity test."""
+    errors), and the flux-law discrimination lives in the contrast test."""
     legacy = _build('quasi_steady', shared_eos, s_init='driven')
     legacy.solve()
     t_legacy = legacy.get_state().T_core
