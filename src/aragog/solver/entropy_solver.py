@@ -4211,7 +4211,7 @@ class EntropySolver:
                 t_quad_list = []
                 weight_list = []
                 for ta, tb in zip(boundaries[:-1], boundaries[1:]):
-                    # Generalized u-substitution removes the (T_onset - T)^(-1/2) cusp.
+                    # The u-substitution smooths the square-root cusp of C_lat and C_grav at onset.
                     is_nucleation_sub = (
                         max(ta, tb) <= t_onset + 1e-6
                         and min(ta, tb) >= t_freeze - 1e-6
