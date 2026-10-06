@@ -196,3 +196,8 @@ def test_quad_0_upper_matches_analytic_integral(ent):
         ent.budget._quad_0_upper(r_cmb, lambda r: legendre.legval(2.0 * r / r_cmb - 1.0, p94))
     )
     assert abs(result) < 1e-12 * r_cmb
+    upper = 0.4 * r_cmb
+    shifted = ent.budget._quad_0_upper(
+        upper, lambda r: 1.0 + legendre.legval(2.0 * r / upper - 1.0, p94)
+    )
+    assert float(shifted) == pytest.approx(upper, rel=1e-12)

@@ -1253,7 +1253,6 @@ def test_the_floor_reduces_the_capacity_outside_the_growth_band():
     full-to-floor ratio drops below 2 within 1 K of the onset and stays near 1.3 to 1.8
     (core_bc.md)."""
     import jax
-    import jax.numpy as jnp
 
     from aragog.core import build_core_module_budget
 
@@ -1263,17 +1262,14 @@ def test_the_floor_reduces_the_capacity_outside_the_growth_band():
     )
     t_on, t_fr = float(budget.t_onset), float(budget.t_freeze)
 
-    def ratio(t):
-        t = jnp.atleast_1d(jnp.asarray(t, dtype=float))
-        full = jax.vmap(lambda x: budget.effective_capacity(x, 1.0e14))(t)
-        floor = jax.vmap(lambda x: budget.effective_capacity(x, -1.0))(t)
-        return np.asarray(full / floor)
-
-    outside = ratio([t_on + 50.0, t_fr - 1.0])
-    assert np.all((600.0 < outside) & (outside < 800.0))
-    assert ratio(t_on - 1.0e-4)[0] > 20.0
-    band = ratio(np.linspace(t_on - 1.0, t_fr + 0.5, 200))
-    assert 1.2 < band.min() and band.max() < 1.9
+    capacity = jax.jit(jax.vmap(budget.effective_capacity))
+    band = np.linspace(t_on - 1.0, t_fr + 0.5, 200)
+    t = np.concatenate([[t_on + 50.0, t_fr - 1.0, t_on - 1.0e-8], band])
+    ratio = np.asarray(
+        capacity(t, np.full_like(t, 1.0e14)) / capacity(t, np.full_like(t, -1.0))
+    )
+    assert np.all((600.0 < ratio[:3]) & (ratio[:3] < 800.0))
+    assert 1.2 < ratio[3:].min() and ratio[3:].max() < 1.9
 
 
 def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():

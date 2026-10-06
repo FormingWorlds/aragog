@@ -126,6 +126,14 @@ def test_a_reset_keeps_the_budget_until_its_inputs_change():
     profiles = fresh._core_module_budget.profiles
     assert float(profiles.p_cmb) == float(fresh._P_basic_flat[0])
     assert float(profiles.r_cmb) == float(fresh._r_basic_flat[0])
+    # A CMB pressure set in the parameters keeps the budget when the mesh pressure moves.
+    fresh.parameters.boundary_conditions.core_module_params['p_cmb'] = 1.3e11
+    fresh._cache_bc_constants()
+    pinned = fresh._core_module_budget
+    fresh._P_basic_flat = fresh._P_basic_flat * 1.01
+    fresh._cache_bc_constants()
+    assert fresh._core_module_budget is pinned
+    assert float(pinned.profiles.p_cmb) == 1.3e11
 
 
 def test_a_failed_budget_build_fails_again_on_the_next_reset():

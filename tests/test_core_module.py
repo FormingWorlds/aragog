@@ -238,10 +238,11 @@ def test_every_documented_key_is_accepted():
 @pytest.mark.parametrize(
     ('drop', 'extra', 'match'),
     [
-        ('m_core', {}, 'needs both m_core and p_cen'),
-        ('p_cen', {'fit_profile': 1}, 'needs both m_core and p_cen'),
-        ('m_core', {'fit_profile': None}, 'needs both m_core and p_cen'),
-        ('p_cen', {'fit_profile': False}, 'needs both m_core and p_cen'),
+        ('m_core', {}, 'give both or neither'),
+        ('p_cen', {'fit_profile': 1}, 'give both or neither'),
+        ('m_core', {'fit_profile': None}, 'give both or neither'),
+        ('p_cen', {'fit_profile': False}, 'give both or neither'),
+        (('m_core', 'p_cen'), {'fit_profile': True}, 'needs both m_core and p_cen'),
         (None, {'fit_profile': 'false'}, 'must be true or false'),
         ('t_m1', {'melting_curve': 'quadratic'}, r"needs \['t_m1'\]"),
         (None, {'melting_curve': 'quadratic', 't_m2': None}, r"needs \['t_m2'\]"),
@@ -252,7 +253,8 @@ def test_incomplete_options_are_refused(drop, extra, match):
     boolean, and a quadratic curve without all three coefficients raise ValueError instead
     of a default profile or a TypeError."""
     params = {**FULL_PARAMS, **extra}
-    params.pop(drop, None)
+    for key in (drop,) if isinstance(drop, str) or drop is None else drop:
+        params.pop(key, None)
     with pytest.raises(ValueError, match=match):
         build_core_module_budget(params, r_cmb=3480e3, p_cmb_fallback=136e9)
 

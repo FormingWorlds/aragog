@@ -132,8 +132,10 @@ def build_core_module_budget(
         raise ValueError(f'fit_profile must be true or false, got {fit_profile!r}')
     given = (m_core is not None) + (p_cen is not None)
     fit = given == 2 if fit_profile is None else bool(fit_profile)
-    if given == 1 or (fit and given == 0):
-        raise ValueError('the profile fit needs both m_core and p_cen')
+    if given == 1:
+        raise ValueError('m_core and p_cen go together: give both or neither')
+    if fit and given == 0:
+        raise ValueError('fit_profile = true needs both m_core and p_cen')
 
     profile_kwargs = {k: params[k] for k in _PROFILE_KEYS if k in params}
     profile_kwargs['r_cmb'] = r_cmb
