@@ -1096,7 +1096,7 @@ def test_set_initial_entropy_warm_restart_and_warnings(caplog):
     assert s._S0[n_stag] == pytest.approx(1.5e-4)
     assert s._S0[n_stag + 1] == pytest.approx(3000.0)
     assert any(
-        'differs from the basal-node EOS temperature' in r.message for r in caplog.records
+        'differs from the mantle temperature at the CMB' in r.message for r in caplog.records
     )
 
     # Test n_stag < 2 fallback for dSdr_cmb_init

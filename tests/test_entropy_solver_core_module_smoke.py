@@ -57,6 +57,7 @@ def _build(
     solver_method: str = 'radau',
     s_init=None,
     use_jax_jacobian: bool = False,
+    core_offset: float | None = None,
 ):
     from aragog.parser import (
         Parameters,
@@ -155,6 +156,12 @@ def _build(
         solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
     else:
         solver.set_initial_entropy(s_init)
+    if core_offset is not None:
+        # Start the core core_offset above the bottom cell at the CMB pressure.
+        S = np.array(solver._S0[: solver._n_stag])
+        t_m = float(np.asarray(shared_eos.temperature(solver._P_basic_flat[:1], S[:1])).item())
+        solver.set_initial_core_temperature(t_m + core_offset)
+        solver.set_initial_entropy(S)
     return solver
 
 
@@ -204,8 +211,8 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     2. Second law over the solve: a core 1000 K hotter than the mantle loses heat
        (positive flux and booked CMB energy), a core 1000 K colder gains it.
 
-    The driven profile's base is mushy (phi 0.19, eta 7e19 Pa s), so the flux is small
-    (order 1 W/m^2) and the core temperature change over the window is below the
+    The driven profile's base is mushy (phi 0.19), so the flux is small (about 0.3 W/m^2
+    for the hot core) and the core temperature change over the window is below the
     integrator tolerance; the sign of the booked flux integral is the solve-level check.
     """
     from aragog.core import cmb_boundary_layer_flux
@@ -249,10 +256,17 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
         assert expected == pytest.approx(q_cond, rel=1e-12)
     else:
         assert expected > 2.0 * q_cond
-    # Node 0 of the output reports the applied closure and the mantle side of the contrast.
+    # Node 0 of the output is the bottom cell at the CMB pressure, carrying the applied flux
+    # as conduction; the gradient slot does not enter it.
     assert float(out.T_basic[0]) == pytest.approx(t_m, rel=1e-10)
-    node0 = out.jcond_b[0] + out.jconv_b[0] + out.jgrav_b[0] + out.jmix_b[0]
-    assert float(node0) == pytest.approx(expected, rel=1e-10)
+    assert float(out.jcond_b[0]) == pytest.approx(expected, rel=1e-10)
+    assert [out.jconv_b[0], out.jgrav_b[0], out.jmix_b[0]] == [0.0, 0.0, 0.0]
+    solver._solution.y[n_stag, -1] = 1.5 * y_end[n_stag] + 1e-4
+    again = solver.get_state()
+    for name in ('T_basic', 'phi_basic', 'cp_basic', 'rho_basic', 'porosity_b', 'dSdr_b'):
+        assert float(getattr(again, name)[0]) == pytest.approx(
+            float(getattr(out, name)[0]), rel=1e-12
+        )
     assert np.sign(out.F_cmb) == np.sign(d_core)
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
 
@@ -260,14 +274,19 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
 def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
     """Outside core_module the CMB node of the output is the state's own diagnostic: the
     temperature of the gradient-extrapolated basic node and the flux components the
-    state computed, which sum to the applied flux."""
+    state computed."""
     solver = _build('energy_balance', shared_eos, s_init='driven')
     solver.solve()
     out = solver.get_state()
     p_cmb = float(solver._P_basic_flat[0])
     t_m = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), out.S_final[:1])).item())
-    assert float(out.T_basic[0]) == float(solver.state.T_basic_diag[0])
-    assert float(out.jcond_b[0]) == float(solver.state.jcond[0])
+    state = solver.state
+    assert float(out.T_basic[0]) == pytest.approx(float(state.T_basic_diag[0]), rel=1e-15)
+    components = ('jcond_b', 'jconv_b', 'jgrav_b', 'jmix_b')
+    for name, attr in zip(components, ('jcond', 'jconv', 'jgrav_heat', 'jmix_heat')):
+        assert float(getattr(out, name)[0]) == pytest.approx(
+            float(getattr(state, attr)[0]), rel=1e-15
+        )
     assert abs(float(out.T_basic[0]) - t_m) > 1.0e-3
 
 
@@ -275,8 +294,8 @@ def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
 def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy(shared_eos):
     """A core 300 K above a liquid base (phi 0.65, eta about 50 Pa s) loses heat through the
     boundary layer fast enough to cool by about 1 K in 4 yr. The heat it loses is the heat
-    booked into the mantle (q_radio = 0), and it equals the budget's own content change
-    between the start and end core temperatures, an independent quadrature of C_eff."""
+    booked into the mantle (q_radio = 0), and it equals the budget's content change between
+    the start and end core temperatures (secular only, the core stays above nucleation)."""
     solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, end_time=4.0)
     S = np.linspace(7000.0, 6700.0, solver._n_stag)
     p_cmb = float(solver._P_basic_flat[0])
@@ -304,8 +323,9 @@ def test_core_module_refuses_a_non_physical_critical_rayleigh_number(shared_eos,
 
 def test_core_module_against_quasi_steady_baseline(shared_eos):
     """Cross-mode sanity on the same driven setup: both core temperatures
-    are finite, the module's integrated state cools under the outgoing
-    flux, and it sits within 5 K of the quasi_steady CMB basic node. The
+    are finite, the module's integrated state, started at the mantle
+    temperature, does not warm under the cooling base, and it sits within
+    5 K of the quasi_steady CMB basic node. The
     quasi_steady T_core is read at the bottom staggered cell, half a cell
     above the CMB node, so the two differ by 86 K on this mesh; the 100 K
     bracket only catches catastrophic divergence (initialisation or unit
@@ -322,8 +342,7 @@ def test_core_module_against_quasi_steady_baseline(shared_eos):
     t_module = out.T_core
 
     assert np.isfinite(t_legacy) and np.isfinite(t_module)
-    # Outgoing driven flux: the integrated core state must cool.
-    assert float(y[n_stag + 1, -1]) < float(y[n_stag + 1, 0])
+    assert float(y[n_stag + 1, -1]) <= float(y[n_stag + 1, 0])
     t_legacy_cmb = float(legacy.state.phase_basic.temperature()[0])
     assert abs(t_module - t_legacy_cmb) < 5.0
     assert abs(t_module - t_legacy) < 100.0
@@ -344,7 +363,7 @@ def test_core_module_missing_params_still_builds_with_defaults(shared_eos):
 
 
 def test_core_module_solves_through_cvode(shared_eos):
-    """core_module completes a driven solve through the CVODE production
+    """core_module completes a driven solve, core 50 K above the mantle, through the CVODE production
     integrator (FD Jacobian; no analytic-Jacobian factory is registered
     here) and lands on the Radau twin's answer. Guards the
     production path PROTEUS actually runs, which the scipy-only tests
@@ -358,6 +377,7 @@ def test_core_module_solves_through_cvode(shared_eos):
         end_time=2.0,
         solver_method='cvode',
         s_init='driven',
+        core_offset=50.0,
     )
     cv.solve()
     out_cv = cv.get_state()
@@ -373,6 +393,7 @@ def test_core_module_solves_through_cvode(shared_eos):
         end_time=2.0,
         solver_method='radau',
         s_init='driven',
+        core_offset=50.0,
     )
     rd.solve()
     out_rd = rd.get_state()
@@ -445,6 +466,7 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
         solver_method='cvode',
         s_init='driven',
         use_jax_jacobian=True,
+        core_offset=50.0,
     )
     args = _build_jax_pieces(zsolver)
     calls = {'n': 0}
@@ -482,6 +504,7 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
         solver_method='cvode',
         s_init='driven',
         use_jax_jacobian=False,
+        core_offset=50.0,
     )
     fd.solve()
     y_fd = fd._solution.y[:, -1]
@@ -492,16 +515,17 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
     np.testing.assert_allclose(y_z[:n_stag], y_fd[:n_stag], rtol=5e-3)
     dT_z = float(y_z[n_stag + 1] - sol.y[n_stag + 1, 0])
     dT_fd = float(y_fd[n_stag + 1] - fd._solution.y[n_stag + 1, 0])
-    assert dT_z < 0.0  # the core cools under the driven flux
+    assert dT_z < 0.0  # the core, 50 K above the mantle, cools
     assert dT_z == pytest.approx(dT_fd, rel=0.05)
 
 
 def test_nucleation_temperature_independent_of_mesh_resolution(shared_eos):
-    """Core profile and initial core temperature anchor at the CMB basic node.
+    """Core profile and initial core temperature anchor at the CMB.
 
     Asserts that the core hydrostatic pressure and inner-core nucleation
-    temperature do not vary with mantle mesh resolution, and that default
-    initial core temperature matches the CMB basic node temperature.
+    temperature do not vary with mantle mesh resolution, and that the default
+    initial core temperature is the bottom cell at the CMB pressure, so a
+    default start has no CMB flux.
     """
     s10 = _build('core_module', shared_eos, CORE_MODULE_PARAMS, n_nodes=10)
     s10.initialize()
@@ -527,11 +551,9 @@ def test_nucleation_temperature_independent_of_mesh_resolution(shared_eos):
     t_core_10 = float(s10._S0[s10._n_stag + 1])
     t_core_60 = float(s60._S0[s60._n_stag + 1])
 
-    s10.state.update(s_init_10, 0.0, dSdr_cmb=float(s10._S0[s10._n_stag]))
-    s60.state.update(s_init_60, 0.0, dSdr_cmb=float(s60._S0[s60._n_stag]))
-
-    t_cmb_node_10 = float(s10.state.phase_basic.temperature()[0])
-    t_cmb_node_60 = float(s60.state.phase_basic.temperature()[0])
-
-    assert t_core_10 == pytest.approx(t_cmb_node_10, abs=1e-6)
-    assert t_core_60 == pytest.approx(t_cmb_node_60, abs=1e-6)
+    for solver, s_init, t_core in ((s10, s_init_10, t_core_10), (s60, s_init_60, t_core_60)):
+        p_cmb = solver._P_basic_flat[:1]
+        t_m = float(np.asarray(shared_eos.temperature(p_cmb, s_init[:1])).item())
+        assert t_core == pytest.approx(t_m, rel=1e-12)
+        solver.dSdt(0.0, solver._S0)
+        assert float(solver.state.heat_flux[0]) == 0.0

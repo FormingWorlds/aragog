@@ -540,9 +540,9 @@ def dSdt_core_module(
     integrates the core budget's cooling rate under it. The boundary
     entropy gradient evolves by the ``dSdt_energy_balance`` balance with
     the budget's effective capacity, so the CMB basic node rides on the
-    core; the slot sets no flux and no reported quantity (the output reports
-    the bottom cell at the CMB pressure as the mantle-side CMB temperature),
-    and the CMB temperature is T_core. State layout:
+    core; the slot sets no flux and does not enter the reported CMB node,
+    which is the bottom cell carried to the CMB pressure, and the CMB
+    temperature is T_core. State layout:
 
         state_ext[0:N] = S at staggered nodes [J/kg/K]
         state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
@@ -574,10 +574,8 @@ def dSdt_core_module(
     dSdr_cmb = state_ext[n_stag]
     t_core = state_ext[n_stag + 1]
 
-    # Boundary-entropy reconstruction and flux assembly are identical
-    # to the energy_balance path: the state-tracked gradient sets the
-    # CMB basic-node entropy and the full physics pipeline evaluates
-    # the flux from it.
+    # The interior flux assembly is the energy_balance one, with the gradient slot setting the
+    # CMB basic-node entropy; the CMB flux itself is replaced below by the boundary-layer law.
     r_basic = mesh.radii_basic
     r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
     dr_offset = r_basic[0] - r_stag_0

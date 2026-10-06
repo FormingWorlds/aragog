@@ -99,10 +99,12 @@ def build_jax_rhs_and_jacobian(
     core_module_q_radio : float, default 0.0
         Constant core internal source power [W] for the core_module
         closure.
-    core_module_ra_crit_cmb : float, optional
+    core_module_ra_crit_cmb : float
         Critical Rayleigh number of the CMB boundary layer for the
-        core_module flux (``aragog.core.cmb_boundary_layer_flux``);
-        ``None`` uses ``aragog.core.RA_CRIT_CMB_DEFAULT``.
+        core_module flux (``aragog.core.cmb_boundary_layer_flux``),
+        the solver's ``_core_module_ra_crit_cmb``; required for
+        core_module, so the CVODE right-hand side cannot use a value
+        other than the solver's.
 
     Returns
     -------
@@ -217,16 +219,14 @@ def build_jax_rhs_and_jacobian(
 
     args_tuple = (eos_jax, phase_params, mesh_arrays, boundary_params, heating_jax, H_radio_fn)
     if core_bc_mode == 'core_module':
-        from aragog.core import RA_CRIT_CMB_DEFAULT
+        from aragog.core import check_ra_crit
 
         # The budget rides in the closure; its methods are pure JAX and
         # its parameters are Python floats, so jit treats it as static.
-        if core_module_ra_crit_cmb is None:
-            core_module_ra_crit_cmb = RA_CRIT_CMB_DEFAULT
         args_tuple = args_tuple + (
             core_module_budget,
             float(core_module_q_radio),
-            float(core_module_ra_crit_cmb),
+            check_ra_crit(core_module_ra_crit_cmb),
         )
 
     # Wrap RHS as a function of (t_phys, S_phys) only

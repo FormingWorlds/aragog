@@ -18,9 +18,24 @@ therefore has the sign of ``dT`` and is continuous at zero.
 
 from __future__ import annotations
 
+import math
+
 import jax.numpy as jnp
 
 RA_CRIT_CMB_DEFAULT = 450.0
+
+
+def check_ra_crit(ra_crit) -> float:
+    """Return the CMB critical Rayleigh number as a float.
+
+    Raises
+    ------
+    ValueError
+        When ``ra_crit`` is missing, not positive or not finite.
+    """
+    if ra_crit is None or not (math.isfinite(float(ra_crit)) and float(ra_crit) > 0.0):
+        raise ValueError(f'ra_crit_cmb must be positive and finite, got {ra_crit}')
+    return float(ra_crit)
 
 
 def cmb_boundary_layer_flux(

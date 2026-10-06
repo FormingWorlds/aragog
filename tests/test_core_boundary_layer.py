@@ -106,7 +106,7 @@ def test_convective_flux_follows_the_boundary_layer_scaling(change, factor):
     props = dict(_LIQUID, **{k: v for k, v in change.items() if k != 'dT'})
     got = _flux(change.get('dT', 100.0), props)
     assert got == pytest.approx(factor * _flux(100.0, _LIQUID), rel=1e-12)
-    assert got > 4.0 * change.get('dT', 100.0) / 1e4
+    assert got > props['conductivity'] * change.get('dT', 100.0) / props['dr_half']
 
 
 def test_flux_slope_on_each_side_of_zero_contrast():
@@ -118,9 +118,10 @@ def test_flux_slope_on_each_side_of_zero_contrast():
     def f(t_core):
         return cmb_boundary_layer_flux(t_core, 4000.0, **_LIQUID)
 
-    dT = 1e-9
-    slopes = np.asarray(jax.vmap(jax.grad(f))(np.array([4000.0 - dT, 4000.0 + dT])))
+    t_hot = 4000.0 + 1e-9
+    dT = t_hot - 4000.0  # the contrast the flux sees after rounding at 4000 K
+    slopes = np.asarray(jax.vmap(jax.grad(f))(np.array([4000.0 - 1e-9, t_hot])))
     q_hot = _flux(100.0, _LIQUID) * (dT / 100.0) ** (4.0 / 3.0)
-    assert slopes[0] == pytest.approx(4.0e-4, rel=1e-9)
-    assert float(f(4000.0 + dT)) == pytest.approx(q_hot, rel=1e-5)
-    assert slopes[1] == pytest.approx(4.0 * q_hot / (3.0 * dT), rel=1e-5)
+    assert slopes[0] == pytest.approx(4.0e-4, rel=1e-9, abs=0.0)
+    assert float(f(t_hot)) == pytest.approx(q_hot, rel=1e-9, abs=0.0)
+    assert slopes[1] == pytest.approx(4.0 * q_hot / (3.0 * dT), rel=1e-9, abs=0.0)

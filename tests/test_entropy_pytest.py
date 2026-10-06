@@ -2066,7 +2066,7 @@ class TestCoreModuleCoreBC:
         for extra in (10, 11):
             assert J[extra, 0] == 1.0 and J[extra, 1] == 1.0 and J[extra, 2] == 1.0
             assert J[0, extra] == 1.0 and J[1, extra] == 1.0
-        # The two boundary states feed each other (shared flux and rate).
+        # The pattern couples the two boundary states both ways (a superset).
         assert J[10, 11] == 1.0 and J[11, 10] == 1.0
         # No spurious coupling to a mid-mantle node.
         assert J[10, 6] == 0.0 and J[6, 11] == 0.0

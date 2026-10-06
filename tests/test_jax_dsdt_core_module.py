@@ -93,7 +93,7 @@ def test_factory_shape_contract_core_module():
         )
 
     good_scales = NonDimScales(state_scale=np.full(n + 2, 1.0), t_ref=1.0)
-    rhs_fn, jac_fn, info = build_jax_rhs_and_jacobian(
+    kwargs = dict(
         eos_jax=None,
         phase_params=None,
         mesh_arrays=None,
@@ -103,8 +103,14 @@ def test_factory_shape_contract_core_module():
         core_bc_mode='core_module',
         core_module_budget=budget,
     )
+    rhs_fn, jac_fn, info = build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=450.0)
     assert callable(rhs_fn) and callable(jac_fn)
     assert info['rhs_calls'] == 0
+    # The critical Rayleigh number must come from the caller (the solver's value), and be
+    # positive and finite.
+    for bad in (None, 0.0, -450.0, float('nan'), float('inf')):
+        with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
+            build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=bad)
 
 
 def _build_numpy_solver(shared_eos):
@@ -205,6 +211,7 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     args = _build_jax_pieces(solver)
     n_stag = solver._n_stag
     y0 = np.asarray(solver._S0, dtype=float)
+    y0[n_stag + 1] += 50.0  # a core 50 K above the mantle
 
     # Base evaluation
     f0 = np.asarray(dSdt_core_module(0.0, jnp.asarray(y0), args)).ravel()
@@ -259,7 +266,7 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
 @pytest.mark.slow
 @pytest.mark.reference_pinned
 @needs_eos
-def test_rhs_parity_with_numpy_on_driven_state():
+def test_rhs_parity_with_numpy_on_driven_state(monkeypatch):
     """The JAX RHS matches the numpy RHS component-by-component on the
     driven real-EOS state, including the dSdr_cmb and T_core slots.
 
@@ -277,6 +284,7 @@ def test_rhs_parity_with_numpy_on_driven_state():
     n_stag = solver._n_stag
 
     y0 = np.asarray(solver._S0, dtype=float)
+    y0[n_stag + 1] += 50.0  # a core 50 K above the mantle, so the CMB carries heat
     states = [y0]
     y1 = y0.copy()
     y1[n_stag] *= 2.0
@@ -333,17 +341,12 @@ def test_rhs_parity_with_numpy_on_driven_state():
     y_hot = y0.copy()
     y_hot[n_stag + 1] += 1000.0
     f_hot = np.asarray(solver.dSdt(0.0, y_hot)).ravel()
-    solver._core_module_ra_crit_cmb = 1800.0
-    try:
-        f_np_c = np.asarray(solver.dSdt(0.0, y_hot)).ravel()
-    finally:
-        solver._core_module_ra_crit_cmb = 450.0
+    monkeypatch.setattr(solver, '_core_module_ra_crit_cmb', 1800.0)
+    f_np_c = np.asarray(solver.dSdt(0.0, y_hot)).ravel()
     f_jax_c = np.asarray(
         dSdt_core_module(0.0, jnp.asarray(y_hot), args[:8] + (1800.0,))
     ).ravel()
-    for slot in (n_stag, n_stag + 1):
-        denom = max(abs(f_np_c[slot]), abs(f_jax_c[slot]), 1e-12)
-        assert abs(f_np_c[slot] - f_jax_c[slot]) / denom < 1e-8
+    np.testing.assert_allclose(f_np_c[n_stag:], f_jax_c[n_stag:], rtol=1e-8)
     assert f_hot[n_stag + 1] < f_np_c[n_stag + 1] < 0.0
 
 

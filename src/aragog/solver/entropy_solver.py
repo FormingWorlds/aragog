@@ -840,8 +840,9 @@ class SolverOutput:
     eddy_diff: npt.NDArray  # eddy diffusivity at basic nodes [m^2/s]
     cap_stag: npt.NDArray  # capacitance rho*T at staggered nodes
 
-    # Flux components at basic nodes from the final state, for diagnostic output (PROTEUS
-    # write_flux_diagnostics); at the end nodes they omit the boundary conditions.
+    # Basic-node diagnostics of the final state (PROTEUS write_flux_diagnostics); the flux
+    # components omit the boundary conditions at the end nodes, except core_module node 0, which
+    # holds the applied CMB flux at the bottom cell carried to the CMB pressure.
     jcond_b: npt.NDArray  # conductive flux [W/m^2]
     jconv_b: npt.NDArray  # convective flux [W/m^2]
     jgrav_b: npt.NDArray  # grav-sep contribution to heat flux [W/m^2]
@@ -1785,14 +1786,13 @@ class EntropySolver:
         if getattr(self, '_core_bc', None) == 'core_module' or (
             getattr(bc, 'core_bc', None) == 'core_module'
         ):
-            from aragog.core import RA_CRIT_CMB_DEFAULT, build_core_module_budget
+            from aragog.core import RA_CRIT_CMB_DEFAULT, build_core_module_budget, check_ra_crit
 
             params = dict(getattr(bc, 'core_module_params', None) or {})
             self._core_module_q_radio = float(params.pop('q_radio', 0.0))
-            ra_crit = float(params.pop('ra_crit_cmb', RA_CRIT_CMB_DEFAULT))
-            if not (np.isfinite(ra_crit) and ra_crit > 0.0):
-                raise ValueError(f'ra_crit_cmb must be positive and finite, got {ra_crit}')
-            self._core_module_ra_crit_cmb = ra_crit
+            self._core_module_ra_crit_cmb = check_ra_crit(
+                params.pop('ra_crit_cmb', RA_CRIT_CMB_DEFAULT)
+            )
             self._core_module_budget = build_core_module_budget(
                 params, r_cmb=r_cmb, p_cmb_fallback=float(self._P_basic_flat[0])
             )
@@ -2080,19 +2080,11 @@ class EntropySolver:
             if (
                 T_core_init is None or core_bc == 'core_module'
             ) and self.entropy_eos is not None:
+                # core_module: the bottom cell at the CMB pressure, the mantle side of the
+                # contrast the boundary-layer flux acts on, so the default start has no flux.
                 P_bot, S_bot = float(self._P_stag_flat[0]), float(S_arr[0])
-                if 'dSdr_cmb' in slots:
+                if core_bc == 'core_module':
                     P_bot = float(getattr(self, '_P_basic_flat', self._P_stag_flat)[0])
-                    radii = getattr(
-                        getattr(getattr(self.evaluator, 'mesh', None), 'basic', None),
-                        'radii',
-                        None,
-                    )
-                    if radii is not None:
-                        r_basic = np.asarray(radii).ravel()
-                        S_bot += float(dSdr_cmb_init) * (
-                            r_basic[0] - 0.5 * (r_basic[0] + r_basic[1])
-                        )
                 T_bottom_eos = float(
                     np.asarray(
                         self.entropy_eos.temperature(np.array([P_bot]), np.array([S_bot]))
@@ -2116,7 +2108,7 @@ class EntropySolver:
                 # a large offset only slowly, shifting nucleation timing.
                 logger.warning(
                     'core_module: initial T_core=%.0f K differs from the '
-                    'basal-node EOS temperature %.0f K by more than 20%%; '
+                    'mantle temperature at the CMB %.0f K by more than 20%%; '
                     'the CMB flux relaxes the offset at the rate the basal '
                     'boundary layer allows, which shifts inner-core nucleation timing.',
                     T_core_init,
@@ -2930,10 +2922,9 @@ class EntropySolver:
                 if 0 <= j < n_stag:
                     J[i, j] = 1.0
 
-        # Every extra boundary state couples to S[0..2] and to every
-        # other extra state (core_module: dSdr_cmb and T_core feed each
-        # other through the shared CMB flux and cooling rate), and
-        # S[0], S[1] gain couplings back via boundary-flux feedback.
+        # A superset pattern: every extra state couples to S[0..2] and to the other extra
+        # states (core_module: dSdr_cmb follows T_core's cooling rate), and S[0], S[1]
+        # couple back through the CMB flux.
         for extra in range(n_stag, N):
             J[extra, 0] = 1.0
             J[extra, 1] = 1.0
@@ -4656,8 +4647,12 @@ class EntropySolver:
             rho_stag = np.full_like(S_final, pm.const_rho)
 
         # Refresh the state at the final entropy through the RHS, so the boundary
-        # fluxes are the ones the integrator applied.
-        self._dSdt_single(sol.t[-1], sol.y[:, -1])
+        # fluxes are the ones the integrator applied; core_module zeroes the gradient
+        # slot, so the CMB node is the bottom cell carried to the CMB pressure.
+        y_diag = sol.y[:, -1].copy()
+        if self._core_bc == 'core_module':
+            y_diag[n_stag] = 0.0
+        self._dSdt_single(sol.t[-1], y_diag)
         visc_stag = np.asarray(self.state.phase_staggered.viscosity()).ravel()
         heat_flux = self.state.heat_flux.copy()
         heating = self.state.heating.copy()
@@ -4675,12 +4670,9 @@ class EntropySolver:
         cp_basic_diag = self.state.cp_basic_diag.copy()
         rho_basic_diag = self.state.rho_basic_diag.copy()
         if self._core_bc == 'core_module':
-            # Node 0 reports the applied closure, conduction across the thinner of the half
-            # cell and the boundary layer, and the mantle side of the CMB contrast.
+            # Node 0 carries the applied closure: conduction across the thinner of the half
+            # cell and the boundary layer.
             jcond_b[0], jconv_b[0], jgrav_b[0], jmix_b[0] = heat_flux[0], 0.0, 0.0, 0.0
-            T_basic_diag[0] = np.asarray(
-                eos.temperature(self._P_basic_flat[0], S_final[0])
-            ).flat[0]
         # Phase-boundary quantities at the basic nodes, for consumers that compute melt drainage.
         ph = self.state.phase_basic
         porosity_b, rho_solid_b, rho_melt_b, g_b = (

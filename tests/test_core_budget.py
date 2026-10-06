@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from scipy.integrate import quad
+from scipy.integrate import quad, simpson
 
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
@@ -353,17 +353,20 @@ def test_heat_content_is_the_capacity_integral_below_onset(prof):
     assert t2 > budget.t_freeze
     nodes = np.linspace(t2, t1, 101)
     c = np.asarray(jax.jit(jax.vmap(budget.effective_capacity))(nodes))
-    h = nodes[1] - nodes[0]
-    reference = -(h / 3.0) * (c[0] + c[-1] + 4.0 * c[1:-1:2].sum() + 2.0 * c[2:-1:2].sum())
+    reference = -simpson(c, x=nodes)
     got = budget.heat_content(t2) - budget.heat_content(t1)
     assert got == pytest.approx(reference, rel=1e-6)
     secular = (t1 - t2) * float(budget.secular_capacity())
     assert abs(got + secular) > 1.0e-2 * secular
     t_hot = budget.t_onset + 10.0
-    assert budget.heat_content(t_hot) == t_hot * float(budget.secular_capacity())
-    budget.stratification = True
+    assert budget.heat_content(t_hot) == pytest.approx(
+        t_hot * float(budget.secular_capacity()), rel=1e-15
+    )
+    stratified = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, stratification=True, k_core=40.0
+    )
     with pytest.raises(ValueError, match='stratified'):
-        budget.heat_content(t1)
+        stratified.heat_content(t1)
 
 
 @pytest.mark.slow
