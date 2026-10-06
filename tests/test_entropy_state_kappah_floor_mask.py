@@ -43,9 +43,6 @@ Testing standards: ../docs/How-to/build_tests.md. Physics context:
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -53,7 +50,7 @@ import pytest
 from aragog.jax.phase import MeshArrays, PhaseParams, PhaseProperties, compute_mlt
 from aragog.solver.entropy_state import apply_kappah_floor
 from aragog.utilities import tanh_weight
-from tests.conftest import entropy_eos_copy
+from tests.conftest import EOS_DIR, entropy_eos_copy
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30, method='signal')]
 
@@ -259,17 +256,6 @@ def test_numpy_floor_gating_is_a_strict_stable_vs_convecting_contrast():
 # End-to-end numpy EntropyState.update floor (needs SPIDER P-S EOS tables).
 # ---------------------------------------------------------------------------
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_FWL_DATA = os.environ.get('FWL_DATA')
-_CANDIDATES = [
-    os.environ.get('ARAGOG_TEST_EOS_DIR'),
-    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
-]
-EOS_DIR = next(
-    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
-    Path(_CANDIDATES[-1]),
-)
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
     reason=f'SPIDER P-S tables not found at {EOS_DIR}.',

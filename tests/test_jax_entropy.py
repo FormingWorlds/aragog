@@ -14,22 +14,13 @@ Table-dependent tests use the @needs_eos skip marker.
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
 from scipy.constants import Stefan_Boltzmann
 
-from tests.conftest import entropy_eos_copy, entropy_eos_jax
+from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax
 
 # EOS directory (same as test_entropy_pytest.py)
-EOS_DIR = Path(
-    os.environ.get(
-        'ARAGOG_TEST_EOS_DIR',
-        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-    )
-)
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),

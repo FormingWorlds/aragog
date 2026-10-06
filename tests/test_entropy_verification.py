@@ -13,22 +13,13 @@ Test hierarchy:
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy.constants import Stefan_Boltzmann
 from scipy.integrate import solve_ivp
 
-from tests.conftest import entropy_eos_copy
-
-EOS_DIR = Path(
-    os.environ.get(
-        'ARAGOG_TEST_EOS_DIR',
-        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-    )
-)
+from tests.conftest import EOS_DIR, entropy_eos_copy
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
