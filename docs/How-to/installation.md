@@ -65,7 +65,7 @@ To add the documentation and test toolchains, combine extras:
 
 ```sh
 pip install -e ".[docs]"          # Zensical, mkdocstrings (build the docs site)
-pip install -e ".[test]"          # pytest, pytest-cov, pytest-xdist, pytest-dependency
+pip install -e ".[test]"          # pytest, pytest-cov, pytest-xdist, pytest-dependency, pytest-timeout
 pip install -e ".[docs,test,jax]" # full development install
 ```
 

@@ -45,6 +45,7 @@ test = [
     "pytest>=8.1",
     "pytest-cov>=1.0.0",
     "pytest-dependency>=0.6.0",
+    "pytest-timeout>=2.1.0",
     "pytest-xdist>=3.0.0",
 ]
 docs = [
@@ -91,6 +92,7 @@ version_file = "src/aragog/_version.py"
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "--strict-markers"
+required_plugins = ["pytest-timeout"]
 markers = [
     "unit: Unit tests (fast, no external data)",
     "smoke: Integration tests (may need external data)",
