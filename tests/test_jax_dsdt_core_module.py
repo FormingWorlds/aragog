@@ -177,6 +177,7 @@ def _build_jax_pieces(solver):
         _no_radio,
         solver._core_module_budget,
         float(solver._core_module_q_radio),
+        float(solver._core_module_ra_crit_cmb),
     )
     return args
 
@@ -195,9 +196,9 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
        T_core non-positive (e.g. -50 K), the 1.0 K floor inside dSdt_core_module
        prevents passing non-positive temperatures to the budget, ensuring the
        RHS evaluates at the 1 K floor value and remains finite.
-    4. Gradient sensitivity: perturbing dSdr_cmb changes the CMB heat flux
-       and modifies the cooling rate dT_core/dt with the physical sign and
-       linear symmetry under +-1e-5 perturbations.
+    4. Flux law: the gradient slot does not change the core or the bottom
+       cell, and the sign of the core rate follows T_core against the
+       mantle (a colder core is heated).
     """
 
     solver = _build_numpy_solver(entropy_eos_copy())
@@ -224,7 +225,7 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
                 self.inner.dtcmb_dt(t_cmb, q_cmb, q_sources=q_sources),
             )
 
-    args_guarded = (*args[:6], GuardedBudget(args[6]), args[7])
+    args_guarded = (*args[:6], GuardedBudget(args[6]), *args[7:])
     y_floor = y0.copy()
     y_floor[n_stag + 1] = 1.0
     f_floor = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_floor), args_guarded)).ravel()
@@ -237,22 +238,22 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     assert np.all(np.isfinite(f_exc))
     np.testing.assert_allclose(np.asarray(f_exc), np.asarray(f_floor), rtol=1e-12)
 
-    # Sensitivity test: perturbing dSdr_cmb changes cooling rate physically
-    delta_s = 1e-5
-    y_plus = y0.copy()
-    y_plus[n_stag] += delta_s
-    f_plus = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_plus), args)).ravel()
-    y_minus = y0.copy()
-    y_minus[n_stag] -= delta_s
-    f_minus = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_minus), args)).ravel()
+    # The gradient slot no longer sets the flux: perturbing it leaves the core and the
+    # bottom cell unchanged.
+    y_slot = y0.copy()
+    y_slot[n_stag] += 1e-5
+    f_slot = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_slot), args)).ravel()
+    assert f_slot[n_stag + 1] == f0[n_stag + 1]
+    assert f_slot[0] == f0[0]
 
-    delta_plus = float(f_plus[n_stag + 1] - f0[n_stag + 1])
-    delta_minus = float(f_minus[n_stag + 1] - f0[n_stag + 1])
-    # A less negative gradient (+delta) gives slower cooling: Delta(dT_core/dt) > 0
-    assert delta_plus > 0.0
-    assert delta_minus < 0.0
-    # Symmetry within a few percent
-    assert abs(delta_plus + delta_minus) / abs(delta_plus) < 0.05
+    # A hotter core loses heat faster and heats the bottom cell; a core colder than the
+    # mantle is heated and cools the bottom cell (second law at the CMB).
+    for d_core, core_sign in ((10.0, -1.0), (-1000.0, 1.0)):
+        y_core = y0.copy()
+        y_core[n_stag + 1] += d_core
+        f_core = np.asarray(dSdt_core_module(0.0, jnp.asarray(y_core), args)).ravel()
+        assert np.sign(f_core[n_stag + 1]) == core_sign
+        assert np.sign(f_core[0] - f0[0]) == -core_sign
 
 
 @pytest.mark.slow
@@ -314,7 +315,7 @@ def test_rhs_parity_with_numpy_on_driven_state():
     f_jax_base = np.asarray(dSdt_core_module(0.0, jnp.asarray(y0), args)).ravel()
     q_radio = 5.0e12
     solver._core_module_q_radio = q_radio
-    args_r = args[:7] + (q_radio,)
+    args_r = args[:7] + (q_radio,) + args[8:]
     try:
         f_np_r = np.asarray(solver.dSdt(0.0, y0)).ravel()
     finally:
@@ -333,10 +334,11 @@ def test_rhs_parity_with_numpy_on_driven_state():
 def test_jacobian_carries_boundary_couplings():
     """``jacrev`` through the RHS (budget custom-JVP included) yields a
     finite Jacobian whose T_core row and column carry the couplings the
-    sparsity pattern promises: dT_core_dt responds to dSdr_cmb (through
-    the flux) and the basal entropy responds to T_core (through the
-    boundary balance). A zero cross-coupling here means the custom JVP
-    was lost and CVODE's Newton would iterate on wrong derivatives.
+    sparsity pattern promises: dT_core_dt responds to the bottom cell and
+    to T_core (through the boundary-layer flux), and the bottom cell
+    responds to T_core (it receives the same flux). A zero cross-coupling
+    here means the custom JVP was lost and CVODE's Newton would iterate on
+    wrong derivatives.
     """
     solver = _build_numpy_solver(entropy_eos_copy())
     args = _build_jax_pieces(solver)
@@ -360,23 +362,19 @@ def test_jacobian_carries_boundary_couplings():
     J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(y0))
     assert J.shape == (n_stag + 2, n_stag + 2)
     assert np.all(np.isfinite(J))
-    # dT_core/dt depends on the flux, which depends on the gradient state.
-    assert abs(J[n_stag + 1, n_stag]) > 0.0
-    # dT_core/dt depends on T_core through C_eff(T_core): this element
-    # is nonzero only because reverse-mode survives the budget's custom
-    # JVP through the inner-core bisection; a lost rule reads zero here.
+    # dT_core/dt depends on the flux, which depends on T_core and on the bottom cell's
+    # entropy, but not on the gradient slot (it only defines T_cmb_node).
+    assert abs(J[n_stag + 1, 0]) > 0.0
+    assert J[n_stag + 1, n_stag] == 0.0
+    # dT_core/dt depends on T_core through the flux and C_eff(T_core); the C_eff part
+    # survives only because reverse-mode keeps the budget's custom JVP.
     assert abs(J[n_stag + 1, n_stag + 1]) > 0.0
-    # The gradient equation couples to itself (flux feedback) and to
-    # T_core (the boundary balance rides on the cooling rate).
-    assert abs(J[n_stag, n_stag]) > 0.0
+    # The gradient slot rides on the cooling rate.
     assert abs(J[n_stag, n_stag + 1]) > 0.0
-    # The basal ENTROPY equation does NOT couple to T_core directly:
-    # the core reaches the mantle only through the integrated gradient
-    # state, never instantaneously. The sparsity pattern is a superset;
-    # this pins the physics.
-    assert J[0, n_stag + 1] == 0.0
-    # ... while the boundary-gradient state drives it strongly.
-    assert abs(J[0, n_stag]) > 0.0
+    # The bottom cell receives the CMB flux directly, so it couples to T_core and no
+    # longer to the gradient slot.
+    assert abs(J[0, n_stag + 1]) > 0.0
+    assert J[0, n_stag] == 0.0
 
 
 @pytest.mark.slow
@@ -401,7 +399,10 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
     strat = _build('core_module', eos, strat_params)  # uniform isentrope
     plain = _build('core_module', eos, CORE_MODULE_PARAMS)
     n_stag = strat._n_stag
+    # The isentrope starts T_core at the mantle CMB temperature (zero flux); 1 K hotter
+    # drives a small, deeply subadiabatic flux (5.8e-5 W/m^2 through the mushy base).
     y0 = np.asarray(strat._S0, dtype=float)
+    y0[n_stag + 1] += 1.0
 
     f_np = np.asarray(strat.dSdt(0.0, y0)).ravel()
     args = _build_jax_pieces(strat)
@@ -413,7 +414,9 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
     # The reduced convecting volume amplifies the cooling response: the
     # stratified T_core rate exceeds the unstratified twin's at the same
     # state by well over the parity tolerance.
-    f_plain = np.asarray(plain.dSdt(0.0, np.asarray(plain._S0, dtype=float))).ravel()
+    y_plain = np.asarray(plain._S0, dtype=float)
+    y_plain[n_stag + 1] += 1.0
+    f_plain = np.asarray(plain.dSdt(0.0, y_plain)).ravel()
     assert abs(f_np[n_stag + 1]) > 2.0 * abs(f_plain[n_stag + 1])
 
     J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(jnp.asarray(y0)))

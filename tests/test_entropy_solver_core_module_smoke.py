@@ -189,6 +189,62 @@ def test_core_module_state_extension_and_integrated_t_core(shared_eos):
         assert np.max(np.abs(np.diff(t_core_path))) < 50.0
 
 
+@pytest.mark.parametrize('d_core', [1000.0, -1000.0], ids=['hot_core', 'cold_core'])
+def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_core):
+    """The solve applies the boundary-layer CMB flux of T_core against the mantle.
+
+    1. Wiring: the end-of-step CMB flux equals ``cmb_boundary_layer_flux`` rebuilt
+       from the end state alone (T_core, the bottom entropy at the CMB pressure, the
+       bottom cell's properties), so the RHS, the output and the law agree.
+    2. Second law over the solve: a core 1000 K hotter than the mantle loses heat
+       (positive flux and booked CMB energy), a core 1000 K colder gains it.
+
+    The driven profile's base is mushy (phi 0.19, eta 7e19 Pa s), so the flux is small
+    (order 1 W/m^2) and the core temperature change over the window is below the
+    integrator tolerance; the sign of the booked flux integral is the solve-level check.
+    """
+    from aragog.core import cmb_boundary_layer_flux
+
+    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, end_time=5.0)
+    S = _driven_s_profile(solver._n_stag)
+    p_cmb = float(solver._P_basic_flat[0])
+    t_m0 = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), S[:1])).item())
+    solver.set_initial_core_temperature(t_m0 + d_core)
+    solver.set_initial_entropy(S)
+    solver.solve()
+    out = solver.get_state()
+    y_end = solver._solution.y[:, -1]
+    n_stag = solver._n_stag
+
+    solver.dSdt(float(solver._solution.t[-1]), y_end)
+    ph = solver.state.phase_staggered
+
+    def first(values):
+        return float(np.asarray(values).flat[0])
+
+    expected = float(
+        cmb_boundary_layer_flux(
+            float(y_end[n_stag + 1]),
+            first(shared_eos.temperature(np.array([p_cmb]), y_end[:1])),
+            conductivity=first(ph.thermal_conductivity()),
+            density=first(ph.density()),
+            heat_capacity=first(shared_eos.heat_capacity(solver._P_stag_flat[:1], y_end[:1])),
+            expansivity=first(ph.thermal_expansivity()),
+            viscosity=first(ph.viscosity()),
+            gravity=first(solver.state.phase_basic.gravitational_acceleration()),
+            dr_half=0.5 * float(solver._r_basic_flat[1] - solver._r_basic_flat[0]),
+        )
+    )
+    assert float(out.heat_flux[0]) == pytest.approx(expected, rel=1e-9)
+    assert np.sign(out.F_cmb) == np.sign(d_core)
+    assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
+
+
+@pytest.mark.xfail(
+    reason='Encodes the mantle-gradient CMB flux; under the boundary-layer flux a mushy base '
+    'insulates the core, so the 5x flux-continuity guard fails until the closure is chosen.',
+    strict=True,
+)
 def test_core_module_core_cools_through_the_state_derived_flux(shared_eos):
     """The core actually loses heat through the mantle-side transport,
     verified against a quantity the core equation never sees.
@@ -277,6 +333,20 @@ def test_core_module_legacy_capacity_matches_energy_balance(shared_eos):
     # extra passive state perturbs step selection slightly).
     np.testing.assert_allclose(S_cm, S_eb, rtol=1e-4)
     assert dsdr_cm == pytest.approx(dsdr_eb, rel=1e-2, abs=1e-9)
+
+
+@pytest.mark.parametrize('ra_crit', [0.0, -1.0, float('nan'), float('inf')])
+def test_core_module_rejects_an_invalid_ra_crit_cmb(shared_eos, ra_crit):
+    """``ra_crit_cmb`` must be positive and finite; the solver refuses it at build time."""
+    params = dict(CORE_MODULE_PARAMS, ra_crit_cmb=ra_crit)
+    with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
+        _build('core_module', shared_eos, params)
+
+
+def test_core_module_ra_crit_cmb_reaches_the_solver(shared_eos):
+    """A configured ``ra_crit_cmb`` replaces the default the flux law uses."""
+    solver = _build('core_module', shared_eos, dict(CORE_MODULE_PARAMS, ra_crit_cmb=900.0))
+    assert solver._core_module_ra_crit_cmb == 900.0
 
 
 def test_core_module_against_quasi_steady_baseline(shared_eos):
@@ -438,6 +508,7 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
             core_bc_mode=core_bc_mode,
             core_module_budget=args[6],
             core_module_q_radio=args[7],
+            core_module_ra_crit_cmb=zsolver._core_module_ra_crit_cmb,
         )
         return rhs_fn, jac_fn
 

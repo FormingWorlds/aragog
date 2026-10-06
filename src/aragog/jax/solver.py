@@ -27,6 +27,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.constants import Stefan_Boltzmann
 
+from aragog.core.boundary_layer import cmb_boundary_layer_flux
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.jax.phase import (
     MeshArrays,
@@ -533,11 +534,14 @@ def dSdt_core_module(
 ) -> jax.Array:
     """RHS for the core_module core BC mode (extended state, N+2).
 
-    Mirrors the numpy ``EntropySolver._core_module_rhs_per_s`` closure:
-    the boundary entropy gradient evolves by the same SPIDER balance as
-    ``dSdt_energy_balance``, with the isothermal-reservoir factor
-    replaced by the core evolution budget's effective heat
-    capacity, and T_core integrates the same cooling rate. State layout:
+    Mirrors the numpy ``EntropySolver._core_module_rhs_per_s`` closure.
+    The CMB flux is ``aragog.core.cmb_boundary_layer_flux`` of T_core and
+    the bottom cell, shared by the bottom cell and the core, and T_core
+    integrates the core budget's cooling rate under it. The boundary
+    entropy gradient evolves by the ``dSdt_energy_balance`` balance with
+    the budget's effective capacity, so the CMB basic node rides on the
+    core; the slot only defines the reported mantle-side node temperature
+    ``T_cmb_node``, and the CMB temperature is T_core. State layout:
 
         state_ext[0:N] = S at staggered nodes [J/kg/K]
         state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
@@ -551,9 +555,10 @@ def dSdt_core_module(
         Extended state vector (entropy, dSdr_cmb, T_core).
     args : tuple
         ``(eos, params, mesh, bc, heating_static, H_radio_fn,
-        core_budget, q_radio_core)``: the ``dSdt`` six plus the
+        core_budget, q_radio_core, ra_crit)``: the ``dSdt`` six plus the
         ``aragog.core.CoreEnergyBudget`` whose ``dtcmb_dt`` closes the
-        boundary, and the constant core internal source power [W].
+        boundary, the constant core internal source power [W], and the
+        critical Rayleigh number of the CMB boundary layer.
 
     Returns
     -------
@@ -561,7 +566,7 @@ def dSdt_core_module(
         d(state_ext)/dt at the same layout, [J/kg/K/yr] for entropy,
         [J/kg/K/m/yr] for dSdr_cmb, [K/yr] for T_core.
     """
-    eos, params, mesh, bc, heating_static, H_radio_fn, core_budget, q_radio_core = args
+    eos, params, mesh, bc, heating_static, H_radio_fn, core_budget, q_radio_core, ra_crit = args
     heating = heating_static + H_radio_fn(t)
     n_stag = mesh.P_stag.shape[0]
     S = state_ext[:n_stag]
@@ -595,10 +600,25 @@ def dSdt_core_module(
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
     heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
+    # The CMB flux is set by T_core against the bottom cell's entropy at the CMB pressure.
+    heat_flux = heat_flux.at[0].set(
+        cmb_boundary_layer_flux(
+            jnp.maximum(t_core, 1.0),
+            eos.temperature(mesh.P_basic[0], S[0]),
+            conductivity=phase_stag.thermal_conductivity[0],
+            density=phase_stag.density[0],
+            heat_capacity=eos.heat_capacity(mesh.P_stag[0], S[0]),
+            expansivity=phase_stag.thermal_expansivity[0],
+            viscosity=phase_stag.viscosity[0],
+            gravity=mesh.gravity[0],
+            dr_half=r_stag_0 - r_basic[0],
+            ra_crit=ra_crit,
+        )
+    )
 
     T_cmb = phase_basic.temperature[0]
     cp_cmb = phase_basic.heat_capacity[0]
-    F_cmb_from_dSdr = heat_flux[0]
+    F_cmb = heat_flux[0]
 
     energy_flux = heat_flux * mesh.area
     delta_energy_flux = jnp.diff(energy_flux)
@@ -613,7 +633,7 @@ def dSdt_core_module(
     # 1 K floor mirroring the numpy path: the melting curve and adiabat
     # are undefined at non-positive temperature and a transient
     # integrator excursion must not evaluate them there.
-    E_tot_cmb = F_cmb_from_dSdr * bc.cmb_area
+    E_tot_cmb = F_cmb * bc.cmb_area
     dT_core_dt_per_s = core_budget.dtcmb_dt(
         jnp.maximum(t_core, 1.0),
         E_tot_cmb,

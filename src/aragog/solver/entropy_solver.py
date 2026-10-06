@@ -1785,10 +1785,14 @@ class EntropySolver:
         if getattr(self, '_core_bc', None) == 'core_module' or (
             getattr(bc, 'core_bc', None) == 'core_module'
         ):
-            from aragog.core import build_core_module_budget
+            from aragog.core import RA_CRIT_CMB_DEFAULT, build_core_module_budget
 
             params = dict(getattr(bc, 'core_module_params', None) or {})
             self._core_module_q_radio = float(params.pop('q_radio', 0.0))
+            ra_crit = float(params.pop('ra_crit_cmb', RA_CRIT_CMB_DEFAULT))
+            if not (np.isfinite(ra_crit) and ra_crit > 0.0):
+                raise ValueError(f'ra_crit_cmb must be positive and finite, got {ra_crit}')
+            self._core_module_ra_crit_cmb = ra_crit
             self._core_module_budget = build_core_module_budget(
                 params, r_cmb=r_cmb, p_cmb_fallback=float(self._P_basic_flat[0])
             )
@@ -2112,13 +2116,13 @@ class EntropySolver:
                 and T_bottom_eos is not None
                 and abs(T_core_init - T_bottom_eos) > 0.2 * max(T_bottom_eos, 1.0)
             ):
-                # Inconsistent initial core offset persists because core_module flux
-                # carries no restoring force toward T_core, shifting nucleation timing.
+                # Under a stiff (solid or mushy) base the boundary-layer flux relaxes
+                # a large offset only slowly, shifting nucleation timing.
                 logger.warning(
                     'core_module: initial T_core=%.0f K differs from the '
                     'basal-node EOS temperature %.0f K by more than 20%%; '
-                    'the offset persists through the run and shifts '
-                    'inner-core nucleation timing accordingly.',
+                    'the CMB flux relaxes the offset at the rate the basal '
+                    'boundary layer allows, which shifts inner-core nucleation timing.',
                     T_core_init,
                     T_bottom_eos,
                 )
@@ -2417,11 +2421,12 @@ class EntropySolver:
 
         # CMB boundary condition
         if self._inner_bc_kind == 1:
-            if gradient_mode or energy_balance or core_mod:
-                # gradient/energy_balance/core_module: heat_flux[0] is
-                # the physical flux computed from the state-provided
-                # dS/dr at the CMB.
+            if gradient_mode or energy_balance:
+                # gradient/energy_balance: heat_flux[0] is the physical
+                # flux computed from the state-provided dS/dr at the CMB.
                 pass
+            elif core_mod:
+                self.state._heat_flux[0] = self._core_module_cmb_flux(t_core, entropy[0])
             elif bower:
                 # bower2018 BC: F_cmb from one-sided Fourier conduction
                 # across the bottom half-cell with molecular
@@ -2573,6 +2578,40 @@ class EntropySolver:
 
         return np.concatenate([dSdt, [dT_core_dt]])
 
+    def _core_module_cmb_flux(self, t_core: float, s_bottom: float) -> float:
+        """CMB heat flux [W/m^2] of the core_module boundary layer.
+
+        ``aragog.core.cmb_boundary_layer_flux`` of the core temperature
+        (floored at 1 K) and the bottom cell's entropy ``s_bottom``
+        evaluated at the CMB pressure (the cell carried adiabatically to
+        the CMB), with the bottom cell's material properties (heat capacity
+        without the latent term, so kappa is the material diffusivity) and
+        the CMB gravity; mirrors the JAX ``dSdt_core_module``.
+        """
+        from aragog.core import cmb_boundary_layer_flux
+
+        ph = self.state.phase_staggered
+
+        def first(values) -> float:
+            return float(np.asarray(values).flat[0])
+
+        return float(
+            cmb_boundary_layer_flux(
+                max(float(t_core), 1.0),
+                first(self.entropy_eos.temperature(self._P_basic_flat[0], s_bottom)),
+                conductivity=first(ph.thermal_conductivity()),
+                density=first(ph.density()),
+                heat_capacity=first(
+                    self.entropy_eos.heat_capacity(self._P_stag_flat[0], s_bottom)
+                ),
+                expansivity=first(ph.thermal_expansivity()),
+                viscosity=first(ph.viscosity()),
+                gravity=first(self.state.phase_basic.gravitational_acceleration()),
+                dr_half=self._cmb_dr_half,
+                ra_crit=self._core_module_ra_crit_cmb,
+            )
+        )
+
     def _energy_balance_rhs_per_s(
         self,
         F_cmb_basic: float,
@@ -2689,7 +2728,10 @@ class EntropySolver:
         passive record of the reservoir cooling. In profile mode
         ``C_eff(T_core)`` carries secular, latent, and gravitational
         terms, so the basal boundary can only change entropy as fast as
-        the core's true thermal inertia allows.
+        the core's true thermal inertia allows. ``F_cmb`` is the
+        boundary-layer flux of ``_core_module_cmb_flux``, so the gradient
+        slot only defines the reported mantle-side node temperature
+        ``T_cmb_node``; the CMB temperature is ``T_core``.
 
         Parameters
         ----------

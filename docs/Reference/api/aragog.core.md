@@ -11,6 +11,7 @@ The `aragog.core` package carries the core evolution module: the core as a compo
 | `CoreEntropyBudget` | Entropy balance on top of the energy budget: cooling, latent, gravitational, and radiogenic sources against the conduction sink (closed form for the Gaussian adiabat), the dynamo entropy margin, and field strength via the Christensen, Holzwarth & Reiners (2009) energy-flux scaling. |
 | `CoreModule` | Standalone coupling: holds the core state and advances it over an externally supplied heat-flow interval with jit-compiled Runge-Kutta sub-steps, recording the sub-step trajectory. |
 | `build_core_module_budget` | Config-dict factory for the solver coupling (`core_bc = 'core_module'`); geometry always comes from the mesh. |
+| `cmb_boundary_layer_flux` | CMB heat flux of the solver coupling from the core-mantle temperature contrast through a mantle-side boundary layer (Foley & Driscoll 2016; Thiriet et al. 2019), never below conduction across the bottom half cell. |
 | `crystallization_regime` | Diagnostic flag from the superheat profile: fully liquid, bottom-up, top-down, snow, or fully frozen (taxonomy of Breuer et al. 2015). |
 | `adiabatic_ratio`, `stratification_depth` | Subadiabatic-onset ratio and the equilibrium thickness of the stably stratified sub-CMB layer from conductive matching. |
 

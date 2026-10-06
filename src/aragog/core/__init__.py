@@ -14,6 +14,7 @@ budget term is an analytic integral and the whole module stays at ODE cost.
 
 from __future__ import annotations
 
+from aragog.core.boundary_layer import RA_CRIT_CMB_DEFAULT, cmb_boundary_layer_flux
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.entropy import CoreEntropyBudget
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
@@ -31,6 +32,8 @@ __all__ = [
     'IronMeltingCurve',
     'QuadraticMeltingCurve',
     'build_core_module_budget',
+    'cmb_boundary_layer_flux',
+    'RA_CRIT_CMB_DEFAULT',
     'REGIME_NAMES',
     'crystallization_regime',
     'regime_name',
