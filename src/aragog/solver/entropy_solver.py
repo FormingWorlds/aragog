@@ -2055,12 +2055,9 @@ class EntropySolver:
                 dSdr_cmb_init,
             )
         elif core_bc in ('bower2018', 'core_module'):
-            # Core temperature as ODE state variable. bower2018:
-            # state = [S, T_core] (parity testing only). core_module:
-            # state = [S, dSdr_cmb, T_core]; the boundary entropy
-            # gradient rides on the core, the CMB flux is the
-            # boundary-layer law of T_core against the bottom cell, and
-            # T_cmb is the core evolution budget's integrated state.
+            # Core temperature as an ODE state: bower2018 [S, T_core] (parity testing only),
+            # core_module [S, dSdr_cmb, T_core] with the boundary-layer CMB flux of T_core
+            # against the bottom cell and T_cmb the core budget's integrated state.
             slots = EXTRA_STATE_SLOTS[core_bc]
             n_extra = len(slots)
             T_core_slot = n_stag + slots.index('T_core')
