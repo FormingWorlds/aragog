@@ -436,6 +436,33 @@ class CoreEnergyBudget:
             + self.gravitational_capacity(t_cmb, upper=upper)
         )
 
+    def heat_content(self, t_cmb) -> float:
+        """Core heat content [J] at CMB temperature ``t_cmb``, full core, no stratification.
+
+        ``t_cmb * C_secular`` minus the latent and gravitational energy released
+        between nucleation onset and ``t_cmb`` (zero above onset), so that
+        ``heat_content(T2) - heat_content(T1)`` is the integral of the effective
+        capacity from ``T1`` to ``T2``. The substitution ``T = T_onset - u^2``
+        removes the inverse-square-root onset singularity of the latent term.
+        Evaluated eagerly (``t_onset`` is a Python float).
+        """
+        secular = float(t_cmb) * float(self.secular_capacity())
+        if self.capacity_mode == 'legacy':
+            return secular
+        u_max = float(_np.sqrt(max(self.t_onset - float(t_cmb), 0.0)))
+        if u_max == 0.0:
+            return secular
+        boundary = jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
+        # One Gauss-Legendre panel per side of the freeze-out jump in the latent term.
+        u_freeze = float(_np.sqrt(max(self.t_onset - self.t_freeze, 0.0)))
+        edges = [0.0, u_freeze, u_max] if 0.0 < u_freeze < u_max else [0.0, u_max]
+        released = 0.0
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            u = lo + 0.5 * (hi - lo) * (_GL_X + 1.0)
+            values = boundary(self.t_onset - u**2) * 2.0 * u
+            released += 0.5 * (hi - lo) * float(jnp.sum(_GL_W * values))
+        return secular - released
+
     def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
         """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of the core.
 

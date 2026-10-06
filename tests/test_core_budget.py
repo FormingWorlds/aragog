@@ -338,3 +338,45 @@ def test_budget_input_validation(prof):
         CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=-0.5)
     with pytest.raises(ValueError, match='alpha_c and c_light must be non-negative'):
         CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, c_light=-0.05)
+
+
+@pytest.mark.slow
+@pytest.mark.physics_invariant
+def test_heat_content_difference_is_the_capacity_integral(prof):
+    """``heat_content(T2) - heat_content(T1)`` equals the integral of C_eff, checked
+    against a dense trapezoid across nucleation onset (inverse-square-root latent term)
+    and full freeze-out (latent jump), with the gravitational term on. One quadrature
+    panel across the freeze-out jump misses the reference by about 2e-3."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t_on, t_fr = budget.t_onset, budget.t_freeze
+    assert t_fr < t_on
+    c_eff = jax.jit(jax.vmap(budget.effective_capacity))
+    for t1, t2 in (
+        (t_on + 200.0, t_on + 50.0),
+        (t_on + 50.0, t_on - 100.0),
+        (t_on - 100.0, t_fr - 30.0),
+    ):
+        nodes = np.linspace(t2, t1, 20001)
+        nodes = np.unique(np.concatenate([nodes, [x for x in (t_on, t_fr) if t2 < x < t1]]))
+        reference = -np.trapezoid(np.asarray(c_eff(nodes)), nodes)
+        got = budget.heat_content(t2) - budget.heat_content(t1)
+        assert got == pytest.approx(reference, rel=2e-5)
+    # Above onset the content is secular only; legacy mode is the reservoir constant times T.
+    assert budget.heat_content(t_on + 10.0) == pytest.approx(
+        (t_on + 10.0) * float(budget.secular_capacity()), rel=1e-14
+    )
+    legacy = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=DS_FUSION,
+        icn_width=10.0,
+        capacity_mode='legacy',
+        legacy_rho_core=11000.0,
+        legacy_tfac=1.1,
+    )
+    assert legacy.heat_content(4000.0) == pytest.approx(
+        4000.0 * float(legacy.secular_capacity())
+    )
