@@ -311,26 +311,32 @@ def test_radio_heating_checks_every_broadcast_isotope():
         make_radio_heating_fn(one, one, one, one, np.array([1.0e9, -1.0]))
 
 
-@pytest.mark.parametrize('traced', [0, 1, 2, 3])
-def test_radio_heating_under_jit_checks_the_concrete_inputs(traced):
-    """Built inside jax.jit, a traced input is not checked, the concrete ones still are:
-    a concrete negative half-life raises, a valid set builds and evaluates."""
+@pytest.mark.parametrize('traced', [0, 1, 2, 3, 4])
+@pytest.mark.parametrize(
+    ('bad_field', 'bad'), [(1, -1.0), (2, np.nan), (3, -np.inf), (4, -1.0), (0, -1.0)]
+)
+def test_radio_heating_under_jit_checks_the_concrete_inputs(traced, bad_field, bad):
+    """Built inside jax.jit, a traced input is not checked and the concrete ones still are:
+    each concrete bad value raises next to each traced input, a valid set builds."""
     import jax
 
     from aragog.jax.solver import make_radio_heating_fn
 
-    def build(x, half_life):
-        args = [np.ones(1), np.ones(1), np.ones(1), np.zeros(1), half_life]
+    if bad_field == traced:
+        pytest.skip('the bad value is the traced input, which is not checked')
+    good = [np.ones(1), np.ones(1), np.ones(1), np.zeros(1), np.full(1, 1.0e9)]
+
+    def build(x, args):
+        args = list(args)
         args[traced] = x
         return make_radio_heating_fn(*args)(1.0)
 
-    with pytest.raises(ValueError, match=r'#0: half_life_years must be positive'):
-        jax.jit(lambda x: build(x, np.array([-1.0])))(np.array([0.5 if traced == 3 else 1.0]))
-    value = float(jax.jit(lambda x: build(x, np.array([1.0e9])))(np.array([2.0])))
-    expected = 2.0 if traced < 3 else 2.0 ** ((2.0 - 1.0) / 1.0e9)
-    assert value == pytest.approx(
-        expected * (2.0 ** (-1.0e-9) if traced < 3 else 1.0), rel=1e-12
-    )
+    broken = list(good)
+    broken[bad_field] = np.array([bad])
+    with pytest.raises(ValueError, match='#0: '):
+        jax.jit(lambda x: build(x, broken))(good[traced])
+    value = float(jax.jit(lambda x: build(x, good))(good[traced]))
+    assert value == pytest.approx(2.0 ** (-1.0e-9), rel=1e-12)
 
 
 def test_jax_heating_matches_the_numpy_decay_law():

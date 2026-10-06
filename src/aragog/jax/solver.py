@@ -96,9 +96,7 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     arrays = (heat_prod, abundance, concentration, t0_years, half_life_years)
     # A traced input is checked with a valid stand-in, so the concrete inputs are still checked.
     concrete = [
-        np.ones(1)
-        if isinstance(a, jax.core.Tracer)
-        else np.atleast_1d(np.asarray(a, dtype=float))
+        np.atleast_1d(1.0 if isinstance(a, jax.core.Tracer) else np.asarray(a, dtype=float))
         for a in arrays
     ]
     for i, iso in enumerate(zip(*np.broadcast_arrays(*concrete))):

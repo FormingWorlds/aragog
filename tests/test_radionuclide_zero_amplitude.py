@@ -293,3 +293,23 @@ def test_a_config_section_cannot_set_the_ppm_record(tmp_path):
     cfg.write_text(text)
     k40 = next(r for r in Parameters.from_file(str(cfg)).radionuclides if r.name == 'K40')
     assert k40.concentration == pytest.approx(310.0e-6, rel=1e-15) and k40._ppm == 310.0
+
+
+@pytest.mark.unit
+def test_toml_and_dict_sections_cannot_set_the_ppm_record(tmp_path):
+    """The TOML file path and the dict path reject _ppm in a radionuclide section too."""
+    import tomllib
+
+    from aragog.config import Config
+
+    text = (BUNDLED_LOOKUP.parent / 'abe_solid.toml').read_text()
+    bad = text.replace('concentration = 310\n', 'concentration = 310\n_ppm = 310\n', 1)
+    assert bad != text
+    path = tmp_path / 'ppm.toml'
+    path.write_text(bad)
+    with pytest.raises(ValueError, match='K40: _ppm is not a configuration key'):
+        Parameters.from_file(str(path))
+    with pytest.raises(ValueError, match='K40: _ppm is not a configuration key'):
+        Config.from_dict(tomllib.loads(bad), config_dir=BUNDLED_LOOKUP.parent)
+    good = Config.from_dict(tomllib.loads(text), config_dir=BUNDLED_LOOKUP.parent)
+    assert next(r for r in good.radionuclides if r.name == 'K40')._ppm == 310.0
