@@ -24,9 +24,11 @@ import numpy as _np
 
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
-from aragog.core.stratification import make_thickness_fn
+from aragog.core.stratification import _q_ad, make_thickness_fn
 
 jax.config.update('jax_enable_x64', True)
+
+CONVECTING_FLOOR = 0.1  # floor of the convecting radius, as a fraction of r_cmb
 
 _GL_X, _GL_W = _np.polynomial.legendre.leggauss(48)
 _GL_X = jnp.asarray(_GL_X)
@@ -180,7 +182,11 @@ class CoreEnergyBudget:
                 'effective_capacity need the CMB heat flow q_cmb'
             )
         thickness = self._thickness_fn(t_cmb, q_cmb)
-        return jnp.maximum(p.r_cmb - thickness, 0.1 * p.r_cmb)
+        return jnp.maximum(p.r_cmb - thickness, CONVECTING_FLOOR * p.r_cmb)
+
+    def conducted_adiabatic_flow(self, r, t_cmb):
+        """Heat flow [W] conducted along the adiabat through radius ``r`` (needs ``k_core``)."""
+        return _q_ad(self.profiles, self.k_core, r, t_cmb)
 
     def secular_capacity(self, upper=None):
         """Secular heat capacity dQ_s / d(dT_cmb/dt) [J/K].

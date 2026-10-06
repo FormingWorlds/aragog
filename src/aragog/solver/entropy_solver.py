@@ -1793,19 +1793,14 @@ class EntropySolver:
             p_cmb = float(self._P_basic_flat[0])
             key = (sorted(params.items()), float(r_cmb), p_cmb)
             if getattr(self, '_core_module_key', None) != key:
-                self._core_module_key = key
-                self._core_module_budget = build_core_module_budget(
-                    params, r_cmb=r_cmb, p_cmb_fallback=p_cmb
+                budget = build_core_module_budget(params, r_cmb=r_cmb, p_cmb_fallback=p_cmb)
+                self._core_module_budget, self._core_module_key = budget, key
+                self._core_module_budget_dtcmb_dt = jax.jit(budget.dtcmb_dt)
+                logger.info(
+                    'Aragog core_module Gaussian profile: rho_cen=%.2f kg/m3, length_scale=%.1f km',
+                    float(budget.profiles.rho_cen),
+                    float(budget.profiles.length_scale) / 1e3,
                 )
-                if not getattr(self, '_logged_core_profile', False):
-                    logger.info(
-                        'Aragog core_module Gaussian profile: rho_cen=%.2f kg/m3, '
-                        'length_scale=%.1f km',
-                        float(self._core_module_budget.profiles.rho_cen),
-                        float(self._core_module_budget.profiles.length_scale) / 1e3,
-                    )
-                    self._logged_core_profile = True
-                self._core_module_budget_dtcmb_dt = jax.jit(self._core_module_budget.dtcmb_dt)
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
@@ -2158,9 +2153,9 @@ class EntropySolver:
 
         Resolution order: the ``set_initial_dSdr_cmb`` override, then the
         previous solution's final value when the state shape matches
-        (hot start, ``get_current_dSdr_cmb``), then a one-sided FD of ``S_arr`` at the bottom (cold start; exactly
-        zero for a uniform isentrope, the correct neutral-buoyancy
-        starting point).
+        (hot start, ``get_current_dSdr_cmb``), then a one-sided FD of
+        ``S_arr`` at the bottom (cold start; exactly zero for a uniform
+        isentrope, the correct neutral-buoyancy starting point).
         """
         dSdr_cmb_init = getattr(self, '_dSdr_cmb_init', None)
         if dSdr_cmb_init is not None:
@@ -4141,7 +4136,6 @@ class EntropySolver:
 
         # Heat content change from the start and end states alone (EOS quadrature of
         # rho T dS), independent of the flux trajectory, so it checks the flux budget.
-        # Uses default n_quad=512 to resolve the integral across the solidus kink.
         state_heat = self._step_heat_content(
             self._stag_entropy(sol.y[:, 0]), self._stag_entropy(sol.y[:, -1])
         )
@@ -4330,31 +4324,33 @@ class EntropySolver:
     def _warn_on_convecting_floor(self, budget, t_core, q_cmb) -> None:
         """Warn once when a stratified core sits on its convecting-radius floor.
 
-        The layer base reaches the floor (10 % of the CMB radius) where the CMB heat flow is
-        at most the adiabatic conducted flow there, ``Q_ad(0.1 r_cmb)``, every non-positive
-        flow included. Below ``1e-3 Q_k`` (``Q_k = Q_ad(r_cmb)``) the core temperature barely
-        moves, so the warning covers only a flow above it, where the floor capacity sets a
-        visible rate outside the quasi-static layer model's range.
+        The layer base reaches the floor (``CONVECTING_FLOOR`` of the CMB radius) where the CMB
+        heat flow is at most the adiabatic conducted flow there, every non-positive flow
+        included. The core temperature changes at ``(q_radio - q_cmb) / C_eff``, so the warning
+        covers a net drive above ``1e-3 Q_k`` (``Q_k`` the conducted flow at the CMB), where
+        the floor capacity sets a visible rate outside the quasi-static layer model's range.
         """
-        from aragog.core.stratification import _q_ad
+        from aragog.core.budget import CONVECTING_FLOOR
 
-        p = budget.profiles
-        q_floor = np.asarray(_q_ad(p, budget.k_core, 0.1 * p.r_cmb, t_core))
-        q_k = np.asarray(_q_ad(p, budget.k_core, p.r_cmb, t_core))
-        on_floor = (q_cmb <= q_floor) & (np.abs(q_cmb) > 1.0e-3 * q_k)
+        r_cmb = budget.profiles.r_cmb
+        q_floor = np.asarray(budget.conducted_adiabatic_flow(CONVECTING_FLOOR * r_cmb, t_core))
+        q_k = np.asarray(budget.conducted_adiabatic_flow(r_cmb, t_core))
+        drive = getattr(self, '_core_module_q_radio', 0.0) - q_cmb
+        on_floor = (q_cmb <= q_floor) & (np.abs(drive) > 1.0e-3 * q_k)
         if on_floor.any():
             i = int(np.argmax(on_floor))
             self._floor_warned = True
             logger.warning(
                 'core_module: the stratified core is on its convecting-radius floor (10%% of '
-                'r_cmb) with a CMB heat flow of %.3e W (Q_k = %.3e W); the quasi-static layer '
-                'model does not hold there and the core temperature changes at the floor '
-                'capacity. Warned once per solver.',
+                'r_cmb) with a CMB heat flow of %.3e W and a net heating of %.3e W (Q_k = %.3e W); '
+                'the quasi-static layer model does not hold there and the core temperature '
+                'changes at the floor capacity. Warned once per solver.',
                 float(q_cmb[i]),
+                float(drive[i]),
                 float(q_k[i]),
             )
 
-    def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int = 512) -> float:
+    def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int | None = None) -> float:
         """Entropy-transported heat content change over one solver call [J].
 
         Evaluates ``Sum_i V_i integral_{S0_i}^{Sf_i} rho(P_i, S) T(P_i, S) dS``
@@ -4381,9 +4377,10 @@ class EntropySolver:
         S0_stag, Sf_stag : np.ndarray
             Staggered specific entropy at the start and end of the call
             [J/kg/K], length ``n_stag``.
-        n_quad : int
-            Quadrature points along each cell's entropy path. Default is 512,
-            resolving the integral across the solidus kink without aliasing.
+        n_quad : int, optional
+            Quadrature points along each cell's entropy path. Default 512 for
+            ``core_module``, whose whole-planet closure needs the solidus kink
+            resolved on fine meshes, and 16 for the other modes.
 
         Returns
         -------
@@ -4401,6 +4398,8 @@ class EntropySolver:
         n = min(P.size, vol.size, S0.size, Sf.size)
         P, vol, S0, Sf = P[:n], vol[:n], S0[:n], Sf[:n]
         dS = Sf - S0
+        if n_quad is None:
+            n_quad = 512 if getattr(self, '_core_bc', None) == 'core_module' else 16
         nq = int(max(2, n_quad))
         w = np.linspace(0.0, 1.0, nq)
         # One EOS call over every (point, cell) pair: the per-call overhead dominates.

@@ -31,6 +31,7 @@ jax.config.update('jax_enable_x64', True)
 
 from aragog.jax.solver import dSdt_core_module  # noqa: E402
 from tests.conftest import entropy_eos_copy, entropy_eos_jax, needs_eos  # noqa: E402
+from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build  # noqa: E402
 
 # Module tier: the real-EOS parity and Jacobian solves are smoke and slow;
 # the two factory-contract tests carry the unit marker so the PR lane still runs them.
@@ -443,11 +444,6 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
 def test_boundary_slots_match_numpy_on_a_five_node_mesh():
     """The production JAX RHS and the numpy RHS agree on every component, both boundary
     slots included, on a 5-node mesh with the core 50 K above the mantle."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
-
     solver = _build(
         'core_module', entropy_eos_copy(), CORE_MODULE_PARAMS, s_init='driven', n_nodes=5
     )
@@ -469,11 +465,6 @@ def test_jacobian_core_column_matches_central_differences(state):
     """``jacrev`` of the core_module RHS agrees with a central difference in T_core for the
     gradient-slot and T_core rows, on the driven (non-uniform) profile: inside the
     nucleation band, above the onset, and stratified above the convecting-radius floor."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
-
     params = dict(CORE_MODULE_PARAMS)
     if state == 'stratified':
         params |= {'stratification': True, 'k_core': 130.0}
@@ -483,9 +474,8 @@ def test_jacobian_core_column_matches_central_differences(state):
     if state == 'nucleating':
         scan = np.linspace(3200.0, 6000.0, 281)
         secular = float(budget.secular_capacity())
-        y[n + 1] = np.median(
-            [t for t in scan if float(budget.latent_capacity(t)) > 0.01 * secular]
-        )
+        latent = np.asarray(jax.vmap(budget.latent_capacity)(jnp.asarray(scan)))
+        y[n + 1] = np.median(scan[latent > 0.01 * secular])
     elif state == 'above_onset':
         y[n + 1] = float(budget.t_onset) + 100.0
     else:

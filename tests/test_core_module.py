@@ -188,8 +188,8 @@ def test_factory_geometry_override_and_error_contract():
 
 FULL_PARAMS = dict(
     fit_profile=True,
-    m_core=1.9268511797e24,
-    p_cen=3.5758588038e11,
+    m_core=2.055444e24,
+    p_cen=3.60878e11,
     rho_cen=12500.0,
     length_scale=7.272e6,
     p_cmb=136e9,
@@ -224,30 +224,45 @@ def _documented_keys():
 
 def test_every_documented_key_is_accepted():
     """The keys core_bc.md lists under core_module_params are the factory's keys plus the two
-    the solver takes (q_radio, ra_crit_cmb), and a dict with all of them builds."""
+    the solver takes (q_radio, ra_crit_cmb), and a dict with all of them builds; the structure
+    values (a grown core) are not the default profile's, so the fit shows in rho_cen."""
     assert _documented_keys() == CORE_MODULE_KEYS | {'q_radio', 'ra_crit_cmb'}
     assert set(FULL_PARAMS) == CORE_MODULE_KEYS
-    budget = build_core_module_budget(dict(FULL_PARAMS), r_cmb=3480e3, p_cmb_fallback=136e9)
-    assert float(budget.profiles.enclosed_mass(3480e3)) == pytest.approx(
-        FULL_PARAMS['m_core'], rel=1e-6
-    )
+    budget = build_core_module_budget(dict(FULL_PARAMS), r_cmb=3.508038e6, p_cmb_fallback=1e11)
+    profiles = budget.profiles
+    assert float(profiles.enclosed_mass(3.508038e6)) == pytest.approx(FULL_PARAMS['m_core'])
+    assert float(profiles.pressure(0.0)) == pytest.approx(FULL_PARAMS['p_cen'])
+    assert abs(float(profiles.rho_cen) / FULL_PARAMS['rho_cen'] - 1.0) > 0.05
 
 
 @pytest.mark.parametrize(
     ('drop', 'extra', 'match'),
     [
         ('m_core', {}, 'needs both m_core and p_cen'),
-        ('p_cen', {}, 'needs both m_core and p_cen'),
+        ('p_cen', {'fit_profile': 1}, 'needs both m_core and p_cen'),
+        ('m_core', {'fit_profile': None}, 'needs both m_core and p_cen'),
+        (None, {'fit_profile': 'false'}, 'must be true or false'),
         ('t_m1', {'melting_curve': 'quadratic'}, r"needs \['t_m1'\]"),
+        (None, {'melting_curve': 'quadratic', 't_m2': None}, r"needs \['t_m2'\]"),
     ],
 )
 def test_incomplete_options_are_refused(drop, extra, match):
-    """fit_profile = true without both structure values, and a quadratic curve without all
-    three coefficients, raise ValueError instead of a default profile or a TypeError."""
+    """A fit (fit_profile true, or one structure value alone) without both structure values,
+    a fit_profile that is not a boolean, and a quadratic curve without all three coefficients
+    raise ValueError instead of a default profile or a TypeError."""
     params = {**FULL_PARAMS, **extra}
-    params.pop(drop)
+    params.pop(drop, None)
     with pytest.raises(ValueError, match=match):
         build_core_module_budget(params, r_cmb=3480e3, p_cmb_fallback=136e9)
+
+
+@pytest.mark.parametrize(('flag', 'fitted'), [(0, False), (np.False_, False), (np.True_, True)])
+def test_fit_profile_reads_integer_and_numpy_booleans(flag, fitted):
+    """The CLI turns fit_profile=0 into an integer; 0 and numpy False keep the explicit
+    profile, numpy True fits it."""
+    params = {**FULL_PARAMS, 'fit_profile': flag}
+    budget = build_core_module_budget(params, r_cmb=3.508038e6, p_cmb_fallback=1e11)
+    assert (float(budget.profiles.rho_cen) != FULL_PARAMS['rho_cen']) is fitted
 
 
 def test_build_core_module_budget_fits_profile_from_structure():

@@ -475,12 +475,10 @@ def run(
     core_bc = getattr(solver.parameters.boundary_conditions, 'core_bc', 'energy_balance')
     if core_bc in ('energy_balance', 'core_module'):
         solver.set_initial_dSdr_cmb(initial_dsdr_cmb)
-    elif initial_dsdr_cmb != 0.0:
+    if core_bc != 'energy_balance' and initial_dsdr_cmb != 0.0:
         logger.warning(
-            '--initial-dsdr-cmb=%g ignored: core_bc=%r does not carry the '
-            'CMB entropy gradient as a state variable. Use core_bc='
-            "'energy_balance' or 'core_module' to make this option "
-            'meaningful.',
+            "--initial-dsdr-cmb=%g sets no CMB flux for core_bc=%r; only core_bc='energy_balance' "
+            'takes its CMB flux from the entropy gradient.',
             initial_dsdr_cmb,
             core_bc,
         )

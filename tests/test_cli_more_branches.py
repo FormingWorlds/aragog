@@ -198,11 +198,13 @@ def test_run_warns_when_initial_dsdr_cmb_set_without_initial_entropy(tmp_path, m
 
 @pytest.mark.parametrize('core_bc', ['energy_balance', 'core_module'])
 def test_run_dispatches_initial_dsdr_cmb_for_gradient_state_modes(
-    tmp_path, monkeypatch, core_bc
+    tmp_path, monkeypatch, caplog, core_bc
 ):
     """Both modes that carry dSdr_cmb as a state variable must receive
     the ``--initial-dsdr-cmb`` value through ``set_initial_dSdr_cmb``;
     a quasi_steady solver must not (and gets the warning instead).
+    core_module carries the slot without using it, so it also warns that
+    the option sets no CMB flux.
 
     Discriminator: a dispatch gated on the literal 'energy_balance'
     string silently drops the user's cold-start gradient for
@@ -251,17 +253,22 @@ def test_run_dispatches_initial_dsdr_cmb_for_gradient_state_modes(
         raising=True,
     )
 
+    import logging
+
     runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        ['run', str(cfg), '--eos-dir', str(eos), '--initial-dsdr-cmb', '-1.5e-4'],
-    )
+    with caplog.at_level(logging.WARNING):
+        result = runner.invoke(
+            cli,
+            ['run', str(cfg), '--eos-dir', str(eos), '--initial-dsdr-cmb', '-1.5e-4'],
+        )
     # The invocation still dies later on the missing --initial-entropy;
     # what matters here is that the dispatch already happened.
     assert result.exit_code != 0
     assert received == [-1.5e-4], (
         f'{core_bc} must receive the CLI dSdr_cmb override; got {received}'
     )
+    warned = any('sets no CMB flux' in r.getMessage() for r in caplog.records)
+    assert warned is (core_bc == 'core_module')
 
 
 # ──────────────────────────────────────────────────────────────────────

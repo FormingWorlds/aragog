@@ -118,3 +118,18 @@ def test_a_reset_keeps_the_budget_until_its_inputs_change():
     fresh.reset()
     assert fresh._core_module_budget is not budget
     assert float(fresh._core_module_budget.profiles.rho_cen) == 12000.0
+    rebuilt = fresh._core_module_budget
+    fresh._P_basic_flat = fresh._P_basic_flat * 1.01
+    fresh._cache_bc_constants()
+    assert fresh._core_module_budget is not rebuilt
+    assert float(fresh._core_module_budget.profiles.p_cmb) == float(fresh._P_basic_flat[0])
+
+
+def test_a_failed_budget_build_fails_again_on_the_next_reset():
+    """A rejected parameter set leaves no cache entry behind, so a second reset with the
+    same parameters raises again instead of keeping the previous budget."""
+    fresh = _build('core_module', entropy_eos_copy(), dict(CORE_MODULE_PARAMS), s_init='driven')
+    fresh.parameters.boundary_conditions.core_module_params['ds_fusion'] = -1.0
+    for _ in range(2):
+        with pytest.raises(ValueError, match='ds_fusion must be positive'):
+            fresh.reset()

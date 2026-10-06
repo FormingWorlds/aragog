@@ -473,14 +473,24 @@ def test_step_heat_content_zero_when_no_eos():
     assert EntropySolver._step_heat_content(fake, np.ones(3), np.zeros(3)) == 0.0
 
 
-def test_step_heat_content_default_quadrature_points():
-    """Default quadrature in _step_heat_content uses 512 points."""
-    import inspect
+@pytest.mark.parametrize(('core_bc', 'n_quad'), [('core_module', 512), ('energy_balance', 16)])
+def test_step_heat_content_default_quadrature_points(core_bc, n_quad):
+    """The default rule has 512 points for core_module and 16 for the other modes: the result
+    equals an explicit call with that count and differs from the other count."""
+    from types import SimpleNamespace
 
     from aragog.solver.entropy_solver import EntropySolver
 
-    sig = inspect.signature(EntropySolver._step_heat_content)
-    assert sig.parameters['n_quad'].default == 512
+    eos = MagicMock()
+    eos.density.side_effect = lambda P, S: np.full(np.asarray(S).shape, 4000.0)
+    eos.temperature.side_effect = lambda P, S: 500.0 + 2.0e-4 * np.asarray(S, float) ** 2
+    fake = SimpleNamespace(
+        entropy_eos=eos, _P_stag_flat=np.ones(2), _volume_flat=np.ones(2), _core_bc=core_bc
+    )
+    S0, Sf = np.array([3000.0, 2800.0]), np.array([2500.0, 2700.0])
+    got = EntropySolver._step_heat_content(fake, S0, Sf)
+    assert got == EntropySolver._step_heat_content(fake, S0, Sf, n_quad=n_quad)
+    assert got != EntropySolver._step_heat_content(fake, S0, Sf, n_quad=528 - n_quad)
 
 
 def test_remap_entropy_handles_missing_xi_pre_resolve():
@@ -1196,3 +1206,57 @@ def test_set_initial_entropy_no_eos_and_no_override_raises(mode):
     s._T_core_init = None
     with pytest.raises(ValueError, match='entropy EOS is not available'):
         s.set_initial_entropy(2900.0)
+
+
+@pytest.mark.parametrize(
+    ('q_frac', 'radio_frac', 'warns'),
+    [(1.2e-3, 0.0, True), (1.6e-3, 0.0, False), (0.0, 0.0, False), (0.0, 2.0e-3, True)],
+    ids=['on_floor', 'above_floor', 'no_drive', 'radiogenic_drive'],
+)
+def test_the_floor_warning_follows_the_net_drive_on_the_floor(
+    caplog, q_frac, radio_frac, warns
+):
+    """The stratified floor is reached at q_cmb <= Q_ad(0.1 r_cmb) (1.40e-3 Q_k on this
+    profile); on it the warning needs a net drive |q_radio - q_cmb| above 1e-3 Q_k, so
+    radiogenic heating at zero CMB flow warns and a flow just above the floor does not."""
+    import logging
+    from types import SimpleNamespace
+
+    from aragog.core import build_core_module_budget
+    from aragog.solver.entropy_solver import EntropySolver
+
+    params = {'light_element_fraction': 0.1, 'depression': 1.2}
+    budget = build_core_module_budget(
+        {**params, 'stratification': True, 'k_core': 130.0}, r_cmb=3.48e6, p_cmb_fallback=136e9
+    )
+    t_core = np.full(3, 4500.0)
+    q_k = float(budget.conducted_adiabatic_flow(3.48e6, 4500.0))
+    on_floor = float(budget.convecting_radius(4500.0, q_frac * q_k)) == pytest.approx(3.48e5)
+    assert on_floor is (q_frac < 1.4e-3)
+    fake = SimpleNamespace(_core_module_q_radio=radio_frac * q_k)
+    with caplog.at_level(logging.WARNING):
+        EntropySolver._warn_on_convecting_floor(fake, budget, t_core, np.full(3, q_frac * q_k))
+    assert any('convecting-radius floor' in r.message for r in caplog.records) is warns
+    assert getattr(fake, '_floor_warned', False) is warns
+
+
+def test_the_floor_reduces_the_capacity_only_above_the_inner_core_onset():
+    """On the convecting-radius floor the secular capacity shrinks about 700 times, but below
+    the onset the latent term is not reduced, so the full-to-floor ratio is 1.3 to 1.6
+    (core_bc.md)."""
+    from aragog.core import build_core_module_budget
+
+    budget = build_core_module_budget(
+        {
+            'light_element_fraction': 0.1,
+            'depression': 1.2,
+            'stratification': True,
+            'k_core': 130.0,
+        },
+        r_cmb=3.48e6,
+        p_cmb_fallback=136e9,
+    )
+    t_onset = float(budget.t_onset)
+    for t, lo, hi in ((t_onset + 50.0, 600.0, 800.0), (t_onset - 60.0, 1.2, 1.6)):
+        ratio = float(budget.effective_capacity(t, 1.0e14) / budget.effective_capacity(t, -1.0))
+        assert lo < ratio < hi

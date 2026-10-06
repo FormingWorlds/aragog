@@ -183,9 +183,9 @@ def test_b_rms_core_scales_with_f_ohm(ent):
     assert b_quarter == pytest.approx(0.5 * b_full, rel=1e-12)
 
 
-def test_quad_0_rcmb_matches_analytic_integral(ent):
-    """_quad_0_upper evaluates Gauss-Legendre quadrature from 0 to r_cmb."""
+def test_quad_0_upper_matches_analytic_integral(ent):
+    """_quad_0_upper is a 48-point Gauss-Legendre rule on [0, r_cmb]: exact for degree 94,
+    which a 16-point rule misses by 1e-4."""
     r_cmb = float(ent.budget.profiles.r_cmb)
-    result = float(ent.budget._quad_0_upper(ent.budget.profiles.r_cmb, lambda r: r**2))
-    expected = (r_cmb**3) / 3.0
-    assert result == pytest.approx(expected, rel=1e-6)
+    result = float(ent.budget._quad_0_upper(r_cmb, lambda r: (r / r_cmb) ** 94))
+    assert result == pytest.approx(r_cmb / 95.0, rel=1e-12)

@@ -294,11 +294,12 @@ def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
             float(getattr(state, attr)[0]), rel=1e-15
         )
     assert abs(float(out.T_basic[0]) - t_m) > 1.0e-3
+    assert out.step_dE_core_J == 0.0  # no core integral outside core_module and bower2018
 
 
 @pytest.mark.physics_invariant
 def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy(shared_eos):
-    """A core 300 K above a liquid base (phi 0.67 to 0.65, eta 33 to 48 Pa s) loses heat through the
+    """A core 300 K above a liquid base (phi 0.67 to 0.65) loses heat through the
     boundary layer fast enough to cool by about 1 K in 4 yr. The heat it loses is the heat
     booked into the mantle (q_radio = 0), and it equals the budget's content change between
     the start and end core temperatures (secular only, the core stays above nucleation)."""
@@ -331,7 +332,7 @@ def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
     """A core 2 K above the inner-core onset over a liquid base cools through it under CVODE
     (a quadratic curve at 1.5 times Nimmo's t_m0 puts the onset above the base). The core
     heat change across the square-root cusp equals the heat_content difference and the CMB
-    heat to the integrator's precision (2.6e-5 at the default rtol, falling with rtol)."""
+    heat to the solve's precision (2.6e-5 at the default rtol 1e-8, 9.8e-6 at 1e-10)."""
     params = {
         k: v
         for k, v in CORE_MODULE_PARAMS.items()

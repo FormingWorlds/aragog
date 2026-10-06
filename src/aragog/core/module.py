@@ -109,8 +109,9 @@ def build_core_module_budget(
     ValueError
         From the underlying constructors on any invalid value, or here on
         an unknown melting-curve selector, an unrecognised key, a quadratic
-        curve without its three coefficients, or ``fit_profile = True`` without
-        both ``m_core`` and ``p_cen``.
+        curve without its three coefficients, a ``fit_profile`` that is not a
+        boolean, or a fit (``fit_profile = True``, or one of ``m_core`` and
+        ``p_cen`` given alone) without both values.
     """
     params = {**_FACTORY_DEFAULTS, **params}
     unknown = set(params) - CORE_MODULE_KEYS
@@ -119,22 +120,26 @@ def build_core_module_budget(
     curve_kind = params.pop('melting_curve', 'iron')
     if curve_kind not in _CURVE_KEYS:
         raise ValueError(f'unknown melting_curve {curve_kind!r}')
-    if curve_kind == 'quadratic' and not _CURVE_KEYS['quadratic'] <= set(params):
-        missing = sorted(_CURVE_KEYS['quadratic'] - set(params))
+    missing = sorted(k for k in _CURVE_KEYS['quadratic'] if params.get(k) is None)
+    if curve_kind == 'quadratic' and missing:
         raise ValueError(f"melting_curve = 'quadratic' needs {missing}")
 
     cfg = {k: params.pop(k, None) for k in ('m_core', 'p_cen', 'fit_profile')}
     m_core = cfg['m_core'] if m_core is None else m_core
     p_cen = cfg['p_cen'] if p_cen is None else p_cen
     fit_profile = cfg['fit_profile']
-    if fit_profile is True and (m_core is None or p_cen is None):
-        raise ValueError('fit_profile = true needs both m_core and p_cen')
+    if fit_profile not in (None, True, False):
+        raise ValueError(f'fit_profile must be true or false, got {fit_profile!r}')
+    given = (m_core is not None) + (p_cen is not None)
+    fit = given == 2 if fit_profile is None else bool(fit_profile)
+    if (fit and given < 2) or (fit_profile is None and given == 1):
+        raise ValueError('the profile fit needs both m_core and p_cen')
 
     profile_kwargs = {k: params[k] for k in _PROFILE_KEYS if k in params}
     profile_kwargs['r_cmb'] = r_cmb
     profile_kwargs.setdefault('p_cmb', p_cmb_fallback)
 
-    if fit_profile is not False and m_core is not None and p_cen is not None:
+    if fit:
         profiles = GaussianCoreProfiles.from_structure(
             m_core=m_core,
             p_cen=p_cen,
