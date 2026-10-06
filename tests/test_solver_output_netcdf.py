@@ -33,7 +33,9 @@ _N_STAG = 4
 _N_BASIC = _N_STAG + 1
 
 
-def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
+def _make_output(
+    *, status: int = 0, dt: float = 1234.5, t_end: float = 101234.5
+) -> SolverOutput:
     """Build a SolverOutput with distinctive values in every field.
 
     Each field gets a unique scale or sign so the round-trip test can
@@ -104,6 +106,7 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         step_dE_compression_J=+2.5e19,
         step_dE_state_heat_J=-7.0e21,
         dt_actual=dt,
+        time=t_end,
         status=status,
         # Distinctive non-default values for the four diagnostic fields so
         # the round-trip test catches a dtype typo (e.g. an int flag
@@ -260,18 +263,18 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             assert ds[name].units == unit, f'{name} units {ds[name].units!r}'
 
 
-def test_to_netcdf_default_time_falls_back_to_dt_actual(tmp_path: Path) -> None:
-    """Edge case: the ``time`` argument is optional. When omitted, the
-    writer falls back to ``dt_actual``. A regression that hard-coded
-    time=0.0 (plausible if the lazy default were misimplemented) would
-    fail this discriminator because dt is set to a distinctive 1234.5.
+def test_to_netcdf_default_time_is_the_time_of_the_state(tmp_path: Path) -> None:
+    """Edge case: the ``time`` argument is optional. When omitted, the writer stores
+    ``SolverOutput.time``, the absolute time of the state, not the call duration
+    ``dt_actual`` (1234.5 here), which stays its own variable.
     """
-    out = _make_output(dt=1234.5)
+    out = _make_output(dt=1234.5, t_end=101234.5)
     f = tmp_path / 'no_time.nc'
     out.to_netcdf(f)  # no `time=`
 
     with nc.Dataset(f, mode='r') as ds:
-        assert float(ds['time'][...]) == pytest.approx(1234.5, rel=0, abs=0)
+        assert float(ds['time'][...]) == pytest.approx(101234.5, rel=0, abs=0)
+        assert float(ds['dt_actual'][...]) == pytest.approx(1234.5, rel=0, abs=0)
 
 
 def test_to_netcdf_creates_parent_directory(tmp_path: Path) -> None:

@@ -940,6 +940,7 @@ class SolverOutput:
     step_dE_state_heat_J: float
 
     dt_actual: float  # actual integration time [yr]
+    time: float  # absolute time of the returned state [yr], the last output time reached
     status: int  # 0 success, 1 stop at a step-cap event, any other value failure
 
     # Raw CVODE return flag, surfaced distinctly from the scipy-compatible
@@ -994,9 +995,8 @@ class SolverOutput:
             Destination NetCDF4 file. Overwrites if the file exists.
         time : float, optional
             Simulation time at which this snapshot was taken [yr].
-            Stored as the scalar ``time`` variable; defaults to the
-            integrated step duration ``dt_actual`` if not supplied
-            (the standalone solver does not carry an absolute clock).
+            Stored as the scalar ``time`` variable; defaults to
+            ``SolverOutput.time``, the time of the stored state.
         description : str, optional
             Free-form description string written to the dataset's
             ``description`` global attribute.
@@ -1059,9 +1059,8 @@ class SolverOutput:
                 v.long_name = long_name
                 v[:] = arr
 
-            # Time stamp: prefer caller-supplied absolute time, else
-            # fall back to the per-call duration.
-            t_value = float(time) if time is not None else float(self.dt_actual)
+            # Time stamp: the caller's time if given, else the time of the state.
+            t_value = float(time) if time is not None else float(self.time)
             _scalar('time', t_value, 'yr', 'Simulation time of snapshot')
 
             # ── Scalar diagnostics ──────────────────────────────────
@@ -4072,7 +4071,7 @@ class EntropySolver:
             Destination NetCDF4 file (overwrites if it exists).
         time : float, optional
             Simulation time at which this snapshot was taken [yr].
-            Defaults to ``SolverOutput.dt_actual`` if omitted.
+            Defaults to ``SolverOutput.time`` if omitted.
         description : str, optional
             Free-form description string written as the dataset's
             ``description`` global attribute.
@@ -4484,6 +4483,7 @@ class EntropySolver:
             step_dE_compression_J=float(getattr(self, '_last_compression_J', 0.0)),
             step_dE_state_heat_J=step_integrals['state_heat'],
             dt_actual=float(sol.t[-1] - sol.t[0]),
+            time=float(sol.t[-1]),
             status=sol.status,
             cvode_flag=int(getattr(sol, 'cvode_flag', 0)),
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),

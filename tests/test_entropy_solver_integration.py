@@ -28,14 +28,13 @@ JIT compile cost that dominates short runs.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import numpy as np
 import pytest
 from scipy.constants import Julian_year
 
-from tests.conftest import entropy_eos_copy
+from tests.conftest import EOS_DIR, entropy_eos_copy
 
 # EOS path is environment-driven for portability across machines.
 # Resolution order:
@@ -47,16 +46,6 @@ from tests.conftest import entropy_eos_copy
 # Tests are skipped if none of these resolve; CI nightly populates the
 # canonical location via ``proteus offline`` before the smoke run.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_FWL_DATA = os.environ.get('FWL_DATA')
-_CANDIDATES = [
-    os.environ.get('ARAGOG_TEST_EOS_DIR'),
-    f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
-    str(_REPO_ROOT.parent / 'output' / 'coupled_parity' / 'spider' / 'data' / 'spider_eos'),
-]
-EOS_DIR = next(
-    (Path(p) for p in _CANDIDATES if p and Path(p).exists()),
-    Path(_CANDIDATES[-1]),
-)
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -800,3 +789,26 @@ def test_mantle_mass_split_at_partial_melt_discriminates_solid_coefficient(share
         rtol=1e-10,
         err_msg='M_mantle_liquid must equal Phi_global * M_mantle',
     )
+
+
+def test_solve_from_a_nonzero_start_writes_the_end_time(tmp_path: Path) -> None:
+    """A run from 100 to 101 yr stores time = 101 yr in the snapshot and the
+    call duration dt_actual = 1 yr, the case of a duration written as the time."""
+    import netCDF4 as nc
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S
+
+    eos = entropy_eos_copy()
+    p = _build_mushy_parameters(solver_method='bdf', n_nodes=12, end_time=101.0)
+    p.solver.start_time = 100.0
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(_pick_mushy_S(eos))
+    s.solve()
+    f = tmp_path / 'from_100.nc'
+    s.get_state().to_netcdf(f)
+    with nc.Dataset(f, mode='r') as ds:
+        assert float(ds['time'][...]) == pytest.approx(101.0, rel=1e-12)
+        assert float(ds['dt_actual'][...]) == pytest.approx(1.0, rel=1e-9)
