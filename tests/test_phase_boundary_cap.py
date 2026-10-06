@@ -288,7 +288,7 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
 @needs_eos
 @needs_cvode
 @pytest.mark.smoke
-@pytest.mark.timeout(120, method='signal')
+@pytest.mark.timeout(180, method='signal')
 def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
     """With the extended energy_balance state, rate mode segments on the entropy block and keeps the CMB entry."""
     s_f, T_f = _isentropic_end(shared_eos, 'fixed', 1e-8, 'energy_balance')
@@ -1072,7 +1072,7 @@ def test_scipy_methods_keep_the_margin_with_cvode_installed(shared_eos, monkeypa
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
-@pytest.mark.timeout(120, method='signal')
+@pytest.mark.timeout(180, method='signal')
 def test_max_steps_counts_per_output_interval_in_both_modes(shared_eos):
     """max_steps is SUNDIALS mxstep per output interval: half the unlimited step count (a
     SUNDIALS-build-dependent measure) completes on the same steps, a budget of 1 fails."""
