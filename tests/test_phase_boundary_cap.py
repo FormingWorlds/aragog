@@ -287,7 +287,6 @@ def test_rate_mode_from_an_isentropic_start_matches_a_tight_fixed_run(shared_eos
 
 @needs_cvode
 @needs_eos
-@needs_cvode
 @pytest.mark.smoke
 @pytest.mark.timeout(120, method='signal')
 def test_rate_mode_keeps_the_energy_balance_state(shared_eos):
@@ -563,7 +562,6 @@ def _rtol_warnings(caplog):
 
 @needs_cvode
 @needs_eos
-@needs_cvode
 @pytest.mark.smoke
 @pytest.mark.parametrize(
     ('mode', 'tol', 'end_time', 'expected'),
