@@ -302,7 +302,7 @@ def _phase_boundary_max_step_clamp(
 _RATE_CAP_MIN_DELTA = 10.0
 # rtol above which the rate cap logs one warning (its accuracy is measured at 1e-8).
 _RATE_CAP_RTOL_LIMIT = 1.0e-7
-# solver.rtol above which Aragog logs one warning; a looser rtol can lock CVODE (0/2000 at 1e-8)
+# solver.rtol above which Aragog warns once; a looser rtol can lock CVODE (0 of 1026 at 1e-8)
 _CVODE_TOL_LIMIT = 1.0e-8
 
 
@@ -3615,9 +3615,10 @@ class EntropySolver:
                     'cvode_tol',
                     f'CVODE at solver.rtol {rtol:.1e}: an rtol above 1e-8 can lock CVODE '
                     'at the switch dS/dr = 0 (convective mask and kappa_h floor; in test runs '
-                    'with atol = rtol: 46 % at 1e-5, about 0.5 % at 1e-6, 0 of 105 at 1e-7, '
-                    f'0 of 2000 at 1e-8; see the solver tuning docs){note}. Use 1e-8, the '
-                    'Aragog default, for rtol and atol',
+                    'with atol = rtol and the initial entropy drawn per run: 12 of 1133 at 1e-6, '
+                    '0 of 1026 at 1e-8, and 0 of 80 at 1e-5 but about 12 times more RHS '
+                    f'evaluations than at 1e-8; see the solver tuning docs){note}. '
+                    'Use 1e-8, the Aragog default, for rtol and atol',
                 )
             if rate_mode:
                 if spans and rtol > _RATE_CAP_RTOL_LIMIT:
