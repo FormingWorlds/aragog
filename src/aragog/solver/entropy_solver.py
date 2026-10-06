@@ -1785,13 +1785,11 @@ class EntropySolver:
             from aragog.core import RA_CRIT_CMB_DEFAULT, build_core_module_budget, check_ra_crit
 
             params = dict(getattr(bc, 'core_module_params', None) or {})
-            self._core_module_q_radio = float(params.pop('q_radio', 0.0))
-            self._core_module_ra_crit_cmb = check_ra_crit(
-                params.pop('ra_crit_cmb', RA_CRIT_CMB_DEFAULT)
-            )
+            q_radio = float(params.pop('q_radio', 0.0))
+            ra_crit = check_ra_crit(params.pop('ra_crit_cmb', RA_CRIT_CMB_DEFAULT))
             # A reset with the same inputs keeps the budget and its compiled functions.
             p_cmb = float(self._P_basic_flat[0])
-            key = (sorted(params.items()), float(r_cmb), p_cmb)
+            key = (sorted(params.items()), float(r_cmb), params.get('p_cmb', p_cmb))
             if getattr(self, '_core_module_key', None) != key:
                 budget = build_core_module_budget(params, r_cmb=r_cmb, p_cmb_fallback=p_cmb)
                 self._core_module_budget, self._core_module_key = budget, key
@@ -1801,6 +1799,7 @@ class EntropySolver:
                     float(budget.profiles.rho_cen),
                     float(budget.profiles.length_scale) / 1e3,
                 )
+            self._core_module_q_radio, self._core_module_ra_crit_cmb = q_radio, ra_crit
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
@@ -4341,10 +4340,11 @@ class EntropySolver:
             i = int(np.argmax(on_floor))
             self._floor_warned = True
             logger.warning(
-                'core_module: the stratified core is on its convecting-radius floor (10%% of '
+                'core_module: the stratified core is on its convecting-radius floor (%.0f%% of '
                 'r_cmb) with a CMB heat flow of %.3e W and a net heating of %.3e W (Q_k = %.3e W); '
                 'the quasi-static layer model does not hold there and the core temperature '
                 'changes at the floor capacity. Warned once per solver.',
+                100.0 * CONVECTING_FLOOR,
                 float(q_cmb[i]),
                 float(drive[i]),
                 float(q_k[i]),

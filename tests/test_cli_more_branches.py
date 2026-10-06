@@ -196,7 +196,9 @@ def test_run_warns_when_initial_dsdr_cmb_set_without_initial_entropy(tmp_path, m
     assert '--initial-entropy is required' in (result.output or '')
 
 
-@pytest.mark.parametrize('core_bc', ['energy_balance', 'core_module'])
+@pytest.mark.parametrize(
+    'core_bc', ['energy_balance', 'core_module', 'quasi_steady', 'gradient']
+)
 def test_run_dispatches_initial_dsdr_cmb_for_gradient_state_modes(
     tmp_path, monkeypatch, caplog, core_bc
 ):
@@ -264,11 +266,11 @@ def test_run_dispatches_initial_dsdr_cmb_for_gradient_state_modes(
     # The invocation still dies later on the missing --initial-entropy;
     # what matters here is that the dispatch already happened.
     assert result.exit_code != 0
-    assert received == [-1.5e-4], (
-        f'{core_bc} must receive the CLI dSdr_cmb override; got {received}'
-    )
-    warned = any('sets no CMB flux' in r.getMessage() for r in caplog.records)
-    assert warned is (core_bc == 'core_module')
+    carried = core_bc in ('energy_balance', 'core_module')
+    assert received == ([-1.5e-4] if carried else []), f'{core_bc}: got {received}'
+    messages = [r.getMessage() for r in caplog.records]
+    assert any('sets no CMB flux' in m for m in messages) is (core_bc == 'core_module')
+    assert any('is ignored' in m for m in messages) is (not carried)
 
 
 # ──────────────────────────────────────────────────────────────────────

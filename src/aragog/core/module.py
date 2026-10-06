@@ -110,8 +110,8 @@ def build_core_module_budget(
         From the underlying constructors on any invalid value, or here on
         an unknown melting-curve selector, an unrecognised key, a quadratic
         curve without its three coefficients, a ``fit_profile`` that is not a
-        boolean, or a fit (``fit_profile = True``, or one of ``m_core`` and
-        ``p_cen`` given alone) without both values.
+        boolean, one of ``m_core`` and ``p_cen`` given alone, or
+        ``fit_profile = True`` without either.
     """
     params = {**_FACTORY_DEFAULTS, **params}
     unknown = set(params) - CORE_MODULE_KEYS
@@ -132,7 +132,7 @@ def build_core_module_budget(
         raise ValueError(f'fit_profile must be true or false, got {fit_profile!r}')
     given = (m_core is not None) + (p_cen is not None)
     fit = given == 2 if fit_profile is None else bool(fit_profile)
-    if (fit and given < 2) or (fit_profile is None and given == 1):
+    if given == 1 or (fit and given == 0):
         raise ValueError('the profile fit needs both m_core and p_cen')
 
     profile_kwargs = {k: params[k] for k in _PROFILE_KEYS if k in params}

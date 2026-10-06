@@ -1210,8 +1210,15 @@ def test_set_initial_entropy_no_eos_and_no_override_raises(mode):
 
 @pytest.mark.parametrize(
     ('q_frac', 'radio_frac', 'warns'),
-    [(1.2e-3, 0.0, True), (1.6e-3, 0.0, False), (0.0, 0.0, False), (0.0, 2.0e-3, True)],
-    ids=['on_floor', 'above_floor', 'no_drive', 'radiogenic_drive'],
+    [
+        (1.2e-3, 0.0, True),
+        (1.6e-3, 0.0, False),
+        (0.0, 0.0, False),
+        (0.0, 2.0e-3, True),
+        (5.0e-4, 0.0, False),
+        (0.0, 5.0e-4, False),
+    ],
+    ids=['on_floor', 'above_floor', 'no_drive', 'radiogenic_drive', 'small_q', 'small_radio'],
 )
 def test_the_floor_warning_follows_the_net_drive_on_the_floor(
     caplog, q_frac, radio_frac, warns
@@ -1240,23 +1247,39 @@ def test_the_floor_warning_follows_the_net_drive_on_the_floor(
     assert getattr(fake, '_floor_warned', False) is warns
 
 
-def test_the_floor_reduces_the_capacity_only_above_the_inner_core_onset():
-    """On the convecting-radius floor the secular capacity shrinks about 700 times, but below
-    the onset the latent term is not reduced, so the full-to-floor ratio is 1.3 to 1.6
+def test_the_floor_reduces_the_capacity_outside_the_growth_band():
+    """On the convecting-radius floor the secular capacity shrinks about 700 times above the
+    onset and below freeze-out; inside the band the latent term is not reduced, so the
+    full-to-floor ratio drops below 2 within 1 K of the onset and stays near 1.3 to 1.8
     (core_bc.md)."""
+    import jax
+    import jax.numpy as jnp
+
     from aragog.core import build_core_module_budget
 
+    params = {'light_element_fraction': 0.1, 'depression': 1.2}
     budget = build_core_module_budget(
-        {
-            'light_element_fraction': 0.1,
-            'depression': 1.2,
-            'stratification': True,
-            'k_core': 130.0,
-        },
-        r_cmb=3.48e6,
-        p_cmb_fallback=136e9,
+        {**params, 'stratification': True, 'k_core': 130.0}, r_cmb=3.48e6, p_cmb_fallback=136e9
     )
-    t_onset = float(budget.t_onset)
-    for t, lo, hi in ((t_onset + 50.0, 600.0, 800.0), (t_onset - 60.0, 1.2, 1.6)):
-        ratio = float(budget.effective_capacity(t, 1.0e14) / budget.effective_capacity(t, -1.0))
-        assert lo < ratio < hi
+    t_on, t_fr = float(budget.t_onset), float(budget.t_freeze)
+
+    def ratio(t):
+        t = jnp.atleast_1d(jnp.asarray(t, dtype=float))
+        full = jax.vmap(lambda x: budget.effective_capacity(x, 1.0e14))(t)
+        floor = jax.vmap(lambda x: budget.effective_capacity(x, -1.0))(t)
+        return np.asarray(full / floor)
+
+    outside = ratio([t_on + 50.0, t_fr - 1.0])
+    assert np.all((600.0 < outside) & (outside < 800.0))
+    assert ratio(t_on - 1.0e-4)[0] > 20.0
+    band = ratio(np.linspace(t_on - 1.0, t_fr + 0.5, 200))
+    assert 1.2 < band.min() and band.max() < 1.9
+
+
+def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():
+    """An unstratified budget has no k_core, so the conducted flow is refused by name."""
+    from aragog.core import build_core_module_budget
+
+    budget = build_core_module_budget({}, r_cmb=3.48e6, p_cmb_fallback=136e9)
+    with pytest.raises(ValueError, match='needs k_core'):
+        budget.conducted_adiabatic_flow(3.48e6, 4500.0)

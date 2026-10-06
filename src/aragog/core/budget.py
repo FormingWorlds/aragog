@@ -186,6 +186,8 @@ class CoreEnergyBudget:
 
     def conducted_adiabatic_flow(self, r, t_cmb):
         """Heat flow [W] conducted along the adiabat through radius ``r`` (needs ``k_core``)."""
+        if self.k_core is None:
+            raise ValueError('conducted_adiabatic_flow needs k_core (a stratified budget)')
         return _q_ad(self.profiles, self.k_core, r, t_cmb)
 
     def secular_capacity(self, upper=None):

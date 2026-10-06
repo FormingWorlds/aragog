@@ -476,12 +476,8 @@ def run(
     if core_bc in ('energy_balance', 'core_module'):
         solver.set_initial_dSdr_cmb(initial_dsdr_cmb)
     if core_bc != 'energy_balance' and initial_dsdr_cmb != 0.0:
-        logger.warning(
-            "--initial-dsdr-cmb=%g sets no CMB flux for core_bc=%r; only core_bc='energy_balance' "
-            'takes its CMB flux from the entropy gradient.',
-            initial_dsdr_cmb,
-            core_bc,
-        )
+        effect = 'sets no CMB flux' if core_bc == 'core_module' else 'is ignored'
+        logger.warning('--initial-dsdr-cmb=%g %s for core_bc=%r.', initial_dsdr_cmb, effect, core_bc)
 
     if initial_entropy is None:
         initial_entropy = _derive_initial_entropy_from_config(solver)

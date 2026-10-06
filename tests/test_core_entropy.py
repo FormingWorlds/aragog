@@ -184,8 +184,15 @@ def test_b_rms_core_scales_with_f_ohm(ent):
 
 
 def test_quad_0_upper_matches_analytic_integral(ent):
-    """_quad_0_upper is a 48-point Gauss-Legendre rule on [0, r_cmb]: exact for degree 94,
-    which a 16-point rule misses by 1e-4."""
+    """_quad_0_upper is a 48-point Gauss-Legendre rule on [0, r_cmb]: it integrates the
+    Legendre polynomial P_94 to zero, which a 47-point rule misses by 0.18 and a 32-point
+    rule by 1.5e-3 (in units of r_cmb / 2)."""
+    from numpy.polynomial import legendre
+
     r_cmb = float(ent.budget.profiles.r_cmb)
-    result = float(ent.budget._quad_0_upper(r_cmb, lambda r: (r / r_cmb) ** 94))
-    assert result == pytest.approx(r_cmb / 95.0, rel=1e-12)
+    p94 = np.zeros(95)
+    p94[94] = 1.0
+    result = float(
+        ent.budget._quad_0_upper(r_cmb, lambda r: legendre.legval(2.0 * r / r_cmb - 1.0, p94))
+    )
+    assert abs(result) < 1e-12 * r_cmb

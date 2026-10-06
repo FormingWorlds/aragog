@@ -118,11 +118,14 @@ def test_a_reset_keeps_the_budget_until_its_inputs_change():
     fresh.reset()
     assert fresh._core_module_budget is not budget
     assert float(fresh._core_module_budget.profiles.rho_cen) == 12000.0
-    rebuilt = fresh._core_module_budget
-    fresh._P_basic_flat = fresh._P_basic_flat * 1.01
-    fresh._cache_bc_constants()
-    assert fresh._core_module_budget is not rebuilt
-    assert float(fresh._core_module_budget.profiles.p_cmb) == float(fresh._P_basic_flat[0])
+    for name in ('_P_basic_flat', '_r_basic_flat'):
+        rebuilt = fresh._core_module_budget
+        setattr(fresh, name, getattr(fresh, name) * 1.01)
+        fresh._cache_bc_constants()
+        assert fresh._core_module_budget is not rebuilt
+    profiles = fresh._core_module_budget.profiles
+    assert float(profiles.p_cmb) == float(fresh._P_basic_flat[0])
+    assert float(profiles.r_cmb) == float(fresh._r_basic_flat[0])
 
 
 def test_a_failed_budget_build_fails_again_on_the_next_reset():

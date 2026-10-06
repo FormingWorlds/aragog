@@ -18,8 +18,6 @@ of the isothermal-reservoir factor. The contract clauses exercised here:
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -121,11 +119,6 @@ def _build_numpy_solver(shared_eos):
     ``_build`` so the parity state matches a configuration the solve
     tests actually integrate.
     """
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
-
     return _build('core_module', shared_eos, CORE_MODULE_PARAMS, s_init='driven')
 
 
@@ -403,11 +396,6 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
     stays finite with the thickness solve's sensitivity composed inside
     (the regime where a lost or mis-signed layer JVP would corrupt the
     analytic Jacobian without failing any standalone gradient test)."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
-
     eos = entropy_eos_copy()
     strat_params = dict(CORE_MODULE_PARAMS) | {'stratification': True, 'k_core': 130.0}
     strat = _build('core_module', eos, strat_params)  # uniform isentrope
