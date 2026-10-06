@@ -12,7 +12,7 @@ import jax
 import numpy as np
 import pytest
 
-from aragog.core import RA_CRIT_CMB_DEFAULT, cmb_boundary_layer_flux
+from aragog.core import RA_CRIT_CMB_DEFAULT, check_ra_crit, cmb_boundary_layer_flux
 
 pytestmark = pytest.mark.unit
 
@@ -125,3 +125,14 @@ def test_flux_slope_on_each_side_of_zero_contrast():
     assert slopes[0] == pytest.approx(4.0e-4, rel=1e-9, abs=0.0)
     assert float(f(t_hot)) == pytest.approx(q_hot, rel=1e-9, abs=0.0)
     assert slopes[1] == pytest.approx(4.0 * q_hot / (3.0 * dT), rel=1e-9, abs=0.0)
+
+
+@pytest.mark.parametrize(
+    'bad', [None, True, '450', [450.0], 0, -450.0, float('nan'), float('inf')]
+)
+def test_check_ra_crit_refuses_anything_but_a_positive_finite_number(bad):
+    """Only a positive, finite real number passes, as a float; a boolean, a string or a
+    sequence is refused with the same message as a non-physical value."""
+    assert check_ra_crit(1800) == 1800.0 and isinstance(check_ra_crit(np.float32(450.0)), float)
+    with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
+        check_ra_crit(bad)

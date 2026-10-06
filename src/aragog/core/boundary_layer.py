@@ -19,6 +19,7 @@ therefore has the sign of ``dT`` and is continuous at zero.
 from __future__ import annotations
 
 import math
+import numbers
 
 import jax.numpy as jnp
 
@@ -31,10 +32,12 @@ def check_ra_crit(ra_crit) -> float:
     Raises
     ------
     ValueError
-        When ``ra_crit`` is missing, not positive or not finite.
+        When ``ra_crit`` is not a real number (a boolean or a string included), not
+        positive or not finite.
     """
-    if ra_crit is None or not (math.isfinite(float(ra_crit)) and float(ra_crit) > 0.0):
-        raise ValueError(f'ra_crit_cmb must be positive and finite, got {ra_crit}')
+    real = isinstance(ra_crit, numbers.Real) and not isinstance(ra_crit, bool)
+    if not (real and 0.0 < float(ra_crit) < math.inf):
+        raise ValueError(f'ra_crit_cmb must be positive and finite, got {ra_crit!r}')
     return float(ra_crit)
 
 

@@ -842,7 +842,7 @@ class SolverOutput:
 
     # Basic-node diagnostics of the final state (PROTEUS write_flux_diagnostics); the flux
     # components omit the boundary conditions at the end nodes, except core_module node 0, which
-    # holds the applied CMB flux at the bottom cell carried to the CMB pressure.
+    # is the bottom cell carried to the CMB pressure (zero gradient) with the applied CMB flux.
     jcond_b: npt.NDArray  # conductive flux [W/m^2]
     jconv_b: npt.NDArray  # convective flux [W/m^2]
     jgrav_b: npt.NDArray  # grav-sep contribution to heat flux [W/m^2]
@@ -2198,8 +2198,9 @@ class EntropySolver:
 
         Must be called BEFORE ``set_initial_entropy``. If not called,
         the initial T_core defaults to the previous solution's final value
-        (if any), else to the bottom-cell mantle temperature derived from
-        S_init via the EOS.
+        (if any), else to the EOS temperature of the bottom cell's entropy
+        in S_init, at the CMB pressure for ``core_module`` (no CMB flux at
+        the start) and at the bottom-cell pressure for ``bower2018``.
 
         Pass ``None`` to clear a previously-set override, restoring
         the hot-start behaviour on the next call to ``set_initial_entropy``.

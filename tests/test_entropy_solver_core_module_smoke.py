@@ -292,7 +292,7 @@ def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
 
 @pytest.mark.physics_invariant
 def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy(shared_eos):
-    """A core 300 K above a liquid base (phi 0.65, eta about 50 Pa s) loses heat through the
+    """A core 300 K above a liquid base (phi 0.67 to 0.65, eta 33 to 48 Pa s) loses heat through the
     boundary layer fast enough to cool by about 1 K in 4 yr. The heat it loses is the heat
     booked into the mantle (q_radio = 0), and it equals the budget's content change between
     the start and end core temperatures (secular only, the core stays above nucleation)."""
@@ -323,18 +323,21 @@ def test_core_module_refuses_a_non_physical_critical_rayleigh_number(shared_eos,
 
 def test_core_module_against_quasi_steady_baseline(shared_eos):
     """Cross-mode sanity on the same driven setup: both core temperatures
-    are finite, the module's integrated state, started at the mantle
-    temperature, does not warm under the cooling base, and it sits within
-    5 K of the quasi_steady CMB basic node. The
+    are finite, the module's core, started 50 K above the mantle, cools
+    through the CMB, and its start sits within 5 K of the quasi_steady CMB
+    basic node plus that offset. The
     quasi_steady T_core is read at the bottom staggered cell, half a cell
-    above the CMB node, so the two differ by 86 K on this mesh; the 100 K
-    bracket only catches catastrophic divergence (initialisation or unit
-    errors), and the flux-law discrimination lives in the contrast test."""
+    above the CMB node, so the two differ by 86 K on this mesh plus the 50 K
+    start offset; the 150 K bracket only catches catastrophic divergence
+    (initialisation or unit errors), and the flux-law discrimination lives in
+    the contrast test."""
     legacy = _build('quasi_steady', shared_eos, s_init='driven')
     legacy.solve()
     t_legacy = legacy.get_state().T_core
 
-    module = _build('core_module', shared_eos, CORE_MODULE_PARAMS, s_init='driven')
+    module = _build(
+        'core_module', shared_eos, CORE_MODULE_PARAMS, s_init='driven', core_offset=50.0
+    )
     module.solve()
     out = module.get_state()
     y = module._solution.y
@@ -342,10 +345,10 @@ def test_core_module_against_quasi_steady_baseline(shared_eos):
     t_module = out.T_core
 
     assert np.isfinite(t_legacy) and np.isfinite(t_module)
-    assert float(y[n_stag + 1, -1]) <= float(y[n_stag + 1, 0])
+    assert float(y[n_stag + 1, -1]) < float(y[n_stag + 1, 0])
     t_legacy_cmb = float(legacy.state.phase_basic.temperature()[0])
-    assert abs(t_module - t_legacy_cmb) < 5.0
-    assert abs(t_module - t_legacy) < 100.0
+    assert abs(float(y[n_stag + 1, 0]) - 50.0 - t_legacy_cmb) < 5.0
+    assert abs(t_module - t_legacy) < 150.0
 
 
 def test_core_module_missing_params_still_builds_with_defaults(shared_eos):

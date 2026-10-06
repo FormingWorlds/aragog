@@ -103,8 +103,7 @@ def build_jax_rhs_and_jacobian(
         Critical Rayleigh number of the CMB boundary layer for the
         core_module flux (``aragog.core.cmb_boundary_layer_flux``),
         the solver's ``_core_module_ra_crit_cmb``; required for
-        core_module, so the CVODE right-hand side cannot use a value
-        other than the solver's.
+        core_module and checked with ``aragog.core.check_ra_crit``.
 
     Returns
     -------
