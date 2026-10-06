@@ -21,7 +21,6 @@ from aragog.config.energy import EnergyConfig
 from aragog.config.initial_condition import InitialConditionConfig
 from aragog.config.mesh import MeshConfig
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
-from aragog.config.radionuclides import RadionuclideConfig
 from aragog.config.solver import SolverConfig
 
 if sys.version_info < (3, 11):
@@ -40,7 +39,6 @@ __all__ = [
     'MeshConfig',
     'MixedPhaseConfig',
     'PhaseConfig',
-    'RadionuclideConfig',
     'SolverConfig',
 ]
 

@@ -11,7 +11,6 @@ The `aragog.config` package provides the modern `attrs`-based configuration clas
 | `MeshConfig` | Mesh geometry, EOS method (Adams-Williamson or user-defined), surface density, gravity, bulk modulus, mass-coordinate flag, surface pressure. |
 | `MixedPhaseConfig` | Mushy-zone parameters: latent heat, rheological transition, smoothing widths, solidus/liquidus paths, `cp_blend` strategy, `separation_viscosity` drag source. |
 | `PhaseConfig` | Single-phase (solid or liquid) properties: density, heat capacity, conductivity, expansivity, viscosity, optional entropy lookup. Each property accepts a float or a path-string lookup. |
-| `RadionuclideConfig` | One radioisotope: name, reference time, abundance, concentration, heat production, half-life. Provides `get_heating(time)` (W/kg). |
 | `SolverConfig` | ODE driver settings: `start_time`, `end_time`, `atol`, `rtol`, surface-T step cap. |
 
 For the TOML field syntax expected on disk, see [How-to: configuration](../../How-to/configuration.md).
@@ -42,10 +41,6 @@ The facade returns a `Parameters` dataclass tree from the legacy `aragog.parser`
 ::: aragog.config.phases.PhaseConfig
 
 ::: aragog.config.phases.MixedPhaseConfig
-
-## Radionuclides
-
-::: aragog.config.radionuclides.RadionuclideConfig
 
 ## Solver driver
 

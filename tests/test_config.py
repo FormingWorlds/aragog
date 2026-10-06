@@ -17,8 +17,8 @@ from aragog.config.energy import EnergyConfig
 from aragog.config.initial_condition import InitialConditionConfig
 from aragog.config.mesh import MeshConfig
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
-from aragog.config.radionuclides import RadionuclideConfig
 from aragog.config.solver import SolverConfig
+from aragog.parser import _Radionuclide
 
 pytestmark = pytest.mark.unit
 
@@ -558,7 +558,7 @@ def test_config_from_dict_round_trips_phase_boundary_entropy_margin():
     assert params.energy.phase_boundary_entropy_margin > 300.0
 
 
-# ---- RadionuclideConfig ----------------------------------------------------
+# ---- _Radionuclide decay law --------------------------------------------------
 
 
 def test_radionuclide_get_heating_at_t0_returns_full_amplitude():
@@ -569,7 +569,7 @@ def test_radionuclide_get_heating_at_t0_returns_full_amplitude():
     from plausible bugs (sign flip on the exponent, missing log(2),
     wrong product order).
     """
-    r = RadionuclideConfig(
+    r = _Radionuclide(
         name='K40',
         t0_years=4.6e9,
         abundance=1.17e-4,
@@ -590,7 +590,7 @@ def test_radionuclide_decay_one_half_life_in_the_past_doubles_heat():
     Discriminator: catches a sign flip on (t0 - time) AND a missing
     log(2) factor, both of which would change this answer.
     """
-    r = RadionuclideConfig(
+    r = _Radionuclide(
         name='Th232',
         t0_years=4.6e9,
         abundance=1.0,
@@ -610,7 +610,7 @@ def test_radionuclide_decay_array_input_broadcasts():
     """Array of times returns an array of the same shape, with a
     monotonic decay (heating now > heating in the future).
     """
-    r = RadionuclideConfig(
+    r = _Radionuclide(
         name='U238',
         t0_years=4.6e9,
         abundance=0.992,
