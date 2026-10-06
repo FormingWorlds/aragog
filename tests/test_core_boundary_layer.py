@@ -86,3 +86,49 @@ def test_flux_is_continuous_and_differentiable_through_zero():
     t_core = np.array([3999.0, 4000.0 - 1e-9, 4000.0, 4000.0 + 1e-9, 4001.0])
     assert np.isfinite(np.asarray(jax.vmap(jax.grad(f))(t_core))).all()
     assert np.abs(np.asarray(f(t_core))[1:4]).max() < 1e-6
+
+
+def _kinked_temperature(s):
+    """T(S) [K] with a nearly flat stretch (slope 1e-9 K kg K/J) on 9000 < S < 10500."""
+    import jax.numpy as jnp
+
+    flat = 5000.0 + 1e-9 * (s - 9000.0)
+    below = 5000.0 + 5.0 * (s - 9000.0)
+    above = flat + 5.0 * (s - 10500.0)
+    return jnp.where(s < 9000.0, below, jnp.where(s > 10500.0, above, flat))
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    't_core', [4700.0, 5000.0 + 1e-10, 6000.0], ids=['below', 'flat', 'above']
+)
+def test_cmb_node_entropy_hits_the_core_temperature_from_a_flat_start(t_core):
+    """The node entropy solves T(S_node) = T_core even when the bottom cell sits on a
+    nearly flat stretch of T(S), where a plain Newton step from S0 jumps to S ~ -1e8.
+    Pinned roots: 8940 below, any point of the flat stretch, and 10700 above."""
+    from aragog.core.boundary_layer import cmb_node_gradient
+
+    s0, dr_offset = 10300.0, -2.0e4
+    s_node = s0 + dr_offset * float(
+        cmb_node_gradient(t_core, s0, _kinked_temperature, dr_offset)
+    )
+    assert float(_kinked_temperature(s_node)) == pytest.approx(t_core, abs=1e-6)
+    if t_core < 5000.0:
+        assert s_node == pytest.approx(8940.0, abs=1e-6)
+    elif t_core > 5001.0:
+        assert s_node == pytest.approx(10700.0, abs=1e-3)
+
+
+def test_cmb_node_gradient_carries_the_core_temperature_sensitivity():
+    """d(S_node)/d(T_core) = 1 / T'(S_node) for the JAX Jacobian (1/5 on the steep part),
+    and S_node does not depend on the bottom entropy it starts from."""
+    import jax
+
+    from aragog.core.boundary_layer import cmb_node_gradient
+
+    def s_node(t_core, s0):
+        return s0 + (-2.0e4) * cmb_node_gradient(t_core, s0, _kinked_temperature, -2.0e4)
+
+    d_tc, d_s0 = jax.grad(s_node, argnums=(0, 1))(4700.0, 10300.0)
+    assert float(d_tc) == pytest.approx(0.2, rel=1e-6)
+    assert abs(float(d_s0)) < 1e-6

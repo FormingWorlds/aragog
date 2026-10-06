@@ -78,15 +78,26 @@ def cmb_boundary_layer_flux(
     return jnp.where(dT > 0.0, jnp.maximum(q_cond, q_conv), q_cond)
 
 
-def cmb_node_gradient(t_core, s_bottom, temperature_at_cmb, dr_offset, n_iter=12, ds=1e-2):
+def cmb_node_gradient(
+    t_core, s_bottom, temperature_at_cmb, dr_offset, width=2.0e4, n_bisect=52, ds=1e-2
+):
     """Entropy gradient at the CMB basic node that puts the node at ``t_core``.
 
-    Newton iterations on ``temperature_at_cmb(S) = t_core`` from the bottom cell's
-    entropy, with a centred finite-difference slope, then the gradient over the
-    basic-to-staggered offset ``dr_offset`` (negative: the node lies below the cell).
+    ``temperature_at_cmb(S)`` rises with S, so bisection on ``[S0 - width, S0 + width]``
+    brackets the root of ``T(S) = t_core`` wherever the slope is small or the table
+    is flat, which a Newton step from S0 does not. One Newton step from the bracketed
+    root, clipped to ``ds``, carries the derivative ``dS/dT_core = 1/T'(S)`` that the
+    JAX Jacobian needs. The gradient is taken over the basic-to-staggered offset
+    ``dr_offset`` (negative: the node lies below the cell). A ``t_core`` outside the
+    bracket's temperature range returns its nearest end.
     """
-    s = s_bottom
-    for _ in range(n_iter):
-        slope = (temperature_at_cmb(s + ds) - temperature_at_cmb(s - ds)) / (2.0 * ds)
-        s = s - (temperature_at_cmb(s) - t_core) / jnp.maximum(slope, 1e-6)
+    lo, hi = s_bottom - width, s_bottom + width
+    for _ in range(n_bisect):
+        mid = 0.5 * (lo + hi)
+        above = temperature_at_cmb(mid) > t_core
+        lo, hi = jnp.where(above, lo, mid), jnp.where(above, mid, hi)
+    s = 0.5 * (lo + hi)
+    slope = (temperature_at_cmb(s + ds) - temperature_at_cmb(s - ds)) / (2.0 * ds)
+    step = (temperature_at_cmb(s) - t_core) / jnp.maximum(slope, 1e-6)
+    s = s - jnp.clip(step, -ds, ds)
     return (s - s_bottom) / dr_offset
