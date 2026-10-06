@@ -104,7 +104,7 @@ print(f"F_heat_total:     {out.F_heat_total:.3e} W/m^2")
 | `E_th` | J | Legacy thermal-energy proxy, $\sum m_i c_p(P_i, S_i) T_i$. Carries phase-dependent jumps in the mushy band; **not** suitable for energy-conservation residuals. Use `E_state_cons` for that. |
 | `Cp_eff` | J/kg/K | Mass-weighted mean heat capacity |
 | `F_heat_total` | W/m² | Total surface heat flux |
-| `dt_actual` | yr | Wall-clock integration span achieved by the solver |
+| `dt_actual` | yr | Simulated time span integrated in this call |
 | `time` | yr | Absolute time of the returned state, the last output time reached |
 | `status` | int | `0` on success; `-1` on solver failure (drives the PROTEUS retry ladder) |
 

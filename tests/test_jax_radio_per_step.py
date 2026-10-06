@@ -303,18 +303,34 @@ def test_radio_heating_rejects_a_non_finite_input(field, bad):
 
 
 def test_radio_heating_checks_every_broadcast_isotope():
-    """A bad half-life at a later isotope is found when the other inputs broadcast from one
-    value, and a build under jax.jit (traced inputs) still works."""
-    import jax
-
+    """A bad half-life at a later isotope is found when the other inputs are given once."""
     from aragog.jax.solver import make_radio_heating_fn
 
     one = np.array([1.0])
     with pytest.raises(ValueError, match=r'#1: half_life_years must be positive'):
         make_radio_heating_fn(one, one, one, one, np.array([1.0e9, -1.0]))
-    jitted = jax.jit(lambda c: make_radio_heating_fn(one, one, c, 0.0 * one, 1.0e9 * one)(1.0))
-    assert float(jitted(np.ones(1))) == pytest.approx(2.0 ** (-1.0e-9), rel=1e-12)
-    assert float(jitted(np.full(1, 2.0))) == pytest.approx(2.0 * 2.0 ** (-1.0e-9), rel=1e-12)
+
+
+@pytest.mark.parametrize('traced', [0, 1, 2, 3])
+def test_radio_heating_under_jit_checks_the_concrete_inputs(traced):
+    """Built inside jax.jit, a traced input is not checked, the concrete ones still are:
+    a concrete negative half-life raises, a valid set builds and evaluates."""
+    import jax
+
+    from aragog.jax.solver import make_radio_heating_fn
+
+    def build(x, half_life):
+        args = [np.ones(1), np.ones(1), np.ones(1), np.zeros(1), half_life]
+        args[traced] = x
+        return make_radio_heating_fn(*args)(1.0)
+
+    with pytest.raises(ValueError, match=r'#0: half_life_years must be positive'):
+        jax.jit(lambda x: build(x, np.array([-1.0])))(np.array([0.5 if traced == 3 else 1.0]))
+    value = float(jax.jit(lambda x: build(x, np.array([1.0e9])))(np.array([2.0])))
+    expected = 2.0 if traced < 3 else 2.0 ** ((2.0 - 1.0) / 1.0e9)
+    assert value == pytest.approx(
+        expected * (2.0 ** (-1.0e-9) if traced < 3 else 1.0), rel=1e-12
+    )
 
 
 def test_jax_heating_matches_the_numpy_decay_law():

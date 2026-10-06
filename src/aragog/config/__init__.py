@@ -114,6 +114,7 @@ class Config:
         from aragog.parser import (
             Parameters,
             _BoundaryConditionsParameters,
+            _check_parsed_radionuclides,
             _EnergyParameters,
             _InitialConditionParameters,
             _MeshParameters,
@@ -149,6 +150,7 @@ class Config:
         for key, val in data.items():
             if key.startswith('radionuclide_'):
                 radionuclides.append(_Radionuclide(**val))
+        _check_parsed_radionuclides(radionuclides)
 
         if config_dir is not None:
             _resolve_data_paths(config_dir, mesh, initial_condition)

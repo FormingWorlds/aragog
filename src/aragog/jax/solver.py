@@ -87,20 +87,22 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     Raises
     ------
     ValueError
-        For concrete inputs with a half-life that is not positive or an amplitude factor or
-        t0 that is negative or not finite, checked by aragog.parser.validate_radionuclide as
-        for a parsed configuration; traced inputs are not checked.
+        For a concrete half-life that is not positive, a concrete amplitude factor that is
+        negative or not finite, or a concrete t0 that is not finite (the checks of
+        aragog.parser.validate_radionuclide without a start time); traced inputs are not checked.
     """
     from aragog.parser import validate_radionuclide
 
     arrays = (heat_prod, abundance, concentration, t0_years, half_life_years)
-    if not any(isinstance(a, jax.core.Tracer) for a in arrays):
-        # Concrete inputs: check every isotope, broadcast as the heating sum broadcasts them.
-        arrays = np.broadcast_arrays(
-            *(np.atleast_1d(np.asarray(a, dtype=float)) for a in arrays)
-        )
-        for i, iso in enumerate(zip(*arrays)):
-            validate_radionuclide(f'#{i}', *iso, ppm=False)
+    # A traced input is checked with a valid stand-in, so the concrete inputs are still checked.
+    concrete = [
+        np.ones(1)
+        if isinstance(a, jax.core.Tracer)
+        else np.atleast_1d(np.asarray(a, dtype=float))
+        for a in arrays
+    ]
+    for i, iso in enumerate(zip(*np.broadcast_arrays(*concrete))):
+        validate_radionuclide(f'#{i}', *iso, ppm=False)
     hp, ab, cn, t0, hl = (jnp.asarray(a, dtype=jnp.float64) for a in arrays)
     amp = hp * ab * cn
 

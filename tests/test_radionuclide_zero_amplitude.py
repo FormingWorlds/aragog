@@ -250,3 +250,46 @@ def test_replace_converts_each_concentration_from_ppm_once():
     assert new.get_heating(k40.t0_years) == pytest.approx(
         new.heat_production * new.abundance * 200.0e-6, rel=1e-15
     )
+
+
+@pytest.mark.unit
+def test_zero_concentration_is_stable_under_replace_and_assignment():
+    """A concentration of 0 (and _ppm 0) stays 0 through replace and assignment, and a
+    later assigned ppm value is still converted."""
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    al26 = next(r for r in p.radionuclides if r.name == 'Al26')
+    assert al26.concentration == 0.0 and al26._ppm == 0.0
+    shorter = replace(al26, half_life_years=0.5 * al26.half_life_years)
+    q = replace(replace(p), radionuclides=[al26, shorter])
+    assert [r.concentration for r in q.radionuclides] == [0.0, 0.0]
+    al26.concentration = 0.0
+    replace(p)
+    assert al26.concentration == 0.0 and al26._ppm == 0.0
+    al26.concentration = 5.0
+    replace(p)
+    assert al26.concentration == pytest.approx(5.0e-6, rel=1e-15) and al26._ppm == 5.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('field', ['heat_production', 'abundance', 'concentration', 't0_years'])
+@pytest.mark.parametrize('bad', [np.nan, np.inf, -np.inf])
+def test_parameters_reject_a_non_finite_isotope_input(field, bad):
+    """A non-finite input stops Parameters before any isotope is scaled; t0_years = -inf
+    gives a finite (zero) heating, so only the finite check catches it."""
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    with pytest.raises(ValueError, match='K40: .*must be finite'):
+        _with(p, {**K40_PPM, field: bad})
+
+
+@pytest.mark.unit
+def test_a_config_section_cannot_set_the_ppm_record(tmp_path):
+    """_ppm in a radionuclide section would mark the concentration as converted, so it is
+    rejected; the same section without it loads and converts."""
+    cfg = _lookup_cfg(tmp_path)
+    text = cfg.read_text()
+    cfg.write_text(text.replace('concentration = 310', 'concentration = 310\n_ppm = 310', 1))
+    with pytest.raises(ValueError, match='K40: _ppm is not a configuration key'):
+        Parameters.from_file(str(cfg))
+    cfg.write_text(text)
+    k40 = next(r for r in Parameters.from_file(str(cfg)).radionuclides if r.name == 'K40')
+    assert k40.concentration == pytest.approx(310.0e-6, rel=1e-15) and k40._ppm == 310.0

@@ -379,9 +379,9 @@ def validate_radionuclide(
         ppm: Whether ``concentration`` is in ppm.
 
     Raises:
-        ValueError: for a half-life that is not positive, a heat production, abundance,
-            concentration or t0_years that is negative or not finite, or a heating that is not
-            finite at ``start_time``.
+        ValueError: for a half-life that is not positive, a heat production, abundance or
+            concentration that is negative, a heat production, abundance, concentration or
+            t0_years that is not finite, or a heating that is not finite at ``start_time``.
     """
     if not half_life_years > 0.0:
         raise ValueError(
@@ -413,6 +413,14 @@ def validate_radionuclide(
         )
 
 
+def _check_parsed_radionuclides(radionuclides: list[_Radionuclide]) -> list[_Radionuclide]:
+    """Reject a configuration section that sets ``_ppm``, which only the ppm conversion sets."""
+    for r in radionuclides:
+        if r._ppm is not None:
+            raise ValueError(f'Radionuclide {r.name}: _ppm is not a configuration key')
+    return radionuclides
+
+
 @dataclass
 class _Radionuclide:
     """Stores the settings in a radionuclide section in the configuration data.
@@ -421,6 +429,8 @@ class _Radionuclide:
     ``Parameters.__post_init__``. ``_ppm`` keeps the ppm value it came from and is copied by
     ``dataclasses.replace``, so a concentration still equal to ``_ppm * 1e-6`` is not scaled
     again, and any other value (a new ppm value, by replace or by assignment) is converted.
+    Write a new concentration in ppm: an edited mass fraction is read as ppm, and a ppm value
+    equal to the old ``_ppm * 1e-6`` is read as converted.
     """
 
     name: str
@@ -432,7 +442,7 @@ class _Radionuclide:
     _ppm: float | None = field(default=None, repr=False, compare=False)
 
     def _is_mass_fraction(self) -> bool:
-        """Whether ``concentration`` is the mass fraction converted from ``_ppm``."""
+        """Whether ``concentration`` is converted: it equals ``_ppm * 1e-6`` [mass fraction]."""
         return self._ppm is not None and self.concentration == self._ppm * _PPM
 
     def get_heating(self, time: npt.NDArray | float) -> npt.NDArray | float:
@@ -664,7 +674,7 @@ class Parameters:
                         f'Configuration error in [{section_name}] of {path.name}: {exc}'
                     ) from exc
 
-        init_dict['radionuclides'] = radionuclides
+        init_dict['radionuclides'] = _check_parsed_radionuclides(radionuclides)
         _resolve_data_paths(
             path.resolve().parent, init_dict['mesh'], init_dict['initial_condition']
         )
@@ -693,7 +703,7 @@ class Parameters:
                 using_dataclass=_Radionuclide, section_name=radionuclide_section
             )
             radionuclides.append(radionuclide)
-        init_dict['radionuclides'] = radionuclides
+        init_dict['radionuclides'] = _check_parsed_radionuclides(radionuclides)
         _resolve_data_paths(
             Path(filenames[0]).resolve().parent,
             init_dict['mesh'],
