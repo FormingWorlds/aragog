@@ -86,3 +86,41 @@ def test_flux_is_continuous_and_differentiable_through_zero():
     t_core = np.array([3999.0, 4000.0 - 1e-9, 4000.0, 4000.0 + 1e-9, 4001.0])
     assert np.isfinite(np.asarray(jax.vmap(jax.grad(f))(t_core))).all()
     assert np.abs(np.asarray(f(t_core))[1:4]).max() < 1e-6
+
+
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize(
+    ('change', 'factor'),
+    [
+        ({'dT': 800.0}, 16.0),
+        ({'viscosity': 0.8}, 0.5),
+        ({'expansivity': 2.4e-4}, 2.0),
+        ({'conductivity': 32.0}, 4.0),
+    ],
+    ids=['dT', 'viscosity', 'expansivity', 'conductivity'],
+)
+def test_convective_flux_follows_the_boundary_layer_scaling(change, factor):
+    """On the convective branch q = k dT / delta with delta ~ (kappa eta / (alpha dT))^(1/3)
+    and kappa = k / (rho c_p), so q ~ dT^(4/3) eta^(-1/3) alpha^(1/3) k^(2/3): an 8x change
+    of each gives 16, 1/2, 2 and 4 times the flux."""
+    props = dict(_LIQUID, **{k: v for k, v in change.items() if k != 'dT'})
+    got = _flux(change.get('dT', 100.0), props)
+    assert got == pytest.approx(factor * _flux(100.0, _LIQUID), rel=1e-12)
+    assert got > 4.0 * change.get('dT', 100.0) / 1e4
+
+
+def test_flux_slope_on_each_side_of_zero_contrast():
+    """A colder core conducts across the half cell, slope k / dr_half = 4e-4 W m^-2 K^-1.
+    A hotter core over a liquid base stays on the convective branch down to about 1e-17 K,
+    since delta grows only as dT^(-1/3) (33 m at 1e-9 K against the 1e4 m half cell), so
+    there q = q(100 K) (dT / 100 K)^(4/3) with slope 4 q / (3 dT)."""
+
+    def f(t_core):
+        return cmb_boundary_layer_flux(t_core, 4000.0, **_LIQUID)
+
+    dT = 1e-9
+    slopes = np.asarray(jax.vmap(jax.grad(f))(np.array([4000.0 - dT, 4000.0 + dT])))
+    q_hot = _flux(100.0, _LIQUID) * (dT / 100.0) ** (4.0 / 3.0)
+    assert slopes[0] == pytest.approx(4.0e-4, rel=1e-9)
+    assert float(f(4000.0 + dT)) == pytest.approx(q_hot, rel=1e-5)
+    assert slopes[1] == pytest.approx(4.0 * q_hot / (3.0 * dT), rel=1e-5)

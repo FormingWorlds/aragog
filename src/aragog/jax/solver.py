@@ -540,8 +540,9 @@ def dSdt_core_module(
     integrates the core budget's cooling rate under it. The boundary
     entropy gradient evolves by the ``dSdt_energy_balance`` balance with
     the budget's effective capacity, so the CMB basic node rides on the
-    core; the slot only defines the reported mantle-side node temperature
-    ``T_cmb_node``, and the CMB temperature is T_core. State layout:
+    core; the slot sets no flux and no reported quantity (the output reports
+    the bottom cell at the CMB pressure as the mantle-side CMB temperature),
+    and the CMB temperature is T_core. State layout:
 
         state_ext[0:N] = S at staggered nodes [J/kg/K]
         state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
@@ -618,7 +619,6 @@ def dSdt_core_module(
 
     T_cmb = phase_basic.temperature[0]
     cp_cmb = phase_basic.heat_capacity[0]
-    F_cmb = heat_flux[0]
 
     energy_flux = heat_flux * mesh.area
     delta_energy_flux = jnp.diff(energy_flux)
@@ -633,7 +633,7 @@ def dSdt_core_module(
     # 1 K floor mirroring the numpy path: the melting curve and adiabat
     # are undefined at non-positive temperature and a transient
     # integrator excursion must not evaluate them there.
-    E_tot_cmb = F_cmb * bc.cmb_area
+    E_tot_cmb = heat_flux[0] * bc.cmb_area
     dT_core_dt_per_s = core_budget.dtcmb_dt(
         jnp.maximum(t_core, 1.0),
         E_tot_cmb,

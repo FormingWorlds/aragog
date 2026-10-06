@@ -1906,11 +1906,11 @@ class TestCoreModuleCoreBC:
     """Unit tests for the core_module boundary-state contract.
 
     The core_module mode extends the state vector by TWO elements:
-    ``[S_0, ..., S_{N-1}, dSdr_cmb, T_core]``. The boundary entropy
-    gradient evolves exactly as in energy_balance, so the CMB flux is
-    the state-derived physical flux, and the reservoir factor in the
-    balance is replaced by the staged core-evolution budget's effective
-    heat capacity ``C_eff(T_core)``. These tests pin:
+    ``[S_0, ..., S_{N-1}, dSdr_cmb, T_core]``. The CMB flux is the
+    boundary-layer law of T_core against the bottom cell, and the
+    reservoir factor in the balance is replaced by the staged
+    core-evolution budget's effective heat capacity ``C_eff(T_core)``.
+    These tests pin:
 
       1. State-vector shape and IC packing (FD cold start for
          dSdr_cmb, EOS default and override for T_core).

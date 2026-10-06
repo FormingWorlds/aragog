@@ -340,6 +340,32 @@ def test_budget_input_validation(prof):
         CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, c_light=-0.05)
 
 
+@pytest.mark.physics_invariant
+def test_heat_content_is_the_capacity_integral_below_onset(prof):
+    """Between nucleation onset and freeze-out, away from both, the content difference
+    equals the integral of C_eff to 1e-6 (Simpson on 101 nodes); above onset the content
+    is the secular term alone, and a stratified budget refuses."""
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=DS_FUSION, icn_width=10.0, alpha_c=0.6, c_light=0.05
+    )
+    t1, t2 = budget.t_onset - 40.0, budget.t_onset - 90.0
+    assert t2 > budget.t_freeze
+    nodes = np.linspace(t2, t1, 101)
+    c = np.asarray(jax.jit(jax.vmap(budget.effective_capacity))(nodes))
+    h = nodes[1] - nodes[0]
+    reference = -(h / 3.0) * (c[0] + c[-1] + 4.0 * c[1:-1:2].sum() + 2.0 * c[2:-1:2].sum())
+    got = budget.heat_content(t2) - budget.heat_content(t1)
+    assert got == pytest.approx(reference, rel=1e-6)
+    secular = (t1 - t2) * float(budget.secular_capacity())
+    assert abs(got + secular) > 1.0e-2 * secular
+    t_hot = budget.t_onset + 10.0
+    assert budget.heat_content(t_hot) == t_hot * float(budget.secular_capacity())
+    budget.stratification = True
+    with pytest.raises(ValueError, match='stratified'):
+        budget.heat_content(t1)
+
+
 @pytest.mark.slow
 @pytest.mark.physics_invariant
 def test_heat_content_difference_is_the_capacity_integral(prof):

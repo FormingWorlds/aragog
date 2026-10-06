@@ -158,7 +158,7 @@ def _build_jax_pieces(solver):
         outer_bc_value=0.0,
         emissivity=float(bc_cfg.emissivity),
         T_eq=float(bc_cfg.equilibrium_temperature),
-        inner_bc_type=1,  # unused by dSdt_core_module; flux is state-derived
+        inner_bc_type=1,  # unused by dSdt_core_module, whose CMB flux is the boundary-layer law
         inner_bc_value=0.0,
         core_density=float(solver._core_density),
         core_heat_capacity=float(solver._core_cp),
@@ -238,7 +238,7 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
     assert np.all(np.isfinite(f_exc))
     np.testing.assert_allclose(np.asarray(f_exc), np.asarray(f_floor), rtol=1e-12)
 
-    # The gradient slot no longer sets the flux: perturbing it leaves the core and the
+    # The gradient slot does not set the flux: perturbing it leaves the core and the
     # bottom cell unchanged.
     y_slot = y0.copy()
     y_slot[n_stag] += 1e-5
@@ -328,6 +328,24 @@ def test_rhs_parity_with_numpy_on_driven_state():
         'a positive core source must warm the cooling rate'
     )
 
+    # ra_crit_cmb reaches both RHS: with a core 1000 K above the base the flux is on the
+    # boundary-layer branch, so a 4x larger Ra_crit thickens the layer and slows the cooling.
+    y_hot = y0.copy()
+    y_hot[n_stag + 1] += 1000.0
+    f_hot = np.asarray(solver.dSdt(0.0, y_hot)).ravel()
+    solver._core_module_ra_crit_cmb = 1800.0
+    try:
+        f_np_c = np.asarray(solver.dSdt(0.0, y_hot)).ravel()
+    finally:
+        solver._core_module_ra_crit_cmb = 450.0
+    f_jax_c = np.asarray(
+        dSdt_core_module(0.0, jnp.asarray(y_hot), args[:8] + (1800.0,))
+    ).ravel()
+    for slot in (n_stag, n_stag + 1):
+        denom = max(abs(f_np_c[slot]), abs(f_jax_c[slot]), 1e-12)
+        assert abs(f_np_c[slot] - f_jax_c[slot]) / denom < 1e-8
+    assert f_hot[n_stag + 1] < f_np_c[n_stag + 1] < 0.0
+
 
 @pytest.mark.slow
 @needs_eos
@@ -363,7 +381,7 @@ def test_jacobian_carries_boundary_couplings():
     assert J.shape == (n_stag + 2, n_stag + 2)
     assert np.all(np.isfinite(J))
     # dT_core/dt depends on the flux, which depends on T_core and on the bottom cell's
-    # entropy, but not on the gradient slot (it only defines T_cmb_node).
+    # entropy, but not on the gradient slot.
     assert abs(J[n_stag + 1, 0]) > 0.0
     assert J[n_stag + 1, n_stag] == 0.0
     # dT_core/dt depends on T_core through the flux and C_eff(T_core); the C_eff part

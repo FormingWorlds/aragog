@@ -2058,10 +2058,9 @@ class EntropySolver:
             # Core temperature as ODE state variable. bower2018:
             # state = [S, T_core] (parity testing only). core_module:
             # state = [S, dSdr_cmb, T_core]; the boundary entropy
-            # gradient evolves like energy_balance's (so the CMB flux
-            # is the state-derived physical flux) and T_cmb is the
-            # core evolution budget's integrated state rather
-            # than the basal node's EOS read-off.
+            # gradient rides on the core, the CMB flux is the
+            # boundary-layer law of T_core against the bottom cell, and
+            # T_cmb is the core evolution budget's integrated state.
             slots = EXTRA_STATE_SLOTS[core_bc]
             n_extra = len(slots)
             T_core_slot = n_stag + slots.index('T_core')
@@ -2358,10 +2357,10 @@ class EntropySolver:
           conduction-only Fourier law. Available for parity testing
           only; not recommended.
         - 'core_module': state = [S, dSdr_cmb, T_core], length N+2.
-          The boundary entropy gradient evolves as in energy_balance,
-          so F_cmb is the state-derived physical flux; T_core is
-          integrated by the core evolution budget's effective
-          heat capacity, replacing the isothermal-reservoir factor.
+          F_cmb is the boundary-layer flux of T_core against the bottom
+          cell; T_core is integrated by the core evolution budget's
+          effective heat capacity, replacing the isothermal-reservoir
+          factor.
         """
         n_stag = self._n_stag
         gradient_mode = self._core_bc == 'gradient'
@@ -2729,20 +2728,18 @@ class EntropySolver:
         With ``capacity_mode='legacy'`` (so that ``C_eff`` equals the
         reservoir constant ``cp_core * tfac * M_core``) and zero
         ``q_radio``, the gradient equation reduces exactly to
-        ``_energy_balance_rhs_per_s``; the T_core equation is then a
-        passive record of the reservoir cooling. In profile mode
+        ``_energy_balance_rhs_per_s`` for a given flux. In profile mode
         ``C_eff(T_core)`` carries secular, latent, and gravitational
         terms, so the basal boundary can only change entropy as fast as
         the core's true thermal inertia allows. ``F_cmb`` is the
         boundary-layer flux of ``_core_module_cmb_flux``, so the gradient
-        slot only defines the reported mantle-side node temperature
-        ``T_cmb_node``; the CMB temperature is ``T_core``.
+        slot sets no flux; the CMB temperature is ``T_core``.
 
         Parameters
         ----------
         F_cmb_basic : float
-            State-derived heat flux at the CMB basic node [W/m^2],
-            positive out of the core.
+            Boundary-layer heat flux at the CMB [W/m^2], positive out
+            of the core.
         dSdt_s_cmb_per_s : float
             dS/dt at the bottom staggered cell [J/(kg*K*s)].
         T_cmb_basic : float
@@ -2907,8 +2904,8 @@ class EntropySolver:
 
           - each extra row couples to S[0..2] (the flux-operator
             reach at the CMB), to itself, and to every other extra
-            slot (core_module: dSdr_cmb and T_core feed each other
-            through the shared CMB flux and cooling rate)
+            slot (core_module: dSdr_cmb follows T_core through the
+            shared cooling rate)
           - rows 0 and 1 (S[0] and S[1]) gain couplings to every
             extra state via the boundary-flux feedback
 
@@ -4680,6 +4677,13 @@ class EntropySolver:
         T_basic_diag = self.state.T_basic_diag.copy()
         cp_basic_diag = self.state.cp_basic_diag.copy()
         rho_basic_diag = self.state.rho_basic_diag.copy()
+        if self._core_bc == 'core_module':
+            # Node 0 reports the applied closure, conduction across the thinner of the half
+            # cell and the boundary layer, and the mantle side of the CMB contrast.
+            jcond_b[0], jconv_b[0], jgrav_b[0], jmix_b[0] = heat_flux[0], 0.0, 0.0, 0.0
+            T_basic_diag[0] = np.asarray(
+                eos.temperature(self._P_basic_flat[0], S_final[0])
+            ).flat[0]
         # Phase-boundary quantities at the basic nodes, for consumers that compute melt drainage.
         ph = self.state.phase_basic
         porosity_b, rho_solid_b, rho_melt_b, g_b = (

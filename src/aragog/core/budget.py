@@ -437,7 +437,7 @@ class CoreEnergyBudget:
         )
 
     def heat_content(self, t_cmb) -> float:
-        """Core heat content [J] at CMB temperature ``t_cmb``, full core, no stratification.
+        """Core heat content [J] at CMB temperature ``t_cmb`` of the full, unstratified core.
 
         ``t_cmb * C_secular`` minus the latent and gravitational energy released
         between nucleation onset and ``t_cmb`` (zero above onset), so that
@@ -446,13 +446,22 @@ class CoreEnergyBudget:
         turns the square-root cusp of the latent and gravitational terms at onset,
         ``C ~ (T_onset - T)^(1/2)``, into a smooth integrand.
         Evaluated eagerly (``t_onset`` is a Python float).
+
+        Raises
+        ------
+        ValueError
+            For a stratified budget, whose capacity covers only the convecting
+            volume and depends on the CMB heat flow.
         """
+        if self.stratification:
+            raise ValueError(
+                'heat_content is the full-core content; a stratified budget evolves '
+                'only its convecting volume'
+            )
         secular = float(t_cmb) * float(self.secular_capacity())
-        if self.capacity_mode == 'legacy':
+        if self.capacity_mode == 'legacy' or float(t_cmb) >= self.t_onset:
             return secular
-        u_max = float(_np.sqrt(max(self.t_onset - float(t_cmb), 0.0)))
-        if u_max == 0.0:
-            return secular
+        u_max = float(_np.sqrt(self.t_onset - float(t_cmb)))
         boundary = jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
         # One Gauss-Legendre panel per side of the freeze-out jump in the latent term.
         u_freeze = float(_np.sqrt(max(self.t_onset - self.t_freeze, 0.0)))

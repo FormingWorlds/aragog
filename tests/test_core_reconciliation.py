@@ -254,7 +254,7 @@ def test_core_module_heating_counted_once(shared_eos):
     flux_heat = float(solver_heat.state.heat_flux[0])
     dT_core_heat = float(dy_heat[n_stag + 1])
 
-    # 1. CMB heat flux is purely state-derived (from dSdr_cmb), unchanged by mantle heating
+    # 1. CMB heat flux depends on the state only, so mantle heating leaves it unchanged
     assert flux_heat == pytest.approx(flux_no_heat, rel=1e-12)
 
     # 2. Core cooling rate dT_core/dt is unchanged by mantle heating

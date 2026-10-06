@@ -2,12 +2,11 @@
 
 The staged core-evolution budget joins the entropy solver as two appended
 ODE states, ``[S, dSdr_cmb, T_core]``. The checks here are the coupling
-contract: the state vector grows by two, the CMB flux is the state-derived
-physical flux (not a conduction-only estimate), the reported core
-temperature is the integrated boundary state rather than the basal node's
-EOS read-off, the core-side energy booking closes against the budget's
-effective capacity, and the legacy-capacity limit reproduces the
-``energy_balance`` mantle trajectory on the same setup.
+contract: the state vector grows by two, the CMB flux is the boundary-layer
+law of T_core against the bottom cell, the reported core temperature is the
+integrated boundary state rather than the basal node's EOS read-off, and the
+heat the core loses is the heat booked into the mantle and the budget's own
+content change.
 """
 
 from __future__ import annotations
@@ -228,29 +227,79 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     def first(values):
         return float(np.asarray(values).flat[0])
 
+    t_core, k = float(y_end[n_stag + 1]), first(ph.thermal_conductivity())
+    t_m = first(shared_eos.temperature(np.array([p_cmb]), y_end[:1]))
+    dr_half = 0.5 * float(solver._r_basic_flat[1] - solver._r_basic_flat[0])
     expected = float(
         cmb_boundary_layer_flux(
-            float(y_end[n_stag + 1]),
-            first(shared_eos.temperature(np.array([p_cmb]), y_end[:1])),
-            conductivity=first(ph.thermal_conductivity()),
+            t_core,
+            t_m,
+            conductivity=k,
             density=first(ph.density()),
             heat_capacity=first(shared_eos.heat_capacity(solver._P_stag_flat[:1], y_end[:1])),
             expansivity=first(ph.thermal_expansivity()),
             viscosity=first(ph.viscosity()),
             gravity=first(solver.state.phase_basic.gravitational_acceleration()),
-            dr_half=0.5 * float(solver._r_basic_flat[1] - solver._r_basic_flat[0]),
+            dr_half=dr_half,
         )
     )
     assert float(out.heat_flux[0]) == pytest.approx(expected, rel=1e-10)
-    t_m = first(shared_eos.temperature(np.array([p_cmb]), y_end[:1]))
-    dr_half = 0.5 * float(solver._r_basic_flat[1] - solver._r_basic_flat[0])
-    q_cond = first(ph.thermal_conductivity()) * (float(y_end[n_stag + 1]) - t_m) / dr_half
+    q_cond = k * (t_core - t_m) / dr_half
     if regime == 'conduction':
         assert expected == pytest.approx(q_cond, rel=1e-12)
     else:
         assert expected > 2.0 * q_cond
+    # Node 0 of the output reports the applied closure and the mantle side of the contrast.
+    assert float(out.T_basic[0]) == pytest.approx(t_m, rel=1e-10)
+    node0 = out.jcond_b[0] + out.jconv_b[0] + out.jgrav_b[0] + out.jmix_b[0]
+    assert float(node0) == pytest.approx(expected, rel=1e-10)
     assert np.sign(out.F_cmb) == np.sign(d_core)
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
+
+
+def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
+    """Outside core_module the CMB node of the output is the state's own diagnostic: the
+    temperature of the gradient-extrapolated basic node and the flux components the
+    state computed, which sum to the applied flux."""
+    solver = _build('energy_balance', shared_eos, s_init='driven')
+    solver.solve()
+    out = solver.get_state()
+    p_cmb = float(solver._P_basic_flat[0])
+    t_m = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), out.S_final[:1])).item())
+    assert float(out.T_basic[0]) == float(solver.state.T_basic_diag[0])
+    assert float(out.jcond_b[0]) == float(solver.state.jcond[0])
+    assert abs(float(out.T_basic[0]) - t_m) > 1.0e-3
+
+
+@pytest.mark.physics_invariant
+def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy(shared_eos):
+    """A core 300 K above a liquid base (phi 0.65, eta about 50 Pa s) loses heat through the
+    boundary layer fast enough to cool by about 1 K in 4 yr. The heat it loses is the heat
+    booked into the mantle (q_radio = 0), and it equals the budget's own content change
+    between the start and end core temperatures, an independent quadrature of C_eff."""
+    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, end_time=4.0)
+    S = np.linspace(7000.0, 6700.0, solver._n_stag)
+    p_cmb = float(solver._P_basic_flat[0])
+    t_m0 = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), S[:1])).item())
+    solver.set_initial_core_temperature(t_m0 + 300.0)
+    solver.set_initial_entropy(S)
+    solver.solve()
+    out = solver.get_state()
+    t_core = solver._solution.y[solver._n_stag + 1]
+    budget = solver._core_module_budget
+    content = budget.heat_content(float(t_core[-1])) - budget.heat_content(float(t_core[0]))
+    assert float(t_core[0] - t_core[-1]) > 0.5
+    assert out.F_cmb > 1.0e4
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-5)
+    assert out.step_dE_core_J == pytest.approx(content, rel=1e-6)
+
+
+@pytest.mark.parametrize('ra_crit', [0.0, -450.0, float('nan'), float('inf')])
+def test_core_module_refuses_a_non_physical_critical_rayleigh_number(shared_eos, ra_crit):
+    """ra_crit_cmb must be positive and finite; the solver refuses anything else when it
+    builds the core budget, before any RHS call."""
+    with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
+        _build('core_module', shared_eos, dict(CORE_MODULE_PARAMS, ra_crit_cmb=ra_crit))
 
 
 def test_core_module_against_quasi_steady_baseline(shared_eos):

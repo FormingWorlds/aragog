@@ -97,7 +97,7 @@ class _BoundaryConditionsParameters:
     # Default 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'
     # Flat parameter dict for core_bc='core_module'; keys documented in
-    # aragog.core.module.build_core_module_budget (plus 'q_radio' [W]).
+    # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').
     core_module_params: dict | None = None
 
     def normalize(self) -> None:
