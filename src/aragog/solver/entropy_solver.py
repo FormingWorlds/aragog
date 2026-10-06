@@ -2393,8 +2393,12 @@ class EntropySolver:
         # uses the boundary value rather than the FD-derived estimate.
         if gradient_mode:
             pass  # state.update already called above with dSdr
-        elif energy_balance or core_mod:
+        elif energy_balance:
             self.state.update(entropy, time, dSdr_cmb=extra)
+        elif core_mod:
+            self.state.update(
+                entropy, time, dSdr_cmb=self._core_module_node_gradient(t_core, entropy[0])
+            )
         else:
             self.state.update(entropy, time)
 
@@ -2421,12 +2425,9 @@ class EntropySolver:
 
         # CMB boundary condition
         if self._inner_bc_kind == 1:
-            if gradient_mode or energy_balance:
-                # gradient/energy_balance: heat_flux[0] is the physical
-                # flux computed from the state-provided dS/dr at the CMB.
+            if gradient_mode or energy_balance or core_mod:
+                # heat_flux[0] is the physical flux from the CMB dS/dr.
                 pass
-            elif core_mod:
-                self.state._heat_flux[0] = self._core_module_cmb_flux(t_core, entropy[0])
             elif bower:
                 # bower2018 BC: F_cmb from one-sided Fourier conduction
                 # across the bottom half-cell with molecular
@@ -2577,6 +2578,21 @@ class EntropySolver:
         dT_core_dt *= SECS_PER_YEAR
 
         return np.concatenate([dSdt, [dT_core_dt]])
+
+    def _core_module_node_gradient(self, t_core: float, s_bottom: float) -> float:
+        """CMB-node entropy gradient that puts the node at ``t_core`` (probe closure)."""
+        from aragog.core.boundary_layer import cmb_node_gradient
+
+        r_basic = self._r_basic_flat
+        p_cmb = self._P_basic_flat[0]
+        return float(
+            cmb_node_gradient(
+                max(float(t_core), 1.0),
+                float(s_bottom),
+                lambda s: float(np.asarray(self.entropy_eos.temperature(p_cmb, s)).flat[0]),
+                float(r_basic[0] - 0.5 * (r_basic[0] + r_basic[1])),
+            )
+        )
 
     def _core_module_cmb_flux(self, t_core: float, s_bottom: float) -> float:
         """CMB heat flux [W/m^2] of the core_module boundary layer.

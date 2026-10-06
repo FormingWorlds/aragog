@@ -76,3 +76,17 @@ def cmb_boundary_layer_flux(
         * (buoyancy / (ra_crit * kappa * viscosity)) ** (1.0 / 3.0)
     )
     return jnp.where(dT > 0.0, jnp.maximum(q_cond, q_conv), q_cond)
+
+
+def cmb_node_gradient(t_core, s_bottom, temperature_at_cmb, dr_offset, n_iter=12, ds=1e-2):
+    """Entropy gradient at the CMB basic node that puts the node at ``t_core``.
+
+    Newton iterations on ``temperature_at_cmb(S) = t_core`` from the bottom cell's
+    entropy, with a centred finite-difference slope, then the gradient over the
+    basic-to-staggered offset ``dr_offset`` (negative: the node lies below the cell).
+    """
+    s = s_bottom
+    for _ in range(n_iter):
+        slope = (temperature_at_cmb(s + ds) - temperature_at_cmb(s - ds)) / (2.0 * ds)
+        s = s - (temperature_at_cmb(s) - t_core) / jnp.maximum(slope, 1e-6)
+    return (s - s_bottom) / dr_offset

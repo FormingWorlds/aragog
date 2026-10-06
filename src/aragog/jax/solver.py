@@ -27,7 +27,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.constants import Stefan_Boltzmann
 
-from aragog.core.boundary_layer import cmb_boundary_layer_flux
+from aragog.core.boundary_layer import cmb_node_gradient
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.jax.phase import (
     MeshArrays,
@@ -580,6 +580,13 @@ def dSdt_core_module(
     r_basic = mesh.radii_basic
     r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
     dr_offset = r_basic[0] - r_stag_0
+    # Probe closure: the CMB node sits at T_core and the mantle's own transport sets the flux.
+    dSdr_cmb = cmb_node_gradient(
+        jnp.maximum(t_core, 1.0),
+        S[0],
+        lambda s_node: eos.temperature(mesh.P_basic[0], s_node),
+        dr_offset,
+    )
     S_basic_cmb = S[0] + dSdr_cmb * dr_offset
 
     flux_out = compute_fluxes(
@@ -600,22 +607,6 @@ def dSdt_core_module(
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
     heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
-    # The CMB flux is set by T_core against the bottom cell's entropy at the CMB pressure.
-    heat_flux = heat_flux.at[0].set(
-        cmb_boundary_layer_flux(
-            jnp.maximum(t_core, 1.0),
-            eos.temperature(mesh.P_basic[0], S[0]),
-            conductivity=phase_stag.thermal_conductivity[0],
-            density=phase_stag.density[0],
-            heat_capacity=eos.heat_capacity(mesh.P_stag[0], S[0]),
-            expansivity=phase_stag.thermal_expansivity[0],
-            viscosity=phase_stag.viscosity[0],
-            gravity=mesh.gravity[0],
-            dr_half=r_stag_0 - r_basic[0],
-            ra_crit=ra_crit,
-        )
-    )
-
     T_cmb = phase_basic.temperature[0]
     cp_cmb = phase_basic.heat_capacity[0]
     F_cmb = heat_flux[0]
