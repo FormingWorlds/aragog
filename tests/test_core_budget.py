@@ -344,7 +344,7 @@ def test_budget_input_validation(prof):
 @pytest.mark.physics_invariant
 def test_heat_content_difference_is_the_capacity_integral(prof):
     """``heat_content(T2) - heat_content(T1)`` equals the integral of C_eff, checked
-    against a dense trapezoid across nucleation onset (inverse-square-root latent term)
+    against a dense trapezoid across nucleation onset (square-root cusp of the latent term)
     and full freeze-out (latent jump), with the gravitational term on. One quadrature
     panel across the freeze-out jump misses the reference by about 2e-3."""
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)

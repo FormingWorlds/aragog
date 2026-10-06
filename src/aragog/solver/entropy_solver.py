@@ -2590,6 +2590,11 @@ class EntropySolver:
         """
         from aragog.core import cmb_boundary_layer_flux
 
+        if self.entropy_eos is None:
+            raise ValueError(
+                "core_bc='core_module' needs the entropy EOS tables: its CMB flux "
+                'evaluates the bottom cell at the CMB pressure (no const_properties).'
+            )
         ph = self.state.phase_staggered
 
         def first(values) -> float:

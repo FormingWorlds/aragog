@@ -443,7 +443,8 @@ class CoreEnergyBudget:
         between nucleation onset and ``t_cmb`` (zero above onset), so that
         ``heat_content(T2) - heat_content(T1)`` is the integral of the effective
         capacity from ``T1`` to ``T2``. The substitution ``T = T_onset - u^2``
-        removes the inverse-square-root onset singularity of the latent term.
+        turns the square-root cusp of the latent and gravitational terms at onset,
+        ``C ~ (T_onset - T)^(1/2)``, into a smooth integrand.
         Evaluated eagerly (``t_onset`` is a Python float).
         """
         secular = float(t_cmb) * float(self.secular_capacity())

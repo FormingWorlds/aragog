@@ -349,6 +349,17 @@ def test_core_module_ra_crit_cmb_reaches_the_solver(shared_eos):
     assert solver._core_module_ra_crit_cmb == 900.0
 
 
+def test_core_module_flux_refuses_a_solver_without_entropy_tables(shared_eos):
+    """Without the entropy EOS (const_properties) the CMB flux has no mantle temperature
+    at the CMB pressure, so the first RHS evaluation stops with a clear error."""
+    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
+    y0 = np.asarray(solver._S0, dtype=float)
+    assert np.isfinite(solver.dSdt(0.0, y0)).all()
+    solver.entropy_eos = None
+    with pytest.raises(ValueError, match='needs the entropy EOS tables'):
+        solver._core_module_cmb_flux(float(y0[-1]), float(y0[0]))
+
+
 def test_core_module_against_quasi_steady_baseline(shared_eos):
     """Cross-mode sanity on the same driven setup: both core temperatures
     are finite, the module's integrated state cools under the outgoing
