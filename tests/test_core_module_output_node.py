@@ -72,6 +72,7 @@ def test_the_cmb_flux_refuses_a_solver_without_entropy_tables(solver, monkeypatc
     """The boundary-layer flux evaluates the bottom cell at the CMB pressure, which needs the
     entropy EOS tables; a solver without them (const_properties) is refused with the reason,
     while the same call with the tables returns a finite flux."""
+    solver.dSdt(0.0, solver._S0)  # the flux reads the bottom cell's state
     assert np.isfinite(solver._core_module_cmb_flux(5000.0, float(solver._S0[0])))
     monkeypatch.setattr(solver, 'entropy_eos', None)
     with pytest.raises(ValueError, match='needs the entropy EOS tables'):
