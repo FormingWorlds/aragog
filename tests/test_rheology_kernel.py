@@ -23,17 +23,11 @@ def test_limit_zero_driving_stress():
     """Verify effective viscosity equals diffusion creep when tau_d is zero."""
     eta_diff = 1.0e22
     tau_y_lid = 1.0e7
-    v_i = 1.0e-9
-    delta_rh = 5.0e4
-    eta_i = 1.0e20
 
     eta_eff = compute_effective_viscosity(
         eta_diff=eta_diff,
         tau_d=0.0,
         tau_y_lid=tau_y_lid,
-        v_i=v_i,
-        delta_rh=delta_rh,
-        eta_i=eta_i,
         stress_closure_mode='lid',
     )
     assert eta_eff == pytest.approx(eta_diff, rel=1.0e-8)
@@ -46,17 +40,11 @@ def test_limit_infinite_yield_stress():
     eta_diff = 1.0e22
     tau_d = 5.0e6
     tau_y_lid = float('inf')
-    v_i = 1.0e-9
-    delta_rh = 5.0e4
-    eta_i = 1.0e20
 
     eta_eff = compute_effective_viscosity(
         eta_diff=eta_diff,
         tau_d=tau_d,
         tau_y_lid=tau_y_lid,
-        v_i=v_i,
-        delta_rh=delta_rh,
-        eta_i=eta_i,
         stress_closure_mode='lid',
     )
     assert eta_eff == pytest.approx(eta_diff, rel=1.0e-10)
@@ -102,18 +90,11 @@ def test_limit_extreme_yielding():
     """Verify yielded branch asymptotically governs at large driving stress."""
     eta_diff = 1.0e25
     tau_y_lid = 50.0e6
-    v_i = 1.0e-9
-    delta_rh = 1.0e4
-    eta_i = 1.0e20
     tau_d = 100.0 * tau_y_lid
-
     eta_eff = compute_effective_viscosity(
         eta_diff=eta_diff,
         tau_d=tau_d,
         tau_y_lid=tau_y_lid,
-        v_i=v_i,
-        delta_rh=delta_rh,
-        eta_i=eta_i,
         stress_closure_mode='lid',
     )
     expected_yielded = min((tau_y_lid * eta_diff) / tau_d, eta_diff)

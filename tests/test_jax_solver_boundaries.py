@@ -85,14 +85,10 @@ def test_jax_effective_viscosity_export_contract():
     tau_y = 5.0e5
     v_i = 1.0e-9
     delta_rh = 1.0e4
-    eta_i = 1.0e20
     res_lid = compute_effective_viscosity(
         eta_diff=eta_d,
         tau_d=tau_d,
         tau_y_lid=tau_y,
-        v_i=v_i,
-        delta_rh=delta_rh,
-        eta_i=eta_i,
         stress_closure_mode='lid',
         w_lid=1.0,
         xp=np,
