@@ -26,7 +26,6 @@ from tests.fixture_helpers import get_cold_top_lid_initial_entropy
 _FWL_DATA = os.environ.get('FWL_DATA')
 _CANDIDATES = [
     os.environ.get('ARAGOG_TEST_EOS_DIR'),
-    '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos',
     f'{_FWL_DATA}/aragog/spider_eos' if _FWL_DATA else None,
 ]
 EOS_DIR = next((Path(p) for p in _CANDIDATES if p and Path(p).exists()), None)
@@ -39,7 +38,7 @@ def shared_eos():
     return EntropyEOS(EOS_DIR)
 
 
-@pytest.mark.unit
+@pytest.mark.smoke
 @pytest.mark.parametrize('mode,tau_y_val', [('yielding', 1.0e4), ('sub_yield', 5.0e4)])
 def test_stagnant_lid_yielding_fixture(shared_eos, mode, tau_y_val):
     """Verify stagnant lid yielding active and sub-yield contracts in integrated solve.
@@ -55,7 +54,7 @@ def test_stagnant_lid_yielding_fixture(shared_eos, mode, tau_y_val):
 
     Notes
     -----
-    Per Ruling 119, pins lid_mask > 0 at top nodes, w_y > 0.9, and the top-node
+    Pins lid_mask > 0 at top nodes, w_y > 0.9, and the top-node
     eta_eff == eta_diff * tau_y / tau_d to rtol 1e-8 for yielding, and
     eta_eff == eta_diff exactly for sub-yield. Runs in under 3 s per case.
     """
