@@ -20,10 +20,12 @@ class SolverConfig:
     end_time : float
         End time [years].
     atol : float
-        Absolute tolerance for BDF solver. Default 1e-8.
+        Absolute tolerance, floored at 1e-8. Default 1e-8.
     rtol : float
-        Relative tolerance for BDF solver. Default 1e-8, the value at which
-        ``phase_boundary_cap = 'rate'`` is verified.
+        Relative tolerance. Default 1e-8, the value at which
+        ``phase_boundary_cap = 'rate'`` is verified. Above 1e-8 a CVODE run logs one
+        warning: a loose rtol can lock CVODE at the switch dS/dr = 0 (the convective mask
+        and the kappa_h floor).
     tsurf_poststep_change : float
         Maximum surface temperature change per step [K].
     cvode_output_points : int
