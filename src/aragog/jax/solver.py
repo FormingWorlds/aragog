@@ -71,8 +71,8 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     """Return a JAX-traceable per-cell radio heating ``H_radio(t_yr)``.
 
     Implements ``H_radio(t) = sum_i (heat_prod_i · abundance_i ·
-    concentration_i · exp(log(2) · (t0_i − t) / half_life_i))`` from
-    aragog/parser.py:_Radionuclide.get_heating, vectorised across
+    concentration_i · exp(log(2) · (t0_i − t) / half_life_i))``, the JAX form of
+    aragog.parser.radionuclide_heating, vectorised across
     isotopes. The returned scalar is broadcast across the staggered
     grid by the caller (radio is uniform per cell).
 
@@ -83,7 +83,24 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
         natural abundance [-], and concentration [mass fraction].
     t0_years, half_life_years : array_like, shape (n_iso,)
         Per-isotope reference time [yr] and half life [yr].
+
+    Raises
+    ------
+    ValueError
+        For a half-life that is not positive or a negative amplitude factor, checked by
+        aragog.parser.validate_radionuclide as for a parsed configuration.
     """
+    from aragog.parser import validate_radionuclide
+
+    for i, iso in enumerate(
+        zip(
+            *(
+                np.atleast_1d(np.asarray(a, dtype=float))
+                for a in (heat_prod, abundance, concentration, t0_years, half_life_years)
+            )
+        )
+    ):
+        validate_radionuclide(f'#{i}', *iso, ppm=False)
     hp = jnp.asarray(heat_prod, dtype=jnp.float64)
     ab = jnp.asarray(abundance, dtype=jnp.float64)
     cn = jnp.asarray(concentration, dtype=jnp.float64)
@@ -92,12 +109,8 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     amp = hp * ab * cn
 
     def _h(t_yr):
-        # exp(log(2) · (t0 − t) / half_life) per isotope, then weighted
-        # sum across isotopes. Returns a scalar [W/kg] that the caller
-        # broadcasts across the staggered grid. The half_life floor of
-        # 1e-10 yr only guards against a literal-zero denominator; any
-        # physical isotope has half_life >> 1e-10 yr.
-        arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1e-10)
+        # Weighted sum across isotopes, a scalar [W/kg] the caller broadcasts across the grid.
+        arg = LOG_TWO * (t0 - t_yr) / hl
         # Mask the argument, so a zero-amplitude isotope and its Jacobian are 0, not 0*inf.
         per_iso = amp * jnp.exp(jnp.where(amp != 0.0, arg, 0.0))
         return jnp.sum(per_iso)

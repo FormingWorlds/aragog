@@ -11,7 +11,6 @@ import pytest
 from click.testing import CliRunner
 
 from aragog.cli import cli
-from aragog.config.radionuclides import RadionuclideConfig
 from aragog.parser import Parameters, _Radionuclide
 
 from .conftest import EOS_DIR, needs_eos
@@ -45,13 +44,17 @@ def _lookup_cfg(tmp_path, *, end_time=None, al26_live=False) -> Path:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('cls', [_Radionuclide, RadionuclideConfig])
-def test_zero_amplitude_isotope_heats_zero_where_exp_overflows(cls):
-    r = cls(**AL26_ZERO)
-    assert r.get_heating(0.0) == 0.0
-    np.testing.assert_array_equal(r.get_heating(np.array([0.0, 1e3])), [0.0, 0.0])
-    with np.errstate(divide='ignore'):
-        assert cls(**{**AL26_ZERO, 'half_life_years': 0.0}).get_heating(0.0) == 0.0
+@pytest.mark.parametrize('half_life', [0.0, np.nan])
+def test_zero_amplitude_isotope_heats_zero_where_exp_overflows(half_life):
+    """A zero-amplitude isotope gives 0 without evaluating its exponent: no overflow,
+    and no division for a zero or NaN half-life (errstate raises on any of them)."""
+    r = _Radionuclide(**AL26_ZERO)
+    with np.errstate(all='raise'):
+        assert r.get_heating(0.0) == 0.0
+        np.testing.assert_array_equal(r.get_heating(np.array([0.0, 1e3])), [0.0, 0.0])
+        assert (
+            _Radionuclide(**{**AL26_ZERO, 'half_life_years': half_life}).get_heating(0.0) == 0.0
+        )
 
 
 @pytest.mark.unit
@@ -223,3 +226,21 @@ def test_live_isotope_overflowing_only_at_the_start_time_raises(tmp_path):
         Parameters.from_file(str(cfg))
     cfg.write_text(text.replace('start_time = -2e9\n', 'start_time = 0\n'))
     Parameters.from_file(str(cfg))
+
+
+@pytest.mark.unit
+def test_replace_converts_each_concentration_from_ppm_once():
+    """dataclasses.replace reruns Parameters.__post_init__ without a second ppm scaling,
+    and an isotope replaced with a new ppm value is scaled once."""
+    p = Parameters.from_file(str(BUNDLED_LOOKUP))
+    k40 = next(r for r in p.radionuclides if r.name == 'K40')
+    assert k40.concentration == pytest.approx(310.0e-6, rel=1e-15)
+    first = [r.concentration for r in p.radionuclides]
+    q = replace(replace(p), solver=p.solver)
+    assert [r.concentration for r in q.radionuclides] == first
+    new = replace(k40, concentration=200.0)
+    replace(p, radionuclides=[new])
+    assert new.concentration == pytest.approx(200.0e-6, rel=1e-15)
+    assert new.get_heating(k40.t0_years) == pytest.approx(
+        new.heat_production * new.abundance * 200.0e-6, rel=1e-15
+    )

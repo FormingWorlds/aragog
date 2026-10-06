@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Self
 
@@ -341,9 +341,83 @@ class _PhaseParameters:
 _PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
 
 
+def radionuclide_heating(
+    time: npt.NDArray | float,
+    amplitude: float,
+    t0_years: float,
+    half_life_years: float,
+) -> npt.NDArray | float:
+    """Decay-law heating ``amplitude * exp(log(2) * (t0 - t) / half_life)`` [W/kg].
+
+    The numpy form of the law; ``aragog.jax.solver.make_radio_heating_fn`` is the JAX
+    form. A zero amplitude gives 0 without evaluating the exponent, so a zero or NaN
+    half-life of an unused isotope neither warns nor overflows.
+    """
+    if amplitude == 0.0:
+        return np.zeros_like(time, dtype=float) if np.ndim(time) else 0.0
+    arg: npt.NDArray | float = np.log(2) * (t0_years - time) / half_life_years
+    return amplitude * np.exp(arg)
+
+
+def validate_radionuclide(
+    name: str,
+    heat_production: float,
+    abundance: float,
+    concentration: float,
+    t0_years: float,
+    half_life_years: float,
+    start_time: float | None = None,
+    ppm: bool = True,
+) -> None:
+    """Reject radionuclide inputs the decay law cannot evaluate.
+
+    Args:
+        name: Isotope label used in the error messages.
+        heat_production, abundance, concentration, t0_years, half_life_years: Isotope
+            settings; ``concentration`` in ppm if ``ppm``, otherwise a mass fraction.
+        start_time: Time [yr] at which the heating must be finite; not checked if None.
+        ppm: Whether ``concentration`` is in ppm.
+
+    Raises:
+        ValueError: for a half-life that is not positive, a negative heat production,
+            abundance or concentration, or a heating that is not finite at ``start_time``.
+    """
+    if not half_life_years > 0.0:
+        raise ValueError(
+            f'Radionuclide {name}: half_life_years must be positive, got {half_life_years}'
+        )
+    unit = ' ppm' if ppm else ''
+    # On the input value: ppm scaling can round a tiny negative value to -0.0.
+    if min(heat_production, abundance, concentration) < 0.0:
+        raise ValueError(
+            f'Radionuclide {name}: heat_production ({heat_production}), '
+            f'abundance ({abundance}) and concentration '
+            f'({concentration}{unit}) must not be negative'
+        )
+    if start_time is None:
+        return
+    amplitude = heat_production * abundance * (concentration * _PPM if ppm else concentration)
+    with np.errstate(over='ignore'):
+        finite = np.isfinite(
+            radionuclide_heating(start_time, amplitude, t0_years, half_life_years)
+        )
+    if not finite:
+        raise ValueError(
+            f'Radionuclide {name}: heating is not finite at the start time '
+            f'{start_time} yr (t0_years = {t0_years}, half_life_years = '
+            f'{half_life_years}); check the amplitude and t0_years'
+        )
+
+
 @dataclass
 class _Radionuclide:
-    """Stores the settings in a radionuclide section in the configuration data."""
+    """Stores the settings in a radionuclide section in the configuration data.
+
+    ``concentration`` is read in ppm and becomes a mass fraction in
+    ``Parameters.__post_init__``, once: ``_ppm_scaled`` records the conversion, and as a
+    non-init field it is reset by ``dataclasses.replace``, so a replaced isotope with a new
+    ppm value is converted again.
+    """
 
     name: str
     t0_years: float
@@ -351,6 +425,7 @@ class _Radionuclide:
     concentration: float
     heat_production: float
     half_life_years: float
+    _ppm_scaled: bool = field(default=False, init=False, repr=False, compare=False)
 
     def get_heating(self, time: npt.NDArray | float) -> npt.NDArray | float:
         """Radiogenic heating
@@ -363,10 +438,8 @@ class _Radionuclide:
                 otherwise a numpy row array where each entry in the row is associated
                 with a single time in the time array.
         """
-        arg: npt.NDArray | float = np.log(2) * (self.t0_years - time) / self.half_life_years
         amplitude = self.heat_production * self.abundance * self.concentration
-        # A zero-amplitude isotope contributes 0, also where exp(arg) overflows.
-        return amplitude * np.exp(np.where(amplitude, arg, 0.0))
+        return radionuclide_heating(time, amplitude, self.t0_years, self.half_life_years)
 
 
 @dataclass
@@ -478,34 +551,24 @@ class Parameters:
                     f'Mesh: [{self.mesh.inner_radius:.3e}, {self.mesh.outer_radius:.3e}]'
                 )
 
-        # Validate ppm-scaled copies and write back only on success, so a rejected call leaves
-        # the caller's objects unchanged.
-        scaled = [replace(r, concentration=r.concentration * _PPM) for r in self.radionuclides]
+        # Validate every isotope before converting any, so a rejected call leaves the
+        # caller's objects unchanged; an isotope already converted is not scaled again.
         if self.energy.radionuclides:
-            t_start = self.solver.start_time
-            for r, r_ppm in zip(scaled, self.radionuclides):
-                if not r.half_life_years > 0.0:
-                    raise ValueError(
-                        f'Radionuclide {r.name}: half_life_years must be positive, '
-                        f'got {r.half_life_years}'
-                    )
-                # On the ppm input: scaling can round a tiny negative value to -0.0.
-                if min(r_ppm.heat_production, r_ppm.abundance, r_ppm.concentration) < 0.0:
-                    raise ValueError(
-                        f'Radionuclide {r.name}: heat_production ({r_ppm.heat_production}), '
-                        f'abundance ({r_ppm.abundance}) and concentration '
-                        f'({r_ppm.concentration} ppm) must not be negative'
-                    )
-                with np.errstate(over='ignore'):
-                    finite = np.isfinite(r.get_heating(t_start))
-                if not finite:
-                    raise ValueError(
-                        f'Radionuclide {r.name}: heating is not finite at the start time '
-                        f'{t_start} yr (t0_years = {r.t0_years}, half_life_years = '
-                        f'{r.half_life_years}); check the amplitude and t0_years'
-                    )
-        for r, r_scaled in zip(self.radionuclides, scaled):
-            r.concentration = r_scaled.concentration
+            for r in self.radionuclides:
+                validate_radionuclide(
+                    r.name,
+                    r.heat_production,
+                    r.abundance,
+                    r.concentration,
+                    r.t0_years,
+                    r.half_life_years,
+                    start_time=self.solver.start_time,
+                    ppm=not r._ppm_scaled,
+                )
+        for r in self.radionuclides:
+            if not r._ppm_scaled:
+                r.concentration *= _PPM
+                r._ppm_scaled = True
 
     @classmethod
     def from_file(cls, *filenames) -> Self:

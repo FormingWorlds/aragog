@@ -17,25 +17,16 @@ correct exponential decay from plausible wrong implementations
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-from tests.conftest import entropy_eos_jax
+from tests.conftest import EOS_DIR, entropy_eos_jax
 
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
 jax.config.update('jax_enable_x64', True)
 
-EOS_DIR = Path(
-    os.environ.get(
-        'ARAGOG_TEST_EOS_DIR',
-        '/Users/timlichtenberg/git/PROTEUS/output/coupled_parity/spider/data/spider_eos',
-    )
-)
 
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
@@ -134,25 +125,23 @@ def test_radio_heating_negative_time_inflates_correctly():
     assert H_back == pytest.approx(2.0e-9, rel=1e-10)
 
 
-def test_radio_heating_unphysical_zero_half_life_does_not_crash():
-    """Zero half-life is clamped by a numerical floor to avoid divide-by-zero.
+@pytest.mark.parametrize('half_life', [0.0, -1.0e6, np.nan])
+@pytest.mark.parametrize('heat_prod', [1.0e-9, 0.0])
+def test_radio_heating_rejects_a_half_life_that_is_not_positive(half_life, heat_prod):
+    """A half-life that is not positive is rejected when the function is built.
 
-    Physical edge case: a misconfigured half_life=0 input must not
-    propagate as NaN/Inf into the integrator. The numerical floor
-    inside ``make_radio_heating_fn`` handles it; this test locks
-    the guard in place.
+    Without the check, hl = 0 gives inf heating and a NaN half-life gives a NaN
+    Jacobian on a zero-amplitude isotope, so both amplitudes are covered.
     """
     from aragog.jax.solver import make_radio_heating_fn
 
-    hp = np.array([1.0e-9])
-    ab = np.array([1.0])
-    cn = np.array([1.0])
-    t0 = np.array([0.0])
-    hl = np.array([0.0])
-
-    H = make_radio_heating_fn(hp, ab, cn, t0, hl)
-    val = float(H(1.0e6))
-    assert np.isfinite(val), 'H_radio with hl=0 must remain finite'
+    one = np.array([1.0])
+    with pytest.raises(ValueError, match=r'#0: half_life_years must be positive'):
+        make_radio_heating_fn(
+            np.array([heat_prod]), one, one, np.array([0.0]), np.array([half_life])
+        )
+    H = make_radio_heating_fn(np.array([heat_prod]), one, one, np.array([0.0]), one)
+    assert np.isfinite(float(H(1.0e6)))
 
 
 def test_radio_heating_short_half_life_decays_correctly():
@@ -298,3 +287,28 @@ def test_dSdt_uses_live_radio_at_different_t():
         f'dS/dt is essentially identical at t=0 and t=t_half_life '
         f'(max|Δ|={max_abs_delta:.3e}); H_radio is frozen, not live.'
     )
+
+
+def test_jax_heating_matches_the_numpy_decay_law():
+    """make_radio_heating_fn sums aragog.parser.radionuclide_heating over the isotopes.
+
+    Bundled K40, Th232, U235, U238 settings (mass fractions) at 1000 times from
+    -4.5 Gyr to +4.5 Gyr around t0; a missing log(2) or a sign flip moves the sum
+    by orders of magnitude.
+    """
+    from aragog.jax.solver import make_radio_heating_fn
+    from aragog.parser import radionuclide_heating
+
+    hp = np.array([2.8761e-05, 2.6368e-05, 5.6870e-04, 9.4650e-05])
+    ab = np.array([1.1668e-04, 1.0, 0.0072045, 0.9927955])
+    cn = np.array([310.0, 0.124, 0.031, 0.031]) * 1e-6
+    t0 = np.full(4, 4.55e9)
+    hl = np.array([1248e6, 14000e6, 704e6, 4468e6])
+    H = make_radio_heating_fn(hp, ab, cn, t0, hl)
+    times = np.linspace(0.05e9, 9.05e9, 1000)
+    jax_vals = np.array([float(H(t)) for t in times])
+    np_vals = sum(
+        radionuclide_heating(times, hp[i] * ab[i] * cn[i], t0[i], hl[i]) for i in range(4)
+    )
+    np.testing.assert_allclose(jax_vals, np_vals, rtol=1e-14, atol=0.0)
+    assert np_vals[0] > 2.0 * np_vals[-1] > 0.0
