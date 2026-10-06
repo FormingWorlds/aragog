@@ -20,8 +20,6 @@ from scipy.constants import Stefan_Boltzmann
 
 from tests.conftest import EOS_DIR, entropy_eos_copy, entropy_eos_jax
 
-# EOS directory (same as test_entropy_pytest.py)
-
 needs_eos = pytest.mark.skipif(
     not EOS_DIR.exists(),
     reason=f'SPIDER P-S tables not found at {EOS_DIR}',

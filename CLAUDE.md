@@ -58,7 +58,7 @@ aragog/
     cfg/                     # Bundled standalone configs (abe_solid.toml, abe_mixed.cfg, ...)
     config/                  # Attrs-based config classes (newer path)
       boundary.py energy.py initial_condition.py mesh.py
-      phases.py radionuclides.py solver.py
+      phases.py solver.py
     eos/
       entropy.py             # SPIDER-format P-S table loader (RegularGridInterpolator)
       entropy_phase.py       # Two-phase blender (lever rule for T, harmonic mean for rho,

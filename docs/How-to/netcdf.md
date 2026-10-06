@@ -38,7 +38,7 @@ out = solver.get_state()
 out.to_netcdf("output/snapshot.nc", time=t_yr)
 ```
 
-When the `time` argument is omitted the writer falls back to `dt_actual` (the per-call integration duration); pass an explicit `time` whenever you have an absolute simulation clock.
+When the `time` argument is omitted the writer stores `SolverOutput.time`, the absolute time of the returned state; the per-call integration duration is the separate `dt_actual` variable.
 
 ### Variables in the standalone schema
 

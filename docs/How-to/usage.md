@@ -105,6 +105,7 @@ print(f"F_heat_total:     {out.F_heat_total:.3e} W/m^2")
 | `Cp_eff` | J/kg/K | Mass-weighted mean heat capacity |
 | `F_heat_total` | W/m² | Total surface heat flux |
 | `dt_actual` | yr | Wall-clock integration span achieved by the solver |
+| `time` | yr | Absolute time of the returned state, the last output time reached |
 | `status` | int | `0` on success; `-1` on solver failure (drives the PROTEUS retry ladder) |
 
 ## Driving Aragog from PROTEUS

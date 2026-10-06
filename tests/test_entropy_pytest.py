@@ -6,7 +6,6 @@ if the tables are not available.
 
 from __future__ import annotations
 
-# Default EOS directory (can be overridden via environment variable)
 import numpy as np
 import pytest
 
