@@ -508,6 +508,8 @@ def test_stagnant_lid_checkpoint_profile_parity():
     )
 
 
+@pytest.mark.unit
+@pytest.mark.physics_invariant
 def test_convecting_layer_viscosity_mixture_parity():
     """Verify mu_i evaluated from mixture viscosity matches between NumPy and JAX."""
     params = SolidRheologyParams()
@@ -585,7 +587,44 @@ def test_convecting_layer_viscosity_mixture_parity():
     np.testing.assert_allclose(
         float(st_mix_np['Ra_eff']), float(st_mix_jx['Ra_eff']), rtol=1e-12
     )
-    assert st_mix_np['mu_i'] < st_none_np['mu_i']
+    # Discriminating assertions: must match expected log-mean and discriminate from Arrhenius
+    np.testing.assert_allclose(float(st_mix_np['mu_i']), 2.5234344760627e16, rtol=1e-8)
+    assert not np.isclose(st_mix_np['mu_i'], st_none_np['mu_i'])
+    assert st_none_np['mu_i'] / st_mix_np['mu_i'] > 1.0e5
+    assert st_none_jx['mu_i'] / st_mix_jx['mu_i'] > 1.0e5
+
+    # 3. Fallback when convective layer is inactive (zero convective flux)
+    st_inactive_np = compute_stagnant_lid_state(
+        radii=r,
+        temperature=T,
+        pressure=P,
+        convective_flux=np.zeros(30),
+        total_flux=tot_flux,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_solid=1.0e21,
+        viscosity_mixture=visc_mix_np,
+        xp=np,
+    )
+    st_inactive_jx = jax_rheo.compute_stagnant_lid_state(
+        radii=jnp.array(r),
+        temperature=jnp.array(T),
+        pressure=jnp.array(P),
+        convective_flux=jnp.zeros(30),
+        total_flux=jnp.array(tot_flux),
+        solidus_temperature=None,
+        melt_fraction=jnp.array(phi),
+        params=params,
+        viscosity_solid=1.0e21,
+        viscosity_mixture=visc_mix_jx,
+    )
+    np.testing.assert_allclose(
+        float(st_inactive_np['mu_i']), float(st_inactive_jx['mu_i']), rtol=1e-12
+    )
+    np.testing.assert_allclose(
+        float(st_inactive_np['mu_i']), float(st_inactive_np['eta_i']), rtol=1e-12
+    )
 
 
 @pytest.mark.unit
