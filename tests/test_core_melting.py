@@ -69,6 +69,10 @@ def test_branch_switch_deviation_and_c1_continuity():
     p_trans_gpa = p_trans / 1e9
     low = 1991.0 * ((p_trans_gpa - 5.2) / 27.39 + 1.0) ** (1.0 / 2.38)
     high = 3712.0 * ((p_trans_gpa - 98.5) / 161.2 + 1.0) ** (1.0 / 1.72)
+    # The unblended fit jumps by 0.73 K at 98.5 GPa (core_bc.md).
+    assert 1991.0 * (93.3 / 27.39 + 1.0) ** (1.0 / 2.38) - 3712.0 == pytest.approx(
+        0.73, abs=0.01
+    )
     t_blended = np.asarray(tm(p_trans))
     dev = np.minimum(np.abs(t_blended - low), np.abs(t_blended - high))
     assert np.max(dev) <= 0.363

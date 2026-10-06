@@ -62,22 +62,11 @@ def crystallization_regime(budget: CoreEnergyBudget, t_cmb):
     superheat = p.adiabat(r, t_cmb) - budget.melting_curve.t_melt(p.pressure(r))
     solid = superheat < 0.0
     changes = jnp.sum(jnp.abs(jnp.diff(solid.astype(jnp.int32))))
-    centre_solid = solid[0]
-    any_solid = jnp.any(solid)
-    all_solid = jnp.all(solid)
-
-    return jnp.where(
-        ~any_solid,
-        REGIME_FULLY_LIQUID,
-        jnp.where(
-            all_solid,
-            REGIME_FULLY_FROZEN,
-            jnp.where(
-                changes > 1,
-                REGIME_SNOW,
-                jnp.where(centre_solid, REGIME_BOTTOM_UP, REGIME_TOP_DOWN),
-            ),
-        ),
+    # jnp.select takes the first true condition, the order of the nested checks.
+    return jnp.select(
+        [~jnp.any(solid), jnp.all(solid), changes > 1, solid[0]],
+        [REGIME_FULLY_LIQUID, REGIME_FULLY_FROZEN, REGIME_SNOW, REGIME_BOTTOM_UP],
+        REGIME_TOP_DOWN,
     )
 
 

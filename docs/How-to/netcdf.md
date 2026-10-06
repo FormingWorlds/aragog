@@ -89,6 +89,8 @@ Time, surface and CMB temperatures, both averaging conventions of the global mel
 
 `time`, `T_magma`, `T_core`, `Phi_global`, `Phi_global_vol`, `M_mantle`, `M_mantle_liquid`, `M_mantle_solid`, `RF_depth`, `E_th`, `E_state`, `E_state_cons`, `Cp_eff`, `F_heat_total`, `F_cmb`, `Q_radio_total`, `Q_tidal_total`, `step_dE_F_int_J`, `step_dE_F_cmb_J`, `step_dE_core_J`, `step_dE_Q_radio_J`, `step_dE_Q_tidal_J`, `step_dE_Q_radio_cons_J`, `step_dE_Q_tidal_cons_J`, `step_solver_residual_J`, `step_dE_compression_J`, `step_dE_state_heat_J`, `dt_actual`, `status` (i4), `cvode_flag` (i4), `tcore_change_max` (f8), `tcore_change_exceeded` (i4).
 
+`step_dE_core_J` is the core's heat change over the call for `core_bc = "core_module"` (the effective-capacity integral over the T_core path) and `"bower2018"` (the reservoir capacity times the T_core change); the other modes write 0.0, since their core is not integrated as a heat content.
+
 `status` is the normalised solve outcome (0 success, negative failure). `cvode_flag` is the raw integer flag CVODE returned for the same solve, kept distinct from `status` so that a `CV_TOO_MUCH_WORK` (-1) step-budget stop is told apart from a `CV_CONV_FAILURE` (-4) convergence failure; the scipy `solve_ivp` path reports 0. Its name is written as the string global attribute `cvode_flag_name`. `tcore_change_max` is the largest change of the core temperature from the solve-entry value over the returned grid [K]; `tcore_change_exceeded` is 1 when `tcore_change_limit` is set and that change exceeds it, or when any sampled core temperature is non-finite (a corrupted-solve signal, independent of the limit), else 0.
 
 ## Inspecting a snapshot

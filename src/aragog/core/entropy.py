@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import numpy as _np
 from scipy import constants as sp_constants
 
 from aragog.core.budget import CoreEnergyBudget
@@ -37,10 +36,6 @@ jax.config.update('jax_enable_x64', True)
 MU0 = sp_constants.mu_0
 _CHR09_C = 0.63  # proportionality constant of CHR09 Eq. 2
 _CHR09_F_GEOMETRY = {'const_flux': 0.88, 'zero_outer': 0.45}
-
-_GL_X, _GL_W = _np.polynomial.legendre.leggauss(48)
-_GL_X = jnp.asarray(_GL_X)
-_GL_W = jnp.asarray(_GL_W)
 
 
 class CoreEntropyBudget:
@@ -98,16 +93,6 @@ class CoreEntropyBudget:
         self.f_ohm = float(f_ohm)
         self.flux_geometry = flux_geometry
 
-    # -- quadrature helper ---------------------------------------------------
-
-    def _quad_0_rcmb(self, integrand):
-        return self._quad_0_upper(self.budget.profiles.r_cmb, integrand)
-
-    def _quad_0_upper(self, upper, integrand):
-        half = upper / 2.0
-        r = half + half * _GL_X
-        return half * jnp.sum(_GL_W * integrand(r))
-
     def _upper(self, t_cmb, q_cmb=None):
         """Convecting-volume top for the entropy integrals.
 
@@ -147,7 +132,7 @@ class CoreEntropyBudget:
             return p.density(r) * p.c_p * (shape - 1.0) * 4.0 * jnp.pi * r**2
 
         top = p.r_cmb if upper is None else upper
-        return self._quad_0_upper(top, integrand) / t_cmb
+        return self.budget._quad_0_upper(top, integrand) / t_cmb
 
     def latent_entropy_capacity(self, t_cmb):
         """Entropy per unit cooling from latent heat [J/K^2].
@@ -183,7 +168,7 @@ class CoreEntropyBudget:
             return p.density(r) * inv_gap * 4.0 * jnp.pi * r**2
 
         top = p.r_cmb if upper is None else upper
-        return (q_radio / mass) * self._quad_0_upper(top, integrand)
+        return (q_radio / mass) * self.budget._quad_0_upper(top, integrand)
 
     # -- dynamo criterion ----------------------------------------------------
 

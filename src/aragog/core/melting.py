@@ -76,15 +76,8 @@ class IronMeltingCurve:
 
     @staticmethod
     def t_melt_pure(pressure):
-        """Pure-iron melting temperature [K] at ``pressure`` [Pa].
-
-        Blends the low-pressure and high-pressure Simon-Glatzel branches of
-        Anzellini et al. (2013) around the 98.5 GPa triple point using a C2
-        smootherstep over a 3.0 GPa half-width. The unblended piecewise fit
-        carries a ~0.73 K discontinuity; blending removes the jump while
-        preserving exact branch values outside [95.5, 101.5] GPa and keeping
-        maximum temperature deviation below 0.37 K.
-        """
+        """Pure-iron melting temperature [K] at ``pressure`` [Pa]: the two Anzellini
+        branches joined by the smootherstep blend of the module docstring."""
         p = jnp.asarray(pressure)
         p_gpa = p / 1e9
         low = _T0 * ((p_gpa - _P0 / 1e9) / _DP_LOW + 1.0) ** _EXP_LOW
@@ -102,7 +95,8 @@ class IronMeltingCurve:
 
         ``light_element_fraction`` overrides the instance value when given,
         which allows callers to evolve the alloy composition without
-        rebuilding the curve. A concrete override is held to the
+        rebuilding the curve. A concrete override is checked like the
+        instance value (in ``[0, 1)``, with the depressed curve kept
         positive); a traced override is the caller's responsibility, since
         a trace cannot raise on data.
 

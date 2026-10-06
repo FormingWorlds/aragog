@@ -11,6 +11,8 @@ content change.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 
@@ -269,6 +271,10 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
         )
     assert np.sign(out.F_cmb) == np.sign(d_core)
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
+    if regime == 'boundary_layer':
+        phi = float(shared_eos.melt_fraction(np.array([p_cmb]), y_end[:1])[0])
+        assert phi == pytest.approx(0.19, abs=0.01)
+        assert 0.1 < out.F_cmb < 1.0
 
 
 def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
@@ -307,10 +313,97 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
     t_core = solver._solution.y[solver._n_stag + 1]
     budget = solver._core_module_budget
     content = budget.heat_content(float(t_core[-1])) - budget.heat_content(float(t_core[0]))
-    assert float(t_core[0] - t_core[-1]) > 0.5
-    assert out.F_cmb > 1.0e4
+    t_m = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), out.S_final[:1])).item())
+    phi = [
+        float(shared_eos.melt_fraction(np.array([p_cmb]), x[:1])[0]) for x in (S, out.S_final)
+    ]
+    # The numbers core_bc.md quotes for this case.
+    assert 0.2 < float(t_core[0] - t_core[-1]) / 4.0 < 0.4
+    assert 5.0e4 < out.F_cmb < 2.0e5
+    assert 320.0 < float(t_core[-1]) - t_m < 340.0
+    assert phi == pytest.approx([0.67, 0.65], abs=0.01)
     assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-5)
     assert out.step_dE_core_J == pytest.approx(content, rel=1e-6)
+
+
+@pytest.mark.physics_invariant
+def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
+    """A core 2 K above the inner-core onset over a liquid base cools through it under CVODE
+    (a quadratic curve at 1.5 times Nimmo's t_m0 puts the onset above the base). The core
+    heat change across the square-root cusp equals the heat_content difference and the CMB
+    heat to the integrator's precision (2.6e-5 at the default rtol, falling with rtol)."""
+    params = {
+        k: v
+        for k, v in CORE_MODULE_PARAMS.items()
+        if k not in ('light_element_fraction', 'depression')
+    }
+    params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
+    solver = _build('core_module', shared_eos, params, end_time=4.0, solver_method='cvode')
+    budget = solver._core_module_budget
+    S = np.linspace(7000.0, 6700.0, solver._n_stag)
+    p_cmb = float(solver._P_basic_flat[0])
+    t_m = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), S[:1])).item())
+    t_onset = float(budget.t_onset)
+    assert t_onset > t_m + 500.0
+    solver.set_initial_core_temperature(t_onset + 2.0)
+    solver.set_initial_entropy(S)
+    solver.solve()
+    out = solver.get_state()
+    t0, t1 = (float(x) for x in solver._solution.y[solver._n_stag + 1, [0, -1]])
+    assert t0 > t_onset > t1
+    assert float(budget.r_icb(t1)) > 0.0
+    content = float(budget.heat_content(t1) - budget.heat_content(t0))
+    assert out.step_dE_core_J == pytest.approx(content, rel=1e-9)
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-4)
+
+
+STRATIFIED_PARAMS = {**CORE_MODULE_PARAMS, 'stratification': True, 'k_core': 130.0}
+FLOOR_WARNING = 'convecting-radius floor'
+
+
+@pytest.mark.physics_invariant
+def test_a_stratified_default_start_keeps_the_core_temperature(shared_eos, caplog):
+    """With stratification on, the default start (T_core at the mantle side of the CMB, so
+    q = 0) sits on the convecting-radius floor, but the flow stays far below 1e-3 Q_k: the
+    core temperature does not move, nothing warns, and the core gains the heat the mantle
+    loses through the CMB."""
+    solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=5.0)
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    with caplog.at_level(logging.WARNING):
+        solver.solve()
+    out = solver.get_state()
+    t_core = solver._solution.y[solver._n_stag + 1]
+    assert abs(float(t_core[-1] - t_core[0])) < 1.0e-6
+    assert not any(FLOOR_WARNING in r.message for r in caplog.records)
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1.0e-2)
+
+
+@pytest.mark.physics_invariant
+def test_a_cold_stratified_core_warns_once_on_the_floor(shared_eos, caplog):
+    """A core 300 K below the mantle (above the inner-core onset) gains heat through the CMB,
+    so the whole core is subadiabatic and the budget uses the floor capacity: the heat gained
+    over the change in T_core is C_eff on the floor, about 700 times below the full core's
+    (core_bc.md).
+    The solver warns once over two calls, and the core heat closes against the CMB heat."""
+    solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=5.0)
+    budget = solver._core_module_budget
+    S = _driven_s_profile(solver._n_stag)
+    p_cmb = float(solver._P_basic_flat[0])
+    t_m0 = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), S[:1])).item())
+    solver.set_initial_core_temperature(t_m0 - 300.0)
+    solver.set_initial_entropy(S)
+    with caplog.at_level(logging.WARNING):
+        solver.solve()
+        out = solver.get_state()
+        t0, t1 = (float(x) for x in solver._solution.y[solver._n_stag + 1, [0, -1]])
+        solver.solve()
+    assert t1 > t0 > float(budget.t_onset)
+    assert sum(FLOOR_WARNING in r.message for r in caplog.records) == 1
+    assert out.step_dE_F_cmb_J < 0.0
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1.0e-6)
+    c_floor = float(budget.effective_capacity(t0, -1.0e12))
+    assert out.step_dE_core_J / (t1 - t0) == pytest.approx(c_floor, rel=1.0e-6)
+    assert 600.0 < float(budget.effective_capacity(t0, 1.0e14)) / c_floor < 800.0
 
 
 @pytest.mark.parametrize('ra_crit', [0.0, -450.0, float('nan'), float('inf')])

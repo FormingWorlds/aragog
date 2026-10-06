@@ -10,6 +10,9 @@ its geometry override and unknown-key rejection are part of the contract.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -21,6 +24,7 @@ from aragog.core import (
     IronMeltingCurve,
     build_core_module_budget,
 )
+from aragog.core.module import CORE_MODULE_KEYS
 
 pytestmark = pytest.mark.unit
 
@@ -180,6 +184,70 @@ def test_factory_geometry_override_and_error_contract():
         CoreModule(_alloy_budget(), t_cmb=4000.0, n_substeps=0)
     with pytest.raises(ValueError, match='dt'):
         CoreModule(_alloy_budget(), t_cmb=4000.0).step(1e12, 0.0)
+
+
+FULL_PARAMS = dict(
+    fit_profile=True,
+    m_core=1.9268511797e24,
+    p_cen=3.5758588038e11,
+    rho_cen=12500.0,
+    length_scale=7.272e6,
+    p_cmb=136e9,
+    pressure_mode='quadrature',
+    alpha=1.35e-5,
+    c_p=840.0,
+    melting_curve='iron',
+    light_element_fraction=0.1,
+    depression=1.2,
+    t_m0=2677.0,
+    t_m1=2.95e-12,
+    t_m2=8.37e-25,
+    ds_fusion=172.8,
+    latent_heat=7.5e5,
+    icn_width=10.0,
+    alpha_c=0.0,
+    c_light=0.0,
+    capacity_mode='profile',
+    legacy_rho_core=11000.0,
+    legacy_tfac=1.147,
+    stratification=True,
+    k_core=130.0,
+)
+
+
+def _documented_keys():
+    text = (Path(__file__).resolve().parents[1] / 'docs/Explanations/core_bc.md').read_text()
+    section = text.split('### Parameters', 1)[1].split('###', 1)[0]
+    lines = [ln for ln in section.splitlines() if ln.startswith('- `')]
+    return {k for ln in lines for k in re.findall(r'`(\w+)`', ln.split(':', 1)[0])}
+
+
+def test_every_documented_key_is_accepted():
+    """The keys core_bc.md lists under core_module_params are the factory's keys plus the two
+    the solver takes (q_radio, ra_crit_cmb), and a dict with all of them builds."""
+    assert _documented_keys() == CORE_MODULE_KEYS | {'q_radio', 'ra_crit_cmb'}
+    assert set(FULL_PARAMS) == CORE_MODULE_KEYS
+    budget = build_core_module_budget(dict(FULL_PARAMS), r_cmb=3480e3, p_cmb_fallback=136e9)
+    assert float(budget.profiles.enclosed_mass(3480e3)) == pytest.approx(
+        FULL_PARAMS['m_core'], rel=1e-6
+    )
+
+
+@pytest.mark.parametrize(
+    ('drop', 'extra', 'match'),
+    [
+        ('m_core', {}, 'needs both m_core and p_cen'),
+        ('p_cen', {}, 'needs both m_core and p_cen'),
+        ('t_m1', {'melting_curve': 'quadratic'}, r"needs \['t_m1'\]"),
+    ],
+)
+def test_incomplete_options_are_refused(drop, extra, match):
+    """fit_profile = true without both structure values, and a quadratic curve without all
+    three coefficients, raise ValueError instead of a default profile or a TypeError."""
+    params = {**FULL_PARAMS, **extra}
+    params.pop(drop)
+    with pytest.raises(ValueError, match=match):
+        build_core_module_budget(params, r_cmb=3480e3, p_cmb_fallback=136e9)
 
 
 def test_build_core_module_budget_fits_profile_from_structure():

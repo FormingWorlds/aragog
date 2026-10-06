@@ -418,8 +418,9 @@ def test_step_heat_content_matches_analytic_integral():
     rho0, a, b, c = 4000.0, 500.0, 0.5, 2.0e-4
     eos = MagicMock()
     eos.density.side_effect = lambda P, S: np.full(np.asarray(S, float).shape, rho0)
+    # The pressure term pins the pairing of each cell's pressure with its entropy path.
     eos.temperature.side_effect = lambda P, S: (
-        a + b * np.asarray(S, float) + c * np.asarray(S, float) ** 2
+        a + b * np.asarray(S, float) + c * np.asarray(S, float) ** 2 + 1.0e-9 * np.asarray(P)
     )
 
     P = np.array([1.0e10, 5.0e10, 1.0e11])
@@ -432,7 +433,11 @@ def test_step_heat_content_matches_analytic_integral():
 
     dS = Sf - S0
     analytic = float(
-        np.sum(rho0 * (a * dS + 0.5 * b * (Sf**2 - S0**2) + c / 3.0 * (Sf**3 - S0**3)) * V)
+        np.sum(
+            rho0
+            * ((a + 1.0e-9 * P) * dS + 0.5 * b * (Sf**2 - S0**2) + c / 3.0 * (Sf**3 - S0**3))
+            * V
+        )
     )
     # 16-point trapezoid on a quadratic integrand: close but not exact.
     assert got == pytest.approx(analytic, rel=1e-3)
@@ -450,7 +455,7 @@ def test_step_heat_content_matches_analytic_integral():
 
     # Discrimination 2: the endpoint estimate rho T(Sf) dS is a different
     # number, so the test fails if the integral degrades to an endpoint read.
-    endpoint = float(np.sum(rho0 * (a + b * Sf + c * Sf**2) * dS * V))
+    endpoint = float(np.sum(rho0 * (a + b * Sf + c * Sf**2 + 1.0e-9 * P) * dS * V))
     assert abs(got - endpoint) > 1e-3 * abs(got)
 
 
@@ -916,23 +921,6 @@ def test_max_step_clamp_entropy_margin_is_configurable():
     assert sig.parameters['entropy_margin'].default is inspect.Parameter.empty
 
 
-def test_setup_solver_core_module_budget_jit_fallback(monkeypatch):
-    """When jax.jit fails, cache_bc_constants falls back to unjitted dtcmb_dt."""
-    import jax
-
-    s = _build_minimal_solver(core_bc='core_module')
-    s.initialize()
-    s._r_basic_flat = np.array([3.48e6, 4e6])
-    s._P_basic_flat = np.array([136e9, 100e9])
-
-    monkeypatch.setattr(
-        jax, 'jit', MagicMock(side_effect=RuntimeError('simulated jit failure'))
-    )
-    s._cache_bc_constants()
-    assert s._core_module_budget_dtcmb_dt is not None
-    assert s._core_module_budget_dtcmb_dt == s._core_module_budget.dtcmb_dt
-
-
 def test_set_initial_entropy_gradient_mode():
     """Initial entropy in gradient mode sets S0 with gradients and surface entropy."""
     s = _build_minimal_solver(core_bc='gradient')
@@ -1007,6 +995,7 @@ def test_step_energy_stratified_core_module_and_fallback():
         effective_capacity=lambda t, q: 2e27,
     )
     s._core_module_budget = mock_budget
+    s._floor_warned = True  # the floor check needs a real profile
 
     # JIT / standard execution
     out = s._compute_step_energy_integrals()
@@ -1016,7 +1005,7 @@ def test_step_energy_stratified_core_module_and_fallback():
     def fail_vmap(*args):
         raise RuntimeError('simulated vmap failure')
 
-    mock_budget._vmap_effective_capacity_strat = fail_vmap
+    mock_budget._vmap_effective_capacity = fail_vmap
     out2 = s._compute_step_energy_integrals()
     assert out2['core'] == pytest.approx(2e27 * (4400.0 - 4500.0))
 
@@ -1069,7 +1058,8 @@ def test_get_current_core_temperature():
 
 
 def test_set_initial_entropy_warm_restart_and_warnings(caplog):
-    """Warm restart preserves T_core and dSdr_cmb; large offsets trigger warning."""
+    """Warm restart preserves T_core and dSdr_cmb without a warning; a supplied start
+    with a large offset warns once per solver."""
     import logging
 
     from scipy.optimize import OptimizeResult
@@ -1095,15 +1085,24 @@ def test_set_initial_entropy_warm_restart_and_warnings(caplog):
     # Solution preserved from previous solve
     assert s._S0[n_stag] == pytest.approx(1.5e-4)
     assert s._S0[n_stag + 1] == pytest.approx(3000.0)
-    assert any(
-        'differs from the mantle temperature at the CMB' in r.message for r in caplog.records
-    )
+    msg = 'differs from the mantle temperature at the CMB'
+    assert not any(msg in r.message for r in caplog.records)
+
+    s.set_initial_core_temperature(3000.0)
+    with caplog.at_level(logging.WARNING):
+        s.set_initial_entropy(3000.0)
+    assert s._S0[n_stag + 1] == pytest.approx(3000.0)
+    assert sum(msg in r.message for r in caplog.records) == 1
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        s.set_initial_entropy(3000.0)
+    assert not any(msg in r.message for r in caplog.records)
 
     # Test n_stag < 2 fallback for dSdr_cmb_init
     s2 = _build_minimal_solver(core_bc='core_module')
     s2.initialize()
     s2._n_stag = 1
-    assert s2._resolve_dSdr_cmb_init(np.array([3000.0]), 1, 2) == 0.0
+    assert s2._resolve_dSdr_cmb_init(np.array([3000.0]), 1) == 0.0
 
 
 def test_step_dE_core_heating_and_exception_fallback():

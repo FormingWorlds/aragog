@@ -435,3 +435,75 @@ def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
     J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(jnp.asarray(y0)))
     assert J.shape == (n_stag + 2, n_stag + 2)
     assert np.all(np.isfinite(J))
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@needs_eos
+def test_boundary_slots_match_numpy_on_a_five_node_mesh():
+    """The production JAX RHS and the numpy RHS agree on every component, both boundary
+    slots included, on a 5-node mesh with the core 50 K above the mantle."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
+
+    solver = _build(
+        'core_module', entropy_eos_copy(), CORE_MODULE_PARAMS, s_init='driven', n_nodes=5
+    )
+    n_stag = solver._n_stag
+    y = np.asarray(solver._S0, dtype=float)
+    y[n_stag + 1] += 50.0
+    f_np = np.asarray(solver.dSdt(0.0, y)).ravel()
+    f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), _build_jax_pieces(solver))).ravel()
+    assert f_np.shape == f_jax.shape == (n_stag + 2,)
+    np.testing.assert_allclose(f_jax, f_np, rtol=1e-10)
+    assert f_np[n_stag + 1] < 0.0
+
+
+@pytest.mark.slow
+@pytest.mark.physics_invariant
+@needs_eos
+@pytest.mark.parametrize('state', ['nucleating', 'above_onset', 'stratified'])
+def test_jacobian_core_column_matches_central_differences(state):
+    """``jacrev`` of the core_module RHS agrees with a central difference in T_core for the
+    gradient-slot and T_core rows, on the driven (non-uniform) profile: inside the
+    nucleation band, above the onset, and stratified above the convecting-radius floor."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
+
+    params = dict(CORE_MODULE_PARAMS)
+    if state == 'stratified':
+        params |= {'stratification': True, 'k_core': 130.0}
+    solver = _build('core_module', entropy_eos_copy(), params, s_init='driven')
+    budget, n = solver._core_module_budget, solver._n_stag
+    y = np.asarray(solver._S0, dtype=float)
+    if state == 'nucleating':
+        scan = np.linspace(3200.0, 6000.0, 281)
+        secular = float(budget.secular_capacity())
+        y[n + 1] = np.median(
+            [t for t in scan if float(budget.latent_capacity(t)) > 0.01 * secular]
+        )
+    elif state == 'above_onset':
+        y[n + 1] = float(budget.t_onset) + 100.0
+    else:
+        y[n + 1] += 50.0
+        solver.dSdt(0.0, y)
+        q = float(solver.state.heat_flux[0]) * solver._cmb_area
+        r_conv = float(budget.convecting_radius(y[n + 1], q)) / budget.profiles.r_cmb
+        assert 0.2 < r_conv < 0.9
+    args = _build_jax_pieces(solver)
+
+    def rhs(v):
+        return np.asarray(dSdt_core_module(0.0, jnp.asarray(v), args))
+
+    J = np.asarray(jax.jacrev(lambda v: dSdt_core_module(0.0, v, args))(jnp.asarray(y)))
+    h, up, down = 0.1, y.copy(), y.copy()
+    up[n + 1] += h
+    down[n + 1] -= h
+    fd = (rhs(up) - rhs(down)) / (2.0 * h)
+    for row in (n, n + 1):
+        assert fd[row] != 0.0
+        assert J[row, n + 1] == pytest.approx(fd[row], rel=1e-6)

@@ -16,12 +16,15 @@ cross-checked against with every feature off.
 
 from __future__ import annotations
 
+import functools
+
 import jax
 import jax.numpy as jnp
 import numpy as _np
 
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
+from aragog.core.stratification import make_thickness_fn
 
 jax.config.update('jax_enable_x64', True)
 
@@ -124,14 +127,7 @@ class CoreEnergyBudget:
                 )
             if k_core is None or not float(k_core) > 0.0:
                 raise ValueError(f'stratification needs a positive k_core, got {k_core}')
-            r_peak = float(profiles.d_scale) * (1.5**0.5)
-            if r_peak < float(profiles.r_cmb):
-                raise ValueError(
-                    f'stratification requires r_peak >= r_cmb (got r_peak={r_peak:.3e} m '
-                    f'< r_cmb={float(profiles.r_cmb):.3e} m); the conductive matching '
-                    f'model has a thickness discontinuity when the conducted flow peaks '
-                    f'inside the core'
-                )
+            self._thickness_fn = make_thickness_fn(profiles, float(k_core))
         self.profiles = profiles
         self.melting_curve = melting_curve
         self.ds_fusion = float(ds_fusion)
@@ -147,10 +143,6 @@ class CoreEnergyBudget:
 
     # -- static integrals ----------------------------------------------------
 
-    def _quad_0_rcmb(self, integrand):
-        """Fixed 48-point Gauss-Legendre integral of ``integrand(r)`` on [0, r_cmb]."""
-        return self._quad_0_upper(self.profiles.r_cmb, integrand)
-
     def _quad_0_upper(self, upper, integrand):
         """Fixed 48-point Gauss-Legendre integral of ``integrand(r)`` on [0, upper]."""
         half = upper / 2.0
@@ -158,17 +150,6 @@ class CoreEnergyBudget:
         return half * jnp.sum(_GL_W * integrand(r))
 
     # -- stratified layer -----------------------------------------------------
-
-    @property
-    def _thickness_fn(self):
-        """The custom-JVP conductive-matching solve, built once per instance."""
-        cached = getattr(self, '_thickness_fn_cached', None)
-        if cached is None:
-            from aragog.core.stratification import make_thickness_fn
-
-            cached = make_thickness_fn(self.profiles, self.k_core)
-            self._thickness_fn_cached = cached
-        return cached
 
     def convecting_radius(self, t_cmb, q_cmb=None):
         """Upper radius [m] of the convecting core.
@@ -229,7 +210,7 @@ class CoreEnergyBudget:
         def mass_integrand(r):
             return p.density(r) * 4.0 * jnp.pi * r**2
 
-        mass = self._quad_0_rcmb(mass_integrand)
+        mass = self._quad_0_upper(p.r_cmb, mass_integrand)
         return self.secular_capacity() / (p.c_p * mass)
 
     # -- inner core ----------------------------------------------------------
@@ -293,12 +274,9 @@ class CoreEnergyBudget:
         """
         return self._r_icb_root(t_cmb)
 
-    @property
+    @functools.cached_property
     def _r_icb_root(self):
         """The custom-JVP-wrapped boundary solve, built once per instance."""
-        cached = getattr(self, '_r_icb_root_cached', None)
-        if cached is not None:
-            return cached
 
         @jax.custom_jvp
         def root(t_cmb):
@@ -318,7 +296,6 @@ class CoreEnergyBudget:
             drdt = jnp.where(interior, -d_dt / safe, 0.0)
             return radius, drdt * t_dot
 
-        self._r_icb_root_cached = root
         return root
 
     def nucleation_factor(self, t_cmb):

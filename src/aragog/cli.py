@@ -341,10 +341,10 @@ def _derive_initial_entropy_from_config(solver) -> float | None:
     default=0.0,
     show_default=True,
     help=(
-        'Initial dS/dr at the CMB [J/kg/K/m]. Used when '
+        'Initial dS/dr at the CMB [J/kg/K/m]. Sets the CMB flux when '
         '``boundary_conditions.core_bc`` is ``"energy_balance"`` (the '
-        'default) or ``"core_module"``, the modes that carry the CMB '
-        'entropy gradient as an extended state variable.'
+        'default). ``"core_module"`` carries the same state slot, but its '
+        'CMB flux is the boundary-layer law, so the value has no effect there.'
     ),
 )
 @click.option(

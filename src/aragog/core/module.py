@@ -36,6 +36,47 @@ _FACTORY_DEFAULTS = {
     'icn_width': 10.0,
 }
 
+_PROFILE_KEYS = frozenset(
+    {
+        'rho_cen',
+        'length_scale',
+        'p_cmb',
+        'alpha',
+        'c_p',
+        'pressure_mode',
+        'm_core',
+        'p_cen',
+        'fit_profile',
+    }
+)
+_CURVE_KEYS = {
+    'iron': frozenset({'light_element_fraction', 'depression'}),
+    'quadratic': frozenset({'t_m0', 't_m1', 't_m2'}),
+}
+_BUDGET_KEYS = frozenset(
+    {
+        'ds_fusion',
+        'icn_width',
+        'latent_heat',
+        'alpha_c',
+        'c_light',
+        'capacity_mode',
+        'legacy_rho_core',
+        'legacy_tfac',
+        'stratification',
+        'k_core',
+    }
+)
+# Every key build_core_module_budget accepts; both curves' keys are accepted whatever the
+# selector, since a config surface (the PROTEUS attrs block) carries every field.
+CORE_MODULE_KEYS = (
+    _PROFILE_KEYS
+    | _CURVE_KEYS['iron']
+    | _CURVE_KEYS['quadratic']
+    | _BUDGET_KEYS
+    | {'melting_curve'}
+)
+
 
 def build_core_module_budget(
     params: dict,
@@ -67,53 +108,29 @@ def build_core_module_budget(
     ------
     ValueError
         From the underlying constructors on any invalid value, or here on
-        an unknown melting-curve selector or unrecognised key.
+        an unknown melting-curve selector, an unrecognised key, a quadratic
+        curve without its three coefficients, or ``fit_profile = True`` without
+        both ``m_core`` and ``p_cen``.
     """
     params = {**_FACTORY_DEFAULTS, **params}
-    profile_keys = {
-        'rho_cen',
-        'length_scale',
-        'p_cmb',
-        'alpha',
-        'c_p',
-        'pressure_mode',
-        'm_core',
-        'p_cen',
-        'fit_profile',
-    }
-    curve_kind = params.pop('melting_curve', 'iron')
-    curve_keys = {
-        'iron': {'light_element_fraction', 'depression'},
-        'quadratic': {'t_m0', 't_m1', 't_m2'},
-    }
-    if curve_kind not in curve_keys:
-        raise ValueError(f'unknown melting_curve {curve_kind!r}')
-    budget_keys = {
-        'ds_fusion',
-        'icn_width',
-        'latent_heat',
-        'alpha_c',
-        'c_light',
-        'capacity_mode',
-        'legacy_rho_core',
-        'legacy_tfac',
-        'stratification',
-        'k_core',
-    }
-    # Both curves' keys are recognised regardless of the active selector:
-    # a config surface (the PROTEUS attrs block) carries every field, and
-    # only the active curve's subset is consumed.
-    known = profile_keys | curve_keys['iron'] | curve_keys['quadratic'] | budget_keys
-    unknown = set(params) - known
+    unknown = set(params) - CORE_MODULE_KEYS
     if unknown:
         raise ValueError(f'unrecognised core_module_params keys: {sorted(unknown)}')
+    curve_kind = params.pop('melting_curve', 'iron')
+    if curve_kind not in _CURVE_KEYS:
+        raise ValueError(f'unknown melting_curve {curve_kind!r}')
+    if curve_kind == 'quadratic' and not _CURVE_KEYS['quadratic'] <= set(params):
+        missing = sorted(_CURVE_KEYS['quadratic'] - set(params))
+        raise ValueError(f"melting_curve = 'quadratic' needs {missing}")
 
     cfg = {k: params.pop(k, None) for k in ('m_core', 'p_cen', 'fit_profile')}
     m_core = cfg['m_core'] if m_core is None else m_core
     p_cen = cfg['p_cen'] if p_cen is None else p_cen
     fit_profile = cfg['fit_profile']
+    if fit_profile is True and (m_core is None or p_cen is None):
+        raise ValueError('fit_profile = true needs both m_core and p_cen')
 
-    profile_kwargs = {k: params[k] for k in profile_keys if k in params}
+    profile_kwargs = {k: params[k] for k in _PROFILE_KEYS if k in params}
     profile_kwargs['r_cmb'] = r_cmb
     profile_kwargs.setdefault('p_cmb', p_cmb_fallback)
 
@@ -126,13 +143,13 @@ def build_core_module_budget(
     else:
         profiles = GaussianCoreProfiles(**profile_kwargs)
 
-    curve_kwargs = {k: params[k] for k in curve_keys[curve_kind] if k in params}
+    curve_kwargs = {k: params[k] for k in _CURVE_KEYS[curve_kind] if k in params}
     if curve_kind == 'iron':
         curve = IronMeltingCurve(**curve_kwargs)
     else:
         curve = QuadraticMeltingCurve(**curve_kwargs)
 
-    budget_kwargs = {k: params[k] for k in budget_keys if k in params}
+    budget_kwargs = {k: params[k] for k in _BUDGET_KEYS if k in params}
     return CoreEnergyBudget(profiles, curve, **budget_kwargs)
 
 

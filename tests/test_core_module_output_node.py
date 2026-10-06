@@ -68,6 +68,22 @@ def test_the_output_cmb_node_is_the_bottom_cell_at_the_cmb_pressure(solver, slot
     assert float(out.rho_basic[0]) == pytest.approx(float(eos.density(p_cmb, s0)[0]), rel=1e-10)
 
 
+@pytest.mark.physics_invariant
+def test_the_gradient_slot_sets_no_other_rate(solver):
+    """The dSdr_cmb slot keeps the energy_balance layout but feeds nothing back: changing it
+    changes its own rate only, with the core 50 K above the mantle."""
+    n_stag = solver._n_stag
+    y = np.array(solver._S0, dtype=float)
+    y[n_stag + 1] += 50.0
+    rates = []
+    for slot in (0.0, 5.0e-4, -5.0e-4):
+        y[n_stag] = slot
+        rates.append(np.array(solver.dSdt(0.0, y), dtype=float))
+    for r in rates[1:]:
+        np.testing.assert_array_equal(np.delete(r, n_stag), np.delete(rates[0], n_stag))
+    assert rates[0][n_stag + 1] != 0.0
+
+
 def test_the_cmb_flux_refuses_a_solver_without_entropy_tables(solver, monkeypatch):
     """The boundary-layer flux evaluates the bottom cell at the CMB pressure, which needs the
     entropy EOS tables; a solver without them (const_properties) is refused with the reason,
@@ -77,3 +93,28 @@ def test_the_cmb_flux_refuses_a_solver_without_entropy_tables(solver, monkeypatc
     monkeypatch.setattr(solver, 'entropy_eos', None)
     with pytest.raises(ValueError, match='needs the entropy EOS tables'):
         solver._core_module_cmb_flux(5000.0, float(solver._S0[0]))
+
+
+def test_the_cmb_flux_asks_for_an_evaluated_state():
+    """Before any right-hand side evaluation the solver state is empty; the flux says so
+    instead of failing on an empty array."""
+    fresh = _build('core_module', entropy_eos_copy(), CORE_MODULE_PARAMS, s_init='driven')
+    with pytest.raises(RuntimeError, match='evaluate the right-hand side'):
+        fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0]))
+    fresh.dSdt(0.0, fresh._S0)
+    assert np.isfinite(fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0])))
+
+
+def test_a_reset_keeps_the_budget_until_its_inputs_change():
+    """A reset with unchanged module parameters and CMB geometry reuses the budget and its
+    compiled functions; a changed parameter (the refit after an impact) rebuilds it."""
+    params = dict(CORE_MODULE_PARAMS)
+    fresh = _build('core_module', entropy_eos_copy(), params, s_init='driven')
+    budget, dtcmb = fresh._core_module_budget, fresh._core_module_budget_dtcmb_dt
+    fresh.reset()
+    assert fresh._core_module_budget is budget
+    assert fresh._core_module_budget_dtcmb_dt is dtcmb
+    fresh.parameters.boundary_conditions.core_module_params['rho_cen'] = 12000.0
+    fresh.reset()
+    assert fresh._core_module_budget is not budget
+    assert float(fresh._core_module_budget.profiles.rho_cen) == 12000.0

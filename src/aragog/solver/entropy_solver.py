@@ -1779,9 +1779,9 @@ class EntropySolver:
 
         # core_module: build the core budget once; the aragog.core constructors validate
         # the params and the CMB radius comes from the mesh, so the geometries agree.
-        if getattr(self, '_core_bc', None) == 'core_module' or (
-            getattr(bc, 'core_bc', None) == 'core_module'
-        ):
+        if 'core_module' in (getattr(self, '_core_bc', None), getattr(bc, 'core_bc', None)):
+            import jax
+
             from aragog.core import RA_CRIT_CMB_DEFAULT, build_core_module_budget, check_ra_crit
 
             params = dict(getattr(bc, 'core_module_params', None) or {})
@@ -1789,22 +1789,23 @@ class EntropySolver:
             self._core_module_ra_crit_cmb = check_ra_crit(
                 params.pop('ra_crit_cmb', RA_CRIT_CMB_DEFAULT)
             )
-            self._core_module_budget = build_core_module_budget(
-                params, r_cmb=r_cmb, p_cmb_fallback=float(self._P_basic_flat[0])
-            )
-            if not getattr(self, '_logged_core_profile', False):
-                logger.info(
-                    'Aragog core_module Gaussian profile: rho_cen=%.2f kg/m3, length_scale=%.1f km',
-                    float(self._core_module_budget.profiles.rho_cen),
-                    float(self._core_module_budget.profiles.length_scale) / 1e3,
+            # A reset with the same inputs keeps the budget and its compiled functions.
+            p_cmb = float(self._P_basic_flat[0])
+            key = (sorted(params.items()), float(r_cmb), p_cmb)
+            if getattr(self, '_core_module_key', None) != key:
+                self._core_module_key = key
+                self._core_module_budget = build_core_module_budget(
+                    params, r_cmb=r_cmb, p_cmb_fallback=p_cmb
                 )
-                self._logged_core_profile = True
-            try:
-                import jax
-
+                if not getattr(self, '_logged_core_profile', False):
+                    logger.info(
+                        'Aragog core_module Gaussian profile: rho_cen=%.2f kg/m3, '
+                        'length_scale=%.1f km',
+                        float(self._core_module_budget.profiles.rho_cen),
+                        float(self._core_module_budget.profiles.length_scale) / 1e3,
+                    )
+                    self._logged_core_profile = True
                 self._core_module_budget_dtcmb_dt = jax.jit(self._core_module_budget.dtcmb_dt)
-            except Exception:
-                self._core_module_budget_dtcmb_dt = self._core_module_budget.dtcmb_dt
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)
@@ -2040,7 +2041,7 @@ class EntropySolver:
             # Hot-start dSdr_cmb_init: preserve from the previous
             # solution if available, so the integrated boundary state
             # survives PROTEUS coupling resets.
-            dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag, 1)
+            dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag)
             self._S0 = np.empty(n_stag + 1)
             self._S0[:n_stag] = S_arr
             self._S0[n_stag] = float(dSdr_cmb_init)
@@ -2058,19 +2059,13 @@ class EntropySolver:
             n_extra = len(slots)
             T_core_slot = n_stag + slots.index('T_core')
             T_core_init = getattr(self, '_T_core_init', None)
+            t_core_override = T_core_init is not None
             if T_core_init is None:
-                prev_sol = getattr(self, '_solution', None)
-                if (
-                    prev_sol is not None
-                    and getattr(prev_sol, 'y', None) is not None
-                    and prev_sol.y.size > 0
-                    and prev_sol.y.shape[0] == n_stag + n_extra
-                ):
-                    T_core_init = float(prev_sol.y[T_core_slot, -1])
+                T_core_init = self.get_current_core_temperature()
 
             dSdr_cmb_init = None
             if 'dSdr_cmb' in slots:
-                dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag, n_extra)
+                dSdr_cmb_init = self._resolve_dSdr_cmb_init(S_arr, n_stag)
 
             T_bottom_eos = None
             if (
@@ -2097,11 +2092,14 @@ class EntropySolver:
                     )
             if (
                 core_bc == 'core_module'
+                and t_core_override
+                and not getattr(self, '_t_core_offset_warned', False)
                 and T_bottom_eos is not None
                 and abs(T_core_init - T_bottom_eos) > 0.2 * max(T_bottom_eos, 1.0)
             ):
-                # Under a stiff (solid or mushy) base the boundary-layer flux relaxes
-                # a large offset only slowly, shifting nucleation timing.
+                # Once, for a supplied start: a hot start continues the run's own contrast.
+                # Under a stiff base the flux relaxes a large offset only slowly.
+                self._t_core_offset_warned = True
                 logger.warning(
                     'core_module: initial T_core=%.0f K differs from the '
                     'mantle temperature at the CMB %.0f K by more than 20%%; '
@@ -2155,28 +2153,20 @@ class EntropySolver:
                 S_arr.max(),
             )
 
-    def _resolve_dSdr_cmb_init(self, S_arr: npt.NDArray, n_stag: int, n_extra: int) -> float:
+    def _resolve_dSdr_cmb_init(self, S_arr: npt.NDArray, n_stag: int) -> float:
         """Resolve the initial CMB entropy gradient for an extended state.
 
         Resolution order: the ``set_initial_dSdr_cmb`` override, then the
         previous solution's final value when the state shape matches
-        (hot start; ``n_extra`` is the number of trailing extra states,
-        and ``dSdr_cmb`` always occupies slot ``n_stag``), then a
-        one-sided FD of ``S_arr`` at the bottom (cold start; exactly
+        (hot start, ``get_current_dSdr_cmb``), then a one-sided FD of ``S_arr`` at the bottom (cold start; exactly
         zero for a uniform isentrope, the correct neutral-buoyancy
         starting point).
         """
         dSdr_cmb_init = getattr(self, '_dSdr_cmb_init', None)
         if dSdr_cmb_init is not None:
             return float(dSdr_cmb_init)
-        prev_sol = getattr(self, '_solution', None)
-        if (
-            prev_sol is not None
-            and getattr(prev_sol, 'y', None) is not None
-            and prev_sol.y.size > 0
-            and prev_sol.y.shape[0] == n_stag + n_extra
-        ):
-            dSdr_cmb_init = float(prev_sol.y[n_stag, -1])
+        dSdr_cmb_init = self.get_current_dSdr_cmb()
+        if dSdr_cmb_init is not None:
             logger.info('Preserved dSdr_cmb from previous solve: %.3e J/kg/K/m', dSdr_cmb_init)
             return dSdr_cmb_init
         if n_stag >= 2:
@@ -2215,22 +2205,7 @@ class EntropySolver:
         T_core before a sequence of retry attempts and restore it on
         each retry, mirroring ``get_current_dSdr_cmb``.
         """
-        n_stag = getattr(self, '_n_stag', None)
-        prev_sol = getattr(self, '_solution', None)
-        core_bc = getattr(self, '_core_bc', None)
-        if core_bc is None and getattr(self, 'parameters', None) is not None:
-            core_bc = getattr(self.parameters.boundary_conditions, 'core_bc', None)
-        slots = EXTRA_STATE_SLOTS.get(core_bc, ())
-        if (
-            n_stag is None
-            or 'T_core' not in slots
-            or prev_sol is None
-            or getattr(prev_sol, 'y', None) is None
-            or prev_sol.y.size == 0
-            or prev_sol.y.shape[0] != n_stag + len(slots)
-        ):
-            return None
-        return float(prev_sol.y[n_stag + slots.index('T_core'), -1])
+        return self._final_extra_state('T_core')
 
     def set_initial_dSdr_cmb(self, dSdr_cmb_init: float | None) -> None:
         """Set the initial CMB entropy gradient (energy_balance / core_module).
@@ -2264,24 +2239,31 @@ class EntropySolver:
         next retry's hot-start IC and drive the boundary state further
         from the pre-solve value each time.
         """
+        return self._final_extra_state('dSdr_cmb')
+
+    def _final_extra_state(self, slot: str) -> float | None:
+        """Final value of the extra state ``slot`` in the last solution, or None.
+
+        None when no solution exists or the state has no such slot for the
+        configured ``core_bc`` (read from the config before the first
+        ``set_initial_entropy``).
+        """
         n_stag = getattr(self, '_n_stag', None)
         prev_sol = getattr(self, '_solution', None)
         core_bc = getattr(self, '_core_bc', None)
         if core_bc is None and getattr(self, 'parameters', None) is not None:
-            # Before the first set_initial_entropy the cached mode is
-            # absent; read it from the config the way that call does.
             core_bc = getattr(self.parameters.boundary_conditions, 'core_bc', None)
         slots = EXTRA_STATE_SLOTS.get(core_bc, ())
         if (
             n_stag is None
-            or 'dSdr_cmb' not in slots
+            or slot not in slots
             or prev_sol is None
             or getattr(prev_sol, 'y', None) is None
             or prev_sol.y.size == 0
             or prev_sol.y.shape[0] != n_stag + len(slots)
         ):
             return None
-        return float(prev_sol.y[n_stag + slots.index('dSdr_cmb'), -1])
+        return float(prev_sol.y[n_stag + slots.index(slot), -1])
 
     def dSdt(
         self,
@@ -2576,6 +2558,11 @@ class EntropySolver:
                 'evaluates the bottom cell at the CMB pressure (no const_properties).'
             )
         ph = self.state.phase_staggered
+        if np.asarray(ph.thermal_conductivity()).size == 0:
+            raise RuntimeError(
+                'the core_module CMB flux reads the bottom cell from the solver state; '
+                'evaluate the right-hand side (dSdt) first'
+            )
 
         def first(values) -> float:
             return float(np.asarray(values).flat[0])
@@ -4146,7 +4133,6 @@ class EntropySolver:
 
         n_stag = getattr(self, '_n_stag', 0)
         core_bc = getattr(self, '_core_bc', None)
-        bower = core_bc == 'bower2018'
 
         dt_s = np.diff(np.asarray(t_pts, dtype=float)) * SECS_PER_YEAR
 
@@ -4207,41 +4193,30 @@ class EntropySolver:
                     t_quad_list.append(t_sub)
                     weight_list.append(w_sub)
 
-                T_quad_all = np.concatenate(t_quad_list)
+                args = (np.concatenate(t_quad_list),)
                 weights_all = np.concatenate(weight_list)
-                try:
-                    c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
-                    if c_eff_fn is None:
-                        import jax
+            else:
+                args = (t_core_traj, P_F_cmb)
+            try:
+                c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
+                if c_eff_fn is None:
+                    import jax
 
-                        c_eff_fn = jax.jit(jax.vmap(budget.effective_capacity))
-                        budget._vmap_effective_capacity = c_eff_fn
-                    c_eff_vals = np.asarray(c_eff_fn(T_quad_all))
-                except Exception:
-                    c_eff_vals = np.array(
-                        [float(budget.effective_capacity(float(t_k))) for t_k in T_quad_all]
-                    )
-
+                    c_eff_fn = jax.jit(jax.vmap(budget.effective_capacity))
+                    budget._vmap_effective_capacity = c_eff_fn
+                c_eff_vals = np.asarray(c_eff_fn(*args))
+            except Exception:
+                c_eff_vals = np.array(
+                    [float(budget.effective_capacity(*map(float, a))) for a in zip(*args)]
+                )
+            if not budget.stratification:
                 step_dE_core = float(np.sum(weights_all * c_eff_vals))
             else:
-                try:
-                    c_eff_fn = getattr(budget, '_vmap_effective_capacity_strat', None)
-                    if c_eff_fn is None:
-                        import jax
-
-                        c_eff_fn = jax.jit(jax.vmap(budget.effective_capacity))
-                        budget._vmap_effective_capacity_strat = c_eff_fn
-                    c_eff_vals = np.asarray(c_eff_fn(t_core_traj, P_F_cmb))
-                except Exception:
-                    c_eff_vals = np.array(
-                        [
-                            float(budget.effective_capacity(float(t_k), float(q_k)))
-                            for t_k, q_k in zip(t_core_traj, P_F_cmb)
-                        ]
-                    )
                 dT_core = np.diff(t_core_traj)
                 step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
-        elif bower:
+                if not getattr(self, '_floor_warned', False):
+                    self._warn_on_convecting_floor(budget, t_core_traj, P_F_cmb)
+        elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:
                 p = self.parameters
@@ -4352,6 +4327,33 @@ class EntropySolver:
             [p_int, p_cmb, Q_radio_i, Q_tidal_i, Q_radio_cons_i, Q_tidal_cons_i, lhs_i - rhs_i]
         )
 
+    def _warn_on_convecting_floor(self, budget, t_core, q_cmb) -> None:
+        """Warn once when a stratified core sits on its convecting-radius floor.
+
+        The layer base reaches the floor (10 % of the CMB radius) where the CMB heat flow is
+        at most the adiabatic conducted flow there, ``Q_ad(0.1 r_cmb)``, every non-positive
+        flow included. Below ``1e-3 Q_k`` (``Q_k = Q_ad(r_cmb)``) the core temperature barely
+        moves, so the warning covers only a flow above it, where the floor capacity sets a
+        visible rate outside the quasi-static layer model's range.
+        """
+        from aragog.core.stratification import _q_ad
+
+        p = budget.profiles
+        q_floor = np.asarray(_q_ad(p, budget.k_core, 0.1 * p.r_cmb, t_core))
+        q_k = np.asarray(_q_ad(p, budget.k_core, p.r_cmb, t_core))
+        on_floor = (q_cmb <= q_floor) & (np.abs(q_cmb) > 1.0e-3 * q_k)
+        if on_floor.any():
+            i = int(np.argmax(on_floor))
+            self._floor_warned = True
+            logger.warning(
+                'core_module: the stratified core is on its convecting-radius floor (10%% of '
+                'r_cmb) with a CMB heat flow of %.3e W (Q_k = %.3e W); the quasi-static layer '
+                'model does not hold there and the core temperature changes at the floor '
+                'capacity. Warned once per solver.',
+                float(q_cmb[i]),
+                float(q_k[i]),
+            )
+
     def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int = 512) -> float:
         """Entropy-transported heat content change over one solver call [J].
 
@@ -4401,12 +4403,11 @@ class EntropySolver:
         dS = Sf - S0
         nq = int(max(2, n_quad))
         w = np.linspace(0.0, 1.0, nq)
-        integrand = np.empty((nq, n), dtype=float)
-        for j, wj in enumerate(w):
-            S_j = S0 + wj * dS
-            rho_j = np.asarray(eos.density(P, S_j)).ravel()[:n]
-            T_j = np.asarray(eos.temperature(P, S_j)).ravel()[:n]
-            integrand[j] = rho_j * T_j
+        # One EOS call over every (point, cell) pair: the per-call overhead dominates.
+        S_q = (S0 + w[:, None] * dS).ravel()
+        P_q = np.broadcast_to(P, (nq, n)).ravel()
+        rho = np.asarray(eos.density(P_q, S_q)).ravel()
+        integrand = (rho * np.asarray(eos.temperature(P_q, S_q)).ravel()).reshape(nq, n)
         # Trapezoidal weights over the unit interval; integral over S is the
         # path integral over w in [0, 1] scaled by the cell entropy change.
         dw = 1.0 / (nq - 1)
