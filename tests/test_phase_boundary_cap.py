@@ -615,7 +615,9 @@ def test_cvode_warns_once_per_solver_when_rtol_is_above_1e_8(
     assert all(('configured solver.atol' in m) == atol_clause for m in hits)
     assert all(
         f'solver.rtol {rtol:.1e}: an rtol above 1e-8' in m
-        and 'with atol = rtol: 46 % at 1e-5' in m
+        and 'drawn per run: 12 of 1133 at 1e-6, 0 of 1026 at 1e-8, and 0 of 80 at 1e-5 '
+        'but about 12 times more RHS evaluations than at 1e-8'
+        in m
         and 'Use 1e-8, the Aragog default, for rtol and atol' in m
         for m in hits
     )
