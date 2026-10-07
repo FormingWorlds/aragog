@@ -1,25 +1,29 @@
 """Tests for JAX CVODE JIT caching and data pytree parameterization.
 
 Verifies:
-(a) Compile counter: 1 RHS and 1 Jacobian trace over repeated factory calls with
-    varying parameters; trace increments on mesh shape change and static BC mode change;
-(b) Parity with pre-change factory across quasi_steady and energy_balance, radio on/off;
-(c) No stale values: perturbation of each pytree leaf alters the output and matches
-    an independent reference build;
-(d) ID-reuse guard: object identity check protects against recycled object addresses.
+- Compile counter: 1 RHS and 1 Jacobian trace over repeated factory calls with
+  varying parameters; trace increments on mesh shape change and static BC mode change;
+- Parity with reference factory across quasi_steady and energy_balance, radio on/off;
+- No stale values: perturbation of each pytree leaf alters the output and matches
+  an independent reference build;
+- ID-reuse guard: object identity check protects against recycled object addresses.
 """
 
 from __future__ import annotations
 
-import functools
 import os
 
-import numpy as np
 import pytest
 
-from aragog.jax.nondim import NonDimScales
-from aragog.jax.phase import PhaseParams
-from aragog.solver.cvode_jax import (
+jax = pytest.importorskip('jax')
+jnp = pytest.importorskip('jax.numpy')
+eqx = pytest.importorskip('equinox')
+
+import numpy as np  # noqa: E402
+
+from aragog.jax.nondim import NonDimScales  # noqa: E402
+from aragog.jax.phase import PhaseParams  # noqa: E402
+from aragog.solver.cvode_jax import (  # noqa: E402
     _CACHE_MAXSIZE,
     _JIT_CACHE,
     _TRACE_COUNTERS,
@@ -28,29 +32,8 @@ from aragog.solver.cvode_jax import (
     build_jax_rhs_and_jacobian,
     clear_jit_cache,
 )
-from tests.conftest import EOS_DIR, entropy_eos_jax
-from tests.conftest import make_mesh as _make_mesh
-
-
-def needs_eos(fn):
-    """Require SPIDER P-S tables; fail in CI when tables are missing."""
-    if os.environ.get('CI') and not EOS_DIR.exists():
-
-        @functools.wraps(fn)
-        def _ci_missing_eos_fail(*args, **kwargs):
-            pytest.fail(f'CI requires SPIDER P-S tables, but {EOS_DIR} not found.')
-
-        return _ci_missing_eos_fail
-    return pytest.mark.skipif(
-        not EOS_DIR.exists(),
-        reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
-    )(fn)
-
-
-jax = pytest.importorskip('jax')
-jnp = pytest.importorskip('jax.numpy')
-eqx = pytest.importorskip('equinox')
-
+from tests.conftest import EOS_DIR, entropy_eos_jax  # noqa: E402
+from tests.conftest import make_mesh as _make_mesh  # noqa: E402
 
 jax.config.update('jax_enable_x64', True)
 
@@ -116,7 +99,7 @@ _LOG_TWO: float = 0.6931471805599453
 def _reference_make_radio_heating_fn(
     heat_prod, abundance, concentration, t0_years, half_life_years
 ):
-    """Test-only independent copy of the abc6101 make_radio_heating_fn implementation."""
+    """Test-only independent copy of the reference make_radio_heating_fn implementation."""
     hp = jnp.asarray(heat_prod, dtype=jnp.float64)
     ab = jnp.asarray(abundance, dtype=jnp.float64)
     cn = jnp.asarray(concentration, dtype=jnp.float64)
@@ -142,7 +125,7 @@ def _build_reference_factory(
     core_bc_mode='quasi_steady',
     radio_isotope_params=(),
 ):
-    """Independent reference implementation of the pre-change factory."""
+    """Independent reference implementation of the closure factory."""
     from aragog.jax.solver import (
         _no_radio,
     )
@@ -199,8 +182,7 @@ def _build_reference_factory(
     return rhs_fn, jacfn, {}
 
 
-@needs_eos
-def test_compile_counter_a(shared_eos):
+def test_compile_counter(shared_eos):
     """Verify trace counters increment exactly once over repeated calls,
     once more on shape change, and once more on static BC type changes.
     """
@@ -344,11 +326,10 @@ def test_compile_counter_a(shared_eos):
     assert np.max(np.abs(J - J_ref_u)) <= 2e-12 * np.max(np.abs(J_ref_u))
 
 
-@needs_eos
 @pytest.mark.parametrize('core_bc_mode', ['quasi_steady', 'energy_balance'])
 @pytest.mark.parametrize('use_radio', [False, True])
-@pytest.mark.parametrize('outer_case', ['grey_body', 'utbl'])
-def test_parity_with_pre_change_factory_b(
+@pytest.mark.parametrize('outer_case', ['prescribed_flux', 'grey_body', 'utbl'])
+def test_cached_factory_matches_closure_reference(
     shared_eos, core_bc_mode: str, use_radio: bool, outer_case: str
 ):
     """Verify numeric parity between cached factory and reference factory.
@@ -361,8 +342,10 @@ def test_parity_with_pre_change_factory_b(
     params = PhaseParams()
     mesh = _make_mesh(N=8)
     inner_type = 5 if core_bc_mode == 'energy_balance' else 2
-    if outer_case == 'grey_body':
-        bc = _make_bc(mesh, outer_type=4, inner_type=inner_type)
+    if outer_case == 'prescribed_flux':
+        bc = _make_bc(mesh, outer_type=4, inner_type=inner_type, outer_val=100.0)
+    elif outer_case == 'grey_body':
+        bc = _make_bc(mesh, outer_type=1, inner_type=inner_type, param_utbl=False)
     else:
         bc = _make_bc(
             mesh, outer_type=1, inner_type=inner_type, param_utbl=True, param_utbl_const=1e-7
@@ -390,7 +373,7 @@ def test_parity_with_pre_change_factory_b(
         radio_isotope_params=radio_params,
     )
 
-    # 2. Build reference pre-change factory
+    # 2. Build reference closure factory
     rhs_ref, jac_ref, _ = _build_reference_factory(
         eos_jax=eos,
         phase_params=params,
@@ -406,6 +389,8 @@ def test_parity_with_pre_change_factory_b(
         np.full(n_stag, 2200.0 / 3.0e3),
         np.full(n_stag, 3050.0 / 3.0e3),
         np.linspace(2400.0, 3600.0, n_stag) / 3.0e3,
+        np.linspace(3600.0, 2400.0, n_stag) / 3.0e3,
+        np.linspace(2600.0, 1900.0, n_stag) / 3.0e3,
     ]
     t_nd = 0.5
 
@@ -436,8 +421,7 @@ def test_parity_with_pre_change_factory_b(
         assert diff_J <= 2e-12 * max_J, f'Jacobian diff {diff_J} > 2e-12 * {max_J}'
 
 
-@needs_eos
-def test_no_stale_values_c(shared_eos):
+def test_no_stale_values(shared_eos):
     """Verify that perturbing each pytree leaf alters the output and matches reference."""
     eos = shared_eos
     params = PhaseParams()
@@ -447,25 +431,34 @@ def test_no_stale_values_c(shared_eos):
     heating = np.full(n_stag, 1e-12)
     radio = _make_radio_tuple()
     scales = NonDimScales(state_scale=np.full(n_stag, 3.0e3), t_ref=100.0)
-    y_nd = np.full(n_stag, 3050.0 / 3.0e3)
+    test_states = [
+        np.full(n_stag, 3050.0 / 3.0e3),
+        np.linspace(3600.0, 2400.0, n_stag) / 3.0e3,
+        np.linspace(2600.0, 1900.0, n_stag) / 3.0e3,
+    ]
     t_nd = 0.5
 
     # Base evaluation
-    rhs_base, _, _ = build_jax_rhs_and_jacobian(
+    rhs_base, jac_base, _ = build_jax_rhs_and_jacobian(
         eos, params, mesh, bc, heating, scales, 'quasi_steady', radio
     )
-    ydot_base = np.zeros(n_stag)
-    rhs_base(t_nd, y_nd, ydot_base)
+    ydot_base = [np.zeros(n_stag) for _ in test_states]
+    J_base = [np.zeros((n_stag, n_stag)) for _ in test_states]
+    for s_idx, y_nd in enumerate(test_states):
+        rhs_base(t_nd, y_nd, ydot_base[s_idx])
+        jac_base(t_nd, y_nd, None, J_base[s_idx])
 
     # Reference base evaluation
-    ref_base, _, _ = _build_reference_factory(
+    ref_base, ref_jac_base, _ = _build_reference_factory(
         eos, params, mesh, bc, heating, scales, 'quasi_steady', radio
     )
-    ydot_ref_base = np.zeros(n_stag)
-    ret_ref_base = ref_base(t_nd, y_nd, ydot_ref_base)
-    assert ret_ref_base == 0
-    max_f_base = np.max(np.abs(ydot_ref_base))
-    assert np.isfinite(max_f_base) and max_f_base > 0.0
+    ydot_ref_base = [np.zeros(n_stag) for _ in test_states]
+    J_ref_base = [np.zeros((n_stag, n_stag)) for _ in test_states]
+    for s_idx, y_nd in enumerate(test_states):
+        assert ref_base(t_nd, y_nd, ydot_ref_base[s_idx]) == 0
+        assert ref_jac_base(t_nd, y_nd, None, J_ref_base[s_idx]) == 0
+        max_f = np.max(np.abs(ydot_ref_base[s_idx]))
+        assert np.isfinite(max_f) and max_f > 0.0
 
     # Leaves to perturb
     perturbations = [
@@ -501,40 +494,49 @@ def test_no_stale_values_c(shared_eos):
     for label, perturber in perturbations:
         p_mesh, p_bc, p_heating, p_scales, p_radio = perturber()
 
-        # 1. Perturbation must change reference output by > 1e-6 * max|f|
-        ref_rhs, _, _ = _build_reference_factory(
+        ref_rhs, ref_jac, _ = _build_reference_factory(
             eos, params, p_mesh, p_bc, p_heating, p_scales, 'quasi_steady', p_radio
         )
-        ydot_ref = np.zeros(n_stag)
-        ret_ref = ref_rhs(t_nd, y_nd, ydot_ref)
-        assert ret_ref == 0
-        ref_diff = np.max(np.abs(ydot_ref - ydot_ref_base))
-        assert ref_diff > 1e-6 * max_f_base, (
-            f'Perturbation {label} does not change reference output enough: {ref_diff} <= 1e-6 * {max_f_base}'
-        )
-
-        # 2. Cached implementation under test
-        p_rhs, _, _ = build_jax_rhs_and_jacobian(
+        p_rhs, p_jac, _ = build_jax_rhs_and_jacobian(
             eos, params, p_mesh, p_bc, p_heating, p_scales, 'quasi_steady', p_radio
         )
-        ydot_pert = np.zeros(n_stag)
-        ret_pert = p_rhs(t_nd, y_nd, ydot_pert)
-        assert ret_pert == 0
 
-        # 3. Output must differ from base (no stale value)
-        diff_from_base = np.max(np.abs(ydot_pert - ydot_base))
-        assert diff_from_base > 1e-6 * np.max(np.abs(ydot_base)), (
-            f'Leaf {label} produced stale value'
-        )
+        for s_idx, y_nd in enumerate(test_states):
+            ydot_ref = np.zeros(n_stag)
+            J_ref = np.zeros((n_stag, n_stag))
+            assert ref_rhs(t_nd, y_nd, ydot_ref) == 0
+            assert ref_jac(t_nd, y_nd, None, J_ref) == 0
 
-        # 4. Output must match independent reference build
-        diff_from_ref = np.max(np.abs(ydot_pert - ydot_ref))
-        assert diff_from_ref <= 1e-14 * np.max(np.abs(ydot_ref)), (
-            f'Leaf {label} diverged from reference'
-        )
+            max_f_base = np.max(np.abs(ydot_ref_base[s_idx]))
+            ref_diff = np.max(np.abs(ydot_ref - ydot_ref_base[s_idx]))
+            assert ref_diff > 1e-6 * max_f_base, (
+                f'Perturbation {label} state {s_idx} does not change reference output enough: {ref_diff} <= 1e-6 * {max_f_base}'
+            )
+
+            ydot_pert = np.zeros(n_stag)
+            J_pert = np.zeros((n_stag, n_stag))
+            assert p_rhs(t_nd, y_nd, ydot_pert) == 0
+            assert p_jac(t_nd, y_nd, None, J_pert) == 0
+
+            diff_from_base = np.max(np.abs(ydot_pert - ydot_base[s_idx]))
+            assert diff_from_base > 1e-6 * np.max(np.abs(ydot_base[s_idx])), (
+                f'Leaf {label} state {s_idx} produced stale value'
+            )
+
+            max_f_ref = np.max(np.abs(ydot_ref))
+            diff_from_ref = np.max(np.abs(ydot_pert - ydot_ref))
+            assert diff_from_ref <= 1e-14 * max_f_ref, (
+                f'Leaf {label} state {s_idx} diverged from reference RHS'
+            )
+
+            max_J_ref = np.max(np.abs(J_ref))
+            diff_J = np.max(np.abs(J_pert - J_ref))
+            assert diff_J <= 2e-12 * max_J_ref, (
+                f'Leaf {label} state {s_idx} diverged from reference Jacobian'
+            )
 
 
-def test_id_reuse_guard_d():
+def test_id_reuse_guard():
     """Verify that if an object address is reused without identity, cache misses."""
     from unittest.mock import patch
 
@@ -567,7 +569,66 @@ def test_id_reuse_guard_d():
         assert r2 == 'fresh_rhs'
 
 
-@needs_eos
+def test_phase_params_convection_distinct_and_cached(shared_eos):
+    """Verify distinct PhaseParams instances alter output and are cached independently."""
+    eos = shared_eos
+    params_a = PhaseParams()
+    params_b = PhaseParams(convection=0)
+    mesh = _make_mesh(N=8)
+    bc = _make_bc(mesh)
+    n_stag = 8
+    heating = np.full(n_stag, 1e-12)
+    scales = NonDimScales(state_scale=np.full(n_stag, 3.0e3), t_ref=100.0)
+    y_nd = np.linspace(3600.0, 2400.0, n_stag) / 3.0e3
+    t_nd = 0.5
+
+    # 1. Build A
+    rhs_a1, jac_a1, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos,
+        phase_params=params_a,
+        mesh_arrays=mesh,
+        boundary_params=bc,
+        heating_array=heating,
+        scales=scales,
+    )
+    ydot_a1 = np.zeros(n_stag)
+    assert rhs_a1(t_nd, y_nd, ydot_a1) == 0
+    traces_after_a1 = _TRACE_COUNTERS['rhs']
+
+    # 2. Build B (convection=0)
+    rhs_b, jac_b, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos,
+        phase_params=params_b,
+        mesh_arrays=mesh,
+        boundary_params=bc,
+        heating_array=heating,
+        scales=scales,
+    )
+    ydot_b = np.zeros(n_stag)
+    assert rhs_b(t_nd, y_nd, ydot_b) == 0
+    assert _TRACE_COUNTERS['rhs'] == traces_after_a1 + 1
+
+    max_f = np.max(np.abs(ydot_a1))
+    diff_ab = np.max(np.abs(ydot_a1 - ydot_b))
+    assert diff_ab > 1e-3 * max_f, f'Convection on vs off diff {diff_ab} <= 1e-3 * {max_f}'
+
+    # 3. Build A again: must return A's values (cache hit on params_a, no new trace)
+    rhs_a2, jac_a2, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos,
+        phase_params=params_a,
+        mesh_arrays=mesh,
+        boundary_params=bc,
+        heating_array=heating,
+        scales=scales,
+    )
+    ydot_a2 = np.zeros(n_stag)
+    assert rhs_a2(t_nd, y_nd, ydot_a2) == 0
+    assert _TRACE_COUNTERS['rhs'] == traces_after_a1 + 1
+
+    diff_a1_a2 = np.max(np.abs(ydot_a2 - ydot_a1))
+    assert diff_a1_a2 <= 1e-14 * max_f, f'Repeated build of A diverged: {diff_a1_a2}'
+
+
 def test_radio_params_shape_mismatch_and_empty(shared_eos):
     """Verify radio parameter shape consistency check and empty array handling."""
     n = 10
@@ -610,7 +671,6 @@ def test_radio_params_shape_mismatch_and_empty(shared_eos):
     assert np.all(np.isfinite(ydot))
 
 
-@needs_eos
 def test_lru_eviction_when_cache_exceeds_maxsize(shared_eos):
     """Verify 9 distinct keys evict the first key; 10th call traces again with identical output."""
     eos = shared_eos
@@ -686,7 +746,6 @@ def test_lru_eviction_when_cache_exceeds_maxsize(shared_eos):
     assert np.max(np.abs(ydot - ydot_0)) <= 1e-14 * np.max(np.abs(ydot_0))
 
 
-@needs_eos
 def test_lru_cache_access_order_move_to_end(shared_eos):
     """Verify accessing an earlier key moves it to most-recent, evicting the next oldest."""
     eos = shared_eos
@@ -716,7 +775,6 @@ def test_lru_cache_access_order_move_to_end(shared_eos):
     assert key_8 in _JIT_CACHE
 
 
-@needs_eos
 def test_eos_jax_identity_guard_misses_on_forged_colliding_key(shared_eos):
     """Verify cache miss when phase_params matches but eos_jax object differs."""
     import copy

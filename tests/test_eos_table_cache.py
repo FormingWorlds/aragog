@@ -17,6 +17,7 @@ import pytest
 
 from aragog.eos.table_cache import (
     _FAILED_CACHE_ROOTS,
+    CACHE_FORMAT_VERSION,
     read_cached_table,
 )
 
@@ -151,11 +152,9 @@ class TestTableCache:
         assert not temp_files, f'Temp files left in {tmp_path}: {temp_files}'
 
     def test_cache_write_deterministic_atomicity(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, table_file: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Verify cache write uses a temporary file and replaces atomically."""
-        table_file = tmp_path / 'atomic_table.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
         expected_cache = table_file.with_name(f'{table_file.name}.cache.npz')
 
         savez_calls: list[bool] = []
@@ -190,8 +189,8 @@ class TestTableCache:
         assert dst_path == expected_cache
         assert expected_cache.is_file()
 
-        temp_files = list(tmp_path.glob('.*.npz'))
-        assert not temp_files, f'Temp files left in {tmp_path}: {temp_files}'
+        temp_files = list(table_file.parent.glob('.*.npz'))
+        assert not temp_files, f'Temp files left in {table_file.parent}: {temp_files}'
 
     def test_fwl_data_dataset_dir_untouched(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -301,16 +300,13 @@ class TestTableCache:
         assert not table_file.with_name(f'{table_file.name}.cache.npz').exists()
 
     def test_cache_temp_file_cleanup_on_replace_error(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, table_file: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Verify temporary cache file is cleaned up if os.replace fails."""
-        table_file = tmp_path / 'replace_fail.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
-
         orig_replace = os.replace
 
         def failing_replace(src, dst):
-            if 'replace_fail' in str(dst):
+            if table_file.stem in str(dst):
                 raise OSError('Simulated replace failure')
             return orig_replace(src, dst)
 
@@ -319,7 +315,7 @@ class TestTableCache:
         arr = read_cached_table(table_file)
         assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
         assert not table_file.with_name(f'{table_file.name}.cache.npz').exists()
-        leftover_temp = list(tmp_path.glob('.replace_fail*.npz'))
+        leftover_temp = list(table_file.parent.glob(f'.{table_file.stem}*.npz'))
         assert not leftover_temp
 
     def test_concurrent_rewrite_during_parse(
@@ -384,12 +380,10 @@ class TestTableCache:
         assert not cache_file.exists()
 
     def test_fwl_data_resolution_error_falls_back_beside_source(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, table_file: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Verify resolution error on FWL_DATA falls back to placing cache beside source."""
         monkeypatch.setenv('FWL_DATA', '/nonexistent/fake/fwl/path')
-        table_file = tmp_path / 'fwl_err_table.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
 
         orig_resolve = Path.resolve
 
@@ -404,3 +398,55 @@ class TestTableCache:
         assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
         cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
+
+    @pytest.mark.skipif(
+        getattr(os, 'getuid', lambda: -1)() == 0,
+        reason='Root bypasses read-only directory permissions',
+    )
+    def test_existing_read_only_cache_root_warns_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify an existing chmod 0o555 cache root logs exactly one warning across 5 reads."""
+        ro_cache_dir = tmp_path / 'existing_ro_cache'
+        ro_cache_dir.mkdir(parents=True)
+        ro_cache_dir.chmod(0o555)
+
+        monkeypatch.setenv('ARAGOG_TABLE_CACHE_DIR', str(ro_cache_dir))
+
+        table_file = tmp_path / 'source_table.dat'
+        table_file.write_text('1.0 2.0\n3.0 4.0\n')
+
+        try:
+            with caplog.at_level(logging.WARNING, logger='fwl.aragog.eos.table_cache'):
+                for _ in range(5):
+                    arr = read_cached_table(table_file)
+                    assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
+
+            warning_records = [
+                r
+                for r in caplog.records
+                if r.levelno == logging.WARNING and 'Could not write table cache' in r.message
+            ]
+            assert len(warning_records) == 1
+            assert ro_cache_dir.resolve() in _FAILED_CACHE_ROOTS
+        finally:
+            ro_cache_dir.chmod(0o755)
+
+    def test_cache_hit_with_empty_data_is_refused(self, tmp_path: Path) -> None:
+        """Verify a cache file containing an empty data array is refused and table is re-parsed."""
+        table_file = tmp_path / 'non_empty.dat'
+        table_file.write_text('1.0 2.0\n3.0 4.0\n')
+        digest = hashlib.blake2b(table_file.read_bytes()).hexdigest()
+
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
+        np.savez(
+            cache_file,
+            data=np.array([]),
+            format_version=np.int64(CACHE_FORMAT_VERSION),
+            source_digest=np.array(digest),
+            skiprows=np.int64(0),
+        )
+
+        arr = read_cached_table(table_file)
+        assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
+        assert arr.size > 0

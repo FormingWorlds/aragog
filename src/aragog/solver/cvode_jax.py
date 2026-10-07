@@ -305,12 +305,10 @@ def build_jax_rhs_and_jacobian(
             info['rhs_calls'] += 1
             if not info['first_rhs_compile_done']:
                 info['first_rhs_compile_done'] = True
-                logger.log(
-                    logging.DEBUG if is_cache_hit else logging.INFO,
-                    'JAX RHS cache hit'
-                    if is_cache_hit
-                    else 'JAX RHS first call (JIT compile complete)',
-                )
+                if is_cache_hit:
+                    logger.debug('JAX RHS cache hit')
+                else:
+                    logger.info('JAX RHS first call (JIT compile complete)')
             return 0
         except Exception as exc:
             logger.error('JAX RHS failed: %s', exc)
@@ -324,12 +322,10 @@ def build_jax_rhs_and_jacobian(
             info['jac_calls'] += 1
             if not info['first_jac_compile_done']:
                 info['first_jac_compile_done'] = True
-                logger.log(
-                    logging.DEBUG if is_cache_hit else logging.INFO,
-                    'JAX Jacobian cache hit'
-                    if is_cache_hit
-                    else 'JAX Jacobian first call (JIT compile complete)',
-                )
+                if is_cache_hit:
+                    logger.debug('JAX Jacobian cache hit')
+                else:
+                    logger.info('JAX Jacobian first call (JIT compile complete)')
             return 0
         except Exception as exc:
             logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD', exc)

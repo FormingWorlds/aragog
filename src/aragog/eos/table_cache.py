@@ -18,14 +18,11 @@ import numpy as np
 
 logger = logging.getLogger('fwl.' + __name__)
 
-CACHE_FORMAT_VERSION = 1
+CACHE_FORMAT_VERSION = 2
 _FAILED_CACHE_ROOTS: set[Path] = set()
 
 
-def _resolve_cache_path(
-    filepath: Path,
-    skiprows: int,
-) -> Path | None:
+def _resolve_cache_path(filepath: Path, skiprows: int) -> Path | None:
     """Resolve destination path for table cache file.
 
     Parameters
@@ -81,14 +78,17 @@ def _resolve_cache_path(
         return cache_dir / f'{digest}.npz'
 
     resolved = filepath.resolve()
+    if resolved.parent in _FAILED_CACHE_ROOTS:
+        logger.debug(
+            'Table cache directory %s previously failed; parsing without cache',
+            resolved.parent,
+        )
+        return None
     return resolved.parent / f'{resolved.name}.cache.npz'
 
 
 def _write_cache_file(
-    cache_path: Path,
-    data: np.ndarray,
-    source_digest: str,
-    skiprows: int,
+    cache_path: Path, data: np.ndarray, source_digest: str, skiprows: int
 ) -> None:
     """Write parsed array and validation metadata atomically to disk.
 
@@ -120,10 +120,7 @@ def _write_cache_file(
         temp_path.unlink(missing_ok=True)
 
 
-def read_cached_table(
-    filepath: Path | str,
-    skiprows: int = 0,
-) -> np.ndarray:
+def read_cached_table(filepath: Path | str, skiprows: int = 0) -> np.ndarray:
     """Load tabular data from disk using an atomic binary cache when valid.
 
     Parameters
@@ -158,6 +155,7 @@ def read_cached_table(
                     int(npz['format_version']) == CACHE_FORMAT_VERSION
                     and str(npz['source_digest']) == source_digest
                     and int(npz['skiprows']) == skiprows
+                    and npz['data'].size > 0
                 ):
                     return npz['data']
         except (
@@ -179,13 +177,17 @@ def read_cached_table(
 
     if cache_path is not None and data.size > 0:
         try:
-            _write_cache_file(
-                cache_path,
-                data,
-                source_digest,
-                skiprows,
-            )
+            _write_cache_file(cache_path, data, source_digest, skiprows)
         except OSError as exc:
-            logger.debug('Failed to write table cache %s: %s', cache_path, exc)
+            parent_dir = cache_path.parent
+            if parent_dir not in _FAILED_CACHE_ROOTS:
+                _FAILED_CACHE_ROOTS.add(parent_dir)
+                logger.warning(
+                    'Could not write table cache in %s: %s; future writes will be skipped',
+                    parent_dir,
+                    exc,
+                )
+            else:
+                logger.debug('Failed to write table cache %s: %s', cache_path, exc)
 
     return data
