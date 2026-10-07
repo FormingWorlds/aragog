@@ -84,11 +84,8 @@ def compute_radio_heating(t_yr, radio_arrays):
     """
     hp, ab, cn, t0, hl = radio_arrays
     amp = hp * ab * cn
-    # exp(log(2) * (t0 - t) / half_life) per isotope, then weighted
-    # sum across isotopes. Returns a scalar [W/kg] that the caller
-    # broadcasts across the staggered grid. The half_life floor of
-    # 1e-10 yr only guards against a literal-zero denominator; any
-    # physical isotope has half_life >> 1e-10 yr.
+    # Exponential decay per isotope, weighted across isotopes.
+    # The 1e-10 yr floor guards against zero denominators.
     arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1e-10)
     # Mask the argument, so a zero-amplitude isotope and its Jacobian are 0, not 0*inf.
     per_iso = amp * jnp.exp(jnp.where(amp != 0.0, arg, 0.0))
