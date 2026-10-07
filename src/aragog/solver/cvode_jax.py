@@ -237,18 +237,12 @@ def build_jax_rhs_and_jacobian(
         raise ValueError('a stratified core_module budget needs core_module_layer_start')
     layer_start = jnp.asarray(core_module_layer_start if stratified else 0.0, dtype=jnp.float64)
 
-    # Wrap RHS as a function of (t_phys, S_phys, layer onset)
-    def _rhs_phys(t_phys, S_phys, start):
-        return _rhs_jax(t_phys, S_phys, args_tuple + ((start,) if stratified else ()))
-
     # The "nondim wrapper" applied to JAX RHS and used by both the
     # solver RHS callback and the Jacobian autodiff. Defined as a
     # JAX-traceable function so jacrev can differentiate through it.
     def _rhs_nondim(t_nd, y_nd, start):
-        t_phys = t_nd * t_ref
-        S_phys = y_nd * state_scale_jax
-        dydt_phys = _rhs_phys(t_phys, S_phys, start)
-        return dydt_phys * rhs_scale_jax
+        args = args_tuple + ((start,) if stratified else ())
+        return _rhs_jax(t_nd * t_ref, y_nd * state_scale_jax, args) * rhs_scale_jax
 
     # JIT-compile both the RHS and its Jacobian. Compilation happens
     # on first call; subsequent calls reuse the compiled artifact.

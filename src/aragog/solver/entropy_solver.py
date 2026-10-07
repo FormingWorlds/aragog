@@ -2209,10 +2209,8 @@ class EntropySolver:
         if self._core_bc != 'core_module' or budget is None or not budget.stratification:
             self._core_layer_start_yr = None
             return
-        override, self._layer_start_override = (
-            getattr(self, '_layer_start_override', None),
-            None,
-        )
+        override = getattr(self, '_layer_start_override', None)
+        self._layer_start_override = None
         kept = getattr(self, '_core_layer_start_yr', None)
         if not self._start_is_stratified(start_time):
             self._core_layer_start_yr = float(start_time)
@@ -2224,9 +2222,9 @@ class EntropySolver:
     def _start_is_stratified(self, start_time: float) -> bool:
         """Whether the CMB heat flow of the start state is below the adiabatic one."""
         self.dSdt(start_time, self._S0)
-        budget, t_core = self._core_module_budget, float(self._S0[self._n_stag + 1])
-        q_k = float(budget.conducted_adiabatic_flow(budget.profiles.r_cmb, t_core))
-        return float(self.state._heat_flux[0]) * self._cmb_area < q_k
+        budget = self._core_module_budget
+        q_k = budget.conducted_adiabatic_flow(budget.profiles.r_cmb, self._S0[self._n_stag + 1])
+        return float(self.state._heat_flux[0]) * self._cmb_area < float(q_k)
 
     def _core_layer_age_s(self, time):
         """Age [s] of the stratified layer at model time ``time`` [yr], or ``None``."""
