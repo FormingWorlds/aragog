@@ -132,12 +132,28 @@ def test_jit_matches_eager():
 def test_melting_curve_runtime_overrides_and_validation():
     """t_melt validates runtime light_element_fraction bounds, and QuadraticMeltingCurve checks t_m0."""
     alloy = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
-    with pytest.raises(ValueError, match='light_element_fraction must be in'):
-        alloy.t_melt(100e9, light_element_fraction=-0.05)
-    for concrete in (np.float32(-0.05), np.array(-0.05), jnp.asarray(-0.05), np.True_):
+    bad = (-0.05, np.float32(-0.05), np.array(-0.05), jnp.asarray(-0.05), np.nan)
+    for concrete in (*bad, [0.1, -0.05], np.array([0.1, np.nan]), np.array([[0.1], [-0.05]])):
         with pytest.raises(ValueError, match='light_element_fraction must be in'):
             alloy.t_melt(100e9, light_element_fraction=concrete)
+    for concrete in (np.array([0.1, 0.9]), jnp.array([0.9, 0.1])):
+        with pytest.raises(ValueError, match='reaches 1'):
+            alloy.t_melt(100e9, light_element_fraction=concrete)
+    for concrete in ('0.05', np.True_, False, 0.05 + 0j):
+        with pytest.raises(ValueError, match='light_element_fraction must be a real number'):
+            alloy.t_melt(100e9, light_element_fraction=concrete)
     # A float32 override is evaluated in float64, and a traced one passes unchecked.
+    p = np.geomspace(1e9, 3e11, 5)
+    x32 = np.float32(0.83333325)
+    near = alloy.t_melt(p, light_element_fraction=x32)
+    np.testing.assert_allclose(
+        near, alloy.t_melt_pure(p) * (1.0 - 1.2 * float(x32)), rtol=1e-12
+    )
+    assert np.all(np.asarray(near) > 0.0)
+    pair = alloy.t_melt(p[:2], light_element_fraction=np.array([0.05, 0.1]))
+    np.testing.assert_allclose(
+        pair, [alloy.t_melt(p[0], light_element_fraction=0.05), alloy.t_melt(p[1])], rtol=1e-15
+    )
     eager = alloy.t_melt(100e9, light_element_fraction=0.05)
     assert alloy.t_melt(100e9, light_element_fraction=np.float32(0.05)).dtype == jnp.float64
     traced = jax.jit(lambda x: alloy.t_melt(100e9, light_element_fraction=x))

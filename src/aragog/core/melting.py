@@ -96,8 +96,8 @@ class IronMeltingCurve:
 
         ``light_element_fraction`` overrides the instance value when given,
         which allows callers to evolve the alloy composition without
-        rebuilding the curve. A concrete override (scalar or array) is taken
-        in float64 and checked like the instance value (in ``[0, 1)``, with
+        rebuilding the curve. A concrete override (a real scalar or array) is
+        taken in float64 and checked like the instance value (in ``[0, 1)``, with
         the depressed curve kept positive); a traced override is the caller's
         responsibility, since a trace cannot raise on data.
 
@@ -112,6 +112,10 @@ class IronMeltingCurve:
         else:
             x = light_element_fraction
             if not isinstance(x, jax.core.Tracer):
+                if np.asarray(x).dtype.kind not in 'iuf':
+                    raise ValueError(
+                        f'light_element_fraction must be a real number, got {light_element_fraction!r}'
+                    )
                 x = np.asarray(x, dtype=float)
                 if not np.all((x >= 0.0) & (x < 1.0)):
                     raise ValueError(
