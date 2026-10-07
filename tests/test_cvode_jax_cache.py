@@ -578,3 +578,90 @@ def test_radio_params_shape_mismatch_and_empty():
     ydot = np.zeros(n)
     assert rhs_fn(0.0, y, ydot) == 0
     assert np.all(np.isfinite(ydot))
+
+
+@needs_eos
+def test_lru_eviction_when_cache_exceeds_maxsize():
+    """Verify 9 distinct keys evict the first key; 10th call traces again with identical output."""
+    from aragog.jax.nondim import NonDimScales
+    from aragog.jax.phase import PhaseParams
+    from aragog.solver.cvode_jax import (
+        _CACHE_MAXSIZE,
+        _JIT_CACHE,
+        _TRACE_COUNTERS,
+        build_jax_rhs_and_jacobian,
+        clear_jit_cache,
+    )
+
+    clear_jit_cache()
+    eos = entropy_eos_jax(EOS_DIR)
+
+    # Maintain references to 9 distinct PhaseParams instances so addresses are not recycled
+    params_list = [PhaseParams() for _ in range(9)]
+    n = 10
+    mesh = _make_mesh(n)
+    bp = _make_bc(mesh)
+    heating = np.zeros(n)
+    scales = NonDimScales(state_scale=np.ones(n), rhs_scale=np.ones(n), t_ref=1.0)
+    y_nd = np.full(n, 1.0)
+    ydot = np.zeros(n)
+
+    # 1. First key call
+    rhs_0, _, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos,
+        phase_params=params_list[0],
+        mesh_arrays=mesh,
+        boundary_params=bp,
+        heating_array=heating,
+        scales=scales,
+    )
+    rhs_0(0.0, y_nd, ydot)
+    ydot_0 = ydot.copy()
+    trace_rhs_after_first = _TRACE_COUNTERS['rhs']
+    assert trace_rhs_after_first >= 1
+
+    # 2. Calls 2 through 9 with distinct PhaseParams (total 9 keys inserted)
+    for i in range(1, 9):
+        rhs_i, _, _ = build_jax_rhs_and_jacobian(
+            eos_jax=eos,
+            phase_params=params_list[i],
+            mesh_arrays=mesh,
+            boundary_params=bp,
+            heating_array=heating,
+            scales=scales,
+        )
+        rhs_i(0.0, y_nd, ydot)
+
+    # Verify cache size is capped at _CACHE_MAXSIZE (8) and first key was evicted
+    assert len(_JIT_CACHE) == _CACHE_MAXSIZE
+    key_0 = ('quasi_steady', False, id(params_list[0]), id(eos))
+    assert key_0 not in _JIT_CACHE
+
+    trace_rhs_before_10th = _TRACE_COUNTERS['rhs']
+
+    # 3. 10th call requesting first key again: must trace anew
+    rhs_10, _, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos,
+        phase_params=params_list[0],
+        mesh_arrays=mesh,
+        boundary_params=bp,
+        heating_array=heating,
+        scales=scales,
+    )
+    rhs_10(0.0, y_nd, ydot)
+
+    assert _TRACE_COUNTERS['rhs'] == trace_rhs_before_10th + 1
+
+    # Verify results match reference build
+    rhs_ref, _, _ = _build_reference_factory(
+        eos_jax=eos,
+        phase_params=params_list[0],
+        mesh_arrays=mesh,
+        boundary_params=bp,
+        heating_array=heating,
+        scales=scales,
+    )
+    ydot_ref = np.zeros(n)
+    rhs_ref(0.0, y_nd, ydot_ref)
+    assert np.allclose(ydot, ydot_ref, atol=1e-12)
+    assert np.allclose(ydot, ydot_0, atol=1e-12)
