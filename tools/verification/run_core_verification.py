@@ -1,0 +1,600 @@
+"""Regenerate the figures and numbers of the core module verification page.
+
+Writes ``docs/figures/vv/fig_08..fig_19_*.png`` (with a PDF beside each) and
+``docs/figures/vv/core_verification_values.json``, the source of every number
+quoted on ``docs/Explanations/core_verification.md``. The solver-level items
+need the SPIDER-format EOS tables (``ARAGOG_TEST_EOS_DIR``); the Leeds
+``thermal_history`` comparisons read the reference tables in
+``tools/verification/data/``.
+
+Usage::
+
+    pip install -e '.[jax,verification]'
+    python tools/verification/run_core_verification.py [--only 1,2,...]
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import time
+from pathlib import Path
+
+import jax
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+from scipy.integrate import quad  # noqa: E402
+
+from aragog.core import (  # noqa: E402
+    CoreEnergyBudget,
+    GaussianCoreProfiles,
+    IronMeltingCurve,
+    QuadraticMeltingCurve,
+    cmb_boundary_layer_flux,
+)
+
+jax.config.update('jax_enable_x64', True)
+
+ROOT = Path(__file__).resolve().parents[2]
+OUT = ROOT / 'docs' / 'figures' / 'vv'
+VALUES_FILE = OUT / 'core_verification_values.json'
+WIDTH = 6.4  # inches, one width for every figure on the page
+G = 6.674_30e-11
+
+# Earth-like core of the test suite (tests/test_core_profiles.py, tests/test_core_budget.py).
+EARTH = dict(
+    rho_cen=12500.0, length_scale=7200e3, r_cmb=3480e3, p_cmb=136e9, alpha=1.35e-5, c_p=840.0
+)
+
+VALUES: dict[str, dict] = {}
+
+
+def record(item: int, key: str, value: float) -> float:
+    """Store one page number under its item; returns the value unchanged."""
+    VALUES.setdefault(str(item), {})[key] = float(value)
+    return value
+
+
+def style():
+    """PROTEUS light theme, or the matplotlib default when proteus-mpl is absent."""
+    try:
+        import proteus_mpl
+
+        proteus_mpl.use('light')
+        plt.rcParams['figure.constrained_layout.use'] = True
+        return proteus_mpl.DOMAINS['interior'], proteus_mpl.COLORS
+    except ImportError:  # the figures stay reproducible without the theme
+        plt.rcParams['figure.constrained_layout.use'] = True
+        return 'C3', {}
+
+
+def colour(name: str, fallback: str) -> str:
+    return COLORS.get(name, fallback)
+
+
+def save(fig, name: str) -> None:
+    fig.align_ylabels()
+    fig.savefig(OUT / f'{name}.png', dpi=200, bbox_inches='tight')
+    fig.savefig(OUT / f'{name}.pdf', bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------- 1. structure
+def item1_structure() -> None:
+    """Gaussian profiles against independent quadrature and hydrostatic balance."""
+    prof = GaussianCoreProfiles(**EARTH)
+    lab = GaussianCoreProfiles(**EARTH, pressure_mode='labrosse')
+    r = np.linspace(1e3, prof.r_cmb, 200)
+    rho = np.asarray(prof.density(r))
+    g = np.asarray(prof.gravity(r))
+    p_quad, p_lab = np.asarray(prof.pressure(r)), np.asarray(lab.pressure(r))
+
+    def m_quad(x):
+        return quad(
+            lambda s: float(prof.density(s)) * 4 * np.pi * s**2, 0.0, x, epsabs=0, epsrel=1e-13
+        )[0]
+
+    mass_err = max(
+        abs(m_quad(x) / float(prof.enclosed_mass(x)) - 1) for x in (0.3e6, 1.5e6, prof.r_cmb)
+    )
+    g_err = max(
+        abs(G * m_quad(x) / x**2 / float(prof.gravity(x)) - 1)
+        for x in (0.3e6, 1.5e6, prof.r_cmb)
+    )
+    h = 50.0
+    rr = r[(r > 2 * h) & (r < prof.r_cmb - 2 * h)]
+    dpdr = (np.asarray(prof.pressure(rr + h)) - np.asarray(prof.pressure(rr - h))) / (2 * h)
+    hydro = np.abs(dpdr / -(np.asarray(prof.density(rr)) * np.asarray(prof.gravity(rr))) - 1)
+    record(1, 'mass_rel_err', mass_err)
+    record(1, 'gravity_rel_err', g_err)
+    record(1, 'hydrostatic_max_rel_err', hydro.max())
+    record(1, 'pressure_lab_vs_quad_max_rel', np.max(np.abs(p_lab / p_quad - 1)))
+    record(1, 'p_cen_GPa', float(prof.pressure(0.0)) / 1e9)
+    record(1, 'rho_cmb', rho[-1])
+    record(1, 'm_core', float(prof.enclosed_mass(prof.r_cmb)))
+    slope = 4 * np.pi * G * EARTH['rho_cen'] / 3
+    record(1, 'gravity_centre_slope_rel_err', abs(float(prof.gravity(1.0)) / slope - 1))
+
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(WIDTH, 5.2), sharex=True, height_ratios=(2, 1))
+    x = r / 1e3
+    ax.plot(x, rho / 1e3, color=CORE, label=r'$\rho$ (g cm$^{-3}$)')
+    ax.plot(x, g, color=colour('ocean', 'C0'), label=r'$g$ (m s$^{-2}$)')
+    ax.plot(x, p_quad / 1e10, color=colour('ink', 'k'), label=r'$P$ (10 GPa)')
+    ax.legend(frameon=False, fontsize='small', loc='center left')
+    ax.set_ylabel('profile value')
+    ax.set_xlim(0, x[-1])
+    ax2.semilogy(
+        rr / 1e3, np.maximum(hydro, 1e-16), color=CORE, label=r'$|dP/dr + \rho g|/\rho g$'
+    )
+    ax2.semilogy(
+        x,
+        np.maximum(np.abs(p_lab / p_quad - 1), 1e-16),
+        color=colour('fog', 'C7'),
+        label='closed form vs quadrature $P$',
+    )
+    ax2.set_xlabel('radius (km)')
+    ax2.set_ylabel('relative residual')
+    ax2.legend(frameon=False, fontsize='small')
+    save(fig, 'fig_08_core_structure')
+
+
+# ------------------------------------------------------------ 2. energy identities
+def _model_budget(curve, **kw):
+    return CoreEnergyBudget(
+        GaussianCoreProfiles(**EARTH), curve, ds_fusion=170.0, icn_width=10.0, **kw
+    )
+
+
+def item2_energy() -> None:
+    """Capacity split across onset and freeze-out; content difference = capacity integral."""
+    budget = _model_budget(
+        IronMeltingCurve(light_element_fraction=0.1, depression=1.2), alpha_c=0.6, c_light=0.05
+    )
+    t_on, t_fr = float(budget.t_onset), float(budget.t_freeze)
+    t = np.linspace(t_fr - 150.0, t_on + 150.0, 40001)
+    t = np.unique(np.concatenate([t, [t_on, t_fr, t_fr - 1e-6, t_fr + 1e-6]]))
+    sec = float(budget.secular_capacity())
+    lat = np.asarray(jax.jit(jax.vmap(budget.latent_capacity))(t))
+    grav = np.asarray(jax.jit(jax.vmap(budget.gravitational_capacity))(t))
+    c_eff = np.asarray(jax.jit(jax.vmap(budget.effective_capacity))(t))
+    integral = np.concatenate([[0.0], np.cumsum(0.5 * (c_eff[1:] + c_eff[:-1]) * np.diff(t))])
+    # The content difference at 121 checkpoints against the dense trapezoid of C_eff.
+    tc = np.linspace(t[0], t[-1], 121)[1:]
+    content = np.array([float(budget.heat_content(x)) for x in np.concatenate([[t[0]], tc])])
+    resid = np.abs((content[1:] - content[0]) - np.interp(tc, t, integral)) / np.abs(
+        integral[-1]
+    )
+    record(2, 't_onset', t_on)
+    record(2, 't_freeze', t_fr)
+    record(2, 'content_vs_integral_max_rel', resid.max())
+    # The freeze-out jump without the gravitational term, as in test_freeze_out_capacity_jump.
+    for name, curve in (
+        ('iron', IronMeltingCurve(light_element_fraction=0.1, depression=1.2)),
+        ('quadratic', QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)),
+    ):
+        b = _model_budget(curve)
+        tf = float(b.t_freeze)
+        above, below = (
+            float(b.effective_capacity(tf + 1e-4)),
+            float(b.effective_capacity(tf - 1e-4)),
+        )
+        record(2, f'{name}_freeze_out_ratio', above / below)
+        record(2, f'{name}_freeze_out_drop', (below - above) / above)
+
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(WIDTH, 5.2), sharex=True, height_ratios=(2, 1))
+    ax.plot(t, np.full_like(t, sec) / 1e27, color=colour('solar', 'C1'), label='secular')
+    ax.plot(t, lat / 1e27, color=CORE, label='latent')
+    ax.plot(t, grav / 1e27, color=colour('ocean', 'C0'), label='gravitational')
+    ax.plot(t, c_eff / 1e27, color=colour('ink', 'k'), lw=1.6, label=r'$\tilde C$ total')
+    for tt, lab in ((t_on, 'onset'), (t_fr, 'freeze-out')):
+        ax.axvline(tt, color=colour('fog', '0.7'), lw=0.8)
+        ax.annotate(
+            lab,
+            (tt, 0.0),
+            xytext=(3, 3),
+            textcoords='offset points',
+            fontsize='small',
+            color=colour('fog', 'C7'),
+        )
+    ax.set_ylabel(r'capacity ($10^{27}$ J K$^{-1}$)')
+    ax.legend(frameon=False, fontsize='small', ncols=2)
+    ax2.semilogy(tc, np.maximum(resid, 1e-17), 'o', ms=2.5, color=CORE)
+    ax2.set_xlabel(r'$T_\mathrm{cmb}$ (K)')
+    ax2.set_ylabel('rel. difference')
+    save(fig, 'fig_09_core_energy_identities')
+
+
+# ------------------------------------------------------- 3. boundary-layer flux
+BL_PROPS = dict(
+    conductivity=4.0,
+    density=4000.0,
+    heat_capacity=1000.0,
+    expansivity=3e-5,
+    gravity=10.0,
+    dr_half=1e4,
+)
+
+
+def item3_flux() -> None:
+    """q(dT) for a liquid and a solid base, both signs, two Ra_crit values."""
+    dT = np.geomspace(1e-3, 1e3, 241)
+    fig, ax = plt.subplots(figsize=(WIDTH, 4.2))
+    styles = {}
+    for eta, name, col in (
+        (0.1, 'liquid base', CORE),
+        (1e21, 'solid base', colour('fog', 'C7')),
+    ):
+        for ra, ls in ((450.0, '-'), (1800.0, '--')):
+            q = np.asarray(
+                cmb_boundary_layer_flux(
+                    4000.0 + dT, 4000.0, viscosity=eta, ra_crit=ra, **BL_PROPS
+                )
+            )
+            ax.loglog(dT, q, ls, color=col)
+            styles[(name, ra)] = q
+        ax.annotate(
+            name,
+            (dT[-1], styles[(name, 450.0)][-1]),
+            xytext=(4, 0),
+            textcoords='offset points',
+            va='center',
+            color=col,
+            fontsize='small',
+        )
+    # A colder core conducts across the half cell over either base: one line for both.
+    qn = -np.asarray(cmb_boundary_layer_flux(4000.0 - dT, 4000.0, viscosity=0.1, **BL_PROPS))
+    ax.loglog(dT, qn, ':', lw=2.4, color=colour('ocean', 'C0'))
+    ax.annotate(
+        'core colder (either base)',
+        (dT[60], qn[60]),
+        xytext=(0, 10),
+        textcoords='offset points',
+        rotation=18,
+        color=colour('ocean', 'C0'),
+        fontsize='small',
+    )
+    record(
+        3,
+        'cold_core_flux_equals_solid_base',
+        float(np.max(np.abs(qn / styles[('solid base', 450.0)] - 1))),
+    )
+    q_liq = styles[('liquid base', 450.0)]
+    hi = dT > 10
+    slope = np.polyfit(np.log(dT[hi]), np.log(q_liq[hi]), 1)[0]
+    record(3, 'convective_slope', slope)
+    record(
+        3,
+        'ra_crit_ratio_1800_450',
+        float(np.median(styles[('liquid base', 1800.0)][hi] / q_liq[hi])),
+    )
+    record(
+        3,
+        'q_liquid_100K',
+        float(cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=0.1, **BL_PROPS)),
+    )
+    record(
+        3,
+        'q_solid_100K',
+        float(cmb_boundary_layer_flux(4100.0, 4000.0, viscosity=1e21, **BL_PROPS)),
+    )
+    record(3, 'conduction_slope', BL_PROPS['conductivity'] / BL_PROPS['dr_half'])
+    ax.set_xlabel(r'$|T_\mathrm{core} - T_m|$ (K)')
+    ax.set_ylabel(r'$|q_\mathrm{cmb}|$ (W m$^{-2}$)')
+    ax.set_xlim(dT[0], dT[-1] * 40)
+    ax.text(
+        0.98,
+        0.04,
+        r'solid: $Ra_\mathrm{crit}=450$; dashed: 1800',
+        transform=ax.transAxes,
+        ha='right',
+        fontsize='small',
+    )
+    save(fig, 'fig_10_cmb_boundary_layer_flux')
+
+
+# ---------------------------------------------------------- 4. nucleation
+def item4_nucleation() -> None:
+    """r_icb ~ (T_on - T)^(1/2) and the implicit-function sensitivity."""
+    budget = _model_budget(
+        IronMeltingCurve(light_element_fraction=0.1, depression=1.2), alpha_c=0.6, c_light=0.05
+    )
+    t_on = float(budget.t_onset)
+    under = np.geomspace(1e-3, 30.0, 61)
+    r_icb = np.asarray(jax.vmap(budget.r_icb)(t_on - under))
+    small = under < 1.0
+    slope = np.polyfit(np.log(under[small]), np.log(r_icb[small]), 1)[0]
+    drdt = np.asarray(jax.vmap(jax.grad(budget.r_icb))(t_on - under))
+    h = 1e-3 * under  # a step relative to the undercooling keeps the cusp out of the difference
+    r_of = jax.vmap(budget.r_icb)
+    fd = (np.asarray(r_of(t_on - under + h)) - np.asarray(r_of(t_on - under - h))) / (2 * h)
+    ok = under > 0
+    rel = np.abs(drdt / fd - 1)
+    record(4, 't_onset', t_on)
+    record(4, 'sqrt_slope', slope)
+    record(4, 'jvp_vs_fd_max_rel', rel.max())
+
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(WIDTH, 5.2), sharex=True, height_ratios=(2, 1))
+    ax.loglog(under, r_icb / 1e3, color=CORE, label=r'$r_\mathrm{icb}$')
+    ref = r_icb[0] * (under / under[0]) ** 0.5
+    ax.loglog(
+        under,
+        ref / 1e3,
+        '--',
+        color=colour('fog', 'C7'),
+        label=r'$\propto (T_\mathrm{on}-T)^{1/2}$',
+    )
+    ax.set_ylabel(r'$r_\mathrm{icb}$ (km)')
+    ax.legend(frameon=False, fontsize='small')
+    ax2.loglog(under[ok], np.maximum(rel, 1e-16), color=CORE)
+    ax2.set_xlabel(r'$T_\mathrm{on} - T_\mathrm{cmb}$ (K)')
+    ax2.set_ylabel('JVP vs central diff.')
+    save(fig, 'fig_11_inner_core_nucleation')
+
+
+# ------------------------------------------------------------- 7. dynamo scaling
+def _model2_entropy():
+    """Nimmo (2015) Table 2 state of tests/test_core_entropy.py."""
+    from aragog.core import CoreEntropyBudget
+
+    prof = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        r_cmb=3480e3,
+        p_cmb=136e9,
+        c_p=840.0,
+        length_scale=7272e3,
+        alpha=1.25e-5,
+        pressure_mode='labrosse',
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=750e3,
+        alpha_c=1.0,
+        c_light=560.0 / 12150.0,
+    )
+    return CoreEntropyBudget(budget, k_core=130.0)
+
+
+def item7_dynamo() -> None:
+    """Entropy margin and Christensen et al. (2009) field strength against CMB heat flow."""
+    from scipy.optimize import brentq
+
+    ent, t_c = _model2_entropy(), 4180.0
+    printed = 1.35e-5 * 10.7 * 3.48e6 / 840.0
+    record(7, 'F_const_flux_printed_inputs', 0.88 * printed)
+    record(7, 'F_zero_outer_printed_inputs', 0.45 * printed)
+    record(7, 'F_const_flux_profile', float(ent.chr09_efficiency_factor()))
+    qk = record(7, 'Q_k_TW', float(ent.adiabatic_heat_flow(t_c)) / 1e12)
+    threshold = record(
+        7,
+        'dynamo_threshold_TW',
+        brentq(lambda q: float(ent.entropy_margin(t_c, q)), 1e12, 40e12) / 1e12,
+    )
+    q = np.linspace(1e12, 30e12, 300)
+    margin = np.asarray(jax.jit(jax.vmap(lambda x: ent.entropy_margin(t_c, x)))(q))
+    b_rms = np.asarray(jax.jit(jax.vmap(lambda x: ent.b_rms_core(t_c, x)))(q))
+    record(7, 'b_rms_17TW_mT', float(ent.b_rms_core(t_c, 17e12)) * 1e3)
+    earth_b = record(
+        7, 'earth_internal_field_mT', 7 * 0.26
+    )  # B/B_dip about 7 times 0.26 mT, CHR09 p. 168
+
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(WIDTH, 5.2), sharex=True)
+    ax.plot(q / 1e12, margin / 1e6, color=CORE)
+    ax.axhline(0.0, color=colour('fog', '0.6'), lw=0.8)
+    ax.axvline(threshold, color=colour('fog', '0.6'), lw=0.8, ls='--')
+    ax.annotate(
+        f'dynamo threshold {threshold:.2f} TW',
+        (threshold, 0.0),
+        xytext=(6, 8),
+        textcoords='offset points',
+        fontsize='small',
+    )
+    ax.set_ylabel(r'$\Delta E$ (MW K$^{-1}$)')
+    ax2.plot(q / 1e12, b_rms * 1e3, color=CORE, label=r'$B_\mathrm{rms}$, Eq. 2, $c=0.63$')
+    ax2.axhline(earth_b, color=colour('ocean', 'C0'), ls='--', lw=1)
+    ax2.annotate(
+        r'Earth: $7 \times 0.26$ mT',
+        (q[0] / 1e12, earth_b),
+        xytext=(2, 4),
+        textcoords='offset points',
+        fontsize='small',
+        color=colour('ocean', 'C0'),
+    )
+    ax2.axvline(qk, color=colour('fog', '0.6'), lw=0.8, ls=':')
+    ax2.annotate(
+        r'$Q_k$', (qk, 0.0), xytext=(3, 3), textcoords='offset points', fontsize='small'
+    )
+    ax2.set_xlabel(r'CMB heat flow $Q_\mathrm{cmb}$ (TW)')
+    ax2.set_ylabel(r'core field (mT)')
+    save(fig, 'fig_14_dynamo_scaling')
+
+
+# ----------------------------------------------------------- 8. melting curve
+def item8_melting() -> None:
+    """PALEOS iron curve against the two Anzellini et al. (2013) Simon branches."""
+    from aragog.core import melting as m
+
+    p = np.linspace(5.2e9, 360e9, 2000)
+    gpa = p / 1e9
+    low = m._T0 * ((gpa - m._P0 / 1e9) / m._DP_LOW + 1.0) ** m._EXP_LOW
+    high = (
+        m._TT * ((np.maximum(gpa, m._PT / 1e9) - m._PT / 1e9) / m._DP_HIGH + 1.0) ** m._EXP_HIGH
+    )
+    pure = np.asarray(IronMeltingCurve.t_melt_pure(p))
+    piecewise = np.where(p < m._PT, low, high)
+    record(
+        8,
+        'branch_jump_K',
+        m._T0 * ((m._PT - m._P0) / 1e9 / m._DP_LOW + 1.0) ** m._EXP_LOW - m._TT,
+    )
+    record(8, 'blend_max_dev_K', float(np.max(np.abs(pure - piecewise))))
+    record(
+        8,
+        'outside_blend_max_rel',
+        float(np.max(np.abs(pure / piecewise - 1)[np.abs(gpa - 98.5) > 3.0])),
+    )
+    record(8, 't_melt_136GPa', float(IronMeltingCurve.t_melt_pure(136e9)))
+    record(8, 't_melt_330GPa', float(IronMeltingCurve.t_melt_pure(330e9)))
+    alloy = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    record(
+        8, 'depression_factor', float(alloy.t_melt(136e9) / IronMeltingCurve.t_melt_pure(136e9))
+    )
+
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(WIDTH, 5.4), height_ratios=(2, 1))
+    ax.plot(gpa, pure, color=colour('ink', 'k'), label='pure Fe (PALEOS)')
+    ax.plot(
+        gpa, np.asarray(alloy.t_melt(p)), color=CORE, label=r'alloy, $x=0.1$, depression 1.2'
+    )
+    ax.axvline(98.5, color=colour('fog', '0.6'), lw=0.8)
+    ax.annotate(
+        r'$\gamma$-$\epsilon$-liquid triple point',
+        (98.5, 6000),
+        xytext=(4, 0),
+        textcoords='offset points',
+        fontsize='small',
+        color=colour('fog', '0.5'),
+    )
+    ax.set_ylabel(r'$T_m$ (K)')
+    ax.set_xlabel('pressure (GPa)')
+    ax.legend(frameon=False, fontsize='small', loc='lower right')
+    pz = np.linspace(94e9, 103e9, 901)
+    pw = np.where(
+        pz < m._PT,
+        m._T0 * ((pz / 1e9 - m._P0 / 1e9) / m._DP_LOW + 1.0) ** m._EXP_LOW,
+        m._TT * ((pz / 1e9 - m._PT / 1e9) / m._DP_HIGH + 1.0) ** m._EXP_HIGH,
+    )
+    ax2.plot(pz / 1e9, np.asarray(IronMeltingCurve.t_melt_pure(pz)) - pw, color=CORE)
+    ax2.axhline(0.0, color=colour('fog', '0.6'), lw=0.8)
+    ax2.set_xlabel('pressure (GPa), around the branch switch')
+    ax2.set_ylabel(r'blend $-$ Eq. 2/3 (K)')
+    save(fig, 'fig_15_iron_melting_curve')
+
+
+# ----------------------------------------------------- 9. CVODE across the onset
+def _solver_helpers():
+    """The solver set-up of tests/test_entropy_solver_core_module_smoke.py."""
+    import sys
+
+    sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
+    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
+
+    from tests.conftest import entropy_eos_copy
+
+    return CORE_MODULE_PARAMS, _build, entropy_eos_copy
+
+
+def item9_cvode_onset() -> None:
+    """Core heat across the inner-core onset: solver ledger, heat content and CMB heat."""
+    params0, build, eos_copy = _solver_helpers()
+    params = {
+        k: v for k, v in params0.items() if k not in ('light_element_fraction', 'depression')
+    }
+    params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
+    eos = eos_copy()
+    solver = build('core_module', eos, params, end_time=4.0, solver_method='cvode')
+    budget, n = solver._core_module_budget, solver._n_stag
+    t_on = float(budget.t_onset)
+    solver.set_initial_core_temperature(t_on + 2.0)
+    solver.set_initial_entropy(np.linspace(7000.0, 6700.0, n))
+    solver.solve()
+    out = solver.get_state()
+    sol = solver._solution
+    t_yr, t_core = np.asarray(sol.t), np.asarray(sol.y[n + 1])
+    content = np.array([float(budget.heat_content(x)) for x in t_core]) - float(
+        budget.heat_content(t_core[0])
+    )
+    flux = []
+    for i in range(t_yr.size):
+        solver.dSdt(t_yr[i], sol.y[:, i])
+        flux.append(
+            solver._core_module_cmb_flux(t_core[i], float(sol.y[0, i])) * solver._cmb_area
+        )
+    secs = 365.25 * 86400.0
+    cmb_heat = np.concatenate(
+        [
+            [0.0],
+            np.cumsum(0.5 * (np.array(flux[1:]) + np.array(flux[:-1])) * np.diff(t_yr) * secs),
+        ]
+    )
+    record(9, 't_onset', t_on)
+    record(9, 't_core_start', t_core[0])
+    record(9, 't_core_end', t_core[-1])
+    record(9, 'r_icb_end_km', float(budget.r_icb(t_core[-1])) / 1e3)
+    record(9, 'core_vs_content_rel', abs(out.step_dE_core_J / content[-1] - 1))
+    record(9, 'core_vs_cmb_rel', abs(out.step_dE_core_J / -out.step_dE_F_cmb_J - 1))
+    record(9, 'step_dE_core_J', out.step_dE_core_J)
+    record(9, 'n_outputs', t_yr.size)
+
+    fig, (ax, ax2, ax3) = plt.subplots(
+        3, 1, figsize=(WIDTH, 6.4), sharex=True, height_ratios=(1.2, 1.2, 1)
+    )
+    ax.plot(t_yr, t_core, color=CORE)
+    ax.axhline(t_on, color=colour('fog', '0.6'), lw=0.8, ls='--')
+    ax.annotate(
+        'inner-core onset',
+        (t_yr[-1], t_on),
+        xytext=(-4, 4),
+        textcoords='offset points',
+        ha='right',
+        fontsize='small',
+        color=colour('fog', '0.5'),
+    )
+    ax.set_ylabel(r'$T_\mathrm{core}$ (K)')
+    ax2.plot(t_yr, -content / 1e27, color=CORE, label='heat-content difference')
+    ax2.plot(
+        t_yr,
+        cmb_heat / 1e27,
+        '--',
+        color=colour('ink', 'k'),
+        label=r'$\int Q_\mathrm{cmb}\,dt$',
+    )
+    ax2.set_ylabel(r'heat lost ($10^{27}$ J)')
+    ax2.legend(frameon=False, fontsize='small')
+    rel = np.abs(-content[1:] / cmb_heat[1:] - 1)
+    record(9, 'reconstructed_cmb_max_rel', rel.max())
+    ax3.semilogy(t_yr[1:], rel, color=CORE)
+    ax3.set_xlabel('time (yr)')
+    ax3.set_ylabel('rel. difference')
+    save(fig, 'fig_16_cvode_onset_ledger')
+
+
+ITEMS = {
+    1: item1_structure,
+    2: item2_energy,
+    3: item3_flux,
+    4: item4_nucleation,
+    7: item7_dynamo,
+    8: item8_melting,
+    9: item9_cvode_onset,
+}
+
+
+def main(argv=None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--only', default='', help='comma list of item numbers')
+    args = parser.parse_args(argv)
+    wanted = [int(i) for i in args.only.split(',') if i] or list(ITEMS)
+    OUT.mkdir(parents=True, exist_ok=True)
+    if VALUES_FILE.exists():
+        VALUES.update(json.loads(VALUES_FILE.read_text()))
+    start = time.perf_counter()
+    for i in wanted:
+        t0 = time.perf_counter()
+        ITEMS[i]()
+        print(f'item {i}: {time.perf_counter() - t0:.1f} s')
+    VALUES_FILE.write_text(json.dumps(VALUES, indent=1, sort_keys=True) + '\n')
+    print(
+        f'total {time.perf_counter() - start:.1f} s; values in {VALUES_FILE.relative_to(ROOT)}'
+    )
+
+
+CORE, COLORS = style()
+
+if __name__ == '__main__':
+    main()

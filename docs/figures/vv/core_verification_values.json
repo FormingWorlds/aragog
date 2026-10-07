@@ -1,0 +1,62 @@
+{
+ "1": {
+  "gravity_centre_slope_rel_err": 2.220446049250313e-16,
+  "gravity_rel_err": 3.61710661422876e-13,
+  "hydrostatic_max_rel_err": 2.5406967196772712e-08,
+  "m_core": 1.9216785284363253e+24,
+  "mass_rel_err": 3.61710661422876e-13,
+  "p_cen_GPa": 356.8261199823811,
+  "pressure_lab_vs_quad_max_rel": 0.0030203226778734438,
+  "rho_cmb": 9895.870344515819
+ },
+ "2": {
+  "content_vs_integral_max_rel": 4.0438302173869735e-07,
+  "iron_freeze_out_drop": -0.5521589050901352,
+  "iron_freeze_out_ratio": 2.2329348766023047,
+  "quadratic_freeze_out_drop": -0.7757745322996685,
+  "quadratic_freeze_out_ratio": 4.459796695959893,
+  "t_freeze": 3688.93008583465,
+  "t_onset": 4054.168313444495
+ },
+ "3": {
+  "cold_core_flux_equals_solid_base": 4.218847493575595e-15,
+  "conduction_slope": 0.0004,
+  "convective_slope": 1.333333333333332,
+  "q_liquid_100K": 55468.90194805075,
+  "q_solid_100K": 0.04,
+  "ra_crit_ratio_1800_450": 0.6299605249474366
+ },
+ "4": {
+  "jvp_vs_fd_max_rel": 1.39480609795406e-06,
+  "sqrt_slope": 0.4992620904720007,
+  "t_onset": 4054.168313444495
+ },
+ "7": {
+  "F_const_flux_printed_inputs": 0.5266234285714286,
+  "F_const_flux_profile": 0.4839361354569642,
+  "F_zero_outer_printed_inputs": 0.2692960714285714,
+  "Q_k_TW": 14.965881524314252,
+  "b_rms_17TW_mT": 1.1042290239096133,
+  "dynamo_threshold_TW": 5.297984272199313,
+  "earth_internal_field_mT": 1.82
+ },
+ "8": {
+  "blend_max_dev_K": 0.3610251346208315,
+  "branch_jump_K": 0.7251141430479038,
+  "depression_factor": 0.88,
+  "outside_blend_max_rel": 0.0,
+  "t_melt_136GPa": 4191.966006630284,
+  "t_melt_330GPa": 6229.18378136264
+ },
+ "9": {
+  "core_vs_cmb_rel": 2.560901108328295e-05,
+  "core_vs_content_rel": 1.7208456881689926e-13,
+  "n_outputs": 71.0,
+  "r_icb_end_km": 148.26413128139149,
+  "reconstructed_cmb_max_rel": 0.0007522541725736298,
+  "step_dE_core_J": -5.892976605245662e+27,
+  "t_core_end": 6268.273338855627,
+  "t_core_start": 6271.2925928593995,
+  "t_onset": 6269.2925928593995
+ }
+}
