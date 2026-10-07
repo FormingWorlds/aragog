@@ -33,7 +33,7 @@ class TestTableCache:
 
         # Cold parse
         arr_cold = read_cached_table(table_file, skiprows=2)
-        cache_file = table_file.with_suffix('.npz')
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
 
         # Warm hit
@@ -48,7 +48,7 @@ class TestTableCache:
 
         dtype = np.dtype([('val', np.float64), ('idx', np.int32)])
         arr_cold = read_cached_table(table_file, dtype=dtype)
-        cache_file = table_file.with_suffix('.npz')
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
 
         arr_warm = read_cached_table(table_file, dtype=dtype)
@@ -101,7 +101,7 @@ class TestTableCache:
         try:
             arr = read_cached_table(table_file)
             assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
-            cache_file = table_file.with_suffix('.npz')
+            cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
             assert not cache_file.exists()
         finally:
             ro_dir.chmod(0o755)
@@ -113,7 +113,7 @@ class TestTableCache:
 
         # Create valid cache
         arr_orig = read_cached_table(table_file)
-        cache_file = table_file.with_suffix('.npz')
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
 
         # Truncate cache to invalid bytes
@@ -140,7 +140,7 @@ class TestTableCache:
         for res in results:
             assert np.array_equal(res, results[0])
 
-        cache_file = table_file.with_suffix('.npz')
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
         with np.load(cache_file) as npz:
             assert np.array_equal(npz['data'], results[0])
@@ -193,7 +193,7 @@ class TestTableCache:
         table_file.write_text('1.0 2.0\n3.0 4.0\n')
 
         read_cached_table(table_file)
-        cache_file = table_file.with_suffix('.npz')
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
         mode = cache_file.stat().st_mode & 0o777
         assert mode & 0o444 == 0o444
@@ -204,7 +204,7 @@ class TestTableCache:
         table_file.write_text('1.0 2.0\n3.0 4.0\n')
 
         arr_orig = read_cached_table(table_file)
-        cache_file = table_file.with_suffix('.npz')
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
 
         # Write non-scalar array for format_version

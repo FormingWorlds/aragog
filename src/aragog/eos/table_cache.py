@@ -1,7 +1,7 @@
 """Disk cache for tabular EOS data files.
 
-Provides atomic caching of parsed ASCII tabular data into compressed
-or uncompressed NumPy binary (.npz) archives with integrity hashing.
+Provides atomic caching of parsed ASCII tabular data into uncompressed
+NumPy binary (.npz) archives with integrity hashing.
 """
 
 from __future__ import annotations
@@ -109,9 +109,7 @@ def _resolve_cache_path(
         return cache_dir / f'{digest}.npz'
 
     resolved = filepath.resolve()
-    if resolved.suffix == '.npz':
-        return resolved.with_name(f'{resolved.name}.cache.npz')
-    return resolved.with_suffix('.npz')
+    return resolved.parent / f'{resolved.name}.cache.npz'
 
 
 def _write_cache_file(
@@ -164,9 +162,7 @@ def _write_cache_file(
                 usecols=np.array(usecols_str),
             )
             try:
-                current_umask = os.umask(0)
-                os.umask(current_umask)
-                os.chmod(temp_path, 0o666 & ~current_umask)
+                os.chmod(temp_path, 0o644)
             except OSError:
                 pass
             os.replace(temp_path, cache_path)
@@ -254,7 +250,7 @@ def read_cached_table(
 
     try:
         data = np.loadtxt(fp, skiprows=skiprows, dtype=dtype, usecols=usecols)
-    except Exception:
+    except ValueError:
         data = np.genfromtxt(
             fp,
             skip_header=skiprows,
@@ -273,7 +269,7 @@ def read_cached_table(
                 dtype_str,
                 usecols_str,
             )
-        except Exception as exc:
+        except OSError as exc:
             logger.debug('Failed to write table cache %s: %s', cache_path, exc)
 
     return data

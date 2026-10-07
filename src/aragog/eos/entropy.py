@@ -296,8 +296,11 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
     P = data[:, 0] * P_scale
     S = data[:, 1] * S_scale
 
-    # Linear interpolation matching SPIDER's 1D phase boundary lookup
-    # for solidus and liquidus S(P).
+    # Linear interpolation matching SPIDER's 1D phase boundary lookup.
+    # PchipInterpolator (C^1 monotone cubic Hermite) was tried but its
+    # sub-percent offsets at phase boundaries compound into the Jconv-Jmix
+    # cancellation failure that drains the CMB cell. SPIDER uses plain
+    # linear interpolation for solidus/liquidus S(P).
     from scipy.interpolate import interp1d
 
     _lin = interp1d(
