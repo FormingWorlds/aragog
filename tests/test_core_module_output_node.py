@@ -159,8 +159,8 @@ def test_a_failed_budget_build_fails_again_on_the_next_reset():
 
 
 def test_core_module_without_jax_names_the_requirement(monkeypatch):
-    """JAX is optional: without it the core_module mode is refused with the install command,
-    and energy_balance still builds and evaluates its right-hand side."""
+    """With new imports of JAX blocked, building a core_module solver is refused with the
+    install command, while an energy_balance solver builds and evaluates its right-hand side."""
     monkeypatch.setitem(sys.modules, 'jax', None)
     with pytest.raises(ImportError, match=r"core_module' needs JAX.*fwl-aragog\[jax\]"):
         _build('core_module', entropy_eos_copy(), dict(CORE_MODULE_PARAMS))

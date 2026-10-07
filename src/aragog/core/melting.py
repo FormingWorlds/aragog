@@ -18,10 +18,9 @@ regression anchor relies on.
 
 from __future__ import annotations
 
-import numbers
-
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 jax.config.update('jax_enable_x64', True)
 
@@ -97,10 +96,10 @@ class IronMeltingCurve:
 
         ``light_element_fraction`` overrides the instance value when given,
         which allows callers to evolve the alloy composition without
-        rebuilding the curve. A concrete override is checked like the
-        instance value (in ``[0, 1)``, with the depressed curve kept
-        positive); a traced override is the caller's responsibility, since
-        a trace cannot raise on data.
+        rebuilding the curve. A concrete override (scalar or array) is taken
+        in float64 and checked like the instance value (in ``[0, 1)``, with
+        the depressed curve kept positive); a traced override is the caller's
+        responsibility, since a trace cannot raise on data.
 
         Raises
         ------
@@ -112,12 +111,15 @@ class IronMeltingCurve:
             x = self.light_element_fraction
         else:
             x = light_element_fraction
-            if isinstance(x, numbers.Real):
-                if not 0.0 <= float(x) < 1.0:
-                    raise ValueError(f'light_element_fraction must be in [0, 1), got {x}')
-                if self.depression * float(x) >= 1.0:
+            if not isinstance(x, jax.core.Tracer):
+                x = np.asarray(x, dtype=float)
+                if not np.all((x >= 0.0) & (x < 1.0)):
                     raise ValueError(
-                        f'depression * light_element_fraction = {self.depression * float(x)} '
+                        f'light_element_fraction must be in [0, 1), got {light_element_fraction}'
+                    )
+                if np.any(self.depression * x >= 1.0):
+                    raise ValueError(
+                        f'depression * light_element_fraction = {self.depression * x} '
                         'reaches 1; the depressed melting curve would not stay positive'
                     )
         return self.t_melt_pure(pressure) * (1.0 - self.depression * x)

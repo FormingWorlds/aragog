@@ -11,6 +11,7 @@ error contract, and the whole surface must be jit-safe.
 from __future__ import annotations
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
@@ -133,8 +134,15 @@ def test_melting_curve_runtime_overrides_and_validation():
     alloy = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     with pytest.raises(ValueError, match='light_element_fraction must be in'):
         alloy.t_melt(100e9, light_element_fraction=-0.05)
-    with pytest.raises(ValueError, match='light_element_fraction must be in'):
-        alloy.t_melt(100e9, light_element_fraction=np.float32(-0.05))
+    for concrete in (np.float32(-0.05), np.array(-0.05), jnp.asarray(-0.05), np.True_):
+        with pytest.raises(ValueError, match='light_element_fraction must be in'):
+            alloy.t_melt(100e9, light_element_fraction=concrete)
+    # A float32 override is evaluated in float64, and a traced one passes unchecked.
+    eager = alloy.t_melt(100e9, light_element_fraction=0.05)
+    assert alloy.t_melt(100e9, light_element_fraction=np.float32(0.05)).dtype == jnp.float64
+    traced = jax.jit(lambda x: alloy.t_melt(100e9, light_element_fraction=x))
+    assert float(traced(0.05)) == pytest.approx(float(eager), rel=1e-15)
+    assert float(traced(-0.05)) > float(alloy.t_melt_pure(100e9))
     with pytest.raises(ValueError, match='light_element_fraction must be in'):
         alloy.t_melt(100e9, light_element_fraction=1.0)
     with pytest.raises(ValueError, match='reaches 1'):
