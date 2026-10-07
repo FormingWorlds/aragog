@@ -9,6 +9,17 @@
   "pressure_lab_vs_quad_max_rel": 0.0030203226778734438,
   "rho_cmb": 9895.870344515819
  },
+ "12": {
+  "jac_tcore_best_step_above_onset": 30.0,
+  "jac_tcore_best_step_nucleating": 0.002537406600850753,
+  "jac_tcore_best_step_stratified": 0.01278159634423007,
+  "jac_tcore_min_rel_above_onset": 1.9984014443252818e-15,
+  "jac_tcore_min_rel_nucleating": 2.993427727915332e-11,
+  "jac_tcore_min_rel_stratified": 3.184696950597754e-11,
+  "rhs_max_rel_above_onset": 1.3611134445627987e-12,
+  "rhs_max_rel_nucleating": 1.3611134445627987e-12,
+  "rhs_max_rel_stratified": 1.3611134445627987e-12
+ },
  "2": {
   "content_vs_integral_max_rel": 4.0438302173869735e-07,
   "iron_freeze_out_drop": -0.5521589050901352,

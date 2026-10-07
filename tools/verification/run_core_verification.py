@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
 import matplotlib
 
 matplotlib.use('Agg')
@@ -564,6 +565,75 @@ def item9_cvode_onset() -> None:
     save(fig, 'fig_16_cvode_onset_ledger')
 
 
+# ------------------------------------------------- 12. NumPy vs JAX and Jacobian
+def item12_jax_parity() -> None:
+    """NumPy and JAX right-hand sides on three core states; the analytic core column against
+    central differences over a range of steps."""
+    _, build, eos_copy = _solver_helpers()
+    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS
+    from test_jax_dsdt_core_module import _build_jax_pieces
+
+    from aragog.jax.solver import dSdt_core_module
+
+    steps = np.geomspace(1e-4, 30.0, 40)
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(WIDTH, 5.6))
+    cols = {
+        'nucleating': CORE,
+        'above onset': colour('ink', 'k'),
+        'stratified': colour('ocean', 'C0'),
+    }
+    for state, col in cols.items():
+        params = dict(CORE_MODULE_PARAMS)
+        if state == 'stratified':
+            params |= {'stratification': True, 'k_core': 130.0}
+        solver = build('core_module', eos_copy(), params, s_init='driven')
+        budget, n = solver._core_module_budget, solver._n_stag
+        y = np.asarray(solver._S0, dtype=float)
+        if state == 'nucleating':
+            scan = np.linspace(3200.0, 6000.0, 281)
+            latent = np.asarray(jax.vmap(budget.latent_capacity)(scan))
+            y[n + 1] = np.median(scan[latent > 0.01 * float(budget.secular_capacity())])
+        elif state == 'above onset':
+            y[n + 1] = float(budget.t_onset) + 100.0
+        else:
+            y[n + 1] += 50.0
+        args = _build_jax_pieces(solver)
+        f_np = np.asarray(solver.dSdt(0.0, y)).ravel()
+        f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), args)).ravel()
+        rel = np.abs(f_jax - f_np) / np.maximum(np.abs(f_np), 1e-300)
+        key = state.replace(' ', '_')
+        record(12, f'rhs_max_rel_{key}', rel.max())
+        ax.semilogy(
+            np.arange(rel.size), np.maximum(rel, 1e-17), 'o-', ms=3, color=col, label=state
+        )
+        jac = np.asarray(jax.jacrev(lambda v: dSdt_core_module(0.0, v, args))(jnp.asarray(y)))[
+            :, n + 1
+        ]
+
+        def rhs(v):
+            return np.asarray(dSdt_core_module(0.0, jnp.asarray(v), args))
+
+        errs = []
+        for h in steps:
+            up, down = y.copy(), y.copy()
+            up[n + 1] += h
+            down[n + 1] -= h
+            fd = (rhs(up) - rhs(down)) / (2.0 * h)
+            errs.append(abs(fd[n + 1] / jac[n + 1] - 1))
+        errs = np.array(errs)
+        record(12, f'jac_tcore_min_rel_{key}', errs.min())
+        record(12, f'jac_tcore_best_step_{key}', steps[np.argmin(errs)])
+        ax2.loglog(steps, np.maximum(errs, 1e-17), color=col, label=state)
+    ax.set_xlabel(r'state index (the last two: $dS/dr$ at the CMB, $T_\mathrm{core}$)')
+    ax.set_ylabel('|JAX / NumPy - 1|')
+    ax2.legend(
+        *ax.get_legend_handles_labels(), frameon=False, fontsize='small', loc='lower left'
+    )
+    ax2.set_xlabel(r'central-difference step in $T_\mathrm{core}$ (K)')
+    ax2.set_ylabel(r'$\partial \dot T_\mathrm{core} / \partial T_\mathrm{core}$ rel. error')
+    save(fig, 'fig_19_numpy_jax_parity')
+
+
 ITEMS = {
     1: item1_structure,
     2: item2_energy,
@@ -572,6 +642,7 @@ ITEMS = {
     7: item7_dynamo,
     8: item8_melting,
     9: item9_cvode_onset,
+    12: item12_jax_parity,
 }
 
 
