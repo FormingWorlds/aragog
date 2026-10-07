@@ -414,6 +414,16 @@ def test_no_stale_values_c():
     ydot_base = np.zeros(n_stag)
     rhs_base(t_nd, y_nd, ydot_base)
 
+    # Reference base evaluation
+    ref_base, _, _ = _build_reference_factory(
+        eos, params, mesh, bc, heating, scales, 'quasi_steady', radio
+    )
+    ydot_ref_base = np.zeros(n_stag)
+    ret_ref_base = ref_base(t_nd, y_nd, ydot_ref_base)
+    assert ret_ref_base == 0
+    max_f_base = np.max(np.abs(ydot_ref_base))
+    assert np.isfinite(max_f_base) and max_f_base > 0.0
+
     # Leaves to perturb
     perturbations = [
         ('mesh.P_stag', lambda: (_make_mesh(N=8, scale_p=1.1), bc, heating, scales, radio)),
@@ -447,24 +457,34 @@ def test_no_stale_values_c():
 
     for label, perturber in perturbations:
         p_mesh, p_bc, p_heating, p_scales, p_radio = perturber()
-        p_rhs, _, _ = build_jax_rhs_and_jacobian(
-            eos, params, p_mesh, p_bc, p_heating, p_scales, 'quasi_steady', p_radio
-        )
-        ydot_pert = np.zeros(n_stag)
-        p_rhs(t_nd, y_nd, ydot_pert)
 
-        # 1. Output must differ from base
-        diff_from_base = np.max(np.abs(ydot_pert - ydot_base))
-        assert diff_from_base > 1e-8 * np.max(np.abs(ydot_base)), (
-            f'Leaf {label} produced stale value'
-        )
-
-        # 2. Output must match independent reference build
+        # 1. Perturbation must change reference output by > 1e-6 * max|f|
         ref_rhs, _, _ = _build_reference_factory(
             eos, params, p_mesh, p_bc, p_heating, p_scales, 'quasi_steady', p_radio
         )
         ydot_ref = np.zeros(n_stag)
-        ref_rhs(t_nd, y_nd, ydot_ref)
+        ret_ref = ref_rhs(t_nd, y_nd, ydot_ref)
+        assert ret_ref == 0
+        ref_diff = np.max(np.abs(ydot_ref - ydot_ref_base))
+        assert ref_diff > 1e-6 * max_f_base, (
+            f'Perturbation {label} does not change reference output enough: {ref_diff} <= 1e-6 * {max_f_base}'
+        )
+
+        # 2. Cached implementation under test
+        p_rhs, _, _ = build_jax_rhs_and_jacobian(
+            eos, params, p_mesh, p_bc, p_heating, p_scales, 'quasi_steady', p_radio
+        )
+        ydot_pert = np.zeros(n_stag)
+        ret_pert = p_rhs(t_nd, y_nd, ydot_pert)
+        assert ret_pert == 0
+
+        # 3. Output must differ from base (no stale value)
+        diff_from_base = np.max(np.abs(ydot_pert - ydot_base))
+        assert diff_from_base > 1e-6 * np.max(np.abs(ydot_base)), (
+            f'Leaf {label} produced stale value'
+        )
+
+        # 4. Output must match independent reference build
         diff_from_ref = np.max(np.abs(ydot_pert - ydot_ref))
         assert diff_from_ref <= 1e-12 * np.max(np.abs(ydot_ref)), (
             f'Leaf {label} diverged from reference'
@@ -554,3 +574,7 @@ def test_radio_params_shape_mismatch_and_empty():
         eos, pp, mesh_arrays, bp, heating, scales, radio_isotope_params=empty_arrays
     )
     assert rhs_fn is not None
+    y = np.ones(n)
+    ydot = np.zeros(n)
+    assert rhs_fn(0.0, y, ydot) == 0
+    assert np.all(np.isfinite(ydot))

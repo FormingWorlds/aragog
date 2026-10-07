@@ -84,13 +84,25 @@ def compute_radio_heating(t_yr, radio_arrays):
     """
     hp, ab, cn, t0, hl = radio_arrays
     amp = hp * ab * cn
+    # exp(log(2) * (t0 - t) / half_life) per isotope, then weighted
+    # sum across isotopes. Returns a scalar [W/kg] that the caller
+    # broadcasts across the staggered grid. The half_life floor of
+    # 1e-10 yr only guards against a literal-zero denominator; any
+    # physical isotope has half_life >> 1e-10 yr.
     arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1e-10)
+    # Mask the argument, so a zero-amplitude isotope and its Jacobian are 0, not 0*inf.
     per_iso = amp * jnp.exp(jnp.where(amp != 0.0, arg, 0.0))
     return jnp.sum(per_iso)
 
 
 def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_life_years):
     """Return a JAX-traceable per-cell radio heating ``H_radio(t_yr)``.
+
+    Implements ``H_radio(t) = sum_i (heat_prod_i · abundance_i ·
+    concentration_i · exp(log(2) · (t0_i − t) / half_life_i))`` from
+    aragog/parser.py:_Radionuclide.get_heating, vectorised across
+    isotopes. The returned scalar is broadcast across the staggered
+    grid by the caller (radio is uniform per cell).
 
     Parameters
     ----------

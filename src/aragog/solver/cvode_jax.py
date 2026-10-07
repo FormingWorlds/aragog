@@ -1,9 +1,33 @@
 """CVODE solver with JAX RHS and analytic Jacobian (option Z).
 
-Combines the existing JAX physics RHS (``aragog.jax.solver.dSdt``) with
-SUNDIALS CVODE via scikits.odes. The Jacobian is computed analytically
-via ``jax.jacrev`` instead of CVODE's default finite-difference
-approximation.
+Combines the existing JAX physics RHS (``aragog.jax.solver.dSdt``)
+with SUNDIALS CVODE via scikits.odes. The Jacobian is computed
+analytically via ``jax.jacrev`` instead of CVODE's default finite-
+difference approximation.
+
+Benefits over pure scipy/CVODE (numpy RHS):
+- JIT-compiled RHS via XLA: 2-5x faster per RHS call typically
+- Analytic Jacobian: no FD truncation noise → better Newton
+  convergence at phase boundaries (the underlying mechanism for
+  the marginal-stability bifurcation)
+- Single source of truth for physics (JAX), no risk of numpy/JAX
+  divergence
+
+Supported ``core_bc_mode`` values:
+- ``quasi_steady``: state vector is N entropy values; RHS is
+  ``jax.solver.dSdt``.
+- ``energy_balance``: state vector is N+1 (entropy + dSdr_cmb);
+  RHS is ``jax.solver.dSdt_energy_balance``. This is the
+  production PROTEUS path.
+
+Unsupported (factory raises ``ValueError`` and the calling solver
+falls back to numpy RHS + FD Jacobian after logging a warning):
+- ``bower2018``: extended state with absolute T_core. No JAX
+  closure for the core thermal balance has been implemented.
+- ``gradient``: extended state with both boundary entropies. No
+  JAX implementation.
+
+Status: PROTOTYPE for the supported modes; fallback for the rest.
 """
 
 from __future__ import annotations
@@ -163,13 +187,26 @@ def build_jax_rhs_and_jacobian(
     boundary_params : BoundaryParams
         Boundary conditions as a JAX pytree.
     heating_array : ndarray, shape (n,)
-        Internal heating per cell [W/kg]. Cast to a JAX array.
+        Internal heating per cell [W/kg]. Will be cast to a JAX array.
     scales : NonDimScales
-        Source of truth for nondim scaling (state_scale, rhs_scale, t_ref).
+        Single source of truth for the nondim scaling (state_scale,
+        rhs_scale, t_ref). Constructed by EntropySolver via
+        ``_build_nondim_scales``; the contract
+        ``rhs_scale = t_ref / state_scale`` is enforced inside
+        ``NonDimScales.__post_init__``. The factory validates the
+        per-call shape against ``heating_array`` and ``core_bc_mode``.
     core_bc_mode : str, default 'quasi_steady'
-        Which JAX RHS to wrap: 'quasi_steady' or 'energy_balance'.
+        Which JAX RHS to wrap: 'quasi_steady' uses ``jax.solver.dSdt``
+        (N-state), 'energy_balance' uses ``jax.solver.dSdt_energy_balance``
+        (N+1 state with dSdr_cmb closure equation as the (N+1)-th
+        component). The latter is the production PROTEUS code path.
     radio_isotope_params : tuple, default ()
-        Optional 5-tuple of radionuclide arrays.
+        Optional 5-tuple ``(heat_prod, abundance, concentration,
+        t0_years, half_life_years)`` of 1D arrays, one entry per
+        radionuclide. When non-empty, the JAX RHS evaluates the
+        radiogenic source at the live integrator time ``t_phys`` so
+        the heating reflects in-step decay. Empty default disables
+        radio heating.
 
     Returns
     -------
@@ -178,8 +215,10 @@ def build_jax_rhs_and_jacobian(
     jacfn : callable
         scikits.odes Jacobian signature
         ``jacfn(t_nd, y_nd, fy_nd, J, user_data=None) -> int``.
+        Fills ``J`` in-place with the nondim Jacobian matrix.
     info : dict
-        Diagnostic info dict populated on first call.
+        Diagnostic info dict (counters, JIT compile times) populated
+        on first call.
     """
     try:
         import jax  # noqa: F401
@@ -204,6 +243,10 @@ def build_jax_rhs_and_jacobian(
             f'set ``use_jax_jacobian = false`` in the config.'
         )
 
+    # NonDimScales enforces the internal nondim contract
+    # rhs_scale = t_ref / state_scale in __post_init__. The factory
+    # validates only the per-call shape compatibility with
+    # ``heating_array`` and ``core_bc_mode``.
     from aragog.jax.nondim import NonDimScales
 
     if not isinstance(scales, NonDimScales):
