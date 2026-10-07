@@ -768,23 +768,22 @@ def item10_leeds_history() -> None:
         atol=1e-8,
         method='LSODA',
     )
-    t_cmb = sol.y[0]
-    r_icb = np.asarray(jax.vmap(budget.r_icb)(t_cmb))
+    t_cmb, k = sol.y[0], np.argmax(th['r_icb'] > 0)
+    r_icb, diff = np.asarray(jax.vmap(budget.r_icb)(t_cmb)), t_cmb - th['T_cmb']
     onset = th['time_myr'][np.argmax(r_icb > 0)]
-    onset_th = th['time_myr'][np.argmax(th['r_icb'] > 0)]
     record(10, 'q_cmb_TW', inp['q_cmb'] / 1e12)
     record(10, 't_end_myr', th['time_myr'][-1])
-    record(10, 't_cmb_max_abs_diff', np.max(np.abs(t_cmb - th['T_cmb'])))
+    record(10, 't_cmb_max_abs_diff', np.max(np.abs(diff)))
+    record(10, 't_cmb_max_abs_diff_myr', th['time_myr'][np.argmax(np.abs(diff))])
     record(10, 'onset_myr_aragog', onset)
-    record(10, 'onset_myr_leeds', onset_th)
+    record(10, 'onset_myr_leeds', th['time_myr'][k])
     record(10, 'r_icb_end_km_aragog', r_icb[-1] / 1e3)
     record(10, 'r_icb_end_km_leeds', th['r_icb'][-1] / 1e3)
-    before = np.arange(len(t_cmb)) < np.argmax(th['r_icb'] > 0)
-    record(10, 't_cmb_max_abs_diff_before_onset', np.max(np.abs(t_cmb - th['T_cmb'])[before]))
-    diff = t_cmb - th['T_cmb']
-    record(10, 't_cmb_abs_diff_at_onset', abs(diff)[np.argmax(~before)])
-    record(10, 't_cmb_diff_max_after_onset_K', diff.max())
-    record(10, 'sign_change_myr', th['time_myr'][~before & (diff < 0)][0])
+    record(10, 't_cmb_max_abs_diff_before_onset', np.max(np.abs(diff[:k])))
+    record(10, 't_cmb_abs_diff_at_onset', abs(diff[k]))
+    record(10, 't_cmb_diff_max_after_onset_K', diff[k:].max())
+    flip = np.flatnonzero(np.sign(diff[k:]) != np.sign(diff[k]))[0]
+    record(10, 'sign_change_myr', th['time_myr'][k + flip])
     record(10, 'r_icb_max_abs_diff_km', np.max(np.abs(r_icb - th['r_icb'])) / 1e3)
     record(10, 'inner_core_age_myr', th['time_myr'][-1] - onset)
 
@@ -799,7 +798,7 @@ def item10_leeds_history() -> None:
     ax2.plot(t, r_icb / 1e3, color=CORE)
     ax2.plot(t, th['r_icb'] / 1e3, '--', color=colour('ink', 'k'))
     ax2.set_ylabel(r'$r_\mathrm{icb}$ (km)')
-    ax3.semilogy(t, np.maximum(np.abs(t_cmb - th['T_cmb']), 1e-12), color=CORE)
+    ax3.semilogy(t, np.maximum(np.abs(diff), 1e-12), color=CORE)
     ax3.set_ylabel(r'$|\Delta T_\mathrm{cmb}|$ (K)')
     ax3.set_xlabel('time (Myr)')
     save(fig, 'fig_17_leeds_thermal_history')
@@ -849,7 +848,6 @@ def item11_coupled() -> None:
 
 
 # ---------------------------------------------------------------- 5. Nimmo (2015)
-# Nimmo (2015, ch. 8.02) Table 4, p. 46: the 'This work (K = 0)' columns at 15.2 and 12 TW.
 NIMMO = dict(  # Nimmo (2015, ch. 8.02) Table 2 core
     rho_cen=12500.0,
     length_scale=7272e3,
@@ -865,6 +863,7 @@ NIMMO = dict(  # Nimmo (2015, ch. 8.02) Table 2 core
     c_light=560.0 / 12150.0,
     k_core=130.0,
 )
+# Nimmo (2015, ch. 8.02) Table 4, p. 46: the 'This work (K = 0)' columns at 15.2 and 12 TW.
 NIMMO_T4 = {
     15.2e12: dict(
         Qs=6.1,

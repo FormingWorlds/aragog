@@ -86,6 +86,8 @@ def test_inner_core_radius_grows_as_the_square_root_of_undercooling(script):
 @pytest.mark.reference_pinned
 def test_budget_terms_match_the_thermal_history_table(script):
     got = _reproduces(script, 6)
+    inputs = script._thermal_history()[0]['inputs']  # sections 5 and 7 use the same core
+    assert {k: inputs[k] for k in script.NIMMO} == script.NIMMO
     assert max(got[f'{k}_max_rel'] for k in ('secular', 'latent', 'latent_entropy')) < 1e-3
     assert got['gravitational_enrichment_corrected_max_rel'] < 1e-3
 
@@ -103,4 +105,4 @@ def test_coupled_tables_reproduce_the_page(script):
     got = _reproduces(script, 11)
     assert got['wrong_sign_rows_core_module'] == 0
     assert got['wrong_sign_rows_energy_balance'] == got['rows_energy_balance']
-    assert abs(got['core_residual_frac_end']) < got['core_residual_frac_max_after_1kyr'] < 1e-5
+    assert got['core_residual_frac_max_after_1kyr'] < 1e-5

@@ -22,6 +22,7 @@
   "t_cmb_diff_max_after_onset_K": 0.025941776112631487,
   "t_cmb_max_abs_diff": 0.05711010455979704,
   "t_cmb_max_abs_diff_before_onset": 2.491744453436695e-06,
+  "t_cmb_max_abs_diff_myr": 1499.0,
   "t_end_myr": 1499.0
  },
  "11": {
