@@ -4306,18 +4306,21 @@ class EntropySolver:
                 t_shell_traj = np.asarray(y_arr[n_stag + 2 :, :], dtype=float).T
                 base = np.asarray(jax.vmap(shell.layer_base)(t_shell_traj, t_core_traj))
                 args = (t_core_traj, base)
+
+            def c_eff(t, *upper):  # args is (T_core,) or, with a shell, (T_core, layer base)
+                kw = {'gravitational_upper': upper[0]} if upper else {}
+                return budget.effective_capacity(t, **kw)
+
             try:
                 c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
                 if c_eff_fn is None:
                     import jax
 
-                    c_eff_fn = jax.jit(jax.vmap(budget.effective_capacity))
+                    c_eff_fn = jax.jit(jax.vmap(c_eff))
                     budget._vmap_effective_capacity = c_eff_fn
                 c_eff_vals = np.asarray(c_eff_fn(*args))
             except Exception:
-                c_eff_vals = np.array(
-                    [float(budget.effective_capacity(*map(float, a))) for a in zip(*args)]
-                )
+                c_eff_vals = np.array([float(c_eff(*map(float, a))) for a in zip(*args)])
             if not budget.stratification:
                 step_dE_core = float(np.sum(weights_all * c_eff_vals))
             else:

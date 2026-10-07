@@ -107,7 +107,7 @@ class CoreEntropyBudget:
         top = p.r_cmb if upper is None else upper
         return 16.0 * jnp.pi * self.k_core * top**5 / (5.0 * p.d_scale**4)
 
-    def secular_entropy_capacity(self, t_cmb, upper=None, t_ref=None):
+    def secular_entropy_capacity(self, t_cmb, upper=None, *, t_ref=None):
         """Entropy per unit cooling from secular cooling [J/K^2].
 
         ``int rho c_p (Ta/T_ref - 1) dV / T_cmb``: heat extracted at
@@ -125,7 +125,7 @@ class CoreEntropyBudget:
         top = p.r_cmb if upper is None else upper
         return self.budget._quad_0_upper(top, integrand) / t_cmb
 
-    def latent_entropy_capacity(self, t_cmb, t_ref=None):
+    def latent_entropy_capacity(self, t_cmb, *, t_ref=None):
         """Entropy per unit cooling from latent heat [J/K^2].
 
         The latent capacity released at ``T_icb`` and delivered at
@@ -137,7 +137,7 @@ class CoreEntropyBudget:
         ref = t_cmb if t_ref is None else t_ref
         return b.latent_capacity(t_cmb) * (t_icb - ref) / (t_icb * ref)
 
-    def gravitational_entropy_capacity(self, t_cmb, upper=None, t_ref=None):
+    def gravitational_entropy_capacity(self, t_cmb, upper=None, *, t_ref=None):
         """Entropy per unit cooling from gravitational energy [J/K^2].
 
         Gravitational energy dissipates in full within the convecting
@@ -146,7 +146,7 @@ class CoreEntropyBudget:
         ref = t_cmb if t_ref is None else t_ref
         return self.budget.gravitational_capacity(t_cmb, upper=upper) / ref
 
-    def radiogenic_entropy(self, t_cmb, q_radio, upper=None, t_ref=None):
+    def radiogenic_entropy(self, t_cmb, q_radio, upper=None, *, t_ref=None):
         """Entropy rate from internal heating [W/K].
 
         ``int h rho (1/T_ref - 1/Ta) dV`` with the heating rate per unit
@@ -166,7 +166,7 @@ class CoreEntropyBudget:
 
     # -- dynamo criterion ----------------------------------------------------
 
-    def entropy_margin(self, t_cmb, q_cmb, q_radio=0.0, t_shell=None):
+    def entropy_margin(self, t_cmb, q_cmb, q_radio=0.0, *, t_shell=None):
         """Entropy production available to the dynamo, ``dE`` [W/K].
 
         The cooling rate follows from the energy budget for the given heat

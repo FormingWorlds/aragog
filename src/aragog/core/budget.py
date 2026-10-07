@@ -372,7 +372,7 @@ class CoreEnergyBudget:
 
     # -- assembled budget ----------------------------------------------------
 
-    def effective_capacity(self, t_cmb, gravitational_upper=None):
+    def effective_capacity(self, t_cmb, *, gravitational_upper=None):
         """Total dQ/d(dT_cmb/dt) [J/K] of the convecting core: secular plus
         latent plus gravitational (profile mode).
 
@@ -448,5 +448,7 @@ class CoreEnergyBudget:
         heating = q_sources / p.enclosed_mass(p.r_cmb)
         d_shell, q_base = shell.rates(t_shell, t_cmb, q_cmb, heating)
         q_conv = heating * p.enclosed_mass(self.r_convecting)
-        capacity = self.effective_capacity(t_cmb, shell.layer_base(t_shell, t_cmb))
+        capacity = self.effective_capacity(
+            t_cmb, gravitational_upper=shell.layer_base(t_shell, t_cmb)
+        )
         return (q_conv - q_base) / capacity, d_shell

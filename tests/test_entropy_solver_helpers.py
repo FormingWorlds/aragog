@@ -1022,7 +1022,9 @@ def test_step_energy_stratified_core_module_and_fallback():
     s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
     s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
     capacity = [
-        float(budget.effective_capacity(t, shell.layer_base(t_shell[:, i], t)))
+        float(
+            budget.effective_capacity(t, gravitational_upper=shell.layer_base(t_shell[:, i], t))
+        )
         for i, t in enumerate((4500.0, 4400.0))
     ]
     content = [float(shell.heat_content(t_shell[:, i])) for i in (0, 1)]

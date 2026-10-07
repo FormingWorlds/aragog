@@ -66,7 +66,7 @@ def test_the_core_and_shell_rates_conserve_heat(q_radio):
     base = budget.shell.layer_base(t_shell, T_C)
     assert float(budget.r_icb(T_C)) > 0.0
     assert float(base) < budget.profiles.r_cmb - 200e3
-    conv = float(budget.effective_capacity(T_C, base)) * float(d_core)
+    conv = float(budget.effective_capacity(T_C, gravitational_upper=base)) * float(d_core)
     mass = np.asarray(budget.shell.mass)
     shell = budget.profiles.c_p * float(np.sum(mass * np.asarray(d_shell)))
     assert conv + shell == pytest.approx(q_radio - 8e12, rel=1e-10, abs=0)
@@ -81,9 +81,29 @@ def test_a_stable_layer_lowers_the_entropy_margin():
     ent = CoreEntropyBudget(budget, k_core=K_CORE)
     mixed = np.asarray(budget.shell.adiabatic_profile(T_C))
     margins = [
-        float(ent.entropy_margin(T_C, 8e12, 0.0, t)) for t in (mixed, _layered_shell(budget))
+        float(ent.entropy_margin(T_C, 8e12, 0.0, t_shell=t))
+        for t in (mixed, _layered_shell(budget))
     ]
     assert np.all(np.isfinite(margins)) and margins[1] < margins[0]
+
+
+def test_the_shell_arguments_are_keyword_only():
+    """A heat flow passed by position where the layer base or the shell now goes fails loudly
+    instead of being read as a radius or a temperature profile."""
+    budget = _budget(True)
+    ent = CoreEntropyBudget(budget, k_core=K_CORE)
+    t_shell = _layered_shell(budget)
+    with pytest.raises(TypeError):
+        budget.effective_capacity(T_C, 8e12)
+    with pytest.raises(TypeError):
+        ent.entropy_margin(T_C, 8e12, 0.0, t_shell)
+    for term in (ent.secular_entropy_capacity, ent.gravitational_entropy_capacity):
+        with pytest.raises(TypeError):
+            term(T_C, None, T_C)
+    with pytest.raises(TypeError):
+        ent.latent_entropy_capacity(T_C, T_C)
+    with pytest.raises(TypeError):
+        ent.radiogenic_entropy(T_C, 1e12, None, T_C)
 
 
 def test_one_temperature_interfaces_refuse_a_stratified_budget():
