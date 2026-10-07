@@ -42,31 +42,24 @@ def _resolve_cache_path(
     """
     custom_cache = os.environ.get('ARAGOG_TABLE_CACHE_DIR')
     fwl_data = os.environ.get('FWL_DATA')
+    cache_dir = None
 
-    is_under_fwl = False
-    if fwl_data:
+    if custom_cache:
+        cache_dir = Path(custom_cache).resolve()
+    elif fwl_data:
         try:
             fwl_resolved = Path(fwl_data).resolve()
             for p in (filepath.resolve(), Path(filepath).absolute()):
                 try:
                     p.relative_to(fwl_resolved)
-                    is_under_fwl = True
+                    cache_dir = fwl_resolved / 'cache' / 'tables'
                     break
-                except (ValueError, RuntimeError):
+                except ValueError:
                     continue
         except (RuntimeError, OSError):
-            is_under_fwl = False
+            cache_dir = None
 
-    if custom_cache:
-        cache_dir = Path(custom_cache).resolve()
-        use_central_root = True
-    elif is_under_fwl and fwl_data:
-        cache_dir = Path(fwl_data).resolve() / 'cache' / 'tables'
-        use_central_root = True
-    else:
-        use_central_root = False
-
-    if use_central_root:
+    if cache_dir is not None:
         if cache_dir in _FAILED_CACHE_ROOTS:
             logger.debug(
                 'Table cache root %s previously failed; parsing without cache',
@@ -110,10 +103,8 @@ def _write_cache_file(
     skiprows : int
         Rows skipped in ASCII source.
     """
-    cache_dir = cache_path.parent
-    cache_dir.mkdir(parents=True, exist_ok=True)
     unique_suffix = uuid.uuid4().hex
-    temp_path = cache_dir / f'.{cache_path.stem}_{unique_suffix}.npz'
+    temp_path = cache_path.parent / f'.{cache_path.stem}_{unique_suffix}.npz'
     fd = os.open(temp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
     try:
         with open(fd, 'wb') as f:

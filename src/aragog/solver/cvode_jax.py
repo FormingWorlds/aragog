@@ -32,6 +32,7 @@ Status: PROTOTYPE for the supported modes; fallback for the rest.
 
 from __future__ import annotations
 
+import functools
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -94,13 +95,11 @@ def _make_jitted_rhs_and_jacobian(
         ) = data
         t_phys = t_nd * t_ref_jax
         S_phys = y_nd * state_scale_jax
-        if use_radio:
-
-            def H_radio_fn(t):
-                return js.compute_radio_heating(t, radio_arrays)
-
-        else:
-            H_radio_fn = js._no_radio
+        H_radio_fn = (
+            functools.partial(js.compute_radio_heating, radio_arrays=radio_arrays)
+            if use_radio
+            else js._no_radio
+        )
         args_tuple = (
             eos_jax,
             phase_params,
@@ -112,16 +111,15 @@ def _make_jitted_rhs_and_jacobian(
         dydt_phys = _rhs_jax(t_phys, S_phys, args_tuple)
         return dydt_phys * rhs_scale_jax
 
-    def _rhs_nondim(t_nd, y_nd, data):
-        _TRACE_COUNTERS['rhs'] += 1
-        return _eval_core(t_nd, y_nd, data)
+    def _make_wrapper(kind: str):
+        def _wrapper(t_nd, y_nd, data):
+            _TRACE_COUNTERS[kind] += 1
+            return _eval_core(t_nd, y_nd, data)
 
-    def _jac_nondim(t_nd, y_nd, data):
-        _TRACE_COUNTERS['jac'] += 1
-        return _eval_core(t_nd, y_nd, data)
+        return _wrapper
 
-    rhs_jit = jax.jit(_rhs_nondim)
-    jac_jit = jax.jit(jax.jacrev(_jac_nondim, argnums=1))
+    rhs_jit = jax.jit(_make_wrapper('rhs'))
+    jac_jit = jax.jit(jax.jacrev(_make_wrapper('jac'), argnums=1))
     return rhs_jit, jac_jit
 
 
@@ -307,10 +305,12 @@ def build_jax_rhs_and_jacobian(
             info['rhs_calls'] += 1
             if not info['first_rhs_compile_done']:
                 info['first_rhs_compile_done'] = True
-                if is_cache_hit:
-                    logger.debug('JAX RHS cache hit')
-                else:
-                    logger.info('JAX RHS first call (JIT compile complete)')
+                logger.log(
+                    logging.DEBUG if is_cache_hit else logging.INFO,
+                    'JAX RHS cache hit'
+                    if is_cache_hit
+                    else 'JAX RHS first call (JIT compile complete)',
+                )
             return 0
         except Exception as exc:
             logger.error('JAX RHS failed: %s', exc)
@@ -324,10 +324,12 @@ def build_jax_rhs_and_jacobian(
             info['jac_calls'] += 1
             if not info['first_jac_compile_done']:
                 info['first_jac_compile_done'] = True
-                if is_cache_hit:
-                    logger.debug('JAX Jacobian cache hit')
-                else:
-                    logger.info('JAX Jacobian first call (JIT compile complete)')
+                logger.log(
+                    logging.DEBUG if is_cache_hit else logging.INFO,
+                    'JAX Jacobian cache hit'
+                    if is_cache_hit
+                    else 'JAX Jacobian first call (JIT compile complete)',
+                )
             return 0
         except Exception as exc:
             logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD', exc)

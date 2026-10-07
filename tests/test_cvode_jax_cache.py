@@ -682,8 +682,8 @@ def test_lru_eviction_when_cache_exceeds_maxsize(shared_eos):
     )
     ydot_ref = np.zeros(n)
     rhs_ref(0.0, y_nd, ydot_ref)
-    assert np.allclose(ydot, ydot_ref, atol=1e-12)
-    assert np.allclose(ydot, ydot_0, atol=1e-12)
+    assert np.max(np.abs(ydot - ydot_ref)) <= 1e-14 * np.max(np.abs(ydot_ref))
+    assert np.max(np.abs(ydot - ydot_0)) <= 1e-14 * np.max(np.abs(ydot_0))
 
 
 @needs_eos
