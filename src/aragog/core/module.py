@@ -163,6 +163,9 @@ def build_core_module_budget(
 class CoreModule:
     """Stateful core evolving under an externally supplied CMB heat flow.
 
+    A stratified budget runs here at its quasi-static layer depth: this standalone path
+    carries no layer age, so the diffusion cap of the solver does not apply.
+
     Parameters
     ----------
     budget : CoreEnergyBudget

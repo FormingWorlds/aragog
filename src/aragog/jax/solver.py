@@ -568,18 +568,8 @@ def dSdt_core_module(
         d(state_ext)/dt at the same layout, [J/kg/K/yr] for entropy,
         [J/kg/K/m/yr] for dSdr_cmb, [K/yr] for T_core.
     """
-    (
-        eos,
-        params,
-        mesh,
-        bc,
-        heating_static,
-        H_radio_fn,
-        core_budget,
-        q_radio_core,
-        ra_crit,
-        *layer,
-    ) = args
+    eos, params, mesh, bc, heating_static, H_radio_fn = args[:6]
+    core_budget, q_radio_core, ra_crit, *layer = args[6:]
     t_layer = (t - layer[0]) * SECS_PER_YEAR if layer else None
     heating = heating_static + H_radio_fn(t)
     n_stag = mesh.P_stag.shape[0]

@@ -113,6 +113,7 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         cvode_flag_name='TOO_MUCH_WORK',
         tcore_change_max=4321.5,
         tcore_change_exceeded=True,
+        core_layer_start_yr=-5.0e7,
     )
 
 
@@ -199,6 +200,7 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             float(ds['tcore_change_max'][...]), out.tcore_change_max, rtol=1e-15, atol=0.0
         )
         assert ds['tcore_change_max'].dtype == np.float64
+        assert float(ds['core_layer_start_yr'][...]) == out.core_layer_start_yr
         assert int(ds['tcore_change_exceeded'][...]) == int(out.tcore_change_exceeded)
         assert ds['tcore_change_exceeded'].dtype == np.int32
 

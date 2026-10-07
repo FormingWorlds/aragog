@@ -110,6 +110,20 @@ def test_factory_shape_contract_core_module():
     for bad in (None, 0.0, -450.0, float('nan'), float('inf')):
         with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
             build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=bad)
+    # A stratified budget needs the layer onset, which enters the compiled functions.
+    kwargs['core_module_budget'] = budget.__class__(
+        budget.profiles,
+        budget.melting_curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        stratification=True,
+        k_core=130.0,
+    )
+    with pytest.raises(ValueError, match='needs core_module_layer_start'):
+        build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=450.0)
+    build_jax_rhs_and_jacobian(
+        **kwargs, core_module_ra_crit_cmb=450.0, core_module_layer_start=0.0
+    )
 
 
 def _build_numpy_solver(shared_eos):
@@ -449,13 +463,16 @@ def test_boundary_slots_match_numpy_on_a_five_node_mesh():
 @pytest.mark.slow
 @pytest.mark.physics_invariant
 @needs_eos
-@pytest.mark.parametrize('state', ['nucleating', 'above_onset', 'stratified'])
+@pytest.mark.parametrize(
+    'state', ['nucleating', 'above_onset', 'stratified', 'stratified_capped']
+)
 def test_jacobian_core_column_matches_central_differences(state):
     """``jacrev`` of the core_module RHS agrees with a central difference in T_core for the
     gradient-slot and T_core rows, on the driven (non-uniform) profile: inside the
-    nucleation band, above the onset, and stratified above the convecting-radius floor."""
+    nucleation band, above the onset, stratified above the convecting-radius floor, and with a
+    10 Myr layer capped by its diffusion length, where JAX also matches NumPy."""
     params = dict(CORE_MODULE_PARAMS)
-    if state == 'stratified':
+    if state.startswith('stratified'):
         params |= {'stratification': True, 'k_core': 130.0}
     solver = _build('core_module', entropy_eos_copy(), params, s_init='driven')
     budget, n = solver._core_module_budget, solver._n_stag
@@ -474,9 +491,36 @@ def test_jacobian_core_column_matches_central_differences(state):
         r_conv = float(budget.convecting_radius(y[n + 1], q)) / budget.profiles.r_cmb
         assert 0.2 < r_conv < 0.9
     args = _build_jax_pieces(solver)
+    if state == 'stratified_capped':
+        solver.set_initial_layer_start(-1.0e7)
+        solver._resolve_layer_start(0.0)
+        args += (-1.0e7,)
+        assert (
+            float(budget.convecting_radius(y[n + 1], q, 1e7 * 3.15576e7))
+            / budget.profiles.r_cmb
+            > 0.9
+        )
 
     def rhs(v):
         return np.asarray(dSdt_core_module(0.0, jnp.asarray(v), args))
+
+    np.testing.assert_allclose(rhs(y), np.asarray(solver.dSdt(0.0, y), dtype=float), rtol=1e-10)
+    if state == 'stratified_capped':  # the factory passes the onset into its compiled RHS
+        from aragog.jax.nondim import NonDimScales
+        from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+        rhs_fn, _, _ = build_jax_rhs_and_jacobian(
+            *args[:5],
+            NonDimScales(state_scale=np.ones(n + 2), t_ref=1.0),
+            core_bc_mode='core_module',
+            core_module_budget=budget,
+            core_module_q_radio=args[7],
+            core_module_ra_crit_cmb=args[8],
+            core_module_layer_start=-1.0e7,
+        )
+        out = np.empty(n + 2)
+        rhs_fn(0.0, y, out)
+        np.testing.assert_allclose(out, rhs(y), rtol=1e-12)
 
     J = np.asarray(jax.jacrev(lambda v: dSdt_core_module(0.0, v, args))(jnp.asarray(y)))
     h, up, down = 0.1, y.copy(), y.copy()

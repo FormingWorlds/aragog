@@ -2198,24 +2198,35 @@ class EntropySolver:
         self._layer_start_override = t_start
 
     def _resolve_layer_start(self, start_time: float) -> None:
-        """Onset time [yr] of the stratified layer for this solve.
+        """Onset time [yr] of the stratified layer for this solve, from its start state.
 
-        A set override wins; otherwise a layer that was stratified at the end of the
-        previous solve keeps its onset, and any other start (a first solve, or a layer
-        that eroded because the CMB heat flow turned superadiabatic) begins at this
-        solve's start time. Onsets therefore resolve to one solver call.
+        A retry or a resume restores the start state, so the onset is decided from it: a
+        start whose CMB heat flow is below the adiabatic one continues its layer (keeping the
+        onset, or taking a set override, or starting the layer now); any other start has no
+        layer to continue and starts afresh. Onsets therefore resolve to one solver call.
         """
         budget = getattr(self, '_core_module_budget', None)
         if self._core_bc != 'core_module' or budget is None or not budget.stratification:
             self._core_layer_start_yr = None
             return
-        override = getattr(self, '_layer_start_override', None)
-        self._layer_start_override = None
+        override, self._layer_start_override = (
+            getattr(self, '_layer_start_override', None),
+            None,
+        )
         kept = getattr(self, '_core_layer_start_yr', None)
-        if override is not None and np.isfinite(override):
-            self._core_layer_start_yr = float(override)
-        elif kept is None or not getattr(self, '_core_layer_stratified_end', False):
+        if not self._start_is_stratified(start_time):
             self._core_layer_start_yr = float(start_time)
+        elif override is not None and np.isfinite(override):
+            self._core_layer_start_yr = float(override)
+        elif kept is None:
+            self._core_layer_start_yr = float(start_time)
+
+    def _start_is_stratified(self, start_time: float) -> bool:
+        """Whether the CMB heat flow of the start state is below the adiabatic one."""
+        self.dSdt(start_time, self._S0)
+        budget, t_core = self._core_module_budget, float(self._S0[self._n_stag + 1])
+        q_k = float(budget.conducted_adiabatic_flow(budget.profiles.r_cmb, t_core))
+        return float(self.state._heat_flux[0]) * self._cmb_area < q_k
 
     def _core_layer_age_s(self, time):
         """Age [s] of the stratified layer at model time ``time`` [yr], or ``None``."""
@@ -4265,10 +4276,11 @@ class EntropySolver:
             else:
                 dT_core = np.diff(t_core_traj)
                 step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
-                q_k_end = budget.conducted_adiabatic_flow(
-                    budget.profiles.r_cmb, t_core_traj[-1]
-                )
-                self._core_layer_stratified_end = bool(P_F_cmb[-1] < float(q_k_end))
+                import jax
+
+                # The layer stores what its base conducts beyond the CMB flow.
+                q_base = np.asarray(jax.vmap(budget.base_heat_flow)(*args))
+                step_dE_core += trap(q_base - P_F_cmb)
                 if not getattr(self, '_floor_warned', False):
                     self._warn_on_convecting_floor(budget, t_core_traj, P_F_cmb, t_layer)
         elif core_bc == 'bower2018':
@@ -4400,9 +4412,8 @@ class EntropySolver:
         q_k = np.asarray(budget.conducted_adiabatic_flow(r_cmb, t_core))
         drive = getattr(self, '_core_module_q_radio', 0.0) - q_cmb
         on_floor = (q_cmb <= q_floor) & (np.abs(drive) > 1.0e-3 * q_k)
-        if (
-            t_layer is not None
-        ):  # a younger layer than its diffusion length to the floor is above it
+        if t_layer is not None and on_floor.any():
+            # A layer younger than its diffusion length to the floor is above it.
             reach = np.asarray(jax.vmap(budget.convecting_radius)(t_core, q_cmb, t_layer))
             on_floor &= reach <= CONVECTING_FLOOR * r_cmb
         if on_floor.any():
@@ -4879,6 +4890,7 @@ class EntropySolver:
         area_surf = 4 * np.pi * float(r_basic[-1]) ** 2
         F_heat_total = float(np.dot(heating, mass_stag)) / area_surf
 
+        layer_start = getattr(self, '_core_layer_start_yr', None)
         return SolverOutput(
             S_final=S_final,
             T_stag=T_stag,
@@ -4931,11 +4943,7 @@ class EntropySolver:
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
             tcore_change_max=tcore_change_max,
             tcore_change_exceeded=tcore_change_exceeded,
-            core_layer_start_yr=float(
-                np.nan
-                if getattr(self, '_core_layer_start_yr', None) is None
-                else self._core_layer_start_yr
-            ),
+            core_layer_start_yr=np.nan if layer_start is None else layer_start,
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,

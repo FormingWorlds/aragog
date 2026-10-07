@@ -364,11 +364,10 @@ FLOOR_WARNING = 'convecting-radius floor'
 
 @pytest.mark.physics_invariant
 def test_a_stratified_default_start_keeps_the_core_temperature(shared_eos, caplog, monkeypatch):
-    """With stratification on and a layer old enough to outgrow its diffusion cap, the
-    default start (T_core at the mantle side of the CMB, so q = 0) sits on the
-    convecting-radius floor, but the flow stays far below 1e-3 Q_k: the core temperature
-    does not move, the floor check runs and does not warn, and the core gains the heat the
-    mantle loses through the CMB."""
+    """With a layer old enough to outgrow its diffusion cap, the default start (T_core at the
+    mantle side of the CMB, so q = 0) sits on the convecting-radius floor with a CMB flow far
+    below 1e-3 Q_k: the floor check runs and does not warn, the convecting core loses its
+    adiabatic flow Q_ad(0.1 r_cmb) to the layer, and the core heat closes against the CMB."""
     from aragog.core.budget import CONVECTING_FLOOR
 
     solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=5.0)
@@ -387,10 +386,13 @@ def test_a_stratified_default_start_keeps_the_core_temperature(shared_eos, caplo
         capped = [float(budget.convecting_radius(*x)) for x in zip(t_traj, q_traj, age)]
         assert capped == [floor] * len(capped)
     out = solver.get_state()
-    t_core = solver._solution.y[solver._n_stag + 1]
-    assert abs(float(t_core[-1] - t_core[0])) < 1.0e-6
+    t0, t1 = (float(x) for x in solver._solution.y[solver._n_stag + 1, [0, -1]])
     assert not any(FLOOR_WARNING in r.message for r in caplog.records)
-    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1.0e-2)
+    q_floor = float(budget.conducted_adiabatic_flow(floor, t0))
+    c_floor = float(budget.effective_capacity(t0, 0.0))
+    assert t1 - t0 == pytest.approx(-q_floor / c_floor * 5.0 * 3.15576e7, rel=1e-3)
+    stored = q_floor * 5.0 * 3.15576e7
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, abs=1e-3 * stored)
 
 
 @pytest.mark.physics_invariant
@@ -399,14 +401,14 @@ def test_a_cold_stratified_core_uses_the_floor_only_once_the_layer_has_grown(
     shared_eos, caplog, layer_start
 ):
     """A core 300 K below the mantle (above the inner-core onset) gains heat through the CMB,
-    so the quasi-static layer spans the whole core. A layer 10 Gyr old has outgrown its
-    diffusion cap, sits on the convecting-radius floor (capacity about 700 times below the
-    full core's, core_bc.md) and warns once over two calls; a layer starting with the solve
-    is capped at about 100 m, keeps nearly the full capacity and does not warn. The core heat
-    closes against the CMB heat in both."""
+    so the quasi-static layer spans the whole core. A 10 Gyr old layer has outgrown its
+    diffusion cap and sits on the convecting-radius floor (capacity about 700 times below the
+    full core's, core_bc.md) and warns once over two calls; a new layer is capped near the CMB
+    and does not warn. In both the convecting core loses the adiabatic flow at the layer base,
+    the layer stores that and the CMB inflow, and the core heat closes against the CMB heat."""
     solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=5.0)
-    budget = solver._core_module_budget
-    S = _driven_s_profile(solver._n_stag)
+    budget, n = solver._core_module_budget, solver._n_stag
+    S = _driven_s_profile(n)
     p_cmb = float(solver._P_basic_flat[0])
     t_m0 = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), S[:1])).item())
     solver.set_initial_core_temperature(t_m0 - 300.0)
@@ -414,23 +416,23 @@ def test_a_cold_stratified_core_uses_the_floor_only_once_the_layer_has_grown(
     solver.set_initial_entropy(S)
     with caplog.at_level(logging.WARNING):
         solver.solve()
-        out = solver.get_state()
-        t0, t1 = (float(x) for x in solver._solution.y[solver._n_stag + 1, [0, -1]])
+        out, y = solver.get_state(), np.array(solver._solution.y)
         solver.solve()
-    assert t1 > t0 > float(budget.t_onset)
     old = layer_start is not None
     assert out.core_layer_start_yr == (layer_start if old else 0.0)
     assert sum(FLOOR_WARNING in r.message for r in caplog.records) == int(old)
     assert out.step_dE_F_cmb_J < 0.0
-    # The full capacity moves T_core by ~1e-7 K, where rounding of T itself is ~1e-5 of it.
-    rounding = 8.0 * np.finfo(float).eps * t1 / (t1 - t0)
-    closure = pytest.approx(-out.step_dE_F_cmb_J, rel=max(1.0e-6, rounding))
-    assert out.step_dE_core_J == closure
+    t0, t1, age = y[n + 1, 0], y[n + 1, -1], -out.core_layer_start_yr * 3.15576e7
+    solver.dSdt(0.0, y[:, 0])
+    q0 = float(solver.state.heat_flux[0]) * solver._cmb_area
+    assert t1 - t0 == pytest.approx(
+        float(budget.dtcmb_dt(t0, q0, t_layer=age)) * 5 * 3.15576e7, rel=1e-2
+    )
     c_floor = float(budget.effective_capacity(t0, -1.0e12))
-    c_full = float(budget.effective_capacity(t0, 1.0e14))
-    assert 600.0 < c_full / c_floor < 800.0
-    expected = c_floor if old else c_full
-    assert out.step_dE_core_J / (t1 - t0) == pytest.approx(expected, rel=1.0e-3)
+    assert 600.0 < float(budget.effective_capacity(t0, 1.0e14)) / c_floor < 800.0
+    assert (float(budget.effective_capacity(t0, q0, age)) == pytest.approx(c_floor)) is old
+    stored = abs(float(budget.base_heat_flow(t0, q0, age)) - q0) * 5 * 3.15576e7
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, abs=1e-4 * stored)
 
 
 @pytest.mark.parametrize('ra_crit', [0.0, -450.0, float('nan'), float('inf')])

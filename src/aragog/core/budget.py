@@ -467,6 +467,18 @@ class CoreEnergyBudget:
             released += 0.5 * (hi - lo) * float(jnp.sum(_GL_W * values))
         return secular - released
 
+    def base_heat_flow(self, t_cmb, q_cmb, t_layer=None):
+        """Heat flow [W] out of the convecting core, ``q_cmb`` without stratification.
+
+        A layer thinner than its quasi-static depth conducts ``Q_ad(r_s) > q_cmb`` at its
+        base and stores the difference, so the convecting core loses ``max(q_cmb,
+        Q_ad(r_s))``; at the quasi-static depth the two are equal.
+        """
+        if not self.stratification:
+            return q_cmb
+        r_s = self.convecting_radius(t_cmb, q_cmb, t_layer)
+        return jnp.maximum(q_cmb, self.conducted_adiabatic_flow(r_s, t_cmb))
+
     def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0, t_layer=None):
         """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of the core.
 
@@ -475,4 +487,5 @@ class CoreEnergyBudget:
         offset it. With stratification enabled the capacity is evaluated
         over the convecting volume for this heat flow and layer age.
         """
-        return (q_sources - q_cmb) / self.effective_capacity(t_cmb, q_cmb, t_layer)
+        q_base = self.base_heat_flow(t_cmb, q_cmb, t_layer)
+        return (q_sources - q_base) / self.effective_capacity(t_cmb, q_cmb, t_layer)

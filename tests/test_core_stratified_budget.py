@@ -312,11 +312,10 @@ def test_layer_below_the_inner_core_closes_the_gravitational_term():
 
 @pytest.mark.physics_invariant
 def test_fully_stratified_floor_keeps_the_ode_finite():
-    """Non-positive flow pins the convecting radius at the 10% floor:
-    the capacity stays positive and finite, warming (q < 0) carries the
-    right sign with the floored inertia, and the floored regime has zero
-    flow-sensitivity so the Jacobian stays finite there. The floor is a
-    numerical guard, not physics; this pins its mechanics."""
+    """Non-positive flow pins the convecting radius at the 10% floor: the capacity stays
+    positive and finite, the convecting core below the floor loses its adiabatic flow
+    Q_ad(0.1 r_cmb) to the layer whatever the CMB flow, and the floored regime has zero
+    flow-sensitivity so the Jacobian stays finite there. The floor is a numerical guard."""
     on = _budget(stratification=True)
     p = on.profiles
 
@@ -325,10 +324,8 @@ def test_fully_stratified_floor_keeps_the_ode_finite():
         assert r == pytest.approx(0.1 * p.r_cmb, rel=1e-9)
         c = float(on.effective_capacity(T_C, q))
         assert 0.0 < c < float(_budget(stratification=False).effective_capacity(T_C))
-        rate = float(on.dtcmb_dt(T_C, q))
-        assert np.isfinite(rate)
-        if q < 0.0:
-            assert rate > 0.0  # heat flowing IN warms the core
+        q_floor = float(on.conducted_adiabatic_flow(0.1 * p.r_cmb, T_C))
+        assert float(on.dtcmb_dt(T_C, q)) == pytest.approx(-q_floor / c, rel=1e-12)
 
     g = float(jax.grad(lambda q: on.convecting_radius(T_C, q))(-1.0e12))
     assert g == 0.0  # the floor is flat: no spurious sensitivity

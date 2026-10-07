@@ -108,7 +108,7 @@ def build_jax_rhs_and_jacobian(
     core_module_layer_start : float, optional
         Onset time [yr] of the stratified layer, the solver's
         ``_core_layer_start_yr``; required for a stratified budget. It enters
-        the compiled functions as an argument, so a new onset reuses them.
+        the compiled functions as an argument rather than a constant.
 
     Returns
     -------
