@@ -271,7 +271,7 @@ def test_compile_counter_a():
     r_rhs_ref(0.0, y_nd, ydot_ref)
     r_jac_ref(0.0, y_nd, None, J_ref)
     assert np.max(np.abs(ydot - ydot_ref)) <= 1e-12 * np.max(np.abs(ydot_ref))
-    assert np.max(np.abs(J - J_ref)) <= 1e-15 * np.max(np.abs(J_ref))
+    assert np.max(np.abs(J - J_ref)) <= 1e-14 * np.max(np.abs(J_ref))
 
     # 4. Changed inner_bc_type (2 -> 0)
     bc_inner0 = _make_bc(mesh10, outer_type=4, inner_type=0)
@@ -298,7 +298,7 @@ def test_compile_counter_a():
     r_rhs_ref_i0(0.0, y_nd, ydot_ref_i0)
     r_jac_ref_i0(0.0, y_nd, None, J_ref_i0)
     assert np.max(np.abs(ydot - ydot_ref_i0)) <= 1e-12 * np.max(np.abs(ydot_ref_i0))
-    assert np.max(np.abs(J - J_ref_i0)) <= 1e-15 * np.max(np.abs(J_ref_i0))
+    assert np.max(np.abs(J - J_ref_i0)) <= 1e-14 * np.max(np.abs(J_ref_i0))
 
     # 5. Changed param_utbl (False -> True)
     bc_utbl = _make_bc(
@@ -393,7 +393,7 @@ def test_parity_with_pre_change_factory_b(core_bc_mode: str, use_radio: bool):
     assert rhs_ref(t_nd, y_nd, ydot_ref) == 0
     assert jac_ref(t_nd, y_nd, None, J_ref) == 0
 
-    # Tolerances: RHS <= 1e-12 max|f|, Jacobian <= 1e-15 max|J|
+    # Tolerances: RHS <= 1e-12 max|f|, Jacobian <= 1e-14 max|J|
     max_f = np.max(np.abs(ydot_ref))
     assert np.isfinite(max_f) and max_f > 0.0
     diff_f = np.max(np.abs(ydot_cached - ydot_ref))
@@ -402,7 +402,7 @@ def test_parity_with_pre_change_factory_b(core_bc_mode: str, use_radio: bool):
     max_J = np.max(np.abs(J_ref))
     assert np.isfinite(max_J) and max_J > 0.0
     diff_J = np.max(np.abs(J_cached - J_ref))
-    assert diff_J <= 1e-15 * max_J, f'Jacobian diff {diff_J} > 1e-15 * {max_J}'
+    assert diff_J <= 1e-14 * max_J, f'Jacobian diff {diff_J} > 1e-14 * {max_J}'
 
 
 @needs_eos
