@@ -18,6 +18,8 @@ regression anchor relies on.
 
 from __future__ import annotations
 
+import numbers
+
 import jax
 import jax.numpy as jnp
 
@@ -110,7 +112,7 @@ class IronMeltingCurve:
             x = self.light_element_fraction
         else:
             x = light_element_fraction
-            if isinstance(x, (int, float)):
+            if isinstance(x, numbers.Real):
                 if not 0.0 <= float(x) < 1.0:
                     raise ValueError(f'light_element_fraction must be in [0, 1), got {x}')
                 if self.depression * float(x) >= 1.0:

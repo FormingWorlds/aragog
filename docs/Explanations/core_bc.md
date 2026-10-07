@@ -86,7 +86,7 @@ The state-vector layout for each mode is documented in [`solver/entropy_solver.p
 
 ### Parameters
 
-When `core_bc = "core_module"`, the module options are specified under `[boundary_conditions.core_module_params]`; any other key is refused when the solver is built:
+The mode needs JAX (`pip install 'fwl-aragog[jax]'`); without it the solver refuses the mode when it is built. When `core_bc = "core_module"`, the module options are specified under `[boundary_conditions.core_module_params]`; any other key is refused when the solver is built:
 
 - `fit_profile`, `m_core`, `p_cen`: the core mass [kg] and central pressure [Pa] the Gaussian profile is fitted to. With both given the profile is fitted (unless `fit_profile = false`); one of them alone, or `fit_profile = true` without them, is refused, and `fit_profile` must be true or false (1 or 0 accepted). PROTEUS fills both from its structure solve.
 - `rho_cen`: Core central density [kg m$^{-3}$], used when no fit is made. Default $12500.0$. The fit does not start from it.

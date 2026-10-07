@@ -1780,7 +1780,13 @@ class EntropySolver:
         # core_module: build the core budget once; the aragog.core constructors validate
         # the params and the CMB radius comes from the mesh, so the geometries agree.
         if 'core_module' in (getattr(self, '_core_bc', None), getattr(bc, 'core_bc', None)):
-            import jax
+            try:
+                import jax
+            except ImportError as err:
+                raise ImportError(
+                    "core_bc = 'core_module' needs JAX; install it with "
+                    "pip install 'fwl-aragog[jax]'"
+                ) from err
 
             from aragog.core import RA_CRIT_CMB_DEFAULT, build_core_module_budget, check_ra_crit
 

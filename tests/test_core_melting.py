@@ -29,7 +29,7 @@ def test_pure_iron_pins_against_the_paleos_source():
     # Anchor points of the fit itself (exact in each branch's formula).
     assert float(tm(5.2e9)) == pytest.approx(1991.0, rel=1e-12)
     assert float(tm(98.5e9)) == pytest.approx(3712.362557, rel=1e-6)
-    # Interior pins computed from the PALEOS function on 2026-08-08.
+    # Interior pins computed from the PALEOS function.
     assert float(tm(1e5)) == pytest.approx(1822.443733, rel=1e-9)
     assert float(tm(50e9)) == pytest.approx(2991.670101, rel=1e-9)
     assert float(tm(136e9)) == pytest.approx(4191.966007, rel=1e-9)  # Earth CMB
@@ -133,6 +133,8 @@ def test_melting_curve_runtime_overrides_and_validation():
     alloy = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     with pytest.raises(ValueError, match='light_element_fraction must be in'):
         alloy.t_melt(100e9, light_element_fraction=-0.05)
+    with pytest.raises(ValueError, match='light_element_fraction must be in'):
+        alloy.t_melt(100e9, light_element_fraction=np.float32(-0.05))
     with pytest.raises(ValueError, match='light_element_fraction must be in'):
         alloy.t_melt(100e9, light_element_fraction=1.0)
     with pytest.raises(ValueError, match='reaches 1'):
