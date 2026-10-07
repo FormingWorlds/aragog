@@ -16,14 +16,22 @@ PAGE = ROOT / 'docs' / 'Explanations' / 'core_verification.md'
 VALUES = json.loads(
     (ROOT / 'docs' / 'figures' / 'vv' / 'core_verification_values.json').read_text()
 )
+ROUNDING = {
+    'jvp_vs_fd_max_rel',
+    'secular_max_rel',
+    'secular_entropy_max_rel',
+    'conduction_sink_rel',
+    't_cmb_max_abs_diff_before_onset',
+}
 TAG = re.compile(r'(-?[\d.]+(?:e[-+]?\d+)?)\s?%?<!--k:(\d+)\.([^:>]+)(?::(-?[\d.]+))?-->')
 
 
 @pytest.mark.unit
 def test_page_numbers_match_the_values():
     """A tagged number equals its value times the optional factor to the last digit shown."""
-    tags = TAG.findall(PAGE.read_text())
-    assert len(tags) > 100
+    text = PAGE.read_text()
+    tags = TAG.findall(text)
+    assert len(tags) == text.count('<!--k:') > 100
     for shown, item, key, factor in tags:
         value = VALUES[item][key] * float(factor or 1)
         half_digit = 0.5 * 10.0 ** Decimal(shown).as_tuple().exponent
@@ -54,13 +62,13 @@ def script(tmp_path, monkeypatch):
 
 
 def _reproduces(script, item):
-    """Run one item and compare what it records with the values file: an error measure
-    (a key with 'rel' or 'diff') may not double, every other number holds to 1e-4."""
+    """Run one item and compare what it records with the values file: a rounding-level
+    error in ROUNDING may not double, every other number holds to 1e-4."""
     script.ITEMS[item]()
     got, want = script.VALUES[str(item)], VALUES[str(item)]
     assert got.keys() == want.keys()
     for key, value in got.items():
-        if 'rel' in key or 'diff' in key:
+        if key in ROUNDING:
             assert abs(value) <= 2.0 * abs(want[key]) + 1e-15, key
         else:
             assert value == pytest.approx(want[key], rel=1e-4, abs=1e-12), key
@@ -94,4 +102,4 @@ def test_coupled_tables_reproduce_the_page(script):
     got = _reproduces(script, 11)
     assert got['wrong_sign_rows_core_module'] == 0
     assert got['wrong_sign_rows_energy_balance'] == got['rows_energy_balance']
-    assert abs(got['core_residual_frac_end']) <= 1e-4
+    assert abs(got['core_residual_frac_end']) < got['core_residual_frac_max_after_1kyr'] < 1e-5

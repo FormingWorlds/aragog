@@ -29,7 +29,6 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from scipy.integrate import cumulative_trapezoid, quad, solve_ivp  # noqa: E402
 from scipy.optimize import brentq  # noqa: E402
-from thermal_history_reference import INPUTS as NIMMO  # noqa: E402
 
 from aragog.core import (  # noqa: E402
     CoreEnergyBudget,
@@ -40,7 +39,6 @@ from aragog.core import (  # noqa: E402
     cmb_boundary_layer_flux,
 )
 from aragog.core import melting as m  # noqa: E402
-from aragog.core.entropy import _CHR09_F_GEOMETRY  # noqa: E402
 
 jax.config.update('jax_enable_x64', True)
 
@@ -360,8 +358,8 @@ def item7_dynamo() -> None:
     """Entropy margin and Christensen et al. (2009) field strength against CMB heat flow."""
     ent, t_c = _nimmo_budget()[1], 4180.0
     printed = 1.35e-5 * 10.7 * 3.48e6 / 840.0
-    for geometry, factor in _CHR09_F_GEOMETRY.items():
-        record(7, f'F_{geometry}_printed_inputs', factor * printed)
+    record(7, 'F_const_flux_printed_inputs', 0.88 * printed)  # CHR09 factors, set here
+    record(7, 'F_zero_outer_printed_inputs', 0.45 * printed)  # independently of aragog
     record(7, 'F_const_flux_profile', float(ent.chr09_efficiency_factor()))
     qk = record(7, 'Q_k_TW', float(ent.adiabatic_heat_flow(t_c)) / 1e12)
     threshold = record(
@@ -758,8 +756,6 @@ def _stable_layer_panel(ax, ax_t) -> None:
 
 def item10_leeds_history() -> None:
     """A core-only thermal history under a fixed CMB heat flow against thermal_history."""
-    from scipy.integrate import solve_ivp
-
     header, th, budget, _ = _thermal_history()
     inp = header['inputs']
     rate = jax.jit(lambda t: budget.dtcmb_dt(t, inp['q_cmb']))
@@ -785,7 +781,10 @@ def item10_leeds_history() -> None:
     record(10, 'r_icb_end_km_leeds', th['r_icb'][-1] / 1e3)
     before = np.arange(len(t_cmb)) < np.argmax(th['r_icb'] > 0)
     record(10, 't_cmb_max_abs_diff_before_onset', np.max(np.abs(t_cmb - th['T_cmb'])[before]))
-    record(10, 't_cmb_abs_diff_at_onset', abs(t_cmb - th['T_cmb'])[np.argmax(~before)])
+    diff = t_cmb - th['T_cmb']
+    record(10, 't_cmb_abs_diff_at_onset', abs(diff)[np.argmax(~before)])
+    record(10, 't_cmb_diff_max_after_onset_K', diff.max())
+    record(10, 'sign_change_myr', th['time_myr'][~before & (diff < 0)][0])
     record(10, 'r_icb_max_abs_diff_km', np.max(np.abs(r_icb - th['r_icb'])) / 1e3)
     record(10, 'inner_core_age_myr', th['time_myr'][-1] - onset)
 
@@ -835,13 +834,11 @@ def item11_coupled() -> None:
         if mode == 'core_module':  # the mantle side cools alike in both runs
             mantle = dict(color=colour('fog', '0.5'), label='mantle side of the CMB')
             ax.semilogx(t, run['t_node'][live], '--', **mantle)
+            record(11, 'core_residual_frac_end', run['residual'][-1])
+            late = np.abs(run['residual'][run['t'] > 1e3])
+            record(11, 'core_residual_frac_max_after_1kyr', late.max())
         ax2.semilogx(t, run['f_cmb'][live], color=col, label=mode)
         ax2.semilogx(t[wrong[live]], run['f_cmb'][live][wrong[live]], 'x', ms=3, color=col)
-    run = _coupled('core_module')
-    record(11, 'core_residual_frac_end', run['residual'][-1])
-    record(
-        11, 'core_residual_frac_max_after_1kyr', np.abs(run['residual'][run['t'] > 1e3]).max()
-    )
     ax.set_ylabel('temperature (K)')
     ax.legend(frameon=False, fontsize='x-small', loc='lower left')
     ax2.set_yscale('symlog', linthresh=1.0)
@@ -853,6 +850,21 @@ def item11_coupled() -> None:
 
 # ---------------------------------------------------------------- 5. Nimmo (2015)
 # Nimmo (2015, ch. 8.02) Table 4, p. 46: the 'This work (K = 0)' columns at 15.2 and 12 TW.
+NIMMO = dict(  # Nimmo (2015, ch. 8.02) Table 2 core
+    rho_cen=12500.0,
+    length_scale=7272e3,
+    r_cmb=3480e3,
+    p_cmb=136e9,
+    alpha=1.25e-5,
+    c_p=840.0,
+    t_m0=2677.0,
+    t_m1=2.95e-12,
+    t_m2=8.37e-25,
+    latent_heat=750e3,
+    alpha_c=1.0,
+    c_light=560.0 / 12150.0,
+    k_core=130.0,
+)
 NIMMO_T4 = {
     15.2e12: dict(
         Qs=6.1,
