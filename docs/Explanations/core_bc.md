@@ -70,7 +70,7 @@ The CMB flux law sees the top shell cell, so a core heated from above warms its 
 
 The entropy margin is the sum over the convecting core and the shell of the balance of Greenwood et al. (2021, eq. 4): every source is delivered at the temperature of the top cell, the CMB temperature, and each part has the conduction sink of its own gradient. The CMB heat flow reaches the margin only through the state, since the top cell is the reference temperature.
 
-The shell must hold the layer and lie above the inner core. The solver refuses an inner core that reaches the shell base and warns once when the layer base comes within three cells of it; a lower `layer_base_fraction` gives a deeper shell.
+The shell must hold the layer and lie above the inner core. The solver refuses an inner core that reaches the shell base and warns once when the layer base comes within three cells of it; a lower `layer_base_fraction` gives a deeper shell. A stratified core runs on CVODE or SciPy BDF, which the solver also falls back to without CVODE; Radau is refused, since the stiff mixing of the shell takes it minutes per call.
 
 ## How to choose
 

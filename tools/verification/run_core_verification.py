@@ -696,6 +696,23 @@ def item6_leeds_terms() -> None:
     save(fig, 'fig_13_leeds_budget_terms')
 
 
+def _theta_base(shell, t_shell, t_c, fraction=0.1):
+    """Layer base [m] by temperature, as thermal_history lowers r_s to T_s = T_a: the deepest
+    radius, reached from the top, where the excess over the adiabat is still ``fraction`` of
+    its top value, interpolated between cells; the CMB without a warm top."""
+    theta = t_shell - np.asarray(shell.adiabatic_profile(t_c))
+    r, target = np.asarray(shell.r_cells), fraction * theta[-1]
+    if theta[-1] <= 0.0:
+        return float(shell.profiles.r_cmb)
+    k = len(theta) - 1
+    while k > 0 and theta[k - 1] >= target:
+        k -= 1
+    if k == 0:
+        return float(shell.r_base)
+    w = (target - theta[k - 1]) / (theta[k] - theta[k - 1])
+    return float(r[k - 1] + w * (r[k] - r[k - 1]))
+
+
 def _shell_history(budget, q, t_cmb0, times):
     """aragog's convecting core and shell under a fixed CMB flow q [W], from the adiabat at
     ``t_cmb0`` (no layer), sampled at ``times`` [Leeds Myr]."""
@@ -718,7 +735,8 @@ def _shell_history(budget, q, t_cmb0, times):
         atol=1e-6,
     )
     base = np.asarray(jax.vmap(shell.layer_base)(sol.y[1:].T, sol.y[0]))
-    return sol.y[0], sol.y[-1], base
+    theta_base = np.array([_theta_base(shell, y[1:], y[0]) for y in sol.y.T])
+    return sol.y[0], sol.y[-1], base, theta_base
 
 
 def _stable_layer_panel(ax, ax_t) -> None:
@@ -734,7 +752,7 @@ def _stable_layer_panel(ax, ax_t) -> None:
     for q, col in zip(header['q_cmb'], (CORE, colour('ocean', 'C0'))):
         rows = data[data[:, 0] == q]
         t, t_cmb_leeds, t_cen_leeds, r_icb_leeds, r_s = rows[:, 1:].T
-        t_c, t_top, base = _shell_history(budget, q, inp['t_cmb_start'], t)
+        t_c, t_top, gradient_base, base = _shell_history(budget, q, inp['t_cmb_start'], t)
         t_cen = np.asarray(jax.vmap(budget.profiles.t_cen)(t_c))
         r_icb = np.asarray(jax.vmap(budget.r_icb)(t_c))
         depth, depth_leeds = r_cmb - base, r_cmb - r_s
@@ -750,6 +768,9 @@ def _stable_layer_panel(ax, ax_t) -> None:
         record(6, f'tcmb_max_abs_diff_K_{tag}', np.max(np.abs(t_top - t_cmb_leeds)))
         record(6, f'layer_ratio_min_{tag}', ratio.min())
         record(6, f'layer_ratio_max_{tag}', ratio.max())
+        by_gradient = (r_cmb - gradient_base)[both] / depth_leeds[both]
+        record(6, f'layer_ratio_gradient_min_{tag}', by_gradient.min())
+        record(6, f'layer_ratio_gradient_max_{tag}', by_gradient.max())
         record(
             6, f'ricb_max_rel_diff_{tag}', np.max(np.abs(r_icb[grown] / r_icb_leeds[grown] - 1))
         )

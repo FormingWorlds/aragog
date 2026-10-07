@@ -364,6 +364,13 @@ needs_cvode = pytest.mark.skipif(
 )
 
 
+def test_a_stratified_core_refuses_radau(shared_eos):
+    solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=1.0)
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    with pytest.raises(ValueError, match="'cvode' or 'bdf'"):
+        solver.solve()
+
+
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_a_stratified_default_start_keeps_the_core_and_closes_its_heat():

@@ -4037,7 +4037,13 @@ class EntropySolver:
                     **cvode_kw,
                 )
         else:
-            method = 'Radau' if solver_method != 'bdf' else 'BDF'
+            shell = self._core_shell() is not None
+            if shell and solver_method == 'radau':
+                raise ValueError(
+                    "a stratified core_module needs solver_method 'cvode' or 'bdf': Radau "
+                    'takes minutes per call on the stiff mixing of the resolved shell'
+                )
+            method = 'BDF' if solver_method == 'bdf' or shell else 'Radau'
             logger.info('EntropySolver: using scipy %s', method)
             if rate_mode:
                 self._warn_once(
