@@ -776,7 +776,9 @@ def _stable_layer_panel(ax) -> None:
     )
     ax.set_xlabel('time (Myr)')
     ax.set_ylabel('layer thickness (km)')
-    ax.legend(frameon=False, fontsize='small', ncols=2, loc='center right', bbox_to_anchor=(1.0, 0.36))
+    ax.legend(
+        frameon=False, fontsize='small', ncols=2, loc='center right', bbox_to_anchor=(1.0, 0.36)
+    )
 
 
 def item10_leeds_history() -> None:
