@@ -78,18 +78,9 @@ def _make_jitted_rhs_and_jacobian(
     """
     import jax
 
-    from aragog.jax.solver import (
-        _no_radio,
-        compute_radio_heating,
-    )
-    from aragog.jax.solver import (
-        dSdt as jax_dsdt,
-    )
-    from aragog.jax.solver import (
-        dSdt_energy_balance as jax_dsdt_eb,
-    )
+    from aragog.jax import solver as js
 
-    _rhs_jax = jax_dsdt if core_bc_mode == 'quasi_steady' else jax_dsdt_eb
+    _rhs_jax = js.dSdt if core_bc_mode == 'quasi_steady' else js.dSdt_energy_balance
 
     def _eval_core(t_nd, y_nd, data):
         (
@@ -106,10 +97,10 @@ def _make_jitted_rhs_and_jacobian(
         if use_radio:
 
             def H_radio_fn(t):
-                return compute_radio_heating(t, radio_arrays)
+                return js.compute_radio_heating(t, radio_arrays)
 
         else:
-            H_radio_fn = _no_radio
+            H_radio_fn = js._no_radio
         args_tuple = (
             eos_jax,
             phase_params,
@@ -148,20 +139,17 @@ def _get_or_create_jitted(
         (rhs_jit, jac_jit, is_cache_hit)
     """
     key = (core_bc_mode, use_radio, id(phase_params), id(eos_jax))
-    if key in _JIT_CACHE:
-        entry = _JIT_CACHE[key]
-        if entry.phase_params is phase_params and entry.eos_jax is eos_jax:
-            _JIT_CACHE.move_to_end(key)
-            return entry.rhs_jit, entry.jac_jit, True
-        del _JIT_CACHE[key]
-
-    rhs_jit, jac_jit = _make_jitted_rhs_and_jacobian(
-        core_bc_mode, use_radio, phase_params, eos_jax
-    )
-    _JIT_CACHE[key] = _JitCacheEntry(rhs_jit, jac_jit, phase_params, eos_jax)
+    entry = _JIT_CACHE.pop(key, None)
+    hit = entry is not None and entry.phase_params is phase_params and entry.eos_jax is eos_jax
+    if not hit:
+        rhs_jit, jac_jit = _make_jitted_rhs_and_jacobian(
+            core_bc_mode, use_radio, phase_params, eos_jax
+        )
+        entry = _JitCacheEntry(rhs_jit, jac_jit, phase_params, eos_jax)
+    _JIT_CACHE[key] = entry
     if len(_JIT_CACHE) > _CACHE_MAXSIZE:
         _JIT_CACHE.popitem(last=False)
-    return rhs_jit, jac_jit, False
+    return entry.rhs_jit, entry.jac_jit, hit
 
 
 def build_jax_rhs_and_jacobian(
@@ -221,7 +209,6 @@ def build_jax_rhs_and_jacobian(
         on first call.
     """
     try:
-        import jax  # noqa: F401
         import jax.numpy as jnp
 
         import aragog.jax.solver  # noqa: F401
@@ -285,7 +272,7 @@ def build_jax_rhs_and_jacobian(
             raise ValueError(
                 f'All radio_isotope_params arrays must have identical shapes, got {shapes}'
             )
-        if any(np.asarray(a).size > 0 for a in radio_isotope_params):
+        if np.size(radio_isotope_params[0]) > 0:
             use_radio = True
             radio_arrays = tuple(
                 jnp.asarray(a, dtype=jnp.float64) for a in radio_isotope_params

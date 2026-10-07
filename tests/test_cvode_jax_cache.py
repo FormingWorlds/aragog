@@ -17,7 +17,19 @@ import os
 import numpy as np
 import pytest
 
+from aragog.jax.nondim import NonDimScales
+from aragog.jax.phase import PhaseParams
+from aragog.solver.cvode_jax import (
+    _CACHE_MAXSIZE,
+    _JIT_CACHE,
+    _TRACE_COUNTERS,
+    _get_or_create_jitted,
+    _JitCacheEntry,
+    build_jax_rhs_and_jacobian,
+    clear_jit_cache,
+)
 from tests.conftest import EOS_DIR, entropy_eos_jax
+from tests.conftest import make_mesh as _make_mesh
 
 
 def needs_eos(fn):
@@ -45,48 +57,18 @@ jax.config.update('jax_enable_x64', True)
 pytestmark = pytest.mark.unit
 
 
-def _make_mesh(N: int = 10, scale_p: float = 1.0):
-    from aragog.jax.phase import MeshArrays
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    clear_jit_cache()
 
-    r_inner = 3.480e6
-    r_outer = 6.371e6
-    r_stag = np.linspace(r_inner, r_outer, N)
-    dr = np.diff(r_stag)
-    r_basic = np.zeros(N + 1)
-    r_basic[0] = r_inner
-    r_basic[-1] = r_outer
-    r_basic[1:-1] = 0.5 * (r_stag[:-1] + r_stag[1:])
-    area = 4.0 * np.pi * r_basic**2
-    volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
-    ml = np.maximum(np.minimum(r_basic - r_inner, r_outer - r_basic), 1.0)
-    d_dr = np.zeros((N + 1, N))
-    for i in range(1, N):
-        d_dr[i, i - 1] = -1.0 / dr[i - 1]
-        d_dr[i, i] = 1.0 / dr[i - 1]
-    d_dr[0, :] = d_dr[1, :]
-    d_dr[-1, :] = d_dr[-2, :]
-    q_mat = np.zeros((N + 1, N))
-    q_mat[0, 0] = 1.0
-    q_mat[-1, -1] = 1.0
-    for i in range(1, N):
-        q_mat[i, i - 1] = 0.5
-        q_mat[i, i] = 0.5
-    p_stag = np.linspace(135e9, 1e5, N) * scale_p
-    p_basic = q_mat @ p_stag
-    return MeshArrays(
-        d_dr_matrix=jnp.asarray(d_dr),
-        quantity_matrix=jnp.asarray(q_mat),
-        area=jnp.asarray(area),
-        volume=jnp.asarray(volume),
-        radii_basic=jnp.asarray(r_basic),
-        radii_stag=jnp.asarray(r_stag),
-        mixing_length=jnp.asarray(ml),
-        mixing_length_sq=jnp.asarray(ml**2),
-        mixing_length_cu=jnp.asarray(ml**3),
-        P_stag=jnp.asarray(p_stag),
-        P_basic=jnp.asarray(p_basic),
-        gravity=jnp.full(N + 1, 10.0),
-    )
+
+@pytest.fixture(scope='module')
+def shared_eos():
+    if not EOS_DIR.exists():
+        if os.environ.get('CI'):
+            pytest.fail(f'CI requires SPIDER P-S tables, but {EOS_DIR} not found.')
+        pytest.skip(f'SPIDER P-S tables not found at {EOS_DIR}.')
+    return entropy_eos_jax(EOS_DIR)
 
 
 def _make_bc(
@@ -218,20 +200,11 @@ def _build_reference_factory(
 
 
 @needs_eos
-def test_compile_counter_a():
+def test_compile_counter_a(shared_eos):
     """Verify trace counters increment exactly once over repeated calls,
     once more on shape change, and once more on static BC type changes.
     """
-    from aragog.jax.nondim import NonDimScales
-    from aragog.jax.phase import PhaseParams
-    from aragog.solver.cvode_jax import (
-        _TRACE_COUNTERS,
-        build_jax_rhs_and_jacobian,
-        clear_jit_cache,
-    )
-
-    clear_jit_cache()
-    eos = entropy_eos_jax(EOS_DIR)
+    eos = shared_eos
     params = PhaseParams()
     mesh10 = _make_mesh(N=10)
     n_stag = 10
@@ -375,19 +348,16 @@ def test_compile_counter_a():
 @pytest.mark.parametrize('core_bc_mode', ['quasi_steady', 'energy_balance'])
 @pytest.mark.parametrize('use_radio', [False, True])
 @pytest.mark.parametrize('outer_case', ['grey_body', 'utbl'])
-def test_parity_with_pre_change_factory_b(core_bc_mode: str, use_radio: bool, outer_case: str):
+def test_parity_with_pre_change_factory_b(
+    shared_eos, core_bc_mode: str, use_radio: bool, outer_case: str
+):
     """Verify numeric parity between cached factory and reference factory.
 
     Bounds are RHS 1e-14 max|f| and J 2e-12 max|J|. Across three table sets
     and random states the measured maximum differences are RHS 2.54e-15 and
     J 3.97e-13, with a Jacobian round-off floor up to 8.2e-13.
     """
-    from aragog.jax.nondim import NonDimScales
-    from aragog.jax.phase import PhaseParams
-    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian, clear_jit_cache
-
-    clear_jit_cache()
-    eos = entropy_eos_jax(EOS_DIR)
+    eos = shared_eos
     params = PhaseParams()
     mesh = _make_mesh(N=8)
     inner_type = 5 if core_bc_mode == 'energy_balance' else 2
@@ -467,14 +437,9 @@ def test_parity_with_pre_change_factory_b(core_bc_mode: str, use_radio: bool, ou
 
 
 @needs_eos
-def test_no_stale_values_c():
+def test_no_stale_values_c(shared_eos):
     """Verify that perturbing each pytree leaf alters the output and matches reference."""
-    from aragog.jax.nondim import NonDimScales
-    from aragog.jax.phase import PhaseParams
-    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian, clear_jit_cache
-
-    clear_jit_cache()
-    eos = entropy_eos_jax(EOS_DIR)
+    eos = shared_eos
     params = PhaseParams()
     mesh = _make_mesh(N=8)
     bc = _make_bc(mesh)
@@ -573,15 +538,6 @@ def test_id_reuse_guard_d():
     """Verify that if an object address is reused without identity, cache misses."""
     from unittest.mock import patch
 
-    from aragog.solver.cvode_jax import (
-        _JIT_CACHE,
-        _get_or_create_jitted,
-        _JitCacheEntry,
-        clear_jit_cache,
-    )
-
-    clear_jit_cache()
-
     class Dummy:
         pass
 
@@ -612,19 +568,15 @@ def test_id_reuse_guard_d():
 
 
 @needs_eos
-def test_radio_params_shape_mismatch_and_empty():
+def test_radio_params_shape_mismatch_and_empty(shared_eos):
     """Verify radio parameter shape consistency check and empty array handling."""
-    from aragog.jax.nondim import NonDimScales
-    from aragog.jax.phase import PhaseParams
-    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
-
     n = 10
     mesh_arrays = _make_mesh(n)
     bp = _make_bc(mesh_arrays)
     heating = np.zeros(n)
     scales = NonDimScales(state_scale=np.ones(n), rhs_scale=np.ones(n), t_ref=1.0)
     pp = PhaseParams()
-    eos = entropy_eos_jax(EOS_DIR)
+    eos = shared_eos
 
     # Mismatched shapes: 2 isotopes vs 3 isotopes
     mismatched = (
@@ -659,20 +611,9 @@ def test_radio_params_shape_mismatch_and_empty():
 
 
 @needs_eos
-def test_lru_eviction_when_cache_exceeds_maxsize():
+def test_lru_eviction_when_cache_exceeds_maxsize(shared_eos):
     """Verify 9 distinct keys evict the first key; 10th call traces again with identical output."""
-    from aragog.jax.nondim import NonDimScales
-    from aragog.jax.phase import PhaseParams
-    from aragog.solver.cvode_jax import (
-        _CACHE_MAXSIZE,
-        _JIT_CACHE,
-        _TRACE_COUNTERS,
-        build_jax_rhs_and_jacobian,
-        clear_jit_cache,
-    )
-
-    clear_jit_cache()
-    eos = entropy_eos_jax(EOS_DIR)
+    eos = shared_eos
 
     # Maintain references to 9 distinct PhaseParams instances so addresses are not recycled
     params_list = [PhaseParams() for _ in range(9)]
@@ -746,18 +687,9 @@ def test_lru_eviction_when_cache_exceeds_maxsize():
 
 
 @needs_eos
-def test_lru_cache_access_order_move_to_end():
+def test_lru_cache_access_order_move_to_end(shared_eos):
     """Verify accessing an earlier key moves it to most-recent, evicting the next oldest."""
-    from aragog.jax.phase import PhaseParams
-    from aragog.solver.cvode_jax import (
-        _CACHE_MAXSIZE,
-        _JIT_CACHE,
-        _get_or_create_jitted,
-        clear_jit_cache,
-    )
-
-    clear_jit_cache()
-    eos = entropy_eos_jax(EOS_DIR)
+    eos = shared_eos
     params_list = [PhaseParams() for _ in range(9)]
 
     # 1. Insert 8 keys (keys 0 through 7)
@@ -785,20 +717,11 @@ def test_lru_cache_access_order_move_to_end():
 
 
 @needs_eos
-def test_eos_jax_identity_guard_misses_on_forged_colliding_key():
+def test_eos_jax_identity_guard_misses_on_forged_colliding_key(shared_eos):
     """Verify cache miss when phase_params matches but eos_jax object differs."""
     import copy
 
-    from aragog.jax.phase import PhaseParams
-    from aragog.solver.cvode_jax import (
-        _JIT_CACHE,
-        _get_or_create_jitted,
-        _JitCacheEntry,
-        clear_jit_cache,
-    )
-
-    clear_jit_cache()
-    eos1 = entropy_eos_jax(EOS_DIR)
+    eos1 = shared_eos
     eos2 = copy.copy(eos1)
     assert eos1 is not eos2
     params = PhaseParams()

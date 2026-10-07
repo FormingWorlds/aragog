@@ -11,6 +11,7 @@ from contextlib import AbstractContextManager
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from aragog import CFG_DATA
@@ -70,6 +71,53 @@ def entropy_eos_jax(eos_dir: Path | str = EOS_DIR):
     from aragog.jax.eos import EntropyEOS_JAX
 
     return _parsed(EntropyEOS_JAX, str(eos_dir))
+
+
+def make_mesh(N: int = 10, scale_p: float = 1.0):
+    """Build a canonical MeshArrays test fixture."""
+    import jax.numpy as jnp
+
+    from aragog.jax.phase import MeshArrays
+
+    r_inner = 3.480e6
+    r_outer = 6.371e6
+    r_stag = np.linspace(r_inner, r_outer, N)
+    dr = np.diff(r_stag)
+    r_basic = np.zeros(N + 1)
+    r_basic[0] = r_inner
+    r_basic[-1] = r_outer
+    r_basic[1:-1] = 0.5 * (r_stag[:-1] + r_stag[1:])
+    area = 4.0 * np.pi * r_basic**2
+    volume = (4.0 / 3.0) * np.pi * np.diff(r_basic**3)
+    ml = np.maximum(np.minimum(r_basic - r_inner, r_outer - r_basic), 1.0)
+    d_dr = np.zeros((N + 1, N))
+    for i in range(1, N):
+        d_dr[i, i - 1] = -1.0 / dr[i - 1]
+        d_dr[i, i] = 1.0 / dr[i - 1]
+    d_dr[0, :] = d_dr[1, :]
+    d_dr[-1, :] = d_dr[-2, :]
+    q_mat = np.zeros((N + 1, N))
+    q_mat[0, 0] = 1.0
+    q_mat[-1, -1] = 1.0
+    for i in range(1, N):
+        q_mat[i, i - 1] = 0.5
+        q_mat[i, i] = 0.5
+    p_stag = np.linspace(135e9, 1e5, N) * scale_p
+    p_basic = q_mat @ p_stag
+    return MeshArrays(
+        d_dr_matrix=jnp.asarray(d_dr),
+        quantity_matrix=jnp.asarray(q_mat),
+        area=jnp.asarray(area),
+        volume=jnp.asarray(volume),
+        radii_basic=jnp.asarray(r_basic),
+        radii_stag=jnp.asarray(r_stag),
+        mixing_length=jnp.asarray(ml),
+        mixing_length_sq=jnp.asarray(ml**2),
+        mixing_length_cu=jnp.asarray(ml**3),
+        P_stag=jnp.asarray(p_stag),
+        P_basic=jnp.asarray(p_basic),
+        gravity=jnp.full(N + 1, 10.0),
+    )
 
 
 def pytest_collection_finish(session):

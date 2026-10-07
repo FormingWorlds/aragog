@@ -114,12 +114,9 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
     callable
         Function of t_yr returning radiogenic heating [W/kg].
     """
-    radio = (
-        jnp.asarray(heat_prod, dtype=jnp.float64),
-        jnp.asarray(abundance, dtype=jnp.float64),
-        jnp.asarray(concentration, dtype=jnp.float64),
-        jnp.asarray(t0_years, dtype=jnp.float64),
-        jnp.asarray(half_life_years, dtype=jnp.float64),
+    radio = tuple(
+        jnp.asarray(a, dtype=jnp.float64)
+        for a in (heat_prod, abundance, concentration, t0_years, half_life_years)
     )
     return lambda t_yr: compute_radio_heating(t_yr, radio)
 

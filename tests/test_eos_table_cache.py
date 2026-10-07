@@ -35,6 +35,14 @@ def _clean_table_cache_env(monkeypatch: pytest.MonkeyPatch) -> None:
     _FAILED_CACHE_ROOTS.clear()
 
 
+@pytest.fixture
+def table_file(tmp_path: Path) -> Path:
+    """Return a simple two-by-two test table file."""
+    p = tmp_path / 'test_table.dat'
+    p.write_text('1.0 2.0\n3.0 4.0\n')
+    return p
+
+
 class TestTableCache:
     """Test suite for tabular caching reader."""
 
@@ -100,16 +108,20 @@ class TestTableCache:
         temp_files = list(ro_dir.glob('.*.npz'))
         assert not temp_files, f'Temp files left in {ro_dir}: {temp_files}'
 
-    def test_corrupt_or_truncated_cache_recovery(self, tmp_path: Path) -> None:
-        """Verify recovery and rewrite when cache file is corrupt or truncated."""
-        table_file = tmp_path / 'corrupt_table.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
-
+    @pytest.mark.parametrize('corruption_mode', ['truncated', 'bad_metadata'])
+    def test_corrupt_cache_recovery(self, table_file: Path, corruption_mode: str) -> None:
+        """Verify recovery and rewrite when cache file is corrupt or has invalid metadata."""
         arr_orig = read_cached_table(table_file)
         cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
 
-        cache_file.write_bytes(b'PK\x03\x04truncated')
+        if corruption_mode == 'truncated':
+            cache_file.write_bytes(b'PK\x03\x04truncated')
+        elif corruption_mode == 'bad_metadata':
+            with np.load(cache_file) as npz:
+                meta = {k: npz[k] for k in npz.files}
+            meta['format_version'] = np.array([1, 2])
+            np.savez(cache_file, **meta)
 
         arr_recov = read_cached_table(table_file)
         assert np.array_equal(arr_orig, arr_recov)
@@ -234,23 +246,6 @@ class TestTableCache:
                 assert mode == expected_mode
             finally:
                 os.umask(orig_umask)
-
-    def test_corrupt_type_error_metadata_fallback(self, tmp_path: Path) -> None:
-        """Verify fallback when metadata contains malformed non-scalar types."""
-        table_file = tmp_path / 'type_err_table.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
-
-        arr_orig = read_cached_table(table_file)
-        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
-        assert cache_file.is_file()
-
-        with np.load(cache_file) as npz:
-            meta = {k: npz[k] for k in npz.files}
-        meta['format_version'] = np.array([1, 2])
-        np.savez(cache_file, **meta)
-
-        arr_recov = read_cached_table(table_file)
-        assert np.array_equal(arr_orig, arr_recov)
 
     def test_custom_cache_dir_override(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
