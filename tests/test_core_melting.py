@@ -10,6 +10,9 @@ error contract, and the whole surface must be jit-safe.
 
 from __future__ import annotations
 
+from decimal import Decimal
+from fractions import Fraction
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -139,9 +142,31 @@ def test_melting_curve_runtime_overrides_and_validation():
     for concrete in (np.array([0.1, 0.9]), jnp.array([0.9, 0.1])):
         with pytest.raises(ValueError, match='reaches 1'):
             alloy.t_melt(100e9, light_element_fraction=concrete)
-    for concrete in ('0.05', np.True_, False, 0.05 + 0j):
+    for concrete in ('0.05', b'0.05', np.True_, False, 0.05 + 0j, [[0.1], [0.1, 0.2]]):
         with pytest.raises(ValueError, match='light_element_fraction must be a real number'):
             alloy.t_melt(100e9, light_element_fraction=concrete)
+        with pytest.raises(ValueError, match='light_element_fraction must be a real number'):
+            IronMeltingCurve(light_element_fraction=concrete, depression=1.2)
+    # Integers and other real types are taken as float64.
+    t_pure = float(alloy.t_melt_pure(100e9))
+    for zero in (0, np.int64(0), np.uint8(0), jnp.array(0)):
+        assert float(alloy.t_melt(100e9, light_element_fraction=zero)) == t_pure
+    for tenth in (Fraction(1, 10), Decimal('0.1'), np.array([0.1], dtype=object)):
+        assert float(np.ravel(alloy.t_melt(100e9, light_element_fraction=tenth))[0]) == float(
+            alloy.t_melt(100e9)
+        )
+    half = jnp.asarray(0.5, dtype=jnp.bfloat16)
+    assert float(alloy.t_melt(100e9, light_element_fraction=half)) == pytest.approx(
+        0.4 * t_pure
+    )
+    # depression * x == 1 exactly is refused; a float32 x whose float32 product rounds to 1
+    # but whose float64 product stays below 1 is accepted.
+    with pytest.raises(ValueError, match='reaches 1'):
+        IronMeltingCurve(light_element_fraction=0.1, depression=2.0).t_melt(1e11, 0.5)
+    x_edge = np.float32(0.8333333)
+    assert np.float32(1.2) * x_edge == np.float32(1.0) and 1.2 * float(x_edge) < 1.0
+    edge = float(alloy.t_melt(100e9, light_element_fraction=x_edge))
+    assert edge == pytest.approx(t_pure * (1.0 - 1.2 * float(x_edge)), rel=1e-9)
     # A float32 override is evaluated in float64, and a traced one passes unchecked.
     p = np.geomspace(1e9, 3e11, 5)
     x32 = np.float32(0.83333325)

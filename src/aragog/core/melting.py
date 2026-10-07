@@ -38,6 +38,32 @@ _EXP_HIGH = 1.0 / 1.72
 IRON_MELTING_BRANCH_BLEND_HALF_WIDTH_PA = 3.0e9
 
 
+def _checked_fraction(x, depression):
+    """Return the light-element fraction ``x`` in float64 after checking it.
+
+    Raises
+    ------
+    ValueError
+        If ``x`` is not a real number (a bool, string, bytes or complex value
+        included), is outside ``[0, 1)``, or makes ``depression * x`` reach 1.
+    """
+    try:
+        arr = np.asarray(x)
+        if isinstance(x, (str, bytes)) or arr.dtype.kind in 'bcSU':
+            raise TypeError
+        xs = arr.astype(float)
+    except (TypeError, ValueError):
+        raise ValueError(f'light_element_fraction must be a real number, got {x!r}') from None
+    if not np.all((xs >= 0.0) & (xs < 1.0)):
+        raise ValueError(f'light_element_fraction must be in [0, 1), got {x}')
+    if np.any(depression * xs >= 1.0):
+        raise ValueError(
+            f'depression * light_element_fraction = {depression * xs} reaches 1; '
+            'the depressed melting curve would not stay positive'
+        )
+    return xs
+
+
 class IronMeltingCurve:
     """Melting temperature of the core alloy.
 
@@ -54,25 +80,18 @@ class IronMeltingCurve:
     Raises
     ------
     ValueError
-        If ``x`` is outside ``[0, 1)``, ``depression`` is negative, or the
-        combined depression factor would reach zero or below.
+        If ``x`` is not a real number or is outside ``[0, 1)``,
+        ``depression`` is negative, or the combined depression factor would
+        reach zero or below.
     """
 
     BLEND_HALF_WIDTH_PA = IRON_MELTING_BRANCH_BLEND_HALF_WIDTH_PA
 
     def __init__(self, *, light_element_fraction: float = 0.0, depression: float = 0.0):
-        x = float(light_element_fraction)
         dep = float(depression)
-        if not 0.0 <= x < 1.0:
-            raise ValueError(f'light_element_fraction must be in [0, 1), got {x}')
         if dep < 0.0:
             raise ValueError(f'depression must be non-negative, got {dep}')
-        if dep * x >= 1.0:
-            raise ValueError(
-                f'depression * light_element_fraction = {dep * x} reaches 1; '
-                'the depressed melting curve would not stay positive'
-            )
-        self.light_element_fraction = x
+        self.light_element_fraction = float(_checked_fraction(light_element_fraction, dep))
         self.depression = dep
 
     @staticmethod
@@ -104,28 +123,16 @@ class IronMeltingCurve:
         Raises
         ------
         ValueError
-            If a concrete override is outside ``[0, 1)`` or drives the
-            depression factor to zero or below.
+            If a concrete override is not a real number (a bool, string,
+            bytes or complex value included), is outside ``[0, 1)``, or
+            drives the depression factor to zero or below.
         """
         if light_element_fraction is None:
             x = self.light_element_fraction
         else:
             x = light_element_fraction
             if not isinstance(x, jax.core.Tracer):
-                if np.asarray(x).dtype.kind not in 'iuf':
-                    raise ValueError(
-                        f'light_element_fraction must be a real number, got {light_element_fraction!r}'
-                    )
-                x = np.asarray(x, dtype=float)
-                if not np.all((x >= 0.0) & (x < 1.0)):
-                    raise ValueError(
-                        f'light_element_fraction must be in [0, 1), got {light_element_fraction}'
-                    )
-                if np.any(self.depression * x >= 1.0):
-                    raise ValueError(
-                        f'depression * light_element_fraction = {self.depression * x} '
-                        'reaches 1; the depressed melting curve would not stay positive'
-                    )
+                x = _checked_fraction(x, self.depression)
         return self.t_melt_pure(pressure) * (1.0 - self.depression * x)
 
 
