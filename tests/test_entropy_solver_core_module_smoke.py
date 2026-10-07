@@ -667,3 +667,39 @@ def test_nucleation_temperature_independent_of_mesh_resolution(shared_eos):
         assert t_core == pytest.approx(t_m, rel=1e-12)
         solver.dSdt(0.0, solver._S0)
         assert float(solver.state.heat_flux[0]) == 0.0
+
+
+@needs_cvode
+def test_a_resume_restarts_the_shell_where_the_previous_solve_ended():
+    """A new solver given the end state of a stratified solve starts its core and shell exactly
+    there, and refuses a shell profile of the wrong length."""
+
+    def heated():
+        solver = _build(
+            'core_module',
+            entropy_eos_copy(),
+            STRATIFIED_PARAMS,
+            end_time=1.0,
+            solver_method='cvode',
+        )
+        S = _driven_s_profile(solver._n_stag)
+        p_cmb = solver._P_basic_flat[:1]
+        t_m = float(np.asarray(solver.entropy_eos.temperature(p_cmb, S[:1])).item())
+        return solver, S, t_m - 300.0
+
+    first, S, t_core = heated()
+    first.set_initial_core_temperature(t_core)
+    first.set_initial_entropy(S)
+    first.solve()
+    n, end = first._n_stag, np.asarray(first._solution.y)[:, -1]
+    second, _, _ = heated()
+    second.set_initial_core_temperature(float(end[n + 1]))
+    second.set_initial_shell_temperature(end[n + 2 :])
+    second.set_initial_entropy(end[:n])
+    second.solve()
+    start = np.asarray(second._solution.y)[:, 0]
+    np.testing.assert_array_equal(start[:n], end[:n])
+    np.testing.assert_array_equal(start[n + 1 :], end[n + 1 :])
+    second.set_initial_shell_temperature(end[n + 3 :])
+    with pytest.raises(ValueError, match='cells'):
+        second.set_initial_entropy(end[:n])
