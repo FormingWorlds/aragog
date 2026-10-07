@@ -1,0 +1,3 @@
+# Reference tables for the core verification page
+
+`thermal_history_evolution.csv` is the output of the `leeds` core model of [thermal_history](https://github.com/sam-greenwood/thermal_history) (Greenwood et al. 2021; MIT licence) at commit `ea9aa99`, made by `tools/verification/thermal_history_reference.py`. The first line holds, as JSON, the inputs, the package versions and the column names: a core-only Earth-like history under a fixed 10 TW CMB heat flow, with 1 Myr steps from a CMB temperature of 4400 K to 1.5 Gyr. Each row pairs the state at the start of a step with the budget terms thermal_history evaluates on it; the energy and entropy terms are per unit change of the central temperature, as thermal_history stores them.

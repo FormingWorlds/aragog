@@ -9,6 +9,17 @@
   "pressure_lab_vs_quad_max_rel": 0.0030203226778734438,
   "rho_cmb": 9895.870344515819
  },
+ "10": {
+  "inner_core_age_myr": 465.0,
+  "onset_myr_aragog": 1034.0,
+  "onset_myr_leeds": 1034.0,
+  "q_cmb_TW": 10.0,
+  "r_icb_end_km_aragog": 1017.8147773301944,
+  "r_icb_end_km_leeds": 1017.0228331000001,
+  "r_icb_max_abs_diff_km": 1.6192973491162193,
+  "t_cmb_max_abs_diff": 0.05711010455979704,
+  "t_end_myr": 1499.0
+ },
  "12": {
   "jac_tcore_best_step_above_onset": 30.0,
   "jac_tcore_best_step_nucleating": 0.002537406600850753,
@@ -41,6 +52,17 @@
   "jvp_vs_fd_max_rel": 1.39480609795406e-06,
   "sqrt_slope": 0.4992620904720007,
   "t_onset": 4054.168313444495
+ },
+ "6": {
+  "conduction_sink_rel": 1.468613738397906e-07,
+  "enrichment_end": 1.0290187885996418,
+  "gravitational_enrichment_corrected_max_rel": 0.00010418723492566784,
+  "gravitational_entropy_max_rel": 0.028126388355887433,
+  "gravitational_max_rel": 0.028126388349898668,
+  "latent_entropy_max_rel": 0.00010428663104411484,
+  "latent_max_rel": 0.00010870205490620677,
+  "secular_entropy_max_rel": 4.0437572845775094e-08,
+  "secular_max_rel": 1.414776906738524e-08
  },
  "7": {
   "F_const_flux_printed_inputs": 0.5266234285714286,

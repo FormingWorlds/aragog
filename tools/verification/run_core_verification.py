@@ -634,14 +634,160 @@ def item12_jax_parity() -> None:
     save(fig, 'fig_19_numpy_jax_parity')
 
 
+# ------------------------------------------- 6 and 10. Leeds thermal_history
+TH_TABLE = ROOT / 'tools' / 'verification' / 'data' / 'thermal_history_evolution.csv'
+
+
+def _thermal_history():
+    """The Leeds table, its inputs, and aragog's budgets on the same inputs."""
+    from aragog.core import CoreEntropyBudget
+
+    with TH_TABLE.open() as fh:
+        header = json.loads(fh.readline()[2:])
+    data = np.loadtxt(TH_TABLE, delimiter=',', comments='#')
+    inp = header['inputs']
+    prof = GaussianCoreProfiles(
+        rho_cen=inp['rho_cen'],
+        length_scale=inp['length_scale'],
+        r_cmb=inp['r_cmb'],
+        p_cmb=inp['p_cmb'],
+        alpha=inp['alpha'],
+        c_p=inp['c_p'],
+        pressure_mode='quadrature',
+    )
+    curve = QuadraticMeltingCurve(t_m0=inp['t_m0'], t_m1=inp['t_m1'], t_m2=inp['t_m2'])
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=inp['latent_heat'],
+        alpha_c=inp['alpha_c'],
+        c_light=inp['c_light'],
+    )
+    cols = {name: data[:, i] for i, name in enumerate(header['columns'])}
+    return header, cols, budget, CoreEntropyBudget(budget, k_core=inp['k_core'])
+
+
+def item6_leeds_terms() -> None:
+    """Every budget term against the Leeds model on the states of its own thermal history."""
+    header, th, budget, ent = _thermal_history()
+    t_cmb, ratio = th['T_cmb'], th['T_cen'] / th['T_cmb']  # Leeds terms are per dT_cen
+    grown = th['r_icb'] > 0
+    ours = {
+        'secular': np.full_like(t_cmb, float(budget.secular_capacity())),
+        'latent': np.asarray(jax.vmap(budget.latent_capacity)(t_cmb)),
+        'gravitational': np.asarray(jax.vmap(budget.gravitational_capacity)(t_cmb)),
+        'secular entropy': np.asarray(jax.vmap(ent.secular_entropy_capacity)(t_cmb)),
+        'latent entropy': np.asarray(jax.vmap(ent.latent_entropy_capacity)(t_cmb)),
+        'gravitational entropy': np.asarray(
+            jax.vmap(ent.gravitational_entropy_capacity)(t_cmb)
+        ),
+    }
+    theirs = {
+        'secular': -th['Qs_per_dTcen'] * ratio,
+        'latent': -th['Ql_per_dTcen'] * ratio,
+        'gravitational': -th['Qg_per_dTcen'] * ratio,
+        'secular entropy': -th['Es_per_dTcen'] * ratio,
+        'latent entropy': -th['El_per_dTcen'] * ratio,
+        'gravitational entropy': -th['Eg_per_dTcen'] * ratio,
+    }
+    enrich = (
+        th['conc_l'] / th['conc_l'][0]
+    )  # Leeds enriches the outer core as the inner core grows
+    record(6, 'conduction_sink_rel', abs(float(ent.conduction_sink()) / th['Ek'][0] - 1))
+    record(6, 'enrichment_end', enrich[-1])
+    time = th['time_myr']
+    fig, ax = plt.subplots(figsize=(WIDTH, 4.2))
+    styles = {
+        'secular': ('-', colour('solar', 'C1')),
+        'latent': ('-', CORE),
+        'gravitational': ('-', colour('ocean', 'C0')),
+    }
+    for name in ours:
+        mask = grown if 'secular' not in name else np.ones_like(grown)
+        rel = np.abs(ours[name][mask] / theirs[name][mask] - 1)
+        key = name.replace(' ', '_')
+        record(6, f'{key}_max_rel', rel.max())
+        if name.endswith('entropy'):
+            continue
+        ls, col = styles[name]
+        ax.semilogy(time[mask], np.maximum(rel, 1e-16), ls, color=col, label=name)
+        if name == 'gravitational':
+            corrected = np.abs(ours[name][mask] * enrich[mask] / theirs[name][mask] - 1)
+            record(6, 'gravitational_enrichment_corrected_max_rel', corrected.max())
+            ax.semilogy(
+                time[mask],
+                corrected,
+                ':',
+                color=col,
+                label='gravitational, Leeds enrichment applied',
+            )
+    ax.set_xlabel('time (Myr)')
+    ax.set_ylabel('|aragog / Leeds - 1|')
+    ax.set_xlim(time[0], time[-1])
+    ax.legend(frameon=False, fontsize='small')
+    save(fig, 'fig_13_leeds_budget_terms')
+
+
+def item10_leeds_history() -> None:
+    """A core-only thermal history under a fixed CMB heat flow against thermal_history."""
+    from scipy.integrate import solve_ivp
+
+    header, th, budget, _ = _thermal_history()
+    inp = header['inputs']
+    myr = 1e6 * 365 * 86400.0  # the Leeds year of 365 days
+    rate = jax.jit(lambda t: budget.dtcmb_dt(t, inp['q_cmb']))
+    sol = solve_ivp(
+        lambda _, y: [float(rate(y[0])) * myr],
+        (th['time_myr'][0], th['time_myr'][-1]),
+        [inp['t_cmb_start']],
+        t_eval=th['time_myr'],
+        rtol=1e-10,
+        atol=1e-8,
+        method='LSODA',
+    )
+    t_cmb = sol.y[0]
+    r_icb = np.asarray(jax.vmap(budget.r_icb)(t_cmb))
+    onset = th['time_myr'][np.argmax(r_icb > 0)]
+    onset_th = th['time_myr'][np.argmax(th['r_icb'] > 0)]
+    record(10, 'q_cmb_TW', inp['q_cmb'] / 1e12)
+    record(10, 't_end_myr', th['time_myr'][-1])
+    record(10, 't_cmb_max_abs_diff', np.max(np.abs(t_cmb - th['T_cmb'])))
+    record(10, 'onset_myr_aragog', onset)
+    record(10, 'onset_myr_leeds', onset_th)
+    record(10, 'r_icb_end_km_aragog', r_icb[-1] / 1e3)
+    record(10, 'r_icb_end_km_leeds', th['r_icb'][-1] / 1e3)
+    record(10, 'r_icb_max_abs_diff_km', np.max(np.abs(r_icb - th['r_icb'])) / 1e3)
+    record(10, 'inner_core_age_myr', th['time_myr'][-1] - onset)
+
+    fig, (ax, ax2, ax3) = plt.subplots(
+        3, 1, figsize=(WIDTH, 6.4), sharex=True, height_ratios=(1.2, 1.2, 1)
+    )
+    t = th['time_myr']
+    ax.plot(t, t_cmb, color=CORE, label='aragog')
+    ax.plot(t, th['T_cmb'], '--', color=colour('ink', 'k'), label='thermal_history')
+    ax.set_ylabel(r'$T_\mathrm{cmb}$ (K)')
+    ax.legend(frameon=False, fontsize='small')
+    ax2.plot(t, r_icb / 1e3, color=CORE)
+    ax2.plot(t, th['r_icb'] / 1e3, '--', color=colour('ink', 'k'))
+    ax2.set_ylabel(r'$r_\mathrm{icb}$ (km)')
+    ax3.semilogy(t, np.maximum(np.abs(t_cmb - th['T_cmb']), 1e-12), color=CORE)
+    ax3.set_ylabel(r'$|\Delta T_\mathrm{cmb}|$ (K)')
+    ax3.set_xlabel('time (Myr)')
+    save(fig, 'fig_17_leeds_thermal_history')
+
+
 ITEMS = {
     1: item1_structure,
     2: item2_energy,
     3: item3_flux,
     4: item4_nucleation,
+    6: item6_leeds_terms,
     7: item7_dynamo,
     8: item8_melting,
     9: item9_cvode_onset,
+    10: item10_leeds_history,
     12: item12_jax_parity,
 }
 
