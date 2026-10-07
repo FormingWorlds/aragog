@@ -858,16 +858,186 @@ def item10_leeds_history() -> None:
     save(fig, 'fig_17_leeds_thermal_history')
 
 
+# ------------------------------------------------------------ 11. coupled PROTEUS
+def _coupled(mode: str) -> dict:
+    data = np.loadtxt(
+        ROOT / 'tools' / 'verification' / 'data' / f'coupled_{mode}.csv', delimiter=','
+    )
+    return dict(zip(('t', 't_core', 't_node', 'f_cmb', 'phi', 'residual'), data.T))
+
+
+def item11_coupled() -> None:
+    """Flux sign, core insulation and solidification in a coupled PROTEUS run, core_module
+    against energy_balance on the same configuration."""
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(WIDTH, 5.6), sharex=True)
+    for mode, col in (('core_module', CORE), ('energy_balance', colour('ink', 'k'))):
+        run = _coupled(mode)
+        live = run['t'] > 0
+        contrast = run['t_core'] - run['t_node']
+        wrong = live & (run['f_cmb'] * contrast < 0.0)
+        record(11, f'rows_{mode}', live.sum())
+        record(11, f'wrong_sign_rows_{mode}', wrong.sum())
+        record(11, f'solidified_kyr_{mode}', run['t'][np.argmax(run['phi'] < 0.05)] / 1e3)
+        record(11, f'contrast_min_K_{mode}', contrast[live].min())
+        record(11, f'contrast_max_K_{mode}', contrast[live].max())
+        record(11, f't_core_end_K_{mode}', run['t_core'][-1])
+        record(11, f't_node_end_K_{mode}', run['t_node'][-1])
+        t = run['t'][live]
+        ax.semilogx(t, run['t_core'][live], color=col, label=f'core, {mode}')
+        if mode == 'core_module':  # the mantle side cools alike in both runs
+            mantle = dict(color=colour('fog', '0.5'), label='mantle side of the CMB')
+            ax.semilogx(t, run['t_node'][live], '--', **mantle)
+        ax2.semilogx(t, run['f_cmb'][live], color=col, label=mode)
+        ax2.semilogx(t[wrong[live]], run['f_cmb'][live][wrong[live]], 'x', ms=3, color=col)
+    record(11, 'core_residual_frac_end', _coupled('core_module')['residual'][-1])
+    ax.set_ylabel('temperature (K)')
+    ax.legend(frameon=False, fontsize='x-small', loc='lower left')
+    ax2.set_yscale('symlog', linthresh=1.0)
+    ax2.set_xlabel('time (yr)')
+    ax2.set_ylabel(r'$F_\mathrm{cmb}$ (W m$^{-2}$)')
+    ax2.legend(frameon=False, fontsize='x-small', loc='lower left')
+    save(fig, 'fig_18_coupled_proteus')
+
+
+# ---------------------------------------------------------------- 5. Nimmo (2015)
+# Nimmo (2015, ch. 8.02) Table 4, p. 46: the 'This work (K = 0)' columns at 15.2 and 12 TW.
+NIMMO_T4 = {
+    15.2e12: dict(
+        Qs=6.1,
+        QL=5.7,
+        Qg=3.4,
+        Qk=15.0,
+        Es=183.0,
+        EL=327.0,
+        Eg=809.0,
+        Ek=450.0,
+        cooling=104.0,
+        growth=1050.0,
+        age=0.59,
+    ),
+    12.0e12: dict(
+        Qs=4.8,
+        QL=4.5,
+        Qg=2.7,
+        Qk=15.0,
+        Es=144.0,
+        EL=258.0,
+        Eg=639.0,
+        Ek=450.0,
+        cooling=82.0,
+        growth=829.0,
+        age=0.75,
+    ),
+}
+
+
+def _nimmo_budget():
+    """The Nimmo (2015, ch. 8.02) Table 2 core, as tests/test_core_entropy.py builds it."""
+    from aragog.core import CoreEntropyBudget
+
+    prof = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=136e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+        pressure_mode='labrosse',
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=750e3,
+        alpha_c=1.0,
+        c_light=560.0 / 12150.0,
+    )
+    return budget, CoreEntropyBudget(budget, k_core=130.0)
+
+
+def _nimmo_terms(budget, ent, t_c, q):
+    """aragog's Table 4 quantities at CMB temperature t_c [K] and heat flow q [W]."""
+    from scipy.integrate import quad as _quad
+
+    gyr = 1e9 * 365.25 * 86400.0
+    cooling = -float(budget.dtcmb_dt(t_c, q))  # K/s
+    r_icb = float(budget.r_icb(t_c))
+    drdt = float(jax.grad(budget.r_icb)(t_c))
+    age = (
+        _quad(lambda x: float(budget.effective_capacity(x)), t_c, float(budget.t_onset))[0] / q
+    )
+    return dict(
+        Qs=float(budget.secular_capacity()) * cooling / 1e12,
+        QL=float(budget.latent_capacity(t_c)) * cooling / 1e12,
+        Qg=float(budget.gravitational_capacity(t_c)) * cooling / 1e12,
+        Qk=float(ent.adiabatic_heat_flow(t_c)) / 1e12,
+        Es=float(ent.secular_entropy_capacity(t_c)) * cooling / 1e6,
+        EL=float(ent.latent_entropy_capacity(t_c)) * cooling / 1e6,
+        Eg=float(ent.gravitational_entropy_capacity(t_c)) * cooling / 1e6,
+        Ek=float(ent.conduction_sink()) / 1e6,
+        cooling=cooling * gyr,
+        growth=-drdt * cooling * gyr / 1e3,
+        age=age / gyr,
+    ), r_icb
+
+
+def item5_nimmo() -> None:
+    """The present-day Earth budget of Nimmo (2015, ch. 8.02, Table 4) on its Table 2 core."""
+    from scipy.optimize import brentq
+
+    budget, ent = _nimmo_budget()
+    t_1220 = brentq(
+        lambda x: float(budget.r_icb(x)) - 1220e3, 3500.0, float(budget.t_onset) - 1e-6
+    )
+    record(5, 't_cmb_r1220_K', t_1220)
+    record(5, 'delta_t_onset_K', float(budget.t_onset) - t_1220)
+    gyr = 1e9 * 365.25 * 86400.0
+    for q in NIMMO_T4:  # Table 4's age matches Delta T_c / (dT_c/dt) at the present rate
+        rate = -float(budget.dtcmb_dt(t_1220, q)) * gyr
+        record(5, f'age_linear_{q / 1e12:g}TW', (float(budget.t_onset) - t_1220) / rate)
+    record(5, 'Cr_m_per_K', -float(jax.grad(budget.r_icb)(t_1220)))
+    names = list(NIMMO_T4[15.2e12])
+    fig, ax = plt.subplots(figsize=(WIDTH, 4.0))
+    x = np.arange(len(names))
+    cases = (
+        (15.2e12, 4180.0, r'15.2 TW, $T_c$ = 4180 K', CORE),
+        (15.2e12, t_1220, r'15.2 TW, $r_\mathrm{icb}$ = 1220 km', colour('ocean', 'C0')),
+        (12.0e12, t_1220, r'12 TW, $r_\mathrm{icb}$ = 1220 km', colour('fog', 'C7')),
+    )
+    for k, (q, t_c, label, col) in enumerate(cases):
+        ours, r_icb = _nimmo_terms(budget, ent, t_c, q)
+        ratio = [ours[n] / NIMMO_T4[q][n] for n in names]
+        tag = f'{q / 1e12:g}TW_{"tc" if t_c == 4180.0 else "r1220"}'
+        record(5, f'r_icb_km_{tag}', r_icb / 1e3)
+        for n in names:
+            record(5, f'{n}_{tag}', ours[n])
+            record(5, f'{n}_ratio_{tag}', ours[n] / NIMMO_T4[q][n])
+        ax.plot(x + 0.12 * (k - 1), ratio, 'o', color=col, label=label)
+        if t_c != 4180.0:  # the age as Delta T_c over the present cooling rate
+            linear = (float(budget.t_onset) - t_c) / ours['cooling'] / NIMMO_T4[q]['age']
+            ax.plot(x[-1] + 0.12 * (k - 1), linear, 'o', mfc='none', color=col)
+    ax.axhline(1.0, color=colour('fog', '0.6'), lw=0.8)
+    ticks = ['$Q_s$', '$Q_L$', '$Q_g$', '$Q_k$', '$E_s$', '$E_L$', '$E_g$', '$E_k$']
+    ax.set_xticks(x, ticks + [r'$\dot T_c$', r'$\dot r_\mathrm{icb}$', 'age'])
+    ax.set_ylabel('aragog / Nimmo (2015)')
+    ax.legend(frameon=False, fontsize='small')
+    save(fig, 'fig_12_nimmo_budget')
+
+
 ITEMS = {
     1: item1_structure,
     2: item2_energy,
     3: item3_flux,
     4: item4_nucleation,
+    5: item5_nimmo,
     6: item6_leeds_terms,
     7: item7_dynamo,
     8: item8_melting,
     9: item9_cvode_onset,
     10: item10_leeds_history,
+    11: item11_coupled,
     12: item12_jax_parity,
 }
 

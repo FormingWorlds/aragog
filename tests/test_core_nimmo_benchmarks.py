@@ -1,6 +1,6 @@
 """Reference benchmarks for ``aragog.core`` against Nimmo (2015) Table 2.
 
-Nimmo (2015), Treatise on Geophysics 2nd ed., ch. 9.08, Table 2 defines two
+Nimmo (2015), Treatise on Geophysics 2nd ed., ch. 9.08, Table 2 (p. 205) defines two
 parameterised Earth core models (model 1: oldest-inner-core end-member;
 model 2: best guess). These tests pin the profile family and the melting
 curve against every quantity that is reproducible from the printed chapter
@@ -15,10 +15,10 @@ Two documented deviations from the printed table:
   ``T_m0``, ``T_m1`` and the stated 9.4 K/GPa ICB melting gradient; the
   tests use the self-consistent assignment (model 1: 69e-25, model 2:
   8.37e-25) and verify both consistency conditions.
-* The printed lumped ``Q_T`` (4.6, 3.3) x 1e27 J/K depends on chapter 8.02
-  machinery that is not reproducible from ch. 9.08 alone (the inner-core
-  radius follows from a pressure profile the chapter does not print), so it
-  is pinned as a band, while the per-term validation is carried by the
+* The printed lumped ``Q_T`` (4.6, 3.3) x 1e27 J/K holds at the present
+  inner core of 1220 km (ch. 8.02, Table 2), which the model-2 parameters
+  on these profiles place below T_c = 4180 K (967 km there), so it is
+  pinned as a band, while the per-term validation is carried by the
   ``thermal_history`` cross-check constants below.
 """
 
@@ -38,7 +38,7 @@ pytestmark = pytest.mark.unit
 T_C = 4180.0
 L_H = 750e3
 SHARED = dict(rho_cen=12500.0, r_cmb=3480e3, p_cmb=136e9, c_p=840.0, length_scale=7272e3)
-P_ICB = 328.9e9  # present-day Earth ICB pressure the 9.4 K/GPa statement refers to
+P_ICB = 328e9  # ICB pressure of ch. 8.02, Table 2, where the 9.4 K/GPa gradient applies
 
 # Per-model Table 2 entries (with the self-consistent T_m2 assignment).
 MODELS = {
@@ -101,7 +101,8 @@ def test_melting_curve_reproduces_printed_icb_state(model):
     curve = _curve(model)
     m = MODELS[model]
     assert float(curve.t_melt(P_ICB)) == pytest.approx(m['t_i'], rel=2e-3)
-    assert float(curve.gradient(P_ICB)) * 1e9 == pytest.approx(9.4, rel=0.02)
+    # rel 0.03: the two-digit T_m2 = 69e-25 of model 1 alone moves the gradient by 3 %.
+    assert float(curve.gradient(P_ICB)) * 1e9 == pytest.approx(9.4, rel=0.03)
     # The printed row's other value is inconsistent by construction.
     wrong = QuadraticMeltingCurve(
         t_m0=m['t_m0'], t_m1=m['t_m1'], t_m2=MODELS[3 - model]['t_m2']
@@ -114,7 +115,7 @@ def test_melting_curve_reproduces_printed_icb_state(model):
 @pytest.mark.parametrize('model', [1, 2])
 def test_adiabat_consistency_with_printed_temperatures(model):
     """The printed (T_cen, T_i, D) triple sits on one Gaussian adiabat with
-    the present-day inner-core radius near 1221 km, and the printed T_cen
+    the present-day inner-core radius of 1220 km (ch. 8.02, Table 2), and the printed T_cen
     is the adiabatic continuation of T_c = 4180 K to the centre."""
     prof = _profiles(model)
     m = MODELS[model]
@@ -167,9 +168,8 @@ def test_budget_terms_match_thermal_history_cross_check():
     assert float(budget.secular_capacity()) == pytest.approx(TH_SECULAR, rel=1e-4)
     assert float(budget.latent_capacity(T_C)) == pytest.approx(TH_LATENT, rel=0.01)
     assert float(budget.gravitational_capacity(T_C)) == pytest.approx(TH_GRAV, rel=0.01)
-    # Printed lumped value, band only: the chapter's state (r_icb 1221 km) uses unprinted
-    # pressure machinery, so the 35 % band covers the state difference; the three 1 %
-    # per-term pins above carry the discrimination.
+    # Printed lumped value, band only: the 35 % band covers the 1220 km against 967 km
+    # inner core; the three 1 % per-term pins above carry the discrimination.
     assert float(budget.effective_capacity(T_C)) == pytest.approx(MODELS[2]['qt'], rel=0.35)
 
 
@@ -178,15 +178,15 @@ def test_budget_terms_match_thermal_history_cross_check():
 @pytest.mark.parametrize('model,cr_printed,rel', [(2, 10100.0, 0.05), (1, 4900.0, 0.15)])
 def test_boundary_sensitivity_matches_printed_cr(model, cr_printed, rel):
     """The implicit-function |dr_icb/dT_cmb| evaluated at the present-day
-    Earth state (r = 1221 km, T_c = 4180 K) reproduces the Cr values the
-    chapter quotes from its companion machinery (Figure 3 caption:
-    10100 m/K for model 2, 4900 m/K for model 1)."""
+    Earth state (r = 1220 km, T_c = 4180 K) reproduces the Cr values of
+    ch. 9.08, Figure 3 caption, p. 211: 10100 m/K for model 2, 4900 m/K
+    for model 1."""
     import jax
 
     prof = _profiles(model)
     budget = CoreEnergyBudget(prof, _curve(model), ds_fusion=170.0, icn_width=10.0)
-    d_dr = float(jax.grad(budget._superheat, argnums=0)(1221e3, T_C))
-    d_dt = float(jax.grad(budget._superheat, argnums=1)(1221e3, T_C))
+    d_dr = float(jax.grad(budget._superheat, argnums=0)(1220e3, T_C))
+    d_dt = float(jax.grad(budget._superheat, argnums=1)(1220e3, T_C))
     cr = abs(d_dt / d_dr)
     assert cr == pytest.approx(cr_printed, rel=rel)
     # Discrimination: the two models' printed Cr differ by a factor two,
@@ -198,17 +198,17 @@ def test_boundary_sensitivity_matches_printed_cr(model, cr_printed, rel):
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
 def test_baseline_scenario_reproduces_chapter_headline():
-    """Nimmo's Figure 5 baseline (model 2, entropy production 50 MW/K before
-    inner-core formation, heat flow held constant after onset, backward
-    integration) states: present-day CMB heat flow 17 TW, inner-core age
+    """Nimmo's baseline (ch. 9.08, p. 212: model 2, entropy production 50 MW/K
+    before inner-core formation, heat flow held constant after onset,
+    backward integration) states: present-day CMB heat flow 17 TW, inner-core age
     0.5 Gy, present-day entropy production 700 MW/K. Reconstructing that
     pipeline on the module's terms with the chapter's own growth law
-    (delta-T_c = 60 K, r_now = 1221 km) lands on 16.7 TW, 0.43 Gy, and
+    (delta-T_c = 60 K, r_now = 1220 km) lands on 16.7 TW, 0.43 Gy, and
     964 MW/K; tolerances reflect that the chapter's state machinery is
     only partly printed."""
     from aragog.core.entropy import CoreEntropyBudget
 
-    r_now, d_tc, year = 1221e3, 60.0, 3.156e7
+    r_now, d_tc, year = 1220e3, 60.0, 3.156e7
     prof = _profiles(2)
     budget = CoreEnergyBudget(
         prof,

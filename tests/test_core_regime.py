@@ -2,7 +2,7 @@
 
 The classifier must place known states in their known regimes: the alloy
 Earth case walks fully_liquid, bottom_up, fully_frozen as it cools, and
-Nimmo (2015) Table 2 model 1's printed parameters, whose melting curve
+Nimmo (2015, ch. 9.08) Table 2 model 1's parameters, whose melting curve
 dips below the adiabat at the CMB while a liquid channel survives in the
 interior, must read as a snow-family topology rather than bottom-up, which
 is exactly the state the budget's boundary terms shut off for.
@@ -58,7 +58,7 @@ def test_alloy_earth_walks_the_bottom_up_sequence():
 
 @pytest.mark.physics_invariant
 def test_nimmo_model1_reads_as_snow_topology():
-    """Model 1's printed parameters (negative T_m1: the curve dips below
+    """Model 1's parameters (negative T_m1: the curve dips below
     the T_c = 4180 K adiabat at the CMB while a liquid channel survives
     around the curve's interior minimum) must classify as the snow family,
     not bottom_up; this is the state whose boundary terms the budget zeroes

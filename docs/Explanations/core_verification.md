@@ -2,7 +2,7 @@
 
 This page checks the `core_module` core boundary condition ([core_bc.md](core_bc.md)) and the `aragog.core` model behind it against analytic results, published values, an independent core evolution code and coupled runs. Each section states the physics a check tests, the reference and where it comes from, the value aragog gives, a figure, and the tests that pin it. A check shows that the code solves the stated equations to the stated accuracy; whether the equations describe a real core is a separate question, which the literature comparisons in sections 5 to 8 and the limits stated with each check address.
 
-Every number on this page and every figure is produced by `tools/verification/run_core_verification.py`, which writes the figures to `docs/figures/vv/` and the numbers to `docs/figures/vv/core_verification_values.json`; `tests/test_core_verification_page.py` checks each number on the page against that file. The script needs the SPIDER-format EOS tables (`ARAGOG_TEST_EOS_DIR`) for sections 9 and 12 and the optional `verification` dependencies for the figure style, and runs in about seven minutes on one core.
+Every number on this page and every figure is produced by `tools/verification/run_core_verification.py`, which writes the figures to `docs/figures/vv/` and the numbers to `docs/figures/vv/core_verification_values.json`; `tests/test_core_verification_page.py` checks each number on the page against that file. The script needs the SPIDER-format EOS tables (`ARAGOG_TEST_EOS_DIR`) for sections 9 and 12 and the optional `verification` dependencies for the figure style, and runs in about seven minutes on one core. Nimmo (2015) is chapter 8.02 of the *Treatise on Geophysics* wherever chapter 9.08 is not named.
 
 ## 1. Gaussian core structure
 
@@ -54,7 +54,27 @@ Pinned by `tests/test_core_verification_page.py::test_inner_core_radius_grows_as
 
 ## 5. Nimmo (2015) Earth core budget
 
-This section is pending the comparison against Nimmo (2015).
+Nimmo (2015, Table 2, p. 42) gives one parameter set for Earth's core (central density 12500 kg m$^{-3}$, $L = 7272$ km, $\alpha = 1.25\times10^{-5}$ K$^{-1}$, $k = 130$ W m$^{-1}$ K$^{-1}$, the quadratic melting curve with $T_{m0} = 2677$ K, $T_{m1} = 2.95\times10^{-12}$ Pa$^{-1}$, $T_{m2} = 8.37\times10^{-25}$ Pa$^{-2}$, a latent heat of 750 kJ kg$^{-1}$ and a light-element density jump of 560 kg m$^{-3}$), and Table 4 (p. 46) the present-day energy and entropy budget it gives for CMB heat flows of 15.2 and 12 TW without radiogenic heat. Table 2 sets the present inner core at 1220 km and the CMB temperature at $T_c = 4180$ K (from $T_i = 5508$ K, p. 43); on aragog's Gaussian core the inner core is 967<!--k:5.r_icb_km_15.2TW_tc--> km at 4180 K and reaches 1220 km at 4157.7<!--k:5.t_cmb_r1220_K--> K. The comparison is made at both states.
+
+At 15.2 TW with the 1220 km inner core:
+
+| quantity | Nimmo (2015) | aragog |
+|---|---|---|
+| $Q_s$, $Q_L$, $Q_g$ (TW) | 6.1, 5.7, 3.4 | 6.07<!--k:5.Qs_15.2TW_r1220-->, 5.72<!--k:5.QL_15.2TW_r1220-->, 3.42<!--k:5.Qg_15.2TW_r1220--> |
+| $Q_k$ (TW) | 15.0 | 14.89<!--k:5.Qk_15.2TW_r1220--> |
+| $E_s$, $E_L$, $E_g$, $-E_k$ (MW K$^{-1}$) | 183, 327, 809, 450 | 184<!--k:5.Es_15.2TW_r1220-->, 332<!--k:5.EL_15.2TW_r1220-->, 822<!--k:5.Eg_15.2TW_r1220-->, 451<!--k:5.Ek_15.2TW_r1220--> |
+| $-dT_c/dt$ (K Gyr$^{-1}$) | 104 | 103.4<!--k:5.cooling_15.2TW_r1220--> |
+| $dr_\mathrm{icb}/dt$ (km Gyr$^{-1}$) | 1050 | 1058<!--k:5.growth_15.2TW_r1220--> |
+
+Every term agrees to 2 percent, and so do the 12 TW column (cooling 81.6<!--k:5.cooling_12TW_r1220--> against 82 K Gyr$^{-1}$, growth 835<!--k:5.growth_12TW_r1220--> against 829 km Gyr$^{-1}$) and the inner-core sensitivity $|dr_\mathrm{icb}/dT_c|$, 10236<!--k:5.Cr_m_per_K--> m K$^{-1}$ against $C_r = 10100$ m K$^{-1}$ (Table 2). At 4180 K, where aragog's inner core is smaller, the latent and gravitational terms are 4 to 11 percent lower, the secular term and the cooling rate 12 percent higher, and the growth rate 41 percent higher, as the square-root growth of section 4 implies for a smaller inner core.
+
+Table 4 states that its inner-core ages, 0.59 and 0.75 Gyr, assume a constant CMB heat flow. They match the drop of the CMB temperature since inner-core onset, about 60 K (p. 43), divided by the present cooling rate (this reading of the table is ours): aragog's drop is 60.8<!--k:5.delta_t_onset_K--> K and the same quotient gives 0.588<!--k:5.age_linear_15.2TW--> and 0.745<!--k:5.age_linear_12TW--> Gyr. Integrating aragog's capacity back to the onset at the same constant heat flow gives 0.475<!--k:5.age_15.2TW_r1220--> and 0.602<!--k:5.age_12TW_r1220--> Gyr, shorter because the latent and gravitational capacities rise from zero at the onset.
+
+![Nimmo (2015) budget](../figures/vv/fig_12_nimmo_budget.png)
+
+**Figure 12.** Ratio of aragog to Nimmo (2015, Table 4) for the energy and entropy terms, the cooling and inner-core growth rates and the inner-core age, at 15.2 TW at the chapter's CMB temperature and at 15.2 and 12 TW with the chapter's 1220 km inner core. Open circles give the age as the temperature drop since onset over the present cooling rate.
+
+Pinned by `tests/test_core_nimmo_benchmarks.py` (the adiabat length scale, ICB state, adiabatic heat flow and $C_r$ of the two models in Nimmo 2015, ch. 9.08, Table 2) and `tests/test_core_verification_page.py::test_page_numbers_match_the_values`.
 
 ## 6. Budget terms against thermal_history
 
@@ -127,11 +147,19 @@ Pinned by `tests/test_core_verification_page.py::test_core_history_matches_the_t
 
 ## 11. Coupled PROTEUS case
 
-This section is pending the coupled runs.
+A coupled PROTEUS run of a 1 Earth-mass planet that starts fully molten (`tools/verification/data/coupled_config.toml`: Zalmoxis structure, the CVODE solver, the PALEOS iron curve with a light-element depression, no stratification) runs to mantle solidification twice, once with `core_bc = "core_module"` and once with `energy_balance`, whose CMB flux follows the mantle-side entropy gradient. The tables of the plotted columns are in `tools/verification/data/`.
+
+With `core_module` the CMB flux has the sign of the core-mantle temperature contrast on all 634<!--k:11.rows_core_module--> rows (0<!--k:11.wrong_sign_rows_core_module--> rows with the opposite sign). With `energy_balance` the core runs 7.7<!--k:11.contrast_max_K_energy_balance:-1--> to 10.0<!--k:11.contrast_min_K_energy_balance:-1--> K colder than the mantle side of the CMB, and the flux carries heat out of it on all 655<!--k:11.wrong_sign_rows_energy_balance--> rows. Once the mantle base passes the rheological transition the `core_module` core is close to insulated: its boundary layer over a viscous base is far thicker than the half cell, the flux stays below 1 W m$^{-2}$ from about 23 kyr on, and the core stays near 5930<!--k:11.t_core_end_K_core_module--> K while the mantle side cools to 4427<!--k:11.t_node_end_K_core_module--> K, a contrast of up to 1503<!--k:11.contrast_max_K_core_module--> K. The mantle reaches a melt fraction of 0.05 at 657<!--k:11.solidified_kyr_core_module--> kyr with `core_module` and at 664<!--k:11.solidified_kyr_energy_balance--> kyr with `energy_balance`, which feeds core heat into the mantle throughout. The core ledger of the `core_module` run closes to 3.5e-06<!--k:11.core_residual_frac_end:-1--> of the cumulative CMB heat at the end.
+
+![Coupled PROTEUS case](../figures/vv/fig_18_coupled_proteus.png)
+
+**Figure 18.** A coupled PROTEUS run to mantle solidification with the `core_module` and the `energy_balance` core boundary conditions. (a) Core temperature in both runs and the mantle side of the CMB, which cools alike in both. (b) CMB heat flux; crosses mark rows where the flux carries heat against the core-mantle temperature contrast.
+
+Pinned by `tests/test_core_verification_page.py::test_coupled_tables_reproduce_the_page`, which recomputes these numbers from the tables; the runs themselves need PROTEUS and are not repeated by the test suite.
 
 ## 12. NumPy and JAX right-hand sides and the analytic Jacobian
 
-The solver evaluates the coupled right-hand side in NumPy and, for CVODE's analytic Jacobian, in JAX; the two must agree, and the JAX Jacobian must equal the derivative of that right-hand side. On a 10-node mesh with the core in three states (inside the nucleation band, 100 K above the onset, and stratified with the core 50 K above the mantle), the two right-hand sides agree to 1.4e-12<!--k:12.rhs_max_rel_nucleating--> in every component. The analytic $\partial \dot T_\mathrm{core}/\partial T_\mathrm{core}$ matches a central difference to 3.0e-11<!--k:12.jac_tcore_min_rel_nucleating--> in the nucleation band and 3.2e-11<!--k:12.jac_tcore_min_rel_stratified--> with the layer, at the step that balances truncation and rounding; above the onset the core is colder than the mantle base, the flux is on its linear conduction branch, and the difference stays at rounding for every step.
+The solver evaluates the coupled right-hand side in NumPy and, for CVODE's analytic Jacobian, in JAX; the two must agree, and the JAX Jacobian must equal the derivative of that right-hand side. On a 10-node mesh with the core in three states (inside the nucleation band, 100 K above the onset, and stratified with the core 50 K above the mantle), the two right-hand sides agree to 1.4e-12<!--k:12.rhs_max_rel_nucleating--> in every component. The analytic $\partial \dot T_\mathrm{core}/\partial T_\mathrm{core}$ matches a central difference to 3.0e-11<!--k:12.jac_tcore_min_rel_nucleating--> in the nucleation band and 6.3e-11<!--k:12.jac_tcore_min_rel_stratified--> with the layer, at the step that balances truncation and rounding; above the onset the core is colder than the mantle base, the flux is on its linear conduction branch, and the difference stays at rounding for every step.
 
 ![NumPy and JAX parity](../figures/vv/fig_19_numpy_jax_parity.png)
 
@@ -147,4 +175,5 @@ Pinned by `tests/test_jax_dsdt_core_module.py::test_boundary_slots_match_numpy_o
 - Greenwood, S., Davies, C. J., & Mound, J. E. (2021). On the evolution of thermally stratified layers at the top of Earth's core. *Physics of the Earth and Planetary Interiors*, 318, 106763. https://doi.org/10.1016/j.pepi.2021.106763
 - Labrosse, S., Poirier, J.-P., & Le Mouël, J.-L. (2001). The age of the inner core. *Earth and Planetary Science Letters*, 190(3-4), 111-123. https://doi.org/10.1016/S0012-821X(01)00387-9
 - Nimmo, F. (2015). Energetics of the Core. In *Treatise on Geophysics* (2nd ed., Vol. 8, pp. 27-55). Elsevier. https://doi.org/10.1016/B978-0-444-53802-4.00139-1
+- Nimmo, F. (2015). Thermal and Compositional Evolution of the Core. In *Treatise on Geophysics* (2nd ed., ch. 9.08, pp. 201-219). Elsevier. https://doi.org/10.1016/B978-0-444-53802-4.00160-3
 - Thiriet, M., Breuer, D., Michaut, C., & Plesa, A.-C. (2019). Scaling laws of convection for cooling planets in a stagnant lid regime. *Physics of the Earth and Planetary Interiors*, 286, 138-153. https://doi.org/10.1016/j.pepi.2018.11.003

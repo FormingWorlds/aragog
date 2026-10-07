@@ -55,6 +55,7 @@ docs = [
     "pymdown-extensions>=10.7",
     "mkdocs-material>=9.5",
 ]
+verification = ["proteus-mpl>=1.3"]
 jax = [
     "jax>=0.4.30",
     "equinox>=0.11.0",

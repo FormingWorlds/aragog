@@ -61,7 +61,7 @@ class GaussianCoreProfiles:
     pressure_mode : str
         ``'quadrature'`` integrates hydrostatic balance against the exact
         erf gravity; ``'labrosse'`` evaluates the printed closed form
-        (Labrosse et al. 2001; Nimmo 2015, Eq. 3), whose derivation uses
+        (Labrosse et al. 2001; Nimmo 2015, ch. 9.08, Eq. 3), whose derivation uses
         the small-radius gravity expansion. The two differ by a few
         tenths of a percent in the deep core (0.3% at the Earth centre),
         enough to move a tangent melting-curve crossing by hundreds of
@@ -154,7 +154,7 @@ class GaussianCoreProfiles:
     # -- pressure -----------------------------------------------------------
 
     def _pressure_labrosse(self, r):
-        """Printed closed form (Nimmo 2015, Eq. 3), anchored at the CMB.
+        """Printed closed form (Nimmo 2015, ch. 9.08, Eq. 3), anchored at the CMB.
 
         ``P(r) = p_cmb + (4 pi G rho_cen^2 / 3) [f(r_cmb) - f(r)]`` with
         ``f(x) = (3 x^2 / 10 - L^2 / 5) exp(-x^2/L^2)``; the exact
