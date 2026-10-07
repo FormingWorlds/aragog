@@ -87,7 +87,7 @@ def test_cvode_failure_exits_non_zero(tmp_path):
     with netCDF4.Dataset(tmp_path / 'o.nc') as d:
         assert int(d['status'][:]) == -1
         assert float(d['time'][:]) == 0.0  # CVODE fails before the first output time
-        nan_ok = {'core_layer_start_yr'}  # NaN without a stratified core
+        nan_ok = {'core_layer_base', 'core_T_top'}  # NaN without a stratified core
         floats = [
             np.asarray(d[k][:])
             for k in d.variables

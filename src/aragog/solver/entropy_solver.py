@@ -226,6 +226,16 @@ def _resolve_step_cap(raw: float | None) -> float:
 _DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN = 200.0
 
 
+def jax_vmap_r_icb(budget):
+    """The budget's vectorised inner-core radius, compiled once per budget."""
+    fn = getattr(budget, '_vmap_r_icb', None)
+    if fn is None:
+        import jax
+
+        fn = budget._vmap_r_icb = jax.jit(jax.vmap(budget.r_icb))
+    return fn
+
+
 def _resolve_entropy_margin(raw: float | None) -> float:
     """Coerce the configured phase-boundary proximity band to a usable float.
 
@@ -970,9 +980,11 @@ class SolverOutput:
     tcore_change_max: float = 0.0
     tcore_change_exceeded: bool = False
 
-    # Onset time [yr] of the stratified core layer (core_module with stratification), NaN
-    # otherwise; a resumed run passes it back through ``set_initial_layer_start``.
-    core_layer_start_yr: float = float('nan')
+    # Stratified core_module: the shell temperatures [K] (a resume passes them back with
+    # ``set_initial_shell_temperature``), the stable-layer base [m] and the CMB temperature [K].
+    core_T_shell: npt.NDArray | None = None
+    core_layer_base: float = float('nan')
+    core_T_top: float = float('nan')
 
     # ── NetCDF output ──────────────────────────────────────────────
     @property
@@ -1192,11 +1204,22 @@ class SolverOutput:
                 'K',
                 'Largest per-solve core-temperature change from solve entry',
             )
+            if self.core_T_shell is not None:
+                ds.createDimension('shell', int(np.asarray(self.core_T_shell).size))
+                _arr('core_T_shell', self.core_T_shell, 'shell', 'K', 'Core shell temperatures')
             _scalar(
-                'core_layer_start_yr',
-                float(self.core_layer_start_yr),
-                'yr',
-                'Onset time of the stratified core layer (NaN without one)',
+                'core_layer_base',
+                self.core_layer_base,
+                'm',
+                'Base of the stable core layer',
+                fill_value_nan=True,
+            )
+            _scalar(
+                'core_T_top',
+                self.core_T_top,
+                'K',
+                'Temperature at the top of the core shell',
+                fill_value_nan=True,
             )
             _scalar(
                 'tcore_change_exceeded',
@@ -1394,8 +1417,10 @@ class EntropySolver:
             ss[:nb] = dSdr_ref
             ss[nb] = S_ref
         else:
-            for i, slot in enumerate(EXTRA_STATE_SLOTS.get(self._core_bc, ())):
+            slots = EXTRA_STATE_SLOTS.get(self._core_bc, ())
+            for i, slot in enumerate(slots):
                 ss[n_s + i] = dSdr_ref if slot == 'dSdr_cmb' else self._T_ref
+            ss[n_s + len(slots) :] = self._T_ref  # shell temperatures of a stratified core
         return NonDimScales(state_scale=ss, t_ref=float(t_ref))
 
     @classmethod
@@ -1809,7 +1834,8 @@ class EntropySolver:
             if getattr(self, '_core_module_key', None) != key:
                 budget = build_core_module_budget(params, r_cmb=r_cmb, p_cmb_fallback=p_cmb)
                 self._core_module_budget, self._core_module_key = budget, key
-                self._core_module_budget_dtcmb_dt = jax.jit(budget.dtcmb_dt)
+                rate = budget.core_rates if budget.stratification else budget.dtcmb_dt
+                self._core_module_budget_rate = jax.jit(rate)
                 logger.info(
                     'Aragog core_module Gaussian profile: rho_cen=%.2f kg/m3, length_scale=%.1f km',
                     float(budget.profiles.rho_cen),
@@ -2118,11 +2144,16 @@ class EntropySolver:
                     T_core_init,
                     T_bottom_eos,
                 )
-            self._S0 = np.empty(n_stag + n_extra)
+            shell = self._core_shell() if core_bc == 'core_module' else None
+            self._S0 = np.empty(n_stag + n_extra + (0 if shell is None else shell.n_cells))
             self._S0[:n_stag] = S_arr
             self._S0[T_core_slot] = T_core_init
             if 'dSdr_cmb' in slots:
                 self._S0[n_stag + slots.index('dSdr_cmb')] = float(dSdr_cmb_init)
+            if shell is not None:
+                self._S0[n_stag + n_extra :] = self._initial_shell(
+                    shell, T_core_init, t_core_override
+                )
             logger.info(
                 'Initial state (%s): S_min=%.0f, S_max=%.0f, T_core_init=%.0f K',
                 core_bc,
@@ -2189,47 +2220,28 @@ class EntropySolver:
         logger.info('Cold-start dSdr_cmb from FD: %.3e J/kg/K/m', dSdr_cmb_init)
         return dSdr_cmb_init
 
-    def set_initial_layer_start(self, t_start: float | None) -> None:
-        """Set the onset time [yr] of the stratified core layer for the next solve.
+    def _core_shell(self):
+        """The resolved shell of a stratified core_module budget, or ``None``."""
+        if getattr(self, '_core_bc', None) != 'core_module':
+            return None
+        return getattr(getattr(self, '_core_module_budget', None), 'shell', None)
 
-        For a resumed run: the value of ``core_layer_start_yr`` in the output of the
-        last solve before the restart. ``None`` (or NaN) lets the next solve decide.
+    def _n_shell(self) -> int:
+        """Number of shell cells in the state (after T_core), zero without a shell."""
+        shell = self._core_shell()
+        return 0 if shell is None else shell.n_cells
+
+    def _n_extra(self) -> int:
+        """Number of state slots after the staggered entropies."""
+        return len(EXTRA_STATE_SLOTS.get(getattr(self, '_core_bc', None), ())) + self._n_shell()
+
+    def set_initial_shell_temperature(self, t_shell: npt.NDArray | None) -> None:
+        """Set the shell temperatures [K] of a stratified core for the next solve (a resume).
+
+        ``None`` starts the shell from the previous solution, or on the adiabat of the core
+        without one; must be called before ``set_initial_entropy``.
         """
-        self._layer_start_override = t_start
-
-    def _resolve_layer_start(self, start_time: float) -> None:
-        """Onset time [yr] of the stratified layer for this solve, from its start state.
-
-        A retry or a resume restores the start state, so the onset is decided from it: a
-        start whose CMB heat flow is below the adiabatic one continues its layer (keeping the
-        onset, or taking a set override, or starting the layer now); any other start has no
-        layer to continue and starts afresh. Onsets therefore resolve to one solver call.
-        """
-        budget = getattr(self, '_core_module_budget', None)
-        if self._core_bc != 'core_module' or budget is None or not budget.stratification:
-            self._core_layer_start_yr = None
-            return
-        override = getattr(self, '_layer_start_override', None)
-        self._layer_start_override = None
-        kept = getattr(self, '_core_layer_start_yr', None)
-        if not self._start_is_stratified(start_time):
-            self._core_layer_start_yr = float(start_time)
-        elif override is not None and np.isfinite(override):
-            self._core_layer_start_yr = float(override)
-        elif kept is None:
-            self._core_layer_start_yr = float(start_time)
-
-    def _start_is_stratified(self, start_time: float) -> bool:
-        """Whether the CMB heat flow of the start state is below the adiabatic one."""
-        self.dSdt(start_time, self._S0)
-        budget = self._core_module_budget
-        q_k = budget.conducted_adiabatic_flow(budget.profiles.r_cmb, self._S0[self._n_stag + 1])
-        return float(self.state._heat_flux[0]) * self._cmb_area < float(q_k)
-
-    def _core_layer_age_s(self, time):
-        """Age [s] of the stratified layer at model time ``time`` [yr], or ``None``."""
-        start = getattr(self, '_core_layer_start_yr', None)
-        return None if start is None else (time - start) * SECS_PER_YEAR
+        self._T_shell_init = None if t_shell is None else np.asarray(t_shell, dtype=float)
 
     def set_initial_core_temperature(self, T_core_init: float | None) -> None:
         """Set the initial core temperature (``bower2018`` / ``core_module``).
@@ -2245,6 +2257,22 @@ class EntropySolver:
         set value is checked against the mantle temperature at the CMB.
         """
         self._T_core_init = None if T_core_init is None else float(T_core_init)
+
+    def _initial_shell(self, shell, t_core: float, t_core_override: bool) -> npt.NDArray:
+        """Shell start: the set profile, else the previous solution's when the core continues
+        from it, else the adiabat of the core (no layer)."""
+        t_shell = getattr(self, '_T_shell_init', None)
+        if t_shell is not None:
+            if t_shell.shape != (shell.n_cells,):
+                raise ValueError(f'the shell has {shell.n_cells} cells, got {t_shell.shape}')
+            return t_shell
+        prev = getattr(self, '_solution', None)
+        n_shell = shell.n_cells
+        if not t_core_override and prev is not None and getattr(prev, 'y', None) is not None:
+            y = np.asarray(prev.y)
+            if y.ndim == 2 and y.shape[0] == self._n_stag + 2 + n_shell:
+                return y[-n_shell:, -1].copy()
+        return np.asarray(shell.adiabatic_profile(t_core))
 
     def get_current_core_temperature(self) -> float | None:
         """Return the most recent core temperature from the solver state.
@@ -2313,7 +2341,7 @@ class EntropySolver:
             or prev_sol is None
             or getattr(prev_sol, 'y', None) is None
             or prev_sol.y.size == 0
-            or prev_sol.y.shape[0] != n_stag + len(slots)
+            or prev_sol.y.shape[0] != n_stag + len(slots) + self._n_shell()
         ):
             return None
         return float(prev_sol.y[n_stag + slots.index(slot), -1])
@@ -2391,7 +2419,7 @@ class EntropySolver:
         is_extended = energy_balance or bower or core_mod
 
         # ── Gradient mode: reconstruct S from the gradient state ──
-        t_core = None
+        t_core = t_shell = None
         if gradient_mode:
             n_basic = n_stag + 1
             dSdr_basic = state_vec[:n_basic]
@@ -2403,6 +2431,7 @@ class EntropySolver:
             extra = float(state_vec[n_stag])
             if core_mod:
                 t_core = float(state_vec[n_stag + 1])
+                t_shell = state_vec[n_stag + 2 :] if self._core_shell() is not None else None
         else:
             entropy = state_vec
             extra = None
@@ -2444,7 +2473,8 @@ class EntropySolver:
                 # flux computed from the state-provided dS/dr at the CMB.
                 pass
             elif core_mod:
-                self.state._heat_flux[0] = self._core_module_cmb_flux(t_core, entropy[0])
+                t_top = t_core if t_shell is None else float(t_shell[-1])  # the top shell cell
+                self.state._heat_flux[0] = self._core_module_cmb_flux(t_top, entropy[0])
             elif bower:
                 # bower2018: F_cmb from molecular conduction across the bottom half cell,
                 # orders of magnitude below convective transport; parity testing only.
@@ -2571,21 +2601,12 @@ class EntropySolver:
             cp_cmb_basic = float(np.asarray(self.state.phase_basic.heat_capacity()).flat[0])
             dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
 
-            d_dSdr_cmb_dt_per_s, dT_core_dt_per_s = self._core_module_rhs_per_s(
-                F_cmb_basic=F_cmb_basic,
-                dSdt_s_cmb_per_s=dSdt_s_cmb_per_s,
-                T_cmb_basic=T_cmb_basic,
-                cp_cmb_basic=cp_cmb_basic,
-                t_core=t_core,
-                t_layer=self._core_layer_age_s(float(time)),
-            )
-            return np.concatenate(
-                [
-                    dSdt,
-                    [d_dSdr_cmb_dt_per_s * SECS_PER_YEAR],
-                    [dT_core_dt_per_s * SECS_PER_YEAR],
-                ]
-            )
+            inputs = (F_cmb_basic, dSdt_s_cmb_per_s, T_cmb_basic, cp_cmb_basic, t_core)
+            if t_shell is None:
+                rates = (*self._core_module_rhs_per_s(*inputs), np.empty(0))
+            else:
+                rates = self._core_shell_rhs_per_s(*inputs, t_shell)
+            return np.concatenate([dSdt, np.r_[rates[0], rates[1], rates[2]] * SECS_PER_YEAR])
 
         # bower2018: T_cmb ODE state drained by the conduction-only flux.
         F_cmb = float(self.state._heat_flux[0])
@@ -2736,7 +2757,6 @@ class EntropySolver:
         T_cmb_basic: float,
         cp_cmb_basic: float,
         t_core: float,
-        t_layer: float | None = None,
     ) -> tuple[float, float]:
         """Boundary-state derivatives for ``core_bc='core_module'``.
 
@@ -2772,9 +2792,6 @@ class EntropySolver:
         t_core : float
             Integrated core temperature state [K]; the budget's
             capacity is evaluated here, not at the mantle-side node.
-        t_layer : float or None
-            Age of the stratified layer [s], which caps its depth; ``None``
-            without stratification.
 
         Returns
         -------
@@ -2785,16 +2802,9 @@ class EntropySolver:
         q_cmb = F_cmb_basic * self._cmb_area
         # Floor the state before the budget sees it (as the T_cmb_basic clamp below): the
         # melting curve and adiabat are undefined at non-positive temperature.
-        dtcmb_fn = getattr(
-            self, '_core_module_budget_dtcmb_dt', self._core_module_budget.dtcmb_dt
-        )
+        rate = getattr(self, '_core_module_budget_rate', self._core_module_budget.dtcmb_dt)
         dT_core_dt = float(
-            dtcmb_fn(
-                max(float(t_core), 1.0),
-                q_cmb,
-                q_sources=self._core_module_q_radio,
-                t_layer=t_layer,
-            )
+            rate(max(float(t_core), 1.0), q_cmb, q_sources=self._core_module_q_radio)
         )
         # The CMB basic node rides on the core: its temperature changes
         # at the core cooling rate, converted to an entropy rate through
@@ -2802,6 +2812,23 @@ class EntropySolver:
         dS_basic_cmb_dt = (cp_cmb_basic / max(T_cmb_basic, 1.0)) * dT_core_dt
         d_dSdr_cmb_dt = (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / self._cmb_dr_cmb
         return d_dSdr_cmb_dt, dT_core_dt
+
+    def _core_shell_rhs_per_s(
+        self, F_cmb_basic, dSdt_s_cmb_per_s, T_cmb_basic, cp_cmb_basic, t_core, t_shell
+    ):
+        """Boundary-state derivatives [per s] of a stratified core: ``d(dSdr_cmb)/dt``, the
+        convecting core's rate and the shell rates; the CMB node rides on the top shell cell."""
+        rate = getattr(self, '_core_module_budget_rate', self._core_module_budget.core_rates)
+        d_core, d_shell = rate(
+            max(float(t_core), 1.0),
+            np.maximum(t_shell, 1.0),
+            F_cmb_basic * self._cmb_area,
+            self._core_module_q_radio,
+        )
+        d_shell = np.asarray(d_shell)
+        dS_basic_cmb_dt = (cp_cmb_basic / max(T_cmb_basic, 1.0)) * float(d_shell[-1])
+        d_dSdr_cmb_dt = (dSdt_s_cmb_per_s - dS_basic_cmb_dt) * 2.0 / self._cmb_dr_cmb
+        return d_dSdr_cmb_dt, float(d_core), d_shell
 
     def _reconstruct_entropy(
         self,
@@ -2947,8 +2974,7 @@ class EntropySolver:
             return None
 
         n_stag = self._n_stag
-        n_extra = len(EXTRA_STATE_SLOTS.get(self._core_bc, ()))
-        N = n_stag + n_extra
+        N = n_stag + self._n_extra()
 
         J = lil_matrix((N, N), dtype=float)
         # Pentadiagonal block for the entropy part
@@ -2961,15 +2987,29 @@ class EntropySolver:
         # A superset pattern: every extra state couples to S[0..2] and to the other extra
         # states (core_module: dSdr_cmb follows T_core's cooling rate), and S[0], S[1]
         # couple back through the CMB flux.
-        for extra in range(n_stag, N):
+        n_core = n_stag + len(EXTRA_STATE_SLOTS.get(self._core_bc, ()))
+        for extra in range(n_stag, n_core):
             J[extra, 0] = 1.0
             J[extra, 1] = 1.0
             if n_stag >= 3:
                 J[extra, 2] = 1.0
-            for other in range(n_stag, N):
+            for other in range(n_stag, n_core):
                 J[extra, other] = 1.0
             J[0, extra] = 1.0
             J[1, extra] = 1.0
+        # Shell cells: tridiagonal, each on the core adiabat; the top cell sets the CMB flux
+        # (S[0..2], dSdr_cmb). T_core's weak dependence on every cell through the layer base
+        # is left out, so the coloured differences stay a handful of RHS calls.
+        for i in range(n_core, N):
+            for j in (i - 1, i, i + 1):
+                if n_core <= j < N:
+                    J[i, j] = 1.0
+            J[i, n_core - 1] = 1.0
+        if N > n_core:
+            J[n_core - 1, n_core] = 1.0
+            for row in (0, 1, n_stag, N - 1):
+                for col in (0, 1, 2, n_stag, N - 2, N - 1):
+                    J[row, col] = 1.0
 
         return J.tocsc()
 
@@ -3556,7 +3596,6 @@ class EntropySolver:
         wall_start = time.perf_counter()
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
-        self._resolve_layer_start(start_time)
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
         # Tight tolerance is necessary to resolve the crystallisation
         # front and prevent cumulative integration error during long
@@ -4255,8 +4294,12 @@ class EntropySolver:
                 args = (np.concatenate(t_quad_list),)
                 weights_all = np.concatenate(weight_list)
             else:
-                t_layer = self._core_layer_age_s(np.asarray(t_pts, dtype=float))
-                args = (t_core_traj, P_F_cmb) + (() if t_layer is None else (t_layer,))
+                import jax
+
+                shell = budget.shell
+                t_shell_traj = np.asarray(y_arr[n_stag + 2 :, :], dtype=float).T
+                base = np.asarray(jax.vmap(shell.layer_base)(t_shell_traj, t_core_traj))
+                args = (t_core_traj, base)
             try:
                 c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
                 if c_eff_fn is None:
@@ -4274,13 +4317,9 @@ class EntropySolver:
             else:
                 dT_core = np.diff(t_core_traj)
                 step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
-                import jax
-
-                # The layer stores what its base conducts beyond the CMB flow.
-                q_base = np.asarray(jax.vmap(budget.base_heat_flow)(*args))
-                step_dE_core += trap(q_base - P_F_cmb)
-                if not getattr(self, '_floor_warned', False):
-                    self._warn_on_convecting_floor(budget, t_core_traj, P_F_cmb, t_layer)
+                content = [float(shell.heat_content(t_shell_traj[i])) for i in (0, -1)]
+                step_dE_core += content[1] - content[0]
+                self._check_shell_base(budget, t_core_traj, base)
         elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:
@@ -4392,40 +4431,24 @@ class EntropySolver:
             [p_int, p_cmb, Q_radio_i, Q_tidal_i, Q_radio_cons_i, Q_tidal_cons_i, lhs_i - rhs_i]
         )
 
-    def _warn_on_convecting_floor(self, budget, t_core, q_cmb, t_layer=None) -> None:
-        """Warn once when a stratified core sits on its convecting-radius floor.
-
-        The layer base reaches the floor (``CONVECTING_FLOOR`` of the CMB radius) where the CMB
-        heat flow is at most the adiabatic conducted flow there, every non-positive flow
-        included. The core temperature changes at ``(q_radio - q_cmb) / C_eff``, so the warning
-        covers a net drive above ``1e-3 Q_k`` (``Q_k`` the conducted flow at the CMB), where
-        the floor capacity sets a visible rate outside the quasi-static layer model's range.
-        """
-        import jax
-
-        from aragog.core.budget import CONVECTING_FLOOR
-
-        r_cmb = budget.profiles.r_cmb
-        q_floor = np.asarray(budget.conducted_adiabatic_flow(CONVECTING_FLOOR * r_cmb, t_core))
-        q_k = np.asarray(budget.conducted_adiabatic_flow(r_cmb, t_core))
-        drive = getattr(self, '_core_module_q_radio', 0.0) - q_cmb
-        on_floor = (q_cmb <= q_floor) & (np.abs(drive) > 1.0e-3 * q_k)
-        if t_layer is not None and on_floor.any():
-            # A layer younger than its diffusion length to the floor is above it.
-            reach = np.asarray(jax.vmap(budget.convecting_radius)(t_core, q_cmb, t_layer))
-            on_floor &= reach <= CONVECTING_FLOOR * r_cmb
-        if on_floor.any():
-            i = int(np.argmax(on_floor))
-            self._floor_warned = True
+    def _check_shell_base(self, budget, t_core, layer_base) -> None:
+        """Refuse an inner core that reaches the shell base, and warn once when the layer base
+        comes within three cells of it, where the shell no longer holds the layer."""
+        shell = budget.shell
+        r_icb = float(np.max(np.asarray(jax_vmap_r_icb(budget)(t_core))))
+        if r_icb >= shell.r_base:
+            raise ValueError(
+                f'core_module: the inner core ({r_icb / 1e3:.0f} km) reaches the base of the '
+                f'resolved shell ({shell.r_base / 1e3:.0f} km); lower layer_base_fraction'
+            )
+        near = shell.r_base + float(np.sum(np.diff(np.asarray(shell.r_faces))[:3]))
+        if float(np.min(layer_base)) < near and not getattr(self, '_shell_base_warned', False):
+            self._shell_base_warned = True
             logger.warning(
-                'core_module: the stratified core is on its convecting-radius floor (%.0f%% of '
-                'r_cmb) with a CMB heat flow of %.3e W and a net heating of %.3e W (Q_k = %.3e W); '
-                'the quasi-static layer model does not hold there and the core temperature '
-                'changes at the floor capacity. Warned once per solver.',
-                100.0 * CONVECTING_FLOOR,
-                float(q_cmb[i]),
-                float(drive[i]),
-                float(q_k[i]),
+                'core_module: the stable layer reaches within three cells of the shell base '
+                '(%.0f km); the shell no longer contains it. Lower layer_base_fraction. '
+                'Warned once per solver.',
+                shell.r_base / 1e3,
             )
 
     def _step_heat_content(self, S0_stag, Sf_stag, n_quad: int | None = None) -> float:
@@ -4888,7 +4911,12 @@ class EntropySolver:
         area_surf = 4 * np.pi * float(r_basic[-1]) ** 2
         F_heat_total = float(np.dot(heating, mass_stag)) / area_surf
 
-        layer_start = getattr(self, '_core_layer_start_yr', None)
+        shell = self._core_shell()
+        if shell is not None:
+            y_end = np.asarray(sol.y[:, -1])
+            t_shell_end = y_end[n_stag + 2 :]
+            layer_base = float(shell.layer_base(t_shell_end, y_end[n_stag + 1]))
+            t_top = float(shell.top_temperature(t_shell_end))
         return SolverOutput(
             S_final=S_final,
             T_stag=T_stag,
@@ -4941,7 +4969,9 @@ class EntropySolver:
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
             tcore_change_max=tcore_change_max,
             tcore_change_exceeded=tcore_change_exceeded,
-            core_layer_start_yr=np.nan if layer_start is None else layer_start,
+            core_T_shell=None if shell is None else t_shell_end.copy(),
+            core_layer_base=np.nan if shell is None else layer_base,
+            core_T_top=np.nan if shell is None else t_top,
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,

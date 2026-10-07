@@ -979,16 +979,39 @@ def test_set_initial_entropy_core_module_with_and_without_mesh():
 
 
 def test_step_energy_stratified_core_module_and_fallback():
-    """Stratified core_module integrates step_dE_core along trajectory and handles jit fallback."""
+    """A stratified core books the convecting core's trapezoid of C_eff dT_c plus the change of
+    the shell's heat, on the compiled path and on the fallback."""
     from types import SimpleNamespace
 
     from scipy.optimize import OptimizeResult
 
     import aragog.solver.entropy_solver as es
+    from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, QuadraticMeltingCurve
 
+    profiles = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=139e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        profiles,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        stratification=True,
+        k_core=130.0,
+        layer={'n_cells': 4},
+    )
+    shell = budget.shell
+    t_shell = np.column_stack(
+        [shell.adiabatic_profile(4500.0), shell.adiabatic_profile(4400.0)]
+    )
     sol = OptimizeResult(
-        t=np.array([0.0, 1.0]),
-        y=np.array([[2000.0, 2000.0], [4500.0, 4400.0]]),
+        t=np.array([0.0, 1.0]), y=np.vstack([[2000.0, 2000.0], [4500.0, 4400.0], t_shell])
     )
     s = es.EntropySolver.__new__(es.EntropySolver)
     s._solution, s.entropy_eos = sol, object()
@@ -997,28 +1020,20 @@ def test_step_energy_stratified_core_module_and_fallback():
     s._stag_entropy = lambda y: y
     s._step_heat_content = lambda a, b: 0.0
     s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
-    s._core_bc = 'core_module'
-    s._n_stag = 0
+    s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
+    capacity = [
+        float(budget.effective_capacity(t, shell.layer_base(t_shell[:, i], t)))
+        for i, t in enumerate((4500.0, 4400.0))
+    ]
+    content = [float(shell.heat_content(t_shell[:, i])) for i in (0, 1)]
+    expected = 0.5 * sum(capacity) * -100.0 + content[1] - content[0]
+    assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
 
-    mock_budget = SimpleNamespace(
-        stratification=True,
-        effective_capacity=lambda t, q: 2e27,
-        base_heat_flow=lambda t, q: q,
-    )
-    s._core_module_budget = mock_budget
-    s._floor_warned = True  # the floor check needs a real profile
-
-    # JIT / standard execution
-    out = s._compute_step_energy_integrals()
-    assert out['core'] == pytest.approx(2e27 * (4400.0 - 4500.0))
-
-    # Exception fallback branch
     def fail_vmap(*args):
         raise RuntimeError('simulated vmap failure')
 
-    mock_budget._vmap_effective_capacity = fail_vmap
-    out2 = s._compute_step_energy_integrals()
-    assert out2['core'] == pytest.approx(2e27 * (4400.0 - 4500.0))
+    budget._vmap_effective_capacity = fail_vmap
+    assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
 
 
 def test_solver_output_to_netcdf_step_dE_core_J(tmp_path):
@@ -1207,80 +1222,6 @@ def test_set_initial_entropy_no_eos_and_no_override_raises(mode):
     s._T_core_init = None
     with pytest.raises(ValueError, match='entropy EOS is not available'):
         s.set_initial_entropy(2900.0)
-
-
-@pytest.mark.parametrize(
-    ('q_frac', 'radio_frac', 'warns'),
-    [
-        (1.2e-3, 0.0, True),
-        (1.6e-3, 0.0, False),
-        (0.0, 0.0, False),
-        (0.0, 2.0e-3, True),
-        (5.0e-4, 0.0, False),
-        (0.0, 5.0e-4, False),
-        (-2.0e-3, 0.0, True),
-    ],
-    ids=[
-        'on_floor',
-        'above_floor',
-        'no_drive',
-        'radiogenic_drive',
-        'small_q',
-        'small_radio',
-        'core_heated_by_mantle',
-    ],
-)
-def test_the_floor_warning_follows_the_net_drive_on_the_floor(
-    caplog, q_frac, radio_frac, warns
-):
-    """The stratified floor is reached at q_cmb <= Q_ad(0.1 r_cmb) (1.40e-3 Q_k on this
-    profile); on it the warning needs a net drive |q_radio - q_cmb| above 1e-3 Q_k, so
-    radiogenic heating at zero CMB flow and a core colder than the mantle base warn, and a
-    flow just above the floor does not."""
-    import logging
-    from types import SimpleNamespace
-
-    from aragog.core import build_core_module_budget
-    from aragog.solver.entropy_solver import EntropySolver
-
-    params = {'light_element_fraction': 0.1, 'depression': 1.2}
-    budget = build_core_module_budget(
-        {**params, 'stratification': True, 'k_core': 130.0}, r_cmb=3.48e6, p_cmb_fallback=136e9
-    )
-    t_core = np.full(3, 4500.0)
-    q_k = float(budget.conducted_adiabatic_flow(3.48e6, 4500.0))
-    on_floor = float(budget.convecting_radius(4500.0, q_frac * q_k)) == pytest.approx(3.48e5)
-    assert on_floor is (q_frac < 1.4e-3)
-    fake = SimpleNamespace(_core_module_q_radio=radio_frac * q_k)
-    with caplog.at_level(logging.WARNING):
-        EntropySolver._warn_on_convecting_floor(fake, budget, t_core, np.full(3, q_frac * q_k))
-    assert sum('convecting-radius floor' in r.message for r in caplog.records) == int(warns)
-    assert getattr(fake, '_floor_warned', False) is warns
-
-
-def test_the_floor_reduces_the_capacity_outside_the_growth_band():
-    """On the convecting-radius floor the secular capacity shrinks about 700 times above the
-    onset and below freeze-out; inside the band the latent term is not reduced, so the
-    full-to-floor ratio drops below 2 within 1 K of the onset and stays near 1.3 to 1.8
-    (core_bc.md)."""
-    import jax
-
-    from aragog.core import build_core_module_budget
-
-    params = {'light_element_fraction': 0.1, 'depression': 1.2}
-    budget = build_core_module_budget(
-        {**params, 'stratification': True, 'k_core': 130.0}, r_cmb=3.48e6, p_cmb_fallback=136e9
-    )
-    t_on, t_fr = float(budget.t_onset), float(budget.t_freeze)
-
-    capacity = jax.jit(jax.vmap(budget.effective_capacity))
-    band = np.linspace(t_on - 1.0, t_fr + 0.5, 200)
-    t = np.concatenate([[t_on + 50.0, t_fr - 1.0, t_on - 1.0e-8], band])
-    ratio = np.asarray(
-        capacity(t, np.full_like(t, 1.0e14)) / capacity(t, np.full_like(t, -1.0))
-    )
-    assert np.all((600.0 < ratio[:3]) & (ratio[:3] < 800.0))
-    assert 1.2 < ratio[3:].min() and ratio[3:].max() < 1.9
 
 
 def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():

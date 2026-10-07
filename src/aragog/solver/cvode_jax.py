@@ -55,7 +55,6 @@ def build_jax_rhs_and_jacobian(
     core_module_budget=None,
     core_module_q_radio: float = 0.0,
     core_module_ra_crit_cmb: float | None = None,
-    core_module_layer_start: float | None = None,
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -105,10 +104,6 @@ def build_jax_rhs_and_jacobian(
         core_module flux (``aragog.core.cmb_boundary_layer_flux``),
         the solver's ``_core_module_ra_crit_cmb``; required for
         core_module and checked with ``aragog.core.check_ra_crit``.
-    core_module_layer_start : float, optional
-        Onset time [yr] of the stratified layer, the solver's
-        ``_core_layer_start_yr``; required for a stratified budget. It enters
-        the compiled functions as an argument rather than a constant.
 
     Returns
     -------
@@ -192,6 +187,10 @@ def build_jax_rhs_and_jacobian(
         )
     heating_np = np.asarray(heating_array)
     n_extra = {'quasi_steady': 0, 'energy_balance': 1, 'core_module': 2}[core_bc_mode]
+    shell = (
+        getattr(core_module_budget, 'shell', None) if core_bc_mode == 'core_module' else None
+    )
+    n_extra += 0 if shell is None else shell.n_cells
     expected_size = heating_np.size + n_extra
     if scales.n != expected_size:
         raise ValueError(
@@ -232,17 +231,12 @@ def build_jax_rhs_and_jacobian(
             float(core_module_q_radio),
             check_ra_crit(core_module_ra_crit_cmb),
         )
-    stratified = core_bc_mode == 'core_module' and core_module_budget.stratification
-    if stratified and core_module_layer_start is None:
-        raise ValueError('a stratified core_module budget needs core_module_layer_start')
-    layer_start = jnp.asarray(core_module_layer_start if stratified else 0.0, dtype=jnp.float64)
 
     # The "nondim wrapper" applied to JAX RHS and used by both the
     # solver RHS callback and the Jacobian autodiff. Defined as a
     # JAX-traceable function so jacrev can differentiate through it.
-    def _rhs_nondim(t_nd, y_nd, start):
-        args = args_tuple + ((start,) if stratified else ())
-        return _rhs_jax(t_nd * t_ref, y_nd * state_scale_jax, args) * rhs_scale_jax
+    def _rhs_nondim(t_nd, y_nd):
+        return _rhs_jax(t_nd * t_ref, y_nd * state_scale_jax, args_tuple) * rhs_scale_jax
 
     # JIT-compile both the RHS and its Jacobian. Compilation happens
     # on first call; subsequent calls reuse the compiled artifact.
@@ -260,7 +254,7 @@ def build_jax_rhs_and_jacobian(
     def rhs_fn(t_nd, y_nd, ydot_nd):
         """scikits.odes RHS function: fills ydot in-place."""
         try:
-            result = rhs_jit(float(t_nd), jnp.asarray(y_nd), layer_start)
+            result = rhs_jit(float(t_nd), jnp.asarray(y_nd))
             ydot_nd[:] = np.asarray(result)
             info['rhs_calls'] += 1
             if not info['first_rhs_compile_done']:
@@ -274,7 +268,7 @@ def build_jax_rhs_and_jacobian(
     def jacfn(t_nd, y_nd, fy_nd, J, user_data=None):
         """scikits.odes Jacobian function: fills J in-place."""
         try:
-            jac = jac_jit(float(t_nd), jnp.asarray(y_nd), layer_start)
+            jac = jac_jit(float(t_nd), jnp.asarray(y_nd))
             J[...] = np.asarray(jac)
             info['jac_calls'] += 1
             if not info['first_jac_compile_done']:

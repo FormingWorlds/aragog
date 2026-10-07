@@ -547,35 +547,37 @@ def dSdt_core_module(
         state_ext[0:N] = S at staggered nodes [J/kg/K]
         state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
         state_ext[N+1] = T_core, the integrated CMB temperature [K]
+        state_ext[N+2:] = shell cell temperatures [K] of a stratified budget
 
     Parameters
     ----------
     t : float
         Current time [yr].
-    state_ext : jax.Array, shape (N+2,)
-        Extended state vector (entropy, dSdr_cmb, T_core).
+    state_ext : jax.Array, shape (N+2,) or (N+2+n_shell,)
+        Extended state vector (entropy, dSdr_cmb, T_core, shell temperatures).
     args : tuple
         ``(eos, params, mesh, bc, heating_static, H_radio_fn,
-        core_budget, q_radio_core, ra_crit[, layer_start])``: the ``dSdt`` six
-        plus the ``aragog.core.CoreEnergyBudget`` whose ``dtcmb_dt`` closes the
-        boundary, the constant core internal source power [W], the critical
-        Rayleigh number of the CMB boundary layer and, for a stratified budget,
-        the onset time [yr] of the layer, whose age caps its depth.
+        core_budget, q_radio_core, ra_crit)``: the ``dSdt`` six
+        plus the ``aragog.core.CoreEnergyBudget`` whose rates close the
+        boundary, the constant core internal source power [W] and the critical
+        Rayleigh number of the CMB boundary layer. A stratified budget's CMB flux
+        sees the top shell cell, and the CMB basic node rides on it.
 
     Returns
     -------
     jax.Array
         d(state_ext)/dt at the same layout, [J/kg/K/yr] for entropy,
-        [J/kg/K/m/yr] for dSdr_cmb, [K/yr] for T_core.
+        [J/kg/K/m/yr] for dSdr_cmb, [K/yr] for T_core and the shell.
     """
     eos, params, mesh, bc, heating_static, H_radio_fn = args[:6]
-    core_budget, q_radio_core, ra_crit, *layer = args[6:]
-    t_layer = (t - layer[0]) * SECS_PER_YEAR if layer else None
+    core_budget, q_radio_core, ra_crit = args[6:9]
+    shell = core_budget.stratification
     heating = heating_static + H_radio_fn(t)
     n_stag = mesh.P_stag.shape[0]
     S = state_ext[:n_stag]
     dSdr_cmb = state_ext[n_stag]
     t_core = state_ext[n_stag + 1]
+    t_shell = state_ext[n_stag + 2 :]
 
     # The interior flux assembly is the energy_balance one, with the gradient slot setting the
     # CMB basic-node entropy; the CMB flux itself is replaced below by the boundary-layer law.
@@ -605,7 +607,7 @@ def dSdt_core_module(
     # The CMB flux is set by T_core against the bottom cell's entropy at the CMB pressure.
     heat_flux = heat_flux.at[0].set(
         cmb_boundary_layer_flux(
-            jnp.maximum(t_core, 1.0),
+            jnp.maximum(t_shell[-1] if shell else t_core, 1.0),
             eos.temperature(mesh.P_basic[0], S[0]),
             conductivity=phase_stag.thermal_conductivity[0],
             density=phase_stag.density[0],
@@ -632,15 +634,19 @@ def dSdt_core_module(
     # dT_core/dt = (q_radio - F_cmb A_cmb) / C_eff(T_core); the 1 K floor mirrors the numpy
     # path, since the melting curve and adiabat are undefined at non-positive temperature.
     E_tot_cmb = heat_flux[0] * bc.cmb_area
-    dT_core_dt_per_s = core_budget.dtcmb_dt(
-        jnp.maximum(t_core, 1.0),
-        E_tot_cmb,
-        q_sources=q_radio_core,
-        t_layer=t_layer,
-    )
-    # The CMB basic node rides on the core: its temperature changes at
-    # the core cooling rate, converted through the node's own cp/T.
-    dSdt_basic_cmb_per_s = cp_cmb / jnp.maximum(T_cmb, 1.0) * dT_core_dt_per_s
+    if shell:
+        dT_core_dt_per_s, d_shell = core_budget.core_rates(
+            jnp.maximum(t_core, 1.0), jnp.maximum(t_shell, 1.0), E_tot_cmb, q_radio_core
+        )
+        dT_top = d_shell[-1]
+    else:
+        dT_core_dt_per_s = core_budget.dtcmb_dt(
+            jnp.maximum(t_core, 1.0), E_tot_cmb, q_sources=q_radio_core
+        )
+        d_shell, dT_top = jnp.zeros(0), dT_core_dt_per_s
+    # The CMB basic node rides on the core (its top shell cell): its temperature changes at
+    # that rate, converted through the node's own cp/T.
+    dSdt_basic_cmb_per_s = cp_cmb / jnp.maximum(T_cmb, 1.0) * dT_top
     d_dSdr_cmb_dt_per_s = (dSdt_per_s[0] - dSdt_basic_cmb_per_s) * 2.0 / bc.cmb_dr_cmb
 
     return jnp.concatenate(
@@ -648,6 +654,7 @@ def dSdt_core_module(
             dSdt_per_yr,
             jnp.array([d_dSdr_cmb_dt_per_s * SECS_PER_YEAR]),
             jnp.array([dT_core_dt_per_s * SECS_PER_YEAR]),
+            d_shell * SECS_PER_YEAR,
         ]
     )
 

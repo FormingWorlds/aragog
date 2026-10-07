@@ -9,12 +9,8 @@ onset criterion: below one, stratification grows. The equilibrium stratification
 ``r_cmb - r_s``, where ``r_s`` is the radius where the adiabatic
 conducted flow ``Q_ad(r) = 4 pi r^2 k |dT_a/dr|`` matches the CMB heat
 flow: above it conduction alone carries the load, below it convection
-must. The full time-dependent layer (diffusive profile, entrainment) is a
-partial-differential problem outside this model's scope; the
-budgets couple to these diagnostics through
-``CoreEnergyBudget.convecting_radius``, which reduces the convecting
-volume in the energy and entropy integrals when stratification is
-enabled.
+must. The quasi-static depth is the limit a steady layer reaches; the
+time-dependent layer itself is resolved by :class:`aragog.core.layer.CoreShell`.
 """
 
 from __future__ import annotations

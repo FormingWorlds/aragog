@@ -66,8 +66,9 @@ def test_a_young_layer_follows_the_erfc_solution_of_a_half_space(t_myr):
     temperature by (2 dF / k) sqrt(kappa t) ierfc(z / 2 sqrt(kappa t)) (Carslaw and Jaeger,
     the planar limit of Greenwood et al. 2021, eq. 27); the cells also cool at the rate the
     divergence of the adiabatic conduction sets. Earlier the top cell limits the match, later
-    the curvature of the sphere."""
-    shell = _shell()
+    the curvature of the sphere. Weak mixing isolates the conduction: with the convecting
+    core held, the sink would make the cells below the front mix."""
+    shell = _shell(k_mix=1e-3)
     p, t = shell.profiles, t_myr * MYR
     q_k = float(_q_ad(p, K_CORE, p.r_cmb, T_C))
     t_shell, y0 = _evolve(shell, 8e12, t)

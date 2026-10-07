@@ -21,18 +21,13 @@ import functools
 import jax
 import jax.numpy as jnp
 import numpy as _np
-from scipy.special import erfcinv
 
+from aragog.core.layer import CoreShell
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
-from aragog.core.stratification import _q_ad, make_thickness_fn
+from aragog.core.stratification import _q_ad
 
 jax.config.update('jax_enable_x64', True)
-
-CONVECTING_FLOOR = 0.1  # floor of the convecting radius, as a fraction of r_cmb
-# Diffusion-length prefactor of the stratified layer: depth where a conducted heat-flow
-# deficit erfc(z / 2 sqrt(kappa t)) has decayed to 10 %, 2 erfcinv(0.1).
-LAYER_DIFFUSION_PREFACTOR = 2.0 * float(erfcinv(0.1))
 
 _GL_X, _GL_W = _np.polynomial.legendre.leggauss(48)
 _GL_X = jnp.asarray(_GL_X)
@@ -80,15 +75,15 @@ class CoreEnergyBudget:
         Core-temperature factor of the legacy closure (required in legacy
         mode; 1.147 is the Earth-like default used across the ecosystem).
     stratification : bool
-        When true, a stably stratified sub-CMB layer at its equilibrium
-        conductive-matching depth reduces the convecting volume in the
-        capacity integrals: the budgets run to ``convecting_radius(t,
-        q)`` instead of the CMB. Quasi-static closure: the layer conducts
-        the CMB heat flow without storage, so the same ``q_cmb`` drives
-        the reduced-volume budget. Profile mode only.
+        When true, the outer core above the base of a resolved shell
+        (:class:`aragog.core.layer.CoreShell`, on ``shell``) can stratify:
+        its temperatures are state the caller evolves with
+        :meth:`core_rates`, and the capacity integrals of the convecting core
+        run to the shell base. Profile mode only.
     k_core : float, optional
-        Core thermal conductivity [W m-1 K-1] for the conductive-matching
-        depth; required when ``stratification`` is on.
+        Core thermal conductivity [W m-1 K-1]; required when ``stratification`` is on.
+    layer : dict, optional
+        Keyword arguments of :class:`aragog.core.layer.CoreShell`.
 
     Raises
     ------
@@ -112,6 +107,7 @@ class CoreEnergyBudget:
         legacy_tfac: float | None = None,
         stratification: bool = False,
         k_core: float | None = None,
+        layer: dict | None = None,
     ) -> None:
         if not float(ds_fusion) > 0.0:
             raise ValueError(f'ds_fusion must be positive, got {ds_fusion}')
@@ -133,7 +129,6 @@ class CoreEnergyBudget:
                 )
             if k_core is None or not float(k_core) > 0.0:
                 raise ValueError(f'stratification needs a positive k_core, got {k_core}')
-            self._thickness_fn = make_thickness_fn(profiles, float(k_core))
         self.profiles = profiles
         self.melting_curve = melting_curve
         self.ds_fusion = float(ds_fusion)
@@ -146,6 +141,10 @@ class CoreEnergyBudget:
         self.legacy_tfac = None if legacy_tfac is None else float(legacy_tfac)
         self.stratification = bool(stratification)
         self.k_core = None if k_core is None else float(k_core)
+        self.shell = (
+            CoreShell(profiles, self.k_core, **(layer or {})) if stratification else None
+        )
+        self.r_convecting = self.shell.r_base if stratification else profiles.r_cmb
 
     # -- static integrals ----------------------------------------------------
 
@@ -154,46 +153,6 @@ class CoreEnergyBudget:
         half = upper / 2.0
         r = half + half * _GL_X
         return half * jnp.sum(_GL_W * integrand(r))
-
-    # -- stratified layer -----------------------------------------------------
-
-    def convecting_radius(self, t_cmb, q_cmb=None, t_layer=None):
-        """Upper radius [m] of the convecting core.
-
-        The CMB radius when stratification is off; otherwise the base of
-        the stratified layer: the quasi-static depth where ``Q_ad = q_cmb``,
-        capped, when the layer age ``t_layer`` [s] is given, by the diffusion
-        length ``LAYER_DIFFUSION_PREFACTOR sqrt(kappa t_layer)`` with ``kappa``
-        the core diffusivity at the CMB; floored at 10% of the CMB
-        radius so a fully stratified transient cannot collapse the
-        capacity integrals to zero volume. At that floor the effective
-        thermal inertia is orders of magnitude below the full core's:
-        the fully stratified regime is outside the quasi-static model's
-        validity, and the floor keeps the ODE finite there, not
-        physical. A stratified budget refuses a missing heat flow
-        rather than silently answering with the full volume.
-
-        Raises
-        ------
-        ValueError
-            When stratification is enabled and no ``q_cmb`` is supplied:
-            the reduction depends on the flow, and the full-volume
-            answer would be a silently wrong capacity.
-        """
-        p = self.profiles
-        if not self.stratification:
-            return jnp.asarray(p.r_cmb, dtype=jnp.float64)
-        if q_cmb is None:
-            raise ValueError(
-                'stratification is enabled: convecting_radius and '
-                'effective_capacity need the CMB heat flow q_cmb'
-            )
-        thickness = self._thickness_fn(t_cmb, q_cmb)
-        if t_layer is not None:
-            kappa = self.k_core / (p.density(p.r_cmb) * p.c_p)
-            grown = LAYER_DIFFUSION_PREFACTOR * jnp.sqrt(kappa * jnp.maximum(t_layer, 0.0))
-            thickness = jnp.minimum(thickness, grown)
-        return jnp.maximum(p.r_cmb - thickness, CONVECTING_FLOOR * p.r_cmb)
 
     def conducted_adiabatic_flow(self, r, t_cmb):
         """Heat flow [W] conducted along the adiabat through radius ``r`` (needs ``k_core``)."""
@@ -413,21 +372,22 @@ class CoreEnergyBudget:
 
     # -- assembled budget ----------------------------------------------------
 
-    def effective_capacity(self, t_cmb, q_cmb=None, t_layer=None):
-        """Total dQ/d(dT_cmb/dt) [J/K]: secular plus latent plus
-        gravitational (profile mode).
+    def effective_capacity(self, t_cmb, gravitational_upper=None):
+        """Total dQ/d(dT_cmb/dt) [J/K] of the convecting core: secular plus
+        latent plus gravitational (profile mode).
 
-        With stratification enabled, a heat flow must be supplied and
-        the volume integrals run to the convecting radius rather than the
-        CMB; with stratification off the full core participates.
+        The secular integral runs to the convecting radius, the CMB or the shell base; the
+        light elements mix up to ``gravitational_upper`` (default the same radius), the base of
+        the stable layer when a shell is resolved.
         """
         if self.capacity_mode == 'legacy':
             return self.secular_capacity()
-        upper = self.convecting_radius(t_cmb, q_cmb, t_layer)
+        upper = self.r_convecting
+        top = upper if gravitational_upper is None else gravitational_upper
         return (
             self.secular_capacity(upper=upper)
             + self.latent_capacity(t_cmb)
-            + self.gravitational_capacity(t_cmb, upper=upper)
+            + self.gravitational_capacity(t_cmb, upper=top)
         )
 
     def heat_content(self, t_cmb) -> float:
@@ -467,25 +427,26 @@ class CoreEnergyBudget:
             released += 0.5 * (hi - lo) * float(jnp.sum(_GL_W * values))
         return secular - released
 
-    def base_heat_flow(self, t_cmb, q_cmb, t_layer=None):
-        """Heat flow [W] out of the convecting core, ``q_cmb`` without stratification.
-
-        A layer thinner than its quasi-static depth conducts ``Q_ad(r_s) > q_cmb`` at its
-        base and stores the difference, so the convecting core loses ``max(q_cmb,
-        Q_ad(r_s))``; at the quasi-static depth the two are equal.
-        """
-        if not self.stratification:
-            return q_cmb
-        r_s = self.convecting_radius(t_cmb, q_cmb, t_layer)
-        return jnp.maximum(q_cmb, self.conducted_adiabatic_flow(r_s, t_cmb))
-
-    def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0, t_layer=None):
-        """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of the core.
+    def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
+        """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of an unstratified core.
 
         ``dT_cmb/dt = (q_sources - q_cmb) / C_eff(T_cmb)``; positive
         ``q_cmb`` cools the core, and internal sources (radiogenic, tidal)
-        offset it. With stratification enabled the capacity is evaluated
-        over the convecting volume for this heat flow and layer age.
+        offset it. A stratified core has shell state: see :meth:`core_rates`.
         """
-        q_base = self.base_heat_flow(t_cmb, q_cmb, t_layer)
-        return (q_sources - q_base) / self.effective_capacity(t_cmb, q_cmb, t_layer)
+        if self.stratification:
+            raise ValueError('a stratified core evolves its shell too: use core_rates')
+        return (q_sources - q_cmb) / self.effective_capacity(t_cmb)
+
+    def core_rates(self, t_cmb, t_shell, q_cmb, q_sources=0.0):
+        """Rates of the convecting core [K/s] and of the shell cells [K/s] of a stratified core.
+
+        The convecting core loses the flow into the shell base and keeps the mass share of the
+        internal sources ``q_sources`` [W] below it; the shell gets the rest, cell by cell.
+        """
+        p, shell = self.profiles, self.shell
+        heating = q_sources / p.enclosed_mass(p.r_cmb)
+        d_shell, q_base = shell.rates(t_shell, t_cmb, q_cmb, heating)
+        q_conv = heating * p.enclosed_mass(self.r_convecting)
+        capacity = self.effective_capacity(t_cmb, shell.layer_base(t_shell, t_cmb))
+        return (q_conv - q_base) / capacity, d_shell

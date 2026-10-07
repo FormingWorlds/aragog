@@ -110,10 +110,10 @@ def test_a_reset_keeps_the_budget_until_its_inputs_change():
     compiled functions; a changed parameter (the refit after an impact) rebuilds it."""
     params = dict(CORE_MODULE_PARAMS)
     fresh = _build('core_module', entropy_eos_copy(), params, s_init='driven')
-    budget, dtcmb = fresh._core_module_budget, fresh._core_module_budget_dtcmb_dt
+    budget, dtcmb = fresh._core_module_budget, fresh._core_module_budget_rate
     fresh.reset()
     assert fresh._core_module_budget is budget
-    assert fresh._core_module_budget_dtcmb_dt is dtcmb
+    assert fresh._core_module_budget_rate is dtcmb
     fresh.parameters.boundary_conditions.core_module_params['rho_cen'] = 12000.0
     fresh.reset()
     assert fresh._core_module_budget is not budget

@@ -696,9 +696,35 @@ def item6_leeds_terms() -> None:
     save(fig, 'fig_13_leeds_budget_terms')
 
 
+def _shell_history(budget, q, t_cmb0, times):
+    """aragog's convecting core and shell under a fixed CMB flow q [W], from the adiabat at
+    ``t_cmb0`` (no layer), sampled at ``times`` [Leeds Myr]."""
+    shell = budget.shell
+
+    def rate(y):
+        d_core, d_shell = budget.core_rates(y[0], y[1:], q)
+        return jnp.concatenate([jnp.atleast_1d(d_core), d_shell]) * MYR_LEEDS
+
+    f, jac = jax.jit(rate), jax.jit(jax.jacfwd(rate))
+    y0 = np.concatenate([[t_cmb0], np.asarray(shell.adiabatic_profile(t_cmb0))])
+    sol = solve_ivp(
+        lambda _, y: np.asarray(f(y)),
+        (times[0], times[-1]),
+        y0,
+        t_eval=times,
+        method='BDF',
+        jac=lambda _, y: np.asarray(jac(y)),
+        rtol=1e-8,
+        atol=1e-6,
+    )
+    base = np.asarray(jax.vmap(shell.layer_base)(sol.y[1:].T, sol.y[0]))
+    return sol.y[0], sol.y[-1], base
+
+
 def _stable_layer_panel(ax, ax_t) -> None:
-    """Layer thickness and central temperature: thermal_history against aragog's own
-    core-only history under the same fixed CMB flows, its layer forming at time zero."""
+    """Layer thickness and central temperature: thermal_history against aragog's convecting
+    core under its resolved shell, both under the same fixed CMB flows from a core without a
+    layer."""
     with LAYER_TABLE.open() as fh:
         header = json.loads(fh.readline()[2:])
     data = np.loadtxt(LAYER_TABLE, delimiter=',', comments='#')
@@ -707,58 +733,31 @@ def _stable_layer_panel(ax, ax_t) -> None:
     r_cmb = inp['r_cmb']
     for q, col in zip(header['q_cmb'], (CORE, colour('ocean', 'C0'))):
         rows = data[data[:, 0] == q]
-        t, r_s, t_cen_leeds = rows[:, 1], rows[:, 5], rows[:, 3]
-        rate = jax.jit(
-            lambda time, temp, q=q: budget.dtcmb_dt(temp, q, t_layer=time * MYR_LEEDS)
-        )
-        sol = solve_ivp(
-            lambda time, y, rate=rate: [float(rate(time, y[0])) * MYR_LEEDS],
-            (t[0], t[-1]),
-            [inp['t_cmb_start']],
-            t_eval=t,
-            method='BDF',
-            rtol=1e-9,
-            atol=1e-6,
-        )
-        t_cmb = sol.y[0]
-        capped = np.asarray(
-            jax.vmap(lambda x, a, q=q: budget.convecting_radius(x, q, a))(t_cmb, t * MYR_LEEDS)
-        )
-        quasi = np.asarray(jax.vmap(lambda x, q=q: budget.convecting_radius(x, q))(t_cmb))
-        t_cen = np.asarray(jax.vmap(budget.profiles.t_cen)(t_cmb))
-        tw = f'{q / 1e12:.0f} TW'
-        ax.plot(t, (r_cmb - r_s) / 1e3, '--', color=col, label=f'Leeds, {tw}')
-        ax.plot(t, (r_cmb - quasi) / 1e3, ':', color=col, label=f'quasi-static, {tw}')
-        ax.plot(t, (r_cmb - capped) / 1e3, color=col, label=f'aragog, {tw}')
+        t, t_cmb_leeds, t_cen_leeds, r_icb_leeds, r_s = rows[:, 1:].T
+        t_c, t_top, base = _shell_history(budget, q, inp['t_cmb_start'], t)
+        t_cen = np.asarray(jax.vmap(budget.profiles.t_cen)(t_c))
+        r_icb = np.asarray(jax.vmap(budget.r_icb)(t_c))
+        depth, depth_leeds = r_cmb - base, r_cmb - r_s
+        tw, tag = f'{q / 1e12:.0f} TW', f'{q / 1e12:.0f}TW'
+        ax.plot(t, depth_leeds / 1e3, '--', color=col, label=f'Leeds, {tw}')
+        ax.plot(t, depth / 1e3, color=col, label=f'aragog, {tw}')
         ax_t.plot(t, t_cen_leeds, '--', color=col, label=f'Leeds, {tw}')
         ax_t.plot(t, t_cen, color=col, label=f'aragog, {tw}')
-        tag = f'{q / 1e12:.0f}TW'
+        both = (depth > 10e3) & (depth_leeds > 10e3)
+        ratio = depth[both] / depth_leeds[both]
+        grown = r_icb_leeds > 0
         record(6, f'tcen_max_abs_diff_K_{tag}', np.max(np.abs(t_cen - t_cen_leeds)))
-        early, leeds_all = t <= 500.0, r_cmb - r_s
+        record(6, f'tcmb_max_abs_diff_K_{tag}', np.max(np.abs(t_top - t_cmb_leeds)))
+        record(6, f'layer_ratio_min_{tag}', ratio.min())
+        record(6, f'layer_ratio_max_{tag}', ratio.max())
         record(
-            6,
-            f'tcen_max_abs_diff_K_{tag}_to_500myr',
-            np.max(np.abs(t_cen - t_cen_leeds)[early]),
+            6, f'ricb_max_rel_diff_{tag}', np.max(np.abs(r_icb[grown] / r_icb_leeds[grown] - 1))
         )
-        binds = (capped > quasi + 1.0) & (leeds_all > 0)  # the cap sets the depth
-        record(
-            6,
-            f'layer_capped_over_leeds_max_{tag}',
-            np.max((r_cmb - capped)[binds] / leeds_all[binds]),
-        )
-        ratio = leeds_all[~binds & (t > 0)] / (r_cmb - capped)[~binds & (t > 0)]
-        record(6, f'layer_leeds_over_aragog_max_{tag}', ratio.max())
-        record(6, f'layer_leeds_over_aragog_max_myr_{tag}', t[~binds & (t > 0)][ratio.argmax()])
-        record(6, f'onset_myr_leeds_{tag}', t[np.argmax(rows[:, 4] > 0)])
-        for when in (10.0, 50.0, 200.0, 500.0):
+        record(6, f'onset_myr_leeds_{tag}', t[np.argmax(grown)])
+        for when in (10.0, 50.0, 200.0, 500.0, 1000.0):
             k = int(np.argmin(np.abs(t - when)))
-            leeds, cap = (r_cmb - r_s[k]) / 1e3, (r_cmb - capped[k]) / 1e3
-            record(6, f'layer_leeds_km_{tag}_{when:.0f}myr', leeds)
-            record(6, f'layer_aragog_km_{tag}_{when:.0f}myr', (r_cmb - quasi[k]) / 1e3)
-            record(6, f'layer_capped_km_{tag}_{when:.0f}myr', cap)
-            record(6, f'layer_capped_over_leeds_{tag}_{when:.0f}myr', cap / leeds)
-            record(6, f'tcen_aragog_K_{tag}_{when:.0f}myr', t_cen[k])
-            record(6, f'tcen_leeds_K_{tag}_{when:.0f}myr', t_cen_leeds[k])
+            record(6, f'layer_leeds_km_{tag}_{when:.0f}myr', depth_leeds[k] / 1e3)
+            record(6, f'layer_aragog_km_{tag}_{when:.0f}myr', depth[k] / 1e3)
     record(
         6, 'q_k_TW', float(budget.conducted_adiabatic_flow(r_cmb, inp['t_cmb_start'])) / 1e12
     )

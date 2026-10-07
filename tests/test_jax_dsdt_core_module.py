@@ -110,7 +110,7 @@ def test_factory_shape_contract_core_module():
     for bad in (None, 0.0, -450.0, float('nan'), float('inf')):
         with pytest.raises(ValueError, match='ra_crit_cmb must be positive and finite'):
             build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=bad)
-    # A stratified budget needs the layer onset, which enters the compiled functions.
+    # A stratified budget builds: its shell temperatures are state after T_core.
     kwargs['core_module_budget'] = budget.__class__(
         budget.profiles,
         budget.melting_curve,
@@ -118,12 +118,13 @@ def test_factory_shape_contract_core_module():
         icn_width=10.0,
         stratification=True,
         k_core=130.0,
+        layer={'n_cells': 8},
     )
-    with pytest.raises(ValueError, match='needs core_module_layer_start'):
+    with pytest.raises(ValueError, match='incompatible'):
         build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=450.0)
-    build_jax_rhs_and_jacobian(
-        **kwargs, core_module_ra_crit_cmb=450.0, core_module_layer_start=0.0
-    )
+    size = kwargs['scales'].n + 8
+    kwargs['scales'] = NonDimScales(state_scale=np.ones(size), t_ref=1.0)
+    build_jax_rhs_and_jacobian(**kwargs, core_module_ra_crit_cmb=450.0)
 
 
 def _build_numpy_solver(shared_eos):
@@ -230,10 +231,12 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
 
     # Excursion test: stub budget returns NaN for T < 1 K to verify the floor guard
     class GuardedBudget:
+        stratification = False
+
         def __init__(self, inner):
             self.inner = inner
 
-        def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0, t_layer=None):
+        def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
             return jnp.where(
                 t_cmb < 1.0,
                 jnp.nan,
@@ -399,48 +402,6 @@ def test_jacobian_carries_boundary_couplings():
     np.testing.assert_array_equal(np.delete(J[:, n_stag], n_stag), 0.0)
 
 
-@pytest.mark.slow
-@needs_eos
-def test_stratified_budget_parity_and_jacobian_through_the_full_rhs():
-    """The stratified reduction reaches the coupled RHS on both paths:
-    with stratification on and a subadiabatic state (the uniform
-    isentrope drives a near-zero flux, deeply subadiabatic for k=130),
-    numpy and JAX still agree on the boundary slots to integrator
-    precision, the cooling rate differs from the unstratified twin by
-    the reduced thermal inertia, and ``jacrev`` through the full RHS
-    stays finite with the thickness solve's sensitivity composed inside
-    (the regime where a lost or mis-signed layer JVP would corrupt the
-    analytic Jacobian without failing any standalone gradient test)."""
-    eos = entropy_eos_copy()
-    strat_params = dict(CORE_MODULE_PARAMS) | {'stratification': True, 'k_core': 130.0}
-    strat = _build('core_module', eos, strat_params)  # uniform isentrope
-    plain = _build('core_module', eos, CORE_MODULE_PARAMS)
-    n_stag = strat._n_stag
-    # The isentrope starts T_core at the mantle CMB temperature (zero flux); 1 K hotter
-    # drives a small, deeply subadiabatic flux (5.8e-5 W/m^2 through the mushy base).
-    y0 = np.asarray(strat._S0, dtype=float)
-    y0[n_stag + 1] += 1.0
-
-    f_np = np.asarray(strat.dSdt(0.0, y0)).ravel()
-    args = _build_jax_pieces(strat)
-    f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y0), args)).ravel()
-    for slot in (n_stag, n_stag + 1):
-        denom = max(abs(f_np[slot]), abs(f_jax[slot]), 1e-15)
-        assert abs(f_np[slot] - f_jax[slot]) / denom < 1e-8
-
-    # The reduced convecting volume amplifies the cooling response: the
-    # stratified T_core rate exceeds the unstratified twin's at the same
-    # state by well over the parity tolerance.
-    y_plain = np.asarray(plain._S0, dtype=float)
-    y_plain[n_stag + 1] += 1.0
-    f_plain = np.asarray(plain.dSdt(0.0, y_plain)).ravel()
-    assert abs(f_np[n_stag + 1]) > 2.0 * abs(f_plain[n_stag + 1])
-
-    J = np.asarray(jax.jacrev(lambda y: dSdt_core_module(0.0, y, args))(jnp.asarray(y0)))
-    assert J.shape == (n_stag + 2, n_stag + 2)
-    assert np.all(np.isfinite(J))
-
-
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 @needs_eos
@@ -463,14 +424,12 @@ def test_boundary_slots_match_numpy_on_a_five_node_mesh():
 @pytest.mark.slow
 @pytest.mark.physics_invariant
 @needs_eos
-@pytest.mark.parametrize(
-    'state', ['nucleating', 'above_onset', 'stratified', 'stratified_capped']
-)
+@pytest.mark.parametrize('state', ['nucleating', 'above_onset', 'stratified'])
 def test_jacobian_core_column_matches_central_differences(state):
     """``jacrev`` of the core_module RHS agrees with a central difference in T_core for the
     gradient-slot and T_core rows, on the driven (non-uniform) profile: inside the
-    nucleation band, above the onset, stratified above the convecting-radius floor, and with a
-    10 Myr layer capped by its diffusion length, where JAX also matches NumPy."""
+    growth band, above the onset, and with a stable layer in the shell, where JAX matches
+    NumPy, the CVODE factory matches both, and the top shell cell's column matches too."""
     params = dict(CORE_MODULE_PARAMS)
     if state.startswith('stratified'):
         params |= {'stratification': True, 'k_core': 130.0}
@@ -486,45 +445,58 @@ def test_jacobian_core_column_matches_central_differences(state):
         y[n + 1] = float(budget.t_onset) + 100.0
     else:
         y[n + 1] += 50.0
-        solver.dSdt(0.0, y)
-        q = float(solver.state.heat_flux[0]) * solver._cmb_area
-        r_conv = float(budget.convecting_radius(y[n + 1], q)) / budget.profiles.r_cmb
-        assert 0.2 < r_conv < 0.9
-    args = _build_jax_pieces(solver)
-    if state == 'stratified_capped':
-        solver.set_initial_layer_start(-1.0e7)
-        solver._resolve_layer_start(0.0)
-        args += (-1.0e7,)
+        depth = budget.profiles.r_cmb - np.asarray(budget.shell.r_cells)
+        y[n + 2 :] = np.asarray(budget.shell.adiabatic_profile(y[n + 1]))
+        y[n + 2 :] += 30.0 * np.clip(1.0 - depth / 200e3, 0.0, None) ** 2
+        # The mixed region carries its flux on a slightly superadiabatic gradient, where the
+        # mixing flux is smooth; on the exact adiabat its curvature is unbounded.
+        y[n + 2 :] -= 1e-9 * (np.asarray(budget.shell.r_cells) - budget.shell.r_base)
         assert (
-            float(budget.convecting_radius(y[n + 1], q, 1e7 * 3.15576e7))
-            / budget.profiles.r_cmb
-            > 0.9
+            float(budget.shell.layer_base(y[n + 2 :], y[n + 1])) < budget.profiles.r_cmb - 1e5
         )
+    args = _build_jax_pieces(solver)
 
     def rhs(v):
         return np.asarray(dSdt_core_module(0.0, jnp.asarray(v), args))
 
-    np.testing.assert_allclose(rhs(y), np.asarray(solver.dSdt(0.0, y), dtype=float), rtol=1e-10)
-    if state == 'stratified_capped':  # the factory passes the onset into its compiled RHS
+    f_jax, f_np = rhs(y), np.asarray(solver.dSdt(0.0, y), dtype=float)
+    np.testing.assert_allclose(f_jax[:n], f_np[:n], rtol=1e-10)
+    np.testing.assert_allclose(f_jax[n : n + 2], f_np[n : n + 2], rtol=1e-8)
+    # A shell rate is the small difference of two face flows of ~1e13 W.
+    shell_scale = np.max(np.abs(f_np[n + 2 :]), initial=0.0)
+    np.testing.assert_allclose(f_jax[n + 2 :], f_np[n + 2 :], rtol=0, atol=1e-6 * shell_scale)
+    if state == 'stratified':
         from aragog.jax.nondim import NonDimScales
         from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
-        scales = NonDimScales(state_scale=np.ones(n + 2), t_ref=1.0)
-        kw = dict(
-            core_module_budget=budget, core_module_q_radio=args[7], core_module_layer_start=-1e7
-        )
+        scales = NonDimScales(state_scale=np.ones(y.size), t_ref=1.0)
+        kw = dict(core_module_budget=budget, core_module_q_radio=args[7])
         rhs_fn, _, _ = build_jax_rhs_and_jacobian(
             *args[:5], scales, 'core_module', core_module_ra_crit_cmb=args[8], **kw
         )
-        out = np.empty(n + 2)
+        out = np.empty(y.size)
         rhs_fn(0.0, y, out)
-        np.testing.assert_allclose(out, rhs(y), rtol=1e-12)
+        np.testing.assert_allclose(out[: n + 2], f_jax[: n + 2], rtol=1e-8)
+        np.testing.assert_allclose(
+            out[n + 2 :], f_jax[n + 2 :], rtol=0, atol=1e-6 * shell_scale
+        )
 
     J = np.asarray(jax.jacrev(lambda v: dSdt_core_module(0.0, v, args))(jnp.asarray(y)))
-    h, up, down = 0.1, y.copy(), y.copy()
+    # The mixing flux curves strongly in the mixed region: there a central difference needs a
+    # 1e-5 K step and agrees to 0.2 %, and the gradient slot barely depends on T_core.
+    h, rows, rel = (1e-5, (n + 1,), 5e-3) if state == 'stratified' else (0.1, (n, n + 1), 1e-6)
+    up, down = y.copy(), y.copy()
     up[n + 1] += h
     down[n + 1] -= h
     fd = (rhs(up) - rhs(down)) / (2.0 * h)
-    for row in (n, n + 1):
+    for row in rows:
         assert fd[row] != 0.0
-        assert J[row, n + 1] == pytest.approx(fd[row], rel=1e-6)
+        assert J[row, n + 1] == pytest.approx(fd[row], rel=rel)
+    if state == 'stratified':  # the top cell sets the CMB flux, so S[0] and the gradient slot
+        h, up, down = 1e-3, y.copy(), y.copy()
+        up[-1] += h
+        down[-1] -= h
+        fd = (rhs(up) - rhs(down)) / (2.0 * h)
+        for row in (0, n):
+            assert fd[row] != 0.0
+            assert J[row, -1] == pytest.approx(fd[row], rel=1e-6)

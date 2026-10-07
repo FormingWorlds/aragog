@@ -69,7 +69,7 @@ class CoreShell:
         base_fraction: float = 0.4,
         n_cells: int = 64,
         top_cell: float = 2.0e3,
-        k_mix: float = 100.0,
+        k_mix: float = 1.0e7,
         g_mix: float = 1.0e-3,
     ) -> None:
         if not 0.0 < base_fraction < 1.0:
@@ -124,10 +124,9 @@ class CoreShell:
         net = flux[:-1] - flux[1:] + heating * self.mass
         return net / (self.mass * self.profiles.c_p), flux[0]
 
-    def top_temperature(self, t_shell, q_cmb):
-        """Temperature [K] at the CMB: the top cell conducted over its upper half."""
-        half = self.profiles.r_cmb - self.r_cells[-1]
-        return t_shell[-1] - q_cmb * half / (self.area[-1] * self.k_core)
+    def top_temperature(self, t_shell):
+        """Temperature [K] at the top of the core: the top cell, a ``top_cell`` wide at the CMB."""
+        return t_shell[-1]
 
     def heat_content(self, t_shell):
         """Sensible heat [J] of the shell, ``c_p sum m_j T_j``."""
@@ -140,3 +139,19 @@ class CoreShell:
         anomaly, g_ref = self._anomaly_gradient(t_shell, t_c)
         mixed = jax.nn.sigmoid(10.0 * (g_ref - anomaly) / g_ref)
         return self.r_base + jnp.sum(mixed * jnp.diff(self.r_faces))
+
+    def entropy_rate(self, t_shell, d_shell, t_c, heating, t_ref):
+        """Entropy production [W/K] of the shell (Greenwood et al. 2021, eq. 4): its cooling and
+        internal heating delivered at ``t_ref``, less conduction along its own gradient."""
+        gain = (
+            self.mass * (heating - self.profiles.c_p * d_shell) * (1.0 / t_ref - 1.0 / t_shell)
+        )
+        anomaly, _ = self._anomaly_gradient(t_shell, t_c)
+        faces = self.r_faces[:-1]
+        grad = self._adiabat_gradient(faces, t_c) + anomaly
+        t_inner = jnp.concatenate([self.profiles.adiabat(faces[:1], t_c), t_shell])
+        t_faces = jnp.concatenate([t_inner[:1], 0.5 * (t_inner[2:] + t_inner[1:-1])])
+        reach = jnp.diff(jnp.concatenate([self.r_faces[:1], self.r_cells]))
+        reach = reach.at[-1].add(self.profiles.r_cmb - self.r_cells[-1])  # the top half cell
+        sink = self.k_core * jnp.sum((grad / t_faces) ** 2 * self.area[:-1] * reach)
+        return jnp.sum(gain) - sink

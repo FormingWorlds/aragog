@@ -93,16 +93,6 @@ class CoreEntropyBudget:
         self.f_ohm = float(f_ohm)
         self.flux_geometry = flux_geometry
 
-    def _upper(self, t_cmb, q_cmb=None, t_layer=None):
-        """Convecting-volume top for the entropy integrals.
-
-        Defers to the energy budget, so one conductive-matching depth
-        reduces both budgets (the constructor enforces one shared
-        conductivity when stratification is on); the CMB radius when
-        stratification is off.
-        """
-        return self.budget.convecting_radius(t_cmb, q_cmb, t_layer)
-
     # -- entropy sink and sources --------------------------------------------
 
     def conduction_sink(self, upper=None):
@@ -117,54 +107,58 @@ class CoreEntropyBudget:
         top = p.r_cmb if upper is None else upper
         return 16.0 * jnp.pi * self.k_core * top**5 / (5.0 * p.d_scale**4)
 
-    def secular_entropy_capacity(self, t_cmb, upper=None):
+    def secular_entropy_capacity(self, t_cmb, upper=None, t_ref=None):
         """Entropy per unit cooling from secular cooling [J/K^2].
 
-        ``int rho c_p (Ta/T_cmb - 1) dV / T_cmb``: heat extracted at
-        temperature ``Ta`` and delivered at ``T_cmb`` produces entropy in
+        ``int rho c_p (Ta/T_ref - 1) dV / T_cmb``: heat extracted at
+        temperature ``Ta`` and delivered at ``T_ref`` (default ``T_cmb``) produces entropy in
         proportion to the temperature drop. Integrated over the
         convecting volume (``upper`` defaults to the CMB radius).
         """
         p = self.budget.profiles
+        scale = 1.0 if t_ref is None else t_cmb / t_ref
 
         def integrand(r):
             shape = p.adiabat(r, 1.0)
-            return p.density(r) * p.c_p * (shape - 1.0) * 4.0 * jnp.pi * r**2
+            return p.density(r) * p.c_p * (scale * shape - 1.0) * 4.0 * jnp.pi * r**2
 
         top = p.r_cmb if upper is None else upper
         return self.budget._quad_0_upper(top, integrand) / t_cmb
 
-    def latent_entropy_capacity(self, t_cmb):
+    def latent_entropy_capacity(self, t_cmb, t_ref=None):
         """Entropy per unit cooling from latent heat [J/K^2].
 
         The latent capacity released at ``T_icb`` and delivered at
-        ``T_cmb``: ``C_lat (T_icb - T_cmb) / (T_icb T_cmb)``.
+        ``T_ref`` (default ``T_cmb``): ``C_lat (T_icb - T_ref) / (T_icb T_ref)``.
         """
         b = self.budget
         radius = b.r_icb(t_cmb)
         t_icb = b.profiles.adiabat(radius, t_cmb)
-        return b.latent_capacity(t_cmb) * (t_icb - t_cmb) / (t_icb * t_cmb)
+        ref = t_cmb if t_ref is None else t_ref
+        return b.latent_capacity(t_cmb) * (t_icb - ref) / (t_icb * ref)
 
-    def gravitational_entropy_capacity(self, t_cmb, upper=None):
+    def gravitational_entropy_capacity(self, t_cmb, upper=None, t_ref=None):
         """Entropy per unit cooling from gravitational energy [J/K^2].
 
         Gravitational energy dissipates in full within the convecting
-        core: ``C_grav / T_cmb``.
+        core: ``C_grav / T_ref`` (default ``T_cmb``).
         """
-        return self.budget.gravitational_capacity(t_cmb, upper=upper) / t_cmb
+        ref = t_cmb if t_ref is None else t_ref
+        return self.budget.gravitational_capacity(t_cmb, upper=upper) / ref
 
-    def radiogenic_entropy(self, t_cmb, q_radio, upper=None):
+    def radiogenic_entropy(self, t_cmb, q_radio, upper=None, t_ref=None):
         """Entropy rate from internal heating [W/K].
 
-        ``int h rho (1/T_cmb - 1/Ta) dV`` with the heating rate per unit
+        ``int h rho (1/T_ref - 1/Ta) dV`` with the heating rate per unit
         mass ``h = q_radio / M_core`` uniform, integrated over the
-        convecting volume (``upper`` defaults to the CMB radius).
+        convecting volume (``upper`` defaults to the CMB radius, ``T_ref`` to ``T_cmb``).
         """
         p = self.budget.profiles
         mass = p.enclosed_mass(p.r_cmb)
+        ref = t_cmb if t_ref is None else t_ref
 
         def integrand(r):
-            inv_gap = 1.0 / t_cmb - 1.0 / p.adiabat(r, t_cmb)
+            inv_gap = 1.0 / ref - 1.0 / p.adiabat(r, t_cmb)
             return p.density(r) * inv_gap * 4.0 * jnp.pi * r**2
 
         top = p.r_cmb if upper is None else upper
@@ -172,27 +166,45 @@ class CoreEntropyBudget:
 
     # -- dynamo criterion ----------------------------------------------------
 
-    def entropy_margin(self, t_cmb, q_cmb, q_radio=0.0, t_layer=None):
+    def entropy_margin(self, t_cmb, q_cmb, q_radio=0.0, t_shell=None):
         """Entropy production available to the dynamo, ``dE`` [W/K].
 
         The cooling rate follows from the energy budget for the given heat
         flow, the three cooling-proportional sources scale with it, and
-        conduction subtracts. Positive margin sustains a dynamo. With
-        stratification enabled on the energy budget, every volume term
-        runs over the convecting region for this heat flow, so the layer
-        shrinks the sources and the sink together.
+        conduction subtracts. Positive margin sustains a dynamo. A stratified
+        core needs its shell temperatures ``t_shell``: the convecting core and the shell
+        each add their sources and sinks, all delivered at the CMB temperature, the top of
+        the shell (Greenwood et al. 2021, eq. 4).
         """
-        cooling = -self.budget.dtcmb_dt(t_cmb, q_cmb, q_sources=q_radio, t_layer=t_layer)
-        upper = self._upper(t_cmb, q_cmb, t_layer)
+        b = self.budget
+        if not b.stratification:
+            cooling = -b.dtcmb_dt(t_cmb, q_cmb, q_sources=q_radio)
+            capacity = (
+                self.secular_entropy_capacity(t_cmb)
+                + self.latent_entropy_capacity(t_cmb)
+                + self.gravitational_entropy_capacity(t_cmb)
+            )
+            return (
+                capacity * cooling
+                + self.radiogenic_entropy(t_cmb, q_radio)
+                - self.conduction_sink()
+            )
+        shell, upper = b.shell, b.r_convecting
+        d_core, d_shell = b.core_rates(t_cmb, t_shell, q_cmb, q_radio)
+        t_top = shell.top_temperature(t_shell)
         capacity = (
-            self.secular_entropy_capacity(t_cmb, upper=upper)
-            + self.latent_entropy_capacity(t_cmb)
-            + self.gravitational_entropy_capacity(t_cmb, upper=upper)
+            self.secular_entropy_capacity(t_cmb, upper=upper, t_ref=t_top)
+            + self.latent_entropy_capacity(t_cmb, t_ref=t_top)
+            + self.gravitational_entropy_capacity(
+                t_cmb, upper=shell.layer_base(t_shell, t_cmb), t_ref=t_top
+            )
         )
+        heating = q_radio / b.profiles.enclosed_mass(b.profiles.r_cmb)
         return (
-            capacity * cooling
-            + self.radiogenic_entropy(t_cmb, q_radio, upper=upper)
+            -capacity * d_core
+            + self.radiogenic_entropy(t_cmb, q_radio, upper=upper, t_ref=t_top)
             - self.conduction_sink(upper=upper)
+            + shell.entropy_rate(t_shell, d_shell, t_cmb, heating, t_top)
         )
 
     # -- field strength ------------------------------------------------------

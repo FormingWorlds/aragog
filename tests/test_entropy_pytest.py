@@ -2083,10 +2083,10 @@ class TestCoreModuleCoreBC:
         real_budget = solver._core_module_budget
 
         class _GuardedBudget:
-            def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0, t_layer=None):
+            def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
                 if t_cmb < 1.0:
                     return float('nan')
-                return real_budget.dtcmb_dt(t_cmb, q_cmb, q_sources=q_sources, t_layer=t_layer)
+                return real_budget.dtcmb_dt(t_cmb, q_cmb, q_sources=q_sources)
 
         solver._core_module_budget = _GuardedBudget()
         for t_bad in (-500.0, 0.0, 1.0):

@@ -11,7 +11,7 @@ content change.
 
 from __future__ import annotations
 
-import logging
+import importlib.util
 
 import numpy as np
 import pytest
@@ -359,80 +359,60 @@ def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
 
 
 STRATIFIED_PARAMS = {**CORE_MODULE_PARAMS, 'stratification': True, 'k_core': 130.0}
-FLOOR_WARNING = 'convecting-radius floor'
+needs_cvode = pytest.mark.skipif(
+    importlib.util.find_spec('scikits_odes_sundials') is None, reason='needs CVODE'
+)
 
 
+@needs_cvode
 @pytest.mark.physics_invariant
-def test_a_stratified_default_start_keeps_the_core_temperature(shared_eos, caplog, monkeypatch):
-    """With a layer old enough to outgrow its diffusion cap, the default start (T_core at the
-    mantle side of the CMB, so q = 0) sits on the convecting-radius floor with a CMB flow far
-    below 1e-3 Q_k: the floor check runs and does not warn, the convecting core loses its
-    adiabatic flow Q_ad(0.1 r_cmb) to the layer, and the core heat closes against the CMB."""
-    from aragog.core.budget import CONVECTING_FLOOR
-
-    solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=5.0)
-    solver.set_initial_layer_start(-1.0e10)
+def test_a_stratified_default_start_keeps_the_core_and_closes_its_heat():
+    """The default start puts the core at the mantle side of the CMB (no flux): the convecting
+    core and the top of the shell stay put over 5 yr, the core heat matches the CMB heat to the
+    integration error, and the shell holds no layer at its base."""
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(),
+        STRATIFIED_PARAMS,
+        end_time=5.0,
+        solver_method='cvode',
+    )
     solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
-    checks = []
-    check = solver._warn_on_convecting_floor
-    monkeypatch.setattr(
-        solver, '_warn_on_convecting_floor', lambda *a: (checks.append(a), check(*a))
+    solver.solve()
+    out, n = solver.get_state(), solver._n_stag
+    t0, t1 = (float(x) for x in solver._solution.y[n + 1, [0, -1]])
+    assert abs(t1 - t0) < 1e-3
+    assert out.core_T_shell.shape == (solver._core_module_budget.shell.n_cells,)
+    assert (
+        abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-2 * abs(out.step_dE_F_cmb_J) + 1e16
     )
-    with caplog.at_level(logging.WARNING):
-        solver.solve()
-    assert checks
-    for budget, t_traj, q_traj, age in checks:
-        floor = CONVECTING_FLOOR * budget.profiles.r_cmb
-        capped = [float(budget.convecting_radius(*x)) for x in zip(t_traj, q_traj, age)]
-        assert capped == [floor] * len(capped)
-    out = solver.get_state()
-    t0, t1 = (float(x) for x in solver._solution.y[solver._n_stag + 1, [0, -1]])
-    assert not any(FLOOR_WARNING in r.message for r in caplog.records)
-    q_floor = float(budget.conducted_adiabatic_flow(floor, t0))
-    c_floor = float(budget.effective_capacity(t0, 0.0))
-    assert t1 - t0 == pytest.approx(-q_floor / c_floor * 5.0 * 3.15576e7, rel=1e-3)
-    stored = q_floor * 5.0 * 3.15576e7
-    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, abs=1e-3 * stored)
 
 
+@needs_cvode
 @pytest.mark.physics_invariant
-@pytest.mark.parametrize('layer_start', [-1.0e10, None], ids=['old_layer', 'new_layer'])
-def test_a_cold_stratified_core_uses_the_floor_only_once_the_layer_has_grown(
-    shared_eos, caplog, layer_start
-):
-    """A core 300 K below the mantle (above the inner-core onset) gains heat through the CMB,
-    so the quasi-static layer spans the whole core. A 10 Gyr old layer has outgrown its
-    diffusion cap and sits on the convecting-radius floor (capacity about 700 times below the
-    full core's, core_bc.md) and warns once over two calls; a new layer is capped near the CMB
-    and does not warn. In both the convecting core loses the adiabatic flow at the layer base,
-    the layer stores that and the CMB inflow, and the core heat closes against the CMB heat."""
-    solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=5.0)
-    budget, n = solver._core_module_budget, solver._n_stag
-    S = _driven_s_profile(n)
-    p_cmb = float(solver._P_basic_flat[0])
-    t_m0 = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), S[:1])).item())
-    solver.set_initial_core_temperature(t_m0 - 300.0)
-    solver.set_initial_layer_start(layer_start)
-    solver.set_initial_entropy(S)
-    with caplog.at_level(logging.WARNING):
-        solver.solve()
-        out, y = solver.get_state(), np.array(solver._solution.y)
-        solver.solve()
-    old = layer_start is not None
-    assert out.core_layer_start_yr == (layer_start if old else 0.0)
-    assert sum(FLOOR_WARNING in r.message for r in caplog.records) == int(old)
-    assert out.step_dE_F_cmb_J < 0.0
-    t0, t1, age = y[n + 1, 0], y[n + 1, -1], -out.core_layer_start_yr * 3.15576e7
-    solver.dSdt(0.0, y[:, 0])
-    q0 = float(solver.state.heat_flux[0]) * solver._cmb_area
-    assert t1 - t0 == pytest.approx(
-        float(budget.dtcmb_dt(t0, q0, t_layer=age)) * 5 * 3.15576e7, rel=1e-2
+def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
+    """A core 300 K below the mantle gains heat through the CMB: the top shell cell warms toward
+    the mantle while the convecting core below barely changes, and the heat the core gains is
+    the heat booked out of the mantle."""
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(),
+        STRATIFIED_PARAMS,
+        end_time=5.0,
+        solver_method='cvode',
     )
-    c_floor = float(budget.effective_capacity(t0, -1.0e12))
-    assert 600.0 < float(budget.effective_capacity(t0, 1.0e14)) / c_floor < 800.0
-    assert (float(budget.effective_capacity(t0, q0, age)) == pytest.approx(c_floor)) is old
-    stored = abs(float(budget.base_heat_flow(t0, q0, age)) - q0) * 5 * 3.15576e7
-    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, abs=1e-4 * stored)
+    S = _driven_s_profile(solver._n_stag)
+    p_cmb = solver._P_basic_flat[:1]
+    t_m = float(np.asarray(solver.entropy_eos.temperature(p_cmb, S[:1])).item())
+    solver.set_initial_core_temperature(t_m - 300.0)
+    solver.set_initial_entropy(S)
+    solver.solve()
+    out, n = solver.get_state(), solver._n_stag
+    y = np.asarray(solver._solution.y)
+    assert out.step_dE_F_cmb_J < 0.0
+    assert y[-1, -1] - y[-1, 0] > 10.0 * abs(y[n + 1, -1] - y[n + 1, 0])
+    assert out.core_T_top == y[-1, -1]
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-4)  # 65 points
 
 
 @pytest.mark.parametrize('ra_crit', [0.0, -450.0, float('nan'), float('inf')])

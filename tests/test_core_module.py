@@ -212,6 +212,11 @@ FULL_PARAMS = dict(
     legacy_tfac=1.147,
     stratification=True,
     k_core=130.0,
+    layer_base_fraction=0.45,
+    layer_cells=32,
+    layer_top_cell=3.0e3,
+    layer_k_mix=1.0e6,
+    layer_g_mix=2.0e-3,
 )
 
 

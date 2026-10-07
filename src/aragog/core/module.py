@@ -67,6 +67,14 @@ _BUDGET_KEYS = frozenset(
         'k_core',
     }
 )
+# Shell settings of a stratified core: config key -> CoreShell keyword.
+_LAYER_KEYS = {
+    'layer_base_fraction': 'base_fraction',
+    'layer_cells': 'n_cells',
+    'layer_top_cell': 'top_cell',
+    'layer_k_mix': 'k_mix',
+    'layer_g_mix': 'g_mix',
+}
 # Every key build_core_module_budget accepts; both curves' keys are accepted whatever the
 # selector, since a config surface (the PROTEUS attrs block) carries every field.
 CORE_MODULE_KEYS = (
@@ -74,6 +82,7 @@ CORE_MODULE_KEYS = (
     | _CURVE_KEYS['iron']
     | _CURVE_KEYS['quadratic']
     | _BUDGET_KEYS
+    | set(_LAYER_KEYS)
     | {'melting_curve'}
 )
 
@@ -96,7 +105,8 @@ def build_core_module_budget(
     and the budget parameters (``ds_fusion``, ``icn_width``,
     ``latent_heat``, ``alpha_c``, ``c_light``, ``capacity_mode``,
     ``legacy_rho_core``, ``legacy_tfac``, ``stratification``,
-    ``k_core``). The CMB radius comes from the caller (the solver's
+    ``k_core``), and the shell of a stratified core (``layer_base_fraction``,
+    ``layer_cells``, ``layer_top_cell``, ``layer_k_mix``, ``layer_g_mix``). The CMB radius comes from the caller (the solver's
     mesh), never from the dict, and ``p_cmb`` falls back to the
     caller's value when absent.
 
@@ -157,14 +167,17 @@ def build_core_module_budget(
         curve = QuadraticMeltingCurve(**curve_kwargs)
 
     budget_kwargs = {k: params[k] for k in _BUDGET_KEYS if k in params}
+    layer = {v: params[k] for k, v in _LAYER_KEYS.items() if params.get(k) is not None}
+    if layer:
+        budget_kwargs['layer'] = layer
     return CoreEnergyBudget(profiles, curve, **budget_kwargs)
 
 
 class CoreModule:
     """Stateful core evolving under an externally supplied CMB heat flow.
 
-    A stratified budget runs here at its quasi-static layer depth: this standalone path
-    carries no layer age, so the diffusion cap of the solver does not apply.
+    The core is one temperature, so a stratified budget, whose shell is state, is refused;
+    the solver evolves it.
 
     Parameters
     ----------
@@ -195,6 +208,10 @@ class CoreModule:
             raise ValueError(f't_cmb must be positive, got {t_cmb}')
         if int(n_substeps) < 1:
             raise ValueError(f'n_substeps must be at least 1, got {n_substeps}')
+        if budget.stratification:
+            raise ValueError(
+                'CoreModule holds one core temperature; a stratified core needs the solver'
+            )
         self.budget = budget
         self.entropy = entropy
         self.t_cmb = float(t_cmb)
@@ -262,10 +279,7 @@ class CoreModule:
         ``nucleation_factor``, ``effective_capacity``, and the phase flags
         ``inner_core_present`` / ``fully_frozen``. With an entropy budget
         attached and ``q_cmb`` given, adds ``entropy_margin``,
-        ``dynamo_active``, and ``b_rms_core``. The heat flow feeds the
-        capacity too, so a stratified budget reports the capacity of the
-        convecting volume that actually drove the trajectory (and raises
-        its missing-flow error when ``q_cmb`` is omitted).
+        ``dynamo_active``, and ``b_rms_core``.
         """
         b = self.budget
         t = self.t_cmb
@@ -275,7 +289,7 @@ class CoreModule:
             't_cen': float(b.profiles.t_cen(t)),
             'r_icb': radius,
             'nucleation_factor': float(b.nucleation_factor(t)),
-            'effective_capacity': float(b.effective_capacity(t, q_cmb)),
+            'effective_capacity': float(b.effective_capacity(t)),
             'inner_core_present': bool(radius > 0.0),
             'fully_frozen': bool(~b._liquid_remains(t)),
             'regime': int(crystallization_regime(b, t)),
