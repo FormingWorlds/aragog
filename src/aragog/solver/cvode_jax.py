@@ -223,6 +223,8 @@ def build_jax_rhs_and_jacobian(
     try:
         import jax  # noqa: F401
         import jax.numpy as jnp
+
+        import aragog.jax.solver  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(
             'Option Z (JAX RHS + Jacobian) requires JAX and the '

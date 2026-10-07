@@ -1,4 +1,4 @@
-"""Tests for Option 1 JAX CVODE JIT caching and data pytree parameterization.
+"""Tests for JAX CVODE JIT caching and data pytree parameterization.
 
 Verifies:
 (a) Compile counter: 1 RHS and 1 Jacobian trace over repeated factory calls with
@@ -69,7 +69,14 @@ def _make_mesh(N: int = 10, scale_p: float = 1.0):
     )
 
 
-def _make_bc(mesh, outer_type: int = 4, inner_type: int = 2, outer_val: float = 0.0):
+def _make_bc(
+    mesh,
+    outer_type: int = 4,
+    inner_type: int = 2,
+    outer_val: float = 0.0,
+    param_utbl: bool = False,
+    param_utbl_const: float = 0.0,
+):
     from aragog.jax.solver import BoundaryParams
 
     r_cmb = float(mesh.radii_basic[0])
@@ -87,6 +94,8 @@ def _make_bc(mesh, outer_type: int = 4, inner_type: int = 2, outer_val: float = 
         cmb_area=4.0 * np.pi * r_cmb**2,
         core_M=(4.0 / 3.0) * np.pi * r_cmb**3 * 10500.0,
         cmb_dr_cmb=r_above - r_cmb,
+        param_utbl=param_utbl,
+        param_utbl_const=param_utbl_const,
     )
 
 
@@ -237,7 +246,7 @@ def test_compile_counter_a():
     assert _TRACE_COUNTERS['rhs'] == 2
     assert _TRACE_COUNTERS['jac'] == 2
 
-    # 3. Ruling 10: Changed outer_bc_type (4 -> 1)
+    # 3. Changed outer_bc_type (4 -> 1)
     bc_outer1 = _make_bc(mesh10, outer_type=1, inner_type=2)
     rhs_o1, jac_o1, _ = build_jax_rhs_and_jacobian(
         eos_jax=eos,
@@ -264,7 +273,7 @@ def test_compile_counter_a():
     assert np.max(np.abs(ydot - ydot_ref)) <= 1e-12 * np.max(np.abs(ydot_ref))
     assert np.max(np.abs(J - J_ref)) <= 1e-15 * np.max(np.abs(J_ref))
 
-    # 4. Ruling 10: Changed inner_bc_type (2 -> 0)
+    # 4. Changed inner_bc_type (2 -> 0)
     bc_inner0 = _make_bc(mesh10, outer_type=4, inner_type=0)
     rhs_i0, jac_i0, _ = build_jax_rhs_and_jacobian(
         eos_jax=eos,
@@ -290,6 +299,35 @@ def test_compile_counter_a():
     r_jac_ref_i0(0.0, y_nd, None, J_ref_i0)
     assert np.max(np.abs(ydot - ydot_ref_i0)) <= 1e-12 * np.max(np.abs(ydot_ref_i0))
     assert np.max(np.abs(J - J_ref_i0)) <= 1e-15 * np.max(np.abs(J_ref_i0))
+
+    # 5. Changed param_utbl (False -> True)
+    bc_utbl = _make_bc(
+        mesh10, outer_type=1, inner_type=2, param_utbl=True, param_utbl_const=1e-7
+    )
+    rhs_u, jac_u, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos,
+        phase_params=params,
+        mesh_arrays=mesh10,
+        boundary_params=bc_utbl,
+        heating_array=np.zeros(10),
+        scales=scales,
+        core_bc_mode='quasi_steady',
+    )
+    rhs_u(0.0, y_nd, ydot)
+    jac_u(0.0, y_nd, None, J)
+    assert _TRACE_COUNTERS['rhs'] == 5
+    assert _TRACE_COUNTERS['jac'] == 5
+
+    # Check parity with reference on param_utbl=True
+    r_rhs_ref_u, r_jac_ref_u, _ = _build_reference_factory(
+        eos, params, mesh10, bc_utbl, np.zeros(10), scales, 'quasi_steady'
+    )
+    ydot_ref_u = np.zeros(10)
+    J_ref_u = np.zeros((10, 10))
+    r_rhs_ref_u(0.0, y_nd, ydot_ref_u)
+    r_jac_ref_u(0.0, y_nd, None, J_ref_u)
+    assert np.max(np.abs(ydot - ydot_ref_u)) <= 1e-12 * np.max(np.abs(ydot_ref_u))
+    assert np.max(np.abs(J - J_ref_u)) <= 1e-14 * np.max(np.abs(J_ref_u))
 
 
 @needs_eos
@@ -355,7 +393,7 @@ def test_parity_with_pre_change_factory_b(core_bc_mode: str, use_radio: bool):
     assert rhs_ref(t_nd, y_nd, ydot_ref) == 0
     assert jac_ref(t_nd, y_nd, None, J_ref) == 0
 
-    # Tolerances per PLAN A2: RHS <= 1e-12 max|f|, Jacobian <= 1e-15 max|J|
+    # Tolerances: RHS <= 1e-12 max|f|, Jacobian <= 1e-15 max|J|
     max_f = np.max(np.abs(ydot_ref))
     assert np.isfinite(max_f) and max_f > 0.0
     diff_f = np.max(np.abs(ydot_cached - ydot_ref))
@@ -644,3 +682,112 @@ def test_lru_eviction_when_cache_exceeds_maxsize():
     rhs_ref(0.0, y_nd, ydot_ref)
     assert np.allclose(ydot, ydot_ref, atol=1e-12)
     assert np.allclose(ydot, ydot_0, atol=1e-12)
+
+
+@needs_eos
+def test_lru_cache_access_order_move_to_end():
+    """Verify accessing an earlier key moves it to most-recent, evicting the next oldest."""
+    from aragog.jax.phase import PhaseParams
+    from aragog.solver.cvode_jax import (
+        _CACHE_MAXSIZE,
+        _JIT_CACHE,
+        _get_or_create_jitted,
+        clear_jit_cache,
+    )
+
+    clear_jit_cache()
+    eos = entropy_eos_jax(EOS_DIR)
+    params_list = [PhaseParams() for _ in range(9)]
+
+    # 1. Insert 8 keys (keys 0 through 7)
+    for i in range(8):
+        _get_or_create_jitted('quasi_steady', False, params_list[i], eos)
+
+    assert len(_JIT_CACHE) == _CACHE_MAXSIZE
+    key_0 = ('quasi_steady', False, id(params_list[0]), id(eos))
+    key_1 = ('quasi_steady', False, id(params_list[1]), id(eos))
+    assert key_0 in _JIT_CACHE
+    assert key_1 in _JIT_CACHE
+
+    # 2. Access key 0: move_to_end should move key 0 to the MRU position
+    _, _, hit = _get_or_create_jitted('quasi_steady', False, params_list[0], eos)
+    assert hit is True
+
+    # 3. Insert 9th key (key 8): evicts the LRU item, which must now be key 1, NOT key 0
+    key_8 = ('quasi_steady', False, id(params_list[8]), id(eos))
+    _get_or_create_jitted('quasi_steady', False, params_list[8], eos)
+
+    assert len(_JIT_CACHE) == _CACHE_MAXSIZE
+    assert key_0 in _JIT_CACHE
+    assert key_1 not in _JIT_CACHE
+    assert key_8 in _JIT_CACHE
+
+
+@needs_eos
+def test_eos_jax_identity_guard_misses_on_forged_colliding_key():
+    """Verify cache miss when phase_params matches but eos_jax object differs."""
+    import copy
+
+    from aragog.jax.phase import PhaseParams
+    from aragog.solver.cvode_jax import (
+        _JIT_CACHE,
+        _get_or_create_jitted,
+        _JitCacheEntry,
+        clear_jit_cache,
+    )
+
+    clear_jit_cache()
+    eos1 = entropy_eos_jax(EOS_DIR)
+    eos2 = copy.copy(eos1)
+    assert eos1 is not eos2
+    params = PhaseParams()
+
+    # Populate cache for eos1
+    rhs_1, jac_1, hit_1 = _get_or_create_jitted('quasi_steady', False, params, eos1)
+    assert hit_1 is False
+
+    # Forge a cache collision entry keyed on id(eos2) but pointing to eos1
+    colliding_key = ('quasi_steady', False, id(params), id(eos2))
+    _JIT_CACHE[colliding_key] = _JitCacheEntry(rhs_1, jac_1, params, eos1)
+
+    # Calling with eos2 must detect that entry.eos_jax is not eos2, evict, and recompile
+    rhs_2, jac_2, hit_2 = _get_or_create_jitted('quasi_steady', False, params, eos2)
+    assert hit_2 is False
+    assert _JIT_CACHE[colliding_key].eos_jax is eos2
+
+
+def test_compute_radio_heating_closed_form():
+    """Verify compute_radio_heating matches analytical sum and Jacobian is finite for amp=0."""
+    from aragog.jax.solver import compute_radio_heating
+
+    # 3 isotopes of different half-lives; 3rd has zero amplitude (abundance=0)
+    hp = np.array([4.38e-11, 5.68e-11, 1.0e-10])
+    ab = np.array([1.0, 1.0, 0.0])
+    cn = np.array([3.1e-8, 1.24e-7, 1.0e-6])
+    t0 = np.array([4.55, 4.55, 4.55])
+    hl = np.array([7.17e5, 2.6e6, 1.0e5])
+    radio_arrays = (
+        jnp.asarray(hp),
+        jnp.asarray(ab),
+        jnp.asarray(cn),
+        jnp.asarray(t0),
+        jnp.asarray(hl),
+    )
+
+    t_val = 1.5e6  # t != t0
+    # Closed-form analytical formula
+    expected_sum = np.sum(hp * ab * cn * np.exp(np.log(2.0) * (t0 - t_val) / hl))
+
+    calc_val = float(compute_radio_heating(t_val, radio_arrays))
+    assert np.isclose(calc_val, expected_sum, rtol=1e-14, atol=1e-25)
+
+    # Check Jacobian with respect to t is finite and non-NaN
+    grad_fn = jax.grad(compute_radio_heating, argnums=0)
+    dt_val = float(grad_fn(t_val, radio_arrays))
+    assert np.isfinite(dt_val)
+    assert not np.isnan(dt_val)
+
+    expected_dt = np.sum(
+        hp * ab * cn * (-np.log(2.0) / hl) * np.exp(np.log(2.0) * (t0 - t_val) / hl)
+    )
+    assert np.isclose(dt_val, expected_dt, rtol=1e-14, atol=1e-25)

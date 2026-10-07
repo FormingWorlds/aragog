@@ -6,7 +6,9 @@ NumPy binary (.npz) archives with integrity hashing.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import logging
 import os
 import tempfile
@@ -16,29 +18,9 @@ from typing import Any
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('fwl.' + __name__)
 
 CACHE_FORMAT_VERSION = 1
-
-
-def _compute_source_digest(filepath: Path) -> str:
-    """Compute blake2b cryptographic digest of file contents.
-
-    Parameters
-    ----------
-    filepath : Path
-        Target file to digest.
-
-    Returns
-    -------
-    str
-        Hexadecimal blake2b digest string.
-    """
-    hasher = hashlib.blake2b()
-    with open(filepath, 'rb') as f:
-        while chunk := f.read(1024 * 1024):
-            hasher.update(chunk)
-    return hasher.hexdigest()
 
 
 def _resolve_cache_path(
@@ -140,37 +122,33 @@ def _write_cache_file(
     usecols_str : str
         String representation of selected columns.
     """
+    cache_dir = cache_path.parent
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=cache_dir,
+        prefix=f'.{cache_path.stem}_',
+        suffix='.npz',
+        delete=False,
+    ) as tf:
+        temp_path = Path(tf.name)
     try:
-        cache_dir = cache_path.parent
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            dir=cache_dir,
-            prefix=f'.{cache_path.stem}_',
-            suffix='.npz',
-            delete=False,
-        ) as tf:
-            temp_path = Path(tf.name)
-        try:
-            np.savez(
-                temp_path,
-                data=data,
-                format_version=np.int64(CACHE_FORMAT_VERSION),
-                source_size=np.int64(source_size),
-                source_digest=np.array(source_digest),
-                skiprows=np.int64(skiprows),
-                dtype=np.array(dtype_str),
-                usecols=np.array(usecols_str),
-            )
-            try:
-                os.chmod(temp_path, 0o644)
-            except OSError:
-                pass
-            os.replace(temp_path, cache_path)
-        finally:
-            if temp_path.exists():
-                temp_path.unlink(missing_ok=True)
-    except (OSError, PermissionError) as exc:
-        logger.debug('Failed to write table cache %s: %s', cache_path, exc)
+        np.savez(
+            temp_path,
+            data=data,
+            format_version=np.int64(CACHE_FORMAT_VERSION),
+            source_size=np.int64(source_size),
+            source_digest=np.array(source_digest),
+            skiprows=np.int64(skiprows),
+            dtype=np.array(dtype_str),
+            usecols=np.array(usecols_str),
+        )
+        current_umask = os.umask(0)
+        os.umask(current_umask)
+        with contextlib.suppress(OSError):
+            os.chmod(temp_path, 0o666 & ~current_umask)
+        os.replace(temp_path, cache_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def read_cached_table(
@@ -218,8 +196,9 @@ def read_cached_table(
         dtype_str = str(np.dtype(dtype))
     usecols_str = str(usecols) if usecols is not None else ''
 
-    source_size = fp.stat().st_size
-    source_digest = _compute_source_digest(fp)
+    raw = fp.read_bytes()
+    source_size = len(raw)
+    source_digest = hashlib.blake2b(raw).hexdigest()
 
     cache_path = _resolve_cache_path(fp, skiprows, dtype_str, usecols_str)
     if cache_path is not None and cache_path.is_file():
@@ -249,10 +228,10 @@ def read_cached_table(
             )
 
     try:
-        data = np.loadtxt(fp, skiprows=skiprows, dtype=dtype, usecols=usecols)
+        data = np.loadtxt(io.BytesIO(raw), skiprows=skiprows, dtype=dtype, usecols=usecols)
     except ValueError:
         data = np.genfromtxt(
-            fp,
+            io.BytesIO(raw),
             skip_header=skiprows,
             dtype=dtype,
             usecols=usecols,

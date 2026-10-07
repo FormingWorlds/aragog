@@ -6,6 +6,7 @@ concurrency safety, and dataset directory preservation.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from concurrent.futures import ProcessPoolExecutor
@@ -17,6 +18,8 @@ import pytest
 from aragog.eos.table_cache import (
     read_cached_table,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def _worker_read(args: tuple[Path, int]) -> np.ndarray:
@@ -241,15 +244,19 @@ class TestTableCache:
         assert table_file.read_text() == orig_text
 
     def test_cache_permissions_respect_umask(self, tmp_path: Path) -> None:
-        """Verify cache file permissions are open to group and world according to umask."""
-        table_file = tmp_path / 'table_perm.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
-
-        read_cached_table(table_file)
-        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
-        assert cache_file.is_file()
-        mode = cache_file.stat().st_mode & 0o777
-        assert mode & 0o444 == 0o444
+        """Verify cache file permissions respect process umask."""
+        for umask_val, expected_mode in [(0o077, 0o600), (0o022, 0o644)]:
+            orig_umask = os.umask(umask_val)
+            try:
+                table_file = tmp_path / f'table_perm_{umask_val:o}.dat'
+                table_file.write_text('1.0 2.0\n3.0 4.0\n')
+                read_cached_table(table_file)
+                cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
+                assert cache_file.is_file()
+                mode = cache_file.stat().st_mode & 0o777
+                assert mode == expected_mode
+            finally:
+                os.umask(orig_umask)
 
     def test_corrupt_type_error_metadata_fallback(self, tmp_path: Path) -> None:
         """Verify fallback when metadata contains malformed non-scalar types."""
@@ -374,6 +381,38 @@ class TestTableCache:
         arr = read_cached_table(table_file)
         assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
         assert not table_file.with_name(f'{table_file.name}.cache.npz').exists()
+        leftover_temp = list(tmp_path.glob('.replace_fail*.npz'))
+        assert not leftover_temp
+
+    def test_concurrent_rewrite_during_parse(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify modifying file on disk during parse does not corrupt cached data or digest."""
+        table_file = tmp_path / 'rewrite_during_parse.dat'
+        table_file.write_text('1.0 2.0\n3.0 4.0\n')
+        orig_data = np.array([[1.0, 2.0], [3.0, 4.0]])
+        orig_digest = hashlib.blake2b(table_file.read_bytes()).hexdigest()
+
+        orig_loadtxt = np.loadtxt
+
+        def loadtxt_with_rewrite(source, *args, **kwargs):
+            # Overwrite file on disk concurrently during parsing
+            table_file.write_text('99.0 99.0\n99.0 99.0\n')
+            return orig_loadtxt(source, *args, **kwargs)
+
+        monkeypatch.setattr(np, 'loadtxt', loadtxt_with_rewrite)
+
+        arr = read_cached_table(table_file)
+        assert np.array_equal(arr, orig_data)
+
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
+        assert cache_file.is_file()
+        with np.load(cache_file) as npz:
+            cached_digest = str(npz['source_digest'])
+            cached_data = np.array(npz['data'])
+
+        assert cached_digest == orig_digest
+        assert np.array_equal(cached_data, orig_data)
 
     def test_missing_source_raises_filenotfound(self, tmp_path: Path) -> None:
         """Verify non-existent table file raises FileNotFoundError."""
