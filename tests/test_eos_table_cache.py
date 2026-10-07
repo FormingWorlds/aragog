@@ -107,6 +107,9 @@ class TestTableCache:
         finally:
             ro_dir.chmod(0o755)
 
+        temp_files = list(ro_dir.glob('.*.npz'))
+        assert not temp_files, f'Temp files left in {ro_dir}: {temp_files}'
+
     def test_corrupt_or_truncated_cache_recovery(self, tmp_path: Path) -> None:
         """Verify recovery and rewrite when cache file is corrupt or truncated."""
         table_file = tmp_path / 'corrupt_table.dat'
@@ -145,6 +148,55 @@ class TestTableCache:
         assert cache_file.is_file()
         with np.load(cache_file) as npz:
             assert np.array_equal(npz['data'], results[0])
+
+        temp_files = list(tmp_path.glob('.*.npz'))
+        assert not temp_files, f'Temp files left in {tmp_path}: {temp_files}'
+
+    def test_cache_write_deterministic_atomicity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify cache write uses a temporary file and replaces atomically."""
+        table_file = tmp_path / 'atomic_table.dat'
+        table_file.write_text('1.0 2.0\n3.0 4.0\n')
+        expected_cache = table_file.with_name(f'{table_file.name}.cache.npz')
+
+        savez_calls: list[tuple[Path, bool]] = []
+        real_savez = np.savez
+
+        def recording_savez(file, *args, **kwargs):
+            savez_calls.append((Path(file), expected_cache.exists()))
+            return real_savez(file, *args, **kwargs)
+
+        replace_calls: list[tuple[Path, Path]] = []
+        real_replace = os.replace
+
+        def recording_replace(src, dst):
+            replace_calls.append((Path(src), Path(dst)))
+            return real_replace(src, dst)
+
+        monkeypatch.setattr('aragog.eos.table_cache.np.savez', recording_savez)
+        monkeypatch.setattr('aragog.eos.table_cache.os.replace', recording_replace)
+
+        arr = read_cached_table(table_file)
+        assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
+
+        assert len(savez_calls) == 1
+        written_path, target_existed_during_save = savez_calls[0]
+
+        assert written_path != expected_cache
+        assert not target_existed_during_save
+        assert written_path.parent == expected_cache.parent
+        assert written_path.name.startswith(f'.{expected_cache.stem}_')
+        assert written_path.name.endswith('.npz')
+
+        assert len(replace_calls) == 1
+        src_path, dst_path = replace_calls[0]
+        assert src_path == written_path
+        assert dst_path == expected_cache
+        assert expected_cache.is_file()
+
+        temp_files = list(tmp_path.glob('.*.npz'))
+        assert not temp_files, f'Temp files left in {tmp_path}: {temp_files}'
 
     def test_fwl_data_dataset_dir_untouched(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
