@@ -556,10 +556,11 @@ def dSdt_core_module(
         Extended state vector (entropy, dSdr_cmb, T_core).
     args : tuple
         ``(eos, params, mesh, bc, heating_static, H_radio_fn,
-        core_budget, q_radio_core, ra_crit)``: the ``dSdt`` six plus the
-        ``aragog.core.CoreEnergyBudget`` whose ``dtcmb_dt`` closes the
-        boundary, the constant core internal source power [W], and the
-        critical Rayleigh number of the CMB boundary layer.
+        core_budget, q_radio_core, ra_crit[, layer_start])``: the ``dSdt`` six
+        plus the ``aragog.core.CoreEnergyBudget`` whose ``dtcmb_dt`` closes the
+        boundary, the constant core internal source power [W], the critical
+        Rayleigh number of the CMB boundary layer and, for a stratified budget,
+        the onset time [yr] of the layer, whose age caps its depth.
 
     Returns
     -------
@@ -567,7 +568,19 @@ def dSdt_core_module(
         d(state_ext)/dt at the same layout, [J/kg/K/yr] for entropy,
         [J/kg/K/m/yr] for dSdr_cmb, [K/yr] for T_core.
     """
-    eos, params, mesh, bc, heating_static, H_radio_fn, core_budget, q_radio_core, ra_crit = args
+    (
+        eos,
+        params,
+        mesh,
+        bc,
+        heating_static,
+        H_radio_fn,
+        core_budget,
+        q_radio_core,
+        ra_crit,
+        *layer,
+    ) = args
+    t_layer = (t - layer[0]) * SECS_PER_YEAR if layer else None
     heating = heating_static + H_radio_fn(t)
     n_stag = mesh.P_stag.shape[0]
     S = state_ext[:n_stag]
@@ -633,6 +646,7 @@ def dSdt_core_module(
         jnp.maximum(t_core, 1.0),
         E_tot_cmb,
         q_sources=q_radio_core,
+        t_layer=t_layer,
     )
     # The CMB basic node rides on the core: its temperature changes at
     # the core cooling rate, converted through the node's own cp/T.

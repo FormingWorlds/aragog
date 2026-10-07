@@ -970,6 +970,10 @@ class SolverOutput:
     tcore_change_max: float = 0.0
     tcore_change_exceeded: bool = False
 
+    # Onset time [yr] of the stratified core layer (core_module with stratification), NaN
+    # otherwise; a resumed run passes it back through ``set_initial_layer_start``.
+    core_layer_start_yr: float = float('nan')
+
     # ── NetCDF output ──────────────────────────────────────────────
     @property
     def failed(self) -> bool:
@@ -1187,6 +1191,12 @@ class SolverOutput:
                 float(self.tcore_change_max),
                 'K',
                 'Largest per-solve core-temperature change from solve entry',
+            )
+            _scalar(
+                'core_layer_start_yr',
+                float(self.core_layer_start_yr),
+                'yr',
+                'Onset time of the stratified core layer (NaN without one)',
             )
             _scalar(
                 'tcore_change_exceeded',
@@ -2179,6 +2189,39 @@ class EntropySolver:
         logger.info('Cold-start dSdr_cmb from FD: %.3e J/kg/K/m', dSdr_cmb_init)
         return dSdr_cmb_init
 
+    def set_initial_layer_start(self, t_start: float | None) -> None:
+        """Set the onset time [yr] of the stratified core layer for the next solve.
+
+        For a resumed run: the value of ``core_layer_start_yr`` in the output of the
+        last solve before the restart. ``None`` (or NaN) lets the next solve decide.
+        """
+        self._layer_start_override = t_start
+
+    def _resolve_layer_start(self, start_time: float) -> None:
+        """Onset time [yr] of the stratified layer for this solve.
+
+        A set override wins; otherwise a layer that was stratified at the end of the
+        previous solve keeps its onset, and any other start (a first solve, or a layer
+        that eroded because the CMB heat flow turned superadiabatic) begins at this
+        solve's start time. Onsets therefore resolve to one solver call.
+        """
+        budget = getattr(self, '_core_module_budget', None)
+        if self._core_bc != 'core_module' or budget is None or not budget.stratification:
+            self._core_layer_start_yr = None
+            return
+        override = getattr(self, '_layer_start_override', None)
+        self._layer_start_override = None
+        kept = getattr(self, '_core_layer_start_yr', None)
+        if override is not None and np.isfinite(override):
+            self._core_layer_start_yr = float(override)
+        elif kept is None or not getattr(self, '_core_layer_stratified_end', False):
+            self._core_layer_start_yr = float(start_time)
+
+    def _core_layer_age_s(self, time):
+        """Age [s] of the stratified layer at model time ``time`` [yr], or ``None``."""
+        start = getattr(self, '_core_layer_start_yr', None)
+        return None if start is None else (time - start) * SECS_PER_YEAR
+
     def set_initial_core_temperature(self, T_core_init: float | None) -> None:
         """Set the initial core temperature (``bower2018`` / ``core_module``).
 
@@ -2525,6 +2568,7 @@ class EntropySolver:
                 T_cmb_basic=T_cmb_basic,
                 cp_cmb_basic=cp_cmb_basic,
                 t_core=t_core,
+                t_layer=self._core_layer_age_s(float(time)),
             )
             return np.concatenate(
                 [
@@ -2683,6 +2727,7 @@ class EntropySolver:
         T_cmb_basic: float,
         cp_cmb_basic: float,
         t_core: float,
+        t_layer: float | None = None,
     ) -> tuple[float, float]:
         """Boundary-state derivatives for ``core_bc='core_module'``.
 
@@ -2718,6 +2763,9 @@ class EntropySolver:
         t_core : float
             Integrated core temperature state [K]; the budget's
             capacity is evaluated here, not at the mantle-side node.
+        t_layer : float or None
+            Age of the stratified layer [s], which caps its depth; ``None``
+            without stratification.
 
         Returns
         -------
@@ -2736,6 +2784,7 @@ class EntropySolver:
                 max(float(t_core), 1.0),
                 q_cmb,
                 q_sources=self._core_module_q_radio,
+                t_layer=t_layer,
             )
         )
         # The CMB basic node rides on the core: its temperature changes
@@ -3498,6 +3547,7 @@ class EntropySolver:
         wall_start = time.perf_counter()
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
+        self._resolve_layer_start(start_time)
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
         # Tight tolerance is necessary to resolve the crystallisation
         # front and prevent cumulative integration error during long
@@ -4196,7 +4246,8 @@ class EntropySolver:
                 args = (np.concatenate(t_quad_list),)
                 weights_all = np.concatenate(weight_list)
             else:
-                args = (t_core_traj, P_F_cmb)
+                t_layer = self._core_layer_age_s(np.asarray(t_pts, dtype=float))
+                args = (t_core_traj, P_F_cmb) + (() if t_layer is None else (t_layer,))
             try:
                 c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
                 if c_eff_fn is None:
@@ -4214,8 +4265,12 @@ class EntropySolver:
             else:
                 dT_core = np.diff(t_core_traj)
                 step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
+                q_k_end = budget.conducted_adiabatic_flow(
+                    budget.profiles.r_cmb, t_core_traj[-1]
+                )
+                self._core_layer_stratified_end = bool(P_F_cmb[-1] < float(q_k_end))
                 if not getattr(self, '_floor_warned', False):
-                    self._warn_on_convecting_floor(budget, t_core_traj, P_F_cmb)
+                    self._warn_on_convecting_floor(budget, t_core_traj, P_F_cmb, t_layer)
         elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:
@@ -4327,7 +4382,7 @@ class EntropySolver:
             [p_int, p_cmb, Q_radio_i, Q_tidal_i, Q_radio_cons_i, Q_tidal_cons_i, lhs_i - rhs_i]
         )
 
-    def _warn_on_convecting_floor(self, budget, t_core, q_cmb) -> None:
+    def _warn_on_convecting_floor(self, budget, t_core, q_cmb, t_layer=None) -> None:
         """Warn once when a stratified core sits on its convecting-radius floor.
 
         The layer base reaches the floor (``CONVECTING_FLOOR`` of the CMB radius) where the CMB
@@ -4336,6 +4391,8 @@ class EntropySolver:
         covers a net drive above ``1e-3 Q_k`` (``Q_k`` the conducted flow at the CMB), where
         the floor capacity sets a visible rate outside the quasi-static layer model's range.
         """
+        import jax
+
         from aragog.core.budget import CONVECTING_FLOOR
 
         r_cmb = budget.profiles.r_cmb
@@ -4343,6 +4400,11 @@ class EntropySolver:
         q_k = np.asarray(budget.conducted_adiabatic_flow(r_cmb, t_core))
         drive = getattr(self, '_core_module_q_radio', 0.0) - q_cmb
         on_floor = (q_cmb <= q_floor) & (np.abs(drive) > 1.0e-3 * q_k)
+        if (
+            t_layer is not None
+        ):  # a younger layer than its diffusion length to the floor is above it
+            reach = np.asarray(jax.vmap(budget.convecting_radius)(t_core, q_cmb, t_layer))
+            on_floor &= reach <= CONVECTING_FLOOR * r_cmb
         if on_floor.any():
             i = int(np.argmax(on_floor))
             self._floor_warned = True
@@ -4869,6 +4931,11 @@ class EntropySolver:
             cvode_flag_name=str(getattr(sol, 'cvode_flag_name', 'N/A')),
             tcore_change_max=tcore_change_max,
             tcore_change_exceeded=tcore_change_exceeded,
+            core_layer_start_yr=float(
+                np.nan
+                if getattr(self, '_core_layer_start_yr', None) is None
+                else self._core_layer_start_yr
+            ),
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,

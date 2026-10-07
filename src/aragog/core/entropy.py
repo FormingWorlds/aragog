@@ -93,7 +93,7 @@ class CoreEntropyBudget:
         self.f_ohm = float(f_ohm)
         self.flux_geometry = flux_geometry
 
-    def _upper(self, t_cmb, q_cmb=None):
+    def _upper(self, t_cmb, q_cmb=None, t_layer=None):
         """Convecting-volume top for the entropy integrals.
 
         Defers to the energy budget, so one conductive-matching depth
@@ -101,7 +101,7 @@ class CoreEntropyBudget:
         conductivity when stratification is on); the CMB radius when
         stratification is off.
         """
-        return self.budget.convecting_radius(t_cmb, q_cmb)
+        return self.budget.convecting_radius(t_cmb, q_cmb, t_layer)
 
     # -- entropy sink and sources --------------------------------------------
 
@@ -172,7 +172,7 @@ class CoreEntropyBudget:
 
     # -- dynamo criterion ----------------------------------------------------
 
-    def entropy_margin(self, t_cmb, q_cmb, q_radio=0.0):
+    def entropy_margin(self, t_cmb, q_cmb, q_radio=0.0, t_layer=None):
         """Entropy production available to the dynamo, ``dE`` [W/K].
 
         The cooling rate follows from the energy budget for the given heat
@@ -182,8 +182,8 @@ class CoreEntropyBudget:
         runs over the convecting region for this heat flow, so the layer
         shrinks the sources and the sink together.
         """
-        cooling = -self.budget.dtcmb_dt(t_cmb, q_cmb, q_sources=q_radio)
-        upper = self._upper(t_cmb, q_cmb)
+        cooling = -self.budget.dtcmb_dt(t_cmb, q_cmb, q_sources=q_radio, t_layer=t_layer)
+        upper = self._upper(t_cmb, q_cmb, t_layer)
         capacity = (
             self.secular_entropy_capacity(t_cmb, upper=upper)
             + self.latent_entropy_capacity(t_cmb)

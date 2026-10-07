@@ -21,6 +21,7 @@ import functools
 import jax
 import jax.numpy as jnp
 import numpy as _np
+from scipy.special import erfcinv
 
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
@@ -29,6 +30,9 @@ from aragog.core.stratification import _q_ad, make_thickness_fn
 jax.config.update('jax_enable_x64', True)
 
 CONVECTING_FLOOR = 0.1  # floor of the convecting radius, as a fraction of r_cmb
+# Diffusion-length prefactor of the stratified layer: depth where a conducted heat-flow
+# deficit erfc(z / 2 sqrt(kappa t)) has decayed to 10 %, 2 erfcinv(0.1).
+LAYER_DIFFUSION_PREFACTOR = 2.0 * float(erfcinv(0.1))
 
 _GL_X, _GL_W = _np.polynomial.legendre.leggauss(48)
 _GL_X = jnp.asarray(_GL_X)
@@ -153,11 +157,14 @@ class CoreEnergyBudget:
 
     # -- stratified layer -----------------------------------------------------
 
-    def convecting_radius(self, t_cmb, q_cmb=None):
+    def convecting_radius(self, t_cmb, q_cmb=None, t_layer=None):
         """Upper radius [m] of the convecting core.
 
         The CMB radius when stratification is off; otherwise the base of
-        the equilibrium stratified layer, floored at 10% of the CMB
+        the stratified layer: the quasi-static depth where ``Q_ad = q_cmb``,
+        capped, when the layer age ``t_layer`` [s] is given, by the diffusion
+        length ``LAYER_DIFFUSION_PREFACTOR sqrt(kappa t_layer)`` with ``kappa``
+        the core diffusivity at the CMB; floored at 10% of the CMB
         radius so a fully stratified transient cannot collapse the
         capacity integrals to zero volume. At that floor the effective
         thermal inertia is orders of magnitude below the full core's:
@@ -182,6 +189,10 @@ class CoreEnergyBudget:
                 'effective_capacity need the CMB heat flow q_cmb'
             )
         thickness = self._thickness_fn(t_cmb, q_cmb)
+        if t_layer is not None:
+            kappa = self.k_core / (p.density(p.r_cmb) * p.c_p)
+            grown = LAYER_DIFFUSION_PREFACTOR * jnp.sqrt(kappa * jnp.maximum(t_layer, 0.0))
+            thickness = jnp.minimum(thickness, grown)
         return jnp.maximum(p.r_cmb - thickness, CONVECTING_FLOOR * p.r_cmb)
 
     def conducted_adiabatic_flow(self, r, t_cmb):
@@ -402,7 +413,7 @@ class CoreEnergyBudget:
 
     # -- assembled budget ----------------------------------------------------
 
-    def effective_capacity(self, t_cmb, q_cmb=None):
+    def effective_capacity(self, t_cmb, q_cmb=None, t_layer=None):
         """Total dQ/d(dT_cmb/dt) [J/K]: secular plus latent plus
         gravitational (profile mode).
 
@@ -412,7 +423,7 @@ class CoreEnergyBudget:
         """
         if self.capacity_mode == 'legacy':
             return self.secular_capacity()
-        upper = self.convecting_radius(t_cmb, q_cmb)
+        upper = self.convecting_radius(t_cmb, q_cmb, t_layer)
         return (
             self.secular_capacity(upper=upper)
             + self.latent_capacity(t_cmb)
@@ -456,12 +467,12 @@ class CoreEnergyBudget:
             released += 0.5 * (hi - lo) * float(jnp.sum(_GL_W * values))
         return secular - released
 
-    def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
+    def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0, t_layer=None):
         """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of the core.
 
         ``dT_cmb/dt = (q_sources - q_cmb) / C_eff(T_cmb)``; positive
         ``q_cmb`` cools the core, and internal sources (radiogenic, tidal)
         offset it. With stratification enabled the capacity is evaluated
-        over the convecting volume for this heat flow.
+        over the convecting volume for this heat flow and layer age.
         """
-        return (q_sources - q_cmb) / self.effective_capacity(t_cmb, q_cmb)
+        return (q_sources - q_cmb) / self.effective_capacity(t_cmb, q_cmb, t_layer)

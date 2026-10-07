@@ -219,7 +219,7 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
         def __init__(self, inner):
             self.inner = inner
 
-        def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
+        def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0, t_layer=None):
             return jnp.where(
                 t_cmb < 1.0,
                 jnp.nan,

@@ -1003,6 +1003,8 @@ def test_step_energy_stratified_core_module_and_fallback():
     mock_budget = SimpleNamespace(
         stratification=True,
         effective_capacity=lambda t, q: 2e27,
+        profiles=SimpleNamespace(r_cmb=1.0),
+        conducted_adiabatic_flow=lambda r, t: 0.0,
     )
     s._core_module_budget = mock_budget
     s._floor_warned = True  # the floor check needs a real profile
