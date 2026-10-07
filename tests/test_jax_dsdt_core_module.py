@@ -509,14 +509,12 @@ def test_jacobian_core_column_matches_central_differences(state):
         from aragog.jax.nondim import NonDimScales
         from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
+        scales = NonDimScales(state_scale=np.ones(n + 2), t_ref=1.0)
+        kw = dict(
+            core_module_budget=budget, core_module_q_radio=args[7], core_module_layer_start=-1e7
+        )
         rhs_fn, _, _ = build_jax_rhs_and_jacobian(
-            *args[:5],
-            NonDimScales(state_scale=np.ones(n + 2), t_ref=1.0),
-            core_bc_mode='core_module',
-            core_module_budget=budget,
-            core_module_q_radio=args[7],
-            core_module_ra_crit_cmb=args[8],
-            core_module_layer_start=-1.0e7,
+            *args[:5], scales, 'core_module', core_module_ra_crit_cmb=args[8], **kw
         )
         out = np.empty(n + 2)
         rhs_fn(0.0, y, out)

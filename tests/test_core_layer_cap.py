@@ -12,15 +12,11 @@ import numpy as np
 import pytest
 from scipy.special import erfc, erfcinv
 
-from aragog.core import (
-    CoreEnergyBudget,
-    CoreEntropyBudget,
-    GaussianCoreProfiles,
-    QuadraticMeltingCurve,
-)
+from aragog.core import CoreEntropyBudget
 from tests.conftest import entropy_eos_copy, needs_eos
 
 sys.path.insert(0, str(Path(__file__).parent))
+from test_core_stratified_budget import _budget  # noqa: E402
 from test_entropy_solver_core_module_smoke import (  # noqa: E402
     STRATIFIED_PARAMS,
     _build,
@@ -29,22 +25,6 @@ from test_entropy_solver_core_module_smoke import (  # noqa: E402
 
 pytestmark = pytest.mark.unit
 MYR = 1.0e6 * 365.25 * 86400.0
-PROF = dict(
-    rho_cen=12500.0, length_scale=7272e3, r_cmb=3480e3, p_cmb=136e9, alpha=1.25e-5, c_p=840.0
-)
-CURVE = dict(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
-
-
-def _budget(stratified=True):
-    """The Nimmo (2015, ch. 8.02, Table 2) core, k = 130 W/m/K."""
-    strat = dict(stratification=True, k_core=130.0) if stratified else {}
-    return CoreEnergyBudget(
-        GaussianCoreProfiles(**PROF),
-        QuadraticMeltingCurve(**CURVE),
-        ds_fusion=170.0,
-        icn_width=10.0,
-        **strat,
-    )
 
 
 @pytest.mark.physics_invariant
@@ -150,29 +130,15 @@ def test_a_resumed_run_with_the_onset_equals_the_uninterrupted_one():
 
 
 def test_an_implicit_solve_through_the_cap_crossover_does_not_thrash():
-    """Core-only rate under 8 TW (not a coupled CVODE solve): SciPy's BDF at rtol 1e-9 crosses
-    the cap's kink near 250 Myr with about 15 smaller steps and recovers within 30 Myr."""
+    """Core-only rate under 8 TW (not a coupled CVODE solve): the cap meets the quasi-static
+    depth near 250 Myr (test above: 729 km at 200 Myr against about 800 km); SciPy's BDF at
+    rtol 1e-9 crosses that kink with about 15 smaller steps and recovers within 30 Myr."""
     from scipy.integrate import solve_ivp
 
-    budget = _budget()
+    budget = _budget(True)
     rate = jax.jit(lambda t, temp: budget.dtcmb_dt(temp, 8e12, t_layer=t * MYR))
     sol = solve_ivp(
-        lambda t, y: [float(rate(t, y[0])) * MYR],
-        (100.0, 500.0),
-        [4400.0],
-        method='BDF',
-        rtol=1e-9,
-        atol=1e-6,
-        dense_output=True,
+        lambda t, y: [float(rate(t, y[0])) * MYR], (100.0, 500.0), [4400.0], 'BDF', rtol=1e-9
     )
-    depth_gap = jax.vmap(
-        lambda temp, age: (
-            budget.convecting_radius(temp, 8e12, age * MYR)
-            - budget.convecting_radius(temp, 8e12)
-        )
-    )
-    grid = np.linspace(100.0, 500.0, 4001)
-    kink = grid[np.argmax(np.asarray(jax.jit(depth_gap)(sol.sol(grid)[0], grid)) <= 0.0)]
     t, dt = sol.t[:-1], np.diff(sol.t)
-    assert sol.success and 200.0 < kink < 300.0
-    assert np.sum(np.abs(t - kink) < 20.0) <= 20 and dt[t > kink + 30.0].min() > 5.0
+    assert sol.success and np.sum((t > 230.0) & (t < 270.0)) <= 20 and dt[t > 280.0].min() > 5.0

@@ -699,7 +699,7 @@ def item6_leeds_terms() -> None:
     record(6, 'conduction_sink_rel', abs(float(ent.conduction_sink()) / th['Ek'][0] - 1))
     record(6, 'enrichment_end', enrich[-1])
     time = th['time_myr']
-    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(WIDTH, 6.0))
+    fig, (ax, ax2, ax3) = plt.subplots(3, 1, figsize=(WIDTH, 8.4))
     styles = {
         'secular': ('-', colour('solar', 'C1')),
         'latent': ('-', CORE),
@@ -728,12 +728,15 @@ def item6_leeds_terms() -> None:
     ax.set_ylabel('|aragog / Leeds - 1|')
     ax.set_xlim(time[0], time[-1])
     ax.legend(frameon=False, fontsize='small')
-    _stable_layer_panel(ax2)
+    _stable_layer_panel(ax2, ax3)
     save(fig, 'fig_13_leeds_budget_terms')
 
 
-def _stable_layer_panel(ax) -> None:
-    """Leeds diffusive layer against aragog's quasi-static depth on the Leeds states."""
+def _stable_layer_panel(ax, ax_t) -> None:
+    """Layer thickness and central temperature: thermal_history against aragog's own
+    core-only history under the same fixed CMB flows, its layer forming at time zero."""
+    from scipy.integrate import solve_ivp
+
     with LAYER_TABLE.open() as fh:
         header = json.loads(fh.readline()[2:])
     data = np.loadtxt(LAYER_TABLE, delimiter=',', comments='#')
@@ -759,26 +762,52 @@ def _stable_layer_panel(ax) -> None:
         stratification=True,
         k_core=inp['k_core'],
     )
-    r_cmb = inp['r_cmb']
+    r_cmb, myr = inp['r_cmb'], 1e6 * 365 * 86400.0  # the Leeds year of 365 days
     for q, col in zip(header['q_cmb'], (CORE, colour('ocean', 'C0'))):
         rows = data[data[:, 0] == q]
-        t, t_cmb, r_s = rows[:, 1], rows[:, 2], rows[:, 5]
-        ours = np.asarray(jax.vmap(lambda x: budget.convecting_radius(x, q))(t_cmb))
-        ax.plot(t, (r_cmb - r_s) / 1e3, '--', color=col, label=f'Leeds, {q / 1e12:.0f} TW')
-        ax.plot(t, (r_cmb - ours) / 1e3, color=col, label=f'aragog, {q / 1e12:.0f} TW')
+        t, r_s, t_cen_leeds = rows[:, 1], rows[:, 5], rows[:, 3]
+        rate = jax.jit(lambda time, temp, q=q: budget.dtcmb_dt(temp, q, t_layer=time * myr))
+        sol = solve_ivp(
+            lambda time, y, rate=rate: [float(rate(time, y[0])) * myr],
+            (t[0], t[-1]),
+            [inp['t_cmb_start']],
+            t_eval=t,
+            method='BDF',
+            rtol=1e-9,
+            atol=1e-6,
+        )
+        t_cmb = sol.y[0]
+        capped = np.asarray(
+            jax.vmap(lambda x, a, q=q: budget.convecting_radius(x, q, a))(t_cmb, t * myr)
+        )
+        quasi = np.asarray(jax.vmap(lambda x, q=q: budget.convecting_radius(x, q))(t_cmb))
+        t_cen = np.asarray(jax.vmap(budget.profiles.t_cen)(t_cmb))
+        tw = f'{q / 1e12:.0f} TW'
+        ax.plot(t, (r_cmb - r_s) / 1e3, '--', color=col, label=f'Leeds, {tw}')
+        ax.plot(t, (r_cmb - quasi) / 1e3, ':', color=col, label=f'quasi-static, {tw}')
+        ax.plot(t, (r_cmb - capped) / 1e3, color=col, label=f'aragog, {tw}')
+        ax_t.plot(t, t_cen_leeds, '--', color=col, label=f'Leeds, {tw}')
+        ax_t.plot(t, t_cen, color=col, label=f'aragog, {tw}')
         tag = f'{q / 1e12:.0f}TW'
-        for when in (50.0, 200.0, 500.0):
+        record(6, f'tcen_max_abs_diff_K_{tag}', np.max(np.abs(t_cen - t_cen_leeds)))
+        for when in (10.0, 50.0, 200.0, 500.0):
             k = int(np.argmin(np.abs(t - when)))
-            record(6, f'layer_leeds_km_{tag}_{when:.0f}myr', (r_cmb - r_s[k]) / 1e3)
-            record(6, f'layer_aragog_km_{tag}_{when:.0f}myr', (r_cmb - ours[k]) / 1e3)
+            leeds, cap = (r_cmb - r_s[k]) / 1e3, (r_cmb - capped[k]) / 1e3
+            record(6, f'layer_leeds_km_{tag}_{when:.0f}myr', leeds)
+            record(6, f'layer_aragog_km_{tag}_{when:.0f}myr', (r_cmb - quasi[k]) / 1e3)
+            record(6, f'layer_capped_km_{tag}_{when:.0f}myr', cap)
+            record(6, f'layer_capped_over_leeds_{tag}_{when:.0f}myr', cap / leeds)
+            record(6, f'tcen_aragog_K_{tag}_{when:.0f}myr', t_cen[k])
+            record(6, f'tcen_leeds_K_{tag}_{when:.0f}myr', t_cen_leeds[k])
     record(
         6, 'q_k_TW', float(budget.conducted_adiabatic_flow(r_cmb, inp['t_cmb_start'])) / 1e12
     )
     ax.set_xlabel('time (Myr)')
     ax.set_ylabel('layer thickness (km)')
-    ax.legend(
-        frameon=False, fontsize='small', ncols=2, loc='center right', bbox_to_anchor=(1.0, 0.36)
-    )
+    ax.legend(frameon=False, fontsize='x-small', ncols=2, loc='lower right')
+    ax_t.set_xlabel('time (Myr)')
+    ax_t.set_ylabel(r'$T_\mathrm{cen}$ (K)')
+    ax_t.legend(frameon=False, fontsize='x-small', ncols=2)
 
 
 def item10_leeds_history() -> None:
