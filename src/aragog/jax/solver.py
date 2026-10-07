@@ -67,14 +67,30 @@ def _no_radio(_t_yr):
     return jnp.asarray(0.0)
 
 
+def compute_radio_heating(t_yr, radio_arrays):
+    """Evaluate radiogenic heating [W/kg] at time t_yr.
+
+    Parameters
+    ----------
+    t_yr : float or Array
+        Integrator time in years.
+    radio_arrays : tuple of 5 Arrays
+        (heat_prod, abundance, concentration, t0_years, half_life_years).
+
+    Returns
+    -------
+    Array
+        Radiogenic heating scalar [W/kg].
+    """
+    hp, ab, cn, t0, hl = radio_arrays
+    amp = hp * ab * cn
+    arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1e-10)
+    per_iso = amp * jnp.exp(jnp.where(amp != 0.0, arg, 0.0))
+    return jnp.sum(per_iso)
+
+
 def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_life_years):
     """Return a JAX-traceable per-cell radio heating ``H_radio(t_yr)``.
-
-    Implements ``H_radio(t) = sum_i (heat_prod_i · abundance_i ·
-    concentration_i · exp(log(2) · (t0_i − t) / half_life_i))`` from
-    aragog/parser.py:_Radionuclide.get_heating, vectorised across
-    isotopes. The returned scalar is broadcast across the staggered
-    grid by the caller (radio is uniform per cell).
 
     Parameters
     ----------
@@ -83,26 +99,20 @@ def make_radio_heating_fn(heat_prod, abundance, concentration, t0_years, half_li
         natural abundance [-], and concentration [mass fraction].
     t0_years, half_life_years : array_like, shape (n_iso,)
         Per-isotope reference time [yr] and half life [yr].
+
+    Returns
+    -------
+    callable
+        Function of t_yr returning radiogenic heating [W/kg].
     """
-    hp = jnp.asarray(heat_prod, dtype=jnp.float64)
-    ab = jnp.asarray(abundance, dtype=jnp.float64)
-    cn = jnp.asarray(concentration, dtype=jnp.float64)
-    t0 = jnp.asarray(t0_years, dtype=jnp.float64)
-    hl = jnp.asarray(half_life_years, dtype=jnp.float64)
-    amp = hp * ab * cn
-
-    def _h(t_yr):
-        # exp(log(2) · (t0 − t) / half_life) per isotope, then weighted
-        # sum across isotopes. Returns a scalar [W/kg] that the caller
-        # broadcasts across the staggered grid. The half_life floor of
-        # 1e-10 yr only guards against a literal-zero denominator; any
-        # physical isotope has half_life >> 1e-10 yr.
-        arg = LOG_TWO * (t0 - t_yr) / jnp.maximum(hl, 1e-10)
-        # Mask the argument, so a zero-amplitude isotope and its Jacobian are 0, not 0*inf.
-        per_iso = amp * jnp.exp(jnp.where(amp != 0.0, arg, 0.0))
-        return jnp.sum(per_iso)
-
-    return _h
+    radio = (
+        jnp.asarray(heat_prod, dtype=jnp.float64),
+        jnp.asarray(abundance, dtype=jnp.float64),
+        jnp.asarray(concentration, dtype=jnp.float64),
+        jnp.asarray(t0_years, dtype=jnp.float64),
+        jnp.asarray(half_life_years, dtype=jnp.float64),
+    )
+    return lambda t_yr: compute_radio_heating(t_yr, radio)
 
 
 # ---------------------------------------------------------------------------

@@ -3561,12 +3561,8 @@ class EntropySolver:
             )
         use_cvode = solver_method == 'cvode' and _CVODE_AVAILABLE
         if use_cvode:
-            # Option Z: build JAX-derived CVODE callbacks when the
-            # factory is registered AND the config flag is on. The
-            # factory re-creates the (rhs_fn, jac_fn) pair per solve
-            # call (JIT recompile cost applies; the same JAX tracing
-            # cache is hit on matching signatures, so cost collapses
-            # after the first call within a Python process lifetime).
+            # Build JAX-derived CVODE callbacks when the factory is registered
+            # and use_jax_jacobian is active. Callbacks reuse cached functions.
             cvode_rhs_override = None
             cvode_jacfn = None
             use_jax_jac = (
