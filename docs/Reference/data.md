@@ -50,8 +50,9 @@ In the PROTEUS coupled path the tables are produced by the PALEOS multiphase EOS
 ### Table cache
 
 Aragog caches parsed ASCII tables into uncompressed NumPy binary (`.npz`) archives to avoid repeated text parsing during evaluator initialisations and runs.
-Each cache archive stores the parsed array, format version, parser arguments, source byte size, and a BLAKE2b digest of the source file.
-If the source file changes or reader arguments differ, the cache is automatically invalidated and regenerated.
+Each cache archive stores the parsed array, format version, skipped row count, and a BLAKE2b digest of the source file.
+If the source file changes or the skipped row count differs, the cache is automatically invalidated and regenerated.
+The cache directory must be writable only by trusted users.
 
 Cache files are resolved using the following location rules:
 

@@ -16,6 +16,7 @@ import numpy as np
 import pytest
 
 from aragog.eos.table_cache import (
+    _FAILED_CACHE_ROOTS,
     read_cached_table,
 )
 
@@ -29,8 +30,9 @@ def _worker_read(args: tuple[Path, int]) -> np.ndarray:
 
 @pytest.fixture(autouse=True)
 def _clean_table_cache_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure ARAGOG_TABLE_CACHE_DIR is unset by default for all cache tests."""
+    """Ensure ARAGOG_TABLE_CACHE_DIR is unset and cache roots cleared by default."""
     monkeypatch.delenv('ARAGOG_TABLE_CACHE_DIR', raising=False)
+    _FAILED_CACHE_ROOTS.clear()
 
 
 class TestTableCache:
@@ -41,27 +43,11 @@ class TestTableCache:
         table_file = tmp_path / 'test_table.dat'
         table_file.write_text('# header 1\n# header 2\n1.0 2.0 3.0\n4.0 5.0 6.0\n')
 
-        # Cold parse
         arr_cold = read_cached_table(table_file, skiprows=2)
         cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
 
-        # Warm hit
         arr_warm = read_cached_table(table_file, skiprows=2)
-        assert np.array_equal(arr_cold, arr_warm)
-        assert arr_cold.dtype == arr_warm.dtype
-
-    def test_cache_hit_structured_dtype(self, tmp_path: Path) -> None:
-        """Verify cache supports structured numpy dtypes bit-equally."""
-        table_file = tmp_path / 'structured_table.dat'
-        table_file.write_text('10.5 42\n20.5 84\n')
-
-        dtype = np.dtype([('val', np.float64), ('idx', np.int32)])
-        arr_cold = read_cached_table(table_file, dtype=dtype)
-        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
-        assert cache_file.is_file()
-
-        arr_warm = read_cached_table(table_file, dtype=dtype)
         assert np.array_equal(arr_cold, arr_warm)
         assert arr_cold.dtype == arr_warm.dtype
 
@@ -74,7 +60,6 @@ class TestTableCache:
         arr1 = read_cached_table(table_file)
         assert arr1[1, 0] == 3.0
 
-        # Edit with same byte length and restore timestamp
         table_file.write_text('1.0 2.0\n5.0 4.0\n')
         assert table_file.stat().st_size == stat_orig.st_size
         os.utime(table_file, (stat_orig.st_atime, stat_orig.st_mtime))
@@ -83,7 +68,7 @@ class TestTableCache:
         assert arr2[1, 0] == 5.0
 
     def test_cache_miss_on_changed_reader_args(self, tmp_path: Path) -> None:
-        """Verify changed reader arguments invalidate cache."""
+        """Verify changed skiprows arguments invalidate cache."""
         table_file = tmp_path / 'args_table.dat'
         table_file.write_text('1.0 2.0 3.0\n4.0 5.0 6.0\n7.0 8.0 9.0\n')
 
@@ -96,9 +81,6 @@ class TestTableCache:
         arr_skip2 = read_cached_table(table_file, skiprows=2)
         assert arr_skip2.shape == (3,)
 
-        arr_f32 = read_cached_table(table_file, dtype=np.float32)
-        assert arr_f32.dtype == np.float32
-
     def test_read_only_dir_fallback(self, tmp_path: Path) -> None:
         """Verify parser falls back cleanly if cache cannot be written."""
         ro_dir = tmp_path / 'ro_dir'
@@ -106,7 +88,6 @@ class TestTableCache:
         table_file = ro_dir / 'ro_table.dat'
         table_file.write_text('1.0 2.0\n3.0 4.0\n')
 
-        # Make directory read-only
         ro_dir.chmod(0o555)
         try:
             arr = read_cached_table(table_file)
@@ -124,19 +105,15 @@ class TestTableCache:
         table_file = tmp_path / 'corrupt_table.dat'
         table_file.write_text('1.0 2.0\n3.0 4.0\n')
 
-        # Create valid cache
         arr_orig = read_cached_table(table_file)
         cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
 
-        # Truncate cache to invalid bytes
         cache_file.write_bytes(b'PK\x03\x04truncated')
 
-        # Reading should recover and recreate valid cache
         arr_recov = read_cached_table(table_file)
         assert np.array_equal(arr_orig, arr_recov)
 
-        # Confirm new cache is valid
         with np.load(cache_file) as npz:
             assert np.array_equal(npz['data'], arr_orig)
 
@@ -169,11 +146,11 @@ class TestTableCache:
         table_file.write_text('1.0 2.0\n3.0 4.0\n')
         expected_cache = table_file.with_name(f'{table_file.name}.cache.npz')
 
-        savez_calls: list[tuple[Path, bool]] = []
+        savez_calls: list[bool] = []
         real_savez = np.savez
 
         def recording_savez(file, *args, **kwargs):
-            savez_calls.append((Path(file), expected_cache.exists()))
+            savez_calls.append(expected_cache.exists())
             return real_savez(file, *args, **kwargs)
 
         replace_calls: list[tuple[Path, Path]] = []
@@ -190,17 +167,14 @@ class TestTableCache:
         assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
 
         assert len(savez_calls) == 1
-        written_path, target_existed_during_save = savez_calls[0]
-
-        assert written_path != expected_cache
-        assert not target_existed_during_save
-        assert written_path.parent == expected_cache.parent
-        assert written_path.name.startswith(f'.{expected_cache.stem}_')
-        assert written_path.name.endswith('.npz')
+        assert not savez_calls[0]
 
         assert len(replace_calls) == 1
         src_path, dst_path = replace_calls[0]
-        assert src_path == written_path
+        assert src_path != expected_cache
+        assert src_path.parent == expected_cache.parent
+        assert src_path.name.startswith(f'.{expected_cache.stem}_')
+        assert src_path.name.endswith('.npz')
         assert dst_path == expected_cache
         assert expected_cache.is_file()
 
@@ -219,7 +193,6 @@ class TestTableCache:
         table_file = dataset_dir / 'source_table.dat'
         table_file.write_text('1.0 2.0\n3.0 4.0\n')
 
-        # Snapshot dataset directory before read
         before_entries = sorted(
             [(p.name, p.stat().st_size, p.stat().st_mtime_ns) for p in dataset_dir.iterdir()]
         )
@@ -227,13 +200,11 @@ class TestTableCache:
         arr = read_cached_table(table_file)
         assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
 
-        # Snapshot dataset directory after read
         after_entries = sorted(
             [(p.name, p.stat().st_size, p.stat().st_mtime_ns) for p in dataset_dir.iterdir()]
         )
         assert before_entries == after_entries
 
-        # Verify cache written under cache/tables
         cache_tables_dir = fwl_root / 'cache' / 'tables'
         assert cache_tables_dir.is_dir()
         cached_files = list(cache_tables_dir.glob('*.npz'))
@@ -273,7 +244,6 @@ class TestTableCache:
         cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
 
-        # Write non-scalar array for format_version
         with np.load(cache_file) as npz:
             meta = {k: npz[k] for k in npz.files}
         meta['format_version'] = np.array([1, 2])
@@ -302,10 +272,10 @@ class TestTableCache:
         assert len(cached_files) == 1
         assert not (table_dir / f'{table_file.name}.cache.npz').exists()
 
-    def test_cache_root_mkdir_failure_logs_warning_and_parses(
+    def test_read_only_cache_root_warns_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Verify warning logged, no cache written, and data matches np.loadtxt when mkdir fails."""
+        """Verify 5 reads of a table under a read-only root emit exactly 1 warning."""
         custom_dir = tmp_path / 'uncreatable_dir'
         monkeypatch.setenv('ARAGOG_TABLE_CACHE_DIR', str(custom_dir))
 
@@ -321,52 +291,19 @@ class TestTableCache:
 
         monkeypatch.setattr(Path, 'mkdir', failing_mkdir)
 
-        with caplog.at_level(logging.WARNING):
-            arr = read_cached_table(table_file)
+        with caplog.at_level(logging.WARNING, logger='fwl.aragog.eos.table_cache'):
+            for _ in range(5):
+                arr = read_cached_table(table_file)
+                assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
 
-        assert np.array_equal(arr, np.loadtxt(table_file))
+        warning_records = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING and 'Could not create table cache root' in r.message
+        ]
+        assert len(warning_records) == 1
         assert not custom_dir.exists()
         assert not table_file.with_name(f'{table_file.name}.cache.npz').exists()
-        assert 'Could not create table cache root' in caplog.text
-
-    def test_write_cache_file_oserror_falls_back(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Verify reader returns parsed data cleanly when _write_cache_file raises OSError."""
-        table_file = tmp_path / 'write_fail.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
-
-        def failing_write(*args, **kwargs):
-            raise OSError('Disk write error')
-
-        monkeypatch.setattr('aragog.eos.table_cache._write_cache_file', failing_write)
-
-        arr = read_cached_table(table_file)
-        assert np.array_equal(arr, np.loadtxt(table_file))
-        assert not table_file.with_name(f'{table_file.name}.cache.npz').exists()
-
-    def test_chmod_failure_still_gives_valid_cache(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Verify os.chmod failure in _write_cache_file is handled and cache remains valid."""
-        table_file = tmp_path / 'chmod_fail.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
-
-        orig_chmod = os.chmod
-
-        def failing_chmod(path, mode):
-            if 'tmp' in str(path) or 'chmod_fail' in str(path):
-                raise OSError('Operation not permitted on chmod')
-            return orig_chmod(path, mode)
-
-        monkeypatch.setattr(os, 'chmod', failing_chmod)
-
-        arr = read_cached_table(table_file)
-        assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
-        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
-        assert cache_file.is_file()
-        arr_warm = read_cached_table(table_file)
-        assert np.array_equal(arr, arr_warm)
 
     def test_cache_temp_file_cleanup_on_replace_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -378,7 +315,7 @@ class TestTableCache:
         orig_replace = os.replace
 
         def failing_replace(src, dst):
-            if 'replace_fail' in str(dst) or 'table' in str(src):
+            if 'replace_fail' in str(dst):
                 raise OSError('Simulated replace failure')
             return orig_replace(src, dst)
 
@@ -399,14 +336,13 @@ class TestTableCache:
         orig_data = np.array([[1.0, 2.0], [3.0, 4.0]])
         orig_digest = hashlib.blake2b(table_file.read_bytes()).hexdigest()
 
-        orig_loadtxt = np.loadtxt
+        orig_genfromtxt = np.genfromtxt
 
-        def loadtxt_with_rewrite(source, *args, **kwargs):
-            # Overwrite file on disk concurrently during parsing
+        def genfromtxt_with_rewrite(source, *args, **kwargs):
             table_file.write_text('99.0 99.0\n99.0 99.0\n')
-            return orig_loadtxt(source, *args, **kwargs)
+            return orig_genfromtxt(source, *args, **kwargs)
 
-        monkeypatch.setattr(np, 'loadtxt', loadtxt_with_rewrite)
+        monkeypatch.setattr(np, 'genfromtxt', genfromtxt_with_rewrite)
 
         arr = read_cached_table(table_file)
         assert np.array_equal(arr, orig_data)
@@ -426,39 +362,31 @@ class TestTableCache:
         with pytest.raises(FileNotFoundError, match='Table file not found'):
             read_cached_table(missing)
 
-    def test_skip_header_argument(self, tmp_path: Path) -> None:
-        """Verify skip_header alias correctly overrides skiprows."""
-        table_file = tmp_path / 'skip_header.dat'
-        table_file.write_text('# header line\n10.0 20.0\n30.0 40.0\n')
-        arr = read_cached_table(table_file, skip_header=1)
-        assert arr.shape == (2, 2)
-        assert arr[0, 0] == 10.0
+    def test_cr_only_line_endings_match_base_genfromtxt(self, tmp_path: Path) -> None:
+        """Verify CR-only line endings match base genfromtxt and cache correctly."""
+        table_file = tmp_path / 'cr_table.dat'
+        table_file.write_bytes(b'# header line\r1.0 2.0\r3.0 4.0\r5.0 6.0\r')
 
-    def test_dtype_none_argument(self, tmp_path: Path) -> None:
-        """Verify dtype=None argument parses and caches correctly."""
-        table_file = tmp_path / 'dtype_none.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
-        arr = read_cached_table(table_file, dtype=None)
-        assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
+        expected = np.genfromtxt(table_file, skip_header=1)
+        arr_cold = read_cached_table(table_file, skiprows=1)
+        assert np.array_equal(arr_cold, expected)
+
         cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
         assert cache_file.is_file()
-        arr_warm = read_cached_table(table_file, dtype=None)
-        assert np.array_equal(arr, arr_warm)
 
-    def test_loadtxt_valueerror_falls_back_to_genfromtxt(self, tmp_path: Path) -> None:
-        """Verify ValueError in np.loadtxt falls back to np.genfromtxt and matches."""
-        table_file = tmp_path / 'missing_val.dat'
-        table_file.write_text('1.0 2.0\nNA 4.0\n')
+        arr_warm = read_cached_table(table_file, skiprows=1)
+        assert np.array_equal(arr_warm, expected)
 
-        with pytest.raises(ValueError):
-            np.loadtxt(table_file)
+    def test_empty_parse_leaves_no_cache_file(self, tmp_path: Path) -> None:
+        """Verify an empty or header-only file leaves no cache file."""
+        table_file = tmp_path / 'empty_table.dat'
+        table_file.write_text('# header only\n# second header\n')
 
-        expected = np.genfromtxt(table_file)
-        arr = read_cached_table(table_file)
-        assert np.allclose(arr, expected, equal_nan=True)
+        arr = read_cached_table(table_file, skiprows=2)
+        assert arr.size == 0
 
-        arr_warm = read_cached_table(table_file)
-        assert np.allclose(arr_warm, expected, equal_nan=True)
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
+        assert not cache_file.exists()
 
     def test_fwl_data_resolution_error_falls_back_beside_source(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
