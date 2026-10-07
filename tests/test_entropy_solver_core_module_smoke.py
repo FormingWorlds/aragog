@@ -363,15 +363,26 @@ FLOOR_WARNING = 'convecting-radius floor'
 
 
 @pytest.mark.physics_invariant
-def test_a_stratified_default_start_keeps_the_core_temperature(shared_eos, caplog):
+def test_a_stratified_default_start_keeps_the_core_temperature(shared_eos, caplog, monkeypatch):
     """With stratification on, the default start (T_core at the mantle side of the CMB, so
     q = 0) sits on the convecting-radius floor, but the flow stays far below 1e-3 Q_k: the
-    core temperature does not move, nothing warns, and the core gains the heat the mantle
-    loses through the CMB."""
+    core temperature does not move, the floor check runs and does not warn, and the core
+    gains the heat the mantle loses through the CMB."""
+    from aragog.core.budget import CONVECTING_FLOOR
+
     solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=5.0)
     solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    checks = []
+    check = solver._warn_on_convecting_floor
+    monkeypatch.setattr(
+        solver, '_warn_on_convecting_floor', lambda *a: (checks.append(a), check(*a))
+    )
     with caplog.at_level(logging.WARNING):
         solver.solve()
+    assert checks
+    for budget, t_traj, q_traj in checks:
+        r_conv = [float(budget.convecting_radius(t, q)) for t, q in zip(t_traj, q_traj)]
+        assert r_conv == [CONVECTING_FLOOR * budget.profiles.r_cmb] * len(r_conv)
     out = solver.get_state()
     t_core = solver._solution.y[solver._n_stag + 1]
     assert abs(float(t_core[-1] - t_core[0])) < 1.0e-6

@@ -381,7 +381,8 @@ def test_jacobian_carries_boundary_couplings():
     # The bottom cell receives the CMB flux directly, so it couples to T_core and no
     # longer to the gradient slot.
     assert abs(J[0, n_stag + 1]) > 0.0
-    assert J[0, n_stag] == 0.0
+    # The gradient slot is inert: its column is zero outside its own row.
+    np.testing.assert_array_equal(np.delete(J[:, n_stag], n_stag), 0.0)
 
 
 @pytest.mark.slow

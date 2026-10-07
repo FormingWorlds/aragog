@@ -2182,8 +2182,9 @@ class EntropySolver:
         in S_init, at the CMB pressure for ``core_module`` (no CMB flux at
         the start) and at the bottom-cell pressure for ``bower2018``.
 
-        Pass ``None`` to clear a previously-set override, restoring
-        the hot-start behaviour on the next call to ``set_initial_entropy``.
+        The value applies to every later call of ``set_initial_entropy``.
+        Pass ``None`` to clear it, restoring the hot-start behaviour; only a
+        set value is checked against the mantle temperature at the CMB.
         """
         self._T_core_init = None if T_core_init is None else float(T_core_init)
 

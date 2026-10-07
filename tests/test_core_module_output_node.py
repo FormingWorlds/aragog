@@ -134,6 +134,18 @@ def test_a_reset_keeps_the_budget_until_its_inputs_change():
     fresh._cache_bc_constants()
     assert fresh._core_module_budget is pinned
     assert float(pinned.profiles.p_cmb) == 1.3e11
+    # An impact changes the fitted core mass and central pressure; each rebuilds the budget.
+    core_params = fresh.parameters.boundary_conditions.core_module_params
+    core_params.update(m_core=1.92e24, p_cen=3.67e11)
+    for key in ('m_core', 'p_cen'):
+        fresh._cache_bc_constants()
+        before = fresh._core_module_budget
+        core_params[key] *= 1.01
+        fresh._cache_bc_constants()
+        assert fresh._core_module_budget is not before
+        assert float(fresh._core_module_budget.profiles.rho_cen) != float(
+            before.profiles.rho_cen
+        )
 
 
 def test_a_failed_budget_build_fails_again_on_the_next_reset():

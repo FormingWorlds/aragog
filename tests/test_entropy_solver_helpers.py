@@ -1217,15 +1217,25 @@ def test_set_initial_entropy_no_eos_and_no_override_raises(mode):
         (0.0, 2.0e-3, True),
         (5.0e-4, 0.0, False),
         (0.0, 5.0e-4, False),
+        (-2.0e-3, 0.0, True),
     ],
-    ids=['on_floor', 'above_floor', 'no_drive', 'radiogenic_drive', 'small_q', 'small_radio'],
+    ids=[
+        'on_floor',
+        'above_floor',
+        'no_drive',
+        'radiogenic_drive',
+        'small_q',
+        'small_radio',
+        'core_heated_by_mantle',
+    ],
 )
 def test_the_floor_warning_follows_the_net_drive_on_the_floor(
     caplog, q_frac, radio_frac, warns
 ):
     """The stratified floor is reached at q_cmb <= Q_ad(0.1 r_cmb) (1.40e-3 Q_k on this
     profile); on it the warning needs a net drive |q_radio - q_cmb| above 1e-3 Q_k, so
-    radiogenic heating at zero CMB flow warns and a flow just above the floor does not."""
+    radiogenic heating at zero CMB flow and a core colder than the mantle base warn, and a
+    flow just above the floor does not."""
     import logging
     from types import SimpleNamespace
 
@@ -1243,7 +1253,7 @@ def test_the_floor_warning_follows_the_net_drive_on_the_floor(
     fake = SimpleNamespace(_core_module_q_radio=radio_frac * q_k)
     with caplog.at_level(logging.WARNING):
         EntropySolver._warn_on_convecting_floor(fake, budget, t_core, np.full(3, q_frac * q_k))
-    assert any('convecting-radius floor' in r.message for r in caplog.records) is warns
+    assert sum('convecting-radius floor' in r.message for r in caplog.records) == int(warns)
     assert getattr(fake, '_floor_warned', False) is warns
 
 
