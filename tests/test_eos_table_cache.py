@@ -450,3 +450,28 @@ class TestTableCache:
         arr = read_cached_table(table_file)
         assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
         assert arr.size > 0
+
+    def test_cache_file_with_outdated_format_version_is_ignored_and_rewritten(
+        self, tmp_path: Path
+    ) -> None:
+        """Verify cache file with outdated format_version is rejected, re-parsed, and rewritten."""
+        table_file = tmp_path / 'outdated_table.dat'
+        table_file.write_text('10.0 20.0\n30.0 40.0\n')
+        digest = hashlib.blake2b(table_file.read_bytes()).hexdigest()
+
+        cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
+        stale_data = np.array([[1.0, 2.0], [3.0, 4.0]])
+        np.savez(
+            cache_file,
+            data=stale_data,
+            format_version=np.int64(CACHE_FORMAT_VERSION - 1),
+            source_digest=np.array(digest),
+            skiprows=np.int64(0),
+        )
+
+        arr = read_cached_table(table_file)
+        assert np.array_equal(arr, np.array([[10.0, 20.0], [30.0, 40.0]]))
+
+        with np.load(cache_file) as npz:
+            assert int(npz['format_version']) == CACHE_FORMAT_VERSION
+            assert np.array_equal(npz['data'], np.array([[10.0, 20.0], [30.0, 40.0]]))

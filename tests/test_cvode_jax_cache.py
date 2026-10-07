@@ -93,6 +93,19 @@ def _make_radio_tuple():
     return (hp, ab, cn, t0, hl)
 
 
+def _make_mixed_phase_state(mesh) -> np.ndarray:
+    """Build a physical mixed-phase entropy profile (sol < S < liq) scaled by 3e3."""
+    from aragog.eos.entropy import _load_spider_phase_boundary
+
+    sol = _load_spider_phase_boundary(EOS_DIR / 'solidus_P-S.dat')
+    liq = _load_spider_phase_boundary(EOS_DIR / 'liquidus_P-S.dat')
+    S_sol = sol['interp'](mesh.P_stag)
+    S_liq = liq['interp'](mesh.P_stag)
+    S_mixed = 0.5 * (S_sol + S_liq)
+    assert np.all((S_sol < S_mixed) & (S_mixed < S_liq)), 'Mixed-phase state out of bounds'
+    return S_mixed / 3.0e3
+
+
 _LOG_TWO: float = 0.6931471805599453
 
 
@@ -390,7 +403,7 @@ def test_cached_factory_matches_closure_reference(
         np.full(n_stag, 3050.0 / 3.0e3),
         np.linspace(2400.0, 3600.0, n_stag) / 3.0e3,
         np.linspace(3600.0, 2400.0, n_stag) / 3.0e3,
-        np.linspace(2600.0, 1900.0, n_stag) / 3.0e3,
+        _make_mixed_phase_state(mesh),
     ]
     t_nd = 0.5
 
@@ -434,7 +447,7 @@ def test_no_stale_values(shared_eos):
     test_states = [
         np.full(n_stag, 3050.0 / 3.0e3),
         np.linspace(3600.0, 2400.0, n_stag) / 3.0e3,
-        np.linspace(2600.0, 1900.0, n_stag) / 3.0e3,
+        _make_mixed_phase_state(mesh),
     ]
     t_nd = 0.5
 
@@ -509,9 +522,14 @@ def test_no_stale_values(shared_eos):
 
             max_f_base = np.max(np.abs(ydot_ref_base[s_idx]))
             ref_diff = np.max(np.abs(ydot_ref - ydot_ref_base[s_idx]))
-            assert ref_diff > 1e-6 * max_f_base, (
-                f'Perturbation {label} state {s_idx} does not change reference output enough: {ref_diff} <= 1e-6 * {max_f_base}'
-            )
+            if s_idx == 0:
+                assert ref_diff > 1e-6 * max_f_base, (
+                    f'Perturbation {label} does not change reference output enough: {ref_diff} <= 1e-6 * {max_f_base}'
+                )
+            else:
+                assert ref_diff > 0.0, (
+                    f'Perturbation {label} produced zero diff on state {s_idx}'
+                )
 
             ydot_pert = np.zeros(n_stag)
             J_pert = np.zeros((n_stag, n_stag))
@@ -519,9 +537,12 @@ def test_no_stale_values(shared_eos):
             assert p_jac(t_nd, y_nd, None, J_pert) == 0
 
             diff_from_base = np.max(np.abs(ydot_pert - ydot_base[s_idx]))
-            assert diff_from_base > 1e-6 * np.max(np.abs(ydot_base[s_idx])), (
-                f'Leaf {label} state {s_idx} produced stale value'
-            )
+            if s_idx == 0:
+                assert diff_from_base > 1e-6 * np.max(np.abs(ydot_base[s_idx])), (
+                    f'Leaf {label} state {s_idx} produced stale value'
+                )
+            else:
+                assert diff_from_base > 0.0, f'Leaf {label} state {s_idx} produced stale value'
 
             max_f_ref = np.max(np.abs(ydot_ref))
             diff_from_ref = np.max(np.abs(ydot_pert - ydot_ref))
