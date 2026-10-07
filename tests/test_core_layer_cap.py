@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -65,6 +66,24 @@ def test_the_layer_is_the_smaller_of_the_quasi_static_and_diffusive_depths(
     assert (slope == 0.0) is (branch != 'quasi')
 
 
+@pytest.mark.physics_invariant
+@pytest.mark.parametrize('age_myr', [10, 1e4])
+def test_the_core_rate_is_continuous_through_a_zero_cmb_flow(age_myr):
+    """Heat into or out of the core: the convecting core loses Q_ad(r_s) to the layer either
+    way, so dT/dt has no jump at q = 0; its radiogenic share is its mass fraction."""
+    budget, t, age = _budget(True), 4400.0, age_myr * MYR
+    rate = [float(budget.dtcmb_dt(t, q, t_layer=age)) for q in (-1e6, 0.0, 1e6)]
+    assert rate[0] == pytest.approx(rate[1], rel=1e-5, abs=0)
+    assert rate[2] == pytest.approx(rate[1], rel=1e-5, abs=0)
+    frac = float(budget.convecting_mass_fraction(t, 8e12, age))
+    heated = float(budget.dtcmb_dt(t, 8e12, q_sources=2e12, t_layer=age))
+    base = float(budget.base_heat_flow(t, 8e12, age))
+    assert 0.0 < frac < 1.0
+    assert heated == pytest.approx(
+        (2e12 * frac - base) / float(budget.effective_capacity(t, 8e12, age)), rel=1e-12, abs=0
+    )
+
+
 @pytest.mark.parametrize(
     ('override', 'kept', 'stratified_start', 'expected'),
     [
@@ -86,9 +105,24 @@ def test_the_layer_onset_rule(override, kept, stratified_start, expected):
         _layer_start_override=override,
         _core_layer_start_yr=kept,
         _start_is_stratified=lambda t: stratified_start,
+        _core_layer_stored_J=7.0,
     )
     EntropySolver._resolve_layer_start(fake, 5.0)
     assert (fake._core_layer_start_yr, fake._layer_start_override) == (expected, None)
+    lost = 0.0 if stratified_start else 7.0  # a fresh start loses the stored heat once
+    fake._core_layer_stored_J = 99.0
+    EntropySolver._resolve_layer_start(fake, 5.0)  # a retry restores the totals first
+    assert (fake._layer_loss_pending, fake._core_layer_stored_J) == (lost, 7.0 - lost)
+
+
+def test_a_large_layer_loss_warns_once(caplog):
+    from aragog.solver.entropy_solver import EntropySolver
+
+    fake = SimpleNamespace(_core_heat_J=1.0e3)
+    with caplog.at_level(logging.WARNING):
+        for loss in (0.5, 2.0, 2.0):
+            EntropySolver._warn_on_layer_loss(fake, loss)
+    assert sum('eroded stratified layer' in r.message for r in caplog.records) == 1
 
 
 @needs_eos
@@ -127,6 +161,35 @@ def test_a_resumed_run_with_the_onset_equals_the_uninterrupted_one():
     rounding = 8.0 * np.finfo(float).eps * y_mid[n + 1]
     end = float(whole._solution.y[n + 1, -1])
     assert float(resumed._solution.y[n + 1, -1]) == pytest.approx(end, rel=0, abs=rounding)
+
+
+@needs_eos
+@pytest.mark.smoke
+@pytest.mark.physics_invariant
+def test_an_eroded_layer_books_its_stored_heat_as_a_loss():
+    """A layer stores heat under a core 300 K below the mantle; a later call that starts 300 K
+    above a liquid base erodes it, books that heat as its loss, and the ledger closes with it."""
+    eos = entropy_eos_copy()
+    solver = _build('core_module', eos, STRATIFIED_PARAMS, end_time=2.0)
+    s0 = _driven_s_profile(solver._n_stag)
+    t_m = float(np.asarray(eos.temperature(solver._P_basic_flat[:1], s0[:1])).item())
+    solver.set_initial_core_temperature(t_m - 300.0)
+    solver.set_initial_layer_start(-50.0e6)
+    solver.set_initial_entropy(s0)
+    solver.solve()
+    stored = solver.get_state().core_layer_stored_J
+    solver.parameters.solver.start_time, solver.parameters.solver.end_time = 2.0, 2.001
+    hot = np.linspace(7000.0, 6700.0, solver._n_stag)  # a liquid base carries Q > Q_k
+    t_hot = float(np.asarray(eos.temperature(solver._P_basic_flat[:1], hot[:1])).item())
+    solver.reset()
+    solver.set_initial_core_temperature(t_hot + 300.0)
+    solver.set_initial_entropy(hot)
+    solver.solve()
+    out = solver.get_state()
+    assert stored > 0.0 and out.step_dE_layer_loss_J == stored
+    assert out.core_layer_stored_J == 0.0
+    closure = out.step_dE_core_J + out.step_dE_layer_loss_J
+    assert closure == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-4)  # the loss is 2e-3 of it
 
 
 def test_an_implicit_solve_through_the_cap_crossover_does_not_thrash():

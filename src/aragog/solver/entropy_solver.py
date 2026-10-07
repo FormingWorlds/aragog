@@ -797,6 +797,7 @@ _ZERO_ENERGY_INTEGRALS = {
     'solver_residual': 0.0,
     'state_heat': 0.0,
     'core': 0.0,
+    'layer_loss': 0.0,
 }
 
 
@@ -899,7 +900,8 @@ class SolverOutput:
     # is negative while the mantle loses heat to the atmosphere).
     step_dE_F_int_J: float  # = -∫ F_int * A_int dt [J]
     step_dE_F_cmb_J: float  # = +∫ F_cmb * A_cmb dt [J]
-    step_dE_core_J: float  # = ∫ C_eff dT [J] (negative during core cooling)
+    step_dE_core_J: float  # = ∫ C_eff dT [J], plus the heat a stratified layer stores
+    step_dE_layer_loss_J: float  # heat an eroded layer loses at the call's start [J]
     step_dE_Q_radio_J: float  # = +∫ Q_radio_total dt [J] (state-dependent mass)
     step_dE_Q_tidal_J: float  # = +∫ Q_tidal_total dt [J] (state-dependent mass)
     # Frozen-mass variants for the conservation-grade budget. Identical
@@ -970,9 +972,11 @@ class SolverOutput:
     tcore_change_max: float = 0.0
     tcore_change_exceeded: bool = False
 
-    # Onset time [yr] of the stratified core layer (core_module with stratification), NaN
-    # otherwise; a resumed run passes it back through ``set_initial_layer_start``.
+    # Onset time [yr] of the layer the call continues, or its start when the start state has
+    # no layer; NaN without stratification. A resumed run passes it back with
+    # ``set_initial_layer_start``. ``core_layer_stored_J``: heat the layer holds [J].
     core_layer_start_yr: float = float('nan')
+    core_layer_stored_J: float = 0.0
 
     # ── NetCDF output ──────────────────────────────────────────────
     @property
@@ -1196,7 +1200,19 @@ class SolverOutput:
                 'core_layer_start_yr',
                 float(self.core_layer_start_yr),
                 'yr',
-                'Onset time of the stratified core layer (NaN without one)',
+                'Onset time of the stratified core layer, or the solve start without one',
+            )
+            _scalar(
+                'core_layer_stored_J',
+                float(self.core_layer_stored_J),
+                'J',
+                'Heat stored by the stratified core layer',
+            )
+            _scalar(
+                'step_dE_layer_loss_J',
+                float(self.step_dE_layer_loss_J),
+                'J',
+                'Stored heat lost when the layer eroded',
             )
             _scalar(
                 'tcore_change_exceeded',
@@ -2204,16 +2220,29 @@ class EntropySolver:
         start whose CMB heat flow is below the adiabatic one continues its layer (keeping the
         onset, or taking a set override, or starting the layer now); any other start has no
         layer to continue and starts afresh. Onsets therefore resolve to one solver call.
+        Starting afresh loses the heat the layer stored, which the next call books as
+        ``step_dE_layer_loss_J``; a retry of a call restores the running totals first.
         """
+        self._layer_loss_pending = 0.0
         budget = getattr(self, '_core_module_budget', None)
         if self._core_bc != 'core_module' or budget is None or not budget.stratification:
             self._core_layer_start_yr = None
             return
+        totals = (
+            getattr(self, '_core_layer_stored_J', 0.0),
+            getattr(self, '_core_heat_J', 0.0),
+        )
+        last = getattr(self, '_layer_call', None)
+        if last is not None and last[0] == start_time:
+            totals = last[1]
+        self._layer_call = (start_time, totals)
+        self._core_layer_stored_J, self._core_heat_J = totals
         override = getattr(self, '_layer_start_override', None)
         self._layer_start_override = None
         kept = getattr(self, '_core_layer_start_yr', None)
         if not self._start_is_stratified(start_time):
             self._core_layer_start_yr = float(start_time)
+            self._layer_loss_pending, self._core_layer_stored_J = self._core_layer_stored_J, 0.0
         elif override is not None and np.isfinite(override):
             self._core_layer_start_yr = float(override)
         elif kept is None:
@@ -4214,7 +4243,7 @@ class EntropySolver:
         f_cmb_step_avg = step_dE_F_cmb / denom if denom > 0.0 else None
 
         # Core energy content change over the call [J] from closed-form C_eff.
-        step_dE_core = 0.0
+        step_dE_core, layer_loss = 0.0, 0.0
         y_arr = np.atleast_2d(y_pts)
         if core_bc == 'core_module' and getattr(self, '_core_module_budget', None) is not None:
             budget = self._core_module_budget
@@ -4276,9 +4305,17 @@ class EntropySolver:
                 step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
                 import jax
 
-                # The layer stores what its base conducts beyond the CMB flow.
+                # The layer stores what its base conducts beyond the CMB flow and its own
+                # share of the radiogenic heat; an eroded layer's store is lost.
                 q_base = np.asarray(jax.vmap(budget.base_heat_flow)(*args))
-                step_dE_core += trap(q_base - P_F_cmb)
+                frac = np.asarray(jax.vmap(budget.convecting_mass_fraction)(*args))
+                q_radio = getattr(self, '_core_module_q_radio', 0.0)
+                stored = trap(q_base - P_F_cmb + q_radio * (1.0 - frac))
+                layer_loss = self._layer_loss_pending
+                step_dE_core += stored - layer_loss
+                self._core_layer_stored_J += stored
+                self._core_heat_J += abs(step_dE_core)
+                self._warn_on_layer_loss(layer_loss)
                 if not getattr(self, '_floor_warned', False):
                     self._warn_on_convecting_floor(budget, t_core_traj, P_F_cmb, t_layer)
         elif core_bc == 'bower2018':
@@ -4304,6 +4341,7 @@ class EntropySolver:
             'solver_residual': trap(P_resid_solver),
             'state_heat': state_heat,
             'core': step_dE_core,
+            'layer_loss': layer_loss,
         }
 
     def _stag_entropy(self, y_col: npt.NDArray) -> npt.NDArray:
@@ -4392,14 +4430,26 @@ class EntropySolver:
             [p_int, p_cmb, Q_radio_i, Q_tidal_i, Q_radio_cons_i, Q_tidal_cons_i, lhs_i - rhs_i]
         )
 
+    def _warn_on_layer_loss(self, layer_loss: float) -> None:
+        """Warn once when an eroded layer loses more than 1e-3 of the core heat change."""
+        if layer_loss > 1.0e-3 * self._core_heat_J and not getattr(self, '_loss_warned', False):
+            self._loss_warned = True
+            logger.warning(
+                'core_module: an eroded stratified layer lost %.3e J of stored heat, %.1e of '
+                'the core heat change so far; the stateless layer model does not return it to '
+                'the convecting core. Warned once per solver.',
+                layer_loss,
+                layer_loss / max(self._core_heat_J, 1.0),
+            )
+
     def _warn_on_convecting_floor(self, budget, t_core, q_cmb, t_layer=None) -> None:
         """Warn once when a stratified core sits on its convecting-radius floor.
 
         The layer base reaches the floor (``CONVECTING_FLOOR`` of the CMB radius) where the CMB
         heat flow is at most the adiabatic conducted flow there, every non-positive flow
-        included. The core temperature changes at ``(q_radio - q_cmb) / C_eff``, so the warning
-        covers a net drive above ``1e-3 Q_k`` (``Q_k`` the conducted flow at the CMB), where
-        the floor capacity sets a visible rate outside the quasi-static layer model's range.
+        included. The warning covers a net heating ``|q_radio - q_cmb|`` above ``1e-3 Q_k``
+        (``Q_k`` the conducted flow at the CMB), outside the quasi-static layer model's range,
+        and reports the drive of the convecting core and what the layer stores.
         """
         import jax
 
@@ -4407,24 +4457,33 @@ class EntropySolver:
 
         r_cmb = budget.profiles.r_cmb
         q_floor = np.asarray(budget.conducted_adiabatic_flow(CONVECTING_FLOOR * r_cmb, t_core))
+        if not (q_cmb <= q_floor).any():  # the floor binds only below Q_ad there
+            return
+        args = (t_core, q_cmb) + (() if t_layer is None else (t_layer,))
+        reach = np.asarray(jax.vmap(budget.convecting_radius)(*args))
+        q_base = np.asarray(jax.vmap(budget.base_heat_flow)(*args))
+        q_conv = getattr(self, '_core_module_q_radio', 0.0) * np.asarray(
+            jax.vmap(budget.convecting_mass_fraction)(*args)
+        )
         q_k = np.asarray(budget.conducted_adiabatic_flow(r_cmb, t_core))
-        drive = getattr(self, '_core_module_q_radio', 0.0) - q_cmb
-        on_floor = (q_cmb <= q_floor) & (np.abs(drive) > 1.0e-3 * q_k)
-        if t_layer is not None and on_floor.any():
-            # A layer younger than its diffusion length to the floor is above it.
-            reach = np.asarray(jax.vmap(budget.convecting_radius)(t_core, q_cmb, t_layer))
-            on_floor &= reach <= CONVECTING_FLOOR * r_cmb
+        q_radio = getattr(self, '_core_module_q_radio', 0.0)
+        drive = q_conv - q_base
+        on_floor = (reach <= CONVECTING_FLOOR * r_cmb) & (
+            np.abs(q_radio - q_cmb) > 1.0e-3 * q_k
+        )
         if on_floor.any():
             i = int(np.argmax(on_floor))
             self._floor_warned = True
             logger.warning(
                 'core_module: the stratified core is on its convecting-radius floor (%.0f%% of '
-                'r_cmb) with a CMB heat flow of %.3e W and a net heating of %.3e W (Q_k = %.3e W); '
-                'the quasi-static layer model does not hold there and the core temperature '
-                'changes at the floor capacity. Warned once per solver.',
+                'r_cmb) with a CMB heat flow of %.3e W; the convecting core is driven at %.3e W '
+                'and the layer stores %.3e W (Q_k = %.3e W). The quasi-static layer model does '
+                'not hold there and the core temperature changes at the floor capacity. Warned '
+                'once per solver.',
                 100.0 * CONVECTING_FLOOR,
                 float(q_cmb[i]),
                 float(drive[i]),
+                float(q_radio - q_cmb[i] - drive[i]),
                 float(q_k[i]),
             )
 
@@ -4923,6 +4982,7 @@ class EntropySolver:
             step_dE_F_int_J=step_integrals['F_int'],
             step_dE_F_cmb_J=step_integrals['F_cmb'],
             step_dE_core_J=step_integrals['core'],
+            step_dE_layer_loss_J=step_integrals.get('layer_loss', 0.0),
             step_dE_Q_radio_J=step_integrals['Q_radio'],
             step_dE_Q_tidal_J=step_integrals['Q_tidal'],
             step_dE_Q_radio_cons_J=step_integrals['Q_radio_cons'],
@@ -4942,6 +5002,7 @@ class EntropySolver:
             tcore_change_max=tcore_change_max,
             tcore_change_exceeded=tcore_change_exceeded,
             core_layer_start_yr=np.nan if layer_start is None else layer_start,
+            core_layer_stored_J=getattr(self, '_core_layer_stored_J', 0.0),
             jcond_b=jcond_b,
             jconv_b=jconv_b,
             jgrav_b=jgrav_b,

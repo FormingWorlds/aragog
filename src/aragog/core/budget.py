@@ -472,12 +472,21 @@ class CoreEnergyBudget:
 
         A layer thinner than its quasi-static depth conducts ``Q_ad(r_s) > q_cmb`` at its
         base and stores the difference, so the convecting core loses ``max(q_cmb,
-        Q_ad(r_s))``; at the quasi-static depth the two are equal.
+        Q_ad(r_s))``; at the quasi-static depth the two are equal. The same holds for heat
+        entering through the CMB, so the closure is continuous through ``q_cmb = 0``.
         """
         if not self.stratification:
             return q_cmb
         r_s = self.convecting_radius(t_cmb, q_cmb, t_layer)
         return jnp.maximum(q_cmb, self.conducted_adiabatic_flow(r_s, t_cmb))
+
+    def convecting_mass_fraction(self, t_cmb, q_cmb, t_layer=None):
+        """Fraction of the core mass below the layer base, 1 without stratification."""
+        if not self.stratification:
+            return 1.0
+        p = self.profiles
+        r_s = self.convecting_radius(t_cmb, q_cmb, t_layer)
+        return p.enclosed_mass(r_s) / p.enclosed_mass(p.r_cmb)
 
     def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0, t_layer=None):
         """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of the core.
@@ -485,7 +494,10 @@ class CoreEnergyBudget:
         ``dT_cmb/dt = (q_sources - q_cmb) / C_eff(T_cmb)``; positive
         ``q_cmb`` cools the core, and internal sources (radiogenic, tidal)
         offset it. With stratification enabled the capacity is evaluated
-        over the convecting volume for this heat flow and layer age.
+        over the convecting volume for this heat flow and layer age, and the
+        convecting core keeps its mass share of the sources; the layer stores
+        the rest.
         """
         q_base = self.base_heat_flow(t_cmb, q_cmb, t_layer)
-        return (q_sources - q_base) / self.effective_capacity(t_cmb, q_cmb, t_layer)
+        q_conv = q_sources * self.convecting_mass_fraction(t_cmb, q_cmb, t_layer)
+        return (q_conv - q_base) / self.effective_capacity(t_cmb, q_cmb, t_layer)

@@ -97,6 +97,7 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         step_dE_F_int_J=-1.0e22,
         step_dE_F_cmb_J=+5.0e21,
         step_dE_core_J=-4.8e21,
+        step_dE_layer_loss_J=3.0e18,
         step_dE_Q_radio_J=+3.0e19,
         step_dE_Q_tidal_J=+1.0e19,
         step_dE_Q_radio_cons_J=+3.1e19,
@@ -114,6 +115,7 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         tcore_change_max=4321.5,
         tcore_change_exceeded=True,
         core_layer_start_yr=-5.0e7,
+        core_layer_stored_J=2.0e20,
     )
 
 
