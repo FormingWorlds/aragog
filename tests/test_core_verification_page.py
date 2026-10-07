@@ -35,7 +35,7 @@ def test_page_numbers_match_the_values():
     for shown, item, key, factor in tags:
         value = VALUES[item][key] * float(factor or 1)
         half_digit = 0.5 * 10.0 ** Decimal(shown).as_tuple().exponent
-        assert abs(float(shown) - value) <= half_digit, (item, key, shown, value)
+        assert abs(float(shown) - value) <= half_digit * (1 + 1e-9), (item, key, shown, value)
 
 
 @pytest.mark.unit
@@ -98,6 +98,7 @@ def test_core_history_matches_the_thermal_history_table(script):
 
 
 @pytest.mark.slow
+@pytest.mark.physics_invariant
 def test_coupled_tables_reproduce_the_page(script):
     got = _reproduces(script, 11)
     assert got['wrong_sign_rows_core_module'] == 0
