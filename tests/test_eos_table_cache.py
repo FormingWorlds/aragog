@@ -27,6 +27,12 @@ def _worker_read(args: tuple[Path, int]) -> np.ndarray:
     return read_cached_table(filepath, skiprows=skiprows)
 
 
+@pytest.fixture(autouse=True)
+def _clean_table_cache_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure ARAGOG_TABLE_CACHE_DIR is unset by default for all cache tests."""
+    monkeypatch.delenv('ARAGOG_TABLE_CACHE_DIR', raising=False)
+
+
 class TestTableCache:
     """Test suite for tabular caching reader."""
 
