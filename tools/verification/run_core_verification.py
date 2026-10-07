@@ -636,6 +636,7 @@ def item12_jax_parity() -> None:
 
 # ------------------------------------------- 6 and 10. Leeds thermal_history
 TH_TABLE = ROOT / 'tools' / 'verification' / 'data' / 'thermal_history_evolution.csv'
+LAYER_TABLE = TH_TABLE.with_name('thermal_history_stable_layer.csv')
 
 
 def _thermal_history():
@@ -698,7 +699,7 @@ def item6_leeds_terms() -> None:
     record(6, 'conduction_sink_rel', abs(float(ent.conduction_sink()) / th['Ek'][0] - 1))
     record(6, 'enrichment_end', enrich[-1])
     time = th['time_myr']
-    fig, ax = plt.subplots(figsize=(WIDTH, 4.2))
+    fig, (ax, ax2) = plt.subplots(2, 1, figsize=(WIDTH, 6.0))
     styles = {
         'secular': ('-', colour('solar', 'C1')),
         'latent': ('-', CORE),
@@ -727,7 +728,55 @@ def item6_leeds_terms() -> None:
     ax.set_ylabel('|aragog / Leeds - 1|')
     ax.set_xlim(time[0], time[-1])
     ax.legend(frameon=False, fontsize='small')
+    _stable_layer_panel(ax2)
     save(fig, 'fig_13_leeds_budget_terms')
+
+
+def _stable_layer_panel(ax) -> None:
+    """Leeds diffusive layer against aragog's quasi-static depth on the Leeds states."""
+    with LAYER_TABLE.open() as fh:
+        header = json.loads(fh.readline()[2:])
+    data = np.loadtxt(LAYER_TABLE, delimiter=',', comments='#')
+    inp = header['inputs']
+    prof = GaussianCoreProfiles(
+        rho_cen=inp['rho_cen'],
+        length_scale=inp['length_scale'],
+        r_cmb=inp['r_cmb'],
+        p_cmb=inp['p_cmb'],
+        alpha=inp['alpha'],
+        c_p=inp['c_p'],
+        pressure_mode='quadrature',
+    )
+    curve = QuadraticMeltingCurve(t_m0=inp['t_m0'], t_m1=inp['t_m1'], t_m2=inp['t_m2'])
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=inp['latent_heat'],
+        alpha_c=inp['alpha_c'],
+        c_light=inp['c_light'],
+        stratification=True,
+        k_core=inp['k_core'],
+    )
+    r_cmb = inp['r_cmb']
+    for q, col in zip(header['q_cmb'], (CORE, colour('ocean', 'C0'))):
+        rows = data[data[:, 0] == q]
+        t, t_cmb, r_s = rows[:, 1], rows[:, 2], rows[:, 5]
+        ours = np.asarray(jax.vmap(lambda x: budget.convecting_radius(x, q))(t_cmb))
+        ax.plot(t, (r_cmb - r_s) / 1e3, '--', color=col, label=f'Leeds, {q / 1e12:.0f} TW')
+        ax.plot(t, (r_cmb - ours) / 1e3, color=col, label=f'aragog, {q / 1e12:.0f} TW')
+        tag = f'{q / 1e12:.0f}TW'
+        for when in (50.0, 200.0, 500.0):
+            k = int(np.argmin(np.abs(t - when)))
+            record(6, f'layer_leeds_km_{tag}_{when:.0f}myr', (r_cmb - r_s[k]) / 1e3)
+            record(6, f'layer_aragog_km_{tag}_{when:.0f}myr', (r_cmb - ours[k]) / 1e3)
+    record(
+        6, 'q_k_TW', float(budget.conducted_adiabatic_flow(r_cmb, inp['t_cmb_start'])) / 1e12
+    )
+    ax.set_xlabel('time (Myr)')
+    ax.set_ylabel('layer thickness (km)')
+    ax.legend(frameon=False, fontsize='small', ncols=2, loc='center right', bbox_to_anchor=(1.0, 0.36))
 
 
 def item10_leeds_history() -> None:

@@ -30,6 +30,8 @@ from pathlib import Path
 import numpy as np
 
 OUT = Path(__file__).resolve().parent / 'data' / 'thermal_history_evolution.csv'
+LAYER_OUT = OUT.with_name('thermal_history_stable_layer.csv')
+LAYER = dict(q_cmb=[8e12, 12e12], t_end_myr=1000.0)
 
 # Nimmo (2015, ch. 8.02) Table 2 core with a prescribed CMB heat flow; aragog uses the
 # same numbers with pressure_mode='quadrature', since thermal_history integrates the
@@ -66,13 +68,13 @@ def _gaussian_poly(scale: float, amplitude: float, terms: int) -> list[float]:
     return coeffs.tolist()
 
 
-def _parameter_file(inp: dict, d_scale: float) -> str:
+def _parameter_file(inp: dict, d_scale: float, stable_layer: bool = False) -> str:
     rho = _gaussian_poly(inp['length_scale'], inp['rho_cen'], inp['taylor_terms'])
     adiabat = _gaussian_poly(d_scale, 1.0, inp['taylor_terms'])
     tm = [inp['t_m0'], inp['t_m0'] * inp['t_m1'], inp['t_m0'] * inp['t_m2']]
     lines = {
         'core': True,
-        'stable_layer': False,
+        'stable_layer': stable_layer,
         'mantle': False,
         'T_cmb': inp['t_cmb_start'],
         'conc_l': [inp['c_light']],
@@ -125,23 +127,75 @@ def _versions(th_root: Path) -> dict:
     )
 
 
-def main() -> None:
-    import thermal_history
+def _model(inp: dict, stable_layer: bool):
+    """A thermal_history model on ``inp``, with or without the leeds_thermal stable layer."""
     import thermal_history.core_models.leeds.routines.profiles as th_profiles
     from thermal_history.model import Parameters, setup_model
 
-    inp = INPUTS
     th_profiles.G = inp['G']  # the CODATA value aragog uses
     d_scale = np.sqrt(3 * inp['c_p'] / (2 * np.pi * inp['alpha'] * inp['rho_cen'] * inp['G']))
     with tempfile.TemporaryDirectory() as tmp:
         prm_file = Path(tmp) / 'core_params.py'
-        prm_file.write_text(_parameter_file(inp, d_scale))
-        model = setup_model(
+        prm_file.write_text(_parameter_file(inp, d_scale, stable_layer))
+        return setup_model(
             Parameters(str(prm_file)),
             core_method='leeds',
+            stable_layer_method='leeds_thermal' if stable_layer else None,
             verbose=False,
             log_file=str(Path(tmp) / 'thermal_history.log'),
         )
+
+
+def _write(path: Path, header: dict, rows: list) -> None:
+    import thermal_history
+
+    header = {
+        'source': 'thermal_history (https://github.com/sam-greenwood/thermal_history), MIT licence',
+        **header,
+        'versions': _versions(Path(thermal_history.__file__).resolve().parents[1]),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w') as fh:
+        fh.write('# ' + json.dumps(header) + '\n')
+        np.savetxt(fh, np.array(rows), delimiter=',', fmt='%.10e')
+    print(f'{len(rows)} rows to {path}', file=sys.stderr)
+
+
+def stable_layer_runs() -> None:
+    """The leeds_thermal layer under fixed subadiabatic CMB heat flows."""
+    inp = dict(INPUTS, t_end_myr=LAYER['t_end_myr'])
+    rows = []
+    for q in LAYER['q_cmb']:
+        model = _model(dict(inp, q_cmb=q), stable_layer=True)
+        ys = model.parameters.ys
+        for _ in range(int(inp['t_end_myr'] / inp['dt_myr'])):
+            model.mantle.Q_cmb = q
+            core = model.core
+            rows.append(
+                [
+                    q,
+                    model.time / (1e6 * ys),
+                    float(core.profiles['T'][-1]),
+                    float(core.Tcen),
+                    float(core.ri),
+                    float(core.rs),
+                ]
+            )
+            model.evolve(inp['dt_myr'] * 1e6 * ys, verbose=False)
+    _write(
+        LAYER_OUT,
+        {
+            'inputs': inp,
+            'q_cmb': LAYER['q_cmb'],
+            'columns': ['q_cmb', 'time_myr', 'T_cmb', 'T_cen', 'r_icb', 'r_s'],
+        },
+        rows,
+    )
+
+
+def main() -> None:
+    inp = INPUTS
+    model = _model(inp, stable_layer=False)
     ys = model.parameters.ys
     rows = []
     for _ in range(int(inp['t_end_myr'] / inp['dt_myr'])):
@@ -169,30 +223,22 @@ def main() -> None:
                 core.Ek,
             ]
         )
-    header = {
-        'source': 'thermal_history (https://github.com/sam-greenwood/thermal_history), MIT licence',
-        'inputs': inp,
-        'versions': _versions(Path(thermal_history.__file__).resolve().parents[1]),
-        'columns': [
-            'time_myr',
-            'T_cmb',
-            'T_cen',
-            'r_icb',
-            'conc_l',
-            'Qs_per_dTcen',
-            'Ql_per_dTcen',
-            'Qg_per_dTcen',
-            'Es_per_dTcen',
-            'El_per_dTcen',
-            'Eg_per_dTcen',
-            'Ek',
-        ],
-    }
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    with OUT.open('w') as fh:
-        fh.write('# ' + json.dumps(header) + '\n')
-        np.savetxt(fh, np.array(rows), delimiter=',', fmt='%.10e')
-    print(f'{len(rows)} rows to {OUT}', file=sys.stderr)
+    columns = [
+        'time_myr',
+        'T_cmb',
+        'T_cen',
+        'r_icb',
+        'conc_l',
+        'Qs_per_dTcen',
+        'Ql_per_dTcen',
+        'Qg_per_dTcen',
+        'Es_per_dTcen',
+        'El_per_dTcen',
+        'Eg_per_dTcen',
+        'Ek',
+    ]
+    _write(OUT, {'inputs': inp, 'columns': columns}, rows)
+    stable_layer_runs()
 
 
 if __name__ == '__main__':
