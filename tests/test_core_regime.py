@@ -67,7 +67,7 @@ def test_nimmo_model1_reads_as_snow_topology():
         rho_cen=12500.0,
         length_scale=7272e3,
         r_cmb=3480e3,
-        p_cmb=136e9,
+        p_cmb=139e9,
         alpha=0.9e-5,
         c_p=840.0,
         pressure_mode='labrosse',

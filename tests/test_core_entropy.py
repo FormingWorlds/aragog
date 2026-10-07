@@ -24,16 +24,15 @@ from aragog.core.profiles import GaussianCoreProfiles
 pytestmark = pytest.mark.unit
 
 T_C = 4180.0
-SHARED = dict(rho_cen=12500.0, r_cmb=3480e3, p_cmb=136e9, c_p=840.0, length_scale=7272e3)
+SHARED = dict(rho_cen=12500.0, r_cmb=3480e3, p_cmb=139e9, c_p=840.0, length_scale=7272e3)
 
 # thermal_history (energy.*) values on the Nimmo model-2 state (labrosse pressure, T_cmb
-# 4180 K, r_icb 967.0 km, 8000-point grid): Es, Ek, Er agree exactly; the two boundary
-# terms carry the 0.5 % trapezoid-grid factor of the energy side.
-TH_ES = 5.571710e22  # J/K^2, ratio to aragog 1.000000
-TH_EL = 8.305058e22  # J/K^2, ratio 0.99493
-TH_EG = 2.111343e23  # J/K^2, ratio 0.99493
-TH_EK = 4.509720e08  # W/K, ratio 1.000000
-TH_ER = 5.518709e07  # W/K at Q_R = Qr(h0=1e-12 W/kg), ratio 1.000000
+# 4180 K, r_icb 1209.4 km on an 8000-point grid with the ICB as a node); aragog agrees to 1e-6.
+TH_ES = 5.571710e22  # J/K^2
+TH_EL = 1.009221e23  # J/K^2
+TH_EG = 2.503614e23  # J/K^2
+TH_EK = 4.509720e08  # W/K
+TH_ER = 5.518709e07  # W/K at Q_R = Qr(h0=1e-12 W/kg)
 TH_ER_QRADIO = 1.9268512e12  # Q_R = M_core * 1e-12 W/kg the TH_ER row used
 
 
@@ -61,8 +60,8 @@ def test_entropy_capacities_match_thermal_history(ent):
     implementation on identical state (see constants above), and each is
     positive as the second law requires of a cooling, heated core."""
     assert float(ent.secular_entropy_capacity(T_C)) == pytest.approx(TH_ES, rel=1e-4)
-    assert float(ent.latent_entropy_capacity(T_C)) == pytest.approx(TH_EL, rel=0.01)
-    assert float(ent.gravitational_entropy_capacity(T_C)) == pytest.approx(TH_EG, rel=0.01)
+    assert float(ent.latent_entropy_capacity(T_C)) == pytest.approx(TH_EL, rel=1e-5)
+    assert float(ent.gravitational_entropy_capacity(T_C)) == pytest.approx(TH_EG, rel=1e-5)
     assert float(ent.conduction_sink()) == pytest.approx(TH_EK, rel=1e-6)
     assert float(ent.radiogenic_entropy(T_C, TH_ER_QRADIO)) == pytest.approx(TH_ER, rel=1e-4)
     for value in (
@@ -129,7 +128,7 @@ def test_field_scaling_bounds_and_earth_magnitude(ent):
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
 def test_dynamo_threshold_and_margin(ent):
-    """The heat flow where the entropy margin vanishes sits at 5.298 TW,
+    """The heat flow where the entropy margin vanishes sits at 5.144 TW,
     consistent with (below) Nimmo's statement that model-2 flows under
     6.5 TW cannot drive a dynamo (ch. 9.08, p. 209); the margin rises monotonically with heat
     flow, and radiogenic heating at FIXED flow lowers it (Nimmo 2015,
@@ -138,11 +137,11 @@ def test_dynamo_threshold_and_margin(ent):
     from scipy.optimize import brentq
 
     threshold = brentq(lambda q: float(ent.entropy_margin(T_C, q)), 1e12, 40e12)
-    assert threshold / 1e12 == pytest.approx(5.298, rel=1e-3)
+    assert threshold / 1e12 == pytest.approx(5.144, rel=1e-3)
     assert threshold / 1e12 < 6.5
     margins = [float(ent.entropy_margin(T_C, q)) for q in (6e12, 10e12, 17e12)]
     assert margins[0] < margins[1] < margins[2]
-    assert float(ent.entropy_margin(T_C, 17e12)) / 1e6 == pytest.approx(993.9, rel=1e-2)
+    assert float(ent.entropy_margin(T_C, 17e12)) / 1e6 == pytest.approx(1039.4, rel=1e-3)
     with_k = float(ent.entropy_margin(T_C, 17e12, q_radio=1e12))
     assert with_k < margins[2]
     # The loss is bounded by the cooling-term substitution alone; the

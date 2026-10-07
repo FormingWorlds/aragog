@@ -28,7 +28,7 @@ def ent():
         rho_cen=12500.0,
         length_scale=7272e3,
         r_cmb=3480e3,
-        p_cmb=136e9,
+        p_cmb=139e9,
         alpha=1.25e-5,
         c_p=840.0,
         pressure_mode='labrosse',

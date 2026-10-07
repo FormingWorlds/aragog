@@ -734,6 +734,22 @@ def _stable_layer_panel(ax, ax_t) -> None:
         ax_t.plot(t, t_cen, color=col, label=f'aragog, {tw}')
         tag = f'{q / 1e12:.0f}TW'
         record(6, f'tcen_max_abs_diff_K_{tag}', np.max(np.abs(t_cen - t_cen_leeds)))
+        early, leeds_all = t <= 500.0, r_cmb - r_s
+        record(
+            6,
+            f'tcen_max_abs_diff_K_{tag}_to_500myr',
+            np.max(np.abs(t_cen - t_cen_leeds)[early]),
+        )
+        binds = (capped > quasi + 1.0) & (leeds_all > 0)  # the cap sets the depth
+        record(
+            6,
+            f'layer_capped_over_leeds_max_{tag}',
+            np.max((r_cmb - capped)[binds] / leeds_all[binds]),
+        )
+        ratio = leeds_all[~binds & (t > 0)] / (r_cmb - capped)[~binds & (t > 0)]
+        record(6, f'layer_leeds_over_aragog_max_{tag}', ratio.max())
+        record(6, f'layer_leeds_over_aragog_max_myr_{tag}', t[~binds & (t > 0)][ratio.argmax()])
+        record(6, f'onset_myr_leeds_{tag}', t[np.argmax(rows[:, 4] > 0)])
         for when in (10.0, 50.0, 200.0, 500.0):
             k = int(np.argmin(np.abs(t - when)))
             leeds, cap = (r_cmb - r_s[k]) / 1e3, (r_cmb - capped[k]) / 1e3
@@ -852,7 +868,7 @@ NIMMO = dict(  # Nimmo (2015, ch. 8.02) Table 2 core
     rho_cen=12500.0,
     length_scale=7272e3,
     r_cmb=3480e3,
-    p_cmb=136e9,
+    p_cmb=139e9,
     alpha=1.25e-5,
     c_p=840.0,
     t_m0=2677.0,
@@ -921,38 +937,48 @@ def _nimmo_terms(budget, ent, t_c, q):
     ), r_icb
 
 
+# Nimmo (2015, ch. 8.02) Table 5, p. 46, 'This work': energies [1e28 J] released since
+# inner-core onset and the inner-core age [Gyr] under a constant 10 TW.
+NIMMO_T5 = dict(
+    Ws=11.6, Wg=4.4, WL=6.9, Wtot=23.0, age_10TW=0.73, delta_t=60.0, tm_centre=5800.0
+)
+
+
 def item5_nimmo() -> None:
-    """The present-day Earth budget of Nimmo (2015, ch. 8.02, Table 4) on its Table 2 core."""
+    """The present-day Earth budget of Nimmo (2015, ch. 8.02, Tables 4 and 5) on its Table 2
+    core at the chapter's CMB temperature."""
     budget, ent = _nimmo_budget()
-    t_1220 = brentq(
-        lambda x: float(budget.r_icb(x)) - 1220e3, 3500.0, float(budget.t_onset) - 1e-6
-    )
-    record(5, 't_cmb_r1220_K', t_1220)
-    record(5, 'delta_t_onset_K', float(budget.t_onset) - t_1220)
-    for q in NIMMO_T4:  # Table 4's age matches Delta T_c / (dT_c/dt) at the present rate
-        rate = -float(budget.dtcmb_dt(t_1220, q)) * GYR
-        record(5, f'age_linear_{q / 1e12:g}TW', (float(budget.t_onset) - t_1220) / rate)
-    record(5, 'Cr_m_per_K', -float(jax.grad(budget.r_icb)(t_1220)))
+    t_c, t_on = 4180.0, float(budget.t_onset)
+    r_icb = record(5, 'r_icb_km', float(budget.r_icb(t_c)) / 1e3)
+    record(5, 'p_icb_GPa', float(budget.profiles.pressure(r_icb * 1e3)) / 1e9)
+    record(5, 'delta_t_onset_K', t_on - t_c)
+    record(5, 'tm_centre_K', float(budget.melting_curve.t_melt(budget.profiles.pressure(0.0))))
+    record(5, 'Cr_m_per_K', -float(jax.grad(budget.r_icb)(t_c)))
+    released = {
+        'Ws': float(budget.secular_capacity()) * (t_on - t_c),
+        'WL': quad(lambda x: float(budget.latent_capacity(x)), t_c, t_on)[0],
+        'Wg': quad(lambda x: float(budget.gravitational_capacity(x)), t_c, t_on)[0],
+    }
+    released['Wtot'] = sum(released.values())
+    for n, w in released.items():
+        record(5, f'{n}_1e28J', w / 1e28)
+        record(5, f'{n}_ratio', w / 1e28 / NIMMO_T5[n])
+    record(5, 'age_10TW_Gyr', released['Wtot'] / 10e12 / GYR)
     names = list(NIMMO_T4[15.2e12])
     fig, ax = plt.subplots(figsize=(WIDTH, 4.0))
     x = np.arange(len(names))
-    cases = (
-        (15.2e12, 4180.0, r'15.2 TW, $T_c$ = 4180 K', CORE),
-        (15.2e12, t_1220, r'15.2 TW, $r_\mathrm{icb}$ = 1220 km', colour('ocean', 'C0')),
-        (12.0e12, t_1220, r'12 TW, $r_\mathrm{icb}$ = 1220 km', colour('fog', 'C7')),
-    )
-    for k, (q, t_c, label, col) in enumerate(cases):
-        ours, r_icb = _nimmo_terms(budget, ent, t_c, q)
-        ratio = [ours[n] / NIMMO_T4[q][n] for n in names]
-        tag = f'{q / 1e12:g}TW_{"tc" if t_c == 4180.0 else "r1220"}'
-        record(5, f'r_icb_km_{tag}', r_icb / 1e3)
+    for k, (q, col) in enumerate(((15.2e12, CORE), (12.0e12, colour('ocean', 'C0')))):
+        ours, _ = _nimmo_terms(budget, ent, t_c, q)
+        tag = f'{q / 1e12:g}TW'
         for n in names:
             record(5, f'{n}_{tag}', ours[n])
             record(5, f'{n}_ratio_{tag}', ours[n] / NIMMO_T4[q][n])
-        ax.plot(x + 0.12 * (k - 1), ratio, 'o', color=col, label=label)
-        if t_c != 4180.0:  # the age as Delta T_c over the present cooling rate
-            linear = (float(budget.t_onset) - t_c) / ours['cooling'] / NIMMO_T4[q]['age']
-            ax.plot(x[-1] + 0.12 * (k - 1), linear, 'o', mfc='none', color=col)
+        linear = record(5, f'age_linear_{tag}', (t_on - t_c) / ours['cooling'])
+        ratio = [ours[n] / NIMMO_T4[q][n] for n in names]
+        ax.plot(x + 0.12 * (2 * k - 1), ratio, 'o', color=col, label=f'{q / 1e12:g} TW')
+        ax.plot(
+            x[-1] + 0.12 * (2 * k - 1), linear / NIMMO_T4[q]['age'], 'o', mfc='none', color=col
+        )
     ax.axhline(1.0, color=colour('fog', '0.6'), lw=0.8)
     ticks = ['$Q_s$', '$Q_L$', '$Q_g$', '$Q_k$', '$E_s$', '$E_L$', '$E_g$', '$E_k$']
     ax.set_xticks(x, ticks + [r'$\dot T_c$', r'$\dot r_\mathrm{icb}$', 'age'])

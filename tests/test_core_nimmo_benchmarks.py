@@ -15,11 +15,13 @@ Two documented deviations from the printed table:
   ``T_m0``, ``T_m1`` and the stated 9.4 K/GPa ICB melting gradient; the
   tests use the self-consistent assignment (model 1: 69e-25, model 2:
   8.37e-25) and verify both consistency conditions.
-* The printed lumped ``Q_T`` (4.6, 3.3) x 1e27 J/K holds at the present
-  inner core of 1220 km (ch. 8.02, Table 2), which the model-2 parameters
-  on these profiles place below T_c = 4180 K (967 km there), so it is
-  pinned as a band, while the per-term validation is carried by the
-  ``thermal_history`` cross-check constants below.
+* The ``Q_T`` row reads (4.6, 3.3) x 1e27 J/K, but the model-2 core of
+  ch. 8.02 cools at 104 K/Gyr under 15.2 TW (Table 4, p. 46), which is
+  Q_T = 4.6e27 J/K; the tests pin model 2 to that value. Reading the row
+  as transposed, like ``T_m2``, is an inference from the two tables.
+
+The CMB pressure is the 139 GPa of ch. 8.02, Table 2, where the model-2
+core puts the ICB at the tabulated 328 GPa.
 """
 
 from __future__ import annotations
@@ -37,7 +39,8 @@ pytestmark = pytest.mark.unit
 # c_p = 840 J/kg/K, rho_cen = 12500 kg/m3, ICB melting gradient 9.4 K/GPa.
 T_C = 4180.0
 L_H = 750e3
-SHARED = dict(rho_cen=12500.0, r_cmb=3480e3, p_cmb=136e9, c_p=840.0, length_scale=7272e3)
+SHARED = dict(rho_cen=12500.0, r_cmb=3480e3, p_cmb=139e9, c_p=840.0, length_scale=7272e3)
+GYR = 1e9 * 365.25 * 86400.0
 P_ICB = 328e9  # ICB pressure of ch. 8.02, Table 2, where the 9.4 K/GPa gradient applies
 
 # Per-model Table 2 entries (with the self-consistent T_m2 assignment).
@@ -51,7 +54,6 @@ MODELS = {
         t_m1=-3.38e-12,
         t_m2=69e-25,
         drho_c=800.0,
-        qt=4.6e27,
     ),
     2: dict(
         alpha=1.25e-5,
@@ -62,7 +64,6 @@ MODELS = {
         t_m1=2.95e-12,
         t_m2=8.37e-25,
         drho_c=560.0,
-        qt=3.3e27,
     ),
 }
 
@@ -141,19 +142,19 @@ def test_model2_adiabatic_heat_flow_matches_printed_qk():
 
 
 # Leeds thermal_history values (energy.secular_cool, .latent_heat, .gravitational) on the
-# model-2 state below (labrosse pressure, T_cmb 4180 K, r_icb 967.0 km, 8000-point grid);
-# their trapezoid grid gives the 0.5 % offset of the two boundary terms.
-TH_SECULAR = 1.851452e27  # J/K, ratio to aragog 1.000000
-TH_LATENT = 1.376655e27  # J/K, ratio 0.99493
-TH_GRAV = 8.825415e26  # J/K, ratio 0.99493
+# model-2 state below (labrosse pressure, T_cmb 4180 K, r_icb 1209.4 km on an 8000-point
+# grid with the ICB as a node), per unit CMB cooling; aragog agrees to 1e-6.
+TH_SECULAR = 1.851452e27  # J/K
+TH_LATENT = 1.744360e27  # J/K
+TH_GRAV = 1.046510e27  # J/K
 
 
 @pytest.mark.reference_pinned
 @pytest.mark.physics_invariant
 def test_budget_terms_match_thermal_history_cross_check():
-    """The three capacity terms at the model-2 state agree with the values
-    from the independent Leeds thermal_history implementation to 1%, and
-    the lumped total lands inside the printed Q_T band."""
+    """At T_c = 4180 K the model-2 core has its ICB at the 328 GPa of ch. 8.02,
+    Table 2; the three capacity terms agree with the Leeds thermal_history
+    values, and the total with the Q_T of ch. 8.02, Table 4."""
     prof = _profiles(2)
     budget = CoreEnergyBudget(
         prof,
@@ -164,13 +165,14 @@ def test_budget_terms_match_thermal_history_cross_check():
         alpha_c=1.0,
         c_light=MODELS[2]['drho_c'] / 12150.0,  # alpha_c * c = drho_c / rho(r_icb)
     )
-    assert float(budget.r_icb(T_C)) / 1e3 == pytest.approx(967.0, rel=1e-3)
+    r_icb = budget.r_icb(T_C)
+    assert float(r_icb) / 1e3 == pytest.approx(1209.4, rel=1e-4)
+    assert float(prof.pressure(r_icb)) / 1e9 == pytest.approx(328.0, rel=3e-3)
     assert float(budget.secular_capacity()) == pytest.approx(TH_SECULAR, rel=1e-4)
-    assert float(budget.latent_capacity(T_C)) == pytest.approx(TH_LATENT, rel=0.01)
-    assert float(budget.gravitational_capacity(T_C)) == pytest.approx(TH_GRAV, rel=0.01)
-    # Printed lumped value, band only: the 35 % band covers the 1220 km against 967 km
-    # inner core; the three 1 % per-term pins above carry the discrimination.
-    assert float(budget.effective_capacity(T_C)) == pytest.approx(MODELS[2]['qt'], rel=0.35)
+    assert float(budget.latent_capacity(T_C)) == pytest.approx(TH_LATENT, rel=1e-5)
+    assert float(budget.gravitational_capacity(T_C)) == pytest.approx(TH_GRAV, rel=1e-5)
+    # Q_T = Q_cmb / (dT_c/dt) of ch. 8.02, Table 4: 15.2 TW at 104 K/Gyr.
+    assert float(budget.effective_capacity(T_C)) == pytest.approx(15.2e12 * GYR / 104, rel=0.02)
 
 
 @pytest.mark.reference_pinned
@@ -270,20 +272,20 @@ def test_baseline_scenario_reproduces_chapter_headline():
 @pytest.mark.physics_invariant
 def test_model1_printed_parameters_break_bottom_up_topology():
     """Model 1's negative T_m1 curve dips below the T_c = 4180 K adiabat at
-    the CMB (melting temperature 5367 K there), a top-down/snow topology
+    the CMB (melting temperature 5331 K there), a top-down/snow topology
     outside the bottom-up assumption of the budget; the budget
     reports it via the freeze-out guard rather than emitting latent heat
     from an ill-defined boundary."""
     prof = _profiles(1)
     curve = _curve(1)
     t_melt_cmb = float(curve.t_melt(prof.p_cmb))
-    assert t_melt_cmb == pytest.approx(5367.0, rel=2e-3)
+    assert t_melt_cmb == pytest.approx(5330.5, rel=2e-3)
     assert t_melt_cmb > T_C  # the CMB itself sits below the melting curve
     # The curve is non-monotone over the core: its minimum lies inside.
     p_min = -curve.t_m1 / (2.0 * curve.t_m2)
     assert prof.p_cmb < p_min < float(prof.pressure(0.0))
     budget = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0, latent_heat=L_H)
     # The smoothed freeze-out factor drives both boundary terms to zero
-    # (sigmoid of a -1187 K CMB superheat over 10 K: below 1e-50).
+    # (sigmoid of a -1151 K CMB superheat over 10 K: below 1e-50).
     assert float(budget.latent_capacity(T_C)) == pytest.approx(0.0, abs=1e-10)
     assert float(budget.gravitational_capacity(T_C)) == pytest.approx(0.0, abs=1e-10)

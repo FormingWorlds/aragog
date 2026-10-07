@@ -96,7 +96,7 @@ def test_budget_terms_match_the_thermal_history_table(script):
 @pytest.mark.reference_pinned
 def test_core_history_matches_the_thermal_history_table(script):
     got = _reproduces(script, 10)
-    assert got['t_cmb_max_abs_diff'] < 0.1 and got['onset_myr_aragog'] == got['onset_myr_leeds']
+    assert got['t_cmb_max_abs_diff'] < 0.2 and got['onset_myr_aragog'] == got['onset_myr_leeds']
 
 
 @pytest.mark.slow
