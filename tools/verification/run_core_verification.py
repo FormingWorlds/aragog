@@ -27,15 +27,20 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-from scipy.integrate import quad  # noqa: E402
+from scipy.integrate import cumulative_trapezoid, quad, solve_ivp  # noqa: E402
+from scipy.optimize import brentq  # noqa: E402
+from thermal_history_reference import INPUTS as NIMMO  # noqa: E402
 
 from aragog.core import (  # noqa: E402
     CoreEnergyBudget,
+    CoreEntropyBudget,
     GaussianCoreProfiles,
     IronMeltingCurve,
     QuadraticMeltingCurve,
     cmb_boundary_layer_flux,
 )
+from aragog.core import melting as m  # noqa: E402
+from aragog.core.entropy import _CHR09_F_GEOMETRY  # noqa: E402
 
 jax.config.update('jax_enable_x64', True)
 
@@ -44,6 +49,9 @@ OUT = ROOT / 'docs' / 'figures' / 'vv'
 VALUES_FILE = OUT / 'core_verification_values.json'
 WIDTH = 6.4  # inches, one width for every figure on the page
 G = 6.674_30e-11
+YEAR = 365.25 * 86400.0
+GYR = 1e9 * YEAR
+MYR_LEEDS = 1e6 * 365 * 86400.0  # thermal_history counts years of 365 days
 
 # Earth-like core of the test suite (tests/test_core_profiles.py, tests/test_core_budget.py).
 EARTH = dict(
@@ -79,7 +87,7 @@ def colour(name: str, fallback: str) -> str:
 def save(fig, name: str) -> None:
     fig.align_ylabels()
     fig.savefig(OUT / f'{name}.png', dpi=200, bbox_inches='tight')
-    fig.savefig(OUT / f'{name}.pdf', bbox_inches='tight')
+    fig.savefig(OUT / f'{name}.pdf', bbox_inches='tight', metadata={'CreationDate': None})
     plt.close(fig)
 
 
@@ -98,13 +106,9 @@ def item1_structure() -> None:
             lambda s: float(prof.density(s)) * 4 * np.pi * s**2, 0.0, x, epsabs=0, epsrel=1e-13
         )[0]
 
-    mass_err = max(
-        abs(m_quad(x) / float(prof.enclosed_mass(x)) - 1) for x in (0.3e6, 1.5e6, prof.r_cmb)
-    )
-    g_err = max(
-        abs(G * m_quad(x) / x**2 / float(prof.gravity(x)) - 1)
-        for x in (0.3e6, 1.5e6, prof.r_cmb)
-    )
+    radii = (0.3e6, 1.5e6, prof.r_cmb)
+    mass_err = max(abs(m_quad(x) / float(prof.enclosed_mass(x)) - 1) for x in radii)
+    g_err = max(abs(G * m_quad(x) / x**2 / float(prof.gravity(x)) - 1) for x in radii)
     h = 50.0
     rr = r[(r > 2 * h) & (r < prof.r_cmb - 2 * h)]
     dpdr = (np.asarray(prof.pressure(rr + h)) - np.asarray(prof.pressure(rr - h))) / (2 * h)
@@ -161,7 +165,7 @@ def item2_energy() -> None:
     lat = np.asarray(jax.jit(jax.vmap(budget.latent_capacity))(t))
     grav = np.asarray(jax.jit(jax.vmap(budget.gravitational_capacity))(t))
     c_eff = np.asarray(jax.jit(jax.vmap(budget.effective_capacity))(t))
-    integral = np.concatenate([[0.0], np.cumsum(0.5 * (c_eff[1:] + c_eff[:-1]) * np.diff(t))])
+    integral = cumulative_trapezoid(c_eff, t, initial=0.0)
     # The content difference at 121 checkpoints against the dense trapezoid of C_eff.
     tc = np.linspace(t[0], t[-1], 121)[1:]
     content = np.array([float(budget.heat_content(x)) for x in np.concatenate([[t[0]], tc])])
@@ -311,7 +315,6 @@ def item4_nucleation() -> None:
     h = 1e-3 * under  # a step relative to the undercooling keeps the cusp out of the difference
     r_of = jax.vmap(budget.r_icb)
     fd = (np.asarray(r_of(t_on - under + h)) - np.asarray(r_of(t_on - under - h))) / (2 * h)
-    ok = under > 0
     rel = np.abs(drdt / fd - 1)
     record(4, 't_onset', t_on)
     record(4, 'sqrt_slope', slope)
@@ -329,47 +332,36 @@ def item4_nucleation() -> None:
     )
     ax.set_ylabel(r'$r_\mathrm{icb}$ (km)')
     ax.legend(frameon=False, fontsize='small')
-    ax2.loglog(under[ok], np.maximum(rel, 1e-16), color=CORE)
+    ax2.loglog(under, np.maximum(rel, 1e-16), color=CORE)
     ax2.set_xlabel(r'$T_\mathrm{on} - T_\mathrm{cmb}$ (K)')
     ax2.set_ylabel('JVP vs central diff.')
     save(fig, 'fig_11_inner_core_nucleation')
 
 
 # ------------------------------------------------------------- 7. dynamo scaling
-def _model2_entropy():
-    """Nimmo (2015) Table 2 state of tests/test_core_entropy.py."""
-    from aragog.core import CoreEntropyBudget
-
-    prof = GaussianCoreProfiles(
-        rho_cen=12500.0,
-        r_cmb=3480e3,
-        p_cmb=136e9,
-        c_p=840.0,
-        length_scale=7272e3,
-        alpha=1.25e-5,
-        pressure_mode='labrosse',
-    )
-    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
-    budget = CoreEnergyBudget(
+def _core_budget(inp, pressure_mode, **kw):
+    """CoreEnergyBudget of the quadratic-melting-curve core that ``inp`` describes."""
+    keys = ('rho_cen', 'length_scale', 'r_cmb', 'p_cmb', 'alpha', 'c_p')
+    prof = GaussianCoreProfiles(**{k: inp[k] for k in keys}, pressure_mode=pressure_mode)
+    curve = QuadraticMeltingCurve(t_m0=inp['t_m0'], t_m1=inp['t_m1'], t_m2=inp['t_m2'])
+    return CoreEnergyBudget(
         prof,
         curve,
         ds_fusion=170.0,
         icn_width=10.0,
-        latent_heat=750e3,
-        alpha_c=1.0,
-        c_light=560.0 / 12150.0,
+        latent_heat=inp['latent_heat'],
+        alpha_c=inp['alpha_c'],
+        c_light=inp['c_light'],
+        **kw,
     )
-    return CoreEntropyBudget(budget, k_core=130.0)
 
 
 def item7_dynamo() -> None:
     """Entropy margin and Christensen et al. (2009) field strength against CMB heat flow."""
-    from scipy.optimize import brentq
-
-    ent, t_c = _model2_entropy(), 4180.0
+    ent, t_c = _nimmo_budget()[1], 4180.0
     printed = 1.35e-5 * 10.7 * 3.48e6 / 840.0
-    record(7, 'F_const_flux_printed_inputs', 0.88 * printed)
-    record(7, 'F_zero_outer_printed_inputs', 0.45 * printed)
+    for geometry, factor in _CHR09_F_GEOMETRY.items():
+        record(7, f'F_{geometry}_printed_inputs', factor * printed)
     record(7, 'F_const_flux_profile', float(ent.chr09_efficiency_factor()))
     qk = record(7, 'Q_k_TW', float(ent.adiabatic_heat_flow(t_c)) / 1e12)
     threshold = record(
@@ -417,18 +409,22 @@ def item7_dynamo() -> None:
 
 
 # ----------------------------------------------------------- 8. melting curve
-def item8_melting() -> None:
-    """PALEOS iron curve against the two Anzellini et al. (2013) Simon branches."""
-    from aragog.core import melting as m
-
-    p = np.linspace(5.2e9, 360e9, 2000)
+def _simon_branches(p):
+    """The two Anzellini et al. (2013) Simon branches, switching at the triple point [K]."""
     gpa = p / 1e9
     low = m._T0 * ((gpa - m._P0 / 1e9) / m._DP_LOW + 1.0) ** m._EXP_LOW
     high = (
         m._TT * ((np.maximum(gpa, m._PT / 1e9) - m._PT / 1e9) / m._DP_HIGH + 1.0) ** m._EXP_HIGH
     )
+    return np.where(p < m._PT, low, high)
+
+
+def item8_melting() -> None:
+    """PALEOS iron curve against the two Anzellini et al. (2013) Simon branches."""
+    p = np.linspace(5.2e9, 360e9, 2000)
+    gpa = p / 1e9
     pure = np.asarray(IronMeltingCurve.t_melt_pure(p))
-    piecewise = np.where(p < m._PT, low, high)
+    piecewise = _simon_branches(p)
     record(
         8,
         'branch_jump_K',
@@ -465,12 +461,9 @@ def item8_melting() -> None:
     ax.set_xlabel('pressure (GPa)')
     ax.legend(frameon=False, fontsize='small', loc='lower right')
     pz = np.linspace(94e9, 103e9, 901)
-    pw = np.where(
-        pz < m._PT,
-        m._T0 * ((pz / 1e9 - m._P0 / 1e9) / m._DP_LOW + 1.0) ** m._EXP_LOW,
-        m._TT * ((pz / 1e9 - m._PT / 1e9) / m._DP_HIGH + 1.0) ** m._EXP_HIGH,
+    ax2.plot(
+        pz / 1e9, np.asarray(IronMeltingCurve.t_melt_pure(pz)) - _simon_branches(pz), color=CORE
     )
-    ax2.plot(pz / 1e9, np.asarray(IronMeltingCurve.t_melt_pure(pz)) - pw, color=CORE)
     ax2.axhline(0.0, color=colour('fog', '0.6'), lw=0.8)
     ax2.set_xlabel('pressure (GPa), around the branch switch')
     ax2.set_ylabel(r'blend $-$ Eq. 2/3 (K)')
@@ -516,13 +509,7 @@ def item9_cvode_onset() -> None:
         flux.append(
             solver._core_module_cmb_flux(t_core[i], float(sol.y[0, i])) * solver._cmb_area
         )
-    secs = 365.25 * 86400.0
-    cmb_heat = np.concatenate(
-        [
-            [0.0],
-            np.cumsum(0.5 * (np.array(flux[1:]) + np.array(flux[:-1])) * np.diff(t_yr) * secs),
-        ]
-    )
+    cmb_heat = cumulative_trapezoid(flux, t_yr, initial=0.0) * YEAR
     record(9, 't_onset', t_on)
     record(9, 't_core_start', t_core[0])
     record(9, 't_core_end', t_core[-1])
@@ -569,8 +556,7 @@ def item9_cvode_onset() -> None:
 def item12_jax_parity() -> None:
     """NumPy and JAX right-hand sides on three core states; the analytic core column against
     central differences over a range of steps."""
-    _, build, eos_copy = _solver_helpers()
-    from test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS
+    core_params, build, eos_copy = _solver_helpers()
     from test_jax_dsdt_core_module import _build_jax_pieces
 
     from aragog.jax.solver import dSdt_core_module
@@ -583,7 +569,7 @@ def item12_jax_parity() -> None:
         'stratified': colour('ocean', 'C0'),
     }
     for state, col in cols.items():
-        params = dict(CORE_MODULE_PARAMS)
+        params = dict(core_params)
         if state == 'stratified':
             params |= {'stratification': True, 'k_core': 130.0}
         solver = build('core_module', eos_copy(), params, s_init='driven')
@@ -641,31 +627,11 @@ LAYER_TABLE = TH_TABLE.with_name('thermal_history_stable_layer.csv')
 
 def _thermal_history():
     """The Leeds table, its inputs, and aragog's budgets on the same inputs."""
-    from aragog.core import CoreEntropyBudget
-
     with TH_TABLE.open() as fh:
         header = json.loads(fh.readline()[2:])
     data = np.loadtxt(TH_TABLE, delimiter=',', comments='#')
     inp = header['inputs']
-    prof = GaussianCoreProfiles(
-        rho_cen=inp['rho_cen'],
-        length_scale=inp['length_scale'],
-        r_cmb=inp['r_cmb'],
-        p_cmb=inp['p_cmb'],
-        alpha=inp['alpha'],
-        c_p=inp['c_p'],
-        pressure_mode='quadrature',
-    )
-    curve = QuadraticMeltingCurve(t_m0=inp['t_m0'], t_m1=inp['t_m1'], t_m2=inp['t_m2'])
-    budget = CoreEnergyBudget(
-        prof,
-        curve,
-        ds_fusion=170.0,
-        icn_width=10.0,
-        latent_heat=inp['latent_heat'],
-        alpha_c=inp['alpha_c'],
-        c_light=inp['c_light'],
-    )
+    budget = _core_budget(inp, 'quadrature')
     cols = {name: data[:, i] for i, name in enumerate(header['columns'])}
     return header, cols, budget, CoreEntropyBudget(budget, k_core=inp['k_core'])
 
@@ -735,40 +701,20 @@ def item6_leeds_terms() -> None:
 def _stable_layer_panel(ax, ax_t) -> None:
     """Layer thickness and central temperature: thermal_history against aragog's own
     core-only history under the same fixed CMB flows, its layer forming at time zero."""
-    from scipy.integrate import solve_ivp
-
     with LAYER_TABLE.open() as fh:
         header = json.loads(fh.readline()[2:])
     data = np.loadtxt(LAYER_TABLE, delimiter=',', comments='#')
     inp = header['inputs']
-    prof = GaussianCoreProfiles(
-        rho_cen=inp['rho_cen'],
-        length_scale=inp['length_scale'],
-        r_cmb=inp['r_cmb'],
-        p_cmb=inp['p_cmb'],
-        alpha=inp['alpha'],
-        c_p=inp['c_p'],
-        pressure_mode='quadrature',
-    )
-    curve = QuadraticMeltingCurve(t_m0=inp['t_m0'], t_m1=inp['t_m1'], t_m2=inp['t_m2'])
-    budget = CoreEnergyBudget(
-        prof,
-        curve,
-        ds_fusion=170.0,
-        icn_width=10.0,
-        latent_heat=inp['latent_heat'],
-        alpha_c=inp['alpha_c'],
-        c_light=inp['c_light'],
-        stratification=True,
-        k_core=inp['k_core'],
-    )
-    r_cmb, myr = inp['r_cmb'], 1e6 * 365 * 86400.0  # the Leeds year of 365 days
+    budget = _core_budget(inp, 'quadrature', stratification=True, k_core=inp['k_core'])
+    r_cmb = inp['r_cmb']
     for q, col in zip(header['q_cmb'], (CORE, colour('ocean', 'C0'))):
         rows = data[data[:, 0] == q]
         t, r_s, t_cen_leeds = rows[:, 1], rows[:, 5], rows[:, 3]
-        rate = jax.jit(lambda time, temp, q=q: budget.dtcmb_dt(temp, q, t_layer=time * myr))
+        rate = jax.jit(
+            lambda time, temp, q=q: budget.dtcmb_dt(temp, q, t_layer=time * MYR_LEEDS)
+        )
         sol = solve_ivp(
-            lambda time, y, rate=rate: [float(rate(time, y[0])) * myr],
+            lambda time, y, rate=rate: [float(rate(time, y[0])) * MYR_LEEDS],
             (t[0], t[-1]),
             [inp['t_cmb_start']],
             t_eval=t,
@@ -778,7 +724,7 @@ def _stable_layer_panel(ax, ax_t) -> None:
         )
         t_cmb = sol.y[0]
         capped = np.asarray(
-            jax.vmap(lambda x, a, q=q: budget.convecting_radius(x, q, a))(t_cmb, t * myr)
+            jax.vmap(lambda x, a, q=q: budget.convecting_radius(x, q, a))(t_cmb, t * MYR_LEEDS)
         )
         quasi = np.asarray(jax.vmap(lambda x, q=q: budget.convecting_radius(x, q))(t_cmb))
         t_cen = np.asarray(jax.vmap(budget.profiles.t_cen)(t_cmb))
@@ -816,10 +762,9 @@ def item10_leeds_history() -> None:
 
     header, th, budget, _ = _thermal_history()
     inp = header['inputs']
-    myr = 1e6 * 365 * 86400.0  # the Leeds year of 365 days
     rate = jax.jit(lambda t: budget.dtcmb_dt(t, inp['q_cmb']))
     sol = solve_ivp(
-        lambda _, y: [float(rate(y[0])) * myr],
+        lambda _, y: [float(rate(y[0])) * MYR_LEEDS],
         (th['time_myr'][0], th['time_myr'][-1]),
         [inp['t_cmb_start']],
         t_eval=th['time_myr'],
@@ -838,6 +783,9 @@ def item10_leeds_history() -> None:
     record(10, 'onset_myr_leeds', onset_th)
     record(10, 'r_icb_end_km_aragog', r_icb[-1] / 1e3)
     record(10, 'r_icb_end_km_leeds', th['r_icb'][-1] / 1e3)
+    before = np.arange(len(t_cmb)) < np.argmax(th['r_icb'] > 0)
+    record(10, 't_cmb_max_abs_diff_before_onset', np.max(np.abs(t_cmb - th['T_cmb'])[before]))
+    record(10, 't_cmb_abs_diff_at_onset', abs(t_cmb - th['T_cmb'])[np.argmax(~before)])
     record(10, 'r_icb_max_abs_diff_km', np.max(np.abs(r_icb - th['r_icb'])) / 1e3)
     record(10, 'inner_core_age_myr', th['time_myr'][-1] - onset)
 
@@ -889,7 +837,11 @@ def item11_coupled() -> None:
             ax.semilogx(t, run['t_node'][live], '--', **mantle)
         ax2.semilogx(t, run['f_cmb'][live], color=col, label=mode)
         ax2.semilogx(t[wrong[live]], run['f_cmb'][live][wrong[live]], 'x', ms=3, color=col)
-    record(11, 'core_residual_frac_end', _coupled('core_module')['residual'][-1])
+    run = _coupled('core_module')
+    record(11, 'core_residual_frac_end', run['residual'][-1])
+    record(
+        11, 'core_residual_frac_max_after_1kyr', np.abs(run['residual'][run['t'] > 1e3]).max()
+    )
     ax.set_ylabel('temperature (K)')
     ax.legend(frameon=False, fontsize='x-small', loc='lower left')
     ax2.set_yscale('symlog', linthresh=1.0)
@@ -933,41 +885,16 @@ NIMMO_T4 = {
 
 def _nimmo_budget():
     """The Nimmo (2015, ch. 8.02) Table 2 core, as tests/test_core_entropy.py builds it."""
-    from aragog.core import CoreEntropyBudget
-
-    prof = GaussianCoreProfiles(
-        rho_cen=12500.0,
-        length_scale=7272e3,
-        r_cmb=3480e3,
-        p_cmb=136e9,
-        alpha=1.25e-5,
-        c_p=840.0,
-        pressure_mode='labrosse',
-    )
-    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
-    budget = CoreEnergyBudget(
-        prof,
-        curve,
-        ds_fusion=170.0,
-        icn_width=10.0,
-        latent_heat=750e3,
-        alpha_c=1.0,
-        c_light=560.0 / 12150.0,
-    )
-    return budget, CoreEntropyBudget(budget, k_core=130.0)
+    budget = _core_budget(NIMMO, 'labrosse')
+    return budget, CoreEntropyBudget(budget, k_core=NIMMO['k_core'])
 
 
 def _nimmo_terms(budget, ent, t_c, q):
     """aragog's Table 4 quantities at CMB temperature t_c [K] and heat flow q [W]."""
-    from scipy.integrate import quad as _quad
-
-    gyr = 1e9 * 365.25 * 86400.0
     cooling = -float(budget.dtcmb_dt(t_c, q))  # K/s
     r_icb = float(budget.r_icb(t_c))
     drdt = float(jax.grad(budget.r_icb)(t_c))
-    age = (
-        _quad(lambda x: float(budget.effective_capacity(x)), t_c, float(budget.t_onset))[0] / q
-    )
+    age = quad(lambda x: float(budget.effective_capacity(x)), t_c, float(budget.t_onset))[0] / q
     return dict(
         Qs=float(budget.secular_capacity()) * cooling / 1e12,
         QL=float(budget.latent_capacity(t_c)) * cooling / 1e12,
@@ -977,25 +904,22 @@ def _nimmo_terms(budget, ent, t_c, q):
         EL=float(ent.latent_entropy_capacity(t_c)) * cooling / 1e6,
         Eg=float(ent.gravitational_entropy_capacity(t_c)) * cooling / 1e6,
         Ek=float(ent.conduction_sink()) / 1e6,
-        cooling=cooling * gyr,
-        growth=-drdt * cooling * gyr / 1e3,
-        age=age / gyr,
+        cooling=cooling * GYR,
+        growth=-drdt * cooling * GYR / 1e3,
+        age=age / GYR,
     ), r_icb
 
 
 def item5_nimmo() -> None:
     """The present-day Earth budget of Nimmo (2015, ch. 8.02, Table 4) on its Table 2 core."""
-    from scipy.optimize import brentq
-
     budget, ent = _nimmo_budget()
     t_1220 = brentq(
         lambda x: float(budget.r_icb(x)) - 1220e3, 3500.0, float(budget.t_onset) - 1e-6
     )
     record(5, 't_cmb_r1220_K', t_1220)
     record(5, 'delta_t_onset_K', float(budget.t_onset) - t_1220)
-    gyr = 1e9 * 365.25 * 86400.0
     for q in NIMMO_T4:  # Table 4's age matches Delta T_c / (dT_c/dt) at the present rate
-        rate = -float(budget.dtcmb_dt(t_1220, q)) * gyr
+        rate = -float(budget.dtcmb_dt(t_1220, q)) * GYR
         record(5, f'age_linear_{q / 1e12:g}TW', (float(budget.t_onset) - t_1220) / rate)
     record(5, 'Cr_m_per_K', -float(jax.grad(budget.r_icb)(t_1220)))
     names = list(NIMMO_T4[15.2e12])
@@ -1052,10 +976,10 @@ def main(argv=None) -> None:
         VALUES.update(json.loads(VALUES_FILE.read_text()))
     start = time.perf_counter()
     for i in wanted:
-        t0 = time.perf_counter()
+        t0, VALUES[str(i)] = time.perf_counter(), {}
         ITEMS[i]()
-        print(f'item {i}: {time.perf_counter() - t0:.1f} s')
-    VALUES_FILE.write_text(json.dumps(VALUES, indent=1, sort_keys=True) + '\n')
+        VALUES_FILE.write_text(json.dumps(VALUES, indent=1, sort_keys=True) + '\n')
+        print(f'item {i}: {time.perf_counter() - t0:.1f} s', flush=True)
     print(
         f'total {time.perf_counter() - start:.1f} s; values in {VALUES_FILE.relative_to(ROOT)}'
     )
