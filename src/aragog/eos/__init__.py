@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator, mobility_function
+from aragog.eos.table_cache import read_cached_table
 
 __all__ = [
     'EntropyEOS',
     'EntropyPhaseEvaluator',
     'mobility_function',
+    'read_cached_table',
 ]
