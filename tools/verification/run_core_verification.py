@@ -488,17 +488,17 @@ def item9_cvode_onset() -> None:
         k: v for k, v in params0.items() if k not in ('light_element_fraction', 'depression')
     }
     params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
-    for rtol in (1e-8, 1e-10):  # the figure and the other values come from the 1e-10 solve
+    # The figure and the other values come from the last, rtol 1e-10, solve; atol has a 1e-8 floor.
+    for rtol, key in ((1e-8, 'core_vs_cmb_rel_rtol1e-8'), (1e-10, 'core_vs_cmb_rel')):
         solver = build('core_module', eos_copy(), params, end_time=4.0, solver_method='cvode')
-        solver.parameters.solver.rtol = solver.parameters.solver.atol = rtol
+        solver.parameters.solver.rtol = rtol
         budget, n = solver._core_module_budget, solver._n_stag
         t_on = float(budget.t_onset)
         solver.set_initial_core_temperature(t_on + 2.0)
         solver.set_initial_entropy(np.linspace(7000.0, 6700.0, n))
         solver.solve()
         out = solver.get_state()
-        core_vs_cmb = abs(out.step_dE_core_J / -out.step_dE_F_cmb_J - 1)
-        record(9, 'core_vs_cmb_rel' + ('_rtol1e-8' if rtol == 1e-8 else ''), core_vs_cmb)
+        record(9, key, abs(out.step_dE_core_J / -out.step_dE_F_cmb_J - 1))
     sol = solver._solution
     t_yr, t_core = np.asarray(sol.t), np.asarray(sol.y[n + 1])
     content = np.array([float(budget.heat_content(x)) for x in t_core]) - float(
@@ -1131,8 +1131,10 @@ def item11_coupled() -> None:
         step = core + cmb - impact
         record(11, f'closure_end_{case}', abs(frac[-1]))
         record(11, f'closure_max_after_1kyr_{case}', np.abs(frac[t > 1e3]).max())
-        record(11, f'closure_max_first_kyr_{case}', np.abs(frac[t <= 1e3]).max())
-        record(11, f'share_22_122yr_{case}', step[abs(t - 122.0) < 0.5].item() / step.sum())
+        first = np.flatnonzero(cmb)[0]  # the first call, from 0 to 2 yr
+        record(11, f'closure_first_call_{case}', abs(step[first] / cmb[first]))
+        share = abs(step[abs(t - 122.0) < 0.5].item()) / np.abs(step).sum()
+        record(11, f'share_22_122yr_{case}', share)
 
 
 # ---------------------------------------------------------------- 5. Nimmo (2015)

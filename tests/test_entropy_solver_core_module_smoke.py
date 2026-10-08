@@ -340,7 +340,7 @@ def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
     }
     params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
     solver = _build('core_module', shared_eos, params, end_time=4.0, solver_method='cvode')
-    solver.parameters.solver.rtol = solver.parameters.solver.atol = 1e-10
+    solver.parameters.solver.rtol = 1e-10
     budget = solver._core_module_budget
     S = np.linspace(7000.0, 6700.0, solver._n_stag)
     p_cmb = float(solver._P_basic_flat[0])
@@ -452,7 +452,7 @@ def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
     assert out.step_dE_F_cmb_J < 0.0
     assert y[-1, -1] - y[-1, 0] > 10.0 * abs(y[n + 1, -1] - y[n + 1, 0])
     assert out.core_T_top == y[-1, -1]
-    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-4)  # 65 points
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=5e-6)  # 1.9e-6 measured
 
 
 @pytest.mark.parametrize('ra_crit', [0.0, -450.0, float('nan'), float('inf')])
