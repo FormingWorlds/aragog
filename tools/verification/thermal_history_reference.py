@@ -31,7 +31,15 @@ import numpy as np
 
 OUT = Path(__file__).resolve().parent / 'data' / 'thermal_history_evolution.csv'
 LAYER_OUT = OUT.with_name('thermal_history_stable_layer.csv')
-LAYER = dict(q_cmb=[8e12, 12e12], t_end_myr=1000.0)
+# Layer cases: each a list of (end time [Myr], CMB heat flow [W]) segments from a core without
+# a layer: cooling below the adiabatic flow, heated from above, and erosion and re-formation.
+LAYER_CASES = {
+    '8 TW': [(1000.0, 8e12)],
+    '12 TW': [(1000.0, 12e12)],
+    '-2 TW': [(1000.0, -2e12)],
+    '0 TW': [(1000.0, 0.0)],
+    'erosion': [(50.0, 8e12), (150.0, 25e12), (400.0, 8e12)],
+}
 
 # Nimmo (2015, ch. 8.02) Table 2 core with a prescribed CMB heat flow; aragog uses the
 # same numbers with pressure_mode='quadrature', since thermal_history integrates the
@@ -161,34 +169,62 @@ def _write(path: Path, header: dict, rows: list) -> None:
     print(f'{len(rows)} rows to {path}', file=sys.stderr)
 
 
+def _theta_depth(layer, r_cmb: float) -> float:
+    """Layer depth [m] where the excess over the adiabat falls to 0.1 of its top value."""
+    r = np.asarray(layer.profiles['r'])
+    if r[-1] <= r[0]:  # no layer, and no adiabat stored before the first step
+        return 0.0
+    theta = np.asarray(layer.profiles['T'] - layer.profiles['Ta'])
+    if theta[-1] <= 0.0:
+        return 0.0
+    k = len(theta) - 1
+    while k > 0 and theta[k - 1] >= 0.1 * theta[-1]:
+        k -= 1
+    base = (
+        r[0] if k == 0 else np.interp(0.1 * theta[-1], theta[k - 1 : k + 1], r[k - 1 : k + 1])
+    )
+    return r_cmb - float(base)
+
+
 def stable_layer_runs() -> None:
-    """The leeds_thermal layer under fixed subadiabatic CMB heat flows."""
-    inp = dict(INPUTS, t_end_myr=LAYER['t_end_myr'])
+    """The leeds_thermal layer under the CMB heat flows of ``LAYER_CASES``; each row is the
+    state at the start of a step, with the flow of that step."""
     rows = []
-    for q in LAYER['q_cmb']:
-        model = _model(dict(inp, q_cmb=q), stable_layer=True)
+    for case, (name, segments) in enumerate(LAYER_CASES.items()):
+        inp = dict(INPUTS, t_end_myr=segments[-1][0], q_cmb=segments[0][1])
+        model = _model(inp, stable_layer=True)
         ys = model.parameters.ys
         for _ in range(int(inp['t_end_myr'] / inp['dt_myr'])):
+            time = model.time / (1e6 * ys)
+            q = next(flow for end, flow in segments if time < end - 1e-9)
             model.mantle.Q_cmb = q
             core = model.core
             rows.append(
                 [
+                    case,
+                    time,
                     q,
-                    model.time / (1e6 * ys),
                     float(core.profiles['T'][-1]),
                     float(core.Tcen),
                     float(core.ri),
-                    float(core.rs),
+                    inp['r_cmb'] - float(core.rs),
+                    _theta_depth(model.stable_layer, inp['r_cmb']),
                 ]
             )
             model.evolve(inp['dt_myr'] * 1e6 * ys, verbose=False)
+    columns = [
+        'case',
+        'time_myr',
+        'q_cmb',
+        'T_cmb',
+        'T_cen',
+        'r_icb',
+        'depth_r_s',
+        'depth_theta',
+    ]
     _write(
         LAYER_OUT,
-        {
-            'inputs': inp,
-            'q_cmb': LAYER['q_cmb'],
-            'columns': ['q_cmb', 'time_myr', 'T_cmb', 'T_cen', 'r_icb', 'r_s'],
-        },
+        {'inputs': dict(INPUTS, t_end_myr=None), 'cases': LAYER_CASES, 'columns': columns},
         rows,
     )
 

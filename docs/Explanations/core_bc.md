@@ -72,6 +72,8 @@ The entropy margin is the sum over the convecting core and the shell of the bala
 
 The shell must hold the layer and lie above the inner core. The solver refuses an inner core that reaches the shell base and warns once when the layer base comes within three cells of it; a lower `layer_base_fraction` gives a deeper shell. A stratified core runs on CVODE or SciPy BDF, which the solver also falls back to without CVODE; Radau is refused, since the stiff mixing of the shell takes it minutes per call.
 
+The resolved layer is experimental, and the solver warns once when `stratification = true`. Against the `leeds_thermal` model it reproduces a layer that grows under a subadiabatic CMB flow and one heated from above, and it meets its analytic limits, resumes where it stopped and has matching NumPy and JAX right-hand sides ([verification, section 13](core_verification.md#13-stable-layer-against-thermal_history)). Erosion, a CMB flow that rises above the conducted adiabatic flow over an existing layer, does not run on CVODE at the default tolerances: the step size collapses where the mixing switches on in the eroding cells, and the energy closure of the core is not guaranteed there. A growing layer needs `solver.rtol` of 1e-10 or tighter: at the default 1e-8 the centre temperature and the inner-core onset of the verification cases have not converged.
+
 ## How to choose
 
 | Need | Recommended `core_bc` |
@@ -107,7 +109,7 @@ The mode needs JAX (`pip install 'fwl-aragog[jax]'`); without it the solver refu
 - `alpha_c`: Compositional expansivity of the outer-core alloy [dimensionless]. Default $0.0$.
 - `c_light`: Light-element mass fraction of the outer core [dimensionless]. Default $0.0$.
 - `capacity_mode`, `legacy_rho_core`, `legacy_tfac`: `"profile"` (default) integrates the Gaussian profile; `"legacy"` uses the isothermal reservoir $\rho_\text{core} V c_p \,\mathrm{tfac}$ with the two legacy values.
-- `stratification`: Boolean flag enabling stable layer tracking under subadiabatic conditions. Default `false`.
+- `stratification`: Boolean flag enabling the resolved stable layer (experimental, see above). Default `false`.
 - `k_core`: Core thermal conductivity [W m$^{-1}$ K$^{-1}$], required with `stratification = true` (no default here; PROTEUS uses $130.0$).
 - `layer_base_fraction`: Base of the resolved shell as a fraction of the CMB radius. Default $0.4$.
 - `layer_cells`: Number of shell cells. Default $64$.

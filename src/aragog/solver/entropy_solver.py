@@ -1842,6 +1842,15 @@ class EntropySolver:
                     float(budget.profiles.length_scale) / 1e3,
                 )
             self._core_module_q_radio, self._core_module_ra_crit_cmb = q_radio, ra_crit
+            if self._core_module_budget.stratification:
+                self._warn_once(
+                    'core_stratification',
+                    'core_module stratification is experimental: the stable layer matches '
+                    'thermal_history while it grows, but its erosion does not integrate on '
+                    'CVODE, and its growth needs solver.rtol 1e-10 or tighter: at the default '
+                    '1e-8 the centre temperature and the inner-core onset do not converge (see '
+                    'the core verification docs)',
+                )
 
         # BC dispatch keys captured once
         self._outer_bc_kind = int(bc.outer_boundary_condition)

@@ -371,6 +371,17 @@ def test_a_stratified_core_refuses_radau(shared_eos):
         solver.solve()
 
 
+def test_only_a_stratified_core_warns_that_the_layer_is_experimental(shared_eos, caplog):
+    def warnings(params):
+        caplog.clear()
+        with caplog.at_level('WARNING', logger='aragog'):
+            _build('core_module', shared_eos, params)
+        return [r for r in caplog.records if 'stratification is experimental' in r.message]
+
+    assert len(warnings(STRATIFIED_PARAMS)) == 1
+    assert warnings(CORE_MODULE_PARAMS) == []
+
+
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_a_stratified_default_start_keeps_the_core_and_closes_its_heat():

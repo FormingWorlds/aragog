@@ -1,5 +1,5 @@
 """The core verification page: every tagged number matches the values file, every test it
-names exists, and items 4, 6, 10 and 11 of the script reproduce their recorded values."""
+names exists, and items 4, 6, 10, 11 and 13 of the script reproduce their recorded values."""
 
 from __future__ import annotations
 
@@ -106,3 +106,25 @@ def test_coupled_tables_reproduce_the_page(script):
     assert got['wrong_sign_rows_core_module'] == 0
     assert got['wrong_sign_rows_energy_balance'] == got['rows_energy_balance']
     assert got['core_residual_frac_max_after_1kyr'] < 1e-5
+
+
+@pytest.mark.slow
+@pytest.mark.reference_pinned
+def test_the_stable_layer_meets_the_thermal_history_bounds(script):
+    """Cooling and heated-from-above layers close their heat to 1e-6 and stay within the bounds
+    against thermal_history: T_cmb 5 K, T_cen 10 K, theta-0.1 depth within a factor 1.5, the inner
+    core within 2 % at the end with its onset within 5 %."""
+    got = _reproduces(script, 13)
+    tags = ('8TW', '12TW', '-2TW', '0TW')
+    assert max(got[f'closure_{t}'] for t in tags) < 1e-6
+    assert max(got[f'tcmb_max_abs_diff_K_{t}'] for t in tags) < 5.0
+    assert max(got[f'tcen_max_abs_diff_K_{t}'] for t in tags) < 10.0
+    assert min(got[f'layer_ratio_min_{t}'] for t in tags) > 1 / 1.5
+    assert max(got[f'layer_ratio_max_{t}'] for t in tags) < 1.5
+    for t in (
+        k[len('ricb_end_rel_diff_') :] for k in got if k.startswith('ricb_end_rel_diff_')
+    ):
+        assert got[f'ricb_end_rel_diff_{t}'] < 0.02
+        assert got[f'onset_myr_aragog_{t}'] == pytest.approx(
+            got[f'onset_myr_leeds_{t}'], rel=0.05
+        )

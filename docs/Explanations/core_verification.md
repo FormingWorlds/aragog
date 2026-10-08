@@ -82,20 +82,11 @@ The `leeds` core model of thermal_history (Greenwood et al. 2021) computes the s
 
 The secular term agrees to 1.4e-08<!--k:6.secular_max_rel--> and the conduction entropy sink to 1.5e-07<!--k:6.conduction_sink_rel-->; the latent term agrees to 6.1e-04<!--k:6.latent_max_rel-->. The gravitational term differs by up to 3.8 %<!--k:6.gravitational_max_rel:100-->, because thermal_history enriches the outer core in the light element as the inner core grows (by the factor 1.039<!--k:6.enrichment_end--> at the end), while aragog holds the composition fixed; with that factor applied the two agree to 6.1e-04<!--k:6.gravitational_enrichment_corrected_max_rel-->.
 
-The stratified layer is compared with the `leeds_thermal` layer of thermal_history, which conducts heat through the layer (Greenwood et al. 2021, eq. 20) and moves its base by a stability check (eq. 25). aragog resolves the layer in a shell of finite volumes that conducts and mixes where superadiabatic ([core_bc.md](core_bc.md)); its layer base is taken, as thermal_history lowers its base to where the layer meets the adiabat, at the radius where the excess over the adiabat has fallen to 0.1 of its value at the top. Both run the core alone under fixed CMB heat flows below the adiabatic one (15.8<!--k:6.q_k_TW--> TW at the start), from 4400 K without a layer.
-
-| CMB heat flow | 10 Myr | 50 Myr | 200 Myr | 500 Myr | 1000 Myr |
-|---|---|---|---|---|---|
-| 8 TW, thermal_history (km) | 142<!--k:6.layer_leeds_km_8TW_10myr--> | 443<!--k:6.layer_leeds_km_8TW_50myr--> | 995<!--k:6.layer_leeds_km_8TW_200myr--> | 1601<!--k:6.layer_leeds_km_8TW_500myr--> | 1267<!--k:6.layer_leeds_km_8TW_1000myr--> |
-| 8 TW, aragog (km) | 137<!--k:6.layer_aragog_km_8TW_10myr--> | 307<!--k:6.layer_aragog_km_8TW_50myr--> | 626<!--k:6.layer_aragog_km_8TW_200myr--> | 1024<!--k:6.layer_aragog_km_8TW_500myr--> | 918<!--k:6.layer_aragog_km_8TW_1000myr--> |
-| 12 TW, thermal_history (km) | 113<!--k:6.layer_leeds_km_12TW_10myr--> | 384<!--k:6.layer_leeds_km_12TW_50myr--> | 902<!--k:6.layer_leeds_km_12TW_200myr--> | 1448<!--k:6.layer_leeds_km_12TW_500myr--> | 842<!--k:6.layer_leeds_km_12TW_1000myr--> |
-| 12 TW, aragog (km) | 137<!--k:6.layer_aragog_km_12TW_10myr--> | 309<!--k:6.layer_aragog_km_12TW_50myr--> | 626<!--k:6.layer_aragog_km_12TW_200myr--> | 889<!--k:6.layer_aragog_km_12TW_500myr--> | 617<!--k:6.layer_aragog_km_12TW_1000myr--> |
-
-Over 1 Gyr the CMB temperatures, the top of each resolved layer, agree to within 2.9<!--k:6.tcmb_max_abs_diff_K_8TW--> K (8 TW) and 2.2<!--k:6.tcmb_max_abs_diff_K_12TW--> K (12 TW), and the central temperatures to within 1.2<!--k:6.tcen_max_abs_diff_K_8TW--> K and 6.8<!--k:6.tcen_max_abs_diff_K_12TW--> K. Where both layers are thicker than 10 km, aragog's layer is 0.63<!--k:6.layer_ratio_min_8TW--> to 1.09<!--k:6.layer_ratio_max_8TW--> times the thermal_history layer at 8 TW and 0.58<!--k:6.layer_ratio_min_12TW--> to 1.35<!--k:6.layer_ratio_max_12TW--> times at 12 TW. With the base where the excess gradient falls to 1e-3 of the adiabatic one, the criterion of the quasi-static depth, the ranges are 0.93<!--k:6.layer_ratio_gradient_min_8TW--> to 2.37<!--k:6.layer_ratio_gradient_max_8TW--> and 0.72<!--k:6.layer_ratio_gradient_min_12TW--> to 2.71<!--k:6.layer_ratio_gradient_max_12TW-->: early on, an erfc profile reaches that gradient at about 4.4 diffusion lengths. The inner core nucleates in thermal_history at 588<!--k:6.onset_myr_leeds_8TW--> Myr.
+The stratified layer is compared with thermal_history in [section 13](#13-stable-layer-against-thermal_history).
 
 ![Budget terms against thermal_history](../figures/vv/fig_13_leeds_budget_terms.png)
 
-**Figure 13.** Comparison with the `leeds` model of thermal_history on the same inputs. (a) Relative difference of the secular, latent and gravitational capacities along the 10 TW history; the dotted line applies thermal_history's outer-core enrichment to aragog's gravitational term. (b) Stratified-layer thickness under fixed CMB heat flows of 8 and 12 TW: thermal_history's layer (dashed) and aragog's resolved layer (solid), each on its own history. (c) Central core temperature of the two histories.
+**Figure 13.** Relative difference of aragog's secular, latent and gravitational capacities from those of the `leeds` model of thermal_history along its 10 TW history on the same inputs; the dotted line applies thermal_history's outer-core enrichment to aragog's gravitational term.
 
 Pinned by `tests/test_core_verification_page.py::test_budget_terms_match_the_thermal_history_table`, and on the Nimmo (2015) state by `tests/test_core_nimmo_benchmarks.py::test_budget_terms_match_thermal_history_cross_check` and `tests/test_core_entropy.py::test_entropy_capacities_match_thermal_history`.
 
@@ -166,6 +157,31 @@ The solver evaluates the coupled right-hand side in NumPy and, for CVODE's analy
 **Figure 19.** Agreement of the NumPy and JAX core right-hand sides. (a) Relative difference per state component, the entropy cells first and the CMB entropy gradient and core temperature last, in three core states. (b) Relative error of a central difference of $\dot T_\mathrm{core}$ against the analytic Jacobian entry, against the difference step.
 
 Pinned by `tests/test_jax_dsdt_core_module.py::test_boundary_slots_match_numpy_on_a_five_node_mesh`, `::test_jacobian_core_column_matches_central_differences` and `::test_jacobian_carries_boundary_couplings`.
+
+## 13. Stable layer against thermal_history
+
+The resolved layer of `stratification = true` is compared with the `leeds_thermal` model of thermal_history (Greenwood et al. 2021) on the core of section 6, which starts on the adiabat at a CMB temperature of 4400 K and runs for 1 Gyr under a fixed CMB heat flow. The conducted adiabatic flow at the CMB is 15.8<!--k:13.q_k_TW--> TW, so a flow of 8 or 12 TW grows a layer by cooling, and a flow of -2 or 0 TW heats the core from above. aragog resolves the outer core above 0.4 $r_\text{cmb}$ in 64 cells with the default mixing constants; mixing acts only where the temperature falls outward faster than the adiabat, so the subadiabatic part conducts only. `leeds_thermal` moves the base of its layer by a stability check after each step. The layer depth is defined the same way on both sides: the depth below the CMB where the excess over the convecting adiabat falls to 0.1 of its value at the top.
+
+aragog integrates with SciPy BDF at rtol 1e-10 and atol 1e-8. At rtol 1e-8 the centre temperature and the inner-core onset of the same cases have not converged: the centre temperature then differs from thermal_history by up to 13.5 K and the onset by up to 32 Myr. The energy closure comes from a second solve of each case at rtol 1e-8 that also integrates the heat of the convecting core: the core and shell heat change matches the CMB heat to 7.4e-13<!--k:13.closure_8TW--> of the core heat or better.
+
+| CMB flow | max $\lvert\Delta T_\text{cmb}\rvert$ (K) | max $\lvert\Delta T_\text{cen}\rvert$ (K) | depth ratio | onset aragog (thermal_history) (Myr) | $r_\text{icb}$ at 1 Gyr |
+|---|---|---|---|---|---|
+| 8 TW | 2.88<!--k:13.tcmb_max_abs_diff_K_8TW--> | 0.78<!--k:13.tcen_max_abs_diff_K_8TW--> | 0.79<!--k:13.layer_ratio_min_8TW--> to 1.13<!--k:13.layer_ratio_max_8TW--> | 590<!--k:13.onset_myr_aragog_8TW--> (588<!--k:13.onset_myr_leeds_8TW-->) | 0.20<!--k:13.ricb_end_rel_diff_8TW:100--> % |
+| 12 TW | 2.23<!--k:13.tcmb_max_abs_diff_K_12TW--> | 0.65<!--k:13.tcen_max_abs_diff_K_12TW--> | 0.82<!--k:13.layer_ratio_min_12TW--> to 1.39<!--k:13.layer_ratio_max_12TW--> | 590<!--k:13.onset_myr_aragog_12TW--> (588<!--k:13.onset_myr_leeds_12TW-->) | 0.05<!--k:13.ricb_end_rel_diff_12TW:100--> % |
+| -2 TW | 4.11<!--k:13.tcmb_max_abs_diff_K_-2TW--> | 1.00<!--k:13.tcen_max_abs_diff_K_-2TW--> | 0.79<!--k:13.layer_ratio_min_-2TW--> to 1.01<!--k:13.layer_ratio_max_-2TW--> | 592<!--k:13.onset_myr_aragog_-2TW--> (589<!--k:13.onset_myr_leeds_-2TW-->) | 0.23<!--k:13.ricb_end_rel_diff_-2TW:100--> % |
+| 0 TW | 3.88<!--k:13.tcmb_max_abs_diff_K_0TW--> | 0.91<!--k:13.tcen_max_abs_diff_K_0TW--> | 0.79<!--k:13.layer_ratio_min_0TW--> to 1.01<!--k:13.layer_ratio_max_0TW--> | 591<!--k:13.onset_myr_aragog_0TW--> (589<!--k:13.onset_myr_leeds_0TW-->) | 0.15<!--k:13.ricb_end_rel_diff_0TW:100--> % |
+
+The bounds are 5 K on the CMB temperature, 10 K on the centre temperature, a factor of 1.5 on the layer depth after the first Myr, 2 % on the inner-core radius at 1 Gyr and 5 % on its onset time. The extremes of the depth ratio fall in the first 51 Myr, while the layer is thin; from 300 Myr on the two depths agree to about 1 % (Figure 20a). The CMB temperature differs most between 36 and 69 Myr, with aragog colder. aragog reports its top cell as the CMB temperature; its centre is 1000<!--k:13.top_cell_depth_m--> m below the CMB, where the adiabat of the starting core is 0.80<!--k:13.top_cell_offset_K--> K below the CMB temperature, which is the whole difference at the start.
+
+The two mixing constants are a model uncertainty, not a fitted quantity. Changing `layer_k_mix` or `layer_g_mix` by a factor of 10 either way changes the centre temperature of the cooling cases by at most 0.68<!--k:13.k_mix_x10_tcen_K_12TW--> K and the layer depth by at most 1.6<!--k:13.k_mix_x10_depth_rel_12TW:100--> %.
+
+A layer that erodes, under a CMB flow that rises above the conducted adiabatic flow, is not part of this comparison: on CVODE at the solver's default tolerances the step size collapses where the mixing switches on in the eroding cells, and the layer stays experimental for that reason (see [the core boundary condition](core_bc.md)).
+
+![Stable layer against thermal_history](../figures/vv/fig_20_leeds_stable_layer.png)
+
+**Figure 20.** The resolved stable layer of aragog (solid) against the `leeds_thermal` model of thermal_history (dashed) over 1 Gyr. (a) Layer depth at 0.1 of the top excess over the adiabat, (b) centre temperature and (c) inner-core radius under a CMB flow of 8 and 12 TW; (d) CMB temperature of a core heated from above at -2 TW and of one under no CMB flow.
+
+Pinned by `tests/test_core_verification_page.py::test_the_stable_layer_meets_the_thermal_history_bounds`; the analytic limits of the shell by `tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space`, `::test_a_steady_layer_reaches_the_quasi_static_depth` and `::test_mixing_keeps_a_superadiabatic_shell_on_the_adiabat`; a resumed solve by `tests/test_entropy_solver_core_module_smoke.py::test_a_resume_restarts_the_shell_where_the_previous_solve_ended`.
 
 ## References
 
