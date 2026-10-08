@@ -714,6 +714,10 @@ def _theta_base(shell, t_shell, t_c, fraction=0.1):
     return float(r[k - 1] + w * (r[k] - r[k - 1]))
 
 
+# Relative tolerances of the layer comparison, of its unconverged run and of its tighter check
+RTOL_LAYER, RTOL_LOOSE, RTOL_TIGHT = 1e-11, 1e-8, 1e-12
+DEPTH_LATE_MYR = 300.0  # the depths are compared closely from here on
+DEPTH_SETTLED_MYR = 200.0  # the reference depth hardly depends on the flow from here on
 _RATES = {}
 
 
@@ -729,7 +733,7 @@ def _rates(budget):
     return _RATES[budget]
 
 
-def _shell_run(budget, segments, times, rtol=1e-11, diagnostics=True):
+def _shell_run(budget, segments, times, rtol=None, diagnostics=True):
     """aragog's convecting core and shell from the adiabat at the table's start temperature
     (no layer) under the CMB flows ``segments`` [(end Myr, W)], one SciPy BDF solve per flow
     with atol 100 rtol, sampled at ``times`` [Leeds Myr], which hold every segment end but the
@@ -737,8 +741,8 @@ def _shell_run(budget, segments, times, rtol=1e-11, diagnostics=True):
 
     ``identity`` is the largest departure of the core and shell heat rates from the CMB flow,
     over the samples, relative to the conducted adiabatic flow at the start; ``top_mixed``
-    marks the samples whose face below the top cell is not stably stratified."""
-    shell, p = budget.shell, budget.profiles
+    marks the samples where the mixing acts on the face below the top cell."""
+    shell, p, rtol = budget.shell, budget.profiles, rtol or RTOL_LAYER
     rate, jac = _rates(budget)
     t0 = LAYER_HEADER['inputs']['t_cmb_start']
     y, start, states, flows = (
@@ -781,8 +785,7 @@ def _shell_run(budget, segments, times, rtol=1e-11, diagnostics=True):
         )
 
     def top_mixed(y):
-        anomaly, g_ref = shell._anomaly_gradient(y[1:], y[0])
-        return anomaly[-1] < g_ref
+        return shell._anomaly_gradient(y[1:], y[0])[0][-1] < 0.0
 
     q_k = float(budget.conducted_adiabatic_flow(p.r_cmb, t0))
     return out | {
@@ -813,9 +816,33 @@ def _layer_cases():
     return out
 
 
+def _core_only_run(budget, segments, times):
+    """Centre temperature [K] of aragog's core without a layer under the CMB flows
+    ``segments`` [(end Myr, W)], sampled at ``times`` [Leeds Myr], from the table's start."""
+    rate = jax.jit(lambda t, q: budget.dtcmb_dt(t, q) * MYR_LEEDS)
+    jac = jax.jit(jax.grad(rate))
+    y, start, states = [LAYER_HEADER['inputs']['t_cmb_start']], 0.0, []
+    for end, q in segments:
+        sol = solve_ivp(
+            lambda _, y, q=q: [float(rate(y[0], q))],
+            (start, end),
+            y,
+            t_eval=times[(times >= start) & (times <= end)][int(start > 0) :],
+            method='BDF',
+            jac=lambda _, y, q=q: [[float(jac(y[0], q))]],
+            rtol=RTOL_LAYER,
+            atol=100 * RTOL_LAYER,
+        )
+        assert sol.success and (sol.t[-1] == end or end >= times[-1]), (sol.message, end)
+        states += list(sol.y[0])
+        y, start = sol.y[:, -1], end
+    return np.asarray(jax.vmap(budget.profiles.t_cen)(jnp.asarray(states)))
+
+
 def _first(t, mask):
     """First sample [Myr] where ``mask`` holds; an event that never happens is an error."""
-    assert mask.any(), 'the event does not occur in the run'
+    if not mask.any():
+        raise ValueError('the event does not occur in the run')
     return t[np.argmax(mask)]
 
 
@@ -833,7 +860,13 @@ def _compare(tag, ours, th):
     record(13, f'ricb_end_rel_diff_{tag}', abs(ours['r_icb'][-1] / th['r_icb'][-1] - 1))
     record(13, f'onset_myr_aragog_{tag}', _first(t, ours['r_icb'] > 0))
     record(13, f'onset_myr_leeds_{tag}', _first(t, th['r_icb'] > 0))
-    return np.max(np.abs(ratio[t[both] >= 300.0] - 1))
+    k = np.max(np.abs(ours['t_top'] - th['T_cmb']))
+    return (
+        np.max(np.abs(ratio[t[both] >= DEPTH_LATE_MYR] - 1)),
+        t[both][[np.argmin(ratio), np.argmax(ratio)]].max(),
+        t[np.argmax(np.abs(ours['t_top'] - th['T_cmb']))],
+        (ours['t_top'] - th['T_cmb'])[np.argmax(np.abs(ours['t_top'] - th['T_cmb']))] / k,
+    )
 
 
 def item13_stable_layer() -> None:
@@ -854,16 +887,23 @@ def item13_stable_layer() -> None:
     )
     fig, axes = plt.subplots(3, 2, figsize=(WIDTH, 8.0), sharex='row')
     (a_dep, a_cen), (a_icb, a_warm), (a_ero, a_ero_dep) = axes
+    record(13, 't_cmb_start_K', inp['t_cmb_start'])
+    record(13, 'shell_base_fraction', float(shell.r_base) / r_cmb)
+    record(13, 'shell_cells', shell.n_cells)
+    record(13, 'rtol', RTOL_LAYER)
+    record(13, 'rtol_loose', RTOL_LOOSE)
+    record(13, 'rtol_tight', RTOL_TIGHT)
+    record(13, 'depth_late_from_myr', DEPTH_LATE_MYR)
     runs, late, loose_cen, loose_onset, noise = {}, [], [], [], []
     for name, col in zip(('8 TW', '12 TW', '-2 TW', '0 TW'), (CORE, colour('ocean', 'C0')) * 2):
         segments, th = cases[name]
         t, tag = th['time_myr'], name.replace(' ', '')
         runs[name] = ours = _shell_run(budget, segments, t)
         late.append(_compare(tag, ours, th))
-        loose = _shell_run(budget, segments, t, rtol=1e-8, diagnostics=False)
+        loose = _shell_run(budget, segments, t, rtol=RTOL_LOOSE, diagnostics=False)
         loose_cen.append(np.max(np.abs(loose['t_cen'] - th['T_cen'])))
         loose_onset.append(abs(_first(t, loose['r_icb'] > 0) - _first(t, th['r_icb'] > 0)))
-        tight = _shell_run(budget, segments, t, rtol=1e-12, diagnostics=False)
+        tight = _shell_run(budget, segments, t, rtol=RTOL_TIGHT, diagnostics=False)
         noise.append(np.max(np.abs(tight['t_cen'] - ours['t_cen'])))
         panels = (
             (
@@ -877,7 +917,22 @@ def item13_stable_layer() -> None:
         for ax, a, b in panels:
             ax.plot(t, b, '--', color=col)
             ax.plot(t, a, color=col, label=name)
-    record(13, 'depth_late_max_rel', max(late))
+    record(13, 'depth_late_max_rel', max(x[0] for x in late))
+    record(13, 'depth_ratio_extremes_last_myr', max(x[1] for x in late))
+    record(13, 'tcmb_max_diff_myr_first', min(x[2] for x in late))
+    record(13, 'tcmb_max_diff_myr_last', max(x[2] for x in late))
+    record(13, 'tcmb_max_diff_sign_max', max(x[3] for x in late))
+    th = [cases[n][1] for n in ('8 TW', '12 TW', '-2 TW', '0 TW')]
+    t, onset = th[0]['time_myr'], min(_first(c['time_myr'], c['r_icb'] > 0) for c in th)
+    before, settled = t < onset, (t >= DEPTH_SETTLED_MYR) & (t < onset)
+    record(13, 'leeds_depth_settled_from_myr', DEPTH_SETTLED_MYR)
+    record(13, 'leeds_onset_first_myr', onset)
+    record(13, 'fixed_end_myr', t[-1])
+    record(
+        13, 'leeds_tcen_flow_spread_K', np.ptp([c['T_cen'][before] for c in th], axis=0).max()
+    )
+    depths = np.array([c['depth_theta'][settled] for c in th])
+    record(13, 'leeds_depth_flow_spread_rel', (np.ptp(depths, axis=0) / depths.mean(0)).max())
     record(13, 'tcen_max_abs_diff_K_rtol1e-8', max(loose_cen))
     record(13, 'onset_max_abs_diff_myr_rtol1e-8', max(loose_onset))
     record(13, 'tcen_max_rtol_noise_K', max(noise))
@@ -897,15 +952,23 @@ def item13_stable_layer() -> None:
         (t > removed) & (t <= end),
     )
     record(13, 'erosion_start_myr', start)
+    record(13, 'erosion_base_flow_TW', segments[0][1] / 1e12)
+    record(13, 'erosion_flow_TW', q_erode / 1e12)
+    record(13, 'erosion_fall_myr', end)
+    record(13, 'erosion_last_segment_end_myr', segments[-1][0])
     record(13, 'erosion_cmb_mixed_myr_aragog', _first(t, after & ero['top_mixed']))
     record(13, 'erosion_removed_myr_aragog', removed)
+    record(13, 'erosion_mixing_myr', removed - start)
     record(13, 'erosion_removed_myr_leeds', removed_leeds)
     record(13, 'erosion_rs_removed_myr_leeds', _first(t, after & (th['depth_r_s'] <= 0.0)))
     record(13, 'erosion_tcmb_max_diff_K_both_layers', diff[both][np.argmax(np.abs(diff[both]))])
+    record(13, 'erosion_tcmb_max_diff_myr', t[both][np.argmax(np.abs(diff[both]))])
     record(13, 'erosion_tcmb_offset_K_after', np.mean(diff[gone]))
     record(13, 'erosion_tcmb_offset_spread_K_after', np.ptp(diff[gone]))
-    record(13, 'erosion_tcmb_max_abs_diff_K_outside', np.max(np.abs(diff[~window])))
     record(13, 'erosion_tcen_max_abs_diff_K', np.max(np.abs(ero['t_cen'] - th['T_cen'])))
+    plain = _core_only_run(_core_budget(inp, 'quadrature', k_core=inp['k_core']), segments, t)
+    record(13, 'erosion_tcen_self_max_K', np.max(np.abs(ero['t_cen'] - plain)[gone]))
+    record(13, 'erosion_tcen_self_at_start_K', (ero['t_cen'] - plain)[t == start][0])
     record(13, 'erosion_identity', ero['identity'])
     record(13, 'erosion_stored_J', float(ero['stored'][t == start][0]))
     drain = q_erode - np.mean(ero['q_ad'][window])

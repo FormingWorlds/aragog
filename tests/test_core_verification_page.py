@@ -23,13 +23,13 @@ ROUNDING = {
     'conduction_sink_rel',
     't_cmb_max_abs_diff_before_onset',
 }
-# Item 13 values that are a rounding-level residual or a spread between two integrations
+# Item 13 values that are a rounding-level residual or the spread between two tolerances
 RUN_SPREAD = {f'identity_{t}' for t in ('8TW', '12TW', '-2TW', '0TW')} | {
     'erosion_identity',
     'tcen_max_rtol_noise_K',
-    'tcen_max_abs_diff_K_rtol1e-8',
-    'onset_max_abs_diff_myr_rtol1e-8',
 }
+# Item 13 differences of an unconverged run from thermal_history: within a factor 2 either way
+UNCONVERGED = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
 TAG = re.compile(r'(-?[\d.]+(?:e[-+]?\d+)?)\s?%?<!--k:(\d+)\.([^:>]+)(?::(-?[\d.]+))?-->')
 
 
@@ -70,14 +70,16 @@ def script(tmp_path, monkeypatch):
 
 def _reproduces(script, item):
     """Run one item and compare what it records with the values file: a rounding-level
-    error in ROUNDING or RUN_SPREAD may not double, every other number holds to
-    1e-4."""
+    error in ROUNDING or RUN_SPREAD may not double, a value in UNCONVERGED stays within a
+    factor 2 either way, every other number holds to 1e-4."""
     script.ITEMS[item]()
     got, want = script.VALUES[str(item)], VALUES[str(item)]
     assert got.keys() == want.keys()
     for key, value in got.items():
         if key in ROUNDING or key in RUN_SPREAD:
             assert abs(value) <= 2.0 * abs(want[key]) + 1e-15, key
+        elif key in UNCONVERGED:
+            assert 0.5 * want[key] <= value <= 2.0 * want[key], key
         else:
             assert value == pytest.approx(want[key], rel=1e-4, abs=1e-12), key
     return got
@@ -121,10 +123,10 @@ def test_coupled_tables_reproduce_the_page(script):
 def test_the_stable_layer_meets_the_thermal_history_bounds(script):
     """Layers under fixed CMB flows stay within the bounds against thermal_history: T_cmb 5 K,
     T_cen 10 K, theta-0.1 depth within a factor 1.5, the inner core within 2 % at the end with
-    its onset within 5 %. Under the eroding flow the centre temperature stays within 10 K, the
-    stored heat drains in the time the shell takes to mix, and the layer re-forms to a depth
-    within a factor 1.5; the CMB temperature there is a model difference without a bound. The
-    heat rates of core and shell equal the CMB flow at every sample."""
+    its onset within 5 %. Under the eroding flow the centre temperature, once the shell has mixed,
+    stays within 0.05 K of aragog without a layer, the stored heat drains in the time the shell
+    takes to mix, and the layer re-forms to a depth within a factor 1.5. The heat rates of core
+    and shell equal the CMB flow at every sample."""
     got = _reproduces(script, 13)
     for t in ('8TW', '12TW', '-2TW', '0TW'):
         assert got[f'identity_{t}'] < 1e-12
@@ -135,8 +137,9 @@ def test_the_stable_layer_meets_the_thermal_history_bounds(script):
         assert got[f'onset_myr_aragog_{t}'] == pytest.approx(
             got[f'onset_myr_leeds_{t}'], rel=0.05
         )
+    assert got['tcmb_max_diff_sign_max'] < 0  # aragog colder at the largest difference
     assert got['erosion_identity'] < 1e-12
-    assert got['erosion_tcen_max_abs_diff_K'] < 10.0
+    assert got['erosion_tcen_self_max_K'] < 0.05
     eroding = got['erosion_removed_myr_aragog'] - got['erosion_start_myr']
     assert got['erosion_drain_myr'] == pytest.approx(eroding, rel=0.05)
     reformed = got['erosion_depth_km_end_aragog'] / got['erosion_depth_km_end_leeds']

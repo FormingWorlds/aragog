@@ -38,10 +38,10 @@ def _evolve(shell, q_cmb, t_end):
     jac = jax.jit(jax.jacfwd(lambda y: shell.rates(y, T_C, q_cmb)[0]))
     y = y0 = np.asarray(shell.adiabatic_profile(T_C))
     edges = np.append(np.arange(0.0, t_end, 1e3 * MYR), t_end)
-    for start, end in zip(edges[:-1], edges[1:]):  # local time per Gyr: a small step floor
+    for span in np.diff(edges):  # local time per Gyr: a small step floor
         sol = solve_ivp(
             lambda _, y: np.asarray(rate(y)),
-            (0.0, end - start),
+            (0.0, span),
             y,
             'BDF',
             jac=lambda _, y: np.asarray(jac(y)),

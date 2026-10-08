@@ -341,8 +341,9 @@ def build_jax_rhs_and_jacobian(
         q_radio, ra_crit = core_module_q_radio, check_ra_crit(core_module_ra_crit_cmb)
         data = data + (jnp.float64(q_radio), jnp.float64(ra_crit))
 
+    budget = core_module_budget if core_bc_mode == 'core_module' else None
     rhs_jit, jac_jit, is_cache_hit = _get_or_create_jitted(
-        core_bc_mode, use_radio, phase_params, eos_jax, core_module_budget
+        core_bc_mode, use_radio, phase_params, eos_jax, budget
     )
 
     info = {
