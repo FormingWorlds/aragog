@@ -39,17 +39,21 @@ def _evolve(shell, q_cmb, t_end):
     y = y0 = np.asarray(shell.adiabatic_profile(T_C))
     edges = np.append(np.arange(0.0, t_end, 1e3 * MYR), t_end)
     for span in np.diff(edges):  # local time per Gyr: a small step floor
-        sol = solve_ivp(
-            lambda _, y: np.asarray(rate(y)),
-            (0.0, span),
-            y,
-            'BDF',
-            jac=lambda _, y: np.asarray(jac(y)),
-            rtol=1e-9,
-            atol=1e-9,
-        )
+        start = 0.0
+        for _ in range(4):  # a step that stalls at a kink of the mixing restarts from there
+            sol = solve_ivp(
+                lambda _, y: np.asarray(rate(y)),
+                (start, span),
+                y,
+                'BDF',
+                jac=lambda _, y: np.asarray(jac(y)),
+                rtol=1e-9,
+                atol=1e-9,
+            )
+            y, start = sol.y[:, -1], sol.t[-1]
+            if sol.success:
+                break
         assert sol.success, sol.message
-        y = sol.y[:, -1]
     return y, y0
 
 

@@ -347,10 +347,10 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
 
 @pytest.mark.physics_invariant
 def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
-    """A core 2 K above the inner-core onset over a liquid base cools through it under CVODE
+    """A core 2 K above the inner-core onset over a partly molten base cools through it under CVODE
     (a quadratic curve at 1.5 times Nimmo's t_m0 puts the onset above the base). The core
     heat change across the square-root cusp equals the heat_content difference and, at rtol
-    1e-10, the CMB heat to 1e-6 (6.2e-7; 1.4e-6 at the default rtol 1e-8)."""
+    1e-10, the CMB heat to 1e-6 (5.2e-7; 1.9e-6 at the default rtol 1e-8)."""
     params = dict(UNENRICHED_PARAMS)
     params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
     solver = _build('core_module', shared_eos, params, end_time=4.0, solver_method='cvode')
@@ -413,7 +413,7 @@ def test_a_cvode_call_through_onset_and_freeze_out_closes_its_heat(shared_eos):
 def test_chained_cvode_calls_close_the_core_ledger(shared_eos):
     """A core 300 K above a liquid base, hot-started through calls ending at 1, 2, 12, 22 and
     122 yr as a coupled run makes them, closes its heat against the CMB heat to 1e-6 in each
-    call and cumulatively (4.5e-7 in the 22 to 122 yr call, 4.0e-7 cumulative)."""
+    call and cumulatively (2.3e-7 in the 22 to 122 yr call, 2.1e-7 cumulative)."""
     solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, solver_method='cvode')
     n, p_cmb = solver._n_stag, solver._P_basic_flat[:1]
     S = np.full(n, float(shared_eos.liquidus_entropy(p_cmb)[0]) + 300.0)
@@ -475,9 +475,10 @@ def test_only_a_stratified_core_warns_that_the_layer_is_experimental(shared_eos,
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_a_hot_core_call_closes_its_heat_to_1e_minus_6(shared_eos):
-    """A core 300 K above the mantle side of the CMB cools by about 2e-6 K in a 10-yr call on 80
-    nodes, by conduction into a mushy base; with its temperature integrated as its change in the
-    call, the core heat matches the CMB heat to 1e-6 of it (4e-8)."""
+    """A core 300 K above the mantle side of the CMB cools by about 1e-5 K in a 10-yr call on 80
+    nodes, into a mushy base whose layer stays below the rheological transition; with its
+    temperature integrated as its change in the call, the core heat matches the CMB heat to 1e-6
+    of it (1.3e-8)."""
     solver = _build(
         'core_module',
         shared_eos,

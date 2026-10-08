@@ -119,6 +119,9 @@ def item1_structure() -> None:
     record(1, 'hydrostatic_max_rel_err', hydro.max())
     record(1, 'pressure_lab_vs_quad_max_rel', np.max(np.abs(p_lab / p_quad - 1)))
     record(1, 'p_cen_GPa', float(prof.pressure(0.0)) / 1e9)
+    record(1, 'tcen_ratio_exact', float(prof.t_cen(1.0)))
+    small = GaussianCoreProfiles(**EARTH, adiabat_mode='small_radius')
+    record(1, 'tcen_ratio_small_radius', float(small.t_cen(1.0)))
     record(1, 'rho_cmb', rho[-1])
     record(1, 'm_core', float(prof.enclosed_mass(prof.r_cmb)))
     slope = 4 * np.pi * G * EARTH['rho_cen'] / 3
@@ -310,7 +313,7 @@ def item4_nucleation() -> None:
     t_on = float(budget.t_onset)
     under = np.geomspace(1e-3, 30.0, 61)
     r_icb = np.asarray(jax.vmap(budget.r_icb)(t_on - under))
-    small = under < 1.0
+    small = under < 0.1  # the square root is the limit at the onset
     slope = np.polyfit(np.log(under[small]), np.log(r_icb[small]), 1)[0]
     drdt = np.asarray(jax.vmap(jax.grad(budget.r_icb))(t_on - under))
     h = 1e-3 * under  # a step relative to the undercooling keeps the cusp out of the difference
@@ -774,21 +777,27 @@ def _shell_run(budget, segments, times, rtol=None, diagnostics=True):
         [],
         [],
     )
+    sampled = -np.inf
     for end, q in segments:  # no step crosses a change of flow
-        sol = solve_ivp(
-            lambda _, y, q=q: np.asarray(rate(y, q)) * MYR_LEEDS,
-            (start, end),
-            y,
-            t_eval=times[(times >= start) & (times <= end)][int(start > 0) :],
-            method='BDF',
-            jac=lambda _, y, q=q: np.asarray(jac(y, q)) * MYR_LEEDS,
-            rtol=rtol,
-            atol=100 * rtol,
-        )
-        assert sol.success and (sol.t[-1] == end or end >= times[-1]), (sol.message, end)
-        states += list(sol.y.T)
-        flows += [q] * sol.t.size
-        y, start = sol.y[:, -1], end
+        for _ in range(4):  # a step that stalls at a kink of the mixing restarts from there
+            sol = solve_ivp(
+                lambda _, y, q=q: np.asarray(rate(y, q)) * MYR_LEEDS,
+                (start, end),
+                y,
+                method='BDF',
+                jac=lambda _, y, q=q: np.asarray(jac(y, q)) * MYR_LEEDS,
+                rtol=rtol,
+                atol=100 * rtol,
+                dense_output=True,
+            )
+            t_new = times[(times > sampled) & (times <= sol.t[-1])]
+            states += list(sol.sol(t_new).T)
+            flows += [q] * t_new.size
+            sampled = max(sampled, *t_new) if t_new.size else sampled
+            y, start = sol.y[:, -1], sol.t[-1]
+            if sol.success:
+                break
+        assert sol.success, (sol.message, end)
     ys = np.array(states)
     t_c, t_shell = ys[:, 0], ys[:, 1:]
     out = {
