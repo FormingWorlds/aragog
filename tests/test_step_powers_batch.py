@@ -10,9 +10,11 @@ Verifies:
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from scipy.optimize import OptimizeResult
 
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
@@ -141,17 +143,44 @@ def _make_step_powers_aux(mesh) -> StepPowersAux:
     )
 
 
+def _assert_powers_match(P_jax: np.ndarray, P_np: np.ndarray) -> None:
+    for col in range(6):
+        colmax = float(np.max(np.abs(P_np[:, col])))
+        np.testing.assert_allclose(
+            P_jax[:, col],
+            P_np[:, col],
+            rtol=1e-12,
+            atol=1e-12 * colmax,
+        )
+    resid_atol = 1e-12 * (float(np.max(np.abs(P_np[:, 0]))) + float(np.max(np.abs(P_np[:, 1]))))
+    np.testing.assert_allclose(
+        P_jax[:, 6],
+        P_np[:, 6],
+        atol=resid_atol,
+    )
+
+
 def _make_phase_params(params: Parameters) -> PhaseParams:
     return PhaseParams(
-        matprop_smooth_width=float(getattr(params.phase_mixed, 'matprop_smooth_width', 0.0)),
-        kappah_floor=float(params.energy.kappah_floor),
-        k_solid=float(params.phase_solid.thermal_conductivity),
-        k_liquid=float(params.phase_liquid.thermal_conductivity),
         phi_rheo=float(params.phase_mixed.rheological_transition_melt_fraction),
         phi_width=float(params.phase_mixed.rheological_transition_width),
+        viscosity_solid=float(params.phase_solid.viscosity),
+        viscosity_liquid=float(params.phase_liquid.viscosity),
         grain_size=float(params.phase_mixed.grain_size),
+        k_solid=float(params.phase_solid.thermal_conductivity),
+        k_liquid=float(params.phase_liquid.thermal_conductivity),
+        matprop_smooth_width=float(params.phase_mixed.matprop_smooth_width),
         conduction=params.energy.conduction,
         convection=params.energy.convection,
+        grav_sep=getattr(params.energy, 'gravitational_separation', False),
+        mixing=getattr(params.energy, 'chemical_mixing', False),
+        eddy_diff_thermal=float(getattr(params.energy, 'eddy_diffusivity_thermal', 1.0)),
+        eddy_diff_chemical=float(getattr(params.energy, 'eddy_diffusivity_chemical', 1.0)),
+        kappah_floor=float(params.energy.kappah_floor),
+        bottom_up_grav_sep=getattr(params.phase_mixed, 'bottom_up_grav_sep', True),
+        phase_smoothing=getattr(params.phase_mixed, 'phase_smoothing', 'tanh'),
+        phase_smoothing_width=float(getattr(params.phase_mixed, 'phase_smoothing_width', 0.01)),
+        separation_viscosity=getattr(params.phase_mixed, 'separation_viscosity', 'melt'),
     )
 
 
@@ -265,25 +294,12 @@ def test_step_powers_per_node_parity(
     P_jax = rhs_fn.step_powers(t_pts, y_pts, aux=aux)
     assert P_jax.shape == P_np.shape
 
-    for col in range(6):
-        colmax = float(np.max(np.abs(P_np[:, col])))
-        np.testing.assert_allclose(
-            P_jax[:, col],
-            P_np[:, col],
-            rtol=1e-12,
-            atol=1e-12 * colmax,
-        )
-
-    resid_atol = 1e-12 * (float(np.max(np.abs(P_np[:, 0]))) + float(np.max(np.abs(P_np[:, 1]))))
-    np.testing.assert_allclose(
-        P_jax[:, 6],
-        P_np[:, 6],
-        atol=resid_atol,
-    )
+    _assert_powers_match(P_jax, P_np)
 
 
 @pytest.mark.smoke
-def test_step_powers_per_node_parity_smooth_width(eos_np, eos_jax):
+@pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
+def test_step_powers_per_node_parity_smooth_width(eos_np, eos_jax, mode: str):
     """Verify per-node power parity when matprop_smooth_width is active.
 
     Uses matprop_smooth_width = 0.01 on both sides and an initial state with
@@ -292,16 +308,29 @@ def test_step_powers_per_node_parity_smooth_width(eos_np, eos_jax):
     assert not eos_np._has_alpha_tables
 
     n_nodes = 15
+    n_stag = n_nodes - 1
+    inner_bc = 1 if mode == 'energy_balance' else 2
+    inner_val = 0.05 if inner_bc == 2 else 0.0
     params = _build_parameters(
-        core_bc='quasi_steady',
+        core_bc=mode,
         solver_method='cvode',
         end_time=5.0,
         n_nodes=n_nodes,
         use_jax_jacobian=False,
+        inner_boundary_condition=inner_bc,
+        inner_boundary_value=inner_val,
     )
     params.phase_mixed.matprop_smooth_width = 0.01
     params.phase_mixed.phase_transition_width = 0.0
     params.solver.cvode_output_points = 60
+
+    r26 = _make_radionuclide()
+    params.energy.radionuclides = True
+    params.radionuclides = [r26]
+
+    params.energy.tidal = True
+    tidal_arr = np.linspace(1e-12, 5e-12, n_stag)
+    params.energy.tidal_array = list(tidal_arr)
 
     solver = es.EntropySolver(params, entropy_eos=eos_np)
     solver.initialize()
@@ -309,7 +338,10 @@ def test_step_powers_per_node_parity_smooth_width(eos_np, eos_jax):
 
     r = np.asarray(solver._r_stag_flat)
     S0 = 3195.0 + 10.0 * (r[-1] - r) / (r[-1] - r[0])
-    solver._dSdt_single(0.0, S0)
+    if mode == 'energy_balance':
+        solver._dSdt_single(0.0, np.append(S0, 0.0))
+    else:
+        solver._dSdt_single(0.0, S0)
     phi0 = np.asarray(solver.state.phase_staggered.melt_fraction()).ravel()
     mixed_nodes = np.where((phi0 > 0.0) & (phi0 < 1.0))[0]
     assert len(mixed_nodes) >= 2, f'Expected >= 2 mixed nodes, got {len(mixed_nodes)}'
@@ -323,37 +355,31 @@ def test_step_powers_per_node_parity_smooth_width(eos_np, eos_jax):
 
     mesh = solver.evaluator.mesh
     mesh_arr = MeshArrays.from_numpy_mesh(mesh)
-    bc = _make_boundary_params(mesh_arr, 'quasi_steady', 0.0)
+    bc = _make_boundary_params(mesh_arr, mode, inner_val)
     phase_params = _make_phase_params(params)
-    scales = NonDimScales(state_scale=np.full(n_nodes - 1, 3000.0), t_ref=100.0)
+    if mode == 'energy_balance':
+        scale_vec = np.empty(n_stag + 1)
+        scale_vec[:n_stag] = 3000.0
+        scale_vec[-1] = 1e-6
+    else:
+        scale_vec = np.full(n_stag, 3000.0)
+    scales = NonDimScales(state_scale=scale_vec, t_ref=100.0)
 
+    radio_params = _make_radio_tuple(params.radionuclides)
     rhs_fn, _, _ = build_jax_rhs_and_jacobian(
         eos_jax=eos_jax,
         phase_params=phase_params,
         mesh_arrays=mesh_arr,
         boundary_params=bc,
-        heating_array=np.zeros(n_nodes - 1),
+        heating_array=tidal_arr,
         scales=scales,
-        core_bc_mode='quasi_steady',
+        core_bc_mode=mode,
+        radio_isotope_params=radio_params,
     )
     aux = _make_step_powers_aux(mesh)
     P_jax = rhs_fn.step_powers(t_pts, y_pts, aux=aux)
 
-    for col in range(6):
-        colmax = float(np.max(np.abs(P_np[:, col])))
-        np.testing.assert_allclose(
-            P_jax[:, col],
-            P_np[:, col],
-            rtol=1e-12,
-            atol=1e-12 * colmax,
-        )
-
-    resid_atol = 1e-12 * (float(np.max(np.abs(P_np[:, 0]))) + float(np.max(np.abs(P_np[:, 1]))))
-    np.testing.assert_allclose(
-        P_jax[:, 6],
-        P_np[:, 6],
-        atol=resid_atol,
-    )
+    _assert_powers_match(P_jax, P_np)
 
 
 @pytest.mark.unit
@@ -616,7 +642,7 @@ def test_step_powers_radio_uses_table_density(eos_jax):
         ('quasi_steady', 550),
     ],
 )
-def test_step_powers_per_call_integrals(eos_np, eos_jax, mode: str, output_pts: int):
+def test_step_powers_per_call_integrals(eos_np, eos_jax, mode: str, output_pts: int, caplog):
     """Verify per-call energy integrals match reference within tolerance."""
     assert not eos_np._has_alpha_tables
 
@@ -701,6 +727,9 @@ def test_step_powers_per_call_integrals(eos_np, eos_jax, mode: str, output_pts: 
 
     # State heat is bit-equal
     assert batch_integrals['state_heat'] == ref_integrals['state_heat']
+    assert not any(
+        'batch step powers evaluation failed' in rec.message for rec in caplog.records
+    ), 'Batch step powers evaluation fell back unexpectedly'
 
 
 @pytest.mark.smoke
@@ -816,7 +845,7 @@ def test_step_powers_solver_dispatch(eos_np, eos_jax):
 
 @pytest.mark.smoke
 @pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
-def test_step_powers_state_refresh(eos_np, eos_jax, mode: str):
+def test_step_powers_state_refresh(eos_np, eos_jax, mode: str, caplog):
     """Verify that solver state after batch powers matches numpy state."""
     assert not eos_np._has_alpha_tables
 
@@ -888,82 +917,103 @@ def test_step_powers_state_refresh(eos_np, eos_jax, mode: str):
     np.testing.assert_array_equal(state_batch_cap, state_np_cap)
     assert hits_batch == hits_np
     assert misses_batch == misses_np
+    assert not any(
+        'batch step powers evaluation failed' in rec.message for rec in caplog.records
+    ), 'Batch step powers evaluation fell back unexpectedly'
 
 
-@pytest.mark.smoke
-def test_step_powers_fallback_on_exception(eos_np, eos_jax, caplog):
-    """Verify that batch failure emits one warning and falls back to numpy."""
-    assert not eos_np._has_alpha_tables
-
-    n_nodes = 15
-    params = _build_parameters(
-        core_bc='quasi_steady',
-        solver_method='cvode',
-        end_time=10.0,
-        n_nodes=n_nodes,
-        use_jax_jacobian=True,
+@pytest.mark.unit
+def test_step_powers_batch_dispatch_unit(caplog):
+    """Verify batch dispatch, exception fallback, and shape fallback without solve()."""
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._warned = set()
+    s.entropy_eos = object()
+    t_nodes = np.array([0.0, 1.0])
+    s._solution = OptimizeResult(
+        t=t_nodes,
+        y=np.zeros((2, 2)),
     )
-    solver = es.EntropySolver(params, entropy_eos=eos_np)
-    solver.initialize()
-    factory = _make_cvode_jax_factory(
-        solver, eos_jax, params, 'quasi_steady', np.zeros(n_nodes - 1), (), 0.0
+    s._r_basic_flat = np.array([1.0, 2.0])
+    s._volume_flat = np.array([1.0, 1.0])
+    s._P_stag_flat = np.array([1e9, 2e9])
+    s.evaluator = SimpleNamespace(
+        mesh=SimpleNamespace(staggered_effective_density=np.array([3000.0, 3000.0]))
     )
-    solver.set_jax_cvode_factory(factory)
-    _set_initial_entropy(solver, s_base=3050.0, s_span=150.0)
-    solver.solve()
+    s.state = SimpleNamespace(_pb_cache_hits=5, _pb_cache_misses=6)
+    s._stag_entropy = lambda y: y
+    s._step_heat_content = lambda a, b: 0.0
+    s._dSdt_single = lambda t, y: y
 
-    solver._cvode_step_powers_batch = None
-    ref_integrals = solver._compute_step_energy_integrals()
+    numpy_called = []
 
-    def failing_batch(t_nodes, Y_nodes, aux):
-        raise RuntimeError('simulated batch powers failure')
+    def stub_step_powers(t, y):
+        numpy_called.append(float(t))
+        return np.full(7, 10.0)
 
-    solver._cvode_step_powers_batch = failing_batch
-    solver._warned.clear()
-    caplog.clear()
+    s._step_powers = stub_step_powers
 
-    with caplog.at_level(logging.WARNING):
-        fallback_integrals = solver._compute_step_energy_integrals()
+    # 1. Success uses batch output without calling numpy loop
+    batch_called = []
 
-    for key, ref_val in ref_integrals.items():
-        fallback_val = fallback_integrals[key]
-        if ref_val is None:
-            assert fallback_val is None
-        else:
-            np.testing.assert_allclose(fallback_val, ref_val, rtol=1e-14, atol=1e-14)
+    def stub_batch_success(t_n, y_n, aux):
+        batch_called.append(len(t_n))
+        assert isinstance(aux, StepPowersAux)
+        return np.full((len(t_n), 7), 20.0)
 
-    warnings = [rec for rec in caplog.records if rec.levelno == logging.WARNING]
-    assert len(warnings) == 1
-    assert 'batch step powers evaluation failed' in warnings[0].message
-    assert 'simulated batch powers failure' in warnings[0].message
-
+    s._cvode_step_powers_batch = stub_batch_success
     caplog.clear()
     with caplog.at_level(logging.WARNING):
-        solver._compute_step_energy_integrals()
-    second_warnings = [rec for rec in caplog.records if rec.levelno == logging.WARNING]
-    assert len(second_warnings) == 0
+        out_success = s._compute_step_energy_integrals()
 
-    # Test that malformed array shape also triggers warning and falls back to numpy
-    def malformed_shape_batch(t_nodes, Y_nodes, aux):
-        return np.zeros((len(t_nodes), 5))
+    assert batch_called == [2]
+    assert len(numpy_called) == 0
+    assert not any(
+        'batch step powers evaluation failed' in rec.message for rec in caplog.records
+    )
+    expected_integral = 20.0 * 1.0 * es.SECS_PER_YEAR
+    np.testing.assert_allclose(out_success['F_int'], expected_integral, rtol=1e-12)
 
-    solver._cvode_step_powers_batch = malformed_shape_batch
-    solver._warned.clear()
+    # 2. Exception falls back to numpy loop with one warning
+    def stub_batch_raise(t_n, y_n, aux):
+        raise RuntimeError('simulated batch failure')
+
+    s._cvode_step_powers_batch = stub_batch_raise
+    s._warned.clear()
     caplog.clear()
-
+    numpy_called.clear()
     with caplog.at_level(logging.WARNING):
-        fallback_shape_integrals = solver._compute_step_energy_integrals()
+        out_raise = s._compute_step_energy_integrals()
 
-    for key, ref_val in ref_integrals.items():
-        fallback_val = fallback_shape_integrals[key]
-        if ref_val is None:
-            assert fallback_val is None
-        else:
-            np.testing.assert_allclose(fallback_val, ref_val, rtol=1e-14, atol=1e-14)
+    assert len(numpy_called) == 2
+    expected_np_integral = 10.0 * 1.0 * es.SECS_PER_YEAR
+    np.testing.assert_allclose(out_raise['F_int'], expected_np_integral, rtol=1e-12)
+    warn_raise = [rec for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert len(warn_raise) == 1
+    assert 'batch step powers evaluation failed' in warn_raise[0].message
+    assert 'simulated batch failure' in warn_raise[0].message
 
-    shape_warnings = [rec for rec in caplog.records if rec.levelno == logging.WARNING]
-    assert len(shape_warnings) == 1
-    assert 'Expected batch step powers shape' in shape_warnings[0].message
+    # Repeated call emits no second warning
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        s._compute_step_energy_integrals()
+    assert len([rec for rec in caplog.records if rec.levelno == logging.WARNING]) == 0
+
+    # 3. Wrong shape falls back to numpy loop with one warning
+    def stub_batch_wrong_shape(t_n, y_n, aux):
+        return np.zeros((len(t_n), 5))
+
+    s._cvode_step_powers_batch = stub_batch_wrong_shape
+    s._warned.clear()
+    caplog.clear()
+    numpy_called.clear()
+    with caplog.at_level(logging.WARNING):
+        out_shape = s._compute_step_energy_integrals()
+
+    assert len(numpy_called) == 2
+    np.testing.assert_allclose(out_shape['F_int'], expected_np_integral, rtol=1e-12)
+    warn_shape = [rec for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert len(warn_shape) == 1
+    assert 'Expected batch step powers shape' in warn_shape[0].message
 
 
 @pytest.mark.unit
@@ -983,7 +1033,7 @@ def test_step_powers_batch_interface(eos_np):
     # When batch callable is registered, passes aux keyword argument
     called_with_aux = []
 
-    def mock_batch(t_nodes, Y_nodes, aux=None):
+    def mock_batch(t_nodes, Y_nodes, aux):
         called_with_aux.append(aux is not None)
         return np.ones((len(t_nodes), 7))
 

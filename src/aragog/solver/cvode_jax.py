@@ -434,17 +434,15 @@ def build_jax_rhs_and_jacobian(
         t_pad = np.pad(t_arr, (0, pad_len), mode='edge')
         Y_pad = np.pad(Y_arr, ((0, 0), (0, pad_len)), mode='edge')
         chunks = [
-            np.asarray(
-                entry.powers_jit(
-                    t_pad[k : k + C],
-                    Y_pad[:, k : k + C],
-                    data,
-                    aux,
-                )
+            entry.powers_jit(
+                t_pad[k : k + C],
+                Y_pad[:, k : k + C],
+                data,
+                aux,
             )
             for k in range(0, t_pad.size, C)
         ]
-        return np.concatenate(chunks, axis=0)[:n]
+        return np.concatenate(chunks)[:n]
 
     rhs_fn.step_powers = step_powers
     return rhs_fn, jacfn, info

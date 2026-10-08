@@ -394,7 +394,7 @@ def _dSdt_parts(
     Returns
     -------
     RhsParts
-        NamedTuple with rate, heat_flux, heating, and phase_stag.
+        NamedTuple with rate, heat_flux, and phase_stag.
     """
     eos, params, mesh, bc, heating_static, H_radio_fn = args
 
