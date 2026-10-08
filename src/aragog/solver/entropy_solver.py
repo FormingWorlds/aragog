@@ -4178,6 +4178,11 @@ class EntropySolver:
             self.state._pb_cache_misses = 0
 
         self._log_solution_outcome(end_time)
+        budget = getattr(self, '_core_module_budget', None)
+        if self._core_bc == 'core_module' and budget is not None:
+            from aragog.core.regime import refuse_unmodelled_regime
+
+            refuse_unmodelled_regime(budget, np.asarray(sol.y)[self._n_stag + 1])
         if self.stop_early:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
             return
@@ -4335,7 +4340,6 @@ class EntropySolver:
                 content = [float(shell.heat_content(t_shell_traj[i])) for i in (0, -1)]
                 step_dE_core += content[1] - content[0]
                 self._check_shell_base(budget, t_core_traj, base)
-            self._check_core_regime(budget, t_core_traj)
         elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:
@@ -4446,22 +4450,6 @@ class EntropySolver:
         return np.array(
             [p_int, p_cmb, Q_radio_i, Q_tidal_i, Q_radio_cons_i, Q_tidal_cons_i, lhs_i - rhs_i]
         )
-
-    def _check_core_regime(self, budget, t_core) -> None:
-        """Refuse a core that crystallizes other than from the centre up: the budget books
-        latent and gravitational heat only for bottom-up growth and its freeze-out."""
-        from aragog.core.regime import REGIME_BOTTOM_UP, REGIME_FULLY_FROZEN, regime_name
-
-        codes = np.asarray(budget.regime_batch(t_core))
-        frozen_ok = budget.t_freeze <= budget.t_onset  # the CMB freezes last
-        bad = (codes > REGIME_BOTTOM_UP) & ((codes != REGIME_FULLY_FROZEN) | (not frozen_ok))
-        if bad.any():
-            i = int(np.argmax(bad))
-            raise ValueError(
-                f'core_module: the core crystallizes {regime_name(codes[i])} at T_core = '
-                f'{float(t_core[i]):.1f} K; only bottom-up growth is modelled, and the budget '
-                'books no latent or gravitational heat in this regime'
-            )
 
     def _check_shell_base(self, budget, t_core, layer_base) -> None:
         """Refuse an inner core that reaches the shell base, and warn once when the layer base

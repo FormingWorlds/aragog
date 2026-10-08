@@ -32,6 +32,7 @@ import pytest
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.melting import QuadraticMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
+from aragog.core.regime import refuse_unmodelled_regime
 
 pytestmark = pytest.mark.unit
 
@@ -273,9 +274,8 @@ def test_baseline_scenario_reproduces_chapter_headline():
 def test_model1_printed_parameters_break_bottom_up_topology():
     """Model 1's negative T_m1 curve dips below the T_c = 4180 K adiabat at
     the CMB (melting temperature 5331 K there), a top-down/snow topology
-    outside the bottom-up assumption of the budget; the budget
-    reports it via the freeze-out guard rather than emitting latent heat
-    from an ill-defined boundary."""
+    outside the bottom-up assumption of the budget; the budget books no
+    boundary terms there, and the regime guard refuses the state."""
     prof = _profiles(1)
     curve = _curve(1)
     t_melt_cmb = float(curve.t_melt(prof.p_cmb))
@@ -285,7 +285,8 @@ def test_model1_printed_parameters_break_bottom_up_topology():
     p_min = -curve.t_m1 / (2.0 * curve.t_m2)
     assert prof.p_cmb < p_min < float(prof.pressure(0.0))
     budget = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0, latent_heat=L_H)
-    # The smoothed freeze-out factor drives both boundary terms to zero
-    # (sigmoid of a -1151 K CMB superheat over 10 K: below 1e-50).
+    # With no liquid at the CMB both boundary terms are zero.
     assert float(budget.latent_capacity(T_C)) == pytest.approx(0.0, abs=1e-10)
     assert float(budget.gravitational_capacity(T_C)) == pytest.approx(0.0, abs=1e-10)
+    with pytest.raises(ValueError, match='only bottom-up growth is modelled'):
+        refuse_unmodelled_regime(budget, T_C)

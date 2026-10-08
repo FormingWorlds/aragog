@@ -13,7 +13,7 @@ The `aragog.core` package carries the core evolution module: the core as a compo
 | `build_core_module_budget` | Config-dict factory for the solver coupling (`core_bc = 'core_module'`); geometry always comes from the mesh. |
 | `check_ra_crit` | Validate the CMB critical Rayleigh number: a positive, finite real number, returned as a float. |
 | `cmb_boundary_layer_flux` | CMB heat flux of the solver coupling from the core-mantle temperature contrast through a mantle-side boundary layer (Foley & Driscoll 2016; Thiriet et al. 2019), never below conduction across the bottom half cell. |
-| `crystallization_regime` | Diagnostic flag from the superheat profile: fully liquid, bottom-up, top-down, snow, or fully frozen (taxonomy of Breuer et al. 2015). |
+| `crystallization_regime` | Regime code from the superheat profile: fully liquid, bottom-up, top-down, snow, or fully frozen (taxonomy of Breuer et al. 2015). `refuse_unmodelled_regime` raises for the regimes the budget does not model. |
 | `adiabatic_ratio`, `stratification_depth` | Subadiabatic-onset ratio and the equilibrium thickness of the stably stratified sub-CMB layer from conductive matching. |
 
 The budget terms are cross-validated against the open-source Leeds `thermal_history` implementation (secular exact, boundary terms to 0.5%), and the profile and melting machinery is pinned against Nimmo (2015) Table 2 (adiabatic length scales, ICB temperatures, melting gradients, adiabatic heat flows). The budget assumes bottom-up crystallization; parameter sets whose melting curve rises above the adiabat at the CMB (a top-down or snow topology) shut off the boundary terms rather than emitting heat from an ill-defined boundary.

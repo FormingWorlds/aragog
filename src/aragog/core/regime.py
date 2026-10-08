@@ -6,16 +6,16 @@ against the CMB with liquid below (top-down), or one or more interior
 solid shells (snow zones). Published evolution models hard-code one
 scenario per body from the local slope comparison (the taxonomy of Breuer,
 Rueckriemen & Spohn 2015); here the regime is read off the superheat
-profile itself on a fixed radial grid and reported as a diagnostic flag,
-so a run announces when it leaves the bottom-up regime the budget's
-boundary terms assume. Classification only; multi-zone energetics of
-non-bottom-up regimes is out of scope.
+profile itself on a fixed radial grid. The budget's boundary terms assume
+bottom-up growth, so the solver refuses a call that enters any other regime
+(``refuse_unmodelled_regime``); multi-zone energetics are out of scope.
 """
 
 from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from aragog.core.budget import CoreEnergyBudget
 
@@ -57,8 +57,9 @@ def crystallization_regime(budget: CoreEnergyBudget, t_cmb):
     The grid resolves shells wider than ``r_cmb / 512``; a thinner shell
     than that reads as its surrounding regime.
     """
-    r = jnp.linspace(0.0, budget.profiles.r_cmb, _N_GRID)
-    superheat = budget._superheat(r, t_cmb)
+    p = budget.profiles
+    r = jnp.linspace(0.0, p.r_cmb, _N_GRID)
+    superheat = p.adiabat(r, t_cmb) - budget.melting_curve.t_melt(p.pressure(r))
     solid = superheat < 0.0
     changes = jnp.sum(jnp.abs(jnp.diff(solid.astype(jnp.int32))))
     # jnp.select takes the first true condition, the order of the nested checks.
@@ -67,6 +68,23 @@ def crystallization_regime(budget: CoreEnergyBudget, t_cmb):
         [REGIME_FULLY_LIQUID, REGIME_FULLY_FROZEN, REGIME_SNOW, REGIME_BOTTOM_UP],
         REGIME_TOP_DOWN,
     )
+
+
+def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
+    """Raise ``ValueError`` when any of the temperatures ``t_cmb`` puts the core in a regime
+    other than fully liquid or bottom-up, or fully frozen by a core whose CMB freezes before its
+    centre: the budget books latent and gravitational heat only for bottom-up growth."""
+    t_cmb = np.atleast_1d(np.asarray(t_cmb, dtype=float))
+    codes = np.asarray(budget.regime_batch(t_cmb))
+    frozen_ok = budget.t_freeze <= budget.t_onset
+    bad = (codes > REGIME_BOTTOM_UP) & ((codes != REGIME_FULLY_FROZEN) | (not frozen_ok))
+    if bad.any():
+        i = int(np.argmax(bad))
+        raise ValueError(
+            f'core_module: the core crystallizes {regime_name(codes[i])} at T_core = '
+            f'{t_cmb[i]:.1f} K; only bottom-up growth is modelled, and the budget books no '
+            'latent or gravitational heat in this regime'
+        )
 
 
 def regime_name(code) -> str:

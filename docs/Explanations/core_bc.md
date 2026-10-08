@@ -123,7 +123,7 @@ The dynamo field-strength options `f_ohm` and `flux_geometry` belong to PROTEUS,
 
 ### Diagnostic outputs
 
-PROTEUS writes six diagnostics of this budget to its output helpfile on every core_module row: the stable layer thickness below the CMB, the entropy margin available to a dynamo, the rms field strength, the crystallisation regime code (0 fully liquid, 1 bottom-up, 2 top-down, 3 snow, 4 fully frozen), the effective heat capacity $\tilde{C}(T_\text{cmb})$ and the inner-core radius.
+PROTEUS writes six diagnostics of this budget to its output helpfile on every core_module row: the stable layer thickness below the CMB, the entropy margin available to a dynamo, the rms field strength, the crystallisation regime code (0 fully liquid, 1 bottom-up, 4 fully frozen; the codes 2 top-down and 3 snow mark states the solver refuses, below), the effective heat capacity $\tilde{C}(T_\text{cmb})$ and the inner-core radius.
 
 The budget books latent and gravitational heat only for an inner core that grows from the centre and for its freeze-out. A call whose core enters the top-down or snow regime, or freezes completely without growing from the centre, raises an error at the end of the call: the energetics of those regimes are not modelled.
 

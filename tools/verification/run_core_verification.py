@@ -1149,6 +1149,7 @@ def item11_coupled() -> None:
         live, contrast = t > 0, t_core - t_node
         record(11, f'rows_{case}', live.sum())
         record(11, f'wrong_sign_rows_{case}', (live & (f_cmb * contrast < 0.0)).sum())
+        record(11, f'zero_flux_rows_{case}', (live & (f_cmb == 0.0)).sum())
         record(11, f'contrast_min_K_{case}', contrast[live].min())
         record(11, f'contrast_max_K_{case}', contrast[live].max())
     config = tomllib.loads((data / 'coupled_config.toml').read_text())
@@ -1168,16 +1169,9 @@ def item11_coupled() -> None:
     # E1: the 1 Earth-mass run at 40 to 320 mantle levels, and at rtol 1e-10 on 80
     rows = np.loadtxt(data / 'coupled_mesh_convergence.csv', delimiter=',')
     names = (
-        't_bf',
-        'T_core_bf',
-        'T_core_end',
-        'F10',
-        'F100',
-        'F1000',
-        'F_bf',
-        'F_2bf',
-        'F_4bf',
+        't_bf T_core_bf T_core_end F10 F100 F1000 F_bf F_2bf F_4bf F_10kyr F_100kyr F_500kyr'
     )
+    names = names.split()
     run = {(int(r[0]), r[1]): dict(zip(names, r[2:])) for r in rows}
     for a, b in ((40, 80), (80, 160), (160, 320), (80, 'rtol')):
         x, y = run[(a, 1e-8)], run[(b, 1e-8)] if b != 'rtol' else run[(80, 1e-10)]
@@ -1186,6 +1180,13 @@ def item11_coupled() -> None:
             record(11, f'e1_{q}_d_{a}_{b}', diff)
     for q in names:
         record(11, f'e1_{q}_320', run[(320, 1e-8)][q])
+    for n in (40, 80, 160, 320):  # the late flux and the cooling after basal freezing
+        record(11, f'e1_F_500kyr_{n}', run[(n, 1e-8)]['F_500kyr'])
+        record(
+            11,
+            f'e1_cooling_after_bf_K_{n}',
+            run[(n, 1e-8)]['T_core_bf'] - run[(n, 1e-8)]['T_core_end'],
+        )
 
 
 # ---------------------------------------------------------------- 5. Nimmo (2015)

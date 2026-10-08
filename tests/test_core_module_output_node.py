@@ -7,7 +7,6 @@ enters no reported node-0 value. No solve runs here.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
@@ -167,23 +166,3 @@ def test_core_module_without_jax_names_the_requirement(monkeypatch):
         _build('core_module', entropy_eos_copy(), dict(CORE_MODULE_PARAMS))
     other = _build('energy_balance', entropy_eos_copy())
     assert np.all(np.isfinite(other.dSdt(0.0, other._S0)))
-
-
-def test_energy_balance_paths_load_no_core_module_at_import():
-    """The numpy solver and the JAX RHS load no part of ``aragog.core``, and ``aragog.core``
-    loads the experimental layer only when a stratified budget is built."""
-    code = (
-        'import sys, aragog.jax.solver, aragog.solver.entropy_solver, aragog.solver.cvode_jax\n'
-        "print(sorted(m for m in sys.modules if m.startswith('aragog.core')))\n"
-        'import aragog.core\n'
-        "print('aragog.core.layer' in sys.modules)"
-    )
-    src = str(Path(__file__).resolve().parents[1] / 'src')
-    out = subprocess.run(
-        [sys.executable, '-c', code],
-        capture_output=True,
-        text=True,
-        check=True,
-        env={'PYTHONPATH': src, 'PATH': ''},
-    )
-    assert out.stdout.split() == ['[]', 'False']

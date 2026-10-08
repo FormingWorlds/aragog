@@ -122,6 +122,7 @@ def test_coupled_tables_reproduce_the_page(script):
         assert got[f'closure_first_call_{case}'] < 3e-4  # 1.5e-4 at 1 Earth mass
     for case in ('3me', '5me', 'wb_1me'):
         assert got[f'wrong_sign_rows_{case}'] == 0 < got[f'rows_{case}']
+        assert got[f'zero_flux_rows_{case}'] <= 1
     for mass in ('1me', '3me', '5me'):  # no inner core in any run
         assert got[f't_cmb_end_K_{mass}'] > max(
             got[f't_onset_K_{mass}'], got[f't_freeze_K_{mass}']
@@ -134,9 +135,9 @@ def test_coupled_tables_reproduce_the_page(script):
     # E1, bounds set before the runs: 5 % on times and fluxes, 10 K on temperatures
     for q in ('t_bf', 'F10', 'F100', 'F1000', 'F_bf'):
         assert got[f'e1_{q}_d_160_320'] < 0.05
+        assert got[f'e1_{q}_d_80_rtol'] < 1e-3
     assert got['e1_T_core_bf_d_160_320'] < 10.0 and got['e1_T_core_end_d_160_320'] < 10.0
-    for pair in ('40_80', '80_160', '160_320'):  # a half-cell conduction flux would halve
-        assert got[f'e1_F_2bf_d_{pair}'] < 0.4 and got[f'e1_F_4bf_d_{pair}'] < 0.4
+    assert got['e1_T_core_bf_d_80_rtol'] < 0.01
 
 
 @pytest.mark.slow

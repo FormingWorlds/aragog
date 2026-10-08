@@ -34,6 +34,12 @@ CORE_MODULE_PARAMS = {
     'q_radio': 0.0,
 }
 
+UNENRICHED_PARAMS = {
+    k: v
+    for k, v in CORE_MODULE_PARAMS.items()
+    if k not in ('light_element_fraction', 'depression')
+}
+
 
 @pytest.fixture(scope='module')
 def shared_eos():
@@ -334,11 +340,7 @@ def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
     (a quadratic curve at 1.5 times Nimmo's t_m0 puts the onset above the base). The core
     heat change across the square-root cusp equals the heat_content difference and, at rtol
     1e-10, the CMB heat to 1e-6 (6.2e-7; 1.4e-6 at the default rtol 1e-8)."""
-    params = {
-        k: v
-        for k, v in CORE_MODULE_PARAMS.items()
-        if k not in ('light_element_fraction', 'depression')
-    }
+    params = dict(UNENRICHED_PARAMS)
     params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
     solver = _build('core_module', shared_eos, params, end_time=4.0, solver_method='cvode')
     solver.parameters.solver.rtol = 1e-10
@@ -373,11 +375,7 @@ def test_a_cvode_call_through_onset_and_freeze_out_closes_its_heat(shared_eos):
     past freeze-out in one CVODE call: a linear curve puts freeze-out 116 K below the onset,
     and a small entropy of fusion keeps the latent heat to a few K of cooling. The core heat
     equals the heat_content difference and, at rtol 1e-10, the CMB heat to 1e-6 (3.2e-8)."""
-    params = {
-        k: v
-        for k, v in CORE_MODULE_PARAMS.items()
-        if k not in ('light_element_fraction', 'depression')
-    }
+    params = dict(UNENRICHED_PARAMS)
     params |= dict(melting_curve='quadratic', t_m0=1.0, t_m1=2.71e-12, t_m2=0.0, ds_fusion=0.17)
     probe = _build('core_module', shared_eos, params)
     p_cmb = float(probe._P_basic_flat[0])
@@ -427,11 +425,7 @@ def test_chained_cvode_calls_close_the_core_ledger(shared_eos):
 def test_a_core_that_freezes_from_the_top_is_refused(shared_eos):
     """A melting curve that the adiabat meets first at the CMB freezes the core from the top;
     the solve refuses it, since the budget books no latent or gravitational heat there."""
-    params = {
-        k: v
-        for k, v in CORE_MODULE_PARAMS.items()
-        if k not in ('light_element_fraction', 'depression')
-    }
+    params = dict(UNENRICHED_PARAMS)
     params |= {'melting_curve': 'quadratic', 't_m0': 5200.0, 't_m1': -1.2e-12, 't_m2': 0.0}
     solver = _build('core_module', shared_eos, params)
     budget = solver._core_module_budget

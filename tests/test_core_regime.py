@@ -10,7 +10,14 @@ is exactly the state the budget's boundary terms shut off for.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
 import jax
+import numpy as np
 import pytest
 
 from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, IronMeltingCurve
@@ -23,6 +30,7 @@ from aragog.core.regime import (
     REGIME_SNOW,
     REGIME_TOP_DOWN,
     crystallization_regime,
+    refuse_unmodelled_regime,
     regime_name,
 )
 
@@ -105,3 +113,44 @@ def test_top_down_state_and_jit_and_names():
     assert set(REGIME_NAMES) == {0, 1, 2, 3, 4}
     with pytest.raises(KeyError):
         regime_name(99)
+
+
+@pytest.mark.physics_invariant
+def test_only_bottom_up_freezing_passes_the_regime_guard():
+    """A core that walks bottom-up through freeze-out passes; a core whose CMB freezes before
+    its centre is refused in the top-down band and when fully frozen, and a snow state is
+    refused whatever the order of freezing, each by regime name."""
+    prof = GaussianCoreProfiles(**EARTH)
+    kw = dict(ds_fusion=170.0, icn_width=10.0)
+    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    refuse_unmodelled_regime(CoreEnergyBudget(prof, curve, **kw), [4300.0, 3900.0, 3300.0])
+    curve = QuadraticMeltingCurve(t_m0=5200.0, t_m1=-1.2e-12, t_m2=0.0)
+    top_down = CoreEnergyBudget(prof, curve, **kw)
+    assert top_down.t_freeze > top_down.t_onset
+    refuse_unmodelled_regime(top_down, [5300.0, 5100.0])
+    with pytest.raises(ValueError, match='crystallizes top_down at T_core = 4300.0 K'):
+        refuse_unmodelled_regime(top_down, [5300.0, 4300.0])
+    with pytest.raises(ValueError, match='crystallizes fully_frozen'):
+        refuse_unmodelled_regime(top_down, 2000.0)
+    snow = SimpleNamespace(
+        t_onset=4000.0, t_freeze=3500.0, regime_batch=lambda t: np.array([1, REGIME_SNOW])
+    )
+    with pytest.raises(ValueError, match='crystallizes snow at T_core = 3900.0 K'):
+        refuse_unmodelled_regime(snow, [4000.0, 3900.0])
+
+
+@pytest.mark.smoke
+def test_energy_balance_paths_load_no_core_module_at_import():
+    """The numpy solver and the JAX RHS load no part of ``aragog.core``, and ``aragog.core``
+    loads the experimental layer only when a stratified budget is built."""
+    code = (
+        'import sys, aragog.jax.solver, aragog.solver.entropy_solver, aragog.solver.cvode_jax\n'
+        "print(sorted(m for m in sys.modules if m.startswith('aragog.core')))\n"
+        'import aragog.core\n'
+        "print('aragog.core.layer' in sys.modules)"
+    )
+    src = str(Path(__file__).resolve().parents[1] / 'src')
+    env = os.environ | {'PYTHONPATH': src}
+    out = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.split() == ['[]', 'False']

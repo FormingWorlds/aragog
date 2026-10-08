@@ -240,8 +240,8 @@ class CoreEnergyBudget:
         so the value is always defined and trace-safe. A liquid centre
         returns zero regardless of frozen shells above it (the top-down
         and snow topologies have no inner core in the bottom-up sense);
-        ``crystallization_regime`` is the diagnostic for those states, and
-        the boundary terms drop to zero there.
+        the boundary terms drop to zero there, and the solver refuses those
+        states (``aragog.core.regime.refuse_unmodelled_regime``).
 
         The derivative is the implicit-function sensitivity attached as a
         custom JVP: a comparison-driven bisection carries no gradient of
