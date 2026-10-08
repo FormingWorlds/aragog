@@ -32,6 +32,8 @@ import numpy as np
 import numpy.typing as npt
 from scipy.interpolate import RegularGridInterpolator
 
+from aragog.eos.table_cache import read_cached_table
+
 logger = logging.getLogger('fwl.' + __name__)
 
 
@@ -214,7 +216,7 @@ def _load_spider_ps_table(filepath: Path) -> dict:
         Q_scale = float(scales[2])
 
     # Read data
-    data = np.genfromtxt(filepath, skip_header=n_header)
+    data = read_cached_table(filepath, skiprows=n_header)
     P_nondim = data[:, 0]
     S_nondim = data[:, 1]
     Q_nondim = data[:, 2]
@@ -290,7 +292,7 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
         P_scale = float(scales[0])
         S_scale = float(scales[1])
 
-    data = np.genfromtxt(filepath, skip_header=n_header)
+    data = read_cached_table(filepath, skiprows=n_header)
     P = data[:, 0] * P_scale
     S = data[:, 1] * S_scale
 
