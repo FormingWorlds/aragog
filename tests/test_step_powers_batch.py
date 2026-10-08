@@ -1,10 +1,10 @@
 """Tests for batched per-call energy power evaluation in Aragog.
 
 Verifies:
-- Test T1: Per-node parity against numpy _step_powers on derived alpha
+- Per-node power parity between JAX batch and numpy step powers
   across 8 combinations of mode, radio heating, and tidal heating for n > 512.
-- Test T3: Invariant I3 compile counter verifies exactly one trace across
-  varying trace lengths and one additional trace for a second mode.
+- Compile counter verifies exactly one trace across varying trace lengths
+  and one additional trace for a second mode.
 """
 
 from __future__ import annotations
@@ -93,11 +93,11 @@ def _make_phase_params(params: Parameters) -> PhaseParams:
 @pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
 @pytest.mark.parametrize('use_radio', [False, True])
 @pytest.mark.parametrize('use_tidal', [False, True])
-def test_t1_per_node_parity(eos_np, eos_jax, mode: str, use_radio: bool, use_tidal: bool):
+def test_step_powers_per_node_parity(eos_np, eos_jax, mode: str, use_radio: bool, use_tidal: bool):
     """Verify per-node power parity between JAX batch and numpy step powers.
 
     Checks columns 0 to 5 relative differences <= 1e-12 against numpy with
-    derived alpha per Ruling 51a, and residual consistency on column 6.
+    derived alpha, and residual consistency on column 6.
     """
     assert not eos_np._has_alpha_tables
 
@@ -229,8 +229,8 @@ def test_t1_per_node_parity(eos_np, eos_jax, mode: str, use_radio: bool, use_tid
     assert jax_resid_ratio <= 1e-12, f'JAX residual {jax_resid_ratio:.4e} exceeds 1e-12'
 
 
-def test_t3_compile_counter(eos_jax):
-    """Verify Invariant I3: compile counter increments exactly once per key."""
+def test_step_powers_compile_once(eos_jax):
+    """Verify that powers JIT is compiled once per cache key."""
     from tests.conftest import make_mesh as _make_mesh
     from tests.test_cvode_jax_cache import _make_bc
 
