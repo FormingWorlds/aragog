@@ -9,6 +9,8 @@ Verifies:
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pytest
 
@@ -90,10 +92,50 @@ def _make_phase_params(params: Parameters) -> PhaseParams:
     )
 
 
+def _make_cvode_jax_factory(solver, eos_jax, params, mode, tidal_arr, radio_params, inner_val):
+    mesh = solver.evaluator.mesh
+    mesh_arr = MeshArrays.from_numpy_mesh(mesh)
+    inner_type = 5 if mode == 'energy_balance' else 2
+    bc = BoundaryParams(
+        outer_bc_type=1,
+        outer_bc_value=1500.0,
+        emissivity=1.0,
+        T_eq=255.0,
+        inner_bc_type=inner_type,
+        inner_bc_value=inner_val,
+        core_density=10500.0,
+        core_heat_capacity=880.0,
+        tfac_core_avg=1.147,
+        cmb_area=4.0 * np.pi * float(mesh_arr.radii_basic[0]) ** 2,
+        core_M=(4.0 / 3.0) * np.pi * float(mesh_arr.radii_basic[0]) ** 3 * 10500.0,
+        cmb_dr_cmb=float(mesh_arr.radii_basic[1] - mesh_arr.radii_basic[0]),
+        param_utbl=False,
+        param_utbl_const=0.0,
+    )
+    phase_params = _make_phase_params(params)
+
+    def factory(scales, core_bc_mode):
+        rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
+            eos_jax=eos_jax,
+            phase_params=phase_params,
+            mesh_arrays=mesh_arr,
+            boundary_params=bc,
+            heating_array=tidal_arr,
+            scales=scales,
+            core_bc_mode=core_bc_mode,
+            radio_isotope_params=radio_params,
+        )
+        return rhs_fn, jac_fn
+
+    return factory
+
+
 @pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
 @pytest.mark.parametrize('use_radio', [False, True])
 @pytest.mark.parametrize('use_tidal', [False, True])
-def test_step_powers_per_node_parity(eos_np, eos_jax, mode: str, use_radio: bool, use_tidal: bool):
+def test_step_powers_per_node_parity(
+    eos_np, eos_jax, mode: str, use_radio: bool, use_tidal: bool
+):
     """Verify per-node power parity between JAX batch and numpy step powers.
 
     Checks columns 0 to 5 relative differences <= 1e-12 against numpy with
@@ -446,3 +488,450 @@ def test_step_powers_radio_uses_table_density(eos_jax):
 
     rel_diff = abs(Q_radio - Q_radio_ref) / Q_radio_ref
     assert rel_diff <= 1e-12, f'Q_radio relative difference {rel_diff:.4e} exceeds 1e-12'
+
+
+@pytest.mark.parametrize(
+    'mode,output_pts',
+    [
+        ('quasi_steady', 65),
+        ('energy_balance', 65),
+        ('quasi_steady', 550),
+    ],
+)
+def test_step_powers_per_call_integrals(eos_np, eos_jax, mode: str, output_pts: int):
+    """Verify per-call energy integrals match reference within tolerance."""
+    assert not eos_np._has_alpha_tables
+
+    n_nodes = 15
+    n_stag = n_nodes - 1
+    inner_bc = 1 if mode == 'energy_balance' else 2
+    inner_val = 0.05 if inner_bc == 2 else 0.0
+    params = _build_parameters(
+        core_bc=mode,
+        solver_method='cvode',
+        end_time=20.0,
+        n_nodes=n_nodes,
+        use_jax_jacobian=True,
+        inner_boundary_condition=inner_bc,
+        inner_boundary_value=inner_val,
+    )
+    params.solver.cvode_output_points = output_pts
+    params.phase_mixed.phase_transition_width = 0.0
+
+    r26 = _make_radionuclide()
+    params.energy.radionuclides = True
+    params.radionuclides = [r26]
+    radio_params = (
+        np.array([r26.heat_production]),
+        np.array([r26.abundance]),
+        np.array([r26.concentration]),
+        np.array([r26.t0_years]),
+        np.array([r26.half_life_years]),
+    )
+
+    params.energy.tidal = True
+    tidal_arr = np.linspace(1e-12, 5e-12, n_stag)
+    params.energy.tidal_array = list(tidal_arr)
+
+    solver = es.EntropySolver(params, entropy_eos=eos_np)
+    solver.initialize()
+
+    factory = _make_cvode_jax_factory(
+        solver, eos_jax, params, mode, tidal_arr, radio_params, inner_val
+    )
+    solver.set_jax_cvode_factory(factory)
+
+    r = np.asarray(solver._r_stag_flat)
+    solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    solver.solve()
+
+    sol = solver._solution
+    assert sol is not None
+    batch_integrals = dict(sol.energy_integrals)
+
+    # Reference evaluation with forced numpy loop
+    batch_callable = solver._cvode_step_powers_batch
+    solver._cvode_step_powers_batch = None
+    ref_integrals = solver._compute_step_energy_integrals()
+    solver._cvode_step_powers_batch = batch_callable
+
+    for key in ['F_int', 'F_cmb', 'Q_radio', 'Q_tidal', 'Q_radio_cons', 'Q_tidal_cons']:
+        val_batch = batch_integrals[key]
+        val_ref = ref_integrals[key]
+        denom = abs(val_ref)
+        if denom > 0.0:
+            rel = abs(val_batch - val_ref) / denom
+            assert rel <= 1e-12, f'{key} relative difference {rel:.4e} exceeds 1e-12'
+        else:
+            assert abs(val_batch - val_ref) <= 1e-12
+
+    if ref_integrals['F_cmb_step_avg'] is not None:
+        denom = abs(ref_integrals['F_cmb_step_avg'])
+        if denom > 0.0:
+            rel = (
+                abs(batch_integrals['F_cmb_step_avg'] - ref_integrals['F_cmb_step_avg']) / denom
+            )
+            assert rel <= 1e-12, f'F_cmb_step_avg relative difference {rel:.4e} exceeds 1e-12'
+        else:
+            assert (
+                abs(batch_integrals['F_cmb_step_avg'] - ref_integrals['F_cmb_step_avg'])
+                <= 1e-12
+            )
+    else:
+        assert batch_integrals['F_cmb_step_avg'] is None
+
+    # Residual consistency: absolute value <= 1e-12 * sum of abs boundary and source integrals
+    scale = (
+        abs(batch_integrals['F_int'])
+        + abs(batch_integrals['F_cmb'])
+        + abs(batch_integrals['Q_radio'])
+        + abs(batch_integrals['Q_tidal'])
+    )
+    assert abs(batch_integrals['solver_residual']) <= 1e-12 * scale
+
+    # State heat is bit-equal
+    assert batch_integrals['state_heat'] == ref_integrals['state_heat']
+
+
+def test_step_powers_solver_dispatch(eos_np, eos_jax):
+    """Verify solver dispatch routes to batch or numpy path as configured."""
+    assert not eos_np._has_alpha_tables
+
+    for mode in ['quasi_steady', 'energy_balance']:
+        n_nodes = 15
+        inner_bc = 1 if mode == 'energy_balance' else 2
+        inner_val = 0.05 if inner_bc == 2 else 0.0
+        params = _build_parameters(
+            core_bc=mode,
+            solver_method='cvode',
+            end_time=10.0,
+            n_nodes=n_nodes,
+            use_jax_jacobian=True,
+            inner_boundary_condition=inner_bc,
+            inner_boundary_value=inner_val,
+        )
+        solver = es.EntropySolver(params, entropy_eos=eos_np)
+        solver.initialize()
+        factory = _make_cvode_jax_factory(
+            solver, eos_jax, params, mode, np.zeros(n_nodes - 1), (), inner_val
+        )
+        solver.set_jax_cvode_factory(factory)
+        r = np.asarray(solver._r_stag_flat)
+        solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+
+        call_count = [0]
+        orig_step_powers = solver._step_powers
+
+        def spy_step_powers(t, y):
+            call_count[0] += 1
+            return orig_step_powers(t, y)
+
+        solver._step_powers = spy_step_powers
+        solver.solve()
+        assert solver._cvode_step_powers_batch is not None
+        assert call_count[0] == 0, (
+            f'Expected 0 numpy calls on CVODE batch path, got {call_count[0]}'
+        )
+
+    params_scipy = _build_parameters(
+        core_bc='quasi_steady', solver_method='radau', end_time=10.0
+    )
+    solver_scipy = es.EntropySolver(params_scipy, entropy_eos=eos_np)
+    solver_scipy.initialize()
+    r = np.asarray(solver_scipy._r_stag_flat)
+    solver_scipy.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    call_count_scipy = [0]
+    orig_sp_scipy = solver_scipy._step_powers
+
+    def spy_sp_scipy(t, y):
+        call_count_scipy[0] += 1
+        return orig_sp_scipy(t, y)
+
+    solver_scipy._step_powers = spy_sp_scipy
+    solver_scipy.solve()
+    assert solver_scipy._cvode_step_powers_batch is None
+    assert call_count_scipy[0] > 0, 'Expected numpy calls on scipy path'
+
+    params_nofac = _build_parameters(
+        core_bc='quasi_steady',
+        solver_method='cvode',
+        end_time=10.0,
+        use_jax_jacobian=False,
+    )
+    solver_nofac = es.EntropySolver(params_nofac, entropy_eos=eos_np)
+    solver_nofac.initialize()
+    r = np.asarray(solver_nofac._r_stag_flat)
+    solver_nofac.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    call_count_nofac = [0]
+    orig_sp_nofac = solver_nofac._step_powers
+
+    def spy_sp_nofac(t, y):
+        call_count_nofac[0] += 1
+        return orig_sp_nofac(t, y)
+
+    solver_nofac._step_powers = spy_sp_nofac
+    solver_nofac.solve()
+    assert solver_nofac._cvode_step_powers_batch is None
+    assert call_count_nofac[0] > 0, 'Expected numpy calls without factory'
+
+    for unsupported_mode in ['gradient', 'bower2018']:
+        params_unsup = _build_parameters(
+            core_bc=unsupported_mode,
+            solver_method='cvode',
+            end_time=10.0,
+            use_jax_jacobian=True,
+        )
+        solver_unsup = es.EntropySolver(params_unsup, entropy_eos=eos_np)
+        solver_unsup.initialize()
+        factory_unsup = _make_cvode_jax_factory(
+            solver_unsup, eos_jax, params_unsup, unsupported_mode, np.zeros(14), (), 0.0
+        )
+        solver_unsup.set_jax_cvode_factory(factory_unsup)
+        r = np.asarray(solver_unsup._r_stag_flat)
+        if unsupported_mode == 'gradient':
+            n_basic = solver_unsup._n_stag + 1
+            y0 = np.zeros(n_basic + 1)
+            y0[:n_basic] = 0.0
+            y0[n_basic] = 3000.0
+            solver_unsup._S0 = y0
+        else:
+            solver_unsup.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+        call_count_unsup = [0]
+        orig_sp_unsup = solver_unsup._step_powers
+
+        def spy_sp_unsup(t, y):
+            call_count_unsup[0] += 1
+            return orig_sp_unsup(t, y)
+
+        solver_unsup._step_powers = spy_sp_unsup
+        solver_unsup.solve()
+        assert solver_unsup._cvode_step_powers_batch is None
+        assert call_count_unsup[0] > 0, f'Expected numpy calls in {unsupported_mode} mode'
+
+    params_noattr = _build_parameters(
+        core_bc='quasi_steady',
+        solver_method='cvode',
+        end_time=10.0,
+        use_jax_jacobian=True,
+    )
+    solver_noattr = es.EntropySolver(params_noattr, entropy_eos=eos_np)
+    solver_noattr.initialize()
+    factory_raw = _make_cvode_jax_factory(
+        solver_noattr, eos_jax, params_noattr, 'quasi_steady', np.zeros(14), (), 0.0
+    )
+
+    def factory_no_attr(scales, core_bc_mode):
+        rhs_fn, jac_fn = factory_raw(scales, core_bc_mode)
+
+        def raw_rhs(t, y, ydot):
+            return rhs_fn(t, y, ydot)
+
+        return raw_rhs, jac_fn
+
+    solver_noattr.set_jax_cvode_factory(factory_no_attr)
+    r = np.asarray(solver_noattr._r_stag_flat)
+    solver_noattr.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    call_count_noattr = [0]
+    orig_sp_noattr = solver_noattr._step_powers
+
+    def spy_sp_noattr(t, y):
+        call_count_noattr[0] += 1
+        return orig_sp_noattr(t, y)
+
+    solver_noattr._step_powers = spy_sp_noattr
+    solver_noattr.solve()
+    assert solver_noattr._cvode_step_powers_batch is None
+    assert call_count_noattr[0] > 0, 'Expected numpy calls when rhs_fn lacks step_powers'
+
+
+@pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
+def test_step_powers_state_refresh(eos_np, eos_jax, mode: str):
+    """Verify that solver state after batch powers matches numpy state."""
+    assert not eos_np._has_alpha_tables
+
+    n_nodes = 15
+    inner_bc = 1 if mode == 'energy_balance' else 2
+    inner_val = 0.05 if inner_bc == 2 else 0.0
+    params = _build_parameters(
+        core_bc=mode,
+        solver_method='cvode',
+        end_time=20.0,
+        n_nodes=n_nodes,
+        use_jax_jacobian=True,
+        inner_boundary_condition=inner_bc,
+        inner_boundary_value=inner_val,
+    )
+    params.phase_mixed.phase_transition_width = 0.0
+
+    r26 = _make_radionuclide()
+    params.energy.radionuclides = True
+    params.radionuclides = [r26]
+    radio_params = (
+        np.array([r26.heat_production]),
+        np.array([r26.abundance]),
+        np.array([r26.concentration]),
+        np.array([r26.t0_years]),
+        np.array([r26.half_life_years]),
+    )
+    params.energy.tidal = True
+    tidal_arr = np.linspace(1e-12, 5e-12, n_nodes - 1)
+    params.energy.tidal_array = list(tidal_arr)
+
+    solver = es.EntropySolver(params, entropy_eos=eos_np)
+    solver.initialize()
+    factory = _make_cvode_jax_factory(
+        solver, eos_jax, params, mode, tidal_arr, radio_params, inner_val
+    )
+    solver.set_jax_cvode_factory(factory)
+    r = np.asarray(solver._r_stag_flat)
+    solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    solver.solve()
+
+    state_batch_flux = solver.state._heat_flux.copy()
+    state_batch_radio = np.asarray(solver.state.heating_radio).copy()
+    state_batch_tidal = np.asarray(solver.state.heating_tidal).copy()
+    state_batch_rho = np.asarray(solver.state.phase_staggered.density()).copy()
+    state_batch_T = np.asarray(solver.state.phase_staggered.temperature()).copy()
+    state_batch_cap = np.asarray(solver.state.capacitance_staggered()).copy()
+    hits_batch = solver.state._pb_cache_hits
+    misses_batch = solver.state._pb_cache_misses
+
+    # Computing integrals on batch path must preserve cache counters
+    solver._compute_step_energy_integrals()
+    assert solver.state._pb_cache_hits == hits_batch
+    assert solver.state._pb_cache_misses == misses_batch
+
+    # Replay on numpy path must preserve cache counters and match state arrays
+    batch_callable = solver._cvode_step_powers_batch
+    solver._cvode_step_powers_batch = None
+    solver._compute_step_energy_integrals()
+    solver._cvode_step_powers_batch = batch_callable
+
+    state_np_flux = solver.state._heat_flux.copy()
+    state_np_radio = np.asarray(solver.state.heating_radio).copy()
+    state_np_tidal = np.asarray(solver.state.heating_tidal).copy()
+    state_np_rho = np.asarray(solver.state.phase_staggered.density()).copy()
+    state_np_T = np.asarray(solver.state.phase_staggered.temperature()).copy()
+    state_np_cap = np.asarray(solver.state.capacitance_staggered()).copy()
+    hits_np = solver.state._pb_cache_hits
+    misses_np = solver.state._pb_cache_misses
+
+    np.testing.assert_array_equal(state_batch_flux, state_np_flux)
+    np.testing.assert_array_equal(state_batch_radio, state_np_radio)
+    np.testing.assert_array_equal(state_batch_tidal, state_np_tidal)
+    np.testing.assert_array_equal(state_batch_rho, state_np_rho)
+    np.testing.assert_array_equal(state_batch_T, state_np_T)
+    np.testing.assert_array_equal(state_batch_cap, state_np_cap)
+    assert hits_batch == hits_np
+    assert misses_batch == misses_np
+
+
+def test_step_powers_fallback_on_exception(eos_np, eos_jax, caplog):
+    """Verify that batch failure emits one warning and falls back to numpy."""
+    assert not eos_np._has_alpha_tables
+
+    n_nodes = 15
+    params = _build_parameters(
+        core_bc='quasi_steady',
+        solver_method='cvode',
+        end_time=10.0,
+        n_nodes=n_nodes,
+        use_jax_jacobian=True,
+    )
+    solver = es.EntropySolver(params, entropy_eos=eos_np)
+    solver.initialize()
+    factory = _make_cvode_jax_factory(
+        solver, eos_jax, params, 'quasi_steady', np.zeros(n_nodes - 1), (), 0.0
+    )
+    solver.set_jax_cvode_factory(factory)
+    r = np.asarray(solver._r_stag_flat)
+    solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    solver.solve()
+
+    solver._cvode_step_powers_batch = None
+    ref_integrals = solver._compute_step_energy_integrals()
+
+    def failing_batch(t_nodes, Y_nodes):
+        raise RuntimeError('simulated batch powers failure')
+
+    solver._cvode_step_powers_batch = failing_batch
+    solver._warned.clear()
+    caplog.clear()
+
+    with caplog.at_level(logging.WARNING):
+        fallback_integrals = solver._compute_step_energy_integrals()
+
+    for key, ref_val in ref_integrals.items():
+        fallback_val = fallback_integrals[key]
+        if ref_val is None:
+            assert fallback_val is None
+        else:
+            np.testing.assert_allclose(fallback_val, ref_val, rtol=1e-14, atol=1e-14)
+
+    warnings = [rec for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert 'batch step powers evaluation failed' in warnings[0].message
+    assert 'simulated batch powers failure' in warnings[0].message
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        solver._compute_step_energy_integrals()
+    second_warnings = [rec for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert len(second_warnings) == 0
+
+    # Test that malformed array shape also triggers warning and falls back to numpy
+    def malformed_shape_batch(t_nodes, Y_nodes, aux=None):
+        return np.zeros((len(t_nodes), 5))
+
+    solver._cvode_step_powers_batch = malformed_shape_batch
+    solver._warned.clear()
+    caplog.clear()
+
+    with caplog.at_level(logging.WARNING):
+        fallback_shape_integrals = solver._compute_step_energy_integrals()
+
+    for key, ref_val in ref_integrals.items():
+        fallback_val = fallback_shape_integrals[key]
+        if ref_val is None:
+            assert fallback_val is None
+        else:
+            np.testing.assert_allclose(fallback_val, ref_val, rtol=1e-14, atol=1e-14)
+
+    shape_warnings = [rec for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert len(shape_warnings) == 1
+    assert 'Expected batch step powers shape' in shape_warnings[0].message
+
+
+def test_step_powers_batch_interface(eos_np):
+    """Verify EntropySolver._step_powers_batch signature handling and error contract."""
+    params = _build_parameters(core_bc='quasi_steady')
+    solver = es.EntropySolver(params, entropy_eos=eos_np)
+    solver.initialize()
+
+    n_dim = len(solver._r_basic_flat)
+
+    # When no batch callable is registered, raises RuntimeError
+    solver._cvode_step_powers_batch = None
+    with pytest.raises(RuntimeError, match='No batch step powers callable available'):
+        solver._step_powers_batch(np.array([0.0]), np.zeros((n_dim, 1)))
+
+    # When batch callable accepts aux keyword argument
+    called_with_aux = []
+
+    def mock_batch_with_aux(t_nodes, Y_nodes, aux=None):
+        called_with_aux.append(aux is not None)
+        return np.ones((len(t_nodes), 7))
+
+    solver._cvode_step_powers_batch = mock_batch_with_aux
+    out1 = solver._step_powers_batch(np.array([0.0, 1.0]), np.zeros((n_dim, 2)))
+    assert out1.shape == (2, 7)
+    assert called_with_aux == [True]
+
+    # When batch callable does not accept aux keyword argument
+    def mock_batch_no_aux(t_nodes, Y_nodes):
+        return np.full((len(t_nodes), 7), 2.0)
+
+    solver._cvode_step_powers_batch = mock_batch_no_aux
+    out2 = solver._step_powers_batch(np.array([0.0, 1.0]), np.zeros((n_dim, 2)))
+    assert out2.shape == (2, 7)
+    np.testing.assert_array_equal(out2, 2.0)

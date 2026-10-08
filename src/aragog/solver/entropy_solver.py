@@ -29,6 +29,7 @@ from scipy.optimize import OptimizeResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from typing import Any
 
     from aragog.jax.nondim import NonDimScales
 
@@ -1271,6 +1272,8 @@ class EntropySolver:
         Loaded P-S EOS tables.
     """
 
+    _cvode_step_powers_batch: Callable[..., Any] | None = None
+
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
         self.entropy_eos = entropy_eos
@@ -1286,6 +1289,9 @@ class EntropySolver:
         # registered by PROTEUS via ``set_jax_cvode_factory()`` when
         # ``config.interior_energetics.aragog.use_jax_jacobian`` is True.
         self._jax_cvode_factory = None
+        # Optional batch callable for per-call energy power evaluation.
+        # Signature: callable(t_nodes, Y_nodes) -> ndarray (n, 7).
+        self._cvode_step_powers_batch: Callable[..., Any] | None = None
         # Output points CVODE returns per macro-step solve; a root ends the call early.
         self._cvode_output_points = self.parameters.solver.cvode_output_points
         # Maximum internal CVODE steps per output interval (SUNDIALS mxstep); exceeding it
@@ -3225,8 +3231,11 @@ class EntropySolver:
 
     def _warn_once(self, key: str, message: str, level: int = logging.WARNING) -> None:
         """Log ``message`` at ``level`` the first time ``key`` is seen by this solver."""
-        if key not in self._warned:
-            self._warned.add(key)
+        warned = getattr(self, '_warned', None)
+        if warned is None:
+            warned = self._warned = set()
+        if key not in warned:
+            warned.add(key)
             logger.log(level, message)
 
     def solve(self) -> None:
@@ -3560,6 +3569,7 @@ class EntropySolver:
                 'CVODE path (same solver SPIDER uses).'
             )
         use_cvode = solver_method == 'cvode' and _CVODE_AVAILABLE
+        self._cvode_step_powers_batch = None
         if use_cvode:
             # Build JAX-derived CVODE callbacks when the factory is registered
             # and use_jax_jacobian is active. Callbacks reuse cached functions.
@@ -3577,6 +3587,9 @@ class EntropySolver:
                         scales,
                         self._core_bc,
                     )
+                    self._cvode_step_powers_batch = getattr(
+                        cvode_rhs_override, 'step_powers', None
+                    )
                     logger.info(
                         'EntropySolver: option Z active '
                         '(JAX analytic Jacobian + JAX RHS via scikits.odes)'
@@ -3589,6 +3602,7 @@ class EntropySolver:
                     )
                     cvode_rhs_override = None
                     cvode_jacfn = None
+                    self._cvode_step_powers_batch = None
 
             if cvode_rhs_override is None:
                 logger.info('EntropySolver: using CVODE (solver_method=cvode)')
@@ -3841,8 +3855,11 @@ class EntropySolver:
         The quadrature nodes are ``sol.energy_trace`` on the CVODE path (the call start,
         every accepted step end, every output point and, on a fired root, the increasing
         root-search points below the root) and the returned ``sol.t`` on the scipy path,
-        whose points are the accepted steps. ``_step_powers`` evaluates the powers at each
-        node and the trapezoidal rule integrates them over physical time, so a transient
+        whose points are the accepted steps. When a JAX CVODE factory provides
+        ``step_powers``, per-node powers are evaluated with one cached JAX batch callable.
+        On scipy, CVODE without the JAX factory, or boundary conditions without a JAX RHS
+        (gradient, bower2018), ``_step_powers`` evaluates the powers at each node in a
+        Python loop. The trapezoidal rule integrates them over physical time, so a transient
         between two outputs is resolved by the steps inside it. Sign convention: positive
         adds energy to the mantle.
 
@@ -3863,9 +3880,29 @@ class EntropySolver:
 
         # On the scipy path solve_ivp returns its accepted steps as sol.t.
         t_pts, y_pts = sol.get('energy_trace') or (sol.t, sol.y)
+        t_pts = np.asarray(t_pts, dtype=float)
+        y_pts = np.asarray(y_pts, dtype=float)
         # The replay refreshes self.state at every node; keep the solve's cache statistics.
         counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
-        P = np.array([self._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
+        P = None
+        batch_fn = getattr(self, '_cvode_step_powers_batch', None)
+        if batch_fn is not None:
+            try:
+                P = self._step_powers_batch(t_pts, y_pts)
+                if P.ndim != 2 or P.shape != (t_pts.size, 7):
+                    raise ValueError(
+                        f'Expected batch step powers shape ({t_pts.size}, 7), got {P.shape}'
+                    )
+                self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
+            except Exception as exc:
+                self._warn_once(
+                    'batch_powers_failed',
+                    f'EntropySolver: batch step powers evaluation failed ({exc}); '
+                    'falling back to numpy loop',
+                )
+                P = None
+        if P is None:
+            P = np.array([self._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
         self.state._pb_cache_hits, self.state._pb_cache_misses = counters
         P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T
 
@@ -3921,10 +3958,56 @@ class EntropySolver:
             return np.asarray(S, dtype=float)
         return np.asarray(y_col[: self._n_stag], dtype=float)
 
+    def _step_powers_batch(self, t_pts: npt.NDArray, y_pts: npt.NDArray) -> npt.NDArray:
+        """Evaluate per-node powers for all quadrature nodes in chunked batches.
+
+        Parameters
+        ----------
+        t_pts : ndarray, shape (n,)
+            Times [yr] at quadrature nodes.
+        y_pts : ndarray, shape (d, n)
+            State vectors in physical units at quadrature nodes.
+
+        Returns
+        -------
+        ndarray, shape (n, 7)
+            Per-node powers ``[-F_int A_int, F_cmb A_cmb, Q_radio, Q_tidal,
+            Q_radio_cons, Q_tidal_cons, residual]`` at all nodes.
+        """
+        batch_fn = getattr(self, '_cvode_step_powers_batch', None)
+        if batch_fn is None:
+            raise RuntimeError('No batch step powers callable available')
+        from aragog.jax.solver import StepPowersAux
+
+        vol = self._volume_flat
+        r_basic = self._r_basic_flat
+        A_int = 4.0 * np.pi * float(r_basic[-1]) ** 2
+        A_cmb = 4.0 * np.pi * float(r_basic[0]) ** 2
+        mass_struct = np.asarray(self.evaluator.mesh.staggered_effective_density).ravel() * vol
+        aux = StepPowersAux(
+            A_int=A_int,
+            A_cmb=A_cmb,
+            volume=vol,
+            mass_struct=mass_struct,
+            P_stag=self._P_stag_flat,
+        )
+        import inspect
+
+        sig = inspect.signature(batch_fn)
+        accepts_aux = 'aux' in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        if accepts_aux:
+            return np.asarray(batch_fn(t_pts, y_pts, aux=aux))
+        return np.asarray(batch_fn(t_pts, y_pts))
+
     def _step_powers(self, t_i: float, y_col: npt.NDArray) -> npt.NDArray:
         """Powers [W] at one solver state, for the per-call energy integrals.
 
-        Evaluates the RHS at the state, which refreshes ``self.state``.
+        Evaluates the RHS at the state, which refreshes ``self.state``. This is the
+        reference implementation and the path used on scipy, on CVODE without the JAX
+        factory, and for boundary conditions without a JAX RHS (gradient, bower2018), or as
+        a fallback if batch evaluation fails.
 
         Parameters
         ----------
