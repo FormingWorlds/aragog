@@ -29,10 +29,7 @@ from aragog.jax.phase import (
 )
 from aragog.jax.solver import (
     BoundaryParams,
-    RhsParts,
     SolveResult,
-    StepPowersAux,
-    step_powers,
 )
 
 __all__ = [
@@ -47,8 +44,5 @@ __all__ = [
     'compute_mlt',
     'evaluate_phase',
     'BoundaryParams',
-    'RhsParts',
     'SolveResult',
-    'StepPowersAux',
-    'step_powers',
 ]

@@ -246,7 +246,7 @@ def build_jax_rhs_and_jacobian(
     -------
     rhs_fn : callable
         scikits.odes RHS signature ``rhs_fn(t_nd, y_nd, ydot_nd) -> int``.
-        Carries ``step_powers(t_nodes, Y_nodes, aux=None) -> ndarray (n, 7)``
+        Carries ``step_powers(t_nodes, Y_nodes, aux) -> ndarray (n, 7)``
         for batched per-call energy power evaluation in physical units.
     jacfn : callable
         scikits.odes Jacobian signature
@@ -383,28 +383,7 @@ def build_jax_rhs_and_jacobian(
     key = (core_bc_mode, use_radio, id(phase_params), id(eos_jax))
     entry = _JIT_CACHE[key]
 
-    default_aux = None
-    if mesh_arrays is not None:
-        from aragog.jax.solver import StepPowersAux
-
-        default_A_int = float(mesh_arrays.area[-1])
-        default_A_cmb = float(mesh_arrays.area[0])
-        default_vol = mesh_arrays.volume
-        default_P_stag = mesh_arrays.P_stag
-        default_mass_struct = (
-            getattr(mesh_arrays, 'mass_struct', None)
-            if getattr(mesh_arrays, 'mass_struct', None) is not None
-            else default_vol * 3300.0
-        )
-        default_aux = StepPowersAux(
-            A_int=default_A_int,
-            A_cmb=default_A_cmb,
-            volume=default_vol,
-            mass_struct=jnp.asarray(default_mass_struct, dtype=jnp.float64),
-            P_stag=default_P_stag,
-        )
-
-    def step_powers(t_nodes, Y_nodes, aux=None):
+    def step_powers(t_nodes, Y_nodes, aux):
         """Batched per-node energy powers [W] for accepted trajectory nodes.
 
         Parameters
@@ -414,9 +393,8 @@ def build_jax_rhs_and_jacobian(
         Y_nodes : array_like, shape (dim, n)
             State at evaluation nodes in physical units (entropy [J/kg/K],
             plus dSdr_cmb for energy_balance mode).
-        aux : StepPowersAux, optional
-            Per-solve geometry and mass structure. When None, uses
-            mesh-derived defaults.
+        aux : StepPowersAux
+            Per-solve geometry and mass structure.
 
         Returns
         -------
@@ -447,36 +425,26 @@ def build_jax_rhs_and_jacobian(
         if n == 0:
             return np.empty((0, 7), dtype=np.float64)
 
-        aux_use = aux if aux is not None else default_aux
-        if aux_use is None:
-            raise ValueError('aux must be supplied when mesh_arrays was None at factory build')
-
         if entry.powers_jit is None:
             entry.powers_jit = _make_jitted_powers(
                 core_bc_mode, use_radio, phase_params, eos_jax
             )
 
-        n_chunks = int(np.ceil(n / C))
-        results = []
-        for k in range(n_chunks):
-            start = k * C
-            end = min(start + C, n)
-            L = end - start
-            t_chunk = t_arr[start:end]
-            Y_chunk = Y_arr[:, start:end]
-            if L < C:
-                t_chunk = np.pad(t_chunk, (0, C - L), mode='edge')
-                Y_chunk = np.pad(Y_chunk, ((0, 0), (0, C - L)), mode='edge')
-
-            chunk_out = entry.powers_jit(
-                jnp.asarray(t_chunk),
-                jnp.asarray(Y_chunk),
-                data,
-                aux_use,
+        pad_len = -n % C
+        t_pad = np.pad(t_arr, (0, pad_len), mode='edge')
+        Y_pad = np.pad(Y_arr, ((0, 0), (0, pad_len)), mode='edge')
+        chunks = [
+            np.asarray(
+                entry.powers_jit(
+                    t_pad[k : k + C],
+                    Y_pad[:, k : k + C],
+                    data,
+                    aux,
+                )
             )
-            results.append(np.asarray(chunk_out)[:L])
-
-        return np.concatenate(results, axis=0)
+            for k in range(0, t_pad.size, C)
+        ]
+        return np.concatenate(chunks, axis=0)[:n]
 
     rhs_fn.step_powers = step_powers
     return rhs_fn, jacfn, info

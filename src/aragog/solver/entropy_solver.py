@@ -1272,6 +1272,7 @@ class EntropySolver:
         Loaded P-S EOS tables.
     """
 
+    # callable(t_nodes, Y_nodes, aux) -> ndarray (n, 7)
     _cvode_step_powers_batch: Callable[..., Any] | None = None
 
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
@@ -1289,9 +1290,6 @@ class EntropySolver:
         # registered by PROTEUS via ``set_jax_cvode_factory()`` when
         # ``config.interior_energetics.aragog.use_jax_jacobian`` is True.
         self._jax_cvode_factory = None
-        # Optional batch callable for per-call energy power evaluation.
-        # Signature: callable(t_nodes, Y_nodes) -> ndarray (n, 7).
-        self._cvode_step_powers_batch: Callable[..., Any] | None = None
         # Output points CVODE returns per macro-step solve; a root ends the call early.
         self._cvode_output_points = self.parameters.solver.cvode_output_points
         # Maximum internal CVODE steps per output interval (SUNDIALS mxstep); exceeding it
@@ -3599,7 +3597,6 @@ class EntropySolver:
                     )
                     cvode_rhs_override = None
                     cvode_jacfn = None
-                    self._cvode_step_powers_batch = None
 
             if cvode_rhs_override is None:
                 logger.info('EntropySolver: using CVODE (solver_method=cvode)')
@@ -3886,7 +3883,7 @@ class EntropySolver:
         if batch_fn is not None:
             try:
                 P = self._step_powers_batch(t_pts, y_pts)
-                if P.ndim != 2 or P.shape != (t_pts.size, 7):
+                if P.shape != (t_pts.size, 7):
                     raise ValueError(
                         f'Expected batch step powers shape ({t_pts.size}, 7), got {P.shape}'
                     )
@@ -3994,9 +3991,7 @@ class EntropySolver:
         """Powers [W] at one solver state, for the per-call energy integrals.
 
         Evaluates the RHS at the state, which refreshes ``self.state``. This is the
-        reference implementation and the path used on scipy, on CVODE without the JAX
-        factory, and for boundary conditions without a JAX RHS (gradient, bower2018), or as
-        a fallback if batch evaluation fails.
+        reference implementation and the sequential fallback path.
 
         Parameters
         ----------

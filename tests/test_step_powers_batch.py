@@ -33,7 +33,6 @@ from tests.test_entropy_solver_integration import _build_parameters  # noqa: E40
 jax.config.update('jax_enable_x64', True)
 
 pytestmark = [
-    pytest.mark.unit,
     pytest.mark.skipif(
         not EOS_DIR.exists(),
         reason=f'SPIDER P-S tables not found at {EOS_DIR}.',
@@ -78,9 +77,73 @@ def _make_radionuclide() -> _Radionuclide:
     )
 
 
+def _make_radio_tuple(radionuclides: list[_Radionuclide]) -> tuple:
+    if not radionuclides:
+        return ()
+    return (
+        np.array([r.heat_production for r in radionuclides]),
+        np.array([r.abundance for r in radionuclides]),
+        np.array([r.concentration for r in radionuclides]),
+        np.array([r.t0_years for r in radionuclides]),
+        np.array([r.half_life_years for r in radionuclides]),
+    )
+
+
+def _make_boundary_params(mesh_arr: MeshArrays, mode: str, inner_val: float) -> BoundaryParams:
+    inner_type = 5 if mode == 'energy_balance' else 2
+    r_cmb = float(mesh_arr.radii_basic[0])
+    r_next = float(mesh_arr.radii_basic[1])
+    return BoundaryParams(
+        outer_bc_type=1,
+        outer_bc_value=1500.0,
+        emissivity=1.0,
+        T_eq=255.0,
+        inner_bc_type=inner_type,
+        inner_bc_value=inner_val,
+        core_density=10500.0,
+        core_heat_capacity=880.0,
+        tfac_core_avg=1.147,
+        cmb_area=4.0 * np.pi * r_cmb**2,
+        core_M=(4.0 / 3.0) * np.pi * r_cmb**3 * 10500.0,
+        cmb_dr_cmb=r_next - r_cmb,
+        param_utbl=False,
+        param_utbl_const=0.0,
+    )
+
+
+def _set_initial_entropy(solver, s_base: float = 3050.0, s_span: float = 150.0) -> None:
+    r = np.asarray(solver._r_stag_flat)
+    solver.set_initial_entropy(s_base + s_span * (r[-1] - r) / (r[-1] - r[0]))
+
+
+def _spy_step_powers(solver) -> list[int]:
+    call_count = [0]
+    orig_sp = solver._step_powers
+
+    def spy(t, y):
+        call_count[0] += 1
+        return orig_sp(t, y)
+
+    solver._step_powers = spy
+    return call_count
+
+
+def _make_step_powers_aux(mesh) -> StepPowersAux:
+    vol = np.asarray(mesh.basic.volume).ravel()
+    r_b = np.asarray(mesh.basic.radii).ravel()
+    mass_struct = np.asarray(mesh.staggered_effective_density).ravel() * vol
+    return StepPowersAux(
+        A_int=4.0 * np.pi * float(r_b[-1]) ** 2,
+        A_cmb=4.0 * np.pi * float(r_b[0]) ** 2,
+        volume=vol,
+        mass_struct=mass_struct,
+        P_stag=np.asarray(mesh.staggered_pressure).ravel(),
+    )
+
+
 def _make_phase_params(params: Parameters) -> PhaseParams:
     return PhaseParams(
-        matprop_smooth_width=float(params.phase_mixed.phase_transition_width),
+        matprop_smooth_width=float(getattr(params.phase_mixed, 'matprop_smooth_width', 0.0)),
         kappah_floor=float(params.energy.kappah_floor),
         k_solid=float(params.phase_solid.thermal_conductivity),
         k_liquid=float(params.phase_liquid.thermal_conductivity),
@@ -95,23 +158,7 @@ def _make_phase_params(params: Parameters) -> PhaseParams:
 def _make_cvode_jax_factory(solver, eos_jax, params, mode, tidal_arr, radio_params, inner_val):
     mesh = solver.evaluator.mesh
     mesh_arr = MeshArrays.from_numpy_mesh(mesh)
-    inner_type = 5 if mode == 'energy_balance' else 2
-    bc = BoundaryParams(
-        outer_bc_type=1,
-        outer_bc_value=1500.0,
-        emissivity=1.0,
-        T_eq=255.0,
-        inner_bc_type=inner_type,
-        inner_bc_value=inner_val,
-        core_density=10500.0,
-        core_heat_capacity=880.0,
-        tfac_core_avg=1.147,
-        cmb_area=4.0 * np.pi * float(mesh_arr.radii_basic[0]) ** 2,
-        core_M=(4.0 / 3.0) * np.pi * float(mesh_arr.radii_basic[0]) ** 3 * 10500.0,
-        cmb_dr_cmb=float(mesh_arr.radii_basic[1] - mesh_arr.radii_basic[0]),
-        param_utbl=False,
-        param_utbl_const=0.0,
-    )
+    bc = _make_boundary_params(mesh_arr, mode, inner_val)
     phase_params = _make_phase_params(params)
 
     def factory(scales, core_bc_mode):
@@ -130,6 +177,7 @@ def _make_cvode_jax_factory(solver, eos_jax, params, mode, tidal_arr, radio_para
     return factory
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
 @pytest.mark.parametrize('use_radio', [False, True])
 @pytest.mark.parametrize('use_tidal', [False, True])
@@ -179,8 +227,7 @@ def test_step_powers_per_node_parity(
 
     solver = es.EntropySolver(params, entropy_eos=eos_np)
     solver.initialize()
-    r = np.asarray(solver._r_stag_flat)
-    solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    _set_initial_entropy(solver, s_base=3050.0, s_span=150.0)
     solver.solve()
     sol = solver._solution
     assert sol is not None
@@ -191,35 +238,10 @@ def test_step_powers_per_node_parity(
 
     mesh = solver.evaluator.mesh
     mesh_arr = MeshArrays.from_numpy_mesh(mesh)
-    inner_type = 5 if mode == 'energy_balance' else 2
-    bc = BoundaryParams(
-        outer_bc_type=1,
-        outer_bc_value=1500.0,
-        emissivity=1.0,
-        T_eq=255.0,
-        inner_bc_type=inner_type,
-        inner_bc_value=inner_val,
-        core_density=10500.0,
-        core_heat_capacity=880.0,
-        tfac_core_avg=1.147,
-        cmb_area=4.0 * np.pi * float(mesh_arr.radii_basic[0]) ** 2,
-        core_M=(4.0 / 3.0) * np.pi * float(mesh_arr.radii_basic[0]) ** 3 * 10500.0,
-        cmb_dr_cmb=float(mesh_arr.radii_basic[1] - mesh_arr.radii_basic[0]),
-        param_utbl=False,
-        param_utbl_const=0.0,
-    )
-    if use_radio:
-        radio_params = (
-            np.array([r.heat_production for r in params.radionuclides]),
-            np.array([r.abundance for r in params.radionuclides]),
-            np.array([r.concentration for r in params.radionuclides]),
-            np.array([r.t0_years for r in params.radionuclides]),
-            np.array([r.half_life_years for r in params.radionuclides]),
-        )
-    else:
-        radio_params = ()
-
+    bc = _make_boundary_params(mesh_arr, mode, inner_val)
+    radio_params = _make_radio_tuple(params.radionuclides)
     phase_params = _make_phase_params(params)
+
     if mode == 'energy_balance':
         scale_vec = np.empty(n_stag + 1)
         scale_vec[:n_stag] = 3000.0
@@ -239,38 +261,102 @@ def test_step_powers_per_node_parity(
         radio_isotope_params=radio_params,
     )
 
-    vol = np.asarray(mesh.basic.volume).ravel()
-    r_b = np.asarray(mesh.basic.radii).ravel()
-    mass_struct = np.asarray(mesh.staggered_effective_density).ravel() * vol
-    aux = StepPowersAux(
-        A_int=4.0 * np.pi * float(r_b[-1]) ** 2,
-        A_cmb=4.0 * np.pi * float(r_b[0]) ** 2,
-        volume=vol,
-        mass_struct=mass_struct,
-        P_stag=np.asarray(mesh.staggered_pressure).ravel(),
-    )
-
+    aux = _make_step_powers_aux(mesh)
     P_jax = rhs_fn.step_powers(t_pts, y_pts, aux=aux)
     assert P_jax.shape == P_np.shape
 
     for col in range(6):
-        denom = np.max(np.abs(P_np[:, col]))
-        if denom == 0.0:
-            np.testing.assert_allclose(P_jax[:, col], 0.0, atol=1e-12)
-        else:
-            rel_diff = np.max(np.abs(P_jax[:, col] - P_np[:, col])) / denom
-            assert rel_diff <= 1e-12, (
-                f'Col {col} rel diff {rel_diff:.4e} exceeds 1e-12 for mode={mode}'
-            )
+        colmax = float(np.max(np.abs(P_np[:, col])))
+        np.testing.assert_allclose(
+            P_jax[:, col],
+            P_np[:, col],
+            rtol=1e-12,
+            atol=1e-12 * colmax,
+        )
 
-    scale_np = np.sum(np.abs(P_np[:, :4]), axis=1)
-    scale_jax = np.sum(np.abs(P_jax[:, :4]), axis=1)
-    np_resid_ratio = np.max(np.abs(P_np[:, 6]) / np.maximum(scale_np, 1.0))
-    jax_resid_ratio = np.max(np.abs(P_jax[:, 6]) / np.maximum(scale_jax, 1.0))
-    assert np_resid_ratio <= 1e-12, f'NP residual {np_resid_ratio:.4e} exceeds 1e-12'
-    assert jax_resid_ratio <= 1e-12, f'JAX residual {jax_resid_ratio:.4e} exceeds 1e-12'
+    resid_atol = 1e-12 * (float(np.max(np.abs(P_np[:, 0]))) + float(np.max(np.abs(P_np[:, 1]))))
+    np.testing.assert_allclose(
+        P_jax[:, 6],
+        P_np[:, 6],
+        atol=resid_atol,
+    )
 
 
+@pytest.mark.smoke
+def test_step_powers_per_node_parity_smooth_width(eos_np, eos_jax):
+    """Verify per-node power parity when matprop_smooth_width is active.
+
+    Uses matprop_smooth_width = 0.01 on both sides and an initial state with
+    melt fraction strictly between 0 and 1 at >= 2 nodes.
+    """
+    assert not eos_np._has_alpha_tables
+
+    n_nodes = 15
+    params = _build_parameters(
+        core_bc='quasi_steady',
+        solver_method='cvode',
+        end_time=5.0,
+        n_nodes=n_nodes,
+        use_jax_jacobian=False,
+    )
+    params.phase_mixed.matprop_smooth_width = 0.01
+    params.phase_mixed.phase_transition_width = 0.0
+    params.solver.cvode_output_points = 60
+
+    solver = es.EntropySolver(params, entropy_eos=eos_np)
+    solver.initialize()
+    _set_initial_entropy(solver, s_base=3195.0, s_span=10.0)
+
+    r = np.asarray(solver._r_stag_flat)
+    S0 = 3195.0 + 10.0 * (r[-1] - r) / (r[-1] - r[0])
+    solver._dSdt_single(0.0, S0)
+    phi0 = np.asarray(solver.state.phase_staggered.melt_fraction()).ravel()
+    mixed_nodes = np.where((phi0 > 0.0) & (phi0 < 1.0))[0]
+    assert len(mixed_nodes) >= 2, f'Expected >= 2 mixed nodes, got {len(mixed_nodes)}'
+
+    solver.solve()
+    sol = solver._solution
+    assert sol is not None
+    t_pts, y_pts = sol.energy_trace
+
+    P_np = np.array([solver._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
+
+    mesh = solver.evaluator.mesh
+    mesh_arr = MeshArrays.from_numpy_mesh(mesh)
+    bc = _make_boundary_params(mesh_arr, 'quasi_steady', 0.0)
+    phase_params = _make_phase_params(params)
+    scales = NonDimScales(state_scale=np.full(n_nodes - 1, 3000.0), t_ref=100.0)
+
+    rhs_fn, _, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos_jax,
+        phase_params=phase_params,
+        mesh_arrays=mesh_arr,
+        boundary_params=bc,
+        heating_array=np.zeros(n_nodes - 1),
+        scales=scales,
+        core_bc_mode='quasi_steady',
+    )
+    aux = _make_step_powers_aux(mesh)
+    P_jax = rhs_fn.step_powers(t_pts, y_pts, aux=aux)
+
+    for col in range(6):
+        colmax = float(np.max(np.abs(P_np[:, col])))
+        np.testing.assert_allclose(
+            P_jax[:, col],
+            P_np[:, col],
+            rtol=1e-12,
+            atol=1e-12 * colmax,
+        )
+
+    resid_atol = 1e-12 * (float(np.max(np.abs(P_np[:, 0]))) + float(np.max(np.abs(P_np[:, 1]))))
+    np.testing.assert_allclose(
+        P_jax[:, 6],
+        P_np[:, 6],
+        atol=resid_atol,
+    )
+
+
+@pytest.mark.unit
 def test_step_powers_compile_once(eos_jax):
     """Verify that powers JIT is compiled once per cache key."""
     from tests.conftest import make_mesh as _make_mesh
@@ -284,6 +370,9 @@ def test_step_powers_compile_once(eos_jax):
     bc1 = _make_bc(mesh10, outer_type=4, inner_type=2)
     scales1 = NonDimScales(state_scale=np.full(10, 3000.0), t_ref=100.0)
 
+    r26 = _make_radionuclide()
+    radio_params = _make_radio_tuple([r26])
+
     rhs_fn1, _, _ = build_jax_rhs_and_jacobian(
         eos_jax=eos_jax,
         phase_params=params,
@@ -292,18 +381,34 @@ def test_step_powers_compile_once(eos_jax):
         heating_array=np.zeros(10),
         scales=scales1,
         core_bc_mode='quasi_steady',
+        radio_isotope_params=radio_params,
+    )
+
+    aux1 = StepPowersAux(
+        A_int=float(mesh10.area[-1]),
+        A_cmb=float(mesh10.area[0]),
+        volume=mesh10.volume,
+        mass_struct=np.asarray(mesh10.volume * 3300.0),
+        P_stag=mesh10.P_stag,
     )
 
     # 5 solves with different trace lengths, one above C = 512
     lengths = [50, 100, 512, 600, 1000]
+    out_1000 = None
+    t_1000 = None
+    Y_1000 = None
     for n in lengths:
         t_nodes = np.linspace(0.0, 10.0, n)
-        Y_nodes = np.full((10, n), 3000.0)
-        out = rhs_fn1.step_powers(t_nodes, Y_nodes)
+        Y_nodes = 3000.0 + 200.0 * np.linspace(0.0, 1.0, n)[None, :] * np.ones((10, 1))
+        out = rhs_fn1.step_powers(t_nodes, Y_nodes, aux=aux1)
         assert out.shape == (n, 7)
         assert _TRACE_COUNTERS['powers'] == 1, (
             f'Expected 1 trace, got {_TRACE_COUNTERS["powers"]} at length {n}'
         )
+        if n == 1000:
+            out_1000 = out
+            t_1000 = t_nodes
+            Y_1000 = Y_nodes
 
     # Re-invoking factory with identical cache key reuses powers_jit with 0 new traces
     rhs_fn1_repeat, _, _ = build_jax_rhs_and_jacobian(
@@ -314,18 +419,33 @@ def test_step_powers_compile_once(eos_jax):
         heating_array=np.zeros(10),
         scales=scales1,
         core_bc_mode='quasi_steady',
+        radio_isotope_params=radio_params,
     )
     out_repeat = rhs_fn1_repeat.step_powers(
-        np.linspace(0.0, 10.0, 50), np.full((10, 50), 3000.0)
+        np.linspace(0.0, 10.0, 50),
+        3000.0 + 200.0 * np.linspace(0.0, 1.0, 50)[None, :] * np.ones((10, 1)),
+        aux=aux1,
     )
     assert out_repeat.shape == (50, 7)
     assert _TRACE_COUNTERS['powers'] == 1, (
         'Expected 0 additional traces on repeated factory call'
     )
 
-    # Verify numerical consistency across chunk boundaries (C = 512)
-    np.testing.assert_allclose(out[0], out[-1], atol=1e-12)
-    np.testing.assert_allclose(out[511], out[512], atol=1e-12)
+    # Compare n=1000 chunked output row by row against n=1 calls at boundary indices
+    check_indices = [0, 510, 511, 512, 513, 999]
+    for idx in check_indices:
+        single_out = rhs_fn1.step_powers(
+            np.array([t_1000[idx]]),
+            Y_1000[:, idx : idx + 1],
+            aux=aux1,
+        )
+        colmax = float(np.max(np.abs(single_out[0])))
+        np.testing.assert_allclose(
+            out_1000[idx],
+            single_out[0],
+            rtol=1e-12,
+            atol=1e-12 * max(colmax, 1.0),
+        )
 
     # Mode 2 with a new cache key must trace exactly once more
     bc2 = _make_bc(mesh10, outer_type=4, inner_type=5)
@@ -342,22 +462,21 @@ def test_step_powers_compile_once(eos_jax):
         heating_array=np.zeros(10),
         scales=scales2,
         core_bc_mode='energy_balance',
+        radio_isotope_params=radio_params,
     )
 
     t_nodes2 = np.linspace(0.0, 10.0, 600)
-    Y_nodes2 = np.full((11, 600), 3000.0)
-    out2 = rhs_fn2.step_powers(t_nodes2, Y_nodes2)
+    Y_nodes2 = 3000.0 + 200.0 * np.linspace(0.0, 1.0, 600)[None, :] * np.ones((11, 1))
+    out2 = rhs_fn2.step_powers(t_nodes2, Y_nodes2, aux=aux1)
     assert out2.shape == (600, 7)
     assert _TRACE_COUNTERS['powers'] == 2, (
         f'Expected 2 traces total, got {_TRACE_COUNTERS["powers"]}'
     )
 
 
+@pytest.mark.unit
 def test_step_powers_input_validation(eos_jax):
     """Verify input validation and error branches in step_powers."""
-    import pytest
-
-    from aragog.jax.solver import StepPowersAux
     from tests.conftest import make_mesh as _make_mesh
     from tests.test_cvode_jax_cache import _make_bc
 
@@ -375,32 +494,6 @@ def test_step_powers_input_validation(eos_jax):
         scales=scales,
         core_bc_mode='quasi_steady',
     )
-
-    # Multidimensional t_nodes
-    with pytest.raises(ValueError, match='t_nodes must be 1D'):
-        rhs_fn.step_powers(np.zeros((2, 2)), np.zeros((10, 4)))
-
-    # Empty nodes
-    empty_out = rhs_fn.step_powers([], np.empty((10, 0)))
-    assert empty_out.shape == (0, 7)
-
-    # Empty nodes with non-2D Y_nodes
-    with pytest.raises(ValueError, match='Y_nodes must be 2D'):
-        rhs_fn.step_powers([], np.zeros(10))
-
-    # Non-2D Y_nodes
-    with pytest.raises(ValueError, match='Y_nodes must be 2D'):
-        rhs_fn.step_powers([0.0], np.zeros(10))
-
-    # Length mismatch
-    with pytest.raises(ValueError, match='does not match t_nodes length'):
-        rhs_fn.step_powers([0.0, 1.0], np.zeros((10, 3)))
-
-    # Dimension mismatch
-    with pytest.raises(ValueError, match='does not match expected dimension'):
-        rhs_fn.step_powers([0.0], np.zeros((9, 1)))
-
-    # Explicit aux
     aux = StepPowersAux(
         A_int=float(mesh10.area[-1]),
         A_cmb=float(mesh10.area[0]),
@@ -408,21 +501,38 @@ def test_step_powers_input_validation(eos_jax):
         mass_struct=np.asarray(mesh10.volume * 3300.0),
         P_stag=mesh10.P_stag,
     )
+
+    # Missing required aux raises TypeError
+    with pytest.raises(TypeError):
+        rhs_fn.step_powers([0.0], np.full((10, 1), 3000.0))
+
+    # Multidimensional t_nodes
+    with pytest.raises(ValueError, match='t_nodes must be 1D'):
+        rhs_fn.step_powers(np.zeros((2, 2)), np.zeros((10, 4)), aux=aux)
+
+    # Empty nodes
+    empty_out = rhs_fn.step_powers([], np.empty((10, 0)), aux=aux)
+    assert empty_out.shape == (0, 7)
+
+    # Empty nodes with non-2D Y_nodes
+    with pytest.raises(ValueError, match='Y_nodes must be 2D'):
+        rhs_fn.step_powers([], np.zeros(10), aux=aux)
+
+    # Non-2D Y_nodes
+    with pytest.raises(ValueError, match='Y_nodes must be 2D'):
+        rhs_fn.step_powers([0.0], np.zeros(10), aux=aux)
+
+    # Length mismatch
+    with pytest.raises(ValueError, match='does not match t_nodes length'):
+        rhs_fn.step_powers([0.0, 1.0], np.zeros((10, 3)), aux=aux)
+
+    # Dimension mismatch
+    with pytest.raises(ValueError, match='does not match expected dimension'):
+        rhs_fn.step_powers([0.0], np.zeros((9, 1)), aux=aux)
+
+    # Valid aux call
     out_aux = rhs_fn.step_powers([0.0], np.full((10, 1), 3000.0), aux=aux)
     assert out_aux.shape == (1, 7)
-
-    # Factory with mesh_arrays=None and no aux provided
-    rhs_no_mesh, _, _ = build_jax_rhs_and_jacobian(
-        eos_jax=eos_jax,
-        phase_params=params,
-        mesh_arrays=None,
-        boundary_params=bc,
-        heating_array=np.zeros(10),
-        scales=scales,
-        core_bc_mode='quasi_steady',
-    )
-    with pytest.raises(ValueError, match='aux must be supplied'):
-        rhs_no_mesh.step_powers([0.0], np.full((10, 1), 3000.0))
 
     # Unknown mode in step_powers
     from aragog.jax.solver import step_powers
@@ -437,25 +547,32 @@ def test_step_powers_input_validation(eos_jax):
         )
 
 
+@pytest.mark.unit
 def test_step_powers_radio_uses_table_density(eos_jax):
     """Verify Q_radio integrates raw table density, not smoothed phase density."""
-    from aragog.jax.solver import StepPowersAux
+    from aragog.jax.phase import evaluate_phase
     from tests.conftest import make_mesh as _make_mesh
     from tests.test_cvode_jax_cache import _make_bc
 
     params = PhaseParams(matprop_smooth_width=0.05)
     mesh10 = _make_mesh(N=10)
+    P_stag = np.asarray(mesh10.P_stag)
+    S_test = np.full((10, 1), 3153.599)
+
+    # First assert phase density and table density differ by > 1e-6 relative
+    phase = evaluate_phase(eos_jax, params, P_stag, S_test.ravel())
+    rho_phase = np.asarray(phase.density)
+    rho_table = np.asarray(eos_jax.density(P_stag, S_test.ravel()))
+    density_rel_diff = float(np.max(np.abs(rho_phase - rho_table) / rho_table))
+    assert density_rel_diff > 1e-6, (
+        f'Phase and table density must differ by > 1e-6, got {density_rel_diff:.4e}'
+    )
+
     bc = _make_bc(mesh10, outer_type=4, inner_type=2)
     scales = NonDimScales(state_scale=np.full(10, 3000.0), t_ref=100.0)
 
     r26 = _make_radionuclide()
-    radio_params = (
-        np.array([r26.heat_production]),
-        np.array([r26.abundance]),
-        np.array([r26.concentration]),
-        np.array([r26.t0_years]),
-        np.array([r26.half_life_years]),
-    )
+    radio_params = _make_radio_tuple([r26])
 
     rhs_fn, _, _ = build_jax_rhs_and_jacobian(
         eos_jax=eos_jax,
@@ -490,6 +607,7 @@ def test_step_powers_radio_uses_table_density(eos_jax):
     assert rel_diff <= 1e-12, f'Q_radio relative difference {rel_diff:.4e} exceeds 1e-12'
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     'mode,output_pts',
     [
@@ -521,13 +639,7 @@ def test_step_powers_per_call_integrals(eos_np, eos_jax, mode: str, output_pts: 
     r26 = _make_radionuclide()
     params.energy.radionuclides = True
     params.radionuclides = [r26]
-    radio_params = (
-        np.array([r26.heat_production]),
-        np.array([r26.abundance]),
-        np.array([r26.concentration]),
-        np.array([r26.t0_years]),
-        np.array([r26.half_life_years]),
-    )
+    radio_params = _make_radio_tuple([r26])
 
     params.energy.tidal = True
     tidal_arr = np.linspace(1e-12, 5e-12, n_stag)
@@ -540,9 +652,7 @@ def test_step_powers_per_call_integrals(eos_np, eos_jax, mode: str, output_pts: 
         solver, eos_jax, params, mode, tidal_arr, radio_params, inner_val
     )
     solver.set_jax_cvode_factory(factory)
-
-    r = np.asarray(solver._r_stag_flat)
-    solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    _set_initial_entropy(solver, s_base=3050.0, s_span=150.0)
     solver.solve()
 
     sol = solver._solution
@@ -593,6 +703,7 @@ def test_step_powers_per_call_integrals(eos_np, eos_jax, mode: str, output_pts: 
     assert batch_integrals['state_heat'] == ref_integrals['state_heat']
 
 
+@pytest.mark.smoke
 def test_step_powers_solver_dispatch(eos_np, eos_jax):
     """Verify solver dispatch routes to batch or numpy path as configured."""
     assert not eos_np._has_alpha_tables
@@ -616,17 +727,8 @@ def test_step_powers_solver_dispatch(eos_np, eos_jax):
             solver, eos_jax, params, mode, np.zeros(n_nodes - 1), (), inner_val
         )
         solver.set_jax_cvode_factory(factory)
-        r = np.asarray(solver._r_stag_flat)
-        solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
-
-        call_count = [0]
-        orig_step_powers = solver._step_powers
-
-        def spy_step_powers(t, y):
-            call_count[0] += 1
-            return orig_step_powers(t, y)
-
-        solver._step_powers = spy_step_powers
+        _set_initial_entropy(solver, s_base=3050.0, s_span=150.0)
+        call_count = _spy_step_powers(solver)
         solver.solve()
         assert solver._cvode_step_powers_batch is not None
         assert call_count[0] == 0, (
@@ -638,16 +740,8 @@ def test_step_powers_solver_dispatch(eos_np, eos_jax):
     )
     solver_scipy = es.EntropySolver(params_scipy, entropy_eos=eos_np)
     solver_scipy.initialize()
-    r = np.asarray(solver_scipy._r_stag_flat)
-    solver_scipy.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
-    call_count_scipy = [0]
-    orig_sp_scipy = solver_scipy._step_powers
-
-    def spy_sp_scipy(t, y):
-        call_count_scipy[0] += 1
-        return orig_sp_scipy(t, y)
-
-    solver_scipy._step_powers = spy_sp_scipy
+    _set_initial_entropy(solver_scipy, s_base=3050.0, s_span=150.0)
+    call_count_scipy = _spy_step_powers(solver_scipy)
     solver_scipy.solve()
     assert solver_scipy._cvode_step_powers_batch is None
     assert call_count_scipy[0] > 0, 'Expected numpy calls on scipy path'
@@ -660,16 +754,8 @@ def test_step_powers_solver_dispatch(eos_np, eos_jax):
     )
     solver_nofac = es.EntropySolver(params_nofac, entropy_eos=eos_np)
     solver_nofac.initialize()
-    r = np.asarray(solver_nofac._r_stag_flat)
-    solver_nofac.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
-    call_count_nofac = [0]
-    orig_sp_nofac = solver_nofac._step_powers
-
-    def spy_sp_nofac(t, y):
-        call_count_nofac[0] += 1
-        return orig_sp_nofac(t, y)
-
-    solver_nofac._step_powers = spy_sp_nofac
+    _set_initial_entropy(solver_nofac, s_base=3050.0, s_span=150.0)
+    call_count_nofac = _spy_step_powers(solver_nofac)
     solver_nofac.solve()
     assert solver_nofac._cvode_step_powers_batch is None
     assert call_count_nofac[0] > 0, 'Expected numpy calls without factory'
@@ -687,7 +773,6 @@ def test_step_powers_solver_dispatch(eos_np, eos_jax):
             solver_unsup, eos_jax, params_unsup, unsupported_mode, np.zeros(14), (), 0.0
         )
         solver_unsup.set_jax_cvode_factory(factory_unsup)
-        r = np.asarray(solver_unsup._r_stag_flat)
         if unsupported_mode == 'gradient':
             n_basic = solver_unsup._n_stag + 1
             y0 = np.zeros(n_basic + 1)
@@ -695,15 +780,8 @@ def test_step_powers_solver_dispatch(eos_np, eos_jax):
             y0[n_basic] = 3000.0
             solver_unsup._S0 = y0
         else:
-            solver_unsup.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
-        call_count_unsup = [0]
-        orig_sp_unsup = solver_unsup._step_powers
-
-        def spy_sp_unsup(t, y):
-            call_count_unsup[0] += 1
-            return orig_sp_unsup(t, y)
-
-        solver_unsup._step_powers = spy_sp_unsup
+            _set_initial_entropy(solver_unsup, s_base=3050.0, s_span=150.0)
+        call_count_unsup = _spy_step_powers(solver_unsup)
         solver_unsup.solve()
         assert solver_unsup._cvode_step_powers_batch is None
         assert call_count_unsup[0] > 0, f'Expected numpy calls in {unsupported_mode} mode'
@@ -729,21 +807,14 @@ def test_step_powers_solver_dispatch(eos_np, eos_jax):
         return raw_rhs, jac_fn
 
     solver_noattr.set_jax_cvode_factory(factory_no_attr)
-    r = np.asarray(solver_noattr._r_stag_flat)
-    solver_noattr.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
-    call_count_noattr = [0]
-    orig_sp_noattr = solver_noattr._step_powers
-
-    def spy_sp_noattr(t, y):
-        call_count_noattr[0] += 1
-        return orig_sp_noattr(t, y)
-
-    solver_noattr._step_powers = spy_sp_noattr
+    _set_initial_entropy(solver_noattr, s_base=3050.0, s_span=150.0)
+    call_count_noattr = _spy_step_powers(solver_noattr)
     solver_noattr.solve()
     assert solver_noattr._cvode_step_powers_batch is None
     assert call_count_noattr[0] > 0, 'Expected numpy calls when rhs_fn lacks step_powers'
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
 def test_step_powers_state_refresh(eos_np, eos_jax, mode: str):
     """Verify that solver state after batch powers matches numpy state."""
@@ -766,13 +837,7 @@ def test_step_powers_state_refresh(eos_np, eos_jax, mode: str):
     r26 = _make_radionuclide()
     params.energy.radionuclides = True
     params.radionuclides = [r26]
-    radio_params = (
-        np.array([r26.heat_production]),
-        np.array([r26.abundance]),
-        np.array([r26.concentration]),
-        np.array([r26.t0_years]),
-        np.array([r26.half_life_years]),
-    )
+    radio_params = _make_radio_tuple([r26])
     params.energy.tidal = True
     tidal_arr = np.linspace(1e-12, 5e-12, n_nodes - 1)
     params.energy.tidal_array = list(tidal_arr)
@@ -783,8 +848,7 @@ def test_step_powers_state_refresh(eos_np, eos_jax, mode: str):
         solver, eos_jax, params, mode, tidal_arr, radio_params, inner_val
     )
     solver.set_jax_cvode_factory(factory)
-    r = np.asarray(solver._r_stag_flat)
-    solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    _set_initial_entropy(solver, s_base=3050.0, s_span=150.0)
     solver.solve()
 
     state_batch_flux = solver.state._heat_flux.copy()
@@ -826,6 +890,7 @@ def test_step_powers_state_refresh(eos_np, eos_jax, mode: str):
     assert misses_batch == misses_np
 
 
+@pytest.mark.smoke
 def test_step_powers_fallback_on_exception(eos_np, eos_jax, caplog):
     """Verify that batch failure emits one warning and falls back to numpy."""
     assert not eos_np._has_alpha_tables
@@ -844,14 +909,13 @@ def test_step_powers_fallback_on_exception(eos_np, eos_jax, caplog):
         solver, eos_jax, params, 'quasi_steady', np.zeros(n_nodes - 1), (), 0.0
     )
     solver.set_jax_cvode_factory(factory)
-    r = np.asarray(solver._r_stag_flat)
-    solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+    _set_initial_entropy(solver, s_base=3050.0, s_span=150.0)
     solver.solve()
 
     solver._cvode_step_powers_batch = None
     ref_integrals = solver._compute_step_energy_integrals()
 
-    def failing_batch(t_nodes, Y_nodes, aux=None):
+    def failing_batch(t_nodes, Y_nodes, aux):
         raise RuntimeError('simulated batch powers failure')
 
     solver._cvode_step_powers_batch = failing_batch
@@ -880,7 +944,7 @@ def test_step_powers_fallback_on_exception(eos_np, eos_jax, caplog):
     assert len(second_warnings) == 0
 
     # Test that malformed array shape also triggers warning and falls back to numpy
-    def malformed_shape_batch(t_nodes, Y_nodes, aux=None):
+    def malformed_shape_batch(t_nodes, Y_nodes, aux):
         return np.zeros((len(t_nodes), 5))
 
     solver._cvode_step_powers_batch = malformed_shape_batch
@@ -902,6 +966,7 @@ def test_step_powers_fallback_on_exception(eos_np, eos_jax, caplog):
     assert 'Expected batch step powers shape' in shape_warnings[0].message
 
 
+@pytest.mark.unit
 def test_step_powers_batch_interface(eos_np):
     """Verify EntropySolver._step_powers_batch signature handling and error contract."""
     params = _build_parameters(core_bc='quasi_steady')

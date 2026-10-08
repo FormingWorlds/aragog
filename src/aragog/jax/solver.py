@@ -238,15 +238,12 @@ class RhsParts(NamedTuple):
         State time derivative [J/kg/K/yr] (and [J/kg/K/m/yr] if extended).
     heat_flux : jax.Array
         Heat flux after both boundary conditions [W/m^2].
-    heating : jax.Array
-        Volumetric heating [W/kg] (radio + tidal) at staggered nodes.
     phase_stag : PhaseProperties
         Thermodynamic and phase properties at staggered nodes.
     """
 
     rate: jax.Array
     heat_flux: jax.Array
-    heating: jax.Array
     phase_stag: PhaseProperties
 
 
@@ -436,7 +433,9 @@ def _dSdt_parts(
     # dS/dt from flux divergence [J/kg/K/s]
     dsdt = -delta_energy_flux / capacitance
 
-    # Internal heating: dS/dt += H / T (sources radio + tidal)
+    # RHS takes heating from flux_out.heating; step_powers rebuilds it from
+    # heating_static and H_radio_fn(t), so its residual column flags any
+    # other source that compute_fluxes adds.
     T_stag = phase_stag.temperature
     dsdt = dsdt + flux_out.heating / jnp.maximum(T_stag, 1.0)
 
@@ -446,7 +445,6 @@ def _dSdt_parts(
     return RhsParts(
         rate=rate,
         heat_flux=heat_flux,
-        heating=flux_out.heating,
         phase_stag=phase_stag,
     )
 
@@ -510,14 +508,14 @@ def _dSdt_energy_balance_parts(
     state_ext : jax.Array, shape (N+1,)
         Extended state vector (entropy + dSdr_cmb).
     args : tuple
-        ``(eos, params, mesh, bc, heating)`` — same as ``dSdt``.
-        ``bc`` must have inner_bc_type = 5 and the energy_balance
-        constants (cmb_area, core_M, cmb_dr_cmb) populated.
+        ``(eos, params, mesh, bc, heating_static, H_radio_fn)``: same
+        as ``dSdt``. ``bc`` must have inner_bc_type = 5 and the
+        energy_balance constants (cmb_area, core_M, cmb_dr_cmb) populated.
 
     Returns
     -------
     RhsParts
-        NamedTuple with rate, heat_flux, heating, and phase_stag.
+        NamedTuple with rate, heat_flux, and phase_stag.
     """
     eos, params, mesh, bc, heating_static, H_radio_fn = args
     # Live radio heating, broadcast to per-cell uniform.
@@ -593,7 +591,6 @@ def _dSdt_energy_balance_parts(
     return RhsParts(
         rate=rate,
         heat_flux=heat_flux,
-        heating=flux_out.heating,
         phase_stag=phase_stag,
     )
 
@@ -622,9 +619,9 @@ def dSdt_energy_balance(
     state_ext : jax.Array, shape (N+1,)
         Extended state vector (entropy + dSdr_cmb).
     args : tuple
-        ``(eos, params, mesh, bc, heating)`` — same as ``dSdt``.
-        ``bc`` must have inner_bc_type = 5 and the energy_balance
-        constants (cmb_area, core_M, cmb_dr_cmb) populated.
+        ``(eos, params, mesh, bc, heating_static, H_radio_fn)``: same
+        as ``dSdt``. ``bc`` must have inner_bc_type = 5 and the
+        energy_balance constants (cmb_area, core_M, cmb_dr_cmb) populated.
 
     Returns
     -------
