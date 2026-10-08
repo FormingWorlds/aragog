@@ -3909,10 +3909,7 @@ class EntropySolver:
                 'EntropySolver: evaluated energy powers via JAX batch path (%d nodes)',
                 t_pts.size,
             )
-            try:
-                self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
-            except Exception as exc:
-                logger.warning('EntropySolver: final state refresh failed: %s', exc)
+            self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
         else:
             logger.info(
                 'EntropySolver: evaluated energy powers via numpy loop fallback (%d nodes)',

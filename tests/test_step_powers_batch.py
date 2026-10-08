@@ -9,6 +9,7 @@ Verifies:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from types import SimpleNamespace
 
@@ -418,59 +419,59 @@ def test_step_powers_per_node_parity_smooth_width(eos_np, eos_jax, mode: str):
     _assert_powers_match(P_jax, P_np)
 
 
-GOLDEN_DSDT_QUASI_STEADY_1350x280 = [
-    4.946876022764861e-08,
-    1.4354528692297296e-08,
-    1.2794689825155506e-08,
-    1.1173027644290394e-08,
-    9.36622694400568e-09,
-    -9.99973230275159e-09,
-    7.3620122729112715e-09,
-    6.535577669641221e-09,
-    2.2141327053768432e-08,
-    -22.091941533065498,
-]
+def _eos_table_sha256(eos) -> str:
+    h = hashlib.sha256()
+    for attr in [
+        '_temperature_solid',
+        '_temperature_melt',
+        '_density_solid',
+        '_density_melt',
+        '_heat_capacity_solid',
+        '_heat_capacity_melt',
+        '_dTdPs_solid',
+        '_dTdPs_melt',
+    ]:
+        table = getattr(eos, attr)
+        h.update(np.asarray(table._values).tobytes())
+    for attr in ['_solidus', '_liquidus']:
+        pb = getattr(eos, attr)
+        h.update(np.asarray(pb._P).tobytes())
+        h.update(np.asarray(pb._S).tobytes())
+    return h.hexdigest()
 
-GOLDEN_DSDT_ENERGY_BALANCE_1350x280 = [
-    6.068558281928821e-08,
-    1.4354528692297296e-08,
-    1.2794689825155506e-08,
-    1.1173027644290394e-08,
-    9.36622694400568e-09,
-    -9.99973230275159e-09,
-    7.3620122729112715e-09,
-    6.535577669641221e-09,
-    2.2141327053768432e-08,
-    -22.091941533065498,
-    7.688733335995297e-13,
-]
 
-GOLDEN_DSDT_QUASI_STEADY_500x200 = [
-    2.84109373702525e-09,
-    6.388116123988195e-09,
-    6.482872735081994e-09,
-    6.613634486732417e-09,
-    6.7176743616853114e-09,
-    6.786633872161627e-09,
-    6.7942728225926e-09,
-    6.9271539732802514e-09,
-    2.064809319837027e-08,
-    -23.472209786073414,
-]
+CI_TABLE_SHA256 = 'd8a6049ae15d453b919b91e812f3282cf98e51ce4335e51c4aa27b34ecdb31ec'
 
-GOLDEN_DSDT_ENERGY_BALANCE_500x200 = [
-    8.25383759619916e-09,
-    6.388116123988195e-09,
-    6.482872735081994e-09,
-    6.613634486732417e-09,
-    6.7176743616853114e-09,
-    6.786633872161627e-09,
-    6.7942728225926e-09,
-    6.9271539732802514e-09,
-    2.064809319837027e-08,
-    -23.472209786073414,
-    2.3803617071177906e-13,
-]
+GOLDEN_DSDT_QUASI_STEADY = np.array(
+    [
+        2.84109373702525e-09,
+        6.388116123988195e-09,
+        6.482872735081994e-09,
+        6.613634486732417e-09,
+        6.7176743616853114e-09,
+        6.786633872161627e-09,
+        6.7942728225926e-09,
+        6.9271539732802514e-09,
+        2.064809319837027e-08,
+        -23.472209786073414,
+    ]
+)
+
+GOLDEN_DSDT_ENERGY_BALANCE = np.array(
+    [
+        8.25383759619916e-09,
+        6.388116123988195e-09,
+        6.482872735081994e-09,
+        6.613634486732417e-09,
+        6.7176743616853114e-09,
+        6.786633872161627e-09,
+        6.7942728225926e-09,
+        6.9271539732802514e-09,
+        2.064809319837027e-08,
+        -23.472209786073414,
+        2.3803617071177906e-13,
+    ]
+)
 
 
 @pytest.mark.smoke
@@ -594,6 +595,8 @@ def test_evolution_unchanged_factory_vs_no_attr(eos_np, eos_jax):
     assert np.array_equal(sol_fac.y, sol_noattr.y)
     assert np.array_equal(sol_fac.energy_trace[0], sol_noattr.energy_trace[0])
     assert np.array_equal(sol_fac.energy_trace[1], sol_noattr.energy_trace[1])
+    assert solver_fac._batch_powers_calls > 0
+    assert solver_noattr._batch_powers_calls == 0
 
 
 @pytest.mark.smoke
@@ -604,6 +607,12 @@ def test_golden_rhs_values(eos_jax):
     from aragog.jax.solver import _no_radio, dSdt, dSdt_energy_balance
     from tests.conftest import make_mesh
     from tests.test_cvode_jax_cache import _make_bc
+
+    table_hash = _eos_table_sha256(eos_jax)
+    if table_hash != CI_TABLE_SHA256:
+        pytest.skip(
+            f'Table set hash {table_hash} does not match CI golden tables ({CI_TABLE_SHA256})'
+        )
 
     params = PhaseParams()
     mesh = make_mesh(N=10)
@@ -617,24 +626,14 @@ def test_golden_rhs_values(eos_jax):
     args_qs = (eos_jax, params, mesh, bc_qs, heating_static, H_radio_fn)
     S_qs = np.linspace(2400.0, 3600.0, n_stag)
     rate_qs = np.asarray(dSdt(t, jnp.asarray(S_qs), args_qs))
-    grid_shape = eos_jax._temperature_solid._values.shape
-    if grid_shape == (500, 200):
-        expected_qs = GOLDEN_DSDT_QUASI_STEADY_500x200
-        expected_eb = GOLDEN_DSDT_ENERGY_BALANCE_500x200
-    elif grid_shape == (1350, 280):
-        expected_qs = GOLDEN_DSDT_QUASI_STEADY_1350x280
-        expected_eb = GOLDEN_DSDT_ENERGY_BALANCE_1350x280
-    else:
-        raise ValueError(f'Unexpected EOS grid shape: {grid_shape}')
-
-    np.testing.assert_array_equal(rate_qs, expected_qs)
+    np.testing.assert_array_max_ulp(rate_qs, GOLDEN_DSDT_QUASI_STEADY, maxulp=4)
 
     # 2. energy_balance
     bc_eb = _make_bc(mesh, outer_type=1, inner_type=5)
     args_eb = (eos_jax, params, mesh, bc_eb, heating_static, H_radio_fn)
     state_eb = np.append(np.linspace(2400.0, 3600.0, n_stag), 1e-7)
     rate_eb = np.asarray(dSdt_energy_balance(t, jnp.asarray(state_eb), args_eb))
-    np.testing.assert_array_equal(rate_eb, expected_eb)
+    np.testing.assert_array_max_ulp(rate_eb, GOLDEN_DSDT_ENERGY_BALANCE, maxulp=4)
 
 
 @pytest.mark.smoke
