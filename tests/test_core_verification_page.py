@@ -115,7 +115,9 @@ def test_coupled_tables_reproduce_the_page(script):
     got = _reproduces(script, 11)
     assert got['wrong_sign_rows_core_module'] == 0
     assert got['wrong_sign_rows_energy_balance'] == got['rows_energy_balance']
-    assert got['core_residual_frac_max_after_1kyr'] < 1e-5
+    for case, bound in (('1me', 1e-6), ('1me_rtol1e-10', 1e-6), ('3me', 5e-6), ('5me', 5e-6)):
+        assert got[f'closure_max_after_1kyr_{case}'] < bound
+        assert got[f'closure_end_{case}'] < bound
 
 
 @pytest.mark.slow

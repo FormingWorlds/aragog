@@ -143,7 +143,7 @@ $$
 |\Delta T_\text{core}| \ge 10^3 \times \text{rtol} \times T_\text{core},
 $$
 
-58 mK per call for the values above; a strongly stratified core with a CMB flux near $10^{-3}$ W m$^{-2}$ changes temperature far more slowly and falls outside it. The smoke test `test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy` (a core cooling by about 1 K over a liquid base) holds the residual below $10^{-5}$ and the core heat change equal to the `heat_content` difference to $10^{-6}$.
+58 mK per call for the values above; a strongly stratified core with a CMB flux near $10^{-3}$ W m$^{-2}$ changes temperature far more slowly and falls outside it. The smoke test `test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy` (a core cooling by about 1 K over a liquid base) holds the residual below $10^{-6}$ and the core heat change equal to the `heat_content` difference to $10^{-6}$.
 
 The core heat change of a call, $\int \tilde{C}\, dT_\text{core}$, uses 32-point Gauss-Legendre quadrature in $T_\text{core}$ on each segment between the inner-core onset and freeze-out temperatures, with a square-root substitution across nucleation; with `stratification = true` the capacity also depends on the layer base, so the integral is a trapezoid rule over the call's output points, and the shell adds the change of its heat content. The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along each cell's entropy path with a trapezoid rule, in one EOS call for all points and cells. In `core_module` the rule has 512 points, since $\rho T$ has a kink at the solidus and a coarse uniform rule aliases over it on fine meshes; the other modes use 16.
 

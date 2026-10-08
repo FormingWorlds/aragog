@@ -488,14 +488,17 @@ def item9_cvode_onset() -> None:
         k: v for k, v in params0.items() if k not in ('light_element_fraction', 'depression')
     }
     params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
-    eos = eos_copy()
-    solver = build('core_module', eos, params, end_time=4.0, solver_method='cvode')
-    budget, n = solver._core_module_budget, solver._n_stag
-    t_on = float(budget.t_onset)
-    solver.set_initial_core_temperature(t_on + 2.0)
-    solver.set_initial_entropy(np.linspace(7000.0, 6700.0, n))
-    solver.solve()
-    out = solver.get_state()
+    for rtol in (1e-8, 1e-10):  # the figure and the other values come from the 1e-10 solve
+        solver = build('core_module', eos_copy(), params, end_time=4.0, solver_method='cvode')
+        solver.parameters.solver.rtol = solver.parameters.solver.atol = rtol
+        budget, n = solver._core_module_budget, solver._n_stag
+        t_on = float(budget.t_onset)
+        solver.set_initial_core_temperature(t_on + 2.0)
+        solver.set_initial_entropy(np.linspace(7000.0, 6700.0, n))
+        solver.solve()
+        out = solver.get_state()
+        core_vs_cmb = abs(out.step_dE_core_J / -out.step_dE_F_cmb_J - 1)
+        record(9, 'core_vs_cmb_rel' + ('_rtol1e-8' if rtol == 1e-8 else ''), core_vs_cmb)
     sol = solver._solution
     t_yr, t_core = np.asarray(sol.t), np.asarray(sol.y[n + 1])
     content = np.array([float(budget.heat_content(x)) for x in t_core]) - float(
@@ -513,7 +516,6 @@ def item9_cvode_onset() -> None:
     record(9, 't_core_end', t_core[-1])
     record(9, 'r_icb_end_km', float(budget.r_icb(t_core[-1])) / 1e3)
     record(9, 'core_vs_content_rel', abs(out.step_dE_core_J / content[-1] - 1))
-    record(9, 'core_vs_cmb_rel', abs(out.step_dE_core_J / -out.step_dE_F_cmb_J - 1))
     record(9, 'step_dE_core_J', out.step_dE_core_J)
     record(9, 'n_outputs', t_yr.size)
 
@@ -1114,9 +1116,6 @@ def item11_coupled() -> None:
         if mode == 'core_module':  # the mantle side cools alike in both runs
             mantle = dict(color=colour('fog', '0.5'), label='mantle side of the CMB')
             ax.semilogx(t, run['t_node'][live], '--', **mantle)
-            record(11, 'core_residual_frac_end', run['residual'][-1])
-            late = np.abs(run['residual'][run['t'] > 1e3])
-            record(11, 'core_residual_frac_max_after_1kyr', late.max())
         ax2.semilogx(t, run['f_cmb'][live], color=col, label=mode)
         ax2.semilogx(t[wrong[live]], run['f_cmb'][live][wrong[live]], 'x', ms=3, color=col)
     ax.set_ylabel('temperature (K)')
@@ -1126,6 +1125,14 @@ def item11_coupled() -> None:
     ax2.set_ylabel(r'$F_\mathrm{cmb}$ (W m$^{-2}$)')
     ax2.legend(frameon=False, fontsize='x-small', loc='lower left')
     save(fig, 'fig_18_coupled_proteus')
+    for case in ('1me', '1me_rtol1e-10', '3me', '5me'):
+        path = ROOT / 'tools' / 'verification' / 'data' / f'coupled_ledger_{case}.csv'
+        t, core, cmb, impact, frac = np.loadtxt(path, delimiter=',').T
+        step = core + cmb - impact
+        record(11, f'closure_end_{case}', abs(frac[-1]))
+        record(11, f'closure_max_after_1kyr_{case}', np.abs(frac[t > 1e3]).max())
+        record(11, f'closure_max_first_kyr_{case}', np.abs(frac[t <= 1e3]).max())
+        record(11, f'share_22_122yr_{case}', step[abs(t - 122.0) < 0.5].item() / step.sum())
 
 
 # ---------------------------------------------------------------- 5. Nimmo (2015)

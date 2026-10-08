@@ -323,7 +323,7 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
     assert 5.0e4 < out.F_cmb < 2.0e5
     assert 320.0 < float(t_core[-1]) - t_m < 340.0
     assert phi == pytest.approx([0.67, 0.65], abs=0.01)
-    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-5)
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
     assert out.step_dE_core_J == pytest.approx(content, rel=1e-6)
 
 
@@ -331,8 +331,8 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
 def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
     """A core 2 K above the inner-core onset over a liquid base cools through it under CVODE
     (a quadratic curve at 1.5 times Nimmo's t_m0 puts the onset above the base). The core
-    heat change across the square-root cusp equals the heat_content difference and the CMB
-    heat to the solve's precision (2.6e-5 at the default rtol 1e-8, 9.8e-6 at 1e-10)."""
+    heat change across the square-root cusp equals the heat_content difference and, at rtol
+    1e-10, the CMB heat to 1e-6 (6.2e-7; 1.4e-6 at the default rtol 1e-8)."""
     params = {
         k: v
         for k, v in CORE_MODULE_PARAMS.items()
@@ -340,6 +340,7 @@ def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
     }
     params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
     solver = _build('core_module', shared_eos, params, end_time=4.0, solver_method='cvode')
+    solver.parameters.solver.rtol = solver.parameters.solver.atol = 1e-10
     budget = solver._core_module_budget
     S = np.linspace(7000.0, 6700.0, solver._n_stag)
     p_cmb = float(solver._P_basic_flat[0])
@@ -355,7 +356,7 @@ def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
     assert float(budget.r_icb(t1)) > 0.0
     content = float(budget.heat_content(t1) - budget.heat_content(t0))
     assert out.step_dE_core_J == pytest.approx(content, rel=1e-9)
-    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-4)
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
 
 
 STRATIFIED_PARAMS = {**CORE_MODULE_PARAMS, 'stratification': True, 'k_core': 130.0}
