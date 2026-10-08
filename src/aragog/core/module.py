@@ -44,6 +44,7 @@ _PROFILE_KEYS = frozenset(
         'alpha',
         'c_p',
         'pressure_mode',
+        'adiabat_mode',
         'm_core',
         'p_cen',
         'fit_profile',
@@ -98,7 +99,7 @@ def build_core_module_budget(
     """Build a :class:`CoreEnergyBudget` from a flat config dict.
 
     Recognised keys: profile parameters (``rho_cen``, ``length_scale``,
-    ``p_cmb``, ``alpha``, ``c_p``, ``pressure_mode``, ``m_core``,
+    ``p_cmb``, ``alpha``, ``c_p``, ``pressure_mode``, ``adiabat_mode``, ``m_core``,
     ``p_cen``, ``fit_profile``), the melting-curve selector
     ``melting_curve`` (``'iron'`` with ``light_element_fraction`` and
     ``depression``, or ``'quadratic'`` with ``t_m0``/``t_m1``/``t_m2``),

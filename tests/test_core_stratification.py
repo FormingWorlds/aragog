@@ -32,6 +32,7 @@ def ent():
         alpha=1.25e-5,
         c_p=840.0,
         pressure_mode='labrosse',
+        adiabat_mode='small_radius',
     )
     curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
     budget = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
@@ -83,9 +84,10 @@ def test_depth_satisfies_conductive_matching_and_monotonicity(ent):
 
 
 @pytest.mark.physics_invariant
-def test_large_core_layer_clamps_at_the_conducted_flow_peak():
+@pytest.mark.parametrize('mode', ['exact', 'small_radius'])
+def test_large_core_layer_clamps_at_the_conducted_flow_peak(mode):
     """For a core larger than the peak radius of the adiabatic conducted
-    flow (D sqrt(3/2)), a subadiabatic layer is reported clamped at the
+    flow (D sqrt(3/2) for linear gravity), a subadiabatic layer is reported clamped at the
     peak instead of a bisection converging to a meaningless deep-interior
     root: the thin-layer estimate ends where the profile stops being
     monotone."""
@@ -98,10 +100,11 @@ def test_large_core_layer_clamps_at_the_conducted_flow_peak():
         p_cmb=300e9,
         alpha=1.25e-5,
         c_p=840.0,
+        adiabat_mode=mode,
     )
     budget = CoreEnergyBudget(prof, IronMeltingCurve(), ds_fusion=170.0, icn_width=10.0)
     ent = CoreEntropyBudget(budget, k_core=130.0)
-    r_peak = prof.d_scale * np.sqrt(1.5)
+    r_peak = prof.r_peak
     assert r_peak < prof.r_cmb  # the scenario is genuinely past the peak
     qk = float(ent.adiabatic_heat_flow(5000.0))
     depth = float(stratification_depth(ent, 5000.0, 0.5 * qk))

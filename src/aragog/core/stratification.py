@@ -30,17 +30,16 @@ _BISECT_ITERS = 60
 
 def _q_ad(profiles, k_core, r, t_cmb):
     """Heat conducted along the adiabat through radius ``r`` [W]."""
-    grad = 2.0 * r * profiles.adiabat(r, t_cmb) / profiles.d_scale**2
-    return 4.0 * jnp.pi * r**2 * k_core * grad
+    return -4.0 * jnp.pi * r**2 * k_core * profiles.adiabat_gradient(r, t_cmb)
 
 
 def _thickness_primal(profiles, k_core, t_cmb, q_cmb):
     """Equilibrium layer thickness [m] by bisection; see the wrapper."""
     p = profiles
 
-    # Q_ad peaks at D sqrt(3/2); the layer base sits on the rising branch, so the search
-    # runs on the monotone [0, min(r_peak, r_cmb)], the whole core for Earth-scale cores.
-    r_peak = p.d_scale * jnp.sqrt(1.5)
+    # The layer base sits on the rising branch of Q_ad, so the search runs on the monotone
+    # [0, min(r_peak, r_cmb)], the whole core for Earth-scale cores.
+    r_peak = p.r_peak
     upper = jnp.minimum(r_peak, p.r_cmb)
 
     def body(_, bracket):

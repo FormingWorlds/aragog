@@ -71,11 +71,11 @@ def test_step_conserves_energy_through_nucleation():
     walks the core through inner-core onset (capacity jumps by more than
     the secular term, so the check discriminates)."""
     budget = _alloy_budget()
-    module = CoreModule(budget, t_cmb=4120.0, n_substeps=64)
+    module = CoreModule(budget, t_cmb=4220.0, n_substeps=256)
     q = 40e12
-    dt = 1.6e8 * YEAR  # extracts ~2e29 J, cooling ~100 K past onset at ~4054 K
+    dt = 1.6e8 * YEAR  # extracts ~2e29 J, cooling ~10 K past onset at ~4147 K
     module.step(q, dt)
-    assert module.t_cmb < 4054.0 < 4120.0  # onset genuinely crossed
+    assert module.t_cmb < budget.t_onset < 4220.0  # onset genuinely crossed
     # Stepping with the entropy budget attached exercises the same path a
     # coupled caller uses; the diagnostics stay consistent post-step.
     from aragog.core import CoreEntropyBudget
@@ -194,6 +194,7 @@ FULL_PARAMS = dict(
     length_scale=7.272e6,
     p_cmb=136e9,
     pressure_mode='quadrature',
+    adiabat_mode='exact',
     alpha=1.35e-5,
     c_p=840.0,
     melting_curve='iron',

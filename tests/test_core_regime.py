@@ -41,7 +41,7 @@ EARTH = dict(
 
 @pytest.mark.physics_invariant
 def test_alloy_earth_walks_the_bottom_up_sequence():
-    """Cooling the alloy Earth core crosses fully_liquid (above the 4054 K
+    """Cooling the alloy Earth core crosses fully_liquid (above the 4147 K
     onset), bottom_up (partial inner core), and fully_frozen (below the
     3689 K CMB melting temperature), in that order."""
     prof = GaussianCoreProfiles(**EARTH)
@@ -110,12 +110,13 @@ def test_top_down_state_and_jit_and_names():
 
 @pytest.mark.physics_invariant
 def test_only_bottom_up_freezing_passes_the_regime_guard():
-    """A core that walks bottom-up through freeze-out passes; a core whose CMB freezes before
-    its centre is refused in the top-down band and when fully frozen, each by regime name."""
+    """A pure-iron core that walks bottom-up through freeze-out passes; a core whose CMB freezes
+    before its centre is refused in the top-down band and when fully frozen; an alloy core is
+    refused once its inner core holds more than a tenth of the core mass, each by name."""
     prof = GaussianCoreProfiles(**EARTH)
     kw = dict(ds_fusion=170.0, icn_width=10.0)
-    curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
-    refuse_unmodelled_regime(CoreEnergyBudget(prof, curve, **kw), [4300.0, 3900.0, 3300.0])
+    pure = CoreEnergyBudget(prof, IronMeltingCurve(), **kw)
+    refuse_unmodelled_regime(pure, [pure.t_onset + 100.0, pure.t_onset - 400.0, 2000.0])
     curve = QuadraticMeltingCurve(t_m0=5200.0, t_m1=-1.2e-12, t_m2=0.0)
     top_down = CoreEnergyBudget(prof, curve, **kw)
     assert top_down.t_freeze > top_down.t_onset
@@ -124,3 +125,11 @@ def test_only_bottom_up_freezing_passes_the_regime_guard():
         refuse_unmodelled_regime(top_down, [5300.0, 4300.0])
     with pytest.raises(ValueError, match='crystallizes fully_frozen'):
         refuse_unmodelled_regime(top_down, 2000.0)
+    alloy = CoreEnergyBudget(
+        prof, IronMeltingCurve(light_element_fraction=0.1, depression=1.2), **kw
+    )
+    refuse_unmodelled_regime(alloy, [alloy.t_onset + 10.0, alloy.t_onset - 2.0])
+    with pytest.raises(
+        ValueError, match='outer core holds 0.591 of the core mass at T_core = 4000.0 K'
+    ):
+        refuse_unmodelled_regime(alloy, [alloy.t_onset - 2.0, 4000.0])

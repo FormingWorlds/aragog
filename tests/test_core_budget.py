@@ -145,7 +145,7 @@ def test_nucleation_onset_growth_and_freeze_out(prof, alloy_budget):
     t_onset = float(alloy_budget.melting_curve.t_melt(prof.pressure(0.0))) / float(
         prof.adiabat(0.0, 1.0)
     )
-    assert t_onset == pytest.approx(4054.17, rel=1e-4)  # emergent, alloy regime
+    assert t_onset == pytest.approx(4146.70, rel=1e-4)  # emergent, alloy regime
     assert float(alloy_budget.nucleation_factor(t_onset)) == pytest.approx(0.5, abs=1e-9)
     assert float(alloy_budget.r_icb(t_onset + 50.0)) == 0.0
     assert float(alloy_budget.latent_capacity(t_onset + 50.0)) == 0.0
@@ -237,9 +237,9 @@ def test_freeze_out_capacity_jump(prof):
 
     When the CMB reaches the melting curve, inner-core growth completes
     and latent heat release ceases abruptly. For the quadratic melting
-    curve, effective capacity drops by a factor of 4.46 on the EARTH profile
+    curve, effective capacity drops by a factor of 3.14 on the EARTH profile
     (length scale 7200 km, CMB radius 3480 km, ds_fusion 170 J/kg/K). For the iron
-    alloy curve, effective capacity drops by 55.2% (from 4.17e27 J/K to 1.87e27 J/K).
+    alloy curve, effective capacity drops by 50.5% (from 3.72e27 J/K to 1.84e27 J/K).
     """
     quad_curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
     b_quad = CoreEnergyBudget(prof, quad_curve, ds_fusion=DS_FUSION, icn_width=10.0)
@@ -248,7 +248,7 @@ def test_freeze_out_capacity_jump(prof):
     c_above_quad = float(b_quad.effective_capacity(t_f_quad + 1e-4))
     c_below_quad = float(b_quad.effective_capacity(t_f_quad - 1e-4))
     assert c_below_quad == pytest.approx(sec_quad, rel=1e-12)
-    assert c_above_quad / c_below_quad == pytest.approx(4.4598, rel=1e-3)
+    assert c_above_quad / c_below_quad == pytest.approx(3.1428, rel=1e-3)
 
     iron_curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     b_iron = CoreEnergyBudget(prof, iron_curve, ds_fusion=DS_FUSION, icn_width=10.0)
@@ -257,7 +257,7 @@ def test_freeze_out_capacity_jump(prof):
     c_above_iron = float(b_iron.effective_capacity(t_f_iron + 1e-4))
     c_below_iron = float(b_iron.effective_capacity(t_f_iron - 1e-4))
     assert c_below_iron == pytest.approx(sec_iron, rel=1e-12)
-    assert (c_below_iron - c_above_iron) / c_above_iron == pytest.approx(-0.5522, rel=1e-3)
+    assert (c_below_iron - c_above_iron) / c_above_iron == pytest.approx(-0.5046, rel=1e-3)
 
 
 @pytest.mark.physics_invariant

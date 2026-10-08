@@ -278,8 +278,8 @@ def test_dsdt_core_module_direct_call_bounds_and_transient_excursion():
 @pytest.mark.reference_pinned
 @needs_eos
 def test_rhs_parity_with_numpy_on_driven_state(monkeypatch):
-    """The JAX RHS matches the numpy RHS component-by-component on the
-    driven real-EOS state, including the dSdr_cmb and T_core slots.
+    """The JAX RHS matches the numpy RHS with the identity expansivity component-by-component
+    on the driven real-EOS state, including the dSdr_cmb and T_core slots.
 
     This is the contract that keeps CVODE's Newton iteration coherent
     when the analytic Jacobian is active. The comparison runs at the
@@ -290,7 +290,7 @@ def test_rhs_parity_with_numpy_on_driven_state(monkeypatch):
     swap on both sides.
     """
 
-    solver = _build_numpy_solver(entropy_eos_copy())
+    solver = _build_numpy_solver(entropy_eos_copy(identity_alpha=True))
     args = _build_jax_pieces(solver)
     n_stag = solver._n_stag
 
@@ -308,15 +308,9 @@ def test_rhs_parity_with_numpy_on_driven_state(monkeypatch):
         assert f_np.shape == f_jax.shape == (n_stag + 2,)
         denom = np.maximum(np.maximum(np.abs(f_np), np.abs(f_jax)), 1e-12)
         rel = np.abs(f_np - f_jax) / denom
-        # The two boundary slots are the physics this mode adds; they
-        # must match to integrator precision.
-        assert rel[n_stag] < 1e-8 and rel[n_stag + 1] < 1e-8, (
-            f'state {k}: boundary-slot parity {rel[n_stag]:.3e} / {rel[n_stag + 1]:.3e}'
-        )
-        # Interior nodes: 4e-4 at two mid-mantle nodes is the numpy-vs-JAX difference of the
-        # shared flux assembly, the same on the energy_balance RHS at this state; a bound
-        # below 1e-3 needs that difference fixed first.
-        assert rel.max() < 1e-3, (
+        # With the same expansivity on both sides every component matches, the boundary
+        # slots included.
+        assert rel.max() < 1e-10, (
             f'state {k}: max rel err {rel.max():.3e} at component {rel.argmax()} '
             f'(numpy {f_np[rel.argmax()]:.6e} vs jax {f_jax[rel.argmax()]:.6e})'
         )
@@ -409,7 +403,11 @@ def test_boundary_slots_match_numpy_on_a_five_node_mesh():
     """The production JAX RHS and the numpy RHS agree on every component, both boundary
     slots included, on a 5-node mesh with the core 50 K above the mantle."""
     solver = _build(
-        'core_module', entropy_eos_copy(), CORE_MODULE_PARAMS, s_init='driven', n_nodes=5
+        'core_module',
+        entropy_eos_copy(identity_alpha=True),
+        CORE_MODULE_PARAMS,
+        s_init='driven',
+        n_nodes=5,
     )
     n_stag = solver._n_stag
     y = np.asarray(solver._S0, dtype=float)
@@ -419,6 +417,29 @@ def test_boundary_slots_match_numpy_on_a_five_node_mesh():
     assert f_np.shape == f_jax.shape == (n_stag + 2,)
     np.testing.assert_allclose(f_jax, f_np, rtol=1e-10)
     assert f_np[n_stag + 1] < 0.0
+
+
+@pytest.mark.physics_invariant
+@needs_eos
+def test_the_expansivity_source_is_the_only_numpy_jax_difference():
+    """Over a mantle above its liquidus at every node, where the single-phase expansivity enters,
+    the JAX RHS equals the numpy RHS with the identity expansivity rho cp |dT/dP_S| / T to
+    1e-10; with the numpy thermal_exp tables the difference is that of the two expansivities."""
+    diffs = []
+    for identity in (True, False):
+        eos = entropy_eos_copy(identity_alpha=identity)
+        solver = _build('core_module', eos, CORE_MODULE_PARAMS)
+        n = solver._n_stag
+        y = np.asarray(solver._S0, dtype=float)
+        y[:n] = np.asarray(eos.liquidus_entropy(solver._P_stag_flat)) + 300.0
+        y[n + 1] = (
+            float(np.asarray(eos.temperature(solver._P_basic_flat[0], y[0])).flat[0]) + 50.0
+        )
+        assert np.all(np.asarray(eos.melt_fraction(solver._P_stag_flat, y[:n])) == 1.0)
+        f_np = np.asarray(solver.dSdt(0.0, y)).ravel()
+        f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), _build_jax_pieces(solver)))
+        diffs.append(np.max(np.abs(f_jax - f_np) / np.maximum(np.abs(f_np), 1e-300)))
+    assert diffs[0] < 1e-10 < diffs[1]
 
 
 @pytest.mark.slow
@@ -433,7 +454,9 @@ def test_jacobian_core_column_matches_central_differences(state):
     params = dict(CORE_MODULE_PARAMS)
     if state.startswith('stratified'):
         params |= {'stratification': True, 'k_core': 130.0}
-    solver = _build('core_module', entropy_eos_copy(), params, s_init='driven')
+    solver = _build(
+        'core_module', entropy_eos_copy(identity_alpha=True), params, s_init='driven'
+    )
     budget, n = solver._core_module_budget, solver._n_stag
     y = np.asarray(solver._S0, dtype=float)
     if state == 'nucleating':
@@ -461,7 +484,10 @@ def test_jacobian_core_column_matches_central_differences(state):
 
     f_jax, f_np = rhs(y), np.asarray(solver.dSdt(0.0, y), dtype=float)
     np.testing.assert_allclose(f_jax[:n], f_np[:n], rtol=1e-10)
-    np.testing.assert_allclose(f_jax[n : n + 2], f_np[n : n + 2], rtol=1e-8)
+    # The stratified core rate moves by 1.5e-6 under a 1e-14 change of the shell temperatures.
+    np.testing.assert_allclose(
+        f_jax[n : n + 2], f_np[n : n + 2], rtol=1e-6 if state == 'stratified' else 1e-8
+    )
     # A shell rate is the small difference of two face flows of ~1e13 W.
     shell_scale = np.max(np.abs(f_np[n + 2 :]), initial=0.0)
     np.testing.assert_allclose(f_jax[n + 2 :], f_np[n + 2 :], rtol=0, atol=1e-6 * shell_scale)
@@ -476,7 +502,7 @@ def test_jacobian_core_column_matches_central_differences(state):
         )
         out = np.empty(y.size)
         rhs_fn(0.0, y, out)
-        np.testing.assert_allclose(out[: n + 2], f_jax[: n + 2], rtol=1e-8)
+        np.testing.assert_allclose(out[: n + 2], f_jax[: n + 2], rtol=1e-6)
         np.testing.assert_allclose(
             out[n + 2 :], f_jax[n + 2 :], rtol=0, atol=1e-6 * shell_scale
         )

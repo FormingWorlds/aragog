@@ -94,6 +94,27 @@ def test_inner_core_radius_grows_as_the_square_root_of_undercooling(script):
 
 @pytest.mark.slow
 @pytest.mark.reference_pinned
+def test_the_earth_budget_meets_nimmo_tables_4_and_5(script):
+    """Every energy and entropy term of Nimmo (2015, Table 4) and the cooling rate hold to 2 %
+    at both heat flows; four quantities are documented exceptions, held at their measured
+    values: the growth rate (aragog's C_r against the printed one), the inner-core age (Table 4
+    divides the drop by the present cooling rate), W_s and W_tot (the chapter's own Table 4
+    capacity times its 60 K drop is 4 % below its Table 5 W_s)."""
+    got = _reproduces(script, 5)
+    for flow in ('15.2TW', '12TW'):
+        for term in ('Qs', 'QL', 'Qg', 'Qk', 'Es', 'EL', 'Eg', 'Ek', 'cooling'):
+            assert abs(got[f'{term}_ratio_{flow}'] - 1.0) < 0.02, (term, flow)
+        assert got[f'growth_ratio_{flow}'] == pytest.approx(1.024, abs=1e-3)
+    assert got['age_ratio_15.2TW'] == pytest.approx(0.786, abs=1e-3)
+    assert got['age_ratio_12TW'] == pytest.approx(0.783, abs=1e-3)
+    assert got['Ws_ratio'] == pytest.approx(0.947, abs=1e-3)
+    assert got['Wtot_ratio'] == pytest.approx(0.967, abs=1e-3)
+    assert abs(got['WL_ratio'] - 1.0) < 0.02 and abs(got['Wg_ratio'] - 1.0) < 0.02
+    assert got['Ws_from_table4_1e28J'] / 11.6 == pytest.approx(0.957, abs=1e-3)
+
+
+@pytest.mark.slow
+@pytest.mark.reference_pinned
 def test_budget_terms_match_the_thermal_history_table(script):
     got = _reproduces(script, 6)
     inputs = script._thermal_history()[0]['inputs']  # sections 5 and 7 use the same core

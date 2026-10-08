@@ -95,14 +95,13 @@ def test_the_cmb_flux_refuses_a_solver_without_entropy_tables(solver, monkeypatc
         solver._core_module_cmb_flux(5000.0, float(solver._S0[0]))
 
 
-def test_the_cmb_flux_asks_for_an_evaluated_state():
-    """Before any right-hand side evaluation the solver state is empty; the flux says so
-    instead of failing on an empty array."""
+def test_the_cmb_flux_needs_no_evaluated_state():
+    """The flux evaluates its own boundary-layer state, so it is the same before and after a
+    right-hand side evaluation."""
     fresh = _build('core_module', entropy_eos_copy(), CORE_MODULE_PARAMS, s_init='driven')
-    with pytest.raises(RuntimeError, match='evaluate the right-hand side'):
-        fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0]))
+    before = fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0]))
     fresh.dSdt(0.0, fresh._S0)
-    assert np.isfinite(fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0])))
+    assert fresh._core_module_cmb_flux(5000.0, float(fresh._S0[0])) == before > 0.0
 
 
 def test_a_reset_keeps_the_budget_until_its_inputs_change():

@@ -96,7 +96,7 @@ class CoreShell:
         return self.profiles.adiabat(self.r_cells, t_c)
 
     def _adiabat_gradient(self, r, t_c):
-        return -2.0 * r * self.profiles.adiabat(r, t_c) / self.profiles.d_scale**2
+        return self.profiles.adiabat_gradient(r, t_c)
 
     def _anomaly_gradient(self, t_shell, t_c):
         """Gradient [K/m] of the departure from the adiabat at faces 0 .. n-1 (the base face sits

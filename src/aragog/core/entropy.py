@@ -98,14 +98,19 @@ class CoreEntropyBudget:
     def conduction_sink(self, upper=None):
         """Entropy sink of conduction along the adiabat, ``Ek`` [W/K].
 
-        ``4 pi k int (dTa/dr / Ta)^2 r^2 dr`` with the Gaussian adiabat's
-        exact ratio ``2 r / D^2``: ``Ek = 16 pi k upper^5 / (5 D^4)``,
-        over the convecting volume (``upper`` defaults to the CMB
-        radius). Independent of ``T_cmb``.
+        ``4 pi k int (dTa/dr / Ta)^2 r^2 dr`` over the convecting volume (``upper``
+        defaults to the CMB radius), independent of ``T_cmb``: by quadrature, or in the
+        small-radius mode, where the ratio is ``2 r / D^2``, as ``16 pi k upper^5 / (5 D^4)``.
         """
         p = self.budget.profiles
         top = p.r_cmb if upper is None else upper
-        return 16.0 * jnp.pi * self.k_core * top**5 / (5.0 * p.d_scale**4)
+        if p.adiabat_mode == 'small_radius':
+            return 16.0 * jnp.pi * self.k_core * top**5 / (5.0 * p.d_scale**4)
+
+        def integrand(r):
+            return (p.adiabat_gradient(r, 1.0) / p.adiabat(r, 1.0)) ** 2 * r**2
+
+        return 4.0 * jnp.pi * self.k_core * self.budget._quad_0_upper(top, integrand)
 
     def secular_entropy_capacity(self, t_cmb, upper=None, *, t_ref=None):
         """Entropy per unit cooling from secular cooling [J/K^2].
@@ -212,8 +217,7 @@ class CoreEntropyBudget:
     def adiabatic_heat_flow(self, t_cmb):
         """Heat conducted down the adiabat at the CMB, ``Qk`` [W]."""
         p = self.budget.profiles
-        grad = 2.0 * p.r_cmb * t_cmb / p.d_scale**2
-        return 4.0 * jnp.pi * p.r_cmb**2 * self.k_core * grad
+        return -4.0 * jnp.pi * p.r_cmb**2 * self.k_core * p.adiabat_gradient(p.r_cmb, t_cmb)
 
     def chr09_efficiency_factor(self):
         """The printed Earth-core ``F``: ``0.88 (or 0.45) alpha g r / c_p``."""

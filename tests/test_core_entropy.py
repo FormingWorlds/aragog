@@ -39,7 +39,9 @@ TH_ER_QRADIO = 1.9268512e12  # Q_R = M_core * 1e-12 W/kg the TH_ER row used
 @pytest.fixture(scope='module')
 def ent():
     """Model-2 entropy budget on the cross-validated energy budget."""
-    prof = GaussianCoreProfiles(**SHARED, alpha=1.25e-5, pressure_mode='labrosse')
+    prof = GaussianCoreProfiles(
+        **SHARED, alpha=1.25e-5, pressure_mode='labrosse', adiabat_mode='small_radius'
+    )
     curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
     budget = CoreEnergyBudget(
         prof,
@@ -87,6 +89,34 @@ def test_conduction_sink_closed_form_and_quadrature(ent):
         lambda r: 4.0 * np.pi * 130.0 * (2.0 * r / p.d_scale**2) ** 2 * r**2, 0.0, p.r_cmb
     )
     assert float(ent.conduction_sink()) == pytest.approx(numeric, rel=1e-9)
+
+
+@pytest.mark.physics_invariant
+def test_exact_adiabat_sink_and_heat_flow_follow_the_exact_gravity(ent):
+    """With the exact adiabat, Ek is 4 pi k int (alpha g / c_p)^2 r^2 dr with the erf gravity and
+    Qk is 4 pi r_cmb^2 k alpha g T / c_p at the CMB; both fall below the small-radius values,
+    since gravity is sub-linear in r."""
+    small = ent.budget.profiles
+    kw = {
+        k: getattr(small, k)
+        for k in ('rho_cen', 'length_scale', 'r_cmb', 'p_cmb', 'alpha', 'c_p')
+    }
+    p = GaussianCoreProfiles(**kw, pressure_mode='labrosse', adiabat_mode='exact')
+    exact = CoreEntropyBudget(
+        CoreEnergyBudget(p, ent.budget.melting_curve, ds_fusion=170.0, icn_width=10.0),
+        k_core=130.0,
+    )
+    numeric, _ = quad(
+        lambda r: 4.0 * np.pi * 130.0 * (p.alpha * float(p.gravity(r)) / p.c_p) ** 2 * r**2,
+        0.0,
+        p.r_cmb,
+    )
+    assert float(exact.conduction_sink()) == pytest.approx(numeric, rel=1e-9)
+    g_cmb = float(p.gravity(p.r_cmb))
+    qk = 4.0 * np.pi * p.r_cmb**2 * 130.0 * p.alpha * g_cmb * 4000.0 / p.c_p
+    assert float(exact.adiabatic_heat_flow(4000.0)) == pytest.approx(qk, rel=1e-12)
+    assert float(exact.conduction_sink()) < float(ent.conduction_sink())
+    assert float(exact.adiabatic_heat_flow(4000.0)) < float(ent.adiabatic_heat_flow(4000.0))
 
 
 @pytest.mark.reference_pinned

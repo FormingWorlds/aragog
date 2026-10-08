@@ -341,9 +341,12 @@ def item4_nucleation() -> None:
 
 # ------------------------------------------------------------- 7. dynamo scaling
 def _core_budget(inp, pressure_mode, **kw):
-    """CoreEnergyBudget of the quadratic-melting-curve core that ``inp`` describes."""
+    """CoreEnergyBudget of the quadratic-melting-curve core that ``inp`` describes, on the
+    small-radius adiabat that Nimmo (2015) and thermal_history use."""
     keys = ('rho_cen', 'length_scale', 'r_cmb', 'p_cmb', 'alpha', 'c_p')
-    prof = GaussianCoreProfiles(**{k: inp[k] for k in keys}, pressure_mode=pressure_mode)
+    prof = GaussianCoreProfiles(
+        **{k: inp[k] for k in keys}, pressure_mode=pressure_mode, adiabat_mode='small_radius'
+    )
     curve = QuadraticMeltingCurve(t_m0=inp['t_m0'], t_m1=inp['t_m1'], t_m2=inp['t_m2'])
     return CoreEnergyBudget(
         prof,
@@ -575,7 +578,7 @@ def item12_jax_parity() -> None:
         params = dict(core_params)
         if state == 'stratified':
             params |= {'stratification': True, 'k_core': 130.0}
-        solver = build('core_module', eos_copy(), params, s_init='driven')
+        solver = build('core_module', eos_copy(identity_alpha=True), params, s_init='driven')
         budget, n = solver._core_module_budget, solver._n_stag
         y = np.asarray(solver._S0, dtype=float)
         if state == 'nucleating':
@@ -613,6 +616,21 @@ def item12_jax_parity() -> None:
         record(12, f'jac_tcore_min_rel_{key}', errs.min())
         record(12, f'jac_tcore_best_step_{key}', steps[np.argmin(errs)])
         ax2.loglog(steps, np.maximum(errs, 1e-17), color=col, label=state)
+    # Over a mantle above its liquidus the single-phase expansivity enters: the tables against
+    # the identity rho cp |dT/dP_S| / T that the JAX EOS uses.
+    for identity, key in ((True, 'identity'), (False, 'tables')):
+        eos = eos_copy(identity_alpha=identity)
+        solver = build('core_module', eos, core_params)
+        n = solver._n_stag
+        y = np.asarray(solver._S0, dtype=float)
+        y[:n] = np.asarray(eos.liquidus_entropy(solver._P_stag_flat)) + 300.0
+        y[n + 1] = (
+            float(np.asarray(eos.temperature(solver._P_basic_flat[0], y[0])).flat[0]) + 50
+        )
+        f_np = np.asarray(solver.dSdt(0.0, y)).ravel()
+        f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), _build_jax_pieces(solver)))
+        rel = np.abs(f_jax - f_np) / np.maximum(np.abs(f_np), 1e-300)
+        record(12, f'rhs_liquid_max_rel_{key}', rel.max())
     ax.set_xlabel(r'state index (the last two: $dS/dr$ at the CMB, $T_\mathrm{core}$)')
     ax.set_ylabel('|JAX / NumPy - 1|')
     ax2.legend(
@@ -1294,6 +1312,9 @@ def item5_nimmo() -> None:
         record(5, f'{n}_1e28J', w / 1e28)
         record(5, f'{n}_ratio', w / 1e28 / NIMMO_T5[n])
     record(5, 'age_10TW_Gyr', released['Wtot'] / 10e12 / GYR)
+    # The chapter's own secular capacity (Table 4, Q_s over the cooling rate) times its drop.
+    capacity_t4 = NIMMO_T4[15.2e12]['Qs'] * 1e12 * GYR / NIMMO_T4[15.2e12]['cooling']
+    record(5, 'Ws_from_table4_1e28J', capacity_t4 * NIMMO_T5['delta_t'] / 1e28)
     names = list(NIMMO_T4[15.2e12])
     fig, ax = plt.subplots(figsize=(WIDTH, 4.0))
     x = np.arange(len(names))

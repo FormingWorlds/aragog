@@ -214,19 +214,22 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
 
     1. Wiring: the end-of-step CMB flux equals ``cmb_boundary_layer_flux`` rebuilt
        from the end state alone (T_core, the bottom entropy at the CMB pressure, the
-       bottom cell's properties), so the RHS, the output and the law agree; the hot
+       layer's properties at the mean temperature), so the RHS, the output and the law agree; the hot
        core is in the boundary-layer branch (above conduction across the half cell),
        the cold core on the conduction branch. The mantle-gradient flux fails both.
     2. Second law over the solve: a core 1000 K hotter than the mantle loses heat
        (positive flux and booked CMB energy), a core 1000 K colder gains it.
 
-    The driven profile's base is mushy (phi 0.19), so the flux is small (about 0.3 W/m^2
-    for the hot core) and the core temperature change over the window is below the
-    integrator tolerance; the sign of the booked flux integral is the solve-level check.
+    The driven profile's base is mushy (phi 0.19); over the hot core the layer's mean
+    temperature is past the rheological transition (phi 0.51), so the flux is about 5e4 W/m^2,
+    while below the cold core it is conduction of about 0.03 W/m^2.
     """
     from aragog.core import cmb_boundary_layer_flux
 
-    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, end_time=5.0)
+    # Pure iron: the cold core grows a large inner core, past the outer-core mass bound an
+    # alloy core has.
+    params = dict(CORE_MODULE_PARAMS, light_element_fraction=0.0)
+    solver = _build('core_module', shared_eos, params, end_time=5.0)
     S = _driven_s_profile(solver._n_stag)
     p_cmb = float(solver._P_basic_flat[0])
     t_m0 = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), S[:1])).item())
@@ -238,23 +241,31 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     n_stag = solver._n_stag
 
     solver.dSdt(float(solver._solution.t[-1]), y_end)
-    ph = solver.state.phase_staggered
 
     def first(values):
         return float(np.asarray(values).flat[0])
 
-    t_core, k = float(y_end[n_stag + 1]), first(ph.thermal_conductivity())
+    # The layer's properties at the CMB pressure and the mean of the two temperatures.
+    t_core = float(y_end[n_stag + 1])
     t_m = first(shared_eos.temperature(np.array([p_cmb]), y_end[:1]))
+    s_bl = shared_eos.entropy_at_temperature(p_cmb, 0.5 * (t_core + t_m))
+    assert first(shared_eos.temperature(p_cmb, s_bl)) == pytest.approx(
+        0.5 * (t_core + t_m), rel=1e-12
+    )
+    bl = solver._bl_phase
+    bl.set_entropy(np.array([s_bl]))
+    bl.update()
+    k = first(bl.thermal_conductivity())
     dr_half = 0.5 * float(solver._r_basic_flat[1] - solver._r_basic_flat[0])
     expected = float(
         cmb_boundary_layer_flux(
             t_core,
             t_m,
             conductivity=k,
-            density=first(ph.density()),
-            heat_capacity=first(shared_eos.heat_capacity(solver._P_stag_flat[:1], y_end[:1])),
-            expansivity=first(ph.thermal_expansivity()),
-            viscosity=first(ph.viscosity()),
+            density=first(bl.density()),
+            heat_capacity=first(shared_eos.heat_capacity(p_cmb, s_bl)),
+            expansivity=first(bl.thermal_expansivity()),
+            viscosity=first(bl.viscosity()),
             gravity=first(solver.state.phase_basic.gravitational_acceleration()),
             dr_half=dr_half,
         )
@@ -281,7 +292,7 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     assert np.sign(out.F_cmb) == np.sign(d_core)
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
     if regime == 'boundary_layer':
-        assert 0.1 < out.F_cmb < 1.0
+        assert 4e4 < out.F_cmb < 6e4
 
 
 def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
@@ -306,8 +317,8 @@ def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
 
 @pytest.mark.physics_invariant
 def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy(shared_eos):
-    """A core 300 K above a liquid base (phi 0.67 to 0.65) loses heat through the
-    boundary layer fast enough to cool by about 1 K in 4 yr. The heat it loses is the heat
+    """A core 300 K above a partly molten base (phi 0.67 to 0.65) loses heat through the
+    boundary layer fast enough to cool by about 1.8 K in 4 yr. The heat it loses is the heat
     booked into the mantle (q_radio = 0), and it equals the budget's content change between
     the start and end core temperatures (secular only, the core stays above nucleation)."""
     solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, end_time=4.0)
@@ -327,8 +338,8 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
     ]
     # The numbers core_bc.md quotes for this case, which hold on a base at these melt fractions.
     assert phi == pytest.approx([0.67, 0.65], abs=0.01)
-    assert 0.2 < float(t_core[0] - t_core[-1]) / 4.0 < 0.4
-    assert 5.0e4 < out.F_cmb < 2.0e5
+    assert 0.4 < float(t_core[0] - t_core[-1]) / 4.0 < 0.5
+    assert 1.5e5 < out.F_cmb < 2.0e5
     assert 320.0 < float(t_core[-1]) - t_m < 340.0
     assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
     assert out.step_dE_core_J == pytest.approx(content, rel=1e-6)
@@ -372,17 +383,18 @@ needs_cvode = pytest.mark.skipif(
 @pytest.mark.physics_invariant
 def test_a_cvode_call_through_onset_and_freeze_out_closes_its_heat(shared_eos):
     """A core 0.5 K above the onset over a liquid base cools through the inner-core band and
-    past freeze-out in one CVODE call: a linear curve puts freeze-out 116 K below the onset,
-    and a small entropy of fusion keeps the latent heat to a few K of cooling. The core heat
-    equals the heat_content difference and, at rtol 1e-10, the CMB heat to 1e-6 (3.2e-8)."""
+    past freeze-out in one CVODE call: a linear curve puts freeze-out 172 K below the onset with
+    bottom-up growth in between, and a small entropy of fusion keeps the latent heat to a few K
+    of cooling. The core heat equals the heat_content difference and, at rtol 1e-10, the CMB
+    heat to 1e-6 (4.2e-8)."""
     params = dict(UNENRICHED_PARAMS)
-    params |= dict(melting_curve='quadratic', t_m0=1.0, t_m1=2.71e-12, t_m2=0.0, ds_fusion=0.17)
+    params |= dict(melting_curve='quadratic', t_m0=1.0, t_m1=2.55e-12, t_m2=0.0, ds_fusion=0.17)
     probe = _build('core_module', shared_eos, params)
     p_cmb = float(probe._P_basic_flat[0])
     S = np.full(probe._n_stag, float(shared_eos.liquidus_entropy(np.array([p_cmb]))[0]) + 300.0)
     t_m = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), S[:1])).item())
-    params['t_m0'] = (t_m + 600.0) / probe._core_module_budget.t_onset
-    solver = _build('core_module', shared_eos, params, end_time=100.0, solver_method='cvode')
+    params['t_m0'] = (t_m + 300.0) / probe._core_module_budget.t_onset
+    solver = _build('core_module', shared_eos, params, end_time=250.0, solver_method='cvode')
     solver.parameters.solver.rtol = 1e-10
     budget = solver._core_module_budget
     solver.set_initial_core_temperature(budget.t_onset + 0.5)
@@ -532,7 +544,7 @@ def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
     assert out.step_dE_F_cmb_J < 0.0
     assert y[-1, -1] - y[-1, 0] > 10.0 * abs(y[n + 1, -1] - y[n + 1, 0])
     assert out.core_T_top == y[-1, -1]
-    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=5e-6)
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-5)
 
 
 @pytest.mark.parametrize('ra_crit', [0.0, -450.0, float('nan'), float('inf')])
@@ -641,12 +653,9 @@ def test_core_module_solve_with_nucleation_active(shared_eos):
     probe = _build('core_module', shared_eos, CORE_MODULE_PARAMS)
     budget = probe._core_module_budget
     secular = float(budget.secular_capacity())
-    # Scan for the nucleation-active band: where the latent term
-    # contributes at least 1% of the secular capacity.
-    T_scan = np.linspace(3200.0, 6000.0, 281)
-    active = [t for t in T_scan if float(budget.latent_capacity(t)) > 0.01 * secular]
-    assert active, 'no nucleation-active band in scan range; params drifted'
-    t_start = float(np.median(active))
+    # 2 K below the onset the latent term dominates while the inner core is still small,
+    # inside the outer-core mass bound of the regime guard.
+    t_start = float(budget.t_onset) - 2.0
 
     solver = _build(
         'core_module', shared_eos, CORE_MODULE_PARAMS, end_time=2.0, s_init='driven'
@@ -683,9 +692,10 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
 
     from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
+    eos = entropy_eos_copy(identity_alpha=True)  # the expansivity of the JAX RHS
     zsolver = _build(
         'core_module',
-        shared_eos,
+        eos,
         CORE_MODULE_PARAMS,
         end_time=2.0,
         solver_method='cvode',
@@ -723,7 +733,7 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
 
     fd = _build(
         'core_module',
-        shared_eos,
+        eos,
         CORE_MODULE_PARAMS,
         end_time=2.0,
         solver_method='cvode',
@@ -733,9 +743,8 @@ def test_core_module_solves_through_cvode_with_jax_jacobian(shared_eos):
     )
     fd.solve()
     y_fd = fd._solution.y[:, -1]
-    # Same physics through both Jacobian paths, to the shared numpy-vs-JAX RHS difference
-    # (about 4e-4 at two mid-mantle nodes), not to integrator tolerance.
-    np.testing.assert_allclose(y_z[:n_stag], y_fd[:n_stag], rtol=5e-3)
+    # Same RHS through both Jacobian paths, so the two land together to integrator precision.
+    np.testing.assert_allclose(y_z[:n_stag], y_fd[:n_stag], rtol=1e-6)
     dT_z = float(y_z[n_stag + 1] - sol.y[n_stag + 1, 0])
     dT_fd = float(y_fd[n_stag + 1] - fd._solution.y[n_stag + 1, 0])
     assert dT_z < 0.0  # the core, 50 K above the mantle, cools

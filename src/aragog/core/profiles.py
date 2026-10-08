@@ -9,10 +9,12 @@ Density is ``rho(r) = rho_cen * exp(-r^2 / L^2)`` with the length scale ``L``
 taken as a direct parameter. Gravity follows exactly from the enclosed mass
 of that density (an erf expression, no series truncation), and pressure
 integrates hydrostatic balance inward from the CMB anchor with fixed-order
-Gauss-Legendre panels. The adiabat is ``T(r) = T_cmb * exp((r_cmb^2 - r^2)
-/ D^2)`` with ``D^2 = 3 c_p / (2 pi alpha rho_cen G)``, the scale for which
-``d ln T / dr = -alpha g / c_p`` holds exactly in the small-radius limit
-where gravity is linear in ``r``.
+Gauss-Legendre panels. The adiabat solves ``d ln T / dr = -alpha g / c_p``:
+with the exact gravity it is ``T(r) = T_cmb * exp(-alpha psi(r) / c_p)``, ``psi``
+the potential on the same panels (``adiabat_mode = 'exact'``); with gravity
+linear in ``r`` it is the closed form ``T_cmb * exp((r_cmb^2 - r^2) / D^2)``,
+``D^2 = 3 c_p / (2 pi alpha rho_cen G)`` (``'small_radius'``), the form of
+Labrosse et al. (2001) and Nimmo (2015).
 
 Everything evaluates through ``jax.numpy`` and is jit- and grad-safe; the
 constructor validates its scalar parameters eagerly, outside any trace.
@@ -20,12 +22,14 @@ constructor validates its scalar parameters eagerly, outside any trace.
 
 from __future__ import annotations
 
+import functools
+
 import jax
 import jax.numpy as jnp
 import numpy as _np
 from jax.scipy.special import erf
 from scipy import constants as sp_constants
-from scipy.optimize import root_scalar
+from scipy.optimize import minimize_scalar, root_scalar
 
 jax.config.update('jax_enable_x64', True)
 
@@ -66,6 +70,11 @@ class GaussianCoreProfiles:
         tenths of a percent in the deep core (0.3% at the Earth centre),
         enough to move a tangent melting-curve crossing by hundreds of
         kilometres when reproducing models built on the printed form.
+    adiabat_mode : str
+        ``'exact'`` integrates ``d ln T / dr = -alpha g / c_p`` with the exact
+        erf gravity; ``'small_radius'`` takes the closed form of linear gravity,
+        which raises ``T_cen / T_cmb`` by 2 % for the Earth's core and by more
+        for larger cores.
 
     Raises
     ------
@@ -85,10 +94,14 @@ class GaussianCoreProfiles:
         alpha: float,
         c_p: float,
         pressure_mode: str = 'quadrature',
+        adiabat_mode: str = 'exact',
     ) -> None:
         if pressure_mode not in ('quadrature', 'labrosse'):
             raise ValueError(f'unknown pressure_mode {pressure_mode!r}')
+        if adiabat_mode not in ('exact', 'small_radius'):
+            raise ValueError(f'unknown adiabat_mode {adiabat_mode!r}')
         self.pressure_mode = pressure_mode
+        self.adiabat_mode = adiabat_mode
         params = {
             'rho_cen': rho_cen,
             'length_scale': length_scale,
@@ -204,14 +217,42 @@ class GaussianCoreProfiles:
     # -- adiabat ------------------------------------------------------------
 
     def adiabat(self, r, t_cmb):
-        """Adiabatic temperature [K] at radius ``r`` anchored at ``t_cmb``.
+        """Adiabatic temperature [K] at radius ``r`` anchored at ``t_cmb``; see ``adiabat_mode``.
 
-        ``T(r) = t_cmb * exp((r_cmb^2 - r^2) / D^2)``; hotter inward,
-        equal to ``t_cmb`` at the CMB by construction.
+        Hotter inward, equal to ``t_cmb`` at the CMB by construction.
         """
         r = jnp.asarray(r)
-        d2 = self.d_scale**2
-        return t_cmb * jnp.exp((self.r_cmb**2 - r**2) / d2)
+        if self.adiabat_mode == 'exact':
+            return t_cmb * jnp.exp(-self.alpha * self.potential(r) / self.c_p)
+        return t_cmb * jnp.exp((self.r_cmb**2 - r**2) / self.d_scale**2)
+
+    def adiabat_gradient(self, r, t_cmb):
+        """``dT/dr`` [K/m] of the adiabat, ``-alpha g T / c_p``, with the gravity of the mode."""
+        r = jnp.asarray(r)
+        g = (
+            self.gravity(r)
+            if self.adiabat_mode == 'exact'
+            else 4.0 * jnp.pi / 3.0 * G * self.rho_cen * r
+        )
+        return -self.alpha * g * self.adiabat(r, t_cmb) / self.c_p
+
+    @functools.cached_property
+    def r_peak(self) -> float:
+        """Radius [m] where the heat conducted down the adiabat, ``r^2 g T``, peaks; ``r_cmb``
+        when it rises through the whole core. ``D sqrt(3/2)`` for linear gravity."""
+        if self.adiabat_mode == 'small_radius':
+            return float(self.d_scale * _np.sqrt(1.5))
+        r = _np.linspace(0.0, self.r_cmb, 513)
+        i = int(_np.argmax(-(r**2) * _np.asarray(self.adiabat_gradient(r, 1.0))))
+        if i == r.size - 1:
+            return self.r_cmb
+        res = minimize_scalar(
+            lambda x: float(x**2 * self.adiabat_gradient(x, 1.0)),
+            bounds=(r[i - 1], r[i + 1]),
+            method='bounded',
+            options={'xatol': 1.0},
+        )
+        return float(res.x)
 
     def t_cen(self, t_cmb):
         """Centre temperature [K] on the adiabat anchored at ``t_cmb``."""
@@ -228,6 +269,7 @@ class GaussianCoreProfiles:
         alpha: float,
         c_p: float,
         pressure_mode: str = 'quadrature',
+        adiabat_mode: str = 'exact',
     ) -> GaussianCoreProfiles:
         """Fit central density and length scale to core mass and central pressure.
 
@@ -247,6 +289,8 @@ class GaussianCoreProfiles:
             Isobaric specific heat capacity [J kg-1 K-1], positive.
         pressure_mode : str, optional
             Pressure mode: ``'quadrature'`` (default) or ``'labrosse'``.
+        adiabat_mode : str, optional
+            Adiabat mode: ``'exact'`` (default) or ``'small_radius'``.
 
         Returns
         -------
@@ -301,6 +345,7 @@ class GaussianCoreProfiles:
                 alpha=alpha,
                 c_p=c_p,
                 pressure_mode=pressure_mode,
+                adiabat_mode=adiabat_mode,
             )
 
         def rho_for(length: float) -> float:

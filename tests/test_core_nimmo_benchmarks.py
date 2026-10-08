@@ -71,7 +71,10 @@ MODELS = {
 
 def _profiles(model: int) -> GaussianCoreProfiles:
     return GaussianCoreProfiles(
-        **SHARED, alpha=MODELS[model]['alpha'], pressure_mode='labrosse'
+        **SHARED,
+        alpha=MODELS[model]['alpha'],
+        pressure_mode='labrosse',
+        adiabat_mode='small_radius',
     )
 
 

@@ -117,31 +117,29 @@ def test_pressure_hydrostatic_balance_and_anchor(prof):
 
 
 @pytest.mark.physics_invariant
-def test_adiabat_gradient_identity_and_anchor(prof):
-    """The adiabat obeys d ln T / dr = -alpha g / c_p in the small-radius
-    limit (the identity defining D), anchors at t_cmb, and is hotter inward;
-    the identity deviates at the CMB where gravity is sub-linear."""
+@pytest.mark.parametrize('mode', ['exact', 'small_radius'])
+def test_adiabat_gradient_identity_and_anchor(mode):
+    """The adiabat anchors at t_cmb, is hotter inward and obeys d ln T / dr = -alpha g / c_p:
+    the exact mode at every radius, the small-radius mode only where gravity is linear, so it
+    deviates at the CMB, where gravity is about 5 % below linear."""
+    prof = GaussianCoreProfiles(**EARTH, adiabat_mode=mode)
     t_cmb = 4000.0
     assert float(prof.adiabat(prof.r_cmb, t_cmb)) == pytest.approx(t_cmb, rel=1e-12)
     assert float(prof.t_cen(t_cmb)) > t_cmb
 
-    # Identity at small radius: -2 r / D^2 vs -alpha g / cp with linear g.
-    radius = 1e3  # 1 km
-    h = 10.0
-    t_hi = float(prof.adiabat(radius + h, t_cmb))
-    t_lo = float(prof.adiabat(radius - h, t_cmb))
-    dlnt_dr = (np.log(t_hi) - np.log(t_lo)) / (2 * h)
-    rhs = -prof.alpha * float(prof.gravity(radius)) / prof.c_p
-    assert dlnt_dr == pytest.approx(rhs, rel=1e-4)
+    def dlnt_dr(radius, h=10.0):
+        t_hi, t_lo = (float(prof.adiabat(radius + s * h, t_cmb)) for s in (1, -1))
+        return (np.log(t_hi) - np.log(t_lo)) / (2 * h)
 
-    # Discrimination guard: at the CMB the same identity must NOT hold to
-    # that tolerance (gravity is ~5% below linear there), proving the test
-    # resolves the approximation structure rather than passing vacuously.
-    t_hi = float(prof.adiabat(prof.r_cmb, t_cmb))
-    t_lo = float(prof.adiabat(prof.r_cmb - 2 * h, t_cmb))
-    dlnt_cmb = (np.log(t_hi) - np.log(t_lo)) / (2 * h)
-    rhs_cmb = -prof.alpha * float(prof.gravity(prof.r_cmb - h)) / prof.c_p
-    assert abs(dlnt_cmb / rhs_cmb - 1.0) > 0.02
+    for radius in (1e3, prof.r_cmb - 10.0):
+        rhs = -prof.alpha * float(prof.gravity(radius)) / prof.c_p
+        if mode == 'exact' or radius < 1e4:
+            assert dlnt_dr(radius) == pytest.approx(rhs, rel=1e-4)
+        else:
+            assert abs(dlnt_dr(radius) / rhs - 1.0) > 0.02
+        assert float(prof.adiabat_gradient(radius, t_cmb)) == pytest.approx(
+            dlnt_dr(radius) * float(prof.adiabat(radius, t_cmb)), rel=1e-4
+        )
 
     # Monotone: temperature decreases outward along the whole profile.
     r = np.linspace(0.0, prof.r_cmb, 100)
@@ -259,12 +257,12 @@ def test_fit_gaussian_core_profiles_zalmoxis_earth_structure():
     )
     c_eff_old = float(budget_old.effective_capacity(4000.0))
     c_eff_new = float(budget_new.effective_capacity(4000.0))
-    # At 4000 K the default Earth geometry is nucleating while the fitted Zalmoxis core is liquid,
-    # so the capacity falls by 74.7 %.
-    assert c_eff_old == pytest.approx(7.322507e27, rel=1e-5)
-    assert c_eff_new == pytest.approx(1.852134e27, rel=1e-5)
+    # At 4000 K both cores nucleate, the fitted Zalmoxis core with the smaller inner core,
+    # so the capacity falls by 38.3 %.
+    assert c_eff_old == pytest.approx(6.733906e27, rel=1e-5)
+    assert c_eff_new == pytest.approx(4.157179e27, rel=1e-5)
     rel_change = (c_eff_new - c_eff_old) / c_eff_old
-    assert rel_change == pytest.approx(-0.747063, rel=1e-4)
+    assert rel_change == pytest.approx(-0.382650, rel=1e-4)
 
 
 @pytest.mark.physics_invariant

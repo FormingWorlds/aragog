@@ -38,6 +38,9 @@ REGIME_NAMES = {
 }
 
 _N_GRID = 512  # fixed sampling of the superheat profile; jit-safe
+# Smallest outer-core mass fraction for which the fixed light-element fraction is kept: below
+# it the gravitational term is more than 10 % low and the depressed melting point too high.
+M_OC_FRACTION_MIN = 0.9
 
 
 def crystallization_regime(budget: CoreEnergyBudget, t_cmb):
@@ -74,7 +77,10 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
 
     The budget books them only for an inner core that grows from the centre and for its
     freeze-out, so every regime other than fully liquid and bottom-up is refused, and so is a
-    fully frozen core whose CMB freezes before its centre.
+    fully frozen core whose CMB freezes before its centre. The light-element fraction of the
+    outer core is fixed, not enriched as the inner core grows, so with a gravitational term or
+    a light-element depression of the melting curve an inner core holding more than
+    ``1 - M_OC_FRACTION_MIN`` of the core mass is refused too.
 
     Parameters
     ----------
@@ -86,7 +92,8 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
     Raises
     ------
     ValueError
-        At the first refused state, naming its regime and temperature.
+        At the first refused state, naming its regime or outer-core mass fraction and
+        its temperature.
     """
     t_cmb = np.atleast_1d(np.asarray(t_cmb, dtype=float))
     codes = np.asarray(budget.regime_batch(t_cmb))
@@ -99,6 +106,21 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
             f'{t_cmb[i]:.1f} K; only bottom-up growth is modelled, and the budget books no '
             'latent or gravitational heat in this regime'
         )
+    curve = budget.melting_curve
+    depressed = getattr(curve, 'light_element_fraction', 0.0) * getattr(
+        curve, 'depression', 0.0
+    )
+    if budget.alpha_c * budget.c_light > 0.0 or depressed > 0.0:
+        p = budget.profiles
+        inner = np.asarray(p.enclosed_mass(jnp.asarray(budget.r_icb_batch(t_cmb))))
+        outer = 1.0 - inner / float(p.enclosed_mass(p.r_cmb))
+        if (outer < M_OC_FRACTION_MIN).any():
+            i = int(np.argmax(outer < M_OC_FRACTION_MIN))
+            raise ValueError(
+                f'core_module: the outer core holds {outer[i]:.3f} of the core mass at T_core = '
+                f'{t_cmb[i]:.1f} K, below {M_OC_FRACTION_MIN}; the light-element fraction is '
+                'fixed, not enriched as the inner core grows'
+            )
 
 
 def regime_name(code) -> str:

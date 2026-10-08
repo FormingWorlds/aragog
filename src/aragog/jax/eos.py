@@ -543,6 +543,31 @@ class EntropyEOS_JAX(eqx.Module):
         """Temperature T(P, S) [K]."""
         return self._lookup_phase_weighted('temperature', P, S)
 
+    def entropy_at_temperature(self, P: jax.Array, T: jax.Array) -> jax.Array:
+        """Entropy [J/kg/K] at scalar pressure ``P`` where ``temperature(P, S) = T``.
+
+        A fixed 60-step bisection over the tables' entropy range (its edge where ``T`` lies
+        beyond the range), then one Newton step with the slope held constant, which leaves the
+        value unchanged to rounding and carries the implicit derivatives
+        ``dS/dT = 1 / (dT/dS)`` and ``dS/dP = -(dT/dP) / (dT/dS)``.
+        """
+        solid, melt = self._get_tables('temperature')
+        span = (min(solid.S_min, melt.S_min), max(solid.S_max, melt.S_max))
+        t_fixed = jax.lax.stop_gradient(T)
+        p_fixed = jax.lax.stop_gradient(P)
+
+        def body(_, bracket):
+            lo, hi = bracket
+            mid = 0.5 * (lo + hi)
+            below = self.temperature(p_fixed, mid) < t_fixed
+            return jnp.where(below, mid, lo), jnp.where(below, hi, mid)
+
+        lo, hi = jax.lax.fori_loop(0, 60, body, (jnp.asarray(span[0]), jnp.asarray(span[1])))
+        s_root = jax.lax.stop_gradient(0.5 * (lo + hi))
+        slope = jax.lax.stop_gradient(jax.grad(self.temperature, argnums=1)(p_fixed, s_root))
+        slope = jnp.where(slope > 0.0, slope, jnp.inf)  # flat at a clamped table edge
+        return s_root + (T - self.temperature(P, s_root)) / slope
+
     def density(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Density rho(P, S) [kg/m^3], matching numpy EntropyEOS.density.
 

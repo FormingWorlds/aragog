@@ -621,16 +621,21 @@ def dSdt_core_module(
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
     heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
-    # The CMB flux is set by T_core against the bottom cell's entropy at the CMB pressure.
+    # The CMB flux is set by T_core against the bottom cell's entropy at the CMB pressure, with
+    # the layer's properties at the mean of the two temperatures (Thiriet et al. 2019).
+    t_hot = jnp.maximum(t_shell[-1] if shell else t_core, 1.0)
+    t_m = eos.temperature(mesh.P_basic[0], S[0])
+    s_bl = eos.entropy_at_temperature(mesh.P_basic[0], 0.5 * (t_hot + t_m))
+    bl = evaluate_phase(eos, params, mesh.P_basic[:1], jnp.reshape(s_bl, (1,)))
     heat_flux = heat_flux.at[0].set(
         cmb_boundary_layer_flux(
-            jnp.maximum(t_shell[-1] if shell else t_core, 1.0),
-            eos.temperature(mesh.P_basic[0], S[0]),
-            conductivity=phase_stag.thermal_conductivity[0],
-            density=phase_stag.density[0],
-            heat_capacity=eos.heat_capacity(mesh.P_stag[0], S[0]),
-            expansivity=phase_stag.thermal_expansivity[0],
-            viscosity=phase_stag.viscosity[0],
+            t_hot,
+            t_m,
+            conductivity=bl.thermal_conductivity[0],
+            density=bl.density[0],
+            heat_capacity=eos.heat_capacity(mesh.P_basic[0], s_bl),
+            expansivity=bl.thermal_expansivity[0],
+            viscosity=bl.viscosity[0],
             gravity=mesh.gravity[0],
             dr_half=r_stag_0 - r_basic[0],
             ra_crit=ra_crit,

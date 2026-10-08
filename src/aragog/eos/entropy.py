@@ -948,6 +948,35 @@ class EntropyEOS:
         """Temperature T(P, S) [K]."""
         return self._lookup_phase_weighted('temperature', P, S)
 
+    def entropy_at_temperature(self, P: float, T: float) -> float:
+        """Entropy [J/kg/K] at pressure ``P`` where ``temperature(P, S) = T``.
+
+        Bracketed secant (Illinois) over the tables' entropy range, to 1e-11 K; the range
+        edge where ``T`` lies beyond it.
+        """
+        solid, melt = self._tables['temperature_solid'], self._tables['temperature_melt']
+        lo, hi = min(solid['S'][0], melt['S'][0]), max(solid['S'][-1], melt['S'][-1])
+
+        def f(s):
+            return float(np.asarray(self.temperature(P, s)).flat[0]) - T
+
+        f_lo, f_hi = f(lo), f(hi)
+        if f_lo >= 0.0 or f_hi <= 0.0:
+            return lo if f_lo >= 0.0 else hi
+        side = 0
+        for _ in range(100):
+            s = (lo * f_hi - hi * f_lo) / (f_hi - f_lo)
+            f_s = f(s)
+            if abs(f_s) < 1e-11:
+                break
+            if f_s < 0.0:
+                lo, f_lo = s, f_s
+                f_hi, side = (0.5 * f_hi, -1) if side == -1 else (f_hi, -1)
+            else:
+                hi, f_hi = s, f_s
+                f_lo, side = (0.5 * f_lo, 1) if side == 1 else (f_lo, 1)
+        return s
+
     def density(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Density rho(P, S) [kg/m^3].
 

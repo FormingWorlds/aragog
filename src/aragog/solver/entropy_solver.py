@@ -1636,6 +1636,11 @@ class EntropySolver:
             **phase_kwargs,
         )
         phase_basic.set_pressure(P_basic)
+        # The core_module CMB boundary layer, one point at the CMB pressure.
+        self._bl_phase = EntropyPhaseEvaluator(
+            gravitational_acceleration=g_basic[:1], **phase_kwargs
+        )
+        self._bl_phase.set_pressure(P_basic[:1])
 
         # Energy settings
         energy = self.parameters.energy
@@ -2622,12 +2627,11 @@ class EntropySolver:
     def _core_module_cmb_flux(self, t_core: float, s_bottom: float) -> float:
         """CMB heat flux [W/m^2] of the core_module boundary layer.
 
-        ``aragog.core.cmb_boundary_layer_flux`` of the core temperature
-        (floored at 1 K) and the bottom cell's entropy ``s_bottom``
-        evaluated at the CMB pressure (the cell carried adiabatically to
-        the CMB), with the bottom cell's material properties (heat capacity
-        without the latent term, so kappa is the material diffusivity) and
-        the CMB gravity; mirrors the JAX ``dSdt_core_module``.
+        ``aragog.core.cmb_boundary_layer_flux`` of the core temperature (floored at 1 K)
+        against the bottom cell's entropy ``s_bottom`` at the CMB pressure, with the layer's
+        properties at the CMB pressure and the mean of the two temperatures (Thiriet et al.
+        2019; heat capacity without the latent term, so kappa is the material diffusivity)
+        and the CMB gravity; mirrors the JAX ``dSdt_core_module``.
         """
         from aragog.core import cmb_boundary_layer_flux
 
@@ -2636,27 +2640,26 @@ class EntropySolver:
                 "core_bc='core_module' needs the entropy EOS tables: its CMB flux "
                 'evaluates the bottom cell at the CMB pressure (no const_properties).'
             )
-        ph = self.state.phase_staggered
-        if np.asarray(ph.thermal_conductivity()).size == 0:
-            raise RuntimeError(
-                'the core_module CMB flux reads the bottom cell from the solver state; '
-                'evaluate the right-hand side (dSdt) first'
-            )
 
         def first(values) -> float:
             return float(np.asarray(values).flat[0])
 
+        eos, p_cmb = self.entropy_eos, float(self._P_basic_flat[0])
+        t_hot = max(float(t_core), 1.0)
+        t_m = first(eos.temperature(p_cmb, s_bottom))
+        s_bl = eos.entropy_at_temperature(p_cmb, 0.5 * (t_hot + t_m))
+        bl = self._bl_phase
+        bl.set_entropy(np.array([s_bl]))
+        bl.update()
         return float(
             cmb_boundary_layer_flux(
-                max(float(t_core), 1.0),
-                first(self.entropy_eos.temperature(self._P_basic_flat[0], s_bottom)),
-                conductivity=first(ph.thermal_conductivity()),
-                density=first(ph.density()),
-                heat_capacity=first(
-                    self.entropy_eos.heat_capacity(self._P_stag_flat[0], s_bottom)
-                ),
-                expansivity=first(ph.thermal_expansivity()),
-                viscosity=first(ph.viscosity()),
+                t_hot,
+                t_m,
+                conductivity=first(bl.thermal_conductivity()),
+                density=first(bl.density()),
+                heat_capacity=first(eos.heat_capacity(p_cmb, s_bl)),
+                expansivity=first(bl.thermal_expansivity()),
+                viscosity=first(bl.viscosity()),
                 gravity=first(self.state.phase_basic.gravitational_acceleration()),
                 dr_half=self._cmb_dr_half,
                 ra_crit=self._core_module_ra_crit_cmb,
