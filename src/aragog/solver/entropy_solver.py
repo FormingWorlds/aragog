@@ -1274,6 +1274,7 @@ class EntropySolver:
 
     # callable(t_nodes, Y_nodes, aux) -> ndarray (n, 7)
     _cvode_step_powers_batch: Callable[..., Any] | None = None
+    _batch_powers_calls: int = 0
 
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
@@ -1283,6 +1284,7 @@ class EntropySolver:
         self._solution: OptimizeResult
         self.stop_early: bool = False
         self._warned: set[str] = set()
+        self._batch_powers_calls: int = 0
         # Optional factory that builds JAX-derived CVODE callbacks.
         # Signature: factory(scales, core_bc_mode) -> (rhs_fn, jac_fn)
         # where ``scales`` is an aragog.jax.nondim.NonDimScales
@@ -1334,6 +1336,8 @@ class EntropySolver:
         factory : callable
             ``factory(scales, core_bc_mode) -> (rhs_fn, jac_fn)`` where
             ``scales`` is an ``aragog.jax.nondim.NonDimScales`` instance.
+            ``rhs_fn`` may optionally carry a ``step_powers(t_nodes, Y_nodes, aux)``
+            attribute for batched per-call energy power evaluation.
             May be None to disable the Option Z path even if the flag
             is on.
         """
@@ -3887,7 +3891,10 @@ class EntropySolver:
                     raise ValueError(
                         f'Expected batch step powers shape ({t_pts.size}, 7), got {P.shape}'
                     )
-                self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
+                if not np.isfinite(P).all():
+                    raise ValueError(
+                        'Batch step powers returned non-finite values (NaN or Inf)'
+                    )
             except Exception as exc:
                 self._warn_once(
                     'batch_powers_failed',
@@ -3895,7 +3902,22 @@ class EntropySolver:
                     'falling back to numpy loop',
                 )
                 P = None
-        if P is None:
+
+        if P is not None:
+            self._batch_powers_calls += 1
+            logger.info(
+                'EntropySolver: evaluated energy powers via JAX batch path (%d nodes)',
+                t_pts.size,
+            )
+            try:
+                self._dSdt_single(float(t_pts[-1]), y_pts[:, -1])
+            except Exception as exc:
+                logger.warning('EntropySolver: final state refresh failed: %s', exc)
+        else:
+            logger.info(
+                'EntropySolver: evaluated energy powers via numpy loop fallback (%d nodes)',
+                t_pts.size,
+            )
             P = np.array([self._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
         self.state._pb_cache_hits, self.state._pb_cache_misses = counters
         P_F_int, P_F_cmb, P_radio, P_tidal, P_radio_cons, P_tidal_cons, P_resid_solver = P.T

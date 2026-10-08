@@ -19,7 +19,7 @@ Dependencies: jax, equinox, diffrax, lineax (transitive via diffrax).
 from __future__ import annotations
 
 import logging
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 import equinox as eqx
 import jax
@@ -632,6 +632,12 @@ def dSdt_energy_balance(
     return _dSdt_energy_balance_parts(t, state_ext, args).rate
 
 
+_PARTS_REGISTRY: dict[str, Callable] = {
+    'quasi_steady': _dSdt_parts,
+    'energy_balance': _dSdt_energy_balance_parts,
+}
+
+
 def step_powers(
     t: float,
     y: jax.Array,
@@ -654,7 +660,7 @@ def step_powers(
         Node state vector in physical units (entropy [J/kg/K], plus
         dSdr_cmb for energy_balance mode).
     args : tuple
-        RHS argument tuple: (eos, params, mesh, bc, heating_static, H_radio_fn).
+        RHS argument tuple: (eos, params, mesh, bc, heating_static, H_radio_fn, ...).
     mode : str
         Solver mode ('quasi_steady' or 'energy_balance').
     aux : StepPowersAux
@@ -665,21 +671,21 @@ def step_powers(
     jax.Array, shape (7,)
         Boundary heat flows, source powers, and entropy balance residual [W].
     """
-    eos, params, mesh, bc, heating_static, H_radio_fn = args
+    eos, params, mesh, bc, heating_static, H_radio_fn = args[:6]
+    parts_fn = _PARTS_REGISTRY.get(mode)
+    if parts_fn is None:
+        raise ValueError(
+            f'mode={mode!r} is not supported by step_powers; expected '
+            f'one of {list(_PARTS_REGISTRY.keys())}.'
+        )
+    parts = parts_fn(t, y, args)
     if mode == 'quasi_steady':
-        parts = _dSdt_parts(t, y, args)
         S_stag = y
         dSdt_stag = parts.rate / SECS_PER_YEAR
-    elif mode == 'energy_balance':
-        parts = _dSdt_energy_balance_parts(t, y, args)
+    else:
         n_stag = aux.volume.shape[0]
         S_stag = y[:n_stag]
         dSdt_stag = parts.rate[:n_stag] / SECS_PER_YEAR
-    else:
-        raise ValueError(
-            f'mode={mode!r} is not supported by step_powers; expected '
-            "'quasi_steady' or 'energy_balance'."
-        )
 
     p_int = -parts.heat_flux[-1] * aux.A_int
     p_cmb = parts.heat_flux[0] * aux.A_cmb
