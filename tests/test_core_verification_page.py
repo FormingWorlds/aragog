@@ -63,12 +63,13 @@ def script(tmp_path, monkeypatch):
 
 def _reproduces(script, item):
     """Run one item and compare what it records with the values file: a rounding-level
-    error in ROUNDING may not double, every other number holds to 1e-4."""
+    error in ROUNDING or an identity residual may not double, every other number holds to
+    1e-4."""
     script.ITEMS[item]()
     got, want = script.VALUES[str(item)], VALUES[str(item)]
     assert got.keys() == want.keys()
     for key, value in got.items():
-        if key in ROUNDING:
+        if key in ROUNDING or 'identity' in key:
             assert abs(value) <= 2.0 * abs(want[key]) + 1e-15, key
         else:
             assert value == pytest.approx(want[key], rel=1e-4, abs=1e-12), key
@@ -111,20 +112,23 @@ def test_coupled_tables_reproduce_the_page(script):
 @pytest.mark.slow
 @pytest.mark.reference_pinned
 def test_the_stable_layer_meets_the_thermal_history_bounds(script):
-    """Cooling and heated-from-above layers close their heat to 1e-6 and stay within the bounds
-    against thermal_history: T_cmb 5 K, T_cen 10 K, theta-0.1 depth within a factor 1.5, the inner
-    core within 2 % at the end with its onset within 5 %."""
+    """Layers under fixed CMB flows stay within the bounds against thermal_history: T_cmb 5 K,
+    T_cen 10 K, theta-0.1 depth within a factor 1.5, the inner core within 2 % at the end with
+    its onset within 5 %. The eroded layer meets the T_cmb bound outside the erosion window and
+    drains its stored heat in the time it takes to vanish. The heat rates of core and shell
+    equal the CMB flow at every sample."""
     got = _reproduces(script, 13)
-    tags = ('8TW', '12TW', '-2TW', '0TW')
-    assert max(got[f'closure_{t}'] for t in tags) < 1e-6
-    assert max(got[f'tcmb_max_abs_diff_K_{t}'] for t in tags) < 5.0
-    assert max(got[f'tcen_max_abs_diff_K_{t}'] for t in tags) < 10.0
-    assert min(got[f'layer_ratio_min_{t}'] for t in tags) > 1 / 1.5
-    assert max(got[f'layer_ratio_max_{t}'] for t in tags) < 1.5
-    for t in (
-        k[len('ricb_end_rel_diff_') :] for k in got if k.startswith('ricb_end_rel_diff_')
-    ):
+    for t in ('8TW', '12TW', '-2TW', '0TW'):
+        assert got[f'identity_{t}'] < 1e-12
+        assert got[f'tcmb_max_abs_diff_K_{t}'] < 5.0
+        assert got[f'tcen_max_abs_diff_K_{t}'] < 10.0
+        assert 1 / 1.5 < got[f'layer_ratio_min_{t}'] <= got[f'layer_ratio_max_{t}'] < 1.5
         assert got[f'ricb_end_rel_diff_{t}'] < 0.02
         assert got[f'onset_myr_aragog_{t}'] == pytest.approx(
             got[f'onset_myr_leeds_{t}'], rel=0.05
         )
+    assert got['erosion_identity'] < 1e-12
+    assert got['erosion_tcmb_max_abs_diff_K_outside'] < 5.0
+    assert got['erosion_tcen_max_abs_diff_K'] < 10.0
+    eroding = got['erosion_removed_myr_aragog'] - 50.0
+    assert got['erosion_drain_myr'] == pytest.approx(eroding, rel=0.05)

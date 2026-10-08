@@ -1845,11 +1845,10 @@ class EntropySolver:
             if self._core_module_budget.stratification:
                 self._warn_once(
                     'core_stratification',
-                    'core_module stratification is experimental: the stable layer matches '
-                    'thermal_history while it grows, but its erosion does not integrate on '
-                    'CVODE, and its growth needs solver.rtol 1e-10 or tighter: at the default '
-                    '1e-8 the centre temperature and the inner-core onset do not converge (see '
-                    'the core verification docs)',
+                    'core_module stratification is experimental: an eroding layer stalls '
+                    'CVODE, and in the core-only SciPy BDF verification the centre temperature '
+                    'and the inner-core onset have not converged at rtol 1e-8; the tolerance '
+                    'CVODE needs is not measured (see the core verification docs)',
                 )
 
         # BC dispatch keys captured once

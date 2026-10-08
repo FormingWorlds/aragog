@@ -714,60 +714,69 @@ def _theta_base(shell, t_shell, t_c, fraction=0.1):
     return float(r[k - 1] + w * (r[k] - r[k - 1]))
 
 
-def _shell_run(budget, segments, times, ledger=False):
+def _shell_run(budget, segments, times, rtol=1e-11):
     """aragog's convecting core and shell from the adiabat at the table's start temperature
-    (no layer) under the CMB flows ``segments`` [(end Myr, W)], one solve per flow, sampled at
-    ``times`` [Leeds Myr], at rtol 1e-10. With ``ledger`` a last state integrates the convecting
-    core's heat for the energy closure, at rtol 1e-8 (its cost grows a hundredfold at 1e-10)."""
-    shell, extra = budget.shell, int(ledger)
+    (no layer) under the CMB flows ``segments`` [(end Myr, W)], one SciPy BDF solve per flow
+    with atol 100 rtol, sampled at ``times`` [Leeds Myr], which hold every segment end but the
+    last.
 
-    def rate(y, q):
-        t_c, t_shell = y[0], y[1 : 1 + shell.n_cells]
-        d_core, d_shell = budget.core_rates(t_c, t_shell, q)
-        out = [jnp.atleast_1d(d_core), d_shell]
-        if ledger:
-            upper = shell.layer_base(t_shell, t_c)
-            out.append(
-                jnp.atleast_1d(
-                    budget.effective_capacity(t_c, gravitational_upper=upper) * d_core
-                )
-            )
-        return jnp.concatenate(out) * MYR_LEEDS
-
-    f, jac = jax.jit(rate), jax.jit(jax.jacfwd(rate))
+    ``identity`` is the largest departure of the core and shell heat rates from the CMB flow,
+    over the samples, relative to the conducted adiabatic flow at the start."""
+    shell, p = budget.shell, budget.profiles
+    rate = jax.jit(
+        lambda y, q: jnp.concatenate(
+            [jnp.atleast_1d(v) for v in budget.core_rates(y[0], y[1:], q)]
+        )
+    )
+    jac = jax.jit(jax.jacfwd(rate))
     t0 = LAYER_HEADER['inputs']['t_cmb_start']
-    y = np.concatenate([[t0], np.asarray(shell.adiabatic_profile(t0)), np.zeros(extra)])
-    states, start, flow_heat = [y], 0.0, np.zeros_like(times)
+    y, start, states, flows = (
+        np.concatenate([[t0], np.asarray(shell.adiabatic_profile(t0))]),
+        0.0,
+        [],
+        [],
+    )
     for end, q in segments:  # no step crosses a change of flow
         sol = solve_ivp(
-            lambda _, y, q=q: np.asarray(f(y, q)),
+            lambda _, y, q=q: np.asarray(rate(y, q)) * MYR_LEEDS,
             (start, end),
             y,
-            t_eval=times[(times > start) & (times <= end)],
+            t_eval=times[(times >= start) & (times <= end)][int(start > 0) :],
             method='BDF',
-            jac=lambda _, y, q=q: np.asarray(jac(y, q)),
-            rtol=1e-8 if ledger else 1e-10,
-            atol=1e-6 if ledger else 1e-8,
+            jac=lambda _, y, q=q: np.asarray(jac(y, q)) * MYR_LEEDS,
+            rtol=rtol,
+            atol=100 * rtol,
         )
+        assert sol.success and (sol.t[-1] == end or end >= times[-1]), (sol.message, end)
         states += list(sol.y.T)
-        flow_heat += q * np.clip(times - start, 0.0, end - start) * MYR_LEEDS
+        flows += [q] * sol.t.size
         y, start = sol.y[:, -1], end
-    y0, ys = states[0], np.array(states).T
-    t_shell, t_shell0 = ys[1 : 1 + shell.n_cells], y0[1 : 1 + shell.n_cells, None]
-    mass, c_p = np.asarray(shell.mass), budget.profiles.c_p
-    excess = t_shell - np.asarray(jax.vmap(shell.adiabatic_profile)(ys[0])).T
-    heat = ys[-1] + c_p * mass @ (t_shell - t_shell0) if ledger else None
+
+    def heat_rate(y, q):
+        d_core, d_shell = budget.core_rates(y[0], y[1:], q)
+        upper = shell.layer_base(y[1:], y[0])
+        return (
+            budget.effective_capacity(y[0], gravitational_upper=upper) * d_core
+            + p.c_p * (shell.mass @ d_shell)
+            + q
+        )
+
+    ys, flows = np.array(states), np.array(flows)
+    t_c, t_shell = ys[:, 0], ys[:, 1:]
+    q_k = float(budget.conducted_adiabatic_flow(p.r_cmb, t0))
     return {
-        't_c': ys[0],
-        't_top': t_shell[-1],
-        't_cen': np.asarray(jax.vmap(budget.profiles.t_cen)(ys[0])),
-        'r_icb': np.asarray(jax.vmap(budget.r_icb)(ys[0])),
-        'depth': budget.profiles.r_cmb
-        - np.array([_theta_base(shell, s, c) for s, c in zip(t_shell.T, ys[0])]),
-        'stored': c_p * mass @ excess,
-        'closure': np.max(np.abs(heat + flow_heat)) / np.max(np.abs(ys[-1]))
-        if ledger
-        else None,
+        't_top': t_shell[:, -1],
+        't_cen': np.asarray(jax.vmap(p.t_cen)(t_c)),
+        'r_icb': np.asarray(jax.vmap(budget.r_icb)(t_c)),
+        'depth': p.r_cmb - np.array([_theta_base(shell, s, c) for s, c in zip(t_shell, t_c)]),
+        'stored': p.c_p
+        * (t_shell - np.asarray(jax.vmap(shell.adiabatic_profile)(t_c)))
+        @ np.asarray(shell.mass),
+        'q_ad': np.asarray(
+            jax.vmap(lambda t: budget.conducted_adiabatic_flow(p.r_cmb, t))(t_c)
+        ),
+        'identity': np.max(np.abs(jax.vmap(heat_rate)(jnp.asarray(ys), jnp.asarray(flows))))
+        / q_k,
     }
 
 
@@ -782,23 +791,30 @@ def _layer_cases():
     return out
 
 
-def _compare(item, tag, ours, th, t):
-    """Record the L criteria of one case: T_cmb, T_cen, theta-0.1 depth ratio, r_icb, onset."""
-    record(item, f'tcmb_max_abs_diff_K_{tag}', np.max(np.abs(ours['t_top'] - th['T_cmb'])))
-    record(item, f'tcen_max_abs_diff_K_{tag}', np.max(np.abs(ours['t_cen'] - th['T_cen'])))
+def _compare(tag, ours, th):
+    """Record one layer case against thermal_history: T_cmb, T_cen, theta-0.1 depth ratio,
+    inner-core radius at the end and its onset."""
+    t = th['time_myr']
+    record(13, f'tcmb_max_abs_diff_K_{tag}', np.max(np.abs(ours['t_top'] - th['T_cmb'])))
+    record(13, f'tcen_max_abs_diff_K_{tag}', np.max(np.abs(ours['t_cen'] - th['T_cen'])))
     both = (ours['depth'] > 10e3) & (th['depth_theta'] > 10e3) & (t >= 1.0)
     ratio = ours['depth'][both] / th['depth_theta'][both]
-    record(item, f'layer_ratio_min_{tag}', ratio.min())
-    record(item, f'layer_ratio_max_{tag}', ratio.max())
-    record(item, f'closure_{tag}', ours['closure'])
-    if th['r_icb'][-1] > 0:
-        record(item, f'ricb_end_rel_diff_{tag}', abs(ours['r_icb'][-1] / th['r_icb'][-1] - 1))
-        record(item, f'onset_myr_aragog_{tag}', t[np.argmax(ours['r_icb'] > 0)])
-        record(item, f'onset_myr_leeds_{tag}', t[np.argmax(th['r_icb'] > 0)])
+    record(13, f'layer_ratio_min_{tag}', ratio.min())
+    record(13, f'layer_ratio_max_{tag}', ratio.max())
+    record(13, f'identity_{tag}', ours['identity'])
+    record(13, f'ricb_end_rel_diff_{tag}', abs(ours['r_icb'][-1] / th['r_icb'][-1] - 1))
+    record(13, f'onset_myr_aragog_{tag}', t[np.argmax(ours['r_icb'] > 0)])
+    record(13, f'onset_myr_leeds_{tag}', t[np.argmax(th['r_icb'] > 0)])
+
+
+def _removal(t, depth, after):
+    """First sample after ``after`` [Myr] without a layer."""
+    return t[np.argmax((t > after) & (depth <= 0.0))]
 
 
 def item13_stable_layer() -> None:
-    """The resolved layer against leeds_thermal: cooling (L1), heated from above (L2), and the
+    """The resolved layer against leeds_thermal under fixed CMB flows below the conducted
+    adiabatic flow, under a flow that erodes the layer and then lets it re-form, and the
     change under the mixing constants (model uncertainty)."""
     inp, cases = LAYER_HEADER['inputs'], _layer_cases()
     budget = _core_budget(inp, 'quadrature', stratification=True, k_core=inp['k_core'])
@@ -806,46 +822,90 @@ def item13_stable_layer() -> None:
     record(
         13, 'q_k_TW', float(budget.conducted_adiabatic_flow(r_cmb, inp['t_cmb_start'])) / 1e12
     )
-    fig, axes = plt.subplots(2, 2, figsize=(WIDTH, 5.6), sharex=True)
-    (a_dep, a_cen), (a_icb, a_l2) = axes
-    runs = {}
-    for name, col in zip(('8 TW', '12 TW', '-2 TW', '0 TW'), (CORE, colour('ocean', 'C0')) * 2):
-        segments, th = cases[name]
-        t, tag = th['time_myr'], name.replace(' ', '')
-        runs[name] = ours = _shell_run(budget, segments, t)
-        ours['closure'] = _shell_run(budget, segments, t, ledger=True)['closure']
-        _compare(13, tag, ours, th, t)
-        if name in ('8 TW', '12 TW'):
-            for ax, a, b in (
-                (a_dep, ours['depth'] / 1e3, th['depth_theta'] / 1e3),
-                (a_cen, ours['t_cen'], th['T_cen']),
-                (a_icb, ours['r_icb'] / 1e3, th['r_icb'] / 1e3),
-            ):
-                ax.plot(t, b, '--', color=col)
-                ax.plot(t, a, color=col, label=name)
-            for when in (10.0, 50.0, 200.0, 500.0, 999.0):
-                k = int(np.argmin(np.abs(t - when)))
-                record(13, f'layer_leeds_km_{tag}_{when:.0f}myr', th['depth_theta'][k] / 1e3)
-                record(13, f'layer_aragog_km_{tag}_{when:.0f}myr', ours['depth'][k] / 1e3)
-        else:
-            a_l2.plot(t, th['T_cmb'], '--', color=col)
-            a_l2.plot(t, ours['t_top'], color=col, label=name)
-            record(13, f'tcmb_end_K_{tag}', ours['t_top'][-1])
-            record(13, f'tcmb_end_leeds_K_{tag}', th['T_cmb'][-1])
     record(13, 'top_cell_depth_m', r_cmb - float(shell.r_cells[-1]))
     record(
         13,
         'top_cell_offset_K',
         float(shell.adiabatic_profile(inp['t_cmb_start'])[-1]) - inp['t_cmb_start'],
     )
+    fig, axes = plt.subplots(3, 2, figsize=(WIDTH, 8.0), sharex='row')
+    (a_dep, a_cen), (a_icb, a_warm), (a_ero, a_ero_dep) = axes
+    fixed, runs, loose, noise = ('8 TW', '12 TW', '-2 TW', '0 TW'), {}, [], []
+    for name, col in zip(fixed, (CORE, colour('ocean', 'C0')) * 2):
+        segments, th = cases[name]
+        t, tag = th['time_myr'], name.replace(' ', '')
+        runs[name] = ours = _shell_run(budget, segments, t)
+        _compare(tag, ours, th)
+        for rtol, out in ((1e-8, loose), (1e-12, noise)):
+            other = _shell_run(budget, segments, t, rtol=rtol)
+            onset = abs(t[np.argmax(other['r_icb'] > 0)] - t[np.argmax(th['r_icb'] > 0)])
+            out.append(
+                (
+                    np.max(
+                        np.abs(
+                            other['t_cen'] - (th['T_cen'] if rtol > 1e-11 else ours['t_cen'])
+                        )
+                    ),
+                    onset,
+                )
+            )
+        panels = (
+            (
+                (a_dep, ours['depth'] / 1e3, th['depth_theta'] / 1e3),
+                (a_cen, ours['t_cen'], th['T_cen']),
+                (a_icb, ours['r_icb'] / 1e3, th['r_icb'] / 1e3),
+            )
+            if name in ('8 TW', '12 TW')
+            else ((a_warm, ours['t_top'], th['T_cmb']),)
+        )
+        for ax, a, b in panels:
+            ax.plot(t, b, '--', color=col)
+            ax.plot(t, a, color=col, label=name)
+    record(13, 'tcen_max_abs_diff_K_rtol1e-8', max(x for x, _ in loose))
+    record(13, 'onset_max_abs_diff_myr_rtol1e-8', max(x for _, x in loose))
+    record(13, 'tcen_max_rtol_noise_K', max(x for x, _ in noise))
+
+    # Erosion: the stored heat of the layer drains through the CMB at the flow above Q_ad
+    segments, th = cases['erosion']
+    t, start, q_erode = th['time_myr'], segments[0][0], segments[1][1]
+    ero = _shell_run(budget, segments, t)
+    removed, removed_leeds = (
+        _removal(t, ero['depth'], start),
+        _removal(t, th['depth_theta'], start),
+    )
+    window = (t >= start) & (t <= removed)
+    k = t == start
+    record(
+        13,
+        'erosion_tcmb_max_abs_diff_K_outside',
+        np.max(np.abs(ero['t_top'] - th['T_cmb'])[~window]),
+    )
+    record(13, 'erosion_tcmb_max_abs_diff_K', np.max(np.abs(ero['t_top'] - th['T_cmb'])))
+    record(13, 'erosion_tcen_max_abs_diff_K', np.max(np.abs(ero['t_cen'] - th['T_cen'])))
+    record(13, 'erosion_identity', ero['identity'])
+    record(13, 'erosion_removed_myr_aragog', removed)
+    record(13, 'erosion_removed_myr_leeds', removed_leeds)
+    record(13, 'erosion_stored_J', float(ero['stored'][k][0]))
+    drain = q_erode - np.mean(ero['q_ad'][window])
+    record(13, 'erosion_drain_TW', drain / 1e12)
+    record(13, 'erosion_drain_myr', float(ero['stored'][k][0]) / drain / (MYR_LEEDS))
+    record(13, 'erosion_depth_km_end_aragog', ero['depth'][-1] / 1e3)
+    record(13, 'erosion_depth_km_end_leeds', th['depth_theta'][-1] / 1e3)
+    for ax, a, b in (
+        (a_ero, ero['t_top'], th['T_cmb']),
+        (a_ero_dep, ero['depth'] / 1e3, th['depth_theta'] / 1e3),
+    ):
+        ax.plot(t, b, '--', color=CORE)
+        ax.plot(t, a, color=CORE, label='erosion')
+        ax.axvspan(start, removed, color=colour('fog', '0.9'), alpha=0.25, lw=0)
 
     # Model uncertainty: the mixing constants changed one at a time
-    base_k, base_g = shell.k_mix, shell.g_mix
-    for key, k_mix, g_mix in (
-        ('k_mix_x10', 10 * base_k, base_g),
-        ('k_mix_x0.1', 0.1 * base_k, base_g),
-        ('g_mix_x10', base_k, 10 * base_g),
-        ('g_mix_x0.1', base_k, 0.1 * base_g),
+    base_k, base_g, shifts = shell.k_mix, shell.g_mix, []
+    for k_mix, g_mix in (
+        (10 * base_k, base_g),
+        (0.1 * base_k, base_g),
+        (base_k, 10 * base_g),
+        (base_k, 0.1 * base_g),
     ):
         b = _core_budget(
             inp,
@@ -855,31 +915,40 @@ def item13_stable_layer() -> None:
             layer={'k_mix': k_mix, 'g_mix': g_mix},
         )
         for name in ('8 TW', '12 TW'):
-            segments, th = cases[name]
-            run, ref, tag = (
-                _shell_run(b, segments, th['time_myr']),
-                runs[name],
-                name.replace(' ', ''),
-            )
-            record(13, f'{key}_tcen_K_{tag}', np.max(np.abs(run['t_cen'] - ref['t_cen'])))
-            record(13, f'{key}_tcmb_K_{tag}', np.max(np.abs(run['t_top'] - ref['t_top'])))
+            run, ref = _shell_run(b, cases[name][0], cases[name][1]['time_myr']), runs[name]
             deep = ref['depth'] > 10e3
-            record(
-                13,
-                f'{key}_depth_rel_{tag}',
-                np.max(np.abs(run['depth'][deep] / ref['depth'][deep] - 1)),
+            shifts.append(
+                (
+                    np.max(np.abs(run['t_cen'] - ref['t_cen'])),
+                    np.max(np.abs(run['depth'][deep] / ref['depth'][deep] - 1)),
+                    0.0,
+                )
             )
+        run = _shell_run(b, segments, t)
+        shifts.append((0.0, 0.0, abs(_removal(t, run['depth'], start) - removed)))
+    record(13, 'mixing_tcen_max_K', max(s[0] for s in shifts))
+    record(13, 'mixing_depth_max_rel', max(s[1] for s in shifts))
+    record(13, 'mixing_removal_max_myr', max(s[2] for s in shifts))
 
-    a_dep.set_ylabel('layer depth (km)')
-    a_cen.set_ylabel(r'$T_\mathrm{cen}$ (K)')
-    a_icb.set_ylabel(r'$r_\mathrm{icb}$ (km)')
-    a_l2.set_ylabel(r'$T_\mathrm{cmb}$ (K)')
-    for ax in (a_dep, a_l2):
+    for ax, label in zip(
+        axes.ravel(),
+        (
+            'layer depth (km)',
+            r'$T_\mathrm{cen}$ (K)',
+            r'$r_\mathrm{icb}$ (km)',
+            r'$T_\mathrm{cmb}$ (K)',
+            r'$T_\mathrm{cmb}$ (K)',
+            'layer depth (km)',
+        ),
+    ):
+        ax.set_ylabel(label)
+    for ax in (a_dep, a_warm, a_ero):
         ax.legend(frameon=False, fontsize='x-small')
     for ax in axes[-1]:
         ax.set_xlabel('time (Myr)')
-    for ax, letter in zip(axes.ravel(), 'abcd'):
-        ax.text(0.02, 0.92, f'({letter})', transform=ax.transAxes)
+    axes[1, 1].set_xlabel('time (Myr)')
+    for ax, letter in zip(axes.ravel(), 'abcdef'):
+        ax.text(0.02, 0.9, f'({letter})', transform=ax.transAxes)
     save(fig, 'fig_20_leeds_stable_layer')
 
 

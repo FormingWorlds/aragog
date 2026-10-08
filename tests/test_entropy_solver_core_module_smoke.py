@@ -372,14 +372,14 @@ def test_a_stratified_core_refuses_radau(shared_eos):
 
 
 def test_only_a_stratified_core_warns_that_the_layer_is_experimental(shared_eos, caplog):
-    def warnings(params):
+    def records(params):
         caplog.clear()
-        with caplog.at_level('WARNING', logger='aragog'):
-            _build('core_module', shared_eos, params)
+        with caplog.at_level('WARNING', logger='fwl.aragog'):
+            _build('core_module', shared_eos, params).reset()
         return [r for r in caplog.records if 'stratification is experimental' in r.message]
 
-    assert len(warnings(STRATIFIED_PARAMS)) == 1
-    assert warnings(CORE_MODULE_PARAMS) == []
+    assert [r.levelname for r in records(STRATIFIED_PARAMS)] == ['WARNING']
+    assert records(CORE_MODULE_PARAMS) == []
 
 
 @needs_cvode
