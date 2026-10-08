@@ -104,6 +104,7 @@ def test_t1_per_node_parity(eos_np, eos_jax, mode: str, use_radio: bool, use_tid
     n_nodes = 15
     n_stag = n_nodes - 1
     inner_bc = 1 if mode == 'energy_balance' else 2
+    inner_val = 0.05 if inner_bc == 2 else 0.0
     params = _build_parameters(
         core_bc=mode,
         solver_method='cvode',
@@ -111,7 +112,9 @@ def test_t1_per_node_parity(eos_np, eos_jax, mode: str, use_radio: bool, use_tid
         n_nodes=n_nodes,
         use_jax_jacobian=False,
         inner_boundary_condition=inner_bc,
+        inner_boundary_value=inner_val,
     )
+
     params.phase_mixed.phase_transition_width = 0.0
     params.solver.cvode_output_points = 550
 
@@ -153,7 +156,7 @@ def test_t1_per_node_parity(eos_np, eos_jax, mode: str, use_radio: bool, use_tid
         emissivity=1.0,
         T_eq=255.0,
         inner_bc_type=inner_type,
-        inner_bc_value=0.0,
+        inner_bc_value=inner_val,
         core_density=10500.0,
         core_heat_capacity=880.0,
         tfac_core_avg=1.147,
@@ -260,6 +263,28 @@ def test_t3_compile_counter(eos_jax):
             f'Expected 1 trace, got {_TRACE_COUNTERS["powers"]} at length {n}'
         )
 
+    # Re-invoking factory with identical cache key reuses powers_jit with 0 new traces
+    rhs_fn1_repeat, _, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos_jax,
+        phase_params=params,
+        mesh_arrays=mesh10,
+        boundary_params=bc1,
+        heating_array=np.zeros(10),
+        scales=scales1,
+        core_bc_mode='quasi_steady',
+    )
+    out_repeat = rhs_fn1_repeat.step_powers(
+        np.linspace(0.0, 10.0, 50), np.full((10, 50), 3000.0)
+    )
+    assert out_repeat.shape == (50, 7)
+    assert _TRACE_COUNTERS['powers'] == 1, (
+        'Expected 0 additional traces on repeated factory call'
+    )
+
+    # Verify numerical consistency across chunk boundaries (C = 512)
+    np.testing.assert_allclose(out[0], out[-1], atol=1e-12)
+    np.testing.assert_allclose(out[511], out[512], atol=1e-12)
+
     # Mode 2 with a new cache key must trace exactly once more
     bc2 = _make_bc(mesh10, outer_type=4, inner_type=5)
     scale_vec = np.empty(11)
@@ -309,9 +334,17 @@ def test_step_powers_input_validation(eos_jax):
         core_bc_mode='quasi_steady',
     )
 
+    # Multidimensional t_nodes
+    with pytest.raises(ValueError, match='t_nodes must be 1D'):
+        rhs_fn.step_powers(np.zeros((2, 2)), np.zeros((10, 4)))
+
     # Empty nodes
     empty_out = rhs_fn.step_powers([], np.empty((10, 0)))
     assert empty_out.shape == (0, 7)
+
+    # Empty nodes with non-2D Y_nodes
+    with pytest.raises(ValueError, match='Y_nodes must be 2D'):
+        rhs_fn.step_powers([], np.zeros(10))
 
     # Non-2D Y_nodes
     with pytest.raises(ValueError, match='Y_nodes must be 2D'):
@@ -360,3 +393,56 @@ def test_step_powers_input_validation(eos_jax):
             'unsupported_mode',
             aux,
         )
+
+
+def test_step_powers_radio_uses_table_density(eos_jax):
+    """Verify Q_radio integrates raw table density, not smoothed phase density."""
+    from aragog.jax.solver import StepPowersAux
+    from tests.conftest import make_mesh as _make_mesh
+    from tests.test_cvode_jax_cache import _make_bc
+
+    params = PhaseParams(matprop_smooth_width=0.05)
+    mesh10 = _make_mesh(N=10)
+    bc = _make_bc(mesh10, outer_type=4, inner_type=2)
+    scales = NonDimScales(state_scale=np.full(10, 3000.0), t_ref=100.0)
+
+    r26 = _make_radionuclide()
+    radio_params = (
+        np.array([r26.heat_production]),
+        np.array([r26.abundance]),
+        np.array([r26.concentration]),
+        np.array([r26.t0_years]),
+        np.array([r26.half_life_years]),
+    )
+
+    rhs_fn, _, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos_jax,
+        phase_params=params,
+        mesh_arrays=mesh10,
+        boundary_params=bc,
+        heating_array=np.zeros(10),
+        scales=scales,
+        core_bc_mode='quasi_steady',
+        radio_isotope_params=radio_params,
+    )
+
+    P_stag = np.asarray(mesh10.P_stag)
+    S_test = np.full((10, 1), 3153.599)
+    aux = StepPowersAux(
+        A_int=float(mesh10.area[-1]),
+        A_cmb=float(mesh10.area[0]),
+        volume=mesh10.volume,
+        mass_struct=np.asarray(mesh10.volume * 3300.0),
+        P_stag=P_stag,
+    )
+
+    out = rhs_fn.step_powers([0.0], S_test, aux=aux)
+    Q_radio = float(out[0, 2])
+
+    # Reference Q_radio from table density
+    h_radio = r26.heat_production * r26.abundance * r26.concentration
+    mass_ref = eos_jax.density(P_stag, S_test.ravel()) * mesh10.volume
+    Q_radio_ref = float(h_radio * np.sum(mass_ref))
+
+    rel_diff = abs(Q_radio - Q_radio_ref) / Q_radio_ref
+    assert rel_diff <= 1e-12, f'Q_radio relative difference {rel_diff:.4e} exceeds 1e-12'

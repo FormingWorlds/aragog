@@ -425,10 +425,11 @@ def build_jax_rhs_and_jacobian(
             [-F_int*A_int, F_cmb*A_cmb, Q_radio, Q_tidal,
              Q_radio_cons, Q_tidal_cons, residual]
         """
-        t_arr = np.asarray(t_nodes, dtype=np.float64).ravel()
+        t_arr = np.asarray(t_nodes, dtype=np.float64)
+        if t_arr.ndim > 1:
+            raise ValueError(f't_nodes must be 1D; got ndim={t_arr.ndim}')
+        t_arr = t_arr.ravel()
         n = t_arr.size
-        if n == 0:
-            return np.empty((0, 7), dtype=np.float64)
 
         Y_arr = np.asarray(Y_nodes, dtype=np.float64)
         if Y_arr.ndim != 2:
@@ -442,6 +443,9 @@ def build_jax_rhs_and_jacobian(
                 f'Y_nodes first dimension {Y_arr.shape[0]} does not match '
                 f'expected dimension {expected_size}'
             )
+
+        if n == 0:
+            return np.empty((0, 7), dtype=np.float64)
 
         aux_use = aux if aux is not None else default_aux
         if aux_use is None:
