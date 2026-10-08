@@ -422,9 +422,12 @@ def test_chained_cvode_calls_close_the_core_ledger(shared_eos):
     assert abs(residual) < 1e-6 * cmb_heat
 
 
-def test_a_core_that_freezes_from_the_top_is_refused(shared_eos):
+def test_a_core_that_freezes_from_the_top_is_refused(shared_eos, monkeypatch):
     """A melting curve that the adiabat meets first at the CMB freezes the core from the top;
-    the solve refuses it, since the budget books no latent or gravitational heat there."""
+    the solve refuses it, since the budget books no latent or gravitational heat there. A
+    failed call is not checked: it stops early and books no energy."""
+    import aragog.solver.entropy_solver as es
+
     params = dict(UNENRICHED_PARAMS)
     params |= {'melting_curve': 'quadratic', 't_m0': 5200.0, 't_m1': -1.2e-12, 't_m2': 0.0}
     solver = _build('core_module', shared_eos, params)
@@ -434,6 +437,9 @@ def test_a_core_that_freezes_from_the_top_is_refused(shared_eos):
     solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
     with pytest.raises(ValueError, match='crystallizes top_down'):
         solver.solve()
+    monkeypatch.setattr(es, '_status_failed', lambda status: True)
+    solver.solve()
+    assert solver.stop_early and solver._solution.energy_integrals['core'] == 0.0
 
 
 def test_a_stratified_core_refuses_radau(shared_eos):

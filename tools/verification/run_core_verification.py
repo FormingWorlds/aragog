@@ -1112,6 +1112,9 @@ def item11_coupled() -> None:
         wrong = live & (run['f_cmb'] * contrast < 0.0)
         record(11, f'rows_{mode}', live.sum())
         record(11, f'wrong_sign_rows_{mode}', wrong.sum())
+        zero = live & (run['f_cmb'] == 0.0)
+        record(11, f'zero_flux_rows_{mode}', zero.sum())
+        record(11, f'zero_flux_contrast_max_K_{mode}', np.abs(contrast[zero]).max(initial=0.0))
         record(11, f'solidified_kyr_{mode}', run['t'][np.argmax(run['phi'] < 0.05)] / 1e3)
         record(11, f'contrast_min_K_{mode}', contrast[live].min())
         record(11, f'contrast_max_K_{mode}', contrast[live].max())
@@ -1149,7 +1152,9 @@ def item11_coupled() -> None:
         live, contrast = t > 0, t_core - t_node
         record(11, f'rows_{case}', live.sum())
         record(11, f'wrong_sign_rows_{case}', (live & (f_cmb * contrast < 0.0)).sum())
-        record(11, f'zero_flux_rows_{case}', (live & (f_cmb == 0.0)).sum())
+        zero = live & (f_cmb == 0.0)
+        record(11, f'zero_flux_rows_{case}', zero.sum())
+        record(11, f'zero_flux_contrast_max_K_{case}', np.abs(contrast[zero]).max(initial=0.0))
         record(11, f'contrast_min_K_{case}', contrast[live].min())
         record(11, f'contrast_max_K_{case}', contrast[live].max())
     config = tomllib.loads((data / 'coupled_config.toml').read_text())
@@ -1169,9 +1174,8 @@ def item11_coupled() -> None:
     # E1: the 1 Earth-mass run at 40 to 320 mantle levels, and at rtol 1e-10 on 80
     rows = np.loadtxt(data / 'coupled_mesh_convergence.csv', delimiter=',')
     names = (
-        't_bf T_core_bf T_core_end F10 F100 F1000 F_bf F_2bf F_4bf F_10kyr F_100kyr F_500kyr'
+        't_bf T_core_bf T_core_end F10 F100 F1000 F_bf F_2bf F_4bf F_100kyr F_500kyr'.split()
     )
-    names = names.split()
     run = {(int(r[0]), r[1]): dict(zip(names, r[2:])) for r in rows}
     for a, b in ((40, 80), (80, 160), (160, 320), (80, 'rtol')):
         x, y = run[(a, 1e-8)], run[(b, 1e-8)] if b != 'rtol' else run[(80, 1e-10)]

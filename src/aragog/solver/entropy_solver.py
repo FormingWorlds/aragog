@@ -4178,14 +4178,16 @@ class EntropySolver:
             self.state._pb_cache_misses = 0
 
         self._log_solution_outcome(end_time)
+        if self.stop_early:
+            sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
+            return
         budget = getattr(self, '_core_module_budget', None)
         if self._core_bc == 'core_module' and budget is not None:
             from aragog.core.regime import refuse_unmodelled_regime
 
-            refuse_unmodelled_regime(budget, np.asarray(sol.y)[self._n_stag + 1])
-        if self.stop_early:
-            sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
-            return
+            # every accepted step of the call, not only the output points
+            t_core = (sol.get('energy_trace') or (sol.t, sol.y))[1][self._n_stag + 1]
+            refuse_unmodelled_regime(budget, t_core)
         t_solved = time.perf_counter()
         sol.energy_integrals = self._compute_step_energy_integrals()
         logger.info(

@@ -16,6 +16,6 @@ The `aragog.core` package carries the core evolution module: the core as a compo
 | `crystallization_regime` | Regime code from the superheat profile: fully liquid, bottom-up, top-down, snow, or fully frozen (taxonomy of Breuer et al. 2015). `refuse_unmodelled_regime` raises for the regimes the budget does not model. |
 | `adiabatic_ratio`, `stratification_depth` | Subadiabatic-onset ratio and the equilibrium thickness of the stably stratified sub-CMB layer from conductive matching. |
 
-The budget terms are cross-validated against the open-source Leeds `thermal_history` implementation (secular exact, boundary terms to 0.5%), and the profile and melting machinery is pinned against Nimmo (2015) Table 2 (adiabatic length scales, ICB temperatures, melting gradients, adiabatic heat flows). The budget assumes bottom-up crystallization; parameter sets whose melting curve rises above the adiabat at the CMB (a top-down or snow topology) shut off the boundary terms rather than emitting heat from an ill-defined boundary.
+The budget terms are cross-validated against the open-source Leeds `thermal_history` implementation (secular exact, boundary terms to 0.5%), and the profile and melting machinery is pinned against Nimmo (2015) Table 2 (adiabatic length scales, ICB temperatures, melting gradients, adiabatic heat flows). The budget assumes bottom-up crystallization; parameter sets whose melting curve rises above the adiabat at the CMB (a top-down or snow topology) book no boundary terms, and the solver refuses a call that enters such a regime.
 
 ::: aragog.core

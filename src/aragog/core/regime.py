@@ -57,9 +57,8 @@ def crystallization_regime(budget: CoreEnergyBudget, t_cmb):
     The grid resolves shells wider than ``r_cmb / 512``; a thinner shell
     than that reads as its surrounding regime.
     """
-    p = budget.profiles
-    r = jnp.linspace(0.0, p.r_cmb, _N_GRID)
-    superheat = p.adiabat(r, t_cmb) - budget.melting_curve.t_melt(p.pressure(r))
+    r = jnp.linspace(0.0, budget.profiles.r_cmb, _N_GRID)
+    superheat = budget.superheat(r, t_cmb)
     solid = superheat < 0.0
     changes = jnp.sum(jnp.abs(jnp.diff(solid.astype(jnp.int32))))
     # jnp.select takes the first true condition, the order of the nested checks.
@@ -71,9 +70,24 @@ def crystallization_regime(budget: CoreEnergyBudget, t_cmb):
 
 
 def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
-    """Raise ``ValueError`` when any of the temperatures ``t_cmb`` puts the core in a regime
-    other than fully liquid or bottom-up, or fully frozen by a core whose CMB freezes before its
-    centre: the budget books latent and gravitational heat only for bottom-up growth."""
+    """Refuse core states whose latent and gravitational heat the budget does not book.
+
+    The budget books them only for an inner core that grows from the centre and for its
+    freeze-out, so every regime other than fully liquid and bottom-up is refused, and so is a
+    fully frozen core whose CMB freezes before its centre.
+
+    Parameters
+    ----------
+    budget : CoreEnergyBudget
+        The core budget; its ``regime_batch``, ``t_onset`` and ``t_freeze`` are used.
+    t_cmb : float or array_like
+        CMB temperatures [K] of the states to check.
+
+    Raises
+    ------
+    ValueError
+        At the first refused state, naming its regime and temperature.
+    """
     t_cmb = np.atleast_1d(np.asarray(t_cmb, dtype=float))
     codes = np.asarray(budget.regime_batch(t_cmb))
     frozen_ok = budget.t_freeze <= budget.t_onset

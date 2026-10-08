@@ -304,8 +304,8 @@ def test_integrals_split_quadrature_at_inner_core_onset():
         c_light=560.0 / 12150.0,
     )
     t_onset = float(budget.t_onset)
-    assert budget._superheat(0.0, t_onset) == pytest.approx(0.0, abs=1e-6)
-    assert budget._superheat(prof.r_cmb, budget.t_freeze) == pytest.approx(0.0, abs=1e-6)
+    assert budget.superheat(0.0, t_onset) == pytest.approx(0.0, abs=1e-6)
+    assert budget.superheat(prof.r_cmb, budget.t_freeze) == pytest.approx(0.0, abs=1e-6)
 
     # Reference integral via high-order substitution quadrature across onset:
     # 128-point GL in T on [t_onset + 25, t_onset] and 128-point GL in u = sqrt(t_onset - T)

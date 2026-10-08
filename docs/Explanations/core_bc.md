@@ -125,7 +125,7 @@ The dynamo field-strength options `f_ohm` and `flux_geometry` belong to PROTEUS,
 
 PROTEUS writes six diagnostics of this budget to its output helpfile on every core_module row: the stable layer thickness below the CMB, the entropy margin available to a dynamo, the rms field strength, the crystallisation regime code (0 fully liquid, 1 bottom-up, 4 fully frozen; the codes 2 top-down and 3 snow mark states the solver refuses, below), the effective heat capacity $\tilde{C}(T_\text{cmb})$ and the inner-core radius.
 
-The budget books latent and gravitational heat only for an inner core that grows from the centre and for its freeze-out. A call whose core enters the top-down or snow regime, or freezes completely without growing from the centre, raises an error at the end of the call: the energetics of those regimes are not modelled.
+The budget books latent and gravitational heat only for an inner core that grows from the centre and for its freeze-out. A call whose core enters the top-down or snow regime, or freezes completely without growing from the centre, raises an error at the end of the call, checked at every accepted step; the energetics of those regimes are not modelled. A call that fails is not checked: it stops early and books no energy.
 
 In aragog `SolverOutput`, the per-call core energy change is recorded in `step_dE_core_J` [J], evaluating $\int \tilde{C} dT_\text{cmb}$ over the call, plus the shell's heat change with `stratification = true`; the shell temperatures (`core_T_shell`), the layer base and the CMB temperature (`core_T_top`) are in the output, and a resumed run passes the shell back with `set_initial_shell_temperature`.
 

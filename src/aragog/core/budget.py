@@ -207,7 +207,7 @@ class CoreEnergyBudget:
         """CMB temperature [K] for full core freeze-out at the CMB."""
         return float(self.melting_curve.t_melt(self.profiles.p_cmb))
 
-    def _superheat(self, r, t_cmb):
+    def superheat(self, r, t_cmb):
         """Adiabat minus melting curve [K] at radius ``r``; positive = liquid."""
         p = self.profiles
         return p.adiabat(r, t_cmb) - self.melting_curve.t_melt(p.pressure(r))
@@ -219,7 +219,7 @@ class CoreEnergyBudget:
         def body(_, bracket):
             lo, hi = bracket
             mid = (lo + hi) / 2.0
-            frozen = self._superheat(mid, t_cmb) < 0.0
+            frozen = self.superheat(mid, t_cmb) < 0.0
             return jnp.where(frozen, mid, lo), jnp.where(frozen, hi, mid)
 
         lo, hi = jax.lax.fori_loop(
@@ -230,7 +230,7 @@ class CoreEnergyBudget:
         )
         root = (lo + hi) / 2.0
         # All-liquid guard: with positive centre superheat there is no root.
-        return jnp.where(self._superheat(0.0, t_cmb) > 0.0, 0.0, root)
+        return jnp.where(self.superheat(0.0, t_cmb) > 0.0, 0.0, root)
 
     def r_icb(self, t_cmb):
         """Inner-core boundary radius [m] at ``t_cmb``.
@@ -276,8 +276,8 @@ class CoreEnergyBudget:
             (t_cmb,) = primals
             (t_dot,) = tangents
             radius = self._r_icb_bisect(t_cmb)
-            d_dr = jax.grad(self._superheat, argnums=0)(radius, t_cmb)
-            d_dt = jax.grad(self._superheat, argnums=1)(radius, t_cmb)
+            d_dr = jax.grad(self.superheat, argnums=0)(radius, t_cmb)
+            d_dt = jax.grad(self.superheat, argnums=1)(radius, t_cmb)
             safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
             # Interior boundary: dr/dT from the implicit function theorem;
             # pinned at the domain ends where the root does not move.
@@ -289,7 +289,7 @@ class CoreEnergyBudget:
 
     def nucleation_factor(self, t_cmb):
         """Diagnostic activation in [0, 1]: sigmoid of centre subcooling."""
-        return jax.nn.sigmoid(-self._superheat(0.0, t_cmb) / self.icn_width)
+        return jax.nn.sigmoid(-self.superheat(0.0, t_cmb) / self.icn_width)
 
     def _boundary_sensitivity(self, t_cmb):
         """|dr_icb/dT_cmb| [m/K] from the implicit-function theorem.
@@ -301,15 +301,15 @@ class CoreEnergyBudget:
         where nesting through the custom-JVP rule would not.
         """
         radius = self.r_icb(t_cmb)
-        d_dr = jax.grad(self._superheat, argnums=0)(radius, t_cmb)
-        d_dt = jax.grad(self._superheat, argnums=1)(radius, t_cmb)
+        d_dr = jax.grad(self.superheat, argnums=0)(radius, t_cmb)
+        d_dt = jax.grad(self.superheat, argnums=1)(radius, t_cmb)
         safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
         interior = (radius > 0.0) & (radius < self.profiles.r_cmb) & self._liquid_remains(t_cmb)
         return jnp.where(interior, jnp.abs(-d_dt / safe), 0.0)
 
     def _liquid_remains(self, t_cmb):
         """False once even the CMB sits below the melting curve."""
-        return self._superheat(self.profiles.r_cmb, t_cmb) > 0.0
+        return self.superheat(self.profiles.r_cmb, t_cmb) > 0.0
 
     def latent_capacity(self, t_cmb):
         """Latent contribution to the effective heat capacity [J/K].

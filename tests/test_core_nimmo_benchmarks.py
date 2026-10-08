@@ -188,8 +188,8 @@ def test_boundary_sensitivity_matches_printed_cr(model, cr_printed, rel):
 
     prof = _profiles(model)
     budget = CoreEnergyBudget(prof, _curve(model), ds_fusion=170.0, icn_width=10.0)
-    d_dr = float(jax.grad(budget._superheat, argnums=0)(1220e3, T_C))
-    d_dt = float(jax.grad(budget._superheat, argnums=1)(1220e3, T_C))
+    d_dr = float(jax.grad(budget.superheat, argnums=0)(1220e3, T_C))
+    d_dt = float(jax.grad(budget.superheat, argnums=1)(1220e3, T_C))
     cr = abs(d_dt / d_dr)
     assert cr == pytest.approx(cr_printed, rel=rel)
     # Discrimination: the two models' printed Cr differ by a factor two,
@@ -288,5 +288,5 @@ def test_model1_printed_parameters_break_bottom_up_topology():
     # With no liquid at the CMB both boundary terms are zero.
     assert float(budget.latent_capacity(T_C)) == pytest.approx(0.0, abs=1e-10)
     assert float(budget.gravitational_capacity(T_C)) == pytest.approx(0.0, abs=1e-10)
-    with pytest.raises(ValueError, match='only bottom-up growth is modelled'):
+    with pytest.raises(ValueError, match='crystallizes snow at T_core = 4180.0 K'):
         refuse_unmodelled_regime(budget, T_C)

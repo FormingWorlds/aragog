@@ -114,13 +114,12 @@ def test_core_history_matches_the_thermal_history_table(script):
 @pytest.mark.physics_invariant
 def test_coupled_tables_reproduce_the_page(script):
     got = _reproduces(script, 11)
-    assert got['wrong_sign_rows_core_module'] == 0
     assert got['wrong_sign_rows_energy_balance'] == got['rows_energy_balance']
     for case, bound in (('1me', 1e-6), ('1me_rtol1e-10', 1e-6), ('3me', 5e-6), ('5me', 5e-6)):
         assert got[f'closure_max_after_1kyr_{case}'] < bound
         assert got[f'closure_end_{case}'] < bound
         assert got[f'closure_first_call_{case}'] < 3e-4  # 1.5e-4 at 1 Earth mass
-    for case in ('3me', '5me', 'wb_1me'):
+    for case in ('core_module', '3me', '5me', 'wb_1me'):
         assert got[f'wrong_sign_rows_{case}'] == 0 < got[f'rows_{case}']
         assert got[f'zero_flux_rows_{case}'] <= 1
     for mass in ('1me', '3me', '5me'):  # no inner core in any run
@@ -138,6 +137,8 @@ def test_coupled_tables_reproduce_the_page(script):
         assert got[f'e1_{q}_d_80_rtol'] < 1e-3
     assert got['e1_T_core_bf_d_160_320'] < 10.0 and got['e1_T_core_end_d_160_320'] < 10.0
     assert got['e1_T_core_bf_d_80_rtol'] < 0.01
+    for pair in ('40_80', '80_160', '160_320'):  # the late flux doubles with the levels
+        assert 0.45 < got[f'e1_F_500kyr_d_{pair}'] < 0.55
 
 
 @pytest.mark.slow
