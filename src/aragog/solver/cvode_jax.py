@@ -35,12 +35,138 @@ Status: PROTOTYPE for the supported modes; fallback for the rest.
 
 from __future__ import annotations
 
+import functools
 import logging
-from typing import Callable
+from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any, Callable
 
 import numpy as np
 
 logger = logging.getLogger('fwl.' + __name__)
+
+_CACHE_MAXSIZE = 8
+
+# Module-level counters for JIT tracing events.
+_TRACE_COUNTERS = {'rhs': 0, 'jac': 0}
+
+
+@dataclass
+class _JitCacheEntry:
+    rhs_jit: Any
+    jac_jit: Any
+    phase_params: Any
+    eos_jax: Any
+    budget: Any = None
+
+
+_JIT_CACHE: OrderedDict[tuple, _JitCacheEntry] = OrderedDict()
+
+
+def clear_jit_cache() -> None:
+    """Clear the module-level JIT cache and reset trace counters."""
+    _JIT_CACHE.clear()
+    _TRACE_COUNTERS['rhs'] = 0
+    _TRACE_COUNTERS['jac'] = 0
+
+
+def _make_jitted_rhs_and_jacobian(
+    core_bc_mode: str,
+    use_radio: bool,
+    phase_params: Any,
+    eos_jax: Any,
+    budget: Any = None,
+):
+    """Build JIT-compiled RHS and Jacobian functions.
+
+    PhaseParams, eos_jax and the core_module budget are closure constants. All remaining
+    parameters are passed as a pytree in data; for core_module it ends with the core source
+    power and the critical Rayleigh number of the CMB boundary layer.
+    """
+    import jax
+
+    from aragog.jax import solver as js
+
+    _rhs_jax = {
+        'quasi_steady': js.dSdt,
+        'energy_balance': js.dSdt_energy_balance,
+        'core_module': js.dSdt_core_module,
+    }[core_bc_mode]
+
+    def _eval_core(t_nd, y_nd, data):
+        (
+            mesh_arrays,
+            boundary_params,
+            heating_jax,
+            radio_arrays,
+            state_scale_jax,
+            rhs_scale_jax,
+            t_ref_jax,
+        ) = data[:7]
+        t_phys = t_nd * t_ref_jax
+        S_phys = y_nd * state_scale_jax
+        H_radio_fn = (
+            functools.partial(js.compute_radio_heating, radio_arrays=radio_arrays)
+            if use_radio
+            else js._no_radio
+        )
+        args_tuple = (
+            eos_jax,
+            phase_params,
+            mesh_arrays,
+            boundary_params,
+            heating_jax,
+            H_radio_fn,
+        )
+        if budget is not None:
+            args_tuple = args_tuple + (budget, *data[7:])
+        dydt_phys = _rhs_jax(t_phys, S_phys, args_tuple)
+        return dydt_phys * rhs_scale_jax
+
+    def _make_wrapper(kind: str):
+        def _wrapper(t_nd, y_nd, data):
+            _TRACE_COUNTERS[kind] += 1
+            return _eval_core(t_nd, y_nd, data)
+
+        return _wrapper
+
+    rhs_jit = jax.jit(_make_wrapper('rhs'))
+    jac_jit = jax.jit(jax.jacrev(_make_wrapper('jac'), argnums=1))
+    return rhs_jit, jac_jit
+
+
+def _get_or_create_jitted(
+    core_bc_mode: str,
+    use_radio: bool,
+    phase_params: Any,
+    eos_jax: Any,
+    budget: Any = None,
+) -> tuple[Any, Any, bool]:
+    """Retrieve cached jitted functions or compile new ones.
+
+    Returns
+    -------
+    tuple
+        (rhs_jit, jac_jit, is_cache_hit)
+    """
+    key = (core_bc_mode, use_radio, id(phase_params), id(eos_jax))
+    key += () if budget is None else (id(budget),)
+    entry = _JIT_CACHE.pop(key, None)
+    hit = (
+        entry is not None
+        and entry.phase_params is phase_params
+        and entry.eos_jax is eos_jax
+        and entry.budget is budget
+    )
+    if not hit:
+        rhs_jit, jac_jit = _make_jitted_rhs_and_jacobian(
+            core_bc_mode, use_radio, phase_params, eos_jax, budget
+        )
+        entry = _JitCacheEntry(rhs_jit, jac_jit, phase_params, eos_jax, budget)
+    _JIT_CACHE[key] = entry
+    if len(_JIT_CACHE) > _CACHE_MAXSIZE:
+        _JIT_CACHE.popitem(last=False)
+    return entry.rhs_jit, entry.jac_jit, hit
 
 
 def build_jax_rhs_and_jacobian(
@@ -118,45 +244,22 @@ def build_jax_rhs_and_jacobian(
         on first call.
     """
     try:
-        import jax
         import jax.numpy as jnp
 
-        from aragog.jax.solver import (
-            _no_radio,
-            make_radio_heating_fn,
-        )
-        from aragog.jax.solver import (
-            dSdt as jax_dsdt,
-        )
-        from aragog.jax.solver import (
-            dSdt_core_module as jax_dsdt_cm,
-        )
-        from aragog.jax.solver import (
-            dSdt_energy_balance as jax_dsdt_eb,
-        )
+        import aragog.jax.solver  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(
             'Option Z (JAX RHS + Jacobian) requires JAX and the '
             f'aragog.jax module. Original error: {exc}'
         ) from exc
 
-    if core_bc_mode == 'quasi_steady':
-        _rhs_jax = jax_dsdt
-    elif core_bc_mode == 'energy_balance':
-        _rhs_jax = jax_dsdt_eb
-    elif core_bc_mode == 'core_module':
-        if core_module_budget is None:
-            raise ValueError(
-                "core_bc_mode='core_module' requires core_module_budget "
-                '(the CoreEnergyBudget the solver built from its config); '
-                'got None.'
-            )
-        _rhs_jax = jax_dsdt_cm
-    else:
-        # Explicit warning + clear error message so the calling
-        # solver's catch-all fallback in entropy_solver.solve logs
-        # an informative reason for the FD-Jacobian fallback rather
-        # than a bare ValueError.
+    if core_bc_mode == 'core_module' and core_module_budget is None:
+        raise ValueError(
+            "core_bc_mode='core_module' requires core_module_budget "
+            '(the CoreEnergyBudget the solver built from its config); '
+            'got None.'
+        )
+    if core_bc_mode not in ('quasi_steady', 'energy_balance', 'core_module'):
         logger.warning(
             'JAX CVODE factory: core_bc_mode=%r is not implemented '
             'in the JAX RHS; only quasi_steady, energy_balance, and '
@@ -201,14 +304,10 @@ def build_jax_rhs_and_jacobian(
 
     state_scale_jax = jnp.asarray(scales.state_scale)
     rhs_scale_jax = jnp.asarray(scales.rhs_scale)
-    t_ref = float(scales.t_ref)
+    t_ref_jax = jnp.asarray(float(scales.t_ref), dtype=jnp.float64)
     heating_jax = jnp.asarray(heating_array)
 
-    # Per-step radio heating evaluation. When the caller supplies
-    # a non-empty radio_isotope_params tuple, build a JAX-traceable
-    # H_radio(t_yr) callable that the dSdt / dSdt_energy_balance RHS
-    # evaluates at the live integrator time. Empty tuple -> no-op
-    # callable returning zero heating.
+    radio_arrays = ()
     if radio_isotope_params:
         if len(radio_isotope_params) != 5:
             raise ValueError(
@@ -216,33 +315,35 @@ def build_jax_rhs_and_jacobian(
                 '(heat_prod, abundance, concentration, t0_years, '
                 f'half_life_years); got length {len(radio_isotope_params)}'
             )
-        H_radio_fn = make_radio_heating_fn(*radio_isotope_params)
-    else:
-        H_radio_fn = _no_radio
+        shapes = [np.shape(a) for a in radio_isotope_params]
+        if len(set(shapes)) > 1:
+            raise ValueError(
+                f'All radio_isotope_params arrays must have identical shapes, got {shapes}'
+            )
+        if np.size(radio_isotope_params[0]) > 0:
+            radio_arrays = tuple(
+                jnp.asarray(a, dtype=jnp.float64) for a in radio_isotope_params
+            )
+    use_radio = bool(radio_arrays)
 
-    args_tuple = (eos_jax, phase_params, mesh_arrays, boundary_params, heating_jax, H_radio_fn)
+    data = (
+        mesh_arrays,
+        boundary_params,
+        heating_jax,
+        radio_arrays,
+        state_scale_jax,
+        rhs_scale_jax,
+        t_ref_jax,
+    )
     if core_bc_mode == 'core_module':
         from aragog.core import check_ra_crit
 
-        # The budget rides in the closure; its methods are pure JAX and
-        # its parameters are Python floats, so jit treats it as static.
-        args_tuple = args_tuple + (
-            core_module_budget,
-            float(core_module_q_radio),
-            check_ra_crit(core_module_ra_crit_cmb),
-        )
+        q_radio, ra_crit = core_module_q_radio, check_ra_crit(core_module_ra_crit_cmb)
+        data = data + (jnp.float64(q_radio), jnp.float64(ra_crit))
 
-    # The "nondim wrapper" applied to JAX RHS and used by both the
-    # solver RHS callback and the Jacobian autodiff. Defined as a
-    # JAX-traceable function so jacrev can differentiate through it.
-    def _rhs_nondim(t_nd, y_nd):
-        return _rhs_jax(t_nd * t_ref, y_nd * state_scale_jax, args_tuple) * rhs_scale_jax
-
-    # JIT-compile both the RHS and its Jacobian. Compilation happens
-    # on first call; subsequent calls reuse the compiled artifact.
-    rhs_jit = jax.jit(_rhs_nondim)
-    # jacrev is fine for square Jacobians; jacfwd would also work
-    jac_jit = jax.jit(jax.jacrev(_rhs_nondim, argnums=1))
+    rhs_jit, jac_jit, is_cache_hit = _get_or_create_jitted(
+        core_bc_mode, use_radio, phase_params, eos_jax, core_module_budget
+    )
 
     info = {
         'rhs_calls': 0,
@@ -254,12 +355,15 @@ def build_jax_rhs_and_jacobian(
     def rhs_fn(t_nd, y_nd, ydot_nd):
         """scikits.odes RHS function: fills ydot in-place."""
         try:
-            result = rhs_jit(float(t_nd), jnp.asarray(y_nd))
+            result = rhs_jit(float(t_nd), jnp.asarray(y_nd), data)
             ydot_nd[:] = np.asarray(result)
             info['rhs_calls'] += 1
             if not info['first_rhs_compile_done']:
                 info['first_rhs_compile_done'] = True
-                logger.info('JAX RHS first call (JIT compile complete)')
+                if is_cache_hit:
+                    logger.debug('JAX RHS cache hit')
+                else:
+                    logger.info('JAX RHS first call (JIT compile complete)')
             return 0
         except Exception as exc:
             logger.error('JAX RHS failed: %s', exc)
@@ -268,12 +372,15 @@ def build_jax_rhs_and_jacobian(
     def jacfn(t_nd, y_nd, fy_nd, J, user_data=None):
         """scikits.odes Jacobian function: fills J in-place."""
         try:
-            jac = jac_jit(float(t_nd), jnp.asarray(y_nd))
+            jac = jac_jit(float(t_nd), jnp.asarray(y_nd), data)
             J[...] = np.asarray(jac)
             info['jac_calls'] += 1
             if not info['first_jac_compile_done']:
                 info['first_jac_compile_done'] = True
-                logger.info('JAX Jacobian first call (JIT compile complete)')
+                if is_cache_hit:
+                    logger.debug('JAX Jacobian cache hit')
+                else:
+                    logger.info('JAX Jacobian first call (JIT compile complete)')
             return 0
         except Exception as exc:
             logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD', exc)

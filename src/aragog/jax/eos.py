@@ -22,6 +22,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from aragog.eos.table_cache import read_cached_table
+
 # Enable float64 (atmodeller does the same in its __init__.py)
 jax.config.update('jax_enable_x64', True)
 
@@ -94,7 +96,7 @@ def _load_spider_ps_table(filepath: Path) -> dict:
         S_scale = float(scales[1])
         Q_scale = float(scales[2])
 
-    data = np.genfromtxt(filepath, skip_header=n_header)
+    data = read_cached_table(filepath, skiprows=n_header)
     P_all = data[:, 0] * P_scale
     S_all = data[:, 1] * S_scale
     Q_all = data[:, 2] * Q_scale
@@ -144,7 +146,7 @@ def _load_spider_phase_boundary(filepath: Path) -> dict:
         P_scale = float(scales[0])
         S_scale = float(scales[1])
 
-    data = np.genfromtxt(filepath, skip_header=n_header)
+    data = read_cached_table(filepath, skiprows=n_header)
     P = data[:, 0] * P_scale
     S = data[:, 1] * S_scale
 
