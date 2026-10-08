@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import tomllib
 from pathlib import Path
 
 import jax
@@ -36,9 +37,11 @@ from aragog.core import (  # noqa: E402
     GaussianCoreProfiles,
     IronMeltingCurve,
     QuadraticMeltingCurve,
+    build_core_module_budget,
     cmb_boundary_layer_flux,
 )
 from aragog.core import melting as m  # noqa: E402
+from aragog.core.module import CORE_MODULE_KEYS  # noqa: E402
 
 jax.config.update('jax_enable_x64', True)
 
@@ -1068,6 +1071,9 @@ def item10_leeds_history() -> None:
     flip = np.flatnonzero(np.sign(diff[k:]) != np.sign(diff[k]))[0]
     record(10, 'sign_change_myr', th['time_myr'][k + flip])
     record(10, 'r_icb_max_abs_diff_km', np.max(np.abs(r_icb - th['r_icb'])) / 1e3)
+    record(10, 'r_icb_end_rel_diff', abs(r_icb[-1] / th['r_icb'][-1] - 1))
+    t_cen = np.asarray(jax.vmap(budget.profiles.t_cen)(t_cmb))
+    record(10, 't_cen_max_abs_diff', np.max(np.abs(t_cen - th['T_cen'])))
     record(10, 'inner_core_age_myr', th['time_myr'][-1] - onset)
 
     fig, (ax, ax2, ax3) = plt.subplots(
@@ -1135,6 +1141,51 @@ def item11_coupled() -> None:
         record(11, f'closure_first_call_{case}', abs(step[first] / cmb[first]))
         share = abs(step[abs(t - 122.0) < 0.5].item()) / np.abs(step).sum()
         record(11, f'share_22_122yr_{case}', share)
+    data = ROOT / 'tools' / 'verification' / 'data'
+    for case in ('3me', '5me', 'wb_1me'):
+        t, t_core, t_node, f_cmb = np.loadtxt(
+            data / f'coupled_flux_{case}.csv', delimiter=','
+        ).T
+        live, contrast = t > 0, t_core - t_node
+        record(11, f'rows_{case}', live.sum())
+        record(11, f'wrong_sign_rows_{case}', (live & (f_cmb * contrast < 0.0)).sum())
+        record(11, f'contrast_min_K_{case}', contrast[live].min())
+        record(11, f'contrast_max_K_{case}', contrast[live].max())
+    config = tomllib.loads((data / 'coupled_config.toml').read_text())
+    params = config['interior_energetics']['aragog']['core_module']
+    params = {k: v for k, v in params.items() if k in CORE_MODULE_KEYS}
+    for mass, r_cmb, p_cmb, rho_cen, length, _, t_end in np.loadtxt(
+        data / 'coupled_core_structure.csv', delimiter=','
+    ):
+        profile = dict(rho_cen=rho_cen, length_scale=length)
+        budget = build_core_module_budget(params | profile, r_cmb=r_cmb, p_cmb_fallback=p_cmb)
+        tag = f'{mass:g}me'
+        record(11, f'p_cmb_GPa_{tag}', p_cmb / 1e9)
+        record(11, f'p_cen_GPa_{tag}', float(budget.profiles.pressure(0.0)) / 1e9)
+        record(11, f't_onset_K_{tag}', budget.t_onset)
+        record(11, f't_freeze_K_{tag}', budget.t_freeze)
+        record(11, f't_cmb_end_K_{tag}', t_end)
+    # E1: the 1 Earth-mass run at 40 to 320 mantle levels, and at rtol 1e-10 on 80
+    rows = np.loadtxt(data / 'coupled_mesh_convergence.csv', delimiter=',')
+    names = (
+        't_bf',
+        'T_core_bf',
+        'T_core_end',
+        'F10',
+        'F100',
+        'F1000',
+        'F_bf',
+        'F_2bf',
+        'F_4bf',
+    )
+    run = {(int(r[0]), r[1]): dict(zip(names, r[2:])) for r in rows}
+    for a, b in ((40, 80), (80, 160), (160, 320), (80, 'rtol')):
+        x, y = run[(a, 1e-8)], run[(b, 1e-8)] if b != 'rtol' else run[(80, 1e-10)]
+        for q in names:
+            diff = abs(x[q] - y[q]) if q.startswith('T_core') else abs(x[q] / y[q] - 1)
+            record(11, f'e1_{q}_d_{a}_{b}', diff)
+    for q in names:
+        record(11, f'e1_{q}_320', run[(320, 1e-8)][q])
 
 
 # ---------------------------------------------------------------- 5. Nimmo (2015)

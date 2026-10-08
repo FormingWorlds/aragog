@@ -159,9 +159,8 @@ class QuadraticMeltingCurve:
     -----
     The fit is only meaningful over the pressure range it was constructed
     for; outside it a negative-coefficient curve can fall through zero.
-    Callers own the range check, and the budget's freeze-out and
-    nucleation factors bound the physical consequences of an out-of-range
-    evaluation.
+    Callers own the range check, and the budget's nucleation factor bounds
+    the physical consequences of an out-of-range evaluation.
     """
 
     def __init__(self, *, t_m0: float, t_m1: float, t_m2: float):

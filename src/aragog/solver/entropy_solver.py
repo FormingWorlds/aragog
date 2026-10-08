@@ -226,16 +226,6 @@ def _resolve_step_cap(raw: float | None) -> float:
 _DEFAULT_PHASE_BOUNDARY_ENTROPY_MARGIN = 200.0
 
 
-def jax_vmap_r_icb(budget):
-    """The budget's vectorised inner-core radius, compiled once per budget."""
-    fn = getattr(budget, '_vmap_r_icb', None)
-    if fn is None:
-        import jax
-
-        fn = budget._vmap_r_icb = jax.jit(jax.vmap(budget.r_icb))
-    return fn
-
-
 def _resolve_entropy_margin(raw: float | None) -> float:
     """Coerce the configured phase-boundary proximity band to a usable float.
 
@@ -2247,15 +2237,12 @@ class EntropySolver:
         shell = self._core_shell()
         return 0 if shell is None else shell.n_cells
 
-    def _n_extra(self) -> int:
-        """Number of state slots after the staggered entropies."""
-        return len(EXTRA_STATE_SLOTS.get(getattr(self, '_core_bc', None), ())) + self._n_shell()
-
     def set_initial_shell_temperature(self, t_shell: npt.NDArray | None) -> None:
-        """Set the shell temperatures [K] of a stratified core for the next solve (a resume).
+        """Set the shell temperatures [K] of a stratified core (a resume).
 
-        ``None`` starts the shell from the previous solution, or on the adiabat of the core
-        without one; must be called before ``set_initial_entropy``.
+        Must be called before ``set_initial_entropy``. The profile applies to every later
+        call of ``set_initial_entropy``; ``None`` clears it, so the shell starts from the
+        previous solution, or on the adiabat of the core without one.
         """
         self._T_shell_init = None if t_shell is None else np.asarray(t_shell, dtype=float)
 
@@ -2618,11 +2605,12 @@ class EntropySolver:
             dSdt_s_cmb_per_s = float(dSdt[0]) / SECS_PER_YEAR
 
             inputs = (F_cmb_basic, dSdt_s_cmb_per_s, T_cmb_basic, cp_cmb_basic, t_core)
-            if t_shell is None:
-                rates = (*self._core_module_rhs_per_s(*inputs), np.empty(0))
-            else:
-                rates = self._core_shell_rhs_per_s(*inputs, t_shell)
-            return np.concatenate([dSdt, np.r_[rates[0], rates[1], rates[2]] * SECS_PER_YEAR])
+            rates = (
+                self._core_module_rhs_per_s(*inputs)
+                if t_shell is None
+                else self._core_shell_rhs_per_s(*inputs, t_shell)
+            )
+            return np.concatenate([dSdt, np.r_[rates] * SECS_PER_YEAR])
 
         # bower2018: T_cmb ODE state drained by the conduction-only flux.
         F_cmb = float(self.state._heat_flux[0])
@@ -2789,10 +2777,9 @@ class EntropySolver:
         ``q_radio``, the gradient equation reduces exactly to
         ``_energy_balance_rhs_per_s`` for a given flux. In profile mode
         ``C_eff(T_core)`` carries secular, latent, and gravitational
-        terms, so the basal boundary can only change entropy as fast as
-        the core's true thermal inertia allows. ``F_cmb`` is the
-        boundary-layer flux of ``_core_module_cmb_flux``, so the gradient
-        slot sets no flux; the CMB temperature is ``T_core``.
+        terms. ``F_cmb`` is the boundary-layer flux of
+        ``_core_module_cmb_flux`` and the CMB temperature is ``T_core``, so
+        the gradient slot is passive: no other rate depends on it.
 
         Parameters
         ----------
@@ -2990,7 +2977,8 @@ class EntropySolver:
             return None
 
         n_stag = self._n_stag
-        N = n_stag + self._n_extra()
+        n_core = n_stag + len(EXTRA_STATE_SLOTS.get(self._core_bc, ()))
+        N = n_core + self._n_shell()
 
         J = lil_matrix((N, N), dtype=float)
         # Pentadiagonal block for the entropy part
@@ -3003,7 +2991,6 @@ class EntropySolver:
         # A superset pattern: every extra state couples to S[0..2] and to the other extra
         # states (core_module: dSdr_cmb follows T_core's cooling rate), and S[0], S[1]
         # couple back through the CMB flux.
-        n_core = n_stag + len(EXTRA_STATE_SLOTS.get(self._core_bc, ()))
         for extra in range(n_stag, n_core):
             J[extra, 0] = 1.0
             J[extra, 1] = 1.0
@@ -4348,6 +4335,7 @@ class EntropySolver:
                 content = [float(shell.heat_content(t_shell_traj[i])) for i in (0, -1)]
                 step_dE_core += content[1] - content[0]
                 self._check_shell_base(budget, t_core_traj, base)
+            self._check_core_regime(budget, t_core_traj)
         elif core_bc == 'bower2018':
             C_core = getattr(self, '_core_cap', None)
             if C_core is None:
@@ -4459,11 +4447,27 @@ class EntropySolver:
             [p_int, p_cmb, Q_radio_i, Q_tidal_i, Q_radio_cons_i, Q_tidal_cons_i, lhs_i - rhs_i]
         )
 
+    def _check_core_regime(self, budget, t_core) -> None:
+        """Refuse a core that crystallizes other than from the centre up: the budget books
+        latent and gravitational heat only for bottom-up growth and its freeze-out."""
+        from aragog.core.regime import REGIME_BOTTOM_UP, REGIME_FULLY_FROZEN, regime_name
+
+        codes = np.asarray(budget.regime_batch(t_core))
+        frozen_ok = budget.t_freeze <= budget.t_onset  # the CMB freezes last
+        bad = (codes > REGIME_BOTTOM_UP) & ((codes != REGIME_FULLY_FROZEN) | (not frozen_ok))
+        if bad.any():
+            i = int(np.argmax(bad))
+            raise ValueError(
+                f'core_module: the core crystallizes {regime_name(codes[i])} at T_core = '
+                f'{float(t_core[i]):.1f} K; only bottom-up growth is modelled, and the budget '
+                'books no latent or gravitational heat in this regime'
+            )
+
     def _check_shell_base(self, budget, t_core, layer_base) -> None:
         """Refuse an inner core that reaches the shell base, and warn once when the layer base
         comes within three cells of it, where the shell no longer holds the layer."""
         shell = budget.shell
-        r_icb = float(np.max(np.asarray(jax_vmap_r_icb(budget)(t_core))))
+        r_icb = float(np.max(np.asarray(budget.r_icb_batch(t_core))))
         if r_icb >= shell.r_base:
             raise ValueError(
                 f'core_module: the inner core ({r_icb / 1e3:.0f} km) reaches the base of the '

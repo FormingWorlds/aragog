@@ -1,0 +1,4 @@
+# {"source": "PROTEUS coupled run, config tools/verification/data/coupled_config.toml with interior_energetics.aragog.core_bc = \"core_module\", planet.mass_tot per row; the core profile of the last snapshot and the CMB of the last row", "commits": {"PROTEUS": "93c88c3b", "aragog": "404bf7a"}, "columns": ["mass_tot", "r_cmb", "p_cmb", "rho_cen", "length_scale", "p_cen", "t_cmb_end"]}
+1,3409103.676,1.029887399e+11,13559.65295,6281583.149,3.413871972e+11,5930.164615
+3,4567422.25,2.979815975e+11,18830.95015,6936889.434,1.045092149e+12,8080.633092
+5,5136780.954,5.1561917e+11,22506.32516,7544461.767,1.837480443e+12,9611.451687

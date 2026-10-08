@@ -22,7 +22,6 @@ import jax
 import jax.numpy as jnp
 import numpy as _np
 
-from aragog.core.layer import CoreShell
 from aragog.core.melting import IronMeltingCurve
 from aragog.core.profiles import GaussianCoreProfiles
 from aragog.core.stratification import _q_ad
@@ -141,9 +140,11 @@ class CoreEnergyBudget:
         self.legacy_tfac = None if legacy_tfac is None else float(legacy_tfac)
         self.stratification = bool(stratification)
         self.k_core = None if k_core is None else float(k_core)
-        self.shell = (
-            CoreShell(profiles, self.k_core, **(layer or {})) if stratification else None
-        )
+        self.shell = None
+        if stratification:
+            from aragog.core.layer import CoreShell
+
+            self.shell = CoreShell(profiles, self.k_core, **(layer or {}))
         self.r_convecting = self.shell.r_base if stratification else profiles.r_cmb
 
     # -- static integrals ----------------------------------------------------
@@ -204,9 +205,7 @@ class CoreEnergyBudget:
     @property
     def t_freeze(self) -> float:
         """CMB temperature [K] for full core freeze-out at the CMB."""
-        p = self.profiles
-        p_cmb = float(p.p_cmb)
-        return float(self.melting_curve.t_melt(p_cmb))
+        return float(self.melting_curve.t_melt(self.profiles.p_cmb))
 
     def _superheat(self, r, t_cmb):
         """Adiabat minus melting curve [K] at radius ``r``; positive = liquid."""
@@ -253,6 +252,18 @@ class CoreEnergyBudget:
         return self._r_icb_root(t_cmb)
 
     @functools.cached_property
+    def r_icb_batch(self):
+        """``r_icb`` vectorised and compiled, once per budget."""
+        return jax.jit(jax.vmap(self.r_icb))
+
+    @functools.cached_property
+    def regime_batch(self):
+        """``crystallization_regime`` vectorised and compiled, once per budget."""
+        from aragog.core.regime import crystallization_regime
+
+        return jax.jit(jax.vmap(lambda t_cmb: crystallization_regime(self, t_cmb)))
+
+    @functools.cached_property
     def _r_icb_root(self):
         """The custom-JVP-wrapped boundary solve, built once per instance."""
 
@@ -295,16 +306,6 @@ class CoreEnergyBudget:
         safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
         interior = (radius > 0.0) & (radius < self.profiles.r_cmb) & self._liquid_remains(t_cmb)
         return jnp.where(interior, jnp.abs(-d_dt / safe), 0.0)
-
-    def freeze_out_factor(self, t_cmb):
-        """Diagnostic survival of the liquid outer core, in [0, 1].
-
-        Sigmoid of the CMB superheat over the nucleation width: one while
-        liquid remains at the CMB, falling to zero as the last liquid
-        freezes. The effective heat capacity steps discontinuously at full
-        freeze-out; this factor is diagnostic only.
-        """
-        return jax.nn.sigmoid(self._superheat(self.profiles.r_cmb, t_cmb) / self.icn_width)
 
     def _liquid_remains(self, t_cmb):
         """False once even the CMB sits below the melting curve."""

@@ -108,19 +108,3 @@ def test_large_core_layer_clamps_at_the_conducted_flow_peak():
     assert depth == pytest.approx(prof.r_cmb - r_peak, abs=1.0)
     # The clamp binds: the unclamped rising-branch root would be far deeper.
     assert depth < 0.2 * prof.r_cmb
-
-
-def test_stratification_sensitivity_fn_raises_when_r_peak_less_than_r_cmb():
-    """make_thickness_fn requires r_peak >= r_cmb."""
-    from aragog.core.stratification import make_thickness_fn
-
-    prof = GaussianCoreProfiles(
-        rho_cen=12500.0,
-        length_scale=7272e3,
-        r_cmb=9000e3,
-        p_cmb=300e9,
-        alpha=1.25e-5,
-        c_p=840.0,
-    )
-    with pytest.raises(ValueError, match='stratification requires r_peak >= r_cmb'):
-        make_thickness_fn(prof, 130.0)

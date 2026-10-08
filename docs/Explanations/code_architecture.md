@@ -109,7 +109,7 @@ These are matrix-vector products inside the RHS, not loops.
 
 ### JAX path: opt-in analytic Jacobian
 
-When `solver_method = "cvode"` and `use_jax_jacobian = true`, the PROTEUS wrapper installs a factory via `EntropySolver.set_jax_cvode_factory()`. The factory returns `(rhs_fn, jac_fn)` callbacks for CVODE built by tracing `aragog.jax.phase.compute_fluxes` with `jax.jacrev`. The numpy RHS path is otherwise untouched. The `aragog.jax` subpackage is only imported when this path is enabled; there is no passive JAX import at module load.
+When `solver_method = "cvode"` and `use_jax_jacobian = true`, the PROTEUS wrapper installs a factory via `EntropySolver.set_jax_cvode_factory()`. The factory returns `(rhs_fn, jac_fn)` callbacks for CVODE built by tracing `aragog.jax.phase.compute_fluxes` with `jax.jacrev`. The numpy RHS path is otherwise untouched. The `aragog.jax` subpackage is only imported when this path is enabled; there is no passive JAX import at module load. The `aragog.core` package is imported only when `core_bc = "core_module"`, and its stratified layer only when `stratification = true`.
 
 ## Data flow during one RHS evaluation
 

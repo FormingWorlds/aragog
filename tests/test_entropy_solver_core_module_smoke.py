@@ -12,6 +12,7 @@ content change.
 from __future__ import annotations
 
 import importlib.util
+import itertools
 
 import numpy as np
 import pytest
@@ -254,6 +255,8 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     )
     assert float(out.heat_flux[0]) == pytest.approx(expected, rel=1e-10)
     q_cond = k * (t_core - t_m) / dr_half
+    phi = float(shared_eos.melt_fraction(np.array([p_cmb]), y_end[:1])[0])
+    assert phi == pytest.approx(0.19, abs=0.01)  # the mushy base that sets both branches
     if regime == 'conduction':
         assert expected == pytest.approx(q_cond, rel=1e-12)
     else:
@@ -272,8 +275,6 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     assert np.sign(out.F_cmb) == np.sign(d_core)
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
     if regime == 'boundary_layer':
-        phi = float(shared_eos.melt_fraction(np.array([p_cmb]), y_end[:1])[0])
-        assert phi == pytest.approx(0.19, abs=0.01)
         assert 0.1 < out.F_cmb < 1.0
 
 
@@ -318,11 +319,11 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
     phi = [
         float(shared_eos.melt_fraction(np.array([p_cmb]), x[:1])[0]) for x in (S, out.S_final)
     ]
-    # The numbers core_bc.md quotes for this case.
+    # The numbers core_bc.md quotes for this case, which hold on a base at these melt fractions.
+    assert phi == pytest.approx([0.67, 0.65], abs=0.01)
     assert 0.2 < float(t_core[0] - t_core[-1]) / 4.0 < 0.4
     assert 5.0e4 < out.F_cmb < 2.0e5
     assert 320.0 < float(t_core[-1]) - t_m < 340.0
-    assert phi == pytest.approx([0.67, 0.65], abs=0.01)
     assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
     assert out.step_dE_core_J == pytest.approx(content, rel=1e-6)
 
@@ -365,6 +366,82 @@ needs_cvode = pytest.mark.skipif(
 )
 
 
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_a_cvode_call_through_onset_and_freeze_out_closes_its_heat(shared_eos):
+    """A core 0.5 K above the onset over a liquid base cools through the inner-core band and
+    past freeze-out in one CVODE call: a linear curve puts freeze-out 116 K below the onset,
+    and a small entropy of fusion keeps the latent heat to a few K of cooling. The core heat
+    equals the heat_content difference and, at rtol 1e-10, the CMB heat to 1e-6 (3.2e-8)."""
+    params = {
+        k: v
+        for k, v in CORE_MODULE_PARAMS.items()
+        if k not in ('light_element_fraction', 'depression')
+    }
+    params |= dict(melting_curve='quadratic', t_m0=1.0, t_m1=2.71e-12, t_m2=0.0, ds_fusion=0.17)
+    probe = _build('core_module', shared_eos, params)
+    p_cmb = float(probe._P_basic_flat[0])
+    S = np.full(probe._n_stag, float(shared_eos.liquidus_entropy(np.array([p_cmb]))[0]) + 300.0)
+    t_m = float(np.asarray(shared_eos.temperature(np.array([p_cmb]), S[:1])).item())
+    params['t_m0'] = (t_m + 600.0) / probe._core_module_budget.t_onset
+    solver = _build('core_module', shared_eos, params, end_time=100.0, solver_method='cvode')
+    solver.parameters.solver.rtol = 1e-10
+    budget = solver._core_module_budget
+    solver.set_initial_core_temperature(budget.t_onset + 0.5)
+    solver.set_initial_entropy(S)
+    solver.solve()
+    out = solver.get_state()
+    t0, t1 = (float(x) for x in solver._solution.y[solver._n_stag + 1, [0, -1]])
+    assert t0 > budget.t_onset > budget.t_freeze > t1
+    content = float(budget.heat_content(t1) - budget.heat_content(t0))
+    assert out.step_dE_core_J == pytest.approx(content, rel=1e-9)
+    assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
+def test_chained_cvode_calls_close_the_core_ledger(shared_eos):
+    """A core 300 K above a liquid base, hot-started through calls ending at 1, 2, 12, 22 and
+    122 yr as a coupled run makes them, closes its heat against the CMB heat to 1e-6 in each
+    call and cumulatively (4.5e-7 in the 22 to 122 yr call, 4.0e-7 cumulative)."""
+    solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, solver_method='cvode')
+    n, p_cmb = solver._n_stag, solver._P_basic_flat[:1]
+    S = np.full(n, float(shared_eos.liquidus_entropy(p_cmb)[0]) + 300.0)
+    solver.set_initial_core_temperature(float(shared_eos.temperature(p_cmb, S[:1])[0]) + 300.0)
+    solver.set_initial_entropy(S)
+    residual, cmb_heat = 0.0, 0.0
+    for start, end in itertools.pairwise((0.0, 1.0, 2.0, 12.0, 22.0, 122.0)):
+        solver.parameters.solver.start_time, solver.parameters.solver.end_time = start, end
+        if start > 0.0:
+            solver.set_initial_core_temperature(None)
+            solver.set_initial_entropy(np.asarray(solver._solution.y)[:n, -1])
+        solver.solve()
+        out = solver.get_state()
+        assert out.step_dE_F_cmb_J > 0.0
+        residual += out.step_dE_core_J + out.step_dE_F_cmb_J
+        cmb_heat += out.step_dE_F_cmb_J
+        assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-6 * out.step_dE_F_cmb_J
+    assert abs(residual) < 1e-6 * cmb_heat
+
+
+def test_a_core_that_freezes_from_the_top_is_refused(shared_eos):
+    """A melting curve that the adiabat meets first at the CMB freezes the core from the top;
+    the solve refuses it, since the budget books no latent or gravitational heat there."""
+    params = {
+        k: v
+        for k, v in CORE_MODULE_PARAMS.items()
+        if k not in ('light_element_fraction', 'depression')
+    }
+    params |= {'melting_curve': 'quadratic', 't_m0': 5200.0, 't_m1': -1.2e-12, 't_m2': 0.0}
+    solver = _build('core_module', shared_eos, params)
+    budget = solver._core_module_budget
+    assert budget.t_freeze > budget.t_onset
+    solver.set_initial_core_temperature(budget.t_freeze - 200.0)
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    with pytest.raises(ValueError, match='crystallizes top_down'):
+        solver.solve()
+
+
 def test_a_stratified_core_refuses_radau(shared_eos):
     solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=1.0)
     solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
@@ -386,9 +463,9 @@ def test_only_a_stratified_core_warns_that_the_layer_is_experimental(shared_eos,
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_a_hot_core_call_closes_its_heat_to_1e_minus_6(shared_eos):
-    """A core 300 K above the mantle side cools by about 1e-3 K in a 10-yr call on 80 nodes; with
-    its temperature integrated as its change in the call, the core heat matches the CMB heat to
-    1e-6 of it, where an absolute core temperature left 3.5e-6 at the default tolerance."""
+    """A core 300 K above the mantle side of the CMB cools by about 2e-6 K in a 10-yr call on 80
+    nodes, by conduction into a mushy base; with its temperature integrated as its change in the
+    call, the core heat matches the CMB heat to 1e-6 of it (4e-8)."""
     solver = _build(
         'core_module',
         shared_eos,
@@ -396,12 +473,14 @@ def test_a_hot_core_call_closes_its_heat_to_1e_minus_6(shared_eos):
         n_nodes=80,
         end_time=10.0,
         solver_method='cvode',
+        s_init='driven',
         core_offset=300.0,
     )
-    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
     solver.solve()
     out = solver.get_state()
-    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-6 * abs(out.step_dE_F_cmb_J)
+    t_core = np.asarray(solver._solution.y)[solver._n_stag + 1]
+    assert out.step_dE_F_cmb_J > 0.0 and t_core[-1] < t_core[0]  # the core loses heat
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-6 * out.step_dE_F_cmb_J
 
 
 @needs_cvode
@@ -444,6 +523,7 @@ def test_a_core_heated_from_above_warms_its_top_and_closes_its_heat():
     S = _driven_s_profile(solver._n_stag)
     p_cmb = solver._P_basic_flat[:1]
     t_m = float(np.asarray(solver.entropy_eos.temperature(p_cmb, S[:1])).item())
+    assert t_m - 300.0 > solver._core_module_budget.t_onset  # no inner core at the start
     solver.set_initial_core_temperature(t_m - 300.0)
     solver.set_initial_entropy(S)
     solver.solve()
@@ -718,6 +798,7 @@ def test_a_resume_restarts_the_shell_where_the_previous_solve_ended():
         S = _driven_s_profile(solver._n_stag)
         p_cmb = solver._P_basic_flat[:1]
         t_m = float(np.asarray(solver.entropy_eos.temperature(p_cmb, S[:1])).item())
+        assert t_m - 300.0 > solver._core_module_budget.t_onset  # no inner core at the start
         return solver, S, t_m - 300.0
 
     first, S, t_core = heated()

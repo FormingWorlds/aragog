@@ -1162,6 +1162,7 @@ def test_step_dE_core_heating_and_exception_fallback():
         t_onset=5150.0,
         t_freeze=4000.0,
         effective_capacity=lambda t: 2.0e27,
+        regime_batch=lambda t: np.zeros(len(t), dtype=int),
     )
     s._core_module_budget = mock_budget
 
@@ -1233,3 +1234,36 @@ def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():
     budget = build_core_module_budget({}, r_cmb=3.48e6, p_cmb_fallback=136e9)
     with pytest.raises(ValueError, match='needs k_core'):
         budget.conducted_adiabatic_flow(3.48e6, 4500.0)
+
+
+@pytest.mark.physics_invariant
+def test_the_core_regime_guard_refuses_all_but_bottom_up_freezing():
+    """A core that walks bottom-up through freeze-out passes; a core whose CMB freezes before
+    its centre is refused in the top-down band and when fully frozen, by regime name."""
+    import aragog.solver.entropy_solver as es
+    from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, IronMeltingCurve
+    from aragog.core.melting import QuadraticMeltingCurve
+
+    prof = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7200e3,
+        r_cmb=3480e3,
+        p_cmb=136e9,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    kw = dict(ds_fusion=170.0, icn_width=10.0)
+    earth = CoreEnergyBudget(
+        prof, IronMeltingCurve(light_element_fraction=0.1, depression=1.2), **kw
+    )
+    s._check_core_regime(earth, np.array([4300.0, 3900.0, 3300.0]))
+    top_down = CoreEnergyBudget(
+        prof, QuadraticMeltingCurve(t_m0=5200.0, t_m1=-1.2e-12, t_m2=0.0), **kw
+    )
+    assert top_down.t_freeze > top_down.t_onset
+    s._check_core_regime(top_down, np.array([5300.0, 5100.0]))
+    with pytest.raises(ValueError, match='crystallizes top_down at T_core = 4300.0 K'):
+        s._check_core_regime(top_down, np.array([5300.0, 4300.0]))
+    with pytest.raises(ValueError, match='crystallizes fully_frozen'):
+        s._check_core_regime(top_down, np.array([2000.0]))

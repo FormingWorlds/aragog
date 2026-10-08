@@ -107,6 +107,7 @@ def test_budget_terms_match_the_thermal_history_table(script):
 def test_core_history_matches_the_thermal_history_table(script):
     got = _reproduces(script, 10)
     assert got['t_cmb_max_abs_diff'] < 0.2 and got['onset_myr_aragog'] == got['onset_myr_leeds']
+    assert got['t_cen_max_abs_diff'] < 1.0 and got['r_icb_end_rel_diff'] < 0.01
 
 
 @pytest.mark.slow
@@ -118,6 +119,24 @@ def test_coupled_tables_reproduce_the_page(script):
     for case, bound in (('1me', 1e-6), ('1me_rtol1e-10', 1e-6), ('3me', 5e-6), ('5me', 5e-6)):
         assert got[f'closure_max_after_1kyr_{case}'] < bound
         assert got[f'closure_end_{case}'] < bound
+        assert got[f'closure_first_call_{case}'] < 3e-4  # 1.5e-4 at 1 Earth mass
+    for case in ('3me', '5me', 'wb_1me'):
+        assert got[f'wrong_sign_rows_{case}'] == 0 < got[f'rows_{case}']
+    for mass in ('1me', '3me', '5me'):  # no inner core in any run
+        assert got[f't_cmb_end_K_{mass}'] > max(
+            got[f't_onset_K_{mass}'], got[f't_freeze_K_{mass}']
+        )
+    assert got['t_freeze_K_1me'] < got['t_onset_K_1me']  # bottom-up at 1 Earth mass
+    assert (
+        got['t_freeze_K_3me'] > got['t_onset_K_3me']
+        and got['t_freeze_K_5me'] > got['t_onset_K_5me']
+    )
+    # E1, bounds set before the runs: 5 % on times and fluxes, 10 K on temperatures
+    for q in ('t_bf', 'F10', 'F100', 'F1000', 'F_bf'):
+        assert got[f'e1_{q}_d_160_320'] < 0.05
+    assert got['e1_T_core_bf_d_160_320'] < 10.0 and got['e1_T_core_end_d_160_320'] < 10.0
+    for pair in ('40_80', '80_160', '160_320'):  # a half-cell conduction flux would halve
+        assert got[f'e1_F_2bf_d_{pair}'] < 0.4 and got[f'e1_F_4bf_d_{pair}'] < 0.4
 
 
 @pytest.mark.slow

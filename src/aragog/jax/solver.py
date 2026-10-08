@@ -27,7 +27,6 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.constants import Stefan_Boltzmann
 
-from aragog.core.boundary_layer import cmb_boundary_layer_flux
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.jax.phase import (
     MeshArrays,
@@ -585,6 +584,8 @@ def dSdt_core_module(
         d(state_ext)/dt at the same layout, [J/kg/K/yr] for entropy,
         [J/kg/K/m/yr] for dSdr_cmb, [K/yr] for T_core and the shell.
     """
+    from aragog.core.boundary_layer import cmb_boundary_layer_flux
+
     eos, params, mesh, bc, heating_static, H_radio_fn = args[:6]
     core_budget, q_radio_core, ra_crit = args[6:9]
     shell = core_budget.stratification

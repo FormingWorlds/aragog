@@ -65,60 +65,6 @@ def _thickness_primal(profiles, k_core, t_cmb, q_cmb):
     return jnp.where(q_cmb <= 0.0, p.r_cmb, thickness)
 
 
-def make_thickness_fn(profiles, k_core: float):
-    """Build the stratified-thickness solve with its sensitivity rule.
-
-    The bisection is comparison-driven, so autodiff sees only the
-    converged constant and reads zero derivatives through it; without the
-    rule the analytic-Jacobian path would miss the layer's response to
-    the state entirely. The rule is the implicit function theorem on
-    ``Q_ad(r_s, T) = q``:
-
-        dr_s/dq = 1 / (dQ_ad/dr),  dr_s/dT = -(dQ_ad/dT) / (dQ_ad/dr),
-
-    with the thickness tangent the negative of the base's, pinned to zero
-    in the clamped regimes (superadiabatic, fully stratified, past-peak)
-    where the primal does not move.
-    """
-    r_peak = float(profiles.d_scale) * (1.5**0.5)
-    if r_peak < float(profiles.r_cmb):
-        raise ValueError(
-            f'stratification requires r_peak >= r_cmb (got r_peak={r_peak:.3e} m '
-            f'< r_cmb={float(profiles.r_cmb):.3e} m); the conductive matching '
-            f'model has a thickness discontinuity when the conducted flow peaks '
-            f'inside the core'
-        )
-
-    @jax.custom_jvp
-    def thickness(t_cmb, q_cmb):
-        return _thickness_primal(profiles, k_core, t_cmb, q_cmb)
-
-    @thickness.defjvp
-    def thickness_jvp(primals, tangents):
-        t_cmb, q_cmb = primals
-        t_dot, q_dot = tangents
-        p = profiles
-        value = _thickness_primal(profiles, k_core, t_cmb, q_cmb)
-        r_s = p.r_cmb - value
-        dq_dr = jax.grad(lambda r: _q_ad(p, k_core, r, t_cmb))(r_s)
-        dq_dt = jax.grad(lambda t: _q_ad(p, k_core, r_s, t))(t_cmb)
-        safe = jnp.where(jnp.abs(dq_dr) > 0.0, dq_dr, 1.0)
-        dr_s = (q_dot - dq_dt * t_dot) / safe
-        # The thickness moves only while the base sits strictly inside
-        # the open rising branch; every clamped regime (no layer, full
-        # stratification, past-peak clamp) has zero sensitivity.
-        r_peak = p.d_scale * jnp.sqrt(1.5)
-        moving = (
-            (value > 0.0)
-            & (value < p.r_cmb)
-            & (r_s > 0.0)
-            & (r_s < jnp.minimum(r_peak, p.r_cmb))
-        )
-        return value, jnp.where(moving, -dr_s, 0.0)
-
-    return thickness
-
-
 def adiabatic_ratio(entropy: 'CoreEntropyBudget', t_cmb, q_cmb):
     """ADR = Q_cmb / Q_k: below one the top of the core is subadiabatic."""
     return q_cmb / entropy.adiabatic_heat_flow(t_cmb)

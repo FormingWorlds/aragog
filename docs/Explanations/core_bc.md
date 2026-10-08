@@ -125,6 +125,8 @@ The dynamo field-strength options `f_ohm` and `flux_geometry` belong to PROTEUS,
 
 PROTEUS writes six diagnostics of this budget to its output helpfile on every core_module row: the stable layer thickness below the CMB, the entropy margin available to a dynamo, the rms field strength, the crystallisation regime code (0 fully liquid, 1 bottom-up, 2 top-down, 3 snow, 4 fully frozen), the effective heat capacity $\tilde{C}(T_\text{cmb})$ and the inner-core radius.
 
+The budget books latent and gravitational heat only for an inner core that grows from the centre and for its freeze-out. A call whose core enters the top-down or snow regime, or freezes completely without growing from the centre, raises an error at the end of the call: the energetics of those regimes are not modelled.
+
 In aragog `SolverOutput`, the per-call core energy change is recorded in `step_dE_core_J` [J], evaluating $\int \tilde{C} dT_\text{cmb}$ over the call, plus the shell's heat change with `stratification = true`; the shell temperatures (`core_T_shell`), the layer base and the CMB temperature (`core_T_top`) are in the output, and a resumed run passes the shell back with `set_initial_shell_temperature`.
 
 ## Energy conservation and core closure
@@ -137,13 +139,7 @@ $$
 
 where $\Delta E(F_\text{cmb}) = \int F_\text{cmb} A_\text{cmb} dt$ and $\Delta E_\text{core} = \int \tilde{C} dT_\text{core}$.
 
-A relative tolerance rtol on the core temperature allows an integration error of about $\text{rtol} \times T_\text{core}$ per step (0.058 mK at $\text{rtol} = 10^{-8}$ and $T_\text{core} \approx 5800$ K), so the residual is meaningful only where the core's temperature change over the call is much larger. Core energy closure is therefore a meaningful check only where
-
-$$
-|\Delta T_\text{core}| \ge 10^3 \times \text{rtol} \times T_\text{core},
-$$
-
-58 mK per call for the values above; a strongly stratified core with a CMB flux near $10^{-3}$ W m$^{-2}$ changes temperature far more slowly and falls outside it. The smoke test `test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy` (a core cooling by about 1 K over a liquid base) holds the residual below $10^{-6}$ and the core heat change equal to the `heat_content` difference to $10^{-6}$.
+The solver integrates the core temperature, and the shell temperatures of a stratified core, as their change within the call: the state is offset by its value at the start of the call, so the solver tolerance acts on that change and not on the absolute temperature. The smoke test `test_a_hot_core_call_closes_its_heat_to_1e_minus_6` holds a 10-yr call in which the core cools by about $2 \times 10^{-6}$ K to a residual below $10^{-6}$, and `test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy` (a core cooling by about 1 K over a liquid base) holds the residual below $10^{-6}$ and the core heat change equal to the `heat_content` difference to $10^{-6}$.
 
 The core heat change of a call, $\int \tilde{C}\, dT_\text{core}$, uses 32-point Gauss-Legendre quadrature in $T_\text{core}$ on each segment between the inner-core onset and freeze-out temperatures, with a square-root substitution across nucleation; with `stratification = true` the capacity also depends on the layer base, so the integral is a trapezoid rule over the call's output points, and the shell adds the change of its heat content. The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along each cell's entropy path with a trapezoid rule, in one EOS call for all points and cells. In `core_module` the rule has 512 points, since $\rho T$ has a kink at the solidus and a coarse uniform rule aliases over it on fine meshes; the other modes use 16.
 

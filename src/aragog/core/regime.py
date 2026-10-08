@@ -57,9 +57,8 @@ def crystallization_regime(budget: CoreEnergyBudget, t_cmb):
     The grid resolves shells wider than ``r_cmb / 512``; a thinner shell
     than that reads as its surrounding regime.
     """
-    p = budget.profiles
-    r = jnp.linspace(0.0, p.r_cmb, _N_GRID)
-    superheat = p.adiabat(r, t_cmb) - budget.melting_curve.t_melt(p.pressure(r))
+    r = jnp.linspace(0.0, budget.profiles.r_cmb, _N_GRID)
+    superheat = budget._superheat(r, t_cmb)
     solid = superheat < 0.0
     changes = jnp.sum(jnp.abs(jnp.diff(solid.astype(jnp.int32))))
     # jnp.select takes the first true condition, the order of the nested checks.
