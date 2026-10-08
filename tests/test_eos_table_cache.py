@@ -44,6 +44,42 @@ def table_file(tmp_path: Path) -> Path:
     return p
 
 
+def _write_cache(
+    cache_file: Path,
+    data: np.ndarray,
+    format_version: int = CACHE_FORMAT_VERSION,
+    source_digest: str = '',
+    skiprows: int = 0,
+) -> None:
+    np.savez(
+        cache_file,
+        data=data,
+        format_version=np.int64(format_version),
+        source_digest=np.array(source_digest),
+        skiprows=np.int64(skiprows),
+    )
+
+
+def _assert_warns_once_across_reads(
+    table_file: Path,
+    expected: np.ndarray,
+    caplog: pytest.LogCaptureFixture,
+    message_substring: str,
+    n_reads: int = 5,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger='fwl.aragog.eos.table_cache'):
+        for _ in range(n_reads):
+            arr = read_cached_table(table_file)
+            assert np.array_equal(arr, expected)
+
+    warning_records = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and message_substring in r.message
+    ]
+    assert len(warning_records) == 1
+
+
 class TestTableCache:
     """Test suite for tabular caching reader."""
 
@@ -267,14 +303,14 @@ class TestTableCache:
         assert not (table_dir / f'{table_file.name}.cache.npz').exists()
 
     def test_read_only_cache_root_warns_once(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self,
+        table_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Verify 5 reads of a table under a read-only root emit exactly 1 warning."""
-        custom_dir = tmp_path / 'uncreatable_dir'
+        custom_dir = table_file.parent / 'uncreatable_dir'
         monkeypatch.setenv('ARAGOG_TABLE_CACHE_DIR', str(custom_dir))
-
-        table_file = tmp_path / 'mkdir_fail.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
 
         orig_mkdir = Path.mkdir
 
@@ -285,17 +321,12 @@ class TestTableCache:
 
         monkeypatch.setattr(Path, 'mkdir', failing_mkdir)
 
-        with caplog.at_level(logging.WARNING, logger='fwl.aragog.eos.table_cache'):
-            for _ in range(5):
-                arr = read_cached_table(table_file)
-                assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
-
-        warning_records = [
-            r
-            for r in caplog.records
-            if r.levelno == logging.WARNING and 'Could not create table cache root' in r.message
-        ]
-        assert len(warning_records) == 1
+        _assert_warns_once_across_reads(
+            table_file,
+            np.array([[1.0, 2.0], [3.0, 4.0]]),
+            caplog,
+            'Could not create table cache root',
+        )
         assert not custom_dir.exists()
         assert not table_file.with_name(f'{table_file.name}.cache.npz').exists()
 
@@ -404,52 +435,37 @@ class TestTableCache:
         reason='Root bypasses read-only directory permissions',
     )
     def test_existing_read_only_cache_root_warns_once(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+        self,
+        table_file: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Verify an existing chmod 0o555 cache root logs exactly one warning across 5 reads."""
-        ro_cache_dir = tmp_path / 'existing_ro_cache'
+        ro_cache_dir = table_file.parent / 'existing_ro_cache'
         ro_cache_dir.mkdir(parents=True)
         ro_cache_dir.chmod(0o555)
 
         monkeypatch.setenv('ARAGOG_TABLE_CACHE_DIR', str(ro_cache_dir))
 
-        table_file = tmp_path / 'source_table.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
-
         try:
-            with caplog.at_level(logging.WARNING, logger='fwl.aragog.eos.table_cache'):
-                for _ in range(5):
-                    arr = read_cached_table(table_file)
-                    assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
-
-            warning_records = [
-                r
-                for r in caplog.records
-                if r.levelno == logging.WARNING and 'Could not write table cache' in r.message
-            ]
-            assert len(warning_records) == 1
+            _assert_warns_once_across_reads(
+                table_file,
+                np.array([[1.0, 2.0], [3.0, 4.0]]),
+                caplog,
+                'Could not write table cache',
+            )
             assert ro_cache_dir.resolve() in _FAILED_CACHE_ROOTS
         finally:
             ro_cache_dir.chmod(0o755)
 
-    def test_cache_hit_with_empty_data_is_refused(self, tmp_path: Path) -> None:
+    def test_cache_hit_with_empty_data_is_refused(self, table_file: Path) -> None:
         """Verify a cache file containing an empty data array is refused and table is re-parsed."""
-        table_file = tmp_path / 'non_empty.dat'
-        table_file.write_text('1.0 2.0\n3.0 4.0\n')
         digest = hashlib.blake2b(table_file.read_bytes()).hexdigest()
-
         cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
-        np.savez(
-            cache_file,
-            data=np.array([]),
-            format_version=np.int64(CACHE_FORMAT_VERSION),
-            source_digest=np.array(digest),
-            skiprows=np.int64(0),
-        )
+        _write_cache(cache_file, data=np.array([]), source_digest=digest)
 
         arr = read_cached_table(table_file)
         assert np.array_equal(arr, np.array([[1.0, 2.0], [3.0, 4.0]]))
-        assert arr.size > 0
 
     def test_cache_file_with_outdated_format_version_is_ignored_and_rewritten(
         self, tmp_path: Path
@@ -460,13 +476,11 @@ class TestTableCache:
         digest = hashlib.blake2b(table_file.read_bytes()).hexdigest()
 
         cache_file = table_file.with_name(f'{table_file.name}.cache.npz')
-        stale_data = np.array([[1.0, 2.0], [3.0, 4.0]])
-        np.savez(
+        _write_cache(
             cache_file,
-            data=stale_data,
-            format_version=np.int64(CACHE_FORMAT_VERSION - 1),
-            source_digest=np.array(digest),
-            skiprows=np.int64(0),
+            data=np.array([[1.0, 2.0], [3.0, 4.0]]),
+            format_version=CACHE_FORMAT_VERSION - 1,
+            source_digest=digest,
         )
 
         arr = read_cached_table(table_file)
@@ -475,3 +489,56 @@ class TestTableCache:
         with np.load(cache_file) as npz:
             assert int(npz['format_version']) == CACHE_FORMAT_VERSION
             assert np.array_equal(npz['data'], np.array([[10.0, 20.0], [30.0, 40.0]]))
+
+    @pytest.mark.skipif(
+        getattr(os, 'getuid', lambda: -1)() == 0,
+        reason='Root bypasses read-only directory permissions',
+    )
+    def test_failed_cache_root_preserves_reads_of_valid_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verify that a write failure in a cache directory does not disable reads of valid caches."""
+        ro_dir = tmp_path / 'ro_table_dir'
+        ro_dir.mkdir(parents=True)
+
+        a_file = ro_dir / 'a.dat'
+        a_file.write_text('1.0 2.0\n3.0 4.0\n')
+        read_cached_table(a_file)
+        assert a_file.with_name(f'{a_file.name}.cache.npz').is_file()
+
+        b_file = ro_dir / 'b.dat'
+        b_file.write_text('5.0 6.0\n7.0 8.0\n')
+
+        ro_dir.chmod(0o555)
+
+        genfromtxt_calls: list[str] = []
+        real_genfromtxt = np.genfromtxt
+
+        def spy_genfromtxt(fname, *args, **kwargs):
+            genfromtxt_calls.append(str(fname))
+            return real_genfromtxt(fname, *args, **kwargs)
+
+        monkeypatch.setattr('aragog.eos.table_cache.np.genfromtxt', spy_genfromtxt)
+
+        try:
+            with caplog.at_level(logging.WARNING, logger='fwl.aragog.eos.table_cache'):
+                arr_a1 = read_cached_table(a_file)
+                assert np.array_equal(arr_a1, np.array([[1.0, 2.0], [3.0, 4.0]]))
+                assert len(genfromtxt_calls) == 0
+
+                arr_b = read_cached_table(b_file)
+                assert np.array_equal(arr_b, np.array([[5.0, 6.0], [7.0, 8.0]]))
+                assert len(genfromtxt_calls) == 1
+
+                arr_a2 = read_cached_table(a_file)
+                assert np.array_equal(arr_a2, np.array([[1.0, 2.0], [3.0, 4.0]]))
+                assert len(genfromtxt_calls) == 1
+
+            warning_records = [
+                r
+                for r in caplog.records
+                if r.levelno == logging.WARNING and 'Could not write table cache' in r.message
+            ]
+            assert len(warning_records) == 1
+        finally:
+            ro_dir.chmod(0o755)

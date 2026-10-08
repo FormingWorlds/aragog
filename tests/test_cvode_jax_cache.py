@@ -11,6 +11,7 @@ Verifies:
 
 from __future__ import annotations
 
+import functools
 import os
 
 import pytest
@@ -86,9 +87,9 @@ def _make_bc(
 
 def _make_radio_tuple():
     hp = np.array([1.0e-8, 2.0e-8])
-    ab = np.array([1.0, 1.0])
-    cn = np.array([1.0, 1.0])
-    t0 = np.array([0.0, 0.0])
+    ab = np.array([0.7, 0.3])
+    cn = np.array([2.0, 5.0])
+    t0 = np.array([10.0, 30.0])
     hl = np.array([50.0, 100.0])
     return (hp, ab, cn, t0, hl)
 
@@ -255,88 +256,42 @@ def test_compile_counter(shared_eos):
     assert _TRACE_COUNTERS['rhs'] == 2
     assert _TRACE_COUNTERS['jac'] == 2
 
-    # 3. Changed outer_bc_type (4 -> 1)
-    bc_outer1 = _make_bc(mesh10, outer_type=1, inner_type=2)
-    rhs_o1, jac_o1, _ = build_jax_rhs_and_jacobian(
-        eos_jax=eos,
-        phase_params=params,
-        mesh_arrays=mesh10,
-        boundary_params=bc_outer1,
-        heating_array=np.zeros(10),
-        scales=scales,
-        core_bc_mode='quasi_steady',
-    )
-    rhs_o1(0.0, y_nd, ydot)
-    jac_o1(0.0, y_nd, None, J)
-    assert _TRACE_COUNTERS['rhs'] == 3
-    assert _TRACE_COUNTERS['jac'] == 3
+    def _step(bc_step, expected_count):
+        r_fn, j_fn, _ = build_jax_rhs_and_jacobian(
+            eos_jax=eos,
+            phase_params=params,
+            mesh_arrays=mesh10,
+            boundary_params=bc_step,
+            heating_array=np.zeros(10),
+            scales=scales,
+            core_bc_mode='quasi_steady',
+        )
+        r_fn(0.0, y_nd, ydot)
+        j_fn(0.0, y_nd, None, J)
+        assert _TRACE_COUNTERS['rhs'] == expected_count
+        assert _TRACE_COUNTERS['jac'] == expected_count
 
-    # Check parity with reference on outer_bc_type=1
-    r_rhs_ref, r_jac_ref, _ = _build_reference_factory(
-        eos, params, mesh10, bc_outer1, np.zeros(10), scales, 'quasi_steady'
-    )
-    ydot_ref = np.zeros(10)
-    J_ref = np.zeros((10, 10))
-    r_rhs_ref(0.0, y_nd, ydot_ref)
-    r_jac_ref(0.0, y_nd, None, J_ref)
-    assert np.max(np.abs(ydot - ydot_ref)) <= 1e-14 * np.max(np.abs(ydot_ref))
-    assert np.max(np.abs(J - J_ref)) <= 2e-12 * np.max(np.abs(J_ref))
+        ref_r, ref_j, _ = _build_reference_factory(
+            eos, params, mesh10, bc_step, np.zeros(10), scales, 'quasi_steady'
+        )
+        ydot_ref = np.zeros(10)
+        J_ref = np.zeros((10, 10))
+        ref_r(0.0, y_nd, ydot_ref)
+        ref_j(0.0, y_nd, None, J_ref)
+        assert np.max(np.abs(ydot - ydot_ref)) <= 1e-14 * np.max(np.abs(ydot_ref))
+        assert np.max(np.abs(J - J_ref)) <= 2e-12 * np.max(np.abs(J_ref))
+
+    # 3. Changed outer_bc_type (4 -> 1)
+    _step(_make_bc(mesh10, outer_type=1, inner_type=2), 3)
 
     # 4. Changed inner_bc_type (2 -> 0)
-    bc_inner0 = _make_bc(mesh10, outer_type=4, inner_type=0)
-    rhs_i0, jac_i0, _ = build_jax_rhs_and_jacobian(
-        eos_jax=eos,
-        phase_params=params,
-        mesh_arrays=mesh10,
-        boundary_params=bc_inner0,
-        heating_array=np.zeros(10),
-        scales=scales,
-        core_bc_mode='quasi_steady',
-    )
-    rhs_i0(0.0, y_nd, ydot)
-    jac_i0(0.0, y_nd, None, J)
-    assert _TRACE_COUNTERS['rhs'] == 4
-    assert _TRACE_COUNTERS['jac'] == 4
-
-    # Check parity with reference on inner_bc_type=0
-    r_rhs_ref_i0, r_jac_ref_i0, _ = _build_reference_factory(
-        eos, params, mesh10, bc_inner0, np.zeros(10), scales, 'quasi_steady'
-    )
-    ydot_ref_i0 = np.zeros(10)
-    J_ref_i0 = np.zeros((10, 10))
-    r_rhs_ref_i0(0.0, y_nd, ydot_ref_i0)
-    r_jac_ref_i0(0.0, y_nd, None, J_ref_i0)
-    assert np.max(np.abs(ydot - ydot_ref_i0)) <= 1e-14 * np.max(np.abs(ydot_ref_i0))
-    assert np.max(np.abs(J - J_ref_i0)) <= 2e-12 * np.max(np.abs(J_ref_i0))
+    _step(_make_bc(mesh10, outer_type=4, inner_type=0), 4)
 
     # 5. Changed param_utbl (False -> True)
-    bc_utbl = _make_bc(
-        mesh10, outer_type=1, inner_type=2, param_utbl=True, param_utbl_const=1e-7
+    _step(
+        _make_bc(mesh10, outer_type=1, inner_type=2, param_utbl=True, param_utbl_const=1e-7),
+        5,
     )
-    rhs_u, jac_u, _ = build_jax_rhs_and_jacobian(
-        eos_jax=eos,
-        phase_params=params,
-        mesh_arrays=mesh10,
-        boundary_params=bc_utbl,
-        heating_array=np.zeros(10),
-        scales=scales,
-        core_bc_mode='quasi_steady',
-    )
-    rhs_u(0.0, y_nd, ydot)
-    jac_u(0.0, y_nd, None, J)
-    assert _TRACE_COUNTERS['rhs'] == 5
-    assert _TRACE_COUNTERS['jac'] == 5
-
-    # Check parity with reference on param_utbl=True
-    r_rhs_ref_u, r_jac_ref_u, _ = _build_reference_factory(
-        eos, params, mesh10, bc_utbl, np.zeros(10), scales, 'quasi_steady'
-    )
-    ydot_ref_u = np.zeros(10)
-    J_ref_u = np.zeros((10, 10))
-    r_rhs_ref_u(0.0, y_nd, ydot_ref_u)
-    r_jac_ref_u(0.0, y_nd, None, J_ref_u)
-    assert np.max(np.abs(ydot - ydot_ref_u)) <= 1e-14 * np.max(np.abs(ydot_ref_u))
-    assert np.max(np.abs(J - J_ref_u)) <= 2e-12 * np.max(np.abs(J_ref_u))
 
 
 @pytest.mark.parametrize('core_bc_mode', ['quasi_steady', 'energy_balance'])
@@ -347,9 +302,9 @@ def test_cached_factory_matches_closure_reference(
 ):
     """Verify numeric parity between cached factory and reference factory.
 
-    Bounds are RHS 1e-14 max|f| and J 2e-12 max|J|. Across three table sets
-    and random states the measured maximum differences are RHS 2.54e-15 and
-    J 3.97e-13, with a Jacobian round-off floor up to 8.2e-13.
+    Bounds are RHS 1e-14 max|f| and J 2e-12 max|J|. Differences are of order
+    1e-15 for RHS and 1e-13 for J across three table sets and random states,
+    with a Jacobian round-off floor up to 8.2e-13.
     """
     eos = shared_eos
     params = PhaseParams()
@@ -452,24 +407,20 @@ def test_no_stale_values(shared_eos):
     t_nd = 0.5
 
     # Base evaluation
-    rhs_base, jac_base, _ = build_jax_rhs_and_jacobian(
+    rhs_base, _, _ = build_jax_rhs_and_jacobian(
         eos, params, mesh, bc, heating, scales, 'quasi_steady', radio
     )
     ydot_base = [np.zeros(n_stag) for _ in test_states]
-    J_base = [np.zeros((n_stag, n_stag)) for _ in test_states]
     for s_idx, y_nd in enumerate(test_states):
         rhs_base(t_nd, y_nd, ydot_base[s_idx])
-        jac_base(t_nd, y_nd, None, J_base[s_idx])
 
     # Reference base evaluation
-    ref_base, ref_jac_base, _ = _build_reference_factory(
+    ref_base, _, _ = _build_reference_factory(
         eos, params, mesh, bc, heating, scales, 'quasi_steady', radio
     )
     ydot_ref_base = [np.zeros(n_stag) for _ in test_states]
-    J_ref_base = [np.zeros((n_stag, n_stag)) for _ in test_states]
     for s_idx, y_nd in enumerate(test_states):
         assert ref_base(t_nd, y_nd, ydot_ref_base[s_idx]) == 0
-        assert ref_jac_base(t_nd, y_nd, None, J_ref_base[s_idx]) == 0
         max_f = np.max(np.abs(ydot_ref_base[s_idx]))
         assert np.isfinite(max_f) and max_f > 0.0
 
@@ -481,7 +432,20 @@ def test_no_stale_values(shared_eos):
             lambda: (mesh, _make_bc(mesh, outer_val=500.0), heating, scales, radio),
         ),
         ('heating', lambda: (mesh, bc, heating + 1e-10, scales, radio)),
-        ('radio', lambda: (mesh, bc, heating, scales, (radio[0] * 2.0, *radio[1:]))),
+        ('radio.hp', lambda: (mesh, bc, heating, scales, (radio[0] * 2.0, *radio[1:]))),
+        (
+            'radio.ab',
+            lambda: (mesh, bc, heating, scales, (radio[0], radio[1] * 2.0, *radio[2:])),
+        ),
+        (
+            'radio.cn',
+            lambda: (mesh, bc, heating, scales, (*radio[:2], radio[2] * 2.0, *radio[3:])),
+        ),
+        (
+            'radio.t0',
+            lambda: (mesh, bc, heating, scales, (*radio[:3], radio[3] + 10.0, radio[4])),
+        ),
+        ('radio.hl', lambda: (mesh, bc, heating, scales, (*radio[:4], radio[4] * 2.0))),
         (
             'state_scale',
             lambda: (
@@ -522,14 +486,10 @@ def test_no_stale_values(shared_eos):
 
             max_f_base = np.max(np.abs(ydot_ref_base[s_idx]))
             ref_diff = np.max(np.abs(ydot_ref - ydot_ref_base[s_idx]))
-            if s_idx == 0:
-                assert ref_diff > 1e-6 * max_f_base, (
-                    f'Perturbation {label} does not change reference output enough: {ref_diff} <= 1e-6 * {max_f_base}'
-                )
-            else:
-                assert ref_diff > 0.0, (
-                    f'Perturbation {label} produced zero diff on state {s_idx}'
-                )
+            thr = 1e-6 if s_idx == 0 else 0.0
+            assert ref_diff > thr * max_f_base, (
+                f'Perturbation {label} does not change reference output enough: {ref_diff} <= {thr} * {max_f_base}'
+            )
 
             ydot_pert = np.zeros(n_stag)
             J_pert = np.zeros((n_stag, n_stag))
@@ -537,12 +497,9 @@ def test_no_stale_values(shared_eos):
             assert p_jac(t_nd, y_nd, None, J_pert) == 0
 
             diff_from_base = np.max(np.abs(ydot_pert - ydot_base[s_idx]))
-            if s_idx == 0:
-                assert diff_from_base > 1e-6 * np.max(np.abs(ydot_base[s_idx])), (
-                    f'Leaf {label} state {s_idx} produced stale value'
-                )
-            else:
-                assert diff_from_base > 0.0, f'Leaf {label} state {s_idx} produced stale value'
+            assert diff_from_base > thr * np.max(np.abs(ydot_base[s_idx])), (
+                f'Leaf {label} state {s_idx} produced stale value'
+            )
 
             max_f_ref = np.max(np.abs(ydot_ref))
             diff_from_ref = np.max(np.abs(ydot_pert - ydot_ref))
@@ -603,28 +560,23 @@ def test_phase_params_convection_distinct_and_cached(shared_eos):
     y_nd = np.linspace(3600.0, 2400.0, n_stag) / 3.0e3
     t_nd = 0.5
 
-    # 1. Build A
-    rhs_a1, jac_a1, _ = build_jax_rhs_and_jacobian(
+    build_fn = functools.partial(
+        build_jax_rhs_and_jacobian,
         eos_jax=eos,
-        phase_params=params_a,
         mesh_arrays=mesh,
         boundary_params=bc,
         heating_array=heating,
         scales=scales,
     )
+
+    # 1. Build A
+    rhs_a1, _, _ = build_fn(phase_params=params_a)
     ydot_a1 = np.zeros(n_stag)
     assert rhs_a1(t_nd, y_nd, ydot_a1) == 0
     traces_after_a1 = _TRACE_COUNTERS['rhs']
 
     # 2. Build B (convection=0)
-    rhs_b, jac_b, _ = build_jax_rhs_and_jacobian(
-        eos_jax=eos,
-        phase_params=params_b,
-        mesh_arrays=mesh,
-        boundary_params=bc,
-        heating_array=heating,
-        scales=scales,
-    )
+    rhs_b, _, _ = build_fn(phase_params=params_b)
     ydot_b = np.zeros(n_stag)
     assert rhs_b(t_nd, y_nd, ydot_b) == 0
     assert _TRACE_COUNTERS['rhs'] == traces_after_a1 + 1
@@ -634,14 +586,7 @@ def test_phase_params_convection_distinct_and_cached(shared_eos):
     assert diff_ab > 1e-3 * max_f, f'Convection on vs off diff {diff_ab} <= 1e-3 * {max_f}'
 
     # 3. Build A again: must return A's values (cache hit on params_a, no new trace)
-    rhs_a2, jac_a2, _ = build_jax_rhs_and_jacobian(
-        eos_jax=eos,
-        phase_params=params_a,
-        mesh_arrays=mesh,
-        boundary_params=bc,
-        heating_array=heating,
-        scales=scales,
-    )
+    rhs_a2, _, _ = build_fn(phase_params=params_a)
     ydot_a2 = np.zeros(n_stag)
     assert rhs_a2(t_nd, y_nd, ydot_a2) == 0
     assert _TRACE_COUNTERS['rhs'] == traces_after_a1 + 1
@@ -674,18 +619,10 @@ def test_radio_params_shape_mismatch_and_empty(shared_eos):
         )
 
     # Empty arrays: length 5 tuple of 0-element arrays
-    empty_arrays = (
-        np.array([]),
-        np.array([]),
-        np.array([]),
-        np.array([]),
-        np.array([]),
-    )
-    # Should succeed with use_radio=False
+    empty_arrays = (np.array([]),) * 5
     rhs_fn, jacfn, info = build_jax_rhs_and_jacobian(
         eos, pp, mesh_arrays, bp, heating, scales, radio_isotope_params=empty_arrays
     )
-    assert rhs_fn is not None
     y = np.ones(n)
     ydot = np.zeros(n)
     assert rhs_fn(0.0, y, ydot) == 0
@@ -706,15 +643,17 @@ def test_lru_eviction_when_cache_exceeds_maxsize(shared_eos):
     y_nd = np.full(n, 1.0)
     ydot = np.zeros(n)
 
-    # 1. First key call
-    rhs_0, _, _ = build_jax_rhs_and_jacobian(
+    build_fn = functools.partial(
+        build_jax_rhs_and_jacobian,
         eos_jax=eos,
-        phase_params=params_list[0],
         mesh_arrays=mesh,
         boundary_params=bp,
         heating_array=heating,
         scales=scales,
     )
+
+    # 1. First key call
+    rhs_0, _, _ = build_fn(phase_params=params_list[0])
     rhs_0(0.0, y_nd, ydot)
     ydot_0 = ydot.copy()
     trace_rhs_after_first = _TRACE_COUNTERS['rhs']
@@ -722,14 +661,7 @@ def test_lru_eviction_when_cache_exceeds_maxsize(shared_eos):
 
     # 2. Calls 2 through 9 with distinct PhaseParams (total 9 keys inserted)
     for i in range(1, 9):
-        rhs_i, _, _ = build_jax_rhs_and_jacobian(
-            eos_jax=eos,
-            phase_params=params_list[i],
-            mesh_arrays=mesh,
-            boundary_params=bp,
-            heating_array=heating,
-            scales=scales,
-        )
+        rhs_i, _, _ = build_fn(phase_params=params_list[i])
         rhs_i(0.0, y_nd, ydot)
 
     # Verify cache size is capped at _CACHE_MAXSIZE (8) and first key was evicted
@@ -740,14 +672,7 @@ def test_lru_eviction_when_cache_exceeds_maxsize(shared_eos):
     trace_rhs_before_10th = _TRACE_COUNTERS['rhs']
 
     # 3. 10th call requesting first key again: must trace anew
-    rhs_10, _, _ = build_jax_rhs_and_jacobian(
-        eos_jax=eos,
-        phase_params=params_list[0],
-        mesh_arrays=mesh,
-        boundary_params=bp,
-        heating_array=heating,
-        scales=scales,
-    )
+    rhs_10, _, _ = build_fn(phase_params=params_list[0])
     rhs_10(0.0, y_nd, ydot)
 
     assert _TRACE_COUNTERS['rhs'] == trace_rhs_before_10th + 1

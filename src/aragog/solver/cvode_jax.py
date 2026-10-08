@@ -256,7 +256,6 @@ def build_jax_rhs_and_jacobian(
     t_ref_jax = jnp.asarray(float(scales.t_ref), dtype=jnp.float64)
     heating_jax = jnp.asarray(heating_array)
 
-    use_radio = False
     radio_arrays = ()
     if radio_isotope_params:
         if len(radio_isotope_params) != 5:
@@ -271,10 +270,10 @@ def build_jax_rhs_and_jacobian(
                 f'All radio_isotope_params arrays must have identical shapes, got {shapes}'
             )
         if np.size(radio_isotope_params[0]) > 0:
-            use_radio = True
             radio_arrays = tuple(
                 jnp.asarray(a, dtype=jnp.float64) for a in radio_isotope_params
             )
+    use_radio = bool(radio_arrays)
 
     data = (
         mesh_arrays,
