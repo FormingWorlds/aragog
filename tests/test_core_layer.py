@@ -36,18 +36,21 @@ def _evolve(shell, q_cmb, t_end):
     """Shell temperatures after ``t_end`` [s] under ``q_cmb`` with the convecting core held."""
     rate = jax.jit(lambda y: shell.rates(y, T_C, q_cmb)[0])
     jac = jax.jit(jax.jacfwd(lambda y: shell.rates(y, T_C, q_cmb)[0]))
-    y0 = np.asarray(shell.adiabatic_profile(T_C))
-    sol = solve_ivp(
-        lambda _, y: np.asarray(rate(y)),
-        (0.0, t_end),
-        y0,
-        'BDF',
-        jac=lambda _, y: np.asarray(jac(y)),
-        rtol=1e-9,
-        atol=1e-9,
-    )
-    assert sol.success
-    return sol.y[:, -1], y0
+    y = y0 = np.asarray(shell.adiabatic_profile(T_C))
+    edges = np.append(np.arange(0.0, t_end, 1e3 * MYR), t_end)
+    for start, end in zip(edges[:-1], edges[1:]):  # local time per Gyr: a small step floor
+        sol = solve_ivp(
+            lambda _, y: np.asarray(rate(y)),
+            (0.0, end - start),
+            y,
+            'BDF',
+            jac=lambda _, y: np.asarray(jac(y)),
+            rtol=1e-9,
+            atol=1e-9,
+        )
+        assert sol.success, sol.message
+        y = sol.y[:, -1]
+    return y, y0
 
 
 @pytest.mark.physics_invariant
