@@ -419,6 +419,7 @@ def test_boundary_slots_match_numpy_on_a_five_node_mesh():
     assert f_np[n_stag + 1] < 0.0
 
 
+@pytest.mark.smoke
 @pytest.mark.physics_invariant
 @needs_eos
 def test_the_expansivity_source_is_the_only_numpy_jax_difference():

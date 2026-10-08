@@ -158,8 +158,9 @@ def test_coupled_tables_reproduce_the_page(script):
         assert got[f'e1_{q}_d_80_rtol'] < 1e-3
     assert got['e1_T_core_bf_d_160_320'] < 10.0 and got['e1_T_core_end_d_160_320'] < 10.0
     assert got['e1_T_core_bf_d_80_rtol'] < 0.01
-    for pair in ('40_80', '80_160', '160_320'):  # the late flux doubles with the levels
-        assert 0.45 < got[f'e1_F_500kyr_d_{pair}'] < 0.55
+    for pair in ('40_80', '80_160', '160_320'):  # a half-cell conduction flux would double
+        for q in ('F_2bf', 'F_4bf', 'F_10kyr', 'F_100kyr', 'F_500kyr'):
+            assert got[f'e1_{q}_d_{pair}'] < 0.1
 
 
 @pytest.mark.slow

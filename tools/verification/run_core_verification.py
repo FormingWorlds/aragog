@@ -1201,7 +1201,7 @@ def item11_coupled() -> None:
     # E1: the 1 Earth-mass run at 40 to 320 mantle levels, and at rtol 1e-10 on 80
     rows = np.loadtxt(data / 'coupled_mesh_convergence.csv', delimiter=',')
     names = (
-        't_bf T_core_bf T_core_end F10 F100 F1000 F_bf F_2bf F_4bf F_100kyr F_500kyr'.split()
+        't_bf T_core_bf T_core_end F10 F100 F1000 F_bf F_2bf F_4bf F_10kyr F_100kyr F_500kyr'.split()
     )
     run = {(int(r[0]), r[1]): dict(zip(names, r[2:])) for r in rows}
     for a, b in ((40, 80), (80, 160), (160, 320), (80, 'rtol')):
