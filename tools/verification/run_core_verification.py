@@ -1131,7 +1131,7 @@ def item11_coupled() -> None:
         step = core + cmb - impact
         record(11, f'closure_end_{case}', abs(frac[-1]))
         record(11, f'closure_max_after_1kyr_{case}', np.abs(frac[t > 1e3]).max())
-        first = np.flatnonzero(cmb)[0]  # the first call, from 0 to 2 yr
+        first = np.flatnonzero(cmb)[0]  # the first call, from 1 to 2 yr
         record(11, f'closure_first_call_{case}', abs(step[first] / cmb[first]))
         share = abs(step[abs(t - 122.0) < 0.5].item()) / np.abs(step).sum()
         record(11, f'share_22_122yr_{case}', share)
