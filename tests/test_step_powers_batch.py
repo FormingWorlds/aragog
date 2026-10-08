@@ -851,7 +851,7 @@ def test_step_powers_fallback_on_exception(eos_np, eos_jax, caplog):
     solver._cvode_step_powers_batch = None
     ref_integrals = solver._compute_step_energy_integrals()
 
-    def failing_batch(t_nodes, Y_nodes):
+    def failing_batch(t_nodes, Y_nodes, aux=None):
         raise RuntimeError('simulated batch powers failure')
 
     solver._cvode_step_powers_batch = failing_batch
@@ -915,23 +915,14 @@ def test_step_powers_batch_interface(eos_np):
     with pytest.raises(RuntimeError, match='No batch step powers callable available'):
         solver._step_powers_batch(np.array([0.0]), np.zeros((n_dim, 1)))
 
-    # When batch callable accepts aux keyword argument
+    # When batch callable is registered, passes aux keyword argument
     called_with_aux = []
 
-    def mock_batch_with_aux(t_nodes, Y_nodes, aux=None):
+    def mock_batch(t_nodes, Y_nodes, aux=None):
         called_with_aux.append(aux is not None)
         return np.ones((len(t_nodes), 7))
 
-    solver._cvode_step_powers_batch = mock_batch_with_aux
-    out1 = solver._step_powers_batch(np.array([0.0, 1.0]), np.zeros((n_dim, 2)))
-    assert out1.shape == (2, 7)
+    solver._cvode_step_powers_batch = mock_batch
+    out = solver._step_powers_batch(np.array([0.0, 1.0]), np.zeros((n_dim, 2)))
+    assert out.shape == (2, 7)
     assert called_with_aux == [True]
-
-    # When batch callable does not accept aux keyword argument
-    def mock_batch_no_aux(t_nodes, Y_nodes):
-        return np.full((len(t_nodes), 7), 2.0)
-
-    solver._cvode_step_powers_batch = mock_batch_no_aux
-    out2 = solver._step_powers_batch(np.array([0.0, 1.0]), np.zeros((n_dim, 2)))
-    assert out2.shape == (2, 7)
-    np.testing.assert_array_equal(out2, 2.0)

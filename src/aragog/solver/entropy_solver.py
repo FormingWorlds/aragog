@@ -1272,8 +1272,6 @@ class EntropySolver:
         Loaded P-S EOS tables.
     """
 
-    _cvode_step_powers_batch: Callable[..., Any] | None = None
-
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
         self.entropy_eos = entropy_eos
@@ -3231,11 +3229,8 @@ class EntropySolver:
 
     def _warn_once(self, key: str, message: str, level: int = logging.WARNING) -> None:
         """Log ``message`` at ``level`` the first time ``key`` is seen by this solver."""
-        warned = getattr(self, '_warned', None)
-        if warned is None:
-            warned = self._warned = set()
-        if key not in warned:
-            warned.add(key)
+        if key not in self._warned:
+            self._warned.add(key)
             logger.log(level, message)
 
     def solve(self) -> None:
@@ -3885,7 +3880,7 @@ class EntropySolver:
         # The replay refreshes self.state at every node; keep the solve's cache statistics.
         counters = (self.state._pb_cache_hits, self.state._pb_cache_misses)
         P = None
-        batch_fn = getattr(self, '_cvode_step_powers_batch', None)
+        batch_fn = self._cvode_step_powers_batch
         if batch_fn is not None:
             try:
                 P = self._step_powers_batch(t_pts, y_pts)
@@ -3974,7 +3969,7 @@ class EntropySolver:
             Per-node powers ``[-F_int A_int, F_cmb A_cmb, Q_radio, Q_tidal,
             Q_radio_cons, Q_tidal_cons, residual]`` at all nodes.
         """
-        batch_fn = getattr(self, '_cvode_step_powers_batch', None)
+        batch_fn = self._cvode_step_powers_batch
         if batch_fn is None:
             raise RuntimeError('No batch step powers callable available')
         from aragog.jax.solver import StepPowersAux
@@ -3991,15 +3986,7 @@ class EntropySolver:
             mass_struct=mass_struct,
             P_stag=self._P_stag_flat,
         )
-        import inspect
-
-        sig = inspect.signature(batch_fn)
-        accepts_aux = 'aux' in sig.parameters or any(
-            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-        )
-        if accepts_aux:
-            return np.asarray(batch_fn(t_pts, y_pts, aux=aux))
-        return np.asarray(batch_fn(t_pts, y_pts))
+        return np.asarray(batch_fn(t_pts, y_pts, aux=aux))
 
     def _step_powers(self, t_i: float, y_col: npt.NDArray) -> npt.NDArray:
         """Powers [W] at one solver state, for the per-call energy integrals.
