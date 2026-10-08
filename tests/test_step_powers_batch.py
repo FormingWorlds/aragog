@@ -172,15 +172,14 @@ def _make_phase_params(params: Parameters) -> PhaseParams:
         matprop_smooth_width=float(params.phase_mixed.matprop_smooth_width),
         conduction=params.energy.conduction,
         convection=params.energy.convection,
-        grav_sep=getattr(params.energy, 'gravitational_separation', False),
-        mixing=getattr(params.energy, 'chemical_mixing', False),
-        eddy_diff_thermal=float(getattr(params.energy, 'eddy_diffusivity_thermal', 1.0)),
-        eddy_diff_chemical=float(getattr(params.energy, 'eddy_diffusivity_chemical', 1.0)),
+        grav_sep=params.energy.gravitational_separation,
+        mixing=params.energy.mixing,
+        eddy_diff_thermal=float(params.energy.eddy_diffusivity_thermal),
+        eddy_diff_chemical=float(params.energy.eddy_diffusivity_chemical),
         kappah_floor=float(params.energy.kappah_floor),
-        bottom_up_grav_sep=getattr(params.phase_mixed, 'bottom_up_grav_sep', True),
-        phase_smoothing=getattr(params.phase_mixed, 'phase_smoothing', 'tanh'),
-        phase_smoothing_width=float(getattr(params.phase_mixed, 'phase_smoothing_width', 0.01)),
-        separation_viscosity=getattr(params.phase_mixed, 'separation_viscosity', 'melt'),
+        bottom_up_grav_sep=params.energy.bottom_up_grav_sep,
+        phase_smoothing=params.energy.phase_smoothing,
+        separation_viscosity=params.phase_mixed.separation_viscosity,
     )
 
 
