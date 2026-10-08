@@ -51,6 +51,7 @@ class NonDimScales:
     state_scale: npt.NDArray
     t_ref: float
     rhs_scale: npt.NDArray = field(default=None)
+    state_offset: npt.NDArray = field(default=None)
 
     def __post_init__(self):
         # Coerce to float64 ndarray for downstream JAX/scipy
@@ -58,6 +59,12 @@ class NonDimScales:
         # the dataclass is frozen.
         ss = np.asarray(self.state_scale, dtype=float)
         object.__setattr__(self, 'state_scale', ss)
+        off = (
+            np.zeros_like(ss)
+            if self.state_offset is None
+            else np.asarray(self.state_offset, dtype=float)
+        )
+        object.__setattr__(self, 'state_offset', off)
 
         if not (np.isfinite(self.t_ref) and float(self.t_ref) > 0.0):
             raise ValueError(f't_ref must be finite and strictly positive; got {self.t_ref!r}')
