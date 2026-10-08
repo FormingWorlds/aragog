@@ -1272,6 +1272,8 @@ class EntropySolver:
         Loaded P-S EOS tables.
     """
 
+    _cvode_step_powers_batch: Callable[..., Any] | None = None
+
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
         self.entropy_eos = entropy_eos
