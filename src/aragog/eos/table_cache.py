@@ -22,7 +22,7 @@ CACHE_FORMAT_VERSION = 2
 _FAILED_CACHE_ROOTS: set[Path] = set()
 
 
-def _resolve_cache_path(filepath: Path, skiprows: int) -> Path | None:
+def _resolve_cache_path(filepath: Path, skiprows: int) -> Path:
     """Resolve destination path for table cache file.
 
     Parameters
@@ -34,8 +34,8 @@ def _resolve_cache_path(filepath: Path, skiprows: int) -> Path | None:
 
     Returns
     -------
-    Path or None
-        Target path for the cache file, or None if cache directory creation fails.
+    Path
+        Target path for the cache file.
     """
     custom_cache = os.environ.get('ARAGOG_TABLE_CACHE_DIR')
     fwl_data = os.environ.get('FWL_DATA')
@@ -145,7 +145,7 @@ def read_cached_table(filepath: Path | str, skiprows: int = 0) -> np.ndarray:
     source_digest = hashlib.blake2b(raw).hexdigest()
 
     cache_path = _resolve_cache_path(fp, skiprows)
-    if cache_path is not None and cache_path.is_file():
+    if cache_path.is_file():
         try:
             with np.load(cache_path) as npz:
                 if (
@@ -173,11 +173,7 @@ def read_cached_table(filepath: Path | str, skiprows: int = 0) -> np.ndarray:
     stream = io.TextIOWrapper(io.BytesIO(raw), newline=None)
     data = np.genfromtxt(stream, skip_header=skiprows)
 
-    if (
-        cache_path is not None
-        and data.size > 0
-        and cache_path.parent not in _FAILED_CACHE_ROOTS
-    ):
+    if data.size > 0 and cache_path.parent not in _FAILED_CACHE_ROOTS:
         try:
             _write_cache_file(cache_path, data, source_digest, skiprows)
         except OSError as exc:
