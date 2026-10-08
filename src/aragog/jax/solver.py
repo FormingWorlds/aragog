@@ -250,6 +250,30 @@ class RhsParts(NamedTuple):
     phase_stag: PhaseProperties
 
 
+class StepPowersAux(NamedTuple):
+    """Auxiliary geometry and structural arrays for step powers.
+
+    Parameters
+    ----------
+    A_int : float or jax.Array
+        Surface area at basic outer node [m^2].
+    A_cmb : float or jax.Array
+        Core-mantle boundary area at basic inner node [m^2].
+    volume : jax.Array
+        Cell volume at staggered nodes [m^3].
+    mass_struct : jax.Array
+        Structural mass per cell [kg] (staggered_effective_density * volume).
+    P_stag : jax.Array
+        Pressure at staggered nodes [Pa].
+    """
+
+    A_int: float | jax.Array
+    A_cmb: float | jax.Array
+    volume: jax.Array
+    mass_struct: jax.Array
+    P_stag: jax.Array
+
+
 # ---------------------------------------------------------------------------
 # RHS function
 # ---------------------------------------------------------------------------
@@ -609,6 +633,90 @@ def dSdt_energy_balance(
         [J/kg/K/m/yr] for dSdr_cmb.
     """
     return _dSdt_energy_balance_parts(t, state_ext, args).rate
+
+
+def step_powers(
+    t: float,
+    y: jax.Array,
+    args: tuple,
+    mode: str,
+    aux: StepPowersAux,
+) -> jax.Array:
+    """Powers [W] at one solver state for per-call energy integrals.
+
+    Calls the mode's parts function once and returns the boundary, source,
+    and residual powers in the order of the numpy ``_step_powers``:
+    ``[-F_int*A_int, F_cmb*A_cmb, Q_radio, Q_tidal, Q_radio_cons,
+    Q_tidal_cons, residual]``.
+
+    Parameters
+    ----------
+    t : float
+        Node time [yr].
+    y : jax.Array
+        Node state vector in physical units (entropy [J/kg/K], plus
+        dSdr_cmb for energy_balance mode).
+    args : tuple
+        RHS argument tuple: (eos, params, mesh, bc, heating_static, H_radio_fn).
+    mode : str
+        Solver mode ('quasi_steady' or 'energy_balance').
+    aux : StepPowersAux
+        Per-solve geometry and structural mass arrays.
+
+    Returns
+    -------
+    jax.Array, shape (7,)
+        Boundary heat flows, source powers, and entropy balance residual [W].
+    """
+    eos, params, mesh, bc, heating_static, H_radio_fn = args
+    if mode == 'quasi_steady':
+        parts = _dSdt_parts(t, y, args)
+        S_stag = y
+        dSdt_stag = parts.rate / SECS_PER_YEAR
+    elif mode == 'energy_balance':
+        parts = _dSdt_energy_balance_parts(t, y, args)
+        n_stag = aux.volume.shape[0]
+        S_stag = y[:n_stag]
+        dSdt_stag = parts.rate[:n_stag] / SECS_PER_YEAR
+    else:
+        raise ValueError(
+            f'mode={mode!r} is not supported by step_powers; expected '
+            "'quasi_steady' or 'energy_balance'."
+        )
+
+    p_int = -parts.heat_flux[-1] * aux.A_int
+    p_cmb = parts.heat_flux[0] * aux.A_cmb
+
+    H_radio = H_radio_fn(t)
+    mass_i = eos.density(aux.P_stag, S_stag) * aux.volume
+    Q_radio_i = H_radio * jnp.sum(mass_i)
+    Q_tidal_i = jnp.dot(heating_static, mass_i)
+
+    Q_radio_cons_i = H_radio * jnp.sum(aux.mass_struct)
+    Q_tidal_cons_i = jnp.dot(heating_static, aux.mass_struct)
+
+    phase_stag = parts.phase_stag
+    cap = phase_stag.capacitance
+    T_phase = phase_stag.temperature
+    rho_phase = phase_stag.density
+    heat_mass = rho_phase * aux.volume * (T_phase / jnp.maximum(T_phase, 1.0))
+    lhs = jnp.sum(cap * dSdt_stag * aux.volume)
+    Q_radio_resid = H_radio * jnp.sum(heat_mass)
+    Q_tidal_resid = jnp.dot(heating_static, heat_mass)
+    rhs = p_int + p_cmb + Q_radio_resid + Q_tidal_resid
+    residual = lhs - rhs
+
+    return jnp.array(
+        [
+            p_int,
+            p_cmb,
+            Q_radio_i,
+            Q_tidal_i,
+            Q_radio_cons_i,
+            Q_tidal_cons_i,
+            residual,
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------

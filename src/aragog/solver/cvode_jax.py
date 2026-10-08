@@ -44,8 +44,11 @@ logger = logging.getLogger('fwl.' + __name__)
 
 _CACHE_MAXSIZE = 8
 
+# Fixed chunk length for batched per-call energy power evaluation.
+C: int = 512
+
 # Module-level counters for JIT tracing events.
-_TRACE_COUNTERS = {'rhs': 0, 'jac': 0}
+_TRACE_COUNTERS = {'rhs': 0, 'jac': 0, 'powers': 0}
 
 
 @dataclass
@@ -54,6 +57,7 @@ class _JitCacheEntry:
     jac_jit: Any
     phase_params: Any
     eos_jax: Any
+    powers_jit: Any = None
 
 
 _JIT_CACHE: OrderedDict[tuple, _JitCacheEntry] = OrderedDict()
@@ -64,6 +68,7 @@ def clear_jit_cache() -> None:
     _JIT_CACHE.clear()
     _TRACE_COUNTERS['rhs'] = 0
     _TRACE_COUNTERS['jac'] = 0
+    _TRACE_COUNTERS['powers'] = 0
 
 
 def _make_jitted_rhs_and_jacobian(
@@ -121,6 +126,49 @@ def _make_jitted_rhs_and_jacobian(
     rhs_jit = jax.jit(_make_wrapper('rhs'))
     jac_jit = jax.jit(jax.jacrev(_make_wrapper('jac'), argnums=1))
     return rhs_jit, jac_jit
+
+
+def _make_jitted_powers(
+    core_bc_mode: str,
+    use_radio: bool,
+    phase_params: Any,
+    eos_jax: Any,
+):
+    """Build JIT-compiled vmapped step_powers function over chunks of size C."""
+    import jax
+
+    from aragog.jax import solver as js
+
+    def _eval_node(t_phys, y_phys, data, aux):
+        (
+            mesh_arrays,
+            boundary_params,
+            heating_jax,
+            radio_arrays,
+            _state_scale_jax,
+            _rhs_scale_jax,
+            _t_ref_jax,
+        ) = data
+        H_radio_fn = (
+            functools.partial(js.compute_radio_heating, radio_arrays=radio_arrays)
+            if use_radio
+            else js._no_radio
+        )
+        args_tuple = (
+            eos_jax,
+            phase_params,
+            mesh_arrays,
+            boundary_params,
+            heating_jax,
+            H_radio_fn,
+        )
+        return js.step_powers(t_phys, y_phys, args_tuple, core_bc_mode, aux)
+
+    def _eval_chunk(t_chunk, Y_chunk, data, aux):
+        _TRACE_COUNTERS['powers'] += 1
+        return jax.vmap(_eval_node, in_axes=(0, 1, None, None))(t_chunk, Y_chunk, data, aux)
+
+    return jax.jit(_eval_chunk)
 
 
 def _get_or_create_jitted(
@@ -198,6 +246,8 @@ def build_jax_rhs_and_jacobian(
     -------
     rhs_fn : callable
         scikits.odes RHS signature ``rhs_fn(t_nd, y_nd, ydot_nd) -> int``.
+        Carries ``step_powers(t_nodes, Y_nodes, aux=None) -> ndarray (n, 7)``
+        for batched per-call energy power evaluation in physical units.
     jacfn : callable
         scikits.odes Jacobian signature
         ``jacfn(t_nd, y_nd, fy_nd, J, user_data=None) -> int``.
@@ -330,6 +380,101 @@ def build_jax_rhs_and_jacobian(
             logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD', exc)
             return 1
 
+    key = (core_bc_mode, use_radio, id(phase_params), id(eos_jax))
+    entry = _JIT_CACHE[key]
+
+    default_aux = None
+    if mesh_arrays is not None:
+        from aragog.jax.solver import StepPowersAux
+
+        default_A_int = float(mesh_arrays.area[-1])
+        default_A_cmb = float(mesh_arrays.area[0])
+        default_vol = mesh_arrays.volume
+        default_P_stag = mesh_arrays.P_stag
+        default_mass_struct = (
+            getattr(mesh_arrays, 'mass_struct', None)
+            if getattr(mesh_arrays, 'mass_struct', None) is not None
+            else default_vol * 3300.0
+        )
+        default_aux = StepPowersAux(
+            A_int=default_A_int,
+            A_cmb=default_A_cmb,
+            volume=default_vol,
+            mass_struct=jnp.asarray(default_mass_struct, dtype=jnp.float64),
+            P_stag=default_P_stag,
+        )
+
+    def step_powers(t_nodes, Y_nodes, aux=None):
+        """Batched per-node energy powers [W] for accepted trajectory nodes.
+
+        Parameters
+        ----------
+        t_nodes : array_like, shape (n,)
+            Times at evaluation nodes [yr].
+        Y_nodes : array_like, shape (dim, n)
+            State at evaluation nodes in physical units (entropy [J/kg/K],
+            plus dSdr_cmb for energy_balance mode).
+        aux : StepPowersAux, optional
+            Per-solve geometry and mass structure. When None, uses
+            mesh-derived defaults.
+
+        Returns
+        -------
+        ndarray, shape (n, 7)
+            Powers in the order:
+            [-F_int*A_int, F_cmb*A_cmb, Q_radio, Q_tidal,
+             Q_radio_cons, Q_tidal_cons, residual]
+        """
+        t_arr = np.asarray(t_nodes, dtype=np.float64).ravel()
+        n = t_arr.size
+        if n == 0:
+            return np.empty((0, 7), dtype=np.float64)
+
+        Y_arr = np.asarray(Y_nodes, dtype=np.float64)
+        if Y_arr.ndim != 2:
+            raise ValueError(f'Y_nodes must be 2D of shape (dim, n); got ndim={Y_arr.ndim}')
+        if Y_arr.shape[1] != n:
+            raise ValueError(
+                f'Y_nodes second dimension {Y_arr.shape[1]} does not match t_nodes length {n}'
+            )
+        if Y_arr.shape[0] != expected_size:
+            raise ValueError(
+                f'Y_nodes first dimension {Y_arr.shape[0]} does not match '
+                f'expected dimension {expected_size}'
+            )
+
+        aux_use = aux if aux is not None else default_aux
+        if aux_use is None:
+            raise ValueError('aux must be supplied when mesh_arrays was None at factory build')
+
+        if entry.powers_jit is None:
+            entry.powers_jit = _make_jitted_powers(
+                core_bc_mode, use_radio, phase_params, eos_jax
+            )
+
+        n_chunks = int(np.ceil(n / C))
+        results = []
+        for k in range(n_chunks):
+            start = k * C
+            end = min(start + C, n)
+            L = end - start
+            t_chunk = t_arr[start:end]
+            Y_chunk = Y_arr[:, start:end]
+            if L < C:
+                t_chunk = np.pad(t_chunk, (0, C - L), mode='edge')
+                Y_chunk = np.pad(Y_chunk, ((0, 0), (0, C - L)), mode='edge')
+
+            chunk_out = entry.powers_jit(
+                jnp.asarray(t_chunk),
+                jnp.asarray(Y_chunk),
+                data,
+                aux_use,
+            )
+            results.append(np.asarray(chunk_out)[:L])
+
+        return np.concatenate(results, axis=0)
+
+    rhs_fn.step_powers = step_powers
     return rhs_fn, jacfn, info
 
 

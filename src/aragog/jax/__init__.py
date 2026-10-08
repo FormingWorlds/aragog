@@ -27,7 +27,13 @@ from aragog.jax.phase import (
     compute_mlt,
     evaluate_phase,
 )
-from aragog.jax.solver import BoundaryParams, RhsParts, SolveResult
+from aragog.jax.solver import (
+    BoundaryParams,
+    RhsParts,
+    SolveResult,
+    StepPowersAux,
+    step_powers,
+)
 
 __all__ = [
     'EntropyEOS_JAX',
@@ -43,4 +49,6 @@ __all__ = [
     'BoundaryParams',
     'RhsParts',
     'SolveResult',
+    'StepPowersAux',
+    'step_powers',
 ]
