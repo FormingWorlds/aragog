@@ -1403,7 +1403,10 @@ class EntropySolver:
 
         ``rhs_scale = t_ref / state_scale`` is derived inside
         NonDimScales.__post_init__; the same dataclass instance feeds
-        both the scipy/CVODE wrapper here and the JAX factory.
+        both the scipy/CVODE wrapper here and the JAX factory. In
+        core_module mode T_core and the shell temperatures are offset by
+        their values in the current state, so the solver tolerance acts on
+        their change within the call, which closes the core energy budget.
         """
         from aragog.jax.nondim import NonDimScales
 
@@ -1421,7 +1424,10 @@ class EntropySolver:
             for i, slot in enumerate(slots):
                 ss[n_s + i] = dSdr_ref if slot == 'dSdr_cmb' else self._T_ref
             ss[n_s + len(slots) :] = self._T_ref  # shell temperatures of a stratified core
-        return NonDimScales(state_scale=ss, t_ref=float(t_ref))
+        offset = np.zeros(len(self._S0))
+        if self._core_bc == 'core_module':  # the temperatures are integrated as their change
+            offset[n_s + 1 :] = self._S0[n_s + 1 :]
+        return NonDimScales(state_scale=ss, t_ref=float(t_ref), state_offset=offset)
 
     @classmethod
     def from_file(cls, filename: str, eos_dir: str, root: str = '') -> 'EntropySolver':
@@ -3076,7 +3082,10 @@ class EntropySolver:
 
     @staticmethod
     def _physical_trace(
-        trace: tuple[npt.NDArray, npt.NDArray], t_ref: float, state_scale: npt.NDArray
+        trace: tuple[npt.NDArray, npt.NDArray],
+        t_ref: float,
+        state_scale: npt.NDArray,
+        state_offset: npt.NDArray | float = 0.0,
     ) -> tuple[npt.NDArray, npt.NDArray]:
         """Energy quadrature nodes in years and physical units, strictly increasing in time.
 
@@ -3091,13 +3100,16 @@ class EntropySolver:
             Time scale [yr].
         state_scale : ndarray
             State scale per row (or scalar).
+        state_offset : ndarray or float
+            State offset per row (or scalar), added after the scale.
 
         Returns
         -------
         tuple of ndarray
             Node times [yr] and node states in physical units.
         """
-        t, y = trace[0] * t_ref, trace[1] * np.reshape(state_scale, (-1, 1))
+        t = trace[0] * t_ref
+        y = trace[1] * np.reshape(state_scale, (-1, 1)) + np.reshape(state_offset, (-1, 1))
         keep = np.append(np.diff(t) > 0, True)
         return t[keep], y[:, keep]
 
@@ -3820,13 +3832,14 @@ class EntropySolver:
         # the JAX factory. ``__post_init__`` enforces the contract
         # ``rhs_scale = t_ref / state_scale``.
         scales = self._build_nondim_scales()
+        _offset = scales.state_offset
         S_ref = self._S_ref
         t_ref = scales.t_ref
         n_s = self._n_stag
         _state_scale = scales.state_scale
         _rhs_scale = scales.rhs_scale
 
-        S0_nd = self._S0 / _state_scale
+        S0_nd = (self._S0 - _offset) / _state_scale
         start_nd = start_time / t_ref
         end_nd = end_time / t_ref
         max_step_nd = max_step / t_ref if np.isfinite(max_step) else max_step
@@ -3847,7 +3860,7 @@ class EntropySolver:
             """Nondim wrapper: scale state to physical, call physics, scale RHS back."""
             dydt_phys = self._dSdt_single(
                 t_nd * t_ref,
-                y_nd * _state_scale,
+                y_nd * _state_scale + _offset,
             )
             return dydt_phys * _rhs_scale
 
@@ -3993,7 +4006,7 @@ class EntropySolver:
 
                 def _rate_h(t_nd, y_nd):
                     try:
-                        y = np.asarray(y_nd, dtype=float) * _state_scale
+                        y = np.asarray(y_nd, dtype=float) * _state_scale + _offset
                         S = y[:n_s]
                         dSdt = np.asarray(self._dSdt_single(t_nd * t_ref, y)).ravel()[:n_s]
                         rho = np.asarray(self.entropy_eos.density(self._P_stag_flat, S)).ravel()
@@ -4078,12 +4091,12 @@ class EntropySolver:
         if sol.y is not None:
             sol_y = np.asarray(sol.y, dtype=float)
             if sol_y.ndim == 2:
-                sol.y = sol_y * _state_scale[:, np.newaxis]
+                sol.y = sol_y * _state_scale[:, np.newaxis] + _offset[:, np.newaxis]
             else:
-                sol.y = sol_y * _state_scale
+                sol.y = sol_y * _state_scale + _offset
         trace = sol.get('energy_trace')
         if trace is not None:
-            sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale)
+            sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale, _offset)
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
         # above) and naming whichever margin actually bound: read from

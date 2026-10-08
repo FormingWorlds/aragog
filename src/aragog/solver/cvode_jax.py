@@ -102,9 +102,10 @@ def _make_jitted_rhs_and_jacobian(
             state_scale_jax,
             rhs_scale_jax,
             t_ref_jax,
-        ) = data[:7]
+            offset_jax,
+        ) = data[:8]
         t_phys = t_nd * t_ref_jax
-        S_phys = y_nd * state_scale_jax
+        S_phys = y_nd * state_scale_jax + offset_jax
         H_radio_fn = (
             functools.partial(js.compute_radio_heating, radio_arrays=radio_arrays)
             if use_radio
@@ -119,7 +120,7 @@ def _make_jitted_rhs_and_jacobian(
             H_radio_fn,
         )
         if budget is not None:
-            args_tuple = args_tuple + (budget, *data[7:])
+            args_tuple = args_tuple + (budget, *data[8:])
         dydt_phys = _rhs_jax(t_phys, S_phys, args_tuple)
         return dydt_phys * rhs_scale_jax
 
@@ -334,6 +335,7 @@ def build_jax_rhs_and_jacobian(
         state_scale_jax,
         rhs_scale_jax,
         t_ref_jax,
+        jnp.asarray(scales.state_offset),
     )
     if core_bc_mode == 'core_module':
         from aragog.core import check_ra_crit

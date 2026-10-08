@@ -384,6 +384,27 @@ def test_only_a_stratified_core_warns_that_the_layer_is_experimental(shared_eos,
 
 @needs_cvode
 @pytest.mark.physics_invariant
+def test_a_hot_core_call_closes_its_heat_to_1e_minus_6(shared_eos):
+    """A core 300 K above the mantle side cools by about 1e-3 K in a 10-yr call on 80 nodes; with
+    its temperature integrated as its change in the call, the core heat matches the CMB heat to
+    1e-6 of it, where an absolute core temperature left 3.5e-6 at the default tolerance."""
+    solver = _build(
+        'core_module',
+        shared_eos,
+        CORE_MODULE_PARAMS,
+        n_nodes=80,
+        end_time=10.0,
+        solver_method='cvode',
+        core_offset=300.0,
+    )
+    solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
+    solver.solve()
+    out = solver.get_state()
+    assert abs(out.step_dE_core_J + out.step_dE_F_cmb_J) < 1e-6 * abs(out.step_dE_F_cmb_J)
+
+
+@needs_cvode
+@pytest.mark.physics_invariant
 def test_a_stratified_default_start_keeps_the_core_and_closes_its_heat():
     """The default start puts the core at the mantle side of the CMB (no flux): the convecting
     core and the top of the shell stay put over 5 yr, the core heat matches the CMB heat to the
