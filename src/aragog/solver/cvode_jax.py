@@ -44,8 +44,11 @@ logger = logging.getLogger('fwl.' + __name__)
 
 _CACHE_MAXSIZE = 8
 
+# Fixed chunk length for batched per-call energy power evaluation.
+C: int = 512
+
 # Module-level counters for JIT tracing events.
-_TRACE_COUNTERS = {'rhs': 0, 'jac': 0}
+_TRACE_COUNTERS = {'rhs': 0, 'jac': 0, 'powers': 0}
 
 
 @dataclass
@@ -54,6 +57,7 @@ class _JitCacheEntry:
     jac_jit: Any
     phase_params: Any
     eos_jax: Any
+    powers_jit: Any = None
 
 
 _JIT_CACHE: OrderedDict[tuple, _JitCacheEntry] = OrderedDict()
@@ -64,6 +68,27 @@ def clear_jit_cache() -> None:
     _JIT_CACHE.clear()
     _TRACE_COUNTERS['rhs'] = 0
     _TRACE_COUNTERS['jac'] = 0
+    _TRACE_COUNTERS['powers'] = 0
+
+
+def _args_from_data(data, phase_params: Any, eos_jax: Any, use_radio: bool) -> tuple:
+    """Build the physical RHS argument tuple from data and closure parameters."""
+    from aragog.jax import solver as js
+
+    mesh_arrays, boundary_params, heating_jax, radio_arrays = data[:4]
+    H_radio_fn = (
+        functools.partial(js.compute_radio_heating, radio_arrays=radio_arrays)
+        if use_radio
+        else js._no_radio
+    )
+    return (
+        eos_jax,
+        phase_params,
+        mesh_arrays,
+        boundary_params,
+        heating_jax,
+        H_radio_fn,
+    )
 
 
 def _make_jitted_rhs_and_jacobian(
@@ -85,29 +110,17 @@ def _make_jitted_rhs_and_jacobian(
 
     def _eval_core(t_nd, y_nd, data):
         (
-            mesh_arrays,
-            boundary_params,
-            heating_jax,
-            radio_arrays,
+            _mesh,
+            _bc,
+            _heating,
+            _radio,
             state_scale_jax,
             rhs_scale_jax,
             t_ref_jax,
-        ) = data
+        ) = data[:7]
         t_phys = t_nd * t_ref_jax
         S_phys = y_nd * state_scale_jax
-        H_radio_fn = (
-            functools.partial(js.compute_radio_heating, radio_arrays=radio_arrays)
-            if use_radio
-            else js._no_radio
-        )
-        args_tuple = (
-            eos_jax,
-            phase_params,
-            mesh_arrays,
-            boundary_params,
-            heating_jax,
-            H_radio_fn,
-        )
+        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio)
         dydt_phys = _rhs_jax(t_phys, S_phys, args_tuple)
         return dydt_phys * rhs_scale_jax
 
@@ -123,18 +136,40 @@ def _make_jitted_rhs_and_jacobian(
     return rhs_jit, jac_jit
 
 
+def _make_jitted_powers(
+    core_bc_mode: str,
+    use_radio: bool,
+    phase_params: Any,
+    eos_jax: Any,
+):
+    """Build JIT-compiled vmapped step_powers function over chunks of size C."""
+    import jax
+
+    from aragog.jax import solver as js
+
+    def _eval_node(t_phys, y_phys, data, aux):
+        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio)
+        return js.step_powers(t_phys, y_phys, args_tuple, core_bc_mode, aux)
+
+    def _eval_chunk(t_chunk, Y_chunk, data, aux):
+        _TRACE_COUNTERS['powers'] += 1
+        return jax.vmap(_eval_node, in_axes=(0, 1, None, None))(t_chunk, Y_chunk, data, aux)
+
+    return jax.jit(_eval_chunk)
+
+
 def _get_or_create_jitted(
     core_bc_mode: str,
     use_radio: bool,
     phase_params: Any,
     eos_jax: Any,
-) -> tuple[Any, Any, bool]:
+) -> tuple[_JitCacheEntry, bool]:
     """Retrieve cached jitted functions or compile new ones.
 
     Returns
     -------
     tuple
-        (rhs_jit, jac_jit, is_cache_hit)
+        (_JitCacheEntry, is_cache_hit)
     """
     key = (core_bc_mode, use_radio, id(phase_params), id(eos_jax))
     entry = _JIT_CACHE.pop(key, None)
@@ -143,11 +178,17 @@ def _get_or_create_jitted(
         rhs_jit, jac_jit = _make_jitted_rhs_and_jacobian(
             core_bc_mode, use_radio, phase_params, eos_jax
         )
-        entry = _JitCacheEntry(rhs_jit, jac_jit, phase_params, eos_jax)
+        entry = _JitCacheEntry(
+            rhs_jit=rhs_jit,
+            jac_jit=jac_jit,
+            phase_params=phase_params,
+            eos_jax=eos_jax,
+            powers_jit=None,
+        )
     _JIT_CACHE[key] = entry
     if len(_JIT_CACHE) > _CACHE_MAXSIZE:
         _JIT_CACHE.popitem(last=False)
-    return entry.rhs_jit, entry.jac_jit, hit
+    return entry, hit
 
 
 def build_jax_rhs_and_jacobian(
@@ -198,6 +239,8 @@ def build_jax_rhs_and_jacobian(
     -------
     rhs_fn : callable
         scikits.odes RHS signature ``rhs_fn(t_nd, y_nd, ydot_nd) -> int``.
+        Carries ``step_powers(t_nodes, Y_nodes, aux) -> ndarray (n, 7)``
+        for batched per-call energy power evaluation in physical units.
     jacfn : callable
         scikits.odes Jacobian signature
         ``jacfn(t_nd, y_nd, fy_nd, J, user_data=None) -> int``.
@@ -285,9 +328,9 @@ def build_jax_rhs_and_jacobian(
         t_ref_jax,
     )
 
-    rhs_jit, jac_jit, is_cache_hit = _get_or_create_jitted(
-        core_bc_mode, use_radio, phase_params, eos_jax
-    )
+    entry, is_cache_hit = _get_or_create_jitted(core_bc_mode, use_radio, phase_params, eos_jax)
+    rhs_jit = entry.rhs_jit
+    jac_jit = entry.jac_jit
 
     info = {
         'rhs_calls': 0,
@@ -329,6 +372,73 @@ def build_jax_rhs_and_jacobian(
         except Exception as exc:
             logger.error('JAX Jacobian failed: %s; CVODE will fall back to FD', exc)
             return 1
+
+    from aragog.jax.solver import _PARTS_REGISTRY
+
+    if core_bc_mode in _PARTS_REGISTRY:
+
+        def step_powers(t_nodes, Y_nodes, aux):
+            """Batched per-node energy powers [W] for accepted trajectory nodes.
+
+            Parameters
+            ----------
+            t_nodes : array_like, shape (n,)
+                Times at evaluation nodes [yr].
+            Y_nodes : array_like, shape (dim, n)
+                State at evaluation nodes in physical units (entropy [J/kg/K],
+                plus dSdr_cmb for energy_balance mode).
+            aux : StepPowersAux
+                Per-solve geometry and mass structure.
+
+            Returns
+            -------
+            ndarray, shape (n, 7)
+                Powers in the order:
+                [-F_int*A_int, F_cmb*A_cmb, Q_radio, Q_tidal,
+                 Q_radio_cons, Q_tidal_cons, residual]
+            """
+            t_arr = np.asarray(t_nodes, dtype=np.float64)
+            if t_arr.ndim > 1:
+                raise ValueError(f't_nodes must be 1D; got ndim={t_arr.ndim}')
+            t_arr = t_arr.ravel()
+            n = t_arr.size
+
+            Y_arr = np.asarray(Y_nodes, dtype=np.float64)
+            if Y_arr.ndim != 2:
+                raise ValueError(f'Y_nodes must be 2D of shape (dim, n); got ndim={Y_arr.ndim}')
+            if Y_arr.shape[1] != n:
+                raise ValueError(
+                    f'Y_nodes second dimension {Y_arr.shape[1]} does not match t_nodes length {n}'
+                )
+            if Y_arr.shape[0] != expected_size:
+                raise ValueError(
+                    f'Y_nodes first dimension {Y_arr.shape[0]} does not match '
+                    f'expected dimension {expected_size}'
+                )
+
+            if n == 0:
+                return np.empty((0, 7), dtype=np.float64)
+
+            if entry.powers_jit is None:
+                entry.powers_jit = _make_jitted_powers(
+                    core_bc_mode, use_radio, phase_params, eos_jax
+                )
+
+            pad_len = -n % C
+            t_pad = np.pad(t_arr, (0, pad_len), mode='edge')
+            Y_pad = np.pad(Y_arr, ((0, 0), (0, pad_len)), mode='edge')
+            chunks = [
+                entry.powers_jit(
+                    t_pad[k : k + C],
+                    Y_pad[:, k : k + C],
+                    data,
+                    aux,
+                )
+                for k in range(0, t_pad.size, C)
+            ]
+            return np.concatenate(chunks)[:n]
+
+        rhs_fn.step_powers = step_powers
 
     return rhs_fn, jacfn, info
 

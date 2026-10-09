@@ -19,7 +19,7 @@ Dependencies: jax, equinox, diffrax, lineax (transitive via diffrax).
 from __future__ import annotations
 
 import logging
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 import equinox as eqx
 import jax
@@ -31,6 +31,7 @@ from aragog.jax.eos import EntropyEOS_JAX
 from aragog.jax.phase import (
     MeshArrays,
     PhaseParams,
+    PhaseProperties,
     compute_fluxes,
     evaluate_phase,
 )
@@ -228,6 +229,48 @@ class SolveResult(NamedTuple):
     success: bool  # solver converged
 
 
+class RhsParts(NamedTuple):
+    """Components computed during JAX RHS assembly.
+
+    Parameters
+    ----------
+    rate : jax.Array
+        State time derivative [J/kg/K/yr] (and [J/kg/K/m/yr] if extended).
+    heat_flux : jax.Array
+        Heat flux after both boundary conditions [W/m^2].
+    phase_stag : PhaseProperties
+        Thermodynamic and phase properties at staggered nodes.
+    """
+
+    rate: jax.Array
+    heat_flux: jax.Array
+    phase_stag: PhaseProperties
+
+
+class StepPowersAux(NamedTuple):
+    """Auxiliary geometry and structural arrays for step powers.
+
+    Parameters
+    ----------
+    A_int : float or jax.Array
+        Surface area at basic outer node [m^2].
+    A_cmb : float or jax.Array
+        Core-mantle boundary area at basic inner node [m^2].
+    volume : jax.Array
+        Cell volume at staggered nodes [m^3].
+    mass_struct : jax.Array
+        Structural mass per cell [kg] (staggered_effective_density * volume).
+    P_stag : jax.Array
+        Pressure at staggered nodes [Pa].
+    """
+
+    A_int: float | jax.Array
+    A_cmb: float | jax.Array
+    volume: jax.Array
+    mass_struct: jax.Array
+    P_stag: jax.Array
+
+
 # ---------------------------------------------------------------------------
 # RHS function
 # ---------------------------------------------------------------------------
@@ -322,12 +365,12 @@ def _apply_cmb_bc(
     return heat_flux.at[0].set(F_cmb)
 
 
-def dSdt(
+def _dSdt_parts(
     t: float,
     S: jax.Array,
     args: tuple,
-) -> jax.Array:
-    """ODE right-hand side: dS/dt at staggered nodes [J/kg/K/yr].
+) -> RhsParts:
+    """Evaluate RHS rate and intermediate components at staggered nodes.
 
     Parameters
     ----------
@@ -350,24 +393,15 @@ def dSdt(
 
     Returns
     -------
-    jax.Array
-        dS/dt at staggered nodes [J/kg/K/yr], shape (N_stag,).
+    RhsParts
+        NamedTuple with rate, heat_flux, and phase_stag.
     """
     eos, params, mesh, bc, heating_static, H_radio_fn = args
 
-    # Time-dependent radio heating evaluated at the live integrator
-    # time. H_radio(t) is recomputed inside the JAX trace at each
-    # RHS call so per-step heating reflects the current physical time
-    # and the JAX path stays in parity with the numpy reference at
-    # every mid-step Newton iterate.
+    # Time-dependent radio heating evaluated at the live integrator time.
     heating = heating_static + H_radio_fn(t)
 
     # Compute fluxes (conduction, convection, grav sep, mixing).
-    # ``flux_out.heating`` is the input ``heating`` (radio + tidal)
-    # passed through unchanged: ``compute_fluxes`` does not add any
-    # state-dependent volumetric source. Sourcing dsdt from
-    # ``flux_out.heating`` is the hidden invariant for any future
-    # contribution added inside compute_fluxes.
     flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
     heat_flux = flux_out.heat_flux
 
@@ -399,17 +433,166 @@ def dSdt(
     # dS/dt from flux divergence [J/kg/K/s]
     dsdt = -delta_energy_flux / capacitance
 
-    # Internal heating: dS/dt += H / T (sources radio + tidal)
+    # RHS takes heating from flux_out.heating; step_powers rebuilds it from
+    # heating_static and H_radio_fn(t), so its residual column flags any
+    # other source that compute_fluxes adds.
     T_stag = phase_stag.temperature
     dsdt = dsdt + flux_out.heating / jnp.maximum(T_stag, 1.0)
 
     # Convert to J/kg/K/yr
-    return dsdt * SECS_PER_YEAR
+    rate = dsdt * SECS_PER_YEAR
+
+    return RhsParts(
+        rate=rate,
+        heat_flux=heat_flux,
+        phase_stag=phase_stag,
+    )
+
+
+def dSdt(
+    t: float,
+    S: jax.Array,
+    args: tuple,
+) -> jax.Array:
+    """ODE right-hand side: dS/dt at staggered nodes [J/kg/K/yr].
+
+    Parameters
+    ----------
+    t : float
+        Current time [yr].
+    S : jax.Array
+        Entropy at staggered nodes [J/kg/K], shape (N_stag,).
+    args : tuple
+        (eos, params, mesh, bc, heating_static, H_radio_fn) where:
+        - eos: EntropyEOS_JAX
+        - params: PhaseParams
+        - mesh: MeshArrays
+        - bc: BoundaryParams
+        - heating_static: jax.Array, time-independent heating [W/kg]
+          at staggered nodes (tidal + any other constant source).
+        - H_radio_fn: callable(t_yr) -> scalar JAX array [W/kg].
+          Returns the per-cell uniform radiogenic heating evaluated
+          at the live integrator time. Use ``_no_radio`` as the
+          callable when the run has no radionuclides.
+
+    Returns
+    -------
+    jax.Array
+        dS/dt at staggered nodes [J/kg/K/yr], shape (N_stag,).
+    """
+    return _dSdt_parts(t, S, args).rate
 
 
 # ---------------------------------------------------------------------------
 # Energy_balance core BC RHS (state vector = [S, dSdr_cmb], length N+1)
 # ---------------------------------------------------------------------------
+
+
+def _dSdt_energy_balance_parts(
+    t: float,
+    state_ext: jax.Array,
+    args: tuple,
+) -> RhsParts:
+    """Evaluate energy-balance RHS rate and intermediate components.
+
+    Mirrors the numpy ``EntropySolver._dSdt_single`` for
+    ``core_bc='energy_balance'``. State layout:
+
+        state_ext[0:N] = S at staggered nodes [J/kg/K]
+        state_ext[N]   = dSdr_cmb at the CMB basic node [J/kg/K/m]
+
+    Parameters
+    ----------
+    t : float
+        Current time [yr].
+    state_ext : jax.Array, shape (N+1,)
+        Extended state vector (entropy + dSdr_cmb).
+    args : tuple
+        ``(eos, params, mesh, bc, heating_static, H_radio_fn)``: same
+        as ``dSdt``. ``bc`` must have inner_bc_type = 5 and the
+        energy_balance constants (cmb_area, core_M, cmb_dr_cmb) populated.
+
+    Returns
+    -------
+    RhsParts
+        NamedTuple with rate, heat_flux, and phase_stag.
+    """
+    eos, params, mesh, bc, heating_static, H_radio_fn = args
+    # Live radio heating, broadcast to per-cell uniform.
+    heating = heating_static + H_radio_fn(t)
+    n_stag = mesh.P_stag.shape[0]
+    S = state_ext[:n_stag]
+    dSdr_cmb = state_ext[n_stag]
+
+    # Reconstruct entropy at the CMB basic node using the boundary gradient.
+    r_basic = mesh.radii_basic
+    r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
+    dr_offset = r_basic[0] - r_stag_0
+    S_basic_cmb = S[0] + dSdr_cmb * dr_offset
+
+    # Compute fluxes using compute_fluxes with the energy_balance overrides.
+    flux_out = compute_fluxes(
+        S,
+        t,
+        eos,
+        params,
+        mesh,
+        heating,
+        S_basic_cmb_override=S_basic_cmb,
+        dSdr_cmb_override=dSdr_cmb,
+    )
+    heat_flux = flux_out.heat_flux
+
+    # Phase properties at staggered nodes
+    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
+
+    # Phase properties at basic nodes (with corrected CMB entropy)
+    S_basic_default = mesh.quantity_matrix @ S
+    S_basic = S_basic_default.at[0].set(S_basic_cmb)
+    phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
+
+    # Surface BC
+    heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
+
+    # CMB BC: heat_flux[0] is already computed by compute_fluxes.
+    T_cmb = phase_basic.temperature[0]
+    cp_cmb = phase_basic.heat_capacity[0]
+    F_cmb_from_dSdr = heat_flux[0]
+
+    # Flux divergence (entropy derivatives, same as dSdt).
+    energy_flux = heat_flux * mesh.area
+    delta_energy_flux = jnp.diff(energy_flux)
+    cap = phase_stag.capacitance
+    capacitance = cap * mesh.volume
+    dSdt_per_s = -delta_energy_flux / capacitance
+    dSdt_per_s = dSdt_per_s + flux_out.heating / jnp.maximum(phase_stag.temperature, 1.0)
+    dSdt_per_yr = dSdt_per_s * SECS_PER_YEAR
+
+    # dSdr_cmb closure equation (SPIDER bc.c:76-131)
+    E_tot_cmb = F_cmb_from_dSdr * bc.cmb_area
+    fac_cmb = cp_cmb / (
+        bc.core_heat_capacity
+        * jnp.maximum(T_cmb, 1.0)
+        * bc.tfac_core_avg
+        * jnp.maximum(bc.core_M, 1.0)
+    )
+    dSdt_basic_cmb_per_s = -E_tot_cmb * fac_cmb
+    d_dSdr_cmb_dt_per_s = (dSdt_per_s[0] - dSdt_basic_cmb_per_s) * 2.0 / bc.cmb_dr_cmb
+    d_dSdr_cmb_dt_per_yr = d_dSdr_cmb_dt_per_s * SECS_PER_YEAR
+
+    # Assemble extended-state derivative
+    rate = jnp.concatenate(
+        [
+            dSdt_per_yr,
+            jnp.array([d_dSdr_cmb_dt_per_yr]),
+        ]
+    )
+
+    return RhsParts(
+        rate=rate,
+        heat_flux=heat_flux,
+        phase_stag=phase_stag,
+    )
 
 
 def dSdt_energy_balance(
@@ -436,9 +619,9 @@ def dSdt_energy_balance(
     state_ext : jax.Array, shape (N+1,)
         Extended state vector (entropy + dSdr_cmb).
     args : tuple
-        ``(eos, params, mesh, bc, heating)`` — same as ``dSdt``.
-        ``bc`` must have inner_bc_type = 5 and the energy_balance
-        constants (cmb_area, core_M, cmb_dr_cmb) populated.
+        ``(eos, params, mesh, bc, heating_static, H_radio_fn)``: same
+        as ``dSdt``. ``bc`` must have inner_bc_type = 5 and the
+        energy_balance constants (cmb_area, core_M, cmb_dr_cmb) populated.
 
     Returns
     -------
@@ -446,93 +629,95 @@ def dSdt_energy_balance(
         d(state_ext)/dt at the same layout, [J/kg/K/yr] for entropy,
         [J/kg/K/m/yr] for dSdr_cmb.
     """
-    eos, params, mesh, bc, heating_static, H_radio_fn = args
-    # Live radio heating, broadcast to per-cell uniform.
-    heating = heating_static + H_radio_fn(t)
-    n_stag = mesh.P_stag.shape[0]
-    S = state_ext[:n_stag]
-    dSdr_cmb = state_ext[n_stag]
+    return _dSdt_energy_balance_parts(t, state_ext, args).rate
 
-    # Reconstruct entropy at the CMB basic node using the boundary
-    # gradient. Mirrors numpy entropy_state.update(dSdr_cmb=extra):
-    #   entropy_basic[0] = S[0] + dSdr_cmb * (r_basic[0] - r_stag[0])
-    # where r_stag[0] = 0.5 * (r_basic[0] + r_basic[1]) is the first
-    # staggered cell. dr_offset is NEGATIVE (basic[0] < stag[0]).
-    r_basic = mesh.radii_basic
-    r_stag_0 = 0.5 * (r_basic[0] + r_basic[1])
-    dr_offset = r_basic[0] - r_stag_0
-    S_basic_cmb = S[0] + dSdr_cmb * dr_offset
 
-    # Compute fluxes using compute_fluxes with the energy_balance
-    # overrides for the CMB basic node. This keeps the full physics
-    # pipeline (conduction + convection + grav_sep + mixing) in one
-    # place; the overrides ensure the CMB cell's contributions use
-    # the state-tracked dSdr_cmb instead of the FD-derived gradient.
-    flux_out = compute_fluxes(
-        S,
-        t,
-        eos,
-        params,
-        mesh,
-        heating,
-        S_basic_cmb_override=S_basic_cmb,
-        dSdr_cmb_override=dSdr_cmb,
-    )
-    heat_flux = flux_out.heat_flux
+_PARTS_REGISTRY: dict[str, Callable] = {
+    'quasi_steady': _dSdt_parts,
+    'energy_balance': _dSdt_energy_balance_parts,
+}
 
-    # Phase properties at staggered nodes
-    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
 
-    # Phase properties at basic nodes (with corrected CMB entropy,
-    # matching what compute_fluxes used internally)
-    S_basic_default = mesh.quantity_matrix @ S
-    S_basic = S_basic_default.at[0].set(S_basic_cmb)
-    phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
+def step_powers(
+    t: float,
+    y: jax.Array,
+    args: tuple,
+    mode: str,
+    aux: StepPowersAux,
+) -> jax.Array:
+    """Powers [W] at one solver state for per-call energy integrals.
 
-    # Surface BC
-    heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
+    Calls the mode's parts function once and returns the boundary, source,
+    and residual powers in the order of the numpy ``_step_powers``:
+    ``[-F_int*A_int, F_cmb*A_cmb, Q_radio, Q_tidal, Q_radio_cons,
+    Q_tidal_cons, residual]``.
 
-    # CMB BC: heat_flux[0] is already correctly computed by
-    # compute_fluxes using the dSdr_cmb override. No additional
-    # override needed here.
-    T_cmb = phase_basic.temperature[0]
-    cp_cmb = phase_basic.heat_capacity[0]
-    F_cmb_from_dSdr = heat_flux[0]
+    Parameters
+    ----------
+    t : float
+        Node time [yr].
+    y : jax.Array
+        Node state vector in physical units (entropy [J/kg/K], plus
+        dSdr_cmb for energy_balance mode).
+    args : tuple
+        RHS argument tuple: (eos, params, mesh, bc, heating_static, H_radio_fn, ...).
+    mode : str
+        Solver mode ('quasi_steady' or 'energy_balance').
+    aux : StepPowersAux
+        Per-solve geometry and structural mass arrays.
 
-    # Flux divergence (entropy derivatives, same as dSdt). Source the
-    # heating term from ``flux_out.heating`` (radio + tidal), not the
-    # closure-captured static ``heating``. Hidden invariant: any future
-    # heating contribution added inside compute_fluxes must be sourced
-    # from flux_out.heating, not the static input array.
-    energy_flux = heat_flux * mesh.area
-    delta_energy_flux = jnp.diff(energy_flux)
+    Returns
+    -------
+    jax.Array, shape (7,)
+        Boundary heat flows, source powers, and entropy balance residual [W].
+    """
+    eos, params, mesh, bc, heating_static, H_radio_fn = args[:6]
+    parts_fn = _PARTS_REGISTRY.get(mode)
+    if parts_fn is None:
+        raise ValueError(
+            f'mode={mode!r} is not supported by step_powers; expected '
+            f'one of {list(_PARTS_REGISTRY.keys())}.'
+        )
+    parts = parts_fn(t, y, args)
+    if mode == 'quasi_steady':
+        S_stag = y
+        dSdt_stag = parts.rate / SECS_PER_YEAR
+    else:
+        n_stag = aux.volume.shape[0]
+        S_stag = y[:n_stag]
+        dSdt_stag = parts.rate[:n_stag] / SECS_PER_YEAR
+
+    p_int = -parts.heat_flux[-1] * aux.A_int
+    p_cmb = parts.heat_flux[0] * aux.A_cmb
+
+    H_radio = H_radio_fn(t)
+    mass_i = eos.density(aux.P_stag, S_stag) * aux.volume
+    Q_radio_i = H_radio * jnp.sum(mass_i)
+    Q_tidal_i = jnp.dot(heating_static, mass_i)
+
+    Q_radio_cons_i = H_radio * jnp.sum(aux.mass_struct)
+    Q_tidal_cons_i = jnp.dot(heating_static, aux.mass_struct)
+
+    phase_stag = parts.phase_stag
     cap = phase_stag.capacitance
-    capacitance = cap * mesh.volume
-    dSdt_per_s = -delta_energy_flux / capacitance
-    dSdt_per_s = dSdt_per_s + flux_out.heating / jnp.maximum(phase_stag.temperature, 1.0)
-    dSdt_per_yr = dSdt_per_s * SECS_PER_YEAR
+    T_phase = phase_stag.temperature
+    rho_phase = phase_stag.density
+    heat_mass = rho_phase * aux.volume * (T_phase / jnp.maximum(T_phase, 1.0))
+    lhs = jnp.sum(cap * dSdt_stag * aux.volume)
+    Q_radio_resid = H_radio * jnp.sum(heat_mass)
+    Q_tidal_resid = jnp.dot(heating_static, heat_mass)
+    rhs = p_int + p_cmb + Q_radio_resid + Q_tidal_resid
+    residual = lhs - rhs
 
-    # ── dSdr_cmb closure equation (SPIDER bc.c:76-131) ──
-    # fac_cmb = cp_cmb / (core_cp * T_cmb * tfac * core_M)
-    # E_tot_cmb = F_cmb * area_cmb [W]
-    # dSdt_basic_cmb = -E_tot_cmb * fac_cmb [J/kg/K/s]
-    # rhs = (dSdt_stag[0] - dSdt_basic_cmb) * 2 / dr_cmb [J/kg/K/m/s]
-    E_tot_cmb = F_cmb_from_dSdr * bc.cmb_area
-    fac_cmb = cp_cmb / (
-        bc.core_heat_capacity
-        * jnp.maximum(T_cmb, 1.0)
-        * bc.tfac_core_avg
-        * jnp.maximum(bc.core_M, 1.0)
-    )
-    dSdt_basic_cmb_per_s = -E_tot_cmb * fac_cmb
-    d_dSdr_cmb_dt_per_s = (dSdt_per_s[0] - dSdt_basic_cmb_per_s) * 2.0 / bc.cmb_dr_cmb
-    d_dSdr_cmb_dt_per_yr = d_dSdr_cmb_dt_per_s * SECS_PER_YEAR
-
-    # Assemble extended-state derivative
-    return jnp.concatenate(
+    return jnp.array(
         [
-            dSdt_per_yr,
-            jnp.array([d_dSdr_cmb_dt_per_yr]),
+            p_int,
+            p_cmb,
+            Q_radio_i,
+            Q_tidal_i,
+            Q_radio_cons_i,
+            Q_tidal_cons_i,
+            residual,
         ]
     )
 
