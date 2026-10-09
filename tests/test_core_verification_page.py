@@ -38,8 +38,9 @@ RUN_SPREAD = {f'identity_{t}' for t in FLOWS} | {
 }
 # Item 13 differences of an unconverged run from thermal_history: within a factor 2 either way
 UNCONVERGED = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
-# Item 13 T_cen changes under the mixing constants, of the size of the integration noise: sign only
-SIGN_ONLY = {'mixing_tcen_max_K', 'mixing_tcen_min_K'}
+# Item 13 T_cen changes under the mixing constants, of the size of the integration noise: held
+# between 0 and 1 K (0.30 K at most under a 1-ulp start temperature)
+MIXING_TCEN = {'mixing_tcen_max_K', 'mixing_tcen_min_K'}
 # Differences of two solutions that the integration moves by more than 1e-4 of themselves: held
 # to 2 to 3 times the largest change under a tenfold tighter tolerance or a 1-ulp start temperature
 BANDS = {
@@ -94,10 +95,10 @@ def script(tmp_path, monkeypatch):
 
 def _holds(key, value, want):
     """A value in ROUNDING or RUN_SPREAD may not double, one in UNCONVERGED stays within a
-    factor 2 either way, one in SIGN_ONLY stays positive, one in BANDS within its band, every
-    other number holds to 1e-4."""
-    if key in SIGN_ONLY:
-        return value > 0
+    factor 2 either way, one in MIXING_TCEN between 0 and 1 K, one in BANDS within its band,
+    every other number holds to 1e-4."""
+    if key in MIXING_TCEN:
+        return 0 < value < 1.0
     if key in ROUNDING or key in RUN_SPREAD:
         return abs(value) <= 2.0 * abs(want) + 1e-15
     if key in UNCONVERGED:
@@ -193,14 +194,11 @@ def test_coupled_tables_reproduce_the_page(script):
         and got['t_freeze_K_5me'] > got['t_onset_K_5me']
     )
     # E1, bounds set before the runs: 5 % on times and fluxes, 10 K on temperatures
-    for q in ('t_bf', 'F10', 'F100', 'F1000', 'F_bf'):
-        assert got[f'e1_{q}_d_160_320'] < 0.05
-        assert got[f'e1_{q}_d_80_rtol'] < 1e-3
+    assert got['e1_bounded_max_d_160_320'] < 0.05 and got['e1_bounded_max_d_80_rtol'] < 1e-3
     assert got['e1_T_core_bf_d_160_320'] < 10.0 and got['e1_T_core_end_d_160_320'] < 10.0
     assert got['e1_T_core_bf_d_80_rtol'] < 0.01
     for pair in ('40_80', '80_160', '160_320'):  # a half-cell conduction flux would double
-        for q in ('F_2bf', 'F_4bf', 'F_10kyr', 'F_100kyr', 'F_500kyr'):
-            assert got[f'e1_{q}_d_{pair}'] < 0.1
+        assert got[f'e1_late_max_d_{pair}'] < 0.1
 
 
 @pytest.mark.slow
@@ -213,7 +211,11 @@ def test_the_stable_layer_meets_the_thermal_history_bounds(script):
     takes to mix, and the layer re-forms to a depth within a factor 1.5. The heat rates of core
     and shell equal the CMB flow at every sample."""
     got = _reproduces(script, 13)
-    assert got['mixing_depth_max_rel'] > 0  # with mixing_tcen_min_K > 0: both constants act
+    # both mixing constants reach the shell
+    assert got['mixing_tcen_min_K'] > 0 and got['mixing_depth_max_rel'] > 0
+    # the runs of stable_layer_spread.json start from this one
+    base = json.loads((ROOT / 'tools/verification/data/stable_layer_spread.json').read_text())
+    assert all(_holds(k, got[k], v) for k, v in base['runs']['base'].items())
     for t in FLOWS:
         assert got[f'identity_{t}'] < 1e-12
         assert got[f'tcmb_max_abs_diff_K_{t}'] < 5.0

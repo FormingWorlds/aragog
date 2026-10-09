@@ -637,16 +637,16 @@ def test_jacobian_core_column_matches_central_differences(state):
     J = np.asarray(jax.jacrev(lambda v: dSdt_core_module(0.0, v, args))(jnp.asarray(y)))
     # The mixing flux curves strongly in the mixed region: there a central difference needs a
     # 1e-5 K step and agrees to 0.2 %, and the gradient slot barely depends on T_core.
-    h, rows = (1e-5, (n + 1,)) if state == 'stratified' else (0.1, (n, n + 1))
-    # over the boundary layer the gradient-slot difference is 2e-6 off by its own rounding
-    rel = {'stratified': 5e-3, 'boundary_layer': 1e-5}.get(state, 1e-6)
+    h, rows, rel = (1e-5, (n + 1,), 5e-3) if state == 'stratified' else (0.1, (n, n + 1), 1e-6)
     up, down = y.copy(), y.copy()
     up[n + 1] += h
     down[n + 1] -= h
     fd = (rhs(up) - rhs(down)) / (2.0 * h)
     for row in rows:
         assert fd[row] != 0.0
-        assert J[row, n + 1] == pytest.approx(fd[row], rel=rel)
+        # over the boundary layer the difference of the small gradient-slot rate is 2e-6 noisy
+        loose = state == 'boundary_layer' and row == n
+        assert J[row, n + 1] == pytest.approx(fd[row], rel=1e-5 if loose else rel)
     # S[0] sets the mantle side of the CMB flux; with a layer the top cell sets the flux, so
     # S[0] and the gradient slot
     col, rows, rel = (-1, (0, n), 1e-6) if state == 'stratified' else (0, (0, n + 1), 1e-5)

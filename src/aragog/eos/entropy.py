@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 from scipy.interpolate import RegularGridInterpolator
+from scipy.optimize import brentq
 
 from aragog.eos.table_cache import read_cached_table
 
@@ -954,8 +955,6 @@ class EntropyEOS:
         Brent's method over the tables' entropy range, which keeps its bracket where ``T(S)`` is
         flat; the range edge where ``T`` lies beyond it.
         """
-        from scipy.optimize import brentq
-
         solid, melt = self._tables['temperature_solid'], self._tables['temperature_melt']
         lo, hi = min(solid['S'][0], melt['S'][0]), max(solid['S'][-1], melt['S'][-1])
 
