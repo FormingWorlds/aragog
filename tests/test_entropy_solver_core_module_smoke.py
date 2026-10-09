@@ -225,7 +225,7 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
        (positive flux and booked CMB energy), a core 1000 K colder gains it.
 
     The driven profile's base is mushy (phi 0.19); over the hot core the layer's mean
-    temperature is past the rheological transition (phi 0.51), so the flux is about 5e4 W/m^2,
+    temperature is past the rheological transition (phi 0.51), so the flux is about 3.4e4 W/m^2,
     while below the cold core it is conduction of about 0.03 W/m^2.
     """
     from aragog.core import cmb_boundary_layer_flux

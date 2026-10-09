@@ -27,7 +27,7 @@ pytest.importorskip('equinox')
 
 jax.config.update('jax_enable_x64', True)
 
-from aragog.jax.solver import dSdt_core_module  # noqa: E402
+from aragog.jax.solver import _dSdt_core_module_parts, dSdt_core_module  # noqa: E402
 from tests.conftest import entropy_eos_copy, entropy_eos_jax, needs_eos  # noqa: E402
 from tests.test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build  # noqa: E402
 
@@ -537,8 +537,6 @@ def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boun
     """Where the layer's mean temperature crosses the solidus or the liquidus by 1e-7 K (5e-7
     J/kg/K in the mush; the tables' pure-phase T(S) is flat next to both edges), the NumPy and
     the JAX CMB fluxes step only by the cube root of the step of the mantle-model viscosity."""
-    from aragog.jax.solver import _dSdt_core_module_parts
-
     solver = _build_numpy_solver(entropy_eos_copy())
     eos, bl, n = solver.entropy_eos, solver._bl_phase, solver._n_stag
     P = float(solver._P_basic_flat[0])
@@ -564,12 +562,13 @@ def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boun
 @pytest.mark.slow
 @pytest.mark.physics_invariant
 @needs_eos
-@pytest.mark.parametrize('state', ['nucleating', 'above_onset', 'stratified'])
+@pytest.mark.parametrize('state', ['nucleating', 'above_onset', 'boundary_layer', 'stratified'])
 def test_jacobian_core_column_matches_central_differences(state):
     """``jacrev`` of the core_module RHS agrees with a central difference in T_core for the
     gradient-slot and T_core rows, on the driven (non-uniform) profile: inside the
-    growth band, above the onset, and with a stable layer in the shell, where JAX matches
-    NumPy, the CVODE factory matches both, and the top shell cell's column matches too."""
+    growth band, above the onset, with the core 300 K above a base at melt fraction 0.66 (the
+    boundary-layer flux), and with a stable layer in the shell, where JAX matches NumPy, the
+    CVODE factory matches both, and the top shell cell's column matches too."""
     params = dict(CORE_MODULE_PARAMS)
     if state.startswith('stratified'):
         params |= {'stratification': True, 'k_core': 130.0}
@@ -585,6 +584,12 @@ def test_jacobian_core_column_matches_central_differences(state):
         y[n + 1] = np.median(scan[latent > 0.01 * secular])
     elif state == 'above_onset':
         y[n + 1] = float(budget.t_onset) + 100.0
+    elif state == 'boundary_layer':
+        eos, p = solver.entropy_eos, float(solver._P_basic_flat[0])
+        y[0] = float(
+            eos.solidus_entropy(p) + 0.66 * (eos.liquidus_entropy(p) - eos.solidus_entropy(p))
+        )
+        y[n + 1] = eos.temperature_scalar(p, y[0]) + 300.0
     else:
         y[n + 1] += 50.0
         depth = budget.profiles.r_cmb - np.asarray(budget.shell.r_cells)
@@ -597,6 +602,8 @@ def test_jacobian_core_column_matches_central_differences(state):
             float(budget.shell.layer_base(y[n + 2 :], y[n + 1])) < budget.profiles.r_cmb - 1e5
         )
     args = _build_jax_pieces(solver)
+    if state == 'boundary_layer':  # conduction across the half cell would give 0.01 W/m^2
+        assert float(_dSdt_core_module_parts(0.0, jnp.asarray(y), args).heat_flux[0]) > 1e4
 
     def rhs(v):
         return np.asarray(dSdt_core_module(0.0, jnp.asarray(v), args))
@@ -630,7 +637,9 @@ def test_jacobian_core_column_matches_central_differences(state):
     J = np.asarray(jax.jacrev(lambda v: dSdt_core_module(0.0, v, args))(jnp.asarray(y)))
     # The mixing flux curves strongly in the mixed region: there a central difference needs a
     # 1e-5 K step and agrees to 0.2 %, and the gradient slot barely depends on T_core.
-    h, rows, rel = (1e-5, (n + 1,), 5e-3) if state == 'stratified' else (0.1, (n, n + 1), 1e-6)
+    h, rows = (1e-5, (n + 1,)) if state == 'stratified' else (0.1, (n, n + 1))
+    # over the boundary layer the gradient-slot difference is 2e-6 off by its own rounding
+    rel = {'stratified': 5e-3, 'boundary_layer': 1e-5}.get(state, 1e-6)
     up, down = y.copy(), y.copy()
     up[n + 1] += h
     down[n + 1] -= h
