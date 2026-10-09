@@ -526,7 +526,6 @@ def item9_cvode_onset() -> None:
     record(9, 't_core_start', t_core[0])
     record(9, 't_core_end', t_core[-1])
     record(9, 'r_icb_end_km', float(budget.r_icb(t_core[-1])) / 1e3)
-    record(9, 'core_vs_content_rel', abs(out.step_dE_core_J / content[-1] - 1))
     record(9, 'step_dE_core_J', out.step_dE_core_J)
     record(9, 'n_outputs', t_yr.size)
 
