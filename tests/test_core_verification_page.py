@@ -44,14 +44,9 @@ BANDS = {
     # item 10, LSODA at rtol 1e-10: these two T_cmb differences move by up to 1.0e-6 K
     **dict.fromkeys(('t_cmb_abs_diff_at_onset', 't_cmb_diff_max_after_onset_K'), 3e-6),
     # item 13: T_cen moves by 0.25 K at -2 TW (Linux moved 8 TW by 0.072 K)
-    **dict.fromkeys(
-        [
-            *(f'tcen_max_abs_diff_K_{t}' for t in FLOWS),
-            'mixing_tcen_max_K',
-            'mixing_tcen_min_K',
-        ],
-        0.6,
-    ),
+    **{f'tcen_max_abs_diff_K_{t}': 0.6 for t in FLOWS},
+    'mixing_tcen_max_K': 0.6,
+    'mixing_tcen_min_K': 0.6,
     # item 13: the end inner-core radius moves by up to 8.3e-5 of itself
     **dict.fromkeys([f'ricb_end_rel_diff_{t}' for t in FLOWS], 2e-4),
     # item 13: the late layer depth, its change under the mixing constants and the end depth
