@@ -158,7 +158,8 @@ def test_the_outer_core_mass_bound_applies_to_either_composition_term():
         lambda t: outer(t) - M_OC_FRACTION_MIN, budget.t_onset - 500.0, budget.t_onset - 1e-3
     )
     refuse_unmodelled_regime(budget, [budget.t_onset + 10.0, t_bound + 1.0])
-    with pytest.raises(ValueError, match='outer core holds 0.89'):
-        refuse_unmodelled_regime(budget, [t_bound - 1.0])
+    for trace in ([t_bound - 1.0], [t_bound - 1.0, budget.t_onset + 10.0]):  # coldest first
+        with pytest.raises(ValueError, match='outer core holds 0.89'):
+            refuse_unmodelled_regime(budget, trace)
     plain = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
     refuse_unmodelled_regime(plain, [t_bound - 1.0])  # no composition term: no bound

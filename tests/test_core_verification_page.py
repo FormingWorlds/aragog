@@ -23,10 +23,12 @@ ROUNDING = {
     'conduction_sink_rel',
     't_cmb_max_abs_diff_before_onset',
 }
-# Item 13 values that are a rounding-level residual or the spread between two tolerances
+# Item 13 values that are a rounding-level residual, the spread between two tolerances or a
+# count of BDF stalls
 RUN_SPREAD = {f'identity_{t}' for t in ('8TW', '12TW', '-2TW', '0TW')} | {
     'erosion_identity',
     'tcen_max_rtol_noise_K',
+    'bdf_restarts',
 }
 # Item 13 differences of an unconverged run from thermal_history: within a factor 2 either way
 UNCONVERGED = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}

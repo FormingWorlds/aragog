@@ -50,6 +50,23 @@ def test_a_temperature_beyond_the_tables_gives_the_table_edge():
         assert float(grad) == 0.0
 
 
+def test_a_rising_edge_slope_keeps_the_inverse_at_the_edge(monkeypatch):
+    """Where the temperature still rises by a rounding-level slope at the table edge, as on some
+    table sets, a temperature beyond the range gives the edge with zero derivatives, not a
+    Newton step divided by that slope."""
+    eos, eos_j = entropy_eos_copy(), entropy_eos_jax()
+    solid, melt = eos._tables['temperature_solid'], eos._tables['temperature_melt']
+    edges = min(solid['S'][0], melt['S'][0]), max(solid['S'][-1], melt['S'][-1])
+    cls = type(eos_j)
+    tables = cls.temperature
+    monkeypatch.setattr(cls, 'temperature', lambda self, P, S: tables(self, P, S) + 1e-13 * S)
+    for t, edge in ((1.0, edges[0]), (1e6, edges[1])):
+        p_t = jnp.asarray(1.3e11), jnp.asarray(t)
+        assert float(eos_j.entropy_at_temperature(*p_t)) == pytest.approx(edge, rel=1e-12)
+        grads = jax.grad(eos_j.entropy_at_temperature, argnums=(0, 1))(*p_t)
+        assert [float(g) for g in grads] == [0.0, 0.0]
+
+
 @pytest.mark.physics_invariant
 @pytest.mark.parametrize('phase', [0, 1, 2])
 def test_the_jax_inverse_carries_the_implicit_derivatives(phase):

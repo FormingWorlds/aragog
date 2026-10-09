@@ -92,8 +92,9 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
     Raises
     ------
     ValueError
-        At the first refused state, naming its regime or outer-core mass fraction and
-        its temperature.
+        At the first state in a refused regime, naming the regime and its temperature, or
+        when the coldest state of the call leaves an outer-core mass fraction below the
+        bound, naming that fraction and temperature.
     """
     t_cmb = np.atleast_1d(np.asarray(t_cmb, dtype=float))
     codes = np.asarray(budget.regime_batch(t_cmb))

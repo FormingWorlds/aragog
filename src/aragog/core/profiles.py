@@ -243,20 +243,17 @@ class GaussianCoreProfiles:
         if self.adiabat_mode == 'small_radius':
             return float(self.d_scale * _np.sqrt(1.5))
         with jax.ensure_compile_time_eval():  # concrete even when first read inside a trace
-            return self._r_peak_exact()
-
-    def _r_peak_exact(self) -> float:
-        r = _np.linspace(0.0, self.r_cmb, 513)
-        i = int(_np.argmax(-(r**2) * _np.asarray(self.adiabat_gradient(r, 1.0))))
-        if i == r.size - 1:
-            return self.r_cmb
-        res = minimize_scalar(
-            lambda x: float(x**2 * self.adiabat_gradient(x, 1.0)),
-            bounds=(r[i - 1], r[i + 1]),
-            method='bounded',
-            options={'xatol': 1.0},
-        )
-        return float(res.x)
+            r = _np.linspace(0.0, self.r_cmb, 513)
+            i = int(_np.argmax(-(r**2) * _np.asarray(self.adiabat_gradient(r, 1.0))))
+            if i == r.size - 1:
+                return self.r_cmb
+            res = minimize_scalar(
+                lambda x: float(x**2 * self.adiabat_gradient(x, 1.0)),
+                bounds=(r[i - 1], r[i + 1]),
+                method='bounded',
+                options={'xatol': 1.0},
+            )
+            return float(res.x)
 
     def t_cen(self, t_cmb):
         """Centre temperature [K] on the adiabat anchored at ``t_cmb``."""

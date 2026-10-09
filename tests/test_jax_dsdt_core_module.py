@@ -520,19 +520,13 @@ def test_jacobian_core_column_matches_central_differences(state):
     for row in rows:
         assert fd[row] != 0.0
         assert J[row, n + 1] == pytest.approx(fd[row], rel=rel)
-    if state != 'stratified':  # S[0] sets the mantle side of the CMB flux and its layer
-        h, up, down = 1e-3, y.copy(), y.copy()
-        up[0] += h
-        down[0] -= h
-        fd = (rhs(up) - rhs(down)) / (2.0 * h)
-        for row in (0, n + 1):
-            assert fd[row] != 0.0
-            assert J[row, 0] == pytest.approx(fd[row], rel=1e-5)
-    if state == 'stratified':  # the top cell sets the CMB flux, so S[0] and the gradient slot
-        h, up, down = 1e-3, y.copy(), y.copy()
-        up[-1] += h
-        down[-1] -= h
-        fd = (rhs(up) - rhs(down)) / (2.0 * h)
-        for row in (0, n):
-            assert fd[row] != 0.0
-            assert J[row, -1] == pytest.approx(fd[row], rel=1e-6)
+    # S[0] sets the mantle side of the CMB flux; with a layer the top cell sets the flux, so
+    # S[0] and the gradient slot
+    col, rows, rel = (-1, (0, n), 1e-6) if state == 'stratified' else (0, (0, n + 1), 1e-5)
+    h, up, down = 1e-3, y.copy(), y.copy()
+    up[col] += h
+    down[col] -= h
+    fd = (rhs(up) - rhs(down)) / (2.0 * h)
+    for row in rows:
+        assert fd[row] != 0.0
+        assert J[row, col] == pytest.approx(fd[row], rel=rel)
