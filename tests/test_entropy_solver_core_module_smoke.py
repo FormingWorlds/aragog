@@ -356,7 +356,7 @@ def test_core_module_cvode_solve_crosses_the_inner_core_onset(shared_eos):
     """A core 2 K above the inner-core onset over a partly molten base cools through it under CVODE
     (a quadratic curve at 1.5 times Nimmo's t_m0 puts the onset above the base). The core
     heat change across the square-root cusp equals the heat_content difference and, at rtol
-    1e-10, the CMB heat to 1e-6 (5.2e-7; 1.9e-6 at the default rtol 1e-8)."""
+    1e-10, the CMB heat to 1e-6, which the default rtol 1e-8 misses."""
     params = dict(UNENRICHED_PARAMS)
     params.update(melting_curve='quadratic', t_m0=4015.5, t_m1=2.95e-12, t_m2=8.37e-25)
     solver = _build('core_module', shared_eos, params, end_time=4.0, solver_method='cvode')

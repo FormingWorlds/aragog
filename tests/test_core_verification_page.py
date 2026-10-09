@@ -1,5 +1,5 @@
 """The core verification page: every tagged number matches the values file, every test it
-names exists, and items 4, 5, 6, 10, 11 and 13 of the script reproduce their recorded values."""
+names exists, and items 4, 5, 6, 9, 10, 11 and 13 of the script reproduce their recorded values."""
 
 from __future__ import annotations
 
@@ -23,30 +23,29 @@ ROUNDING = {
     'conduction_sink_rel',
     't_cmb_max_abs_diff_before_onset',
 }
-# Item 13 values that are a rounding-level residual, the spread between two tolerances or a
-# count of BDF stalls
-RUN_SPREAD = {f'identity_{t}' for t in ('8TW', '12TW', '-2TW', '0TW')} | {
+FLOWS = ('8TW', '12TW', '-2TW', '0TW')
+# Values set by the integration: a rounding-level residual, a closure error, the spread between
+# two tolerances, or a count of solver outputs or BDF stalls (items 9 and 13)
+RUN_SPREAD = {f'identity_{t}' for t in FLOWS} | {
     'erosion_identity',
     'tcen_max_rtol_noise_K',
     'bdf_restarts',
+    'core_vs_cmb_rel',
+    'core_vs_cmb_rel_rtol1e-8',
+    'reconstructed_cmb_max_rel',
+    'n_outputs',
 }
 # Item 13 differences of an unconverged run from thermal_history: within a factor 2 either way
 UNCONVERGED = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
-# Differences of two solutions that the integration error sets below 1e-4: held to twice the
-# largest change under a tenfold tighter tolerance or a 1-ulp start temperature
+# Differences of two solutions that the integration moves by more than 1e-4 of themselves: held
+# to 2 to 3 times the largest change under a tenfold tighter tolerance or a 1-ulp start temperature
 BANDS = {
-    # item 10, LSODA at rtol 1e-10: the T_cmb differences move by up to 1.4e-6 K
-    **dict.fromkeys(
-        ('t_cmb_abs_diff_at_onset', 't_cmb_diff_max_after_onset_K', 't_cmb_max_abs_diff'), 3e-6
-    ),
-    # item 13, the layered core at rtol 1e-11: T_cen moves by up to 0.27 K (its tolerance spread)
-    **dict.fromkeys(
-        [f'tcen_max_abs_diff_K_{t}' for t in ('8TW', '12TW', '-2TW', '0TW')]
-        + ['mixing_tcen_max_K'],
-        0.6,
-    ),
+    # item 10, LSODA at rtol 1e-10: these two T_cmb differences move by up to 1.0e-6 K
+    **dict.fromkeys(('t_cmb_abs_diff_at_onset', 't_cmb_diff_max_after_onset_K'), 3e-6),
+    # item 13: T_cen moves by 0.25 K at -2 TW (Linux moved 8 TW by 0.072 K)
+    **dict.fromkeys([*(f'tcen_max_abs_diff_K_{t}' for t in FLOWS), 'mixing_tcen_max_K'], 0.6),
     # item 13: the end inner-core radius moves by up to 8.3e-5 of itself
-    **dict.fromkeys([f'ricb_end_rel_diff_{t}' for t in ('8TW', '12TW', '-2TW', '0TW')], 2e-4),
+    **dict.fromkeys([f'ricb_end_rel_diff_{t}' for t in FLOWS], 2e-4),
     # item 13: the late layer depth, its change under the mixing constants and the end depth
     'depth_late_max_rel': 2e-3,
     'mixing_depth_max_rel': 5e-3,
@@ -90,22 +89,25 @@ def script(tmp_path, monkeypatch):
     sys.path.remove(str(ROOT / 'tools' / 'verification'))
 
 
-def _reproduces(script, item):
-    """Run one item and compare what it records with the values file: a rounding-level
-    error in ROUNDING or RUN_SPREAD may not double, a value in UNCONVERGED stays within a
+def _holds(key, value, want):
+    """A value in ROUNDING or RUN_SPREAD may not double, one in UNCONVERGED stays within a
     factor 2 either way, one in BANDS within its band, every other number holds to 1e-4."""
+    if key in ROUNDING or key in RUN_SPREAD:
+        return abs(value) <= 2.0 * abs(want) + 1e-15
+    if key in UNCONVERGED:
+        return 0.5 * want <= value <= 2.0 * want
+    if key in BANDS:
+        return abs(value - want) <= BANDS[key]
+    return value == pytest.approx(want, rel=1e-4, abs=1e-12)
+
+
+def _reproduces(script, item):
+    """Run one item and compare every value it records with the values file."""
     script.ITEMS[item]()
     got, want = script.VALUES[str(item)], VALUES[str(item)]
     assert got.keys() == want.keys()
-    for key, value in got.items():
-        if key in ROUNDING or key in RUN_SPREAD:
-            assert abs(value) <= 2.0 * abs(want[key]) + 1e-15, key
-        elif key in UNCONVERGED:
-            assert 0.5 * want[key] <= value <= 2.0 * want[key], key
-        elif key in BANDS:
-            assert abs(value - want[key]) <= BANDS[key], key
-        else:
-            assert value == pytest.approx(want[key], rel=1e-4, abs=1e-12), key
+    bad = [(k, v, want[k]) for k, v in got.items() if not _holds(k, v, want[k])]
+    assert not bad, bad
     return got
 
 
@@ -145,6 +147,13 @@ def test_budget_terms_match_the_thermal_history_table(script):
     assert {k: inputs[k] for k in script.NIMMO} == script.NIMMO
     assert max(got[f'{k}_max_rel'] for k in ('secular', 'latent', 'latent_entropy')) < 1e-3
     assert got['gravitational_enrichment_corrected_max_rel'] < 1e-3
+
+
+@pytest.mark.slow
+@pytest.mark.physics_invariant
+def test_a_cvode_solve_across_the_onset_needs_the_tight_tolerance_to_close(script):
+    got = _reproduces(script, 9)
+    assert got['core_vs_cmb_rel'] < 1e-6 < got['core_vs_cmb_rel_rtol1e-8']
 
 
 @pytest.mark.slow
@@ -197,7 +206,8 @@ def test_the_stable_layer_meets_the_thermal_history_bounds(script):
     takes to mix, and the layer re-forms to a depth within a factor 1.5. The heat rates of core
     and shell equal the CMB flow at every sample."""
     got = _reproduces(script, 13)
-    for t in ('8TW', '12TW', '-2TW', '0TW'):
+    assert got['mixing_tcen_max_K'] > 0 and got['mixing_depth_max_rel'] > 0
+    for t in FLOWS:
         assert got[f'identity_{t}'] < 1e-12
         assert got[f'tcmb_max_abs_diff_K_{t}'] < 5.0
         assert got[f'tcen_max_abs_diff_K_{t}'] < 10.0
