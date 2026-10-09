@@ -163,3 +163,22 @@ def test_the_outer_core_mass_bound_applies_to_either_composition_term():
             refuse_unmodelled_regime(budget, trace)
     plain = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
     refuse_unmodelled_regime(plain, [t_bound - 1.0])  # no composition term: no bound
+
+
+@pytest.mark.physics_invariant
+def test_a_legacy_core_is_never_refused():
+    """A legacy-mode budget, a reservoir of constant capacity, books no inner core, so the guard
+    passes the outer-core mass and top-down states it refuses for the same curve in profile
+    mode."""
+    prof = GaussianCoreProfiles(**EARTH)
+    kw = dict(ds_fusion=170.0, icn_width=10.0)
+    legacy = dict(capacity_mode='legacy', legacy_rho_core=10500.0, legacy_tfac=1.147)
+    alloy = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
+    top_down = QuadraticMeltingCurve(t_m0=5200.0, t_m1=-1.2e-12, t_m2=0.0)
+    for curve, states in ((alloy, [5000.0, 4000.0]), (top_down, [5300.0, 4300.0, 2000.0])):
+        with pytest.raises(ValueError, match='outer core holds|crystallizes top_down'):
+            refuse_unmodelled_regime(CoreEnergyBudget(prof, curve, **kw), states)
+        budget = CoreEnergyBudget(prof, curve, **kw, **legacy)
+        capacity = {float(budget.effective_capacity(t)) for t in states}
+        assert len(capacity) == 1
+        refuse_unmodelled_regime(budget, states)

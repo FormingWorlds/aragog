@@ -80,12 +80,14 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
     fully frozen core whose CMB freezes before its centre. The light-element fraction of the
     outer core is fixed, not enriched as the inner core grows, so with a gravitational term or
     a light-element depression of the melting curve an inner core holding more than
-    ``1 - M_OC_FRACTION_MIN`` of the core mass is refused too.
+    ``1 - M_OC_FRACTION_MIN`` of the core mass is refused too. A legacy-mode budget books no
+    inner core, so it refuses no state.
 
     Parameters
     ----------
     budget : CoreEnergyBudget
-        The core budget; its ``regime_batch``, ``t_onset`` and ``t_freeze`` are used.
+        The core budget; its ``capacity_mode``, ``regime_batch``, ``t_onset`` and ``t_freeze``
+        are used.
     t_cmb : float or array_like
         CMB temperatures [K] of the states to check.
 
@@ -96,6 +98,8 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
         when the coldest state of the call leaves an outer-core mass fraction below the
         bound, naming that fraction and temperature.
     """
+    if budget.capacity_mode == 'legacy':  # no inner core, latent or gravitational heat
+        return
     t_cmb = np.atleast_1d(np.asarray(t_cmb, dtype=float))
     codes = np.asarray(budget.regime_batch(t_cmb))
     frozen_ok = budget.t_freeze <= budget.t_onset
