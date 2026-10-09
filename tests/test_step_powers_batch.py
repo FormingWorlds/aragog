@@ -1420,9 +1420,8 @@ def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog
     from tests.test_jax_dsdt_core_module import _build_jax_pieces
 
     prm, end = (STRATIFIED_PARAMS, 0.05) if stratified else (CORE_MODULE_PARAMS, 2.0)
-    # A radiogenic power of ~1e13 W, above the 1e-12 share of the surface flow (~3e20 W)
-    radio = [dataclasses.replace(_make_radionuclide(), concentration=1e6)]
-    tidal = np.linspace(1e-12, 5e-12, 9)
+    # 1e6 ppm, a mass fraction of 1, and a half-life of the run, so the source varies in time
+    radio = [dataclasses.replace(_make_radionuclide(), concentration=1e6, half_life_years=end)]
     solver = _build(
         'core_module',
         entropy_eos_copy(identity_alpha=True),
@@ -1433,17 +1432,17 @@ def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog
         use_jax_jacobian=True,
         core_offset=50.0,
         radionuclides=radio,
-        tidal_array=tidal,
+        tidal_array=np.linspace(1e-12, 5e-12, 9),
     )
     args = _build_jax_pieces(solver)
 
     def factory(scales, core_bc_mode):
         rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
             *args[:4],
-            heating_array=tidal,
+            heating_array=np.asarray(args[4]),
             scales=scales,
             core_bc_mode=core_bc_mode,
-            radio_isotope_params=_make_radio_tuple(radio),
+            radio_isotope_params=_make_radio_tuple(solver.parameters.radionuclides),
             core_module_budget=args[6],
             core_module_q_radio=args[7],
             core_module_ra_crit_cmb=args[8],
@@ -1461,7 +1460,11 @@ def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog
     t_pts, y_pts = solver._solution.energy_trace
     P_jax = solver._step_powers_batch(t_pts, y_pts)
     P_np = np.array([solver._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
-    assert np.all(np.abs(P_np[:, 2:6]) > 0.0)
+    resid_atol = 1e-12 * (np.max(np.abs(P_np[:, 0])) + np.max(np.abs(P_np[:, 1])))
+    assert (
+        np.min(np.abs(P_np[:, 2:4])) > 1e3 * resid_atol
+    )  # a lost source shows in the residual
+    assert np.ptp(P_np[:, 2]) > 1e3 * resid_atol  # and a wrong decay time
     _assert_powers_match(P_jax, P_np, rtol_col1=1e-13)
 
     batch = dict(solver._solution.energy_integrals)

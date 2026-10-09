@@ -138,9 +138,9 @@ def _build_numpy_solver(shared_eos):
 
 
 def _build_jax_pieces(solver):
-    """JAX pytrees mirroring the numpy solver's mesh, phases, and BC."""
+    """JAX pytrees mirroring the numpy solver's mesh, phases, BC and mantle heating."""
     from aragog.jax.phase import MeshArrays, PhaseParams
-    from aragog.jax.solver import BoundaryParams, _no_radio
+    from aragog.jax.solver import BoundaryParams, _no_radio, make_radio_heating_fn
 
     eos_jax = entropy_eos_jax()
     mesh_jax = MeshArrays.from_numpy_mesh(solver.evaluator.mesh)
@@ -182,14 +182,17 @@ def _build_jax_pieces(solver):
         core_M=float(solver._core_M),
         cmb_dr_cmb=float(solver._cmb_dr_cmb),
     )
-    n_stag = solver._n_stag
+    n_stag, radio = solver._n_stag, solver.parameters.radionuclides if en.radionuclides else []
+    keys = ('heat_production', 'abundance', 'concentration', 't0_years', 'half_life_years')
     args = (
         eos_jax,
         params_jax,
         mesh_jax,
         bc_jax,
-        jnp.zeros(n_stag),
-        _no_radio,
+        jnp.asarray(en.tidal_array, dtype=float) if en.tidal else jnp.zeros(n_stag),
+        make_radio_heating_fn(*([getattr(r, k) for r in radio] for k in keys))
+        if radio
+        else _no_radio,
         solver._core_module_budget,
         float(solver._core_module_q_radio),
         float(solver._core_module_ra_crit_cmb),
