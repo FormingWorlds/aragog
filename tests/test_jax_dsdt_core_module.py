@@ -425,6 +425,38 @@ def test_boundary_slots_match_numpy_on_a_five_node_mesh():
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 @needs_eos
+def test_the_heated_rhs_matches_numpy_after_the_start():
+    """With radiogenic and tidal heating, the JAX RHS from the helper's heating matches the
+    numpy RHS at t > 0, where a one-year half-life halves the radiogenic source."""
+    from aragog.parser import _Radionuclide
+
+    al = _Radionuclide(  # 1e6 ppm is a mass fraction of 1: 1e-6 W/kg at t0
+        name='Al26',
+        t0_years=0.0,
+        abundance=1.0,
+        concentration=1e6,
+        heat_production=1e-6,
+        half_life_years=1.0,
+    )
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(identity_alpha=True),
+        CORE_MODULE_PARAMS,
+        s_init='driven',
+        core_offset=50.0,
+        radionuclides=[al],
+        tidal_array=np.linspace(1e-12, 5e-12, 9),
+    )
+    args, y, n = _build_jax_pieces(solver), np.asarray(solver._S0, dtype=float), solver._n_stag
+    f_jax = np.asarray(dSdt_core_module(1.0, jnp.asarray(y), args))
+    f_np = np.asarray(solver.dSdt(1.0, y), dtype=float)
+    np.testing.assert_allclose(f_jax[:n], f_np[:n], rtol=1e-10)
+    np.testing.assert_allclose(f_jax[n : n + 2], f_np[n : n + 2], rtol=1e-8)
+
+
+@pytest.mark.smoke
+@pytest.mark.physics_invariant
+@needs_eos
 def test_the_expansivity_source_is_the_only_numpy_jax_difference():
     """Over a mantle above its liquidus at every node, where the single-phase expansivity enters,
     the JAX RHS equals the numpy RHS with the identity expansivity rho cp |dT/dP_S| / T to
