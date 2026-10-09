@@ -1084,6 +1084,7 @@ def item13_stable_layer() -> None:
     tcen, ricb = 'tcen_max_abs_diff_K_', 'ricb_end_rel_diff_'
     t2, linux = f'{tcen}-2TW', spread['runs']['linux'][f'{tcen}8TW']
     record(13, 'spread_tcen_-2TW_last_bit_K', bit[t2])
+    record(13, 'spread_tcen_-2TW_rtol1e-12_K', tight[t2])
     record(13, 'spread_tcen_-2TW_changed_runs_K', abs(bit[t2] - tight[t2]))
     shift = {k: abs(bit[k] - base[k]) for k in base}
     others = ('8TW', '12TW', '0TW')
@@ -1233,22 +1234,18 @@ def item11_coupled() -> None:
     rows = np.loadtxt(data / 'coupled_mesh_convergence.csv', delimiter=',')
     names = 't_bf T_core_bf T_core_end F10 F100 F1000 F_bf F_2bf F_4bf F_10kyr F_100kyr F_500kyr'.split()
     run = {(int(r[0]), r[1]): dict(zip(names, r[2:])) for r in rows}
+    sets = {  # the largest change of each set is recorded too
+        'bounded': ('t_bf', 'F10', 'F100', 'F1000', 'F_bf'),
+        'late': ('F_2bf', 'F_4bf', 'F_10kyr', 'F_100kyr', 'F_500kyr'),
+    }
     for a, b in ((40, 80), (80, 160), (160, 320), (80, 'rtol')):
         x, y = run[(a, 1e-8)], run[(b, 1e-8)] if b != 'rtol' else run[(80, 1e-10)]
+        d = {}
         for q in names:
             diff = abs(x[q] - y[q]) if q.startswith('T_core') else abs(x[q] / y[q] - 1)
-            record(11, f'e1_{q}_d_{a}_{b}', diff)
-        bounded = ('t_bf', 'F10', 'F100', 'F1000', 'F_bf')
-        late = ('F_2bf', 'F_4bf', 'F_10kyr', 'F_100kyr', 'F_500kyr')
-        for name, qs in (
-            ('bounded', bounded),
-            ('late', late),
-        ):  # the largest change of each set
-            record(
-                11,
-                f'e1_{name}_max_d_{a}_{b}',
-                max(VALUES['11'][f'e1_{q}_d_{a}_{b}'] for q in qs),
-            )
+            d[q] = record(11, f'e1_{q}_d_{a}_{b}', diff)
+        for name, qs in sets.items():
+            record(11, f'e1_{name}_max_d_{a}_{b}', max(d[q] for q in qs))
     for q in names:
         record(11, f'e1_{q}_320', run[(320, 1e-8)][q])
     # the call-mean flux at 100 kyr of the two tolerances, placed at the middle of its call

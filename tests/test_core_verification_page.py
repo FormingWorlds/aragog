@@ -81,6 +81,15 @@ def test_tests_named_on_the_page_exist():
             assert not name or f'def {name}(' in path.read_text(), (path.name, name)
 
 
+@pytest.mark.unit
+def test_the_spread_runs_start_from_the_stored_stable_layer_run():
+    """The base run of stable_layer_spread.json, from which section 13 takes its changes, holds
+    the item 13 values of the values file."""
+    spread = ROOT / 'tools' / 'verification' / 'data' / 'stable_layer_spread.json'
+    base = json.loads(spread.read_text())['runs']['base']
+    assert base == {k: VALUES['13'][k] for k in base}
+
+
 @pytest.fixture
 def script(tmp_path, monkeypatch):
     """The verification script with its figures sent to a temporary folder."""
@@ -213,9 +222,6 @@ def test_the_stable_layer_meets_the_thermal_history_bounds(script):
     got = _reproduces(script, 13)
     # both mixing constants reach the shell
     assert got['mixing_tcen_min_K'] > 0 and got['mixing_depth_max_rel'] > 0
-    # the runs of stable_layer_spread.json start from this one
-    base = json.loads((ROOT / 'tools/verification/data/stable_layer_spread.json').read_text())
-    assert all(_holds(k, got[k], v) for k, v in base['runs']['base'].items())
     for t in FLOWS:
         assert got[f'identity_{t}'] < 1e-12
         assert got[f'tcmb_max_abs_diff_K_{t}'] < 5.0

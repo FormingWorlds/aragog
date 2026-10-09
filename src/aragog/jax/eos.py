@@ -557,7 +557,8 @@ class EntropyEOS_JAX(eqx.Module):
 
         A fixed 60-step bisection over the tables' entropy range (its edge where ``T`` lies
         beyond the range), plus a term that is zero in value and carries the implicit
-        derivatives ``dS/dT = 1 / (dT/dS)`` and ``dS/dP = -(dT/dP) / (dT/dS)``.
+        derivatives ``dS/dT = 1 / (dT/dS)`` and ``dS/dP = -(dT/dP) / (dT/dS)``, which are zero
+        where ``T(S)`` is flat to rounding; NaN for a NaN ``P`` or ``T``.
         """
         solid, melt = self._get_tables('temperature')
         span = (min(solid.S_min, melt.S_min), max(solid.S_max, melt.S_max))
@@ -573,13 +574,13 @@ class EntropyEOS_JAX(eqx.Module):
         lo, hi = jax.lax.fori_loop(0, 60, body, (jnp.asarray(span[0]), jnp.asarray(span[1])))
         s_root = jax.lax.stop_gradient(0.5 * (lo + hi))
         slope = jax.lax.stop_gradient(jax.grad(self.temperature, argnums=1)(p_fixed, s_root))
-        slope = jnp.where(slope > 0.0, slope, jnp.inf)
+        slope = jnp.where(slope > 1e-9 * t_fixed, slope, jnp.inf)
         inside = (self.temperature(p_fixed, span[0]) < t_fixed) & (
             t_fixed < self.temperature(p_fixed, span[1])
         )
         zero = (T - t_fixed) - (self.temperature(P, s_root) - self.temperature(p_fixed, s_root))
-        # the edge, with no derivative, beyond the range
-        return jnp.where(inside, s_root + zero / slope, s_root)
+        s = jnp.where(inside, s_root + zero / slope, s_root)
+        return jnp.where(jnp.isnan(P + T), jnp.nan, s)
 
     def density(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Density rho(P, S) [kg/m^3], matching numpy EntropyEOS.density.

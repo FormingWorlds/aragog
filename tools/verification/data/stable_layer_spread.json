@@ -1,5 +1,5 @@
 {
- "source": "item13_stable_layer of tools/verification/run_core_verification.py, run as it is (base), with LAYER_HEADER['inputs']['t_cmb_start'] multiplied by 1 + 2**-52 (last_bit), and with RTOL_LAYER = 1e-12 (rtol1e-12); linux: tcen_max_abs_diff_K_8TW of the nightly CI run of the page test. On macOS the item gives bit-identical values at the two commits.",
+ "source": "item13_stable_layer of tools/verification/run_core_verification.py, run as it is (base), with LAYER_HEADER['inputs']['t_cmb_start'] multiplied by 1 + 2**-52 (last_bit), and with RTOL_LAYER = 1e-12 (rtol1e-12); linux: tcen_max_abs_diff_K_8TW of the nightly CI run of the page test.",
  "commits": {
   "aragog": {
    "base": "a8753af",

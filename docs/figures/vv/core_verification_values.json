@@ -268,6 +268,7 @@
   "spread_tcen_-2TW_changed_runs_K": 0.008370209448912647,
   "spread_tcen_-2TW_last_bit_K": 0.9858376150077675,
   "spread_tcen_-2TW_last_bit_shift_K": 0.2496318945532039,
+  "spread_tcen_-2TW_rtol1e-12_K": 0.9942078244566801,
   "spread_tcen_others_max_K": 0.024222167839070607,
   "t_cmb_start_K": 4400.0,
   "tcen_max_abs_diff_K_-2TW": 1.2354695095609713,

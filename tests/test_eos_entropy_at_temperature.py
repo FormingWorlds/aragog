@@ -39,19 +39,24 @@ def test_the_entropy_inverts_the_temperature_in_every_phase(p):
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_both_inverses_find_the_root_next_to_a_flat_phase_boundary():
-    """The tables hold T(S) flat next to the solidus and the liquidus; 1e-11 K to 1e-6 K and
-    one ulp from either boundary temperature, at pressures where 100 Brent iterations are too
-    few, both inverses return an entropy at the target temperature, and NaN for a NaN one."""
+    """The tables hold T(S) flat next to the solidus and the liquidus; up to 1e-6 K and one ulp
+    from either boundary temperature, at pressures where 100 Brent iterations are too few and at
+    the CMB pressure of the tests, both inverses return an entropy at the target temperature, the
+    JAX one with dS/dT below 100 K^-1 J/kg, and both return NaN for a NaN pressure or target."""
     eos, eos_j = entropy_eos_copy(), entropy_eos_jax()
-    for p in np.linspace(1e9, 1.49e11, 60)[14:16]:
+    grad = jax.grad(eos_j.entropy_at_temperature, argnums=1)
+    for p in np.r_[np.linspace(1e9, 1.49e11, 60)[14:16], 1.457e11]:
         for edge in (eos.solidus_entropy(p), eos.liquidus_entropy(p)):
             t_edge = eos.temperature_scalar(p, float(edge))
             ulp = np.spacing(t_edge)
-            for t in t_edge + np.array([-1e-11, -1e-12, -ulp, ulp, 1e-12, 1e-9, 1e-7, 1e-6]):
+            for t in t_edge + np.array([-1e-11, -1e-12, -ulp, 0.0, ulp, 1e-12, 1e-9, 1e-6]):
                 s_jax = eos_j.entropy_at_temperature(jnp.asarray(p), jnp.asarray(t))
                 for s in (eos.entropy_at_temperature(p, t), float(s_jax)):
                     assert eos.temperature_scalar(p, s) == pytest.approx(t, abs=1e-10)
-    assert np.isnan(eos.entropy_at_temperature(1.3e11, np.nan))
+                assert abs(float(grad(jnp.asarray(p), jnp.asarray(t)))) < 100.0
+    for p, t in ((1.3e11, np.nan), (np.nan, 4000.0)):
+        assert np.isnan(eos.entropy_at_temperature(p, t))
+        assert np.isnan(eos_j.entropy_at_temperature(jnp.asarray(p), jnp.asarray(t)))
 
 
 def test_a_temperature_beyond_the_tables_gives_the_table_edge():

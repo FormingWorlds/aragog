@@ -646,7 +646,7 @@ def test_jacobian_core_column_matches_central_differences(state):
         assert fd[row] != 0.0
         # over the boundary layer the difference of the small gradient-slot rate is 2e-6 noisy
         loose = state == 'boundary_layer' and row == n
-        assert J[row, n + 1] == pytest.approx(fd[row], rel=1e-5 if loose else rel)
+        assert J[row, n + 1] == pytest.approx(fd[row], rel=1e-5 if loose else rel, abs=0)
     # S[0] sets the mantle side of the CMB flux; with a layer the top cell sets the flux, so
     # S[0] and the gradient slot
     col, rows, rel = (-1, (0, n), 1e-6) if state == 'stratified' else (0, (0, n + 1), 1e-5)
@@ -656,4 +656,4 @@ def test_jacobian_core_column_matches_central_differences(state):
     fd = (rhs(up) - rhs(down)) / (2.0 * h)
     for row in rows:
         assert fd[row] != 0.0
-        assert J[row, col] == pytest.approx(fd[row], rel=rel)
+        assert J[row, col] == pytest.approx(fd[row], rel=rel, abs=0)
