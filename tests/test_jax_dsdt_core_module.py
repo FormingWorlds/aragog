@@ -427,15 +427,15 @@ def test_boundary_slots_match_numpy_on_a_five_node_mesh():
 @needs_eos
 def test_the_heated_rhs_matches_numpy_after_the_start():
     """With radiogenic and tidal heating, the JAX RHS from the helper's heating matches the
-    numpy RHS at t > 0, where a one-year half-life halves the radiogenic source."""
+    numpy RHS 0.75 yr after the radiogenic reference time, at the source the decay law gives."""
     from aragog.parser import _Radionuclide
 
-    al = _Radionuclide(  # 1e6 ppm is a mass fraction of 1: 1e-6 W/kg at t0
+    al = _Radionuclide(  # 4e6 ppm is a mass fraction of 4: 1e-6 W/kg at t0
         name='Al26',
-        t0_years=0.0,
-        abundance=1.0,
-        concentration=1e6,
-        heat_production=1e-6,
+        t0_years=0.25,
+        abundance=0.5,
+        concentration=4e6,
+        heat_production=5e-7,
         half_life_years=1.0,
     )
     solver = _build(
@@ -450,6 +450,7 @@ def test_the_heated_rhs_matches_numpy_after_the_start():
     args, y, n = _build_jax_pieces(solver), np.asarray(solver._S0, dtype=float), solver._n_stag
     f_jax = np.asarray(dSdt_core_module(1.0, jnp.asarray(y), args))
     f_np = np.asarray(solver.dSdt(1.0, y), dtype=float)
+    assert np.asarray(solver.state.heating_radio) == pytest.approx(1e-6 * 2**-0.75, rel=1e-12)
     np.testing.assert_allclose(f_jax[:n], f_np[:n], rtol=1e-10)
     np.testing.assert_allclose(f_jax[n : n + 2], f_np[n : n + 2], rtol=1e-8)
 
