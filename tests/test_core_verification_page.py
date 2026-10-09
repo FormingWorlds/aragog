@@ -32,6 +32,26 @@ RUN_SPREAD = {f'identity_{t}' for t in ('8TW', '12TW', '-2TW', '0TW')} | {
 }
 # Item 13 differences of an unconverged run from thermal_history: within a factor 2 either way
 UNCONVERGED = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
+# Differences of two solutions that the integration error sets below 1e-4: held to twice the
+# largest change under a tenfold tighter tolerance or a 1-ulp start temperature
+BANDS = {
+    # item 10, LSODA at rtol 1e-10: the T_cmb differences move by up to 1.4e-6 K
+    **dict.fromkeys(
+        ('t_cmb_abs_diff_at_onset', 't_cmb_diff_max_after_onset_K', 't_cmb_max_abs_diff'), 3e-6
+    ),
+    # item 13, the layered core at rtol 1e-11: T_cen moves by up to 0.27 K (its tolerance spread)
+    **dict.fromkeys(
+        [f'tcen_max_abs_diff_K_{t}' for t in ('8TW', '12TW', '-2TW', '0TW')]
+        + ['mixing_tcen_max_K'],
+        0.6,
+    ),
+    # item 13: the end inner-core radius moves by up to 8.3e-5 of itself
+    **dict.fromkeys([f'ricb_end_rel_diff_{t}' for t in ('8TW', '12TW', '-2TW', '0TW')], 2e-4),
+    # item 13: the late layer depth, its change under the mixing constants and the end depth
+    'depth_late_max_rel': 2e-3,
+    'mixing_depth_max_rel': 5e-3,
+    'erosion_depth_km_end_aragog': 0.2,
+}
 TAG = re.compile(r'(-?[\d.]+(?:e[-+]?\d+)?)\s?%?<!--k:(\d+)\.([^:>]+)(?::(-?[\d.]+))?-->')
 
 
@@ -73,7 +93,7 @@ def script(tmp_path, monkeypatch):
 def _reproduces(script, item):
     """Run one item and compare what it records with the values file: a rounding-level
     error in ROUNDING or RUN_SPREAD may not double, a value in UNCONVERGED stays within a
-    factor 2 either way, every other number holds to 1e-4."""
+    factor 2 either way, one in BANDS within its band, every other number holds to 1e-4."""
     script.ITEMS[item]()
     got, want = script.VALUES[str(item)], VALUES[str(item)]
     assert got.keys() == want.keys()
@@ -82,6 +102,8 @@ def _reproduces(script, item):
             assert abs(value) <= 2.0 * abs(want[key]) + 1e-15, key
         elif key in UNCONVERGED:
             assert 0.5 * want[key] <= value <= 2.0 * want[key], key
+        elif key in BANDS:
+            assert abs(value - want[key]) <= BANDS[key], key
         else:
             assert value == pytest.approx(want[key], rel=1e-4, abs=1e-12), key
     return got
