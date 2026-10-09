@@ -482,18 +482,36 @@ def test_the_expansivity_source_is_the_only_numpy_jax_difference():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 @needs_eos
-def test_the_material_expansivity_is_continuous_and_matches_jax():
-    """At the CMB pressure, over the solid, the mush and the melt, the NumPy material
-    expansivity without the alpha tables equals the JAX one to rounding and with the tables
-    differs by the single-phase table-identity difference only; it has no jump at the solidus
-    or the liquidus."""
-    tables, identity, eos_jax = (
-        entropy_eos_copy(),
-        entropy_eos_copy(identity_alpha=True),
-        entropy_eos_jax(),
-    )
+def test_the_material_expansivity_is_volume_weighted_continuous_and_matches_jax():
+    """At the CMB pressure the material expansivity is the volume-weighted mean
+    ``sum_i x_i alpha_i / rho_i / sum_i x_i / rho_i`` of the coexisting phases, from the raw
+    tables or the identity per phase; NumPy without the alpha tables equals JAX to rounding and
+    with them differs by the table-identity difference only; it and the heat capacity have no
+    jump at the solidus or the liquidus."""
+    tables, eos_jax = entropy_eos_copy(), entropy_eos_jax()
+    identity = entropy_eos_copy(identity_alpha=True)
     P = float(_build_numpy_solver(tables)._P_basic_flat[0])
     s_sol, s_liq = float(tables.solidus_entropy(P)), float(tables.liquidus_entropy(P))
+
+    def raw(name, phase, s):
+        return float(tables._tables[f'{name}_{phase}']['interp']([[P, s]])[0])
+
+    for eos in (tables, identity):
+        for phi in (0.25, 0.5, 0.75):
+            ends = {}
+            for phase, s, x in (('solid', s_sol, 1.0 - phi), ('melt', s_liq, phi)):
+                rho = raw('density', phase, s)
+                if eos is tables:
+                    alpha = raw('thermal_exp', phase, s)
+                else:
+                    cp, dtdp, t = (
+                        raw(q, phase, s) for q in ('heat_capacity', 'dTdPs', 'temperature')
+                    )
+                    alpha = rho * cp * abs(dtdp) / t
+                ends[phase] = (x / rho, alpha)
+            want = sum(v * a for v, a in ends.values()) / sum(v for v, _ in ends.values())
+            got = eos.material_expansivity(P, s_sol + phi * (s_liq - s_sol))
+            assert float(got) == pytest.approx(want, rel=1e-12)
     S = np.linspace(s_sol - 400.0, s_liq + 400.0, 201)
     a_jax = np.asarray(jax.vmap(eos_jax.material_expansivity)(jnp.full_like(S, P), S))
     np.testing.assert_allclose(
@@ -504,46 +522,42 @@ def test_the_material_expansivity_is_continuous_and_matches_jax():
     )
     for edge in (s_sol, s_liq):
         sides = np.array([edge - 1e-6, edge + 1e-6])
-        for alpha in (
-            tables.material_expansivity(np.full(2, P), sides),
-            eos_jax.material_expansivity(P, sides),
-        ):
-            assert float(alpha[1] / alpha[0]) == pytest.approx(1.0, abs=1e-6)
+        for eos in (tables, eos_jax):
+            for q in (
+                eos.material_expansivity(np.full(2, P), sides),
+                eos.heat_capacity(np.full(2, P), sides),
+            ):
+                assert float(q[1] / q[0]) == pytest.approx(1.0, abs=1e-6)
 
 
 @pytest.mark.smoke
 @pytest.mark.physics_invariant
 @needs_eos
 def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boundaries():
-    """Where the layer's mean temperature crosses the solidus or the liquidus, the NumPy and the
-    JAX CMB fluxes step only by the cube root of the step of the mantle-model viscosity: the
-    heat capacity and the expansivity of the layer have no phase-change term."""
+    """Where the layer's mean temperature crosses the solidus or the liquidus by 1e-7 K (5e-7
+    J/kg/K in the mush; the tables' pure-phase T(S) is flat next to both edges), the NumPy and
+    the JAX CMB fluxes step only by the cube root of the step of the mantle-model viscosity."""
     from aragog.jax.solver import _dSdt_core_module_parts
 
     solver = _build_numpy_solver(entropy_eos_copy())
-    eos, P, bl, n = (
-        solver.entropy_eos,
-        float(solver._P_basic_flat[0]),
-        solver._bl_phase,
-        solver._n_stag,
-    )
+    eos, bl, n = solver.entropy_eos, solver._bl_phase, solver._n_stag
+    P = float(solver._P_basic_flat[0])
     args, y = _build_jax_pieces(solver), np.asarray(solver._S0, dtype=float)
     y[0] = 1100.0  # a solid bottom cell, about 600 K below the solidus at the CMB
-    t_m = float(np.asarray(eos.temperature(P, y[0])).flat[0])
-    for s_edge in (eos.solidus_entropy(P), eos.liquidus_entropy(P)):
-        t_edge = float(np.asarray(eos.temperature(P, s_edge)).flat[0])
-        flux, eta = [], []
-        for t_mean in (t_edge - 0.01, t_edge + 0.01):
+    t_m = eos.temperature_scalar(P, y[0])
+    for s_edge in (float(eos.solidus_entropy(P)), float(eos.liquidus_entropy(P))):
+        t_edge, flux, eta = eos.temperature_scalar(P, s_edge), [], []
+        for t_mean in (t_edge - 1e-7, t_edge + 1e-7):
             y[n + 1] = 2.0 * t_mean - t_m
             f_np = solver._core_module_cmb_flux(y[n + 1], y[0])
             f_jax = float(_dSdt_core_module_parts(0.0, jnp.asarray(y), args).heat_flux[0])
-            assert f_jax == pytest.approx(f_np, rel=1e-4)
+            assert f_jax == pytest.approx(f_np, rel=1e-5)
             bl.set_entropy(np.array([eos.entropy_at_temperature(P, t_mean)]))
             bl.update()
             flux.append(np.array([f_np, f_jax]))
             eta.append(float(np.asarray(bl.viscosity()).flat[0]))
         np.testing.assert_allclose(
-            flux[1] / flux[0] * (eta[1] / eta[0]) ** (1 / 3), 1.0, atol=1e-3
+            flux[1] / flux[0] * (eta[1] / eta[0]) ** (1 / 3), 1.0, atol=1e-6
         )
 
 

@@ -479,6 +479,7 @@ class EntropyEOS_JAX(eqx.Module):
         P: jax.Array,
         S: jax.Array,
         per_phase=None,
+        melt_weight=None,
     ) -> jax.Array:
         """Look up a property with phase weighting, matching numpy EntropyEOS.
 
@@ -496,7 +497,8 @@ class EntropyEOS_JAX(eqx.Module):
         boundary, diverging from the numpy EntropyEOS reference.
         With ``per_phase``, ``prop_name`` is a tuple of table names and
         each phase's value is ``per_phase`` of those tables at that
-        phase's entropy, taken before the blend.
+        phase's entropy, taken before the blend. ``melt_weight`` replaces phi as
+        the melt weight of the blend; it is 0 and 1 where phi is.
         """
         phi = self.melt_fraction(P, S)
 
@@ -513,8 +515,9 @@ class EntropyEOS_JAX(eqx.Module):
         val_solid = combine(*(solid(P, S_for_solid) for solid, _ in tables))
         val_melt = combine(*(melt(P, S_for_melt) for _, melt in tables))
 
-        result = jnp.where(phi > 0, phi * val_melt, 0.0) + jnp.where(
-            phi < 1, (1.0 - phi) * val_solid, 0.0
+        w = phi if melt_weight is None else melt_weight
+        result = jnp.where(w > 0, w * val_melt, 0.0) + jnp.where(
+            w < 1, (1.0 - w) * val_solid, 0.0
         )
         # A non-finite S (NaN or +-inf) would otherwise be masked to a
         # finite value by phi's clip and the tables' own edge-clamping;
@@ -640,14 +643,21 @@ class EntropyEOS_JAX(eqx.Module):
     def material_expansivity(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Thermal expansivity [1/K] of the phases, without the phase-change term.
 
-        Lever-rule blend of each phase's ``rho cp |dT/dP|_S / T`` at its own
-        entropy, the weighting of ``heat_capacity``.
+        The volume-weighted blend ``rho sum_i x_i alpha_i / rho_i`` of each phase's
+        ``rho cp |dT/dP|_S / T`` at its own entropy, with ``x_i`` the Lever-rule mass fractions
+        and ``rho`` the harmonic mixture density of ``density``.
         """
+        phi = self.melt_fraction(P, S)
+        melt = phi / self._lookup_at_phase_boundary('density', P, 'melt')
+        volume = melt / (
+            melt + (1.0 - phi) / self._lookup_at_phase_boundary('density', P, 'solid')
+        )
         return self._lookup_phase_weighted(
             ('density', 'heat_capacity', 'dTdPs', 'temperature'),
             P,
             S,
             per_phase=lambda rho, cp, dTdPs, T: rho * cp * jnp.abs(dTdPs) / jnp.maximum(T, 1.0),
+            melt_weight=volume,
         )
 
     def thermal_expansivity(self, P: jax.Array, S: jax.Array) -> jax.Array:

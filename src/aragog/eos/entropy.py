@@ -870,6 +870,7 @@ class EntropyEOS:
         P: npt.NDArray,
         S: npt.NDArray,
         per_phase=None,
+        melt_weight=None,
     ) -> npt.NDArray:
         """Look up a property with Lever Rule blending (SPIDER parity).
 
@@ -887,7 +888,8 @@ class EntropyEOS:
         Outside the two-phase zone the single-phase table is evaluated
         at the actual (P, S). With ``per_phase``, ``prop_name`` is a tuple of
         table names and each phase's value is ``per_phase`` of those tables
-        at that phase's entropy, taken before the blend.
+        at that phase's entropy, taken before the blend. ``melt_weight``
+        replaces phi as the melt weight of the blend; it is 0 and 1 where phi is.
         """
         P = np.asarray(P, dtype=float)
         S = np.asarray(S, dtype=float)
@@ -932,8 +934,9 @@ class EntropyEOS:
         val_solid, val_melt = combine(*values['solid']), combine(*values['melt'])
 
         # NaN-safe phase-weighted blend: avoid 0.0 * NaN = NaN
-        result = np.where(phi > 0, phi * val_melt, 0.0) + np.where(
-            phi < 1, (1.0 - phi) * val_solid, 0.0
+        w = phi if melt_weight is None else melt_weight
+        result = np.where(w > 0, w * val_melt, 0.0) + np.where(
+            w < 1, (1.0 - w) * val_solid, 0.0
         )
         # phi is NaN whenever S is NaN (clip propagates NaN), and NaN
         # comparisons are always False, so both np.where branches above
@@ -948,9 +951,11 @@ class EntropyEOS:
     def entropy_at_temperature(self, P: float, T: float) -> float:
         """Entropy [J/kg/K] at pressure ``P`` where ``temperature(P, S) = T``.
 
-        Bracketed secant (Illinois) over the tables' entropy range, to 1e-11 K; the range
-        edge where ``T`` lies beyond it.
+        Brent's method over the tables' entropy range, which keeps its bracket where ``T(S)`` is
+        flat; the range edge where ``T`` lies beyond it.
         """
+        from scipy.optimize import brentq
+
         solid, melt = self._tables['temperature_solid'], self._tables['temperature_melt']
         lo, hi = min(solid['S'][0], melt['S'][0]), max(solid['S'][-1], melt['S'][-1])
 
@@ -960,19 +965,7 @@ class EntropyEOS:
         f_lo, f_hi = f(lo), f(hi)
         if f_lo >= 0.0 or f_hi <= 0.0:
             return lo if f_lo >= 0.0 else hi
-        side = 0
-        for _ in range(100):
-            s = (lo * f_hi - hi * f_lo) / (f_hi - f_lo)
-            f_s = f(s)
-            if abs(f_s) < 1e-11:
-                break
-            if f_s < 0.0:
-                lo, f_lo = s, f_s
-                f_hi, side = (0.5 * f_hi, -1) if side == -1 else (f_hi, -1)
-            else:
-                hi, f_hi = s, f_s
-                f_lo, side = (0.5 * f_lo, 1) if side == 1 else (f_lo, 1)
-        return s
+        return brentq(f, lo, hi)
 
     def density(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Density rho(P, S) [kg/m^3].
@@ -1237,17 +1230,24 @@ class EntropyEOS:
     ) -> npt.NDArray:
         """Thermal expansivity [1/K] of the phases, without the phase-change term.
 
-        Lever-rule blend of each phase's expansivity, the weighting of
-        ``heat_capacity``: the thermal_exp tables when present, otherwise
-        ``rho cp |dT/dP|_S / T`` of each phase at its own entropy.
+        The volume-weighted blend ``rho sum_i x_i alpha_i / rho_i`` of each phase's
+        expansivity, with ``x_i`` the Lever-rule mass fractions and ``rho`` the harmonic
+        mixture density of ``density``. Each ``alpha_i`` is from the thermal_exp tables when
+        present, otherwise ``rho cp |dT/dP|_S / T`` of the phase at its own entropy.
         """
+        phi = self._melt_fraction(P, S)
+        melt = phi / self._lookup_at_phase_boundary('density', P, 'melt')
+        volume = melt / (
+            melt + (1.0 - phi) / self._lookup_at_phase_boundary('density', P, 'solid')
+        )
         if self._has_alpha_tables:
-            return self._lookup_phase_weighted('thermal_exp', P, S)
+            return self._lookup_phase_weighted('thermal_exp', P, S, melt_weight=volume)
         return self._lookup_phase_weighted(
             ('density', 'heat_capacity', 'dTdPs', 'temperature'),
             P,
             S,
             per_phase=lambda rho, cp, dTdPs, T: rho * cp * np.abs(dTdPs) / np.maximum(T, 1.0),
+            melt_weight=volume,
         )
 
     def thermal_expansivity(
