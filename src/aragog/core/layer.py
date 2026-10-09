@@ -95,15 +95,12 @@ class CoreShell:
         """Cell temperatures [K] on the adiabat of the convecting core: a shell without a layer."""
         return self.profiles.adiabat(self.r_cells, t_c)
 
-    def _adiabat_gradient(self, r, t_c):
-        return self.profiles.adiabat_gradient(r, t_c)
-
     def _anomaly_gradient(self, t_shell, t_c):
         """Gradient [K/m] of the departure from the adiabat at faces 0 .. n-1 (the base face sits
         on the adiabat), and the reference superadiabatic gradient."""
         theta = jnp.concatenate([jnp.zeros(1), t_shell - self.adiabatic_profile(t_c)])
         r_inner = jnp.concatenate([self.r_faces[:1], self.r_cells])
-        g_ref = self.g_mix * jnp.abs(self._adiabat_gradient(self.profiles.r_cmb, t_c))
+        g_ref = self.g_mix * jnp.abs(self.profiles.adiabat_gradient(self.profiles.r_cmb, t_c))
         return jnp.diff(theta) / jnp.diff(r_inner), g_ref
 
     def face_fluxes(self, t_shell, t_c, q_cmb):
@@ -113,7 +110,7 @@ class CoreShell:
         faces = self.r_faces[:-1]
         unstable = jnp.maximum(-anomaly, 0.0)
         mixed = self.rho_cp_faces[:-1] * self.k_mix * unstable**1.5 / jnp.sqrt(g_ref)
-        grad = self._adiabat_gradient(faces, t_c) + anomaly
+        grad = self.profiles.adiabat_gradient(faces, t_c) + anomaly
         inner = self.area[:-1] * (mixed - self.k_core * grad)
         return jnp.concatenate([inner, jnp.atleast_1d(q_cmb)])
 
@@ -148,7 +145,7 @@ class CoreShell:
         )
         anomaly, _ = self._anomaly_gradient(t_shell, t_c)
         faces = self.r_faces[:-1]
-        grad = self._adiabat_gradient(faces, t_c) + anomaly
+        grad = self.profiles.adiabat_gradient(faces, t_c) + anomaly
         t_inner = jnp.concatenate([self.profiles.adiabat(faces[:1], t_c), t_shell])
         t_faces = jnp.concatenate([t_inner[:1], 0.5 * (t_inner[2:] + t_inner[1:-1])])
         reach = jnp.diff(jnp.concatenate([self.r_faces[:1], self.r_cells]))

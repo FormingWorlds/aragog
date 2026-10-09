@@ -1160,48 +1160,46 @@ def test_set_initial_entropy_warm_restart_and_warnings(caplog):
     assert s2._resolve_dSdr_cmb_init(np.array([3000.0]), 1) == 0.0
 
 
-def test_step_dE_core_heating_and_exception_fallback():
-    """Unstratified step_dE_core supports heating across onset and handles jit fallback."""
+def test_step_dE_core_heating_across_onset():
+    """An unstratified core heated across the onset and the freeze-out books the integral of
+    C_eff dT_c over the call, here against an adaptive quadrature broken at both."""
     from types import SimpleNamespace
 
+    import jax
+    from scipy.integrate import quad
     from scipy.optimize import OptimizeResult
 
     import aragog.solver.entropy_solver as es
+    from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, QuadraticMeltingCurve
 
-    # Heating: T_start=5000 < T_end=5300 crossing onset=5150
-    sol = OptimizeResult(
-        t=np.array([0.0, 1.0]),
-        y=np.array([[2000.0, 2000.0], [5000.0, 5300.0]]),
+    profiles = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=139e9,
+        alpha=1.25e-5,
+        c_p=840.0,
     )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(profiles, curve, ds_fusion=170.0, icn_width=10.0)
+    t_start, t_end = budget.t_freeze - 50.0, budget.t_onset + 50.0
     s = es.EntropySolver.__new__(es.EntropySolver)
-    s._solution = sol
+    s._solution = OptimizeResult(
+        t=np.array([0.0, 1.0]), y=np.array([[2000.0, 2000.0], [t_start, t_end]])
+    )
     s.entropy_eos = object()
     s._r_basic_flat = np.array([1.0, 2.0])
     s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
     s._stag_entropy = lambda y: y
     s._step_heat_content = lambda a, b: 0.0
     s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
-    s._core_bc = 'core_module'
-    s._n_stag = 0
+    s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
 
-    mock_budget = SimpleNamespace(
-        stratification=False,
-        t_onset=5150.0,
-        t_freeze=4000.0,
-        effective_capacity=lambda t: 2.0e27,
-    )
-    s._core_module_budget = mock_budget
-
-    out = s._compute_step_energy_integrals()
-    assert out['core'] == pytest.approx(2.0e27 * (5300.0 - 5000.0), rel=1e-5)
-
-    # Exception fallback branch
-    def fail_vmap(*args):
-        raise RuntimeError('simulated vmap failure')
-
-    mock_budget._vmap_effective_capacity = fail_vmap
-    out2 = s._compute_step_energy_integrals()
-    assert out2['core'] == pytest.approx(2.0e27 * (5300.0 - 5000.0), rel=1e-5)
+    capacity = jax.jit(budget.effective_capacity)
+    points = [budget.t_freeze, budget.t_onset]
+    expected, _ = quad(lambda t: float(capacity(t)), t_start, t_end, points=points, limit=200)
+    assert expected > float(budget.effective_capacity(t_end)) * (t_end - t_start)
+    assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-8)
 
 
 def test_step_dE_core_bower2018():

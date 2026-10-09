@@ -85,8 +85,6 @@ class IronMeltingCurve:
         reach zero or below.
     """
 
-    BLEND_HALF_WIDTH_PA = IRON_MELTING_BRANCH_BLEND_HALF_WIDTH_PA
-
     def __init__(self, *, light_element_fraction: float = 0.0, depression: float = 0.0):
         dep = float(depression)
         if dep < 0.0:

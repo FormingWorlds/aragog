@@ -186,10 +186,8 @@ def build_core_module_budget(
         profiles = GaussianCoreProfiles(**profile_kwargs)
 
     curve_kwargs = {k: params[k] for k in _CURVE_KEYS[curve_kind] if k in params}
-    if curve_kind == 'iron':
-        curve = IronMeltingCurve(**curve_kwargs)
-    else:
-        curve = QuadraticMeltingCurve(**curve_kwargs)
+    curve_class = {'iron': IronMeltingCurve, 'quadratic': QuadraticMeltingCurve}[curve_kind]
+    curve = curve_class(**curve_kwargs)
 
     budget_kwargs = {k: params[k] for k in _BUDGET_KEYS if k in params}
     layer = {v: params[k] for k, v in _LAYER_KEYS.items() if params.get(k) is not None}

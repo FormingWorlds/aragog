@@ -4331,65 +4331,28 @@ class EntropySolver:
             budget = self._core_module_budget
             t_core_traj = np.asarray(y_arr[n_stag + 1, :], dtype=float)
             if not budget.stratification:
-                T_start = float(t_core_traj[0])
-                T_end = float(t_core_traj[-1])
-                gl_nodes, gl_weights = np.polynomial.legendre.leggauss(32)
-
-                t_onset, t_freeze = float(budget.t_onset), float(budget.t_freeze)
-                t_lo, t_hi = sorted((T_start, T_end))
-                cuts = [c for c in (t_onset, t_freeze) if t_lo + 1e-6 < c < t_hi - 1e-6]
-                boundaries = [T_start, *sorted(cuts, reverse=T_start > T_end), T_end]
-
-                t_quad_list = []
-                weight_list = []
-                for ta, tb in zip(boundaries[:-1], boundaries[1:]):
-                    # The u-substitution smooths the square-root cusp of C_lat and C_grav at onset.
-                    is_nucleation_sub = (
-                        max(ta, tb) <= t_onset + 1e-6
-                        and min(ta, tb) >= t_freeze - 1e-6
-                        and abs(ta - tb) > 1e-9
-                    )
-                    if is_nucleation_sub:
-                        ua = np.sqrt(max(0.0, t_onset - ta))
-                        ub = np.sqrt(max(0.0, t_onset - tb))
-                        u_nodes = 0.5 * (ua + ub) + 0.5 * (ub - ua) * gl_nodes
-                        t_sub = t_onset - u_nodes**2
-                        w_sub = (ua - ub) * gl_weights * u_nodes
-                    else:
-                        h = 0.5 * (tb - ta)
-                        m = 0.5 * (tb + ta)
-                        t_sub = m + h * gl_nodes
-                        w_sub = h * gl_weights
-                    t_quad_list.append(t_sub)
-                    weight_list.append(w_sub)
-
-                args = (np.concatenate(t_quad_list),)
-                weights_all = np.concatenate(weight_list)
+                content = [float(budget.heat_content(t_core_traj[i])) for i in (0, -1)]
+                step_dE_core = content[1] - content[0]
             else:
                 import jax
 
                 shell = budget.shell
                 t_shell_traj = np.asarray(y_arr[n_stag + 2 :, :], dtype=float).T
                 base = np.asarray(jax.vmap(shell.layer_base)(t_shell_traj, t_core_traj))
-                args = (t_core_traj, base)
 
-            def c_eff(t, *upper):  # args is (T_core,) or, with a shell, (T_core, layer base)
-                kw = {'gravitational_upper': upper[0]} if upper else {}
-                return budget.effective_capacity(t, **kw)
+                def c_eff(t, upper):
+                    return budget.effective_capacity(t, gravitational_upper=upper)
 
-            try:
-                c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
-                if c_eff_fn is None:
-                    import jax
-
-                    c_eff_fn = jax.jit(jax.vmap(c_eff))
-                    budget._vmap_effective_capacity = c_eff_fn
-                c_eff_vals = np.asarray(c_eff_fn(*args))
-            except Exception:
-                c_eff_vals = np.array([float(c_eff(*map(float, a))) for a in zip(*args)])
-            if not budget.stratification:
-                step_dE_core = float(np.sum(weights_all * c_eff_vals))
-            else:
+                try:
+                    c_eff_fn = getattr(budget, '_vmap_effective_capacity', None)
+                    if c_eff_fn is None:
+                        c_eff_fn = jax.jit(jax.vmap(c_eff))
+                        budget._vmap_effective_capacity = c_eff_fn
+                    c_eff_vals = np.asarray(c_eff_fn(t_core_traj, base))
+                except Exception:
+                    c_eff_vals = np.array(
+                        [float(c_eff(*map(float, a))) for a in zip(t_core_traj, base)]
+                    )
                 dT_core = np.diff(t_core_traj)
                 step_dE_core = float(np.sum(0.5 * (c_eff_vals[:-1] + c_eff_vals[1:]) * dT_core))
                 content = [float(shell.heat_content(t_shell_traj[i])) for i in (0, -1)]
