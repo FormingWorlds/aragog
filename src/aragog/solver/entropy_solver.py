@@ -2638,8 +2638,8 @@ class EntropySolver:
         ``aragog.core.cmb_boundary_layer_flux`` of the core temperature (floored at 1 K)
         against the bottom cell's entropy ``s_bottom`` at the CMB pressure, with the layer's
         properties at the CMB pressure and the mean of the two temperatures (Thiriet et al.
-        2019; heat capacity without the latent term, so kappa is the material diffusivity)
-        and the CMB gravity; mirrors the JAX ``dSdt_core_module``.
+        2019; the heat capacity and the expansivity of the phases, without the phase-change
+        terms) and the CMB gravity; mirrors the JAX ``dSdt_core_module``.
         """
         from aragog.core import cmb_boundary_layer_flux
 
@@ -2666,7 +2666,7 @@ class EntropySolver:
                 conductivity=first(bl.thermal_conductivity()),
                 density=first(bl.density()),
                 heat_capacity=first(eos.heat_capacity(p_cmb, s_bl)),
-                expansivity=first(bl.thermal_expansivity()),
+                expansivity=first(eos.material_expansivity(p_cmb, s_bl)),
                 viscosity=first(bl.viscosity()),
                 gravity=first(self.state.phase_basic.gravitational_acceleration()),
                 dr_half=self._cmb_dr_half,

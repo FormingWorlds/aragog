@@ -819,7 +819,7 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
             conductivity=bl.thermal_conductivity[0],
             density=bl.density[0],
             heat_capacity=eos.heat_capacity(mesh.P_basic[0], s_bl),
-            expansivity=bl.thermal_expansivity[0],
+            expansivity=eos.material_expansivity(mesh.P_basic[0], s_bl),
             viscosity=bl.viscosity[0],
             gravity=mesh.gravity[0],
             dr_half=r_stag_0 - r_basic[0],

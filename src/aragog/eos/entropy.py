@@ -866,9 +866,10 @@ class EntropyEOS:
 
     def _lookup_phase_weighted(
         self,
-        prop_name: str,
+        prop_name: str | tuple[str, ...],
         P: npt.NDArray,
         S: npt.NDArray,
+        per_phase=None,
     ) -> npt.NDArray:
         """Look up a property with Lever Rule blending (SPIDER parity).
 
@@ -884,14 +885,13 @@ class EntropyEOS:
         pressure, weighted by melt fraction.
 
         Outside the two-phase zone the single-phase table is evaluated
-        at the actual (P, S).
+        at the actual (P, S). With ``per_phase``, ``prop_name`` is a tuple of
+        table names and each phase's value is ``per_phase`` of those tables
+        at that phase's entropy, taken before the blend.
         """
         P = np.asarray(P, dtype=float)
         S = np.asarray(S, dtype=float)
         phi = self._melt_fraction(P, S)
-
-        solid_table = self._tables[f'{prop_name}_solid']
-        melt_table = self._tables[f'{prop_name}_melt']
 
         # Phase boundary entropies for the Lever Rule
         S_sol = self.solidus_entropy(P)
@@ -909,30 +909,27 @@ class EntropyEOS:
         # False) still passes through the check instead of being masked.
         solid_used = ~(phi >= 1)
         melt_used = ~(phi <= 0)
-        self._check_entropy_range(
-            np.where(solid_used, S_for_solid, solid_table['S'][0]),
-            solid_table['S'][0],
-            solid_table['S'][-1],
-            f'{prop_name} (solid table lookup)',
-        )
-        self._check_entropy_range(
-            np.where(melt_used, S_for_melt, melt_table['S'][0]),
-            melt_table['S'][0],
-            melt_table['S'][-1],
-            f'{prop_name} (melt table lookup)',
-        )
-
-        # Clamp to each table's own range
-        S_solid_clamped = np.clip(S_for_solid, solid_table['S'][0], solid_table['S'][-1])
-        S_melt_clamped = np.clip(S_for_melt, melt_table['S'][0], melt_table['S'][-1])
-        P_solid_clamped = np.clip(P, solid_table['P'][0], solid_table['P'][-1])
-        P_melt_clamped = np.clip(P, melt_table['P'][0], melt_table['P'][-1])
-
-        pts_solid = np.column_stack([P_solid_clamped.ravel(), S_solid_clamped.ravel()])
-        pts_melt = np.column_stack([P_melt_clamped.ravel(), S_melt_clamped.ravel()])
-
-        val_solid = solid_table['interp'](pts_solid).reshape(P.shape)
-        val_melt = melt_table['interp'](pts_melt).reshape(P.shape)
+        values = {'solid': [], 'melt': []}
+        for name in (prop_name,) if per_phase is None else prop_name:
+            for phase, S_phase, used in (
+                ('solid', S_for_solid, solid_used),
+                ('melt', S_for_melt, melt_used),
+            ):
+                table = self._tables[f'{name}_{phase}']
+                lo, hi = table['S'][0], table['S'][-1]
+                self._check_entropy_range(
+                    np.where(used, S_phase, lo), lo, hi, f'{name} ({phase} table lookup)'
+                )
+                # Clamp to each table's own range
+                pts = np.column_stack(
+                    [
+                        np.clip(P, table['P'][0], table['P'][-1]).ravel(),
+                        np.clip(S_phase, lo, hi).ravel(),
+                    ]
+                )
+                values[phase].append(table['interp'](pts).reshape(P.shape))
+        combine = per_phase or (lambda value: value)
+        val_solid, val_melt = combine(*values['solid']), combine(*values['melt'])
 
         # NaN-safe phase-weighted blend: avoid 0.0 * NaN = NaN
         result = np.where(phi > 0, phi * val_melt, 0.0) + np.where(
@@ -1234,6 +1231,24 @@ class EntropyEOS:
         T_liq = self._lookup_at_phase_boundary('temperature', P, 'melt')
         T_fus = 0.5 * (T_sol + T_liq)
         return T_fus * np.maximum(S_liq - S_sol, 1.0)
+
+    def material_expansivity(
+        self, P: npt.NDArray | float, S: npt.NDArray | float
+    ) -> npt.NDArray:
+        """Thermal expansivity [1/K] of the phases, without the phase-change term.
+
+        Lever-rule blend of each phase's expansivity, the weighting of
+        ``heat_capacity``: the thermal_exp tables when present, otherwise
+        ``rho cp |dT/dP|_S / T`` of each phase at its own entropy.
+        """
+        if self._has_alpha_tables:
+            return self._lookup_phase_weighted('thermal_exp', P, S)
+        return self._lookup_phase_weighted(
+            ('density', 'heat_capacity', 'dTdPs', 'temperature'),
+            P,
+            S,
+            per_phase=lambda rho, cp, dTdPs, T: rho * cp * np.abs(dTdPs) / np.maximum(T, 1.0),
+        )
 
     def thermal_expansivity(
         self, P: npt.NDArray | float, S: npt.NDArray | float

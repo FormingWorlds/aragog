@@ -66,8 +66,8 @@ def cmb_boundary_layer_flux(
     conductivity, density, heat_capacity, expansivity, viscosity : float
         Bottom-cell thermal conductivity [W/m/K], density [kg/m^3], heat
         capacity [J/kg/K], thermal expansivity [1/K] and dynamic viscosity
-        [Pa s]. The thermal diffusivity is ``k / (rho c_p)``, so ``c_p`` is
-        the material heat capacity without a latent contribution.
+        [Pa s]. The thermal diffusivity is ``k / (rho c_p)``; ``c_p`` and the
+        expansivity are the material values, without a phase-change contribution.
     gravity : float
         Gravitational acceleration at the CMB [m/s^2].
     dr_half : float

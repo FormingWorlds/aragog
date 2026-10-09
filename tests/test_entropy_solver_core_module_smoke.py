@@ -268,7 +268,7 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
             conductivity=k,
             density=first(bl.density()),
             heat_capacity=first(shared_eos.heat_capacity(p_cmb, s_bl)),
-            expansivity=first(bl.thermal_expansivity()),
+            expansivity=first(shared_eos.material_expansivity(p_cmb, s_bl)),
             viscosity=first(bl.viscosity()),
             gravity=first(solver.state.phase_basic.gravitational_acceleration()),
             dr_half=dr_half,
@@ -296,7 +296,7 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     assert np.sign(out.F_cmb) == np.sign(d_core)
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
     if regime == 'boundary_layer':
-        assert 4e4 < out.F_cmb < 6e4
+        assert 3e4 < out.F_cmb < 4e4
         # the layer's mean temperature lies past the rheological transition, the base below it
         assert first(shared_eos.melt_fraction(p_cmb, s_bl)) == pytest.approx(0.51, abs=0.01)
 
@@ -324,7 +324,7 @@ def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):
 @pytest.mark.physics_invariant
 def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy(shared_eos):
     """A core 300 K above a partly molten base (phi 0.67 to 0.65) loses heat through the
-    boundary layer fast enough to cool by about 1.8 K in 4 yr. The heat it loses is the heat
+    boundary layer fast enough to cool by about 1.3 K in 4 yr. The heat it loses is the heat
     booked into the mantle (q_radio = 0), and it equals the budget's content change between
     the start and end core temperatures (secular only, the core stays above nucleation)."""
     solver = _build('core_module', shared_eos, CORE_MODULE_PARAMS, end_time=4.0)
@@ -344,8 +344,8 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
     ]
     # The numbers core_bc.md quotes for this case, which hold on a base at these melt fractions.
     assert phi == pytest.approx([0.67, 0.65], abs=0.01)
-    assert 0.4 < float(t_core[0] - t_core[-1]) / 4.0 < 0.5
-    assert 1.5e5 < out.F_cmb < 2.0e5
+    assert 0.3 < float(t_core[0] - t_core[-1]) / 4.0 < 0.35
+    assert 1.1e5 < out.F_cmb < 1.4e5
     assert 320.0 < float(t_core[-1]) - t_m < 340.0
     assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
     assert out.step_dE_core_J == pytest.approx(content, rel=1e-6)

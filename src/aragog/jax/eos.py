@@ -475,9 +475,10 @@ class EntropyEOS_JAX(eqx.Module):
 
     def _lookup_phase_weighted(
         self,
-        prop_name: str,
+        prop_name: str | tuple[str, ...],
         P: jax.Array,
         S: jax.Array,
+        per_phase=None,
     ) -> jax.Array:
         """Look up a property with phase weighting, matching numpy EntropyEOS.
 
@@ -493,9 +494,11 @@ class EntropyEOS_JAX(eqx.Module):
         Evaluating both tables at the actual (P, S) inside the mushy
         band would produce values that are not on either phase
         boundary, diverging from the numpy EntropyEOS reference.
+        With ``per_phase``, ``prop_name`` is a tuple of table names and
+        each phase's value is ``per_phase`` of those tables at that
+        phase's entropy, taken before the blend.
         """
         phi = self.melt_fraction(P, S)
-        solid_table, melt_table = self._get_tables(prop_name)
 
         S_sol = self.solidus_entropy(P)
         S_liq = self.liquidus_entropy(P)
@@ -504,8 +507,11 @@ class EntropyEOS_JAX(eqx.Module):
         S_for_solid = jnp.where(mushy, S_sol, S)
         S_for_melt = jnp.where(mushy, S_liq, S)
 
-        val_solid = solid_table(P, S_for_solid)
-        val_melt = melt_table(P, S_for_melt)
+        names = (prop_name,) if per_phase is None else prop_name
+        tables = [self._get_tables(name) for name in names]
+        combine = per_phase or (lambda value: value)
+        val_solid = combine(*(solid(P, S_for_solid) for solid, _ in tables))
+        val_melt = combine(*(melt(P, S_for_melt) for _, melt in tables))
 
         result = jnp.where(phi > 0, phi * val_melt, 0.0) + jnp.where(
             phi < 1, (1.0 - phi) * val_solid, 0.0
@@ -630,6 +636,19 @@ class EntropyEOS_JAX(eqx.Module):
         T_liq = self._lookup_at_phase_boundary('temperature', P, 'melt')
         T_fus = 0.5 * (T_sol + T_liq)
         return T_fus * jnp.maximum(S_liq - S_sol, 1.0)
+
+    def material_expansivity(self, P: jax.Array, S: jax.Array) -> jax.Array:
+        """Thermal expansivity [1/K] of the phases, without the phase-change term.
+
+        Lever-rule blend of each phase's ``rho cp |dT/dP|_S / T`` at its own
+        entropy, the weighting of ``heat_capacity``.
+        """
+        return self._lookup_phase_weighted(
+            ('density', 'heat_capacity', 'dTdPs', 'temperature'),
+            P,
+            S,
+            per_phase=lambda rho, cp, dTdPs, T: rho * cp * jnp.abs(dTdPs) / jnp.maximum(T, 1.0),
+        )
 
     def thermal_expansivity(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Thermal expansivity alpha(P, S) [1/K].
