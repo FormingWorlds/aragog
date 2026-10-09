@@ -1054,6 +1054,10 @@ def item13_stable_layer() -> None:
         run = _shell_run(b, segments, t)
         shifts.append((0.0, 0.0, abs(_first(t, after & (run['depth'] <= 0.0)) - removed)))
     record(13, 'mixing_tcen_max_K', max(s[0] for s in shifts))
+    # the smallest T_cen change of one constant over the 8 and 12 TW runs: zero if it is unused
+    record(
+        13, 'mixing_tcen_min_K', min(max(s[0] for s in shifts[i : i + 2]) for i in (0, 3, 6, 9))
+    )
     record(13, 'mixing_depth_max_rel', max(s[1] for s in shifts))
     record(13, 'mixing_removal_max_myr', max(s[2] for s in shifts))
 

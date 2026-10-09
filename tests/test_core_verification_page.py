@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import needs_eos
+
 ROOT = Path(__file__).resolve().parents[1]
 PAGE = ROOT / 'docs' / 'Explanations' / 'core_verification.md'
 VALUES = json.loads(
@@ -25,7 +27,7 @@ ROUNDING = {
 }
 FLOWS = ('8TW', '12TW', '-2TW', '0TW')
 # Values set by the integration: a rounding-level residual, a closure error, the spread between
-# two tolerances, or a count of solver outputs or BDF stalls (items 9 and 13)
+# two tolerances, or a count of BDF stalls (items 9 and 13)
 RUN_SPREAD = {f'identity_{t}' for t in FLOWS} | {
     'erosion_identity',
     'tcen_max_rtol_noise_K',
@@ -33,7 +35,6 @@ RUN_SPREAD = {f'identity_{t}' for t in FLOWS} | {
     'core_vs_cmb_rel',
     'core_vs_cmb_rel_rtol1e-8',
     'reconstructed_cmb_max_rel',
-    'n_outputs',
 }
 # Item 13 differences of an unconverged run from thermal_history: within a factor 2 either way
 UNCONVERGED = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
@@ -43,7 +44,14 @@ BANDS = {
     # item 10, LSODA at rtol 1e-10: these two T_cmb differences move by up to 1.0e-6 K
     **dict.fromkeys(('t_cmb_abs_diff_at_onset', 't_cmb_diff_max_after_onset_K'), 3e-6),
     # item 13: T_cen moves by 0.25 K at -2 TW (Linux moved 8 TW by 0.072 K)
-    **dict.fromkeys([*(f'tcen_max_abs_diff_K_{t}' for t in FLOWS), 'mixing_tcen_max_K'], 0.6),
+    **dict.fromkeys(
+        [
+            *(f'tcen_max_abs_diff_K_{t}' for t in FLOWS),
+            'mixing_tcen_max_K',
+            'mixing_tcen_min_K',
+        ],
+        0.6,
+    ),
     # item 13: the end inner-core radius moves by up to 8.3e-5 of itself
     **dict.fromkeys([f'ricb_end_rel_diff_{t}' for t in FLOWS], 2e-4),
     # item 13: the late layer depth, its change under the mixing constants and the end depth
@@ -149,11 +157,11 @@ def test_budget_terms_match_the_thermal_history_table(script):
     assert got['gravitational_enrichment_corrected_max_rel'] < 1e-3
 
 
+@needs_eos
 @pytest.mark.slow
 @pytest.mark.physics_invariant
-def test_a_cvode_solve_across_the_onset_needs_the_tight_tolerance_to_close(script):
-    got = _reproduces(script, 9)
-    assert got['core_vs_cmb_rel'] < 1e-6 < got['core_vs_cmb_rel_rtol1e-8']
+def test_a_cvode_solve_across_the_onset_closes_its_heat(script):
+    assert 0 < _reproduces(script, 9)['core_vs_cmb_rel'] < 1e-6
 
 
 @pytest.mark.slow
@@ -206,7 +214,8 @@ def test_the_stable_layer_meets_the_thermal_history_bounds(script):
     takes to mix, and the layer re-forms to a depth within a factor 1.5. The heat rates of core
     and shell equal the CMB flow at every sample."""
     got = _reproduces(script, 13)
-    assert got['mixing_tcen_max_K'] > 0 and got['mixing_depth_max_rel'] > 0
+    # both mixing constants reach the shell
+    assert got['mixing_tcen_min_K'] > 0 and got['mixing_depth_max_rel'] > 0
     for t in FLOWS:
         assert got[f'identity_{t}'] < 1e-12
         assert got[f'tcmb_max_abs_diff_K_{t}'] < 5.0

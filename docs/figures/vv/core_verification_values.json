@@ -227,6 +227,7 @@
   "mixing_depth_max_rel": 0.0033204353181457424,
   "mixing_removal_max_myr": 0.0,
   "mixing_tcen_max_K": 0.16984845061961096,
+  "mixing_tcen_min_K": 0.07212072558922955,
   "onset_max_abs_diff_myr_rtol1e-8": 26.0,
   "onset_myr_aragog_-2TW": 592.0,
   "onset_myr_aragog_0TW": 591.0,
