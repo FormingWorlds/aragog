@@ -527,24 +527,34 @@ def test_id_reuse_guard():
 
     # Pre-populate cache with obj1
     key = ('quasi_steady', False, id(obj1), id(eos))
-    _JIT_CACHE[key] = _JitCacheEntry('dummy_rhs', 'dummy_jac', obj1, eos)
+    _JIT_CACHE[key] = _JitCacheEntry(
+        rhs_jit='dummy_rhs',
+        jac_jit='dummy_jac',
+        phase_params=obj1,
+        eos_jax=eos,
+        powers_jit=None,
+    )
 
     # Look up with obj1 -> HIT
-    r, j, hit = _get_or_create_jitted('quasi_steady', False, obj1, eos)
+    entry, hit = _get_or_create_jitted('quasi_steady', False, obj1, eos)
     assert hit is True
-    assert r == 'dummy_rhs'
+    assert entry.rhs_jit == 'dummy_rhs'
 
     # Simulate address collision: obj2 with same key as obj1 -> MISS
     _JIT_CACHE[('quasi_steady', False, id(obj2), id(eos))] = _JitCacheEntry(
-        'stale_rhs', 'stale_jac', obj1, eos
+        rhs_jit='stale_rhs',
+        jac_jit='stale_jac',
+        phase_params=obj1,
+        eos_jax=eos,
+        powers_jit=None,
     )
     with patch(
         'aragog.solver.cvode_jax._make_jitted_rhs_and_jacobian',
         return_value=('fresh_rhs', 'fresh_jac'),
     ):
-        r2, j2, hit2 = _get_or_create_jitted('quasi_steady', False, obj2, eos)
+        entry2, hit2 = _get_or_create_jitted('quasi_steady', False, obj2, eos)
         assert hit2 is False
-        assert r2 == 'fresh_rhs'
+        assert entry2.rhs_jit == 'fresh_rhs'
 
 
 @pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
@@ -587,20 +597,15 @@ def test_core_module_entries_hit_only_for_the_same_budget():
         'aragog.solver.cvode_jax._make_jitted_rhs_and_jacobian',
         side_effect=[('rhs_a', 'jac_a'), ('rhs_b', 'jac_b')],
     ) as make:
-        assert _get_or_create_jitted('core_module', False, params, eos, budget) == (
-            'rhs_a',
-            'jac_a',
-            False,
-        )
-        assert _get_or_create_jitted('core_module', False, params, eos, budget)[2] is True
-        assert _get_or_create_jitted('core_module', False, params, eos, other)[:2] == (
-            'rhs_b',
-            'jac_b',
-        )
-        assert _get_or_create_jitted('core_module', False, params, eos, budget)[:2] == (
-            'rhs_a',
-            'jac_a',
-        )
+
+        def get(b):
+            entry, hit = _get_or_create_jitted('core_module', False, params, eos, b)
+            return entry.rhs_jit, entry.jac_jit, hit
+
+        assert get(budget) == ('rhs_a', 'jac_a', False)
+        assert get(budget)[2] is True
+        assert get(other)[:2] == ('rhs_b', 'jac_b')
+        assert get(budget)[:2] == ('rhs_a', 'jac_a')
     assert make.call_args_list[0].args[-1] is budget
     assert make.call_args_list[1].args[-1] is other
     # A reused address: the key of a new budget holds an entry built for another one
@@ -611,7 +616,7 @@ def test_core_module_entries_hit_only_for_the_same_budget():
         'aragog.solver.cvode_jax._make_jitted_rhs_and_jacobian',
         return_value=('fresh_rhs', 'fresh_jac'),
     ):
-        assert _get_or_create_jitted('core_module', False, params, eos, forged)[2] is False
+        assert _get_or_create_jitted('core_module', False, params, eos, forged)[1] is False
 
 
 def test_phase_params_convection_distinct_and_cached(shared_eos):
@@ -775,7 +780,7 @@ def test_lru_cache_access_order_move_to_end(shared_eos):
     assert key_1 in _JIT_CACHE
 
     # 2. Access key 0: move_to_end should move key 0 to the MRU position
-    _, _, hit = _get_or_create_jitted('quasi_steady', False, params_list[0], eos)
+    _, hit = _get_or_create_jitted('quasi_steady', False, params_list[0], eos)
     assert hit is True
 
     # 3. Insert 9th key (key 8): evicts the LRU item, which must now be key 1, NOT key 0
@@ -798,17 +803,80 @@ def test_eos_jax_identity_guard_misses_on_forged_colliding_key(shared_eos):
     params = PhaseParams()
 
     # Populate cache for eos1
-    rhs_1, jac_1, hit_1 = _get_or_create_jitted('quasi_steady', False, params, eos1)
+    entry_1, hit_1 = _get_or_create_jitted('quasi_steady', False, params, eos1)
     assert hit_1 is False
 
     # Forge a cache collision entry keyed on id(eos2) but pointing to eos1
     colliding_key = ('quasi_steady', False, id(params), id(eos2))
-    _JIT_CACHE[colliding_key] = _JitCacheEntry(rhs_1, jac_1, params, eos1)
+    _JIT_CACHE[colliding_key] = _JitCacheEntry(
+        rhs_jit=entry_1.rhs_jit,
+        jac_jit=entry_1.jac_jit,
+        phase_params=params,
+        eos_jax=eos1,
+        powers_jit=None,
+    )
 
     # Calling with eos2 must detect that entry.eos_jax is not eos2, evict, and recompile
-    rhs_2, jac_2, hit_2 = _get_or_create_jitted('quasi_steady', False, params, eos2)
+    entry_2, hit_2 = _get_or_create_jitted('quasi_steady', False, params, eos2)
     assert hit_2 is False
     assert _JIT_CACHE[colliding_key].eos_jax is eos2
+
+
+def test_mode_without_parts_function_omits_step_powers(shared_eos, monkeypatch):
+    """Verify modes without parts function omit rhs_fn.step_powers and solve via numpy loop."""
+    import aragog.jax.solver as js
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.test_step_powers_batch import _build_parameters
+
+    eos = shared_eos
+    params = PhaseParams()
+    mesh = _make_mesh(N=8)
+    bc = _make_bc(mesh)
+    n_stag = 8
+    heating = np.full(n_stag, 1e-12)
+    scales = NonDimScales(state_scale=np.full(n_stag, 3.0e3), t_ref=100.0)
+
+    # Monkeypatch _PARTS_REGISTRY so mode has no parts function
+    monkeypatch.setattr(js, '_PARTS_REGISTRY', {})
+
+    rhs_fn, jacfn, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos,
+        phase_params=params,
+        mesh_arrays=mesh,
+        boundary_params=bc,
+        heating_array=heating,
+        scales=scales,
+        core_bc_mode='quasi_steady',
+    )
+    # rhs_fn.step_powers must NOT be attached
+    assert not hasattr(rhs_fn, 'step_powers')
+
+    # Verify that EntropySolver solves cleanly using numpy loop fallback without raising
+    solver_params = _build_parameters(
+        core_bc='quasi_steady',
+        solver_method='cvode',
+        end_time=5.0,
+        n_nodes=9,
+        use_jax_jacobian=True,
+    )
+    from tests.conftest import EOS_DIR, entropy_eos_copy
+
+    eos_np = entropy_eos_copy(EOS_DIR)
+    solver = EntropySolver(solver_params, entropy_eos=eos_np)
+    solver.initialize()
+    r = np.asarray(solver._r_stag_flat)
+    solver.set_initial_entropy(3050.0 + 150.0 * (r[-1] - r) / (r[-1] - r[0]))
+
+    def factory(scales_arg, mode_arg):
+        return rhs_fn, jacfn
+
+    solver.set_jax_cvode_factory(factory)
+    solver.solve()
+    sol = solver._solution
+    assert sol is not None
+    assert sol.status == 0
+    assert getattr(solver, '_batch_powers_calls', 0) == 0
+    assert 'F_cmb' in sol.energy_integrals
 
 
 def test_compute_radio_heating_closed_form():
