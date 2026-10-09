@@ -22,6 +22,7 @@ import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
 
+from aragog.config.boundary import check_core_bc
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
@@ -112,6 +113,7 @@ class _BoundaryConditionsParameters:
             self.param_utbl_const = 0.0
         self._normalize_inner_boundary_condition()
         self._normalize_outer_boundary_condition()
+        check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
 
     def _normalize_inner_boundary_condition(self) -> None:
         """Normalise the inner boundary value.

@@ -16,6 +16,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 
+from aragog.core.boundary_layer import RA_CRIT_CMB_DEFAULT, check_ra_crit
 from aragog.core.budget import CoreEnergyBudget
 from aragog.core.entropy import CoreEntropyBudget
 from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
@@ -88,6 +89,39 @@ CORE_MODULE_KEYS = (
 )
 
 
+def _check_budget_params(params: dict) -> str:
+    """Refuse an unrecognised key, an unknown melting-curve selector, a quadratic curve without
+    its three coefficients and a ``fit_profile`` that is not a boolean; return the selector."""
+    unknown = set(params) - CORE_MODULE_KEYS
+    if unknown:
+        raise ValueError(f'unrecognised core_module_params keys: {sorted(unknown)}')
+    curve_kind = params.get('melting_curve', 'iron')
+    if curve_kind not in _CURVE_KEYS:
+        raise ValueError(f'unknown melting_curve {curve_kind!r}')
+    missing = sorted(k for k in _CURVE_KEYS['quadratic'] if params.get(k) is None)
+    if curve_kind == 'quadratic' and missing:
+        raise ValueError(f"melting_curve = 'quadratic' needs {missing}")
+    if params.get('fit_profile') not in (None, True, False):
+        raise ValueError(f'fit_profile must be true or false, got {params["fit_profile"]!r}')
+    return curve_kind
+
+
+def split_core_module_params(params: dict | None) -> tuple[dict, float, float]:
+    """Split ``core_module_params`` into the budget keys, ``q_radio`` [W] and ``ra_crit_cmb``.
+
+    Raises
+    ------
+    ValueError
+        On a ``ra_crit_cmb`` that is not a positive finite number, or on budget keys that
+        :func:`build_core_module_budget` refuses before it builds the core profile.
+    """
+    params = dict(params or {})
+    q_radio = float(params.pop('q_radio', 0.0))
+    ra_crit = check_ra_crit(params.pop('ra_crit_cmb', RA_CRIT_CMB_DEFAULT))
+    _check_budget_params(params)
+    return params, q_radio, ra_crit
+
+
 def build_core_module_budget(
     params: dict,
     *,
@@ -125,22 +159,12 @@ def build_core_module_budget(
         ``fit_profile = True`` without either.
     """
     params = {**_FACTORY_DEFAULTS, **params}
-    unknown = set(params) - CORE_MODULE_KEYS
-    if unknown:
-        raise ValueError(f'unrecognised core_module_params keys: {sorted(unknown)}')
-    curve_kind = params.pop('melting_curve', 'iron')
-    if curve_kind not in _CURVE_KEYS:
-        raise ValueError(f'unknown melting_curve {curve_kind!r}')
-    missing = sorted(k for k in _CURVE_KEYS['quadratic'] if params.get(k) is None)
-    if curve_kind == 'quadratic' and missing:
-        raise ValueError(f"melting_curve = 'quadratic' needs {missing}")
-
+    curve_kind = _check_budget_params(params)
+    params.pop('melting_curve', None)
     cfg = {k: params.pop(k, None) for k in ('m_core', 'p_cen', 'fit_profile')}
     m_core = cfg['m_core'] if m_core is None else m_core
     p_cen = cfg['p_cen'] if p_cen is None else p_cen
     fit_profile = cfg['fit_profile']
-    if fit_profile not in (None, True, False):
-        raise ValueError(f'fit_profile must be true or false, got {fit_profile!r}')
     given = (m_core is not None) + (p_cen is not None)
     fit = given == 2 if fit_profile is None else bool(fit_profile)
     if given == 1:

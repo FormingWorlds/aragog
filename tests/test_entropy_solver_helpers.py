@@ -204,7 +204,7 @@ def _build_minimal_solver(*, core_bc: str = 'energy_balance', cvode_output_point
     bc = _BoundaryConditionsParameters(
         outer_boundary_condition=1,
         outer_boundary_value=1500.0,
-        inner_boundary_condition=2,
+        inner_boundary_condition=1 if core_bc == 'core_module' else 2,
         inner_boundary_value=0.0,
         emissivity=1.0,
         equilibrium_temperature=255.0,

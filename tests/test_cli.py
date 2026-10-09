@@ -919,6 +919,45 @@ def test_validate_rejects_scalings_section_via_strict_reject(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    'ibc, core_bc, params, message',
+    [
+        (1, 'core_module', 'rho_cen = 12500.0', None),
+        (1, 'core-module', '', "unknown core_bc 'core-module'"),
+        (3, 'core_module', '', 'needs inner_boundary_condition = 1, got 3'),
+        (1, 'core_module', 'rho_centre = 12500.0', "keys: ['rho_centre']"),
+        (1, 'core_module', 'melting_curve = "quadratic"', "'quadratic' needs"),
+        (1, 'core_module', 'ra_crit_cmb = -450.0', 'ra_crit_cmb must be positive'),
+    ],
+)
+def test_validate_refuses_a_core_bc_the_solver_cannot_run(
+    tmp_path, ibc, core_bc, params, message
+):
+    """`aragog validate` refuses an unknown core_bc, core_module without core cooling and
+    core_module_params the core module refuses, and passes a valid core_module block."""
+    import importlib.resources
+
+    from aragog.cli import cli
+
+    text = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    text = text.replace('inner_boundary_condition = 3', f'inner_boundary_condition = {ibc}')
+    text = text.replace(
+        'core_heat_capacity = 880', f'core_heat_capacity = 880\ncore_bc = "{core_bc}"'
+    )
+    cfg = tmp_path / 'core.toml'
+    cfg.write_text(f'{text}\n[boundary_conditions.core_module_params]\n{params}\n')
+    result = CliRunner().invoke(cli, ['validate', str(cfg)])
+
+    if message is None:
+        assert result.exit_code == 0, result.output
+        assert 'core_bc=core_module, IBC=1' in result.output
+    else:
+        assert result.exit_code != 0
+        assert 'configuration error' in result.output and message in result.output, (
+            result.output
+        )
+
+
 def test_validate_rejects_missing_required_field(tmp_path):
     """A config missing a required section must produce a non-zero
     exit AND a message that names the broken section, not a bare

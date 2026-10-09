@@ -1832,11 +1832,11 @@ class EntropySolver:
                     "pip install 'fwl-aragog[jax]'"
                 ) from err
 
-            from aragog.core import RA_CRIT_CMB_DEFAULT, build_core_module_budget, check_ra_crit
+            from aragog.core.module import build_core_module_budget, split_core_module_params
 
-            params = dict(getattr(bc, 'core_module_params', None) or {})
-            q_radio = float(params.pop('q_radio', 0.0))
-            ra_crit = check_ra_crit(params.pop('ra_crit_cmb', RA_CRIT_CMB_DEFAULT))
+            params, q_radio, ra_crit = split_core_module_params(
+                getattr(bc, 'core_module_params', None)
+            )
             # A reset with the same inputs keeps the budget and its compiled functions.
             p_cmb = float(self._P_basic_flat[0])
             key = (sorted(params.items()), float(r_cmb), params.get('p_cmb', p_cmb))

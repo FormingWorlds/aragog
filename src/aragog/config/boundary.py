@@ -8,6 +8,30 @@ import attrs
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
+CORE_BC_MODES = ('quasi_steady', 'energy_balance', 'gradient', 'bower2018', 'core_module')
+
+
+def check_core_bc(core_bc: str, inner_boundary_condition: int, core_module_params) -> None:
+    """Refuse an unknown ``core_bc``, and for ``'core_module'`` an inner boundary condition
+    other than core cooling (1) or ``core_module_params`` the core module refuses.
+
+    Raises
+    ------
+    ValueError
+        Naming the unknown mode, the inner boundary condition, or the refused parameter.
+    """
+    if core_bc not in CORE_BC_MODES:
+        raise ValueError(f'unknown core_bc {core_bc!r}; the modes are {CORE_BC_MODES}')
+    if core_bc == 'core_module':
+        if inner_boundary_condition != 1:
+            raise ValueError(
+                "core_bc = 'core_module' needs inner_boundary_condition = 1, got "
+                f'{inner_boundary_condition}'
+            )
+        from aragog.core.module import split_core_module_params
+
+        split_core_module_params(core_module_params)
+
 
 @attrs.define
 class BoundaryConfig:
@@ -70,3 +94,6 @@ class BoundaryConfig:
     # Flat parameter dict for core_bc='core_module'; keys documented in
     # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').
     core_module_params: dict | None = None
+
+    def __attrs_post_init__(self) -> None:
+        check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)

@@ -49,24 +49,26 @@ def test_boundary_config_defaults_match_documented_values():
     assert bc.core_bc == 'energy_balance'
 
 
-def test_boundary_config_accepts_all_documented_core_bc_modes():
-    """All four core_bc modes documented in the parser/configuration
-    table must be accepted by attrs construction. The validation of
-    the mode value happens downstream in the solver dispatch; this
-    test guards against an attrs-level rejection regression.
-    """
-    for mode in ('quasi_steady', 'energy_balance', 'gradient', 'bower2018'):
-        bc = BoundaryConfig(
-            outer_boundary_condition=1,
-            outer_boundary_value=2.5e3,
-            inner_boundary_condition=1,
-            inner_boundary_value=4000.0,
-            emissivity=1.0,
-            equilibrium_temperature=255.0,
-            core_heat_capacity=880.0,
-            core_bc=mode,
-        )
-        assert bc.core_bc == mode
+def test_boundary_config_accepts_the_solver_core_bc_modes_and_refuses_others():
+    """Every core_bc mode the solver dispatches is accepted at construction, and a misspelt
+    mode is refused there, not run as another mode."""
+    from aragog.config.boundary import CORE_BC_MODES
+    from aragog.solver.entropy_solver import EXTRA_STATE_SLOTS
+
+    assert set(CORE_BC_MODES) == {*EXTRA_STATE_SLOTS, 'gradient'}
+    kw = dict(
+        outer_boundary_condition=1,
+        outer_boundary_value=2.5e3,
+        inner_boundary_condition=1,
+        inner_boundary_value=4000.0,
+        emissivity=1.0,
+        equilibrium_temperature=255.0,
+        core_heat_capacity=880.0,
+    )
+    for mode in CORE_BC_MODES:
+        assert BoundaryConfig(**kw, core_bc=mode).core_bc == mode
+    with pytest.raises(ValueError, match="unknown core_bc 'core-module'"):
+        BoundaryConfig(**kw, core_bc='core-module')
 
 
 # ---- EnergyConfig ----------------------------------------------------------
