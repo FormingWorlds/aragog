@@ -9,6 +9,7 @@ Verifies:
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 from types import SimpleNamespace
@@ -1407,9 +1408,9 @@ def test_step_powers_table_alpha_cmb_bound(eos_np_table, eos_jax):
 @pytest.mark.smoke
 @pytest.mark.parametrize('stratified', [False, True])
 def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog):
-    """A core_module solve takes its energy powers from the JAX batch, whose per-node powers and
-    per-call integrals match the numpy loop on derived alpha; column 1 is the boundary-layer
-    flux, whose two entropy inversions differ at 1e-14."""
+    """A core_module solve with radiogenic and tidal heating takes its energy powers from the
+    JAX batch, whose per-node powers and per-call integrals match the numpy loop on derived
+    alpha; column 1 is the boundary-layer flux, whose two entropy inversions differ at 1e-14."""
     from tests.conftest import entropy_eos_copy
     from tests.test_entropy_solver_core_module_smoke import (
         CORE_MODULE_PARAMS,
@@ -1419,6 +1420,9 @@ def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog
     from tests.test_jax_dsdt_core_module import _build_jax_pieces
 
     prm, end = (STRATIFIED_PARAMS, 0.05) if stratified else (CORE_MODULE_PARAMS, 2.0)
+    # A radiogenic power of ~1e13 W, above the 1e-12 share of the surface flow (~3e20 W)
+    radio = [dataclasses.replace(_make_radionuclide(), concentration=1e6)]
+    tidal = np.linspace(1e-12, 5e-12, 9)
     solver = _build(
         'core_module',
         entropy_eos_copy(identity_alpha=True),
@@ -1428,15 +1432,18 @@ def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog
         s_init='driven',
         use_jax_jacobian=True,
         core_offset=50.0,
+        radionuclides=radio,
+        tidal_array=tidal,
     )
     args = _build_jax_pieces(solver)
 
     def factory(scales, core_bc_mode):
         rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
             *args[:4],
-            heating_array=np.zeros(solver._n_stag),
+            heating_array=tidal,
             scales=scales,
             core_bc_mode=core_bc_mode,
+            radio_isotope_params=_make_radio_tuple(radio),
             core_module_budget=args[6],
             core_module_q_radio=args[7],
             core_module_ra_crit_cmb=args[8],
@@ -1454,10 +1461,14 @@ def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog
     t_pts, y_pts = solver._solution.energy_trace
     P_jax = solver._step_powers_batch(t_pts, y_pts)
     P_np = np.array([solver._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
+    assert np.all(np.abs(P_np[:, 2:6]) > 0.0)
     _assert_powers_match(P_jax, P_np, rtol_col1=1e-13)
 
     batch = dict(solver._solution.energy_integrals)
     solver._cvode_step_powers_batch = None
     ref = solver._compute_step_energy_integrals()
-    for key in ('F_int', 'F_cmb', 'core', 'state_heat'):
-        assert batch[key] == pytest.approx(ref[key], rel=1e-13)
+    keys = ('F_int', 'F_cmb', 'F_cmb_step_avg', 'Q_radio', 'Q_tidal', 'Q_radio_cons')
+    for key in (*keys, 'Q_tidal_cons'):
+        assert batch[key] == pytest.approx(ref[key], rel=1e-13), key
+    scale = abs(ref['F_int']) + abs(ref['F_cmb'])
+    assert batch['solver_residual'] == pytest.approx(ref['solver_residual'], abs=1e-12 * scale)

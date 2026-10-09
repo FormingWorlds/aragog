@@ -67,6 +67,8 @@ def _build(
     s_init=None,
     use_jax_jacobian: bool = False,
     core_offset: float | None = None,
+    radionuclides=(),
+    tidal_array=None,
 ):
     from aragog.parser import (
         Parameters,
@@ -96,11 +98,13 @@ def _build(
         convection=True,
         gravitational_separation=False,
         mixing=False,
-        radionuclides=False,
-        tidal=False,
+        radionuclides=bool(radionuclides),
+        tidal=tidal_array is not None,
         solver_method=solver_method,
         use_jax_jacobian=use_jax_jacobian,
     )
+    if tidal_array is not None:
+        en.tidal_array = np.asarray(tidal_array, dtype=float)
     ic = _InitialConditionParameters(
         initial_condition=1, surface_temperature=3500.0, basal_temperature=3500.0
     )
@@ -154,7 +158,7 @@ def _build(
         phase_solid=ps,
         phase_liquid=pl,
         phase_mixed=pm,
-        radionuclides=[],
+        radionuclides=list(radionuclides),
         solver=sv,
     )
     solver = EntropySolver(params, entropy_eos=shared_eos)

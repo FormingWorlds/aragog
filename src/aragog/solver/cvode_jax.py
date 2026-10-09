@@ -116,16 +116,7 @@ def _make_jitted_rhs_and_jacobian(
     }[core_bc_mode]
 
     def _eval_core(t_nd, y_nd, data):
-        (
-            _mesh,
-            _bc,
-            _heating,
-            _radio,
-            state_scale_jax,
-            rhs_scale_jax,
-            t_ref_jax,
-            offset_jax,
-        ) = data[:8]
+        state_scale_jax, rhs_scale_jax, t_ref_jax, offset_jax = data[4:8]
         t_phys = t_nd * t_ref_jax
         S_phys = y_nd * state_scale_jax + offset_jax
         args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
@@ -194,14 +185,7 @@ def _get_or_create_jitted(
         rhs_jit, jac_jit = _make_jitted_rhs_and_jacobian(
             core_bc_mode, use_radio, phase_params, eos_jax, budget
         )
-        entry = _JitCacheEntry(
-            rhs_jit=rhs_jit,
-            jac_jit=jac_jit,
-            phase_params=phase_params,
-            eos_jax=eos_jax,
-            budget=budget,
-            powers_jit=None,
-        )
+        entry = _JitCacheEntry(rhs_jit, jac_jit, phase_params, eos_jax, budget)
     _JIT_CACHE[key] = entry
     if len(_JIT_CACHE) > _CACHE_MAXSIZE:
         _JIT_CACHE.popitem(last=False)
