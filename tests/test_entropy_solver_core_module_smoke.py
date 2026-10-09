@@ -460,6 +460,33 @@ def test_a_core_that_freezes_from_the_top_is_refused(shared_eos, monkeypatch):
     assert solver.stop_early and solver._solution.energy_integrals['core'] == 0.0
 
 
+@needs_cvode
+def test_the_regime_guard_sees_every_accepted_step(shared_eos, monkeypatch):
+    """The regime guard receives T_core at every accepted CVODE step of the call, not only at
+    the output points, so a refused regime entered between two outputs is caught."""
+    import aragog.core.regime as regime
+
+    seen = []
+    guard = regime.refuse_unmodelled_regime
+    monkeypatch.setattr(
+        regime, 'refuse_unmodelled_regime', lambda b, t: seen.append(np.array(t)) or guard(b, t)
+    )
+    solver = _build(
+        'core_module',
+        shared_eos,
+        CORE_MODULE_PARAMS,
+        solver_method='cvode',
+        s_init='driven',
+        core_offset=50.0,
+    )
+    solver.parameters.solver.cvode_output_points = 2
+    solver.solve()
+    sol, n = solver._solution, solver._n_stag
+    trace = sol.energy_trace[1][n + 1]
+    assert len(seen) == 1 and trace.size > sol.t.size
+    np.testing.assert_array_equal(seen[0], trace)
+
+
 def test_a_stratified_core_refuses_radau(shared_eos):
     solver = _build('core_module', shared_eos, STRATIFIED_PARAMS, end_time=1.0)
     solver.set_initial_entropy(_driven_s_profile(solver._n_stag))
