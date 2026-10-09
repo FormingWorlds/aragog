@@ -1038,6 +1038,33 @@ def test_step_energy_stratified_core_module_and_fallback():
     assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
 
 
+def test_check_shell_base_refuses_the_inner_core_and_warns_once(caplog):
+    """An inner core that reaches the base of the resolved shell is refused, naming both radii;
+    a stable layer base within three cells of the shell base warns once per solver."""
+    import logging
+    from types import SimpleNamespace
+
+    import aragog.solver.entropy_solver as es
+
+    faces = np.linspace(1000e3, 2000e3, 11)  # 100 km cells: three cells end at 1300 km
+    budget = SimpleNamespace(
+        shell=SimpleNamespace(r_base=faces[0], r_faces=faces),
+        r_icb_batch=lambda t: np.interp(t, [3000.0, 5000.0], [1100e3, 0.0]),
+    )
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    with caplog.at_level(logging.WARNING):
+        s._check_shell_base(budget, [5000.0, 4000.0], [1400e3, 1301e3])
+        assert not caplog.records
+        for _ in range(2):
+            s._check_shell_base(budget, [5000.0], [1400e3, 1299e3])
+    warned = [r for r in caplog.records if 'within three cells of the shell base' in r.message]
+    assert len(warned) == 1 and len(caplog.records) == 1
+    with pytest.raises(
+        ValueError, match=r'inner core \(1100 km\) reaches the base .* \(1000 km\)'
+    ):
+        s._check_shell_base(budget, [5000.0, 3000.0], [1400e3])
+
+
 def test_solver_output_to_netcdf_step_dE_core_J(tmp_path):
     """SolverOutput.to_netcdf writes step_dE_core_J to netCDF."""
     import netCDF4 as nc
