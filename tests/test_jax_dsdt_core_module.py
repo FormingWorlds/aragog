@@ -440,7 +440,7 @@ def test_the_expansivity_source_is_the_only_numpy_jax_difference():
         f_np = np.asarray(solver.dSdt(0.0, y)).ravel()
         f_jax = np.asarray(dSdt_core_module(0.0, jnp.asarray(y), _build_jax_pieces(solver)))
         diffs.append(np.max(np.abs(f_jax - f_np) / np.maximum(np.abs(f_np), 1e-300)))
-    assert diffs[0] < 1e-10 < diffs[1]
+    assert diffs[0] < 1e-10 < diffs[1] < 1e-3
 
 
 @pytest.mark.slow
@@ -503,7 +503,8 @@ def test_jacobian_core_column_matches_central_differences(state):
         )
         out = np.empty(y.size)
         rhs_fn(0.0, y, out)
-        np.testing.assert_allclose(out[: n + 2], f_jax[: n + 2], rtol=1e-6)
+        np.testing.assert_allclose(out[:n], f_jax[:n], rtol=1e-8)
+        np.testing.assert_allclose(out[n : n + 2], f_jax[n : n + 2], rtol=1e-6)
         np.testing.assert_allclose(
             out[n + 2 :], f_jax[n + 2 :], rtol=0, atol=1e-6 * shell_scale
         )
@@ -519,6 +520,14 @@ def test_jacobian_core_column_matches_central_differences(state):
     for row in rows:
         assert fd[row] != 0.0
         assert J[row, n + 1] == pytest.approx(fd[row], rel=rel)
+    if state != 'stratified':  # S[0] sets the mantle side of the CMB flux and its layer
+        h, up, down = 1e-3, y.copy(), y.copy()
+        up[0] += h
+        down[0] -= h
+        fd = (rhs(up) - rhs(down)) / (2.0 * h)
+        for row in (0, n + 1):
+            assert fd[row] != 0.0
+            assert J[row, 0] == pytest.approx(fd[row], rel=1e-5)
     if state == 'stratified':  # the top cell sets the CMB flux, so S[0] and the gradient slot
         h, up, down = 1e-3, y.copy(), y.copy()
         up[-1] += h

@@ -57,7 +57,7 @@ def exoplanet_prof():
 
 @pytest.fixture(scope='module')
 def alloy_budget(prof):
-    """Alloy-curve budget in the partial-inner-core regime (onset ~4054 K)."""
+    """Alloy-curve budget in the partial-inner-core regime (onset ~4147 K)."""
     curve = IronMeltingCurve(light_element_fraction=0.1, depression=1.2)
     return CoreEnergyBudget(prof, curve, ds_fusion=DS_FUSION, icn_width=10.0)
 

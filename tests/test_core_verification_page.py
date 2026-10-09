@@ -1,5 +1,5 @@
 """The core verification page: every tagged number matches the values file, every test it
-names exists, and items 4, 6, 10, 11 and 13 of the script reproduce their recorded values."""
+names exists, and items 4, 5, 6, 10, 11 and 13 of the script reproduce their recorded values."""
 
 from __future__ import annotations
 

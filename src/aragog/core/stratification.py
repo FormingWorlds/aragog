@@ -73,9 +73,9 @@ def stratification_depth(entropy: 'CoreEntropyBudget', t_cmb, q_cmb):
     """Equilibrium thickness [m] of the stably stratified sub-CMB layer.
 
     Solves ``Q_ad(r_s) = Q_cmb`` for the layer base ``r_s`` by fixed
-    bisection on the inner rising branch of ``Q_ad(r) = (8 pi k / D^2) r^3
-    T_a(r)``, which peaks at ``r_peak = D sqrt(3/2)`` and decreases
-    beyond it; the thickness is ``r_cmb - r_s``. For Earth-scale cores
+    bisection on the inner rising branch of ``Q_ad(r) = 4 pi r^2 k |dT_a/dr|``,
+    which peaks at ``profiles.r_peak`` (``D sqrt(3/2)`` on the small-radius adiabat) and
+    decreases beyond it; the thickness is ``r_cmb - r_s``. For Earth-scale cores
     the peak sits outside the CMB and the branch spans the whole core;
     for larger cores the search is bracketed at the peak, and a layer
     reaching the peak is reported clamped there, since the thin-layer

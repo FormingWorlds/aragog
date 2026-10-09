@@ -7,9 +7,9 @@ directly, and thermal conduction along the adiabat is the sink. The margin
 ``dE = Es + EL + Eg + ER - Ek`` is the entropy production rate available to
 ohmic dissipation; a dynamo requires it positive. Term structures follow
 the Leeds ``thermal_history`` implementation (Gubbins et al. 2003
-formalism) evaluated on the Gaussian profiles, where the conduction sink
-has the closed form ``Ek = 16 pi k r_cmb^5 / (5 D^4)`` because
-``|dT_a/dr| / T_a = 2 r / D^2`` exactly.
+formalism) evaluated on the Gaussian profiles. The conduction sink integrates
+``(alpha g / c_p)^2``; on the small-radius adiabat, where ``|dT_a/dr| / T_a = 2 r / D^2``,
+it has the closed form ``Ek = 16 pi k r_cmb^5 / (5 D^4)``.
 
 Field strength uses the energy-flux scaling of Christensen, Holzwarth &
 Reiners (2009, Nature 457, 167, Eq. 2): ``<B>^2 / (2 mu0) = c f_ohm
@@ -107,8 +107,8 @@ class CoreEntropyBudget:
         if p.adiabat_mode == 'small_radius':
             return 16.0 * jnp.pi * self.k_core * top**5 / (5.0 * p.d_scale**4)
 
-        def integrand(r):
-            return (p.adiabat_gradient(r, 1.0) / p.adiabat(r, 1.0)) ** 2 * r**2
+        def integrand(r):  # d ln T / dr = -alpha g / c_p
+            return (p.alpha * p.gravity(r) / p.c_p) ** 2 * r**2
 
         return 4.0 * jnp.pi * self.k_core * self.budget._quad_0_upper(top, integrand)
 

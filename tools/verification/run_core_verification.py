@@ -315,6 +315,8 @@ def item4_nucleation() -> None:
     r_icb = np.asarray(jax.vmap(budget.r_icb)(t_on - under))
     small = under < 0.1  # the square root is the limit at the onset
     slope = np.polyfit(np.log(under[small]), np.log(r_icb[small]), 1)[0]
+    kelvin = under < 1.0
+    record(4, 'sqrt_slope_1K', np.polyfit(np.log(under[kelvin]), np.log(r_icb[kelvin]), 1)[0])
     drdt = np.asarray(jax.vmap(jax.grad(budget.r_icb))(t_on - under))
     h = 1e-3 * under  # a step relative to the undercooling keeps the cusp out of the difference
     r_of = jax.vmap(budget.r_icb)
@@ -759,6 +761,9 @@ def _rates(budget):
     return _RATES[budget]
 
 
+SHELL_RESTARTS = []  # BDF restarts of each shell run, for item 13
+
+
 def _shell_run(budget, segments, times, rtol=None, diagnostics=True):
     """aragog's convecting core and shell from the adiabat at the table's start temperature
     (no layer) under the CMB flows ``segments`` [(end Myr, W)], one SciPy BDF solve per flow
@@ -777,7 +782,7 @@ def _shell_run(budget, segments, times, rtol=None, diagnostics=True):
         [],
         [],
     )
-    sampled = -np.inf
+    sampled, restarts = -np.inf, 0
     for end, q in segments:  # no step crosses a change of flow
         for _ in range(4):  # a step that stalls at a kink of the mixing restarts from there
             sol = solve_ivp(
@@ -791,13 +796,16 @@ def _shell_run(budget, segments, times, rtol=None, diagnostics=True):
                 dense_output=True,
             )
             t_new = times[(times > sampled) & (times <= sol.t[-1])]
-            states += list(sol.sol(t_new).T)
-            flows += [q] * t_new.size
-            sampled = max(sampled, *t_new) if t_new.size else sampled
+            if t_new.size:
+                states += list(sol.sol(t_new).T)
+                flows += [q] * t_new.size
+                sampled = t_new[-1]
             y, start = sol.y[:, -1], sol.t[-1]
             if sol.success:
                 break
+            restarts += 1
         assert sol.success, (sol.message, end)
+    SHELL_RESTARTS.append(restarts)
     ys = np.array(states)
     t_c, t_shell = ys[:, 0], ys[:, 1:]
     out = {
@@ -906,6 +914,7 @@ def item13_stable_layer() -> None:
     adiabatic flow, under a flow that erodes the layer and then lets it re-form, and the
     change under the mixing constants (model uncertainty)."""
     inp, cases = LAYER_HEADER['inputs'], _layer_cases()
+    SHELL_RESTARTS.clear()
     budget = _core_budget(inp, 'quadrature', stratification=True, k_core=inp['k_core'])
     r_cmb, shell = inp['r_cmb'], budget.shell
     record(
@@ -1065,6 +1074,7 @@ def item13_stable_layer() -> None:
     for ax in (a_dep, a_warm, a_ero):
         ax.legend(frameon=False, fontsize='x-small')
     save(fig, 'fig_20_leeds_stable_layer')
+    record(13, 'bdf_restarts', sum(SHELL_RESTARTS))
 
 
 def item10_leeds_history() -> None:
@@ -1322,6 +1332,7 @@ def item5_nimmo() -> None:
     # The chapter's own secular capacity (Table 4, Q_s over the cooling rate) times its drop.
     capacity_t4 = NIMMO_T4[15.2e12]['Qs'] * 1e12 * GYR / NIMMO_T4[15.2e12]['cooling']
     record(5, 'Ws_from_table4_1e28J', capacity_t4 * NIMMO_T5['delta_t'] / 1e28)
+    record(5, 'secular_capacity_vs_table4', released['Ws'] / (t_on - t_c) / capacity_t4)
     names = list(NIMMO_T4[15.2e12])
     fig, ax = plt.subplots(figsize=(WIDTH, 4.0))
     x = np.arange(len(names))

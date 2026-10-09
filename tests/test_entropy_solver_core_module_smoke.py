@@ -293,6 +293,8 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
     if regime == 'boundary_layer':
         assert 4e4 < out.F_cmb < 6e4
+        # the layer's mean temperature lies past the rheological transition, the base below it
+        assert first(shared_eos.melt_fraction(p_cmb, s_bl)) == pytest.approx(0.51, abs=0.01)
 
 
 def test_energy_balance_output_keeps_the_gradient_node_diagnostics(shared_eos):

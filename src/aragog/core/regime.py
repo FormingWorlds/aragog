@@ -111,14 +111,13 @@ def refuse_unmodelled_regime(budget: CoreEnergyBudget, t_cmb) -> None:
         curve, 'depression', 0.0
     )
     if budget.alpha_c * budget.c_light > 0.0 or depressed > 0.0:
-        p = budget.profiles
-        inner = np.asarray(p.enclosed_mass(jnp.asarray(budget.r_icb_batch(t_cmb))))
+        p, coldest = budget.profiles, float(np.min(t_cmb))  # the inner core is largest there
+        inner = float(p.enclosed_mass(budget.r_icb(coldest)))
         outer = 1.0 - inner / float(p.enclosed_mass(p.r_cmb))
-        if (outer < M_OC_FRACTION_MIN).any():
-            i = int(np.argmax(outer < M_OC_FRACTION_MIN))
+        if outer < M_OC_FRACTION_MIN:
             raise ValueError(
-                f'core_module: the outer core holds {outer[i]:.3f} of the core mass at T_core = '
-                f'{t_cmb[i]:.1f} K, below {M_OC_FRACTION_MIN}; the light-element fraction is '
+                f'core_module: the outer core holds {outer:.3f} of the core mass at T_core = '
+                f'{coldest:.1f} K, below {M_OC_FRACTION_MIN}; the light-element fraction is '
                 'fixed, not enriched as the inner core grows'
             )
 

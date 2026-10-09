@@ -9,6 +9,7 @@ printed model-2 heat-flow anchor (ADR = 1 at 15 TW).
 
 from __future__ import annotations
 
+import jax
 import numpy as np
 import pytest
 
@@ -111,3 +112,29 @@ def test_large_core_layer_clamps_at_the_conducted_flow_peak(mode):
     assert depth == pytest.approx(prof.r_cmb - r_peak, abs=1.0)
     # The clamp binds: the unclamped rising-branch root would be far deeper.
     assert depth < 0.2 * prof.r_cmb
+
+
+@pytest.mark.physics_invariant
+def test_the_depth_with_the_exact_adiabat_traces_under_jit():
+    """The peak radius of the exact adiabat is computed outside the trace, so the depth of a
+    fresh profile, first read under jit, evaluates and equals the eager value."""
+    from aragog.core import IronMeltingCurve
+
+    def entropy():
+        prof = GaussianCoreProfiles(
+            rho_cen=12500.0,
+            length_scale=7272e3,
+            r_cmb=3480e3,
+            p_cmb=139e9,
+            alpha=1.25e-5,
+            c_p=840.0,
+        )
+        budget = CoreEnergyBudget(prof, IronMeltingCurve(), ds_fusion=170.0, icn_width=10.0)
+        return CoreEntropyBudget(budget, k_core=130.0)
+
+    fresh = entropy()
+    traced = float(jax.jit(lambda t, q: stratification_depth(fresh, t, q))(4000.0, 5e12))
+    assert traced == pytest.approx(
+        float(stratification_depth(entropy(), 4000.0, 5e12)), rel=1e-12
+    )
+    assert traced > 0.0

@@ -161,6 +161,8 @@ def test_constructor_error_contract_and_jit_compatibility():
         GaussianCoreProfiles(**tail)
     with pytest.raises(ValueError, match='unknown pressure_mode'):
         GaussianCoreProfiles(**EARTH, pressure_mode='invalid')
+    with pytest.raises(ValueError, match='unknown adiabat_mode'):
+        GaussianCoreProfiles(**EARTH, adiabat_mode='invalid')
 
     prof = GaussianCoreProfiles(**EARTH)
     r = np.linspace(0.0, prof.r_cmb, 17)
@@ -310,3 +312,15 @@ def test_fit_gaussian_core_profiles_error_contract_and_non_convergence(recwarn):
 
     # Strict contract: no warnings emitted, raise only
     assert len(recwarn) == 0
+
+
+@pytest.mark.physics_invariant
+def test_the_peak_of_the_conducted_adiabatic_flow_is_found_on_a_fine_grid():
+    """The exact-mode peak radius of r^2 |dT_a/dr| equals the argmax on a 20001-point grid of a
+    core larger than the peak, and a core inside the peak reports its CMB."""
+    big = GaussianCoreProfiles(**{**EARTH, 'r_cmb': 9000e3, 'p_cmb': 300e9})
+    r = np.linspace(0.0, big.r_cmb, 20001)
+    brute = r[np.argmax(-(r**2) * np.asarray(big.adiabat_gradient(r, 1.0)))]
+    assert big.r_peak < big.r_cmb
+    assert big.r_peak == pytest.approx(brute, abs=r[1] - r[0])
+    assert GaussianCoreProfiles(**EARTH).r_peak == GaussianCoreProfiles(**EARTH).r_cmb

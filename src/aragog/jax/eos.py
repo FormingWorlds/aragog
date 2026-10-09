@@ -565,8 +565,12 @@ class EntropyEOS_JAX(eqx.Module):
         lo, hi = jax.lax.fori_loop(0, 60, body, (jnp.asarray(span[0]), jnp.asarray(span[1])))
         s_root = jax.lax.stop_gradient(0.5 * (lo + hi))
         slope = jax.lax.stop_gradient(jax.grad(self.temperature, argnums=1)(p_fixed, s_root))
-        slope = jnp.where(slope > 0.0, slope, jnp.inf)  # flat at a clamped table edge
-        return s_root + (T - self.temperature(P, s_root)) / slope
+        slope = jnp.where(slope > 0.0, slope, jnp.inf)
+        inside = (self.temperature(p_fixed, span[0]) < t_fixed) & (
+            t_fixed < self.temperature(p_fixed, span[1])
+        )
+        newton = s_root + (T - self.temperature(P, s_root)) / slope
+        return jnp.where(inside, newton, s_root)  # the edge, with no derivative, beyond it
 
     def density(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Density rho(P, S) [kg/m^3], matching numpy EntropyEOS.density.

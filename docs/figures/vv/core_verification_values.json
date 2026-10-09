@@ -179,6 +179,7 @@
   "rhs_max_rel_stratified": 1.981196161109541e-10
  },
  "13": {
+  "bdf_restarts": 1.0,
   "depth_late_from_myr": 300.0,
   "depth_late_max_rel": 0.015464760754347662,
   "depth_ratio_extremes_last_myr": 51.0,
@@ -282,6 +283,7 @@
  "4": {
   "jvp_vs_fd_max_rel": 1.2914753192427852e-06,
   "sqrt_slope": 0.49981371411542413,
+  "sqrt_slope_1K": 0.49891877830400955,
   "t_onset": 4146.697086911713
  },
  "5": {
@@ -345,6 +347,7 @@
   "growth_ratio_15.2TW": 1.0240588107180446,
   "p_icb_GPa": 328.5355994432639,
   "r_icb_km": 1209.4359618617214,
+  "secular_capacity_vs_table4": 1.0002581589537358,
   "tm_centre_K": 5808.326911705094
  },
  "6": {

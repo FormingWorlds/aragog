@@ -133,3 +133,32 @@ def test_only_bottom_up_freezing_passes_the_regime_guard():
         ValueError, match='outer core holds 0.591 of the core mass at T_core = 4000.0 K'
     ):
         refuse_unmodelled_regime(alloy, [alloy.t_onset - 2.0, 4000.0])
+
+
+@pytest.mark.physics_invariant
+def test_the_outer_core_mass_bound_applies_to_either_composition_term():
+    """With a gravitational term alone, on a curve without light elements, the guard refuses
+    too, and the bound sits at an outer-core mass fraction of 0.9: a kelvin above that state
+    passes, a kelvin below it is refused."""
+    from scipy.optimize import brentq
+
+    from aragog.core.regime import M_OC_FRACTION_MIN
+
+    prof = GaussianCoreProfiles(**EARTH)
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        prof, curve, ds_fusion=170.0, icn_width=10.0, alpha_c=1.0, c_light=0.046
+    )
+    m_core = float(prof.enclosed_mass(prof.r_cmb))
+
+    def outer(t):
+        return 1.0 - float(prof.enclosed_mass(budget.r_icb(t))) / m_core
+
+    t_bound = brentq(
+        lambda t: outer(t) - M_OC_FRACTION_MIN, budget.t_onset - 500.0, budget.t_onset - 1e-3
+    )
+    refuse_unmodelled_regime(budget, [budget.t_onset + 10.0, t_bound + 1.0])
+    with pytest.raises(ValueError, match='outer core holds 0.89'):
+        refuse_unmodelled_regime(budget, [t_bound - 1.0])
+    plain = CoreEnergyBudget(prof, curve, ds_fusion=170.0, icn_width=10.0)
+    refuse_unmodelled_regime(plain, [t_bound - 1.0])  # no composition term: no bound
