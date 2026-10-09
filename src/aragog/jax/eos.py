@@ -556,9 +556,8 @@ class EntropyEOS_JAX(eqx.Module):
         """Entropy [J/kg/K] at scalar pressure ``P`` where ``temperature(P, S) = T``.
 
         A fixed 60-step bisection over the tables' entropy range (its edge where ``T`` lies
-        beyond the range), then one Newton step with the slope held constant, which leaves the
-        value unchanged to rounding and carries the implicit derivatives
-        ``dS/dT = 1 / (dT/dS)`` and ``dS/dP = -(dT/dP) / (dT/dS)``.
+        beyond the range), plus a term that is zero in value and carries the implicit
+        derivatives ``dS/dT = 1 / (dT/dS)`` and ``dS/dP = -(dT/dP) / (dT/dS)``.
         """
         solid, melt = self._get_tables('temperature')
         span = (min(solid.S_min, melt.S_min), max(solid.S_max, melt.S_max))
@@ -578,8 +577,9 @@ class EntropyEOS_JAX(eqx.Module):
         inside = (self.temperature(p_fixed, span[0]) < t_fixed) & (
             t_fixed < self.temperature(p_fixed, span[1])
         )
-        newton = s_root + (T - self.temperature(P, s_root)) / slope
-        return jnp.where(inside, newton, s_root)  # the edge, with no derivative, beyond it
+        zero = (T - t_fixed) - (self.temperature(P, s_root) - self.temperature(p_fixed, s_root))
+        # the edge, with no derivative, beyond the range
+        return jnp.where(inside, s_root + zero / slope, s_root)
 
     def density(self, P: jax.Array, S: jax.Array) -> jax.Array:
         """Density rho(P, S) [kg/m^3], matching numpy EntropyEOS.density.

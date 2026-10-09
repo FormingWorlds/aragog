@@ -960,12 +960,14 @@ class EntropyEOS:
         lo, hi = min(solid['S'][0], melt['S'][0]), max(solid['S'][-1], melt['S'][-1])
 
         def f(s):
-            return float(np.asarray(self.temperature(P, s)).flat[0]) - T
+            return self.temperature_scalar(P, s) - T
 
         f_lo, f_hi = f(lo), f(hi)
+        if np.isnan(f_lo + f_hi):
+            return np.nan
         if f_lo >= 0.0 or f_hi <= 0.0:
             return lo if f_lo >= 0.0 else hi
-        return brentq(f, lo, hi)
+        return brentq(f, lo, hi, maxiter=500)  # up to 105 iterations next to a flat T(S)
 
     def density(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Density rho(P, S) [kg/m^3].
