@@ -1054,7 +1054,7 @@ def item13_stable_layer() -> None:
         run = _shell_run(b, segments, t)
         shifts.append((0.0, 0.0, abs(_first(t, after & (run['depth'] <= 0.0)) - removed)))
     record(13, 'mixing_tcen_max_K', max(s[0] for s in shifts))
-    # the smallest T_cen change of one constant over the 8 and 12 TW runs: zero if it is unused
+    # smallest T_cen change of the four settings in the 8 and 12 TW runs: zero if one is unused
     record(
         13, 'mixing_tcen_min_K', min(max(s[0] for s in shifts[i : i + 2]) for i in (0, 3, 6, 9))
     )
@@ -1078,6 +1078,28 @@ def item13_stable_layer() -> None:
         ax.legend(frameon=False, fontsize='x-small')
     save(fig, 'fig_20_leeds_stable_layer')
     record(13, 'bdf_restarts', sum(SHELL_RESTARTS))
+    # runs of this item separate from the script, with their commits and platforms in the file
+    spread = json.loads((ROOT / 'tools/verification/data/stable_layer_spread.json').read_text())
+    base, bit, tight = (spread['runs'][k] for k in ('base', 'last_bit', 'rtol1e-12'))
+    tcen, ricb = 'tcen_max_abs_diff_K_', 'ricb_end_rel_diff_'
+    record(13, 'spread_tcen_-2TW_last_bit_K', bit[f'{tcen}-2TW'])
+    record(13, 'spread_tcen_-2TW_rtol1e-12_K', tight[f'{tcen}-2TW'])
+    record(
+        13, 'spread_tcen_-2TW_changed_runs_K', abs(bit[f'{tcen}-2TW'] - tight[f'{tcen}-2TW'])
+    )
+    shift = {k: abs(bit[k] - base[k]) for k in base}
+    others = ('8TW', '12TW', '0TW')
+    record(13, 'spread_tcen_-2TW_last_bit_shift_K', shift[f'{tcen}-2TW'])
+    record(13, 'spread_tcen_others_max_K', max(shift[f'{tcen}{t}'] for t in others))
+    record(13, 'spread_ricb_others_max', max(shift[f'{ricb}{t}'] for t in others))
+    record(13, 'spread_ricb_-2TW', shift[f'{ricb}-2TW'])
+    record(13, 'spread_depth_late', shift['depth_late_max_rel'])
+    record(13, 'spread_mixing_tcen_K', shift['mixing_tcen_max_K'])
+    record(13, 'spread_mixing_depth_rtol1e-12', tight['mixing_depth_max_rel'])
+    record(13, 'linux_tcen_8TW_K', spread['runs']['linux'][f'{tcen}8TW'])
+    record(
+        13, 'linux_tcen_8TW_shift_K', spread['runs']['linux'][f'{tcen}8TW'] - base[f'{tcen}8TW']
+    )
 
 
 def item10_leeds_history() -> None:
@@ -1222,6 +1244,15 @@ def item11_coupled() -> None:
             record(11, f'e1_{q}_d_{a}_{b}', diff)
     for q in names:
         record(11, f'e1_{q}_320', run[(320, 1e-8)][q])
+    # the call-mean flux at 100 kyr of the two tolerances, placed at the middle of its call
+    mid = {}
+    for case in ('1me', '1me_rtol1e-10'):
+        t, _, cmb, _, _ = np.loadtxt(data / f'coupled_ledger_{case}.csv', delimiter=',').T
+        live = np.diff(t) > 0
+        dt, end, heat = np.diff(t)[live], t[1:][live], cmb[1:][live]
+        record(11, f'e1_call_kyr_100kyr_{case}', dt[np.searchsorted(end, 1e5)] / 1e3)
+        mid[case] = np.interp(1e5, end - dt / 2, heat / dt)
+    record(11, 'e1_F_100kyr_d_80_rtol_midcall', abs(mid['1me'] / mid['1me_rtol1e-10'] - 1))
     for n in (40, 80, 160, 320):  # the late flux and the cooling after basal freezing
         record(11, f'e1_F_500kyr_{n}', run[(n, 1e-8)]['F_500kyr'])
         record(

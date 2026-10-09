@@ -38,15 +38,15 @@ RUN_SPREAD = {f'identity_{t}' for t in FLOWS} | {
 }
 # Item 13 differences of an unconverged run from thermal_history: within a factor 2 either way
 UNCONVERGED = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
+# Item 13 T_cen changes under the mixing constants, of the size of the integration noise: sign only
+SIGN_ONLY = {'mixing_tcen_max_K', 'mixing_tcen_min_K'}
 # Differences of two solutions that the integration moves by more than 1e-4 of themselves: held
 # to 2 to 3 times the largest change under a tenfold tighter tolerance or a 1-ulp start temperature
 BANDS = {
     # item 10, LSODA at rtol 1e-10: these two T_cmb differences move by up to 1.0e-6 K
     **dict.fromkeys(('t_cmb_abs_diff_at_onset', 't_cmb_diff_max_after_onset_K'), 3e-6),
-    # item 13: T_cen moves by 0.25 K at -2 TW (Linux moved 8 TW by 0.072 K)
-    **{f'tcen_max_abs_diff_K_{t}': 0.6 for t in FLOWS},
-    'mixing_tcen_max_K': 0.6,
-    'mixing_tcen_min_K': 0.6,
+    # item 13: T_cen moves by 0.25 K at -2 TW, 0.024 K or less in the others (Linux 8 TW 0.072 K)
+    **{f'tcen_max_abs_diff_K_{t}': 0.6 if t == '-2TW' else 0.2 for t in FLOWS},
     # item 13: the end inner-core radius moves by up to 8.3e-5 of itself
     **dict.fromkeys([f'ricb_end_rel_diff_{t}' for t in FLOWS], 2e-4),
     # item 13: the late layer depth, its change under the mixing constants and the end depth
@@ -94,7 +94,10 @@ def script(tmp_path, monkeypatch):
 
 def _holds(key, value, want):
     """A value in ROUNDING or RUN_SPREAD may not double, one in UNCONVERGED stays within a
-    factor 2 either way, one in BANDS within its band, every other number holds to 1e-4."""
+    factor 2 either way, one in SIGN_ONLY stays positive, one in BANDS within its band, every
+    other number holds to 1e-4."""
+    if key in SIGN_ONLY:
+        return value > 0
     if key in ROUNDING or key in RUN_SPREAD:
         return abs(value) <= 2.0 * abs(want) + 1e-15
     if key in UNCONVERGED:
@@ -156,7 +159,8 @@ def test_budget_terms_match_the_thermal_history_table(script):
 @pytest.mark.slow
 @pytest.mark.physics_invariant
 def test_a_cvode_solve_across_the_onset_closes_its_heat(script):
-    assert 0 < _reproduces(script, 9)['core_vs_cmb_rel'] < 1e-6
+    got = _reproduces(script, 9)
+    assert 0 < got['core_vs_cmb_rel'] < 1e-6 < got['core_vs_cmb_rel_rtol1e-8']
 
 
 @pytest.mark.slow
@@ -209,8 +213,7 @@ def test_the_stable_layer_meets_the_thermal_history_bounds(script):
     takes to mix, and the layer re-forms to a depth within a factor 1.5. The heat rates of core
     and shell equal the CMB flow at every sample."""
     got = _reproduces(script, 13)
-    # both mixing constants reach the shell
-    assert got['mixing_tcen_min_K'] > 0 and got['mixing_depth_max_rel'] > 0
+    assert got['mixing_depth_max_rel'] > 0  # with mixing_tcen_min_K > 0: both constants act
     for t in FLOWS:
         assert got[f'identity_{t}'] < 1e-12
         assert got[f'tcmb_max_abs_diff_K_{t}'] < 5.0

@@ -1,0 +1,61 @@
+{
+ "source": "item 13 of tools/verification/run_core_verification.py: as run (base), with t_cmb_start changed in its last bit (last_bit), and with the shell runs at rtol 1e-12 (rtol1e-12); linux: the 8 TW value of a CI run",
+ "commits": {
+  "aragog": {
+   "base": "a8753af",
+   "last_bit": "a8753af",
+   "rtol1e-12": "a8753af",
+   "linux": "47fe538"
+  }
+ },
+ "platform": {
+  "base": "macOS arm64",
+  "last_bit": "macOS arm64",
+  "rtol1e-12": "macOS arm64",
+  "linux": "Ubuntu x86_64 (GitHub Actions)"
+ },
+ "runs": {
+  "base": {
+   "tcen_max_abs_diff_K_8TW": 0.6215756653000426,
+   "tcen_max_abs_diff_K_12TW": 0.6158619309881033,
+   "tcen_max_abs_diff_K_-2TW": 1.2354695095609713,
+   "tcen_max_abs_diff_K_0TW": 0.928186722454484,
+   "ricb_end_rel_diff_8TW": 0.0019554687487728373,
+   "ricb_end_rel_diff_12TW": 0.0004793051648258606,
+   "ricb_end_rel_diff_-2TW": 0.002363576245821397,
+   "ricb_end_rel_diff_0TW": 0.001462715514027324,
+   "depth_late_max_rel": 0.015464760754347662,
+   "mixing_tcen_max_K": 0.16984845061961096,
+   "mixing_depth_max_rel": 0.0033204353181457424
+  },
+  "last_bit": {
+   "tcen_max_abs_diff_K_8TW": 0.6208095685833541,
+   "tcen_max_abs_diff_K_12TW": 0.6096334311987448,
+   "tcen_max_abs_diff_K_-2TW": 0.9858376150077675,
+   "tcen_max_abs_diff_K_0TW": 0.9039645546154134,
+   "ricb_end_rel_diff_8TW": 0.001955627824048456,
+   "ricb_end_rel_diff_12TW": 0.0004703667799000888,
+   "ricb_end_rel_diff_-2TW": 0.0022808519682054884,
+   "ricb_end_rel_diff_0TW": 0.0014346988753063394,
+   "depth_late_max_rel": 0.016214805106420593,
+   "mixing_tcen_max_K": 0.29635478671661986,
+   "mixing_depth_max_rel": 0.004107359028940771
+  },
+  "rtol1e-12": {
+   "tcen_max_abs_diff_K_8TW": 0.6195122052849911,
+   "tcen_max_abs_diff_K_12TW": 0.6081854199173904,
+   "tcen_max_abs_diff_K_-2TW": 0.9942078244566801,
+   "tcen_max_abs_diff_K_0TW": 0.9128393571463675,
+   "ricb_end_rel_diff_8TW": 0.001947648907812738,
+   "ricb_end_rel_diff_12TW": 0.0004687651540525861,
+   "ricb_end_rel_diff_-2TW": 0.002290773418987535,
+   "ricb_end_rel_diff_0TW": 0.0014453933207870806,
+   "depth_late_max_rel": 0.01637641980949467,
+   "mixing_tcen_max_K": 0.1219847404763641,
+   "mixing_depth_max_rel": 0.001225122167356485
+  },
+  "linux": {
+   "tcen_max_abs_diff_K_8TW": 0.693217197699596
+  }
+ }
+}
