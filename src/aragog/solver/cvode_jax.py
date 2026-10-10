@@ -20,8 +20,9 @@ Supported ``core_bc_mode`` values:
   RHS is ``jax.solver.dSdt_energy_balance``. This is the
   production PROTEUS path.
 - ``core_module``: state vector is N+2 (entropy + dSdr_cmb +
-  T_core); RHS is ``jax.solver.dSdt_core_module``, closed by the
-  core evolution budget passed as ``core_module_budget``.
+  T_core) plus the shell temperatures of a stratified core; RHS
+  is ``jax.solver.dSdt_core_module``, closed by the core evolution
+  budget passed as ``core_module_budget``.
 
 Unsupported (factory raises ``ValueError`` and the calling solver
 falls back to numpy RHS + FD Jacobian after logging a warning):

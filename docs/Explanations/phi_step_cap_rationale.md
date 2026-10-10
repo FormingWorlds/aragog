@@ -4,7 +4,7 @@ The `phi_step_cap` knob limits the per-call change in the mass-weighted mean mel
 
 ## The problem
 
-CVODE's adaptive step selection is based on local truncation error in the state vector. The state vector for Aragog is the entropy profile (plus a single dS/dr value at the CMB in `energy_balance` mode). The step-size controller has no notion of melt fraction.
+CVODE's adaptive step selection is based on local truncation error in the state vector. The state vector for Aragog is the entropy profile (plus the extra states of the `core_bc` mode: a single dS/dr value at the CMB in the default `energy_balance`). The step-size controller has no notion of melt fraction.
 
 Across the rheological transition this matters. A single CVODE step that an LTE controller considers acceptable can take the mantle from $\Phi_\mathrm{global} = 0.45$ to $\Phi_\mathrm{global} = 0.10$ in one shot. Locally the truncation error in $S(r)$ is fine; globally the planet has just transitioned through the rheological front in a way that:
 

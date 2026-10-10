@@ -717,7 +717,7 @@ def step_powers(
 
 
 # ---------------------------------------------------------------------------
-# core_module core BC RHS (state vector = [S, dSdr_cmb, T_core], length N+2)
+# core_module core BC RHS (state vector = [S, dSdr_cmb, T_core, shell temperatures])
 # ---------------------------------------------------------------------------
 
 
@@ -726,7 +726,7 @@ def dSdt_core_module(
     state_ext: jax.Array,
     args: tuple,
 ) -> jax.Array:
-    """RHS for the core_module core BC mode (extended state, N+2).
+    """RHS for the core_module core BC mode (extended state, N+2 plus the shell).
 
     Mirrors the numpy ``EntropySolver._core_module_rhs_per_s`` closure.
     The CMB flux is ``aragog.core.cmb_boundary_layer_flux`` of T_core and

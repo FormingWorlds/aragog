@@ -180,7 +180,7 @@ Pressure $P(r)$ is treated as time-invariant. Two options are provided:
 ### Spatial discretisation
 
 - Staggered finite-volume mesh on $N+1$ basic nodes and $N$ staggered nodes.
-- The entropy gradient at basic nodes is the SPIDER-parity centred difference of staggered $S$ in uniform $\xi$-space, then chain-ruled through $d\xi/dr$. Boundary values copy from the nearest interior node; in `energy_balance` mode the CMB boundary value is overridden by the state-vector entry.
+- The entropy gradient at basic nodes is the SPIDER-parity centred difference of staggered $S$ in uniform $\xi$-space, then chain-ruled through $d\xi/dr$. Boundary values copy from the nearest interior node; in the `energy_balance` and `core_module` modes the CMB boundary value is overridden by the state-vector entry.
 - A configurable phase-boundary smoothing function gates the gravitational-separation and chemical-mixing fluxes outside the mushy band. The default is `phase_smoothing = "tanh"` (SPIDER-parity, two-branch tanh of width `matprop_smooth_width`); `phase_smoothing = "cubic_hermite"` is available as an alternative.
 
 ### Time integration

@@ -567,9 +567,8 @@ class _PhiCapRootFunction(_CV_RootFunction):
         ``P_stag``).
     n_stag : int
         Number of staggered cells. The first ``n_stag`` entries of
-        ``y`` are entropy; later entries are the extended-state
-        boundary terms (energy_balance, gradient modes) which are not
-        needed for Φ_global.
+        ``y`` are entropy; later entries are the extra states of the
+        core BC mode, which are not needed for Φ_global.
     phi0_global : float
         Φ_global at the start of solve(). Pre-computed by ``solve()``
         before the rootfn is constructed so the cap is anchored to
@@ -972,7 +971,7 @@ class SolverOutput:
     tcore_change_exceeded: bool = False
 
     # Stratified core_module: the shell temperatures [K] (a resume passes them back with
-    # ``set_initial_shell_temperature``), the stable-layer base [m] and the CMB temperature [K].
+    # ``set_initial_shell_temperature``), the stable-layer base [m] and the top shell cell [K].
     core_T_shell: npt.NDArray | None = None
     core_layer_base: float = float('nan')
     core_T_top: float = float('nan')
@@ -1397,7 +1396,8 @@ class EntropySolver:
           the Bower+2018 Table 1 temperature scale). So
           energy_balance gets [S_ref..., dSdr_ref], bower2018
           [S_ref..., T_ref], and core_module
-          [S_ref..., dSdr_ref, T_ref].
+          [S_ref..., dSdr_ref, T_ref], with T_ref for each shell
+          temperature of a stratified core.
 
         ``rhs_scale = t_ref / state_scale`` is derived inside
         NonDimScales.__post_init__; the same dataclass instance feeds
@@ -1496,19 +1496,8 @@ class EntropySolver:
         self._P_stag_flat = P_stag
         self._P_basic_flat = P_basic
 
-        # CMB BC mode (set here from config so dSdt can dispatch even
-        # before set_initial_entropy is called):
-        #   'energy_balance' = SPIDER-parity. State =
-        #     [S_0..S_{N-1}, dSdr_cmb]: the CMB entropy gradient is an
-        #     ODE state variable evolved by the core energy balance
-        #     (bc.c:76-131). Drives dSdr_cmb toward zero as the core
-        #     tracks the mantle, preventing the CMB cell drain seen
-        #     in quasi_steady mode where the FD-derived dSdr[0]
-        #     overshoots at the crystallisation front.
-        #   'quasi_steady' = alpha-factor BC. Faster but produces a
-        #     ~18 % T_core offset versus SPIDER due to CMB cell drain.
-        #   'bower2018' = T_core as ODE state with conduction-only
-        #     F_cmb. Available for parity testing; not recommended.
+        # CMB BC mode, set here from config so dSdt can dispatch before set_initial_entropy
+        # is called. The five modes and their state layouts are in ``_dSdt_single``.
         self._core_bc = getattr(
             self.parameters.boundary_conditions, 'core_bc', 'energy_balance'
         )
@@ -2045,7 +2034,9 @@ class EntropySolver:
         ``quasi_steady`` uses length N; ``energy_balance`` and
         ``bower2018`` use length N+1 (entropy block plus one extra
         state variable: ``dSdr_cmb`` or ``T_core`` respectively);
-        ``gradient`` uses length N+2. For the bower2018 mode the
+        ``gradient`` uses length N+2; ``core_module`` uses length N+2
+        (``dSdr_cmb`` and ``T_core``) plus the shell temperatures of a
+        stratified core. For the bower2018 mode the
         initial ``T_core`` is taken from the bottom-cell mantle
         temperature derived from ``S_init`` via the EOS unless
         ``set_initial_core_temperature`` has been called first.
@@ -2108,8 +2099,8 @@ class EntropySolver:
             )
         elif core_bc in ('bower2018', 'core_module'):
             # Core temperature as an ODE state: bower2018 [S, T_core] (parity testing only),
-            # core_module [S, dSdr_cmb, T_core] with the boundary-layer CMB flux of T_core
-            # against the bottom cell and T_cmb the core budget's integrated state.
+            # core_module [S, dSdr_cmb, T_core] with T_core the core budget's state. The CMB
+            # flux law takes T_core (the top shell cell with a shell) against the bottom cell.
             slots = EXTRA_STATE_SLOTS[core_bc]
             n_extra = len(slots)
             T_core_slot = n_stag + slots.index('T_core')
@@ -2127,7 +2118,7 @@ class EntropySolver:
                 T_core_init is None or core_bc == 'core_module'
             ) and self.entropy_eos is not None:
                 # core_module: the bottom cell at the CMB pressure, the mantle side of the
-                # contrast the boundary-layer flux acts on, so the default start has no flux.
+                # contrast of the flux law, so the default start without a shell has no flux.
                 P_bot, S_bot = float(self._P_stag_flat[0]), float(S_arr[0])
                 if core_bc == 'core_module':
                     P_bot = float(getattr(self, '_P_basic_flat', self._P_stag_flat)[0])
@@ -2369,14 +2360,9 @@ class EntropySolver:
     ) -> npt.NDArray:
         """Time derivative of the full state vector.
 
-        For the ``bower2018`` core BC the state vector is
-        ``[S_0, ..., S_{N-1}, T_core]`` of length N+1, and this returns
-        ``[dS/dt, dT_core/dt]`` of the same length. ``core_module``
-        adds the boundary entropy gradient before T_core:
-        ``[S, dSdr_cmb, T_core]`` of length N+2.
-
-        For the quasi_steady BC the state vector is just
-        ``[S_0, ..., S_{N-1}]`` of length N.
+        The layout and the length of the state vector depend on the
+        core BC mode (``_dSdt_single`` lists the five), and this
+        returns the derivative in the same layout.
 
         The integrator passes ``vectorized=False``; this RHS handles
         the 1D path only.
@@ -2386,8 +2372,8 @@ class EntropySolver:
         time : float
             Time [yr].
         state_vec : array
-            Solver state vector [J/kg/K for entropy, K for T_core].
-            Shape (N,) or (N+1,) only.
+            Solver state vector [J/kg/K for entropy, K for T_core],
+            one column of the length of the active core BC mode.
 
         Returns
         -------
@@ -2423,10 +2409,10 @@ class EntropySolver:
           only; not recommended.
         - 'core_module': state = [S, dSdr_cmb, T_core], length N+2,
           plus the shell temperatures of a stratified core.
-          F_cmb is the boundary-layer flux of T_core against the bottom
-          cell; T_core is integrated by the core evolution budget's
-          effective heat capacity, replacing the isothermal-reservoir
-          factor.
+          F_cmb is the boundary-layer flux of T_core (of the top shell
+          cell with a shell) against the bottom cell; T_core is
+          integrated by the core evolution budget's effective heat
+          capacity, replacing the isothermal-reservoir factor.
         """
         n_stag = self._n_stag
         gradient_mode = self._core_bc == 'gradient'
@@ -2910,7 +2896,8 @@ class EntropySolver:
         """True when the state vector has more than N elements.
 
         - bower2018 / energy_balance: N+1 (entropy + 1 extra)
-        - core_module: N+2 (entropy + dSdr_cmb + T_core)
+        - core_module: N+2 (entropy + dSdr_cmb + T_core), plus the
+          shell temperatures of a stratified core
         - gradient: N+2 (N+1 gradients + S_surf)
         - quasi_steady: N (entropy only)
         """
@@ -2920,10 +2907,10 @@ class EntropySolver:
     def entropy_staggered(self) -> npt.NDArray:
         """Entropy at staggered nodes from the solution.
 
-        For bower2018 and energy_balance modes the solver state vector is
-        N+1 in length; we strip the trailing extra row and return
-        only the entropy block. For gradient mode, we reconstruct S
-        from the gradient state.
+        For the bower2018, energy_balance and core_module modes the
+        solver state vector is longer than N; we strip the trailing
+        extra rows and return only the entropy block. For gradient
+        mode, we reconstruct S from the gradient state.
         """
         y = self._solution.y
         if self._core_bc == 'gradient':
@@ -2975,6 +2962,10 @@ class EntropySolver:
             shared cooling rate)
           - rows 0 and 1 (S[0] and S[1]) gain couplings to every
             extra state via the boundary-flux feedback
+
+        The shell temperatures of a stratified core add tridiagonal
+        rows coupled to T_core; the top cell also couples with
+        S[0..2] and dSdr_cmb through the CMB flux.
 
         With this sparsity hint scipy groups finite-difference
         perturbations by graph colouring, giving ~5 RHS evaluations
@@ -4651,12 +4642,13 @@ class EntropySolver:
         -----
         The EOS temperature lookup is pointwise, so this evaluates the table
         at the single bottom node rather than across all ``n_stag`` nodes,
-        making the per-column cost O(1) for bower2018, energy_balance and
-        quasi_steady. The gradient mode is the exception: it must reconstruct
+        making the per-column cost O(1) for energy_balance and quasi_steady;
+        bower2018 and core_module read the core temperature from the state,
+        also at O(1). The gradient mode is the exception: it must reconstruct
         the staggered entropy from the basic-node state through
         ``_reconstruct_entropy`` before it can read the bottom cell, so its
         per-column cost stays O(n_stag). Sweeping the excursion measure over
-        the full trajectory is therefore O(n_col) for the other three modes
+        the full trajectory is therefore O(n_col) for the other four modes
         and O(n_col * n_stag) for gradient.
         """
         n_stag = self._n_stag

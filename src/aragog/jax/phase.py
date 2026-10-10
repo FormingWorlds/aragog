@@ -777,14 +777,14 @@ def compute_fluxes(
         (radionuclide + tidal, pre-computed by caller).
     S_basic_cmb_override : float or None
         Optional override for the entropy at the CMB basic node
-        (basic-node index 0). Used by the energy_balance core BC
-        which reconstructs S_basic[0] from the state-tracked
+        (basic-node index 0). Used by the energy_balance and
+        core_module core BCs, which reconstruct S_basic[0] from the state-tracked
         dSdr_cmb via S[0] + dSdr_cmb * (r_basic[0] - r_stag[0]).
         When None, the standard quantity_matrix mapping is used.
     dSdr_cmb_override : float or None
         Optional override for the entropy gradient at the CMB
-        basic node (dSdr[0]). Used by the energy_balance core BC
-        where dSdr_cmb is a state-tracked variable. When None,
+        basic node (dSdr[0]). Used by the energy_balance and
+        core_module core BCs, where dSdr_cmb is a state-tracked variable. When None,
         the standard d_dr_matrix mapping is used.
 
     Returns
@@ -817,10 +817,8 @@ def compute_fluxes(
     if dSdr_cmb_override is not None:
         dSdr = dSdr.at[0].set(dSdr_cmb_override)
     else:
-        # Mirror numpy entropy_state.py:389 ``dSdxi[0] = dSdxi[1]`` for
-        # the non-energy_balance modes (quasi_steady etc.) where there
-        # is no boundary-state override. In energy_balance mode the
-        # explicit override above wins and this branch is skipped.
+        # Mirror numpy entropy_state.py:389 ``dSdxi[0] = dSdxi[1]`` for the modes without a
+        # boundary-state override; energy_balance and core_module pass one above.
         dSdr = dSdr.at[0].set(dSdr[1])
 
     # Phase properties at basic nodes only. The SPIDER-bracket Jmix

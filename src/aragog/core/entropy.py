@@ -178,8 +178,8 @@ class CoreEntropyBudget:
         flow, the three cooling-proportional sources scale with it, and
         conduction subtracts. Positive margin sustains a dynamo. A stratified
         core needs its shell temperatures ``t_shell``: the convecting core and the shell
-        each add their sources and sinks, all delivered at the CMB temperature, the top of
-        the shell (Greenwood et al. 2021, eq. 4).
+        each add their sources and sinks, all delivered at the temperature of the top shell
+        cell (Greenwood et al. 2021, eq. 4).
         """
         b = self.budget
         if not b.stratification:

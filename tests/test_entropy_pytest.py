@@ -1861,7 +1861,7 @@ class TestEnergyBalanceCoreBC:
         """Phase-aware atol phi0 estimate works in extended-state modes.
 
         ``solve()`` slices ``_S0`` whenever the state vector is
-        extended (energy_balance, bower2018, gradient) so that
+        extended (every mode but quasi_steady) so that
         ``melt_fraction`` is called against the entropy block only,
         not the full state vector. Without that slice, calls in the
         N+1 modes pass a length-N+1 array to ``melt_fraction`` against
