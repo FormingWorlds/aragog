@@ -676,8 +676,8 @@ def test_jacobian_core_column_matches_central_differences(state):
         loose = state == 'boundary_layer' and row == n
         for jac in jacobians:
             assert jac[row, n + 1] == pytest.approx(fd[row], rel=1e-5 if loose else rel, abs=0)
-    # S[0] sets the mantle side of the CMB flux; with a layer the top cell sets the flux, so
-    # S[0] and the gradient slot
+    # S[0] sets the mantle side of the CMB flux: its column, in the S[0] and T_core rows. With a
+    # layer the top shell cell sets the core side: its column, in the S[0] and gradient rows.
     col, rows, rel = (-1, (0, n), 1e-6) if state == 'stratified' else (0, (0, n + 1), 1e-5)
     h, up, down = 1e-3, y.copy(), y.copy()
     up[col] += h
