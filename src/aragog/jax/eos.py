@@ -558,7 +558,7 @@ class EntropyEOS_JAX(eqx.Module):
         A fixed 60-step bisection over the tables' entropy range (its edge where ``T`` lies
         beyond the range), plus a term that is zero in value and carries the implicit
         derivatives ``dS/dT = 1 / (dT/dS)`` and ``dS/dP = -(dT/dP) / (dT/dS)``, which are zero
-        where ``T(S)`` is flat to rounding; NaN for a NaN ``P`` or ``T``.
+        where ``dT/dS`` is below ``1e-12 |T|``; NaN for a NaN ``P`` or ``T``.
         """
         solid, melt = self._get_tables('temperature')
         span = (min(solid.S_min, melt.S_min), max(solid.S_max, melt.S_max))
@@ -574,7 +574,8 @@ class EntropyEOS_JAX(eqx.Module):
         lo, hi = jax.lax.fori_loop(0, 60, body, (jnp.asarray(span[0]), jnp.asarray(span[1])))
         s_root = jax.lax.stop_gradient(0.5 * (lo + hi))
         slope = jax.lax.stop_gradient(jax.grad(self.temperature, argnums=1)(p_fixed, s_root))
-        slope = jnp.where(slope > 1e-9 * t_fixed, slope, jnp.inf)
+        # inside a flat band of the tables the slope is rounding, below 1e-16 |T|
+        slope = jnp.where(slope > 1e-12 * jnp.abs(t_fixed), slope, jnp.inf)
         inside = (self.temperature(p_fixed, span[0]) < t_fixed) & (
             t_fixed < self.temperature(p_fixed, span[1])
         )

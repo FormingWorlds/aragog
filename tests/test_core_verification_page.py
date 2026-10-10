@@ -87,6 +87,7 @@ def test_the_spread_runs_start_from_the_stored_stable_layer_run():
     the item 13 values of the values file."""
     spread = ROOT / 'tools' / 'verification' / 'data' / 'stable_layer_spread.json'
     base = json.loads(spread.read_text())['runs']['base']
+    assert base and base.keys() <= VALUES['13'].keys(), base.keys() - VALUES['13'].keys()
     assert base == {k: VALUES['13'][k] for k in base}
 
 

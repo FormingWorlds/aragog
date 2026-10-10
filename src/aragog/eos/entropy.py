@@ -953,21 +953,23 @@ class EntropyEOS:
         """Entropy [J/kg/K] at pressure ``P`` where ``temperature(P, S) = T``.
 
         Brent's method over the tables' entropy range, which keeps its bracket where ``T(S)`` is
-        flat; the range edge where ``T`` lies beyond it, and NaN for a NaN ``P`` or ``T``.
+        flat; the range edge where ``T`` lies beyond it, and NaN for a NaN ``P`` or ``T`` or where
+        the method does not converge.
         """
+        if np.isnan(P + T):
+            return np.nan
         solid, melt = self._tables['temperature_solid'], self._tables['temperature_melt']
         lo, hi = min(solid['S'][0], melt['S'][0]), max(solid['S'][-1], melt['S'][-1])
 
         def f(s):
             return self.temperature_scalar(P, s) - T
 
-        if np.isnan(P + T):
-            return np.nan
         f_lo, f_hi = f(lo), f(hi)
         if f_lo >= 0.0 or f_hi <= 0.0:
             return lo if f_lo >= 0.0 else hi
         # next to a flat T(S) Brent takes more than its default 100 iterations
-        return brentq(f, lo, hi, maxiter=500, disp=False)
+        s, result = brentq(f, lo, hi, maxiter=500, full_output=True, disp=False)
+        return s if result.converged else np.nan
 
     def density(self, P: npt.NDArray | float, S: npt.NDArray | float) -> npt.NDArray:
         """Density rho(P, S) [kg/m^3].

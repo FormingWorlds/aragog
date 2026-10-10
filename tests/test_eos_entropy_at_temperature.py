@@ -40,11 +40,12 @@ def test_the_entropy_inverts_the_temperature_in_every_phase(p):
 @pytest.mark.physics_invariant
 def test_both_inverses_find_the_root_next_to_a_flat_phase_boundary():
     """The tables hold T(S) flat next to the solidus and the liquidus; up to 1e-6 K and one ulp
-    from either boundary temperature, at pressures where 100 Brent iterations are too few and at
+    from either boundary temperature, at pressures where 100 Brent iterations are too few and near
     the CMB pressure of the tests, both inverses return an entropy at the target temperature, the
-    JAX one with dS/dT below 100 K^-1 J/kg, and both return NaN for a NaN pressure or target."""
+    JAX one with |dS/dT| below 20 J kg^-1 K^-2 and |dS/dP| below 1e-5 J kg^-1 K^-1 Pa^-1, and
+    both return NaN for a NaN pressure or target."""
     eos, eos_j = entropy_eos_copy(), entropy_eos_jax()
-    grad = jax.grad(eos_j.entropy_at_temperature, argnums=1)
+    grad = jax.grad(eos_j.entropy_at_temperature, argnums=(0, 1))
     for p in np.r_[np.linspace(1e9, 1.49e11, 60)[14:16], 1.457e11]:
         for edge in (eos.solidus_entropy(p), eos.liquidus_entropy(p)):
             t_edge = eos.temperature_scalar(p, float(edge))
@@ -53,7 +54,8 @@ def test_both_inverses_find_the_root_next_to_a_flat_phase_boundary():
                 s_jax = eos_j.entropy_at_temperature(jnp.asarray(p), jnp.asarray(t))
                 for s in (eos.entropy_at_temperature(p, t), float(s_jax)):
                     assert eos.temperature_scalar(p, s) == pytest.approx(t, abs=1e-10)
-                assert abs(float(grad(jnp.asarray(p), jnp.asarray(t)))) < 100.0
+                d_p, d_t = grad(jnp.asarray(p), jnp.asarray(t))
+                assert abs(float(d_t)) < 20.0 and abs(float(d_p)) < 1e-5
     for p, t in ((1.3e11, np.nan), (np.nan, 4000.0)):
         assert np.isnan(eos.entropy_at_temperature(p, t))
         assert np.isnan(eos_j.entropy_at_temperature(jnp.asarray(p), jnp.asarray(t)))
@@ -74,15 +76,14 @@ def test_a_temperature_beyond_the_tables_gives_the_table_edge():
 
 
 def test_a_rising_edge_slope_keeps_the_inverse_at_the_edge(monkeypatch):
-    """Where the temperature still rises by a rounding-level slope at the table edge, as on some
-    table sets, a temperature beyond the range gives the edge with zero derivatives, not a
-    Newton step divided by that slope."""
+    """Where the temperature still rises at the table edge, a temperature beyond the range gives
+    the edge with zero derivatives, not the implicit derivatives of that slope."""
     eos, eos_j = entropy_eos_copy(), entropy_eos_jax()
     solid, melt = eos._tables['temperature_solid'], eos._tables['temperature_melt']
     edges = min(solid['S'][0], melt['S'][0]), max(solid['S'][-1], melt['S'][-1])
     cls = type(eos_j)
     tables = cls.temperature
-    monkeypatch.setattr(cls, 'temperature', lambda self, P, S: tables(self, P, S) + 1e-13 * S)
+    monkeypatch.setattr(cls, 'temperature', lambda self, P, S: tables(self, P, S) + 1e-3 * S)
     for t, edge in ((1.0, edges[0]), (1e6, edges[1])):
         p_t = jnp.asarray(1.3e11), jnp.asarray(t)
         assert float(eos_j.entropy_at_temperature(*p_t)) == pytest.approx(edge, rel=1e-12)
