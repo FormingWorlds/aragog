@@ -559,6 +559,30 @@ def test_the_boundary_layer_flux_steps_only_with_the_viscosity_at_the_phase_boun
         )
 
 
+@pytest.mark.smoke
+@needs_eos
+def test_an_unconverged_inversion_gives_nan_and_stops_the_layer_flux(monkeypatch):
+    """Where Brent's method stops before it converges, the NumPy inverse returns NaN, not its last
+    iterate, and the boundary-layer flux then stops at the entropy-domain check, as it does for a
+    NaN bottom entropy."""
+    from scipy.optimize import brentq
+
+    import aragog.eos.entropy as entropy_module
+
+    solver = _build_numpy_solver(entropy_eos_copy())
+    eos, P = solver.entropy_eos, float(solver._P_basic_flat[0])
+    t_m = eos.temperature_scalar(P, 1100.0)
+    t_mean = t_m + 300.0
+    assert np.isfinite(eos.entropy_at_temperature(P, t_mean))
+    assert solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0) > 0.0
+    monkeypatch.setattr(
+        entropy_module, 'brentq', lambda *a, **k: brentq(*a, **(k | {'maxiter': 2}))
+    )
+    assert np.isnan(eos.entropy_at_temperature(P, t_mean))
+    with pytest.raises(RuntimeError, match='EOS table domain'):
+        solver._core_module_cmb_flux(2.0 * t_mean - t_m, 1100.0)
+
+
 @pytest.mark.slow
 @pytest.mark.physics_invariant
 @needs_eos
@@ -617,24 +641,28 @@ def test_jacobian_core_column_matches_central_differences(state):
     # A shell rate is the small difference of two face flows of ~1e13 W.
     shell_scale = np.max(np.abs(f_np[n + 2 :]), initial=0.0)
     np.testing.assert_allclose(f_jax[n + 2 :], f_np[n + 2 :], rtol=0, atol=1e-6 * shell_scale)
-    if state == 'stratified':
+    J = np.asarray(jax.jacrev(lambda v: dSdt_core_module(0.0, v, args))(jnp.asarray(y)))
+    jacobians = [J]
+    if state in ('stratified', 'boundary_layer'):  # the CVODE factory, in physical units
         from aragog.jax.nondim import NonDimScales
         from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
 
         scales = NonDimScales(state_scale=np.ones(y.size), t_ref=1.0)
         kw = dict(core_module_budget=budget, core_module_q_radio=args[7])
-        rhs_fn, _, _ = build_jax_rhs_and_jacobian(
+        rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
             *args[:5], scales, 'core_module', core_module_ra_crit_cmb=args[8], **kw
         )
-        out = np.empty(y.size)
-        rhs_fn(0.0, y, out)
+        out, J_cvode = np.empty(y.size), np.empty((y.size, y.size))
+        assert rhs_fn(0.0, y, out) == 0 and jac_fn(0.0, y, out, J_cvode) == 0
         np.testing.assert_allclose(out[:n], f_jax[:n], rtol=1e-8)
-        np.testing.assert_allclose(out[n : n + 2], f_jax[n : n + 2], rtol=1e-6)
+        np.testing.assert_allclose(
+            out[n : n + 2], f_jax[n : n + 2], rtol=1e-6 if state == 'stratified' else 1e-8
+        )
         np.testing.assert_allclose(
             out[n + 2 :], f_jax[n + 2 :], rtol=0, atol=1e-6 * shell_scale
         )
+        jacobians.append(J_cvode)
 
-    J = np.asarray(jax.jacrev(lambda v: dSdt_core_module(0.0, v, args))(jnp.asarray(y)))
     # The mixing flux curves strongly in the mixed region: there a central difference needs a
     # 1e-5 K step and agrees to 0.2 %, and the gradient slot barely depends on T_core.
     h, rows, rel = (1e-5, (n + 1,), 5e-3) if state == 'stratified' else (0.1, (n, n + 1), 1e-6)
@@ -646,7 +674,8 @@ def test_jacobian_core_column_matches_central_differences(state):
         assert fd[row] != 0.0
         # over the boundary layer the difference of the small gradient-slot rate is 2e-6 noisy
         loose = state == 'boundary_layer' and row == n
-        assert J[row, n + 1] == pytest.approx(fd[row], rel=1e-5 if loose else rel, abs=0)
+        for jac in jacobians:
+            assert jac[row, n + 1] == pytest.approx(fd[row], rel=1e-5 if loose else rel, abs=0)
     # S[0] sets the mantle side of the CMB flux; with a layer the top cell sets the flux, so
     # S[0] and the gradient slot
     col, rows, rel = (-1, (0, n), 1e-6) if state == 'stratified' else (0, (0, n + 1), 1e-5)

@@ -45,20 +45,21 @@ def test_both_inverses_find_the_root_next_to_a_flat_phase_boundary():
     JAX one with |dS/dT| below 20 J kg^-1 K^-2 and |dS/dP| below 1e-5 J kg^-1 K^-1 Pa^-1, and
     both return NaN for a NaN pressure or target."""
     eos, eos_j = entropy_eos_copy(), entropy_eos_jax()
-    grad = jax.grad(eos_j.entropy_at_temperature, argnums=(0, 1))
+    inverse = jax.jit(lambda p, t: eos_j.entropy_at_temperature(p, t))
+    grad = jax.jit(jax.grad(inverse, argnums=(0, 1)))
     for p in np.r_[np.linspace(1e9, 1.49e11, 60)[14:16], 1.457e11]:
         for edge in (eos.solidus_entropy(p), eos.liquidus_entropy(p)):
             t_edge = eos.temperature_scalar(p, float(edge))
             ulp = np.spacing(t_edge)
             for t in t_edge + np.array([-1e-11, -1e-12, -ulp, 0.0, ulp, 1e-12, 1e-9, 1e-6]):
-                s_jax = eos_j.entropy_at_temperature(jnp.asarray(p), jnp.asarray(t))
+                s_jax = inverse(jnp.asarray(p), jnp.asarray(t))
                 for s in (eos.entropy_at_temperature(p, t), float(s_jax)):
                     assert eos.temperature_scalar(p, s) == pytest.approx(t, abs=1e-10)
                 d_p, d_t = grad(jnp.asarray(p), jnp.asarray(t))
                 assert abs(float(d_t)) < 20.0 and abs(float(d_p)) < 1e-5
     for p, t in ((1.3e11, np.nan), (np.nan, 4000.0)):
         assert np.isnan(eos.entropy_at_temperature(p, t))
-        assert np.isnan(eos_j.entropy_at_temperature(jnp.asarray(p), jnp.asarray(t)))
+        assert np.isnan(inverse(jnp.asarray(p), jnp.asarray(t)))
 
 
 def test_a_temperature_beyond_the_tables_gives_the_table_edge():
