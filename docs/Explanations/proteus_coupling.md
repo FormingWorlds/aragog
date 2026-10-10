@@ -173,7 +173,7 @@ Use sparingly: the flag has a small per-step cost (XLA fast-math disabled) and m
 - [Energy equation](energy_equation.md): the entropy-form RHS that Aragog integrates.
 - [Energy diagnostics](energy_diagnostics.md): per-call energy-budget integrals (`step_dE_*_J`) and cumulative conservation residuals (`E_residual_cons_J`, `solver_residual_J`).
 - [Aragog vs SPIDER](spider_comparison.md): formulation differences and parity guarantees.
-- [Core BC modes](core_bc.md): the four core-mantle boundary conditions, with the `energy_balance` SPIDER bit-parity derivation.
+- [Core BC modes](core_bc.md): the five core-mantle boundary conditions, with the `energy_balance` SPIDER bit-parity derivation.
 - [PROTEUS framework documentation](https://proteus-framework.org/PROTEUS): top-level entry.
 
 The wrapper itself lives in the PROTEUS repository, not in Aragog. The single source of truth for the symbol-level API is rendered from PROTEUS source via mkdocstrings:

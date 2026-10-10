@@ -4,7 +4,7 @@ With ``stratification=True`` on ``CoreEnergyBudget`` the outer core above the sh
 :class:`aragog.core.layer.CoreShell` whose temperatures are state; ``core_rates`` advances the
 convecting core and the shell together, and ``CoreEntropyBudget.entropy_margin`` adds the
 shell's own sources and sinks. Contract clauses exercised here: the two rates conserve heat
-exactly; the entropy margin grows with the heat flow; the one-temperature interfaces refuse a
+exactly; a stable layer lowers the entropy margin; the one-temperature interfaces refuse a
 stratified budget; the constructor and the factory reject meaningless configurations.
 """
 

@@ -532,9 +532,10 @@ def test_a_hot_core_call_closes_its_heat_to_1e_minus_6(shared_eos):
 @needs_cvode
 @pytest.mark.physics_invariant
 def test_a_stratified_default_start_keeps_the_core_and_closes_its_heat():
-    """The default start puts the core at the mantle side of the CMB (no flux): the convecting
-    core and the top of the shell stay put over 5 yr, the core heat matches the CMB heat to the
-    integration error, and the shell holds no layer at its base."""
+    """The default start puts the core at the mantle side of the CMB and the top shell cell on
+    its adiabat, 0.8 K above (a small flux): the convecting core and the top of the shell stay
+    put over 5 yr, the core heat matches the CMB heat to the integration error, and the shell
+    holds no layer at its base."""
     solver = _build(
         'core_module',
         entropy_eos_copy(),

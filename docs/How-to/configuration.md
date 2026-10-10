@@ -150,7 +150,7 @@ Thermal boundary conditions at the surface and CMB.
 | `tfac_core_avg` | -- | Core adiabat correction factor (default 1.147; Bower+2018 Table 2) |
 | `param_utbl` | bool | Enable upper-thermal-boundary-layer parameterisation (default false) |
 | `param_utbl_const` | K⁻² | UTBL constant in $\Delta T = b\,T^3$ |
-| `core_bc` | str | CMB BC mode. `energy_balance` (SPIDER bit-parity, length $N+1$, **default and PROTEUS production**), `quasi_steady` (alpha-factor, state length $N$), `gradient` (entropy gradient as state, length $N+2$, experimental), `bower2018` (parity-only, not recommended), or `core_module` (the core evolution module, length $N+2$, needs `inner_boundary_condition = 1`). Any other value is refused. |
+| `core_bc` | str | CMB BC mode. `energy_balance` (SPIDER bit-parity, length $N+1$, **default and PROTEUS production**), `quasi_steady` (alpha-factor, state length $N$), `gradient` (entropy gradient as state, length $N+2$, experimental), `bower2018` (parity-only, not recommended), or `core_module` (the core evolution module, length $N+2$ plus the shell cells with `stratification = true`, needs `inner_boundary_condition = 1`). Any other value is refused. |
 
 ### `[mesh]`
 

@@ -27,7 +27,7 @@ $$
 
 with $A_{i\pm 1/2} = 4\pi r_{i\pm 1/2}^2$ and $V_i = \tfrac{4}{3}\pi(r_{i+1/2}^3 - r_{i-1/2}^3)$. Entropy is held at the $N$ staggered nodes (cell centres), fluxes at the $N+1$ basic nodes (cell faces), and $\rho$, $T$ are read from the EOS at the staggered pressures.
 
-For the `quasi_steady` core BC the unknown vector is $[S_0, \ldots, S_{N-1}]$ of length $N$. The `energy_balance` mode appends the boundary entropy gradient $\partial S/\partial r |_\mathrm{cmb}$ as an additional ODE state variable (length $N+1$), and the `gradient` mode replaces the entropy block with its gradient and adds the surface entropy as a closure (length $N+2$).
+For the `quasi_steady` core BC the unknown vector is $[S_0, \ldots, S_{N-1}]$ of length $N$. The `energy_balance` mode appends the boundary entropy gradient $\partial S/\partial r |_\mathrm{cmb}$ as an additional ODE state variable (length $N+1$), the `gradient` mode replaces the entropy block with its gradient and adds the surface entropy as a closure (length $N+2$), and the `core_module` mode appends the boundary entropy gradient and the core temperature (length $N+2$, plus the shell temperatures of a stratified core).
 
 ## Coordinates and geometry
 
@@ -166,6 +166,7 @@ The `core_bc` selector chooses how the core energy balance is closed when `inner
 | `energy_balance` | length $N+1$ | The CMB entropy gradient is an ODE state variable evolved by SPIDER's `bc.c:76-131` formula; produces SPIDER bit-parity. **Default and PROTEUS production**. |
 | `gradient` | length $N+2$ | Entropy gradient as the primary state field; $S$ is reconstructed by cumulative integration from the surface inward. |
 | `bower2018` | length $N+1$ | $T_\mathrm{core}$ as an ODE state with conduction-only $F_\mathrm{cmb}$. Available for parity testing only; not recommended. |
+| `core_module` | length $N+2$, plus the shell cells with `stratification = true` | The CMB flux is a boundary-layer law in the core-mantle temperature contrast, and the core temperature follows the core evolution budget of `aragog.core`, with inner-core growth. See [Core BC modes](core_bc.md). |
 
 ## Pressure and density profiles
 

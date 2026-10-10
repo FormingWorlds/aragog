@@ -110,7 +110,7 @@ The gradient core and the scipy integrators use 1 yr in both modes; `rate` then 
 
 ## Boundary conditions
 
-The five outer BC modes and three inner BC modes are summarised in [Model overview](model.md#boundary-conditions). At the surface, the grey-body mode ($q_\mathrm{top} = \varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$) optionally adds an upper-thermal-boundary-layer correction via Cardano's formula when `param_utbl = true`. At the CMB, the four `core_bc` formulations differ in whether the bottom-cell heat flux is partitioned by heat capacity (`quasi_steady`), driven by an evolved boundary-gradient state (`energy_balance`), reconstructed from a gradient state field (`gradient`), or set by one-sided Fourier conduction across the bottom half-cell (`bower2018`).
+The five outer BC modes and three inner BC modes are summarised in [Model overview](model.md#boundary-conditions). At the surface, the grey-body mode ($q_\mathrm{top} = \varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$) optionally adds an upper-thermal-boundary-layer correction via Cardano's formula when `param_utbl = true`. At the CMB, the five `core_bc` formulations differ in whether the bottom-cell heat flux is partitioned by heat capacity (`quasi_steady`), driven by an evolved boundary-gradient state (`energy_balance`), reconstructed from a gradient state field (`gradient`), set by one-sided Fourier conduction across the bottom half-cell (`bower2018`), or set by a boundary-layer law in the core-mantle temperature contrast (`core_module`).
 
 ## Termination
 

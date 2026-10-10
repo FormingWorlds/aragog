@@ -171,7 +171,7 @@ At 15.2 TW and 4180 K:
 | $-dT_c/dt$ (K Gyr$^{-1}$) | 104 | 103.3<!--k:5.cooling_15.2TW--> |
 | $dr_\mathrm{icb}/dt$ (km Gyr$^{-1}$) | 1050 | 1075<!--k:5.growth_15.2TW--> |
 
-Every energy and entropy term and the cooling rate agree to 1.3 percent at both heat flows (at 12 TW the cooling rate is 81.6<!--k:5.cooling_12TW--> against 82 K Gyr$^{-1}$). The inner core grows 2.4 percent faster, as aragog's $|dr_\mathrm{icb}/dT_c|$ is 10406<!--k:5.Cr_m_per_K--> m K$^{-1}$ against $C_r = 10100$ m K$^{-1}$ (Table 2). The CMB temperature has dropped by 59.3<!--k:5.delta_t_onset_K--> K since the onset, against about 60 K (p. 43), and the melting temperature at the centre is 5808<!--k:5.tm_centre_K--> K against 5800 K (Table 5).
+Every energy and entropy term and the cooling rate agree to 1.3 percent at both heat flows (at 12 TW the cooling rate is 81.6<!--k:5.cooling_12TW--> against 82 K Gyr$^{-1}$). The inner core grows 2.4 percent faster. The growth rate is $|dr_\mathrm{icb}/dT_c|$ times the cooling rate: aragog's $|dr_\mathrm{icb}/dT_c|$ is 10406<!--k:5.Cr_m_per_K--> m K$^{-1}$ against $C_r = 10100$ m K$^{-1}$ (Table 2), a factor of 1.030, and its cooling rate is 0.994<!--k:5.cooling_ratio_15.2TW--> of Table 4. The CMB temperature has dropped by 59.3<!--k:5.delta_t_onset_K--> K since the onset, against about 60 K (p. 43), and the melting temperature at the centre is 5808<!--k:5.tm_centre_K--> K against 5800 K (Table 5).
 
 Integrating aragog's capacities from 4180 K to the onset gives 22.2<!--k:5.Wtot_1e28J--> (10.98<!--k:5.Ws_1e28J-->, 6.83<!--k:5.WL_1e28J--> and 4.42<!--k:5.Wg_1e28J-->) $\times10^{28}$ J and 0.70<!--k:5.age_10TW_Gyr--> Gyr. The secular term, the secular capacity times the drop, is 5 percent lower, and the chapter's own numbers account for most of the gap: its Table 4 secular capacity, $Q_s$ over the cooling rate, times its 60 K drop gives 11.1<!--k:5.Ws_from_table4_1e28J--> $\times10^{28}$ J, 4 percent below its Table 5 value, while aragog's capacity is 1.0003<!--k:5.secular_capacity_vs_table4--> times that of Table 4 and its drop is 59.3 K.
 
@@ -191,9 +191,9 @@ The bound is 2 percent on every energy and entropy term of Table 4 and on the co
 
 **What the figure shows.** The points of the eight energy and entropy terms and of the cooling rate lie close to the line at 1, at both heat flows; the growth rate lies above it. The filled circles of the age lie far below 1 and the open circles close to it: in our reading of the chapter, the gap comes from the definition of the age, not from the budget terms. A wrong term of the budget would move its point away from 1. These terms are computed from the capacities of the `core_module` budget, which set the core cooling and the inner-core growth of a run.
 
-**Limits.** Four quantities are documented exceptions to the bound, each held at its measured value: the inner-core growth rate (1.024<!--k:5.growth_ratio_15.2TW--> of Table 4, from $C_r$ above), the inner-core age (0.786<!--k:5.age_ratio_15.2TW--> and 0.783<!--k:5.age_ratio_12TW--> of Table 4, which divides the drop by the present cooling rate), and $W_s$ and $W_\mathrm{tot}$ (0.947<!--k:5.Ws_ratio--> and 0.967<!--k:5.Wtot_ratio--> of Table 5, from the chapter's own secular capacity above). Like the chapter, these numbers use the small-radius adiabat of section 1 (`adiabat_mode = "small_radius"`); the solver default integrates the exact gravity.
+**Limits.** Four quantities are documented exceptions to the bound, each held at its measured value: the inner-core growth rate (1.024<!--k:5.growth_ratio_15.2TW--> of Table 4, from $C_r$ and the cooling rate above), the inner-core age (0.786<!--k:5.age_ratio_15.2TW--> and 0.783<!--k:5.age_ratio_12TW--> of Table 4, which divides the drop by the present cooling rate), and $W_s$ and $W_\mathrm{tot}$ (0.947<!--k:5.Ws_ratio--> and 0.967<!--k:5.Wtot_ratio--> of Table 5, from the chapter's own secular capacity above). Like the chapter, these numbers use the small-radius adiabat of section 1 (`adiabat_mode = "small_radius"`); the solver default integrates the exact gravity.
 
-**Pinned by** `tests/test_core_nimmo_benchmarks.py` (the adiabat length scale, ICB state, adiabatic heat flow and $C_r$ of the two models in Nimmo 2015, ch. 9.08, Table 2, and the ICB pressure and $\tilde Q_T$ of ch. 8.02), `tests/test_core_verification_page.py::test_the_earth_budget_meets_nimmo_tables_4_and_5` and `::test_page_numbers_match_the_values`.
+**Pinned by** `tests/test_core_nimmo_benchmarks.py` (the adiabat length scale, ICB state and adiabatic heat flow of the two models in Nimmo 2015, ch. 9.08, Table 2, their $C_r$ from the caption of Figure 3, p. 211 (the value of model 2 is that of ch. 8.02, Table 2), and the ICB pressure and $\tilde Q_T$ of ch. 8.02), `tests/test_core_verification_page.py::test_the_earth_budget_meets_nimmo_tables_4_and_5` and `::test_page_numbers_match_the_values`.
 
 ## 6. Budget terms against thermal_history
 
@@ -255,7 +255,7 @@ the first for a constant total heat flow $4\pi r^2 q_c$, the second for a convec
 
 **Limits.** Christensen et al. derive the efficiency factors for Earth's core with an inner core of 0.35 of the core radius, $L = D$, constant density and thermodynamic properties and gravity linear in radius (pp. 167 and 168); aragog applies them at every inner-core size. Their $q_o$ is the effective convected flux at the inner boundary, compositional driving included, scaled to the outer radius (p. 167); aragog takes the superadiabatic part of the CMB heat flow over the CMB area, a thermal flux only, so here $q_o$ departs from their definition. With $q_o$ defined differently, the field comparison is an order-of-magnitude check only.
 
-The efficiency factors of $\Delta E$ use $T_\mathrm{cmb}$, the convecting adiabat extended to the CMB. Under a stratified layer the reference of the whole-core entropy balance is the actual CMB temperature (Greenwood et al. 2021, eq. 4 and p. 9), which aragog does not resolve and which lies between $T_\mathrm{cmb}$ and $T_a(r_s)$ at the base of the layer; $\Delta E$ is then the upper end of that bracket ([core_bc.md](core_bc.md)).
+Without the resolved shell (`stratification = false`) the efficiency factors of $\Delta E$ use $T_\mathrm{cmb}$, the convecting adiabat extended to the CMB. Under a stratified layer the reference of the whole-core entropy balance is the actual CMB temperature (Greenwood et al. 2021, eq. 4 and p. 9), which aragog does not resolve without the shell and which lies between $T_\mathrm{cmb}$ and $T_a(r_s)$ at the base of the layer; $\Delta E$ is then the upper end of that bracket. With the resolved shell the reference is the temperature of the top shell cell ([core_bc.md](core_bc.md#resolved-stable-layer-experimental)).
 
 **Pinned by** `tests/test_core_entropy.py::test_chr09_efficiency_factors_reproduce_printed_values`, `::test_field_scaling_bounds_and_earth_magnitude` and `::test_dynamo_threshold_and_margin`.
 
@@ -311,9 +311,9 @@ with $P$ in GPa, $T_m$ the melting temperature and $P_\mathrm{TP}$ and $T_\mathr
 
 **What is tested.** The core-only history of section 6 tests the integrated evolution rather than the terms.
 
-**Reference.** aragog integrates its cooling rate under the same fixed 10 TW CMB heat flow by an implicit solver with a relative tolerance of $10^{-10}$, and thermal_history steps it with its own fixed 1 Myr steps.
+**Reference.** aragog integrates its cooling rate under the same fixed 10 TW CMB heat flow with LSODA (SciPy `solve_ivp`) at a relative tolerance of $10^{-10}$ and an absolute tolerance of $10^{-8}$ K, and thermal_history steps it with its own fixed 1 Myr steps.
 
-**Result.** Over 1499<!--k:10.t_end_myr--> Myr the CMB temperatures differ by at most 0.119<!--k:10.t_cmb_max_abs_diff--> K. The centre temperatures, on the same adiabat, differ by at most 0.163<!--k:10.t_cen_max_abs_diff--> K, the CMB difference times the adiabat ratio, and the final inner-core radii by 0.13 %<!--k:10.r_icb_end_rel_diff:100-->, within the bounds of 1 K and 1 %.
+**Result.** Over 1499<!--k:10.t_end_myr--> Myr the CMB temperatures differ by at most 0.119<!--k:10.t_cmb_max_abs_diff--> K. The centre temperatures, on the same adiabat, differ by at most 0.163<!--k:10.t_cen_max_abs_diff--> K, the CMB difference times the adiabat ratio, and the final inner-core radii by 0.13 %<!--k:10.r_icb_end_rel_diff:100-->, within the bounds of 0.2 K for the CMB temperature, 1 K for the centre temperature and 1 % for the radius.
 
 | Quantity | aragog | thermal_history |
 |---|---|---|
@@ -348,7 +348,7 @@ Before the onset the CMB temperatures agree to 2.2e-06<!--k:10.t_cmb_max_abs_dif
 
 The same configuration at 3 and 5 Earth masses (`planet.mass_tot`) and at 1 Earth mass with `interior_energetics.rtol = 1e-10` gives the core ledgers in `tools/verification/data/coupled_ledger_*.csv`.
 
-The tables of the plotted columns are in `tools/verification/data/`, each from a run at the aragog commit in its header; at the commit of the `core_module` tables the inversion of the layer's temperature differs from that of the current code by rounding, except for a layer mean temperature within about $3 \times 10^{-11}$ K of a phase-boundary temperature, where the EOS tables hold the temperature flat (see [the core boundary condition](core_bc.md)).
+The coupled tables of the plotted columns are in `tools/verification/data/`, each with the PROTEUS and aragog commits of its run in its header. The `core_module` tables come from an inversion of the layer's temperature that agrees with the one described in [the core boundary condition](core_bc.md) to rounding, except for a layer mean temperature within about $3 \times 10^{-11}$ K of a phase-boundary temperature, where the EOS tables hold the temperature flat.
 
 ### Flux sign
 
@@ -400,7 +400,7 @@ None of the 1, 3 and 5 Earth-mass runs grows an inner core. The cores are coldes
 
 Section 9 takes a CVODE solve through the onset, and `tests/test_entropy_solver_core_module_smoke.py::test_a_cvode_call_through_onset_and_freeze_out_closes_its_heat` takes one through the onset and freeze-out, with an entropy of fusion of 0.17 J kg$^{-1}$ K$^{-1}$ and no gravitational term, so that one call crosses the whole band.
 
-With the Earth values of the thermal expansivity and the heat capacity in the core adiabat (below), at 3 and 5 Earth masses the melting curve reaches the adiabat at the CMB, at 5217<!--k:11.t_freeze_K_3me--> K and 6865<!--k:11.t_freeze_K_5me--> K, before it reaches it at the centre, so these cores would freeze from the top down; the order of the two temperatures depends on that adiabat. The budget books latent and gravitational heat only for an inner core that grows from the centre, so a call that enters a top-down or snow regime raises an error (`::test_a_core_that_freezes_from_the_top_is_refused`); the energetics of those regimes are not modelled. The runs end above these temperatures.
+With the Earth values of the thermal expansivity and the heat capacity in the core adiabat (below), at 3 and 5 Earth masses the melting curve reaches the adiabat at the CMB, at 5217<!--k:11.t_freeze_K_3me--> K and 6865<!--k:11.t_freeze_K_5me--> K, before it reaches it at the centre, so these cores would freeze from the top down; the order of the two temperatures depends on that adiabat. The budget books latent and gravitational heat only for an inner core that grows from the centre, so a call that enters a top-down or snow regime raises an error; the energetics of those regimes are not modelled. `::test_a_core_that_freezes_from_the_top_is_refused` takes a solver call into the top-down regime, and `tests/test_core_nimmo_benchmarks.py::test_model1_printed_parameters_break_bottom_up_topology` gives a snow state to the guard that the solver calls. The runs end above these temperatures.
 
 ### Pressures and extrapolation
 
@@ -416,7 +416,7 @@ The structure EOS of the core is the PALEOS iron table, which spans pressures up
 
 The 1 Earth-mass `core_module` run at 40, 80, 160 and 320 mantle levels (`interior_energetics.num_levels`), and at 80 levels with `interior_energetics.rtol = 1e-10`, tests how the CMB flux depends on the mantle mesh through basal freezing, the time $t_\mathrm{bf}$ at which the melt fraction of the lowest mantle node falls through 0.5 (`coupled_mesh_convergence.csv`). At 320 levels basal freezing comes at 1327<!--k:11.e1_t_bf_320--> yr, with a CMB flux of 7.48e+04<!--k:11.e1_F_bf_320--> W m$^{-2}$.
 
-From 160 to 320 levels the changes are within the bounds set before the runs, 5 % for the times and fluxes and 10 K for the temperatures:
+From 160 to 320 levels the changes are within the bounds of 5 % for the times and fluxes and 10 K for the temperatures:
 
 | Quantity | Change from 160 to 320 levels |
 |---|---|
@@ -467,7 +467,7 @@ The difference with the tables is the difference of the two single-phase expansi
 
 **What the figure shows.** In (a) the stratified state has the most components, its shell cells, and the largest differences, at the level of the table above; the lines of the two other states end after the entropy cells and the two boundary slots. In (b) the error of the central difference falls with the step to a minimum and rises again at small steps, where rounding takes over; above the onset it stays at rounding. A wrong Jacobian entry would give an error that does not fall with the step. With `use_jax_jacobian` set, as in PROTEUS, CVODE builds the implicit steps of a `core_module` run on this Jacobian.
 
-**Limits.** In the three core states the CMB flux is the conduction across the half cell, and in runs separate from the script the numbers of this section do not change when the expansivity of the boundary layer is multiplied by 1.5 in both NumPy and JAX; `tests/test_jax_dsdt_core_module.py::test_jacobian_core_column_matches_central_differences` checks the boundary-layer flux instead, with the Jacobian columns of the core temperature and the bottom cell against central differences for a core 300 K above a base at melt fraction 0.66, where the flux is $1.1 \times 10^5$ W m$^{-2}$.
+**Limits.** In the three core states the CMB flux is the conduction across the half cell, and in runs separate from the script the numbers of this section do not change when the expansivity of the boundary layer is multiplied by 1.5 in both NumPy and JAX; `tests/test_jax_dsdt_core_module.py::test_jacobian_core_column_matches_central_differences` checks the boundary-layer flux instead, with the Jacobian columns of the core temperature and the bottom cell against central differences for a core 300 K above a base at melt fraction 0.66, where the test asserts a flux above $10^4$ W m$^{-2}$.
 
 **Pinned by** `tests/test_jax_dsdt_core_module.py::test_boundary_slots_match_numpy_on_a_five_node_mesh`, `::test_jacobian_core_column_matches_central_differences` and `::test_jacobian_carries_boundary_couplings`.
 

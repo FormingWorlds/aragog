@@ -122,9 +122,9 @@ def test_exact_adiabat_sink_and_heat_flow_follow_the_exact_gravity(ent):
 @pytest.mark.reference_pinned
 def test_chr09_efficiency_factors_reproduce_printed_values(ent):
     """The CHR09 Earth-core formula 0.88 (0.45) alpha g R / c_p gives the
-    printed 0.52 (0.27) with their stated inputs (g = 10.7 m/s2); with the
-    profile family's own CMB gravity (9.83 m/s2, the L = 7272 km family
-    carries less mass than PREM) the factors shift to 0.484/0.247."""
+    printed 0.52 (0.27) with their stated inputs (alpha = 1.35e-5 1/K,
+    g = 10.7 m/s2); with the profile's own expansivity (1.25e-5 1/K) and
+    CMB gravity (10.6 m/s2) the factors shift to 0.484/0.247."""
     printed_inputs = 1.35e-5 * 10.7 * 3.48e6 / 840.0
     assert 0.88 * printed_inputs == pytest.approx(0.5266, rel=1e-3)
     assert 0.45 * printed_inputs == pytest.approx(0.2693, rel=1e-3)

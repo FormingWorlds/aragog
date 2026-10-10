@@ -2266,7 +2266,7 @@ class EntropySolver:
         the initial T_core defaults to the previous solution's final value
         (if any), else to the EOS temperature of the bottom cell's entropy
         in S_init, at the CMB pressure for ``core_module`` (no CMB flux at
-        the start) and at the bottom-cell pressure for ``bower2018``.
+        the start without a shell) and at the bottom-cell pressure for ``bower2018``.
 
         The value applies to every later call of ``set_initial_entropy``.
         Pass ``None`` to clear it, restoring the hot-start behaviour; only a
@@ -2403,12 +2403,12 @@ class EntropySolver:
     ) -> npt.NDArray:
         """Time derivative of one state vector column.
 
-        Four CMB BC modes:
+        Five CMB BC modes:
 
-        - 'quasi_steady' (default): state = [S_0, ..., S_{N-1}],
+        - 'quasi_steady': state = [S_0, ..., S_{N-1}],
           length N. F_cmb is set by the alpha-factor partition of
           F[1].
-        - 'energy_balance' (SPIDER bit-parity): state =
+        - 'energy_balance' (default, SPIDER bit-parity): state =
           [S_0, ..., S_{N-1}, dSdr_cmb], length N+1. The boundary
           state dSdr_cmb is passed into ``state.update`` so the
           convective+conductive flux at the CMB basic node uses
@@ -2421,7 +2421,8 @@ class EntropySolver:
         - 'bower2018': state = [S, T_core], length N+1. F_cmb from
           conduction-only Fourier law. Available for parity testing
           only; not recommended.
-        - 'core_module': state = [S, dSdr_cmb, T_core], length N+2.
+        - 'core_module': state = [S, dSdr_cmb, T_core], length N+2,
+          plus the shell temperatures of a stratified core.
           F_cmb is the boundary-layer flux of T_core against the bottom
           cell; T_core is integrated by the core evolution budget's
           effective heat capacity, replacing the isothermal-reservoir
