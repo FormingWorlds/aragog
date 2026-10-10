@@ -685,4 +685,5 @@ def test_jacobian_core_column_matches_central_differences(state):
     fd = (rhs(up) - rhs(down)) / (2.0 * h)
     for row in rows:
         assert fd[row] != 0.0
-        assert J[row, col] == pytest.approx(fd[row], rel=rel, abs=0)
+        for jac in jacobians:
+            assert jac[row, col] == pytest.approx(fd[row], rel=rel, abs=0)

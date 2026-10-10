@@ -296,7 +296,7 @@ def test_core_module_cmb_flux_follows_the_core_mantle_contrast(shared_eos, d_cor
     assert np.sign(out.F_cmb) == np.sign(d_core)
     assert np.sign(out.step_dE_F_cmb_J) == np.sign(d_core)
     if regime == 'boundary_layer':
-        assert 3.28e4 < out.F_cmb < 3.48e4  # 3.38e4 +- 3 %
+        assert 3.35e4 < out.F_cmb < 3.42e4  # 3.38e4 +- 1 %
         # the layer's mean temperature lies past the rheological transition, the base below it
         assert first(shared_eos.melt_fraction(p_cmb, s_bl)) == pytest.approx(0.51, abs=0.01)
 
@@ -344,8 +344,8 @@ def test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy
     ]
     # The numbers core_bc.md quotes for this case, which hold on a base at these melt fractions.
     assert phi == pytest.approx([0.67, 0.65], abs=0.01)
-    assert 0.317 < float(t_core[0] - t_core[-1]) / 4.0 < 0.336  # 0.326 K/yr +- 3 %
-    assert 1.21e5 < out.F_cmb < 1.29e5  # 1.25e5 W/m^2 +- 3 %
+    assert 0.323 < float(t_core[0] - t_core[-1]) / 4.0 < 0.330  # 0.326 K/yr +- 1 %
+    assert 1.239e5 < out.F_cmb < 1.264e5  # 1.252e5 W/m^2 +- 1 %
     assert 320.0 < float(t_core[-1]) - t_m < 340.0
     assert out.step_dE_core_J == pytest.approx(-out.step_dE_F_cmb_J, rel=1e-6)
     assert out.step_dE_core_J == pytest.approx(content, rel=1e-6)
