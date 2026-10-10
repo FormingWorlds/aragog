@@ -485,8 +485,9 @@ class EntropyState:
         time : float
             Current time [yr].
         dSdr_cmb : float, optional
-            energy_balance mode: override the CMB boundary gradient
-            with the value from the extended state vector.
+            energy_balance and core_module modes: override the CMB
+            boundary gradient with the value from the extended state
+            vector.
         dSdr : array, optional
             Gradient-mode: provide dS/dr at all basic nodes directly,
             bypassing the FD transform. Shape (N+1,).
@@ -551,9 +552,8 @@ class EntropyState:
             dxidr = np.asarray(mesh.dxidr).ravel()
             self._dSdr = dSdxi * dxidr
 
-        # energy_balance mode: override the boundary entropy gradient
-        # with the state-vector value. Must happen BEFORE the
-        # phase_basic update so the bottom basic node uses the
+        # energy_balance and core_module: override the boundary entropy gradient with the
+        # state-vector value, BEFORE the phase_basic update so the bottom basic node uses the
         # boundary entropy.
         if dSdr_cmb is not None:
             r_basic = np.asarray(mesh.basic.radii).ravel()

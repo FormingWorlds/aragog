@@ -1,0 +1,325 @@
+"""Standalone core-evolution module and the config-driven budget factory.
+
+Two couplings expose the same physics. The solver-coupled path appends
+``T_cmb`` to the entropy solver's state vector (``core_bc =
+'core_module'``), so the core temperature advances inside every CVODE
+sub-step. The module here is the pure coupling: :class:`CoreModule` holds
+the core state itself and advances it over an externally supplied heat-flow
+interval with fixed Runge-Kutta sub-steps, recording the sub-step
+trajectory so a caller integrating over a coupling step never loses the
+fast transients inside it. Both couplings share :class:`CoreEnergyBudget`,
+so they can be compared on identical physics.
+"""
+
+from __future__ import annotations
+
+import jax
+import jax.numpy as jnp
+
+from aragog.core.boundary_layer import RA_CRIT_CMB_DEFAULT, check_ra_crit
+from aragog.core.budget import CoreEnergyBudget
+from aragog.core.entropy import CoreEntropyBudget
+from aragog.core.melting import IronMeltingCurve, QuadraticMeltingCurve
+from aragog.core.profiles import GaussianCoreProfiles
+from aragog.core.regime import crystallization_regime
+
+jax.config.update('jax_enable_x64', True)
+
+# Factory defaults: Earth-like values so a bare configuration is runnable.
+# The entropy of fusion is the PALEOS calibration anchor, 1.16 k_B per atom
+# of iron (Zhang et al. 2015), converted to 172.8 J/kg/K.
+_FACTORY_DEFAULTS = {
+    'rho_cen': 12500.0,
+    'length_scale': 7272e3,
+    'alpha': 1.35e-5,
+    'c_p': 840.0,
+    'ds_fusion': 172.8,
+    'icn_width': 10.0,
+}
+
+_PROFILE_KEYS = frozenset(
+    {
+        'rho_cen',
+        'length_scale',
+        'p_cmb',
+        'alpha',
+        'c_p',
+        'pressure_mode',
+        'adiabat_mode',
+        'm_core',
+        'p_cen',
+        'fit_profile',
+    }
+)
+_CURVE_KEYS = {
+    'iron': frozenset({'light_element_fraction', 'depression'}),
+    'quadratic': frozenset({'t_m0', 't_m1', 't_m2'}),
+}
+_BUDGET_KEYS = frozenset(
+    {
+        'ds_fusion',
+        'icn_width',
+        'latent_heat',
+        'alpha_c',
+        'c_light',
+        'capacity_mode',
+        'legacy_rho_core',
+        'legacy_tfac',
+        'stratification',
+        'k_core',
+    }
+)
+# Shell settings of a stratified core: config key -> CoreShell keyword.
+_LAYER_KEYS = {
+    'layer_base_fraction': 'base_fraction',
+    'layer_cells': 'n_cells',
+    'layer_top_cell': 'top_cell',
+    'layer_k_mix': 'k_mix',
+    'layer_g_mix': 'g_mix',
+}
+# Every key build_core_module_budget accepts; both curves' keys are accepted whatever the
+# selector, since a config surface (the PROTEUS attrs block) carries every field.
+CORE_MODULE_KEYS = (
+    _PROFILE_KEYS
+    | _CURVE_KEYS['iron']
+    | _CURVE_KEYS['quadratic']
+    | _BUDGET_KEYS
+    | set(_LAYER_KEYS)
+    | {'melting_curve'}
+)
+
+
+def _check_budget_params(params: dict) -> str:
+    """Refuse an unrecognised key, an unknown melting-curve selector, a quadratic curve without
+    its three coefficients and a ``fit_profile`` that is not a boolean; return the selector."""
+    unknown = set(params) - CORE_MODULE_KEYS
+    if unknown:
+        raise ValueError(f'unrecognised core_module_params keys: {sorted(unknown)}')
+    curve_kind = params.get('melting_curve', 'iron')
+    if curve_kind not in _CURVE_KEYS:
+        raise ValueError(f'unknown melting_curve {curve_kind!r}')
+    missing = sorted(k for k in _CURVE_KEYS['quadratic'] if params.get(k) is None)
+    if curve_kind == 'quadratic' and missing:
+        raise ValueError(f"melting_curve = 'quadratic' needs {missing}")
+    if params.get('fit_profile') not in (None, True, False):
+        raise ValueError(f'fit_profile must be true or false, got {params["fit_profile"]!r}')
+    return curve_kind
+
+
+def split_core_module_params(params: dict | None) -> tuple[dict, float, float]:
+    """Split ``core_module_params`` into the budget keys, ``q_radio`` [W] and ``ra_crit_cmb``.
+
+    Raises
+    ------
+    ValueError
+        On a ``ra_crit_cmb`` that is not a positive finite number, or on budget keys that
+        :func:`build_core_module_budget` refuses before it builds the core profile.
+    """
+    params = dict(params or {})
+    q_radio = float(params.pop('q_radio', 0.0))
+    ra_crit = check_ra_crit(params.pop('ra_crit_cmb', RA_CRIT_CMB_DEFAULT))
+    _check_budget_params(params)
+    return params, q_radio, ra_crit
+
+
+def build_core_module_budget(
+    params: dict,
+    *,
+    r_cmb: float,
+    p_cmb_fallback: float,
+    m_core: float | None = None,
+    p_cen: float | None = None,
+) -> CoreEnergyBudget:
+    """Build a :class:`CoreEnergyBudget` from a flat config dict.
+
+    Recognised keys: profile parameters (``rho_cen``, ``length_scale``,
+    ``p_cmb``, ``alpha``, ``c_p``, ``pressure_mode``, ``adiabat_mode``, ``m_core``,
+    ``p_cen``, ``fit_profile``), the melting-curve selector
+    ``melting_curve`` (``'iron'`` with ``light_element_fraction`` and
+    ``depression``, or ``'quadratic'`` with ``t_m0``/``t_m1``/``t_m2``),
+    and the budget parameters (``ds_fusion``, ``icn_width``,
+    ``latent_heat``, ``alpha_c``, ``c_light``, ``capacity_mode``,
+    ``legacy_rho_core``, ``legacy_tfac``, ``stratification``,
+    ``k_core``), and the shell of a stratified core (``layer_base_fraction``,
+    ``layer_cells``, ``layer_top_cell``, ``layer_k_mix``, ``layer_g_mix``). The CMB radius comes from the caller (the solver's
+    mesh), never from the dict, and ``p_cmb`` falls back to the
+    caller's value when absent.
+
+    When both ``m_core`` and ``p_cen`` are provided (and ``fit_profile`` is
+    not ``False``), ``rho_cen`` and ``length_scale`` are fitted to the
+    structure constraints via :meth:`GaussianCoreProfiles.from_structure`.
+
+    Raises
+    ------
+    ValueError
+        From the underlying constructors on any invalid value, or here on
+        an unknown melting-curve selector, an unrecognised key, a quadratic
+        curve without its three coefficients, a ``fit_profile`` that is not a
+        boolean, one of ``m_core`` and ``p_cen`` given alone, or
+        ``fit_profile = True`` without either.
+    """
+    params = {**_FACTORY_DEFAULTS, **params}
+    curve_kind = _check_budget_params(params)
+    params.pop('melting_curve', None)
+    cfg = {k: params.pop(k, None) for k in ('m_core', 'p_cen', 'fit_profile')}
+    m_core = cfg['m_core'] if m_core is None else m_core
+    p_cen = cfg['p_cen'] if p_cen is None else p_cen
+    fit_profile = cfg['fit_profile']
+    given = (m_core is not None) + (p_cen is not None)
+    fit = given == 2 if fit_profile is None else bool(fit_profile)
+    if given == 1:
+        raise ValueError('m_core and p_cen go together: give both or neither')
+    if fit and given == 0:
+        raise ValueError('fit_profile = true needs both m_core and p_cen')
+
+    profile_kwargs = {k: params[k] for k in _PROFILE_KEYS if k in params}
+    profile_kwargs['r_cmb'] = r_cmb
+    profile_kwargs.setdefault('p_cmb', p_cmb_fallback)
+
+    if fit:
+        profiles = GaussianCoreProfiles.from_structure(
+            m_core=m_core,
+            p_cen=p_cen,
+            **{k: v for k, v in profile_kwargs.items() if k not in ('rho_cen', 'length_scale')},
+        )
+    else:
+        profiles = GaussianCoreProfiles(**profile_kwargs)
+
+    curve_kwargs = {k: params[k] for k in _CURVE_KEYS[curve_kind] if k in params}
+    curve_class = {'iron': IronMeltingCurve, 'quadratic': QuadraticMeltingCurve}[curve_kind]
+    curve = curve_class(**curve_kwargs)
+
+    budget_kwargs = {k: params[k] for k in _BUDGET_KEYS if k in params}
+    layer = {v: params[k] for k, v in _LAYER_KEYS.items() if params.get(k) is not None}
+    if layer:
+        budget_kwargs['layer'] = layer
+    return CoreEnergyBudget(profiles, curve, **budget_kwargs)
+
+
+class CoreModule:
+    """Stateful core evolving under an externally supplied CMB heat flow.
+
+    The core is one temperature, so a stratified budget, whose shell is state, is refused;
+    the solver evolves it.
+
+    Parameters
+    ----------
+    budget : CoreEnergyBudget
+        The energy budget that supplies the cooling rate.
+    t_cmb : float
+        Initial CMB temperature [K], positive.
+    entropy : CoreEntropyBudget, optional
+        When given, diagnostics include the entropy margin and field
+        strength alongside the energy-side quantities.
+    q_radio : float
+        Internal source power [W] passed to every cooling-rate call.
+    n_substeps : int
+        Fixed classical Runge-Kutta sub-steps per :meth:`step` call;
+        positive. The trajectory arrays carry ``n_substeps + 1`` samples.
+    """
+
+    def __init__(
+        self,
+        budget: CoreEnergyBudget,
+        *,
+        t_cmb: float,
+        entropy: CoreEntropyBudget | None = None,
+        q_radio: float = 0.0,
+        n_substeps: int = 32,
+    ) -> None:
+        if not float(t_cmb) > 0.0:
+            raise ValueError(f't_cmb must be positive, got {t_cmb}')
+        if int(n_substeps) < 1:
+            raise ValueError(f'n_substeps must be at least 1, got {n_substeps}')
+        if budget.stratification:
+            raise ValueError(
+                'CoreModule holds one core temperature; a stratified core needs the solver'
+            )
+        self.budget = budget
+        self.entropy = entropy
+        self.t_cmb = float(t_cmb)
+        self.q_radio = float(q_radio)
+        self.n_substeps = int(n_substeps)
+        self.last_times: jnp.ndarray | None = None
+        self.last_t_cmb: jnp.ndarray | None = None
+        self.last_q_cmb: jnp.ndarray | None = None
+        # One compiled RHS per instance (RK4 calls it hundreds of times per step); q_radio
+        # is a traced argument, since jit freezes closed-over values at the first trace
+        # and a later change of the attribute would keep the old power.
+        self._rhs = jax.jit(
+            lambda temp, q, q_radio: self.budget.dtcmb_dt(temp, q, q_sources=q_radio)
+        )
+
+    def step(self, q_cmb: float, dt: float, q_cmb_end: float | None = None) -> float:
+        """Advance ``T_cmb`` over ``dt`` seconds of heat flow ``q_cmb`` [W].
+
+        The heat flow ramps linearly from ``q_cmb`` to ``q_cmb_end`` (equal
+        to ``q_cmb`` when omitted) across the interval, and the state
+        advances with ``n_substeps`` classical RK4 sub-steps. The sub-step
+        trajectory is stored on ``last_times`` / ``last_t_cmb`` /
+        ``last_q_cmb`` so the caller can see through the coupling interval
+        instead of only its endpoints. Returns the new ``T_cmb`` [K].
+
+        Raises
+        ------
+        ValueError
+            If ``dt`` is not positive.
+        """
+        if not float(dt) > 0.0:
+            raise ValueError(f'dt must be positive, got {dt}')
+        q_end = float(q_cmb) if q_cmb_end is None else float(q_cmb_end)
+        h = float(dt) / self.n_substeps
+
+        def q_at(t: float) -> float:
+            return float(q_cmb) + (q_end - float(q_cmb)) * (t / float(dt))
+
+        def rhs(t: float, temp):
+            return self._rhs(temp, q_at(t), self.q_radio)
+
+        times = [0.0]
+        temps = [self.t_cmb]
+        temp = jnp.asarray(self.t_cmb)
+        t = 0.0
+        for _ in range(self.n_substeps):
+            k1 = rhs(t, temp)
+            k2 = rhs(t + h / 2.0, temp + h / 2.0 * k1)
+            k3 = rhs(t + h / 2.0, temp + h / 2.0 * k2)
+            k4 = rhs(t + h, temp + h * k3)
+            temp = temp + h / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+            t += h
+            times.append(t)
+            temps.append(float(temp))
+        self.last_times = jnp.asarray(times)
+        self.last_t_cmb = jnp.asarray(temps)
+        self.last_q_cmb = jnp.asarray([q_at(x) for x in times])
+        self.t_cmb = float(temp)
+        return self.t_cmb
+
+    def diagnostics(self, q_cmb: float | None = None) -> dict:
+        """Current core state as plain floats.
+
+        Always contains ``t_cmb``, ``t_cen``, ``r_icb``,
+        ``nucleation_factor``, ``effective_capacity``, and the phase flags
+        ``inner_core_present`` / ``fully_frozen``. With an entropy budget
+        attached and ``q_cmb`` given, adds ``entropy_margin``,
+        ``dynamo_active``, and ``b_rms_core``.
+        """
+        b = self.budget
+        t = self.t_cmb
+        radius = float(b.r_icb(t))
+        out = {
+            't_cmb': t,
+            't_cen': float(b.profiles.t_cen(t)),
+            'r_icb': radius,
+            'nucleation_factor': float(b.nucleation_factor(t)),
+            'effective_capacity': float(b.effective_capacity(t)),
+            'inner_core_present': bool(radius > 0.0),
+            'fully_frozen': bool(~b._liquid_remains(t)),
+            'regime': int(crystallization_regime(b, t)),
+        }
+        if self.entropy is not None and q_cmb is not None:
+            margin = float(self.entropy.entropy_margin(t, q_cmb, self.q_radio))
+            out['entropy_margin'] = margin
+            out['dynamo_active'] = bool(margin > 0.0)
+            out['b_rms_core'] = float(self.entropy.b_rms_core(t, q_cmb))
+        return out

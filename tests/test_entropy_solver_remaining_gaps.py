@@ -213,7 +213,7 @@ def test_entropy_staggered_and_temperature_staggered_accessors_for_extended_stat
     ``temperature_staggered`` have three structurally distinct
     branches: gradient (covered by
     ``test_entropy_solver_gradient_smoke``), extended-state
-    (energy_balance / bower2018, lines 1750-1751, 1761-1762), and
+    (energy_balance / bower2018 / core_module, lines 1750-1751, 1761-1762), and
     plain quasi_steady (lines 1752, 1764). The latter two need
     explicit accessor calls.
 

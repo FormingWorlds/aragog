@@ -96,6 +96,7 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         Q_tidal_total=4.5e15,
         step_dE_F_int_J=-1.0e22,
         step_dE_F_cmb_J=+5.0e21,
+        step_dE_core_J=-4.8e21,
         step_dE_Q_radio_J=+3.0e19,
         step_dE_Q_tidal_J=+1.0e19,
         step_dE_Q_radio_cons_J=+3.1e19,
@@ -112,6 +113,9 @@ def _make_output(*, status: int = 0, dt: float = 1234.5) -> SolverOutput:
         cvode_flag_name='TOO_MUCH_WORK',
         tcore_change_max=4321.5,
         tcore_change_exceeded=True,
+        core_T_shell=np.array([4100.0, 4105.0, 4112.0]),
+        core_layer_base=3.2e6,
+        core_T_top=4112.0,
     )
 
 
@@ -160,6 +164,7 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             'Q_tidal_total': out.Q_tidal_total,
             'step_dE_F_int_J': out.step_dE_F_int_J,
             'step_dE_F_cmb_J': out.step_dE_F_cmb_J,
+            'step_dE_core_J': out.step_dE_core_J,
             'step_dE_Q_radio_J': out.step_dE_Q_radio_J,
             'step_dE_Q_tidal_J': out.step_dE_Q_tidal_J,
             'step_dE_Q_radio_cons_J': out.step_dE_Q_radio_cons_J,
@@ -197,6 +202,9 @@ def test_to_netcdf_round_trip_preserves_every_field(tmp_path: Path) -> None:
             float(ds['tcore_change_max'][...]), out.tcore_change_max, rtol=1e-15, atol=0.0
         )
         assert ds['tcore_change_max'].dtype == np.float64
+        assert float(ds['core_layer_base'][...]) == out.core_layer_base
+        assert float(ds['core_T_top'][...]) == out.core_T_top
+        assert np.array_equal(ds['core_T_shell'][:], out.core_T_shell)
         assert int(ds['tcore_change_exceeded'][...]) == int(out.tcore_change_exceeded)
         assert ds['tcore_change_exceeded'].dtype == np.int32
 

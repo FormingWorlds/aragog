@@ -19,6 +19,10 @@ Supported ``core_bc_mode`` values:
 - ``energy_balance``: state vector is N+1 (entropy + dSdr_cmb);
   RHS is ``jax.solver.dSdt_energy_balance``. This is the
   production PROTEUS path.
+- ``core_module``: state vector is N+2 (entropy + dSdr_cmb +
+  T_core) plus the shell temperatures of a stratified core; RHS
+  is ``jax.solver.dSdt_core_module``, closed by the core evolution
+  budget passed as ``core_module_budget``.
 
 Unsupported (factory raises ``ValueError`` and the calling solver
 falls back to numpy RHS + FD Jacobian after logging a warning):
@@ -57,6 +61,7 @@ class _JitCacheEntry:
     jac_jit: Any
     phase_params: Any
     eos_jax: Any
+    budget: Any = None
     powers_jit: Any = None
 
 
@@ -71,8 +76,11 @@ def clear_jit_cache() -> None:
     _TRACE_COUNTERS['powers'] = 0
 
 
-def _args_from_data(data, phase_params: Any, eos_jax: Any, use_radio: bool) -> tuple:
-    """Build the physical RHS argument tuple from data and closure parameters."""
+def _args_from_data(
+    data, phase_params: Any, eos_jax: Any, use_radio: bool, budget: Any = None
+) -> tuple:
+    """Build the physical RHS argument tuple from data and closure parameters; for
+    core_module it ends with the budget and the data entries after the state offset."""
     from aragog.jax import solver as js
 
     mesh_arrays, boundary_params, heating_jax, radio_arrays = data[:4]
@@ -81,14 +89,8 @@ def _args_from_data(data, phase_params: Any, eos_jax: Any, use_radio: bool) -> t
         if use_radio
         else js._no_radio
     )
-    return (
-        eos_jax,
-        phase_params,
-        mesh_arrays,
-        boundary_params,
-        heating_jax,
-        H_radio_fn,
-    )
+    args = (eos_jax, phase_params, mesh_arrays, boundary_params, heating_jax, H_radio_fn)
+    return args if budget is None else args + (budget, *data[8:])
 
 
 def _make_jitted_rhs_and_jacobian(
@@ -96,31 +98,29 @@ def _make_jitted_rhs_and_jacobian(
     use_radio: bool,
     phase_params: Any,
     eos_jax: Any,
+    budget: Any = None,
 ):
     """Build JIT-compiled RHS and Jacobian functions.
 
-    PhaseParams and eos_jax are closure constants.
-    All remaining parameters are passed as a pytree in data.
+    PhaseParams, eos_jax and the core_module budget are closure constants. All remaining
+    parameters are passed as a pytree in data; for core_module it ends with the core source
+    power and the critical Rayleigh number of the CMB boundary layer.
     """
     import jax
 
     from aragog.jax import solver as js
 
-    _rhs_jax = js.dSdt if core_bc_mode == 'quasi_steady' else js.dSdt_energy_balance
+    _rhs_jax = {
+        'quasi_steady': js.dSdt,
+        'energy_balance': js.dSdt_energy_balance,
+        'core_module': js.dSdt_core_module,
+    }[core_bc_mode]
 
     def _eval_core(t_nd, y_nd, data):
-        (
-            _mesh,
-            _bc,
-            _heating,
-            _radio,
-            state_scale_jax,
-            rhs_scale_jax,
-            t_ref_jax,
-        ) = data[:7]
+        state_scale_jax, rhs_scale_jax, t_ref_jax, offset_jax = data[4:8]
         t_phys = t_nd * t_ref_jax
-        S_phys = y_nd * state_scale_jax
-        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio)
+        S_phys = y_nd * state_scale_jax + offset_jax
+        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
         dydt_phys = _rhs_jax(t_phys, S_phys, args_tuple)
         return dydt_phys * rhs_scale_jax
 
@@ -141,6 +141,7 @@ def _make_jitted_powers(
     use_radio: bool,
     phase_params: Any,
     eos_jax: Any,
+    budget: Any = None,
 ):
     """Build JIT-compiled vmapped step_powers function over chunks of size C."""
     import jax
@@ -148,7 +149,7 @@ def _make_jitted_powers(
     from aragog.jax import solver as js
 
     def _eval_node(t_phys, y_phys, data, aux):
-        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio)
+        args_tuple = _args_from_data(data, phase_params, eos_jax, use_radio, budget)
         return js.step_powers(t_phys, y_phys, args_tuple, core_bc_mode, aux)
 
     def _eval_chunk(t_chunk, Y_chunk, data, aux):
@@ -163,6 +164,7 @@ def _get_or_create_jitted(
     use_radio: bool,
     phase_params: Any,
     eos_jax: Any,
+    budget: Any = None,
 ) -> tuple[_JitCacheEntry, bool]:
     """Retrieve cached jitted functions or compile new ones.
 
@@ -172,19 +174,19 @@ def _get_or_create_jitted(
         (_JitCacheEntry, is_cache_hit)
     """
     key = (core_bc_mode, use_radio, id(phase_params), id(eos_jax))
+    key += () if budget is None else (id(budget),)
     entry = _JIT_CACHE.pop(key, None)
-    hit = entry is not None and entry.phase_params is phase_params and entry.eos_jax is eos_jax
+    hit = (
+        entry is not None
+        and entry.phase_params is phase_params
+        and entry.eos_jax is eos_jax
+        and entry.budget is budget
+    )
     if not hit:
         rhs_jit, jac_jit = _make_jitted_rhs_and_jacobian(
-            core_bc_mode, use_radio, phase_params, eos_jax
+            core_bc_mode, use_radio, phase_params, eos_jax, budget
         )
-        entry = _JitCacheEntry(
-            rhs_jit=rhs_jit,
-            jac_jit=jac_jit,
-            phase_params=phase_params,
-            eos_jax=eos_jax,
-            powers_jit=None,
-        )
+        entry = _JitCacheEntry(rhs_jit, jac_jit, phase_params, eos_jax, budget)
     _JIT_CACHE[key] = entry
     if len(_JIT_CACHE) > _CACHE_MAXSIZE:
         _JIT_CACHE.popitem(last=False)
@@ -200,6 +202,9 @@ def build_jax_rhs_and_jacobian(
     scales,
     core_bc_mode: str = 'quasi_steady',
     radio_isotope_params: tuple = (),
+    core_module_budget=None,
+    core_module_q_radio: float = 0.0,
+    core_module_ra_crit_cmb: float | None = None,
 ):
     """Build CVODE-compatible RHS and Jacobian functions backed by JAX.
 
@@ -225,8 +230,9 @@ def build_jax_rhs_and_jacobian(
     core_bc_mode : str, default 'quasi_steady'
         Which JAX RHS to wrap: 'quasi_steady' uses ``jax.solver.dSdt``
         (N-state), 'energy_balance' uses ``jax.solver.dSdt_energy_balance``
-        (N+1 state with dSdr_cmb closure equation as the (N+1)-th
-        component). The latter is the production PROTEUS code path.
+        (N+1 state with the dSdr_cmb closure equation), and
+        'core_module' uses ``jax.solver.dSdt_core_module`` (N+2 state
+        with dSdr_cmb and T_core; requires ``core_module_budget``).
     radio_isotope_params : tuple, default ()
         Optional 5-tuple ``(heat_prod, abundance, concentration,
         t0_years, half_life_years)`` of 1D arrays, one entry per
@@ -234,6 +240,20 @@ def build_jax_rhs_and_jacobian(
         radiogenic source at the live integrator time ``t_phys`` so
         the heating reflects in-step decay. Empty default disables
         radio heating.
+    core_module_budget : CoreEnergyBudget, optional
+        The core evolution budget whose ``dtcmb_dt`` closes the
+        boundary for ``core_bc_mode='core_module'``; required in that
+        mode, ignored otherwise. Its methods are pure JAX, so the
+        Jacobian differentiates through it (the boundary solve carries
+        a custom JVP).
+    core_module_q_radio : float, default 0.0
+        Constant core internal source power [W] for the core_module
+        closure.
+    core_module_ra_crit_cmb : float
+        Critical Rayleigh number of the CMB boundary layer for the
+        core_module flux (``aragog.core.cmb_boundary_layer_flux``),
+        the solver's ``_core_module_ra_crit_cmb``; required for
+        core_module and checked with ``aragog.core.check_ra_crit``.
 
     Returns
     -------
@@ -259,18 +279,27 @@ def build_jax_rhs_and_jacobian(
             f'aragog.jax module. Original error: {exc}'
         ) from exc
 
-    if core_bc_mode not in ('quasi_steady', 'energy_balance'):
+    if core_bc_mode == 'core_module' and core_module_budget is None:
+        raise ValueError(
+            "core_bc_mode='core_module' requires core_module_budget "
+            '(the CoreEnergyBudget the solver built from its config); '
+            'got None.'
+        )
+    if core_bc_mode not in ('quasi_steady', 'energy_balance', 'core_module'):
         logger.warning(
             'JAX CVODE factory: core_bc_mode=%r is not implemented '
-            'in the JAX RHS; only quasi_steady and energy_balance '
-            'are supported. Falling back to numpy RHS + FD Jacobian.',
+            'in the JAX RHS; only quasi_steady, energy_balance, and '
+            'core_module are supported. Falling back to numpy RHS + '
+            'FD Jacobian.',
             core_bc_mode,
         )
         raise ValueError(
             f'core_bc_mode={core_bc_mode!r} is not supported by the '
             f"JAX CVODE factory. Supported modes: 'quasi_steady', "
-            f"'energy_balance'. To use 'bower2018' or 'gradient', "
-            f'set ``use_jax_jacobian = false`` in the config.'
+            f"'energy_balance', 'core_module'. To use any other mode "
+            f'(including {core_bc_mode!r}), set ``use_jax_jacobian = '
+            f'false`` in the config, or leave it true to get the '
+            f'automatic FD-Jacobian fallback.'
         )
 
     # NonDimScales enforces the internal nondim contract
@@ -286,7 +315,12 @@ def build_jax_rhs_and_jacobian(
             'state_scale=..., t_ref=...) and let it derive rhs_scale.'
         )
     heating_np = np.asarray(heating_array)
-    expected_size = heating_np.size if core_bc_mode == 'quasi_steady' else heating_np.size + 1
+    n_extra = {'quasi_steady': 0, 'energy_balance': 1, 'core_module': 2}[core_bc_mode]
+    shell = (
+        getattr(core_module_budget, 'shell', None) if core_bc_mode == 'core_module' else None
+    )
+    n_extra += 0 if shell is None else shell.n_cells
+    expected_size = heating_np.size + n_extra
     if scales.n != expected_size:
         raise ValueError(
             f'state_scale length {scales.n} is incompatible '
@@ -326,9 +360,18 @@ def build_jax_rhs_and_jacobian(
         state_scale_jax,
         rhs_scale_jax,
         t_ref_jax,
+        jnp.asarray(scales.state_offset),
     )
+    if core_bc_mode == 'core_module':
+        from aragog.core import check_ra_crit
 
-    entry, is_cache_hit = _get_or_create_jitted(core_bc_mode, use_radio, phase_params, eos_jax)
+        q_radio, ra_crit = core_module_q_radio, check_ra_crit(core_module_ra_crit_cmb)
+        data = data + (jnp.float64(q_radio), jnp.float64(ra_crit))
+
+    budget = core_module_budget if core_bc_mode == 'core_module' else None
+    entry, is_cache_hit = _get_or_create_jitted(
+        core_bc_mode, use_radio, phase_params, eos_jax, budget
+    )
     rhs_jit = entry.rhs_jit
     jac_jit = entry.jac_jit
 
@@ -386,7 +429,7 @@ def build_jax_rhs_and_jacobian(
                 Times at evaluation nodes [yr].
             Y_nodes : array_like, shape (dim, n)
                 State at evaluation nodes in physical units (entropy [J/kg/K],
-                plus dSdr_cmb for energy_balance mode).
+                plus the extra slots of energy_balance and core_module).
             aux : StepPowersAux
                 Per-solve geometry and mass structure.
 
@@ -421,7 +464,7 @@ def build_jax_rhs_and_jacobian(
 
             if entry.powers_jit is None:
                 entry.powers_jit = _make_jitted_powers(
-                    core_bc_mode, use_radio, phase_params, eos_jax
+                    core_bc_mode, use_radio, phase_params, eos_jax, budget
                 )
 
             pad_len = -n % C

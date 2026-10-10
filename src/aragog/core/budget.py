@@ -1,0 +1,455 @@
+"""Core energy balance: secular cooling and inner-core latent heat.
+
+Given the CMB heat flow, the budget returns the CMB cooling rate through an
+effective heat capacity: ``Q_cmb = -C_eff(T_cmb) dT_cmb/dt + Q_sources``.
+``C_eff`` carries the secular term (the mass-weighted adiabat integral over
+the Gaussian profiles) plus, once the centre adiabat reaches the melting
+curve, the latent heat and light-element gravitational energy of inner-core
+growth, governed by the inner-core boundary geometry. Radiogenic or tidal
+powers enter as per-call source terms supplied by the caller.
+
+The ``legacy`` capacity mode reproduces the isothermal-reservoir closure
+(Bower et al. 2018, Eq. 37 constants: uniform core density and a fixed
+core-temperature factor), which is the regression anchor the module is
+cross-checked against with every feature off.
+"""
+
+from __future__ import annotations
+
+import functools
+
+import jax
+import jax.numpy as jnp
+import numpy as _np
+
+from aragog.core.melting import IronMeltingCurve
+from aragog.core.profiles import GaussianCoreProfiles
+from aragog.core.stratification import _q_ad
+
+jax.config.update('jax_enable_x64', True)
+
+_GL_X, _GL_W = _np.polynomial.legendre.leggauss(48)
+_GL_X = jnp.asarray(_GL_X)
+_GL_W = jnp.asarray(_GL_W)
+
+_BISECT_ITERS = 80  # halves the bracket to ~1e-24 of r_cmb: machine precision
+
+
+class CoreEnergyBudget:
+    """Energy budget of a well-mixed core with inner-core growth.
+
+    Parameters
+    ----------
+    profiles : GaussianCoreProfiles
+        Radial structure the budget integrates over.
+    melting_curve : IronMeltingCurve or QuadraticMeltingCurve
+        Alloy melting curve; sets the freezing point profile T_m(P).
+    ds_fusion : float
+        Entropy of fusion at the inner-core boundary [J kg-1 K-1]; sets the
+        latent heat per unit mass as ``T_icb * ds_fusion``.
+    icn_width : float
+        Temperature width [K] of the nucleation diagnostic sigmoid. Positive;
+        governs diagnostic regime indicators.
+    latent_heat : float, optional
+        Constant latent heat of fusion [J/kg]. When given it replaces the
+        ``T_icb * ds_fusion`` form; parameterised models in the literature
+        (Nimmo 2015 Table 2 uses 750 kJ/kg) prescribe the constant.
+    alpha_c : float, optional
+        Compositional expansivity of the outer-core alloy (fractional
+        density decrease per unit light-element mass fraction), for the
+        gravitational-energy term. Zero disables the term.
+    c_light : float, optional
+        Light-element mass fraction of the outer core, rejected entirely
+        by the solid on freezing (the complete-rejection limit). Zero
+        disables the gravitational term.
+    capacity_mode : str
+        ``'profile'`` integrates the secular capacity over the Gaussian
+        profiles; ``'legacy'`` uses the isothermal-reservoir constants
+        below and disables nucleation, reproducing the boundary-condition
+        closure this module replaces.
+    legacy_rho_core : float, optional
+        Uniform core density [kg m-3] of the legacy closure (required in
+        legacy mode).
+    legacy_tfac : float, optional
+        Core-temperature factor of the legacy closure (required in legacy
+        mode; 1.147 is the Earth-like default used across the ecosystem).
+    stratification : bool
+        When true, the outer core above the base of a resolved shell
+        (:class:`aragog.core.layer.CoreShell`, on ``shell``) can stratify:
+        its temperatures are state the caller evolves with
+        :meth:`core_rates`, and the capacity integrals of the convecting core
+        run to the shell base. Profile mode only.
+    k_core : float, optional
+        Core thermal conductivity [W m-1 K-1]; required when ``stratification`` is on.
+    layer : dict, optional
+        Keyword arguments of :class:`aragog.core.layer.CoreShell`.
+
+    Raises
+    ------
+    ValueError
+        On a non-positive ``ds_fusion`` or ``icn_width``, an unknown
+        ``capacity_mode``, or missing legacy constants in legacy mode.
+    """
+
+    def __init__(
+        self,
+        profiles: GaussianCoreProfiles,
+        melting_curve: IronMeltingCurve,
+        *,
+        ds_fusion: float,
+        icn_width: float,
+        latent_heat: float | None = None,
+        alpha_c: float = 0.0,
+        c_light: float = 0.0,
+        capacity_mode: str = 'profile',
+        legacy_rho_core: float | None = None,
+        legacy_tfac: float | None = None,
+        stratification: bool = False,
+        k_core: float | None = None,
+        layer: dict | None = None,
+    ) -> None:
+        if not float(ds_fusion) > 0.0:
+            raise ValueError(f'ds_fusion must be positive, got {ds_fusion}')
+        if not float(icn_width) > 0.0:
+            raise ValueError(f'icn_width must be positive, got {icn_width}')
+        if latent_heat is not None and not float(latent_heat) > 0.0:
+            raise ValueError(f'latent_heat must be positive, got {latent_heat}')
+        if float(alpha_c) < 0.0 or float(c_light) < 0.0:
+            raise ValueError('alpha_c and c_light must be non-negative')
+        if capacity_mode not in ('profile', 'legacy'):
+            raise ValueError(f'unknown capacity_mode {capacity_mode!r}')
+        if capacity_mode == 'legacy' and (legacy_rho_core is None or legacy_tfac is None):
+            raise ValueError('legacy mode needs legacy_rho_core and legacy_tfac')
+        if stratification:
+            if capacity_mode == 'legacy':
+                raise ValueError(
+                    'stratification needs the profile capacity mode; the '
+                    'legacy reservoir has no volume to reduce'
+                )
+            if k_core is None or not float(k_core) > 0.0:
+                raise ValueError(f'stratification needs a positive k_core, got {k_core}')
+        self.profiles = profiles
+        self.melting_curve = melting_curve
+        self.ds_fusion = float(ds_fusion)
+        self.icn_width = float(icn_width)
+        self.latent_heat = None if latent_heat is None else float(latent_heat)
+        self.alpha_c = float(alpha_c)
+        self.c_light = float(c_light)
+        self.capacity_mode = capacity_mode
+        self.legacy_rho_core = None if legacy_rho_core is None else float(legacy_rho_core)
+        self.legacy_tfac = None if legacy_tfac is None else float(legacy_tfac)
+        self.stratification = bool(stratification)
+        self.k_core = None if k_core is None else float(k_core)
+        self.shell = None
+        if stratification:
+            from aragog.core.layer import CoreShell
+
+            self.shell = CoreShell(profiles, self.k_core, **(layer or {}))
+        self.r_convecting = self.shell.r_base if stratification else profiles.r_cmb
+
+    # -- static integrals ----------------------------------------------------
+
+    def _quad_0_upper(self, upper, integrand):
+        """Fixed 48-point Gauss-Legendre integral of ``integrand(r)`` on [0, upper]."""
+        half = upper / 2.0
+        r = half + half * _GL_X
+        return half * jnp.sum(_GL_W * integrand(r))
+
+    def conducted_adiabatic_flow(self, r, t_cmb):
+        """Heat flow [W] conducted along the adiabat through radius ``r`` (needs ``k_core``)."""
+        if self.k_core is None:
+            raise ValueError('conducted_adiabatic_flow needs k_core (a stratified budget)')
+        return _q_ad(self.profiles, self.k_core, r, t_cmb)
+
+    def secular_capacity(self, upper=None):
+        """Secular heat capacity dQ_s / d(dT_cmb/dt) [J/K].
+
+        Profile mode: ``c_p int rho(r) f(r) 4 pi r^2 dr`` over the
+        convecting volume (``upper`` defaults to the CMB radius), with
+        ``f`` the adiabat shape ``T_a(r)/T_cmb``, i.e. ``c_p M
+        tfac_eff``. Legacy mode: ``(4/3) pi r_cmb^3 rho c_p tfac``, the
+        reservoir constant.
+        """
+        p = self.profiles
+        if self.capacity_mode == 'legacy':
+            volume = 4.0 / 3.0 * jnp.pi * p.r_cmb**3
+            return volume * self.legacy_rho_core * p.c_p * self.legacy_tfac
+
+        def integrand(r):
+            shape = p.adiabat(r, 1.0)  # T_a / T_cmb: anchor-independent
+            return p.density(r) * shape * 4.0 * jnp.pi * r**2
+
+        top = p.r_cmb if upper is None else upper
+        return p.c_p * self._quad_0_upper(top, integrand)
+
+    def effective_tfac(self):
+        """Mass-weighted mean of ``T_a/T_cmb`` over the core (profile mode)."""
+        p = self.profiles
+
+        def mass_integrand(r):
+            return p.density(r) * 4.0 * jnp.pi * r**2
+
+        mass = self._quad_0_upper(p.r_cmb, mass_integrand)
+        return self.secular_capacity() / (p.c_p * mass)
+
+    # -- inner core ----------------------------------------------------------
+
+    @property
+    def t_onset(self) -> float:
+        """CMB temperature [K] for inner-core nucleation onset at the centre."""
+        p = self.profiles
+        p_cen = float(p.pressure(0.0))
+        adiabat_factor = float(p.adiabat(0.0, 1.0))
+        return float(self.melting_curve.t_melt(p_cen)) / adiabat_factor
+
+    @property
+    def t_freeze(self) -> float:
+        """CMB temperature [K] for full core freeze-out at the CMB."""
+        return float(self.melting_curve.t_melt(self.profiles.p_cmb))
+
+    def superheat(self, r, t_cmb):
+        """Adiabat minus melting curve [K] at radius ``r``; positive = liquid."""
+        p = self.profiles
+        return p.adiabat(r, t_cmb) - self.melting_curve.t_melt(p.pressure(r))
+
+    def _r_icb_bisect(self, t_cmb):
+        """Primal bisection for the boundary radius; see :meth:`r_icb`."""
+        p = self.profiles
+
+        def body(_, bracket):
+            lo, hi = bracket
+            mid = (lo + hi) / 2.0
+            frozen = self.superheat(mid, t_cmb) < 0.0
+            return jnp.where(frozen, mid, lo), jnp.where(frozen, hi, mid)
+
+        lo, hi = jax.lax.fori_loop(
+            0,
+            _BISECT_ITERS,
+            body,
+            (jnp.zeros_like(t_cmb * 1.0), jnp.full_like(t_cmb * 1.0, p.r_cmb)),
+        )
+        root = (lo + hi) / 2.0
+        # All-liquid guard: with positive centre superheat there is no root.
+        return jnp.where(self.superheat(0.0, t_cmb) > 0.0, 0.0, root)
+
+    def r_icb(self, t_cmb):
+        """Inner-core boundary radius [m] at ``t_cmb``.
+
+        Fixed-iteration bisection of the superheat on [0, r_cmb]; with no
+        crossing it converges to 0 (fully liquid) or r_cmb (fully frozen),
+        so the value is always defined and trace-safe. A liquid centre
+        returns zero regardless of frozen shells above it (the top-down
+        and snow topologies have no inner core in the bottom-up sense);
+        the boundary terms drop to zero there, and the solver refuses those
+        states (``aragog.core.regime.refuse_unmodelled_regime``).
+
+        The derivative is the implicit-function sensitivity attached as a
+        custom JVP: a comparison-driven bisection carries no gradient of
+        its own (autodiff sees only the converged constant trace), so
+        without this rule anything differentiating through the boundary
+        would silently read zero.
+        """
+        return self._r_icb_root(t_cmb)
+
+    @functools.cached_property
+    def r_icb_batch(self):
+        """``r_icb`` vectorised and compiled, once per budget."""
+        return jax.jit(jax.vmap(self.r_icb))
+
+    @functools.cached_property
+    def regime_batch(self):
+        """``crystallization_regime`` vectorised and compiled, once per budget."""
+        from aragog.core.regime import crystallization_regime
+
+        return jax.jit(jax.vmap(lambda t_cmb: crystallization_regime(self, t_cmb)))
+
+    @functools.cached_property
+    def _r_icb_root(self):
+        """The custom-JVP-wrapped boundary solve, built once per instance."""
+
+        @jax.custom_jvp
+        def root(t_cmb):
+            return self._r_icb_bisect(t_cmb)
+
+        @root.defjvp
+        def root_jvp(primals, tangents):
+            (t_cmb,) = primals
+            (t_dot,) = tangents
+            radius = self._r_icb_bisect(t_cmb)
+            d_dr = jax.grad(self.superheat, argnums=0)(radius, t_cmb)
+            d_dt = jax.grad(self.superheat, argnums=1)(radius, t_cmb)
+            safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
+            # Interior boundary: dr/dT from the implicit function theorem;
+            # pinned at the domain ends where the root does not move.
+            interior = (radius > 0.0) & (radius < self.profiles.r_cmb)
+            drdt = jnp.where(interior, -d_dt / safe, 0.0)
+            return radius, drdt * t_dot
+
+        return root
+
+    def nucleation_factor(self, t_cmb):
+        """Diagnostic activation in [0, 1]: sigmoid of centre subcooling."""
+        return jax.nn.sigmoid(-self.superheat(0.0, t_cmb) / self.icn_width)
+
+    def _boundary_sensitivity(self, t_cmb):
+        """|dr_icb/dT_cmb| [m/K] from the implicit-function theorem.
+
+        Written as the explicit ratio of superheat partials at the boundary
+        rather than ``|grad(r_icb)|``: the same first-order value, but a
+        smooth composition that higher-order autodiff (the capacity
+        gradient the solver Jacobian needs) differentiates correctly,
+        where nesting through the custom-JVP rule would not.
+        """
+        radius = self.r_icb(t_cmb)
+        d_dr = jax.grad(self.superheat, argnums=0)(radius, t_cmb)
+        d_dt = jax.grad(self.superheat, argnums=1)(radius, t_cmb)
+        safe = jnp.where(jnp.abs(d_dr) > 0.0, d_dr, 1.0)
+        interior = (radius > 0.0) & (radius < self.profiles.r_cmb) & self._liquid_remains(t_cmb)
+        return jnp.where(interior, jnp.abs(-d_dt / safe), 0.0)
+
+    def _liquid_remains(self, t_cmb):
+        """False once even the CMB sits below the melting curve."""
+        return self.superheat(self.profiles.r_cmb, t_cmb) > 0.0
+
+    def latent_capacity(self, t_cmb):
+        """Latent contribution to the effective heat capacity [J/K].
+
+        ``L rho(r_icb) 4 pi r_icb^2 |dr_icb/dT_cmb|`` with the latent heat
+        per unit mass ``L`` either the prescribed constant or
+        ``T_icb * ds_fusion``. Zero before nucleation onset and after
+        freeze-out completion when the boundary is pinned.
+        """
+        p = self.profiles
+        radius = self.r_icb(t_cmb)
+        if self.latent_heat is not None:
+            heat = self.latent_heat
+        else:
+            heat = p.adiabat(radius, t_cmb) * self.ds_fusion
+        area_mass = p.density(radius) * 4.0 * jnp.pi * radius**2
+        return heat * area_mass * self._boundary_sensitivity(t_cmb)
+
+    def gravitational_capacity(self, t_cmb, upper=None):
+        """Gravitational contribution to the effective heat capacity [J/K].
+
+        Light elements rejected by the growing inner core mix through the
+        outer core and release gravitational energy. Per unit cooling:
+        ``[int_oc rho psi dV - M_oc psi(r_icb)] * alpha_c * Cc *
+        |dr_icb/dT_cmb|`` with ``Cc = 4 pi r_icb^2 rho(r_icb) c_light /
+        M_oc`` the enrichment per unit boundary advance in the
+        complete-rejection limit; the structure of the Leeds
+        ``thermal_history`` core model (Greenwood et al. 2021 lineage,
+        Gubbins et al. 2003 formalism). Zero when either compositional
+        parameter is zero, before onset, and after freeze-out. The
+        outer-core region runs to ``upper`` (default the CMB radius),
+        which the stratified budget reduces to the convecting radius.
+        """
+        p = self.profiles
+        radius = self.r_icb(t_cmb)
+        top = p.r_cmb if upper is None else upper
+        # A layer below the ICB leaves no convecting shell: clamp the top at the ICB so the
+        # integral closes to zero rather than flipping sign (a negative half-width would
+        # negate both moments and pass the mass guard with a wrong-sign capacity).
+        top = jnp.maximum(top, radius)
+
+        def integrand(r):
+            return p.density(r) * p.potential(r) * 4.0 * jnp.pi * r**2
+
+        # Outer-core integrals on [r_icb, upper] with the shared GL panel.
+        half = (top - radius) / 2.0
+        centre = (top + radius) / 2.0
+        s = centre[..., None] + half[..., None] * _GL_X
+        rho_psi = half * jnp.sum(_GL_W * integrand(s), axis=-1)
+        mass_oc = half * jnp.sum(_GL_W * p.density(s) * 4.0 * jnp.pi * s**2, axis=-1)
+        potential_moment = rho_psi - mass_oc * p.potential(radius)
+
+        enrichment = 4.0 * jnp.pi * radius**2 * p.density(radius) * self.c_light
+        safe_mass = jnp.where(mass_oc > 0.0, mass_oc, 1.0)
+        return (
+            potential_moment
+            * self.alpha_c
+            * (enrichment / safe_mass)
+            * self._boundary_sensitivity(t_cmb)
+        )
+
+    # -- assembled budget ----------------------------------------------------
+
+    def effective_capacity(self, t_cmb, *, gravitational_upper=None):
+        """Total dQ/d(dT_cmb/dt) [J/K] of the convecting core: secular plus
+        latent plus gravitational (profile mode).
+
+        The secular integral runs to the convecting radius, the CMB or the shell base; the
+        light elements mix up to ``gravitational_upper`` (default the same radius), the base of
+        the stable layer when a shell is resolved.
+        """
+        if self.capacity_mode == 'legacy':
+            return self.secular_capacity()
+        upper = self.r_convecting
+        top = upper if gravitational_upper is None else gravitational_upper
+        return (
+            self.secular_capacity(upper=upper)
+            + self.latent_capacity(t_cmb)
+            + self.gravitational_capacity(t_cmb, upper=top)
+        )
+
+    def heat_content(self, t_cmb) -> float:
+        """Core heat content [J] at CMB temperature ``t_cmb`` of the full, unstratified core.
+
+        ``t_cmb * C_secular`` minus the latent and gravitational energy released
+        between nucleation onset and ``t_cmb`` (zero above onset), so that
+        ``heat_content(T2) - heat_content(T1)`` is the integral of the effective
+        capacity from ``T1`` to ``T2``. The substitution ``T = T_onset - u^2``
+        turns the square-root cusp of the latent and gravitational terms at onset,
+        ``C ~ (T_onset - T)^(1/2)``, into a smooth integrand.
+        Evaluated eagerly (``t_onset`` is a Python float).
+
+        Raises
+        ------
+        ValueError
+            For a stratified budget, whose capacity covers only the convecting
+            volume and depends on the CMB heat flow.
+        """
+        if self.stratification:
+            raise ValueError(
+                'heat_content is the full-core content; a stratified budget evolves '
+                'only its convecting volume'
+            )
+        secular = float(t_cmb) * float(self.secular_capacity())
+        if self.capacity_mode == 'legacy' or float(t_cmb) >= self.t_onset:
+            return secular
+        u_max = float(_np.sqrt(self.t_onset - float(t_cmb)))
+        boundary = jax.vmap(lambda t: self.latent_capacity(t) + self.gravitational_capacity(t))
+        # One Gauss-Legendre panel per side of the freeze-out jump in the latent term.
+        u_freeze = float(_np.sqrt(max(self.t_onset - self.t_freeze, 0.0)))
+        edges = [0.0, u_freeze, u_max] if 0.0 < u_freeze < u_max else [0.0, u_max]
+        released = 0.0
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            u = lo + 0.5 * (hi - lo) * (_GL_X + 1.0)
+            values = boundary(self.t_onset - u**2) * 2.0 * u
+            released += 0.5 * (hi - lo) * float(jnp.sum(_GL_W * values))
+        return secular - released
+
+    def dtcmb_dt(self, t_cmb, q_cmb, q_sources=0.0):
+        """CMB cooling rate [K/s] for heat flow ``q_cmb`` [W] out of an unstratified core.
+
+        ``dT_cmb/dt = (q_sources - q_cmb) / C_eff(T_cmb)``; positive
+        ``q_cmb`` cools the core, and internal sources (radiogenic, tidal)
+        offset it. A stratified core has shell state: see :meth:`core_rates`.
+        """
+        if self.stratification:
+            raise ValueError('a stratified core evolves its shell too: use core_rates')
+        return (q_sources - q_cmb) / self.effective_capacity(t_cmb)
+
+    def core_rates(self, t_cmb, t_shell, q_cmb, q_sources=0.0):
+        """Rates of the convecting core [K/s] and of the shell cells [K/s] of a stratified core.
+
+        The convecting core loses the flow into the shell base and keeps the mass share of the
+        internal sources ``q_sources`` [W] below it; the shell gets the rest, cell by cell.
+        """
+        p, shell = self.profiles, self.shell
+        heating = q_sources / p.enclosed_mass(p.r_cmb)
+        d_shell, q_base = shell.rates(t_shell, t_cmb, q_cmb, heating)
+        q_conv = heating * p.enclosed_mass(self.r_convecting)
+        capacity = self.effective_capacity(
+            t_cmb, gravitational_upper=shell.layer_base(t_shell, t_cmb)
+        )
+        return (q_conv - q_base) / capacity, d_shell

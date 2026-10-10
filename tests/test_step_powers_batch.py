@@ -9,6 +9,7 @@ Verifies:
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 from types import SimpleNamespace
@@ -1402,3 +1403,75 @@ def test_step_powers_table_alpha_cmb_bound(eos_np_table, eos_jax):
     # Measured difference is 2.44e-7 (> 0 and <= 3x measured = 7.32e-7)
     assert max_rel > 0.0, f'Expected non-zero difference from table alpha, got {max_rel}'
     assert max_rel <= 7.32e-07, f'Relative difference {max_rel:.4e} exceeds 7.32e-07'
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize('stratified', [False, True])
+def test_step_powers_core_module_batch_matches_the_numpy_loop(stratified, caplog):
+    """A core_module solve with radiogenic and tidal heating takes its energy powers from the
+    JAX batch, whose per-node powers and per-call integrals match the numpy loop on derived
+    alpha; column 1 is the boundary-layer flux, whose two entropy inversions differ at 1e-14."""
+    from tests.conftest import entropy_eos_copy
+    from tests.test_entropy_solver_core_module_smoke import (
+        CORE_MODULE_PARAMS,
+        STRATIFIED_PARAMS,
+        _build,
+    )
+    from tests.test_jax_dsdt_core_module import _build_jax_pieces
+
+    prm, end = (STRATIFIED_PARAMS, 0.05) if stratified else (CORE_MODULE_PARAMS, 2.0)
+    # 1e6 ppm, a mass fraction of 1, and a half-life of the run, so the source varies in time
+    radio = [dataclasses.replace(_make_radionuclide(), concentration=1e6, half_life_years=end)]
+    solver = _build(
+        'core_module',
+        entropy_eos_copy(identity_alpha=True),
+        prm,
+        end_time=end,
+        solver_method='cvode',
+        s_init='driven',
+        use_jax_jacobian=True,
+        core_offset=50.0,
+        radionuclides=radio,
+        tidal_array=np.linspace(1e-12, 5e-12, 9),
+    )
+    args = _build_jax_pieces(solver)
+
+    def factory(scales, core_bc_mode):
+        rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
+            *args[:4],
+            heating_array=np.asarray(args[4]),
+            scales=scales,
+            core_bc_mode=core_bc_mode,
+            radio_isotope_params=_make_radio_tuple(solver.parameters.radionuclides),
+            core_module_budget=args[6],
+            core_module_q_radio=args[7],
+            core_module_ra_crit_cmb=args[8],
+        )
+        return rhs_fn, jac_fn
+
+    solver.set_jax_cvode_factory(factory)
+    call_count = _spy_step_powers(solver)
+    with caplog.at_level(logging.INFO):
+        solver.solve()
+    assert solver._solution.status == 0
+    assert call_count[0] == 0 and solver._batch_powers_calls == 1
+    assert any('via JAX batch path' in r.message for r in caplog.records)
+
+    t_pts, y_pts = solver._solution.energy_trace
+    P_jax = solver._step_powers_batch(t_pts, y_pts)
+    P_np = np.array([solver._step_powers(float(t), y) for t, y in zip(t_pts, y_pts.T)])
+    resid_atol = 1e-12 * (np.max(np.abs(P_np[:, 0])) + np.max(np.abs(P_np[:, 1])))
+    assert (
+        np.min(np.abs(P_np[:, 2:4])) > 1e3 * resid_atol
+    )  # a lost source shows in the residual
+    assert np.ptp(P_np[:, 2]) > 1e3 * resid_atol  # and a wrong decay time
+    _assert_powers_match(P_jax, P_np, rtol_col1=1e-13)
+
+    batch = dict(solver._solution.energy_integrals)
+    solver._cvode_step_powers_batch = None
+    ref = solver._compute_step_energy_integrals()
+    keys = ('F_int', 'F_cmb', 'F_cmb_step_avg', 'Q_radio', 'Q_tidal', 'Q_radio_cons')
+    for key in (*keys, 'Q_tidal_cons'):
+        assert batch[key] == pytest.approx(ref[key], rel=1e-13), key
+    scale = abs(ref['F_int']) + abs(ref['F_cmb'])
+    assert batch['solver_residual'] == pytest.approx(ref['solver_residual'], abs=1e-12 * scale)

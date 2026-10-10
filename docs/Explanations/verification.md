@@ -34,7 +34,7 @@ Test the SPIDER-parity behaviour of `EntropyPhaseEvaluator`:
 Drive `EntropySolver` through short integrations and check the resulting profiles:
 
 - Standalone grey-body cooling: a fully-molten initial state cools toward the equilibrium temperature without status flag failures.
-- The `set_initial_entropy`, `set_initial_dSdr_cmb`, and `set_initial_core_temperature` paths produce the expected state-vector layouts for `quasi_steady`, `energy_balance`, and `bower2018` modes.
+- The `set_initial_entropy`, `set_initial_dSdr_cmb`, and `set_initial_core_temperature` paths produce the expected state-vector layouts for each of the five `core_bc` modes.
 - The retry-ladder hooks (`get_current_dSdr_cmb`, `_atol_sf`) round-trip cleanly.
 
 ### Conservation tests (`tests/test_entropy_verification.py`)

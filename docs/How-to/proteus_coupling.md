@@ -63,7 +63,7 @@ The `diffrax` direct-JAX integration path is research-only and is not exposed th
 
 ## Core boundary condition
 
-Aragog supports four core-mantle boundary modes:
+Aragog supports five core-mantle boundary modes:
 
 | Mode | When to use | Notes |
 |---|---|---|
@@ -71,6 +71,7 @@ Aragog supports four core-mantle boundary modes:
 | `"quasi_steady"` | SPIDER parity tests only. | Alpha-factor heat-flux partition (heat-capacity-weighted). Gives a $\sim 19$% T_core offset against SPIDER on a typical Earth IC; do not use for new runs. |
 | `"gradient"` | Numerical-experiment use. | Two boundary entropies promoted to state variables. |
 | `"bower2018"` | Experimental. | Do not use for production. |
+| `"core_module"` | Core evolution with inner-core growth. | The core evolution budget of `aragog.core` with a boundary-layer CMB flux; see [Core BC modes](../Explanations/core_bc.md). |
 
 ```toml
 [interior_energetics.aragog]

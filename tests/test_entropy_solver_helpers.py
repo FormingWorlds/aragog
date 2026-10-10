@@ -204,7 +204,7 @@ def _build_minimal_solver(*, core_bc: str = 'energy_balance', cvode_output_point
     bc = _BoundaryConditionsParameters(
         outer_boundary_condition=1,
         outer_boundary_value=1500.0,
-        inner_boundary_condition=2,
+        inner_boundary_condition=1 if core_bc == 'core_module' else 2,
         inner_boundary_value=0.0,
         emissivity=1.0,
         equilibrium_temperature=255.0,
@@ -418,8 +418,9 @@ def test_step_heat_content_matches_analytic_integral():
     rho0, a, b, c = 4000.0, 500.0, 0.5, 2.0e-4
     eos = MagicMock()
     eos.density.side_effect = lambda P, S: np.full(np.asarray(S, float).shape, rho0)
+    # The pressure term pins the pairing of each cell's pressure with its entropy path.
     eos.temperature.side_effect = lambda P, S: (
-        a + b * np.asarray(S, float) + c * np.asarray(S, float) ** 2
+        a + b * np.asarray(S, float) + c * np.asarray(S, float) ** 2 + 1.0e-9 * np.asarray(P)
     )
 
     P = np.array([1.0e10, 5.0e10, 1.0e11])
@@ -432,7 +433,11 @@ def test_step_heat_content_matches_analytic_integral():
 
     dS = Sf - S0
     analytic = float(
-        np.sum(rho0 * (a * dS + 0.5 * b * (Sf**2 - S0**2) + c / 3.0 * (Sf**3 - S0**3)) * V)
+        np.sum(
+            rho0
+            * ((a + 1.0e-9 * P) * dS + 0.5 * b * (Sf**2 - S0**2) + c / 3.0 * (Sf**3 - S0**3))
+            * V
+        )
     )
     # 16-point trapezoid on a quadratic integrand: close but not exact.
     assert got == pytest.approx(analytic, rel=1e-3)
@@ -450,7 +455,7 @@ def test_step_heat_content_matches_analytic_integral():
 
     # Discrimination 2: the endpoint estimate rho T(Sf) dS is a different
     # number, so the test fails if the integral degrades to an endpoint read.
-    endpoint = float(np.sum(rho0 * (a + b * Sf + c * Sf**2) * dS * V))
+    endpoint = float(np.sum(rho0 * (a + b * Sf + c * Sf**2 + 1.0e-9 * P) * dS * V))
     assert abs(got - endpoint) > 1e-3 * abs(got)
 
 
@@ -466,6 +471,26 @@ def test_step_heat_content_zero_when_no_eos():
         _volume_flat=np.ones(3),
     )
     assert EntropySolver._step_heat_content(fake, np.ones(3), np.zeros(3)) == 0.0
+
+
+@pytest.mark.parametrize(('core_bc', 'n_quad'), [('core_module', 512), ('energy_balance', 16)])
+def test_step_heat_content_default_quadrature_points(core_bc, n_quad):
+    """The default rule has 512 points for core_module and 16 for the other modes: the result
+    equals an explicit call with that count and differs from the other count."""
+    from types import SimpleNamespace
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    eos = MagicMock()
+    eos.density.side_effect = lambda P, S: np.full(np.asarray(S).shape, 4000.0)
+    eos.temperature.side_effect = lambda P, S: 500.0 + 2.0e-4 * np.asarray(S, float) ** 2
+    fake = SimpleNamespace(
+        entropy_eos=eos, _P_stag_flat=np.ones(2), _volume_flat=np.ones(2), _core_bc=core_bc
+    )
+    S0, Sf = np.array([3000.0, 2800.0]), np.array([2500.0, 2700.0])
+    got = EntropySolver._step_heat_content(fake, S0, Sf)
+    assert got == EntropySolver._step_heat_content(fake, S0, Sf, n_quad=n_quad)
+    assert got != EntropySolver._step_heat_content(fake, S0, Sf, n_quad=528 - n_quad)
 
 
 def test_remap_entropy_handles_missing_xi_pre_resolve():
@@ -904,3 +929,332 @@ def test_max_step_clamp_entropy_margin_is_configurable():
     # could silently drift away from the config default it must track.
     sig = inspect.signature(_phase_boundary_max_step_clamp)
     assert sig.parameters['entropy_margin'].default is inspect.Parameter.empty
+
+
+def test_set_initial_entropy_gradient_mode():
+    """Initial entropy in gradient mode sets S0 with gradients and surface entropy."""
+    s = _build_minimal_solver(core_bc='gradient')
+    s.initialize()
+    s.set_initial_entropy(3000.0)
+    assert hasattr(s, '_S0')
+    assert len(s._S0) == s.parameters.mesh.number_of_nodes + 1
+
+
+def test_set_initial_entropy_core_module_with_and_without_mesh():
+    """Initial entropy resolution for core_module exercises offset with and without mesh."""
+    from types import SimpleNamespace
+
+    mock_eos = MagicMock()
+    mock_eos.temperature.return_value = np.array([4500.0])
+
+    # Case A: with mesh basic radii
+    s_a = _build_minimal_solver(core_bc='core_module')
+    s_a.initialize()
+    s_a.entropy_eos = mock_eos
+    s_a._P_basic_flat = np.array([136e9])
+    s_a._P_stag_flat = np.array([135e9])
+    mesh_mock = SimpleNamespace(basic=SimpleNamespace(radii=np.linspace(3.48e6, 6.371e6, 10)))
+    s_a.evaluator = SimpleNamespace(mesh=mesh_mock)
+    s_a.set_initial_entropy(3000.0)
+    assert s_a._S0[10] == pytest.approx(4500.0)
+
+    # Case B: without mesh (evaluator is None)
+    s_b = _build_minimal_solver(core_bc='core_module')
+    s_b.initialize()
+    s_b.entropy_eos = mock_eos
+    s_b._P_basic_flat = np.array([136e9])
+    s_b.evaluator = None
+    s_b._dSdr_cmb_init = 0.0
+    s_b.set_initial_entropy(3000.0)
+    assert s_b._S0[10] == pytest.approx(4500.0)
+
+    # Case C: bower2018 with no initial core temperature (resolves from EOS at P_stag)
+    s_c = _build_minimal_solver(core_bc='bower2018')
+    s_c.initialize()
+    s_c.entropy_eos = mock_eos
+    s_c._P_stag_flat = np.array([135e9])
+    s_c._T_core_init = None
+    s_c.set_initial_entropy(3000.0)
+    assert s_c._S0[9] == pytest.approx(4500.0)
+
+
+def test_step_energy_stratified_core_module_and_fallback():
+    """A stratified core books the convecting core's trapezoid of C_eff dT_c plus the change of
+    the shell's heat, on the compiled path and on the fallback."""
+    from types import SimpleNamespace
+
+    from scipy.optimize import OptimizeResult
+
+    import aragog.solver.entropy_solver as es
+    from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, QuadraticMeltingCurve
+
+    profiles = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=139e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        profiles,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        stratification=True,
+        k_core=130.0,
+        layer={'n_cells': 4},
+    )
+    shell = budget.shell
+    t_shell = np.column_stack(
+        [shell.adiabatic_profile(4500.0), shell.adiabatic_profile(4400.0)]
+    )
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]), y=np.vstack([[2000.0, 2000.0], [4500.0, 4400.0], t_shell])
+    )
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution, s.entropy_eos = sol, object()
+    s._r_basic_flat = np.array([1.0, 2.0])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy = lambda y: y
+    s._step_heat_content = lambda a, b: 0.0
+    s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
+    s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
+    capacity = [
+        float(
+            budget.effective_capacity(t, gravitational_upper=shell.layer_base(t_shell[:, i], t))
+        )
+        for i, t in enumerate((4500.0, 4400.0))
+    ]
+    content = [float(shell.heat_content(t_shell[:, i])) for i in (0, 1)]
+    expected = 0.5 * sum(capacity) * -100.0 + content[1] - content[0]
+    assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
+
+    def fail_vmap(*args):
+        raise RuntimeError('simulated vmap failure')
+
+    budget._vmap_effective_capacity = fail_vmap
+    assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-10)
+
+
+def test_check_shell_base_refuses_the_inner_core_and_warns_once(caplog):
+    """An inner core that reaches the base of the resolved shell is refused, naming both radii;
+    a stable layer base within three cells of the shell base warns once per solver."""
+    import logging
+    from types import SimpleNamespace
+
+    import aragog.solver.entropy_solver as es
+
+    faces = np.linspace(1000e3, 2000e3, 11)  # 100 km cells: three cells end at 1300 km
+    budget = SimpleNamespace(
+        shell=SimpleNamespace(r_base=faces[0], r_faces=faces),
+        r_icb_batch=lambda t: np.interp(t, [3000.0, 5000.0], [1100e3, 0.0]),
+    )
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    with caplog.at_level(logging.WARNING):
+        s._check_shell_base(budget, [5000.0, 4000.0], [1400e3, 1301e3])
+        assert not caplog.records
+        for _ in range(2):
+            s._check_shell_base(budget, [5000.0], [1400e3, 1299e3])
+    warned = [r for r in caplog.records if 'within three cells of the shell base' in r.message]
+    assert len(warned) == 1 and len(caplog.records) == 1
+    with pytest.raises(
+        ValueError, match=r'inner core \(1100 km\) reaches the base .* \(1000 km\)'
+    ):
+        s._check_shell_base(budget, [5000.0, 3000.0], [1400e3])
+
+
+def test_solver_output_to_netcdf_step_dE_core_J(tmp_path):
+    """SolverOutput.to_netcdf writes step_dE_core_J to netCDF."""
+    import netCDF4 as nc
+
+    from tests.test_solver_output_netcdf import _make_output
+
+    out = _make_output()
+    p = tmp_path / 'test.nc'
+    out.to_netcdf(p)
+    with nc.Dataset(p) as ds:
+        assert float(ds['step_dE_core_J'][...]) == pytest.approx(out.step_dE_core_J)
+
+
+def test_get_current_core_temperature():
+    """get_current_core_temperature returns None or the last T_core state value."""
+    from scipy.optimize import OptimizeResult
+
+    s = _build_minimal_solver(core_bc='core_module')
+    s.initialize()
+
+    # None cases: no solution, shape mismatch, or core_bc without T_core
+    assert s.get_current_core_temperature() is None
+
+    s._solution = OptimizeResult(y=np.array([]))
+    assert s.get_current_core_temperature() is None
+
+    # Shape mismatch (e.g. wrong number of rows)
+    s._solution = OptimizeResult(y=np.ones((5, 2)))
+    assert s.get_current_core_temperature() is None
+
+    # core_bc with no T_core slot
+    s._core_bc = 'gradient'
+    assert s.get_current_core_temperature() is None
+
+    # Valid core_module case: n_stag + 2 slots (dSdr_cmb, T_core)
+    s._core_bc = 'core_module'
+    n_stag = s._n_stag
+    y = np.zeros((n_stag + 2, 3))
+    y[n_stag + 1, -1] = 5234.5
+    s._solution = OptimizeResult(y=y)
+    assert s.get_current_core_temperature() == pytest.approx(5234.5)
+
+    # Fallback to parameters.boundary_conditions.core_bc when _core_bc is None
+    s._core_bc = None
+    assert s.get_current_core_temperature() == pytest.approx(5234.5)
+
+
+def test_set_initial_entropy_warm_restart_and_warnings(caplog):
+    """Warm restart preserves T_core and dSdr_cmb without a warning; a supplied start
+    with a large offset warns once per solver."""
+    import logging
+
+    from scipy.optimize import OptimizeResult
+
+    s = _build_minimal_solver(core_bc='core_module')
+    s.initialize()
+    n_stag = s._n_stag
+
+    # Mock previous solution for warm restart
+    y_prev = np.zeros((n_stag + 2, 4))
+    y_prev[n_stag, -1] = 1.5e-4
+    y_prev[n_stag + 1, -1] = 3000.0
+    s._solution = OptimizeResult(y=y_prev)
+
+    mock_eos = MagicMock()
+    mock_eos.temperature.return_value = np.array([5000.0])
+    s.entropy_eos = mock_eos
+    s._P_basic_flat = np.array([136e9])
+
+    with caplog.at_level(logging.WARNING):
+        s.set_initial_entropy(3000.0)
+
+    # Solution preserved from previous solve
+    assert s._S0[n_stag] == pytest.approx(1.5e-4)
+    assert s._S0[n_stag + 1] == pytest.approx(3000.0)
+    msg = 'differs from the mantle temperature at the CMB'
+    assert not any(msg in r.message for r in caplog.records)
+
+    s.set_initial_core_temperature(3000.0)
+    with caplog.at_level(logging.WARNING):
+        s.set_initial_entropy(3000.0)
+    assert s._S0[n_stag + 1] == pytest.approx(3000.0)
+    assert sum(msg in r.message for r in caplog.records) == 1
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        s.set_initial_entropy(3000.0)
+    assert not any(msg in r.message for r in caplog.records)
+
+    # Test n_stag < 2 fallback for dSdr_cmb_init
+    s2 = _build_minimal_solver(core_bc='core_module')
+    s2.initialize()
+    s2._n_stag = 1
+    assert s2._resolve_dSdr_cmb_init(np.array([3000.0]), 1) == 0.0
+
+
+def test_step_dE_core_heating_across_onset():
+    """An unstratified core heated across the onset and the freeze-out books the integral of
+    C_eff dT_c over the call, here against an adaptive quadrature broken at both."""
+    from types import SimpleNamespace
+
+    import jax
+    from scipy.integrate import quad
+    from scipy.optimize import OptimizeResult
+
+    import aragog.solver.entropy_solver as es
+    from aragog.core import CoreEnergyBudget, GaussianCoreProfiles, QuadraticMeltingCurve
+
+    profiles = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=139e9,
+        alpha=1.25e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(profiles, curve, ds_fusion=170.0, icn_width=10.0)
+    t_start, t_end = budget.t_freeze - 50.0, budget.t_onset + 50.0
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution = OptimizeResult(
+        t=np.array([0.0, 1.0]), y=np.array([[2000.0, 2000.0], [t_start, t_end]])
+    )
+    s.entropy_eos = object()
+    s._r_basic_flat = np.array([1.0, 2.0])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy = lambda y: y
+    s._step_heat_content = lambda a, b: 0.0
+    s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
+    s._core_bc, s._n_stag, s._core_module_budget = 'core_module', 0, budget
+
+    capacity = jax.jit(budget.effective_capacity)
+    points = [budget.t_freeze, budget.t_onset]
+    expected, _ = quad(lambda t: float(capacity(t)), t_start, t_end, points=points, limit=200)
+    assert expected > float(budget.effective_capacity(t_end)) * (t_end - t_start)
+    assert s._compute_step_energy_integrals()['core'] == pytest.approx(expected, rel=1e-8)
+
+
+def test_step_dE_core_bower2018():
+    """Bower2018 core energy change integrates constant core capacity."""
+    from types import SimpleNamespace
+
+    from scipy.optimize import OptimizeResult
+
+    import aragog.solver.entropy_solver as es
+
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[5000.0, 4800.0]]),
+    )
+    s = es.EntropySolver.__new__(es.EntropySolver)
+    s._solution = sol
+    s.entropy_eos = object()
+    s._r_basic_flat = np.array([3.48e6, 4.0e6])
+    s.state = SimpleNamespace(_pb_cache_hits=0, _pb_cache_misses=0)
+    s._stag_entropy = lambda y: y
+    s._step_heat_content = lambda a, b: 0.0
+    s._step_powers = lambda t, y: np.array([0.0, 1e12, 0.0, 0.0, 0.0, 0.0, 0.0])
+    s._core_bc = 'bower2018'
+    s._n_stag = 0
+    s.parameters = SimpleNamespace(
+        mesh=SimpleNamespace(core_density=7000.0),
+        boundary_conditions=SimpleNamespace(core_heat_capacity=800.0),
+    )
+
+    out = s._compute_step_energy_integrals()
+    vol_c = 4.0 / 3.0 * np.pi * (3.48e6**3)
+    c_core = vol_c * 7000.0 * 800.0
+    assert out['core'] == pytest.approx(c_core * (4800.0 - 5000.0))
+
+
+@pytest.mark.parametrize('mode', ['bower2018', 'core_module'])
+def test_set_initial_entropy_no_eos_and_no_override_raises(mode):
+    """Raise ValueError when no entropy EOS and no core temperature override exist.
+
+    Setting initial entropy without an EOS and without an explicit core temperature
+    cannot determine the core temperature and must raise ValueError rather than
+    substituting the raw entropy value in Kelvin.
+    """
+    s = _build_minimal_solver(core_bc=mode)
+    s.initialize()
+    s.entropy_eos = None
+    s._T_core_init = None
+    with pytest.raises(ValueError, match='entropy EOS is not available'):
+        s.set_initial_entropy(2900.0)
+
+
+def test_the_conducted_adiabatic_flow_needs_a_core_conductivity():
+    """An unstratified budget has no k_core, so the conducted flow is refused by name."""
+    from aragog.core import build_core_module_budget
+
+    budget = build_core_module_budget({}, r_cmb=3.48e6, p_cmb_fallback=136e9)
+    with pytest.raises(ValueError, match='needs k_core'):
+        budget.conducted_adiabatic_flow(3.48e6, 4500.0)

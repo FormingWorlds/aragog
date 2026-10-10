@@ -557,6 +557,68 @@ def test_id_reuse_guard():
         assert entry2.rhs_jit == 'fresh_rhs'
 
 
+@pytest.mark.parametrize('mode', ['quasi_steady', 'energy_balance'])
+def test_a_budget_outside_core_module_is_ignored(shared_eos, mode):
+    """Outside core_module the factory ignores a core budget: the RHS gives the values it gives
+    without one, and the cache keeps a single entry."""
+    from tests.test_jax_dsdt_core_module import _tiny_budget
+
+    mesh, n = _make_mesh(N=10), 10 + (mode == 'energy_balance')
+    kwargs = dict(
+        eos_jax=shared_eos,
+        phase_params=PhaseParams(),
+        mesh_arrays=mesh,
+        boundary_params=_make_bc(mesh, outer_type=4, inner_type=2, outer_val=10.0),
+        heating_array=np.zeros(10),
+        scales=NonDimScales(state_scale=np.full(n, 3.0e3), t_ref=1.0),
+        core_bc_mode=mode,
+    )
+    y_nd = np.full(n, 3050.0 / 3.0e3)
+    rates = []
+    for budget in (None, _tiny_budget()):
+        rhs_fn, _, _ = build_jax_rhs_and_jacobian(**kwargs, core_module_budget=budget)
+        ydot = np.zeros(n)
+        assert rhs_fn(0.0, y_nd, ydot) == 0
+        rates.append(ydot)
+    np.testing.assert_array_equal(rates[0], rates[1])
+    assert len(_JIT_CACHE) == 1
+
+
+def test_core_module_entries_hit_only_for_the_same_budget():
+    """A core_module entry carries its budget in the key and the identity check: the same
+    budget hits, another budget compiles anew."""
+    from unittest.mock import patch
+
+    class Dummy:
+        pass
+
+    params, eos, budget, other = Dummy(), Dummy(), Dummy(), Dummy()
+    with patch(
+        'aragog.solver.cvode_jax._make_jitted_rhs_and_jacobian',
+        side_effect=[('rhs_a', 'jac_a'), ('rhs_b', 'jac_b')],
+    ) as make:
+
+        def get(b):
+            entry, hit = _get_or_create_jitted('core_module', False, params, eos, b)
+            return entry.rhs_jit, entry.jac_jit, hit
+
+        assert get(budget) == ('rhs_a', 'jac_a', False)
+        assert get(budget)[2] is True
+        assert get(other)[:2] == ('rhs_b', 'jac_b')
+        assert get(budget)[:2] == ('rhs_a', 'jac_a')
+    assert make.call_args_list[0].args[-1] is budget
+    assert make.call_args_list[1].args[-1] is other
+    # A reused address: the key of a new budget holds an entry built for another one
+    forged = Dummy()
+    key = ('core_module', False, id(params), id(eos), id(forged))
+    _JIT_CACHE[key] = _JitCacheEntry('stale_rhs', 'stale_jac', params, eos, budget)
+    with patch(
+        'aragog.solver.cvode_jax._make_jitted_rhs_and_jacobian',
+        return_value=('fresh_rhs', 'fresh_jac'),
+    ):
+        assert _get_or_create_jitted('core_module', False, params, eos, forged)[1] is False
+
+
 def test_phase_params_convection_distinct_and_cached(shared_eos):
     """Verify distinct PhaseParams instances alter output and are cached independently."""
     eos = shared_eos

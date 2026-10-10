@@ -261,6 +261,160 @@ def test_integrals_evaluate_the_powers_at_every_node(traced):
 
 
 @pytest.mark.unit
+def test_integrals_compute_bower2018_core_energy():
+    """bower2018 records C_core * Delta T_core in the step integrals."""
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[2000.0, 2000.0], [4000.0, 3900.0]]),
+    )
+    s, _ = _fake_solver(sol)
+    s._core_bc = 'bower2018'
+    s._n_stag = 1
+    s._core_cap = 1.5e27
+    out = s._compute_step_energy_integrals()
+    assert out['core'] == pytest.approx(1.5e27 * (3900.0 - 4000.0))
+    assert out['core'] != 0.0
+
+
+@pytest.mark.unit
+def test_integrals_split_quadrature_at_inner_core_onset():
+    """step_dE_core splits Gauss-Legendre quadrature across inner-core onset."""
+    import jax
+
+    from aragog.core.budget import CoreEnergyBudget
+    from aragog.core.melting import QuadraticMeltingCurve
+    from aragog.core.profiles import GaussianCoreProfiles
+
+    prof = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=136e9,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=750e3,
+        alpha_c=1.0,
+        c_light=560.0 / 12150.0,
+    )
+    t_onset = float(budget.t_onset)
+    assert budget.superheat(0.0, t_onset) == pytest.approx(0.0, abs=1e-6)
+    assert budget.superheat(prof.r_cmb, budget.t_freeze) == pytest.approx(0.0, abs=1e-6)
+
+    # Reference integral via high-order substitution quadrature across onset:
+    # 128-point GL in T on [t_onset + 25, t_onset] and 128-point GL in u = sqrt(t_onset - T)
+    # on [t_onset, t_onset - 25].
+    c_eff_vmap = jax.jit(jax.vmap(budget.effective_capacity))
+    ref_nodes, ref_weights = np.polynomial.legendre.leggauss(128)
+    h1 = 0.5 * (-25.0)
+    m1 = 0.5 * (2.0 * t_onset + 25.0)
+    ref_t1 = m1 + h1 * ref_nodes
+    ref_dE1 = float(h1 * np.sum(ref_weights * np.asarray(c_eff_vmap(ref_t1))))
+
+    u_max = np.sqrt(25.0)
+    ref_u_nodes = 0.5 * u_max * (1.0 + ref_nodes)
+    ref_t2 = t_onset - ref_u_nodes**2
+    ref_dE2 = float(
+        -np.sum(0.5 * u_max * ref_weights * 2.0 * ref_u_nodes * np.asarray(c_eff_vmap(ref_t2)))
+    )
+    i_ref = ref_dE1 + ref_dE2
+
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[2000.0, 2000.0], [t_onset + 25.0, t_onset - 25.0]]),
+    )
+    s, _ = _fake_solver(sol)
+    s._core_bc = 'core_module'
+    s._n_stag = 0
+    s._core_module_budget = budget
+
+    out = s._compute_step_energy_integrals()
+    dE_core = out['core']
+    rel_err = abs(dE_core - i_ref) / abs(i_ref)
+    assert rel_err < 1e-10
+
+    # Unsplit comparison: standard 32-point Gauss-Legendre quadrature across onset
+    h_mut = 0.5 * (-50.0)
+    m_mut = 0.5 * (2.0 * t_onset)
+    mut_nodes, mut_weights = np.polynomial.legendre.leggauss(32)
+    t_mut = m_mut + h_mut * mut_nodes
+    dE_mut = float(h_mut * np.sum(mut_weights * np.asarray(c_eff_vmap(t_mut))))
+    mut_err = abs(dE_mut - i_ref) / abs(i_ref)
+    assert mut_err > 1e-4
+
+
+@pytest.mark.unit
+def test_integrals_sub_interval_below_onset_resolves_cusp():
+    """step_dE_core resolves the square root cusp on sub-intervals strictly below onset."""
+    import jax
+
+    from aragog.core.budget import CoreEnergyBudget
+    from aragog.core.melting import QuadraticMeltingCurve
+    from aragog.core.profiles import GaussianCoreProfiles
+
+    prof = GaussianCoreProfiles(
+        rho_cen=12500.0,
+        length_scale=7272e3,
+        r_cmb=3480e3,
+        p_cmb=136e9,
+        alpha=1.35e-5,
+        c_p=840.0,
+    )
+    curve = QuadraticMeltingCurve(t_m0=2677.0, t_m1=2.95e-12, t_m2=8.37e-25)
+    budget = CoreEnergyBudget(
+        prof,
+        curve,
+        ds_fusion=170.0,
+        icn_width=10.0,
+        latent_heat=750e3,
+        alpha_c=1.0,
+        c_light=560.0 / 12150.0,
+    )
+    t_onset = float(budget.t_onset)
+    c_eff_vmap = jax.jit(jax.vmap(budget.effective_capacity))
+
+    # Interval strictly below onset: starting 1e-5 K below onset
+    ta = t_onset - 1e-5
+    tb = t_onset - 1.0
+    ua = np.sqrt(max(0.0, t_onset - ta))
+    ub = np.sqrt(max(0.0, t_onset - tb))
+    gl_nodes_ref, gl_weights_ref = np.polynomial.legendre.leggauss(512)
+    u_nodes_ref = 0.5 * (ua + ub) + 0.5 * (ub - ua) * gl_nodes_ref
+    t_ref = t_onset - u_nodes_ref**2
+    w_ref = (ua - ub) * gl_weights_ref * u_nodes_ref
+    i_ref = float(np.sum(w_ref * np.asarray(c_eff_vmap(t_ref))))
+
+    sol = OptimizeResult(
+        t=np.array([0.0, 1.0]),
+        y=np.array([[2000.0, 2000.0], [ta, tb]]),
+    )
+    s, _ = _fake_solver(sol)
+    s._core_bc = 'core_module'
+    s._n_stag = 0
+    s._core_module_budget = budget
+
+    out = s._compute_step_energy_integrals()
+    dE_core = out['core']
+    rel_err = abs(dE_core - i_ref) / abs(i_ref)
+    assert rel_err < 1e-10
+
+    # Canary: standard 32-point Gauss-Legendre in T without u-substitution has err > 5e-7
+    h_std = 0.5 * (tb - ta)
+    m_std = 0.5 * (tb + ta)
+    nodes_std, weights_std = np.polynomial.legendre.leggauss(32)
+    t_std = m_std + h_std * nodes_std
+    dE_std = float(h_std * np.sum(weights_std * np.asarray(c_eff_vmap(t_std))))
+    std_err = abs(dE_std - i_ref) / abs(i_ref)
+    assert std_err > 5e-7
+
+
+@pytest.mark.unit
 def test_a_trace_short_of_the_steps_warns(monkeypatch, caplog):
     monkeypatch.setattr(
         es.EntropySolver, '_energy_trace', staticmethod(lambda nodes, t, y: (t, y))
@@ -406,6 +560,7 @@ _FIELDS = {
     'Q_tidal_cons': 'step_dE_Q_tidal_cons_J',
     'solver_residual': 'step_solver_residual_J',
     'state_heat': 'step_dE_state_heat_J',
+    'core': 'step_dE_core_J',
 }
 
 
@@ -438,7 +593,7 @@ def test_a_failed_solve_reports_zero_integrals(monkeypatch):
     s.solve()
     out = s.get_state()
     assert s.stop_early and not calls
-    assert [getattr(out, f) for k, f in _FIELDS.items() if k != 'F_cmb_step_avg'] == [0.0] * 8
+    assert [getattr(out, f) for k, f in _FIELDS.items() if k != 'F_cmb_step_avg'] == [0.0] * 9
 
 
 @pytest.mark.unit

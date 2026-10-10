@@ -1,6 +1,236 @@
 # Core boundary condition modes
 
-The `boundary_conditions.core_bc` setting selects the formulation used at the core-mantle boundary (CMB) when `inner_boundary_condition = 1` (core cooling). Four modes are available; they differ in what is treated as the primary state variable, what is reconstructed, and how strongly the bottom mantle cell is coupled to the core.
+The `boundary_conditions.core_bc` setting selects the formulation used at the core-mantle boundary (CMB) when `inner_boundary_condition = 1` (core cooling). Five modes are available; they differ in what is treated as the primary state variable, what is reconstructed, and how strongly the bottom mantle cell is coupled to the core.
+
+## `core_module`
+
+State vector length: $N + 2$ (with the CMB entropy gradient $dS/dr|_\text{cmb}$ and $T_\text{cmb}$ as the extra states; the temperature is driven by the core evolution budget of [`aragog.core`](../Reference/api/aragog.core.md)), plus the `layer_cells` shell temperatures with `stratification = true`.
+
+![Structure of the core_module model](../figures/core_module_sketch_light.png#only-light){ width="100%" }
+![Structure of the core_module model](../figures/core_module_sketch_dark.png#only-dark){ width="100%" }
+
+**Figure 1.** Structure of the `core_module` model, not to scale. (a) A wedge through the core and the base of the mantle, with the terms of the core energy budget as arrows: the secular cooling $Q_s$, the latent heat $Q_L$ released at the inner-core boundary (ICB), the gravitational energy $Q_g$ of the light elements rejected there, the radiogenic heat $Q_R$ and the heat flow through the CMB, $Q_\text{cmb}$. (b) Temperature against radius: the core adiabat $T_a(r)$, dotted inside the inner core, the melting curve, which meets the adiabat at the ICB radius $r_\text{icb}$, and the drop $\Delta T$ from the CMB temperature $T_\text{cmb}$ to the mantle temperature $T_m$ across the boundary layer of thickness $\delta$, with the flux law of a core hotter than the mantle. The dashed parts are the optional resolved shell above $r_\text{sh}$, whose subadiabatic part is the stable layer; with a shell, the flux law takes the temperature of the top shell cell in place of $T_\text{cmb}$, and the convecting core loses the heat that crosses the shell base in place of $Q_\text{cmb}$. The curves are illustrative shapes, not solver output.
+
+| Symbol | Meaning | Configuration key (default) |
+|---|---|---|
+| $T_\text{cmb}$ | CMB temperature, a solver state | start value from `set_initial_core_temperature`; without one, $T_m$ at a first start |
+| $T_m$ | bottom mantle cell at the CMB pressure | from the mantle state |
+| $q$, $k$, $\Delta r_{1/2}$ | CMB heat flux, conductivity of the boundary layer, half cell above the CMB | from the mantle phase model and the mesh |
+| $\delta$, $\mathrm{Ra}_\text{crit}$ | boundary-layer thickness, critical Rayleigh number | `ra_crit_cmb` (450) |
+| $T_a(r)$ | core adiabat | `alpha` ($1.35\times 10^{-5}$ K$^{-1}$), `c_p` (840 J kg$^{-1}$ K$^{-1}$), `adiabat_mode` (`"exact"`) |
+| core structure | Gaussian core density and its pressure | `rho_cen` (12500 kg m$^{-3}$), `length_scale` ($7.272\times 10^6$ m), or the fit to `m_core`, `p_cen`; `p_cmb` (the solver's CMB pressure), `pressure_mode` (`"quadrature"`) |
+| melting curve | iron alloy or quadratic | `melting_curve` (`"iron"`), `light_element_fraction` (0), `depression` (0), or `t_m0`, `t_m1`, `t_m2` |
+| $Q_s$, $C_s$ | secular cooling | `capacity_mode` (`"profile"`) |
+| $Q_L$, $C_L$ | latent heat at the ICB | `ds_fusion` (172.8 J kg$^{-1}$ K$^{-1}$) or `latent_heat` |
+| $Q_g$, $C_g$ | gravitational energy of the rejected light elements | `alpha_c` (0), `c_light` (0); zero with either default |
+| $Q_R$ | radiogenic heat | `q_radio` (0 W) |
+| $r_\text{sh}$, stable layer | resolved shell | `stratification` (`false`), `layer_base_fraction` (0.4), `k_core` (no default), `layer_cells` (64), `layer_top_cell` (2000 m), `layer_k_mix` ($10^7$ m$^2$ s$^{-1}$), `layer_g_mix` ($10^{-3}$) |
+
+The keys are described under [Parameters](#parameters).
+
+### Core energy budget
+
+The core carries its own physics instead of an isothermal reservoir: the CMB temperature evolves through an effective heat capacity
+
+$$
+Q_\text{cmb} = -\tilde{C}(T_\text{cmb})\, \frac{dT_\text{cmb}}{dt} + Q_R, \qquad \tilde{C} = C_s + C_L + C_g,
+$$
+
+where $Q_\text{cmb}$ is the heat flow out of the core at the CMB, $Q_R$ the radiogenic power of the core, and $C_s$, $C_L$ and $C_g$ the secular, latent and gravitational terms of the capacity. Each term times the cooling rate $-dT_\text{cmb}/dt$ is the heat flow $Q_s$, $Q_L$ or $Q_g$ of the figure. The secular term integrates the mass-weighted adiabat over the closed-form Gaussian core profiles, and the latent and gravitational terms follow inner-core growth through the implicit-function sensitivity of the adiabat-liquidus crossing.
+
+All terms are cross-validated against the Leeds `thermal_history` implementation and pinned against Nimmo (2015, ch. 9.08) Table 2; the entropy side ([`CoreEntropyBudget`](../Reference/api/aragog.core.md)) adds the dynamo criterion and field-strength scaling.
+
+### Inner-core growth and the melting curve
+
+At nucleation onset, the latent capacity rises from zero as
+
+$$
+C_L \propto (T_\text{onset} - T_\text{cmb})^{1/2},
+$$
+
+with $T_\text{onset}$ the CMB temperature at the onset: the inner-core radius grows as the square root of the undercooling at the centre.
+
+At freeze-out completion, latent heat release ceases abruptly once the entire core has solidified, causing a discontinuous drop in $\tilde{C}$. On an Earth-like core profile (length scale 7200 km, CMB radius 3480 km, $\Delta s_\text{fusion} = 170$ J/kg/K) the drop is:
+
+- a factor of $\approx 3.14$ for the quadratic melting curve;
+- $\approx 50\%$ for the iron alloy curve.
+
+The size of the drop depends on the core geometry and $\Delta s_\text{fusion}$.
+
+The melting curve is the PALEOS iron prescription (Anzellini et al. 2013) with a light-element depression, or the Nimmo (2015, ch. 9.08, Eq. 6) quadratic. The piecewise Anzellini fit carries a ~0.73 K jump at the 98.5 GPa triple point, which is blended smoothly with a $C^2$ smootherstep over a 3.0 GPa half-width, bounding the temperature adjustment to 0.363 K and recovering exact branch values outside the range 95.5 to 101.5 GPa. This adjustment is far below the experimental uncertainty of the measured curve.
+
+### Coupling to the mantle solver
+
+Two properties matter for coupled stability.
+
+- The reported core temperature is the integrated boundary state, not the lowermost mantle node's EOS read-off, so it does not inherit the node's phase-branch snaps at crystallisation onset.
+- The boundary solve carries a custom JVP, so reverse-mode autodiff sees the implicit-function sensitivities through inner-core growth. The CVODE analytic-Jacobian factory covers the mode through `dSdt_core_module` (the budget rides inside the JAX trace), so the production path runs the analytic Jacobian, and a solver without the factory registered falls back to a finite-difference Jacobian.
+
+### CMB heat flux law
+
+The CMB heat flux is a boundary-layer law in the core-mantle temperature contrast
+
+$$
+\Delta T = T_\text{cmb} - T_m,
+$$
+
+where $T_m$ is the bottom mantle cell's entropy evaluated at the CMB pressure (the cell carried adiabatically to the boundary). Following the parameterised-convection closure of Foley & Driscoll (2016, eq. 20) with the boundary-layer thickness set by a critical Rayleigh number (Thiriet et al. 2019, eqs. 13 and 14 with exponent 1/3),
+
+$$
+q_\text{conv} = \frac{k\,\Delta T}{\delta}, \qquad \delta = \left(\frac{\mathrm{Ra}_\text{crit}\, \kappa\, \eta}{\alpha \rho g\, \Delta T}\right)^{1/3}, \qquad \kappa = \frac{k}{\rho c_p},
+$$
+
+with the layer's conductivity $k$, density $\rho$, heat capacity $c_p$, expansivity $\alpha$ and viscosity $\eta$, the thermal diffusivity $\kappa$ and the CMB gravity $g$.
+
+The default $\mathrm{Ra}_\text{crit} = 450$ is the theoretical value Thiriet et al. (2019, Table 2) take for the upper boundary layer; their lower-layer law (Deschamps & Sotin 2000) is not adopted.
+
+### Properties of the boundary layer
+
+The layer's conductivity, density, heat capacity, expansivity and viscosity are evaluated at the CMB pressure and the layer's mean temperature
+
+$$
+\bar{T} = \frac{T_\text{cmb} + T_m}{2},
+$$
+
+the temperature at which Thiriet et al. (2019, p. 140) take the viscosity of the lower boundary layer (Foley & Driscoll 2016 leave that temperature to the model). With a resolved shell the temperature of the top shell cell takes the place of $T_\text{cmb}$ in $\bar{T}$ and in $\Delta T$ ([Resolved stable layer](#resolved-stable-layer-experimental)). The solver finds the entropy of that state by inverting the EOS temperature at the CMB pressure and evaluates the mantle phase model there. The layer's viscosity is then the rheological blend of the mantle model at the layer's melt fraction: past the rheological transition its $\log_{10}\eta$ is closer to that of the melt than to that of the solid, and it approaches the melt viscosity toward the liquidus.
+
+In a partly molten layer $c_p$ and $\alpha$ are those of the two phases, without the latent heat or the density change of melting, each phase evaluated at its end-member entropy. The heat capacity is weighted by the Lever-rule mass fractions $x_i$ and the expansivity by the volume fractions:
+
+$$
+c_p = \sum_i x_i\, c_{p,i}, \qquad \alpha = \rho \sum_i \frac{x_i\, \alpha_i}{\rho_i}, \qquad \frac{1}{\rho} = \sum_i \frac{x_i}{\rho_i},
+$$
+
+with $c_{p,i}$, $\alpha_i$ and $\rho_i$ the heat capacity, expansivity and density of phase $i$, and $\rho$ the harmonic mean density of the two phases. This volume weighting applies to the boundary layer only; the mantle cells take the composite expansivity, or the mass-weighted one with `cp_blend = "linear"`.
+
+### Flux at the phase boundaries
+
+The heat capacity and the expansivity of the layer are continuous at the solidus and the liquidus. The viscosity is continuous in entropy too when `matprop_smooth_width` is positive (PROTEUS sets $10^{-2}$ by default).
+
+With a width of 0, as in the tests, it is not: the rheological blend of the mantle model gives the melt viscosity a weight of 0.5 % in $\log_{10}\eta$ already at zero melt fraction (transition at a melt fraction of 0.4, width 0.15). This takes the solid viscosity of the tests, $10^{21}$ Pa s, to $8.0\times10^{20}$ Pa s, so the flux steps up by the cube root of that ratio where the mean temperature crosses the solidus. At the liquidus the viscosity steps from 10.16 Pa s to the melt viscosity of 10 Pa s, and the flux steps with it.
+
+The flux steps at a positive width too, because the tables hold the temperature constant over a band of entropy next to each phase boundary, so the layer's entropy jumps across that band where its mean temperature crosses the boundary. The widths of that band, in J kg$^{-1}$ K$^{-1}$, are:
+
+| Tables | CMB pressure | Band at the solidus | Band at the liquidus |
+|---|---|---|---|
+| Test tables | 146 GPa, the CMB pressure of the tests | 76 | 63 |
+| PALEOS tables of the coupled runs, 1 Earth-mass run | 103 GPa | 30 | 59 |
+| PALEOS tables of the coupled runs, 3 and 5 Earth-mass runs | the CMB of those runs | 80 to 83 | none |
+
+The steps of the flux, by `matprop_smooth_width`, are:
+
+| Width | Step from | Step at the solidus | Step at the liquidus |
+|---|---|---|---|
+| 0 | the viscosity | 7.7 % | 0.5 % |
+| $10^{-2}$ | the temperature band, test configuration | 2.7 % | 0.16 % |
+
+### Closure choices of Aragog
+
+Three closure choices are Aragog's own, not the papers':
+
+1. The flux never falls below conduction across the half cell between the CMB and the bottom staggered node.
+2. A core colder than the mantle above it (a stably stratified layer) gains heat by that conduction only.
+3. A partly molten layer has no buoyancy from melting.
+
+The first two give the applied flux
+
+$$
+q = \begin{cases} \max(q_\text{conv},\, q_\text{cond}), & \Delta T > 0, \\ q_\text{cond}, & \Delta T \le 0, \end{cases} \qquad q_\text{cond} = \frac{k\,\Delta T}{\Delta r_{1/2}},
+$$
+
+with $q_\text{cond}$ the conduction across the half cell of width $\Delta r_{1/2}$. With the first two the flux has the sign of $\Delta T$ and is continuous through zero.
+
+The composite expansivity of the mantle model, which holds the density change of melting, is larger in the mush by a factor whose cube root, the factor on the flux, is 1.35 at the liquidus to 2.15 at the solidus at the CMB pressure of the test tables and a `matprop_smooth_width` of 0.
+
+### NumPy and JAX right-hand sides
+
+NumPy reads each $\alpha_i$ from the `thermal_exp` tables when they are present, and JAX always takes
+
+$$
+\alpha_i = \frac{\rho_i\, c_{p,i}}{T} \left|\frac{\partial T}{\partial P}\right|_S
+$$
+
+of each phase. At the CMB pressure of the test tables and a layer mean temperature below 20000 K the two differ by up to $1.8 \times 10^{-4}$ in the solid and $8 \times 10^{-6}$ in the mush, which moves the flux by up to $6 \times 10^{-5}$. At that pressure, in the melt near the 22400 K edge of the tables, they differ by $8.7 \times 10^{-4}$, and the flux by $2.9 \times 10^{-4}$.
+
+The NumPy and JAX right-hand sides apply the same flux law and differ by this expansivity source and, at a mean temperature within rounding of a phase-boundary temperature, by the entropy that each temperature inversion picks in the flat band, which changes the flux by up to the step above.
+
+CVODE integrates the JAX one when `use_jax_jacobian` is set (the default) and a JAX CVODE factory is registered, as PROTEUS does, and the NumPy one otherwise; the NumPy one also gives the output flux, and the per-call energy terms where the JAX batch evaluation fails. In each, the bottom cell and the core see the same flux, so the CMB exchange conserves energy.
+
+### Response of the core
+
+The core temperature feeds the flux back, and the core cools at the rate its heat capacity allows, which without a resolved shell is
+
+$$
+\frac{dT_\text{cmb}}{dt} = -\frac{A_\text{cmb}\, q - Q_R}{\tilde{C}},
+$$
+
+with $A_\text{cmb}$ the area of the CMB, so that $Q_\text{cmb} = A_\text{cmb}\, q$; the contrast itself also follows the mantle base, which can cool much faster. The case with a shell is under [Resolved stable layer](#resolved-stable-layer-experimental).
+
+In the 10-node test of a 300 K contrast over a partly molten base (melt fraction 0.67 to 0.65 over 4 yr), the flux is about $1.25 \times 10^5$ W m$^{-2}$ and the core cools by about 0.33 K per year, while the base cools faster and the contrast grows to about 330 K.
+
+The flux follows the layer's mean temperature rather than the base: a 1000 K contrast over a base at melt fraction 0.19 puts the layer at melt fraction 0.51, past the rheological transition, and carries about $3.4 \times 10^4$ W m$^{-2}$, while a layer whose mean temperature stays below the transition has a solid-like viscosity and a far smaller flux. Where $\delta$ exceeds the half cell, the flux is the conduction across it, $q_\text{cond}$, which scales with the mesh spacing.
+
+### State, output node and initial temperature
+
+The CMB entropy gradient stays in the state so the layout matches `energy_balance`, and it evolves by the same balance with $\tilde{C}(T_\text{cmb})$ in place of the reservoir factor, but no other rate, no flux and no output reads it; it enters only the integrator's error control, and `--initial-dsdr-cmb` sets no flux for this mode.
+
+The output's CMB node is the bottom cell carried to the CMB pressure: `T_basic[0]` is $T_m$, so $T_\text{cmb} - T_m$ is the contrast the flux acts on (with a shell, the top shell cell in place of $T_\text{cmb}$), its entropy gradient (`dSdr_b[0]`) is zero, and its flux components carry the applied flux as conduction.
+
+The default initial core temperature is $T_m$, so a run without a shell and without a set core temperature has no CMB flux at first. With a shell the flux law takes the top shell cell, which starts on the core adiabat half a cell below the CMB, slightly above $T_m$. The solver warns once when a core temperature set with `set_initial_core_temperature` differs from $T_m$ by more than 20 percent at a start. The set value applies to every later start until it is cleared with `None`; a start without a set value (the default, or a hot start from the previous solution) does not warn.
+
+### Resolved stable layer (experimental)
+
+With `stratification = true` in the module parameters, the outer core above the radius `layer_base_fraction` $\times\, r_\text{cmb}$ is a resolved shell of finite volumes, finest at the CMB, whose temperatures are part of the solver state after `T_core`; the state indices up to `T_core` are those of the unstratified mode. With a shell the state $T_\text{cmb}$ is the convecting adiabat carried to the CMB, and the top shell cell holds the temperature at the top of the core.
+
+In the shell heat moves by conduction (Greenwood et al. 2021, eq. 20),
+
+$$
+\rho c_p\, \frac{\partial T}{\partial t} = \nabla \cdot (k \nabla T),
+$$
+
+with $T$ the temperature of the shell and $\rho$, $c_p$ and $k$ the density, specific heat and conductivity of the core. Where the temperature falls outward faster than the adiabat, heat also moves by convective mixing. The mixing closure is a mixing-length flux
+
+$$
+F_\text{mix} = \rho c_p\, K_\text{mix}\, \frac{(-a)^{3/2}}{\sqrt{g_\text{mix}}}, \qquad a = \frac{\partial (T - T_a)}{\partial r},
+$$
+
+with $a$ the gradient of the departure from the convecting adiabat $T_a$; it is zero for $a \ge 0$ and continuous with its derivative at $a = 0$. Its two constants are `layer_k_mix` ($K_\text{mix}$), the eddy diffusivity at the reference superadiabatic gradient $g_\text{mix}$, and `layer_g_mix`, that reference gradient as a fraction of the adiabatic gradient at the CMB; with the defaults a shell under a CMB flux of $10^5$ W m$^{-2}$ mixes within about 40 days.
+
+The subadiabatic part conducts only and is the stable layer. Its base, reported as `core_layer_base`, is the shell base plus the width of every cell whose lower face is not stably stratified (anomaly gradient below the reference), weighted smoothly. Onset, growth, erosion and re-formation follow from the profile without events; the scheme of Greenwood et al. (2021, eq. 25, p. 6), the `leeds_thermal` model of [thermal_history](https://github.com/sam-greenwood/thermal_history), instead moves the layer base by a stability check after each step and mixes an unstable part instantly.
+
+The CMB flux law sees the top shell cell, so a core heated from above warms its layer first and its convecting part only when the heat reaches the layer base. The shell base sits on the convecting adiabat, and the heat crossing it is what the convecting core loses: its capacity integrals run to the shell base, the gravitational term to the layer base, and the shell carries its own sensible heat.
+
+Radiogenic heat is spread uniformly over the core mass,
+
+$$
+h = \frac{Q_R}{M_\text{core}}:
+$$
+
+the convecting core keeps $h M(r_\text{sh})$, with $M(r_\text{sh})$ the mass below the shell base, and each shell cell $h\, m_j$ of its mass $m_j$, so a layer stores the heat of its own mass.
+
+The entropy margin is the sum over the convecting core and the shell of the balance of Greenwood et al. (2021, eq. 4): every source is delivered at the temperature of the top shell cell, and each part has the conduction sink of its own gradient. The CMB heat flow reaches the margin only through the state, since the top cell is the reference temperature.
+
+The shell must hold the layer and lie above the inner core. The solver refuses an inner core that reaches the shell base and warns once when the layer base comes within three cells of it; a lower `layer_base_fraction` gives a deeper shell. A stratified core runs on CVODE or SciPy BDF, which the solver also falls back to without CVODE; Radau is refused, since the stiff mixing of the shell takes it minutes per call.
+
+### Limits and energy closure with a layer
+
+The resolved layer is experimental, and the solver warns once when `stratification = true`.
+
+Against the `leeds_thermal` model, integrated alone with SciPy BDF, it reproduces a layer under a CMB flow below the conducted adiabatic flow, with heat removed, added or neither at the CMB; when the flow rises above that value the two models erode the layer differently (aragog mixes it from the CMB down, `leeds_thermal` removes it in one step of its stability check), and when the flow falls back both form a new layer of similar depth ([verification, section 13](core_verification.md#13-stable-layer-against-thermal_history)); it meets its analytic limits and resumes where it stopped, and its NumPy and JAX right-hand sides match ([section 12](core_verification.md#12-numpy-and-jax-right-hand-sides-and-the-analytic-jacobian)).
+
+In the solver, an eroding layer stalls CVODE at the default tolerances: the step size collapses where the mixing switches on in the eroding cells. In the SciPy BDF comparison the centre temperature and the inner-core onset have not converged at a relative tolerance of 1e-8, and the comparison runs at 1e-11; the `solver.rtol` that CVODE needs for them is not measured.
+
+With a layer, the core heat of a 5 yr CVODE call that heats the core from above closes against the CMB heat to one of two values that a rounding-level change of the input selects:
+
+- $1.9 \times 10^{-6}$ or $8.2 \times 10^{-6}$ (a relative change of $10^{-15}$ in the core conductivity switches between them);
+- $7.7 \times 10^{-6}$ or $8.2 \times 10^{-6}$ with the exact adiabat and the boundary-layer properties at the mean temperature.
+
+An rtol of $10^{-10}$ does not change this. The core rate of a stratified state is ill-conditioned: a relative change of $10^{-14}$ in the shell temperatures moves it by $1.5 \times 10^{-6}$, which also sets the agreement of its NumPy and JAX evaluations. `test_a_core_heated_from_above_warms_its_top_and_closes_its_heat` holds that call to $10^{-5}$.
+
+Without a layer the smoke tests hold $10^{-6}$:
+
+- with Radau at an rtol of $10^{-6}$;
+- with CVODE at the default rtol for a hot core above the onset;
+- with CVODE at an rtol of $10^{-10}$ across the inner-core onset, which closes to $1.5 \times 10^{-6}$ at the default rtol ([verification, section 9](core_verification.md#9-a-cvode-solve-across-the-inner-core-onset)).
 
 ## `quasi_steady`
 
@@ -44,9 +274,89 @@ Treats the core temperature as an ODE state variable, with the CMB heat flux com
 
 | Need | Recommended `core_bc` |
 |------|----------------------|
+| Core evolution with inner-core growth, or a core temperature decoupled from basal-node phase snaps | `core_module` |
 | Production PROTEUS runs and SPIDER-parity validation | `energy_balance` (default) |
 | Quick standalone exploration where SPIDER parity is not required | `quasi_steady` |
 | Very steep mushy-band gradient that destabilises `energy_balance` | `gradient` (experimental) |
-| Reproducing pre-2026 results | `bower2018` (legacy) |
+| Parity tests with a conduction-only CMB flux | `bower2018` (legacy) |
 
 The state-vector layout for each mode is documented in [`solver/entropy_solver.py`](https://github.com/FormingWorlds/aragog/blob/main/src/aragog/solver/entropy_solver.py) at the `_build_jac_sparsity` and `set_initial_entropy` methods; the test class `TestEnergyBalanceCoreBC` in `tests/test_entropy_pytest.py` exercises the `energy_balance` mode directly.
+
+## Configuration parameters and diagnostics for `core_module`
+
+### Parameters
+
+The mode needs JAX (`pip install 'fwl-aragog[jax]'`); without it the solver refuses the mode when it is built. When `core_bc = "core_module"`, which needs `inner_boundary_condition = 1`, the module options are specified under `[boundary_conditions.core_module_params]`; any other key is refused when the configuration is read, so `aragog validate` reports it:
+
+- `fit_profile`, `m_core`, `p_cen`: the core mass (kg) and central pressure (Pa) the Gaussian profile is fitted to. With both given the profile is fitted (unless `fit_profile = false`); one of them alone, or `fit_profile = true` without them, is refused, and `fit_profile` must be true or false (1 or 0 accepted). PROTEUS fills both from its structure solve.
+- `rho_cen`: Core central density (kg m$^{-3}$), used when no fit is made. Default $12500.0$. The fit does not start from it.
+- `length_scale`: Core Gaussian density length scale (m), used when no fit is made. Default $7.272\times 10^6$. The fit searches it in $[r_\text{cmb}/3, 100\, r_\text{cmb}]$ and does not start from this value.
+- `p_cmb`: CMB pressure (Pa) for the profile. Default: the solver's CMB pressure.
+- `pressure_mode`: How the profile's pressure is computed, `"quadrature"` (default) or `"labrosse"`.
+- `adiabat_mode`: How the core adiabat is computed, `"exact"` (default), which integrates $d \ln T / dr = -\alpha g / c_p$ with the exact gravity of the Gaussian density, or `"small_radius"`, the closed form $T_\text{cmb} \exp((r_\text{cmb}^2 - r^2)/D^2)$ of gravity linear in $r$ that Labrosse et al. (2001) and Nimmo (2015) use. The closed form gives a 2 % larger $T_\text{cen}/T_\text{cmb}$ for the Earth's core and a larger one for larger cores.
+- `alpha`: Thermal expansivity (K$^{-1}$). Default $1.35\times 10^{-5}$.
+- `c_p`: Specific heat capacity (J kg$^{-1}$ K$^{-1}$). Default $840.0$.
+- `melting_curve`: Iron melting curve parameterisation, `"iron"` (PALEOS / Anzellini et al. 2013) or `"quadratic"` (Nimmo 2015, ch. 9.08, Eq. 6). Default `"iron"`; the triple-point blend of the iron curve is described above.
+- `light_element_fraction`: Mole fraction of light elements depressing the iron melting curve. Default $0.0$.
+- `depression`: Melting-point depression per unit mole fraction (dimensionless). Default $0.0$.
+- `t_m0`, `t_m1`, `t_m2`: Coefficients of the quadratic melting curve (K, Pa$^{-1}$, Pa$^{-2}$), all three required with `melting_curve = "quadratic"`. (PROTEUS defaults: $2677.0$, $2.95\times 10^{-12}$, $8.37\times 10^{-25}$.)
+- `ds_fusion`: Entropy of fusion at the inner-core boundary (J kg$^{-1}$ K$^{-1}$). Default $172.8$.
+- `latent_heat`: Constant latent heat of fusion (J kg$^{-1}$), in place of $T_\text{icb}\,\Delta s$ from `ds_fusion` (Nimmo 2015, ch. 8.02 and 9.08, Table 2, uses 750 kJ kg$^{-1}$).
+- `icn_width`: Temperature width of the inner-core nucleation diagnostic sigmoid (K). Diagnostic only; does not affect the effective heat capacity. Default $10.0$.
+- `alpha_c`: Compositional expansivity of the outer-core alloy (dimensionless). Default $0.0$.
+- `c_light`: Light-element mass fraction of the outer core (dimensionless). Default $0.0$.
+- `capacity_mode`, `legacy_rho_core`, `legacy_tfac`: `"profile"` (default) integrates the Gaussian profile; `"legacy"` uses the isothermal reservoir $\rho_\text{core} V c_p \,\mathrm{tfac}$ with the two legacy values.
+- `stratification`: Boolean flag enabling the resolved stable layer (experimental, see above). Default `false`.
+- `k_core`: Core thermal conductivity (W m$^{-1}$ K$^{-1}$), required with `stratification = true` (no default here; PROTEUS uses $130.0$).
+- `layer_base_fraction`: Base of the resolved shell as a fraction of the CMB radius. Default $0.4$.
+- `layer_cells`: Number of shell cells. Default $64$.
+- `layer_top_cell`: Width of the shell cell at the CMB (m); the cells widen geometrically downward. Default $2000$.
+- `layer_k_mix`: Eddy diffusivity of convective mixing at the reference superadiabatic gradient (m$^2$ s$^{-1}$). Default $10^7$.
+- `layer_g_mix`: Reference superadiabatic gradient, as a fraction of the adiabatic gradient at the CMB. Default $10^{-3}$.
+- `q_radio`: Core radiogenic power (W). Default $0.0$.
+- `ra_crit_cmb`: Critical Rayleigh number of the mantle-side CMB boundary layer (dimensionless). Default $450.0$; positive and finite.
+
+The dynamo field-strength options `f_ohm` and `flux_geometry` belong to PROTEUS, which builds the entropy budget itself; they are not accepted here.
+
+### Diagnostic outputs
+
+PROTEUS writes seven diagnostics of this budget to its output helpfile on every `core_module` row:
+
+- `core_r_icb`: the inner-core radius;
+- `core_C_eff`: the effective heat capacity $\tilde{C}(T_\text{cmb})$;
+- `core_dynamo_margin`: the entropy margin available to a dynamo;
+- `core_B_rms`: the rms field strength;
+- `core_regime`: the crystallisation regime code (0 fully liquid, 1 bottom-up, 4 fully frozen; the codes 2 top-down and 3 snow mark states the solver refuses, below);
+- `core_strat_depth`: the stable layer thickness below the CMB;
+- `core_T_top`: the temperature at the top of the core (the top shell cell with a shell, else $T_\text{cmb}$).
+
+The budget books latent and gravitational heat only for an inner core that grows from the centre and for its freeze-out. A call whose core enters the top-down or snow regime, or freezes completely without growing from the centre, raises an error at the end of the call, checked at every accepted step; the energetics of those regimes are not modelled. A call that fails is not checked: it stops early and books no energy.
+
+The light-element fraction of the outer core is fixed: the gravitational term uses a constant `c_light` and the iron curve a constant depression, where complete rejection of light elements by the growing inner core would raise the outer-core fraction as $c_0 M_\text{core} / M_\text{oc}$. With a gravitational term or a light-element depression in use, a call whose inner core holds more than a tenth of the core mass ($M_\text{oc} / M_\text{core} < 0.9$, where the gravitational term would be low by up to 10 percent) raises an error. The enrichment of the outer core is not modelled.
+
+In aragog `SolverOutput`, the per-call core energy change is recorded in `step_dE_core_J` (J), evaluating $\int \tilde{C} dT_\text{cmb}$ over the call, plus the shell's heat change with `stratification = true`; the shell temperatures (`core_T_shell`), the layer base (`core_layer_base`) and the temperature of the top shell cell (`core_T_top`) are in the output, the last two NaN without a shell, and a resumed run passes the shell back with `set_initial_shell_temperature`.
+
+## Energy conservation and core closure
+
+From `SolverOutput`, the core energy closure residual of a call compares the core's heat change with the CMB heat transport:
+
+$$
+r_\text{core} = \frac{|\Delta E_\text{core} + \Delta E_\text{cmb} - Q_R\, \Delta t|}{\max(|\Delta E_\text{core}|, |\Delta E_\text{cmb}|)}
+$$
+
+where $\Delta E_\text{cmb} = \int A_\text{cmb}\, q\, dt$ and $\Delta E_\text{core} = \int \tilde{C}\, dT_\text{cmb}$.
+
+The solver integrates the core temperature, and the shell temperatures of a stratified core, as their change within the call: the state is offset by its value at the start of the call, so the solver tolerance acts on that change and not on the absolute temperature. The smoke test `test_a_hot_core_call_closes_its_heat_to_1e_minus_6` holds a 10-yr call in which the core cools by about $10^{-5}$ K to a residual below $10^{-6}$, and `test_core_module_core_cools_through_the_boundary_layer_and_closes_its_energy` (a core cooling by about 1.3 K over a partly molten base) holds the residual below $10^{-6}$ and the core heat change equal to the `heat_content` difference to $10^{-6}$.
+
+The core heat change of a call, $\int \tilde{C}\, dT_\text{cmb}$, uses 32-point Gauss-Legendre quadrature in $T_\text{cmb}$ on each segment between the inner-core onset and freeze-out temperatures, with a square-root substitution across nucleation; with `stratification = true` the capacity also depends on the layer base, so the integral is a trapezoid rule over the call's output points, and the shell adds the change of its heat content. The mantle heat change (`step_dE_state_heat_J`) integrates $\rho T\, dS$ along each cell's entropy path with a trapezoid rule, in one EOS call for all points and cells. In `core_module` the rule has 512 points, since $\rho T$ has a kink at the solidus and a coarse uniform rule aliases over it on fine meshes; the other modes use 16.
+
+## References
+
+- Anzellini, S., Dewaele, A., Mezouar, M., Loubeyre, P., & Morard, G. (2013). Melting of iron at Earth's inner core boundary based on fast X-ray diffraction. *Science*, 340(6131), 464-466. https://doi.org/10.1126/science.1233514
+- Deschamps, F., & Sotin, C. (2000). Inversion of two-dimensional numerical convection experiments for a fluid with a strongly temperature-dependent viscosity. *Geophysical Journal International*, 143(1), 204-218. https://doi.org/10.1046/j.1365-246x.2000.00228.x
+- Foley, B. J., & Driscoll, P. E. (2016). Whole planet coupling between climate, mantle, and core: Implications for rocky planet evolution. *Geochemistry, Geophysics, Geosystems*, 17(5), 1885-1914. https://doi.org/10.1002/2015GC006210
+- Greenwood, S., Davies, C. J., & Mound, J. E. (2021). On the evolution of thermally stratified layers at the top of Earth's core. *Physics of the Earth and Planetary Interiors*, 318, 106763. https://doi.org/10.1016/j.pepi.2021.106763
+- Labrosse, S., Poirier, J.-P., & Le Mouël, J.-L. (2001). The age of the inner core. *Earth and Planetary Science Letters*, 190(3-4), 111-123. https://doi.org/10.1016/S0012-821X(01)00387-9
+- Nimmo, F. (2015). Energetics of the Core. In G. Schubert (Ed.), *Treatise on Geophysics* (2nd ed., Vol. 8, pp. 27-55). Elsevier. https://doi.org/10.1016/B978-0-444-53802-4.00139-1
+- Nimmo, F. (2015). Thermal and Compositional Evolution of the Core. In *Treatise on Geophysics* (2nd ed., Vol. 9, ch. 9.08, pp. 201-219). Elsevier. https://doi.org/10.1016/B978-0-444-53802-4.00160-3
+- Thiriet, M., Breuer, D., Michaut, C., & Plesa, A.-C. (2019). Scaling laws of convection for cooling planets in a stagnant lid regime. *Physics of the Earth and Planetary Interiors*, 286, 138-153. https://doi.org/10.1016/j.pepi.2018.11.003

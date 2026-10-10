@@ -50,16 +50,24 @@ def _parsed(eos_class: type, eos_dir: str):
     return eos
 
 
-def entropy_eos_copy(eos_dir: Path | str = EOS_DIR, strict_range: bool = False) -> EntropyEOS:
+def entropy_eos_copy(
+    eos_dir: Path | str = EOS_DIR, strict_range: bool = False, identity_alpha: bool = False
+) -> EntropyEOS:
     """Return an independent copy of ``EntropyEOS(eos_dir, strict_range)``.
 
     The tables are parsed once per process and each call returns a deep copy,
     which starts in the state of a fresh build; only the read-only solidus and
     liquidus interpolation functions are shared. Tests of the constructor
-    itself build ``EntropyEOS`` directly.
+    itself build ``EntropyEOS`` directly. ``identity_alpha`` drops the
+    ``thermal_exp`` tables, so the expansivity comes from the identity
+    ``rho cp |dT/dP_S| / T`` that the JAX EOS uses.
     """
     eos = copy.deepcopy(_parsed(EntropyEOS, str(eos_dir)))
     eos.strict_range = strict_range
+    if identity_alpha:
+        for name in ('thermal_exp_solid', 'thermal_exp_melt'):
+            eos._tables.pop(name, None)
+        eos._has_alpha_tables = False
     return eos
 
 

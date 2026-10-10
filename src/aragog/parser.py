@@ -22,6 +22,7 @@ import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
 
+from aragog.config.boundary import check_core_bc
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
@@ -81,18 +82,12 @@ class _BoundaryConditionsParameters:
     tfac_core_avg: float = 1.147
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
-    # Core BC mode selector, threaded from config/boundary.py.
-    # Valid values: 'quasi_steady' (alpha-factor flux partition,
-    #               state vector length N),
-    #               'energy_balance' (SPIDER-parity dSdr_cmb evolution,
-    #               state vector length N+1),
-    #               'gradient' (entropy gradient as primary state,
-    #               length N+2),
-    #               'bower2018' (unrecommended; T_core as ODE state,
-    #               retained for parity testing only).
-    # See aragog/config/boundary.py docstring for details.
-    # Default 'energy_balance' matches the PROTEUS production path.
+    # Core BC mode, threaded from config/boundary.py (modes and state lengths in the
+    # BoundaryConfig docstring); 'energy_balance' matches the PROTEUS production path.
     core_bc: str = 'energy_balance'
+    # Flat parameter dict for core_bc='core_module'; keys documented in
+    # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').
+    core_module_params: dict | None = None
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -118,6 +113,7 @@ class _BoundaryConditionsParameters:
             self.param_utbl_const = 0.0
         self._normalize_inner_boundary_condition()
         self._normalize_outer_boundary_condition()
+        check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
 
     def _normalize_inner_boundary_condition(self) -> None:
         """Normalise the inner boundary value.

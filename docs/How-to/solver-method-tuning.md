@@ -31,6 +31,8 @@ When a CVODE call stalls or runs far slower than expected, check whether CVODE i
 
 CVODE is selected by default and is the only path that supports the JAX-traced analytic Jacobian (`use_jax_jacobian = true`). With JAX absent, CVODE falls back to a finite-difference Jacobian: correct, but $O(N)$ RHS evaluations per Jacobian build and noisier on stiff profiles. See the [CVODE and JAX explainer](../Explanations/cvode_jax.md).
 
+The tolerance warning also names a configured `atol` above `1e-8`, but only on the `energy_balance` core, the one setup whose lock data show a loose `atol` adding to the lock. No lock data exist for the other core boundary conditions, `core_module` included, so the warning makes no `atol` claim for them.
+
 CVODE also accepts a SUNDIALS root function for melt-fraction step capping; see [`phi_step_cap` how-to](phi-step-cap.md). The scipy fallbacks register the equivalent capping logic as a `solve_ivp` event with `terminal=True`, so the same TOML config behaves consistently.
 
 ## Radau and BDF specifics

@@ -31,9 +31,9 @@ Three competing designs were considered:
 
 2. **Build the trace lazily inside `solve()`.** The trace then has to walk into `self.parameters`, which is a `Parameters` dataclass with numpy arrays and Python floats. JAX cannot trace through `Parameters` directly; it would have to be unpacked at every call. The unpacking is non-trivial (e.g. `mesh.basic_radii`, `eos._tables['temperature_solid']`) and would couple the solver class to the JAX representation.
 
-3. **Factory pattern (the chosen design).** The solver exposes a `set_jax_cvode_factory` hook. PROTEUS (or any caller that has JAX installed) imports `build_jax_rhs_and_jacobian` and registers it once. Inside `solve()`, the solver calls the factory with the already-unpacked mesh / EOS / params and gets back the two callables. The solver class never imports JAX. The factory function lives in a module that is only imported by callers who explicitly opt in.
+3. **Factory pattern (the chosen design).** The solver exposes a `set_jax_cvode_factory` hook. PROTEUS (or any caller that has JAX installed) imports `build_jax_rhs_and_jacobian` and registers it once. Inside `solve()`, the solver calls the factory with the already-unpacked mesh / EOS / params and gets back the two callables. The solver class does not build the JAX trace itself. The factory function lives in a module that is only imported by callers who explicitly opt in.
 
-The third option keeps the solver class JAX-agnostic and lets the factory be the only place that knows the trace shape. Refactors of the JAX layer (e.g. splitting `compute_fluxes` into smaller pieces, adding a new flux contribution) only touch `cvode_jax.py` and `aragog.jax.phase`; the solver is unaffected.
+The third option keeps the JAX trace out of the solver class and lets the factory be the only place that knows the trace shape. Refactors of the JAX layer (e.g. splitting `compute_fluxes` into smaller pieces, adding a new flux contribution) only touch `cvode_jax.py` and `aragog.jax.phase`; the solver is unaffected.
 
 ## What "registered before solve()" means
 
@@ -43,7 +43,7 @@ The third option keeps the solver class JAX-agnostic and lets the factory be the
 2. Hands the resulting `(rhs, jac)` to CVODE,
 3. Lets CVODE drive the integration.
 
-If the factory is not registered, the solver silently falls back to CVODE's built-in finite-difference Jacobian. This is intentional: it lets the standalone unit-test suite run without JAX installed, and it gives users on JAX-less platforms a working (slower) path.
+If the factory is not registered, the solver silently falls back to CVODE's built-in finite-difference Jacobian. This is intentional: a caller that registers no factory still gets a working (slower) path.
 
 The fallback is deliberate; an exception would make the JAX extra a hard dependency. The cost is that a misconfigured environment (JAX installed, factory not registered) silently runs at FD-Jacobian speed instead of failing loudly. Mitigations:
 

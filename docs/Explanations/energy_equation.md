@@ -32,7 +32,7 @@ with $A_{i\pm 1/2} = 4\pi r_{i\pm 1/2}^2$ and $V_i = \tfrac{4}{3}\pi(r_{i+1/2}^3
 - **Basic nodes** ($N+1$ radial positions, cell faces): hold radial fluxes, pressure, and the entropy gradient $\partial S/\partial r$.
 - **Staggered nodes** ($N$ radial positions, cell centres): hold the prognostic entropy $S$ as well as the diagnostic temperature, density, melt fraction, viscosity, and capacitance.
 
-The entropy gradient at basic nodes is the SPIDER-parity centred difference of the staggered $S$ values in uniform $\xi$-space, then chain-ruled through $d\xi/dr$. Boundary values copy from the nearest interior node; in `energy_balance` mode the CMB boundary value is overridden by the entropy-gradient state-vector entry on every RHS evaluation.
+The entropy gradient at basic nodes is the SPIDER-parity centred difference of the staggered $S$ values in uniform $\xi$-space, then chain-ruled through $d\xi/dr$. Boundary values copy from the nearest interior node; in the `energy_balance` and `core_module` modes the CMB boundary value is overridden by the entropy-gradient state-vector entry on every RHS evaluation.
 
 ## Mass coordinate transform
 
@@ -70,11 +70,11 @@ The default also enables the JAX-derived analytic Jacobian (`use_jax_jacobian = 
 The right-hand side function `EntropySolver.dSdt(time, state_vec)` computes:
 
 1. Phase, density, $T$, $c_p$, $\alpha$, $k$, $\partial T/\partial P|_S$, and the smoothing weight $\mathrm{smth}(\phi)$ at every node from the EOS lookup at $(P, S)$.
-2. The entropy gradient $\partial S/\partial r$ at basic nodes (centred difference in uniform $\xi$, plus the optional `energy_balance` override).
+2. The entropy gradient $\partial S/\partial r$ at basic nodes (centred difference in uniform $\xi$, plus the override at the CMB in the `energy_balance` and `core_module` modes).
 3. The four flux contributions $F_\mathrm{cond}$, $F_\mathrm{conv}$, $F_\mathrm{grav}$, $F_\mathrm{mix}$ (see [Heat transport](heat_transport.md)).
 4. The internal heating $H = H_\mathrm{radio} + H_\mathrm{tidal}$ at staggered nodes.
 5. The flux divergence $\partial S/\partial t = (\rho T V)^{-1}[-(F\,A)_{i+1/2} + (F\,A)_{i-1/2}] + H/T$, returned in $\mathrm{J\,kg^{-1}\,K^{-1}\,yr^{-1}}$.
-6. For extended-state modes, the additional ODE for the boundary state (the SPIDER `bc.c:76-131` formula in `energy_balance`, or the surface-entropy ODE in `gradient`).
+6. For extended-state modes, the additional ODE for the boundary state (the SPIDER `bc.c:76-131` formula in `energy_balance`, the surface-entropy ODE in `gradient`, the core temperature in `bower2018`, or the boundary gradient, the core temperature and the shell temperatures of a stratified core in `core_module`).
 
 ### Nondimensionalisation layer
 
@@ -110,7 +110,7 @@ The gradient core and the scipy integrators use 1 yr in both modes; `rate` then 
 
 ## Boundary conditions
 
-The five outer BC modes and three inner BC modes are summarised in [Model overview](model.md#boundary-conditions). At the surface, the grey-body mode ($q_\mathrm{top} = \varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$) optionally adds an upper-thermal-boundary-layer correction via Cardano's formula when `param_utbl = true`. At the CMB, the four `core_bc` formulations differ in whether the bottom-cell heat flux is partitioned by heat capacity (`quasi_steady`), driven by an evolved boundary-gradient state (`energy_balance`), reconstructed from a gradient state field (`gradient`), or set by one-sided Fourier conduction across the bottom half-cell (`bower2018`).
+The five outer BC modes and three inner BC modes are summarised in [Model overview](model.md#boundary-conditions). At the surface, the grey-body mode ($q_\mathrm{top} = \varepsilon\sigma(T_\mathrm{top}^4 - T_\mathrm{eqm}^4)$) optionally adds an upper-thermal-boundary-layer correction via Cardano's formula when `param_utbl = true`. At the CMB, the five `core_bc` formulations differ in whether the bottom-cell heat flux is partitioned by heat capacity (`quasi_steady`), driven by an evolved boundary-gradient state (`energy_balance`), reconstructed from a gradient state field (`gradient`), set by one-sided Fourier conduction across the bottom half-cell (`bower2018`), or set by a boundary-layer law in the core-mantle temperature contrast (`core_module`).
 
 ## Termination
 

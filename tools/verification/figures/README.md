@@ -17,6 +17,8 @@ Each script is a self-contained verification of one numerical or physical aspect
 
 `_style.py` is a shared style helper (color palette, panel labels, save helper). It is not invoked directly.
 
+`sketch_core_module.py` is not a verification: it draws the schematic of the `core_module` core boundary condition for `docs/Explanations/core_bc.md`, in the light and the dark theme, to `docs/figures/core_module_sketch_{light,dark}.{png,pdf}`. It needs `proteus_mpl` (`pip install 'fwl-aragog[verification]'`).
+
 ## Running
 
 All seven scripts depend on the production aragog environment (numpy, JAX, equinox, scipy; the JAX path uses `jax.config.update('jax_enable_x64', True)` so float64 is required):

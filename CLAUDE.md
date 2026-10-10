@@ -102,6 +102,7 @@ The state vector length depends on the core BC mode:
 - `core_bc = 'quasi_steady'`: length $N$.
 - `core_bc = 'gradient'`: length $N+2$.
 - `core_bc = 'bower2018'`: experimental.
+- `core_bc = 'core_module'`: length $N+2$ where the extra states are $dS/dr|_\mathrm{cmb}$ and the core temperature, plus the shell temperatures with `stratification = true`.
 
 The right-hand side assembles four heat-flux components plus internal heating:
 
