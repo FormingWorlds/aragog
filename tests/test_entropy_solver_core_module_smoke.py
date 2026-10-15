@@ -861,3 +861,17 @@ def test_a_resume_restarts_the_shell_where_the_previous_solve_ended():
     second.set_initial_shell_temperature(end[n + 3 :])
     with pytest.raises(ValueError, match='cells'):
         second.set_initial_entropy(end[:n])
+
+
+@pytest.mark.physics_invariant
+def test_cp_eff_is_the_mean_heat_capacity_of_the_cell_masses(shared_eos):
+    """Cp_eff is the heat capacity of the solver's cells weighted by their masses, so it lies
+    within the cell values even where those masses do not sum to the structural M_mantle."""
+    solver = _build('energy_balance', shared_eos, s_init='driven')
+    solver.solve()
+    out = solver.get_state()
+    cp = np.asarray(solver.state.phase_staggered.heat_capacity()).ravel()
+    mass = np.asarray(out.mass_stag).ravel()
+    assert out.Cp_eff == pytest.approx(np.sum(mass * cp) / np.sum(mass), rel=1e-12)
+    assert cp.min() <= out.Cp_eff <= cp.max()
+    assert abs(np.sum(mass) / out.M_mantle - 1.0) > 1e-3  # the old denominator differs here

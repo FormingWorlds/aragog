@@ -4919,7 +4919,7 @@ class EntropySolver:
         E_th = float(np.sum(mass_stag * Cp_stag * T_stag))
 
         # Effective heat capacity (mass-weighted mean Cp)
-        Cp_eff = float(np.sum(mass_stag * Cp_stag)) / max(M_mantle, 1.0)
+        Cp_eff = float(np.sum(mass_stag * Cp_stag)) / max(float(np.sum(mass_stag)), 1.0)
 
         # EOS-consistent mantle integrated enthalpy [J]. Falls back
         # to NaN when no entropy EOS is loaded (e.g. const_properties
