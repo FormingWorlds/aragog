@@ -168,3 +168,20 @@ def test_mantle_liquid_solid_split_conserves_against_reported_m_mantle():
         rtol=1e-10,
         err_msg='M_mantle_liquid + M_mantle_solid must equal the reported M_mantle',
     )
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_cp_eff_is_the_one_heat_capacity_whatever_the_cell_masses():
+    """With the same heat capacity in every cell, Cp_eff is that value, also where the
+    cell masses exceed the structural M_mantle (here at every node)."""
+    from aragog.solver.entropy_solver import EntropySolver
+
+    solver = EntropySolver(_build_mismatched_density_parameters(), entropy_eos=None)
+    solver.initialize()
+    solver.set_initial_entropy(3050.0)
+    solver.solve()
+    out = solver.get_state()
+
+    assert out.Cp_eff == pytest.approx(1000.0, rel=1e-12)  # const_Cp of the fixture
+    assert float(np.sum(out.mass_stag)) > 1.001 * out.M_mantle
