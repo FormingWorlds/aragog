@@ -10,7 +10,7 @@ import numpy.typing as npt
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
-# Stable entropy gradient [J/kg/K/m] below which a node convects; single-sourced
+# Stable entropy gradient [J/kg/K/m] below which the kappa_h floor applies; single-sourced
 # here for parser.py, jax/phase.py and solver/entropy_state.py.
 CONVECTIVE_THRESHOLD_DEFAULT: float = 1.0e-6
 
@@ -53,9 +53,11 @@ class EnergyConfig:
         rheological transition. Default 10.0 matches PROTEUS
         production; set 0.0 for textbook MLT.
     convective_threshold : float
-        Entropy gradient D [J/kg/K/m] below which a node convects: the
-        mixing-length drive uses |dS/dr| and the floor applies wherever
-        dS/dr < D. Default 1e-6; 0.0 gives the dS/dr < 0 switch.
+        Entropy gradient D [J/kg/K/m] below which the phase-modulated
+        kappa_h floor applies. The mixing-length drive acts only where
+        dS/dr < 0, so a node with 0 <= dS/dr < D gets the floor and no
+        mixing-length eddy diffusivity. Default 1e-6; 0.0 gives the
+        dS/dr < 0 switch for both.
     bottom_up_grav_sep : bool
         SPIDER-analogue bottom-up gate for the gravitational
         mass-flux: only allow melt/solid separation across an

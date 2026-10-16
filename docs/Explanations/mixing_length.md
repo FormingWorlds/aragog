@@ -25,8 +25,8 @@ $$
 F_\mathrm{conv} = -\rho\,T\,\kappa_h\,\frac{\partial S}{\partial r}.
 $$
 
-A node convects while $\partial S/\partial r < D$, with $D$ = `energy.convective_threshold` (default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$); elsewhere $\kappa_h = 0$ and the flux is off (for a positive `eddy_diffusivity_thermal`).
-On the unstable side this is the instability criterion $\partial S/\partial r < 0$; on the stable side up to $D$ the eddy diffusion smooths a near-zero gradient back towards zero (see [Heat transport](heat_transport.md#convection-mixing-length-theory)).
+The flux is driven where $\partial S/\partial r < 0$; elsewhere the mixing-length $\kappa_h = 0$ (for a positive `eddy_diffusivity_thermal`).
+The Aragog floor below also acts on the band $0 \le \partial S/\partial r < D$, with $D$ = `energy.convective_threshold` (default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$), so a near-zero stable gradient still diffuses (see [Heat transport](heat_transport.md#convection-mixing-length-theory)).
 The buoyancy driver is the locally *superadiabatic* entropy gradient.
 In Aragog's entropy form there is no explicit subtraction of an adiabat: the adiabatic state is $\partial S/\partial r = 0$ by definition, so the entropy gradient itself measures the deviation from the adiabat.
 
@@ -55,7 +55,7 @@ $$
 
 the classical bounded-eddy profile that vanishes at both boundaries and reaches half the layer thickness at mid-mantle.
 A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
-A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in convecting mushy cells (melt fraction non-trivial and $\partial S/\partial r < D$); it is switched off (zero) in layers with a stable gradient above $D$. SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
+A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in mushy cells with $\partial S/\partial r < D$ (melt fraction non-trivial); it is switched off (zero) in layers with a stable gradient above $D$. SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
 
 The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
 
@@ -158,11 +158,11 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
   A `constant` profile is also available for analytical-mode tests.
 
 - **Convective threshold.**
-  A node convects up to a small stable gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$), where SPIDER switches at $\partial S/\partial r = 0$.
-  $D$ is a few times the median gradient of a liquid layer and more than an order of magnitude below that of a mush, so it acts mainly on liquid nodes near the adiabat; the flux jumps at $D$ (see [Heat transport](heat_transport.md#convection-mixing-length-theory)), and $D = 0$ gives the SPIDER switch.
+  The floor acts up to a small stable gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$); the mixing-length drive keeps the SPIDER switch at $\partial S/\partial r = 0$.
+  $D$ is a few times the median gradient of a liquid layer and more than an order of magnitude below that of a mush, so it acts mainly on liquid nodes near the adiabat; the band carries only the floor flux (see [Heat transport](heat_transport.md#convection-mixing-length-theory)), and $D = 0$ gives the SPIDER switch for the floor too.
 
 - **Phase-modulated diffusivity floor.**
-  `kappah_floor` lifts the eddy diffusivity only in convecting cells ($\partial S/\partial r < D$) whose melt fraction $\phi$ is large enough (tanh ramp around $\phi = 0.4$); it is zero in layers with a stable gradient above $D$.
+  `kappah_floor` lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$ whose melt fraction $\phi$ is large enough (tanh ramp around $\phi = 0.4$); it is zero in layers with a stable gradient above $D$.
   SPIDER carries no eddy-diffusivity floor, so $\kappa_h = 0$ in stratified layers is the SPIDER-consistent limit.
   Gating the floor by the convective mask keeps a just-frozen, stably-stratified front cell from receiving a spurious sign-flipped convective flux that would otherwise pin it below its solidus.
 

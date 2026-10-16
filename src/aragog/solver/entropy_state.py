@@ -2,10 +2,10 @@
 
 Stores the thermodynamic state as S(r,t) and computes heat fluxes
 (conduction, convection, gravitational separation, mixing) from the
-entropy gradient dS/dr. A node convects while dS/dr < D, the convective
-threshold, with eddy diffusivity from Abe (1993) viscous/inviscid
-MLT. No c_p spike at phase boundaries (entropy is monotonic through
-the mushy zone).
+entropy gradient dS/dr. Convection is driven where dS/dr < 0, with eddy
+diffusivity from Abe (1993) viscous/inviscid MLT, and the kappa_h floor
+applies up to the convective threshold D. No c_p spike at phase boundaries
+(entropy is monotonic through the mushy zone).
 """
 
 from __future__ import annotations
@@ -64,17 +64,17 @@ def apply_kappah_floor(
     f_floor: npt.NDArray,
     is_convective: npt.NDArray,
 ) -> npt.NDArray:
-    """Floor the eddy diffusivity in convecting cells only.
+    """Floor the eddy diffusivity in cells below the convective threshold only.
 
     Lifts the eddy diffusivity to ``kappah_floor * f_floor`` so that
     mixing-length convection does not numerically freeze where the entropy
     gradient becomes small in mushy/liquid layers. The ``is_convective``
     (``dS/dr < D``, D the convective threshold) mask confines the floor to
-    convecting cells: a cell with a stable gradient above D, such as a
+    those cells: a cell with a stable gradient above D, such as a
     just-frozen cell at the crystallisation front, must NOT receive a floored
     diffusivity, because the signed convective flux ``rho*T*kappa_h*(-dS/dr)``
     would then inject a sign-flipped flux that pins the cell sub-solidus.
-    Below D that flux is the eddy diffusion that smooths a near-zero gradient.
+    Below D it is a downward flux of at most ``rho*T*kappah_floor*D``.
     SPIDER carries no kappa_h floor, so floor = 0 in stratified layers is the
     SPIDER-consistent limit.
     Mirrors the JAX twin ``aragog.jax.phase.compute_mlt``.
@@ -90,7 +90,7 @@ def apply_kappah_floor(
         Melt-fraction ramp in [0, 1], from ``tanh_weight(phi, phi_rheo,
         phi_width)``, ~0 in solid layers and ~1 in mushy/liquid layers.
     is_convective : numpy.ndarray
-        Boolean mask, True where ``dS/dr < D`` (the node convects).
+        Boolean mask, True where ``dS/dr < D`` (the floor applies).
 
     Returns
     -------
@@ -592,21 +592,17 @@ class EntropyState:
         # evaluates directly from dSdr and dP/dr (see below).
 
         # ── MLT from entropy gradient ────────────────────────────────
-        # A node convects while dS/dr < D (convective_threshold): unstable nodes and
-        # stable nodes up to D get the |dS/dr| drive and the floor; D = 0 is dS/dr < 0.
+        # The floor applies while dS/dr < D (convective_threshold); the drive below
+        # acts only where dS/dr < 0. D = 0 gives the dS/dr < 0 switch for both.
         self._is_convective = self._dSdr < self._convective_threshold
 
-        # Buoyancy |superadiabatic| = alpha * T * |dS/dr| / Cp on convecting nodes.
+        # Buoyancy |superadiabatic| = alpha * T * max(-dS/dr, 0) / Cp.
         alpha = np.asarray(self.phase_basic.thermal_expansivity()).ravel()
         T = np.asarray(self.phase_basic.temperature()).ravel()
         Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
         g = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
 
-        # max(-dS/dr, 0) (eps = 1e-30 is a hard switch, as in SPIDER) plus dS/dr on
-        # the stable convecting nodes 0 <= dS/dr < D; the added term is 0 when D = 0.
-        conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-30) + np.where(
-            (self._dSdr >= 0.0) & self._is_convective, self._dSdr, 0.0
-        )
+        conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-30)
         Cp_safe_mlt = self._maybe_warn_cp_floor(
             Cp,
             floor=1.0,
@@ -620,7 +616,7 @@ class EntropyState:
         velocity_prefactor = g * effective_superadiabatic
 
         # Viscous velocity (Re <= Re_crit). No boolean masking needed:
-        # velocity_prefactor is 0 on non-convecting cells via conv_drive.
+        # velocity_prefactor is 0 on stable cells via conv_drive.
         mixing_length = self._mixing_length
         mixing_length_cubed = self._mixing_length_cu
         mixing_length_squared = self._mixing_length_sq
@@ -677,7 +673,7 @@ class EntropyState:
         else:
             self._kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
 
-        # Melt-fraction-modulated kappa_h floor on convecting cells only (see
+        # Melt-fraction-modulated kappa_h floor on cells with dS/dr < D only (see
         # apply_kappah_floor for why cells with dS/dr >= D keep their raw value).
         # Mirrored in the JAX twin jax/phase.py.
         if self._kappah_floor > 0.0:
@@ -766,7 +762,7 @@ class EntropyState:
 
         if self._convection:
             # F_conv = rho * T * kappa_h * (-dS/dr)
-            # Positive when dS/dr < 0, negative on stable convecting nodes (0 <= dS/dr < D)
+            # Positive when dS/dr < 0, negative on stable nodes with the floor (0 <= dS/dr < D)
             self._jconv = rho * T * self._eddy_diffusivity * (-self._dSdr)
             self._heat_flux += self._jconv
 

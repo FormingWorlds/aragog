@@ -57,7 +57,7 @@ tidal = false
 eddy_diffusivity_thermal = 1.0
 eddy_diffusivity_chemical = 1.0
 kappah_floor = 10.0                # PROTEUS production default; 0.0 = textbook MLT
-convective_threshold = 1.0e-6      # a node convects while dS/dr < this [J/kg/K/m]; 0.0 = SPIDER switch
+convective_threshold = 1.0e-6      # the floor applies while dS/dr < this [J/kg/K/m]; 0.0 = SPIDER switch
 phi_step_cap = 0.0                 # 0 = disabled; 0.05 caps per-call melt-fraction change in mushy band
 phase_boundary_cap = "rate"        # "rate" (default) or "fixed" (1 yr step near a phase boundary)
 bottom_up_grav_sep = true
@@ -181,7 +181,7 @@ Heat-transport switches, transport parameters, and integrator selection.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `conduction` | bool | -- | Conductive flux $-k\,[(T/c_p)\partial S/\partial r + (\partial T/\partial P)_S\,\partial P/\partial r]$ |
-| `convection` | bool | -- | Convective flux $\rho T\kappa_h(-\partial S/\partial r)$ when $\partial S/\partial r < D$ (`convective_threshold`) |
+| `convection` | bool | -- | Convective flux $\rho T\kappa_h(-\partial S/\partial r)$, driven when $\partial S/\partial r < 0$, with the floor up to `convective_threshold` |
 | `gravitational_separation` | bool | -- | Stokes-regime separation of melt and solid; phase-boundary smoothed |
 | `mixing` | bool | -- | Chemical mixing flux (SPIDER bracket form involving $\partial S_\mathrm{liq}/\partial P$ and $\partial S_\mathrm{sol}/\partial P$) |
 | `radionuclides` | bool | -- | Internal radiogenic heating from any `[radionuclide_*]` sections |
@@ -189,7 +189,7 @@ Heat-transport switches, transport parameters, and integrator selection.
 | `eddy_diffusivity_thermal` | float | 1.0 | Scalar multiplier on $\kappa_h$. Negative values pin $\kappa_h$ to the absolute value (SPIDER convention) |
 | `eddy_diffusivity_chemical` | float | 1.0 | Scalar multiplier on $\kappa_c$. Negative values pin to absolute |
 | `kappah_floor` | m²/s | 10.0 | Phase-modulated lower bound on $\kappa_h$. Default 10.0 (PROTEUS production); set 0.0 for textbook MLT |
-| `convective_threshold` | J kg⁻¹ K⁻¹ m⁻¹ | 1e-6 | Entropy gradient $D$ below which a node convects: nodes with $\partial S/\partial r < D$ get the mixing-length $\kappa_h$ of $|\partial S/\partial r|$ and the floor. Finite and $\ge 0$; `0.0` gives the $\partial S/\partial r < 0$ switch of SPIDER. See [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory) |
+| `convective_threshold` | J kg⁻¹ K⁻¹ m⁻¹ | 1e-6 | Entropy gradient $D$ below which the `kappah_floor` applies; the mixing-length drive acts only where $\partial S/\partial r < 0$, so nodes with $0 \le \partial S/\partial r < D$ get the floor alone. Finite and $\ge 0$; `0.0` gives the $\partial S/\partial r < 0$ switch of SPIDER. See [Heat transport](../Explanations/heat_transport.md#convection-mixing-length-theory) |
 | `phi_step_cap` | -- | 0.0 | Per-call $\Delta\Phi_\mathrm{global}$ cap. When `> 0` and the mantle straddles the rheological transition, a SUNDIALS root function fires at the step where the mass-weighted global melt fraction $\Phi_\mathrm{global}$ has changed by `cap` from its value at `solve()` entry. `0.05` is a useful upper bound for 1 M$_\oplus$ runs. Default `0.0` (disabled). |
 | `phase_boundary_cap` | str | `"rate"` | Step-size cap near or inside the two-phase band. `"fixed"` uses 1 yr. `"rate"`, the default (also when unset), uses event-driven CVODE segments with `max_step` set to 0.1 of the shortest time to reach a phase boundary, clipped to `[1, 100]` yr. Inside the stiff zone ($\delta = \max(3w \max_j(S_{\mathrm{liq},j}-S_{\mathrm{sol},j}), 10\ \mathrm{J\,kg^{-1}\,K^{-1}})$, with $w = \mathtt{matprop\_smooth\_width}$) or below the rate floor, the estimate uses the distance to the nearer boundary. The gradient core and the scipy integrators use 1 yr in both modes. On CVODE the segments of a `"rate"` call arm within the larger of `phase_boundary_entropy_margin` and $\delta$; the step caps, `"fixed"`, the gradient core and the scipy integrators use `phase_boundary_entropy_margin`. At the default `rtol` $= 10^{-8}$, `"rate"` stays within $1.3 \times 10^{-4}$ K of a `"fixed"` run at $10^{-10}$ in the cases on the [energy equation](../Explanations/energy_equation.md) page; an `rtol` above $10^{-7}$ makes the rate cap log one warning. |
 | `bottom_up_grav_sep` | bool | true | Apply SPIDER's bottom-up gating on the gravitational-separation flux |

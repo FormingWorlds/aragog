@@ -463,7 +463,8 @@ def test_numpy_zero_threshold_is_the_sign_switch():
     )
     np.testing.assert_allclose(state.heat_flux[5:13], _HF_SIGN_SWITCH, rtol=1e-12, atol=0)
     state_d, _, _ = _update_across_threshold(CONVECTIVE_THRESHOLD_DEFAULT)
-    assert state_d.eddy_diffusivity[10] > 1.0e3 * _KAPPAH_FLOOR  # the node at +5e-7
+    # The node at +5e-7 gets the floor only: no chemical diffusivity, a small downward flux.
+    assert 0.0 < state_d.eddy_diffusivity[10] <= _KAPPAH_FLOOR and state_d._kappac[10] == 0.0
     assert state_d.heat_flux[10] < 0.0
 
 
@@ -502,13 +503,14 @@ def test_numpy_matches_jax_across_threshold(D):
     )
     kh_jax, kc_jax = compute_mlt(jnp.asarray(dSdr), props, jmesh, params)
     np.testing.assert_allclose(state.eddy_diffusivity, np.asarray(kh_jax), rtol=1e-10, atol=0)
-    np.testing.assert_allclose(state._kappac, np.asarray(kc_jax), rtol=1e-10, atol=0)
+    # atol: at dS/dr = 0 and +1e-31 the numpy drive is 5e-31 (kappa_c ~1e-18), JAX gives 0.
+    np.testing.assert_allclose(state._kappac, np.asarray(kc_jax), rtol=1e-10, atol=1e-12)
 
 
 @needs_eos
 def test_numpy_threshold_is_strict_at_D():
-    """On the numpy path a node just below D convects and nodes at D and just above
-    do not; ``EntropyState`` rejects a negative D."""
+    """On the numpy path a node just below D gets the floor only and nodes at D and
+    just above get nothing; ``EntropyState`` rejects a negative D."""
     eos = entropy_eos_copy(EOS_DIR)
     D = CONVECTIVE_THRESHOLD_DEFAULT
     state, mesh = _build_state(eos, kappah_floor=_KAPPAH_FLOOR)
@@ -517,8 +519,28 @@ def test_numpy_threshold_is_strict_at_D():
     dSdr = np.full(mesh.N + 1, -1.0e-6)
     dSdr[5:8] = [np.nextafter(D, 0.0), D, np.nextafter(D, 1.0)]
     state.update(S_sol + _PHI_MUSH * (S_liq - S_sol), time=0.0, dSdr=dSdr)
-    assert state.eddy_diffusivity[5] > 10.0 and state._kappac[5] > 10.0
+    assert 0.0 < state.eddy_diffusivity[5] <= _KAPPAH_FLOOR and state._kappac[5] == 0.0
     assert state.eddy_diffusivity[6] == 0.0 and state.eddy_diffusivity[7] == 0.0
     assert state._kappac[6] == 0.0
     with pytest.raises(ValueError, match='convective_threshold'):
         _build_state(eos, kappah_floor=_KAPPAH_FLOOR, convective_threshold=-1.0e-6)
+
+
+@needs_eos
+def test_numpy_band_has_no_mixing_length_flux():
+    """Without the floor, no node with 0 <= dS/dr < D has an eddy diffusivity or a
+    convective flux on the numpy path, also with the mixing flux on."""
+    eos = entropy_eos_copy(EOS_DIR)
+    state, mesh = _build_state(eos, kappah_floor=0.0)
+    state._mixing = True
+    S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
+    S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
+    dSdr = np.full(mesh.N + 1, -1.0e-6)
+    dSdr[5:9] = [0.0, 1.0e-31, 5.0e-7, np.nextafter(CONVECTIVE_THRESHOLD_DEFAULT, 0.0)]
+    state.update(S_sol + _PHI_MUSH * (S_liq - S_sol), time=0.0, dSdr=dSdr)
+    # 0 and +1e-31 keep the ~1e-18 m^2/s of the numpy drive at x ~ 0; the rest is exactly 0.
+    assert np.all(state.eddy_diffusivity[5:9] < 1.0e-12) and np.all(
+        state._kappac[5:9] < 1.0e-12
+    )
+    assert np.all(state.eddy_diffusivity[7:9] == 0.0) and np.all(state.jconv[7:9] == 0.0)
+    assert state.eddy_diffusivity[3] > 1.0e3

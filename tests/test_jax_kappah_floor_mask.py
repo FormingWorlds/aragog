@@ -155,26 +155,32 @@ _DSDR_D = jnp.array([-1.0e-4, -1.0e-4, -1.0e-7, -1.0e-31, 0.0, 1.0e-31, 5.0e-7, 
 _KH_SIGN_SWITCH = [857758.707329748, 857758.707329748, 27124.711980037686, 5.0, 0, 0, 0, 0, 0]
 
 
-def test_stable_node_below_threshold_convects():
-    """A node with 0 <= dS/dr < D convects: its eddy diffusivity takes the
-    mixing-length value of |dS/dr| and the floor; a node above D does not.
+def test_stable_node_below_threshold_gets_the_floor_only():
+    """A node with 0 <= dS/dr < D gets the phase-modulated floor and no
+    mixing-length eddy diffusivity; a node above D gets neither.
 
     Discriminating: under the dS/dr < 0 switch the nodes at 0, 1e-31 and
-    5e-7 get kappa_h = 0 (``_KH_SIGN_SWITCH``).
+    5e-7 get kappa_h = 0 (``_KH_SIGN_SWITCH``); with the drive in the band the
+    node at 5e-7 would get about 6e4 m^2/s.
     """
     n = _DSDR_D.size
     ph = _phase(n, [0.4] * n)
-    params = PhaseParams(**_PARAMS)
-    kh, _ = compute_mlt(_DSDR_D, ph, _mesh(n, ml=1.0e5), params)
-    kh_mirror, _ = compute_mlt(-_DSDR_D, ph, _mesh(n, ml=1.0e5), params)
+    kh, kc = compute_mlt(_DSDR_D, ph, _mesh(n, ml=1.0e5), PhaseParams(**_PARAMS))
     kh_floor = 10.0 * float(tanh_weight(jnp.asarray(0.4), 0.4, 0.15))
 
-    # +5e-7 gets the drive of -5e-7, far above the floor.
-    assert float(kh[6]) == pytest.approx(float(kh_mirror[6]), rel=1e-12)
-    assert float(kh[6]) > 1.0e3 * kh_floor
-    # The nodes at 0 and +1e-31 sit at the floor; +2e-6 and +1e-4 stay at 0.
-    np.testing.assert_allclose(np.asarray(kh[4:6]), kh_floor, rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(kh[4:7]), kh_floor, rtol=1e-12)
+    assert np.all(np.asarray(kc[4:7]) == 0.0)
     assert float(kh[7]) == 0.0 and float(kh[8]) == 0.0
+
+
+def test_band_has_no_mixing_length_diffusivity():
+    """Without the floor, every node with 0 <= dS/dr < D has kappa_h = kappa_c = 0,
+    so the band carries no mixing-length flux; unstable nodes keep theirs."""
+    n = _DSDR_D.size
+    params = PhaseParams(**{**_PARAMS, 'kappah_floor': 0.0})
+    kh, kc = compute_mlt(_DSDR_D, _phase(n, [0.4] * n), _mesh(n, ml=1.0e5), params)
+    assert np.all(np.asarray(kh[4:9]) == 0.0) and np.all(np.asarray(kc[4:9]) == 0.0)
+    assert float(kh[2]) == pytest.approx(_KH_SIGN_SWITCH[2], rel=1e-12)
 
 
 def test_zero_threshold_is_the_sign_switch():
@@ -188,12 +194,14 @@ def test_zero_threshold_is_the_sign_switch():
 
 @pytest.mark.parametrize('D', [1.0e-6, 3.0e-7, 3.0e-6])
 def test_threshold_is_strict_at_D(D):
-    """A node just below D convects and a node at D does not, for the default
-    and two other values of D; the mask is ``dS/dr < D``, not ``<=``."""
+    """A node just below D gets the floor (and no chemical diffusivity) and a node
+    at D does not, for the default and two other values of D; the floor mask is
+    ``dS/dr < D``, not ``<=``."""
     x = jnp.array([-1.0e-4, -1.0e-4, np.nextafter(D, 0.0), D, np.nextafter(D, 1.0), -1.0e-4])
     params = PhaseParams(**_PARAMS, convective_threshold=D)
     kh, kc = compute_mlt(x, _phase(x.size, [0.4] * x.size), _mesh(x.size, ml=1.0e5), params)
-    assert float(kh[2]) > 10.0 and float(kc[2]) > 10.0
+    kh_floor = 10.0 * float(tanh_weight(jnp.asarray(0.4), 0.4, 0.15))
+    assert float(kh[2]) == pytest.approx(kh_floor, rel=1e-12) and float(kc[2]) == 0.0
     assert float(kh[3]) == 0.0 and float(kh[4]) == 0.0 and float(kc[3]) == 0.0
 
 
@@ -207,5 +215,5 @@ def test_cmb_node_follows_the_node_above_across_D():
         x = jnp.array([cmb, np.nextafter(D, 0.0), -1.0e-4, -1.0e-4])
         below, _ = compute_mlt(x, ph, mesh, params)
         at, _ = compute_mlt(x.at[1].set(D), ph, mesh, params)
-        assert float(below[0]) == float(below[1]) > 10.0
+        assert float(below[0]) == float(below[1]) > 1.0
         assert float(at[0]) == float(at[1]) == 0.0

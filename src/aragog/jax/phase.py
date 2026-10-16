@@ -116,7 +116,7 @@ class PhaseParams(eqx.Module):
     eddy_diff_thermal: float
     eddy_diff_chemical: float
     kappah_floor: float
-    # Entropy gradient D [J/kg/K/m] below which a node convects.
+    # Entropy gradient D [J/kg/K/m] below which the kappa_h floor applies.
     convective_threshold: float
 
     # SPIDER-analogue bottom-up gate for Jgrav. Stored as float for JAX
@@ -658,9 +658,10 @@ def compute_mlt(
     effective_superadiabatic = alpha * T * abs_dSdr_safe / jnp.maximum(Cp, 1.0)
     velocity_prefactor = mesh.gravity * effective_superadiabatic
 
-    # Hard mask matching the numpy reference: a node convects while dS/dr < D
-    # (convective_threshold), so stable nodes up to D get the |dS/dr| drive.
-    conv_mask = jnp.where(dSdr < params.convective_threshold, 1.0, 0.0)
+    # Hard masks matching the numpy reference: the mixing-length drive acts where
+    # dS/dr < 0, the floor where dS/dr < D (convective_threshold).
+    conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
+    floor_mask = jnp.where(dSdr < params.convective_threshold, 1.0, 0.0)
 
     # Viscous velocity (Re <= Re_crit)
     viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)) * conv_mask
@@ -707,12 +708,12 @@ def compute_mlt(
         jnp.full_like(kh_raw, -params.eddy_diff_chemical),
     )
 
-    # Melt-fraction-modulated kappa_h floor on convecting cells only; see
+    # Melt-fraction-modulated kappa_h floor on cells with dS/dr < D only; see
     # solver/entropy_state.py:apply_kappah_floor for why cells with
     # dS/dr >= D keep their raw value.
     phi_basic = phase_basic.melt_fraction
     f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
-    kh_floor = params.kappah_floor * f_floor * conv_mask
+    kh_floor = params.kappah_floor * f_floor * floor_mask
     kappa_h = jnp.maximum(kappa_h, kh_floor)
 
     # SPIDER energy.c:220-223 CMB fix: use kappa_h from the first interior
