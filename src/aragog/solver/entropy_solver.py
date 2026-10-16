@@ -3985,7 +3985,7 @@ class EntropySolver:
                 self._warn_once(
                     'cvode_tol',
                     f'CVODE at solver.rtol {rtol:.1e}: an rtol above 1e-8 can lock CVODE '
-                    'at the switch dS/dr = 0 (convective mask and kappa_h floor; in test runs '
+                    'at the convective switch dS/dr = D (convective mask and kappa_h floor; in test runs at D = 0 '
                     'with atol = rtol and the initial entropy drawn per run: 12 of 1133 at 1e-6, '
                     '0 of 1026 at 1e-8, and 0 of 80 at 1e-5 but about 12 times more RHS '
                     f'evaluations than at 1e-8; see the solver tuning docs){note}. '

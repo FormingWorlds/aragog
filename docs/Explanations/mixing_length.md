@@ -25,7 +25,7 @@ $$
 F_\mathrm{conv} = -\rho\,T\,\kappa_h\,\frac{\partial S}{\partial r}.
 $$
 
-A node convects while $\partial S/\partial r < D$, with $D$ = `energy.convective_threshold` (default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$); elsewhere $\kappa_h = 0$ and the flux is off.
+A node convects while $\partial S/\partial r < D$, with $D$ = `energy.convective_threshold` (default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$); elsewhere $\kappa_h = 0$ and the flux is off (for a positive `eddy_diffusivity_thermal`).
 On the unstable side this is the instability criterion $\partial S/\partial r < 0$; on the stable side up to $D$ the eddy diffusion smooths a near-zero gradient back towards zero (see [Heat transport](heat_transport.md#convection-mixing-length-theory)).
 The buoyancy driver is the locally *superadiabatic* entropy gradient.
 In Aragog's entropy form there is no explicit subtraction of an adiabat: the adiabatic state is $\partial S/\partial r = 0$ by definition, so the entropy gradient itself measures the deviation from the adiabat.
@@ -159,7 +159,7 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
 
 - **Convective threshold.**
   A node convects up to a small stable gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$), where SPIDER switches at $\partial S/\partial r = 0$.
-  $D$ is a few times the median gradient of a liquid layer and more than an order of magnitude below that of a mush, so it acts on liquid nodes near the adiabat and leaves mush and front nodes unchanged; $D = 0$ gives the SPIDER switch.
+  $D$ is a few times the median gradient of a liquid layer and more than an order of magnitude below that of a mush, so it acts mainly on liquid nodes near the adiabat; the flux jumps at $D$ (see [Heat transport](heat_transport.md#convection-mixing-length-theory)), and $D = 0$ gives the SPIDER switch.
 
 - **Phase-modulated diffusivity floor.**
   `kappah_floor` lifts the eddy diffusivity only in convecting cells ($\partial S/\partial r < D$) whose melt fraction $\phi$ is large enough (tanh ramp around $\phi = 0.4$); it is zero in layers with a stable gradient above $D$.

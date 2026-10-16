@@ -302,7 +302,7 @@ def run_aragog(tag, R_surf, R_core, g_surf, t_end_yr,
         gravitational_separation=grav_sep, mixing=mixing,
         radionuclides=False, tidal=False, tidal_array=[0.0],
         eddy_diffusivity_thermal=1.0, eddy_diffusivity_chemical=1.0,
-        kappah_floor=0.0)
+        kappah_floor=0.0, convective_threshold=0.0)
 
     S0 = np.full(N, S_INIT)
     sigma = 5.670374419e-8

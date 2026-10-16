@@ -802,3 +802,18 @@ def test_mantle_mass_split_at_partial_melt_discriminates_solid_coefficient(share
         rtol=1e-10,
         err_msg='M_mantle_liquid must equal Phi_global * M_mantle',
     )
+
+
+@pytest.mark.parametrize('D', [0.0, 3.0e-6])
+def test_entropy_solver_passes_convective_threshold_to_state(shared_eos, D):
+    """``energy.convective_threshold`` reaches the numpy ``EntropyState``, also
+    for 0.0 and a value away from the 1e-6 default."""
+    import dataclasses
+
+    from aragog.solver.entropy_solver import EntropySolver
+
+    parameters = _build_parameters(core_bc='quasi_steady', n_nodes=15, end_time=10.0)
+    parameters.energy = dataclasses.replace(parameters.energy, convective_threshold=D)
+    solver = EntropySolver(parameters, entropy_eos=shared_eos)
+    solver.initialize()
+    assert solver.state._convective_threshold == D

@@ -2,8 +2,8 @@
 
 Stores the thermodynamic state as S(r,t) and computes heat fluxes
 (conduction, convection, gravitational separation, mixing) from the
-entropy gradient dS/dr. Convective instability is determined by
-dS/dr < 0, with eddy diffusivity from Abe (1993) viscous/inviscid
+entropy gradient dS/dr. A node convects while dS/dr < D, the convective
+threshold, with eddy diffusivity from Abe (1993) viscous/inviscid
 MLT. No c_p spike at phase boundaries (entropy is monotonic through
 the mushy zone).
 """
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import numpy.typing as npt
 
-from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT
+from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_threshold
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.utilities import FloatOrArray
 
@@ -52,9 +52,8 @@ def _smooth_abs_neg(x: npt.NDArray, eps: float = 1.0e-8) -> npt.NDArray:
     """Smooth approximation of ``max(-x, 0)``.
 
     Returns ``-x`` when ``x << -eps``, ``0`` when ``x >> eps``, and
-    smoothly interpolates across the zero crossing. Folds the abs()
-    and the boolean mask ``x < 0`` used for convective-cell selection
-    into a single C^infinity expression.
+    smoothly interpolates across the zero crossing. The MLT drive uses
+    ``eps = 1e-30``, which is a hard ``max(-x, 0)`` in double precision.
     """
     return 0.5 * (np.sqrt(x * x + eps * eps) - x)
 
@@ -221,6 +220,7 @@ class EntropyState:
         self._eddy_diff_thermal = eddy_diffusivity_thermal
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
+        check_convective_threshold(convective_threshold)
         self._convective_threshold = convective_threshold
         self._bottom_up_grav_sep = bool(bottom_up_grav_sep)
         # Phase-boundary smoothing method for Jgrav and Jmix.
@@ -766,7 +766,7 @@ class EntropyState:
 
         if self._convection:
             # F_conv = rho * T * kappa_h * (-dS/dr)
-            # This is the entropy flux: positive when dS/dr < 0 (unstable)
+            # Positive when dS/dr < 0, negative on stable convecting nodes (0 <= dS/dr < D)
             self._jconv = rho * T * self._eddy_diffusivity * (-self._dSdr)
             self._heat_flux += self._jconv
 

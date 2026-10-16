@@ -52,7 +52,7 @@ See [Phi step cap](../How-to/phi-step-cap.md) for tuning guidance.
 
 ## Where the two codes should agree
 
-In `core_bc = energy_balance` mode, with matching tolerances, matching `matprop_smooth_width`, and the SPIDER-bundled P-S tables, Aragog reproduces SPIDER's Earth reference.
+In `core_bc = energy_balance` mode, with matching tolerances, matching `matprop_smooth_width`, `convective_threshold = 0`, and the SPIDER-bundled P-S tables, Aragog reproduces SPIDER's Earth reference.
 Specifically:
 
 - The bit-parity helper-formula tests in `tests/test_entropy_pytest.py::TestEnergyBalanceCoreBC::test_energy_balance_rhs_bit_parity_prescribed_inputs` reproduce the SPIDER `bc.c:76-131` evaluation to machine precision on hand-computed inputs.
@@ -64,6 +64,11 @@ Specifically:
 Integration-level parity between the two codes is the criterion that the production validation track drives toward; the relevant harness lives at `output/coupled_parity/` in the PROTEUS tree.
 
 ## Where they intentionally diverge
+
+### Convective threshold
+
+SPIDER switches convection at $\partial S/\partial r = 0$. Aragog lets a node convect up to a small stable gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$), so the two codes differ at nodes with $0 \le \partial S/\partial r < D$ and, through the copied CMB eddy diffusivity, at the CMB node when the node above it is in that band.
+`convective_threshold = 0` gives the SPIDER switch; see [Heat transport](heat_transport.md#convection-mixing-length-theory).
 
 ### Default thermodynamic tables
 

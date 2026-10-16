@@ -651,16 +651,8 @@ def compute_mlt(
     Cp = phase_basic.heat_capacity
     nu = phase_basic.kinematic_viscosity
 
-    # Buoyancy from entropy gradient. ``jnp.abs`` has a non-differentiable
-    # kink at zero (subgradient anywhere in [-1, +1] is mathematically
-    # valid, but JAX returns sign(0) = 0 in fwd and the backward pass
-    # through the abs and the downstream multiplications can produce
-    # NaN at exact-zero entropy gradients. Numpy uses
-    # ``_smooth_abs_neg(dSdr, eps=1e-30)`` which is the smoothed
-    # ``max(-x, 0)``; we use the differentiable
-    # ``0.5*(|x| + sqrt(x^2 + eps^2)) ~ |x|`` instead, which keeps the
-    # forward equal to ``abs(x)`` to ULP precision while delivering a
-    # finite analytic gradient everywhere.
+    # |dS/dr| as 0.5*(|x| + sqrt(x^2 + eps^2)): equal to |x| to ULP, with a finite
+    # gradient at x = 0, where the backward pass of jnp.abs can give NaN.
     eps_abs = 1.0e-30
     abs_dSdr_safe = 0.5 * (jnp.abs(dSdr) + jnp.sqrt(dSdr * dSdr + eps_abs * eps_abs))
     effective_superadiabatic = alpha * T * abs_dSdr_safe / jnp.maximum(Cp, 1.0)

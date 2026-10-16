@@ -577,23 +577,22 @@ def _phase_params(**kw):
     return PhaseParams(**kw)
 
 
-@pytest.mark.parametrize(
+_ALL_BUILDERS = pytest.mark.parametrize(
     'build',
     [lambda **kw: _EnergyParameters(**_ENERGY_FLAGS, **kw), _energy_config, _phase_params],
     ids=['_EnergyParameters', 'EnergyConfig', 'PhaseParams'],
 )
-@pytest.mark.parametrize('bad_value', [-1.0e-6, float('nan'), float('inf')])
+
+
+@_ALL_BUILDERS
+@pytest.mark.parametrize('bad_value', [-1.0e-6, float('nan'), float('inf'), True])
 def test_convective_threshold_rejects_negative_and_non_finite(build, bad_value):
-    """Every constructor that takes D rejects a negative or non-finite value."""
+    """Every constructor that takes D rejects a negative, non-finite or bool value."""
     with pytest.raises(ValueError, match='convective_threshold'):
         build(convective_threshold=bad_value)
 
 
-@pytest.mark.parametrize(
-    'build',
-    [lambda **kw: _EnergyParameters(**_ENERGY_FLAGS, **kw), _energy_config, _phase_params],
-    ids=['_EnergyParameters', 'EnergyConfig', 'PhaseParams'],
-)
+@_ALL_BUILDERS
 def test_convective_threshold_default_and_zero(build):
     """D defaults to 1e-6 J/kg/K/m and accepts 0, the dS/dr < 0 switch."""
     assert build().convective_threshold == 1.0e-6

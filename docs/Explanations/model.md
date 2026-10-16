@@ -79,7 +79,7 @@ $$
 F_\mathrm{conv} = -\rho T \kappa_h \frac{\partial S}{\partial r},
 $$
 
-with $\kappa_h > 0$ only on convecting nodes. The instability criterion in the entropy formulation is $\partial S/\partial r < 0$; a node convects while $\partial S/\partial r < D$, where the small stable gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$) keeps eddy diffusion on near-adiabatic liquid nodes. The switch is a hard mask at $D$ (see [Heat transport](heat_transport.md#convection-mixing-length-theory)).
+with $\kappa_h > 0$ only on convecting nodes (for a positive `eddy_diffusivity_thermal`). The instability criterion in the entropy formulation is $\partial S/\partial r < 0$; a node convects while $\partial S/\partial r < D$, where the small stable gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$) keeps eddy diffusion on near-adiabatic liquid nodes. The switch is a hard mask at $D$ (see [Heat transport](heat_transport.md#convection-mixing-length-theory)).
 
 The eddy diffusivity $\kappa_h$ is computed from a mixing length $l(r)$ and a regime-dependent velocity scale. The viscous and inviscid limits of Abe (1993)[^cite-abe1993] are blended via a $\tanh$ on the cell Reynolds number around $Re_\mathrm{crit} = 9/8$, the critical value Aragog inherits via Abe (1995)[^cite-abe1995] and documented in Bower et al. (2018)[^cite-bower2018] §2.1:
 

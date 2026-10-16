@@ -3,8 +3,8 @@
 The phi-modulated kappa_h floor (``params.kappah_floor``) must act ONLY in
 convecting cells (dS/dr < D, D = ``params.convective_threshold``). A mushy
 cell with a stable gradient above D, such as a just-frozen cell at the
-crystallisation front, must NOT receive a floored eddy diffusivity: the signed convective flux ``rho*T*kappa_h*(-dS/dr)`` would
-otherwise inject a spurious sign-flipped flux that pins the cell sub-solidus
+crystallisation front, must NOT receive a floored eddy diffusivity: the
+signed convective flux ``rho*T*kappa_h*(-dS/dr)`` would otherwise inject a spurious sign-flipped flux that pins the cell sub-solidus
 (the T_cmb-cliff / front-inversion artifact). SPIDER carries no kappa_h
 floor, so floor = 0 in stratified layers is the SPIDER-consistent limit.
 
@@ -149,7 +149,8 @@ def test_floor_gating_is_a_strict_stable_vs_convecting_contrast():
 
 # Basic-node entropy gradients [J/kg/K/m] across D = 1e-6 (index 0 is the CMB copy of 1).
 _DSDR_D = jnp.array([-1.0e-4, -1.0e-4, -1.0e-7, -1.0e-31, 0.0, 1.0e-31, 5.0e-7, 2.0e-6, 1.0e-4])
-# kappa_h of the dS/dr < 0 switch on _DSDR_D (mixing length 1e5 m, phi = 0.4).
+# kappa_h on _DSDR_D (mixing length 1e5 m, phi = 0.4) from compute_mlt of aragog a322e05,
+# the release whose switch is dS/dr < 0.
 _KH_SIGN_SWITCH = [857758.707329748, 857758.707329748, 27124.711980037686, 5.0, 0, 0, 0, 0, 0]
 
 
@@ -182,3 +183,14 @@ def test_zero_threshold_is_the_sign_switch():
     params = PhaseParams(**_PARAMS, convective_threshold=0.0)
     kh, _ = compute_mlt(_DSDR_D, ph, _mesh(n, ml=1.0e5), params)
     np.testing.assert_allclose(np.asarray(kh), _KH_SIGN_SWITCH, rtol=1e-12, atol=0.0)
+
+
+@pytest.mark.parametrize('D', [1.0e-6, 3.0e-7, 3.0e-6])
+def test_threshold_is_strict_at_D(D):
+    """A node just below D convects and a node at D does not, for the default
+    and two other values of D; the mask is ``dS/dr < D``, not ``<=``."""
+    x = jnp.array([-1.0e-4, -1.0e-4, np.nextafter(D, 0.0), D, np.nextafter(D, 1.0), -1.0e-4])
+    params = PhaseParams(**_PARAMS, convective_threshold=D)
+    kh, kc = compute_mlt(x, _phase(x.size, [0.4] * x.size), _mesh(x.size, ml=1.0e5), params)
+    assert float(kh[2]) > 10.0 and float(kc[2]) > 10.0
+    assert float(kh[3]) == 0.0 and float(kh[4]) == 0.0 and float(kc[3]) == 0.0
