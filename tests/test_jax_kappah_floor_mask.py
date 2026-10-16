@@ -203,9 +203,9 @@ def test_cmb_node_follows_the_node_above_across_D():
     D = 1.0e-6
     params = PhaseParams(**_PARAMS, convective_threshold=D)
     ph, mesh = _phase(4, [0.4] * 4), _mesh(4, ml=1.0e5)
-    below, _ = compute_mlt(
-        jnp.array([-1.0e-4, np.nextafter(D, 0.0), -1.0e-4, -1.0e-4]), ph, mesh, params
-    )
-    at, _ = compute_mlt(jnp.array([-1.0e-4, D, -1.0e-4, -1.0e-4]), ph, mesh, params)
-    assert float(below[0]) == float(below[1]) > 10.0
-    assert float(at[0]) == float(at[1]) == 0.0
+    for cmb in (-1.0e-4, 1.0e-4):
+        x = jnp.array([cmb, np.nextafter(D, 0.0), -1.0e-4, -1.0e-4])
+        below, _ = compute_mlt(x, ph, mesh, params)
+        at, _ = compute_mlt(x.at[1].set(D), ph, mesh, params)
+        assert float(below[0]) == float(below[1]) > 10.0
+        assert float(at[0]) == float(at[1]) == 0.0

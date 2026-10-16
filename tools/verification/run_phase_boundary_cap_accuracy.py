@@ -18,8 +18,8 @@ The mushy start is the midpoint of the solidus and liquidus entropy at
 140 GPa, in every cell. F is a prescribed surface flux
 (``outer_boundary_condition = 4``); w is ``matprop_smooth_width``. The other
 parameters are those of ``_build_mushy_parameters`` in
-``tests/test_phi_step_cap_armed_smoke.py`` with ``phi_step_cap`` off and
-``max_steps`` 1e7. Run from the repository root::
+``tests/test_phi_step_cap_armed_smoke.py`` with ``phi_step_cap`` off,
+``max_steps`` 1e7 and ``convective_threshold`` 0, the setting of the table. Run from the repository root::
 
     ARAGOG_TEST_EOS_DIR=<dir> python tools/verification/run_phase_boundary_cap_accuracy.py [--check] [A B C D]
 
@@ -54,7 +54,9 @@ RATE_BOUND_K = 1.3e-4  # the bound the energy-equation docs state for 'rate' at 
 def run_case(eos, case, mode, tol):
     """Integrate one call of ``case``; return the end temperatures [K] and the CVODE step count."""
     p = _build_mushy_parameters(solver_method='cvode', n_nodes=case['n'], end_time=case['end'])
-    p.energy = dataclasses.replace(p.energy, phase_boundary_cap=mode, phi_step_cap=None)
+    p.energy = dataclasses.replace(
+        p.energy, phase_boundary_cap=mode, phi_step_cap=None, convective_threshold=0.0
+    )
     p.boundary_conditions = dataclasses.replace(
         p.boundary_conditions,
         outer_boundary_condition=4,
