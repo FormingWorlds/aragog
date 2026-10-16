@@ -585,7 +585,7 @@ _ALL_BUILDERS = pytest.mark.parametrize(
 
 
 @_ALL_BUILDERS
-@pytest.mark.parametrize('bad_value', [-1.0e-6, float('nan'), float('inf'), True])
+@pytest.mark.parametrize('bad_value', [-1.0e-6, float('nan'), float('inf'), True, np.True_])
 def test_convective_threshold_rejects_negative_and_non_finite(build, bad_value):
     """Every constructor that takes D rejects a negative, non-finite or bool value."""
     with pytest.raises(ValueError, match='convective_threshold'):

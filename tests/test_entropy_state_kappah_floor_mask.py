@@ -5,8 +5,9 @@ The phi-modulated kappa_h floor (``kappah_floor``) must act ONLY in
 convecting cells (dS/dr < D, D the convective threshold). A mushy cell with a
 stable gradient above D, such as a just-frozen cell at the crystallisation
 front, must NOT receive a floored eddy diffusivity: the signed convective
-flux ``rho*T*kappa_h*(-dS/dr)`` would otherwise inject a spurious sign-flipped flux that pins the cell
-sub-solidus (the T_cmb-cliff / front-inversion artifact). SPIDER carries
+flux ``rho*T*kappa_h*(-dS/dr)`` would otherwise inject a spurious
+sign-flipped flux that pins the cell sub-solidus (the T_cmb-cliff /
+front-inversion artifact). SPIDER carries
 no kappa_h floor, so floor = 0 in stratified layers is the
 SPIDER-consistent limit.
 
@@ -367,7 +368,7 @@ def _build_state(
 @needs_eos
 def test_numpy_entropy_state_floor_gated_end_to_end():
     """End-to-end numpy MLT floor: a mushy basic cell held at phi ~ phi_rheo
-    receives the kappa_h floor only when it is convecting (dS/dr < 0), and
+    receives the kappa_h floor only when it is convecting (dS/dr < D), and
     keeps its raw (sub-floor) eddy diffusivity when stably stratified.
 
     Exercises the real ``EntropyState.update`` numpy floor block via a
@@ -426,7 +427,7 @@ def test_numpy_entropy_state_floor_gated_end_to_end():
 # Basic-node entropy gradients [J/kg/K/m] across D = 1e-6, set at nodes 5 to 12.
 _DSDR_D = [-1.0e-4, -1.0e-7, -1.0e-31, 0.0, 1.0e-31, 5.0e-7, 2.0e-6, 1.0e-4]
 # kappa_h [m^2/s] and heat flux [W/m^2] at those nodes from EntropyState.update of aragog
-# a322e05, the release whose switch is dS/dr < 0.
+# 26.10.10, whose switch is dS/dr < 0.
 _KH_SIGN_SWITCH = [
     7762894.603439967, 55663.21111160709, 4.999657202814174,
     9.687475868114067e-19, 1.4519863026283773e-18, 0.0, 0.0, 0.0,
@@ -467,10 +468,11 @@ def test_numpy_zero_threshold_is_the_sign_switch():
 
 
 @needs_eos
-def test_numpy_matches_jax_across_threshold():
+@pytest.mark.parametrize('D', [CONVECTIVE_THRESHOLD_DEFAULT, 3.0e-6])
+def test_numpy_matches_jax_across_threshold(D):
     """The numpy and JAX thermal and chemical eddy diffusivities agree on every
     node, from dS/dr = -1e-4 through 0 and +0.5 D to +1e-4."""
-    state, mesh, dSdr = _update_across_threshold(CONVECTIVE_THRESHOLD_DEFAULT)
+    state, mesh, dSdr = _update_across_threshold(D)
     pb = state.phase_basic
     n = dSdr.size
 
@@ -496,7 +498,27 @@ def test_numpy_matches_jax_across_threshold():
         phi_rheo=float(pb._phi_rheo),
         phi_width=float(pb._phi_width),
         eddy_diff_thermal=1.0,
+        convective_threshold=D,
     )
     kh_jax, kc_jax = compute_mlt(jnp.asarray(dSdr), props, jmesh, params)
     np.testing.assert_allclose(state.eddy_diffusivity, np.asarray(kh_jax), rtol=1e-10, atol=0)
     np.testing.assert_allclose(state._kappac, np.asarray(kc_jax), rtol=1e-10, atol=0)
+
+
+@needs_eos
+def test_numpy_threshold_is_strict_at_D():
+    """On the numpy path a node just below D convects and nodes at D and just above
+    do not; ``EntropyState`` rejects a negative D."""
+    eos = entropy_eos_copy(EOS_DIR)
+    D = CONVECTIVE_THRESHOLD_DEFAULT
+    state, mesh = _build_state(eos, kappah_floor=_KAPPAH_FLOOR)
+    S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
+    S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
+    dSdr = np.full(mesh.N + 1, -1.0e-6)
+    dSdr[5:8] = [np.nextafter(D, 0.0), D, np.nextafter(D, 1.0)]
+    state.update(S_sol + _PHI_MUSH * (S_liq - S_sol), time=0.0, dSdr=dSdr)
+    assert state.eddy_diffusivity[5] > 10.0 and state._kappac[5] > 10.0
+    assert state.eddy_diffusivity[6] == 0.0 and state.eddy_diffusivity[7] == 0.0
+    assert state._kappac[6] == 0.0
+    with pytest.raises(ValueError, match='convective_threshold'):
+        _build_state(eos, kappah_floor=_KAPPAH_FLOOR, convective_threshold=-1.0e-6)

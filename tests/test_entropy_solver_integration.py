@@ -804,6 +804,7 @@ def test_mantle_mass_split_at_partial_melt_discriminates_solid_coefficient(share
     )
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize('D', [0.0, 3.0e-6])
 def test_entropy_solver_passes_convective_threshold_to_state(shared_eos, D):
     """``energy.convective_threshold`` reaches the numpy ``EntropyState``, also

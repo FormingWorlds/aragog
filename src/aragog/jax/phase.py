@@ -651,8 +651,8 @@ def compute_mlt(
     Cp = phase_basic.heat_capacity
     nu = phase_basic.kinematic_viscosity
 
-    # |dS/dr| as 0.5*(|x| + sqrt(x^2 + eps^2)): equal to |x| to ULP, with a finite
-    # gradient at x = 0, where the backward pass of jnp.abs can give NaN.
+    # |dS/dr| as 0.5*(|x| + sqrt(x^2 + eps^2)): equal to |x| for |x| >> eps, with a
+    # finite gradient at x = 0, where the backward pass of jnp.abs can give NaN.
     eps_abs = 1.0e-30
     abs_dSdr_safe = 0.5 * (jnp.abs(dSdr) + jnp.sqrt(dSdr * dSdr + eps_abs * eps_abs))
     effective_superadiabatic = alpha * T * abs_dSdr_safe / jnp.maximum(Cp, 1.0)

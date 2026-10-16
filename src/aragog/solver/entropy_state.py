@@ -52,8 +52,8 @@ def _smooth_abs_neg(x: npt.NDArray, eps: float = 1.0e-8) -> npt.NDArray:
     """Smooth approximation of ``max(-x, 0)``.
 
     Returns ``-x`` when ``x << -eps``, ``0`` when ``x >> eps``, and
-    smoothly interpolates across the zero crossing. The MLT drive uses
-    ``eps = 1e-30``, which is a hard ``max(-x, 0)`` in double precision.
+    smoothly interpolates across the zero crossing. With the ``eps = 1e-30`` of
+    the MLT drive it equals ``max(-x, 0)`` for ``|x| >> 1e-30`` (5e-31 at x = 0).
     """
     return 0.5 * (np.sqrt(x * x + eps * eps) - x)
 
