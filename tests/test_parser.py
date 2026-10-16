@@ -553,3 +553,48 @@ def test_solver_parameters_rejects_bool_cvode_output_points(bad_value):
             rtol=1e-6,
             cvode_output_points=bad_value,
         )
+
+
+_ENERGY_FLAGS = dict(
+    conduction=True,
+    convection=True,
+    gravitational_separation=False,
+    mixing=False,
+    radionuclides=False,
+    tidal=False,
+)
+
+
+def _energy_config(**kw):
+    from aragog.config.energy import EnergyConfig
+
+    return EnergyConfig(**_ENERGY_FLAGS, **kw)
+
+
+def _phase_params(**kw):
+    from aragog.jax.phase import PhaseParams
+
+    return PhaseParams(**kw)
+
+
+@pytest.mark.parametrize(
+    'build',
+    [lambda **kw: _EnergyParameters(**_ENERGY_FLAGS, **kw), _energy_config, _phase_params],
+    ids=['_EnergyParameters', 'EnergyConfig', 'PhaseParams'],
+)
+@pytest.mark.parametrize('bad_value', [-1.0e-6, float('nan'), float('inf')])
+def test_convective_threshold_rejects_negative_and_non_finite(build, bad_value):
+    """Every constructor that takes D rejects a negative or non-finite value."""
+    with pytest.raises(ValueError, match='convective_threshold'):
+        build(convective_threshold=bad_value)
+
+
+@pytest.mark.parametrize(
+    'build',
+    [lambda **kw: _EnergyParameters(**_ENERGY_FLAGS, **kw), _energy_config, _phase_params],
+    ids=['_EnergyParameters', 'EnergyConfig', 'PhaseParams'],
+)
+def test_convective_threshold_default_and_zero(build):
+    """D defaults to 1e-6 J/kg/K/m and accepts 0, the dS/dr < 0 switch."""
+    assert build().convective_threshold == 1.0e-6
+    assert build(convective_threshold=0.0).convective_threshold == 0.0

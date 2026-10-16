@@ -10,6 +10,16 @@ import numpy.typing as npt
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
+# Stable entropy gradient [J/kg/K/m] below which a node convects; single-sourced
+# here for parser.py, jax/phase.py and solver/entropy_state.py.
+CONVECTIVE_THRESHOLD_DEFAULT: float = 1.0e-6
+
+
+def check_convective_threshold(value: float) -> None:
+    """Raise ``ValueError`` unless ``value`` is finite and non-negative."""
+    if not 0.0 <= value < float('inf'):
+        raise ValueError(f'convective_threshold must be finite and >= 0, got {value!r}')
+
 
 @attrs.define
 class EnergyConfig:
@@ -42,6 +52,10 @@ class EnergyConfig:
         ``f`` falls from 1 (liquid) to 0 (solid) across the
         rheological transition. Default 10.0 matches PROTEUS
         production; set 0.0 for textbook MLT.
+    convective_threshold : float
+        Entropy gradient D [J/kg/K/m] below which a node convects: the
+        mixing-length drive uses |dS/dr| and the floor applies wherever
+        dS/dr < D. Default 1e-6; 0.0 gives the dS/dr < 0 switch.
     bottom_up_grav_sep : bool
         SPIDER-analogue bottom-up gate for the gravitational
         mass-flux: only allow melt/solid separation across an
@@ -125,6 +139,10 @@ class EnergyConfig:
     eddy_diffusivity_chemical: float = 1.0
     eddy_diffusivity_thermal: float = 1.0
     kappah_floor: float = 10.0
+    convective_threshold: float = attrs.field(
+        default=CONVECTIVE_THRESHOLD_DEFAULT,
+        validator=lambda _inst, _attr, value: check_convective_threshold(value),
+    )
     bottom_up_grav_sep: bool = True
     phase_smoothing: str = 'tanh'
     solver_method: str = 'cvode'

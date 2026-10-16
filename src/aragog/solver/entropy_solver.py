@@ -1655,6 +1655,7 @@ class EntropySolver:
             eddy_diffusivity_thermal=getattr(energy, 'eddy_diffusivity_thermal', 1.0),
             eddy_diffusivity_chemical=energy.eddy_diffusivity_chemical,
             kappah_floor=energy.kappah_floor,
+            convective_threshold=energy.convective_threshold,
             bottom_up_grav_sep=getattr(energy, 'bottom_up_grav_sep', True),
             phase_smoothing=getattr(energy, 'phase_smoothing', 'tanh'),
         )
