@@ -173,8 +173,8 @@ class _EnergyParameters:
     # rheological transition. Default 10.0 matches the PROTEUS
     # production value; set to 0.0 for textbook MLT.
     kappah_floor: float = 10.0
-    # Entropy gradient D [J/kg/K/m] below which the kappa_h floor applies; 0.0
-    # gives the dS/dr < 0 switch. See EnergyConfig.convective_threshold.
+    # Minimum drive gradient on unstable nodes and floor band [J/kg/K/m]; 0.0 gives
+    # the dS/dr < 0 switch. See EnergyConfig.convective_threshold.
     convective_threshold: float = CONVECTIVE_THRESHOLD_DEFAULT
 
     # SPIDER-analogue bottom-up gate for the gravitational-separation mass

@@ -596,13 +596,18 @@ class EntropyState:
         # acts only where dS/dr < 0. D = 0 gives the dS/dr < 0 switch for both.
         self._is_convective = self._dSdr < self._convective_threshold
 
-        # Buoyancy |superadiabatic| = alpha * T * max(-dS/dr, 0) / Cp.
+        # Buoyancy |superadiabatic| = alpha * T * max(-dS/dr, 0) / Cp, at least alpha*T*D/Cp
+        # on unstable nodes.
         alpha = np.asarray(self.phase_basic.thermal_expansivity()).ravel()
         T = np.asarray(self.phase_basic.temperature()).ravel()
         Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
         g = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
 
         conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-30)
+        # An unstable node is driven by at least the gradient D; D = 0 leaves the drive as is.
+        conv_drive = np.where(
+            self._dSdr < 0.0, np.maximum(conv_drive, self._convective_threshold), conv_drive
+        )
         Cp_safe_mlt = self._maybe_warn_cp_floor(
             Cp,
             floor=1.0,

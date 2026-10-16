@@ -180,7 +180,7 @@ def test_band_has_no_mixing_length_diffusivity():
     params = PhaseParams(**{**_PARAMS, 'kappah_floor': 0.0})
     kh, kc = compute_mlt(_DSDR_D, _phase(n, [0.4] * n), _mesh(n, ml=1.0e5), params)
     assert np.all(np.asarray(kh[4:9]) == 0.0) and np.all(np.asarray(kc[4:9]) == 0.0)
-    assert float(kh[2]) == pytest.approx(_KH_SIGN_SWITCH[2], rel=1e-12)
+    assert float(kh[0]) == pytest.approx(_KH_SIGN_SWITCH[0], rel=1e-12)
 
 
 def test_zero_threshold_is_the_sign_switch():
@@ -217,3 +217,34 @@ def test_cmb_node_follows_the_node_above_across_D():
         at, _ = compute_mlt(x.at[1].set(D), ph, mesh, params)
         assert float(below[0]) == float(below[1]) > 1.0
         assert float(at[0]) == float(at[1]) == 0.0
+
+
+def test_unstable_node_gets_at_least_the_drive_of_D():
+    """An unstable node with |dS/dr| < D takes the kappa_h and kappa_c of a gradient
+    D; a node with |dS/dr| > D keeps its own value, and D = 0 keeps every value.
+
+    Discriminating: without the minimum drive the node at -1e-7 has 2.7e4 m^2/s
+    (``_KH_SIGN_SWITCH``) and the node at -1e-31 has 5 (the floor).
+    """
+    x = jnp.array([-1.0e-4, -1.0e-4, -1.0e-6, -1.0e-7, -1.0e-31])
+    ph, mesh = _phase(x.size, [0.4] * x.size), _mesh(x.size, ml=1.0e5)
+    kh, kc = compute_mlt(x, ph, mesh, PhaseParams(**_PARAMS, convective_threshold=1.0e-6))
+    np.testing.assert_allclose(np.asarray(kh[3:]), float(kh[2]), rtol=1e-12)
+    np.testing.assert_allclose(np.asarray(kc[3:]), float(kc[2]), rtol=1e-12)
+    assert float(kh[0]) == pytest.approx(_KH_SIGN_SWITCH[0], rel=1e-12)
+    kh0, _ = compute_mlt(x, ph, mesh, PhaseParams(**_PARAMS, convective_threshold=0.0))
+    assert float(kh0[3]) == pytest.approx(_KH_SIGN_SWITCH[2], rel=1e-12)
+
+
+def test_drive_switch_is_strict_at_zero():
+    """Just below dS/dr = 0 a node takes the mixing-length kappa_h and kappa_c of a
+    gradient D; at 0 it has the floor alone and no kappa_c."""
+    D = 1.0e-6
+    # -1e-300, not the subnormal nextafter(0, -1), which XLA flushes to zero on the CPU.
+    x = jnp.array([-1.0e-4, -1.0e-4, -D, -1.0e-300, 0.0])
+    ph, mesh = _phase(x.size, [0.4] * x.size), _mesh(x.size, ml=1.0e5)
+    kh, kc = compute_mlt(x, ph, mesh, PhaseParams(**_PARAMS, convective_threshold=D))
+    kh_floor = 10.0 * float(tanh_weight(jnp.asarray(0.4), 0.4, 0.15))
+    assert float(kh[3]) == pytest.approx(float(kh[2]), rel=1e-12) and float(kh[3]) > 1.0e3
+    assert float(kc[3]) == pytest.approx(float(kc[2]), rel=1e-12)
+    assert float(kh[4]) == pytest.approx(kh_floor, rel=1e-12) and float(kc[4]) == 0.0

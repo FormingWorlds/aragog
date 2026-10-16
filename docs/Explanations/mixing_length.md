@@ -25,8 +25,8 @@ $$
 F_\mathrm{conv} = -\rho\,T\,\kappa_h\,\frac{\partial S}{\partial r}.
 $$
 
-The flux is driven where $\partial S/\partial r < 0$; elsewhere the mixing-length $\kappa_h = 0$ (for a positive `eddy_diffusivity_thermal`).
-The Aragog floor below also acts on the band $0 \le \partial S/\partial r < D$, with $D$ = `energy.convective_threshold` (default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$), so a near-zero stable gradient still diffuses (see [Heat transport](heat_transport.md#convection-mixing-length-theory)).
+The flux is driven where $\partial S/\partial r < 0$, by at least the gradient $D$ = `energy.convective_threshold`; elsewhere the mixing-length $\kappa_h = 0$ (for a positive `eddy_diffusivity_thermal`).
+The Aragog floor below also acts on the band $0 \le \partial S/\partial r < D$ (default $D = 10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$), so a near-zero stable gradient still diffuses (see [Heat transport](heat_transport.md#convection-mixing-length-theory)).
 The buoyancy driver is the locally *superadiabatic* entropy gradient.
 In Aragog's entropy form there is no explicit subtraction of an adiabat: the adiabatic state is $\partial S/\partial r = 0$ by definition, so the entropy gradient itself measures the deviation from the adiabat.
 
@@ -158,8 +158,8 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
   A `constant` profile is also available for analytical-mode tests.
 
 - **Convective threshold.**
-  The floor acts up to a small stable gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$); the mixing-length drive keeps the SPIDER switch at $\partial S/\partial r = 0$.
-  $D$ is a few times the median gradient of a liquid layer and more than an order of magnitude below that of a mush, so it acts mainly on liquid nodes near the adiabat; the band carries only the floor flux (see [Heat transport](heat_transport.md#convection-mixing-length-theory)), and $D = 0$ gives the SPIDER switch for the floor too.
+  The mixing-length drive keeps the SPIDER switch at $\partial S/\partial r = 0$ but uses at least a small gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$) on unstable nodes, and the floor acts up to $\partial S/\partial r = D$.
+  $D$ is a few times the median gradient of a liquid layer and more than an order of magnitude below that of a mush, so it acts mainly on nodes near the adiabat; the band carries only the floor flux, the mixing flux jumps at $\partial S/\partial r = 0$ in a mush (see [Heat transport](heat_transport.md#convection-mixing-length-theory)), and $D = 0$ gives the plain SPIDER switch.
 
 - **Phase-modulated diffusivity floor.**
   `kappah_floor` lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$ whose melt fraction $\phi$ is large enough (tanh ramp around $\phi = 0.4$); it is zero in layers with a stable gradient above $D$.

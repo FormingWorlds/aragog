@@ -544,3 +544,28 @@ def test_numpy_band_has_no_mixing_length_flux():
     )
     assert np.all(state.eddy_diffusivity[7:9] == 0.0) and np.all(state.jconv[7:9] == 0.0)
     assert state.eddy_diffusivity[3] > 1.0e3
+
+
+@needs_eos
+@pytest.mark.parametrize('phi', [0.4, 0.95])
+def test_numpy_convective_flux_never_runs_up_a_stable_gradient(phi):
+    """Across dS/dr from -1e-4 through 0 and D to 1e-4, with the mixing flux on, the
+    convective flux is upward only where dS/dr < 0, and a downward convective flux
+    (the floor band) stays below rho*T*kappah_floor*D."""
+    D = CONVECTIVE_THRESHOLD_DEFAULT
+    eos = entropy_eos_copy(EOS_DIR)
+    state, mesh = _build_state(eos, kappah_floor=_KAPPAH_FLOOR)
+    state._mixing = True
+    S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
+    S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
+    x = np.array([-1e-4, -1e-6, -1e-9, 0.0, 1e-9, 5e-7, np.nextafter(D, 0.0), D, 1e-4])
+    dSdr = np.full(mesh.N + 1, -1.0e-6)
+    dSdr[5 : 5 + x.size] = x
+    state.update(S_sol + phi * (S_liq - S_sol), time=0.0, dSdr=dSdr)
+    jconv = np.asarray(state.jconv)[5 : 5 + x.size]
+    rho_T = (state.phase_basic.density() * state.phase_basic.temperature()).ravel()
+    bound = rho_T[5 : 5 + x.size] * _KAPPAH_FLOOR * D
+    assert np.all(jconv[x < 0] > 0.0)
+    assert np.all(jconv[x >= 0] <= 0.0)
+    assert np.all(np.abs(jconv[x >= 0]) <= bound[x >= 0])
+    assert np.abs(jconv[6]) > 0.1 * bound[6]  # the band node at 5e-7 carries the floor flux

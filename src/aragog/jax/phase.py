@@ -116,7 +116,7 @@ class PhaseParams(eqx.Module):
     eddy_diff_thermal: float
     eddy_diff_chemical: float
     kappah_floor: float
-    # Entropy gradient D [J/kg/K/m] below which the kappa_h floor applies.
+    # Minimum drive gradient on unstable nodes and floor band [J/kg/K/m].
     convective_threshold: float
 
     # SPIDER-analogue bottom-up gate for Jgrav. Stored as float for JAX
@@ -655,7 +655,9 @@ def compute_mlt(
     # finite gradient at x = 0, where the backward pass of jnp.abs can give NaN.
     eps_abs = 1.0e-30
     abs_dSdr_safe = 0.5 * (jnp.abs(dSdr) + jnp.sqrt(dSdr * dSdr + eps_abs * eps_abs))
-    effective_superadiabatic = alpha * T * abs_dSdr_safe / jnp.maximum(Cp, 1.0)
+    # An unstable node is driven by at least the gradient D (convective_threshold).
+    drive = jnp.maximum(abs_dSdr_safe, params.convective_threshold)
+    effective_superadiabatic = alpha * T * drive / jnp.maximum(Cp, 1.0)
     velocity_prefactor = mesh.gravity * effective_superadiabatic
 
     # Hard masks matching the numpy reference: the mixing-length drive acts where
