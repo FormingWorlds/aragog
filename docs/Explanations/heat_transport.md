@@ -26,10 +26,14 @@ The pressure gradient is the configured profile (Adams-Williamson or external me
 Convection is parameterised as eddy diffusion of entropy:
 
 $$
-F_\mathrm{conv} = \rho T \kappa_h \max\!\left(-\tfrac{\partial S}{\partial r},\ 0\right).
+F_\mathrm{conv} = -\rho T \kappa_h \tfrac{\partial S}{\partial r},
 $$
 
-The instability criterion is $\partial S/\partial r < 0$. The $\max(\cdot, 0)$ form is implemented as a smooth approximation (a $C^\infty$ ramp) so that the BDF Jacobian remains continuous through the onset of convection. There is no explicit "superadiabatic gradient" subtraction in the entropy formulation: the adiabat corresponds to $\partial S/\partial r = 0$, so the entropy gradient itself measures departures from the adiabat.
+with $\kappa_h > 0$ only on convecting nodes. A node convects while $\partial S/\partial r < D$, where $D$ is `energy.convective_threshold` (default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$). On the unstable side this is the usual criterion $\partial S/\partial r < 0$. On the stable side up to $D$, $\kappa_h$ takes the mixing-length value of $|\partial S/\partial r|$ and the floor below, and the flux points downward, so eddy diffusion smooths a near-zero gradient back towards zero instead of switching off at exactly $\partial S/\partial r = 0$. A node with a stable gradient above $D$ does not convect. The switch is a hard mask at $D$; $D = 0$ gives the $\partial S/\partial r < 0$ switch of SPIDER, and the convective switches of the two codes differ only at nodes with $0 \le \partial S/\partial r < D$.
+
+$D$ sits between the gradients of a liquid layer and of a mush. In a coupled 1 $M_\oplus$ run with 80 mesh levels, the median $|\partial S/\partial r|$ is $2$ to $4 \times 10^{-7}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$ in the liquid layer, while the mush has at least $3 \times 10^{-5}$ and a crystallisation front $2 \times 10^{-3}$ to $0.1$. A liquid node that drifts just onto the stable side therefore keeps mixing, while mush and front nodes switch at their usual sign.
+
+There is no explicit "superadiabatic gradient" subtraction in the entropy formulation: the adiabat corresponds to $\partial S/\partial r = 0$, so the entropy gradient itself measures departures from the adiabat.
 
 ### Eddy diffusivity
 
@@ -62,7 +66,7 @@ $$
 \kappa_h \;\to\; \max\!\big(\kappa_h,\ \kappa_h^\mathrm{floor}(\phi)\big),
 $$
 
-where $\kappa_h^\mathrm{floor}(\phi)$ is modulated by melt fraction and gated to convectively-unstable cells ($\partial S/\partial r < 0$): it lifts $\kappa_h$ only where the cell actually convects, and is zero in stably-stratified layers. SPIDER carries no eddy-diffusivity floor, so $\kappa_h^\mathrm{floor}=0$ in stratified layers is the SPIDER-consistent limit; gating this way keeps a just-frozen, stably-stratified front cell from receiving a spurious sign-flipped convective flux. The thermal and chemical eddy diffusivities also accept independent scale factors:
+where $\kappa_h^\mathrm{floor}(\phi)$ is modulated by melt fraction and gated to convecting cells ($\partial S/\partial r < D$): it lifts $\kappa_h$ only where the cell convects, and is zero in layers with a stable gradient above $D$. SPIDER carries no eddy-diffusivity floor, so $\kappa_h^\mathrm{floor}=0$ in stratified layers is the SPIDER-consistent limit; gating this way keeps a just-frozen, stably-stratified front cell from receiving a spurious sign-flipped convective flux. The thermal and chemical eddy diffusivities also accept independent scale factors:
 
 | Key | Meaning |
 |-----|---------|
