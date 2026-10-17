@@ -92,8 +92,8 @@ def test_fb2014_earth_reference_state():
     state = compute_stagnant_lid_state(**_make_earth_reference_inputs())
 
     t_i = float(state['T_i'])
-    # Zero-flux lid nodes retain weight 0.5 * (1 + tanh(-0.05 / 0.01)) = 4.54e-5 under fixed width 0.01.
-    assert abs(t_i - 1600.0) < 0.5
+    # Conductive lid nodes at f = 0 have zero weight under w_Ti (f_0 = 0.9, width = 0.02).
+    assert t_i == pytest.approx(1600.0, rel=1.0e-12)
 
     r_gas = 8.314462618
     h_act = 300.0e3
@@ -107,19 +107,19 @@ def test_fb2014_earth_reference_state():
     expected_vm = c4 * (kappa / d_conv) * (expected_ra_rh ** (2.0 / 3.0))
     expected_tau_d = 2.0 * eta_i * expected_vm / d_conv
     # Discretisation regression value on the 50-node mesh; converged value is about 22.5 km.
-    expected_delta_rh = 30791.06
+    expected_delta_rh = 30791.0646
     expected_tau_buoy = rho * g * alpha * expected_dt_rh * expected_delta_rh
     expected_ratio = expected_tau_d / expected_tau_buoy
 
-    assert state['theta'] == pytest.approx(expected_theta, rel=1.0e-5)
-    assert state['dT_rh'] == pytest.approx(expected_dt_rh, rel=1.0e-5)
-    assert state['Ra_eff'] == pytest.approx(expected_ra_eff, rel=1.0e-3)
-    assert state['Ra_rh'] == pytest.approx(expected_ra_rh, rel=1.0e-3)
-    assert state['delta_rh'] == pytest.approx(expected_delta_rh, rel=1.0e-3)
-    assert state['tau_d'] == pytest.approx(expected_tau_d, rel=1.0e-3)
-    assert state['v_m'] == pytest.approx(expected_vm, rel=1.0e-3)
-    assert state['tau_buoy'] == pytest.approx(expected_tau_buoy, rel=1.0e-3)
-    assert state['tau_d_over_tau_buoy'] == pytest.approx(expected_ratio, rel=1.0e-3)
+    assert state['theta'] == pytest.approx(expected_theta, rel=1.0e-6)
+    assert state['dT_rh'] == pytest.approx(expected_dt_rh, rel=1.0e-6)
+    assert state['Ra_eff'] == pytest.approx(expected_ra_eff, rel=1.0e-6)
+    assert state['Ra_rh'] == pytest.approx(expected_ra_rh, rel=1.0e-6)
+    assert state['delta_rh'] == pytest.approx(expected_delta_rh, rel=1.0e-6)
+    assert state['tau_d'] == pytest.approx(expected_tau_d, rel=1.0e-6)
+    assert state['v_m'] == pytest.approx(expected_vm, rel=1.0e-6)
+    assert state['tau_buoy'] == pytest.approx(expected_tau_buoy, rel=1.0e-6)
+    assert state['tau_d_over_tau_buoy'] == pytest.approx(expected_ratio, rel=1.0e-6)
 
 
 @pytest.mark.unit
