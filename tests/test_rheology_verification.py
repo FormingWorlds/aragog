@@ -376,25 +376,27 @@ def test_compute_effective_viscosity_infinite_yield_stress_jax():
     import aragog
 
     sub_env = {**os.environ, 'PYTHONPATH': str(Path(aragog.__file__).parents[1])}
-    subprocess.run(
-        [sys.executable, '-c', "import sys, aragog; assert 'jax' not in sys.modules"],
+    proc_no_jax = subprocess.run(
+        [sys.executable, '-c', "import sys, aragog; print('jax' in sys.modules)"],
         env=sub_env,
-        check=True,
         capture_output=True,
         text=True,
     )
-    proc = subprocess.run(
+    assert proc_no_jax.returncode == 0, proc_no_jax.stderr
+    assert proc_no_jax.stdout.strip() == 'False'
+
+    proc_x64 = subprocess.run(
         [
             sys.executable,
             '-c',
-            'import aragog.rheology, jax; assert jax.config.jax_enable_x64 is True; print(jax.config.jax_enable_x64)',
+            'import aragog.rheology, jax; print(jax.config.jax_enable_x64)',
         ],
         env=sub_env,
-        check=True,
         capture_output=True,
         text=True,
     )
-    assert proc.stdout.strip() == 'True'
+    assert proc_x64.returncode == 0, proc_x64.stderr
+    assert proc_x64.stdout.strip() == 'True'
 
 
 def test_arrhenius_t_ref_positivity_validation():

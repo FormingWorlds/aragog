@@ -227,11 +227,131 @@ def test_interior_selection_first_lid_node_and_resolution_invariance():
     )
     assert rel_diff_ti < 0.02
     assert rel_diff_taud < 0.02
+    _assert_w_conv_fixed_width_pins_w_active_and_w_upper(kwargs)
+
+
+def _assert_w_conv_fixed_width_pins_w_active_and_w_upper(kwargs: dict[str, Any]) -> None:
+    """Pin w_active and w_upper on a smooth f profile rising across interior_flux_fraction."""
+    n_nodes = 20
+    r = np.linspace(3480.0e3, 6370.0e3, n_nodes)
+    p = np.linspace(135.0e9, 1.0e5, n_nodes)
+    t = np.linspace(1600.0, 300.0, n_nodes)
+    # Smooth convective fraction rising across interior_flux_fraction = 0.05 over several nodes.
+    f_smooth = np.linspace(0.035, 0.060, n_nodes)
+    f_tot = np.full(n_nodes, 100.0)
+    f_conv = f_smooth * f_tot
+    v_uny = np.full(n_nodes, 1.0e-9)
+    params = kwargs['params']
+    st_smooth = compute_stagnant_lid_state(
+        **{
+            **kwargs,
+            'radii': r,
+            'temperature': t,
+            'pressure': p,
+            'convective_flux': f_conv,
+            'total_flux': f_tot,
+            'melt_fraction': np.zeros(n_nodes),
+            'unyielded_velocity': v_uny,
+        }
+    )
+    w_conv_expected = 0.5 * (1.0 + np.tanh((f_smooth - params.interior_flux_fraction) / 0.01))
+    w_active_expected = 0.5 * (1.0 + np.tanh((np.sum(w_conv_expected) - 1.0) / 0.5))
+    idx = np.arange(n_nodes)
+    interior_mask = np.where((idx > 0) & (idx < n_nodes - 1), 1.0, 0.0)
+    w_ti = 0.5 * (1.0 + np.tanh((f_smooth - 0.9) / 0.02)) * interior_mask
+    w_surf = w_ti[::-1]
+    omw = np.concatenate([np.ones(1), 1.0 - w_surf[:-1]])
+    w_raw = (w_surf * np.cumprod(omw))[::-1]
+    w_sum = float(np.sum(w_raw))
+    w_weight = float(np.tanh(w_sum / 1.0e-6))
+    w_tilde = w_weight * (w_raw / max(w_sum, 1.0e-12)) + (1.0 - w_weight) * np.full(
+        n_nodes, 1.0 / n_nodes
+    )
+    r_i = float(np.sum(w_tilde * r))
+    r_mid = 0.5 * (r_i + r[0])
+    dr_scale = max(float(np.mean(np.abs(r[1:] - r[:-1]))), 1.0)
+    w_above_mid = 0.5 * (1.0 + np.tanh((r - r_mid) / dr_scale))
+    w_below_top = 0.5 * (1.0 + np.tanh((r_i - r) / dr_scale))
+    w_upper_expected = w_above_mid * w_below_top * w_conv_expected
+    assert float(st_smooth['w_active']) == pytest.approx(float(w_active_expected), rel=1.0e-12)
+    assert np.allclose(st_smooth['w_upper'], w_upper_expected, rtol=1.0e-12, atol=1.0e-12)
+
+
+@pytest.mark.unit
+def test_w_conv_fixed_width_pins_w_active_and_w_upper():
+    """Verify w_active and w_upper match the width-0.01 w_conv formula on a smooth f profile."""
+    _assert_w_conv_fixed_width_pins_w_active_and_w_upper(_make_earth_reference_inputs())
+
+
+def _assert_hot_convecting_cmb_node_excluded(
+    g_hom: float, t_m: float = 1600.0, t_s: float = 300.0
+) -> None:
+    """Verify a hot convecting CMB node r[0] at 4000 K with f=1 moves T_i by < 1 K."""
+    from math import erf
+
+    n_nodes = 25
+    r = np.linspace(3480.0e3, 6370.0e3, n_nodes)
+    z = r[-1] - r
+    delta = 1800.0e3
+    t_base = t_s + (t_m - t_s) * np.array([erf(x) for x in z / delta])
+    t_base[1:-5] = t_m
+    k_cond = 4.0
+    f_cond = (
+        k_cond * (t_m - t_s) * (2.0 / (np.sqrt(np.pi) * delta)) * np.exp(-((z / delta) ** 2))
+    )
+    f_tot = np.full(n_nodes, f_cond[-1])
+    f_conv = f_tot - f_cond
+    f_conv[0] = f_tot[0]
+    p = np.linspace(135.0e9, 1.0e5, n_nodes)
+    params = SolidRheologyParams(
+        enabled=True,
+        g_homologous=g_hom,
+        t_sol_0=t_m,
+        dt_sol_dp=0.0,
+        arrhenius_t_ref=t_m,
+        interior_flux_fraction=0.05,
+    )
+    st_cold_cmb = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_base,
+        pressure=p,
+        convective_flux=f_conv,
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=params,
+        viscosity_solid=1.0e20,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    t_hot_cmb = t_base.copy()
+    t_hot_cmb[0] = 4000.0
+    st_hot_cmb = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_hot_cmb,
+        pressure=p,
+        convective_flux=f_conv,
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=params,
+        viscosity_solid=1.0e20,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    assert abs(float(st_hot_cmb['T_i']) - float(st_cold_cmb['T_i'])) <= 1.0
+
+
+@pytest.mark.unit
+def test_hot_convecting_cmb_node_excluded_from_ti():
+    """Verify boundary node r[0] at 4000 K with f=1 is excluded from T_i weights."""
+    g_hom = 300.0e3 / (8.314462618 * 1600.0)
+    _assert_hot_convecting_cmb_node_excluded(g_hom)
 
 
 @pytest.mark.unit
 def test_erf_boundary_layer_ti_and_175kyr_default_ti():
-    """Verify T_i on an erf boundary layer across N in {100, 400, 800} and on the 175 kyr fixture."""
+    """Verify T_i on an erf boundary layer across N in {100, 200, 400, 800} and on the 175 kyr fixture."""
     import os
     from math import erf
 
@@ -254,7 +374,7 @@ def test_erf_boundary_layer_ti_and_175kyr_default_ti():
 
     for delta in (100.0e3, 200.0e3):
         ti_by_n: dict[int, float] = {}
-        for n_nodes in (100, 400, 800):
+        for n_nodes in (100, 200, 400, 800):
             r = np.linspace(3480.0e3, 6370.0e3, n_nodes)
             z = r[-1] - r
             t = t_s + (t_m - t_s) * np.array([erf(x) for x in z / delta])
@@ -293,6 +413,8 @@ def test_erf_boundary_layer_ti_and_175kyr_default_ti():
             ti_by_n[n_nodes] = ti_val
             assert abs(ti_val - t_m) <= 2.0 * dt_rh_true
         assert abs(ti_by_n[800] - ti_by_n[100]) <= 0.5 * dt_rh_true
+
+    _assert_hot_convecting_cmb_node_excluded(g_hom, t_m=t_m, t_s=t_s)
 
     ckpt_path = os.path.join(
         os.path.dirname(__file__), 'reference', 'checkpoint_profile_175kyr.npz'
