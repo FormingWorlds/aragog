@@ -358,7 +358,7 @@ def _collect_nav_strings(mkdocs_text: str) -> set[str]:
                 break
         elif in_nav and ': ' in stripped:
             _, rhs = stripped.split(': ', 1)
-            val = rhs.strip().strip("'\"")
+            val = rhs.strip().strip('\'"')
             if val:
                 out.add(val)
     return out
