@@ -8,18 +8,14 @@ and viscosity-contrast-dependent mixing-length scaling for solid-state convectio
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, fields, replace
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
-try:
-    import jax
-
-    jax.config.update('jax_enable_x64', True)
-except ImportError:  # pragma: no cover
-    pass
+os.environ['JAX_ENABLE_X64'] = '1'
 
 R_GAS = 8.314462618
 COHESION_FLOOR = 1.0e-6
