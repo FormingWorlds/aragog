@@ -65,7 +65,7 @@ $$
 s_\text{top}(\theta) = s_{\text{top},\infty} + (1 - s_{\text{top},\infty}) \exp\big( -c_\theta \max(\theta, 0) \big)
 $$
 
-with decay rate $c_\theta = 0.15$ (`c_theta`) and stagnant-lid asymptotic slope $s_{\text{top},\infty} = 0.22$ (`s_top_inf`, placeholder default pending joint benchmark calibration). In the isoviscous limit ($\theta \le 0$), $s_\text{top}(0) = 1.0$, recovering the symmetric mixing-length profile. In the strong stagnant-lid regime ($\theta \gg 8$), $s_\text{top}(\theta)$ approaches $s_{\text{top},\infty}$. Because the viscous eddy diffusivity scales as $l^4$, `viscous_mixing_length_factor` multiplies the viscous velocity and diffusivity by $(l_v / l)^4$ at interior nodes while keeping $1.0$ at the boundary nodes where $l = 0$.
+with decay rate $c_\theta = 0.15$ (`c_theta`) and stagnant-lid asymptotic slope $s_{\text{top},\infty} = 0.22$ (`s_top_inf`). In the isoviscous limit ($\theta \le 0$), $s_\text{top}(0) = 1.0$, recovering the symmetric mixing-length profile. In the strong stagnant-lid regime ($\theta \gg 8$), $s_\text{top}(\theta)$ approaches $s_{\text{top},\infty}$. Because the viscous eddy diffusivity scales as $l^4$, `viscous_mixing_length_factor` multiplies the viscous velocity and diffusivity by $(l_v / l)^4$ at interior nodes while keeping $1.0$ at the boundary nodes where $l = 0$.
 
 ## 2. Plastic Yielding Criterion
 
@@ -298,21 +298,19 @@ When convective vigor ceases ($v_i \to 0$), convective heat transport drops belo
 
 ## 6. Interaction with the Eddy-Diffusivity Floor
 
-PROTEUS enforces an eddy-diffusivity floor $\kappa_{h,\text{floor}} = 10\text{ m}^2\text{ s}^{-1}$ in coupled runs to prevent numerical stagnation in the fluid magma ocean. The floor is ramped through the melt fraction:
+In `aragog.jax.phase.compute_mlt` and `aragog.solver.entropy_state.apply_kappah_floor`, the thermal eddy diffusivity $\kappa_h$ is floored in convectively unstable cells ($\partial S / \partial r < 0$) by a melt-fraction-modulated ramp without a lid mask:
 
 $$
 f(\phi) = \frac{1}{2} \left( 1 + \tanh\left( \frac{\phi - \phi_\text{rheo}}{\phi_\text{width}} \right) \right)
 $$
 
-With $\phi_\text{rheo} = 0.4$ and $\phi_\text{width} = 0.2$, the unanchored ramp evaluates to $f(0) = 0.018$ at zero melt fraction. In the solid state, an unmasked floor produces an effective diffusivity of $0.18\text{ m}^2\text{ s}^{-1}$, five orders of magnitude larger than molecular thermal diffusivity ($\kappa \sim 10^{-6}\text{ m}^2\text{ s}^{-1}$), which would artificially homogenise the thermal lithosphere.
-
-When solid rheology is enabled, Aragog masks the eddy-diffusivity floor inside the lid:
-
 $$
-\kappa_{h,\text{floor,eff}} = \kappa_{h,\text{floor}} \cdot f(\phi) \cdot (1 - w_\text{lid})
+\kappa_{h,\text{floor,eff}} = \kappa_{h,\text{floor}} \cdot f(\phi) \cdot I_\text{conv}, \quad \kappa_h = \max\big(\kappa_{h,\text{MLT}}, \; \kappa_{h,\text{floor,eff}}\big)
 $$
 
-Inside the cold lid ($w_\text{lid} \to 1$), the floor is suppressed, preserving molecular conduction. In the convective interior and the molten magma ocean ($w_\text{lid} \to 0$), the floor remains active.
+where $I_\text{conv} = 1$ when $\partial S / \partial r < 0$ and $0$ in stably stratified cells ($\partial S / \partial r \ge 0$).
+
+In standalone Aragog configurations (`src/aragog/cfg/abe_*.cfg` and `PhaseParams`), the transition width defaults to `rheological_transition_width = 0.15` ($\phi_\text{width} = 0.15$ at $\phi_\text{rheo} = 0.4$, where $f(0) = 0.004805$) and `kappah_floor` defaults to $0.0\text{ m}^2\text{ s}^{-1}$. In coupled PROTEUS runs (`src/proteus/config/_interior.py`, lines 728-729 and 736), the defaults are `rfront_loc = 0.4` ($\phi_\text{rheo} = 0.4$), `rfront_wid = 0.2` ($\phi_\text{width} = 0.2$), and `kappah_floor = 10.0` ($\kappa_{h,\text{floor}} = 10.0\text{ m}^2\text{ s}^{-1}$). With those PROTEUS defaults, the ramp evaluates to $f(0) = 0.018$ at zero melt fraction ($\phi = 0$), which gives $\kappa_{h,\text{floor,eff}} = 0.18\text{ m}^2\text{ s}^{-1}$ in convectively unstable solid cells (or $0.048\text{ m}^2\text{ s}^{-1}$ at $\phi_\text{width} = 0.15$), exceeding molecular thermal diffusivity ($\kappa \sim 10^{-6}\text{ m}^2\text{ s}^{-1}$) by five orders of magnitude. In stably stratified cells ($\partial S / \partial r \ge 0$), $I_\text{conv} = 0$ and $\kappa_{h,\text{floor,eff}} = 0$.
 
 ## 7. Stress Closure Modes
 
