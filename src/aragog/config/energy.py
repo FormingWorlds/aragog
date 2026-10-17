@@ -109,9 +109,11 @@ class EnergyConfig:
         temperature, and the smallest cell entropy reaches S_min + m, or
         S_min + m/2 when the call starts below S_min + m; the call then
         returns a shorter step. A call that starts at or below S_min + m/2
-        stops at half its distance to S_min when that entropy is not
-        falling, and otherwise does not advance and returns status 1, so a
-        drain that does not stop ends after two floor stops. Default 100,
+        arms a level at half its distance to S_min, and does not advance
+        (status 1) when that entropy falls fast enough to reach the level
+        within the call; at or below S_min it arms nothing and does not
+        advance only when falling. A drain that does not stop therefore
+        ends after two floor stops. Default 100,
         below the entropy span of the tables; ``None`` or a non-positive
         value disables it, and a bool, NaN, infinity or non-number is
         refused.

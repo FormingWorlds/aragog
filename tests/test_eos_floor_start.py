@@ -78,12 +78,12 @@ def test_the_rate_of_the_lowest_component_decides():
         ([np.inf, S_MIN + 40.0, S_MIN + 40.0], [0.0] * 3, (None, False)),
         ([S_MIN + 40.0] * 3, [np.nan] * 3, (None, True)),
         ([S_MIN + 40.0] * 3, [-np.inf] * 3, (None, True)),
-        ([S_MIN + 40.0] * 3, [np.inf] * 3, (S_MIN + 20.0, False)),
+        ([S_MIN + 40.0] * 3, [0.0, 0.0, np.inf], (S_MIN + 20.0, False)),
     ],
 )
 def test_non_finite_states_and_rates(S, rate, expected):
     """A non-finite start is left to the table guard; a NaN or falling infinite rate is refused,
-    a rising infinite rate arms half the distance."""
+    an infinitely warming top cell arms half the distance."""
     level, refuse = _start(S, rate)
     assert refuse is expected[1] and (
         level is None if expected[0] is None else level == pytest.approx(expected[0])

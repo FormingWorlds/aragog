@@ -554,6 +554,58 @@ def _floor_entropy(weights: npt.NDArray, S_stag: npt.NDArray) -> float:
     return min(float(np.dot(weights, S_stag)), float(np.min(S_stag)))
 
 
+def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, span: float):
+    """Root level of the EOS floor for one call start, and whether the call is refused.
+
+    The floor entropy ``s0`` is the smaller of the top basic-node entropy ``weights @ S`` and the
+    smallest cell entropy. Above ``S_min + margin/2`` (plus ``1e-6 margin``) the level is
+    ``S_min + margin``, or ``S_min + margin/2`` below ``S_min + margin``, without an RHS call.
+    Closer to the table, the rate of ``s0`` decides, taken as the smallest rate of every component
+    within ``1e-6 margin`` of ``s0``: a start inside the table arms half its distance to ``S_min``
+    unless that rate reaches it within ``span``, which refuses the call; a start at or below
+    ``S_min`` (plus ``2e-6 margin``) arms nothing and is refused only when falling.
+
+    Parameters
+    ----------
+    weights : np.ndarray
+        Weights of the top basic node on the cell entropies.
+    S_stag : np.ndarray
+        Cell entropies at the call start [J/kg/K].
+    rate_fn : callable
+        Returns the cell entropy rates at the call start [J/kg/K/yr]; called only near the table.
+    S_min, margin : float
+        Table minimum entropy and floor margin [J/kg/K].
+    span : float
+        Call span [yr].
+
+    Returns
+    -------
+    tuple
+        ``(level, refuse)``: the root level [J/kg/K] or ``None``, and whether the call does not
+        advance. A non-finite start gives ``(None, False)`` (the table guard handles it), a NaN
+        rate ``(None, True)``.
+    """
+    S = np.asarray(S_stag, dtype=float)
+    if not np.all(np.isfinite(S)):
+        return None, False
+    s_top = float(np.dot(weights, S))
+    s0, tol = min(s_top, float(S.min())), 1.0e-6 * margin
+    for level in (S_min + margin, S_min + 0.5 * margin):
+        if s0 > level + tol:
+            return level, False
+    rate = np.asarray(rate_fn(), dtype=float)
+    active = rate[S <= s0 + tol].tolist() + (
+        [float(np.dot(weights, rate))] if s_top <= s0 + tol else []
+    )
+    r = float(np.min(active))
+    if np.isnan(r):
+        return None, True
+    if s0 <= S_min + 2.0 * tol:
+        return None, r < 0.0
+    half = 0.5 * (s0 + S_min)
+    return (half, False) if s0 + r * span > half else (None, True)
+
+
 class _PhiCapRootFunction(_CV_RootFunction):
     """SUNDIALS root function for the per-call ΔΦ_global cap.
 
@@ -3842,25 +3894,23 @@ class EntropySolver:
                         f'span of the EOS tables, {float(self.entropy_eos.S_max) - S_tab!r}'
                     )
                 w = np.asarray(self.evaluator.mesh._quantity_transform)[-1]
-                s0, tol = _floor_entropy(w, S_arr_stag), 1.0e-6 * floor_margin
-                levels = (S_tab + floor_margin, S_tab + 0.5 * floor_margin)
-                level = next((x for x in levels if s0 > x + tol), None)
-                if level is None and s0 > S_tab + 2.0 * tol:
-                    dS = np.asarray(self._dSdt_single(start_time, self._S0)).ravel()[
-                        : self._n_stag
-                    ]
-                    top = np.dot(w, S_arr_stag) <= S_arr_stag.min()
-                    rate = np.dot(w, dS) if top else dS[np.argmin(S_arr_stag)]
-                    level = 0.5 * (s0 + S_tab) if rate >= 0.0 else None
-                floor = dict(floor_weights=w, floor_level=level, floor_margin=floor_margin)
-                if level is None:
-                    floor = None
-                if level is None and np.isfinite(s0):
+                level, refuse = _floor_start_level(
+                    w,
+                    S_arr_stag,
+                    lambda: np.ravel(self._dSdt_single(start_time, self._S0))[: self._n_stag],
+                    S_tab,
+                    floor_margin,
+                    end_time - start_time,
+                )
+                if level is not None:
+                    floor = dict(floor_weights=w, floor_level=level, floor_margin=floor_margin)
+                elif refuse:
                     floor_refused, end_time = True, start_time
                     logger.warning(
-                        'EOS floor: entropy %.1f J/kg/K at the call start is at most %.1f J/kg/K '
-                        'above the table minimum %.1f J/kg/K; the call does not advance',
-                        s0,
+                        'EOS floor: entropy %.1f J/kg/K at the call start, at most %.1f J/kg/K '
+                        'above the table minimum %.1f J/kg/K, falls too fast; the call does not '
+                        'advance',
+                        _floor_entropy(w, S_arr_stag),
                         0.5 * floor_margin,
                         S_tab,
                     )
