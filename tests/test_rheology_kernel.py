@@ -29,6 +29,7 @@ def test_limit_zero_driving_stress():
 
     eta_eff = compute_effective_viscosity(
         eta_diff=eta_diff,
+        eta_i=eta_diff,
         tau_d=0.0,
         tau_y_lid=tau_y_lid,
         stress_closure_mode='lid',
@@ -46,6 +47,7 @@ def test_limit_infinite_yield_stress():
 
     eta_eff = compute_effective_viscosity(
         eta_diff=eta_diff,
+        eta_i=eta_diff,
         tau_d=tau_d,
         tau_y_lid=tau_y_lid,
         stress_closure_mode='lid',
@@ -148,6 +150,7 @@ def test_limit_extreme_yielding():
     tau_d = 100.0 * tau_y_lid
     eta_eff = compute_effective_viscosity(
         eta_diff=eta_diff,
+        eta_i=eta_diff,
         tau_d=tau_d,
         tau_y_lid=tau_y_lid,
         stress_closure_mode='lid',
@@ -182,6 +185,7 @@ def test_exact_yield_match():
     # Stagnant lid mode: under min closure, tau_d == tau_y yields eta_eff == eta_diff.
     eta_eff_lid = compute_effective_viscosity(
         eta_diff=eta_diff,
+        eta_i=eta_diff,
         tau_d=tau_y,
         tau_y_lid=tau_y,
         stress_closure_mode='lid',
@@ -204,6 +208,7 @@ def test_min_closure_local_asymptotic_limits():
         eta_diff=eta_d,
         tau_y=tau_y,
         strain_rate=sr_low,
+        stress_closure_mode='local',
     )
     assert eta_eff_high == eta_d
 
@@ -214,6 +219,7 @@ def test_min_closure_local_asymptotic_limits():
         eta_diff=eta_d,
         tau_y=tau_y,
         strain_rate=sr_high,
+        stress_closure_mode='local',
     )
     assert eta_eff_low == eta_y_low
 
@@ -231,6 +237,7 @@ def test_monotonicity_and_continuity_across_yield():
         eta_diff=eta_diff,
         tau_y=tau_y,
         strain_rate=strain_rates,
+        stress_closure_mode='local',
         xp=np,
     )
 
@@ -303,6 +310,7 @@ def test_inactive_convection_yield_viscosity_unyielded():
     eta_diff = np.full(n_nodes, 1.0e24)
     eta_eff = compute_effective_viscosity(
         eta_diff=eta_diff,
+        eta_i=state['eta_i'],
         tau_d=state['tau_d'],
         tau_y_lid=state['tau_y_lid'],
         stress_closure_mode='lid',

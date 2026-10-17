@@ -426,7 +426,7 @@ def compute_effective_viscosity(
         eta_eff = min(eta_diff, eta_i * tau_y_lid / tau_d)  for tau_d > tau_y_lid
     When ``eta_i < eta_diff``, ``eta_eff`` jumps at ``tau_d = tau_y_lid`` from ``eta_diff``
     for ``tau_d <= tau_y_lid`` to ``eta_i * (tau_y_lid / tau_d)`` for ``tau_d > tau_y_lid``.
-    When ``eta_i`` is omitted, ``eta_diff`` is used as the fallback scale.
+    ``eta_i``, ``tau_d``, and ``tau_y_lid`` are required in ``'lid'`` mode.
 
     In local stress closure mode:
         eta_eff = min(eta_diff, eta_y)
@@ -452,7 +452,11 @@ def compute_effective_viscosity(
         raise ValueError(
             f"Unknown stress_closure_mode {stress_closure_mode!r}; expected 'lid' or 'local'{hint}"
         )
-    if stress_closure_mode == 'local' or strain_rate is not None or tau_y is not None:
+    if stress_closure_mode == 'local':
+        if any(x is not None for x in (tau_d, tau_y_lid, w_lid, eta_i)):
+            raise ValueError(
+                "tau_d, tau_y_lid, w_lid, and eta_i are not allowed when stress_closure_mode='local'"
+            )
         if strain_rate is None:
             if unyielded_velocity is None or mixing_length is None:
                 raise ValueError(
@@ -474,20 +478,30 @@ def compute_effective_viscosity(
         has_nan_local = xp.isnan(eta_d) | xp.isnan(ty) | xp.isnan(sr)
         return xp.where(has_nan_local, xp.nan, xp.where(is_unyielded, eta_d, res))
 
+    if any(
+        x is not None
+        for x in (strain_rate, tau_y, tau_y_profile, unyielded_velocity, mixing_length)
+    ):
+        raise ValueError(
+            'strain_rate, tau_y, tau_y_profile, unyielded_velocity, and mixing_length '
+            "are not allowed when stress_closure_mode='lid'"
+        )
+    if eta_i is None:
+        raise ValueError("eta_i is required when stress_closure_mode='lid'")
+    if tau_d is None or tau_y_lid is None:
+        raise ValueError("tau_d and tau_y_lid are required when stress_closure_mode='lid'")
+
     eta_d = xp.asarray(eta_diff, dtype=float)
-    eta_i = eta_d if eta_i is None else xp.asarray(eta_i, dtype=float)
+    eta_i_arr = xp.asarray(eta_i, dtype=float)
 
     # Moresi & Solomatov (1998) Eq. 13-14 min closure at convective strain rate D_conv = tau_d / eta_i:
-    if tau_d is not None and tau_y_lid is not None:
-        td = xp.asarray(tau_d, dtype=float)
-        ty_lid = xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR)
-        ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
-        ratio = xp.where(xp.isinf(ty_lid), 1.0, ratio)
-        eta_eff_val = xp.where(ratio >= 1.0, eta_d, xp.minimum(eta_d, eta_i * ratio))
-        has_nan_lid = xp.isnan(eta_d) | xp.isnan(eta_i) | xp.isnan(td) | xp.isnan(ty_lid)
-        eta_eff_val = xp.where(has_nan_lid, xp.nan, eta_eff_val)
-    else:
-        eta_eff_val = eta_d
+    td = xp.asarray(tau_d, dtype=float)
+    ty_lid = xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR)
+    ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
+    ratio = xp.where(xp.isinf(ty_lid), 1.0, ratio)
+    eta_eff_val = xp.where(ratio >= 1.0, eta_d, xp.minimum(eta_d, eta_i_arr * ratio))
+    has_nan_lid = xp.isnan(eta_d) | xp.isnan(eta_i_arr) | xp.isnan(td) | xp.isnan(ty_lid)
+    eta_eff_val = xp.where(has_nan_lid, xp.nan, eta_eff_val)
 
     if w_lid is not None:
         wl = xp.asarray(w_lid, dtype=float)

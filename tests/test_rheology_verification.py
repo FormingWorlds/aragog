@@ -213,6 +213,33 @@ def test_lid_base_mode_and_stress_closure_validation():
     with pytest.raises(ValueError, match='mixing_length and unyielded_velocity required'):
         compute_effective_viscosity(eta_diff=1.0e21, stress_closure_mode='local')
 
+    with pytest.raises(ValueError, match="not allowed when stress_closure_mode='lid'"):
+        compute_effective_viscosity(
+            eta_diff=1.0e21,
+            eta_i=1.0e20,
+            tau_d=1.0e6,
+            tau_y_lid=1.0e6,
+            strain_rate=1.0e-15,
+            stress_closure_mode='lid',
+        )
+
+    with pytest.raises(ValueError, match="not allowed when stress_closure_mode='local'"):
+        compute_effective_viscosity(
+            eta_diff=1.0e21,
+            tau_y=1.0e7,
+            strain_rate=1.0e-15,
+            tau_d=1.0e6,
+            stress_closure_mode='local',
+        )
+
+    with pytest.raises(ValueError, match="eta_i is required when stress_closure_mode='lid'"):
+        compute_effective_viscosity(
+            eta_diff=1.0e21,
+            tau_d=1.0e6,
+            tau_y_lid=1.0e6,
+            stress_closure_mode='lid',
+        )
+
     with pytest.raises(ValueError, match='mixing_length must be provided'):
         stress_closure('local', viscous_velocity=1.0e-9, mixing_length=None)
 
@@ -326,7 +353,11 @@ def test_compute_effective_viscosity_infinite_yield_stress_jax():
     sr = 1.0e-15
 
     eta_eff_val = compute_effective_viscosity(
-        jnp.asarray(visc_diff), tau_y=tau_y_inf, strain_rate=sr, xp=jnp
+        jnp.asarray(visc_diff),
+        tau_y=tau_y_inf,
+        strain_rate=sr,
+        stress_closure_mode='local',
+        xp=jnp,
     )
     assert jnp.isfinite(eta_eff_val)
     assert float(eta_eff_val) == pytest.approx(visc_diff, rel=1.0e-12)
@@ -510,15 +541,17 @@ def test_moresi_solomatov_min_closure_exact_contract():
     td_below = 8.645e5
     eta_eff_below = compute_effective_viscosity(
         eta_diff=eta_d,
+        eta_i=eta_d,
         tau_d=td_below,
         tau_y_lid=tau_y,
     )
     assert eta_eff_below == eta_d
 
-    # 2. Above yield with default eta_i=None (falls back to eta_diff): eta_eff / eta_diff == tau_y / tau_d.
+    # 2. Above yield with eta_i == eta_diff: eta_eff / eta_diff == tau_y / tau_d.
     td_above = 2.0e6
     eta_eff_above = compute_effective_viscosity(
         eta_diff=eta_d,
+        eta_i=eta_d,
         tau_d=td_above,
         tau_y_lid=tau_y,
     )
@@ -1024,7 +1057,11 @@ def test_rheology_and_lid_branch_coverage():
     )
     assert float(st_scalar_sol['eta_i']) == pytest.approx(expected_eta_i_2000, rel=1e-12)
 
-    eta_lid_none = compute_effective_viscosity(
-        eta_diff=1.0e22, tau_d=None, tau_y_lid=None, stress_closure_mode='lid'
-    )
-    assert eta_lid_none == pytest.approx(1.0e22, rel=1e-12)
+    with pytest.raises(ValueError, match='tau_d and tau_y_lid are required'):
+        compute_effective_viscosity(
+            eta_diff=1.0e22,
+            eta_i=1.0e21,
+            tau_d=None,
+            tau_y_lid=None,
+            stress_closure_mode='lid',
+        )
