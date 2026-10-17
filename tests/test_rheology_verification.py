@@ -947,10 +947,9 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         phi_width=0.15,
         viscosity_mixture=np.full(n_nodes, np.nan),
     )
-    assert np.isfinite(float(st_inactive_nan_mix['mu_i']))
-    assert float(st_inactive_nan_mix['mu_i']) == pytest.approx(
-        float(st_inactive_nan_mix['eta_solid_arrhenius']), rel=1.0e-12
-    )
+    assert np.isnan(float(st_inactive_nan_mix['mu_i']))
+    assert np.isnan(float(st_inactive_nan_mix['d_lid']))
+    assert np.isnan(float(st_inactive_nan_mix['tau_d']))
 
     assert np.isnan(
         compute_effective_viscosity(
@@ -1263,3 +1262,122 @@ def test_validation_and_lid_base_edge_cases():
     )
     assert isinstance(sr_j, jax.Array)
     np.testing.assert_allclose(np.asarray(sr_j), np.array([5.0e-15, 1.0e-14]), rtol=1e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'nan_field',
+    [
+        'radii',
+        'temperature',
+        'pressure',
+        'convective_flux',
+        'total_flux',
+        'melt_fraction',
+        'density',
+        'gravity',
+        'thermal_expansivity',
+        'thermal_diffusivity',
+        'solidus_temperature',
+        'unyielded_velocity',
+        'viscosity_mixture',
+    ],
+)
+def test_lid_state_nan_propagation_per_input(nan_field: str):
+    """Verify NaN in each array input of compute_stagnant_lid_state propagates NaN to outputs."""
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    jnp = pytest.importorskip('jax.numpy')
+    n_nodes = 20
+    base_arrays = {
+        'radii': np.linspace(3.48e6, 6.371e6, n_nodes),
+        'temperature': np.linspace(2600.0, 300.0, n_nodes),
+        'pressure': np.linspace(135.0e9, 0.0, n_nodes),
+        'convective_flux': np.where(np.linspace(3.48e6, 6.371e6, n_nodes) < 6.0e6, 100.0, 0.0),
+        'total_flux': np.full(n_nodes, 100.0),
+        'melt_fraction': np.zeros(n_nodes),
+        'density': np.full(n_nodes, 3300.0),
+        'gravity': np.full(n_nodes, 9.81),
+        'thermal_expansivity': np.full(n_nodes, 3.0e-5),
+        'thermal_diffusivity': np.full(n_nodes, 1.0e-6),
+        'solidus_temperature': 1400.0 + 2.4e-8 * np.linspace(135.0e9, 0.0, n_nodes),
+        'unyielded_velocity': np.full(n_nodes, 1.0e-9),
+        'viscosity_mixture': np.full(n_nodes, 1.0e20),
+    }
+    bad = base_arrays[nan_field].copy()
+    bad[5] = np.nan
+    base_arrays[nan_field] = bad
+
+    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
+    for xp_mod in (np, jnp):
+        kw = {k: xp_mod.asarray(v) for k, v in base_arrays.items()}
+        st = compute_stagnant_lid_state(
+            **kw,
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=xp_mod,
+        )
+        for key in (
+            'T_i',
+            'theta',
+            'eta_i',
+            'mu_i',
+            'd_lid',
+            'v_m',
+            'v_i',
+            'tau_d',
+            'lid_regime',
+        ):
+            assert bool(xp_mod.isnan(st[key])), (
+                f'Expected {key} to be NaN when {nan_field} has NaN under {xp_mod.__name__}'
+            )
+
+
+@pytest.mark.unit
+def test_water_prefactor_and_w_lid_nan_propagation():
+    """Verify NaN water_prefactor in compute_arrhenius_viscosity and NaN w_lid in compute_effective_viscosity return NaN."""
+    jnp = pytest.importorskip('jax.numpy')
+    assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, water_prefactor=np.nan))
+    res_np_arr = compute_arrhenius_viscosity(
+        np.array([1600.0, 1600.0]),
+        np.array([0.0, 0.0]),
+        water_prefactor=np.array([np.nan, 0.5]),
+    )
+    assert np.isnan(res_np_arr[0]) and np.isfinite(res_np_arr[1])
+
+    assert bool(
+        jnp.isnan(compute_arrhenius_viscosity(1600.0, 0.0, water_prefactor=jnp.nan, xp=jnp))
+    )
+    res_jx_arr = compute_arrhenius_viscosity(
+        jnp.array([1600.0, 1600.0]),
+        jnp.array([0.0, 0.0]),
+        water_prefactor=jnp.array([jnp.nan, 0.5]),
+        xp=jnp,
+    )
+    assert bool(jnp.isnan(res_jx_arr[0])) and bool(jnp.isfinite(res_jx_arr[1]))
+
+    for xp_mod in (np, jnp):
+        eta_wl_nan = compute_effective_viscosity(
+            eta_diff=xp_mod.asarray([1.0e24, 1.0e24]),
+            eta_i=xp_mod.asarray(1.0e20),
+            tau_d=xp_mod.asarray(1.0e5),
+            tau_y_lid=xp_mod.asarray(1.0e6),
+            w_lid=xp_mod.asarray([np.nan, 0.5]),
+            stress_closure_mode='lid',
+            xp=xp_mod,
+        )
+        assert bool(xp_mod.isnan(eta_wl_nan[0]))
+        assert bool(xp_mod.isfinite(eta_wl_nan[1]))
+
+        eta_input_nan_with_wl_zero = compute_effective_viscosity(
+            eta_diff=xp_mod.asarray([1.0e24, 1.0e24]),
+            eta_i=xp_mod.asarray(np.nan),
+            tau_d=xp_mod.asarray(2.0e6),
+            tau_y_lid=xp_mod.asarray(1.0e6),
+            w_lid=xp_mod.asarray([0.0, 1.0]),
+            stress_closure_mode='lid',
+            xp=xp_mod,
+        )
+        assert bool(xp_mod.all(xp_mod.isnan(eta_input_nan_with_wl_zero)))
