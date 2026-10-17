@@ -278,9 +278,7 @@ needs_eos = pytest.mark.skipif(
 )
 
 
-def _build_state(
-    eos, *, kappah_floor: float, convective_threshold=_D
-):
+def _build_state(eos, *, kappah_floor: float, convective_threshold=_D):
     """Mirror of ``test_entropy_state_branches._build_state`` with the
     kappa_h floor enabled, returning the state plus the mesh."""
     from aragog.eos.entropy_phase import EntropyPhaseEvaluator
