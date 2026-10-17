@@ -505,6 +505,49 @@ def test_jax_jacrev_closure_differentiability():
     assert jnp.all(jnp.isfinite(grad_tau_d))
     assert float(jnp.linalg.norm(grad_tau_d)) > 0.0
 
+    jac_log_eta = jax.jit(jax.jacrev(lambda T_p: jnp.log10(_eval_closure(T_p)[2])))(T_init)
+    assert jac_log_eta.shape == (n_nodes, n_nodes)
+    assert jnp.all(jnp.isfinite(jac_log_eta))
+    np.testing.assert_allclose(
+        np.asarray(jnp.sum(jac_log_eta, axis=0)),
+        np.asarray(grad_val),
+        rtol=1.0e-8,
+        atol=1.0e-11,
+    )
+
+    for T_reg, f_reg, phi_reg in (
+        (T_init, conv_flux, melt_frac),
+        (jnp.full(n_nodes, 1600.0), conv_flux, melt_frac),
+        (T_init, jnp.zeros(n_nodes), melt_frac),
+        (T_init, conv_flux, jnp.full(n_nodes, 0.8)),
+    ):
+        jac_reg = jax.jit(
+            jax.jacrev(
+                lambda T_p, f_c=f_reg, phi_m=phi_reg: jnp.stack(
+                    [
+                        compute_stagnant_lid_state(
+                            radii=radii,
+                            temperature=T_p,
+                            pressure=pressure,
+                            convective_flux=f_c,
+                            total_flux=tot_flux,
+                            solidus_temperature=None,
+                            melt_fraction=phi_m,
+                            params=params,
+                            unyielded_velocity=v_unyielded,
+                            viscosity_solid=1.0e21,
+                            phi_rheo=0.4,
+                            phi_width=0.15,
+                            xp=jnp,
+                        )[k]
+                        for k in ('T_i', 'theta', 'd_lid', 'v_m', 'tau_d', 'lid_regime')
+                    ]
+                )
+            )
+        )(T_reg)
+        assert jac_reg.shape == (6, n_nodes)
+        assert jnp.all(jnp.isfinite(jac_reg))
+
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
