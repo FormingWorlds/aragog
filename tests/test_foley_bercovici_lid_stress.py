@@ -227,3 +227,96 @@ def test_interior_selection_first_lid_node_and_resolution_invariance():
     )
     assert rel_diff_ti < 0.02
     assert rel_diff_taud < 0.02
+
+
+@pytest.mark.unit
+def test_erf_boundary_layer_ti_and_175kyr_default_ti():
+    """Verify T_i on an erf boundary layer across N in {100, 400, 800} and on the 175 kyr fixture."""
+    import os
+    from math import erf
+
+    with pytest.raises(ValueError, match='interior_flux_fraction'):
+        SolidRheologyParams(interior_flux_fraction=0.04)
+    with pytest.raises(ValueError, match='interior_flux_fraction'):
+        SolidRheologyParams(interior_flux_fraction=0.51)
+    assert SolidRheologyParams(
+        interior_flux_fraction=0.05
+    ).interior_flux_fraction == pytest.approx(0.05)
+    assert SolidRheologyParams(
+        interior_flux_fraction=0.50
+    ).interior_flux_fraction == pytest.approx(0.50)
+
+    r_gas = 8.314462618
+    t_m, t_s = 1600.0, 300.0
+    h_act = 300.0e3
+    g_hom = h_act / (r_gas * t_m)
+    dt_rh_true = (r_gas * t_m**2) / h_act
+
+    for delta in (100.0e3, 200.0e3):
+        ti_by_n: dict[int, float] = {}
+        for n_nodes in (100, 400, 800):
+            r = np.linspace(3480.0e3, 6370.0e3, n_nodes)
+            z = r[-1] - r
+            t = t_s + (t_m - t_s) * np.array([erf(x) for x in z / delta])
+            k_cond = 4.0
+            f_cond = (
+                k_cond
+                * (t_m - t_s)
+                * (2.0 / (np.sqrt(np.pi) * delta))
+                * np.exp(-((z / delta) ** 2))
+            )
+            f_tot = np.full(n_nodes, f_cond[-1])
+            f_conv = f_tot - f_cond
+            p = np.linspace(135.0e9, 1.0e5, n_nodes)
+            params = SolidRheologyParams(
+                enabled=True,
+                g_homologous=g_hom,
+                t_sol_0=t_m,
+                dt_sol_dp=0.0,
+                arrhenius_t_ref=t_m,
+                interior_flux_fraction=0.05,
+            )
+            st = compute_stagnant_lid_state(
+                radii=r,
+                temperature=t,
+                pressure=p,
+                convective_flux=f_conv,
+                total_flux=f_tot,
+                solidus_temperature=None,
+                melt_fraction=np.zeros(n_nodes),
+                params=params,
+                viscosity_solid=1.0e20,
+                phi_rheo=0.4,
+                phi_width=0.15,
+            )
+            ti_val = float(st['T_i'])
+            ti_by_n[n_nodes] = ti_val
+            assert abs(ti_val - t_m) <= 2.0 * dt_rh_true
+        assert abs(ti_by_n[800] - ti_by_n[100]) <= 0.5 * dt_rh_true
+
+    ckpt_path = os.path.join(
+        os.path.dirname(__file__), 'reference', 'checkpoint_profile_175kyr.npz'
+    )
+    data = np.load(ckpt_path)
+    f_ckpt = np.clip(
+        np.maximum(data['F_conv'], 0.0) / np.maximum(np.abs(data['F_tot']), 1.0e-12),
+        0.0,
+        1.0,
+    )
+    idx_f09 = int(np.where(f_ckpt[:-1] >= 0.9)[0][-1])
+    t_at_f09 = float(data['T_basic'][idx_f09])
+    st_ckpt = compute_stagnant_lid_state(
+        radii=data['r_basic'],
+        temperature=data['T_basic'],
+        pressure=data['P_basic'],
+        convective_flux=data['F_conv'],
+        total_flux=data['F_tot'],
+        solidus_temperature=None,
+        melt_fraction=data['phi_basic'],
+        params=SolidRheologyParams(enabled=True),
+        unyielded_velocity=data['v_unyielded'],
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    assert abs(float(st_ckpt['T_i']) - t_at_f09) <= 50.0
