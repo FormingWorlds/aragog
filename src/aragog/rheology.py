@@ -14,6 +14,13 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+try:
+    import jax
+
+    jax.config.update('jax_enable_x64', True)
+except ImportError:  # pragma: no cover
+    jax = None  # type: ignore[assignment]
+
 R_GAS = 8.314462618
 COHESION_FLOOR = 1.0e-6
 
@@ -148,6 +155,12 @@ def delegate_rheology(cls):
     return cls
 
 
+def _ensure_x64(xp: Any) -> None:
+    """Enable 64-bit floating-point precision when xp is jax.numpy."""
+    if xp is not np and jax is not None and not jax.config.jax_enable_x64:
+        jax.config.update('jax_enable_x64', True)
+
+
 def _unwrap_scalar(result: Any, xp: Any, *inputs: Any) -> Any:
     """Return a Python float for NumPy results when every input is a scalar."""
     if xp is np and all(np.ndim(x) == 0 for x in inputs):
@@ -185,6 +198,7 @@ def compute_mlt_top_slope(
     float or array-like
         Upper mixing-length slope s_top(theta) [-].
     """
+    _ensure_x64(xp)
     if s_top_inf is None:
         s_top_inf = SolidRheologyParams.s_top_inf
     if c_theta is None:
@@ -241,6 +255,7 @@ def viscous_mixing_length_factor(
     array
         ``(l_v / l)^4``, and 1 where ``l`` is 0 (the boundary nodes).
     """
+    _ensure_x64(xp)
     eff_top_slope = top_slope if s_top_inf is None else s_top_inf
     if theta is not None:
         eff_top_slope = compute_mlt_top_slope(
@@ -292,6 +307,7 @@ def compute_arrhenius_enthalpy(
     float or array-like
         Activation enthalpy H(P) [J/mol].
     """
+    _ensure_x64(xp)
     p = xp.asarray(pressure, dtype=float)
     if solidus_temperature is not None:
         t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
@@ -359,6 +375,7 @@ def compute_arrhenius_viscosity(
     float or array-like
         Dynamic diffusion creep viscosity eta_diff [Pa s].
     """
+    _ensure_x64(xp)
     if arrhenius_t_ref <= 0.0:
         raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
 
@@ -430,6 +447,7 @@ def compute_yield_stress(
     float or array-like
         Yield stress tau_y [Pa].
     """
+    _ensure_x64(xp)
     p = xp.asarray(pressure, dtype=float)
     tau_y = xp.maximum(0.0, xp.minimum(yield_stress_c + yield_stress_mu * p, yield_stress_max))
     return _unwrap_scalar(tau_y, xp, pressure)
@@ -462,6 +480,7 @@ def compute_strain_rate_local(
     float or array-like
         Local strain rate [1/s].
     """
+    _ensure_x64(xp)
     v = xp.asarray(viscous_velocity, dtype=float)
     l_mix = xp.asarray(mixing_length, dtype=float)
     denom = 2.0 * xp.maximum(l_mix, eps)

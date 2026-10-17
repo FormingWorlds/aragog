@@ -346,7 +346,8 @@ def test_numpy_jax_crossover_sweep_parity():
 
 @pytest.mark.physics_invariant
 def test_compute_effective_viscosity_infinite_yield_stress_jax():
-    """Verify compute_effective_viscosity handles infinite yield stress in JAX."""
+    """Verify compute_effective_viscosity enables float64 and handles infinite yield stress in JAX."""
+    jax = pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
 
     visc_diff = 1.0e21
@@ -360,8 +361,21 @@ def test_compute_effective_viscosity_infinite_yield_stress_jax():
         stress_closure_mode='local',
         xp=jnp,
     )
+    assert eta_eff_val.dtype == jnp.float64
     assert jnp.isfinite(eta_eff_val)
     assert float(eta_eff_val) == pytest.approx(visc_diff, rel=1.0e-12)
+
+    jax.config.update('jax_enable_x64', False)
+    eta_reenabled = compute_effective_viscosity(
+        visc_diff,
+        tau_y=tau_y_inf,
+        strain_rate=sr,
+        stress_closure_mode='local',
+        xp=jnp,
+    )
+    assert jax.config.jax_enable_x64 is True
+    assert eta_reenabled.dtype == jnp.float64
+    assert float(eta_reenabled) == pytest.approx(visc_diff, rel=1.0e-12)
 
 
 def test_arrhenius_t_ref_positivity_validation():

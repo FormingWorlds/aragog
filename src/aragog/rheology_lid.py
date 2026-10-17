@@ -11,6 +11,7 @@ from aragog.rheology import (
     COHESION_FLOOR,
     R_GAS,
     FloatOrArray,
+    _ensure_x64,
     compute_arrhenius_enthalpy,
     compute_arrhenius_viscosity,
     compute_strain_rate_local,
@@ -166,6 +167,7 @@ def compute_stagnant_lid_state(
     indicators, layers with melt fraction exceeding 0.01 are treated as non-lid interior
     by ``w_hot_sol``, rendering the lid boundary position independent of ``phi_rheo``.
     """
+    _ensure_x64(xp)
     r = xp.asarray(radii, dtype=float)
     T = xp.asarray(temperature, dtype=float)
     P = xp.asarray(pressure, dtype=float)
@@ -443,6 +445,7 @@ def compute_effective_viscosity(
     Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
         (alternative harmonic mean formulation)
     """
+    _ensure_x64(xp)
     if stress_closure_mode not in ('lid', 'local'):
         hint = (
             ". 'global' mode is unsupported; use 'lid'."
