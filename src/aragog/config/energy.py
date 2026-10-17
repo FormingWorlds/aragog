@@ -83,6 +83,15 @@ class EnergyConfig:
         Per-call per-cell ``|ΔS|`` cap [J/kg/K] in the native solver
         variable; same role as the temperature cap without an EOS lookup
         in the root function. ``None`` (the default) disables the cap.
+    eos_floor_margin : float or None
+        Margin [J/kg/K] above the minimum entropy of the EOS tables. A CVODE
+        root (scipy: a terminal event) ends the call when the top basic-node
+        entropy, which sets the surface temperature, or a cell entropy
+        reaches the minimum plus this margin, or halfway to the minimum
+        when the call starts closer; the call then returns a shorter step.
+        A call that starts at or below the minimum does not advance and
+        returns status 1. Default 100 (about 1.5 cells of the bundled
+        solid tables); ``None`` or a non-positive value disables it.
     phase_boundary_entropy_margin : float
         Proximity band [J/kg/K] within which a staggered cell counts as
         "near" a phase boundary, tightening the integrator ``max_step`` so
@@ -132,6 +141,7 @@ class EnergyConfig:
     phi_step_cap: float | None = None
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
+    eos_floor_margin: float | None = 100.0
     phase_boundary_entropy_margin: float = 200.0
     phase_boundary_cap: str | None = attrs.field(
         default=None,
