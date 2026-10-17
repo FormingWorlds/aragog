@@ -122,12 +122,19 @@ def test_yield_stress_knee_is_continuous():
     assert tau_above <= _TAU_MAX + 1.0
 
 
+def _import_jax_x64():
+    """Import jax and jax.numpy with 64-bit precision enabled for in-process JAX tests."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+    return jax, jnp
+
+
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 def test_numpy_jax_rheology_float64_parity():
     """The NumPy and JAX rheology kernels agree to float64 parity."""
-    pytest.importorskip('jax')
-    jnp = pytest.importorskip('jax.numpy')
+    _, jnp = _import_jax_x64()
 
     t_test = 0.85 * _T_REF
     p_test = 40.0e9
@@ -316,8 +323,7 @@ def test_phase_config_yield_stress_max_and_viscosity_max():
 @pytest.mark.physics_invariant
 def test_numpy_jax_crossover_sweep_parity():
     """Verify numpy and JAX Arrhenius viscosity match across the viscosity_max_log10 cap."""
-    pytest.importorskip('jax')
-    jnp = pytest.importorskip('jax.numpy')
+    _, jnp = _import_jax_x64()
 
     temperatures = np.linspace(400.0, 700.0, 31)
     for t_val in temperatures:
@@ -351,9 +357,8 @@ def test_numpy_jax_crossover_sweep_parity():
 
 @pytest.mark.physics_invariant
 def test_compute_effective_viscosity_infinite_yield_stress_jax():
-    """Verify aragog.rheology enables float64 on import and handles infinite yield stress in JAX."""
-    pytest.importorskip('jax')
-    jnp = pytest.importorskip('jax.numpy')
+    """Verify aragog.rheology requires float64 on the JAX path and handles infinite yield stress."""
+    _, jnp = _import_jax_x64()
 
     visc_diff = 1.0e21
     tau_y_inf = jnp.inf
@@ -375,28 +380,67 @@ def test_compute_effective_viscosity_infinite_yield_stress_jax():
 
     import aragog
 
-    sub_env = {**os.environ, 'PYTHONPATH': str(Path(aragog.__file__).parents[1])}
+    sub_env = {k: v for k, v in os.environ.items() if k != 'JAX_ENABLE_X64'}
+    sub_env['PYTHONPATH'] = str(Path(aragog.__file__).parents[1])
     proc_no_jax = subprocess.run(
-        [sys.executable, '-c', "import sys, aragog; print('jax' in sys.modules)"],
-        env=sub_env,
-        capture_output=True,
-        text=True,
-    )
-    assert proc_no_jax.returncode == 0, proc_no_jax.stderr
-    assert proc_no_jax.stdout.strip() == 'False'
-
-    proc_x64 = subprocess.run(
         [
             sys.executable,
             '-c',
-            'import aragog.rheology, jax; print(jax.config.jax_enable_x64)',
+            (
+                'import os, sys, aragog, aragog.rheology; '
+                "print('jax' in sys.modules, 'JAX_ENABLE_X64' in os.environ)"
+            ),
         ],
         env=sub_env,
         capture_output=True,
         text=True,
     )
-    assert proc_x64.returncode == 0, proc_x64.stderr
-    assert proc_x64.stdout.strip() == 'True'
+    assert proc_no_jax.returncode == 0, proc_no_jax.stderr
+    assert proc_no_jax.stdout.strip() == 'False False'
+
+    proc_no_x64 = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            (
+                'import os, jax, jax.numpy as jnp, aragog.rheology as r\n'
+                'print("env", "JAX_ENABLE_X64" in os.environ, "x64", jax.config.jax_enable_x64)\n'
+                'try:\n'
+                '    v = r.compute_arrhenius_viscosity(300.0, 0.0, xp=jnp)\n'
+                '    print("returned", v.dtype, float(v))\n'
+                'except RuntimeError as exc:\n'
+                '    print("RuntimeError", exc)\n'
+            ),
+        ],
+        env=sub_env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc_no_x64.returncode == 0, proc_no_x64.stderr
+    lines_no_x64 = proc_no_x64.stdout.strip().splitlines()
+    assert lines_no_x64[0] == 'env False x64 False'
+    assert lines_no_x64[1].startswith('RuntimeError ')
+    assert 'jax_enable_x64' in lines_no_x64[1]
+
+    proc_with_x64 = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            (
+                'import jax; jax.config.update("jax_enable_x64", True); '
+                'import jax.numpy as jnp, aragog.rheology as r; '
+                'v = r.compute_arrhenius_viscosity(300.0, 0.0, xp=jnp); '
+                'print(v.dtype, float(v))'
+            ),
+        ],
+        env=sub_env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc_with_x64.returncode == 0, proc_with_x64.stderr
+    dtype_str, val_str = proc_with_x64.stdout.strip().split()
+    assert dtype_str == 'float64'
+    assert float(val_str) == pytest.approx(1.0e40, rel=1.0e-12)
 
 
 def test_arrhenius_t_ref_positivity_validation():
@@ -441,7 +485,7 @@ def test_phase_config_rheological_lid_requires_positive_g_homologous():
 
 def test_water_prefactor_scalar_and_array_parity():
     """Verify water_prefactor scales viscosity linearly for scalar and array in numpy and JAX."""
-    jnp = pytest.importorskip('jax.numpy')
+    _, jnp = _import_jax_x64()
 
     t = np.array([1600.0, 1800.0])
     p = np.array([0.0, 1e9])
@@ -525,8 +569,7 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
     )
     assert eta_yielded == pytest.approx(eta_plastic, rel=1.0e-12)
 
-    pytest.importorskip('jax')
-    jnp = pytest.importorskip('jax.numpy')
+    _, jnp = _import_jax_x64()
 
     eta_match_jax = compute_effective_viscosity(
         eta_diff=eta_d,
@@ -617,8 +660,7 @@ def test_moresi_solomatov_min_closure_exact_contract():
         assert wrong_cold_scaled < eta_interior
 
     # Three reference regimes (cold surface 300 K, warm surface 700 K, and low-yield lid):
-    pytest.importorskip('jax')
-    jnp = pytest.importorskip('jax.numpy')
+    _, jnp = _import_jax_x64()
     cases = [
         (1.0e40, 1.0e21, 1.2e6, 1.0e6, 8.333333333333334e20),
         (8.30e24, 1.0e21, 1.2e6, 1.0e6, 8.333333333333334e20),
@@ -683,8 +725,7 @@ def test_moresi_solomatov_min_closure_exact_contract():
 @pytest.mark.physics_invariant
 def test_lid_closure_jump_at_yield_threshold():
     """Verify lid closure jumps at tau_d = tau_y_lid from eta_diff below/at yield to eta_i * tau_y/tau_d above."""
-    pytest.importorskip('jax')
-    jnp = pytest.importorskip('jax.numpy')
+    _, jnp = _import_jax_x64()
 
     eta_d = 1.0e26
     eta_i = 1.0e20
@@ -822,8 +863,7 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
     """Verify no-lid profiles zero boundary-layer diagnostics and W_sum blends smoothly."""
     from aragog.rheology_lid import compute_stagnant_lid_state
 
-    pytest.importorskip('jax')
-    jnp = pytest.importorskip('jax.numpy')
+    _, jnp = _import_jax_x64()
 
     n_nodes = 20
     r = np.linspace(3.48e6, 6.371e6, n_nodes)
@@ -1171,8 +1211,7 @@ def test_validation_and_lid_base_edge_cases():
     from aragog.rheology import stress_closure, viscous_mixing_length_factor
     from aragog.rheology_lid import compute_stagnant_lid_state
 
-    jax = pytest.importorskip('jax')
-    jnp = pytest.importorskip('jax.numpy')
+    jax, jnp = _import_jax_x64()
 
     # 1. enabled must be a bool.
     with pytest.raises(ValueError, match='enabled must be a bool'):
@@ -1328,7 +1367,7 @@ def test_lid_state_nan_propagation_per_input(nan_field: str):
     """Verify NaN in each array input of compute_stagnant_lid_state propagates NaN to outputs."""
     from aragog.rheology_lid import compute_stagnant_lid_state
 
-    jnp = pytest.importorskip('jax.numpy')
+    _, jnp = _import_jax_x64()
     n_nodes = 20
     base_arrays = {
         'radii': np.linspace(3.48e6, 6.371e6, n_nodes),
@@ -1380,7 +1419,7 @@ def test_lid_state_nan_propagation_per_input(nan_field: str):
 @pytest.mark.unit
 def test_water_prefactor_and_w_lid_nan_propagation():
     """Verify NaN water_prefactor in compute_arrhenius_viscosity and NaN w_lid in compute_effective_viscosity return NaN."""
-    jnp = pytest.importorskip('jax.numpy')
+    _, jnp = _import_jax_x64()
     assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, water_prefactor=np.nan))
     res_np_arr = compute_arrhenius_viscosity(
         np.array([1600.0, 1600.0]),

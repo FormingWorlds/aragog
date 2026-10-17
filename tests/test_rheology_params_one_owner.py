@@ -191,7 +191,8 @@ def test_phase_config_merge_precedence():
 
 def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
     """Verify water_prefactor scaling in compute_arrhenius_viscosity and compute_stagnant_lid_state."""
-    pytest.importorskip('jax')
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
     jnp = pytest.importorskip('jax.numpy')
 
     T = 650.0

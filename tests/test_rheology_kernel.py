@@ -399,6 +399,7 @@ def test_limit_whole_mantle_mush_clips_lid():
 def test_jax_autodiff_linear_solidus_enthalpy_gradient():
     """Verify JAX dH/dP matches NumPy analytical derivative g_hom * R * dT_sol/dP."""
     jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
     jnp = pytest.importorskip('jax.numpy')
 
     dt_sol_dp = 5.0e-6 / (25.0 * R_GAS)

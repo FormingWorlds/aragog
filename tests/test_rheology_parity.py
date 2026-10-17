@@ -21,6 +21,7 @@ from aragog.rheology import (
 )
 
 jax = pytest.importorskip('jax')
+jax.config.update('jax_enable_x64', True)
 jnp = pytest.importorskip('jax.numpy')
 
 
