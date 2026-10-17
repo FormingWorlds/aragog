@@ -511,26 +511,15 @@ def test_jax_jacrev_closure_differentiability():
 def test_stagnant_lid_checkpoint_profile_parity():
     """Verify stagnant lid state on 175 kyr checkpoint profile matches between NumPy and JAX.
 
-    Provenance: ``tests/reference/checkpoint_profile_175kyr.npz`` was extracted from
-    ``/Users/timlichtenberg/work/stream-ssc-step1/data/A6/acceptance_175kyr/ssc_earth_4p5gyr.nc``
-    (run ``r_item13_acceptance_175kyr_rate_cap``, ``A6/run_acceptance_175kyr_rate_cap.py``)
-    produced by Aragog commit ``9fc9247`` on branch ``tl/ssc-step1-a6`` (committed as test
-    fixture in ``f898299``): a 100-node Earth-sized magma-ocean solidification snapshot at
-    ``t = 175 kyr`` (``r_basic`` 3480-6371 km, ``P_basic`` 145.5-0.71 GPa, ``T_basic``
-    4794.8-452.6 K, ``phi_basic`` 0.141 at the CMB to 0.0 at the surface).
-
-    On ``checkpoint_profile_175kyr.npz``, the surface node has ``T_basic[-1] = 452.559`` K
-    and ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Under the fixed-width (0.01)
-    convective selector:
-    - At ``interior_flux_fraction = 0.05``, ``f[-1] > 0.05`` classifies the 452.559 K
-      surface node as convecting interior, giving ``T_i = 454.923`` K,
-      ``eta_i = 1.000000e+40`` Pa s, ``d_lid = 18186.13`` m, ``max(w_lid) = 0.494596``,
-      ``tau_d = 1.770575e+11`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.
-    - At ``interior_flux_fraction = 0.10`` (above ``f[-1] = 0.08007493``), the surface
-      node is classified as conductive lid, giving ``T_i = 1405.285`` K,
-      ``eta_i = 3.772671e+22`` Pa s, ``d_lid = 41509.80`` m, ``max(w_lid) = 0.847313``,
-      ``tau_d = 1.230400e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa (sub-yield under
-      Byerlee and yielding when tested against ``tau_y_lid = 0.5e6`` Pa < ``tau_d``).
+    Fixture ``tests/reference/checkpoint_profile_175kyr.npz`` is a 100-node Earth-sized
+    magma-ocean solidification snapshot at ``t = 175 kyr`` (``r_basic`` 3480 to 6371 km,
+    ``P_basic`` 145.5 to 0.71 GPa, ``T_basic`` 4794.8 to 452.6 K, ``phi_basic`` 0.141 at
+    the CMB to 0.0 at the surface) with ``T_basic[-1] = 452.559`` K and
+    ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Because the interior temperature
+    selector ``w_Ti`` gates on ``f = 0.9`` and excludes the boundary nodes, both the
+    default ``interior_flux_fraction = 0.05`` and ``0.10`` give ``T_i = 1423.012`` K,
+    ``eta_i = 2.760821e+22`` Pa s, ``d_lid = 42026.67`` m, ``max(w_lid) = 0.851185``,
+    ``tau_d = 1.299379e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.
     """
     ckpt_path = os.path.join(
         os.path.dirname(__file__), 'reference', 'checkpoint_profile_175kyr.npz'
@@ -571,6 +560,13 @@ def test_stagnant_lid_checkpoint_profile_parity():
     )
     state_np = _lid_state(np, **lid_inputs)
     state_jx = _lid_state(jnp, **lid_inputs)
+
+    assert float(state_np['T_i']) == pytest.approx(1423.012466, rel=1.0e-6)
+    assert float(state_np['eta_i']) == pytest.approx(2.760821e22, rel=1.0e-5)
+    assert float(state_np['d_lid']) == pytest.approx(42026.67, rel=1.0e-5)
+    assert float(np.max(state_np['w_lid'])) == pytest.approx(0.851185, rel=1.0e-5)
+    assert float(state_np['tau_d']) == pytest.approx(1.299379e6, rel=1.0e-5)
+    assert float(state_np['tau_y_lid']) == pytest.approx(5.0e8, rel=1.0e-12)
 
     for key in [
         'eta_i',
