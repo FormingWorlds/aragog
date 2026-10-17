@@ -77,6 +77,7 @@ def test_the_rate_of_the_lowest_component_decides():
         ([np.nan, S_MIN + 40.0, S_MIN + 40.0], [0.0] * 3, (None, False)),
         ([np.inf, S_MIN + 40.0, S_MIN + 40.0], [0.0] * 3, (None, False)),
         ([S_MIN + 40.0] * 3, [np.nan] * 3, (None, True)),
+        ([S_MIN - 10.0] * 3, [np.nan] * 3, (None, True)),
         ([S_MIN + 40.0] * 3, [-np.inf] * 3, (None, True)),
         ([S_MIN + 40.0] * 3, [0.0, 0.0, np.inf], (S_MIN + 20.0, False)),
     ],
