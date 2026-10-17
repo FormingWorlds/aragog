@@ -165,7 +165,8 @@ def test_stable_node_below_threshold_gets_the_floor_only():
     """
     n = _DSDR_D.size
     ph = _phase(n, [0.4] * n)
-    kh, kc = compute_mlt(_DSDR_D, ph, _mesh(n, ml=1.0e5), PhaseParams(**_PARAMS))
+    params = PhaseParams(**_PARAMS, convective_threshold=1.0e-6)
+    kh, kc = compute_mlt(_DSDR_D, ph, _mesh(n, ml=1.0e5), params)
     kh_floor = 10.0 * float(tanh_weight(jnp.asarray(0.4), 0.4, 0.15))
 
     np.testing.assert_allclose(np.asarray(kh[4:7]), kh_floor, rtol=1e-12)
@@ -185,7 +186,7 @@ def test_zero_threshold_is_the_sign_switch():
 @pytest.mark.parametrize('D', [1.0e-6, 3.0e-7, 3.0e-6])
 def test_threshold_is_strict_at_D(D):
     """A node just below D gets the floor (and no chemical diffusivity) and a node
-    at D does not, for the default and two other values of D; the floor mask is
+    at D does not, for three values of D; the floor mask is
     ``dS/dr < D``, not ``<=``."""
     x = jnp.array([-1.0e-4, -1.0e-4, np.nextafter(D, 0.0), D, np.nextafter(D, 1.0), -1.0e-4])
     params = PhaseParams(**_PARAMS, convective_threshold=D)

@@ -12,7 +12,7 @@ logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 # Minimum drive gradient and kappa_h floor band [J/kg/K/m]; single-sourced
 # here for parser.py, jax/phase.py and solver/entropy_state.py.
-CONVECTIVE_THRESHOLD_DEFAULT: float = 1.0e-6
+CONVECTIVE_THRESHOLD_DEFAULT: float = 0.0
 
 
 def check_convective_threshold(value: float) -> None:
@@ -57,8 +57,10 @@ class EnergyConfig:
         where dS/dr < 0 and uses max(|dS/dr|, D) there, so an unstable node
         gets at least the eddy diffusivity of a gradient D. The
         phase-modulated kappa_h floor applies wherever dS/dr < D, so a node
-        with 0 <= dS/dr < D gets the floor alone. Default 1e-6; 0.0 gives
-        the dS/dr < 0 switch with no minimum drive.
+        with 0 <= dS/dr < D gets the floor alone. Default 0.0, the
+        dS/dr < 0 switch with no minimum drive. With D > 0, kappa_h jumps
+        at dS/dr = 0 from the floor to the value at D, which can stall
+        CVODE at a node whose gradient stays near 0.
     bottom_up_grav_sep : bool
         SPIDER-analogue bottom-up gate for the gravitational
         mass-flux: only allow melt/solid separation across an

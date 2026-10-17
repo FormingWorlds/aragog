@@ -596,6 +596,6 @@ def test_convective_threshold_rejects_negative_and_non_finite(build, bad_value):
 
 @_ALL_BUILDERS
 def test_convective_threshold_default_and_zero(build):
-    """D defaults to 1e-6 J/kg/K/m and accepts 0, the dS/dr < 0 switch."""
-    assert build().convective_threshold == 1.0e-6
-    assert build(convective_threshold=0.0).convective_threshold == 0.0
+    """D defaults to 0, the dS/dr < 0 switch, and accepts 1e-6 J/kg/K/m."""
+    assert build().convective_threshold == 0.0
+    assert build(convective_threshold=1.0e-6).convective_threshold == 1.0e-6
