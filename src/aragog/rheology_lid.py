@@ -197,12 +197,10 @@ def compute_stagnant_lid_state(
             T_sol_arr = T_sol_raw
             T_sol_i = T_sol_arr
             T_sol_surf = T_sol_arr
-        t_sol_ref_0 = T_sol_surf
     else:
         T_sol_arr = None
         T_sol_i = None
         T_sol_surf = None
-        t_sol_ref_0 = params.t_sol_0
 
     H_T_i = compute_arrhenius_enthalpy(
         P_T_i,
@@ -227,7 +225,7 @@ def compute_stagnant_lid_state(
         compute_arrhenius_viscosity,
         viscosity_solid=eta_0,
         g_homologous=params.g_homologous,
-        t_sol_0=t_sol_ref_0,
+        t_sol_0=params.t_sol_0,
         dt_sol_dp=params.dt_sol_dp,
         arrhenius_t_ref=params.arrhenius_t_ref,
         r_gas=R_GAS,

@@ -994,11 +994,35 @@ def test_rheology_and_lid_branch_coverage():
         melt_fraction=phi,
         params=params_fixed,
     )
+    st_arr_sol = compute_stagnant_lid_state(
+        radii=r,
+        temperature=T,
+        pressure=P,
+        convective_flux=F_conv,
+        total_flux=F_tot,
+        solidus_temperature=np.full(n_nodes, 2000.0),
+        melt_fraction=phi,
+        params=params_fixed,
+    )
     t_i_val = float(st_scalar_sol['T_i'])
     expected_dt_rh_sol = t_i_val**2 / (params_fixed.g_homologous * 2000.0)
     expected_theta_sol = (t_i_val - T[-1]) / expected_dt_rh_sol
     assert float(st_scalar_sol['dT_rh']) == pytest.approx(expected_dt_rh_sol, rel=1e-12)
     assert float(st_scalar_sol['theta']) == pytest.approx(expected_theta_sol, rel=1e-12)
+    assert float(st_scalar_sol['eta_i']) == pytest.approx(float(st_arr_sol['eta_i']), rel=1e-12)
+    assert float(st_scalar_sol['eta_contrast']) == pytest.approx(
+        float(st_arr_sol['eta_contrast']), rel=1e-12
+    )
+    expected_eta_i_2000 = compute_arrhenius_viscosity(
+        t_i_val,
+        float(st_scalar_sol['P_T_i']),
+        viscosity_solid=1.0e21,
+        g_homologous=params_fixed.g_homologous,
+        solidus_temperature=2000.0,
+        t_sol_0=params_fixed.t_sol_0,
+        arrhenius_t_ref=params_fixed.arrhenius_t_ref,
+    )
+    assert float(st_scalar_sol['eta_i']) == pytest.approx(expected_eta_i_2000, rel=1e-12)
 
     eta_lid_none = compute_effective_viscosity(
         eta_diff=1.0e22, tau_d=None, tau_y_lid=None, stress_closure_mode='lid'

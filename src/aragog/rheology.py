@@ -302,7 +302,8 @@ def compute_arrhenius_enthalpy(
     solidus_temperature : float or array-like, optional
         Local solidus temperature T_sol(P) [K].
     t_sol_0 : float, optional
-        Zero-pressure solidus T_sol(0) [K] for the linear fallback (1400.0 K when None).
+        Zero-pressure solidus T_sol(0) [K] for the linear fallback
+        (``SolidRheologyParams.t_sol_0`` when None).
     dt_sol_dp : float, default 2.4e-8
         Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa).
     r_gas : float, default 8.314462618
@@ -319,7 +320,7 @@ def compute_arrhenius_enthalpy(
     if solidus_temperature is not None:
         t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
     else:
-        t_sol = (1400.0 if t_sol_0 is None else t_sol_0) + dt_sol_dp * p
+        t_sol = (SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0) + dt_sol_dp * p
     h = g_homologous * r_gas * t_sol
     return _unwrap_scalar(h, xp, pressure, solidus_temperature)
 
@@ -364,9 +365,9 @@ def compute_arrhenius_viscosity(
         Local solidus temperature T_sol(P) [K]. When None, uses the linear fallback
         ``t_sol_0 + dt_sol_dp * P``.
     t_sol_0 : float, optional
-        Zero-pressure reference solidus temperature T_sol(0) [K]. When None, inferred
-        from the lowest-pressure endpoint of a 1D ``solidus_temperature`` profile or
-        defaults to 1400.0.
+        Zero-pressure reference solidus temperature T_sol(0) [K]. Required when
+        ``solidus_temperature`` is provided; defaults to
+        ``SolidRheologyParams.t_sol_0`` for the linear fallback.
     dt_sol_dp : float, default 2.4e-8
         Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa).
     arrhenius_t_ref : float, default 1600.0
@@ -405,18 +406,13 @@ def compute_arrhenius_viscosity(
     if xp is np and np.any(wp <= 0.0):
         raise ValueError(f'water_prefactor must be positive, got {water_prefactor}')
 
+    if solidus_temperature is not None and t_sol_0 is None:
+        raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
+
     t = xp.asarray(temperature, dtype=float)
     p = xp.asarray(pressure, dtype=float)
 
-    t_sol_ref_0: Any = 1400.0 if t_sol_0 is None else t_sol_0
-    if t_sol_0 is None and solidus_temperature is not None:
-        t_sol_arr = xp.asarray(solidus_temperature, dtype=float)
-        if xp.ndim(t_sol_arr) > 0 and xp.ndim(p) > 0:
-            t_sol_flat = xp.ravel(t_sol_arr)
-            p_flat = xp.ravel(p)
-            t_sol_ref_0 = xp.where(
-                xp.abs(p_flat[0]) <= xp.abs(p_flat[-1]), t_sol_flat[0], t_sol_flat[-1]
-            )
+    t_sol_ref_0 = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
 
     h_p = compute_arrhenius_enthalpy(
         pressure=p,

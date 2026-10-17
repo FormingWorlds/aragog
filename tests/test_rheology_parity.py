@@ -65,34 +65,57 @@ def test_arrhenius_viscosity_parity_float64():
 
     np.testing.assert_allclose(np.array(eta_jx), eta_np, rtol=1.0e-12, atol=1.0e-30)
 
-    # Verify t_sol_0=None infers low-pressure solidus endpoint for ascending and descending P:
-    eta_auto_asc = compute_arrhenius_viscosity(
-        t_vals,
-        p_vals,
+    # When solidus_temperature is given and t_sol_0 is None, raise ValueError:
+    with pytest.raises(ValueError, match='t_sol_0'):
+        compute_arrhenius_viscosity(
+            t_vals,
+            p_vals,
+            viscosity_solid=1.0e21,
+            g_homologous=25.0,
+            solidus_temperature=t_sol_vals,
+            t_sol_0=None,
+            arrhenius_t_ref=1600.0,
+            viscosity_max_log10=40.0,
+            xp=np,
+        )
+
+    # Scalar, full array, and sliced array solidus_temperature give the same viscosity:
+    eta_sliced = compute_arrhenius_viscosity(
+        t_vals[10:20],
+        p_vals[10:20],
         viscosity_solid=1.0e21,
         g_homologous=25.0,
-        solidus_temperature=t_sol_vals,
-        t_sol_0=None,
+        solidus_temperature=t_sol_vals[10:20],
+        t_sol_0=1400.0,
         arrhenius_t_ref=1600.0,
         viscosity_max_log10=40.0,
         xp=np,
     )
-    np.testing.assert_allclose(eta_auto_asc, eta_np, rtol=1.0e-12, atol=1.0e-30)
+    np.testing.assert_allclose(eta_sliced, eta_np[10:20], rtol=1.0e-12, atol=1.0e-30)
 
-    eta_auto_desc_jx = compute_arrhenius_viscosity(
-        jnp.array(t_vals[::-1]),
-        jnp.array(p_vals[::-1]),
+    eta_scalar_2000 = compute_arrhenius_viscosity(
+        2000.0,
+        10.0e9,
         viscosity_solid=1.0e21,
         g_homologous=25.0,
-        solidus_temperature=jnp.array(t_sol_vals[::-1]),
-        t_sol_0=None,
+        solidus_temperature=2000.0,
+        t_sol_0=1400.0,
         arrhenius_t_ref=1600.0,
         viscosity_max_log10=40.0,
-        xp=jnp,
+        xp=np,
     )
-    np.testing.assert_allclose(
-        np.array(eta_auto_desc_jx), eta_np[::-1], rtol=1.0e-12, atol=1.0e-30
+    eta_arr_2000 = compute_arrhenius_viscosity(
+        np.full(5, 2000.0),
+        np.linspace(0.0, 20.0e9, 5),
+        viscosity_solid=1.0e21,
+        g_homologous=25.0,
+        solidus_temperature=np.full(5, 2000.0),
+        t_sol_0=1400.0,
+        arrhenius_t_ref=1600.0,
+        viscosity_max_log10=40.0,
+        xp=np,
     )
+    np.testing.assert_allclose(eta_arr_2000, eta_scalar_2000, rtol=1.0e-12, atol=1.0e-30)
 
     # Exact hand-computed analytical verification:
     expected = np.minimum(
