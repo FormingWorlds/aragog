@@ -307,3 +307,32 @@ def test_merge_precedence_explicit_default_value():
     assert p_cfg.g_homologous == 25.0
     assert p_cfg.t_sol_0 == 1400.0
     assert p_cfg.enabled is False
+
+
+def test_rheology_docs_and_mkdocs_nav_registration():
+    """Verify docs page parameter table, API stubs, and mkdocs.yml nav entries match this tip."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parent.parent
+    mkdocs_text = (repo_root / 'mkdocs.yml').read_text(encoding='utf-8')
+    for nav_path in (
+        'Explanations/solid_state_convection.md',
+        'Reference/api/aragog.rheology.md',
+        'Reference/api/aragog.rheology_lid.md',
+    ):
+        assert nav_path in mkdocs_text
+        assert (repo_root / 'docs' / nav_path).is_file()
+
+    doc_text = (repo_root / 'docs' / 'Explanations' / 'solid_state_convection.md').read_text(
+        encoding='utf-8'
+    )
+    assert 'aragog TOML path' not in doc_text
+    assert 'PROTEUS TOML path' not in doc_text
+    assert 'sits outside' not in doc_text
+    assert 'lies outside' in doc_text
+
+    default_rheo = SolidRheologyParams()
+    for f in dataclasses.fields(SolidRheologyParams):
+        expected_row = f'| `{f.name}` |'
+        assert expected_row in doc_text
+        assert f'`{getattr(default_rheo, f.name)!r}`' in doc_text
