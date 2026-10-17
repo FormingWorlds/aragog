@@ -187,10 +187,7 @@ def test_branch_switch_stays_continuous_in_kappa():
 def test_numpy_and_jax_theta_top_slope_parity():
     """Verify NumPy and JAX evaluate identical s_top(theta) and mixing-length factors."""
     pytest.importorskip('jax')
-    import jax
     import jax.numpy as jnp
-
-    jax.config.update('jax_enable_x64', True)
 
     r = np.linspace(3.48e6, 6.371e6, 41)
     ml = np.minimum(r - r[0], r[-1] - r)

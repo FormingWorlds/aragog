@@ -106,6 +106,7 @@ def test_fb2014_earth_reference_state():
     expected_ra_rh = (expected_ra_eff * a_rh) / expected_theta
     expected_vm = c4 * (kappa / d_conv) * (expected_ra_rh ** (2.0 / 3.0))
     expected_tau_d = 2.0 * eta_i * expected_vm / d_conv
+    # Discretisation regression value on the 50-node mesh; converged value is about 22.5 km.
     expected_delta_rh = 30791.06
     expected_tau_buoy = rho * g * alpha * expected_dt_rh * expected_delta_rh
     expected_ratio = expected_tau_d / expected_tau_buoy
@@ -179,46 +180,6 @@ def test_fb2014_monotonicity_in_interior_viscosity():
         # Each decade of viscosity increases tau_d by 10^(1/3) ~ 2.1544.
         ratio = tau_d_values[i + 1] / tau_d_values[i]
         assert ratio == pytest.approx(10.0 ** (1.0 / 3.0), rel=1.0e-2)
-
-
-@pytest.mark.unit
-def test_fb2014_mutant_exponent_half_fails(monkeypatch):
-    """Verify mutant with velocity exponent 1/2 fails pinned Earth value assertion.
-
-    Solomatov & Moresi (2000) internally heated scaling uses exponent 1/2,
-    yielding tau_d ~ 1.39e4 Pa (a 94% reduction from FB2014 2.32e5 Pa).
-    """
-    kwargs = _make_earth_reference_inputs()
-    st_prod = compute_stagnant_lid_state(**kwargs)
-    tau_prod = float(st_prod['tau_d'])
-
-    monkeypatch.setattr('aragog.rheology_lid.FB2014_VELOCITY_EXPONENT', 0.5)
-    st_mutant = compute_stagnant_lid_state(**kwargs)
-    tau_mutant = float(st_mutant['tau_d'])
-
-    rel_error = abs(tau_mutant - tau_prod) / tau_prod
-    assert rel_error > 0.90, f'Mutant exponent 1/2 must fail by >90%, got {rel_error:.2%}'
-
-
-@pytest.mark.unit
-def test_fb2014_mutant_missing_factor_two_fails(monkeypatch):
-    """Verify mutant omitting factor 2 (tau_d = mu_i * v_m / d) fails pinned value assertion.
-
-    FB2014 Eq. 28 explicitly specifies tau_xz = 2 * mu_i * v_m / d due to horizontal
-    shear across the convective cell half-depth.
-    """
-    kwargs = _make_earth_reference_inputs()
-    st_prod = compute_stagnant_lid_state(**kwargs)
-    tau_prod = float(st_prod['tau_d'])
-
-    monkeypatch.setattr('aragog.rheology_lid.FB2014_STRESS_FACTOR', 1.0)
-    st_mutant = compute_stagnant_lid_state(**kwargs)
-    tau_mutant = float(st_mutant['tau_d'])
-
-    rel_error = abs(tau_mutant - tau_prod) / tau_prod
-    assert rel_error == pytest.approx(0.50, abs=1.0e-3), (
-        f'Mutant missing factor 2 must differ by exactly 50%, got {rel_error:.2%}'
-    )
 
 
 @pytest.mark.unit

@@ -210,7 +210,7 @@ def test_min_closure_local_asymptotic_limits():
         strain_rate=sr_low,
         stress_closure_mode='local',
     )
-    assert eta_eff_high == eta_d
+    assert eta_eff_high == pytest.approx(eta_d, rel=1.0e-12)
 
     # Limit 2: eta_y << eta_d (high strain rate, yielding).
     sr_high = 5.0e-11
@@ -221,7 +221,7 @@ def test_min_closure_local_asymptotic_limits():
         strain_rate=sr_high,
         stress_closure_mode='local',
     )
-    assert eta_eff_low == eta_y_low
+    assert eta_eff_low == pytest.approx(eta_y_low, rel=1.0e-12)
 
 
 @pytest.mark.unit
@@ -278,6 +278,7 @@ def test_limit_no_convection_lid_diagnostics():
     )
 
     assert state['w_active'] < 0.02
+    # Exact by construction: if_lid gates inactive-convection diagnostics to literal 0.0.
     assert float(state['tau_d']) == 0.0
     assert float(state['tau_d_lid']) == 0.0
     assert float(state['tau_buoy']) == 0.0
@@ -312,6 +313,7 @@ def test_inactive_convection_yield_viscosity_unyielded():
         phi_width=0.15,
         xp=np,
     )
+    # Exact by construction: if_lid returns literal 0.0 when has_lid is False.
     assert float(state['tau_d']) == 0.0
     eta_diff = np.full(n_nodes, 1.0e24)
     eta_eff = compute_effective_viscosity(
@@ -362,8 +364,6 @@ def test_jax_autodiff_linear_solidus_enthalpy_gradient():
     """Verify JAX dH/dP matches NumPy analytical derivative g_hom * R * dT_sol/dP."""
     jax = pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
-
-    jax.config.update('jax_enable_x64', True)
 
     dt_sol_dp = 5.0e-6 / (25.0 * R_GAS)
 

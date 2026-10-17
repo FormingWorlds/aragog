@@ -75,6 +75,7 @@ def test_phase_config_rheology_defaults_match():
         viscosity=1e21,
     )
     assert p_cfg.rheology == default_rheo
+    # Exact by construction: delegate_rheology forwards each stored field attribute unchanged.
     for name in EXPECTED_FIELDS:
         assert getattr(p_cfg, name) == getattr(default_rheo, name)
 
@@ -121,6 +122,7 @@ def test_custom_solid_rheology_params_propagation():
         viscosity=1e21,
         rheology=custom_rheo,
     )
+    # Exact by construction: PhaseConfig stores custom_rheo and delegates its attributes.
     assert p_cfg.rheology == custom_rheo
     assert p_cfg.g_homologous == 18.0
     assert p_cfg.t_sol_0 == 1450.0
@@ -168,6 +170,7 @@ def test_phase_config_merge_precedence():
         rheology=custom,
         lid_contrast_coeff=3.0,
     )
+    # Exact by construction: merge_rheology copies dataclass fields without arithmetic.
     assert p_cfg.rheology.enabled is True
     assert p_cfg.rheology.g_homologous == 20.0
     assert p_cfg.rheology.t_sol_0 == 1500.0
@@ -179,9 +182,8 @@ def test_phase_config_merge_precedence():
 
 def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
     """Verify water_prefactor scaling in compute_arrhenius_viscosity and compute_stagnant_lid_state."""
-    jax = pytest.importorskip('jax')
+    pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
-    jax.config.update('jax_enable_x64', True)
 
     T = 200.0
     P = 1e9
@@ -285,6 +287,7 @@ def test_merge_precedence_explicit_default_value():
     """Verify explicit keyword argument matching default overrides base rheology."""
     custom = SolidRheologyParams(enabled=True, g_homologous=18.0, t_sol_0=1500.0)
     merged = merge_rheology(custom, {'g_homologous': 25.0, 't_sol_0': 1400.0, 'enabled': False})
+    # Exact by construction: merge_rheology replaces dataclass fields with the override values.
     assert merged.g_homologous == 25.0
     assert merged.t_sol_0 == 1400.0
     assert merged.enabled is False

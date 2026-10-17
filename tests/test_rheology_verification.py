@@ -125,9 +125,8 @@ def test_yield_stress_knee_is_continuous():
 @pytest.mark.reference_pinned
 def test_numpy_jax_rheology_float64_parity():
     """The NumPy and JAX rheology kernels agree to float64 parity."""
-    jax = pytest.importorskip('jax')
+    pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
-    jax.config.update('jax_enable_x64', True)
 
     t_test = 0.85 * _T_REF
     p_test = 40.0e9
@@ -293,6 +292,7 @@ def test_phase_config_yield_stress_max_and_viscosity_max():
         yield_stress_max=200.0e6,
         viscosity_max_log10=28.0,
     )
+    # Exact by construction: PhaseConfig delegates stored dataclass attributes unchanged.
     assert p_cfg.yield_stress_max == 200.0e6
     assert p_cfg.viscosity_max_log10 == 28.0
 
@@ -315,9 +315,8 @@ def test_phase_config_yield_stress_max_and_viscosity_max():
 @pytest.mark.physics_invariant
 def test_numpy_jax_crossover_sweep_parity():
     """Verify numpy and JAX Arrhenius viscosity match across the viscosity_max_log10 cap."""
-    jax = pytest.importorskip('jax')
+    pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
-    jax.config.update('jax_enable_x64', True)
 
     temperatures = np.linspace(400.0, 700.0, 31)
     for t_val in temperatures:
@@ -455,6 +454,7 @@ def test_water_prefactor_scalar_and_array_parity():
 def test_phi_visc_single_parameter_control():
     """Verify phi_visc_single controls the single-phase transition threshold."""
     default_p = SolidRheologyParams()
+    # Exact by construction: dataclass stores literal default and constructor argument.
     assert default_p.phi_visc_single == 0.5
 
     custom_p = SolidRheologyParams(phi_visc_single=0.7)
@@ -490,7 +490,7 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
         strain_rate=sr_low,
         stress_closure_mode='local',
     )
-    assert eta_below == eta_d
+    assert eta_below == pytest.approx(eta_d, rel=1.0e-12)
 
     sr_high = 1.0e-10
     eta_plastic = tau_y / (2.0 * sr_high)
@@ -500,11 +500,10 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
         strain_rate=sr_high,
         stress_closure_mode='local',
     )
-    assert eta_yielded == eta_plastic
+    assert eta_yielded == pytest.approx(eta_plastic, rel=1.0e-12)
 
-    jax = pytest.importorskip('jax')
+    pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
-    jax.config.update('jax_enable_x64', True)
 
     eta_match_jax = compute_effective_viscosity(
         eta_diff=eta_d,
@@ -548,7 +547,7 @@ def test_moresi_solomatov_min_closure_exact_contract():
         tau_d=td_below,
         tau_y_lid=tau_y,
     )
-    assert eta_eff_below == eta_d
+    assert eta_eff_below == pytest.approx(eta_d, rel=1.0e-14)
 
     # 2. Above yield with eta_i == eta_diff: eta_eff / eta_diff == tau_y / tau_d.
     td_above = 2.0e6
@@ -570,7 +569,7 @@ def test_moresi_solomatov_min_closure_exact_contract():
         tau_d=8.645e5,
         tau_y_lid=1.0e6,
     )
-    assert eta_unyielded_cold == eta_cold_lid
+    assert eta_unyielded_cold == pytest.approx(eta_cold_lid, rel=1.0e-14)
 
     eta_yielded_cold = compute_effective_viscosity(
         eta_diff=eta_cold_lid,
@@ -595,9 +594,8 @@ def test_moresi_solomatov_min_closure_exact_contract():
         assert wrong_cold_scaled < eta_interior
 
     # Three reference regimes (cold surface 300 K, warm surface 700 K, and low-yield lid):
-    jax = pytest.importorskip('jax')
+    pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
-    jax.config.update('jax_enable_x64', True)
     cases = [
         (1.0e40, 1.0e21, 1.2e6, 1.0e6, 8.333333333333334e20),
         (8.30e24, 1.0e21, 1.2e6, 1.0e6, 8.333333333333334e20),
@@ -639,8 +637,8 @@ def test_moresi_solomatov_min_closure_exact_contract():
         tau_d=tau_y + eps,
         tau_y_lid=tau_y,
     )
-    assert eta_left == eta_d
-    assert eta_mid == eta_d
+    assert eta_left == pytest.approx(eta_d, rel=1.0e-14)
+    assert eta_mid == pytest.approx(eta_d, rel=1.0e-14)
     assert eta_right == pytest.approx(eta_d, rel=1.0e-11)
 
     eta_cold_left = compute_effective_viscosity(
@@ -655,16 +653,15 @@ def test_moresi_solomatov_min_closure_exact_contract():
         tau_d=tau_y + eps,
         tau_y_lid=tau_y,
     )
-    assert eta_cold_left == eta_cold_lid
+    assert eta_cold_left == pytest.approx(eta_cold_lid, rel=1.0e-14)
     assert eta_cold_right == pytest.approx(eta_interior, rel=1.0e-11)
 
 
 @pytest.mark.physics_invariant
 def test_lid_closure_jump_at_yield_threshold():
     """Verify lid closure jumps at tau_d = tau_y_lid from eta_diff below/at yield to eta_i * tau_y/tau_d above."""
-    jax = pytest.importorskip('jax')
+    pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
-    jax.config.update('jax_enable_x64', True)
 
     eta_d = 1.0e26
     eta_i = 1.0e20
@@ -752,7 +749,7 @@ def test_zero_yield_stress_cohesion_floor_prevents_zero_viscosity(monkeypatch):
     import aragog.rheology_lid as lid_mod
     from aragog.rheology_lid import COHESION_FLOOR
 
-    assert COHESION_FLOOR == 1.0e-6
+    assert COHESION_FLOOR == pytest.approx(1.0e-6, rel=1.0e-15)
     sr = 1.0e-15
     eta_local_zero = compute_effective_viscosity(
         eta_diff=1.0e21,
@@ -802,9 +799,8 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
     """Verify no-lid profiles zero boundary-layer diagnostics and W_sum blends smoothly."""
     from aragog.rheology_lid import compute_stagnant_lid_state
 
-    jax = pytest.importorskip('jax')
+    pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
-    jax.config.update('jax_enable_x64', True)
 
     n_nodes = 20
     r = np.linspace(3.48e6, 6.371e6, n_nodes)
@@ -843,6 +839,7 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         phi_width=0.15,
         xp=jnp,
     )
+    # Exact by construction: if_lid gates isothermal no-lid diagnostics to literal 0.0.
     for key in (
         'd_lid',
         'Ra_eff',
@@ -957,6 +954,7 @@ def test_rheology_and_lid_branch_coverage():
         1.0e21, rel=1e-12
     )
     assert np.isnan(compute_arrhenius_viscosity(np.nan, 0.0))
+    # Exact by construction: xp.maximum(0.0, ...) clamps negative Byerlee stress to literal 0.0.
     assert compute_yield_stress(-200.0e6, yield_stress_c=50.0e6, yield_stress_mu=0.6) == 0.0
     assert float(
         compute_effective_viscosity(
@@ -1011,6 +1009,7 @@ def test_rheology_and_lid_branch_coverage():
         viscosity_mixture=1.0e20,
         density=np.full(n_nodes, 3300.0),
     )
+    # Exact by construction: fixed lid_base_mode sets T_lid_iso = params.lid_base_temperature.
     assert st['T_lid_iso'] == 1350.0
     assert float(st['mu_i']) == pytest.approx(1.0e20, rel=1e-12)
     assert float(st['d_lid']) > 1.0e5

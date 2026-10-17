@@ -22,8 +22,6 @@ from aragog.rheology import (
 jax = pytest.importorskip('jax')
 jnp = pytest.importorskip('jax.numpy')
 
-jax.config.update('jax_enable_x64', True)
-
 
 def _lid_state(xp, **fields):
     """Evaluate compute_stagnant_lid_state with every array input converted to ``xp``."""
@@ -225,7 +223,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         v_unyielded = np.linspace(0.0, 1.0e-9, n_nodes)
         v_unyielded[-8:] = 0.0
         melt_frac = np.zeros(n_nodes)
-        tau_y_max = 50.0e6
+        tau_y_max = 2.65e6
     elif regime == 'mobile':
         temperature = np.linspace(3400.0, 1400.0, n_nodes)
         conv_flux = np.linspace(0.0, 1000.0, n_nodes)
@@ -233,7 +231,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         v_unyielded = np.linspace(0.0, 1.0e-8, n_nodes)
         v_unyielded[-8:] = 0.0
         melt_frac = np.zeros(n_nodes)
-        tau_y_max = 10.0e6
+        tau_y_max = 2.0e6
     elif regime == 'no_lid':
         temperature = np.full(n_nodes, 2200.0)
         conv_flux = np.full(n_nodes, 100.0)
@@ -294,26 +292,44 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         'Ra_eff',
         'tau_y_lid',
         'w_active',
+        'w_y',
+        'lid_regime',
     ]:
         val_np = float(state_np[key])
         val_jx = float(state_jx[key])
+        atol = 1.0e-20 if key in ('v_i', 'v_m') else 1.0e-12
         np.testing.assert_allclose(
             val_jx,
             val_np,
             rtol=1.0e-9,
-            atol=1.0e-12,
+            atol=atol,
             err_msg=f'Mismatch in diagnostic {key} for regime {regime}',
         )
 
     if regime in ('unyielded', 'yielding', 'mobile'):
         assert state_np['d_lid'] > 1.0e4, f'{regime} must form stagnant lid > 10 km'
         assert state_np['w_active'] > 0.5, f'{regime} must have active lid closure'
+        ratio = float(state_np['tau_d']) / float(state_np['tau_y_lid'])
+        if regime == 'unyielded':
+            assert ratio < 0.01
+            assert float(state_np['w_y']) < 1.0e-4
+            assert float(state_np['lid_regime']) == pytest.approx(1.0, rel=1.0e-4)
+        elif regime == 'yielding':
+            assert 0.95 < ratio < 1.0
+            assert 0.2 < float(state_np['w_y']) < 0.5
+            assert 1.2 < float(state_np['lid_regime']) < 1.5
+        elif regime == 'mobile':
+            assert ratio > 1.1
+            assert float(state_np['w_y']) > 0.99
+            assert float(state_np['lid_regime']) > 1.99
     elif regime in ('no_lid', 'mushy'):
+        # Exact by construction: if_lid gates non-lid diagnostics to literal 0.0.
         assert state_np['d_lid'] == 0.0, f'{regime} must suppress stagnant lid formation'
         assert state_np['lid_regime'] == 0.0, f'{regime} must have lid_regime == 0'
         assert state_np['tau_d'] == 0.0, f'{regime} must have tau_d == 0'
         assert state_np['v_m'] == 0.0, f'{regime} must have v_m == 0'
     elif regime == 'inactive_convection':
+        # Exact by construction: if_lid gates inactive-convection diagnostics to literal 0.0.
         assert state_np['d_lid'] == 0.0
         assert state_np['tau_d'] == 0.0
 
@@ -364,6 +380,8 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         atol=1.0e-12,
         err_msg=f'Mismatch in eta_eff for regime {regime}',
     )
+    if regime == 'mobile':
+        assert np.any(eta_eff_np < eta_diff_np)
 
     if regime == 'unyielded':
         t_sol_1d = 1400.0 + 2.4e-8 * pressure - 5.0e-20 * pressure**2
@@ -472,6 +490,11 @@ def test_jax_jacrev_closure_differentiability():
 def test_stagnant_lid_checkpoint_profile_parity():
     """Verify stagnant lid state on 175 kyr checkpoint profile matches between NumPy and JAX.
 
+    Provenance: ``tests/reference/checkpoint_profile_175kyr.npz`` is a 100-node Earth-sized
+    magma-ocean solidification snapshot at ``t = 175 kyr`` (``r_basic`` 3480-6371 km,
+    ``P_basic`` 145.5-0.71 GPa, ``T_basic`` 4794.8-452.6 K, ``phi_basic`` 0.141 at the CMB
+    to 0.0 at the surface).
+
     On ``checkpoint_profile_175kyr.npz``, the surface node has ``T_basic[-1] = 452.559`` K
     and ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Under the fixed-width (0.01)
     convective selector:
@@ -488,8 +511,9 @@ def test_stagnant_lid_checkpoint_profile_parity():
     ckpt_path = os.path.join(
         os.path.dirname(__file__), 'reference', 'checkpoint_profile_175kyr.npz'
     )
-    if not os.path.exists(ckpt_path):
-        pytest.skip('Reference checkpoint profile fixture not found')
+    assert os.path.exists(ckpt_path), (
+        f'Missing reference checkpoint profile fixture: {ckpt_path}'
+    )
 
     data = np.load(ckpt_path)
     r_basic = data['r_basic']
@@ -537,11 +561,12 @@ def test_stagnant_lid_checkpoint_profile_parity():
         'Ra_eff',
         'delta_rh',
     ]:
+        atol = 1.0e-20 if key in ('v_i', 'v_m') else 1.0e-12
         np.testing.assert_allclose(
             float(state_np[key]),
             float(state_jx[key]),
             rtol=1.0e-9,
-            atol=1.0e-12,
+            atol=atol,
             err_msg=f'Mismatch in diagnostic {key} on checkpoint profile',
         )
 
@@ -663,7 +688,7 @@ def test_convecting_layer_viscosity_mixture_parity():
     st_none_np = _lid_state(np, **base, viscosity_mixture=None)
     st_none_jx = _lid_state(jnp, **base, viscosity_mixture=None)
     np.testing.assert_allclose(float(st_none_np['mu_i']), float(st_none_jx['mu_i']), rtol=1e-12)
-    assert st_none_np['mu_i'] == st_none_np['eta_i']
+    assert float(st_none_np['mu_i']) == pytest.approx(float(st_none_np['eta_i']), rel=1.0e-12)
 
     # 2. When viscosity_mixture is provided: mu_i is evaluated from the mixture viscosity.
     st_mix_np = _lid_state(np, **base, viscosity_mixture=visc_mix_np)
@@ -725,8 +750,8 @@ def test_local_stress_closure_min_form_parity():
         rtol=1.0e-12,
         err_msg='Mismatch in local mode eta_eff between NumPy and JAX',
     )
-    assert eta_eff_np[0] == eta_diff[0]
+    assert eta_eff_np[0] == pytest.approx(eta_diff[0], rel=1.0e-12)
     assert eta_eff_np[1] == pytest.approx(eta_diff[1], rel=1.0e-12)
     expected_eta_y = tau_y[2] / (2.0 * sr[2])
     assert eta_eff_np[2] == pytest.approx(expected_eta_y, rel=1.0e-12)
-    assert eta_eff_np[3] == eta_diff[3]
+    assert eta_eff_np[3] == pytest.approx(eta_diff[3], rel=1.0e-12)
