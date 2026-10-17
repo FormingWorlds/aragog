@@ -25,6 +25,12 @@ jnp = pytest.importorskip('jax.numpy')
 jax.config.update('jax_enable_x64', True)
 
 
+def _lid_state(xp, **fields):
+    """Evaluate compute_stagnant_lid_state with every array input converted to ``xp``."""
+    conv = {k: xp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in fields.items()}
+    return compute_stagnant_lid_state(xp=xp, **conv)
+
+
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_arrhenius_viscosity_parity_float64():
@@ -234,7 +240,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         yield_stress_max=tau_y_max,
     )
 
-    state_np = compute_stagnant_lid_state(
+    lid_inputs = dict(
         radii=radii,
         temperature=temperature,
         pressure=pressure,
@@ -245,22 +251,9 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         params=params,
         unyielded_velocity=v_unyielded,
         viscosity_solid=1.0e21,
-        xp=np,
     )
-
-    state_jx = compute_stagnant_lid_state(
-        radii=jnp.array(radii),
-        temperature=jnp.array(temperature),
-        pressure=jnp.array(pressure),
-        convective_flux=jnp.array(conv_flux),
-        total_flux=jnp.array(tot_flux),
-        solidus_temperature=None,
-        melt_fraction=jnp.array(melt_frac),
-        params=params,
-        unyielded_velocity=jnp.array(v_unyielded),
-        viscosity_solid=1.0e21,
-        xp=jnp,
-    )
+    state_np = _lid_state(np, **lid_inputs)
+    state_jx = _lid_state(jnp, **lid_inputs)
 
     for key in [
         'T_i',
@@ -470,7 +463,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
     )
     visc_solid = 1.0e21
 
-    state_np = compute_stagnant_lid_state(
+    lid_inputs = dict(
         radii=r_basic,
         temperature=T_basic,
         pressure=P_basic,
@@ -481,22 +474,9 @@ def test_stagnant_lid_checkpoint_profile_parity():
         params=params,
         unyielded_velocity=v_unyielded,
         viscosity_solid=visc_solid,
-        xp=np,
     )
-
-    state_jx = compute_stagnant_lid_state(
-        radii=jnp.array(r_basic),
-        temperature=jnp.array(T_basic),
-        pressure=jnp.array(P_basic),
-        convective_flux=jnp.array(F_conv),
-        total_flux=jnp.array(F_tot),
-        solidus_temperature=None,
-        melt_fraction=jnp.array(phi_basic),
-        params=params,
-        unyielded_velocity=jnp.array(v_unyielded),
-        viscosity_solid=visc_solid,
-        xp=jnp,
-    )
+    state_np = _lid_state(np, **lid_inputs)
+    state_jx = _lid_state(jnp, **lid_inputs)
 
     for key in [
         'eta_i',
@@ -620,10 +600,8 @@ def test_convecting_layer_viscosity_mixture_parity():
 
     visc_mix_np = np.full(30, 1.0e11)
     visc_mix_np[-4:] = 1.0e23
-    visc_mix_jx = jnp.array(visc_mix_np)
 
-    # 1. Fallback when viscosity_mixture is None: mu_i == arrhenius(T_i, P_T_i).
-    st_none_np = compute_stagnant_lid_state(
+    base = dict(
         radii=r,
         temperature=T,
         pressure=P,
@@ -633,52 +611,17 @@ def test_convecting_layer_viscosity_mixture_parity():
         melt_fraction=phi,
         params=params,
         viscosity_solid=1.0e21,
-        viscosity_mixture=None,
-        xp=np,
     )
-    st_none_jx = compute_stagnant_lid_state(
-        radii=jnp.array(r),
-        temperature=jnp.array(T),
-        pressure=jnp.array(P),
-        convective_flux=jnp.array(conv_flux),
-        total_flux=jnp.array(tot_flux),
-        solidus_temperature=None,
-        melt_fraction=jnp.array(phi),
-        params=params,
-        viscosity_solid=1.0e21,
-        viscosity_mixture=None,
-        xp=jnp,
-    )
+
+    # 1. Fallback when viscosity_mixture is None: mu_i == arrhenius(T_i, P_T_i).
+    st_none_np = _lid_state(np, **base, viscosity_mixture=None)
+    st_none_jx = _lid_state(jnp, **base, viscosity_mixture=None)
     np.testing.assert_allclose(float(st_none_np['mu_i']), float(st_none_jx['mu_i']), rtol=1e-12)
     assert st_none_np['mu_i'] == st_none_np['eta_i']
 
     # 2. When viscosity_mixture is provided: mu_i is evaluated from the mixture viscosity.
-    st_mix_np = compute_stagnant_lid_state(
-        radii=r,
-        temperature=T,
-        pressure=P,
-        convective_flux=conv_flux,
-        total_flux=tot_flux,
-        solidus_temperature=None,
-        melt_fraction=phi,
-        params=params,
-        viscosity_solid=1.0e21,
-        viscosity_mixture=visc_mix_np,
-        xp=np,
-    )
-    st_mix_jx = compute_stagnant_lid_state(
-        radii=jnp.array(r),
-        temperature=jnp.array(T),
-        pressure=jnp.array(P),
-        convective_flux=jnp.array(conv_flux),
-        total_flux=jnp.array(tot_flux),
-        solidus_temperature=None,
-        melt_fraction=jnp.array(phi),
-        params=params,
-        viscosity_solid=1.0e21,
-        viscosity_mixture=visc_mix_jx,
-        xp=jnp,
-    )
+    st_mix_np = _lid_state(np, **base, viscosity_mixture=visc_mix_np)
+    st_mix_jx = _lid_state(jnp, **base, viscosity_mixture=visc_mix_np)
     np.testing.assert_allclose(float(st_mix_np['mu_i']), float(st_mix_jx['mu_i']), rtol=1e-12)
     np.testing.assert_allclose(float(st_mix_np['tau_d']), float(st_mix_jx['tau_d']), rtol=1e-12)
     np.testing.assert_allclose(
@@ -690,31 +633,11 @@ def test_convecting_layer_viscosity_mixture_parity():
     assert st_none_jx['mu_i'] / st_mix_jx['mu_i'] > 1.0e5
 
     # 3. Fallback when convective layer is inactive (zero convective flux).
-    st_inactive_np = compute_stagnant_lid_state(
-        radii=r,
-        temperature=T,
-        pressure=P,
-        convective_flux=np.zeros(30),
-        total_flux=tot_flux,
-        solidus_temperature=None,
-        melt_fraction=phi,
-        params=params,
-        viscosity_solid=1.0e21,
-        viscosity_mixture=visc_mix_np,
-        xp=np,
+    st_inactive_np = _lid_state(
+        np, **dict(base, convective_flux=np.zeros(30)), viscosity_mixture=visc_mix_np
     )
-    st_inactive_jx = compute_stagnant_lid_state(
-        radii=jnp.array(r),
-        temperature=jnp.array(T),
-        pressure=jnp.array(P),
-        convective_flux=jnp.zeros(30),
-        total_flux=jnp.array(tot_flux),
-        solidus_temperature=None,
-        melt_fraction=jnp.array(phi),
-        params=params,
-        viscosity_solid=1.0e21,
-        viscosity_mixture=visc_mix_jx,
-        xp=jnp,
+    st_inactive_jx = _lid_state(
+        jnp, **dict(base, convective_flux=np.zeros(30)), viscosity_mixture=visc_mix_np
     )
     np.testing.assert_allclose(
         float(st_inactive_np['mu_i']), float(st_inactive_jx['mu_i']), rtol=1e-12

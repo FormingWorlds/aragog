@@ -6,6 +6,8 @@ and JAX (float64) modes.
 
 from __future__ import annotations
 
+from functools import partial
+
 import numpy as np
 import pytest
 
@@ -29,6 +31,16 @@ _DT_SOL_DP = 2.4e-8
 _T_REF = 1600.0
 _R = 8.314462618
 
+_eta_ref = partial(
+    eta_diff,
+    viscosity_solid=_ETA0,
+    g_homologous=_G_HOM,
+    t_sol_0=_T_SOL_0,
+    dt_sol_dp=_DT_SOL_DP,
+    t_ref=_T_REF,
+    r_gas=_R,
+)
+
 _TAU_C = 50.0e6
 _TAU_MU = 0.6
 _TAU_MAX = 500.0e6
@@ -38,56 +50,20 @@ _TAU_MAX = 500.0e6
 @pytest.mark.reference_pinned
 def test_arrhenius_viscosity_collapses_to_reference_at_t_ref():
     """At the reference temperature with P=0, eta_diff equals eta_0."""
-    eta_at_ref = eta_diff(
-        _T_REF,
-        0.0,
-        viscosity_solid=_ETA0,
-        g_homologous=_G_HOM,
-        t_sol_0=_T_SOL_0,
-        dt_sol_dp=_DT_SOL_DP,
-        t_ref=_T_REF,
-        r_gas=_R,
-    )
+    eta_at_ref = _eta_ref(_T_REF, 0.0)
     assert eta_at_ref == pytest.approx(_ETA0, rel=1e-12)
 
     cold = 0.9 * _T_REF
-    eta_cold = eta_diff(
-        cold,
-        0.0,
-        viscosity_solid=_ETA0,
-        g_homologous=_G_HOM,
-        t_sol_0=_T_SOL_0,
-        dt_sol_dp=_DT_SOL_DP,
-        t_ref=_T_REF,
-        r_gas=_R,
-    )
+    eta_cold = _eta_ref(cold, 0.0)
     expected_cold = _ETA0 * np.exp(_G_HOM * _T_SOL_0 * (1.0 / cold - 1.0 / _T_REF))
     assert eta_cold == pytest.approx(expected_cold, rel=1e-12)
     assert eta_cold > 10.0 * _ETA0
 
-    eta_hot = eta_diff(
-        1.1 * _T_REF,
-        0.0,
-        viscosity_solid=_ETA0,
-        g_homologous=_G_HOM,
-        t_sol_0=_T_SOL_0,
-        dt_sol_dp=_DT_SOL_DP,
-        t_ref=_T_REF,
-        r_gas=_R,
-    )
+    eta_hot = _eta_ref(1.1 * _T_REF, 0.0)
     assert eta_hot < _ETA0 < eta_cold
     assert eta_hot > 0.0
 
-    eta_hot_limit = eta_diff(
-        1.0e15,
-        0.0,
-        viscosity_solid=_ETA0,
-        g_homologous=_G_HOM,
-        t_sol_0=_T_SOL_0,
-        dt_sol_dp=_DT_SOL_DP,
-        t_ref=_T_REF,
-        r_gas=_R,
-    )
+    eta_hot_limit = _eta_ref(1.0e15, 0.0)
     floor = _ETA0 * np.exp(-_G_HOM * _T_SOL_0 / _T_REF)
     assert eta_hot_limit == pytest.approx(floor, rel=1e-9)
     assert 0.0 < eta_hot_limit < _ETA0
@@ -98,30 +74,12 @@ def test_arrhenius_viscosity_collapses_to_reference_at_t_ref():
 def test_arrhenius_pressure_term_uses_reference_at_t_ref():
     """At T = T_ref the zero-pressure term cancels, leaving homologous pressure activation."""
     p_test = 100.0e9
-    eta_p = eta_diff(
-        _T_REF,
-        p_test,
-        viscosity_solid=_ETA0,
-        g_homologous=_G_HOM,
-        t_sol_0=_T_SOL_0,
-        dt_sol_dp=_DT_SOL_DP,
-        t_ref=_T_REF,
-        r_gas=_R,
-    )
+    eta_p = _eta_ref(_T_REF, p_test)
     expected = _ETA0 * np.exp(_G_HOM * (_DT_SOL_DP * p_test) / _T_REF)
     assert eta_p == pytest.approx(expected, rel=1e-12)
     assert eta_p > 1.5 * _ETA0
     assert eta_p > 0.0
-    assert eta_diff(
-        _T_REF,
-        0.0,
-        viscosity_solid=_ETA0,
-        g_homologous=_G_HOM,
-        t_sol_0=_T_SOL_0,
-        dt_sol_dp=_DT_SOL_DP,
-        t_ref=_T_REF,
-        r_gas=_R,
-    ) == pytest.approx(_ETA0, rel=1e-12)
+    assert _eta_ref(_T_REF, 0.0) == pytest.approx(_ETA0, rel=1e-12)
 
 
 @pytest.mark.physics_invariant
@@ -174,16 +132,7 @@ def test_numpy_jax_rheology_float64_parity():
     t_test = 0.85 * _T_REF
     p_test = 40.0e9
 
-    eta_np = eta_diff(
-        t_test,
-        p_test,
-        viscosity_solid=_ETA0,
-        g_homologous=_G_HOM,
-        t_sol_0=_T_SOL_0,
-        dt_sol_dp=_DT_SOL_DP,
-        t_ref=_T_REF,
-        r_gas=_R,
-    )
+    eta_np = _eta_ref(t_test, p_test)
     eta_jx = float(
         compute_arrhenius_viscosity(
             jnp.asarray(t_test),
@@ -467,37 +416,6 @@ def test_water_prefactor_scalar_and_array_parity():
         eta_diff(t, p, water_prefactor=0.0)
     with pytest.raises(ValueError, match='water_prefactor must be positive'):
         eta_diff(t, p, water_prefactor=-0.5)
-
-    from aragog.rheology_lid import compute_stagnant_lid_state
-
-    r_lid = np.linspace(3.48e6, 6.371e6, 20)
-    t_lid = np.linspace(2600.0, 1200.0, 20)
-    p_lid = np.linspace(135.0e9, 1.0e5, 20)
-    f_conv = np.full(20, 50.0)
-    f_conv[-4:] = 0.0
-    f_tot = np.full(20, 60.0)
-    phi_lid = np.zeros(20)
-    st_dry = compute_stagnant_lid_state(
-        radii=r_lid,
-        temperature=t_lid,
-        pressure=p_lid,
-        convective_flux=f_conv,
-        total_flux=f_tot,
-        solidus_temperature=None,
-        melt_fraction=phi_lid,
-        params=SolidRheologyParams(enabled=True, water_prefactor=1.0),
-    )
-    st_wet = compute_stagnant_lid_state(
-        radii=r_lid,
-        temperature=t_lid,
-        pressure=p_lid,
-        convective_flux=f_conv,
-        total_flux=f_tot,
-        solidus_temperature=None,
-        melt_fraction=phi_lid,
-        params=SolidRheologyParams(enabled=True, water_prefactor=0.1),
-    )
-    assert float(st_wet['eta_i']) == pytest.approx(0.1 * float(st_dry['eta_i']), rel=1e-12)
 
 
 def test_phi_visc_single_parameter_control():

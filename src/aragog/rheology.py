@@ -172,6 +172,13 @@ def delegate_rheology(cls):
     return cls
 
 
+def _unwrap_scalar(result: Any, xp: Any, *inputs: Any) -> Any:
+    """Return a Python float for NumPy results when every input is a scalar."""
+    if xp is np and all(np.ndim(x) == 0 for x in inputs):
+        return float(result.item())
+    return result
+
+
 def compute_mlt_top_slope(
     theta: FloatOrArray,
     s_top_inf: float | None = None,
@@ -206,12 +213,9 @@ def compute_mlt_top_slope(
         s_top_inf = SolidRheologyParams.s_top_inf
     if c_theta is None:
         c_theta = SolidRheologyParams.c_theta
-    theta_arr = xp.asarray(theta, dtype=float)
-    theta_pos = xp.maximum(theta_arr, 0.0)
+    theta_pos = xp.maximum(xp.asarray(theta, dtype=float), 0.0)
     s_top = s_top_inf + (1.0 - s_top_inf) * xp.exp(-c_theta * theta_pos)
-    if xp is np and np.ndim(theta) == 0:
-        return float(s_top.item())
-    return s_top
+    return _unwrap_scalar(s_top, xp, theta)
 
 
 def viscous_mixing_length_factor(
@@ -261,11 +265,11 @@ def viscous_mixing_length_factor(
     array
         ``(l_v / l)^4``, and 1 where ``l`` is 0 (the boundary nodes).
     """
-    s_inf = top_slope if s_top_inf is None else s_top_inf
+    eff_top_slope = top_slope if s_top_inf is None else s_top_inf
     if theta is not None:
-        eff_top_slope = compute_mlt_top_slope(theta, s_top_inf=s_inf, c_theta=c_theta, xp=xp)
-    else:
-        eff_top_slope = s_inf
+        eff_top_slope = compute_mlt_top_slope(
+            theta, s_top_inf=eff_top_slope, c_theta=c_theta, xp=xp
+        )
     l_v = xp.minimum(bottom_slope * (radii - r_in), eff_top_slope * (r_out - radii))
     positive = mixing_length > 0.0
     return xp.where(positive, (l_v / xp.where(positive, mixing_length, 1.0)) ** 4, 1.0)
@@ -285,34 +289,22 @@ def compute_arrhenius_enthalpy(
     .. math::
         H(P) = g_\mathrm{hom} R T_\mathrm{sol}(P)
 
-    At ``g_homologous = 25.0`` and :math:`T_\mathrm{sol}(0) = 1400` K, the
-    zero-pressure enthalpy is :math:`H(0) = 291` kJ/mol, close to a standard
-    olivine diffusion-creep activation energy :math:`E_a = 300` kJ/mol
-    (Karato & Wu 1993). When ``solidus_temperature`` is not provided, a linear
-    fallback :math:`T_\mathrm{sol}(P) = T_{\mathrm{sol},0} + (dT_\mathrm{sol}/dP) P`
-    is used. Its defaults ``t_sol_0 = 1400.0`` K and ``dt_sol_dp = 2.4e-8`` K/Pa
-    are close to the secant of the SPIDER solidus table read by Aragog (1429 K
-    at 0 GPa to 4595 K at 135 GPa, 23.5 K/GPa); because the linear form is about
-    30 % low at 25 GPa (2000 K versus 2969 K), it serves table-free benchmarks
-    only.
+    When ``solidus_temperature`` is not provided, the linear fallback
+    :math:`T_\mathrm{sol}(P) = T_{\mathrm{sol},0} + (dT_\mathrm{sol}/dP) P` is
+    used; it serves table-free benchmarks only (see ``SolidRheologyParams``).
 
     Parameters
     ----------
     pressure : float or array-like
         Pressure P [Pa].
     g_homologous : float, default 25.0
-        Dimensionless homologous activation parameter g_hom [-]. Gives
-        H(0) = 291 kJ/mol at T_sol(0) = 1400 K, close to E_a = 300 kJ/mol.
+        Dimensionless homologous activation parameter g_hom [-].
     solidus_temperature : float or array-like, optional
         Local solidus temperature T_sol(P) [K].
     t_sol_0 : float, optional
-        Zero-pressure reference solidus temperature T_sol(0) [K] for the linear
-        fallback (1400.0 K when None, close to 1429 K at 0 GPa in the solidus table;
-        table-free benchmarks only).
+        Zero-pressure solidus T_sol(0) [K] for the linear fallback (1400.0 K when None).
     dt_sol_dp : float, default 2.4e-8
-        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa,
-        close to the 23.5 K/GPa table secant from 0 to 135 GPa, about 30 % low at
-        25 GPa; table-free benchmarks only).
+        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa).
     r_gas : float, default 8.314462618
         Universal gas constant R [J/(mol K)].
     xp : array module, default np
@@ -324,24 +316,12 @@ def compute_arrhenius_enthalpy(
         Activation enthalpy H(P) [J/mol].
     """
     p = xp.asarray(pressure, dtype=float)
-    t_sol_base = 1400.0 if t_sol_0 is None else t_sol_0
-
-    def _eval_t_sol(val: Any) -> Any:
-        if solidus_temperature is not None:
-            return xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(val)
-        return t_sol_base + dt_sol_dp * val
-
-    g_hom = g_homologous
-    r_val_R = r_gas
-    T_sol = _eval_t_sol(p)
-    h = g_hom * r_val_R * T_sol
-    if (
-        xp is np
-        and np.ndim(pressure) == 0
-        and (solidus_temperature is None or np.ndim(solidus_temperature) == 0)
-    ):
-        return float(h.item())
-    return h
+    if solidus_temperature is not None:
+        t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
+    else:
+        t_sol = (1400.0 if t_sol_0 is None else t_sol_0) + dt_sol_dp * p
+    h = g_homologous * r_gas * t_sol
+    return _unwrap_scalar(h, xp, pressure, solidus_temperature)
 
 
 def compute_arrhenius_viscosity(
@@ -379,20 +359,16 @@ def compute_arrhenius_viscosity(
     viscosity_solid : float, default 1.0e21
         Reference solid-state dynamic viscosity eta_0 [Pa s] at (T_ref, P=0).
     g_homologous : float, default 25.0
-        Dimensionless homologous activation parameter g_hom [-]. Gives
-        H(0) = 291 kJ/mol at T_sol(0) = 1400 K, close to E_a = 300 kJ/mol.
+        Dimensionless homologous activation parameter g_hom [-].
     solidus_temperature : float or array-like, optional
         Local solidus temperature T_sol(P) [K]. When None, uses the linear fallback
         ``t_sol_0 + dt_sol_dp * P``.
     t_sol_0 : float, optional
         Zero-pressure reference solidus temperature T_sol(0) [K]. When None, inferred
         from the lowest-pressure endpoint of a 1D ``solidus_temperature`` profile or
-        defaults to 1400.0 (close to 1429 K at 0 GPa in the SPIDER solidus table;
-        table-free benchmarks only).
+        defaults to 1400.0.
     dt_sol_dp : float, default 2.4e-8
-        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa,
-        close to the 23.5 K/GPa solidus table secant over 0 to 135 GPa, about 30 %
-        low at 25 GPa where 2000 K compares with 2969 K; table-free benchmarks only).
+        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa).
     arrhenius_t_ref : float, default 1600.0
         Reference temperature T_ref [K].
     r_gas : float, default 8.314462618
@@ -432,9 +408,8 @@ def compute_arrhenius_viscosity(
     t = xp.asarray(temperature, dtype=float)
     p = xp.asarray(pressure, dtype=float)
 
-    if t_sol_0 is not None:
-        t_sol_ref_0: Any = t_sol_0
-    elif solidus_temperature is not None:
+    t_sol_ref_0: Any = 1400.0 if t_sol_0 is None else t_sol_0
+    if t_sol_0 is None and solidus_temperature is not None:
         t_sol_arr = xp.asarray(solidus_temperature, dtype=float)
         if xp.ndim(t_sol_arr) > 0 and xp.ndim(p) > 0:
             t_sol_flat = xp.ravel(t_sol_arr)
@@ -442,10 +417,6 @@ def compute_arrhenius_viscosity(
             t_sol_ref_0 = xp.where(
                 xp.abs(p_flat[0]) <= xp.abs(p_flat[-1]), t_sol_flat[0], t_sol_flat[-1]
             )
-        else:
-            t_sol_ref_0 = 1400.0
-    else:
-        t_sol_ref_0 = 1400.0
 
     h_p = compute_arrhenius_enthalpy(
         pressure=p,
@@ -456,15 +427,7 @@ def compute_arrhenius_viscosity(
         r_gas=r_gas,
         xp=xp,
     )
-    h_0 = compute_arrhenius_enthalpy(
-        pressure=0.0,
-        g_homologous=g_homologous,
-        solidus_temperature=None,
-        t_sol_0=t_sol_ref_0,
-        dt_sol_dp=0.0,
-        r_gas=r_gas,
-        xp=xp,
-    )
+    h_0 = g_homologous * r_gas * t_sol_ref_0
 
     t_safe = xp.where(t > 0.0, t, 1.0)
     exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * arrhenius_t_ref)
@@ -476,15 +439,9 @@ def compute_arrhenius_viscosity(
     result = viscosity_solid * wp * xp.exp(clipped_exp)
     result = xp.minimum(result, 10.0**viscosity_max_log10)
     result = xp.where(xp.isnan(t) | xp.isnan(p), xp.nan, result)
-    if (
-        xp is np
-        and np.ndim(temperature) == 0
-        and np.ndim(pressure) == 0
-        and np.ndim(water_prefactor) == 0
-        and (solidus_temperature is None or np.ndim(solidus_temperature) == 0)
-    ):
-        return float(result.item())
-    return result
+    return _unwrap_scalar(
+        result, xp, temperature, pressure, water_prefactor, solidus_temperature
+    )
 
 
 def eta_diff(
@@ -550,9 +507,7 @@ def compute_yield_stress(
     """
     p = xp.asarray(pressure, dtype=float)
     tau_y = xp.maximum(0.0, xp.minimum(yield_stress_c + yield_stress_mu * p, yield_stress_max))
-    if xp is np and np.ndim(pressure) == 0:
-        return float(tau_y.item())
-    return tau_y
+    return _unwrap_scalar(tau_y, xp, pressure)
 
 
 def eta_eff(
@@ -580,14 +535,7 @@ def eta_eff(
     else:
         result = xp.minimum(eta_d, tau_y_term)
 
-    if (
-        xp is np
-        and np.ndim(visc_diff) == 0
-        and np.ndim(tau_y) == 0
-        and np.ndim(strain_rate) == 0
-    ):
-        return float(result.item())
-    return result
+    return _unwrap_scalar(result, xp, visc_diff, tau_y, strain_rate)
 
 
 def compute_strain_rate_local(
@@ -620,10 +568,7 @@ def compute_strain_rate_local(
     v = xp.asarray(viscous_velocity, dtype=float)
     l_mix = xp.asarray(mixing_length, dtype=float)
     denom = 2.0 * xp.maximum(l_mix, eps)
-    res = xp.abs(v) / denom
-    if xp is np and np.ndim(viscous_velocity) == 0 and np.ndim(mixing_length) == 0:
-        return float(res.item())
-    return res
+    return _unwrap_scalar(xp.abs(v) / denom, xp, viscous_velocity, mixing_length)
 
 
 def __getattr__(name: str) -> Any:

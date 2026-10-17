@@ -16,12 +16,6 @@ logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 SEPARATION_VISCOSITY_MODES: tuple[str, str] = ('melt', 'mixture')
 SEPARATION_VISCOSITY_DEFAULT: str = 'melt'
 
-STRESS_CLOSURE_MODES: tuple[str, str] = ('lid', 'local')
-STRESS_CLOSURE_DEFAULT: str = 'lid'
-
-LID_BASE_MODES: tuple[str, str] = ('fixed', 'rheological')
-LID_BASE_DEFAULT: str = 'rheological'
-
 
 @delegate_rheology
 @attrs.define(init=False)

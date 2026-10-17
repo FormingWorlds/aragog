@@ -48,6 +48,22 @@ SOLIDUS_MELT_FRACTION_THRESHOLD: float = 0.01
 SOLIDUS_MELT_FRACTION_WIDTH: float = 0.002
 
 
+def _boundary_weights(w: Any, xp: Any) -> tuple[Any, Any, Any]:
+    """Smooth weights of the shallowest crossing of ``w``, scanned from the surface down.
+
+    Returns ``(W_tilde, W_sum, w_weight)``; ``W_tilde`` relaxes to uniform weights when
+    ``W_sum`` (the total crossing weight) vanishes.
+    """
+    w_surf = w[::-1]
+    omw = xp.concatenate([xp.ones(1, dtype=w.dtype), 1.0 - w_surf[:-1]])
+    W = (w_surf * xp.cumprod(omw))[::-1]
+    W_sum = xp.sum(W)
+    w_weight = xp.tanh(W_sum / 1.0e-6)
+    W_uniform = xp.ones_like(W) / float(w.shape[0])
+    W_tilde = w_weight * (W / xp.maximum(W_sum, 1e-12)) + (1.0 - w_weight) * W_uniform
+    return W_tilde, W_sum, w_weight
+
+
 def compute_stagnant_lid_state(
     radii: FloatOrArray,
     temperature: FloatOrArray,
@@ -130,12 +146,8 @@ def compute_stagnant_lid_state(
     The Frank-Kamenetskii parameter uses the homologous activation enthalpy at the
     interior pressure ``P_i``:
     ``theta = H(P_i) * (T_i - T_surf) / (R_GAS * T_i**2)`` with
-    ``H(P_i) = params.g_homologous * R_GAS * T_sol(P_i)`` (at ``g_homologous = 25.0``
-    and ``t_sol_0 = 1400.0`` K, ``H(0) = 291`` kJ/mol, close to ``E_a = 300`` kJ/mol;
-    when ``solidus_temperature`` is None, the linear fallback ``t_sol_0 + dt_sol_dp * P``
-    approximates the 23.5 K/GPa solidus-table secant from 1429 K at 0 GPa to 4595 K at
-    135 GPa, is about 30 % low at 25 GPa where 2000 K compares with 2969 K, and serves
-    table-free benchmarks only).
+    ``H(P_i) = params.g_homologous * R_GAS * T_sol(P_i)``; when ``solidus_temperature``
+    is None, ``T_sol`` is the linear fallback ``t_sol_0 + dt_sol_dp * P``.
 
     When convective layer weights place interior temperature T_i below lid base
     temperature T_lid (for example in cold_top_lid where T_i < T_lid), the solver
@@ -164,23 +176,10 @@ def compute_stagnant_lid_state(
     F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
     f = xp.clip(xp.maximum(F_conv, 0.0) / xp.abs(F_tot_safe), 0.0, 1.0)
 
-    f_conv_min = params.interior_flux_fraction
     df = xp.maximum(xp.abs(xp.gradient(f)), 1e-4)
-    w_conv = 0.5 * (1.0 + xp.tanh((f - f_conv_min) / df))
+    w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / df))
 
-    # Surface to CMB scan
-    w_from_surf = w_conv[::-1]
-    omw = 1.0 - w_from_surf
-    ones = xp.ones(1, dtype=w_conv.dtype)
-    omw_padded = xp.concatenate([ones, omw[:-1]])
-    prefix = xp.cumprod(omw_padded)
-    W_from_surf = w_from_surf * prefix
-    W = W_from_surf[::-1]
-    W_sum = xp.sum(W)
-    W_safe = xp.maximum(W_sum, 1e-12)
-    W_uniform = xp.ones_like(W) / float(T.shape[0])
-    w_weight = xp.tanh(W_sum / 1.0e-6)
-    W_tilde = w_weight * (W / W_safe) + (1.0 - w_weight) * W_uniform
+    W_tilde, W_sum, w_weight = _boundary_weights(w_conv, xp)
 
     T_i = xp.sum(W_tilde * T)
     P_T_i = xp.sum(W_tilde * P)
@@ -223,9 +222,7 @@ def compute_stagnant_lid_state(
     # Homologous Frank-Kamenetskii contrast: theta = H(P_i) * (T_i - T_surf) / (R * T_i**2).
     theta = (H_T_i * (T_i - T_surf)) / (R_GAS * T_i_safe**2)
 
-    eta_0 = viscosity_solid
-    if eta_0 is None:
-        eta_0 = getattr(params, 'viscosity_solid', 1.0e21)
+    eta_0 = 1.0e21 if viscosity_solid is None else viscosity_solid
 
     arrhenius = partial(
         compute_arrhenius_viscosity,
@@ -251,10 +248,9 @@ def compute_stagnant_lid_state(
             log_mu_mix = xp.sum(W_tilde * log_visc)
         log_mu_mix = xp.where(xp.isfinite(log_mu_mix), log_mu_mix, log_eta_arr)
         # Smooth log-blend from eta_arr_i when convection is inactive to mu_i_mix when active.
-        mu_i = 10.0 ** (w_weight * log_mu_mix + (1.0 - w_weight) * log_eta_arr)
+        eta_i = 10.0 ** (w_weight * log_mu_mix + (1.0 - w_weight) * log_eta_arr)
     else:
-        mu_i = eta_arr_i
-    eta_i = mu_i
+        eta_i = eta_arr_i
     eta_contrast = eta_surf / xp.maximum(eta_i, 1e-30)
 
     if params.lid_base_mode == 'fixed':
@@ -262,45 +258,27 @@ def compute_stagnant_lid_state(
     else:
         T_lid_iso = T_i - params.lid_contrast_coeff * dT_rh
 
-    dT_cell = xp.maximum(xp.abs(xp.gradient(T)), 1.0)
-    w_mask = params.lid_mask_width_cells
-    scale = w_mask * dT_cell
+    scale = params.lid_mask_width_cells * xp.maximum(xp.abs(xp.gradient(T)), 1.0)
 
-    phi_rheo_val = phi_rheo if phi_rheo is not None else getattr(params, 'phi_rheo', 0.4)
-    phi_width_val = phi_width if phi_width is not None else getattr(params, 'phi_width', 0.15)
+    def _melt_ramp(centre, width):
+        """Hot-side tanh indicator of ``phi``, rescaled to 0 at ``phi = 0``."""
+        zero = 0.5 * (1.0 + xp.tanh(-centre / width))
+        raw = 0.5 * (1.0 + xp.tanh((phi - centre) / width))
+        return xp.clip((raw - zero) / (1.0 - zero), 0.0, 1.0)
 
     w_hot_iso = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale))
     if T_sol_arr is not None:
         w_hot_sol = 0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale))
     else:
-        w_raw_sol = 0.5 * (
-            1.0 + xp.tanh((phi - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
-        )
-        w_zero_sol = 0.5 * (
-            1.0 + xp.tanh(-SOLIDUS_MELT_FRACTION_THRESHOLD / SOLIDUS_MELT_FRACTION_WIDTH)
-        )
-        w_hot_sol = xp.clip((w_raw_sol - w_zero_sol) / (1.0 - w_zero_sol), 0.0, 1.0)
-
-    w_raw_phi = 0.5 * (1.0 + xp.tanh((phi - phi_rheo_val) / phi_width_val))
-    w_zero_phi = 0.5 * (1.0 + xp.tanh(-phi_rheo_val / phi_width_val))
-    w_hot_phi = xp.clip((w_raw_phi - w_zero_phi) / (1.0 - w_zero_phi), 0.0, 1.0)
+        w_hot_sol = _melt_ramp(SOLIDUS_MELT_FRACTION_THRESHOLD, SOLIDUS_MELT_FRACTION_WIDTH)
+    w_hot_phi = _melt_ramp(
+        0.4 if phi_rheo is None else phi_rheo, 0.15 if phi_width is None else phi_width
+    )
 
     w_interior = xp.maximum(xp.maximum(w_hot_iso, w_hot_sol), w_hot_phi)
     w_lid = (1.0 - w_interior) * w_active
 
-    w_int_surf = w_interior[::-1]
-    om_int = 1.0 - w_int_surf
-    om_int_padded = xp.concatenate([ones, om_int[:-1]])
-    prefix_int = xp.cumprod(om_int_padded)
-    W_base_surf = w_int_surf * prefix_int
-    W_base = W_base_surf[::-1]
-    W_base_sum = xp.sum(W_base)
-    W_base_safe = xp.maximum(W_base_sum, 1e-12)
-    W_base_uniform = xp.ones_like(W_base) / float(T.shape[0])
-    w_base_weight = xp.tanh(W_base_sum / 1.0e-6)
-    W_base_tilde = (
-        w_base_weight * (W_base / W_base_safe) + (1.0 - w_base_weight) * W_base_uniform
-    )
+    W_base_tilde = _boundary_weights(w_interior, xp)[0]
 
     r_lid_base = xp.sum(W_base_tilde * r)
     P_lid_base = xp.sum(W_base_tilde * P)
@@ -311,7 +289,8 @@ def compute_stagnant_lid_state(
         & ((T_i - T_surf) > NO_LID_DT_THRESHOLD)
         & (d_lid_raw > NO_LID_THICKNESS_THRESHOLD)
     )
-    d_lid = xp.where(has_lid, d_lid_raw, 0.0)
+    if_lid = partial(xp.where, has_lid)
+    d_lid = if_lid(d_lid_raw, 0.0)
 
     dT_dr = xp.abs(xp.gradient(T, r))
     dr_min = xp.min(xp.abs(r[1:] - r[:-1]))
@@ -353,43 +332,24 @@ def compute_stagnant_lid_state(
     alpha_i = _weighted_mean(thermal_expansivity)
     kappa_i = _weighted_mean(thermal_diffusivity)
     DeltaT_conv = xp.maximum(T_i - T[-1], 1e-6)
-    eta_i_safe = xp.maximum(eta_i, 1e-30)
 
     # Convective interior velocity and lid driving stress (Foley & Bercovici 2014, eqs. 26, 28).
-    Ra_eff = xp.where(
-        has_lid,
-        (rho_i * g_i * alpha_i * DeltaT_conv * (d_conv**3)) / (kappa_i * eta_i_safe),
+    Ra_eff = if_lid(
+        (rho_i * g_i * alpha_i * DeltaT_conv * (d_conv**3))
+        / (kappa_i * xp.maximum(eta_i, 1e-30)),
         0.0,
     )
-    theta_safe = xp.maximum(theta, 1e-6)
-    Ra_rh = xp.where(has_lid, (Ra_eff * a_rh_fb) / theta_safe, 0.0)
-    ra_rh_pos = xp.maximum(Ra_rh, 1.0e-30)
+    Ra_rh = if_lid((Ra_eff * a_rh_fb) / xp.maximum(theta, 1e-6), 0.0)
     v_m = xp.where(
         has_lid & (Ra_rh > 0.0),
-        (kappa_i / d_conv) * C4 * (ra_rh_pos**FB2014_VELOCITY_EXPONENT),
+        (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 1.0e-30) ** FB2014_VELOCITY_EXPONENT),
         0.0,
     )
 
-    tau_d = xp.where(
-        has_lid,
-        (FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active,
-        0.0,
-    )
-    tau_d_lid = xp.where(
-        has_lid,
-        (FB2014_STRESS_FACTOR * eta_i * v_m) / xp.maximum(d_lid, 1e-6),
-        0.0,
-    )
-    tau_buoy = xp.where(
-        has_lid,
-        rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active,
-        0.0,
-    )
-    tau_d_over_tau_buoy = xp.where(
-        has_lid,
-        tau_d / xp.maximum(tau_buoy, 1e-30),
-        0.0,
-    )
+    tau_d = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active, 0.0)
+    tau_d_lid = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m) / xp.maximum(d_lid, 1e-6), 0.0)
+    tau_buoy = if_lid(rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active, 0.0)
+    tau_d_over_tau_buoy = if_lid(tau_d / xp.maximum(tau_buoy, 1e-30), 0.0)
 
     tau_y_lid = compute_yield_stress(
         P_lid_base,
@@ -400,14 +360,13 @@ def compute_stagnant_lid_state(
     )
 
     ratio = tau_d / xp.maximum(tau_y_lid, COHESION_FLOOR)
-    w_y_raw = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH))
-    w_y = xp.where(has_lid, w_y_raw, 0.0)
+    w_y = if_lid(0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH)), 0.0)
     lid_cell_count = xp.sum(w_lid)
     w_solid_surf = 0.5 * (
         1.0 - xp.tanh((phi[-1] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
     )
     w_has_lid = 0.5 * (1.0 + xp.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf
-    lid_regime = xp.where(has_lid, w_active * w_has_lid * (1.0 + w_y), 0.0)
+    lid_regime = if_lid(w_active * w_has_lid * (1.0 + w_y), 0.0)
 
     return {
         'T_i': T_i,
@@ -438,7 +397,7 @@ def compute_stagnant_lid_state(
         'lid_regime': lid_regime,
         'lid_cell_count': lid_cell_count,
         'eta_i': eta_i,
-        'mu_i': mu_i,
+        'mu_i': eta_i,
         'eta_solid_arrhenius': eta_arr_i,
     }
 
@@ -487,14 +446,14 @@ def compute_effective_viscosity(
     Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
         (alternative harmonic mean formulation)
     """
-    if stress_closure_mode == 'global':
-        raise ValueError(
-            "Unknown stress_closure_mode 'global'; expected 'lid' or 'local'. "
-            "'global' mode is unsupported; use 'lid'."
-        )
     if stress_closure_mode not in ('lid', 'local'):
+        hint = (
+            ". 'global' mode is unsupported; use 'lid'."
+            if stress_closure_mode == 'global'
+            else ''
+        )
         raise ValueError(
-            f"Unknown stress_closure_mode {stress_closure_mode!r}; expected 'lid' or 'local'"
+            f"Unknown stress_closure_mode {stress_closure_mode!r}; expected 'lid' or 'local'{hint}"
         )
     if stress_closure_mode == 'local' or strain_rate is not None or tau_y is not None:
         if strain_rate is None:
@@ -514,8 +473,7 @@ def compute_effective_viscosity(
         sr_safe = xp.where(sr > 0.0, sr, 1.0)
         tau_y_term = safe_ty / (2.0 * sr_safe)
         is_unyielded = (sr <= 0.0) | xp.isinf(tau_y_term) | xp.isnan(tau_y_term)
-        safe_ty_term = xp.where(is_unyielded, eta_d, tau_y_term)
-        res = xp.minimum(eta_d, safe_ty_term)
+        res = xp.minimum(eta_d, tau_y_term)
         has_nan_local = xp.isnan(eta_d) | xp.isnan(ty) | xp.isnan(sr)
         return xp.where(has_nan_local, xp.nan, xp.where(is_unyielded, eta_d, res))
 
@@ -528,9 +486,7 @@ def compute_effective_viscosity(
         ty_lid = xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR)
         ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
         ratio = xp.where(xp.isinf(ty_lid), 1.0, ratio)
-        ratio_eff = xp.clip(ratio, 0.0, 1.0)
-        eta_eff_val = xp.where(ratio_eff >= 1.0, eta_d, eta_i * ratio_eff)
-        eta_eff_val = xp.minimum(eta_d, eta_eff_val)
+        eta_eff_val = xp.where(ratio >= 1.0, eta_d, xp.minimum(eta_d, eta_i * ratio))
         has_nan_lid = xp.isnan(eta_d) | xp.isnan(eta_i) | xp.isnan(td) | xp.isnan(ty_lid)
         eta_eff_val = xp.where(has_nan_lid, xp.nan, eta_eff_val)
     else:

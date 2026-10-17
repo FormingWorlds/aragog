@@ -107,6 +107,7 @@ def test_limit_infinite_decay_pressure():
             h_grid, g_val * R_GAS * t_sol_grid, rtol=1.0e-12, atol=1.0e-30
         )
 
+        eta_by_frac = dict()
         # Evaluate eta_diff at T in {0.5, 0.7, 0.9, 1.0} * T_sol(P) with high cap so unclipped.
         for frac in (0.5, 0.7, 0.9, 1.0):
             t_eval = frac * t_sol_grid
@@ -124,34 +125,11 @@ def test_limit_infinite_decay_pressure():
             )
             expected_eta = 1.0e21 * np.exp(g_val * (1.0 / frac - t_sol_grid[0] / 1600.0))
             np.testing.assert_allclose(eta_eval, expected_eta, rtol=1.0e-12, atol=1.0e-30)
+            eta_by_frac[frac] = eta_eval
 
         # Homologous invariant: eta(0.9 * T_sol(P), P) / eta(T_sol(P), P) == exp(g_hom / 9).
-        eta_09 = compute_arrhenius_viscosity(
-            0.9 * t_sol_grid,
-            p_grid,
-            viscosity_solid=1.0e21,
-            g_homologous=g_val,
-            solidus_temperature=t_sol_grid,
-            t_sol_0=t_sol_grid[0],
-            arrhenius_t_ref=1600.0,
-            r_gas=R_GAS,
-            viscosity_max_log10=80.0,
-            xp=np,
-        )
-        eta_10 = compute_arrhenius_viscosity(
-            1.0 * t_sol_grid,
-            p_grid,
-            viscosity_solid=1.0e21,
-            g_homologous=g_val,
-            solidus_temperature=t_sol_grid,
-            t_sol_0=t_sol_grid[0],
-            arrhenius_t_ref=1600.0,
-            r_gas=R_GAS,
-            viscosity_max_log10=80.0,
-            xp=np,
-        )
         np.testing.assert_allclose(
-            eta_09 / eta_10, np.exp(g_val / 9.0), rtol=1.0e-12, atol=1.0e-30
+            eta_by_frac[0.9] / eta_by_frac[1.0], np.exp(g_val / 9.0), rtol=1.0e-12, atol=1.0e-30
         )
 
     # 3. Verify compute_mlt_top_slope across theta in {0, 5, 10, 20, 40}.
