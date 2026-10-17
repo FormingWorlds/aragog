@@ -58,11 +58,11 @@ class EnergyConfig:
         gets at least the eddy diffusivity of a gradient D. The
         phase-modulated kappa_h floor applies wherever dS/dr < D, so a node
         with 0 <= dS/dr < D gets the floor alone. Default 0.0, the
-        dS/dr < 0 switch with no minimum drive. D > 0 removes the two end
-        states of some coupled calls under that switch, but kappa_h then
-        jumps at dS/dr = 0 from the floor to the mixing-length value at D
-        (where that is above the floor), which can stall CVODE at a node
-        whose gradient stays near 0.
+        dS/dr < 0 switch with no minimum drive. D = 1e-6 gave one end state
+        in 3 replayed coupled calls that end in one of 2 states under that
+        switch, but with D > 0 kappa_h jumps at dS/dr = 0 from the floor to
+        the mixing-length value at D (where that is above the floor), which
+        can stall CVODE at a node whose gradient stays near 0.
     bottom_up_grav_sep : bool
         SPIDER-analogue bottom-up gate for the gravitational
         mass-flux: only allow melt/solid separation across an
