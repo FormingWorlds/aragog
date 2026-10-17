@@ -341,26 +341,74 @@ def test_merge_precedence_explicit_default_value():
     assert p_cfg.yield_stress_c == pytest.approx(40.0e6)
 
 
+def _collect_nav_strings(node) -> set[str]:
+    """Recursively collect string leaf values from a parsed mkdocs.yml nav tree."""
+    out: set[str] = set()
+    if isinstance(node, str):
+        out.add(node)
+    elif isinstance(node, list):
+        for item in node:
+            out.update(_collect_nav_strings(item))
+    elif isinstance(node, dict):
+        for val in node.values():
+            out.update(_collect_nav_strings(val))
+    return out
+
+
 def test_rheology_docs_and_mkdocs_nav_registration():
     """Verify docs page parameter table, API stubs, and mkdocs.yml nav entries match this tip."""
     from pathlib import Path
 
+    import yaml
+
     repo_root = Path(__file__).resolve().parent.parent
-    mkdocs_text = (repo_root / 'mkdocs.yml').read_text(encoding='utf-8')
+    with (repo_root / 'mkdocs.yml').open(encoding='utf-8') as fh:
+        mkdocs_data = yaml.load(fh, Loader=yaml.BaseLoader)
+    nav_leaves = _collect_nav_strings(mkdocs_data.get('nav', []))
     for nav_path in (
         'Explanations/solid_state_convection.md',
         'Reference/api/aragog.rheology.md',
         'Reference/api/aragog.rheology_lid.md',
     ):
-        assert nav_path in mkdocs_text
+        assert nav_path in nav_leaves
         assert (repo_root / 'docs' / nav_path).is_file()
 
     doc_text = (repo_root / 'docs' / 'Explanations' / 'solid_state_convection.md').read_text(
         encoding='utf-8'
     )
+    table_defaults: dict[str, str] = {}
+    for line in doc_text.splitlines():
+        parts = [c.strip() for c in line.strip().strip('|').split('|')]
+        if len(parts) == 3 and parts[0].startswith('`') and parts[0].endswith('`'):
+            field_key = parts[0].strip('`')
+            if field_key != 'field':
+                table_defaults[field_key] = parts[2]
 
     default_rheo = SolidRheologyParams()
-    for f in dataclasses.fields(SolidRheologyParams):
-        expected_row = f'| `{f.name}` |'
-        assert expected_row in doc_text
-        assert f'`{getattr(default_rheo, f.name)!r}`' in doc_text
+    expected_map = {
+        f.name: f'`{getattr(default_rheo, f.name)!r}`'
+        for f in dataclasses.fields(SolidRheologyParams)
+    }
+    assert table_defaults == expected_map
+
+    for banned in (
+        "as `'tau_y_profile'`",
+        'added separately',
+        'not yet connected',
+        'pending calibration',
+        'clips the effective lid base temperature',
+    ):
+        assert banned not in doc_text
+    assert '1.55\\text{ MPa}' in doc_text
+    assert '0.150' in doc_text
+
+    rheo_api = (repo_root / 'docs' / 'Reference' / 'api' / 'aragog.rheology.md').read_text(
+        encoding='utf-8'
+    )
+    lid_api = (repo_root / 'docs' / 'Reference' / 'api' / 'aragog.rheology_lid.md').read_text(
+        encoding='utf-8'
+    )
+    assert '`stress_closure`' not in rheo_api
+    assert '`merge_rheology`' in rheo_api
+    assert '`delegate_rheology`' in rheo_api
+    assert '`stress_closure`' in lid_api
