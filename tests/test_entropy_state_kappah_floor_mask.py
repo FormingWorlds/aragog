@@ -478,7 +478,7 @@ def test_numpy_zero_threshold_is_the_sign_switch():
     )  # fmt: skip
     ml = np.asarray(raw._mixing_length).ravel()[8]
     assert dSdr[8] == 0.0 and kh_raw[8] == pytest.approx(
-        g * a * t * 5e-31 / cp * ml**4 / (18 * nu), rel=1e-12
+        g * a * t * 5e-31 / cp * ml**4 / (18 * nu), rel=1e-12, abs=0
     )
     np.testing.assert_allclose(state.eddy_diffusivity[5:13], kh_ref[5:13], rtol=1e-12, atol=0)
     np.testing.assert_allclose(state.heat_flux[5:13], hf_ref[5:13], rtol=1e-12, atol=0)
