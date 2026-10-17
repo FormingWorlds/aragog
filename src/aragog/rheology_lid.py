@@ -11,6 +11,7 @@ from aragog.rheology import (
     COHESION_FLOOR,
     R_GAS,
     FloatOrArray,
+    _require_x64_if_jax,
     compute_arrhenius_enthalpy,
     compute_arrhenius_viscosity,
     compute_strain_rate_local,
@@ -176,6 +177,7 @@ def compute_stagnant_lid_state(
     indicators, layers with melt fraction exceeding 0.01 are treated as non-lid interior
     by ``w_hot_sol``, rendering the lid boundary position independent of ``phi_rheo``.
     """
+    _require_x64_if_jax(xp)
     if viscosity_solid is None or phi_rheo is None or phi_width is None:
         raise ValueError('viscosity_solid, phi_rheo, and phi_width must be provided')
     if solidus_temperature is not None and t_sol_0 is None:
@@ -481,6 +483,7 @@ def compute_effective_viscosity(
     Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
         (alternative harmonic mean formulation)
     """
+    _require_x64_if_jax(xp)
     if stress_closure_mode not in ('lid', 'local'):
         hint = (
             ". 'global' mode is unsupported; use 'lid'."
@@ -560,6 +563,7 @@ def stress_closure(
     xp: Any = np,
 ) -> FloatOrArray:
     r"""Calculate strain rate dispatching on stress closure mode."""
+    _require_x64_if_jax(xp)
     if mode == 'local':
         if mixing_length is None:
             raise ValueError("mixing_length must be provided when mode='local'")
