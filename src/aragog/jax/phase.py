@@ -179,7 +179,7 @@ class PhaseParams(eqx.Module):
         self.eddy_diff_chemical = eddy_diff_chemical
         self.kappah_floor = kappah_floor
         check_convective_threshold(convective_threshold)
-        self.convective_threshold = convective_threshold
+        self.convective_threshold = float(convective_threshold)
         self.bottom_up_grav_sep = float(bottom_up_grav_sep)
         if phase_smoothing not in ('cubic_hermite', 'tanh'):
             raise ValueError(

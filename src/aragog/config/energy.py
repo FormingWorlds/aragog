@@ -16,8 +16,12 @@ CONVECTIVE_THRESHOLD_DEFAULT: float = 0.0
 
 
 def check_convective_threshold(value: float) -> None:
-    """Raise ``ValueError`` unless ``value`` is a finite, non-negative number."""
-    if isinstance(value, (bool, np.bool_)) or not 0.0 <= value < float('inf'):
+    """Raise ``ValueError`` unless ``value`` is a finite, non-negative scalar number."""
+    if (
+        isinstance(value, (bool, np.bool_))
+        or np.ndim(value) != 0
+        or not 0.0 <= value < float('inf')
+    ):
         raise ValueError(f'convective_threshold must be finite and >= 0, got {value!r}')
 
 

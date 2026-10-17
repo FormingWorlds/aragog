@@ -3976,7 +3976,7 @@ class EntropySolver:
                 phi_cap_rootfn=phi_cap_rootfn,
             )
             spans = end_time > start_time
-            D = self.parameters.energy.convective_threshold
+            D = self.state._convective_threshold
             if spans and D > 0.0:
                 self._warn_once(
                     'threshold',

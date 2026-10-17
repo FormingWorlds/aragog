@@ -221,7 +221,7 @@ class EntropyState:
         self._eddy_diff_chem = eddy_diffusivity_chemical
         self._kappah_floor = kappah_floor
         check_convective_threshold(convective_threshold)
-        self._convective_threshold = convective_threshold
+        self._convective_threshold = float(convective_threshold)
         self._bottom_up_grav_sep = bool(bottom_up_grav_sep)
         # Phase-boundary smoothing method for Jgrav and Jmix.
         # 'tanh' (default): SPIDER's get_smoothing(matprop_smooth_width=0.01, gphi).

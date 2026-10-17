@@ -212,9 +212,13 @@ def test_unset_phase_boundary_cap_runs_rate_segments(shared_eos):
     np.testing.assert_array_equal(unset._solution.y, rate._solution.y)
 
 
-def _solver(eos, mode, core_bc='quasi_steady', n_nodes=12, end_time=2.0, S=None, tol=None):
+def _solver(
+    eos, mode, core_bc='quasi_steady', n_nodes=12, end_time=2.0, S=None, tol=None, **energy
+):
     p = _build_mushy_parameters(solver_method='cvode', n_nodes=n_nodes, end_time=end_time)
-    p.energy = dataclasses.replace(p.energy, phase_boundary_cap=mode, phi_step_cap=None)
+    p.energy = dataclasses.replace(
+        p.energy, phase_boundary_cap=mode, phi_step_cap=None, **energy
+    )
     p.boundary_conditions.core_bc = core_bc
     if tol is not None:
         p.solver.rtol = p.solver.atol = tol
@@ -638,16 +642,29 @@ def test_cvode_warns_once_per_solver_when_rtol_is_above_1e_8(
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
-@pytest.mark.parametrize('D', [0.0, 1.0e-6])
-def test_cvode_warns_once_per_solver_when_the_threshold_is_positive(shared_eos, caplog, D):
-    """A positive convective_threshold logs one stall warning over two CVODE calls; 0 logs none."""
-    s = _solver(shared_eos, 'fixed', end_time=0.01)
-    s.parameters.energy = dataclasses.replace(s.parameters.energy, convective_threshold=D)
+@pytest.mark.parametrize(
+    ('D', 'tol', 'end_time', 'n_stall', 'n_rtol'),
+    [
+        (0.0, 1e-8, 0.01, 0, 0),
+        (1e-6, 1e-8, 0.01, 1, 0),
+        (1e-6, 1e-6, 0.01, 1, 1),
+        (1e-6, 1e-6, 0.0, 0, 0),
+    ],
+)
+def test_cvode_warns_once_per_solver_when_the_threshold_is_positive(
+    shared_eos, caplog, D, tol, end_time, n_stall, n_rtol
+):
+    """The D the RHS uses logs one stall warning over two CVODE calls when positive, apart from the
+    rtol warning; D = 0 and a zero-span call log none."""
+    s = _solver(shared_eos, 'fixed', end_time=end_time, tol=tol, convective_threshold=D)
+    assert s.state._convective_threshold == D
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, convective_threshold=0.0)
     with caplog.at_level('WARNING'):
         s.solve()
         s.solve()
-    hits = [r.getMessage() for r in caplog.records if 'can stall CVODE' in r.getMessage()]
-    assert len(hits) == (1 if D > 0.0 else 0)
+    messages = [r.getMessage() for r in caplog.records]
+    hits = [m for m in messages if 'can stall CVODE' in m]
+    assert len(hits) == n_stall and sum('can lock CVODE' in m for m in messages) == n_rtol
     assert all(m.startswith('convective_threshold 1.0e-06 > 0') for m in hits)
 
 
