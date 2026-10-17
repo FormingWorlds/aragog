@@ -6,6 +6,7 @@ and JAX (float64) modes.
 
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import sys
 from functools import partial
@@ -1026,6 +1027,7 @@ def test_rheology_and_lid_branch_coverage():
         convective_flux=F_conv,
         total_flux=F_tot,
         solidus_temperature=T_sol,
+        t_sol_0=1400.0,
         melt_fraction=phi,
         params=params_fixed,
         viscosity_solid=1.0e21,
@@ -1067,6 +1069,22 @@ def test_rheology_and_lid_branch_coverage():
             strain_rate=1.0e-14,
         )
 
+    with pytest.raises(ValueError, match='t_sol_0 must be provided when solidus_temperature'):
+        compute_stagnant_lid_state(
+            radii=r,
+            temperature=T,
+            pressure=P,
+            convective_flux=F_conv,
+            total_flux=F_tot,
+            solidus_temperature=2000.0,
+            t_sol_0=None,
+            melt_fraction=phi,
+            params=params_fixed,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+
     st_scalar_sol = compute_stagnant_lid_state(
         radii=r,
         temperature=T,
@@ -1074,6 +1092,7 @@ def test_rheology_and_lid_branch_coverage():
         convective_flux=F_conv,
         total_flux=F_tot,
         solidus_temperature=2000.0,
+        t_sol_0=2000.0,
         melt_fraction=phi,
         params=params_fixed,
         viscosity_solid=1.0e21,
@@ -1087,8 +1106,9 @@ def test_rheology_and_lid_branch_coverage():
         convective_flux=F_conv,
         total_flux=F_tot,
         solidus_temperature=np.full(n_nodes, 2000.0),
+        t_sol_0=2000.0,
         melt_fraction=phi,
-        params=params_fixed,
+        params=dataclasses.replace(params_fixed, t_sol_0=2200.0),
         viscosity_solid=1.0e21,
         phi_rheo=0.4,
         phi_width=0.15,
@@ -1099,6 +1119,7 @@ def test_rheology_and_lid_branch_coverage():
     assert float(st_scalar_sol['dT_rh']) == pytest.approx(expected_dt_rh_sol, rel=1e-12)
     assert float(st_scalar_sol['theta']) == pytest.approx(expected_theta_sol, rel=1e-12)
     assert float(st_scalar_sol['eta_i']) == pytest.approx(float(st_arr_sol['eta_i']), rel=1e-12)
+    assert float(st_scalar_sol['tau_d']) == pytest.approx(float(st_arr_sol['tau_d']), rel=1e-12)
     assert float(st_scalar_sol['eta_contrast']) == pytest.approx(
         float(st_arr_sol['eta_contrast']), rel=1e-12
     )
@@ -1108,7 +1129,7 @@ def test_rheology_and_lid_branch_coverage():
         viscosity_solid=1.0e21,
         g_homologous=params_fixed.g_homologous,
         solidus_temperature=2000.0,
-        t_sol_0=params_fixed.t_sol_0,
+        t_sol_0=2000.0,
         arrhenius_t_ref=params_fixed.arrhenius_t_ref,
     )
     assert float(st_scalar_sol['eta_i']) == pytest.approx(expected_eta_i_2000, rel=1e-12)
@@ -1313,6 +1334,7 @@ def test_lid_state_nan_propagation_per_input(nan_field: str):
         kw = {k: xp_mod.asarray(v) for k, v in base_arrays.items()}
         st = compute_stagnant_lid_state(
             **kw,
+            t_sol_0=1400.0,
             params=params,
             viscosity_solid=1.0e21,
             phi_rheo=0.4,
