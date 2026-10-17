@@ -460,6 +460,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
         stress_closure_mode='lid',
         lid_base_mode='rheological',
         yield_stress_max=500.0e6,
+        interior_flux_fraction=0.10,
     )
     visc_solid = 1.0e21
 
@@ -558,7 +559,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
         eta_diff=eta_diff_np,
         eta_i=state_np['eta_i'],
         tau_d=state_np['tau_d'],
-        tau_y_lid=50.0e6,
+        tau_y_lid=0.5e6,
         stress_closure_mode='lid',
         w_lid=state_np['w_lid'],
         xp=np,
@@ -567,7 +568,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
         eta_diff=eta_diff_jx,
         eta_i=state_jx['eta_i'],
         tau_d=state_jx['tau_d'],
-        tau_y_lid=50.0e6,
+        tau_y_lid=0.5e6,
         stress_closure_mode='lid',
         w_lid=state_jx['w_lid'],
         xp=jnp,
