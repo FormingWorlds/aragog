@@ -111,7 +111,7 @@ def main():
             k_liquid=params0.k_liquid,
             matprop_smooth_width=params0.matprop_smooth_width,
             conduction=cond, convection=conv,
-            grav_sep=grav, mixing=mix, dilatation=dil,
+            grav_sep=grav, mixing=mix,
             eddy_diff_thermal=params0.eddy_diff_thermal,
             eddy_diff_chemical=params0.eddy_diff_chemical,
             kappah_floor=params0.kappah_floor,

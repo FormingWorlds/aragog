@@ -469,6 +469,17 @@ def test_numpy_zero_threshold_is_the_sign_switch():
     )
     hf_ref = raw.heat_flux - rho_t * (kh_ref - kh_raw) * dSdr
     assert kh_ref[7] == floor[7] > 1.0 and np.all(kh_ref[8:13] < 1.0e-12)
+    # Table-independent anchor: at dS/dr = 0 the drive is 5e-31 and the viscous branch sets kappa_h.
+    pb, n = raw.phase_basic, dSdr.size
+    g, a, t, cp, nu = (
+        (np.asarray(f()) * np.ones(n))[8]
+        for f in (pb.gravitational_acceleration, pb.thermal_expansivity, pb.temperature,
+                  pb.heat_capacity, pb.kinematic_viscosity)
+    )  # fmt: skip
+    ml = np.asarray(raw._mixing_length).ravel()[8]
+    assert dSdr[8] == 0.0 and kh_raw[8] == pytest.approx(
+        g * a * t * 5e-31 / cp * ml**4 / (18 * nu), rel=1e-12
+    )
     np.testing.assert_allclose(state.eddy_diffusivity[5:13], kh_ref[5:13], rtol=1e-12, atol=0)
     np.testing.assert_allclose(state.heat_flux[5:13], hf_ref[5:13], rtol=1e-12, atol=0)
     state_d, _, _ = _update_across_threshold(CONVECTIVE_THRESHOLD_DEFAULT)
@@ -478,11 +489,15 @@ def test_numpy_zero_threshold_is_the_sign_switch():
 
 
 @needs_eos
+@pytest.mark.parametrize('phi', [0.0, _PHI_MUSH, 1.0])
 @pytest.mark.parametrize('D', [CONVECTIVE_THRESHOLD_DEFAULT, 3.0e-6])
-def test_numpy_matches_jax_across_threshold(D):
+def test_numpy_matches_jax_across_threshold(D, phi):
     """The numpy and JAX thermal and chemical eddy diffusivities agree on every
-    node, from dS/dr = -1e-4 through 0 and +0.5 D to +1e-4."""
-    state, mesh, dSdr = _update_across_threshold(D)
+    node, from dS/dr = -1e-4 through 0 and +0.5 D to +1e-4, in a solid, a mush and
+    a liquid, except for the residual numpy kappa_c at 0 <= dS/dr < 1e-22."""
+    state, mesh, dSdr = _update_with_gradients(
+        _DSDR_D, phi=phi, kappah_floor=_KAPPAH_FLOOR, convective_threshold=D
+    )
     pb = state.phase_basic
     n = dSdr.size
 
@@ -512,9 +527,30 @@ def test_numpy_matches_jax_across_threshold(D):
     )
     kh_jax, kc_jax = compute_mlt(jnp.asarray(dSdr), props, jmesh, params)
     np.testing.assert_allclose(state.eddy_diffusivity, np.asarray(kh_jax), rtol=1e-10, atol=0)
-    # atol: at dS/dr = 0 and +1e-31 the numpy drive is 5e-31, so kappa_c is below 1e-18 in this
-    # mush (about 1e-8 in a liquid); JAX gives 0.
-    np.testing.assert_allclose(state._kappac, np.asarray(kc_jax), rtol=1e-10, atol=1e-12)
+    # At 0 <= dS/dr < 1e-22 the numpy drive keeps up to 5e-31 (JAX: 0), a kappa_c up to ~1e-7
+    # in a liquid here; its size depends on the EOS tables and the mixing length.
+    res = (dSdr >= 0.0) & (dSdr < 1.0e-22)
+    kc_jax = np.asarray(kc_jax)
+    np.testing.assert_allclose(state._kappac[~res], kc_jax[~res], rtol=1e-10, atol=0)
+    assert np.all(kc_jax[res] == 0.0) and np.all(state._kappac[res] < 1.0e-6)
+
+
+@needs_eos
+def test_numpy_cmb_node_follows_the_node_above_across_0_and_D():
+    """The CMB node copies kappa_h of node 1, so its convective flux at a fixed CMB
+    gradient follows node 1 across 0 (mixing length to floor) and D (floor to 0)."""
+    D = CONVECTIVE_THRESHOLD_DEFAULT
+    kh1 = []
+    for x in (-1.0e-300, 0.0, np.nextafter(D, 0.0), D):
+        state, _, dSdr = _update_with_gradients([x], start=1, kappah_floor=_KAPPAH_FLOOR)
+        kh = state.eddy_diffusivity
+        rho_t = (
+            np.asarray(state.phase_basic.density()).ravel()
+            * np.asarray(state.phase_basic.temperature()).ravel()
+        )
+        assert kh[0] == kh[1] and state.jconv[0] == pytest.approx(rho_t[0] * kh[1] * -dSdr[0])
+        kh1.append(kh[1])
+    assert kh1[0] > kh1[1] == kh1[2] > 0.0 == kh1[3]
 
 
 @needs_eos
