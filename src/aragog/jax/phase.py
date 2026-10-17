@@ -20,6 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 from scipy.interpolate import PchipInterpolator
 
+from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_threshold
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 from aragog.jax.eos import EntropyEOS_JAX
 
@@ -115,6 +116,8 @@ class PhaseParams(eqx.Module):
     eddy_diff_thermal: float
     eddy_diff_chemical: float
     kappah_floor: float
+    # Minimum drive gradient on unstable nodes and floor band [J/kg/K/m].
+    convective_threshold: float
 
     # SPIDER-analogue bottom-up gate for Jgrav. Stored as float for JAX
     # tracing (1.0 = smoothing on, 0.0 = raw un-smoothed flux). Keep ON
@@ -158,6 +161,7 @@ class PhaseParams(eqx.Module):
         phase_smoothing: str = 'tanh',
         phase_smoothing_width: float = 0.01,
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
+        convective_threshold: float = CONVECTIVE_THRESHOLD_DEFAULT,
     ):
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -174,6 +178,8 @@ class PhaseParams(eqx.Module):
         self.eddy_diff_thermal = eddy_diff_thermal
         self.eddy_diff_chemical = eddy_diff_chemical
         self.kappah_floor = kappah_floor
+        check_convective_threshold(convective_threshold)
+        self.convective_threshold = float(convective_threshold)
         self.bottom_up_grav_sep = float(bottom_up_grav_sep)
         if phase_smoothing not in ('cubic_hermite', 'tanh'):
             raise ValueError(
@@ -645,26 +651,19 @@ def compute_mlt(
     Cp = phase_basic.heat_capacity
     nu = phase_basic.kinematic_viscosity
 
-    # Buoyancy from entropy gradient. ``jnp.abs`` has a non-differentiable
-    # kink at zero (subgradient anywhere in [-1, +1] is mathematically
-    # valid, but JAX returns sign(0) = 0 in fwd and the backward pass
-    # through the abs and the downstream multiplications can produce
-    # NaN at exact-zero entropy gradients. Numpy uses
-    # ``_smooth_abs_neg(dSdr, eps=1e-30)`` which is the smoothed
-    # ``max(-x, 0)``; we use the differentiable
-    # ``0.5*(|x| + sqrt(x^2 + eps^2)) ~ |x|`` instead, which keeps the
-    # forward equal to ``abs(x)`` to ULP precision while delivering a
-    # finite analytic gradient everywhere.
+    # |dS/dr| as 0.5*(|x| + sqrt(x^2 + eps^2)): equal to |x| for |x| >> eps, with a
+    # finite gradient at x = 0, where the backward pass of jnp.abs can give NaN.
     eps_abs = 1.0e-30
     abs_dSdr_safe = 0.5 * (jnp.abs(dSdr) + jnp.sqrt(dSdr * dSdr + eps_abs * eps_abs))
-    effective_superadiabatic = alpha * T * abs_dSdr_safe / jnp.maximum(Cp, 1.0)
+    # An unstable node is driven by at least the gradient D (convective_threshold).
+    drive = jnp.maximum(abs_dSdr_safe, params.convective_threshold)
+    effective_superadiabatic = alpha * T * drive / jnp.maximum(Cp, 1.0)
     velocity_prefactor = mesh.gravity * effective_superadiabatic
 
-    # Convective mask: unstable when dS/dr < 0.
-    # Hard mask matching the numpy reference. Using jnp.where (not boolean
-    # indexing) for JAX traceability. Produces exactly 0 at stable nodes,
-    # avoiding spurious convection from a soft sigmoid.
+    # Hard masks matching the numpy reference: the mixing-length drive acts where
+    # dS/dr < 0, the floor where dS/dr < D (convective_threshold).
     conv_mask = jnp.where(dSdr < 0.0, 1.0, 0.0)
+    floor_mask = jnp.where(dSdr < params.convective_threshold, 1.0, 0.0)
 
     # Viscous velocity (Re <= Re_crit)
     viscous_velocity = (velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)) * conv_mask
@@ -711,24 +710,12 @@ def compute_mlt(
         jnp.full_like(kh_raw, -params.eddy_diff_chemical),
     )
 
-    # kappa_h floor (phase-dependent, modulated by melt fraction), gated to
-    # convectively-unstable cells. Production PROTEUS runs use
-    # kappah_floor = 10 m^2/s; the phi-modulated f_floor ramps from 0 in
-    # solid layers to ~1 in mushy/liquid layers, where MLT can otherwise
-    # numerically freeze when the entropy gradient gets small. The
-    # ``conv_mask`` gate confines the floor to cells that are actually
-    # convecting (dS/dr < 0): a stably-stratified, just-frozen mushy cell at
-    # the crystallisation front must NOT receive a floored eddy diffusivity,
-    # because the signed convective flux rho*T*kappa_h*(-dS/dr) would then
-    # inject a spurious sign-flipped flux that pins the cell sub-solidus.
-    # SPIDER has no kappa_h floor, so floor = 0 in stratified layers is the
-    # SPIDER-consistent limit. The transition is anchored on the rheological
-    # critical melt fraction (``params.phi_rheo``, default 0.4) with width
-    # ``params.phi_width`` (default 0.15). See solver/entropy_state.py for
-    # the numpy twin.
+    # Melt-fraction-modulated kappa_h floor on cells with dS/dr < D only; see
+    # solver/entropy_state.py:apply_kappah_floor for why cells with
+    # dS/dr >= D keep their raw value.
     phi_basic = phase_basic.melt_fraction
     f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
-    kh_floor = params.kappah_floor * f_floor * conv_mask
+    kh_floor = params.kappah_floor * f_floor * floor_mask
     kappa_h = jnp.maximum(kappa_h, kh_floor)
 
     # SPIDER energy.c:220-223 CMB fix: use kappa_h from the first interior

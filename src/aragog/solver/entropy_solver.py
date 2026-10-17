@@ -1655,6 +1655,7 @@ class EntropySolver:
             eddy_diffusivity_thermal=getattr(energy, 'eddy_diffusivity_thermal', 1.0),
             eddy_diffusivity_chemical=energy.eddy_diffusivity_chemical,
             kappah_floor=energy.kappah_floor,
+            convective_threshold=energy.convective_threshold,
             bottom_up_grav_sep=getattr(energy, 'bottom_up_grav_sep', True),
             phase_smoothing=getattr(energy, 'phase_smoothing', 'tanh'),
         )
@@ -3975,6 +3976,14 @@ class EntropySolver:
                 phi_cap_rootfn=phi_cap_rootfn,
             )
             spans = end_time > start_time
+            D = self.state._convective_threshold
+            if spans and D > 0.0:
+                self._warn_once(
+                    'threshold',
+                    f'convective_threshold {D:.1e} > 0: kappa_h jumps at dS/dr = 0, which can '
+                    'stall CVODE at a node whose gradient stays near 0, also at rtol 1e-8; '
+                    'see the heat transport docs',
+                )
             if spans and rtol > _CVODE_TOL_LIMIT:
                 atol_cfg = self.parameters.solver.atol
                 loose = atol_cfg > _CVODE_TOL_LIMIT and self._core_bc == 'energy_balance'
@@ -3984,7 +3993,8 @@ class EntropySolver:
                 self._warn_once(
                     'cvode_tol',
                     f'CVODE at solver.rtol {rtol:.1e}: an rtol above 1e-8 can lock CVODE '
-                    'at the switch dS/dr = 0 (convective mask and kappa_h floor; in test runs '
+                    'at the convective switch (convective mask and kappa_h floor; in test runs '
+                    'at convective_threshold = 0 '
                     'with atol = rtol and the initial entropy drawn per run: 12 of 1133 at 1e-6, '
                     '0 of 1026 at 1e-8, and 0 of 80 at 1e-5 but about 12 times more RHS '
                     f'evaluations than at 1e-8; see the solver tuning docs){note}. '

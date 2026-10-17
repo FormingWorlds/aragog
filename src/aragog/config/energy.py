@@ -10,6 +10,20 @@ import numpy.typing as npt
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
+# Minimum drive gradient and kappa_h floor band [J/kg/K/m]; single-sourced
+# here for parser.py, jax/phase.py and solver/entropy_state.py.
+CONVECTIVE_THRESHOLD_DEFAULT: float = 0.0
+
+
+def check_convective_threshold(value: float) -> None:
+    """Raise ``ValueError`` unless ``value`` is a finite, non-negative scalar number."""
+    if (
+        isinstance(value, (bool, np.bool_))
+        or np.ndim(value) != 0
+        or not 0.0 <= value < float('inf')
+    ):
+        raise ValueError(f'convective_threshold must be finite and >= 0, got {value!r}')
+
 
 @attrs.define
 class EnergyConfig:
@@ -42,6 +56,17 @@ class EnergyConfig:
         ``f`` falls from 1 (liquid) to 0 (solid) across the
         rheological transition. Default 10.0 matches PROTEUS
         production; set 0.0 for textbook MLT.
+    convective_threshold : float
+        Entropy gradient D [J/kg/K/m]. The mixing-length drive acts only
+        where dS/dr < 0 and uses max(|dS/dr|, D) there, so an unstable node
+        gets at least the eddy diffusivity of a gradient D. The
+        phase-modulated kappa_h floor applies wherever dS/dr < D, so a node
+        with 0 <= dS/dr < D gets the floor alone. Default 0.0, the
+        dS/dr < 0 switch with no minimum drive. D = 1e-6 gives one end state
+        in 3 replayed coupled calls that end in one of 2 states under that
+        switch, but with D > 0 kappa_h jumps at dS/dr = 0 from the floor to
+        the mixing-length value at D (where that is above the floor), which
+        can stall CVODE at a node whose gradient stays near 0.
     bottom_up_grav_sep : bool
         SPIDER-analogue bottom-up gate for the gravitational
         mass-flux: only allow melt/solid separation across an
@@ -125,6 +150,10 @@ class EnergyConfig:
     eddy_diffusivity_chemical: float = 1.0
     eddy_diffusivity_thermal: float = 1.0
     kappah_floor: float = 10.0
+    convective_threshold: float = attrs.field(
+        default=CONVECTIVE_THRESHOLD_DEFAULT,
+        validator=lambda _inst, _attr, value: check_convective_threshold(value),
+    )
     bottom_up_grav_sep: bool = True
     phase_smoothing: str = 'tanh'
     solver_method: str = 'cvode'
