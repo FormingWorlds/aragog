@@ -65,16 +65,17 @@ class SolidRheologyParams:
     lid_mask_width_cells: float = 1.0
     phi_visc_single: float = 0.5
     # Viscous-branch mixing-length boundary slopes and theta-dependent top-slope parameters.
-    mlt_top_slope: float = 0.22
     mlt_bottom_slope: float = 1.0
     s_top_inf: float = 0.22
     c_theta: float = 0.15
 
     def __post_init__(self) -> None:
-        for name in ('mlt_top_slope', 'mlt_bottom_slope', 's_top_inf'):
+        if not isinstance(self.enabled, bool):
+            raise ValueError(f'enabled must be a bool, got {self.enabled!r}')
+        for name in ('mlt_bottom_slope', 's_top_inf'):
             val = getattr(self, name)
-            if not math.isfinite(val) or val <= 0.0:
-                raise ValueError(f'{name} must be positive and finite, got {val}')
+            if not math.isfinite(val) or not (0.0 < val <= 1.0):
+                raise ValueError(f'{name} must be in (0, 1], got {val}')
         if not math.isfinite(self.c_theta) or self.c_theta < 0.0:
             raise ValueError(f'c_theta must be non-negative and finite, got {self.c_theta}')
         if not math.isfinite(self.g_homologous) or self.g_homologous < 0.0:
@@ -133,9 +134,9 @@ class SolidRheologyParams:
             )
         if not math.isfinite(self.phi_visc_single) or not (0.0 < self.phi_visc_single < 1.0):
             raise ValueError(f'phi_visc_single must be in (0, 1), got {self.phi_visc_single}')
-        if self.enabled and self.lid_base_mode == 'rheological' and self.g_homologous <= 0.0:
+        if self.enabled and self.g_homologous <= 0.0:
             raise ValueError(
-                f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires positive '
+                'Invalid combination: enabled=True requires positive '
                 f'g_homologous, got g_homologous={self.g_homologous}'
             )
 
@@ -206,11 +207,10 @@ def viscous_mixing_length_factor(
     r_in: Any,
     r_out: Any,
     mixing_length: Any,
-    top_slope: float = 0.22,
+    s_top_inf: float = 0.22,
     bottom_slope: float = 1.0,
     xp: Any = np,
     theta: Any = None,
-    s_top_inf: float | None = None,
     c_theta: float | None = None,
 ) -> Any:
     r"""Factor on the viscous MLT velocity replacing the Abe length by the calibrated one.
@@ -229,16 +229,16 @@ def viscous_mixing_length_factor(
         Inner and outer radius of the mantle [m].
     mixing_length : array
         Abe mixing length ``l`` at the basic nodes [m].
-    top_slope, bottom_slope : float, default (0.22, 1.0)
-        Slopes of ``l_v`` at the surface and at the CMB when ``theta`` is None.
+    s_top_inf : float, default 0.22
+        Upper mixing-length slope at the surface when ``theta`` is None, or asymptotic
+        upper slope in the stagnant-lid limit when ``theta`` is provided [-].
+    bottom_slope : float, default 1.0
+        Lower mixing-length slope at the CMB [-].
     xp : module, default np
         Array namespace.
     theta : float or array-like, optional
         Frank-Kamenetskii viscosity contrast parameter [-]. When provided, evaluates
         the upper slope via :func:`compute_mlt_top_slope`.
-    s_top_inf : float, optional
-        Asymptotic upper mixing-length slope in the stagnant-lid limit [-]. Defaults
-        to ``top_slope`` when None.
     c_theta : float, optional
         Exponential decay rate with respect to ``theta`` [-]. Defaults to
         ``SolidRheologyParams.c_theta`` when None.
@@ -248,10 +248,10 @@ def viscous_mixing_length_factor(
     array
         ``(l_v / l)^4``, and 1 where ``l`` is 0 (the boundary nodes).
     """
-    eff_top_slope = top_slope if s_top_inf is None else s_top_inf
+    eff_top_slope = s_top_inf
     if theta is not None:
         eff_top_slope = compute_mlt_top_slope(
-            theta, s_top_inf=eff_top_slope, c_theta=c_theta, xp=xp
+            theta, s_top_inf=s_top_inf, c_theta=c_theta, xp=xp
         )
     l_v = xp.minimum(bottom_slope * (radii - r_in), eff_top_slope * (r_out - radii))
     positive = mixing_length > 0.0
@@ -393,15 +393,17 @@ def compute_arrhenius_viscosity(
     h_0 = g_homologous * r_gas * t_sol_ref_0
 
     t_safe = xp.where(t > 0.0, t, 1.0)
-    exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * arrhenius_t_ref)
+    wp_pos = xp.where(wp > 0.0, wp, 1.0)
+    exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * arrhenius_t_ref) + xp.log(wp_pos)
 
     max_exponent = (
         viscosity_max_log10 - xp.log10(xp.maximum(viscosity_solid, 1e-300))
     ) * math.log(10.0)
     clipped_exp = xp.clip(exponent, -700.0, max_exponent)
-    result = viscosity_solid * wp * xp.exp(clipped_exp)
+    result = viscosity_solid * xp.exp(clipped_exp)
     result = xp.minimum(result, 10.0**viscosity_max_log10)
-    result = xp.where(xp.isnan(t) | xp.isnan(p), xp.nan, result)
+    invalid = xp.isnan(t) | xp.isnan(p) | (t <= 0.0) | (wp <= 0.0)
+    result = xp.where(invalid, xp.nan, result)
     return _unwrap_scalar(
         result, xp, temperature, pressure, water_prefactor, solidus_temperature
     )

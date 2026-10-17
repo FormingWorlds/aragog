@@ -40,7 +40,6 @@ EXPECTED_FIELDS = {
     'lid_contrast_coeff',
     'lid_mask_width_cells',
     'phi_visc_single',
-    'mlt_top_slope',
     'mlt_bottom_slope',
     's_top_inf',
     'c_theta',
@@ -48,7 +47,7 @@ EXPECTED_FIELDS = {
 
 
 def test_solid_rheology_params_has_expected_fields():
-    """Verify SolidRheologyParams declares all expected fields and no dead activation fields."""
+    """Verify SolidRheologyParams declares all expected fields and no dead fields."""
     import aragog.rheology as rheo_mod
 
     field_names = {f.name for f in dataclasses.fields(SolidRheologyParams)}
@@ -57,6 +56,7 @@ def test_solid_rheology_params_has_expected_fields():
         'activation_energy',
         'activation_volume',
         'activation_volume_decay_pressure',
+        'mlt_top_slope',
     ):
         assert dead_field not in field_names
     assert not hasattr(rheo_mod, 'eta_eff')
@@ -244,6 +244,8 @@ def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
         melt_fraction=phi_prof,
         params=SolidRheologyParams(enabled=True, water_prefactor=1.0),
         viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         xp=np,
     )
     st_wet = compute_stagnant_lid_state(
@@ -256,6 +258,8 @@ def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
         melt_fraction=phi_prof,
         params=SolidRheologyParams(enabled=True, water_prefactor=0.1),
         viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         xp=np,
     )
     assert float(st_wet['eta_i']) == pytest.approx(0.1 * float(st_dry['eta_i']), rel=1.0e-12)

@@ -201,8 +201,11 @@ def test_lid_base_mode_and_stress_closure_validation():
     with pytest.raises(ValueError, match="Unknown lid_base_mode 'invalid'"):
         SolidRheologyParams(lid_base_mode='invalid')
 
-    with pytest.raises(ValueError, match='lid_base_mode.*g_homologous'):
+    with pytest.raises(ValueError, match='enabled=True requires positive g_homologous'):
         SolidRheologyParams(enabled=True, g_homologous=0.0, lid_base_mode='rheological')
+
+    with pytest.raises(ValueError, match='enabled=True requires positive g_homologous'):
+        SolidRheologyParams(enabled=True, g_homologous=0.0, lid_base_mode='fixed')
 
     p = SolidRheologyParams(enabled=False, g_homologous=0.0, lid_base_mode='rheological')
     assert p.lid_base_mode == 'rheological'
@@ -821,6 +824,9 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         solidus_temperature=None,
         melt_fraction=phi,
         params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         xp=np,
     )
     st_iso_jx = compute_stagnant_lid_state(
@@ -832,6 +838,9 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         solidus_temperature=None,
         melt_fraction=jnp.asarray(phi),
         params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         xp=jnp,
     )
     for key in (
@@ -863,6 +872,9 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         solidus_temperature=None,
         melt_fraction=phi,
         params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         viscosity_mixture=visc_mix_arr,
     )
     st_arr_2 = compute_stagnant_lid_state(
@@ -874,6 +886,9 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         solidus_temperature=None,
         melt_fraction=phi,
         params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         viscosity_mixture=visc_mix_arr,
     )
     assert abs(np.log10(float(st_arr_2['mu_i'])) - np.log10(float(st_arr_1['mu_i']))) < 0.05
@@ -887,6 +902,9 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         solidus_temperature=None,
         melt_fraction=phi,
         params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         viscosity_mixture=1.0e18,
     )
     assert float(st_scalar_1['mu_i']) == pytest.approx(float(st_arr_1['mu_i']), rel=1.0e-12)
@@ -901,6 +919,9 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         solidus_temperature=None,
         melt_fraction=phi,
         params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         viscosity_mixture=np.full(n_nodes, np.nan),
     )
     assert np.isfinite(float(st_inactive_nan_mix['mu_i']))
@@ -984,6 +1005,9 @@ def test_rheology_and_lid_branch_coverage():
         solidus_temperature=T_sol,
         melt_fraction=phi,
         params=params_fixed,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         viscosity_mixture=1.0e20,
         density=np.full(n_nodes, 3300.0),
     )
@@ -1028,6 +1052,9 @@ def test_rheology_and_lid_branch_coverage():
         solidus_temperature=2000.0,
         melt_fraction=phi,
         params=params_fixed,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
     )
     st_arr_sol = compute_stagnant_lid_state(
         radii=r,
@@ -1038,6 +1065,9 @@ def test_rheology_and_lid_branch_coverage():
         solidus_temperature=np.full(n_nodes, 2000.0),
         melt_fraction=phi,
         params=params_fixed,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
     )
     t_i_val = float(st_scalar_sol['T_i'])
     expected_dt_rh_sol = t_i_val**2 / (params_fixed.g_homologous * 2000.0)
@@ -1067,3 +1097,97 @@ def test_rheology_and_lid_branch_coverage():
             tau_y_lid=None,
             stress_closure_mode='lid',
         )
+
+
+def test_validation_and_lid_base_edge_cases():
+    """Verify parameter validation, non-positive T NaN return, water_prefactor log-clip, and full-lid base."""
+    import math
+
+    from aragog.rheology import viscous_mixing_length_factor
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    jnp = pytest.importorskip('jax.numpy')
+
+    # 1. g_homologous > 0 required whenever enabled=True (both lid modes).
+    for mode in ('rheological', 'fixed'):
+        with pytest.raises(ValueError, match='g_homologous'):
+            SolidRheologyParams(enabled=True, lid_base_mode=mode, g_homologous=0.0)
+
+    # 2. enabled must be a bool; s_top_inf and mlt_bottom_slope must be in (0, 1].
+    with pytest.raises(ValueError, match='enabled must be a bool'):
+        SolidRheologyParams(enabled='False')  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match='s_top_inf must be in'):
+        SolidRheologyParams(s_top_inf=1.5)
+    with pytest.raises(ValueError, match='mlt_bottom_slope must be in'):
+        SolidRheologyParams(mlt_bottom_slope=1.5)
+
+    # 3. Single top-slope parameter: mlt_top_slope and top_slope are removed.
+    assert not hasattr(SolidRheologyParams(), 'mlt_top_slope')
+    r = np.linspace(3.48e6, 6.371e6, 20)
+    ml = np.minimum(r - r[0], r[-1] - r)
+    with pytest.raises(TypeError, match='unexpected keyword argument'):
+        viscous_mixing_length_factor(r, r[0], r[-1], ml, top_slope=0.5)
+
+    # 4. T <= 0 returns NaN (not the viscosity cap) in both NumPy and JAX.
+    for t_bad in (0.0, -50.0):
+        assert math.isnan(compute_arrhenius_viscosity(t_bad, 0.0))
+        assert bool(jnp.isnan(compute_arrhenius_viscosity(t_bad, 0.0, xp=jnp)))
+    assert bool(
+        jnp.isnan(compute_arrhenius_viscosity(1600.0, 0.0, water_prefactor=0.0, xp=jnp))
+    )
+    assert bool(
+        jnp.isnan(compute_arrhenius_viscosity(1600.0, 0.0, water_prefactor=-1.0, xp=jnp))
+    )
+
+    # 5. Water prefactor clipped in log space after multiplication:
+    # At T=520 K, P=0, wp=0.1: unclipped is 1e21 * 0.1 * exp(25 * 1400 * (1/520 - 1/1600)) = 5.424869e39 Pa s.
+    expected_520 = 1.0e21 * 0.1 * math.exp(25.0 * 1400.0 * (1.0 / 520.0 - 1.0 / 1600.0))
+    assert compute_arrhenius_viscosity(520.0, 0.0, water_prefactor=0.1) == pytest.approx(
+        expected_520, rel=1e-12
+    )
+    assert float(
+        compute_arrhenius_viscosity(520.0, 0.0, water_prefactor=0.1, xp=jnp)
+    ) == pytest.approx(expected_520, rel=1e-12)
+    assert compute_arrhenius_viscosity(300.0, 0.0, water_prefactor=0.1) == pytest.approx(
+        1.0e40, rel=1e-12
+    )
+
+    # 6. viscosity_solid, phi_rheo, and phi_width are required in compute_stagnant_lid_state.
+    P = np.linspace(135.0e9, 1.0e5, 20)
+    T = np.linspace(2500.0, 1200.0, 20)
+    F_conv = np.full(20, 50.0)
+    F_conv[-1] = 0.0
+    F_tot = np.full(20, 60.0)
+    phi = np.zeros(20)
+    params_fixed_high = SolidRheologyParams(
+        enabled=True, lid_base_mode='fixed', lid_base_temperature=5000.0
+    )
+    with pytest.raises(TypeError):
+        compute_stagnant_lid_state(
+            radii=r,
+            temperature=T,
+            pressure=P,
+            convective_flux=F_conv,
+            total_flux=F_tot,
+            solidus_temperature=None,
+            melt_fraction=phi,
+            params=params_fixed_high,
+        )
+
+    # 7. When W_base_sum -> 0 (entire mantle below lid_base_temperature=5000 K),
+    # r_lid_base goes to r[0] (CMB) and d_lid equals full mantle thickness r[-1] - r[0].
+    st_full_lid = compute_stagnant_lid_state(
+        radii=r,
+        temperature=T,
+        pressure=P,
+        convective_flux=F_conv,
+        total_flux=F_tot,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_fixed_high,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    assert float(st_full_lid['r_lid_base']) == pytest.approx(r[0], rel=1e-9)
+    assert float(st_full_lid['d_lid']) == pytest.approx(r[-1] - r[0], rel=1e-4)

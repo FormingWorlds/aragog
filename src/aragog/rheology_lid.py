@@ -48,19 +48,26 @@ SOLIDUS_MELT_FRACTION_THRESHOLD: float = 0.01
 SOLIDUS_MELT_FRACTION_WIDTH: float = 0.002
 
 
-def _boundary_weights(w: Any, xp: Any) -> tuple[Any, Any, Any]:
+def _boundary_weights(
+    w: Any, xp: Any, *, fallback_bottom: bool = False
+) -> tuple[Any, Any, Any]:
     """Smooth weights of the shallowest crossing of ``w``, scanned from the surface down.
 
-    Returns ``(W_tilde, W_sum, w_weight)``; ``W_tilde`` relaxes to uniform weights when
-    ``W_sum`` (the total crossing weight) vanishes.
+    Returns ``(W_tilde, W_sum, w_weight)``; ``W_tilde`` relaxes to uniform weights (or
+    to the bottom node at index 0 when ``fallback_bottom=True``) when ``W_sum`` vanishes.
     """
     w_surf = w[::-1]
     omw = xp.concatenate([xp.ones(1, dtype=w.dtype), 1.0 - w_surf[:-1]])
     W = (w_surf * xp.cumprod(omw))[::-1]
     W_sum = xp.sum(W)
     w_weight = xp.tanh(W_sum / 1.0e-6)
-    W_uniform = xp.ones_like(W) / float(w.shape[0])
-    W_tilde = w_weight * (W / xp.maximum(W_sum, 1e-12)) + (1.0 - w_weight) * W_uniform
+    if fallback_bottom:
+        W_fallback = xp.concatenate(
+            [xp.ones(1, dtype=w.dtype), xp.zeros(w.shape[0] - 1, dtype=w.dtype)]
+        )
+    else:
+        W_fallback = xp.ones_like(W) / float(w.shape[0])
+    W_tilde = w_weight * (W / xp.maximum(W_sum, 1e-12)) + (1.0 - w_weight) * W_fallback
     return W_tilde, W_sum, w_weight
 
 
@@ -73,11 +80,11 @@ def compute_stagnant_lid_state(
     solidus_temperature: FloatOrArray | None,
     melt_fraction: FloatOrArray,
     params: Any,
+    viscosity_solid: float,
+    phi_rheo: float,
+    phi_width: float,
     unyielded_velocity: FloatOrArray | None = None,
-    viscosity_solid: float | None = None,
     viscosity_mixture: FloatOrArray | None = None,
-    phi_rheo: float | None = None,
-    phi_width: float | None = None,
     density: FloatOrArray = 3300.0,
     gravity: FloatOrArray = 9.81,
     thermal_expansivity: FloatOrArray = 3.0e-5,
@@ -107,20 +114,20 @@ def compute_stagnant_lid_state(
         Melt mass fraction profile phi [-].
     params : SolidRheologyParams
         Rheology parameter set.
+    viscosity_solid : float
+        Reference solid mantle viscosity [Pa s].
+    phi_rheo : float
+        Critical melt fraction for rheological transition [-].
+    phi_width : float
+        Transition width for rheological melt fraction indicator [-].
     unyielded_velocity : float or array-like, optional
         Unyielded convective velocity profile v [m/s].
-    viscosity_solid : float, optional
-        Reference solid mantle viscosity [Pa s]. Defaults to 1e21 if unspecified.
     viscosity_mixture : float or array-like, optional
         Effective mixture viscosity profile [Pa s] of the convecting layer (in mush,
         the blended two-phase viscosity used by the solver). When provided, mu_i
         blends smoothly via ``w_weight = tanh(W_sum / 1e-6)`` between the
         W_tilde-weighted log mean of ``viscosity_mixture`` and the solid Arrhenius
         viscosity ``eta_arr_i``; otherwise falls back to ``eta_arr_i``.
-    phi_rheo : float, optional
-        Critical melt fraction for rheological transition. Defaults to 0.4.
-    phi_width : float, optional
-        Transition width for rheological melt fraction indicator. Defaults to 0.15.
     density : float or array-like, default 3300.0
         Mantle density rho [kg/m^3].
     gravity : float or array-like, default 9.81
@@ -166,6 +173,8 @@ def compute_stagnant_lid_state(
     indicators, layers with melt fraction exceeding 0.01 are treated as non-lid interior
     by ``w_hot_sol``, rendering the lid boundary position independent of ``phi_rheo``.
     """
+    if viscosity_solid is None or phi_rheo is None or phi_width is None:
+        raise ValueError('viscosity_solid, phi_rheo, and phi_width must be provided')
     r = xp.asarray(radii, dtype=float)
     T = xp.asarray(temperature, dtype=float)
     P = xp.asarray(pressure, dtype=float)
@@ -219,11 +228,9 @@ def compute_stagnant_lid_state(
     # Homologous Frank-Kamenetskii contrast: theta = H(P_i) * (T_i - T_surf) / (R * T_i**2).
     theta = (H_T_i * (T_i - T_surf)) / (R_GAS * T_i_safe**2)
 
-    eta_0 = 1.0e21 if viscosity_solid is None else viscosity_solid
-
     arrhenius = partial(
         compute_arrhenius_viscosity,
-        viscosity_solid=eta_0,
+        viscosity_solid=viscosity_solid,
         g_homologous=params.g_homologous,
         t_sol_0=params.t_sol_0,
         dt_sol_dp=params.dt_sol_dp,
@@ -268,14 +275,12 @@ def compute_stagnant_lid_state(
         w_hot_sol = 0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale))
     else:
         w_hot_sol = _melt_ramp(SOLIDUS_MELT_FRACTION_THRESHOLD, SOLIDUS_MELT_FRACTION_WIDTH)
-    w_hot_phi = _melt_ramp(
-        0.4 if phi_rheo is None else phi_rheo, 0.15 if phi_width is None else phi_width
-    )
+    w_hot_phi = _melt_ramp(phi_rheo, phi_width)
 
     w_interior = xp.maximum(xp.maximum(w_hot_iso, w_hot_sol), w_hot_phi)
     w_lid = (1.0 - w_interior) * w_active
 
-    W_base_tilde = _boundary_weights(w_interior, xp)[0]
+    W_base_tilde = _boundary_weights(w_interior, xp, fallback_bottom=True)[0]
 
     r_lid_base = xp.sum(W_base_tilde * r)
     P_lid_base = xp.sum(W_base_tilde * P)

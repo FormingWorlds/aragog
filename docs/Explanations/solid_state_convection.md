@@ -465,7 +465,6 @@ All solid-state convection parameters are managed by `SolidRheologyParams` in Ar
 | `lid_contrast_coeff` | - | `2.2` | `[phase_solid].lid_contrast_coeff` | `[interior_energetics.aragog.rheology].lid_contrast_coeff` |
 | `lid_mask_width_cells` | - | `1.0` | `[phase_solid].lid_mask_width_cells` | `[interior_energetics.aragog.rheology].lid_mask_width_cells` |
 | `phi_visc_single` | - | `0.5` | `[phase_solid].phi_visc_single` | `[interior_energetics.aragog.rheology].phi_visc_single` |
-| `mlt_top_slope` | - | `0.22` | `[phase_solid].mlt_top_slope` | `[interior_energetics.aragog.rheology].mlt_top_slope` |
 | `mlt_bottom_slope` | - | `1.0` | `[phase_solid].mlt_bottom_slope` | `[interior_energetics.aragog.rheology].mlt_bottom_slope` |
 | `s_top_inf` | - | `0.22` | `[phase_solid].s_top_inf` | `[interior_energetics.aragog.rheology].s_top_inf` |
 | `c_theta` | - | `0.15` | `[phase_solid].c_theta` | `[interior_energetics.aragog.rheology].c_theta` |

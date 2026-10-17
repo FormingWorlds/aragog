@@ -28,6 +28,8 @@ jax.config.update('jax_enable_x64', True)
 def _lid_state(xp, **fields):
     """Evaluate compute_stagnant_lid_state with every array input converted to ``xp``."""
     conv = {k: xp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in fields.items()}
+    conv.setdefault('phi_rheo', 0.4)
+    conv.setdefault('phi_width', 0.15)
     return compute_stagnant_lid_state(xp=xp, **conv)
 
 
@@ -376,6 +378,8 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             params=params,
             unyielded_velocity=v_unyielded,
             viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
             xp=np,
         )
         st_sol_jx = compute_stagnant_lid_state(
@@ -389,6 +393,8 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             params=params,
             unyielded_velocity=jnp.array(v_unyielded),
             viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
             xp=jnp,
         )
         for key in ['theta', 'dT_rh', 'd_lid', 'tau_d', 'eta_i']:
@@ -428,6 +434,8 @@ def test_jax_jacrev_closure_differentiability():
             params=params,
             unyielded_velocity=v_unyielded,
             viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
             xp=jnp,
         )
         eta_d = compute_arrhenius_viscosity(

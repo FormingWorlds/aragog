@@ -135,7 +135,7 @@ def test_canary_theta_zero_and_exponent_mutations_fail(monkeypatch):
         r, r[0], r[-1], ml, s_top_inf=s_inf, bottom_slope=1.0, theta=0.0, c_theta=c_th
     )
     q_zero_mutant = viscous_mixing_length_factor(
-        r, r[0], r[-1], ml, top_slope=s_inf, bottom_slope=1.0
+        r, r[0], r[-1], ml, s_top_inf=s_inf, bottom_slope=1.0
     )
     assert q_zero_true[TOP] == pytest.approx(1.0, rel=1e-14)
     assert abs(q_zero_mutant[TOP] - 1.0) > 0.99
@@ -164,8 +164,8 @@ def test_branch_switch_stays_continuous_in_kappa():
     lvs = np.arange(-2.0, 18.0, 0.02)
 
     cases = [
-        (viscous_mixing_length_factor(r, r[0], r[-1], ml, top_slope=0.5), 0.5**4),
-        (viscous_mixing_length_factor(r, r[0], r[-1], ml, top_slope=0.22), 0.22**4),
+        (viscous_mixing_length_factor(r, r[0], r[-1], ml, s_top_inf=0.5), 0.5**4),
+        (viscous_mixing_length_factor(r, r[0], r[-1], ml, s_top_inf=0.22), 0.22**4),
         (
             viscous_mixing_length_factor(
                 r, r[0], r[-1], ml, s_top_inf=0.22, theta=15.0, c_theta=0.15
@@ -226,20 +226,24 @@ def test_numpy_and_jax_theta_top_slope_parity():
 def test_solid_rheology_params_top_slope_defaults_and_bounds():
     """Verify SolidRheologyParams defaults and bounds validation for s_top_inf and c_theta."""
     params = SolidRheologyParams()
-    assert params.mlt_top_slope == 0.22
-    assert params.mlt_bottom_slope == 1.0
-    assert params.s_top_inf == 0.22
-    assert params.c_theta == 0.15
+    assert not hasattr(params, 'mlt_top_slope')
+    assert params.mlt_bottom_slope == pytest.approx(1.0, rel=1e-15)
+    assert params.s_top_inf == pytest.approx(0.22, rel=1e-15)
+    assert params.c_theta == pytest.approx(0.15, rel=1e-15)
 
     custom = SolidRheologyParams(s_top_inf=0.18, c_theta=0.0)
-    assert custom.s_top_inf == 0.18
-    assert custom.c_theta == 0.0
+    assert custom.s_top_inf == pytest.approx(0.18, rel=1e-15)
+    assert custom.c_theta == pytest.approx(0.0, abs=1e-15)
 
-    with pytest.raises(ValueError, match='mlt_top_slope must be positive'):
-        SolidRheologyParams(mlt_top_slope=0.0)
-    with pytest.raises(ValueError, match='s_top_inf must be positive'):
+    with pytest.raises(ValueError, match='s_top_inf must be in'):
         SolidRheologyParams(s_top_inf=0.0)
-    with pytest.raises(ValueError, match='s_top_inf must be positive'):
+    with pytest.raises(ValueError, match='s_top_inf must be in'):
         SolidRheologyParams(s_top_inf=-0.1)
+    with pytest.raises(ValueError, match='s_top_inf must be in'):
+        SolidRheologyParams(s_top_inf=1.1)
+    with pytest.raises(ValueError, match='mlt_bottom_slope must be in'):
+        SolidRheologyParams(mlt_bottom_slope=0.0)
+    with pytest.raises(ValueError, match='mlt_bottom_slope must be in'):
+        SolidRheologyParams(mlt_bottom_slope=1.1)
     with pytest.raises(ValueError, match='c_theta must be non-negative'):
         SolidRheologyParams(c_theta=-0.01)

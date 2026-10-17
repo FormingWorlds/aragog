@@ -270,6 +270,9 @@ def test_limit_no_convection_lid_diagnostics():
         solidus_temperature=None,
         melt_fraction=melt_frac,
         params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         unyielded_velocity=np.zeros(n_nodes),
         xp=np,
     )
@@ -304,6 +307,9 @@ def test_inactive_convection_yield_viscosity_unyielded():
         solidus_temperature=None,
         melt_fraction=np.zeros(n_nodes),
         params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         xp=np,
     )
     assert float(state['tau_d']) == 0.0
@@ -341,6 +347,9 @@ def test_limit_whole_mantle_mush_clips_lid():
         solidus_temperature=None,
         melt_fraction=melt_frac,
         params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
         unyielded_velocity=np.full(n_nodes, 1.0e-9),
         xp=np,
     )
