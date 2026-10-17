@@ -181,6 +181,13 @@ def test_exact_yield_match():
         stress_closure_mode='local',
     )
     assert eta_eff_local == pytest.approx(eta_diff, rel=1.0e-12)
+    eta_eff_local_2x = compute_effective_viscosity(
+        eta_diff=eta_diff,
+        tau_y=tau_y,
+        strain_rate=2.0 * strain_rate_match,
+        stress_closure_mode='local',
+    )
+    assert eta_eff_local_2x == pytest.approx(0.5 * eta_diff, rel=1.0e-12)
 
     # Stagnant lid mode: under min closure, tau_d == tau_y yields eta_eff == eta_diff.
     eta_eff_lid = compute_effective_viscosity(
@@ -191,6 +198,14 @@ def test_exact_yield_match():
         stress_closure_mode='lid',
     )
     assert eta_eff_lid == pytest.approx(eta_diff, rel=1.0e-12)
+    eta_eff_lid_2x = compute_effective_viscosity(
+        eta_diff=eta_diff,
+        eta_i=eta_diff,
+        tau_d=2.0 * tau_y,
+        tau_y_lid=tau_y,
+        stress_closure_mode='lid',
+    )
+    assert eta_eff_lid_2x == pytest.approx(0.5 * eta_diff, rel=1.0e-12)
 
 
 @pytest.mark.unit
@@ -240,6 +255,10 @@ def test_monotonicity_and_continuity_across_yield():
         stress_closure_mode='local',
         xp=np,
     )
+
+    assert eta_eff_vals[0] == pytest.approx(eta_diff, rel=1.0e-12)
+    assert eta_eff_vals[-1] == pytest.approx(tau_y / (2.0 * strain_rates[-1]), rel=1.0e-12)
+    assert eta_eff_vals[-1] < 1.0e-5 * eta_eff_vals[0]
 
     diffs = np.diff(eta_eff_vals)
     assert np.all(diffs <= 0.0), 'Effective viscosity must not increase with strain rate'
@@ -330,15 +349,32 @@ def test_inactive_convection_yield_viscosity_unyielded():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_limit_whole_mantle_mush_clips_lid():
-    """Verify lid thickness is zero when mantle is entirely mushy."""
+    """Verify lid thickness is positive when solid and zero when mantle is entirely mushy."""
     n_nodes = 30
     radii = np.linspace(3.48e6, 6.371e6, n_nodes)
     temperature = np.linspace(3500.0, 1600.0, n_nodes)
     pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
     conv_flux = np.full(n_nodes, 100.0)
+    conv_flux[-6:] = 0.0
     total_flux = np.full(n_nodes, 100.0)
-    melt_frac = np.full(n_nodes, 0.8)
     params = SolidRheologyParams(enabled=True, stress_closure_mode='lid', phi_visc_single=0.5)
+
+    state_solid = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temperature,
+        pressure=pressure,
+        convective_flux=conv_flux,
+        total_flux=total_flux,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        xp=np,
+    )
+    assert float(state_solid['d_lid']) > 1.0e5
 
     state = compute_stagnant_lid_state(
         radii=radii,
@@ -347,7 +383,7 @@ def test_limit_whole_mantle_mush_clips_lid():
         convective_flux=conv_flux,
         total_flux=total_flux,
         solidus_temperature=None,
-        melt_fraction=melt_frac,
+        melt_fraction=np.full(n_nodes, 0.8),
         params=params,
         viscosity_solid=1.0e21,
         phi_rheo=0.4,

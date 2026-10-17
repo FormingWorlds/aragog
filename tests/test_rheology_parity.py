@@ -6,6 +6,7 @@ autodiff reversibility without ConcretizationTypeError.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 
 import numpy as np
@@ -384,7 +385,8 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         assert np.any(eta_eff_np < eta_diff_np)
 
     if regime == 'unyielded':
-        t_sol_1d = 1400.0 + 2.4e-8 * pressure - 5.0e-20 * pressure**2
+        t_sol_1d = 2200.0 + 2.4e-8 * pressure - 5.0e-20 * pressure**2
+        params_1d = dataclasses.replace(params, t_sol_0=2200.0)
         st_sol_np = compute_stagnant_lid_state(
             radii=radii,
             temperature=temperature,
@@ -393,7 +395,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             total_flux=tot_flux,
             solidus_temperature=t_sol_1d,
             melt_fraction=melt_frac,
-            params=params,
+            params=params_1d,
             unyielded_velocity=v_unyielded,
             viscosity_solid=1.0e21,
             phi_rheo=0.4,
@@ -408,13 +410,15 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             total_flux=jnp.array(tot_flux),
             solidus_temperature=jnp.array(t_sol_1d[:, None]),
             melt_fraction=jnp.array(melt_frac),
-            params=params,
+            params=params_1d,
             unyielded_velocity=jnp.array(v_unyielded),
             viscosity_solid=1.0e21,
             phi_rheo=0.4,
             phi_width=0.15,
             xp=jnp,
         )
+        assert float(st_sol_np['d_lid']) > 1.0e5
+        assert float(st_sol_np['tau_d']) > 0.0
         for key in ['theta', 'dT_rh', 'd_lid', 'tau_d', 'eta_i']:
             np.testing.assert_allclose(
                 float(st_sol_jx[key]),
@@ -426,21 +430,22 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
 
 @pytest.mark.unit
 def test_jax_jacrev_closure_differentiability():
-    """Verify JAX reverse-mode autodiff through the full closure without concretization error."""
+    """Verify JAX reverse-mode autodiff through the full lid and yield closure."""
     n_nodes = 20
     radii = jnp.linspace(3.48e6, 6.371e6, n_nodes)
     pressure = jnp.linspace(135.0e9, 1.0e5, n_nodes)
-    v_unyielded = jnp.linspace(1.0e-11, 1.0e-9, n_nodes)
-    conv_flux = jnp.linspace(0.0, 200.0, n_nodes)
-    tot_flux = conv_flux + 10.0
+    v_unyielded = jnp.linspace(0.0, 1.0e-8, n_nodes).at[-5:].set(0.0)
+    conv_flux = jnp.linspace(0.0, 200.0, n_nodes).at[-5:].set(0.0)
+    tot_flux = jnp.full(n_nodes, 200.0)
     melt_frac = jnp.zeros(n_nodes)
     params = SolidRheologyParams(
         enabled=True,
         stress_closure_mode='lid',
         lid_base_mode='rheological',
+        yield_stress_max=1.0e6,
     )
 
-    def _loss(T_profile):
+    def _eval_closure(T_profile):
         lid_st = compute_stagnant_lid_state(
             radii=radii,
             temperature=T_profile,
@@ -475,14 +480,28 @@ def test_jax_jacrev_closure_differentiability():
             w_lid=lid_st['w_lid'],
             xp=jnp,
         )
+        return lid_st, eta_d, eta_eff
+
+    def _loss(T_profile):
+        _, _, eta_eff = _eval_closure(T_profile)
         return jnp.sum(jnp.log10(eta_eff))
 
-    T_init = jnp.linspace(3200.0, 1600.0, n_nodes)
-    grad_fn = jax.grad(_loss)
-    grad_val = grad_fn(T_init)
+    T_init = jnp.linspace(3400.0, 1400.0, n_nodes)
+    lid_st_init, eta_d_init, eta_eff_init = _eval_closure(T_init)
+    assert float(lid_st_init['d_lid']) > 0.0
+    assert float(lid_st_init['tau_d']) > float(lid_st_init['tau_y_lid']) > 0.0
+    assert float(jnp.max(lid_st_init['w_lid'])) > 0.9
+    assert jnp.any(eta_eff_init < eta_d_init)
+
+    grad_val = jax.grad(_loss)(T_init)
+    grad_tau_d = jax.grad(lambda T_p: _eval_closure(T_p)[0]['tau_d'])(T_init)
 
     assert grad_val.shape == (n_nodes,)
     assert jnp.all(jnp.isfinite(grad_val))
+    assert float(jnp.linalg.norm(grad_val)) > 0.0
+    assert grad_tau_d.shape == (n_nodes,)
+    assert jnp.all(jnp.isfinite(grad_tau_d))
+    assert float(jnp.linalg.norm(grad_tau_d)) > 0.0
 
 
 @pytest.mark.unit
@@ -490,10 +509,13 @@ def test_jax_jacrev_closure_differentiability():
 def test_stagnant_lid_checkpoint_profile_parity():
     """Verify stagnant lid state on 175 kyr checkpoint profile matches between NumPy and JAX.
 
-    Provenance: ``tests/reference/checkpoint_profile_175kyr.npz`` is a 100-node Earth-sized
-    magma-ocean solidification snapshot at ``t = 175 kyr`` (``r_basic`` 3480-6371 km,
-    ``P_basic`` 145.5-0.71 GPa, ``T_basic`` 4794.8-452.6 K, ``phi_basic`` 0.141 at the CMB
-    to 0.0 at the surface).
+    Provenance: ``tests/reference/checkpoint_profile_175kyr.npz`` was extracted from
+    ``/Users/timlichtenberg/work/stream-ssc-step1/data/A6/acceptance_175kyr/ssc_earth_4p5gyr.nc``
+    (run ``r_item13_acceptance_175kyr_rate_cap``, ``A6/run_acceptance_175kyr_rate_cap.py``)
+    produced by Aragog commit ``9fc9247`` on branch ``tl/ssc-step1-a6`` (committed as test
+    fixture in ``f898299``): a 100-node Earth-sized magma-ocean solidification snapshot at
+    ``t = 175 kyr`` (``r_basic`` 3480-6371 km, ``P_basic`` 145.5-0.71 GPa, ``T_basic``
+    4794.8-452.6 K, ``phi_basic`` 0.141 at the CMB to 0.0 at the surface).
 
     On ``checkpoint_profile_175kyr.npz``, the surface node has ``T_basic[-1] = 452.559`` K
     and ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Under the fixed-width (0.01)
@@ -688,7 +710,9 @@ def test_convecting_layer_viscosity_mixture_parity():
     st_none_np = _lid_state(np, **base, viscosity_mixture=None)
     st_none_jx = _lid_state(jnp, **base, viscosity_mixture=None)
     np.testing.assert_allclose(float(st_none_np['mu_i']), float(st_none_jx['mu_i']), rtol=1e-12)
-    assert float(st_none_np['mu_i']) == pytest.approx(float(st_none_np['eta_i']), rel=1.0e-12)
+    assert float(st_none_np['mu_i']) == pytest.approx(
+        float(st_none_np['eta_solid_arrhenius']), rel=1.0e-12
+    )
 
     # 2. When viscosity_mixture is provided: mu_i is evaluated from the mixture viscosity.
     st_mix_np = _lid_state(np, **base, viscosity_mixture=visc_mix_np)
@@ -707,19 +731,23 @@ def test_convecting_layer_viscosity_mixture_parity():
     assert st_none_np['mu_i'] / st_mix_np['mu_i'] > 1.0e5
     assert st_none_jx['mu_i'] / st_mix_jx['mu_i'] > 1.0e5
 
-    # 3. Fallback when convective layer is inactive (zero convective flux).
-    st_inactive_np = _lid_state(
-        np, **dict(base, convective_flux=np.zeros(30)), viscosity_mixture=visc_mix_np
+    # 3. Fallback when convective layer is inactive (W_sum << 1e-6 -> w_weight -> 0).
+    inactive_base = dict(
+        base,
+        convective_flux=np.zeros(30),
+        params=dataclasses.replace(params, interior_flux_fraction=0.20),
     )
-    st_inactive_jx = _lid_state(
-        jnp, **dict(base, convective_flux=np.zeros(30)), viscosity_mixture=visc_mix_np
-    )
+    st_inactive_np = _lid_state(np, **inactive_base, viscosity_mixture=visc_mix_np)
+    st_inactive_jx = _lid_state(jnp, **inactive_base, viscosity_mixture=visc_mix_np)
     np.testing.assert_allclose(
         float(st_inactive_np['mu_i']), float(st_inactive_jx['mu_i']), rtol=1e-12
     )
     np.testing.assert_allclose(
-        float(st_inactive_np['mu_i']), float(st_inactive_np['eta_i']), rtol=1e-12
+        float(st_inactive_np['mu_i']),
+        float(st_inactive_np['eta_solid_arrhenius']),
+        rtol=1e-8,
     )
+    assert float(st_inactive_np['mu_i']) > 1.0e5 * float(st_mix_np['mu_i'])
 
 
 @pytest.mark.unit

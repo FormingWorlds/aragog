@@ -182,10 +182,22 @@ def compute_stagnant_lid_state(
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)
 
-    F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
+    any_input_nan = (
+        xp.any(xp.isnan(r))
+        | xp.any(xp.isnan(T))
+        | xp.any(xp.isnan(P))
+        | xp.any(xp.isnan(F_conv))
+        | xp.any(xp.isnan(F_tot))
+        | xp.any(xp.isnan(phi))
+    )
+    zero_or_nan = xp.where(any_input_nan, xp.nan, 0.0)
+
+    F_tot_safe = xp.where(
+        xp.isnan(F_tot), xp.nan, xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
+    )
     f = xp.clip(xp.maximum(F_conv, 0.0) / xp.abs(F_tot_safe), 0.0, 1.0)
 
-    w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / 0.01))
+    w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / 0.01)) + zero_or_nan
 
     W_tilde, W_sum, w_weight = _boundary_weights(w_conv, xp)
 
@@ -285,14 +297,19 @@ def compute_stagnant_lid_state(
     r_lid_base = xp.sum(W_base_tilde * r)
     P_lid_base = xp.sum(W_base_tilde * P)
     T_lid = xp.sum(W_base_tilde * T)
-    d_lid_raw = xp.where(is_convecting, xp.maximum(r[-1] - r_lid_base, 0.0) * w_active, 0.0)
+    d_lid_raw = xp.where(
+        is_convecting, xp.maximum(r[-1] - r_lid_base, 0.0) * w_active, zero_or_nan
+    )
     has_lid = (
         is_convecting
         & ((T_i - T_surf) > NO_LID_DT_THRESHOLD)
         & (d_lid_raw > NO_LID_THICKNESS_THRESHOLD)
     )
-    if_lid = partial(xp.where, has_lid)
-    d_lid = if_lid(d_lid_raw, 0.0)
+
+    def if_lid(val):
+        return xp.where(has_lid, val, zero_or_nan)
+
+    d_lid = if_lid(d_lid_raw)
 
     dT_dr = xp.abs(xp.gradient(T, r))
     dr_min = xp.min(xp.abs(r[1:] - r[:-1]))
@@ -316,10 +333,10 @@ def compute_stagnant_lid_state(
         u_shift = xp.max(u)
         sum_w_exp = xp.sum(w_upper * xp.exp((u - u_shift) / T_v))
         v_i_raw = u_shift + T_v * (xp.log(xp.maximum(sum_w_exp, 1e-300)) - xp.log(N_upper))
-        v_i = xp.where(is_convecting, xp.maximum(v_i_raw, 0.0) * w_active, 0.0)
+        v_i = xp.where(is_convecting, xp.maximum(v_i_raw, 0.0) * w_active, zero_or_nan)
     else:
-        v_i = 0.0
-        w_upper = xp.zeros_like(r)
+        v_i = zero_or_nan
+        w_upper = xp.zeros_like(r) + zero_or_nan
 
     d_conv = xp.maximum(r[-1] - r[0], 1.0)
 
@@ -338,20 +355,19 @@ def compute_stagnant_lid_state(
     # Convective interior velocity and lid driving stress (Foley & Bercovici 2014, eqs. 26, 28).
     Ra_eff = if_lid(
         (rho_i * g_i * alpha_i * DeltaT_conv * (d_conv**3))
-        / (kappa_i * xp.maximum(eta_i, 1e-30)),
-        0.0,
+        / (kappa_i * xp.maximum(eta_i, 1e-30))
     )
-    Ra_rh = if_lid((Ra_eff * a_rh_fb) / xp.maximum(theta, 1e-6), 0.0)
+    Ra_rh = if_lid((Ra_eff * a_rh_fb) / xp.maximum(theta, 1e-6))
     v_m = xp.where(
         has_lid & (Ra_rh > 0.0),
         (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 1.0e-30) ** FB2014_VELOCITY_EXPONENT),
-        0.0,
+        zero_or_nan,
     )
 
-    tau_d = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active, 0.0)
-    tau_d_lid = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m) / xp.maximum(d_lid, 1e-6), 0.0)
-    tau_buoy = if_lid(rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active, 0.0)
-    tau_d_over_tau_buoy = if_lid(tau_d / xp.maximum(tau_buoy, 1e-30), 0.0)
+    tau_d = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active)
+    tau_d_lid = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m) / xp.maximum(d_lid, 1e-6))
+    tau_buoy = if_lid(rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active)
+    tau_d_over_tau_buoy = if_lid(tau_d / xp.maximum(tau_buoy, 1e-30))
 
     tau_y_lid = compute_yield_stress(
         P_lid_base,
@@ -362,13 +378,13 @@ def compute_stagnant_lid_state(
     )
 
     ratio = tau_d / xp.maximum(tau_y_lid, COHESION_FLOOR)
-    w_y = if_lid(0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH)), 0.0)
+    w_y = if_lid(0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH)))
     lid_cell_count = xp.sum(w_lid)
     w_solid_surf = 0.5 * (
         1.0 - xp.tanh((phi[-1] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
     )
     w_has_lid = 0.5 * (1.0 + xp.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf
-    lid_regime = if_lid(w_active * w_has_lid * (1.0 + w_y), 0.0)
+    lid_regime = if_lid(w_active * w_has_lid * (1.0 + w_y))
 
     return {
         'T_i': T_i,
@@ -524,12 +540,13 @@ def stress_closure(
     viscous_velocity: FloatOrArray,
     mixing_length: FloatOrArray | None = None,
     eps: float = 1.0e-15,
+    xp: Any = np,
 ) -> FloatOrArray:
     r"""Calculate strain rate dispatching on stress closure mode."""
     if mode == 'local':
         if mixing_length is None:
             raise ValueError("mixing_length must be provided when mode='local'")
-        return compute_strain_rate_local(viscous_velocity, mixing_length, eps=eps)
+        return compute_strain_rate_local(viscous_velocity, mixing_length, eps=eps, xp=xp)
     elif mode == 'global':
         raise ValueError(
             "Unknown stress closure mode 'global'; expected 'lid' or 'local'. "

@@ -64,7 +64,7 @@ def test_solid_rheology_params_has_expected_fields():
 
 
 def test_phase_config_rheology_defaults_match():
-    """Verify PhaseConfig defaults match SolidRheologyParams field-by-field."""
+    """Verify PhaseConfig defaults match SolidRheologyParams field-by-field and reflect overrides."""
     default_rheo = SolidRheologyParams()
     p_cfg = PhaseConfig(
         density=4000.0,
@@ -78,6 +78,22 @@ def test_phase_config_rheology_defaults_match():
     # Exact by construction: delegate_rheology forwards each stored field attribute unchanged.
     for name in EXPECTED_FIELDS:
         assert getattr(p_cfg, name) == getattr(default_rheo, name)
+
+    p_cfg_custom = PhaseConfig(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=2e-5,
+        viscosity=1e21,
+        g_homologous=19.0,
+        yield_stress_c=35.0e6,
+        water_prefactor=0.25,
+    )
+    assert p_cfg_custom.rheology != default_rheo
+    assert p_cfg_custom.g_homologous == pytest.approx(19.0)
+    assert p_cfg_custom.yield_stress_c == pytest.approx(35.0e6)
+    assert p_cfg_custom.water_prefactor == pytest.approx(0.25)
 
 
 def test_mixed_phase_config_has_no_rheology_fields():
@@ -185,16 +201,35 @@ def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
     pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
 
-    T = 200.0
-    P = 1e9
+    T = 650.0
+    P = 0.0
     cap_log10 = 35.0
     expected_cap = 10.0**cap_log10
+    expected_dry_650 = 1.0e21 * np.exp(25.0 * (1400.0 / 650.0 - 1400.0 / 1600.0))
+    assert expected_dry_650 < expected_cap < 100.0 * expected_dry_650
+
+    res_dry_np = compute_arrhenius_viscosity(
+        T, P, viscosity_solid=1e21, viscosity_max_log10=cap_log10, water_prefactor=1.0
+    )
+    assert res_dry_np == pytest.approx(expected_dry_650, rel=1.0e-12)
+    assert res_dry_np < expected_cap
 
     res_np = compute_arrhenius_viscosity(
         T, P, viscosity_solid=1e21, viscosity_max_log10=cap_log10, water_prefactor=100.0
     )
-    assert np.isclose(res_np, expected_cap)
+    assert res_np == pytest.approx(expected_cap, rel=1.0e-12)
     assert res_np <= expected_cap
+
+    res_dry_jax = compute_arrhenius_viscosity(
+        jnp.asarray(T),
+        jnp.asarray(P),
+        viscosity_solid=1e21,
+        viscosity_max_log10=cap_log10,
+        water_prefactor=1.0,
+        xp=jnp,
+    )
+    assert float(res_dry_jax) == pytest.approx(expected_dry_650, rel=1.0e-12)
+    assert float(res_dry_jax) < expected_cap
 
     res_jax = compute_arrhenius_viscosity(
         jnp.asarray(T),
@@ -204,7 +239,7 @@ def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
         water_prefactor=100.0,
         xp=jnp,
     )
-    assert np.isclose(float(res_jax), expected_cap)
+    assert float(res_jax) == pytest.approx(expected_cap, rel=1.0e-12)
     assert float(res_jax) <= expected_cap
 
     # Unclipped hand-computed verification at T = 1800 K, P = 10 GPa, g_hom = 25:
@@ -284,13 +319,16 @@ def test_solid_rheology_params_rejects_nan():
 
 
 def test_merge_precedence_explicit_default_value():
-    """Verify explicit keyword argument matching default overrides base rheology."""
-    custom = SolidRheologyParams(enabled=True, g_homologous=18.0, t_sol_0=1500.0)
+    """Verify explicit keyword argument matching default overrides base rheology while keeping others."""
+    custom = SolidRheologyParams(
+        enabled=True, g_homologous=18.0, t_sol_0=1500.0, yield_stress_c=40.0e6
+    )
     merged = merge_rheology(custom, {'g_homologous': 25.0, 't_sol_0': 1400.0, 'enabled': False})
     # Exact by construction: merge_rheology replaces dataclass fields with the override values.
     assert merged.g_homologous == 25.0
     assert merged.t_sol_0 == 1400.0
     assert merged.enabled is False
+    assert merged.yield_stress_c == pytest.approx(40.0e6)
 
     p_cfg = PhaseConfig(
         density=4000.0,
@@ -307,6 +345,7 @@ def test_merge_precedence_explicit_default_value():
     assert p_cfg.g_homologous == 25.0
     assert p_cfg.t_sol_0 == 1400.0
     assert p_cfg.enabled is False
+    assert p_cfg.yield_stress_c == pytest.approx(40.0e6)
 
 
 def test_rheology_docs_and_mkdocs_nav_registration():

@@ -424,8 +424,10 @@ def test_water_prefactor_scalar_and_array_parity():
 
     t = np.array([1600.0, 1800.0])
     p = np.array([0.0, 1e9])
+    expected_dry = 1.0e21 * np.exp(25.0 * ((1400.0 + 2.4e-8 * p) / t - 1400.0 / 1600.0))
 
     eta_dry = compute_arrhenius_viscosity(t, p, water_prefactor=1.0)
+    np.testing.assert_allclose(eta_dry, expected_dry, rtol=1e-12)
     eta_wet_scalar = compute_arrhenius_viscosity(t, p, water_prefactor=0.1)
     np.testing.assert_allclose(eta_wet_scalar, 0.1 * eta_dry, rtol=1e-12)
 
@@ -858,8 +860,9 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
     # Smooth transition of mu_i across W_sum ~ 1e-6 for both array and scalar viscosity_mixture:
     t_grad = np.linspace(2600.0, 1200.0, n_nodes)
     visc_mix_arr = np.full(n_nodes, 1.0e18)
-    f_low_1 = np.full(n_nodes, 1.0e-4)
-    f_low_2 = np.full(n_nodes, 1.05e-4)
+    params_smooth = SolidRheologyParams(enabled=True, interior_flux_fraction=0.10)
+    f_low_1 = np.full(n_nodes, 1.50)
+    f_low_2 = np.full(n_nodes, 1.502)
     st_arr_1 = compute_stagnant_lid_state(
         radii=r,
         temperature=t_grad,
@@ -868,7 +871,7 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         total_flux=f_tot,
         solidus_temperature=None,
         melt_fraction=phi,
-        params=params,
+        params=params_smooth,
         viscosity_solid=1.0e21,
         phi_rheo=0.4,
         phi_width=0.15,
@@ -882,13 +885,16 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         total_flux=f_tot,
         solidus_temperature=None,
         melt_fraction=phi,
-        params=params,
+        params=params_smooth,
         viscosity_solid=1.0e21,
         phi_rheo=0.4,
         phi_width=0.15,
         viscosity_mixture=visc_mix_arr,
     )
-    assert abs(np.log10(float(st_arr_2['mu_i'])) - np.log10(float(st_arr_1['mu_i']))) < 0.05
+    mu_1 = float(st_arr_1['mu_i'])
+    mu_2 = float(st_arr_2['mu_i'])
+    assert 1.0e19 < mu_2 < mu_1 < float(st_arr_1['eta_solid_arrhenius'])
+    assert 0.005 < abs(np.log10(mu_2) - np.log10(mu_1)) < 0.05
 
     st_scalar_1 = compute_stagnant_lid_state(
         radii=r,
@@ -898,15 +904,35 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         total_flux=f_tot,
         solidus_temperature=None,
         melt_fraction=phi,
-        params=params,
+        params=params_smooth,
         viscosity_solid=1.0e21,
         phi_rheo=0.4,
         phi_width=0.15,
         viscosity_mixture=1.0e18,
     )
-    assert float(st_scalar_1['mu_i']) == pytest.approx(float(st_arr_1['mu_i']), rel=1.0e-12)
+    assert float(st_scalar_1['mu_i']) == pytest.approx(mu_1, rel=1.0e-12)
 
-    # Inactive convection with non-finite viscosity_mixture falls back cleanly to eta_arr_i:
+    # Inactive convection with finite viscosity_mixture (W_sum << 1e-6 -> w_weight -> 0)
+    # and with non-finite viscosity_mixture both fall back cleanly to eta_solid_arrhenius:
+    params_inactive = SolidRheologyParams(enabled=True, interior_flux_fraction=0.20)
+    st_inactive_finite_mix = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_grad,
+        pressure=p,
+        convective_flux=np.zeros(n_nodes),
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_inactive,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        viscosity_mixture=np.full(n_nodes, 1.0e15),
+    )
+    assert float(st_inactive_finite_mix['mu_i']) == pytest.approx(
+        float(st_inactive_finite_mix['eta_solid_arrhenius']), rel=1.0e-8
+    )
+
     st_inactive_nan_mix = compute_stagnant_lid_state(
         radii=r,
         temperature=t_grad,
@@ -1102,9 +1128,10 @@ def test_validation_and_lid_base_edge_cases():
     """Verify parameter validation, non-positive T NaN return, water_prefactor log-clip, and full-lid base."""
     import math
 
-    from aragog.rheology import viscous_mixing_length_factor
+    from aragog.rheology import stress_closure, viscous_mixing_length_factor
     from aragog.rheology_lid import compute_stagnant_lid_state
 
+    jax = pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
 
     # 1. g_homologous > 0 required whenever enabled=True (both lid modes).
@@ -1172,6 +1199,20 @@ def test_validation_and_lid_base_edge_cases():
             melt_fraction=phi,
             params=params_fixed_high,
         )
+    with pytest.raises(ValueError, match='viscosity_solid, phi_rheo, and phi_width'):
+        compute_stagnant_lid_state(
+            radii=r,
+            temperature=T,
+            pressure=P,
+            convective_flux=F_conv,
+            total_flux=F_tot,
+            solidus_temperature=None,
+            melt_fraction=phi,
+            params=params_fixed_high,
+            viscosity_solid=None,  # type: ignore[arg-type]
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
 
     # 7. When W_base_sum -> 0 (entire mantle below lid_base_temperature=5000 K),
     # r_lid_base goes to r[0] (CMB) and d_lid equals full mantle thickness r[-1] - r[0].
@@ -1190,3 +1231,45 @@ def test_validation_and_lid_base_edge_cases():
     )
     assert float(st_full_lid['r_lid_base']) == pytest.approx(r[0], rel=1e-9)
     assert float(st_full_lid['d_lid']) == pytest.approx(r[-1] - r[0], rel=1e-4)
+
+    # 8. NaN in total_flux or temperature propagates NaN to lid diagnostics (NumPy and JAX).
+    params_rheo = SolidRheologyParams(enabled=True)
+    f_tot_nan = F_tot.copy()
+    f_tot_nan[5] = np.nan
+    t_nan = T.copy()
+    t_nan[5] = np.nan
+    for xp_mod in (np, jnp):
+        for bad_t, bad_ftot in ((T, f_tot_nan), (t_nan, F_tot)):
+            st_nan = compute_stagnant_lid_state(
+                radii=xp_mod.asarray(r),
+                temperature=xp_mod.asarray(bad_t),
+                pressure=xp_mod.asarray(P),
+                convective_flux=xp_mod.asarray(F_conv),
+                total_flux=xp_mod.asarray(bad_ftot),
+                solidus_temperature=None,
+                melt_fraction=xp_mod.asarray(phi),
+                params=params_rheo,
+                unyielded_velocity=xp_mod.asarray(np.full(20, 1.0e-9)),
+                viscosity_solid=1.0e21,
+                phi_rheo=0.4,
+                phi_width=0.15,
+                xp=xp_mod,
+            )
+            for key in ('d_lid', 'tau_d', 'theta', 'eta_i', 'mu_i', 'v_m', 'v_i', 'lid_regime'):
+                assert bool(xp_mod.isnan(st_nan[key])), (
+                    f'{key} must be NaN under {xp_mod.__name__}'
+                )
+            assert bool(xp_mod.all(xp_mod.isnan(st_nan['w_lid'])))
+
+    # 9. API: xp is keyword-only and last in viscous_mixing_length_factor; stress_closure takes xp.
+    with pytest.raises(TypeError, match='positional arguments'):
+        viscous_mixing_length_factor(r, r[0], r[-1], ml, 0.22, 1.0, 10.0, 0.17, jnp)
+    fac_j = viscous_mixing_length_factor(
+        jnp.asarray(r), r[0], r[-1], jnp.asarray(ml), 0.22, 1.0, 10.0, 0.17, xp=jnp
+    )
+    assert isinstance(fac_j, jax.Array)
+    sr_j = stress_closure(
+        'local', jnp.asarray([1.0e-9, 2.0e-9]), jnp.asarray([1.0e5, 1.0e5]), xp=jnp
+    )
+    assert isinstance(sr_j, jax.Array)
+    np.testing.assert_allclose(np.asarray(sr_j), np.array([5.0e-15, 1.0e-14]), rtol=1e-12)

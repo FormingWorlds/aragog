@@ -209,9 +209,10 @@ def viscous_mixing_length_factor(
     mixing_length: Any,
     s_top_inf: float = 0.22,
     bottom_slope: float = 1.0,
-    xp: Any = np,
     theta: Any = None,
     c_theta: float | None = None,
+    *,
+    xp: Any = np,
 ) -> Any:
     r"""Factor on the viscous MLT velocity replacing the Abe length by the calibrated one.
 
@@ -234,14 +235,14 @@ def viscous_mixing_length_factor(
         upper slope in the stagnant-lid limit when ``theta`` is provided [-].
     bottom_slope : float, default 1.0
         Lower mixing-length slope at the CMB [-].
-    xp : module, default np
-        Array namespace.
     theta : float or array-like, optional
         Frank-Kamenetskii viscosity contrast parameter [-]. When provided, evaluates
         the upper slope via :func:`compute_mlt_top_slope`.
     c_theta : float, optional
         Exponential decay rate with respect to ``theta`` [-]. Defaults to
         ``SolidRheologyParams.c_theta`` when None.
+    xp : module, default np
+        Array namespace (keyword-only).
 
     Returns
     -------
