@@ -28,6 +28,9 @@ class SolidRheologyParams:
     """
 
     enabled: bool = False
+    g_homologous: float = 25.0
+    t_sol_0: float = 1400.0
+    dt_sol_dp: float = 2.4e-8
     activation_energy: float = 300e3
     activation_volume: float = 5e-6
     activation_volume_decay_pressure: float = float('inf')
@@ -57,6 +60,14 @@ class SolidRheologyParams:
                 raise ValueError(f'{name} must be positive and finite, got {val}')
         if not math.isfinite(self.c_theta) or self.c_theta < 0.0:
             raise ValueError(f'c_theta must be non-negative and finite, got {self.c_theta}')
+        if not math.isfinite(self.g_homologous) or self.g_homologous < 0.0:
+            raise ValueError(
+                f'g_homologous must be non-negative and finite, got {self.g_homologous}'
+            )
+        if not math.isfinite(self.t_sol_0) or self.t_sol_0 <= 0.0:
+            raise ValueError(f't_sol_0 must be positive and finite, got {self.t_sol_0}')
+        if not math.isfinite(self.dt_sol_dp) or self.dt_sol_dp < 0.0:
+            raise ValueError(f'dt_sol_dp must be non-negative and finite, got {self.dt_sol_dp}')
         if self.stress_closure_mode not in ('lid', 'local'):
             raise ValueError(
                 f'Unknown stress_closure_mode {self.stress_closure_mode!r}; '
@@ -124,11 +135,12 @@ class SolidRheologyParams:
         if (
             self.enabled
             and self.lid_base_mode == 'rheological'
-            and self.activation_energy <= 0.0
+            and (self.g_homologous <= 0.0 or self.activation_energy <= 0.0)
         ):
             raise ValueError(
-                f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires non-zero '
-                f'activation_energy, but activation_energy={self.activation_energy}'
+                f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires positive '
+                f'g_homologous and activation_energy, got g_homologous={self.g_homologous}, '
+                f'activation_energy={self.activation_energy}'
             )
 
 
@@ -248,26 +260,37 @@ def viscous_mixing_length_factor(
 
 def compute_arrhenius_enthalpy(
     pressure: FloatOrArray,
-    activation_energy: float = 300.0e3,
-    activation_volume: float = 5.0e-6,
-    activation_volume_decay_pressure: float = float('inf'),
+    g_homologous: float = 25.0,
+    solidus_temperature: FloatOrArray | None = None,
+    t_sol_0: float | None = None,
+    dt_sol_dp: float = 2.4e-8,
+    r_gas: float = R_GAS,
     xp: Any = np,
 ) -> FloatOrArray:
-    r"""Compute saturating activation enthalpy H(P) [J/mol].
+    r"""Compute homologous-temperature activation enthalpy H(P) [J/mol].
 
     .. math::
-        H(P) = E_a + V_0 P_\mathrm{decay} \left(1 - \exp\left(-\frac{P}{P_\mathrm{decay}}\right)\right)
+        H(P) = g_\mathrm{hom} R T_\mathrm{sol}(P)
+
+    When ``solidus_temperature`` is not provided, a linear constant-property
+    fallback :math:`T_\mathrm{sol}(P) = T_{\mathrm{sol},0} + (dT_\mathrm{sol}/dP) P`
+    is used.
 
     Parameters
     ----------
     pressure : float or array-like
         Pressure P [Pa].
-    activation_energy : float, default 300.0e3
-        Molar activation energy E_a [J/mol].
-    activation_volume : float, default 5.0e-6
-        Zero-pressure molar activation volume V_0 [m^3/mol].
-    activation_volume_decay_pressure : float, default inf
-        Characteristic pressure scale P_decay [Pa].
+    g_homologous : float, default 25.0
+        Dimensionless homologous activation parameter g_hom [-].
+    solidus_temperature : float or array-like, optional
+        Local solidus temperature T_sol(P) [K].
+    t_sol_0 : float, optional
+        Zero-pressure reference solidus temperature T_sol(0) [K] for the linear fallback.
+        Defaults to 1400.0 when None.
+    dt_sol_dp : float, default 2.4e-8
+        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback.
+    r_gas : float, default 8.314462618
+        Universal gas constant R [J/(mol K)].
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
 
@@ -277,12 +300,22 @@ def compute_arrhenius_enthalpy(
         Activation enthalpy H(P) [J/mol].
     """
     p = xp.asarray(pressure, dtype=float)
-    is_inf = xp.isinf(activation_volume_decay_pressure)
-    p_safe = xp.where(is_inf, 1.0, activation_volume_decay_pressure)
-    p_arg = xp.clip(-p / p_safe, -700.0, 700.0)
-    p_term = xp.where(is_inf, p, -p_safe * xp.expm1(p_arg))
-    h = activation_energy + activation_volume * p_term
-    if xp is np and np.ndim(pressure) == 0:
+    t_sol_base = 1400.0 if t_sol_0 is None else t_sol_0
+
+    def _eval_t_sol(val: Any) -> Any:
+        if solidus_temperature is not None:
+            return xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(val)
+        return t_sol_base + dt_sol_dp * val
+
+    g_hom = g_homologous
+    r_val_R = r_gas
+    T_sol = _eval_t_sol(p)
+    h = g_hom * r_val_R * T_sol
+    if (
+        xp is np
+        and np.ndim(pressure) == 0
+        and (solidus_temperature is None or np.ndim(solidus_temperature) == 0)
+    ):
         return float(h.item())
     return h
 
@@ -291,9 +324,10 @@ def compute_arrhenius_viscosity(
     temperature: FloatOrArray,
     pressure: FloatOrArray,
     viscosity_solid: float = 1.0e21,
-    activation_energy: float = 300.0e3,
-    activation_volume: float = 5.0e-6,
-    activation_volume_decay_pressure: float = float('inf'),
+    g_homologous: float = 25.0,
+    solidus_temperature: FloatOrArray | None = None,
+    t_sol_0: float | None = None,
+    dt_sol_dp: float = 2.4e-8,
     arrhenius_t_ref: float = 1600.0,
     r_gas: float = R_GAS,
     viscosity_max_log10: float = 40.0,
@@ -303,12 +337,14 @@ def compute_arrhenius_viscosity(
     T_ref: float | None = None,
     R: float | None = None,
 ) -> FloatOrArray:
-    r"""Compute temperature- and pressure-dependent Arrhenius viscosity.
+    r"""Compute temperature- and pressure-dependent homologous Arrhenius viscosity.
 
     .. math::
-        \eta_\mathrm{diff}(T, P) = \eta_0 f_\mathrm{water} \exp\left(
-            \frac{H(P)}{R T} - \frac{E_a}{R T_\mathrm{ref}}
-        \right)
+        \eta_\mathrm{diff}(T, P) = \eta_0 f_\mathrm{water} \exp\left[
+            g_\mathrm{hom} \left(
+                \frac{T_\mathrm{sol}(P)}{T} - \frac{T_\mathrm{sol}(0)}{T_\mathrm{ref}}
+            \right)
+        \right]
 
     Parameters
     ----------
@@ -318,12 +354,17 @@ def compute_arrhenius_viscosity(
         Pressure P [Pa].
     viscosity_solid : float, default 1.0e21
         Reference solid-state dynamic viscosity eta_0 [Pa s] at (T_ref, P=0).
-    activation_energy : float, default 300.0e3
-        Molar activation energy E_a [J/mol].
-    activation_volume : float, default 5.0e-6
-        Zero-pressure molar activation volume V_0 [m^3/mol].
-    activation_volume_decay_pressure : float, default inf
-        Characteristic pressure scale P_decay [Pa].
+    g_homologous : float, default 25.0
+        Dimensionless homologous activation parameter g_hom [-].
+    solidus_temperature : float or array-like, optional
+        Local solidus temperature T_sol(P) [K]. When None, uses the linear fallback
+        ``t_sol_0 + dt_sol_dp * P``.
+    t_sol_0 : float, optional
+        Zero-pressure reference solidus temperature T_sol(0) [K]. When None, inferred
+        from the lowest-pressure endpoint of a 1D ``solidus_temperature`` profile or
+        defaults to 1400.0.
+    dt_sol_dp : float, default 2.4e-8
+        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback.
     arrhenius_t_ref : float, default 1600.0
         Reference temperature T_ref [K].
     r_gas : float, default 8.314462618
@@ -363,14 +404,39 @@ def compute_arrhenius_viscosity(
     t = xp.asarray(temperature, dtype=float)
     p = xp.asarray(pressure, dtype=float)
 
+    if t_sol_0 is not None:
+        t_sol_ref_0: Any = t_sol_0
+    elif solidus_temperature is not None:
+        t_sol_arr = xp.asarray(solidus_temperature, dtype=float)
+        if xp.ndim(t_sol_arr) > 0 and xp.ndim(p) > 0:
+            t_sol_flat = xp.ravel(t_sol_arr)
+            p_flat = xp.ravel(p)
+            t_sol_ref_0 = xp.where(
+                xp.abs(p_flat[0]) <= xp.abs(p_flat[-1]), t_sol_flat[0], t_sol_flat[-1]
+            )
+        else:
+            t_sol_ref_0 = 1400.0
+    else:
+        t_sol_ref_0 = 1400.0
+
     h_p = compute_arrhenius_enthalpy(
         pressure=p,
-        activation_energy=activation_energy,
-        activation_volume=activation_volume,
-        activation_volume_decay_pressure=activation_volume_decay_pressure,
+        g_homologous=g_homologous,
+        solidus_temperature=solidus_temperature,
+        t_sol_0=t_sol_ref_0,
+        dt_sol_dp=dt_sol_dp,
+        r_gas=r_gas,
         xp=xp,
     )
-    h_0 = activation_energy
+    h_0 = compute_arrhenius_enthalpy(
+        pressure=0.0,
+        g_homologous=g_homologous,
+        solidus_temperature=None,
+        t_sol_0=t_sol_ref_0,
+        dt_sol_dp=0.0,
+        r_gas=r_gas,
+        xp=xp,
+    )
 
     t_safe = xp.where(t > 0.0, t, 1.0)
     exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * arrhenius_t_ref)
@@ -387,6 +453,7 @@ def compute_arrhenius_viscosity(
         and np.ndim(temperature) == 0
         and np.ndim(pressure) == 0
         and np.ndim(water_prefactor) == 0
+        and (solidus_temperature is None or np.ndim(solidus_temperature) == 0)
     ):
         return float(result.item())
     return result
@@ -396,23 +463,25 @@ def eta_diff(
     temperature: FloatOrArray,
     pressure: FloatOrArray,
     viscosity_solid: float = 1.0e21,
-    activation_energy: float = 300.0e3,
-    activation_volume: float = 5.0e-6,
+    g_homologous: float = 25.0,
+    solidus_temperature: FloatOrArray | None = None,
+    t_sol_0: float | None = None,
+    dt_sol_dp: float = 2.4e-8,
     t_ref: float = 1600.0,
     r_gas: float = R_GAS,
     viscosity_max_log10: float = 40.0,
     water_prefactor: FloatOrArray = 1.0,
-    activation_volume_decay_pressure: float = float('inf'),
     xp: Any = np,
 ) -> FloatOrArray:
-    r"""Compute temperature- and pressure-dependent Arrhenius viscosity."""
+    r"""Compute temperature- and pressure-dependent homologous Arrhenius viscosity."""
     return compute_arrhenius_viscosity(
         temperature=temperature,
         pressure=pressure,
         viscosity_solid=viscosity_solid,
-        activation_energy=activation_energy,
-        activation_volume=activation_volume,
-        activation_volume_decay_pressure=activation_volume_decay_pressure,
+        g_homologous=g_homologous,
+        solidus_temperature=solidus_temperature,
+        t_sol_0=t_sol_0,
+        dt_sol_dp=dt_sol_dp,
         arrhenius_t_ref=t_ref,
         r_gas=r_gas,
         viscosity_max_log10=viscosity_max_log10,

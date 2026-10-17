@@ -118,9 +118,10 @@ def compute_stagnant_lid_state(
 
     Notes
     -----
-    The Frank-Kamenetskii parameter follows Foley & Bercovici (2014, p. 582):
-    ``theta = params.activation_energy * (T_i - T_surf) / (R_GAS * T_i**2)``,
-    using activation energy E rather than enthalpy H = E + P V.
+    The Frank-Kamenetskii parameter uses the homologous activation enthalpy at the
+    interior pressure ``P_i``:
+    ``theta = H(P_i) * (T_i - T_surf) / (R_GAS * T_i**2)`` with
+    ``H(P_i) = params.g_homologous * R_GAS * T_sol(P_i)``.
 
     When convective layer weights place interior temperature T_i below lid base
     temperature T_lid (for example in cold_top_lid where T_i < T_lid), the solver
@@ -167,11 +168,30 @@ def compute_stagnant_lid_state(
     w_active = 0.5 * (1.0 + xp.tanh((xp.sum(w_conv) - 1.0) / 0.5))
     is_convecting = (W_sum > 1e-6) & (w_active > 0.05)
 
+    if solidus_temperature is not None:
+        T_sol_raw = xp.asarray(solidus_temperature, dtype=float)
+        if xp.ndim(T_sol_raw) > 0:
+            T_sol_arr = xp.ravel(T_sol_raw)
+            T_sol_i = xp.sum(W_tilde * T_sol_arr)
+            T_sol_surf = T_sol_arr[-1]
+        else:
+            T_sol_arr = T_sol_raw
+            T_sol_i = T_sol_arr
+            T_sol_surf = T_sol_arr
+        t_sol_ref_0 = T_sol_surf
+    else:
+        T_sol_arr = None
+        T_sol_i = None
+        T_sol_surf = None
+        t_sol_ref_0 = params.t_sol_0
+
     H_T_i = compute_arrhenius_enthalpy(
         P_T_i,
-        activation_energy=params.activation_energy,
-        activation_volume=params.activation_volume,
-        activation_volume_decay_pressure=params.activation_volume_decay_pressure,
+        g_homologous=params.g_homologous,
+        solidus_temperature=T_sol_i,
+        t_sol_0=params.t_sol_0,
+        dt_sol_dp=params.dt_sol_dp,
+        r_gas=R_GAS,
         xp=xp,
     )
     H_safe = xp.maximum(H_T_i, 1e-6)
@@ -179,8 +199,8 @@ def compute_stagnant_lid_state(
     dT_rh = (R_GAS * T_i_safe**2) / H_safe
     T_surf = T[-1]
     P_surf = P[-1]
-    # Foley & Bercovici (2014) p. 582: theta = E * DeltaT / (R * T_i**2).
-    theta = (params.activation_energy * (T_i - T_surf)) / (R_GAS * T_i_safe**2)
+    # Homologous Frank-Kamenetskii contrast: theta = H(P_i) * (T_i - T_surf) / (R * T_i**2).
+    theta = (H_T_i * (T_i - T_surf)) / (R_GAS * T_i_safe**2)
 
     eta_0 = viscosity_solid
     if eta_0 is None:
@@ -189,16 +209,17 @@ def compute_stagnant_lid_state(
     arrhenius = partial(
         compute_arrhenius_viscosity,
         viscosity_solid=eta_0,
-        activation_energy=params.activation_energy,
-        activation_volume=params.activation_volume,
-        activation_volume_decay_pressure=params.activation_volume_decay_pressure,
+        g_homologous=params.g_homologous,
+        t_sol_0=t_sol_ref_0,
+        dt_sol_dp=params.dt_sol_dp,
         arrhenius_t_ref=params.arrhenius_t_ref,
         r_gas=R_GAS,
         viscosity_max_log10=params.viscosity_max_log10,
+        water_prefactor=params.water_prefactor,
         xp=xp,
     )
-    eta_surf = arrhenius(T_surf, P_surf)
-    eta_arr_i = arrhenius(T_i, P_T_i)
+    eta_surf = arrhenius(T_surf, P_surf, solidus_temperature=T_sol_surf)
+    eta_arr_i = arrhenius(T_i, P_T_i, solidus_temperature=T_sol_i)
     if viscosity_mixture is not None:
         visc_mix = xp.asarray(viscosity_mixture, dtype=float)
         if xp.ndim(visc_mix) == 0:
@@ -226,9 +247,8 @@ def compute_stagnant_lid_state(
     phi_width_val = phi_width if phi_width is not None else getattr(params, 'phi_width', 0.15)
 
     w_hot_iso = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale))
-    if solidus_temperature is not None:
-        T_sol = xp.asarray(solidus_temperature, dtype=float)
-        w_hot_sol = 0.5 * (1.0 + xp.tanh((T - T_sol) / scale))
+    if T_sol_arr is not None:
+        w_hot_sol = 0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale))
     else:
         w_raw_sol = 0.5 * (
             1.0 + xp.tanh((phi - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)

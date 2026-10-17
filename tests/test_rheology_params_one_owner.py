@@ -13,8 +13,10 @@ import pytest
 
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
 from aragog.rheology import (
+    R_GAS,
     SolidRheologyParams,
     compute_arrhenius_viscosity,
+    compute_stagnant_lid_state,
     eta_diff,
     merge_rheology,
 )
@@ -23,6 +25,9 @@ pytestmark = pytest.mark.unit
 
 EXPECTED_FIELDS = {
     'enabled',
+    'g_homologous',
+    't_sol_0',
+    'dt_sol_dp',
     'activation_energy',
     'activation_volume',
     'activation_volume_decay_pressure',
@@ -88,6 +93,9 @@ def test_custom_solid_rheology_params_propagation():
     """Verify non-default SolidRheologyParams propagates through PhaseConfig and merge_rheology."""
     custom_rheo = SolidRheologyParams(
         enabled=True,
+        g_homologous=18.0,
+        t_sol_0=1450.0,
+        dt_sol_dp=2.0e-8,
         activation_energy=250e3,
         activation_volume=4e-6,
         water_prefactor=0.5,
@@ -110,6 +118,9 @@ def test_custom_solid_rheology_params_propagation():
         rheology=custom_rheo,
     )
     assert p_cfg.rheology == custom_rheo
+    assert p_cfg.g_homologous == 18.0
+    assert p_cfg.t_sol_0 == 1450.0
+    assert p_cfg.dt_sol_dp == 2.0e-8
     assert p_cfg.water_prefactor == 0.5
     assert p_cfg.phi_visc_single == 0.6
     assert p_cfg.s_top_inf == 0.18
@@ -120,6 +131,15 @@ def test_solid_rheology_params_unconditional_bounds_validation():
     """Verify bounds validation runs unconditionally even when enabled=False."""
     with pytest.raises(ValueError, match='phi_visc_single'):
         SolidRheologyParams(enabled=False, phi_visc_single=-0.1)
+
+    with pytest.raises(ValueError, match='g_homologous'):
+        SolidRheologyParams(enabled=False, g_homologous=-1.0)
+
+    with pytest.raises(ValueError, match='t_sol_0'):
+        SolidRheologyParams(enabled=False, t_sol_0=0.0)
+
+    with pytest.raises(ValueError, match='dt_sol_dp'):
+        SolidRheologyParams(enabled=False, dt_sol_dp=-1.0e-9)
 
     with pytest.raises(ValueError, match='activation_energy'):
         SolidRheologyParams(enabled=False, activation_energy=-100.0)
@@ -132,6 +152,7 @@ def test_phase_config_merge_precedence():
     """Verify PhaseConfig preserves custom rheology when flat kwargs are provided."""
     custom = SolidRheologyParams(
         enabled=True,
+        g_homologous=20.0,
         activation_energy=250e3,
         yield_stress_c=40e6,
         water_prefactor=0.5,
@@ -147,6 +168,7 @@ def test_phase_config_merge_precedence():
         lid_contrast_coeff=3.0,
     )
     assert p_cfg.rheology.enabled is True
+    assert p_cfg.rheology.g_homologous == 20.0
     assert p_cfg.rheology.activation_energy == 250e3
     assert p_cfg.rheology.yield_stress_c == 40e6
     assert p_cfg.rheology.water_prefactor == 0.5
@@ -155,7 +177,7 @@ def test_phase_config_merge_precedence():
 
 
 def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
-    """Verify water_prefactor > 1 does not exceed viscosity_max_log10 cap."""
+    """Verify water_prefactor scaling in compute_arrhenius_viscosity and compute_stagnant_lid_state."""
     jax = pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
     jax.config.update('jax_enable_x64', True)
@@ -182,6 +204,68 @@ def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
     assert np.isclose(float(res_jax), expected_cap)
     assert float(res_jax) <= expected_cap
 
+    # Unclipped hand-computed verification at T = 1800 K, P = 10 GPa, g_hom = 25:
+    t_unclipped = 1800.0
+    p_unclipped = 10.0e9
+    t_sol_p = 1400.0 + 2.4e-8 * p_unclipped
+    expected_unclipped = 1.0e21 * 0.1 * np.exp(25.0 * (t_sol_p / t_unclipped - 1400.0 / 1600.0))
+    eta_wet_np = compute_arrhenius_viscosity(
+        t_unclipped,
+        p_unclipped,
+        viscosity_solid=1.0e21,
+        g_homologous=25.0,
+        t_sol_0=1400.0,
+        dt_sol_dp=2.4e-8,
+        arrhenius_t_ref=1600.0,
+        r_gas=R_GAS,
+        water_prefactor=0.1,
+        xp=np,
+    )
+    assert eta_wet_np == pytest.approx(expected_unclipped, rel=1.0e-12)
+
+    # Verify compute_stagnant_lid_state forwards params.water_prefactor into eta_i and eta_surf.
+    n_nodes = 20
+    radii = np.linspace(3.48e6, 6.371e6, n_nodes)
+    temp_prof = np.linspace(2400.0, 1400.0, n_nodes)
+    press_prof = np.linspace(100.0e9, 0.0, n_nodes)
+    f_conv = np.full(n_nodes, 50.0)
+    f_conv[-4:] = 0.0
+    f_tot = np.full(n_nodes, 60.0)
+    phi_prof = np.zeros(n_nodes)
+
+    st_dry = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_prof,
+        pressure=press_prof,
+        convective_flux=f_conv,
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=phi_prof,
+        params=SolidRheologyParams(enabled=True, water_prefactor=1.0),
+        viscosity_solid=1.0e21,
+        xp=np,
+    )
+    st_wet = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp_prof,
+        pressure=press_prof,
+        convective_flux=f_conv,
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=phi_prof,
+        params=SolidRheologyParams(enabled=True, water_prefactor=0.1),
+        viscosity_solid=1.0e21,
+        xp=np,
+    )
+    assert float(st_wet['eta_i']) == pytest.approx(0.1 * float(st_dry['eta_i']), rel=1.0e-12)
+    assert float(st_wet['mu_i']) == pytest.approx(0.1 * float(st_dry['mu_i']), rel=1.0e-12)
+    assert float(st_wet['eta_contrast']) == pytest.approx(
+        float(st_dry['eta_contrast']), rel=1.0e-12
+    )
+    assert float(st_wet['tau_d']) == pytest.approx(
+        (0.1 ** (1.0 / 3.0)) * float(st_dry['tau_d']), rel=1.0e-12
+    )
+
 
 def test_solid_rheology_params_rejects_nan():
     """Verify SolidRheologyParams rejects NaN for all numeric parameters."""
@@ -194,8 +278,11 @@ def test_solid_rheology_params_rejects_nan():
 
 def test_merge_precedence_explicit_default_value():
     """Verify explicit keyword argument matching default overrides base rheology."""
-    custom = SolidRheologyParams(enabled=True, activation_energy=250e3)
-    merged = merge_rheology(custom, {'activation_energy': 300e3, 'enabled': False})
+    custom = SolidRheologyParams(enabled=True, g_homologous=18.0, activation_energy=250e3)
+    merged = merge_rheology(
+        custom, {'g_homologous': 25.0, 'activation_energy': 300e3, 'enabled': False}
+    )
+    assert merged.g_homologous == 25.0
     assert merged.activation_energy == 300e3
     assert merged.enabled is False
 
@@ -207,8 +294,10 @@ def test_merge_precedence_explicit_default_value():
         thermal_expansivity=2e-5,
         viscosity=1e21,
         rheology=custom,
+        g_homologous=25.0,
         activation_energy=300e3,
         enabled=False,
     )
+    assert p_cfg.g_homologous == 25.0
     assert p_cfg.activation_energy == 300e3
     assert p_cfg.enabled is False

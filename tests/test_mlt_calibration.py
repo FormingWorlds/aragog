@@ -97,7 +97,7 @@ def test_theta_dependent_top_slope_hand_values_and_limits():
     np.testing.assert_allclose(q_neg, 1.0, rtol=1e-15)
 
     # 3. Hand-computed intermediate value at theta = 15:
-    # s_top(15) = 0.22 + 0.78 * exp(-0.15 * 15) = 0.22 + 0.78 * exp(-2.25) = 0.3022113961996865.
+    # s_top(15) = 0.22 + 0.78 * exp(-0.15 * 15) = 0.22 + 0.78 * exp(-2.25) = 0.3022113951582542.
     expected_s15 = 0.22 + 0.78 * math.exp(-2.25)
     expected_q15 = expected_s15**4
     assert compute_mlt_top_slope(15.0) == pytest.approx(expected_s15, rel=1e-14)

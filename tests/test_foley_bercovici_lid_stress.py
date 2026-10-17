@@ -30,9 +30,13 @@ def _make_earth_reference_inputs() -> dict[str, Any]:
     total_flux = np.full(n_nodes, 100.0)
     melt_frac = np.zeros(n_nodes)
 
+    g_hom_earth = 300.0e3 / (8.314462618 * 1600.0)
     params = SolidRheologyParams(
         enabled=True,
         stress_closure_mode='lid',
+        g_homologous=g_hom_earth,
+        t_sol_0=1600.0,
+        dt_sol_dp=0.0,
         activation_energy=300.0e3,
         activation_volume=0.0,
         arrhenius_t_ref=1600.0,
@@ -69,7 +73,7 @@ def test_fb2014_earth_reference_state():
     - T_s = 300.0 K -> DeltaT = 1300.0 K
     - d = 2.89e6 m (mantle thickness)
     - kappa = 1.0e-6 m^2/s
-    - E = 300.0e3 J/mol
+    - H = 300.0e3 J/mol
     - R = 8.31446261815324 J/(mol K)
     - eta_i = 1.0e20 Pa s
     - a_rh = 1.3 (FB2014 p. 589)
@@ -87,6 +91,7 @@ def test_fb2014_earth_reference_state():
     """
     state = compute_stagnant_lid_state(**_make_earth_reference_inputs())
 
+    expected_theta = 18.322742
     expected_tau_d = 2.323131e5
     expected_vm = 3.356924e-9
     expected_dt_rh = (8.314462618 * 1600.0**2) / 300.0e3
@@ -94,6 +99,7 @@ def test_fb2014_earth_reference_state():
     expected_tau_buoy = 2.121689e6
     expected_ratio = 0.109494
 
+    assert state['theta'] == pytest.approx(expected_theta, rel=1.0e-5)
     assert state['dT_rh'] == pytest.approx(expected_dt_rh, rel=1.0e-5)
     assert state['delta_rh'] == pytest.approx(expected_delta_rh, rel=1.0e-3)
     assert state['tau_d'] == pytest.approx(expected_tau_d, rel=1.0e-3)
@@ -121,11 +127,15 @@ def test_fb2014_monotonicity_in_interior_viscosity():
 
     viscosities = [1.0e18, 1.0e19, 1.0e20, 1.0e21, 1.0e22]
     tau_d_values = []
+    g_hom_earth = 300.0e3 / (8.314462618 * 1600.0)
 
     for visc in viscosities:
         params = SolidRheologyParams(
             enabled=True,
             stress_closure_mode='lid',
+            g_homologous=g_hom_earth,
+            t_sol_0=1600.0,
+            dt_sol_dp=0.0,
             activation_energy=300.0e3,
             activation_volume=0.0,
             arrhenius_t_ref=1600.0,

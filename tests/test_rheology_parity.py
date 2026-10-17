@@ -28,17 +28,18 @@ jax.config.update('jax_enable_x64', True)
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_arrhenius_viscosity_parity_float64():
-    """Verify Arrhenius viscosity evaluates identically in NumPy and JAX to 1e-12."""
+    """Verify homologous Arrhenius viscosity matches analytical values and JAX parity to 1e-12."""
     t_vals = np.linspace(1400.0, 3000.0, 50)
     p_vals = np.linspace(0.0, 135.0e9, 50)
+    t_sol_vals = 1400.0 + 2.4e-8 * p_vals - 5.0e-20 * p_vals**2
 
     eta_np = compute_arrhenius_viscosity(
         t_vals,
         p_vals,
         viscosity_solid=1.0e21,
-        activation_energy=300.0e3,
-        activation_volume=5.0e-6,
-        activation_volume_decay_pressure=100.0e9,
+        g_homologous=25.0,
+        solidus_temperature=t_sol_vals,
+        t_sol_0=1400.0,
         arrhenius_t_ref=1600.0,
         viscosity_max_log10=40.0,
         xp=np,
@@ -48,15 +49,97 @@ def test_arrhenius_viscosity_parity_float64():
         jnp.array(t_vals),
         jnp.array(p_vals),
         viscosity_solid=1.0e21,
-        activation_energy=300.0e3,
-        activation_volume=5.0e-6,
-        activation_volume_decay_pressure=100.0e9,
+        g_homologous=25.0,
+        solidus_temperature=jnp.array(t_sol_vals),
+        t_sol_0=1400.0,
         arrhenius_t_ref=1600.0,
         viscosity_max_log10=40.0,
         xp=jnp,
     )
 
     np.testing.assert_allclose(np.array(eta_jx), eta_np, rtol=1.0e-12, atol=1.0e-30)
+
+    # Verify t_sol_0=None infers low-pressure solidus endpoint for ascending and descending P:
+    eta_auto_asc = compute_arrhenius_viscosity(
+        t_vals,
+        p_vals,
+        viscosity_solid=1.0e21,
+        g_homologous=25.0,
+        solidus_temperature=t_sol_vals,
+        t_sol_0=None,
+        arrhenius_t_ref=1600.0,
+        viscosity_max_log10=40.0,
+        xp=np,
+    )
+    np.testing.assert_allclose(eta_auto_asc, eta_np, rtol=1.0e-12, atol=1.0e-30)
+
+    eta_auto_desc_jx = compute_arrhenius_viscosity(
+        jnp.array(t_vals[::-1]),
+        jnp.array(p_vals[::-1]),
+        viscosity_solid=1.0e21,
+        g_homologous=25.0,
+        solidus_temperature=jnp.array(t_sol_vals[::-1]),
+        t_sol_0=None,
+        arrhenius_t_ref=1600.0,
+        viscosity_max_log10=40.0,
+        xp=jnp,
+    )
+    np.testing.assert_allclose(
+        np.array(eta_auto_desc_jx), eta_np[::-1], rtol=1.0e-12, atol=1.0e-30
+    )
+
+    # Exact hand-computed analytical verification:
+    expected = np.minimum(
+        1.0e21 * np.exp(25.0 * (t_sol_vals / t_vals - 1400.0 / 1600.0)),
+        10.0**40.0,
+    )
+    np.testing.assert_allclose(eta_np, expected, rtol=1.0e-12, atol=1.0e-30)
+
+    # Canary 1: sign flip on g_homologous must fail rtol=1.0e-12, atol=1.0e-30.
+    eta_sign_flip = compute_arrhenius_viscosity(
+        t_vals,
+        p_vals,
+        viscosity_solid=1.0e21,
+        g_homologous=-25.0,
+        solidus_temperature=t_sol_vals,
+        t_sol_0=1400.0,
+        arrhenius_t_ref=1600.0,
+        viscosity_max_log10=40.0,
+        xp=np,
+    )
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(eta_sign_flip, eta_np, rtol=1.0e-12, atol=1.0e-30)
+
+    # Canary 2: dropping T_sol(0) / T_ref (equivalent to t_sol_0 = 0.0) must fail.
+    eta_no_ref = compute_arrhenius_viscosity(
+        t_vals,
+        p_vals,
+        viscosity_solid=1.0e21,
+        g_homologous=25.0,
+        solidus_temperature=t_sol_vals,
+        t_sol_0=0.0,
+        arrhenius_t_ref=1600.0,
+        viscosity_max_log10=40.0,
+        xp=np,
+    )
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(eta_no_ref, eta_np, rtol=1.0e-12, atol=1.0e-30)
+
+    # Canary 3: ignoring solidus_temperature and falling back to linear solidus must fail.
+    eta_linear_fallback = compute_arrhenius_viscosity(
+        t_vals,
+        p_vals,
+        viscosity_solid=1.0e21,
+        g_homologous=25.0,
+        solidus_temperature=None,
+        t_sol_0=1400.0,
+        dt_sol_dp=2.4e-8,
+        arrhenius_t_ref=1600.0,
+        viscosity_max_log10=40.0,
+        xp=np,
+    )
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(eta_linear_fallback, eta_np, rtol=1.0e-12, atol=1.0e-30)
 
 
 @pytest.mark.unit
@@ -226,8 +309,9 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         temperature,
         pressure,
         viscosity_solid=1.0e21,
-        activation_energy=params.activation_energy,
-        activation_volume=params.activation_volume,
+        g_homologous=params.g_homologous,
+        t_sol_0=params.t_sol_0,
+        dt_sol_dp=params.dt_sol_dp,
         arrhenius_t_ref=params.arrhenius_t_ref,
         xp=np,
     )
@@ -258,6 +342,42 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         atol=1.0e-12,
         err_msg=f'Mismatch in eta_eff for regime {regime}',
     )
+
+    if regime == 'unyielded':
+        t_sol_1d = 1400.0 + 2.4e-8 * pressure - 5.0e-20 * pressure**2
+        st_sol_np = compute_stagnant_lid_state(
+            radii=radii,
+            temperature=temperature,
+            pressure=pressure,
+            convective_flux=conv_flux,
+            total_flux=tot_flux,
+            solidus_temperature=t_sol_1d,
+            melt_fraction=melt_frac,
+            params=params,
+            unyielded_velocity=v_unyielded,
+            viscosity_solid=1.0e21,
+            xp=np,
+        )
+        st_sol_jx = compute_stagnant_lid_state(
+            radii=jnp.array(radii),
+            temperature=jnp.array(temperature),
+            pressure=jnp.array(pressure),
+            convective_flux=jnp.array(conv_flux),
+            total_flux=jnp.array(tot_flux),
+            solidus_temperature=jnp.array(t_sol_1d[:, None]),
+            melt_fraction=jnp.array(melt_frac),
+            params=params,
+            unyielded_velocity=jnp.array(v_unyielded),
+            viscosity_solid=1.0e21,
+            xp=jnp,
+        )
+        for key in ['theta', 'dT_rh', 'd_lid', 'tau_d', 'eta_i']:
+            np.testing.assert_allclose(
+                float(st_sol_jx[key]),
+                float(st_sol_np[key]),
+                rtol=1.0e-9,
+                atol=1.0e-12,
+            )
 
 
 @pytest.mark.unit
@@ -294,8 +414,9 @@ def test_jax_jacrev_closure_differentiability():
             T_profile,
             pressure,
             viscosity_solid=1.0e21,
-            activation_energy=params.activation_energy,
-            activation_volume=params.activation_volume,
+            g_homologous=params.g_homologous,
+            t_sol_0=params.t_sol_0,
+            dt_sol_dp=params.dt_sol_dp,
             arrhenius_t_ref=params.arrhenius_t_ref,
             xp=jnp,
         )
@@ -409,8 +530,9 @@ def test_stagnant_lid_checkpoint_profile_parity():
         T_basic,
         P_basic,
         viscosity_solid=visc_solid,
-        activation_energy=params.activation_energy,
-        activation_volume=params.activation_volume,
+        g_homologous=params.g_homologous,
+        t_sol_0=params.t_sol_0,
+        dt_sol_dp=params.dt_sol_dp,
         arrhenius_t_ref=params.arrhenius_t_ref,
         xp=np,
     )

@@ -10,9 +10,12 @@ import numpy as np
 import pytest
 
 from aragog.rheology import (
+    R_GAS,
     SolidRheologyParams,
     compute_arrhenius_enthalpy,
+    compute_arrhenius_viscosity,
     compute_effective_viscosity,
+    compute_mlt_top_slope,
     compute_stagnant_lid_state,
 )
 
@@ -53,35 +56,109 @@ def test_limit_infinite_yield_stress():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_limit_zero_activation_volume():
-    """Verify activation enthalpy is constant when activation volume is zero."""
-    e_a = 300.0e3
+    """Verify activation enthalpy is constant in pressure when dt_sol_dp is zero."""
+    g_hom = 25.0
+    t_sol_0 = 1400.0
     p_values = np.linspace(0.0, 1.0e11, 20)
     enthalpy = compute_arrhenius_enthalpy(
         p_values,
-        activation_energy=e_a,
-        activation_volume=0.0,
-        activation_volume_decay_pressure=float('inf'),
+        g_homologous=g_hom,
+        t_sol_0=t_sol_0,
+        dt_sol_dp=0.0,
+        r_gas=R_GAS,
         xp=np,
     )
-    np.testing.assert_allclose(enthalpy, e_a, rtol=1.0e-14)
+    expected = g_hom * R_GAS * t_sol_0
+    np.testing.assert_allclose(enthalpy, expected, rtol=1.0e-14)
 
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_limit_infinite_decay_pressure():
-    """Verify activation enthalpy is linear in pressure when decay pressure is infinite."""
-    e_a = 300.0e3
-    v_0 = 5.0e-6
+    """Verify homologous enthalpy H(P) = g_hom R T_sol(P) and constant-ratio viscosity invariant."""
+    # 1. Linear constant-property fallback H(P) = g_hom * R_GAS * (t_sol_0 + dt_sol_dp * P).
+    g_hom = 25.0
+    t_sol_0 = 1400.0
+    dt_sol_dp = 2.4e-8
     p_values = np.linspace(0.0, 1.0e11, 25)
     enthalpy = compute_arrhenius_enthalpy(
         p_values,
-        activation_energy=e_a,
-        activation_volume=v_0,
-        activation_volume_decay_pressure=float('inf'),
+        g_homologous=g_hom,
+        t_sol_0=t_sol_0,
+        dt_sol_dp=dt_sol_dp,
+        r_gas=R_GAS,
         xp=np,
     )
-    expected = e_a + p_values * v_0
+    expected = g_hom * R_GAS * (t_sol_0 + dt_sol_dp * p_values)
     np.testing.assert_allclose(enthalpy, expected, rtol=1.0e-14)
+
+    # 2. Explicit solidus curve at P = {0, 25, 50, 100, 135} GPa and g_hom = {14, 25}.
+    p_grid = np.array([0.0, 25.0e9, 50.0e9, 100.0e9, 135.0e9])
+    t_sol_grid = np.array([1428.9478, 2969.0408, 3668.0717, 4270.4757, 4595.2113])
+    for g_val in (14.0, 25.0):
+        h_grid = compute_arrhenius_enthalpy(
+            p_grid,
+            g_homologous=g_val,
+            solidus_temperature=t_sol_grid,
+            r_gas=R_GAS,
+            xp=np,
+        )
+        np.testing.assert_allclose(
+            h_grid, g_val * R_GAS * t_sol_grid, rtol=1.0e-12, atol=1.0e-30
+        )
+
+        # Evaluate eta_diff at T in {0.5, 0.7, 0.9, 1.0} * T_sol(P) with high cap so unclipped.
+        for frac in (0.5, 0.7, 0.9, 1.0):
+            t_eval = frac * t_sol_grid
+            eta_eval = compute_arrhenius_viscosity(
+                t_eval,
+                p_grid,
+                viscosity_solid=1.0e21,
+                g_homologous=g_val,
+                solidus_temperature=t_sol_grid,
+                t_sol_0=t_sol_grid[0],
+                arrhenius_t_ref=1600.0,
+                r_gas=R_GAS,
+                viscosity_max_log10=80.0,
+                xp=np,
+            )
+            expected_eta = 1.0e21 * np.exp(g_val * (1.0 / frac - t_sol_grid[0] / 1600.0))
+            np.testing.assert_allclose(eta_eval, expected_eta, rtol=1.0e-12, atol=1.0e-30)
+
+        # Homologous invariant: eta(0.9 * T_sol(P), P) / eta(T_sol(P), P) == exp(g_hom / 9).
+        eta_09 = compute_arrhenius_viscosity(
+            0.9 * t_sol_grid,
+            p_grid,
+            viscosity_solid=1.0e21,
+            g_homologous=g_val,
+            solidus_temperature=t_sol_grid,
+            t_sol_0=t_sol_grid[0],
+            arrhenius_t_ref=1600.0,
+            r_gas=R_GAS,
+            viscosity_max_log10=80.0,
+            xp=np,
+        )
+        eta_10 = compute_arrhenius_viscosity(
+            1.0 * t_sol_grid,
+            p_grid,
+            viscosity_solid=1.0e21,
+            g_homologous=g_val,
+            solidus_temperature=t_sol_grid,
+            t_sol_0=t_sol_grid[0],
+            arrhenius_t_ref=1600.0,
+            r_gas=R_GAS,
+            viscosity_max_log10=80.0,
+            xp=np,
+        )
+        np.testing.assert_allclose(
+            eta_09 / eta_10, np.exp(g_val / 9.0), rtol=1.0e-12, atol=1.0e-30
+        )
+
+    # 3. Verify compute_mlt_top_slope across theta in {0, 5, 10, 20, 40}.
+    theta_grid = np.array([0.0, 5.0, 10.0, 20.0, 40.0])
+    s_top_vals = compute_mlt_top_slope(theta_grid, s_top_inf=0.22, c_theta=0.15, xp=np)
+    expected_s_top = 0.22 + 0.78 * np.exp(-0.15 * theta_grid)
+    np.testing.assert_allclose(s_top_vals, expected_s_top, rtol=1.0e-12, atol=1.0e-30)
 
 
 @pytest.mark.unit
@@ -287,18 +364,21 @@ def test_limit_whole_mantle_mush_clips_lid():
 
 @pytest.mark.unit
 def test_jax_autodiff_infinite_decay_pressure():
-    """Verify JAX jacrev is finite at P_decay = inf."""
+    """Verify JAX dH/dP matches NumPy analytical derivative g_hom * R * dT_sol/dP."""
     jax = pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
 
     jax.config.update('jax_enable_x64', True)
 
+    dt_sol_dp = 5.0e-6 / (25.0 * R_GAS)
+
     def _eval(p):
         return compute_arrhenius_enthalpy(
             p,
-            activation_energy=300e3,
-            activation_volume=5e-6,
-            activation_volume_decay_pressure=jnp.inf,
+            g_homologous=25.0,
+            t_sol_0=1400.0,
+            dt_sol_dp=dt_sol_dp,
+            r_gas=R_GAS,
             xp=jnp,
         )
 
