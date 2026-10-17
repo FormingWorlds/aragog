@@ -597,7 +597,7 @@ def test_moresi_solomatov_min_closure_exact_contract():
     )
     assert eta_eff_below == eta_d
 
-    # 2. Above yield (tau_d >= tau_y): eta_eff / eta_diff == tau_y / tau_d.
+    # 2. Above yield with default eta_i=None (falls back to eta_diff): eta_eff / eta_diff == tau_y / tau_d.
     td_above = 2.0e6
     eta_eff_above = compute_effective_viscosity(
         eta_diff=eta_d,
@@ -607,26 +607,286 @@ def test_moresi_solomatov_min_closure_exact_contract():
     expected_ratio = tau_y / td_above
     assert (eta_eff_above / eta_d) == pytest.approx(expected_ratio, rel=1.0e-14)
 
-    # 3. Continuous at tau_d = tau_y.
+    # 3. Interior-scaled yield cap eta_yield = eta_i * (tau_y_lid / tau_d) in a cold lid:
+    eta_cold_lid = 1.0e40
+    eta_interior = 1.0e21
+    eta_unyielded_cold = compute_effective_viscosity(
+        eta_diff=eta_cold_lid,
+        eta_i=eta_interior,
+        tau_d=8.645e5,
+        tau_y_lid=1.0e6,
+    )
+    assert eta_unyielded_cold == eta_cold_lid
+
+    eta_yielded_cold = compute_effective_viscosity(
+        eta_diff=eta_cold_lid,
+        eta_i=eta_interior,
+        tau_d=1.2e6,
+        tau_y_lid=1.0e6,
+    )
+    expected_yielded_cold = eta_interior * (1.0e6 / 1.2e6)
+    assert eta_yielded_cold == pytest.approx(expected_yielded_cold, rel=1.0e-14)
+    assert eta_yielded_cold < eta_interior
+
+    # Canary: calling compute_effective_viscosity with cold-lid creep viscosity as the scale
+    # (eta_i=eta_cold_lid or omitted) leaves 8.333e39 Pa s >> eta_interior and fails mobilization.
+    wrong_cold_scaled = compute_effective_viscosity(
+        eta_diff=eta_cold_lid,
+        eta_i=eta_cold_lid,
+        tau_d=1.2e6,
+        tau_y_lid=1.0e6,
+    )
+    assert wrong_cold_scaled == pytest.approx(8.333333333333334e39, rel=1.0e-14)
+    with pytest.raises(AssertionError):
+        assert wrong_cold_scaled < eta_interior
+
+    # Three reference regimes (cold surface 300 K, warm surface 700 K, and low-yield lid):
+    jax = pytest.importorskip('jax')
+    jnp = pytest.importorskip('jax.numpy')
+    jax.config.update('jax_enable_x64', True)
+    cases = [
+        (1.0e40, 1.0e21, 1.2e6, 1.0e6, 8.333333333333334e20),
+        (8.30e24, 1.0e21, 1.2e6, 1.0e6, 8.333333333333334e20),
+        (8.30e24, 1.0e20, 8.65e5, 1.0e4, 1.0e20 * (1.0e4 / 8.65e5)),
+    ]
+    for ed_c, ei_c, td_c, ty_c, exp_c in cases:
+        v_np = compute_effective_viscosity(
+            eta_diff=ed_c, eta_i=ei_c, tau_d=td_c, tau_y_lid=ty_c, xp=np
+        )
+        v_jx = float(
+            compute_effective_viscosity(
+                eta_diff=jnp.asarray(ed_c),
+                eta_i=jnp.asarray(ei_c),
+                tau_d=jnp.asarray(td_c),
+                tau_y_lid=jnp.asarray(ty_c),
+                xp=jnp,
+            )
+        )
+        assert v_np == pytest.approx(exp_c, rel=1.0e-12)
+        assert v_jx == pytest.approx(exp_c, rel=1.0e-12)
+
+    # 4. Yield threshold transition at tau_d = tau_y (both eta_i == eta_d and eta_i < eta_d).
     eps = 1.0e-6
     eta_left = compute_effective_viscosity(
         eta_diff=eta_d,
+        eta_i=eta_d,
         tau_d=tau_y - eps,
         tau_y_lid=tau_y,
     )
     eta_mid = compute_effective_viscosity(
         eta_diff=eta_d,
+        eta_i=eta_d,
         tau_d=tau_y,
         tau_y_lid=tau_y,
     )
     eta_right = compute_effective_viscosity(
         eta_diff=eta_d,
+        eta_i=eta_d,
         tau_d=tau_y + eps,
         tau_y_lid=tau_y,
     )
     assert eta_left == eta_d
     assert eta_mid == eta_d
     assert eta_right == pytest.approx(eta_d, rel=1.0e-11)
+
+    eta_cold_left = compute_effective_viscosity(
+        eta_diff=eta_cold_lid,
+        eta_i=eta_interior,
+        tau_d=tau_y - eps,
+        tau_y_lid=tau_y,
+    )
+    eta_cold_right = compute_effective_viscosity(
+        eta_diff=eta_cold_lid,
+        eta_i=eta_interior,
+        tau_d=tau_y + eps,
+        tau_y_lid=tau_y,
+    )
+    assert eta_cold_left == eta_cold_lid
+    assert eta_cold_right == pytest.approx(eta_interior, rel=1.0e-11)
+
+
+@pytest.mark.physics_invariant
+def test_zero_yield_stress_cohesion_floor_prevents_zero_viscosity(monkeypatch):
+    """Verify zero yield stress is floored at COHESION_FLOOR (1e-6 Pa) so eta_eff > 0."""
+    import aragog.rheology as rheo_mod
+    import aragog.rheology_lid as lid_mod
+    from aragog.rheology_lid import COHESION_FLOOR
+
+    assert COHESION_FLOOR == 1.0e-6
+    sr = 1.0e-15
+    eta_local_zero = compute_effective_viscosity(
+        eta_diff=1.0e21,
+        tau_y=0.0,
+        strain_rate=sr,
+        stress_closure_mode='local',
+    )
+    expected_local = COHESION_FLOOR / (2.0 * sr)
+    assert eta_local_zero == pytest.approx(expected_local, rel=1.0e-12)
+    assert eta_local_zero > 0.0
+
+    eta_lid_zero = compute_effective_viscosity(
+        eta_diff=1.0e21,
+        eta_i=1.0e20,
+        tau_d=1.0e5,
+        tau_y_lid=0.0,
+        stress_closure_mode='lid',
+    )
+    expected_lid = 1.0e20 * (COHESION_FLOOR / 1.0e5)
+    assert eta_lid_zero == pytest.approx(expected_lid, rel=1.0e-12)
+    assert eta_lid_zero > 0.0
+
+    assert eta_eff(1.0e21, 0.0, sr, smooth=False) == pytest.approx(expected_local, rel=1.0e-12)
+    assert eta_eff(1.0e21, 0.0, sr, smooth=True) == pytest.approx(expected_local, rel=1.0e-9)
+
+    # Canary: disabling COHESION_FLOOR in the functions under test produces zero viscosity.
+    monkeypatch.setattr(lid_mod, 'COHESION_FLOOR', 0.0)
+    monkeypatch.setattr(rheo_mod, 'COHESION_FLOOR', 0.0)
+    unfloored_local = compute_effective_viscosity(
+        eta_diff=1.0e21,
+        tau_y=0.0,
+        strain_rate=sr,
+        stress_closure_mode='local',
+    )
+    unfloored_lid = compute_effective_viscosity(
+        eta_diff=1.0e21,
+        eta_i=1.0e20,
+        tau_d=1.0e5,
+        tau_y_lid=0.0,
+        stress_closure_mode='lid',
+    )
+    with pytest.raises(AssertionError):
+        assert unfloored_local > 0.0
+    with pytest.raises(AssertionError):
+        assert unfloored_lid > 0.0
+
+
+@pytest.mark.physics_invariant
+def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
+    """Verify no-lid profiles zero boundary-layer diagnostics and W_sum blends smoothly."""
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    jax = pytest.importorskip('jax')
+    jnp = pytest.importorskip('jax.numpy')
+    jax.config.update('jax_enable_x64', True)
+
+    n_nodes = 20
+    r = np.linspace(3.48e6, 6.371e6, n_nodes)
+    p = np.linspace(135.0e9, 1.0e5, n_nodes)
+    t_iso = np.full(n_nodes, 2000.0)
+    f_conv = np.full(n_nodes, 80.0)
+    f_tot = np.full(n_nodes, 100.0)
+    phi = np.zeros(n_nodes)
+    params = SolidRheologyParams(enabled=True)
+
+    st_iso_np = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_iso,
+        pressure=p,
+        convective_flux=f_conv,
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        xp=np,
+    )
+    st_iso_jx = compute_stagnant_lid_state(
+        radii=jnp.asarray(r),
+        temperature=jnp.asarray(t_iso),
+        pressure=jnp.asarray(p),
+        convective_flux=jnp.asarray(f_conv),
+        total_flux=jnp.asarray(f_tot),
+        solidus_temperature=None,
+        melt_fraction=jnp.asarray(phi),
+        params=params,
+        xp=jnp,
+    )
+    for key in (
+        'd_lid',
+        'Ra_eff',
+        'Ra_rh',
+        'v_m',
+        'tau_d',
+        'tau_d_lid',
+        'tau_buoy',
+        'tau_d_over_tau_buoy',
+        'w_y',
+        'lid_regime',
+    ):
+        assert float(st_iso_np[key]) == 0.0
+        assert float(st_iso_jx[key]) == 0.0
+
+    # Smooth transition of mu_i across W_sum ~ 1e-6 for both array and scalar viscosity_mixture:
+    t_grad = np.linspace(2600.0, 1200.0, n_nodes)
+    visc_mix_arr = np.full(n_nodes, 1.0e18)
+    f_low_1 = np.full(n_nodes, 1.0e-4)
+    f_low_2 = np.full(n_nodes, 1.05e-4)
+    st_arr_1 = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_grad,
+        pressure=p,
+        convective_flux=f_low_1,
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_mixture=visc_mix_arr,
+    )
+    st_arr_2 = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_grad,
+        pressure=p,
+        convective_flux=f_low_2,
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_mixture=visc_mix_arr,
+    )
+    assert abs(np.log10(float(st_arr_2['mu_i'])) - np.log10(float(st_arr_1['mu_i']))) < 0.05
+
+    st_scalar_1 = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_grad,
+        pressure=p,
+        convective_flux=f_low_1,
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_mixture=1.0e18,
+    )
+    assert float(st_scalar_1['mu_i']) == pytest.approx(float(st_arr_1['mu_i']), rel=1.0e-12)
+
+    # Inactive convection with non-finite viscosity_mixture falls back cleanly to eta_arr_i:
+    st_inactive_nan_mix = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_grad,
+        pressure=p,
+        convective_flux=np.zeros(n_nodes),
+        total_flux=f_tot,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_mixture=np.full(n_nodes, np.nan),
+    )
+    assert np.isfinite(float(st_inactive_nan_mix['mu_i']))
+    assert float(st_inactive_nan_mix['mu_i']) == pytest.approx(
+        float(st_inactive_nan_mix['eta_solid_arrhenius']), rel=1.0e-12
+    )
+
+    assert np.isnan(
+        compute_effective_viscosity(
+            eta_diff=1.0e21, eta_i=1.0e20, tau_d=np.nan, tau_y_lid=1.0e6
+        )
+    )
+    assert np.isnan(
+        compute_effective_viscosity(
+            eta_diff=1.0e21,
+            tau_y=1.0e6,
+            strain_rate=np.nan,
+            stress_closure_mode='local',
+        )
+    )
 
 
 def test_rheology_and_lid_branch_coverage():
@@ -697,6 +957,7 @@ def test_rheology_and_lid_branch_coverage():
     # eta_eff_val = 0.01 * 1e24 = 1e22 -> log_solid = 0.5 * 22 + 0.5 * 24 = 23 -> 1e23 Pa s.
     eta_blended = compute_effective_viscosity(
         eta_diff=np.array([1.0e24]),
+        eta_i=1.0e24,
         tau_d=1.0e8,
         tau_y_lid=1.0e6,
         stress_closure_mode='lid',

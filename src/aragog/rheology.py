@@ -15,6 +15,7 @@ import numpy as np
 import numpy.typing as npt
 
 R_GAS = 8.314462618
+COHESION_FLOOR = 1.0e-6
 
 FloatOrArray = float | npt.NDArray[np.floating]
 
@@ -25,6 +26,18 @@ class SolidRheologyParams:
 
     This class is the single source of truth for rheology parameter defaults
     and bounds validation across Aragog and PROTEUS.
+
+    Notes
+    -----
+    At the default ``g_homologous = 25.0`` and ``t_sol_0 = 1400.0`` K, the
+    zero-pressure activation enthalpy is :math:`H(0) = 291` kJ/mol, close to a
+    standard olivine diffusion-creep activation energy :math:`E_a = 300` kJ/mol
+    (Karato & Wu 1993). The linear solidus fallback defaults ``t_sol_0 = 1400.0`` K
+    and ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) approximate the whole-mantle secant
+    of the SPIDER phase-boundary solidus table read by Aragog (1429 K at 0 GPa to
+    4595 K at 135 GPa, slope 23.5 K/GPa). Because the physical solidus is concave
+    downward, the linear form is about 30 % low at 25 GPa (2000 K versus 2969 K)
+    and serves table-free constant-property benchmarks only.
     """
 
     enabled: bool = False
@@ -272,23 +285,34 @@ def compute_arrhenius_enthalpy(
     .. math::
         H(P) = g_\mathrm{hom} R T_\mathrm{sol}(P)
 
-    When ``solidus_temperature`` is not provided, a linear constant-property
+    At ``g_homologous = 25.0`` and :math:`T_\mathrm{sol}(0) = 1400` K, the
+    zero-pressure enthalpy is :math:`H(0) = 291` kJ/mol, close to a standard
+    olivine diffusion-creep activation energy :math:`E_a = 300` kJ/mol
+    (Karato & Wu 1993). When ``solidus_temperature`` is not provided, a linear
     fallback :math:`T_\mathrm{sol}(P) = T_{\mathrm{sol},0} + (dT_\mathrm{sol}/dP) P`
-    is used.
+    is used. Its defaults ``t_sol_0 = 1400.0`` K and ``dt_sol_dp = 2.4e-8`` K/Pa
+    are close to the secant of the SPIDER solidus table read by Aragog (1429 K
+    at 0 GPa to 4595 K at 135 GPa, 23.5 K/GPa); because the linear form is about
+    30 % low at 25 GPa (2000 K versus 2969 K), it serves table-free benchmarks
+    only.
 
     Parameters
     ----------
     pressure : float or array-like
         Pressure P [Pa].
     g_homologous : float, default 25.0
-        Dimensionless homologous activation parameter g_hom [-].
+        Dimensionless homologous activation parameter g_hom [-]. Gives
+        H(0) = 291 kJ/mol at T_sol(0) = 1400 K, close to E_a = 300 kJ/mol.
     solidus_temperature : float or array-like, optional
         Local solidus temperature T_sol(P) [K].
     t_sol_0 : float, optional
-        Zero-pressure reference solidus temperature T_sol(0) [K] for the linear fallback.
-        Defaults to 1400.0 when None.
+        Zero-pressure reference solidus temperature T_sol(0) [K] for the linear
+        fallback (1400.0 K when None, close to 1429 K at 0 GPa in the solidus table;
+        table-free benchmarks only).
     dt_sol_dp : float, default 2.4e-8
-        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback.
+        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa,
+        close to the 23.5 K/GPa table secant from 0 to 135 GPa, about 30 % low at
+        25 GPa; table-free benchmarks only).
     r_gas : float, default 8.314462618
         Universal gas constant R [J/(mol K)].
     xp : array module, default np
@@ -355,16 +379,20 @@ def compute_arrhenius_viscosity(
     viscosity_solid : float, default 1.0e21
         Reference solid-state dynamic viscosity eta_0 [Pa s] at (T_ref, P=0).
     g_homologous : float, default 25.0
-        Dimensionless homologous activation parameter g_hom [-].
+        Dimensionless homologous activation parameter g_hom [-]. Gives
+        H(0) = 291 kJ/mol at T_sol(0) = 1400 K, close to E_a = 300 kJ/mol.
     solidus_temperature : float or array-like, optional
         Local solidus temperature T_sol(P) [K]. When None, uses the linear fallback
         ``t_sol_0 + dt_sol_dp * P``.
     t_sol_0 : float, optional
         Zero-pressure reference solidus temperature T_sol(0) [K]. When None, inferred
         from the lowest-pressure endpoint of a 1D ``solidus_temperature`` profile or
-        defaults to 1400.0.
+        defaults to 1400.0 (close to 1429 K at 0 GPa in the SPIDER solidus table;
+        table-free benchmarks only).
     dt_sol_dp : float, default 2.4e-8
-        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback.
+        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa,
+        close to the 23.5 K/GPa solidus table secant over 0 to 135 GPa, about 30 %
+        low at 25 GPa where 2000 K compares with 2969 K; table-free benchmarks only).
     arrhenius_t_ref : float, default 1600.0
         Reference temperature T_ref [K].
     r_gas : float, default 8.314462618
@@ -537,7 +565,7 @@ def eta_eff(
 ) -> FloatOrArray:
     r"""Compute effective viscosity with plastic yielding cap."""
     eta_d = xp.asarray(visc_diff, dtype=float)
-    ty = xp.asarray(tau_y, dtype=float)
+    ty = xp.maximum(xp.asarray(tau_y, dtype=float), COHESION_FLOOR)
     sr = xp.maximum(xp.asarray(strain_rate, dtype=float), eps)
 
     tau_y_term = ty / (2.0 * sr)

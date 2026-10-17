@@ -291,8 +291,10 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
         assert state_np['d_lid'] > 1.0e4, f'{regime} must form stagnant lid > 10 km'
         assert state_np['w_active'] > 0.5, f'{regime} must have active lid closure'
     elif regime in ('no_lid', 'mushy'):
-        assert state_np['d_lid'] < 1.0e2, f'{regime} must suppress stagnant lid formation'
-        assert state_np['lid_regime'] < 0.05, f'{regime} must have lid_regime ~ 0'
+        assert state_np['d_lid'] == 0.0, f'{regime} must suppress stagnant lid formation'
+        assert state_np['lid_regime'] == 0.0, f'{regime} must have lid_regime == 0'
+        assert state_np['tau_d'] == 0.0, f'{regime} must have tau_d == 0'
+        assert state_np['v_m'] == 0.0, f'{regime} must have v_m == 0'
     elif regime == 'inactive_convection':
         assert state_np['d_lid'] == 0.0
         assert state_np['tau_d'] == 0.0
@@ -319,6 +321,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
 
     eta_eff_np = compute_effective_viscosity(
         eta_diff=eta_diff_np,
+        eta_i=state_np['eta_i'],
         tau_d=state_np['tau_d'],
         tau_y_lid=state_np['tau_y_lid'],
         stress_closure_mode='lid',
@@ -328,6 +331,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
 
     eta_eff_jx = compute_effective_viscosity(
         eta_diff=eta_diff_jx,
+        eta_i=state_jx['eta_i'],
         tau_d=state_jx['tau_d'],
         tau_y_lid=state_jx['tau_y_lid'],
         stress_closure_mode='lid',
@@ -422,6 +426,7 @@ def test_jax_jacrev_closure_differentiability():
         )
         eta_eff = compute_effective_viscosity(
             eta_diff=eta_d,
+            eta_i=lid_st['eta_i'],
             tau_d=lid_st['tau_d'],
             tau_y_lid=lid_st['tau_y_lid'],
             stress_closure_mode='lid',
@@ -540,6 +545,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
 
     eta_eff_np = compute_effective_viscosity(
         eta_diff=eta_diff_np,
+        eta_i=state_np['eta_i'],
         tau_d=state_np['tau_d'],
         tau_y_lid=state_np['tau_y_lid'],
         stress_closure_mode='lid',
@@ -548,6 +554,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
     )
     eta_eff_jx = compute_effective_viscosity(
         eta_diff=eta_diff_jx,
+        eta_i=state_jx['eta_i'],
         tau_d=state_jx['tau_d'],
         tau_y_lid=state_jx['tau_y_lid'],
         stress_closure_mode='lid',
@@ -569,6 +576,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
 
     eta_eff_np_yield = compute_effective_viscosity(
         eta_diff=eta_diff_np,
+        eta_i=state_np['eta_i'],
         tau_d=state_np['tau_d'],
         tau_y_lid=50.0e6,
         stress_closure_mode='lid',
@@ -577,6 +585,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
     )
     eta_eff_jx_yield = compute_effective_viscosity(
         eta_diff=eta_diff_jx,
+        eta_i=state_jx['eta_i'],
         tau_d=state_jx['tau_d'],
         tau_y_lid=50.0e6,
         stress_closure_mode='lid',

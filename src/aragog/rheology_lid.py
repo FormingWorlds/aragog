@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from aragog.rheology import (
+    COHESION_FLOOR,
     R_GAS,
     FloatOrArray,
     compute_arrhenius_enthalpy,
@@ -17,9 +18,12 @@ from aragog.rheology import (
 )
 
 __all__ = [
+    'COHESION_FLOOR',
     'FB2014_STRESS_FACTOR',
     'FB2014_VELOCITY_EXPONENT',
     'LID_REGIME_LABEL_WIDTH',
+    'NO_LID_DT_THRESHOLD',
+    'NO_LID_THICKNESS_THRESHOLD',
     'SOLIDUS_MELT_FRACTION_THRESHOLD',
     'SOLIDUS_MELT_FRACTION_WIDTH',
     'compute_stagnant_lid_state',
@@ -30,6 +34,10 @@ __all__ = [
 # Foley & Bercovici (2014) scaling parameters (Eq. 26 and Eq. 28).
 FB2014_VELOCITY_EXPONENT: float = 2.0 / 3.0
 FB2014_STRESS_FACTOR: float = 2.0
+
+# Minimum thermal contrast [K] and thickness [m] required for a physical conductive lid.
+NO_LID_DT_THRESHOLD: float = 1.0e-3
+NO_LID_THICKNESS_THRESHOLD: float = 1.0
 
 # Transition smoothing width that sets the lid_regime diagnostic label only.
 LID_REGIME_LABEL_WIDTH: float = 0.1
@@ -90,8 +98,9 @@ def compute_stagnant_lid_state(
     viscosity_mixture : float or array-like, optional
         Effective mixture viscosity profile [Pa s] of the convecting layer (in mush,
         the blended two-phase viscosity used by the solver). When provided, mu_i
-        is evaluated as the W_tilde-weighted log mean using the same boundary layer
-        weights as T_i; otherwise falls back to pure solid Arrhenius viscosity.
+        blends smoothly via ``w_weight = tanh(W_sum / 1e-6)`` between the
+        W_tilde-weighted log mean of ``viscosity_mixture`` and the solid Arrhenius
+        viscosity ``eta_arr_i``; otherwise falls back to ``eta_arr_i``.
     phi_rheo : float, optional
         Critical melt fraction for rheological transition. Defaults to 0.4.
     phi_width : float, optional
@@ -121,12 +130,23 @@ def compute_stagnant_lid_state(
     The Frank-Kamenetskii parameter uses the homologous activation enthalpy at the
     interior pressure ``P_i``:
     ``theta = H(P_i) * (T_i - T_surf) / (R_GAS * T_i**2)`` with
-    ``H(P_i) = params.g_homologous * R_GAS * T_sol(P_i)``.
+    ``H(P_i) = params.g_homologous * R_GAS * T_sol(P_i)`` (at ``g_homologous = 25.0``
+    and ``t_sol_0 = 1400.0`` K, ``H(0) = 291`` kJ/mol, close to ``E_a = 300`` kJ/mol;
+    when ``solidus_temperature`` is None, the linear fallback ``t_sol_0 + dt_sol_dp * P``
+    approximates the 23.5 K/GPa solidus-table secant from 1429 K at 0 GPa to 4595 K at
+    135 GPa, is about 30 % low at 25 GPa where 2000 K compares with 2969 K, and serves
+    table-free benchmarks only).
 
     When convective layer weights place interior temperature T_i below lid base
     temperature T_lid (for example in cold_top_lid where T_i < T_lid), the solver
     evaluates theta and driving stress directly from the convective layer state T_i
     without clamping T_i to T_lid.
+
+    When convection is inactive or no physical conductive lid forms
+    (``d_lid_raw <= NO_LID_THICKNESS_THRESHOLD`` of 1.0 m or
+    ``T_i - T_surf <= NO_LID_DT_THRESHOLD`` of 1.0e-3 K), boundary-layer diagnostics
+    (``d_lid``, ``Ra_eff``, ``Ra_rh``, ``v_m``, ``tau_d``, ``tau_d_lid``,
+    ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are zeroed.
 
     When ``solidus_temperature`` is None, the solidus crossing indicator ``w_hot_sol``
     is evaluated from melt fraction using ``SOLIDUS_MELT_FRACTION_THRESHOLD`` (0.01).
@@ -159,7 +179,8 @@ def compute_stagnant_lid_state(
     W_sum = xp.sum(W)
     W_safe = xp.maximum(W_sum, 1e-12)
     W_uniform = xp.ones_like(W) / float(T.shape[0])
-    W_tilde = xp.where(W_sum > 1e-6, W / W_safe, W_uniform)
+    w_weight = xp.tanh(W_sum / 1.0e-6)
+    W_tilde = w_weight * (W / W_safe) + (1.0 - w_weight) * W_uniform
 
     T_i = xp.sum(W_tilde * T)
     P_T_i = xp.sum(W_tilde * P)
@@ -222,13 +243,15 @@ def compute_stagnant_lid_state(
     eta_arr_i = arrhenius(T_i, P_T_i, solidus_temperature=T_sol_i)
     if viscosity_mixture is not None:
         visc_mix = xp.asarray(viscosity_mixture, dtype=float)
+        log_eta_arr = xp.log10(xp.maximum(eta_arr_i, 1e-30))
         if xp.ndim(visc_mix) == 0:
-            mu_i = visc_mix
+            log_mu_mix = xp.log10(xp.maximum(visc_mix, 1e-30))
         else:
             log_visc = xp.log10(xp.maximum(xp.ravel(visc_mix), 1e-30))
-            mu_i_mix = 10.0 ** xp.sum(W_tilde * log_visc)
-            # Uniform weights corrupt mu_i with cold surface viscosity when convection is inactive.
-            mu_i = xp.where(W_sum > 1e-6, mu_i_mix, eta_arr_i)
+            log_mu_mix = xp.sum(W_tilde * log_visc)
+        log_mu_mix = xp.where(xp.isfinite(log_mu_mix), log_mu_mix, log_eta_arr)
+        # Smooth log-blend from eta_arr_i when convection is inactive to mu_i_mix when active.
+        mu_i = 10.0 ** (w_weight * log_mu_mix + (1.0 - w_weight) * log_eta_arr)
     else:
         mu_i = eta_arr_i
     eta_i = mu_i
@@ -274,12 +297,21 @@ def compute_stagnant_lid_state(
     W_base_sum = xp.sum(W_base)
     W_base_safe = xp.maximum(W_base_sum, 1e-12)
     W_base_uniform = xp.ones_like(W_base) / float(T.shape[0])
-    W_base_tilde = xp.where(W_base_sum > 1e-6, W_base / W_base_safe, W_base_uniform)
+    w_base_weight = xp.tanh(W_base_sum / 1.0e-6)
+    W_base_tilde = (
+        w_base_weight * (W_base / W_base_safe) + (1.0 - w_base_weight) * W_base_uniform
+    )
 
     r_lid_base = xp.sum(W_base_tilde * r)
     P_lid_base = xp.sum(W_base_tilde * P)
     T_lid = xp.sum(W_base_tilde * T)
-    d_lid = xp.where(is_convecting, xp.maximum(r[-1] - r_lid_base, 0.0) * w_active, 0.0)
+    d_lid_raw = xp.where(is_convecting, xp.maximum(r[-1] - r_lid_base, 0.0) * w_active, 0.0)
+    has_lid = (
+        is_convecting
+        & ((T_i - T_surf) > NO_LID_DT_THRESHOLD)
+        & (d_lid_raw > NO_LID_THICKNESS_THRESHOLD)
+    )
+    d_lid = xp.where(has_lid, d_lid_raw, 0.0)
 
     dT_dr = xp.abs(xp.gradient(T, r))
     dr_min = xp.min(xp.abs(r[1:] - r[:-1]))
@@ -325,36 +357,36 @@ def compute_stagnant_lid_state(
 
     # Convective interior velocity and lid driving stress (Foley & Bercovici 2014, eqs. 26, 28).
     Ra_eff = xp.where(
-        is_convecting,
+        has_lid,
         (rho_i * g_i * alpha_i * DeltaT_conv * (d_conv**3)) / (kappa_i * eta_i_safe),
         0.0,
     )
     theta_safe = xp.maximum(theta, 1e-6)
-    Ra_rh = xp.where(is_convecting, (Ra_eff * a_rh_fb) / theta_safe, 0.0)
+    Ra_rh = xp.where(has_lid, (Ra_eff * a_rh_fb) / theta_safe, 0.0)
     ra_rh_pos = xp.maximum(Ra_rh, 1.0e-30)
     v_m = xp.where(
-        is_convecting & (Ra_rh > 0.0),
+        has_lid & (Ra_rh > 0.0),
         (kappa_i / d_conv) * C4 * (ra_rh_pos**FB2014_VELOCITY_EXPONENT),
         0.0,
     )
 
     tau_d = xp.where(
-        is_convecting,
+        has_lid,
         (FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active,
         0.0,
     )
     tau_d_lid = xp.where(
-        is_convecting,
+        has_lid,
         (FB2014_STRESS_FACTOR * eta_i * v_m) / xp.maximum(d_lid, 1e-6),
         0.0,
     )
     tau_buoy = xp.where(
-        is_convecting,
+        has_lid,
         rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active,
         0.0,
     )
     tau_d_over_tau_buoy = xp.where(
-        is_convecting,
+        has_lid,
         tau_d / xp.maximum(tau_buoy, 1e-30),
         0.0,
     )
@@ -367,14 +399,15 @@ def compute_stagnant_lid_state(
         xp=xp,
     )
 
-    ratio = tau_d / xp.maximum(tau_y_lid, 1e-10)
-    w_y = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH))
+    ratio = tau_d / xp.maximum(tau_y_lid, COHESION_FLOOR)
+    w_y_raw = 0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH))
+    w_y = xp.where(has_lid, w_y_raw, 0.0)
     lid_cell_count = xp.sum(w_lid)
     w_solid_surf = 0.5 * (
         1.0 - xp.tanh((phi[-1] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
     )
     w_has_lid = 0.5 * (1.0 + xp.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf
-    lid_regime = xp.where(is_convecting, w_active * w_has_lid * (1.0 + w_y), 0.0)
+    lid_regime = xp.where(has_lid, w_active * w_has_lid * (1.0 + w_y), 0.0)
 
     return {
         'T_i': T_i,
@@ -421,26 +454,32 @@ def compute_effective_viscosity(
     w_lid: FloatOrArray | None = None,
     strain_rate: FloatOrArray | None = None,
     tau_y: FloatOrArray | None = None,
+    eta_i: FloatOrArray | None = None,
     xp: Any = np,
 ) -> FloatOrArray:
     r"""Compute effective dynamic viscosity with boundary-layer or local stress closure.
 
-    Both stagnant lid mode and local stress closure mode use the minimum closure
+    Both boundary-layer lid mode and local stress closure mode use the minimum closure
     of diffusion creep and plastic yield viscosity per Moresi & Solomatov (1998):
         eta_eff = min(eta_diff, eta_y)
 
-    In stagnant lid mode:
-        eta_eff = eta_diff * min(1, tau_y / tau_d)
-    where edot_lid = tau_d / (2 * eta_diff) and eta_y = tau_y * eta_diff / tau_d.
+    In boundary-layer lid mode, plastic yield viscosity is evaluated at the interior
+    convective strain-rate invariant scale D_conv = 2 * v_m / d_conv = tau_d / eta_i:
+        eta_y = eta_i * (tau_y_lid / tau_d)
+        eta_eff = eta_diff                              for tau_d < tau_y_lid
+        eta_eff = min(eta_diff, eta_i * tau_y_lid / tau_d)  for tau_d >= tau_y_lid
+    When ``eta_i`` is omitted, ``eta_diff`` is used as the fallback scale.
 
     In local stress closure mode:
         eta_eff = min(eta_diff, eta_y)
-        eta_y = tau_y / (2 * strain_rate)
+        eta_y = max(tau_y, COHESION_FLOOR) / (2 * strain_rate)
 
     References
     ----------
     Moresi & Solomatov (1998), p. 672, eqs. 13-14, doi:10.1046/j.1365-246X.1998.00531.x
         (viscosity switch / minimum form eta_eff = min(eta_creep, eta_yield))
+    Foley & Bercovici (2014), p. 588, eq. 28, doi:10.1093/gji/ggu275
+        (convective driving shear stress tau_d = 2 * mu_i * v_m / d)
     Tackley (2000), eq. 8, p. 4, doi:10.1029/2000GC000036
         (viscosity cap / minimum form eta_eff = min[eta, sigma_y / (2 e_dot)])
     Foley & Becker (2009), eqs. 7-8, p. 3, doi:10.1029/2009GC002378
@@ -450,6 +489,10 @@ def compute_effective_viscosity(
         raise ValueError(
             "Unknown stress_closure_mode 'global'; expected 'lid' or 'local'. "
             "'global' mode is unsupported; use 'lid'."
+        )
+    if stress_closure_mode not in ('lid', 'local'):
+        raise ValueError(
+            f"Unknown stress_closure_mode {stress_closure_mode!r}; expected 'lid' or 'local'"
         )
     if stress_closure_mode == 'local' or strain_rate is not None or tau_y is not None:
         if strain_rate is None:
@@ -465,25 +508,29 @@ def compute_effective_viscosity(
             raise ValueError("tau_y or tau_y_profile required for 'local' mode")
         ty = xp.asarray(ty_raw, dtype=float)
         eta_d = xp.asarray(eta_diff, dtype=float)
-        safe_ty = xp.maximum(ty, 0.0)
+        safe_ty = xp.maximum(ty, COHESION_FLOOR)
         sr_safe = xp.where(sr > 0.0, sr, 1.0)
         tau_y_term = safe_ty / (2.0 * sr_safe)
         is_unyielded = (sr <= 0.0) | xp.isinf(tau_y_term) | xp.isnan(tau_y_term)
         safe_ty_term = xp.where(is_unyielded, eta_d, tau_y_term)
         res = xp.minimum(eta_d, safe_ty_term)
-        return xp.where(is_unyielded, eta_d, res)
+        has_nan_local = xp.isnan(eta_d) | xp.isnan(ty) | xp.isnan(sr)
+        return xp.where(has_nan_local, xp.nan, xp.where(is_unyielded, eta_d, res))
 
     eta_d = xp.asarray(eta_diff, dtype=float)
+    eta_i = eta_d if eta_i is None else xp.asarray(eta_i, dtype=float)
 
-    # Moresi & Solomatov (1998) Eq. 13-14 min closure:
-    # eta_eff = min(eta_diff, eta_y) = eta_diff * min(1, tau_y / tau_d)
+    # Moresi & Solomatov (1998) Eq. 13-14 min closure at convective strain rate D_conv = tau_d / eta_i:
     if tau_d is not None and tau_y_lid is not None:
         td = xp.asarray(tau_d, dtype=float)
-        ty_lid = xp.asarray(tau_y_lid, dtype=float)
+        ty_lid = xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR)
         ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
-        ratio = xp.where(xp.isnan(ratio) | xp.isinf(ty_lid), 1.0, ratio)
+        ratio = xp.where(xp.isinf(ty_lid), 1.0, ratio)
         ratio_eff = xp.clip(ratio, 0.0, 1.0)
-        eta_eff_val = xp.where(ratio_eff >= 1.0, eta_d, eta_d * ratio_eff)
+        eta_eff_val = xp.where(ratio_eff >= 1.0, eta_d, eta_i * ratio_eff)
+        eta_eff_val = xp.minimum(eta_d, eta_eff_val)
+        has_nan_lid = xp.isnan(eta_d) | xp.isnan(eta_i) | xp.isnan(td) | xp.isnan(ty_lid)
+        eta_eff_val = xp.where(has_nan_lid, xp.nan, eta_eff_val)
     else:
         eta_eff_val = eta_d
 
