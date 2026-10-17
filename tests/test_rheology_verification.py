@@ -706,6 +706,92 @@ def test_moresi_solomatov_min_closure_exact_contract():
 
 
 @pytest.mark.physics_invariant
+def test_lid_closure_jump_at_yield_threshold():
+    """Verify lid closure jumps at tau_d = tau_y_lid from eta_diff below/at yield to eta_i * tau_y/tau_d above."""
+    jax = pytest.importorskip('jax')
+    jnp = pytest.importorskip('jax.numpy')
+    jax.config.update('jax_enable_x64', True)
+
+    eta_d = 1.0e26
+    eta_i = 1.0e20
+    tau_y = 1.0e8
+    w_lid = 1.0
+
+    # Below yield (tau_d / tau_y = 0.999999) and at yield (tau_d / tau_y = 1.0): eta_eff == eta_diff (1.0e26).
+    for ratio_td_ty in (0.999999, 1.0):
+        td = ratio_td_ty * tau_y
+        val_np = float(
+            compute_effective_viscosity(
+                eta_diff=eta_d,
+                tau_d=td,
+                tau_y_lid=tau_y,
+                stress_closure_mode='lid',
+                w_lid=w_lid,
+                eta_i=eta_i,
+                xp=np,
+            )
+        )
+        val_jx = float(
+            compute_effective_viscosity(
+                eta_diff=jnp.asarray(eta_d),
+                tau_d=jnp.asarray(td),
+                tau_y_lid=jnp.asarray(tau_y),
+                stress_closure_mode='lid',
+                w_lid=jnp.asarray(w_lid),
+                eta_i=jnp.asarray(eta_i),
+                xp=jnp,
+            )
+        )
+        assert val_np == pytest.approx(1.0e26, rel=1.0e-14)
+        assert val_jx == pytest.approx(1.0e26, rel=1.0e-14)
+
+    # Immediately above yield (tau_d / tau_y = 1.000001): eta_eff == eta_i * (tau_y / tau_d) = 1.0e20 / 1.000001.
+    td_above = 1.000001 * tau_y
+    expected_above = 1.0e20 / 1.000001
+    val_above_np = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            tau_d=td_above,
+            tau_y_lid=tau_y,
+            stress_closure_mode='lid',
+            w_lid=w_lid,
+            eta_i=eta_i,
+            xp=np,
+        )
+    )
+    val_above_jx = float(
+        compute_effective_viscosity(
+            eta_diff=jnp.asarray(eta_d),
+            tau_d=jnp.asarray(td_above),
+            tau_y_lid=jnp.asarray(tau_y),
+            stress_closure_mode='lid',
+            w_lid=jnp.asarray(w_lid),
+            eta_i=jnp.asarray(eta_i),
+            xp=jnp,
+        )
+    )
+    assert val_above_np == pytest.approx(expected_above, rel=1.0e-14)
+    assert val_above_jx == pytest.approx(expected_above, rel=1.0e-14)
+    assert val_above_np == pytest.approx(1.0e20, rel=2.0e-6)
+    assert (1.0e26 / val_above_np) == pytest.approx(1.0e6 * 1.000001, rel=1.0e-14)
+
+    # Canary: cold-lid scaling eta_diff * (tau_y / tau_d) = 1.0e26 / 1.000001 fails the interior-scaled contract.
+    wrong_cold_above = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            tau_d=td_above,
+            tau_y_lid=tau_y,
+            stress_closure_mode='lid',
+            w_lid=w_lid,
+            eta_i=eta_d,
+            xp=np,
+        )
+    )
+    with pytest.raises(AssertionError):
+        assert wrong_cold_above == pytest.approx(expected_above, rel=1.0e-3)
+
+
+@pytest.mark.physics_invariant
 def test_zero_yield_stress_cohesion_floor_prevents_zero_viscosity(monkeypatch):
     """Verify zero yield stress is floored at COHESION_FLOOR (1e-6 Pa) so eta_eff > 0."""
     import aragog.rheology as rheo_mod

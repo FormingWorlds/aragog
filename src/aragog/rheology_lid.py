@@ -466,8 +466,10 @@ def compute_effective_viscosity(
     In boundary-layer lid mode, plastic yield viscosity is evaluated at the interior
     convective strain-rate invariant scale D_conv = 2 * v_m / d_conv = tau_d / eta_i:
         eta_y = eta_i * (tau_y_lid / tau_d)
-        eta_eff = eta_diff                              for tau_d < tau_y_lid
-        eta_eff = min(eta_diff, eta_i * tau_y_lid / tau_d)  for tau_d >= tau_y_lid
+        eta_eff = eta_diff                              for tau_d <= tau_y_lid
+        eta_eff = min(eta_diff, eta_i * tau_y_lid / tau_d)  for tau_d > tau_y_lid
+    When ``eta_i < eta_diff``, ``eta_eff`` jumps at ``tau_d = tau_y_lid`` from ``eta_diff``
+    for ``tau_d <= tau_y_lid`` to ``eta_i * (tau_y_lid / tau_d)`` for ``tau_d > tau_y_lid``.
     When ``eta_i`` is omitted, ``eta_diff`` is used as the fallback scale.
 
     In local stress closure mode:
