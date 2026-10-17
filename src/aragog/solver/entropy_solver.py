@@ -3881,8 +3881,8 @@ class EntropySolver:
                     )
 
             # EOS floor: a root ends the call at S_min + m, or S_min + m/2 for a start below
-            # S_min + m; a start at or below S_min + m/2 that is not draining gets half its
-            # distance, a draining one does not advance (1e-6 m covers the root location error).
+            # S_min + m; closer starts are decided by _floor_start_level (1e-6 m covers the root
+            # location error).
             floor_margin = _resolve_step_cap(
                 getattr(self.parameters.energy, 'eos_floor_margin', EOS_FLOOR_MARGIN_DEFAULT)
             )

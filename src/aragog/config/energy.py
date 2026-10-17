@@ -112,8 +112,9 @@ class EnergyConfig:
         arms a level at half its distance to S_min, and does not advance
         (status 1) when that entropy falls fast enough to reach the level
         before the call ends; at or below S_min it arms nothing and does not
-        advance only when falling. A drain that does not stop therefore
-        ends after two floor stops. Default 100,
+        advance only when falling. The refusal depends on the call span,
+        so a caller that retries with a shorter span can advance closer to
+        S_min. Default 100,
         below the entropy span of the tables; ``None`` or a non-positive
         value disables it, and a bool, NaN, infinity or non-number is
         refused.
