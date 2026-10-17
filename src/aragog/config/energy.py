@@ -3,12 +3,25 @@
 from __future__ import annotations
 
 import logging
+import numbers
 
 import attrs
 import numpy as np
 import numpy.typing as npt
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
+
+
+def check_eos_floor_margin(value: float | None) -> None:
+    """Raise ``ValueError`` unless ``value`` is ``None`` or a finite real scalar."""
+    if value is None:
+        return
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, numbers.Real)
+        or not np.isfinite(value)
+    ):
+        raise ValueError(f'eos_floor_margin must be None or a finite number, got {value!r}')
 
 
 @attrs.define
@@ -92,7 +105,8 @@ class EnergyConfig:
         A call that starts at or below the minimum does not advance and
         returns status 1. Default 100 (about 1.5 entropy cells of the solid
         tables of the coupled runs it was set on); ``None`` or a
-        non-positive value disables it.
+        non-positive value disables it, and a bool, NaN, infinity or
+        non-number is refused.
     phase_boundary_entropy_margin : float
         Proximity band [J/kg/K] within which a staggered cell counts as
         "near" a phase boundary, tightening the integrator ``max_step`` so
@@ -142,7 +156,9 @@ class EnergyConfig:
     phi_step_cap: float | None = None
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
-    eos_floor_margin: float | None = 100.0
+    eos_floor_margin: float | None = attrs.field(
+        default=100.0, validator=lambda _inst, _attr, value: check_eos_floor_margin(value)
+    )
     phase_boundary_entropy_margin: float = 200.0
     phase_boundary_cap: str | None = attrs.field(
         default=None,

@@ -23,6 +23,7 @@ import numpy.typing as npt
 from typed_configparser import ConfigParser
 
 from aragog.config.boundary import check_core_bc
+from aragog.config.energy import check_eos_floor_margin
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
@@ -234,6 +235,7 @@ class _EnergyParameters:
             raise ValueError(
                 f'phase_boundary_cap must be fixed or rate, got {self.phase_boundary_cap!r}'
             )
+        check_eos_floor_margin(self.eos_floor_margin)
 
 
 @dataclass
