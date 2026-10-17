@@ -426,17 +426,6 @@ def test_numpy_entropy_state_floor_gated_end_to_end():
 
 # Basic-node entropy gradients [J/kg/K/m] across D = 1e-6, set at nodes 5 to 12.
 _DSDR_D = [-1.0e-4, -1.0e-7, -1.0e-31, 0.0, 1.0e-31, 5.0e-7, 2.0e-6, 1.0e-4]
-# kappa_h [m^2/s] and heat flux [W/m^2] at those nodes from EntropyState.update of aragog
-# 26.10.10, whose switch is dS/dr < 0.
-_KH_SIGN_SWITCH = [
-    7762894.603439967, 55663.21111160709, 4.999657202814174,
-    9.687475868114067e-19, 1.4519863026283773e-18, 0.0, 0.0, 0.0,
-]  # fmt: skip
-_HF_SIGN_SWITCH = [
-    17530771201.533676, 123358.43784071376, 0.000796898554101558,
-    0.0008150658016818472, 0.0008346323000632113, 0.0008386907623806254,
-    0.000860487838587221, 0.0008374873959071976,
-]  # fmt: skip
 
 
 def _update_with_gradients(values, start=5, *, phi=_PHI_MUSH, mixing=False, **state_kwargs):
@@ -463,12 +452,25 @@ def _update_across_threshold(convective_threshold: float):
 @needs_eos
 def test_numpy_zero_threshold_is_the_sign_switch():
     """D = 0 gives the kappa_h and heat flux of the dS/dr < 0 switch, including
-    the nodes at dS/dr = 0 and +-1e-31; the default D does not."""
-    state, _, _ = _update_across_threshold(0.0)
-    np.testing.assert_allclose(
-        state.eddy_diffusivity[5:13], _KH_SIGN_SWITCH, rtol=1e-12, atol=0
+    the nodes at dS/dr = 0 and +-1e-31; the default D does not.
+
+    The reference applies the floor by hand to the run without the floor, only
+    where dS/dr < 0, so it does not depend on the EOS table set.
+    """
+    state, _, dSdr = _update_across_threshold(0.0)
+    raw, _, _ = _update_with_gradients(_DSDR_D, kappah_floor=0.0, convective_threshold=0.0)
+    kh_raw = np.asarray(raw.eddy_diffusivity).ravel()
+    phi = np.asarray(state.phase_basic.melt_fraction()).ravel()
+    floor = _KAPPAH_FLOOR * tanh_weight(phi, _PHI_RHEO, _PHI_WIDTH)
+    kh_ref = np.where(dSdr < 0.0, np.maximum(kh_raw, floor), kh_raw)
+    rho_t = (
+        np.asarray(state.phase_basic.density()).ravel()
+        * np.asarray(state.phase_basic.temperature()).ravel()
     )
-    np.testing.assert_allclose(state.heat_flux[5:13], _HF_SIGN_SWITCH, rtol=1e-12, atol=0)
+    hf_ref = raw.heat_flux - rho_t * (kh_ref - kh_raw) * dSdr
+    assert kh_ref[7] == floor[7] > 1.0 and np.all(kh_ref[8:13] < 1.0e-12)
+    np.testing.assert_allclose(state.eddy_diffusivity[5:13], kh_ref[5:13], rtol=1e-12, atol=0)
+    np.testing.assert_allclose(state.heat_flux[5:13], hf_ref[5:13], rtol=1e-12, atol=0)
     state_d, _, _ = _update_across_threshold(CONVECTIVE_THRESHOLD_DEFAULT)
     # The node at +5e-7 gets the floor only: no chemical diffusivity, a small downward flux.
     assert 0.0 < state_d.eddy_diffusivity[10] <= _KAPPAH_FLOOR and state_d._kappac[10] == 0.0
@@ -510,7 +512,8 @@ def test_numpy_matches_jax_across_threshold(D):
     )
     kh_jax, kc_jax = compute_mlt(jnp.asarray(dSdr), props, jmesh, params)
     np.testing.assert_allclose(state.eddy_diffusivity, np.asarray(kh_jax), rtol=1e-10, atol=0)
-    # atol: at dS/dr = 0 and +1e-31 the numpy drive is 5e-31 (kappa_c ~1e-18), JAX gives 0.
+    # atol: at dS/dr = 0 and +1e-31 the numpy drive is 5e-31, so kappa_c is below 1e-18 in this
+    # mush (about 1e-8 in a liquid); JAX gives 0.
     np.testing.assert_allclose(state._kappac, np.asarray(kc_jax), rtol=1e-10, atol=1e-12)
 
 
@@ -537,7 +540,7 @@ def test_numpy_band_has_no_mixing_length_flux():
     mush just below 0 is large and downward."""
     x = [-1.0e-300, 0.0, 1.0e-31, 5.0e-7, np.nextafter(CONVECTIVE_THRESHOLD_DEFAULT, 0.0)]
     state, _, _ = _update_with_gradients(x, 4, mixing=True, kappah_floor=0.0)
-    # 0 and +1e-31 keep the ~1e-18 m^2/s of the numpy drive at x ~ 0; the rest is exactly 0.
+    # 0 and +1e-31 keep the numpy drive of x ~ 0 (below 1e-18 m^2/s here); the rest is exactly 0.
     assert np.all(state.eddy_diffusivity[5:9] < 1.0e-12) and np.all(
         state._kappac[5:9] < 1.0e-12
     )

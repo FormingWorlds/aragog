@@ -604,10 +604,9 @@ class EntropyState:
         Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
         g = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
 
-        conv_drive = _smooth_abs_neg(self._dSdr, eps=1.0e-30)
-        # An unstable node is driven by at least the gradient D; D = 0 leaves the drive as is.
-        conv_drive = np.where(
-            self._dSdr < 0.0, np.maximum(conv_drive, self._convective_threshold), conv_drive
+        conv_drive = np.maximum(
+            _smooth_abs_neg(self._dSdr, eps=1.0e-30),
+            self._convective_threshold * self._is_convective,
         )
         Cp_safe_mlt = self._maybe_warn_cp_floor(
             Cp,

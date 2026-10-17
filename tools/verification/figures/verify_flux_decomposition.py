@@ -115,6 +115,7 @@ def main():
             eddy_diff_thermal=params0.eddy_diff_thermal,
             eddy_diff_chemical=params0.eddy_diff_chemical,
             kappah_floor=params0.kappah_floor,
+            convective_threshold=params0.convective_threshold,
             bottom_up_grav_sep=True,
         )
 

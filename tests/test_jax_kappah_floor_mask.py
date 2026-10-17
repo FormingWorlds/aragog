@@ -150,8 +150,8 @@ def test_floor_gating_is_a_strict_stable_vs_convecting_contrast():
 
 # Basic-node entropy gradients [J/kg/K/m] across D = 1e-6 (index 0 is the CMB copy of 1).
 _DSDR_D = jnp.array([-1.0e-4, -1.0e-4, -1.0e-7, -1.0e-31, 0.0, 1.0e-31, 5.0e-7, 2.0e-6, 1.0e-4])
-# kappa_h on _DSDR_D (mixing length 1e5 m, phi = 0.4) from compute_mlt of aragog 26.10.10,
-# whose switch is dS/dr < 0.
+# kappa_h of the dS/dr < 0 switch on _DSDR_D (mixing length 1e5 m, phi = 0.4); the
+# properties are synthetic, so the values do not depend on an EOS table.
 _KH_SIGN_SWITCH = [857758.707329748, 857758.707329748, 27124.711980037686, 5.0, 0, 0, 0, 0, 0]
 
 

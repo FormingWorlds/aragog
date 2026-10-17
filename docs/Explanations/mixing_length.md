@@ -55,7 +55,7 @@ $$
 
 the classical bounded-eddy profile that vanishes at both boundaries and reaches half the layer thickness at mid-mantle.
 A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
-A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$ whose melt fraction is above the rheological ramp (mushy or liquid); it is switched off (zero) in layers with a stable gradient above $D$. SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
+A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$, by an amount that follows the melt fraction across the rheological ramp: about `kappah_floor` in a liquid, half of it at the ramp centre and $4.8 \times 10^{-3}$ of it in a solid (0.048 m$^2$ s$^{-1}$ at `kappah_floor` = 10); it is switched off (zero) in layers with a stable gradient above $D$. SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
 
 The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
 

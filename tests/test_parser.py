@@ -15,6 +15,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from aragog.config.energy import EnergyConfig
+from aragog.jax.phase import PhaseParams
 from aragog.parser import (
     Parameters,
     _BoundaryConditionsParameters,
@@ -565,21 +567,13 @@ _ENERGY_FLAGS = dict(
 )
 
 
-def _energy_config(**kw):
-    from aragog.config.energy import EnergyConfig
-
-    return EnergyConfig(**_ENERGY_FLAGS, **kw)
-
-
-def _phase_params(**kw):
-    from aragog.jax.phase import PhaseParams
-
-    return PhaseParams(**kw)
-
-
 _ALL_BUILDERS = pytest.mark.parametrize(
     'build',
-    [lambda **kw: _EnergyParameters(**_ENERGY_FLAGS, **kw), _energy_config, _phase_params],
+    [
+        lambda **kw: _EnergyParameters(**_ENERGY_FLAGS, **kw),
+        lambda **kw: EnergyConfig(**_ENERGY_FLAGS, **kw),
+        PhaseParams,
+    ],
     ids=['_EnergyParameters', 'EnergyConfig', 'PhaseParams'],
 )
 
