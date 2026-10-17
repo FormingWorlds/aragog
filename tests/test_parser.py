@@ -16,7 +16,6 @@ import numpy as np
 import pytest
 
 from aragog.config.energy import EnergyConfig
-from aragog.jax.phase import PhaseParams
 from aragog.parser import (
     Parameters,
     _BoundaryConditionsParameters,
@@ -567,12 +566,21 @@ _ENERGY_FLAGS = dict(
 )
 
 
+def _phase_params(**kw):
+    """Build PhaseParams; skips when the optional JAX stack is not installed."""
+    pytest.importorskip('jax')
+    pytest.importorskip('equinox')
+    from aragog.jax.phase import PhaseParams
+
+    return PhaseParams(**kw)
+
+
 _ALL_BUILDERS = pytest.mark.parametrize(
     'build',
     [
         lambda **kw: _EnergyParameters(**_ENERGY_FLAGS, **kw),
         lambda **kw: EnergyConfig(**_ENERGY_FLAGS, **kw),
-        PhaseParams,
+        _phase_params,
     ],
     ids=['_EnergyParameters', 'EnergyConfig', 'PhaseParams'],
 )
