@@ -187,8 +187,12 @@ def compute_stagnant_lid_state(
     f = xp.clip(xp.maximum(F_conv, 0.0) / xp.abs(F_tot_safe), 0.0, 1.0)
 
     w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / 0.01)) + zero_or_nan
+    _, W_sum, w_weight = _boundary_weights(w_conv, xp)
 
-    W_tilde, W_sum, w_weight = _boundary_weights(w_conv, xp)
+    idx = xp.arange(r.shape[0])
+    interior_node_mask = xp.where((idx > 0) & (idx < r.shape[0] - 1), 1.0, 0.0)
+    w_Ti = 0.5 * (1.0 + xp.tanh((f - 0.9) / 0.02)) * interior_node_mask + zero_or_nan
+    W_tilde = _boundary_weights(w_Ti, xp)[0]
 
     T_i = xp.sum(W_tilde * T)
     P_T_i = xp.sum(W_tilde * P)

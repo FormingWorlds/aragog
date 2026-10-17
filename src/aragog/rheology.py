@@ -115,10 +115,10 @@ class SolidRheologyParams:
         if not math.isfinite(self.yield_stress_max) or self.yield_stress_max <= 0.0:
             raise ValueError(f'yield_stress_max must be positive, got {self.yield_stress_max}')
         if not math.isfinite(self.interior_flux_fraction) or not (
-            0.0 < self.interior_flux_fraction < 1.0
+            0.05 <= self.interior_flux_fraction <= 0.5
         ):
             raise ValueError(
-                f'interior_flux_fraction must be in (0, 1), got {self.interior_flux_fraction}'
+                f'interior_flux_fraction must be in [0.05, 0.5], got {self.interior_flux_fraction}'
             )
         if not math.isfinite(self.lid_base_temperature) or self.lid_base_temperature <= 0.0:
             raise ValueError(
