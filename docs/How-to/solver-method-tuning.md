@@ -41,6 +41,12 @@ Both scipy paths use `solve_ivp` with `dense_output=False` and a 1 yr `max_step`
 
 With `phase_boundary_cap = "fixed"` the 1 yr `max_step` activates at the same trigger on all three integrators. The default `"rate"` runs only on CVODE: it arms within the larger of `phase_boundary_entropy_margin` and the stiff-zone half-width and integrates the call in segments; the scipy paths fall back to the 1 yr step.
 
+## EOS floor
+
+The entropy state of CVODE has no lower bound, but the EOS tables stop at a minimum entropy $S_\mathrm{min}$; below it every lookup is clamped to the table edge, so a cell keeps losing entropy at a fixed temperature. This happens when a prescribed surface flux, fixed over a coupling step, drains the top cell after it crystallises. The EOS floor (`energy.eos_floor_margin`, default 100 J kg$^{-1}$ K$^{-1}$, about 1.5 entropy cells of the solid tables in the coupled runs below) is one more component of the step-cap root function: the call ends when the smaller of the top basic-node entropy, which sets the surface temperature, and the smallest cell entropy reaches $S_\mathrm{min}$ plus the margin, or the midpoint between $S_\mathrm{min}$ and its start value when the call starts closer than twice the margin. CVODE then returns status 0 with a shorter `dt_actual`, scipy status 1 at the event. A call that starts at or below $S_\mathrm{min}$ does not advance and returns status 1 with `dt_actual = 0`. The floor is armed in every solve with the entropy EOS except on the `gradient` core, and a call in which it does not fire takes the same steps as without it.
+
+In two replayed coupled calls with a fixed surface flux (the runs are not in the repository), the floor ended the call at 921.34 yr of a call from 822.03 to 922.04 yr and at 2295.94 yr of a call from 2228.62 to 2433.45 yr, with the top basic-node entropy at $S_\mathrm{min} + 100$ (321.8 K) instead of below the table (300.49 K, the clamp).
+
 ## Cross-references
 
 - [CVODE and JAX explainer](../Explanations/cvode_jax.md): why the analytic Jacobian helps and how `set_jax_cvode_factory` is wired.

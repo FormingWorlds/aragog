@@ -90,8 +90,9 @@ class EnergyConfig:
         reaches the minimum plus this margin, or halfway to the minimum
         when the call starts closer; the call then returns a shorter step.
         A call that starts at or below the minimum does not advance and
-        returns status 1. Default 100 (about 1.5 cells of the bundled
-        solid tables); ``None`` or a non-positive value disables it.
+        returns status 1. Default 100 (about 1.5 entropy cells of the solid
+        tables of the coupled runs it was set on); ``None`` or a
+        non-positive value disables it.
     phase_boundary_entropy_margin : float
         Proximity band [J/kg/K] within which a staggered cell counts as
         "near" a phase boundary, tightening the integrator ``max_step`` so
