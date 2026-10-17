@@ -370,8 +370,26 @@ def test_compute_effective_viscosity_infinite_yield_stress_jax():
     assert jnp.isfinite(eta_eff_val)
     assert float(eta_eff_val) == pytest.approx(visc_diff, rel=1.0e-12)
 
+    import os
+    from pathlib import Path
+
+    import aragog
+
+    sub_env = {**os.environ, 'PYTHONPATH': str(Path(aragog.__file__).parents[1])}
+    subprocess.run(
+        [sys.executable, '-c', "import sys, aragog; assert 'jax' not in sys.modules"],
+        env=sub_env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     proc = subprocess.run(
-        [sys.executable, '-c', 'import aragog.rheology, jax; print(jax.config.jax_enable_x64)'],
+        [
+            sys.executable,
+            '-c',
+            'import aragog.rheology, jax; assert jax.config.jax_enable_x64 is True; print(jax.config.jax_enable_x64)',
+        ],
+        env=sub_env,
         check=True,
         capture_output=True,
         text=True,
