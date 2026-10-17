@@ -89,6 +89,7 @@ def compute_stagnant_lid_state(
     thermal_diffusivity: FloatOrArray = 1.0e-6,
     a_rh_fb: float = 1.3,
     C4: float = 0.125,
+    t_sol_0: float | None = None,
     xp: Any = np,
 ) -> dict[str, Any]:
     r"""Compute stagnant lid boundary-layer indicators and convective driving stress.
@@ -138,6 +139,10 @@ def compute_stagnant_lid_state(
         Rheological sublayer parameter fitted with C4 in FB2014 (p. 589).
     C4 : float, default 0.125
         Convective velocity prefactor in FB2014 (Eq. 26, p. 586-587; p. 589).
+    t_sol_0 : float, optional
+        Zero-pressure reference solidus temperature T_sol(0) [K]. Required when
+        ``solidus_temperature`` is provided; defaults to ``params.t_sol_0`` for
+        the linear fallback.
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
 
@@ -173,6 +178,9 @@ def compute_stagnant_lid_state(
     """
     if viscosity_solid is None or phi_rheo is None or phi_width is None:
         raise ValueError('viscosity_solid, phi_rheo, and phi_width must be provided')
+    if solidus_temperature is not None and t_sol_0 is None:
+        raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
+    t_sol_0_eff = params.t_sol_0 if t_sol_0 is None else t_sol_0
     r = xp.asarray(radii, dtype=float)
     T = xp.asarray(temperature, dtype=float)
     P = xp.asarray(pressure, dtype=float)
@@ -235,7 +243,7 @@ def compute_stagnant_lid_state(
         P_T_i,
         g_homologous=params.g_homologous,
         solidus_temperature=T_sol_i,
-        t_sol_0=params.t_sol_0,
+        t_sol_0=t_sol_0_eff,
         dt_sol_dp=params.dt_sol_dp,
         r_gas=R_GAS,
         xp=xp,
@@ -252,7 +260,7 @@ def compute_stagnant_lid_state(
         compute_arrhenius_viscosity,
         viscosity_solid=viscosity_solid,
         g_homologous=params.g_homologous,
-        t_sol_0=params.t_sol_0,
+        t_sol_0=t_sol_0_eff,
         dt_sol_dp=params.dt_sol_dp,
         arrhenius_t_ref=params.arrhenius_t_ref,
         r_gas=R_GAS,

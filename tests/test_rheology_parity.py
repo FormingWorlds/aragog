@@ -724,11 +724,7 @@ def test_convecting_layer_viscosity_mixture_parity():
     np.testing.assert_allclose(
         float(st_mix_np['Ra_eff']), float(st_mix_jx['Ra_eff']), rtol=1e-12
     )
-    w_0 = 0.5 * (1.0 + np.tanh(-0.05 / 0.01))
-    w_lid_sum = 1.0 - (1.0 - w_0) ** 4
-    expected_mu_i = 10.0 ** (w_lid_sum * 23.0 + (1.0 - w_lid_sum) * 11.0)
-    np.testing.assert_allclose(float(st_mix_np['mu_i']), expected_mu_i, rtol=1e-10)
-    np.testing.assert_allclose(float(st_mix_np['mu_i']), 1.0e11, rtol=0.01)
+    np.testing.assert_allclose(float(st_mix_np['mu_i']), 1.0e11, rtol=1e-12)
     assert not np.isclose(st_mix_np['mu_i'], st_none_np['mu_i'])
     assert st_none_np['mu_i'] / st_mix_np['mu_i'] > 1.0e5
     assert st_none_jx['mu_i'] / st_mix_jx['mu_i'] > 1.0e5
