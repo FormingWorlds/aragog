@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import numpy as np
 import pytest
 from hypothesis import given
@@ -42,6 +44,14 @@ def test_a_bool_non_finite_text_or_array_margin_is_refused(build, value):
     """A TOML true, NaN, an infinity, a string or an array is refused by name, never armed."""
     with pytest.raises(ValueError, match='eos_floor_margin'):
         build(eos_floor_margin=value)
+
+
+@_BUILDERS
+def test_a_fraction_is_accepted_and_a_huge_int_refused(build):
+    """Any real number that converts to a finite float is accepted; one that overflows is refused."""
+    assert build(eos_floor_margin=Fraction(1, 2)).eos_floor_margin == Fraction(1, 2)
+    with pytest.raises(ValueError, match='eos_floor_margin'):
+        build(eos_floor_margin=10**400)
 
 
 @_BUILDERS

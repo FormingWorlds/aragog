@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import warnings
 
 import numpy as np
 import pytest
 
-from aragog.solver import entropy_solver as es
 from aragog.solver.entropy_solver import (
     EntropySolver,
     _floor_entropy,
@@ -18,7 +18,7 @@ from aragog.solver.entropy_solver import (
 from tests.conftest import entropy_eos_copy
 
 from .conftest import EOS_DIR, needs_eos
-from .test_phi_step_cap_armed_smoke import _build_mushy_parameters
+from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S
 
 pytestmark = [pytest.mark.smoke, needs_eos]
 
@@ -30,19 +30,29 @@ def shared_eos():
     return entropy_eos_copy(EOS_DIR)
 
 
-def _drained(eos, S0, *, margin=100.0, method='cvode', end_time=10.0):
+def _floor_series(s):
+    """The floor entropy at every output point of the last solve."""
+    w = np.asarray(s.evaluator.mesh.quantity_at_basic_nodes(np.eye(s._n_stag)))[-1]
+    S = np.asarray(s._solution.y, dtype=float)[: s._n_stag]
+    return np.array([_floor_entropy(w, S[:, k]) for k in range(S.shape[1])])
+
+
+def _drained(
+    eos, S0, *, margin=100.0, method='cvode', end_time=10.0, core='quasi_steady', mode=None
+):
     """A cold uniform start at entropy ``S0`` under a prescribed outgoing surface flux."""
     p = _build_mushy_parameters(solver_method=method, end_time=end_time)
     p.boundary_conditions.outer_boundary_condition = 4
     p.boundary_conditions.outer_boundary_value = _FLUX
-    p.energy = dataclasses.replace(p.energy, phi_step_cap=None, eos_floor_margin=margin)
+    p.boundary_conditions.core_bc = core
+    p.energy = dataclasses.replace(
+        p.energy, phi_step_cap=None, eos_floor_margin=margin, phase_boundary_cap=mode
+    )
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
     s.set_initial_entropy(np.full(s._n_stag, S0))
     s.solve()
-    w = np.asarray(s.evaluator.mesh.quantity_at_basic_nodes(np.eye(s._n_stag)))[-1]
-    S = np.asarray(s._solution.y, dtype=float)[: s._n_stag]
-    return s, np.array([_floor_entropy(w, S[:, k]) for k in range(S.shape[1])])
+    return s, _floor_series(s)
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
@@ -63,27 +73,84 @@ def test_floor_root_ends_the_call_at_the_margin(shared_eos, method):
     assert s_off._solution.t[-1] == pytest.approx(10.0) and f_off[-1] < S_min
 
 
-def test_floor_level_is_halfway_when_the_start_is_inside_twice_the_margin(shared_eos):
-    """A start at S_min + 50 stops at S_min + 25, not at once or past the table edge."""
+@pytest.mark.parametrize(
+    ('core', 'mode'), [('energy_balance', 'fixed'), ('quasi_steady', 'rate')]
+)
+def test_floor_root_stops_the_energy_balance_core_and_rate_segments(shared_eos, core, mode):
+    """The energy_balance core and the rate-cap segments stop at S_min + 100 as well."""
     S_min = float(shared_eos.S_min)
-    s, f = _drained(shared_eos, S_min + 50.0)
+    s, f = _drained(shared_eos, S_min + 400.0, core=core, mode=mode)
     assert s._solution.cap_label == 'eos_floor' and 0.0 < s._solution.t[-1] < 10.0
-    assert f[-1] == pytest.approx(S_min + 25.0, abs=1.0e-3)
+    assert f[-1] == pytest.approx(S_min + 100.0, abs=1.0e-3)
 
 
-@pytest.mark.parametrize('at', [False, True])
-def test_floor_refuses_a_start_at_or_below_the_table(shared_eos, caplog, monkeypatch, at):
-    """Below S_min, or exactly at it (the floor entropy pinned to S_min), the call does not
-    advance: status 1, dt_actual 0, one named warning."""
+def test_floor_stops_a_start_inside_the_margin_at_half_the_margin(shared_eos):
+    """A start at S_min + 80 stops at S_min + 50, the second and last level."""
     S_min = float(shared_eos.S_min)
-    if at:
-        monkeypatch.setattr(es, '_floor_entropy', lambda w, S: S_min)
-    with caplog.at_level(logging.WARNING):
-        s, _ = _drained(shared_eos, S_min + 400.0 if at else S_min - 10.0)
+    s, f = _drained(shared_eos, S_min + 80.0)
+    assert s._solution.cap_label == 'eos_floor' and 0.0 < s._solution.t[-1] < 10.0
+    assert f[-1] == pytest.approx(S_min + 50.0, abs=1.0e-3)
+
+
+def test_a_persistent_drain_ends_after_two_floor_stops(shared_eos):
+    """Calls chained under the same drain stop at S_min + 100, then S_min + 50, then are refused."""
+    S_min = float(shared_eos.S_min)
+    s, f = _drained(shared_eos, S_min + 400.0)
+    ends, t = [f[-1]], float(s._solution.t[-1])
+    for _ in range(3):
+        S = np.array(s._solution.y[: s._n_stag, -1])
+        s.parameters.solver.start_time, s.parameters.solver.end_time = t, t + 10.0
+        s.reset()
+        s.set_initial_entropy(S)
+        s.solve()
+        ends.append(_floor_series(s)[-1])
+        t = float(s._solution.t[-1])
+    assert ends[0] == pytest.approx(S_min + 100.0, abs=1.0e-3)
+    assert ends[1] == pytest.approx(S_min + 50.0, abs=1.0e-3)
+    assert ends[2] == ends[1] and ends[3] == ends[1] and s._solution.status == 1
+
+
+@pytest.mark.parametrize('where', ['below', 'one ulp above', 'at half the margin'])
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+def test_floor_refuses_a_start_at_or_below_half_the_margin(shared_eos, caplog, method, where):
+    """Below S_min, 1 ulp above it, or at S_min + 50 the call does not advance: status 1,
+    dt_actual 0, one named warning, and the log names the full requested span."""
+    S_min = float(shared_eos.S_min)
+    S0 = {'below': S_min - 10.0, 'one ulp above': np.nextafter(S_min, np.inf)}.get(
+        where, S_min + 50.0
+    )
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(shared_eos, S0, method=method)
     sol = s._solution
     assert sol.status == 1 and sol.t[-1] == sol.t[0] == 0.0
     assert s.get_state().dt_actual == 0.0
-    assert any('the call does not advance' in r.getMessage() for r in caplog.records)
+    messages = [r.getMessage() for r in caplog.records]
+    assert sum('the call does not advance' in m for m in messages) == 1
+    assert any('stopped 10.0 yr before end_time' in m for m in messages)
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+@pytest.mark.parametrize('mode', ['fixed', 'rate'])
+@pytest.mark.parametrize('core', ['quasi_steady', 'energy_balance'])
+def test_floor_on_and_off_are_bit_equal_when_it_does_not_fire(shared_eos, method, mode, core):
+    """A call that never comes near the table edge takes the same steps with and without the
+    floor: output times, states and energy integrals are identical."""
+    runs = []
+    for margin in (100.0, None):
+        p = _build_mushy_parameters(solver_method=method, end_time=2.0)
+        p.boundary_conditions.core_bc = core
+        p.energy = dataclasses.replace(
+            p.energy, eos_floor_margin=margin, phase_boundary_cap=mode
+        )
+        s = EntropySolver(p, entropy_eos=shared_eos)
+        s.initialize()
+        s.set_initial_entropy(_pick_mushy_S(shared_eos))
+        s.solve()
+        runs.append(s._solution)
+    on, off = runs
+    assert on.status == off.status == 0 and not getattr(on, 'cap_fired', False)
+    assert np.array_equal(on.t, off.t) and np.array_equal(on.y, off.y)
+    assert on.energy_integrals == off.energy_integrals
 
 
 def test_floor_component_takes_the_lower_of_the_top_node_and_the_cells():
@@ -120,3 +187,8 @@ def test_segment_root_names_the_floor_as_the_cap():
     )
     assert roots.names[0] == 'cap'
     assert roots.fired(0.0, np.array([250.0, 200.0])) == 'cap'
+    with warnings.catch_warnings():
+        warnings.simplefilter(
+            'error'
+        )  # a floor-only cap whose evaluate raised scales by the margin
+        assert roots.fired(0.0, None) in roots.names
