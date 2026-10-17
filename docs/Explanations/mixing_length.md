@@ -55,7 +55,7 @@ $$
 
 the classical bounded-eddy profile that vanishes at both boundaries and reaches half the layer thickness at mid-mantle.
 A `constant` option (a uniform fraction of the mantle thickness) is also available; see [Heat transport](heat_transport.md#mixing-length-profile).
-A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in mushy cells with $\partial S/\partial r < D$ (melt fraction non-trivial); it is switched off (zero) in layers with a stable gradient above $D$. SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
+A phase-modulated diffusivity floor `kappah_floor` is an Aragog addition that lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$ whose melt fraction is above the rheological ramp (mushy or liquid); it is switched off (zero) in layers with a stable gradient above $D$. SPIDER has no such floor, so the two codes agree only where the floor is off; where it is active the lift is Aragog-specific. See [Heat transport](heat_transport.md#phase-modulated-floor).
 
 The implementation is inlined in `EntropyState.update` (numpy path, `src/aragog/solver/entropy_state.py`) and packaged as `aragog.jax.phase.compute_mlt` (JAX path), with bit-identity tested in `tests/test_jax_entropy.py`.
 
@@ -143,7 +143,7 @@ MLT becomes necessary, not just preferable, in the partial-melt regime and throu
 The version of MLT in Aragog inherits six concrete choices that distinguish it from a textbook stellar-interior MLT and from a different magma-ocean MLT implementation.
 
 - **Entropy form, not temperature form.**
-  The buoyancy driver is the entropy gradient $|\partial S/\partial r|$ on convecting nodes, not the superadiabatic temperature gradient.
+  The buoyancy driver is the entropy gradient, $\max(|\partial S/\partial r|, D)$ on unstable nodes, not the superadiabatic temperature gradient.
   The two are equivalent through the thermodynamic identity $\partial T/\partial r|_S = (T/c_p)\,\partial S/\partial r$, but the entropy form keeps the EOS-tabulated $(P,S)$ lookup as the only thermodynamic call inside the RHS.
   An earlier plan to rewrite the prognostic equation in a temperature-only formalism has been deprioritised: the entropy form's tighter coupling to the SPIDER-format P-S property tables and its correct lever-rule blending across the mushy zone outweigh the marginal interpretability gain of a $T(r,t)$ state vector.
   A T-only path remains available through the `const_properties` mode (matching SPIDER's `-use_const_properties` flag) for analytic-mode benchmarks, but it is not the production solver path.
@@ -164,7 +164,7 @@ The version of MLT in Aragog inherits six concrete choices that distinguish it f
 - **Phase-modulated diffusivity floor.**
   `kappah_floor` lifts the eddy diffusivity only in cells with $\partial S/\partial r < D$ whose melt fraction $\phi$ is large enough (tanh ramp around $\phi = 0.4$); it is zero in layers with a stable gradient above $D$.
   SPIDER carries no eddy-diffusivity floor, so $\kappa_h = 0$ in stratified layers is the SPIDER-consistent limit.
-  Gating the floor by the convective mask keeps a just-frozen, stably-stratified front cell from receiving a spurious sign-flipped convective flux that would otherwise pin it below its solidus.
+  Gating the floor by $\partial S/\partial r < D$ keeps a just-frozen, stably-stratified front cell from receiving a spurious sign-flipped convective flux that would otherwise pin it below its solidus.
 
 - **Per-component flux diagnostics.**
   Aragog reports $F_\mathrm{conv}$ separately from the conduction, gravitational-separation, and chemical-mixing fluxes, with reconstruction of the total to floating-point round-off (Figure 2 of [Heat transport](heat_transport.md)).

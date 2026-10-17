@@ -1,7 +1,7 @@
-"""Regression tests for the convective-mask gating of the kappa_h floor.
+"""Regression tests for the floor-mask gating of the kappa_h floor.
 
 The phi-modulated kappa_h floor (``params.kappah_floor``) must act ONLY in
-convecting cells (dS/dr < D, D = ``params.convective_threshold``). A mushy
+cells with dS/dr < D (D = ``params.convective_threshold``). A mushy
 cell with a stable gradient above D, such as a just-frozen cell at the
 crystallisation front, must NOT receive a floored eddy diffusivity: the
 signed convective flux ``rho*T*kappa_h*(-dS/dr)`` would otherwise inject a
@@ -75,7 +75,7 @@ _PARAMS = dict(kappah_floor=10.0, phi_rheo=0.4, phi_width=0.15, eddy_diff_therma
 
 def test_kappah_floor_off_in_stable_mushy_cell():
     """A stably-stratified mushy cell (dS/dr above D, phi at phi_rheo) must NOT
-    receive the kappa_h floor; the floor is gated to convecting cells.
+    receive the kappa_h floor; the floor is gated to cells with dS/dr < D.
 
     Discriminating: with kappah_floor = 10 and a meaningfully active
     f_floor(phi=0.4), the un-gated floor would set kappa_h ~ kappah_floor *
@@ -173,16 +173,6 @@ def test_stable_node_below_threshold_gets_the_floor_only():
     assert float(kh[7]) == 0.0 and float(kh[8]) == 0.0
 
 
-def test_band_has_no_mixing_length_diffusivity():
-    """Without the floor, every node with 0 <= dS/dr < D has kappa_h = kappa_c = 0,
-    so the band carries no mixing-length flux; unstable nodes keep theirs."""
-    n = _DSDR_D.size
-    params = PhaseParams(**{**_PARAMS, 'kappah_floor': 0.0})
-    kh, kc = compute_mlt(_DSDR_D, _phase(n, [0.4] * n), _mesh(n, ml=1.0e5), params)
-    assert np.all(np.asarray(kh[4:9]) == 0.0) and np.all(np.asarray(kc[4:9]) == 0.0)
-    assert float(kh[0]) == pytest.approx(_KH_SIGN_SWITCH[0], rel=1e-12)
-
-
 def test_zero_threshold_is_the_sign_switch():
     """D = 0 gives the kappa_h of the dS/dr < 0 switch on every node."""
     n = _DSDR_D.size
@@ -205,18 +195,28 @@ def test_threshold_is_strict_at_D(D):
     assert float(kh[3]) == 0.0 and float(kh[4]) == 0.0 and float(kc[3]) == 0.0
 
 
-def test_cmb_node_follows_the_node_above_across_D():
-    """The CMB node takes kappa_h of the node above it, so it switches when that
-    node crosses D, whatever its own gradient."""
+def test_cmb_node_follows_the_node_above_across_0_and_D():
+    """The CMB node takes kappa_h of the node above it, whatever its own gradient. Just
+    below dS/dr = 0 that node has the kappa_h and kappa_c of a gradient D, from 0 to
+    below D the floor alone and no kappa_c, from D on neither."""
     D = 1.0e-6
     params = PhaseParams(**_PARAMS, convective_threshold=D)
     ph, mesh = _phase(4, [0.4] * 4), _mesh(4, ml=1.0e5)
+    kh_floor = 10.0 * float(tanh_weight(jnp.asarray(0.4), 0.4, 0.15))
+    # -1e-300, not the subnormal nextafter(0, -1), which XLA flushes to zero on the CPU.
+    xs = (-1.0e-300, 0.0, np.nextafter(D, 0.0), D)
     for cmb in (-1.0e-4, 1.0e-4):
-        x = jnp.array([cmb, np.nextafter(D, 0.0), -1.0e-4, -1.0e-4])
-        below, _ = compute_mlt(x, ph, mesh, params)
-        at, _ = compute_mlt(x.at[1].set(D), ph, mesh, params)
-        assert float(below[0]) == float(below[1]) > 1.0
-        assert float(at[0]) == float(at[1]) == 0.0
+        out = [compute_mlt(jnp.array([cmb, x1, -D, -1.0e-4]), ph, mesh, params) for x1 in xs]
+        assert all(float(kh[0]) == float(kh[1]) for kh, _ in out)
+        (kh, kc), band, edge, (kh_d, kc_d) = out
+        assert float(kh[1]) == pytest.approx(float(kh[2]), rel=1e-12)
+        assert float(kh[1]) > 1.0e3 * kh_floor
+        assert float(kc[1]) == pytest.approx(float(kc[2]), rel=1e-12)
+        for kh_b, kc_b in (band, edge):
+            assert (
+                float(kh_b[1]) == pytest.approx(kh_floor, rel=1e-12) and float(kc_b[1]) == 0.0
+            )
+        assert float(kh_d[1]) == 0.0 and float(kc_d[1]) == 0.0
 
 
 def test_unstable_node_gets_at_least_the_drive_of_D():
@@ -234,17 +234,3 @@ def test_unstable_node_gets_at_least_the_drive_of_D():
     assert float(kh[0]) == pytest.approx(_KH_SIGN_SWITCH[0], rel=1e-12)
     kh0, _ = compute_mlt(x, ph, mesh, PhaseParams(**_PARAMS, convective_threshold=0.0))
     assert float(kh0[3]) == pytest.approx(_KH_SIGN_SWITCH[2], rel=1e-12)
-
-
-def test_drive_switch_is_strict_at_zero():
-    """Just below dS/dr = 0 a node takes the mixing-length kappa_h and kappa_c of a
-    gradient D; at 0 it has the floor alone and no kappa_c."""
-    D = 1.0e-6
-    # -1e-300, not the subnormal nextafter(0, -1), which XLA flushes to zero on the CPU.
-    x = jnp.array([-1.0e-4, -1.0e-4, -D, -1.0e-300, 0.0])
-    ph, mesh = _phase(x.size, [0.4] * x.size), _mesh(x.size, ml=1.0e5)
-    kh, kc = compute_mlt(x, ph, mesh, PhaseParams(**_PARAMS, convective_threshold=D))
-    kh_floor = 10.0 * float(tanh_weight(jnp.asarray(0.4), 0.4, 0.15))
-    assert float(kh[3]) == pytest.approx(float(kh[2]), rel=1e-12) and float(kh[3]) > 1.0e3
-    assert float(kc[3]) == pytest.approx(float(kc[2]), rel=1e-12)
-    assert float(kh[4]) == pytest.approx(kh_floor, rel=1e-12) and float(kc[4]) == 0.0

@@ -62,19 +62,19 @@ def apply_kappah_floor(
     eddy_diffusivity: npt.NDArray,
     kappah_floor: float,
     f_floor: npt.NDArray,
-    is_convective: npt.NDArray,
+    floor_mask: npt.NDArray,
 ) -> npt.NDArray:
     """Floor the eddy diffusivity in cells below the convective threshold only.
 
     Lifts the eddy diffusivity to ``kappah_floor * f_floor`` so that
     mixing-length convection does not numerically freeze where the entropy
-    gradient becomes small in mushy/liquid layers. The ``is_convective``
-    (``dS/dr < D``, D the convective threshold) mask confines the floor to
+    gradient becomes small in mushy/liquid layers. The ``floor_mask``
+    (``dS/dr < D``, D the convective threshold) confines the floor to
     those cells: a cell with a stable gradient above D, such as a
     just-frozen cell at the crystallisation front, must NOT receive a floored
     diffusivity, because the signed convective flux ``rho*T*kappa_h*(-dS/dr)``
     would then inject a sign-flipped flux that pins the cell sub-solidus.
-    Below D it is a downward flux of at most ``rho*T*kappah_floor*D``.
+    On ``0 <= dS/dr < D`` the floor flux is downward and at most ``rho*T*kappah_floor*D``.
     SPIDER carries no kappa_h floor, so floor = 0 in stratified layers is the
     SPIDER-consistent limit.
     Mirrors the JAX twin ``aragog.jax.phase.compute_mlt``.
@@ -89,16 +89,16 @@ def apply_kappah_floor(
     f_floor : numpy.ndarray
         Melt-fraction ramp in [0, 1], from ``tanh_weight(phi, phi_rheo,
         phi_width)``, ~0 in solid layers and ~1 in mushy/liquid layers.
-    is_convective : numpy.ndarray
+    floor_mask : numpy.ndarray
         Boolean mask, True where ``dS/dr < D`` (the floor applies).
 
     Returns
     -------
     numpy.ndarray
-        Eddy diffusivity floored in convecting cells only; stratified cells
-        keep their raw value.
+        Eddy diffusivity floored where ``dS/dr < D``; the other cells keep
+        their raw value.
     """
-    kh_floor = kappah_floor * f_floor * is_convective
+    kh_floor = kappah_floor * f_floor * floor_mask
     return np.maximum(eddy_diffusivity, kh_floor)
 
 
@@ -592,9 +592,10 @@ class EntropyState:
         # evaluates directly from dSdr and dP/dr (see below).
 
         # ── MLT from entropy gradient ────────────────────────────────
-        # The floor applies while dS/dr < D (convective_threshold); the drive below
-        # acts only where dS/dr < 0. D = 0 gives the dS/dr < 0 switch for both.
-        self._is_convective = self._dSdr < self._convective_threshold
+        # The drive below acts only where dS/dr < 0; the floor applies while dS/dr < D
+        # (convective_threshold). D = 0 gives the dS/dr < 0 switch for both.
+        self._is_convective = self._dSdr < 0.0
+        floor_mask = self._dSdr < self._convective_threshold
 
         # Buoyancy |superadiabatic| = alpha * T * max(-dS/dr, 0) / Cp, at least alpha*T*D/Cp
         # on unstable nodes.
@@ -692,7 +693,7 @@ class EntropyState:
                 self._eddy_diffusivity,
                 self._kappah_floor,
                 f_floor,
-                self._is_convective,
+                floor_mask,
             )
 
         # Mirror SPIDER energy.c:220-223: at the CMB basic node, use

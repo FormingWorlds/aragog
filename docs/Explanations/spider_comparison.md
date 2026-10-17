@@ -67,7 +67,7 @@ Integration-level parity between the two codes is the criterion that the product
 
 ### Convective threshold
 
-SPIDER switches convection at $\partial S/\partial r = 0$, and so does the Aragog mixing-length drive, but Aragog drives an unstable node by at least a small gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$), and its `kappah_floor`, which SPIDER does not have, acts up to $\partial S/\partial r = D$. The two codes therefore differ at nodes with $|\partial S/\partial r| < D$ and, through the copied CMB eddy diffusivity, at the CMB node when the node above it is in that band.
+SPIDER switches convection at $\partial S/\partial r = 0$, and so does the Aragog mixing-length drive, but Aragog drives an unstable node by at least a small gradient $D$ (`energy.convective_threshold`, default $10^{-6}$ J kg$^{-1}$ K$^{-1}$ m$^{-1}$), and its `kappah_floor`, which SPIDER does not have, acts up to $\partial S/\partial r = D$. Apart from the floor, the two codes therefore differ at nodes with $|\partial S/\partial r| < D$ and, through the copied CMB eddy diffusivity, at the CMB node when the node above it is in that band.
 `convective_threshold = 0` gives the SPIDER switch; see [Heat transport](heat_transport.md#convection-mixing-length-theory).
 
 ### Default thermodynamic tables

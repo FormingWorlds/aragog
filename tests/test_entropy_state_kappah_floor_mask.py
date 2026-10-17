@@ -1,8 +1,8 @@
-"""Regression tests for the convective-mask gating of the kappa_h floor on
+"""Regression tests for the floor-mask gating of the kappa_h floor on
 the numpy (scipy Radau/BDF + parity-harness) solver path.
 
 The phi-modulated kappa_h floor (``kappah_floor``) must act ONLY in
-convecting cells (dS/dr < D, D the convective threshold). A mushy cell with a
+cells with dS/dr < D (D the convective threshold). A mushy cell with a
 stable gradient above D, such as a just-frozen cell at the crystallisation
 front, must NOT receive a floored eddy diffusivity: the signed convective
 flux ``rho*T*kappa_h*(-dS/dr)`` would otherwise inject a spurious
@@ -15,8 +15,8 @@ The numpy floor lives in the source helper
 ``aragog.solver.entropy_state.apply_kappah_floor``, which
 ``EntropyState.update`` calls with
 ``f_floor = tanh_weight(phi, phi_rheo, phi_width)`` and
-``is_convective = self._dSdr < self._convective_threshold``. The helper computes
-``kappah_floor * f_floor * is_convective`` and floors the raw eddy
+``floor_mask = self._dSdr < self._convective_threshold``. The helper computes
+``kappah_floor * f_floor * floor_mask`` and floors the raw eddy
 diffusivity with ``np.maximum``. The companion file
 ``test_jax_kappah_floor_mask.py`` covers the JAX twin
 (``aragog.jax.phase.compute_mlt``).
@@ -26,11 +26,11 @@ Strategy. Two complementary checks are used:
 * The ``test_numpy_floor_*_matches_jax`` and ``..._strict_stable_vs_convecting``
   checks call the REAL source helper ``apply_kappah_floor`` (via the thin
   ``_numpy_floor`` wrapper that only derives ``f_floor`` and
-  ``is_convective``), using the already-verified production JAX
+  ``floor_mask``), using the already-verified production JAX
   ``compute_mlt`` as the ground-truth floored kappa_h in a controlled
   stratified-mush state. They assert term-for-term parity at floor = 10 and
   run in every environment (no EOS data required), so a regression that drops
-  the convective mask inside ``apply_kappah_floor`` fails them. They are the
+  the floor mask inside ``apply_kappah_floor`` fails them. They are the
   discriminating gated-vs-ungated contrast on the numpy formula.
 * ``test_numpy_entropy_state_floor_gated_end_to_end`` exercises the real
   ``EntropyState.update`` numpy MLT block end-to-end when SPIDER P-S tables
@@ -127,17 +127,17 @@ def _numpy_floor(kh_raw: np.ndarray, phi: np.ndarray, dSdr: np.ndarray) -> np.nd
     """Apply the numpy-path kappa_h floor by calling the REAL source helper
     ``aragog.solver.entropy_state.apply_kappah_floor``.
 
-    The masked-multiply that gates the floor to convecting cells
-    (``kappah_floor * f_floor * is_convective`` then ``max(kappa_h_raw, .)``)
+    The masked-multiply that gates the floor to cells with dS/dr < D
+    (``kappah_floor * f_floor * floor_mask`` then ``max(kappa_h_raw, .)``)
     is the source function under test; only the ``f_floor`` and
-    ``is_convective`` derivations are reproduced here, from the same
+    ``floor_mask`` derivations are reproduced here, from the same
     ``tanh_weight`` symbol and the same ``dS/dr < D`` definition the source
-    uses. A regression that drops the ``is_convective`` mask inside
+    uses. A regression that drops the ``floor_mask`` inside
     ``apply_kappah_floor`` therefore fails these parity checks.
     """
     f_floor = tanh_weight(phi, _PHI_RHEO, _PHI_WIDTH)
-    is_convective = dSdr < CONVECTIVE_THRESHOLD_DEFAULT
-    return apply_kappah_floor(kh_raw, _KAPPAH_FLOOR, f_floor, is_convective)
+    floor_mask = dSdr < CONVECTIVE_THRESHOLD_DEFAULT
+    return apply_kappah_floor(kh_raw, _KAPPAH_FLOOR, f_floor, floor_mask)
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ def _numpy_floor(kh_raw: np.ndarray, phi: np.ndarray, dSdr: np.ndarray) -> np.nd
 
 def test_numpy_floor_off_in_stable_mushy_cell_matches_jax():
     """A stably-stratified mushy cell (dS/dr above D, phi at phi_rheo) must NOT
-    receive the numpy kappa_h floor; the floor is gated to convecting cells.
+    receive the numpy kappa_h floor; the floor is gated to cells with dS/dr < D.
 
     The production JAX ``compute_mlt`` is the verified reference: its floored
     output in this state is the ground truth the numpy floor must reproduce.
@@ -368,7 +368,7 @@ def _build_state(
 @needs_eos
 def test_numpy_entropy_state_floor_gated_end_to_end():
     """End-to-end numpy MLT floor: a mushy basic cell held at phi ~ phi_rheo
-    receives the kappa_h floor only when it is convecting (dS/dr < D), and
+    receives the kappa_h floor only while dS/dr < D, and
     keeps its raw (sub-floor) eddy diffusivity when stably stratified.
 
     Exercises the real ``EntropyState.update`` numpy floor block via a
@@ -439,18 +439,25 @@ _HF_SIGN_SWITCH = [
 ]  # fmt: skip
 
 
-def _update_across_threshold(convective_threshold: float):
-    """Run ``EntropyState.update`` on a phi_rheo mush with ``_DSDR_D`` at nodes 5 to 12."""
+def _update_with_gradients(values, start=5, *, phi=_PHI_MUSH, mixing=False, **state_kwargs):
+    """Run ``EntropyState.update`` on a mush at melt fraction ``phi`` with dS/dr equal to
+    ``values`` from node ``start`` and -1e-6 elsewhere."""
     eos = entropy_eos_copy(EOS_DIR)
-    state, mesh = _build_state(
-        eos, kappah_floor=_KAPPAH_FLOOR, convective_threshold=convective_threshold
-    )
+    state, mesh = _build_state(eos, **state_kwargs)
+    state._mixing = mixing
     S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
     S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
     dSdr = np.full(mesh.N + 1, -1.0e-6)
-    dSdr[5:13] = _DSDR_D
-    state.update(S_sol + _PHI_MUSH * (S_liq - S_sol), time=0.0, dSdr=dSdr)
+    dSdr[start : start + len(values)] = values
+    state.update(S_sol + phi * (S_liq - S_sol), time=0.0, dSdr=dSdr)
     return state, mesh, dSdr
+
+
+def _update_across_threshold(convective_threshold: float):
+    """``_DSDR_D`` at nodes 5 to 12 of a phi_rheo mush with the floor on."""
+    return _update_with_gradients(
+        _DSDR_D, kappah_floor=_KAPPAH_FLOOR, convective_threshold=convective_threshold
+    )
 
 
 @needs_eos
@@ -511,39 +518,33 @@ def test_numpy_matches_jax_across_threshold(D):
 def test_numpy_threshold_is_strict_at_D():
     """On the numpy path a node just below D gets the floor only and nodes at D and
     just above get nothing; ``EntropyState`` rejects a negative D."""
-    eos = entropy_eos_copy(EOS_DIR)
     D = CONVECTIVE_THRESHOLD_DEFAULT
-    state, mesh = _build_state(eos, kappah_floor=_KAPPAH_FLOOR)
-    S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
-    S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
-    dSdr = np.full(mesh.N + 1, -1.0e-6)
-    dSdr[5:8] = [np.nextafter(D, 0.0), D, np.nextafter(D, 1.0)]
-    state.update(S_sol + _PHI_MUSH * (S_liq - S_sol), time=0.0, dSdr=dSdr)
+    x = [np.nextafter(D, 0.0), D, np.nextafter(D, 1.0)]
+    state, _, _ = _update_with_gradients(x, kappah_floor=_KAPPAH_FLOOR)
     assert 0.0 < state.eddy_diffusivity[5] <= _KAPPAH_FLOOR and state._kappac[5] == 0.0
     assert state.eddy_diffusivity[6] == 0.0 and state.eddy_diffusivity[7] == 0.0
     assert state._kappac[6] == 0.0
     with pytest.raises(ValueError, match='convective_threshold'):
-        _build_state(eos, kappah_floor=_KAPPAH_FLOOR, convective_threshold=-1.0e-6)
+        _build_state(
+            entropy_eos_copy(EOS_DIR), kappah_floor=_KAPPAH_FLOOR, convective_threshold=-1.0e-6
+        )
 
 
 @needs_eos
 def test_numpy_band_has_no_mixing_length_flux():
-    """Without the floor, no node with 0 <= dS/dr < D has an eddy diffusivity or a
-    convective flux on the numpy path, also with the mixing flux on."""
-    eos = entropy_eos_copy(EOS_DIR)
-    state, mesh = _build_state(eos, kappah_floor=0.0)
-    state._mixing = True
-    S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
-    S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
-    dSdr = np.full(mesh.N + 1, -1.0e-6)
-    dSdr[5:9] = [0.0, 1.0e-31, 5.0e-7, np.nextafter(CONVECTIVE_THRESHOLD_DEFAULT, 0.0)]
-    state.update(S_sol + _PHI_MUSH * (S_liq - S_sol), time=0.0, dSdr=dSdr)
+    """Without the floor, no node with 0 <= dS/dr < D has an eddy diffusivity, a
+    convective flux or a mixing flux on the numpy path, while the mixing flux of the
+    mush just below 0 is large and downward."""
+    x = [-1.0e-300, 0.0, 1.0e-31, 5.0e-7, np.nextafter(CONVECTIVE_THRESHOLD_DEFAULT, 0.0)]
+    state, _, _ = _update_with_gradients(x, 4, mixing=True, kappah_floor=0.0)
     # 0 and +1e-31 keep the ~1e-18 m^2/s of the numpy drive at x ~ 0; the rest is exactly 0.
     assert np.all(state.eddy_diffusivity[5:9] < 1.0e-12) and np.all(
         state._kappac[5:9] < 1.0e-12
     )
     assert np.all(state.eddy_diffusivity[7:9] == 0.0) and np.all(state.jconv[7:9] == 0.0)
     assert state.eddy_diffusivity[3] > 1.0e3
+    jmix = np.asarray(state._jmix_heat)
+    assert jmix[4] < -1.0e7 and np.all(np.abs(jmix[5:9]) < 1.0e-6)
 
 
 @needs_eos
@@ -553,19 +554,12 @@ def test_numpy_convective_flux_never_runs_up_a_stable_gradient(phi):
     convective flux is upward only where dS/dr < 0, and a downward convective flux
     (the floor band) stays below rho*T*kappah_floor*D."""
     D = CONVECTIVE_THRESHOLD_DEFAULT
-    eos = entropy_eos_copy(EOS_DIR)
-    state, mesh = _build_state(eos, kappah_floor=_KAPPAH_FLOOR)
-    state._mixing = True
-    S_sol = np.asarray(eos.solidus_entropy(mesh.staggered.pressure)).ravel()
-    S_liq = np.asarray(eos.liquidus_entropy(mesh.staggered.pressure)).ravel()
     x = np.array([-1e-4, -1e-6, -1e-9, 0.0, 1e-9, 5e-7, np.nextafter(D, 0.0), D, 1e-4])
-    dSdr = np.full(mesh.N + 1, -1.0e-6)
-    dSdr[5 : 5 + x.size] = x
-    state.update(S_sol + phi * (S_liq - S_sol), time=0.0, dSdr=dSdr)
+    state, _, _ = _update_with_gradients(x, phi=phi, mixing=True, kappah_floor=_KAPPAH_FLOOR)
     jconv = np.asarray(state.jconv)[5 : 5 + x.size]
     rho_T = (state.phase_basic.density() * state.phase_basic.temperature()).ravel()
     bound = rho_T[5 : 5 + x.size] * _KAPPAH_FLOOR * D
     assert np.all(jconv[x < 0] > 0.0)
     assert np.all(jconv[x >= 0] <= 0.0)
     assert np.all(np.abs(jconv[x >= 0]) <= bound[x >= 0])
-    assert np.abs(jconv[6]) > 0.1 * bound[6]  # the band node at 5e-7 carries the floor flux
+    assert np.abs(jconv[5]) > 0.1 * bound[5]  # the band node at 5e-7 carries the floor flux
