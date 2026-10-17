@@ -530,16 +530,16 @@ def test_numpy_matches_jax_across_threshold(D, phi):
     )
     assert state._convective_threshold == params.convective_threshold == (D or 0.0)
     kh_jax, kc_jax = compute_mlt(jnp.asarray(dSdr), props, jmesh, params)
-    # At 0 <= dS/dr < 1e-22 the numpy drive keeps up to 5e-31 (JAX: 0), a kappa_c (and at D = 0 a
-    # kappa_h) up to ~1e-7 in a liquid and below 1e-17 in a solid or mush here; its size depends on
-    # the EOS tables and the mixing length.
+    # At 0 <= dS/dr < 1e-22 the numpy drive keeps up to 5e-31 (JAX: 0): a kappa_c (and at D = 0 a
+    # kappa_h) of about 3e-29 (solid), 1.5e-18 (mush) and 1.7e-7 (liquid) m^2/s with these tables.
+    bound = {0.0: 1.0e-26, _PHI_MUSH: 1.0e-16, 1.0: 1.0e-6}[phi]
     res = (dSdr >= 0.0) & (dSdr < 1.0e-22)
     kh_np, kh_jax, kc_jax = state.eddy_diffusivity, np.asarray(kh_jax), np.asarray(kc_jax)
     exact = ~res if D is None else np.ones_like(res)  # D > 0 floors the residual nodes
     np.testing.assert_allclose(kh_np[exact], kh_jax[exact], rtol=1e-10, atol=0)
-    assert np.all(np.abs(kh_np[res] - kh_jax[res]) < (1.0e-6 if phi == 1.0 else 1.0e-12))
+    assert np.all(np.abs(kh_np[res] - kh_jax[res]) < bound)
     np.testing.assert_allclose(state._kappac[~res], kc_jax[~res], rtol=1e-10, atol=0)
-    assert np.all(kc_jax[res] == 0.0) and np.all(state._kappac[res] < 1.0e-6)
+    assert np.all(kc_jax[res] == 0.0) and np.all(state._kappac[res] < bound)
 
 
 @needs_eos

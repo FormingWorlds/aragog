@@ -635,6 +635,22 @@ def test_cvode_warns_once_per_solver_when_rtol_is_above_1e_8(
         np.testing.assert_allclose(kw['atol'] * scale, max(atol, 1e-8), rtol=1e-12)
 
 
+@needs_cvode
+@needs_eos
+@pytest.mark.smoke
+@pytest.mark.parametrize('D', [0.0, 1.0e-6])
+def test_cvode_warns_once_per_solver_when_the_threshold_is_positive(shared_eos, caplog, D):
+    """A positive convective_threshold logs one stall warning over two CVODE calls; 0 logs none."""
+    s = _solver(shared_eos, 'fixed', end_time=0.01)
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, convective_threshold=D)
+    with caplog.at_level('WARNING'):
+        s.solve()
+        s.solve()
+    hits = [r.getMessage() for r in caplog.records if 'can stall CVODE' in r.getMessage()]
+    assert len(hits) == (1 if D > 0.0 else 0)
+    assert all(m.startswith('convective_threshold 1.0e-06 > 0') for m in hits)
+
+
 def _two_calls(eos, with_state):
     s = _solver(eos, 'rate', end_time=20.0)
     s.solve()

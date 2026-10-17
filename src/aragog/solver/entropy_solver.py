@@ -3976,6 +3976,14 @@ class EntropySolver:
                 phi_cap_rootfn=phi_cap_rootfn,
             )
             spans = end_time > start_time
+            D = self.parameters.energy.convective_threshold
+            if spans and D > 0.0:
+                self._warn_once(
+                    'threshold',
+                    f'convective_threshold {D:.1e} > 0: kappa_h jumps at dS/dr = 0, which can '
+                    'stall CVODE at a node whose gradient stays near 0, also at rtol 1e-8; '
+                    'see the heat transport docs',
+                )
             if spans and rtol > _CVODE_TOL_LIMIT:
                 atol_cfg = self.parameters.solver.atol
                 loose = atol_cfg > _CVODE_TOL_LIMIT and self._core_bc == 'energy_balance'
