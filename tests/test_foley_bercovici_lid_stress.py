@@ -256,18 +256,7 @@ def _assert_w_conv_fixed_width_pins_w_active_and_w_upper(kwargs: dict[str, Any])
     )
     w_conv_expected = 0.5 * (1.0 + np.tanh((f_smooth - params.interior_flux_fraction) / 0.01))
     w_active_expected = 0.5 * (1.0 + np.tanh((np.sum(w_conv_expected) - 1.0) / 0.5))
-    idx = np.arange(n_nodes)
-    interior_mask = np.where((idx > 0) & (idx < n_nodes - 1), 1.0, 0.0)
-    w_ti = 0.5 * (1.0 + np.tanh((f_smooth - 0.9) / 0.02)) * interior_mask
-    w_surf = w_ti[::-1]
-    omw = np.concatenate([np.ones(1), 1.0 - w_surf[:-1]])
-    w_raw = (w_surf * np.cumprod(omw))[::-1]
-    w_sum = float(np.sum(w_raw))
-    w_weight = float(np.tanh(w_sum / 1.0e-6))
-    w_tilde = w_weight * (w_raw / max(w_sum, 1.0e-12)) + (1.0 - w_weight) * np.full(
-        n_nodes, 1.0 / n_nodes
-    )
-    r_i = float(np.sum(w_tilde * r))
+    r_i = float(st_smooth['r_i'])
     r_mid = 0.5 * (r_i + r[0])
     dr_scale = max(float(np.mean(np.abs(r[1:] - r[:-1]))), 1.0)
     w_above_mid = 0.5 * (1.0 + np.tanh((r - r_mid) / dr_scale))
@@ -442,3 +431,73 @@ def test_erf_boundary_layer_ti_and_175kyr_default_ti():
         phi_width=0.15,
     )
     assert abs(float(st_ckpt['T_i']) - t_at_f09) <= 50.0
+    # Exact by construction: f_int_max == 1.0 on the 175 kyr profile matches the f = 0.9 threshold.
+    assert float(st_ckpt['T_i']) == 1423.012466223234
+    assert float(st_ckpt['tau_d']) == 1299378.5915329107
+    assert float(st_ckpt['eta_i']) == 2.760821023551699e22
+
+
+def _eval_adiabat_lid_profile(f_conv_arr: np.ndarray) -> tuple[dict[str, Any], np.ndarray]:
+    """Evaluate compute_stagnant_lid_state on a 50-node 1600 K interior adiabat under a 7-node lid."""
+    n_nodes = 50
+    r = np.linspace(3480.0e3, 6370.0e3, n_nodes)
+    p = np.linspace(135.0e9, 1.0e5, n_nodes)
+    t_adiabat = np.empty(n_nodes)
+    t_adiabat[:43] = np.linspace(2200.0, 1600.0, 43)
+    t_adiabat[43:] = np.linspace(1500.0, 300.0, 7)
+    visc_mix = np.full(n_nodes, 1.0e20)
+    visc_mix[43:] = 1.0e40
+    g_hom = 300.0e3 / (8.314462618 * 1600.0)
+    params = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        g_homologous=g_hom,
+        t_sol_0=1600.0,
+        dt_sol_dp=0.0,
+        arrhenius_t_ref=1600.0,
+        interior_flux_fraction=0.05,
+    )
+    st = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_adiabat,
+        pressure=p,
+        convective_flux=f_conv_arr * 100.0,
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=params,
+        viscosity_solid=1.0e20,
+        viscosity_mixture=visc_mix,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    return st, t_adiabat
+
+
+@pytest.mark.unit
+def test_relative_ti_threshold_and_no_convection_fallback():
+    """Verify T_i relative threshold (0.9 * max interior f) and no-convection fallback."""
+    st_earth = compute_stagnant_lid_state(**_make_earth_reference_inputs())
+    # Exact by construction: f_int_max == 1.0 on the Earth reference state matches the 0.9 threshold.
+    assert float(st_earth['T_i']) == 1599.9999999999998
+
+    for f_val in (1.0, 0.85, 0.70):
+        f_arr = np.zeros(50)
+        f_arr[:43] = f_val
+        st_f, t_ad = _eval_adiabat_lid_profile(f_arr)
+        assert abs(float(st_f['T_i']) - float(t_ad[42])) <= float(st_f['dT_rh'])
+        assert float(st_f['mu_i']) == pytest.approx(1.0e20, rel=1.0e-6)
+
+    f_mid = np.zeros(50)
+    f_mid[25] = 0.10
+    st_mid, t_ad = _eval_adiabat_lid_profile(f_mid)
+    assert float(st_mid['T_i']) == pytest.approx(float(t_ad[25]), abs=1.0)
+
+    f_surf_only = np.zeros(50)
+    f_surf_only[-1] = 1.0
+    st_surf, _ = _eval_adiabat_lid_profile(f_surf_only)
+    assert float(st_surf['T_i']) == pytest.approx(float(t_ad[-1]), abs=1.0)
+
+    st_no_conv, _ = _eval_adiabat_lid_profile(np.zeros(50))
+    assert float(st_no_conv['T_i']) == pytest.approx(float(t_ad[0]), rel=1.0e-6)
+    assert abs(float(st_no_conv['T_i']) - float(np.mean(t_ad))) > 100.0
