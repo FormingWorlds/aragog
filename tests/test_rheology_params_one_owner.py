@@ -17,7 +17,6 @@ from aragog.rheology import (
     SolidRheologyParams,
     compute_arrhenius_viscosity,
     compute_stagnant_lid_state,
-    eta_diff,
     merge_rheology,
 )
 
@@ -28,9 +27,6 @@ EXPECTED_FIELDS = {
     'g_homologous',
     't_sol_0',
     'dt_sol_dp',
-    'activation_energy',
-    'activation_volume',
-    'activation_volume_decay_pressure',
     'arrhenius_t_ref',
     'viscosity_max_log10',
     'water_prefactor',
@@ -52,9 +48,19 @@ EXPECTED_FIELDS = {
 
 
 def test_solid_rheology_params_has_expected_fields():
-    """Verify SolidRheologyParams declares all expected fields."""
+    """Verify SolidRheologyParams declares all expected fields and no dead activation fields."""
+    import aragog.rheology as rheo_mod
+
     field_names = {f.name for f in dataclasses.fields(SolidRheologyParams)}
     assert field_names == EXPECTED_FIELDS
+    for dead_field in (
+        'activation_energy',
+        'activation_volume',
+        'activation_volume_decay_pressure',
+    ):
+        assert dead_field not in field_names
+    assert not hasattr(rheo_mod, 'eta_eff')
+    assert not hasattr(rheo_mod, 'eta_diff')
 
 
 def test_phase_config_rheology_defaults_match():
@@ -96,8 +102,6 @@ def test_custom_solid_rheology_params_propagation():
         g_homologous=18.0,
         t_sol_0=1450.0,
         dt_sol_dp=2.0e-8,
-        activation_energy=250e3,
-        activation_volume=4e-6,
         water_prefactor=0.5,
         yield_stress_c=40e6,
         stress_closure_mode='local',
@@ -141,9 +145,6 @@ def test_solid_rheology_params_unconditional_bounds_validation():
     with pytest.raises(ValueError, match='dt_sol_dp'):
         SolidRheologyParams(enabled=False, dt_sol_dp=-1.0e-9)
 
-    with pytest.raises(ValueError, match='activation_energy'):
-        SolidRheologyParams(enabled=False, activation_energy=-100.0)
-
     with pytest.raises(ValueError, match='viscosity_max_log10'):
         SolidRheologyParams(enabled=False, viscosity_max_log10=15.0)
 
@@ -153,7 +154,7 @@ def test_phase_config_merge_precedence():
     custom = SolidRheologyParams(
         enabled=True,
         g_homologous=20.0,
-        activation_energy=250e3,
+        t_sol_0=1500.0,
         yield_stress_c=40e6,
         water_prefactor=0.5,
     )
@@ -169,7 +170,7 @@ def test_phase_config_merge_precedence():
     )
     assert p_cfg.rheology.enabled is True
     assert p_cfg.rheology.g_homologous == 20.0
-    assert p_cfg.rheology.activation_energy == 250e3
+    assert p_cfg.rheology.t_sol_0 == 1500.0
     assert p_cfg.rheology.yield_stress_c == 40e6
     assert p_cfg.rheology.water_prefactor == 0.5
     assert p_cfg.rheology.lid_contrast_coeff == 3.0
@@ -187,7 +188,7 @@ def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
     cap_log10 = 35.0
     expected_cap = 10.0**cap_log10
 
-    res_np = eta_diff(
+    res_np = compute_arrhenius_viscosity(
         T, P, viscosity_solid=1e21, viscosity_max_log10=cap_log10, water_prefactor=100.0
     )
     assert np.isclose(res_np, expected_cap)
@@ -278,12 +279,10 @@ def test_solid_rheology_params_rejects_nan():
 
 def test_merge_precedence_explicit_default_value():
     """Verify explicit keyword argument matching default overrides base rheology."""
-    custom = SolidRheologyParams(enabled=True, g_homologous=18.0, activation_energy=250e3)
-    merged = merge_rheology(
-        custom, {'g_homologous': 25.0, 'activation_energy': 300e3, 'enabled': False}
-    )
+    custom = SolidRheologyParams(enabled=True, g_homologous=18.0, t_sol_0=1500.0)
+    merged = merge_rheology(custom, {'g_homologous': 25.0, 't_sol_0': 1400.0, 'enabled': False})
     assert merged.g_homologous == 25.0
-    assert merged.activation_energy == 300e3
+    assert merged.t_sol_0 == 1400.0
     assert merged.enabled is False
 
     p_cfg = PhaseConfig(
@@ -295,9 +294,9 @@ def test_merge_precedence_explicit_default_value():
         viscosity=1e21,
         rheology=custom,
         g_homologous=25.0,
-        activation_energy=300e3,
+        t_sol_0=1400.0,
         enabled=False,
     )
     assert p_cfg.g_homologous == 25.0
-    assert p_cfg.activation_energy == 300e3
+    assert p_cfg.t_sol_0 == 1400.0
     assert p_cfg.enabled is False

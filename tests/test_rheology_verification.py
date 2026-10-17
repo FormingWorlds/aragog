@@ -17,8 +17,6 @@ from aragog.rheology import (
     compute_arrhenius_viscosity,
     compute_strain_rate_local,
     compute_yield_stress,
-    eta_diff,
-    eta_eff,
 )
 from aragog.rheology_lid import compute_effective_viscosity, stress_closure
 
@@ -32,12 +30,12 @@ _T_REF = 1600.0
 _R = 8.314462618
 
 _eta_ref = partial(
-    eta_diff,
+    compute_arrhenius_viscosity,
     viscosity_solid=_ETA0,
     g_homologous=_G_HOM,
     t_sol_0=_T_SOL_0,
     dt_sol_dp=_DT_SOL_DP,
-    t_ref=_T_REF,
+    arrhenius_t_ref=_T_REF,
     r_gas=_R,
 )
 
@@ -141,8 +139,8 @@ def test_numpy_jax_rheology_float64_parity():
             g_homologous=_G_HOM,
             t_sol_0=_T_SOL_0,
             dt_sol_dp=_DT_SOL_DP,
-            T_ref=_T_REF,
-            R=_R,
+            arrhenius_t_ref=_T_REF,
+            r_gas=_R,
             xp=jnp,
         )
     )
@@ -169,23 +167,26 @@ def test_viscosity_max_log10_clipping():
     """Verify viscosity_max_log10 caps cold Arrhenius viscosity without overflow."""
     T = 40.0
     P = 0.0
-    eta_d = eta_diff(
+    eta_d = compute_arrhenius_viscosity(
         temperature=T,
         pressure=P,
         viscosity_solid=1.0e21,
         g_homologous=25.0,
         t_sol_0=1400.0,
         dt_sol_dp=2.4e-8,
-        t_ref=1600.0,
+        arrhenius_t_ref=1600.0,
         r_gas=8.314462618,
         viscosity_max_log10=40.0,
     )
     assert eta_d == pytest.approx(1e40, rel=1e-12)
 
-    eta_e = eta_eff(
-        visc_diff=eta_d,
-        tau_y=50e6,
-        strain_rate=1e-15,
+    eta_e = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            tau_y=50e6,
+            strain_rate=1e-15,
+            stress_closure_mode='local',
+        )
     )
     assert eta_e == pytest.approx(50e6 / (2.0 * 1e-15), rel=1e-12)
 
@@ -198,13 +199,10 @@ def test_lid_base_mode_and_stress_closure_validation():
     with pytest.raises(ValueError, match="Unknown lid_base_mode 'invalid'"):
         SolidRheologyParams(lid_base_mode='invalid')
 
-    with pytest.raises(ValueError, match='lid_base_mode.*activation_energy'):
-        SolidRheologyParams(enabled=True, activation_energy=0.0, lid_base_mode='rheological')
-
     with pytest.raises(ValueError, match='lid_base_mode.*g_homologous'):
         SolidRheologyParams(enabled=True, g_homologous=0.0, lid_base_mode='rheological')
 
-    p = SolidRheologyParams(enabled=False, activation_energy=0.0, lid_base_mode='rheological')
+    p = SolidRheologyParams(enabled=False, g_homologous=0.0, lid_base_mode='rheological')
     assert p.lid_base_mode == 'rheological'
 
     with pytest.raises(ValueError, match='Unknown stress_closure_mode'):
@@ -258,17 +256,20 @@ def test_lid_base_mode_and_stress_closure_validation():
 
 
 @pytest.mark.physics_invariant
-def test_eta_eff_infinite_yield_stress():
-    """Verify eta_eff handles infinite yield stress without NaN evaluation."""
+def test_compute_effective_viscosity_infinite_yield_stress_numpy():
+    """Verify compute_effective_viscosity handles infinite yield stress without NaN evaluation."""
     visc_diff = 1.0e21
     tau_y_inf = np.inf
     sr = 1.0e-15
 
-    eta_smooth = eta_eff(visc_diff, tau_y_inf, sr, smooth=True)
-    assert not np.isnan(eta_smooth)
-    assert eta_smooth == pytest.approx(visc_diff, rel=1.0e-12)
-
-    eta_sharp = eta_eff(visc_diff, tau_y_inf, sr, smooth=False)
+    eta_sharp = float(
+        compute_effective_viscosity(
+            eta_diff=visc_diff,
+            tau_y=tau_y_inf,
+            strain_rate=sr,
+            stress_closure_mode='local',
+        )
+    )
     assert not np.isnan(eta_sharp)
     assert eta_sharp == pytest.approx(visc_diff, rel=1.0e-12)
 
@@ -315,14 +316,14 @@ def test_numpy_jax_crossover_sweep_parity():
 
     temperatures = np.linspace(400.0, 700.0, 31)
     for t_val in temperatures:
-        eta_np = eta_diff(
+        eta_np = compute_arrhenius_viscosity(
             temperature=t_val,
             pressure=0.0,
             viscosity_solid=_ETA0,
             g_homologous=_G_HOM,
             t_sol_0=_T_SOL_0,
             dt_sol_dp=_DT_SOL_DP,
-            t_ref=_T_REF,
+            arrhenius_t_ref=_T_REF,
             r_gas=_R,
             viscosity_max_log10=40.0,
         )
@@ -334,8 +335,8 @@ def test_numpy_jax_crossover_sweep_parity():
                 g_homologous=_G_HOM,
                 t_sol_0=_T_SOL_0,
                 dt_sol_dp=_DT_SOL_DP,
-                T_ref=_T_REF,
-                R=_R,
+                arrhenius_t_ref=_T_REF,
+                r_gas=_R,
                 viscosity_max_log10=40.0,
                 xp=jnp,
             )
@@ -364,12 +365,16 @@ def test_compute_effective_viscosity_infinite_yield_stress_jax():
 
 
 def test_arrhenius_t_ref_positivity_validation():
-    """Verify non-positive arrhenius_t_ref is rejected."""
-    with pytest.raises(ValueError, match='t_ref must be positive'):
-        eta_diff(temperature=1600.0, pressure=0.0, t_ref=0.0)
+    """Verify non-positive arrhenius_t_ref is rejected and removed aliases raise TypeError."""
+    with pytest.raises(ValueError, match='arrhenius_t_ref must be positive'):
+        compute_arrhenius_viscosity(temperature=1600.0, pressure=0.0, arrhenius_t_ref=0.0)
 
-    with pytest.raises(ValueError, match='t_ref must be positive'):
-        eta_diff(temperature=1600.0, pressure=0.0, t_ref=-100.0)
+    with pytest.raises(ValueError, match='arrhenius_t_ref must be positive'):
+        compute_arrhenius_viscosity(temperature=1600.0, pressure=0.0, arrhenius_t_ref=-100.0)
+
+    for removed_alias in ('t_ref', 'T_ref', 'R'):
+        with pytest.raises(TypeError, match='unexpected keyword argument'):
+            compute_arrhenius_viscosity(1600.0, 0.0, **{removed_alias: 1600.0})
 
     with pytest.raises(ValueError):
         PhaseConfig(
@@ -383,26 +388,9 @@ def test_arrhenius_t_ref_positivity_validation():
         )
 
 
-def test_phase_config_rheological_lid_requires_positive_activation_energy():
-    """Verify PhaseConfig rejects zero activation_energy or g_homologous with rheological lid."""
-    with pytest.raises(
-        ValueError, match='requires positive g_homologous and activation_energy'
-    ):
-        PhaseConfig(
-            density=3000.0,
-            heat_capacity=1000.0,
-            melt_fraction=0.0,
-            thermal_conductivity=4.0,
-            thermal_expansivity=2e-5,
-            viscosity=1e21,
-            enabled=True,
-            lid_base_mode='rheological',
-            activation_energy=0.0,
-        )
-
-    with pytest.raises(
-        ValueError, match='requires positive g_homologous and activation_energy'
-    ):
+def test_phase_config_rheological_lid_requires_positive_g_homologous():
+    """Verify PhaseConfig rejects zero g_homologous with rheological lid."""
+    with pytest.raises(ValueError, match='g_homologous'):
         PhaseConfig(
             density=3000.0,
             heat_capacity=1000.0,
@@ -423,12 +411,12 @@ def test_water_prefactor_scalar_and_array_parity():
     t = np.array([1600.0, 1800.0])
     p = np.array([0.0, 1e9])
 
-    eta_dry = eta_diff(t, p, water_prefactor=1.0)
-    eta_wet_scalar = eta_diff(t, p, water_prefactor=0.1)
+    eta_dry = compute_arrhenius_viscosity(t, p, water_prefactor=1.0)
+    eta_wet_scalar = compute_arrhenius_viscosity(t, p, water_prefactor=0.1)
     np.testing.assert_allclose(eta_wet_scalar, 0.1 * eta_dry, rtol=1e-12)
 
     wp_arr = np.array([0.5, 0.2])
-    eta_wet_arr = eta_diff(t, p, water_prefactor=wp_arr)
+    eta_wet_arr = compute_arrhenius_viscosity(t, p, water_prefactor=wp_arr)
     np.testing.assert_allclose(eta_wet_arr, wp_arr * eta_dry, rtol=1e-12)
 
     t_j = jnp.asarray(t)
@@ -444,9 +432,9 @@ def test_water_prefactor_scalar_and_array_parity():
     np.testing.assert_allclose(np.asarray(eta_j_wet_arr), eta_wet_arr, rtol=1e-12)
 
     with pytest.raises(ValueError, match='water_prefactor must be positive'):
-        eta_diff(t, p, water_prefactor=0.0)
+        compute_arrhenius_viscosity(t, p, water_prefactor=0.0)
     with pytest.raises(ValueError, match='water_prefactor must be positive'):
-        eta_diff(t, p, water_prefactor=-0.5)
+        compute_arrhenius_viscosity(t, p, water_prefactor=-0.5)
 
 
 def test_phi_visc_single_parameter_control():
@@ -772,9 +760,6 @@ def test_zero_yield_stress_cohesion_floor_prevents_zero_viscosity(monkeypatch):
     assert eta_lid_zero == pytest.approx(expected_lid, rel=1.0e-12)
     assert eta_lid_zero > 0.0
 
-    assert eta_eff(1.0e21, 0.0, sr, smooth=False) == pytest.approx(expected_local, rel=1.0e-12)
-    assert eta_eff(1.0e21, 0.0, sr, smooth=True) == pytest.approx(expected_local, rel=1.0e-9)
-
     # Canary: disabling COHESION_FLOOR in the functions under test produces zero viscosity.
     monkeypatch.setattr(lid_mod, 'COHESION_FLOOR', 0.0)
     monkeypatch.setattr(rheo_mod, 'COHESION_FLOOR', 0.0)
@@ -935,19 +920,24 @@ def test_rheology_and_lid_branch_coverage():
     with pytest.raises(AttributeError, match='has no attribute'):
         _ = rheo_mod.nonexistent_attribute
 
-    assert compute_arrhenius_viscosity(1600.0, 0.0, t_ref=1600.0) == pytest.approx(
+    assert compute_arrhenius_viscosity(1600.0, 0.0, arrhenius_t_ref=1600.0) == pytest.approx(
         1.0e21, rel=1e-12
     )
     assert np.isnan(compute_arrhenius_viscosity(np.nan, 0.0))
     assert compute_yield_stress(-200.0e6, yield_stress_c=50.0e6, yield_stress_mu=0.6) == 0.0
-    assert eta_eff(np.inf, 50.0e6, 1.0e-15, smooth=True) == pytest.approx(2.5e22, rel=1e-12)
+    assert float(
+        compute_effective_viscosity(
+            eta_diff=np.inf,
+            tau_y=50.0e6,
+            strain_rate=1.0e-15,
+            stress_closure_mode='local',
+        )
+    ) == pytest.approx(2.5e22, rel=1e-12)
 
     invalid_cases = [
         {'t_sol_0': 0.0},
         {'t_sol_0': -100.0},
         {'dt_sol_dp': -1.0e-8},
-        {'activation_volume': -1.0e-6},
-        {'activation_volume_decay_pressure': 0.0},
         {'viscosity_max_log10': 310.0},
         {'yield_stress_c': -1.0},
         {'yield_stress_mu': -0.1},

@@ -452,9 +452,6 @@ All solid-state convection parameters are managed by `SolidRheologyParams` in Ar
 | `g_homologous` | - | `25.0` | `[phase_solid].g_homologous` | `[interior_energetics.aragog.rheology].g_homologous` |
 | `t_sol_0` | K | `1400.0` | `[phase_solid].t_sol_0` | `[interior_energetics.aragog.rheology].t_sol_0` |
 | `dt_sol_dp` | K/Pa | `2.4e-08` | `[phase_solid].dt_sol_dp` | `[interior_energetics.aragog.rheology].dt_sol_dp` |
-| `activation_energy` | J/mol | `300000.0` | `[phase_solid].activation_energy` | `[interior_energetics.aragog.rheology].activation_energy` |
-| `activation_volume` | m^3/mol | `5e-06` | `[phase_solid].activation_volume` | `[interior_energetics.aragog.rheology].activation_volume` |
-| `activation_volume_decay_pressure` | Pa | `inf` | `[phase_solid].activation_volume_decay_pressure` | `[interior_energetics.aragog.rheology].activation_volume_decay_pressure` |
 | `arrhenius_t_ref` | K | `1600.0` | `[phase_solid].arrhenius_t_ref` | `[interior_energetics.aragog.rheology].arrhenius_t_ref` |
 | `viscosity_max_log10` | log10 Pa s | `40.0` | `[phase_solid].viscosity_max_log10` | `[interior_energetics.aragog.rheology].viscosity_max_log10` |
 | `water_prefactor` | - | `1.0` | `[phase_solid].water_prefactor` | `[interior_energetics.aragog.rheology].water_prefactor` |

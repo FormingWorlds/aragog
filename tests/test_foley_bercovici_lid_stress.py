@@ -37,8 +37,6 @@ def _make_earth_reference_inputs() -> dict[str, Any]:
         g_homologous=g_hom_earth,
         t_sol_0=1600.0,
         dt_sol_dp=0.0,
-        activation_energy=300.0e3,
-        activation_volume=0.0,
         arrhenius_t_ref=1600.0,
         interior_flux_fraction=0.05,
         lid_contrast_coeff=2.2,
@@ -136,8 +134,6 @@ def test_fb2014_monotonicity_in_interior_viscosity():
             g_homologous=g_hom_earth,
             t_sol_0=1600.0,
             dt_sol_dp=0.0,
-            activation_energy=300.0e3,
-            activation_volume=0.0,
             arrhenius_t_ref=1600.0,
             interior_flux_fraction=0.05,
         )

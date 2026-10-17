@@ -57,7 +57,7 @@ def test_limit_infinite_yield_stress():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_limit_zero_activation_volume():
+def test_limit_zero_solidus_slope():
     """Verify activation enthalpy is constant in pressure when dt_sol_dp is zero."""
     g_hom = 25.0
     t_sol_0 = 1400.0
@@ -76,7 +76,7 @@ def test_limit_zero_activation_volume():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_limit_infinite_decay_pressure():
+def test_homologous_enthalpy_and_viscosity_invariants():
     """Verify homologous enthalpy H(P) = g_hom R T_sol(P) and constant-ratio viscosity invariant."""
     # 1. Linear constant-property fallback H(P) = g_hom * R_GAS * (t_sol_0 + dt_sol_dp * P).
     g_hom = 25.0
@@ -349,7 +349,7 @@ def test_limit_whole_mantle_mush_clips_lid():
 
 
 @pytest.mark.unit
-def test_jax_autodiff_infinite_decay_pressure():
+def test_jax_autodiff_linear_solidus_enthalpy_gradient():
     """Verify JAX dH/dP matches NumPy analytical derivative g_hom * R * dT_sol/dP."""
     jax = pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')

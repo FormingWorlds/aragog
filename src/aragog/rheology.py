@@ -44,9 +44,6 @@ class SolidRheologyParams:
     g_homologous: float = 25.0
     t_sol_0: float = 1400.0
     dt_sol_dp: float = 2.4e-8
-    activation_energy: float = 300e3
-    activation_volume: float = 5e-6
-    activation_volume_decay_pressure: float = float('inf')
     arrhenius_t_ref: float = 1600.0
     viscosity_max_log10: float = 40.0
     water_prefactor: float = 1.0
@@ -93,22 +90,6 @@ class SolidRheologyParams:
             )
         if not math.isfinite(self.arrhenius_t_ref) or self.arrhenius_t_ref <= 0.0:
             raise ValueError(f'arrhenius_t_ref must be positive, got {self.arrhenius_t_ref}')
-        if not math.isfinite(self.activation_energy) or self.activation_energy < 0.0:
-            raise ValueError(
-                f'activation_energy must be non-negative, got {self.activation_energy}'
-            )
-        if not math.isfinite(self.activation_volume) or self.activation_volume < 0.0:
-            raise ValueError(
-                f'activation_volume must be non-negative, got {self.activation_volume}'
-            )
-        if math.isnan(self.activation_volume_decay_pressure) or (
-            self.activation_volume_decay_pressure <= 0.0
-            and not math.isinf(self.activation_volume_decay_pressure)
-        ):
-            raise ValueError(
-                'activation_volume_decay_pressure must be positive or inf, '
-                f'got {self.activation_volume_decay_pressure}'
-            )
         if not math.isfinite(self.viscosity_max_log10) or not (
             20.0 < self.viscosity_max_log10 <= 300.0
         ):
@@ -145,15 +126,10 @@ class SolidRheologyParams:
             )
         if not math.isfinite(self.phi_visc_single) or not (0.0 < self.phi_visc_single < 1.0):
             raise ValueError(f'phi_visc_single must be in (0, 1), got {self.phi_visc_single}')
-        if (
-            self.enabled
-            and self.lid_base_mode == 'rheological'
-            and (self.g_homologous <= 0.0 or self.activation_energy <= 0.0)
-        ):
+        if self.enabled and self.lid_base_mode == 'rheological' and self.g_homologous <= 0.0:
             raise ValueError(
                 f'Invalid combination: lid_base_mode={self.lid_base_mode!r} requires positive '
-                f'g_homologous and activation_energy, got g_homologous={self.g_homologous}, '
-                f'activation_energy={self.activation_energy}'
+                f'g_homologous, got g_homologous={self.g_homologous}'
             )
 
 
@@ -338,9 +314,6 @@ def compute_arrhenius_viscosity(
     viscosity_max_log10: float = 40.0,
     water_prefactor: FloatOrArray = 1.0,
     xp: Any = np,
-    t_ref: float | None = None,
-    T_ref: float | None = None,
-    R: float | None = None,
 ) -> FloatOrArray:
     r"""Compute temperature- and pressure-dependent homologous Arrhenius viscosity.
 
@@ -380,25 +353,12 @@ def compute_arrhenius_viscosity(
         Multiplicative prefactor for hydration weakening. Must be positive.
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
-    t_ref : float, optional
-        Alias for arrhenius_t_ref.
-    T_ref : float, optional
-        Alias for arrhenius_t_ref.
-    R : float, optional
-        Alias for r_gas.
 
     Returns
     -------
     float or array-like
         Dynamic diffusion creep viscosity eta_diff [Pa s].
     """
-    if t_ref is not None:
-        arrhenius_t_ref = t_ref
-    if T_ref is not None:
-        arrhenius_t_ref = T_ref
-    if R is not None:
-        r_gas = R
-
     if arrhenius_t_ref <= 0.0:
         raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
 
@@ -440,37 +400,6 @@ def compute_arrhenius_viscosity(
     )
 
 
-def eta_diff(
-    temperature: FloatOrArray,
-    pressure: FloatOrArray,
-    viscosity_solid: float = 1.0e21,
-    g_homologous: float = 25.0,
-    solidus_temperature: FloatOrArray | None = None,
-    t_sol_0: float | None = None,
-    dt_sol_dp: float = 2.4e-8,
-    t_ref: float = 1600.0,
-    r_gas: float = R_GAS,
-    viscosity_max_log10: float = 40.0,
-    water_prefactor: FloatOrArray = 1.0,
-    xp: Any = np,
-) -> FloatOrArray:
-    r"""Compute temperature- and pressure-dependent homologous Arrhenius viscosity."""
-    return compute_arrhenius_viscosity(
-        temperature=temperature,
-        pressure=pressure,
-        viscosity_solid=viscosity_solid,
-        g_homologous=g_homologous,
-        solidus_temperature=solidus_temperature,
-        t_sol_0=t_sol_0,
-        dt_sol_dp=dt_sol_dp,
-        arrhenius_t_ref=t_ref,
-        r_gas=r_gas,
-        viscosity_max_log10=viscosity_max_log10,
-        water_prefactor=water_prefactor,
-        xp=xp,
-    )
-
-
 def compute_yield_stress(
     pressure: FloatOrArray,
     yield_stress_c: float = 50.0e6,
@@ -504,34 +433,6 @@ def compute_yield_stress(
     p = xp.asarray(pressure, dtype=float)
     tau_y = xp.maximum(0.0, xp.minimum(yield_stress_c + yield_stress_mu * p, yield_stress_max))
     return _unwrap_scalar(tau_y, xp, pressure)
-
-
-def eta_eff(
-    visc_diff: FloatOrArray,
-    tau_y: FloatOrArray,
-    strain_rate: FloatOrArray,
-    smooth: bool = True,
-    eps: float = 1.0e-30,
-    xp: Any = np,
-) -> FloatOrArray:
-    r"""Compute effective viscosity with plastic yielding cap."""
-    eta_d = xp.asarray(visc_diff, dtype=float)
-    ty = xp.maximum(xp.asarray(tau_y, dtype=float), COHESION_FLOOR)
-    sr = xp.maximum(xp.asarray(strain_rate, dtype=float), eps)
-
-    tau_y_term = ty / (2.0 * sr)
-    if smooth:
-        is_inf = xp.isinf(tau_y_term)
-        is_inf_d = xp.isinf(eta_d)
-        safe_ty_term = xp.where(is_inf, 1.0, tau_y_term)
-        safe_eta_d = xp.where(is_inf_d, 1.0, eta_d)
-        result = (safe_eta_d * safe_ty_term) / (safe_eta_d + safe_ty_term)
-        result = xp.where(is_inf_d, safe_ty_term, result)
-        result = xp.where(is_inf, eta_d, result)
-    else:
-        result = xp.minimum(eta_d, tau_y_term)
-
-    return _unwrap_scalar(result, xp, visc_diff, tau_y, strain_rate)
 
 
 def compute_strain_rate_local(
