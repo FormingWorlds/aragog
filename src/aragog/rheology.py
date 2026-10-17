@@ -403,7 +403,7 @@ def compute_arrhenius_viscosity(
     clipped_exp = xp.clip(exponent, -700.0, max_exponent)
     result = viscosity_solid * xp.exp(clipped_exp)
     result = xp.minimum(result, 10.0**viscosity_max_log10)
-    invalid = xp.isnan(t) | xp.isnan(p) | (t <= 0.0) | (wp <= 0.0)
+    invalid = xp.isnan(t) | xp.isnan(p) | xp.isnan(wp) | (t <= 0.0) | ~(wp > 0.0)
     result = xp.where(invalid, xp.nan, result)
     return _unwrap_scalar(
         result, xp, temperature, pressure, water_prefactor, solidus_temperature

@@ -180,7 +180,22 @@ def compute_stagnant_lid_state(
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)
 
-    any_input_nan = xp.any(xp.isnan(xp.concatenate([r, T, P, F_conv, F_tot, phi])))
+    nan_parts = [
+        xp.ravel(r),
+        xp.ravel(T),
+        xp.ravel(P),
+        xp.ravel(F_conv),
+        xp.ravel(F_tot),
+        xp.ravel(phi),
+        xp.ravel(xp.asarray(density, dtype=float)),
+        xp.ravel(xp.asarray(gravity, dtype=float)),
+        xp.ravel(xp.asarray(thermal_expansivity, dtype=float)),
+        xp.ravel(xp.asarray(thermal_diffusivity, dtype=float)),
+    ]
+    for opt_arr in (solidus_temperature, unyielded_velocity, viscosity_mixture):
+        if opt_arr is not None:
+            nan_parts.append(xp.ravel(xp.asarray(opt_arr, dtype=float)))
+    any_input_nan = xp.any(xp.isnan(xp.concatenate(nan_parts)))
     zero_or_nan = xp.where(any_input_nan, xp.nan, 0.0)
 
     F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
@@ -255,7 +270,6 @@ def compute_stagnant_lid_state(
         else:
             log_visc = xp.log10(xp.maximum(xp.ravel(visc_mix), 1e-30))
             log_mu_mix = xp.sum(W_tilde * log_visc)
-        log_mu_mix = xp.where(xp.isfinite(log_mu_mix), log_mu_mix, log_eta_arr)
         # Smooth log-blend from eta_arr_i when convection is inactive to mu_i_mix when active.
         eta_i = 10.0 ** (w_weight * log_mu_mix + (1.0 - w_weight) * log_eta_arr)
     else:
@@ -350,9 +364,13 @@ def compute_stagnant_lid_state(
     )
     Ra_rh = if_lid((Ra_eff * a_rh_fb) / xp.maximum(theta, 1e-6))
     v_m = xp.where(
-        Ra_rh > 0.0,
-        (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 1.0e-30) ** FB2014_VELOCITY_EXPONENT),
-        zero_or_nan,
+        xp.isnan(Ra_rh),
+        xp.nan,
+        xp.where(
+            Ra_rh > 0.0,
+            (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 1.0e-30) ** FB2014_VELOCITY_EXPONENT),
+            zero_or_nan,
+        ),
     )
 
     tau_d = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active)
@@ -520,7 +538,8 @@ def compute_effective_viscosity(
         log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
         log_solid = wl * log_eff + (1.0 - wl) * log_diff
         res = 10.0**log_solid
-        return xp.where((wl == 0.0) | (eta_eff_val == eta_d), eta_d, res)
+        blended = xp.where((wl == 0.0) | (eta_eff_val == eta_d), eta_d, res)
+        return xp.where(has_nan_lid | xp.isnan(wl), xp.nan, blended)
 
     return eta_eff_val
 
