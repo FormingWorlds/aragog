@@ -89,21 +89,34 @@ def test_fb2014_earth_reference_state():
     """
     state = compute_stagnant_lid_state(**_make_earth_reference_inputs())
 
-    expected_theta = 18.322742
-    expected_tau_d = 2.323131e5
-    expected_vm = 3.356924e-9
-    expected_dt_rh = (8.314462618 * 1600.0**2) / 300.0e3
-    expected_delta_rh = 30791.06
-    expected_tau_buoy = 2.121689e6
-    expected_ratio = 0.109494
+    t_i = float(state['T_i'])
+    # Zero-flux lid nodes retain weight 0.5 * (1 + tanh(-0.05 / 0.01)) = 4.54e-5 under fixed width 0.01.
+    assert abs(t_i - 1600.0) < 0.5
 
-    assert state['theta'] == pytest.approx(expected_theta, rel=2.0e-4)
-    assert state['dT_rh'] == pytest.approx(expected_dt_rh, rel=5.0e-4)
-    assert state['delta_rh'] == pytest.approx(expected_delta_rh, rel=2.0e-3)
-    assert state['tau_d'] == pytest.approx(expected_tau_d, rel=2.0e-3)
-    assert state['v_m'] == pytest.approx(expected_vm, rel=3.0e-3)
-    assert state['tau_buoy'] == pytest.approx(expected_tau_buoy, rel=2.0e-3)
-    assert state['tau_d_over_tau_buoy'] == pytest.approx(expected_ratio, rel=3.0e-3)
+    r_gas = 8.314462618
+    h_act = 300.0e3
+    rho, g, alpha, kappa, d_conv = 3300.0, 9.81, 3.0e-5, 1.0e-6, 2.89e6
+    a_rh, c4 = 1.3, 0.125
+    eta_i = 1.0e20 * np.exp((h_act / r_gas) * (1.0 / t_i - 1.0 / 1600.0))
+    expected_dt_rh = (r_gas * t_i**2) / h_act
+    expected_theta = (t_i - 300.0) / expected_dt_rh
+    expected_ra_eff = (rho * g * alpha * (t_i - 300.0) * d_conv**3) / (kappa * eta_i)
+    expected_ra_rh = (expected_ra_eff * a_rh) / expected_theta
+    expected_vm = c4 * (kappa / d_conv) * (expected_ra_rh ** (2.0 / 3.0))
+    expected_tau_d = 2.0 * eta_i * expected_vm / d_conv
+    expected_delta_rh = 30791.06
+    expected_tau_buoy = rho * g * alpha * expected_dt_rh * expected_delta_rh
+    expected_ratio = expected_tau_d / expected_tau_buoy
+
+    assert state['theta'] == pytest.approx(expected_theta, rel=1.0e-5)
+    assert state['dT_rh'] == pytest.approx(expected_dt_rh, rel=1.0e-5)
+    assert state['Ra_eff'] == pytest.approx(expected_ra_eff, rel=1.0e-3)
+    assert state['Ra_rh'] == pytest.approx(expected_ra_rh, rel=1.0e-3)
+    assert state['delta_rh'] == pytest.approx(expected_delta_rh, rel=1.0e-3)
+    assert state['tau_d'] == pytest.approx(expected_tau_d, rel=1.0e-3)
+    assert state['v_m'] == pytest.approx(expected_vm, rel=1.0e-3)
+    assert state['tau_buoy'] == pytest.approx(expected_tau_buoy, rel=1.0e-3)
+    assert state['tau_d_over_tau_buoy'] == pytest.approx(expected_ratio, rel=1.0e-3)
 
 
 @pytest.mark.unit

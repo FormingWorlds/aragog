@@ -462,7 +462,21 @@ def test_jax_jacrev_closure_differentiability():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_stagnant_lid_checkpoint_profile_parity():
-    """Verify stagnant lid state on 175 kyr checkpoint profile matches between NumPy and JAX."""
+    """Verify stagnant lid state on 175 kyr checkpoint profile matches between NumPy and JAX.
+
+    On ``checkpoint_profile_175kyr.npz``, the surface node has ``T_basic[-1] = 452.559`` K
+    and ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Under the fixed-width (0.01)
+    convective selector:
+    - At ``interior_flux_fraction = 0.05``, ``f[-1] > 0.05`` classifies the 452.559 K
+      surface node as convecting interior, giving ``T_i = 454.923`` K,
+      ``eta_i = 1.000000e+40`` Pa s, ``d_lid = 18186.13`` m, ``max(w_lid) = 0.494596``,
+      ``tau_d = 1.770575e+11`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.
+    - At ``interior_flux_fraction = 0.10`` (above ``f[-1] = 0.08007493``), the surface
+      node is classified as conductive lid, giving ``T_i = 1405.285`` K,
+      ``eta_i = 3.772671e+22`` Pa s, ``d_lid = 41509.80`` m, ``max(w_lid) = 0.847313``,
+      ``tau_d = 1.230400e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa (sub-yield under
+      Byerlee and yielding when tested against ``tau_y_lid = 0.5e6`` Pa < ``tau_d``).
+    """
     ckpt_path = os.path.join(
         os.path.dirname(__file__), 'reference', 'checkpoint_profile_175kyr.npz'
     )
