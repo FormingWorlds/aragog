@@ -116,9 +116,9 @@ $$
 w_{\text{conv}, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - f_\text{conv,min}}{0.01} \right) \right)
 $$
 
-so that a zero-flux conductive node ($f_k = 0$) carries a weight of at most $\frac{1}{2}(1 - \tanh(5)) \approx 4.5 \times 10^{-5}$. From $w_{\text{conv}, k}$, `compute_stagnant_lid_state` evaluates the convective activity indicator $w_\text{active} = \frac{1}{2}(1 + \tanh((\sum_k w_{\text{conv}, k} - 1.0) / 0.5))$ and the boundary sum $W_\text{sum}$ (with $w_\text{weight} = \tanh(W_\text{sum} / 10^{-6})$).
+so that a zero-flux conductive node ($f_k = 0$) carries a weight of at most $\frac{1}{2}(1 - \tanh(5)) \approx 4.5 \times 10^{-5}$. From $w_{\text{conv}, k}$, `compute_stagnant_lid_state` evaluates the convective activity indicator $w_\text{active} = \frac{1}{2}(1 + \tanh((\sum_k w_{\text{conv}, k} - 1.0) / 0.5))$ and the shallowest-crossing boundary sum $W_\text{sum} = \sum_k w_{\text{conv}, k} \prod_{j < k} (1 - w_{\text{conv}, j})$ (with $w_\text{weight} = \tanh(W_\text{sum} / 10^{-6})$).
 
-To evaluate the interior temperature $T_i$, pressure $P_{T_i}$, radius $r_i$, and interior viscosity $\mu_i$ where convection dominates ($F_\text{conv} \ge 0.9 F_\text{tot}$) rather than inside the rheological sublayer (where $f = 0.05$ sits $2.21 \Delta T_\text{rh}$ below $T_i$ on a classic $\mathrm{erf}$ boundary-layer profile, whereas $f = 0.9$ sits at $z / \delta = 1.517$ where $T_i - T = 0.416 \Delta T_\text{rh}$), `compute_stagnant_lid_state` forms the interior selector on non-boundary nodes ($1 < k < N$):
+To evaluate the interior temperature $T_i$, pressure $P_{T_i}$, radius $r_i$, and interior viscosity $\mu_i$ where convection dominates ($F_\text{conv} \ge 0.9 F_\text{tot}$), `compute_stagnant_lid_state` forms the interior selector on non-boundary nodes ($1 < k < N$). For an error-function boundary-layer profile $T(z) = 300 + 1300\,\mathrm{erf}(z / \delta)$ with a $1300\text{ K}$ surface-to-interior temperature contrast and $\Delta T_\text{rh} = 70.95\text{ K}$ ($H = 300\text{ kJ mol}^{-1}$ at $1600\text{ K}$), the onset threshold $f = 0.05$ ($z / \delta = 0.2265$, $T = 626.6\text{ K}$) sits $13.7\,\Delta T_\text{rh}$ below the interior, whereas $f = 0.9$ ($z / \delta = 1.517$, $T = 1558.6\text{ K}$) sits $0.584\,\Delta T_\text{rh}$ below the interior:
 
 $$
 w_{T_i, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - 0.9}{0.02} \right) \right) I_{1 < k < N}
@@ -129,6 +129,8 @@ The shallowest convection-dominated node from the surface is isolated by the cum
 $$
 T_i = \sum_{k=1}^N \tilde{W}_k T_k, \quad P_{T_i} = \sum_{k=1}^N \tilde{W}_k P_k
 $$
+
+Because the selector places $T_i$ at the node under the lid, its accuracy is bounded by the radial mesh resolution across the thermal boundary layer: when the lid is one cell thick (as in the 175 kyr profile, where $T_i = 1423.0\text{ K}$ against $1736.9\text{ K}$ one node deeper), $T_i$ lies in the rheological sublayer.
 
 When an optional mixture viscosity profile `viscosity_mixture` ($\eta_\text{mix}$) is supplied to `compute_stagnant_lid_state`, the convecting interior viscosity $\mu_i$ is evaluated using the smooth activity weight $w_\text{weight}$ in logarithmic space:
 

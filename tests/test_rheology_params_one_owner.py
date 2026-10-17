@@ -342,17 +342,25 @@ def test_merge_precedence_explicit_default_value():
     assert p_cfg.yield_stress_c == pytest.approx(40.0e6)
 
 
-def _collect_nav_strings(node) -> set[str]:
-    """Recursively collect string leaf values from a parsed mkdocs.yml nav tree."""
+def _collect_nav_strings(mkdocs_text: str) -> set[str]:
+    """Collect leaf target strings from the top-level nav block of mkdocs.yml."""
     out: set[str] = set()
-    if isinstance(node, str):
-        out.add(node)
-    elif isinstance(node, list):
-        for item in node:
-            out.update(_collect_nav_strings(item))
-    elif isinstance(node, dict):
-        for val in node.values():
-            out.update(_collect_nav_strings(val))
+    in_nav = False
+    for raw_line in mkdocs_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        if not raw_line[0].isspace():
+            if stripped == 'nav:':
+                in_nav = True
+                continue
+            if in_nav:
+                break
+        elif in_nav and ': ' in stripped:
+            _, rhs = stripped.split(': ', 1)
+            val = rhs.strip().strip("'\"")
+            if val:
+                out.add(val)
     return out
 
 
@@ -362,12 +370,9 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     from pathlib import Path
 
     monkeypatch.setitem(sys.modules, 'yaml', None)
-    import yaml
 
     repo_root = Path(__file__).resolve().parent.parent
-    with (repo_root / 'mkdocs.yml').open(encoding='utf-8') as fh:
-        mkdocs_data = yaml.load(fh, Loader=yaml.BaseLoader)
-    nav_leaves = _collect_nav_strings(mkdocs_data.get('nav', []))
+    nav_leaves = _collect_nav_strings((repo_root / 'mkdocs.yml').read_text(encoding='utf-8'))
     for nav_path in (
         'Explanations/solid_state_convection.md',
         'Reference/api/aragog.rheology.md',
