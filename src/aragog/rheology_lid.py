@@ -49,13 +49,11 @@ SOLIDUS_MELT_FRACTION_THRESHOLD: float = 0.01
 SOLIDUS_MELT_FRACTION_WIDTH: float = 0.002
 
 
-def _boundary_weights(
-    w: Any, xp: Any, *, fallback_bottom: bool = False
-) -> tuple[Any, Any, Any]:
+def _boundary_weights(w: Any, xp: Any, *, fallback: Any | None = None) -> tuple[Any, Any, Any]:
     """Smooth weights of the shallowest crossing of ``w``, scanned from the surface down.
 
-    Returns ``(W_tilde, W_sum, w_weight)``; ``W_tilde`` relaxes to uniform weights (or
-    to the bottom node at index 0 when ``fallback_bottom=True``) when ``W_sum`` vanishes.
+    Returns ``(W_tilde, W_sum, w_weight)``; ``W_tilde`` relaxes to ``fallback`` (or
+    to the bottom node at index 0 when ``fallback`` is None) when ``W_sum`` vanishes.
     """
     w_surf = w[::-1]
     omw = xp.concatenate([xp.ones(1, dtype=w.dtype), 1.0 - w_surf[:-1]])
@@ -63,9 +61,7 @@ def _boundary_weights(
     W_sum = xp.sum(W)
     w_weight = xp.tanh(W_sum / 1.0e-6)
     n = w.shape[0]
-    W_fallback = (
-        xp.where(xp.arange(n) == 0, 1.0, 0.0) if fallback_bottom else xp.full(n, 1.0 / n)
-    )
+    W_fallback = xp.where(xp.arange(n) == 0, 1.0, 0.0) if fallback is None else fallback
     W_tilde = w_weight * (W / xp.maximum(W_sum, 1e-12)) + (1.0 - w_weight) * W_fallback
     return W_tilde, W_sum, w_weight
 
@@ -213,11 +209,20 @@ def compute_stagnant_lid_state(
 
     w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / 0.01)) + zero_or_nan
     _, W_sum, w_weight = _boundary_weights(w_conv, xp)
+    W_conv_tilde = _boundary_weights(
+        xp.where(xp.max(f) >= params.interior_flux_fraction, w_conv, 0.0) + zero_or_nan,
+        xp,
+    )[0]
 
     idx = xp.arange(r.shape[0])
     interior_node_mask = xp.where((idx > 0) & (idx < r.shape[0] - 1), 1.0, 0.0)
-    w_Ti = 0.5 * (1.0 + xp.tanh((f - 0.9) / 0.02)) * interior_node_mask + zero_or_nan
-    W_tilde = _boundary_weights(w_Ti, xp)[0]
+    f_int_max = xp.max(f * interior_node_mask)
+    f_Ti_thresh = xp.where(f_int_max >= params.interior_flux_fraction, 0.9 * f_int_max, 0.9)
+    w_Ti = (
+        0.5 * (1.0 + xp.tanh((f - f_Ti_thresh) / 0.02)) * w_conv * interior_node_mask
+        + zero_or_nan
+    )
+    W_tilde = _boundary_weights(w_Ti, xp, fallback=W_conv_tilde)[0]
 
     T_i = xp.sum(W_tilde * T)
     P_T_i = xp.sum(W_tilde * P)
@@ -309,7 +314,7 @@ def compute_stagnant_lid_state(
     w_interior = xp.maximum(xp.maximum(w_hot_iso, w_hot_sol), w_hot_phi)
     w_lid = (1.0 - w_interior) * w_active
 
-    W_base_tilde = _boundary_weights(w_interior, xp, fallback_bottom=True)[0]
+    W_base_tilde = _boundary_weights(w_interior, xp)[0]
 
     r_lid_base = xp.sum(W_base_tilde * r)
     P_lid_base = xp.sum(W_base_tilde * P)

@@ -118,13 +118,13 @@ $$
 
 so that a zero-flux conductive node ($f_k = 0$) carries a weight of at most $\frac{1}{2}(1 - \tanh(5)) \approx 4.5 \times 10^{-5}$. From $w_{\text{conv}, k}$, `compute_stagnant_lid_state` evaluates the convective activity indicator $w_\text{active} = \frac{1}{2}(1 + \tanh((\sum_k w_{\text{conv}, k} - 1.0) / 0.5))$ and the shallowest-crossing boundary sum $W_\text{sum} = \sum_k w_{\text{conv}, k} \prod_{j < k} (1 - w_{\text{conv}, j})$ (with $w_\text{weight} = \tanh(W_\text{sum} / 10^{-6})$).
 
-To evaluate the interior temperature $T_i$, pressure $P_{T_i}$, radius $r_i$, and interior viscosity $\mu_i$ where convection dominates ($F_\text{conv} \ge 0.9 F_\text{tot}$), `compute_stagnant_lid_state` forms the interior selector on non-boundary nodes ($1 < k < N$). For an error-function boundary-layer profile $T(z) = 300 + 1300\,\mathrm{erf}(z / \delta)$ with a $1300\text{ K}$ surface-to-interior temperature contrast and $\Delta T_\text{rh} = 70.95\text{ K}$ ($H = 300\text{ kJ mol}^{-1}$ at $1600\text{ K}$), the onset threshold $f = 0.05$ ($z / \delta = 0.2265$, $T = 626.6\text{ K}$) sits $13.7\,\Delta T_\text{rh}$ below the interior, whereas $f = 0.9$ ($z / \delta = 1.517$, $T = 1558.6\text{ K}$) sits $0.584\,\Delta T_\text{rh}$ below the interior:
+To evaluate the interior temperature $T_i$, pressure $P_{T_i}$, radius $r_i$, and interior viscosity $\mu_i$ where convection dominates relative to the interior peak $f_\text{int,max} = \max_{1 < k < N} f_k$ (threshold $f_{T_i} = 0.9 f_\text{int,max}$ when $f_\text{int,max} \ge f_\text{conv,min}$, else $0.9$), `compute_stagnant_lid_state` forms the interior selector on non-boundary nodes ($1 < k < N$). For an error-function boundary-layer profile $T(z) = 300 + 1300\,\mathrm{erf}(z / \delta)$ with a $1300\text{ K}$ surface-to-interior temperature contrast and $\Delta T_\text{rh} = 70.95\text{ K}$ ($H = 300\text{ kJ mol}^{-1}$ at $1600\text{ K}$), the onset threshold $f = 0.05$ ($z / \delta = 0.2265$, $T = 626.6\text{ K}$) sits $13.7\,\Delta T_\text{rh}$ below the interior, whereas $f = 0.9$ ($z / \delta = 1.517$, $T = 1558.6\text{ K}$) sits $0.584\,\Delta T_\text{rh}$ below the interior:
 
 $$
-w_{T_i, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - 0.9}{0.02} \right) \right) I_{1 < k < N}
+w_{T_i, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - f_{T_i}}{0.02} \right) \right) w_{\text{conv}, k} I_{1 < k < N}
 $$
 
-The shallowest convection-dominated node from the surface is isolated by the cumulative product indicator $W_k = w_{T_i, k} \prod_{j < k} (1 - w_{T_i, j})$ and normalised to $\tilde{W}_k$ (falling back to uniform weights $W_{\text{unif}, k} = 1 / N$ when $\sum_m W_m \to 0$), from which interior state variables are evaluated smoothly:
+The shallowest convection-dominated node from the surface is isolated by the cumulative product indicator $W_k = w_{T_i, k} \prod_{j < k} (1 - w_{T_i, j})$ and normalised to $\tilde{W}_k$ (falling back when $\sum_m W_m \to 0$ to the shallowest node with active convection from $w_\text{conv}$, or to the bottom node $k = 1$ when no node convects), from which interior state variables are evaluated smoothly:
 
 $$
 T_i = \sum_{k=1}^N \tilde{W}_k T_k, \quad P_{T_i} = \sum_{k=1}^N \tilde{W}_k P_k
