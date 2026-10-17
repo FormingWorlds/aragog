@@ -805,10 +805,10 @@ def test_mantle_mass_split_at_partial_melt_discriminates_solid_coefficient(share
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize('D', [0.0, 3.0e-6])
+@pytest.mark.parametrize('D', [1.0e-6, 3.0e-6])
 def test_entropy_solver_passes_convective_threshold_to_state(shared_eos, D):
-    """``energy.convective_threshold`` reaches the numpy ``EntropyState``, also
-    for 0.0 and a value away from the 1e-6 default."""
+    """``energy.convective_threshold`` reaches the numpy ``EntropyState`` for two
+    values away from the 0.0 default."""
     import dataclasses
 
     from aragog.solver.entropy_solver import EntropySolver

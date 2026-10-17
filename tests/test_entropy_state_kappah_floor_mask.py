@@ -358,7 +358,11 @@ def _build_state(eos, *, kappah_floor: float, convective_threshold=_D):
         convection=True,
         eddy_diffusivity_thermal=1.0,
         kappah_floor=kappah_floor,
-        convective_threshold=convective_threshold,
+        **(
+            {}
+            if convective_threshold is None
+            else {'convective_threshold': convective_threshold}
+        ),
     )
     return state, mesh
 
@@ -488,11 +492,12 @@ def test_numpy_zero_threshold_is_the_sign_switch():
 
 @needs_eos
 @pytest.mark.parametrize('phi', [0.0, _PHI_MUSH, 1.0])
-@pytest.mark.parametrize('D', [_D, 3.0e-6])
+@pytest.mark.parametrize('D', [None, _D, 3.0e-6])
 def test_numpy_matches_jax_across_threshold(D, phi):
     """The numpy and JAX thermal and chemical eddy diffusivities agree on every
     node, from dS/dr = -1e-4 through 0 and +0.5 D to +1e-4, in a solid, a mush and
-    a liquid, except for the residual numpy kappa_c at 0 <= dS/dr < 1e-22."""
+    a liquid, at the default D (None: no argument, 0) and two D > 0, except for the
+    residual numpy drive at 0 <= dS/dr < 1e-22."""
     state, mesh, dSdr = _update_with_gradients(
         _DSDR_D, phi=phi, kappah_floor=_KAPPAH_FLOOR, convective_threshold=D
     )
@@ -521,14 +526,17 @@ def test_numpy_matches_jax_across_threshold(D, phi):
         phi_rheo=float(pb._phi_rheo),
         phi_width=float(pb._phi_width),
         eddy_diff_thermal=1.0,
-        convective_threshold=D,
+        **({} if D is None else {'convective_threshold': D}),
     )
+    assert state._convective_threshold == params.convective_threshold == (D or 0.0)
     kh_jax, kc_jax = compute_mlt(jnp.asarray(dSdr), props, jmesh, params)
-    np.testing.assert_allclose(state.eddy_diffusivity, np.asarray(kh_jax), rtol=1e-10, atol=0)
     # At 0 <= dS/dr < 1e-22 the numpy drive keeps up to 5e-31 (JAX: 0), a kappa_c up to ~1e-7
     # in a liquid here; its size depends on the EOS tables and the mixing length.
     res = (dSdr >= 0.0) & (dSdr < 1.0e-22)
-    kc_jax = np.asarray(kc_jax)
+    kh_np, kh_jax, kc_jax = state.eddy_diffusivity, np.asarray(kh_jax), np.asarray(kc_jax)
+    exact = ~res if D is None else np.ones_like(res)  # D > 0 floors the residual nodes
+    np.testing.assert_allclose(kh_np[exact], kh_jax[exact], rtol=1e-10, atol=0)
+    assert np.all(np.abs(kh_np[res] - kh_jax[res]) < 1.0e-6)
     np.testing.assert_allclose(state._kappac[~res], kc_jax[~res], rtol=1e-10, atol=0)
     assert np.all(kc_jax[res] == 0.0) and np.all(state._kappac[res] < 1.0e-6)
 
