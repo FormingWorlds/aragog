@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import numbers
 
 import attrs
@@ -12,15 +13,20 @@ import numpy.typing as npt
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 
+# Margin of the EOS floor above the entropy table minimum [J/kg/K]; single-sourced here.
+EOS_FLOOR_MARGIN_DEFAULT: float = 100.0
+
+
 def check_eos_floor_margin(value: float | None) -> None:
-    """Raise ``ValueError`` unless ``value`` is ``None`` or a finite real scalar."""
+    """Raise ``ValueError`` unless ``value`` is ``None`` or a real scalar with a finite float."""
     if value is None:
         return
-    if (
-        isinstance(value, (bool, np.bool_))
-        or not isinstance(value, numbers.Real)
-        or not np.isfinite(value)
-    ):
+    try:
+        ok = not isinstance(value, bool) and isinstance(value, numbers.Real)
+        ok = ok and math.isfinite(float(value))
+    except OverflowError:
+        ok = False
+    if not ok:
         raise ValueError(f'eos_floor_margin must be None or a finite number, got {value!r}')
 
 
@@ -97,14 +103,14 @@ class EnergyConfig:
         variable; same role as the temperature cap without an EOS lookup
         in the root function. ``None`` (the default) disables the cap.
     eos_floor_margin : float or None
-        Margin [J/kg/K] above the minimum entropy of the EOS tables. A CVODE
-        root (scipy: a terminal event) ends the call when the top basic-node
-        entropy, which sets the surface temperature, or a cell entropy
-        reaches the minimum plus this margin, or halfway to the minimum
-        when the call starts closer; the call then returns a shorter step.
-        A call that starts at or below the minimum does not advance and
-        returns status 1. Default 100 (about 1.5 entropy cells of the solid
-        tables of the coupled runs it was set on); ``None`` or a
+        Margin m [J/kg/K] above the minimum entropy S_min of the EOS
+        tables. A CVODE root (scipy: a terminal event) ends the call when
+        the smaller of the top basic-node entropy, which sets the surface
+        temperature, and the smallest cell entropy reaches S_min + m, or
+        S_min + m/2 when the call starts below S_min + m; the call then
+        returns a shorter step. A call that starts at or below S_min + m/2
+        does not advance and returns status 1, so a drain that does not
+        stop ends after two floor stops. Default 100; ``None`` or a
         non-positive value disables it, and a bool, NaN, infinity or
         non-number is refused.
     phase_boundary_entropy_margin : float
@@ -157,7 +163,8 @@ class EnergyConfig:
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
     eos_floor_margin: float | None = attrs.field(
-        default=100.0, validator=lambda _inst, _attr, value: check_eos_floor_margin(value)
+        default=EOS_FLOOR_MARGIN_DEFAULT,
+        validator=lambda _inst, _attr, value: check_eos_floor_margin(value),
     )
     phase_boundary_entropy_margin: float = 200.0
     phase_boundary_cap: str | None = attrs.field(

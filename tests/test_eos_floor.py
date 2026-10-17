@@ -15,9 +15,8 @@ from aragog.solver.entropy_solver import (
     _PhaseBoundarySegmentRoot,
     _PhiCapRootFunction,
 )
-from tests.conftest import entropy_eos_copy
 
-from .conftest import EOS_DIR, needs_eos
+from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_S
 
 pytestmark = [pytest.mark.smoke, needs_eos]
@@ -187,8 +186,16 @@ def test_segment_root_names_the_floor_as_the_cap():
     )
     assert roots.names[0] == 'cap'
     assert roots.fired(0.0, np.array([250.0, 200.0])) == 'cap'
+    bad = _PhiCapRootFunction(
+        eos=None, P_stag=np.zeros(2), volume=np.ones(2), n_stag=2, phi0_global=0.0, cap=0.0,
+        state_scale=np.ones(2), floor_weights=np.ones(3), floor_level=200.0, floor_margin=100.0,
+    )  # fmt: skip
+    roots = _PhaseBoundarySegmentRoot(
+        np.full(3, 6000.0), np.full(3, 4000.0), y0, 10.0, None, np.ones(2), 2, cap=bad
+    )
     with warnings.catch_warnings():
         warnings.simplefilter(
             'error'
         )  # a floor-only cap whose evaluate raised scales by the margin
-        assert roots.fired(0.0, None) in roots.names
+        assert roots.fired(0.0, np.array([5000.0, 5000.0])) in roots.names
+    assert bad.binding_cap is None

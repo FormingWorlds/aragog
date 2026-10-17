@@ -705,12 +705,7 @@ def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
 
     monkeypatch.setattr(s, '_solve_cvode_segments', wrapped)
     s.solve()
-    assert first[0].inside and first[0].names == [
-        'cap',
-        'stiff',
-        'entry',
-        'progress',
-    ]  # EOS floor
+    assert first[0].inside and first[0].names == ['cap', 'stiff', 'entry', 'progress']
     assert not first[0].watch[5] and first[0].watch.sum() == s._n_stag
 
 
