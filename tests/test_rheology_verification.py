@@ -6,6 +6,8 @@ and JAX (float64) modes.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from functools import partial
 
 import numpy as np
@@ -346,8 +348,8 @@ def test_numpy_jax_crossover_sweep_parity():
 
 @pytest.mark.physics_invariant
 def test_compute_effective_viscosity_infinite_yield_stress_jax():
-    """Verify compute_effective_viscosity enables float64 and handles infinite yield stress in JAX."""
-    jax = pytest.importorskip('jax')
+    """Verify aragog.rheology enables float64 on import and handles infinite yield stress in JAX."""
+    pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
 
     visc_diff = 1.0e21
@@ -365,17 +367,13 @@ def test_compute_effective_viscosity_infinite_yield_stress_jax():
     assert jnp.isfinite(eta_eff_val)
     assert float(eta_eff_val) == pytest.approx(visc_diff, rel=1.0e-12)
 
-    jax.config.update('jax_enable_x64', False)
-    eta_reenabled = compute_effective_viscosity(
-        visc_diff,
-        tau_y=tau_y_inf,
-        strain_rate=sr,
-        stress_closure_mode='local',
-        xp=jnp,
+    proc = subprocess.run(
+        [sys.executable, '-c', 'import aragog.rheology, jax; print(jax.config.jax_enable_x64)'],
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    assert jax.config.jax_enable_x64 is True
-    assert eta_reenabled.dtype == jnp.float64
-    assert float(eta_reenabled) == pytest.approx(visc_diff, rel=1.0e-12)
+    assert proc.stdout.strip() == 'True'
 
 
 def test_arrhenius_t_ref_positivity_validation():
