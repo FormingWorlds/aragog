@@ -356,10 +356,12 @@ def _collect_nav_strings(node) -> set[str]:
     return out
 
 
-def test_rheology_docs_and_mkdocs_nav_registration():
+def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     """Verify docs page parameter table, API stubs, and mkdocs.yml nav entries match this tip."""
+    import sys
     from pathlib import Path
 
+    monkeypatch.setitem(sys.modules, 'yaml', None)
     import yaml
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -398,10 +400,20 @@ def test_rheology_docs_and_mkdocs_nav_registration():
         'not yet connected',
         'pending calibration',
         'clips the effective lid base temperature',
+        'rather than inside the rheological sublayer',
+        '2.21 \\Delta T_\\text{rh}',
+        '0.416 \\Delta T_\\text{rh}',
     ):
         assert banned not in doc_text
     assert '1.55\\text{ MPa}' in doc_text
     assert '0.150' in doc_text
+    assert '300 + 1300\\,\\mathrm{erf}(z / \\delta)' in doc_text
+    assert '1300\\text{ K}' in doc_text
+    assert '13.7\\,\\Delta T_\\text{rh}' in doc_text
+    assert '0.584\\,\\Delta T_\\text{rh}' in doc_text
+    assert '70.95\\text{ K}' in doc_text
+    assert '1423.0\\text{ K}' in doc_text
+    assert '1736.9\\text{ K}' in doc_text
 
     rheo_api = (repo_root / 'docs' / 'Reference' / 'api' / 'aragog.rheology.md').read_text(
         encoding='utf-8'
