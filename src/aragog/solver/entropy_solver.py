@@ -3828,21 +3828,35 @@ class EntropySolver:
                         exc,
                     )
 
-            # EOS floor: a root ends the call before the top basic node or a cell leaves the
-            # entropy table, at S_min + m, or at S_min + m/2 for a start below S_min + m; a start
-            # at or below S_min + m/2 does not advance (1e-6 m covers the root location error).
+            # EOS floor: a root ends the call at S_min + m, or S_min + m/2 for a start below
+            # S_min + m; a start at or below S_min + m/2 that is not draining gets half its
+            # distance, a draining one does not advance (1e-6 m covers the root location error).
             floor_margin = _resolve_step_cap(
                 getattr(self.parameters.energy, 'eos_floor_margin', EOS_FLOOR_MARGIN_DEFAULT)
             )
             S_tab = float(self.entropy_eos.S_min)
             if floor_margin > 0.0 and not gradient_mode:
+                if floor_margin >= float(self.entropy_eos.S_max) - S_tab:
+                    raise ValueError(
+                        f'eos_floor_margin {floor_margin!r} J/kg/K must be below the entropy '
+                        f'span of the EOS tables, {float(self.entropy_eos.S_max) - S_tab!r}'
+                    )
                 w = np.asarray(self.evaluator.mesh._quantity_transform)[-1]
-                s0 = _floor_entropy(w, S_arr_stag)
+                s0, tol = _floor_entropy(w, S_arr_stag), 1.0e-6 * floor_margin
                 levels = (S_tab + floor_margin, S_tab + 0.5 * floor_margin)
-                level = next((x for x in levels if s0 > x + 1.0e-6 * floor_margin), None)
+                level = next((x for x in levels if s0 > x + tol), None)
+                if level is None and s0 > S_tab + 2.0 * tol:
+                    dS = np.asarray(self._dSdt_single(start_time, self._S0)).ravel()[
+                        : self._n_stag
+                    ]
+                    top = np.dot(w, S_arr_stag) <= S_arr_stag.min()
+                    rate = np.dot(w, dS) if top else dS[np.argmin(S_arr_stag)]
+                    level = 0.5 * (s0 + S_tab) if rate >= 0.0 else None
                 floor = dict(floor_weights=w, floor_level=level, floor_margin=floor_margin)
                 if level is None:
-                    floor, floor_refused, end_time = None, True, start_time
+                    floor = None
+                if level is None and np.isfinite(s0):
+                    floor_refused, end_time = True, start_time
                     logger.warning(
                         'EOS floor: entropy %.1f J/kg/K at the call start is at most %.1f J/kg/K '
                         'above the table minimum %.1f J/kg/K; the call does not advance',
@@ -4193,13 +4207,16 @@ class EntropySolver:
                         float(getattr(sol, 'cap_phi0', 0.0)),
                     )
                 else:
+                    floor_fired = cap_label == 'eos_floor'
                     logger.log(
-                        logging.WARNING if cap_label == 'eos_floor' else logging.INFO,
-                        '%s cap: CVODE rootfn fired at t=%.3e yr after %d evals; cap=%.3g',
+                        logging.WARNING if floor_fired else logging.INFO,
+                        '%s cap: CVODE rootfn fired at t=%.3e yr after %d evals; %s',
                         cap_name,
                         t_root_phys,
                         int(getattr(sol, 'cap_evals', 0)),
-                        float(getattr(sol, 'cap_value', 0.0)),
+                        f'level={sol.cap_value:.6g}'
+                        if floor_fired
+                        else f'cap={sol.cap_value:.3g}',
                     )
         elif (
             getattr(sol, 't_events', None) is not None
@@ -4216,7 +4233,8 @@ class EntropySolver:
                 )
             else:
                 cap_name = cap_display_names.get(event_label, 'ΔΦ_global')
-                logger.info(
+                logger.log(
+                    logging.WARNING if event_label == 'eos_floor' else logging.INFO,
                     '%s cap: scipy event fired at t=%.3e yr (terminal=True)',
                     cap_name,
                     t_event_phys,

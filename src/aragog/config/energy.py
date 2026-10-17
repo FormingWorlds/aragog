@@ -109,10 +109,12 @@ class EnergyConfig:
         temperature, and the smallest cell entropy reaches S_min + m, or
         S_min + m/2 when the call starts below S_min + m; the call then
         returns a shorter step. A call that starts at or below S_min + m/2
-        does not advance and returns status 1, so a drain that does not
-        stop ends after two floor stops. Default 100; ``None`` or a
-        non-positive value disables it, and a bool, NaN, infinity or
-        non-number is refused.
+        stops at half its distance to S_min when that entropy is not
+        falling, and otherwise does not advance and returns status 1, so a
+        drain that does not stop ends after two floor stops. Default 100,
+        below the entropy span of the tables; ``None`` or a non-positive
+        value disables it, and a bool, NaN, infinity or non-number is
+        refused.
     phase_boundary_entropy_margin : float
         Proximity band [J/kg/K] within which a staggered cell counts as
         "near" a phase boundary, tightening the integrator ``max_step`` so
