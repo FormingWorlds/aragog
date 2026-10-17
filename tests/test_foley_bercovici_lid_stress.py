@@ -206,3 +206,65 @@ def test_fb2014_mutant_missing_factor_two_fails(monkeypatch):
     assert rel_error == pytest.approx(0.50, abs=1.0e-3), (
         f'Mutant missing factor 2 must differ by exactly 50%, got {rel_error:.2%}'
     )
+
+
+@pytest.mark.unit
+def test_interior_selection_first_lid_node_and_resolution_invariance():
+    """Verify fixed-width f selector keeps zero-flux lid nodes out of T_i and converges across N."""
+    kwargs = _make_earth_reference_inputs()
+    g_hom_earth = 300.0e3 / (8.31446261815324 * 1600.0)
+    kwargs['params'] = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        g_homologous=g_hom_earth,
+        t_sol_0=1600.0,
+        dt_sol_dp=0.0,
+        arrhenius_t_ref=1600.0,
+        interior_flux_fraction=0.05,
+        lid_contrast_coeff=2.2,
+    )
+    st_base = compute_stagnant_lid_state(**kwargs)
+    assert abs(float(st_base['T_i']) - 1600.0) < 1.0
+
+    # Setting the first zero-flux lid node (index -8) to 1500 K moves T_i by < 1 K:
+    t_perturbed = kwargs['temperature'].copy()
+    t_perturbed[-8] = 1500.0
+    st_perturbed = compute_stagnant_lid_state(**{**kwargs, 'temperature': t_perturbed})
+    assert abs(float(st_perturbed['T_i']) - float(st_base['T_i'])) < 1.0
+    assert abs(float(st_perturbed['T_i']) - 1600.0) < 1.0
+
+    # Resolution invariance from N = 200 to N = 400 on the same physical profile (< 2 % change):
+    def _eval_at_n(n_nodes: int) -> dict[str, Any]:
+        r_cmb, r_surf = 3480.0e3, 6370.0e3
+        d_lid_true = 413.0e3
+        r_lid = r_surf - d_lid_true
+        r = np.linspace(r_cmb, r_surf, n_nodes)
+        p = np.linspace(135.0e9, 1.0e5, n_nodes)
+        t = np.where(r <= r_lid, 1600.0, 1600.0 - 1300.0 * (r - r_lid) / d_lid_true)
+        f_conv = np.where(r <= r_lid, 100.0, 0.0)
+        f_tot = np.full(n_nodes, 100.0)
+        phi = np.zeros(n_nodes)
+        return compute_stagnant_lid_state(
+            radii=r,
+            temperature=t,
+            pressure=p,
+            convective_flux=f_conv,
+            total_flux=f_tot,
+            solidus_temperature=None,
+            melt_fraction=phi,
+            params=kwargs['params'],
+            viscosity_solid=1.0e20,
+            density=3300.0,
+            gravity=9.81,
+            thermal_expansivity=3.0e-5,
+            thermal_diffusivity=1.0e-6,
+            xp=np,
+        )
+
+    st_200 = _eval_at_n(200)
+    st_400 = _eval_at_n(400)
+    rel_diff_ti = abs(float(st_400['T_i']) - float(st_200['T_i'])) / float(st_200['T_i'])
+    rel_diff_taud = abs(float(st_400['tau_d']) - float(st_200['tau_d'])) / float(st_200['tau_d'])
+    assert rel_diff_ti < 0.02
+    assert rel_diff_taud < 0.02
+

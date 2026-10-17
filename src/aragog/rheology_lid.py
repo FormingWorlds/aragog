@@ -176,8 +176,7 @@ def compute_stagnant_lid_state(
     F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
     f = xp.clip(xp.maximum(F_conv, 0.0) / xp.abs(F_tot_safe), 0.0, 1.0)
 
-    df = xp.maximum(xp.abs(xp.gradient(f)), 1e-4)
-    w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / df))
+    w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / 0.01))
 
     W_tilde, W_sum, w_weight = _boundary_weights(w_conv, xp)
 
