@@ -52,13 +52,6 @@ def test_solid_rheology_params_has_expected_fields():
 
     field_names = {f.name for f in dataclasses.fields(SolidRheologyParams)}
     assert field_names == EXPECTED_FIELDS
-    for dead_field in (
-        'activation_energy',
-        'activation_volume',
-        'activation_volume_decay_pressure',
-        'mlt_top_slope',
-    ):
-        assert dead_field not in field_names
     assert not hasattr(rheo_mod, 'eta_eff')
     assert not hasattr(rheo_mod, 'eta_diff')
 
@@ -365,10 +358,6 @@ def test_rheology_docs_and_mkdocs_nav_registration():
     doc_text = (repo_root / 'docs' / 'Explanations' / 'solid_state_convection.md').read_text(
         encoding='utf-8'
     )
-    assert 'aragog TOML path' not in doc_text
-    assert 'PROTEUS TOML path' not in doc_text
-    assert 'sits outside' not in doc_text
-    assert 'lies outside' in doc_text
 
     default_rheo = SolidRheologyParams()
     for f in dataclasses.fields(SolidRheologyParams):

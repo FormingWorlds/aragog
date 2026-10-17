@@ -186,17 +186,6 @@ def test_fb2014_monotonicity_in_interior_viscosity():
 def test_interior_selection_first_lid_node_and_resolution_invariance():
     """Verify fixed-width f selector keeps zero-flux lid nodes out of T_i and converges across N."""
     kwargs = _make_earth_reference_inputs()
-    g_hom_earth = 300.0e3 / (8.31446261815324 * 1600.0)
-    kwargs['params'] = SolidRheologyParams(
-        enabled=True,
-        stress_closure_mode='lid',
-        g_homologous=g_hom_earth,
-        t_sol_0=1600.0,
-        dt_sol_dp=0.0,
-        arrhenius_t_ref=1600.0,
-        interior_flux_fraction=0.05,
-        lid_contrast_coeff=2.2,
-    )
     st_base = compute_stagnant_lid_state(**kwargs)
     assert abs(float(st_base['T_i']) - 1600.0) < 1.0
 
@@ -219,22 +208,15 @@ def test_interior_selection_first_lid_node_and_resolution_invariance():
         f_tot = np.full(n_nodes, 100.0)
         phi = np.zeros(n_nodes)
         return compute_stagnant_lid_state(
-            radii=r,
-            temperature=t,
-            pressure=p,
-            convective_flux=f_conv,
-            total_flux=f_tot,
-            solidus_temperature=None,
-            melt_fraction=phi,
-            params=kwargs['params'],
-            viscosity_solid=1.0e20,
-            phi_rheo=0.4,
-            phi_width=0.15,
-            density=3300.0,
-            gravity=9.81,
-            thermal_expansivity=3.0e-5,
-            thermal_diffusivity=1.0e-6,
-            xp=np,
+            **{
+                **kwargs,
+                'radii': r,
+                'temperature': t,
+                'pressure': p,
+                'convective_flux': f_conv,
+                'total_flux': f_tot,
+                'melt_fraction': phi,
+            }
         )
 
     st_200 = _eval_at_n(200)

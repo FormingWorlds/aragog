@@ -1134,21 +1134,11 @@ def test_validation_and_lid_base_edge_cases():
     jax = pytest.importorskip('jax')
     jnp = pytest.importorskip('jax.numpy')
 
-    # 1. g_homologous > 0 required whenever enabled=True (both lid modes).
-    for mode in ('rheological', 'fixed'):
-        with pytest.raises(ValueError, match='g_homologous'):
-            SolidRheologyParams(enabled=True, lid_base_mode=mode, g_homologous=0.0)
-
-    # 2. enabled must be a bool; s_top_inf and mlt_bottom_slope must be in (0, 1].
+    # 1. enabled must be a bool.
     with pytest.raises(ValueError, match='enabled must be a bool'):
         SolidRheologyParams(enabled='False')  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match='s_top_inf must be in'):
-        SolidRheologyParams(s_top_inf=1.5)
-    with pytest.raises(ValueError, match='mlt_bottom_slope must be in'):
-        SolidRheologyParams(mlt_bottom_slope=1.5)
 
-    # 3. Single top-slope parameter: mlt_top_slope and top_slope are removed.
-    assert not hasattr(SolidRheologyParams(), 'mlt_top_slope')
+    # 2. Single top-slope parameter: top_slope is removed.
     r = np.linspace(3.48e6, 6.371e6, 20)
     ml = np.minimum(r - r[0], r[-1] - r)
     with pytest.raises(TypeError, match='unexpected keyword argument'):

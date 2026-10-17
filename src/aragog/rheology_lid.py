@@ -61,12 +61,10 @@ def _boundary_weights(
     W = (w_surf * xp.cumprod(omw))[::-1]
     W_sum = xp.sum(W)
     w_weight = xp.tanh(W_sum / 1.0e-6)
-    if fallback_bottom:
-        W_fallback = xp.concatenate(
-            [xp.ones(1, dtype=w.dtype), xp.zeros(w.shape[0] - 1, dtype=w.dtype)]
-        )
-    else:
-        W_fallback = xp.ones_like(W) / float(w.shape[0])
+    n = w.shape[0]
+    W_fallback = (
+        xp.where(xp.arange(n) == 0, 1.0, 0.0) if fallback_bottom else xp.full(n, 1.0 / n)
+    )
     W_tilde = w_weight * (W / xp.maximum(W_sum, 1e-12)) + (1.0 - w_weight) * W_fallback
     return W_tilde, W_sum, w_weight
 
@@ -182,19 +180,10 @@ def compute_stagnant_lid_state(
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)
 
-    any_input_nan = (
-        xp.any(xp.isnan(r))
-        | xp.any(xp.isnan(T))
-        | xp.any(xp.isnan(P))
-        | xp.any(xp.isnan(F_conv))
-        | xp.any(xp.isnan(F_tot))
-        | xp.any(xp.isnan(phi))
-    )
+    any_input_nan = xp.any(xp.isnan(xp.concatenate([r, T, P, F_conv, F_tot, phi])))
     zero_or_nan = xp.where(any_input_nan, xp.nan, 0.0)
 
-    F_tot_safe = xp.where(
-        xp.isnan(F_tot), xp.nan, xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
-    )
+    F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
     f = xp.clip(xp.maximum(F_conv, 0.0) / xp.abs(F_tot_safe), 0.0, 1.0)
 
     w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / 0.01)) + zero_or_nan
@@ -297,9 +286,7 @@ def compute_stagnant_lid_state(
     r_lid_base = xp.sum(W_base_tilde * r)
     P_lid_base = xp.sum(W_base_tilde * P)
     T_lid = xp.sum(W_base_tilde * T)
-    d_lid_raw = xp.where(
-        is_convecting, xp.maximum(r[-1] - r_lid_base, 0.0) * w_active, zero_or_nan
-    )
+    d_lid_raw = xp.maximum(r[-1] - r_lid_base, 0.0) * w_active
     has_lid = (
         is_convecting
         & ((T_i - T_surf) > NO_LID_DT_THRESHOLD)
@@ -359,7 +346,7 @@ def compute_stagnant_lid_state(
     )
     Ra_rh = if_lid((Ra_eff * a_rh_fb) / xp.maximum(theta, 1e-6))
     v_m = xp.where(
-        has_lid & (Ra_rh > 0.0),
+        Ra_rh > 0.0,
         (kappa_i / d_conv) * C4 * (xp.maximum(Ra_rh, 1.0e-30) ** FB2014_VELOCITY_EXPONENT),
         zero_or_nan,
     )
@@ -492,9 +479,8 @@ def compute_effective_viscosity(
         ty = xp.asarray(ty_raw, dtype=float)
         eta_d = xp.asarray(eta_diff, dtype=float)
         safe_ty = xp.maximum(ty, COHESION_FLOOR)
-        sr_safe = xp.where(sr > 0.0, sr, 1.0)
-        tau_y_term = safe_ty / (2.0 * sr_safe)
-        is_unyielded = (sr <= 0.0) | xp.isinf(tau_y_term) | xp.isnan(tau_y_term)
+        tau_y_term = safe_ty / (2.0 * xp.where(sr > 0.0, sr, 1.0))
+        is_unyielded = (sr <= 0.0) | xp.isnan(tau_y_term)
         res = xp.minimum(eta_d, tau_y_term)
         has_nan_local = xp.isnan(eta_d) | xp.isnan(ty) | xp.isnan(sr)
         return xp.where(has_nan_local, xp.nan, xp.where(is_unyielded, eta_d, res))
