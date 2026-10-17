@@ -111,7 +111,7 @@ class EnergyConfig:
         returns a shorter step. A call that starts at or below S_min + m/2
         arms a level at half its distance to S_min, and does not advance
         (status 1) when that entropy falls fast enough to reach the level
-        within the call; at or below S_min it arms nothing and does not
+        before the call ends; at or below S_min it arms nothing and does not
         advance only when falling. A drain that does not stop therefore
         ends after two floor stops. Default 100,
         below the entropy span of the tables; ``None`` or a non-positive

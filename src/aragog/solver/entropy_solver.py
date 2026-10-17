@@ -561,8 +561,8 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
     smallest cell entropy. Above ``S_min + margin/2`` (plus ``1e-6 margin``) the level is
     ``S_min + margin``, or ``S_min + margin/2`` below ``S_min + margin``, without an RHS call.
     Closer to the table, the rate of ``s0`` decides, taken as the smallest rate of every component
-    within ``1e-6 margin`` of ``s0``: a start inside the table arms half its distance to ``S_min``
-    unless that rate reaches it within ``span``, which refuses the call; a start at or below
+    no more than ``1e-6 margin`` above ``s0``: a start inside the table arms half its distance to
+    ``S_min`` unless that rate reaches it in ``span``, which refuses the call; a start at or below
     ``S_min`` (plus ``2e-6 margin``) arms nothing and is refused only when falling.
 
     Parameters
