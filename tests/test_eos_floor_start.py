@@ -72,6 +72,38 @@ def test_the_rate_of_the_lowest_component_decides():
 
 
 @pytest.mark.parametrize(
+    ('S', 'rate'),
+    [([S_MIN + 40.0] * 3, [-10.0, 0.0, 1.0]), ([S_MIN + 40.0, S_MIN + 40.00005, S_MIN + 50.0], [10.0, -10.0, 10.0])],
+)  # fmt: skip
+def test_the_fastest_fall_among_tied_components_decides(S, rate):
+    """Components within 1e-6 m of the floor entropy, the top node included, are refused by the
+    fastest fall among them, even when another of them warms."""
+    assert _start(S, rate) == (None, True)
+
+
+def test_a_drain_that_lands_on_half_the_distance_is_refused():
+    """A projected entropy equal to (s0 + S_min)/2 at the call end is refused."""
+    assert _start(np.full(3, S_MIN + 40.0), [-2.0] * 3) == (None, True)
+
+
+T = np.array([0.0, 0.0, 1.0])  # top node equal to the top cell, so the boundaries are exact
+
+
+@pytest.mark.parametrize(
+    ('s0', 'expected'),
+    [
+        ((S_MIN + M) + 1e-6 * M, (S_MIN + 0.5 * M, False)),
+        (S_MIN + 1.5e-6 * M, (None, False)),
+        (S_MIN + 2e-6 * M, (None, False)),
+    ],
+)
+def test_the_level_and_table_boundaries_are_inclusive(s0, expected):
+    """A start at S_min + m + 1e-6 m arms S_min + m/2; a warming start at or below S_min + 2e-6 m
+    arms nothing."""
+    assert _floor_start_level(T, np.full(3, s0), lambda: np.ones(3), S_MIN, M, DT) == expected
+
+
+@pytest.mark.parametrize(
     ('S', 'rate', 'expected'),
     [
         ([np.nan, S_MIN + 40.0, S_MIN + 40.0], [0.0] * 3, (None, False)),
