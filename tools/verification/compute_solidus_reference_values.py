@@ -13,12 +13,16 @@ import argparse
 import hashlib
 import math
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
 
-from aragog.rheology import R_GAS, SolidRheologyParams
-from aragog.rheology_lid import (
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / 'src'))
+
+from aragog.rheology import R_GAS, SolidRheologyParams  # noqa: E402
+from aragog.rheology_lid import (  # noqa: E402
     SOLIDUS_MELT_FRACTION_THRESHOLD,
     SOLIDUS_MELT_FRACTION_WIDTH,
     compute_stagnant_lid_state,
@@ -90,23 +94,35 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help=f'Path to solidus.dat (defaults to $FWL_DATA/{RELATIVE_SOLIDUS_PATH}).',
     )
+    parser.add_argument(
+        '--allow-md5-mismatch',
+        action='store_true',
+        help='Continue instead of exiting non-zero when the table MD5 does not match EXPECTED_MD5.',
+    )
     args = parser.parse_args(argv)
     table_path = resolve_solidus_table_path(args.table)
     p_table, t_table, md5_hex = load_solidus_curve(table_path)
+    md5_match = md5_hex == EXPECTED_MD5
     print(f'Table path: {table_path}')
     print('Release: r15728072 (Zenodo 10.5281/zenodo.15728072)')
-    print(f'MD5: {md5_hex} (expected {EXPECTED_MD5}, match={md5_hex == EXPECTED_MD5})')
+    print(f'MD5: {md5_hex} (expected {EXPECTED_MD5}, match={md5_match})')
+    if not md5_match and not args.allow_md5_mismatch:
+        raise SystemExit(
+            f'MD5 mismatch for {table_path}: got {md5_hex}, expected {EXPECTED_MD5} '
+            '(pass --allow-md5-mismatch to override).'
+        )
 
+    params = SolidRheologyParams()
     p_gpa = np.array([0.0, 25.0, 50.0, 100.0, 135.0])
     p_pa = p_gpa * 1.0e9
     t_sol = np.interp(p_pa, p_table, t_table)
 
     print('\n--- Section 1 Table Values ---')
     print('P_GPa | T_sol_exact_K | T_sol_1dec_K | H_g14_kJ_mol | H_g25_kJ_mol | ratio_0p9_g25')
-    ratio_0p9_g25 = math.exp(25.0 / 9.0)
+    ratio_0p9_g25 = math.exp(params.g_homologous / 9.0)
     for pg, ts in zip(p_gpa, t_sol):
         h14 = 14.0 * R_GAS * ts * 1.0e-3
-        h25 = 25.0 * R_GAS * ts * 1.0e-3
+        h25 = params.g_homologous * R_GAS * ts * 1.0e-3
         print(
             f'{pg:5.0f} | {ts:13.4f} | {ts:12.1f} | {h14:12.1f} | {h25:12.1f} | {ratio_0p9_g25:13.3f}'
         )
@@ -118,20 +134,32 @@ def main(argv: list[str] | None = None) -> None:
         + ']'
     )
 
+    dt_sol_dp_gpa = params.dt_sol_dp * 1.0e9
     secant_exact = (t_sol[-1] - t_sol[0]) / 135.0
     secant_1dec = (round(float(t_sol[-1]), 1) - round(float(t_sol[0]), 1)) / 135.0
-    t_lin_25 = 1400.0 + 24.0 * 25.0
+    t_lin_25 = params.t_sol_0 + dt_sol_dp_gpa * 25.0
     err_25_exact = (t_sol[1] - t_lin_25) / t_sol[1] * 100.0
     err_25_1dec = (round(float(t_sol[1]), 1) - t_lin_25) / round(float(t_sol[1]), 1) * 100.0
+    t_lin_135 = params.t_sol_0 + dt_sol_dp_gpa * 135.0
+    err_135_exact = (t_lin_135 - t_sol[-1]) / t_sol[-1] * 100.0
+    err_135_1dec = (t_lin_135 - round(float(t_sol[-1]), 1)) / round(float(t_sol[-1]), 1) * 100.0
+    slope_25_135 = (t_sol[-1] - t_sol[1]) / (135.0 - 25.0)
+    p_table_gpa = p_table[:136] * 1.0e-9
+    diff_lin = (params.t_sol_0 + dt_sol_dp_gpa * p_table_gpa) - t_table[:136]
+    cross_idx = int(np.where(np.diff(np.sign(diff_lin)) != 0)[0][-1])
+    p_cross_gpa = float(
+        p_table_gpa[cross_idx]
+        - diff_lin[cross_idx]
+        * (p_table_gpa[cross_idx + 1] - p_table_gpa[cross_idx])
+        / (diff_lin[cross_idx + 1] - diff_lin[cross_idx])
+    )
 
-    params = SolidRheologyParams()
+    t_sol_0_1dec = round(float(t_sol[0]), 1)
     ratio_eta_exact = math.exp(
         params.g_homologous * (float(t_sol[0]) - params.t_sol_0) / params.arrhenius_t_ref
     )
     ratio_eta_1dec = math.exp(
-        params.g_homologous
-        * (round(float(t_sol[0]), 1) - params.t_sol_0)
-        / params.arrhenius_t_ref
+        params.g_homologous * (t_sol_0_1dec - params.t_sol_0) / params.arrhenius_t_ref
     )
 
     print('\n--- Derived Slopes, Errors, and Viscosity Ratios ---')
@@ -147,17 +175,26 @@ def main(argv: list[str] | None = None) -> None:
         f'(from 1-dec: {secant_1dec:.4f} K/GPa -> {secant_exact:.1f} K/GPa)'
     )
     print(
+        f'High-pressure slope 25..135 GPa: {slope_25_135:.4f} K/GPa '
+        f'(-> {round(float(slope_25_135)):.0f} K/GPa)'
+    )
+    print(
         f'Linear fallback at 25 GPa: {t_lin_25:.1f} K vs table {t_sol[1]:.1f} K '
         f'({err_25_exact:.2f}% low, 1-dec: {err_25_1dec:.2f}% -> {round(float(err_25_exact)):.0f}% low)'
     )
     print(
-        f'Table-to-linear eta_diff(1600 K, 0) ratio at g_hom=25, t_sol_0=1400 K: '
+        f'Linear fallback at 135 GPa: {t_lin_135:.1f} K vs table {t_sol[-1]:.1f} K '
+        f'({err_135_exact:.2f}% high, 1-dec: {err_135_1dec:.2f}% -> {err_135_exact:.1f}% high; '
+        f'crossing at {p_cross_gpa:.1f} GPa, near {round(p_cross_gpa, -1):.0f} GPa)'
+    )
+    print(
+        f'Table-to-linear eta_diff({params.arrhenius_t_ref:.0f} K, 0) ratio at '
+        f'g_hom={params.g_homologous:g}, t_sol_0={params.t_sol_0:g} K: '
         f'exact={ratio_eta_exact:.6f} ({ratio_eta_exact:.3f}x / {ratio_eta_exact:.2f}x), '
-        f'from 1380.6 K={ratio_eta_1dec:.6f} ({ratio_eta_1dec:.3f}x / {ratio_eta_1dec:.2f}x)'
+        f'from {t_sol_0_1dec:.1f} K={ratio_eta_1dec:.6f} ({ratio_eta_1dec:.3f}x / {ratio_eta_1dec:.2f}x)'
     )
 
-    repo_root = Path(__file__).resolve().parents[2]
-    ckpt_path = repo_root / 'tests' / 'reference' / 'checkpoint_profile_175kyr.npz'
+    ckpt_path = REPO_ROOT / 'tests' / 'reference' / 'checkpoint_profile_175kyr.npz'
     if ckpt_path.is_file():
         d = np.load(ckpt_path)
         r = d['r_basic']
@@ -165,7 +202,7 @@ def main(argv: list[str] | None = None) -> None:
         p_prof = d['P_basic']
         phi = d['phi_basic']
         t_sol_prof = np.interp(p_prof, p_table, t_table)
-        params_ckpt = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
+        params_ckpt = SolidRheologyParams(enabled=True)
         st = compute_stagnant_lid_state(
             radii=r,
             temperature=t_prof,
@@ -173,7 +210,7 @@ def main(argv: list[str] | None = None) -> None:
             convective_flux=d['F_conv'],
             total_flux=d['F_tot'],
             solidus_temperature=t_sol_prof,
-            t_sol_0=1400.0,
+            t_sol_0=params_ckpt.t_sol_0,
             melt_fraction=phi,
             params=params_ckpt,
             viscosity_solid=1.0e21,

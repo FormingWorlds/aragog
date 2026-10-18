@@ -12,6 +12,8 @@ from aragog.rheology import (
     R_GAS,
     FloatOrArray,
     _require_x64_if_jax,
+    _scalar_or_nan,
+    _validate_inputs,
     compute_arrhenius_enthalpy,
     compute_arrhenius_viscosity,
     compute_strain_rate_local,
@@ -71,26 +73,6 @@ def _boundary_weights(w: Any, xp: Any, *, fallback: Any | None = None) -> tuple[
     return W_tilde, W_sum, w_weight
 
 
-def _scalar_or_nan(val: Any, name: str) -> float:
-    """Return ``float(val)`` on numeric scalars, ``nan`` on traced scalars; reject arrays, bools, and strings."""
-    if (
-        isinstance(val, (bool, np.bool_, str, bytes))
-        or getattr(val, 'ndim', 0) > 0
-        or (not hasattr(val, 'ndim') and np.ndim(val) > 0)
-    ):
-        raise ValueError(f'{name} must be a scalar')
-    if isinstance(val, (int, float)):
-        return float(val)
-    if isinstance(val, (np.ndarray, np.generic)) and val.dtype.kind not in 'iuf':
-        raise ValueError(f'{name} must be a scalar')
-    try:
-        return float(val)
-    except TypeError as exc:
-        if 'Tracer' in type(val).__name__ or 'Concretization' in type(exc).__name__:
-            return np.nan
-        raise ValueError(f'{name} must be a real scalar, got {val!r}') from exc
-
-
 def compute_stagnant_lid_state(
     radii: FloatOrArray,
     temperature: FloatOrArray,
@@ -129,8 +111,12 @@ def compute_stagnant_lid_state(
     total_flux : array-like
         Total heat flux profile F_tot [W/m^2].
     solidus_temperature : float or array-like or None
-        Solidus temperature profile T_sol [K]. When None, solidus crossing is
-        evaluated using SOLIDUS_MELT_FRACTION_THRESHOLD (0.01 melt fraction).
+        Solidus temperature profile T_sol [K]. When provided, the solidus
+        crossing indicators ``w_hot_sol`` and ``w_hot_sol_mask`` take the
+        elementwise maximum of the thermal ``tanh((T - T_sol) / scale)`` ramp
+        and the melt-fraction ramp centered at
+        ``SOLIDUS_MELT_FRACTION_THRESHOLD`` (0.01). When None, they use the
+        melt-fraction ramp alone.
     melt_fraction : array-like
         Melt mass fraction profile phi [-].
     params : SolidRheologyParams
@@ -188,12 +174,21 @@ def compute_stagnant_lid_state(
     Raises
     ------
     ValueError
-        If scalar parameters are None, non-scalar, infinite, or out of bounds on
-        the eager path, if ``t_sol_0`` is missing when ``solidus_temperature`` is
-        given or does not match ``params.t_sol_0``, or if radial and profile
-        arrays fail shape or monotonicity checks. Under ``jax.jit``, traced
-        scalar value violations propagate NaN through ``zero_or_nan`` instead of
-        raising ``ValueError``.
+        If ``viscosity_solid``, ``phi_rheo``, or ``phi_width`` is None; if
+        scalar parameters (``viscosity_solid``, ``phi_rheo``, ``phi_width``,
+        ``a_rh_fb``, ``C4``, ``t_sol_0``) are non-scalar; if ``t_sol_0`` is
+        missing when ``solidus_temperature`` is given or does not match
+        ``params.t_sol_0``; if ``radii`` is not a 1-D strictly increasing
+        array of at least 3 finite nodes; if any profile input does not match
+        ``radii`` in 1-D length; if any input is a boolean; or, on the eager
+        NumPy path (``xp is np``), if any input is infinite, if
+        ``viscosity_solid``, ``phi_width``, ``a_rh_fb``, ``C4``, ``t_sol_0``,
+        ``temperature``, ``solidus_temperature``, ``viscosity_mixture``,
+        ``density``, ``gravity``, ``thermal_expansivity``, or
+        ``thermal_diffusivity`` is non-positive, if ``pressure`` is negative,
+        or if ``phi_rheo`` or ``melt_fraction`` lies outside ``[0, 1]``. Under
+        ``jax.jit``, traced out-of-range numeric values propagate ``NaN``
+        through ``zero_or_nan``.
 
     Notes
     -----
@@ -232,28 +227,20 @@ def compute_stagnant_lid_state(
     ``w_lid = (1 - w_interior_mask) * w_active`` uses the capped width
     ``scale_mask = min(scale_cell, lid_mask_width_cells * max(dT_rh, 1.0 K))`` via
     ``w_interior_mask = max(w_hot_iso_mask, w_hot_sol_mask, w_hot_phi)``.
-    When ``solidus_temperature`` is None, the solidus crossing indicator ``w_hot_sol``
-    is evaluated from melt fraction using ``SOLIDUS_MELT_FRACTION_THRESHOLD`` (0.01).
-    Because ``w_interior`` and ``w_interior_mask`` take the maximum of isothermal,
-    solidus, and rheological indicators, layers with melt fraction exceeding 0.01 are
-    treated as non-lid interior, rendering the lid boundary position independent of
-    ``phi_rheo``.
+    The solidus crossing indicators ``w_hot_sol`` and ``w_hot_sol_mask`` evaluate the
+    melt-fraction ramp ``w_sol_phi`` centered at ``SOLIDUS_MELT_FRACTION_THRESHOLD``
+    (0.01) with width ``SOLIDUS_MELT_FRACTION_WIDTH`` (0.002), and take the elementwise
+    maximum with the thermal solidus ``tanh`` ramp when ``solidus_temperature`` is
+    provided. Because ``w_interior`` and ``w_interior_mask`` take the maximum of
+    isothermal, solidus, and rheological indicators, a column with ``phi >= 0.025`` at
+    every node has ``has_lid = False`` at any mesh resolution ``N`` (measured at
+    ``N`` in ``{10, 50, 100, 200}``) with or without a solidus table, whereas for
+    ``0.01 < phi < 0.025`` the residual ramp tail ``(1 - w_sol_phi) * dr`` can leave a
+    metre-scale lid above the 1 m threshold on coarse meshes.
     """
     _require_x64_if_jax(xp)
     if viscosity_solid is None or phi_rheo is None or phi_width is None:
         raise ValueError('viscosity_solid, phi_rheo, and phi_width must be provided')
-    pos_fin = lambda v: (0.0 < v) & (v < np.inf)  # noqa: E731
-    scalar_bounds = (
-        ('viscosity_solid', viscosity_solid, pos_fin, 'positive and finite'),
-        ('phi_width', phi_width, pos_fin, 'positive and finite'),
-        ('phi_rheo', phi_rheo, lambda v: (0.0 <= v) & (v <= 1.0), 'finite and in [0, 1]'),
-        ('a_rh_fb', a_rh_fb, pos_fin, 'positive and finite'),
-        ('C4', C4, pos_fin, 'positive and finite'),
-    )
-    for s_name, s_raw, ok, msg in scalar_bounds:
-        v = _scalar_or_nan(s_raw, s_name)
-        if not np.isnan(v) and not ok(v):
-            raise ValueError(f'{s_name} must be {msg}, got {s_raw}')
     if solidus_temperature is not None and t_sol_0 is None:
         raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
     if t_sol_0 is not None:
@@ -280,11 +267,11 @@ def compute_stagnant_lid_state(
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)
     for name, val, allow_scalar in (
-        ('temperature', T, False),
-        ('pressure', P, False),
-        ('convective_flux', F_conv, False),
-        ('total_flux', F_tot, False),
-        ('melt_fraction', phi, False),
+        ('temperature', temperature, False),
+        ('pressure', pressure, False),
+        ('convective_flux', convective_flux, False),
+        ('total_flux', total_flux, False),
+        ('melt_fraction', melt_fraction, False),
         ('solidus_temperature', solidus_temperature, True),
         ('unyielded_velocity', unyielded_velocity, True),
         ('viscosity_mixture', viscosity_mixture, True),
@@ -298,33 +285,39 @@ def compute_stagnant_lid_state(
         a = xp.asarray(val, dtype=float)
         if not ((allow_scalar and a.ndim == 0) or (a.ndim == 1 and a.shape[0] == r.shape[0])):
             raise ValueError(f'{name} must have the same 1-D length as radii ({r.shape[0]})')
-        if xp is np and np.any(np.isinf(a)):
-            raise ValueError(f'{name} must be finite (no inf values)')
+
+    invalid_inputs = _validate_inputs(
+        (
+            ('viscosity_solid', viscosity_solid, 'pos', True),
+            ('phi_width', phi_width, 'pos', True),
+            ('phi_rheo', phi_rheo, 'unit', True),
+            ('a_rh_fb', a_rh_fb, 'pos', True),
+            ('C4', C4, 'pos', True),
+            ('t_sol_0', t_sol_0_eff, 'pos', True),
+            ('radii', r, 'finite', False),
+            ('temperature', temperature, 'pos', False),
+            ('pressure', pressure, 'nonneg', False),
+            ('convective_flux', convective_flux, 'finite', False),
+            ('total_flux', total_flux, 'finite', False),
+            ('melt_fraction', melt_fraction, 'unit', False),
+            ('solidus_temperature', solidus_temperature, 'pos', False),
+            ('unyielded_velocity', unyielded_velocity, 'finite', False),
+            ('viscosity_mixture', viscosity_mixture, 'pos', False),
+            ('density', density, 'pos', False),
+            ('gravity', gravity, 'pos', False),
+            ('thermal_expansivity', thermal_expansivity, 'pos', False),
+            ('thermal_diffusivity', thermal_diffusivity, 'pos', False),
+        ),
+        xp,
+        reduce_any=True,
+    )
 
     F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
     f = xp.clip(xp.maximum(F_conv, 0.0) / xp.abs(F_tot_safe), 0.0, 1.0)
-    opt_arrays = (solidus_temperature, unyielded_velocity, viscosity_mixture)
-    nan_inputs = (
-        r,
-        T,
-        P,
-        F_conv,
-        F_tot,
-        f,
-        phi,
-        density,
-        gravity,
-        thermal_expansivity,
-        thermal_diffusivity,
-        *(a for a in opt_arrays if a is not None),
-    )
-    any_input_nan = xp.any(
-        ~xp.isfinite(xp.concatenate([xp.ravel(xp.asarray(a, dtype=float)) for a in nan_inputs]))
-    )
     invalid_scalar = xp.asarray(t_sol_0_eff, dtype=float) != params.t_sol_0
-    for _, s_raw, ok, _ in scalar_bounds:
-        invalid_scalar = invalid_scalar | ~ok(xp.asarray(s_raw, dtype=float))
-    zero_or_nan = xp.where(any_input_nan | invalid_scalar, xp.nan, 0.0)
+    zero_or_nan = xp.where(
+        invalid_inputs | invalid_scalar | xp.any(~xp.isfinite(f)), xp.nan, 0.0
+    )
 
     w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / 0.01)) + zero_or_nan
     idx = xp.arange(r.shape[0])
@@ -603,6 +596,25 @@ def compute_effective_viscosity(
         eta_eff = min(eta_diff, eta_y)
         eta_y = max(tau_y, COHESION_FLOOR) / (2 * strain_rate)
 
+    Raises
+    ------
+    ValueError
+        If ``stress_closure_mode`` is not ``'lid'`` or ``'local'``, if required
+        mode arguments are missing or cross-mode arguments are passed, if any
+        input is a boolean, or, on the eager NumPy path (``xp is np``), if
+        ``eta_diff`` or ``eta_i`` is non-positive or infinite, if ``strain_rate``
+        is negative or infinite, if ``tau_d``, ``unyielded_velocity``, or
+        ``mixing_length`` is infinite, if ``w_lid`` lies outside ``[0, 1]``, or
+        if ``tau_y_lid``, ``tau_y``, or ``tau_y_profile`` is ``-inf``. On the
+        JAX path, out-of-range numeric values return ``NaN``.
+
+    Notes
+    -----
+    Setting ``tau_y_lid = +inf`` in ``'lid'`` mode (or ``tau_y = +inf`` in
+    ``'local'`` mode) represents infinite yield strength (no plastic yielding)
+    and returns ``eta_diff`` for every finite non-negative driving stress or
+    strain rate.
+
     References
     ----------
     Moresi & Solomatov (1998), p. 672, eqs. 13-14, doi:10.1046/j.1365-246X.1998.00531.x
@@ -629,29 +641,38 @@ def compute_effective_viscosity(
             raise ValueError(
                 "tau_d, tau_y_lid, w_lid, and eta_i are not allowed when stress_closure_mode='local'"
             )
-        if strain_rate is None:
-            if unyielded_velocity is None or mixing_length is None:
-                raise ValueError(
-                    "mixing_length and unyielded_velocity required for 'local' mode"
-                )
-            sr = compute_strain_rate_local(unyielded_velocity, mixing_length, xp=xp)
-        else:
-            sr = xp.asarray(strain_rate, dtype=float)
+        if strain_rate is None and (unyielded_velocity is None or mixing_length is None):
+            raise ValueError("mixing_length and unyielded_velocity required for 'local' mode")
         if tau_y is not None and tau_y_profile is not None:
             raise ValueError("Provide either tau_y or tau_y_profile in 'local' mode, not both")
         ty_raw = tau_y if tau_y is not None else tau_y_profile
         if ty_raw is None:
             raise ValueError("tau_y or tau_y_profile required for 'local' mode")
+        invalid_local = _validate_inputs(
+            (
+                ('eta_diff', eta_diff, 'pos', False),
+                ('strain_rate', strain_rate, 'nonneg', False),
+                ('unyielded_velocity', unyielded_velocity, 'finite', False),
+                ('mixing_length', mixing_length, 'finite', False),
+                ('tau_y', tau_y, 'not_neginf', False),
+                ('tau_y_profile', tau_y_profile, 'not_neginf', False),
+            ),
+            xp,
+        )
+        sr = (
+            compute_strain_rate_local(unyielded_velocity, mixing_length, xp=xp)
+            if strain_rate is None
+            else xp.asarray(strain_rate, dtype=float)
+        )
         ty = xp.asarray(ty_raw, dtype=float)
         eta_d = xp.asarray(eta_diff, dtype=float)
-        if xp is np and np.any(np.isinf(eta_d)):
-            raise ValueError('eta_diff must be finite (no inf values)')
         safe_ty = xp.maximum(ty, COHESION_FLOOR)
         tau_y_term = safe_ty / (2.0 * xp.where(sr > 0.0, sr, 1.0))
         is_unyielded = (sr <= 0.0) | xp.isnan(tau_y_term)
         res = xp.minimum(eta_d, tau_y_term)
-        has_nan_local = ~xp.isfinite(eta_d) | xp.isnan(ty) | xp.isnan(sr)
-        return xp.where(has_nan_local, xp.nan, xp.where(is_unyielded, eta_d, res))
+        return xp.where(
+            invalid_local | xp.isnan(sr), xp.nan, xp.where(is_unyielded, eta_d, res)
+        )
 
     if any(
         x is not None
@@ -666,37 +687,34 @@ def compute_effective_viscosity(
     if tau_d is None or tau_y_lid is None:
         raise ValueError("tau_d and tau_y_lid are required when stress_closure_mode='lid'")
 
+    invalid_lid = _validate_inputs(
+        (
+            ('eta_diff', eta_diff, 'pos', False),
+            ('eta_i', eta_i, 'pos', False),
+            ('tau_d', tau_d, 'finite', False),
+            ('tau_y_lid', tau_y_lid, 'not_neginf', False),
+            ('w_lid', w_lid, 'unit', False),
+        ),
+        xp,
+    )
     eta_d = xp.asarray(eta_diff, dtype=float)
     eta_i_arr = xp.asarray(eta_i, dtype=float)
     td = xp.asarray(tau_d, dtype=float)
-    if xp is np:
-        for name, arr in (('eta_diff', eta_d), ('eta_i', eta_i_arr), ('tau_d', td)):
-            if np.any(np.isinf(arr)):
-                raise ValueError(f'{name} must be finite (no inf values)')
 
     # Moresi & Solomatov (1998) Eq. 13-14 min closure at convective strain rate D_conv = tau_d / eta_i:
     ty_lid = xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR)
     ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
     eta_eff_val = xp.where(ratio >= 1.0, eta_d, xp.minimum(eta_d, eta_i_arr * ratio))
-    has_nan_lid = (
-        ~xp.isfinite(eta_d) | ~xp.isfinite(eta_i_arr) | ~xp.isfinite(td) | xp.isnan(ty_lid)
-    )
-    eta_eff_val = xp.where(has_nan_lid, xp.nan, eta_eff_val)
+    eta_eff_val = xp.where(invalid_lid, xp.nan, eta_eff_val)
 
     if w_lid is not None:
         wl = xp.asarray(w_lid, dtype=float)
-        try:
-            wl_np = np.asarray(wl, dtype=float)
-        except Exception:
-            wl_np = None
-        if wl_np is not None and np.any(np.isinf(wl_np) | (wl_np < 0.0) | (wl_np > 1.0)):
-            raise ValueError('w_lid must be in [0, 1]')
         log_diff = xp.log10(xp.maximum(eta_d, 1e-30))
         log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
         log_solid = wl * log_eff + (1.0 - wl) * log_diff
         res = 10.0**log_solid
         blended = xp.where((wl == 0.0) | (eta_eff_val == eta_d), eta_d, res)
-        return xp.where(has_nan_lid | xp.isnan(wl) | (wl < 0.0) | (wl > 1.0), xp.nan, blended)
+        return xp.where(invalid_lid, xp.nan, blended)
 
     return eta_eff_val
 
