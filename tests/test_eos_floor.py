@@ -574,17 +574,32 @@ def test_a_floor_stop_at_the_call_start_is_a_refusal(
 ):
     """A level 1e-12 below a draining start at 1e8 yr, or at 54522722 yr, which comes back one
     ulp later through the time scale: the scipy event stops the call at its start, which is
-    logged and returned as a refusal, not as a silent zero step."""
+    logged and returned as a refusal, not as a silent zero step. A stub moves the stopped state,
+    as a stop a few scaled-time steps after the start would: the refusal still returns the start
+    state, times and per-call energy ledger of a call with no span."""
     monkeypatch.setattr(
         es, '_floor_start_level', lambda w, S, *_: (es._floor_entropy(w, S) - 1e-12, False)
     )
+    real = es.solve_ivp
+
+    def moved(fun, t_span, y0, **kwargs):
+        res = real(fun, t_span, y0, **kwargs)
+        if res.status == 1 and res.t[-1] == res.t[0]:
+            res.y[5, -1] += 1e-3  # the state moved while the time did not
+        return res
+
+    monkeypatch.setattr(es, 'solve_ivp', moved)
+    S0 = float(shared_eos.S_min) + 400.0
     with caplog.at_level(logging.INFO):
-        s, _ = _drained(
-            shared_eos, float(shared_eos.S_min) + 400.0, method='bdf', start_time=start_time
-        )
+        s, _ = _drained(shared_eos, S0, method='bdf', start_time=start_time)
+    z, _ = _drained(shared_eos, S0, method='bdf', start_time=start_time, end_time=0.0)
     refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
     assert s._solution.status == 1 and s.get_state().dt_actual == 0.0 and len(refusals) == 1
     assert 'fell at the call start' in refusals[0].getMessage()
+    sol, st, zt = s._solution, s.get_state(), z.get_state()
+    assert np.all(_cells(s)[:, -1] == S0) and np.all(np.asarray(sol.t) == sol.t[0])
+    ledger = [k for k in vars(st) if k.startswith('step_dE_')]
+    assert ledger and all(getattr(st, k) == getattr(zt, k) for k in ledger)
 
 
 @pytest.mark.parametrize('where', ['trace', 'cell', 'node'])
