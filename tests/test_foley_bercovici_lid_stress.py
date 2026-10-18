@@ -1289,6 +1289,16 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
     # shift by (2300 / w_Ti(uniform)) * (1/49 - 1/399) = 41.176234 K across N=50..400.
     w_ti_uniform = 0.5 * (1.0 + np.tanh(0.1 / 0.02))
     max_dt_uniform = (2300.0 / w_ti_uniform) * (1.0 / 49.0 - 1.0 / 399.0)
+    # Along P(T) with dP/dT = 135 GPa / 2300 K at T[1](50) = 2553.06 K, |d log10(eta_diff)/dT| = 1.628e-3 K^-1
+    # gives max_dlog_eta_uniform = |d log10(eta_diff)/dT| * max_dt_uniform = 0.06704 decades.
+    t1_u50 = 2600.0 - 2300.0 / 49.0
+    p1_u50 = 135.0e9 * (48.0 / 49.0)
+    dp_dt_u = 135.0e9 / 2300.0
+    t_sol_u50 = params.t_sol_0 + params.dt_sol_dp * p1_u50
+    dlog_eta_dt_u = (params.g_homologous / np.log(10.0)) * abs(
+        -t_sol_u50 / (t1_u50**2) + params.dt_sol_dp * dp_dt_u / t1_u50
+    )
+    max_dlog_eta_uniform = dlog_eta_dt_u * max_dt_uniform
 
     f_half = float(
         params.interior_flux_fraction
@@ -1331,13 +1341,13 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
         _, ti_400, log_eta_400 = results_by_n[400]
         for n_nodes, (_, ti_n, log_eta_n) in results_by_n.items():
             assert abs(ti_n - ti_400) <= max_dt_uniform
-            assert abs(log_eta_n - log_eta_400) <= 0.07
+            assert abs(log_eta_n - log_eta_400) <= max_dlog_eta_uniform
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
     d = np.load(ckpt_path)
     keys = ('T_basic', 'P_basic', 'F_conv', 'F_tot', 'phi_basic')
-    # On the resampled 175 kyr profile at s=1e-6, f_int_max changes by 2.66e-13 across N=50..400 (dw_weight/w_weight < 1e-6),
-    # and the fallback node T[1] shifts by |T[1](50) - T[1](400)| = 41.674 K, bounding |T_i(N) - T_i(400)| <= 41.674 K.
+    # On the resampled 175 kyr profile at s=1e-6, |T[1](50) - T[1](400)| = 41.674 K and
+    # |d log10(eta_diff)/dT|_P = 1 / (dT_rh * ln 10) bounds |d log10(eta_i)| <= max_dt_175kyr / (dT_rh * ln 10).
     r0 = d['r_basic']
     t1_50 = float(np.interp(np.linspace(r0[0], r0[-1], 50), r0, d['T_basic'])[1])
     t1_400 = float(np.interp(np.linspace(r0[0], r0[-1], 400), r0, d['T_basic'])[1])
@@ -1365,12 +1375,15 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
         log_arr = float(np.log10(float(st['eta_solid_arrhenius'])))
         w_eff = (log_eta - log_arr) / (15.0 - log_arr)
         prof_175_by_n[n_nodes] = (w_eff, float(st['T_i']), log_eta)
+        if n_nodes == 400:
+            dtrh_175_400 = float(st['dT_rh'])
 
+    max_dlog_eta_175kyr = max_dt_175kyr / (dtrh_175_400 * np.log(10.0))
     w_400, ti_175_400, log_eta_175_400 = prof_175_by_n[400]
     for n_nodes, (w_n, ti_n, log_eta_n) in prof_175_by_n.items():
         assert w_n == pytest.approx(w_400, rel=1.0e-6)
         assert abs(ti_n - ti_175_400) <= max_dt_175kyr
-        assert abs(log_eta_n - log_eta_175_400) <= 0.06
+        assert abs(log_eta_n - log_eta_175_400) <= max_dlog_eta_175kyr
 
     s_sweep = (
         0.0,
