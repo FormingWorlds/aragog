@@ -522,6 +522,45 @@ def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
                 assert float(st_sub['d_lid']) > 10.0e3
                 assert float(st_sub['tau_d']) > 0.0
 
+    # A molten interior (phi = 0.05) with a cold solid surface node (phi[-1] = 0.0) has a
+    # surface lid bounded by sum_k (1 - w_sol_phi[k+1]) * dr_k, exceeding the k-indexed sum.
+    r_12 = np.linspace(3.48e6, 6.37e6, 12)
+    p_12 = np.linspace(135.0e9, 1.0e5, 12)
+    t_12 = np.full(12, 3000.0)
+    t_12[-1] = 300.0
+    f_conv_12 = np.full(12, 80.0)
+    f_conv_12[-1] = 0.0
+    phi_12 = np.full(12, 0.05)
+    phi_12[-1] = 0.0
+    st_cold_surf = compute_stagnant_lid_state(
+        radii=r_12,
+        temperature=t_12,
+        pressure=p_12,
+        convective_flux=f_conv_12,
+        total_flux=np.full(12, 100.0),
+        solidus_temperature=None,
+        t_sol_0=1400.0,
+        melt_fraction=phi_12,
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    zero_sol = 0.5 * (
+        1.0 + np.tanh(-SOLIDUS_MELT_FRACTION_THRESHOLD / SOLIDUS_MELT_FRACTION_WIDTH)
+    )
+    raw_sol = 0.5 * (
+        1.0 + np.tanh((phi_12 - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
+    )
+    w_sol_phi_12 = np.clip((raw_sol - zero_sol) / (1.0 - zero_sol), 0.0, 1.0)
+    dr_12 = np.diff(r_12)
+    bound_upper_node = float(np.sum((1.0 - w_sol_phi_12[1:]) * dr_12))
+    bound_lower_node = float(np.sum((1.0 - w_sol_phi_12[:-1]) * dr_12))
+    assert bool(st_cold_surf['has_lid']) is True
+    assert 0.0 < float(st_cold_surf['d_lid']) <= bound_upper_node
+    assert float(st_cold_surf['d_lid']) > bound_lower_node
+
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
@@ -579,6 +618,15 @@ def test_melt_fraction_ramp_phi_rheo_and_phi_width_below_solidus_threshold():
         )
 
 
+def _reaches_jit_kernel(val) -> bool:
+    """Return True if JAX traces val into the jitted function instead of rejecting at trace entry."""
+    if isinstance(val, (list, tuple)):
+        return all(_reaches_jit_kernel(x) for x in val)
+    if isinstance(val, np.ndarray):
+        return val.dtype.kind in ('b', 'i', 'u', 'f', 'c')
+    return val is None or isinstance(val, (bool, int, float, complex, np.generic))
+
+
 def _assert_invalid_raises_np_and_nan_jit(
     fn,
     np_kw: dict,
@@ -590,13 +638,15 @@ def _assert_invalid_raises_np_and_nan_jit(
     static_error: bool = False,
     is_lid_state: bool = False,
 ) -> None:
-    """Assert ValueError on eager NumPy and NaN (or ValueError for static type/shape errors) under jax.jit."""
+    """Assert ValueError on eager NumPy and NaN (or ValueError/TypeError for static errors) under jax.jit."""
     jnp = pytest.importorskip('jax.numpy')
     with pytest.raises(ValueError, match=field_name):
         fn(**{**np_kw, field_name: bad_val, 'xp': np})
 
     if static_error:
-        with pytest.raises((ValueError, TypeError)):
+        # JAX rejects str, Decimal, and object leaves with TypeError before entering jit_fn.
+        expected_exc = ValueError if _reaches_jit_kernel(bad_val) else TypeError
+        with pytest.raises(expected_exc, match=field_name):
             jit_fn({**jax_kw, field_name: bad_val})
         return
 
@@ -745,6 +795,11 @@ def test_arrhenius_enthalpy_validation_table(field_name: str, bad_val, static_er
         ('viscosity_max_log10', np.nan, False),
         ('viscosity_max_log10', np.inf, False),
         ('viscosity_max_log10', -np.inf, False),
+        ('viscosity_max_log10', -400.0, False),
+        ('viscosity_max_log10', 0.0, False),
+        ('viscosity_max_log10', 15.0, False),
+        ('viscosity_max_log10', 20.0, False),
+        ('viscosity_max_log10', 400.0, False),
         ('viscosity_max_log10', True, True),
         ('viscosity_max_log10', [40.0, 40.0], True),
         ('viscosity_max_log10', 40.0 + 1.0j, True),
@@ -789,6 +844,11 @@ def test_arrhenius_viscosity_validation_table(field_name: str, bad_val, static_e
     assert compute_arrhenius_viscosity(
         1600.0, 0.0, viscosity_solid=1.0e21, g_homologous=0.0
     ) == pytest.approx(1.0e21, rel=1.0e-12)
+    assert np.isfinite(
+        compute_arrhenius_viscosity(
+            800.0, 1.0e9, viscosity_solid=1.0e21, g_homologous=25.0, viscosity_max_log10=300.0
+        )
+    )
     assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, viscosity_solid=np.nan, xp=np))
     assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, g_homologous=np.nan, xp=np))
 
@@ -1061,7 +1121,7 @@ def test_compute_effective_viscosity_accepts_infinite_tau_y_lid():
     jit_eta = jax.jit(
         lambda kw: compute_effective_viscosity(**kw, stress_closure_mode='lid', xp=jnp)
     )
-    for td_finite in (0.0, 1.0e6, 1.0e12):
+    for td_finite in (0.0, 1.0e6, 1.0e12, 1.0e31):
         for wl_val in (None, 0.0, 0.5, 1.0):
             res_np = compute_effective_viscosity(
                 eta_diff=1.0e22,
@@ -1084,6 +1144,17 @@ def test_compute_effective_viscosity_accepts_infinite_tau_y_lid():
         )
         assert float(res_jit_inf) == pytest.approx(1.0e22, rel=1.0e-12)
 
+    res_large_finite = compute_effective_viscosity(
+        eta_diff=1.0e22,
+        eta_i=1.0e20,
+        tau_d=5.0e30,
+        tau_y_lid=1.0e31,
+        w_lid=1.0,
+        stress_closure_mode='lid',
+        xp=np,
+    )
+    assert float(res_large_finite) == pytest.approx(1.0e22, rel=1.0e-12)
+
     for wl_j in (None, jnp.asarray(0.5), jnp.asarray(1.0)):
         grads_lid = jax.grad(
             lambda ei, td, ed, w=wl_j: compute_effective_viscosity(
@@ -1102,20 +1173,42 @@ def test_compute_effective_viscosity_accepts_infinite_tau_y_lid():
         assert float(grads_lid[1]) == 0.0
         assert float(grads_lid[2]) == pytest.approx(1.0, rel=1.0e-12)
 
-    grads_local = jax.grad(
-        lambda ed, sr: compute_effective_viscosity(
-            eta_diff=ed,
-            strain_rate=sr,
-            tau_y=jnp.asarray(jnp.inf),
+    for ed_val, sr_val in ((1.0e22, 1.0e-15), (1.0e40, 1.0e-10)):
+        res_loc = compute_effective_viscosity(
+            eta_diff=ed_val,
+            strain_rate=sr_val,
+            tau_y=np.inf,
             stress_closure_mode='local',
-            xp=jnp,
-        ),
-        argnums=(0, 1),
-    )(jnp.asarray(1.0e22), jnp.asarray(1.0e-15))
-    assert all(bool(jnp.all(jnp.isfinite(g))) for g in grads_local)
-    assert float(grads_local[0]) == pytest.approx(1.0, rel=1.0e-12)
-    assert float(grads_local[1]) == 0.0
+            xp=np,
+        )
+        assert float(res_loc) == pytest.approx(ed_val, rel=1.0e-12)
+        grads_local = jax.grad(
+            lambda ed, sr: compute_effective_viscosity(
+                eta_diff=ed,
+                strain_rate=sr,
+                tau_y=jnp.asarray(jnp.inf),
+                stress_closure_mode='local',
+                xp=jnp,
+            ),
+            argnums=(0, 1),
+        )(jnp.asarray(ed_val), jnp.asarray(sr_val))
+        assert all(bool(jnp.all(jnp.isfinite(g))) for g in grads_local)
+        assert float(grads_local[0]) == pytest.approx(1.0, rel=1.0e-12)
+        assert float(grads_local[1]) == 0.0
 
+    # Include a cold surface node (eta_diff = 1e40 Pa s, mixing_length = 0.0 m).
+    ed_prof = jnp.array([1.0e22, 1.0e40])
+    v_prof = jnp.array([1.0e-9, 1.0e-20])
+    ml_prof = jnp.array([1.0e5, 0.0])
+    res_prof = compute_effective_viscosity(
+        eta_diff=ed_prof,
+        unyielded_velocity=v_prof,
+        mixing_length=ml_prof,
+        tau_y_profile=jnp.array([jnp.inf, jnp.inf]),
+        stress_closure_mode='local',
+        xp=jnp,
+    )
+    np.testing.assert_allclose(res_prof, [1.0e22, 1.0e40], rtol=1.0e-12)
     grads_prof = jax.grad(
         lambda ed, v, ml: jnp.sum(
             compute_effective_viscosity(
@@ -1128,11 +1221,7 @@ def test_compute_effective_viscosity_accepts_infinite_tau_y_lid():
             )
         ),
         argnums=(0, 1, 2),
-    )(
-        jnp.array([1.0e22, 2.0e22]),
-        jnp.array([1.0e-9, 2.0e-9]),
-        jnp.array([1.0e5, 2.0e5]),
-    )
+    )(ed_prof, v_prof, ml_prof)
     assert all(bool(jnp.all(jnp.isfinite(g))) for g in grads_prof)
     np.testing.assert_allclose(grads_prof[0], [1.0, 1.0], rtol=1.0e-12)
     np.testing.assert_allclose(grads_prof[1], [0.0, 0.0], atol=1.0e-30)
