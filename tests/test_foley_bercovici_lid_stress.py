@@ -112,10 +112,8 @@ def test_fb2014_earth_reference_state():
     expected_ratio = expected_tau_d / expected_tau_buoy
     # Formula relation: tau_d_lid = 2 * eta_i * v_m / d_lid
     expected_tau_d_lid = 2.0 * eta_i * expected_vm / state['d_lid']
-    # Derivation of eta_contrast:
-    # At T_surf = 300 K, Arrhenius viscosity exceeds 10^40 Pa s and is clamped to 10^viscosity_max_log10 = 1.0e40 Pa s.
-    # At T_i = arrhenius_t_ref = 1600 K, eta_i evaluates to 1.0e20 Pa s.
-    # Therefore eta_contrast = eta_surf / eta_i = 1.0e40 / 1.0e20 = 1.0e20.
+    # At T_surf = 300 K, Arrhenius viscosity exceeds 10^40 Pa s and clamps to 1.0e40 Pa s.
+    # At T_i = arrhenius_t_ref = 1600 K, eta_i = 1.0e20 Pa s, so eta_contrast = 1.0e20.
     expected_eta_surf = 1.0e40  # 10^viscosity_max_log10 with default 40.0
     expected_eta_contrast = expected_eta_surf / eta_i
 
