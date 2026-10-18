@@ -62,7 +62,10 @@ def _drained(
     **caps,
 ):
     """A cold start at entropy ``S0`` (scalar or per cell) under a prescribed surface flux, over
-    ``end_time`` years from ``start_time``."""
+    ``end_time`` years from ``start_time``; a CVODE case is skipped without scikits.odes, where
+    'cvode' falls back to Radau."""
+    if method == 'cvode' and not es._CVODE_AVAILABLE:
+        pytest.skip('needs scikits.odes CVODE')
     p = _build_mushy_parameters(solver_method=method, end_time=start_time + end_time)
     p.solver.start_time = start_time
     p.boundary_conditions.outer_boundary_condition = 4
