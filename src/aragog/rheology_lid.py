@@ -165,7 +165,9 @@ def compute_stagnant_lid_state(
     (``d_lid_raw <= NO_LID_THICKNESS_THRESHOLD`` of 1.0 m or
     ``T_i - T_surf <= NO_LID_DT_THRESHOLD`` of 1.0e-3 K), boundary-layer diagnostics
     (``d_lid``, ``Ra_eff``, ``Ra_rh``, ``v_m``, ``tau_d``, ``tau_d_lid``,
-    ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are zeroed.
+    ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are zeroed and
+    ``has_lid`` is False, while ``T_i`` serves as an interior fallback diagnostic and
+    all solver-facing outputs vary continuously across low convective flux fractions.
 
     When ``solidus_temperature`` is None, the solidus crossing indicator ``w_hot_sol``
     is evaluated from melt fraction using ``SOLIDUS_MELT_FRACTION_THRESHOLD`` (0.01).
@@ -281,7 +283,9 @@ def compute_stagnant_lid_state(
     P_T_i = xp.sum(W_tilde * P)
     r_i = xp.sum(W_tilde * r)
 
-    w_active = 0.5 * (1.0 + xp.tanh((xp.sum(w_conv) - 1.0) / 0.5))
+    w_active = (
+        0.5 * (1.0 + xp.tanh((f_int_max - params.interior_flux_fraction) / 0.01)) + zero_or_nan
+    )
     is_convecting = (W_sum > 1e-6) & (w_active > 0.05)
 
     if solidus_temperature is not None:
@@ -489,6 +493,7 @@ def compute_stagnant_lid_state(
         'w_lid': w_lid,
         'w_y': w_y,
         'w_active': w_active,
+        'has_lid': has_lid,
         'lid_regime': lid_regime,
         'lid_cell_count': lid_cell_count,
         'eta_i': eta_i,
