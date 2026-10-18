@@ -82,10 +82,11 @@ def _drained(
     if (
         margin is not None and margin > 0.0
     ):  # the floor keeps basic nodes and cells in the table
-        sol, n = s._solution, s._n_stag
-        trace = sol.get('energy_trace')
-        assert np.all(_basic(s) >= float(eos.S_min)) and _cells(s).min() >= float(eos.S_min)
-        assert trace is None or np.asarray(trace[1])[:n].min() >= float(eos.S_min)
+        sol, S_min = s._solution, float(eos.S_min)
+        tt, ty = sol.get('energy_trace') or (sol.t, sol.y)
+        after = np.asarray(tt) > sol.t[0]  # the call start is the previous call's end
+        assert np.all(_basic(s) >= S_min) and np.all(_cells(s)[:, sol.t > sol.t[0]] >= S_min)
+        assert np.all(np.asarray(ty)[: s._n_stag, after] >= S_min)
     return s, _floor_series(s)
 
 
