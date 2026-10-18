@@ -19,8 +19,10 @@ from aragog.config.phases import MixedPhaseConfig, PhaseConfig
 from aragog.rheology import (
     SolidRheologyParams,
     compute_arrhenius_viscosity,
+    compute_stagnant_lid_state,
     compute_strain_rate_local,
     compute_yield_stress,
+    viscous_mixing_length_factor,
 )
 from aragog.rheology_lid import (
     compute_effective_viscosity,
@@ -1792,13 +1794,19 @@ def test_compute_effective_viscosity_w_lid_bounds_validation():
 def test_solid_rheology_params_boundary_values():
     """Verify SolidRheologyParams boundary acceptance and rejection edges."""
     # Acceptance of zero cohesion and zero friction coefficient.
-    p_zero = SolidRheologyParams(enabled=False, yield_stress_c=0.0, yield_stress_mu=0.0)
-    assert p_zero.yield_stress_c == 0.0
-    assert p_zero.yield_stress_mu == 0.0
+    try:
+        p_zero = SolidRheologyParams(enabled=False, yield_stress_c=0.0, yield_stress_mu=0.0)
+    except ValueError as e:
+        pytest.fail(f'yield_stress_c=0.0 and yield_stress_mu=0.0 must be accepted: {e}')
+    assert p_zero.yield_stress_c == pytest.approx(0.0, abs=1e-12)
+    assert p_zero.yield_stress_mu == pytest.approx(0.0, abs=1e-12)
 
     # Acceptance of upper bound viscosity_max_log10 = 300.0.
-    p_cap = SolidRheologyParams(enabled=False, viscosity_max_log10=300.0)
-    assert p_cap.viscosity_max_log10 == 300.0
+    try:
+        p_cap = SolidRheologyParams(enabled=False, viscosity_max_log10=300.0)
+    except ValueError as e:
+        pytest.fail(f'viscosity_max_log10=300.0 must be accepted: {e}')
+    assert p_cap.viscosity_max_log10 == pytest.approx(300.0, abs=1e-12)
 
     # Rejection of water_prefactor <= 0 on dataclass.
     with pytest.raises(ValueError, match='water_prefactor must be positive'):
@@ -1809,3 +1817,109 @@ def test_solid_rheology_params_boundary_values():
         SolidRheologyParams(enabled=False, viscosity_max_log10=20.0)
     with pytest.raises(ValueError, match='viscosity_max_log10 must be in'):
         SolidRheologyParams(enabled=False, viscosity_max_log10=300.0000001)
+
+
+@pytest.mark.unit
+def test_stagnant_lid_state_rejects_2d_and_0d_core_arrays():
+    """Verify compute_stagnant_lid_state rejects (N, 1) and 0-d core arrays with named ValueError."""
+    n_nodes = 30
+    radii = np.linspace(3480.0e3, 6370.0e3, n_nodes)
+    temp = np.full(n_nodes, 1600.0)
+    press = np.linspace(135.0e9, 1.0e5, n_nodes)
+    f_conv = np.full(n_nodes, 100.0)
+    f_tot = np.full(n_nodes, 100.0)
+    phi = np.zeros(n_nodes)
+    base_kwargs = {
+        'radii': radii,
+        'temperature': temp,
+        'pressure': press,
+        'convective_flux': f_conv,
+        'total_flux': f_tot,
+        'melt_fraction': phi,
+        'solidus_temperature': None,
+        'params': SolidRheologyParams(enabled=True),
+        'viscosity_solid': 1.0e20,
+        'phi_rheo': 0.4,
+        'phi_width': 0.15,
+    }
+
+    # 2D (N, 1) and 0-d radii
+    with pytest.raises(ValueError, match='radii must be a 1-D array'):
+        compute_stagnant_lid_state(**{**base_kwargs, 'radii': radii.reshape(-1, 1)})
+    with pytest.raises(ValueError, match='radii must be a 1-D array'):
+        compute_stagnant_lid_state(**{**base_kwargs, 'radii': np.array(6370.0e3)})
+
+    # 2D (N, 1) and 0-d for each other core array
+    for arr_name in (
+        'temperature',
+        'pressure',
+        'convective_flux',
+        'total_flux',
+        'melt_fraction',
+    ):
+        with pytest.raises(
+            ValueError, match=f'{arr_name} must have the same 1-D length as radii'
+        ):
+            compute_stagnant_lid_state(
+                **{**base_kwargs, arr_name: base_kwargs[arr_name].reshape(-1, 1)}
+            )
+        with pytest.raises(
+            ValueError, match=f'{arr_name} must have the same 1-D length as radii'
+        ):
+            compute_stagnant_lid_state(**{**base_kwargs, arr_name: np.array(100.0)})
+
+
+@pytest.mark.unit
+def test_viscous_mixing_length_factor_nan_scalar_inputs_propagate():
+    """Verify NaN scalar inputs propagate to boundary nodes in viscous_mixing_length_factor."""
+    r = np.linspace(3.48e6, 6.371e6, 41)
+    ml = np.minimum(r - r[0], r[-1] - r)
+
+    for kwargs in (
+        {'s_top_inf': float('nan')},
+        {'bottom_slope': float('nan')},
+        {'theta': 10.0, 'c_theta': float('nan')},
+    ):
+        q = viscous_mixing_length_factor(r, r[0], r[-1], ml, **kwargs)
+        assert np.isnan(q[0])
+        assert np.isnan(q[-1])
+        assert np.all(np.isnan(q))
+
+    q_rin = viscous_mixing_length_factor(r, float('nan'), r[-1], ml)
+    assert np.isnan(q_rin[0]) and np.isnan(q_rin[-1]) and np.all(np.isnan(q_rin))
+
+    q_rout = viscous_mixing_length_factor(r, r[0], float('nan'), ml)
+    assert np.isnan(q_rout[0]) and np.isnan(q_rout[-1]) and np.all(np.isnan(q_rout))
+
+
+@pytest.mark.unit
+def test_w_ti_selector_requires_w_conv_factor():
+    """Verify w_Ti selector includes the w_conv factor distinguishing weak convection states."""
+    n_nodes = 50
+    r = np.linspace(3480.0e3, 6370.0e3, n_nodes)
+    p = np.linspace(135.0e9, 1.0e5, n_nodes)
+    t = np.full(n_nodes, 1600.0)
+    t[:43] = np.linspace(2200.0, 1600.0, 43)
+    t[-7:] = np.linspace(1600.0, 300.0, 7)
+
+    f_arr = np.zeros(n_nodes)
+    f_arr[:43] = np.linspace(0.045, 0.060, 43)
+
+    st = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=f_arr * 100.0,
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e20,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+
+    # With w_conv, T_i weights the deeper active nodes giving 1601.95 K; without it T_i is 1600.00 K.
+    assert float(st['T_i']) == pytest.approx(1601.953991, rel=1e-5)
+    assert abs(float(st['T_i']) - 1600.0) > 1.0
+    assert float(st['r_i']) == pytest.approx(5949075.67, rel=1e-5)
