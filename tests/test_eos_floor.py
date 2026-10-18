@@ -35,6 +35,13 @@ def _weights(s):
     return np.asarray(s.evaluator.mesh.quantity_at_basic_nodes(np.eye(s._n_stag)))[-1]
 
 
+def _basic(s):
+    """Every basic-node entropy of every state after the call start of the last solve."""
+    sol = s._solution
+    S = np.asarray(sol.y, dtype=float)[: s._n_stag, np.asarray(sol.t) > sol.t[0]]
+    return np.asarray(s.evaluator.mesh.quantity_at_basic_nodes(S))
+
+
 def _floor_series(s):
     """The floor entropy at every output point of the last solve."""
     S = np.asarray(s._solution.y, dtype=float)[: s._n_stag]
@@ -68,6 +75,8 @@ def _drained(
     s.initialize()
     s.set_initial_entropy(np.broadcast_to(np.asarray(S0, dtype=float), s._n_stag).copy())
     s.solve()
+    if margin is not None and margin > 0.0:  # the floor keeps every basic node in the table
+        assert np.all(_basic(s) >= float(eos.S_min))
     return s, _floor_series(s)
 
 
@@ -180,11 +189,8 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
     messages = [r.getMessage() for r in caplog.records]
     refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
     assert len(refusals) == 1 and refusals[0].levelno == logging.WARNING
-    text = (
-        'at the table minimum and falls'
-        if where in ('below', 'one ulp above')
-        else 'falls too fast'
-    )
+    text = {'below': 'at or below the table minimum', 'one ulp above': 'counts as at the table'}
+    text = text.get(where, 'falls too fast')
     assert text in refusals[0].getMessage() and sol.message.startswith('EOS floor:')
     assert any('stopped 10.0 yr before end_time' in m for m in messages)
 
@@ -395,40 +401,39 @@ def _steep_top(eos, top3):
     s.initialize()
     S0 = np.full(s._n_stag, float(eos.S_min) + 2000.0)
     S0[-3:] = float(eos.S_min) + np.asarray(top3, dtype=float)
-    assert _weights(s) @ S0 < float(eos.S_min)  # precondition: the extrapolated top node is out
     return S0
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
-def test_a_warming_top_cell_under_an_extrapolated_falling_node_runs_its_span(
-    shared_eos, method
+@pytest.mark.parametrize(
+    ('top3', 'flux', 'end_time'),
+    [([2000.0, 236.0, 40.0], 0.0, 10.0), ([40.0, 2000.0, 40.0], 860.0, 2.0e4)],
+    ids=['warming top cell', 'rising node'],
+)
+def test_a_top_node_below_the_table_is_refused_when_it_or_the_top_cell_rises(
+    shared_eos, caplog, method, top3, flux, end_time
 ):
-    """Flux 0, top node at S_min - 58: the node falls only by extrapolation while the top cell
-    warms, so the call runs its full span with every cell inside the table."""
-    S_min = float(shared_eos.S_min)
-    s, _ = _drained(
-        shared_eos, _steep_top(shared_eos, [2000.0, 236.0, 40.0]), flux=0.0, method=method
-    )
-    assert s._solution.status == 0 and s._solution.t[-1] == pytest.approx(10.0)
-    assert _cells(s).min() > S_min + 39.0
+    """Top node at S_min - 58 under flux 0 (it falls only by extrapolation while the top cell
+    warms) or at S_min - 940 under 860 W/m^2 (it rises while the top cell falls): the call does
+    not advance, with the named refusal."""
+    S0 = _steep_top(shared_eos, top3)
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(shared_eos, S0, flux=flux, end_time=end_time, method=method)
+    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
+    refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
+    assert len(refusals) == 1 and 'at or below the table minimum' in refusals[0].getMessage()
+    assert s._solution.message.startswith('EOS floor:')
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
-def test_a_rising_node_at_the_table_stops_a_falling_top_cell_at_half_its_distance(
-    shared_eos, method
-):
-    """Top cells S_min + [40, 2000, 40] under 860 W/m^2: the extrapolated node rises while the
-    top cell falls, so the call advances and a root stops the top cell at S_min + 20 (named
-    eos_floor on CVODE); without the floor the same call drains it below the table."""
+def test_a_top_node_just_above_the_table_stops_at_half_its_distance(shared_eos, method):
+    """Top node at S_min + 1e-4 under flux 0, falling only by extrapolation while the top cell
+    warms: the call advances and a root stops the node at S_min + 5e-5 (named eos_floor on
+    CVODE), every basic node inside the table."""
     S_min = float(shared_eos.S_min)
-    S0 = _steep_top(shared_eos, [40.0, 2000.0, 40.0])
-    s, _ = _drained(shared_eos, S0, flux=860.0, end_time=2.0e4, method=method)
-    Y = _cells(s)
-    assert 0.0 < s._solution.t[-1] < 2.0e4
-    assert (
-        Y[-1, -1] == pytest.approx(S_min + 20.0, abs=1.0e-3) and Y.min() >= S_min + 20.0 - 1e-3
-    )
+    S0 = _steep_top(shared_eos, [2000.0, 120.0 - 2e-4, 40.0])
+    s, _ = _drained(shared_eos, S0, flux=0.0, method=method)
+    assert 0.0 < s._solution.t[-1] < 10.0
+    assert _basic(s)[-1, -1] == pytest.approx(S_min + 5e-5, abs=1e-6)
     if method == 'cvode':
         assert s._solution.status == 0 and s._solution.cap_label == 'eos_floor'
-    s_off, _ = _drained(shared_eos, S0, flux=860.0, end_time=2.0e4, margin=None, method=method)
-    assert _cells(s_off)[-1, -1] < S_min

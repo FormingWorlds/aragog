@@ -55,12 +55,19 @@ def test_a_fast_drain_in_the_band_is_refused():
     assert _start(np.full(3, S_MIN + 40.0), [-10.0, -10.0, -10.0]) == (None, True)
 
 
-@pytest.mark.parametrize('offset', [-10.0, 0.0, 1e-4])
+@pytest.mark.parametrize('offset', [-10.0, 0.0])
+@pytest.mark.parametrize('rate', [0.0, 1.0, -1.0])
+def test_a_start_at_or_below_the_table_is_refused_at_any_rate(offset, rate):
+    """A start at or below S_min is refused also when it warms."""
+    assert _start(np.full(3, S_MIN + offset), [rate] * 3) == (None, True)
+
+
 @pytest.mark.parametrize(('rate', 'refuse'), [(0.0, False), (1.0, False), (-1.0, True)])
-def test_a_start_at_or_below_the_table_advances_unless_it_falls(offset, rate, refuse):
-    """At or below S_min + 2e-6 m no level is armed: a warming or steady start advances with the
-    floor off, a falling one is refused."""
-    assert _start(np.full(3, S_MIN + offset), [rate] * 3) == (None, refuse)
+def test_a_start_just_above_the_table_arms_half_its_distance_unless_it_falls(rate, refuse):
+    """At S_min + 1e-6 m a warming or steady start arms half its distance; a falling one is
+    refused."""
+    level, r = _start(np.full(3, S_MIN + 1e-4), [rate] * 3)
+    assert r is refuse and (level is None if refuse else level == pytest.approx(S_MIN + 5e-5))
 
 
 def test_the_rate_of_the_lowest_component_decides():
@@ -93,13 +100,14 @@ T = np.array([0.0, 0.0, 1.0])  # top node equal to the top cell, so the boundari
     ('s0', 'expected'),
     [
         ((S_MIN + M) + 1e-6 * M, (S_MIN + 0.5 * M, False)),
-        (S_MIN + 1.5e-6 * M, (None, False)),
-        (S_MIN + 2e-6 * M, (None, False)),
+        (S_MIN + 1.5e-6 * M, (0.5 * (S_MIN + 1.5e-6 * M + S_MIN), False)),
+        (S_MIN + 2e-6 * M, (0.5 * (S_MIN + 2e-6 * M + S_MIN), False)),
+        (np.nextafter(S_MIN, np.inf), (None, True)),
     ],
 )
 def test_the_level_and_table_boundaries_are_inclusive(s0, expected):
     """A start at S_min + m + 1e-6 m arms S_min + m/2; a warming start at or below S_min + 2e-6 m
-    arms nothing."""
+    arms half its distance, and one ulp above S_min, where no level fits between, is refused."""
     assert _floor_start_level(T, np.full(3, s0), lambda: np.ones(3), S_MIN, M, DT) == expected
 
 
@@ -141,18 +149,22 @@ def test_a_top_node_below_the_table_is_refused_on_a_slow_fall_with_every_cell_in
     assert _start(S, [0.0, 0.0, -1.5e-3]) == (None, True)
 
 
-def test_a_warming_top_cell_under_an_extrapolated_falling_node_advances():
-    """Flux 0, top node at S_min - 58, top cell warming slower than the cell below: the node
-    rate is negative only by extrapolation, so the start advances, and a root watches the
-    smallest cell at half its distance."""
-    S = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])
-    rate = [-0.015, 0.069, 0.0034]
-    assert W @ np.array(rate) < 0.0
-    assert _start(S, rate) == (S_MIN + 20.0, False)
+S_NODE_BELOW = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])  # top node at S_min - 58
+S_NODE_AT = np.array([S_MIN + 2000.0, S_MIN + 120.0 - 2e-4, S_MIN + 40.0])  # S_min + 1e-4
 
 
-def test_a_rising_node_at_the_table_arms_a_root_for_a_falling_top_cell():
-    """Top node below the table and rising, top cell falling: the start advances and a root
-    at half the distance of the smallest cell protects it."""
-    S = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])
-    assert _start(S, [0.0, -4.0, -1.0]) == (S_MIN + 20.0, False)
+@pytest.mark.parametrize('rate', [[-0.015, 0.069, 0.0034], [0.0, -4.0, -1.0]])
+def test_a_top_node_below_the_table_is_refused_when_it_or_the_top_cell_rises(rate):
+    """Top node at S_min - 58 with every cell inside: refused also when the top cell warms
+    (node falling by extrapolation) or the node rises."""
+    assert W @ S_NODE_BELOW == pytest.approx(S_MIN - 58.0)
+    assert _start(S_NODE_BELOW, rate) == (None, True)
+
+
+@pytest.mark.parametrize('rate', [[-0.015, 0.069, 0.0034], [0.0, -4.0, -1.0]])
+def test_a_top_node_just_above_the_table_arms_half_its_distance_when_not_falling(rate):
+    """Top node at S_min + 1e-4: a node falling only by extrapolation under a warming top cell,
+    or a rising node over a falling top cell, arms half the node's distance."""
+    assert W @ S_NODE_AT == pytest.approx(S_MIN + 1e-4)
+    level, refuse = _start(S_NODE_AT, rate)
+    assert not refuse and level == pytest.approx(S_MIN + 5e-5)
