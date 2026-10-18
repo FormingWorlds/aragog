@@ -7,7 +7,12 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from aragog.solver.entropy_solver import AcceptedStateError, _check_accepted_states
+from aragog.eos import entropy as eos_mod
+from aragog.solver.entropy_solver import (
+    AcceptedStateError,
+    _check_accepted_states,
+    _check_end_state,
+)
 
 from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from .test_eos_floor import _FLUX, _drained
@@ -140,3 +145,68 @@ def test_a_call_inside_the_tables_does_not_raise(shared_eos, method, flux):
     """The floor keeps a drained call inside; a call without the drain stays inside."""
     s, f = _drained(shared_eos, float(shared_eos.S_min) + 400.0, flux=flux, method=method)
     assert f.min() >= float(shared_eos.S_min)
+
+
+@pytest.mark.unit
+def test_an_end_state_with_positive_temperatures_and_melt_fractions_in_0_1_passes():
+    _check_end_state(5.0, np.full(3, 300.0), np.full(4, 300.0), np.array([0.0, 0.5, 1.0]))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('T_stag', 'T_basic', 'phi', 'expected'),
+    [
+        ([300.0, 0.0, 300.0], [300.0] * 4, [0.5] * 3, ('end_temperature', 'cell 1', 0.0, 0.0)),
+        ([300.0] * 3, [300.0, 300.0, -1.0, 300.0], [0.5] * 3, ('end_temperature', 'basic 2', -1.0, 0.0)),
+        ([300.0] * 3, [300.0] * 4, [0.5, 1.0 + 1e-12, 0.5], ('end_melt_fraction', 'cell 1', 1.0 + 1e-12, 1.0)),
+        ([300.0] * 3, [300.0] * 4, [-1e-12, 0.5, 0.5], ('end_melt_fraction', 'cell 0', -1e-12, 0.0)),
+    ],
+)  # fmt: skip
+def test_an_end_state_outside_its_bounds_names_the_check(T_stag, T_basic, phi, expected):
+    with pytest.raises(AcceptedStateError) as e:
+        _check_end_state(5.0, np.array(T_stag), np.array(T_basic), np.array(phi))
+    assert (e.value.check, e.value.node, e.value.value, e.value.bound) == expected
+    assert e.value.time == 5.0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('which', ['T_stag', 'T_basic', 'phi'])
+def test_a_non_finite_end_state_raises(which):
+    arrays = {'T_stag': np.full(3, 300.0), 'T_basic': np.full(4, 300.0), 'phi': np.full(3, 0.5)}
+    arrays[which][0] = np.nan
+    with pytest.raises(AcceptedStateError) as e:
+        _check_end_state(5.0, arrays['T_stag'], arrays['T_basic'], arrays['phi'])
+    assert e.value.check == ('end_melt_fraction' if which == 'phi' else 'end_temperature')
+
+
+@pytest.mark.smoke
+@needs_eos
+@pytest.mark.parametrize('bad', [0.0, -5.0, np.nan])
+def test_a_temperature_table_with_a_non_positive_or_non_finite_value_is_refused(
+    monkeypatch, bad
+):
+    load = eos_mod._load_spider_ps_table
+
+    def spoiled(path, *a, **k):
+        tbl = load(path, *a, **k)
+        if path.name == 'temperature_melt.dat':
+            tbl['values'] = np.array(tbl['values'], dtype=float)
+            tbl['values'][3, 4] = bad
+        return tbl
+
+    monkeypatch.setattr(eos_mod, '_load_spider_ps_table', spoiled)
+    with pytest.raises(ValueError, match='temperature_melt'):
+        eos_mod.EntropyEOS(EOS_DIR)
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_get_state_checks_the_end_state(shared_eos, monkeypatch):
+    s, _ = _drained(shared_eos, float(shared_eos.S_min) + 400.0, flux=0.0)
+    s.get_state()
+    monkeypatch.setattr(
+        s.entropy_eos, 'melt_fraction', lambda P, S: np.full(np.size(S), np.nan)
+    )
+    with pytest.raises(AcceptedStateError) as e:
+        s.get_state()
+    assert e.value.check == 'end_melt_fraction'
