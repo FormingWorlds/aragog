@@ -153,20 +153,32 @@ def test_arrhenius_viscosity_parity_float64():
     with pytest.raises(AssertionError):
         np.testing.assert_allclose(eta_wrong_g, eta_np, rtol=1.0e-12, atol=1.0e-30)
 
-    # Canary 2: dropping T_sol(0) / T_ref (equivalent to t_sol_0 = 0.0) must fail.
-    eta_no_ref = compute_arrhenius_viscosity(
+    # Canary 2: t_sol_0 <= 0 raises ValueError on NumPy, and a wrong positive t_sol_0 fails parity.
+    with pytest.raises(ValueError, match='t_sol_0'):
+        compute_arrhenius_viscosity(
+            t_vals,
+            p_vals,
+            viscosity_solid=1.0e21,
+            g_homologous=25.0,
+            solidus_temperature=t_sol_vals,
+            t_sol_0=0.0,
+            arrhenius_t_ref=1600.0,
+            viscosity_max_log10=40.0,
+            xp=np,
+        )
+    eta_wrong_t_sol_0 = compute_arrhenius_viscosity(
         t_vals,
         p_vals,
         viscosity_solid=1.0e21,
         g_homologous=25.0,
         solidus_temperature=t_sol_vals,
-        t_sol_0=0.0,
+        t_sol_0=1000.0,
         arrhenius_t_ref=1600.0,
         viscosity_max_log10=40.0,
         xp=np,
     )
     with pytest.raises(AssertionError):
-        np.testing.assert_allclose(eta_no_ref, eta_np, rtol=1.0e-12, atol=1.0e-30)
+        np.testing.assert_allclose(eta_wrong_t_sol_0, eta_np, rtol=1.0e-12, atol=1.0e-30)
 
     # Canary 3: ignoring solidus_temperature and falling back to linear solidus must fail.
     eta_linear_fallback = compute_arrhenius_viscosity(

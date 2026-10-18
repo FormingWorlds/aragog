@@ -1252,9 +1252,10 @@ def test_validation_and_lid_base_edge_cases():
     with pytest.raises(TypeError, match='unexpected keyword argument'):
         viscous_mixing_length_factor(r, r[0], r[-1], ml, top_slope=0.5)
 
-    # 4. T <= 0 returns NaN (not the viscosity cap) in both NumPy and JAX.
+    # 4. T <= 0 raises ValueError in NumPy and returns NaN in JAX.
     for t_bad in (0.0, -50.0):
-        assert math.isnan(compute_arrhenius_viscosity(t_bad, 0.0))
+        with pytest.raises(ValueError, match='temperature'):
+            compute_arrhenius_viscosity(t_bad, 0.0, xp=np)
         assert bool(jnp.isnan(compute_arrhenius_viscosity(t_bad, 0.0, xp=jnp)))
     assert bool(
         jnp.isnan(compute_arrhenius_viscosity(1600.0, 0.0, water_prefactor=0.0, xp=jnp))

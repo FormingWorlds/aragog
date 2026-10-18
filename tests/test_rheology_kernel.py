@@ -435,7 +435,7 @@ def test_strain_rate_local_eps_floor_at_zero_mixing_length():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
-    """Verify a molten column with a solidus table reports no lid at N = 50, 100, and 200."""
+    """Verify phi >= 0.03 has no lid at N in {50, 100, 200} with/without table, while phi = 0.005 retains a lid."""
     params = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
     for n_nodes in (50, 100, 200):
         radii = np.linspace(3.48e6, 6.37e6, n_nodes)
@@ -443,30 +443,57 @@ def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
         t_sol = 1400.0 + 2.4e-8 * pressure
         conv_flux = np.full(n_nodes, 99.0)
         tot_flux = np.full(n_nodes, 100.0)
-        for dt_above in (100.0, 150.0, 200.0, 250.0):
-            t_prof = t_sol + dt_above
-            for phi_val in (0.41, 0.50):
-                state = compute_stagnant_lid_state(
-                    radii=radii,
-                    temperature=t_prof,
-                    pressure=pressure,
-                    convective_flux=conv_flux,
-                    total_flux=tot_flux,
-                    solidus_temperature=t_sol,
-                    t_sol_0=1400.0,
-                    melt_fraction=np.full(n_nodes, phi_val),
-                    params=params,
-                    viscosity_solid=1.0e21,
-                    phi_rheo=0.4,
-                    phi_width=0.15,
-                    xp=np,
-                )
-                assert bool(state['has_lid']) is False
-                assert float(state['d_lid']) == 0.0
-                assert float(radii[-1] - state['r_lid_base']) < 1.0
-                assert float(state['tau_d']) == 0.0
-                assert float(state['lid_regime']) == 0.0
-                np.testing.assert_allclose(state['w_lid'], 0.0, atol=1.0e-12)
+        for sol_arg in (t_sol, None):
+            for dt_above in (100.0, 200.0):
+                t_prof = t_sol + dt_above
+                for phi_val in (0.03, 0.05, 0.10, 0.41, 0.50):
+                    state = compute_stagnant_lid_state(
+                        radii=radii,
+                        temperature=t_prof,
+                        pressure=pressure,
+                        convective_flux=conv_flux,
+                        total_flux=tot_flux,
+                        solidus_temperature=sol_arg,
+                        t_sol_0=1400.0,
+                        melt_fraction=np.full(n_nodes, phi_val),
+                        params=params,
+                        viscosity_solid=1.0e21,
+                        phi_rheo=0.4,
+                        phi_width=0.15,
+                        xp=np,
+                    )
+                    assert bool(state['has_lid']) is False
+                    assert float(state['d_lid']) == 0.0
+                    assert float(radii[-1] - state['r_lid_base']) < 1.0
+                    assert float(state['tau_d']) == 0.0
+                    assert float(state['lid_regime']) == 0.0
+                    np.testing.assert_allclose(state['w_lid'], 0.0, atol=1.0e-4)
+
+        # At phi = 0.005 (< SOLIDUS_MELT_FRACTION_THRESHOLD = 0.01) with a cold surface lid and a table,
+        # the lid remains active (kills SOLIDUS_MELT_FRACTION_THRESHOLD 0.01 -> 0.001 mutant, while
+        # phi = 0.03 above kills 0.01 -> 0.05).
+        t_lid_prof = t_sol + 200.0
+        t_lid_prof[-6:] = np.linspace(1600.0, 300.0, 6)
+        conv_lid = conv_flux.copy()
+        conv_lid[-6:] = 0.0
+        st_sub = compute_stagnant_lid_state(
+            radii=radii,
+            temperature=t_lid_prof,
+            pressure=pressure,
+            convective_flux=conv_lid,
+            total_flux=tot_flux,
+            solidus_temperature=t_sol,
+            t_sol_0=1400.0,
+            melt_fraction=np.full(n_nodes, 0.005),
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
+        )
+        assert bool(st_sub['has_lid']) is True
+        assert float(st_sub['d_lid']) > 10.0e3
+        assert float(st_sub['tau_d']) > 0.0
 
 
 @pytest.mark.unit
@@ -516,56 +543,248 @@ def test_melt_fraction_ramp_phi_rheo_and_phi_width_below_solidus_threshold():
         )
 
 
+def _assert_invalid_raises_np_and_nan_jit(
+    fn,
+    np_kw: dict,
+    jax_kw: dict,
+    jit_fn,
+    field_name: str,
+    bad_val,
+    *,
+    static_error: bool = False,
+    is_lid_state: bool = False,
+) -> None:
+    """Assert ValueError on eager NumPy and NaN (or ValueError for static type/shape errors) under jax.jit."""
+    jnp = pytest.importorskip('jax.numpy')
+    with pytest.raises(ValueError, match=field_name):
+        fn(**{**np_kw, field_name: bad_val, 'xp': np})
+
+    if static_error:
+        with pytest.raises(ValueError, match=field_name):
+            jit_fn({**jax_kw, field_name: bad_val})
+        return
+
+    j_val = jnp.asarray(bad_val, dtype=float)
+    res_jit = jit_fn({**jax_kw, field_name: j_val})
+    if is_lid_state:
+        assert bool(res_jit['has_lid']) is False
+        assert bool(jnp.all(jnp.isnan(res_jit['w_lid'])))
+        for k in ('T_i', 'theta', 'eta_i', 'mu_i', 'd_lid', 'v_m', 'tau_d', 'lid_regime'):
+            assert bool(jnp.isnan(res_jit[k]))
+    else:
+        assert bool(jnp.all(jnp.isnan(res_jit)))
+
+
 @pytest.mark.unit
-def test_arrhenius_viscosity_and_enthalpy_reject_invalid_viscosity_solid_and_g_homologous():
-    """Verify viscosity_solid <= 0 and g_homologous < 0 raise ValueError on np and return NaN on JAX."""
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('pressure', -1.0, False),
+        ('pressure', np.inf, False),
+        ('pressure', -np.inf, False),
+        ('pressure', True, True),
+        ('g_homologous', -25.0, False),
+        ('g_homologous', -1.0e-6, False),
+        ('g_homologous', np.inf, False),
+        ('g_homologous', -np.inf, False),
+        ('g_homologous', np.array([25.0, 14.0]), True),
+        ('g_homologous', True, True),
+        ('solidus_temperature', 0.0, False),
+        ('solidus_temperature', -100.0, False),
+        ('solidus_temperature', np.inf, False),
+        ('solidus_temperature', -np.inf, False),
+        ('solidus_temperature', True, True),
+        ('t_sol_0', 0.0, False),
+        ('t_sol_0', -100.0, False),
+        ('t_sol_0', np.inf, False),
+        ('t_sol_0', -np.inf, False),
+        ('t_sol_0', np.array([1400.0, 1500.0]), True),
+        ('t_sol_0', True, True),
+        ('dt_sol_dp', -1.0e-8, False),
+        ('dt_sol_dp', np.inf, False),
+        ('dt_sol_dp', -np.inf, False),
+        ('dt_sol_dp', True, True),
+    ],
+)
+def test_arrhenius_enthalpy_validation_table(field_name: str, bad_val, static_error: bool):
+    """Verify compute_arrhenius_enthalpy rejects invalid inputs on np and returns NaN under jax.jit."""
     jax = pytest.importorskip('jax')
     jax.config.update('jax_enable_x64', True)
     jnp = pytest.importorskip('jax.numpy')
 
-    for bad_g in (-25.0, -1.0e-6, np.inf, -np.inf):
-        with pytest.raises(ValueError, match='g_homologous'):
-            compute_arrhenius_enthalpy(1.0e9, g_homologous=bad_g, xp=np)
-        with pytest.raises(ValueError, match='g_homologous'):
-            compute_arrhenius_viscosity(1600.0, 1.0e9, g_homologous=bad_g, xp=np)
-        h_jax = compute_arrhenius_enthalpy(jnp.asarray(1.0e9), g_homologous=bad_g, xp=jnp)
-        assert bool(jnp.isnan(h_jax))
-        eta_jax = compute_arrhenius_viscosity(
-            jnp.asarray([1600.0, 2000.0]),
-            jnp.asarray([0.0, 1.0e9]),
-            g_homologous=bad_g,
-            xp=jnp,
-        )
-        assert bool(jnp.all(jnp.isnan(eta_jax)))
-
-    for bad_vs in (0.0, -1.0e21, np.inf, -np.inf):
-        with pytest.raises(ValueError, match='viscosity_solid'):
-            compute_arrhenius_viscosity(1600.0, 0.0, viscosity_solid=bad_vs, xp=np)
-        eta_jax_vs = compute_arrhenius_viscosity(
-            jnp.asarray([1600.0, 2000.0]),
-            jnp.asarray([0.0, 1.0e9]),
-            viscosity_solid=bad_vs,
-            xp=jnp,
-        )
-        assert bool(jnp.all(jnp.isnan(eta_jax_vs)))
-
+    np_kw = {
+        'pressure': 1.0e9,
+        'g_homologous': 25.0,
+        'solidus_temperature': None,
+        't_sol_0': 1400.0,
+        'dt_sol_dp': 2.4e-8,
+    }
+    jax_kw = {**np_kw, 'pressure': jnp.asarray(1.0e9)}
+    jit_fn = jax.jit(lambda kw: compute_arrhenius_enthalpy(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_arrhenius_enthalpy,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
     assert compute_arrhenius_enthalpy(1.0e9, g_homologous=0.0, xp=np) == 0.0
+    assert np.isnan(compute_arrhenius_enthalpy(1.0e9, g_homologous=np.nan, xp=np))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('temperature', 0.0, False),
+        ('temperature', -50.0, False),
+        ('temperature', np.inf, False),
+        ('temperature', -np.inf, False),
+        ('temperature', True, True),
+        ('pressure', -1.0, False),
+        ('pressure', np.inf, False),
+        ('pressure', -np.inf, False),
+        ('pressure', False, True),
+        ('viscosity_solid', 0.0, False),
+        ('viscosity_solid', -1.0e21, False),
+        ('viscosity_solid', np.inf, False),
+        ('viscosity_solid', -np.inf, False),
+        ('viscosity_solid', np.array([1.0e21, 2.0e21]), True),
+        ('viscosity_solid', True, True),
+        ('g_homologous', -25.0, False),
+        ('g_homologous', -1.0e-6, False),
+        ('g_homologous', np.inf, False),
+        ('g_homologous', -np.inf, False),
+        ('g_homologous', np.array([25.0, 14.0]), True),
+        ('g_homologous', np.bool_(True), True),
+        ('solidus_temperature', 0.0, False),
+        ('solidus_temperature', -500.0, False),
+        ('solidus_temperature', np.inf, False),
+        ('solidus_temperature', -np.inf, False),
+        ('solidus_temperature', True, True),
+        ('t_sol_0', 0.0, False),
+        ('t_sol_0', -100.0, False),
+        ('t_sol_0', np.inf, False),
+        ('t_sol_0', -np.inf, False),
+        ('t_sol_0', True, True),
+        ('dt_sol_dp', -1.0e-8, False),
+        ('dt_sol_dp', np.inf, False),
+        ('dt_sol_dp', -np.inf, False),
+        ('dt_sol_dp', True, True),
+        ('arrhenius_t_ref', 0.0, False),
+        ('arrhenius_t_ref', -100.0, False),
+        ('arrhenius_t_ref', np.inf, False),
+        ('arrhenius_t_ref', -np.inf, False),
+        ('arrhenius_t_ref', True, True),
+        ('water_prefactor', 0.0, False),
+        ('water_prefactor', -0.5, False),
+        ('water_prefactor', np.inf, False),
+        ('water_prefactor', -np.inf, False),
+        ('water_prefactor', True, True),
+    ],
+)
+def test_arrhenius_viscosity_validation_table(field_name: str, bad_val, static_error: bool):
+    """Verify compute_arrhenius_viscosity rejects invalid inputs on np and returns NaN under jax.jit."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    np_kw = {
+        'temperature': 1600.0,
+        'pressure': 1.0e9,
+        'viscosity_solid': 1.0e21,
+        'g_homologous': 25.0,
+        'solidus_temperature': None,
+        't_sol_0': 1400.0,
+        'dt_sol_dp': 2.4e-8,
+        'arrhenius_t_ref': 1600.0,
+        'water_prefactor': 1.0,
+    }
+    jax_kw = {
+        **np_kw,
+        'temperature': jnp.asarray(1600.0),
+        'pressure': jnp.asarray(1.0e9),
+    }
+    jit_fn = jax.jit(lambda kw: compute_arrhenius_viscosity(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_arrhenius_viscosity,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
     assert compute_arrhenius_viscosity(
         1600.0, 0.0, viscosity_solid=1.0e21, g_homologous=0.0
-    ) == (pytest.approx(1.0e21, rel=1.0e-12))
-    assert np.isnan(compute_arrhenius_enthalpy(1.0e9, g_homologous=np.nan, xp=np))
+    ) == pytest.approx(1.0e21, rel=1.0e-12)
     assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, viscosity_solid=np.nan, xp=np))
     assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, g_homologous=np.nan, xp=np))
 
 
 @pytest.mark.unit
-def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs():
-    """Verify inf in any array or profile input raises ValueError on np and gives has_lid=False and NaN on JAX."""
+@pytest.mark.parametrize(
+    ('field_name', 'bad_entry', 'as_scalar', 'static_error'),
+    [
+        ('temperature', np.inf, False, False),
+        ('temperature', -np.inf, False, False),
+        ('temperature', 0.0, False, False),
+        ('temperature', -50.0, False, False),
+        ('temperature', True, False, True),
+        ('pressure', np.inf, False, False),
+        ('pressure', -np.inf, False, False),
+        ('pressure', -1.0e5, False, False),
+        ('convective_flux', np.inf, False, False),
+        ('convective_flux', -np.inf, False, False),
+        ('total_flux', np.inf, False, False),
+        ('total_flux', -np.inf, False, False),
+        ('melt_fraction', np.inf, False, False),
+        ('melt_fraction', -np.inf, False, False),
+        ('melt_fraction', -0.01, False, False),
+        ('melt_fraction', 1.01, False, False),
+        ('solidus_temperature', np.inf, False, False),
+        ('solidus_temperature', -np.inf, False, False),
+        ('solidus_temperature', 0.0, False, False),
+        ('solidus_temperature', -100.0, True, False),
+        ('unyielded_velocity', np.inf, False, False),
+        ('unyielded_velocity', -np.inf, False, False),
+        ('viscosity_mixture', np.inf, False, False),
+        ('viscosity_mixture', -np.inf, False, False),
+        ('viscosity_mixture', 0.0, False, False),
+        ('viscosity_mixture', -1.0e20, True, False),
+        ('density', np.inf, False, False),
+        ('density', -np.inf, True, False),
+        ('density', 0.0, False, False),
+        ('density', -3300.0, True, False),
+        ('density', True, True, True),
+        ('gravity', np.inf, False, False),
+        ('gravity', -np.inf, False, False),
+        ('gravity', 0.0, True, False),
+        ('gravity', -9.81, False, False),
+        ('thermal_expansivity', np.inf, False, False),
+        ('thermal_expansivity', -np.inf, False, False),
+        ('thermal_expansivity', 0.0, True, False),
+        ('thermal_expansivity', -3.0e-5, False, False),
+        ('thermal_diffusivity', np.inf, False, False),
+        ('thermal_diffusivity', -np.inf, False, False),
+        ('thermal_diffusivity', 0.0, True, False),
+        ('thermal_diffusivity', -1.0e-6, False, False),
+        ('t_sol_0', 0.0, True, False),
+        ('t_sol_0', -100.0, True, False),
+    ],
+)
+def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
+    field_name: str, bad_entry, as_scalar: bool, static_error: bool
+):
+    """Verify compute_stagnant_lid_state rejects invalid array/scalar inputs on np and returns NaN under jax.jit."""
     jax = pytest.importorskip('jax')
     jax.config.update('jax_enable_x64', True)
     jnp = pytest.importorskip('jax.numpy')
 
     n_nodes = 12
+    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
     base_kw = {
         'radii': np.linspace(3.48e6, 6.37e6, n_nodes),
         'temperature': np.linspace(2600.0, 300.0, n_nodes),
@@ -581,189 +800,139 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs():
         'gravity': np.full(n_nodes, 9.81),
         'thermal_expansivity': np.full(n_nodes, 3.0e-5),
         'thermal_diffusivity': np.full(n_nodes, 1.0e-6),
-        'params': SolidRheologyParams(enabled=True, t_sol_0=1400.0),
+        'params': params,
         'viscosity_solid': 1.0e21,
         'phi_rheo': 0.4,
         'phi_width': 0.15,
     }
+    jax_kw = {
+        k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
+        for k, v in base_kw.items()
+        if k != 'params'
+    }
+    jit_lid = jax.jit(lambda kw: compute_stagnant_lid_state(**kw, params=params, xp=jnp))
 
-    for field_name in (
-        'temperature',
-        'pressure',
-        'convective_flux',
-        'total_flux',
-        'melt_fraction',
-        'solidus_temperature',
-        'unyielded_velocity',
-        'viscosity_mixture',
-        'density',
-        'gravity',
-        'thermal_expansivity',
-        'thermal_diffusivity',
-    ):
-        for sign in (1.0, -1.0):
-            bad_arr = base_kw[field_name].copy()
-            bad_arr[3] = sign * np.inf
-            with pytest.raises(ValueError, match=field_name):
-                compute_stagnant_lid_state(**{**base_kw, field_name: bad_arr, 'xp': np})
+    if static_error:
+        bad_val = bad_entry if as_scalar else np.ones(n_nodes, dtype=bool)
+    elif as_scalar:
+        bad_val = bad_entry
+    else:
+        bad_val = base_kw[field_name].copy()
+        bad_val[3] = bad_entry
 
-            j_kw = {
-                k: jnp.asarray(v) if isinstance(v, np.ndarray) else v
-                for k, v in base_kw.items()
-            }
-            j_kw[field_name] = jnp.asarray(bad_arr)
-            st_jax = compute_stagnant_lid_state(**j_kw, xp=jnp)
-            assert bool(st_jax['has_lid']) is False
-            assert bool(jnp.all(jnp.isnan(st_jax['w_lid'])))
-            for k in ('T_i', 'theta', 'eta_i', 'mu_i', 'd_lid', 'v_m', 'tau_d', 'lid_regime'):
-                assert bool(jnp.isnan(st_jax[k]))
-
-    for scalar_inf in (np.inf, -np.inf):
-        with pytest.raises(ValueError, match='density'):
-            compute_stagnant_lid_state(**{**base_kw, 'density': scalar_inf, 'xp': np})
-        j_kw_sc = {
-            k: jnp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in base_kw.items()
-        }
-        j_kw_sc['density'] = scalar_inf
-        st_jax_sc = compute_stagnant_lid_state(**j_kw_sc, xp=jnp)
-        assert bool(st_jax_sc['has_lid']) is False
-        assert bool(jnp.isnan(st_jax_sc['tau_d']))
-        assert bool(jnp.all(jnp.isnan(st_jax_sc['w_lid'])))
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_stagnant_lid_state,
+        base_kw,
+        jax_kw,
+        jit_lid,
+        field_name,
+        bad_val,
+        static_error=static_error,
+        is_lid_state=True,
+    )
 
 
 @pytest.mark.unit
-def test_compute_effective_viscosity_rejects_inf_tau_d_eta_diff_eta_i_and_accepts_inf_tau_y_lid():
-    """Verify compute_effective_viscosity rejects inf in tau_d, eta_diff, and eta_i while accepting tau_y_lid=+inf."""
+@pytest.mark.parametrize(
+    ('mode', 'field_name', 'bad_val', 'static_error'),
+    [
+        ('lid', 'eta_diff', 0.0, False),
+        ('lid', 'eta_diff', -1.0e22, False),
+        ('lid', 'eta_diff', np.inf, False),
+        ('lid', 'eta_diff', -np.inf, False),
+        ('lid', 'eta_diff', True, True),
+        ('lid', 'eta_i', 0.0, False),
+        ('lid', 'eta_i', -1.0e20, False),
+        ('lid', 'eta_i', np.inf, False),
+        ('lid', 'eta_i', -np.inf, False),
+        ('lid', 'eta_i', True, True),
+        ('lid', 'tau_d', np.inf, False),
+        ('lid', 'tau_d', -np.inf, False),
+        ('lid', 'tau_d', True, True),
+        ('lid', 'tau_y_lid', -np.inf, False),
+        ('lid', 'tau_y_lid', True, True),
+        ('lid', 'w_lid', -0.1, False),
+        ('lid', 'w_lid', 1.1, False),
+        ('lid', 'w_lid', np.inf, False),
+        ('lid', 'w_lid', -np.inf, False),
+        ('lid', 'w_lid', True, True),
+        ('local', 'eta_diff', 0.0, False),
+        ('local', 'eta_diff', -1.0e22, False),
+        ('local', 'eta_diff', np.inf, False),
+        ('local', 'eta_diff', -np.inf, False),
+        ('local', 'eta_diff', True, True),
+        ('local', 'strain_rate', -1.0e-15, False),
+        ('local', 'strain_rate', np.inf, False),
+        ('local', 'strain_rate', -np.inf, False),
+        ('local', 'strain_rate', True, True),
+        ('local', 'tau_y', -np.inf, False),
+        ('local', 'tau_y', True, True),
+    ],
+)
+def test_compute_effective_viscosity_rejects_inf_tau_d_eta_diff_eta_i_and_accepts_inf_tau_y_lid(
+    mode: str, field_name: str, bad_val, static_error: bool
+):
+    """Verify compute_effective_viscosity rejects invalid inputs on np, returns NaN under jit, and accepts +inf yield stress."""
     jax = pytest.importorskip('jax')
     jax.config.update('jax_enable_x64', True)
     jnp = pytest.importorskip('jax.numpy')
 
-    jit_lid = jax.jit(
-        lambda ed, ei, td, ty, wl: compute_effective_viscosity(
-            eta_diff=ed,
-            eta_i=ei,
-            tau_d=td,
-            tau_y_lid=ty,
-            w_lid=wl,
-            stress_closure_mode='lid',
-            xp=jnp,
-        )
+    lid_np = {
+        'eta_diff': 1.0e22,
+        'eta_i': 1.0e20,
+        'tau_d': 1.0e6,
+        'tau_y_lid': 1.0e8,
+        'w_lid': 1.0,
+        'stress_closure_mode': 'lid',
+    }
+    local_np = {
+        'eta_diff': 1.0e22,
+        'strain_rate': 1.0e-15,
+        'tau_y': 1.0e8,
+        'stress_closure_mode': 'local',
+    }
+    np_kw = lid_np if mode == 'lid' else local_np
+    jax_kw = {
+        k: (v if k == 'stress_closure_mode' else jnp.asarray(v, dtype=float))
+        for k, v in np_kw.items()
+    }
+    jit_eta = jax.jit(
+        lambda m, kw: compute_effective_viscosity(
+            **{**kw, 'stress_closure_mode': m, 'xp': jnp}
+        ),
+        static_argnums=0,
     )
-    jit_local = jax.jit(
-        lambda ed, sr, ty: compute_effective_viscosity(
-            eta_diff=ed,
-            strain_rate=sr,
-            tau_y=ty,
-            stress_closure_mode='local',
-            xp=jnp,
-        )
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_effective_viscosity,
+        np_kw,
+        {k: v for k, v in jax_kw.items() if k != 'stress_closure_mode'},
+        lambda kw: jit_eta(mode, kw),
+        field_name,
+        bad_val,
+        static_error=static_error,
     )
 
-    # 1. tau_d = +-inf (with tau_y_lid finite and +inf): ValueError on np, NaN under jax.jit.
-    for sign in (1.0, -1.0):
-        td_inf = sign * np.inf
-        for ty_val in (1.0e6, np.inf):
-            for wl_val in (None, 1.0, 0.5):
-                with pytest.raises(ValueError, match='tau_d'):
-                    compute_effective_viscosity(
-                        eta_diff=1.0e22,
-                        eta_i=1.0e20,
-                        tau_d=td_inf,
-                        tau_y_lid=ty_val,
-                        w_lid=wl_val,
-                        stress_closure_mode='lid',
-                        xp=np,
-                    )
-            res_jit = jit_lid(
-                jnp.asarray(1.0e22),
-                jnp.asarray(1.0e20),
-                jnp.asarray(td_inf),
-                jnp.asarray(ty_val),
-                jnp.asarray(1.0),
-            )
-            assert bool(jnp.isnan(res_jit))
-
-    # 2. eta_diff = +-inf and eta_i = +-inf: ValueError on np, NaN under jax.jit.
-    for sign in (1.0, -1.0):
-        inf_v = sign * np.inf
-        with pytest.raises(ValueError, match='eta_diff'):
-            compute_effective_viscosity(
-                eta_diff=inf_v,
-                eta_i=1.0e20,
-                tau_d=1.0e6,
-                tau_y_lid=1.0e8,
-                w_lid=1.0,
-                stress_closure_mode='lid',
-                xp=np,
-            )
-        with pytest.raises(ValueError, match='eta_diff'):
-            compute_effective_viscosity(
-                eta_diff=inf_v,
-                strain_rate=1.0e-15,
-                tau_y=1.0e8,
-                stress_closure_mode='local',
-                xp=np,
-            )
-        with pytest.raises(ValueError, match='eta_i'):
-            compute_effective_viscosity(
-                eta_diff=1.0e22,
-                eta_i=inf_v,
-                tau_d=1.0e6,
-                tau_y_lid=1.0e8,
-                w_lid=1.0,
-                stress_closure_mode='lid',
-                xp=np,
-            )
-        assert bool(
-            jnp.isnan(
-                jit_lid(
-                    jnp.asarray(inf_v),
-                    jnp.asarray(1.0e20),
-                    jnp.asarray(1.0e6),
-                    jnp.asarray(1.0e8),
-                    jnp.asarray(1.0),
+    if mode == 'lid' and field_name == 'tau_y_lid' and not static_error:
+        for td_finite in (0.0, 1.0e6, 1.0e12):
+            for wl_val in (None, 0.0, 0.5, 1.0):
+                res_np = compute_effective_viscosity(
+                    eta_diff=1.0e22,
+                    eta_i=1.0e20,
+                    tau_d=td_finite,
+                    tau_y_lid=np.inf,
+                    w_lid=wl_val,
+                    stress_closure_mode='lid',
+                    xp=np,
                 )
+                assert float(res_np) == pytest.approx(1.0e22, rel=1.0e-12)
+            res_jit_inf = jit_eta(
+                'lid',
+                {
+                    'eta_diff': jnp.asarray(1.0e22),
+                    'eta_i': jnp.asarray(1.0e20),
+                    'tau_d': jnp.asarray(td_finite),
+                    'tau_y_lid': jnp.asarray(np.inf),
+                    'w_lid': jnp.asarray(1.0),
+                },
             )
-        )
-        assert bool(
-            jnp.isnan(
-                jit_local(
-                    jnp.asarray(inf_v),
-                    jnp.asarray(1.0e-15),
-                    jnp.asarray(1.0e8),
-                )
-            )
-        )
-        assert bool(
-            jnp.isnan(
-                jit_lid(
-                    jnp.asarray(1.0e22),
-                    jnp.asarray(inf_v),
-                    jnp.asarray(1.0e6),
-                    jnp.asarray(1.0e8),
-                    jnp.asarray(1.0),
-                )
-            )
-        )
-
-    # 3. tau_y_lid = +inf stays valid (no yielding) and returns eta_diff for finite tau_d >= 0.
-    for td_finite in (0.0, 1.0e6, 1.0e12):
-        for wl_val in (None, 0.0, 0.5, 1.0):
-            res_np = compute_effective_viscosity(
-                eta_diff=1.0e22,
-                eta_i=1.0e20,
-                tau_d=td_finite,
-                tau_y_lid=np.inf,
-                w_lid=wl_val,
-                stress_closure_mode='lid',
-                xp=np,
-            )
-            assert float(res_np) == pytest.approx(1.0e22, rel=1.0e-12)
-        res_jax = jit_lid(
-            jnp.asarray(1.0e22),
-            jnp.asarray(1.0e20),
-            jnp.asarray(td_finite),
-            jnp.asarray(jnp.inf),
-            jnp.asarray(1.0),
-        )
-        assert float(res_jax) == pytest.approx(1.0e22, rel=1.0e-12)
+            assert float(res_jit_inf) == pytest.approx(1.0e22, rel=1.0e-12)
