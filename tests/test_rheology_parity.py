@@ -410,7 +410,7 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             pressure=jnp.array(pressure),
             convective_flux=jnp.array(conv_flux),
             total_flux=jnp.array(tot_flux),
-            solidus_temperature=jnp.array(t_sol_1d[:, None]),
+            solidus_temperature=jnp.array(t_sol_1d),
             t_sol_0=2200.0,
             melt_fraction=jnp.array(melt_frac),
             params=params_1d,
