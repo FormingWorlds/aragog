@@ -196,6 +196,11 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
         'at half the margin': S_min + 50.0,
         'in the band': S_min + 50.0 + 5e-5,
     }[where]
+    if where in ('below', 'at'):  # a start outside the table is a bad snapshot: it raises
+        with pytest.raises(es.AcceptedStateError) as e:
+            _drained(shared_eos, S0, method=method)
+        assert (e.value.check, e.value.time) == ('entropy_table', 0.0)
+        return
     with caplog.at_level(logging.INFO):
         s, _ = _drained(shared_eos, S0, method=method)
     sol = s._solution
@@ -320,7 +325,8 @@ def test_a_zero_span_call_is_not_refused(shared_eos, caplog, method):
 
 def test_a_top_node_below_the_table_with_every_cell_inside_is_refused(shared_eos, caplog):
     """A steep top gradient extrapolates the top basic node below S_min while every cell is
-    inside the table: under a slow drain the call does not advance."""
+    inside the table: such a start state is a bad snapshot, so the first call raises on the top
+    node at the start time (the floor would refuse it)."""
     S_min = float(shared_eos.S_min)
     p = _build_mushy_parameters(solver_method='cvode', end_time=10.0)
     s = EntropySolver(p, entropy_eos=shared_eos)
@@ -328,12 +334,9 @@ def test_a_top_node_below_the_table_with_every_cell_inside_is_refused(shared_eos
     S0 = np.full(s._n_stag, S_min + 2000.0)
     S0[-2:] = S_min + 236.0, S_min + 40.0
     assert _weights(s) @ S0 < S_min  # precondition: the extrapolated top node is out
-    with caplog.at_level(logging.INFO):
-        s, _ = _drained(shared_eos, S0, flux=50.0)
-    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
-    refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
-    assert len(refusals) == 1 and refusals[0].levelno == logging.WARNING
-    assert s._solution.message.startswith('EOS floor:')
+    with pytest.raises(es.AcceptedStateError) as e:
+        _drained(shared_eos, S0, flux=50.0)
+    assert (e.value.check, e.value.node, e.value.time) == ('entropy_table', 'basic 11', 0.0)
 
 
 @pytest.mark.parametrize(('core', 'end_time'), [('quasi_steady', 0.0), ('gradient', 10.0)])
@@ -395,16 +398,12 @@ def _steep_top(eos, top3):
 def test_a_top_node_below_the_table_is_refused_when_it_or_the_top_cell_rises(
     shared_eos, caplog, method, top3, flux, end_time
 ):
-    """Top node at S_min - 58 under flux 0 (it falls only by extrapolation while the top cell
-    warms) or at S_min - 940 under 860 W/m^2 (it rises while the top cell falls): the call does
-    not advance, with the named refusal."""
+    """Top node at S_min - 58 under flux 0 or at S_min - 940 under 860 W/m^2, set as the start
+    state: a bad snapshot, so the first call raises on the top node at the start time."""
     S0 = _steep_top(shared_eos, top3)
-    with caplog.at_level(logging.INFO):
-        s, _ = _drained(shared_eos, S0, flux=flux, end_time=end_time, method=method)
-    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
-    refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
-    assert len(refusals) == 1 and 'at or below the table minimum' in refusals[0].getMessage()
-    assert s._solution.message.startswith('EOS floor:')
+    with pytest.raises(es.AcceptedStateError) as e:
+        _drained(shared_eos, S0, flux=flux, end_time=end_time, method=method)
+    assert (e.value.check, e.value.node, e.value.time) == ('entropy_table', 'basic 11', 0.0)
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
