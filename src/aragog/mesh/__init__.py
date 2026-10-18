@@ -149,6 +149,37 @@ def _radius_for_mass_coordinate(
     return clamped
 
 
+def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.inf, xp=np):
+    """Limited entropy of the top basic node from the top 3 cell entropies.
+
+    The linear node ``S_N + (ratio/2)(S_N - S_N-1)`` takes the smaller of the top cell step and the
+    next one (minmod: 0 for steps of opposite sign or a zero step), so a cold top cell over a hot
+    cell does not extrapolate across the hot step. A limited node outside ``[S_min, S_max]``
+    becomes the top cell. A non-finite cell among the top 3 gives NaN.
+
+    Parameters
+    ----------
+    S : array
+        Cell entropies, innermost first; the last 3 are used [J/kg/K].
+    ratio : float
+        Basic over staggered spacing of the outer cell (the outer row of the quantity transform).
+    S_min, S_max : float
+        Entropy range of the table [J/kg/K].
+    xp : module
+        ``numpy`` or ``jax.numpy``.
+
+    Returns
+    -------
+    float or array
+        Top basic-node entropy [J/kg/K].
+    """
+    a, b = S[-1] - S[-2], S[-2] - S[-3]
+    step = xp.where(a * b > 0, xp.sign(a) * xp.minimum(xp.abs(a), xp.abs(b)), 0.0)
+    node = S[-1] + 0.5 * ratio * step
+    node = xp.where((node < S_min) | (node > S_max), S[-1], node)
+    return xp.where(xp.isfinite(a + b), node, xp.nan)
+
+
 class Mesh:
     """A staggered mesh.
 
@@ -284,6 +315,7 @@ class Mesh:
             self._dxidr: npt.NDArray = np.ones_like(self.basic.radii)
         self._d_dr_transform: npt.NDArray = self._get_d_dr_transform_matrix()
         self._quantity_transform: npt.NDArray = self._get_quantity_transform_matrix()
+        self.top_node, self.top_bounds = 'linear', (-np.inf, np.inf)
 
     @property
     def dxidr(self) -> npt.NDArray:
@@ -466,6 +498,25 @@ class Mesh:
         logger.debug('quantity_at_basic_nodes = %s', quantity_at_basic_nodes)
 
         return quantity_at_basic_nodes
+
+    @property
+    def top_ratio(self) -> float:
+        """Basic over staggered spacing of the outer cell (the outer row of the transform)."""
+        return float(
+            np.ravel(self.basic.delta_mesh)[-1] / np.ravel(self.staggered.delta_mesh)[-1]
+        )
+
+    def set_top_node(self, mode: str, S_min: float = -np.inf, S_max: float = np.inf) -> None:
+        """Choose the top basic-node entropy ('linear' or 'limited') and the table range."""
+        self.top_node, self.top_bounds = mode, (float(S_min), float(S_max))
+
+    def entropy_at_basic_nodes(self, S: npt.NDArray) -> npt.NDArray:
+        """Entropy at the basic nodes, with the top node from ``top_node_entropy`` when limited."""
+        S = np.asarray(S, dtype=float).ravel()
+        S_basic = np.asarray(self.quantity_at_basic_nodes(S), dtype=float).ravel()
+        if self.top_node == 'limited':
+            S_basic[-1] = top_node_entropy(S, self.top_ratio, *self.top_bounds)
+        return S_basic
 
     def quantity_at_staggered_nodes(self, basic_quantity: npt.NDArray) -> npt.NDArray:
         """Determines a quantity at the staggered nodes that is defined at the basic nodes.

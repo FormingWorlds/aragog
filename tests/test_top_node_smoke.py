@@ -37,7 +37,7 @@ def _solver(eos, mode, S0=None, method='cvode', end_time=10.0):
 
 
 def _ratio(mesh):
-    return float(mesh.basic.delta_mesh[-1] / mesh.staggered.delta_mesh[-1])
+    return float(np.ravel(mesh.basic.delta_mesh)[-1] / np.ravel(mesh.staggered.delta_mesh)[-1])
 
 
 def test_the_linear_mode_keeps_the_quantity_transform(shared_eos):

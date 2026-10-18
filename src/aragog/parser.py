@@ -22,7 +22,7 @@ import numpy as np
 import numpy.typing as npt
 from typed_configparser import ConfigParser
 
-from aragog.config.boundary import check_core_bc
+from aragog.config.boundary import check_core_bc, check_top_node
 from aragog.config.energy import (
     CONVECTIVE_THRESHOLD_DEFAULT,
     EOS_FLOOR_MARGIN_DEFAULT,
@@ -94,6 +94,8 @@ class _BoundaryConditionsParameters:
     # Flat parameter dict for core_bc='core_module'; keys documented in
     # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').
     core_module_params: dict | None = None
+    # Top basic-node entropy, 'linear' or 'limited' (see the BoundaryConfig docstring).
+    top_node: str = 'linear'
 
     def normalize(self) -> None:
         """Normalise BC values that need post-parse adjustment.
@@ -120,6 +122,7 @@ class _BoundaryConditionsParameters:
         self._normalize_inner_boundary_condition()
         self._normalize_outer_boundary_condition()
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
+        check_top_node(self.top_node)
 
     def _normalize_inner_boundary_condition(self) -> None:
         """Normalise the inner boundary value.

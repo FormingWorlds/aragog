@@ -9,6 +9,19 @@ import attrs
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 CORE_BC_MODES = ('quasi_steady', 'energy_balance', 'gradient', 'bower2018', 'core_module')
+TOP_NODE_MODES = ('linear', 'limited')
+
+
+def check_top_node(top_node) -> None:
+    """Refuse a ``top_node`` that is not one of ``TOP_NODE_MODES``.
+
+    Raises
+    ------
+    ValueError
+        Naming the value and the modes.
+    """
+    if not isinstance(top_node, str) or top_node not in TOP_NODE_MODES:
+        raise ValueError(f'unknown top_node {top_node!r}; the modes are {TOP_NODE_MODES}')
 
 
 def check_core_bc(core_bc: str, inner_boundary_condition: int, core_module_params) -> None:
@@ -77,6 +90,10 @@ class BoundaryConfig:
         budget with dSdr_cmb and T_core as states; state length N+2).
         Standalone callers that want the alpha-factor behaviour set
         'quasi_steady' explicitly.
+    top_node : str
+        Entropy of the top basic node: 'linear' (default) extrapolates the top 2 cells; 'limited'
+        limits that extrapolation by the next cell step (minmod) and takes the top cell where the
+        limited node leaves the entropy table.
     """
 
     outer_boundary_condition: int
@@ -94,6 +111,8 @@ class BoundaryConfig:
     # Flat parameter dict for core_bc='core_module'; keys documented in
     # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').
     core_module_params: dict | None = None
+    top_node: str = 'linear'
 
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
+        check_top_node(self.top_node)

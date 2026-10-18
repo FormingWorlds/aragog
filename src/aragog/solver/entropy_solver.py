@@ -1767,6 +1767,12 @@ class EntropySolver:
         # integrand.
         self._check_eos_floors()
 
+        top = getattr(self.parameters.boundary_conditions, 'top_node', 'linear')
+        eos = self.entropy_eos
+        self.evaluator.mesh.set_top_node(top, *(() if eos is None else (eos.S_min, eos.S_max)))
+        if top == 'limited':
+            logger.info('EntropySolver: top node: limited (minmod, top cell outside the table)')
+
         # Cache constant BC and mesh terms so the dSdt hot path
         # doesn't recompute them on every RHS call. None of these
         # depend on entropy.
@@ -3905,7 +3911,10 @@ class EntropySolver:
                 floor_refused, end_time = True, start_time
                 logger.warning(_floor_discard)
             elif floor_margin > 0.0 and not gradient_mode and end_time > start_time:
-                floor_w = np.asarray(self.evaluator.mesh._quantity_transform)[-1]
+                mesh = self.evaluator.mesh
+                floor_w = np.asarray(mesh._quantity_transform)[-1]
+                if mesh.top_node == 'limited':  # the node stays in the table with its cells
+                    floor_w = np.eye(1, floor_w.size, floor_w.size - 1).ravel()
                 level, refuse = _floor_start_level(
                     floor_w,
                     S_arr_stag,
