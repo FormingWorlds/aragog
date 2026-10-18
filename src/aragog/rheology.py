@@ -107,6 +107,8 @@ class SolidRheologyParams:
             )
         for name, in_range, expected in _BOUNDS:
             val = getattr(self, name)
+            if isinstance(val, (bool, np.bool_)):
+                raise TypeError(f'{name} must be a real number, got {val!r}')
             if not math.isfinite(val) or not in_range(val):
                 raise ValueError(f'{name} must be {expected}, got {val}')
         if self.enabled and self.g_homologous <= 0.0:
