@@ -426,12 +426,13 @@ def compute_stagnant_lid_state(
 
     w_hot_iso = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale))
     w_hot_iso_mask = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale_mask))
+    w_sol_phi = _melt_ramp(SOLIDUS_MELT_FRACTION_THRESHOLD, SOLIDUS_MELT_FRACTION_WIDTH)
     if T_sol_arr is not None:
-        w_hot_sol = 0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale))
-        w_hot_sol_mask = 0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale_mask))
+        w_hot_sol = xp.maximum(0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale)), w_sol_phi)
+        w_hot_sol_mask = xp.maximum(0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale_mask)), w_sol_phi)
     else:
-        w_hot_sol = _melt_ramp(SOLIDUS_MELT_FRACTION_THRESHOLD, SOLIDUS_MELT_FRACTION_WIDTH)
-        w_hot_sol_mask = w_hot_sol
+        w_hot_sol = w_sol_phi
+        w_hot_sol_mask = w_sol_phi
     w_hot_phi = _melt_ramp(phi_rheo, phi_width)
 
     w_interior = xp.maximum(xp.maximum(w_hot_iso, w_hot_sol), w_hot_phi) + zero_or_nan
