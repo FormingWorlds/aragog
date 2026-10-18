@@ -195,7 +195,8 @@ def top_node_entropy(
     lo = xp.clip((free - S_min) / band, 0.0, 1.0)
     hi = xp.clip((S_max - free) / band, 0.0, 1.0)
     w = lo * lo * (3.0 - 2.0 * lo) * hi * hi * (3.0 - 2.0 * hi)
-    return xp.where(xp.isfinite(a + b), S[-1] + w * (free - S[-1]), xp.nan)
+    node = xp.where(w >= 1.0, free, S[-1] + w * (free - S[-1]))  # S_f itself at full weight
+    return xp.where(xp.isfinite(a + b), node, xp.nan)
 
 
 class Mesh:
@@ -524,10 +525,6 @@ class Mesh:
     def top_ratio(self) -> float:
         """Basic over staggered spacing of the outer cell (the outer row of the transform)."""
         return float(-2.0 * self._quantity_transform[-1, -2])
-
-    def set_top_bounds(self, S_min: float, S_max: float, band: float) -> None:
-        """Set the table range and the blend band [J/kg/K] of the limited top node."""
-        self.top_bounds, self.top_band = (float(S_min), float(S_max)), float(band)
 
     def entropy_at_basic_nodes(self, S: npt.NDArray) -> npt.NDArray:
         """Entropy at the basic nodes, with the top node from ``top_node_entropy`` when limited."""

@@ -96,7 +96,8 @@ class BoundaryConfig:
     top_node : str
         Entropy of the top basic node: 'linear' (default) extrapolates the top 2 cells; 'limited'
         limits that extrapolation by the next cell step (minmod) and blends it into the top cell
-        within half the EOS floor margin of a table edge (not on the 'gradient' core).
+        within half the EOS floor margin, at least 50 J/kg/K, of a table edge (not on the
+        'gradient' core).
     """
 
     outer_boundary_condition: int

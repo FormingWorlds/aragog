@@ -37,6 +37,7 @@ from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+from aragog.mesh import TOP_NODE_BAND
 from aragog.parser import Parameters
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
@@ -1409,18 +1410,19 @@ class EntropySolver:
     _batch_powers_calls: int = 0
 
     def _sync_top_node(self) -> None:
-        """Give a limited top node the table range and a band of half the EOS floor margin
-        (``TOP_NODE_BAND`` without the floor or where half the margin is not positive)."""
-        from aragog.mesh import TOP_NODE_BAND
-
-        mesh, eos = self.evaluator.mesh, self.entropy_eos
-        if mesh.top_node != 'limited':
-            return
-        m = self.parameters.energy.eos_floor_margin
-        band = 0.5 * m if m is not None and 0.5 * m > 0 else TOP_NODE_BAND
-        mesh.set_top_bounds(
-            *((-np.inf, np.inf) if eos is None else (eos.S_min, eos.S_max)), band
+        """Give a limited top node the table range and a blend band of half the EOS floor margin,
+        at least ``TOP_NODE_BAND``: inside the band the node falls as the top cell warms, so a
+        narrow band would make the grey-body flux feed back on the top cell fast."""
+        mesh, eos, m = (
+            self.evaluator.mesh,
+            self.entropy_eos,
+            self.parameters.energy.eos_floor_margin,
         )
+        if mesh.top_node == 'limited':
+            mesh.top_band = TOP_NODE_BAND if m is None else max(0.5 * float(m), TOP_NODE_BAND)
+            mesh.top_bounds = (
+                (-np.inf, np.inf) if eos is None else (float(eos.S_min), float(eos.S_max))
+            )
 
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
@@ -1783,11 +1785,12 @@ class EntropySolver:
         self._check_eos_floors()
 
         self._sync_top_node()
-        if self.evaluator.mesh.top_node == 'limited' and not getattr(
-            self, '_top_logged', False
-        ):
-            logger.info('EntropySolver: top node: limited (minmod, blends into the top cell)')
-            self._top_logged = True
+        if self.evaluator.mesh.top_node == 'limited':
+            self._warn_once(
+                'top_node',
+                'EntropySolver: top node: limited (minmod, blends into the top cell)',
+                logging.INFO,
+            )
 
         # Cache constant BC and mesh terms so the dSdt hot path
         # doesn't recompute them on every RHS call. None of these
