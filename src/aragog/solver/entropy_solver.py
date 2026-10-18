@@ -587,9 +587,8 @@ def _check_accepted_states(
         Entropy range of the EOS tables [J/kg/K]; the edges are inside.
     cmb : ndarray, optional
         CMB basic-node entropy per node [J/kg/K], used in place of row 0 of ``weights @ S`` where
-        the CMB flux does not come from that extrapolation (``energy_balance`` under inner
-        condition 1 or 3: from its state; inner condition 0 or 2, or 1 on the other cores: the
-        bottom cell).
+        the model does not use that extrapolation (``energy_balance``: from its state; the other
+        cores under inner condition 0, 1 or 2: the bottom cell).
     skip_start : bool
         Skip the nodes at the start time; False checks them too (a start state that did not come
         from a checked call).
@@ -4392,7 +4391,7 @@ class EntropySolver:
         ):
             t_acc, y_acc = sol.get('energy_trace') or (sol.t, sol.y)
             y_acc, cmb = np.asarray(y_acc, dtype=float), None
-            if self._core_bc == 'energy_balance' and self._inner_bc_kind in (1, 3):
+            if self._core_bc == 'energy_balance':  # the CMB node is a state value
                 r = np.asarray(self.evaluator.mesh.basic.radii).ravel()
                 cmb = y_acc[0] + y_acc[self._n_stag] * (r[0] - 0.5 * (r[0] + r[1]))
             elif self._inner_bc_kind != 3:
