@@ -452,3 +452,117 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     assert '`merge_rheology`' in rheo_api
     assert '`delegate_rheology`' in rheo_api
     assert '`stress_closure`' in lid_api
+
+
+def test_kernel_signatures_use_none_sentinels_and_match_dataclass_defaults(monkeypatch):
+    """Verify kernel signatures use None sentinels that resolve dynamically to SolidRheologyParams."""
+    import inspect
+
+    from aragog.rheology import (
+        compute_arrhenius_enthalpy,
+        compute_mlt_top_slope,
+        compute_yield_stress,
+        viscous_mixing_length_factor,
+    )
+
+    expected_none_params = {
+        compute_mlt_top_slope: ('s_top_inf', 'c_theta'),
+        viscous_mixing_length_factor: ('s_top_inf', 'bottom_slope', 'c_theta'),
+        compute_arrhenius_enthalpy: ('g_homologous', 't_sol_0', 'dt_sol_dp'),
+        compute_arrhenius_viscosity: (
+            'viscosity_solid',
+            'g_homologous',
+            't_sol_0',
+            'dt_sol_dp',
+            'arrhenius_t_ref',
+            'viscosity_max_log10',
+            'water_prefactor',
+        ),
+        compute_yield_stress: ('yield_stress_c', 'yield_stress_mu', 'yield_stress_max'),
+    }
+    for fn, param_names in expected_none_params.items():
+        sig = inspect.signature(fn)
+        for p_name in param_names:
+            assert sig.parameters[p_name].default is None, (
+                f'{fn.__name__} parameter {p_name} must default to None'
+            )
+
+    defaults = SolidRheologyParams()
+    assert compute_arrhenius_enthalpy(10.0e9) == pytest.approx(
+        compute_arrhenius_enthalpy(
+            10.0e9,
+            g_homologous=defaults.g_homologous,
+            t_sol_0=defaults.t_sol_0,
+            dt_sol_dp=defaults.dt_sol_dp,
+        ),
+        rel=1.0e-12,
+    )
+    assert compute_arrhenius_viscosity(1500.0, 10.0e9) == pytest.approx(
+        compute_arrhenius_viscosity(
+            1500.0,
+            10.0e9,
+            viscosity_solid=1.0e21,
+            g_homologous=defaults.g_homologous,
+            t_sol_0=defaults.t_sol_0,
+            dt_sol_dp=defaults.dt_sol_dp,
+            arrhenius_t_ref=defaults.arrhenius_t_ref,
+            viscosity_max_log10=defaults.viscosity_max_log10,
+            water_prefactor=defaults.water_prefactor,
+        ),
+        rel=1.0e-12,
+    )
+    assert compute_yield_stress(10.0e9) == pytest.approx(
+        compute_yield_stress(
+            10.0e9,
+            yield_stress_c=defaults.yield_stress_c,
+            yield_stress_mu=defaults.yield_stress_mu,
+            yield_stress_max=defaults.yield_stress_max,
+        ),
+        rel=1.0e-12,
+    )
+    r_grid = np.linspace(3.48e6, 6.371e6, 7)
+    ml_grid = np.minimum(r_grid - r_grid[0], r_grid[-1] - r_grid)
+    np.testing.assert_allclose(
+        viscous_mixing_length_factor(r_grid, r_grid[0], r_grid[-1], ml_grid),
+        viscous_mixing_length_factor(
+            r_grid,
+            r_grid[0],
+            r_grid[-1],
+            ml_grid,
+            s_top_inf=defaults.s_top_inf,
+            bottom_slope=defaults.mlt_bottom_slope,
+        ),
+        rtol=1.0e-12,
+    )
+
+    monkeypatch.setattr(SolidRheologyParams, 'g_homologous', 30.0)
+    assert compute_arrhenius_enthalpy(0.0) == pytest.approx(
+        30.0 * R_GAS * defaults.t_sol_0, rel=1.0e-12
+    )
+    monkeypatch.setattr(SolidRheologyParams, 'yield_stress_c', 80.0e6)
+    assert compute_yield_stress(0.0) == pytest.approx(80.0e6, rel=1.0e-12)
+
+
+def test_stagnant_lid_state_rejects_mismatched_t_sol_0():
+    """Verify compute_stagnant_lid_state raises ValueError when t_sol_0 and params.t_sol_0 differ."""
+    n_nodes = 10
+    r = np.linspace(3.48e6, 6.371e6, n_nodes)
+    t = np.linspace(2600.0, 300.0, n_nodes)
+    p = np.linspace(135.0e9, 0.0, n_nodes)
+    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
+    for sol_t in (None, np.full(n_nodes, 2000.0)):
+        with pytest.raises(ValueError, match='t_sol_0'):
+            compute_stagnant_lid_state(
+                radii=r,
+                temperature=t,
+                pressure=p,
+                convective_flux=np.full(n_nodes, 80.0),
+                total_flux=np.full(n_nodes, 100.0),
+                solidus_temperature=sol_t,
+                t_sol_0=2000.0,
+                melt_fraction=np.zeros(n_nodes),
+                params=params,
+                viscosity_solid=1.0e21,
+                phi_rheo=0.4,
+                phi_width=0.15,
+            )

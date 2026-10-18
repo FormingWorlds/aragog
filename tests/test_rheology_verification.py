@@ -1145,6 +1145,7 @@ def test_rheology_and_lid_branch_coverage():
             phi_width=0.15,
         )
 
+    params_fixed_2000 = dataclasses.replace(params_fixed, t_sol_0=2000.0)
     st_scalar_sol = compute_stagnant_lid_state(
         radii=r,
         temperature=T,
@@ -1154,7 +1155,7 @@ def test_rheology_and_lid_branch_coverage():
         solidus_temperature=2000.0,
         t_sol_0=2000.0,
         melt_fraction=phi,
-        params=params_fixed,
+        params=params_fixed_2000,
         viscosity_solid=1.0e21,
         phi_rheo=0.4,
         phi_width=0.15,
@@ -1168,11 +1169,26 @@ def test_rheology_and_lid_branch_coverage():
         solidus_temperature=np.full(n_nodes, 2000.0),
         t_sol_0=2000.0,
         melt_fraction=phi,
-        params=dataclasses.replace(params_fixed, t_sol_0=2200.0),
+        params=params_fixed_2000,
         viscosity_solid=1.0e21,
         phi_rheo=0.4,
         phi_width=0.15,
     )
+    with pytest.raises(ValueError, match='t_sol_0'):
+        compute_stagnant_lid_state(
+            radii=r,
+            temperature=T,
+            pressure=P,
+            convective_flux=F_conv,
+            total_flux=F_tot,
+            solidus_temperature=np.full(n_nodes, 2000.0),
+            t_sol_0=2000.0,
+            melt_fraction=phi,
+            params=dataclasses.replace(params_fixed, t_sol_0=2200.0),
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
     t_i_val = float(st_scalar_sol['T_i'])
     expected_dt_rh_sol = t_i_val**2 / (params_fixed.g_homologous * 2000.0)
     expected_theta_sol = (t_i_val - T[-1]) / expected_dt_rh_sol
