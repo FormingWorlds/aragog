@@ -3702,7 +3702,8 @@ class EntropySolver:
         A successful solve also stores the per-call energy integrals on the result as
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
         zeros. ``_floor_discard`` (internal) refuses the call with that warning: a call whose
-        floor root returns a state below the EOS table is solved again this way.
+        floor root returns a state below the EOS table, or stops at the call start, is solved
+        again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()
         start_time = self.parameters.solver.start_time
@@ -4270,13 +4271,12 @@ class EntropySolver:
                     )
                 )
             if t_end <= float(np.asarray(sol.t)[0]):  # the returned start, after the time scale
-                sol.status = 1
-                sol.message = 'EOS floor: the call does not advance'
-                logger.warning(
-                    'EOS floor: the root of level S_min %+.3e J/kg/K fell at the call start '
-                    't=%.9g yr; the call does not advance',
-                    floor['floor_level'] - S_tab,
-                    start_time,
+                return self.solve(
+                    _floor_discard=(
+                        f'EOS floor: the root of level S_min {floor["floor_level"] - S_tab:+.3e} '
+                        f'J/kg/K fell at the call start t={start_time:.9g} yr; the call does not '
+                        'advance'
+                    )
                 )
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
