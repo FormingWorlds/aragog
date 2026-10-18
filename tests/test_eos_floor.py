@@ -59,10 +59,13 @@ def _drained(
     core='quasi_steady',
     mode=None,
     end_time=10.0,
+    start_time=0.0,
     **caps,
 ):
-    """A cold start at entropy ``S0`` (scalar or per cell) under a prescribed surface flux."""
-    p = _build_mushy_parameters(solver_method=method, end_time=end_time)
+    """A cold start at entropy ``S0`` (scalar or per cell) under a prescribed surface flux, over
+    ``end_time`` years from ``start_time``."""
+    p = _build_mushy_parameters(solver_method=method, end_time=start_time + end_time)
+    p.solver.start_time = start_time
     p.boundary_conditions.outer_boundary_condition = 4
     p.boundary_conditions.outer_boundary_value = flux
     p.boundary_conditions.core_bc = core
@@ -431,27 +434,134 @@ def test_a_top_node_below_the_table_is_refused_when_it_or_the_top_cell_rises(
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
-def test_a_top_node_just_above_the_table_stops_at_half_its_distance(shared_eos, method):
+def test_a_top_node_in_the_table_band_falling_by_extrapolation_is_refused(
+    shared_eos, caplog, method
+):
     """Top node at S_min + 1e-4 under flux 0, falling only by extrapolation while the top cell
-    warms: the call advances and a root stops the node at S_min + 5e-5 (named eos_floor on
-    CVODE), every basic node inside the table."""
-    S_min = float(shared_eos.S_min)
+    warms: inside S_min + 2e-6 m the node's own rate counts, so the call is refused at once."""
     S0 = _steep_top(shared_eos, [2000.0, 120.0 - 2e-4, 40.0])
-    s, _ = _drained(shared_eos, S0, flux=0.0, method=method)
-    assert 0.0 < s._solution.t[-1] < 10.0
-    assert _basic(s)[-1, -1] == pytest.approx(S_min + 5e-5, abs=1e-6)
-    if method == 'cvode':
-        assert s._solution.status == 0 and s._solution.cap_label == 'eos_floor'
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(shared_eos, S0, flux=0.0, method=method)
+    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
+    refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
+    assert len(refusals) == 1 and 'counts as at the table' in refusals[0].getMessage()
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
-def test_a_cell_at_the_table_that_does_not_fall_still_guards_the_others(shared_eos, method):
+def test_a_node_falling_by_extrapolation_halves_its_distance_then_is_refused(
+    shared_eos, method
+):
+    """Top node at S_min + 1e-2 under flux 0, falling only by extrapolation while the top cell
+    warms: each call stops at half the node's distance until the start is inside S_min + 2e-6 m,
+    at most ceil(log2(1e-2 / 2e-4)) = 6 calls, and that start is refused."""
+    S_min = float(shared_eos.S_min)
+    S0, t0, advancing = _steep_top(shared_eos, [2000.0, 120.0 - 2e-2, 40.0]), 0.0, 0
+    for _ in range(10):
+        s, _ = _drained(shared_eos, S0, flux=0.0, method=method, start_time=t0)
+        if s.get_state().dt_actual == 0.0:
+            break
+        advancing += 1
+        S0, t0 = _cells(s)[:, -1], float(s._solution.t[-1])
+    assert s._solution.status == 1 and 1 <= advancing <= 6
+    assert S_min < _weights(s) @ S0 <= S_min + 2e-4  # the refused start is in the band
+
+
+T0S = [0.0, 1.0e6, 1.0e9, 4.5e9]  # call start times [yr]; the root error grows with the time
+
+
+def _stopped_or_discarded(s, caplog, level):
+    """The call stopped with the top node at most at ``level`` (the root error grows with the
+    time) and inside the table (checked in ``_drained``), or it was discarded: status 1, no time
+    advanced and the warning that names the discard."""
+    if s.get_state().dt_actual > 0.0:
+        assert _basic(s)[-1, -1] <= level + 1e-7
+    else:
+        assert s._solution.status == 1 and 'discarded' in caplog.text
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+@pytest.mark.parametrize('start_time', T0S)
+def test_a_cell_at_the_table_that_does_not_fall_still_guards_the_others(
+    shared_eos, caplog, method, start_time
+):
     """A mid cell 1e-5 above S_min, every other cell at S_min + 400, 1e6 W/m^2: the start arms
     half the mid cell's distance, and the root stops the top node, extrapolated
     from the draining top cell, there instead of letting it leave the table."""
     S_min = float(shared_eos.S_min)
     S0 = np.full(len(_steep_top(shared_eos, [400.0] * 3)), S_min + 400.0)
     S0[5] = S_min + 1e-5  # a mid cell: no extrapolated basic node leaves the table
-    s, _ = _drained(shared_eos, S0, method=method)
-    assert 0.0 < s._solution.t[-1] < 10.0 and _cells(s).min() >= S_min
-    assert _basic(s)[-1, -1] == pytest.approx(S_min + 5e-6, abs=1e-7)
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(shared_eos, S0, method=method, start_time=start_time)
+    assert s._solution.t[-1] < start_time + 10.0
+    _stopped_or_discarded(s, caplog, S_min + 5e-6)
+    if start_time == 0.0:
+        assert s.get_state().dt_actual > 0.0
+
+
+def _mid_cell_at(eos, d):
+    """Every cell at S_min + 400 except a mid cell at S_min + d (no extrapolated node leaves)."""
+    S0 = np.full(len(_steep_top(eos, [400.0] * 3)), float(eos.S_min) + 400.0)
+    S0[5] = float(eos.S_min) + d
+    return S0
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+@pytest.mark.parametrize('start_time', T0S)
+@pytest.mark.parametrize('d', [1e-3, 1e-6, 1e-8])
+def test_a_late_call_near_the_table_returns_no_state_below_it(
+    shared_eos, method, start_time, d
+):
+    """A mid cell S_min + d under 1e6 W/m^2 from 1e6 or 1e9 yr, where the root location error
+    of the integrator grows with the time: every basic node above the CMB node of every returned
+    state stays at or above S_min (checked in ``_drained``), whether the call stops or not."""
+    _drained(shared_eos, _mid_cell_at(shared_eos, d), method=method, start_time=start_time)
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+def test_a_warming_start_with_no_room_for_a_level_names_that(shared_eos, caplog, method):
+    """A mid cell one ulp above S_min that warms leaves no level between S_min and the start:
+    the call is refused with a warning that says so, not that the entropy falls."""
+    S_min = float(shared_eos.S_min)
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(
+            shared_eos,
+            _mid_cell_at(shared_eos, 0.0)
+            + np.eye(11)[5] * (np.nextafter(S_min, np.inf) - S_min),
+            flux=0.0,
+            method=method,
+        )
+    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
+    refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
+    assert len(refusals) == 1 and 'no level fits' in refusals[0].getMessage()
+
+
+def test_a_discarded_call_keeps_the_start_state_time_and_energy_ledger(shared_eos, caplog):
+    """A mid cell 1e-6 above S_min under 1e6 W/m^2 from 1e9 yr on CVODE, where the root lands
+    below the table: the call is discarded, and its state, time, energy trace and per-call energy
+    ledger equal those of a call with no span from the same start."""
+    S0 = _mid_cell_at(shared_eos, 1e-6)
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(shared_eos, S0, start_time=1.0e9)
+    z, _ = _drained(shared_eos, S0, start_time=1.0e9, end_time=0.0)
+    sol, st, zt = s._solution, s.get_state(), z.get_state()
+    assert sol.status == 1 and st.dt_actual == 0.0 and 'discarded' in caplog.text
+    assert np.array_equal(_cells(s)[:, -1], S0) and np.all(np.asarray(sol.t) == 1.0e9)
+    assert np.all(np.asarray(sol.energy_trace[0]) == 1.0e9)
+    ledger = [k for k in vars(st) if k.startswith('step_dE_')]
+    assert ledger and all(getattr(st, k) == getattr(zt, k) for k in ledger)
+
+
+def test_a_floor_stop_at_the_call_start_is_a_refusal(shared_eos, caplog, monkeypatch):
+    """A level 1e-12 below a draining start at 1e8 yr, closer than the scipy event time
+    tolerance: the event stops the call at its start, which is logged and returned as a
+    refusal, not as a silent zero step."""
+    monkeypatch.setattr(
+        es, '_floor_start_level', lambda w, S, *_: (es._floor_entropy(w, S) - 1e-12, False)
+    )
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(
+            shared_eos, float(shared_eos.S_min) + 400.0, method='bdf', start_time=1e8
+        )
+    refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
+    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0 and len(refusals) == 1
+    assert 'at the call start' in refusals[0].getMessage()

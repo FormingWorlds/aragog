@@ -183,10 +183,23 @@ def test_a_top_node_below_the_table_is_refused_when_it_or_the_top_cell_rises(rat
     assert _start(S_NODE_BELOW, rate) == (None, True)
 
 
-@pytest.mark.parametrize('rate', [[-0.015, 0.069, 0.0034], [0.0, -4.0, -1.0]])
-def test_a_top_node_just_above_the_table_arms_half_its_distance_when_not_falling(rate):
-    """Top node at S_min + 1e-4: a node falling only by extrapolation under a warming top cell,
-    or a rising node over a falling top cell, arms half the node's distance."""
+def test_a_rising_top_node_just_above_the_table_arms_half_its_distance():
+    """Top node at S_min + 1e-4 rising over a falling top cell: half the node's distance."""
     assert W @ S_NODE_AT == pytest.approx(S_MIN + 1e-4)
-    level, refuse = _start(S_NODE_AT, rate)
+    level, refuse = _start(S_NODE_AT, [0.0, -4.0, -1.0])
     assert not refuse and level == pytest.approx(S_MIN + 5e-5)
+
+
+def test_inside_the_table_band_the_node_falls_by_its_own_rate():
+    """Top node at S_min + 1e-4 falling only by extrapolation under a warming top cell: inside
+    S_min + 2e-6 m the node's own rate decides, so the start is refused."""
+    assert _start(S_NODE_AT, [-0.015, 0.069, 0.0034]) == (None, True)
+
+
+def test_above_the_table_band_a_warming_top_cell_lets_the_node_advance():
+    """Top node at S_min + 1e-2 falling only by extrapolation under a warming top cell: above
+    the band the top-cell rate counts too, so the start arms half the node's distance."""
+    S = np.array([S_MIN + 2000.0, S_MIN + 120.0 - 2e-2, S_MIN + 40.0])
+    assert W @ S == pytest.approx(S_MIN + 1e-2)
+    level, refuse = _start(S, [-0.015, 0.069, 0.0034])
+    assert not refuse and level == pytest.approx(S_MIN + 5e-3)
