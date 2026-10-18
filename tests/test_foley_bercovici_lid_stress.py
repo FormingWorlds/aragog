@@ -717,3 +717,28 @@ def test_surface_node_excluded_from_interior_ti_selector():
     # 6223e3f regression pin: interior convective driving stress is ~232.3 kPa (surface 300 K would give ~1e11 Pa).
     assert float(st['tau_d']) == pytest.approx(232313.068898, rel=1.0e-4)
     assert float(st['tau_d']) < 1.0e6
+
+
+@pytest.mark.unit
+def test_depth_varying_solidus_surface_temperature_pins_eta_contrast():
+    """Verify surface viscosity contrast uses surface solidus T_sol[-1], not CMB T_sol[0]."""
+    inputs = _make_earth_reference_inputs()
+    n_nodes = len(inputs['radii'])
+    inputs['solidus_temperature'] = np.linspace(2200.0, 1400.0, n_nodes)
+    inputs['t_sol_0'] = 1400.0
+    # Warm surface temperature 1300 K keeps surface viscosity unclipped below 10^40.
+    inputs['temperature'][-8:] = np.linspace(1600.0, 1300.0, 8)
+    st = compute_stagnant_lid_state(**inputs)
+
+    # Formula derivation: eta_surf = arrhenius(T_surf, P_surf, solidus_temperature=T_sol[-1])
+    # T_sol[-1] = 1400 K gives H ~ 291 kJ/mol and eta_contrast ~ 15.1.
+    # Selecting CMB solidus T_sol[0] = 2200 K gives H ~ 457 kJ/mol and eta_contrast ~ 269.7.
+    t_sol_surf = float(inputs['solidus_temperature'][-1])
+    h_surf = inputs['params'].g_homologous * 8.314462618 * t_sol_surf
+    eta_surf_expected = 1.0e20 * np.exp((h_surf / 8.314462618) * (1.0 / 1300.0 - 1.0 / 1600.0))
+    expected_contrast = eta_surf_expected / float(st['eta_i'])
+
+    assert float(st['eta_contrast']) == pytest.approx(expected_contrast, rel=1.0e-6)
+    assert float(st['eta_contrast']) < 50.0
+    # 6223e3f regression pin: unclipped surface viscosity yields eta_contrast ~ 15.07.
+    assert float(st['eta_contrast']) == pytest.approx(15.069411, rel=1.0e-4)
