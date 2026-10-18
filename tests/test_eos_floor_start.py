@@ -138,3 +138,20 @@ def test_a_top_node_below_the_table_is_refused_on_a_slow_fall_with_every_cell_in
     S = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])
     assert W @ S == pytest.approx(S_MIN - 58.0)
     assert _start(S, [0.0, 0.0, -1.5e-3]) == (None, True)
+
+
+def test_a_warming_top_cell_under_an_extrapolated_falling_node_advances():
+    """Flux 0, top node at S_min - 58, top cell warming slower than the cell below: the node
+    rate is negative only by extrapolation, so the start advances, and a root watches the
+    smallest cell at half its distance."""
+    S = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])
+    rate = [-0.015, 0.069, 0.0034]
+    assert W @ np.array(rate) < 0.0
+    assert _start(S, rate) == (S_MIN + 20.0, False)
+
+
+def test_a_rising_node_at_the_table_arms_a_root_for_a_falling_top_cell():
+    """Top node below the table and rising, top cell falling: the start advances and a root
+    at half the distance of the smallest cell protects it."""
+    S = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])
+    assert _start(S, [0.0, -4.0, -1.0]) == (S_MIN + 20.0, False)
