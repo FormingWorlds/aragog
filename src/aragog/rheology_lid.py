@@ -201,6 +201,8 @@ def compute_stagnant_lid_state(
     for opt_arr in (solidus_temperature, unyielded_velocity, viscosity_mixture):
         if opt_arr is not None:
             nan_parts.append(xp.ravel(xp.asarray(opt_arr, dtype=float)))
+    for scalar_in in (viscosity_solid, phi_rheo, phi_width, a_rh_fb, C4, t_sol_0_eff):
+        nan_parts.append(xp.ravel(xp.asarray(scalar_in, dtype=float)))
     any_input_nan = xp.any(xp.isnan(xp.concatenate(nan_parts)))
     zero_or_nan = xp.where(any_input_nan, xp.nan, 0.0)
 
@@ -295,7 +297,7 @@ def compute_stagnant_lid_state(
     eta_contrast = eta_surf / xp.maximum(eta_i, 1e-30)
 
     if params.lid_base_mode == 'fixed':
-        T_lid_iso = params.lid_base_temperature
+        T_lid_iso = params.lid_base_temperature + zero_or_nan
     else:
         T_lid_iso = T_i - params.lid_contrast_coeff * dT_rh
 
@@ -314,7 +316,7 @@ def compute_stagnant_lid_state(
         w_hot_sol = _melt_ramp(SOLIDUS_MELT_FRACTION_THRESHOLD, SOLIDUS_MELT_FRACTION_WIDTH)
     w_hot_phi = _melt_ramp(phi_rheo, phi_width)
 
-    w_interior = xp.maximum(xp.maximum(w_hot_iso, w_hot_sol), w_hot_phi)
+    w_interior = xp.maximum(xp.maximum(w_hot_iso, w_hot_sol), w_hot_phi) + zero_or_nan
     w_lid = (1.0 - w_interior) * w_active
 
     W_base_tilde = _boundary_weights(w_interior, xp)[0]

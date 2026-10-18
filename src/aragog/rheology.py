@@ -263,7 +263,11 @@ def viscous_mixing_length_factor(
         )
     l_v = xp.minimum(bottom_slope * (radii - r_in), eff_top_slope * (r_out - radii))
     positive = mixing_length > 0.0
-    return xp.where(positive, (l_v / xp.where(positive, mixing_length, 1.0)) ** 4, 1.0)
+    return xp.where(
+        xp.isnan(mixing_length) | xp.isnan(l_v),
+        xp.nan,
+        xp.where(positive, (l_v / xp.where(positive, mixing_length, 1.0)) ** 4, 1.0),
+    )
 
 
 def compute_arrhenius_enthalpy(
