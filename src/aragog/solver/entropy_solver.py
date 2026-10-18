@@ -1408,21 +1408,19 @@ class EntropySolver:
     _cvode_step_powers_batch: Callable[..., Any] | None = None
     _batch_powers_calls: int = 0
 
-    @property
-    def entropy_eos(self):
-        """Entropy EOS tables; setting them also bounds the limited top node by their range, with
-        a blend band of half the EOS floor margin (50 J/kg/K without the floor)."""
-        return self._entropy_eos
+    def _sync_top_node(self) -> None:
+        """Give a limited top node the table range and a band of half the EOS floor margin
+        (``TOP_NODE_BAND`` without the floor or where half the margin is not positive)."""
+        from aragog.mesh import TOP_NODE_BAND
 
-    @entropy_eos.setter
-    def entropy_eos(self, eos) -> None:
-        self._entropy_eos = eos
-        mesh = getattr(getattr(self, 'evaluator', None), 'mesh', None)
-        if hasattr(mesh, 'set_top_bounds'):
-            m = getattr(getattr(self.parameters, 'energy', None), 'eos_floor_margin', None)
-            band = 0.5 * float(m) if m is not None and m > 0 else 50.0
-            bounds = (-np.inf, np.inf) if eos is None else (eos.S_min, eos.S_max)
-            mesh.set_top_bounds(*bounds, band)
+        mesh, eos = self.evaluator.mesh, self.entropy_eos
+        if mesh.top_node != 'limited':
+            return
+        m = self.parameters.energy.eos_floor_margin
+        band = 0.5 * m if m is not None and 0.5 * m > 0 else TOP_NODE_BAND
+        mesh.set_top_bounds(
+            *((-np.inf, np.inf) if eos is None else (eos.S_min, eos.S_max)), band
+        )
 
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
@@ -1784,9 +1782,12 @@ class EntropySolver:
         # integrand.
         self._check_eos_floors()
 
-        self.entropy_eos = self.entropy_eos  # the limited top node takes its bounds
-        if self.evaluator.mesh.top_node == 'limited':
-            logger.info('EntropySolver: top node: limited (minmod, top cell outside the table)')
+        self._sync_top_node()
+        if self.evaluator.mesh.top_node == 'limited' and not getattr(
+            self, '_top_logged', False
+        ):
+            logger.info('EntropySolver: top node: limited (minmod, blends into the top cell)')
+            self._top_logged = True
 
         # Cache constant BC and mesh terms so the dSdt hot path
         # doesn't recompute them on every RHS call. None of these
@@ -3727,6 +3728,7 @@ class EntropySolver:
         again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()
+        self._sync_top_node()  # the EOS or the floor margin may have changed since the reset
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
@@ -3929,7 +3931,7 @@ class EntropySolver:
                 mesh = self.evaluator.mesh
                 floor_w = np.asarray(mesh._quantity_transform)[-1]
                 if mesh.top_node == 'limited':  # the node stays in the table with its cells
-                    floor_w = np.eye(floor_w.size)[-1]
+                    floor_w = np.eye(1, floor_w.size, floor_w.size - 1).ravel()
                 level, refuse = _floor_start_level(
                     floor_w,
                     S_arr_stag,
@@ -4985,6 +4987,7 @@ class EntropySolver:
         SolverOutput
             Dataclass containing all quantities needed by PROTEUS.
         """
+        self._sync_top_node()
         sol = self._solution
         eos = self.entropy_eos
         mesh = self.evaluator.mesh

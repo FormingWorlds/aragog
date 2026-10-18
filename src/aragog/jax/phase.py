@@ -23,7 +23,7 @@ from scipy.interpolate import PchipInterpolator
 from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_threshold
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 from aragog.jax.eos import EntropyEOS_JAX
-from aragog.mesh import top_node_entropy
+from aragog.mesh import TOP_NODE_BAND, top_node_entropy
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
@@ -270,7 +270,7 @@ class MeshArrays(eqx.Module):
         top_limited=False,
         top_ratio=1.0,
         top_bounds=(-jnp.inf, jnp.inf),
-        top_band=50.0,
+        top_band=TOP_NODE_BAND,
     ):
         """Custom init so callers that predate the dP_dr_basic field
         keep working. When ``dP_dr_basic`` is not supplied we derive it
@@ -349,7 +349,7 @@ class MeshArrays(eqx.Module):
             top_limited=getattr(mesh, 'top_node', 'linear') == 'limited',
             top_ratio=getattr(mesh, 'top_ratio', 1.0),
             top_bounds=getattr(mesh, 'top_bounds', (-np.inf, np.inf)),
-            top_band=getattr(mesh, 'top_band', 50.0),
+            top_band=getattr(mesh, 'top_band', TOP_NODE_BAND),
         )
 
 

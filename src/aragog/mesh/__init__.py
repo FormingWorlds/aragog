@@ -11,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.optimize import brentq
 
+from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.mesh.fixed_mesh import FixedMesh
 from aragog.mesh.pressure_eos import (
     EOS,
@@ -149,8 +150,16 @@ def _radius_for_mass_coordinate(
     return clamped
 
 
+TOP_NODE_BAND = 0.5 * EOS_FLOOR_MARGIN_DEFAULT  # [J/kg/K], blend band of the limited top node
+
+
 def top_node_entropy(
-    S, ratio: float, S_min: float = -np.inf, S_max: float = np.inf, band: float = 50.0, xp=np
+    S,
+    ratio: float,
+    S_min: float = -np.inf,
+    S_max: float = np.inf,
+    band: float = TOP_NODE_BAND,
+    xp=np,
 ):
     """Limited entropy of the top basic node from the top 3 cell entropies.
 
@@ -186,8 +195,7 @@ def top_node_entropy(
     lo = xp.clip((free - S_min) / band, 0.0, 1.0)
     hi = xp.clip((S_max - free) / band, 0.0, 1.0)
     w = lo * lo * (3.0 - 2.0 * lo) * hi * hi * (3.0 - 2.0 * hi)
-    node = xp.where(w >= 1.0, free, S[-1] + w * (free - S[-1]))
-    return xp.where(xp.isfinite(a + b), node, xp.nan)
+    return xp.where(xp.isfinite(a + b), S[-1] + w * (free - S[-1]), xp.nan)
 
 
 class Mesh:
@@ -328,7 +336,7 @@ class Mesh:
         self.top_node = getattr(
             getattr(parameters, 'boundary_conditions', None), 'top_node', 'linear'
         )
-        self.top_bounds, self.top_band = (-np.inf, np.inf), 50.0
+        self.top_bounds, self.top_band = (-np.inf, np.inf), TOP_NODE_BAND
 
     @property
     def dxidr(self) -> npt.NDArray:
@@ -517,9 +525,7 @@ class Mesh:
         """Basic over staggered spacing of the outer cell (the outer row of the transform)."""
         return float(-2.0 * self._quantity_transform[-1, -2])
 
-    def set_top_bounds(
-        self, S_min: float = -np.inf, S_max: float = np.inf, band: float = 50.0
-    ) -> None:
+    def set_top_bounds(self, S_min: float, S_max: float, band: float) -> None:
         """Set the table range and the blend band [J/kg/K] of the limited top node."""
         self.top_bounds, self.top_band = (float(S_min), float(S_max)), float(band)
 

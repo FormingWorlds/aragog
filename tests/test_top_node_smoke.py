@@ -161,7 +161,7 @@ def test_the_gradient_core_refuses_the_limited_node():
 
 
 def test_the_mesh_takes_the_mode_from_the_parameters_and_the_bounds_from_the_eos(shared_eos):
-    """A new EOS on the solver moves the bounds of the limited node with it."""
+    """A new EOS on the solver moves the bounds of the limited node at the next solve."""
     s = _solver(shared_eos, 'limited')
     mesh = s.evaluator.mesh
     assert mesh.top_node == 'limited'
@@ -169,6 +169,7 @@ def test_the_mesh_takes_the_mode_from_the_parameters_and_the_bounds_from_the_eos
     other = entropy_eos_copy(EOS_DIR)
     other.S_min, other.S_max = float(shared_eos.S_min) + 500.0, float(shared_eos.S_max) - 500.0
     s.entropy_eos = other
+    s.solve()
     assert s.evaluator.mesh.top_bounds == (float(other.S_min), float(other.S_max))
 
 
