@@ -136,14 +136,20 @@ class EnergyConfig:
         returns a shorter step. A call that starts at or below S_min + m/2
         arms a level at half its distance to S_min, and does not advance
         (status 1) when that entropy falls fast enough to reach the level
-        before the call ends; at or below S_min it arms nothing and does not
-        advance only when falling. The refusal depends on the call span,
-        so a caller that retries with a shorter span can advance closer to
-        S_min. Default 100,
-        below the entropy span of the tables; ``None`` or a non-positive
+        before the call ends; a caller that retries with a shorter span can
+        then advance closer to S_min; there the top node counts as falling
+        only when the top cell falls too. At or below S_min + 2e-6 m the call
+        does not advance on any fall, the top node at its own rate, at every span,
+        and a start at or below S_min, also of the extrapolated top node alone, or
+        with no level between it and S_min, does not advance at all. A call
+        whose stop lands below S_min through the root location error, which
+        grows with the call time, is discarded as a refusal. A call with no
+        span skips the floor. Default 100,
+        below the entropy span of the tables on every core; ``None`` (not in
+        TOML) or a non-positive
         value disables it (a call that then leaves the tables raises
-        ``AcceptedStateError``), and a bool, NaN, infinity or non-number is
-        refused.
+        ``AcceptedStateError``), and a bool, NaN, infinity or a value that is not
+        a ``numbers.Real`` is refused.
     phase_boundary_entropy_margin : float
         Proximity band [J/kg/K] within which a staggered cell counts as
         "near" a phase boundary, tightening the integrator ``max_step`` so

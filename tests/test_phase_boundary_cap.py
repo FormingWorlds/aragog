@@ -169,6 +169,23 @@ def test_segment_root_scales_the_cap_by_the_cap_that_binds():
 
 
 @pytest.mark.unit
+def test_segment_root_scales_a_floor_root_by_the_margin_or_the_largest_cap():
+    """A floor root 60 J/kg/K short of firing, with a 300 K cap also armed, is scaled by the
+    100 J/kg/K margin, so the stiff root at 0.3 delta comes first; a floor-only cap without a
+    binding name falls back to the margin, so a floor 20 short of firing comes first."""
+
+    class _FloorAndT(_FakeCap):
+        cap, cap_T, floor_margin, binding_cap = 0.0, 300.0, 100.0, 'eos_floor'
+
+    class _FloorOnly(_FakeCap):
+        cap, floor_margin, binding_cap = 0.0, 100.0, None
+
+    at = [1313.0, 1500.0]
+    assert _roots(at, inside=False, cap=_FloorAndT(60.0)).fired(0.0, at) == 'stiff'
+    assert _roots(at, inside=False, cap=_FloorOnly(20.0)).fired(0.0, at) == 'cap'
+
+
+@pytest.mark.unit
 def test_segment_root_puts_the_step_cap_first_and_forwards_its_attributes():
     """The step cap is component 0, names 'cap' when it is at zero, and its attributes reach _solve_cvode."""
     r = _roots([1200.0, 1500.0], inside=False, cap=_FakeCap(0.0))
