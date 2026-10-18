@@ -170,8 +170,11 @@ def compute_stagnant_lid_state(
     ``T_i - T_surf <= NO_LID_DT_THRESHOLD`` of 1.0e-3 K), boundary-layer diagnostics
     (``d_lid``, ``Ra_eff``, ``Ra_rh``, ``v_m``, ``tau_d``, ``tau_d_lid``,
     ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are zeroed and
-    ``has_lid`` is False, while ``T_i`` serves as an interior fallback diagnostic and
-    all solver-facing outputs vary continuously across low convective flux fractions.
+    ``has_lid`` is False, while ``T_i`` serves as an interior fallback diagnostic
+    (selecting the shallowest interior node near ``0.9 * f_int_max`` when
+    ``W_sum >> 1e-6``, such as ``1e-4 <= f_int_max < 0.036``, and relaxing to the
+    interior fallback node ``T[1]`` as ``W_sum -> 0`` at ``f = 0``) and all
+    solver-facing outputs vary continuously across low convective flux fractions.
 
     When ``solidus_temperature`` is None, the solidus crossing indicator ``w_hot_sol``
     is evaluated from melt fraction using ``SOLIDUS_MELT_FRACTION_THRESHOLD`` (0.01).
@@ -295,17 +298,23 @@ def compute_stagnant_lid_state(
     w_conv_0 = 0.5 * (1.0 + xp.tanh(-params.interior_flux_fraction / 0.01))
     w_conv_int = xp.maximum(w_conv - w_conv_0, 0.0) * interior_node_mask + zero_or_nan
     interior_fallback = xp.where(idx == 1, 1.0, 0.0)
-    W_conv_tilde, W_sum, w_weight = _boundary_weights(w_conv_int, xp, fallback=interior_fallback)
+    W_conv_tilde, W_sum, w_weight = _boundary_weights(
+        w_conv_int, xp, fallback=interior_fallback
+    )
 
     f_int_max = xp.max(f * interior_node_mask)
-    f_int_scale = xp.maximum(f_int_max, params.interior_flux_fraction)
-    f_Ti_thresh = 0.9 * f_int_scale
+    f_int_scale = xp.maximum(f_int_max, 1.0e-12)
+    f_Ti_thresh = 0.9 * f_int_max
     w_Ti_width = 0.02 * f_int_scale
     w_Ti = (
-        0.5 * (1.0 + xp.tanh((f - f_Ti_thresh) / w_Ti_width)) * w_conv * interior_node_mask
+        0.5
+        * (1.0 + xp.tanh((f - f_Ti_thresh) / w_Ti_width))
+        * interior_node_mask
+        * xp.where(f_int_max > 0.0, 1.0, 0.0)
         + zero_or_nan
     )
-    W_tilde = _boundary_weights(w_Ti, xp, fallback=W_conv_tilde)[0]
+    W_Ti_tilde = _boundary_weights(w_Ti, xp, fallback=W_conv_tilde)[0]
+    W_tilde = w_weight * W_Ti_tilde + (1.0 - w_weight) * W_conv_tilde
 
     def _weighted_mean(val):
         arr = xp.asarray(val, dtype=float)

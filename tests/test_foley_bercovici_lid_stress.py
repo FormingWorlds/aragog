@@ -907,3 +907,171 @@ def test_baseline_subtraction_w_weight_and_viscosity_mixture_blend():
     assert float(st_f1['d_lid']) == pytest.approx(42026.66884939559, rel=1.0e-12)
     assert abs(np.log10(float(st_f0['eta_i'])) - np.log10(float(st_f1['eta_i']))) > 5.0
 
+
+@pytest.mark.unit
+def test_ti_selector_scale_invariance_and_subthreshold_regime():
+    """Verify T_i selector scale invariance across s x N on 175 kyr, D3-3 pins, and 2-node transition."""
+    from pathlib import Path
+
+    ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
+    d = np.load(ckpt_path)
+    keys = ('T_basic', 'P_basic', 'F_conv', 'F_tot', 'phi_basic')
+    s_list = (
+        0.0,
+        1.0e-12,
+        1.0e-6,
+        1.0e-4,
+        0.01,
+        0.03,
+        0.034,
+        0.036,
+        0.038,
+        0.04,
+        0.042,
+        0.044,
+        0.046,
+        0.05,
+        0.06,
+        0.1,
+        1.0,
+    )
+    params = SolidRheologyParams(enabled=True)
+
+    for n_nodes in (50, 100, 200, 400):
+        r0 = d['r_basic']
+        if n_nodes == len(r0):
+            r_arr = r0
+            prof = {k: d[k] for k in keys}
+        else:
+            r_arr = np.linspace(r0[0], r0[-1], n_nodes)
+            prof = {k: np.interp(r_arr, r0, d[k]) for k in keys}
+
+        st_s1 = compute_stagnant_lid_state(
+            radii=r_arr,
+            temperature=prof['T_basic'],
+            pressure=prof['P_basic'],
+            convective_flux=prof['F_conv'],
+            total_flux=prof['F_tot'],
+            solidus_temperature=None,
+            melt_fraction=prof['phi_basic'],
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        ti_s1 = float(st_s1['T_i'])
+        dtrh_s1 = float(st_s1['dT_rh'])
+        if n_nodes == 100:
+            assert ti_s1 == pytest.approx(1423.012466223234, rel=1.0e-12)
+
+        for s in s_list:
+            st_s = compute_stagnant_lid_state(
+                radii=r_arr,
+                temperature=prof['T_basic'],
+                pressure=prof['P_basic'],
+                convective_flux=prof['F_conv'] * s,
+                total_flux=prof['F_tot'],
+                solidus_temperature=None,
+                melt_fraction=prof['phi_basic'],
+                params=params,
+                viscosity_solid=1.0e21,
+                phi_rheo=0.4,
+                phi_width=0.15,
+            )
+            ti_s = float(st_s['T_i'])
+            if bool(st_s['has_lid']):
+                assert abs(ti_s - ti_s1) <= dtrh_s1
+            if s == 0.0:
+                assert ti_s == pytest.approx(float(prof['T_basic'][1]), rel=1.0e-12)
+            if s == 1.0e-4:
+                assert ti_s == pytest.approx(ti_s1, abs=1.0)
+                assert abs(ti_s - float(np.mean(prof['T_basic'][1:-1]))) > 500.0
+
+    st_earth = compute_stagnant_lid_state(**_make_earth_reference_inputs())
+    assert float(st_earth['T_i']) == pytest.approx(1600.0, rel=1.0e-12)
+
+    n_p = 40
+    r_p = np.linspace(3.48e6, 6.371e6, n_p)
+    p_p = np.linspace(135.0e9, 1.0e5, n_p)
+    d33_cases = [
+        (
+            np.linspace(3000.0, 1800.0, n_p),
+            np.linspace(0.0, 50.0, n_p),
+            np.zeros(n_p),
+            500.0e6,
+            True,
+            2046.1552431347498,
+        ),
+        (
+            np.linspace(3200.0, 1600.0, n_p),
+            np.linspace(0.0, 200.0, n_p),
+            np.zeros(n_p),
+            2.65e6,
+            True,
+            1928.2069907847497,
+        ),
+        (
+            np.linspace(3400.0, 1400.0, n_p),
+            np.linspace(0.0, 1000.0, n_p),
+            np.zeros(n_p),
+            2.0e6,
+            True,
+            1810.258738462404,
+        ),
+        (
+            np.full(n_p, 2200.0),
+            np.full(n_p, 100.0),
+            np.zeros(n_p),
+            100.0e6,
+            False,
+            2200.0000000000005,
+        ),
+        (
+            np.linspace(3200.0, 2000.0, n_p),
+            np.linspace(10.0, 500.0, n_p),
+            np.linspace(0.6, 0.1, n_p),
+            50.0e6,
+            True,
+            2246.155243079992,
+        ),
+        (
+            np.linspace(3000.0, 1800.0, n_p),
+            np.zeros(n_p),
+            np.zeros(n_p),
+            500.0e6,
+            False,
+            2969.230769230769,
+        ),
+    ]
+    for t_c, fc_c, phi_c, tym_c, zero_top, expected_ti in d33_cases:
+        fc_arr = fc_c.copy()
+        if zero_top:
+            fc_arr[-8:] = 0.0
+        st_c = compute_stagnant_lid_state(
+            radii=r_p,
+            temperature=t_c,
+            pressure=p_p,
+            convective_flux=fc_arr,
+            total_flux=fc_arr + 10.0,
+            solidus_temperature=None,
+            melt_fraction=phi_c,
+            params=SolidRheologyParams(
+                enabled=True,
+                stress_closure_mode='lid',
+                lid_base_mode='rheological',
+                yield_stress_max=tym_c,
+            ),
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        assert float(st_c['T_i']) == pytest.approx(expected_ti, rel=1.0e-12)
+
+    f_two = np.zeros(50)
+    f_two[:41] = 0.040
+    f_two[41] = 0.91 * 0.040
+    f_two[42] = 0.89 * 0.040
+    st_two, t_ad = _eval_adiabat_lid_profile(f_two)
+    ti_two = float(st_two['T_i'])
+    assert np.isfinite(ti_two)
+    assert float(t_ad[42]) < ti_two < float(t_ad[41])
