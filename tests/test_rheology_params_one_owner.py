@@ -424,9 +424,60 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     r_gas = 8.314462618
     dt_rh_val = (r_gas * 1600.0**2) / 300.0e3
     tau_buoy_val = 3300.0 * 9.81 * 3.0e-5 * dt_rh_val * 30791.0646
-    tau_buoy_str = f'{tau_buoy_val * 1e-6:.2f}\\text{{ MPa}}'
+    tau_buoy_str = rf'{tau_buoy_val * 1e-6:.2f}\text{{ MPa}}'
     assert tau_buoy_str in doc_text
     assert '0.150' in doc_text
+
+    # Computed doc numbers from Ruling 32 l 6 (1423.0 K, 1736.9 K, 70.95 K, 13.7, 0.584 dT_rh, 1.55 MPa)
+    assert rf'{dt_rh_val:.2f}\text{{ K}}' in doc_text
+
+    ckpt_path = repo_root / 'tests' / 'reference' / 'checkpoint_profile_175kyr.npz'
+    if ckpt_path.is_file():
+        from aragog.rheology import compute_stagnant_lid_state
+
+        data = np.load(ckpt_path)
+        st_ckpt = compute_stagnant_lid_state(
+            radii=data['r_basic'],
+            temperature=data['T_basic'],
+            pressure=data['P_basic'],
+            convective_flux=data['F_conv'],
+            total_flux=data['F_tot'],
+            solidus_temperature=None,
+            melt_fraction=data['phi_basic'],
+            params=SolidRheologyParams(enabled=True),
+            unyielded_velocity=data['v_unyielded'],
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        assert rf'{float(st_ckpt["T_i"]):.1f}\text{{ K}}' in doc_text
+
+        f_ckpt = np.clip(
+            np.maximum(data['F_conv'], 0.0) / np.maximum(np.abs(data['F_tot']), 1.0e-12),
+            0.0,
+            1.0,
+        )
+        idx_f09 = int(np.where(f_ckpt[:-1] >= 0.9)[0][-1])
+        assert rf'{float(data["T_basic"][idx_f09 - 1]):.1f}\text{{ K}}' in doc_text
+
+    import math
+
+    z_over_delta_005 = math.sqrt(-math.log(0.95))
+    t_005 = 300.0 + 1300.0 * math.erf(z_over_delta_005)
+    ratio_005 = (1600.0 - t_005) / dt_rh_val
+    assert rf'{ratio_005:.1f}\,\Delta T_\text{{rh}}' in doc_text
+
+    z_over_delta_09 = math.sqrt(-math.log(0.1))
+    t_09 = 300.0 + 1300.0 * math.erf(z_over_delta_09)
+    ratio_09 = (1600.0 - t_09) / dt_rh_val
+    assert rf'{ratio_09:.3f}\,\Delta T_\text{{rh}}' in doc_text
+
+    d_mantle = 6370.0e3 - 3480.0e3
+    d_lid_cond = 7.0 * (d_mantle / 49.0)
+    theta_ref = (1600.0 - 300.0) / dt_rh_val
+    delta_rh_cond = d_lid_cond / theta_ref
+    tau_buoy_cond = 3300.0 * 9.81 * 3.0e-5 * dt_rh_val * delta_rh_cond
+    assert rf'{tau_buoy_cond * 1e-6:.2f}\text{{ MPa}}' in doc_text
 
     rheo_api = (repo_root / 'docs' / 'Reference' / 'api' / 'aragog.rheology.md').read_text(
         encoding='utf-8'
@@ -614,3 +665,16 @@ def test_softmax_velocity_scale_constant_and_phase_config_roundtrip(monkeypatch)
     )
     with pytest.raises(AttributeError):
         pc.g_homologous = 30.0  # type: ignore[misc]
+
+
+@pytest.mark.unit
+def test_solid_rheology_params_bounds_covers_every_numeric_field():
+    """Verify _BOUNDS table covers every numeric field in SolidRheologyParams."""
+    from aragog.rheology import _BOUNDS
+
+    bounds_fields = {entry[0] for entry in _BOUNDS}
+    for field_info in dataclasses.fields(SolidRheologyParams):
+        if field_info.type in ('float', float):
+            assert field_info.name in bounds_fields, (
+                f'Numeric field {field_info.name} is missing from _BOUNDS'
+            )
