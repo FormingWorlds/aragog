@@ -564,6 +564,8 @@ def compute_effective_viscosity(
             sr = compute_strain_rate_local(unyielded_velocity, mixing_length, xp=xp)
         else:
             sr = xp.asarray(strain_rate, dtype=float)
+        if tau_y is not None and tau_y_profile is not None:
+            raise ValueError("Provide either tau_y or tau_y_profile in 'local' mode, not both")
         ty_raw = tau_y if tau_y is not None else tau_y_profile
         if ty_raw is None:
             raise ValueError("tau_y or tau_y_profile required for 'local' mode")
@@ -603,12 +605,22 @@ def compute_effective_viscosity(
 
     if w_lid is not None:
         wl = xp.asarray(w_lid, dtype=float)
+        try:
+            wl_np = np.asarray(wl, dtype=float)
+        except Exception:
+            wl_np = None
+        if wl_np is not None and np.any(np.isfinite(wl_np) & ((wl_np < 0.0) | (wl_np > 1.0))):
+            raise ValueError('w_lid must be in [0, 1]')
         log_diff = xp.log10(xp.maximum(eta_d, 1e-30))
         log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
-        log_solid = wl * log_eff + (1.0 - wl) * log_diff
+        log_solid = wl * log_eff + (1.0 - wl) * xp.where(wl == 1.0, 0.0, log_diff)
         res = 10.0**log_solid
-        blended = xp.where((wl == 0.0) | (eta_eff_val == eta_d), eta_d, res)
-        return xp.where(has_nan_lid | xp.isnan(wl), xp.nan, blended)
+        blended = xp.where(
+            (wl == 0.0) | (eta_eff_val == eta_d),
+            eta_d,
+            xp.where(wl == 1.0, eta_eff_val, res),
+        )
+        return xp.where(has_nan_lid | xp.isnan(wl) | (wl < 0.0) | (wl > 1.0), xp.nan, blended)
 
     return eta_eff_val
 
