@@ -29,6 +29,10 @@ def _non_negative(v: float) -> bool:
     return v >= 0.0
 
 
+def _in_vmax_range(v: Any) -> Any:
+    return (v > 20.0) & (v <= 300.0)
+
+
 # (field, in-range test, expectation text) for the finite-and-bounded numeric fields.
 _BOUNDS = (
     *((n, lambda v: 0.0 < v <= 1.0, 'in (0, 1]') for n in ('mlt_bottom_slope', 's_top_inf')),
@@ -37,7 +41,7 @@ _BOUNDS = (
     ('t_sol_0', _positive, 'positive and finite'),
     ('dt_sol_dp', _non_negative, 'non-negative and finite'),
     ('arrhenius_t_ref', _positive, 'positive'),
-    ('viscosity_max_log10', lambda v: 20.0 < v <= 300.0, 'in (20, 300]'),
+    ('viscosity_max_log10', _in_vmax_range, 'in (20, 300]'),
     ('water_prefactor', _positive, 'positive'),
     ('yield_stress_c', _non_negative, 'non-negative'),
     ('yield_stress_mu', _non_negative, 'non-negative'),
@@ -177,7 +181,7 @@ def _is_non_real(val: Any) -> bool:
 
 def _scalar_or_nan(val: Any, name: str) -> float:
     """Return ``float(val)`` on numeric scalars, ``nan`` on traced scalars; reject arrays and non-reals."""
-    if _is_non_real(val) or np.ndim(val) > 0:
+    if _is_non_real(val) or isinstance(val, (list, tuple)) or np.ndim(val) > 0:
         raise ValueError(f'{name} must be a scalar')
     try:
         return float(val)
@@ -190,7 +194,7 @@ _RULES: dict[str, tuple[Any, str]] = {
     'nonneg': (lambda a: (a >= 0.0) & (a < np.inf), 'non-negative and finite'),
     'unit': (lambda a: (a >= 0.0) & (a <= 1.0), 'in [0, 1]'),
     'finite': (lambda a: (a > -np.inf) & (a < np.inf), 'finite (no inf values)'),
-    'finite_scalar': (lambda a: (a > -np.inf) & (a < np.inf), 'finite'),
+    'vmax_scalar': (_in_vmax_range, 'in (20, 300]'),
     'not_neginf': (lambda a: a > -np.inf, 'greater than -inf'),
 }
 
@@ -209,7 +213,7 @@ def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
                 raise ValueError(f'{name} must be a real number or array, got {val!r}')
             arr = xp.asarray(val, dtype=float)
         ok, msg = _RULES[rule]
-        allow_nan = rule != 'finite_scalar'
+        allow_nan = rule != 'vmax_scalar'
         if xp is np and np.any((~np.isnan(arr) if allow_nan else True) & ~ok(arr)):
             raise ValueError(f'{name} must be {msg}, got {val}')
         bad = ~ok(arr)
@@ -373,11 +377,11 @@ def compute_arrhenius_enthalpy(
     ------
     ValueError
         If ``g_homologous``, ``t_sol_0``, ``dt_sol_dp``, or ``r_gas`` is not a
-        scalar; if any input is a boolean; or, on the eager NumPy path
-        (``xp is np``), if ``pressure``, ``g_homologous``, or ``dt_sol_dp`` is
-        negative or infinite, or if ``solidus_temperature``, ``t_sol_0``, or
-        ``r_gas`` is non-positive or infinite. On the JAX path, out-of-range
-        numeric values return ``NaN``.
+        scalar; if any input is non-real (such as a boolean, string, or complex
+        value); or, on the eager NumPy path (``xp is np``), if ``pressure``,
+        ``g_homologous``, or ``dt_sol_dp`` is negative or infinite, or if
+        ``solidus_temperature``, ``t_sol_0``, or ``r_gas`` is non-positive or
+        infinite. On the JAX path, out-of-range numeric values return ``NaN``.
     """
     _require_x64_if_jax(xp)
     if g_homologous is None:
@@ -479,13 +483,14 @@ def compute_arrhenius_viscosity(
         If ``solidus_temperature`` is provided without ``t_sol_0``; if
         ``viscosity_solid``, ``g_homologous``, ``t_sol_0``, ``dt_sol_dp``,
         ``arrhenius_t_ref``, ``r_gas``, or ``viscosity_max_log10`` is not a
-        scalar; if any input is non-real (such as a boolean); or, on the eager
-        NumPy path (``xp is np``), if ``viscosity_max_log10`` is non-finite, if
-        ``temperature``, ``viscosity_solid``, ``solidus_temperature``,
-        ``t_sol_0``, ``arrhenius_t_ref``, ``r_gas``, or ``water_prefactor`` is
-        non-positive or infinite, or if ``pressure``, ``g_homologous``, or
-        ``dt_sol_dp`` is negative or infinite. On the JAX path, out-of-range
-        numeric values return ``NaN``.
+        scalar; if any input is non-real (such as a boolean, string, or complex
+        value); or, on the eager NumPy path (``xp is np``), if
+        ``viscosity_max_log10`` is not in ``(20, 300]``, if ``temperature``,
+        ``viscosity_solid``, ``solidus_temperature``, ``t_sol_0``,
+        ``arrhenius_t_ref``, ``r_gas``, or ``water_prefactor`` is non-positive
+        or infinite, or if ``pressure``, ``g_homologous``, or ``dt_sol_dp`` is
+        negative or infinite. On the JAX path, out-of-range numeric values
+        return ``NaN``.
     """
     _require_x64_if_jax(xp)
     if viscosity_solid is None:
@@ -509,7 +514,7 @@ def compute_arrhenius_viscosity(
             ('temperature', temperature, 'pos', False),
             ('viscosity_solid', viscosity_solid, 'pos', True),
             ('arrhenius_t_ref', arrhenius_t_ref, 'pos', True),
-            ('viscosity_max_log10', viscosity_max_log10, 'finite_scalar', True),
+            ('viscosity_max_log10', viscosity_max_log10, 'vmax_scalar', True),
             ('water_prefactor', water_prefactor, 'pos', False),
         ),
         xp,

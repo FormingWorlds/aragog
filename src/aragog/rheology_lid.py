@@ -182,16 +182,17 @@ def compute_stagnant_lid_state(
         missing when ``solidus_temperature`` is given or does not match
         ``params.t_sol_0``; if ``radii`` is not a 1-D array of at least 3
         nodes; if any profile input does not match ``radii`` in 1-D length; if
-        any input is a boolean; or, on the eager NumPy path (``xp is np``), if
-        ``radii`` is not strictly increasing or has ``inf`` values (``NaN``
-        propagates), if any input is infinite, if ``viscosity_solid``,
-        ``phi_width``, ``a_rh_fb``, ``C4``, ``t_sol_0``, ``temperature``,
-        ``solidus_temperature``, ``viscosity_mixture``, ``density``,
-        ``gravity``, ``thermal_expansivity``, or ``thermal_diffusivity`` is
-        non-positive, if ``pressure`` is negative, or if ``phi_rheo`` or
-        ``melt_fraction`` lies outside ``[0, 1]``. Under ``jax.jit``, traced
-        out-of-range numeric values (including non-increasing ``radii``)
-        propagate ``NaN`` through ``zero_or_nan``.
+        any input is non-real (such as a boolean, string, or complex value);
+        or, on the eager NumPy path (``xp is np``), if ``radii`` is not
+        strictly increasing or has ``inf`` values (``NaN`` propagates), if any
+        input is infinite, if ``viscosity_solid``, ``phi_width``, ``a_rh_fb``,
+        ``C4``, ``t_sol_0``, ``temperature``, ``solidus_temperature``,
+        ``viscosity_mixture``, ``density``, ``gravity``,
+        ``thermal_expansivity``, or ``thermal_diffusivity`` is non-positive, if
+        ``pressure`` is negative, or if ``phi_rheo`` or ``melt_fraction`` lies
+        outside ``[0, 1]``. Under ``jax.jit``, traced out-of-range numeric
+        values (including non-increasing ``radii``) propagate ``NaN`` through
+        ``zero_or_nan``.
 
     Notes
     -----
@@ -234,7 +235,7 @@ def compute_stagnant_lid_state(
     melt-fraction ramp ``w_sol_phi`` centered at ``SOLIDUS_MELT_FRACTION_THRESHOLD``
     (0.01) with width ``SOLIDUS_MELT_FRACTION_WIDTH`` (0.002), and take the elementwise
     maximum with the thermal solidus ``tanh`` ramp when ``solidus_temperature`` is
-    provided, bounding ``d_lid_raw <= sum_k (1 - w_sol_phi,k) * dr_k`` so that a column
+    provided, bounding ``d_lid_raw <= sum_k (1 - w_sol_phi,k+1) * dr_k`` so that a column
     with ``phi >= 0.03`` at every node has ``has_lid = False`` across ``N`` in
     ``{3, 10, 50, 100, 200}`` on both Earth and 9000 km mantle spans (at ``phi = 0.025``,
     an extreme ``N = 3``, 9000 km mantle span gives ``d_lid_raw = 1.38 m`` and
@@ -609,20 +610,22 @@ def compute_effective_viscosity(
     ValueError
         If ``stress_closure_mode`` is not ``'lid'`` or ``'local'``, if required
         mode arguments are missing or cross-mode arguments are passed, if any
-        input is a boolean, or, on the eager NumPy path (``xp is np``), if
-        ``eta_diff`` or ``eta_i`` is non-positive or infinite, if ``strain_rate``
-        or ``mixing_length`` is negative or infinite, if ``tau_d`` or
-        ``unyielded_velocity`` is infinite, if ``w_lid`` lies outside ``[0, 1]``,
-        or if ``tau_y_lid``, ``tau_y``, or ``tau_y_profile`` is ``-inf``. On the
-        JAX path, out-of-range numeric values return ``NaN``.
+        input is non-real (such as a boolean, string, or complex value), or, on
+        the eager NumPy path (``xp is np``), if ``eta_diff`` or ``eta_i`` is
+        non-positive or infinite, if ``strain_rate`` or ``mixing_length`` is
+        negative or infinite, if ``tau_d`` or ``unyielded_velocity`` is
+        infinite, if ``w_lid`` lies outside ``[0, 1]``, or if ``tau_y_lid``,
+        ``tau_y``, or ``tau_y_profile`` is ``-inf``. On the JAX path,
+        out-of-range numeric values return ``NaN``.
 
     Notes
     -----
     Setting ``tau_y_lid = +inf`` in ``'lid'`` mode (or ``tau_y = +inf`` in
     ``'local'`` mode) represents infinite yield strength (no plastic yielding);
-    yield stress is capped at ``1.0e30`` Pa before the ratio so ``jax.grad``
-    remains finite while returning ``eta_diff`` for every finite non-negative
-    driving stress or strain rate.
+    a double-``where`` substitution replaces ``+inf`` with a finite placeholder
+    before the ratio so ``jax.grad`` remains finite while returning ``eta_diff``
+    in the outer ``where`` without capping finite yield stresses or high
+    diffusion viscosities.
 
     References
     ----------
@@ -675,9 +678,10 @@ def compute_effective_viscosity(
         )
         ty = xp.asarray(ty_raw, dtype=float)
         eta_d = xp.asarray(eta_diff, dtype=float)
-        safe_ty = xp.minimum(xp.maximum(ty, COHESION_FLOOR), 1.0e30)
-        tau_y_term = safe_ty / (2.0 * xp.where(sr > 0.0, sr, 1.0))
-        is_unyielded = (sr <= 0.0) | xp.isnan(tau_y_term)
+        inf_ty = xp.isinf(ty) & (ty > 0.0)
+        ty_fin = xp.where(inf_ty, 1.0, xp.maximum(ty, COHESION_FLOOR))
+        tau_y_term = ty_fin / (2.0 * xp.where(sr > 0.0, sr, 1.0))
+        is_unyielded = inf_ty | (sr <= 0.0) | xp.isnan(tau_y_term)
         res = xp.minimum(eta_d, tau_y_term)
         return xp.where(
             invalid_local | xp.isnan(sr), xp.nan, xp.where(is_unyielded, eta_d, res)
@@ -711,8 +715,10 @@ def compute_effective_viscosity(
     td = xp.asarray(tau_d, dtype=float)
 
     # Moresi & Solomatov (1998) Eq. 13-14 min closure at convective strain rate D_conv = tau_d / eta_i:
-    ty_lid = xp.minimum(xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR), 1.0e30)
-    ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
+    ty_raw_lid = xp.asarray(tau_y_lid, dtype=float)
+    inf_ty = xp.isinf(ty_raw_lid) & (ty_raw_lid > 0.0)
+    ty_lid = xp.where(inf_ty, 1.0, xp.maximum(ty_raw_lid, COHESION_FLOOR))
+    ratio = xp.where((td <= 0.0) | inf_ty, 1.0, ty_lid / xp.maximum(td, 1e-30))
     eta_eff_val = xp.where(ratio >= 1.0, eta_d, xp.minimum(eta_d, eta_i_arr * ratio))
 
     if w_lid is not None:
