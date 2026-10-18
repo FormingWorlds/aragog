@@ -14,7 +14,7 @@ from aragog.solver.entropy_solver import AcceptedStateError, EntropySolver
 from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from .test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
 from .test_entropy_solver_gradient_smoke import _build_gradient_parameters
-from .test_eos_floor import _FLUX, _drained, needs_cvode
+from .test_eos_floor import _FLUX, _cells, _drained, needs_cvode
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters
 
 pytestmark = [pytest.mark.smoke, needs_eos]
@@ -116,29 +116,17 @@ def test_the_cmb_node_of_energy_balance_is_the_model_value_not_the_extrapolation
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
-def test_a_cmb_node_below_the_table_raises_with_every_cell_inside(shared_eos, method):
+@pytest.mark.parametrize('inner', [0, 1, 2, 3])
+def test_a_cmb_node_below_the_table_raises_with_every_cell_inside(shared_eos, method, inner):
     """All cells at S_min + 2000 and dSdr_cmb that puts the model's CMB node at S_min - 100: the
-    call raises on basic node 0."""
+    call raises on basic node 0 under every inner condition, as the node is a state value."""
     S_min = float(shared_eos.S_min)
     S0 = np.full(11, S_min + 2000.0)
-    probe, off = _energy_balance(shared_eos, S0, 0.0, method=method)
-    s, _ = _energy_balance(shared_eos, S0, (S_min - 100.0 - S0[0]) / off, method=method)
+    probe, off = _energy_balance(shared_eos, S0, 0.0, method=method, inner=inner)
+    s, _ = _energy_balance(shared_eos, S0, (S_min - 100.0 - S0[0]) / off, method, inner=inner)
     with pytest.raises(AcceptedStateError) as e:
         s.solve()
     assert (e.value.check, e.value.node, e.value.bound) == ('entropy_table', 'basic 0', S_min)
-
-
-@pytest.mark.parametrize('inner', [0, 2])
-def test_the_energy_balance_cmb_node_is_the_bottom_cell_where_the_cmb_law_sets_the_flux(
-    shared_eos, inner
-):
-    """The same start under an insulating or prescribed-flux CMB: the state's CMB node feeds no
-    rate there, so node 0 is checked as the bottom cell and the call does not raise."""
-    S_min = float(shared_eos.S_min)
-    S0 = np.full(11, S_min + 2000.0)
-    _, off = _energy_balance(shared_eos, S0, 0.0, method='bdf', inner=inner)
-    s, _ = _energy_balance(shared_eos, S0, (S_min - 100.0 - S0[0]) / off, 'bdf', inner=inner)
-    assert _solves(s) and s._solution.status >= 0
 
 
 @needs_cvode
@@ -339,16 +327,20 @@ def test_the_extrapolated_cmb_node_is_the_bottom_cell_where_the_cmb_law_sets_the
 ):
     """With the extrapolation at S_min - 52.5 and every cell inside, a call whose CMB flux comes
     from the CMB law does not raise: node 0 feeds no rate there. The reported node-0 temperature
-    is a diagnostic from the clamped lookup at the extrapolation, finite and positive."""
+    is the clamped lookup at the extrapolated node."""
     s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), inner, method, core)
     assert _solves(s) and s._solution.status >= 0
-    assert 0.0 < s.get_state().T_basic[0] < np.inf
+    W = np.asarray(s.evaluator.mesh._quantity_transform)
+    S_cmb = float(W[0] @ _cells(s)[:, -1])
+    T_cmb = float(np.ravel(shared_eos.temperature(float(s._P_basic_flat[0]), S_cmb))[0])
+    assert S_cmb < float(shared_eos.S_min) and s.get_state().T_basic[0] == pytest.approx(T_cmb)
 
 
-def test_the_extrapolated_cmb_node_is_checked_under_inner_condition_3(shared_eos):
+@pytest.mark.parametrize('core', ['quasi_steady', 'bower2018'])
+def test_the_extrapolated_cmb_node_is_checked_under_inner_condition_3(shared_eos, core):
     """Under inner condition 3 the flux law of the interior acts at the extrapolated node, which
     then sets the CMB flux: the same start raises on basic node 0."""
-    s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), 3)
+    s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), 3, core=core)
     with pytest.raises(AcceptedStateError) as e:
         s.solve()
     assert (e.value.check, e.value.node, e.value.time) == ('entropy_table', 'basic 0', 0.0)
