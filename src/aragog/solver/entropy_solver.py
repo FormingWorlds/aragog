@@ -590,13 +590,14 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
             return level, False
     rate = np.asarray(rate_fn(), dtype=float)
     active = rate[S <= s0 + tol].tolist() + (
-        [float(np.dot(weights, rate))] if s_top <= s0 + tol else []
+        [max(float(np.dot(weights, rate)), float(rate[-1]))] if s_top <= s0 + tol else []
     )
     r = float(np.min(active))
     if np.isnan(r):
         return None, True
     if s0 <= S_min + 2.0 * tol:
-        return None, r < 0.0
+        c = float(S.min())
+        return (0.5 * (c + S_min) if c > S_min + 2.0 * tol and r >= 0.0 else None), r < 0.0
     half = 0.5 * (s0 + S_min)
     return (half, False) if s0 + r * span > half else (None, True)
 
@@ -3908,6 +3909,11 @@ class EntropySolver:
                     end_time - start_time,
                 )
                 if level is not None:
+                    if (
+                        _floor_entropy(w, S_arr_stag) <= level
+                    ):  # node already past it: watch cells
+                        w = np.zeros_like(w)
+                        w[-1] = 1.0
                     floor = dict(floor_weights=w, floor_level=level, floor_margin=floor_margin)
                 elif refuse:
                     floor_refused, end_time = True, start_time
