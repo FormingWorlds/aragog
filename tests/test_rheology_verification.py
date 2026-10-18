@@ -1511,3 +1511,59 @@ def test_water_prefactor_and_w_lid_nan_propagation():
             xp=xp_mod,
         )
         assert bool(xp_mod.all(xp_mod.isnan(eta_input_nan_with_wl_zero)))
+
+
+@pytest.mark.unit
+def test_compute_stagnant_lid_state_input_validation():
+    """Verify compute_stagnant_lid_state validates radii, node count, lengths, viscosity_solid, and phi_width."""
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    n_nodes = 10
+    valid_kw = {
+        'radii': np.linspace(3.48e6, 6.371e6, n_nodes),
+        'temperature': np.linspace(2600.0, 300.0, n_nodes),
+        'pressure': np.linspace(135.0e9, 0.0, n_nodes),
+        'convective_flux': np.full(n_nodes, 80.0),
+        'total_flux': np.full(n_nodes, 100.0),
+        'solidus_temperature': None,
+        'melt_fraction': np.zeros(n_nodes),
+        'params': SolidRheologyParams(enabled=True),
+        'viscosity_solid': 1.0e21,
+        'phi_rheo': 0.4,
+        'phi_width': 0.15,
+    }
+
+    with pytest.raises(ValueError, match='radii must be strictly increasing'):
+        compute_stagnant_lid_state(**{**valid_kw, 'radii': valid_kw['radii'][::-1]})
+
+    dup_r = valid_kw['radii'].copy()
+    dup_r[4] = dup_r[3]
+    with pytest.raises(ValueError, match='radii must be strictly increasing'):
+        compute_stagnant_lid_state(**{**valid_kw, 'radii': dup_r})
+
+    for bad_n in (1, 2):
+        short_kw = {
+            **valid_kw,
+            'radii': np.linspace(3.48e6, 6.371e6, bad_n),
+            'temperature': np.linspace(2600.0, 300.0, bad_n),
+            'pressure': np.linspace(135.0e9, 0.0, bad_n),
+            'convective_flux': np.full(bad_n, 80.0),
+            'total_flux': np.full(bad_n, 100.0),
+            'melt_fraction': np.zeros(bad_n),
+        }
+        with pytest.raises(ValueError, match='at least 3 nodes'):
+            compute_stagnant_lid_state(**short_kw)
+
+    with pytest.raises(ValueError, match='same 1-D length as radii'):
+        compute_stagnant_lid_state(**{**valid_kw, 'temperature': np.linspace(2600.0, 300.0, 9)})
+
+    with pytest.raises(ValueError, match='same 1-D length as radii'):
+        compute_stagnant_lid_state(**{**valid_kw, 'density': np.full(9, 3300.0)})
+
+    for bad_vs in (0.0, -1.0e21):
+        with pytest.raises(ValueError, match='viscosity_solid must be positive'):
+            compute_stagnant_lid_state(**{**valid_kw, 'viscosity_solid': bad_vs})
+
+    for bad_pw in (0.0, -0.15):
+        with pytest.raises(ValueError, match='phi_width must be positive'):
+            compute_stagnant_lid_state(**{**valid_kw, 'phi_width': bad_pw})
