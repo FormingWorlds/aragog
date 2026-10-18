@@ -1378,6 +1378,7 @@ def test_validation_and_lid_base_edge_cases():
         'solidus_temperature',
         'unyielded_velocity',
         'viscosity_mixture',
+        'viscosity_solid',
         'phi_rheo',
         'phi_width',
         't_sol_0',
@@ -1672,4 +1673,3 @@ def test_compute_effective_viscosity_w_lid_bounds_validation():
         stress_closure_mode='lid',
     )
     assert np.isnan(nan_res[0])
-

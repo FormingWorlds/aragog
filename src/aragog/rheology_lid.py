@@ -186,14 +186,20 @@ def compute_stagnant_lid_state(
         vs_val = float(np.asarray(viscosity_solid, dtype=float))
     except Exception:
         vs_val = np.nan
-    if np.isfinite(vs_val) and vs_val <= 0.0:
-        raise ValueError(f'viscosity_solid must be positive, got {viscosity_solid}')
+    if not np.isnan(vs_val) and (not np.isfinite(vs_val) or vs_val <= 0.0):
+        raise ValueError(f'viscosity_solid must be positive and finite, got {viscosity_solid}')
     try:
         pw_val = float(np.asarray(phi_width, dtype=float))
     except Exception:
         pw_val = np.nan
-    if np.isfinite(pw_val) and pw_val <= 0.0:
-        raise ValueError(f'phi_width must be positive, got {phi_width}')
+    if not np.isnan(pw_val) and (not np.isfinite(pw_val) or pw_val <= 0.0):
+        raise ValueError(f'phi_width must be positive and finite, got {phi_width}')
+    try:
+        pr_val = float(np.asarray(phi_rheo, dtype=float))
+    except Exception:
+        pr_val = np.nan
+    if not np.isnan(pr_val) and (not np.isfinite(pr_val) or pr_val < 0.0 or pr_val > 1.0):
+        raise ValueError(f'phi_rheo must be finite and in [0, 1], got {phi_rheo}')
     if solidus_temperature is not None and t_sol_0 is None:
         raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
     if t_sol_0 is not None:
@@ -217,7 +223,9 @@ def compute_stagnant_lid_state(
         r_np = None
     if r_np is not None:
         dr_np = r_np[1:] - r_np[:-1]
-        if np.any(np.isfinite(dr_np) & (dr_np <= 0.0)):
+        if np.any(np.isinf(r_np)) or np.any(
+            ~np.isnan(dr_np) & ((~np.isfinite(dr_np)) | (dr_np <= 0.0))
+        ):
             raise ValueError('radii must be strictly increasing from core to surface')
     T = xp.asarray(temperature, dtype=float)
     P = xp.asarray(pressure, dtype=float)
@@ -246,7 +254,9 @@ def compute_stagnant_lid_state(
     ):
         if opt_val is not None:
             opt_arr_check = xp.asarray(opt_val, dtype=float)
-            if opt_arr_check.ndim > 0 and xp.ravel(opt_arr_check).shape[0] != r.shape[0]:
+            if opt_arr_check.ndim > 1 or (
+                opt_arr_check.ndim == 1 and opt_arr_check.shape[0] != r.shape[0]
+            ):
                 raise ValueError(
                     f'{opt_name} must have the same 1-D length as radii ({r.shape[0]})'
                 )
@@ -629,7 +639,9 @@ def compute_effective_viscosity(
             wl_np = np.asarray(wl, dtype=float)
         except Exception:
             wl_np = None
-        if wl_np is not None and np.any(np.isfinite(wl_np) & ((wl_np < 0.0) | (wl_np > 1.0))):
+        if wl_np is not None and np.any(
+            ~np.isnan(wl_np) & ((~np.isfinite(wl_np)) | (wl_np < 0.0) | (wl_np > 1.0))
+        ):
             raise ValueError('w_lid must be in [0, 1]')
         log_diff = xp.log10(xp.maximum(eta_d, 1e-30))
         log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
