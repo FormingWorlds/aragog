@@ -113,13 +113,28 @@ def test_with_every_cell_inside_the_table_the_node_is_inside(s, r, below, above)
     assert lo <= node <= hi
 
 
+def _limited(S, r):
+    """The limited node from the cells, computed here independently of the function."""
+    a, b = S[-1] - S[-2], S[-2] - S[-3]
+    step = np.sign(a) * min(abs(a), abs(b)) if a * b > 0 else 0.0
+    return S[-1] + 0.5 * r * step
+
+
 @given(s=st.tuples(_S, _S, _S), r=_R, D=st.floats(1.0, 200.0))
 def test_away_from_the_band_the_node_is_the_limited_node_bit_for_bit(s, r, D):
     """With S_f at least D inside the table on both sides the blend weight is 1."""
     S = np.array(s)
-    free = top_node_entropy(S, r)
-    node = top_node_entropy(S, r, free - D - 1.0, free + D + 1.0, D)
-    assert node == free
+    free = _limited(S, r)
+    assert top_node_entropy(S, r, free - D - 1.0, free + D + 1.0, D) == free
+
+
+def test_the_full_weight_keeps_the_limited_node_where_a_plain_blend_would_round():
+    """Top cell and limited node of opposite sign: S_N + (S_f - S_N) rounds 1 ULP away from
+    S_f = -1024, so the full weight must return S_f itself."""
+    S = np.array([10034.000000000004, 4505.000000000002, 819.0000000000006])
+    free = _limited(S, 1.0)
+    assert free == -1024.0 and S[-1] + (free - S[-1]) != free
+    assert top_node_entropy(S, 1.0, free - 60.0, free + 60.0, 50.0) == free
 
 
 @given(s=st.tuples(_S, _S, _S), r=_R, D=st.floats(1.0, 200.0), x=st.floats(0.0, 1.0))

@@ -191,11 +191,21 @@ def test_the_grey_body_flux_is_continuous_across_the_band(shared_eos):
 
 
 @pytest.mark.parametrize(
-    ('margin', 'band'), [(30.0, 15.0), (None, 50.0), (0.0, 50.0), (-5.0, 50.0), (5e-324, 50.0)]
+    ('margin', 'band'),
+    [
+        (200.0, 100.0),
+        (30.0, 50.0),
+        (10.0, 50.0),
+        (1.0, 50.0),
+        (None, 50.0),
+        (0.0, 50.0),
+        (-5.0, 50.0),
+        (5e-324, 50.0),
+    ],
 )
 def test_the_band_is_half_the_floor_margin(shared_eos, margin, band):
-    """The blend band is half the EOS floor margin; without the floor, or where half the margin
-    is not positive, it is 50 J/kg/K. The JAX mesh carries the same band."""
+    """The blend band is half the EOS floor margin, at least 50 J/kg/K (also without the floor),
+    so a small margin cannot sharpen the blend. The JAX mesh carries the same band."""
     from aragog.jax.phase import MeshArrays
 
     p = _build_mushy_parameters(solver_method='cvode', end_time=1.0)
@@ -209,9 +219,9 @@ def test_the_band_is_half_the_floor_margin(shared_eos, margin, band):
 
 def test_the_band_follows_a_margin_change_at_the_next_solve(shared_eos):
     s = _solver(shared_eos, 'limited', S0=np.full(11, float(shared_eos.S_min) + 2000.0))
-    s.parameters.energy = dataclasses.replace(s.parameters.energy, eos_floor_margin=40.0)
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, eos_floor_margin=160.0)
     s.solve()
-    assert s.evaluator.mesh.top_band == 20.0
+    assert s.evaluator.mesh.top_band == 80.0
 
 
 def test_a_plain_entropy_eos_assignment_and_a_patch_keep_working(shared_eos):
@@ -235,8 +245,8 @@ def test_the_limited_mode_is_logged_once_per_solver(shared_eos, caplog):
 
 
 def test_the_jax_rhs_matches_numpy_inside_the_band(shared_eos):
-    """With a 30 J/kg/K floor margin (band 15) and the limited node 7 J/kg/K above S_min, the JAX
-    top-cell rate under the grey-body surface matches the numpy one."""
+    """With a 200 J/kg/K floor margin (band 100) and the limited node 7 J/kg/K above S_min, the
+    JAX top-cell rate under the grey-body surface matches the numpy one."""
     jnp = pytest.importorskip('jax.numpy')
     from aragog.jax.solver import dSdt
 
@@ -246,13 +256,13 @@ def test_the_jax_rhs_matches_numpy_inside_the_band(shared_eos):
     eos = entropy_eos_copy(EOS_DIR, identity_alpha=True)
     s = _build('quasi_steady', eos)
     s.parameters.boundary_conditions.top_node = 'limited'
-    s.parameters.energy = dataclasses.replace(s.parameters.energy, eos_floor_margin=30.0)
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, eos_floor_margin=200.0)
     s.initialize()
     s.set_initial_entropy(2700.0)
     y, n = np.asarray(s._S0, dtype=float).copy(), s._n_stag
     y[n - 3 : n] = float(eos.S_min) + np.array([1700.0, 1000.0, 338.0])
     free = float(top_node_entropy(y[:n], s.evaluator.mesh.top_ratio)) - float(eos.S_min)
-    assert 0.0 < free < 15.0 and s.evaluator.mesh.top_band == 15.0
+    assert 0.0 < free < 100.0 and s.evaluator.mesh.top_band == 100.0
     s._core_module_budget, s._core_module_q_radio, s._core_module_ra_crit_cmb = None, 0, 0
     f_jax = float(np.ravel(dSdt(0.0, jnp.asarray(y), _build_jax_pieces(s)[:6]))[n - 1])
     assert f_jax == pytest.approx(float(np.ravel(s.dSdt(0.0, y))[n - 1]), rel=1e-8)
@@ -277,3 +287,44 @@ def test_a_grey_body_solve_inside_the_band_finishes_and_closes_its_energy(shared
     assert s._solution.status >= 0 and out.dt_actual == pytest.approx(50.0)
     assert getattr(s._solution, 'cvode_nst', 0) < 5000
     assert abs(out.step_dE_state_heat_J - terms) <= 1e-3 * abs(out.step_dE_F_int_J)
+
+
+def test_get_state_takes_the_bounds_of_a_new_eos(shared_eos):
+    """An EOS assigned after a solve, as PROTEUS does before a re-melt, bounds the node that
+    get_state reports, with no solve in between."""
+    s = _solver(shared_eos, 'limited', S0=np.full(11, float(shared_eos.S_min) + 2000.0))
+    s.solve()
+    other = entropy_eos_copy(EOS_DIR)
+    other.S_min, other.S_max = float(shared_eos.S_min) + 1.0, float(shared_eos.S_max) - 1.0
+    s.entropy_eos = other
+    s.get_state()
+    assert s.evaluator.mesh.top_bounds == (float(other.S_min), float(other.S_max))
+
+
+def test_a_small_floor_margin_does_not_sharpen_the_grey_body_feedback():
+    """Inside the band the node falls as the top cell warms, so under the grey-body surface the
+    top-cell rate can grow with its own entropy. With the node bounds moved 600 J/kg/K up, onto
+    rows where T is not flat, the largest such self-derivative over a sweep of the top cell
+    through the band is no larger at margins 1 and 10 than at the default 100, as the band stays
+    at least 50 J/kg/K."""
+    eos = entropy_eos_copy(EOS_DIR)
+    base = float(eos.S_min) + 600.0
+    tops = 333.0 + np.r_[np.linspace(0.0, 1.0, 201), np.linspace(1.0, 40.0, 79)]
+    peak = {}
+    for margin in (100.0, 10.0, 1.0):
+        s = _solver(eos, 'limited', bc=1)
+        s.parameters.energy = dataclasses.replace(s.parameters.energy, eos_floor_margin=margin)
+        s.initialize()
+        s.entropy_eos.S_min = base
+        s._sync_top_node()
+        y0, n, worst = np.asarray(s._S0, dtype=float).copy(), s._n_stag, -np.inf
+        for t in tops:
+            rate = []
+            for dy in (0.01, -0.01):
+                z = y0.copy()
+                z[n - 3 : n] = base + np.array([1700.0, 1000.0, t + dy])
+                rate.append(float(np.ravel(s.dSdt(0.0, z))[n - 1]))
+            worst = max(worst, (rate[0] - rate[1]) / 0.02)
+        peak[margin] = worst
+    assert peak[100.0] > 0.0
+    assert peak[10.0] <= peak[100.0] * (1 + 1e-9) and peak[1.0] <= peak[100.0] * (1 + 1e-9)
