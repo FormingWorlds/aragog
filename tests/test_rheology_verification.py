@@ -10,6 +10,7 @@ import dataclasses
 import subprocess
 import sys
 from functools import partial
+from typing import Any
 
 import numpy as np
 import pytest
@@ -21,7 +22,11 @@ from aragog.rheology import (
     compute_strain_rate_local,
     compute_yield_stress,
 )
-from aragog.rheology_lid import compute_effective_viscosity, stress_closure
+from aragog.rheology_lid import (
+    compute_effective_viscosity,
+    compute_stagnant_lid_state,
+    stress_closure,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
@@ -1609,6 +1614,114 @@ def test_compute_stagnant_lid_state_input_validation():
             compute_stagnant_lid_state(
                 **{**valid_kw, **extra, opt_name: np.ones((5, 2), dtype=float)}
             )
+
+
+def _valid_lid_state_kwargs(n_nodes: int = 10) -> dict[str, Any]:
+    """Build valid 1-D arguments for compute_stagnant_lid_state input-validation tests."""
+    return {
+        'radii': np.linspace(3.48e6, 6.371e6, n_nodes),
+        'temperature': np.linspace(2600.0, 300.0, n_nodes),
+        'pressure': np.linspace(135.0e9, 0.0, n_nodes),
+        'convective_flux': np.full(n_nodes, 80.0),
+        'total_flux': np.full(n_nodes, 100.0),
+        'solidus_temperature': None,
+        'melt_fraction': np.zeros(n_nodes),
+        'params': SolidRheologyParams(enabled=True),
+        'viscosity_solid': 1.0e21,
+        'phi_rheo': 0.4,
+        'phi_width': 0.15,
+    }
+
+
+@pytest.mark.unit
+def test_stagnant_lid_state_t_sol_0_inf_and_mismatch_validation():
+    """Verify t_sol_0 rejects +-inf and mismatched values while propagating NaN."""
+    valid_kw = _valid_lid_state_kwargs()
+    for bad_ts0 in (np.inf, -np.inf, 1500.0):
+        with pytest.raises(ValueError, match='t_sol_0'):
+            compute_stagnant_lid_state(**{**valid_kw, 't_sol_0': bad_ts0})
+    st_nan_ts0 = compute_stagnant_lid_state(**{**valid_kw, 't_sol_0': np.nan})
+    assert np.isnan(float(st_nan_ts0['tau_d']))
+
+
+@pytest.mark.unit
+def test_stagnant_lid_state_c4_bounds_validation():
+    """Verify C4 rejects non-positive and +-inf values while propagating NaN."""
+    valid_kw = _valid_lid_state_kwargs()
+    for bad_c4 in (0.0, -0.125, np.inf, -np.inf):
+        with pytest.raises(ValueError, match='C4 must be positive and finite'):
+            compute_stagnant_lid_state(**{**valid_kw, 'C4': bad_c4})
+    st_nan_c4 = compute_stagnant_lid_state(**{**valid_kw, 'C4': np.nan})
+    assert np.isnan(float(st_nan_c4['tau_d']))
+
+
+@pytest.mark.unit
+def test_stagnant_lid_state_a_rh_fb_bounds_validation():
+    """Verify a_rh_fb rejects non-positive and +-inf values while propagating NaN."""
+    valid_kw = _valid_lid_state_kwargs()
+    for bad_arh in (0.0, -1.3, np.inf, -np.inf):
+        with pytest.raises(ValueError, match='a_rh_fb must be positive and finite'):
+            compute_stagnant_lid_state(**{**valid_kw, 'a_rh_fb': bad_arh})
+    st_nan_arh = compute_stagnant_lid_state(**{**valid_kw, 'a_rh_fb': np.nan})
+    assert np.isnan(float(st_nan_arh['tau_d']))
+
+
+@pytest.mark.unit
+def test_stagnant_lid_state_rejects_array_valued_scalars():
+    """Verify array-valued scalar arguments raise ValueError instead of being skipped."""
+    n_nodes = 10
+    valid_kw = _valid_lid_state_kwargs(n_nodes)
+    for scalar_name, bad_arr in (
+        ('viscosity_solid', np.full(n_nodes, 1.0e21)),
+        ('phi_width', np.full(n_nodes, 0.15)),
+        ('phi_rheo', np.full(n_nodes, -5.0)),
+        ('a_rh_fb', np.full(n_nodes, 1.3)),
+        ('C4', np.full(n_nodes, 0.125)),
+        ('t_sol_0', np.full(n_nodes, 1400.0)),
+    ):
+        with pytest.raises(ValueError, match=rf'{scalar_name} must be a scalar'):
+            compute_stagnant_lid_state(**{**valid_kw, scalar_name: bad_arr})
+
+
+@pytest.mark.unit
+def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():
+    """Verify jax.jit traced invalid scalar values propagate NaN through zero_or_nan."""
+    valid_kw = _valid_lid_state_kwargs()
+    jax, jnp = _import_jax_x64()
+    j_kw = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in valid_kw.items()}
+
+    @jax.jit
+    def _jit_eval(vs, pw, pr, arh, c4, ts0):
+        return compute_stagnant_lid_state(
+            **{
+                **j_kw,
+                'viscosity_solid': vs,
+                'phi_width': pw,
+                'phi_rheo': pr,
+                'a_rh_fb': arh,
+                'C4': c4,
+                't_sol_0': ts0,
+                'xp': jnp,
+            }
+        )
+
+    st_jit_ok = _jit_eval(1.0e21, 0.15, 0.4, 1.3, 0.125, 1400.0)
+    assert bool(jnp.isfinite(st_jit_ok['tau_d']))
+    for bad_args in (
+        (-1.0e21, 0.15, 0.4, 1.3, 0.125, 1400.0),
+        (jnp.inf, 0.15, 0.4, 1.3, 0.125, 1400.0),
+        (1.0e21, 0.0, 0.4, 1.3, 0.125, 1400.0),
+        (1.0e21, 0.15, 1.5, 1.3, 0.125, 1400.0),
+        (1.0e21, 0.15, 0.4, 0.0, 0.125, 1400.0),
+        (1.0e21, 0.15, 0.4, 1.3, -0.125, 1400.0),
+        (1.0e21, 0.15, 0.4, 1.3, 0.125, 1500.0),
+        (1.0e21, 0.15, 0.4, 1.3, 0.125, jnp.inf),
+    ):
+        st_jit_bad = _jit_eval(*bad_args)
+        assert not bool(st_jit_bad['has_lid'])
+        for k, v in st_jit_bad.items():
+            if k != 'has_lid':
+                assert bool(jnp.all(jnp.isnan(v))), f'Expected NaN for {k} on {bad_args}'
 
 
 @pytest.mark.unit
