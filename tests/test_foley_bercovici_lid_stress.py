@@ -1390,7 +1390,9 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
         assert abs(log_eta_n - log_eta_175_400) <= max_dlog_eta_175kyr
 
     dw_weight_df_max = 9085.0
-    f_conv_max = float(np.max(d['F_conv']))
+    f_int_s1 = float(
+        np.max(np.maximum(d['F_conv'][1:-1] / np.maximum(d['F_tot'][1:-1], 1.0e-30), 0.0))
+    )
     t1_ref = float(d['T_basic'][1])
     t_top = float(d['T_basic'][-1])
     dt_span = abs(t1_ref - t_top)
@@ -1419,9 +1421,10 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
             assert ti_curr == pytest.approx(t1_ref, abs=1.0e-3)
         if prev_s is not None and prev_ti is not None:
             assert ti_curr <= prev_ti + 1.0e-9
-            delta_f = f_conv_max * abs(s - prev_s)
-            bound = dw_weight_df_max * dt_span * delta_f + 1.0
-            assert abs(ti_curr - prev_ti) <= bound
+            if prev_s >= 1.0e-12:
+                delta_f = f_int_s1 * abs(s - prev_s)
+                bound = dw_weight_df_max * dt_span * delta_f
+                assert abs(ti_curr - prev_ti) <= bound
         prev_s = s
         prev_ti = ti_curr
 
