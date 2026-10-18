@@ -1704,6 +1704,12 @@ def test_stagnant_lid_state_rejects_array_valued_scalars():
         with pytest.raises(ValueError, match=rf'{scalar_name} must be a scalar'):
             compute_stagnant_lid_state(**{**valid_kw, scalar_name: bad_arr})
 
+    assert _scalar_or_nan(10**21, 'viscosity_solid') == 1.0e21
+    st_float = compute_stagnant_lid_state(**valid_kw)
+    st_int = compute_stagnant_lid_state(**{**valid_kw, 'viscosity_solid': 10**21})
+    for k, v_float in st_float.items():
+        np.testing.assert_array_equal(st_int[k], v_float)
+
 
 @pytest.mark.unit
 def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():

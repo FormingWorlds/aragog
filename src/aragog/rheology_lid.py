@@ -79,9 +79,11 @@ def _scalar_or_nan(val: Any, name: str) -> float:
         or (not hasattr(val, 'ndim') and np.ndim(val) > 0)
     ):
         raise ValueError(f'{name} must be a scalar')
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, (np.ndarray, np.generic)) and val.dtype.kind not in 'iuf':
+        raise ValueError(f'{name} must be a scalar')
     try:
-        if np.asarray(val).dtype.kind not in 'iuf':
-            raise ValueError(f'{name} must be a scalar')
         return float(val)
     except TypeError as exc:
         if 'Tracer' in type(val).__name__ or 'Concretization' in type(exc).__name__:
