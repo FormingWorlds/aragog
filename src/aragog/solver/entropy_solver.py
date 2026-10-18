@@ -545,7 +545,8 @@ def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
 
 
 def _floor_entropy(weights: npt.NDArray, S_stag: npt.NDArray) -> float:
-    """Smaller of the top basic-node entropy ``weights @ S_stag`` and the smallest cell entropy."""
+    """Smaller of the top basic-node entropy ``weights @ S_stag`` and the smallest cell entropy
+    (the smallest cell with ``top_node = 'limited'``, where ``weights`` is the top cell)."""
     return min(float(np.dot(weights, S_stag)), float(np.min(S_stag)))
 
 
@@ -1407,6 +1408,18 @@ class EntropySolver:
     _cvode_step_powers_batch: Callable[..., Any] | None = None
     _batch_powers_calls: int = 0
 
+    @property
+    def entropy_eos(self):
+        """Entropy EOS tables; setting them also bounds the limited top node by their range."""
+        return self._entropy_eos
+
+    @entropy_eos.setter
+    def entropy_eos(self, eos) -> None:
+        self._entropy_eos = eos
+        mesh = getattr(getattr(self, 'evaluator', None), 'mesh', None)
+        if hasattr(mesh, 'set_top_bounds'):
+            mesh.set_top_bounds(*(() if eos is None else (eos.S_min, eos.S_max)))
+
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
         self.entropy_eos = entropy_eos
@@ -1767,10 +1780,8 @@ class EntropySolver:
         # integrand.
         self._check_eos_floors()
 
-        top = getattr(self.parameters.boundary_conditions, 'top_node', 'linear')
-        eos = self.entropy_eos
-        self.evaluator.mesh.set_top_node(top, *(() if eos is None else (eos.S_min, eos.S_max)))
-        if top == 'limited':
+        self.entropy_eos = self.entropy_eos  # the limited top node takes its bounds
+        if self.evaluator.mesh.top_node == 'limited':
             logger.info('EntropySolver: top node: limited (minmod, top cell outside the table)')
 
         # Cache constant BC and mesh terms so the dSdt hot path
@@ -3914,7 +3925,7 @@ class EntropySolver:
                 mesh = self.evaluator.mesh
                 floor_w = np.asarray(mesh._quantity_transform)[-1]
                 if mesh.top_node == 'limited':  # the node stays in the table with its cells
-                    floor_w = np.eye(1, floor_w.size, floor_w.size - 1).ravel()
+                    floor_w = np.eye(floor_w.size)[-1]
                 level, refuse = _floor_start_level(
                     floor_w,
                     S_arr_stag,

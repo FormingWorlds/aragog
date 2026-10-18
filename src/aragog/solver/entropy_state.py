@@ -507,7 +507,8 @@ class EntropyState:
         if entropy_basic is not None:
             self._entropy_basic = np.asarray(entropy_basic).ravel()
         else:
-            self._entropy_basic = mesh.entropy_at_basic_nodes(S)
+            basic = getattr(mesh, 'entropy_at_basic_nodes', mesh.quantity_at_basic_nodes)
+            self._entropy_basic = np.ravel(basic(S))
         if dSdr is not None:
             self._dSdr = np.asarray(dSdr).ravel()
         else:

@@ -12,8 +12,9 @@ CORE_BC_MODES = ('quasi_steady', 'energy_balance', 'gradient', 'bower2018', 'cor
 TOP_NODE_MODES = ('linear', 'limited')
 
 
-def check_top_node(top_node) -> None:
-    """Refuse a ``top_node`` that is not one of ``TOP_NODE_MODES``.
+def check_top_node(top_node, core_bc: str | None = None) -> None:
+    """Refuse a ``top_node`` that is not one of ``TOP_NODE_MODES``, and ``'limited'`` on the
+    ``'gradient'`` core, whose basic entropies come from its own state.
 
     Raises
     ------
@@ -22,6 +23,8 @@ def check_top_node(top_node) -> None:
     """
     if not isinstance(top_node, str) or top_node not in TOP_NODE_MODES:
         raise ValueError(f'unknown top_node {top_node!r}; the modes are {TOP_NODE_MODES}')
+    if top_node == 'limited' and core_bc == 'gradient':
+        raise ValueError("top_node = 'limited' is not available on core_bc = 'gradient'")
 
 
 def check_core_bc(core_bc: str, inner_boundary_condition: int, core_module_params) -> None:
@@ -115,4 +118,4 @@ class BoundaryConfig:
 
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
-        check_top_node(self.top_node)
+        check_top_node(self.top_node, self.core_bc)

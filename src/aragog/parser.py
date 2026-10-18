@@ -122,7 +122,7 @@ class _BoundaryConditionsParameters:
         self._normalize_inner_boundary_condition()
         self._normalize_outer_boundary_condition()
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
-        check_top_node(self.top_node)
+        check_top_node(self.top_node, self.core_bc)
 
     def _normalize_inner_boundary_condition(self) -> None:
         """Normalise the inner boundary value.

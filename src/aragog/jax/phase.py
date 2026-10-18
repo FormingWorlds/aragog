@@ -344,7 +344,7 @@ class MeshArrays(eqx.Module):
             # staggered grid.
             gravity_stag=_build_gravity_array(mesh, r_stag=True),
             top_limited=getattr(mesh, 'top_node', 'linear') == 'limited',
-            top_ratio=mesh.top_ratio if hasattr(mesh, 'top_ratio') else 1.0,
+            top_ratio=getattr(mesh, 'top_ratio', 1.0),
             top_bounds=getattr(mesh, 'top_bounds', (-np.inf, np.inf)),
         )
 

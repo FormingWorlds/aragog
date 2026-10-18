@@ -315,7 +315,8 @@ class Mesh:
             self._dxidr: npt.NDArray = np.ones_like(self.basic.radii)
         self._d_dr_transform: npt.NDArray = self._get_d_dr_transform_matrix()
         self._quantity_transform: npt.NDArray = self._get_quantity_transform_matrix()
-        self.top_node, self.top_bounds = 'linear', (-np.inf, np.inf)
+        self.top_node = getattr(parameters.boundary_conditions, 'top_node', 'linear')
+        self.top_bounds = (-np.inf, np.inf)
 
     @property
     def dxidr(self) -> npt.NDArray:
@@ -502,18 +503,16 @@ class Mesh:
     @property
     def top_ratio(self) -> float:
         """Basic over staggered spacing of the outer cell (the outer row of the transform)."""
-        return float(
-            np.ravel(self.basic.delta_mesh)[-1] / np.ravel(self.staggered.delta_mesh)[-1]
-        )
+        return float(-2.0 * self._quantity_transform[-1, -2])
 
-    def set_top_node(self, mode: str, S_min: float = -np.inf, S_max: float = np.inf) -> None:
-        """Choose the top basic-node entropy ('linear' or 'limited') and the table range."""
-        self.top_node, self.top_bounds = mode, (float(S_min), float(S_max))
+    def set_top_bounds(self, S_min: float = -np.inf, S_max: float = np.inf) -> None:
+        """Set the entropy range of the table that bounds the limited top node."""
+        self.top_bounds = (float(S_min), float(S_max))
 
     def entropy_at_basic_nodes(self, S: npt.NDArray) -> npt.NDArray:
         """Entropy at the basic nodes, with the top node from ``top_node_entropy`` when limited."""
-        S = np.asarray(S, dtype=float).ravel()
-        S_basic = np.asarray(self.quantity_at_basic_nodes(S), dtype=float).ravel()
+        S = np.ravel(S)
+        S_basic = self.quantity_at_basic_nodes(S)
         if self.top_node == 'limited':
             S_basic[-1] = top_node_entropy(S, self.top_ratio, *self.top_bounds)
         return S_basic

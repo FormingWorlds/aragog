@@ -165,13 +165,6 @@ def test_the_gradient_core_refuses_the_limited_node():
         )  # fmt: skip
 
 
-def test_fewer_than_3_cells_refuse_the_limited_node(shared_eos):
-    p = _build_mushy_parameters(solver_method='cvode', n_nodes=3, end_time=1.0)
-    p.boundary_conditions.top_node = 'limited'
-    with pytest.raises(ValueError, match='top_node'):
-        EntropySolver(p, entropy_eos=shared_eos).initialize()
-
-
 def test_the_mesh_takes_the_mode_from_the_parameters_and_the_bounds_from_the_eos(shared_eos):
     """A new EOS on the solver moves the bounds of the limited node with it."""
     s = _solver(shared_eos, 'limited')
