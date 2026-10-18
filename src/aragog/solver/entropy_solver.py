@@ -549,6 +549,66 @@ def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
     return (xi3 - r3_core) / span
 
 
+class AcceptedStateError(ValueError):
+    """An accepted state of a call is not finite or leaves the EOS tables.
+
+    Attributes ``check`` (``'finite_state'`` or ``'entropy_table'``), ``node`` (``'cell i'`` or
+    ``'basic j'``), ``time`` [yr], ``value`` [J/kg/K] and ``bound`` [J/kg/K, NaN for a
+    non-finite value] name the first offending state.
+    """
+
+    def __init__(self, check: str, node: str, time: float, value: float, bound: float):
+        self.check, self.node, self.time, self.value, self.bound = (
+            check,
+            node,
+            time,
+            value,
+            bound,
+        )
+        super().__init__(
+            f'{check}: {node} at t={time:.6g} yr has entropy {value:.6g} J/kg/K '
+            f'(bound {bound:.6g} J/kg/K)'
+        )
+
+
+def _check_accepted_states(t, S, weights, S_min: float, S_max: float) -> None:
+    """Raise AcceptedStateError at the first accepted state outside its bounds.
+
+    Parameters
+    ----------
+    t : ndarray
+        Node times [yr], shape (n,); node 0 is the call start and is not checked.
+    S : ndarray
+        Cell entropies [J/kg/K], shape (n_stag, n).
+    weights : ndarray
+        Cell-to-basic-node transform, shape (n_basic, n_stag).
+    S_min, S_max : float
+        Entropy range of the EOS tables [J/kg/K]; the edges are inside.
+
+    Raises
+    ------
+    AcceptedStateError
+        For the earliest node with a non-finite cell entropy, or a cell or basic-node entropy
+        outside ``[S_min, S_max]``; at one node cells come before basic nodes.
+    """
+    S = np.asarray(S, dtype=float)[:, 1:]
+    B = np.asarray(weights, dtype=float) @ np.where(np.isfinite(S), S, 0.0)
+    for k in range(S.shape[1]):
+        for kind, col in (('cell', S[:, k]), ('basic', B[:, k])):
+            if kind == 'cell' and not np.all(np.isfinite(col)):
+                i = int(np.argmin(np.isfinite(col)))
+                raise AcceptedStateError(
+                    'finite_state', f'cell {i}', float(t[k + 1]), float(col[i]), np.nan
+                )
+            out = (col < S_min) | (col > S_max)
+            if out.any():
+                i = int(np.argmax(out))
+                bound = S_min if col[i] < S_min else S_max
+                raise AcceptedStateError(
+                    'entropy_table', f'{kind} {i}', float(t[k + 1]), float(col[i]), bound
+                )
+
+
 def _floor_entropy(weights: npt.NDArray, S_stag: npt.NDArray) -> float:
     """Smaller of the top basic-node entropy ``weights @ S_stag`` and the smallest cell entropy."""
     return min(float(np.dot(weights, S_stag)), float(np.min(S_stag)))
@@ -4225,6 +4285,20 @@ class EntropySolver:
         trace = sol.get('energy_trace')
         if trace is not None:
             sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale, _offset)
+        if (
+            self.entropy_eos is not None
+            and getattr(self, '_core_bc', None) != 'gradient'
+            and not getattr(self.parameters.phase_mixed, 'const_properties', False)
+            and sol.t is not None
+        ):
+            t_acc, y_acc = sol.get('energy_trace') or (sol.t, sol.y)
+            _check_accepted_states(
+                t_acc,
+                np.asarray(y_acc, dtype=float)[: self._n_stag],
+                self.evaluator.mesh._quantity_transform,
+                float(self.entropy_eos.S_min),
+                float(self.entropy_eos.S_max),
+            )
         if floor_refused:
             sol.status = 1
             sol.message = (
