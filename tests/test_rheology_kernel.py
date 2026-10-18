@@ -629,3 +629,141 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs():
         assert bool(st_jax_sc['has_lid']) is False
         assert bool(jnp.isnan(st_jax_sc['tau_d']))
         assert bool(jnp.all(jnp.isnan(st_jax_sc['w_lid'])))
+
+
+@pytest.mark.unit
+def test_compute_effective_viscosity_rejects_inf_tau_d_eta_diff_eta_i_and_accepts_inf_tau_y_lid():
+    """Verify compute_effective_viscosity rejects inf in tau_d, eta_diff, and eta_i while accepting tau_y_lid=+inf."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    jit_lid = jax.jit(
+        lambda ed, ei, td, ty, wl: compute_effective_viscosity(
+            eta_diff=ed,
+            eta_i=ei,
+            tau_d=td,
+            tau_y_lid=ty,
+            w_lid=wl,
+            stress_closure_mode='lid',
+            xp=jnp,
+        )
+    )
+    jit_local = jax.jit(
+        lambda ed, sr, ty: compute_effective_viscosity(
+            eta_diff=ed,
+            strain_rate=sr,
+            tau_y=ty,
+            stress_closure_mode='local',
+            xp=jnp,
+        )
+    )
+
+    # 1. tau_d = +-inf (with tau_y_lid finite and +inf): ValueError on np, NaN under jax.jit.
+    for sign in (1.0, -1.0):
+        td_inf = sign * np.inf
+        for ty_val in (1.0e6, np.inf):
+            for wl_val in (None, 1.0, 0.5):
+                with pytest.raises(ValueError, match='tau_d'):
+                    compute_effective_viscosity(
+                        eta_diff=1.0e22,
+                        eta_i=1.0e20,
+                        tau_d=td_inf,
+                        tau_y_lid=ty_val,
+                        w_lid=wl_val,
+                        stress_closure_mode='lid',
+                        xp=np,
+                    )
+            res_jit = jit_lid(
+                jnp.asarray(1.0e22),
+                jnp.asarray(1.0e20),
+                jnp.asarray(td_inf),
+                jnp.asarray(ty_val),
+                jnp.asarray(1.0),
+            )
+            assert bool(jnp.isnan(res_jit))
+
+    # 2. eta_diff = +-inf and eta_i = +-inf: ValueError on np, NaN under jax.jit.
+    for sign in (1.0, -1.0):
+        inf_v = sign * np.inf
+        with pytest.raises(ValueError, match='eta_diff'):
+            compute_effective_viscosity(
+                eta_diff=inf_v,
+                eta_i=1.0e20,
+                tau_d=1.0e6,
+                tau_y_lid=1.0e8,
+                w_lid=1.0,
+                stress_closure_mode='lid',
+                xp=np,
+            )
+        with pytest.raises(ValueError, match='eta_diff'):
+            compute_effective_viscosity(
+                eta_diff=inf_v,
+                strain_rate=1.0e-15,
+                tau_y=1.0e8,
+                stress_closure_mode='local',
+                xp=np,
+            )
+        with pytest.raises(ValueError, match='eta_i'):
+            compute_effective_viscosity(
+                eta_diff=1.0e22,
+                eta_i=inf_v,
+                tau_d=1.0e6,
+                tau_y_lid=1.0e8,
+                w_lid=1.0,
+                stress_closure_mode='lid',
+                xp=np,
+            )
+        assert bool(
+            jnp.isnan(
+                jit_lid(
+                    jnp.asarray(inf_v),
+                    jnp.asarray(1.0e20),
+                    jnp.asarray(1.0e6),
+                    jnp.asarray(1.0e8),
+                    jnp.asarray(1.0),
+                )
+            )
+        )
+        assert bool(
+            jnp.isnan(
+                jit_local(
+                    jnp.asarray(inf_v),
+                    jnp.asarray(1.0e-15),
+                    jnp.asarray(1.0e8),
+                )
+            )
+        )
+        assert bool(
+            jnp.isnan(
+                jit_lid(
+                    jnp.asarray(1.0e22),
+                    jnp.asarray(inf_v),
+                    jnp.asarray(1.0e6),
+                    jnp.asarray(1.0e8),
+                    jnp.asarray(1.0),
+                )
+            )
+        )
+
+    # 3. tau_y_lid = +inf stays valid (no yielding) and returns eta_diff for finite tau_d >= 0.
+    for td_finite in (0.0, 1.0e6, 1.0e12):
+        for wl_val in (None, 0.0, 0.5, 1.0):
+            res_np = compute_effective_viscosity(
+                eta_diff=1.0e22,
+                eta_i=1.0e20,
+                tau_d=td_finite,
+                tau_y_lid=np.inf,
+                w_lid=wl_val,
+                stress_closure_mode='lid',
+                xp=np,
+            )
+            assert float(res_np) == pytest.approx(1.0e22, rel=1.0e-12)
+        res_jax = jit_lid(
+            jnp.asarray(1.0e22),
+            jnp.asarray(1.0e20),
+            jnp.asarray(td_finite),
+            jnp.asarray(jnp.inf),
+            jnp.asarray(1.0),
+        )
+        assert float(res_jax) == pytest.approx(1.0e22, rel=1.0e-12)

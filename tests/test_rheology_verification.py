@@ -1757,20 +1757,29 @@ def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():
 
 @pytest.mark.unit
 def test_compute_effective_viscosity_lid_inf_eta_diff_with_w_lid_one():
-    """Verify w_lid=1 with eta_diff=inf returns eta_eff rather than NaN."""
+    """Verify w_lid=1 with eta_diff=inf raises ValueError on np and returns NaN for the inf element on JAX."""
     _, jnp = _import_jax_x64()
-    for xp_mod in (np, jnp):
-        res_inf = compute_effective_viscosity(
-            eta_diff=xp_mod.asarray([np.inf, 1.0e24]),
-            eta_i=xp_mod.asarray(1.0e20),
-            tau_d=xp_mod.asarray(2.0e6),
-            tau_y_lid=xp_mod.asarray(1.0e6),
-            w_lid=xp_mod.asarray([1.0, 1.0]),
+    with pytest.raises(ValueError, match='eta_diff'):
+        compute_effective_viscosity(
+            eta_diff=np.asarray([np.inf, 1.0e24]),
+            eta_i=np.asarray(1.0e20),
+            tau_d=np.asarray(2.0e6),
+            tau_y_lid=np.asarray(1.0e6),
+            w_lid=np.asarray([1.0, 1.0]),
             stress_closure_mode='lid',
-            xp=xp_mod,
+            xp=np,
         )
-        assert float(res_inf[0]) == pytest.approx(5.0e19, rel=1.0e-12)
-        assert float(res_inf[1]) == pytest.approx(5.0e19, rel=1.0e-12)
+    res_inf_jax = compute_effective_viscosity(
+        eta_diff=jnp.asarray([jnp.inf, 1.0e24]),
+        eta_i=jnp.asarray(1.0e20),
+        tau_d=jnp.asarray(2.0e6),
+        tau_y_lid=jnp.asarray(1.0e6),
+        w_lid=jnp.asarray([1.0, 1.0]),
+        stress_closure_mode='lid',
+        xp=jnp,
+    )
+    assert bool(jnp.isnan(res_inf_jax[0]))
+    assert float(res_inf_jax[1]) == pytest.approx(5.0e19, rel=1.0e-12)
 
 
 @pytest.mark.unit
