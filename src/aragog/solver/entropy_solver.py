@@ -3922,17 +3922,20 @@ class EntropySolver:
                     s_floor = _floor_entropy(floor_w, S_arr_stag)
                     band, half = 2.0e-6 * floor_margin, 0.5 * (s_floor + S_tab)
                     if s_floor <= S_tab:
-                        why = 'is at or below the table minimum'
+                        why = 'at or below the table minimum'
                     elif s_floor <= S_tab + band and not S_tab < half < s_floor:
-                        why = 'leaves no level between it and the table minimum (no level fits)'
+                        why = 'no level fits between it and the table minimum'
                     elif s_floor <= S_tab + band:
                         why = f'counts as at the table minimum (within {band:.2g} J/kg/K) and falls'
                     else:
-                        why = f'is at most {0.5 * floor_margin:.1f} J/kg/K above it and falls too fast'
+                        why = (
+                            f'at most {0.5 * floor_margin:.1f} J/kg/K above it, falls too fast'
+                        )
                     logger.warning(
-                        'EOS floor: entropy %.6g J/kg/K at the call start (table minimum %.6g '
-                        'J/kg/K) %s; the call does not advance',
+                        'EOS floor: entropy %.9g J/kg/K at the call start, %+.3e J/kg/K from the '
+                        'table minimum %.9g J/kg/K, %s; the call does not advance',
                         s_floor,
+                        s_floor - S_tab,
                         S_tab,
                         why,
                     )
@@ -4259,19 +4262,19 @@ class EntropySolver:
             if low < S_tab:
                 return self.solve(
                     _floor_discard=(
-                        f'EOS floor: the root of level {floor["floor_level"]:.9g} J/kg/K near '
-                        f't={t_end:.6g} yr put the floor entropy at {low:.9g} J/kg/K, below the '
-                        f'table minimum {S_tab:.9g} J/kg/K; the call is discarded and does not '
-                        'advance'
+                        f'EOS floor: the root of level S_min {floor["floor_level"] - S_tab:+.3e} '
+                        f'J/kg/K near t={t_end:.9g} yr put the floor entropy at S_min '
+                        f'{low - S_tab:+.3e} J/kg/K (table minimum {S_tab:.9g} J/kg/K); the call '
+                        'is discarded and does not advance'
                     )
                 )
-            if t_end <= start_time:
+            if t_end <= float(np.asarray(sol.t)[0]):  # the returned start, after the time scale
                 sol.status = 1
                 sol.message = 'EOS floor: the call does not advance'
                 logger.warning(
-                    'EOS floor: the root of level %.9g J/kg/K fell at the call start t=%.6g yr; '
-                    'the call does not advance',
-                    floor['floor_level'],
+                    'EOS floor: the root of level S_min %+.3e J/kg/K fell at the call start '
+                    't=%.9g yr; the call does not advance',
+                    floor['floor_level'] - S_tab,
                     start_time,
                 )
 
