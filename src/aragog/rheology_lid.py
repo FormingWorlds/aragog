@@ -57,13 +57,13 @@ def _boundary_weights(w: Any, xp: Any, *, fallback: Any | None = None) -> tuple[
     """Smooth weights of the shallowest crossing of ``w``, scanned from the surface down.
 
     Returns ``(W_tilde, W_sum, w_weight)``; ``W_tilde`` relaxes to ``fallback`` (or
-    to the bottom node at index 0 when ``fallback`` is None) when ``W_sum`` vanishes.
+    to the bottom node at index 0 when ``fallback`` is None) when ``max(w)`` vanishes.
     """
     w_surf = w[::-1]
     omw = xp.concatenate([xp.ones(1, dtype=w.dtype), 1.0 - w_surf[:-1]])
     W = (w_surf * xp.cumprod(omw))[::-1]
     W_sum = xp.sum(W)
-    w_weight = xp.tanh(W_sum / 1.0e-6)
+    w_weight = xp.tanh(xp.max(w) / 1.0e-6)
     n = w.shape[0]
     W_fallback = xp.where(xp.arange(n) == 0, 1.0, 0.0) if fallback is None else fallback
     W_tilde = w_weight * (W / xp.maximum(W_sum, 1e-12)) + (1.0 - w_weight) * W_fallback

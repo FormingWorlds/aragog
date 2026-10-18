@@ -910,7 +910,7 @@ def test_baseline_subtraction_w_weight_and_viscosity_mixture_blend():
 
 @pytest.mark.unit
 def test_ti_selector_scale_invariance_and_subthreshold_regime():
-    """Verify T_i selector scale invariance across s x N on 175 kyr, D3-3 pins, and 2-node transition."""
+    """Verify T_i selector scale invariance across s x N on 175 kyr, piecewise-linear pins, and 2-node transition."""
     from pathlib import Path
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
@@ -921,6 +921,7 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
         1.0e-12,
         1.0e-6,
         1.0e-4,
+        1.0e-3,
         0.01,
         0.03,
         0.034,
@@ -979,11 +980,13 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
                 phi_width=0.15,
             )
             ti_s = float(st_s['T_i'])
+            if s >= 0.036:
+                assert bool(st_s['has_lid']) is True
             if bool(st_s['has_lid']):
                 assert abs(ti_s - ti_s1) <= dtrh_s1
             if s == 0.0:
                 assert ti_s == pytest.approx(float(prof['T_basic'][1]), rel=1.0e-12)
-            if s == 1.0e-4:
+            if s in (1.0e-3, 0.01):
                 assert ti_s == pytest.approx(ti_s1, abs=1.0)
                 assert abs(ti_s - float(np.mean(prof['T_basic'][1:-1]))) > 500.0
 
@@ -1268,3 +1271,139 @@ def test_w_active_scaling_relations_when_lid_is_active():
     assert float(st_weak['tau_buoy']) == pytest.approx(expected_tau_buoy, rel=1.0e-9)
     assert float(st_weak['d_lid']) == pytest.approx(expected_d_lid, rel=1.0e-9)
     assert float(st_weak['lid_regime']) == pytest.approx(expected_lid_regime, rel=1.0e-9)
+
+
+@pytest.mark.unit
+def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
+    """Verify w_weight = tanh(max_k w_conv_int / 1e-6) mesh invariance across N and continuity over s in [0, 1e-3]."""
+    from pathlib import Path
+
+    params = SolidRheologyParams(enabled=True)
+    w_c0 = 0.5 * (1.0 + np.tanh(-params.interior_flux_fraction / 0.01))
+    # At uniform f > 0, max_k w_conv_int = w_conv(f) - w_conv(0) is independent of N (dw_weight = 0),
+    # while interior endpoints T[1] and T[N-2] (with geometric scan factor 1 / w_Ti(uniform) = 1 / (0.5*(1+tanh(5))))
+    # shift by (2300 / w_Ti(uniform)) * (1/49 - 1/399) = 41.176234 K across N=50..400.
+    w_ti_uniform = 0.5 * (1.0 + np.tanh(0.1 / 0.02))
+    max_dt_uniform = (2300.0 / w_ti_uniform) * (1.0 / 49.0 - 1.0 / 399.0)
+
+    f_half = float(
+        params.interior_flux_fraction
+        + 0.01 * np.arctanh(2.0 * (w_c0 + 1.0e-6 * np.arctanh(0.5)) - 1.0)
+    )
+    for f_val in (1.0e-6, 1.0e-4, 1.0e-2, f_half):
+        expected_w_weight = float(
+            np.tanh(
+                (0.5 * (1.0 + np.tanh((f_val - params.interior_flux_fraction) / 0.01)) - w_c0)
+                / 1.0e-6
+            )
+        )
+        if f_val == f_half:
+            assert expected_w_weight == pytest.approx(0.5, rel=1.0e-9)
+        results_by_n: dict[int, tuple[float, float, float]] = {}
+        for n_nodes in (50, 100, 200, 400):
+            r = np.linspace(3.48e6, 6.37e6, n_nodes)
+            t_prof = np.linspace(2600.0, 300.0, n_nodes)
+            p_prof = np.linspace(135.0e9, 0.0, n_nodes)
+            st = compute_stagnant_lid_state(
+                radii=r,
+                temperature=t_prof,
+                pressure=p_prof,
+                convective_flux=np.full(n_nodes, f_val),
+                total_flux=np.ones(n_nodes),
+                solidus_temperature=None,
+                melt_fraction=np.zeros(n_nodes),
+                params=params,
+                viscosity_solid=1.0e21,
+                viscosity_mixture=np.full(n_nodes, 1.0e15),
+                phi_rheo=0.4,
+                phi_width=0.15,
+            )
+            log_eta = float(np.log10(float(st['eta_i'])))
+            log_arr = float(np.log10(float(st['eta_solid_arrhenius'])))
+            w_eff = (log_eta - log_arr) / (15.0 - log_arr)
+            assert w_eff == pytest.approx(expected_w_weight, rel=1.0e-12)
+            results_by_n[n_nodes] = (w_eff, float(st['T_i']), log_eta)
+
+        _, ti_400, log_eta_400 = results_by_n[400]
+        for n_nodes, (_, ti_n, log_eta_n) in results_by_n.items():
+            assert abs(ti_n - ti_400) <= max_dt_uniform
+            assert abs(log_eta_n - log_eta_400) <= 0.07
+
+    ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
+    d = np.load(ckpt_path)
+    keys = ('T_basic', 'P_basic', 'F_conv', 'F_tot', 'phi_basic')
+    # On the resampled 175 kyr profile at s=1e-6, f_int_max changes by 2.66e-13 across N=50..400 (dw_weight/w_weight < 1e-6),
+    # and the fallback node T[1] shifts by |T[1](50) - T[1](400)| = 41.674 K, bounding |T_i(N) - T_i(400)| <= 41.674 K.
+    r0 = d['r_basic']
+    t1_50 = float(np.interp(np.linspace(r0[0], r0[-1], 50), r0, d['T_basic'])[1])
+    t1_400 = float(np.interp(np.linspace(r0[0], r0[-1], 400), r0, d['T_basic'])[1])
+    max_dt_175kyr = abs(t1_50 - t1_400)
+
+    prof_175_by_n: dict[int, tuple[float, float, float]] = {}
+    for n_nodes in (50, 100, 200, 400):
+        r_arr = r0 if n_nodes == len(r0) else np.linspace(r0[0], r0[-1], n_nodes)
+        prof = {k: d[k] if n_nodes == len(r0) else np.interp(r_arr, r0, d[k]) for k in keys}
+        st = compute_stagnant_lid_state(
+            radii=r_arr,
+            temperature=prof['T_basic'],
+            pressure=prof['P_basic'],
+            convective_flux=prof['F_conv'] * 1.0e-6,
+            total_flux=prof['F_tot'],
+            solidus_temperature=None,
+            melt_fraction=prof['phi_basic'],
+            params=params,
+            viscosity_solid=1.0e21,
+            viscosity_mixture=np.full(n_nodes, 1.0e15),
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        log_eta = float(np.log10(float(st['eta_i'])))
+        log_arr = float(np.log10(float(st['eta_solid_arrhenius'])))
+        w_eff = (log_eta - log_arr) / (15.0 - log_arr)
+        prof_175_by_n[n_nodes] = (w_eff, float(st['T_i']), log_eta)
+
+    w_400, ti_175_400, log_eta_175_400 = prof_175_by_n[400]
+    for n_nodes, (w_n, ti_n, log_eta_n) in prof_175_by_n.items():
+        assert w_n == pytest.approx(w_400, rel=1.0e-6)
+        assert abs(ti_n - ti_175_400) <= max_dt_175kyr
+        assert abs(log_eta_n - log_eta_175_400) <= 0.06
+
+    s_sweep = (
+        0.0,
+        1.0e-15,
+        1.0e-12,
+        1.0e-9,
+        1.0e-8,
+        1.0e-7,
+        1.0e-6,
+        1.0e-5,
+        3.0e-5,
+        6.0e-5,
+        1.0e-4,
+        2.0e-4,
+        5.0e-4,
+        1.0e-3,
+    )
+    t1_ref = float(d['T_basic'][1])
+    prev_ti: float | None = None
+    for s in s_sweep:
+        st_s = compute_stagnant_lid_state(
+            radii=r0,
+            temperature=d['T_basic'],
+            pressure=d['P_basic'],
+            convective_flux=d['F_conv'] * s,
+            total_flux=d['F_tot'],
+            solidus_temperature=None,
+            melt_fraction=d['phi_basic'],
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        ti_curr = float(st_s['T_i'])
+        if s in (0.0, 1.0e-15, 1.0e-12):
+            assert ti_curr == pytest.approx(t1_ref, abs=1.0e-3)
+        if prev_ti is not None:
+            assert ti_curr <= prev_ti + 1.0e-9
+            assert abs(ti_curr - prev_ti) <= 950.0
+        prev_ti = ti_curr
