@@ -1576,13 +1576,38 @@ def test_compute_stagnant_lid_state_input_validation():
     with pytest.raises(ValueError, match='same 1-D length as radii'):
         compute_stagnant_lid_state(**{**valid_kw, 'density': np.full(9, 3300.0)})
 
-    for bad_vs in (0.0, -1.0e21):
+    for bad_vs in (0.0, -1.0e21, np.inf, -np.inf):
         with pytest.raises(ValueError, match='viscosity_solid must be positive'):
             compute_stagnant_lid_state(**{**valid_kw, 'viscosity_solid': bad_vs})
 
-    for bad_pw in (0.0, -0.15):
+    for bad_pw in (0.0, -0.15, np.inf, -np.inf):
         with pytest.raises(ValueError, match='phi_width must be positive'):
             compute_stagnant_lid_state(**{**valid_kw, 'phi_width': bad_pw})
+
+    for bad_pr in (np.inf, -np.inf, -0.1, 1.1):
+        with pytest.raises(ValueError, match='phi_rheo must be'):
+            compute_stagnant_lid_state(**{**valid_kw, 'phi_rheo': bad_pr})
+
+    for bad_idx, bad_val in ((0, -np.inf), (-1, np.inf), (-1, -np.inf)):
+        inf_r = valid_kw['radii'].copy()
+        inf_r[bad_idx] = bad_val
+        with pytest.raises(ValueError, match='radii must be strictly increasing'):
+            compute_stagnant_lid_state(**{**valid_kw, 'radii': inf_r})
+
+    for opt_name in (
+        'solidus_temperature',
+        'unyielded_velocity',
+        'viscosity_mixture',
+        'density',
+        'gravity',
+        'thermal_expansivity',
+        'thermal_diffusivity',
+    ):
+        extra = {'t_sol_0': 1400.0} if opt_name == 'solidus_temperature' else {}
+        with pytest.raises(ValueError, match=rf'{opt_name}.*same 1-D length as radii'):
+            compute_stagnant_lid_state(
+                **{**valid_kw, **extra, opt_name: np.ones((5, 2), dtype=float)}
+            )
 
 
 @pytest.mark.unit
@@ -1618,8 +1643,17 @@ def test_compute_effective_viscosity_local_rejects_both_tau_y_and_profile():
 
 @pytest.mark.unit
 def test_compute_effective_viscosity_w_lid_bounds_validation():
-    """Verify w_lid outside [0, 1] raises ValueError."""
-    for bad_wl in (-0.1, 1.5, np.array([0.5, 1.2]), np.array([-0.01, 0.5])):
+    """Verify w_lid outside [0, 1] or +-inf raises ValueError while NaN propagates."""
+    for bad_wl in (
+        -0.1,
+        1.5,
+        np.inf,
+        -np.inf,
+        np.array([0.5, 1.2]),
+        np.array([-0.01, 0.5]),
+        np.array([0.5, np.inf]),
+        np.array([-np.inf, 0.5]),
+    ):
         with pytest.raises(ValueError, match='w_lid must be in'):
             compute_effective_viscosity(
                 eta_diff=np.array([1.0e24, 1.0e24]),
@@ -1629,3 +1663,13 @@ def test_compute_effective_viscosity_w_lid_bounds_validation():
                 w_lid=bad_wl,
                 stress_closure_mode='lid',
             )
+    nan_res = compute_effective_viscosity(
+        eta_diff=np.array([1.0e24, 1.0e24]),
+        eta_i=1.0e20,
+        tau_d=2.0e6,
+        tau_y_lid=1.0e6,
+        w_lid=np.array([np.nan, 0.5]),
+        stress_closure_mode='lid',
+    )
+    assert np.isnan(nan_res[0])
+
