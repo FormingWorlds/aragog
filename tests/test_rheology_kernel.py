@@ -623,6 +623,7 @@ def _assert_invalid_raises_np_and_nan_jit(
         ('pressure', np.inf, False),
         ('pressure', -np.inf, False),
         ('pressure', True, True),
+        ('pressure', [True, True], True),
         ('g_homologous', -25.0, False),
         ('g_homologous', -1.0e-6, False),
         ('g_homologous', np.inf, False),
@@ -683,10 +684,12 @@ def test_arrhenius_enthalpy_validation_table(field_name: str, bad_val, static_er
         ('temperature', np.inf, False),
         ('temperature', -np.inf, False),
         ('temperature', True, True),
+        ('temperature', [True, True], True),
         ('pressure', -1.0, False),
         ('pressure', np.inf, False),
         ('pressure', -np.inf, False),
         ('pressure', False, True),
+        ('pressure', [True, True], True),
         ('viscosity_solid', 0.0, False),
         ('viscosity_solid', -1.0e21, False),
         ('viscosity_solid', np.inf, False),
@@ -768,11 +771,13 @@ def test_arrhenius_viscosity_validation_table(field_name: str, bad_val, static_e
 @pytest.mark.parametrize(
     ('field_name', 'bad_entry', 'as_scalar', 'static_error'),
     [
+        ('radii', 0.0, False, False),
         ('temperature', np.inf, False, False),
         ('temperature', -np.inf, False, False),
         ('temperature', 0.0, False, False),
         ('temperature', -50.0, False, False),
         ('temperature', True, False, True),
+        ('temperature', [True] * 12, True, True),
         ('pressure', np.inf, False, False),
         ('pressure', -np.inf, False, False),
         ('pressure', -1.0e5, False, False),
@@ -881,6 +886,7 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         ('lid', 'eta_diff', np.inf, False),
         ('lid', 'eta_diff', -np.inf, False),
         ('lid', 'eta_diff', True, True),
+        ('lid', 'eta_diff', [True, True], True),
         ('lid', 'eta_i', 0.0, False),
         ('lid', 'eta_i', -1.0e20, False),
         ('lid', 'eta_i', np.inf, False),
@@ -901,12 +907,22 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         ('local', 'eta_diff', np.inf, False),
         ('local', 'eta_diff', -np.inf, False),
         ('local', 'eta_diff', True, True),
+        ('local', 'eta_diff', [True, True], True),
         ('local', 'strain_rate', -1.0e-15, False),
         ('local', 'strain_rate', np.inf, False),
         ('local', 'strain_rate', -np.inf, False),
         ('local', 'strain_rate', True, True),
         ('local', 'tau_y', -np.inf, False),
         ('local', 'tau_y', True, True),
+        ('local', 'mixing_length', -1.0, False),
+        ('local', 'mixing_length', np.inf, False),
+        ('local', 'mixing_length', -np.inf, False),
+        ('local', 'mixing_length', True, True),
+        ('local', 'unyielded_velocity', np.inf, False),
+        ('local', 'unyielded_velocity', -np.inf, False),
+        ('local', 'unyielded_velocity', True, True),
+        ('local', 'tau_y_profile', -np.inf, False),
+        ('local', 'tau_y_profile', True, True),
     ],
 )
 def test_compute_effective_viscosity_rejects_inf_tau_d_eta_diff_eta_i_and_accepts_inf_tau_y_lid(
@@ -931,7 +947,19 @@ def test_compute_effective_viscosity_rejects_inf_tau_d_eta_diff_eta_i_and_accept
         'tau_y': 1.0e8,
         'stress_closure_mode': 'local',
     }
-    np_kw = lid_np if mode == 'lid' else local_np
+    local_vel_np = {
+        'eta_diff': 1.0e22,
+        'unyielded_velocity': 1.0e-9,
+        'mixing_length': 1.0e5,
+        'tau_y_profile': 1.0e8,
+        'stress_closure_mode': 'local',
+    }
+    if mode == 'lid':
+        np_kw = lid_np
+    elif field_name in ('unyielded_velocity', 'mixing_length', 'tau_y_profile'):
+        np_kw = local_vel_np
+    else:
+        np_kw = local_np
     jax_kw = {
         k: (v if k == 'stress_closure_mode' else jnp.asarray(v, dtype=float))
         for k, v in np_kw.items()
