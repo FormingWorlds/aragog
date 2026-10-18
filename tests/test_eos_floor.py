@@ -68,7 +68,7 @@ def _floor_logs(caplog):
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
 def test_floor_root_ends_the_call_at_the_margin(shared_eos, caplog, method):
     """CVODE (status 0) and scipy (status 1) stop at S_min + 100 before the call end with one
-    WARNING; without the floor the same call drains below the table."""
+    WARNING; without the floor the same call leaves the table and raises."""
     S_min = float(shared_eos.S_min)
     with caplog.at_level(logging.INFO):
         s, f = _drained(shared_eos, S_min + 400.0, method=method)
@@ -80,8 +80,8 @@ def test_floor_root_ends_the_call_at_the_margin(shared_eos, caplog, method):
     if method == 'cvode':
         assert sol.cap_label == 'eos_floor' and sol.cap_value == S_min + 100.0
         assert f'level={S_min + 100.0:.6g}' in logs[0][1]
-    s_off, f_off = _drained(shared_eos, S_min + 400.0, margin=None, method=method)
-    assert s_off._solution.t[-1] == pytest.approx(10.0) and f_off[-1] < S_min
+    with pytest.raises(es.AcceptedStateError):
+        _drained(shared_eos, S_min + 400.0, margin=None, method=method)
 
 
 @pytest.mark.parametrize(
