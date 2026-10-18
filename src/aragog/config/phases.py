@@ -40,7 +40,7 @@ class PhaseConfig:
     viscosity : float or str
         Dynamic viscosity [Pa s] or path to lookup table.
     entropy : float or str, optional
-        Reference entropy [J/kg/K] or path to lookup table.
+        Reference entropy [J/kg/K] or path to lookup table. Empty string means unused.
     rheology : SolidRheologyParams, optional
         Solid-state rheology parameters container.
     **flat_rheo : Any
@@ -52,7 +52,7 @@ class PhaseConfig:
     melt_fraction: float
     thermal_conductivity: float | str
     thermal_expansivity: float | str
-    viscosity: float | str | None = None
+    viscosity: float | str
     entropy: float | str = ''
     rheology: SolidRheologyParams = attrs.field(factory=SolidRheologyParams)
 
@@ -63,11 +63,13 @@ class PhaseConfig:
         melt_fraction: float,
         thermal_conductivity: float | str,
         thermal_expansivity: float | str,
-        viscosity: float | str | None = None,
+        viscosity: float | str,
         entropy: float | str = '',
         rheology: SolidRheologyParams | None = None,
         **flat_rheo: Any,
     ):
+        if viscosity is None:
+            raise ValueError('viscosity must not be None')
         self.density = density
         self.heat_capacity = heat_capacity
         self.melt_fraction = melt_fraction
