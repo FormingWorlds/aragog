@@ -176,15 +176,63 @@ def compute_stagnant_lid_state(
     _require_x64_if_jax(xp)
     if viscosity_solid is None or phi_rheo is None or phi_width is None:
         raise ValueError('viscosity_solid, phi_rheo, and phi_width must be provided')
+    try:
+        vs_val = float(np.asarray(viscosity_solid, dtype=float))
+    except Exception:
+        vs_val = np.nan
+    if np.isfinite(vs_val) and vs_val <= 0.0:
+        raise ValueError(f'viscosity_solid must be positive, got {viscosity_solid}')
+    try:
+        pw_val = float(np.asarray(phi_width, dtype=float))
+    except Exception:
+        pw_val = np.nan
+    if np.isfinite(pw_val) and pw_val <= 0.0:
+        raise ValueError(f'phi_width must be positive, got {phi_width}')
     if solidus_temperature is not None and t_sol_0 is None:
         raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
     t_sol_0_eff = params.t_sol_0 if t_sol_0 is None else t_sol_0
     r = xp.asarray(radii, dtype=float)
+    if r.ndim != 1 or r.shape[0] < 3:
+        raise ValueError('radii must be a 1-D array with at least 3 nodes')
+    try:
+        r_np = np.asarray(r, dtype=float)
+    except Exception:
+        r_np = None
+    if r_np is not None:
+        dr_np = r_np[1:] - r_np[:-1]
+        if np.any(np.isfinite(dr_np) & (dr_np <= 0.0)):
+            raise ValueError('radii must be strictly increasing from core to surface')
     T = xp.asarray(temperature, dtype=float)
     P = xp.asarray(pressure, dtype=float)
     F_conv = xp.asarray(convective_flux, dtype=float)
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)
+    for arr_name, arr_val in (
+        ('temperature', T),
+        ('pressure', P),
+        ('convective_flux', F_conv),
+        ('total_flux', F_tot),
+        ('melt_fraction', phi),
+    ):
+        if arr_val.ndim != 1 or arr_val.shape[0] != r.shape[0]:
+            raise ValueError(
+                f'{arr_name} must have the same 1-D length as radii ({r.shape[0]})'
+            )
+    for opt_name, opt_val in (
+        ('solidus_temperature', solidus_temperature),
+        ('unyielded_velocity', unyielded_velocity),
+        ('viscosity_mixture', viscosity_mixture),
+        ('density', density),
+        ('gravity', gravity),
+        ('thermal_expansivity', thermal_expansivity),
+        ('thermal_diffusivity', thermal_diffusivity),
+    ):
+        if opt_val is not None:
+            opt_arr_check = xp.asarray(opt_val, dtype=float)
+            if opt_arr_check.ndim > 0 and xp.ravel(opt_arr_check).shape[0] != r.shape[0]:
+                raise ValueError(
+                    f'{opt_name} must have the same 1-D length as radii ({r.shape[0]})'
+                )
 
     nan_parts = [
         xp.ravel(r),
