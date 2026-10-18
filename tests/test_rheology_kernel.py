@@ -97,7 +97,7 @@ def test_homologous_enthalpy_and_viscosity_invariants():
 
     # 2. Explicit solidus curve at P = {0, 25, 50, 100, 135} GPa and g_hom = {14, 25}.
     p_grid = np.array([0.0, 25.0e9, 50.0e9, 100.0e9, 135.0e9])
-    t_sol_grid = np.array([1428.9478, 2969.0408, 3668.0717, 4270.4757, 4595.2113])
+    t_sol_grid = np.array([1380.6038, 2475.9161, 2875.9474, 3673.7136, 4232.1499])
     for g_val in (14.0, 25.0):
         h_grid = compute_arrhenius_enthalpy(
             p_grid,

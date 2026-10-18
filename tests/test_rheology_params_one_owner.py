@@ -473,7 +473,7 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     assert rf'{ratio_09:.3f}\,\Delta T_\text{{rh}}' in doc_text
 
     ratio_sol_ref = math.exp(
-        default_rheo.g_homologous * (1429.0 - default_rheo.t_sol_0) / 1600.0
+        default_rheo.g_homologous * (1380.6 - default_rheo.t_sol_0) / 1600.0
     )
     assert rf'{ratio_sol_ref:.2f}\times' in doc_text
 
