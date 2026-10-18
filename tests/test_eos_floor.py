@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import warnings
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -562,9 +563,17 @@ def test_a_discarded_call_keeps_the_start_state_time_and_energy_ledger(
     below the table: the call is discarded with a warning that gives the level and the entropy
     as offsets from S_min, and its state, time, energy trace and per-call energy ledger equal
     those of a call with no span from the same start."""
-    S0 = _mid_cell_at(shared_eos, 1e-6)
-    with caplog.at_level(logging.INFO):
+    S0, passes = _mid_cell_at(shared_eos, 1e-6), []
+    solve = EntropySolver.solve
+
+    def counted(self, *args, **kwargs):  # the discard solves the call once more, never twice
+        passes.append(kwargs.get('_floor_discard'))
+        assert len(passes) <= 2
+        return solve(self, *args, **kwargs)
+
+    with caplog.at_level(logging.INFO), mock.patch.object(EntropySolver, 'solve', counted):
         s, _ = _drained(shared_eos, S0, method=method, start_time=start_time)
+    assert len(passes) == 2 and passes[0] is None and 'discarded' in passes[1]
     z, _ = _drained(shared_eos, S0, method=method, start_time=start_time, end_time=0.0)
     assert 'put the floor entropy at S_min -' in caplog.text
     sol, st, zt = s._solution, s.get_state(), z.get_state()

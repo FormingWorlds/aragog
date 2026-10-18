@@ -203,3 +203,22 @@ def test_above_the_table_band_a_warming_top_cell_lets_the_node_advance():
     assert W @ S == pytest.approx(S_MIN + 1e-2)
     level, refuse = _start(S, [-0.015, 0.069, 0.0034])
     assert not refuse and level == pytest.approx(S_MIN + 5e-3)
+
+
+def test_a_start_exactly_on_the_band_edge_uses_the_node_rate():
+    """Top node exactly at S_min + 2e-6 m, falling only by extrapolation under a warming top
+    cell: the edge belongs to the band, so the node's own rate refuses the start."""
+    s_edge = S_MIN + 2.0 * 1e-6 * M
+    S = np.array([S_MIN + 2000.0, 0.0, S_MIN + 40.0])
+    S[1] = 2.0 * (1.5 * S[2] - s_edge)
+    while W @ S != s_edge:  # step the middle cell by ulps until the node sits on the edge
+        S[1] = np.nextafter(S[1], np.inf if W @ S > s_edge else -np.inf)
+    assert _start(S, [-0.015, 0.069, 0.0034]) == (None, True)
+
+
+def test_above_the_band_a_rising_node_over_a_falling_top_cell_advances():
+    """Top node at S_min + 1e-2 rising over a top cell that falls fast enough to reach half the
+    distance: above the band the larger of the two rates counts, so the start arms the level."""
+    S = np.array([S_MIN + 2000.0, S_MIN + 120.0 - 2e-2, S_MIN + 40.0])
+    level, refuse = _start(S, [0.0, -4.0, -1.0])
+    assert not refuse and level == pytest.approx(S_MIN + 5e-3)
