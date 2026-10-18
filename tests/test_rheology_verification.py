@@ -269,8 +269,10 @@ def test_lid_base_mode_and_stress_closure_validation():
         stress_closure('other', viscous_velocity=1.0e-9, mixing_length=1.0e5)
 
     sr = stress_closure('local', viscous_velocity=2.0e-9, mixing_length=1.0e5)
-    assert sr == pytest.approx(1.0e-14, rel=1e-12)
-    assert compute_strain_rate_local(2.0e-9, 1.0e5) == pytest.approx(1.0e-14, rel=1e-12)
+    assert sr == pytest.approx(1.0e-14, rel=1e-12, abs=0.0)
+    assert compute_strain_rate_local(2.0e-9, 1.0e5) == pytest.approx(
+        1.0e-14, rel=1e-12, abs=0.0
+    )
 
 
 @pytest.mark.physics_invariant
@@ -819,7 +821,7 @@ def test_zero_yield_stress_cohesion_floor_prevents_zero_viscosity(monkeypatch):
     import aragog.rheology_lid as lid_mod
     from aragog.rheology_lid import COHESION_FLOOR
 
-    assert COHESION_FLOOR == pytest.approx(1.0e-6, rel=1.0e-15)
+    assert COHESION_FLOOR == pytest.approx(1.0e-6, rel=1.0e-15, abs=0.0)
     sr = 1.0e-15
     eta_local_zero = compute_effective_viscosity(
         eta_diff=1.0e21,
@@ -1938,63 +1940,88 @@ def test_viscous_mixing_length_factor_nan_scalar_inputs_propagate():
     assert np.isnan(q_rout[0]) and np.isnan(q_rout[-1]) and np.all(np.isnan(q_rout))
 
 
+def _scan_ast_for_direct_rheology_imports(tree) -> list[str]:
+    """Scan an AST tree at any depth for direct imports of aragog.rheology or rheology_lid."""
+    import ast
+
+    violations: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                name = alias.name
+                if name in ('aragog.rheology', 'aragog.rheology_lid') or name.startswith(
+                    ('aragog.rheology.', 'aragog.rheology_lid.')
+                ):
+                    violations.append(f'import {name}')
+        elif isinstance(node, ast.ImportFrom):
+            mod = node.module or ''
+            if mod in ('aragog.rheology', 'aragog.rheology_lid') or mod.startswith(
+                ('aragog.rheology.', 'aragog.rheology_lid.')
+            ):
+                violations.append(f'from {mod} import ...')
+            elif mod == 'aragog':
+                for alias in node.names:
+                    if alias.name in ('rheology', 'rheology_lid'):
+                        violations.append(f'from aragog import {alias.name}')
+        elif isinstance(node, ast.Call):
+            func = node.func
+            is_import_call = False
+            if isinstance(func, ast.Name) and func.id == '__import__':
+                is_import_call = True
+            elif isinstance(func, ast.Attribute) and func.attr == 'import_module':
+                is_import_call = True
+            if is_import_call and node.args:
+                first_arg = node.args[0]
+                if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
+                    val = first_arg.value
+                    if val in ('aragog.rheology', 'aragog.rheology_lid') or val.startswith(
+                        ('aragog.rheology.', 'aragog.rheology_lid.')
+                    ):
+                        violations.append(f'import call: {val}')
+    return violations
+
+
 @pytest.mark.unit
-def test_solver_modules_do_not_import_rheology_kernels():
-    """Verify solver modules do not import aragog.rheology or aragog.rheology_lid."""
-    import json
-    import subprocess
-    import sys
+def test_solver_modules_do_not_direct_import_rheology_kernels():
+    """Verify solver modules do not directly import aragog.rheology or aragog.rheology_lid.
+
+    The kernels are loaded transitively through aragog.config.phases
+    (SolidRheologyParams), which is allowed.
+    """
+    import ast
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[1]
-    probe_script = """
-import sys, builtins, importlib, json
-target_mod = sys.argv[1]
-direct = []
-orig_import = builtins.__import__
-def hook(name, globals=None, locals=None, fromlist=(), level=0):
-    caller = globals.get('__name__') if globals else None
-    if caller == target_mod:
-        direct.append({'name': name, 'fromlist': list(fromlist) if fromlist else []})
-    return orig_import(name, globals, locals, fromlist, level)
-builtins.__import__ = hook
-sys.path.insert(0, sys.argv[2])
-importlib.import_module(target_mod)
-print(json.dumps(direct))
-"""
-
-    solver_modules = [
-        'aragog.jax.phase',
-        'aragog.solver.entropy_state',
-        'aragog.eos.entropy_phase',
+    solver_rel_paths = [
+        'src/aragog/jax/phase.py',
+        'src/aragog/solver/entropy_state.py',
+        'src/aragog/eos/entropy_phase.py',
     ]
 
-    for mod in solver_modules:
-        res = subprocess.run(
-            [sys.executable, '-c', probe_script, mod, str(repo_root / 'src')],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        imports = json.loads(res.stdout)
-        rheo = [
-            imp
-            for imp in imports
-            if 'rheology' in imp['name'] or any('rheology' in str(f) for f in imp['fromlist'])
-        ]
-        assert not rheo, f'{mod} directly imports rheology modules: {rheo}'
+    for rel_path in solver_rel_paths:
+        file_path = repo_root / rel_path
+        tree = ast.parse(file_path.read_text(encoding='utf-8'), filename=str(file_path))
+        direct_imports = _scan_ast_for_direct_rheology_imports(tree)
+        assert not direct_imports, f'{rel_path} has direct rheology imports: {direct_imports}'
 
-    # Canary: verify that if a module imports aragog.rheology, the probe catches it.
-    canary_res = subprocess.run(
-        [sys.executable, '-c', probe_script, 'aragog.config.phases', str(repo_root / 'src')],
-        capture_output=True,
-        text=True,
-        check=True,
+    # Canary 1: top-level direct import in aragog.config.phases must be caught.
+    cfg_tree = ast.parse(
+        (repo_root / 'src/aragog/config/phases.py').read_text(encoding='utf-8')
     )
-    canary_imports = json.loads(canary_res.stdout)
-    canary_rheo = [
-        imp
-        for imp in canary_imports
-        if 'rheology' in imp['name'] or any('rheology' in str(f) for f in imp['fromlist'])
-    ]
-    assert canary_rheo, 'Canary failed: probe did not catch rheology import in config.phases'
+    assert _scan_ast_for_direct_rheology_imports(cfg_tree), (
+        'Canary 1 failed: direct import in config.phases was not caught'
+    )
+
+    # Canary 2: function-local import must be caught.
+    local_import_code = (
+        'def _lazy_probe():\n    from aragog.rheology import compute_arrhenius_viscosity\n'
+    )
+    assert _scan_ast_for_direct_rheology_imports(ast.parse(local_import_code)), (
+        'Canary 2 failed: function-local import was not caught'
+    )
+
+    # Canary 3: dynamic importlib call must be caught.
+    importlib_code = "import importlib\nmod = importlib.import_module('aragog.rheology_lid')\n"
+    assert _scan_ast_for_direct_rheology_imports(ast.parse(importlib_code)), (
+        'Canary 3 failed: importlib.import_module call was not caught'
+    )

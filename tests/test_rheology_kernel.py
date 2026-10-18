@@ -19,6 +19,10 @@ from aragog.rheology import (
     compute_stagnant_lid_state,
     compute_strain_rate_local,
 )
+from aragog.rheology_lid import (
+    SOLIDUS_MELT_FRACTION_THRESHOLD,
+    SOLIDUS_MELT_FRACTION_WIDTH,
+)
 
 
 @pytest.mark.unit
@@ -140,6 +144,33 @@ def test_homologous_enthalpy_and_viscosity_invariants():
     s_top_vals = compute_mlt_top_slope(theta_grid, s_top_inf=0.22, c_theta=0.15, xp=np)
     expected_s_top = 0.22 + 0.78 * np.exp(-0.15 * theta_grid)
     np.testing.assert_allclose(s_top_vals, expected_s_top, rtol=1.0e-12, atol=1.0e-30)
+
+
+@pytest.mark.unit
+def test_wolf_bower_2018_solidus_table_interpolation_matches_pinned_grid():
+    """Verify solidus.dat interpolation matches pinned test grid and docs table."""
+    import os
+    from pathlib import Path
+
+    fwl_data = os.environ.get('FWL_DATA')
+    if not fwl_data:
+        pytest.skip('FWL_DATA not set')
+    table_path = (
+        Path(fwl_data) / 'interior/melting_curves/wolf_bower_2018/r15728072/solidus.dat'
+    )
+    if not table_path.is_file():
+        pytest.skip(f'Solidus table not found at {table_path}')
+
+    raw = np.loadtxt(table_path, comments='#')
+    p_table, t_table = raw[:, 0], raw[:, 1]
+    p_grid = np.array([0.0, 25.0e9, 50.0e9, 100.0e9, 135.0e9])
+    t_sol_interp = np.interp(p_grid, p_table, t_table)
+
+    pinned = np.array([1380.6038, 2475.9161, 2875.9474, 3673.7136, 4232.1499])
+    np.testing.assert_allclose(t_sol_interp, pinned, atol=1.0e-4)
+
+    docs_1dec = np.array([1380.6, 2475.9, 2875.9, 3673.7, 4232.1])
+    np.testing.assert_allclose(np.round(t_sol_interp, 1), docs_1dec, atol=1.0e-12)
 
 
 @pytest.mark.unit
@@ -519,6 +550,15 @@ def test_melt_fraction_ramp_phi_rheo_and_phi_width_below_solidus_threshold():
     raw_phi = 0.5 * (1.0 + np.tanh((phi - phi_rheo) / phi_width))
     expected_w_hot_phi = np.clip((raw_phi - zero_phi) / (1.0 - zero_phi), 0.0, 1.0)
 
+    zero_sol = 0.5 * (
+        1.0 + np.tanh(-SOLIDUS_MELT_FRACTION_THRESHOLD / SOLIDUS_MELT_FRACTION_WIDTH)
+    )
+    raw_sol = 0.5 * (
+        1.0 + np.tanh((phi - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
+    )
+    expected_w_sol_phi = np.clip((raw_sol - zero_sol) / (1.0 - zero_sol), 0.0, 1.0)
+    expected_w_int = np.maximum(expected_w_hot_phi[-5:-1], expected_w_sol_phi[-5:-1])
+
     for sol_arg in (None, t_sol):
         state = compute_stagnant_lid_state(
             radii=radii,
@@ -536,10 +576,10 @@ def test_melt_fraction_ramp_phi_rheo_and_phi_width_below_solidus_threshold():
             xp=np,
         )
         # At nodes -5..-2, T <= 943 K is far below T_lid_iso and T_sol, and phi <= 0.005
-        # is well below SOLIDUS_MELT_FRACTION_THRESHOLD (0.01), so w_hot_phi dominates.
-        expected_w_lid_slice = (1.0 - expected_w_hot_phi[-5:-1]) * float(state['w_active'])
+        # is below SOLIDUS_MELT_FRACTION_THRESHOLD (0.01), so w_hot_phi dominates with w_sol_phi.
+        expected_w_lid_slice = (1.0 - expected_w_int) * float(state['w_active'])
         np.testing.assert_allclose(
-            state['w_lid'][-5:-1], expected_w_lid_slice, rtol=1.0e-2, atol=7.0e-3
+            state['w_lid'][-5:-1], expected_w_lid_slice, rtol=1.0e-12, atol=1.0e-14
         )
 
 

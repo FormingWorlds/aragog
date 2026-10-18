@@ -618,7 +618,7 @@ def test_softmax_velocity_scale_constant_and_phase_config_roundtrip(monkeypatch)
 
     assert hasattr(lid_mod, 'SOFTMAX_VELOCITY_SCALE')
     assert 'SOFTMAX_VELOCITY_SCALE' in lid_mod.__all__
-    assert lid_mod.SOFTMAX_VELOCITY_SCALE == pytest.approx(3.17e-12, rel=1.0e-12)
+    assert lid_mod.SOFTMAX_VELOCITY_SCALE == pytest.approx(3.17e-12, rel=1.0e-12, abs=0.0)
 
     n_nodes = 20
     r = np.linspace(3.48e6, 6.371e6, n_nodes)
@@ -722,10 +722,6 @@ def test_arrhenius_enthalpy_exact_r_gas_codata_2018():
     )
     expected_h = 25.0 * 8.314462618 * 1400.0
     assert float(h_linear) == pytest.approx(expected_h, rel=1.0e-12)
-
-    # Assert mutant R_GAS = 8.314 fails
-    mutant_h = 25.0 * 8.314 * 1400.0
-    assert abs(float(h_linear) - mutant_h) > 15.0
 
     # Check table enthalpy values from r15728072 solidus
     t_sol_table = np.array([1380.6038, 2475.9161, 2875.9474, 3673.7136, 4232.1499])
