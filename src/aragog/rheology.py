@@ -313,12 +313,15 @@ def compute_arrhenius_enthalpy(
         g_homologous = SolidRheologyParams.g_homologous
     if dt_sol_dp is None:
         dt_sol_dp = SolidRheologyParams.dt_sol_dp
+    g_arr = xp.asarray(g_homologous, dtype=float)
+    if xp is np and np.any((g_arr < 0.0) | np.isinf(g_arr)):
+        raise ValueError(f'g_homologous must be non-negative and finite, got {g_homologous}')
     p = xp.asarray(pressure, dtype=float)
     if solidus_temperature is not None:
         t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
     else:
         t_sol = (SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0) + dt_sol_dp * p
-    h = g_homologous * r_gas * t_sol
+    h = xp.where((g_arr < 0.0) | xp.isinf(g_arr), xp.nan, g_arr * r_gas * t_sol)
     return _unwrap_scalar(h, xp, pressure, solidus_temperature)
 
 
@@ -407,6 +410,12 @@ def compute_arrhenius_viscosity(
     wp = xp.asarray(water_prefactor, dtype=float)
     if xp is np and np.any(wp <= 0.0):
         raise ValueError(f'water_prefactor must be positive, got {water_prefactor}')
+    vs = xp.asarray(viscosity_solid, dtype=float)
+    if xp is np and np.any((vs <= 0.0) | np.isinf(vs)):
+        raise ValueError(f'viscosity_solid must be positive and finite, got {viscosity_solid}')
+    g_arr = xp.asarray(g_homologous, dtype=float)
+    if xp is np and np.any((g_arr < 0.0) | np.isinf(g_arr)):
+        raise ValueError(f'g_homologous must be non-negative and finite, got {g_homologous}')
 
     if solidus_temperature is not None and t_sol_0 is None:
         raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
@@ -425,19 +434,29 @@ def compute_arrhenius_viscosity(
         r_gas=r_gas,
         xp=xp,
     )
-    h_0 = g_homologous * r_gas * t_sol_ref_0
+    h_0 = g_arr * r_gas * t_sol_ref_0
 
     t_safe = xp.where(t > 0.0, t, 1.0)
     wp_pos = xp.where(wp > 0.0, wp, 1.0)
     exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * arrhenius_t_ref) + xp.log(wp_pos)
 
-    max_exponent = (
-        viscosity_max_log10 - xp.log10(xp.maximum(viscosity_solid, 1e-300))
-    ) * math.log(10.0)
+    vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
+    max_exponent = (viscosity_max_log10 - xp.log10(xp.maximum(vs_pos, 1e-300))) * math.log(10.0)
     clipped_exp = xp.clip(exponent, -700.0, max_exponent)
-    result = viscosity_solid * xp.exp(clipped_exp)
+    result = vs * xp.exp(clipped_exp)
     result = xp.minimum(result, 10.0**viscosity_max_log10)
-    invalid = xp.isnan(t) | xp.isnan(p) | xp.isnan(wp) | (t <= 0.0) | ~(wp > 0.0)
+    invalid = (
+        xp.isnan(t)
+        | xp.isnan(p)
+        | xp.isnan(wp)
+        | xp.isnan(h_p)
+        | (t <= 0.0)
+        | ~(wp > 0.0)
+        | ~(vs > 0.0)
+        | xp.isinf(vs)
+        | ~(g_arr >= 0.0)
+        | xp.isinf(g_arr)
+    )
     result = xp.where(invalid, xp.nan, result)
     return _unwrap_scalar(
         result, xp, temperature, pressure, water_prefactor, solidus_temperature

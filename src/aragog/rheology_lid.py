@@ -296,9 +296,10 @@ def compute_stagnant_lid_state(
         if val is None:
             continue
         a = xp.asarray(val, dtype=float)
-        if (allow_scalar and a.ndim == 0) or (a.ndim == 1 and a.shape[0] == r.shape[0]):
-            continue
-        raise ValueError(f'{name} must have the same 1-D length as radii ({r.shape[0]})')
+        if not ((allow_scalar and a.ndim == 0) or (a.ndim == 1 and a.shape[0] == r.shape[0])):
+            raise ValueError(f'{name} must have the same 1-D length as radii ({r.shape[0]})')
+        if xp is np and np.any(np.isinf(a)):
+            raise ValueError(f'{name} must be finite (no inf values)')
 
     F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
     f = xp.clip(xp.maximum(F_conv, 0.0) / xp.abs(F_tot_safe), 0.0, 1.0)
@@ -318,7 +319,7 @@ def compute_stagnant_lid_state(
         *(a for a in opt_arrays if a is not None),
     )
     any_input_nan = xp.any(
-        xp.isnan(xp.concatenate([xp.ravel(xp.asarray(a, dtype=float)) for a in nan_inputs]))
+        ~xp.isfinite(xp.concatenate([xp.ravel(xp.asarray(a, dtype=float)) for a in nan_inputs]))
     )
     invalid_scalar = xp.asarray(t_sol_0_eff, dtype=float) != params.t_sol_0
     for _, s_raw, ok, _ in scalar_bounds:
@@ -429,7 +430,9 @@ def compute_stagnant_lid_state(
     w_sol_phi = _melt_ramp(SOLIDUS_MELT_FRACTION_THRESHOLD, SOLIDUS_MELT_FRACTION_WIDTH)
     if T_sol_arr is not None:
         w_hot_sol = xp.maximum(0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale)), w_sol_phi)
-        w_hot_sol_mask = xp.maximum(0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale_mask)), w_sol_phi)
+        w_hot_sol_mask = xp.maximum(
+            0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale_mask)), w_sol_phi
+        )
     else:
         w_hot_sol = w_sol_phi
         w_hot_sol_mask = w_sol_phi
