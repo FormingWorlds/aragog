@@ -565,8 +565,13 @@ class AcceptedStateError(ValueError):
             f'{check}: {node} at t={time:.6g} yr has {value:.6g} (bound {bound:.6g})'
         )
 
+    def __reduce__(self):
+        return type(self), (self.check, self.node, self.time, self.value, self.bound)
 
-def _check_accepted_states(t, S, weights, S_min: float, S_max: float) -> None:
+
+def _check_accepted_states(
+    t, S, weights, S_min: float, S_max: float, cmb=None, skip_start: bool = True
+) -> None:
     """Raise AcceptedStateError at the first accepted state outside its bounds.
 
     Parameters
@@ -580,6 +585,12 @@ def _check_accepted_states(t, S, weights, S_min: float, S_max: float) -> None:
         Cell-to-basic-node transform, shape (n_basic, n_stag).
     S_min, S_max : float
         Entropy range of the EOS tables [J/kg/K]; the edges are inside.
+    cmb : ndarray, optional
+        CMB basic-node entropy per node [J/kg/K], used in place of row 0 of ``weights @ S`` where
+        the model sets that node from its own state (``energy_balance``, ``core_module``).
+    skip_start : bool
+        Skip the nodes at the start time; False checks them too (a start state that did not come
+        from a checked call).
 
     Raises
     ------
@@ -587,9 +598,11 @@ def _check_accepted_states(t, S, weights, S_min: float, S_max: float) -> None:
         For the earliest node with a non-finite cell entropy, or a cell or basic-node entropy
         outside ``[S_min, S_max]``; at one node cells come before basic nodes.
     """
-    k0 = int(np.searchsorted(t, t[0], side='right'))
+    k0 = int(np.searchsorted(t, t[0], side='right')) if skip_start else 0
     t, S = np.asarray(t)[k0:], np.asarray(S, dtype=float)[:, k0:]
     B = np.asarray(weights, dtype=float) @ np.where(np.isfinite(S), S, 0.0)
+    if cmb is not None:
+        B[0] = np.asarray(cmb, dtype=float)[k0:]
     for k in range(S.shape[1]):
         for kind, col in (('cell', S[:, k]), ('basic', B[:, k])):
             if kind == 'cell' and not np.all(np.isfinite(col)):
@@ -627,7 +640,9 @@ def _check_end_state(time: float, T_stag, T_basic, phi) -> None:
         bad = ~np.isfinite(x) | (x <= lo if hi is None else (x < lo) | (x > hi))
         if bad.any():
             i = int(np.argmax(bad))
-            bound = hi if hi is not None and x[i] > hi else lo
+            bound = (
+                np.nan if not np.isfinite(x[i]) else hi if hi is not None and x[i] > hi else lo
+            )
             raise AcceptedStateError(check, f'{kind} {i}', time, float(x[i]), bound)
 
 
@@ -2224,6 +2239,7 @@ class EntropySolver:
         temperature derived from ``S_init`` via the EOS unless
         ``set_initial_core_temperature`` has been called first.
         """
+        self._check_start = True  # the next call checks this start state too
         # Prefer the cached _n_stag from _initialize_internals; fall
         # back to the mesh accessor for legacy callers that bypass it.
         if hasattr(self, '_n_stag') and self._n_stag is not None:
@@ -4370,14 +4386,22 @@ class EntropySolver:
             and getattr(self, '_core_bc', None) != 'gradient'
             and not getattr(self.parameters.phase_mixed, 'const_properties', False)
             and sol.t is not None
+            and sol.status >= 0  # a failed call goes back to the caller's retry ladder
         ):
             t_acc, y_acc = sol.get('energy_trace') or (sol.t, sol.y)
+            y_acc, cmb = np.asarray(y_acc, dtype=float), None
+            if self._core_bc in ('energy_balance', 'core_module'):  # the model's CMB node
+                r = np.asarray(self.evaluator.mesh.basic.radii).ravel()
+                cmb = y_acc[0] + y_acc[self._n_stag] * (r[0] - 0.5 * (r[0] + r[1]))
+            skip_start, self._check_start = not getattr(self, '_check_start', False), False
             _check_accepted_states(
                 t_acc,
-                np.asarray(y_acc, dtype=float)[: self._n_stag],
+                y_acc[: self._n_stag],
                 self.evaluator.mesh._quantity_transform,
                 float(self.entropy_eos.S_min),
                 float(self.entropy_eos.S_max),
+                cmb=cmb,
+                skip_start=skip_start,
             )
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
