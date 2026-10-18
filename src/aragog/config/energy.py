@@ -137,8 +137,8 @@ class EnergyConfig:
         arms a level at half its distance to S_min, and does not advance
         (status 1) when that entropy falls fast enough to reach the level
         before the call ends; at or below S_min + 2e-6 m it arms nothing and
-        does not advance on any fall, unless only the extrapolated top node
-        is there, when it watches the cells. The refusal depends on the call
+        does not advance on any fall, also when only the extrapolated top
+        node is there. The refusal depends on the call
         span, so a caller that retries with a shorter span can advance closer
         to S_min. A call with no span skips the floor. Default 100, below the
         entropy span of the tables; ``None`` (not in TOML) or a non-positive

@@ -549,19 +549,6 @@ def _floor_entropy(weights: npt.NDArray, S_stag: npt.NDArray) -> float:
     return min(float(np.dot(weights, S_stag)), float(np.min(S_stag)))
 
 
-def _floor_watch_weights(weights, S_stag, S_min: float, margin: float):
-    """Weights of the top basic node, or of the top cell when only that node is at the table.
-
-    A top node at or below ``S_min + 2e-6 margin``, extrapolated from cells that all lie above
-    it, cannot be protected by a root; the floor then watches the cells (``min`` of the top cell
-    and the smallest cell is the smallest cell) and the call can advance.
-    """
-    S = np.asarray(S_stag, dtype=float)
-    if float(np.dot(weights, S)) <= S_min + 2.0e-6 * margin < float(S.min()):
-        return np.eye(S.size)[-1]
-    return weights
-
-
 def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, span: float):
     """Root level of the EOS floor for one call start, and whether the call is refused.
 
@@ -3904,18 +3891,14 @@ class EntropySolver:
                 getattr(self.parameters.energy, 'eos_floor_margin', EOS_FLOOR_MARGIN_DEFAULT)
             )
             S_tab = float(self.entropy_eos.S_min)
-            if floor_margin > 0.0 and not gradient_mode and end_time > start_time:
+            if floor_margin > 0.0 and not gradient_mode:
                 if floor_margin >= float(self.entropy_eos.S_max) - S_tab:
                     raise ValueError(
                         f'eos_floor_margin {floor_margin!r} J/kg/K must be below the entropy '
                         f'span of the EOS tables, {float(self.entropy_eos.S_max) - S_tab!r}'
                     )
-                w = _floor_watch_weights(
-                    np.asarray(self.evaluator.mesh._quantity_transform)[-1],
-                    S_arr_stag,
-                    S_tab,
-                    floor_margin,
-                )
+            if floor_margin > 0.0 and not gradient_mode and end_time > start_time:
+                w = np.asarray(self.evaluator.mesh._quantity_transform)[-1]
                 level, refuse = _floor_start_level(
                     w,
                     S_arr_stag,
