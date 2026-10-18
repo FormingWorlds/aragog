@@ -325,9 +325,9 @@ def test_a_zero_span_call_is_not_refused(shared_eos, caplog, method):
     assert s._solution.status == 0 and not _floor_logs(caplog)
 
 
-def test_a_top_node_below_the_table_with_every_cell_inside_lets_the_call_advance(shared_eos):
+def test_a_top_node_below_the_table_with_every_cell_inside_is_refused(shared_eos):
     """A steep top gradient extrapolates the top basic node below S_min while every cell is
-    inside the table: the floor watches the cells, and a slow drain advances."""
+    inside the table: under a slow drain the call does not advance."""
     S_min = float(shared_eos.S_min)
     p = _build_mushy_parameters(solver_method='cvode', end_time=10.0)
     s = EntropySolver(p, entropy_eos=shared_eos)
@@ -335,7 +335,31 @@ def test_a_top_node_below_the_table_with_every_cell_inside_lets_the_call_advance
     S0 = np.full(s._n_stag, S_min + 2000.0)
     S0[-2:] = S_min + 236.0, S_min + 40.0
     assert _weights(s) @ S0 < S_min  # precondition: the extrapolated top node is out
-    s, f = _drained(shared_eos, S0, flux=50.0)
-    S_end = np.asarray(s._solution.y, dtype=float)[: s._n_stag, -1]
-    assert s._solution.status == 0 and s._solution.t[-1] == pytest.approx(10.0)
-    assert S_end.min() > S_min + 20.0
+    s, _ = _drained(shared_eos, S0, flux=50.0)
+    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
+
+
+def test_a_zero_span_call_still_checks_the_margin(shared_eos):
+    """The margin check against the table span runs also on a call with no span."""
+    span = float(shared_eos.S_max) - float(shared_eos.S_min)
+    with pytest.raises(ValueError, match='eos_floor_margin'):
+        _drained(shared_eos, float(shared_eos.S_min) + 400.0, margin=span, end_time=0.0)
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+def test_the_floor_log_names_the_half_margin_level(shared_eos, caplog, method):
+    """A start between S_min + m/2 and S_min + m stops at S_min + 50, and the log names it."""
+    S_min = float(shared_eos.S_min)
+    with caplog.at_level(logging.INFO):
+        _, f = _drained(shared_eos, S_min + 80.0, method=method)
+    logs = _floor_logs(caplog)
+    assert f[-1] == pytest.approx(S_min + 50.0, abs=1.0e-3)
+    assert len(logs) == 1 and f'level={S_min + 50.0:.6g}' in logs[0][1]
+
+
+def test_an_entropy_cap_that_binds_first_ends_the_call_before_the_floor(shared_eos):
+    """With a 50 J/kg/K entropy cap and the floor 300 J/kg/K away, the entropy cap ends the
+    call and the floor does not."""
+    S_min = float(shared_eos.S_min)
+    s, f = _drained(shared_eos, S_min + 400.0, entropy_step_cap=50.0)
+    assert s._solution.cap_label == 'entropy' and f[-1] > S_min + 100.0
