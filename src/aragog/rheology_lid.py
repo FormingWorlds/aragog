@@ -170,7 +170,10 @@ def compute_stagnant_lid_state(
         ``tau_d = w_active * 2 * eta_i * v_m / d`` and the lid-thickness-scaled
         stress diagnostic
         ``tau_d_lid = w_active * 2 * eta_i * v_m / max(r_top - r_lid_base, 1e-6 m)``
-        (zeroed when ``has_lid`` is False). ``has_lid`` is False when any input is
+        (zeroed when ``has_lid`` is False; because ``has_lid`` turns on at
+        ``d_lid_raw > NO_LID_THICKNESS_THRESHOLD`` of 1.0 m, the 1e-6 m floor is
+        inactive whenever ``has_lid`` is True and ``tau_d_lid / tau_d = d / d_geom``
+        scales as ``1 / d_lid`` down to 1 m). ``has_lid`` is False when any input is
         NaN while numeric diagnostics propagate NaN.
 
     Raises
@@ -215,14 +218,17 @@ def compute_stagnant_lid_state(
     (``d_lid``, ``Ra_eff``, ``Ra_rh``, ``v_m``, ``tau_d``, ``tau_d_lid``,
     ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are zeroed and
     ``has_lid`` is False, while ``T_i``, ``eta_i``, ``mu_i``, and ``theta`` serve as
-    interior fallback diagnostics (selecting the shallowest interior node near
-    ``0.9 * f_int_max`` when ``max_k w_conv_int >> 1e-6``, such as
-    ``1e-3 <= f_int_max < 0.035278`` where ``w_weight >= 1 - 4e-9``, transitioning
-    across the band near ``f_int_max ~ 6e-5`` where ``w_weight = 0.5`` at
-    ``f = 6.01e-5`` and ``w_weight = 0.72`` at ``f = 1e-4``, and relaxing to the
-    interior fallback node ``T[1]`` as ``max_k w_conv_int -> 0`` at ``f = 0``) and
-    all solver-facing outputs vary continuously across uniform convective flux
-    fractions ``f`` in ``[0, 1e-3]``.
+    interior fallback diagnostics (at the default ``interior_flux_fraction = 0.05``,
+    selecting the shallowest interior node near ``0.9 * f_int_max`` when
+    ``max_k w_conv_int >> 1e-6``, such as ``1e-3 <= f_int_max < 0.035278`` where
+    ``w_weight >= 1 - 4e-9``, transitioning across the band near ``f_int_max ~ 6e-5``
+    where ``w_weight = 0.5`` at ``f = 6.01e-5`` and ``w_weight = 0.72`` at
+    ``f = 1e-4``, and relaxing to the interior fallback node ``T[1]`` as
+    ``max_k w_conv_int -> 0`` at ``f = 0``; these ``f_int_max`` transition values
+    hold at ``interior_flux_fraction = 0.05`` only because ``w_conv(f) - w_conv(0)``
+    scales with ``sech^2(interior_flux_fraction / 0.01)``) and all solver-facing
+    outputs vary continuously across uniform convective flux fractions ``f`` in
+    ``[0, 1e-3]``.
 
     The lid-base locator ``W_base_tilde = _boundary_weights(w_interior, xp)[0]`` scans
     ``w_interior = max(w_hot_iso, w_hot_sol, w_hot_phi)`` (smoothed over the local cell
@@ -237,10 +243,16 @@ def compute_stagnant_lid_state(
     maximum with the thermal solidus ``tanh`` ramp when ``solidus_temperature`` is
     provided, bounding ``d_lid_raw <= sum_k (1 - w_sol_phi,k+1) * dr_k`` so that a column
     with ``phi >= 0.03`` at every node has ``has_lid = False`` across ``N`` in
-    ``{3, 10, 50, 100, 200}`` on both Earth and 9000 km mantle spans (at ``phi = 0.025``,
-    an extreme ``N = 3``, 9000 km mantle span gives ``d_lid_raw = 1.38 m`` and
-    ``has_lid = True``; see ``docs/Explanations/solid_state_convection.md`` Section 8
-    item 7).
+    ``{3, 10, 50, 100, 200}`` on both Earth and 9000 km mantle spans. In the transition
+    band ``0.01 < phi < 0.03``, ``1 - w_sol_phi`` remains non-zero (0.119 at ``phi = 0.012``,
+    6.69e-3 at ``phi = 0.015``, and 4.54e-5 at ``phi = 0.020``), shifting ``r_lid_base``
+    inward by approximately ``((1 - w_sol_phi) / w_sol_phi) * dr_top`` and producing a
+    mesh-dependent lid whenever that shift exceeds 1 m (for example on an Earth mantle
+    span at ``T = T_sol + 100 K``: ``d_lid = 43.1 km`` at ``phi = 0.012, N = 10``,
+    ``397 m`` at ``phi = 0.015, N = 50``, and ``2.68 m`` at ``phi = 0.020, N = 50``;
+    at ``phi = 0.025``, an extreme ``N = 3``, 9000 km mantle span gives
+    ``d_lid_raw = 1.38 m`` and ``has_lid = True``; see
+    ``docs/Explanations/solid_state_convection.md`` Section 8 item 7).
     """
     _require_x64_if_jax(xp)
     if viscosity_solid is None or phi_rheo is None or phi_width is None:
@@ -615,8 +627,9 @@ def compute_effective_viscosity(
         non-positive or infinite, if ``strain_rate`` or ``mixing_length`` is
         negative or infinite, if ``tau_d`` or ``unyielded_velocity`` is
         infinite, if ``w_lid`` lies outside ``[0, 1]``, or if ``tau_y_lid``,
-        ``tau_y``, or ``tau_y_profile`` is ``-inf``. On the JAX path,
-        out-of-range numeric values return ``NaN``.
+        ``tau_y``, or ``tau_y_profile`` is negative (including ``-inf``;
+        ``+inf`` is allowed). On the JAX path, out-of-range numeric values
+        return ``NaN``.
 
     Notes
     -----

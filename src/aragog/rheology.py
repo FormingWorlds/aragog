@@ -195,7 +195,7 @@ _RULES: dict[str, tuple[Any, str]] = {
     'unit': (lambda a: (a >= 0.0) & (a <= 1.0), 'in [0, 1]'),
     'finite': (lambda a: (a > -np.inf) & (a < np.inf), 'finite (no inf values)'),
     'vmax_scalar': (_in_vmax_range, 'in (20, 300]'),
-    'not_neginf': (lambda a: a > -np.inf, 'greater than -inf'),
+    'not_neginf': (lambda a: a >= 0.0, 'non-negative (or +inf)'),
 }
 
 
