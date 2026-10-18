@@ -430,3 +430,87 @@ def test_strain_rate_local_eps_floor_at_zero_mixing_length():
     sr = compute_strain_rate_local(v, 0.0, eps=1.0e-15)
     expected = 1.0e-9 / (2.0 * 1.0e-15)
     assert sr == pytest.approx(expected, rel=1.0e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
+    """Verify a molten column with a solidus table reports no lid at N = 50, 100, and 200."""
+    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
+    for n_nodes in (50, 100, 200):
+        radii = np.linspace(3.48e6, 6.37e6, n_nodes)
+        pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
+        t_sol = 1400.0 + 2.4e-8 * pressure
+        conv_flux = np.full(n_nodes, 99.0)
+        tot_flux = np.full(n_nodes, 100.0)
+        for dt_above in (100.0, 150.0, 200.0, 250.0):
+            t_prof = t_sol + dt_above
+            for phi_val in (0.41, 0.50):
+                state = compute_stagnant_lid_state(
+                    radii=radii,
+                    temperature=t_prof,
+                    pressure=pressure,
+                    convective_flux=conv_flux,
+                    total_flux=tot_flux,
+                    solidus_temperature=t_sol,
+                    t_sol_0=1400.0,
+                    melt_fraction=np.full(n_nodes, phi_val),
+                    params=params,
+                    viscosity_solid=1.0e21,
+                    phi_rheo=0.4,
+                    phi_width=0.15,
+                    xp=np,
+                )
+                assert bool(state['has_lid']) is False
+                assert float(state['d_lid']) == 0.0
+                assert float(radii[-1] - state['r_lid_base']) < 1.0
+                assert float(state['tau_d']) == 0.0
+                assert float(state['lid_regime']) == 0.0
+                np.testing.assert_allclose(state['w_lid'], 0.0, atol=1.0e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_melt_fraction_ramp_phi_rheo_and_phi_width_below_solidus_threshold():
+    """Verify w_hot_phi ramp governs w_lid when phi_rheo is below SOLIDUS_MELT_FRACTION_THRESHOLD."""
+    n_nodes = 40
+    radii = np.linspace(3.48e6, 6.37e6, n_nodes)
+    pressure = np.linspace(135.0e9, 0.0, n_nodes)
+    t_sol = 1400.0 + 2.4e-8 * pressure
+    temperature = np.full(n_nodes, 1600.0)
+    temperature[-8:] = np.linspace(1200.0, 300.0, 8)
+    conv_flux = np.full(n_nodes, 100.0)
+    conv_flux[-8:] = 0.0
+    tot_flux = np.full(n_nodes, 100.0)
+    phi = np.zeros(n_nodes)
+    phi[-6:-1] = np.array([0.001, 0.002, 0.003, 0.004, 0.005])
+    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
+
+    phi_rheo = 0.002
+    phi_width = 0.001
+    zero_phi = 0.5 * (1.0 + np.tanh(-phi_rheo / phi_width))
+    raw_phi = 0.5 * (1.0 + np.tanh((phi - phi_rheo) / phi_width))
+    expected_w_hot_phi = np.clip((raw_phi - zero_phi) / (1.0 - zero_phi), 0.0, 1.0)
+
+    for sol_arg in (None, t_sol):
+        state = compute_stagnant_lid_state(
+            radii=radii,
+            temperature=temperature,
+            pressure=pressure,
+            convective_flux=conv_flux,
+            total_flux=tot_flux,
+            solidus_temperature=sol_arg,
+            t_sol_0=1400.0,
+            melt_fraction=phi,
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=phi_rheo,
+            phi_width=phi_width,
+            xp=np,
+        )
+        # At nodes -5..-2, T <= 943 K is far below T_lid_iso and T_sol, and phi <= 0.005
+        # is well below SOLIDUS_MELT_FRACTION_THRESHOLD (0.01), so w_hot_phi dominates.
+        expected_w_lid_slice = (1.0 - expected_w_hot_phi[-5:-1]) * float(state['w_active'])
+        np.testing.assert_allclose(
+            state['w_lid'][-5:-1], expected_w_lid_slice, rtol=1.0e-2, atol=7.0e-3
+        )
