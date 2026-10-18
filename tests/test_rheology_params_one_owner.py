@@ -584,7 +584,7 @@ def test_softmax_velocity_scale_constant_and_phase_config_roundtrip(monkeypatch)
     p = np.linspace(135.0e9, 0.0, n_nodes)
     f_conv = np.full(n_nodes, 80.0)
     f_conv[-4:] = 0.0
-    v_uny = np.linspace(1.0e-12, 1.0e-11, n_nodes)
+    v_uny = np.linspace(1.0e-10, 1.0e-8, n_nodes)
     kw = dict(
         radii=r,
         temperature=t,
@@ -602,7 +602,7 @@ def test_softmax_velocity_scale_constant_and_phase_config_roundtrip(monkeypatch)
     st_default = compute_stagnant_lid_state(**kw)
     monkeypatch.setattr(lid_mod, 'SOFTMAX_VELOCITY_SCALE', 3.17e-9)
     st_mutated = compute_stagnant_lid_state(**kw)
-    assert abs(float(st_mutated['v_i']) - float(st_default['v_i'])) > 1.0e-10
+    assert abs(float(st_mutated['v_i']) - float(st_default['v_i'])) > 1.0e-9
 
     pc = PhaseConfig(
         density=4000.0,
