@@ -166,17 +166,18 @@ def test_a_persistent_drain_ends_after_two_floor_stops_and_a_pause_does_not(shar
 
 
 @pytest.mark.parametrize(
-    'where', ['below', 'one ulp above', 'at half the margin', 'in the band']
+    'where', ['below', 'at', 'one ulp above', 'at half the margin', 'in the band']
 )
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
 def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
     shared_eos, caplog, method, where
 ):
-    """Below S_min, 1 ulp above it, at S_min + 50 or within 1e-6 m above it, a draining call does
+    """Below S_min, at it, 1 ulp above it, at S_min + 50 or within 1e-6 m above it, a draining call does
     not advance: status 1, dt_actual 0, one named warning; the log names the requested span."""
     S_min = float(shared_eos.S_min)
     S0 = {
         'below': S_min - 10.0,
+        'at': np.r_[S_min, _steep_top(shared_eos, [400.0] * 3)[1:]],  # a cell exactly at S_min
         'one ulp above': np.nextafter(S_min, np.inf),
         'at half the margin': S_min + 50.0,
         'in the band': S_min + 50.0 + 5e-5,
@@ -189,7 +190,8 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
     messages = [r.getMessage() for r in caplog.records]
     refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
     assert len(refusals) == 1 and refusals[0].levelno == logging.WARNING
-    text = {'below': 'at or below the table minimum', 'one ulp above': 'counts as at the table'}
+    text = {'below': 'at or below the table minimum', 'at': 'at or below the table minimum'}
+    text['one ulp above'] = 'counts as at the table'
     text = text.get(where, 'falls too fast')
     assert text in refusals[0].getMessage() and sol.message.startswith('EOS floor:')
     assert any('stopped 10.0 yr before end_time' in m for m in messages)

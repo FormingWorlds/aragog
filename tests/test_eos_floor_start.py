@@ -111,6 +111,28 @@ def test_the_level_and_table_boundaries_are_inclusive(s0, expected):
     assert _floor_start_level(T, np.full(3, s0), lambda: np.ones(3), S_MIN, M, DT) == expected
 
 
+@pytest.mark.parametrize('s0', [S_MIN + 1.5e-6 * M, S_MIN + 2e-6 * M])
+def test_a_falling_start_in_the_table_band_is_refused_at_any_span(s0):
+    """Inside S_min + 2e-6 m, including its edge, a fall is refused also over a span too short
+    to reach half the distance."""
+    assert _floor_start_level(T, np.full(3, s0), lambda: -np.ones(3), S_MIN, M, 1e-10) == (
+        None,
+        True,
+    )
+
+
+def test_one_ulp_above_the_table_is_refused_when_the_midpoint_rounds_up():
+    """With an odd last bit of S_min the midpoint of S_min and the next float rounds up to the
+    start itself, which leaves no level below it."""
+    s_min = np.nextafter(S_MIN, np.inf)
+    s0 = np.nextafter(s_min, np.inf)
+    assert 0.5 * (s0 + s_min) == s0  # precondition: the midpoint rounds up
+    assert _floor_start_level(T, np.full(3, s0), lambda: np.ones(3), s_min, M, DT) == (
+        None,
+        True,
+    )
+
+
 @pytest.mark.parametrize(
     ('S', 'rate', 'expected'),
     [
