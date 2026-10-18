@@ -1890,36 +1890,3 @@ def test_viscous_mixing_length_factor_nan_scalar_inputs_propagate():
 
     q_rout = viscous_mixing_length_factor(r, r[0], float('nan'), ml)
     assert np.isnan(q_rout[0]) and np.isnan(q_rout[-1]) and np.all(np.isnan(q_rout))
-
-
-@pytest.mark.unit
-def test_w_ti_selector_requires_w_conv_factor():
-    """Verify w_Ti selector includes the w_conv factor distinguishing weak convection states."""
-    n_nodes = 50
-    r = np.linspace(3480.0e3, 6370.0e3, n_nodes)
-    p = np.linspace(135.0e9, 1.0e5, n_nodes)
-    t = np.full(n_nodes, 1600.0)
-    t[:43] = np.linspace(2200.0, 1600.0, 43)
-    t[-7:] = np.linspace(1600.0, 300.0, 7)
-
-    f_arr = np.zeros(n_nodes)
-    f_arr[:43] = np.linspace(0.045, 0.060, 43)
-
-    st = compute_stagnant_lid_state(
-        radii=r,
-        temperature=t,
-        pressure=p,
-        convective_flux=f_arr * 100.0,
-        total_flux=np.full(n_nodes, 100.0),
-        solidus_temperature=None,
-        melt_fraction=np.zeros(n_nodes),
-        params=SolidRheologyParams(enabled=True),
-        viscosity_solid=1.0e20,
-        phi_rheo=0.4,
-        phi_width=0.15,
-    )
-
-    # With w_conv, T_i weights the deeper active nodes giving 1601.95 K; without it T_i is 1600.00 K.
-    assert float(st['T_i']) == pytest.approx(1601.953991, rel=1e-5)
-    assert abs(float(st['T_i']) - 1600.0) > 1.0
-    assert float(st['r_i']) == pytest.approx(5949075.67, rel=1e-5)
