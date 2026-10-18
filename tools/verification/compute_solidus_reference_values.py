@@ -9,6 +9,7 @@ checkpoint profile solidus-indicator comparison.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import math
 import os
@@ -27,8 +28,13 @@ RELATIVE_SOLIDUS_PATH = Path('interior/melting_curves/wolf_bower_2018/r15728072/
 EXPECTED_MD5 = '66b297a120c79e7e58de5761ac40f4c4'
 
 
-def resolve_solidus_table_path() -> Path:
-    """Resolve the Wolf and Bower (2018) solidus table path from FWL_DATA.
+def resolve_solidus_table_path(table_arg: Path | None = None) -> Path:
+    """Resolve the Wolf and Bower (2018) solidus table path from ``--table`` or ``FWL_DATA``.
+
+    Parameters
+    ----------
+    table_arg : Path | None, optional
+        Explicit path to ``solidus.dat`` passed via ``--table``.
 
     Returns
     -------
@@ -38,19 +44,23 @@ def resolve_solidus_table_path() -> Path:
     Raises
     ------
     FileNotFoundError
-        If the table cannot be located under ``FWL_DATA`` or standard work directories.
+        If neither ``--table`` nor ``FWL_DATA`` resolves to an existing ``solidus.dat`` file.
     """
-    candidates: list[Path] = []
-    fwl_data = os.environ.get('FWL_DATA')
-    if fwl_data:
-        candidates.append(Path(fwl_data) / RELATIVE_SOLIDUS_PATH)
-    home = Path.home()
-    for work_dir in sorted((home / 'work').glob('fwl_data*')):
-        candidates.append(work_dir / RELATIVE_SOLIDUS_PATH)
-    for path in candidates:
+    if table_arg is not None:
+        path = Path(table_arg)
         if path.is_file():
             return path
-    raise FileNotFoundError(f'Could not find {RELATIVE_SOLIDUS_PATH} in FWL_DATA or ~/work.')
+        raise FileNotFoundError(
+            f'Explicit --table path does not exist: {path} (expected {RELATIVE_SOLIDUS_PATH}).'
+        )
+    fwl_data = os.environ.get('FWL_DATA')
+    if fwl_data:
+        path = Path(fwl_data) / RELATIVE_SOLIDUS_PATH
+        if path.is_file():
+            return path
+    raise FileNotFoundError(
+        f'Could not find {RELATIVE_SOLIDUS_PATH}: set FWL_DATA or pass --table <path>.'
+    )
 
 
 def load_solidus_curve(path: Path) -> tuple[np.ndarray, np.ndarray, str]:
@@ -71,9 +81,17 @@ def load_solidus_curve(path: Path) -> tuple[np.ndarray, np.ndarray, str]:
     return raw[:, 0], raw[:, 1], md5_hex
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """Print all solidus reference quantities and 175 kyr solidus-indicator node trace."""
-    table_path = resolve_solidus_table_path()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        '--table',
+        type=Path,
+        default=None,
+        help=f'Path to solidus.dat (defaults to $FWL_DATA/{RELATIVE_SOLIDUS_PATH}).',
+    )
+    args = parser.parse_args(argv)
+    table_path = resolve_solidus_table_path(args.table)
     p_table, t_table, md5_hex = load_solidus_curve(table_path)
     print(f'Table path: {table_path}')
     print('Release: r15728072 (Zenodo 10.5281/zenodo.15728072)')
