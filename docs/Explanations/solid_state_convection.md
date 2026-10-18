@@ -204,7 +204,7 @@ $$
 w_\text{lid} = (1 - w_\text{interior}) \cdot w_\text{active}
 $$
 
-where $w_\text{interior} = \max(w_\text{hot,iso}, w_\text{hot,sol}, w_{\text{hot},\phi})$ transitions smoothly over the local temperature step $\Delta T_\text{cell} = \max(|\nabla T|, 1.0\text{ K})$ scaled by `lid_mask_width_cells` (default $1.0$). Inside the cold solid lid, $w_\text{lid} \to 1$. In the warm or partially molten interior, $w_\text{lid} \to 0$.
+where the lid-base locator $\tilde{W}_{\text{base}, k}$ transitions smoothly over the local cell temperature step $\Delta T_\text{cell} = \max(|\nabla T|, 1.0\text{ K})$ scaled by `lid_mask_width_cells` (default $1.0$), while the lid mask $w_\text{lid}$ uses the capped width $\min(\text{lid\_mask\_width\_cells} \cdot \Delta T_\text{cell},\, \text{lid\_mask\_width\_cells} \cdot \max(\Delta T_\text{rh}, 1.0\text{ K}))$ so that steep single-cell surface thermal boundary layers saturate at $w_\text{lid}(\text{surface}) \to 1$. Inside the cold solid lid, $w_\text{lid} \to 1$. In the warm or partially molten interior, $w_\text{lid} \to 0$.
 
 ## 4. Convective Driving Stress
 

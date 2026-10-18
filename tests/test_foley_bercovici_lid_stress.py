@@ -1075,3 +1075,80 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
     ti_two = float(st_two['T_i'])
     assert np.isfinite(ti_two)
     assert float(t_ad[42]) < ti_two < float(t_ad[41])
+
+
+@pytest.mark.unit
+def test_wlid_mask_width_surface_saturation_and_no_lid_finiteness():
+    """Verify w_lid[-1] == 1 within 1e-12 on 175 kyr and erf lid (N=25..800), and finite when has_lid is False."""
+    from pathlib import Path
+    from scipy.special import erf
+
+    ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
+    d = np.load(ckpt_path)
+    params = SolidRheologyParams(enabled=True)
+    st_ckpt = compute_stagnant_lid_state(
+        radii=d['r_basic'],
+        temperature=d['T_basic'],
+        pressure=d['P_basic'],
+        convective_flux=d['F_conv'],
+        total_flux=d['F_tot'],
+        solidus_temperature=None,
+        melt_fraction=d['phi_basic'],
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    assert float(st_ckpt['w_lid'][-1]) == pytest.approx(1.0, abs=1.0e-12)
+
+    g_hom = 300.0e3 / (8.314462618 * 1600.0)
+    params_erf = SolidRheologyParams(
+        enabled=True,
+        g_homologous=g_hom,
+        t_sol_0=1600.0,
+        dt_sol_dp=0.0,
+        arrhenius_t_ref=1600.0,
+    )
+    for n_nodes in (25, 50, 100, 200, 400, 800):
+        r_erf = np.linspace(3480.0e3, 6370.0e3, n_nodes)
+        depth = r_erf[-1] - r_erf
+        t_erf = 300.0 + 1300.0 * erf(depth / 100.0e3)
+        p_erf = np.linspace(135.0e9, 1.0e5, n_nodes)
+        fc_erf = 100.0 * (erf(depth / 100.0e3) ** 2)
+        st_erf = compute_stagnant_lid_state(
+            radii=r_erf,
+            temperature=t_erf,
+            pressure=p_erf,
+            convective_flux=fc_erf,
+            total_flux=np.full(n_nodes, 100.0),
+            solidus_temperature=None,
+            melt_fraction=np.zeros(n_nodes),
+            params=params_erf,
+            viscosity_solid=1.0e20,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        assert float(st_erf['w_lid'][-1]) == pytest.approx(1.0, abs=1.0e-12)
+
+    r_50 = np.linspace(3480.0e3, 6370.0e3, 50)
+    p_50 = np.linspace(135.0e9, 1.0e5, 50)
+    for t_case, fc_case in (
+        (np.linspace(2200.0, 300.0, 50), np.zeros(50)),
+        (np.full(50, 1600.0), np.full(50, 100.0)),
+        (np.linspace(2200.0, 300.0, 50), np.full(50, 1.0)),
+    ):
+        st_nolid = compute_stagnant_lid_state(
+            radii=r_50,
+            temperature=t_case,
+            pressure=p_50,
+            convective_flux=fc_case,
+            total_flux=np.full(50, 100.0),
+            solidus_temperature=None,
+            melt_fraction=np.zeros(50),
+            params=params_erf,
+            viscosity_solid=1.0e20,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        assert bool(st_nolid['has_lid']) is False
+        assert np.all(np.isfinite(st_nolid['w_lid']))

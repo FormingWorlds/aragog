@@ -387,6 +387,7 @@ def compute_stagnant_lid_state(
         T_lid_iso = T_i - params.lid_contrast_coeff * dT_rh
 
     scale = params.lid_mask_width_cells * xp.maximum(xp.abs(xp.gradient(T)), 1.0)
+    scale_mask = xp.minimum(scale, params.lid_mask_width_cells * xp.maximum(dT_rh, 1.0))
 
     def _melt_ramp(centre, width):
         """Hot-side tanh indicator of ``phi``, rescaled to 0 at ``phi = 0``."""
@@ -395,14 +396,20 @@ def compute_stagnant_lid_state(
         return xp.clip((raw - zero) / (1.0 - zero), 0.0, 1.0)
 
     w_hot_iso = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale))
+    w_hot_iso_mask = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale_mask))
     if T_sol_arr is not None:
         w_hot_sol = 0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale))
+        w_hot_sol_mask = 0.5 * (1.0 + xp.tanh((T - T_sol_arr) / scale_mask))
     else:
         w_hot_sol = _melt_ramp(SOLIDUS_MELT_FRACTION_THRESHOLD, SOLIDUS_MELT_FRACTION_WIDTH)
+        w_hot_sol_mask = w_hot_sol
     w_hot_phi = _melt_ramp(phi_rheo, phi_width)
 
     w_interior = xp.maximum(xp.maximum(w_hot_iso, w_hot_sol), w_hot_phi) + zero_or_nan
-    w_lid = (1.0 - w_interior) * w_active
+    w_interior_mask = (
+        xp.maximum(xp.maximum(w_hot_iso_mask, w_hot_sol_mask), w_hot_phi) + zero_or_nan
+    )
+    w_lid = (1.0 - w_interior_mask) * w_active
 
     W_base_tilde = _boundary_weights(w_interior, xp)[0]
 

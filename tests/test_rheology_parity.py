@@ -560,9 +560,10 @@ def test_stagnant_lid_checkpoint_profile_parity():
     ``P_basic`` 145.5 to 0.71 GPa, ``T_basic`` 4794.8 to 452.6 K, ``phi_basic`` 0.141 at
     the CMB to 0.0 at the surface) with ``T_basic[-1] = 452.559`` K and
     ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Because the interior temperature
-    selector ``w_Ti`` activates at ``f = 0.9`` and excludes the boundary nodes, both the
-    default ``interior_flux_fraction = 0.05`` and ``0.10`` give ``T_i = 1423.012`` K,
-    ``eta_i = 2.760821e+22`` Pa s, ``d_lid = 42026.67`` m, ``max(w_lid) = 0.851185``,
+    selector ``w_Ti`` is centred at ``0.9 * f_int_max`` (``0.9`` on this profile) and
+    excludes the boundary nodes, both the default ``interior_flux_fraction = 0.05`` and
+    ``0.10`` give ``T_i = 1423.012`` K, ``eta_i = 2.760821e+22`` Pa s,
+    ``d_lid = 42026.67`` m, ``max(w_lid) = 1.000000``,
     ``tau_d = 1.299379e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.
     """
     # Evaluates under linear solidus fallback (table-free) with solidus_temperature=None.
@@ -609,7 +610,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
     assert float(state_np['T_i']) == pytest.approx(1423.012466, rel=1.0e-6)
     assert float(state_np['eta_i']) == pytest.approx(2.760821e22, rel=1.0e-5)
     assert float(state_np['d_lid']) == pytest.approx(42026.67, rel=1.0e-5)
-    assert float(np.max(state_np['w_lid'])) == pytest.approx(0.851185, rel=1.0e-5)
+    assert float(np.max(state_np['w_lid'])) == pytest.approx(1.000000, rel=1.0e-5)
     assert float(state_np['tau_d']) == pytest.approx(1.299379e6, rel=1.0e-5)
     assert float(state_np['tau_y_lid']) == pytest.approx(5.0e8, rel=1.0e-12)
 
