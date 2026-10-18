@@ -5,7 +5,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from aragog.solver.entropy_solver import _floor_start_level, _phi_cap_event_factory
+from aragog.solver.entropy_solver import (
+    _floor_start_level,
+    _floor_watch_weights,
+    _phi_cap_event_factory,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -130,3 +134,30 @@ def test_the_scipy_event_falls_back_to_the_margin():
         state_scale=np.ones(2), floor_weights=np.ones(3), floor_level=200.0, floor_margin=M,
     )  # fmt: skip
     assert event(0.0, np.array([5000.0, 5000.0])) == M and event.binding_cap is None
+
+
+@pytest.mark.parametrize(
+    ('S', 'cells_only'),
+    [
+        ([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0], True),
+        ([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 1e-4], False),
+        ([S_MIN + 2000.0, S_MIN + 60.0, S_MIN + 40.0], False),
+    ],
+)
+def test_the_floor_watches_the_cells_when_only_the_top_node_is_below_the_table(S, cells_only):
+    """A top node at or below S_min + 2e-6 m with every cell above it is replaced by the top
+    cell, so the floor entropy is the smallest cell; otherwise the top node stays."""
+    w = _floor_watch_weights(W, np.array(S), S_MIN, M)
+    assert np.array_equal(w, [0.0, 0.0, 1.0] if cells_only else W)
+
+
+def test_a_slow_drain_with_the_top_node_below_the_table_advances():
+    """The lens state: top node at S_min - 58 from the top two cells, a slow drain of the top
+    cell arms half the distance of the smallest cell instead of refusing."""
+    S = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])
+    assert W @ S == pytest.approx(S_MIN - 58.0)
+    w = _floor_watch_weights(W, S, S_MIN, M)
+    level, refuse = _floor_start_level(
+        w, S, lambda: np.array([0.0, 0.0, -1.5e-3]), S_MIN, M, DT
+    )
+    assert not refuse and level == pytest.approx(S_MIN + 20.0)

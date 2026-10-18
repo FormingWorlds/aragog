@@ -42,15 +42,27 @@ def _floor_series(s):
 
 
 def _drained(
-    eos, S0, *, flux=_FLUX, margin=100.0, method='cvode', core='quasi_steady', mode=None
+    eos,
+    S0,
+    *,
+    flux=_FLUX,
+    margin=100.0,
+    method='cvode',
+    core='quasi_steady',
+    mode=None,
+    end_time=10.0,
+    **caps,
 ):
     """A cold start at entropy ``S0`` (scalar or per cell) under a prescribed surface flux."""
-    p = _build_mushy_parameters(solver_method=method, end_time=10.0)
+    p = _build_mushy_parameters(solver_method=method, end_time=end_time)
     p.boundary_conditions.outer_boundary_condition = 4
     p.boundary_conditions.outer_boundary_value = flux
     p.boundary_conditions.core_bc = core
     p.energy = dataclasses.replace(
-        p.energy, phi_step_cap=None, eos_floor_margin=margin, phase_boundary_cap=mode
+        p.energy,
+        **{'phi_step_cap': None, **caps},
+        eos_floor_margin=margin,
+        phase_boundary_cap=mode,
     )
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
@@ -77,9 +89,9 @@ def test_floor_root_ends_the_call_at_the_margin(shared_eos, caplog, method):
     assert f[-1] == pytest.approx(S_min + 100.0, abs=1.0e-3) and f.min() >= S_min + 100.0 - 1e-3
     logs = _floor_logs(caplog)
     assert len(logs) == 1 and logs[0][0] == logging.WARNING
+    assert f'level={S_min + 100.0:.6g}' in logs[0][1]
     if method == 'cvode':
         assert sol.cap_label == 'eos_floor' and sol.cap_value == S_min + 100.0
-        assert f'level={S_min + 100.0:.6g}' in logs[0][1]
     s_off, f_off = _drained(shared_eos, S_min + 400.0, margin=None, method=method)
     assert s_off._solution.t[-1] == pytest.approx(10.0) and f_off[-1] < S_min
 
@@ -166,7 +178,9 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
     assert sol.status == 1 and sol.t[-1] == sol.t[0] == 0.0
     assert s.get_state().dt_actual == 0.0
     messages = [r.getMessage() for r in caplog.records]
-    assert sum('the call does not advance' in m for m in messages) == 1
+    refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
+    assert len(refusals) == 1 and refusals[0].levelno == logging.WARNING
+    assert 'falls too fast' in refusals[0].getMessage() and sol.message.startswith('EOS floor:')
     assert any('stopped 10.0 yr before end_time' in m for m in messages)
 
 
@@ -280,3 +294,48 @@ def test_segment_root_names_the_floor_as_the_cap():
         warnings.simplefilter('error')
         assert roots.fired(0.0, np.array([5000.0, 5000.0])) in roots.names
     assert bad.binding_cap is None
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+@pytest.mark.parametrize(
+    'caps',
+    [{'phi_step_cap': 0.05}, {'temperature_step_cap': 1.0e4}, {'entropy_step_cap': 1.0e5}],
+)
+def test_floor_fires_and_refuses_with_another_cap_armed(shared_eos, method, caps):
+    """With a phi, temperature or entropy step cap armed, the floor still ends a drained call at
+    S_min + 100 (named eos_floor on CVODE) and refuses a draining start at S_min + 50."""
+    S_min = float(shared_eos.S_min)
+    s, f = _drained(shared_eos, S_min + 400.0, method=method, **caps)
+    assert 0.0 < s._solution.t[-1] < 10.0
+    assert f[-1] == pytest.approx(S_min + 100.0, abs=1.0e-3)
+    if method == 'cvode':
+        assert s._solution.cap_label == 'eos_floor'
+    s, _ = _drained(shared_eos, S_min + 50.0, method=method, **caps)
+    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+def test_a_zero_span_call_is_not_refused(shared_eos, caplog, method):
+    """A call with start == end (a static initial call) skips the floor: a falling start at the
+    table returns status 0 without a floor log."""
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(
+            shared_eos, float(shared_eos.S_min) + 1.0e-5, method=method, end_time=0.0
+        )
+    assert s._solution.status == 0 and not _floor_logs(caplog)
+
+
+def test_a_top_node_below_the_table_with_every_cell_inside_lets_the_call_advance(shared_eos):
+    """A steep top gradient extrapolates the top basic node below S_min while every cell is
+    inside the table: the floor watches the cells, and a slow drain advances."""
+    S_min = float(shared_eos.S_min)
+    p = _build_mushy_parameters(solver_method='cvode', end_time=10.0)
+    s = EntropySolver(p, entropy_eos=shared_eos)
+    s.initialize()
+    S0 = np.full(s._n_stag, S_min + 2000.0)
+    S0[-2:] = S_min + 236.0, S_min + 40.0
+    assert _weights(s) @ S0 < S_min  # precondition: the extrapolated top node is out
+    s, f = _drained(shared_eos, S0, flux=50.0)
+    S_end = np.asarray(s._solution.y, dtype=float)[: s._n_stag, -1]
+    assert s._solution.status == 0 and s._solution.t[-1] == pytest.approx(10.0)
+    assert S_end.min() > S_min + 20.0
