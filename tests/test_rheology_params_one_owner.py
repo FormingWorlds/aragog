@@ -89,6 +89,28 @@ def test_phase_config_rheology_defaults_match():
     assert p_cfg_custom.water_prefactor == pytest.approx(0.25)
 
 
+def test_phase_config_requires_viscosity():
+    """Verify PhaseConfig requires viscosity and rejects None."""
+    with pytest.raises(TypeError, match='viscosity'):
+        PhaseConfig(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=2e-5,
+        )
+
+    with pytest.raises(ValueError, match='viscosity must not be None'):
+        PhaseConfig(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=2e-5,
+            viscosity=None,  # type: ignore[arg-type]
+        )
+
+
 def test_mixed_phase_config_has_no_rheology_fields():
     """Verify MixedPhaseConfig has no rheology fields."""
     mixed_cfg = MixedPhaseConfig(
