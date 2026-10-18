@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from aragog.solver.entropy_solver import _floor_start_level, _phi_cap_event_factory
+from aragog.solver.entropy_solver import (
+    _floor_start_level,
+    _PhaseBoundarySegmentRoot,
+    _phi_cap_event_factory,
+    _PhiCapRootFunction,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -260,3 +267,70 @@ def test_a_non_finite_start_is_left_to_the_table_guard(r, bad):
     """A NaN or infinite cell entropy, with any rate, gives (None, False) and no rate call."""
     S = np.array([S_MIN + 40.0, bad, S_MIN + 40.0])
     assert _floor_start_level(W, S, _no_rate, S_MIN, M, DT) == (None, False)
+
+
+def test_floor_component_takes_the_lower_of_the_top_node_and_the_cells():
+    """g is the smaller of w @ S and min(S) minus the level, and it names the floor; the
+    exception sentinel stays positive with no other cap armed."""
+    w = np.array([0.0, -0.5, 1.5])
+    kw = dict(
+        eos=None, P_stag=np.zeros(3), volume=np.ones(3), n_stag=3, phi0_global=0.0, cap=0.0
+    )
+    root = _PhiCapRootFunction(
+        **kw, state_scale=np.ones(3), floor_weights=w, floor_level=200.0, floor_margin=100.0
+    )
+    g = np.zeros(1)
+    for S, expected in (
+        ([500.0, 400.0, 300.0], 250.0 - 200.0),
+        ([500.0, 300.0, 400.0], 300.0 - 200.0),
+    ):
+        root.evaluate(0.0, np.array(S), g)
+        assert g[0] == pytest.approx(expected) and root.binding_cap == 'eos_floor'
+    root.evaluate(0.0, None, g)
+    assert g[0] == 100.0 and root.binding_cap is None
+
+
+def _segment_roots(floor_weights):
+    cap = _PhiCapRootFunction(
+        eos=None, P_stag=np.zeros(2), volume=np.ones(2), n_stag=2, phi0_global=0.0, cap=0.0,
+        state_scale=np.ones(2), floor_weights=floor_weights, floor_level=200.0, floor_margin=100.0,
+    )  # fmt: skip
+    y0 = np.array([5000.0, 5000.0])
+    return cap, _PhaseBoundarySegmentRoot(
+        np.full(3, 6000.0), np.full(3, 4000.0), y0, 10.0, None, np.ones(2), 2, cap=cap
+    )
+
+
+def test_segment_root_names_the_floor_as_the_cap():
+    """At a floor root the segment roots report 'cap', which ends a rate-cap call; a floor-only
+    cap whose evaluate raised is scaled by its margin, without a division by zero."""
+    _, roots = _segment_roots(np.array([-0.5, 1.5]))
+    assert roots.names[0] == 'cap' and roots.fired(0.0, np.array([250.0, 200.0])) == 'cap'
+    bad, roots = _segment_roots(np.ones(3))
+    # warnings as errors: a zero scale would warn on division
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert roots.fired(0.0, np.array([5000.0, 5000.0])) in roots.names
+    assert bad.binding_cap is None
+
+
+def test_the_scipy_event_gives_the_floor_entropy_minus_its_level_and_names_the_floor():
+    """Cells S = [300, 250] with the top node 225: the floor-only event returns 225 - 200 and
+    names eos_floor as the binding cap."""
+    event = _phi_cap_event_factory(
+        eos=None, P_stag=np.zeros(2), volume=np.ones(2), n_stag=2, phi0_global=0.0, cap=0.0,
+        state_scale=np.ones(2), floor_weights=np.array([-0.5, 1.5]), floor_level=200.0,
+        floor_margin=M,
+    )  # fmt: skip
+    assert event(0.0, np.array([300.0, 250.0])) == pytest.approx(25.0)
+    assert event.binding_cap == 'eos_floor'
+
+
+@pytest.mark.parametrize('offset', [-10.0, 0.0])
+def test_a_start_at_or_below_the_table_is_refused_without_a_rate_call(offset):
+    """A start at or below S_min is refused before the RHS is evaluated at a state below the
+    table."""
+    assert _floor_start_level(W, np.full(3, S_MIN + offset), _no_rate, S_MIN, M, DT) == (
+        None,
+        True,
+    )

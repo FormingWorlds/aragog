@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import logging
 import re
-import warnings
 from unittest import mock
 
 import numpy as np
@@ -15,8 +14,6 @@ from aragog.solver import entropy_solver as es
 from aragog.solver.entropy_solver import (
     EntropySolver,
     _floor_entropy,
-    _PhaseBoundarySegmentRoot,
-    _PhiCapRootFunction,
 )
 
 from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
@@ -88,7 +85,9 @@ def _drained(
         tt, ty = sol.get('energy_trace') or (sol.t, sol.y)
         after = np.asarray(tt) > sol.t[0]  # the call start is the previous call's end
         assert np.all(_basic(s) >= S_min) and np.all(_cells(s)[:, sol.t > sol.t[0]] >= S_min)
-        assert np.all(np.asarray(ty)[: s._n_stag, after] >= S_min)
+        ty = np.asarray(ty)[: s._n_stag, after]
+        assert np.all(ty >= S_min)
+        assert np.all(np.asarray(s.evaluator.mesh.quantity_at_basic_nodes(ty))[1:] >= S_min)
     return s, _floor_series(s)
 
 
@@ -107,7 +106,7 @@ def test_floor_root_ends_the_call_at_the_margin(shared_eos, caplog, method):
         s, f = _drained(shared_eos, S_min + 400.0, method=method)
     sol = s._solution
     assert sol.status == (0 if method == 'cvode' else 1) and 0.0 < sol.t[-1] < 10.0
-    assert f[-1] == pytest.approx(S_min + 100.0, abs=1.0e-3) and f.min() >= S_min + 100.0 - 1e-3
+    assert f[-1] == pytest.approx(S_min + 100.0, abs=1.0e-6) and f.min() >= S_min + 100.0 - 1e-6
     logs = _floor_logs(caplog)
     assert len(logs) == 1 and logs[0][0] == logging.WARNING
     assert f'level={S_min + 100.0:.6g}' in logs[0][1]
@@ -140,7 +139,7 @@ def test_floor_stops_each_core_and_rate_segments_at_its_level(
     s0 = _floor_entropy(_weights(s), np.broadcast_to(S0, s._n_stag))
     level = S_min + (100.0 if s0 > S_min + 100.0 + _TOL else 50.0)
     assert s._solution.cap_label == 'eos_floor' and 0.0 < s._solution.t[-1] < 10.0
-    assert f[-1] == pytest.approx(level, abs=1.0e-3)
+    assert f[-1] == pytest.approx(level, abs=1.0e-6)
     assert bool(s._solution.get('segments')) is stratified
 
 
@@ -172,8 +171,8 @@ def test_a_persistent_drain_ends_after_two_floor_stops_and_a_pause_does_not(shar
         ends.append(_floor_series(s)[-1])
         status.append((s._solution.status, float(s._solution.t[-1]) - t))
         t = float(s._solution.t[-1])
-    assert ends[0] == pytest.approx(S_min + 100.0, abs=1.0e-3)
-    assert ends[1] == pytest.approx(S_min + 50.0, abs=1.0e-3)
+    assert ends[0] == pytest.approx(S_min + 100.0, abs=1.0e-6)
+    assert ends[1] == pytest.approx(S_min + 50.0, abs=1.0e-6)
     assert status[1] == (1, 0.0) and ends[2] == ends[1]
     assert status[2] == (0, pytest.approx(10.0)) and ends[3] >= ends[2]
 
@@ -214,13 +213,22 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
     assert any('stopped 10.0 yr before end_time' in m for m in messages)
 
 
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
 @pytest.mark.parametrize('flux', [0.0, -1.0e5])
-def test_floor_lets_a_start_in_the_band_advance_when_it_does_not_drain(shared_eos, flux):
-    """At S_min + 40 a call with no or an inward surface flux advances its full span."""
-    S_min = float(shared_eos.S_min)
-    s, f = _drained(shared_eos, S_min + 40.0, flux=flux)
+def test_floor_lets_a_start_in_the_band_advance_when_it_does_not_drain(
+    shared_eos, monkeypatch, method, flux
+):
+    """At S_min + 40 a call with no or an inward surface flux arms the level S_min + 20 and
+    advances its full span without a stop."""
+    S_min, armed = float(shared_eos.S_min), []
+    start_level = es._floor_start_level
+    monkeypatch.setattr(
+        es, '_floor_start_level', lambda *a: armed.append(start_level(*a)) or armed[-1]
+    )
+    s, f = _drained(shared_eos, S_min + 40.0, flux=flux, method=method)
+    assert armed == [(pytest.approx(S_min + 20.0), False)]
     assert s._solution.status == 0 and s._solution.t[-1] == pytest.approx(10.0)
-    assert f.min() > S_min
+    assert not getattr(s._solution, 'cap_fired', False) and f.min() > S_min
 
 
 def test_floor_leaves_a_non_finite_start_to_the_table_guard(shared_eos):
@@ -281,51 +289,6 @@ def test_floor_on_and_off_are_bit_equal_when_it_does_not_fire(
     assert on.energy_integrals == off.energy_integrals
 
 
-def test_floor_component_takes_the_lower_of_the_top_node_and_the_cells():
-    """g is the smaller of w @ S and min(S) minus the level, and it names the floor; the
-    exception sentinel stays positive with no other cap armed."""
-    w = np.array([0.0, -0.5, 1.5])
-    kw = dict(
-        eos=None, P_stag=np.zeros(3), volume=np.ones(3), n_stag=3, phi0_global=0.0, cap=0.0
-    )
-    root = _PhiCapRootFunction(
-        **kw, state_scale=np.ones(3), floor_weights=w, floor_level=200.0, floor_margin=100.0
-    )
-    g = np.zeros(1)
-    for S, expected in (
-        ([500.0, 400.0, 300.0], 250.0 - 200.0),
-        ([500.0, 300.0, 400.0], 300.0 - 200.0),
-    ):
-        root.evaluate(0.0, np.array(S), g)
-        assert g[0] == pytest.approx(expected) and root.binding_cap == 'eos_floor'
-    root.evaluate(0.0, None, g)
-    assert g[0] == 100.0 and root.binding_cap is None
-
-
-def _segment_roots(floor_weights):
-    cap = _PhiCapRootFunction(
-        eos=None, P_stag=np.zeros(2), volume=np.ones(2), n_stag=2, phi0_global=0.0, cap=0.0,
-        state_scale=np.ones(2), floor_weights=floor_weights, floor_level=200.0, floor_margin=100.0,
-    )  # fmt: skip
-    y0 = np.array([5000.0, 5000.0])
-    return cap, _PhaseBoundarySegmentRoot(
-        np.full(3, 6000.0), np.full(3, 4000.0), y0, 10.0, None, np.ones(2), 2, cap=cap
-    )
-
-
-def test_segment_root_names_the_floor_as_the_cap():
-    """At a floor root the segment roots report 'cap', which ends a rate-cap call; a floor-only
-    cap whose evaluate raised is scaled by its margin, without a division by zero."""
-    _, roots = _segment_roots(np.array([-0.5, 1.5]))
-    assert roots.names[0] == 'cap' and roots.fired(0.0, np.array([250.0, 200.0])) == 'cap'
-    bad, roots = _segment_roots(np.ones(3))
-    # warnings as errors: a zero scale would warn on division
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        assert roots.fired(0.0, np.array([5000.0, 5000.0])) in roots.names
-    assert bad.binding_cap is None
-
-
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
 @pytest.mark.parametrize(
     'caps',
@@ -337,7 +300,7 @@ def test_floor_fires_and_refuses_with_another_cap_armed(shared_eos, method, caps
     S_min = float(shared_eos.S_min)
     s, f = _drained(shared_eos, S_min + 400.0, method=method, **caps)
     assert 0.0 < s._solution.t[-1] < 10.0
-    assert f[-1] == pytest.approx(S_min + 100.0, abs=1.0e-3)
+    assert f[-1] == pytest.approx(S_min + 100.0, abs=1.0e-6)
     if method == 'cvode':
         assert s._solution.cap_label == 'eos_floor'
     s, _ = _drained(shared_eos, S_min + 50.0, method=method, **caps)
@@ -397,7 +360,7 @@ def test_the_floor_log_names_the_half_margin_level(shared_eos, caplog, method):
     with caplog.at_level(logging.INFO):
         _, f = _drained(shared_eos, S_min + 80.0, method=method)
     logs = _floor_logs(caplog)
-    assert f[-1] == pytest.approx(S_min + 50.0, abs=1.0e-3)
+    assert f[-1] == pytest.approx(S_min + 50.0, abs=1.0e-6)
     assert len(logs) == 1 and f'level={S_min + 50.0:.6g}' in logs[0][1]
 
 
@@ -625,7 +588,7 @@ def test_a_floor_stop_at_the_call_start_is_a_refusal(
     assert 'fell at the call start' in refusals[0].getMessage()
 
 
-@pytest.mark.parametrize('where', ['trace', 'cell'])
+@pytest.mark.parametrize('where', ['trace', 'cell', 'node'])
 def test_a_state_below_the_table_only_in_the_trace_or_a_cell_is_discarded(
     shared_eos, caplog, monkeypatch, where
 ):
@@ -647,7 +610,10 @@ def test_a_state_below_the_table_only_in_the_trace_or_a_cell_is_discarded(
                 col = ((bad - sc.state_offset) / sc.state_scale)[:, np.newaxis]
                 res.energy_trace = (np.append(tt, tt[-1]), np.hstack([ty, col]))
             else:
-                bad[5] = S_min - 1.0
+                if where == 'cell':
+                    bad[5] = S_min - 1.0
+                else:  # top node S_min - 48.5 from the top two cells, every cell inside
+                    bad[self._n_stag - 2 : self._n_stag] = S_min + 100.0, S_min + 1.0
                 res.y[:, -1] = (bad - sc.state_offset) / sc.state_scale
         return res
 
