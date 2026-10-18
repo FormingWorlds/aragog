@@ -325,13 +325,13 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             assert float(state_np['w_y']) > 0.99
             assert float(state_np['lid_regime']) > 1.99
     elif regime in ('no_lid', 'mushy'):
-        # Exact by construction: if_lid gates non-lid diagnostics to literal 0.0.
+        # if_lid sets non-lid diagnostics to literal 0.0.
         assert state_np['d_lid'] == 0.0, f'{regime} must suppress stagnant lid formation'
         assert state_np['lid_regime'] == 0.0, f'{regime} must have lid_regime == 0'
         assert state_np['tau_d'] == 0.0, f'{regime} must have tau_d == 0'
         assert state_np['v_m'] == 0.0, f'{regime} must have v_m == 0'
     elif regime == 'inactive_convection':
-        # Exact by construction: if_lid gates inactive-convection diagnostics to literal 0.0.
+        # if_lid sets inactive-convection diagnostics to literal 0.0.
         assert state_np['d_lid'] == 0.0
         assert state_np['tau_d'] == 0.0
 
@@ -560,7 +560,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
     ``P_basic`` 145.5 to 0.71 GPa, ``T_basic`` 4794.8 to 452.6 K, ``phi_basic`` 0.141 at
     the CMB to 0.0 at the surface) with ``T_basic[-1] = 452.559`` K and
     ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Because the interior temperature
-    selector ``w_Ti`` gates on ``f = 0.9`` and excludes the boundary nodes, both the
+    selector ``w_Ti`` activates at ``f = 0.9`` and excludes the boundary nodes, both the
     default ``interior_flux_fraction = 0.05`` and ``0.10`` give ``T_i = 1423.012`` K,
     ``eta_i = 2.760821e+22`` Pa s, ``d_lid = 42026.67`` m, ``max(w_lid) = 0.851185``,
     ``tau_d = 1.299379e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.

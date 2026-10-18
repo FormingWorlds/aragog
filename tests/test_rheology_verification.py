@@ -444,7 +444,7 @@ def test_compute_effective_viscosity_infinite_yield_stress_jax():
 
 
 def test_arrhenius_t_ref_positivity_validation():
-    """Verify non-positive arrhenius_t_ref is rejected and removed aliases raise TypeError."""
+    """Verify non-positive arrhenius_t_ref is rejected and rejects t_ref, T_ref and R."""
     with pytest.raises(ValueError, match='arrhenius_t_ref must be positive'):
         compute_arrhenius_viscosity(temperature=1600.0, pressure=0.0, arrhenius_t_ref=0.0)
 
@@ -902,7 +902,7 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         phi_width=0.15,
         xp=jnp,
     )
-    # Exact by construction: if_lid gates isothermal no-lid diagnostics to literal 0.0.
+    # if_lid sets isothermal no-lid diagnostics to literal 0.0.
     for key in (
         'd_lid',
         'Ra_eff',
@@ -1217,7 +1217,7 @@ def test_validation_and_lid_base_edge_cases():
     with pytest.raises(ValueError, match='enabled must be a bool'):
         SolidRheologyParams(enabled='False')  # type: ignore[arg-type]
 
-    # 2. Single top-slope parameter: top_slope is removed.
+    # 2. Single top-slope parameter: top_slope is not an argument.
     r = np.linspace(3.48e6, 6.371e6, 20)
     ml = np.minimum(r - r[0], r[-1] - r)
     with pytest.raises(TypeError, match='unexpected keyword argument'):
@@ -1462,3 +1462,26 @@ def test_water_prefactor_and_w_lid_nan_propagation():
             xp=xp_mod,
         )
         assert bool(xp_mod.all(xp_mod.isnan(eta_input_nan_with_wl_zero)))
+
+
+@pytest.mark.unit
+def test_solid_rheology_params_boundary_values():
+    """Verify SolidRheologyParams boundary acceptance and rejection edges."""
+    # Acceptance of zero cohesion and zero friction coefficient.
+    p_zero = SolidRheologyParams(enabled=False, yield_stress_c=0.0, yield_stress_mu=0.0)
+    assert p_zero.yield_stress_c == 0.0
+    assert p_zero.yield_stress_mu == 0.0
+
+    # Acceptance of upper bound viscosity_max_log10 = 300.0.
+    p_cap = SolidRheologyParams(enabled=False, viscosity_max_log10=300.0)
+    assert p_cap.viscosity_max_log10 == 300.0
+
+    # Rejection of water_prefactor <= 0 on dataclass.
+    with pytest.raises(ValueError, match='water_prefactor must be positive'):
+        SolidRheologyParams(enabled=False, water_prefactor=0.0)
+
+    # Rejection of viscosity_max_log10 at lower open bound (20.0) and above upper bound (300.0000001).
+    with pytest.raises(ValueError, match='viscosity_max_log10 must be in'):
+        SolidRheologyParams(enabled=False, viscosity_max_log10=20.0)
+    with pytest.raises(ValueError, match='viscosity_max_log10 must be in'):
+        SolidRheologyParams(enabled=False, viscosity_max_log10=300.0000001)

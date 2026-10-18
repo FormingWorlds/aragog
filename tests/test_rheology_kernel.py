@@ -17,6 +17,7 @@ from aragog.rheology import (
     compute_effective_viscosity,
     compute_mlt_top_slope,
     compute_stagnant_lid_state,
+    compute_strain_rate_local,
 )
 
 
@@ -297,7 +298,7 @@ def test_limit_no_convection_lid_diagnostics():
     )
 
     assert state['w_active'] < 0.02
-    # Exact by construction: if_lid gates inactive-convection diagnostics to literal 0.0.
+    # if_lid sets inactive-convection diagnostics to literal 0.0.
     assert float(state['tau_d']) == 0.0
     assert float(state['tau_d_lid']) == 0.0
     assert float(state['tau_buoy']) == 0.0
@@ -418,3 +419,14 @@ def test_jax_autodiff_linear_solidus_enthalpy_gradient():
     grad_val = grad_fn(10.0e9)
     assert jnp.isfinite(grad_val)
     assert float(grad_val) == pytest.approx(5.0e-6, rel=1.0e-10)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_strain_rate_local_eps_floor_at_zero_mixing_length():
+    """Verify compute_strain_rate_local applies eps floor when mixing length is zero."""
+    v = 1.0e-9
+    # At boundary nodes, mixing_length is zero; eps prevents division by zero.
+    sr = compute_strain_rate_local(v, 0.0, eps=1.0e-15)
+    expected = 1.0e-9 / (2.0 * 1.0e-15)
+    assert sr == pytest.approx(expected, rel=1.0e-12)
