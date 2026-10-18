@@ -587,7 +587,8 @@ def _check_accepted_states(
         Entropy range of the EOS tables [J/kg/K]; the edges are inside.
     cmb : ndarray, optional
         CMB basic-node entropy per node [J/kg/K], used in place of row 0 of ``weights @ S`` where
-        the model sets that node from its own state (``energy_balance``, ``core_module``).
+        the model does not extrapolate that node (``energy_balance``: from its state;
+        ``core_module``: the bottom cell, as its gradient slot feeds nothing back).
     skip_start : bool
         Skip the nodes at the start time; False checks them too (a start state that did not come
         from a checked call).
@@ -595,8 +596,8 @@ def _check_accepted_states(
     Raises
     ------
     AcceptedStateError
-        For the earliest node with a non-finite cell entropy, or a cell or basic-node entropy
-        outside ``[S_min, S_max]``; at one node cells come before basic nodes.
+        For the earliest node with a non-finite cell or basic-node entropy, or one outside
+        ``[S_min, S_max]``; at one node cells come before basic nodes.
     """
     k0 = int(np.searchsorted(t, t[0], side='right')) if skip_start else 0
     t, S = np.asarray(t)[k0:], np.asarray(S, dtype=float)[:, k0:]
@@ -605,10 +606,10 @@ def _check_accepted_states(
         B[0] = np.asarray(cmb, dtype=float)[k0:]
     for k in range(S.shape[1]):
         for kind, col in (('cell', S[:, k]), ('basic', B[:, k])):
-            if kind == 'cell' and not np.all(np.isfinite(col)):
+            if not np.all(np.isfinite(col)):
                 i = int(np.argmin(np.isfinite(col)))
                 raise AcceptedStateError(
-                    'finite_state', f'cell {i}', float(t[k]), float(col[i]), np.nan
+                    'finite_state', f'{kind} {i}', float(t[k]), float(col[i]), np.nan
                 )
             out = (col < S_min) | (col > S_max)
             if out.any():
@@ -4390,9 +4391,11 @@ class EntropySolver:
         ):
             t_acc, y_acc = sol.get('energy_trace') or (sol.t, sol.y)
             y_acc, cmb = np.asarray(y_acc, dtype=float), None
-            if self._core_bc in ('energy_balance', 'core_module'):  # the model's CMB node
+            if self._core_bc == 'energy_balance':  # the CMB node the model sets from its state
                 r = np.asarray(self.evaluator.mesh.basic.radii).ravel()
                 cmb = y_acc[0] + y_acc[self._n_stag] * (r[0] - 0.5 * (r[0] + r[1]))
+            elif self._core_bc == 'core_module':  # the gradient slot feeds nothing back
+                cmb = y_acc[0]
             skip_start, self._check_start = not getattr(self, '_check_start', False), False
             _check_accepted_states(
                 t_acc,
