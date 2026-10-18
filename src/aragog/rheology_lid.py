@@ -493,7 +493,7 @@ def compute_stagnant_lid_state(
         w_upper = w_above_mid * w_below_top * w_conv
         N_upper = xp.sum(w_upper) + 1e-12
 
-        v_abs = xp.abs(unyielded_velocity)
+        v_abs = xp.abs(xp.asarray(unyielded_velocity, dtype=float))
         u = w_upper * v_abs
         u_shift = xp.max(u)
         sum_w_exp = xp.sum(w_upper * xp.exp((u - u_shift) / T_v))
