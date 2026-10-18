@@ -175,3 +175,20 @@ def test_the_mesh_takes_the_mode_from_the_parameters_and_the_bounds_from_the_eos
     other.S_min, other.S_max = float(shared_eos.S_min) + 500.0, float(shared_eos.S_max) - 500.0
     s.entropy_eos = other
     assert s.evaluator.mesh.top_bounds == (float(other.S_min), float(other.S_max))
+
+
+def test_the_grey_body_flux_is_continuous_across_the_band(shared_eos):
+    """Under the grey-body surface the top-cell rate follows the top node: moving the top cell in
+    steps of 0.01 J/kg/K through the band changes it by far less than the switch to the top cell
+    did (about 3.3e-3 on this profile)."""
+    s = _solver(shared_eos, 'limited', bc=1)
+    y0, n, S_min = np.asarray(s._S0, dtype=float).copy(), s._n_stag, float(shared_eos.S_min)
+    rates, free = [], []
+    for t in 333.0 + 0.01 * np.arange(-3000, 3001):
+        y = y0.copy()
+        y[n - 3 : n] = S_min + np.array([1700.0, 1000.0, t])
+        rates.append(float(np.ravel(s.dSdt(0.0, y))[n - 1]))
+        free.append(float(top_node_entropy(y[:n], 1.0)))
+    free = np.asarray(free)
+    assert (free < S_min).any() and (free > S_min + 50.0).any()
+    assert np.max(np.abs(np.diff(rates))) < 3.3e-4

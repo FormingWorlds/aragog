@@ -81,12 +81,13 @@ def test_opposite_or_zero_steps_give_the_top_cell(S):
 
 
 def test_a_node_outside_the_table_falls_back_to_the_top_cell():
-    """The limited node 106 - 25 lies below S_min = 100, so the top cell 106 is returned."""
+    """The limited node 106 - 25 lies below S_min = 100, so the blend weight is 0 and the top cell
+    106 is returned; above S_max the same."""
     S = np.array([206.0, 156.0, 106.0])
     assert top_node_entropy(S, 1.0) == 81.0
-    assert top_node_entropy(S, 1.0, 100.0, 25000.0) == 106.0
+    assert top_node_entropy(S, 1.0, 100.0, 25000.0, 50.0) == 106.0
     S = np.array([24800.0, 24900.0, 24990.0])
-    assert top_node_entropy(S, 1.0, 100.0, 25000.0) == 24990.0
+    assert top_node_entropy(S, 1.0, 100.0, 25000.0, 50.0) == 24990.0
 
 
 @given(s=st.tuples(_S, _S, _S), r=_R)
@@ -102,18 +103,43 @@ _GAP = st.floats(0.0, 1000.0)
 @given(s=st.tuples(_S, _S, _S), r=_R, below=_GAP, above=_GAP)
 def test_with_every_cell_inside_the_table_the_node_is_inside(s, r, below, above):
     lo, hi = min(s) - below, max(s) + above
-    node = top_node_entropy(np.array(s), r, lo, hi)
+    node = top_node_entropy(np.array(s), r, lo, hi, 50.0)
     assert lo <= node <= hi
 
 
-@given(s=st.tuples(_S, _S, _S), r=_R, below=_GAP)
-def test_the_fallback_moves_the_node_by_at_most_the_top_cell_distance_to_the_edge(s, r, below):
-    """Where the fallback acts the node jumps from a value at most S_N - S_min below the top cell
-    (the limited node lies between S_N and the linear node) to the top cell itself."""
-    S, lo = np.array(s), min(s) - below
-    free, kept = top_node_entropy(S, r), top_node_entropy(S, r, lo, np.inf)
-    if free < lo:
-        assert kept == S[-1] and 0.0 <= S[-1] - lo <= S[-1] - free
+@given(s=st.tuples(_S, _S, _S), r=_R, D=st.floats(1.0, 200.0))
+def test_away_from_the_band_the_node_is_the_limited_node_bit_for_bit(s, r, D):
+    """With S_f at least D inside the table on both sides the blend weight is 1."""
+    S = np.array(s)
+    free = top_node_entropy(S, r)
+    node = top_node_entropy(S, r, free - D - 1.0, free + D + 1.0, D)
+    assert node == free
+
+
+@given(s=st.tuples(_S, _S, _S), r=_R, D=st.floats(1.0, 200.0), x=st.floats(0.0, 1.0))
+def test_inside_the_band_the_node_lies_between_the_limited_node_and_the_top_cell(s, r, D, x):
+    S = np.array(s)
+    free = top_node_entropy(S, r)
+    for lo, hi in ((free - x * D, np.inf), (-np.inf, free + x * D)):
+        node = top_node_entropy(S, r, lo, hi, D)
+        assert min(free, S[-1]) - 1e-9 <= node <= max(free, S[-1]) + 1e-9
+
+
+@pytest.mark.parametrize('side', ['S_min', 'S_max'])
+def test_the_node_is_continuous_across_the_band(side):
+    """Moving the top cell in steps of 1e-3 J/kg/K through both edges of the band moves the node
+    by a small multiple of the step, where a switch to the top cell would jump by about 333."""
+    D, step = 50.0, 1.0e-3
+    if side == 'S_min':
+        lo, hi, base = 0.0, np.inf, np.array([1700.0, 1000.0])
+        tops = 333.0 + step * np.arange(-60000, 60001)
+    else:
+        lo, hi, base = -np.inf, 3000.0, np.array([1300.0, 2000.0])
+        tops = 2667.0 + step * np.arange(-60000, 60001)
+    nodes = np.array([top_node_entropy(np.r_[base, t], 1.0, lo, hi, D) for t in tops])
+    free = np.array([top_node_entropy(np.r_[base, t], 1.0) for t in tops])
+    assert ((free < lo) | (free > hi)).any() and ((free > lo + D) & (free < hi - D)).any()
+    assert np.max(np.abs(np.diff(nodes))) < 0.05
 
 
 @given(S=st.tuples(_S, _S, _S), r=_R)
