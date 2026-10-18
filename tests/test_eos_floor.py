@@ -36,10 +36,11 @@ def _weights(s):
 
 
 def _basic(s):
-    """Every basic-node entropy of every state after the call start of the last solve."""
+    """Basic-node entropies above the CMB node (not watched by the floor) of every state after
+    the call start of the last solve."""
     sol = s._solution
     S = np.asarray(sol.y, dtype=float)[: s._n_stag, np.asarray(sol.t) > sol.t[0]]
-    return np.asarray(s.evaluator.mesh.quantity_at_basic_nodes(S))
+    return np.asarray(s.evaluator.mesh.quantity_at_basic_nodes(S))[1:]
 
 
 def _floor_series(s):
@@ -166,7 +167,8 @@ def test_a_persistent_drain_ends_after_two_floor_stops_and_a_pause_does_not(shar
 
 
 @pytest.mark.parametrize(
-    'where', ['below', 'at', 'one ulp above', 'at half the margin', 'in the band']
+    'where',
+    ['below', 'at', 'one ulp above', 'at the band edge', 'at half the margin', 'in the band'],
 )
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
 def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
@@ -179,6 +181,7 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
         'below': S_min - 10.0,
         'at': np.r_[S_min, _steep_top(shared_eos, [400.0] * 3)[1:]],  # a cell exactly at S_min
         'one ulp above': np.nextafter(S_min, np.inf),
+        'at the band edge': S_min + 2.0e-6 * 100.0,
         'at half the margin': S_min + 50.0,
         'in the band': S_min + 50.0 + 5e-5,
     }[where]
@@ -191,7 +194,7 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
     refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
     assert len(refusals) == 1 and refusals[0].levelno == logging.WARNING
     text = {'below': 'at or below the table minimum', 'at': 'at or below the table minimum'}
-    text['one ulp above'] = 'counts as at the table'
+    text['one ulp above'] = text['at the band edge'] = 'counts as at the table'
     text = text.get(where, 'falls too fast')
     assert text in refusals[0].getMessage() and sol.message.startswith('EOS floor:')
     assert any('stopped 10.0 yr before end_time' in m for m in messages)
@@ -439,3 +442,17 @@ def test_a_top_node_just_above_the_table_stops_at_half_its_distance(shared_eos, 
     assert _basic(s)[-1, -1] == pytest.approx(S_min + 5e-5, abs=1e-6)
     if method == 'cvode':
         assert s._solution.status == 0 and s._solution.cap_label == 'eos_floor'
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+def test_a_cell_at_the_table_that_does_not_fall_still_guards_the_others(shared_eos, method):
+    """A bottom cell 1e-5 above S_min with every other cell at S_min + 400 under 1e6 W/m^2: the
+    start arms half the bottom cell's distance, and the root stops the top node, extrapolated
+    from the draining top cell, there instead of letting it leave the table."""
+    S_min = float(shared_eos.S_min)
+    S0 = np.r_[
+        S_min + 1e-5, np.full(len(_steep_top(shared_eos, [400.0] * 3)) - 1, S_min + 400.0)
+    ]
+    s, _ = _drained(shared_eos, S0, method=method)
+    assert 0.0 < s._solution.t[-1] < 10.0 and _cells(s).min() >= S_min
+    assert _basic(s)[-1, -1] == pytest.approx(S_min + 5e-6, abs=1e-7)
