@@ -42,7 +42,9 @@ class PhaseConfig:
     entropy : float or str, optional
         Reference entropy [J/kg/K] or path to lookup table. Empty string means unused.
     rheology : SolidRheologyParams, optional
-        Solid-state rheology parameters container.
+        Solid-state rheology parameters container. Each ``SolidRheologyParams``
+        field is also exposed as a read-only property on ``PhaseConfig`` via
+        ``delegate_rheology``.
     **flat_rheo : Any
         Flat rheology attributes forwarded to rheology container.
     """

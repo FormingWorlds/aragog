@@ -136,10 +136,15 @@ class SolidRheologyParams:
 
 
 def merge_rheology(
-    rheology: SolidRheologyParams | None, overrides: dict[str, Any]
+    rheology: SolidRheologyParams | dict[str, Any] | None, overrides: dict[str, Any]
 ) -> SolidRheologyParams:
     """Return ``rheology`` (default parameters when None) with field ``overrides`` applied."""
-    base = SolidRheologyParams() if rheology is None else rheology
+    if isinstance(rheology, dict):
+        base = SolidRheologyParams(**rheology)
+    elif rheology is None:
+        base = SolidRheologyParams()
+    else:
+        base = rheology
     return replace(base, **overrides) if overrides else base
 
 

@@ -25,6 +25,7 @@ __all__ = [
     'LID_REGIME_LABEL_WIDTH',
     'NO_LID_DT_THRESHOLD',
     'NO_LID_THICKNESS_THRESHOLD',
+    'SOFTMAX_VELOCITY_SCALE',
     'SOLIDUS_MELT_FRACTION_THRESHOLD',
     'SOLIDUS_MELT_FRACTION_WIDTH',
     'compute_stagnant_lid_state',
@@ -47,6 +48,9 @@ LID_REGIME_LABEL_WIDTH: float = 0.1
 # This 1% threshold is distinct from phi_rheo (~0.4), the rheological transition.
 SOLIDUS_MELT_FRACTION_THRESHOLD: float = 0.01
 SOLIDUS_MELT_FRACTION_WIDTH: float = 0.002
+
+# Soft-maximum smoothing scale [m/s] (~0.1 mm/yr) for the upper-mantle velocity diagnostic v_i.
+SOFTMAX_VELOCITY_SCALE: float = 3.17e-12
 
 
 def _boundary_weights(w: Any, xp: Any, *, fallback: Any | None = None) -> tuple[Any, Any, Any]:
@@ -408,7 +412,7 @@ def compute_stagnant_lid_state(
     delta_rh = xp.minimum(delta_rh, r[-1] - r[0])
 
     if unyielded_velocity is not None:
-        T_v = 3.17e-12
+        T_v = SOFTMAX_VELOCITY_SCALE
         r_mid = 0.5 * (r_i + r[0])
         dr_scale = xp.maximum(xp.mean(xp.abs(r[1:] - r[:-1])), 1.0)
         w_above_mid = 0.5 * (1.0 + xp.tanh((r - r_mid) / dr_scale))
