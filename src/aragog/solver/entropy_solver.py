@@ -557,7 +557,8 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
     ``S_min + margin``, or ``S_min + margin/2`` below ``S_min + margin``, without an RHS call.
     Closer to the table, the rate of ``s0`` decides, taken as the smallest rate of every component
     no more than ``1e-6 margin`` above ``s0``; the top-node component uses the larger of its own
-    rate and the top-cell rate, as the extrapolated node can fall while no cell does. Every such
+    rate and the top-cell rate above ``S_min + 2e-6 margin``, as the extrapolated node can fall
+    while no cell does; inside that band its own rate counts. Every such
     start arms half its distance to ``S_min``. Above ``S_min + 2e-6 margin`` the call is refused
     when that rate reaches the level in ``span``; at or below it, on any fall, at every span, and
     when no level fits strictly between ``S_min`` and ``s0`` (every start at or below ``S_min``).
@@ -591,9 +592,10 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
         if s0 > level + tol:
             return level, False
     rate = np.asarray(rate_fn(), dtype=float)
-    active = rate[S <= s0 + tol].tolist() + (
-        [max(float(np.dot(weights, rate)), float(rate[-1]))] if s_top <= s0 + tol else []
-    )
+    node_rate = float(np.dot(weights, rate))
+    if s0 > S_min + 2.0 * tol:  # above the table band the top cell counts too
+        node_rate = max(node_rate, float(rate[-1]))
+    active = rate[S <= s0 + tol].tolist() + ([node_rate] if s_top <= s0 + tol else [])
     r = float(np.min(active))
     if np.isnan(r):
         return None, True
@@ -3694,12 +3696,13 @@ class EntropySolver:
             self._warned.add(key)
             logger.log(level, message)
 
-    def solve(self) -> None:
+    def solve(self, _floor_discard: str | None = None) -> None:
         """Run the BDF time integration.
 
         A successful solve also stores the per-call energy integrals on the result as
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
-        zeros.
+        zeros. ``_floor_discard`` (internal) refuses the call with that warning: a call whose
+        floor root returns a state below the EOS table is solved again this way.
         """
         wall_start = time.perf_counter()
         start_time = self.parameters.solver.start_time
@@ -3887,8 +3890,7 @@ class EntropySolver:
                     )
 
             # EOS floor: a root ends the call at S_min + m, or S_min + m/2 for a start below
-            # S_min + m; closer starts are decided by _floor_start_level (1e-6 m covers the root
-            # location error).
+            # S_min + m; closer starts are decided by _floor_start_level.
             floor_margin = _resolve_step_cap(
                 getattr(self.parameters.energy, 'eos_floor_margin', EOS_FLOOR_MARGIN_DEFAULT)
             )
@@ -3898,7 +3900,10 @@ class EntropySolver:
                     f'eos_floor_margin {floor_margin!r} J/kg/K must be below the entropy '
                     f'span of the EOS tables, {float(self.entropy_eos.S_max) - S_tab!r}'
                 )
-            if floor_margin > 0.0 and not gradient_mode and end_time > start_time:
+            if _floor_discard is not None:
+                floor_refused, end_time = True, start_time
+                logger.warning(_floor_discard)
+            elif floor_margin > 0.0 and not gradient_mode and end_time > start_time:
                 floor_w = np.asarray(self.evaluator.mesh._quantity_transform)[-1]
                 level, refuse = _floor_start_level(
                     floor_w,
@@ -3915,31 +3920,22 @@ class EntropySolver:
                 elif refuse:
                     floor_refused, end_time = True, start_time
                     s_floor = _floor_entropy(floor_w, S_arr_stag)
+                    band, half = 2.0e-6 * floor_margin, 0.5 * (s_floor + S_tab)
                     if s_floor <= S_tab:
-                        logger.warning(
-                            'EOS floor: entropy %.1f J/kg/K at the call start is at or below the '
-                            'table minimum %.1f J/kg/K; the call does not advance',
-                            s_floor,
-                            S_tab,
-                        )
-                    elif s_floor <= S_tab + 2.0e-6 * floor_margin:
-                        logger.warning(
-                            'EOS floor: entropy %.1f J/kg/K at the call start, not above the '
-                            'table minimum %.1f J/kg/K plus %.2g J/kg/K, counts as at the table '
-                            'minimum and falls; the call does not advance',
-                            s_floor,
-                            S_tab,
-                            2.0e-6 * floor_margin,
-                        )
+                        why = 'is at or below the table minimum'
+                    elif s_floor <= S_tab + band and not S_tab < half < s_floor:
+                        why = 'leaves no level between it and the table minimum (no level fits)'
+                    elif s_floor <= S_tab + band:
+                        why = f'counts as at the table minimum (within {band:.2g} J/kg/K) and falls'
                     else:
-                        logger.warning(
-                            'EOS floor: entropy %.1f J/kg/K at the call start, at most %.1f '
-                            'J/kg/K above the table minimum %.1f J/kg/K, falls too fast; the '
-                            'call does not advance',
-                            s_floor,
-                            0.5 * floor_margin,
-                            S_tab,
-                        )
+                        why = f'is at most {0.5 * floor_margin:.1f} J/kg/K above it and falls too fast'
+                    logger.warning(
+                        'EOS floor: entropy %.6g J/kg/K at the call start (table minimum %.6g '
+                        'J/kg/K) %s; the call does not advance',
+                        s_floor,
+                        S_tab,
+                        why,
+                    )
 
         # External per-call atol scale factor (PROTEUS retry ladder
         # opts in by setting solver._atol_sf before solve()). Default
@@ -4252,9 +4248,32 @@ class EntropySolver:
             sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale, _offset)
         if floor_refused:
             sol.status = 1
-            sol.message = (
-                'EOS floor: the call starts within half the margin of the table minimum'
-            )
+            sol.message = 'EOS floor: the call does not advance'
+        elif floor is not None and sol.status >= 0 and sol.t is not None and len(sol.t):
+            t_end = float(np.asarray(sol.t)[-1])
+            ys = [np.asarray(sol.y, dtype=float)]
+            if trace is not None:
+                ys.append(np.asarray(sol.energy_trace[1], dtype=float))
+            S_all = np.concatenate([y[:n_s] for y in ys], axis=1)
+            low = min(float(np.min(floor['floor_weights'] @ S_all)), float(S_all.min()))
+            if low < S_tab:
+                return self.solve(
+                    _floor_discard=(
+                        f'EOS floor: the root of level {floor["floor_level"]:.9g} J/kg/K near '
+                        f't={t_end:.6g} yr put the floor entropy at {low:.9g} J/kg/K, below the '
+                        f'table minimum {S_tab:.9g} J/kg/K; the call is discarded and does not '
+                        'advance'
+                    )
+                )
+            if t_end <= start_time:
+                sol.status = 1
+                sol.message = 'EOS floor: the call does not advance'
+                logger.warning(
+                    'EOS floor: the root of level %.9g J/kg/K fell at the call start t=%.6g yr; '
+                    'the call does not advance',
+                    floor['floor_level'],
+                    start_time,
+                )
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
         # above) and naming whichever margin actually bound: read from
