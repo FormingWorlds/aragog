@@ -220,11 +220,9 @@ def compute_stagnant_lid_state(
     f_int_max = xp.max(f * interior_node_mask)
     f_int_scale = xp.maximum(f_int_max, params.interior_flux_fraction)
     f_Ti_thresh = 0.9 * f_int_scale
-    w_Ti_0 = 0.5 * (1.0 + xp.tanh(-f_Ti_thresh / 0.02))
+    w_Ti_width = 0.02 * f_int_scale
     w_Ti = (
-        xp.maximum(0.5 * (1.0 + xp.tanh((f - f_Ti_thresh) / 0.02)) - w_Ti_0, 0.0)
-        * w_conv
-        * interior_node_mask
+        0.5 * (1.0 + xp.tanh((f - f_Ti_thresh) / w_Ti_width)) * w_conv * interior_node_mask
         + zero_or_nan
     )
     W_tilde = _boundary_weights(w_Ti, xp, fallback=W_conv_tilde)[0]
