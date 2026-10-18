@@ -70,7 +70,7 @@ class SolidRheologyParams:
     downward overall (steep below about 25 GPa, about 16 K/GPa above), the
     linear form is 1.4 % high at 0 GPa (1400 K versus 1380.6 K), 19 % low at
     25 GPa (2000 K versus 2475.9 K), and 9.6 % high at 135 GPa (4640 K versus
-    4232.1 K), crossing the table curve near 0.2 GPa (0.21 GPa) and at 84.3 GPa,
+    4232.1 K), crossing the table curve below 1 GPa and at 84.3 GPa,
     and serves table-free constant-property benchmarks only.
     """
 
@@ -190,6 +190,7 @@ _RULES: dict[str, tuple[Any, str]] = {
     'nonneg': (lambda a: (a >= 0.0) & (a < np.inf), 'non-negative and finite'),
     'unit': (lambda a: (a >= 0.0) & (a <= 1.0), 'in [0, 1]'),
     'finite': (lambda a: (a > -np.inf) & (a < np.inf), 'finite (no inf values)'),
+    'finite_scalar': (lambda a: (a > -np.inf) & (a < np.inf), 'finite'),
     'not_neginf': (lambda a: a > -np.inf, 'greater than -inf'),
 }
 
@@ -208,7 +209,8 @@ def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
                 raise ValueError(f'{name} must be a real number or array, got {val!r}')
             arr = xp.asarray(val, dtype=float)
         ok, msg = _RULES[rule]
-        if xp is np and np.any(~np.isnan(arr) & ~ok(arr)):
+        allow_nan = rule != 'finite_scalar'
+        if xp is np and np.any((~np.isnan(arr) if allow_nan else True) & ~ok(arr)):
             raise ValueError(f'{name} must be {msg}, got {val}')
         bad = ~ok(arr)
         invalid = invalid | (xp.any(bad) if reduce_any else bad)
@@ -476,8 +478,9 @@ def compute_arrhenius_viscosity(
     ValueError
         If ``solidus_temperature`` is provided without ``t_sol_0``; if
         ``viscosity_solid``, ``g_homologous``, ``t_sol_0``, ``dt_sol_dp``,
-        ``arrhenius_t_ref``, or ``r_gas`` is not a scalar; if any input is a
-        boolean; or, on the eager NumPy path (``xp is np``), if
+        ``arrhenius_t_ref``, ``r_gas``, or ``viscosity_max_log10`` is not a
+        scalar; if any input is non-real (such as a boolean); or, on the eager
+        NumPy path (``xp is np``), if ``viscosity_max_log10`` is non-finite, if
         ``temperature``, ``viscosity_solid``, ``solidus_temperature``,
         ``t_sol_0``, ``arrhenius_t_ref``, ``r_gas``, or ``water_prefactor`` is
         non-positive or infinite, or if ``pressure``, ``g_homologous``, or
@@ -506,6 +509,7 @@ def compute_arrhenius_viscosity(
             ('temperature', temperature, 'pos', False),
             ('viscosity_solid', viscosity_solid, 'pos', True),
             ('arrhenius_t_ref', arrhenius_t_ref, 'pos', True),
+            ('viscosity_max_log10', viscosity_max_log10, 'finite_scalar', True),
             ('water_prefactor', water_prefactor, 'pos', False),
         ),
         xp,
@@ -525,6 +529,7 @@ def compute_arrhenius_viscosity(
     vs = xp.asarray(viscosity_solid, dtype=float)
     g_arr = xp.asarray(g_homologous, dtype=float)
     t_ref_arr = xp.asarray(arrhenius_t_ref, dtype=float)
+    vmax_log10 = xp.asarray(viscosity_max_log10, dtype=float)
     h_0 = g_arr * r_gas * t_sol_ref_0
 
     t_safe = xp.where(t > 0.0, t, 1.0)
@@ -533,10 +538,10 @@ def compute_arrhenius_viscosity(
     exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
-    max_exponent = (viscosity_max_log10 - xp.log10(xp.maximum(vs_pos, 1e-300))) * math.log(10.0)
+    max_exponent = (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1e-300))) * math.log(10.0)
     clipped_exp = xp.clip(exponent, -700.0, max_exponent)
     result = vs * xp.exp(clipped_exp)
-    result = xp.minimum(result, 10.0**viscosity_max_log10)
+    result = xp.minimum(result, 10.0**vmax_log10)
     result = xp.where(invalid | xp.isnan(h_p), xp.nan, result)
     return _unwrap_scalar(
         result, xp, temperature, pressure, water_prefactor, solidus_temperature

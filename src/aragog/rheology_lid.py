@@ -11,6 +11,7 @@ from aragog.rheology import (
     COHESION_FLOOR,
     R_GAS,
     FloatOrArray,
+    _is_non_real,
     _require_x64_if_jax,
     _scalar_or_nan,
     _validate_inputs,
@@ -233,20 +234,12 @@ def compute_stagnant_lid_state(
     melt-fraction ramp ``w_sol_phi`` centered at ``SOLIDUS_MELT_FRACTION_THRESHOLD``
     (0.01) with width ``SOLIDUS_MELT_FRACTION_WIDTH`` (0.002), and take the elementwise
     maximum with the thermal solidus ``tanh`` ramp when ``solidus_temperature`` is
-    provided. Because ``w_interior`` and ``w_interior_mask`` take the maximum of
-    isothermal, solidus, and rheological indicators, a column with ``phi >= 0.03`` at
-    every node (where ``1 - w_sol_phi <= 2.06e-9``, giving ``d_lid_raw < 1 m`` for cell
-    widths up to about ``4.85e8 m``) has ``has_lid = False`` across mesh resolutions
-    ``N`` in ``{3, 10, 50, 100, 200}`` on both Earth and 9000 km mantle spans with or
-    without a solidus table (at ``phi = 0.025``, where ``1 - w_sol_phi = 3.06e-7``, an
-    Earth-span column has ``has_lid = False`` across ``N`` in ``{3, 10, 50, 100, 200}``
-    whereas an extreme ``N = 3``, 9000 km mantle span gives ``d_lid_raw = 1.38 m`` and
-    ``has_lid = True``). Across ``0.01 < phi < 0.03`` on an Earth-span column, the
-    residual lid thickness ``d_lid_raw`` from ``(1 - w_sol_phi) * dr`` scales roughly
-    as ``1 / N`` (from up to 79 km at ``N = 4`` and 630 m to 4.8 km at ``N = 50`` for
-    ``phi = 0.0125`` down to 2.7 m at ``N = 50`` and 1.3 m at ``N = 100`` for
-    ``phi = 0.02``), so lid presence against the 1 m threshold depends on radial mesh
-    spacing in that band.
+    provided, bounding ``d_lid_raw <= sum_k (1 - w_sol_phi,k) * dr_k`` so that a column
+    with ``phi >= 0.03`` at every node has ``has_lid = False`` across ``N`` in
+    ``{3, 10, 50, 100, 200}`` on both Earth and 9000 km mantle spans (at ``phi = 0.025``,
+    an extreme ``N = 3``, 9000 km mantle span gives ``d_lid_raw = 1.38 m`` and
+    ``has_lid = True``; see ``docs/Explanations/solid_state_convection.md`` Section 8
+    item 7).
     """
     _require_x64_if_jax(xp)
     if viscosity_solid is None or phi_rheo is None or phi_width is None:
@@ -260,6 +253,8 @@ def compute_stagnant_lid_state(
                 f't_sol_0 ({t_sol_0}) must be finite and match params.t_sol_0 ({params.t_sol_0})'
             )
     t_sol_0_eff = params.t_sol_0 if t_sol_0 is None else t_sol_0
+    if _is_non_real(radii):
+        raise ValueError(f'radii must be a real number or array, got {radii!r}')
     r = xp.asarray(radii, dtype=float)
     if r.ndim != 1 or r.shape[0] < 3:
         raise ValueError('radii must be a 1-D array with at least 3 nodes')
@@ -271,11 +266,6 @@ def compute_stagnant_lid_state(
         dr_np = r_np[1:] - r_np[:-1]
         if np.any(np.isinf(r_np)) or np.any(np.isinf(dr_np) | (dr_np <= 0.0)):
             raise ValueError('radii must be strictly increasing from core to surface')
-    T = xp.asarray(temperature, dtype=float)
-    P = xp.asarray(pressure, dtype=float)
-    F_conv = xp.asarray(convective_flux, dtype=float)
-    F_tot = xp.asarray(total_flux, dtype=float)
-    phi = xp.asarray(melt_fraction, dtype=float)
     for name, val, allow_scalar in (
         ('temperature', temperature, False),
         ('pressure', pressure, False),
@@ -292,6 +282,8 @@ def compute_stagnant_lid_state(
     ):
         if val is None:
             continue
+        if _is_non_real(val):
+            raise ValueError(f'{name} must be a real number or array, got {val!r}')
         a = xp.asarray(val, dtype=float)
         if not ((allow_scalar and a.ndim == 0) or (a.ndim == 1 and a.shape[0] == r.shape[0])):
             raise ValueError(f'{name} must have the same 1-D length as radii ({r.shape[0]})')
@@ -320,6 +312,11 @@ def compute_stagnant_lid_state(
         xp,
         reduce_any=True,
     )
+    T = xp.asarray(temperature, dtype=float)
+    P = xp.asarray(pressure, dtype=float)
+    F_conv = xp.asarray(convective_flux, dtype=float)
+    F_tot = xp.asarray(total_flux, dtype=float)
+    phi = xp.asarray(melt_fraction, dtype=float)
 
     F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
     f = xp.clip(xp.maximum(F_conv, 0.0) / xp.abs(F_tot_safe), 0.0, 1.0)
@@ -622,9 +619,10 @@ def compute_effective_viscosity(
     Notes
     -----
     Setting ``tau_y_lid = +inf`` in ``'lid'`` mode (or ``tau_y = +inf`` in
-    ``'local'`` mode) represents infinite yield strength (no plastic yielding)
-    and returns ``eta_diff`` for every finite non-negative driving stress or
-    strain rate.
+    ``'local'`` mode) represents infinite yield strength (no plastic yielding);
+    yield stress is capped at ``1.0e30`` Pa before the ratio so ``jax.grad``
+    remains finite while returning ``eta_diff`` for every finite non-negative
+    driving stress or strain rate.
 
     References
     ----------
@@ -677,7 +675,7 @@ def compute_effective_viscosity(
         )
         ty = xp.asarray(ty_raw, dtype=float)
         eta_d = xp.asarray(eta_diff, dtype=float)
-        safe_ty = xp.maximum(ty, COHESION_FLOOR)
+        safe_ty = xp.minimum(xp.maximum(ty, COHESION_FLOOR), 1.0e30)
         tau_y_term = safe_ty / (2.0 * xp.where(sr > 0.0, sr, 1.0))
         is_unyielded = (sr <= 0.0) | xp.isnan(tau_y_term)
         res = xp.minimum(eta_d, tau_y_term)
@@ -713,7 +711,7 @@ def compute_effective_viscosity(
     td = xp.asarray(tau_d, dtype=float)
 
     # Moresi & Solomatov (1998) Eq. 13-14 min closure at convective strain rate D_conv = tau_d / eta_i:
-    ty_lid = xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR)
+    ty_lid = xp.minimum(xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR), 1.0e30)
     ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
     eta_eff_val = xp.where(ratio >= 1.0, eta_d, xp.minimum(eta_d, eta_i_arr * ratio))
 

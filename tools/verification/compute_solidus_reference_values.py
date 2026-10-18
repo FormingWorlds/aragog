@@ -196,8 +196,8 @@ def main(argv: list[str] | None = None) -> None:
         f'({err_25_exact:.2f}% low, 1-dec: {err_25_1dec:.2f}% -> {round(float(err_25_exact)):.0f}% low)'
     )
     cross_desc = (
-        f'crossings at {crossings_gpa[0]:.2f} GPa (near {crossings_gpa[0]:.1f} GPa) and {crossings_gpa[1]:.1f} GPa'
-        if len(crossings_gpa) >= 2
+        f'crossings below 1 GPa and at {crossings_gpa[1]:.1f} GPa'
+        if len(crossings_gpa) >= 2 and crossings_gpa[0] < 1.0
         else f'crossings at {[round(c, 2) for c in crossings_gpa]} GPa'
     )
     print(
