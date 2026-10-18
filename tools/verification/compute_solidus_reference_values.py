@@ -137,6 +137,10 @@ def main(argv: list[str] | None = None) -> None:
     dt_sol_dp_gpa = params.dt_sol_dp * 1.0e9
     secant_exact = (t_sol[-1] - t_sol[0]) / 135.0
     secant_1dec = (round(float(t_sol[-1]), 1) - round(float(t_sol[0]), 1)) / 135.0
+    err_0_exact = (params.t_sol_0 - t_sol[0]) / t_sol[0] * 100.0
+    err_0_1dec = (
+        (params.t_sol_0 - round(float(t_sol[0]), 1)) / round(float(t_sol[0]), 1) * 100.0
+    )
     t_lin_25 = params.t_sol_0 + dt_sol_dp_gpa * 25.0
     err_25_exact = (t_sol[1] - t_lin_25) / t_sol[1] * 100.0
     err_25_1dec = (round(float(t_sol[1]), 1) - t_lin_25) / round(float(t_sol[1]), 1) * 100.0
@@ -144,15 +148,20 @@ def main(argv: list[str] | None = None) -> None:
     err_135_exact = (t_lin_135 - t_sol[-1]) / t_sol[-1] * 100.0
     err_135_1dec = (t_lin_135 - round(float(t_sol[-1]), 1)) / round(float(t_sol[-1]), 1) * 100.0
     slope_25_135 = (t_sol[-1] - t_sol[1]) / (135.0 - 25.0)
-    p_table_gpa = p_table[:136] * 1.0e-9
-    diff_lin = (params.t_sol_0 + dt_sol_dp_gpa * p_table_gpa) - t_table[:136]
-    cross_idx = int(np.where(np.diff(np.sign(diff_lin)) != 0)[0][-1])
-    p_cross_gpa = float(
-        p_table_gpa[cross_idx]
-        - diff_lin[cross_idx]
-        * (p_table_gpa[cross_idx + 1] - p_table_gpa[cross_idx])
-        / (diff_lin[cross_idx + 1] - diff_lin[cross_idx])
-    )
+    mantle_mask = p_table <= 135.0e9
+    p_table_gpa = p_table[mantle_mask] * 1.0e-9
+    t_mantle = t_table[mantle_mask]
+    diff_lin = (params.t_sol_0 + dt_sol_dp_gpa * p_table_gpa) - t_mantle
+    cross_indices = np.where(np.diff(np.sign(diff_lin)) != 0)[0]
+    crossings_gpa = [
+        float(
+            p_table_gpa[idx]
+            - diff_lin[idx]
+            * (p_table_gpa[idx + 1] - p_table_gpa[idx])
+            / (diff_lin[idx + 1] - diff_lin[idx])
+        )
+        for idx in cross_indices
+    ]
 
     t_sol_0_1dec = round(float(t_sol[0]), 1)
     ratio_eta_exact = math.exp(
@@ -179,13 +188,22 @@ def main(argv: list[str] | None = None) -> None:
         f'(-> {round(float(slope_25_135)):.0f} K/GPa)'
     )
     print(
+        f'Linear fallback at 0 GPa: {params.t_sol_0:.1f} K vs table {t_sol[0]:.1f} K '
+        f'({err_0_exact:.2f}% high, 1-dec: {err_0_1dec:.2f}% -> {err_0_exact:.1f}% high)'
+    )
+    print(
         f'Linear fallback at 25 GPa: {t_lin_25:.1f} K vs table {t_sol[1]:.1f} K '
         f'({err_25_exact:.2f}% low, 1-dec: {err_25_1dec:.2f}% -> {round(float(err_25_exact)):.0f}% low)'
+    )
+    cross_desc = (
+        f'crossings at {crossings_gpa[0]:.2f} GPa (near {crossings_gpa[0]:.1f} GPa) and {crossings_gpa[1]:.1f} GPa'
+        if len(crossings_gpa) >= 2
+        else f'crossings at {[round(c, 2) for c in crossings_gpa]} GPa'
     )
     print(
         f'Linear fallback at 135 GPa: {t_lin_135:.1f} K vs table {t_sol[-1]:.1f} K '
         f'({err_135_exact:.2f}% high, 1-dec: {err_135_1dec:.2f}% -> {err_135_exact:.1f}% high; '
-        f'crossing at {p_cross_gpa:.1f} GPa, near {round(p_cross_gpa, -1):.0f} GPa)'
+        f'{cross_desc})'
     )
     print(
         f'Table-to-linear eta_diff({params.arrhenius_t_ref:.0f} K, 0) ratio at '

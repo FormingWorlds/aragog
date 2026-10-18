@@ -68,9 +68,10 @@ class SolidRheologyParams:
     2018 solidus curve ``wolf_bower_2018/r15728072/solidus.dat``, 1380.6 K at
     0 GPa to 4232.1 K at 135 GPa). Because the physical solidus is concave
     downward overall (steep below about 25 GPa, about 16 K/GPa above), the
-    linear form is 19 % low at 25 GPa (2000 K versus 2475.9 K) and 9.6 % high
-    at 135 GPa (4640 K versus 4232.1 K), crossing the table curve near 80 GPa
-    (84.3 GPa), and serves table-free constant-property benchmarks only.
+    linear form is 1.4 % high at 0 GPa (1400 K versus 1380.6 K), 19 % low at
+    25 GPa (2000 K versus 2475.9 K), and 9.6 % high at 135 GPa (4640 K versus
+    4232.1 K), crossing the table curve near 0.2 GPa (0.21 GPa) and at 84.3 GPa,
+    and serves table-free constant-property benchmarks only.
     """
 
     enabled: bool = False
@@ -160,24 +161,28 @@ def _unwrap_scalar(result: Any, xp: Any, *inputs: Any) -> Any:
     return result
 
 
-def _scalar_or_nan(val: Any, name: str) -> float:
-    """Return ``float(val)`` on numeric scalars, ``nan`` on traced scalars; reject arrays, bools, and strings."""
-    dtype = getattr(val, 'dtype', None)
-    if (
-        isinstance(val, (bool, np.bool_, str, bytes))
-        or (dtype is not None and dtype.kind not in 'iuf')
-        or getattr(val, 'ndim', 0) > 0
-        or (not hasattr(val, 'ndim') and np.ndim(val) > 0)
-    ):
-        raise ValueError(f'{name} must be a scalar')
+def _is_non_real(val: Any) -> bool:
+    """Return True if ``val`` is or contains a boolean, string, complex, or non-numeric object."""
+    if isinstance(val, (bool, np.bool_, str, bytes)):
+        return True
     if isinstance(val, (int, float)):
-        return float(val)
+        return False
+    dtype = getattr(val, 'dtype', None)
+    if dtype is not None:
+        return dtype.kind not in 'iuf'
+    if isinstance(val, (list, tuple)):
+        return any(_is_non_real(x) for x in val)
+    return True
+
+
+def _scalar_or_nan(val: Any, name: str) -> float:
+    """Return ``float(val)`` on numeric scalars, ``nan`` on traced scalars; reject arrays and non-reals."""
+    if _is_non_real(val) or np.ndim(val) > 0:
+        raise ValueError(f'{name} must be a scalar')
     try:
         return float(val)
-    except TypeError as exc:
-        if 'Tracer' in type(val).__name__ or 'Concretization' in type(exc).__name__:
-            return np.nan
-        raise ValueError(f'{name} must be a real scalar, got {val!r}') from exc
+    except TypeError:
+        return np.nan
 
 
 _RULES: dict[str, tuple[Any, str]] = {
@@ -195,21 +200,16 @@ def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
     for name, val, rule, is_scalar in checks:
         if val is None:
             continue
-        ok, msg = _RULES[rule]
         if is_scalar:
             v = _scalar_or_nan(val, name)
-            if not np.isnan(v) and not ok(v) and xp is np:
-                raise ValueError(f'{name} must be {msg}, got {val}')
             arr = xp.asarray(val if np.isnan(v) else v, dtype=float)
         else:
-            dtype = getattr(val, 'dtype', None)
-            if isinstance(val, (bool, np.bool_, str, bytes)) or (
-                dtype is not None and dtype.kind not in 'iuf'
-            ):
+            if _is_non_real(val):
                 raise ValueError(f'{name} must be a real number or array, got {val!r}')
             arr = xp.asarray(val, dtype=float)
-            if xp is np and np.any(~np.isnan(arr) & ~ok(arr)):
-                raise ValueError(f'{name} must be {msg}, got {val}')
+        ok, msg = _RULES[rule]
+        if xp is np and np.any(~np.isnan(arr) & ~ok(arr)):
+            raise ValueError(f'{name} must be {msg}, got {val}')
         bad = ~ok(arr)
         invalid = invalid | (xp.any(bad) if reduce_any else bad)
     return invalid
@@ -344,7 +344,8 @@ def compute_arrhenius_enthalpy(
     Parameters
     ----------
     pressure : float or array-like
-        Pressure P [Pa].
+        Pressure P [Pa] (must be non-negative; callers clamp negative round-off
+        excursions at zero).
     g_homologous : float, optional
         Dimensionless homologous activation parameter g_hom [-]. Defaults to
         ``SolidRheologyParams.g_homologous`` when None.
@@ -431,7 +432,8 @@ def compute_arrhenius_viscosity(
     temperature : float or array-like
         Temperature T [K].
     pressure : float or array-like
-        Pressure P [Pa].
+        Pressure P [Pa] (must be non-negative; callers clamp negative round-off
+        excursions at zero).
     viscosity_solid : float, optional
         Reference solid-state dynamic viscosity eta_0 [Pa s] at (T_ref, P=0).
         Defaults to ``DEFAULT_VISCOSITY_SOLID`` (1.0e21) when None.
@@ -502,28 +504,14 @@ def compute_arrhenius_viscosity(
     invalid = _validate_inputs(
         (
             ('temperature', temperature, 'pos', False),
-            ('pressure', pressure, 'nonneg', False),
             ('viscosity_solid', viscosity_solid, 'pos', True),
-            ('g_homologous', g_homologous, 'nonneg', True),
-            ('solidus_temperature', solidus_temperature, 'pos', False),
-            ('t_sol_0', t_sol_ref_0, 'pos', True),
-            ('dt_sol_dp', dt_sol_dp, 'nonneg', True),
             ('arrhenius_t_ref', arrhenius_t_ref, 'pos', True),
-            ('r_gas', r_gas, 'pos', True),
             ('water_prefactor', water_prefactor, 'pos', False),
         ),
         xp,
     )
-
-    t = xp.asarray(temperature, dtype=float)
-    p = xp.asarray(pressure, dtype=float)
-    wp = xp.asarray(water_prefactor, dtype=float)
-    vs = xp.asarray(viscosity_solid, dtype=float)
-    g_arr = xp.asarray(g_homologous, dtype=float)
-    t_ref_arr = xp.asarray(arrhenius_t_ref, dtype=float)
-
     h_p = compute_arrhenius_enthalpy(
-        pressure=p,
+        pressure=pressure,
         g_homologous=g_homologous,
         solidus_temperature=solidus_temperature,
         t_sol_0=t_sol_ref_0,
@@ -531,6 +519,12 @@ def compute_arrhenius_viscosity(
         r_gas=r_gas,
         xp=xp,
     )
+
+    t = xp.asarray(temperature, dtype=float)
+    wp = xp.asarray(water_prefactor, dtype=float)
+    vs = xp.asarray(viscosity_solid, dtype=float)
+    g_arr = xp.asarray(g_homologous, dtype=float)
+    t_ref_arr = xp.asarray(arrhenius_t_ref, dtype=float)
     h_0 = g_arr * r_gas * t_sol_ref_0
 
     t_safe = xp.where(t > 0.0, t, 1.0)
