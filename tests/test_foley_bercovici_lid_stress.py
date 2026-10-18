@@ -1081,6 +1081,7 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
 def test_wlid_mask_width_surface_saturation_and_no_lid_finiteness():
     """Verify w_lid[-1] == 1 within 1e-12 on 175 kyr and erf lid (N=25..800), and finite when has_lid is False."""
     from pathlib import Path
+
     from scipy.special import erf
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
@@ -1130,6 +1131,59 @@ def test_wlid_mask_width_surface_saturation_and_no_lid_finiteness():
         )
         assert float(st_erf['w_lid'][-1]) == pytest.approx(1.0, abs=1.0e-12)
 
+    # Assertion on fine mesh (N=800) where cell scale is below lid_mask_width_cells * dT_rh:
+    dT_rh_800 = float(st_erf['dT_rh'])
+    scale_cell_800 = params_erf.lid_mask_width_cells * np.maximum(
+        np.abs(np.gradient(t_erf)), 1.0
+    )
+    scale_mask_800 = np.minimum(
+        scale_cell_800, params_erf.lid_mask_width_cells * max(dT_rh_800, 1.0)
+    )
+    t_lid_iso_800 = float(st_erf['T_i']) - params_erf.lid_contrast_coeff * dT_rh_800
+    w_hot_iso_mask_800 = 0.5 * (1.0 + np.tanh((t_erf - t_lid_iso_800) / scale_mask_800))
+    w_lid_expected_800 = (1.0 - w_hot_iso_mask_800) * float(st_erf['w_active'])
+    idx_base_800 = np.where((st_erf['w_lid'] > 0.05) & (st_erf['w_lid'] < 0.95))[0]
+    assert len(idx_base_800) > 0
+    for i_base in idx_base_800:
+        assert float(st_erf['w_lid'][i_base]) == pytest.approx(
+            float(w_lid_expected_800[i_base]), rel=1.0e-9
+        )
+
+    # Case with solidus_temperature given (a table) where the surface cell is wide (175 kyr profile):
+    t_sol_175 = np.linspace(3000.0, 1400.0, len(d['r_basic']))
+    params_sol = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
+    st_sol = compute_stagnant_lid_state(
+        radii=d['r_basic'],
+        temperature=d['T_basic'],
+        pressure=d['P_basic'],
+        convective_flux=d['F_conv'],
+        total_flux=d['F_tot'],
+        solidus_temperature=t_sol_175,
+        t_sol_0=1400.0,
+        melt_fraction=d['phi_basic'],
+        params=params_sol,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    assert float(st_sol['w_lid'][-1]) == pytest.approx(1.0, abs=1.0e-12)
+    scale_cell_sol = params_sol.lid_mask_width_cells * np.maximum(
+        np.abs(np.gradient(d['T_basic'])), 1.0
+    )
+    scale_mask_sol = np.minimum(
+        scale_cell_sol, params_sol.lid_mask_width_cells * max(float(st_sol['dT_rh']), 1.0)
+    )
+    t_lid_iso_sol = float(st_sol['T_i']) - params_sol.lid_contrast_coeff * float(
+        st_sol['dT_rh']
+    )
+    w_hot_iso_sol = 0.5 * (1.0 + np.tanh((d['T_basic'] - t_lid_iso_sol) / scale_mask_sol))
+    w_hot_sol_sol = 0.5 * (1.0 + np.tanh((d['T_basic'] - t_sol_175) / scale_mask_sol))
+    w_int_sol = np.maximum(w_hot_iso_sol, w_hot_sol_sol)
+    w_lid_expected_sol = (1.0 - w_int_sol) * float(st_sol['w_active'])
+    assert float(st_sol['w_lid'][-1]) == pytest.approx(
+        float(w_lid_expected_sol[-1]), rel=1.0e-9
+    )
+
     r_50 = np.linspace(3480.0e3, 6370.0e3, 50)
     p_50 = np.linspace(135.0e9, 1.0e5, 50)
     for t_case, fc_case in (
@@ -1152,3 +1206,65 @@ def test_wlid_mask_width_surface_saturation_and_no_lid_finiteness():
         )
         assert bool(st_nolid['has_lid']) is False
         assert np.all(np.isfinite(st_nolid['w_lid']))
+
+
+@pytest.mark.unit
+def test_w_active_scaling_relations_when_lid_is_active():
+    """Verify w_active scaling on tau_d, tau_buoy, d_lid, and lid_regime for weak convection."""
+    from aragog.rheology_lid import (
+        FB2014_STRESS_FACTOR,
+        SOLIDUS_MELT_FRACTION_THRESHOLD,
+        SOLIDUS_MELT_FRACTION_WIDTH,
+    )
+
+    inputs_weak = _make_earth_reference_inputs()
+    inputs_weak['convective_flux'] = np.zeros(50)
+    inputs_weak['convective_flux'][20] = 5.5
+    inputs_weak['unyielded_velocity'] = np.full(50, 1.0e-3)
+    st_weak = compute_stagnant_lid_state(**inputs_weak)
+
+    assert bool(st_weak['has_lid']) is True
+    w_active = float(st_weak['w_active'])
+    assert 0.70 < w_active < 0.75
+
+    r = inputs_weak['radii']
+    d_conv = float(r[-1] - r[0])
+    r_lid_base = float(st_weak['r_lid_base'])
+    r_i = float(st_weak['r_i'])
+
+    rho_arr = np.broadcast_to(np.asarray(inputs_weak['density'], dtype=float), r.shape)
+    g_arr = np.broadcast_to(np.asarray(inputs_weak['gravity'], dtype=float), r.shape)
+    alpha_arr = np.broadcast_to(
+        np.asarray(inputs_weak['thermal_expansivity'], dtype=float), r.shape
+    )
+    phi = inputs_weak['melt_fraction']
+
+    rho_i = float(np.interp(r_i, r, rho_arr))
+    g_i = float(np.interp(r_i, r, g_arr))
+    alpha_i = float(np.interp(r_i, r, alpha_arr))
+
+    eta_i = float(st_weak['eta_i'])
+    v_m = float(st_weak['v_m'])
+    dT_rh = float(st_weak['dT_rh'])
+    delta_rh = float(st_weak['delta_rh'])
+    w_y = float(st_weak['w_y'])
+
+    lid_cell_count = float(np.sum(st_weak['w_lid']))
+    w_solid_surf = float(
+        0.5
+        * (
+            1.0
+            - np.tanh((phi[-1] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
+        )
+    )
+    w_has_lid = float(0.5 * (1.0 + np.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf)
+
+    expected_tau_d = FB2014_STRESS_FACTOR * eta_i * v_m / d_conv * w_active
+    expected_tau_buoy = rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active
+    expected_d_lid = (r[-1] - r_lid_base) * w_active
+    expected_lid_regime = w_active * w_has_lid * (1.0 + w_y)
+
+    assert float(st_weak['tau_d']) == pytest.approx(expected_tau_d, rel=1.0e-9)
+    assert float(st_weak['tau_buoy']) == pytest.approx(expected_tau_buoy, rel=1.0e-9)
+    assert float(st_weak['d_lid']) == pytest.approx(expected_d_lid, rel=1.0e-9)
+    assert float(st_weak['lid_regime']) == pytest.approx(expected_lid_regime, rel=1.0e-9)
