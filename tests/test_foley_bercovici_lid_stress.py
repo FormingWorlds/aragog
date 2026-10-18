@@ -110,8 +110,14 @@ def test_fb2014_earth_reference_state():
     expected_delta_rh = 30791.0646
     expected_tau_buoy = rho * g * alpha * expected_dt_rh * expected_delta_rh
     expected_ratio = expected_tau_d / expected_tau_buoy
+    # Formula relation: tau_d_lid = 2 * eta_i * v_m / d_lid
     expected_tau_d_lid = 2.0 * eta_i * expected_vm / state['d_lid']
-    expected_eta_contrast = 1.0e20
+    # Derivation of eta_contrast:
+    # At T_surf = 300 K, Arrhenius viscosity exceeds 10^40 Pa s and is clamped to 10^viscosity_max_log10 = 1.0e40 Pa s.
+    # At T_i = arrhenius_t_ref = 1600 K, eta_i evaluates to 1.0e20 Pa s.
+    # Therefore eta_contrast = eta_surf / eta_i = 1.0e40 / 1.0e20 = 1.0e20.
+    expected_eta_surf = 1.0e40  # 10^viscosity_max_log10 with default 40.0
+    expected_eta_contrast = expected_eta_surf / eta_i
 
     assert state['theta'] == pytest.approx(expected_theta, rel=1.0e-6)
     assert state['dT_rh'] == pytest.approx(expected_dt_rh, rel=1.0e-6)
@@ -123,6 +129,7 @@ def test_fb2014_earth_reference_state():
     assert state['tau_buoy'] == pytest.approx(expected_tau_buoy, rel=1.0e-6)
     assert state['tau_d_over_tau_buoy'] == pytest.approx(expected_ratio, rel=1.0e-6)
     assert state['tau_d_lid'] == pytest.approx(expected_tau_d_lid, rel=1.0e-6)
+    # Regression pin from 6223e3f: on 50 nodes d_lid = 325494.33 m, giving tau_d_lid ~ 1.774 MPa.
     assert state['tau_d_lid'] == pytest.approx(1774312.943961, rel=1.0e-6)
     assert state['eta_contrast'] == pytest.approx(expected_eta_contrast, rel=1.0e-6)
 
@@ -404,6 +411,7 @@ def test_erf_boundary_layer_ti_and_175kyr_default_ti():
 
     _assert_hot_convecting_cmb_node_excluded(g_hom, t_m=t_m, t_s=t_s)
 
+    # Evaluates under linear solidus fallback (table-free) with solidus_temperature=None.
     ckpt_path = os.path.join(
         os.path.dirname(__file__), 'reference', 'checkpoint_profile_175kyr.npz'
     )
@@ -619,15 +627,45 @@ def test_w_active_mesh_independence_and_low_flux_solver_continuity():
 
 
 @pytest.mark.unit
-def test_fb2014_v_i_unyielded_velocity_hand_values():
-    """Verify v_i hand value with unyielded_velocity and scaling with w_active."""
+def test_fb2014_v_i_unyielded_velocity_and_w_active_scaling():
+    """Verify v_i unyielded_velocity LogSumExp selector and scaling with w_active."""
     inputs = _make_earth_reference_inputs()
     n_nodes = len(inputs['radii'])
     # Linear unyielded_velocity across geological velocity scale [1e-10, 1e-9] m/s.
     inputs['unyielded_velocity'] = np.linspace(1.0e-10, 1.0e-9, n_nodes)
     st = compute_stagnant_lid_state(**inputs)
-    # Pinned hand value exercises T_v = 3.17e-12 LogSumExp soft-max selector.
+
+    # Formula derivation: upper-mantle LogSumExp selector between r_mid and r_i with T_v = 3.17e-12 m/s:
+    r = inputs['radii']
+    dr_scale = np.maximum(np.mean(np.abs(r[1:] - r[:-1])), 1.0)
+    r_i = float(st['r_i'])
+    r_mid = 0.5 * (r_i + r[0])
+    w_conv = 0.5 * (
+        1.0 + np.tanh((inputs['convective_flux'] / inputs['total_flux'] - 0.05) / 0.01)
+    )
+    w_above_mid = 0.5 * (1.0 + np.tanh((r - r_mid) / dr_scale))
+    w_below_top = 0.5 * (1.0 + np.tanh((r_i - r) / dr_scale))
+    w_upper = w_above_mid * w_below_top * w_conv
+    n_upper = np.sum(w_upper) + 1e-12
+    t_v = 3.17e-12
+    v_abs = np.abs(inputs['unyielded_velocity'])
+    u = w_upper * v_abs
+    u_shift = np.max(u)
+    sum_w_exp = np.sum(w_upper * np.exp((u - u_shift) / t_v))
+    expected_v_i = float(
+        u_shift + t_v * (np.log(np.maximum(sum_w_exp, 1e-300)) - np.log(n_upper))
+    )
+
+    assert float(st['v_i']) == pytest.approx(expected_v_i, rel=1.0e-9)
+    # 6223e3f regression pin: on 50 nodes with linear unyielded velocity, v_i ~ 7.925e-10 m/s.
     assert float(st['v_i']) == pytest.approx(7.9253365e-10, rel=1.0e-6)
+    # Formula relation: v_i is bounded between unyielded_velocity at r_mid and r_i.
+    idx_mid = len(r) // 2
+    assert (
+        inputs['unyielded_velocity'][idx_mid]
+        < float(st['v_i'])
+        <= inputs['unyielded_velocity'][-1]
+    )
 
     # Weak convection where w_active < 1: v_i must scale with w_active.
     inputs_weak = _make_earth_reference_inputs()
@@ -635,8 +673,33 @@ def test_fb2014_v_i_unyielded_velocity_hand_values():
     inputs_weak['convective_flux'][20] = 5.5
     inputs_weak['unyielded_velocity'] = np.full(n_nodes, 1.0e-3)
     st_weak = compute_stagnant_lid_state(**inputs_weak)
+
+    # Formula derivation: w_active = 0.5 * (1 + tanh((f_int_max - 0.05) / 0.01)) and v_i = v_i_raw * w_active.
+    f_weak = inputs_weak['convective_flux'] / inputs_weak['total_flux']
+    w_conv_weak = 0.5 * (1.0 + np.tanh((f_weak - 0.05) / 0.01))
+    f_int_max_weak = float(np.max(f_weak[1:-1]))
+    expected_w_active = float(0.5 * (1.0 + np.tanh((f_int_max_weak - 0.05) / 0.01)))
+    r_i_weak = float(st_weak['r_i'])
+    r_mid_weak = 0.5 * (r_i_weak + r[0])
+    w_above_mid_weak = 0.5 * (1.0 + np.tanh((r - r_mid_weak) / dr_scale))
+    w_below_top_weak = 0.5 * (1.0 + np.tanh((r_i_weak - r) / dr_scale))
+    w_upper_weak = w_above_mid_weak * w_below_top_weak * w_conv_weak
+    n_upper_weak = np.sum(w_upper_weak) + 1e-12
+    u_weak = w_upper_weak * 1.0e-3
+    u_shift_weak = np.max(u_weak)
+    sum_w_exp_weak = np.sum(w_upper_weak * np.exp((u_weak - u_shift_weak) / t_v))
+    v_i_raw_weak = u_shift_weak + t_v * (
+        np.log(np.maximum(sum_w_exp_weak, 1e-300)) - np.log(n_upper_weak)
+    )
+    expected_v_i_weak = float(v_i_raw_weak * expected_w_active)
+
+    assert float(st_weak['w_active']) == pytest.approx(expected_w_active, rel=1.0e-9)
+    assert float(st_weak['v_i']) == pytest.approx(expected_v_i_weak, rel=1.0e-9)
+    # Regression pin: weak convection at node 20 (f_int_max = 0.055) gives w_active ~ 0.731059 and v_i ~ 2.672e-4 m/s.
     assert float(st_weak['w_active']) == pytest.approx(0.731059, rel=1.0e-4)
     assert float(st_weak['v_i']) == pytest.approx(2.672233e-04, rel=1.0e-6)
+    # Formula relation: weak convection scales v_i below full unyielded velocity 1e-3 m/s by w_active.
+    assert float(st_weak['v_i']) <= expected_w_active * 1.0e-3
 
 
 @pytest.mark.unit
@@ -658,8 +721,13 @@ def test_lid_mask_width_cells_sensitivity():
         lid_mask_width_cells=2.0,
     )
     st2 = compute_stagnant_lid_state(**inputs2)
-    # Doubling width from 1 to 2 cells widens the transition, shifting r_lid_base and d_lid.
+    # Formula relation: d_lid = r[-1] - r_lid_base, and doubling cell width widens transition, narrowing lid.
+    assert float(st2['d_lid']) == pytest.approx(
+        float(inputs2['radii'][-1] - st2['r_lid_base']), rel=1.0e-9
+    )
+    assert float(st2['d_lid']) < float(st1['d_lid'])
     assert abs(float(st2['d_lid']) - float(st1['d_lid'])) > 3.0e4
+    # 6223e3f regression pin: doubling width shifts r_lid_base down by ~15.6 km, d_lid to ~341.1 km.
     assert float(st2['d_lid']) == pytest.approx(341105.3726, rel=1.0e-6)
 
 
@@ -679,14 +747,37 @@ def test_non_uniform_profile_weighting_pins_ra_eff():
     """Verify _weighted_mean weights near-lid properties instead of column average."""
     inputs = _make_earth_reference_inputs()
     n_nodes = len(inputs['radii'])
+    d_conv = inputs['radii'][-1] - inputs['radii'][0]
+    delta_t = 1600.0 - 300.0
+    alpha, kappa, eta_i = 3.0e-5, 1.0e-6, 1.0e20
+
     inputs['gravity'] = np.linspace(10.0, 4.0, n_nodes)
     st_g = compute_stagnant_lid_state(**inputs)
-    # Real weighted mean evaluates near r_i (g ~ 4 m/s^2), yielding Ra_eff ~ 1.547e8.
-    # Column mean g = 7.0 would yield 2.175e8 (+40%).
+
+    # Formula relation: Ra_eff = (rho * g_i * alpha * DeltaT * d_conv^3) / (kappa * eta_i).
+    # Real weighted mean evaluates near r_i (g ~ 4.7 m/s^2), yielding Ra_eff ~ 1.547e8.
+    # Column mean g = 7.0 m/s^2 would yield 2.279e8 (+47%), while surface g = 4.0 m/s^2 yields 1.302e8 (-16%).
+    ra_mean_g = (3300.0 * np.mean(inputs['gravity']) * alpha * delta_t * d_conv**3) / (
+        kappa * eta_i
+    )
+    ra_surf_g = (3300.0 * inputs['gravity'][-1] * alpha * delta_t * d_conv**3) / (kappa * eta_i)
+    assert ra_surf_g < float(st_g['Ra_eff']) < ra_mean_g
+    assert abs(float(st_g['Ra_eff']) - ra_mean_g) / ra_mean_g > 0.25
+    # 6223e3f regression pin: near-lid weighted g yields Ra_eff ~ 1.5469e8.
     assert float(st_g['Ra_eff']) == pytest.approx(154691448.57, rel=1.0e-4)
 
     inputs['density'] = np.linspace(4000.0, 3000.0, n_nodes)
     st_grho = compute_stagnant_lid_state(**inputs)
+    # Near-lid density rho_i evaluated near r_i (rho ~ 3100 kg/m^3) bounds Ra_eff below column mean rho = 3500.
+    ra_mean_rho = (
+        np.mean(inputs['density'])
+        * float(st_g['Ra_eff'] * kappa * eta_i / (3300.0 * alpha * delta_t * d_conv**3))
+        * alpha
+        * delta_t
+        * d_conv**3
+    ) / (kappa * eta_i)
+    assert float(st_grho['Ra_eff']) < ra_mean_rho
+    # 6223e3f regression pin: near-lid weighted rho and g yield Ra_eff ~ 1.4828e8.
     assert float(st_grho['Ra_eff']) == pytest.approx(148281889.62, rel=1.0e-4)
 
 
@@ -701,8 +792,22 @@ def test_depth_varying_solidus_pins_theta_and_eta_i():
     inputs['t_sol_0'] = 1400.0
     inputs['params'] = replace(inputs['params'], t_sol_0=1400.0)
     st = compute_stagnant_lid_state(**inputs)
-    # T_sol_i is weighted at r_i; selecting T_sol_arr[0] (2200 K) would yield theta ~ 25.19.
+
+    # Formula relation: theta = g_hom * T_sol_i * (T_i - T_surf) / T_i^2, where T_sol_i is weighted at r_i.
+    t_sol_cmb = inputs['solidus_temperature'][0]
+    t_sol_surf = inputs['solidus_temperature'][-1]
+    g_hom = inputs['params'].g_homologous
+    t_i = float(st['T_i'])
+    theta_cmb = g_hom * t_sol_cmb * (t_i - 300.0) / (t_i**2)
+    theta_surf = g_hom * t_sol_surf * (t_i - 300.0) / (t_i**2)
+    assert theta_surf < float(st['theta']) < theta_cmb
+    assert abs(float(st['theta']) - theta_cmb) > 5.0
+    # 6223e3f regression pin: near-lid T_sol_i ~ 1528 K yields theta ~ 17.528.
     assert float(st['theta']) == pytest.approx(17.528141, rel=1.0e-4)
+
+    # Formula relation: T_lid lies in the boundary layer between T_lid_iso and T_i.
+    assert float(st['T_lid_iso']) < float(st['T_lid']) < t_i
+    # 6223e3f regression pin: lid boundary weights yield T_lid ~ 1482.7 K.
     assert float(st['T_lid']) == pytest.approx(1482.7168, rel=1.0e-4)
 
 
@@ -717,6 +822,13 @@ def test_surface_node_excluded_from_interior_ti_selector():
     inputs['convective_flux'] = f_conv
     inputs['total_flux'] = np.full(n_nodes, 100.0)
     st = compute_stagnant_lid_state(**inputs)
+
     # Excluding surface node keeps T_i at interior value (~1600 K), avoiding surface 300 K.
     assert abs(float(st['T_i']) - 1600.0) <= float(st['dT_rh'])
+    # Formula relation: tau_d = 2 * eta_i * v_m / d_conv.
+    d_conv = float(inputs['radii'][-1] - inputs['radii'][0])
+    expected_tau_d = 2.0 * float(st['eta_i']) * float(st['v_m']) / d_conv
+    assert float(st['tau_d']) == pytest.approx(expected_tau_d, rel=1.0e-6)
+    # 6223e3f regression pin: interior convective driving stress is ~232.3 kPa (surface 300 K would give ~1e11 Pa).
     assert float(st['tau_d']) == pytest.approx(232313.068898, rel=1.0e-4)
+    assert float(st['tau_d']) < 1.0e6
