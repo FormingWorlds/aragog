@@ -363,3 +363,47 @@ def test_an_entropy_cap_that_binds_first_ends_the_call_before_the_floor(shared_e
     S_min = float(shared_eos.S_min)
     s, f = _drained(shared_eos, S_min + 400.0, entropy_step_cap=50.0)
     assert s._solution.cap_label == 'entropy' and f[-1] > S_min + 100.0
+
+
+def _cells(s):
+    return np.asarray(s._solution.y, dtype=float)[: s._n_stag]
+
+
+def _steep_top(eos, top3):
+    """Interior at S_min + 2000 with the top three cells at S_min + ``top3``."""
+    p = _build_mushy_parameters(solver_method='cvode', end_time=10.0)
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    S0 = np.full(s._n_stag, float(eos.S_min) + 2000.0)
+    S0[-3:] = float(eos.S_min) + np.asarray(top3, dtype=float)
+    assert _weights(s) @ S0 < float(eos.S_min)  # precondition: the extrapolated top node is out
+    return S0
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+def test_a_warming_top_cell_under_an_extrapolated_falling_node_runs_its_span(shared_eos, method):
+    """Flux 0, top node at S_min - 58: the node falls only by extrapolation while the top cell
+    warms, so the call runs its full span with every cell inside the table."""
+    S_min = float(shared_eos.S_min)
+    s, _ = _drained(shared_eos, _steep_top(shared_eos, [2000.0, 236.0, 40.0]), flux=0.0, method=method)
+    assert s._solution.status == 0 and s._solution.t[-1] == pytest.approx(10.0)
+    assert _cells(s).min() > S_min + 39.0
+
+
+@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+def test_a_rising_node_at_the_table_stops_a_falling_top_cell_at_half_its_distance(
+    shared_eos, method
+):
+    """Top cells S_min + [40, 2000, 40] under 860 W/m^2: the extrapolated node rises while the
+    top cell falls, so the call advances and a root stops the top cell at S_min + 20 (named
+    eos_floor on CVODE); without the floor the same call drains it below the table."""
+    S_min = float(shared_eos.S_min)
+    S0 = _steep_top(shared_eos, [40.0, 2000.0, 40.0])
+    s, _ = _drained(shared_eos, S0, flux=860.0, end_time=2.0e4, method=method)
+    Y = _cells(s)
+    assert 0.0 < s._solution.t[-1] < 2.0e4
+    assert Y[-1, -1] == pytest.approx(S_min + 20.0, abs=1.0e-3) and Y.min() >= S_min + 20.0 - 1e-3
+    if method == 'cvode':
+        assert s._solution.status == 0 and s._solution.cap_label == 'eos_floor'
+    s_off, _ = _drained(shared_eos, S0, flux=860.0, end_time=2.0e4, margin=None, method=method)
+    assert _cells(s_off)[-1, -1] < S_min
