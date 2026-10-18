@@ -23,6 +23,9 @@ pytestmark = [pytest.mark.smoke, needs_eos]
 
 _FLUX = 1.0e6  # prescribed surface flux [W/m^2]; drains the top cell of the cold start in ~3 yr
 _TOL = 1.0e-4  # 1e-6 of the default margin
+# without scikits.odes 'cvode' falls back to Radau, which has no CVODE root or cap label
+needs_cvode = pytest.mark.skipif(not es._CVODE_AVAILABLE, reason='needs scikits.odes CVODE')
+CVODE_BDF = [pytest.param('cvode', marks=needs_cvode), 'bdf']
 
 
 @pytest.fixture(scope='module')
@@ -62,10 +65,7 @@ def _drained(
     **caps,
 ):
     """A cold start at entropy ``S0`` (scalar or per cell) under a prescribed surface flux, over
-    ``end_time`` years from ``start_time``; a CVODE case is skipped without scikits.odes, where
-    'cvode' falls back to Radau."""
-    if method == 'cvode' and not es._CVODE_AVAILABLE:
-        pytest.skip('needs scikits.odes CVODE')
+    ``end_time`` years from ``start_time``."""
     p = _build_mushy_parameters(solver_method=method, end_time=start_time + end_time)
     p.solver.start_time = start_time
     p.boundary_conditions.outer_boundary_condition = 4
@@ -100,7 +100,7 @@ def _floor_logs(caplog):
     ]
 
 
-@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+@pytest.mark.parametrize('method', CVODE_BDF)
 def test_floor_root_ends_the_call_at_the_margin(shared_eos, caplog, method):
     """CVODE (status 0) and scipy (status 1) stop at S_min + 100 before the call end with one
     WARNING; without the floor the same call drains below the table."""
@@ -119,6 +119,7 @@ def test_floor_root_ends_the_call_at_the_margin(shared_eos, caplog, method):
     assert s_off._solution.t[-1] == pytest.approx(10.0) and f_off[-1] < S_min
 
 
+@needs_cvode
 @pytest.mark.parametrize(
     ('core', 'mode', 'stratified', 'offset'),
     [
@@ -145,6 +146,7 @@ def test_floor_stops_each_core_and_rate_segments_at_its_level(
     assert bool(s._solution.get('segments')) is stratified
 
 
+@needs_cvode
 @pytest.mark.parametrize(
     ('offset', 'level'), [(100.0 + 5e-5, 50.0), (100.0 + 1e-3, 100.0), (50.0 + 1e-3, 50.0)]
 )
@@ -291,7 +293,7 @@ def test_floor_on_and_off_are_bit_equal_when_it_does_not_fire(
     assert on.energy_integrals == off.energy_integrals
 
 
-@pytest.mark.parametrize('method', ['cvode', 'bdf'])
+@pytest.mark.parametrize('method', CVODE_BDF)
 @pytest.mark.parametrize(
     'caps',
     [{'phi_step_cap': 0.05}, {'temperature_step_cap': 1.0e4}, {'entropy_step_cap': 1.0e5}],
@@ -366,6 +368,7 @@ def test_the_floor_log_names_the_half_margin_level(shared_eos, caplog, method):
     assert len(logs) == 1 and f'level={S_min + 50.0:.6g}' in logs[0][1]
 
 
+@needs_cvode
 def test_an_entropy_cap_that_binds_first_ends_the_call_before_the_floor(shared_eos):
     """With a 50 J/kg/K entropy cap and the floor 300 J/kg/K away, the entropy cap ends the
     call and the floor does not."""
@@ -605,6 +608,7 @@ def test_a_floor_stop_at_the_call_start_is_a_refusal(
     assert ledger and all(getattr(st, k) == getattr(zt, k) for k in ledger)
 
 
+@needs_cvode
 @pytest.mark.parametrize('where', ['trace', 'cell', 'node'])
 def test_a_state_below_the_table_only_in_the_trace_or_a_cell_is_discarded(
     shared_eos, caplog, monkeypatch, where
