@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 import warnings
 from unittest import mock
 
@@ -576,6 +577,7 @@ def test_a_discarded_call_keeps_the_start_state_time_and_energy_ledger(
     assert len(passes) == 2 and passes[0] is None and 'discarded' in passes[1]
     z, _ = _drained(shared_eos, S0, method=method, start_time=start_time, end_time=0.0)
     assert 'put the floor entropy at S_min -' in caplog.text
+    assert re.search(r'at [0-9.e+-]+ yr after the call start', caplog.text)
     sol, st, zt = s._solution, s.get_state(), z.get_state()
     assert sol.status == 1 and st.dt_actual == 0.0 and 'discarded' in caplog.text
     assert np.array_equal(_cells(s)[:, -1], S0) and np.all(np.asarray(sol.t) == sol.t[0])
@@ -601,3 +603,38 @@ def test_a_floor_stop_at_the_call_start_is_a_refusal(
     refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
     assert s._solution.status == 1 and s.get_state().dt_actual == 0.0 and len(refusals) == 1
     assert 'fell at the call start' in refusals[0].getMessage()
+
+
+@pytest.mark.parametrize('where', ['trace', 'cell'])
+def test_a_state_below_the_table_only_in_the_trace_or_a_cell_is_discarded(
+    shared_eos, caplog, monkeypatch, where
+):
+    """A simulated missed root: the CVODE result of a call that stops nowhere gets one state
+    below S_min, either only as an extra energy-trace node or only in a mid cell of the returned
+    end state with the top node above it. The call is discarded and returns its start, and the
+    warning names no root."""
+    real = EntropySolver._solve_cvode
+
+    def missed_root(self, start_time, end_time, y0, **kwargs):
+        res = real(self, start_time, end_time, y0, **kwargs)
+        if end_time > start_time:
+            sc = self._build_nondim_scales()
+            bad = np.asarray(res.y, dtype=float)[:, -1] * sc.state_scale + sc.state_offset
+            S_min = float(self.entropy_eos.S_min)
+            if where == 'trace':
+                bad[: self._n_stag] = S_min - 1.0
+                tt, ty = res.energy_trace
+                col = ((bad - sc.state_offset) / sc.state_scale)[:, np.newaxis]
+                res.energy_trace = (np.append(tt, tt[-1]), np.hstack([ty, col]))
+            else:
+                bad[5] = S_min - 1.0
+                res.y[:, -1] = (bad - sc.state_offset) / sc.state_scale
+        return res
+
+    monkeypatch.setattr(EntropySolver, '_solve_cvode', missed_root)
+    S0 = float(shared_eos.S_min) + 400.0
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(shared_eos, S0, flux=0.0)
+    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
+    assert np.all(_cells(s)[:, -1] == S0) and 'discarded' in caplog.text
+    assert 'root' not in [r for r in caplog.messages if 'discarded' in r][0]
