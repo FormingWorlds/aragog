@@ -141,7 +141,8 @@ class EnergyConfig:
         so a caller that retries with a shorter span can advance closer to
         S_min. Default 100,
         below the entropy span of the tables; ``None`` or a non-positive
-        value disables it, and a bool, NaN, infinity or non-number is
+        value disables it (a call that then leaves the tables raises
+        ``AcceptedStateError``), and a bool, NaN, infinity or non-number is
         refused.
     phase_boundary_entropy_margin : float
         Proximity band [J/kg/K] within which a staggered cell counts as
