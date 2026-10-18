@@ -587,8 +587,8 @@ def _check_accepted_states(
         Entropy range of the EOS tables [J/kg/K]; the edges are inside.
     cmb : ndarray, optional
         CMB basic-node entropy per node [J/kg/K], used in place of row 0 of ``weights @ S`` where
-        the model does not extrapolate that node (``energy_balance``: from its state;
-        ``core_module``: the bottom cell, as its gradient slot feeds nothing back).
+        the CMB flux does not come from that extrapolation (``energy_balance``: from its state;
+        otherwise the bottom cell, unless the CMB temperature is prescribed).
     skip_start : bool
         Skip the nodes at the start time; False checks them too (a start state that did not come
         from a checked call).
@@ -4394,9 +4394,8 @@ class EntropySolver:
             if self._core_bc == 'energy_balance':  # the CMB node the model sets from its state
                 r = np.asarray(self.evaluator.mesh.basic.radii).ravel()
                 cmb = y_acc[0] + y_acc[self._n_stag] * (r[0] - 0.5 * (r[0] + r[1]))
-            elif self._core_bc == 'core_module':  # the gradient slot feeds nothing back
-                cmb = y_acc[0]
-            skip_start, self._check_start = not getattr(self, '_check_start', False), False
+            elif self._inner_bc_kind != 3:
+                cmb = y_acc[0]  # the CMB law sets the CMB flux, so node 0 feeds no rate
             _check_accepted_states(
                 t_acc,
                 y_acc[: self._n_stag],
@@ -4404,8 +4403,9 @@ class EntropySolver:
                 float(self.entropy_eos.S_min),
                 float(self.entropy_eos.S_max),
                 cmb=cmb,
-                skip_start=skip_start,
+                skip_start=not getattr(self, '_check_start', False),
             )
+            self._check_start = False  # a start that raised is checked again on the next call
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
         # above) and naming whichever margin actually bound: read from
