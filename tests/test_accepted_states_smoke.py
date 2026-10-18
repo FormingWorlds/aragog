@@ -71,6 +71,16 @@ def test_get_state_checks_the_end_state(shared_eos, monkeypatch):
     assert e.value.check == 'end_melt_fraction'
 
 
+def _solves(s):
+    """True when the call solves without an accepted-state error, so a wrong raise fails an
+    assertion."""
+    try:
+        s.solve()
+    except AcceptedStateError:
+        return False
+    return True
+
+
 def _energy_balance(eos, S0, dSdr_cmb, method='cvode', margin=None):
     """A 1e-3 yr energy_balance call with no surface flux from cells ``S0`` and the CMB entropy
     gradient ``dSdr_cmb``; returns the solver and the offset of the CMB node from cell 0."""
@@ -99,8 +109,7 @@ def test_the_cmb_node_of_energy_balance_is_the_model_value_not_the_extrapolation
     S0 = np.full(11, S_min + 2000.0)
     S0[:2] = S_min + 15.0, S_min + 150.0
     s, _ = _energy_balance(shared_eos, S0, 0.0, method=method)
-    s.solve()
-    assert s._solution.status >= 0
+    assert _solves(s) and s._solution.status >= 0
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
@@ -161,8 +170,7 @@ def test_a_failed_call_is_not_checked(shared_eos, monkeypatch):
     s = EntropySolver(p, entropy_eos=shared_eos)
     s.initialize()
     s.set_initial_entropy(np.full(s._n_stag, float(shared_eos.S_min) + 400.0))
-    s.solve()
-    assert s._solution.status == -1
+    assert _solves(s) and s._solution.status == -1
 
 
 def test_get_state_checks_the_basic_node_end_temperatures(shared_eos, monkeypatch):
@@ -213,5 +221,4 @@ def test_the_start_is_checked_only_once_after_set_initial_entropy(shared_eos):
     start is changed without set_initial_entropy gets the floor refusal, not the error."""
     s, _ = _drained(shared_eos, float(shared_eos.S_min) + 400.0, flux=0.0)
     s._S0 = _bad_start(shared_eos)
-    s.solve()
-    assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
+    assert _solves(s) and s._solution.status == 1 and s.get_state().dt_actual == 0.0
