@@ -126,7 +126,7 @@ $$
 w_{T_i, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - f_{T_i}}{0.02 f_\text{int,scale}} \right) \right) w_{\text{conv}, k} I_{1 < k < N}
 $$
 
-The shallowest convection-dominated node from the surface is isolated by the cumulative product indicator $W_k = w_{T_i, k} \prod_{j < k} (1 - w_{T_i, j})$ and normalised to $\tilde{W}_k$ (falling back when $\sum_m W_m \to 0$ to the shallowest interior node with active convection from $w_\text{conv,int} = \max(w_{\text{conv}, k} - w_{\text{conv}, 0}, 0) I_{1 < k < N}$, or to the deepest interior node $k = 2$ when no interior node convects), from which interior state variables are evaluated smoothly:
+The shallowest convection-dominated node from the surface is isolated by the cumulative product indicator $W_k = w_{T_i, k} \prod_{j < k} (1 - w_{T_i, j})$ and normalised to $\tilde{W}_k$ (falling back when $\sum_m W_m \to 0$ to the shallowest interior node with active convection from $w_\text{conv,int} = \max(w_{\text{conv}, k} - w_\text{conv}(f = 0), 0) I_{1 < k < N}$, or to the deepest interior node $k = 2$ when no interior node convects), from which interior state variables are evaluated smoothly:
 
 $$
 T_i = \sum_{k=1}^N \tilde{W}_k T_k, \quad P_{T_i} = \sum_{k=1}^N \tilde{W}_k P_k
@@ -342,7 +342,7 @@ The kernels in `aragog.rheology` and `aragog.rheology_lid` satisfy the following
 1. **Zero driving stress ($\tau_d \to 0$):**
    $\tau_d / \tau_{y,\text{lid}} \to 0 \implies w_y \approx 0$ ($\frac{1}{2}(1 - \tanh 10) \approx 2.1 \times 10^{-9}$ when a lid is present, or $0$ when `has_lid` is `False`) and $\eta_\text{eff} = \eta_\text{diff}$. The system exhibits pure Arrhenius diffusion creep without plastic weakening.
 2. **Infinite yield stress ($\tau_y \to \infty$):**
-   $\tau_d / \tau_{y,\text{lid}} \to 0 \implies \eta_\text{eff} = \eta_\text{diff}$, yielding never activates, and the lid remains stagnant at diffusion-creep viscosity.
+   $\tau_d / \tau_{y,\text{lid}} \to 0 \implies \eta_\text{eff} = \eta_\text{diff}$, yielding stays inactive, and the lid remains stagnant at diffusion-creep viscosity.
 3. **Small homologous activation parameter ($g_\text{hom} \to 0^+$):**
    `SolidRheologyParams` requires `g_homologous > 0` when `enabled = True` in both `'rheological'` and `'fixed'` lid modes. In `compute_arrhenius_viscosity`, taking $g_\text{hom} \to 0$ gives $H(P) \to 0$ and recovers an isoviscous solid mantle $\eta_\text{diff} = \eta_\text{solid} f_\text{water}$.
 4. **Zero solidus pressure slope ($dT_\text{sol} / dP = 0$):**

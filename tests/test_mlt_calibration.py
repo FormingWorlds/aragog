@@ -244,7 +244,10 @@ def test_solid_rheology_params_top_slope_defaults_and_bounds():
     assert params.s_top_inf == pytest.approx(0.22, rel=1e-15)
     assert params.c_theta == pytest.approx(0.15, rel=1e-15)
 
-    custom = SolidRheologyParams(s_top_inf=0.18, c_theta=0.0)
+    try:
+        custom = SolidRheologyParams(s_top_inf=0.18, c_theta=0.0)
+    except ValueError:
+        pytest.fail('c_theta = 0.0 must be accepted')
     assert custom.s_top_inf == pytest.approx(0.18, rel=1e-15)
     assert custom.c_theta == pytest.approx(0.0, abs=1e-15)
 
@@ -260,3 +263,36 @@ def test_solid_rheology_params_top_slope_defaults_and_bounds():
         SolidRheologyParams(mlt_bottom_slope=1.1)
     with pytest.raises(ValueError, match='c_theta must be non-negative'):
         SolidRheologyParams(c_theta=-0.01)
+
+
+def test_viscous_mixing_length_factor_nan_scalar_inputs_propagate_to_boundaries():
+    """Verify NaN scalar inputs propagate to boundary nodes 0 and -1."""
+    r = np.linspace(3.48e6, 6.371e6, 41)
+    ml = np.minimum(r - r[0], r[-1] - r)
+
+    q_nan_stop = viscous_mixing_length_factor(r, r[0], r[-1], ml, s_top_inf=float('nan'))
+    assert np.isnan(q_nan_stop[0])
+    assert np.isnan(q_nan_stop[-1])
+    assert np.all(np.isnan(q_nan_stop))
+
+    q_nan_sbot = viscous_mixing_length_factor(r, r[0], r[-1], ml, bottom_slope=float('nan'))
+    assert np.isnan(q_nan_sbot[0])
+    assert np.isnan(q_nan_sbot[-1])
+    assert np.all(np.isnan(q_nan_sbot))
+
+    q_nan_rin = viscous_mixing_length_factor(r, float('nan'), r[-1], ml)
+    assert np.isnan(q_nan_rin[0])
+    assert np.isnan(q_nan_rin[-1])
+    assert np.all(np.isnan(q_nan_rin))
+
+    q_nan_rout = viscous_mixing_length_factor(r, r[0], float('nan'), ml)
+    assert np.isnan(q_nan_rout[0])
+    assert np.isnan(q_nan_rout[-1])
+    assert np.all(np.isnan(q_nan_rout))
+
+    q_nan_ctheta = viscous_mixing_length_factor(
+        r, r[0], r[-1], ml, theta=10.0, c_theta=float('nan')
+    )
+    assert np.isnan(q_nan_ctheta[0])
+    assert np.isnan(q_nan_ctheta[-1])
+    assert np.all(np.isnan(q_nan_ctheta))

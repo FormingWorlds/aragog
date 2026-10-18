@@ -560,7 +560,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
     ``P_basic`` 145.5 to 0.71 GPa, ``T_basic`` 4794.8 to 452.6 K, ``phi_basic`` 0.141 at
     the CMB to 0.0 at the surface) with ``T_basic[-1] = 452.559`` K and
     ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Because the interior temperature
-    selector ``w_Ti`` activates at ``f = 0.9`` and excludes the boundary nodes, both the
+    selector ``w_Ti`` is centred at ``f = 0.9`` and excludes the boundary nodes, both the
     default ``interior_flux_fraction = 0.05`` and ``0.10`` give ``T_i = 1423.012`` K,
     ``eta_i = 2.760821e+22`` Pa s, ``d_lid = 42026.67`` m, ``max(w_lid) = 0.851185``,
     ``tau_d = 1.299379e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.

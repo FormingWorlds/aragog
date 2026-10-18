@@ -129,7 +129,7 @@ def test_fb2014_earth_reference_state():
     assert state['tau_buoy'] == pytest.approx(expected_tau_buoy, rel=1.0e-6)
     assert state['tau_d_over_tau_buoy'] == pytest.approx(expected_ratio, rel=1.0e-6)
     assert state['tau_d_lid'] == pytest.approx(expected_tau_d_lid, rel=1.0e-6)
-    # Regression pin from 6223e3f: on 50 nodes d_lid = 325494.33 m, giving tau_d_lid ~ 1.774 MPa.
+    # Regression pin: on 50 nodes d_lid = 378391.41 m, giving tau_d_lid ~ 1.774 MPa.
     assert state['tau_d_lid'] == pytest.approx(1774312.943961, rel=1.0e-6)
     assert state['eta_contrast'] == pytest.approx(expected_eta_contrast, rel=1.0e-6)
 
@@ -510,9 +510,9 @@ def test_relative_ti_threshold_and_no_convection_fallback():
 
 @pytest.mark.unit
 def test_ti_continuity_across_flux_threshold():
-    """Verify T_i is continuous across interior f = 0.05 for surface f = 0.0 and 0.08."""
-    # Fixed rheological temperature scale at T_i = 1600 K: a_rh_fb * T_i / g_hom = 92.235105 K.
-    dt_rh_fixed = 1.3 * 1600.0 / (300.0e3 / (8.314462618 * 1600.0))
+    """Verify T_i is continuous across interior f = 0.05 within 1 dT_rh for surface f = 0.0 and 0.08."""
+    # Rheological temperature scale at T_i = 1600 K: dT_rh = (r_gas * T_i^2) / H = 70.950081 K.
+    dt_rh_fixed = 1600.0 / (300.0e3 / (8.314462618 * 1600.0))
     for f_surf in (0.0, 0.08):
         f_lo = np.zeros(50)
         f_lo[:43] = 0.0499
@@ -541,7 +541,7 @@ def test_ti_continuity_across_flux_threshold():
 @pytest.mark.unit
 def test_ti_linear_flux_profile_scale_invariance():
     """Verify linear f profile scaled by 0.06, 0.1, 0.2, 1.0 gives T_i within 1 dT_rh."""
-    dt_rh_fixed = 1.3 * 1600.0 / (300.0e3 / (8.314462618 * 1600.0))
+    dt_rh_fixed = 1600.0 / (300.0e3 / (8.314462618 * 1600.0))
     f_ref = np.zeros(50)
     f_ref[:43] = np.linspace(1.0, 0.5, 43)
     st_ref, _ = _eval_adiabat_lid_profile(f_ref)
@@ -657,7 +657,7 @@ def test_fb2014_v_i_unyielded_velocity_and_w_active_scaling():
     )
 
     assert float(st['v_i']) == pytest.approx(expected_v_i, rel=1.0e-9)
-    # 6223e3f regression pin: on 50 nodes with linear unyielded velocity, v_i ~ 7.925e-10 m/s.
+    # Regression pin: on 50 nodes with linear unyielded velocity, v_i ~ 7.925e-10 m/s.
     assert float(st['v_i']) == pytest.approx(7.9253365e-10, rel=1.0e-6)
     # Formula relation: v_i is bounded between unyielded_velocity at r_mid and r_i.
     idx_mid = len(r) // 2
@@ -727,7 +727,7 @@ def test_lid_mask_width_cells_sensitivity():
     )
     assert float(st2['d_lid']) < float(st1['d_lid'])
     assert abs(float(st2['d_lid']) - float(st1['d_lid'])) > 3.0e4
-    # 6223e3f regression pin: doubling width shifts r_lid_base down by ~15.6 km, d_lid to ~341.1 km.
+    # Regression pin: doubling width shifts r_lid_base up by ~37.3 km, narrowing d_lid to ~341.1 km.
     assert float(st2['d_lid']) == pytest.approx(341105.3726, rel=1.0e-6)
 
 
@@ -755,20 +755,20 @@ def test_non_uniform_profile_weighting_pins_ra_eff():
     st_g = compute_stagnant_lid_state(**inputs)
 
     # Formula relation: Ra_eff = (rho * g_i * alpha * DeltaT * d_conv^3) / (kappa * eta_i).
-    # Real weighted mean evaluates near r_i (g ~ 4.7 m/s^2), yielding Ra_eff ~ 1.547e8.
-    # Column mean g = 7.0 m/s^2 would yield 2.279e8 (+47%), while surface g = 4.0 m/s^2 yields 1.302e8 (-16%).
+    # Real weighted mean evaluates near r_i (g ~ 4.98 m/s^2), yielding Ra_eff ~ 1.547e8.
+    # Column mean g = 7.0 m/s^2 yields 2.175e8 (+40.6% vs Ra_eff), while surface g = 4.0 m/s^2 yields 1.243e8 (-19.7% vs Ra_eff).
     ra_mean_g = (3300.0 * np.mean(inputs['gravity']) * alpha * delta_t * d_conv**3) / (
         kappa * eta_i
     )
     ra_surf_g = (3300.0 * inputs['gravity'][-1] * alpha * delta_t * d_conv**3) / (kappa * eta_i)
     assert ra_surf_g < float(st_g['Ra_eff']) < ra_mean_g
     assert abs(float(st_g['Ra_eff']) - ra_mean_g) / ra_mean_g > 0.25
-    # 6223e3f regression pin: near-lid weighted g yields Ra_eff ~ 1.5469e8.
+    # Regression pin: near-lid weighted g yields Ra_eff ~ 1.5469e8.
     assert float(st_g['Ra_eff']) == pytest.approx(154691448.57, rel=1.0e-4)
 
     inputs['density'] = np.linspace(4000.0, 3000.0, n_nodes)
     st_grho = compute_stagnant_lid_state(**inputs)
-    # Near-lid density rho_i evaluated near r_i (rho ~ 3100 kg/m^3) bounds Ra_eff below column mean rho = 3500.
+    # Near-lid density rho_i evaluated near r_i (rho ~ 3163 kg/m^3) bounds Ra_eff below column mean rho = 3500.
     ra_mean_rho = (
         np.mean(inputs['density'])
         * float(st_g['Ra_eff'] * kappa * eta_i / (3300.0 * alpha * delta_t * d_conv**3))
@@ -777,7 +777,7 @@ def test_non_uniform_profile_weighting_pins_ra_eff():
         * d_conv**3
     ) / (kappa * eta_i)
     assert float(st_grho['Ra_eff']) < ra_mean_rho
-    # 6223e3f regression pin: near-lid weighted rho and g yield Ra_eff ~ 1.4828e8.
+    # Regression pin: near-lid weighted rho and g yield Ra_eff ~ 1.4828e8.
     assert float(st_grho['Ra_eff']) == pytest.approx(148281889.62, rel=1.0e-4)
 
 
@@ -802,12 +802,12 @@ def test_depth_varying_solidus_pins_theta_and_eta_i():
     theta_surf = g_hom * t_sol_surf * (t_i - 300.0) / (t_i**2)
     assert theta_surf < float(st['theta']) < theta_cmb
     assert abs(float(st['theta']) - theta_cmb) > 5.0
-    # 6223e3f regression pin: near-lid T_sol_i ~ 1528 K yields theta ~ 17.528.
+    # Regression pin: near-lid T_sol_i ~ 1528 K yields theta ~ 17.528.
     assert float(st['theta']) == pytest.approx(17.528141, rel=1.0e-4)
 
     # Formula relation: T_lid lies in the boundary layer between T_lid_iso and T_i.
     assert float(st['T_lid_iso']) < float(st['T_lid']) < t_i
-    # 6223e3f regression pin: lid boundary weights yield T_lid ~ 1482.7 K.
+    # Regression pin: lid boundary weights yield T_lid ~ 1482.7 K.
     assert float(st['T_lid']) == pytest.approx(1482.7168, rel=1.0e-4)
 
 
@@ -829,7 +829,7 @@ def test_surface_node_excluded_from_interior_ti_selector():
     d_conv = float(inputs['radii'][-1] - inputs['radii'][0])
     expected_tau_d = 2.0 * float(st['eta_i']) * float(st['v_m']) / d_conv
     assert float(st['tau_d']) == pytest.approx(expected_tau_d, rel=1.0e-6)
-    # 6223e3f regression pin: interior convective driving stress is ~232.3 kPa (surface 300 K would give ~1e11 Pa).
+    # Regression pin: interior convective driving stress is ~232.3 kPa (surface 300 K would give ~1e11 Pa).
     assert float(st['tau_d']) == pytest.approx(232313.068898, rel=1.0e-4)
     assert float(st['tau_d']) < 1.0e6
 
@@ -858,5 +858,5 @@ def test_depth_varying_solidus_surface_temperature_pins_eta_contrast():
 
     assert float(st['eta_contrast']) == pytest.approx(expected_contrast, rel=1.0e-6)
     assert float(st['eta_contrast']) < 50.0
-    # 6223e3f regression pin: unclipped surface viscosity yields eta_contrast ~ 15.07.
+    # Regression pin: unclipped surface viscosity yields eta_contrast ~ 15.07.
     assert float(st['eta_contrast']) == pytest.approx(15.069411, rel=1.0e-4)
