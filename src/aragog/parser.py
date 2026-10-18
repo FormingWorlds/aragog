@@ -23,7 +23,12 @@ import numpy.typing as npt
 from typed_configparser import ConfigParser
 
 from aragog.config.boundary import check_core_bc
-from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT, check_eos_floor_margin
+from aragog.config.energy import (
+    CONVECTIVE_THRESHOLD_DEFAULT,
+    EOS_FLOOR_MARGIN_DEFAULT,
+    check_convective_threshold,
+    check_eos_floor_margin,
+)
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
@@ -173,6 +178,9 @@ class _EnergyParameters:
     # rheological transition. Default 10.0 matches the PROTEUS
     # production value; set to 0.0 for textbook MLT.
     kappah_floor: float = 10.0
+    # Minimum drive gradient on unstable nodes and floor band [J/kg/K/m]; 0.0 gives
+    # the dS/dr < 0 switch. See EnergyConfig.convective_threshold.
+    convective_threshold: float = CONVECTIVE_THRESHOLD_DEFAULT
 
     # SPIDER-analogue bottom-up gate for the gravitational-separation mass
     # flux. Only allows melt/solid separation across an interface when the
@@ -231,6 +239,7 @@ class _EnergyParameters:
     tidal_array: npt.NDArray = field(default_factory=lambda: np.array([0.0], dtype=float))
 
     def __post_init__(self):
+        check_convective_threshold(self.convective_threshold)
         if self.phase_boundary_cap not in (None, 'fixed', 'rate'):
             raise ValueError(
                 f'phase_boundary_cap must be fixed or rate, got {self.phase_boundary_cap!r}'

@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from aragog.config.energy import EnergyConfig
 from aragog.parser import (
     Parameters,
     _BoundaryConditionsParameters,
@@ -553,3 +554,50 @@ def test_solver_parameters_rejects_bool_cvode_output_points(bad_value):
             rtol=1e-6,
             cvode_output_points=bad_value,
         )
+
+
+_ENERGY_FLAGS = dict(
+    conduction=True,
+    convection=True,
+    gravitational_separation=False,
+    mixing=False,
+    radionuclides=False,
+    tidal=False,
+)
+
+
+def _phase_params(**kw):
+    """Build PhaseParams; skips when the optional JAX stack is not installed."""
+    pytest.importorskip('jax')
+    pytest.importorskip('equinox')
+    from aragog.jax.phase import PhaseParams
+
+    return PhaseParams(**kw)
+
+
+_ALL_BUILDERS = pytest.mark.parametrize(
+    'build',
+    [
+        lambda **kw: _EnergyParameters(**_ENERGY_FLAGS, **kw),
+        lambda **kw: EnergyConfig(**_ENERGY_FLAGS, **kw),
+        _phase_params,
+    ],
+    ids=['_EnergyParameters', 'EnergyConfig', 'PhaseParams'],
+)
+
+
+@_ALL_BUILDERS
+@pytest.mark.parametrize(
+    'bad_value', [-1.0e-6, float('nan'), float('inf'), True, np.True_, np.array([1.0e-6])]
+)
+def test_convective_threshold_rejects_negative_and_non_finite(build, bad_value):
+    """Every constructor that takes D rejects a negative, non-finite, bool or array value."""
+    with pytest.raises(ValueError, match='convective_threshold'):
+        build(convective_threshold=bad_value)
+
+
+@_ALL_BUILDERS
+def test_convective_threshold_default_and_zero(build):
+    """D defaults to 0, the dS/dr < 0 switch, and accepts 1e-6 J/kg/K/m."""
+    assert build().convective_threshold == 0.0
+    assert build(convective_threshold=1.0e-6).convective_threshold == 1.0e-6

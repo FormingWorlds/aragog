@@ -145,7 +145,7 @@ def _build(
     sv = _SolverParameters(
         start_time=0.0,
         end_time=end_time,
-        # CVODE at the Aragog default 1e-8; a looser rtol can lock it at dS/dr = 0.
+        # CVODE at the Aragog default 1e-8; a looser rtol can lock it at the convective switch.
         atol=1.0e-8 if solver_method == 'cvode' else 1.0e-6,
         rtol=1.0e-8 if solver_method == 'cvode' else 1.0e-6,
         tsurf_poststep_change=30.0,
