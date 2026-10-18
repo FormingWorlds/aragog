@@ -126,12 +126,24 @@ def test_arrhenius_viscosity_parity_float64():
     )
     np.testing.assert_allclose(eta_np, expected, rtol=1.0e-12, atol=1.0e-30)
 
-    # Canary 1: sign flip on g_homologous must fail rtol=1.0e-12, atol=1.0e-30.
-    eta_sign_flip = compute_arrhenius_viscosity(
+    # Canary 1: negative g_homologous raises ValueError; wrong g_homologous (14.0) fails rtol=1.0e-12.
+    with pytest.raises(ValueError, match='g_homologous'):
+        compute_arrhenius_viscosity(
+            t_vals,
+            p_vals,
+            viscosity_solid=1.0e21,
+            g_homologous=-25.0,
+            solidus_temperature=t_sol_vals,
+            t_sol_0=1400.0,
+            arrhenius_t_ref=1600.0,
+            viscosity_max_log10=40.0,
+            xp=np,
+        )
+    eta_wrong_g = compute_arrhenius_viscosity(
         t_vals,
         p_vals,
         viscosity_solid=1.0e21,
-        g_homologous=-25.0,
+        g_homologous=14.0,
         solidus_temperature=t_sol_vals,
         t_sol_0=1400.0,
         arrhenius_t_ref=1600.0,
@@ -139,7 +151,7 @@ def test_arrhenius_viscosity_parity_float64():
         xp=np,
     )
     with pytest.raises(AssertionError):
-        np.testing.assert_allclose(eta_sign_flip, eta_np, rtol=1.0e-12, atol=1.0e-30)
+        np.testing.assert_allclose(eta_wrong_g, eta_np, rtol=1.0e-12, atol=1.0e-30)
 
     # Canary 2: dropping T_sol(0) / T_ref (equivalent to t_sol_0 = 0.0) must fail.
     eta_no_ref = compute_arrhenius_viscosity(
