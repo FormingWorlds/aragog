@@ -496,8 +496,38 @@ def test_relative_ti_threshold_and_no_convection_fallback():
     f_surf_only = np.zeros(50)
     f_surf_only[-1] = 1.0
     st_surf, _ = _eval_adiabat_lid_profile(f_surf_only)
-    assert float(st_surf['T_i']) == pytest.approx(float(t_ad[-1]), abs=1.0)
+    assert float(st_surf['T_i']) == pytest.approx(float(t_ad[1]), rel=1.0e-6)
 
     st_no_conv, _ = _eval_adiabat_lid_profile(np.zeros(50))
-    assert float(st_no_conv['T_i']) == pytest.approx(float(t_ad[0]), rel=1.0e-6)
+    assert float(st_no_conv['T_i']) == pytest.approx(float(t_ad[1]), rel=1.0e-6)
     assert abs(float(st_no_conv['T_i']) - float(np.mean(t_ad))) > 100.0
+
+
+@pytest.mark.unit
+def test_ti_continuity_across_flux_threshold():
+    """Verify T_i is continuous across interior f = 0.05 for surface f = 0.0 and 0.08."""
+    # Fixed rheological temperature scale at T_i = 1600 K: a_rh_fb * T_i / g_hom = 92.235105 K.
+    dt_rh_fixed = 1.3 * 1600.0 / (300.0e3 / (8.314462618 * 1600.0))
+    for f_surf in (0.0, 0.08):
+        f_lo = np.zeros(50)
+        f_lo[:43] = 0.0499
+        f_lo[-1] = f_surf
+        f_hi = np.zeros(50)
+        f_hi[:43] = 0.0501
+        f_hi[-1] = f_surf
+        st_lo, t_ad = _eval_adiabat_lid_profile(f_lo)
+        st_hi, _ = _eval_adiabat_lid_profile(f_hi)
+        assert abs(float(st_hi['T_i']) - float(st_lo['T_i'])) <= 5.0
+        assert abs(float(st_lo['T_i']) - float(t_ad[42])) <= dt_rh_fixed
+
+        f_col_lo = np.zeros(50)
+        f_col_lo[1:-1] = 0.0499
+        f_col_lo[0] = 0.0499
+        f_col_lo[-1] = f_surf
+        f_col_hi = np.zeros(50)
+        f_col_hi[1:-1] = 0.0501
+        f_col_hi[0] = 0.0501
+        f_col_hi[-1] = f_surf
+        st_col_lo, _ = _eval_adiabat_lid_profile(f_col_lo)
+        st_col_hi, _ = _eval_adiabat_lid_profile(f_col_hi)
+        assert abs(float(st_col_hi['T_i']) - float(st_col_lo['T_i'])) <= 15.0
