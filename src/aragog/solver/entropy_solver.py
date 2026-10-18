@@ -556,9 +556,12 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
     smallest cell entropy. Above ``S_min + margin/2`` (plus ``1e-6 margin``) the level is
     ``S_min + margin``, or ``S_min + margin/2`` below ``S_min + margin``, without an RHS call.
     Closer to the table, the rate of ``s0`` decides, taken as the smallest rate of every component
-    no more than ``1e-6 margin`` above ``s0``: a start inside the table arms half its distance to
-    ``S_min`` unless that rate reaches it in ``span``, which refuses the call; a start at or below
-    ``S_min`` (plus ``2e-6 margin``) arms nothing and is refused only when falling.
+    no more than ``1e-6 margin`` above ``s0``; the top-node component uses the larger of its own
+    rate and the top-cell rate, as the extrapolated node can fall while no cell does. A start
+    inside the table arms half its distance to ``S_min`` unless that rate reaches it in ``span``,
+    which refuses the call. A start at or below ``S_min`` (plus ``2e-6 margin``) is refused on any
+    fall, at every span; otherwise it arms half the distance of the smallest cell to ``S_min``
+    when that cell is above the table, and nothing when it is not.
 
     Parameters
     ----------
@@ -3892,39 +3895,49 @@ class EntropySolver:
                 getattr(self.parameters.energy, 'eos_floor_margin', EOS_FLOOR_MARGIN_DEFAULT)
             )
             S_tab = float(self.entropy_eos.S_min)
-            if floor_margin > 0.0 and not gradient_mode:
-                if floor_margin >= float(self.entropy_eos.S_max) - S_tab:
-                    raise ValueError(
-                        f'eos_floor_margin {floor_margin!r} J/kg/K must be below the entropy '
-                        f'span of the EOS tables, {float(self.entropy_eos.S_max) - S_tab!r}'
-                    )
+            if floor_margin >= float(self.entropy_eos.S_max) - S_tab:
+                raise ValueError(
+                    f'eos_floor_margin {floor_margin!r} J/kg/K must be below the entropy '
+                    f'span of the EOS tables, {float(self.entropy_eos.S_max) - S_tab!r}'
+                )
             if floor_margin > 0.0 and not gradient_mode and end_time > start_time:
-                w = np.asarray(self.evaluator.mesh._quantity_transform)[-1]
+                floor_w = np.asarray(self.evaluator.mesh._quantity_transform)[-1]
                 level, refuse = _floor_start_level(
-                    w,
+                    floor_w,
                     S_arr_stag,
                     lambda: np.ravel(self._dSdt_single(start_time, self._S0))[: self._n_stag],
                     S_tab,
                     floor_margin,
                     end_time - start_time,
                 )
+                s_floor = _floor_entropy(floor_w, S_arr_stag)
                 if level is not None:
-                    if (
-                        _floor_entropy(w, S_arr_stag) <= level
-                    ):  # node already past it: watch cells
-                        w = np.zeros_like(w)
-                        w[-1] = 1.0
-                    floor = dict(floor_weights=w, floor_level=level, floor_margin=floor_margin)
+                    if s_floor <= level:  # top node already past the level: watch the cells
+                        floor_w = np.zeros_like(floor_w)
+                        floor_w[-1] = 1.0
+                    floor = dict(
+                        floor_weights=floor_w, floor_level=level, floor_margin=floor_margin
+                    )
                 elif refuse:
                     floor_refused, end_time = True, start_time
-                    logger.warning(
-                        'EOS floor: entropy %.1f J/kg/K at the call start, at most %.1f J/kg/K '
-                        'above the table minimum %.1f J/kg/K, falls too fast; the call does not '
-                        'advance',
-                        _floor_entropy(w, S_arr_stag),
-                        0.5 * floor_margin,
-                        S_tab,
-                    )
+                    if s_floor <= S_tab + 2.0e-6 * floor_margin:
+                        logger.warning(
+                            'EOS floor: entropy %.1f J/kg/K at the call start, not above the '
+                            'table minimum %.1f J/kg/K plus %.2g J/kg/K, counts as at the table '
+                            'minimum and falls; the call does not advance',
+                            s_floor,
+                            S_tab,
+                            2.0e-6 * floor_margin,
+                        )
+                    else:
+                        logger.warning(
+                            'EOS floor: entropy %.1f J/kg/K at the call start, at most %.1f '
+                            'J/kg/K above the table minimum %.1f J/kg/K, falls too fast; the '
+                            'call does not advance',
+                            s_floor,
+                            0.5 * floor_margin,
+                            S_tab,
+                        )
 
         # External per-call atol scale factor (PROTEUS retry ladder
         # opts in by setting solver._atol_sf before solve()). Default
