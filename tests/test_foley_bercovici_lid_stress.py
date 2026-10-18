@@ -255,7 +255,10 @@ def _assert_w_conv_fixed_width_pins_w_active_and_w_upper(kwargs: dict[str, Any])
         }
     )
     w_conv_expected = 0.5 * (1.0 + np.tanh((f_smooth - params.interior_flux_fraction) / 0.01))
-    w_active_expected = 0.5 * (1.0 + np.tanh((np.sum(w_conv_expected) - 1.0) / 0.5))
+    f_int_max_expected = float(np.max(f_smooth[1:-1]))
+    w_active_expected = 0.5 * (
+        1.0 + np.tanh((f_int_max_expected - params.interior_flux_fraction) / 0.01)
+    )
     r_i = float(st_smooth['r_i'])
     r_mid = 0.5 * (r_i + r[0])
     dr_scale = max(float(np.mean(np.abs(r[1:] - r[:-1]))), 1.0)
@@ -548,3 +551,74 @@ def test_ti_linear_flux_profile_scale_invariance():
         st_pk, _ = _eval_adiabat_lid_profile(f_pk)
         assert abs(float(st_pk['T_i']) - ti_ref) <= dt_rh_fixed
         assert abs(float(st_pk['T_i']) - ti_ref) <= float(st_ref['dT_rh'])
+
+
+@pytest.mark.unit
+def test_w_active_mesh_independence_and_low_flux_solver_continuity():
+    """Verify mesh-independent w_active at f=0.03 and f=0.01 and continuity across f in 0..1e-3."""
+    from aragog.rheology_lid import compute_effective_viscosity
+
+    g_hom = 300.0e3 / (8.314462618 * 1600.0)
+    params = SolidRheologyParams(
+        enabled=True,
+        g_homologous=g_hom,
+        t_sol_0=1600.0,
+        dt_sol_dp=0.0,
+        arrhenius_t_ref=1600.0,
+        interior_flux_fraction=0.05,
+    )
+    w_act_by_n_003: list[float] = []
+    for n_nodes in (50, 100, 200, 400):
+        r = np.linspace(3480.0e3, 6370.0e3, n_nodes)
+        p = np.linspace(135.0e9, 1.0e5, n_nodes)
+        t = np.linspace(2200.0, 300.0, n_nodes)
+        for f_val, expected_w in ((0.03, 0.0179862), (0.01, 3.3535e-4)):
+            st = compute_stagnant_lid_state(
+                radii=r,
+                temperature=t,
+                pressure=p,
+                convective_flux=np.full(n_nodes, f_val * 100.0),
+                total_flux=np.full(n_nodes, 100.0),
+                solidus_temperature=None,
+                melt_fraction=np.zeros(n_nodes),
+                params=params,
+                viscosity_solid=1.0e20,
+                phi_rheo=0.4,
+                phi_width=0.15,
+            )
+            rel_tol = 1.0e-6 if f_val == 0.03 else 1.0e-4
+            assert float(st['w_active']) == pytest.approx(expected_w, rel=rel_tol)
+            assert bool(st['has_lid']) is False
+            assert float(st['d_lid']) == 0.0
+            assert float(st['tau_d']) == 0.0
+            assert abs(float(st['T_i']) - float(t[0])) > 1.0
+            if f_val == 0.03:
+                w_act_by_n_003.append(float(st['w_active']))
+    for w_val in w_act_by_n_003[1:]:
+        assert w_val == pytest.approx(w_act_by_n_003[0], rel=1.0e-12)
+
+    prev_st: dict[str, Any] | None = None
+    prev_log_eta: np.ndarray | None = None
+    eta_diff = np.full(50, 1.0e24)
+    for fv in np.linspace(0.0, 1.0e-3, 11):
+        f_arr = np.zeros(50)
+        f_arr[:43] = fv
+        st_step, _ = _eval_adiabat_lid_profile(f_arr)
+        log_eta = np.log10(
+            compute_effective_viscosity(
+                eta_diff=eta_diff,
+                eta_i=1.0e20,
+                tau_d=2.0e6,
+                tau_y_lid=1.0e6,
+                w_lid=st_step['w_lid'],
+                stress_closure_mode='lid',
+            )
+        )
+        if prev_st is not None and prev_log_eta is not None:
+            for k in ('tau_d', 'w_y', 'lid_regime'):
+                assert abs(float(st_step[k]) - float(prev_st[k])) <= 1.0e-3
+            assert bool(st_step['has_lid']) == bool(prev_st['has_lid'])
+            assert float(np.max(np.abs(st_step['w_lid'] - prev_st['w_lid']))) <= 1.0e-3
+            assert float(np.max(np.abs(log_eta - prev_log_eta))) / 4.30103 <= 1.0e-3
+        prev_st = st_step
+        prev_log_eta = log_eta
