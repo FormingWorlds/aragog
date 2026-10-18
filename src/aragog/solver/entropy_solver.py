@@ -577,7 +577,8 @@ def _check_accepted_states(t, S, weights, S_min: float, S_max: float) -> None:
     Parameters
     ----------
     t : ndarray
-        Node times [yr], shape (n,); node 0 is the call start and is not checked.
+        Node times [yr], shape (n,), non-decreasing; nodes at the call start time ``t[0]`` hold
+        the start state (twice on a zero-span call) and are not checked.
     S : ndarray
         Cell entropies [J/kg/K], shape (n_stag, n).
     weights : ndarray
@@ -591,21 +592,22 @@ def _check_accepted_states(t, S, weights, S_min: float, S_max: float) -> None:
         For the earliest node with a non-finite cell entropy, or a cell or basic-node entropy
         outside ``[S_min, S_max]``; at one node cells come before basic nodes.
     """
-    S = np.asarray(S, dtype=float)[:, 1:]
+    k0 = int(np.searchsorted(t, t[0], side='right'))
+    t, S = np.asarray(t)[k0:], np.asarray(S, dtype=float)[:, k0:]
     B = np.asarray(weights, dtype=float) @ np.where(np.isfinite(S), S, 0.0)
     for k in range(S.shape[1]):
         for kind, col in (('cell', S[:, k]), ('basic', B[:, k])):
             if kind == 'cell' and not np.all(np.isfinite(col)):
                 i = int(np.argmin(np.isfinite(col)))
                 raise AcceptedStateError(
-                    'finite_state', f'cell {i}', float(t[k + 1]), float(col[i]), np.nan
+                    'finite_state', f'cell {i}', float(t[k]), float(col[i]), np.nan
                 )
             out = (col < S_min) | (col > S_max)
             if out.any():
                 i = int(np.argmax(out))
                 bound = S_min if col[i] < S_min else S_max
                 raise AcceptedStateError(
-                    'entropy_table', f'{kind} {i}', float(t[k + 1]), float(col[i]), bound
+                    'entropy_table', f'{kind} {i}', float(t[k]), float(col[i]), bound
                 )
 
 
