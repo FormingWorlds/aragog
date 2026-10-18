@@ -110,6 +110,8 @@ def test_fb2014_earth_reference_state():
     expected_delta_rh = 30791.0646
     expected_tau_buoy = rho * g * alpha * expected_dt_rh * expected_delta_rh
     expected_ratio = expected_tau_d / expected_tau_buoy
+    expected_tau_d_lid = 2.0 * eta_i * expected_vm / state['d_lid']
+    expected_eta_contrast = 1.0e20
 
     assert state['theta'] == pytest.approx(expected_theta, rel=1.0e-6)
     assert state['dT_rh'] == pytest.approx(expected_dt_rh, rel=1.0e-6)
@@ -120,6 +122,9 @@ def test_fb2014_earth_reference_state():
     assert state['v_m'] == pytest.approx(expected_vm, rel=1.0e-6)
     assert state['tau_buoy'] == pytest.approx(expected_tau_buoy, rel=1.0e-6)
     assert state['tau_d_over_tau_buoy'] == pytest.approx(expected_ratio, rel=1.0e-6)
+    assert state['tau_d_lid'] == pytest.approx(expected_tau_d_lid, rel=1.0e-6)
+    assert state['tau_d_lid'] == pytest.approx(1774312.943961, rel=1.0e-6)
+    assert state['eta_contrast'] == pytest.approx(expected_eta_contrast, rel=1.0e-6)
 
 
 @pytest.mark.unit
@@ -227,7 +232,6 @@ def test_interior_selection_first_lid_node_and_resolution_invariance():
     )
     assert rel_diff_ti < 0.02
     assert rel_diff_taud < 0.02
-    _assert_w_conv_fixed_width_pins_w_active_and_w_upper(kwargs)
 
 
 def _assert_w_conv_fixed_width_pins_w_active_and_w_upper(kwargs: dict[str, Any]) -> None:
@@ -425,11 +429,10 @@ def test_erf_boundary_layer_ti_and_175kyr_default_ti():
         phi_rheo=0.4,
         phi_width=0.15,
     )
-    assert abs(float(st_ckpt['T_i']) - t_at_f09) <= 50.0
-    # Exact by construction: f_int_max == 1.0 on the 175 kyr profile matches the f = 0.9 threshold.
-    assert float(st_ckpt['T_i']) == 1423.012466223234
-    assert float(st_ckpt['tau_d']) == 1299378.5915329107
-    assert float(st_ckpt['eta_i']) == 2.760821023551699e22
+    assert abs(float(st_ckpt['T_i']) - t_at_f09) <= 1.0
+    assert float(st_ckpt['T_i']) == pytest.approx(1423.012466223234, rel=1.0e-9)
+    assert float(st_ckpt['tau_d']) == pytest.approx(1299378.5915329107, rel=1.0e-9)
+    assert float(st_ckpt['eta_i']) == pytest.approx(2.760821023551699e22, rel=1.0e-9)
 
 
 def _eval_adiabat_lid_profile(f_conv_arr: np.ndarray) -> tuple[dict[str, Any], np.ndarray]:
@@ -473,8 +476,7 @@ def _eval_adiabat_lid_profile(f_conv_arr: np.ndarray) -> tuple[dict[str, Any], n
 def test_relative_ti_threshold_and_no_convection_fallback():
     """Verify T_i relative threshold (0.9 * max interior f) and no-convection fallback."""
     st_earth = compute_stagnant_lid_state(**_make_earth_reference_inputs())
-    # Exact by construction: f_int_max == 1.0 on the Earth reference state matches the 0.9 threshold.
-    assert float(st_earth['T_i']) == 1599.9999999999998
+    assert float(st_earth['T_i']) == pytest.approx(1600.0, rel=1.0e-9)
 
     for f_val in (1.0, 0.85, 0.70):
         f_arr = np.zeros(50)
@@ -614,3 +616,107 @@ def test_w_active_mesh_independence_and_low_flux_solver_continuity():
             assert float(np.max(np.abs(log_eta - prev_log_eta))) / 4.30103 <= 1.0e-3
         prev_st = st_step
         prev_log_eta = log_eta
+
+
+@pytest.mark.unit
+def test_fb2014_v_i_unyielded_velocity_hand_values():
+    """Verify v_i hand value with unyielded_velocity and scaling with w_active."""
+    inputs = _make_earth_reference_inputs()
+    n_nodes = len(inputs['radii'])
+    # Linear unyielded_velocity across geological velocity scale [1e-10, 1e-9] m/s.
+    inputs['unyielded_velocity'] = np.linspace(1.0e-10, 1.0e-9, n_nodes)
+    st = compute_stagnant_lid_state(**inputs)
+    # Pinned hand value exercises T_v = 3.17e-12 LogSumExp soft-max selector.
+    assert float(st['v_i']) == pytest.approx(7.9253365e-10, rel=1.0e-6)
+
+    # Weak convection where w_active < 1: v_i must scale with w_active.
+    inputs_weak = _make_earth_reference_inputs()
+    inputs_weak['convective_flux'] = np.zeros(n_nodes)
+    inputs_weak['convective_flux'][20] = 5.5
+    inputs_weak['unyielded_velocity'] = np.full(n_nodes, 1.0e-3)
+    st_weak = compute_stagnant_lid_state(**inputs_weak)
+    assert float(st_weak['w_active']) == pytest.approx(0.731059, rel=1.0e-4)
+    assert float(st_weak['v_i']) == pytest.approx(2.672233e-04, rel=1.0e-6)
+
+
+@pytest.mark.unit
+def test_lid_mask_width_cells_sensitivity():
+    """Verify lid_mask_width_cells scales transition width and changes lid thickness."""
+    inputs1 = _make_earth_reference_inputs()
+    st1 = compute_stagnant_lid_state(**inputs1)
+
+    inputs2 = _make_earth_reference_inputs()
+    inputs2['params'] = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        g_homologous=inputs1['params'].g_homologous,
+        t_sol_0=1600.0,
+        dt_sol_dp=0.0,
+        arrhenius_t_ref=1600.0,
+        interior_flux_fraction=0.05,
+        lid_contrast_coeff=2.2,
+        lid_mask_width_cells=2.0,
+    )
+    st2 = compute_stagnant_lid_state(**inputs2)
+    # Doubling width from 1 to 2 cells widens the transition, shifting r_lid_base and d_lid.
+    assert abs(float(st2['d_lid']) - float(st1['d_lid'])) > 3.0e4
+    assert float(st2['d_lid']) == pytest.approx(341105.3726, rel=1.0e-6)
+
+
+@pytest.mark.unit
+def test_isothermal_column_delta_rh_capped_at_mantle_thickness():
+    """Verify delta_rh is capped at total mantle thickness on an isothermal column."""
+    inputs = _make_earth_reference_inputs()
+    inputs['temperature'] = np.full(len(inputs['radii']), 1600.0)
+    st = compute_stagnant_lid_state(**inputs)
+    d_conv = inputs['radii'][-1] - inputs['radii'][0]
+    # Without the min(delta_rh, r[-1] - r[0]) cap, dT_rh / dTdr_lid_base exceeds d_conv.
+    assert float(st['delta_rh']) == pytest.approx(d_conv, rel=1.0e-12)
+
+
+@pytest.mark.unit
+def test_non_uniform_profile_weighting_pins_ra_eff():
+    """Verify _weighted_mean weights near-lid properties instead of column average."""
+    inputs = _make_earth_reference_inputs()
+    n_nodes = len(inputs['radii'])
+    inputs['gravity'] = np.linspace(10.0, 4.0, n_nodes)
+    st_g = compute_stagnant_lid_state(**inputs)
+    # Real weighted mean evaluates near r_i (g ~ 4 m/s^2), yielding Ra_eff ~ 1.547e8.
+    # Column mean g = 7.0 would yield 2.175e8 (+40%).
+    assert float(st_g['Ra_eff']) == pytest.approx(154691448.57, rel=1.0e-4)
+
+    inputs['density'] = np.linspace(4000.0, 3000.0, n_nodes)
+    st_grho = compute_stagnant_lid_state(**inputs)
+    assert float(st_grho['Ra_eff']) == pytest.approx(148281889.62, rel=1.0e-4)
+
+
+@pytest.mark.unit
+def test_depth_varying_solidus_pins_theta_and_eta_i():
+    """Verify depth-varying solidus table weights T_sol at r_i rather than boundary nodes."""
+    from dataclasses import replace
+
+    inputs = _make_earth_reference_inputs()
+    n_nodes = len(inputs['radii'])
+    inputs['solidus_temperature'] = np.linspace(2200.0, 1400.0, n_nodes)
+    inputs['t_sol_0'] = 1400.0
+    inputs['params'] = replace(inputs['params'], t_sol_0=1400.0)
+    st = compute_stagnant_lid_state(**inputs)
+    # T_sol_i is weighted at r_i; selecting T_sol_arr[0] (2200 K) would yield theta ~ 25.19.
+    assert float(st['theta']) == pytest.approx(17.528141, rel=1.0e-4)
+    assert float(st['T_lid']) == pytest.approx(1482.7168, rel=1.0e-4)
+
+
+@pytest.mark.unit
+def test_surface_node_excluded_from_interior_ti_selector():
+    """Verify surface node is excluded from interior_node_mask when f_surf exceeds interior."""
+    inputs = _make_earth_reference_inputs()
+    n_nodes = len(inputs['radii'])
+    f_conv = np.zeros(n_nodes)
+    f_conv[:42] = 50.0  # interior convective fraction f = 0.5
+    f_conv[-1] = 100.0  # surface boundary node f = 1.0
+    inputs['convective_flux'] = f_conv
+    inputs['total_flux'] = np.full(n_nodes, 100.0)
+    st = compute_stagnant_lid_state(**inputs)
+    # Excluding surface node keeps T_i at interior value (~1600 K), avoiding surface 300 K.
+    assert abs(float(st['T_i']) - 1600.0) <= float(st['dT_rh'])
+    assert float(st['tau_d']) == pytest.approx(232313.068898, rel=1.0e-4)

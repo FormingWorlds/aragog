@@ -122,34 +122,49 @@ def test_theta_dependent_top_slope_hand_values_and_limits():
 
 
 @pytest.mark.physics_invariant
-def test_canary_theta_zero_and_exponent_mutations_fail(monkeypatch):
-    """Canary: s_top(0) != 1.0 or sign flip on c_theta fails the calibration assertions."""
+def test_viscous_mixing_length_factor_theta_dispatch_and_limits(monkeypatch):
+    """Verify viscous_mixing_length_factor evaluates compute_mlt_top_slope when theta is given."""
     r = np.linspace(3.48e6, 6.371e6, 41)
     ml = np.minimum(r - r[0], r[-1] - r)
     s_inf = 0.22
     c_th = 0.15
 
-    # True theta=0 factor is 1.0; a mutant that ignores theta (using constant s_top_inf=0.22)
-    # gives 0.22^4 = 0.00234256, failing the isoviscous recovery assertion.
-    q_zero_true = viscous_mixing_length_factor(
+    # In the isoviscous limit (theta = 0), s_top(0) = 1.0, recovering the Abe mixing length factor.
+    q_zero = viscous_mixing_length_factor(
         r, r[0], r[-1], ml, s_top_inf=s_inf, bottom_slope=1.0, theta=0.0, c_theta=c_th
     )
-    q_zero_mutant = viscous_mixing_length_factor(
-        r, r[0], r[-1], ml, s_top_inf=s_inf, bottom_slope=1.0
-    )
-    assert q_zero_true[TOP] == pytest.approx(1.0, rel=1e-14)
-    assert abs(q_zero_mutant[TOP] - 1.0) > 0.99
+    assert q_zero[TOP] == pytest.approx(1.0, rel=1e-14)
 
-    # Mutant flipping the sign of c_theta (c_theta = -0.15) causes s_top(15) to blow up > 1.
-    q_15_sign_mutant = viscous_mixing_length_factor(
-        r, r[0], r[-1], ml, s_top_inf=s_inf, bottom_slope=1.0, theta=15.0, c_theta=-c_th
+    # When theta is None, s_top defaults to s_top_inf, yielding s_top_inf^4 at the surface.
+    q_none = viscous_mixing_length_factor(
+        r, r[0], r[-1], ml, s_top_inf=s_inf, bottom_slope=1.0, theta=None
     )
-    assert q_15_sign_mutant[TOP] > 1000.0
+    assert q_none[TOP] == pytest.approx(s_inf**4, rel=1e-14)
+
+    # At finite theta = 15.0, factor matches analytical compute_mlt_top_slope^4.
+    expected_s15 = compute_mlt_top_slope(15.0, s_top_inf=s_inf, c_theta=c_th)
+    q_15 = viscous_mixing_length_factor(
+        r, r[0], r[-1], ml, s_top_inf=s_inf, bottom_slope=1.0, theta=15.0, c_theta=c_th
+    )
+    assert q_15[TOP] == pytest.approx(expected_s15**4, rel=1e-14)
 
     # Monkeypatching compute_mlt_top_slope proves viscous_mixing_length_factor delegates to it.
     monkeypatch.setattr('aragog.rheology.compute_mlt_top_slope', lambda *a, **kw: 0.5)
     q_patched = viscous_mixing_length_factor(r, r[0], r[-1], ml, theta=15.0)
     assert q_patched[TOP] == pytest.approx(0.5**4, rel=1e-14)
+
+
+@pytest.mark.physics_invariant
+def test_viscous_mixing_length_factor_bottom_slope_calibration():
+    """Verify viscous_mixing_length_factor with non-unit bottom_slope scales the CMB boundary layer."""
+    r = np.linspace(3.48e6, 6.371e6, 41)
+    ml = np.minimum(r - r[0], r[-1] - r)
+    # At the CMB boundary node (node 0), mixing_length is zero; factor is 1.0.
+    # At node 1 (near-CMB), radii - r_in governs l_v; with bottom_slope=0.5, l_v / l = 0.5.
+    q_05 = viscous_mixing_length_factor(r, r[0], r[-1], ml, bottom_slope=0.5)
+    assert q_05[0] == 1.0
+    assert q_05[1] == pytest.approx(0.5**4, rel=1e-12)
+    assert q_05[BOTTOM] == pytest.approx(0.5**4, rel=1e-12)
 
 
 @pytest.mark.physics_invariant
