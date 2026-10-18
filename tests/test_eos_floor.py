@@ -446,13 +446,12 @@ def test_a_top_node_just_above_the_table_stops_at_half_its_distance(shared_eos, 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
 def test_a_cell_at_the_table_that_does_not_fall_still_guards_the_others(shared_eos, method):
-    """A bottom cell 1e-5 above S_min with every other cell at S_min + 400 under 1e6 W/m^2: the
-    start arms half the bottom cell's distance, and the root stops the top node, extrapolated
+    """A mid cell 1e-5 above S_min, every other cell at S_min + 400, 1e6 W/m^2: the start arms
+    half the mid cell's distance, and the root stops the top node, extrapolated
     from the draining top cell, there instead of letting it leave the table."""
     S_min = float(shared_eos.S_min)
-    S0 = np.r_[
-        S_min + 1e-5, np.full(len(_steep_top(shared_eos, [400.0] * 3)) - 1, S_min + 400.0)
-    ]
+    S0 = np.full(len(_steep_top(shared_eos, [400.0] * 3)), S_min + 400.0)
+    S0[5] = S_min + 1e-5  # a mid cell: no extrapolated basic node leaves the table
     s, _ = _drained(shared_eos, S0, method=method)
     assert 0.0 < s._solution.t[-1] < 10.0 and _cells(s).min() >= S_min
     assert _basic(s)[-1, -1] == pytest.approx(S_min + 5e-6, abs=1e-7)
