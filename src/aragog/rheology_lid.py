@@ -416,6 +416,7 @@ def compute_stagnant_lid_state(
     r_lid_base = xp.sum(W_base_tilde * r)
     P_lid_base = xp.sum(W_base_tilde * P)
     T_lid = xp.sum(W_base_tilde * T)
+    d_geom = xp.maximum(r[-1] - r_lid_base, 1.0e-6)
     d_lid_raw = xp.maximum(r[-1] - r_lid_base, 0.0) * w_active
     has_lid = (
         is_convecting
@@ -480,7 +481,7 @@ def compute_stagnant_lid_state(
     )
 
     tau_d = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m / d_conv) * w_active)
-    tau_d_lid = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m) / xp.maximum(d_lid, 1e-6))
+    tau_d_lid = if_lid((FB2014_STRESS_FACTOR * eta_i * v_m / d_geom) * w_active)
     tau_buoy = if_lid(rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active)
     tau_d_over_tau_buoy = if_lid(tau_d / xp.maximum(tau_buoy, 1e-30))
 

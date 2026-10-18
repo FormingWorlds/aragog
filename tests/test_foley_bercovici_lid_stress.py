@@ -1263,11 +1263,15 @@ def test_w_active_scaling_relations_when_lid_is_active():
     w_has_lid = float(0.5 * (1.0 + np.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf)
 
     expected_tau_d = FB2014_STRESS_FACTOR * eta_i * v_m / d_conv * w_active
+    expected_tau_d_lid = (
+        FB2014_STRESS_FACTOR * eta_i * v_m / max(r[-1] - r_lid_base, 1.0e-6) * w_active
+    )
     expected_tau_buoy = rho_i * g_i * alpha_i * dT_rh * delta_rh * w_active
     expected_d_lid = (r[-1] - r_lid_base) * w_active
     expected_lid_regime = w_active * w_has_lid * (1.0 + w_y)
 
     assert float(st_weak['tau_d']) == pytest.approx(expected_tau_d, rel=1.0e-9)
+    assert float(st_weak['tau_d_lid']) == pytest.approx(expected_tau_d_lid, rel=1.0e-9)
     assert float(st_weak['tau_buoy']) == pytest.approx(expected_tau_buoy, rel=1.0e-9)
     assert float(st_weak['d_lid']) == pytest.approx(expected_d_lid, rel=1.0e-9)
     assert float(st_weak['lid_regime']) == pytest.approx(expected_lid_regime, rel=1.0e-9)
@@ -1407,3 +1411,68 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
             assert ti_curr <= prev_ti + 1.0e-9
             assert abs(ti_curr - prev_ti) <= 950.0
         prev_ti = ti_curr
+
+
+@pytest.mark.unit
+def test_tau_d_lid_scales_monotonically_with_w_active():
+    """Verify tau_d_lid -> 0 as w_active -> 0, rises monotonically with w_active, and matches s=1 reference pins."""
+    from pathlib import Path
+
+    from aragog.rheology_lid import FB2014_STRESS_FACTOR
+
+    ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
+    d = np.load(ckpt_path)
+    params = SolidRheologyParams(enabled=True)
+    r0 = d['r_basic']
+
+    for s_off in (0.0, 0.01, 0.03, 0.035):
+        st_off = compute_stagnant_lid_state(
+            radii=r0,
+            temperature=d['T_basic'],
+            pressure=d['P_basic'],
+            convective_flux=d['F_conv'] * s_off,
+            total_flux=d['F_tot'],
+            solidus_temperature=None,
+            melt_fraction=d['phi_basic'],
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        assert float(st_off['tau_d_lid']) == 0.0
+
+    s_active = (0.0353, 0.036, 0.04, 0.045, 0.05, 0.06, 0.08, 0.1, 0.2, 1.0)
+    tau_d_lid_vals: list[float] = []
+    for s in s_active:
+        st_s = compute_stagnant_lid_state(
+            radii=r0,
+            temperature=d['T_basic'],
+            pressure=d['P_basic'],
+            convective_flux=d['F_conv'] * s,
+            total_flux=d['F_tot'],
+            solidus_temperature=None,
+            melt_fraction=d['phi_basic'],
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        assert bool(st_s['has_lid']) is True
+        eta_i = float(st_s['eta_i'])
+        v_m = float(st_s['v_m'])
+        r_lid_base = float(st_s['r_lid_base'])
+        d_geom = max(float(r0[-1]) - r_lid_base, 1.0e-6)
+        w_act = float(st_s['w_active'])
+        tau_lid = float(st_s['tau_d_lid'])
+        expected = w_act * FB2014_STRESS_FACTOR * eta_i * v_m / d_geom
+        assert tau_lid == pytest.approx(expected, rel=1.0e-12)
+        tau_d_lid_vals.append(tau_lid)
+
+    for prev_val, curr_val in zip(tau_d_lid_vals[:-1], tau_d_lid_vals[1:], strict=True):
+        assert curr_val > prev_val
+    assert tau_d_lid_vals[0] < 0.1 * tau_d_lid_vals[-1]
+    assert tau_d_lid_vals[-1] == pytest.approx(89383803.45069079, rel=1.0e-12)
+
+    earth_inputs = _make_earth_reference_inputs()
+    st_earth = compute_stagnant_lid_state(**earth_inputs)
+    assert float(st_earth['tau_d_lid']) == pytest.approx(1774312.9439614443, rel=1.0e-12)
