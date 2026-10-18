@@ -16,6 +16,7 @@ import numpy.typing as npt
 
 R_GAS = 8.314462618
 COHESION_FLOOR = 1.0e-6
+DEFAULT_VISCOSITY_SOLID = 1.0e21
 
 FloatOrArray = float | npt.NDArray[np.floating]
 
@@ -213,8 +214,8 @@ def viscous_mixing_length_factor(
     r_in: Any,
     r_out: Any,
     mixing_length: Any,
-    s_top_inf: float = 0.22,
-    bottom_slope: float = 1.0,
+    s_top_inf: float | None = None,
+    bottom_slope: float | None = None,
     theta: Any = None,
     c_theta: float | None = None,
     *,
@@ -236,11 +237,13 @@ def viscous_mixing_length_factor(
         Inner and outer radius of the mantle [m].
     mixing_length : array
         Abe mixing length ``l`` at the basic nodes [m].
-    s_top_inf : float, default 0.22
+    s_top_inf : float, optional
         Upper mixing-length slope at the surface when ``theta`` is None, or asymptotic
         upper slope in the stagnant-lid limit when ``theta`` is provided [-].
-    bottom_slope : float, default 1.0
-        Lower mixing-length slope at the CMB [-].
+        Defaults to ``SolidRheologyParams.s_top_inf`` when None.
+    bottom_slope : float, optional
+        Lower mixing-length slope at the CMB [-]. Defaults to
+        ``SolidRheologyParams.mlt_bottom_slope`` when None.
     theta : float or array-like, optional
         Frank-Kamenetskii viscosity contrast parameter [-]. When provided, evaluates
         the upper slope via :func:`compute_mlt_top_slope`.
@@ -256,6 +259,10 @@ def viscous_mixing_length_factor(
         ``(l_v / l)^4``, and 1 where ``l`` is 0 (the boundary nodes).
     """
     _require_x64_if_jax(xp)
+    if s_top_inf is None:
+        s_top_inf = SolidRheologyParams.s_top_inf
+    if bottom_slope is None:
+        bottom_slope = SolidRheologyParams.mlt_bottom_slope
     eff_top_slope = s_top_inf
     if theta is not None:
         eff_top_slope = compute_mlt_top_slope(
@@ -272,10 +279,10 @@ def viscous_mixing_length_factor(
 
 def compute_arrhenius_enthalpy(
     pressure: FloatOrArray,
-    g_homologous: float = 25.0,
+    g_homologous: float | None = None,
     solidus_temperature: FloatOrArray | None = None,
     t_sol_0: float | None = None,
-    dt_sol_dp: float = 2.4e-8,
+    dt_sol_dp: float | None = None,
     r_gas: float = R_GAS,
     xp: Any = np,
 ) -> FloatOrArray:
@@ -292,15 +299,17 @@ def compute_arrhenius_enthalpy(
     ----------
     pressure : float or array-like
         Pressure P [Pa].
-    g_homologous : float, default 25.0
-        Dimensionless homologous activation parameter g_hom [-].
+    g_homologous : float, optional
+        Dimensionless homologous activation parameter g_hom [-]. Defaults to
+        ``SolidRheologyParams.g_homologous`` when None.
     solidus_temperature : float or array-like, optional
         Local solidus temperature T_sol(P) [K].
     t_sol_0 : float, optional
         Zero-pressure solidus T_sol(0) [K] for the linear fallback
         (``SolidRheologyParams.t_sol_0`` when None).
-    dt_sol_dp : float, default 2.4e-8
-        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa).
+    dt_sol_dp : float, optional
+        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback. Defaults to
+        ``SolidRheologyParams.dt_sol_dp`` when None.
     r_gas : float, default 8.314462618
         Universal gas constant R [J/(mol K)].
     xp : array module, default np
@@ -312,6 +321,10 @@ def compute_arrhenius_enthalpy(
         Activation enthalpy H(P) [J/mol].
     """
     _require_x64_if_jax(xp)
+    if g_homologous is None:
+        g_homologous = SolidRheologyParams.g_homologous
+    if dt_sol_dp is None:
+        dt_sol_dp = SolidRheologyParams.dt_sol_dp
     p = xp.asarray(pressure, dtype=float)
     if solidus_temperature is not None:
         t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
@@ -324,15 +337,15 @@ def compute_arrhenius_enthalpy(
 def compute_arrhenius_viscosity(
     temperature: FloatOrArray,
     pressure: FloatOrArray,
-    viscosity_solid: float = 1.0e21,
-    g_homologous: float = 25.0,
+    viscosity_solid: float | None = None,
+    g_homologous: float | None = None,
     solidus_temperature: FloatOrArray | None = None,
     t_sol_0: float | None = None,
-    dt_sol_dp: float = 2.4e-8,
-    arrhenius_t_ref: float = 1600.0,
+    dt_sol_dp: float | None = None,
+    arrhenius_t_ref: float | None = None,
     r_gas: float = R_GAS,
-    viscosity_max_log10: float = 40.0,
-    water_prefactor: FloatOrArray = 1.0,
+    viscosity_max_log10: float | None = None,
+    water_prefactor: FloatOrArray | None = None,
     xp: Any = np,
 ) -> FloatOrArray:
     r"""Compute temperature- and pressure-dependent homologous Arrhenius viscosity.
@@ -350,10 +363,12 @@ def compute_arrhenius_viscosity(
         Temperature T [K].
     pressure : float or array-like
         Pressure P [Pa].
-    viscosity_solid : float, default 1.0e21
+    viscosity_solid : float, optional
         Reference solid-state dynamic viscosity eta_0 [Pa s] at (T_ref, P=0).
-    g_homologous : float, default 25.0
-        Dimensionless homologous activation parameter g_hom [-].
+        Defaults to ``DEFAULT_VISCOSITY_SOLID`` (1.0e21) when None.
+    g_homologous : float, optional
+        Dimensionless homologous activation parameter g_hom [-]. Defaults to
+        ``SolidRheologyParams.g_homologous`` when None.
     solidus_temperature : float or array-like, optional
         Local solidus temperature T_sol(P) [K]. When None, uses the linear fallback
         ``t_sol_0 + dt_sol_dp * P``.
@@ -361,16 +376,20 @@ def compute_arrhenius_viscosity(
         Zero-pressure reference solidus temperature T_sol(0) [K]. Required when
         ``solidus_temperature`` is provided; defaults to
         ``SolidRheologyParams.t_sol_0`` for the linear fallback.
-    dt_sol_dp : float, default 2.4e-8
-        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback (24 K/GPa).
-    arrhenius_t_ref : float, default 1600.0
-        Reference temperature T_ref [K].
+    dt_sol_dp : float, optional
+        Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback. Defaults to
+        ``SolidRheologyParams.dt_sol_dp`` when None.
+    arrhenius_t_ref : float, optional
+        Reference temperature T_ref [K]. Defaults to
+        ``SolidRheologyParams.arrhenius_t_ref`` when None.
     r_gas : float, default 8.314462618
         Universal gas constant R [J/(mol K)].
-    viscosity_max_log10 : float, default 40.0
-        Upper bound on log10 dynamic viscosity [log10(Pa s)].
-    water_prefactor : float or array-like, default 1.0
-        Multiplicative prefactor for hydration weakening. Must be positive;
+    viscosity_max_log10 : float, optional
+        Upper bound on log10 dynamic viscosity [log10(Pa s)]. Defaults to
+        ``SolidRheologyParams.viscosity_max_log10`` when None.
+    water_prefactor : float or array-like, optional
+        Multiplicative prefactor for hydration weakening. Defaults to
+        ``SolidRheologyParams.water_prefactor`` when None. Must be positive;
         values ``<= 0`` raise ``ValueError`` when ``xp is np`` and return ``NaN``
         on the JAX path for JIT compatibility.
     xp : array module, default np
@@ -382,6 +401,18 @@ def compute_arrhenius_viscosity(
         Dynamic diffusion creep viscosity eta_diff [Pa s].
     """
     _require_x64_if_jax(xp)
+    if viscosity_solid is None:
+        viscosity_solid = DEFAULT_VISCOSITY_SOLID
+    if g_homologous is None:
+        g_homologous = SolidRheologyParams.g_homologous
+    if dt_sol_dp is None:
+        dt_sol_dp = SolidRheologyParams.dt_sol_dp
+    if arrhenius_t_ref is None:
+        arrhenius_t_ref = SolidRheologyParams.arrhenius_t_ref
+    if viscosity_max_log10 is None:
+        viscosity_max_log10 = SolidRheologyParams.viscosity_max_log10
+    if water_prefactor is None:
+        water_prefactor = SolidRheologyParams.water_prefactor
     if arrhenius_t_ref <= 0.0:
         raise ValueError(f'arrhenius_t_ref must be positive, got {arrhenius_t_ref}')
 
@@ -427,9 +458,9 @@ def compute_arrhenius_viscosity(
 
 def compute_yield_stress(
     pressure: FloatOrArray,
-    yield_stress_c: float = 50.0e6,
-    yield_stress_mu: float = 0.6,
-    yield_stress_max: float = 500.0e6,
+    yield_stress_c: float | None = None,
+    yield_stress_mu: float | None = None,
+    yield_stress_max: float | None = None,
     xp: Any = np,
 ) -> FloatOrArray:
     r"""Compute Byerlee frictional yield stress.
@@ -441,12 +472,14 @@ def compute_yield_stress(
     ----------
     pressure : float or array-like
         Pressure P [Pa].
-    yield_stress_c : float, default 50.0e6
-        Cohesion c [Pa].
-    yield_stress_mu : float, default 0.6
-        Friction coefficient mu [-].
-    yield_stress_max : float, default 500.0e6
-        Maximum yield stress ceiling [Pa].
+    yield_stress_c : float, optional
+        Cohesion c [Pa]. Defaults to ``SolidRheologyParams.yield_stress_c`` when None.
+    yield_stress_mu : float, optional
+        Friction coefficient mu [-]. Defaults to
+        ``SolidRheologyParams.yield_stress_mu`` when None.
+    yield_stress_max : float, optional
+        Maximum yield stress ceiling [Pa]. Defaults to
+        ``SolidRheologyParams.yield_stress_max`` when None.
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
 
@@ -456,6 +489,12 @@ def compute_yield_stress(
         Yield stress tau_y [Pa].
     """
     _require_x64_if_jax(xp)
+    if yield_stress_c is None:
+        yield_stress_c = SolidRheologyParams.yield_stress_c
+    if yield_stress_mu is None:
+        yield_stress_mu = SolidRheologyParams.yield_stress_mu
+    if yield_stress_max is None:
+        yield_stress_max = SolidRheologyParams.yield_stress_max
     p = xp.asarray(pressure, dtype=float)
     tau_y = xp.maximum(0.0, xp.minimum(yield_stress_c + yield_stress_mu * p, yield_stress_max))
     return _unwrap_scalar(tau_y, xp, pressure)

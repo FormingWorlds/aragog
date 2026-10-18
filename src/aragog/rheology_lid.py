@@ -192,6 +192,17 @@ def compute_stagnant_lid_state(
         raise ValueError(f'phi_width must be positive, got {phi_width}')
     if solidus_temperature is not None and t_sol_0 is None:
         raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
+    if t_sol_0 is not None:
+        try:
+            ts0_val = float(np.asarray(t_sol_0, dtype=float))
+            pts0_val = float(np.asarray(params.t_sol_0, dtype=float))
+        except Exception:
+            ts0_val = np.nan
+            pts0_val = np.nan
+        if np.isfinite(ts0_val) and np.isfinite(pts0_val) and ts0_val != pts0_val:
+            raise ValueError(
+                f't_sol_0 ({t_sol_0}) must match params.t_sol_0 ({params.t_sol_0})'
+            )
     t_sol_0_eff = params.t_sol_0 if t_sol_0 is None else t_sol_0
     r = xp.asarray(radii, dtype=float)
     if r.ndim != 1 or r.shape[0] < 3:
