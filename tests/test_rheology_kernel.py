@@ -6,6 +6,8 @@ and autodiff properties of the kernel in aragog.rheology.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import numpy as np
 import pytest
 
@@ -594,7 +596,7 @@ def _assert_invalid_raises_np_and_nan_jit(
         fn(**{**np_kw, field_name: bad_val, 'xp': np})
 
     if static_error:
-        with pytest.raises(ValueError, match=field_name):
+        with pytest.raises((ValueError, TypeError)):
             jit_fn({**jax_kw, field_name: bad_val})
         return
 
@@ -618,12 +620,22 @@ def _assert_invalid_raises_np_and_nan_jit(
         ('pressure', -np.inf, False),
         ('pressure', True, True),
         ('pressure', [True, True], True),
+        ('pressure', 1.0 + 2.0j, True),
+        ('pressure', np.array([1.0 + 2.0j, 2.0 + 3.0j]), True),
+        ('pressure', ['a', 'b'], True),
+        ('pressure', np.array(['a', 'b']), True),
+        ('pressure', [1.0, None], True),
+        ('pressure', np.array([1.0, object()], dtype=object), True),
         ('g_homologous', -25.0, False),
         ('g_homologous', -1.0e-6, False),
         ('g_homologous', np.inf, False),
         ('g_homologous', -np.inf, False),
         ('g_homologous', np.array([25.0, 14.0]), True),
         ('g_homologous', True, True),
+        ('g_homologous', 1.0 + 2.0j, True),
+        ('g_homologous', 'bad', True),
+        ('g_homologous', object(), True),
+        ('g_homologous', Decimal('25.0'), True),
         ('solidus_temperature', 0.0, False),
         ('solidus_temperature', -100.0, False),
         ('solidus_temperature', np.inf, False),
@@ -679,6 +691,12 @@ def test_arrhenius_enthalpy_validation_table(field_name: str, bad_val, static_er
         ('temperature', -np.inf, False),
         ('temperature', True, True),
         ('temperature', [True, True], True),
+        ('temperature', 1600.0 + 1.0j, True),
+        ('temperature', np.array([1600.0 + 1.0j, 1500.0 + 2.0j]), True),
+        ('temperature', ['1600', '1500'], True),
+        ('temperature', np.array(['1600', '1500']), True),
+        ('temperature', [1600.0, None], True),
+        ('temperature', np.array([1600.0, object()], dtype=object), True),
         ('pressure', -1.0, False),
         ('pressure', np.inf, False),
         ('pressure', -np.inf, False),
@@ -690,6 +708,10 @@ def test_arrhenius_enthalpy_validation_table(field_name: str, bad_val, static_er
         ('viscosity_solid', -np.inf, False),
         ('viscosity_solid', np.array([1.0e21, 2.0e21]), True),
         ('viscosity_solid', True, True),
+        ('viscosity_solid', 1.0e21 + 1.0j, True),
+        ('viscosity_solid', '1e21', True),
+        ('viscosity_solid', object(), True),
+        ('viscosity_solid', Decimal('1e21'), True),
         ('g_homologous', -25.0, False),
         ('g_homologous', -1.0e-6, False),
         ('g_homologous', np.inf, False),
@@ -720,6 +742,15 @@ def test_arrhenius_enthalpy_validation_table(field_name: str, bad_val, static_er
         ('water_prefactor', np.inf, False),
         ('water_prefactor', -np.inf, False),
         ('water_prefactor', True, True),
+        ('viscosity_max_log10', np.nan, False),
+        ('viscosity_max_log10', np.inf, False),
+        ('viscosity_max_log10', -np.inf, False),
+        ('viscosity_max_log10', True, True),
+        ('viscosity_max_log10', [40.0, 40.0], True),
+        ('viscosity_max_log10', 40.0 + 1.0j, True),
+        ('viscosity_max_log10', '40.0', True),
+        ('viscosity_max_log10', object(), True),
+        ('viscosity_max_log10', Decimal('40.0'), True),
     ],
 )
 def test_arrhenius_viscosity_validation_table(field_name: str, bad_val, static_error: bool):
@@ -738,6 +769,7 @@ def test_arrhenius_viscosity_validation_table(field_name: str, bad_val, static_e
         'dt_sol_dp': 2.4e-8,
         'arrhenius_t_ref': 1600.0,
         'water_prefactor': 1.0,
+        'viscosity_max_log10': 40.0,
     }
     jax_kw = {
         **np_kw,
@@ -761,17 +793,34 @@ def test_arrhenius_viscosity_validation_table(field_name: str, bad_val, static_e
     assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, g_homologous=np.nan, xp=np))
 
 
+_RADII_DUP = np.linspace(3.48e6, 6.37e6, 12)
+_RADII_DUP[3] = _RADII_DUP[2]
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ('field_name', 'bad_entry', 'as_scalar', 'static_error'),
     [
         ('radii', 0.0, False, False),
+        ('radii', _RADII_DUP, True, False),
+        ('radii', np.linspace(6.37e6, 3.48e6, 12), True, False),
+        ('radii', np.full(12, 3.48e6 + 1.0j), True, True),
+        ('radii', ['3.48e6'] * 12, True, True),
+        ('radii', [3.48e6] * 11 + [None], True, True),
+        ('radii', np.array([3.48e6] * 11 + [object()], dtype=object), True, True),
+        ('radii', [Decimal('3.48e6')] * 12, True, True),
         ('temperature', np.inf, False, False),
         ('temperature', -np.inf, False, False),
         ('temperature', 0.0, False, False),
         ('temperature', -50.0, False, False),
         ('temperature', True, False, True),
         ('temperature', [True] * 12, True, True),
+        ('temperature', np.full(12, 1600.0 + 1.0j), True, True),
+        ('temperature', ['1600.0'] * 12, True, True),
+        ('temperature', np.array(['1600.0'] * 12), True, True),
+        ('temperature', [1600.0] * 11 + [None], True, True),
+        ('temperature', np.array([1600.0] * 11 + [object()], dtype=object), True, True),
+        ('temperature', [Decimal('1600.0')] * 12, True, True),
         ('pressure', np.inf, False, False),
         ('pressure', -np.inf, False, False),
         ('pressure', -1.0e5, False, False),
@@ -798,6 +847,10 @@ def test_arrhenius_viscosity_validation_table(field_name: str, bad_val, static_e
         ('density', 0.0, False, False),
         ('density', -3300.0, True, False),
         ('density', True, True, True),
+        ('density', 3300.0 + 1.0j, True, True),
+        ('density', '3300.0', True, True),
+        ('density', object(), True, True),
+        ('density', Decimal('3300.0'), True, True),
         ('gravity', np.inf, False, False),
         ('gravity', -np.inf, False, False),
         ('gravity', 0.0, True, False),
@@ -812,6 +865,10 @@ def test_arrhenius_viscosity_validation_table(field_name: str, bad_val, static_e
         ('thermal_diffusivity', -1.0e-6, False, False),
         ('t_sol_0', 0.0, True, False),
         ('t_sol_0', -100.0, True, False),
+        ('t_sol_0', 1400.0 + 1.0j, True, True),
+        ('t_sol_0', '1400.0', True, True),
+        ('t_sol_0', object(), True, True),
+        ('t_sol_0', Decimal('1400.0'), True, True),
     ],
 )
 def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
@@ -881,6 +938,13 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         ('lid', 'eta_diff', -np.inf, False),
         ('lid', 'eta_diff', True, True),
         ('lid', 'eta_diff', [True, True], True),
+        ('lid', 'eta_diff', 1.0e22 + 1.0j, True),
+        ('lid', 'eta_diff', np.array([1.0e22 + 1.0j, 1.0e22 + 2.0j]), True),
+        ('lid', 'eta_diff', ['a', 'b'], True),
+        ('lid', 'eta_diff', np.array(['a', 'b']), True),
+        ('lid', 'eta_diff', [1.0e22, None], True),
+        ('lid', 'eta_diff', np.array([1.0e22, object()], dtype=object), True),
+        ('lid', 'eta_diff', Decimal('1e22'), True),
         ('lid', 'eta_i', 0.0, False),
         ('lid', 'eta_i', -1.0e20, False),
         ('lid', 'eta_i', np.inf, False),
@@ -891,6 +955,10 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         ('lid', 'tau_d', True, True),
         ('lid', 'tau_y_lid', -np.inf, False),
         ('lid', 'tau_y_lid', True, True),
+        ('lid', 'tau_y_lid', 1.0e8 + 1.0j, True),
+        ('lid', 'tau_y_lid', '1e8', True),
+        ('lid', 'tau_y_lid', object(), True),
+        ('lid', 'tau_y_lid', Decimal('1e8'), True),
         ('lid', 'w_lid', -0.1, False),
         ('lid', 'w_lid', 1.1, False),
         ('lid', 'w_lid', np.inf, False),
@@ -902,12 +970,18 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         ('local', 'eta_diff', -np.inf, False),
         ('local', 'eta_diff', True, True),
         ('local', 'eta_diff', [True, True], True),
+        ('local', 'eta_diff', 1.0e22 + 1.0j, True),
+        ('local', 'eta_diff', [1.0e22, None], True),
         ('local', 'strain_rate', -1.0e-15, False),
         ('local', 'strain_rate', np.inf, False),
         ('local', 'strain_rate', -np.inf, False),
         ('local', 'strain_rate', True, True),
         ('local', 'tau_y', -np.inf, False),
         ('local', 'tau_y', True, True),
+        ('local', 'tau_y', 1.0e8 + 1.0j, True),
+        ('local', 'tau_y', '1e8', True),
+        ('local', 'tau_y', object(), True),
+        ('local', 'tau_y', Decimal('1e8'), True),
         ('local', 'mixing_length', -1.0, False),
         ('local', 'mixing_length', np.inf, False),
         ('local', 'mixing_length', -np.inf, False),
@@ -917,6 +991,8 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         ('local', 'unyielded_velocity', True, True),
         ('local', 'tau_y_profile', -np.inf, False),
         ('local', 'tau_y_profile', True, True),
+        ('local', 'tau_y_profile', [1.0e8, None], True),
+        ('local', 'tau_y_profile', np.array([1.0e8 + 1.0j, 1.0e8 + 2.0j]), True),
     ],
 )
 def test_compute_effective_viscosity_rejects_invalid_inputs(
@@ -977,7 +1053,7 @@ def test_compute_effective_viscosity_rejects_invalid_inputs(
 
 @pytest.mark.unit
 def test_compute_effective_viscosity_accepts_infinite_tau_y_lid():
-    """Verify compute_effective_viscosity accepts +inf yield stress without yielding."""
+    """Verify compute_effective_viscosity accepts +inf yield stress with finite jax.grad."""
     jax = pytest.importorskip('jax')
     jax.config.update('jax_enable_x64', True)
     jnp = pytest.importorskip('jax.numpy')
@@ -1007,3 +1083,57 @@ def test_compute_effective_viscosity_accepts_infinite_tau_y_lid():
             }
         )
         assert float(res_jit_inf) == pytest.approx(1.0e22, rel=1.0e-12)
+
+    for wl_j in (None, jnp.asarray(0.5), jnp.asarray(1.0)):
+        grads_lid = jax.grad(
+            lambda ei, td, ed, w=wl_j: compute_effective_viscosity(
+                eta_diff=ed,
+                eta_i=ei,
+                tau_d=td,
+                tau_y_lid=jnp.asarray(jnp.inf),
+                w_lid=w,
+                stress_closure_mode='lid',
+                xp=jnp,
+            ),
+            argnums=(0, 1, 2),
+        )(jnp.asarray(1.0e20), jnp.asarray(1.0e6), jnp.asarray(1.0e22))
+        assert all(bool(jnp.all(jnp.isfinite(g))) for g in grads_lid)
+        assert float(grads_lid[0]) == 0.0
+        assert float(grads_lid[1]) == 0.0
+        assert float(grads_lid[2]) == pytest.approx(1.0, rel=1.0e-12)
+
+    grads_local = jax.grad(
+        lambda ed, sr: compute_effective_viscosity(
+            eta_diff=ed,
+            strain_rate=sr,
+            tau_y=jnp.asarray(jnp.inf),
+            stress_closure_mode='local',
+            xp=jnp,
+        ),
+        argnums=(0, 1),
+    )(jnp.asarray(1.0e22), jnp.asarray(1.0e-15))
+    assert all(bool(jnp.all(jnp.isfinite(g))) for g in grads_local)
+    assert float(grads_local[0]) == pytest.approx(1.0, rel=1.0e-12)
+    assert float(grads_local[1]) == 0.0
+
+    grads_prof = jax.grad(
+        lambda ed, v, ml: jnp.sum(
+            compute_effective_viscosity(
+                eta_diff=ed,
+                unyielded_velocity=v,
+                mixing_length=ml,
+                tau_y_profile=jnp.array([jnp.inf, jnp.inf]),
+                stress_closure_mode='local',
+                xp=jnp,
+            )
+        ),
+        argnums=(0, 1, 2),
+    )(
+        jnp.array([1.0e22, 2.0e22]),
+        jnp.array([1.0e-9, 2.0e-9]),
+        jnp.array([1.0e5, 2.0e5]),
+    )
+    assert all(bool(jnp.all(jnp.isfinite(g))) for g in grads_prof)
+    np.testing.assert_allclose(grads_prof[0], [1.0, 1.0], rtol=1.0e-12)
+    np.testing.assert_allclose(grads_prof[1], [0.0, 0.0], atol=1.0e-30)
+    np.testing.assert_allclose(grads_prof[2], [0.0, 0.0], atol=1.0e-30)
