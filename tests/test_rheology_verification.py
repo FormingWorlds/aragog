@@ -1567,3 +1567,49 @@ def test_compute_stagnant_lid_state_input_validation():
     for bad_pw in (0.0, -0.15):
         with pytest.raises(ValueError, match='phi_width must be positive'):
             compute_stagnant_lid_state(**{**valid_kw, 'phi_width': bad_pw})
+
+
+@pytest.mark.unit
+def test_compute_effective_viscosity_lid_inf_eta_diff_with_w_lid_one():
+    """Verify w_lid=1 with eta_diff=inf returns eta_eff rather than NaN."""
+    _, jnp = _import_jax_x64()
+    for xp_mod in (np, jnp):
+        res_inf = compute_effective_viscosity(
+            eta_diff=xp_mod.asarray([np.inf, 1.0e24]),
+            eta_i=xp_mod.asarray(1.0e20),
+            tau_d=xp_mod.asarray(2.0e6),
+            tau_y_lid=xp_mod.asarray(1.0e6),
+            w_lid=xp_mod.asarray([1.0, 1.0]),
+            stress_closure_mode='lid',
+            xp=xp_mod,
+        )
+        assert float(res_inf[0]) == pytest.approx(5.0e19, rel=1.0e-12)
+        assert float(res_inf[1]) == pytest.approx(5.0e19, rel=1.0e-12)
+
+
+@pytest.mark.unit
+def test_compute_effective_viscosity_local_rejects_both_tau_y_and_profile():
+    """Verify local stress closure mode raises ValueError when both tau_y and tau_y_profile are given."""
+    with pytest.raises(ValueError, match='not both'):
+        compute_effective_viscosity(
+            eta_diff=1.0e21,
+            strain_rate=1.0e-14,
+            tau_y=1.0e7,
+            tau_y_profile=1.0e3,
+            stress_closure_mode='local',
+        )
+
+
+@pytest.mark.unit
+def test_compute_effective_viscosity_w_lid_bounds_validation():
+    """Verify w_lid outside [0, 1] raises ValueError."""
+    for bad_wl in (-0.1, 1.5, np.array([0.5, 1.2]), np.array([-0.01, 0.5])):
+        with pytest.raises(ValueError, match='w_lid must be in'):
+            compute_effective_viscosity(
+                eta_diff=np.array([1.0e24, 1.0e24]),
+                eta_i=1.0e20,
+                tau_d=2.0e6,
+                tau_y_lid=1.0e6,
+                w_lid=bad_wl,
+                stress_closure_mode='lid',
+            )
