@@ -134,12 +134,14 @@ def compute_stagnant_lid_state(
     params : SolidRheologyParams
         Rheology parameter set.
     viscosity_solid : float
-        Reference solid mantle viscosity [Pa s], equal to ``eta_diff`` at
+        Reference solid mantle viscosity [Pa s] such that
+        ``viscosity_solid * f_water`` equals ``eta_diff`` at
         ``(params.arrhenius_t_ref, P = 0)`` for the linear solidus; when a
-        ``solidus_temperature`` table is provided, it is referenced to
-        ``params.t_sol_0`` and differs from ``eta_diff`` at the table's
-        ``T_sol(0)`` by ``exp(g_hom * (T_sol(0) - params.t_sol_0) / T)``
-        (1.57x at 1600 K for 1429 K against 1400 K).
+        ``solidus_temperature`` table is provided, ``viscosity_solid`` is
+        referenced to ``params.t_sol_0``, so the table ``eta_diff(T, 0)``
+        exceeds the linear-solidus ``eta_diff(T, 0)`` at the same ``T`` by
+        ``exp(g_hom * (T_sol(0) - params.t_sol_0) / T)`` (a ratio of 1.573,
+        or 1.57x, at 1600 K for 1429 K against 1400 K).
     phi_rheo : float
         Critical melt fraction for rheological transition [-].
     phi_width : float
@@ -174,8 +176,12 @@ def compute_stagnant_lid_state(
     Returns
     -------
     dict[str, Any]
-        Dictionary of boundary layer state diagnostics. ``has_lid`` is False when
-        any input is NaN while numeric diagnostics propagate NaN.
+        Dictionary of boundary layer state diagnostics, including
+        ``tau_d = w_active * 2 * eta_i * v_m / d`` and the lid-thickness-scaled
+        stress diagnostic
+        ``tau_d_lid = w_active * 2 * eta_i * v_m / max(r_top - r_lid_base, 1e-6 m)``
+        (zeroed when ``has_lid`` is False). ``has_lid`` is False when any input is
+        NaN while numeric diagnostics propagate NaN.
 
     Raises
     ------
@@ -210,9 +216,12 @@ def compute_stagnant_lid_state(
     ``has_lid`` is False, while ``T_i``, ``eta_i``, ``mu_i``, and ``theta`` serve as
     interior fallback diagnostics (selecting the shallowest interior node near
     ``0.9 * f_int_max`` when ``max_k w_conv_int >> 1e-6``, such as
-    ``1e-4 <= f_int_max < 0.035278``, and relaxing to the interior fallback node
-    ``T[1]`` as ``max_k w_conv_int -> 0`` at ``f = 0``) and all solver-facing outputs
-    vary continuously across uniform convective flux fractions ``f`` in ``[0, 1e-3]``.
+    ``1e-3 <= f_int_max < 0.035278`` where ``w_weight >= 1 - 4e-9``, transitioning
+    across the band near ``f_int_max ~ 6e-5`` where ``w_weight = 0.5`` at
+    ``f = 6.01e-5`` and ``w_weight = 0.72`` at ``f = 1e-4``, and relaxing to the
+    interior fallback node ``T[1]`` as ``max_k w_conv_int -> 0`` at ``f = 0``) and
+    all solver-facing outputs vary continuously across uniform convective flux
+    fractions ``f`` in ``[0, 1e-3]``.
 
     The lid-base locator ``W_base_tilde = _boundary_weights(w_interior, xp)[0]`` scans
     ``w_interior = max(w_hot_iso, w_hot_sol, w_hot_phi)`` (smoothed over the local cell
