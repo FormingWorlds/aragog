@@ -479,12 +479,14 @@ def test_a_node_falling_by_extrapolation_halves_its_distance_then_is_refused(
 T0S = [0.0, 1.0e6, 1.0e9, 4.5e9]  # call start times [yr]; the root error grows with the time
 
 
-def _stopped_or_discarded(s, caplog, level):
-    """The call stopped with the top node at most at ``level`` (the root error grows with the
-    time) and inside the table (checked in ``_drained``), or it was discarded: status 1, no time
-    advanced and the warning that names the discard."""
+def _stopped_or_discarded(s, caplog, level, start_time, method):
+    """The call stopped inside the table (checked in ``_drained``) with the top node at most at
+    ``level`` on CVODE, which returns its root past the crossing; a scipy event can stop on
+    either side, within the event error 2.2e-14 t |dS/dt| (rate bound 200 J/kg/K/yr). Or the
+    call was discarded: status 1, no time advanced and the warning that names the discard."""
     if s.get_state().dt_actual > 0.0:
-        assert _basic(s)[-1, -1] <= level + 1e-7
+        slack = 1e-7 if method == 'cvode' else 1e-7 + 2.2e-14 * start_time * 200.0
+        assert _basic(s)[-1, -1] <= level + slack
     else:
         assert s._solution.status == 1 and 'discarded' in caplog.text
 
@@ -503,7 +505,7 @@ def test_a_cell_at_the_table_that_does_not_fall_still_guards_the_others(
     with caplog.at_level(logging.INFO):
         s, _ = _drained(shared_eos, S0, method=method, start_time=start_time)
     assert s._solution.t[-1] < start_time + 10.0
-    _stopped_or_discarded(s, caplog, S_min + 5e-6)
+    _stopped_or_discarded(s, caplog, S_min + 5e-6, start_time, method)
     if start_time == 0.0:
         assert s.get_state().dt_actual > 0.0
 
@@ -554,16 +556,33 @@ def test_a_warming_start_with_no_room_for_a_level_names_that(shared_eos, caplog,
     assert len(refusals) == 1 and 'no level fits' in refusals[0].getMessage()
 
 
+def _scipy_stop_below(monkeypatch):
+    """Make every scipy call that advances end with the mid cell 1 J/kg/K below S_min, as a stop
+    that the event placed below the table would."""
+    real = es.solve_ivp
+
+    def below(fun, t_span, y0, **kwargs):
+        res = real(fun, t_span, y0, **kwargs)
+        if t_span[1] > t_span[0] and len(res.t) > 1:
+            res.y[5, -1] = res.y[5, -1] - 1e3  # far below the table in the scaled state
+        return res
+
+    monkeypatch.setattr(es, 'solve_ivp', below)
+
+
 @pytest.mark.parametrize(
     ('method', 'start_time'), [('cvode', 1.0e9), ('bdf', 9.0e9), ('radau', 1.2345678e9)]
 )
 def test_a_discarded_call_keeps_the_start_state_time_and_energy_ledger(
-    shared_eos, caplog, method, start_time
+    shared_eos, caplog, monkeypatch, method, start_time
 ):
-    """A mid cell 1e-6 above S_min under 1e6 W/m^2 at a late start time, where the stop lands
-    below the table: the call is discarded with a warning that gives the level and the entropy
-    as offsets from S_min, and its state, time, energy trace and per-call energy ledger equal
-    those of a call with no span from the same start."""
+    """A mid cell 1e-6 above S_min under 1e6 W/m^2 at a late start time: on CVODE the root lands
+    below the table by itself (by about 1e-3 J/kg/K at 1e9 yr); on scipy, whose event lands on
+    either side, a stub puts the stop below it. The call is discarded with a warning that gives
+    the level and the entropy as offsets from S_min, and its state, time, energy trace and
+    per-call energy ledger equal those of a call with no span from the same start."""
+    if method != 'cvode':
+        _scipy_stop_below(monkeypatch)
     S0, passes = _mid_cell_at(shared_eos, 1e-6), []
     solve = EntropySolver.solve
 
