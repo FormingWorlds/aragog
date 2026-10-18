@@ -426,7 +426,7 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     tau_buoy_val = 3300.0 * 9.81 * 3.0e-5 * dt_rh_val * 30791.0646
     tau_buoy_str = rf'{tau_buoy_val * 1e-6:.2f}\text{{ MPa}}'
     assert tau_buoy_str in doc_text
-    assert '0.150' in doc_text
+    assert r'\tau_d / \tau_\text{buoy} \approx 0.150' in doc_text
 
     # Verify computed reference temperatures, erf offsets, and solidus offset ratio in docs
     assert rf'{dt_rh_val:.2f}\text{{ K}}' in doc_text

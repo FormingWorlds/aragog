@@ -441,6 +441,7 @@ def test_erf_boundary_layer_ti_and_175kyr_default_ti():
         phi_width=0.15,
     )
     assert abs(float(st_ckpt['T_i']) - t_at_f09) <= 1.0
+    # Regression pin: interior temperature T_i for 175 kyr checkpoint profile
     assert float(st_ckpt['T_i']) == pytest.approx(1423.012466223234, rel=1.0e-9)
     assert float(st_ckpt['tau_d']) == pytest.approx(1299378.5915329107, rel=1.0e-9)
     assert float(st_ckpt['eta_i']) == pytest.approx(2.760821023551699e22, rel=1.0e-9)
@@ -907,6 +908,7 @@ def test_baseline_subtraction_w_weight_and_viscosity_mixture_blend():
         float(st_f0['eta_solid_arrhenius']), rel=1.0e-12
     )
     assert float(st_f1['eta_i']) == pytest.approx(1.0e15, rel=1.0e-6)
+    # Regression pin: resolved lid thickness d_lid for f_int = 0.040 profile
     assert float(st_f1['d_lid']) == pytest.approx(42026.66884939559, rel=1.0e-12)
     assert abs(np.log10(float(st_f0['eta_i'])) - np.log10(float(st_f1['eta_i']))) > 5.0
 
@@ -966,6 +968,7 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
         ti_s1 = float(st_s1['T_i'])
         dtrh_s1 = float(st_s1['dT_rh'])
         if n_nodes == 100:
+            # Regression pin: interior temperature T_i on 100-node reference profile
             assert ti_s1 == pytest.approx(1423.012466223234, rel=1.0e-12)
 
         for s in s_list:
@@ -999,6 +1002,7 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
     n_p = 40
     r_p = np.linspace(3.48e6, 6.371e6, n_p)
     p_p = np.linspace(135.0e9, 1.0e5, n_p)
+    # Regression pins: synthetic reference profiles with expected T_i values
     ref_cases = [
         (
             np.linspace(3000.0, 1800.0, n_p),
@@ -1071,6 +1075,7 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
             phi_rheo=0.4,
             phi_width=0.15,
         )
+        # Regression pin: expected_ti for each synthetic reference case
         assert float(st_c['T_i']) == pytest.approx(expected_ti, rel=1.0e-12)
 
     f_two = np.zeros(50)
@@ -1492,3 +1497,242 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
     earth_inputs = _make_earth_reference_inputs()
     st_earth = compute_stagnant_lid_state(**earth_inputs)
     assert float(st_earth['tau_d_lid']) == pytest.approx(1774312.9439614443, rel=1.0e-12)
+
+
+@pytest.mark.unit
+def test_thermal_diffusivity_and_expansivity_weighting_and_vm_scaling():
+    """Verify kappa and alpha profile weighting in v_m, Ra_eff, and tau_d."""
+    inputs = _make_earth_reference_inputs()
+    st_base = compute_stagnant_lid_state(**inputs)
+    n_nodes = len(inputs['radii'])
+
+    # Uniform kappa doubling: Ra_eff scales by 0.5, tau_d scales by 2^(1/3).
+    inp_k2 = {**inputs, 'thermal_diffusivity': np.full(n_nodes, 2.0e-6)}
+    st_k2 = compute_stagnant_lid_state(**inp_k2)
+    assert float(st_k2['Ra_eff']) / float(st_base['Ra_eff']) == pytest.approx(0.5, rel=1.0e-6)
+    expected_taud_ratio_k = 2.0 ** (1.0 / 3.0)
+    assert float(st_k2['tau_d']) / float(st_base['tau_d']) == pytest.approx(
+        expected_taud_ratio_k, rel=1.0e-4
+    )
+
+    # Uniform alpha doubling: Ra_eff and tau_buoy scale by 2.0, tau_d scales by 2^(2/3).
+    inp_a2 = {**inputs, 'thermal_expansivity': np.full(n_nodes, 6.0e-5)}
+    st_a2 = compute_stagnant_lid_state(**inp_a2)
+    assert float(st_a2['Ra_eff']) / float(st_base['Ra_eff']) == pytest.approx(2.0, rel=1.0e-6)
+    assert float(st_a2['tau_buoy']) / float(st_base['tau_buoy']) == pytest.approx(
+        2.0, rel=1.0e-6
+    )
+    expected_taud_ratio_a = 2.0 ** (2.0 / 3.0)
+    assert float(st_a2['tau_d']) / float(st_base['tau_d']) == pytest.approx(
+        expected_taud_ratio_a, rel=1.0e-4
+    )
+
+    # Depth-varying kappa profile: weighted mean near lid base differs from column mean.
+    k_prof = np.linspace(1.0e-6, 4.0e-6, n_nodes)
+    inp_kp = {**inputs, 'thermal_diffusivity': k_prof}
+    st_kp = compute_stagnant_lid_state(**inp_kp)
+    unweighted_mean_taud_ratio = (np.mean(k_prof) / 1.0e-6) ** (1.0 / 3.0)
+    measured_taud_ratio = float(st_kp['tau_d']) / float(st_base['tau_d'])
+    assert (
+        abs(measured_taud_ratio - unweighted_mean_taud_ratio) / unweighted_mean_taud_ratio
+        > 0.05
+    )
+    assert abs(measured_taud_ratio - 1.0) > 0.3
+
+    # Depth-varying alpha profile: weighted mean near lid base differs from column mean.
+    a_prof = np.linspace(1.0e-5, 5.0e-5, n_nodes)
+    inp_ap = {**inputs, 'thermal_expansivity': a_prof}
+    st_ap = compute_stagnant_lid_state(**inp_ap)
+    unweighted_mean_taud_ratio_a = (np.mean(a_prof) / 3.0e-5) ** (2.0 / 3.0)
+    measured_taud_ratio_a = float(st_ap['tau_d']) / float(st_base['tau_d'])
+    assert (
+        abs(measured_taud_ratio_a - unweighted_mean_taud_ratio_a) / unweighted_mean_taud_ratio_a
+        > 0.05
+    )
+    assert abs(measured_taud_ratio_a - 1.0) > 0.2
+
+
+@pytest.mark.unit
+def test_lid_mask_width_cells_nodal_scaling_and_dtrh_floor():
+    """Verify w_lid node-by-node scaling across lid_mask_width_cells and the 1 K floor."""
+    from dataclasses import replace
+
+    inputs = _make_earth_reference_inputs()
+    T = inputs['temperature']
+    gradT = np.abs(np.gradient(T))
+
+    for w in [1.0, 3.0, 10.0]:
+        params = replace(inputs['params'], lid_mask_width_cells=w)
+        st = compute_stagnant_lid_state(**{**inputs, 'params': params})
+        dT_rh = float(st['dT_rh'])
+        T_lid_iso = float(st['T_i']) - params.lid_contrast_coeff * dT_rh
+
+        # Independent formula rebuild of scale_mask and w_lid
+        scale_cell = w * np.maximum(gradT, 1.0)
+        scale_mask = np.minimum(scale_cell, w * np.maximum(dT_rh, 1.0))
+        w_hot_iso_mask = 0.5 * (1.0 + np.tanh((T - T_lid_iso) / scale_mask))
+        expected_w_lid = (1.0 - w_hot_iso_mask) * float(st['w_active'])
+
+        np.testing.assert_allclose(st['w_lid'], expected_w_lid, rtol=1.0e-12, atol=1.0e-12)
+
+    # Test 1 K floor with small dT_rh (< 1.0 K) via large g_homologous
+    params_high_g = replace(inputs['params'], g_homologous=3000.0)
+    st_floor = compute_stagnant_lid_state(**{**inputs, 'params': params_high_g})
+    dT_rh_floor = float(st_floor['dT_rh'])
+    assert dT_rh_floor < 1.0
+    T_lid_iso_floor = float(st_floor['T_i']) - params_high_g.lid_contrast_coeff * dT_rh_floor
+
+    # The 1 K floor forces max(dT_rh, 1.0) = 1.0 K
+    scale_cell_f = 1.0 * np.maximum(gradT, 1.0)
+    scale_mask_with_floor = np.minimum(scale_cell_f, 1.0 * 1.0)
+    scale_mask_without_floor = np.minimum(scale_cell_f, 1.0 * dT_rh_floor)
+    assert not np.allclose(scale_mask_with_floor, scale_mask_without_floor)
+
+    w_hot_iso_floor = 0.5 * (1.0 + np.tanh((T - T_lid_iso_floor) / scale_mask_with_floor))
+    expected_w_lid_floor = (1.0 - w_hot_iso_floor) * float(st_floor['w_active'])
+    np.testing.assert_allclose(
+        st_floor['w_lid'], expected_w_lid_floor, rtol=1.0e-12, atol=1.0e-12
+    )
+
+
+@pytest.mark.unit
+def test_lid_thresholds_isothermal_convective_and_cell_count():
+    """Verify has_lid, is_convecting, and lid_regime thresholds and exact cell count."""
+    inputs = _make_earth_reference_inputs()
+    n_nodes = len(inputs['radii'])
+
+    # 1. Isothermal column at 1600 K with fixed lid base above 1600 K:
+    # d_lid_raw is positive, but T_i - T_surf <= 1e-3 K -> has_lid is False and diagnostics zeroed
+    from dataclasses import replace
+
+    params_iso = replace(inputs['params'], lid_base_mode='fixed', lid_base_temperature=1700.0)
+    inp_iso = {
+        **inputs,
+        'temperature': np.full(n_nodes, 1600.0),
+        'params': params_iso,
+    }
+    st_iso = compute_stagnant_lid_state(**inp_iso)
+    assert bool(st_iso['has_lid']) is False
+    assert float(st_iso['v_i']) == 0.0
+    assert float(st_iso['tau_d']) == 0.0
+    assert float(st_iso['d_lid']) == 0.0
+    assert float(st_iso['lid_cell_count']) == pytest.approx(
+        float(np.sum(st_iso['w_lid'])), rel=1.0e-12
+    )
+
+    # 2. Localized low convective flux: 1e-6 < W_sum < 0.1, w_active > 0.05 -> convecting
+    inp_low_conv = {**inputs}
+    inp_low_conv['total_flux'] = np.full(n_nodes, 100.0)
+    inp_low_conv['convective_flux'] = np.zeros(n_nodes)
+    inp_low_conv['convective_flux'][10] = 3.6  # f = 0.036 -> W_sum ~ 0.0573
+    st_low_conv = compute_stagnant_lid_state(**inp_low_conv)
+    assert bool(st_low_conv['has_lid']) is True
+    assert float(st_low_conv['lid_cell_count']) == pytest.approx(
+        float(np.sum(st_low_conv['w_lid'])), rel=1.0e-12
+    )
+
+    # 3. 1-cell lid where w_has_lid is between 0.1 and 0.9
+    inp_1cell = {**inputs}
+    T_1cell = np.full(n_nodes, 1600.0)
+    T_1cell[-1] = 1450.0  # T_surf = 1450 K gives lid_cell_count ~ 0.469
+    inp_1cell['temperature'] = T_1cell
+    st_1cell = compute_stagnant_lid_state(**inp_1cell)
+    cell_count = float(st_1cell['lid_cell_count'])
+    assert 0.3 < cell_count < 0.7
+    assert float(st_1cell['lid_cell_count']) == pytest.approx(
+        float(np.sum(st_1cell['w_lid'])), rel=1.0e-12
+    )
+    expected_w_has_lid = 0.5 * (1.0 + np.tanh((cell_count - 0.5) / 0.1))
+    assert 0.1 < expected_w_has_lid < 0.9
+    assert float(st_1cell['lid_regime']) == pytest.approx(
+        float(st_1cell['w_active']) * expected_w_has_lid * (1.0 + float(st_1cell['w_y'])),
+        rel=1.0e-4,
+    )
+
+
+@pytest.mark.unit
+def test_tau_y_lid_evaluates_at_lid_base_pressure():
+    """Verify tau_y_lid is computed at P_lid_base rather than P_T_i."""
+    from dataclasses import replace
+
+    inputs = _make_earth_reference_inputs()
+    params = replace(inputs['params'], yield_stress_max=1.0e12)
+    st = compute_stagnant_lid_state(**{**inputs, 'params': params})
+
+    p_lid_base = float(st['P_lid_base'])
+    p_t_i = float(st['P_T_i'])
+    assert abs(p_t_i - p_lid_base) > 1.0e9
+
+    expected_tau_y = params.yield_stress_c + params.yield_stress_mu * p_lid_base
+    wrong_tau_y = params.yield_stress_c + params.yield_stress_mu * p_t_i
+    assert float(st['tau_y_lid']) == pytest.approx(expected_tau_y, rel=1.0e-12)
+    assert abs(float(st['tau_y_lid']) - wrong_tau_y) > 1.0e8
+
+
+@pytest.mark.unit
+def test_melt_fraction_lid_indicator_moves_with_phi_rheo_and_width():
+    """Verify r_lid_base moves with phi_rheo and phi_width when T < T_sol."""
+    from dataclasses import replace
+
+    inputs = _make_earth_reference_inputs()
+    n_nodes = len(inputs['radii'])
+    t_sol = np.full(n_nodes, 2500.0)
+    t_prof = np.full(n_nodes, 1200.0)
+    params = replace(
+        inputs['params'],
+        lid_base_mode='fixed',
+        lid_base_temperature=2000.0,
+        t_sol_0=2500.0,
+    )
+    phi_prof = np.linspace(0.6, 0.0, n_nodes)
+
+    base_inp = {
+        **inputs,
+        'temperature': t_prof,
+        'solidus_temperature': t_sol,
+        't_sol_0': 2500.0,
+        'melt_fraction': phi_prof,
+        'params': params,
+        'phi_rheo': 0.3,
+        'phi_width': 0.05,
+    }
+    st_base = compute_stagnant_lid_state(**base_inp)
+
+    # Shifting phi_rheo by +0.1 moves the transition deeper (smaller radius).
+    st_a1 = compute_stagnant_lid_state(**{**base_inp, 'phi_rheo': 0.4})
+    assert float(st_a1['r_lid_base']) < float(st_base['r_lid_base']) - 100.0e3
+
+    # Doubling phi_width changes the smooth transition location.
+    st_l33 = compute_stagnant_lid_state(**{**base_inp, 'phi_width': 0.10})
+    assert abs(float(st_l33['r_lid_base']) - float(st_base['r_lid_base'])) > 100.0e3
+    # Regression pin: base r_lid_base ~ 5065.4 km
+    assert float(st_base['r_lid_base']) == pytest.approx(5065401.9, rel=1.0e-4)
+
+
+@pytest.mark.unit
+def test_convective_flux_fraction_negative_and_submicro_total_flux():
+    """Verify convective flux fraction handles negative and sub-micro total flux."""
+    inputs = _make_earth_reference_inputs()
+    n_nodes = len(inputs['radii'])
+
+    # Negative total flux with positive convective flux: f = abs(F_conv / F_tot)
+    inp_neg = {
+        **inputs,
+        'total_flux': np.full(n_nodes, -100.0),
+        'convective_flux': np.full(n_nodes, 50.0),
+    }
+    st_neg = compute_stagnant_lid_state(**inp_neg)
+    assert float(st_neg['w_active']) == pytest.approx(1.0, abs=1.0e-5)
+    assert bool(st_neg['has_lid']) is True
+    assert float(st_neg['tau_d']) > 0.0
+    assert float(st_neg['d_lid']) > 0.0
+
+    # Sub-micro total flux (|F_tot| = 1e-9 > 1e-12 floor)
+    inp_sub = {
+        **inputs,
+        'total_flux': np.full(n_nodes, 1.0e-9),
+        'convective_flux': np.full(n_nodes, 5.0e-10),
+    }
+    st_sub = compute_stagnant_lid_state(**inp_sub)
+    assert float(st_sub['w_active']) == pytest.approx(1.0, abs=1.0e-5)
+    assert bool(st_sub['has_lid']) is True

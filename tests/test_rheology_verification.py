@@ -1919,3 +1919,65 @@ def test_viscous_mixing_length_factor_nan_scalar_inputs_propagate():
 
     q_rout = viscous_mixing_length_factor(r, r[0], float('nan'), ml)
     assert np.isnan(q_rout[0]) and np.isnan(q_rout[-1]) and np.all(np.isnan(q_rout))
+
+
+@pytest.mark.unit
+def test_solver_modules_do_not_import_rheology_kernels():
+    """Verify solver modules do not import aragog.rheology or aragog.rheology_lid."""
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo_root = Path(__file__).resolve().parents[1]
+    probe_script = """
+import sys, builtins, importlib, json
+target_mod = sys.argv[1]
+direct = []
+orig_import = builtins.__import__
+def hook(name, globals=None, locals=None, fromlist=(), level=0):
+    caller = globals.get('__name__') if globals else None
+    if caller == target_mod:
+        direct.append({'name': name, 'fromlist': list(fromlist) if fromlist else []})
+    return orig_import(name, globals, locals, fromlist, level)
+builtins.__import__ = hook
+sys.path.insert(0, sys.argv[2])
+importlib.import_module(target_mod)
+print(json.dumps(direct))
+"""
+
+    solver_modules = [
+        'aragog.jax.phase',
+        'aragog.solver.entropy_state',
+        'aragog.eos.entropy_phase',
+    ]
+
+    for mod in solver_modules:
+        res = subprocess.run(
+            [sys.executable, '-c', probe_script, mod, str(repo_root / 'src')],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        imports = json.loads(res.stdout)
+        rheo = [
+            imp
+            for imp in imports
+            if 'rheology' in imp['name'] or any('rheology' in str(f) for f in imp['fromlist'])
+        ]
+        assert not rheo, f'{mod} directly imports rheology modules: {rheo}'
+
+    # Canary: verify that if a module imports aragog.rheology, the probe catches it.
+    canary_res = subprocess.run(
+        [sys.executable, '-c', probe_script, 'aragog.config.phases', str(repo_root / 'src')],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    canary_imports = json.loads(canary_res.stdout)
+    canary_rheo = [
+        imp
+        for imp in canary_imports
+        if 'rheology' in imp['name'] or any('rheology' in str(f) for f in imp['fromlist'])
+    ]
+    assert canary_rheo, 'Canary failed: probe did not catch rheology import in config.phases'
