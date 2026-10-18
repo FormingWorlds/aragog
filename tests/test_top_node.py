@@ -53,6 +53,12 @@ def test_the_default_top_node_is_linear(build):
 
 
 @_BUILDERS
+def test_the_gradient_core_refuses_the_limited_node(build):
+    with pytest.raises(ValueError, match='top_node'):
+        build(core_bc='gradient', top_node='limited')
+
+
+@_BUILDERS
 @given(value=st.sampled_from([True, False, None, 1, 0.5, 'Limited', 'minmod', '', np.nan]))
 def test_another_top_node_value_is_refused(build, value):
     """A TOML true, a number, None, another spelling or another word is refused by name."""
@@ -131,15 +137,23 @@ def test_the_node_is_continuous_across_the_band(side):
     by a small multiple of the step, where a switch to the top cell would jump by about 333."""
     D, step = 50.0, 1.0e-3
     if side == 'S_min':
-        lo, hi, base = 0.0, np.inf, np.array([1700.0, 1000.0])
-        tops = 333.0 + step * np.arange(-60000, 60001)
+        lo, hi, base, mid = 0.0, np.inf, (1700.0, 1000.0), 333.0
     else:
-        lo, hi, base = -np.inf, 3000.0, np.array([1300.0, 2000.0])
-        tops = 2667.0 + step * np.arange(-60000, 60001)
-    nodes = np.array([top_node_entropy(np.r_[base, t], 1.0, lo, hi, D) for t in tops])
-    free = np.array([top_node_entropy(np.r_[base, t], 1.0) for t in tops])
+        lo, hi, base, mid = -np.inf, 3000.0, (1300.0, 2000.0), 2667.0
+    tops = mid + step * np.arange(-60000, 60001)
+    S = np.vstack([np.full_like(tops, base[0]), np.full_like(tops, base[1]), tops])
+    nodes, free = top_node_entropy(S, 1.0, lo, hi, D), top_node_entropy(S, 1.0)
     assert ((free < lo) | (free > hi)).any() and ((free > lo + D) & (free < hi - D)).any()
     assert np.max(np.abs(np.diff(nodes))) < 0.05
+
+
+@pytest.mark.parametrize(('x', 'w'), [(0.25, 0.15625), (0.5, 0.5), (0.75, 0.84375)])
+def test_the_blend_weight_is_the_smoothstep(x, w):
+    """With the limited node x D above S_min the node is S_N + w (S_f - S_N), w = 3x^2 - 2x^3."""
+    S = np.array([1700.0, 1000.0, 400.0])
+    free = top_node_entropy(S, 1.0)
+    node = top_node_entropy(S, 1.0, free - x * 40.0, np.inf, 40.0)
+    assert node == pytest.approx(S[-1] + w * (free - S[-1]), rel=1e-12)
 
 
 @given(S=st.tuples(_S, _S, _S), r=_R)

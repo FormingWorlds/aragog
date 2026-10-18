@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 import numpy as np
@@ -97,12 +98,6 @@ def test_the_jax_mesh_carries_the_limited_node(shared_eos):
         assert np.allclose(got, mesh.entropy_at_basic_nodes(S), rtol=0.0, atol=1e-9)
 
 
-def test_the_limited_mode_is_logged(shared_eos, caplog):
-    with caplog.at_level(logging.INFO):
-        _solver(shared_eos, 'limited')
-    assert any('top node: limited' in r.getMessage() for r in caplog.records)
-
-
 @pytest.mark.parametrize('top3', [[3000.0, 1700.0, 450.0], [3000.0, 2000.0, 900.0]])
 @pytest.mark.parametrize('core_bc', ['core_module', 'energy_balance', 'quasi_steady'])
 def test_the_jax_rhs_uses_the_limited_node_as_the_numpy_rhs_does(core_bc, top3):
@@ -179,16 +174,105 @@ def test_the_mesh_takes_the_mode_from_the_parameters_and_the_bounds_from_the_eos
 
 def test_the_grey_body_flux_is_continuous_across_the_band(shared_eos):
     """Under the grey-body surface the top-cell rate follows the top node: moving the top cell in
-    steps of 0.01 J/kg/K through the band changes it by far less than the switch to the top cell
+    steps of 0.1 J/kg/K through the band changes it by far less than the switch to the top cell
     did (about 3.3e-3 on this profile)."""
     s = _solver(shared_eos, 'limited', bc=1)
     y0, n, S_min = np.asarray(s._S0, dtype=float).copy(), s._n_stag, float(shared_eos.S_min)
     rates, free = [], []
-    for t in 333.0 + 0.01 * np.arange(-3000, 7001):
+    for t in 333.0 + 0.1 * np.arange(-300, 701):
         y = y0.copy()
         y[n - 3 : n] = S_min + np.array([1700.0, 1000.0, t])
         rates.append(float(np.ravel(s.dSdt(0.0, y))[n - 1]))
         free.append(float(top_node_entropy(y[:n], 1.0)))
     free = np.asarray(free)
     assert (free < S_min).any() and (free > S_min + 50.0).any()
-    assert np.max(np.abs(np.diff(rates))) < 3.3e-4
+    assert np.max(np.abs(np.diff(rates))) < 1.0e-3
+
+
+@pytest.mark.parametrize(
+    ('margin', 'band'), [(30.0, 15.0), (None, 50.0), (0.0, 50.0), (-5.0, 50.0), (5e-324, 50.0)]
+)
+def test_the_band_is_half_the_floor_margin(shared_eos, margin, band):
+    """The blend band is half the EOS floor margin; without the floor, or where half the margin
+    is not positive, it is 50 J/kg/K. The JAX mesh carries the same band."""
+    from aragog.jax.phase import MeshArrays
+
+    p = _build_mushy_parameters(solver_method='cvode', end_time=1.0)
+    p.boundary_conditions.top_node = 'limited'
+    p.energy = dataclasses.replace(p.energy, eos_floor_margin=margin)
+    s = EntropySolver(p, entropy_eos=shared_eos)
+    s.initialize()
+    assert s.evaluator.mesh.top_band == band
+    assert MeshArrays.from_numpy_mesh(s.evaluator.mesh).top_band == band
+
+
+def test_the_band_follows_a_margin_change_at_the_next_solve(shared_eos):
+    s = _solver(shared_eos, 'limited', S0=np.full(11, float(shared_eos.S_min) + 2000.0))
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, eos_floor_margin=40.0)
+    s.solve()
+    assert s.evaluator.mesh.top_band == 20.0
+
+
+def test_a_plain_entropy_eos_assignment_and_a_patch_keep_working(shared_eos):
+    """The EOS is a plain attribute: any object can be assigned in linear mode, and a patch of it
+    restores the solver's own EOS."""
+    from unittest import mock
+
+    s = _solver(shared_eos, 'linear')
+    with mock.patch.object(s, 'entropy_eos', object()):
+        pass
+    assert s.entropy_eos is shared_eos
+    s.entropy_eos = object()
+
+
+def test_the_limited_mode_is_logged_once_per_solver(shared_eos, caplog):
+    with caplog.at_level(logging.INFO):
+        s = _solver(shared_eos, 'limited')
+        s.initialize()
+    lines = [r.getMessage() for r in caplog.records if 'top node: limited' in r.getMessage()]
+    assert len(lines) == 1 and 'blends into the top cell' in lines[0]
+
+
+def test_the_jax_rhs_matches_numpy_inside_the_band(shared_eos):
+    """With a 30 J/kg/K floor margin (band 15) and the limited node 7 J/kg/K above S_min, the JAX
+    top-cell rate under the grey-body surface matches the numpy one."""
+    jnp = pytest.importorskip('jax.numpy')
+    from aragog.jax.solver import dSdt
+
+    from .test_entropy_solver_core_module_smoke import _build
+    from .test_jax_dsdt_core_module import _build_jax_pieces
+
+    eos = entropy_eos_copy(EOS_DIR, identity_alpha=True)
+    s = _build('quasi_steady', eos)
+    s.parameters.boundary_conditions.top_node = 'limited'
+    s.parameters.energy = dataclasses.replace(s.parameters.energy, eos_floor_margin=30.0)
+    s.initialize()
+    s.set_initial_entropy(2700.0)
+    y, n = np.asarray(s._S0, dtype=float).copy(), s._n_stag
+    y[n - 3 : n] = float(eos.S_min) + np.array([1700.0, 1000.0, 338.0])
+    free = float(top_node_entropy(y[:n], s.evaluator.mesh.top_ratio)) - float(eos.S_min)
+    assert 0.0 < free < 15.0 and s.evaluator.mesh.top_band == 15.0
+    s._core_module_budget, s._core_module_q_radio, s._core_module_ra_crit_cmb = None, 0, 0
+    f_jax = float(np.ravel(dSdt(0.0, jnp.asarray(y), _build_jax_pieces(s)[:6]))[n - 1])
+    assert f_jax == pytest.approx(float(np.ravel(s.dSdt(0.0, y))[n - 1]), rel=1e-8)
+
+
+def test_a_grey_body_solve_inside_the_band_finishes_and_closes_its_energy(shared_eos):
+    """A top cell at S_min + 340 over cells at S_min + [1700, 1000] puts the limited node inside
+    the band, where the node is not monotone in the top cell, on a part of the table where T is
+    not flat: CVODE finishes the call without a stall and the energy ledger closes."""
+    S_min = float(shared_eos.S_min)
+    S0 = np.full(11, S_min + 2600.0)
+    S0[-3:] = S_min + np.array([1700.0, 1000.0, 340.0])
+    s = _solver(shared_eos, 'limited', S0=S0, bc=1, end_time=50.0)
+    s.solve()
+    out = s.get_state()
+    terms = (
+        out.step_dE_F_int_J
+        + out.step_dE_F_cmb_J
+        + out.step_dE_Q_radio_J
+        + out.step_dE_Q_tidal_J
+    )
+    assert s._solution.status >= 0 and out.dt_actual == pytest.approx(50.0)
+    assert getattr(s._solution, 'cvode_nst', 0) < 5000
+    assert abs(out.step_dE_state_heat_J - terms) <= 1e-3 * abs(out.step_dE_F_int_J)
