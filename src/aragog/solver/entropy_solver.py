@@ -591,14 +591,14 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
     for level in (S_min + margin, S_min + 0.5 * margin):
         if s0 > level + tol:
             return level, False
+    if s0 <= S_min:  # no level fits; the RHS is not evaluated at a state below the table
+        return None, True
     rate = np.asarray(rate_fn(), dtype=float)
     node_rate = float(np.dot(weights, rate))
     if s0 > S_min + 2.0 * tol:  # above the table band the top cell counts too
         node_rate = max(node_rate, float(rate[-1]))
     active = rate[S <= s0 + tol].tolist() + ([node_rate] if s_top <= s0 + tol else [])
-    r = float(np.min(active))
-    if np.isnan(r):
-        return None, True
+    r = float(np.min(active))  # a NaN rate fails both comparisons below, so it refuses
     half = 0.5 * (s0 + S_min)
     if s0 <= S_min + 2.0 * tol:  # at the table: any fall, or no room for a level, refuses
         return (half, False) if r >= 0.0 and S_min < half < s0 else (None, True)
