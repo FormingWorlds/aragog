@@ -531,3 +531,20 @@ def test_ti_continuity_across_flux_threshold():
         st_col_lo, _ = _eval_adiabat_lid_profile(f_col_lo)
         st_col_hi, _ = _eval_adiabat_lid_profile(f_col_hi)
         assert abs(float(st_col_hi['T_i']) - float(st_col_lo['T_i'])) <= 15.0
+
+
+@pytest.mark.unit
+def test_ti_linear_flux_profile_scale_invariance():
+    """Verify linear f profile scaled by 0.06, 0.1, 0.2, 1.0 gives T_i within 1 dT_rh."""
+    dt_rh_fixed = 1.3 * 1600.0 / (300.0e3 / (8.314462618 * 1600.0))
+    f_ref = np.zeros(50)
+    f_ref[:43] = np.linspace(1.0, 0.5, 43)
+    st_ref, _ = _eval_adiabat_lid_profile(f_ref)
+    ti_ref = float(st_ref['T_i'])
+
+    for pk in (0.06, 0.1, 0.2, 1.0):
+        f_pk = np.zeros(50)
+        f_pk[:43] = np.linspace(pk, 0.5 * pk, 43)
+        st_pk, _ = _eval_adiabat_lid_profile(f_pk)
+        assert abs(float(st_pk['T_i']) - ti_ref) <= dt_rh_fixed
+        assert abs(float(st_pk['T_i']) - ti_ref) <= float(st_ref['dT_rh'])
