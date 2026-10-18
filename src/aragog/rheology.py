@@ -21,6 +21,35 @@ DEFAULT_VISCOSITY_SOLID = 1.0e21
 FloatOrArray = float | npt.NDArray[np.floating]
 
 
+def _positive(v: float) -> bool:
+    return v > 0.0
+
+
+def _non_negative(v: float) -> bool:
+    return v >= 0.0
+
+
+# (field, in-range test, expectation text) for the finite-and-bounded numeric fields.
+_BOUNDS = (
+    *((n, lambda v: 0.0 < v <= 1.0, 'in (0, 1]') for n in ('mlt_bottom_slope', 's_top_inf')),
+    ('c_theta', _non_negative, 'non-negative and finite'),
+    ('g_homologous', _non_negative, 'non-negative and finite'),
+    ('t_sol_0', _positive, 'positive and finite'),
+    ('dt_sol_dp', _non_negative, 'non-negative and finite'),
+    ('arrhenius_t_ref', _positive, 'positive'),
+    ('viscosity_max_log10', lambda v: 20.0 < v <= 300.0, 'in (20, 300]'),
+    ('water_prefactor', _positive, 'positive'),
+    ('yield_stress_c', _non_negative, 'non-negative'),
+    ('yield_stress_mu', _non_negative, 'non-negative'),
+    ('yield_stress_max', _positive, 'positive'),
+    ('interior_flux_fraction', lambda v: 0.05 <= v <= 0.5, 'in [0.05, 0.5]'),
+    ('lid_base_temperature', _positive, 'positive'),
+    ('lid_contrast_coeff', _positive, 'positive'),
+    ('lid_mask_width_cells', _positive, 'positive'),
+    ('phi_visc_single', lambda v: 0.0 < v < 1.0, 'in (0, 1)'),
+)
+
+
 @dataclass(frozen=True, eq=True)
 class SolidRheologyParams:
     """Parameters for solid-state mantle rheology and stagnant lid scaling.
@@ -66,20 +95,6 @@ class SolidRheologyParams:
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
             raise ValueError(f'enabled must be a bool, got {self.enabled!r}')
-        for name in ('mlt_bottom_slope', 's_top_inf'):
-            val = getattr(self, name)
-            if not math.isfinite(val) or not (0.0 < val <= 1.0):
-                raise ValueError(f'{name} must be in (0, 1], got {val}')
-        if not math.isfinite(self.c_theta) or self.c_theta < 0.0:
-            raise ValueError(f'c_theta must be non-negative and finite, got {self.c_theta}')
-        if not math.isfinite(self.g_homologous) or self.g_homologous < 0.0:
-            raise ValueError(
-                f'g_homologous must be non-negative and finite, got {self.g_homologous}'
-            )
-        if not math.isfinite(self.t_sol_0) or self.t_sol_0 <= 0.0:
-            raise ValueError(f't_sol_0 must be positive and finite, got {self.t_sol_0}')
-        if not math.isfinite(self.dt_sol_dp) or self.dt_sol_dp < 0.0:
-            raise ValueError(f'dt_sol_dp must be non-negative and finite, got {self.dt_sol_dp}')
         if self.stress_closure_mode not in ('lid', 'local'):
             raise ValueError(
                 f'Unknown stress_closure_mode {self.stress_closure_mode!r}; '
@@ -90,44 +105,10 @@ class SolidRheologyParams:
                 f'Unknown lid_base_mode {self.lid_base_mode!r}; '
                 f"expected 'fixed' or 'rheological'"
             )
-        if not math.isfinite(self.arrhenius_t_ref) or self.arrhenius_t_ref <= 0.0:
-            raise ValueError(f'arrhenius_t_ref must be positive, got {self.arrhenius_t_ref}')
-        if not math.isfinite(self.viscosity_max_log10) or not (
-            20.0 < self.viscosity_max_log10 <= 300.0
-        ):
-            raise ValueError(
-                f'viscosity_max_log10 must be in (20, 300], got {self.viscosity_max_log10}'
-            )
-        if not math.isfinite(self.water_prefactor) or self.water_prefactor <= 0.0:
-            raise ValueError(f'water_prefactor must be positive, got {self.water_prefactor}')
-        if not math.isfinite(self.yield_stress_c) or self.yield_stress_c < 0.0:
-            raise ValueError(f'yield_stress_c must be non-negative, got {self.yield_stress_c}')
-        if not math.isfinite(self.yield_stress_mu) or self.yield_stress_mu < 0.0:
-            raise ValueError(
-                f'yield_stress_mu must be non-negative, got {self.yield_stress_mu}'
-            )
-        if not math.isfinite(self.yield_stress_max) or self.yield_stress_max <= 0.0:
-            raise ValueError(f'yield_stress_max must be positive, got {self.yield_stress_max}')
-        if not math.isfinite(self.interior_flux_fraction) or not (
-            0.05 <= self.interior_flux_fraction <= 0.5
-        ):
-            raise ValueError(
-                f'interior_flux_fraction must be in [0.05, 0.5], got {self.interior_flux_fraction}'
-            )
-        if not math.isfinite(self.lid_base_temperature) or self.lid_base_temperature <= 0.0:
-            raise ValueError(
-                f'lid_base_temperature must be positive, got {self.lid_base_temperature}'
-            )
-        if not math.isfinite(self.lid_contrast_coeff) or self.lid_contrast_coeff <= 0.0:
-            raise ValueError(
-                f'lid_contrast_coeff must be positive, got {self.lid_contrast_coeff}'
-            )
-        if not math.isfinite(self.lid_mask_width_cells) or self.lid_mask_width_cells <= 0.0:
-            raise ValueError(
-                f'lid_mask_width_cells must be positive, got {self.lid_mask_width_cells}'
-            )
-        if not math.isfinite(self.phi_visc_single) or not (0.0 < self.phi_visc_single < 1.0):
-            raise ValueError(f'phi_visc_single must be in (0, 1), got {self.phi_visc_single}')
+        for name, in_range, expected in _BOUNDS:
+            val = getattr(self, name)
+            if not math.isfinite(val) or not in_range(val):
+                raise ValueError(f'{name} must be {expected}, got {val}')
         if self.enabled and self.g_homologous <= 0.0:
             raise ValueError(
                 'Invalid combination: enabled=True requires positive '

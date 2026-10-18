@@ -261,24 +261,29 @@ def compute_stagnant_lid_state(
                     f'{opt_name} must have the same 1-D length as radii ({r.shape[0]})'
                 )
 
-    nan_parts = [
-        xp.ravel(r),
-        xp.ravel(T),
-        xp.ravel(P),
-        xp.ravel(F_conv),
-        xp.ravel(F_tot),
-        xp.ravel(phi),
-        xp.ravel(xp.asarray(density, dtype=float)),
-        xp.ravel(xp.asarray(gravity, dtype=float)),
-        xp.ravel(xp.asarray(thermal_expansivity, dtype=float)),
-        xp.ravel(xp.asarray(thermal_diffusivity, dtype=float)),
-    ]
-    for opt_arr in (solidus_temperature, unyielded_velocity, viscosity_mixture):
-        if opt_arr is not None:
-            nan_parts.append(xp.ravel(xp.asarray(opt_arr, dtype=float)))
-    for scalar_in in (viscosity_solid, phi_rheo, phi_width, a_rh_fb, C4, t_sol_0_eff):
-        nan_parts.append(xp.ravel(xp.asarray(scalar_in, dtype=float)))
-    any_input_nan = xp.any(xp.isnan(xp.concatenate(nan_parts)))
+    optional = (solidus_temperature, unyielded_velocity, viscosity_mixture)
+    nan_inputs = (
+        r,
+        T,
+        P,
+        F_conv,
+        F_tot,
+        phi,
+        density,
+        gravity,
+        thermal_expansivity,
+        thermal_diffusivity,
+        *(a for a in optional if a is not None),
+        viscosity_solid,
+        phi_rheo,
+        phi_width,
+        a_rh_fb,
+        C4,
+        t_sol_0_eff,
+    )
+    any_input_nan = xp.any(
+        xp.isnan(xp.concatenate([xp.ravel(xp.asarray(a, dtype=float)) for a in nan_inputs]))
+    )
     zero_or_nan = xp.where(any_input_nan, xp.nan, 0.0)
 
     F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
@@ -304,6 +309,10 @@ def compute_stagnant_lid_state(
     )
     W_tilde = _boundary_weights(w_Ti, xp, fallback=W_conv_tilde)[0]
 
+    def _weighted_mean(val):
+        arr = xp.asarray(val, dtype=float)
+        return arr if xp.ndim(arr) == 0 else xp.sum(W_tilde * xp.ravel(arr))
+
     T_i = xp.sum(W_tilde * T)
     P_T_i = xp.sum(W_tilde * P)
     r_i = xp.sum(W_tilde * r)
@@ -313,20 +322,15 @@ def compute_stagnant_lid_state(
     )
     is_convecting = (W_sum > 1e-6) & (w_active > 0.05)
 
+    T_sol_arr = T_sol_i = T_sol_surf = None
     if solidus_temperature is not None:
-        T_sol_raw = xp.asarray(solidus_temperature, dtype=float)
-        if xp.ndim(T_sol_raw) > 0:
-            T_sol_arr = xp.ravel(T_sol_raw)
+        T_sol_arr = xp.asarray(solidus_temperature, dtype=float)
+        if xp.ndim(T_sol_arr) > 0:
+            T_sol_arr = xp.ravel(T_sol_arr)
             T_sol_i = xp.sum(W_tilde * T_sol_arr)
             T_sol_surf = T_sol_arr[-1]
         else:
-            T_sol_arr = T_sol_raw
-            T_sol_i = T_sol_arr
-            T_sol_surf = T_sol_arr
-    else:
-        T_sol_arr = None
-        T_sol_i = None
-        T_sol_surf = None
+            T_sol_i = T_sol_surf = T_sol_arr
 
     H_T_i = compute_arrhenius_enthalpy(
         P_T_i,
@@ -360,13 +364,10 @@ def compute_stagnant_lid_state(
     eta_surf = arrhenius(T_surf, P_surf, solidus_temperature=T_sol_surf)
     eta_arr_i = arrhenius(T_i, P_T_i, solidus_temperature=T_sol_i)
     if viscosity_mixture is not None:
-        visc_mix = xp.asarray(viscosity_mixture, dtype=float)
         log_eta_arr = xp.log10(xp.maximum(eta_arr_i, 1e-30))
-        if xp.ndim(visc_mix) == 0:
-            log_mu_mix = xp.log10(xp.maximum(visc_mix, 1e-30))
-        else:
-            log_visc = xp.log10(xp.maximum(xp.ravel(visc_mix), 1e-30))
-            log_mu_mix = xp.sum(W_tilde * log_visc)
+        log_mu_mix = _weighted_mean(
+            xp.log10(xp.maximum(xp.asarray(viscosity_mixture, dtype=float), 1e-30))
+        )
         # Smooth log-blend from eta_arr_i when convection is inactive to mu_i_mix when active.
         eta_i = 10.0 ** (w_weight * log_mu_mix + (1.0 - w_weight) * log_eta_arr)
     else:
@@ -442,17 +443,11 @@ def compute_stagnant_lid_state(
 
     d_conv = xp.maximum(r[-1] - r[0], 1.0)
 
-    def _weighted_mean(val):
-        arr = xp.asarray(val, dtype=float)
-        if xp.ndim(arr) == 0:
-            return arr
-        return xp.sum(W_tilde * arr)
-
     rho_i = _weighted_mean(density)
     g_i = _weighted_mean(gravity)
     alpha_i = _weighted_mean(thermal_expansivity)
     kappa_i = _weighted_mean(thermal_diffusivity)
-    DeltaT_conv = xp.maximum(T_i - T[-1], 1e-6)
+    DeltaT_conv = xp.maximum(T_i - T_surf, 1e-6)
 
     # Convective interior velocity and lid driving stress (Foley & Bercovici 2014, eqs. 26, 28).
     Ra_eff = if_lid(

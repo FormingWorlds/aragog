@@ -303,35 +303,27 @@ def _assert_hot_convecting_cmb_node_excluded(
         arrhenius_t_ref=t_m,
         interior_flux_fraction=0.05,
     )
-    st_cold_cmb = compute_stagnant_lid_state(
-        radii=r,
-        temperature=t_base,
-        pressure=p,
-        convective_flux=f_conv,
-        total_flux=f_tot,
-        solidus_temperature=None,
-        melt_fraction=np.zeros(n_nodes),
-        params=params,
-        viscosity_solid=1.0e20,
-        phi_rheo=0.4,
-        phi_width=0.15,
-    )
     t_hot_cmb = t_base.copy()
     t_hot_cmb[0] = 4000.0
-    st_hot_cmb = compute_stagnant_lid_state(
-        radii=r,
-        temperature=t_hot_cmb,
-        pressure=p,
-        convective_flux=f_conv,
-        total_flux=f_tot,
-        solidus_temperature=None,
-        melt_fraction=np.zeros(n_nodes),
-        params=params,
-        viscosity_solid=1.0e20,
-        phi_rheo=0.4,
-        phi_width=0.15,
-    )
-    assert abs(float(st_hot_cmb['T_i']) - float(st_cold_cmb['T_i'])) <= 1.0
+    t_i = [
+        float(
+            compute_stagnant_lid_state(
+                radii=r,
+                temperature=t_prof,
+                pressure=p,
+                convective_flux=f_conv,
+                total_flux=f_tot,
+                solidus_temperature=None,
+                melt_fraction=np.zeros(n_nodes),
+                params=params,
+                viscosity_solid=1.0e20,
+                phi_rheo=0.4,
+                phi_width=0.15,
+            )['T_i']
+        )
+        for t_prof in (t_base, t_hot_cmb)
+    ]
+    assert abs(t_i[1] - t_i[0]) <= 1.0
 
 
 @pytest.mark.unit
