@@ -77,6 +77,16 @@ def test_the_call_start_is_not_checked():
     _check(S)
 
 
+def test_nodes_at_the_call_start_time_are_not_checked():
+    """A zero-span call returns its start state twice; neither copy is checked."""
+    S = np.full((3, 2), S_MIN - 10.0)
+    _check_accepted_states(np.zeros(2), S, W, S_MIN, S_MAX)
+    S = np.hstack([S, np.full((3, 1), S_MIN - 10.0)])
+    with pytest.raises(AcceptedStateError) as e:
+        _check_accepted_states(np.array([0.0, 0.0, 1.0]), S, W, S_MIN, S_MAX)
+    assert e.value.time == 1.0
+
+
 def test_the_earliest_offending_state_is_reported():
     S = _inside()
     S[2, 3], S[0, 2] = S_MIN - 9.0, S_MAX + 9.0
