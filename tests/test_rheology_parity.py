@@ -565,6 +565,7 @@ def test_stagnant_lid_checkpoint_profile_parity():
     ``eta_i = 2.760821e+22`` Pa s, ``d_lid = 42026.67`` m, ``max(w_lid) = 0.851185``,
     ``tau_d = 1.299379e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.
     """
+    # Evaluates under linear solidus fallback (table-free) with solidus_temperature=None.
     ckpt_path = os.path.join(
         os.path.dirname(__file__), 'reference', 'checkpoint_profile_175kyr.npz'
     )
