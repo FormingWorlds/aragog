@@ -428,7 +428,7 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     assert tau_buoy_str in doc_text
     assert '0.150' in doc_text
 
-    # Computed doc numbers from Ruling 32 l 6 (1423.0 K, 1736.9 K, 70.95 K, 13.7, 0.584 dT_rh, 1.55 MPa)
+    # Computed doc numbers (1423.0 K, 1736.9 K, 70.95 K, 13.7, 0.584 dT_rh, 1.55 MPa)
     assert rf'{dt_rh_val:.2f}\text{{ K}}' in doc_text
 
     ckpt_path = repo_root / 'tests' / 'reference' / 'checkpoint_profile_175kyr.npz'

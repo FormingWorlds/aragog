@@ -802,7 +802,7 @@ def test_depth_varying_solidus_pins_theta_and_eta_i():
     theta_surf = g_hom * t_sol_surf * (t_i - 300.0) / (t_i**2)
     assert theta_surf < float(st['theta']) < theta_cmb
     assert abs(float(st['theta']) - theta_cmb) > 5.0
-    # Regression pin: near-lid T_sol_i ~ 1528 K yields theta ~ 17.528.
+    # Regression pin: near-lid T_sol_i ~ 1530.6 K yields theta ~ 17.528.
     assert float(st['theta']) == pytest.approx(17.528141, rel=1.0e-4)
 
     # Formula relation: T_lid lies in the boundary layer between T_lid_iso and T_i.
@@ -910,7 +910,7 @@ def test_baseline_subtraction_w_weight_and_viscosity_mixture_blend():
 
 @pytest.mark.unit
 def test_ti_selector_scale_invariance_and_subthreshold_regime():
-    """Verify T_i selector scale invariance across s x N on 175 kyr, D3-3 pins, and 2-node transition."""
+    """Verify T_i selector scale invariance across s x N on 175 kyr and 2-node transition."""
     from pathlib import Path
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
@@ -981,6 +981,8 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
             ti_s = float(st_s['T_i'])
             if bool(st_s['has_lid']):
                 assert abs(ti_s - ti_s1) <= dtrh_s1
+            if s >= 0.036:
+                assert bool(st_s['has_lid'])
             if s == 0.0:
                 assert ti_s == pytest.approx(float(prof['T_basic'][1]), rel=1.0e-12)
             if s == 1.0e-4:
