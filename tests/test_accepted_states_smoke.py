@@ -241,3 +241,23 @@ def test_the_core_module_cmb_slot_is_not_checked(shared_eos):
     off, n = r[0] - 0.5 * (r[0] + r[1]), s._n_stag
     s._S0[n] = (float(shared_eos.S_min) - 50.0 - s._S0[0]) / off
     assert _solves(s)
+
+
+def test_the_core_module_cmb_node_is_the_bottom_cell(shared_eos):
+    """Bottom cells S_min + [15, 150] on core_module with a hot core: node 0 is the bottom cell,
+    inside the table, while the extrapolation 1.5 S0 - 0.5 S1 is S_min - 52.5; no raise."""
+    s = _build(
+        'core_module', shared_eos, CORE_MODULE_PARAMS, s_init='driven', solver_method='cvode'
+    )
+    S0 = np.array(s._S0[: s._n_stag])
+    S0[:2] = float(shared_eos.S_min) + 15.0, float(shared_eos.S_min) + 150.0
+    s = _build(
+        'core_module',
+        shared_eos,
+        CORE_MODULE_PARAMS,
+        s_init=S0,
+        solver_method='cvode',
+        end_time=1.0e-2,
+        core_offset=5000.0,
+    )
+    assert _solves(s) and s._solution.status == 0
