@@ -979,7 +979,7 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
     )
     assert float(st_scalar_1['mu_i']) == pytest.approx(mu_1, rel=1.0e-12)
 
-    # Inactive convection with finite viscosity_mixture (W_sum << 1e-6 -> w_weight -> 0)
+    # Inactive convection with finite viscosity_mixture (max_k w_conv_int << 1e-6 -> w_weight -> 0)
     # and with non-finite viscosity_mixture both fall back cleanly to eta_solid_arrhenius:
     params_inactive = SolidRheologyParams(enabled=True, interior_flux_fraction=0.20)
     st_inactive_finite_mix = compute_stagnant_lid_state(
