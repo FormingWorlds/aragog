@@ -79,8 +79,13 @@ def _drained(
     s.initialize()
     s.set_initial_entropy(np.broadcast_to(np.asarray(S0, dtype=float), s._n_stag).copy())
     s.solve()
-    if margin is not None and margin > 0.0:  # the floor keeps every basic node in the table
-        assert np.all(_basic(s) >= float(eos.S_min))
+    if (
+        margin is not None and margin > 0.0
+    ):  # the floor keeps basic nodes and cells in the table
+        sol, n = s._solution, s._n_stag
+        trace = sol.get('energy_trace')
+        assert np.all(_basic(s) >= float(eos.S_min)) and _cells(s).min() >= float(eos.S_min)
+        assert trace is None or np.asarray(trace[1])[:n].min() >= float(eos.S_min)
     return s, _floor_series(s)
 
 
@@ -201,6 +206,7 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
     text['at the band edge'] = 'counts as at the table'
     text = text.get(where, 'falls too fast')
     assert text in refusals[0].getMessage() and sol.message.startswith('EOS floor:')
+    assert 'J/kg/K from the table minimum' in refusals[0].getMessage()
     assert any('stopped 10.0 yr before end_time' in m for m in messages)
 
 
@@ -512,10 +518,19 @@ def _mid_cell_at(eos, d):
 def test_a_late_call_near_the_table_returns_no_state_below_it(
     shared_eos, method, start_time, d
 ):
-    """A mid cell S_min + d under 1e6 W/m^2 from 1e6 or 1e9 yr, where the root location error
-    of the integrator grows with the time: every basic node above the CMB node of every returned
-    state stays at or above S_min (checked in ``_drained``), whether the call stops or not."""
+    """A mid cell S_min + d under 1e6 W/m^2 from 0 to 4.5e9 yr, where the root location error
+    of the integrator grows with the time: no returned state or trace node has a basic node above
+    the CMB node or a cell below S_min (checked in ``_drained``), whether the call stops or not."""
     _drained(shared_eos, _mid_cell_at(shared_eos, d), method=method, start_time=start_time)
+
+
+@pytest.mark.parametrize(('method', 'start_time'), [('bdf', 9.0e9), ('radau', 1.2345678e9)])
+def test_a_late_scipy_call_near_the_table_returns_no_state_below_it(
+    shared_eos, method, start_time
+):
+    """The scipy integrators, whose event location error also grows with the time, at start
+    times where a stop near the table lands below it."""
+    _drained(shared_eos, _mid_cell_at(shared_eos, 1e-6), method=method, start_time=start_time)
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
@@ -536,32 +551,42 @@ def test_a_warming_start_with_no_room_for_a_level_names_that(shared_eos, caplog,
     assert len(refusals) == 1 and 'no level fits' in refusals[0].getMessage()
 
 
-def test_a_discarded_call_keeps_the_start_state_time_and_energy_ledger(shared_eos, caplog):
-    """A mid cell 1e-6 above S_min under 1e6 W/m^2 from 1e9 yr on CVODE, where the root lands
-    below the table: the call is discarded, and its state, time, energy trace and per-call energy
-    ledger equal those of a call with no span from the same start."""
+@pytest.mark.parametrize(
+    ('method', 'start_time'), [('cvode', 1.0e9), ('bdf', 9.0e9), ('radau', 1.2345678e9)]
+)
+def test_a_discarded_call_keeps_the_start_state_time_and_energy_ledger(
+    shared_eos, caplog, method, start_time
+):
+    """A mid cell 1e-6 above S_min under 1e6 W/m^2 at a late start time, where the stop lands
+    below the table: the call is discarded with a warning that gives the level and the entropy
+    as offsets from S_min, and its state, time, energy trace and per-call energy ledger equal
+    those of a call with no span from the same start."""
     S0 = _mid_cell_at(shared_eos, 1e-6)
     with caplog.at_level(logging.INFO):
-        s, _ = _drained(shared_eos, S0, start_time=1.0e9)
-    z, _ = _drained(shared_eos, S0, start_time=1.0e9, end_time=0.0)
+        s, _ = _drained(shared_eos, S0, method=method, start_time=start_time)
+    z, _ = _drained(shared_eos, S0, method=method, start_time=start_time, end_time=0.0)
+    assert 'put the floor entropy at S_min -' in caplog.text
     sol, st, zt = s._solution, s.get_state(), z.get_state()
     assert sol.status == 1 and st.dt_actual == 0.0 and 'discarded' in caplog.text
-    assert np.array_equal(_cells(s)[:, -1], S0) and np.all(np.asarray(sol.t) == 1.0e9)
-    assert np.all(np.asarray((sol.get('energy_trace') or (sol.t, sol.y))[0]) == 1.0e9)
+    assert np.array_equal(_cells(s)[:, -1], S0) and np.all(np.asarray(sol.t) == sol.t[0])
+    assert np.all(np.asarray((sol.get('energy_trace') or (sol.t, sol.y))[0]) == sol.t[0])
     ledger = [k for k in vars(st) if k.startswith('step_dE_')]
     assert ledger and all(getattr(st, k) == getattr(zt, k) for k in ledger)
 
 
-def test_a_floor_stop_at_the_call_start_is_a_refusal(shared_eos, caplog, monkeypatch):
-    """A level 1e-12 below a draining start at 1e8 yr, closer than the scipy event time
-    tolerance: the event stops the call at its start, which is logged and returned as a
-    refusal, not as a silent zero step."""
+@pytest.mark.parametrize('start_time', [1.0e8, 54522722.0])
+def test_a_floor_stop_at_the_call_start_is_a_refusal(
+    shared_eos, caplog, monkeypatch, start_time
+):
+    """A level 1e-12 below a draining start at 1e8 yr, or at 54522722 yr, which comes back one
+    ulp later through the time scale: the scipy event stops the call at its start, which is
+    logged and returned as a refusal, not as a silent zero step."""
     monkeypatch.setattr(
         es, '_floor_start_level', lambda w, S, *_: (es._floor_entropy(w, S) - 1e-12, False)
     )
     with caplog.at_level(logging.INFO):
         s, _ = _drained(
-            shared_eos, float(shared_eos.S_min) + 400.0, method='bdf', start_time=1e8
+            shared_eos, float(shared_eos.S_min) + 400.0, method='bdf', start_time=start_time
         )
     refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
     assert s._solution.status == 1 and s.get_state().dt_actual == 0.0 and len(refusals) == 1
