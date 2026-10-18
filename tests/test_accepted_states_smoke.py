@@ -82,12 +82,14 @@ def _solves(s):
     return True
 
 
-def _energy_balance(eos, S0, dSdr_cmb, method='cvode', margin=None):
-    """A 1e-3 yr energy_balance call with no surface flux from cells ``S0`` and the CMB entropy
-    gradient ``dSdr_cmb``; returns the solver and the offset of the CMB node from cell 0."""
+def _energy_balance(eos, S0, dSdr_cmb, method='cvode', margin=None, inner=1):
+    """A 1e-3 yr energy_balance call with no surface flux from cells ``S0``, the CMB entropy
+    gradient ``dSdr_cmb`` and inner boundary condition ``inner``; returns the solver and the
+    offset of the CMB node from cell 0."""
     p = _build_mushy_parameters(solver_method=method, end_time=1.0e-3)
     p.boundary_conditions.outer_boundary_condition = 4
     p.boundary_conditions.outer_boundary_value = 0.0
+    p.boundary_conditions.inner_boundary_condition = inner
     p.boundary_conditions.core_bc = 'energy_balance'
     p.energy = dataclasses.replace(
         p.energy, phi_step_cap=None, eos_floor_margin=margin, phase_boundary_cap=None
@@ -124,6 +126,19 @@ def test_a_cmb_node_below_the_table_raises_with_every_cell_inside(shared_eos, me
     with pytest.raises(AcceptedStateError) as e:
         s.solve()
     assert (e.value.check, e.value.node, e.value.bound) == ('entropy_table', 'basic 0', S_min)
+
+
+@pytest.mark.parametrize('inner', [0, 2])
+def test_the_energy_balance_cmb_node_is_the_bottom_cell_where_the_cmb_law_sets_the_flux(
+    shared_eos, inner
+):
+    """The same start under an insulating or prescribed-flux CMB: the state's CMB node feeds no
+    rate there, so node 0 is checked as the bottom cell and the call does not raise."""
+    S_min = float(shared_eos.S_min)
+    S0 = np.full(11, S_min + 2000.0)
+    _, off = _energy_balance(shared_eos, S0, 0.0, method='bdf', inner=inner)
+    s, _ = _energy_balance(shared_eos, S0, (S_min - 100.0 - S0[0]) / off, 'bdf', inner=inner)
+    assert _solves(s) and s._solution.status >= 0
 
 
 @needs_cvode
@@ -230,8 +245,8 @@ def test_a_start_that_raised_is_checked_again_on_the_next_call(shared_eos):
 
 
 def test_the_start_is_checked_only_once_after_set_initial_entropy(shared_eos):
-    """After the first call the start is the previous end, already checked: a later call whose
-    start is changed without set_initial_entropy gets the floor refusal, not the error."""
+    """After the first call the start is already checked: a later call whose start is changed
+    without set_initial_entropy gets the floor refusal, not the error."""
     s, _ = _drained(shared_eos, float(shared_eos.S_min) + 400.0, flux=0.0)
     s._S0 = _bad_start(shared_eos)
     assert _solves(s) and s._solution.status == 1 and s.get_state().dt_actual == 0.0
@@ -275,14 +290,14 @@ def test_the_core_module_cmb_node_is_the_bottom_cell(shared_eos):
     assert _solves(s) and s._solution.status == 0
 
 
-def _quasi_steady(eos, S0, inner, method='bdf'):
-    """A 1e-3 yr quasi_steady call with no surface flux from cells ``S0`` under inner boundary
-    condition ``inner`` (3: the CMB held at 4000 K)."""
+def _quasi_steady(eos, S0, inner, method='bdf', core='quasi_steady'):
+    """A 1e-3 yr call on ``core`` with no surface flux from cells ``S0`` under inner boundary
+    condition ``inner``."""
     p = _build_mushy_parameters(solver_method=method, end_time=1.0e-3)
     p.boundary_conditions.outer_boundary_condition = 4
     p.boundary_conditions.outer_boundary_value = 0.0
     p.boundary_conditions.inner_boundary_condition = inner
-    p.boundary_conditions.inner_boundary_value = 4000.0 if inner == 3 else 0.0
+    p.boundary_conditions.core_bc = core
     p.energy = dataclasses.replace(
         p.energy, phi_step_cap=None, eos_floor_margin=None, phase_boundary_cap=None
     )
@@ -299,13 +314,15 @@ def _steep_bottom(eos):
     return S0
 
 
+@pytest.mark.parametrize('core', ['quasi_steady', 'bower2018'])
 @pytest.mark.parametrize('inner', [0, 1, 2, 3])
-def test_the_quasi_steady_cmb_node_feeds_a_rate_only_under_a_prescribed_temperature(
-    shared_eos, inner
+def test_the_extrapolated_cmb_node_feeds_a_rate_only_under_inner_condition_3(
+    shared_eos, inner, core
 ):
     """Moving the extrapolated CMB node by 6 J/kg/K leaves every rate unchanged where the CMB
-    law sets the CMB flux (inner 0, 1, 2) and changes them under a prescribed temperature."""
-    s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), inner)
+    law sets the CMB flux (inner 0, 1, 2) and changes them under inner condition 3, where the
+    flux law of the interior acts at that node."""
+    s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), inner, core=core)
     W, y = np.asarray(s.evaluator.mesh._quantity_transform), np.array(s._S0, dtype=float)
     r0, row = np.ravel(s._dSdt_single(0.0, y)).copy(), W[0].copy()
     W[0, :2] += -3.0, 3.0
@@ -315,19 +332,22 @@ def test_the_quasi_steady_cmb_node_feeds_a_rate_only_under_a_prescribed_temperat
 
 
 @pytest.mark.parametrize('method', [pytest.param('cvode', marks=needs_cvode), 'bdf'])
+@pytest.mark.parametrize('core', ['quasi_steady', 'bower2018'])
 @pytest.mark.parametrize('inner', [0, 1, 2])
-def test_the_quasi_steady_cmb_node_is_the_bottom_cell_where_the_cmb_law_sets_the_flux(
-    shared_eos, inner, method
+def test_the_extrapolated_cmb_node_is_the_bottom_cell_where_the_cmb_law_sets_the_flux(
+    shared_eos, inner, core, method
 ):
     """With the extrapolation at S_min - 52.5 and every cell inside, a call whose CMB flux comes
-    from the CMB law does not raise: node 0 feeds no rate there."""
-    s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), inner, method)
+    from the CMB law does not raise: node 0 feeds no rate there. The reported node-0 temperature
+    is a diagnostic from the clamped lookup at the extrapolation, finite and positive."""
+    s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), inner, method, core)
     assert _solves(s) and s._solution.status >= 0
+    assert 0.0 < s.get_state().T_basic[0] < np.inf
 
 
-def test_the_quasi_steady_cmb_node_is_checked_under_a_prescribed_temperature(shared_eos):
-    """Under a prescribed CMB temperature the extrapolated node sets the CMB flux: the same start
-    raises on basic node 0."""
+def test_the_extrapolated_cmb_node_is_checked_under_inner_condition_3(shared_eos):
+    """Under inner condition 3 the flux law of the interior acts at the extrapolated node, which
+    then sets the CMB flux: the same start raises on basic node 0."""
     s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), 3)
     with pytest.raises(AcceptedStateError) as e:
         s.solve()
