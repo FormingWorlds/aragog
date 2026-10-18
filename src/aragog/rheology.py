@@ -370,7 +370,9 @@ def compute_arrhenius_viscosity(
     viscosity_max_log10 : float, default 40.0
         Upper bound on log10 dynamic viscosity [log10(Pa s)].
     water_prefactor : float or array-like, default 1.0
-        Multiplicative prefactor for hydration weakening. Must be positive.
+        Multiplicative prefactor for hydration weakening. Must be positive;
+        values ``<= 0`` raise ``ValueError`` when ``xp is np`` and return ``NaN``
+        on the JAX path for JIT compatibility.
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
 

@@ -338,7 +338,7 @@ In `SolidRheologyParams`, `stress_closure_mode` defaults to `'lid'` to activate 
 The kernels in `aragog.rheology` and `aragog.rheology_lid` satisfy the following asymptotic limits:
 
 1. **Zero driving stress ($\tau_d \to 0$):**
-   $\tau_d / \tau_{y,\text{lid}} \to 0 \implies w_y = 0$ and $\eta_\text{eff} = \eta_\text{diff}$. The system exhibits pure Arrhenius diffusion creep without plastic weakening.
+   $\tau_d / \tau_{y,\text{lid}} \to 0 \implies w_y \approx 0$ ($\frac{1}{2}(1 - \tanh 10) \approx 2.1 \times 10^{-9}$ when a lid is present, or $0$ when `has_lid` is `False`) and $\eta_\text{eff} = \eta_\text{diff}$. The system exhibits pure Arrhenius diffusion creep without plastic weakening.
 2. **Infinite yield stress ($\tau_y \to \infty$):**
    $\tau_d / \tau_{y,\text{lid}} \to 0 \implies \eta_\text{eff} = \eta_\text{diff}$, yielding never activates, and the lid remains stagnant at diffusion-creep viscosity.
 3. **Small homologous activation parameter ($g_\text{hom} \to 0^+$):**
