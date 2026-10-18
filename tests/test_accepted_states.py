@@ -189,3 +189,13 @@ def test_the_call_start_is_checked_when_asked():
     with pytest.raises(AcceptedStateError) as e:
         _check_accepted_states(T, S, W, S_MIN, S_MAX, skip_start=False)
     assert (e.value.node, e.value.time) == ('cell 0', 0.0)
+
+
+def test_a_non_finite_cmb_node_raises_as_a_non_finite_state():
+    """A NaN CMB row from the model's state is not a table value: it raises finite_state."""
+    with pytest.raises(AcceptedStateError) as e:
+        _check_accepted_states(
+            T, _inside(), W, S_MIN, S_MAX, cmb=[1000.0, np.nan, 1000.0, 1000.0]
+        )
+    assert (e.value.check, e.value.node, e.value.time) == ('finite_state', 'basic 0', 1.0)
+    assert np.isnan(e.value.bound)

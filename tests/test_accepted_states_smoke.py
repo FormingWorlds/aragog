@@ -12,6 +12,7 @@ from aragog.solver import entropy_solver as es
 from aragog.solver.entropy_solver import AcceptedStateError, EntropySolver
 
 from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
+from .test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
 from .test_entropy_solver_gradient_smoke import _build_gradient_parameters
 from .test_eos_floor import _FLUX, _drained
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters
@@ -222,3 +223,21 @@ def test_the_start_is_checked_only_once_after_set_initial_entropy(shared_eos):
     s, _ = _drained(shared_eos, float(shared_eos.S_min) + 400.0, flux=0.0)
     s._S0 = _bad_start(shared_eos)
     assert _solves(s) and s._solution.status == 1 and s.get_state().dt_actual == 0.0
+
+
+def test_the_core_module_cmb_slot_is_not_checked(shared_eos):
+    """On core_module the CMB gradient slot feeds nothing back (the boundary-layer law sets the
+    CMB flux), so node 0 is checked as the bottom cell: a slot that would put S[0] + slot dr at
+    S_min - 50 does not raise."""
+    s = _build(
+        'core_module',
+        shared_eos,
+        CORE_MODULE_PARAMS,
+        s_init='driven',
+        solver_method='cvode',
+        end_time=1.0e-2,
+    )
+    r = np.asarray(s.evaluator.mesh.basic.radii).ravel()
+    off, n = r[0] - 0.5 * (r[0] + r[1]), s._n_stag
+    s._S0[n] = (float(shared_eos.S_min) - 50.0 - s._S0[0]) / off
+    assert _solves(s)

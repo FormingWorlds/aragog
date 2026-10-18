@@ -193,13 +193,13 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
     S_min = float(shared_eos.S_min)
     S0 = {
         'below': S_min - 10.0,
-        'at': np.r_[S_min, _steep_top(shared_eos, [400.0] * 3)[1:]],  # a cell exactly at S_min
+        'at': np.where(np.arange(11) == 5, S_min, S_min + 400.0),  # a mid cell exactly at S_min
         'one ulp above': np.nextafter(S_min, np.inf),
         'at the band edge': S_min + 2.0e-6 * 100.0,
         'at half the margin': S_min + 50.0,
         'in the band': S_min + 50.0 + 5e-5,
     }[where]
-    if where in ('below', 'at'):  # a start outside the table is a bad snapshot: it raises
+    if where == 'below':  # a start outside the table is a bad snapshot: it raises
         with pytest.raises(es.AcceptedStateError) as e:
             _drained(shared_eos, S0, method=method)
         assert (e.value.check, e.value.time) == ('entropy_table', 0.0)
@@ -326,7 +326,7 @@ def test_a_zero_span_call_is_not_refused(shared_eos, caplog, method):
     assert s._solution.status == 0 and not _floor_logs(caplog)
 
 
-def test_a_top_node_below_the_table_with_every_cell_inside_is_refused(shared_eos, caplog):
+def test_a_top_node_below_the_table_with_every_cell_inside_is_refused(shared_eos):
     """A steep top gradient extrapolates the top basic node below S_min while every cell is
     inside the table: such a start state is a bad snapshot, so the first call raises on the top
     node at the start time (the floor would refuse it)."""
@@ -399,7 +399,7 @@ def _steep_top(eos, top3):
     ids=['warming top cell', 'rising node'],
 )
 def test_a_top_node_below_the_table_is_refused_when_it_or_the_top_cell_rises(
-    shared_eos, caplog, method, top3, flux, end_time
+    shared_eos, method, top3, flux, end_time
 ):
     """Top node at S_min - 58 under flux 0 or at S_min - 940 under 860 W/m^2, set as the start
     state: a bad snapshot, so the first call raises on the top node at the start time."""
