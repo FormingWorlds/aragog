@@ -1234,3 +1234,72 @@ def test_compute_effective_viscosity_accepts_infinite_tau_y_lid():
     np.testing.assert_allclose(grads_prof[0], [1.0, 1.0], rtol=1.0e-12)
     np.testing.assert_allclose(grads_prof[1], [0.0, 0.0], atol=1.0e-30)
     np.testing.assert_allclose(grads_prof[2], [0.0, 0.0], atol=1.0e-30)
+
+
+@pytest.mark.unit
+def test_stagnant_lid_state_unyielded_velocity_list_input():
+    """Verify compute_stagnant_lid_state accepts a Python list for unyielded_velocity on numpy and jax.numpy."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    import jax.numpy as jnp
+
+    radii = [3.48e6, 4.10e6, 4.80e6, 5.60e6, 6.37e6]
+    temperature = [3000.0, 2600.0, 2200.0, 1800.0, 300.0]
+    pressure = [1.35e11, 9.0e10, 5.0e10, 2.0e10, 0.0]
+    convective_flux = [0.0, 0.5, 0.5, 0.5, 0.0]
+    total_flux = [0.5, 0.5, 0.5, 0.5, 0.5]
+    melt_fraction = [0.0, 0.0, 0.0, 0.0, 0.0]
+    vel_list = [1.0e-9, -2.0e-9, 3.0e-9, -4.0e-9, 1.0e-12]
+
+    ref_np = compute_stagnant_lid_state(
+        radii=np.asarray(radii),
+        temperature=np.asarray(temperature),
+        pressure=np.asarray(pressure),
+        convective_flux=np.asarray(convective_flux),
+        total_flux=np.asarray(total_flux),
+        melt_fraction=np.asarray(melt_fraction),
+        solidus_temperature=None,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.asarray(vel_list),
+        xp=np,
+    )
+    state_np = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temperature,
+        pressure=pressure,
+        convective_flux=convective_flux,
+        total_flux=total_flux,
+        melt_fraction=melt_fraction,
+        solidus_temperature=None,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=vel_list,
+        xp=np,
+    )
+    state_jnp = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temperature,
+        pressure=pressure,
+        convective_flux=convective_flux,
+        total_flux=total_flux,
+        melt_fraction=melt_fraction,
+        solidus_temperature=None,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=vel_list,
+        xp=jnp,
+    )
+    assert float(ref_np['v_i']) > 0.0
+    assert float(state_np['v_i']) == pytest.approx(float(ref_np['v_i']), rel=1.0e-12, abs=0.0)
+    assert float(state_jnp['v_i']) == pytest.approx(float(ref_np['v_i']), rel=1.0e-12, abs=0.0)
+    np.testing.assert_allclose(state_np['w_upper'], ref_np['w_upper'], rtol=1.0e-12, atol=0.0)
+    np.testing.assert_allclose(
+        state_jnp['w_upper'], ref_np['w_upper'], rtol=1.0e-12, atol=1.0e-15
+    )
