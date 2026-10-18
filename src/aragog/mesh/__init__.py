@@ -325,7 +325,9 @@ class Mesh:
             self._dxidr: npt.NDArray = np.ones_like(self.basic.radii)
         self._d_dr_transform: npt.NDArray = self._get_d_dr_transform_matrix()
         self._quantity_transform: npt.NDArray = self._get_quantity_transform_matrix()
-        self.top_node = getattr(parameters.boundary_conditions, 'top_node', 'linear')
+        self.top_node = getattr(
+            getattr(parameters, 'boundary_conditions', None), 'top_node', 'linear'
+        )
         self.top_bounds, self.top_band = (-np.inf, np.inf), 50.0
 
     @property
