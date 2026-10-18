@@ -24,12 +24,21 @@ def _check(S):
     _check_accepted_states(T, np.asarray(S, float), W, S_MIN, S_MAX)
 
 
+def _passes(t, S):
+    """True when the states pass, so a wrong raise fails an assertion."""
+    try:
+        _check_accepted_states(t, np.asarray(S, float), W, S_MIN, S_MAX)
+    except AcceptedStateError:
+        return False
+    return True
+
+
 def _inside():
     return np.full((3, 4), 1000.0)
 
 
 def test_states_inside_the_tables_pass():
-    _check(_inside())
+    assert _passes(T, _inside())
 
 
 @pytest.mark.parametrize(
@@ -74,13 +83,13 @@ def test_the_call_start_is_not_checked():
     """The first node is the previous call's end, checked there."""
     S = _inside()
     S[0, 0] = S_MIN - 50.0
-    _check(S)
+    assert _passes(T, S)
 
 
 def test_nodes_at_the_call_start_time_are_not_checked():
     """A zero-span call returns its start state twice; neither copy is checked."""
     S = np.full((3, 2), S_MIN - 10.0)
-    _check_accepted_states(np.zeros(2), S, W, S_MIN, S_MAX)
+    assert _passes(np.zeros(2), S)
     S = np.hstack([S, np.full((3, 1), S_MIN - 10.0)])
     with pytest.raises(AcceptedStateError) as e:
         _check_accepted_states(np.array([0.0, 0.0, 1.0]), S, W, S_MIN, S_MAX)
@@ -99,7 +108,7 @@ def test_the_earliest_offending_state_is_reported():
 def test_the_table_edge_itself_is_inside(edge):
     S = _inside()
     S[:, 1:] = edge
-    _check(S)
+    assert _passes(T, S)
 
 
 @settings(max_examples=200, deadline=None)

@@ -36,7 +36,7 @@ def test_a_call_inside_the_tables_does_not_raise(shared_eos, method, flux):
     assert f.min() >= float(shared_eos.S_min)
 
 
-@pytest.mark.parametrize('bad', [0.0, -5.0, np.nan])
+@pytest.mark.parametrize('bad', [0.0, -5.0, np.nan, np.inf])
 def test_a_temperature_table_with_a_non_positive_or_non_finite_value_is_refused(
     monkeypatch, bad
 ):
