@@ -566,3 +566,65 @@ def test_stagnant_lid_state_rejects_mismatched_t_sol_0():
                 phi_rheo=0.4,
                 phi_width=0.15,
             )
+
+
+def test_softmax_velocity_scale_constant_and_phase_config_roundtrip(monkeypatch):
+    """Verify SOFTMAX_VELOCITY_SCALE constant in rheology_lid and PhaseConfig attrs round-trip."""
+    import attrs
+
+    import aragog.rheology_lid as lid_mod
+
+    assert hasattr(lid_mod, 'SOFTMAX_VELOCITY_SCALE')
+    assert 'SOFTMAX_VELOCITY_SCALE' in lid_mod.__all__
+    assert lid_mod.SOFTMAX_VELOCITY_SCALE == pytest.approx(3.17e-12, rel=1.0e-12)
+
+    n_nodes = 20
+    r = np.linspace(3.48e6, 6.371e6, n_nodes)
+    t = np.linspace(2600.0, 300.0, n_nodes)
+    p = np.linspace(135.0e9, 0.0, n_nodes)
+    f_conv = np.full(n_nodes, 80.0)
+    f_conv[-4:] = 0.0
+    v_uny = np.linspace(1.0e-12, 1.0e-11, n_nodes)
+    kw = dict(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=f_conv,
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=SolidRheologyParams(enabled=True),
+        unyielded_velocity=v_uny,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    st_default = compute_stagnant_lid_state(**kw)
+    monkeypatch.setattr(lid_mod, 'SOFTMAX_VELOCITY_SCALE', 3.17e-9)
+    st_mutated = compute_stagnant_lid_state(**kw)
+    assert abs(float(st_mutated['v_i']) - float(st_default['v_i'])) > 1.0e-10
+
+    pc = PhaseConfig(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=2e-5,
+        viscosity=1e21,
+        g_homologous=22.0,
+        yield_stress_c=40.0e6,
+    )
+    evolved = attrs.evolve(
+        pc,
+        viscosity=2.0e21,
+        rheology=dataclasses.replace(pc.rheology, enabled=True, g_homologous=19.0),
+    )
+    assert evolved.viscosity == pytest.approx(2.0e21)
+    assert evolved.g_homologous == pytest.approx(19.0)
+    assert evolved.rheology.enabled is True
+    assert PhaseConfig(**attrs.asdict(pc)) == pc
+    assert (
+        PhaseConfig(**{**attrs.asdict(pc), 'rheology': dataclasses.asdict(pc.rheology)}) == pc
+    )
+    with pytest.raises(AttributeError):
+        pc.g_homologous = 30.0  # type: ignore[misc]
