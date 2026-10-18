@@ -428,7 +428,7 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     assert tau_buoy_str in doc_text
     assert '0.150' in doc_text
 
-    # Computed doc numbers from Ruling 32 l 6 (1423.0 K, 1736.9 K, 70.95 K, 13.7, 0.584 dT_rh, 1.55 MPa)
+    # Verify computed reference temperatures, erf offsets, and solidus offset ratio in docs
     assert rf'{dt_rh_val:.2f}\text{{ K}}' in doc_text
 
     ckpt_path = repo_root / 'tests' / 'reference' / 'checkpoint_profile_175kyr.npz'
@@ -471,6 +471,11 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     t_09 = 300.0 + 1300.0 * math.erf(z_over_delta_09)
     ratio_09 = (1600.0 - t_09) / dt_rh_val
     assert rf'{ratio_09:.3f}\,\Delta T_\text{{rh}}' in doc_text
+
+    ratio_sol_ref = math.exp(
+        default_rheo.g_homologous * (1429.0 - default_rheo.t_sol_0) / 1600.0
+    )
+    assert rf'{ratio_sol_ref:.2f}\times' in doc_text
 
     d_mantle = 6370.0e3 - 3480.0e3
     d_lid_cond = 7.0 * (d_mantle / 49.0)

@@ -2,7 +2,7 @@
 
 Aragog models thermal evolution from a molten magma ocean through a partially molten mush to a solidified rocky mantle. In the solid regime, mantle viscosity varies by many orders of magnitude with temperature and pressure, producing a cold, high-viscosity conductive boundary layer (stagnant lid) unless convective driving stresses exceed the lithospheric yield strength and mobilise the surface boundary layer. The modules `aragog.rheology` and `aragog.rheology_lid` provide the standalone Arrhenius creep, plastic yield, stagnant-lid diagnostic, and effective-viscosity kernels documented below.
 
-**Status:** The functions in `aragog.rheology` and `aragog.rheology_lid` are standalone kernels with no caller in the time-stepping solver (`aragog.jax.phase.compute_mlt` and `aragog.solver.entropy_state.apply_kappah_floor` do not call them). On `SolidRheologyParams`, the fields `enabled`, `stress_closure_mode`, and `phi_visc_single` are validated and stored on the parameter container, and no kernel reads them directly (callers pass `stress_closure_mode` explicitly to `compute_effective_viscosity`).
+**Status:** The functions in `aragog.rheology` and `aragog.rheology_lid` are standalone kernels with no caller in the time-stepping solver (`aragog.jax.phase.compute_mlt` and `aragog.solver.entropy_state.apply_kappah_floor` do not call them). On `SolidRheologyParams`, the fields `enabled`, `stress_closure_mode`, and `phi_visc_single` are validated and stored on the parameter container, and no kernel reads them directly (callers pass `stress_closure_mode` explicitly to `compute_effective_viscosity`). Remaining hard switches and derivative kinks in these standalone kernels are the boolean lid conditions `is_convecting`, $d_\text{lid} > 1\text{ m}$, and $T_i - T_\text{surf} > 10^{-3}\text{ K}$, the viscosity ceiling `viscosity_max_log10`, the temperature-gradient floor $\max(|\nabla T|, 1\text{ K})$, the $\min$ cap in `scale_mask`, and the $\max_k w_{\text{conv,int}, k}$ evaluation in $w_\text{weight}$.
 
 ## 1. Homologous-Temperature Diffusion Creep
 
@@ -14,7 +14,7 @@ $$
 
 where:
 
-- $\eta_\text{solid}$ is the reference solid viscosity at temperature $T_\text{ref} = 1600\text{ K}$ and zero pressure (`viscosity_solid`, default $10^{21}\text{ Pa s}$).
+- $\eta_\text{solid}$ is the reference solid viscosity (`viscosity_solid`, default $10^{21}\text{ Pa s}$), equal to $\eta_\text{diff}$ at $(T_\text{ref} = 1600\text{ K}, P = 0)$ for the linear solidus; when a solidus table is supplied, it is referenced to `params.t_sol_0` ($T_{\text{sol},0}$), so it differs from $\eta_\text{diff}$ at the table's $T_\text{sol}(0)$ by $\exp\big(g_\text{hom}(T_\text{sol}(0) - T_{\text{sol},0}) / T\big)$ ($1.57\times$ at $1600\text{ K}$ for $1429\text{ K}$ against $1400\text{ K}$).
 - $f_\text{water}$ is the hydration weakening prefactor (`water_prefactor`, default $1.0$).
 - $R = 8.314462618\text{ J mol}^{-1}\text{ K}^{-1}$ is the universal gas constant.
 - $g_\text{hom}$ is the dimensionless homologous activation parameter (`g_homologous`, default $25.0$).
@@ -33,7 +33,7 @@ $$
 
 For $f = 0.9$, this ratio equals $\exp(g_\text{hom} / 9) = 16.083$ at $g_\text{hom} = 25$ (and $4.738$ at $g_\text{hom} = 14$) at all depths.
 
-When an explicit solidus profile $T_\text{sol}(P)$ is supplied to `compute_arrhenius_viscosity` or `compute_stagnant_lid_state`, the caller must also supply the zero-pressure reference solidus $T_\text{sol}(0)$ (`t_sol_0`) from the same solidus source. When `solidus_temperature` is `None` (such as in table-free constant-property benchmarks), `compute_arrhenius_enthalpy`, `compute_arrhenius_viscosity`, and `compute_stagnant_lid_state` evaluate the linear solidus fallback:
+When an explicit solidus profile $T_\text{sol}(P)$ is supplied to `compute_arrhenius_viscosity` or `compute_stagnant_lid_state`, the caller must also supply the zero-pressure reference solidus $T_{\text{sol},0}$ (`t_sol_0`) matching `params.t_sol_0`; because `t_sol_0` is checked against `params.t_sol_0` rather than against the table's $P = 0$ value $T_\text{sol}(0)$, `viscosity_solid` is referenced to `params.t_sol_0` and differs from $\eta_\text{diff}$ at $(T_\text{ref}, P = 0)$ on the table by $\exp\big(g_\text{hom}(T_\text{sol}(0) - T_{\text{sol},0}) / T\big)$ ($1.57\times$ at $T = 1600\text{ K}$ and $g_\text{hom} = 25$ for a $1429\text{ K}$ table value against $1400\text{ K}$). When `solidus_temperature` is `None` (such as in table-free constant-property benchmarks), `compute_arrhenius_enthalpy`, `compute_arrhenius_viscosity`, and `compute_stagnant_lid_state` evaluate the linear solidus fallback:
 
 $$
 T_\text{sol}(P) = T_{\text{sol},0} + \frac{dT_\text{sol}}{dP} P
@@ -118,15 +118,15 @@ $$
 w_{\text{conv}, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - f_\text{conv,min}}{0.01} \right) \right)
 $$
 
-so that a zero-flux conductive node ($f_k = 0$) carries a weight of at most $w_\text{conv}(f = 0) = \frac{1}{2}(1 - \tanh(5)) \approx 4.5 \times 10^{-5}$. From the interior peak convective flux fraction $f_\text{int,max} = \max_{1 < k < N} f_k$ and the baseline-subtracted interior convective indicator $w_{\text{conv,int}, k} = \max(w_{\text{conv}, k} - w_\text{conv}(f = 0), 0) I_{1 < k < N}$, `compute_stagnant_lid_state` evaluates the mesh-independent convective activity indicator $w_\text{active} = \frac{1}{2}(1 + \tanh((f_\text{int,max} - f_\text{conv,min}) / 0.01))$ and the shallowest-crossing boundary sum $W_\text{sum} = \sum_k w_{\text{conv,int}, k} \prod_{j < k} (1 - w_{\text{conv,int}, j})$ (with $w_\text{weight} = \tanh(W_\text{sum} / 10^{-6})$ and `is_convecting` requiring $W_\text{sum} > 10^{-6}$ and $w_\text{active} > 0.05$).
+so that a zero-flux conductive node ($f_k = 0$) carries a weight of at most $w_\text{conv}(f = 0) = \frac{1}{2}(1 - \tanh(5)) \approx 4.5 \times 10^{-5}$. From the interior peak convective flux fraction $f_\text{int,max} = \max_{1 < k < N} f_k$ and the baseline-subtracted interior convective indicator $w_{\text{conv,int}, k} = \max(w_{\text{conv}, k} - w_\text{conv}(f = 0), 0) I_{1 < k < N}$, `compute_stagnant_lid_state` evaluates the mesh-independent convective activity indicator $w_\text{active} = \frac{1}{2}(1 + \tanh((f_\text{int,max} - f_\text{conv,min}) / 0.01))$ and the shallowest-crossing boundary sum $W_\text{sum} = \sum_k w_{\text{conv,int}, k} \prod_{j > k} (1 - w_{\text{conv,int}, j})$ scanned from the outermost surface node $k = N$ inward (with mesh-independent transition weight $w_\text{weight} = \tanh(\max_k w_{\text{conv,int}, k} / 10^{-6})$ and `is_convecting` requiring $W_\text{sum} > 10^{-6}$ and $w_\text{active} > 0.05$).
 
-To evaluate the interior temperature $T_i$, pressure $P_{T_i}$, radius $r_i$, and interior viscosity $\mu_i$ where convection dominates relative to the interior peak $f_\text{int,max} = \max_{1 < k < N} f_k$ (with scale $f_\text{int,scale} = \max(f_\text{int,max}, 10^{-12})$ and threshold $f_{T_i} = 0.9 f_\text{int,max}$), `compute_stagnant_lid_state` forms the interior selector on non-boundary nodes ($1 < k < N$). For an error-function boundary-layer profile $T(z) = 300 + 1300\,\mathrm{erf}(z / \delta)$ with a $1300\text{ K}$ surface-to-interior temperature contrast and $\Delta T_\text{rh} = 70.95\text{ K}$ ($H = 300\text{ kJ mol}^{-1}$ at $1600\text{ K}$), the onset threshold $f = 0.05$ ($z / \delta = 0.2265$, $T = 626.6\text{ K}$) sits $13.7\,\Delta T_\text{rh}$ below the interior, whereas $f = 0.9$ ($z / \delta = 1.517$, $T = 1558.6\text{ K}$) sits $0.584\,\Delta T_\text{rh}$ below the interior:
+To evaluate the interior temperature $T_i$, pressure $P_{T_i}$, radius $r_i$, and interior viscosity $\mu_i$ where convection dominates relative to the interior peak $f_\text{int,max} = \max_{1 < k < N} f_k$ (with scale $f_\text{int,scale} = \max(f_\text{int,max}, 10^{-12})$ and threshold $f_{T_i} = 0.9 f_\text{int,max}$), `compute_stagnant_lid_state` forms the interior selector on non-boundary nodes ($1 < k < N$). For an error-function boundary-layer profile $T(z) = 300 + 1300\,\mathrm{erf}(z / \delta)$ with conductive flux-fraction profile $f(z) = 1 - \exp(-(z / \delta)^2)$, a $1300\text{ K}$ surface-to-interior temperature contrast, and $\Delta T_\text{rh} = 70.95\text{ K}$ ($H = 300\text{ kJ mol}^{-1}$ at $1600\text{ K}$), the onset threshold $f = 0.05$ ($z / \delta = 0.2265$, $T = 626.6\text{ K}$) sits $13.7\,\Delta T_\text{rh}$ below the interior, whereas $f = 0.9$ ($z / \delta = 1.517$, $T = 1558.6\text{ K}$) sits $0.584\,\Delta T_\text{rh}$ below the interior:
 
 $$
-w_{T_i, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - f_{T_i}}{0.02 f_\text{int,scale}} \right) \right) I_{1 < k < N} I_{f_\text{int,max} > 0}
+w_{T_i, k} = \frac{1}{2} \left( 1 + \tanh\left( \frac{f_k - f_{T_i}}{0.02 f_\text{int,scale}} \right) \right) I_{1 < k < N}
 $$
 
-The shallowest convection-dominated node from the surface is isolated by the cumulative product indicator $W_k = w_{T_i, k} \prod_{j < k} (1 - w_{T_i, j})$, normalised to $\tilde{W}_{T_i, k}$, and blended via $\tilde{W}_k = w_\text{weight} \tilde{W}_{T_i, k} + (1 - w_\text{weight}) \tilde{W}_{\text{conv}, k}$ (where $\tilde{W}_{\text{conv}, k}$ is the shallowest-crossing weight of $w_{\text{conv,int}, k}$ with fallback to the deepest interior node $k = 2$). For weak convective fluxes below the lid onset ($f_\text{int,max} < 0.036$) where $W_\text{sum} \gg 10^{-6}$ (for example $f_\text{int,max} = 10^{-4}$), $w_\text{weight} \approx 1$ and $T_i$ still selects the top-of-convection node near $0.9 f_\text{int,max}$; as $f_\text{int,max} \to 0$ ($W_\text{sum} \ll 10^{-6}$), $w_\text{weight} \to 0$ and $T_i$ relaxes smoothly to the interior fallback node $T_2$:
+The shallowest convection-dominated node from the surface is isolated by the surface-down cumulative product indicator $W_k = w_{T_i, k} \prod_{j > k} (1 - w_{T_i, j})$ over shallower nodes $j > k$, normalised to $\tilde{W}_{T_i, k}$, and blended via $\tilde{W}_k = w_\text{weight} \tilde{W}_{T_i, k} + (1 - w_\text{weight}) \tilde{W}_{\text{conv}, k}$ (where $\tilde{W}_{\text{conv}, k}$ is the shallowest-crossing weight of $w_{\text{conv,int}, k}$ with fallback to the deepest interior node $k = 2$). For weak convective fluxes below the lid onset ($f_\text{int,max} < 0.05 + 0.01\,\mathrm{arctanh}(-0.9) = 0.035278$) where $\max_k w_{\text{conv,int}, k} \gg 10^{-6}$ (for example $f_\text{int,max} = 10^{-4}$), $w_\text{weight} \approx 1$ and $T_i$ still selects the top-of-convection node near $0.9 f_\text{int,max}$; as $f_\text{int,max} \to 0$ ($\max_k w_{\text{conv,int}, k} \ll 10^{-6}$), $w_\text{weight} \to 0$ and $T_i$ relaxes smoothly to the interior fallback node $T_2$:
 
 $$
 T_i = \sum_{k=1}^N \tilde{W}_k T_k, \quad P_{T_i} = \sum_{k=1}^N \tilde{W}_k P_k
@@ -140,7 +140,7 @@ $$
 \log_{10} \mu_i = w_\text{weight} \sum_{k=1}^N \tilde{W}_k \log_{10} \eta_{\text{mix}, k} + (1 - w_\text{weight}) \log_{10} \eta_\text{diff}(T_i, P_{T_i})
 $$
 
-When `viscosity_mixture` is `None`, $\mu_i$ equals the solid Arrhenius interior viscosity $\eta_i = \eta_\text{diff}(T_i, P_{T_i})$. When $f_\text{int,max}$ lies more than $0.01\,\mathrm{arctanh}(0.9) \approx 0.0147$ below $f_\text{conv,min}$ (for example $f_k \le 0.035$ at $f_\text{conv,min} = 0.05$), $w_\text{active} \le 0.05$, `is_convecting` and `has_lid` are `False`, no lid is delimited, and yielding remains inactive across any mesh resolution $N$.
+When `viscosity_mixture` is `None`, $\mu_i$ equals the solid Arrhenius interior viscosity $\eta_i = \eta_\text{diff}(T_i, P_{T_i})$. When $f_\text{int,max}$ lies more than $0.01\,\mathrm{arctanh}(0.9) \approx 0.0147$ below $f_\text{conv,min}$ (that is, $f_\text{int,max} \le 0.035278$ at $f_\text{conv,min} = 0.05$), $w_\text{active} \le 0.05$, `is_convecting` and `has_lid` are `False`, no lid is delimited, and yielding remains inactive across any mesh resolution $N$.
 
 ### Rheological Temperature Scale
 
@@ -198,13 +198,13 @@ where $|dT/dr|_\text{lid\_base}$ is the $\tilde{W}_{\text{base}, k}$-weighted ra
 
 Because $|dT/dr|_\text{lid\_base}$ is computed by a nodal central difference (`xp.gradient(T, r)`), $\delta_\text{rh}$ depends on the radial mesh spacing around the lid base. In addition, the `lid_state` dictionary records `lid_cell_count` ($\sum_k w_{\text{lid}, k}$) over the physical lid thickness $d_\text{lid}$ to track numerical resolution within the lid.
 
-Nodes belonging to the lid are weighted by a smooth hyperbolic tangent mask:
+The lid-base locator $\tilde{W}_{\text{base}, k}$ scans the cell-width interior indicator $w_\text{interior} = \max(w_\text{hot,iso}, w_\text{hot,sol}, w_\text{hot,phi})$ (with smoothing scale $\text{scale\_cell} = \text{lid\_mask\_width\_cells} \cdot \max(|\nabla T|, 1.0\text{ K})$) from the surface node inward, whereas the nodal lid mask uses the capped-width indicator $w_\text{interior,mask} = \max(w_\text{hot,iso,mask}, w_\text{hot,sol,mask}, w_\text{hot,phi})$ evaluated with $\text{scale\_mask} = \min(\text{scale\_cell},\, \text{lid\_mask\_width\_cells} \cdot \max(\Delta T_\text{rh}, 1.0\text{ K}))$:
 
 $$
-w_\text{lid} = (1 - w_\text{interior}) \cdot w_\text{active}
+w_\text{lid} = (1 - w_\text{interior,mask}) \cdot w_\text{active}
 $$
 
-where the lid-base locator $\tilde{W}_{\text{base}, k}$ transitions smoothly over the local cell temperature step $\Delta T_\text{cell} = \max(|\nabla T|, 1.0\text{ K})$ scaled by `lid_mask_width_cells` (default $1.0$), while the lid mask $w_\text{lid}$ uses the capped width $\min(\text{lid\_mask\_width\_cells} \cdot \Delta T_\text{cell},\, \text{lid\_mask\_width\_cells} \cdot \max(\Delta T_\text{rh}, 1.0\text{ K}))$ so that steep single-cell surface thermal boundary layers saturate at $w_\text{lid}(\text{surface}) \to 1$. Inside the cold solid lid, $w_\text{lid} \to 1$. In the warm or partially molten interior, $w_\text{lid} \to 0$.
+Using $w_\text{interior,mask}$ in $w_\text{lid}$ ensures that steep single-cell surface thermal boundary layers saturate at $w_\text{lid}(\text{surface}) \to 1$. Inside the cold solid lid, $w_\text{lid} \to 1$. In the warm or partially molten interior, $w_\text{lid} \to 0$.
 
 ## 4. Convective Driving Stress
 

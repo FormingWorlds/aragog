@@ -56,8 +56,9 @@ SOFTMAX_VELOCITY_SCALE: float = 3.17e-12
 def _boundary_weights(w: Any, xp: Any, *, fallback: Any | None = None) -> tuple[Any, Any, Any]:
     """Smooth weights of the shallowest crossing of ``w``, scanned from the surface down.
 
-    Returns ``(W_tilde, W_sum, w_weight)``; ``W_tilde`` relaxes to ``fallback`` (or
-    to the bottom node at index 0 when ``fallback`` is None) when ``max(w)`` vanishes.
+    Evaluates ``W_k = w_k * prod_{j > k} (1 - w_j)`` from the outermost node ``r[-1]``
+    inward and returns ``(W_tilde, W_sum, w_weight)``; ``W_tilde`` relaxes to ``fallback``
+    (or to the bottom node at index 0 when ``fallback`` is None) when ``max(w)`` vanishes.
     """
     w_surf = w[::-1]
     omw = xp.concatenate([xp.ones(1, dtype=w.dtype), 1.0 - w_surf[:-1]])
@@ -71,8 +72,12 @@ def _boundary_weights(w: Any, xp: Any, *, fallback: Any | None = None) -> tuple[
 
 
 def _scalar_or_nan(val: Any, name: str) -> float:
-    """Return ``float(val)`` on concrete scalars, ``nan`` on traced scalars; reject arrays."""
-    if getattr(val, 'ndim', 0) > 0 or (not hasattr(val, 'ndim') and np.ndim(val) > 0):
+    """Return ``float(val)`` on concrete scalars, ``nan`` on traced scalars; reject arrays and strings."""
+    if (
+        isinstance(val, (str, bytes))
+        or getattr(val, 'ndim', 0) > 0
+        or (not hasattr(val, 'ndim') and np.ndim(val) > 0)
+    ):
         raise ValueError(f'{name} must be a scalar')
     try:
         return float(val)
@@ -127,7 +132,12 @@ def compute_stagnant_lid_state(
     params : SolidRheologyParams
         Rheology parameter set.
     viscosity_solid : float
-        Reference solid mantle viscosity [Pa s].
+        Reference solid mantle viscosity [Pa s], equal to ``eta_diff`` at
+        ``(params.arrhenius_t_ref, P = 0)`` for the linear solidus; when a
+        ``solidus_temperature`` table is provided, it is referenced to
+        ``params.t_sol_0`` and differs from ``eta_diff`` at the table's
+        ``T_sol(0)`` by ``exp(g_hom * (T_sol(0) - params.t_sol_0) / T)``
+        (1.57x at 1600 K for 1429 K against 1400 K).
     phi_rheo : float
         Critical melt fraction for rheological transition [-].
     phi_width : float
@@ -137,7 +147,7 @@ def compute_stagnant_lid_state(
     viscosity_mixture : float or array-like, optional
         Effective mixture viscosity profile [Pa s] of the convecting layer (in mush,
         the blended two-phase viscosity used by the solver). When provided, mu_i
-        blends smoothly via ``w_weight = tanh(W_sum / 1e-6)`` between the
+        blends smoothly via ``w_weight = tanh(max_k w_conv_int / 1e-6)`` between the
         W_tilde-weighted log mean of ``viscosity_mixture`` and the solid Arrhenius
         viscosity ``eta_arr_i``; otherwise falls back to ``eta_arr_i``.
     density : float or array-like, default 3300.0
@@ -190,21 +200,31 @@ def compute_stagnant_lid_state(
 
     When convection is inactive or no physical conductive lid forms
     (``d_lid_raw <= NO_LID_THICKNESS_THRESHOLD`` of 1.0 m or
-    ``T_i - T_surf <= NO_LID_DT_THRESHOLD`` of 1.0e-3 K), boundary-layer diagnostics
+    ``T_i - T_surf <= NO_LID_DT_THRESHOLD`` of 1.0e-3 K, where the ``w_active > 0.05``
+    threshold sits at ``f_int_max = params.interior_flux_fraction + 0.01 * atanh(-0.9) = 0.035278``
+    at the default ``interior_flux_fraction = 0.05``), boundary-layer diagnostics
     (``d_lid``, ``Ra_eff``, ``Ra_rh``, ``v_m``, ``tau_d``, ``tau_d_lid``,
     ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are zeroed and
     ``has_lid`` is False, while ``T_i``, ``eta_i``, ``mu_i``, and ``theta`` serve as
     interior fallback diagnostics (selecting the shallowest interior node near
-    ``0.9 * f_int_max`` when ``W_sum >> 1e-6``, such as ``1e-4 <= f_int_max < 0.036``,
-    and relaxing to the interior fallback node ``T[1]`` as ``W_sum -> 0`` at ``f = 0``)
-    and all solver-facing outputs vary continuously across uniform convective flux
-    fractions ``f`` in ``[0, 1e-3]``.
+    ``0.9 * f_int_max`` when ``max_k w_conv_int >> 1e-6``, such as
+    ``1e-4 <= f_int_max < 0.035278``, and relaxing to the interior fallback node
+    ``T[1]`` as ``max_k w_conv_int -> 0`` at ``f = 0``) and all solver-facing outputs
+    vary continuously across uniform convective flux fractions ``f`` in ``[0, 1e-3]``.
 
+    The lid-base locator ``W_base_tilde = _boundary_weights(w_interior, xp)[0]`` scans
+    ``w_interior = max(w_hot_iso, w_hot_sol, w_hot_phi)`` (smoothed over the local cell
+    temperature step ``scale_cell = lid_mask_width_cells * max(|grad T|, 1.0 K)``) from
+    the outermost node ``r[-1]`` inward, whereas the nodal lid mask
+    ``w_lid = (1 - w_interior_mask) * w_active`` uses the capped width
+    ``scale_mask = min(scale_cell, lid_mask_width_cells * max(dT_rh, 1.0 K))`` via
+    ``w_interior_mask = max(w_hot_iso_mask, w_hot_sol_mask, w_hot_phi)``.
     When ``solidus_temperature`` is None, the solidus crossing indicator ``w_hot_sol``
     is evaluated from melt fraction using ``SOLIDUS_MELT_FRACTION_THRESHOLD`` (0.01).
-    Because ``w_interior`` takes the maximum of isothermal, solidus, and rheological
-    indicators, layers with melt fraction exceeding 0.01 are treated as non-lid interior
-    by ``w_hot_sol``, rendering the lid boundary position independent of ``phi_rheo``.
+    Because ``w_interior`` and ``w_interior_mask`` take the maximum of isothermal,
+    solidus, and rheological indicators, layers with melt fraction exceeding 0.01 are
+    treated as non-lid interior, rendering the lid boundary position independent of
+    ``phi_rheo``.
     """
     _require_x64_if_jax(xp)
     if viscosity_solid is None or phi_rheo is None or phi_width is None:
@@ -307,11 +327,7 @@ def compute_stagnant_lid_state(
     f_Ti_thresh = 0.9 * f_int_max
     w_Ti_width = 0.02 * f_int_scale
     w_Ti = (
-        0.5
-        * (1.0 + xp.tanh((f - f_Ti_thresh) / w_Ti_width))
-        * interior_node_mask
-        * xp.where(f_int_max > 0.0, 1.0, 0.0)
-        + zero_or_nan
+        0.5 * (1.0 + xp.tanh((f - f_Ti_thresh) / w_Ti_width)) * interior_node_mask + zero_or_nan
     )
     W_Ti_tilde = _boundary_weights(w_Ti, xp, fallback=W_conv_tilde)[0]
     W_tilde = w_weight * W_Ti_tilde + (1.0 - w_weight) * W_conv_tilde
@@ -351,7 +367,7 @@ def compute_stagnant_lid_state(
     H_safe = xp.maximum(H_T_i, 1e-6)
     T_i_safe = xp.maximum(T_i, 1.0)
     dT_rh = (R_GAS * T_i_safe**2) / H_safe
-    T_surf = T[-1] + zero_or_nan
+    T_surf = T[-1]
     P_surf = P[-1]
     # Homologous Frank-Kamenetskii contrast: theta = H(P_i) * (T_i - T_surf) / (R * T_i**2).
     theta = (H_T_i * (T_i - T_surf)) / (R_GAS * T_i_safe**2)

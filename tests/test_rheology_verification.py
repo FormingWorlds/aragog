@@ -1669,10 +1669,19 @@ def test_stagnant_lid_state_a_rh_fb_bounds_validation():
 
 @pytest.mark.unit
 def test_stagnant_lid_state_rejects_array_valued_scalars():
-    """Verify array-valued scalar arguments raise ValueError instead of being skipped."""
+    """Verify array-valued and string scalar arguments raise ValueError instead of being accepted."""
+    from aragog.rheology_lid import _scalar_or_nan
+
+    for bad_str in ('1e21', b'1e21'):
+        with pytest.raises(ValueError, match='viscosity_solid must be a scalar'):
+            _scalar_or_nan(bad_str, 'viscosity_solid')
+
     n_nodes = 10
     valid_kw = _valid_lid_state_kwargs(n_nodes)
     for scalar_name, bad_arr in (
+        ('C4', '0.125'),
+        ('phi_rheo', '0.4'),
+        ('viscosity_solid', '1e21'),
         ('viscosity_solid', np.full(n_nodes, 1.0e21)),
         ('phi_width', np.full(n_nodes, 0.15)),
         ('phi_rheo', np.full(n_nodes, -5.0)),
