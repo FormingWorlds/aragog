@@ -249,6 +249,7 @@ class MeshArrays(eqx.Module):
     top_limited: bool = eqx.field(static=True)
     top_ratio: float
     top_bounds: jax.Array  # [J/kg/K], (S_min, S_max)
+    top_band: float  # [J/kg/K], blend band inside each table edge
 
     def __init__(
         self,
@@ -269,6 +270,7 @@ class MeshArrays(eqx.Module):
         top_limited=False,
         top_ratio=1.0,
         top_bounds=(-jnp.inf, jnp.inf),
+        top_band=50.0,
     ):
         """Custom init so callers that predate the dP_dr_basic field
         keep working. When ``dP_dr_basic`` is not supplied we derive it
@@ -305,6 +307,7 @@ class MeshArrays(eqx.Module):
         self.gravity_stag = jnp.asarray(gravity_stag)
         self.top_limited, self.top_ratio = bool(top_limited), float(top_ratio)
         self.top_bounds = jnp.asarray(top_bounds, dtype=float)
+        self.top_band = float(top_band)
 
     @staticmethod
     def from_numpy_mesh(mesh) -> 'MeshArrays':
@@ -346,6 +349,7 @@ class MeshArrays(eqx.Module):
             top_limited=getattr(mesh, 'top_node', 'linear') == 'limited',
             top_ratio=getattr(mesh, 'top_ratio', 1.0),
             top_bounds=getattr(mesh, 'top_bounds', (-np.inf, np.inf)),
+            top_band=getattr(mesh, 'top_band', 50.0),
         )
 
 
@@ -353,7 +357,7 @@ def entropy_at_basic_nodes(mesh: MeshArrays, S: jax.Array) -> jax.Array:
     """Entropy at the basic nodes, with the limited top node of ``aragog.mesh`` when set."""
     S_basic = mesh.quantity_matrix @ S
     if mesh.top_limited:
-        top = top_node_entropy(S, mesh.top_ratio, *mesh.top_bounds, xp=jnp)
+        top = top_node_entropy(S, mesh.top_ratio, *mesh.top_bounds, mesh.top_band, xp=jnp)
         S_basic = S_basic.at[-1].set(top)
     return S_basic
 

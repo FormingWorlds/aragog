@@ -1410,7 +1410,8 @@ class EntropySolver:
 
     @property
     def entropy_eos(self):
-        """Entropy EOS tables; setting them also bounds the limited top node by their range."""
+        """Entropy EOS tables; setting them also bounds the limited top node by their range, with
+        a blend band of half the EOS floor margin (50 J/kg/K without the floor)."""
         return self._entropy_eos
 
     @entropy_eos.setter
@@ -1418,7 +1419,10 @@ class EntropySolver:
         self._entropy_eos = eos
         mesh = getattr(getattr(self, 'evaluator', None), 'mesh', None)
         if hasattr(mesh, 'set_top_bounds'):
-            mesh.set_top_bounds(*(() if eos is None else (eos.S_min, eos.S_max)))
+            m = getattr(getattr(self.parameters, 'energy', None), 'eos_floor_margin', None)
+            band = 0.5 * float(m) if m is not None and m > 0 else 50.0
+            bounds = (-np.inf, np.inf) if eos is None else (eos.S_min, eos.S_max)
+            mesh.set_top_bounds(*bounds, band)
 
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters

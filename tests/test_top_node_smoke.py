@@ -184,7 +184,7 @@ def test_the_grey_body_flux_is_continuous_across_the_band(shared_eos):
     s = _solver(shared_eos, 'limited', bc=1)
     y0, n, S_min = np.asarray(s._S0, dtype=float).copy(), s._n_stag, float(shared_eos.S_min)
     rates, free = [], []
-    for t in 333.0 + 0.01 * np.arange(-3000, 3001):
+    for t in 333.0 + 0.01 * np.arange(-3000, 7001):
         y = y0.copy()
         y[n - 3 : n] = S_min + np.array([1700.0, 1000.0, t])
         rates.append(float(np.ravel(s.dSdt(0.0, y))[n - 1]))

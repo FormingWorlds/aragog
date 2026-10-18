@@ -154,7 +154,7 @@ Thermal boundary conditions at the surface and CMB.
 | `param_utbl` | bool | Enable upper-thermal-boundary-layer parameterisation (default false) |
 | `param_utbl_const` | K⁻² | UTBL constant in $\Delta T = b\,T^3$ |
 | `core_bc` | str | CMB BC mode. `energy_balance` (SPIDER bit-parity, length $N+1$, **default and PROTEUS production**), `quasi_steady` (alpha-factor, state length $N$), `gradient` (entropy gradient as state, length $N+2$, experimental), `bower2018` (parity-only, not recommended), or `core_module` (the core evolution module, length $N+2$ plus the shell cells with `stratification = true`, needs `inner_boundary_condition = 1`). Any other value is refused. |
-| `top_node` | str | Entropy of the top basic node, which sets the surface temperature `T_magma`. `linear` (default) extrapolates the top two cells; `limited` takes the smaller of the top cell step and the next one (minmod) and the top cell where that node leaves the entropy table, so a cold top cell over a hot cell does not extrapolate across the hot step. Any other value is refused. |
+| `top_node` | str | Entropy of the top basic node, which sets the surface temperature `T_magma`. `linear` (default) extrapolates the top two cells; `limited` takes the smaller of the top cell step and the next one (minmod) and blends into the top cell within half the EOS floor margin of a table edge, so a cold top cell over a hot cell does not extrapolate across the hot step and the node stays in the table. Not on the `gradient` core. Any other value is refused. |
 
 ### `[mesh]`
 

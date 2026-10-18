@@ -149,13 +149,18 @@ def _radius_for_mass_coordinate(
     return clamped
 
 
-def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.inf, xp=np):
+def top_node_entropy(
+    S, ratio: float, S_min: float = -np.inf, S_max: float = np.inf, band: float = 50.0, xp=np
+):
     """Limited entropy of the top basic node from the top 3 cell entropies.
 
     The linear node ``S_N + (ratio/2)(S_N - S_N-1)`` takes the smaller of the top cell step and the
     next one (minmod: 0 for steps of opposite sign or a zero step), so a cold top cell over a hot
-    cell does not extrapolate across the hot step. A limited node outside ``[S_min, S_max]``
-    becomes the top cell. A non-finite cell among the top 3 gives NaN.
+    cell does not extrapolate across the hot step. Within ``band`` of a table edge this limited
+    node ``S_f`` blends into the top cell, ``S_N + w (S_f - S_N)`` with ``w`` the product of the
+    smoothsteps of ``(S_f - S_min)/band`` and ``(S_max - S_f)/band``: the node is continuous, ``S_f``
+    itself away from the edges and the top cell at or beyond them. A non-finite cell among the top
+    3 gives NaN.
 
     Parameters
     ----------
@@ -165,6 +170,8 @@ def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.
         Basic over staggered spacing of the outer cell (the outer row of the quantity transform).
     S_min, S_max : float
         Entropy range of the table [J/kg/K].
+    band : float
+        Width of the blend inside each table edge [J/kg/K].
     xp : module
         ``numpy`` or ``jax.numpy``.
 
@@ -175,8 +182,11 @@ def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.
     """
     a, b = S[-1] - S[-2], S[-2] - S[-3]
     step = xp.where(a * b > 0, xp.sign(a) * xp.minimum(xp.abs(a), xp.abs(b)), 0.0)
-    node = S[-1] + 0.5 * ratio * step
-    node = xp.where((node < S_min) | (node > S_max), S[-1], node)
+    free = S[-1] + 0.5 * ratio * step
+    lo = xp.clip((free - S_min) / band, 0.0, 1.0)
+    hi = xp.clip((S_max - free) / band, 0.0, 1.0)
+    w = lo * lo * (3.0 - 2.0 * lo) * hi * hi * (3.0 - 2.0 * hi)
+    node = xp.where(w >= 1.0, free, S[-1] + w * (free - S[-1]))
     return xp.where(xp.isfinite(a + b), node, xp.nan)
 
 
@@ -316,7 +326,7 @@ class Mesh:
         self._d_dr_transform: npt.NDArray = self._get_d_dr_transform_matrix()
         self._quantity_transform: npt.NDArray = self._get_quantity_transform_matrix()
         self.top_node = getattr(parameters.boundary_conditions, 'top_node', 'linear')
-        self.top_bounds = (-np.inf, np.inf)
+        self.top_bounds, self.top_band = (-np.inf, np.inf), 50.0
 
     @property
     def dxidr(self) -> npt.NDArray:
@@ -505,16 +515,18 @@ class Mesh:
         """Basic over staggered spacing of the outer cell (the outer row of the transform)."""
         return float(-2.0 * self._quantity_transform[-1, -2])
 
-    def set_top_bounds(self, S_min: float = -np.inf, S_max: float = np.inf) -> None:
-        """Set the entropy range of the table that bounds the limited top node."""
-        self.top_bounds = (float(S_min), float(S_max))
+    def set_top_bounds(
+        self, S_min: float = -np.inf, S_max: float = np.inf, band: float = 50.0
+    ) -> None:
+        """Set the table range and the blend band [J/kg/K] of the limited top node."""
+        self.top_bounds, self.top_band = (float(S_min), float(S_max)), float(band)
 
     def entropy_at_basic_nodes(self, S: npt.NDArray) -> npt.NDArray:
         """Entropy at the basic nodes, with the top node from ``top_node_entropy`` when limited."""
         S = np.ravel(S)
         S_basic = self.quantity_at_basic_nodes(S)
         if self.top_node == 'limited':
-            S_basic[-1] = top_node_entropy(S, self.top_ratio, *self.top_bounds)
+            S_basic[-1] = top_node_entropy(S, self.top_ratio, *self.top_bounds, self.top_band)
         return S_basic
 
     def quantity_at_staggered_nodes(self, basic_quantity: npt.NDArray) -> npt.NDArray:
