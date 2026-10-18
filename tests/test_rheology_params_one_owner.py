@@ -70,7 +70,7 @@ def test_phase_config_rheology_defaults_match():
     assert p_cfg.rheology == default_rheo
     # Exact by construction: delegate_rheology forwards each stored field attribute unchanged.
     for name in EXPECTED_FIELDS:
-        assert getattr(p_cfg, name) == getattr(default_rheo, name)
+        assert hasattr(p_cfg, name) and getattr(p_cfg, name) == getattr(default_rheo, name)
 
     p_cfg_custom = PhaseConfig(
         density=4000.0,
