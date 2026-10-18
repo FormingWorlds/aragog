@@ -209,17 +209,22 @@ def compute_stagnant_lid_state(
 
     w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / 0.01)) + zero_or_nan
     _, W_sum, w_weight = _boundary_weights(w_conv, xp)
-    W_conv_tilde = _boundary_weights(
-        xp.where(xp.max(f) >= params.interior_flux_fraction, w_conv, 0.0) + zero_or_nan,
-        xp,
-    )[0]
 
     idx = xp.arange(r.shape[0])
     interior_node_mask = xp.where((idx > 0) & (idx < r.shape[0] - 1), 1.0, 0.0)
+    w_conv_0 = 0.5 * (1.0 + xp.tanh(-params.interior_flux_fraction / 0.01))
+    w_conv_int = xp.maximum(w_conv - w_conv_0, 0.0) * interior_node_mask + zero_or_nan
+    interior_fallback = xp.where(idx == 1, 1.0, 0.0)
+    W_conv_tilde = _boundary_weights(w_conv_int, xp, fallback=interior_fallback)[0]
+
     f_int_max = xp.max(f * interior_node_mask)
-    f_Ti_thresh = xp.where(f_int_max >= params.interior_flux_fraction, 0.9 * f_int_max, 0.9)
+    f_int_scale = xp.maximum(f_int_max, params.interior_flux_fraction)
+    f_Ti_thresh = 0.9 * f_int_scale
+    w_Ti_0 = 0.5 * (1.0 + xp.tanh(-f_Ti_thresh / 0.02))
     w_Ti = (
-        0.5 * (1.0 + xp.tanh((f - f_Ti_thresh) / 0.02)) * w_conv * interior_node_mask
+        xp.maximum(0.5 * (1.0 + xp.tanh((f - f_Ti_thresh) / 0.02)) - w_Ti_0, 0.0)
+        * w_conv
+        * interior_node_mask
         + zero_or_nan
     )
     W_tilde = _boundary_weights(w_Ti, xp, fallback=W_conv_tilde)[0]
