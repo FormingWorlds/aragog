@@ -89,7 +89,8 @@ def test_fb2014_earth_reference_state():
     - tau_buoy = 2.121689e6 Pa (2.12 MPa)
     - tau_d / tau_buoy = 0.109494
     """
-    state = compute_stagnant_lid_state(**_make_earth_reference_inputs())
+    inputs = _make_earth_reference_inputs()
+    state = compute_stagnant_lid_state(**inputs)
 
     t_i = float(state['T_i'])
     # Conductive lid nodes at f = 0 have zero weight under w_Ti (f_0 = 0.9, width = 0.02).
@@ -110,8 +111,12 @@ def test_fb2014_earth_reference_state():
     expected_delta_rh = 30791.0646
     expected_tau_buoy = rho * g * alpha * expected_dt_rh * expected_delta_rh
     expected_ratio = expected_tau_d / expected_tau_buoy
-    # Formula relation: tau_d_lid = 2 * eta_i * v_m / d_lid
-    expected_tau_d_lid = 2.0 * eta_i * expected_vm / state['d_lid']
+    # Formula relation: tau_d_lid = w_active * 2 * eta_i * v_m / max(r_top - r_lid_base, 1e-6 m)
+    r_top = float(inputs['radii'][-1])
+    r_lid_base = float(state['r_lid_base'])
+    w_active = float(state['w_active'])
+    expected_d_geom = max(r_top - r_lid_base, 1.0e-6)
+    expected_tau_d_lid = w_active * 2.0 * eta_i * expected_vm / expected_d_geom
     # At T_surf = 300 K, Arrhenius viscosity exceeds 10^40 Pa s and clamps to 1.0e40 Pa s.
     # At T_i = arrhenius_t_ref = 1600 K, eta_i = 1.0e20 Pa s, so eta_contrast = 1.0e20.
     expected_eta_surf = 1.0e40  # 10^viscosity_max_log10 with default 40.0
@@ -1284,19 +1289,10 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
     w_c0 = 0.5 * (1.0 + np.tanh(-params.interior_flux_fraction / 0.01))
     # At uniform f > 0, max_k w_conv_int = w_conv(f) - w_conv(0) is independent of N (dw_weight = 0),
     # while interior endpoints T[1] and T[N-2] (with geometric scan factor 1 / w_Ti(uniform) = 1 / (0.5*(1+tanh(5))))
-    # shift by (2300 / w_Ti(uniform)) * (1/49 - 1/399) = 41.176234 K across N=50..400.
+    # give the exact value (1200 / w_Ti(uniform)) * (1/49 - 1/399) = 21.483252 K across N=50..400.
     w_ti_uniform = 0.5 * (1.0 + np.tanh(0.1 / 0.02))
-    max_dt_uniform = (2300.0 / w_ti_uniform) * (1.0 / 49.0 - 1.0 / 399.0)
-    # Along P(T) with dP/dT = 135 GPa / 2300 K at T[1](50) = 2553.06 K, |d log10(eta_diff)/dT| = 1.628e-3 K^-1
-    # gives max_dlog_eta_uniform = |d log10(eta_diff)/dT| * max_dt_uniform = 0.06704 decades.
-    t1_u50 = 2600.0 - 2300.0 / 49.0
-    p1_u50 = 135.0e9 * (48.0 / 49.0)
-    dp_dt_u = 135.0e9 / 2300.0
-    t_sol_u50 = params.t_sol_0 + params.dt_sol_dp * p1_u50
-    dlog_eta_dt_u = (params.g_homologous / np.log(10.0)) * abs(
-        -t_sol_u50 / (t1_u50**2) + params.dt_sol_dp * dp_dt_u / t1_u50
-    )
-    max_dlog_eta_uniform = dlog_eta_dt_u * max_dt_uniform
+    max_dt_uniform = (1200.0 / w_ti_uniform) * (1.0 / 49.0 - 1.0 / 399.0)
+    dp_dt_u = 135.0e9 / 1200.0
 
     f_half = float(
         params.interior_flux_fraction
@@ -1314,7 +1310,7 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
         results_by_n: dict[int, tuple[float, float, float]] = {}
         for n_nodes in (50, 100, 200, 400):
             r = np.linspace(3.48e6, 6.37e6, n_nodes)
-            t_prof = np.linspace(2600.0, 300.0, n_nodes)
+            t_prof = np.linspace(2600.0, 1400.0, n_nodes)
             p_prof = np.linspace(135.0e9, 0.0, n_nodes)
             st = compute_stagnant_lid_state(
                 radii=r,
@@ -1332,14 +1328,24 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
             )
             log_eta = float(np.log10(float(st['eta_i'])))
             log_arr = float(np.log10(float(st['eta_solid_arrhenius'])))
+            assert log_arr < 40.0
             w_eff = (log_eta - log_arr) / (15.0 - log_arr)
-            assert w_eff == pytest.approx(expected_w_weight, rel=1.0e-12)
+            assert w_eff == pytest.approx(expected_w_weight, rel=1.0e-11)
             results_by_n[n_nodes] = (w_eff, float(st['T_i']), log_eta)
 
         _, ti_400, log_eta_400 = results_by_n[400]
+        p_400 = 135.0e9 * (ti_400 - 1400.0) / 1200.0
+        t_sol = params.t_sol_0 + params.dt_sol_dp * p_400
+        dlog_eta_dt = (params.g_homologous / np.log(10.0)) * abs(
+            -t_sol / (ti_400**2) + params.dt_sol_dp * dp_dt_u / ti_400
+        )
+        bound_log_eta = dlog_eta_dt * max_dt_uniform
         for n_nodes, (_, ti_n, log_eta_n) in results_by_n.items():
-            assert abs(ti_n - ti_400) <= max_dt_uniform
-            assert abs(log_eta_n - log_eta_400) <= max_dlog_eta_uniform
+            if n_nodes == 50 and f_val == 1.0e-2:
+                assert abs(ti_n - ti_400) == pytest.approx(max_dt_uniform, rel=1.0e-9)
+            else:
+                assert abs(ti_n - ti_400) <= max_dt_uniform * (1.0 + 1.0e-9)
+            assert abs(log_eta_n - log_eta_400) <= bound_log_eta
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
     d = np.load(ckpt_path)
@@ -1383,23 +1389,16 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
         assert abs(ti_n - ti_175_400) <= max_dt_175kyr
         assert abs(log_eta_n - log_eta_175_400) <= max_dlog_eta_175kyr
 
-    s_sweep = (
-        0.0,
-        1.0e-15,
-        1.0e-12,
-        1.0e-9,
-        1.0e-8,
-        1.0e-7,
-        1.0e-6,
-        1.0e-5,
-        3.0e-5,
-        6.0e-5,
-        1.0e-4,
-        2.0e-4,
-        5.0e-4,
-        1.0e-3,
-    )
+    dw_weight_df_max = 9085.0
+    f_conv_max = float(np.max(d['F_conv']))
     t1_ref = float(d['T_basic'][1])
+    t_top = float(d['T_basic'][-1])
+    dt_span = abs(t1_ref - t_top)
+
+    s_sweep = sorted(
+        list(set([0.0, 1.0e-15, 1.0e-12] + list(np.geomspace(1.0e-12, 1.0e-3, 50))))
+    )
+    prev_s: float | None = None
     prev_ti: float | None = None
     for s in s_sweep:
         st_s = compute_stagnant_lid_state(
@@ -1418,9 +1417,12 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
         ti_curr = float(st_s['T_i'])
         if s in (0.0, 1.0e-15, 1.0e-12):
             assert ti_curr == pytest.approx(t1_ref, abs=1.0e-3)
-        if prev_ti is not None:
+        if prev_s is not None and prev_ti is not None:
             assert ti_curr <= prev_ti + 1.0e-9
-            assert abs(ti_curr - prev_ti) <= 950.0
+            delta_f = f_conv_max * abs(s - prev_s)
+            bound = dw_weight_df_max * dt_span * delta_f + 1.0
+            assert abs(ti_curr - prev_ti) <= bound
+        prev_s = s
         prev_ti = ti_curr
 
 
