@@ -26,7 +26,6 @@ from aragog.rheology import (
 )
 from aragog.rheology_lid import (
     compute_effective_viscosity,
-    compute_stagnant_lid_state,
     stress_closure,
 )
 
