@@ -17,7 +17,11 @@ import numpy as np
 import pytest
 
 from aragog.rheology import SolidRheologyParams
-from aragog.rheology_lid import compute_stagnant_lid_state
+from aragog.rheology_lid import (
+    SOLIDUS_MELT_FRACTION_THRESHOLD,
+    SOLIDUS_MELT_FRACTION_WIDTH,
+    compute_stagnant_lid_state,
+)
 
 
 def _make_earth_reference_inputs() -> dict[str, Any]:
@@ -1563,7 +1567,7 @@ def test_thermal_diffusivity_and_expansivity_weighting_and_vm_scaling():
 @pytest.mark.unit
 def test_lid_mask_width_cells_nodal_scaling_and_dtrh_floor():
     """Verify w_lid node-by-node scaling across lid_mask_width_cells and the 1 K floor."""
-    # Regression pin: formula copy of WP2 mask scaling switch, allowed to change with WP2 smoothing.
+    # Regression pin of the hard mask-scaling switch.
     inputs = _make_earth_reference_inputs()
     T = inputs['temperature']
     gradT = np.abs(np.gradient(T))
@@ -1605,7 +1609,7 @@ def test_lid_mask_width_cells_nodal_scaling_and_dtrh_floor():
 @pytest.mark.unit
 def test_lid_thresholds_isothermal_convective_and_cell_count():
     """Verify has_lid, is_convecting, and lid_regime thresholds and exact cell count."""
-    # Regression pin: formula copy of WP2 threshold and cell-count switches, allowed to change with WP2 smoothing.
+    # Regression pin of the lid threshold and cell-count switches.
     inputs = _make_earth_reference_inputs()
     n_nodes = len(inputs['radii'])
 
@@ -1626,26 +1630,19 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         float(np.sum(st_iso['w_lid'])), rel=1.0e-12
     )
 
-    # Discriminating T_i - T_surf threshold: 5e-4 K <= 1e-3 K -> has_lid is False; 1e-2 K > 1e-3 K -> has_lid is True.
-    inp_dt_sub = {
-        **inputs,
-        'temperature': np.full(n_nodes, 1600.0),
-        'params': params_iso,
-    }
-    inp_dt_sub['temperature'][-1] = 1600.0 - 5.0e-4
-    st_dt_sub = compute_stagnant_lid_state(**inp_dt_sub)
-    assert bool(st_dt_sub['has_lid']) is False
+    # Discriminating T_i - T_surf threshold: 8e-4 K <= 1e-3 K -> False; 1.2e-3 K > 1e-3 K -> True.
+    for dt_val, expected_has_lid in [(8.0e-4, False), (1.2e-3, True)]:
+        inp_dt = {
+            **inputs,
+            'temperature': np.full(n_nodes, 1600.0),
+            'params': params_iso,
+        }
+        inp_dt['temperature'][-1] = 1600.0 - dt_val
+        st_dt = compute_stagnant_lid_state(**inp_dt)
+        assert bool(st_dt['has_lid']) is expected_has_lid
 
-    inp_dt_sup = {
-        **inputs,
-        'temperature': np.full(n_nodes, 1600.0),
-        'params': params_iso,
-    }
-    inp_dt_sup['temperature'][-1] = 1600.0 - 1.0e-2
-    st_dt_sup = compute_stagnant_lid_state(**inp_dt_sup)
-    assert bool(st_dt_sup['has_lid']) is True
-
-    # Discriminating d_lid_raw threshold: N=100, phi=0.02 without solidus table gives d_lid_raw ~ 1.33 m > 1 m.
+    # Discriminating d_lid_raw threshold: N=100 without solidus table brackets 1.0 m from both sides.
+    # phi = 0.0205 gives d_lid_raw ~ 0.80 m <= 1.0 m (no lid); phi = 0.0201 gives d_lid_raw ~ 1.20 m > 1.0 m (lid).
     n_100 = 100
     r_100 = np.linspace(3480.0e3, 6370.0e3, n_100)
     t_100 = np.full(n_100, 1800.0)
@@ -1661,27 +1658,35 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         dt_sol_dp=0.0,
         arrhenius_t_ref=1600.0,
     )
-    st_dlid = compute_stagnant_lid_state(
-        radii=r_100,
-        temperature=t_100,
-        pressure=p_100,
-        convective_flux=f_conv_100,
-        total_flux=np.full(n_100, 100.0),
-        solidus_temperature=None,
-        melt_fraction=np.full(n_100, 0.02),
-        params=params_dlid,
-        viscosity_solid=1.0e20,
-        phi_rheo=0.4,
-        phi_width=0.15,
-        density=3300.0,
-        gravity=9.81,
-        thermal_expansivity=3.0e-5,
-        thermal_diffusivity=1.0e-6,
-        xp=np,
-    )
-    assert bool(st_dlid['has_lid']) is True
-    assert float(st_dlid['d_lid']) == pytest.approx(1.3253712495788932, rel=1.0e-4)
-    assert float(st_dlid['d_lid']) > 1.0
+    for phi_val, expected_has_lid, d_raw_bound in [
+        (0.0205, False, (0.75, 0.85)),
+        (0.0201, True, (1.15, 1.25)),
+    ]:
+        st_dlid = compute_stagnant_lid_state(
+            radii=r_100,
+            temperature=t_100,
+            pressure=p_100,
+            convective_flux=f_conv_100,
+            total_flux=np.full(n_100, 100.0),
+            solidus_temperature=None,
+            melt_fraction=np.full(n_100, phi_val),
+            params=params_dlid,
+            viscosity_solid=1.0e20,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            density=3300.0,
+            gravity=9.81,
+            thermal_expansivity=3.0e-5,
+            thermal_diffusivity=1.0e-6,
+            xp=np,
+        )
+        d_raw = float((r_100[-1] - st_dlid['r_lid_base']) * st_dlid['w_active'])
+        assert d_raw_bound[0] <= d_raw <= d_raw_bound[1]
+        assert bool(st_dlid['has_lid']) is expected_has_lid
+        if expected_has_lid:
+            assert float(st_dlid['d_lid']) == pytest.approx(d_raw, rel=1.0e-9)
+        else:
+            assert float(st_dlid['d_lid']) == 0.0
 
     # 2. Localized low convective flux: 1e-6 < W_sum < 0.1, w_active > 0.05 -> convecting
     inp_low_conv = {**inputs}
@@ -1694,23 +1699,50 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         float(np.sum(st_low_conv['w_lid'])), rel=1.0e-12
     )
 
-    # 3. 1-cell lid where w_has_lid is between 0.1 and 0.9
+    # 3. 1-cell lid where w_has_lid is between 0.1 and 0.9, verifying w_solid_surf reads phi[-1]
     inp_1cell = {**inputs}
     T_1cell = np.full(n_nodes, 1600.0)
     T_1cell[-1] = 1450.0  # T_surf = 1450 K gives lid_cell_count ~ 0.469
     inp_1cell['temperature'] = T_1cell
+    phi_1cell = np.zeros(n_nodes)
+    phi_1cell[0] = 0.2  # molten interior
+    phi_1cell[-1] = 0.0  # solid surface
+    inp_1cell['melt_fraction'] = phi_1cell
     st_1cell = compute_stagnant_lid_state(**inp_1cell)
     cell_count = float(st_1cell['lid_cell_count'])
     assert 0.3 < cell_count < 0.7
     assert float(st_1cell['lid_cell_count']) == pytest.approx(
         float(np.sum(st_1cell['w_lid'])), rel=1.0e-12
     )
-    expected_w_has_lid = 0.5 * (1.0 + np.tanh((cell_count - 0.5) / 0.1))
+    # w_solid_surf evaluates at phi[-1] = 0.0 (~1.0); reading phi[0] = 0.2 gives ~0.0
+    w_solid_surf = 0.5 * (
+        1.0
+        - np.tanh(
+            (phi_1cell[-1] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH
+        )
+    )
+    w_solid_surf_wrong = 0.5 * (
+        1.0
+        - np.tanh(
+            (phi_1cell[0] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH
+        )
+    )
+    assert w_solid_surf > 0.999
+    assert w_solid_surf_wrong < 1.0e-6
+    expected_w_has_lid = 0.5 * (1.0 + np.tanh((cell_count - 0.5) / 0.1)) * w_solid_surf
     assert 0.1 < expected_w_has_lid < 0.9
     assert float(st_1cell['lid_regime']) == pytest.approx(
         float(st_1cell['w_active']) * expected_w_has_lid * (1.0 + float(st_1cell['w_y'])),
-        rel=1.0e-4,
+        rel=1.0e-12,
     )
+    wrong_lid_regime = (
+        float(st_1cell['w_active'])
+        * 0.5
+        * (1.0 + np.tanh((cell_count - 0.5) / 0.1))
+        * w_solid_surf_wrong
+        * (1.0 + float(st_1cell['w_y']))
+    )
+    assert abs(float(st_1cell['lid_regime']) - wrong_lid_regime) > 0.3
 
 
 @pytest.mark.unit
@@ -1796,25 +1828,15 @@ def test_convective_flux_fraction_negative_and_submicro_total_flux():
     assert float(st_sub['w_active']) == pytest.approx(1.0, abs=1.0e-5)
     assert bool(st_sub['has_lid']) is True
 
-    # Discriminating flux floor: F_tot = 1e-13 <= 1e-12 floor, F_conv = 3e-14 -> f = 0.03 -> w_active ~ 0.01798621.
-    inp_floor_disc = {
-        **inputs,
-        'total_flux': np.full(n_nodes, 1.0e-13),
-        'convective_flux': np.full(n_nodes, 3.0e-14),
-    }
-    st_floor_disc = compute_stagnant_lid_state(**inp_floor_disc)
+    # Discriminating flux floor: F_tot = 1e-13 <= 1e-12 floor, and F_tot = 5e-10 > 1e-12 floor, both giving f = 0.03.
     expected_w_active = 0.5 * (1.0 + np.tanh((0.03 - 0.05) / 0.01))
-    assert float(st_floor_disc['w_active']) == pytest.approx(
-        expected_w_active, rel=1.0e-12, abs=0.0
-    )
-
-    # Discriminating above floor: F_tot = 5e-10 > 1e-12 floor, F_conv = 1.5e-11 -> f = 0.03 -> same w_active.
-    inp_above_floor = {
-        **inputs,
-        'total_flux': np.full(n_nodes, 5.0e-10),
-        'convective_flux': np.full(n_nodes, 1.5e-11),
-    }
-    st_above_floor = compute_stagnant_lid_state(**inp_above_floor)
-    assert float(st_above_floor['w_active']) == pytest.approx(
-        expected_w_active, rel=1.0e-12, abs=0.0
-    )
+    for f_tot, f_conv in [(1.0e-13, 3.0e-14), (5.0e-10, 1.5e-11)]:
+        inp_floor = {
+            **inputs,
+            'total_flux': np.full(n_nodes, f_tot),
+            'convective_flux': np.full(n_nodes, f_conv),
+        }
+        st_disc = compute_stagnant_lid_state(**inp_floor)
+        assert float(st_disc['w_active']) == pytest.approx(
+            expected_w_active, rel=1.0e-12, abs=0.0
+        )
