@@ -72,14 +72,16 @@ def _boundary_weights(w: Any, xp: Any, *, fallback: Any | None = None) -> tuple[
 
 
 def _scalar_or_nan(val: Any, name: str) -> float:
-    """Return ``float(val)`` on concrete scalars, ``nan`` on traced scalars; reject arrays and strings."""
+    """Return ``float(val)`` on numeric scalars, ``nan`` on traced scalars; reject arrays, bools, and strings."""
     if (
-        isinstance(val, (str, bytes))
+        isinstance(val, (bool, np.bool_, str, bytes))
         or getattr(val, 'ndim', 0) > 0
         or (not hasattr(val, 'ndim') and np.ndim(val) > 0)
     ):
         raise ValueError(f'{name} must be a scalar')
     try:
+        if np.asarray(val).dtype.kind not in 'iuf':
+            raise ValueError(f'{name} must be a scalar')
         return float(val)
     except TypeError as exc:
         if 'Tracer' in type(val).__name__ or 'Concretization' in type(exc).__name__:
