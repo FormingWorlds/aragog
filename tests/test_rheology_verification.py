@@ -1940,44 +1940,73 @@ def test_viscous_mixing_length_factor_nan_scalar_inputs_propagate():
     assert np.isnan(q_rout[0]) and np.isnan(q_rout[-1]) and np.all(np.isnan(q_rout))
 
 
-def _scan_ast_for_direct_rheology_imports(tree) -> list[str]:
+def _scan_ast_for_direct_rheology_imports(tree, filename: str | None = None) -> list[str]:
     """Scan an AST tree at any depth for direct imports of aragog.rheology or rheology_lid."""
     import ast
+    from pathlib import Path
+
+    def hit(name: str) -> bool:
+        return name.split('.')[:2] in (['aragog', 'rheology'], ['aragog', 'rheology_lid'])
+
+    pkg_parts: list[str] = []
+    if filename:
+        p_parts = Path(filename).resolve().parent.parts
+        if 'aragog' in p_parts:
+            idx = len(p_parts) - 1 - p_parts[::-1].index('aragog')
+            pkg_parts = list(p_parts[idx:])
+
+    aragog_names = {
+        alias.asname or 'aragog'
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name == 'aragog'
+    } | {'aragog'}
 
     violations: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                name = alias.name
-                if name in ('aragog.rheology', 'aragog.rheology_lid') or name.startswith(
-                    ('aragog.rheology.', 'aragog.rheology_lid.')
-                ):
-                    violations.append(f'import {name}')
+                if hit(alias.name):
+                    violations.append(f'import {alias.name}')
         elif isinstance(node, ast.ImportFrom):
             mod = node.module or ''
-            if mod in ('aragog.rheology', 'aragog.rheology_lid') or mod.startswith(
-                ('aragog.rheology.', 'aragog.rheology_lid.')
-            ):
+            if node.level > 0:
+                if pkg_parts:
+                    base = (
+                        pkg_parts[: len(pkg_parts) - node.level + 1]
+                        if node.level <= len(pkg_parts)
+                        else []
+                    )
+                    mod = f'{".".join(base)}.{mod}' if mod else '.'.join(base)
+                else:
+                    mod = f'aragog.{mod}' if mod else 'aragog'
+            if hit(mod):
                 violations.append(f'from {mod} import ...')
-            elif mod == 'aragog':
-                for alias in node.names:
-                    if alias.name in ('rheology', 'rheology_lid'):
-                        violations.append(f'from aragog import {alias.name}')
+            for alias in node.names:
+                if hit(f'{mod}.{alias.name}'):
+                    violations.append(f'from {mod} import {alias.name}')
+        elif isinstance(node, ast.Attribute):
+            if (
+                node.attr in ('rheology', 'rheology_lid')
+                and isinstance(node.value, ast.Name)
+                and node.value.id in aragog_names
+            ):
+                violations.append(f'attribute access: aragog.{node.attr}')
         elif isinstance(node, ast.Call):
             func = node.func
-            is_import_call = False
-            if isinstance(func, ast.Name) and func.id == '__import__':
-                is_import_call = True
-            elif isinstance(func, ast.Attribute) and func.attr == 'import_module':
-                is_import_call = True
-            if is_import_call and node.args:
-                first_arg = node.args[0]
-                if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
-                    val = first_arg.value
-                    if val in ('aragog.rheology', 'aragog.rheology_lid') or val.startswith(
-                        ('aragog.rheology.', 'aragog.rheology_lid.')
-                    ):
-                        violations.append(f'import call: {val}')
+            is_import = (isinstance(func, ast.Name) and func.id == '__import__') or (
+                isinstance(func, ast.Attribute) and func.attr == 'import_module'
+            )
+            if (
+                is_import
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                arg_val = node.args[0].value
+                if hit(arg_val):
+                    violations.append(f'import call: {arg_val}')
     return violations
 
 
@@ -2001,15 +2030,13 @@ def test_solver_modules_do_not_direct_import_rheology_kernels():
     for rel_path in solver_rel_paths:
         file_path = repo_root / rel_path
         tree = ast.parse(file_path.read_text(encoding='utf-8'), filename=str(file_path))
-        direct_imports = _scan_ast_for_direct_rheology_imports(tree)
+        direct_imports = _scan_ast_for_direct_rheology_imports(tree, filename=str(file_path))
         assert not direct_imports, f'{rel_path} has direct rheology imports: {direct_imports}'
 
-    # Canary 1: top-level direct import in aragog.config.phases must be caught.
-    cfg_tree = ast.parse(
-        (repo_root / 'src/aragog/config/phases.py').read_text(encoding='utf-8')
-    )
-    assert _scan_ast_for_direct_rheology_imports(cfg_tree), (
-        'Canary 1 failed: direct import in config.phases was not caught'
+    # Canary 1: synthetic direct top-level import must be caught.
+    synth_tree = ast.parse('import aragog.rheology\n')
+    assert _scan_ast_for_direct_rheology_imports(synth_tree), (
+        'Canary 1 failed: direct top-level import was not caught'
     )
 
     # Canary 2: function-local import must be caught.
@@ -2024,4 +2051,26 @@ def test_solver_modules_do_not_direct_import_rheology_kernels():
     importlib_code = "import importlib\nmod = importlib.import_module('aragog.rheology_lid')\n"
     assert _scan_ast_for_direct_rheology_imports(ast.parse(importlib_code)), (
         'Canary 3 failed: importlib.import_module call was not caught'
+    )
+
+    for phase_file in (
+        str(repo_root / 'src/aragog/jax/phase.py'),
+        '/home/runner/work/aragog/aragog/src/aragog/jax/phase.py',
+    ):
+        # Canary 4: relative import with module ('from ..rheology import X').
+        rel_code_1 = 'from ..rheology import compute_arrhenius_viscosity\n'
+        assert _scan_ast_for_direct_rheology_imports(
+            ast.parse(rel_code_1, filename=phase_file), filename=phase_file
+        ), f'Canary 4 failed for {phase_file}: relative import from ..rheology was not caught'
+
+        # Canary 5: relative import from parent ('from .. import rheology_lid').
+        rel_code_2 = 'from .. import rheology_lid\n'
+        assert _scan_ast_for_direct_rheology_imports(
+            ast.parse(rel_code_2, filename=phase_file), filename=phase_file
+        ), f'Canary 5 failed for {phase_file}: relative import from .. was not caught'
+
+    # Canary 6: attribute chain access (including module alias) must be caught.
+    attr_code = 'import aragog as ar\nx = ar.rheology.compute_arrhenius_viscosity\n'
+    assert _scan_ast_for_direct_rheology_imports(ast.parse(attr_code)), (
+        'Canary 6 failed: attribute chain aragog.rheology was not caught'
     )

@@ -466,65 +466,59 @@ def test_strain_rate_local_eps_floor_at_zero_mixing_length():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
-    """Verify phi >= 0.03 has no lid at N in {50, 100, 200} with/without table, while phi = 0.005 retains a lid."""
+    """Verify phi >= 0.03 has no lid at N in {3, 10, 50, 100, 200} with/without table."""
     params = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
-    for n_nodes in (50, 100, 200):
-        radii = np.linspace(3.48e6, 6.37e6, n_nodes)
-        pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
-        t_sol = 1400.0 + 2.4e-8 * pressure
-        conv_flux = np.full(n_nodes, 99.0)
-        tot_flux = np.full(n_nodes, 100.0)
-        for sol_arg in (t_sol, None):
-            for dt_above in (100.0, 200.0):
-                t_prof = t_sol + dt_above
-                for phi_val in (0.03, 0.05, 0.10, 0.41, 0.50):
-                    state = compute_stagnant_lid_state(
-                        radii=radii,
-                        temperature=t_prof,
-                        pressure=pressure,
-                        convective_flux=conv_flux,
-                        total_flux=tot_flux,
-                        solidus_temperature=sol_arg,
-                        t_sol_0=1400.0,
-                        melt_fraction=np.full(n_nodes, phi_val),
-                        params=params,
-                        viscosity_solid=1.0e21,
-                        phi_rheo=0.4,
-                        phi_width=0.15,
-                        xp=np,
-                    )
-                    assert bool(state['has_lid']) is False
-                    assert float(state['d_lid']) == 0.0
-                    assert float(radii[-1] - state['r_lid_base']) < 1.0
-                    assert float(state['tau_d']) == 0.0
-                    assert float(state['lid_regime']) == 0.0
-                    np.testing.assert_allclose(state['w_lid'], 0.0, atol=1.0e-4)
+    spans = [(3.48e6, 6.37e6), (3.0e6, 12.0e6)]
+    for r_in, r_out in spans:
+        for n_nodes in (3, 10, 50, 100, 200):
+            radii = np.linspace(r_in, r_out, n_nodes)
+            pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
+            t_sol = 1400.0 + 2.4e-8 * pressure
+            conv_flux = np.full(n_nodes, 99.0)
+            tot_flux = np.full(n_nodes, 100.0)
 
-        # At phi = 0.005 (< SOLIDUS_MELT_FRACTION_THRESHOLD = 0.01) with a cold surface lid and a table,
-        # the lid remains active (kills SOLIDUS_MELT_FRACTION_THRESHOLD 0.01 -> 0.001 mutant, while
-        # phi = 0.03 above kills 0.01 -> 0.05).
-        t_lid_prof = t_sol + 200.0
-        t_lid_prof[-6:] = np.linspace(1600.0, 300.0, 6)
-        conv_lid = conv_flux.copy()
-        conv_lid[-6:] = 0.0
-        st_sub = compute_stagnant_lid_state(
-            radii=radii,
-            temperature=t_lid_prof,
-            pressure=pressure,
-            convective_flux=conv_lid,
-            total_flux=tot_flux,
-            solidus_temperature=t_sol,
-            t_sol_0=1400.0,
-            melt_fraction=np.full(n_nodes, 0.005),
-            params=params,
-            viscosity_solid=1.0e21,
-            phi_rheo=0.4,
-            phi_width=0.15,
-            xp=np,
-        )
-        assert bool(st_sub['has_lid']) is True
-        assert float(st_sub['d_lid']) > 10.0e3
-        assert float(st_sub['tau_d']) > 0.0
+            def run(temperature, convective_flux, phi_val, sol_arg):
+                return compute_stagnant_lid_state(
+                    radii=radii,
+                    temperature=temperature,
+                    pressure=pressure,
+                    convective_flux=convective_flux,
+                    total_flux=tot_flux,
+                    solidus_temperature=sol_arg,
+                    t_sol_0=1400.0,
+                    melt_fraction=np.full(n_nodes, phi_val),
+                    params=params,
+                    viscosity_solid=1.0e21,
+                    phi_rheo=0.4,
+                    phi_width=0.15,
+                    xp=np,
+                )
+
+            for sol_arg in (t_sol, None):
+                for dt_above in (100.0, 200.0):
+                    t_prof = t_sol + dt_above
+                    for phi_val in (0.03, 0.05, 0.10, 0.41, 0.50):
+                        state = run(t_prof, conv_flux, phi_val, sol_arg)
+                        assert bool(state['has_lid']) is False
+                        assert float(state['d_lid']) == 0.0
+                        assert float(radii[-1] - state['r_lid_base']) < 1.0
+                        assert float(state['tau_d']) == 0.0
+                        assert float(state['lid_regime']) == 0.0
+                        atol = 1.0e-8 if phi_val == 0.03 else 1.0e-12
+                        np.testing.assert_allclose(state['w_lid'], 0.0, atol=atol)
+
+            # At phi = 0.005 (< SOLIDUS_MELT_FRACTION_THRESHOLD = 0.01) with a cold surface lid and a table,
+            # the lid remains active, pinning the solidus melt threshold from both sides.
+            if n_nodes >= 10:
+                t_lid_prof = t_sol + 200.0
+                n_lid_cold = min(6, n_nodes)
+                t_lid_prof[-n_lid_cold:] = np.linspace(1600.0, 300.0, n_lid_cold)
+                conv_lid = conv_flux.copy()
+                conv_lid[-n_lid_cold:] = 0.0
+                st_sub = run(t_lid_prof, conv_lid, 0.005, t_sol)
+                assert bool(st_sub['has_lid']) is True
+                assert float(st_sub['d_lid']) > 10.0e3
+                assert float(st_sub['tau_d']) > 0.0
 
 
 @pytest.mark.unit
@@ -925,10 +919,10 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         ('local', 'tau_y_profile', True, True),
     ],
 )
-def test_compute_effective_viscosity_rejects_inf_tau_d_eta_diff_eta_i_and_accepts_inf_tau_y_lid(
+def test_compute_effective_viscosity_rejects_invalid_inputs(
     mode: str, field_name: str, bad_val, static_error: bool
 ):
-    """Verify compute_effective_viscosity rejects invalid inputs on np, returns NaN under jit, and accepts +inf yield stress."""
+    """Verify compute_effective_viscosity rejects invalid inputs on np and returns NaN under jit."""
     jax = pytest.importorskip('jax')
     jax.config.update('jax_enable_x64', True)
     jnp = pytest.importorskip('jax.numpy')
@@ -980,27 +974,36 @@ def test_compute_effective_viscosity_rejects_inf_tau_d_eta_diff_eta_i_and_accept
         static_error=static_error,
     )
 
-    if mode == 'lid' and field_name == 'tau_y_lid' and not static_error:
-        for td_finite in (0.0, 1.0e6, 1.0e12):
-            for wl_val in (None, 0.0, 0.5, 1.0):
-                res_np = compute_effective_viscosity(
-                    eta_diff=1.0e22,
-                    eta_i=1.0e20,
-                    tau_d=td_finite,
-                    tau_y_lid=np.inf,
-                    w_lid=wl_val,
-                    stress_closure_mode='lid',
-                    xp=np,
-                )
-                assert float(res_np) == pytest.approx(1.0e22, rel=1.0e-12)
-            res_jit_inf = jit_eta(
-                'lid',
-                {
-                    'eta_diff': jnp.asarray(1.0e22),
-                    'eta_i': jnp.asarray(1.0e20),
-                    'tau_d': jnp.asarray(td_finite),
-                    'tau_y_lid': jnp.asarray(np.inf),
-                    'w_lid': jnp.asarray(1.0),
-                },
+
+@pytest.mark.unit
+def test_compute_effective_viscosity_accepts_infinite_tau_y_lid():
+    """Verify compute_effective_viscosity accepts +inf yield stress without yielding."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    jit_eta = jax.jit(
+        lambda kw: compute_effective_viscosity(**kw, stress_closure_mode='lid', xp=jnp)
+    )
+    for td_finite in (0.0, 1.0e6, 1.0e12):
+        for wl_val in (None, 0.0, 0.5, 1.0):
+            res_np = compute_effective_viscosity(
+                eta_diff=1.0e22,
+                eta_i=1.0e20,
+                tau_d=td_finite,
+                tau_y_lid=np.inf,
+                w_lid=wl_val,
+                stress_closure_mode='lid',
+                xp=np,
             )
-            assert float(res_jit_inf) == pytest.approx(1.0e22, rel=1.0e-12)
+            assert float(res_np) == pytest.approx(1.0e22, rel=1.0e-12)
+        res_jit_inf = jit_eta(
+            {
+                'eta_diff': jnp.asarray(1.0e22),
+                'eta_i': jnp.asarray(1.0e20),
+                'tau_d': jnp.asarray(td_finite),
+                'tau_y_lid': jnp.asarray(np.inf),
+                'w_lid': jnp.asarray(1.0),
+            }
+        )
+        assert float(res_jit_inf) == pytest.approx(1.0e22, rel=1.0e-12)
