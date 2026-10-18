@@ -860,3 +860,50 @@ def test_depth_varying_solidus_surface_temperature_pins_eta_contrast():
     assert float(st['eta_contrast']) < 50.0
     # 6223e3f regression pin: unclipped surface viscosity yields eta_contrast ~ 15.07.
     assert float(st['eta_contrast']) == pytest.approx(15.069411, rel=1.0e-4)
+
+
+@pytest.mark.unit
+def test_baseline_subtraction_w_weight_and_viscosity_mixture_blend():
+    """Verify baseline subtraction gives w_weight < 0.5 at f=0, < 1e-5 at f=1e-12, and ~1 at f=1."""
+    from pathlib import Path
+
+    ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
+    data = np.load(ckpt_path)
+    n_nodes = len(data['r_basic'])
+    visc_mix = np.full(n_nodes, 1.0e15)
+    params = SolidRheologyParams(enabled=True)
+
+    def _eval_scale(fc_scale: float) -> tuple[dict[str, Any], float]:
+        st = compute_stagnant_lid_state(
+            radii=data['r_basic'],
+            temperature=data['T_basic'],
+            pressure=data['P_basic'],
+            convective_flux=data['F_conv'] * fc_scale,
+            total_flux=data['F_tot'],
+            solidus_temperature=None,
+            melt_fraction=data['phi_basic'],
+            params=params,
+            viscosity_solid=1.0e21,
+            viscosity_mixture=visc_mix,
+            phi_rheo=0.4,
+            phi_width=0.15,
+        )
+        log_eta = np.log10(float(st['eta_i']))
+        log_arr = np.log10(float(st['eta_solid_arrhenius']))
+        w_weight_eff = (log_eta - log_arr) / (15.0 - log_arr)
+        return st, float(w_weight_eff)
+
+    st_f0, w_f0 = _eval_scale(0.0)
+    st_noise, w_noise = _eval_scale(1.0e-12)
+    st_f1, w_f1 = _eval_scale(1.0)
+
+    assert w_f0 < 0.5
+    assert w_noise < 1.0e-5
+    assert abs(w_f1 - 1.0) <= 1.0e-3
+    assert float(st_f0['eta_i']) == pytest.approx(
+        float(st_f0['eta_solid_arrhenius']), rel=1.0e-12
+    )
+    assert float(st_f1['eta_i']) == pytest.approx(1.0e15, rel=1.0e-6)
+    assert float(st_f1['d_lid']) == pytest.approx(42026.66884939559, rel=1.0e-12)
+    assert abs(np.log10(float(st_f0['eta_i'])) - np.log10(float(st_f1['eta_i']))) > 5.0
+
