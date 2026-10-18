@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from aragog.solver.entropy_solver import _floor_start_level, _phi_cap_event_factory
 
@@ -222,3 +224,39 @@ def test_above_the_band_a_rising_node_over_a_falling_top_cell_advances():
     S = np.array([S_MIN + 2000.0, S_MIN + 120.0 - 2e-2, S_MIN + 40.0])
     level, refuse = _start(S, [0.0, -4.0, -1.0])
     assert not refuse and level == pytest.approx(S_MIN + 5e-3)
+
+
+_DIST = st.floats(-50.0, 500.0) | st.sampled_from([0.0, 1e-12, 1e-4, 2e-4, 50.0, 100.0])
+_RATE = st.floats(-1e3, 1e3) | st.sampled_from([0.0, -0.0, np.nan, np.inf, -np.inf])
+_SPAN = st.floats(1e-9, 1e4)
+
+
+@given(
+    d=st.lists(_DIST, min_size=3, max_size=3),
+    r=st.lists(_RATE, min_size=3, max_size=3),
+    span=_SPAN,
+)
+def test_every_armed_level_lies_inside_the_table_below_the_start(d, r, span):
+    """Over cell distances from 50 below to 500 above S_min, rates up to 1e3 J/kg/K/yr with
+    zero, NaN and infinities, and spans from 1e-9 to 1e4 yr: an armed level lies strictly
+    between S_min and the floor entropy, a start at or below S_min is refused, and a refused
+    start stays refused over a longer span."""
+    S = S_MIN + np.asarray(d)
+    level, refuse = _floor_start_level(W, S, lambda: np.asarray(r), S_MIN, M, span)
+    s0 = min(float(W @ S), float(S.min()))
+    assert isinstance(refuse, bool) and (level is None or isinstance(level, float))
+    if level is not None:
+        assert not refuse and S_MIN < level < s0
+    if s0 <= S_MIN:
+        assert (level, refuse) == (None, True)
+    if refuse:
+        assert _floor_start_level(W, S, lambda: np.asarray(r), S_MIN, M, 2.0 * span)[1]
+
+
+@given(
+    r=st.lists(_RATE, min_size=3, max_size=3), bad=st.sampled_from([np.nan, np.inf, -np.inf])
+)
+def test_a_non_finite_start_is_left_to_the_table_guard(r, bad):
+    """A NaN or infinite cell entropy, with any rate, gives (None, False) and no rate call."""
+    S = np.array([S_MIN + 40.0, bad, S_MIN + 40.0])
+    assert _floor_start_level(W, S, _no_rate, S_MIN, M, DT) == (None, False)
