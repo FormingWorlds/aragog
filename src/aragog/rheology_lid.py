@@ -644,11 +644,13 @@ def compute_effective_viscosity(
             raise ValueError("tau_y or tau_y_profile required for 'local' mode")
         ty = xp.asarray(ty_raw, dtype=float)
         eta_d = xp.asarray(eta_diff, dtype=float)
+        if xp is np and np.any(np.isinf(eta_d)):
+            raise ValueError('eta_diff must be finite (no inf values)')
         safe_ty = xp.maximum(ty, COHESION_FLOOR)
         tau_y_term = safe_ty / (2.0 * xp.where(sr > 0.0, sr, 1.0))
         is_unyielded = (sr <= 0.0) | xp.isnan(tau_y_term)
         res = xp.minimum(eta_d, tau_y_term)
-        has_nan_local = xp.isnan(eta_d) | xp.isnan(ty) | xp.isnan(sr)
+        has_nan_local = ~xp.isfinite(eta_d) | xp.isnan(ty) | xp.isnan(sr)
         return xp.where(has_nan_local, xp.nan, xp.where(is_unyielded, eta_d, res))
 
     if any(
@@ -666,13 +668,19 @@ def compute_effective_viscosity(
 
     eta_d = xp.asarray(eta_diff, dtype=float)
     eta_i_arr = xp.asarray(eta_i, dtype=float)
+    td = xp.asarray(tau_d, dtype=float)
+    if xp is np:
+        for name, arr in (('eta_diff', eta_d), ('eta_i', eta_i_arr), ('tau_d', td)):
+            if np.any(np.isinf(arr)):
+                raise ValueError(f'{name} must be finite (no inf values)')
 
     # Moresi & Solomatov (1998) Eq. 13-14 min closure at convective strain rate D_conv = tau_d / eta_i:
-    td = xp.asarray(tau_d, dtype=float)
     ty_lid = xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR)
     ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
     eta_eff_val = xp.where(ratio >= 1.0, eta_d, xp.minimum(eta_d, eta_i_arr * ratio))
-    has_nan_lid = xp.isnan(eta_d) | xp.isnan(eta_i_arr) | xp.isnan(td) | xp.isnan(ty_lid)
+    has_nan_lid = (
+        ~xp.isfinite(eta_d) | ~xp.isfinite(eta_i_arr) | ~xp.isfinite(td) | xp.isnan(ty_lid)
+    )
     eta_eff_val = xp.where(has_nan_lid, xp.nan, eta_eff_val)
 
     if w_lid is not None:
@@ -685,7 +693,7 @@ def compute_effective_viscosity(
             raise ValueError('w_lid must be in [0, 1]')
         log_diff = xp.log10(xp.maximum(eta_d, 1e-30))
         log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
-        log_solid = wl * log_eff + (1.0 - wl) * xp.where(wl == 1.0, 0.0, log_diff)
+        log_solid = wl * log_eff + (1.0 - wl) * log_diff
         res = 10.0**log_solid
         blended = xp.where((wl == 0.0) | (eta_eff_val == eta_d), eta_d, res)
         return xp.where(has_nan_lid | xp.isnan(wl) | (wl < 0.0) | (wl > 1.0), xp.nan, blended)
