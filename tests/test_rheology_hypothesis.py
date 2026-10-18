@@ -191,7 +191,7 @@ def test_hypothesis_phase_config_rheology_construction_and_delegation(
     assert cfg_dict.rheology == params
 
     for name in RHEOLOGY_FIELD_NAMES:
-        expected_val = getattr(cfg_obj.rheology, name)
+        expected_val = rheo_dict[name]
         assert hasattr(cfg_obj, name) and getattr(cfg_obj, name) == expected_val
         assert hasattr(cfg_flat, name) and getattr(cfg_flat, name) == expected_val
         assert hasattr(cfg_dict, name) and getattr(cfg_dict, name) == expected_val
