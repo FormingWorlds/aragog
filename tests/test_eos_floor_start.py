@@ -134,7 +134,8 @@ def test_the_scipy_event_falls_back_to_the_margin():
 
 def test_a_top_node_below_the_table_is_refused_on_a_slow_fall_with_every_cell_inside():
     """A top node at S_min - 58 from a steep gradient of the top two cells, every cell inside
-    the table and a slow drain of the top cell: the start is at the table and is refused."""
+    the table and a slow fall of the top cell: the start counts as at the table, arms no level
+    and is refused."""
     S = np.array([S_MIN + 2000.0, S_MIN + 236.0, S_MIN + 40.0])
     assert W @ S == pytest.approx(S_MIN - 58.0)
     assert _start(S, [0.0, 0.0, -1.5e-3]) == (None, True)

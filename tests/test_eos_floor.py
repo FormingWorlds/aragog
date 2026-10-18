@@ -180,7 +180,12 @@ def test_floor_refuses_a_draining_start_at_or_below_half_the_margin(
     messages = [r.getMessage() for r in caplog.records]
     refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
     assert len(refusals) == 1 and refusals[0].levelno == logging.WARNING
-    assert 'falls too fast' in refusals[0].getMessage() and sol.message.startswith('EOS floor:')
+    text = (
+        'at the table minimum and falls'
+        if where in ('below', 'one ulp above')
+        else 'falls too fast'
+    )
+    assert text in refusals[0].getMessage() and sol.message.startswith('EOS floor:')
     assert any('stopped 10.0 yr before end_time' in m for m in messages)
 
 
@@ -325,7 +330,7 @@ def test_a_zero_span_call_is_not_refused(shared_eos, caplog, method):
     assert s._solution.status == 0 and not _floor_logs(caplog)
 
 
-def test_a_top_node_below_the_table_with_every_cell_inside_is_refused(shared_eos):
+def test_a_top_node_below_the_table_with_every_cell_inside_is_refused(shared_eos, caplog):
     """A steep top gradient extrapolates the top basic node below S_min while every cell is
     inside the table: under a slow drain the call does not advance."""
     S_min = float(shared_eos.S_min)
@@ -335,15 +340,29 @@ def test_a_top_node_below_the_table_with_every_cell_inside_is_refused(shared_eos
     S0 = np.full(s._n_stag, S_min + 2000.0)
     S0[-2:] = S_min + 236.0, S_min + 40.0
     assert _weights(s) @ S0 < S_min  # precondition: the extrapolated top node is out
-    s, _ = _drained(shared_eos, S0, flux=50.0)
+    with caplog.at_level(logging.INFO):
+        s, _ = _drained(shared_eos, S0, flux=50.0)
     assert s._solution.status == 1 and s.get_state().dt_actual == 0.0
+    refusals = [r for r in caplog.records if 'the call does not advance' in r.getMessage()]
+    assert len(refusals) == 1 and refusals[0].levelno == logging.WARNING
+    assert s._solution.message.startswith('EOS floor:')
 
 
-def test_a_zero_span_call_still_checks_the_margin(shared_eos):
-    """The margin check against the table span runs also on a call with no span."""
+@pytest.mark.parametrize(('core', 'end_time'), [('quasi_steady', 0.0), ('gradient', 10.0)])
+def test_the_margin_is_checked_also_without_span_or_on_the_gradient_core(
+    shared_eos, core, end_time
+):
+    """The margin check against the table span runs also on a call with no span and on the
+    gradient core, where the floor is not armed."""
     span = float(shared_eos.S_max) - float(shared_eos.S_min)
     with pytest.raises(ValueError, match='eos_floor_margin'):
-        _drained(shared_eos, float(shared_eos.S_min) + 400.0, margin=span, end_time=0.0)
+        _drained(
+            shared_eos,
+            float(shared_eos.S_min) + 400.0,
+            margin=span,
+            core=core,
+            end_time=end_time,
+        )
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
@@ -381,11 +400,15 @@ def _steep_top(eos, top3):
 
 
 @pytest.mark.parametrize('method', ['cvode', 'bdf'])
-def test_a_warming_top_cell_under_an_extrapolated_falling_node_runs_its_span(shared_eos, method):
+def test_a_warming_top_cell_under_an_extrapolated_falling_node_runs_its_span(
+    shared_eos, method
+):
     """Flux 0, top node at S_min - 58: the node falls only by extrapolation while the top cell
     warms, so the call runs its full span with every cell inside the table."""
     S_min = float(shared_eos.S_min)
-    s, _ = _drained(shared_eos, _steep_top(shared_eos, [2000.0, 236.0, 40.0]), flux=0.0, method=method)
+    s, _ = _drained(
+        shared_eos, _steep_top(shared_eos, [2000.0, 236.0, 40.0]), flux=0.0, method=method
+    )
     assert s._solution.status == 0 and s._solution.t[-1] == pytest.approx(10.0)
     assert _cells(s).min() > S_min + 39.0
 
@@ -402,7 +425,9 @@ def test_a_rising_node_at_the_table_stops_a_falling_top_cell_at_half_its_distanc
     s, _ = _drained(shared_eos, S0, flux=860.0, end_time=2.0e4, method=method)
     Y = _cells(s)
     assert 0.0 < s._solution.t[-1] < 2.0e4
-    assert Y[-1, -1] == pytest.approx(S_min + 20.0, abs=1.0e-3) and Y.min() >= S_min + 20.0 - 1e-3
+    assert (
+        Y[-1, -1] == pytest.approx(S_min + 20.0, abs=1.0e-3) and Y.min() >= S_min + 20.0 - 1e-3
+    )
     if method == 'cvode':
         assert s._solution.status == 0 and s._solution.cap_label == 'eos_floor'
     s_off, _ = _drained(shared_eos, S0, flux=860.0, end_time=2.0e4, margin=None, method=method)
