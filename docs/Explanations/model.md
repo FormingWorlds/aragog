@@ -76,10 +76,10 @@ The pressure gradient $\partial P/\partial r$ is taken from the configured press
 Convection is parameterised as eddy diffusion of entropy:
 
 $$
-F_\mathrm{conv} = \rho T \kappa_h \max\!\left(-\frac{\partial S}{\partial r},\,0\right).
+F_\mathrm{conv} = -\rho T \kappa_h \frac{\partial S}{\partial r},
 $$
 
-The instability criterion in the entropy formulation is simply $\partial S/\partial r < 0$. The $\max$ form is implemented as a smooth approximation (rather than a hard switch) so that the BDF Jacobian remains continuous through the onset of convection.
+with the mixing-length $\kappa_h > 0$ only where $\partial S/\partial r < 0$, the instability criterion in the entropy formulation (for a positive `eddy_diffusivity_thermal`); for $D > 0$ the drive there uses at least the gradient $D$. The `kappah_floor` acts up to $\partial S/\partial r = D$ (`energy.convective_threshold`, default 0), so with $D > 0$ near-adiabatic liquid nodes keep a floor diffusivity. Both switches are hard masks (see [Heat transport](heat_transport.md#convection-mixing-length-theory)).
 
 The eddy diffusivity $\kappa_h$ is computed from a mixing length $l(r)$ and a regime-dependent velocity scale. The viscous and inviscid limits of Abe (1993)[^cite-abe1993] are blended via a $\tanh$ on the cell Reynolds number around $Re_\mathrm{crit} = 9/8$, the critical value Aragog inherits via Abe (1995)[^cite-abe1995] and documented in Bower et al. (2018)[^cite-bower2018] §2.1:
 

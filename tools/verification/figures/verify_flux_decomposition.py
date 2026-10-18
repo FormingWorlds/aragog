@@ -2,7 +2,7 @@
 
 Decomposes the total radial heat flux F_tot = F_cond + F_conv + F_grav
 + F_mix (the four heat-flux components) and the
-internal volumetric heat source H = H_radio + H_dil + H_tidal
+internal volumetric heat source H = H_radio + H_tidal
 (the entropy balance) at every basic node of an Earth-like 80-cell mesh
 (``chili_repro_v2.toml``).
 
@@ -18,8 +18,7 @@ a small superimposed entropy gradient to drive convection. This is
 the regime where every flux component has a non-zero contribution:
 gravitational separation and chemical mixing turn on inside the
 mushy band, MLT convection is active where the entropy gradient is
-unstable, conduction dominates near the boundaries, and dilatation
-PdV heating (the entropy balance) develops where the mass fluxes are large.
+unstable, and conduction dominates near the boundaries.
 
 Run:
     conda activate proteus  # or your aragog env
@@ -90,8 +89,8 @@ def main():
     delta_S = jnp.linspace(0.0, 60.0, n_stag)  # surface 60 J/kg/K hotter
     S_stag = S_mid_phi + delta_S
 
-    # Static radio (uniform per cell). We add it manually below to the
-    # H_dil decomposition; compute_fluxes does NOT mix radio in.
+    # Static radio (uniform per cell). We add it to the heating
+    # decomposition below; compute_fluxes does NOT mix radio in.
     H_radio_fn = make_radio_heating_fn(
         RADIO['hp'], RADIO['ab'], RADIO['cc'], RADIO['t0'], RADIO['hl'],
     )
@@ -100,7 +99,7 @@ def main():
 
     # Build component-isolated PhaseParams. Reuse the production
     # rheology/viscosity, only flip the transport flags.
-    def with_flags(cond=False, conv=False, grav=False, mix=False, dil=False):
+    def with_flags(cond=False, conv=False, grav=False, mix=False):
         return PhaseParams(
             phi_rheo=params0.phi_rheo,
             phi_width=params0.phi_width,
@@ -111,10 +110,11 @@ def main():
             k_liquid=params0.k_liquid,
             matprop_smooth_width=params0.matprop_smooth_width,
             conduction=cond, convection=conv,
-            grav_sep=grav, mixing=mix, dilatation=dil,
+            grav_sep=grav, mixing=mix,
             eddy_diff_thermal=params0.eddy_diff_thermal,
             eddy_diff_chemical=params0.eddy_diff_chemical,
             kappah_floor=params0.kappah_floor,
+            convective_threshold=params0.convective_threshold,
             bottom_up_grav_sep=True,
         )
 
@@ -146,22 +146,9 @@ def main():
     # Internal heating (per-staggered-node) decomposition
     # Radio: just the constant H_radio_per_cell
     H_radio_arr = np.full(n_stag, H_radio_per_cell)
-    # Dilatation: difference between heating_with_dil (all flags on,
-    # dilatation ON) and heating_with_dil (all flags on, dilatation OFF).
-    out_with_dil = compute_fluxes(
-        S_stag, 0.0, eos,
-        with_flags(cond=True, conv=True, grav=True, mix=True, dil=True),
-        mesh, jnp.zeros(n_stag),
-    )
-    out_no_dil = compute_fluxes(
-        S_stag, 0.0, eos,
-        with_flags(cond=True, conv=True, grav=True, mix=True, dil=False),
-        mesh, jnp.zeros(n_stag),
-    )
-    H_dil_arr = np.asarray(out_with_dil.heating - out_no_dil.heating)
     # Tidal: zero in this run (no tidal_array). Plot as zero baseline.
     H_tidal_arr = np.zeros(n_stag)
-    H_total = H_radio_arr + H_dil_arr + H_tidal_arr
+    H_total = H_radio_arr + H_tidal_arr
 
     # Save raw data
     np.savez(
@@ -171,7 +158,7 @@ def main():
         F_cond=F_cond, F_conv=F_conv, F_grav=F_grav, F_mix=F_mix,
         F_total=F_total, F_sum=F_sum,
         component_residual=component_residual,
-        H_radio=H_radio_arr, H_dil=H_dil_arr, H_tidal=H_tidal_arr,
+        H_radio=H_radio_arr, H_tidal=H_tidal_arr,
         H_total=H_total,
         n_stag=n_stag,
     )
@@ -229,8 +216,6 @@ def main():
     ax = axes[1]
     plot_signed_log(ax, depth_km_stag, H_radio_arr, PALETTE['radio'],
                     r'$|H_\mathrm{radio}|$  (4-isotope cocktail at $t=0$)')
-    plot_signed_log(ax, depth_km_stag, H_dil_arr, PALETTE['dil'],
-                    r'$|H_\mathrm{dil}|$  (PdV term)')
     # Tidal is identically zero in this config; show as floored line for legend.
     ax.plot(depth_km_stag, np.full(n_stag, 1e-20), color=PALETTE['tidal'],
             lw=1.0, ls=':', label=r'$H_\mathrm{tidal}$ (= 0 in this run)')
@@ -252,7 +237,6 @@ def main():
 
     print('fig_02 saved.')
     print(f'  H_radio per cell = {H_radio_per_cell:.3e} W/kg')
-    print(f'  max |H_dil|      = {np.abs(H_dil_arr).max():.3e} W/kg')
     print(f'  max |F_total|    = {np.abs(F_total).max():.3e} W/m^2')
 
 

@@ -343,6 +343,7 @@ def run_aragog():
         eddy_diffusivity_thermal=1.0,
         eddy_diffusivity_chemical=1.0,
         kappah_floor=0.0,
+        convective_threshold=0.0,
     )
 
     # Initial condition
