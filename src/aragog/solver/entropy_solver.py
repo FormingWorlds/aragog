@@ -552,9 +552,10 @@ def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
 class AcceptedStateError(ValueError):
     """An accepted state of a call is not finite or leaves the EOS tables.
 
-    Attributes ``check`` (``'finite_state'`` or ``'entropy_table'``), ``node`` (``'cell i'`` or
-    ``'basic j'``), ``time`` [yr], ``value`` [J/kg/K] and ``bound`` [J/kg/K, NaN for a
-    non-finite value] name the first offending state.
+    Attributes ``check`` (``'finite_state'``, ``'entropy_table'``, ``'end_temperature'`` or
+    ``'end_melt_fraction'``), ``node`` (``'cell i'`` or ``'basic j'``), ``time`` [yr], ``value``
+    and ``bound`` (in the unit of the check: J/kg/K, K or none; NaN for a non-finite value) name
+    the first offending state.
     """
 
     def __init__(self, check: str, node: str, time: float, value: float, bound: float):
@@ -566,8 +567,7 @@ class AcceptedStateError(ValueError):
             bound,
         )
         super().__init__(
-            f'{check}: {node} at t={time:.6g} yr has entropy {value:.6g} J/kg/K '
-            f'(bound {bound:.6g} J/kg/K)'
+            f'{check}: {node} at t={time:.6g} yr has {value:.6g} (bound {bound:.6g})'
         )
 
 
@@ -607,6 +607,31 @@ def _check_accepted_states(t, S, weights, S_min: float, S_max: float) -> None:
                 raise AcceptedStateError(
                     'entropy_table', f'{kind} {i}', float(t[k + 1]), float(col[i]), bound
                 )
+
+
+def _check_end_state(time: float, T_stag, T_basic, phi) -> None:
+    """Raise AcceptedStateError unless the end state has finite ``T > 0`` and ``0 <= phi <= 1``.
+
+    Parameters
+    ----------
+    time : float
+        End time of the call [yr].
+    T_stag, T_basic : ndarray
+        Cell and basic-node temperatures [K].
+    phi : ndarray
+        Cell melt fractions.
+    """
+    for check, kind, x, lo, hi in (
+        ('end_temperature', 'cell', T_stag, 0.0, None),
+        ('end_temperature', 'basic', T_basic, 0.0, None),
+        ('end_melt_fraction', 'cell', phi, 0.0, 1.0),
+    ):
+        x = np.asarray(x, dtype=float).ravel()
+        bad = ~np.isfinite(x) | (x <= lo if hi is None else (x < lo) | (x > hi))
+        if bad.any():
+            i = int(np.argmax(bad))
+            bound = hi if hi is not None and x[i] > hi else lo
+            raise AcceptedStateError(check, f'{kind} {i}', time, float(x[i]), bound)
 
 
 def _floor_entropy(weights: npt.NDArray, S_stag: npt.NDArray) -> float:
@@ -5207,6 +5232,7 @@ class EntropySolver:
             t_shell_end = y_end[n_stag + 2 :]
             layer_base = float(shell.layer_base(t_shell_end, y_end[n_stag + 1]))
             t_top = float(shell.top_temperature(t_shell_end))
+        _check_end_state(float(sol.t[-1]), T_stag, T_basic_diag, phi_stag)
         return SolverOutput(
             S_final=S_final,
             T_stag=T_stag,

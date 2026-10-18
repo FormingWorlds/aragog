@@ -420,6 +420,10 @@ class EntropyEOS:
         self.P_max = float(max(ref_melt['P'][-1], ref_solid['P'][-1]))
         self.S_min = float(min(tbl['S'][0] for tbl in self._tables.values()))
         self.S_max = float(max(tbl['S'][-1] for tbl in self._tables.values()))
+        for name in ('temperature_melt', 'temperature_solid'):
+            T_tab = np.asarray(self._tables[name]['values'], dtype=float)
+            if not np.all(np.isfinite(T_tab) & (T_tab > 0.0)):
+                raise ValueError(f'{name} table holds a non-positive or non-finite temperature')
 
         logger.info(
             'Entropy EOS loaded: P=[%.2e, %.2e] Pa, S=[%.0f, %.0f] J/kg/K, %d x %d grid (melt)',
