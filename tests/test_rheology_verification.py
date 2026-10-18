@@ -1345,6 +1345,7 @@ def test_validation_and_lid_base_edge_cases():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize('lid_base_mode', ['rheological', 'fixed'])
 @pytest.mark.parametrize(
     'nan_field',
     [
@@ -1361,10 +1362,15 @@ def test_validation_and_lid_base_edge_cases():
         'solidus_temperature',
         'unyielded_velocity',
         'viscosity_mixture',
+        'phi_rheo',
+        'phi_width',
+        't_sol_0',
+        'a_rh_fb',
+        'C4',
     ],
 )
-def test_lid_state_nan_propagation_per_input(nan_field: str):
-    """Verify NaN in each array input of compute_stagnant_lid_state propagates NaN to outputs."""
+def test_lid_state_nan_propagation_per_input(nan_field: str, lid_base_mode: str):
+    """Verify NaN in each array or scalar input propagates NaN in both lid_base_modes."""
     from aragog.rheology_lid import compute_stagnant_lid_state
 
     _, jnp = _import_jax_x64()
@@ -1384,20 +1390,28 @@ def test_lid_state_nan_propagation_per_input(nan_field: str):
         'unyielded_velocity': np.full(n_nodes, 1.0e-9),
         'viscosity_mixture': np.full(n_nodes, 1.0e20),
     }
-    bad = base_arrays[nan_field].copy()
-    bad[5] = np.nan
-    base_arrays[nan_field] = bad
+    scalars = {
+        'viscosity_solid': 1.0e21,
+        'phi_rheo': 0.4,
+        'phi_width': 0.15,
+        't_sol_0': 1400.0,
+        'a_rh_fb': 1.3,
+        'C4': 0.125,
+    }
+    if nan_field in base_arrays:
+        bad = base_arrays[nan_field].copy()
+        bad[5] = np.nan
+        base_arrays[nan_field] = bad
+    else:
+        scalars[nan_field] = float('nan')
 
-    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
+    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0, lid_base_mode=lid_base_mode)
     for xp_mod in (np, jnp):
         kw = {k: xp_mod.asarray(v) for k, v in base_arrays.items()}
         st = compute_stagnant_lid_state(
             **kw,
-            t_sol_0=1400.0,
+            **scalars,
             params=params,
-            viscosity_solid=1.0e21,
-            phi_rheo=0.4,
-            phi_width=0.15,
             xp=xp_mod,
         )
         for key in (
@@ -1405,6 +1419,11 @@ def test_lid_state_nan_propagation_per_input(nan_field: str):
             'theta',
             'eta_i',
             'mu_i',
+            'T_lid',
+            'T_lid_iso',
+            'r_lid_base',
+            'P_lid_base',
+            'tau_y_lid',
             'd_lid',
             'v_m',
             'v_i',
@@ -1412,13 +1431,16 @@ def test_lid_state_nan_propagation_per_input(nan_field: str):
             'lid_regime',
         ):
             assert bool(xp_mod.isnan(st[key])), (
-                f'Expected {key} to be NaN when {nan_field} has NaN under {xp_mod.__name__}'
+                f'Expected {key} to be NaN when {nan_field} has NaN in {lid_base_mode} under {xp_mod.__name__}'
             )
+        assert bool(xp_mod.all(xp_mod.isnan(st['w_lid'])))
 
 
 @pytest.mark.unit
 def test_water_prefactor_and_w_lid_nan_propagation():
-    """Verify NaN water_prefactor in compute_arrhenius_viscosity and NaN w_lid in compute_effective_viscosity return NaN."""
+    """Verify NaN propagation in compute_arrhenius_viscosity, compute_effective_viscosity, and viscous_mixing_length_factor."""
+    from aragog.rheology import viscous_mixing_length_factor
+
     _, jnp = _import_jax_x64()
     assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, water_prefactor=np.nan))
     res_np_arr = compute_arrhenius_viscosity(
@@ -1439,7 +1461,34 @@ def test_water_prefactor_and_w_lid_nan_propagation():
     )
     assert bool(jnp.isnan(res_jx_arr[0])) and bool(jnp.isfinite(res_jx_arr[1]))
 
+    r_ml = np.linspace(3.48e6, 6.371e6, 11)
+    ml_base = np.minimum(r_ml - r_ml[0], r_ml[-1] - r_ml)
+    ml_nan = ml_base.copy()
+    ml_nan[5] = np.nan
+    r_nan = r_ml.copy()
+    r_nan[5] = np.nan
     for xp_mod in (np, jnp):
+        fac_ml_nan = viscous_mixing_length_factor(
+            xp_mod.asarray(r_ml),
+            r_ml[0],
+            r_ml[-1],
+            xp_mod.asarray(ml_nan),
+            0.22,
+            xp=xp_mod,
+        )
+        assert bool(xp_mod.isnan(fac_ml_nan[5]))
+        assert bool(xp_mod.isfinite(fac_ml_nan[4]))
+
+        fac_r_nan = viscous_mixing_length_factor(
+            xp_mod.asarray(r_nan),
+            r_ml[0],
+            r_ml[-1],
+            xp_mod.asarray(ml_base),
+            0.22,
+            xp=xp_mod,
+        )
+        assert bool(xp_mod.isnan(fac_r_nan[5]))
+
         eta_wl_nan = compute_effective_viscosity(
             eta_diff=xp_mod.asarray([1.0e24, 1.0e24]),
             eta_i=xp_mod.asarray(1.0e20),
