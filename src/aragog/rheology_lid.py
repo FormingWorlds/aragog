@@ -141,9 +141,9 @@ def compute_stagnant_lid_state(
         ``(params.arrhenius_t_ref, P = 0)`` for the linear solidus; when a
         ``solidus_temperature`` table is provided, ``viscosity_solid`` is
         referenced to ``params.t_sol_0``, so the table ``eta_diff(T, 0)``
-        exceeds the linear-solidus ``eta_diff(T, 0)`` at the same ``T`` by
-        ``exp(g_hom * (T_sol(0) - params.t_sol_0) / T)`` (a ratio of 1.573,
-        or 1.57x, at 1600 K for 1429 K against 1400 K).
+        scales relative to the linear-solidus ``eta_diff(T, 0)`` at the same
+        ``T`` by ``exp(g_hom * (T_sol(0) - params.t_sol_0) / T)`` (a ratio
+        of 0.739, or 0.74x, at 1600 K for 1380.6 K against 1400 K).
     phi_rheo : float
         Critical melt fraction for rheological transition [-].
     phi_width : float

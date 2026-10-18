@@ -64,10 +64,10 @@ class SolidRheologyParams:
     standard olivine diffusion-creep activation energy :math:`E_a = 300` kJ/mol
     (Karato & Wu 1993). The linear solidus fallback defaults ``t_sol_0 = 1400.0`` K
     and ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) approximate the whole-mantle secant
-    of the SPIDER phase-boundary solidus table read by Aragog (1429 K at 0 GPa to
-    4595 K at 135 GPa, slope 23.5 K/GPa). Because the physical solidus is concave
-    downward, the linear form is about 30 % low at 25 GPa (2000 K versus 2969 K)
-    and serves table-free constant-property benchmarks only.
+    of the Wolf & Bower (2018) solidus curve (``wolf_bower_2018/r15728072/solidus.dat``,
+    1380.6 K at 0 GPa to 4232.1 K at 135 GPa, slope 21.1 K/GPa). Because the physical
+    solidus is concave downward, the linear form is about 19 % low at 25 GPa
+    (2000 K versus 2475.9 K) and serves table-free constant-property benchmarks only.
     """
 
     enabled: bool = False
