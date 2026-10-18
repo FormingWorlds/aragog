@@ -702,7 +702,7 @@ def test_arrhenius_viscosity_lower_exponent_clip_active():
         arrhenius_t_ref=1.0,
     )
     expected_eta = 1.0e20 * np.exp(-700.0)
-    assert float(eta) == pytest.approx(expected_eta, rel=1.0e-12)
+    assert float(eta) == pytest.approx(expected_eta, rel=1.0e-12, abs=0.0)
 
     # A clip at -100.0 yields ~3.72e-24, failing this assertion.
     clip_100_eta = 1.0e20 * np.exp(-100.0)
