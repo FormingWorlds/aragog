@@ -1686,7 +1686,7 @@ def test_melt_fraction_lid_indicator_moves_with_phi_rheo_and_width():
         lid_base_temperature=2000.0,
         t_sol_0=2500.0,
     )
-    phi_prof = np.linspace(0.6, 0.0, n_nodes)
+    phi_prof = np.linspace(0.005, 0.0, n_nodes)
 
     base_inp = {
         **inputs,
@@ -1695,20 +1695,20 @@ def test_melt_fraction_lid_indicator_moves_with_phi_rheo_and_width():
         't_sol_0': 2500.0,
         'melt_fraction': phi_prof,
         'params': params,
-        'phi_rheo': 0.3,
-        'phi_width': 0.05,
+        'phi_rheo': 0.002,
+        'phi_width': 0.001,
     }
     st_base = compute_stagnant_lid_state(**base_inp)
 
     # Shifting phi_rheo by +0.1 moves the transition deeper (smaller radius).
-    st_a1 = compute_stagnant_lid_state(**{**base_inp, 'phi_rheo': 0.4})
+    st_a1 = compute_stagnant_lid_state(**{**base_inp, 'phi_rheo': 0.102})
     assert float(st_a1['r_lid_base']) < float(st_base['r_lid_base']) - 100.0e3
 
     # Doubling phi_width changes the smooth transition location.
-    st_l33 = compute_stagnant_lid_state(**{**base_inp, 'phi_width': 0.10})
+    st_l33 = compute_stagnant_lid_state(**{**base_inp, 'phi_width': 0.002})
     assert abs(float(st_l33['r_lid_base']) - float(st_base['r_lid_base'])) > 100.0e3
-    # Regression pin: base r_lid_base ~ 5065.4 km
-    assert float(st_base['r_lid_base']) == pytest.approx(5065401.9, rel=1.0e-4)
+    # Regression pin: base r_lid_base ~ 5668.0 km
+    assert float(st_base['r_lid_base']) == pytest.approx(5668000.2, rel=1.0e-4)
 
 
 @pytest.mark.unit

@@ -671,7 +671,6 @@ def compute_effective_viscosity(
     td = xp.asarray(tau_d, dtype=float)
     ty_lid = xp.maximum(xp.asarray(tau_y_lid, dtype=float), COHESION_FLOOR)
     ratio = xp.where(td > 0.0, ty_lid / xp.maximum(td, 1e-30), 1.0)
-    ratio = xp.where(xp.isinf(ty_lid), 1.0, ratio)
     eta_eff_val = xp.where(ratio >= 1.0, eta_d, xp.minimum(eta_d, eta_i_arr * ratio))
     has_nan_lid = xp.isnan(eta_d) | xp.isnan(eta_i_arr) | xp.isnan(td) | xp.isnan(ty_lid)
     eta_eff_val = xp.where(has_nan_lid, xp.nan, eta_eff_val)
