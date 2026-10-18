@@ -683,3 +683,57 @@ def test_solid_rheology_params_bounds_covers_every_numeric_field():
             assert field_info.name in bounds_fields, (
                 f'Numeric field {field_info.name} is missing from _BOUNDS'
             )
+
+
+@pytest.mark.unit
+def test_arrhenius_viscosity_lower_exponent_clip_active():
+    """Verify arrhenius viscosity clips exponent to -700 rather than -100."""
+    from aragog.rheology import compute_arrhenius_viscosity
+
+    # Setting arrhenius_t_ref = 1.0 K forces exponent = g_hom * (1 - t_sol_0 / arrhenius_t_ref) = -1399
+    # which exercises the lower clip -700.0.
+    eta = compute_arrhenius_viscosity(
+        temperature=1400.0,
+        pressure=0.0,
+        viscosity_solid=1.0e20,
+        g_homologous=1.0,
+        t_sol_0=1400.0,
+        dt_sol_dp=0.0,
+        arrhenius_t_ref=1.0,
+    )
+    expected_eta = 1.0e20 * np.exp(-700.0)
+    assert float(eta) == pytest.approx(expected_eta, rel=1.0e-12)
+
+    # A mutant clipping at -100.0 yields ~3.72e-24, failing this assertion.
+    mutant_eta = 1.0e20 * np.exp(-100.0)
+    assert abs(float(eta) - mutant_eta) / mutant_eta > 0.99
+
+
+@pytest.mark.unit
+def test_arrhenius_enthalpy_exact_r_gas_codata_2018():
+    """Verify compute_arrhenius_enthalpy uses CODATA 2018 exact R_GAS."""
+    from aragog.rheology import R_GAS, compute_arrhenius_enthalpy
+
+    assert R_GAS == pytest.approx(8.314462618, abs=1.0e-12)
+
+    # Check absolute H at P=0 Pa with t_sol_0 = 1400.0 K and g_hom = 25.0
+    h_linear = compute_arrhenius_enthalpy(
+        pressure=0.0, g_homologous=25.0, t_sol_0=1400.0, dt_sol_dp=0.0
+    )
+    expected_h = 25.0 * 8.314462618 * 1400.0
+    assert float(h_linear) == pytest.approx(expected_h, rel=1.0e-12)
+
+    # Assert mutant R_GAS = 8.314 fails
+    mutant_h = 25.0 * 8.314 * 1400.0
+    assert abs(float(h_linear) - mutant_h) > 15.0
+
+    # Check table enthalpy values from r15728072 solidus
+    t_sol_table = np.array([1380.6038, 2475.9161, 2875.9474, 3673.7136, 4232.1499])
+    h_g25 = compute_arrhenius_enthalpy(
+        pressure=np.array([0.0, 25.0e9, 50.0e9, 100.0e9, 135.0e9]),
+        g_homologous=25.0,
+        solidus_temperature=t_sol_table,
+        t_sol_0=1380.6038,
+    )
+    expected_h_g25 = 25.0 * 8.314462618 * t_sol_table
+    np.testing.assert_allclose(h_g25, expected_h_g25, rtol=1.0e-12)

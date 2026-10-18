@@ -1506,25 +1506,27 @@ def test_thermal_diffusivity_and_expansivity_weighting_and_vm_scaling():
     st_base = compute_stagnant_lid_state(**inputs)
     n_nodes = len(inputs['radii'])
 
-    # Uniform kappa doubling: Ra_eff scales by 0.5, tau_d scales by 2^(1/3).
+    # Uniform kappa doubling: Ra_eff scales by exactly 0.5, tau_d scales by 2^(1/3).
+    # Since kappa is uniform, spatial weighting across the convective layer is exact to round-off.
     inp_k2 = {**inputs, 'thermal_diffusivity': np.full(n_nodes, 2.0e-6)}
     st_k2 = compute_stagnant_lid_state(**inp_k2)
-    assert float(st_k2['Ra_eff']) / float(st_base['Ra_eff']) == pytest.approx(0.5, rel=1.0e-6)
+    assert float(st_k2['Ra_eff']) / float(st_base['Ra_eff']) == pytest.approx(0.5, rel=1.0e-12)
     expected_taud_ratio_k = 2.0 ** (1.0 / 3.0)
     assert float(st_k2['tau_d']) / float(st_base['tau_d']) == pytest.approx(
-        expected_taud_ratio_k, rel=1.0e-4
+        expected_taud_ratio_k, rel=1.0e-12
     )
 
     # Uniform alpha doubling: Ra_eff and tau_buoy scale by 2.0, tau_d scales by 2^(2/3).
+    # Spatial weighting of uniform alpha across the layer is exact to round-off.
     inp_a2 = {**inputs, 'thermal_expansivity': np.full(n_nodes, 6.0e-5)}
     st_a2 = compute_stagnant_lid_state(**inp_a2)
-    assert float(st_a2['Ra_eff']) / float(st_base['Ra_eff']) == pytest.approx(2.0, rel=1.0e-6)
+    assert float(st_a2['Ra_eff']) / float(st_base['Ra_eff']) == pytest.approx(2.0, rel=1.0e-12)
     assert float(st_a2['tau_buoy']) / float(st_base['tau_buoy']) == pytest.approx(
-        2.0, rel=1.0e-6
+        2.0, rel=1.0e-12
     )
     expected_taud_ratio_a = 2.0 ** (2.0 / 3.0)
     assert float(st_a2['tau_d']) / float(st_base['tau_d']) == pytest.approx(
-        expected_taud_ratio_a, rel=1.0e-4
+        expected_taud_ratio_a, rel=1.0e-12
     )
 
     # Depth-varying kappa profile: weighted mean near lid base differs from column mean.
