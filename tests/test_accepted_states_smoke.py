@@ -14,7 +14,7 @@ from aragog.solver.entropy_solver import AcceptedStateError, EntropySolver
 from .conftest import EOS_DIR, entropy_eos_copy, needs_eos
 from .test_entropy_solver_core_module_smoke import CORE_MODULE_PARAMS, _build
 from .test_entropy_solver_gradient_smoke import _build_gradient_parameters
-from .test_eos_floor import _FLUX, _drained
+from .test_eos_floor import _FLUX, _drained, needs_cvode
 from .test_phi_step_cap_armed_smoke import _build_mushy_parameters
 
 pytestmark = [pytest.mark.smoke, needs_eos]
@@ -126,6 +126,7 @@ def test_a_cmb_node_below_the_table_raises_with_every_cell_inside(shared_eos, me
     assert (e.value.check, e.value.node, e.value.bound) == ('entropy_table', 'basic 0', S_min)
 
 
+@needs_cvode
 def test_a_trace_node_outside_the_table_raises_when_the_returned_points_are_inside(
     shared_eos, monkeypatch
 ):
@@ -150,6 +151,7 @@ def test_a_trace_node_outside_the_table_raises_when_the_returned_points_are_insi
     assert (e.value.check, e.value.node) == ('entropy_table', 'cell 5')
 
 
+@needs_cvode
 def test_a_failed_call_is_not_checked(shared_eos, monkeypatch):
     """A call that fails (status -1) with a trace node below S_min returns its status to the
     caller's retry ladder instead of raising."""
@@ -217,6 +219,16 @@ def test_a_start_state_below_the_table_raises_on_the_first_call(shared_eos, meth
     assert (e.value.check, e.value.node, e.value.time) == ('entropy_table', 'cell 5', 0.0)
 
 
+def test_a_start_that_raised_is_checked_again_on_the_next_call(shared_eos):
+    """A raise on a bad start leaves it unaccepted: a second call without set_initial_entropy
+    raises on it again instead of returning the floor refusal."""
+    s = _quasi_steady(shared_eos, _bad_start(shared_eos), 2)
+    for _ in range(2):
+        with pytest.raises(AcceptedStateError) as e:
+            s.solve()
+        assert (e.value.check, e.value.node, e.value.time) == ('entropy_table', 'cell 5', 0.0)
+
+
 def test_the_start_is_checked_only_once_after_set_initial_entropy(shared_eos):
     """After the first call the start is the previous end, already checked: a later call whose
     start is changed without set_initial_entropy gets the floor refusal, not the error."""
@@ -240,7 +252,7 @@ def test_the_core_module_cmb_slot_is_not_checked(shared_eos):
     r = np.asarray(s.evaluator.mesh.basic.radii).ravel()
     off, n = r[0] - 0.5 * (r[0] + r[1]), s._n_stag
     s._S0[n] = (float(shared_eos.S_min) - 50.0 - s._S0[0]) / off
-    assert _solves(s)
+    assert _solves(s) and s._solution.status >= 0
 
 
 def test_the_core_module_cmb_node_is_the_bottom_cell(shared_eos):
@@ -261,3 +273,62 @@ def test_the_core_module_cmb_node_is_the_bottom_cell(shared_eos):
         core_offset=5000.0,
     )
     assert _solves(s) and s._solution.status == 0
+
+
+def _quasi_steady(eos, S0, inner, method='bdf'):
+    """A 1e-3 yr quasi_steady call with no surface flux from cells ``S0`` under inner boundary
+    condition ``inner`` (3: the CMB held at 4000 K)."""
+    p = _build_mushy_parameters(solver_method=method, end_time=1.0e-3)
+    p.boundary_conditions.outer_boundary_condition = 4
+    p.boundary_conditions.outer_boundary_value = 0.0
+    p.boundary_conditions.inner_boundary_condition = inner
+    p.boundary_conditions.inner_boundary_value = 4000.0 if inner == 3 else 0.0
+    p.energy = dataclasses.replace(
+        p.energy, phi_step_cap=None, eos_floor_margin=None, phase_boundary_cap=None
+    )
+    s = EntropySolver(p, entropy_eos=eos)
+    s.initialize()
+    s.set_initial_entropy(np.broadcast_to(np.asarray(S0, dtype=float), s._n_stag).copy())
+    return s
+
+
+def _steep_bottom(eos):
+    """Bottom cells S_min + [15, 150]: the extrapolation 1.5 S0 - 0.5 S1 is S_min - 52.5."""
+    S0 = np.full(11, float(eos.S_min) + 2000.0)
+    S0[:2] = float(eos.S_min) + 15.0, float(eos.S_min) + 150.0
+    return S0
+
+
+@pytest.mark.parametrize('inner', [0, 1, 2, 3])
+def test_the_quasi_steady_cmb_node_feeds_a_rate_only_under_a_prescribed_temperature(
+    shared_eos, inner
+):
+    """Moving the extrapolated CMB node by 6 J/kg/K leaves every rate unchanged where the CMB
+    law sets the CMB flux (inner 0, 1, 2) and changes them under a prescribed temperature."""
+    s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), inner)
+    W, y = np.asarray(s.evaluator.mesh._quantity_transform), np.array(s._S0, dtype=float)
+    r0, row = np.ravel(s._dSdt_single(0.0, y)).copy(), W[0].copy()
+    W[0, :2] += -3.0, 3.0
+    r1 = np.ravel(s._dSdt_single(0.0, y))
+    W[0] = row
+    assert np.all(r1 == r0) == (inner != 3)
+
+
+@pytest.mark.parametrize('method', [pytest.param('cvode', marks=needs_cvode), 'bdf'])
+@pytest.mark.parametrize('inner', [0, 1, 2])
+def test_the_quasi_steady_cmb_node_is_the_bottom_cell_where_the_cmb_law_sets_the_flux(
+    shared_eos, inner, method
+):
+    """With the extrapolation at S_min - 52.5 and every cell inside, a call whose CMB flux comes
+    from the CMB law does not raise: node 0 feeds no rate there."""
+    s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), inner, method)
+    assert _solves(s) and s._solution.status >= 0
+
+
+def test_the_quasi_steady_cmb_node_is_checked_under_a_prescribed_temperature(shared_eos):
+    """Under a prescribed CMB temperature the extrapolated node sets the CMB flux: the same start
+    raises on basic node 0."""
+    s = _quasi_steady(shared_eos, _steep_bottom(shared_eos), 3)
+    with pytest.raises(AcceptedStateError) as e:
+        s.solve()
+    assert (e.value.check, e.value.node, e.value.time) == ('entropy_table', 'basic 0', 0.0)
