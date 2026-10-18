@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pickle
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -157,3 +159,33 @@ def test_a_non_finite_end_state_raises(which):
     with pytest.raises(AcceptedStateError) as e:
         _check_end_state(5.0, arrays['T_stag'], arrays['T_basic'], arrays['phi'])
     assert e.value.check == ('end_melt_fraction' if which == 'phi' else 'end_temperature')
+
+
+@pytest.mark.parametrize('bad', [np.nan, np.inf])
+def test_a_non_finite_end_value_has_a_nan_bound(bad):
+    """The class contract: the bound of a non-finite value is NaN."""
+    with pytest.raises(AcceptedStateError) as e:
+        _check_end_state(1.0, [bad, 300.0], [300.0, 300.0], [0.5, 0.5])
+    assert np.isnan(e.value.bound)
+
+
+def test_the_error_survives_pickling():
+    e = AcceptedStateError('entropy_table', 'cell 2', 3.0, 99.0, 100.0)
+    f = pickle.loads(pickle.dumps(e))
+    assert (f.check, f.node, f.time, f.value, f.bound) == (
+        'entropy_table',
+        'cell 2',
+        3.0,
+        99.0,
+        100.0,
+    )
+
+
+def test_the_call_start_is_checked_when_asked():
+    """With skip_start=False the start column is checked too (a first call, a resume, a re-melt
+    or a structure update)."""
+    S = _inside()
+    S[0, 0] = S_MIN - 50.0
+    with pytest.raises(AcceptedStateError) as e:
+        _check_accepted_states(T, S, W, S_MIN, S_MAX, skip_start=False)
+    assert (e.value.node, e.value.time) == ('cell 0', 0.0)
