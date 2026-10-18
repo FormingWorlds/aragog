@@ -557,11 +557,10 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
     ``S_min + margin``, or ``S_min + margin/2`` below ``S_min + margin``, without an RHS call.
     Closer to the table, the rate of ``s0`` decides, taken as the smallest rate of every component
     no more than ``1e-6 margin`` above ``s0``; the top-node component uses the larger of its own
-    rate and the top-cell rate, as the extrapolated node can fall while no cell does. A start
-    inside the table arms half its distance to ``S_min`` unless that rate reaches it in ``span``,
-    which refuses the call. A start at or below ``S_min`` (plus ``2e-6 margin``) is refused on any
-    fall, at every span; otherwise it arms half the distance of the smallest cell to ``S_min``
-    when that cell is above the table, and nothing when it is not.
+    rate and the top-cell rate, as the extrapolated node can fall while no cell does. Every such
+    start arms half its distance to ``S_min``. Above ``S_min + 2e-6 margin`` the call is refused
+    when that rate reaches the level in ``span``; at or below it, on any fall, at every span, and
+    when no level fits strictly between ``S_min`` and ``s0`` (every start at or below ``S_min``).
 
     Parameters
     ----------
@@ -598,10 +597,9 @@ def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, sp
     r = float(np.min(active))
     if np.isnan(r):
         return None, True
-    if s0 <= S_min + 2.0 * tol:
-        c = float(S.min())
-        return (0.5 * (c + S_min) if c > S_min + 2.0 * tol and r >= 0.0 else None), r < 0.0
     half = 0.5 * (s0 + S_min)
+    if s0 <= S_min + 2.0 * tol:  # at the table: any fall, or no room for a level, refuses
+        return (half, False) if r >= 0.0 and S_min < half < s0 else (None, True)
     return (half, False) if s0 + r * span > half else (None, True)
 
 
@@ -3910,17 +3908,21 @@ class EntropySolver:
                     floor_margin,
                     end_time - start_time,
                 )
-                s_floor = _floor_entropy(floor_w, S_arr_stag)
                 if level is not None:
-                    if s_floor <= level:  # top node already past the level: watch the cells
-                        floor_w = np.zeros_like(floor_w)
-                        floor_w[-1] = 1.0
                     floor = dict(
                         floor_weights=floor_w, floor_level=level, floor_margin=floor_margin
                     )
                 elif refuse:
                     floor_refused, end_time = True, start_time
-                    if s_floor <= S_tab + 2.0e-6 * floor_margin:
+                    s_floor = _floor_entropy(floor_w, S_arr_stag)
+                    if s_floor <= S_tab:
+                        logger.warning(
+                            'EOS floor: entropy %.1f J/kg/K at the call start is at or below the '
+                            'table minimum %.1f J/kg/K; the call does not advance',
+                            s_floor,
+                            S_tab,
+                        )
+                    elif s_floor <= S_tab + 2.0e-6 * floor_margin:
                         logger.warning(
                             'EOS floor: entropy %.1f J/kg/K at the call start, not above the '
                             'table minimum %.1f J/kg/K plus %.2g J/kg/K, counts as at the table '
