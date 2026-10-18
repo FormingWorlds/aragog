@@ -1727,7 +1727,10 @@ def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():
         (1.0e21, 0.15, 0.4, 1.3, 0.125, 1500.0),
         (1.0e21, 0.15, 0.4, 1.3, 0.125, jnp.inf),
     ):
-        st_jit_bad = _jit_eval(*bad_args)
+        try:
+            st_jit_bad = _jit_eval(*bad_args)
+        except ValueError as exc:
+            pytest.fail(f'traced invalid scalar must give NaN, not raise: {exc}')
         assert not bool(st_jit_bad['has_lid'])
         for k, v in st_jit_bad.items():
             if k != 'has_lid':
