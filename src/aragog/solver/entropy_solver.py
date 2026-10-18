@@ -4262,10 +4262,11 @@ class EntropySolver:
             if low < S_tab:
                 return self.solve(
                     _floor_discard=(
-                        f'EOS floor: the root of level S_min {floor["floor_level"] - S_tab:+.3e} '
-                        f'J/kg/K near t={t_end:.9g} yr put the floor entropy at S_min '
-                        f'{low - S_tab:+.3e} J/kg/K (table minimum {S_tab:.9g} J/kg/K); the call '
-                        'is discarded and does not advance'
+                        f'EOS floor: the call with level S_min {floor["floor_level"] - S_tab:+.3e} '
+                        f'J/kg/K put the floor entropy at S_min {low - S_tab:+.3e} J/kg/K at '
+                        f'{t_end - start_time:.6g} yr after the call start {start_time:.9g} yr '
+                        f'(table minimum {S_tab:.9g} J/kg/K); the call is discarded and does not '
+                        'advance'
                     )
                 )
             if t_end <= float(np.asarray(sol.t)[0]):  # the returned start, after the time scale
