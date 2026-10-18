@@ -40,6 +40,35 @@ UNIT_HALF_OPEN_FIELDS: tuple[str, ...] = (
     's_top_inf',
 )
 
+BOUNDED_INTERVAL_FIELDS: tuple[str, ...] = (
+    'mlt_bottom_slope',
+    's_top_inf',
+    'viscosity_max_log10',
+    'interior_flux_fraction',
+    'phi_visc_single',
+)
+
+NUMERIC_FIELD_NAMES: tuple[str, ...] = (
+    POSITIVE_FIELDS + NON_NEGATIVE_FIELDS + BOUNDED_INTERVAL_FIELDS
+)
+
+
+def _assert_wrong_types_raise_type_error(
+    field_names: tuple[str, ...], wrong_types: tuple[Any, ...]
+) -> None:
+    """Assert that SolidRheologyParams raises TypeError for every (field, wrong_type) pair."""
+    failures: list[str] = []
+    for f_name in field_names:
+        for wt in wrong_types:
+            try:
+                SolidRheologyParams(enabled=False, **{f_name: wt})  # type: ignore[arg-type]
+                failures.append(f'{f_name}={wt!r}->accepted')
+            except TypeError:
+                pass
+            except Exception as exc:
+                failures.append(f'{f_name}={wt!r}->raised {type(exc).__name__}')
+    assert not failures, f'Expected TypeError on wrong types, got: {failures}'
+
 
 @st.composite
 def valid_rheology_dict_strategy(draw: st.DrawFn) -> dict[str, Any]:
@@ -183,6 +212,38 @@ def test_hypothesis_phase_config_rheology_construction_and_delegation(
     with pytest.raises(ValueError, match='viscosity must not be None'):
         _make_phase_config(viscosity=None, rheology=params)
 
+    # TOML reachability: tomllib parses `true`/`false` as bool, reaching PhaseConfig ->
+    # merge_rheology -> SolidRheologyParams; Config.from_dict / Parameters._from_toml
+    # stops earlier at _PhaseParameters, which does not accept rheology keys.
+    import tomllib
+
+    assert set(NUMERIC_FIELD_NAMES) == set(RHEOLOGY_FIELD_NAMES) - {
+        'enabled',
+        'stress_closure_mode',
+        'lid_base_mode',
+    }
+    toml_failures: list[str] = []
+    for num_field in NUMERIC_FIELD_NAMES:
+        for bool_literal in ('true', 'false'):
+            toml_data = tomllib.loads(
+                '[phase_solid]\n'
+                'density = 4000.0\n'
+                'heat_capacity = 1000.0\n'
+                'melt_fraction = 0.0\n'
+                'thermal_conductivity = 4.0\n'
+                'thermal_expansivity = 1.0e-5\n'
+                'viscosity = 1.0e21\n'
+                f'{num_field} = {bool_literal}\n'
+            )
+            try:
+                PhaseConfig(**toml_data['phase_solid'])
+                toml_failures.append(f'{num_field}={bool_literal}->accepted')
+            except TypeError:
+                pass
+            except Exception as exc:
+                toml_failures.append(f'{num_field}={bool_literal}->raised {type(exc).__name__}')
+    assert not toml_failures, f'TOML bools did not raise TypeError: {toml_failures}'
+
 
 @pytest.mark.unit
 @settings(max_examples=50, deadline=None)
@@ -320,22 +381,20 @@ def test_hypothesis_positive_and_non_negative_field_validators(
     bad_str: str,
 ) -> None:
     """Verify positive and non-negative numeric field validators across bounds and wrong types."""
-    # Positive fields: accept > 0, reject 0, negative, NaN, +-inf, False, None, str.
+    # Positive fields: accept > 0, reject 0, negative, NaN, +-inf with ValueError, and
+    # reject True, False, np.bool_, None, str with TypeError.
     p_valid = SolidRheologyParams(**{pos_field: valid_pos})
     assert getattr(p_valid, pos_field) == valid_pos
 
     min_pos = float(np.nextafter(0.0, 1.0))
     assert getattr(SolidRheologyParams(**{pos_field: min_pos}), pos_field) == min_pos
 
-    for rejected_num in (0.0, -0.0, neg_val, float('nan'), float('inf'), float('-inf'), False):
+    for rejected_num in (0.0, -0.0, neg_val, float('nan'), float('inf'), float('-inf')):
         with pytest.raises(ValueError, match=pos_field):
             SolidRheologyParams(**{pos_field: rejected_num})
 
-    for wrong_type in (None, bad_str):
-        with pytest.raises(TypeError):
-            SolidRheologyParams(**{pos_field: wrong_type})  # type: ignore[arg-type]
-
-    # Non-negative fields (with enabled=False): accept 0 and > 0, reject < 0, NaN, +-inf, None, str.
+    # Non-negative fields (with enabled=False): accept 0 and > 0, reject < 0, NaN, +-inf
+    # with ValueError, and reject True, False, np.bool_, None, str with TypeError.
     nn_zero = SolidRheologyParams(enabled=False, **{non_neg_field: 0.0})
     assert getattr(nn_zero, non_neg_field) == 0.0
     nn_pos = SolidRheologyParams(enabled=False, **{non_neg_field: valid_pos})
@@ -345,9 +404,10 @@ def test_hypothesis_positive_and_non_negative_field_validators(
         with pytest.raises(ValueError, match=non_neg_field):
             SolidRheologyParams(enabled=False, **{non_neg_field: rejected_nn})
 
-    for wrong_type in (None, bad_str):
-        with pytest.raises(TypeError):
-            SolidRheologyParams(enabled=False, **{non_neg_field: wrong_type})  # type: ignore[arg-type]
+    _assert_wrong_types_raise_type_error(
+        POSITIVE_FIELDS + NON_NEGATIVE_FIELDS,
+        (True, False, np.bool_(True), np.bool_(False), None, bad_str),
+    )
 
 
 @pytest.mark.unit
@@ -384,6 +444,8 @@ def test_hypothesis_bounded_interval_field_validators(
     bad_str: str,
 ) -> None:
     """Verify interval bounds, endpoints, non-finites, and wrong types for bounded fields."""
+    wrong_types = (True, False, np.bool_(True), np.bool_(False), None, bad_str)
+
     # 1. mlt_bottom_slope and s_top_inf: in (0, 1]
     assert (
         getattr(SolidRheologyParams(**{unit_field: unit_open_val}), unit_field) == unit_open_val
@@ -397,13 +459,9 @@ def test_hypothesis_bounded_interval_field_validators(
         float('nan'),
         float('inf'),
         float('-inf'),
-        False,
     ):
         with pytest.raises(ValueError, match=unit_field):
             SolidRheologyParams(**{unit_field: bad_u})
-    for wrong_t in (None, bad_str):
-        with pytest.raises(TypeError):
-            SolidRheologyParams(**{unit_field: wrong_t})  # type: ignore[arg-type]
 
     # 2. viscosity_max_log10: in (20, 300]
     assert SolidRheologyParams(viscosity_max_log10=visc_val).viscosity_max_log10 == visc_val
@@ -418,14 +476,9 @@ def test_hypothesis_bounded_interval_field_validators(
         float('nan'),
         float('inf'),
         float('-inf'),
-        True,
-        False,
     ):
         with pytest.raises(ValueError, match='viscosity_max_log10'):
             SolidRheologyParams(viscosity_max_log10=bad_v)
-    for wrong_t in (None, bad_str):
-        with pytest.raises(TypeError):
-            SolidRheologyParams(viscosity_max_log10=wrong_t)  # type: ignore[arg-type]
 
     # 3. interior_flux_fraction: in [0.05, 0.5]
     assert (
@@ -442,14 +495,9 @@ def test_hypothesis_bounded_interval_field_validators(
         float('nan'),
         float('inf'),
         float('-inf'),
-        True,
-        False,
     ):
         with pytest.raises(ValueError, match='interior_flux_fraction'):
             SolidRheologyParams(interior_flux_fraction=bad_f)
-    for wrong_t in (None, bad_str):
-        with pytest.raises(TypeError):
-            SolidRheologyParams(interior_flux_fraction=wrong_t)  # type: ignore[arg-type]
 
     # 4. phi_visc_single: in (0, 1)
     assert SolidRheologyParams(phi_visc_single=unit_open_val).phi_visc_single == unit_open_val
@@ -462,11 +510,8 @@ def test_hypothesis_bounded_interval_field_validators(
         float('nan'),
         float('inf'),
         float('-inf'),
-        True,
-        False,
     ):
         with pytest.raises(ValueError, match='phi_visc_single'):
             SolidRheologyParams(phi_visc_single=bad_p)
-    for wrong_t in (None, bad_str):
-        with pytest.raises(TypeError):
-            SolidRheologyParams(phi_visc_single=wrong_t)  # type: ignore[arg-type]
+
+    _assert_wrong_types_raise_type_error(BOUNDED_INTERVAL_FIELDS, wrong_types)
