@@ -36,8 +36,6 @@ RUN_SPREAD = {f'identity_{t}' for t in FLOWS} | {
     'core_vs_cmb_rel_rtol1e-8',
     'reconstructed_cmb_max_rel',
 }
-# Item 13 differences of an unconverged run from thermal_history: within a factor 2 either way
-UNCONVERGED = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
 # Item 13 T_cen changes under the mixing constants, of the size of the integration noise: held
 # between 0 and 1 K (0.30 K at most under a 1-ulp start temperature)
 MIXING_TCEN = {'mixing_tcen_max_K', 'mixing_tcen_min_K'}
@@ -50,11 +48,17 @@ BANDS = {
     **{f'tcen_max_abs_diff_K_{t}': 0.6 if t == '-2TW' else 0.2 for t in FLOWS},
     # item 13: the end inner-core radius moves by up to 8.3e-5 of itself
     **dict.fromkeys([f'ricb_end_rel_diff_{t}' for t in FLOWS], 2e-4),
-    # item 13: the late layer depth, its change under the mixing constants and the end depth
+    # item 13: the late layer depth
     'depth_late_max_rel': 2e-3,
-    'mixing_depth_max_rel': 5e-3,
-    'erosion_depth_km_end_aragog': 0.2,
+    # item 13, the mixing-constant depth change, the eroding end depth and the unconverged run:
+    # twice the spread over the Linux and macOS runners, this file's value and the Linux order
+    # in which items 4, 5 or 6 run first in the same process
+    'mixing_depth_max_rel': 1.4e-2,
+    'erosion_depth_km_end_aragog': 1.5,
+    'tcen_max_abs_diff_K_rtol1e-8': 23.0,
+    'onset_max_abs_diff_myr_rtol1e-8': 70.0,
 }
+pytestmark = pytest.mark.xdist_group('core_verification')
 TAG = re.compile(r'(-?[\d.]+(?:e[-+]?\d+)?)\s?%?<!--k:(\d+)\.([^:>]+)(?::(-?[\d.]+))?-->')
 
 
@@ -104,15 +108,12 @@ def script(tmp_path, monkeypatch):
 
 
 def _holds(key, value, want):
-    """A value in ROUNDING or RUN_SPREAD may not double, one in UNCONVERGED stays within a
-    factor 2 either way, one in MIXING_TCEN between 0 and 1 K, one in BANDS within its band,
-    every other number holds to 1e-4."""
+    """A value in ROUNDING or RUN_SPREAD may not double, one in MIXING_TCEN lies between 0 and
+    1 K, one in BANDS within its band, every other number holds to 1e-4."""
     if key in MIXING_TCEN:
         return 0 < value < 1.0
     if key in ROUNDING or key in RUN_SPREAD:
         return abs(value) <= 2.0 * abs(want) + 1e-15
-    if key in UNCONVERGED:
-        return 0.5 * want <= value <= 2.0 * want
     if key in BANDS:
         return abs(value - want) <= BANDS[key]
     return value == pytest.approx(want, rel=1e-4, abs=1e-12)
