@@ -355,3 +355,33 @@ def test_a_precision_that_is_not_a_finite_fraction_is_rejected(stored, eps):
 def test_an_exact_table_passes_at_every_valid_precision(stored, eps):
     res = c.check(stored, eps)
     assert all(v['tested'].sum() > 0 and not v['fail'].any() for v in res.values())
+
+
+# Per identity: (quantity, axis) of its derivative ends, and the quantities of its algebraic
+# factor at the cell.
+_FLOOR_PARTS = {
+    'dTdS': ([('temperature', 1)], ['temperature', 'heat_capacity']),
+    'dTdP': ([('temperature', 0)], ['adiabat_temp_grad']),
+    'maxwell': ([('density', 1)], ['density', 'adiabat_temp_grad']),
+    'adiabat': (
+        [],
+        ['adiabat_temp_grad', 'density', 'heat_capacity', 'thermal_exp', 'temperature'],
+    ),
+}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('name', list(_FLOOR_PARTS))
+@pytest.mark.parametrize('cell', [(60, 60), (150, 120)])
+def test_the_floor_is_the_first_order_round_off_of_each_stored_value(stored, name, cell):
+    """Moving each stored value that enters the identity by eps alone, the sum of the changes
+    of R at the cell is its floor (first order): no term of the floor is lost or doubled."""
+    eps, (i, j) = 1e-9, cell
+    base = c.residuals(stored, 1)[name][i, j]
+    ends, factors = _FLOOR_PARTS[name]
+    moves = [(q, (i + o, j) if ax == 0 else (i, j + o)) for q, ax in ends for o in (-1, 1)]
+    moves += [(q, (i, j)) for q in factors]
+    total = sum(
+        abs(c.residuals(_plant(stored, q, at, eps), 1)[name][i, j] - base) for q, at in moves
+    )
+    assert total == pytest.approx(c.floors(stored, eps, 1)[name][i, j], rel=1e-4)
