@@ -109,8 +109,10 @@ def test_axes_that_do_not_increase_raise(axis, grid):
 
 @pytest.mark.unit
 def test_a_check_that_tests_no_cell_raises(gas):
-    with pytest.raises(ValueError, match='no cell'):
-        c.check(_ideal_gas(P[:8], S[:8]), 5e-9)
+    res = c.check(_ideal_gas(P[:8], S[:8]), 5e-9)  # too short to differentiate
+    assert {n for n, v in res.items() if v['skipped']} == {'dTdS', 'dTdP', 'maxwell'}
+    res = c.check(_plant(gas, 'thermal_exp', slice(None), -1.0), 5e-9)  # alpha = 0 everywhere
+    assert {n for n, v in res.items() if v['skipped']} == {'adiabat'}
     t = {
         **gas,
         'temperature': {**gas['temperature'], 'values': np.full((P.size, S.size), np.nan)},
