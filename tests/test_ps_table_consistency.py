@@ -153,3 +153,100 @@ def test_the_adiabat_identity_is_tested_against_its_floor(stored):
 def test_a_precision_below_the_floor_is_raised_to_it(stored):
     lo, at = (c.check(stored, e)['dTdS']['bound'] for e in (1e-16, 5e-9))
     np.testing.assert_array_equal(lo, at)
+
+
+# SPIDER P-S files as zalmoxis.eos_export._write_spider_2d writes them: '.18e', S slowest.
+_SCALES = {
+    'density': 1000.0,
+    'temperature': 1000.0,
+    'heat_capacity': 1000.0,
+    'thermal_exp': 1e-5,
+    'adiabat_temp_grad': 1e-9,
+}
+P_SCALE, S_SCALE = 1e9, 4824266.84604467
+
+
+def _write_spider(path, P, S, values, q_scale):
+    with open(path, 'w') as f:
+        f.write(f'# 5 {len(P)} {len(S)}\n')
+        f.write('# Pressure [nondim], Entropy [nondim], Quantity [nondim]\n')
+        f.write('# column * scaling factor = SI units\n')
+        f.write('# scaling factors (constant) for each column given on line below\n')
+        f.write(f'# {P_SCALE} {S_SCALE} {q_scale}\n')
+        for j in range(len(S)):
+            for i in range(len(P)):
+                f.write(
+                    f'{P[i] / P_SCALE:.18e} {S[j] / S_SCALE:.18e} {values[i, j] / q_scale:.18e}\n'
+                )
+
+
+def _murnaghan_ps(
+    P, S, rho0=4100.0, K0=250e9, Kp0=4.0, a0=2e-5, cp0=1100.0, cp1=0.05, T0=1500.0, s0=2200.0
+):
+    """Murnaghan solid of tests in Zalmoxis (constant alpha) on a (P, S) grid; T by Newton on s."""
+    PP, SS = np.meshgrid(P, S, indexing='ij')
+    phi = K0 / (Kp0 - 1.0) * ((1.0 + Kp0 * PP / K0) ** (1.0 - 1.0 / Kp0) - 1.0)
+
+    def s_cp(T):
+        v0 = np.exp(a0 * (T - T0)) / rho0
+        s = s0 + cp0 * np.log(T / T0) + cp1 * (T - T0) - a0 * v0 * phi
+        return s, cp0 + cp1 * T - T * a0**2 * v0 * phi
+
+    T = np.full(PP.shape, T0)
+    for _ in range(60):
+        s, cp = s_cp(T)
+        T = T - (s - SS) * T / cp
+    s, cp = s_cp(T)
+    v = np.exp(a0 * (T - T0)) / rho0 * (1.0 + Kp0 * PP / K0) ** (-1.0 / Kp0)
+    assert np.max(np.abs(s - SS)) < 1e-9 * np.max(np.abs(SS))
+    cols = {
+        'temperature': T,
+        'density': 1.0 / v,
+        'heat_capacity': cp,
+        'thermal_exp': np.full(T.shape, a0),
+        'adiabat_temp_grad': a0 * T * v / cp,
+    }
+    return cols
+
+
+@pytest.fixture(scope='module')
+def spider_files(tmp_path_factory):
+    """The exact gas and Murnaghan solid written as SPIDER files and read back by aragog."""
+    from aragog.eos.entropy import _load_spider_ps_table
+
+    out = {}
+    for name in ('gas', 'murnaghan'):
+        d = tmp_path_factory.mktemp(name)
+        if name == 'gas':
+            Pg, Sg = np.linspace(1e9, 1e11, 81), np.linspace(6000.0, 8000.0, 81)
+            cols = {q: v['values'] for q, v in _ideal_gas(Pg, Sg).items()}
+        else:
+            Pg, Sg = np.linspace(1e9, 1e11, 81), np.linspace(2000.0, 2400.0, 81)
+            cols = _murnaghan_ps(Pg, Sg)
+        for q, vals in cols.items():
+            _write_spider(d / f'{q}_solid.dat', Pg, Sg, vals, _SCALES[q])
+        out[name] = {q: _load_spider_ps_table(d / f'{q}_solid.dat') for q in c.QUANTITIES}
+    return out
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('name', ['gas', 'murnaghan'])
+def test_an_exact_table_written_as_spider_files_has_no_failing_cell(spider_files, name):
+    res = c.check(spider_files[name], np.finfo(float).eps)
+    assert {n: int(v['fail'].sum()) for n, v in res.items()} == dict.fromkeys(c.IDENTITIES, 0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('name', ['gas', 'murnaghan'])
+@pytest.mark.parametrize(
+    'quantity, identity', [('temperature', 'dTdS'), ('density', 'maxwell')]
+)
+@pytest.mark.parametrize('size', [1e-4, 1e-6])
+def test_a_planted_value_in_spider_files_fails_one_and_two_steps_away(
+    spider_files, name, quantity, identity, size
+):
+    t = spider_files[name]
+    t = {**t, quantity: {**t[quantity], 'values': t[quantity]['values'].copy()}}
+    t[quantity]['values'][40, 40] *= 1 + size
+    fail = c.check(t, np.finfo(float).eps)[identity]['fail']
+    assert [bool(fail[40, 40 + o]) for o in (-2, -1, 1, 2)] == [True] * 4
