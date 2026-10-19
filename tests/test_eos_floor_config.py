@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.resources
 from fractions import Fraction
 
 import numpy as np
@@ -10,7 +11,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from aragog.config.energy import EnergyConfig
-from aragog.parser import _EnergyParameters
+from aragog.parser import Parameters, _EnergyParameters
 from aragog.solver.entropy_solver import _resolve_step_cap
 
 pytestmark = pytest.mark.unit
@@ -52,6 +53,17 @@ def test_a_fraction_is_accepted_and_a_huge_int_refused(build):
     assert build(eos_floor_margin=Fraction(1, 2)).eos_floor_margin == Fraction(1, 2)
     with pytest.raises(ValueError, match='eos_floor_margin'):
         build(eos_floor_margin=10**400)
+
+
+def test_the_bundled_config_without_the_key_loads_with_the_floor_off():
+    """cfg/abe_solid.toml has no eos_floor_margin key; read through the config loader it has the
+    default margin 0, which leaves the floor off."""
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+    ) as path:
+        assert 'eos_floor_margin' not in path.read_text(encoding='utf-8')
+        margin = Parameters.from_file(path).energy.eos_floor_margin
+    assert margin == 0.0 and _resolve_step_cap(margin) == 0.0
 
 
 @_BUILDERS
