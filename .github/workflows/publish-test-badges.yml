@@ -71,7 +71,7 @@ jobs:
           # applies at module scope, so collection stays clean under
           # --strict-markers. Then install aragog editably and its runtime
           # deps; jax/scikits are already satisfied, so no extra source build.
-          pip install pytest pytest-xdist pytest-dependency pytest-timeout
+          pip install pytest pytest-xdist pytest-dependency pytest-timeout hypothesis
           pip install scikits-odes-sundials jax equinox
           pip install -e .
 

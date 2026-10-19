@@ -12,6 +12,8 @@ src/aragog/
 ├── mesh/                  # Mesh, FixedMesh, AdamsWilliamsonEOS, UserDefinedEOS
 ├── jax/                   # Optional JAX-traceable replicas (analytic-Jacobian path)
 ├── output/                # Diagnostic helpers (rheological_front, total_enthalpy, volume_average)
+├── rheology.py            # Solid-state Arrhenius creep, Byerlee yield stress, and MLT slope factor
+├── rheology_lid.py        # Stagnant-lid diagnostics and minimum yield viscosity closure
 ├── parser.py              # Parameters dataclass and INI parser
 ├── cli.py                 # Click CLI (run, inspect, validate, show-config, new, list-configs, vnv)
 └── utilities.py           # Utility functions and type aliases
@@ -44,6 +46,10 @@ The legacy single/mixed/composite phase evaluator stack and the temperature-base
 ### JAX backend
 
 - [`aragog.jax`](aragog.jax.md) — JAX-traceable replicas of the EOS, phase evaluator, and dSdt RHS, used to build analytic Jacobians via `jax.jacrev`. Only loaded when `solver.use_jax_jacobian = true`. See the [CVODE+JAX explanation](../../Explanations/cvode_jax.md) for when to opt in.
+
+### Solid-state rheology
+
+- [`aragog.rheology`](aragog.rheology.md) and [`aragog.rheology_lid`](aragog.rheology_lid.md): homologous-temperature Arrhenius diffusion creep, Byerlee yield stress, viscosity-contrast mixing-length slope, stagnant-lid diagnostics, and the minimum plastic yield viscosity closure. See [Solid-state convection and lithospheric rheology](../../Explanations/solid_state_convection.md) for the physical background.
 
 ## What is not in the public API
 

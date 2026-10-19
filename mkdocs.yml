@@ -44,6 +44,7 @@ nav:
           - Energy equation: Explanations/energy_equation.md
           - Heat transport: Explanations/heat_transport.md
           - Mixing-length theory: Explanations/mixing_length.md
+          - Solid-state convection: Explanations/solid_state_convection.md
           - Two-phase flow: Explanations/two_phase_flow.md
           - Phase transitions: Explanations/phase_transitions.md
           - Pressure EOS: Explanations/pressure_eos.md
@@ -68,6 +69,8 @@ nav:
           - Output: Reference/api/aragog.output.md
           - JAX backend: Reference/api/aragog.jax.md
           - Core evolution: Reference/api/aragog.core.md
+          - Rheology: Reference/api/aragog.rheology.md
+          - Stagnant-lid rheology: Reference/api/aragog.rheology_lid.md
       - CLI: Reference/cli.md
       - Data: Reference/data.md
       - Publications: Reference/publications.md
