@@ -7,6 +7,8 @@ cells; a stencil counts only when all its cells hold numbers.
 
 from __future__ import annotations
 
+import numbers
+
 import numpy as np
 
 IDENTITIES = ('dTdS', 'dTdP', 'maxwell', 'adiabat')
@@ -76,9 +78,13 @@ def residuals(tables, k=1):
     Raises
     ------
     ValueError
-        If the tables are not on one (P, S) grid, or values do not have its shape.
+        If the tables are not on one (P, S) grid, an axis is not strictly increasing, or values
+        do not have the shape of the grid.
     """
     P, S = tables['temperature']['P'], tables['temperature']['S']
+    for name, x in (('P', P), ('S', S)):
+        if not np.all(np.diff(x) > 0):
+            raise ValueError(f'{name} must be strictly increasing')
     for name in QUANTITIES:
         if not (np.array_equal(tables[name]['P'], P) and np.array_equal(tables[name]['S'], S)):
             raise ValueError(f'{name} is not on the (P, S) grid of the temperature table')
@@ -146,12 +152,13 @@ def floors(tables, eps, k=1):
 
 
 def _eps(eps):
-    """``eps`` raised to ``EPS_FLOOR``; ValueError unless it is a finite number in [0, 1)."""
+    """``eps`` raised to ``EPS_FLOOR``; ValueError unless it is a real number in [0, 1)."""
+    real = isinstance(eps, (numbers.Real, np.integer, np.floating))
     try:
-        x = float(eps)
-    except (TypeError, ValueError, OverflowError):
+        x = float(eps) if real and not isinstance(eps, (bool, np.bool_)) else np.nan
+    except OverflowError:
         x = np.nan
-    if isinstance(eps, (bool, np.bool_, str, bytes)) or not 0 <= x < 1:
+    if not 0 <= x < 1:
         raise ValueError(f'eps must be a finite number in [0, 1), got {eps!r}')
     return max(x, EPS_FLOOR)
 
@@ -163,8 +170,10 @@ def check(tables, eps):
     (4 R_k - R_2k) / 3, floor_x = (4 floor_1 + floor_2) / 3 and est = |R_x(2h) - R_x(h)| / 15,
     the measured h^4 term of R_x(h) at the cell; the adiabat identity fails where |R| > floor.
     The floor uses eps_eff = max(eps, EPS_FLOOR): every table is checked at the 9-digit floor
-    at best, so faults below about 2e-8 (relative) are out of reach on any table. A derivative
-    identity is tested only at cells 4 or more steps from an edge or a missing cell along its axis.
+    at best, so a single value off by about 1e-8 (relative) or less is out of reach on any table.
+    A derivative identity is tested only where 4 cells on each side along its axis hold values; a
+    cell where a factor of an identity is 0 or not finite is not tested for it. On a grid that is
+    not uniform the h^4 estimate holds only where the spacing changes smoothly.
 
     Parameters
     ----------
@@ -182,7 +191,7 @@ def check(tables, eps):
     Raises
     ------
     ValueError
-        If eps is not a finite number in [0, 1).
+        If eps is not a real number in [0, 1), or an identity tests no cell.
     """
     eps = _eps(eps)
     r = {k: residuals(tables, k) for k in (1, 2, 4)}
@@ -203,4 +212,7 @@ def check(tables, eps):
                 'tested': tested,
                 'fail': tested & (np.abs(rx) > bound),
             }
+    empty = [n for n, v in out.items() if not v['tested'].any()]
+    if empty:
+        raise ValueError(f'no cell tested for {", ".join(empty)}')
     return out
