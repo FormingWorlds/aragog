@@ -129,6 +129,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -144,9 +146,11 @@ jobs:
       - name: Combine and check the coverage
         run: |
           pip install "coverage[toml]>=7.6"
+          pip install --no-deps -e .
           coverage combine cov-main.dat cov-core-verification.dat
-          coverage report
-          coverage xml
+          # the vnv tests also measure modules they write to pytest tmp folders
+          coverage report --include='*/src/aragog/*'
+          coverage xml --include='*/src/aragog/*'
 
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}
