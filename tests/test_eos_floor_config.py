@@ -55,8 +55,14 @@ def test_a_fraction_is_accepted_and_a_huge_int_refused(build):
 
 
 @_BUILDERS
-def test_the_default_margin_is_0_and_none_turns_it_off(build):
-    """The default margin is 0, so the floor is off; None is accepted and leaves it off too."""
+@given(
+    value=st.none()
+    | st.floats(max_value=0.0, allow_nan=False, allow_infinity=False)
+    | st.integers(-(10**6), 0)
+)
+def test_the_default_margin_is_0_and_none_or_a_non_positive_margin_is_off_like_it(build, value):
+    """The default margin is 0, so the floor is off; None and any margin at or below 0 leave it
+    off exactly as the default does."""
     assert build().eos_floor_margin == 0.0
     assert _resolve_step_cap(build().eos_floor_margin) == 0.0
-    assert _resolve_step_cap(build(eos_floor_margin=None).eos_floor_margin) == 0.0
+    assert _resolve_step_cap(build(eos_floor_margin=value).eos_floor_margin) == 0.0
