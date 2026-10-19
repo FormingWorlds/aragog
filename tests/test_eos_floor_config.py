@@ -55,7 +55,8 @@ def test_a_fraction_is_accepted_and_a_huge_int_refused(build):
 
 
 @_BUILDERS
-def test_the_default_margin_is_100_and_none_turns_it_off(build):
-    """The default is 100 J/kg/K; None is accepted and leaves the floor off."""
-    assert build().eos_floor_margin == 100.0
+def test_the_default_margin_is_0_and_none_turns_it_off(build):
+    """The default margin is 0, so the floor is off; None is accepted and leaves it off too."""
+    assert build().eos_floor_margin == 0.0
+    assert _resolve_step_cap(build().eos_floor_margin) == 0.0
     assert _resolve_step_cap(build(eos_floor_margin=None).eos_floor_margin) == 0.0

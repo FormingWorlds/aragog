@@ -22,6 +22,7 @@ from .test_phi_step_cap_armed_smoke import _build_mushy_parameters, _pick_mushy_
 pytestmark = [pytest.mark.smoke, needs_eos]
 
 _FLUX = 1.0e6  # prescribed surface flux [W/m^2]; drains the top cell of the cold start in ~3 yr
+_UNSET = object()  # _drained leaves eos_floor_margin at the config default
 _TOL = 1.0e-4  # 1e-6 of the default margin
 # without scikits.odes 'cvode' falls back to Radau, which has no CVODE root or cap label
 needs_cvode = pytest.mark.skipif(not es._CVODE_AVAILABLE, reason='needs scikits.odes CVODE')
@@ -71,19 +72,16 @@ def _drained(
     p.boundary_conditions.outer_boundary_condition = 4
     p.boundary_conditions.outer_boundary_value = flux
     p.boundary_conditions.core_bc = core
+    floor = {} if margin is _UNSET else {'eos_floor_margin': margin}
     p.energy = dataclasses.replace(
-        p.energy,
-        **{'phi_step_cap': None, **caps},
-        eos_floor_margin=margin,
-        phase_boundary_cap=mode,
+        p.energy, **{'phi_step_cap': None, **caps}, **floor, phase_boundary_cap=mode
     )
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
     s.set_initial_entropy(np.broadcast_to(np.asarray(S0, dtype=float), s._n_stag).copy())
     s.solve()
-    if (
-        margin is not None and margin > 0.0
-    ):  # the floor keeps basic nodes and cells in the table
+    if margin is not _UNSET and margin is not None and margin > 0.0:
+        # the floor keeps basic nodes and cells in the table
         sol, S_min = s._solution, float(eos.S_min)
         tt, ty = sol.get('energy_trace') or (sol.t, sol.y)
         after = np.asarray(tt) > sol.t[0]  # the call start is the previous call's end
@@ -98,6 +96,21 @@ def _floor_logs(caplog):
     return [
         (r.levelno, r.getMessage()) for r in caplog.records if 'EOS floor' in r.getMessage()
     ]
+
+
+@pytest.mark.parametrize('method', CVODE_BDF)
+def test_the_default_config_leaves_the_floor_off(shared_eos, caplog, method):
+    """Without eos_floor_margin in the config a draining call runs to its end below the table,
+    with no floor log, bit-equal to the same call with eos_floor_margin = 0."""
+    S_min = float(shared_eos.S_min)
+    with caplog.at_level(logging.INFO):
+        s, f = _drained(shared_eos, S_min + 400.0, margin=_UNSET, method=method)
+    assert s.parameters.energy.eos_floor_margin == 0.0 and not _floor_logs(caplog)
+    assert s._solution.t[-1] == pytest.approx(10.0) and f[-1] < S_min
+    z, _ = _drained(shared_eos, S_min + 400.0, margin=0.0, method=method)
+    a, b = s._solution, z._solution
+    assert a.status == b.status and np.array_equal(a.t, b.t) and np.array_equal(a.y, b.y)
+    assert a.energy_integrals == b.energy_integrals
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)
