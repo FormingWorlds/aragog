@@ -99,18 +99,21 @@ def _floor_logs(caplog):
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)
-def test_the_default_config_leaves_the_floor_off(shared_eos, caplog, method):
-    """Without eos_floor_margin in the config a draining call runs to its end below the table,
-    with no floor log, bit-equal to the same call with eos_floor_margin = 0."""
+def test_the_default_config_leaves_the_floor_off(shared_eos, caplog, monkeypatch, method):
+    """Without eos_floor_margin in the config and with no other cap, no step-cap root is built and
+    a draining call runs to its end below the table with no floor log."""
+    built, real = [], es._PhiCapRootFunction.__init__
+    monkeypatch.setattr(
+        es._PhiCapRootFunction,
+        '__init__',
+        lambda self, *a, **k: built.append(1) or real(self, *a, **k),
+    )
     S_min = float(shared_eos.S_min)
     with caplog.at_level(logging.INFO):
         s, f = _drained(shared_eos, S_min + 400.0, margin=_UNSET, method=method)
     assert s.parameters.energy.eos_floor_margin == 0.0 and not _floor_logs(caplog)
+    assert not built and s._solution.status == 0
     assert s._solution.t[-1] == pytest.approx(10.0) and f[-1] < S_min
-    z, _ = _drained(shared_eos, S_min + 400.0, margin=0.0, method=method)
-    a, b = s._solution, z._solution
-    assert a.status == b.status and np.array_equal(a.t, b.t) and np.array_equal(a.y, b.y)
-    assert a.energy_integrals == b.energy_integrals
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)
