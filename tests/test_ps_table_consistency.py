@@ -89,3 +89,67 @@ def test_tables_on_different_grids_raise(gas):
 @pytest.mark.unit
 def test_a_grid_shorter_than_the_stencil_gives_no_derivative():
     assert np.isnan(c.derivative(np.ones((3, 4)), np.arange(3.0), 0, 2)).all()
+
+
+def _stored(t, digits=9):
+    """The tables rounded to ``digits`` significant digits, as a file stores them."""
+    fmt = f'{{:.{digits - 1}e}}'
+    return {
+        q: {**v, 'values': np.vectorize(lambda x: float(fmt.format(x)))(v['values'])}
+        for q, v in t.items()
+    }
+
+
+@pytest.fixture(scope='module')
+def stored(gas):
+    return _stored(gas)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('digits', [9, None])
+def test_an_exact_table_has_no_failing_cell(gas, stored, digits):
+    res = c.check(stored if digits else gas, 5e-9)
+    assert {n: int(v['fail'].sum()) for n, v in res.items()} == dict.fromkeys(c.IDENTITIES, 0)
+    assert all(v['tested'].sum() > 30_000 for v in res.values())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'quantity, name, axis, size',
+    [
+        ('temperature', 'dTdS', 1, 1e-4),
+        ('temperature', 'dTdS', 1, 1e-6),
+        ('density', 'maxwell', 1, 1e-4),
+        ('density', 'maxwell', 1, 1e-6),
+        ('temperature', 'dTdP', 0, 1e-4),
+        ('temperature', 'dTdP', 0, 1e-6),
+    ],
+)
+def test_a_planted_value_fails_one_and_two_steps_away(stored, quantity, name, axis, size):
+    t = {**stored, quantity: {**stored[quantity], 'values': stored[quantity]['values'].copy()}}
+    t[quantity]['values'][100, 100] *= 1 + size
+    fail = c.check(t, 5e-9)[name]['fail']
+    at = {
+        o: bool(fail[(100 + o, 100) if axis == 0 else (100, 100 + o)]) for o in (-2, -1, 1, 2)
+    }
+    assert at == dict.fromkeys((-2, -1, 1, 2), True)
+
+
+@pytest.mark.unit
+def test_the_adiabat_identity_is_tested_against_its_floor(stored):
+    t = {
+        **stored,
+        'thermal_exp': {
+            **stored['thermal_exp'],
+            'values': stored['thermal_exp']['values'].copy(),
+        },
+    }
+    t['thermal_exp']['values'][50, 60] *= 1 + 1e-6
+    fail = c.check(t, 5e-9)['adiabat']['fail']
+    assert fail[50, 60] and int(fail.sum()) == 1
+
+
+@pytest.mark.unit
+def test_a_precision_below_the_floor_is_raised_to_it(stored):
+    lo, at = (c.check(stored, e)['dTdS']['bound'] for e in (1e-16, 5e-9))
+    np.testing.assert_array_equal(lo, at)
