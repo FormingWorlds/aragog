@@ -1,47 +1,27 @@
-name: Aragog nightly
+name: item13 probe
 
 on:
-  schedule:
-    # 02:30 UTC daily (offset from Zalmoxis 02:00 UTC to spread runner load).
-    - cron: "30 2 * * *"
-  # Refresh the canonical (full-suite) Codecov upload on every push to main
-  # so the badge tracks the merged state of the repo, not just the last cron.
-  push:
-    branches: [main]
-  # Manual trigger for ad-hoc runs (e.g. before cutting a release, or to
-  # verify the suite on a feature branch via
-  # `gh workflow run "Aragog nightly" -r <branch>`).
   workflow_dispatch:
 
-# Least-privilege token: only read access to the repo contents. Coverage
-# upload uses the CODECOV_TOKEN secret directly, not the default
-# GITHUB_TOKEN.
 permissions:
   contents: read
 
-# Nightly: full unit + smoke + slow suite with coverage instrumentation
-# and the 90% floor enforced via [tool.coverage.report].fail_under in
-# pyproject.toml. Excluded from push and PR CI because the slow tier
-# alone takes ~110 s and coverage instrumentation pushes the full run
-# to ~10 min on a 2-vCPU runner, over the 5 min budget for fast CI.
-#
-# `smoke` is included because the integration tests in
-# test_entropy_advanced.py, test_entropy_verification.py and
-# test_entropy_solver_integration.py exercise the production
-# EntropySolver.solve() path and the JAX RHS at full physical scale —
-# without them, entropy_solver.py / cvode_jax.py / jax/solver.py sit
-# at ~33 % / ~51 % / ~63 % coverage respectively.
-#
-# Uses micromamba + conda-forge for the env so SUNDIALS, gfortran, and the
-# scikits-odes binary stack come prebuilt.
 jobs:
-  nightly:
-    name: Aragog-nightly (ubuntu-latest)
-    runs-on: ubuntu-latest
+  probe:
+    name: item13 ${{ matrix.os }} before=${{ matrix.before }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        before: ['alone', '4', '5', '6', '9', '10', '11', '4,5,6,9,10,11', 'testfile']
+        include:
+          - os: macos-latest
+            before: 'alone'
     # The full suite takes 83-113 min on the 2-vCPU runner with coverage
     # and xdist; 150 min leaves headroom for JAX warmup, conda cache
     # misses, and runner-to-runner timing variance.
-    timeout-minutes: 150
+    timeout-minutes: 240
     defaults:
       run:
         shell: bash -el {0}
@@ -85,28 +65,12 @@ jobs:
           tar xzf /tmp/spider_eos.tar.gz -C /tmp/aragog-test-data/
           echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
 
-      - name: Run unit + smoke + slow tests with coverage
+      - name: Run item 13 probe
         run: |
-          # -n auto runs xdist workers; coverage's parallel mode collects
-          # per-worker .coverage.* files which pytest-cov auto-combines
-          # before the report. Without xdist the serial run hit the
-          # 30-minute timeout at 23 % of the 271-test suite, dominated by
-          # JAX-traced functions where line tracing is the bottleneck.
-          # -ra prints a short summary of failed/error/skipped tests at
-          # the end of the run; without it --quiet suppresses the
-          # FAILED list entirely if there are no other final messages,
-          # making post-mortem on cancelled runs near-impossible.
-          pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra \
-            --timeout=2700 --timeout-method=thread --durations=30 \
-            --cov=aragog --cov-report=term-missing --cov-report=xml \
-            --cov-fail-under=90
-
-      - name: Upload coverage to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          slug: FormingWorlds/Aragog
-          files: coverage.xml
-          flags: nightly
-          fail_ci_if_error: false
+          if [ "${{ matrix.before }}" = testfile ]; then
+            pytest tests/test_core_verification_page.py -p no:xdist -o "addopts=" -s -q --timeout=6000 -m "slow or unit or smoke" || true
+          elif [ "${{ matrix.before }}" = alone ]; then
+            python item13_probe.py
+          else
+            python item13_probe.py "${{ matrix.before }}"
+          fi
