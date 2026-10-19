@@ -108,19 +108,59 @@ def test_axes_that_do_not_increase_raise(axis, grid):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    'case, skipped',
+    [('short', {'dTdS', 'dTdP', 'maxwell'}), ('alpha 0', {'adiabat'})],
+    ids=['too short to differentiate', 'alpha 0 everywhere'],
+)
+def test_an_identity_that_tests_no_cell_is_skipped_and_named(gas, case, skipped):
+    """An identity without a testable cell is skipped while the others run; nothing fails."""
+    t = (
+        _ideal_gas(P[:8], S[:8])
+        if case == 'short'
+        else _plant(gas, 'thermal_exp', slice(None), -1.0)
+    )
+    try:
+        res = c.check(t, 5e-9)
+    except ValueError as err:
+        pytest.fail(f'a table with testable identities raised: {err}')
+    assert {n for n, v in res.items() if v['skipped']} == skipped
+    assert not any(v['fail'].any() for v in res.values())
+
+
+@pytest.mark.unit
 def test_a_check_that_tests_no_cell_raises(gas):
-    for t, skipped in (
-        (_ideal_gas(P[:8], S[:8]), {'dTdS', 'dTdP', 'maxwell'}),  # too short to differentiate
-        (_plant(gas, 'thermal_exp', slice(None), -1.0), {'adiabat'}),  # alpha = 0 everywhere
-    ):
-        try:
-            res = c.check(t, 5e-9)
-        except ValueError as err:
-            pytest.fail(f'a table with testable identities raised: {err}')
-        assert {n for n, v in res.items() if v['skipped']} == skipped
     t = {q: {**v, 'values': np.full((P.size, S.size), np.nan)} for q, v in gas.items()}
     with pytest.raises(ValueError, match='no cell'):
         c.check(t, 5e-9)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'quantity, size, failing',
+    [
+        ('thermal_exp', -1.0, {'adiabat'}),
+        ('density', np.inf, {'maxwell', 'adiabat'}),
+        ('heat_capacity', np.inf, {'dTdS', 'adiabat'}),
+        ('adiabat_temp_grad', -1.0, {'dTdP', 'maxwell', 'adiabat'}),
+    ],
+    ids=['alpha 0', 'rho inf', 'cp inf', 'grad 0'],
+)
+def test_an_isolated_zero_or_infinite_factor_fails(stored, quantity, size, failing):
+    """A stored 0 or inf among numbers is a table fault: its identities fail at the cell."""
+    res = c.check(_plant(stored, quantity, (100, 100), size), 5e-9)
+    assert {n for n, v in res.items() if v['fail'][100, 100]} == failing
+    assert not any(v['skipped'] for v in res.values())
+    assert all(v['fail'].sum() <= 9 for v in res.values())
+
+
+@pytest.mark.unit
+def test_a_missing_value_is_not_a_failure(stored):
+    """NaN marks a missing value: the identities with T at the cell leave it untested, not
+    failing, and maxwell, which has no T at the cell, still tests it."""
+    res = c.check(_plant(stored, 'temperature', (100, 100), np.nan), 5e-9)
+    assert not any(v['fail'].any() for v in res.values())
+    assert {n for n, v in res.items() if v['tested'][100, 100]} == {'maxwell'}
 
 
 @pytest.mark.unit
@@ -378,15 +418,83 @@ _FLOOR_PARTS = {
 @pytest.mark.unit
 @pytest.mark.parametrize('name', list(_FLOOR_PARTS))
 @pytest.mark.parametrize('cell', [(60, 60), (150, 120)])
-def test_the_floor_is_the_first_order_round_off_of_each_stored_value(stored, name, cell):
+@pytest.mark.parametrize('k', [1, 2])
+def test_the_floor_is_the_first_order_round_off_of_each_stored_value(stored, name, cell, k):
     """Moving each stored value that enters the identity by eps alone, the sum of the changes
     of R at the cell is its floor (first order): no term of the floor is lost or doubled."""
     eps, (i, j) = 1e-9, cell
-    base = c.residuals(stored, 1)[name][i, j]
+    base = c.residuals(stored, k)[name][i, j]
     ends, factors = _FLOOR_PARTS[name]
-    moves = [(q, (i + o, j) if ax == 0 else (i, j + o)) for q, ax in ends for o in (-1, 1)]
+    moves = [(q, (i + o, j) if ax == 0 else (i, j + o)) for q, ax in ends for o in (-k, k)]
     moves += [(q, (i, j)) for q in factors]
     total = sum(
-        abs(c.residuals(_plant(stored, q, at, eps), 1)[name][i, j] - base) for q, at in moves
+        abs(c.residuals(_plant(stored, q, at, eps), k)[name][i, j] - base) for q, at in moves
     )
-    assert total == pytest.approx(c.floors(stored, eps, 1)[name][i, j], rel=1e-4)
+    assert total == pytest.approx(c.floors(stored, eps, k)[name][i, j], rel=1e-4)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'row, found',
+    [(8, 0), (15, 2), (25, 4), (100, 4)],
+    ids=['P/dP 10', 'P/dP 17', 'P/dP 27', 'P/dP 102'],
+)
+def test_dtdp_finds_a_1e_6_fault_only_where_p_is_large_against_the_step(stored, row, found):
+    """On a linear P grid the h^4 term of dTdP grows as P/dP falls: a planted 1e-6 temperature
+    is found at all 4 cells 1 and 2 steps away from P/dP of about 27 up, at none below 10."""
+    res = c.check(_plant(stored, 'temperature', (row, 100), 1e-6), 5e-9)['dTdP']
+    assert sum(bool(res['fail'][row + o, 100]) for o in (-2, -1, 1, 2)) == found
+    assert res['fail'].sum() <= 4
+
+
+@pytest.mark.unit
+def test_floors_and_residuals_check_the_axes(gas):
+    """floors takes the tables residuals takes: a reversed axis raises, a list axis works."""
+    rev = _ideal_gas(P[::-1], S)
+    with pytest.raises(ValueError, match='strictly increasing'):
+        c.floors(rev, 5e-9)
+    listed = {q: {**v, 'P': list(v['P']), 'S': list(v['S'])} for q, v in gas.items()}
+    for name, f in c.floors(listed, 5e-9).items():
+        np.testing.assert_array_equal(f, c.floors(gas, 5e-9)[name])
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('axis', ['P', 'S'])
+@pytest.mark.parametrize('grid', ['nan', 'one point'])
+def test_an_axis_with_a_nan_or_one_point_raises(axis, grid):
+    """An axis needs at least 2 finite, increasing coordinates."""
+    x = (P if axis == 'P' else S).copy()
+    x = x[:1] if grid == 'one point' else np.r_[x[:50], np.nan, x[51:]]
+    t = _ideal_gas(x, S) if axis == 'P' else _ideal_gas(P, x)
+    with pytest.raises(ValueError, match='strictly increasing'):
+        c.check(t, 5e-9)
+
+
+@pytest.mark.unit
+def test_the_precision_floor_is_9_digits():
+    """EPS_FLOOR is 0.5 x 10^(1 - 9), the precision of 9 significant digits."""
+    assert c.EPS_FLOOR == pytest.approx(0.5 * 10 ** (1 - 9), rel=1e-12)
+    assert c._eps(0.0) == c.EPS_FLOOR
+
+
+@pytest.mark.unit
+def test_an_exact_table_on_a_geometric_grid_passes():
+    """A grid uniform in log P (not in P) still gives no failing cell on an exact table."""
+    t = _stored(_ideal_gas(np.geomspace(1.0e9, 1.0e11, 199), S))
+    res = c.check(t, 5e-9)
+    assert all(v['tested'].sum() > 1000 and not v['fail'].any() for v in res.values())
+
+
+@pytest.mark.unit
+def test_a_missing_temperature_leaves_dtdp_untested_four_cells_each_way(gas):
+    """A missing temperature blocks dTdP at the 4 cells on each side along P."""
+    res = c.check(_plant(gas, 'temperature', (100, 100), np.nan), 5e-9)['dTdP']
+    assert not res['tested'][96:105, 100].any()
+    assert res['tested'][95, 100] and res['tested'][105, 100]
+
+
+@pytest.mark.unit
+def test_a_precision_that_is_not_a_number_names_the_rule():
+    """The message says eps must be a real number."""
+    with pytest.raises(ValueError, match='eps must be a real number in'):
+        c._eps('1e-9')
