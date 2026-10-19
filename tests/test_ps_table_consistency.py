@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from aragog.eos import consistency as c
 
@@ -250,3 +252,48 @@ def test_a_planted_value_in_spider_files_fails_one_and_two_steps_away(
     t[quantity]['values'][40, 40] *= 1 + size
     fail = c.check(t, np.finfo(float).eps)[identity]['fail']
     assert [bool(fail[40, 40 + o]) for o in (-2, -1, 1, 2)] == [True] * 4
+
+
+_BAD_EPS = st.one_of(
+    st.sampled_from([np.nan, np.inf, -np.inf, True, False, None, '5e-9', 1.0]),
+    st.floats(max_value=0.0, exclude_max=True),
+    st.floats(min_value=1.0),
+)
+_BAD_FACTOR = st.one_of(
+    st.sampled_from([np.nan, np.inf, -np.inf, True, None, '2', 0.0]),
+    st.floats(max_value=0.0),
+)
+
+
+@pytest.mark.unit
+@settings(
+    max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(eps=_BAD_EPS)
+def test_a_precision_that_is_not_a_finite_fraction_is_rejected(stored, eps):
+    """A NaN or infinite eps would make every bound NaN or infinite and hide every cell."""
+    with pytest.raises(ValueError, match='eps'):
+        c.check(stored, eps)
+
+
+@pytest.mark.unit
+@settings(
+    max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(factor=_BAD_FACTOR)
+def test_a_factor_that_is_not_finite_and_positive_is_rejected(stored, factor):
+    with pytest.raises(ValueError, match='factor'):
+        c.check(stored, 5e-9, factor)
+
+
+@pytest.mark.unit
+@settings(
+    max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(
+    eps=st.one_of(st.just(0.0), st.floats(min_value=1e-300, max_value=1e-3)),
+    factor=st.floats(1e-3, 1e3),
+)
+def test_a_valid_precision_and_factor_test_cells(stored, eps, factor):
+    res = c.check(stored, eps, factor)
+    assert all(int(v['tested'].sum()) > 0 for v in res.values())
