@@ -109,10 +109,15 @@ def test_axes_that_do_not_increase_raise(axis, grid):
 
 @pytest.mark.unit
 def test_a_check_that_tests_no_cell_raises(gas):
-    res = c.check(_ideal_gas(P[:8], S[:8]), 5e-9)  # too short to differentiate
-    assert {n for n, v in res.items() if v['skipped']} == {'dTdS', 'dTdP', 'maxwell'}
-    res = c.check(_plant(gas, 'thermal_exp', slice(None), -1.0), 5e-9)  # alpha = 0 everywhere
-    assert {n for n, v in res.items() if v['skipped']} == {'adiabat'}
+    for t, skipped in (
+        (_ideal_gas(P[:8], S[:8]), {'dTdS', 'dTdP', 'maxwell'}),  # too short to differentiate
+        (_plant(gas, 'thermal_exp', slice(None), -1.0), {'adiabat'}),  # alpha = 0 everywhere
+    ):
+        try:
+            res = c.check(t, 5e-9)
+        except ValueError as err:
+            pytest.fail(f'a table with testable identities raised: {err}')
+        assert {n for n, v in res.items() if v['skipped']} == skipped
     t = {q: {**v, 'values': np.full((P.size, S.size), np.nan)} for q, v in gas.items()}
     with pytest.raises(ValueError, match='no cell'):
         c.check(t, 5e-9)
