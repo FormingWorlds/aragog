@@ -113,10 +113,7 @@ def test_a_check_that_tests_no_cell_raises(gas):
     assert {n for n, v in res.items() if v['skipped']} == {'dTdS', 'dTdP', 'maxwell'}
     res = c.check(_plant(gas, 'thermal_exp', slice(None), -1.0), 5e-9)  # alpha = 0 everywhere
     assert {n for n, v in res.items() if v['skipped']} == {'adiabat'}
-    t = {
-        **gas,
-        'temperature': {**gas['temperature'], 'values': np.full((P.size, S.size), np.nan)},
-    }
+    t = {q: {**v, 'values': np.full((P.size, S.size), np.nan)} for q, v in gas.items()}
     with pytest.raises(ValueError, match='no cell'):
         c.check(t, 5e-9)
 

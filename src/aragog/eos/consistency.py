@@ -186,12 +186,13 @@ def check(tables, eps):
     -------
     dict
         Identity name -> dict with ``rx`` (the tested residual), ``bound``, ``tested`` (both
-        finite) and ``fail`` (tested and above the bound) arrays.
+        finite) and ``fail`` (tested and above the bound) arrays, and ``skipped``, True when
+        the identity tests no cell.
 
     Raises
     ------
     ValueError
-        If eps is not a real number in [0, 1), or an identity tests no cell.
+        If eps is not a real number in [0, 1), or no identity tests a cell.
     """
     eps = _eps(eps)
     r = {k: residuals(tables, k) for k in (1, 2, 4)}
@@ -212,7 +213,8 @@ def check(tables, eps):
                 'tested': tested,
                 'fail': tested & (np.abs(rx) > bound),
             }
-    empty = [n for n, v in out.items() if not v['tested'].any()]
-    if empty:
-        raise ValueError(f'no cell tested for {", ".join(empty)}')
+    for v in out.values():
+        v['skipped'] = not v['tested'].any()
+    if all(v['skipped'] for v in out.values()):
+        raise ValueError(f'no cell tested for {", ".join(out)}')
     return out
