@@ -128,6 +128,16 @@ def floors(tables, eps, k=1):
     return {n: out[n] for n in IDENTITIES}
 
 
+def _number(name, value, ok, rule):
+    """``value`` as a float when it is a finite real number with ``ok(value)``, else ValueError."""
+    real = isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(
+        value, (bool, np.bool_)
+    )
+    if not (real and np.isfinite(value) and ok(value)):
+        raise ValueError(f'{name} must be a finite number {rule}, got {value!r}')
+    return float(value)
+
+
 def check(tables, eps, factor=2.0):
     """Test every cell against the Richardson bound of each identity.
 
@@ -151,8 +161,13 @@ def check(tables, eps, factor=2.0):
     dict
         Identity name -> dict with ``rx`` (the tested residual), ``bound``, ``tested`` (both
         finite) and ``fail`` (tested and above the bound) arrays.
+    Raises
+    ------
+    ValueError
+        If eps is not a finite number in [0, 1) or factor is not a finite number above 0.
     """
-    eps = max(eps, EPS_FLOOR)
+    eps = max(_number('eps', eps, lambda x: 0 <= x < 1, 'in [0, 1)'), EPS_FLOOR)
+    factor = _number('factor', factor, lambda x: x > 0, 'above 0')
     r = {k: residuals(tables, k) for k in (1, 2, 4)}
     f1, f2 = floors(tables, eps, 1), floors(tables, eps, 2)
     out = {}
