@@ -12,6 +12,7 @@ import numpy as np
 IDENTITIES = ('dTdS', 'dTdP', 'maxwell', 'adiabat')
 QUANTITIES = ('temperature', 'density', 'heat_capacity', 'thermal_exp', 'adiabat_temp_grad')
 EPS_FLOOR = 5e-9  # 9 significant digits, the precision of the shipped tables
+FACTOR = 2.0  # allowed multiple of the h^4 term; a fault 2 cells away is found only below 3
 
 
 def _stencil(f, x, axis, k, sign):
@@ -75,12 +76,14 @@ def residuals(tables, k=1):
     Raises
     ------
     ValueError
-        If the tables are not on one (P, S) grid.
+        If the tables are not on one (P, S) grid, or values do not have its shape.
     """
     P, S = tables['temperature']['P'], tables['temperature']['S']
     for name in QUANTITIES:
         if not (np.array_equal(tables[name]['P'], P) and np.array_equal(tables[name]['S'], S)):
             raise ValueError(f'{name} is not on the (P, S) grid of the temperature table')
+        if np.shape(tables[name]['values']) != (len(P), len(S)):
+            raise ValueError(f'{name} values do not have the shape of the (P, S) grid')
     T, rho, cp, alpha, grad = (np.asarray(tables[q]['values'], float) for q in QUANTITIES)
     with np.errstate(divide='ignore', invalid='ignore'):
         return {
@@ -117,6 +120,20 @@ def floors(tables, eps, k=1):
     For R + 1 = D / Q the bound is (E / |Q| + |D / Q| q) eps, with E the error of the central
     difference from its two stored ends and q the relative error of Q; the adiabat identity,
     with no derivative, gets |R + 1| 5 eps from its five stored factors.
+
+    Parameters
+    ----------
+    tables : dict
+        As for ``residuals``.
+    eps : float
+        Relative precision of the stored values.
+    k : int
+        Stencil step in grid cells.
+
+    Returns
+    -------
+    dict
+        Identity name -> floor array on the grid.
     """
     T, rho, cp, alpha, grad = (np.asarray(tables[q]['values'], float) for q in QUANTITIES)
     with np.errstate(divide='ignore', invalid='ignore'):
@@ -128,24 +145,26 @@ def floors(tables, eps, k=1):
     return {n: out[n] for n in IDENTITIES}
 
 
-def _number(name, value, ok, rule):
-    """``value`` as a float when it is a finite real number with ``ok(value)``, else ValueError."""
-    real = isinstance(value, (int, float, np.integer, np.floating)) and not isinstance(
-        value, (bool, np.bool_)
-    )
-    if not (real and np.isfinite(value) and ok(value)):
-        raise ValueError(f'{name} must be a finite number {rule}, got {value!r}')
-    return float(value)
+def _eps(eps):
+    """``eps`` raised to ``EPS_FLOOR``; ValueError unless it is a finite number in [0, 1)."""
+    try:
+        x = float(eps)
+    except (TypeError, ValueError, OverflowError):
+        x = np.nan
+    if isinstance(eps, (bool, np.bool_, str, bytes)) or not 0 <= x < 1:
+        raise ValueError(f'eps must be a finite number in [0, 1), got {eps!r}')
+    return max(x, EPS_FLOOR)
 
 
-def check(tables, eps, factor=2.0):
-    """Test every cell against the Richardson bound of each identity.
+def check(tables, eps):
+    """Test each cell against the Richardson bound of each identity.
 
-    A derivative identity fails where |R_x(h)| > floor_x + factor * est, with R_x(kh) =
+    A derivative identity fails where |R_x(h)| > floor_x + FACTOR * est, with R_x(kh) =
     (4 R_k - R_2k) / 3, floor_x = (4 floor_1 + floor_2) / 3 and est = |R_x(2h) - R_x(h)| / 15,
     the measured h^4 term of R_x(h) at the cell; the adiabat identity fails where |R| > floor.
     The floor uses eps_eff = max(eps, EPS_FLOOR): every table is checked at the 9-digit floor
-    at best, so faults below about 2e-8 (relative) are out of reach on any table.
+    at best, so faults below about 2e-8 (relative) are out of reach on any table. A derivative
+    identity is tested only at cells 4 or more steps from an edge or a missing cell along its axis.
 
     Parameters
     ----------
@@ -153,21 +172,19 @@ def check(tables, eps, factor=2.0):
         As for ``residuals``.
     eps : float
         Relative precision of the stored columns (0.5 x 10^(1 - n) for n significant digits).
-    factor : float
-        Allowed multiple of the h^4 term.
 
     Returns
     -------
     dict
         Identity name -> dict with ``rx`` (the tested residual), ``bound``, ``tested`` (both
         finite) and ``fail`` (tested and above the bound) arrays.
+
     Raises
     ------
     ValueError
-        If eps is not a finite number in [0, 1) or factor is not a finite number above 0.
+        If eps is not a finite number in [0, 1).
     """
-    eps = max(_number('eps', eps, lambda x: 0 <= x < 1, 'in [0, 1)'), EPS_FLOOR)
-    factor = _number('factor', factor, lambda x: x > 0, 'above 0')
+    eps = _eps(eps)
     r = {k: residuals(tables, k) for k in (1, 2, 4)}
     f1, f2 = floors(tables, eps, 1), floors(tables, eps, 2)
     out = {}
@@ -178,7 +195,7 @@ def check(tables, eps, factor=2.0):
             else:
                 rx = (4 * r[1][n] - r[2][n]) / 3
                 est = np.abs((4 * r[2][n] - r[4][n]) / 3 - rx) / 15
-                bound = (4 * f1[n] + f2[n]) / 3 + factor * est
+                bound = (4 * f1[n] + f2[n]) / 3 + FACTOR * est
             tested = np.isfinite(rx) & np.isfinite(bound)
             out[n] = {
                 'rx': rx,
