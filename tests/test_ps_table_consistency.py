@@ -89,6 +89,13 @@ def test_tables_on_different_grids_raise(gas):
 
 
 @pytest.mark.unit
+def test_values_off_the_shape_of_the_grid_raise(gas):
+    t = {**gas, 'density': {**gas['density'], 'values': gas['density']['values'][:, :-1]}}
+    with pytest.raises(ValueError, match='density values do not have the shape'):
+        c.residuals(t)
+
+
+@pytest.mark.unit
 def test_a_grid_shorter_than_the_stencil_gives_no_derivative():
     assert np.isnan(c.derivative(np.ones((3, 4)), np.arange(3.0), 0, 2)).all()
 
@@ -155,6 +162,15 @@ def test_the_adiabat_identity_is_tested_against_its_floor(stored):
 def test_a_precision_below_the_floor_is_raised_to_it(stored):
     lo, at = (c.check(stored, e)['dTdS']['bound'] for e in (1e-16, 5e-9))
     np.testing.assert_array_equal(lo, at)
+
+
+@pytest.mark.unit
+def test_a_coarse_precision_hides_a_fault_the_9_digit_floor_finds(stored):
+    t = {**stored, 'temperature': {**stored['temperature']}}
+    t['temperature']['values'] = stored['temperature']['values'].copy()
+    t['temperature']['values'][100, 100] *= 1 + 1e-6
+    assert c.check(t, 0.0)['dTdS']['fail'][100, 101]
+    assert not c.check(t, 1e-4)['dTdS']['fail'][100, 101]
 
 
 # SPIDER P-S files as zalmoxis.eos_export._write_spider_2d writes them: '.18e', S slowest.
@@ -236,6 +252,7 @@ def spider_files(tmp_path_factory):
 def test_an_exact_table_written_as_spider_files_has_no_failing_cell(spider_files, name):
     res = c.check(spider_files[name], np.finfo(float).eps)
     assert {n: int(v['fail'].sum()) for n, v in res.items()} == dict.fromkeys(c.IDENTITIES, 0)
+    assert all(v['tested'].sum() > 5_000 for v in res.values())
 
 
 @pytest.mark.unit
@@ -258,10 +275,9 @@ _BAD_EPS = st.one_of(
     st.sampled_from([np.nan, np.inf, -np.inf, True, False, None, '5e-9', 1.0]),
     st.floats(max_value=0.0, exclude_max=True),
     st.floats(min_value=1.0),
-)
-_BAD_FACTOR = st.one_of(
-    st.sampled_from([np.nan, np.inf, -np.inf, True, None, '2', 0.0]),
-    st.floats(max_value=0.0),
+    st.integers(min_value=1),
+    st.integers(max_value=-1),
+    st.sampled_from([10**400, -(10**400), np.int64(2)]),
 )
 
 
@@ -278,22 +294,9 @@ def test_a_precision_that_is_not_a_finite_fraction_is_rejected(stored, eps):
 
 @pytest.mark.unit
 @settings(
-    max_examples=40, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
-)
-@given(factor=_BAD_FACTOR)
-def test_a_factor_that_is_not_finite_and_positive_is_rejected(stored, factor):
-    with pytest.raises(ValueError, match='factor'):
-        c.check(stored, 5e-9, factor)
-
-
-@pytest.mark.unit
-@settings(
     max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
 )
-@given(
-    eps=st.one_of(st.just(0.0), st.floats(min_value=1e-300, max_value=1e-3)),
-    factor=st.floats(1e-3, 1e3),
-)
-def test_a_valid_precision_and_factor_test_cells(stored, eps, factor):
-    res = c.check(stored, eps, factor)
-    assert all(int(v['tested'].sum()) > 0 for v in res.values())
+@given(eps=st.one_of(st.just(0), st.floats(min_value=0.0, max_value=0.99)))
+def test_an_exact_table_passes_at_every_valid_precision(stored, eps):
+    res = c.check(stored, eps)
+    assert all(v['tested'].sum() > 0 and not v['fail'].any() for v in res.values())
