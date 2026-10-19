@@ -7,6 +7,8 @@ differences alone. See docs/How-to/build_tests.md for the test tiers.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -95,6 +97,29 @@ def test_values_off_the_shape_of_the_grid_raise(gas):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    'axis, grid',
+    [('P', P[::-1]), ('S', S[::-1]), ('S', np.r_[S[:100], S[99], S[101:]])],
+)
+def test_axes_that_do_not_increase_raise(axis, grid):
+    t = _ideal_gas(grid, S) if axis == 'P' else _ideal_gas(P, grid)
+    with pytest.raises(ValueError, match='strictly increasing'):
+        c.check(t, 5e-9)
+
+
+@pytest.mark.unit
+def test_a_check_that_tests_no_cell_raises(gas):
+    with pytest.raises(ValueError, match='no cell'):
+        c.check(_ideal_gas(P[:8], S[:8]), 5e-9)
+    t = {
+        **gas,
+        'temperature': {**gas['temperature'], 'values': np.full((P.size, S.size), np.nan)},
+    }
+    with pytest.raises(ValueError, match='no cell'):
+        c.check(t, 5e-9)
+
+
+@pytest.mark.unit
 def test_a_grid_shorter_than_the_stencil_gives_no_derivative():
     assert np.isnan(c.derivative(np.ones((3, 4)), np.arange(3.0), 0, 2)).all()
 
@@ -147,6 +172,51 @@ def test_the_adiabat_identity_is_tested_against_its_floor(stored):
     t = _plant(stored, 'thermal_exp', (50, 60), 1e-6)
     fail = c.check(t, 5e-9)['adiabat']['fail']
     assert fail[50, 60] and int(fail.sum()) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'quantity, expected',
+    [
+        (
+            'temperature',
+            {
+                'dTdS': [(0, o) for o in (-2, -1, 0, 1, 2)],
+                'dTdP': [(o, 0) for o in (-2, -1, 1, 2)],
+                'adiabat': [(0, 0)],
+            },
+        ),
+        ('density', {'maxwell': [(0, o) for o in (-2, -1, 0, 1, 2)], 'adiabat': [(0, 0)]}),
+        ('heat_capacity', {'adiabat': [(0, 0)]}),
+        ('thermal_exp', {'adiabat': [(0, 0)]}),
+        ('adiabat_temp_grad', {'maxwell': [(0, 0)], 'adiabat': [(0, 0)]}),
+    ],
+)
+def test_each_planted_column_fails_exactly_its_identities(stored, quantity, expected):
+    res = c.check(_plant(stored, quantity, (100, 100), 1e-6), 5e-9)
+    got = {
+        n: sorted((int(i) - 100, int(j) - 100) for i, j in np.argwhere(v['fail']))
+        for n, v in res.items()
+        if v['fail'].any()
+    }
+    assert got == {n: sorted(x) for n, x in expected.items()}
+
+
+@pytest.mark.unit
+def test_the_bound_is_the_floor_plus_twice_the_h4_term(stored):
+    r = {k: c.residuals(stored, k)['dTdS'] for k in (1, 2, 4)}
+    f1, f2 = (c.floors(stored, 5e-9, k)['dTdS'] for k in (1, 2))
+    rx = (4 * r[1] - r[2]) / 3
+    est = np.abs((4 * r[2] - r[4]) / 3 - rx) / 15
+    bound = c.check(stored, 0.0)['dTdS']['bound']
+    np.testing.assert_allclose(bound, (4 * f1 + f2) / 3 + 2 * est, rtol=1e-12)
+    assert c.EPS_FLOOR == 5e-9
+
+
+@pytest.mark.unit
+def test_a_missing_cell_leaves_four_untested_cells_on_each_side(gas):
+    tested = c.check(_plant(gas, 'temperature', (100, 100), np.nan), 5e-9)['dTdS']['tested']
+    assert not tested[100, 96:105].any() and tested[100, [95, 105]].all()
 
 
 @pytest.mark.unit
@@ -247,15 +317,17 @@ def test_an_exact_table_written_as_spider_files_has_no_failing_cell(spider_files
 @pytest.mark.unit
 @pytest.mark.parametrize('name', ['gas', 'murnaghan'])
 @pytest.mark.parametrize(
-    'quantity, identity', [('temperature', 'dTdS'), ('density', 'maxwell')]
+    'quantity, identity, axis',
+    [('temperature', 'dTdS', 1), ('density', 'maxwell', 1), ('temperature', 'dTdP', 0)],
 )
 @pytest.mark.parametrize('size', [1e-4, 1e-6])
 def test_a_planted_value_in_spider_files_fails_one_and_two_steps_away(
-    spider_files, name, quantity, identity, size
+    spider_files, name, quantity, identity, axis, size
 ):
     t = _plant(spider_files[name], quantity, (40, 40), size)
     fail = c.check(t, np.finfo(float).eps)[identity]['fail']
-    assert [bool(fail[40, 40 + o]) for o in (-2, -1, 1, 2)] == [True] * 4
+    cells = [(40 + o, 40) if axis == 0 else (40, 40 + o) for o in (-2, -1, 1, 2)]
+    assert [bool(fail[x]) for x in cells] == [True] * 4
 
 
 _BAD_EPS = st.one_of(
@@ -264,7 +336,8 @@ _BAD_EPS = st.one_of(
     st.floats(min_value=1.0),
     st.integers(min_value=1),
     st.integers(max_value=-1),
-    st.sampled_from([10**400, -(10**400), np.int64(2)]),
+    st.sampled_from([10**400, -(10**400), np.int64(2), np.False_, b'1e-3']),
+    st.sampled_from([bytearray(b'1e-3'), memoryview(b'1e-3'), np.array(1e-3), Decimal('1e-3')]),
 )
 
 
