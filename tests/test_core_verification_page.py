@@ -121,6 +121,8 @@ def _holds(key, value, want):
 def _reproduces(script, item):
     """Run one item and compare every value it records with the values file."""
     script.ITEMS[item]()
+    if item == 13:
+        print('ITEM13_VALUES testfile', json.dumps(script.VALUES['13'], sort_keys=True, default=float), flush=True)
     got, want = script.VALUES[str(item)], VALUES[str(item)]
     assert got.keys() == want.keys()
     bad = [(k, v, want[k]) for k, v in got.items() if not _holds(k, v, want[k])]
