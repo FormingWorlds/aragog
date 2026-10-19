@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.smoke, needs_eos]
 
 _FLUX = 1.0e6  # prescribed surface flux [W/m^2]; drains the top cell of the cold start in ~3 yr
 _UNSET = object()  # _drained leaves eos_floor_margin at the config default
-_TOL = 1.0e-4  # 1e-6 of the default margin
+_TOL = 1.0e-4  # 1e-6 of the tested margin, 100
 # without scikits.odes 'cvode' falls back to Radau, which has no CVODE root or cap label
 needs_cvode = pytest.mark.skipif(not es._CVODE_AVAILABLE, reason='needs scikits.odes CVODE')
 CVODE_BDF = [pytest.param('cvode', marks=needs_cvode), 'bdf']
@@ -98,10 +98,13 @@ def _floor_logs(caplog):
     ]
 
 
+@pytest.mark.parametrize('margin', [_UNSET, 0.0, -50.0], ids=['default', 'zero', 'negative'])
 @pytest.mark.parametrize('method', CVODE_BDF)
-def test_the_default_config_leaves_the_floor_off(shared_eos, caplog, monkeypatch, method):
-    """Without eos_floor_margin in the config and with no other cap, no step-cap root is built and
-    a draining call runs to its end below the table with no floor log."""
+def test_the_default_config_leaves_the_floor_off(
+    shared_eos, caplog, monkeypatch, method, margin
+):
+    """Without eos_floor_margin in the config (or with 0 or a negative margin) and with no other cap,
+    no step-cap root is built and a draining call runs to its end below the table with no floor log."""
     built, real = [], es._PhiCapRootFunction.__init__
     monkeypatch.setattr(
         es._PhiCapRootFunction,
@@ -110,8 +113,9 @@ def test_the_default_config_leaves_the_floor_off(shared_eos, caplog, monkeypatch
     )
     S_min = float(shared_eos.S_min)
     with caplog.at_level(logging.INFO):
-        s, f = _drained(shared_eos, S_min + 400.0, margin=_UNSET, method=method)
-    assert s.parameters.energy.eos_floor_margin == 0.0 and not _floor_logs(caplog)
+        s, f = _drained(shared_eos, S_min + 400.0, margin=margin, method=method)
+    assert s.parameters.energy.eos_floor_margin == (0.0 if margin is _UNSET else margin)
+    assert not _floor_logs(caplog)
     assert not built and s._solution.status == 0
     assert s._solution.t[-1] == pytest.approx(10.0) and f[-1] < S_min
 
