@@ -58,7 +58,6 @@ BANDS = {
     'tcen_max_abs_diff_K_rtol1e-8': 23.0,
     'onset_max_abs_diff_myr_rtol1e-8': 70.0,
 }
-pytestmark = pytest.mark.xdist_group('core_verification')
 TAG = re.compile(r'(-?[\d.]+(?:e[-+]?\d+)?)\s?%?<!--k:(\d+)\.([^:>]+)(?::(-?[\d.]+))?-->')
 
 
