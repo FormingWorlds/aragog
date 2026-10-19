@@ -142,7 +142,7 @@ def floors(tables, eps, k=1):
             for n, (D, E, Q, q) in _parts(tables, k).items()
         }
         out['adiabat'] = np.abs(grad * rho * cp / (alpha * T)) * 5 * eps
-    return {n: out[n] for n in IDENTITIES}
+    return out
 
 
 def _eps(eps):

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from aragog.eos import consistency as c
@@ -55,13 +55,16 @@ def test_an_identity_without_truncation_holds_to_round_off(gas, name, bound):
     assert np.nanmax(np.abs(c.residuals(gas)[name])) < bound
 
 
+def _plant(t, quantity, idx, size):
+    """``t`` with ``quantity`` scaled by 1 + ``size`` at ``idx`` (NaN for a NaN size)."""
+    v = t[quantity]['values'].copy()
+    v[idx] *= 1 + size
+    return {**t, quantity: {**t[quantity], 'values': v}}
+
+
 @pytest.mark.unit
 def test_a_missing_cell_ends_the_stencils_around_it(gas):
-    t = {
-        **gas,
-        'temperature': {**gas['temperature'], 'values': gas['temperature']['values'].copy()},
-    }
-    t['temperature']['values'][100, 100] = np.nan
+    t = _plant(gas, 'temperature', (100, 100), np.nan)
     r = c.residuals(t, 1)['dTdS']
     assert (
         np.isnan(r[100, 99:102]).all() and np.isfinite(r[100, 98]) and np.isfinite(r[99, 100])
@@ -71,11 +74,7 @@ def test_a_missing_cell_ends_the_stencils_around_it(gas):
 @pytest.mark.unit
 @pytest.mark.parametrize('size', [1e-6, 1e-4, 1e-2])
 def test_a_planted_temperature_error_shows_in_the_richardson_residual(gas, size):
-    t = {
-        **gas,
-        'temperature': {**gas['temperature'], 'values': gas['temperature']['values'].copy()},
-    }
-    t['temperature']['values'][100, 100] *= 1 + size
+    t = _plant(gas, 'temperature', (100, 100), size)
     rx = np.abs(4 * c.residuals(t, 1)['dTdS'] - c.residuals(t, 2)['dTdS']) / 3
     exact = np.abs(4 * c.residuals(gas, 1)['dTdS'] - c.residuals(gas, 2)['dTdS']) / 3
     assert np.nanmax(rx[100, 97:104]) > 100 * np.nanmax(exact)
@@ -135,8 +134,7 @@ def test_an_exact_table_has_no_failing_cell(gas, stored, digits):
     ],
 )
 def test_a_planted_value_fails_one_and_two_steps_away(stored, quantity, name, axis, size):
-    t = {**stored, quantity: {**stored[quantity], 'values': stored[quantity]['values'].copy()}}
-    t[quantity]['values'][100, 100] *= 1 + size
+    t = _plant(stored, quantity, (100, 100), size)
     fail = c.check(t, 5e-9)[name]['fail']
     at = {
         o: bool(fail[(100 + o, 100) if axis == 0 else (100, 100 + o)]) for o in (-2, -1, 1, 2)
@@ -146,14 +144,7 @@ def test_a_planted_value_fails_one_and_two_steps_away(stored, quantity, name, ax
 
 @pytest.mark.unit
 def test_the_adiabat_identity_is_tested_against_its_floor(stored):
-    t = {
-        **stored,
-        'thermal_exp': {
-            **stored['thermal_exp'],
-            'values': stored['thermal_exp']['values'].copy(),
-        },
-    }
-    t['thermal_exp']['values'][50, 60] *= 1 + 1e-6
+    t = _plant(stored, 'thermal_exp', (50, 60), 1e-6)
     fail = c.check(t, 5e-9)['adiabat']['fail']
     assert fail[50, 60] and int(fail.sum()) == 1
 
@@ -166,9 +157,7 @@ def test_a_precision_below_the_floor_is_raised_to_it(stored):
 
 @pytest.mark.unit
 def test_a_coarse_precision_hides_a_fault_the_9_digit_floor_finds(stored):
-    t = {**stored, 'temperature': {**stored['temperature']}}
-    t['temperature']['values'] = stored['temperature']['values'].copy()
-    t['temperature']['values'][100, 100] *= 1 + 1e-6
+    t = _plant(stored, 'temperature', (100, 100), 1e-6)
     assert c.check(t, 0.0)['dTdS']['fail'][100, 101]
     assert not c.check(t, 1e-4)['dTdS']['fail'][100, 101]
 
@@ -264,9 +253,7 @@ def test_an_exact_table_written_as_spider_files_has_no_failing_cell(spider_files
 def test_a_planted_value_in_spider_files_fails_one_and_two_steps_away(
     spider_files, name, quantity, identity, size
 ):
-    t = spider_files[name]
-    t = {**t, quantity: {**t[quantity], 'values': t[quantity]['values'].copy()}}
-    t[quantity]['values'][40, 40] *= 1 + size
+    t = _plant(spider_files[name], quantity, (40, 40), size)
     fail = c.check(t, np.finfo(float).eps)[identity]['fail']
     assert [bool(fail[40, 40 + o]) for o in (-2, -1, 1, 2)] == [True] * 4
 
@@ -282,9 +269,7 @@ _BAD_EPS = st.one_of(
 
 
 @pytest.mark.unit
-@settings(
-    max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
-)
+@settings(max_examples=60, deadline=None)
 @given(eps=_BAD_EPS)
 def test_a_precision_that_is_not_a_finite_fraction_is_rejected(stored, eps):
     """A NaN or infinite eps would make every bound NaN or infinite and hide every cell."""
@@ -293,9 +278,7 @@ def test_a_precision_that_is_not_a_finite_fraction_is_rejected(stored, eps):
 
 
 @pytest.mark.unit
-@settings(
-    max_examples=10, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
-)
+@settings(max_examples=10, deadline=None)
 @given(eps=st.one_of(st.just(0), st.floats(min_value=0.0, max_value=0.99)))
 def test_an_exact_table_passes_at_every_valid_precision(stored, eps):
     res = c.check(stored, eps)
