@@ -121,6 +121,18 @@ def test_the_default_config_leaves_the_floor_off(
 
 
 @pytest.mark.parametrize('method', CVODE_BDF)
+def test_the_default_config_is_bit_equal_to_margin_zero(shared_eos, method):
+    """A draining call with no margin in the config gives the same output times, states and
+    energy integrals as the same call with eos_floor_margin = 0."""
+    S0 = float(shared_eos.S_min) + 400.0
+    a = _drained(shared_eos, S0, margin=_UNSET, method=method)[0]._solution
+    b = _drained(shared_eos, S0, margin=0.0, method=method)[0]._solution
+    assert a.status == b.status == 0
+    assert np.array_equal(a.t, b.t) and np.array_equal(a.y, b.y)
+    assert a.energy_integrals == b.energy_integrals
+
+
+@pytest.mark.parametrize('method', CVODE_BDF)
 def test_floor_root_ends_the_call_at_the_margin(shared_eos, caplog, method):
     """CVODE (status 0) and scipy (status 1) stop at S_min + 100 before the call end with one
     WARNING; without the floor the same call drains below the table."""
