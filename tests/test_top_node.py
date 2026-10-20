@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -194,7 +195,9 @@ def _slopes(S, r, lo, hi, h=1e-3):
 
 
 @given(state=_table_states(margin=1.0))
-@example(state=(np.array([1106.1, 1806.1, 455.7]), 1.0, 106.1, 3000.0))  # blend slope -13.4
+@example(
+    state=(np.array([1106.1, 1806.1, 455.7]), 1.0, 106.1, 3000.0)
+)  # steep cold top near S_min
 def test_the_node_rises_with_the_top_cell_and_falls_with_the_cell_below(state):
     """d node / d S_N >= 1 - C and -r/2 <= d node / d S_N-1 <= 0 inside the table."""
     S, r, lo, hi = state
@@ -245,8 +248,18 @@ def test_a_steep_top_step_far_from_the_edge_is_not_limited_by_the_next_step():
 @pytest.mark.parametrize(
     ('S', 'side'), [([400.0, 300.0, 50.0], 'below'), ([2700.0, 2800.0, 3050.0], 'above')]
 )
-def test_a_top_cell_outside_the_table_is_its_own_node(S, side):
+def test_a_top_cell_outside_the_table_stepping_away_from_it_is_its_own_node(S, side):
     assert top_node_entropy(np.array(S), 1.0, 100.0, 3000.0) == S[-1]
+
+
+@pytest.mark.parametrize(
+    'S', [[1.0, 20.0, 50.0], [1.0, 4000.0, 3100.0]], ids=['below', 'above']
+)
+def test_a_top_cell_outside_the_table_stepping_into_it_takes_the_far_edge(S):
+    """The half step points into the table, so b is half the distance to the far edge."""
+    S = np.array(S)
+    node = top_node_entropy(S, 1.0, 100.0, 3000.0)
+    assert node == pytest.approx(_ref(S, 1.0, 100.0, 3000.0), rel=1e-12) and node != S[-1]
 
 
 def test_the_node_is_continuous_across_a_zero_step():
@@ -294,7 +307,12 @@ def test_the_jax_node_matches_numpy_and_its_jacobian_matches_differences():
         assert np.array(jac(jnp.asarray(S)))[:0:-1] == pytest.approx(
             _slopes(S, 1.03, lo, hi, h=1e-4), rel=1e-5, abs=1e-6
         )
-    for S in ([1e3, 2e3, 2e3], [1e3, 2e3, lo], [lo, lo, lo]):  # zero step, top cell at S_min
+    for b_lo, b_hi in ((lo, hi), (-np.inf, np.inf)):  # a zero step has the linear slopes
+        zero = jax.jacrev(lambda S: top_node_entropy(S, 1.03, b_lo, b_hi, xp=jnp))
+        assert np.array(zero(jnp.asarray([1e3, 2e3, 2e3]))) == pytest.approx(
+            [0.0, -0.515, 1.515]
+        )
+    for S in ([1e3, 2e3, lo], [lo, lo, lo]):  # top cell at S_min
         assert np.all(np.isfinite(np.array(jac(jnp.asarray(S)))))
     with pytest.raises(ValueError, match='at least 2 cells'):
         top_node_entropy(jnp.asarray([400.0]), 1.0, lo, hi, xp=jnp)
@@ -327,6 +345,15 @@ def test_the_mesh_refuses_a_node_that_breaks_its_bounds(monkeypatch):
         monkeypatch.setattr(aragog.mesh, 'top_node_entropy', lambda *a, v=bad, **k: v)
         with pytest.raises(RuntimeError, match='limited top node'):
             mesh.entropy_at_basic_nodes(S)
+    wide = _limited_mesh(
+        (-1e4, 1e4)
+    )  # the linear node is in the table: only the 1e-12 tolerance
+    lin = wide.quantity_at_basic_nodes(S).ravel()[-1]
+    monkeypatch.setattr(aragog.mesh, 'top_node_entropy', lambda *a, **k: lin * (1 - 1e-10))
+    with pytest.raises(RuntimeError, match='limited top node'):
+        wide.entropy_at_basic_nodes(S)
+    monkeypatch.setattr(aragog.mesh, 'top_node_entropy', lambda *a, **k: lin * (1 - 1e-13))
+    assert wide.entropy_at_basic_nodes(S)[-1] == lin * (1 - 1e-13)
 
 
 def test_the_jax_mesh_carries_the_mode_and_bounds_and_gives_the_numpy_node():
@@ -348,11 +375,14 @@ def test_the_floor_margin_does_not_enter_the_node():
     s = _build_minimal_solver()
     s.parameters.boundary_conditions.top_node = 'limited'
     s._initialize_internals()
+    s.entropy_eos = SimpleNamespace(S_min=100.0, S_max=3000.0)
+    s._sync_top_node()
     mesh = s.evaluator.mesh
     S = np.linspace(2900.0, 200.0, mesh._quantity_transform.shape[1])
     want = mesh.entropy_at_basic_nodes(S)
-    for margin in (np.nan, np.inf, 0.0):
+    assert want[-1] != mesh.quantity_at_basic_nodes(S).ravel()[-1]
+    for margin in (np.nan, np.inf, 0.0, 150.0):
         s.parameters.energy.eos_floor_margin = margin
         s._sync_top_node()
-        assert mesh.top_bounds == (-np.inf, np.inf)
+        assert mesh.top_bounds == (100.0, 3000.0)
         assert np.array_equal(mesh.entropy_at_basic_nodes(S), want)

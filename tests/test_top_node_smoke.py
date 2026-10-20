@@ -177,8 +177,8 @@ def test_the_mesh_takes_the_mode_from_the_parameters_and_the_bounds_from_the_eos
 
 def test_the_grey_body_flux_is_continuous_where_the_linear_node_leaves_the_table(shared_eos):
     """Under the grey-body surface the top-cell rate follows the top node: moving the top cell in
-    steps of 0.1 J/kg/K while the linear node crosses S_min changes it by less than 1e-3 per step
-    (a switch to the top cell gave about 3.3e-3 on this profile)."""
+    steps of 0.1 J/kg/K while the linear node crosses S_min changes it by less than 1e-3 per
+    step."""
     s = _solver(shared_eos, 'limited', bc=1)
     y0, n, S_min = np.asarray(s._S0, dtype=float).copy(), s._n_stag, float(shared_eos.S_min)
     rates, free = [], []
@@ -203,7 +203,7 @@ def test_the_floor_margin_does_not_move_the_node(shared_eos, margin):
     assert np.array_equal(s.evaluator.mesh.entropy_at_basic_nodes(S), want)
 
 
-def test_a_plain_entropy_eos_assignment_and_a_patch_keep_working(shared_eos):
+def test_any_object_can_be_assigned_or_patched_as_the_eos_in_linear_mode(shared_eos):
     """The EOS is a plain attribute: any object can be assigned in linear mode, and a patch of it
     restores the solver's own EOS."""
     from unittest import mock
@@ -274,10 +274,17 @@ def test_a_grey_body_solve_near_s_min_finishes_and_closes_its_energy(shared_eos)
 def test_get_state_takes_the_bounds_of_a_new_eos(shared_eos):
     """An EOS assigned after a solve, as PROTEUS does before a re-melt, bounds the node that
     get_state reports, with no solve in between."""
-    s = _solver(shared_eos, 'limited', S0=np.full(11, float(shared_eos.S_min) + 2000.0))
+    S_min = float(shared_eos.S_min)
+    S0 = np.full(11, S_min + 2600.0)
+    S0[-2:] = S_min + np.array([1000.0, 300.0])
+    s = _solver(shared_eos, 'limited', S0=S0)
     s.solve()
     other = entropy_eos_copy(EOS_DIR)
-    other.S_min, other.S_max = float(shared_eos.S_min) + 1.0, float(shared_eos.S_max) - 1.0
+    other.S_min, other.S_max = S_min + 200.0, float(shared_eos.S_max) - 1.0
     s.entropy_eos = other
-    s.get_state()
-    assert s.evaluator.mesh.top_bounds == (float(other.S_min), float(other.S_max))
+    out = s.get_state()
+    mesh, S_end = s.evaluator.mesh, np.asarray(out.S_final, dtype=float)
+    assert mesh.top_bounds == (other.S_min, other.S_max)
+    want = top_node_entropy(S_end, mesh.top_ratio, other.S_min, other.S_max)
+    assert s.state._entropy_basic[-1] == pytest.approx(want, rel=1e-12)
+    assert want != pytest.approx(top_node_entropy(S_end, mesh.top_ratio, S_min, other.S_max))
