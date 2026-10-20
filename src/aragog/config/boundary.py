@@ -27,6 +27,14 @@ def check_top_node(top_node, core_bc: str | None = None) -> None:
         raise ValueError("top_node = 'limited' is not available on core_bc = 'gradient'")
 
 
+def _check_top_node_pair(instance, attribute, value) -> None:
+    """Check ``top_node`` against ``core_bc`` at construction and on assignment of either."""
+    if attribute.name == 'top_node':
+        check_top_node(value, instance.core_bc)
+    else:
+        check_top_node(instance.top_node, value)
+
+
 def check_core_bc(core_bc: str, inner_boundary_condition: int, core_module_params) -> None:
     """Refuse an unknown ``core_bc``, and for ``'core_module'`` an inner boundary condition
     other than core cooling (1) or ``core_module_params`` the core module refuses.
@@ -95,9 +103,9 @@ class BoundaryConfig:
         'quasi_steady' explicitly.
     top_node : str
         Entropy of the top basic node: 'linear' (default) extrapolates the top 2 cells; 'limited'
-        limits that extrapolation by the next cell step (minmod) and blends it into the top cell
-        within half the EOS floor margin, at least 50 J/kg/K, of a table edge (not on the
-        'gradient' core).
+        reduces that half step smoothly near a table edge, so the node rises with the top cell
+        and stays in the table (``aragog.mesh.top_node_entropy``; not on the 'gradient' core,
+        checked also on assignment).
     """
 
     outer_boundary_condition: int
@@ -111,12 +119,11 @@ class BoundaryConfig:
     param_utbl: bool = False
     param_utbl_const: float = 1.0e-7
     # Core boundary mode for inner_boundary_condition = 1 (see the class docstring).
-    core_bc: str = 'energy_balance'
+    core_bc: str = attrs.field(default='energy_balance', validator=_check_top_node_pair)
     # Flat parameter dict for core_bc='core_module'; keys documented in
     # aragog.core.module.build_core_module_budget (plus 'q_radio' [W] and 'ra_crit_cmb').
     core_module_params: dict | None = None
-    top_node: str = 'linear'
+    top_node: str = attrs.field(default='linear', validator=_check_top_node_pair)
 
     def __attrs_post_init__(self) -> None:
         check_core_bc(self.core_bc, self.inner_boundary_condition, self.core_module_params)
-        check_top_node(self.top_node, self.core_bc)

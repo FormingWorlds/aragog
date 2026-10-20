@@ -37,7 +37,6 @@ from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
-from aragog.mesh import TOP_NODE_BAND
 from aragog.parser import Parameters
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
@@ -1410,16 +1409,9 @@ class EntropySolver:
     _batch_powers_calls: int = 0
 
     def _sync_top_node(self) -> None:
-        """Give a limited top node the table range and a blend band of half the EOS floor margin,
-        at least ``TOP_NODE_BAND``: inside the band the node falls as the top cell warms, so a
-        narrow band would make the grey-body flux feed back on the top cell fast."""
-        mesh, eos, m = (
-            self.evaluator.mesh,
-            self.entropy_eos,
-            self.parameters.energy.eos_floor_margin,
-        )
+        """Give a limited top node the entropy range of the current EOS tables."""
+        mesh, eos = self.evaluator.mesh, self.entropy_eos
         if mesh.top_node == 'limited':
-            mesh.top_band = TOP_NODE_BAND if m is None else max(0.5 * float(m), TOP_NODE_BAND)
             mesh.top_bounds = (
                 (-np.inf, np.inf) if eos is None else (float(eos.S_min), float(eos.S_max))
             )
@@ -1788,7 +1780,7 @@ class EntropySolver:
         if self.evaluator.mesh.top_node == 'limited':
             self._warn_once(
                 'top_node',
-                'EntropySolver: top node: limited (minmod, blends into the top cell)',
+                'EntropySolver: top node: limited (monotone, inside the table)',
                 logging.INFO,
             )
 

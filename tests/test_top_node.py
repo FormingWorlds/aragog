@@ -214,8 +214,8 @@ def test_at_a_table_edge_the_slope_is_one_outside_and_one_minus_c_inside(edge):
     )
     sgn = 1.0 if edge == 'S_min' else -1.0
     node = lambda x: top_node_entropy(np.array([*S[:2], S[2] + sgn * x]), 1.0, lo, hi)  # noqa: E731
-    assert (node(0.0) - node(-h)) / h == pytest.approx(1.0, rel=1e-9)
-    assert (node(h) - node(0.0)) / h == pytest.approx(1 - C, rel=1e-6)
+    assert (node(0.0) - node(-h)) / (sgn * h) == pytest.approx(1.0, rel=1e-9)
+    assert (node(h) - node(0.0)) / (sgn * h) == pytest.approx(1 - C, rel=1e-6)
 
 
 @pytest.mark.parametrize(('ratio', 'gap'), [(4.0, 9.742e-4), (2.0, 1.504e-2), (1.0, 0.1591)])
@@ -236,7 +236,7 @@ def test_an_unbounded_table_gives_the_linear_node(s, r):
 
 
 def test_a_steep_top_step_far_from_the_edge_is_not_limited_by_the_next_step():
-    """No minmod: the next cell step does not enter, the node is linear up to the edge term."""
+    """The next cell step does not enter: far from the edge the node is the linear node."""
     S = np.array([3100.0, 3000.0, 200.0])
     assert top_node_entropy(S, 1.0) == pytest.approx(_linear(S, 1.0), rel=1e-12)
     assert top_node_entropy(S, 1.0, -1e5, 1e5) == pytest.approx(-1200.0, rel=1e-3)
