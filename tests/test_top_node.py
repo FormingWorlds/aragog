@@ -426,6 +426,7 @@ def test_the_limited_mode_log_follows_a_new_eos(caplog):
     s._check_eos_floors = lambda: None
     s.initialize()
     s.entropy_eos = SimpleNamespace(S_min=25.99, S_max=3000.0)
+    caplog.clear()  # an earlier test can leave the logger at INFO
     with caplog.at_level(logging.INFO, logger='fwl.aragog'):
         s._sync_top_node()
     rec = [r.getMessage() for r in caplog.records if 'top node: limited' in r.getMessage()]
