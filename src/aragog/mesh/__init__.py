@@ -198,11 +198,10 @@ def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.
     D = 0.5 * ratio * (S[-1] - S[-2])
     a = xp.abs(D)
     b = TOP_NODE_SCALE * xp.maximum(xp.where(D < 0, S[-1] - S_min, S_max - S[-1]), 0.0)
-    lo, hi = xp.minimum(a, b), xp.maximum(a, b)
-    q = lo / xp.where(hi > 0, hi, 1.0)  # in [0, 1]; 0 for an unbounded table
-    step = xp.where(
-        a <= b, D, xp.sign(D) * b
-    )  # D itself keeps its slope at D = 0 under autodiff
+    # min(a, b) / max(a, b) by branch: autodiff takes a one-sided slope at a = b and at D = 0
+    le = a <= b
+    q = xp.where(le, a / xp.where(le & (b > 0), b, 1.0), b / xp.where(le, 1.0, a))
+    step = xp.where(le, D, xp.where(D < 0, -b, b))
     node = S[-1] + step * (1.0 + q**TOP_NODE_POWER) ** (-1.0 / TOP_NODE_POWER)
     return xp.where(xp.isfinite(S[-1] + S[-2]), node, xp.nan)
 

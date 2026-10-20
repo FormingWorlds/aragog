@@ -1409,12 +1409,31 @@ class EntropySolver:
     _batch_powers_calls: int = 0
 
     def _sync_top_node(self) -> None:
-        """Give a limited top node the entropy range of the current EOS tables."""
+        """Give a limited top node the entropy range of the current EOS tables; log a new range.
+
+        Raises
+        ------
+        ValueError
+            If the entropy range of the EOS is not an interval (NaN, or S_min >= S_max).
+        """
         mesh, eos = self.evaluator.mesh, self.entropy_eos
-        if mesh.top_node == 'limited':
-            mesh.top_bounds = (
-                (-np.inf, np.inf) if eos is None else (float(eos.S_min), float(eos.S_max))
-            )
+        if mesh.top_node != 'limited':
+            return
+        bounds = (-np.inf, np.inf) if eos is None else (float(eos.S_min), float(eos.S_max))
+        if not bounds[0] < bounds[1]:
+            raise ValueError(f'top node: the EOS entropy range {bounds!r} is not an interval')
+        mesh.top_bounds = bounds
+        if bounds != getattr(self, '_top_bounds_logged', None):
+            self._top_bounds_logged = bounds
+            if np.isinf(bounds).all():
+                logger.warning(
+                    'EntropySolver: top node: limited without EOS table bounds equals the linear node'
+                )
+            else:
+                logger.info(
+                    'EntropySolver: top node: limited (monotone, inside the table [%.6g, %.6g] J/kg/K)',
+                    *bounds,
+                )
 
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
@@ -1777,16 +1796,6 @@ class EntropySolver:
         self._check_eos_floors()
 
         self._sync_top_node()
-        if self.evaluator.mesh.top_node == 'limited':
-            lo, hi = self.evaluator.mesh.top_bounds
-            bounded = bool(np.isfinite(lo) and np.isfinite(hi))
-            self._warn_once(
-                'top_node',
-                f'EntropySolver: top node: limited (monotone, inside the table [{lo:.6g}, {hi:.6g}] J/kg/K)'
-                if bounded
-                else 'EntropySolver: top node: limited without EOS table bounds equals the linear node',
-                logging.INFO if bounded else logging.WARNING,
-            )
 
         # Cache constant BC and mesh terms so the dSdt hot path
         # doesn't recompute them on every RHS call. None of these
