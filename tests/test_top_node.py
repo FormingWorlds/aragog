@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import tomllib
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -54,11 +55,7 @@ def _ref(S, r, lo=-np.inf, hi=np.inf):
         return S[-1]
     a, b = abs(D), C * max((S[-1] - lo) if D < 0 else (hi - S[-1]), 0.0)
     h = max(a, b)  # scaled so a^p and b^p do not underflow
-    M = (
-        a
-        if np.isinf(b)
-        else (0.0 if b == 0.0 else (a / h) * b / ((a / h) ** P + (b / h) ** P) ** (1 / P))
-    )
+    M = a if np.isinf(b) else (a / h) * b / ((a / h) ** P + (b / h) ** P) ** (1 / P)
     return S[-1] + np.sign(D) * M
 
 
@@ -201,9 +198,8 @@ def _slopes(S, r, lo, hi, h=1e-3):
 
 
 @given(state=_table_states(margin=1.0))
-@example(
-    state=(np.array([1106.1, 1806.1, 455.7]), 1.0, 106.1, 3000.0)
-)  # steep cold top near S_min
+# steep cold top near S_min
+@example(state=(np.array([1106.1, 1806.1, 455.7]), 1.0, 106.1, 3000.0))
 def test_the_node_rises_with_the_top_cell_and_falls_with_the_cell_below(state):
     """d node / d S_N >= 1 - C and -r/2 <= d node / d S_N-1 <= 0 inside the table."""
     S, r, lo, hi = state
@@ -236,6 +232,13 @@ def test_the_node_returns_to_linear_as_the_edge_moves_away(ratio, gap):
     rel = (top_node_entropy(S, 1.0, lo, 1e5) - _linear(S, 1.0)) / a
     assert rel == pytest.approx(1 - (1 + ratio**-P) ** (-1 / P), rel=1e-12)
     assert rel == pytest.approx(gap, rel=1e-3)
+
+
+@pytest.mark.parametrize('bounds', [(-np.inf, np.inf), (100.0, np.inf), (-np.inf, 3000.0)])
+def test_a_zero_step_on_an_unbounded_side_raises_no_warning(bounds):
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert top_node_entropy(np.array([1e3, 2e3, 2e3]), 1.0, *bounds) == 2e3
 
 
 @given(s=st.tuples(_S, _S, _S), r=_R)
@@ -311,6 +314,10 @@ def test_the_jax_node_matches_numpy_and_its_jacobian_matches_differences():
         assert np.array(zero(jnp.asarray([1e3, 2e3, 2e3]))) == pytest.approx(
             [0.0, -0.515, 1.515]
         )
+    for S in ([0.0, 900.0, 500.0], [0.0, -2000.0, 500.0]):  # exact ties a == b at both edges
+        tie = jax.jacrev(lambda x: top_node_entropy(x, 1.0, 100.0, 3000.0, xp=jnp))
+        fd = _slopes(np.array(S), 1.0, 100.0, 3000.0, h=1e-4)
+        assert np.array(tie(jnp.asarray(S)))[:0:-1] == pytest.approx(fd, rel=1e-5, abs=1e-6)
     for S in ([1e3, 2e3, lo], [lo, lo, lo]):  # top cell at S_min
         assert np.all(np.isfinite(np.array(jac(jnp.asarray(S)))))
     with pytest.raises(ValueError, match='at least 2 cells'):
@@ -344,9 +351,8 @@ def test_the_mesh_refuses_a_node_that_breaks_its_bounds(monkeypatch):
         monkeypatch.setattr(aragog.mesh, 'top_node_entropy', lambda *a, v=bad, **k: v)
         with pytest.raises(RuntimeError, match='limited top node'):
             mesh.entropy_at_basic_nodes(S)
-    wide = _limited_mesh(
-        (-1e4, 1e4)
-    )  # the linear node is in the table: only the 1e-12 tolerance
+    # the linear node is in the table: only the tolerance
+    wide = _limited_mesh((-1e4, 1e4))
     lin = wide.quantity_at_basic_nodes(S).ravel()[-1]
     monkeypatch.setattr(aragog.mesh, 'top_node_entropy', lambda *a, **k: lin * (1 - 1e-10))
     with pytest.raises(RuntimeError, match='limited top node'):
@@ -387,9 +393,12 @@ def test_the_floor_margin_does_not_enter_the_node():
         assert np.array_equal(mesh.entropy_at_basic_nodes(S), want)
 
 
-@pytest.mark.parametrize('bounds', [None, (100.0, 3000.0)], ids=['no-eos', 'eos'])
+@pytest.mark.parametrize(
+    'bounds', [None, (100.0, 3000.0), (100.0, np.inf)], ids=['no-eos', 'eos', 'half-open']
+)
 def test_the_limited_mode_log_names_the_bounds_or_warns_without_a_table(caplog, bounds):
-    """Without EOS table bounds the limited node equals the linear node: the solver warns."""
+    """Without EOS table bounds the limited node equals the linear node: the solver warns; with
+    bounds, also one-sided ones, it names them; a second initialize logs nothing new."""
     s = _build_minimal_solver()
     s.parameters.boundary_conditions.top_node = 'limited'
     if bounds:
@@ -397,12 +406,53 @@ def test_the_limited_mode_log_names_the_bounds_or_warns_without_a_table(caplog, 
         s._check_eos_floors = lambda: None
     with caplog.at_level(logging.INFO, logger='fwl.aragog'):
         s.initialize()
+        s.initialize()
     rec = [r for r in caplog.records if 'top node: limited' in r.getMessage()]
     assert len(rec) == 1
     if bounds:
-        assert rec[0].levelno == logging.INFO and '[100, 3000] J/kg/K' in rec[0].getMessage()
+        want = f'[{bounds[0]:g}, {bounds[1]:g}] J/kg/K'
+        assert rec[0].levelno == logging.INFO and want in rec[0].getMessage()
     else:
         assert (
             rec[0].levelno == logging.WARNING
             and 'equals the linear node' in rec[0].getMessage()
         )
+
+
+def test_the_limited_mode_log_follows_a_new_eos(caplog):
+    s = _build_minimal_solver()
+    s.parameters.boundary_conditions.top_node = 'limited'
+    s.entropy_eos = SimpleNamespace(S_min=100.0, S_max=3000.0)
+    s._check_eos_floors = lambda: None
+    s.initialize()
+    s.entropy_eos = SimpleNamespace(S_min=25.99, S_max=3000.0)
+    with caplog.at_level(logging.INFO, logger='fwl.aragog'):
+        s._sync_top_node()
+    rec = [r.getMessage() for r in caplog.records if 'top node: limited' in r.getMessage()]
+    assert rec == [
+        'EntropySolver: top node: limited (monotone, inside the table [25.99, 3000] J/kg/K)'
+    ]
+    assert s.evaluator.mesh.top_bounds == (25.99, 3000.0)
+
+
+@pytest.mark.parametrize('bounds', [(np.nan, 3000.0), (3000.0, 100.0), (100.0, 100.0)])
+def test_a_limited_node_refuses_a_table_range_that_is_not_an_interval(bounds):
+    s = _build_minimal_solver()
+    s.parameters.boundary_conditions.top_node = 'limited'
+    s._initialize_internals()
+    s.entropy_eos = SimpleNamespace(S_min=bounds[0], S_max=bounds[1])
+    with pytest.raises(ValueError, match='not an interval'):
+        s._sync_top_node()
+    assert s.evaluator.mesh.top_bounds == (-np.inf, np.inf)
+
+
+def test_the_linear_mode_reads_no_table_range_of_the_eos():
+    """In linear mode any object can stand as the EOS: the bounds sync does not read it."""
+    s = _build_minimal_solver()
+    s._initialize_internals()
+    s.entropy_eos = object()
+    s._sync_top_node()
+    assert s.evaluator.mesh.top_node == 'linear' and s.evaluator.mesh.top_bounds == (
+        -np.inf,
+        np.inf,
+    )
