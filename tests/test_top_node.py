@@ -491,3 +491,51 @@ def test_the_limited_node_is_the_linear_row_bitwise_where_the_limiter_does_not_a
             (arrays.quantity_matrix @ Sj)[-1]
         )
     assert differ == [0, 0]
+
+
+def _ratio_mesh(bounds, r=0.7316):
+    """A limited mesh whose outer row of the quantity transform has the ratio ``r``."""
+    mesh = _limited_mesh(bounds)
+    mesh._quantity_transform[-1, -2:] = (-r / 2, 1 + r / 2)
+    assert mesh.top_ratio == r
+    return mesh
+
+
+def test_a_top_cell_on_or_next_to_an_edge_keeps_the_node_in_the_table():
+    """With the top cell on an edge that is not a round number, or 1 or 2 ulp inside it, and the
+    half step pointing out, the node stays in the table and the mesh accepts it; a flat top on
+    an edge gives the linear row."""
+    lo, hi = 2345.678901, 3999.123
+    rng, bad = np.random.default_rng(3), 0
+    for r, edge, sgn in [
+        (r, e, g) for r in (0.7316, 0.99564) for e, g in ((hi, -1.0), (lo, 1.0))
+    ]:
+        mesh = _ratio_mesh((lo, hi), r)
+        n = mesh._quantity_transform.shape[1]
+        for k in range(3):
+            top = edge + sgn * k * np.spacing(edge)
+            for u in rng.uniform(1.0, 500.0, 200):
+                S = np.full(n, 0.5 * (lo + hi))
+                S[-2:] = top + sgn * u, top
+                try:
+                    bad += not lo <= mesh.entropy_at_basic_nodes(S)[-1] <= hi
+                except RuntimeError:
+                    bad += 1
+        S = np.full(n, edge)
+        try:
+            flat = mesh.entropy_at_basic_nodes(S)[-1]
+        except RuntimeError:
+            flat = np.nan
+        assert flat == mesh.quantity_at_basic_nodes(S)[-1]
+    assert bad == 0
+
+
+def test_the_limited_node_rises_with_the_top_cell_ulp_by_ulp():
+    mesh = _ratio_mesh((100.0, 3999.123))
+    S = np.full(mesh._quantity_transform.shape[1], 999.123)
+    S[-1] = 3500.0
+    nodes = []
+    for _ in range(2000):
+        nodes.append(mesh.entropy_at_basic_nodes(S)[-1])
+        S[-1] = np.nextafter(S[-1], np.inf)
+    assert np.all(np.diff(nodes) >= 0)
