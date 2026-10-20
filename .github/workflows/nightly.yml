@@ -32,9 +32,9 @@ jobs:
       fail-fast: false
       matrix:
         part: [main, core-verification]
-    # With coverage on the 2-vCPU runner the tests of the main part take 67-90 min and those of
-    # the core verification part 23-31 min; 150 min leaves headroom for JAX warmup, conda cache
-    # misses, and runner-to-runner timing variance.
+    # With coverage on the 2-vCPU runner the tests of the main part took 67-93 min and those of
+    # the core verification part 23-36 min in 4 runs; 150 min leaves headroom for JAX warmup,
+    # conda cache misses, and runner-to-runner timing variance.
     timeout-minutes: 150
     defaults:
       run:
@@ -92,7 +92,7 @@ jobs:
       - name: Run the core verification page test in one process
         if: matrix.part == 'core-verification'
         run: |
-          # 4500 s per test: 3.1 times the longest item 13 call of this part on this runner (1430 s)
+          # 4500 s per test: 2.7 times the longest item 13 call of this part in 4 runs (1648 s)
           pytest tests/test_core_verification_page.py -m "unit or smoke or integration or slow" \
             -p no:xdist -o "addopts=" -ra --timeout=4500 --timeout-method=thread --durations=10 \
             --cov=aragog --cov-report=term-missing --cov-fail-under=0
