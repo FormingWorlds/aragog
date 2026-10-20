@@ -36,16 +36,16 @@ permissions:
 # scikits-odes binary stack come prebuilt.
 jobs:
   nightly:
-    # The core verification page test runs alone in its own process on its own runner: its
-    # values depend on the tests that run before it in a process, and it takes up to 45 min.
+    # The core verification page test runs in one process on its own runner: in an xdist worker
+    # its item 13 run crashes the worker, and its values depend on the process history.
     name: Aragog-nightly ${{ matrix.part }} (ubuntu-latest)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         part: [main, core-verification]
-    # The full suite takes 83-113 min on the 2-vCPU runner with coverage
-    # and xdist; 150 min leaves headroom for JAX warmup, conda cache
+    # With coverage on the 2-vCPU runner the tests of the main part take 67-90 min and those of
+    # the core verification part 23-31 min; 150 min leaves headroom for JAX warmup, conda cache
     # misses, and runner-to-runner timing variance.
     timeout-minutes: 150
     defaults:
@@ -148,9 +148,10 @@ jobs:
           pip install "coverage[toml]>=7.6"
           pip install --no-deps -e .
           coverage combine cov-main.dat cov-core-verification.dat
-          # the vnv tests also measure modules they write to pytest tmp folders
+          # the vnv tests also measure modules they write to pytest tmp folders; the XML is
+          # written before the gate, so Codecov gets it also on a night below 90 %
+          coverage xml --include='*/src/aragog/*' --fail-under=0
           coverage report --include='*/src/aragog/*'
-          coverage xml --include='*/src/aragog/*'
 
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}
