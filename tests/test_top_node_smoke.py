@@ -27,13 +27,14 @@ def shared_eos():
 
 def _solver(eos, mode, S0=None, method='cvode', end_time=10.0, bc=4):
     """A call from ``S0`` (the cold-top profile by default) under no surface flux (``bc`` 4) or
-    the grey-body surface at 255 K (``bc`` 1)."""
+    the grey-body surface at 255 K (``bc`` 1), with the EOS floor at margin 100 J/kg/K."""
     p = _build_mushy_parameters(solver_method=method, end_time=end_time)
     p.boundary_conditions.outer_boundary_condition = bc
     p.boundary_conditions.outer_boundary_value = 0.0
     p.boundary_conditions.emissivity = 1.0
     p.boundary_conditions.equilibrium_temperature = 255.0
     p.boundary_conditions.top_node = mode
+    p.energy = dataclasses.replace(p.energy, eos_floor_margin=100.0)
     s = EntropySolver(p, entropy_eos=eos)
     s.initialize()
     s.set_initial_entropy(_steep_top(eos, _TOP3) if S0 is None else S0)
