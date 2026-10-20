@@ -118,6 +118,20 @@ def _holds(key, value, want):
     return value == pytest.approx(want, rel=1e-4, abs=1e-12)
 
 
+@pytest.mark.unit
+def test_the_bands_bound_their_values_on_both_sides():
+    """Every banded key is a recorded value and fails just outside its band; the differences of
+    the unconverged rtol 1e-8 run fail below half their recorded value."""
+    for key, band in BANDS.items():
+        want = next(item[key] for item in VALUES.values() if key in item)
+        assert not _holds(key, want + 1.01 * band, want), key
+    for key in ('tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'):
+        want = VALUES['13'][key]
+        assert _holds(key, want, want)
+        assert not _holds(key, 0.0, want), key
+        assert not _holds(key, 0.49 * want, want), key
+
+
 def _reproduces(script, item):
     """Run one item and compare every value it records with the values file."""
     script.ITEMS[item]()
