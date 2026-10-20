@@ -52,7 +52,12 @@ def _ref(S, r, lo=-np.inf, hi=np.inf):
     if D == 0.0:
         return S[-1]
     a, b = abs(D), C * max((S[-1] - lo) if D < 0 else (hi - S[-1]), 0.0)
-    M = a if np.isinf(b) else (0.0 if b == 0.0 else a * b / (a**P + b**P) ** (1 / P))
+    h = max(a, b)  # scaled so a^p and b^p do not underflow
+    M = (
+        a
+        if np.isinf(b)
+        else (0.0 if b == 0.0 else (a / h) * b / ((a / h) ** P + (b / h) ** P) ** (1 / P))
+    )
     return S[-1] + np.sign(D) * M
 
 
