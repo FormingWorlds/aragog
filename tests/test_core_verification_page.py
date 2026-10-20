@@ -129,10 +129,11 @@ def _holds(key, value, want):
 
 @pytest.mark.unit
 def test_the_bands_hold_the_recorded_runs_and_bound_both_sides():
-    """Every process run of item 13 in stable_layer_spread.json holds, each band is twice the spread
-    of these runs and the values file (rounded up) and fails just outside on both sides, the
-    differences the page states as present fail below half their value, and the page gives the
-    largest values of these runs."""
+    """Every process run of item 13 in stable_layer_spread.json holds; the bands of the 4 keys
+    of these runs are twice their spread over the runs and the values file (rounded up); every
+    band fails just outside it on both sides (for 3 keys the lower side through the half
+    floor); the differences the page states as present fail below half their value; and the
+    page gives the largest values of these runs."""
     spread = json.loads((ROOT / 'tools/verification/data/stable_layer_spread.json').read_text())
     runs, file13 = spread['process_runs']['runs'], VALUES['13']
     assert len(runs) == 10
