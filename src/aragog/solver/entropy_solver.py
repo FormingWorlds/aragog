@@ -1778,10 +1778,14 @@ class EntropySolver:
 
         self._sync_top_node()
         if self.evaluator.mesh.top_node == 'limited':
+            lo, hi = self.evaluator.mesh.top_bounds
+            bounded = bool(np.isfinite(lo) and np.isfinite(hi))
             self._warn_once(
                 'top_node',
-                'EntropySolver: top node: limited (monotone, inside the table)',
-                logging.INFO,
+                f'EntropySolver: top node: limited (monotone, inside the table [{lo:.6g}, {hi:.6g}] J/kg/K)'
+                if bounded
+                else 'EntropySolver: top node: limited without EOS table bounds equals the linear node',
+                logging.INFO if bounded else logging.WARNING,
             )
 
         # Cache constant BC and mesh terms so the dSdt hot path

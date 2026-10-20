@@ -546,10 +546,8 @@ class Mesh:
         S = np.ravel(S)
         S_basic = self.quantity_at_basic_nodes(S)
         if self.top_node == 'limited':
-            node, (lo, hi) = (
-                float(top_node_entropy(S, self.top_ratio, *self.top_bounds)),
-                self.top_bounds,
-            )
+            lo, hi = self.top_bounds
+            node = float(top_node_entropy(S, self.top_ratio, lo, hi))
             ends = sorted((S[-1], S_basic[-1]))
             tol = 1e-12 * max(abs(ends[0]), abs(ends[1]), 1.0)
             if np.isfinite(S_basic[-1]) and not (
