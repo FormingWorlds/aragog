@@ -482,15 +482,11 @@ def test_the_limited_node_is_the_linear_row_bitwise_where_the_limiter_does_not_a
     mesh = _limited_mesh((-1.0e6, 1.0e7))
     arrays = MeshArrays.from_numpy_mesh(mesh)
     rng, n = np.random.default_rng(5), mesh._quantity_transform.shape[1]
-    differ = [0, 0]
     for _ in range(500):
         S = rng.uniform(2000.0, 4000.0) + rng.normal(0.0, 1.0, n)
-        differ[0] += mesh.entropy_at_basic_nodes(S)[-1] != mesh.quantity_at_basic_nodes(S)[-1]
+        assert mesh.entropy_at_basic_nodes(S)[-1] == mesh.quantity_at_basic_nodes(S)[-1]
         Sj = jax.numpy.asarray(S)
-        differ[1] += float(entropy_at_basic_nodes(arrays, Sj)[-1]) != float(
-            (arrays.quantity_matrix @ Sj)[-1]
-        )
-    assert differ == [0, 0]
+        assert entropy_at_basic_nodes(arrays, Sj)[-1] == (arrays.quantity_matrix @ Sj)[-1]
 
 
 def _ratio_mesh(bounds, r=0.7316):
