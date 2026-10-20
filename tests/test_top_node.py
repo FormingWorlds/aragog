@@ -459,3 +459,24 @@ def test_the_linear_mode_reads_no_table_range_of_the_eos():
     s._sync_top_node()
     mesh = s.evaluator.mesh
     assert mesh.top_node == 'linear' and mesh.top_bounds == (-np.inf, np.inf)
+
+
+def test_the_limited_node_is_the_linear_row_bitwise_where_the_limiter_does_not_act():
+    """Far from the table edges the limited node is the outer row of the quantity transform bit
+    for bit, in numpy and in JAX, so limited and linear runs agree to the last bit there."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    from aragog.jax.phase import MeshArrays, entropy_at_basic_nodes
+
+    mesh = _limited_mesh((-1.0e6, 1.0e7))
+    arrays = MeshArrays.from_numpy_mesh(mesh)
+    rng, n = np.random.default_rng(5), mesh._quantity_transform.shape[1]
+    differ = [0, 0]
+    for _ in range(500):
+        S = rng.uniform(2000.0, 4000.0) + rng.normal(0.0, 1.0, n)
+        differ[0] += mesh.entropy_at_basic_nodes(S)[-1] != mesh.quantity_at_basic_nodes(S)[-1]
+        Sj = jax.numpy.asarray(S)
+        differ[1] += float(entropy_at_basic_nodes(arrays, Sj)[-1]) != float(
+            (arrays.quantity_matrix @ Sj)[-1]
+        )
+    assert differ == [0, 0]
