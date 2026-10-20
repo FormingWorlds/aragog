@@ -19,21 +19,9 @@ on:
 permissions:
   contents: read
 
-# Nightly: full unit + smoke + slow suite with coverage instrumentation
-# and the 90% floor enforced via [tool.coverage.report].fail_under in
-# pyproject.toml. Excluded from push and PR CI because the slow tier
-# alone takes ~110 s and coverage instrumentation pushes the full run
-# to ~10 min on a 2-vCPU runner, over the 5 min budget for fast CI.
-#
-# `smoke` is included because the integration tests in
-# test_entropy_advanced.py, test_entropy_verification.py and
-# test_entropy_solver_integration.py exercise the production
-# EntropySolver.solve() path and the JAX RHS at full physical scale —
-# without them, entropy_solver.py / cvode_jax.py / jax/solver.py sit
-# at ~33 % / ~51 % / ~63 % coverage respectively.
-#
-# Uses micromamba + conda-forge for the env so SUNDIALS, gfortran, and the
-# scikits-odes binary stack come prebuilt.
+# Nightly: the unit, smoke and slow tiers with coverage in 2 parts and the 90 % gate of
+# [tool.coverage.report] on their combined data; over an hour on a 2-vCPU runner, so not run on
+# push or PR. micromamba with conda-forge provides SUNDIALS, gfortran and scikits-odes prebuilt.
 jobs:
   nightly:
     # The core verification page test runs in one process on its own runner: in an xdist worker
@@ -104,7 +92,7 @@ jobs:
       - name: Run the core verification page test in one process
         if: matrix.part == 'core-verification'
         run: |
-          # 4500 s per test: 1.7 times the longest item 13 call measured on this runner (2683 s)
+          # 4500 s per test: 3.1 times the longest item 13 call of this part on this runner (1430 s)
           pytest tests/test_core_verification_page.py -m "unit or smoke or integration or slow" \
             -p no:xdist -o "addopts=" -ra --timeout=4500 --timeout-method=thread --durations=10 \
             --cov=aragog --cov-report=term-missing --cov-fail-under=0
