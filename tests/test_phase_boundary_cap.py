@@ -737,11 +737,17 @@ def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeyp
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
+@pytest.mark.parametrize(
+    ('margin', 'names'),
+    [(100.0, ['cap', 'stiff', 'entry', 'progress']), (0.0, ['stiff', 'entry', 'progress'])],
+    ids=['floor on', 'floor off'],
+)
 def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
-    shared_eos, monkeypatch
+    shared_eos, monkeypatch, margin, names
 ):
-    """A start with one cell 1 J/kg/K above its liquidus opens an inside segment that watches every other entry."""
-    s = _solver(shared_eos, 'rate', end_time=2.0)
+    """A start with one cell 1 J/kg/K above its liquidus opens an inside segment that watches every
+    other entry; the step-cap root leads it only when a cap, here the EOS floor, is armed."""
+    s = _solver(shared_eos, 'rate', end_time=2.0, eos_floor_margin=margin)
     S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
     S0 = np.full(s._n_stag, S_liq[5] + 1.0)
     assert np.abs(S0 - S_liq).min() < 10.0
@@ -755,7 +761,7 @@ def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
 
     monkeypatch.setattr(s, '_solve_cvode_segments', wrapped)
     s.solve()
-    assert first[0].inside and first[0].names == ['cap', 'stiff', 'entry', 'progress']
+    assert first[0].inside and first[0].names == names
     assert not first[0].watch[5] and first[0].watch.sum() == s._n_stag
 
 

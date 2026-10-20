@@ -42,12 +42,12 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+    "hypothesis>=6.100.0",
     "pytest>=8.1",
     "pytest-cov>=1.0.0",
     "pytest-dependency>=0.6.0",
     "pytest-timeout>=2.1.0",
     "pytest-xdist>=3.0.0",
-    "hypothesis>=6.100",
 ]
 docs = [
     "zensical>=0.0.40",

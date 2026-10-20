@@ -57,5 +57,101 @@
   "linux": {
    "tcen_max_abs_diff_K_8TW": 0.693217197699596
   }
+ },
+ "process_runs": {
+  "source": "item13_stable_layer of the script, run without coverage on the GitHub runners in the stated process order: 10 jobs with 3 distinct outcomes. The aragog source and the script are those of 075fcb05; the job commit, on the kept branch tl/scratch-item13-probe, adds the probe script item13_probe.py, its workflow and a print of the values in the page test. The values of the 4 keys whose page-test bands are twice their spread over these runs and the values file; the job logs expire, the commit stays.",
+  "commit": "3bc03ef",
+  "runs": {
+   "macos_alone": {
+    "platform": "macOS arm64 (GitHub Actions)",
+    "order": "item 13 alone in one plain process (python item13_probe.py)",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732657",
+    "erosion_depth_km_end_aragog": 701.5721390712918,
+    "mixing_depth_max_rel": 0.0031229904304685974,
+    "tcen_max_abs_diff_K_rtol1e-8": 20.007353725446592,
+    "onset_max_abs_diff_myr_rtol1e-8": 61.0
+   },
+   "ubuntu_10": {
+    "platform": "Ubuntu x86_64 (GitHub Actions)",
+    "order": "after item 10 in one plain process (python item13_probe.py 10)",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732595",
+    "erosion_depth_km_end_aragog": 701.609193044195,
+    "mixing_depth_max_rel": 0.009829212806564902,
+    "tcen_max_abs_diff_K_rtol1e-8": 12.355096367376063,
+    "onset_max_abs_diff_myr_rtol1e-8": 29.0
+   },
+   "ubuntu_11": {
+    "platform": "Ubuntu x86_64 (GitHub Actions)",
+    "order": "after item 11 in one plain process (python item13_probe.py 11)",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732540",
+    "erosion_depth_km_end_aragog": 701.609193044195,
+    "mixing_depth_max_rel": 0.009829212806564902,
+    "tcen_max_abs_diff_K_rtol1e-8": 12.355096367376063,
+    "onset_max_abs_diff_myr_rtol1e-8": 29.0
+   },
+   "ubuntu_4": {
+    "platform": "Ubuntu x86_64 (GitHub Actions)",
+    "order": "after item 4 in one plain process (python item13_probe.py 4)",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732504",
+    "erosion_depth_km_end_aragog": 702.2953520695484,
+    "mixing_depth_max_rel": 0.003464257995572817,
+    "tcen_max_abs_diff_K_rtol1e-8": 9.92644300019765,
+    "onset_max_abs_diff_myr_rtol1e-8": 29.0
+   },
+   "ubuntu_4_5_6_9_10_11": {
+    "platform": "Ubuntu x86_64 (GitHub Actions)",
+    "order": "after items 4, 5, 6, 9, 10 and 11 in one plain process (python item13_probe.py 4,5,6,9,10,11)",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732590",
+    "erosion_depth_km_end_aragog": 702.2953520695484,
+    "mixing_depth_max_rel": 0.003464257995572817,
+    "tcen_max_abs_diff_K_rtol1e-8": 9.92644300019765,
+    "onset_max_abs_diff_myr_rtol1e-8": 29.0
+   },
+   "ubuntu_5": {
+    "platform": "Ubuntu x86_64 (GitHub Actions)",
+    "order": "after item 5 in one plain process (python item13_probe.py 5)",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732526",
+    "erosion_depth_km_end_aragog": 702.2953520695484,
+    "mixing_depth_max_rel": 0.003464257995572817,
+    "tcen_max_abs_diff_K_rtol1e-8": 9.92644300019765,
+    "onset_max_abs_diff_myr_rtol1e-8": 29.0
+   },
+   "ubuntu_6": {
+    "platform": "Ubuntu x86_64 (GitHub Actions)",
+    "order": "after item 6 in one plain process (python item13_probe.py 6)",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732677",
+    "erosion_depth_km_end_aragog": 702.2953520695484,
+    "mixing_depth_max_rel": 0.003464257995572817,
+    "tcen_max_abs_diff_K_rtol1e-8": 9.92644300019765,
+    "onset_max_abs_diff_myr_rtol1e-8": 29.0
+   },
+   "ubuntu_9": {
+    "platform": "Ubuntu x86_64 (GitHub Actions)",
+    "order": "after item 9 in one plain process (python item13_probe.py 9)",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732746",
+    "erosion_depth_km_end_aragog": 701.609193044195,
+    "mixing_depth_max_rel": 0.009829212806564902,
+    "tcen_max_abs_diff_K_rtol1e-8": 12.355096367376063,
+    "onset_max_abs_diff_myr_rtol1e-8": 29.0
+   },
+   "ubuntu_alone": {
+    "platform": "Ubuntu x86_64 (GitHub Actions)",
+    "order": "item 13 alone in one plain process (python item13_probe.py)",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732627",
+    "erosion_depth_km_end_aragog": 701.609193044195,
+    "mixing_depth_max_rel": 0.009829212806564902,
+    "tcen_max_abs_diff_K_rtol1e-8": 12.355096367376063,
+    "onset_max_abs_diff_myr_rtol1e-8": 29.0
+   },
+   "ubuntu_testfile": {
+    "platform": "Ubuntu x86_64 (GitHub Actions)",
+    "order": "the whole page test file in one pytest process",
+    "job": "https://github.com/FormingWorlds/aragog/actions/runs/39291704697/job/118193732481",
+    "erosion_depth_km_end_aragog": 701.609193044195,
+    "mixing_depth_max_rel": 0.009829212806564902,
+    "tcen_max_abs_diff_K_rtol1e-8": 12.355096367376063,
+    "onset_max_abs_diff_myr_rtol1e-8": 29.0
+   }
+  }
  }
 }
