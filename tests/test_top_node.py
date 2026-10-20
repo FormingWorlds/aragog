@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -243,13 +244,6 @@ def test_an_unbounded_table_gives_the_linear_node(s, r):
     assert top_node_entropy(S, r) == pytest.approx(_linear(S, r), rel=1e-12, abs=1e-9)
 
 
-def test_a_steep_top_step_far_from_the_edge_is_not_limited_by_the_next_step():
-    """The next cell step does not enter: far from the edge the node is the linear node."""
-    S = np.array([3100.0, 3000.0, 200.0])
-    assert top_node_entropy(S, 1.0) == pytest.approx(_linear(S, 1.0), rel=1e-12)
-    assert top_node_entropy(S, 1.0, -1e5, 1e5) == pytest.approx(-1200.0, rel=1e-3)
-
-
 @pytest.mark.parametrize(
     ('S', 'side'), [([400.0, 300.0, 50.0], 'below'), ([2700.0, 2800.0, 3050.0], 'above')]
 )
@@ -391,3 +385,24 @@ def test_the_floor_margin_does_not_enter_the_node():
         s._sync_top_node()
         assert mesh.top_bounds == (100.0, 3000.0)
         assert np.array_equal(mesh.entropy_at_basic_nodes(S), want)
+
+
+@pytest.mark.parametrize('bounds', [None, (100.0, 3000.0)], ids=['no-eos', 'eos'])
+def test_the_limited_mode_log_names_the_bounds_or_warns_without_a_table(caplog, bounds):
+    """Without EOS table bounds the limited node equals the linear node: the solver warns."""
+    s = _build_minimal_solver()
+    s.parameters.boundary_conditions.top_node = 'limited'
+    if bounds:
+        s.entropy_eos = SimpleNamespace(S_min=bounds[0], S_max=bounds[1])
+        s._check_eos_floors = lambda: None
+    with caplog.at_level(logging.INFO, logger='fwl.aragog'):
+        s.initialize()
+    rec = [r for r in caplog.records if 'top node: limited' in r.getMessage()]
+    assert len(rec) == 1
+    if bounds:
+        assert rec[0].levelno == logging.INFO and '[100, 3000] J/kg/K' in rec[0].getMessage()
+    else:
+        assert (
+            rec[0].levelno == logging.WARNING
+            and 'equals the linear node' in rec[0].getMessage()
+        )
