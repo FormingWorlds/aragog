@@ -173,8 +173,9 @@ def top_node_entropy(
     edge the half step points to, the node is continuous with slope 1 outside and ``1 - c``
     inside. An unbounded table gives the linear node. A non-finite cell among the top 2 gives
     NaN. Where the limiter does not act (step ``D``, factor ``k`` exactly 1) the node is
-    ``linear`` bit for bit, so the statements above hold to its rounding: a flat top on an edge
-    can lie 1 ulp outside the table, and where ``k`` leaves 1 the node can fall by 1 or 2 ulp.
+    ``linear`` bit for bit, so the statements above hold to its rounding: a flat top on or next
+    to an edge can lie up to 2 ulp outside the table, and where ``k`` leaves 1 the node fell by
+    at most 1 ulp in the sweeps measured (the tests allow 2).
 
     Parameters
     ----------
@@ -550,7 +551,8 @@ class Mesh:
         ------
         RuntimeError
             When a limited node with finite cells is not between the top cell and the linear
-            node, or leaves the table with the top cell in it and is not the linear node.
+            node, or leaves the table with the top cell in it and is not the linear node within
+            4 ulp of the table.
         """
         S = np.ravel(S)
         S_basic = self.quantity_at_basic_nodes(S)
@@ -559,9 +561,13 @@ class Mesh:
             node = float(top_node_entropy(S, self.top_ratio, lo, hi, linear=S_basic[-1]))
             ends = sorted((S[-1], S_basic[-1]))
             tol = 1e-12 * max(abs(ends[0]), abs(ends[1]), 1.0)
+            # the linear row may lie outside by rounding: 4 ulp, above the 2 ulp measured
+            near = min(node - lo, hi - node) >= -4 * np.spacing(abs(node))
             if np.isfinite(S_basic[-1]) and not (
                 ends[0] - tol <= node <= ends[1] + tol
-                and (not lo <= S[-1] <= hi or lo <= node <= hi or node == S_basic[-1])
+                and (
+                    not lo <= S[-1] <= hi or lo <= node <= hi or (node == S_basic[-1] and near)
+                )
             ):
                 raise RuntimeError(
                     f'limited top node {node!r} is outside [{ends[0]!r}, {ends[1]!r}] (top cell, '
