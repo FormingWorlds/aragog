@@ -153,7 +153,9 @@ def _radius_for_mass_coordinate(
 TOP_NODE_SCALE, TOP_NODE_POWER = 0.5, 4  # c and p of the limited top node
 
 
-def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.inf, xp=np):
+def top_node_entropy(
+    S, ratio: float, S_min: float = -np.inf, S_max: float = np.inf, xp=np, linear=None
+):
     """Limited entropy of the top basic node from the top 2 cell entropies.
 
     The linear node is ``S_N + D`` with the half step ``D = (ratio/2)(S_N - S_N-1)``. The limited
@@ -170,7 +172,8 @@ def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.
     is its own node; one whose half step points into it takes ``b`` from the far edge. At the
     edge the half step points to, the node is continuous with slope 1 outside and ``1 - c``
     inside. An unbounded table gives the linear node. A non-finite cell among the top 2 gives
-    NaN.
+    NaN. The node is ``linear + (step k - D)``, so where the limiter does not act (step ``D``,
+    factor ``k`` exactly 1) it is ``linear`` bit for bit.
 
     Parameters
     ----------
@@ -182,6 +185,9 @@ def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.
         Entropy range of the table [J/kg/K].
     xp : module
         ``numpy`` or ``jax.numpy``.
+    linear : float or array, optional
+        The linear node as the caller computes it (the outer row of the quantity transform);
+        ``S_N + D`` by default.
 
     Returns
     -------
@@ -203,7 +209,9 @@ def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.
     le = a <= b
     q = xp.where(le, a / xp.where(le & (b > 0), b, 1.0), b / xp.where(le, 1.0, a))
     step = xp.where(le, D, xp.where(D < 0, -b, b))
-    node = S[-1] + step * (1.0 + q**TOP_NODE_POWER) ** (-1.0 / TOP_NODE_POWER)
+    base = S[-1] + D if linear is None else linear
+    k = (1.0 + q**TOP_NODE_POWER) ** (-1.0 / TOP_NODE_POWER)
+    node = base + (step * k - xp.where(xp.isfinite(D), D, 0.0))  # no inf - inf; NaN later
     return xp.where(xp.isfinite(S[-1] + S[-2]), node, xp.nan)
 
 
@@ -547,7 +555,7 @@ class Mesh:
         S_basic = self.quantity_at_basic_nodes(S)
         if self.top_node == 'limited':
             lo, hi = self.top_bounds
-            node = float(top_node_entropy(S, self.top_ratio, lo, hi))
+            node = float(top_node_entropy(S, self.top_ratio, lo, hi, linear=S_basic[-1]))
             ends = sorted((S[-1], S_basic[-1]))
             tol = 1e-12 * max(abs(ends[0]), abs(ends[1]), 1.0)
             if np.isfinite(S_basic[-1]) and not (

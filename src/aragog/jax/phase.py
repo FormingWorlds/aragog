@@ -353,7 +353,8 @@ def entropy_at_basic_nodes(mesh: MeshArrays, S: jax.Array) -> jax.Array:
     """Entropy at the basic nodes, with the limited top node of ``aragog.mesh`` when set."""
     S_basic = mesh.quantity_matrix @ S
     if mesh.top_limited:
-        return S_basic.at[-1].set(top_node_entropy(S, mesh.top_ratio, *mesh.top_bounds, xp=jnp))
+        node = top_node_entropy(S, mesh.top_ratio, *mesh.top_bounds, xp=jnp, linear=S_basic[-1])
+        return S_basic.at[-1].set(node)
     return S_basic
 
 
