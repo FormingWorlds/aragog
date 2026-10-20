@@ -3723,7 +3723,7 @@ class EntropySolver:
         again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()
-        self._sync_top_node()  # the EOS or the floor margin may have changed since the reset
+        self._sync_top_node()  # the EOS may have changed since the reset
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.

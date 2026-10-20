@@ -164,11 +164,13 @@ def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.
     With the top cell in the table the node keeps at least ``1 - c`` of the top cell's distance
     to each edge and lies between the top cell and the linear node. ``d node / d S_N`` lies in
     ``[1 - c, 1 + ratio/2]`` and ``d node / d S_N-1`` in ``[-ratio/2, 0]``, so a cooling top cell
-    lowers the node. The node is C^p across ``D = 0`` and leaves the linear node by the fraction
-    ``1 - (1 + (|D|/b)^p)^(-1/p)`` of ``|D|``, below 1e-3 for ``b >= 4|D|`` at ``p = 4``. A top cell
-    outside the table is its own node; at the edge the node is continuous with slope 1 outside
-    and ``1 - c`` inside. An unbounded table gives the linear node. A non-finite cell among the
-    top 2 gives NaN.
+    lowers the node. With the top cell in the table the node is C^p across ``D = 0`` and leaves
+    the linear node by the fraction ``1 - (1 + (|D|/b)^p)^(-1/p)`` of ``|D|``, below 1e-3 for
+    ``b >= 4|D|`` at ``p = 4``. A top cell outside the table whose half step points away from it
+    is its own node; one whose half step points into it takes ``b`` from the far edge. At the
+    edge the half step points to, the node is continuous with slope 1 outside and ``1 - c``
+    inside. An unbounded table gives the linear node. A non-finite cell among the top 2 gives
+    NaN.
 
     Parameters
     ----------
@@ -198,7 +200,10 @@ def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.
     b = TOP_NODE_SCALE * xp.maximum(xp.where(D < 0, S[-1] - S_min, S_max - S[-1]), 0.0)
     lo, hi = xp.minimum(a, b), xp.maximum(a, b)
     q = lo / xp.where(hi > 0, hi, 1.0)  # in [0, 1]; 0 for an unbounded table
-    node = S[-1] + xp.sign(D) * lo * (1.0 + q**TOP_NODE_POWER) ** (-1.0 / TOP_NODE_POWER)
+    step = xp.where(
+        a <= b, D, xp.sign(D) * b
+    )  # D itself keeps its slope at D = 0 under autodiff
+    node = S[-1] + step * (1.0 + q**TOP_NODE_POWER) ** (-1.0 / TOP_NODE_POWER)
     return xp.where(xp.isfinite(S[-1] + S[-2]), node, xp.nan)
 
 
