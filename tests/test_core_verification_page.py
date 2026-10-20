@@ -36,13 +36,9 @@ RUN_SPREAD = {f'identity_{t}' for t in FLOWS} | {
     'core_vs_cmb_rel_rtol1e-8',
     'reconstructed_cmb_max_rel',
 }
-# Item 13 differences the page states as present (the unconverged run at rtol 1e-8 and the
-# mixing-constant depth change): at least half the value
-AT_LEAST_HALF = {
-    'tcen_max_abs_diff_K_rtol1e-8',
-    'onset_max_abs_diff_myr_rtol1e-8',
-    'mixing_depth_max_rel',
-}
+# Item 13 differences the page states as present (the unconverged run at rtol 1e-8): at least
+# half the value
+AT_LEAST_HALF = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
 # Item 13 T_cen changes under the mixing constants, of the size of the integration noise: held
 # between 0 and 1 K (0.30 K at most under a 1-ulp start temperature)
 MIXING_TCEN = {'mixing_tcen_max_K', 'mixing_tcen_min_K'}
@@ -130,10 +126,11 @@ def _holds(key, value, want):
 @pytest.mark.unit
 def test_the_bands_hold_the_recorded_runs_and_bound_both_sides():
     """Every process run of item 13 in stable_layer_spread.json holds; the bands of the 4 keys
-    of these runs are twice their spread over the runs and the values file (rounded up); every
-    band fails just outside it on both sides (for 3 keys the lower side through the half
-    floor); the differences the page states as present fail below half their value; and the
-    page gives the largest values of these runs."""
+    of these runs are twice their spread over the runs and the values file (rounded up); _holds
+    applies every band on both sides (for the 2 unconverged differences the lower side through
+    the half floor); those 2 fail below half their value, while the mixing-constant depth change,
+    which the page states as not resolved, is held by its band alone; and the page gives the
+    largest values of these runs."""
     spread = json.loads((ROOT / 'tools/verification/data/stable_layer_spread.json').read_text())
     runs, file13 = spread['process_runs']['runs'], VALUES['13']
     assert len(runs) == 10
@@ -152,10 +149,11 @@ def test_the_bands_hold_the_recorded_runs_and_bound_both_sides():
         assert want is not None, key
         assert not _holds(key, want + 1.01 * band, want), key
         assert not _holds(key, want - 1.01 * band, want), key
-    for key in (tcen, onset, mix):
+    for key in (tcen, onset):
         assert _holds(key, 0.51 * file13[key], file13[key]), key
         assert not _holds(key, 0.0, file13[key]), key
         assert not _holds(key, 0.49 * file13[key], file13[key]), key
+    assert _holds(mix, 0.49 * file13[mix], file13[mix]) and _holds(mix, 0.0, file13[mix])
     top = {key: max(run[key] for run in runs.values()) for key in (tcen, onset, mix)}
     page = PAGE.read_text()
     assert f'reach {top[tcen]:.0f} K and {top[onset]:.0f} Myr' in page
