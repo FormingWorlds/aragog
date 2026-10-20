@@ -23,6 +23,7 @@ from scipy.interpolate import PchipInterpolator
 from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_threshold
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 from aragog.jax.eos import EntropyEOS_JAX
+from aragog.mesh import top_node_entropy
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
@@ -244,6 +245,11 @@ class MeshArrays(eqx.Module):
     # (AdamsWilliamsonEOS).
     gravity_stag: jax.Array  # [m/s^2]
 
+    # Top basic node: limited (mesh.top_node == 'limited'), outer-cell spacing ratio, table range
+    top_limited: bool = eqx.field(static=True)
+    top_ratio: float
+    top_bounds: jax.Array  # [J/kg/K], (S_min, S_max)
+
     def __init__(
         self,
         d_dr_matrix,
@@ -260,6 +266,9 @@ class MeshArrays(eqx.Module):
         gravity,
         dP_dr_basic=None,
         gravity_stag=None,
+        top_limited=False,
+        top_ratio=1.0,
+        top_bounds=(-jnp.inf, jnp.inf),
     ):
         """Custom init so callers that predate the dP_dr_basic field
         keep working. When ``dP_dr_basic`` is not supplied we derive it
@@ -294,6 +303,8 @@ class MeshArrays(eqx.Module):
             g_arr = jnp.asarray(gravity)
             gravity_stag = 0.5 * (g_arr[:-1] + g_arr[1:])
         self.gravity_stag = jnp.asarray(gravity_stag)
+        self.top_limited, self.top_ratio = bool(top_limited), float(top_ratio)
+        self.top_bounds = jnp.asarray(top_bounds, dtype=float)
 
     @staticmethod
     def from_numpy_mesh(mesh) -> 'MeshArrays':
@@ -332,7 +343,19 @@ class MeshArrays(eqx.Module):
             # eos_gravity)`` (with scalar fallback). Aligned to the
             # staggered grid.
             gravity_stag=_build_gravity_array(mesh, r_stag=True),
+            top_limited=getattr(mesh, 'top_node', 'linear') == 'limited',
+            top_ratio=getattr(mesh, 'top_ratio', 1.0),
+            top_bounds=getattr(mesh, 'top_bounds', (-np.inf, np.inf)),
         )
+
+
+def entropy_at_basic_nodes(mesh: MeshArrays, S: jax.Array) -> jax.Array:
+    """Entropy at the basic nodes, with the limited top node of ``aragog.mesh`` when set."""
+    S_basic = mesh.quantity_matrix @ S
+    if mesh.top_limited:
+        top = top_node_entropy(S, mesh.top_ratio, *mesh.top_bounds, xp=jnp)
+        S_basic = S_basic.at[-1].set(top)
+    return S_basic
 
 
 # ---------------------------------------------------------------------------
@@ -780,7 +803,7 @@ def compute_fluxes(
         Heat flux, mass flux, eddy diffusivity, heating.
     """
     # Interpolate entropy to basic nodes and compute gradient
-    S_basic = mesh.quantity_matrix @ S_stag
+    S_basic = entropy_at_basic_nodes(mesh, S_stag)
     dSdr = mesh.d_dr_matrix @ S_stag
 
     # SPIDER ic.c:450 boundary-copy convention for dSdr at the surface

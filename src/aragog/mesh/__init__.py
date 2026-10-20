@@ -11,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.optimize import brentq
 
+from aragog.config.boundary import check_top_node
 from aragog.mesh.fixed_mesh import FixedMesh
 from aragog.mesh.pressure_eos import (
     EOS,
@@ -149,6 +150,58 @@ def _radius_for_mass_coordinate(
     return clamped
 
 
+TOP_NODE_SCALE, TOP_NODE_POWER = 0.5, 4  # c and p of the limited top node
+
+
+def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.inf, xp=np):
+    """Limited entropy of the top basic node from the top 2 cell entropies.
+
+    The linear node is ``S_N + D`` with the half step ``D = (ratio/2)(S_N - S_N-1)``. The limited
+    node is ``S_N + sign(D) M(|D|, b)``, with ``b = c (S_N - S_min)`` for ``D < 0`` and
+    ``b = c (S_max - S_N)`` for ``D > 0`` (0 outside the table), and the smooth minimum
+    ``M(a, b) = a b / (a^p + b^p)^(1/p)``, ``c = TOP_NODE_SCALE``, ``p = TOP_NODE_POWER``.
+
+    With the top cell in the table the node keeps at least ``1 - c`` of the top cell's distance
+    to each edge and lies between the top cell and the linear node. ``d node / d S_N`` lies in
+    ``[1 - c, 1 + ratio/2]`` and ``d node / d S_N-1`` in ``[-ratio/2, 0]``, so a cooling top cell
+    lowers the node. The node is C^p across ``D = 0`` and leaves the linear node by the fraction
+    ``1 - (1 + (|D|/b)^p)^(-1/p)`` of ``|D|``, below 1e-3 for ``b >= 4|D|`` at ``p = 4``. A top cell
+    outside the table is its own node; at the edge the node is continuous with slope 1 outside
+    and ``1 - c`` inside. An unbounded table gives the linear node. A non-finite cell among the
+    top 2 gives NaN.
+
+    Parameters
+    ----------
+    S : array
+        Cell entropies, innermost first along axis 0; the last 2 are used [J/kg/K].
+    ratio : float
+        Basic over staggered spacing of the outer cell (the outer row of the quantity transform).
+    S_min, S_max : float
+        Entropy range of the table [J/kg/K].
+    xp : module
+        ``numpy`` or ``jax.numpy``.
+
+    Returns
+    -------
+    float or array
+        Top basic-node entropy [J/kg/K].
+
+    Raises
+    ------
+    ValueError
+        With fewer than 2 cells.
+    """
+    if S.shape[0] < 2:
+        raise ValueError(f'the limited top node needs at least 2 cells, got {S.shape[0]}')
+    D = 0.5 * ratio * (S[-1] - S[-2])
+    a = xp.abs(D)
+    b = TOP_NODE_SCALE * xp.maximum(xp.where(D < 0, S[-1] - S_min, S_max - S[-1]), 0.0)
+    lo, hi = xp.minimum(a, b), xp.maximum(a, b)
+    q = lo / xp.where(hi > 0, hi, 1.0)  # in [0, 1]; 0 for an unbounded table
+    node = S[-1] + xp.sign(D) * lo * (1.0 + q**TOP_NODE_POWER) ** (-1.0 / TOP_NODE_POWER)
+    return xp.where(xp.isfinite(S[-1] + S[-2]), node, xp.nan)
+
+
 class Mesh:
     """A staggered mesh.
 
@@ -284,6 +337,10 @@ class Mesh:
             self._dxidr: npt.NDArray = np.ones_like(self.basic.radii)
         self._d_dr_transform: npt.NDArray = self._get_d_dr_transform_matrix()
         self._quantity_transform: npt.NDArray = self._get_quantity_transform_matrix()
+        bc = getattr(parameters, 'boundary_conditions', None)
+        self.top_node = getattr(bc, 'top_node', 'linear')
+        check_top_node(self.top_node, getattr(bc, 'core_bc', None))
+        self.top_bounds = (-np.inf, np.inf)
 
     @property
     def dxidr(self) -> npt.NDArray:
@@ -466,6 +523,40 @@ class Mesh:
         logger.debug('quantity_at_basic_nodes = %s', quantity_at_basic_nodes)
 
         return quantity_at_basic_nodes
+
+    @property
+    def top_ratio(self) -> float:
+        """Basic over staggered spacing of the outer cell (the outer row of the transform)."""
+        return float(-2.0 * self._quantity_transform[-1, -2])
+
+    def entropy_at_basic_nodes(self, S: npt.NDArray) -> npt.NDArray:
+        """Entropy at the basic nodes, with the top node from ``top_node_entropy`` when limited.
+
+        Raises
+        ------
+        RuntimeError
+            When a limited node with finite cells is not between the top cell and the linear
+            node, or leaves the table with the top cell in it.
+        """
+        S = np.ravel(S)
+        S_basic = self.quantity_at_basic_nodes(S)
+        if self.top_node == 'limited':
+            node, (lo, hi) = (
+                float(top_node_entropy(S, self.top_ratio, *self.top_bounds)),
+                self.top_bounds,
+            )
+            ends = sorted((S[-1], S_basic[-1]))
+            tol = 1e-12 * max(abs(ends[0]), abs(ends[1]), 1.0)
+            if np.isfinite(S_basic[-1]) and not (
+                ends[0] - tol <= node <= ends[1] + tol
+                and (not lo <= S[-1] <= hi or lo <= node <= hi)
+            ):
+                raise RuntimeError(
+                    f'limited top node {node!r} is outside [{ends[0]!r}, {ends[1]!r}] (top cell, '
+                    f'linear node) or the table [{lo!r}, {hi!r}] that holds the top cell'
+                )
+            S_basic[-1] = node
+        return S_basic
 
     def quantity_at_staggered_nodes(self, basic_quantity: npt.NDArray) -> npt.NDArray:
         """Determines a quantity at the staggered nodes that is defined at the basic nodes.
