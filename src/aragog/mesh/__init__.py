@@ -172,8 +172,8 @@ def top_node_entropy(
     is its own node; one whose half step points into it takes ``b`` from the far edge. At the
     edge the half step points to, the node is continuous with slope 1 outside and ``1 - c``
     inside. An unbounded table gives the linear node. A non-finite cell among the top 2 gives
-    NaN. The node is ``linear + (step k - D)``, so where the limiter does not act (step ``D``,
-    factor ``k`` exactly 1) it is ``linear`` bit for bit.
+    NaN. Where the limiter does not act (step ``D``, factor ``k`` exactly 1) the node is
+    ``linear`` bit for bit, so the statements above hold there to its rounding.
 
     Parameters
     ----------
@@ -209,9 +209,9 @@ def top_node_entropy(
     le = a <= b
     q = xp.where(le, a / xp.where(le & (b > 0), b, 1.0), b / xp.where(le, 1.0, a))
     step = xp.where(le, D, xp.where(D < 0, -b, b))
-    base = S[-1] + D if linear is None else linear
     k = (1.0 + q**TOP_NODE_POWER) ** (-1.0 / TOP_NODE_POWER)
-    node = base + (step * k - xp.where(xp.isfinite(D), D, 0.0))  # no inf - inf; NaN later
+    linear = S[-1] + D if linear is None else linear
+    node = xp.where((step == D) & (k == 1.0), linear, S[-1] + step * k)
     return xp.where(xp.isfinite(S[-1] + S[-2]), node, xp.nan)
 
 
@@ -560,7 +560,7 @@ class Mesh:
             tol = 1e-12 * max(abs(ends[0]), abs(ends[1]), 1.0)
             if np.isfinite(S_basic[-1]) and not (
                 ends[0] - tol <= node <= ends[1] + tol
-                and (not lo <= S[-1] <= hi or lo <= node <= hi)
+                and (not lo <= S[-1] <= hi or lo - tol <= node <= hi + tol)
             ):
                 raise RuntimeError(
                     f'limited top node {node!r} is outside [{ends[0]!r}, {ends[1]!r}] (top cell, '
