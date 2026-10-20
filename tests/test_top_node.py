@@ -281,6 +281,17 @@ def test_a_non_finite_cell_gives_a_non_finite_node(S, r, bad):
         assert not np.isfinite(top_node_entropy(cells, r, -6000.0, 30000.0))
 
 
+@pytest.mark.parametrize(
+    'cells', [[2e3, np.inf], [2e3, -np.inf], [np.inf, 2e3], [-np.inf, 2e3]]
+)
+def test_a_non_finite_cell_on_a_bounded_table_gives_nan_without_a_warning(cells):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        node = top_node_entropy(np.array(cells), 1.0, 100.0, 3000.0)
+    assert np.isnan(node)
+    assert not [w for w in caught if issubclass(w.category, RuntimeWarning)]
+
+
 def test_two_cells_give_the_node_and_one_cell_is_refused():
     assert np.isfinite(top_node_entropy(np.array([2000.0, 400.0]), 1.0, 100.0, 3000.0))
     with pytest.raises(ValueError, match='at least 2 cells'):
