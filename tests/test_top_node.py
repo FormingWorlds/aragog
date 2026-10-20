@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import tomllib
 import warnings
@@ -503,9 +504,7 @@ def test_a_top_cell_on_or_next_to_an_edge_keeps_the_node_in_the_table():
     an edge gives the linear row."""
     lo, hi = 2345.678901, 3999.123
     rng, bad = np.random.default_rng(3), 0
-    for r, edge, sgn in [
-        (r, e, g) for r in (0.7316, 0.99564) for e, g in ((hi, -1.0), (lo, 1.0))
-    ]:
+    for r, (edge, sgn) in itertools.product((0.7316, 0.99564), ((hi, -1.0), (lo, 1.0))):
         mesh = _ratio_mesh((lo, hi), r)
         n = mesh._quantity_transform.shape[1]
         for k in range(3):
