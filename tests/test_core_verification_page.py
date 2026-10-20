@@ -124,17 +124,37 @@ def _holds(key, value, want):
 
 
 @pytest.mark.unit
-def test_the_bands_bound_their_values_on_both_sides():
-    """Every banded key is a recorded value and fails just outside its band; the differences of
-    the unconverged rtol 1e-8 run fail below half their recorded value."""
+def test_the_bands_hold_the_recorded_runs_and_bound_both_sides():
+    """Every process run of item 13 in stable_layer_spread.json holds, each band is twice the spread
+    of these runs and the values file (rounded up) and fails just outside on both sides, the
+    differences the page states as present fail below half their value, and the page gives the
+    largest values of these runs."""
+    spread = json.loads((ROOT / 'tools/verification/data/stable_layer_spread.json').read_text())
+    runs, file13 = spread['process_runs']['runs'], VALUES['13']
+    assert len(runs) == 10
+    tcen, onset, mix = (
+        'tcen_max_abs_diff_K_rtol1e-8',
+        'onset_max_abs_diff_myr_rtol1e-8',
+        'mixing_depth_max_rel',
+    )
+    for key in (tcen, onset, mix, 'erosion_depth_km_end_aragog'):
+        vals = [run[key] for run in runs.values()] + [file13[key]]
+        assert 2.0 <= BANDS[key] / (max(vals) - min(vals)) < 2.1, key
+        for name, run in runs.items():
+            assert _holds(key, run[key], file13[key]), (name, key, run[key])
     for key, band in BANDS.items():
-        want = next(item[key] for item in VALUES.values() if key in item)
+        want = next((item[key] for item in VALUES.values() if key in item), None)
+        assert want is not None, key
         assert not _holds(key, want + 1.01 * band, want), key
-    for key in ('tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'):
-        want = VALUES['13'][key]
-        assert _holds(key, want, want)
-        assert not _holds(key, 0.0, want), key
-        assert not _holds(key, 0.49 * want, want), key
+        assert not _holds(key, want - 1.01 * band, want), key
+    for key in (tcen, onset, mix):
+        assert _holds(key, 0.51 * file13[key], file13[key]), key
+        assert not _holds(key, 0.0, file13[key]), key
+        assert not _holds(key, 0.49 * file13[key], file13[key]), key
+    top = {key: max(run[key] for run in runs.values()) for key in (tcen, onset, mix)}
+    page = PAGE.read_text()
+    assert f'reach {top[tcen]:.0f} K and {top[onset]:.0f} Myr' in page
+    assert f'reaches {100 * top[mix]:.1f} %' in page
 
 
 def _reproduces(script, item):
