@@ -592,3 +592,16 @@ def test_the_node_falls_at_most_2_ulp_where_the_limiter_starts_to_act():
                 nodes.append(mesh.entropy_at_basic_nodes(S)[-1])
             worst = min(worst, (np.diff(nodes) / np.spacing(np.array(nodes[1:]))).min())
     assert worst >= -2.0
+
+
+def test_a_flat_top_2_ulp_outside_the_table_is_accepted_as_the_linear_row():
+    hi = 3868.319704423903
+    mesh = _ratio_mesh((100.0, hi))
+    S = np.full(mesh._quantity_transform.shape[1], hi)
+    row = mesh.quantity_at_basic_nodes(S)[-1]
+    assert row == hi + 2 * np.spacing(hi)
+    try:
+        node = mesh.entropy_at_basic_nodes(S)[-1]
+    except RuntimeError:
+        node = np.nan
+    assert node == row
