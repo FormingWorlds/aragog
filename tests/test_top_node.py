@@ -234,7 +234,7 @@ def test_the_node_returns_to_linear_as_the_edge_moves_away(ratio, gap):
     assert rel == pytest.approx(gap, rel=1e-3)
 
 
-@pytest.mark.parametrize('bounds', [(-np.inf, np.inf), (100.0, np.inf), (-np.inf, 3000.0)])
+@pytest.mark.parametrize('bounds', [(-np.inf, np.inf), (100.0, np.inf), (2e3, np.inf)])
 def test_a_zero_step_on_an_unbounded_side_raises_no_warning(bounds):
     with warnings.catch_warnings():
         warnings.simplefilter('error')
@@ -318,6 +318,10 @@ def test_the_jax_node_matches_numpy_and_its_jacobian_matches_differences():
         tie = jax.jacrev(lambda x: top_node_entropy(x, 1.0, 100.0, 3000.0, xp=jnp))
         fd = _slopes(np.array(S), 1.0, 100.0, 3000.0, h=1e-4)
         assert np.array(tie(jnp.asarray(S)))[:0:-1] == pytest.approx(fd, rel=1e-5, abs=1e-6)
+    edge = jax.jacrev(lambda x: top_node_entropy(x, 1.0, 100.0, 3000.0, xp=jnp))
+    for S in ([0.0, 500.0, 100.0], [0.0, 2500.0, 3000.0]):  # top cell on the edge it steps to
+        assert float(np.array(edge(jnp.asarray(S)))[-1]) == pytest.approx(1 - C)
+    assert np.isnan(top_node_entropy(np.array([1e3, 2e3, 500.0]), 1.0, np.nan, 3000.0))
     for S in ([1e3, 2e3, lo], [lo, lo, lo]):  # top cell at S_min
         assert np.all(np.isfinite(np.array(jac(jnp.asarray(S)))))
     with pytest.raises(ValueError, match='at least 2 cells'):
@@ -453,7 +457,5 @@ def test_the_linear_mode_reads_no_table_range_of_the_eos():
     s._initialize_internals()
     s.entropy_eos = object()
     s._sync_top_node()
-    assert s.evaluator.mesh.top_node == 'linear' and s.evaluator.mesh.top_bounds == (
-        -np.inf,
-        np.inf,
-    )
+    mesh = s.evaluator.mesh
+    assert mesh.top_node == 'linear' and mesh.top_bounds == (-np.inf, np.inf)
