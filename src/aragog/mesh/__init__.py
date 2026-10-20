@@ -197,7 +197,8 @@ def top_node_entropy(S, ratio: float, S_min: float = -np.inf, S_max: float = np.
         raise ValueError(f'the limited top node needs at least 2 cells, got {S.shape[0]}')
     D = 0.5 * ratio * (S[-1] - S[-2])
     a = xp.abs(D)
-    b = TOP_NODE_SCALE * xp.maximum(xp.where(D < 0, S[-1] - S_min, S_max - S[-1]), 0.0)
+    x = xp.where(D < 0, S[-1] - S_min, S_max - S[-1])
+    b = TOP_NODE_SCALE * xp.where(x < 0, 0.0, x)  # inside slope at x = 0; NaN stays
     # min(a, b) / max(a, b) by branch: autodiff takes a one-sided slope at a = b and at D = 0
     le = a <= b
     q = xp.where(le, a / xp.where(le & (b > 0), b, 1.0), b / xp.where(le, 1.0, a))

@@ -1427,11 +1427,13 @@ class EntropySolver:
             self._top_bounds_logged = bounds
             if np.isinf(bounds).all():
                 logger.warning(
-                    'EntropySolver: top node: limited without EOS table bounds equals the linear node'
+                    'EntropySolver: top node: limited without EOS table bounds '
+                    'equals the linear node'
                 )
             else:
                 logger.info(
-                    'EntropySolver: top node: limited (monotone, inside the table [%.6g, %.6g] J/kg/K)',
+                    'EntropySolver: top node: limited (monotone, inside the table '
+                    '[%.6g, %.6g] J/kg/K)',
                     *bounds,
                 )
 
