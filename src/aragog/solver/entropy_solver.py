@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from aragog.jax.nondim import NonDimScales
 
+from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
@@ -479,8 +480,10 @@ class _PhaseBoundarySegmentRoot(_CV_RootFunction):
         scale = {'stiff': self.delta, 'entry': self.delta}
         if self.step_cap is not None:
             c = self.step_cap  # scaled by the cap that binds, in that cap's own unit
-            by_cap = {'phi': c.cap, 'temperature': c.cap_T, 'entropy': c.cap_S}
-            scale['cap'] = by_cap.get(c.binding_cap) or max(c.cap, c.cap_T, c.cap_S)
+            by_cap = dict(
+                phi=c.cap, temperature=c.cap_T, entropy=c.cap_S, eos_floor=c.floor_margin
+            )
+            scale['cap'] = by_cap.get(c.binding_cap) or max(by_cap.values())
         if 'progress' in self.names:
             scale['progress'] = float(np.min(self.reach[self.moving]))
         g = g / np.array([scale[n] for n in self.names])
@@ -541,10 +544,73 @@ def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
     return (xi3 - r3_core) / span
 
 
-class _PhiCapRootFunction(_CV_RootFunction):
-    """SUNDIALS root function for the per-call ΔΦ_global cap.
+def _floor_entropy(weights: npt.NDArray, S_stag: npt.NDArray) -> float:
+    """Smaller of the top basic-node entropy ``weights @ S_stag`` and the smallest cell entropy."""
+    return min(float(np.dot(weights, S_stag)), float(np.min(S_stag)))
 
-    Fires (g[0]=0) when the mass-weighted |ΔΦ_global(t, y)| relative to
+
+def _floor_start_level(weights, S_stag, rate_fn, S_min: float, margin: float, span: float):
+    """Root level of the EOS floor for one call start, and whether the call is refused.
+
+    The floor entropy ``s0`` is the smaller of the top basic-node entropy ``weights @ S`` and the
+    smallest cell entropy. Above ``S_min + margin/2`` (plus ``1e-6 margin``) the level is
+    ``S_min + margin``, or ``S_min + margin/2`` below ``S_min + margin``, without an RHS call.
+    Closer to the table, the rate of ``s0`` decides, taken as the smallest rate of every component
+    no more than ``1e-6 margin`` above ``s0``; the top-node component uses the larger of its own
+    rate and the top-cell rate above ``S_min + 2e-6 margin``, as the extrapolated node can fall
+    while no cell does; inside that band its own rate counts. Every such
+    start arms half its distance to ``S_min``. Above ``S_min + 2e-6 margin`` the call is refused
+    when that rate reaches the level in ``span``; at or below it, on any fall, at every span, and
+    when no level fits strictly between ``S_min`` and ``s0`` (every start at or below ``S_min``).
+
+    Parameters
+    ----------
+    weights : np.ndarray
+        Weights of the top basic node on the cell entropies.
+    S_stag : np.ndarray
+        Cell entropies at the call start [J/kg/K].
+    rate_fn : callable
+        Returns the cell entropy rates at the call start [J/kg/K/yr]; called only near the table.
+    S_min, margin : float
+        Table minimum entropy and floor margin [J/kg/K].
+    span : float
+        Call span [yr].
+
+    Returns
+    -------
+    tuple
+        ``(level, refuse)``: the root level [J/kg/K] or ``None``, and whether the call does not
+        advance. A non-finite start gives ``(None, False)`` (the table guard handles it), a NaN
+        rate ``(None, True)``.
+    """
+    S = np.asarray(S_stag, dtype=float)
+    if not np.all(np.isfinite(S)):
+        return None, False
+    s_top = float(np.dot(weights, S))
+    s0, tol = min(s_top, float(S.min())), 1.0e-6 * margin
+    for level in (S_min + margin, S_min + 0.5 * margin):
+        if s0 > level + tol:
+            return level, False
+    if s0 <= S_min:  # no level fits; the RHS is not evaluated at a state below the table
+        return None, True
+    rate = np.asarray(rate_fn(), dtype=float)
+    node_rate = float(np.dot(weights, rate))
+    if s0 > S_min + 2.0 * tol:  # above the table band the top cell counts too
+        node_rate = max(node_rate, float(rate[-1]))
+    active = rate[S <= s0 + tol].tolist() + ([node_rate] if s_top <= s0 + tol else [])
+    r = float(np.min(active))  # a NaN rate fails both comparisons below, so it refuses
+    half = 0.5 * (s0 + S_min)
+    if s0 <= S_min + 2.0 * tol:  # at the table: any fall, or no room for a level, refuses
+        return (half, False) if r >= 0.0 and S_min < half < s0 else (None, True)
+    return (half, False) if s0 + r * span > half else (None, True)
+
+
+class _PhiCapRootFunction(_CV_RootFunction):
+    """SUNDIALS root function for the per-call step caps and the EOS floor.
+
+    g[0] is the smallest margin of the armed components: the ΔΦ_global cap below, the per-cell
+    temperature and entropy caps, and the EOS floor (``_floor_entropy`` minus its level).
+    The ΔΦ_global cap fires (g[0]=0) when the mass-weighted |ΔΦ_global(t, y)| relative to
     the start-of-solve value crosses the configured cap. CVODE returns
     at the exact crossing time, so the achieved |ΔΦ_global| equals
     the cap to within CVODE's root tolerance and there is no rate
@@ -579,6 +645,16 @@ class _PhiCapRootFunction(_CV_RootFunction):
         Element-wise nondim scaling for the state vector. The first
         ``n_stag`` entries are entropy scales (S_ref); later entries
         scale the boundary state.
+    phi0_per_cell, T0_per_cell, S0_per_cell : np.ndarray, optional
+        Per-cell melt fraction, temperature [K] and entropy [J/kg/K] at solve entry.
+    cap_temperature, cap_entropy : float
+        Per-cell temperature [K] and entropy [J/kg/K] caps; 0 disables them.
+    floor_weights : np.ndarray, optional
+        Top basic-node weights of the EOS floor (``None``: no floor).
+    floor_level : float
+        Floor entropy at which the floor fires [J/kg/K].
+    floor_margin : float
+        Floor margin m [J/kg/K], the scale of the floor component.
     """
 
     def __init__(
@@ -595,6 +671,9 @@ class _PhiCapRootFunction(_CV_RootFunction):
         T0_per_cell=None,
         cap_entropy=0.0,
         S0_per_cell=None,
+        floor_weights=None,
+        floor_level=0.0,
+        floor_margin=0.0,
     ):
         self.eos = eos
         self.P_stag = np.asarray(P_stag, dtype=float).ravel()
@@ -627,17 +706,18 @@ class _PhiCapRootFunction(_CV_RootFunction):
         self.S0_cell = (
             None if S0_per_cell is None else np.asarray(S0_per_cell, dtype=float).ravel()
         )
+        # EOS floor: the smaller of the top basic-node entropy (floor_weights @ S) and the
+        # smallest cell entropy must stay above floor_level, a margin above the table minimum.
+        self.floor_w = None if floor_weights is None else np.asarray(floor_weights, dtype=float)
+        self.floor_level, self.floor_margin = float(floor_level), float(floor_margin)
         # Hit counter for diagnostics; CVODE may evaluate the rootfn
         # at every internal step so this can grow large.
         self.evals = 0
         # Mass-total at start (constant within one solve); cached for
         # repeated mass-weight normalisation.
         self._mass_total_at_start = -1.0  # filled on first evaluate()
-        # Which margin ('phi', 'entropy', 'temperature') produced g[0] on
-        # the last evaluate() call, so a caller can name the cap that
-        # actually bound when this fires. None until the first evaluate(),
-        # and reset to None whenever evaluate() raises, since g[0] is then
-        # a sentinel with no margin behind it.
+        # Margin ('phi', 'entropy', 'temperature', 'eos_floor') behind g[0] of the last
+        # evaluate(); None before it and after an evaluate() that raised (g[0] a sentinel).
         self.binding_cap = None
 
     def evaluate(self, t, y, g, userdata=None):
@@ -681,6 +761,11 @@ class _PhiCapRootFunction(_CV_RootFunction):
                     if candidate < margin:
                         margin = candidate
                         binding_cap = 'temperature'
+            if self.floor_w is not None:
+                candidate = _floor_entropy(self.floor_w, S_stag) - self.floor_level
+                if candidate < margin:
+                    margin = candidate
+                    binding_cap = 'eos_floor'
             g[0] = margin if np.isfinite(margin) else 1.0
             self.binding_cap = binding_cap
             self.evals += 1
@@ -692,7 +777,7 @@ class _PhiCapRootFunction(_CV_RootFunction):
             # a safe positive sentinel (at least one cap is positive whenever
             # this rootfn was constructed).
             self.binding_cap = None
-            g[0] = max(self.cap, self.cap_T, self.cap_S)
+            g[0] = max(self.cap, self.cap_T, self.cap_S, self.floor_margin)
             return 0
 
 
@@ -709,6 +794,9 @@ def _phi_cap_event_factory(
     T0_per_cell=None,
     cap_entropy=0.0,
     S0_per_cell=None,
+    floor_weights=None,
+    floor_level=0.0,
+    floor_margin=0.0,
 ):
     """Build a scipy ``solve_ivp`` event for the per-cell step caps.
 
@@ -717,10 +805,12 @@ def _phi_cap_event_factory(
     semantics mirror :class:`_PhiCapRootFunction`: the event value is the
     minimum margin across the active caps, ``cap - max(|ΔΦ_global|,
     max_i |Δφ_i|)`` and, when enabled, ``cap_temperature - max_i |ΔT_i|``
-    and ``cap_entropy - max_i |ΔS_i|``. Crossing zero from positive to
+    and ``cap_entropy - max_i |ΔS_i|``, and with ``floor_weights`` the EOS floor
+    ``_floor_entropy - floor_level``. Crossing zero from positive to
     negative terminates the integration, so a single deep cell crossing the
     two-phase window or cooling on the solid adiabat arrests the step even
-    when the global mean barely moves.
+    when the global mean barely moves. The parameters are those of
+    :class:`_PhiCapRootFunction`.
     """
     P_stag_arr = np.asarray(P_stag, dtype=float).ravel()
     volume_arr = np.asarray(volume, dtype=float).ravel()
@@ -769,11 +859,16 @@ def _phi_cap_event_factory(
                     if candidate < margin:
                         margin = candidate
                         binding_cap = 'temperature'
+            if floor_weights is not None:
+                candidate = _floor_entropy(floor_weights, S_stag) - float(floor_level)
+                if candidate < margin:
+                    margin = candidate
+                    binding_cap = 'eos_floor'
             _event.binding_cap = binding_cap
             return margin if np.isfinite(margin) else 1.0
         except Exception:
             _event.binding_cap = None
-            return max(cap_float, cap_T, cap_S)
+            return max(cap_float, cap_T, cap_S, float(floor_margin))
 
     _event.terminal = True
     _event.direction = -1.0  # only fire on positive-to-negative crossing
@@ -3466,6 +3561,8 @@ class EntropySolver:
                     result.cap_value = float(phi_cap_rootfn.cap_S)
                 elif result.cap_label == 'phi':
                     result.cap_value = float(phi_cap_rootfn.cap)
+                elif result.cap_label == 'eos_floor':
+                    result.cap_value = float(phi_cap_rootfn.floor_level)
                 result.cap_phi0 = float(phi_cap_rootfn.phi0)
         else:
             result.status = -1
@@ -3599,12 +3696,14 @@ class EntropySolver:
             self._warned.add(key)
             logger.log(level, message)
 
-    def solve(self) -> None:
+    def solve(self, _floor_discard: str | None = None) -> None:
         """Run the BDF time integration.
 
         A successful solve also stores the per-call energy integrals on the result as
         ``energy_integrals`` (see ``_compute_step_energy_integrals``); a failed one stores
-        zeros.
+        zeros. ``_floor_discard`` (internal) refuses the call with that warning: a call whose
+        floor root returns a state below the EOS table, or stops at the call start, is solved
+        again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()
         start_time = self.parameters.solver.start_time
@@ -3644,12 +3743,10 @@ class EntropySolver:
             atol_scale = 10.0
             max_step = np.inf
 
-        # phi_cap_anchor stores the step-cap anchor dict for the SUNDIALS
-        # rootfn / scipy event, or None when no cap is armed. Initialised
-        # here so the consumer at the bottom of solve() never hits an
-        # UnboundLocalError when the EOS branch below is skipped (e.g. the
-        # const_properties path with no EOS).
+        # Step-cap anchor of the root or event, None when no cap is armed (the floor arms the
+        # root without it); set here for the paths without an EOS, such as const_properties.
         phi_cap_anchor = None
+        floor, floor_refused = None, False
         rate_mode = False
 
         # Runs whenever the entropy EOS is loaded: the T and S caps stay armed in the deep solid,
@@ -3793,6 +3890,57 @@ class EntropySolver:
                         exc,
                     )
 
+            # EOS floor: a root ends the call at S_min + m, or S_min + m/2 for a start below
+            # S_min + m; closer starts are decided by _floor_start_level.
+            floor_margin = _resolve_step_cap(
+                getattr(self.parameters.energy, 'eos_floor_margin', EOS_FLOOR_MARGIN_DEFAULT)
+            )
+            S_tab = float(self.entropy_eos.S_min)
+            if floor_margin >= float(self.entropy_eos.S_max) - S_tab:
+                raise ValueError(
+                    f'eos_floor_margin {floor_margin!r} J/kg/K must be below the entropy '
+                    f'span of the EOS tables, {float(self.entropy_eos.S_max) - S_tab!r}'
+                )
+            if _floor_discard is not None:
+                floor_refused, end_time = True, start_time
+                logger.warning(_floor_discard)
+            elif floor_margin > 0.0 and not gradient_mode and end_time > start_time:
+                floor_w = np.asarray(self.evaluator.mesh._quantity_transform)[-1]
+                level, refuse = _floor_start_level(
+                    floor_w,
+                    S_arr_stag,
+                    lambda: np.ravel(self._dSdt_single(start_time, self._S0))[: self._n_stag],
+                    S_tab,
+                    floor_margin,
+                    end_time - start_time,
+                )
+                if level is not None:
+                    floor = dict(
+                        floor_weights=floor_w, floor_level=level, floor_margin=floor_margin
+                    )
+                elif refuse:
+                    floor_refused, end_time = True, start_time
+                    s_floor = _floor_entropy(floor_w, S_arr_stag)
+                    band, half = 2.0e-6 * floor_margin, 0.5 * (s_floor + S_tab)
+                    if s_floor <= S_tab:
+                        why = 'at or below the table minimum'
+                    elif s_floor <= S_tab + band and not S_tab < half < s_floor:
+                        why = 'no level fits between it and the table minimum'
+                    elif s_floor <= S_tab + band:
+                        why = f'counts as at the table minimum (within {band:.2g} J/kg/K) and falls'
+                    else:
+                        why = (
+                            f'at most {0.5 * floor_margin:.1f} J/kg/K above it, falls too fast'
+                        )
+                    logger.warning(
+                        'EOS floor: entropy %.9g J/kg/K at the call start, %+.3e J/kg/K from the '
+                        'table minimum %.9g J/kg/K, %s; the call does not advance',
+                        s_floor,
+                        s_floor - S_tab,
+                        S_tab,
+                        why,
+                    )
+
         # External per-call atol scale factor (PROTEUS retry ladder
         # opts in by setting solver._atol_sf before solve()). Default
         # 1.0 leaves behaviour unchanged for callers that don't set it.
@@ -3879,22 +4027,23 @@ class EntropySolver:
         # solve entry.
         events = None
         phi_cap_rootfn = None
-        if phi_cap_anchor is not None:
-            a = phi_cap_anchor
+        if phi_cap_anchor is not None or floor is not None:
+            a = phi_cap_anchor or {}
             try:
                 cap_kw = dict(
                     eos=self.entropy_eos,
                     P_stag=self._P_stag_flat,
                     volume=self._volume_flat,
                     n_stag=self._n_stag,
-                    phi0_global=a['phi0_global'],
-                    cap=a['cap_phi'],
+                    phi0_global=a.get('phi0_global', 0.0),
+                    cap=a.get('cap_phi', 0.0),
                     state_scale=_state_scale,
-                    phi0_per_cell=a['phi0_cell'],
-                    cap_temperature=a['cap_T'],
-                    T0_per_cell=a['T0_cell'],
-                    cap_entropy=a['cap_S'],
-                    S0_per_cell=a['S0_cell'],
+                    phi0_per_cell=a.get('phi0_cell'),
+                    cap_temperature=a.get('cap_T', 0.0),
+                    T0_per_cell=a.get('T0_cell'),
+                    cap_entropy=a.get('cap_S', 0.0),
+                    S0_per_cell=a.get('S0_cell'),
+                    **(floor or {}),
                 )
                 phi_cap_rootfn = _PhiCapRootFunction(**cap_kw)
                 events = [_phi_cap_event_factory(**cap_kw)]
@@ -4101,12 +4250,45 @@ class EntropySolver:
         trace = sol.get('energy_trace')
         if trace is not None:
             sol.energy_trace = self._physical_trace(trace, t_ref, _state_scale, _offset)
+        if floor_refused:
+            sol.status = 1
+            sol.message = 'EOS floor: the call does not advance'
+        elif floor is not None and sol.status >= 0 and sol.t is not None and len(sol.t):
+            t_end = float(np.asarray(sol.t)[-1])
+            ys = [np.asarray(sol.y, dtype=float)]
+            if trace is not None:
+                ys.append(np.asarray(sol.energy_trace[1], dtype=float))
+            S_all = np.concatenate([y[:n_s] for y in ys], axis=1)
+            low = min(float(np.min(floor['floor_weights'] @ S_all)), float(S_all.min()))
+            if low < S_tab:
+                return self.solve(
+                    _floor_discard=(
+                        f'EOS floor: the call with level S_min {floor["floor_level"] - S_tab:+.3e} '
+                        f'J/kg/K put the floor entropy at S_min {low - S_tab:+.3e} J/kg/K at '
+                        f'{t_end - start_time:.6g} yr after the call start {start_time:.9g} yr '
+                        f'(table minimum {S_tab:.9g} J/kg/K); the call is discarded and does not '
+                        'advance'
+                    )
+                )
+            if t_end <= float(np.asarray(sol.t)[0]):  # the returned start, after the time scale
+                return self.solve(
+                    _floor_discard=(
+                        f'EOS floor: the root of level S_min {floor["floor_level"] - S_tab:+.3e} '
+                        f'J/kg/K fell at the call start t={start_time:.9g} yr; the call does not '
+                        'advance'
+                    )
+                )
 
         # Step-cap-fire log, in physical time (after the t_ref restoration
         # above) and naming whichever margin actually bound: read from
         # ``sol.cap_label`` on the CVODE path, from the event closure's
         # ``binding_cap`` on the scipy fallback path.
-        cap_display_names = {'phi': 'ΔΦ_global', 'temperature': 'ΔT', 'entropy': 'ΔS'}
+        cap_display_names = {
+            'phi': 'ΔΦ_global',
+            'temperature': 'ΔT',
+            'entropy': 'ΔS',
+            'eos_floor': 'EOS floor',
+        }
         if getattr(sol, 'cap_fired', False) and sol.t is not None:
             t_root_phys = float(sol.t[-1])
             cap_label = getattr(sol, 'cap_label', None)
@@ -4133,12 +4315,16 @@ class EntropySolver:
                         float(getattr(sol, 'cap_phi0', 0.0)),
                     )
                 else:
-                    logger.info(
-                        '%s cap: CVODE rootfn fired at t=%.3e yr after %d evals; cap=%.3g',
+                    floor_fired = cap_label == 'eos_floor'
+                    logger.log(
+                        logging.WARNING if floor_fired else logging.INFO,
+                        '%s cap: CVODE rootfn fired at t=%.3e yr after %d evals; %s',
                         cap_name,
                         t_root_phys,
                         int(getattr(sol, 'cap_evals', 0)),
-                        float(getattr(sol, 'cap_value', 0.0)),
+                        f'level={sol.cap_value:.6g}'
+                        if floor_fired
+                        else f'cap={sol.cap_value:.3g}',
                     )
         elif (
             getattr(sol, 't_events', None) is not None
@@ -4155,10 +4341,12 @@ class EntropySolver:
                 )
             else:
                 cap_name = cap_display_names.get(event_label, 'ΔΦ_global')
-                logger.info(
-                    '%s cap: scipy event fired at t=%.3e yr (terminal=True)',
+                logger.log(
+                    logging.WARNING if event_label == 'eos_floor' else logging.INFO,
+                    '%s cap: scipy event fired at t=%.3e yr (terminal=True)%s',
                     cap_name,
                     t_event_phys,
+                    f'; level={floor["floor_level"]:.6g}' if event_label == 'eos_floor' else '',
                 )
 
         # Diagnostic logging: internal BDF step statistics (in physical yr)
@@ -4194,7 +4382,7 @@ class EntropySolver:
             self.state._pb_cache_hits = 0
             self.state._pb_cache_misses = 0
 
-        self._log_solution_outcome(end_time)
+        self._log_solution_outcome(self.parameters.solver.end_time)
         if self.stop_early:
             sol.energy_integrals = dict(_ZERO_ENERGY_INTEGRALS)
             return
