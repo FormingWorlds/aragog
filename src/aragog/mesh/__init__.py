@@ -173,7 +173,8 @@ def top_node_entropy(
     edge the half step points to, the node is continuous with slope 1 outside and ``1 - c``
     inside. An unbounded table gives the linear node. A non-finite cell among the top 2 gives
     NaN. Where the limiter does not act (step ``D``, factor ``k`` exactly 1) the node is
-    ``linear`` bit for bit, so the statements above hold there to its rounding.
+    ``linear`` bit for bit, so the statements above hold to its rounding: a flat top on an edge
+    can lie 1 ulp outside the table, and where ``k`` leaves 1 the node can fall by 1 or 2 ulp.
 
     Parameters
     ----------
@@ -549,7 +550,7 @@ class Mesh:
         ------
         RuntimeError
             When a limited node with finite cells is not between the top cell and the linear
-            node, or leaves the table with the top cell in it.
+            node, or leaves the table with the top cell in it and is not the linear node.
         """
         S = np.ravel(S)
         S_basic = self.quantity_at_basic_nodes(S)
@@ -560,7 +561,7 @@ class Mesh:
             tol = 1e-12 * max(abs(ends[0]), abs(ends[1]), 1.0)
             if np.isfinite(S_basic[-1]) and not (
                 ends[0] - tol <= node <= ends[1] + tol
-                and (not lo <= S[-1] <= hi or lo - tol <= node <= hi + tol)
+                and (not lo <= S[-1] <= hi or lo <= node <= hi or node == S_basic[-1])
             ):
                 raise RuntimeError(
                     f'limited top node {node!r} is outside [{ends[0]!r}, {ends[1]!r}] (top cell, '
