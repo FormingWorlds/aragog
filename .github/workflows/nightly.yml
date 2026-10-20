@@ -32,8 +32,8 @@ jobs:
       fail-fast: false
       matrix:
         part: [main, core-verification]
-    # With coverage on the 2-vCPU runner the tests of the main part took 67-93 min and those of
-    # the core verification part 23-36 min in 4 runs; 150 min leaves headroom for JAX warmup,
+    # With coverage on the 2-vCPU runner the tests of the main part took 58-98 min in 6 runs and
+    # those of the core verification part 23-36 min in 8; 150 min leaves headroom for JAX warmup,
     # conda cache misses, and runner-to-runner timing variance.
     timeout-minutes: 150
     defaults:
