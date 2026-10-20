@@ -526,6 +526,7 @@ def test_a_top_cell_on_or_next_to_an_edge_keeps_the_node_in_the_table():
 
 
 def test_the_limited_node_rises_with_the_top_cell_ulp_by_ulp():
+    """With the limiter acting, a rise of the top cell by 1 ulp never lowers the node."""
     mesh = _ratio_mesh((100.0, 3999.123))
     S = np.full(mesh._quantity_transform.shape[1], 999.123)
     S[-1] = 3500.0
@@ -536,45 +537,55 @@ def test_the_limited_node_rises_with_the_top_cell_ulp_by_ulp():
     assert np.all(np.diff(nodes) >= 0)
 
 
-def test_the_mesh_refuses_a_node_just_outside_the_table_unless_it_is_the_linear_row(
-    monkeypatch,
+@pytest.mark.parametrize(
+    'cells, bad',
+    [
+        ((2999.0, 2000.0), 3000.0 + 2 * np.spacing(3000.0)),
+        ((2999.0, 2000.0), 3000.0 + 1e-9),
+        ((2999.0, 2000.0), 'row'),
+        ((101.0, 500.0), 100.0 - 2 * np.spacing(100.0)),
+        ((101.0, 500.0), 100.0 - 1e-9),
+        ((101.0, 500.0), 'row'),
+    ],
+)
+def test_the_mesh_refuses_a_node_outside_the_table_unless_it_is_the_row_by_rounding(
+    monkeypatch, cells, bad
 ):
-    """Only the linear row may lie outside the table, by its own rounding; another node 2 ulp or
-    1e-9 outside it stops the call."""
+    """With the top cell in the table, a node outside it that is not the linear row, or the
+    linear row more than 4 ulp outside it (the limiter off), stops the call."""
     mesh = _ratio_mesh((100.0, 3000.0))
-    S = np.full(mesh._quantity_transform.shape[1], 2900.0)
-    S[-1] = 2999.0
-    refused = 0
-    for bad in (3000.0 + 2 * np.spacing(3000.0), 3000.0 + 1e-9):
-        monkeypatch.setattr(aragog.mesh, 'top_node_entropy', lambda *a, v=bad, **k: v)
-        try:
-            mesh.entropy_at_basic_nodes(S)
-        except RuntimeError:
-            refused += 1
-    assert refused == 2
+    S = np.full(mesh._quantity_transform.shape[1], 1500.0)
+    S[-1], S[-2] = cells
+    node = (lambda *a, linear=None, **k: linear) if bad == 'row' else (lambda *a, **k: bad)
+    monkeypatch.setattr(aragog.mesh, 'top_node_entropy', node)
+    with pytest.raises(RuntimeError, match='limited top node'):
+        mesh.entropy_at_basic_nodes(S)
 
 
 def test_the_node_falls_at_most_2_ulp_where_the_limiter_starts_to_act():
     """Across the switch from the linear row to S_N + step k (where k leaves 1, near |D|/b =
-    1e-4), a rise of the top cell by 1 ulp lowers the node by at most 2 ulp."""
-    hi, rng, worst = 4000.0, np.random.default_rng(13), 0.0
-    p = aragog.mesh.TOP_NODE_POWER
+    1e-4) at either edge, a rise of the top cell by 1 ulp lowers the node by at most 2 ulp; the
+    largest fall measured is 1 ulp."""
+    lo, hi, rng, worst = 100.0, 4000.0, np.random.default_rng(13), 0.0
+    p, c = aragog.mesh.TOP_NODE_POWER, aragog.mesh.TOP_NODE_SCALE
 
-    def k_is_1(top, below, r):
-        q = 0.5 * r * (top - below) / (aragog.mesh.TOP_NODE_SCALE * (hi - top))
+    def k_is_1(top, other, r):
+        D = 0.5 * r * (top - other)
+        q = abs(D) / (c * (hi - top if D > 0 else top - lo))
         return (1.0 + q**p) ** (-1.0 / p) == 1.0
 
-    for r in (0.3, 0.7316, 0.99564):
-        mesh = _ratio_mesh((100.0, hi), r)
+    sides = ((hi, (2500.0, 3500.0)), (lo, (600.0, 1600.0)))
+    for r, (edge, spread) in itertools.product((0.3, 0.7316, 0.99564), sides):
+        mesh = _ratio_mesh((lo, hi), r)
         S = np.full(mesh._quantity_transform.shape[1], 2000.0)
-        for below in rng.uniform(2500.0, 3500.0, 20):
-            S[-2] = below
-            a, b = below + 1e-9, 0.5 * (below + hi)
+        for other in rng.uniform(*spread, 10):
+            S[-2] = other
+            a, b = other + np.sign(edge - other) * 1e-9, 0.5 * (other + edge)
             for _ in range(80):
                 m = 0.5 * (a + b)
-                a, b = (m, b) if k_is_1(m, below, r) else (a, m)
+                a, b = (m, b) if k_is_1(m, other, r) else (a, m)
             tops = a + np.arange(-150, 150) * np.spacing(a)
-            assert k_is_1(tops[0], below, r) and not k_is_1(tops[-1], below, r)
+            assert k_is_1(tops[0], other, r) != k_is_1(tops[-1], other, r)
             nodes = []
             for top in tops:
                 S[-1] = top
