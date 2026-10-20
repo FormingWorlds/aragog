@@ -33,6 +33,7 @@ from aragog.jax.phase import (
     PhaseParams,
     PhaseProperties,
     compute_fluxes,
+    entropy_at_basic_nodes,
     evaluate_phase,
 )
 
@@ -408,7 +409,7 @@ def _dSdt_parts(
     # Phase properties needed for BCs
     phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
     phase_basic_T = evaluate_phase(
-        eos, params, mesh.P_basic, mesh.quantity_matrix @ S
+        eos, params, mesh.P_basic, entropy_at_basic_nodes(mesh, S)
     ).temperature
 
     # Apply boundary conditions
@@ -547,7 +548,7 @@ def _dSdt_energy_balance_parts(
     phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
 
     # Phase properties at basic nodes (with corrected CMB entropy)
-    S_basic_default = mesh.quantity_matrix @ S
+    S_basic_default = entropy_at_basic_nodes(mesh, S)
     S_basic = S_basic_default.at[0].set(S_basic_cmb)
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
@@ -801,7 +802,7 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
     heat_flux = flux_out.heat_flux
 
     phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
-    S_basic_default = mesh.quantity_matrix @ S
+    S_basic_default = entropy_at_basic_nodes(mesh, S)
     S_basic = S_basic_default.at[0].set(S_basic_cmb)
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
