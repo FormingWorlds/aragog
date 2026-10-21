@@ -83,8 +83,9 @@ def test_a_planted_temperature_error_shows_in_the_richardson_residual(gas, size)
 
 
 @pytest.mark.unit
-def test_tables_on_different_grids_raise(gas):
-    t = {**gas, 'density': {**gas['density'], 'S': gas['density']['S'] + 1.0}}
+@pytest.mark.parametrize('axis', ['P', 'S'])
+def test_tables_on_different_grids_raise(gas, axis):
+    t = {**gas, 'density': {**gas['density'], axis: gas['density'][axis] * (1 + 1e-6)}}
     with pytest.raises(ValueError, match='density is not on the'):
         c.residuals(t)
 
@@ -110,15 +111,15 @@ def test_axes_that_do_not_increase_raise(axis, grid):
 @pytest.mark.unit
 @pytest.mark.parametrize(
     'case, skipped',
-    [('short', {'dTdS', 'dTdP', 'maxwell'}), ('alpha 0', {'adiabat'})],
-    ids=['too short to differentiate', 'alpha 0 everywhere'],
+    [('short', {'dTdS', 'dTdP', 'maxwell'}), ('alpha NaN', {'adiabat'})],
+    ids=['too short to differentiate', 'alpha NaN everywhere'],
 )
-def test_an_identity_that_tests_no_cell_is_skipped_and_named(gas, case, skipped):
-    """An identity without a testable cell is skipped while the others run; nothing fails."""
+def test_an_identity_with_no_cell_of_its_inputs_is_skipped_and_named(gas, case, skipped):
+    """An identity with no cell that holds its inputs is skipped while the others run."""
     t = (
         _ideal_gas(P[:8], S[:8])
         if case == 'short'
-        else _plant(gas, 'thermal_exp', slice(None), -1.0)
+        else _plant(gas, 'thermal_exp', slice(None), np.nan)
     )
     try:
         res = c.check(t, 5e-9)
@@ -460,11 +461,16 @@ def test_floors_and_residuals_check_the_axes(gas):
 
 @pytest.mark.unit
 @pytest.mark.parametrize('axis', ['P', 'S'])
-@pytest.mark.parametrize('grid', ['nan', 'one point', '2-D'])
-def test_an_axis_with_a_nan_one_point_or_two_dimensions_raises(axis, grid):
+@pytest.mark.parametrize('grid', ['nan', 'inf end', 'one point', '2-D'])
+def test_an_axis_with_a_nan_inf_one_point_or_two_dimensions_raises(axis, grid):
     """An axis needs at least 2 finite, increasing coordinates in one dimension."""
     x = (P if axis == 'P' else S).copy()
-    x = x[:1] if grid == 'one point' else np.r_[x[:50], np.nan, x[51:]] if grid == 'nan' else x
+    if grid == 'one point':
+        x = x[:1]
+    elif grid == 'nan':
+        x = np.r_[x[:50], np.nan, x[51:]]
+    elif grid == 'inf end':
+        x[-1] = np.inf
     t = _ideal_gas(x, S) if axis == 'P' else _ideal_gas(P, x)
     if grid == '2-D':
         t = {q: {**v, axis: np.asarray(v[axis]).reshape(1, -1)} for q, v in t.items()}
@@ -500,3 +506,66 @@ def test_a_precision_that_is_not_a_number_names_the_rule():
     """The message says eps must be a real number."""
     with pytest.raises(ValueError, match='eps must be a real number in'):
         c._eps('1e-9')
+
+
+READS = {
+    'dTdS': {'temperature', 'heat_capacity'},
+    'dTdP': {'temperature', 'adiabat_temp_grad'},
+    'maxwell': {'density', 'adiabat_temp_grad'},
+    'adiabat': set(c.QUANTITIES),
+}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('quantity', c.QUANTITIES)
+@pytest.mark.parametrize('value', [np.inf, 0.0])
+def test_a_column_of_inf_or_zero_fails_the_identities_that_read_it_and_no_other(
+    stored, quantity, value
+):
+    """A stored inf or 0 is a value: no identity is skipped, those that read the column fail,
+    and the others test and pass exactly the cells they test on the clean table."""
+    clean = c.check(stored, 5e-9)
+    t = {**stored, quantity: {**stored[quantity], 'values': np.full((P.size, S.size), value)}}
+    res = c.check(t, 5e-9)
+    assert not any(v['skipped'] for v in res.values())
+    for n, v in res.items():
+        if quantity in READS[n]:
+            assert v['fail'].any(), n
+        else:
+            assert np.array_equal(v['tested'], clean[n]['tested']) and not v['fail'].any(), n
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('quantity', c.QUANTITIES)
+def test_a_column_of_nan_skips_the_identities_that_read_it_and_no_other(stored, quantity):
+    t = {**stored, quantity: {**stored[quantity], 'values': np.full((P.size, S.size), np.nan)}}
+    res = c.check(t, 5e-9)
+    assert {n for n, v in res.items() if v['skipped']} == {
+        n for n in READS if quantity in READS[n]
+    }
+    assert not any(v['fail'].any() for v in res.values())
+
+
+def _stored_axes(t, digits=9):
+    """``_stored`` with the P and S coordinates rounded to ``digits`` digits too."""
+    fmt = f'{{:.{digits - 1}e}}'
+    r = np.vectorize(lambda x: float(fmt.format(x)))
+    return {q: {**v, 'P': r(v['P']), 'S': r(v['S'])} for q, v in _stored(t, digits).items()}
+
+
+@pytest.mark.unit
+def test_an_exact_table_with_9_digit_axes_has_no_failing_cell():
+    """211 S points: the S coordinates are not exact at 9 digits, as they are at 201."""
+    S211 = np.linspace(6000.0, 8000.0, 211)
+    t = _stored_axes(_ideal_gas(P, S211))
+    assert not np.array_equal(t['temperature']['S'], S211)
+    res = c.check(t, 5e-9)
+    assert {n: int(v['fail'].sum()) for n, v in res.items()} == dict.fromkeys(c.IDENTITIES, 0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('quantity', c.QUANTITIES)
+def test_a_missing_table_raises_a_value_error_that_names_it(gas, quantity):
+    t = {q: v for q, v in gas.items() if q != quantity}
+    with pytest.raises(ValueError, match=f'{quantity} table is missing'):
+        c.check(t, 5e-9)
