@@ -14,7 +14,8 @@ import numpy as np
 IDENTITIES = ('dTdS', 'dTdP', 'maxwell', 'adiabat')
 QUANTITIES = ('temperature', 'density', 'heat_capacity', 'thermal_exp', 'adiabat_temp_grad')
 EPS_FLOOR = 5e-9  # 9 significant digits, the precision of the shipped tables
-FACTOR = 2.0  # allowed multiple of the h^4 term; with a negligible floor a fault 2 cells away is found only below 3
+AXIS_FIT = 1e-6  # departure, in units of the step, below which an axis counts as regular
+FACTOR = 2.0  # multiple of the h^4 term; a fault 2 cells away is found only below 3
 
 
 def _stencil(f, x, axis, k, sign):
@@ -56,11 +57,16 @@ def derivative(f, x, axis, k):
 
 
 def _grid(tables):
-    """Return the (P, S) axes after checking that every table is on that one regular grid."""
+    """Return the (P, S) axes after checking that every table is there and on that one grid."""
+    for name in QUANTITIES:
+        if name not in tables:
+            raise ValueError(f'the {name} table is missing')
     P, S = (np.asarray(tables['temperature'][a], float) for a in ('P', 'S'))
     for name, x in (('P', P), ('S', S)):
-        if x.ndim != 1 or x.size < 2 or not np.all(np.diff(x) > 0):
-            raise ValueError(f'{name} must be strictly increasing, with at least 2 points')
+        if x.ndim != 1 or x.size < 2 or not (np.isfinite(x).all() and np.all(np.diff(x) > 0)):
+            raise ValueError(
+                f'{name} must be finite and strictly increasing, with at least 2 points'
+            )
     for name in QUANTITIES:
         if not (np.array_equal(tables[name]['P'], P) and np.array_equal(tables[name]['S'], S)):
             raise ValueError(f'{name} is not on the (P, S) grid of the temperature table')
@@ -106,32 +112,53 @@ def residuals(tables, k=1):
         }
 
 
-def _parts(tables, k):
-    """Per derivative identity (D, E, Q, q) with R + 1 = D / Q: E bounds the error of D per unit
-    of stored precision, q the relative error of Q per unit of stored precision."""
+def _axis_error(x, eps):
+    """Rounding error of each stored coordinate: its departure from the uniform or geometric fit
+    that the axis follows within AXIS_FIT of its step plus ``eps``, plus 4 ulp; else eps |x|."""
+    i = np.arange(x.size)
+    tiny = 4 * np.finfo(float).eps * np.abs(x)
+    lin = np.polyval(np.polyfit(i, x, 1), i)
+    if (np.abs(x - lin) <= AXIS_FIT * np.abs(np.diff(x)).mean() + eps * np.abs(x)).all():
+        return np.abs(x - lin) + tiny
+    if (x > 0).all():
+        ly = np.log(x)
+        fit = np.polyval(np.polyfit(i, ly, 1), i)
+        if (np.abs(ly - fit) <= AXIS_FIT * np.abs(np.diff(ly)).mean() + eps).all():
+            return np.abs(x - np.exp(fit)) + tiny
+    return eps * np.abs(x)
+
+
+def _parts(tables, k, eps=EPS_FLOOR):
+    """Per derivative identity (D, E, Q, q, A) with R + 1 = D / Q: E bounds the error of D per
+    unit of stored precision from its two stored ends, q the relative error of Q per unit of
+    stored precision, and A the relative error of D from the rounding of its two coordinates."""
     P, S = _grid(tables)
     T, rho, cp, _, grad = (np.asarray(tables[q]['values'], float) for q in QUANTITIES)
     with np.errstate(divide='ignore', invalid='ignore'):
         ln_rho = np.log(rho)
         one = np.where(np.isfinite(ln_rho), 1.0, np.nan)
+
+        def d(f, ends, x, ax):
+            err = _axis_error(x, eps).reshape((-1, 1) if ax == 0 else (1, -1))
+            A = _stencil(np.broadcast_to(err, f.shape), x, ax, k, 1.0)
+            return derivative(f, x, ax, k), _stencil(ends, x, ax, k, 1.0), A
+
+        dTdS, dTdP, mx = d(T, np.abs(T), S, 1), d(T, np.abs(T), P, 0), d(ln_rho, one, S, 1)
         return {
-            'dTdS': (derivative(T, S, 1, k), _stencil(np.abs(T), S, 1, k, 1.0), T / cp, 2.0),
-            'dTdP': (derivative(T, P, 0, k), _stencil(np.abs(T), P, 0, k, 1.0), grad, 1.0),
-            'maxwell': (
-                derivative(ln_rho, S, 1, k),
-                _stencil(one, S, 1, k, 1.0),
-                -rho * grad,
-                2.0,
-            ),
+            'dTdS': (*dTdS[:2], T / cp, 2.0, dTdS[2]),
+            'dTdP': (*dTdP[:2], grad, 1.0, dTdP[2]),
+            'maxwell': (*mx[:2], -rho * grad, 2.0, mx[2]),
         }
 
 
 def floors(tables, eps, k=1):
     """Round-off bound of each residual at step ``k`` for values stored to relative ``eps``.
 
-    For R + 1 = D / Q the bound is (E / |Q| + |D / Q| q) eps, with E the error of the central
-    difference from its two stored ends and q the relative error of Q; the adiabat identity,
-    with no derivative, gets |R + 1| 5 eps from its five stored factors.
+    For R + 1 = D / Q the bound is (E / |Q| + |D / Q| q) eps + |D / Q| A, with E the error of
+    the central difference from its two stored ends, q the relative error of Q, and A =
+    (e[i+k] + e[i-k]) / (x[i+k] - x[i-k]) from the rounding error e of each coordinate: its
+    departure from the uniform or geometric fit of the axis, or eps |x| for an irregular axis.
+    The adiabat identity, with no derivative, gets |R + 1| 5 eps from its five stored factors.
 
     Parameters
     ----------
@@ -152,11 +179,12 @@ def floors(tables, eps, k=1):
     ValueError
         As for ``residuals``.
     """
+    _grid(tables)
     T, rho, cp, alpha, grad = (np.asarray(tables[q]['values'], float) for q in QUANTITIES)
     with np.errstate(divide='ignore', invalid='ignore'):
         out = {
-            n: (E / np.abs(Q) + np.abs(D / Q) * q) * eps
-            for n, (D, E, Q, q) in _parts(tables, k).items()
+            n: (E / np.abs(Q) + np.abs(D / Q) * q) * eps + np.abs(D / Q) * A
+            for n, (D, E, Q, q, A) in _parts(tables, k, eps).items()
         }
         out['adiabat'] = np.abs(grad * rho * cp / (alpha * T)) * 5 * eps
     return out
@@ -176,15 +204,15 @@ def check(tables, eps):
     (4 R_k - R_2k) / 3, floor_x = (4 floor_1 + floor_2) / 3 and est = |R_x(2h) - R_x(h)| / 15,
     the measured h^4 term of R_x(h) at the cell; the adiabat identity fails where |R| > floor.
     The floor uses eps_eff = max(eps, EPS_FLOOR): every table is checked at the 9-digit floor
-    at best, so a single value off by about 1e-8 (relative) or less is out of reach on any table.
-    A derivative identity is tested only where 4 cells on each side along its axis hold values;
-    NaN marks a missing value. Where all values an identity needs are present but its residual or
-    bound is not finite (a stored 0 or inf, for example alpha = 0), the cell fails, unless the
-    identity tests no cell at all: it is then skipped, as a column of zeros would make it. On a
-    grid that is not uniform the h^4 estimate holds only where the spacing changes smoothly. On a
-    grid linear in P, the h^4 term of dTdP grows as P / dP falls: on the 199 x 201 test grid a
-    1e-6 temperature fault is found at all 4 cells 1 and 2 steps away from P / dP of about 27,
-    and at none below about 10.
+    at best, so a single value off by about 1e-8 (relative) or less is out of reach.
+    The floor also covers the rounding of the stored P and S coordinates. A derivative identity
+    is tested only where 4 cells on each side along its axis hold values; NaN marks a missing
+    value, and a stored 0 or inf is a value. Where all values an identity reads are present but
+    its residual or bound is not finite, the cell fails; an identity is skipped only when no
+    cell holds all values it reads. On a grid that is not uniform the h^4 estimate holds only
+    where the spacing changes smoothly. On a grid linear in P, the h^4 term of dTdP grows as
+    P / dP falls: on the 199 x 201 test grid a 1e-6 temperature fault is found at all 4 cells 1
+    and 2 steps away from P / dP of about 27, and at none below about 10.
 
     Parameters
     ----------
@@ -199,12 +227,13 @@ def check(tables, eps):
         Identity name -> dict with ``rx`` (the Richardson residual, defined also at untested
         cells), ``bound``, ``tested`` (both finite), ``fail`` (tested and above the bound, or
         with all values present and a residual or bound that is not finite) arrays, and
-        ``skipped``, True when the identity tests no cell.
+        ``skipped``, True when no cell holds all values the identity reads.
 
     Raises
     ------
     ValueError
-        If eps is not a real number in [0, 1), or no identity tests a cell.
+        If eps is not a real number in [0, 1), a table is missing or off the grid, or every
+        identity is skipped.
     """
     eps = _eps(eps)
     r = {k: residuals(tables, k) for k in (1, 2, 4)}
@@ -225,14 +254,12 @@ def check(tables, eps):
                 bound = (4 * f1[n] + f2[n]) / 3 + FACTOR * est
                 have = np.isfinite(present[1][n] + present[2][n] + present[4][n])
             tested = np.isfinite(rx) & np.isfinite(bound)
-            skipped = not tested.any()
-            broken = have & ~tested & (not skipped)
             out[n] = {
                 'rx': rx,
                 'bound': bound,
                 'tested': tested,
-                'fail': (tested & (np.abs(rx) > bound)) | broken,
-                'skipped': skipped,
+                'fail': (tested & (np.abs(rx) > bound)) | (have & ~tested),
+                'skipped': not have.any(),
             }
     if all(v['skipped'] for v in out.values()):
         raise ValueError(f'no cell tested for {", ".join(out)}')

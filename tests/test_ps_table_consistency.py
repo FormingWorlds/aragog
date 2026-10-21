@@ -569,3 +569,50 @@ def test_a_missing_table_raises_a_value_error_that_names_it(gas, quantity):
     t = {q: v for q, v in gas.items() if q != quantity}
     with pytest.raises(ValueError, match=f'{quantity} table is missing'):
         c.check(t, 5e-9)
+
+
+def _found_around(res, name, axis, at=(100, 100)):
+    fail = res[name]['fail']
+    i, j = at
+    return [bool(fail[(i + o, j) if axis == 0 else (i, j + o)]) for o in (-2, -1, 1, 2)]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'quantity, name, axis',
+    [('temperature', 'dTdS', 1), ('density', 'maxwell', 1), ('temperature', 'dTdP', 0)],
+)
+def test_a_1e_6_fault_is_found_on_a_table_with_9_digit_axes(quantity, name, axis):
+    t = _plant(
+        _stored_axes(_ideal_gas(P, np.linspace(6000.0, 8000.0, 211))),
+        quantity,
+        (100, 100),
+        1e-6,
+    )
+    assert _found_around(c.check(t, 5e-9), name, axis) == [True] * 4
+
+
+@pytest.mark.unit
+def test_an_axis_off_its_fit_by_half_the_limit_raises_the_floor_and_keeps_detection(stored):
+    """A jitter of 0.5 AXIS_FIT steps still counts as a regular axis: the floor grows at every
+    tested cell, the exact table passes, and a 1e-4 fault is found one and two steps away."""
+    rng = np.random.default_rng(3)
+    S2 = S + 0.5 * c.AXIS_FIT * np.diff(S).mean() * rng.uniform(-1, 1, S.size)
+    t = {q: {**v, 'S': S2} for q, v in _stored(_ideal_gas(P, S2)).items()}
+    grown = c.floors(t, 5e-9)['dTdS'] > c.floors(_stored(_ideal_gas(P, S)), 5e-9)['dTdS']
+    ok = np.isfinite(c.floors(t, 5e-9)['dTdS'])
+    assert grown[ok].all()
+    assert not any(v['fail'].any() for v in c.check(t, 5e-9).values())
+    planted = c.check(_plant(t, 'temperature', (100, 100), 1e-4), 5e-9)
+    assert _found_around(planted, 'dTdS', 1) == [True] * 4
+
+
+@pytest.mark.unit
+def test_the_axis_error_is_the_departure_from_the_fit_or_eps_x_for_an_irregular_axis():
+    geo = np.geomspace(1.0e9, 1.0e11, 50)
+    rounded = np.array([float(f'{x:.8e}') for x in geo])
+    assert (c._axis_error(geo, 5e-9) < 1e-13 * geo).all()
+    err = c._axis_error(rounded, 5e-9)
+    assert (err <= 5e-9 * rounded).all() and err.max() > 0.5 * np.abs(rounded - geo).max()
+    irregular = np.cumsum(np.r_[1.0, np.tile([1.0, 3.0], 20)])
+    np.testing.assert_array_equal(c._axis_error(irregular, 5e-9), 5e-9 * irregular)
