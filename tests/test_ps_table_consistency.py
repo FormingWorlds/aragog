@@ -510,6 +510,16 @@ def test_a_precision_that_is_not_a_number_names_the_rule():
         c._eps('1e-9')
 
 
+def _value_error(call, text):
+    """Assert that ``call`` raises a ValueError whose message holds ``text``."""
+    try:
+        call()
+    except Exception as err:  # noqa: BLE001 - any other exception fails the assertion
+        assert type(err) is ValueError and text in str(err), repr(err)
+    else:
+        pytest.fail(f'no ValueError with {text!r}')
+
+
 READS = {
     'dTdS': {'temperature', 'heat_capacity'},
     'dTdP': {'temperature', 'adiabat_temp_grad'},
@@ -627,8 +637,7 @@ def test_the_axis_class_boundary_is_axis_fit_steps_plus_eps_x(jitter, regular):
 def test_a_table_without_a_field_raises_a_value_error_that_names_it(gas, quantity, key):
     t = {**gas, quantity: {k: v for k, v in gas[quantity].items() if k != key}}
     for call in (lambda: c.check(t, 5e-9), lambda: c.residuals(t), lambda: c.floors(t, 5e-9)):
-        with pytest.raises(ValueError, match=f"{quantity} table has no '{key}'"):
-            call()
+        _value_error(call, f"{quantity} table has no '{key}'")
 
 
 @pytest.mark.unit
@@ -648,7 +657,11 @@ def test_with_eps_0_an_axis_is_regular_within_axis_fit_steps(kind, fraction, reg
 
 @pytest.mark.unit
 def test_a_check_ignores_an_entry_that_is_not_a_quantity(stored):
-    res, clean = c.check({**stored, 'note': {'source': 'test'}}, 5e-9), c.check(stored, 5e-9)
+    try:
+        res = c.check({**stored, 'note': {'source': 'test'}}, 5e-9)
+    except Exception as err:  # noqa: BLE001 - any exception fails the check
+        pytest.fail(f'an extra entry raised {err!r}')
+    clean = c.check(stored, 5e-9)
     for n in c.IDENTITIES:
         assert np.array_equal(res[n]['tested'], clean[n]['tested'])
         assert np.array_equal(res[n]['bound'], clean[n]['bound'], equal_nan=True)
@@ -656,16 +669,16 @@ def test_a_check_ignores_an_entry_that_is_not_a_quantity(stored):
 
 @pytest.mark.unit
 def test_a_table_that_is_not_a_mapping_raises_a_value_error(gas):
-    with pytest.raises(ValueError, match='density table is not a mapping'):
-        c.check({**gas, 'density': None}, 5e-9)
+    _value_error(
+        lambda: c.check({**gas, 'density': None}, 5e-9), 'density table is not a mapping'
+    )
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize('tables', [None, 5, ['temperature']], ids=['None', 'int', 'list'])
 def test_tables_that_are_not_a_mapping_raise_a_value_error(tables):
     for call in (lambda: c.check(tables, 5e-9), lambda: c.residuals(tables)):
-        with pytest.raises(ValueError, match='tables is not a mapping'):
-            call()
+        _value_error(call, 'tables is not a mapping')
 
 
 @pytest.mark.unit
