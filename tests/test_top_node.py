@@ -565,7 +565,8 @@ def test_the_mesh_refuses_a_node_outside_the_table_unless_it_is_the_row_by_round
 def test_the_node_falls_at_most_2_ulp_where_the_limiter_starts_to_act():
     """Across the switch from the linear row to S_N + step k (where k leaves 1, near |D|/b =
     1e-4) at either edge, a rise of the top cell by 1 ulp lowers the node by at most 2 ulp; the
-    largest fall measured is 1 ulp."""
+    largest fall measured is 1 ulp. The node is the linear row exactly where k is 1, else
+    S_N + step k."""
     lo, hi, rng, worst = 100.0, 4000.0, np.random.default_rng(13), 0.0
     p, c = aragog.mesh.TOP_NODE_POWER, aragog.mesh.TOP_NODE_SCALE
 
@@ -586,18 +587,24 @@ def test_the_node_falls_at_most_2_ulp_where_the_limiter_starts_to_act():
                 a, b = (m, b) if k_is_1(m, other, r) else (a, m)
             tops = a + np.arange(-150, 150) * np.spacing(a)
             assert k_is_1(tops[0], other, r) != k_is_1(tops[-1], other, r)
-            nodes = []
+            nodes, off = [], 0
             for top in tops:
                 S[-1] = top
                 nodes.append(mesh.entropy_at_basic_nodes(S)[-1])
+                want = top_node_entropy(S, r, lo, hi, linear=np.nan)
+                if k_is_1(top, other, r):
+                    want = mesh.quantity_at_basic_nodes(S)[-1]
+                off += nodes[-1] != want
+            assert off == 0
             worst = min(worst, (np.diff(nodes) / np.spacing(np.array(nodes[1:]))).min())
     assert worst >= -2.0
 
 
-@pytest.mark.parametrize('ulps, accepted', [(2, True), (5, False)])
+@pytest.mark.parametrize('ulps, accepted', [(2, True), (4, True), (5, False)])
 def test_the_linear_row_is_accepted_up_to_4_ulp_outside_the_table(monkeypatch, ulps, accepted):
     """A flat top on an edge can give a linear row up to 2 ulp outside the table (the dot product
-    rounds by platform); the mesh takes such a row as the node and refuses one 5 ulp outside."""
+    rounds by platform); the mesh takes such a row up to 4 ulp outside as the node and refuses one
+    5 ulp outside."""
     hi = 3868.319704423903
     mesh = _ratio_mesh((100.0, hi))
     S = np.full(mesh._quantity_transform.shape[1], hi)
