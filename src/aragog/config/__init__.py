@@ -9,7 +9,7 @@ dataclass-based ``Parameters`` object defined in ``aragog.parser``;
 from __future__ import annotations
 
 import logging
-import sys
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,11 +23,6 @@ from aragog.config.mesh import MeshConfig
 from aragog.config.phases import MixedPhaseConfig, PhaseConfig
 from aragog.config.radionuclides import RadionuclideConfig
 from aragog.config.solver import SolverConfig
-
-if sys.version_info < (3, 11):
-    import tomli as tomllib
-else:
-    import tomllib
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -191,10 +186,3 @@ class Config:
 
         # Fall back to legacy INI parser
         return Parameters.from_file(*filenames)
-
-
-# Make Parameters importable from aragog.config for convenience
-def _get_parameters_class():
-    from aragog.parser import Parameters
-
-    return Parameters

@@ -110,7 +110,6 @@ source = ["aragog"]
 omit = [
     "*/tests/*",
     "*/conftest.py",
-    "*/__init__.py",
 ]
 
 [tool.coverage.report]
