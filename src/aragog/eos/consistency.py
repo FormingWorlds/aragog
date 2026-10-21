@@ -14,7 +14,7 @@ import numpy as np
 
 IDENTITIES = ('dTdS', 'dTdP', 'maxwell', 'adiabat')
 QUANTITIES = ('temperature', 'density', 'heat_capacity', 'thermal_exp', 'adiabat_temp_grad')
-EPS_FLOOR = 5e-9  # 9 significant digits, the precision of the shipped tables
+EPS_FLOOR = 5e-9  # 9 significant digits
 AXIS_FIT = 1e-6  # an axis is regular within AXIS_FIT steps plus eps |x| of its fit
 FACTOR = 2.0  # multiple of the h^4 term; a fault 2 cells away is found only below 3
 

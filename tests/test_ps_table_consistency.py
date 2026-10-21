@@ -588,8 +588,8 @@ def test_a_1e_6_fault_is_found_on_a_table_with_9_digit_axes(quantity, name, axis
 
 @pytest.mark.unit
 def test_an_axis_off_its_fit_by_half_the_limit_raises_the_floor_and_keeps_detection(stored):
-    """A jitter of 0.5 AXIS_FIT steps still counts as a regular axis: the floor grows at every
-    tested cell, the exact table passes, and a 1e-4 fault is found one and two steps away."""
+    """A jitter of 0.5e-6 steps still counts as a regular axis: the floor grows at every tested
+    cell, the exact table passes, and a 1e-4 fault is found one and two steps away."""
     rng = np.random.default_rng(3)
     S2 = S + 0.5 * 1e-6 * np.diff(S).mean() * rng.uniform(-1, 1, S.size)
     t = {q: {**v, 'S': S2} for q, v in _stored(_ideal_gas(P, S2)).items()}
@@ -648,8 +648,10 @@ def test_with_eps_0_an_axis_is_regular_within_axis_fit_steps(kind, fraction, reg
 
 @pytest.mark.unit
 def test_a_check_ignores_an_entry_that_is_not_a_quantity(stored):
-    res = c.check({**stored, 'note': {'source': 'test'}}, 5e-9)
-    assert not any(v['fail'].any() for v in res.values())
+    res, clean = c.check({**stored, 'note': {'source': 'test'}}, 5e-9), c.check(stored, 5e-9)
+    for n in c.IDENTITIES:
+        assert np.array_equal(res[n]['tested'], clean[n]['tested'])
+        assert np.array_equal(res[n]['bound'], clean[n]['bound'], equal_nan=True)
 
 
 @pytest.mark.unit
@@ -664,3 +666,42 @@ def test_tables_that_are_not_a_mapping_raise_a_value_error(tables):
     for call in (lambda: c.check(tables, 5e-9), lambda: c.residuals(tables)):
         with pytest.raises(ValueError, match='tables is not a mapping'):
             call()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('kind', ['linear', 'geometric'])
+@pytest.mark.parametrize('fraction, regular', [(0.5, True), (2.0, False)])
+def test_one_coordinate_beyond_the_limit_moves_the_whole_axis_to_the_fallback(
+    kind, fraction, regular
+):
+    """At eps = 0 the fallback is 0 everywhere, the fit a departure of the moved point."""
+    if kind == 'linear':
+        x = S.copy()
+        x[100] += fraction * 1e-6 * 10.0
+    else:
+        ly = np.log(np.geomspace(1.0e9, 1.0e11, 201))
+        ly[100] += fraction * 1e-6 * np.diff(ly).mean()
+        x = np.exp(ly)
+    err = c._axis_error(x, 0.0)
+    assert bool(err.any()) is regular
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    'axis, name, share',
+    [('S', 'dTdS', 1.0), ('P', 'dTdP', 0.9)],
+)
+def test_an_exact_table_on_an_axis_alternating_by_1e_3_of_a_step_fails(axis, name, share):
+    """The first-order error of a central difference on an uneven grid is not in the floor."""
+    x = (S if axis == 'S' else P).copy()
+    x = x + 1e-3 * np.diff(x).mean() * np.where(np.arange(x.size) % 2, 1.0, -1.0)
+    t = _stored(_ideal_gas(x, S) if axis == 'P' else _ideal_gas(P, x))
+    v = c.check(t, 5e-9)[name]
+    assert v['fail'].sum() >= share * v['tested'].sum() > 0
+
+
+@pytest.mark.unit
+def test_an_exact_table_on_an_s_axis_with_random_1e_5_step_departures_passes():
+    x = S + 1e-5 * 10.0 * np.random.default_rng(0).uniform(-1, 1, S.size)
+    res = c.check(_stored(_ideal_gas(P, x)), 5e-9)
+    assert not any(v['fail'].any() for v in res.values())
