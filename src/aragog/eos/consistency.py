@@ -8,6 +8,7 @@ cells; a stencil counts only when all its cells hold numbers.
 from __future__ import annotations
 
 import numbers
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -61,6 +62,8 @@ def _grid(tables):
     for name in QUANTITIES:
         if name not in tables:
             raise ValueError(f'the {name} table is missing')
+        if not isinstance(tables[name], Mapping):
+            raise ValueError(f'the {name} table is not a mapping')
         for key in ('P', 'S', 'values'):
             if key not in tables[name]:
                 raise ValueError(f"the {name} table has no '{key}'")
@@ -117,8 +120,9 @@ def residuals(tables, k=1):
 
 
 def _axis_error(x, eps):
-    """Rounding error of each stored coordinate: its departure from the uniform or geometric fit
-    that the axis follows within AXIS_FIT of its step plus ``eps``, plus 4 ulp; else eps |x|."""
+    """Rounding error of each stored coordinate: its departure from the fit of the axis plus
+    4 ulp when the axis lies within AXIS_FIT steps plus eps |x| of a uniform fit, or within the
+    same relative limit in ln x of a geometric fit; else eps |x| for the whole axis."""
     i = np.arange(x.size)
     tiny = 4 * np.finfo(float).eps * np.abs(x)
     lin = np.polyval(np.polyfit(i, x, 1), i)
@@ -159,8 +163,9 @@ def floors(tables, eps, k=1):
 
     For R + 1 = D / Q the bound is (E / |Q| + |D / Q| q) eps + |D / Q| A, with E the error of
     the central difference from its two stored ends, q the relative error of Q, and A =
-    (e[i+k] + e[i-k]) / (x[i+k] - x[i-k]) from the rounding error e of each coordinate
-    (``_axis_error``).
+    (e[i+k] + e[i-k]) / (x[i+k] - x[i-k]) from the rounding error e of each coordinate: its
+    departure from the fit of a regular axis (within AXIS_FIT steps plus eps |x| of a uniform
+    or geometric grid), or eps |x| on every coordinate of any other axis.
     The adiabat identity, with no derivative, gets |R + 1| 5 eps from its five stored factors.
 
     Parameters
@@ -235,14 +240,17 @@ def check(tables, eps):
     Raises
     ------
     ValueError
-        If eps is not a real number in [0, 1), a table is missing or off the grid, or every
-        identity is skipped.
+        If eps is not a real number in [0, 1), a table, its P, S or values is missing, a table
+        is not a mapping or off the grid, or every identity is skipped.
     """
     eps = _eps(eps)
     r = {k: residuals(tables, k) for k in (1, 2, 4)}
     ones = {
-        q: {**v, 'values': np.where(np.isnan(v['values']), np.nan, 1.0)}
-        for q, v in tables.items()
+        q: {
+            **tables[q],
+            'values': np.where(np.isnan(np.asarray(tables[q]['values'], float)), np.nan, 1.0),
+        }
+        for q in QUANTITIES
     }
     present = {k: residuals(ones, k) for k in (1, 2, 4)}  # finite where every value is present
     f1, f2 = floors(tables, eps, 1), floors(tables, eps, 2)
