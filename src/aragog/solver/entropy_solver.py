@@ -545,7 +545,8 @@ def _mantle_mass_fraction(xi: npt.NDArray) -> npt.NDArray:
 
 
 def _floor_entropy(weights: npt.NDArray, S_stag: npt.NDArray) -> float:
-    """Smaller of the top basic-node entropy ``weights @ S_stag`` and the smallest cell entropy."""
+    """Smaller of the top basic-node entropy ``weights @ S_stag`` and the smallest cell entropy
+    (the smallest cell with ``top_node = 'limited'``, where ``weights`` is the top cell)."""
     return min(float(np.dot(weights, S_stag)), float(np.min(S_stag)))
 
 
@@ -1407,6 +1408,35 @@ class EntropySolver:
     _cvode_step_powers_batch: Callable[..., Any] | None = None
     _batch_powers_calls: int = 0
 
+    def _sync_top_node(self) -> None:
+        """Give a limited top node the entropy range of the current EOS tables; log a new range.
+
+        Raises
+        ------
+        ValueError
+            If the entropy range of the EOS is not an interval (NaN, or S_min >= S_max).
+        """
+        mesh, eos = self.evaluator.mesh, self.entropy_eos
+        if mesh.top_node != 'limited':
+            return
+        bounds = (-np.inf, np.inf) if eos is None else (float(eos.S_min), float(eos.S_max))
+        if not bounds[0] < bounds[1]:
+            raise ValueError(f'top node: the EOS entropy range {bounds!r} is not an interval')
+        mesh.top_bounds = bounds
+        if bounds != getattr(self, '_top_bounds_logged', None):
+            self._top_bounds_logged = bounds
+            if np.isinf(bounds).all():
+                logger.warning(
+                    'EntropySolver: top node: limited without EOS table bounds '
+                    'equals the linear node'
+                )
+            else:
+                logger.info(
+                    'EntropySolver: top node: limited (monotone, inside the table '
+                    '[%.6g, %.6g] J/kg/K)',
+                    *bounds,
+                )
+
     def __init__(self, parameters: Parameters, entropy_eos: EntropyEOS | None = None):
         self.parameters = parameters
         self.entropy_eos = entropy_eos
@@ -1766,6 +1796,8 @@ class EntropySolver:
         # any RHS call where the floors could silently bias the
         # integrand.
         self._check_eos_floors()
+
+        self._sync_top_node()
 
         # Cache constant BC and mesh terms so the dSdt hot path
         # doesn't recompute them on every RHS call. None of these
@@ -3706,6 +3738,7 @@ class EntropySolver:
         again this way, so it returns its start state.
         """
         wall_start = time.perf_counter()
+        self._sync_top_node()  # the EOS may have changed since the reset
         start_time = self.parameters.solver.start_time
         end_time = self.parameters.solver.end_time
         # Absolute tolerance floor (1e-8) matches SPIDER's atol=rtol.
@@ -3905,7 +3938,10 @@ class EntropySolver:
                 floor_refused, end_time = True, start_time
                 logger.warning(_floor_discard)
             elif floor_margin > 0.0 and not gradient_mode and end_time > start_time:
-                floor_w = np.asarray(self.evaluator.mesh._quantity_transform)[-1]
+                mesh = self.evaluator.mesh
+                floor_w = np.asarray(mesh._quantity_transform)[-1]
+                if mesh.top_node == 'limited':  # the node stays in the table with its cells
+                    floor_w = np.eye(1, floor_w.size, floor_w.size - 1).ravel()
                 level, refuse = _floor_start_level(
                     floor_w,
                     S_arr_stag,
@@ -4961,6 +4997,7 @@ class EntropySolver:
         SolverOutput
             Dataclass containing all quantities needed by PROTEUS.
         """
+        self._sync_top_node()
         sol = self._solution
         eos = self.entropy_eos
         mesh = self.evaluator.mesh
