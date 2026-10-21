@@ -532,7 +532,7 @@ def test_a_column_of_inf_or_zero_fails_the_identities_that_read_it_and_no_other(
     assert not any(v['skipped'] for v in res.values())
     for n, v in res.items():
         if quantity in READS[n]:
-            assert v['fail'].sum() >= clean[n]['tested'].sum(), n
+            assert np.array_equal(v['fail'], clean[n]['tested']), n
         else:
             assert np.array_equal(v['tested'], clean[n]['tested']) and not v['fail'].any(), n
 
@@ -591,7 +591,7 @@ def test_an_axis_off_its_fit_by_half_the_limit_raises_the_floor_and_keeps_detect
     """A jitter of 0.5 AXIS_FIT steps still counts as a regular axis: the floor grows at every
     tested cell, the exact table passes, and a 1e-4 fault is found one and two steps away."""
     rng = np.random.default_rng(3)
-    S2 = S + 0.5 * c.AXIS_FIT * np.diff(S).mean() * rng.uniform(-1, 1, S.size)
+    S2 = S + 0.5 * 1e-6 * np.diff(S).mean() * rng.uniform(-1, 1, S.size)
     t = {q: {**v, 'S': S2} for q, v in _stored(_ideal_gas(P, S2)).items()}
     grown = c.floors(t, 5e-9)['dTdS'] > c.floors(_stored(_ideal_gas(P, S)), 5e-9)['dTdS']
     ok = np.isfinite(c.floors(t, 5e-9)['dTdS'])
@@ -622,8 +622,37 @@ def test_the_axis_class_boundary_is_axis_fit_steps_plus_eps_x(jitter, regular):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize('quantity', c.QUANTITIES)
 @pytest.mark.parametrize('key', ['values', 'P', 'S'])
-def test_a_table_without_a_field_raises_a_value_error_that_names_it(gas, key):
-    t = {**gas, 'density': {k: v for k, v in gas['density'].items() if k != key}}
-    with pytest.raises(ValueError, match=f"density table has no '{key}'"):
-        c.check(t, 5e-9)
+def test_a_table_without_a_field_raises_a_value_error_that_names_it(gas, quantity, key):
+    t = {**gas, quantity: {k: v for k, v in gas[quantity].items() if k != key}}
+    for call in (lambda: c.check(t, 5e-9), lambda: c.residuals(t), lambda: c.floors(t, 5e-9)):
+        with pytest.raises(ValueError, match=f"{quantity} table has no '{key}'"):
+            call()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('kind', ['linear', 'geometric'])
+@pytest.mark.parametrize('fraction, regular', [(0.9, True), (1.1, False)])
+def test_with_eps_0_an_axis_is_regular_within_axis_fit_steps(kind, fraction, regular):
+    """At eps = 0 the limit is AXIS_FIT steps alone (in ln x for a geometric axis)."""
+    sign = np.where(np.arange(201) % 2, 1.0, -1.0)
+    if kind == 'linear':
+        x = S + fraction * 1e-6 * 10.0 * sign
+    else:
+        ly = np.log(np.geomspace(1.0e9, 1.0e11, 201))
+        x = np.exp(ly + fraction * 1e-6 * np.diff(ly).mean() * sign)
+    err = c._axis_error(x, 0.0)
+    assert bool(err.any()) is regular  # the fallback eps |x| is 0 at eps = 0
+
+
+@pytest.mark.unit
+def test_a_check_ignores_an_entry_that_is_not_a_quantity(stored):
+    res = c.check({**stored, 'note': {'source': 'test'}}, 5e-9)
+    assert not any(v['fail'].any() for v in res.values())
+
+
+@pytest.mark.unit
+def test_a_table_that_is_not_a_mapping_raises_a_value_error(gas):
+    with pytest.raises(ValueError, match='density table is not a mapping'):
+        c.check({**gas, 'density': None}, 5e-9)
