@@ -1,10 +1,4 @@
-"""Code in the package ``__init__`` modules: logging, config dispatch and the mesh.
-
-Covers ``aragog.debug_logger``, ``aragog.config.Config.from_file`` and the parts of
-``aragog.mesh`` that the solver tests do not reach: the exact-root return of
-``_radius_for_mass_coordinate``, the unknown-EOS and duplicate-radius errors of ``Mesh``,
-and ``Mesh.quantity_at_staggered_nodes`` and ``Mesh.volume_average``.
-"""
+"""Tests for code in the package ``__init__`` modules: logging, config dispatch and the mesh."""
 
 from __future__ import annotations
 
@@ -42,7 +36,8 @@ def _settings(n_nodes: int = 6, mass_coordinates: bool = False) -> _MeshParamete
 
 def test_debug_logger_sets_debug_level_and_one_console_handler():
     """Two calls leave the package logger at DEBUG with one simple-format console handler."""
-    pkg = logging.getLogger('fwl.aragog')
+    pkg = aragog.logger
+    record = logging.LogRecord('fwl.aragog', logging.INFO, __file__, 1, 'msg', None, None)
     saved_level, saved_handlers = pkg.level, list(pkg.handlers)
     try:
         pkg.setLevel(logging.WARNING)
@@ -50,7 +45,7 @@ def test_debug_logger_sets_debug_level_and_one_console_handler():
         assert aragog.debug_logger() is pkg
         assert pkg.level == logging.DEBUG
         assert [type(h) for h in pkg.handlers] == [logging.StreamHandler]
-        assert pkg.handlers[0].formatter._fmt == aragog.simple_formatter()._fmt
+        assert pkg.handlers[0].format(record) == aragog.simple_formatter().format(record)
     finally:
         pkg.setLevel(saved_level)
         pkg.handlers = saved_handlers
@@ -85,13 +80,13 @@ def test_config_from_file_reads_the_bundled_toml():
 
 def test_radius_for_mass_coordinate_returns_the_upper_end_on_an_exact_root(caplog):
     """A target equal to xi at the upper bracket end returns that end without a clamp warning."""
-    with caplog.at_level(logging.WARNING):
-        r = _radius_for_mass_coordinate(lambda r: 2.0 * r, 10.0, 1.0, 5.0, node=3)
-    assert r == 5.0
-    assert not [rec for rec in caplog.records if 'bracket failed' in rec.getMessage()]
+    caplog.set_level(logging.WARNING)
+    assert _radius_for_mass_coordinate(lambda r: 2.0 * r, 10.0, 1.0, 5.0, node=3) == 5.0
+    assert 'bracket failed' not in caplog.text
 
 
 def test_mesh_rejects_an_unknown_eos_method():
+    """An eos_method other than 1 (Adams-Williamson) or 2 (user table) raises."""
     settings = _settings()
     settings.eos_method = 3
     with pytest.raises(ValueError, match='Unknown method to initialize Equation of State'):
@@ -99,7 +94,10 @@ def test_mesh_rejects_an_unknown_eos_method():
 
 
 def test_mass_coordinate_mesh_rejects_duplicate_node_radii(monkeypatch):
-    """Interior nodes all clamped to the lower bracket end give zero-width cells."""
+    """Interior nodes all clamped to the lower bracket end give zero-width cells.
+
+    The stub forces the clamp; no real EOS profile that produces it is constructed here.
+    """
     monkeypatch.setattr(
         'aragog.mesh._radius_for_mass_coordinate',
         lambda xi_of_r, xi_target, r_lo, r_hi, node=None: r_lo,
@@ -112,9 +110,7 @@ def test_quantity_at_staggered_nodes_is_the_mean_of_the_cell_ends():
     mesh = Mesh(SimpleNamespace(mesh=_settings()))
     basic = np.array([[1.0, -2.0], [4.0, 0.5], [9.0, 3.0], [16.0, 7.5]])
     expected = np.array([[2.5, -0.75], [6.5, 1.75], [12.5, 5.25]])
-    np.testing.assert_allclose(
-        mesh.quantity_at_staggered_nodes(basic), expected, rtol=0, atol=0
-    )
+    np.testing.assert_array_equal(mesh.quantity_at_staggered_nodes(basic), expected)
 
 
 def test_volume_average_weights_each_cell_by_its_shell_volume():
