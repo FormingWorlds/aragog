@@ -530,7 +530,7 @@ def test_a_column_of_inf_or_zero_fails_the_identities_that_read_it_and_no_other(
     assert not any(v['skipped'] for v in res.values())
     for n, v in res.items():
         if quantity in READS[n]:
-            assert v['fail'].any(), n
+            assert v['fail'].sum() >= clean[n]['tested'].sum(), n
         else:
             assert np.array_equal(v['tested'], clean[n]['tested']) and not v['fail'].any(), n
 
@@ -616,3 +616,20 @@ def test_the_axis_error_is_the_departure_from_the_fit_or_eps_x_for_an_irregular_
     assert (err <= 5e-9 * rounded).all() and err.max() > 0.5 * np.abs(rounded - geo).max()
     irregular = np.cumsum(np.r_[1.0, np.tile([1.0, 3.0], 20)])
     np.testing.assert_array_equal(c._axis_error(irregular, 5e-9), 5e-9 * irregular)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('jitter, regular', [(3.5e-5, True), (1e-4, False)])
+def test_the_axis_class_boundary_is_axis_fit_steps_plus_eps_x(jitter, regular):
+    """On S from 6000 to 8000 (step 10) the limit is 1e-5 + 5e-9 |S|, 4e-5 to 5e-5."""
+    x = S + jitter * np.where(np.arange(S.size) % 2, 1.0, -1.0)
+    is_fallback = np.array_equal(c._axis_error(x, 5e-9), 5e-9 * np.abs(x))
+    assert is_fallback is not regular
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('key', ['values', 'P', 'S'])
+def test_a_table_without_a_field_raises_a_value_error_that_names_it(gas, key):
+    t = {**gas, 'density': {k: v for k, v in gas['density'].items() if k != key}}
+    with pytest.raises(ValueError, match=f"density table has no '{key}'"):
+        c.check(t, 5e-9)
