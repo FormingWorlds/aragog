@@ -594,14 +594,20 @@ def test_the_node_falls_at_most_2_ulp_where_the_limiter_starts_to_act():
     assert worst >= -2.0
 
 
-def test_a_flat_top_2_ulp_outside_the_table_is_accepted_as_the_linear_row():
+@pytest.mark.parametrize('ulps, accepted', [(2, True), (5, False)])
+def test_the_linear_row_is_accepted_up_to_4_ulp_outside_the_table(monkeypatch, ulps, accepted):
+    """A flat top on an edge can give a linear row up to 2 ulp outside the table (the dot product
+    rounds by platform); the mesh takes such a row as the node and refuses one 5 ulp outside."""
     hi = 3868.319704423903
     mesh = _ratio_mesh((100.0, hi))
     S = np.full(mesh._quantity_transform.shape[1], hi)
-    row = mesh.quantity_at_basic_nodes(S)[-1]
-    assert row == hi + 2 * np.spacing(hi)
+    row, plain = hi + ulps * np.spacing(hi), mesh.quantity_at_basic_nodes
+    monkeypatch.setattr(
+        mesh, 'quantity_at_basic_nodes', lambda s: np.append(plain(s)[:-1], row)
+    )
+    monkeypatch.setattr(aragog.mesh, 'top_node_entropy', lambda *a, linear=None, **k: linear)
     try:
         node = mesh.entropy_at_basic_nodes(S)[-1]
-    except RuntimeError:
-        node = np.nan
-    assert node == row
+    except RuntimeError as e:
+        node = 'refused' if 'limited top node' in str(e) else str(e)
+    assert node == (row if accepted else 'refused')
