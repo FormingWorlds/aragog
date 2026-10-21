@@ -718,3 +718,22 @@ def test_an_exact_table_on_an_s_axis_with_random_1e_5_step_departures_passes():
     x = S + 1e-5 * 10.0 * np.random.default_rng(0).uniform(-1, 1, S.size)
     res = c.check(_stored(_ideal_gas(P, x)), 5e-9)
     assert not any(v['fail'].any() for v in res.values())
+
+
+@pytest.mark.unit
+def test_the_4_ulp_term_covers_float64_coordinates_without_the_precision_floor(monkeypatch):
+    """With EPS_FLOOR 0 an exact float64 table on a 1001-point P axis passes the derivative
+    identities only through the 4 ulp term of each coordinate (the adiabat has no such term)."""
+    monkeypatch.setattr(c, 'EPS_FLOOR', 0.0)
+    res = c.check(_ideal_gas(np.linspace(1.0e9, 1.0e11, 1001), S), 0.0)
+    assert {n: int(res[n]['fail'].sum()) for n in ('dTdS', 'dTdP', 'maxwell')} == dict.fromkeys(
+        ('dTdS', 'dTdP', 'maxwell'), 0
+    )
+
+
+@pytest.mark.unit
+def test_a_9_digit_geometric_axis_of_2001_points_is_regular():
+    """Its rounding departs about 2 AXIS_FIT steps from the fit in ln x; the stored precision
+    in the limit keeps it regular."""
+    x = np.array([float(f'{v:.8e}') for v in np.geomspace(1.0e9, 1.0e11, 2001)])
+    assert not np.array_equal(c._axis_error(x, 5e-9), 5e-9 * np.abs(x))
