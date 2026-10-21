@@ -14,7 +14,7 @@ import numpy as np
 IDENTITIES = ('dTdS', 'dTdP', 'maxwell', 'adiabat')
 QUANTITIES = ('temperature', 'density', 'heat_capacity', 'thermal_exp', 'adiabat_temp_grad')
 EPS_FLOOR = 5e-9  # 9 significant digits, the precision of the shipped tables
-AXIS_FIT = 1e-6  # departure, in units of the step, below which an axis counts as regular
+AXIS_FIT = 1e-6  # an axis is regular within AXIS_FIT steps plus eps |x| of its fit
 FACTOR = 2.0  # multiple of the h^4 term; a fault 2 cells away is found only below 3
 
 
@@ -61,6 +61,9 @@ def _grid(tables):
     for name in QUANTITIES:
         if name not in tables:
             raise ValueError(f'the {name} table is missing')
+        for key in ('P', 'S', 'values'):
+            if key not in tables[name]:
+                raise ValueError(f"the {name} table has no '{key}'")
     P, S = (np.asarray(tables['temperature'][a], float) for a in ('P', 'S'))
     for name, x in (('P', P), ('S', S)):
         if x.ndim != 1 or x.size < 2 or not (np.isfinite(x).all() and np.all(np.diff(x) > 0)):
@@ -98,8 +101,9 @@ def residuals(tables, k=1):
     Raises
     ------
     ValueError
-        If the tables are not on one (P, S) grid, an axis is not strictly increasing with at
-        least 2 points, or values do not have the shape of the grid.
+        If a table or its P, S or values is missing, the tables are not on one (P, S) grid,
+        an axis is not finite and strictly increasing with at least 2 points, or values do not
+        have the shape of the grid.
     """
     P, S = _grid(tables)
     T, rho, cp, alpha, grad = (np.asarray(tables[q]['values'], float) for q in QUANTITIES)
@@ -128,7 +132,7 @@ def _axis_error(x, eps):
     return eps * np.abs(x)
 
 
-def _parts(tables, k, eps=EPS_FLOOR):
+def _parts(tables, k, eps):
     """Per derivative identity (D, E, Q, q, A) with R + 1 = D / Q: E bounds the error of D per
     unit of stored precision from its two stored ends, q the relative error of Q per unit of
     stored precision, and A the relative error of D from the rounding of its two coordinates."""
@@ -138,16 +142,15 @@ def _parts(tables, k, eps=EPS_FLOOR):
         ln_rho = np.log(rho)
         one = np.where(np.isfinite(ln_rho), 1.0, np.nan)
 
-        def d(f, ends, x, ax):
+        def d(f, ends, x, ax, Q, q):
             err = _axis_error(x, eps).reshape((-1, 1) if ax == 0 else (1, -1))
             A = _stencil(np.broadcast_to(err, f.shape), x, ax, k, 1.0)
-            return derivative(f, x, ax, k), _stencil(ends, x, ax, k, 1.0), A
+            return derivative(f, x, ax, k), _stencil(ends, x, ax, k, 1.0), Q, q, A
 
-        dTdS, dTdP, mx = d(T, np.abs(T), S, 1), d(T, np.abs(T), P, 0), d(ln_rho, one, S, 1)
         return {
-            'dTdS': (*dTdS[:2], T / cp, 2.0, dTdS[2]),
-            'dTdP': (*dTdP[:2], grad, 1.0, dTdP[2]),
-            'maxwell': (*mx[:2], -rho * grad, 2.0, mx[2]),
+            'dTdS': d(T, np.abs(T), S, 1, T / cp, 2.0),
+            'dTdP': d(T, np.abs(T), P, 0, grad, 1.0),
+            'maxwell': d(ln_rho, one, S, 1, -rho * grad, 2.0),
         }
 
 
@@ -156,8 +159,8 @@ def floors(tables, eps, k=1):
 
     For R + 1 = D / Q the bound is (E / |Q| + |D / Q| q) eps + |D / Q| A, with E the error of
     the central difference from its two stored ends, q the relative error of Q, and A =
-    (e[i+k] + e[i-k]) / (x[i+k] - x[i-k]) from the rounding error e of each coordinate: its
-    departure from the uniform or geometric fit of the axis, or eps |x| for an irregular axis.
+    (e[i+k] + e[i-k]) / (x[i+k] - x[i-k]) from the rounding error e of each coordinate
+    (``_axis_error``).
     The adiabat identity, with no derivative, gets |R + 1| 5 eps from its five stored factors.
 
     Parameters

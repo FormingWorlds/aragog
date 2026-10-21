@@ -1,8 +1,8 @@
 """Thermodynamic consistency of SPIDER P-S tables.
 
-Module under test: ``aragog.eos.consistency``. An ideal gas with constant heat capacity in closed
-form in (P, S) holds every identity exactly, so its residuals are the truncation of the central
-differences alone. See docs/How-to/build_tests.md for the test tiers.
+Module under test: ``aragog.eos.consistency``. An ideal gas with constant heat capacity in
+closed form in (P, S) holds every identity exactly, so its residuals are the truncation of the
+central differences alone. See docs/How-to/build_tests.md for the test tiers.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from aragog.eos import consistency as c
 R_S, CP, P0, T0, S0 = 287.05, 1004.675, 1.0e5, 300.0, 7000.0
 P = np.linspace(1.0e9, 1.0e11, 199)
 S = np.linspace(6000.0, 8000.0, 201)
+S211 = np.linspace(6000.0, 8000.0, 211)  # not exact at 9 digits, unlike S
 
 
 def _ideal_gas(P, S):
@@ -169,11 +170,12 @@ def test_a_grid_shorter_than_the_stencil_gives_no_derivative():
     assert np.isnan(c.derivative(np.ones((3, 4)), np.arange(3.0), 0, 2)).all()
 
 
-def _stored(t, digits=9):
-    """The tables rounded to ``digits`` significant digits, as a file stores them."""
-    fmt = f'{{:.{digits - 1}e}}'
+def _stored(t, digits=9, axes=False):
+    """The tables rounded to ``digits`` significant digits, as a file stores them, with the P
+    and S coordinates too when ``axes``."""
+    r = np.vectorize(lambda x: float(f'{x:.{digits - 1}e}'))
     return {
-        q: {**v, 'values': np.vectorize(lambda x: float(fmt.format(x)))(v['values'])}
+        q: {**v, 'values': r(v['values']), **({'P': r(v['P']), 'S': r(v['S'])} if axes else {})}
         for q, v in t.items()
     }
 
@@ -297,15 +299,15 @@ def _write_spider(path, P, S, values, q_scale):
         f.write(f'# {P_SCALE} {S_SCALE} {q_scale}\n')
         for j in range(len(S)):
             for i in range(len(P)):
-                f.write(
-                    f'{P[i] / P_SCALE:.18e} {S[j] / S_SCALE:.18e} {values[i, j] / q_scale:.18e}\n'
-                )
+                p, s_, v = P[i] / P_SCALE, S[j] / S_SCALE, values[i, j] / q_scale
+                f.write(f'{p:.18e} {s_:.18e} {v:.18e}\n')
 
 
 def _murnaghan_ps(
     P, S, rho0=4100.0, K0=250e9, Kp0=4.0, a0=2e-5, cp0=1100.0, cp1=0.05, T0=1500.0, s0=2200.0
 ):
-    """Murnaghan solid of tests in Zalmoxis (constant alpha) on a (P, S) grid; T by Newton on s."""
+    """Murnaghan solid of the Zalmoxis tests (constant alpha) on a (P, S) grid; T by Newton on
+    s."""
     PP, SS = np.meshgrid(P, S, indexing='ij')
     phi = K0 / (Kp0 - 1.0) * ((1.0 + Kp0 * PP / K0) ** (1.0 - 1.0 / Kp0) - 1.0)
 
@@ -546,18 +548,10 @@ def test_a_column_of_nan_skips_the_identities_that_read_it_and_no_other(stored, 
     assert not any(v['fail'].any() for v in res.values())
 
 
-def _stored_axes(t, digits=9):
-    """``_stored`` with the P and S coordinates rounded to ``digits`` digits too."""
-    fmt = f'{{:.{digits - 1}e}}'
-    r = np.vectorize(lambda x: float(fmt.format(x)))
-    return {q: {**v, 'P': r(v['P']), 'S': r(v['S'])} for q, v in _stored(t, digits).items()}
-
-
 @pytest.mark.unit
 def test_an_exact_table_with_9_digit_axes_has_no_failing_cell():
     """211 S points: the S coordinates are not exact at 9 digits, as they are at 201."""
-    S211 = np.linspace(6000.0, 8000.0, 211)
-    t = _stored_axes(_ideal_gas(P, S211))
+    t = _stored(_ideal_gas(P, S211), axes=True)
     assert not np.array_equal(t['temperature']['S'], S211)
     res = c.check(t, 5e-9)
     assert {n: int(v['fail'].sum()) for n, v in res.items()} == dict.fromkeys(c.IDENTITIES, 0)
@@ -584,7 +578,7 @@ def _found_around(res, name, axis, at=(100, 100)):
 )
 def test_a_1e_6_fault_is_found_on_a_table_with_9_digit_axes(quantity, name, axis):
     t = _plant(
-        _stored_axes(_ideal_gas(P, np.linspace(6000.0, 8000.0, 211))),
+        _stored(_ideal_gas(P, S211), axes=True),
         quantity,
         (100, 100),
         1e-6,
