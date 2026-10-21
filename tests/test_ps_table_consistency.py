@@ -460,12 +460,14 @@ def test_floors_and_residuals_check_the_axes(gas):
 
 @pytest.mark.unit
 @pytest.mark.parametrize('axis', ['P', 'S'])
-@pytest.mark.parametrize('grid', ['nan', 'one point'])
-def test_an_axis_with_a_nan_or_one_point_raises(axis, grid):
-    """An axis needs at least 2 finite, increasing coordinates."""
+@pytest.mark.parametrize('grid', ['nan', 'one point', '2-D'])
+def test_an_axis_with_a_nan_one_point_or_two_dimensions_raises(axis, grid):
+    """An axis needs at least 2 finite, increasing coordinates in one dimension."""
     x = (P if axis == 'P' else S).copy()
-    x = x[:1] if grid == 'one point' else np.r_[x[:50], np.nan, x[51:]]
+    x = x[:1] if grid == 'one point' else np.r_[x[:50], np.nan, x[51:]] if grid == 'nan' else x
     t = _ideal_gas(x, S) if axis == 'P' else _ideal_gas(P, x)
+    if grid == '2-D':
+        t = {q: {**v, axis: np.asarray(v[axis]).reshape(1, -1)} for q, v in t.items()}
     with pytest.raises(ValueError, match='strictly increasing'):
         c.check(t, 5e-9)
 
