@@ -19,28 +19,22 @@ on:
 permissions:
   contents: read
 
-# Nightly: full unit + smoke + slow suite with coverage instrumentation
-# and the 90% floor enforced via [tool.coverage.report].fail_under in
-# pyproject.toml. Excluded from push and PR CI because the slow tier
-# alone takes ~110 s and coverage instrumentation pushes the full run
-# to ~10 min on a 2-vCPU runner, over the 5 min budget for fast CI.
-#
-# `smoke` is included because the integration tests in
-# test_entropy_advanced.py, test_entropy_verification.py and
-# test_entropy_solver_integration.py exercise the production
-# EntropySolver.solve() path and the JAX RHS at full physical scale —
-# without them, entropy_solver.py / cvode_jax.py / jax/solver.py sit
-# at ~33 % / ~51 % / ~63 % coverage respectively.
-#
-# Uses micromamba + conda-forge for the env so SUNDIALS, gfortran, and the
-# scikits-odes binary stack come prebuilt.
+# Nightly: the unit, smoke and slow tiers with coverage in 2 parts and the 90 % gate of
+# [tool.coverage.report] on their combined data; over an hour on a 2-vCPU runner, so not run on
+# push or PR. micromamba with conda-forge provides SUNDIALS, gfortran and scikits-odes prebuilt.
 jobs:
   nightly:
-    name: Aragog-nightly (ubuntu-latest)
+    # The core verification page test runs in one process on its own runner: in an xdist worker
+    # its item 13 run crashes the worker, and its values depend on the process history.
+    name: Aragog-nightly ${{ matrix.part }} (ubuntu-latest)
     runs-on: ubuntu-latest
-    # The full suite takes 83-113 min on the 2-vCPU runner with coverage
-    # and xdist; 150 min leaves headroom for JAX warmup, conda cache
-    # misses, and runner-to-runner timing variance.
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [main, core-verification]
+    # With coverage on the 2-vCPU runner the tests of the main part took 58-98 min in 6 runs and
+    # those of the core verification part 23-36 min in 8; 150 min leaves headroom for JAX warmup,
+    # conda cache misses, and runner-to-runner timing variance.
     timeout-minutes: 150
     defaults:
       run:
@@ -86,20 +80,66 @@ jobs:
           echo "ARAGOG_TEST_EOS_DIR=/tmp/aragog-test-data/spider_eos" >> $GITHUB_ENV
 
       - name: Run unit + smoke + slow tests with coverage
+        if: matrix.part == 'main'
         run: |
-          # -n auto runs xdist workers; coverage's parallel mode collects
-          # per-worker .coverage.* files which pytest-cov auto-combines
-          # before the report. Without xdist the serial run hit the
-          # 30-minute timeout at 23 % of the 271-test suite, dominated by
-          # JAX-traced functions where line tracing is the bottleneck.
-          # -ra prints a short summary of failed/error/skipped tests at
-          # the end of the run; without it --quiet suppresses the
-          # FAILED list entirely if there are no other final messages,
-          # making post-mortem on cancelled runs near-impossible.
+          # -n auto runs xdist workers; pytest-cov combines their data into .coverage. -ra prints
+          # the failed, errored and skipped tests at the end, also for a cancelled run.
           pytest -m "unit or smoke or integration or slow" -n auto -o "addopts=" -ra \
+            --ignore=tests/test_core_verification_page.py \
             --timeout=2700 --timeout-method=thread --durations=30 \
-            --cov=aragog --cov-report=term-missing --cov-report=xml \
-            --cov-fail-under=90
+            --cov=aragog --cov-report=term-missing --cov-fail-under=0
+
+      - name: Run the core verification page test in one process
+        if: matrix.part == 'core-verification'
+        run: |
+          # 4500 s per test: 2.7 times the longest item 13 call of this part in 4 runs (1648 s)
+          pytest tests/test_core_verification_page.py -m "unit or smoke or integration or slow" \
+            -p no:xdist -o "addopts=" -ra --timeout=4500 --timeout-method=thread --durations=10 \
+            --cov=aragog --cov-report=term-missing --cov-fail-under=0
+
+      - name: Keep the coverage data
+        if: ${{ !cancelled() }}
+        run: mv .coverage cov-${{ matrix.part }}.dat
+
+      - name: Upload the coverage data
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cov-${{ matrix.part }}
+          path: cov-${{ matrix.part }}.dat
+
+  coverage:
+    # The 90 % gate of [tool.coverage.report] on the combined data of both parts
+    name: Aragog-nightly coverage
+    needs: nightly
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download the coverage data
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cov-*
+          merge-multiple: true
+
+      - name: Combine and check the coverage
+        run: |
+          pip install "coverage[toml]>=7.6"
+          pip install --no-deps -e .
+          coverage combine cov-main.dat cov-core-verification.dat
+          # the vnv tests also measure modules they write to pytest tmp folders; the XML is
+          # written before the gate, so Codecov gets it also on a night below 90 %
+          coverage xml --include='*/src/aragog/*' --fail-under=0
+          coverage report --include='*/src/aragog/*'
 
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() }}

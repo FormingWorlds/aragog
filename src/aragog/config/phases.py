@@ -3,41 +3,50 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import attrs
+
+from aragog.rheology import SolidRheologyParams, delegate_rheology, merge_rheology
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
 # Allowed separation_viscosity modes and default, single-sourced here and
-# imported by every site that parses, validates, or consumes the option
-# (parser.py, eos/entropy_phase.py, jax/phase.py, solver/entropy_solver.py).
+# imported by every site that parses, validates, or consumes the option.
 SEPARATION_VISCOSITY_MODES: tuple[str, str] = ('melt', 'mixture')
 SEPARATION_VISCOSITY_DEFAULT: str = 'melt'
 
 
-@attrs.define
+@delegate_rheology
+@attrs.define(init=False)
 class PhaseConfig:
     """Single-phase (solid or liquid) material properties.
 
     Each property can be a float (constant value) or a str (path to
-    a lookup table file).
+    a lookup table file). Rheology parameters are owned by ``SolidRheologyParams``.
 
     Parameters
     ----------
     density : float or str
-        Density [kg/m^3] or path to lookup.
+        Reference density [kg/m^3] or path to lookup table.
     heat_capacity : float or str
-        Heat capacity [J/(kg K)] or path to lookup.
+        Specific heat capacity [J/kg/K] or path to lookup table.
     melt_fraction : float
         Melt fraction (0 for solid, 1 for liquid).
     thermal_conductivity : float or str
-        Thermal conductivity [W/(m K)] or path to lookup.
+        Thermal conductivity [W/m/K] or path to lookup table.
     thermal_expansivity : float or str
-        Thermal expansivity [1/K] or path to lookup.
+        Thermal expansivity [1/K] or path to lookup table.
     viscosity : float or str
-        Dynamic viscosity [Pa s] or path to lookup.
-    entropy : float or str
-        Entropy [J/(kg K)] or path to lookup. Empty string means unused.
+        Dynamic viscosity [Pa s] or path to lookup table.
+    entropy : float or str, optional
+        Reference entropy [J/kg/K] or path to lookup table. Empty string means unused.
+    rheology : SolidRheologyParams, optional
+        Solid-state rheology parameters container. Each ``SolidRheologyParams``
+        field is also exposed as a read-only property on ``PhaseConfig`` via
+        ``delegate_rheology``.
+    **flat_rheo : Any
+        Flat rheology attributes forwarded to rheology container.
     """
 
     density: float | str
@@ -47,6 +56,30 @@ class PhaseConfig:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
+    rheology: SolidRheologyParams = attrs.field(factory=SolidRheologyParams)
+
+    def __init__(
+        self,
+        density: float | str,
+        heat_capacity: float | str,
+        melt_fraction: float,
+        thermal_conductivity: float | str,
+        thermal_expansivity: float | str,
+        viscosity: float | str,
+        entropy: float | str = '',
+        rheology: SolidRheologyParams | None = None,
+        **flat_rheo: Any,
+    ):
+        if viscosity is None:
+            raise ValueError('viscosity must not be None')
+        self.density = density
+        self.heat_capacity = heat_capacity
+        self.melt_fraction = melt_fraction
+        self.thermal_conductivity = thermal_conductivity
+        self.thermal_expansivity = thermal_expansivity
+        self.viscosity = viscosity
+        self.entropy = entropy
+        self.rheology = merge_rheology(rheology, flat_rheo)
 
 
 @attrs.define

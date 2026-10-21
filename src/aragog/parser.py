@@ -23,7 +23,12 @@ import numpy.typing as npt
 from typed_configparser import ConfigParser
 
 from aragog.config.boundary import check_core_bc
-from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_threshold
+from aragog.config.energy import (
+    CONVECTIVE_THRESHOLD_DEFAULT,
+    EOS_FLOOR_MARGIN_DEFAULT,
+    check_convective_threshold,
+    check_eos_floor_margin,
+)
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
@@ -222,6 +227,7 @@ class _EnergyParameters:
     # disables each.
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
+    eos_floor_margin: float | None = EOS_FLOOR_MARGIN_DEFAULT
     # Proximity band [J/kg/K] within which a cell counts as near a phase boundary.
     # Tightens max_step to resolve stiff RHS across the solidus/liquidus; a 'rate' call on
     # CVODE also arms its segments within the stiff zone when that is wider.
@@ -238,6 +244,7 @@ class _EnergyParameters:
             raise ValueError(
                 f'phase_boundary_cap must be fixed or rate, got {self.phase_boundary_cap!r}'
             )
+        check_eos_floor_margin(self.eos_floor_margin)
 
 
 @dataclass

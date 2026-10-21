@@ -142,6 +142,7 @@ def test_segment_root_stiff_zone_entry_and_exit_with_hysteresis():
 
 class _FakeCap:
     cap, cap_T, cap_S, phi0, evals, binding_cap = 0.05, 0.0, 0.0, 0.3, 7, 'phi'
+    floor_margin = 0.0
 
     def __init__(self, g):
         self.g = g
@@ -165,6 +166,23 @@ def test_segment_root_scales_the_cap_by_the_cap_that_binds():
     assert (
         _roots([1350.0, 1500.0], inside=False, cap=_TwoCaps(1e-6)).fired(0.0, at_stiff) == 'cap'
     )
+
+
+@pytest.mark.unit
+def test_segment_root_scales_a_floor_root_by_the_margin_or_the_largest_cap():
+    """A floor root 60 J/kg/K short of firing, with a 300 K cap also armed, is scaled by the
+    100 J/kg/K margin, so the stiff root at 0.3 delta comes first; a floor-only cap without a
+    binding name falls back to the margin, so a floor 20 short of firing comes first."""
+
+    class _FloorAndT(_FakeCap):
+        cap, cap_T, floor_margin, binding_cap = 0.0, 300.0, 100.0, 'eos_floor'
+
+    class _FloorOnly(_FakeCap):
+        cap, floor_margin, binding_cap = 0.0, 100.0, None
+
+    at = [1313.0, 1500.0]
+    assert _roots(at, inside=False, cap=_FloorAndT(60.0)).fired(0.0, at) == 'stiff'
+    assert _roots(at, inside=False, cap=_FloorOnly(20.0)).fired(0.0, at) == 'cap'
 
 
 @pytest.mark.unit
@@ -719,11 +737,17 @@ def test_rate_cap_includes_the_cmb_entry_at_the_cmb_pressure(shared_eos, monkeyp
 @needs_cvode
 @needs_eos
 @pytest.mark.smoke
+@pytest.mark.parametrize(
+    ('margin', 'names'),
+    [(100.0, ['cap', 'stiff', 'entry', 'progress']), (0.0, ['stiff', 'entry', 'progress'])],
+    ids=['floor on', 'floor off'],
+)
 def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
-    shared_eos, monkeypatch
+    shared_eos, monkeypatch, margin, names
 ):
-    """A start with one cell 1 J/kg/K above its liquidus opens an inside segment that watches every other entry."""
-    s = _solver(shared_eos, 'rate', end_time=2.0)
+    """A start with one cell 1 J/kg/K above its liquidus opens an inside segment that watches every
+    other entry; the step-cap root leads it only when a cap, here the EOS floor, is armed."""
+    s = _solver(shared_eos, 'rate', end_time=2.0, eos_floor_margin=margin)
     S_liq = np.asarray(shared_eos.liquidus_entropy(s._P_stag_flat)).ravel()
     S0 = np.full(s._n_stag, S_liq[5] + 1.0)
     assert np.abs(S0 - S_liq).min() < 10.0
@@ -737,7 +761,7 @@ def test_rate_mode_starts_inside_the_stiff_zone_when_a_cell_is_within_delta(
 
     monkeypatch.setattr(s, '_solve_cvode_segments', wrapped)
     s.solve()
-    assert first[0].inside and first[0].names == ['stiff', 'entry', 'progress']
+    assert first[0].inside and first[0].names == names
     assert not first[0].watch[5] and first[0].watch.sum() == s._n_stag
 
 
@@ -1131,9 +1155,9 @@ def test_max_steps_counts_per_output_interval_in_both_modes(shared_eos):
 def test_rate_arms_the_step_caps_like_fixed_for_a_stiff_zone_beyond_the_margin(
     shared_eos, monkeypatch
 ):
-    """The wider stiff zone arms rate segments only: with phi_step_cap 0.05 and cells 230 above
-    the liquidus (beyond the 200 margin) neither rate nor fixed builds the cap root; at 150
-    (within the margin) both build it."""
+    """The wider stiff zone arms rate segments only: with phi_step_cap 0.05, the EOS floor off and
+    cells 230 above the liquidus (beyond the 200 margin) neither rate nor fixed builds the cap root;
+    at 150 (within the margin) both build it."""
     built, real = [], es._PhiCapRootFunction.__init__
 
     def spy(self, *args, **kwargs):
@@ -1145,7 +1169,9 @@ def test_rate_arms_the_step_caps_like_fixed_for_a_stiff_zone_beyond_the_margin(
         for gap, armed in ((230.0, False), (150.0, True)):
             built.clear()
             s, _, _ = _cooling_above_liquidus(shared_eos, 0.01, gap=gap, mode=mode)
-            s.parameters.energy = dataclasses.replace(s.parameters.energy, phi_step_cap=0.05)
+            s.parameters.energy = dataclasses.replace(
+                s.parameters.energy, phi_step_cap=0.05, eos_floor_margin=None
+            )
             s.solve()
             assert bool(built) is armed, (mode, gap)
             if not armed:

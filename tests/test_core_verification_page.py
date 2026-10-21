@@ -36,13 +36,14 @@ RUN_SPREAD = {f'identity_{t}' for t in FLOWS} | {
     'core_vs_cmb_rel_rtol1e-8',
     'reconstructed_cmb_max_rel',
 }
-# Item 13 differences of an unconverged run from thermal_history: within a factor 2 either way
-UNCONVERGED = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
+# Item 13 differences the page states as present (the unconverged run at rtol 1e-8): at least
+# half the value
+AT_LEAST_HALF = {'tcen_max_abs_diff_K_rtol1e-8', 'onset_max_abs_diff_myr_rtol1e-8'}
 # Item 13 T_cen changes under the mixing constants, of the size of the integration noise: held
 # between 0 and 1 K (0.30 K at most under a 1-ulp start temperature)
 MIXING_TCEN = {'mixing_tcen_max_K', 'mixing_tcen_min_K'}
-# Differences of two solutions that the integration moves by more than 1e-4 of themselves: held
-# to 2 to 3 times the largest change under a tenfold tighter tolerance or a 1-ulp start temperature
+# Differences of two solutions that the integration moves by more than 1e-4 of themselves: held to
+# 2 to 3 times their largest change under a tighter tolerance, a 1-ulp start or a platform change
 BANDS = {
     # item 10, LSODA at rtol 1e-10: these two T_cmb differences move by up to 1.0e-6 K
     **dict.fromkeys(('t_cmb_abs_diff_at_onset', 't_cmb_diff_max_after_onset_K'), 3e-6),
@@ -50,10 +51,14 @@ BANDS = {
     **{f'tcen_max_abs_diff_K_{t}': 0.6 if t == '-2TW' else 0.2 for t in FLOWS},
     # item 13: the end inner-core radius moves by up to 8.3e-5 of itself
     **dict.fromkeys([f'ricb_end_rel_diff_{t}' for t in FLOWS], 2e-4),
-    # item 13: the late layer depth, its change under the mixing constants and the end depth
+    # item 13: the late layer depth
     'depth_late_max_rel': 2e-3,
-    'mixing_depth_max_rel': 5e-3,
-    'erosion_depth_km_end_aragog': 0.2,
+    # item 13, the mixing-constant depth change, the eroding end depth and the unconverged run:
+    # twice their spread over the process runs of stable_layer_spread.json and this file's value
+    'mixing_depth_max_rel': 1.4e-2,
+    'erosion_depth_km_end_aragog': 1.5,
+    'tcen_max_abs_diff_K_rtol1e-8': 23.0,
+    'onset_max_abs_diff_myr_rtol1e-8': 70.0,
 }
 TAG = re.compile(r'(-?[\d.]+(?:e[-+]?\d+)?)\s?%?<!--k:(\d+)\.([^:>]+)(?::(-?[\d.]+))?-->')
 
@@ -104,18 +109,55 @@ def script(tmp_path, monkeypatch):
 
 
 def _holds(key, value, want):
-    """A value in ROUNDING or RUN_SPREAD may not double, one in UNCONVERGED stays within a
-    factor 2 either way, one in MIXING_TCEN between 0 and 1 K, one in BANDS within its band,
-    every other number holds to 1e-4."""
+    """A value in ROUNDING or RUN_SPREAD may not double, one in MIXING_TCEN lies between 0 and
+    1 K, one in AT_LEAST_HALF is at least half its value, one in BANDS within its band, every
+    other number holds to 1e-4."""
     if key in MIXING_TCEN:
         return 0 < value < 1.0
     if key in ROUNDING or key in RUN_SPREAD:
         return abs(value) <= 2.0 * abs(want) + 1e-15
-    if key in UNCONVERGED:
-        return 0.5 * want <= value <= 2.0 * want
+    if key in AT_LEAST_HALF and value < 0.5 * want:
+        return False
     if key in BANDS:
         return abs(value - want) <= BANDS[key]
     return value == pytest.approx(want, rel=1e-4, abs=1e-12)
+
+
+@pytest.mark.unit
+def test_the_bands_hold_the_recorded_runs_and_bound_both_sides():
+    """Every process run of item 13 in stable_layer_spread.json holds; the bands of the 4 keys
+    of these runs are twice their spread over the runs and the values file (rounded up); _holds
+    applies every band on both sides (for the 2 unconverged differences the lower side through
+    the half floor); those 2 fail below half their value, while the mixing-constant depth change,
+    which the page states as not resolved, is held by its band alone; and the page gives the
+    largest values of these runs."""
+    spread = json.loads((ROOT / 'tools/verification/data/stable_layer_spread.json').read_text())
+    runs, file13 = spread['process_runs']['runs'], VALUES['13']
+    assert len(runs) == 10
+    tcen, onset, mix = (
+        'tcen_max_abs_diff_K_rtol1e-8',
+        'onset_max_abs_diff_myr_rtol1e-8',
+        'mixing_depth_max_rel',
+    )
+    for key in (tcen, onset, mix, 'erosion_depth_km_end_aragog'):
+        vals = [run[key] for run in runs.values()] + [file13[key]]
+        assert 2.0 <= BANDS[key] / (max(vals) - min(vals)) < 2.1, key
+        for name, run in runs.items():
+            assert _holds(key, run[key], file13[key]), (name, key, run[key])
+    for key, band in BANDS.items():
+        want = next((item[key] for item in VALUES.values() if key in item), None)
+        assert want is not None, key
+        assert not _holds(key, want + 1.01 * band, want), key
+        assert not _holds(key, want - 1.01 * band, want), key
+    for key in (tcen, onset):
+        assert _holds(key, 0.51 * file13[key], file13[key]), key
+        assert not _holds(key, 0.0, file13[key]), key
+        assert not _holds(key, 0.49 * file13[key], file13[key]), key
+    assert _holds(mix, 0.49 * file13[mix], file13[mix]) and _holds(mix, 0.0, file13[mix])
+    top = {key: max(run[key] for run in runs.values()) for key in (tcen, onset, mix)}
+    page = PAGE.read_text()
+    assert f'reach {top[tcen]:.0f} K and {top[onset]:.0f} Myr' in page
+    assert f'reaches {100 * top[mix]:.1f} %' in page
 
 
 def _reproduces(script, item):

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import math
+import numbers
 
 import attrs
 import numpy as np
@@ -23,6 +25,23 @@ def check_convective_threshold(value: float) -> None:
         or not 0.0 <= value < float('inf')
     ):
         raise ValueError(f'convective_threshold must be finite and >= 0, got {value!r}')
+
+
+# Margin of the EOS floor above the entropy table minimum [J/kg/K]; 0 leaves the floor off.
+EOS_FLOOR_MARGIN_DEFAULT: float = 0.0
+
+
+def check_eos_floor_margin(value: float | None) -> None:
+    """Raise ``ValueError`` unless ``value`` is ``None`` or a real scalar with a finite float."""
+    if value is None:
+        return
+    try:
+        ok = not isinstance(value, bool) and isinstance(value, numbers.Real)
+        ok = ok and math.isfinite(float(value))
+    except OverflowError:
+        ok = False
+    if not ok:
+        raise ValueError(f'eos_floor_margin must be None or a finite number, got {value!r}')
 
 
 @attrs.define
@@ -108,6 +127,31 @@ class EnergyConfig:
         Per-call per-cell ``|ΔS|`` cap [J/kg/K] in the native solver
         variable; same role as the temperature cap without an EOS lookup
         in the root function. ``None`` (the default) disables the cap.
+    eos_floor_margin : float or None
+        Margin m [J/kg/K] above the minimum entropy S_min of the EOS
+        tables. A CVODE root (scipy: a terminal event) ends the call when
+        the smaller of the top basic-node entropy, which sets the surface
+        temperature, and the smallest cell entropy reaches S_min + m, or
+        S_min + m/2 when the call starts below S_min + m; the call then
+        returns a shorter step. A call that starts at or below S_min + m/2
+        arms a level at half its distance to S_min, and does not advance
+        (status 1) when that entropy falls fast enough to reach the level
+        before the call ends; a caller that retries with a shorter span can
+        then advance closer to S_min; there the top node counts as falling
+        only when the top cell falls too. At or below S_min + 2e-6 m the call
+        does not advance on any fall, the top node at its own rate, at every span,
+        and a start at or below S_min, also of the extrapolated top node alone, or
+        with no level between it and S_min, does not advance at all. A call
+        whose stop lands below S_min through the root location error, which
+        grows with the call time, is discarded as a refusal. A call with no
+        span skips the floor. Default 0: the floor is off, so a drain past
+        S_min continues at the clamped table-edge temperature and the EOS
+        lookup logs its out-of-range WARNING (it raises only for an EOS
+        built with ``strict_range=True``). A positive margin
+        turns it on (100 is the tested value) and must stay below the
+        entropy span of the tables; ``None`` (not in TOML) or a non-positive
+        value disables it, and a bool, NaN, infinity or a value that is not
+        a ``numbers.Real`` is refused.
     phase_boundary_entropy_margin : float
         Proximity band [J/kg/K] within which a staggered cell counts as
         "near" a phase boundary, tightening the integrator ``max_step`` so
@@ -161,6 +205,10 @@ class EnergyConfig:
     phi_step_cap: float | None = None
     temperature_step_cap: float | None = None
     entropy_step_cap: float | None = None
+    eos_floor_margin: float | None = attrs.field(
+        default=EOS_FLOOR_MARGIN_DEFAULT,
+        validator=lambda _inst, _attr, value: check_eos_floor_margin(value),
+    )
     phase_boundary_entropy_margin: float = 200.0
     phase_boundary_cap: str | None = attrs.field(
         default=None,
