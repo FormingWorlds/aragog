@@ -153,6 +153,7 @@ Thermal boundary conditions at the surface and CMB.
 | `param_utbl` | bool | Enable upper-thermal-boundary-layer parameterisation (default false) |
 | `param_utbl_const` | K⁻² | UTBL constant in $\Delta T = b\,T^3$ |
 | `core_bc` | str | CMB BC mode. `energy_balance` (SPIDER bit-parity, length $N+1$, **default and PROTEUS production**), `quasi_steady` (alpha-factor, state length $N$), `gradient` (entropy gradient as state, length $N+2$, experimental), `bower2018` (parity-only, not recommended), or `core_module` (the core evolution module, length $N+2$ plus the shell cells with `stratification = true`, needs `inner_boundary_condition = 1`). Any other value is refused. |
+| `top_node` | str | Entropy of the top basic node. `linear` (default) extrapolates the top 2 cells; `limited` reduces that half step smoothly near an edge of the EOS entropy table, so the node rises with the top cell and, with the top cell in the table, stays in the table (`aragog.mesh.top_node_entropy`). `limited` is refused on `core_bc = "gradient"`: when the config is read, on a later assignment of either key, and when the mesh is built. Any other value is refused. |
 
 ### `[mesh]`
 

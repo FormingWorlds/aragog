@@ -164,7 +164,8 @@ def top_node_entropy(
     ``M(a, b) = a b / (a^p + b^p)^(1/p)``, ``c = TOP_NODE_SCALE``, ``p = TOP_NODE_POWER``.
 
     With the top cell in the table the node keeps at least ``1 - c`` of the top cell's distance
-    to each edge and lies between the top cell and the linear node. ``d node / d S_N`` lies in
+    to each edge and lies between the top cell and the linear node (to rounding: where the limiter
+    acts, a few ulp outside a ``linear`` from the matrix row). ``d node / d S_N`` lies in
     ``[1 - c, 1 + ratio/2]`` and ``d node / d S_N-1`` in ``[-ratio/2, 0]``, so a cooling top cell
     lowers the node. With the top cell in the table the node is C^p across ``D = 0`` and leaves
     the linear node by the fraction ``1 - (1 + (|D|/b)^p)^(-1/p)`` of ``|D|``, below 1e-3 for
@@ -174,8 +175,10 @@ def top_node_entropy(
     inside. An unbounded table gives the linear node. A non-finite cell among the top 2 gives
     NaN. Where the limiter does not act (step ``D``, factor ``k`` exactly 1) the node is
     ``linear`` bit for bit, so the statements above hold to its rounding: a flat top on or next
-    to an edge can lie up to 2 ulp outside the table, and where ``k`` leaves 1 the node fell by
-    at most 1 ulp in the sweeps measured (the tests allow 2).
+    to an edge can lie up to 2 ulp outside the table for ``ratio < 2``, and where ``k`` leaves 1
+    the node fell by at most 1 ulp in the sweeps measured (the tests allow 2). Every ``Mesh``
+    gives ``ratio < 2``: its staggered nodes are the cell midpoints in the mesh coordinate, so
+    ``ratio = 2 h_N / (h_N-1 + h_N)`` with ``h`` the cell widths.
 
     Parameters
     ----------
@@ -561,7 +564,7 @@ class Mesh:
             node = float(top_node_entropy(S, self.top_ratio, lo, hi, linear=S_basic[-1]))
             ends = sorted((S[-1], S_basic[-1]))
             tol = 1e-12 * max(abs(ends[0]), abs(ends[1]), 1.0)
-            # the linear row may lie outside by rounding: 4 ulp, above the 2 ulp measured
+            # the linear row may lie outside by rounding: 4 ulp, 2 measured at ratio < 2
             near = min(node - lo, hi - node) >= -4 * np.spacing(abs(node))
             if np.isfinite(S_basic[-1]) and not (
                 ends[0] - tol <= node <= ends[1] + tol
