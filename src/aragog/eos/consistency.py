@@ -59,6 +59,8 @@ def derivative(f, x, axis, k):
 
 def _grid(tables):
     """Return the (P, S) axes after checking that every table is there and on that one grid."""
+    if not isinstance(tables, Mapping):
+        raise ValueError('tables is not a mapping')
     for name in QUANTITIES:
         if name not in tables:
             raise ValueError(f'the {name} table is missing')
@@ -104,9 +106,9 @@ def residuals(tables, k=1):
     Raises
     ------
     ValueError
-        If a table or its P, S or values is missing, the tables are not on one (P, S) grid,
-        an axis is not finite and strictly increasing with at least 2 points, or values do not
-        have the shape of the grid.
+        If tables or a table is not a mapping, a table or its P, S or values is missing, the
+        tables are not on one (P, S) grid, an axis is not finite and strictly increasing with
+        at least 2 points, or values do not have the shape of the grid.
     """
     P, S = _grid(tables)
     T, rho, cp, alpha, grad = (np.asarray(tables[q]['values'], float) for q in QUANTITIES)
