@@ -656,3 +656,11 @@ def test_a_check_ignores_an_entry_that_is_not_a_quantity(stored):
 def test_a_table_that_is_not_a_mapping_raises_a_value_error(gas):
     with pytest.raises(ValueError, match='density table is not a mapping'):
         c.check({**gas, 'density': None}, 5e-9)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('tables', [None, 5, ['temperature']], ids=['None', 'int', 'list'])
+def test_tables_that_are_not_a_mapping_raise_a_value_error(tables):
+    for call in (lambda: c.check(tables, 5e-9), lambda: c.residuals(tables)):
+        with pytest.raises(ValueError, match='tables is not a mapping'):
+            call()
