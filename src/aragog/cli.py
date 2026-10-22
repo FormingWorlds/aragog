@@ -35,6 +35,7 @@ import logging
 import os
 import re
 import sys
+import tomllib
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
@@ -438,10 +439,6 @@ def run(
                 f'--set requires a .toml configuration; got {config.suffix!r}. '
                 'Convert the .cfg file to TOML or drop --set.'
             )
-        if sys.version_info < (3, 11):
-            import tomli as tomllib
-        else:
-            import tomllib
 
         from aragog.config import Config
         from aragog.eos.entropy import EntropyEOS
