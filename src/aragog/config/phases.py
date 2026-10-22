@@ -15,7 +15,8 @@ logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 # imported by every site that parses, validates, or consumes the option.
 SEPARATION_VISCOSITY_MODES: tuple[str, str] = ('melt', 'mixture')
 SEPARATION_VISCOSITY_DEFAULT: str = 'melt'
-# Buoyancy of the separation velocity: against the mixture (McKenzie 1984) or the solid (Abe 1995).
+# Buoyancy of the separation velocity: against the mixture (McKenzie 1984) or the solid
+# (Abe 1995).
 SEPARATION_BUOYANCY_MODES: tuple[str, str] = ('mixture', 'solid')
 SEPARATION_BUOYANCY_DEFAULT: str = 'mixture'
 

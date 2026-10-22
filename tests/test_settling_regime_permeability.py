@@ -150,8 +150,9 @@ def _numpy_v_rel(ev, density):
 def test_relative_velocity_nonnegative_across_porosity_numpy():
     """Melt-lighter contrast (delta_rho < 0) still yields v_rel >= 0.
 
-    A contrast of the wrong sign would make every value here negative. The ``max(F, 0)`` clamp is a defensive guard
-    that these in-domain porosities do not exercise: the mobility F is
+    A contrast of the wrong sign would make every value here negative. The
+    ``max(F, 0)`` clamp is a defensive guard that these in-domain porosities do
+    not exercise: the mobility F is
     non-negative for every porosity the density-to-porosity map produces, so
     the clamp never changes a value in this sweep.
     """
