@@ -116,6 +116,8 @@ def main():
             kappah_floor=params0.kappah_floor,
             convective_threshold=params0.convective_threshold,
             bottom_up_grav_sep=True,
+            separation_viscosity='mixture' if params0.separation_viscosity_mixture else 'melt',
+            separation_buoyancy='mixture' if params0.separation_buoyancy_mixture else 'solid',
         )
 
     # Per-component isolation
