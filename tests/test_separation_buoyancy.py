@@ -203,6 +203,17 @@ def test_relative_velocity_numpy_jax_parity_in_both_buoyancy_forms(mode):
         )
 
 
+def _refused(build, word):
+    """Assert that ``build`` raises a ValueError naming ``word``; another exception type
+    or no exception fails the test by assertion."""
+    try:
+        build()
+    except Exception as exc:
+        assert isinstance(exc, ValueError) and word in str(exc), repr(exc)
+    else:
+        pytest.fail(f'{word}: accepted')
+
+
 @pytest.mark.parametrize('bad', ['Mixture', '', 'melt', None, True, 1])
 def test_every_entry_point_rejects_an_unknown_buoyancy(bad):
     """The evaluator, the JAX parameters, the attrs config and the parser dataclass."""
@@ -212,14 +223,13 @@ def test_every_entry_point_rejects_an_unknown_buoyancy(bad):
     common = dict(latent_heat_of_fusion=4e5, rheological_transition_melt_fraction=0.4,
                   rheological_transition_width=0.15, solidus='s.dat', liquidus='l.dat',
                   phase='mixed', phase_transition_width=0.01, grain_size=1e-3)  # fmt: skip
-    with pytest.raises(ValueError, match='separation_buoyancy'):
-        EntropyPhaseEvaluator(_StubEOS(), _G, separation_buoyancy=bad)
-    with pytest.raises(ValueError, match='separation_buoyancy'):
-        PhaseParams(grain_size=_D, viscosity_liquid=_ETA, separation_buoyancy=bad)
-    with pytest.raises(ValueError, match='separation_buoyancy'):
-        MixedPhaseConfig(**common, separation_buoyancy=bad)
-    with pytest.raises(ValueError, match='separation_buoyancy'):
-        _PhaseMixedParameters(**common, separation_buoyancy=bad)
+    w = 'separation_buoyancy'
+    _refused(lambda: EntropyPhaseEvaluator(_StubEOS(), _G, separation_buoyancy=bad), w)
+    _refused(
+        lambda: PhaseParams(grain_size=_D, viscosity_liquid=_ETA, separation_buoyancy=bad), w
+    )
+    _refused(lambda: MixedPhaseConfig(**common, separation_buoyancy=bad), w)
+    _refused(lambda: _PhaseMixedParameters(**common, separation_buoyancy=bad), w)
 
 
 @pytest.mark.parametrize(

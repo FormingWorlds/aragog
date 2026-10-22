@@ -327,8 +327,12 @@ def test_gravity_not_positive_at_a_basic_node_only_raises(shared_eos):
     half = 0.2 * np.min(np.abs(rs - rb[k]))
     g[np.abs(r - rb[k]) < half] = -1.0
     assert np.all(PchipInterpolator(r, g)(rs) > 0.0) and PchipInterpolator(r, g)(rb[k]) < 0.0
-    with pytest.raises(ValueError, match='basic nodes'):
+    try:  # another failure further on (CVODE) must fail the test, not error it
         _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+    except Exception as exc:
+        assert isinstance(exc, ValueError) and 'basic nodes' in str(exc), repr(exc)
+    else:
+        pytest.fail('a profile below 0 at a basic node passed')
 
 
 @pytest.mark.smoke
