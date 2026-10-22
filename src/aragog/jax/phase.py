@@ -650,9 +650,7 @@ def relative_velocity(
     w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)
     F_matrix = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg
-    F_matrix = (
-        jnp.where(params.separation_buoyancy_mixture > 0.5, 1.0 - porosity, 1.0) * F_matrix
-    )
+    F_matrix = (1.0 - params.separation_buoyancy_mixture * porosity) * F_matrix
     F = jnp.maximum(F_matrix + w_stokes * F_stokes, 0.0)
 
     # Signed contrast, positive outward (melt rising), as the numpy path.
