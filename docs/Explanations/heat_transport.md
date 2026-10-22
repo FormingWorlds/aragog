@@ -86,7 +86,7 @@ j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
 v_\mathrm{rel} = \frac{(\rho_s - \rho_m)\,g\,F(\phi)}{\eta_\mathrm{mix}},
 $$
 
-with $g > 0$ the gravity magnitude (negative $v_\mathrm{rel}$ where the melt is denser, and about 0 where the node density is at or above $\rho_s$, see [Two-phase flow](two_phase_flow.md)), $F(\phi)$ the melt-solid mobility (the permeability over porosity, detailed below; `separation_buoyancy` sets its form, see [Two-phase flow](two_phase_flow.md)) and $\eta_\mathrm{mix}$ the drag viscosity selected by `separation_viscosity`.
+with $g > 0$ the gravity magnitude (a melt denser than the solid does not drain: a mush density between $\rho_s$ and $\rho_l$ is then at or above $\rho_s$, so the porosity is floored and $v_\mathrm{rel}$ is about 0, see [Two-phase flow](two_phase_flow.md)), $F(\phi)$ the melt-solid mobility (the permeability over porosity, detailed below; `separation_buoyancy` sets its form, see [Two-phase flow](two_phase_flow.md)) and $\eta_\mathrm{mix}$ the drag viscosity selected by `separation_viscosity`.
 The default, `"melt"`, is the fixed liquid viscosity, matching SPIDER's `GetGravitationalHeatFlux`.
 The alternative, `"mixture"`, is the rheological-transition-blended mixture viscosity: liquid near and above `phi_rheo`, ramping smoothly to the solid viscosity below it, so settling locks up through the same transition that sets the bulk rheology.
 The corresponding heat flux is

@@ -65,7 +65,7 @@ v_\mathrm{rel} = \frac{(\rho_\mathrm{sol} - \rho_\mathrm{liq})\,g\,F(\phi)}{\eta
 $$
 
 with $g > 0$ the gravity magnitude. Bower et al. (2018)[^cite-bower2018] Eq. 12 and SPIDER write the contrast as $\rho_\mathrm{liq} - \rho_\mathrm{sol}$ with a negative $g$, which gives the same sign.
-A lighter melt rises and the solid settles; a denser melt sinks.
+A lighter melt rises and the solid settles; where the melt is denser the velocity is negative but about 0, since the porosity is floored there (below).
 The tabulated densities can cross so that the melt is locally the denser phase in a shallow region.
 Aragog floors the porosity denominator $\rho_\mathrm{sol} - \rho_\mathrm{liq}$ at about 1 kg m⁻³ in that region, so the porosity there is $(\rho_\mathrm{sol} - \rho)/(1\ \mathrm{kg\,m^{-3}})$ clipped to $[0, 1]$: about 0 where the node density is at or above $\rho_\mathrm{sol}$, and up to 1 below it. The flux $j_\mathrm{grav}$ carries the factor $\phi(1-\phi)$ of the melt fraction, so it vanishes in solid and fully molten nodes whatever the porosity.
 

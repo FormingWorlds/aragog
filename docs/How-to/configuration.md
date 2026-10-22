@@ -170,7 +170,7 @@ Spatial discretisation and pressure-density profile.
 | `core_density` | kg/m³ | Mean core density |
 | `eos_method` | int | `1` = analytic Adams–Williamson; `2` = external file (`eos_file`) |
 | `surface_density` | kg/m³ | Surface mantle density (Adams-Williamson). Default 4078.95095544 (PROTEUS production; SPIDER `-adams_williamson_rhos`) |
-| `gravitational_acceleration` | m/s² | Scalar gravity for Adams-Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. A scalar must be finite and positive; a per-node profile must be finite on every row and positive at every mesh node, or the solver raises at construction. Default 9.81 |
+| `gravitational_acceleration` | m/s² | Scalar gravity for Adams-Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. A scalar must be finite and positive; a per-node profile must be finite on every row and positive at every mesh node, or `initialize()` raises. Default 9.81 |
 | `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams–Williamson. Default 260e9 |
 | `adams_williamson_beta` | -- | A–W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
 | `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |

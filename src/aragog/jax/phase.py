@@ -141,13 +141,11 @@ class PhaseParams(eqx.Module):
     phase_smoothing_tanh: float
     phase_smoothing_width: float
 
-    # separation_viscosity_mixture: 1.0 -> gravitational-separation drag
-    # uses the rheological-transition-blended mixture viscosity; 0.0 ->
-    # the fixed single-phase liquid viscosity (SPIDER's
-    # GetGravitationalHeatFlux convention).
+    # separation_viscosity_mixture: above 0.5 -> separation drag with the blended mixture
+    # viscosity; otherwise the liquid viscosity (SPIDER's GetGravitationalHeatFlux).
     separation_viscosity_mixture: float
-    # separation_buoyancy_mixture: 1.0 -> 1 - phi on the BKC and RG mobility (McKenzie
-    # 1984); 0.0 -> buoyancy against the solid (Abe 1995, SPIDER).
+    # separation_buoyancy_mixture: above 0.5 -> 1 - phi on the BKC and RG mobility
+    # (McKenzie 1984); otherwise buoyancy against the solid (Abe 1995, SPIDER).
     separation_buoyancy_mixture: float
 
     def __init__(
@@ -607,8 +605,8 @@ def relative_velocity(
     multiplies (rho_s - rho_l) g / eta (Abe 1995, Bower et al. 2018 section 2.1;
     SPIDER convention): Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
     The contrast is signed: the velocity is negative where the melt is denser.
-    ``params.separation_buoyancy_mixture`` 1.0 puts ``1 - phi`` on the BKC and RG
-    terms (McKenzie 1984), 0.0 takes the buoyancy against the solid (Abe 1995).
+    ``params.separation_buoyancy_mixture`` above 0.5 puts ``1 - phi`` on the BKC and RG
+    terms (McKenzie 1984); otherwise the buoyancy is against the solid (Abe 1995).
 
     The drag viscosity is set by ``params.separation_viscosity_mixture``:
     0.0 uses the fixed single-phase liquid viscosity, matching SPIDER's
