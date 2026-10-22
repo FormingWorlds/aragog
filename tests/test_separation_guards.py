@@ -18,6 +18,14 @@ from aragog.utilities import positive_gravity
 pytestmark = pytest.mark.unit
 
 
+def _accepted(j, c, viscosity='melt', buoyancy='solid'):
+    """Fail the test, not error it, when the sign check refuses a valid row."""
+    try:
+        _check_separation_sign(np.asarray(j), np.asarray(c), viscosity, buoyancy)
+    except RuntimeError as exc:
+        pytest.fail(f'valid row refused: {exc}')
+
+
 @pytest.mark.parametrize('bad', [0.0, -0.0, -9.8, np.nan, np.inf, -np.inf])
 def test_positive_gravity_refuses_a_bad_node(bad):
     """A zero, negative or non-finite value at node 2 raises with the node and value named."""
@@ -65,7 +73,7 @@ def test_sign_check_accepts_a_denser_melt_and_zero_contrast():
     contrast, pass."""
     j = np.array([-3.0e-2, 4.0e-2, -0.0, 0.0, 1.0e-3, -1.0e-3])
     c = np.array([-120.0, 300.0, 5.0, 0.0, 0.0, 0.0])
-    assert _check_separation_sign(j, c, 'melt', 'mixture') is None
+    _accepted(j, c, buoyancy='mixture')
 
 
 def test_sign_check_floor_bounds_the_refused_flux():
@@ -74,8 +82,6 @@ def test_sign_check_floor_bounds_the_refused_flux():
     c = np.array([7.0])
     with pytest.raises(RuntimeError, match='against the density contrast'):
         _check_separation_sign(np.array([-2.0 * JGRAV_SIGN_FLOOR]), c, 'melt', 'solid')
-    assert (
-        _check_separation_sign(np.array([-0.5 * JGRAV_SIGN_FLOOR]), c, 'melt', 'solid') is None
-    )
-    assert _check_separation_sign(np.array([-JGRAV_SIGN_FLOOR]), c, 'melt', 'solid') is None
+    _accepted([-0.5 * JGRAV_SIGN_FLOOR], c)
+    _accepted([-JGRAV_SIGN_FLOOR], c)
     assert JGRAV_SIGN_FLOOR == 1.0e-12
