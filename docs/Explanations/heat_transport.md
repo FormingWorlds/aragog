@@ -83,10 +83,10 @@ In the partially molten regime, melt and solid separate vertically by gravity. T
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{\lvert\rho_m - \rho_s\rvert\,g\,F(\phi)}{\eta_\mathrm{mix}},
+v_\mathrm{rel} = \frac{(\rho_s - \rho_m)\,g\,F(\phi)}{\eta_\mathrm{mix}},
 $$
 
-with $F(\phi)$ the melt-solid mobility (the permeability over porosity, detailed below) and $\eta_\mathrm{mix}$ the drag viscosity selected by `separation_viscosity`.
+with $g > 0$ the gravity magnitude (negative $v_\mathrm{rel}$ where the melt is denser), $F(\phi)$ the melt-solid mobility (the permeability over porosity, detailed below; `separation_buoyancy` sets its form, see [Two-phase flow](two_phase_flow.md)) and $\eta_\mathrm{mix}$ the drag viscosity selected by `separation_viscosity`.
 The default, `"melt"`, is the fixed liquid viscosity, matching SPIDER's `GetGravitationalHeatFlux`.
 The alternative, `"mixture"`, is the rheological-transition-blended mixture viscosity: liquid near and above `phi_rheo`, ramping smoothly to the solid viscosity below it, so settling locks up through the same transition that sets the bulk rheology.
 The corresponding heat flux is
@@ -99,7 +99,7 @@ where $L(P)$ is the EOS-tabulated, pressure-dependent latent heat of fusion.
 
 ### Melt-solid mobility across the three Abe regimes
 
-The factor that sets the relative velocity, $v_\mathrm{rel} = F(\zeta)\,\lvert\rho_m-\rho_s\rvert\,g/\eta_\mathrm{mix}$, is the melt-solid mobility $F(\zeta)$: the permeability $K(\zeta)$ divided by the porosity $\zeta$ (the melt volume fraction, $\zeta \equiv \phi$).
+The factor that sets the relative velocity, $v_\mathrm{rel} = F(\zeta)\,(\rho_s-\rho_m)\,g/\eta_\mathrm{mix}$, is the melt-solid mobility $F(\zeta)$: the permeability $K(\zeta)$ divided by the porosity $\zeta$ (the melt volume fraction, $\zeta \equiv \phi$).
 Following Abe (1995)[^cite-abe1995] and Bower et al. (2018)[^cite-bower2018] §2.1, with $a$ the grain size set by `grain_size`, its three regimes are
 
 $$
