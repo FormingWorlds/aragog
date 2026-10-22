@@ -265,10 +265,11 @@ def test_mesh_gravity_profile_not_positive_at_a_node_raises(bad):
 
 
 @pytest.mark.unit
-def test_scalar_gravity_is_used_as_its_magnitude_and_zero_raises():
-    """Without a profile the JAX mesh takes the scalar as its magnitude (-9.81 gives
-    9.81 at every node) and refuses 0."""
-    g = np.asarray(MeshArrays.from_numpy_mesh(_StubMesh(configured_g=-9.81)).gravity)
+@pytest.mark.parametrize('bad', [0.0, -9.81, np.nan])
+def test_scalar_gravity_not_positive_raises(bad):
+    """Without a profile the JAX mesh refuses a scalar gravity that is 0, negative or
+    NaN, and broadcasts a positive one unchanged."""
+    g = np.asarray(MeshArrays.from_numpy_mesh(_StubMesh(configured_g=9.81)).gravity)
     np.testing.assert_array_equal(g, np.full(g.shape, 9.81))
     with pytest.raises(ValueError, match='gravity on the mesh nodes'):
-        MeshArrays.from_numpy_mesh(_StubMesh(configured_g=0.0))
+        MeshArrays.from_numpy_mesh(_StubMesh(configured_g=bad))

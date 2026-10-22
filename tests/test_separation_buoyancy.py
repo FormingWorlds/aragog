@@ -51,7 +51,7 @@ class _StubEOS:
         self._rho = {'solid': rho_s, 'melt': rho_l}
 
     def _lookup_at_phase_boundary(self, prop, P, phase):
-        return np.full(np.shape(P), self._rho['solid' if phase == 'solid' else 'melt'])
+        return np.full(np.shape(P), self._rho[phase])
 
 
 def _v(path, porosity, rho_s=_RHO_S, rho_l=_RHO_L, **kw):
@@ -126,24 +126,54 @@ def test_mobility_of_a_nan_or_inf_porosity_is_nan(mode, p):
 @example(-1.0e-300)
 def test_relative_velocity_has_the_sign_of_the_contrast(contrast):
     """For rho_s - rho_l over [-1000, 1000] kg/m^3 in a mush halfway between the phase
-    densities, both paths and both forms give v with the sign of the contrast, 0 at 0,
-    and |v_mixture| <= |v_solid|."""
+    densities, both paths and both forms give v with the sign of the realised contrast
+    (strictly for |c| >= 1e-6), 0 at 0, and |v_mixture| <= |v_solid|."""
     rho_l = 3900.0
-    kw = dict(rho_s=rho_l + contrast, rho_l=rho_l)
+    rho_s = rho_l + contrast
+    c = rho_s - rho_l  # a contrast below ~1e-13 rounds to 0 at these densities
     for path in ('numpy', 'jax'):
-        v = {m: _v(path, 0.5, separation_buoyancy=m, **kw) for m in ('mixture', 'solid')}
+        v = {
+            m: _v(path, 0.5, rho_s=rho_s, rho_l=rho_l, separation_buoyancy=m)
+            for m in ('mixture', 'solid')
+        }
         for m in v:
-            assert v[m] * contrast >= 0.0 and np.isfinite(v[m])
-            assert contrast != 0.0 or v[m] == 0.0
+            assert np.isfinite(v[m]) and v[m] * c >= 0.0
+            assert abs(c) < 1.0e-6 or v[m] * c > 0.0
+            assert c != 0.0 or v[m] == 0.0
         assert abs(v['mixture']) <= abs(v['solid'])
 
 
 @pytest.mark.parametrize('path', ['numpy', 'jax'])
 @pytest.mark.parametrize('mode', ['mixture', 'solid'])
 def test_denser_melt_gives_a_negative_velocity_in_both_forms(path, mode):
-    """With the melt denser than the solid by 300 kg/m^3 the velocity is negative in both
-    forms and both paths (porosity floored by the density denominator)."""
-    assert _v(path, 0.5, rho_s=3900.0, rho_l=4200.0, separation_buoyancy=mode) < 0.0
+    """With the melt denser than the solid by 300 kg/m^3 the velocity is negative and
+    about 0 in both forms and both paths: the density denominator floors the porosity,
+    so |v| is below 1e-9 of the velocity of a melt lighter by 300 kg/m^3."""
+    v = _v(path, 0.5, rho_s=3900.0, rho_l=4200.0, separation_buoyancy=mode)
+    v_lighter = _v(path, 0.5, rho_s=4200.0, rho_l=3900.0, separation_buoyancy=mode)
+    assert v < 0.0 and abs(v) < 1.0e-9 * v_lighter
+
+
+def test_jax_buoyancy_flag_is_a_threshold():
+    """The JAX form follows the flag as a switch: a flag of 2.0 or 0.6 gives the
+    'mixture' velocity and 0.4 the 'solid' one, never a scaled factor."""
+    import equinox as eqx
+
+    base = PhaseParams(grain_size=_D, viscosity_liquid=_ETA, separation_viscosity='melt')
+    eos = _StubEOS()
+    density = _RHO_S - 0.5 * (_RHO_S - _RHO_L)
+
+    def v(flag):
+        params = eqx.tree_at(lambda q: q.separation_buoyancy_mixture, base, flag)
+        return float(
+            jax_relative_velocity(
+                eos, params, jnp.asarray(1.0e9), jnp.asarray(density), jnp.asarray(0.5),
+                jnp.asarray(_G), viscosity=jnp.asarray(1.0e30),
+            )
+        )  # fmt: skip
+
+    assert v(2.0) == v(1.0) and v(0.6) == v(1.0)
+    assert v(0.4) == v(0.0) and v(0.0) != v(1.0)
 
 
 @pytest.mark.parametrize('path', ['numpy', 'jax'])

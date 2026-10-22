@@ -284,7 +284,7 @@ def test_gravity_export_follows_an_external_profile(shared_eos):
 @needs_eos
 @pytest.mark.parametrize('bad', [0.0, -1.0, np.nan])
 def test_gravity_not_positive_at_a_mesh_node_raises(shared_eos, bad):
-    """A profile that is negative or NaN at an interpolated basic or staggered node
+    """A profile that is 0, negative or NaN at an interpolated basic or staggered node
     raises; a centre node at g = 0 below the CMB, outside the mesh, does not."""
     r = np.concatenate(([0.0], np.linspace(3.480e6, 6.371e6, 50)))
     g = np.concatenate(([0.0], np.linspace(10.0, 9.0, 50)))
@@ -316,15 +316,47 @@ def test_gravity_not_positive_at_a_staggered_node_only_raises(shared_eos):
 
 @pytest.mark.smoke
 @needs_eos
+def test_gravity_not_positive_at_a_basic_node_only_raises(shared_eos):
+    """A dip below 0 around one basic node, with every staggered node positive, raises
+    from the basic-node check."""
+    r = np.linspace(3.480e6, 6.371e6, 4000)
+    g = np.linspace(10.0, 9.0, r.size)
+    s = _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+    rb, rs = s._r_basic_flat, s._r_stag_flat
+    k = rb.size // 2
+    half = 0.2 * np.min(np.abs(rs - rb[k]))
+    g[np.abs(r - rb[k]) < half] = -1.0
+    assert np.all(np.abs(r[g < 0.0] - rb[k]) < half)
+    with pytest.raises(ValueError, match='basic nodes'):
+        _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_negative_scalar_gravity_raises(shared_eos):
+    """A negative scalar gravity (no profile) raises instead of giving a negative
+    Adams-Williamson pressure."""
+    with pytest.raises(ValueError, match='gravity on the basic nodes'):
+        _solve(
+            shared_eos, _pick_mushy_S(shared_eos), mesh={'gravitational_acceleration': -9.81}
+        )
+
+
+@pytest.mark.smoke
+@needs_eos
 def test_separation_flux_against_the_density_contrast_raises(shared_eos, monkeypatch):
     """An output whose separation heat flux has the sign opposite to rho_s - rho_l at a
-    node, above the floor, raises with the node named."""
-    s = _solve(shared_eos, _pick_mushy_S(shared_eos), energy={'gravitational_separation': True})
+    node, above the floor, raises with the node and both separation modes named."""
+    s = _solve(
+        shared_eos, _pick_mushy_S(shared_eos), energy={'gravitational_separation': True},
+        separation_viscosity='melt', separation_buoyancy='mixture',
+    )  # fmt: skip
     assert np.max(np.abs(s.get_state().jgrav_b)) > 1.0e-6
     v_rel = EntropyPhaseEvaluator.relative_velocity
     monkeypatch.setattr(EntropyPhaseEvaluator, 'relative_velocity', lambda ph: -v_rel(ph))
-    with pytest.raises(RuntimeError, match='against the density contrast at node'):
+    with pytest.raises(RuntimeError, match='against the density contrast at node') as exc:
         s.get_state()
+    assert "separation_viscosity 'melt', separation_buoyancy 'mixture'" in str(exc.value)
 
 
 @pytest.mark.smoke

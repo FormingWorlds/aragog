@@ -42,8 +42,9 @@ def test_sign_check_refuses_a_non_finite_row(jgrav, contrast):
     """A NaN or inf flux or contrast at node 1 raises with the node named."""
     j = np.array([1.0e-3, jgrav, 0.0])
     c = np.array([5.0, contrast, 5.0])
-    with pytest.raises(RuntimeError, match='not finite at node 1'):
+    with pytest.raises(RuntimeError, match='not finite at node 1') as exc:
         _check_separation_sign(j, c, 'melt', 'solid')
+    assert 'np.float64' not in str(exc.value)
 
 
 def test_sign_check_names_node_values_and_modes():
@@ -60,18 +61,21 @@ def test_sign_check_names_node_values_and_modes():
 
 
 def test_sign_check_accepts_a_denser_melt_and_zero_contrast():
-    """A negative flux under a negative contrast, and any flux at 0 contrast, pass."""
-    j = np.array([-3.0e-2, 4.0e-2, -0.0, 0.0])
-    c = np.array([-120.0, 300.0, 5.0, 0.0])
+    """A negative flux under a negative contrast, and a zero or nonzero flux at 0
+    contrast, pass."""
+    j = np.array([-3.0e-2, 4.0e-2, -0.0, 0.0, 1.0e-3, -1.0e-3])
+    c = np.array([-120.0, 300.0, 5.0, 0.0, 0.0, 0.0])
     assert _check_separation_sign(j, c, 'melt', 'mixture') is None
 
 
 def test_sign_check_floor_bounds_the_refused_flux():
-    """A flux against the contrast just above the floor raises; just below it passes."""
+    """A flux against the contrast at 2x the floor raises; at the floor and at half of it
+    the flux passes."""
     c = np.array([7.0])
     with pytest.raises(RuntimeError, match='against the density contrast'):
         _check_separation_sign(np.array([-2.0 * JGRAV_SIGN_FLOOR]), c, 'melt', 'solid')
     assert (
         _check_separation_sign(np.array([-0.5 * JGRAV_SIGN_FLOOR]), c, 'melt', 'solid') is None
     )
+    assert _check_separation_sign(np.array([-JGRAV_SIGN_FLOOR]), c, 'melt', 'solid') is None
     assert JGRAV_SIGN_FLOOR == 1.0e-12
