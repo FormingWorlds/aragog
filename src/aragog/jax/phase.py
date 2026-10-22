@@ -216,7 +216,7 @@ class PhaseParams(eqx.Module):
                 f'separation_buoyancy must be one of {SEPARATION_BUOYANCY_MODES}, '
                 f'got {separation_buoyancy!r}'
             )
-        self.separation_buoyancy_mixture = 1.0 if separation_buoyancy == 'mixture' else 0.0
+        self.separation_buoyancy_mixture = {'mixture': 1.0, 'solid': 0.0}[separation_buoyancy]
 
 
 class MeshArrays(eqx.Module):
@@ -462,7 +462,7 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
             'an external EOS file with a gravity column) before constructing '
             'the JAX phase parameters.'
         )
-    g_scalar = abs(float(_eos_g))
+    g_scalar = float(_eos_g)
     return jnp.asarray(positive_gravity(np.full(r_basic.size, g_scalar), 'mesh nodes'))
 
 
@@ -650,7 +650,9 @@ def relative_velocity(
     w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)
     F_matrix = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg
-    F_matrix = (1.0 - params.separation_buoyancy_mixture * porosity) * F_matrix
+    F_matrix = (
+        jnp.where(params.separation_buoyancy_mixture > 0.5, 1.0 - porosity, 1.0) * F_matrix
+    )
     F = jnp.maximum(F_matrix + w_stokes * F_stokes, 0.0)
 
     # Signed contrast, positive outward (melt rising), as the numpy path.

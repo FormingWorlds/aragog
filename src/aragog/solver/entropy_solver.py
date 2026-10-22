@@ -907,15 +907,19 @@ JGRAV_SIGN_FLOOR = 1.0e-12  # W/m^2
 
 
 def _check_separation_sign(jgrav, contrast, viscosity, buoyancy):
-    """Raise when the separation heat flux opposes the phase density contrast at a node,
-    or when the flux or the contrast is not finite. It checks the numpy output only."""
+    """Raise when the separation heat flux opposes the density contrast or is not finite.
+
+    Notes
+    -----
+    It checks the numpy output of an accepted state; the JAX right-hand side cannot raise.
+    """
     modes = f'separation_viscosity {viscosity!r}, separation_buoyancy {buoyancy!r}'
     nonfinite = np.flatnonzero(~(np.isfinite(jgrav) & np.isfinite(contrast)))
     if nonfinite.size:
         k = nonfinite[0]
         raise RuntimeError(
             f'separation heat flux or density contrast not finite at node {k}: jgrav '
-            f'{jgrav[k]!r} W/m^2, rho_s - rho_l {contrast[k]!r} kg/m^3 ({modes}, '
+            f'{float(jgrav[k])!r} W/m^2, rho_s - rho_l {float(contrast[k])!r} kg/m^3 ({modes}, '
             f'{nonfinite.size} such nodes)'
         )
     bad = np.flatnonzero((np.abs(jgrav) > JGRAV_SIGN_FLOOR) & (jgrav * contrast < 0.0))
@@ -1659,13 +1663,11 @@ class EntropySolver:
         # mesh. Interpolation from the external eos_radius grid onto
         # aragog's basic and staggered node radii keeps gravity
         # consistent with the other node-aligned fields.
-        g_scalar = abs(
-            float(
-                getattr(
-                    mesh.eos,
-                    '_gravitational_acceleration',
-                    self.parameters.mesh.gravitational_acceleration,
-                )
+        g_scalar = float(
+            getattr(
+                mesh.eos,
+                '_gravitational_acceleration',
+                self.parameters.mesh.gravitational_acceleration,
             )
         )
         eos_gravity_arr = np.asarray(
