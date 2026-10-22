@@ -30,8 +30,9 @@ def _accepted(j, c, viscosity='melt', buoyancy='solid'):
 def test_positive_gravity_refuses_a_bad_node(bad):
     """A zero, negative or non-finite value at node 2 raises with the node and value named."""
     g = np.array([10.0, 9.9, bad, 9.7])
-    with pytest.raises(ValueError, match=r'gravity on the test mesh .* node 2 has'):
+    with pytest.raises(ValueError, match=r'gravity on the test mesh .* node 2 has') as exc:
         positive_gravity(g, 'test mesh')
+    assert 'np.float64' not in str(exc.value)
 
 
 def test_positive_gravity_passes_a_valid_profile_unchanged():

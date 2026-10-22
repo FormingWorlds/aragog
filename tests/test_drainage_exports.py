@@ -333,13 +333,18 @@ def test_gravity_not_positive_at_a_basic_node_only_raises(shared_eos):
 
 @pytest.mark.smoke
 @needs_eos
-def test_negative_scalar_gravity_raises(shared_eos):
-    """A negative scalar gravity (no profile) raises instead of giving a negative
-    Adams-Williamson pressure."""
-    with pytest.raises(ValueError, match='gravity on the basic nodes'):
-        _solve(
-            shared_eos, _pick_mushy_S(shared_eos), mesh={'gravitational_acceleration': -9.81}
-        )
+@pytest.mark.parametrize('bad', [0.0, -9.81, np.nan, np.inf])
+@pytest.mark.parametrize('profile', [False, True])
+def test_scalar_gravity_not_positive_raises_before_the_pressure(shared_eos, bad, profile):
+    """A scalar gravity that is 0, negative, NaN or inf raises with the setting named
+    before the Adams-Williamson pressure uses it, also when a positive per-node profile
+    supplies the separation gravity."""
+    mesh = {'gravitational_acceleration': bad}
+    if profile:
+        r = np.linspace(3.480e6, 6.371e6, 50)
+        mesh |= {'eos_radius': r, 'eos_gravity': np.linspace(10.0, 9.0, 50)}
+    with pytest.raises(ValueError, match='gravitational_acceleration'):
+        _solve(shared_eos, _pick_mushy_S(shared_eos), mesh=mesh)
 
 
 @pytest.mark.smoke
