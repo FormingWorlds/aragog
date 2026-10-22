@@ -120,8 +120,12 @@ def test_mobility_of_a_nan_or_inf_porosity_is_nan(mode, p):
 @settings(max_examples=60, deadline=None)
 @given(st.floats(-1000.0, 1000.0))
 @example(0.0)
-@example(1.0e-6)
-@example(-1.0e-6)
+@example(2.0e-6)
+@example(-2.0e-6)
+@example(1.0e-5)
+@example(-1.0e-5)
+@example(1.0e-3)
+@example(-1.0e-3)
 @example(1.0e-300)
 @example(-1.0e-300)
 def test_relative_velocity_has_the_sign_of_the_contrast(contrast):
@@ -130,7 +134,7 @@ def test_relative_velocity_has_the_sign_of_the_contrast(contrast):
     (strictly for |c| >= 1e-6), 0 at 0, and |v_mixture| <= |v_solid|."""
     rho_l = 3900.0
     rho_s = rho_l + contrast
-    c = rho_s - rho_l  # a contrast below ~1e-13 rounds to 0 at these densities
+    c = rho_s - rho_l  # a contrast below ~2e-13 rounds to 0 at these densities
     for path in ('numpy', 'jax'):
         v = {
             m: _v(path, 0.5, rho_s=rho_s, rho_l=rho_l, separation_buoyancy=m)
@@ -154,9 +158,12 @@ def test_denser_melt_gives_a_negative_velocity_in_both_forms(path, mode):
     assert v < 0.0 and abs(v) < 1.0e-9 * v_lighter
 
 
-def test_jax_buoyancy_flag_is_a_threshold():
-    """The JAX form follows the flag as a switch: a flag of 2.0 or 0.6 gives the
-    'mixture' velocity and 0.4 the 'solid' one, never a scaled factor."""
+@pytest.mark.parametrize(
+    'field', ['separation_buoyancy_mixture', 'separation_viscosity_mixture']
+)
+def test_jax_mode_flags_are_thresholds(field):
+    """Both JAX mode flags act as switches at 0.5: a flag of 2.0 or 0.6 gives the
+    'mixture' velocity and 0.4 the other mode's, never a scaled value."""
     import equinox as eqx
 
     base = PhaseParams(grain_size=_D, viscosity_liquid=_ETA, separation_viscosity='melt')
@@ -164,7 +171,7 @@ def test_jax_buoyancy_flag_is_a_threshold():
     density = _RHO_S - 0.5 * (_RHO_S - _RHO_L)
 
     def v(flag):
-        params = eqx.tree_at(lambda q: q.separation_buoyancy_mixture, base, flag)
+        params = eqx.tree_at(lambda q: getattr(q, field), base, flag)
         return float(
             jax_relative_velocity(
                 eos, params, jnp.asarray(1.0e9), jnp.asarray(density), jnp.asarray(0.5),

@@ -309,7 +309,7 @@ def test_gravity_not_positive_at_a_staggered_node_only_raises(shared_eos):
     k = rs.size // 2
     half = 0.2 * np.min(np.abs(rb - rs[k]))
     g[np.abs(r - rs[k]) < half] = -1.0
-    assert np.all(np.abs(r[g < 0.0] - rs[k]) < half)
+    assert np.all(PchipInterpolator(r, g)(rb) > 0.0) and PchipInterpolator(r, g)(rs[k]) < 0.0
     with pytest.raises(ValueError, match='staggered nodes'):
         _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
 
@@ -326,7 +326,7 @@ def test_gravity_not_positive_at_a_basic_node_only_raises(shared_eos):
     k = rb.size // 2
     half = 0.2 * np.min(np.abs(rs - rb[k]))
     g[np.abs(r - rb[k]) < half] = -1.0
-    assert np.all(np.abs(r[g < 0.0] - rb[k]) < half)
+    assert np.all(PchipInterpolator(r, g)(rs) > 0.0) and PchipInterpolator(r, g)(rb[k]) < 0.0
     with pytest.raises(ValueError, match='basic nodes'):
         _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
 

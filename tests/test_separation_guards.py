@@ -48,25 +48,27 @@ def test_positive_gravity_passes_a_valid_profile_unchanged():
     [(np.nan, 5.0), (1.0e-3, np.nan), (np.inf, 5.0), (-1.0e-3, -np.inf)],
 )
 def test_sign_check_refuses_a_non_finite_row(jgrav, contrast):
-    """A NaN or inf flux or contrast at node 1 raises with the node named."""
-    j = np.array([1.0e-3, jgrav, 0.0])
-    c = np.array([5.0, contrast, 5.0])
+    """A NaN or inf flux or contrast at nodes 1 and 3 raises with the first node and the
+    count named."""
+    j = np.array([1.0e-3, jgrav, 0.0, jgrav])
+    c = np.array([5.0, contrast, 5.0, contrast])
     with pytest.raises(RuntimeError, match='not finite at node 1') as exc:
         _check_separation_sign(j, c, 'melt', 'solid')
-    assert 'np.float64' not in str(exc.value)
+    assert 'np.float64' not in str(exc.value) and ', 2 such nodes)' in str(exc.value)
 
 
 def test_sign_check_names_node_values_and_modes():
-    """A flux against the contrast at node 2 raises with node, values and both modes."""
-    j = np.array([1.0e-3, -2.0e-3, -4.0e-3])
-    c = np.array([5.0, -5.0, 250.0])
+    """Fluxes against the contrast at nodes 2 and 3 raise with the first node, its values,
+    both modes and the count."""
+    j = np.array([1.0e-3, -2.0e-3, -4.0e-3, 6.0e-3])
+    c = np.array([5.0, -5.0, 250.0, -8.0])
     with pytest.raises(RuntimeError) as exc:
         _check_separation_sign(j, c, 'mixture', 'solid')
     msg = str(exc.value)
     assert 'against the density contrast at node 2' in msg
     assert '-4.000000e-03' in msg and '2.500000e+02' in msg
     assert "separation_viscosity 'mixture'" in msg and "separation_buoyancy 'solid'" in msg
-    assert ', 1 such nodes)' in msg
+    assert ', 2 such nodes)' in msg
 
 
 def test_sign_check_accepts_a_denser_melt_and_zero_contrast():
