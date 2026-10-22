@@ -516,14 +516,16 @@ class EntropyPhaseEvaluator:
         or lighter by less than 1 kg/m^3). There the porosity is
         ``(rho_s - rho) / (1 kg/m^3)`` clipped to [0, 1]: about 0 where the node
         density is at or above ``rho_s``, 1 where it is more than 1 kg/m^3
-        below, and intermediate in between. The separation direction is fixed by the
-        non-negative contrast ``|rho_l - rho_s|`` in ``v_rel`` and cannot
-        reverse.
+        below, and intermediate in between.
+
+        The contrast is signed, ``v_rel = (rho_s - rho_l) g F / eta`` with ``g`` the
+        positive gravity magnitude (Bower et al. 2018, Eq. 12, and SPIDER, which
+        write ``(rho_l - rho_s)`` with a negative ``g``): positive (melt rising) where
+        the melt is lighter, negative (melt sinking) where it is denser.
         """
         if self._const_properties:
             return np.zeros_like(self._density)
         rho_s, rho_l = self.phase_boundary_densities()
-        delta_rho = rho_l - rho_s  # typically negative (melt lighter)
         g = self._g
         # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
         # must fail here rather than silently fall back to 'melt'.
@@ -537,14 +539,8 @@ class EntropyPhaseEvaluator:
         porosity = self._porosity_from(rho_s, rho_l)
         F = mobility_function(porosity, self._grain_size)
 
-        # Relative velocity: v = |delta_rho| * g * F / eta_liquid
-        # Sign convention: positive = outward (melt rising, solid sinking)
-        # Smoothed |delta_rho| via sqrt(x^2 + eps^2); eps tiny compared
-        # to physical delta_rho ~ -500 kg/m^3, so bulk result unchanged.
-        abs_drho = np.sqrt(delta_rho * delta_rho + 1.0e-12)
-        v_rel = abs_drho * g * F / np.maximum(eta_l, 1e-10)
-
-        return v_rel
+        # Positive outward: melt rising, solid sinking.
+        return (rho_s - rho_l) * g * F / np.maximum(eta_l, 1e-10)
 
     def phase_boundary_densities(self) -> tuple[FloatOrArray, FloatOrArray]:
         """Solid and melt densities at the phase boundary at the node pressure [kg/m^3].

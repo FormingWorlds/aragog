@@ -24,6 +24,7 @@ from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_
 from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.mesh import top_node_entropy
+from aragog.utilities import positive_gravity
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
@@ -421,8 +422,10 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
         # smooth, so the cubic Hermite has no overshoot risk like the
         # solidus/liquidus 1-D entropy curves (where PCHIP was
         # rejected; see eos.entropy._load_spider_phase_boundary).
+        if not np.all(np.isfinite(eos_gravity_arr)):
+            raise ValueError('gravity profile eos_gravity must be finite on every row')
         g_basic = PchipInterpolator(eos_radius_arr, eos_gravity_arr)(r_basic)
-        return jnp.asarray(g_basic)
+        return jnp.asarray(positive_gravity(g_basic, 'interpolated mesh nodes'))
     # Scalar fallback chain. Mirrors the numpy reference in
     # entropy_solver.py::_initialize_internals: try the pressure-EOS
     # attribute first, then mesh.settings, then mesh.parameters. Both
@@ -445,7 +448,7 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
             'the JAX phase parameters.'
         )
     g_scalar = abs(float(_eos_g))
-    return jnp.asarray(np.full(r_basic.size, g_scalar))
+    return jnp.asarray(positive_gravity(np.full(r_basic.size, g_scalar), 'mesh nodes'))
 
 
 # ---------------------------------------------------------------------------
@@ -587,8 +590,9 @@ def relative_velocity(
     """Melt-solid relative velocity for gravitational separation [m/s].
 
     Three-regime mobility model, the permeability over porosity that
-    multiplies delta_rho*g/eta (Abe 1995, Bower et al. 2018 section 2.1;
+    multiplies (rho_s - rho_l) g / eta (Abe 1995, Bower et al. 2018 section 2.1;
     SPIDER convention): Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
+    The contrast is signed: the velocity is negative where the melt is denser.
 
     The drag viscosity is set by ``params.separation_viscosity_mixture``:
     0.0 uses the fixed single-phase liquid viscosity, matching SPIDER's
@@ -598,7 +602,6 @@ def relative_velocity(
     """
     rho_s = eos._lookup_at_phase_boundary('density', P, 'solid')
     rho_l = eos._lookup_at_phase_boundary('density', P, 'melt')
-    delta_rho = rho_l - rho_s
     d = params.grain_size
     eta_melt = 10.0**params.log10_visc_liquid
     eta_l = jnp.where(params.separation_viscosity_mixture > 0.5, viscosity, eta_melt)
@@ -632,10 +635,8 @@ def relative_velocity(
     F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
     F = jnp.maximum(F, 0.0)
 
-    # Smoothed |delta_rho|: sqrt(x^2 + eps^2) with eps tiny vs physical
-    # density contrast ~ 500 kg/m^3. Matches entropy_phase.py:464.
-    abs_drho = jnp.sqrt(delta_rho * delta_rho + 1.0e-12)
-    return abs_drho * gravity * F / jnp.maximum(eta_l, 1e-10)
+    # Signed contrast, positive outward (melt rising), as the numpy path.
+    return drho * gravity * F / jnp.maximum(eta_l, 1e-10)
 
 
 # ---------------------------------------------------------------------------

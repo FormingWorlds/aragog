@@ -40,6 +40,7 @@ from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
+from aragog.utilities import positive_gravity
 
 # SUNDIALS CVODE via scikits-odes-sundials. Same underlying solver SPIDER
 # uses (SUNDIALS CVODE BDF with modified-Newton nonlinear iteration and
@@ -901,6 +902,22 @@ def _status_failed(status: int) -> bool:
     return status not in (0, 1)
 
 
+# |jgrav| above which its sign must follow rho_s - rho_l; crossover-node fluxes are ~1e-10.
+JGRAV_SIGN_FLOOR = 1.0e-12  # W/m^2
+
+
+def _check_separation_sign(jgrav, contrast, mode):
+    """Raise when the separation heat flux opposes the phase density contrast at a node."""
+    bad = np.flatnonzero((np.abs(jgrav) > JGRAV_SIGN_FLOOR) & (jgrav * contrast < 0.0))
+    if bad.size:
+        k = bad[0]
+        raise RuntimeError(
+            f'separation heat flux against the density contrast at node {k}: jgrav '
+            f'{jgrav[k]:.6e} W/m^2, rho_s - rho_l {contrast[k]:.6e} kg/m^3 '
+            f'(separation_viscosity {mode!r}, {bad.size} such nodes)'
+        )
+
+
 @dataclass
 class SolverOutput:
     """Complete output from one EntropySolver integration step.
@@ -1661,9 +1678,11 @@ class EntropySolver:
             # is smooth wherever density is smooth, so the cubic Hermite
             # carries no overshoot risk like the solidus/liquidus
             # entropy curves (where PCHIP was rejected upstream).
+            if not np.all(np.isfinite(eos_gravity_arr)):
+                raise ValueError('gravity profile eos_gravity must be finite on every row')
             g_interp = PchipInterpolator(eos_radius_arr, eos_gravity_arr)
-            g_basic = g_interp(self._r_basic_flat)
-            g_stag = g_interp(self._r_stag_flat)
+            g_basic = positive_gravity(g_interp(self._r_basic_flat), 'basic nodes')
+            g_stag = positive_gravity(g_interp(self._r_stag_flat), 'staggered nodes')
             logger.info(
                 'EntropySolver gravity: per-node profile from external mesh '
                 '(n=%d, basic range [%.4f, %.4f] m/s^2)',
@@ -1672,7 +1691,9 @@ class EntropySolver:
                 float(g_basic.max()),
             )
         else:
-            g_basic = np.full(self._r_basic_flat.shape, g_scalar)
+            g_basic = positive_gravity(
+                np.full(self._r_basic_flat.shape, g_scalar), 'basic nodes'
+            )
             g_stag = np.full(self._r_stag_flat.shape, g_scalar)
             logger.info(
                 'EntropySolver gravity: scalar broadcast (%.4f m/s^2) — '
@@ -5076,6 +5097,7 @@ class EntropySolver:
                 ph.gravitational_acceleration(),
             )
         )
+        _check_separation_sign(jgrav_b, rho_solid_b - rho_melt_b, ph._separation_viscosity)
 
         # Scalar quantities. M_mantle is the structural mass between the CMB
         # and the surface from the EOS mass integral, not the PALEOS rho_stag

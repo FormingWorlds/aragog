@@ -85,6 +85,32 @@ def tanh_weight(value: FloatOrArray, threshold: float, width: float) -> npt.NDAr
     return weight
 
 
+def positive_gravity(gravity: Any, where: str) -> npt.NDArray:
+    """Returns gravity as an array after checking it is finite and positive on every node.
+
+    The separation velocity takes gravity as a positive magnitude, so its sign
+    sets the direction of melt-solid separation.
+
+    Args:
+        gravity: Gravity at the mesh nodes [m/s^2]
+        where: Mesh and source named in the error message
+
+    Returns:
+        gravity as a float array
+
+    Raises:
+        ValueError: if any value is not finite or not positive
+    """
+    g = np.asarray(gravity, dtype=float)
+    bad = np.flatnonzero(~(np.isfinite(g) & (g > 0.0)))
+    if bad.size:
+        raise ValueError(
+            f'gravity on the {where} must be finite and positive; node {bad[0]} has '
+            f'{g.ravel()[bad[0]]!r} ({bad.size} such nodes)'
+        )
+    return g
+
+
 def combine_properties(weight: Any, property1: Any, property2: Any) -> Any:
     """Linear weighting of two quantities.
 
