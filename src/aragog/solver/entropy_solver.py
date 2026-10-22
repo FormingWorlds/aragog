@@ -902,20 +902,29 @@ def _status_failed(status: int) -> bool:
     return status not in (0, 1)
 
 
-# |jgrav| above which its sign must follow rho_s - rho_l; crossover-node fluxes are ~1e-10.
+# |jgrav| above which its sign must follow rho_s - rho_l.
 JGRAV_SIGN_FLOOR = 1.0e-12  # W/m^2
 
 
 def _check_separation_sign(jgrav, contrast, viscosity, buoyancy):
-    """Raise when the separation heat flux opposes the phase density contrast at a node."""
+    """Raise when the separation heat flux opposes the phase density contrast at a node,
+    or when the flux or the contrast is not finite. It checks the numpy output only."""
+    modes = f'separation_viscosity {viscosity!r}, separation_buoyancy {buoyancy!r}'
+    nonfinite = np.flatnonzero(~(np.isfinite(jgrav) & np.isfinite(contrast)))
+    if nonfinite.size:
+        k = nonfinite[0]
+        raise RuntimeError(
+            f'separation heat flux or density contrast not finite at node {k}: jgrav '
+            f'{jgrav[k]!r} W/m^2, rho_s - rho_l {contrast[k]!r} kg/m^3 ({modes}, '
+            f'{nonfinite.size} such nodes)'
+        )
     bad = np.flatnonzero((np.abs(jgrav) > JGRAV_SIGN_FLOOR) & (jgrav * contrast < 0.0))
     if bad.size:
         k = bad[0]
         raise RuntimeError(
             f'separation heat flux against the density contrast at node {k}: jgrav '
             f'{jgrav[k]:.6e} W/m^2, rho_s - rho_l {contrast[k]:.6e} kg/m^3 '
-            f'(separation_viscosity {viscosity!r}, separation_buoyancy {buoyancy!r}, '
-            f'{bad.size} such nodes)'
+            f'({modes}, {bad.size} such nodes)'
         )
 
 
