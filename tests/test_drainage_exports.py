@@ -48,9 +48,10 @@ def shared_eos():
     return entropy_eos_copy(EOS_DIR)
 
 
-def _solve(eos, S0, mesh=None, **phase_mixed):
+def _solve(eos, S0, mesh=None, energy=None, **phase_mixed):
     p = _build_mushy_parameters(solver_method='cvode', n_nodes=16, end_time=1.0)
     p.phase_mixed = dataclasses.replace(p.phase_mixed, **phase_mixed)
+    p.energy = dataclasses.replace(p.energy, **(energy or {}))
     for k, v in (mesh or {}).items():
         setattr(p.mesh, k, v)
     s = EntropySolver(p, entropy_eos=eos)
@@ -300,7 +301,8 @@ def test_gravity_not_positive_at_a_mesh_node_raises(shared_eos, bad):
 def test_separation_flux_against_the_density_contrast_raises(shared_eos, monkeypatch):
     """An output whose separation heat flux has the sign opposite to rho_s - rho_l at a
     node, above the floor, raises with the node named."""
-    s = _solve(shared_eos, _pick_mushy_S(shared_eos))
+    s = _solve(shared_eos, _pick_mushy_S(shared_eos), energy={'gravitational_separation': True})
+    assert np.max(np.abs(s.get_state().jgrav_b)) > 1.0e-6
     v_rel = EntropyPhaseEvaluator.relative_velocity
     monkeypatch.setattr(EntropyPhaseEvaluator, 'relative_velocity', lambda ph: -v_rel(ph))
     with pytest.raises(RuntimeError, match='against the density contrast at node'):
