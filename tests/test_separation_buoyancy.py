@@ -47,19 +47,19 @@ def _F(p, buoyancy):
 class _StubEOS:
     """Constant phase-boundary densities for the numpy and the JAX path."""
 
-    def __init__(self, xp):
-        self._xp = xp
+    def __init__(self, rho_s=_RHO_S, rho_l=_RHO_L):
+        self._rho = {'solid': rho_s, 'melt': rho_l}
 
     def _lookup_at_phase_boundary(self, prop, P, phase):
-        rho = _RHO_S if phase == 'solid' else _RHO_L
-        return self._xp.full(np.shape(P), rho) if self._xp is np else self._xp.asarray(rho)
+        return np.full(np.shape(P), self._rho['solid' if phase == 'solid' else 'melt'])
 
 
-def _v(path, porosity, **kw):
-    density = _RHO_S - porosity * (_RHO_S - _RHO_L)
+def _v(path, porosity, rho_s=_RHO_S, rho_l=_RHO_L, **kw):
+    density = rho_s - porosity * (rho_s - rho_l)
+    eos = _StubEOS(rho_s, rho_l)
     if path == 'numpy':
         ev = EntropyPhaseEvaluator(
-            entropy_eos=_StubEOS(np), gravitational_acceleration=_G, grain_size=_D,
+            entropy_eos=eos, gravitational_acceleration=_G, grain_size=_D,
             viscosity_liquid=_ETA, separation_viscosity='melt', **kw,
         )  # fmt: skip
         ev.pressure = np.array([1.0e9])
@@ -70,7 +70,7 @@ def _v(path, porosity, **kw):
     )
     return float(
         jax_relative_velocity(
-            _StubEOS(jnp), params, jnp.asarray(1.0e9), jnp.asarray(density),
+            eos, params, jnp.asarray(1.0e9), jnp.asarray(density),
             jnp.asarray(0.5), jnp.asarray(_G), viscosity=jnp.asarray(1.0e30),
         )
     )  # fmt: skip
@@ -109,9 +109,41 @@ def test_mixture_mobility_lies_between_the_solid_form_and_its_matrix_reduction(p
     assert (1.0 - p) * f_solid * (1 - 1e-12) <= f_mix <= f_solid * (1 + 1e-12)
 
 
-@pytest.mark.parametrize('p', [float('nan')])
-def test_mixture_mobility_keeps_a_nan_porosity_nan(p):
-    assert np.isnan(mobility_function(p, _D, buoyancy='mixture'))
+@pytest.mark.filterwarnings('ignore:invalid value:RuntimeWarning')
+@pytest.mark.parametrize('mode', ['mixture', 'solid'])
+@pytest.mark.parametrize('p', [float('nan'), float('inf')])
+def test_mobility_of_a_nan_or_inf_porosity_is_nan(mode, p):
+    """A NaN or +inf porosity never becomes a finite mobility in either form."""
+    assert np.isnan(mobility_function(p, _D, buoyancy=mode))
+
+
+@settings(max_examples=60, deadline=None)
+@given(st.floats(-1000.0, 1000.0))
+@example(0.0)
+@example(1.0e-6)
+@example(-1.0e-6)
+@example(1.0e-300)
+@example(-1.0e-300)
+def test_relative_velocity_has_the_sign_of_the_contrast(contrast):
+    """For rho_s - rho_l over [-1000, 1000] kg/m^3 in a mush halfway between the phase
+    densities, both paths and both forms give v with the sign of the contrast, 0 at 0,
+    and |v_mixture| <= |v_solid|."""
+    rho_l = 3900.0
+    kw = dict(rho_s=rho_l + contrast, rho_l=rho_l)
+    for path in ('numpy', 'jax'):
+        v = {m: _v(path, 0.5, separation_buoyancy=m, **kw) for m in ('mixture', 'solid')}
+        for m in v:
+            assert v[m] * contrast >= 0.0 and np.isfinite(v[m])
+            assert contrast != 0.0 or v[m] == 0.0
+        assert abs(v['mixture']) <= abs(v['solid'])
+
+
+@pytest.mark.parametrize('path', ['numpy', 'jax'])
+@pytest.mark.parametrize('mode', ['mixture', 'solid'])
+def test_denser_melt_gives_a_negative_velocity_in_both_forms(path, mode):
+    """With the melt denser than the solid by 300 kg/m^3 the velocity is negative in both
+    forms and both paths (porosity floored by the density denominator)."""
+    assert _v(path, 0.5, rho_s=3900.0, rho_l=4200.0, separation_buoyancy=mode) < 0.0
 
 
 @pytest.mark.parametrize('path', ['numpy', 'jax'])
@@ -144,7 +176,7 @@ def test_every_entry_point_rejects_an_unknown_buoyancy(bad):
                   rheological_transition_width=0.15, solidus='s.dat', liquidus='l.dat',
                   phase='mixed', phase_transition_width=0.01, grain_size=1e-3)  # fmt: skip
     with pytest.raises(ValueError, match='separation_buoyancy'):
-        EntropyPhaseEvaluator(_StubEOS(np), _G, separation_buoyancy=bad)
+        EntropyPhaseEvaluator(_StubEOS(), _G, separation_buoyancy=bad)
     with pytest.raises(ValueError, match='separation_buoyancy'):
         PhaseParams(grain_size=_D, viscosity_liquid=_ETA, separation_buoyancy=bad)
     with pytest.raises(ValueError, match='separation_buoyancy'):
