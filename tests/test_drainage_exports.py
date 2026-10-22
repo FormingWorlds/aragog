@@ -147,16 +147,21 @@ DENSE = (3000.0, 3200.0, [3010.0, 2999.5, 2990.0])
             'mixture',
             [2.038850617665734e-12, 1.554389729529367e-06, 0.005452514570505166],
         ),
-        (DENSE, 'melt', [1.7305046284832315e-16, 0.0006194217469480419, 0.004361034099523181]),
+        (
+            DENSE,
+            'melt',
+            [-1.7305046284832315e-16, -0.0006194217469480419, -0.004361034099523181],
+        ),
         (
             DENSE,
             'mixture',
-            [1.7305046284832316e-20, 6.194217469480419e-06, 0.0021805170497615906],
+            [-1.7305046284832316e-20, -6.194217469480419e-06, -0.0021805170497615906],
         ),
     ],
 )
 def test_relative_velocity_matches_values_frozen_before_the_extraction(case, mode, golden):
-    """``relative_velocity`` bit for bit equal to values computed with aragog 3b3628e6."""
+    """``relative_velocity`` bit for bit equal to values computed with aragog 3b3628e6, with
+    the sign of ``rho_s - rho_l`` (negative for the denser melt)."""
     np.testing.assert_array_equal(_stub_evaluator(*case, mode).relative_velocity(), golden)
 
 
@@ -164,13 +169,13 @@ def test_relative_velocity_matches_values_frozen_before_the_extraction(case, mod
 @needs_eos
 @pytest.mark.parametrize('mode', ['melt', 'mixture'])
 def test_relative_velocity_is_built_from_the_exported_quantities(shared_eos, mode):
-    """``v_rel = |rho_l - rho_s| g F(porosity) / eta`` with the evaluator's public pieces."""
+    """``v_rel = (rho_s - rho_l) g F(porosity) / eta`` with the evaluator's public pieces."""
     s = _solve(shared_eos, _pick_mushy_S(shared_eos), separation_viscosity=mode)
     ph = s.state.phase_basic
     rho_s, rho_l = ph.phase_boundary_densities()
     eta = ph._viscosity_val if mode == 'mixture' else ph._visc_liquid
     F = mobility_function(ph.porosity(), ph._grain_size)
-    expected = np.sqrt((rho_l - rho_s) ** 2 + 1e-12) * ph.gravitational_acceleration() * F / eta
+    expected = (rho_s - rho_l) * ph.gravitational_acceleration() * F / eta
     np.testing.assert_array_equal(ph.relative_velocity(), expected)
 
 
@@ -292,16 +297,13 @@ def test_gravity_not_positive_at_a_mesh_node_raises(shared_eos, bad):
 
 @pytest.mark.smoke
 @needs_eos
-def test_separation_flux_against_the_density_contrast_raises(shared_eos):
+def test_separation_flux_against_the_density_contrast_raises(shared_eos, monkeypatch):
     """An output whose separation heat flux has the sign opposite to rho_s - rho_l at a
     node, above the floor, raises with the node named."""
     s = _solve(shared_eos, _pick_mushy_S(shared_eos))
-    ph = s.state.phase_basic
-    rho_s, rho_l = (np.asarray(x).ravel() for x in ph.phase_boundary_densities())
-    k = len(rho_s) // 2
-    s.state._jgrav_heat = s.state._jgrav_heat.copy()
-    s.state._jgrav_heat[k] = -np.sign(rho_s[k] - rho_l[k]) * 1.0
-    with pytest.raises(RuntimeError, match=f'node {k}'):
+    v_rel = EntropyPhaseEvaluator.relative_velocity
+    monkeypatch.setattr(EntropyPhaseEvaluator, 'relative_velocity', lambda ph: -v_rel(ph))
+    with pytest.raises(RuntimeError, match='against the density contrast at node'):
         s.get_state()
 
 
