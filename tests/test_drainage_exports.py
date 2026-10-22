@@ -162,8 +162,8 @@ DENSE = (3000.0, 3200.0, [3010.0, 2999.5, 2990.0])
     ],
 )
 def test_relative_velocity_matches_values_frozen_before_the_extraction(case, mode, golden):
-    """``relative_velocity`` bit for bit equal to values computed with aragog 3b3628e6, with
-    the sign of ``rho_s - rho_l`` (negative for the denser melt)."""
+    """``relative_velocity`` bit for bit equal to the frozen reference values, with the sign
+    of ``rho_s - rho_l`` (negative for the denser melt)."""
     np.testing.assert_array_equal(_stub_evaluator(*case, mode).relative_velocity(), golden)
 
 
@@ -282,7 +282,7 @@ def test_gravity_export_follows_an_external_profile(shared_eos):
 
 @pytest.mark.smoke
 @needs_eos
-@pytest.mark.parametrize('bad', [-1.0, np.nan])
+@pytest.mark.parametrize('bad', [0.0, -1.0, np.nan])
 def test_gravity_not_positive_at_a_mesh_node_raises(shared_eos, bad):
     """A profile that is negative or NaN at an interpolated basic or staggered node
     raises; a centre node at g = 0 below the CMB, outside the mesh, does not."""
@@ -294,6 +294,23 @@ def test_gravity_not_positive_at_a_mesh_node_raises(shared_eos, bad):
     assert np.all(out.get_state().g_b > 0.0)
     g[15:35] = bad
     with pytest.raises(ValueError, match='gravity'):
+        _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_gravity_not_positive_at_a_staggered_node_only_raises(shared_eos):
+    """A dip below 0 around one staggered node, with every basic node positive, raises
+    from the staggered-node check."""
+    r = np.linspace(3.480e6, 6.371e6, 4000)
+    g = np.linspace(10.0, 9.0, r.size)
+    s = _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+    rb, rs = s._r_basic_flat, s._r_stag_flat
+    k = rs.size // 2
+    half = 0.2 * np.min(np.abs(rb - rs[k]))
+    g[np.abs(r - rs[k]) < half] = -1.0
+    assert np.all(np.abs(r[g < 0.0] - rs[k]) < half)
+    with pytest.raises(ValueError, match='staggered nodes'):
         _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
 
 
