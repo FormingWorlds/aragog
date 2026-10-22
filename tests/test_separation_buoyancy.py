@@ -199,6 +199,7 @@ def test_entropy_solver_plumbs_separation_buoyancy_to_evaluators(separation_buoy
     solver.initialize()
     assert solver.state.phase_staggered._separation_buoyancy == expected
     assert solver.state.phase_basic._separation_buoyancy == expected
+    assert solver._bl_phase._separation_buoyancy == expected
 
 
 def test_abe_benchmarks_with_separation_pin_the_solid_buoyancy():
