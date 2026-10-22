@@ -34,7 +34,7 @@ def mobility_function(
     """Three-regime permeability over porosity, ``F = k(phi) / phi`` [m^2].
 
     The melt-solid relative velocity of gravitational separation is
-    ``|delta_rho| g F / eta`` (Abe 1995; Bower et al. 2018, section 2.1,
+    ``(rho_s - rho_l) g F / eta`` with ``g > 0`` (Abe 1995; Bower et al. 2018, section 2.1,
     Eqs. 13a-c). The regimes are blended with tanh weights centred on the
     equal-density-ratio crossings 0.0769452 (Blake-Kozeny-Carman to
     Rumpf-Gupte) and 0.771462 (Rumpf-Gupte to Stokes settling); the blend
@@ -53,8 +53,8 @@ def mobility_function(
         ``'solid'`` (default): the buoyancy against the solid, Abe (1995, Eq. 40).
         ``'mixture'``: against the mixture, McKenzie (1984, Eq. 3.7), which puts a
         factor ``1 - phi`` on the Blake-Kozeny-Carman and Rumpf-Gupte terms;
-        McKenzie's matrix of touching grains does not cover Stokes settling, so
-        that term has no factor.
+        the Stokes term keeps the buoyancy against the melt (the dilute limit of a
+        grain settling alone), so it has no factor.
 
     Returns
     -------
@@ -529,7 +529,9 @@ class EntropyPhaseEvaluator:
         on the density-derived porosity (see :meth:`porosity`), matching
         SPIDER's GetGravitationalHeatFlux in energy.c.
 
-        Regimes (F = K/porosity, the quantity multiplying delta_rho*g/eta):
+        Regimes (F = K/porosity, the quantity multiplying (rho_s - rho_l)*g/eta);
+        under ``separation_buoyancy = 'mixture'`` regimes 1 and 2 carry a factor
+        1 - por (see :func:`mobility_function`):
         1. Blake-Kozeny-Carman (low porosity): F = d^2 por^2 / ((1-por)^2 * 1000)
         2. Rumpf-Gupte (intermediate): F = d^2 por^4.5 * (5/7)
         3. Stokes settling (high porosity): F = d^2 * 2/9
