@@ -111,11 +111,11 @@ class EntropyPhaseEvaluator:
         (single-phase liquid viscosity, matches SPIDER's
         ``GetGravitationalHeatFlux``) or ``'mixture'`` (the
         rheological-transition-blended bulk viscosity). Default ``'melt'``.
+    latent_heat_constant : float
+        Latent heat of fusion [J/kg]. Used for gravitational separation flux.
     separation_buoyancy : str
         Buoyancy of the separation velocity, passed to :func:`mobility_function`:
         ``'mixture'`` (McKenzie 1984, default) or ``'solid'`` (Abe 1995, SPIDER).
-    latent_heat_constant : float
-        Latent heat of fusion [J/kg]. Used for gravitational separation flux.
     """
 
     def __init__(
@@ -131,7 +131,6 @@ class EntropyPhaseEvaluator:
         thermal_conductivity_liquid: float = 2.0,
         cp_blend: str = 'latent',
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
-        separation_buoyancy: str = SEPARATION_BUOYANCY_DEFAULT,
         matprop_smooth_width: float = 0.0,
         const_properties: bool = False,
         const_rho: float = 4000.0,
@@ -141,6 +140,7 @@ class EntropyPhaseEvaluator:
         const_log10visc: float = 2.0,
         const_T_ref: float = 3500.0,
         const_S_ref: float = 3000.0,
+        separation_buoyancy: str = SEPARATION_BUOYANCY_DEFAULT,
     ):
         self._eos = entropy_eos
         self._g = gravitational_acceleration
