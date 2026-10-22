@@ -29,7 +29,12 @@ from aragog.config.energy import (
     check_convective_threshold,
     check_eos_floor_margin,
 )
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.config.phases import (
+    SEPARATION_BUOYANCY_DEFAULT,
+    SEPARATION_BUOYANCY_MODES,
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+)
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -308,6 +313,8 @@ class _PhaseMixedParameters:
     # transition-blended bulk viscosity). Consumed by
     # EntropyPhaseEvaluator.relative_velocity via getattr fall-back.
     separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT
+    # Buoyancy of the separation velocity: "mixture" (default) or "solid".
+    separation_buoyancy: str = SEPARATION_BUOYANCY_DEFAULT
     # Mushy-zone Cp blending mode: "latent" (SPIDER parity, default) or
     # "linear". Consumed by EntropyPhaseEvaluator via getattr fall-back,
     # but accepting it here lets the documented [phase_mixed] cp_blend
@@ -328,6 +335,11 @@ class _PhaseMixedParameters:
             raise ValueError(
                 'separation_viscosity must be one of '
                 f'{SEPARATION_VISCOSITY_MODES}, got {self.separation_viscosity!r}'
+            )
+        if self.separation_buoyancy not in SEPARATION_BUOYANCY_MODES:
+            raise ValueError(
+                'separation_buoyancy must be one of '
+                f'{SEPARATION_BUOYANCY_MODES}, got {self.separation_buoyancy!r}'
             )
 
 

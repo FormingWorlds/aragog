@@ -15,6 +15,9 @@ logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 # imported by every site that parses, validates, or consumes the option.
 SEPARATION_VISCOSITY_MODES: tuple[str, str] = ('melt', 'mixture')
 SEPARATION_VISCOSITY_DEFAULT: str = 'melt'
+# Buoyancy of the separation velocity: against the mixture (McKenzie 1984) or the solid (Abe 1995).
+SEPARATION_BUOYANCY_MODES: tuple[str, str] = ('mixture', 'solid')
+SEPARATION_BUOYANCY_DEFAULT: str = 'mixture'
 
 
 @delegate_rheology
@@ -110,6 +113,11 @@ class MixedPhaseConfig:
         ``GetGravitationalHeatFlux``) or ``'mixture'`` (the
         rheological-transition-blended bulk viscosity). Default
         ``'melt'``.
+    separation_buoyancy : str
+        Buoyancy of the separation velocity: ``'mixture'`` (against the
+        mixture, McKenzie 1984 Eq. 3.7: a factor ``1 - phi`` on the
+        Blake-Kozeny-Carman and Rumpf-Gupte terms) or ``'solid'`` (against
+        the solid, Abe 1995 Eq. 40, as SPIDER). Default ``'mixture'``.
     cp_blend : str
         Mushy-zone Cp blending mode: ``'latent'`` (SPIDER-parity,
         latent-heat-augmented) or ``'linear'`` (linear blend of
@@ -157,6 +165,10 @@ class MixedPhaseConfig:
     separation_viscosity: str = attrs.field(
         default=SEPARATION_VISCOSITY_DEFAULT,
         validator=attrs.validators.in_(SEPARATION_VISCOSITY_MODES),
+    )
+    separation_buoyancy: str = attrs.field(
+        default=SEPARATION_BUOYANCY_DEFAULT,
+        validator=attrs.validators.in_(SEPARATION_BUOYANCY_MODES),
     )
     cp_blend: str = 'latent'
     matprop_smooth_width: float = 0.0

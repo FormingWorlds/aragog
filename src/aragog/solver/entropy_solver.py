@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from aragog.jax.nondim import NonDimScales
 
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT
+from aragog.config.phases import SEPARATION_BUOYANCY_DEFAULT, SEPARATION_VISCOSITY_DEFAULT
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
@@ -906,7 +906,7 @@ def _status_failed(status: int) -> bool:
 JGRAV_SIGN_FLOOR = 1.0e-12  # W/m^2
 
 
-def _check_separation_sign(jgrav, contrast, mode):
+def _check_separation_sign(jgrav, contrast, viscosity, buoyancy):
     """Raise when the separation heat flux opposes the phase density contrast at a node."""
     bad = np.flatnonzero((np.abs(jgrav) > JGRAV_SIGN_FLOOR) & (jgrav * contrast < 0.0))
     if bad.size:
@@ -914,7 +914,8 @@ def _check_separation_sign(jgrav, contrast, mode):
         raise RuntimeError(
             f'separation heat flux against the density contrast at node {k}: jgrav '
             f'{jgrav[k]:.6e} W/m^2, rho_s - rho_l {contrast[k]:.6e} kg/m^3 '
-            f'(separation_viscosity {mode!r}, {bad.size} such nodes)'
+            f'(separation_viscosity {viscosity!r}, separation_buoyancy {buoyancy!r}, '
+            f'{bad.size} such nodes)'
         )
 
 
@@ -1714,6 +1715,10 @@ class EntropySolver:
             self.parameters.phase_mixed, 'separation_viscosity', SEPARATION_VISCOSITY_DEFAULT
         )
         logger.info('Gravitational separation drag viscosity: %s', separation_viscosity)
+        separation_buoyancy = getattr(
+            self.parameters.phase_mixed, 'separation_buoyancy', SEPARATION_BUOYANCY_DEFAULT
+        )
+        logger.info('Gravitational separation buoyancy: %s', separation_buoyancy)
 
         phase_kwargs = dict(
             entropy_eos=self.entropy_eos,
@@ -1726,6 +1731,7 @@ class EntropySolver:
             grain_size=self.parameters.phase_mixed.grain_size,
             cp_blend=cp_blend,
             separation_viscosity=separation_viscosity,
+            separation_buoyancy=separation_buoyancy,
         )
 
         # Get viscosity and thermal conductivity from config.
@@ -5097,7 +5103,9 @@ class EntropySolver:
                 ph.gravitational_acceleration(),
             )
         )
-        _check_separation_sign(jgrav_b, rho_solid_b - rho_melt_b, ph._separation_viscosity)
+        _check_separation_sign(
+            jgrav_b, rho_solid_b - rho_melt_b, ph._separation_viscosity, ph._separation_buoyancy
+        )
 
         # Scalar quantities. M_mantle is the structural mass between the CMB
         # and the surface from the EOS mass integral, not the PALEOS rho_stag

@@ -21,7 +21,12 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_threshold
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.config.phases import (
+    SEPARATION_BUOYANCY_DEFAULT,
+    SEPARATION_BUOYANCY_MODES,
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+)
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.mesh import top_node_entropy
 from aragog.utilities import positive_gravity
@@ -141,6 +146,9 @@ class PhaseParams(eqx.Module):
     # the fixed single-phase liquid viscosity (SPIDER's
     # GetGravitationalHeatFlux convention).
     separation_viscosity_mixture: float
+    # separation_buoyancy_mixture: 1.0 -> 1 - phi on the BKC and RG mobility (McKenzie
+    # 1984); 0.0 -> buoyancy against the solid (Abe 1995, SPIDER).
+    separation_buoyancy_mixture: float
 
     def __init__(
         self,
@@ -164,6 +172,7 @@ class PhaseParams(eqx.Module):
         phase_smoothing_width: float = 0.01,
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
         convective_threshold: float = CONVECTIVE_THRESHOLD_DEFAULT,
+        separation_buoyancy: str = SEPARATION_BUOYANCY_DEFAULT,
     ):
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -202,6 +211,12 @@ class PhaseParams(eqx.Module):
             self.separation_viscosity_mixture = 0.0
         else:
             raise ValueError(f'unhandled separation_viscosity {separation_viscosity!r}')
+        if separation_buoyancy not in SEPARATION_BUOYANCY_MODES:
+            raise ValueError(
+                f'separation_buoyancy must be one of {SEPARATION_BUOYANCY_MODES}, '
+                f'got {separation_buoyancy!r}'
+            )
+        self.separation_buoyancy_mixture = 1.0 if separation_buoyancy == 'mixture' else 0.0
 
 
 class MeshArrays(eqx.Module):
@@ -593,6 +608,8 @@ def relative_velocity(
     multiplies (rho_s - rho_l) g / eta (Abe 1995, Bower et al. 2018 section 2.1;
     SPIDER convention): Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
     The contrast is signed: the velocity is negative where the melt is denser.
+    ``params.separation_buoyancy_mixture`` 1.0 puts ``1 - phi`` on the BKC and RG
+    terms (McKenzie 1984), 0.0 takes the buoyancy against the solid (Abe 1995).
 
     The drag viscosity is set by ``params.separation_viscosity_mixture``:
     0.0 uses the fixed single-phase liquid viscosity, matching SPIDER's
@@ -632,8 +649,11 @@ def relative_velocity(
     # crossing), RG -> Stokes at zeta_2 = 0.771462 (exact).
     w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)
-    F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
-    F = jnp.maximum(F, 0.0)
+    F_matrix = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg
+    F_matrix = (
+        jnp.where(params.separation_buoyancy_mixture > 0.5, 1.0 - porosity, 1.0) * F_matrix
+    )
+    F = jnp.maximum(F_matrix + w_stokes * F_stokes, 0.0)
 
     # Signed contrast, positive outward (melt rising), as the numpy path.
     return drho * gravity * F / jnp.maximum(eta_l, 1e-10)
