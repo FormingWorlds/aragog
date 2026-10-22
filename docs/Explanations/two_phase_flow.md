@@ -87,6 +87,9 @@ Aragog hard-codes fixed porosity thresholds, $\zeta_1 = 0.0769452$ (BKC to RG) a
 `separation_buoyancy` sets the buoyancy that drives the separation.
 The default, `"mixture"`, takes it against the mixture as McKenzie (1984)[^cite-mckenzie1984] Eq. 3.7 does, $w_0 = (k_\phi/\mu)\,((1-\phi)/\phi)\,(\rho_\mathrm{sol} - \rho_\mathrm{liq})\,g$, which puts a factor $1-\phi$ on the Blake-Kozeny-Carman and Rumpf-Gupte terms of $F$.
 McKenzie's derivation is for a matrix of touching grains, which the Stokes regime is not, so the Stokes term has no factor.
+His matrix solution holds below a porosity of about 0.2 (McKenzie 1984, p. 722); above it, through most of the Rumpf-Gupte range, the factor is an extrapolation of that solution.
+Under `"mixture"` the Rumpf-Gupte term never reaches the Stokes value: $(1-\phi)\,F_\mathrm{RG}$ peaks at $0.0526\,a^2$ near $\phi = 0.818$, while $F_\mathrm{Stokes} = 0.2222\,a^2$, so $\zeta_2$ is no longer a crossing and the mobility rises by a factor of about 3 between porosities 0.72 and 0.82.
+The tanh blend keeps $F$ smooth through that step.
 The alternative, `"solid"`, takes the buoyancy against the solid as Abe (1995)[^cite-abe1995] Eq. 40 and SPIDER do; the bundled Abe benchmark `abe_mixed.cfg` sets it.
 The resulting mobility-vs-porosity curve (Figure 1 of [Heat transport](heat_transport.md#melt-solid-mobility-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
 The corresponding heat flux is
