@@ -100,6 +100,7 @@ phase_transition_width = 0.01
 grain_size = 1.0e-3
 matprop_smooth_width = 0.0
 separation_viscosity = "melt"      # "melt" or "mixture"
+separation_buoyancy = "mixture"    # "mixture" or "solid"
 cp_blend = "latent"                # "latent" or "linear"
 const_properties = false
 
@@ -169,7 +170,7 @@ Spatial discretisation and pressure-density profile.
 | `core_density` | kg/m³ | Mean core density |
 | `eos_method` | int | `1` = analytic Adams–Williamson; `2` = external file (`eos_file`) |
 | `surface_density` | kg/m³ | Surface mantle density (Adams-Williamson). Default 4078.95095544 (PROTEUS production; SPIDER `-adams_williamson_rhos`) |
-| `gravitational_acceleration` | m/s² | Scalar gravity for Adams–Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. Default 9.81 |
+| `gravitational_acceleration` | m/s² | Scalar gravity for Adams-Williamson; superseded by the per-node profile from `eos_file` when `eos_method = 2`. A scalar must be finite and positive; a per-node profile must be finite on every row and positive at every mesh node, or `initialize()` raises. Default 9.81 |
 | `adiabatic_bulk_modulus` | Pa | $K_S$ in Adams–Williamson. Default 260e9 |
 | `adams_williamson_beta` | -- | A–W exponent $\beta$; `0.0` derives it from $K_S$. Default 0.0 |
 | `surface_pressure` | Pa | Atmospheric overburden added to the pressure integration. Default 0.0 |
@@ -245,7 +246,8 @@ Mixed-phase (mushy) parameters and the optional constant-properties analytical m
 | `phase_transition_width` | -- | -- | Legacy smoothing width |
 | `grain_size` | m | `1.0e-3` | Grain size $a$ in the melt-solid mobility $F(\zeta)=K(\zeta)/\zeta$ |
 | `matprop_smooth_width` | -- | 0.0 | SPIDER-parity blending width across phase boundaries |
-| `separation_viscosity` | str | `"melt"` | Drag viscosity in $v_\mathrm{rel} = \lvert\Delta\rho\rvert g F(\phi)/\eta$: `"melt"` (fixed single-phase liquid viscosity, SPIDER parity) keeps separation active below `phi_rheo`, which collapses the CMB temperature in coupled caps-off runs; `"mixture"` (rheological-transition-blended bulk viscosity) locks separation up below `phi_rheo` and avoids that collapse, which is why PROTEUS defaults to `"mixture"` |
+| `separation_viscosity` | str | `"melt"` | Drag viscosity in $v_\mathrm{rel} = (\rho_s - \rho_l) g F(\phi)/\eta$: `"melt"` (fixed single-phase liquid viscosity, SPIDER parity) keeps separation active below `phi_rheo`, which collapses the CMB temperature in coupled caps-off runs; `"mixture"` (rheological-transition-blended bulk viscosity) locks separation up below `phi_rheo` and avoids that collapse, which is why PROTEUS defaults to `"mixture"` |
+| `separation_buoyancy` | str | `"mixture"` | Buoyancy reference of the separation mobility $F(\phi)$: `"mixture"` (McKenzie 1984) multiplies the Blake-Kozeny-Carman and Rumpf-Gupte terms by $(1-\phi)$, and the Stokes term keeps the plain contrast, as under `"solid"` (dilute limit); `"solid"` (Abe 1995, SPIDER) uses no factor. The Abe benchmarks and the SPIDER parity runs use `"solid"` |
 | `cp_blend` | str | `"latent"` | `"latent"` (SPIDER parity) or `"linear"` for the mushy $C_p$ rule |
 | `const_properties` | bool | false | Enable the analytic constant-properties path (no EOS tables needed) |
 | `const_rho` | kg/m³ | 4000 | Constant density when `const_properties = true` |

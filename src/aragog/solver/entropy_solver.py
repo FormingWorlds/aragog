@@ -34,12 +34,13 @@ if TYPE_CHECKING:
     from aragog.jax.nondim import NonDimScales
 
 from aragog.config.energy import EOS_FLOOR_MARGIN_DEFAULT
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT
+from aragog.config.phases import SEPARATION_BUOYANCY_DEFAULT, SEPARATION_VISCOSITY_DEFAULT
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
 from aragog.parser import Parameters
 from aragog.solver.boundary import BoundaryConditions
 from aragog.solver.entropy_state import EntropyState
+from aragog.utilities import positive_gravity
 
 # SUNDIALS CVODE via scikits-odes-sundials. Same underlying solver SPIDER
 # uses (SUNDIALS CVODE BDF with modified-Newton nonlinear iteration and
@@ -901,6 +902,36 @@ def _status_failed(status: int) -> bool:
     return status not in (0, 1)
 
 
+# |jgrav| above which its sign must follow rho_s - rho_l.
+JGRAV_SIGN_FLOOR = 1.0e-12  # W/m^2
+
+
+def _check_separation_sign(jgrav, contrast, viscosity, buoyancy):
+    """Raise when the separation heat flux opposes the density contrast or is not finite.
+
+    Notes
+    -----
+    It checks the numpy output of an accepted state; the JAX right-hand side cannot raise.
+    """
+    modes = f'separation_viscosity {viscosity!r}, separation_buoyancy {buoyancy!r}'
+    nonfinite = np.flatnonzero(~(np.isfinite(jgrav) & np.isfinite(contrast)))
+    if nonfinite.size:
+        k = nonfinite[0]
+        raise RuntimeError(
+            f'separation heat flux or density contrast not finite at node {k}: jgrav '
+            f'{float(jgrav[k])!r} W/m^2, rho_s - rho_l {float(contrast[k])!r} kg/m^3 ({modes}, '
+            f'{nonfinite.size} such nodes)'
+        )
+    bad = np.flatnonzero((np.abs(jgrav) > JGRAV_SIGN_FLOOR) & (jgrav * contrast < 0.0))
+    if bad.size:
+        k = bad[0]
+        raise RuntimeError(
+            f'separation heat flux against the density contrast at node {k}: jgrav '
+            f'{jgrav[k]:.6e} W/m^2, rho_s - rho_l {contrast[k]:.6e} kg/m^3 '
+            f'({modes}, {bad.size} such nodes)'
+        )
+
+
 @dataclass
 class SolverOutput:
     """Complete output from one EntropySolver integration step.
@@ -1632,13 +1663,11 @@ class EntropySolver:
         # mesh. Interpolation from the external eos_radius grid onto
         # aragog's basic and staggered node radii keeps gravity
         # consistent with the other node-aligned fields.
-        g_scalar = abs(
-            float(
-                getattr(
-                    mesh.eos,
-                    '_gravitational_acceleration',
-                    self.parameters.mesh.gravitational_acceleration,
-                )
+        g_scalar = float(
+            getattr(
+                mesh.eos,
+                '_gravitational_acceleration',
+                self.parameters.mesh.gravitational_acceleration,
             )
         )
         eos_gravity_arr = np.asarray(
@@ -1661,9 +1690,11 @@ class EntropySolver:
             # is smooth wherever density is smooth, so the cubic Hermite
             # carries no overshoot risk like the solidus/liquidus
             # entropy curves (where PCHIP was rejected upstream).
+            if not np.all(np.isfinite(eos_gravity_arr)):
+                raise ValueError('gravity profile eos_gravity must be finite on every row')
             g_interp = PchipInterpolator(eos_radius_arr, eos_gravity_arr)
-            g_basic = g_interp(self._r_basic_flat)
-            g_stag = g_interp(self._r_stag_flat)
+            g_basic = positive_gravity(g_interp(self._r_basic_flat), 'basic nodes')
+            g_stag = positive_gravity(g_interp(self._r_stag_flat), 'staggered nodes')
             logger.info(
                 'EntropySolver gravity: per-node profile from external mesh '
                 '(n=%d, basic range [%.4f, %.4f] m/s^2)',
@@ -1672,7 +1703,9 @@ class EntropySolver:
                 float(g_basic.max()),
             )
         else:
-            g_basic = np.full(self._r_basic_flat.shape, g_scalar)
+            g_basic = positive_gravity(
+                np.full(self._r_basic_flat.shape, g_scalar), 'basic nodes'
+            )
             g_stag = np.full(self._r_stag_flat.shape, g_scalar)
             logger.info(
                 'EntropySolver gravity: scalar broadcast (%.4f m/s^2) — '
@@ -1693,6 +1726,10 @@ class EntropySolver:
             self.parameters.phase_mixed, 'separation_viscosity', SEPARATION_VISCOSITY_DEFAULT
         )
         logger.info('Gravitational separation drag viscosity: %s', separation_viscosity)
+        separation_buoyancy = getattr(
+            self.parameters.phase_mixed, 'separation_buoyancy', SEPARATION_BUOYANCY_DEFAULT
+        )
+        logger.info('Gravitational separation buoyancy: %s', separation_buoyancy)
 
         phase_kwargs = dict(
             entropy_eos=self.entropy_eos,
@@ -1705,6 +1742,7 @@ class EntropySolver:
             grain_size=self.parameters.phase_mixed.grain_size,
             cp_blend=cp_blend,
             separation_viscosity=separation_viscosity,
+            separation_buoyancy=separation_buoyancy,
         )
 
         # Get viscosity and thermal conductivity from config.
@@ -5075,6 +5113,9 @@ class EntropySolver:
                 *ph.phase_boundary_densities(),
                 ph.gravitational_acceleration(),
             )
+        )
+        _check_separation_sign(
+            jgrav_b, rho_solid_b - rho_melt_b, ph._separation_viscosity, ph._separation_buoyancy
         )
 
         # Scalar quantities. M_mantle is the structural mass between the CMB

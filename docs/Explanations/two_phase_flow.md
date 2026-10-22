@@ -57,15 +57,16 @@ Two-phase flow adds two additional flux components and one additional source ter
 ### Gravitational separation of melt and solid
 
 Solid and melt have different densities, so they separate vertically by gravity.
-The mass flux of melt is positive upward; Aragog treats melt as the lighter phase, so separation moves melt up and solid down:
+The mass flux of melt is positive upward:
 
 $$
 j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
-v_\mathrm{rel} = \frac{\lvert\rho_\mathrm{liq} - \rho_\mathrm{sol}\rvert\,g\,F(\phi)}{\eta_\mathrm{mix}}.
+v_\mathrm{rel} = \frac{(\rho_\mathrm{sol} - \rho_\mathrm{liq})\,g\,F(\phi)}{\eta_\mathrm{mix}},
 $$
 
+with $g > 0$ the gravity magnitude. Bower et al. (2018)[^cite-bower2018] Eq. 12 and SPIDER write the contrast as $\rho_\mathrm{liq} - \rho_\mathrm{sol}$ with a negative $g$, which gives the same sign.
+A lighter melt rises and the solid settles; where the melt is denser the velocity is negative but about 0, since the porosity is floored there (below).
 The tabulated densities can cross so that the melt is locally the denser phase in a shallow region.
-The absolute value $\lvert\rho_\mathrm{liq} - \rho_\mathrm{sol}\rvert$ keeps $v_\mathrm{rel}$ non-negative there, so the separation direction stays fixed (melt up, solid down).
 Aragog floors the porosity denominator $\rho_\mathrm{sol} - \rho_\mathrm{liq}$ at about 1 kg m⁻³ in that region, so the porosity there is $(\rho_\mathrm{sol} - \rho)/(1\ \mathrm{kg\,m^{-3}})$ clipped to $[0, 1]$: about 0 where the node density is at or above $\rho_\mathrm{sol}$, and up to 1 below it. The flux $j_\mathrm{grav}$ carries the factor $\phi(1-\phi)$ of the melt fraction, so it vanishes in solid and fully molten nodes whatever the porosity.
 
 $\eta_\mathrm{mix}$ is the drag viscosity selected by `separation_viscosity`.
@@ -83,6 +84,13 @@ The mobility factor $F(\phi)$ (the permeability $K(\phi)$ divided by porosity) s
 The two regime boundaries, $\zeta_1 = 0.0769452$ and $\zeta_2 = 0.771462$, are the porosities at which Aragog switches between adjacent permeability laws, placed at their crossings: Blake-Kozeny-Carman with Rumpf-Gupte at $\zeta_1$, Rumpf-Gupte with Stokes settling at $\zeta_2$ (Bower et al. (2018)[^cite-bower2018] §2.1, Eqs. 13a to 13c). For the coded forms, $\zeta_2$ is the exact crossing and $\zeta_1$ sits $1.7 \times 10^{-5}$ below it in porosity (0.02 percent; exact value 0.0769618), far inside the blend width of 0.02. The boundaries follow from the functional forms of the three laws.
 The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER use is consolidated in Abe (1995)[^cite-abe1995] and reviewed in Bower et al. (2018) §2.1 Eqs. 13a-c, where the general regime transitions are density-ratio-dependent: $\rho_\mathrm{liq}/(11.993\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for BKC-to-RG and $\rho_\mathrm{liq}/(0.29624\,\rho_\mathrm{sol} + \rho_\mathrm{liq})$ for RG-to-Stokes.
 Aragog hard-codes fixed porosity thresholds, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), close to the equal-density-ratio limits of these expressions (0.0769645 and 0.7714621), and blends through them with a tanh switch rather than recomputing per radial node.
+`separation_buoyancy` sets the buoyancy that drives the separation.
+The default, `"mixture"`, takes it against the mixture as McKenzie (1984)[^cite-mckenzie1984] Eq. 3.7 does, $w_0 = (k_\phi/\mu)\,((1-\phi)/\phi)\,(\rho_\mathrm{sol} - \rho_\mathrm{liq})\,g$, which puts a factor $1-\phi$ on the Blake-Kozeny-Carman and Rumpf-Gupte terms of $F$.
+The Stokes term keeps the plain contrast, as under `"solid"`: the dilute limit of a grain settling alone, so it has no factor; McKenzie's derivation is for a matrix of touching grains, which the Stokes regime is not.
+His matrix solution holds below a porosity of about 0.2 (McKenzie 1984, p. 722); above it, through most of the Rumpf-Gupte range, the factor is an extrapolation of that solution.
+Under `"mixture"` the Rumpf-Gupte term never reaches the Stokes value: $(1-\phi)\,F_\mathrm{RG}$ peaks at $0.0526\,a^2$ near $\phi = 0.818$, while $F_\mathrm{Stokes} = 0.2222\,a^2$, so $\zeta_2$ is no longer a crossing and the mobility rises by a factor of about 3 between porosities 0.72 and 0.82.
+The tanh blend keeps $F$ smooth through that step.
+The alternative, `"solid"`, takes the buoyancy against the solid as Abe (1995)[^cite-abe1995] Eq. 40 and SPIDER do; the bundled Abe benchmark `abe_mixed.cfg` sets it.
 The resulting mobility-vs-porosity curve (Figure 1 of [Heat transport](heat_transport.md#melt-solid-mobility-across-the-three-abe-regimes)) is JAX-differentiable and shifts the transition location by a few percent in $\phi$ relative to the density-ratio-dependent form.
 The corresponding heat flux is
 
@@ -150,5 +158,6 @@ For the SPIDER cross-check, see [Aragog vs SPIDER](spider_comparison.md).
 [^cite-costa2009]: A. Costa, L. Caricchi, N. Bagdassarov, *[A model for the rheology of particle-bearing suspensions and partially molten rocks](https://doi.org/10.1029/2008GC002138)*, Geochemistry, Geophysics, Geosystems, 10, Q03010, 2009. [SciX](https://scixplorer.org/abs/2009GGG....10.3010C/abstract).
 [^cite-elkinstanton2008]: L. T. Elkins-Tanton, *[Linked magma ocean solidification and atmospheric growth for Earth and Mars](https://doi.org/10.1016/j.epsl.2008.03.062)*, Earth and Planetary Science Letters, 271, 181–191, 2008. [SciX](https://scixplorer.org/abs/2008E%26PSL.271..181E/abstract).
 [^cite-hamano2013]: K. Hamano, Y. Abe, H. Genda, *[Emergence of two types of terrestrial planet on solidification of magma ocean](https://doi.org/10.1038/nature12163)*, Nature, 497, 607–610, 2013. [SciX](https://scixplorer.org/abs/2013Natur.497..607H/abstract).
+[^cite-mckenzie1984]: Dan McKenzie, *[The generation and compaction of partially molten rock](https://doi.org/10.1093/petrology/25.3.713)*, Journal of Petrology, 25, 713–765, 1984.
 [^cite-rumpfgupte1971]: H. C. H. Rumpf; A. R. Gupte, *[Einflüsse der Porosität und Korngrößenverteilung im Widerstandsgesetz der Porenströmung](https://doi.org/10.1002/cite.330430610)*, Chemie Ingenieur Technik, 43, 367–375, 1971.
 [^cite-schaefer2016]: L. Schaefer, et al., *[Predictions of the atmospheric composition of GJ 1132b](https://doi.org/10.3847/0004-637X/829/1/63)*, The Astrophysical Journal, 829, 63, 2016. [SciX](https://scixplorer.org/abs/2016ApJ...829...63S/abstract).

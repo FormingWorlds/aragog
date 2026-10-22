@@ -36,6 +36,7 @@ def _stub_evaluator(rho_s, rho_l, rho, mode='melt'):
         grain_size=D,
         viscosity_liquid=0.1,
         separation_viscosity=mode,
+        separation_buoyancy='solid',
     )
     ev.set_pressure(np.full(len(rho), 5e9))
     ev._density = np.array(rho)
@@ -48,9 +49,10 @@ def shared_eos():
     return entropy_eos_copy(EOS_DIR)
 
 
-def _solve(eos, S0, mesh=None, **phase_mixed):
+def _solve(eos, S0, mesh=None, energy=None, **phase_mixed):
     p = _build_mushy_parameters(solver_method='cvode', n_nodes=16, end_time=1.0)
     p.phase_mixed = dataclasses.replace(p.phase_mixed, **phase_mixed)
+    p.energy = dataclasses.replace(p.energy, **(energy or {}))
     for k, v in (mesh or {}).items():
         setattr(p.mesh, k, v)
     s = EntropySolver(p, entropy_eos=eos)
@@ -147,16 +149,21 @@ DENSE = (3000.0, 3200.0, [3010.0, 2999.5, 2990.0])
             'mixture',
             [2.038850617665734e-12, 1.554389729529367e-06, 0.005452514570505166],
         ),
-        (DENSE, 'melt', [1.7305046284832315e-16, 0.0006194217469480419, 0.004361034099523181]),
+        (
+            DENSE,
+            'melt',
+            [-1.7305046284832315e-16, -0.0006194217469480419, -0.004361034099523181],
+        ),
         (
             DENSE,
             'mixture',
-            [1.7305046284832316e-20, 6.194217469480419e-06, 0.0021805170497615906],
+            [-1.7305046284832316e-20, -6.194217469480419e-06, -0.0021805170497615906],
         ),
     ],
 )
 def test_relative_velocity_matches_values_frozen_before_the_extraction(case, mode, golden):
-    """``relative_velocity`` bit for bit equal to values computed with aragog 3b3628e6."""
+    """``relative_velocity`` bit for bit equal to the frozen reference values, with the sign
+    of ``rho_s - rho_l`` (negative for the denser melt)."""
     np.testing.assert_array_equal(_stub_evaluator(*case, mode).relative_velocity(), golden)
 
 
@@ -164,13 +171,13 @@ def test_relative_velocity_matches_values_frozen_before_the_extraction(case, mod
 @needs_eos
 @pytest.mark.parametrize('mode', ['melt', 'mixture'])
 def test_relative_velocity_is_built_from_the_exported_quantities(shared_eos, mode):
-    """``v_rel = |rho_l - rho_s| g F(porosity) / eta`` with the evaluator's public pieces."""
+    """``v_rel = (rho_s - rho_l) g F(porosity) / eta`` with the evaluator's public pieces."""
     s = _solve(shared_eos, _pick_mushy_S(shared_eos), separation_viscosity=mode)
     ph = s.state.phase_basic
     rho_s, rho_l = ph.phase_boundary_densities()
     eta = ph._viscosity_val if mode == 'mixture' else ph._visc_liquid
-    F = mobility_function(ph.porosity(), ph._grain_size)
-    expected = np.sqrt((rho_l - rho_s) ** 2 + 1e-12) * ph.gravitational_acceleration() * F / eta
+    F = mobility_function(ph.porosity(), ph._grain_size, ph._separation_buoyancy)
+    expected = (rho_s - rho_l) * ph.gravitational_acceleration() * F / eta
     np.testing.assert_array_equal(ph.relative_velocity(), expected)
 
 
@@ -271,6 +278,94 @@ def test_gravity_export_follows_an_external_profile(shared_eos):
         shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g}
     ).get_state()
     np.testing.assert_allclose(out.g_b, PchipInterpolator(r, g)(out.r_basic), rtol=1e-12)
+
+
+@pytest.mark.smoke
+@needs_eos
+@pytest.mark.parametrize('bad', [0.0, -1.0, np.nan])
+def test_gravity_not_positive_at_a_mesh_node_raises(shared_eos, bad):
+    """A profile that is 0, negative or NaN at an interpolated basic or staggered node
+    raises; a centre node at g = 0 below the CMB, outside the mesh, does not."""
+    r = np.concatenate(([0.0], np.linspace(3.480e6, 6.371e6, 50)))
+    g = np.concatenate(([0.0], np.linspace(10.0, 9.0, 50)))
+    out = _solve(
+        shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g}
+    )
+    assert np.all(out.get_state().g_b > 0.0)
+    g[15:35] = bad
+    with pytest.raises(ValueError, match='gravity'):
+        _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_gravity_not_positive_at_a_staggered_node_only_raises(shared_eos):
+    """A dip below 0 around one staggered node, with every basic node positive, raises
+    from the staggered-node check."""
+    r = np.linspace(3.480e6, 6.371e6, 4000)
+    g = np.linspace(10.0, 9.0, r.size)
+    s = _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+    rb, rs = s._r_basic_flat, s._r_stag_flat
+    k = rs.size // 2
+    half = 0.2 * np.min(np.abs(rb - rs[k]))
+    g[np.abs(r - rs[k]) < half] = -1.0
+    assert np.all(PchipInterpolator(r, g)(rb) > 0.0) and PchipInterpolator(r, g)(rs[k]) < 0.0
+    with pytest.raises(ValueError, match='staggered nodes'):
+        _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_gravity_not_positive_at_a_basic_node_only_raises(shared_eos):
+    """A dip below 0 around one basic node, with every staggered node positive, raises
+    from the basic-node check."""
+    r = np.linspace(3.480e6, 6.371e6, 4000)
+    g = np.linspace(10.0, 9.0, r.size)
+    s = _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+    rb, rs = s._r_basic_flat, s._r_stag_flat
+    k = rb.size // 2
+    half = 0.2 * np.min(np.abs(rs - rb[k]))
+    g[np.abs(r - rb[k]) < half] = -1.0
+    assert np.all(PchipInterpolator(r, g)(rs) > 0.0) and PchipInterpolator(r, g)(rb[k]) < 0.0
+    try:  # another failure further on (CVODE) must fail the test, not error it
+        _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+    except Exception as exc:
+        assert isinstance(exc, ValueError) and 'basic nodes' in str(exc), repr(exc)
+    else:
+        pytest.fail('a profile below 0 at a basic node passed')
+
+
+@pytest.mark.smoke
+@needs_eos
+@pytest.mark.parametrize('bad', [0.0, -9.81, np.nan, np.inf])
+@pytest.mark.parametrize('profile', [False, True])
+def test_scalar_gravity_not_positive_raises_before_the_pressure(shared_eos, bad, profile):
+    """A scalar gravity that is 0, negative, NaN or inf raises with the setting named
+    before the Adams-Williamson pressure uses it, also when a positive per-node profile
+    supplies the separation gravity."""
+    mesh = {'gravitational_acceleration': bad}
+    if profile:
+        r = np.linspace(3.480e6, 6.371e6, 50)
+        mesh |= {'eos_radius': r, 'eos_gravity': np.linspace(10.0, 9.0, 50)}
+    with pytest.raises(ValueError, match='gravitational_acceleration'):
+        _solve(shared_eos, _pick_mushy_S(shared_eos), mesh=mesh)
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_separation_flux_against_the_density_contrast_raises(shared_eos, monkeypatch):
+    """An output whose separation heat flux has the sign opposite to rho_s - rho_l at a
+    node, above the floor, raises with the node and both separation modes named."""
+    s = _solve(
+        shared_eos, _pick_mushy_S(shared_eos), energy={'gravitational_separation': True},
+        separation_viscosity='melt', separation_buoyancy='mixture',
+    )  # fmt: skip
+    assert np.max(np.abs(s.get_state().jgrav_b)) > 1.0e-6
+    v_rel = EntropyPhaseEvaluator.relative_velocity
+    monkeypatch.setattr(EntropyPhaseEvaluator, 'relative_velocity', lambda ph: -v_rel(ph))
+    with pytest.raises(RuntimeError, match='against the density contrast at node') as exc:
+        s.get_state()
+    assert "separation_viscosity 'melt', separation_buoyancy 'mixture'" in str(exc.value)
 
 
 @pytest.mark.smoke

@@ -21,9 +21,15 @@ import numpy as np
 from scipy.interpolate import PchipInterpolator
 
 from aragog.config.energy import CONVECTIVE_THRESHOLD_DEFAULT, check_convective_threshold
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.config.phases import (
+    SEPARATION_BUOYANCY_DEFAULT,
+    SEPARATION_BUOYANCY_MODES,
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+)
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.mesh import top_node_entropy
+from aragog.utilities import positive_gravity
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
@@ -135,11 +141,12 @@ class PhaseParams(eqx.Module):
     phase_smoothing_tanh: float
     phase_smoothing_width: float
 
-    # separation_viscosity_mixture: 1.0 -> gravitational-separation drag
-    # uses the rheological-transition-blended mixture viscosity; 0.0 ->
-    # the fixed single-phase liquid viscosity (SPIDER's
-    # GetGravitationalHeatFlux convention).
+    # separation_viscosity_mixture: above 0.5 -> separation drag with the blended mixture
+    # viscosity; otherwise the liquid viscosity (SPIDER's GetGravitationalHeatFlux).
     separation_viscosity_mixture: float
+    # separation_buoyancy_mixture: above 0.5 -> 1 - phi on the BKC and RG mobility
+    # (McKenzie 1984); otherwise buoyancy against the solid (Abe 1995, SPIDER).
+    separation_buoyancy_mixture: float
 
     def __init__(
         self,
@@ -163,6 +170,7 @@ class PhaseParams(eqx.Module):
         phase_smoothing_width: float = 0.01,
         separation_viscosity: str = SEPARATION_VISCOSITY_DEFAULT,
         convective_threshold: float = CONVECTIVE_THRESHOLD_DEFAULT,
+        separation_buoyancy: str = SEPARATION_BUOYANCY_DEFAULT,
     ):
         self.phi_rheo = phi_rheo
         self.phi_width = phi_width
@@ -201,6 +209,12 @@ class PhaseParams(eqx.Module):
             self.separation_viscosity_mixture = 0.0
         else:
             raise ValueError(f'unhandled separation_viscosity {separation_viscosity!r}')
+        if separation_buoyancy not in SEPARATION_BUOYANCY_MODES:
+            raise ValueError(
+                f'separation_buoyancy must be one of {SEPARATION_BUOYANCY_MODES}, '
+                f'got {separation_buoyancy!r}'
+            )
+        self.separation_buoyancy_mixture = {'mixture': 1.0, 'solid': 0.0}[separation_buoyancy]
 
 
 class MeshArrays(eqx.Module):
@@ -421,8 +435,10 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
         # smooth, so the cubic Hermite has no overshoot risk like the
         # solidus/liquidus 1-D entropy curves (where PCHIP was
         # rejected; see eos.entropy._load_spider_phase_boundary).
+        if not np.all(np.isfinite(eos_gravity_arr)):
+            raise ValueError('gravity profile eos_gravity must be finite on every row')
         g_basic = PchipInterpolator(eos_radius_arr, eos_gravity_arr)(r_basic)
-        return jnp.asarray(g_basic)
+        return jnp.asarray(positive_gravity(g_basic, 'interpolated mesh nodes'))
     # Scalar fallback chain. Mirrors the numpy reference in
     # entropy_solver.py::_initialize_internals: try the pressure-EOS
     # attribute first, then mesh.settings, then mesh.parameters. Both
@@ -444,8 +460,7 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
             'an external EOS file with a gravity column) before constructing '
             'the JAX phase parameters.'
         )
-    g_scalar = abs(float(_eos_g))
-    return jnp.asarray(np.full(r_basic.size, g_scalar))
+    return jnp.asarray(positive_gravity(np.full(r_basic.size, float(_eos_g)), 'mesh nodes'))
 
 
 # ---------------------------------------------------------------------------
@@ -587,8 +602,11 @@ def relative_velocity(
     """Melt-solid relative velocity for gravitational separation [m/s].
 
     Three-regime mobility model, the permeability over porosity that
-    multiplies delta_rho*g/eta (Abe 1995, Bower et al. 2018 section 2.1;
+    multiplies (rho_s - rho_l) g / eta (Abe 1995, Bower et al. 2018 section 2.1;
     SPIDER convention): Blake-Kozeny-Carman -> Rumpf-Gupte -> Stokes settling.
+    The contrast is signed: the velocity is negative where the melt is denser.
+    ``params.separation_buoyancy_mixture`` above 0.5 puts ``1 - phi`` on the BKC and RG
+    terms (McKenzie 1984); otherwise the buoyancy is against the solid (Abe 1995).
 
     The drag viscosity is set by ``params.separation_viscosity_mixture``:
     0.0 uses the fixed single-phase liquid viscosity, matching SPIDER's
@@ -598,7 +616,6 @@ def relative_velocity(
     """
     rho_s = eos._lookup_at_phase_boundary('density', P, 'solid')
     rho_l = eos._lookup_at_phase_boundary('density', P, 'melt')
-    delta_rho = rho_l - rho_s
     d = params.grain_size
     eta_melt = 10.0**params.log10_visc_liquid
     eta_l = jnp.where(params.separation_viscosity_mixture > 0.5, viscosity, eta_melt)
@@ -629,13 +646,14 @@ def relative_velocity(
     # crossing), RG -> Stokes at zeta_2 = 0.771462 (exact).
     w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)
-    F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
-    F = jnp.maximum(F, 0.0)
+    F_matrix = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg
+    F_matrix = (
+        jnp.where(params.separation_buoyancy_mixture > 0.5, 1.0 - porosity, 1.0) * F_matrix
+    )
+    F = jnp.maximum(F_matrix + w_stokes * F_stokes, 0.0)
 
-    # Smoothed |delta_rho|: sqrt(x^2 + eps^2) with eps tiny vs physical
-    # density contrast ~ 500 kg/m^3. Matches entropy_phase.py:464.
-    abs_drho = jnp.sqrt(delta_rho * delta_rho + 1.0e-12)
-    return abs_drho * gravity * F / jnp.maximum(eta_l, 1e-10)
+    # Signed contrast, positive outward (melt rising), as the numpy path.
+    return drho * gravity * F / jnp.maximum(eta_l, 1e-10)
 
 
 # ---------------------------------------------------------------------------

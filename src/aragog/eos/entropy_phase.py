@@ -16,18 +16,25 @@ import logging
 import numpy as np
 import numpy.typing as npt
 
-from aragog.config.phases import SEPARATION_VISCOSITY_DEFAULT, SEPARATION_VISCOSITY_MODES
+from aragog.config.phases import (
+    SEPARATION_BUOYANCY_DEFAULT,
+    SEPARATION_BUOYANCY_MODES,
+    SEPARATION_VISCOSITY_DEFAULT,
+    SEPARATION_VISCOSITY_MODES,
+)
 from aragog.eos.entropy import EntropyEOS
 from aragog.utilities import FloatOrArray, tanh_weight
 
 logger = logging.getLogger('fwl.' + __name__)
 
 
-def mobility_function(porosity: FloatOrArray, grain_size: float) -> FloatOrArray:
+def mobility_function(
+    porosity: FloatOrArray, grain_size: float, buoyancy: str = 'solid'
+) -> FloatOrArray:
     """Three-regime permeability over porosity, ``F = k(phi) / phi`` [m^2].
 
     The melt-solid relative velocity of gravitational separation is
-    ``|delta_rho| g F / eta`` (Abe 1995; Bower et al. 2018, section 2.1,
+    ``(rho_s - rho_l) g F / eta`` with ``g > 0`` (Abe 1995; Bower et al. 2018, section 2.1,
     Eqs. 13a-c). The regimes are blended with tanh weights centred on the
     equal-density-ratio crossings 0.0769452 (Blake-Kozeny-Carman to
     Rumpf-Gupte) and 0.771462 (Rumpf-Gupte to Stokes settling); the blend
@@ -42,14 +49,25 @@ def mobility_function(porosity: FloatOrArray, grain_size: float) -> FloatOrArray
         Grain size ``a`` [m]. It enters as ``a**2`` with the Stokes prefactor 2/9
         (Abe 1995, Eq. 39; Bower et al. 2018, Eqs. 12 and 13a), which is Stokes' law
         for a sphere of radius ``a``, so it acts as the grain radius.
+    buoyancy : str
+        ``'solid'`` (default): the buoyancy against the solid, Abe (1995, Eq. 40).
+        ``'mixture'``: against the mixture, McKenzie (1984, Eq. 3.7), which puts a
+        factor ``1 - phi`` on the Blake-Kozeny-Carman and Rumpf-Gupte terms;
+        the Stokes term keeps the plain contrast, as under ``'solid'`` (the dilute
+        limit of a grain settling alone), so it has no factor.
 
     Returns
     -------
     float or array
         ``F`` [m^2], non-negative: ``d^2 phi^2 / (1000 (1 - phi)^2)`` at low
         porosity, ``(5/7) d^2 phi^4.5`` at intermediate porosity and
-        ``(2/9) d^2`` at high porosity, with ``d`` the grain size.
+        ``(2/9) d^2`` at high porosity, with ``d`` the grain size; under
+        ``'mixture'`` the first two carry a factor ``1 - phi``.
     """
+    if buoyancy not in SEPARATION_BUOYANCY_MODES:
+        raise ValueError(
+            f'buoyancy must be one of {SEPARATION_BUOYANCY_MODES}, got {buoyancy!r}'
+        )
     d = grain_size
     por = np.maximum(porosity, 1e-20)
     one_m_por = np.maximum(1.0 - porosity, 1e-20)
@@ -59,8 +77,10 @@ def mobility_function(porosity: FloatOrArray, grain_size: float) -> FloatOrArray
     # zeta_1 sits 1.7e-5 below the exact BKC-RG crossing (0.02 percent); zeta_2 is exact.
     w_rg = tanh_weight(porosity, 0.0769452, 0.02)
     w_stokes = tanh_weight(porosity, 0.771462, 0.05)
-    F = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg + w_stokes * F_stokes
-    return np.maximum(F, 0.0)
+    F_matrix = (1.0 - w_rg) * F_bkc + (w_rg - w_stokes) * F_rg
+    if buoyancy == 'mixture':
+        F_matrix = (1.0 - porosity) * F_matrix
+    return np.maximum(F_matrix + w_stokes * F_stokes, 0.0)
 
 
 class EntropyPhaseEvaluator:
@@ -91,8 +111,9 @@ class EntropyPhaseEvaluator:
         (single-phase liquid viscosity, matches SPIDER's
         ``GetGravitationalHeatFlux``) or ``'mixture'`` (the
         rheological-transition-blended bulk viscosity). Default ``'melt'``.
-    latent_heat_constant : float
-        Latent heat of fusion [J/kg]. Used for gravitational separation flux.
+    separation_buoyancy : str
+        Buoyancy of the separation velocity, passed to :func:`mobility_function`:
+        ``'mixture'`` (McKenzie 1984, default) or ``'solid'`` (Abe 1995, SPIDER).
     """
 
     def __init__(
@@ -117,6 +138,7 @@ class EntropyPhaseEvaluator:
         const_log10visc: float = 2.0,
         const_T_ref: float = 3500.0,
         const_S_ref: float = 3000.0,
+        separation_buoyancy: str = SEPARATION_BUOYANCY_DEFAULT,
     ):
         self._eos = entropy_eos
         self._g = gravitational_acceleration
@@ -148,6 +170,12 @@ class EntropyPhaseEvaluator:
                 f'got {separation_viscosity!r}'
             )
         self._separation_viscosity = separation_viscosity
+        if separation_buoyancy not in SEPARATION_BUOYANCY_MODES:
+            raise ValueError(
+                f'separation_buoyancy must be one of {SEPARATION_BUOYANCY_MODES}, '
+                f'got {separation_buoyancy!r}'
+            )
+        self._separation_buoyancy = separation_buoyancy
 
         # State arrays (set by set_entropy / set_pressure / update)
         self.entropy: npt.NDArray = np.array([])
@@ -499,7 +527,9 @@ class EntropyPhaseEvaluator:
         on the density-derived porosity (see :meth:`porosity`), matching
         SPIDER's GetGravitationalHeatFlux in energy.c.
 
-        Regimes (F = K/porosity, the quantity multiplying delta_rho*g/eta):
+        Regimes (F = K/porosity, the quantity multiplying (rho_s - rho_l)*g/eta);
+        under ``separation_buoyancy = 'mixture'`` regimes 1 and 2 carry a factor
+        1 - por (see :func:`mobility_function`):
         1. Blake-Kozeny-Carman (low porosity): F = d^2 por^2 / ((1-por)^2 * 1000)
         2. Rumpf-Gupte (intermediate): F = d^2 por^4.5 * (5/7)
         3. Stokes settling (high porosity): F = d^2 * 2/9
@@ -516,14 +546,16 @@ class EntropyPhaseEvaluator:
         or lighter by less than 1 kg/m^3). There the porosity is
         ``(rho_s - rho) / (1 kg/m^3)`` clipped to [0, 1]: about 0 where the node
         density is at or above ``rho_s``, 1 where it is more than 1 kg/m^3
-        below, and intermediate in between. The separation direction is fixed by the
-        non-negative contrast ``|rho_l - rho_s|`` in ``v_rel`` and cannot
-        reverse.
+        below, and intermediate in between.
+
+        The contrast is signed, ``v_rel = (rho_s - rho_l) g F / eta`` with ``g`` the
+        positive gravity magnitude (Bower et al. 2018, Eq. 12, and SPIDER, which
+        write ``(rho_l - rho_s)`` with a negative ``g``): positive (melt rising) where
+        the melt is lighter, negative (melt sinking) where it is denser.
         """
         if self._const_properties:
             return np.zeros_like(self._density)
         rho_s, rho_l = self.phase_boundary_densities()
-        delta_rho = rho_l - rho_s  # typically negative (melt lighter)
         g = self._g
         # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
         # must fail here rather than silently fall back to 'melt'.
@@ -535,16 +567,10 @@ class EntropyPhaseEvaluator:
             raise ValueError(f'unhandled separation_viscosity {self._separation_viscosity!r}')
 
         porosity = self._porosity_from(rho_s, rho_l)
-        F = mobility_function(porosity, self._grain_size)
+        F = mobility_function(porosity, self._grain_size, self._separation_buoyancy)
 
-        # Relative velocity: v = |delta_rho| * g * F / eta_liquid
-        # Sign convention: positive = outward (melt rising, solid sinking)
-        # Smoothed |delta_rho| via sqrt(x^2 + eps^2); eps tiny compared
-        # to physical delta_rho ~ -500 kg/m^3, so bulk result unchanged.
-        abs_drho = np.sqrt(delta_rho * delta_rho + 1.0e-12)
-        v_rel = abs_drho * g * F / np.maximum(eta_l, 1e-10)
-
-        return v_rel
+        # Positive outward: melt rising, solid sinking.
+        return (rho_s - rho_l) * g * F / np.maximum(eta_l, 1e-10)
 
     def phase_boundary_densities(self) -> tuple[FloatOrArray, FloatOrArray]:
         """Solid and melt densities at the phase boundary at the node pressure [kg/m^3].
