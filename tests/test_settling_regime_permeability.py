@@ -319,3 +319,52 @@ def test_relative_velocity_numpy_jax_parity_across_porosity():
         v_np = _numpy_v_rel(ev, density)
         v_jx = _jax_v_rel(density)
         assert v_jx == pytest.approx(v_np, rel=1e-10, abs=1e-15)
+
+
+# --- signed density contrast ----------------------------------------------
+
+# Melt denser than the solid by 300 kg/m^3: the porosity denominator is floored
+# at about 1 kg/m^3, so a density 0.4 kg/m^3 below rho_s maps to porosity 0.4.
+_RHO_DENSE_MELT = 4500.0
+
+
+def _v_rel(path, density, rho_s=_RHO_S, rho_l=_RHO_L):
+    if path == 'numpy':
+        return _numpy_v_rel(_numpy_evaluator(rho_s, rho_l), density)
+    return _jax_v_rel(density, rho_s, rho_l)
+
+
+@pytest.mark.parametrize('path', ['numpy', 'jax'])
+def test_relative_velocity_is_zero_at_equal_phase_densities(path):
+    """With rho_s = rho_l there is no buoyancy, so v_rel is exactly 0."""
+    assert _v_rel(path, _RHO_S - 0.4, rho_s=_RHO_S, rho_l=_RHO_S) == 0.0
+
+
+@pytest.mark.parametrize('path', ['numpy', 'jax'])
+@pytest.mark.parametrize('porosity', [0.02, 0.4, 0.99])
+def test_relative_velocity_is_negative_where_the_melt_is_denser(path, porosity):
+    """Melt denser than the solid gives v_rel = (rho_s - rho_l) g F / eta < 0 (melt sinks)."""
+    v = _v_rel(path, _RHO_S - porosity, rho_l=_RHO_DENSE_MELT)
+    expected = (_RHO_S - _RHO_DENSE_MELT) * _G * _F_blend(porosity) / _ETA
+    assert v < 0.0
+    assert v == pytest.approx(expected, rel=2.0e-3)
+
+
+@pytest.mark.parametrize('rho_l', [_RHO_L, _RHO_DENSE_MELT])
+def test_relative_velocity_numpy_jax_parity_for_both_signs(rho_l):
+    """Numpy and JAX agree to 1e-10 for a lighter and a denser melt."""
+    for p in (0.02, 0.1, 0.4, 0.8, 0.99):
+        density = _density_for_porosity(p) if rho_l < _RHO_S else _RHO_S - p
+        v_np = _v_rel('numpy', density, rho_l=rho_l)
+        assert _v_rel('jax', density, rho_l=rho_l) == pytest.approx(v_np, rel=1e-10, abs=1e-15)
+
+
+def test_relative_velocity_is_the_signed_contrast_times_the_mobility_numpy():
+    """For a lighter melt v_rel equals (rho_s - rho_l) g F(p) / eta to round-off, with F
+    the exported mobility at the evaluator's own porosity."""
+    from aragog.eos.entropy_phase import mobility_function
+
+    ev = _numpy_evaluator()
+    v = _numpy_v_rel(ev, _density_for_porosity(0.4))
+    F = mobility_function(ev.porosity(), _D).item()
+    assert v == pytest.approx((_RHO_S - _RHO_L) * _G * F / _ETA, rel=1e-14)

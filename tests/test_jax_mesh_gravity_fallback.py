@@ -240,3 +240,25 @@ def test_mesh_gravity_profile_preserved_through_compute_fluxes():
     # Pulling this through compute_fluxes requires an EOS; skip if table fixture unavailable
     # (the rest of the file exercises from_numpy_mesh directly and is sufficient for the
     # shape-preservation invariant).
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize('bad', [0.0, -1.0, np.nan])
+def test_mesh_gravity_profile_not_positive_at_a_node_raises(bad):
+    """The separation velocity takes g as a positive magnitude, so a profile that is
+    0, negative or NaN at an interpolated node raises; a centre node at g = 0 below
+    the CMB, outside the mesh, does not."""
+    import types
+
+    mesh = _StubMesh(configured_g=9.81)
+    mesh.parameters = types.SimpleNamespace()
+    r = np.linspace(3.48e6, 6.37e6, 60)
+    g = np.linspace(8.0, 10.0, 60)
+    mesh.parameters.eos_radius = np.concatenate(([0.0], r))
+    mesh.parameters.eos_gravity = np.concatenate(([0.0], g))
+    assert np.all(np.asarray(MeshArrays.from_numpy_mesh(mesh).gravity) > 0.0)
+
+    g[20:45] = bad
+    mesh.parameters.eos_gravity = np.concatenate(([0.0], g))
+    with pytest.raises(ValueError, match='gravity'):
+        MeshArrays.from_numpy_mesh(mesh)

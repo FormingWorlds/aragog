@@ -274,6 +274,38 @@ def test_gravity_export_follows_an_external_profile(shared_eos):
 
 
 @pytest.mark.smoke
+@needs_eos
+@pytest.mark.parametrize('bad', [-1.0, np.nan])
+def test_gravity_not_positive_at_a_mesh_node_raises(shared_eos, bad):
+    """A profile that is negative or NaN at an interpolated basic or staggered node
+    raises; a centre node at g = 0 below the CMB, outside the mesh, does not."""
+    r = np.concatenate(([0.0], np.linspace(3.480e6, 6.371e6, 50)))
+    g = np.concatenate(([0.0], np.linspace(10.0, 9.0, 50)))
+    out = _solve(
+        shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g}
+    )
+    assert np.all(out.get_state().g_b > 0.0)
+    g[15:35] = bad
+    with pytest.raises(ValueError, match='gravity'):
+        _solve(shared_eos, _pick_mushy_S(shared_eos), mesh={'eos_radius': r, 'eos_gravity': g})
+
+
+@pytest.mark.smoke
+@needs_eos
+def test_separation_flux_against_the_density_contrast_raises(shared_eos):
+    """An output whose separation heat flux has the sign opposite to rho_s - rho_l at a
+    node, above the floor, raises with the node named."""
+    s = _solve(shared_eos, _pick_mushy_S(shared_eos))
+    ph = s.state.phase_basic
+    rho_s, rho_l = (np.asarray(x).ravel() for x in ph.phase_boundary_densities())
+    k = len(rho_s) // 2
+    s.state._jgrav_heat = s.state._jgrav_heat.copy()
+    s.state._jgrav_heat[k] = -np.sign(rho_s[k] - rho_l[k]) * 1.0
+    with pytest.raises(RuntimeError, match=f'node {k}'):
+        s.get_state()
+
+
+@pytest.mark.smoke
 def test_const_properties_exports():
     """Without phase contrast: porosity one, both densities ``const_rho``, gravity the mesh value."""
     p = _build_const_properties_parameters(n_nodes=12, end_time=1.0)
