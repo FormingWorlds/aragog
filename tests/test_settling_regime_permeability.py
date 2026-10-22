@@ -1,19 +1,20 @@
 """Behavioural tests for the gravitational-separation relative velocity.
 
 ``relative_velocity`` computes the melt-solid drag velocity as
-``abs_drho * gravity * F / eta_l``, where ``F`` is the
+``(rho_s - rho_l) * gravity * F / eta_l``, where ``F`` is the
 permeability-over-porosity mobility from the Abe (1993/1995) three-regime
 model (SPIDER convention, Bower et al. 2018 Eqs. 13a-c): Blake-Kozeny-Carman
 at low porosity, Rumpf-Gupte at intermediate porosity, Stokes settling at
 high porosity, blended with two ``tanh`` weights at the equal-mobility
-crossings 0.0769452 and 0.771462.
+crossings 0.0769452 and 0.771462. These tests use ``separation_buoyancy = 'solid'``, the
+SPIDER form; the ``'mixture'`` form is in ``test_separation_buoyancy.py``.
 
 These tests pin the behaviour that the source-text constant pins and the
 viscosity-scaling tests do not cover:
 
 1. ``v_rel >= 0`` across the whole porosity range, with a melt-lighter
-   density contrast (``delta_rho < 0``). A dropped ``abs`` on the density
-   contrast would produce a negative velocity here.
+   density contrast (``delta_rho < 0``). A contrast of the wrong sign
+   would produce a negative velocity here.
 2. ``v_rel`` scales linearly with the magnitude of the density contrast at
    fixed porosity. A regression that froze the contrast to a constant would
    leave the ratio at one instead of tracking the contrast ratio.
@@ -133,6 +134,7 @@ def _numpy_evaluator(rho_s=_RHO_S, rho_l=_RHO_L):
         grain_size=_D,
         viscosity_liquid=_ETA,
         separation_viscosity='melt',
+        separation_buoyancy='solid',
     )
 
 
@@ -148,8 +150,7 @@ def _numpy_v_rel(ev, density):
 def test_relative_velocity_nonnegative_across_porosity_numpy():
     """Melt-lighter contrast (delta_rho < 0) still yields v_rel >= 0.
 
-    A regression dropping the ``abs`` on the density contrast would make
-    every value here negative. The ``max(F, 0)`` clamp is a defensive guard
+    A contrast of the wrong sign would make every value here negative. The ``max(F, 0)`` clamp is a defensive guard
     that these in-domain porosities do not exercise: the mobility F is
     non-negative for every porosity the density-to-porosity map produces, so
     the clamp never changes a value in this sweep.
@@ -243,7 +244,12 @@ class _StubEOS_JAX:
 
 def _jax_v_rel(density, rho_s=_RHO_S, rho_l=_RHO_L):
     eos = _StubEOS_JAX(rho_s, rho_l)
-    params = PhaseParams(grain_size=_D, viscosity_liquid=_ETA, separation_viscosity='melt')
+    params = PhaseParams(
+        grain_size=_D,
+        viscosity_liquid=_ETA,
+        separation_viscosity='melt',
+        separation_buoyancy='solid',
+    )
     out = jax_relative_velocity(
         eos,
         params,
@@ -366,5 +372,5 @@ def test_relative_velocity_is_the_signed_contrast_times_the_mobility_numpy():
 
     ev = _numpy_evaluator()
     v = _numpy_v_rel(ev, _density_for_porosity(0.4))
-    F = mobility_function(ev.porosity(), _D).item()
+    F = mobility_function(ev.porosity(), _D, 'solid').item()
     assert v == pytest.approx((_RHO_S - _RHO_L) * _G * F / _ETA, rel=1e-14)

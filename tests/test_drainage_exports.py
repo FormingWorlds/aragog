@@ -36,6 +36,7 @@ def _stub_evaluator(rho_s, rho_l, rho, mode='melt'):
         grain_size=D,
         viscosity_liquid=0.1,
         separation_viscosity=mode,
+        separation_buoyancy='solid',
     )
     ev.set_pressure(np.full(len(rho), 5e9))
     ev._density = np.array(rho)
@@ -175,7 +176,7 @@ def test_relative_velocity_is_built_from_the_exported_quantities(shared_eos, mod
     ph = s.state.phase_basic
     rho_s, rho_l = ph.phase_boundary_densities()
     eta = ph._viscosity_val if mode == 'mixture' else ph._visc_liquid
-    F = mobility_function(ph.porosity(), ph._grain_size)
+    F = mobility_function(ph.porosity(), ph._grain_size, ph._separation_buoyancy)
     expected = (rho_s - rho_l) * ph.gravitational_acceleration() * F / eta
     np.testing.assert_array_equal(ph.relative_velocity(), expected)
 
