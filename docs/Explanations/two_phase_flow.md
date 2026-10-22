@@ -86,7 +86,7 @@ The three-regime $\zeta_\mathrm{grav}(\phi)$ formulation that Aragog and SPIDER 
 Aragog hard-codes fixed porosity thresholds, $\zeta_1 = 0.0769452$ (BKC to RG) and $\zeta_2 = 0.771462$ (RG to Stokes), close to the equal-density-ratio limits of these expressions (0.0769645 and 0.7714621), and blends through them with a tanh switch rather than recomputing per radial node.
 `separation_buoyancy` sets the buoyancy that drives the separation.
 The default, `"mixture"`, takes it against the mixture as McKenzie (1984)[^cite-mckenzie1984] Eq. 3.7 does, $w_0 = (k_\phi/\mu)\,((1-\phi)/\phi)\,(\rho_\mathrm{sol} - \rho_\mathrm{liq})\,g$, which puts a factor $1-\phi$ on the Blake-Kozeny-Carman and Rumpf-Gupte terms of $F$.
-The Stokes term keeps the buoyancy against the melt, the dilute limit of a grain settling alone, so it has no factor; McKenzie's derivation is for a matrix of touching grains, which the Stokes regime is not.
+The Stokes term keeps the plain contrast, as under `"solid"`: the dilute limit of a grain settling alone, so it has no factor; McKenzie's derivation is for a matrix of touching grains, which the Stokes regime is not.
 His matrix solution holds below a porosity of about 0.2 (McKenzie 1984, p. 722); above it, through most of the Rumpf-Gupte range, the factor is an extrapolation of that solution.
 Under `"mixture"` the Rumpf-Gupte term never reaches the Stokes value: $(1-\phi)\,F_\mathrm{RG}$ peaks at $0.0526\,a^2$ near $\phi = 0.818$, while $F_\mathrm{Stokes} = 0.2222\,a^2$, so $\zeta_2$ is no longer a crossing and the mobility rises by a factor of about 3 between porosities 0.72 and 0.82.
 The tanh blend keeps $F$ smooth through that step.

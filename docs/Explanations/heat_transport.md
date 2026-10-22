@@ -86,7 +86,7 @@ j_\mathrm{grav} = \rho\,\phi(1-\phi)\,v_\mathrm{rel}\,\mathrm{smth}(\phi),\qquad
 v_\mathrm{rel} = \frac{(\rho_s - \rho_m)\,g\,F(\phi)}{\eta_\mathrm{mix}},
 $$
 
-with $g > 0$ the gravity magnitude (negative $v_\mathrm{rel}$ where the melt is denser), $F(\phi)$ the melt-solid mobility (the permeability over porosity, detailed below; `separation_buoyancy` sets its form, see [Two-phase flow](two_phase_flow.md)) and $\eta_\mathrm{mix}$ the drag viscosity selected by `separation_viscosity`.
+with $g > 0$ the gravity magnitude (negative $v_\mathrm{rel}$ where the melt is denser, and about 0 where the node density is at or above $\rho_s$, see [Two-phase flow](two_phase_flow.md)), $F(\phi)$ the melt-solid mobility (the permeability over porosity, detailed below; `separation_buoyancy` sets its form, see [Two-phase flow](two_phase_flow.md)) and $\eta_\mathrm{mix}$ the drag viscosity selected by `separation_viscosity`.
 The default, `"melt"`, is the fixed liquid viscosity, matching SPIDER's `GetGravitationalHeatFlux`.
 The alternative, `"mixture"`, is the rheological-transition-blended mixture viscosity: liquid near and above `phi_rheo`, ramping smoothly to the solid viscosity below it, so settling locks up through the same transition that sets the bulk rheology.
 The corresponding heat flux is
@@ -114,11 +114,11 @@ $$
 The permeability itself is $K(\zeta) = \zeta\,F(\zeta)$, which recovers the Stokes ($K \propto \zeta$), Rumpf-Gupte ($K \propto \zeta^{5.5}$), and Blake-Kozeny-Carman ($K \propto \zeta^3/(1-\zeta)^2$) forms; the extra power of porosity that separates $K$ from $F$ is the Darcy $1/\zeta$ in the relative velocity.
 Aragog evaluates a $\tanh$-blended composite of the three branches rather than the hard piecewise switch, so that $F(\zeta)$ and its porosity derivative stay continuous for the JAX Jacobian.
 The equations above and Figure 1 are the `separation_buoyancy = "solid"` form; the default `"mixture"` multiplies the Blake-Kozeny-Carman and Rumpf-Gupte branches by $(1-\zeta)$ ([Two-phase flow](two_phase_flow.md)).
-Figure 1 plots the dimensionless mobility $F(\zeta)/a^2$: the three individual branches (dashed) and the blended composite that Aragog evaluates under `"solid"` (solid).
+Figure 1 plots the dimensionless mobility $F(\zeta)/a^2$: the three individual branches (dashed) and the blended composite of the `"solid"` form (solid line), as the verification script computes it.
 
 ![Melt-solid mobility F(porosity)](../figures/vv/fig_04_permeability.png)
 
-**Figure 1.** The gravitational-separation mobility $F(\zeta) = K(\zeta)/\zeta$ (the permeability divided by porosity), shown as the dimensionless $F(\zeta)/a^2$ against porosity. Dashed lines: the three regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling, following Abe (1995)[^cite-abe1995] and Bower et al. (2018)[^cite-bower2018] §2.1. Solid black: the smooth tanh-blended composite that Aragog evaluates under `separation_buoyancy = "solid"`, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes). (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The numpy and JAX implementations agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
+**Figure 1.** The gravitational-separation mobility $F(\zeta) = K(\zeta)/\zeta$ (the permeability divided by porosity), shown as the dimensionless $F(\zeta)/a^2$ against porosity. Dashed lines: the three regime branches considered individually, namely Blake-Kozeny-Carman (BKC), Rumpf-Gupte (RG), and Stokes settling, following Abe (1995)[^cite-abe1995] and Bower et al. (2018)[^cite-bower2018] §2.1. Solid black: the smooth tanh-blended composite of the `separation_buoyancy = "solid"` form, with regime-switch porosities $\zeta_1=0.0769452$ (BKC to RG) and $\zeta_2=0.771462$ (RG to Stokes). (a) Linear axis showing the smooth crossover. (b) Log-log axis showing the BKC regime extending to vanishingly small porosity. The script's numpy and JAX copies of the formula agree to within float-64 machine epsilon ($\max|\Delta F|=1.1\times 10^{-16}$ in absolute units).
 
 ### Phase-boundary smoothing
 

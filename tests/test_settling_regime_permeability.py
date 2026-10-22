@@ -13,7 +13,7 @@ These tests pin the behaviour that the source-text constant pins and the
 viscosity-scaling tests do not cover:
 
 1. ``v_rel >= 0`` across the whole porosity range, with a melt-lighter
-   density contrast (``delta_rho < 0``). A contrast of the wrong sign
+   density contrast (``rho_s - rho_l > 0``). A contrast of the wrong sign
    would produce a negative velocity here.
 2. ``v_rel`` scales linearly with the magnitude of the density contrast at
    fixed porosity. A regression that froze the contrast to a constant would
@@ -148,13 +148,13 @@ def _numpy_v_rel(ev, density):
 
 
 def test_relative_velocity_nonnegative_across_porosity_numpy():
-    """Melt-lighter contrast (delta_rho < 0) still yields v_rel >= 0.
+    """Melt-lighter contrast (rho_s - rho_l > 0) yields v_rel >= 0.
 
     A contrast of the wrong sign would make every value here negative. The
     ``max(F, 0)`` clamp is a defensive guard that these in-domain porosities do
-    not exercise: the mobility F is
-    non-negative for every porosity the density-to-porosity map produces, so
-    the clamp never changes a value in this sweep.
+    not exercise: the mobility F is non-negative for every porosity the
+    density-to-porosity map produces, so the clamp never changes a value in this
+    sweep.
     """
     ev = _numpy_evaluator()
     porosities = np.linspace(0.0, 1.0, 41)

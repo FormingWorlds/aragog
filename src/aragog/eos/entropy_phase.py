@@ -53,8 +53,8 @@ def mobility_function(
         ``'solid'`` (default): the buoyancy against the solid, Abe (1995, Eq. 40).
         ``'mixture'``: against the mixture, McKenzie (1984, Eq. 3.7), which puts a
         factor ``1 - phi`` on the Blake-Kozeny-Carman and Rumpf-Gupte terms;
-        the Stokes term keeps the buoyancy against the melt (the dilute limit of a
-        grain settling alone), so it has no factor.
+        the Stokes term keeps the plain contrast, as under ``'solid'`` (the dilute
+        limit of a grain settling alone), so it has no factor.
 
     Returns
     -------
@@ -111,8 +111,6 @@ class EntropyPhaseEvaluator:
         (single-phase liquid viscosity, matches SPIDER's
         ``GetGravitationalHeatFlux``) or ``'mixture'`` (the
         rheological-transition-blended bulk viscosity). Default ``'melt'``.
-    latent_heat_constant : float
-        Latent heat of fusion [J/kg]. Used for gravitational separation flux.
     separation_buoyancy : str
         Buoyancy of the separation velocity, passed to :func:`mobility_function`:
         ``'mixture'`` (McKenzie 1984, default) or ``'solid'`` (Abe 1995, SPIDER).
