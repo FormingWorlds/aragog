@@ -462,8 +462,7 @@ def _build_gravity_array(mesh, r_stag: bool = False) -> 'jax.Array':
             'an external EOS file with a gravity column) before constructing '
             'the JAX phase parameters.'
         )
-    g_scalar = float(_eos_g)
-    return jnp.asarray(positive_gravity(np.full(r_basic.size, g_scalar), 'mesh nodes'))
+    return jnp.asarray(positive_gravity(np.full(r_basic.size, float(_eos_g)), 'mesh nodes'))
 
 
 # ---------------------------------------------------------------------------

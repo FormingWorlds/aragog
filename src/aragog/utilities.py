@@ -106,7 +106,7 @@ def positive_gravity(gravity: Any, where: str) -> npt.NDArray:
     if bad.size:
         raise ValueError(
             f'gravity on the {where} must be finite and positive; node {bad[0]} has '
-            f'{g.ravel()[bad[0]]!r} ({bad.size} such nodes)'
+            f'{float(g.ravel()[bad[0]])!r} ({bad.size} such nodes)'
         )
     return g
 

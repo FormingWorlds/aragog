@@ -10,7 +10,7 @@ from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import PchipInterpolator
 
 from aragog.parser import _MeshParameters
-from aragog.utilities import FloatOrArray
+from aragog.utilities import FloatOrArray, positive_gravity
 
 
 class EOS(ABC):
@@ -94,7 +94,11 @@ class AdamsWilliamsonEOS(EOS):
         self._outer_boundary = np.max(basic_radii)
         self._inner_boundary = np.min(basic_radii)
         self._surface_density: float = self._settings.surface_density
-        self._gravitational_acceleration: float = self._settings.gravitational_acceleration
+        self._gravitational_acceleration: float = float(
+            positive_gravity(
+                self._settings.gravitational_acceleration, 'scalar gravitational_acceleration'
+            )
+        )
         self._adiabatic_bulk_modulus: float = self._settings.adiabatic_bulk_modulus
         self._surface_pressure: float = self._settings.surface_pressure
         # Use beta from config if set (> 0); fall back to K_S-derived value
