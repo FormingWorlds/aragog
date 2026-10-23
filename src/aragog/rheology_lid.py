@@ -718,7 +718,7 @@ def compute_effective_viscosity(
         (
             ('eta_diff', eta_diff, 'pos', False),
             ('eta_i', eta_i, 'pos', False),
-            ('tau_d', tau_d, 'finite', False),
+            ('tau_d', tau_d, 'nonneg', False),
             ('tau_y_lid', tau_y_lid, 'not_neginf', False),
             ('w_lid', w_lid, 'unit', False),
         ),
