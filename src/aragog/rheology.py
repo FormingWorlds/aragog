@@ -199,6 +199,7 @@ _RULES: dict[str, tuple[Any, str]] = {
         'non-negative and finite',
     ),
     'unit': (lambda a: (a >= 0.0) & (a <= 1.0), 'in [0, 1]'),
+    'half_open_unit': (lambda a: (a > 0.0) & (a <= 1.0), 'in (0, 1]'),
     'finite': (lambda a: (a > -np.inf) & (a < np.inf), 'finite (no inf values)'),
     'vmax_scalar': (_in_vmax_range, 'in (20, 300]'),
     'not_neginf': (lambda a: a >= 0.0, 'non-negative (or +inf)'),
@@ -264,12 +265,21 @@ def compute_mlt_top_slope(
         Upper mixing-length slope s_top(theta) [-].
     """
     _require_x64_if_jax(xp)
-    if s_top_inf is None:
-        s_top_inf = SolidRheologyParams.s_top_inf
-    if c_theta is None:
-        c_theta = SolidRheologyParams.c_theta
+    s_top_inf_eff = SolidRheologyParams.s_top_inf if s_top_inf is None else s_top_inf
+    c_theta_eff = SolidRheologyParams.c_theta if c_theta is None else c_theta
+    invalid = _validate_inputs(
+        (
+            ('theta', theta, 'finite', False),
+            ('s_top_inf', s_top_inf_eff, 'half_open_unit', True),
+            ('c_theta', c_theta_eff, 'nonneg', True),
+        ),
+        xp,
+    )
     theta_pos = xp.maximum(xp.asarray(theta, dtype=float), 0.0)
-    s_top = s_top_inf + (1.0 - s_top_inf) * xp.exp(-c_theta * theta_pos)
+    s_top_arr = xp.asarray(s_top_inf_eff, dtype=float)
+    c_th_arr = xp.asarray(c_theta_eff, dtype=float)
+    s_top = s_top_arr + (1.0 - s_top_arr) * xp.exp(-c_th_arr * theta_pos)
+    s_top = xp.where(invalid, xp.nan, s_top)
     return _unwrap_scalar(s_top, xp, theta)
 
 
@@ -323,21 +333,44 @@ def viscous_mixing_length_factor(
         ``(l_v / l)^4``, and 1 where ``l`` is 0 (the boundary nodes).
     """
     _require_x64_if_jax(xp)
-    if s_top_inf is None:
-        s_top_inf = SolidRheologyParams.s_top_inf
-    if bottom_slope is None:
-        bottom_slope = SolidRheologyParams.mlt_bottom_slope
-    eff_top_slope = s_top_inf
+    s_top_inf_eff = SolidRheologyParams.s_top_inf if s_top_inf is None else s_top_inf
+    bottom_slope_eff = (
+        SolidRheologyParams.mlt_bottom_slope if bottom_slope is None else bottom_slope
+    )
+    c_theta_eff = SolidRheologyParams.c_theta if c_theta is None else c_theta
+    checks: list[tuple[str, Any, str, bool]] = [
+        ('radii', radii, 'finite', False),
+        ('r_in', r_in, 'pos', True),
+        ('r_out', r_out, 'pos', True),
+        ('mixing_length', mixing_length, 'nonneg', False),
+        ('s_top_inf', s_top_inf_eff, 'half_open_unit', True),
+        ('bottom_slope', bottom_slope_eff, 'half_open_unit', True),
+    ]
+    if theta is not None:
+        checks.extend(
+            [
+                ('theta', theta, 'finite', False),
+                ('c_theta', c_theta_eff, 'nonneg', True),
+            ]
+        )
+    invalid = _validate_inputs(checks, xp)
     if theta is not None:
         eff_top_slope = compute_mlt_top_slope(
-            theta, s_top_inf=s_top_inf, c_theta=c_theta, xp=xp
+            theta, s_top_inf=s_top_inf_eff, c_theta=c_theta_eff, xp=xp
         )
-    l_v = xp.minimum(bottom_slope * (radii - r_in), eff_top_slope * (r_out - radii))
-    positive = mixing_length > 0.0
+    else:
+        eff_top_slope = xp.asarray(s_top_inf_eff, dtype=float)
+    r_arr = xp.asarray(radii, dtype=float)
+    rin_arr = xp.asarray(r_in, dtype=float)
+    rout_arr = xp.asarray(r_out, dtype=float)
+    b_slope_arr = xp.asarray(bottom_slope_eff, dtype=float)
+    l_v = xp.minimum(b_slope_arr * (r_arr - rin_arr), eff_top_slope * (rout_arr - r_arr))
+    ml_arr = xp.asarray(mixing_length, dtype=float)
+    positive = ml_arr > 0.0
     return xp.where(
-        xp.isnan(mixing_length) | xp.isnan(l_v),
+        invalid | xp.isnan(ml_arr) | xp.isnan(l_v),
         xp.nan,
-        xp.where(positive, (l_v / xp.where(positive, mixing_length, 1.0)) ** 4, 1.0),
+        xp.where(positive, (l_v / xp.where(positive, ml_arr, 1.0)) ** 4, 1.0),
     )
 
 
@@ -602,14 +635,26 @@ def compute_yield_stress(
         Yield stress tau_y [Pa].
     """
     _require_x64_if_jax(xp)
-    if yield_stress_c is None:
-        yield_stress_c = SolidRheologyParams.yield_stress_c
-    if yield_stress_mu is None:
-        yield_stress_mu = SolidRheologyParams.yield_stress_mu
-    if yield_stress_max is None:
-        yield_stress_max = SolidRheologyParams.yield_stress_max
+    c_eff = SolidRheologyParams.yield_stress_c if yield_stress_c is None else yield_stress_c
+    mu_eff = SolidRheologyParams.yield_stress_mu if yield_stress_mu is None else yield_stress_mu
+    max_eff = (
+        SolidRheologyParams.yield_stress_max if yield_stress_max is None else yield_stress_max
+    )
+    invalid = _validate_inputs(
+        (
+            ('pressure', pressure, 'pressure', False),
+            ('yield_stress_c', c_eff, 'nonneg', True),
+            ('yield_stress_mu', mu_eff, 'nonneg', True),
+            ('yield_stress_max', max_eff, 'pos', True),
+        ),
+        xp,
+    )
     p = _clamp_pressure(pressure, xp)
-    tau_y = xp.maximum(0.0, xp.minimum(yield_stress_c + yield_stress_mu * p, yield_stress_max))
+    c = xp.asarray(c_eff, dtype=float)
+    mu = xp.asarray(mu_eff, dtype=float)
+    tau_max = xp.asarray(max_eff, dtype=float)
+    tau_y = xp.maximum(0.0, xp.minimum(c + mu * p, tau_max))
+    tau_y = xp.where(invalid, xp.nan, tau_y)
     return _unwrap_scalar(tau_y, xp, pressure)
 
 
@@ -641,10 +686,20 @@ def compute_strain_rate_local(
         Local strain rate [1/s].
     """
     _require_x64_if_jax(xp)
+    invalid = _validate_inputs(
+        (
+            ('viscous_velocity', viscous_velocity, 'finite', False),
+            ('mixing_length', mixing_length, 'nonneg', False),
+            ('eps', eps, 'pos', True),
+        ),
+        xp,
+    )
     v = xp.asarray(viscous_velocity, dtype=float)
     l_mix = xp.asarray(mixing_length, dtype=float)
     denom = 2.0 * xp.maximum(l_mix, eps)
-    return _unwrap_scalar(xp.abs(v) / denom, xp, viscous_velocity, mixing_length)
+    res = xp.abs(v) / denom
+    res = xp.where(invalid, xp.nan, res)
+    return _unwrap_scalar(res, xp, viscous_velocity, mixing_length)
 
 
 def __getattr__(name: str) -> Any:
