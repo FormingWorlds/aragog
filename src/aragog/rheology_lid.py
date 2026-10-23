@@ -200,6 +200,9 @@ def compute_stagnant_lid_state(
 
     Notes
     -----
+    See ``docs/Explanations/solid_state_convection.md`` for model formulation
+    and derivations.
+
     The Frank-Kamenetskii parameter uses the homologous activation enthalpy at the
     interior pressure ``P_i``:
     ``theta = H(P_i) * (T_i - T_surf) / (R_GAS * T_i**2)`` with

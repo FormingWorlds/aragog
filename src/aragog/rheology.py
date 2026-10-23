@@ -78,6 +78,8 @@ class SolidRheologyParams:
     25 GPa (2000 K versus 2475.9 K), and 9.6 % high at 135 GPa (4640 K versus
     4232.1 K), crossing the table curve below 1 GPa and at 84.3 GPa,
     and serves table-free constant-property benchmarks only.
+    See ``docs/Explanations/solid_state_convection.md`` for model formulation
+    and derivations.
     """
 
     enabled: bool = False
@@ -557,8 +559,14 @@ def compute_arrhenius_viscosity(
     invalid = _validate_inputs(
         (
             ('temperature', temperature, 'pos', False),
+            ('pressure', pressure, 'pressure', False),
             ('viscosity_solid', viscosity_solid, 'pos', True),
+            ('g_homologous', g_homologous, 'nonneg', True),
+            ('solidus_temperature', solidus_temperature, 'pos', False),
+            ('t_sol_0', t_sol_ref_0, 'pos', True),
+            ('dt_sol_dp', dt_sol_dp, 'nonneg', True),
             ('arrhenius_t_ref', arrhenius_t_ref, 'pos', True),
+            ('r_gas', r_gas, 'pos', True),
             ('viscosity_max_log10', viscosity_max_log10, 'vmax_scalar', True),
             ('water_prefactor', water_prefactor, 'pos', False),
         ),
