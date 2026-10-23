@@ -226,10 +226,9 @@ def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
             raise ValueError(f'{name} must be a real number or array, got {val!r}')
         arr = xp.asarray(val, dtype=float)
         ok, msg = _RULES[rule]
-        allow_nan = rule != 'vmax_scalar'
-        if xp is np and np.any((~np.isnan(arr) if allow_nan else True) & ~ok(arr)):
-            raise ValueError(f'{name} must be {msg}, got {val}')
         bad = ~ok(arr)
+        if xp is np and np.any((~np.isnan(arr) if rule != 'vmax_scalar' else True) & bad):
+            raise ValueError(f'{name} must be {msg}, got {val}')
         invalid = invalid | (xp.any(bad) if reduce_any else bad)
     return invalid
 
@@ -450,7 +449,8 @@ def compute_arrhenius_enthalpy(
         t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
     else:
         t_sol = t_sol_0_eff + dt_sol_dp * p
-    h = xp.where(invalid, xp.nan, g_homologous * r_gas * t_sol)
+    g_arr = xp.asarray(g_homologous, dtype=float)
+    h = xp.where(invalid, xp.nan, g_arr * r_gas * t_sol)
     return _unwrap_scalar(h, xp, pressure, solidus_temperature)
 
 
@@ -576,10 +576,12 @@ def compute_arrhenius_viscosity(
     t = xp.asarray(temperature, dtype=float)
     wp = xp.asarray(water_prefactor, dtype=float)
     vs = xp.asarray(viscosity_solid, dtype=float)
+    g_arr = xp.asarray(g_homologous, dtype=float)
+    t_ref_arr = xp.asarray(arrhenius_t_ref, dtype=float)
     vmax_log10 = xp.asarray(viscosity_max_log10, dtype=float)
-    h_0 = g_homologous * r_gas * t_sol_ref_0
+    h_0 = g_arr * r_gas * t_sol_ref_0
 
-    exponent = h_p / (r_gas * t) - h_0 / (r_gas * arrhenius_t_ref) + xp.log(wp)
+    exponent = h_p / (r_gas * t) - h_0 / (r_gas * t_ref_arr) + xp.log(wp)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
     # Prevent float64 underflow to zero when viscosity_solid is small.
@@ -588,8 +590,7 @@ def compute_arrhenius_viscosity(
     )
     max_exponent = (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1e-300))) * math.log(10.0)
     clipped_exp = xp.clip(exponent, min_exponent, max_exponent)
-    result = vs * xp.exp(clipped_exp)
-    result = xp.minimum(result, 10.0**vmax_log10)
+    result = xp.minimum(vs * xp.exp(clipped_exp), 10.0**vmax_log10)
     result = xp.where(invalid | xp.isnan(h_p), xp.nan, result)
     return _unwrap_scalar(
         result, xp, temperature, pressure, water_prefactor, solidus_temperature
