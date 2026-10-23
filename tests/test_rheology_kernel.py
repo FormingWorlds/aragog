@@ -1093,6 +1093,7 @@ def test_pressure_surface_roundoff_clamping_and_validation():
         ('lid', 'eta_i', np.inf, False),
         ('lid', 'eta_i', -np.inf, False),
         ('lid', 'eta_i', True, True),
+        ('lid', 'tau_d', -1.0, False),
         ('lid', 'tau_d', np.inf, False),
         ('lid', 'tau_d', -np.inf, False),
         ('lid', 'tau_d', True, True),
