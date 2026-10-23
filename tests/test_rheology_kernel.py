@@ -21,6 +21,7 @@ from aragog.rheology import (
     compute_stagnant_lid_state,
     compute_strain_rate_local,
     compute_yield_stress,
+    viscous_mixing_length_factor,
 )
 from aragog.rheology_lid import (
     SOLIDUS_MELT_FRACTION_THRESHOLD,
@@ -1430,3 +1431,244 @@ def test_arrhenius_exponent_lower_clip_cannot_underflow() -> None:
     )
     assert np.all(res_arr >= tiny)
     assert np.all(res_arr > 0.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('pressure', -10.0, False),
+        ('pressure', np.inf, False),
+        ('pressure', -np.inf, False),
+        ('pressure', False, True),
+        ('yield_stress_c', -1.0, False),
+        ('yield_stress_c', np.inf, False),
+        ('yield_stress_c', -np.inf, False),
+        ('yield_stress_c', True, True),
+        ('yield_stress_c', [50.0e6, 50.0e6], True),
+        ('yield_stress_mu', -0.1, False),
+        ('yield_stress_mu', np.inf, False),
+        ('yield_stress_mu', -np.inf, False),
+        ('yield_stress_mu', True, True),
+        ('yield_stress_mu', [0.6, 0.6], True),
+        ('yield_stress_max', 0.0, False),
+        ('yield_stress_max', -100.0, False),
+        ('yield_stress_max', np.inf, False),
+        ('yield_stress_max', -np.inf, False),
+        ('yield_stress_max', True, True),
+        ('yield_stress_max', [500.0e6, 500.0e6], True),
+    ],
+)
+def test_yield_stress_validation_table(field_name: str, bad_val, static_error: bool):
+    """Verify compute_yield_stress rejects invalid inputs on np and returns NaN under jax.jit."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    np_kw = {
+        'pressure': 1.0e9,
+        'yield_stress_c': 50.0e6,
+        'yield_stress_mu': 0.6,
+        'yield_stress_max': 500.0e6,
+    }
+    jax_kw = {
+        'pressure': jnp.asarray(1.0e9),
+        'yield_stress_c': 50.0e6,
+        'yield_stress_mu': 0.6,
+        'yield_stress_max': 500.0e6,
+    }
+    jit_fn = jax.jit(lambda kw: compute_yield_stress(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_yield_stress,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('viscous_velocity', np.inf, False),
+        ('viscous_velocity', -np.inf, False),
+        ('viscous_velocity', True, True),
+        ('mixing_length', -1.0, False),
+        ('mixing_length', np.inf, False),
+        ('mixing_length', -np.inf, False),
+        ('mixing_length', True, True),
+        ('eps', 0.0, False),
+        ('eps', -1.0e-15, False),
+        ('eps', np.inf, False),
+        ('eps', -np.inf, False),
+        ('eps', True, True),
+        ('eps', [1.0e-15, 1.0e-15], True),
+    ],
+)
+def test_strain_rate_local_validation_table(field_name: str, bad_val, static_error: bool):
+    """Verify compute_strain_rate_local rejects invalid inputs on np and returns NaN under jax.jit."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    np_kw = {
+        'viscous_velocity': 1.0e-9,
+        'mixing_length': 1.0e5,
+        'eps': 1.0e-15,
+    }
+    jax_kw = {
+        'viscous_velocity': jnp.asarray(1.0e-9),
+        'mixing_length': jnp.asarray(1.0e5),
+        'eps': 1.0e-15,
+    }
+    jit_fn = jax.jit(lambda kw: compute_strain_rate_local(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_strain_rate_local,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('theta', np.inf, False),
+        ('theta', -np.inf, False),
+        ('theta', True, True),
+        ('s_top_inf', 0.0, False),
+        ('s_top_inf', -0.1, False),
+        ('s_top_inf', 1.1, False),
+        ('s_top_inf', np.inf, False),
+        ('s_top_inf', -np.inf, False),
+        ('s_top_inf', True, True),
+        ('s_top_inf', [0.22, 0.22], True),
+        ('c_theta', -0.1, False),
+        ('c_theta', np.inf, False),
+        ('c_theta', -np.inf, False),
+        ('c_theta', True, True),
+        ('c_theta', [0.15, 0.15], True),
+    ],
+)
+def test_mlt_top_slope_validation_table(field_name: str, bad_val, static_error: bool):
+    """Verify compute_mlt_top_slope rejects invalid inputs on np and returns NaN under jax.jit."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    np_kw = {
+        'theta': 10.0,
+        's_top_inf': 0.22,
+        'c_theta': 0.15,
+    }
+    jax_kw = {
+        'theta': jnp.asarray(10.0),
+        's_top_inf': 0.22,
+        'c_theta': 0.15,
+    }
+    jit_fn = jax.jit(lambda kw: compute_mlt_top_slope(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_mlt_top_slope,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('radii', np.inf, False),
+        ('radii', -np.inf, False),
+        ('radii', True, True),
+        ('r_in', 0.0, False),
+        ('r_in', -1.0e6, False),
+        ('r_in', np.inf, False),
+        ('r_in', -np.inf, False),
+        ('r_in', True, True),
+        ('r_in', [3.48e6, 3.48e6], True),
+        ('r_out', 0.0, False),
+        ('r_out', -1.0e6, False),
+        ('r_out', np.inf, False),
+        ('r_out', -np.inf, False),
+        ('r_out', True, True),
+        ('r_out', [6.371e6, 6.371e6], True),
+        ('mixing_length', -1.0, False),
+        ('mixing_length', np.inf, False),
+        ('mixing_length', -np.inf, False),
+        ('mixing_length', True, True),
+        ('s_top_inf', 0.0, False),
+        ('s_top_inf', -0.1, False),
+        ('s_top_inf', 1.1, False),
+        ('s_top_inf', np.inf, False),
+        ('s_top_inf', -np.inf, False),
+        ('s_top_inf', True, True),
+        ('s_top_inf', [0.22, 0.22], True),
+        ('bottom_slope', 0.0, False),
+        ('bottom_slope', -0.1, False),
+        ('bottom_slope', 1.1, False),
+        ('bottom_slope', np.inf, False),
+        ('bottom_slope', -np.inf, False),
+        ('bottom_slope', True, True),
+        ('bottom_slope', [1.0, 1.0], True),
+        ('theta', np.inf, False),
+        ('theta', -np.inf, False),
+        ('theta', True, True),
+        ('c_theta', -0.1, False),
+        ('c_theta', np.inf, False),
+        ('c_theta', -np.inf, False),
+        ('c_theta', True, True),
+        ('c_theta', [0.15, 0.15], True),
+    ],
+)
+def test_viscous_mixing_length_factor_validation_table(
+    field_name: str, bad_val, static_error: bool
+):
+    """Verify viscous_mixing_length_factor rejects invalid inputs on np and returns NaN under jax.jit."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    r = np.linspace(3.48e6, 6.371e6, 11)
+    ml = np.minimum(r - r[0], r[-1] - r)
+    np_kw = {
+        'radii': r,
+        'r_in': 3.48e6,
+        'r_out': 6.371e6,
+        'mixing_length': ml,
+        's_top_inf': 0.22,
+        'bottom_slope': 1.0,
+        'theta': 10.0,
+        'c_theta': 0.15,
+    }
+    jax_kw = {
+        'radii': jnp.asarray(r),
+        'r_in': 3.48e6,
+        'r_out': 6.371e6,
+        'mixing_length': jnp.asarray(ml),
+        's_top_inf': 0.22,
+        'bottom_slope': 1.0,
+        'theta': jnp.asarray(10.0),
+        'c_theta': 0.15,
+    }
+    jit_fn = jax.jit(lambda kw: viscous_mixing_length_factor(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        viscous_mixing_length_factor,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
