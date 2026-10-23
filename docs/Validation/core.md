@@ -540,7 +540,7 @@ The two mixing constants are a model uncertainty, not a fitted quantity. Changin
 
 ### Young layer against the ierfc solution
 
-A fixed deficit $\Delta F$ of the CMB flow below the conducted adiabatic flow, per unit area of the CMB, heats a conducting half space as $\Delta T(z, t) = (2 \Delta F / k) \sqrt{\kappa t}\, \mathrm{ierfc}(z / 2\sqrt{\kappa t})$, with $z$ the depth below the CMB and $\mathrm{ierfc}(x) = e^{-x^2}/\sqrt{\pi} - x\,\mathrm{erfc}(x)$. This is the constant-flux solution of a planar half space, the short-time limit of the fixed-gradient sphere of Greenwood et al. (2021, eq. 27). The test runs the shell with weak mixing (`k_mix = 1e-3`) under a CMB flow of 8 TW, adds to the solution the cooling that the divergence of the adiabatic conduction sets, and compares the temperature rise of the cells within $z < 6\sqrt{\kappa t}$ after 0.03 and 0.1 Myr.
+A fixed deficit $\Delta F$ of the CMB flow below the conducted adiabatic flow, per unit area of the CMB, heats a conducting half space as $\Delta T(z, t) = (2 \Delta F / k) \sqrt{\kappa t}\, \mathrm{ierfc}(z / 2\sqrt{\kappa t})$, with $z$ the depth below the CMB and $\mathrm{ierfc}(x) = e^{-x^2}/\sqrt{\pi} - x\,\mathrm{erfc}(x)$. This is the constant-flux solution of a planar half space, the planar short-time counterpart of the fixed-gradient sphere of Greenwood et al. (2021, eq. 27). The test runs the shell with weak mixing (`k_mix = 1e-3`) under a CMB flow of 8 TW, adds to the solution the cooling that the divergence of the adiabatic conduction sets, and compares the temperature rise of the cells within $z < 6\sqrt{\kappa t}$ after 0.03 and 0.1 Myr.
 
 ![Temperature rise below the CMB after 0.1 Myr and its difference from the ierfc solution](../assets/validation/core_layer_erfc_half_space_0p1myr.svg#only-light){ width="80%" }
 ![Temperature rise below the CMB after 0.1 Myr and its difference from the ierfc solution](../assets/validation/core_layer_erfc_half_space_0p1myr_dark.svg#only-dark){ width="80%" }
@@ -549,6 +549,7 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 
 - Reference: the constant-flux half-space solution above (analytical).
 - Tolerance: 1 % of the expected rise of the top cell, 0.0098 K after 0.03 Myr and 0.020 K after 0.1 Myr; the largest differences are 0.0053 K over 9 cells and 0.0083 K over 13 cells.
+- The cooling term comes from the shell's own rates (`CoreShell.rates`), not from an independent formula. Without it the 0.03 Myr case still passes (0.0064 K); the 0.1 Myr case separates it (0.0216 K against 0.020 K).
 - Test id: `tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space`
 - Command: `pytest tests/test_core_layer.py -k erfc` (add `--validation-plots` to write the plot pairs)
 
