@@ -66,16 +66,17 @@ def test_the_shell_heat_changes_by_the_flows_at_its_faces():
     assert content == pytest.approx(expected, rel=1e-10, abs=0)
 
 
+@pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 @pytest.mark.parametrize('t_myr', [0.03, 0.1])
 def test_a_young_layer_follows_the_erfc_solution_of_a_half_space(t_myr, validation_plot):
     """A fixed flow deficit Q_k - q at the top of a conducting half space raises the
     temperature by (2 dF / k) sqrt(kappa t) ierfc(z / 2 sqrt(kappa t)) (Carslaw and Jaeger,
     the planar short-time counterpart of the fixed-gradient sphere of Greenwood et al. 2021,
-    eq. 27); the cells also cool at the rate the
-    divergence of the adiabatic conduction sets. Earlier the top cell limits the match, later
-    the curvature of the sphere. Weak mixing isolates the conduction: with the convecting
-    core held, the sink would make the cells below the front mix."""
+    eq. 27); the cells also cool at the rate the divergence of the adiabatic conduction sets.
+    Earlier the top cell limits the match, later the curvature of the sphere. Weak mixing
+    isolates the conduction: with the convecting core held, the sink would make the cells
+    below the front mix."""
     shell = _shell(k_mix=1e-3)
     p, t = shell.profiles, t_myr * MYR
     q_k = float(_q_ad(p, K_CORE, p.r_cmb, T_C))
@@ -90,7 +91,8 @@ def test_a_young_layer_follows_the_erfc_solution_of_a_half_space(t_myr, validati
     tol = 1e-2 * expected[-1]
     assert np.max(np.abs(t_shell - y0 - expected)[near]) < tol
     if t_myr == 0.1:  # discrimination: the ierfc profile without the cooling term misses
-        assert np.max(np.abs(t_shell - y0 - (expected - sink))[near]) > tol
+        miss = np.max(np.abs(t_shell - y0 - (expected - sink))[near])
+        assert miss > tol, 'the cooling term no longer separates the ierfc profile'
 
     def figure():
         import matplotlib.pyplot as plt
