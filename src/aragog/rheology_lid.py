@@ -11,6 +11,7 @@ from aragog.rheology import (
     COHESION_FLOOR,
     R_GAS,
     FloatOrArray,
+    _clamp_pressure,
     _is_non_real,
     _require_x64_if_jax,
     _scalar_or_nan,
@@ -310,7 +311,7 @@ def compute_stagnant_lid_state(
             ('C4', C4, 'pos', True),
             ('radii', radii, 'finite', False),
             ('temperature', temperature, 'pos', False),
-            ('pressure', pressure, 'nonneg', False),
+            ('pressure', pressure, 'pressure', False),
             ('convective_flux', convective_flux, 'finite', False),
             ('total_flux', total_flux, 'finite', False),
             ('melt_fraction', melt_fraction, 'unit', False),
@@ -326,7 +327,7 @@ def compute_stagnant_lid_state(
         reduce_any=True,
     )
     T = xp.asarray(temperature, dtype=float)
-    P = xp.asarray(pressure, dtype=float)
+    P = _clamp_pressure(pressure, xp)
     F_conv = xp.asarray(convective_flux, dtype=float)
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)

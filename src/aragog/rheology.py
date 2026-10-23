@@ -17,6 +17,7 @@ import numpy.typing as npt
 R_GAS = 8.314462618
 COHESION_FLOOR = 1.0e-6
 DEFAULT_VISCOSITY_SOLID = 1.0e21
+PRESSURE_ROUNDOFF_TOLERANCE = 1.0
 
 FloatOrArray = float | npt.NDArray[np.floating]
 
@@ -192,11 +193,21 @@ def _scalar_or_nan(val: Any, name: str) -> float:
 _RULES: dict[str, tuple[Any, str]] = {
     'pos': (lambda a: (a > 0.0) & (a < np.inf), 'positive and finite'),
     'nonneg': (lambda a: (a >= 0.0) & (a < np.inf), 'non-negative and finite'),
+    'pressure': (
+        lambda a: (a >= -PRESSURE_ROUNDOFF_TOLERANCE) & (a < np.inf),
+        'non-negative and finite',
+    ),
     'unit': (lambda a: (a >= 0.0) & (a <= 1.0), 'in [0, 1]'),
     'finite': (lambda a: (a > -np.inf) & (a < np.inf), 'finite (no inf values)'),
     'vmax_scalar': (_in_vmax_range, 'in (20, 300]'),
     'not_neginf': (lambda a: a >= 0.0, 'non-negative (or +inf)'),
 }
+
+
+def _clamp_pressure(pressure: Any, xp: Any) -> Any:
+    """Clamp small negative pressures in [-PRESSURE_ROUNDOFF_TOLERANCE, 0.0) to 0.0."""
+    p = xp.asarray(pressure, dtype=float)
+    return xp.where((p < 0.0) & (p >= -PRESSURE_ROUNDOFF_TOLERANCE), 0.0, p)
 
 
 def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
@@ -391,7 +402,7 @@ def compute_arrhenius_enthalpy(
     t_sol_0_eff = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
     invalid = _validate_inputs(
         (
-            ('pressure', pressure, 'nonneg', False),
+            ('pressure', pressure, 'pressure', False),
             ('g_homologous', g_homologous, 'nonneg', True),
             ('solidus_temperature', solidus_temperature, 'pos', False),
             ('t_sol_0', t_sol_0_eff, 'pos', True),
@@ -401,7 +412,7 @@ def compute_arrhenius_enthalpy(
         xp,
     )
     g_arr = xp.asarray(g_homologous, dtype=float)
-    p = xp.asarray(pressure, dtype=float)
+    p = _clamp_pressure(pressure, xp)
     if solidus_temperature is not None:
         t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
     else:
@@ -592,7 +603,7 @@ def compute_yield_stress(
         yield_stress_mu = SolidRheologyParams.yield_stress_mu
     if yield_stress_max is None:
         yield_stress_max = SolidRheologyParams.yield_stress_max
-    p = xp.asarray(pressure, dtype=float)
+    p = _clamp_pressure(pressure, xp)
     tau_y = xp.maximum(0.0, xp.minimum(yield_stress_c + yield_stress_mu * p, yield_stress_max))
     return _unwrap_scalar(tau_y, xp, pressure)
 
