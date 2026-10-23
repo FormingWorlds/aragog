@@ -1800,3 +1800,90 @@ def test_wp5_fixture_grid_bitwise_parity():
             xp=np,
         ),
     )
+
+
+def test_scalar_parameters_float32_bitwise_parity() -> None:
+    """Verify scalar parameters passed as np.float32 produce bitwise identical outputs to Python float."""
+    p = 10e9
+
+    # 1. compute_arrhenius_enthalpy
+    for kw, val in [
+        ('g_homologous', 50.0),
+        ('t_sol_0', 1400.0),
+        ('dt_sol_dp', 2.4e-8),
+        ('r_gas', 8.314462618),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_arrhenius_enthalpy(p, **{kw: val32})
+        out64 = compute_arrhenius_enthalpy(p, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_arrhenius_enthalpy failed for {kw}'
+
+    # 2. compute_arrhenius_viscosity
+    for kw, val in [
+        ('viscosity_solid', 1e21),
+        ('g_homologous', 50.0),
+        ('t_sol_0', 1400.0),
+        ('dt_sol_dp', 2.4e-8),
+        ('arrhenius_t_ref', 1600.0),
+        ('r_gas', 8.314462618),
+        ('viscosity_max_log10', 40.0),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_arrhenius_viscosity(1600.0, p, **{kw: val32})
+        out64 = compute_arrhenius_viscosity(1600.0, p, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_arrhenius_viscosity failed for {kw}'
+
+    # 3. compute_yield_stress
+    for kw, val in [
+        ('yield_stress_c', 5e6),
+        ('yield_stress_mu', 0.6),
+        ('yield_stress_max', 1e8),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_yield_stress(p, **{kw: val32})
+        out64 = compute_yield_stress(p, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_yield_stress failed for {kw}'
+
+    # 4. compute_mlt_top_slope
+    for kw, val in [
+        ('s_top_inf', 0.5),
+        ('c_theta', 2.0),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_mlt_top_slope(10.0, **{kw: val32})
+        out64 = compute_mlt_top_slope(10.0, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_mlt_top_slope failed for {kw}'
+
+    # 5. compute_strain_rate_local
+    for kw, val in [
+        ('eps', 1e-15),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_strain_rate_local(1e-9, 1e5, **{kw: val32})
+        out64 = compute_strain_rate_local(1e-9, 1e5, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_strain_rate_local failed for {kw}'
+
+    # 6. viscous_mixing_length_factor
+    r = np.linspace(3480e3, 6371e3, 5)
+    l_mix = np.full(5, 1e4)
+    base_kwargs = {
+        'radii': r,
+        'r_in': 3480e3,
+        'r_out': 6371e3,
+        'mixing_length': l_mix,
+        's_top_inf': 0.5,
+        'bottom_slope': 0.2,
+        'c_theta': 2.0,
+        'theta': 10.0,
+    }
+    for kw in ['r_in', 'r_out', 's_top_inf', 'bottom_slope', 'c_theta']:
+        val32 = np.float32(base_kwargs[kw])
+        val64 = float(val32)
+        out32 = viscous_mixing_length_factor(**{**base_kwargs, kw: val32})
+        out64 = viscous_mixing_length_factor(**{**base_kwargs, kw: val64})
+        assert np.array_equal(out32, out64), f'viscous_mixing_length_factor failed for {kw}'
