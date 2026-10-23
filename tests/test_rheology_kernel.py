@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from aragog.rheology import (
+    _RULES,
     R_GAS,
     SolidRheologyParams,
     compute_arrhenius_enthalpy,
@@ -54,14 +55,24 @@ def test_limit_infinite_yield_stress():
     tau_d = 5.0e6
     tau_y_lid = float('inf')
 
-    eta_eff = compute_effective_viscosity(
-        eta_diff=eta_diff,
-        eta_i=eta_diff,
-        tau_d=tau_d,
-        tau_y_lid=tau_y_lid,
-        stress_closure_mode='lid',
-    )
+    try:
+        eta_eff = compute_effective_viscosity(
+            eta_diff=eta_diff,
+            eta_i=eta_diff,
+            tau_d=tau_d,
+            tau_y_lid=tau_y_lid,
+            stress_closure_mode='lid',
+        )
+    except ValueError as exc:
+        pytest.fail(f'compute_effective_viscosity rejected infinite tau_y_lid: {exc}')
     assert eta_eff == pytest.approx(eta_diff, rel=1.0e-10)
+
+
+@pytest.mark.unit
+def test_rules_nonneg_or_posinf_exists():
+    """Verify nonneg_or_posinf rule exists and not_neginf is renamed."""
+    assert 'nonneg_or_posinf' in _RULES
+    assert 'not_neginf' not in _RULES
 
 
 @pytest.mark.unit
