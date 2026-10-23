@@ -20,6 +20,7 @@ from aragog.rheology import (
     compute_mlt_top_slope,
     compute_stagnant_lid_state,
     compute_strain_rate_local,
+    compute_yield_stress,
 )
 from aragog.rheology_lid import (
     SOLIDUS_MELT_FRACTION_THRESHOLD,
@@ -986,6 +987,91 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         static_error=static_error,
         is_lid_state=True,
     )
+
+
+@pytest.mark.unit
+def test_pressure_surface_roundoff_clamping_and_validation():
+    """Verify near-zero negative surface pressure is clamped to zero and large negative pressure raises ValueError."""
+    p_tol_val = -1.0e-4
+    h_clamped = compute_arrhenius_enthalpy(p_tol_val, xp=np)
+    h_zero = compute_arrhenius_enthalpy(0.0, xp=np)
+    assert h_clamped == pytest.approx(h_zero, abs=1e-12)
+
+    eta_clamped = compute_arrhenius_viscosity(1600.0, p_tol_val, xp=np)
+    eta_zero = compute_arrhenius_viscosity(1600.0, 0.0, xp=np)
+    assert eta_clamped == pytest.approx(eta_zero, rel=1e-12)
+
+    tau_y_clamped = compute_yield_stress(p_tol_val, xp=np)
+    tau_y_zero = compute_yield_stress(0.0, xp=np)
+    assert tau_y_clamped == pytest.approx(tau_y_zero, rel=1e-12)
+
+    n_nodes = 12
+    params = SolidRheologyParams(enabled=True)
+    radii = np.linspace(3.48e6, 6.37e6, n_nodes)
+    temp = np.linspace(2600.0, 300.0, n_nodes)
+    press_zero = np.linspace(135.0e9, 0.0, n_nodes)
+    press_roundoff = press_zero.copy()
+    press_roundoff[-1] = p_tol_val
+
+    st_roundoff = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp,
+        pressure=press_roundoff,
+        convective_flux=np.full(n_nodes, 80.0),
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=None,
+        params=params,
+        melt_fraction=np.zeros(n_nodes),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        xp=np,
+    )
+    st_zero = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp,
+        pressure=press_zero,
+        convective_flux=np.full(n_nodes, 80.0),
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=None,
+        params=params,
+        melt_fraction=np.zeros(n_nodes),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        xp=np,
+    )
+    assert float(st_roundoff['d_lid']) == pytest.approx(float(st_zero['d_lid']), rel=1e-12)
+
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_enthalpy(-10.0, xp=np)
+
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_viscosity(1600.0, -10.0, xp=np)
+
+    with pytest.raises(ValueError, match='pressure'):
+        compute_yield_stress(-10.0, xp=np)
+
+    press_bad = press_zero.copy()
+    press_bad[-1] = -10.0
+    with pytest.raises(ValueError, match='pressure'):
+        compute_stagnant_lid_state(
+            radii=radii,
+            temperature=temp,
+            pressure=press_bad,
+            convective_flux=np.full(n_nodes, 80.0),
+            total_flux=np.full(n_nodes, 100.0),
+            solidus_temperature=None,
+            params=params,
+            melt_fraction=np.zeros(n_nodes),
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            unyielded_velocity=np.full(n_nodes, 1.0e-9),
+            xp=np,
+        )
 
 
 @pytest.mark.unit
