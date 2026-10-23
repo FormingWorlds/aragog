@@ -102,7 +102,7 @@ pytest -m unit tests/             # unit tests only
 pytest -m smoke tests/            # smoke tests only
 ```
 
-The JAX-path tests require `jax` and `equinox` to be installed; tests are skipped (not failed) when the optional dependencies are missing. Some tests also require the SPIDER-format EOS table directory; they skip if `FWL_DATA` is unset or does not contain the expected files.
+The JAX-path tests require `jax` and `equinox` to be installed; tests are skipped (not failed) when the optional dependencies are missing. Some tests also require the SPIDER-format EOS table directory; they look in `ARAGOG_TEST_EOS_DIR`, then in `$FWL_DATA/aragog/spider_eos`, then in a parity cache next to the repository (`tests/conftest.py`), and skip when none of them exists.
 
 ## Physical constraints checked
 
