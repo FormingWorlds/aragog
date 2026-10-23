@@ -6,6 +6,7 @@ and autodiff properties of the kernel in aragog.rheology.
 
 from __future__ import annotations
 
+import dataclasses
 from decimal import Decimal
 
 import numpy as np
@@ -101,9 +102,9 @@ def test_homologous_enthalpy_and_viscosity_invariants():
     expected = g_hom * R_GAS * (t_sol_0 + dt_sol_dp * p_values)
     np.testing.assert_allclose(enthalpy, expected, rtol=1.0e-14)
 
-    # 2. Explicit solidus curve at P = {0, 25, 50, 100, 135} GPa and g_hom = {14, 25}.
+    # 2. Explicit PALEOS solidus curve at P = {0, 25, 50, 100, 135} GPa and g_hom = {14, 25}.
     p_grid = np.array([0.0, 25.0e9, 50.0e9, 100.0e9, 135.0e9])
-    t_sol_grid = np.array([1380.6038, 2475.9161, 2875.9474, 3673.7136, 4232.1499])
+    t_sol_grid = np.array([1464.8000, 3066.9899, 3672.6551, 4397.9263, 4754.8271])
     for g_val in (14.0, 25.0):
         h_grid = compute_arrhenius_enthalpy(
             p_grid,
@@ -150,28 +151,31 @@ def test_homologous_enthalpy_and_viscosity_invariants():
 
 @pytest.mark.unit
 def test_wolf_bower_2018_solidus_table_interpolation_matches_pinned_grid():
-    """Verify solidus.dat interpolation matches pinned test grid and docs table."""
-    import os
+    """Verify PALEOS solidus curve interpolation matches pinned test grid and docs table."""
+    import importlib.util
     from pathlib import Path
 
-    fwl_data = os.environ.get('FWL_DATA')
-    if not fwl_data:
-        pytest.skip('FWL_DATA not set')
-    table_path = (
-        Path(fwl_data) / 'interior/melting_curves/wolf_bower_2018/r15728072/solidus.dat'
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / 'tools'
+        / 'verification'
+        / 'compute_solidus_reference_values.py'
     )
-    if not table_path.is_file():
-        pytest.skip(f'Solidus table not found at {table_path}')
+    spec = importlib.util.spec_from_file_location(
+        'compute_solidus_reference_values', script_path
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
 
-    raw = np.loadtxt(table_path, comments='#')
-    p_table, t_table = raw[:, 0], raw[:, 1]
+    p_table, t_table = mod.paleos_solidus_curve()
     p_grid = np.array([0.0, 25.0e9, 50.0e9, 100.0e9, 135.0e9])
     t_sol_interp = np.interp(p_grid, p_table, t_table)
 
-    pinned = np.array([1380.6038, 2475.9161, 2875.9474, 3673.7136, 4232.1499])
+    pinned = np.array([1464.8000, 3066.9899, 3672.6551, 4397.9263, 4754.8271])
     np.testing.assert_allclose(t_sol_interp, pinned, atol=1.0e-4)
 
-    docs_1dec = np.array([1380.6, 2475.9, 2875.9, 3673.7, 4232.1])
+    docs_1dec = np.array([1464.8, 3067.0, 3672.7, 4397.9, 4754.8])
     np.testing.assert_allclose(np.round(t_sol_interp, 1), docs_1dec, atol=1.0e-12)
 
 
@@ -487,7 +491,6 @@ def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
                     convective_flux=convective_flux,
                     total_flux=tot_flux,
                     solidus_temperature=sol_arg,
-                    t_sol_0=1400.0,
                     melt_fraction=np.full(n_nodes, phi_val),
                     params=params,
                     viscosity_solid=1.0e21,
@@ -539,7 +542,6 @@ def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
         convective_flux=f_conv_12,
         total_flux=np.full(12, 100.0),
         solidus_temperature=None,
-        t_sol_0=1400.0,
         melt_fraction=phi_12,
         params=params,
         viscosity_solid=1.0e21,
@@ -602,7 +604,6 @@ def test_melt_fraction_ramp_phi_rheo_and_phi_width_below_solidus_threshold():
             convective_flux=conv_flux,
             total_flux=tot_flux,
             solidus_temperature=sol_arg,
-            t_sol_0=1400.0,
             melt_fraction=phi,
             params=params,
             viscosity_solid=1.0e21,
@@ -948,7 +949,6 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         'convective_flux': np.full(n_nodes, 80.0),
         'total_flux': np.full(n_nodes, 100.0),
         'solidus_temperature': np.linspace(4200.0, 1400.0, n_nodes),
-        't_sol_0': 1400.0,
         'melt_fraction': np.zeros(n_nodes),
         'unyielded_velocity': np.full(n_nodes, 1.0e-9),
         'viscosity_mixture': np.full(n_nodes, 1.0e20),
@@ -966,7 +966,23 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         for k, v in base_kw.items()
         if k != 'params'
     }
-    jit_lid = jax.jit(lambda kw: compute_stagnant_lid_state(**kw, params=params, xp=jnp))
+
+    def _call_lid_np(**kw):
+        kw = dict(kw)
+        p = kw.pop('params', params)
+        if 't_sol_0' in kw:
+            p = dataclasses.replace(p)
+            object.__setattr__(p, 't_sol_0', kw.pop('t_sol_0'))
+        return compute_stagnant_lid_state(**kw, params=p)
+
+    def _call_lid_jax(kw):
+        kw = dict(kw)
+        p = dataclasses.replace(params)
+        if 't_sol_0' in kw:
+            object.__setattr__(p, 't_sol_0', kw.pop('t_sol_0'))
+        return compute_stagnant_lid_state(**kw, params=p, xp=jnp)
+
+    jit_lid = jax.jit(_call_lid_jax)
 
     if static_error:
         bad_val = bad_entry if as_scalar else np.ones(n_nodes, dtype=bool)
@@ -977,7 +993,7 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         bad_val[3] = bad_entry
 
     _assert_invalid_raises_np_and_nan_jit(
-        compute_stagnant_lid_state,
+        _call_lid_np,
         base_kw,
         jax_kw,
         jit_lid,

@@ -1102,7 +1102,6 @@ def test_rheology_and_lid_branch_coverage():
         convective_flux=F_conv,
         total_flux=F_tot,
         solidus_temperature=T_sol,
-        t_sol_0=1400.0,
         melt_fraction=phi,
         params=params_fixed,
         viscosity_solid=1.0e21,
@@ -1144,7 +1143,7 @@ def test_rheology_and_lid_branch_coverage():
             strain_rate=1.0e-14,
         )
 
-    with pytest.raises(ValueError, match='t_sol_0 must be provided when solidus_temperature'):
+    with pytest.raises(TypeError, match='t_sol_0'):
         compute_stagnant_lid_state(
             radii=r,
             temperature=T,
@@ -1152,7 +1151,7 @@ def test_rheology_and_lid_branch_coverage():
             convective_flux=F_conv,
             total_flux=F_tot,
             solidus_temperature=2000.0,
-            t_sol_0=None,
+            t_sol_0=2000.0,
             melt_fraction=phi,
             params=params_fixed,
             viscosity_solid=1.0e21,
@@ -1168,7 +1167,6 @@ def test_rheology_and_lid_branch_coverage():
         convective_flux=F_conv,
         total_flux=F_tot,
         solidus_temperature=2000.0,
-        t_sol_0=2000.0,
         melt_fraction=phi,
         params=params_fixed_2000,
         viscosity_solid=1.0e21,
@@ -1182,13 +1180,14 @@ def test_rheology_and_lid_branch_coverage():
         convective_flux=F_conv,
         total_flux=F_tot,
         solidus_temperature=np.full(n_nodes, 2000.0),
-        t_sol_0=2000.0,
         melt_fraction=phi,
         params=params_fixed_2000,
         viscosity_solid=1.0e21,
         phi_rheo=0.4,
         phi_width=0.15,
     )
+    params_bad_ts0 = dataclasses.replace(params_fixed_2000)
+    object.__setattr__(params_bad_ts0, 't_sol_0', 0.0)
     with pytest.raises(ValueError, match='t_sol_0'):
         compute_stagnant_lid_state(
             radii=r,
@@ -1197,9 +1196,8 @@ def test_rheology_and_lid_branch_coverage():
             convective_flux=F_conv,
             total_flux=F_tot,
             solidus_temperature=np.full(n_nodes, 2000.0),
-            t_sol_0=2000.0,
             melt_fraction=phi,
-            params=dataclasses.replace(params_fixed, t_sol_0=2200.0),
+            params=params_bad_ts0,
             viscosity_solid=1.0e21,
             phi_rheo=0.4,
             phi_width=0.15,
@@ -1427,18 +1425,19 @@ def test_lid_state_nan_propagation_per_input(nan_field: str, lid_base_mode: str)
         'viscosity_solid': 1.0e21,
         'phi_rheo': 0.4,
         'phi_width': 0.15,
-        't_sol_0': 1400.0,
         'a_rh_fb': 1.3,
         'C4': 0.125,
     }
+    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0, lid_base_mode=lid_base_mode)
     if nan_field in base_arrays:
         bad = base_arrays[nan_field].copy()
         bad[5] = np.nan
         base_arrays[nan_field] = bad
+    elif nan_field == 't_sol_0':
+        object.__setattr__(params, 't_sol_0', float('nan'))
     else:
         scalars[nan_field] = float('nan')
 
-    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0, lid_base_mode=lid_base_mode)
     for xp_mod in (np, jnp):
         kw = {k: xp_mod.asarray(v) for k, v in base_arrays.items()}
         st = compute_stagnant_lid_state(
@@ -1620,11 +1619,8 @@ def test_compute_stagnant_lid_state_input_validation():
         'thermal_expansivity',
         'thermal_diffusivity',
     ):
-        extra = {'t_sol_0': 1400.0} if opt_name == 'solidus_temperature' else {}
         with pytest.raises(ValueError, match=rf'{opt_name}.*same 1-D length as radii'):
-            compute_stagnant_lid_state(
-                **{**valid_kw, **extra, opt_name: np.ones((5, 2), dtype=float)}
-            )
+            compute_stagnant_lid_state(**{**valid_kw, opt_name: np.ones((5, 2), dtype=float)})
 
 
 def _valid_lid_state_kwargs(n_nodes: int = 10) -> dict[str, Any]:
@@ -1646,12 +1642,18 @@ def _valid_lid_state_kwargs(n_nodes: int = 10) -> dict[str, Any]:
 
 @pytest.mark.unit
 def test_stagnant_lid_state_t_sol_0_inf_and_mismatch_validation():
-    """Verify t_sol_0 rejects +-inf and mismatched values while propagating NaN."""
+    """Verify params.t_sol_0 rejects +-inf and non-positive values while propagating NaN, and t_sol_0 kwarg raises TypeError."""
     valid_kw = _valid_lid_state_kwargs()
-    for bad_ts0 in (np.inf, -np.inf, 1500.0):
+    with pytest.raises(TypeError, match='t_sol_0'):
+        compute_stagnant_lid_state(**{**valid_kw, 't_sol_0': 1500.0})
+    for bad_ts0 in (np.inf, -np.inf, 0.0, -100.0):
+        bad_params = dataclasses.replace(valid_kw['params'])
+        object.__setattr__(bad_params, 't_sol_0', bad_ts0)
         with pytest.raises(ValueError, match='t_sol_0'):
-            compute_stagnant_lid_state(**{**valid_kw, 't_sol_0': bad_ts0})
-    st_nan_ts0 = compute_stagnant_lid_state(**{**valid_kw, 't_sol_0': np.nan})
+            compute_stagnant_lid_state(**{**valid_kw, 'params': bad_params})
+    nan_params = dataclasses.replace(valid_kw['params'])
+    object.__setattr__(nan_params, 't_sol_0', np.nan)
+    st_nan_ts0 = compute_stagnant_lid_state(**{**valid_kw, 'params': nan_params})
     assert np.isnan(float(st_nan_ts0['tau_d']))
 
 
@@ -1680,7 +1682,7 @@ def test_stagnant_lid_state_a_rh_fb_bounds_validation():
 @pytest.mark.unit
 def test_stagnant_lid_state_rejects_array_valued_scalars():
     """Verify array-valued, bool, and string scalar arguments raise ValueError instead of being accepted."""
-    from aragog.rheology_lid import _scalar_or_nan
+    from aragog.rheology import _scalar_or_nan
 
     for bad_scalar in (
         '1e21',
@@ -1711,8 +1713,14 @@ def test_stagnant_lid_state_rejects_array_valued_scalars():
         ('C4', np.full(n_nodes, 0.125)),
         ('t_sol_0', np.full(n_nodes, 1400.0)),
     ):
+        if scalar_name == 't_sol_0':
+            bad_params = dataclasses.replace(valid_kw['params'])
+            object.__setattr__(bad_params, 't_sol_0', bad_arr)
+            call_kw = {**valid_kw, 'params': bad_params}
+        else:
+            call_kw = {**valid_kw, scalar_name: bad_arr}
         with pytest.raises(ValueError, match=rf'{scalar_name} must be a scalar'):
-            compute_stagnant_lid_state(**{**valid_kw, scalar_name: bad_arr})
+            compute_stagnant_lid_state(**call_kw)
 
     assert _scalar_or_nan(10**21, 'viscosity_solid') == 1.0e21
     st_float = compute_stagnant_lid_state(**valid_kw)
@@ -1730,15 +1738,17 @@ def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():
 
     @jax.jit
     def _jit_eval(vs, pw, pr, arh, c4, ts0):
+        p = dataclasses.replace(valid_kw['params'])
+        object.__setattr__(p, 't_sol_0', ts0)
         return compute_stagnant_lid_state(
             **{
                 **j_kw,
+                'params': p,
                 'viscosity_solid': vs,
                 'phi_width': pw,
                 'phi_rheo': pr,
                 'a_rh_fb': arh,
                 'C4': c4,
-                't_sol_0': ts0,
                 'xp': jnp,
             }
         )
@@ -1752,7 +1762,7 @@ def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():
         (1.0e21, 0.15, 1.5, 1.3, 0.125, 1400.0),
         (1.0e21, 0.15, 0.4, 0.0, 0.125, 1400.0),
         (1.0e21, 0.15, 0.4, 1.3, -0.125, 1400.0),
-        (1.0e21, 0.15, 0.4, 1.3, 0.125, 1500.0),
+        (1.0e21, 0.15, 0.4, 1.3, 0.125, 0.0),
         (1.0e21, 0.15, 0.4, 1.3, 0.125, jnp.inf),
     ):
         try:
@@ -2074,3 +2084,83 @@ def test_solver_modules_do_not_direct_import_rheology_kernels():
     assert _scan_ast_for_direct_rheology_imports(ast.parse(attr_code)), (
         'Canary 6 failed: attribute chain aragog.rheology was not caught'
     )
+
+
+@pytest.mark.unit
+def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys, monkeypatch):
+    """Verify PALEOS defaults, multi-crossing reporting, and non-1-GPa grid slicing."""
+    import importlib.util
+    from pathlib import Path
+
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / 'tools'
+        / 'verification'
+        / 'compute_solidus_reference_values.py'
+    )
+    spec = importlib.util.spec_from_file_location(
+        'compute_solidus_reference_values', script_path
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    mod.main([])
+    out_default = capsys.readouterr().out
+    assert 'PALEOS MgSiO3 solidus' in out_default
+    assert '[1464.8000, 3066.9899, 3672.6551, 4397.9263, 4754.8271]' in out_default
+    assert 'no crossings over 0..135 GPa' in out_default
+    assert '-1108.1 K' in out_default
+
+    # 1-crossing synthetic table (crossing at 45 GPa on a 30 GPa step grid).
+    p_1 = np.array([0.0, 30.0, 60.0, 100.0, 135.0]) * 1.0e9
+    t_lin_1 = 1400.0 + 2.4e-8 * p_1
+    t_tab_1 = t_lin_1 + np.array([100.0, 50.0, -50.0, -100.0, -120.0])
+    t1_file = tmp_path / 'solidus_1cross.dat'
+    np.savetxt(t1_file, np.column_stack([p_1, t_tab_1]))
+    c1 = mod.find_solidus_crossings(p_1, t_tab_1, 1400.0, 2.4e-8)
+    assert len(c1) == 1
+    assert c1[0] == pytest.approx(45.0, rel=1.0e-12)
+    mod.main(['--table', str(t1_file)])
+    out_1 = capsys.readouterr().out
+    assert 'crossings at 45.0 GPa (all: [45.0] GPa)' in out_1
+
+    monkeypatch.setattr(mod, 'EXPECTED_MD5', '00000000000000000000000000000000')
+    with pytest.raises(SystemExit, match='MD5 mismatch'):
+        mod.main(['--table', str(t1_file)])
+    capsys.readouterr()
+    mod.main(['--table', str(t1_file), '--allow-md5-mismatch'])
+    capsys.readouterr()
+    monkeypatch.setattr(mod, 'EXPECTED_MD5', None)
+
+    t_short = tmp_path / 'solidus_short.dat'
+    np.savetxt(t_short, np.column_stack([p_1[:3], t_tab_1[:3]]))
+    with pytest.raises(ValueError, match='135.0e9'):
+        mod.main(['--table', str(t_short)])
+
+    # 3-crossing table on a non-1-GPa grid: roots at 0.40, 50.0 (node), and 134.0 GPa,
+    # plus an excluded root at 145.0 GPa above the 135 GPa mantle bound.
+    p_3_gpa = np.array([0.0, 0.2, 0.8, 25.0, 50.0, 80.0, 133.0, 140.0, 150.0])
+    p_3 = p_3_gpa * 1.0e9
+    t_lin_3 = 1400.0 + 24.0 * p_3_gpa
+    offset_3 = np.array([-20.0, -10.0, 20.0, 100.0, 0.0, -80.0, -10.0, 60.0, -60.0])
+    t_tab_3 = t_lin_3 - offset_3
+    t3_file = tmp_path / 'solidus_3cross.dat'
+    np.savetxt(t3_file, np.column_stack([p_3, t_tab_3]))
+
+    c3 = mod.find_solidus_crossings(p_3, t_tab_3, 1400.0, 2.4e-8)
+    assert len(c3) == 3
+    assert c3[0] == pytest.approx(0.4, rel=1.0e-12)
+    assert c3[1] == pytest.approx(50.0, rel=1.0e-12)
+    assert c3[2] == pytest.approx(134.0, rel=1.0e-12)
+
+    mod.main(['--table', str(t3_file), '--allow-md5-mismatch'])
+    out_3 = capsys.readouterr().out
+    assert '0.40 GPa' in out_3
+    assert '50.0, 134.0 GPa' in out_3
+    assert '[0.4, 50.0, 134.0]' in out_3
+
+    # Canary: the old formatter dropped crossings_gpa[2:] when crossings_gpa[0] < 1.0.
+    old_truncated_desc = f'crossings below 1 GPa and at {c3[1]:.1f} GPa'
+    assert '134.0' not in old_truncated_desc
+    assert '134.0' in mod.format_crossings_description(c3)

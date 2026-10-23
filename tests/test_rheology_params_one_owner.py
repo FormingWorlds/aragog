@@ -473,7 +473,7 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     assert rf'{ratio_09:.3f}\,\Delta T_\text{{rh}}' in doc_text
 
     ratio_sol_ref = math.exp(
-        default_rheo.g_homologous * (1380.6 - default_rheo.t_sol_0) / 1600.0
+        default_rheo.g_homologous * (1464.8 - default_rheo.t_sol_0) / 1600.0
     )
     assert rf'{ratio_sol_ref:.2f}\times' in doc_text
 
@@ -586,14 +586,17 @@ def test_kernel_signatures_use_none_sentinels_and_match_dataclass_defaults(monke
 
 
 def test_stagnant_lid_state_rejects_mismatched_t_sol_0():
-    """Verify compute_stagnant_lid_state raises ValueError when t_sol_0 and params.t_sol_0 differ."""
+    """Verify compute_stagnant_lid_state takes t_sol_0 solely from params.t_sol_0."""
+    import inspect
+
+    assert 't_sol_0' not in inspect.signature(compute_stagnant_lid_state).parameters
     n_nodes = 10
     r = np.linspace(3.48e6, 6.371e6, n_nodes)
-    t = np.linspace(2600.0, 300.0, n_nodes)
+    t = np.linspace(2600.0, 1600.0, n_nodes)
     p = np.linspace(135.0e9, 0.0, n_nodes)
     params = SolidRheologyParams(enabled=True, t_sol_0=1400.0)
     for sol_t in (None, np.full(n_nodes, 2000.0)):
-        with pytest.raises(ValueError, match='t_sol_0'):
+        with pytest.raises(TypeError, match='t_sol_0'):
             compute_stagnant_lid_state(
                 radii=r,
                 temperature=t,
@@ -608,6 +611,38 @@ def test_stagnant_lid_state_rejects_mismatched_t_sol_0():
                 phi_rheo=0.4,
                 phi_width=0.15,
             )
+
+    params_2000 = dataclasses.replace(params, t_sol_0=2000.0)
+    state_1400 = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=np.full(n_nodes, 80.0),
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=np.full(n_nodes, 2000.0),
+        melt_fraction=np.zeros(n_nodes),
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    state_2000 = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=np.full(n_nodes, 80.0),
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=np.full(n_nodes, 2000.0),
+        melt_fraction=np.zeros(n_nodes),
+        params=params_2000,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    expected_ratio = np.exp(params.g_homologous * (2000.0 - 1400.0) / params.arrhenius_t_ref)
+    assert float(state_1400['eta_solid_arrhenius'] / state_2000['eta_solid_arrhenius']) == (
+        pytest.approx(expected_ratio, rel=1.0e-12)
+    )
 
 
 def test_softmax_velocity_scale_constant_and_phase_config_roundtrip(monkeypatch):
@@ -723,13 +758,13 @@ def test_arrhenius_enthalpy_exact_r_gas_codata_2018():
     expected_h = 25.0 * 8.314462618 * 1400.0
     assert float(h_linear) == pytest.approx(expected_h, rel=1.0e-12)
 
-    # Check table enthalpy values from r15728072 solidus
-    t_sol_table = np.array([1380.6038, 2475.9161, 2875.9474, 3673.7136, 4232.1499])
+    # Check table enthalpy values from the PALEOS MgSiO3 solidus (0.8 * T_liq)
+    t_sol_table = np.array([1464.8000, 3066.9899, 3672.6551, 4397.9263, 4754.8271])
     h_g25 = compute_arrhenius_enthalpy(
         pressure=np.array([0.0, 25.0e9, 50.0e9, 100.0e9, 135.0e9]),
         g_homologous=25.0,
         solidus_temperature=t_sol_table,
-        t_sol_0=1380.6038,
+        t_sol_0=1464.8000,
     )
     expected_h_g25 = 25.0 * 8.314462618 * t_sol_table
     np.testing.assert_allclose(h_g25, expected_h_g25, rtol=1.0e-12)

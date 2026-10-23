@@ -13,7 +13,6 @@ from aragog.rheology import (
     FloatOrArray,
     _is_non_real,
     _require_x64_if_jax,
-    _scalar_or_nan,
     _validate_inputs,
     compute_arrhenius_enthalpy,
     compute_arrhenius_viscosity,
@@ -94,7 +93,6 @@ def compute_stagnant_lid_state(
     thermal_diffusivity: FloatOrArray = 1.0e-6,
     a_rh_fb: float = 1.3,
     C4: float = 0.125,
-    t_sol_0: float | None = None,
     xp: Any = np,
 ) -> dict[str, Any]:
     r"""Compute stagnant lid boundary-layer indicators and convective driving stress.
@@ -131,7 +129,7 @@ def compute_stagnant_lid_state(
         referenced to ``params.t_sol_0``, so the table ``eta_diff(T, 0)``
         scales relative to the linear-solidus ``eta_diff(T, 0)`` at the same
         ``T`` by ``exp(g_hom * (T_sol(0) - params.t_sol_0) / T)`` (a ratio
-        of 0.739, or 0.74x, at 1600 K for 1380.6 K against 1400 K).
+        of 2.752, or 2.75x, at 1600 K for 1464.8 K against 1400 K).
     phi_rheo : float
         Critical melt fraction for rheological transition [-].
     phi_width : float
@@ -156,10 +154,6 @@ def compute_stagnant_lid_state(
         Rheological sublayer parameter fitted with C4 in FB2014 (p. 589).
     C4 : float, default 0.125
         Convective velocity prefactor in FB2014 (Eq. 26, p. 586-587; p. 589).
-    t_sol_0 : float, optional
-        Zero-pressure reference solidus temperature T_sol(0) [K]. Required when
-        ``solidus_temperature`` is provided, and must match ``params.t_sol_0``
-        when given; defaults to ``params.t_sol_0`` for the linear fallback.
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
 
@@ -181,15 +175,14 @@ def compute_stagnant_lid_state(
     ValueError
         If ``viscosity_solid``, ``phi_rheo``, or ``phi_width`` is None; if
         scalar parameters (``viscosity_solid``, ``phi_rheo``, ``phi_width``,
-        ``a_rh_fb``, ``C4``, ``t_sol_0``) are non-scalar; if ``t_sol_0`` is
-        missing when ``solidus_temperature`` is given or does not match
-        ``params.t_sol_0``; if ``radii`` is not a 1-D array of at least 3
-        nodes; if any profile input does not match ``radii`` in 1-D length; if
-        any input is non-real (such as a boolean, string, or complex value);
-        or, on the eager NumPy path (``xp is np``), if ``radii`` is not
-        strictly increasing or has ``inf`` values (``NaN`` propagates), if any
-        input is infinite, if ``viscosity_solid``, ``phi_width``, ``a_rh_fb``,
-        ``C4``, ``t_sol_0``, ``temperature``, ``solidus_temperature``,
+        ``a_rh_fb``, ``C4``, ``params.t_sol_0``) are non-scalar; if ``radii``
+        is not a 1-D array of at least 3 nodes; if any profile input does not
+        match ``radii`` in 1-D length; if any input is non-real (such as a
+        boolean, string, or complex value); or, on the eager NumPy path
+        (``xp is np``), if ``radii`` is not strictly increasing or has ``inf``
+        values (``NaN`` propagates), if any input is infinite, if
+        ``viscosity_solid``, ``phi_width``, ``a_rh_fb``, ``C4``,
+        ``params.t_sol_0``, ``temperature``, ``solidus_temperature``,
         ``viscosity_mixture``, ``density``, ``gravity``,
         ``thermal_expansivity``, or ``thermal_diffusivity`` is non-positive, if
         ``pressure`` is negative, or if ``phi_rheo`` or ``melt_fraction`` lies
@@ -257,15 +250,6 @@ def compute_stagnant_lid_state(
     _require_x64_if_jax(xp)
     if viscosity_solid is None or phi_rheo is None or phi_width is None:
         raise ValueError('viscosity_solid, phi_rheo, and phi_width must be provided')
-    if solidus_temperature is not None and t_sol_0 is None:
-        raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
-    if t_sol_0 is not None:
-        ts0 = _scalar_or_nan(t_sol_0, 't_sol_0')
-        if not np.isnan(ts0) and ts0 != params.t_sol_0:
-            raise ValueError(
-                f't_sol_0 ({t_sol_0}) must be finite and match params.t_sol_0 ({params.t_sol_0})'
-            )
-    t_sol_0_eff = params.t_sol_0 if t_sol_0 is None else t_sol_0
     if _is_non_real(radii):
         raise ValueError(f'radii must be a real number or array, got {radii!r}')
     r = xp.asarray(radii, dtype=float)
@@ -308,6 +292,7 @@ def compute_stagnant_lid_state(
             ('phi_rheo', phi_rheo, 'unit', True),
             ('a_rh_fb', a_rh_fb, 'pos', True),
             ('C4', C4, 'pos', True),
+            ('t_sol_0', params.t_sol_0, 'pos', True),
             ('radii', radii, 'finite', False),
             ('temperature', temperature, 'pos', False),
             ('pressure', pressure, 'nonneg', False),
@@ -333,9 +318,7 @@ def compute_stagnant_lid_state(
 
     F_tot_safe = xp.where(xp.abs(F_tot) > 1e-12, F_tot, 1e-12)
     f = xp.clip(xp.maximum(F_conv, 0.0) / xp.abs(F_tot_safe), 0.0, 1.0)
-    invalid_scalar = (xp.asarray(t_sol_0_eff, dtype=float) != params.t_sol_0) | xp.any(
-        (r[1:] - r[:-1]) <= 0.0
-    )
+    invalid_scalar = xp.any((r[1:] - r[:-1]) <= 0.0)
     zero_or_nan = xp.where(
         invalid_inputs | invalid_scalar | xp.any(~xp.isfinite(f)), xp.nan, 0.0
     )
@@ -387,7 +370,7 @@ def compute_stagnant_lid_state(
         P_T_i,
         g_homologous=params.g_homologous,
         solidus_temperature=T_sol_i,
-        t_sol_0=t_sol_0_eff,
+        t_sol_0=params.t_sol_0,
         dt_sol_dp=params.dt_sol_dp,
         r_gas=R_GAS,
         xp=xp,
@@ -404,7 +387,7 @@ def compute_stagnant_lid_state(
         compute_arrhenius_viscosity,
         viscosity_solid=viscosity_solid,
         g_homologous=params.g_homologous,
-        t_sol_0=t_sol_0_eff,
+        t_sol_0=params.t_sol_0,
         dt_sol_dp=params.dt_sol_dp,
         arrhenius_t_ref=params.arrhenius_t_ref,
         r_gas=R_GAS,
