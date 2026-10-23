@@ -1,22 +1,7 @@
 #!/usr/bin/env bash
-# Marker-validation gate for the aragog test suite.
-#
-# Walks every *.py file under tests/, finds every `def test_*` definition,
-# and verifies that the function (or its enclosing class, or the
-# module-level pytestmark) carries exactly one of:
-#
-#     @pytest.mark.unit
-#     @pytest.mark.smoke
-#     @pytest.mark.integration
-#     @pytest.mark.slow
-#     @pytest.mark.skip
-#
-# Any unmarked test is printed as <file>:<line> and the script exits 1.
-# Run from repository root:
-#
-#     bash tools/validate_test_structure.sh
-#
-# CI invokes this before pytest in .github/workflows/ci_tests.yml.
+# Marker check of the tests (CI runs it before pytest): every test_* function, by itself, its
+# class or the module pytestmark, needs at least one of unit, smoke, integration, slow, skip.
+# An unmarked test is printed as <file>:<line> and the script exits 1. Run from the repository root.
 
 set -e
 

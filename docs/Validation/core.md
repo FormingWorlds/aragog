@@ -549,7 +549,7 @@ Top: the expected temperature rise (line) and the rise of the cells (dots) again
 
 - Reference: the constant-flux half-space solution above (analytical).
 - Tolerance: 1 % of the expected rise of the top cell, 0.0098 K after 0.03 Myr and 0.020 K after 0.1 Myr; the largest differences are 0.0053 K over 9 cells and 0.0083 K over 13 cells.
-- The cooling term comes from the shell's own rates (`CoreShell.rates`), not from an independent formula. Without it the 0.03 Myr case still passes (0.0064 K); the 0.1 Myr case separates it (0.0216 K against 0.020 K).
+- The cooling term comes from the shell's own rates (`CoreShell.rates`), not from an independent formula. Without it the 0.03 Myr case still passes (0.0064 K); the 0.1 Myr case separates it (0.0216 K against 0.020 K) and asserts that it does.
 - Test id: `tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space`
 - Command: `pytest tests/test_core_layer.py -k erfc` (add `--validation-plots` to write the plot pairs)
 
