@@ -1,1 +1,0 @@
-../../.claude/rules/proteus-tests.md
