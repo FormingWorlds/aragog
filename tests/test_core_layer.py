@@ -71,12 +71,12 @@ def test_the_shell_heat_changes_by_the_flows_at_its_faces():
 @pytest.mark.parametrize('t_myr', [0.03, 0.1])
 def test_a_young_layer_follows_the_erfc_solution_of_a_half_space(t_myr, validation_plot):
     """A fixed flow deficit Q_k - q at the top of a conducting half space raises the
-    temperature by (2 dF / k) sqrt(kappa t) ierfc(z / 2 sqrt(kappa t)) (Carslaw and Jaeger,
-    the planar short-time counterpart of the fixed-gradient sphere of Greenwood et al. 2021,
-    eq. 27); the cells also cool at the rate the divergence of the adiabatic conduction sets.
-    Earlier the top cell limits the match, later the curvature of the sphere. Weak mixing
-    isolates the conduction: with the convecting core held, the sink would make the cells
-    below the front mix."""
+    temperature by (2 dF / k) sqrt(kappa t) ierfc(z / 2 sqrt(kappa t)), the constant-flux
+    solution of a planar half space and the short-time counterpart of the fixed-gradient sphere
+    of Greenwood et al. 2021, eq. 27; the cells also cool at the rate the divergence of the
+    adiabatic conduction sets. Earlier the top cell limits the match, later the curvature of
+    the sphere. Weak mixing isolates the conduction: with the convecting core held, the sink
+    would make the cells below the front mix."""
     shell = _shell(k_mix=1e-3)
     p, t = shell.profiles, t_myr * MYR
     q_k = float(_q_ad(p, K_CORE, p.r_cmb, T_C))
@@ -86,10 +86,14 @@ def test_a_young_layer_follows_the_erfc_solution_of_a_half_space(t_myr, validati
     x = (p.r_cmb - np.asarray(shell.r_cells)) / (2.0 * length)
     ierfc = np.exp(-(x**2)) / np.sqrt(np.pi) - x * erfc(x)
     deficit = (q_k - 8e12) / (4.0 * np.pi * p.r_cmb**2)
-    expected = 2.0 * deficit / K_CORE * length * ierfc + sink
+    amplitude = 2.0 * deficit / K_CORE * length
+    expected = amplitude * ierfc + sink
     near = x < 3.0
     tol = 1e-2 * expected[-1]
     assert np.max(np.abs(t_shell - y0 - expected)[near]) < tol
+    # discrimination: erfc in place of ierfc and a halved amplitude miss by more than 10 tol
+    for wrong in (amplitude * erfc(x) + sink, 0.5 * amplitude * ierfc + sink):
+        assert np.max(np.abs(t_shell - y0 - wrong)[near]) > 10.0 * tol
     if t_myr == 0.1:  # discrimination: the ierfc profile without the cooling term misses
         miss = np.max(np.abs(t_shell - y0 - (expected - sink))[near])
         assert miss > tol, 'the cooling term no longer separates the ierfc profile'
