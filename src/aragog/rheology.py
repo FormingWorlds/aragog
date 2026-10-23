@@ -18,6 +18,7 @@ R_GAS = 8.314462618
 COHESION_FLOOR = 1.0e-6
 DEFAULT_VISCOSITY_SOLID = 1.0e21
 PRESSURE_ROUNDOFF_TOLERANCE = 1.0
+_MIN_ARRHENIUS_EXPONENT_BOUND = math.log(np.finfo(float).tiny) + 1.0e-5
 
 FloatOrArray = float | npt.NDArray[np.floating]
 
@@ -554,8 +555,12 @@ def compute_arrhenius_viscosity(
     exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
+    # Prevent float64 underflow to zero when viscosity_solid is small.
+    min_exponent = xp.maximum(
+        -700.0, _MIN_ARRHENIUS_EXPONENT_BOUND - xp.log(xp.maximum(vs_pos, 1e-300))
+    )
     max_exponent = (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1e-300))) * math.log(10.0)
-    clipped_exp = xp.clip(exponent, -700.0, max_exponent)
+    clipped_exp = xp.clip(exponent, min_exponent, max_exponent)
     result = vs * xp.exp(clipped_exp)
     result = xp.minimum(result, 10.0**vmax_log10)
     result = xp.where(invalid | xp.isnan(h_p), xp.nan, result)
