@@ -1,6 +1,6 @@
 # Verification figures
 
-Reproducible scripts that generate the seven first-principles verification figures embedded in `docs/Explanations/verification.md`.
+Reproducible scripts that generate the seven first-principles verification figures embedded in `docs/Validation/numerics.md`.
 Each script is a self-contained verification of one numerical or physical aspect of Aragog and writes its output to `docs/figures/vv/<stem>.{pdf,png}` (tracked in git) plus a raw-data `.npz` to `output/aragog_vv_data/` (gitignored).
 
 ## Layout

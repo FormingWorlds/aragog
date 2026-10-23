@@ -2,7 +2,7 @@
 
 Writes ``docs/figures/vv/fig_08..fig_20_*.png`` (with a PDF beside each) and
 ``docs/figures/vv/core_verification_values.json``, the source of every number
-quoted on ``docs/Explanations/core_verification.md``. The solver-level items
+quoted on ``docs/Validation/core.md``. The solver-level items
 need the SPIDER-format EOS tables (``ARAGOG_TEST_EOS_DIR``); the Leeds
 ``thermal_history`` comparisons read the reference tables in
 ``tools/verification/data/``.

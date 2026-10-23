@@ -56,8 +56,11 @@ nav:
       - Diagnostics & verification:
           - EOS sanity checks: Explanations/eos_sanity_checks.md
           - Energy diagnostics: Explanations/energy_diagnostics.md
-          - First-principles verification: Explanations/verification.md
-          - Core module verification: Explanations/core_verification.md
+
+  - Validation:
+      - Overview: Validation/index.md
+      - Core: Validation/core.md
+      - Numerics: Validation/numerics.md
 
   - Reference:
       - API reference:
