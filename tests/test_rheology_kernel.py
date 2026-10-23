@@ -1387,3 +1387,46 @@ def test_stagnant_lid_state_unyielded_velocity_list_input():
     np.testing.assert_allclose(
         state_jnp['w_upper'], ref_np['w_upper'], rtol=1.0e-12, atol=1.0e-15
     )
+
+
+@pytest.mark.unit
+def test_arrhenius_exponent_lower_clip_cannot_underflow() -> None:
+    """Verify compute_arrhenius_viscosity does not underflow to zero when viscosity_solid is small."""
+    tiny = np.finfo(float).tiny
+    res_np = compute_arrhenius_viscosity(
+        1600.0,
+        0.0,
+        viscosity_solid=1e-20,
+        arrhenius_t_ref=50.0,
+        g_homologous=50.0,
+        xp=np,
+    )
+    assert res_np >= tiny > 0.0
+
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+    jit_visc = jax.jit(
+        lambda vs: compute_arrhenius_viscosity(
+            1600.0,
+            0.0,
+            viscosity_solid=vs,
+            arrhenius_t_ref=50.0,
+            g_homologous=50.0,
+            xp=jnp,
+        )
+    )
+    res_jax = float(jit_visc(jnp.asarray(1e-20, dtype=float)))
+    assert res_jax >= tiny > 0.0
+
+    temp_arr = np.array([1600.0, 1800.0])
+    res_arr = compute_arrhenius_viscosity(
+        temp_arr,
+        0.0,
+        viscosity_solid=1e-20,
+        arrhenius_t_ref=50.0,
+        g_homologous=50.0,
+        xp=np,
+    )
+    assert np.all(res_arr >= tiny)
+    assert np.all(res_arr > 0.0)
