@@ -11,7 +11,15 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from aragog.config.phases import PhaseConfig
-from aragog.rheology import SolidRheologyParams, merge_rheology
+from aragog.rheology import (
+    SolidRheologyParams,
+    compute_arrhenius_viscosity,
+    compute_mlt_top_slope,
+    compute_strain_rate_local,
+    compute_yield_stress,
+    merge_rheology,
+)
+from aragog.rheology_lid import compute_effective_viscosity
 
 pytestmark = pytest.mark.unit
 
@@ -515,3 +523,71 @@ def test_hypothesis_bounded_interval_field_validators(
             SolidRheologyParams(phi_visc_single=bad_p)
 
     _assert_wrong_types_raise_type_error(BOUNDED_INTERVAL_FIELDS, wrong_types)
+
+
+@given(
+    p=st.floats(min_value=-1000.0, max_value=-1.0001, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=25)
+def test_hypothesis_compute_yield_stress_negative_pressure(p: float) -> None:
+    """Hypothesis test: compute_yield_stress rejects negative pressure beyond roundoff tolerance."""
+    with pytest.raises(ValueError, match='pressure'):
+        compute_yield_stress(p, xp=np)
+
+
+@given(
+    tau_d=st.floats(min_value=-1e8, max_value=-1e-12, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=25)
+def test_hypothesis_compute_effective_viscosity_negative_tau_d(tau_d: float) -> None:
+    """Hypothesis test: compute_effective_viscosity in lid mode rejects negative tau_d."""
+    with pytest.raises(ValueError, match='tau_d'):
+        compute_effective_viscosity(
+            eta_diff=1e22,
+            eta_i=1e20,
+            tau_d=tau_d,
+            tau_y_lid=1e8,
+            stress_closure_mode='lid',
+            xp=np,
+        )
+
+
+@given(
+    vs=st.floats(min_value=1e-25, max_value=1e-4, allow_nan=False, allow_infinity=False),
+    temp=st.floats(min_value=1000.0, max_value=2500.0, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=25)
+def test_hypothesis_compute_arrhenius_viscosity_small_vs_no_underflow(
+    vs: float, temp: float
+) -> None:
+    """Hypothesis test: compute_arrhenius_viscosity never underflows to zero for small viscosity_solid."""
+    tiny = np.finfo(float).tiny
+    res = compute_arrhenius_viscosity(
+        temp,
+        0.0,
+        viscosity_solid=vs,
+        arrhenius_t_ref=50.0,
+        g_homologous=50.0,
+        xp=np,
+    )
+    assert res >= tiny > 0.0
+
+
+@given(
+    s_top_inf=st.floats(min_value=-10.0, max_value=0.0, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=25)
+def test_hypothesis_compute_mlt_top_slope_invalid_s_top_inf(s_top_inf: float) -> None:
+    """Hypothesis test: compute_mlt_top_slope rejects non-positive s_top_inf."""
+    with pytest.raises(ValueError, match='s_top_inf'):
+        compute_mlt_top_slope(10.0, s_top_inf=s_top_inf, xp=np)
+
+
+@given(
+    l_mix=st.floats(min_value=-1e6, max_value=-1e-12, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=25)
+def test_hypothesis_compute_strain_rate_local_negative_mixing_length(l_mix: float) -> None:
+    """Hypothesis test: compute_strain_rate_local rejects negative mixing length."""
+    with pytest.raises(ValueError, match='mixing_length'):
+        compute_strain_rate_local(1e-9, l_mix, xp=np)

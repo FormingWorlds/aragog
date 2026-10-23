@@ -1683,3 +1683,120 @@ def test_viscous_mixing_length_factor_validation_table(
         bad_val,
         static_error=static_error,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_wp5_fixture_grid_bitwise_parity():
+    """Verify bitwise output equivalence against origin/main reference outputs on valid input grid."""
+    from pathlib import Path
+
+    fixture_path = Path(__file__).resolve().parent / 'reference' / 'wp5_main_grid_outputs.npz'
+    data = np.load(fixture_path)
+
+    # 1. compute_arrhenius_enthalpy
+    p_grid = np.linspace(0.0, 135e9, 25)
+    assert np.array_equal(data['enthalpy_arr'], compute_arrhenius_enthalpy(p_grid, xp=np))
+    assert np.array_equal(
+        data['enthalpy_scalar'], np.array(compute_arrhenius_enthalpy(10.0e9, xp=np))
+    )
+
+    # 2. compute_arrhenius_viscosity
+    t_1d = np.linspace(1200.0, 2500.0, 10)
+    p_1d = np.linspace(0.0, 100e9, 10)
+    t_grid, p_grid_2d = np.meshgrid(t_1d, p_1d, indexing='ij')
+    assert np.array_equal(
+        data['viscosity_arr'], compute_arrhenius_viscosity(t_grid, p_grid_2d, xp=np)
+    )
+    assert np.array_equal(
+        data['viscosity_scalar'], np.array(compute_arrhenius_viscosity(1600.0, 10.0e9, xp=np))
+    )
+
+    # 3. compute_yield_stress
+    assert np.array_equal(data['yield_stress_arr'], compute_yield_stress(p_grid, xp=np))
+    assert np.array_equal(
+        data['yield_stress_scalar'], np.array(compute_yield_stress(50.0e9, xp=np))
+    )
+
+    # 4. compute_strain_rate_local
+    v_arr = np.linspace(-1e-8, 1e-8, 20)
+    ml_arr = np.linspace(1e3, 1e6, 20)
+    assert np.array_equal(
+        data['strain_rate_arr'], compute_strain_rate_local(v_arr, ml_arr, xp=np)
+    )
+    assert np.array_equal(
+        data['strain_rate_scalar'], np.array(compute_strain_rate_local(1e-9, 1e5, xp=np))
+    )
+
+    # 5. compute_mlt_top_slope
+    th_arr = np.linspace(-5.0, 50.0, 25)
+    assert np.array_equal(data['top_slope_arr'], compute_mlt_top_slope(th_arr, xp=np))
+    assert np.array_equal(
+        data['top_slope_scalar'], np.array(compute_mlt_top_slope(15.0, xp=np))
+    )
+
+    # 6. viscous_mixing_length_factor
+    radii = np.linspace(3.48e6, 6.371e6, 30)
+    r_in = float(radii[0])
+    r_out = float(radii[-1])
+    ml_col = np.minimum(radii - r_in, r_out - radii)
+    assert np.array_equal(
+        data['vml_none'], viscous_mixing_length_factor(radii, r_in, r_out, ml_col, xp=np)
+    )
+    assert np.array_equal(
+        data['vml_theta'],
+        viscous_mixing_length_factor(radii, r_in, r_out, ml_col, theta=15.0, xp=np),
+    )
+
+    # 7. compute_stagnant_lid_state
+    temp = np.linspace(3000.0, 1500.0, 30)
+    press = np.linspace(135e9, 0.0, 30)
+    conv_flux = np.full(30, 100.0)
+    conv_flux[-5:] = 0.0
+    tot_flux = np.full(30, 100.0)
+    params = SolidRheologyParams(enabled=True)
+    lid_st = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp,
+        pressure=press,
+        convective_flux=conv_flux,
+        total_flux=tot_flux,
+        solidus_temperature=None,
+        params=params,
+        melt_fraction=np.zeros(30),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(30, 1e-9),
+        xp=np,
+    )
+    for k, v in lid_st.items():
+        arr = v if isinstance(v, np.ndarray) else np.array(v)
+        assert np.array_equal(data[f'lid_{k}'], arr, equal_nan=True)
+
+    # 8. compute_effective_viscosity
+    tau_d_arr = np.linspace(1e4, 1e8, 20)
+    eta_diff = np.full(20, 1.0e22)
+    w_lid = np.linspace(0.0, 1.0, 20)
+    assert np.array_equal(
+        data['eff_lid'],
+        compute_effective_viscosity(
+            eta_diff=eta_diff,
+            eta_i=1.0e21,
+            tau_d=tau_d_arr,
+            tau_y_lid=50e6,
+            stress_closure_mode='lid',
+            w_lid=w_lid,
+            xp=np,
+        ),
+    )
+    assert np.array_equal(
+        data['eff_local'],
+        compute_effective_viscosity(
+            eta_diff=eta_diff,
+            tau_y=50e6,
+            strain_rate=np.logspace(-18, -12, 20),
+            stress_closure_mode='local',
+            xp=np,
+        ),
+    )
