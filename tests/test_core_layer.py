@@ -68,7 +68,7 @@ def test_the_shell_heat_changes_by_the_flows_at_its_faces():
 
 @pytest.mark.reference_pinned
 @pytest.mark.parametrize('t_myr', [0.03, 0.1])
-def test_a_young_layer_follows_the_erfc_solution_of_a_half_space(t_myr):
+def test_a_young_layer_follows_the_erfc_solution_of_a_half_space(t_myr, validation_plot):
     """A fixed flow deficit Q_k - q at the top of a conducting half space raises the
     temperature by (2 dF / k) sqrt(kappa t) ierfc(z / 2 sqrt(kappa t)) (Carslaw and Jaeger,
     the planar limit of Greenwood et al. 2021, eq. 27); the cells also cool at the rate the
@@ -86,7 +86,26 @@ def test_a_young_layer_follows_the_erfc_solution_of_a_half_space(t_myr):
     deficit = (q_k - 8e12) / (4.0 * np.pi * p.r_cmb**2)
     expected = 2.0 * deficit / K_CORE * length * ierfc + sink
     near = x < 3.0
-    assert np.max(np.abs(t_shell - y0 - expected)[near]) < 1e-2 * expected[-1]
+    tol = 1e-2 * expected[-1]
+    assert np.max(np.abs(t_shell - y0 - expected)[near]) < tol
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        depth = (p.r_cmb - np.asarray(shell.r_cells))[near] / 1e3
+        rise, ref = (t_shell - y0)[near], expected[near]
+        fig, (top, bottom) = plt.subplots(2, 1, sharex=True, figsize=(6.4, 5.6))
+        top.plot(depth, ref, label='ierfc solution')
+        top.plot(depth, rise, 'o', ms=3, label='Aragog')
+        top.set(ylabel='Temperature rise [K]')
+        top.legend()
+        bottom.plot(depth, np.abs(rise - ref), '.', ms=3)
+        bottom.axhline(tol, color=plt.rcParams['text.color'], ls='--')
+        bottom.set(xlabel='Depth below the CMB [km]', ylabel='|Difference| [K]')
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, f'core_layer_erfc_half_space_{t_myr:g}myr'.replace('.', 'p'))
 
 
 @pytest.mark.reference_pinned
