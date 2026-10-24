@@ -24,6 +24,10 @@ from aragog.rheology import (
     R_GAS,
     FloatOrArray,
     _clamp_pressure,
+    _compute_arrhenius_enthalpy_core,
+    _compute_arrhenius_viscosity_core,
+    _compute_strain_rate_local_core,
+    _compute_yield_stress_core,
     _is_non_real,
     _require_x64_if_jax,
     _softmax2,
@@ -409,6 +413,60 @@ def compute_stagnant_lid_state(
         xp,
         reduce_any=True,
     )
+    # Evaluates _boundary_weights(w_Ti, xp, fallback=W_conv_tilde) inside the core helper.
+    return _compute_stagnant_lid_state_core(
+        radii=radii,
+        temperature=temperature,
+        pressure=pressure,
+        convective_flux=convective_flux,
+        total_flux=total_flux,
+        solidus_temperature=solidus_temperature,
+        melt_fraction=melt_fraction,
+        params=params,
+        viscosity_solid=viscosity_solid,
+        phi_rheo=phi_rheo,
+        phi_width=phi_width,
+        unyielded_velocity=unyielded_velocity,
+        viscosity_mixture=viscosity_mixture,
+        density=density,
+        gravity=gravity,
+        thermal_expansivity=thermal_expansivity,
+        thermal_diffusivity=thermal_diffusivity,
+        a_rh_fb=a_rh_fb,
+        C4=C4,
+        xp=xp,
+        _invalid_inputs=invalid_inputs,
+        _use_public_kernels=True,
+    )
+
+
+def _compute_stagnant_lid_state_core(
+    radii: FloatOrArray,
+    temperature: FloatOrArray,
+    pressure: FloatOrArray,
+    convective_flux: FloatOrArray,
+    total_flux: FloatOrArray,
+    solidus_temperature: FloatOrArray | None,
+    melt_fraction: FloatOrArray,
+    params: Any,
+    viscosity_solid: float,
+    phi_rheo: float,
+    phi_width: float,
+    unyielded_velocity: FloatOrArray | None = None,
+    viscosity_mixture: FloatOrArray | None = None,
+    density: FloatOrArray = 3300.0,
+    gravity: FloatOrArray = 9.81,
+    thermal_expansivity: FloatOrArray = 3.0e-5,
+    thermal_diffusivity: FloatOrArray = 1.0e-6,
+    a_rh_fb: float = 1.3,
+    C4: float = 0.125,
+    xp: Any = np,
+    *,
+    _invalid_inputs: Any = False,
+    _use_public_kernels: bool = False,
+) -> dict[str, Any]:
+    """Unchecked core evaluation of the stagnant-lid boundary-layer state."""
+    r = xp.asarray(radii, dtype=float)
     T = xp.asarray(temperature, dtype=float)
     P = _clamp_pressure(pressure, xp)
     F_conv = xp.asarray(convective_flux, dtype=float)
@@ -437,7 +495,7 @@ def compute_stagnant_lid_state(
     f = xp.clip(xp.maximum(F_conv, 0.0) / F_tot_safe, 0.0, 1.0)
     invalid_scalar = xp.any((r[1:] - r[:-1]) <= 0.0)
     zero_or_nan = xp.where(
-        invalid_inputs | invalid_scalar | xp.any(~xp.isfinite(f)), xp.nan, 0.0
+        _invalid_inputs | invalid_scalar | xp.any(~xp.isfinite(f)), xp.nan, 0.0
     )
 
     w_conv = 0.5 * (1.0 + xp.tanh((f - params.interior_flux_fraction) / 0.01)) + zero_or_nan
@@ -483,7 +541,10 @@ def compute_stagnant_lid_state(
         else:
             T_sol_i = T_sol_surf = T_sol_arr
 
-    H_T_i = compute_arrhenius_enthalpy(
+    enthalpy_fn = (
+        compute_arrhenius_enthalpy if _use_public_kernels else _compute_arrhenius_enthalpy_core
+    )
+    H_T_i = enthalpy_fn(
         P_T_i,
         g_homologous=params.g_homologous,
         solidus_temperature=T_sol_i,
@@ -500,20 +561,45 @@ def compute_stagnant_lid_state(
     # Homologous Frank-Kamenetskii contrast: theta = H(P_i) * (T_i - T_surf) / (R * T_i**2).
     theta = (H_T_i * (T_i - T_surf)) / (R_GAS * T_i_safe**2)
 
-    arrhenius = partial(
-        compute_arrhenius_viscosity,
-        viscosity_solid=viscosity_solid,
-        g_homologous=params.g_homologous,
-        t_sol_0=params.t_sol_0,
-        dt_sol_dp=params.dt_sol_dp,
-        arrhenius_t_ref=params.arrhenius_t_ref,
-        r_gas=R_GAS,
-        viscosity_max_log10=params.viscosity_max_log10,
-        water_prefactor=params.water_prefactor,
-        xp=xp,
-    )
-    eta_surf = arrhenius(T_surf, P_surf, solidus_temperature=T_sol_surf)
-    eta_arr_i = arrhenius(T_i, P_T_i, solidus_temperature=T_sol_i)
+    if _use_public_kernels:
+        arrhenius = partial(
+            compute_arrhenius_viscosity,
+            viscosity_solid=viscosity_solid,
+            g_homologous=params.g_homologous,
+            t_sol_0=params.t_sol_0,
+            dt_sol_dp=params.dt_sol_dp,
+            arrhenius_t_ref=params.arrhenius_t_ref,
+            r_gas=R_GAS,
+            viscosity_max_log10=params.viscosity_max_log10,
+            water_prefactor=params.water_prefactor,
+            xp=xp,
+        )
+        eta_surf = arrhenius(T_surf, P_surf, solidus_temperature=T_sol_surf)
+        eta_arr_i = arrhenius(T_i, P_T_i, solidus_temperature=T_sol_i)
+    else:
+        t_pair = xp.stack([T_surf, T_i])
+        p_pair = xp.stack([P_surf, P_T_i])
+        tsol_pair = (
+            xp.stack([T_sol_surf, T_sol_i])
+            if (T_sol_surf is not None and T_sol_i is not None)
+            else None
+        )
+        eta_pair = _compute_arrhenius_viscosity_core(
+            t_pair,
+            p_pair,
+            viscosity_solid=viscosity_solid,
+            g_homologous=params.g_homologous,
+            solidus_temperature=tsol_pair,
+            t_sol_0=params.t_sol_0,
+            dt_sol_dp=params.dt_sol_dp,
+            arrhenius_t_ref=params.arrhenius_t_ref,
+            r_gas=R_GAS,
+            viscosity_max_log10=params.viscosity_max_log10,
+            water_prefactor=params.water_prefactor,
+            xp=xp,
+        )
+        eta_surf = eta_pair[0]
+        eta_arr_i = eta_pair[1]
     if viscosity_mixture is not None:
         log_eta_arr = xp.log10(xp.maximum(eta_arr_i, 1e-30))
         log_mu_mix = _weighted_mean(
@@ -659,7 +745,8 @@ def compute_stagnant_lid_state(
     tau_buoy = if_lid(tau_buoy_raw)
     tau_d_over_tau_buoy = if_lid(tau_d_raw / xp.maximum(tau_buoy_raw, 1e-30))
 
-    tau_y_lid = compute_yield_stress(
+    yield_fn = compute_yield_stress if _use_public_kernels else _compute_yield_stress_core
+    tau_y_lid = yield_fn(
         P_lid_base,
         yield_stress_c=params.yield_stress_c,
         yield_stress_mu=params.yield_stress_mu,
@@ -719,6 +806,82 @@ def compute_stagnant_lid_state(
         'mu_i': eta_i,
         'eta_solid_arrhenius': eta_arr_i,
     }
+
+
+def _compute_effective_viscosity_core(
+    eta_diff: FloatOrArray,
+    tau_d: FloatOrArray | None = None,
+    tau_y_lid: FloatOrArray | None = None,
+    stress_closure_mode: str = 'lid',
+    unyielded_velocity: FloatOrArray | None = None,
+    mixing_length: FloatOrArray | None = None,
+    tau_y_profile: FloatOrArray | None = None,
+    w_lid: FloatOrArray | None = None,
+    strain_rate: FloatOrArray | None = None,
+    tau_y: FloatOrArray | None = None,
+    eta_i: FloatOrArray | None = None,
+    xp: Any = np,
+) -> Any:
+    """Unchecked core evaluation of effective dynamic viscosity."""
+    if stress_closure_mode == 'local':
+        ty_raw = tau_y if tau_y is not None else tau_y_profile
+        sr = (
+            _compute_strain_rate_local_core(unyielded_velocity, mixing_length, xp=xp)
+            if strain_rate is None
+            else xp.asarray(strain_rate, dtype=float)
+        )
+        ty = xp.asarray(ty_raw, dtype=float)
+        eta_d = xp.asarray(eta_diff, dtype=float)
+        inf_ty = xp.isinf(ty) & (ty > 0.0)
+        ty_fin = xp.where(inf_ty, 1.0, xp.maximum(ty, COHESION_FLOOR))
+        sr_safe = xp.sqrt(sr**2 + LOCAL_STRAIN_RATE_FLOOR**2)
+        tau_y_term = ty_fin / (2.0 * sr_safe)
+        is_unyielded = inf_ty | (sr <= 0.0) | xp.isnan(tau_y_term)
+        log10_d = xp.log10(xp.maximum(eta_d, 1.0e-300))
+        log10_y = xp.log10(xp.maximum(tau_y_term, 1.0e-300))
+        d_loc = (log10_d - log10_y) / LOCAL_CAP_LOG10_WIDTH
+        log10_res = _softmin2(log10_d, log10_y, LOCAL_CAP_LOG10_WIDTH, xp)
+        res = xp.where(
+            d_loc > 40.0, tau_y_term, xp.where(d_loc < -40.0, eta_d, 10.0**log10_res)
+        )
+        return xp.where(xp.isnan(sr), xp.nan, xp.where(is_unyielded, eta_d, res))
+
+    eta_d = xp.asarray(eta_diff, dtype=float)
+    eta_i_arr = xp.asarray(eta_i, dtype=float)
+    td = xp.asarray(tau_d, dtype=float)
+
+    ty_raw_lid = xp.asarray(tau_y_lid, dtype=float)
+    inf_ty = xp.isinf(ty_raw_lid) & (ty_raw_lid > 0.0)
+    ty_lid = xp.where(inf_ty, 1.0, xp.maximum(ty_raw_lid, COHESION_FLOOR))
+    unyielded = (td <= 0.0) | inf_ty
+    ratio = xp.where(unyielded, 1.0, ty_lid / xp.maximum(td, 1.0e-30))
+    x_ratio = xp.where(unyielded, 0.0, td / xp.maximum(ty_lid, 1.0e-30))
+    w_b = 0.5 * (1.0 + xp.tanh((x_ratio - 1.0) / YIELD_BLEND_RATIO_WIDTH))
+    log10_d_lid = xp.log10(xp.maximum(eta_d, 1.0e-300))
+    log10_y_raw = xp.log10(xp.maximum(eta_i_arr * ratio, 1.0e-300))
+    log10_y_lid = _softmin2(log10_d_lid, log10_y_raw, LOCAL_CAP_LOG10_WIDTH, xp)
+    d_y_lid = (log10_d_lid - log10_y_raw) / LOCAL_CAP_LOG10_WIDTH
+    eta_y_branch = xp.where(
+        d_y_lid > 40.0,
+        eta_i_arr * ratio,
+        xp.where(d_y_lid < -40.0, eta_d, 10.0**log10_y_lid),
+    )
+    log10_eff_val = (1.0 - w_b) * log10_d_lid + w_b * log10_y_lid
+    eta_eff_val = xp.where(
+        w_b <= 1.0e-15,
+        eta_d,
+        xp.where(w_b >= 1.0 - 1.0e-15, eta_y_branch, 10.0**log10_eff_val),
+    )
+
+    if w_lid is not None:
+        wl = xp.asarray(w_lid, dtype=float)
+        log_diff = xp.log10(xp.maximum(eta_d, 1e-30))
+        log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
+        log_solid = wl * log_eff + (1.0 - wl) * log_diff
+        res = 10.0**log_solid
+        eta_eff_val = xp.where((wl == 0.0) | (eta_eff_val == eta_d), eta_d, res)
+
+    return eta_eff_val
 
 
 def compute_effective_viscosity(
@@ -821,28 +984,17 @@ def compute_effective_viscosity(
             ),
             xp,
         )
-        sr = (
-            compute_strain_rate_local(unyielded_velocity, mixing_length, xp=xp)
-            if strain_rate is None
-            else xp.asarray(strain_rate, dtype=float)
+        res = _compute_effective_viscosity_core(
+            eta_diff=eta_diff,
+            stress_closure_mode='local',
+            unyielded_velocity=unyielded_velocity,
+            mixing_length=mixing_length,
+            tau_y_profile=tau_y_profile,
+            strain_rate=strain_rate,
+            tau_y=tau_y,
+            xp=xp,
         )
-        ty = xp.asarray(ty_raw, dtype=float)
-        eta_d = xp.asarray(eta_diff, dtype=float)
-        inf_ty = xp.isinf(ty) & (ty > 0.0)
-        ty_fin = xp.where(inf_ty, 1.0, xp.maximum(ty, COHESION_FLOOR))
-        sr_safe = xp.sqrt(sr**2 + LOCAL_STRAIN_RATE_FLOOR**2)
-        tau_y_term = ty_fin / (2.0 * sr_safe)
-        is_unyielded = inf_ty | (sr <= 0.0) | xp.isnan(tau_y_term)
-        log10_d = xp.log10(xp.maximum(eta_d, 1.0e-300))
-        log10_y = xp.log10(xp.maximum(tau_y_term, 1.0e-300))
-        d_loc = (log10_d - log10_y) / LOCAL_CAP_LOG10_WIDTH
-        log10_res = _softmin2(log10_d, log10_y, LOCAL_CAP_LOG10_WIDTH, xp)
-        res = xp.where(
-            d_loc > 40.0, tau_y_term, xp.where(d_loc < -40.0, eta_d, 10.0**log10_res)
-        )
-        return xp.where(
-            invalid_local | xp.isnan(sr), xp.nan, xp.where(is_unyielded, eta_d, res)
-        )
+        return xp.where(invalid_local, xp.nan, res)
 
     if any(
         x is not None
@@ -867,42 +1019,15 @@ def compute_effective_viscosity(
         ),
         xp,
     )
-    eta_d = xp.asarray(eta_diff, dtype=float)
-    eta_i_arr = xp.asarray(eta_i, dtype=float)
-    td = xp.asarray(tau_d, dtype=float)
-
-    # Smooth log10 tanh blend at convective strain rate D_conv = tau_d / eta_i:
-    ty_raw_lid = xp.asarray(tau_y_lid, dtype=float)
-    inf_ty = xp.isinf(ty_raw_lid) & (ty_raw_lid > 0.0)
-    ty_lid = xp.where(inf_ty, 1.0, xp.maximum(ty_raw_lid, COHESION_FLOOR))
-    unyielded = (td <= 0.0) | inf_ty
-    ratio = xp.where(unyielded, 1.0, ty_lid / xp.maximum(td, 1.0e-30))
-    x_ratio = xp.where(unyielded, 0.0, td / xp.maximum(ty_lid, 1.0e-30))
-    w_b = 0.5 * (1.0 + xp.tanh((x_ratio - 1.0) / YIELD_BLEND_RATIO_WIDTH))
-    log10_d_lid = xp.log10(xp.maximum(eta_d, 1.0e-300))
-    log10_y_raw = xp.log10(xp.maximum(eta_i_arr * ratio, 1.0e-300))
-    log10_y_lid = _softmin2(log10_d_lid, log10_y_raw, LOCAL_CAP_LOG10_WIDTH, xp)
-    d_y_lid = (log10_d_lid - log10_y_raw) / LOCAL_CAP_LOG10_WIDTH
-    eta_y_branch = xp.where(
-        d_y_lid > 40.0,
-        eta_i_arr * ratio,
-        xp.where(d_y_lid < -40.0, eta_d, 10.0**log10_y_lid),
+    eta_eff_val = _compute_effective_viscosity_core(
+        eta_diff=eta_diff,
+        tau_d=tau_d,
+        tau_y_lid=tau_y_lid,
+        stress_closure_mode='lid',
+        w_lid=w_lid,
+        eta_i=eta_i,
+        xp=xp,
     )
-    log10_eff_val = (1.0 - w_b) * log10_d_lid + w_b * log10_y_lid
-    eta_eff_val = xp.where(
-        w_b <= 1.0e-15,
-        eta_d,
-        xp.where(w_b >= 1.0 - 1.0e-15, eta_y_branch, 10.0**log10_eff_val),
-    )
-
-    if w_lid is not None:
-        wl = xp.asarray(w_lid, dtype=float)
-        log_diff = xp.log10(xp.maximum(eta_d, 1e-30))
-        log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
-        log_solid = wl * log_eff + (1.0 - wl) * log_diff
-        res = 10.0**log_solid
-        eta_eff_val = xp.where((wl == 0.0) | (eta_eff_val == eta_d), eta_d, res)
-
     return xp.where(invalid_lid, xp.nan, eta_eff_val)
 
 

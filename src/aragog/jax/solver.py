@@ -407,9 +407,13 @@ def _dSdt_parts(
     heat_flux = flux_out.heat_flux
 
     # Phase properties needed for BCs
-    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
+    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S, include_rheology=False)
     phase_basic_T = evaluate_phase(
-        eos, params, mesh.P_basic, entropy_at_basic_nodes(mesh, S)
+        eos,
+        params,
+        mesh.P_basic,
+        entropy_at_basic_nodes(mesh, S),
+        include_rheology=False,
     ).temperature
 
     # Apply boundary conditions
@@ -545,12 +549,12 @@ def _dSdt_energy_balance_parts(
     heat_flux = flux_out.heat_flux
 
     # Phase properties at staggered nodes
-    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
+    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S, include_rheology=False)
 
     # Phase properties at basic nodes (with corrected CMB entropy)
     S_basic_default = entropy_at_basic_nodes(mesh, S)
     S_basic = S_basic_default.at[0].set(S_basic_cmb)
-    phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
+    phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic, include_rheology=False)
 
     # Surface BC
     heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
@@ -801,10 +805,10 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
     )
     heat_flux = flux_out.heat_flux
 
-    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S)
+    phase_stag = evaluate_phase(eos, params, mesh.P_stag, S, include_rheology=False)
     S_basic_default = entropy_at_basic_nodes(mesh, S)
     S_basic = S_basic_default.at[0].set(S_basic_cmb)
-    phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
+    phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic, include_rheology=False)
 
     heat_flux = _apply_surface_bc(heat_flux, bc, phase_basic.temperature)
     # The CMB flux is set by T_core against the bottom cell's entropy at the CMB pressure, with
@@ -812,7 +816,9 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
     t_hot = jnp.maximum(t_shell[-1] if shell else t_core, 1.0)
     t_m = eos.temperature(mesh.P_basic[0], S[0])
     s_bl = eos.entropy_at_temperature(mesh.P_basic[0], 0.5 * (t_hot + t_m))
-    bl = evaluate_phase(eos, params, mesh.P_basic[:1], jnp.reshape(s_bl, (1,)))
+    bl = evaluate_phase(
+        eos, params, mesh.P_basic[:1], jnp.reshape(s_bl, (1,)), include_rheology=False
+    )
     heat_flux = heat_flux.at[0].set(
         cmb_boundary_layer_flux(
             t_hot,

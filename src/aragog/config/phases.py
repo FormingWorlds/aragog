@@ -7,7 +7,45 @@ from typing import Any
 
 import attrs
 
-from aragog.rheology import SolidRheologyParams, delegate_rheology, merge_rheology
+from aragog.rheology import (
+    PRESSURE_ROUNDOFF_TOLERANCE as PRESSURE_ROUNDOFF_TOLERANCE,
+)
+from aragog.rheology import (
+    R_GAS as R_GAS,
+)
+from aragog.rheology import (
+    SolidRheologyParams as SolidRheologyParams,
+)
+from aragog.rheology import (
+    _compute_arrhenius_enthalpy_core as _compute_arrhenius_enthalpy_core,
+)
+from aragog.rheology import (
+    _compute_arrhenius_viscosity_core as _compute_arrhenius_viscosity_core,
+)
+from aragog.rheology import (
+    _compute_mlt_top_slope_core as _compute_mlt_top_slope_core,
+)
+from aragog.rheology import (
+    _compute_strain_rate_local_core as _compute_strain_rate_local_core,
+)
+from aragog.rheology import (
+    _compute_yield_stress_core as _compute_yield_stress_core,
+)
+from aragog.rheology import (
+    _viscous_mixing_length_factor_core as _viscous_mixing_length_factor_core,
+)
+from aragog.rheology import (
+    delegate_rheology as delegate_rheology,
+)
+from aragog.rheology import (
+    merge_rheology as merge_rheology,
+)
+from aragog.rheology_lid import (
+    _compute_effective_viscosity_core as _compute_effective_viscosity_core,
+)
+from aragog.rheology_lid import (
+    _compute_stagnant_lid_state_core as _compute_stagnant_lid_state_core,
+)
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 

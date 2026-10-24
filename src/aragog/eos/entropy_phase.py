@@ -21,6 +21,10 @@ from aragog.config.phases import (
     SEPARATION_BUOYANCY_MODES,
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
+    SolidRheologyParams,
+    _compute_arrhenius_viscosity_core,
+    _compute_yield_stress_core,
+    merge_rheology,
 )
 from aragog.eos.entropy import EntropyEOS
 from aragog.utilities import FloatOrArray, tanh_weight
@@ -139,6 +143,8 @@ class EntropyPhaseEvaluator:
         const_T_ref: float = 3500.0,
         const_S_ref: float = 3000.0,
         separation_buoyancy: str = SEPARATION_BUOYANCY_DEFAULT,
+        rheology: SolidRheologyParams | dict | None = None,
+        defer_rheology_viscosity: bool = False,
     ):
         self._eos = entropy_eos
         self._g = gravitational_acceleration
@@ -150,6 +156,9 @@ class EntropyPhaseEvaluator:
         self._k_solid = thermal_conductivity_solid
         self._k_liquid = thermal_conductivity_liquid
         self._matprop_smooth_width = matprop_smooth_width
+        self._rheology: SolidRheologyParams = merge_rheology(rheology, {})
+        self._defer_rheology_viscosity: bool = bool(defer_rheology_viscosity)
+        self._rheology_viscosity_dirty: bool = False
         # Constant-properties mode (matches SPIDER -use_const_properties)
         self._const_properties = const_properties
         self._const_rho = const_rho
@@ -190,6 +199,10 @@ class EntropyPhaseEvaluator:
         self._melt_fraction: npt.NDArray = np.array([])
         self._viscosity_val: npt.NDArray = np.array([])
         self._thermal_conductivity_val: npt.NDArray = np.array([])
+        self._solidus_temperature: npt.NDArray = np.array([])
+        self._eta_diff: npt.NDArray = np.array([])
+        self._tau_y: npt.NDArray = np.array([])
+        self._smth_val: npt.NDArray = np.array([])
 
     # ── State setters (match PhaseEvaluatorProtocol interface) ────────
 
@@ -241,6 +254,18 @@ class EntropyPhaseEvaluator:
         self._viscosity_val = np.full_like(S, 10.0**self._const_log10visc)
         self._thermal_conductivity_val = np.full_like(S, self._const_cond)
         self._latent_heat_val = np.zeros_like(S)
+        P_arr = (
+            np.atleast_1d(np.asarray(self.pressure, dtype=float))
+            if self.pressure.size > 0
+            else np.zeros_like(S)
+        )
+        self._solidus_temperature = (
+            self._rheology.t_sol_0 + self._rheology.dt_sol_dp * np.maximum(P_arr, 0.0)
+        )
+        self._smth_val = np.zeros_like(S)
+        self._eta_diff = np.full_like(S, self._visc_solid)
+        self._tau_y = np.full_like(S, np.inf)
+        self._rheology_viscosity_dirty = False
 
         # Flatten if scalar input (capture ndim before atleast_1d)
         if np.ndim(self.entropy) == 0 or np.ndim(self.pressure) == 0:
@@ -253,6 +278,10 @@ class EntropyPhaseEvaluator:
                 '_thermal_conductivity_val',
                 '_melt_fraction',
                 '_latent_heat_val',
+                '_solidus_temperature',
+                '_smth_val',
+                '_eta_diff',
+                '_tau_y',
             ):
                 setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
 
@@ -410,6 +439,8 @@ class EntropyPhaseEvaluator:
         self._thermal_expansivity = _blend(alpha_mixed, alpha_single)
         self._dTdPs_val = _blend(dTdPs_mixed, dTdPs_single)
         self._thermal_conductivity_val = _blend(cond_mixed, cond_single)
+        self._solidus_temperature = np.asarray(T_sol, dtype=float)
+        self._smth_val = np.asarray(smth, dtype=float)
 
         # Flatten if scalar input
         if np.ndim(P) == 0:
@@ -421,6 +452,8 @@ class EntropyPhaseEvaluator:
                 '_dTdPs_val',
                 '_thermal_conductivity_val',
                 '_melt_fraction',
+                '_solidus_temperature',
+                '_smth_val',
             ):
                 setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
 
@@ -430,23 +463,31 @@ class EntropyPhaseEvaluator:
         self._thermal_expansivity = 0.5 * (a + np.sqrt(a * a + eps_a * eps_a))
 
         # ── Step 6: viscosity (two-stage, reuses cached gphi/smth) ──
-        # Stage 1: tanh blend at phi_rheo (SPIDER lines 255-259)
-        w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
-        log_visc_mixed = (1.0 - w) * np.log10(self._visc_solid) + w * np.log10(
-            self._visc_liquid
-        )
+        if not self._rheology.enabled:
+            # Stage 1: tanh blend at phi_rheo (SPIDER lines 255-259)
+            w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
+            log_visc_mixed = (1.0 - w) * np.log10(self._visc_solid) + w * np.log10(
+                self._visc_liquid
+            )
 
-        # Single-phase viscosity (constant per phase)
-        log_visc_single = np.where(
-            phi_arr > 0.5,
-            np.log10(self._visc_liquid),
-            np.log10(self._visc_solid),
-        )
+            # Single-phase viscosity (constant per phase)
+            log_visc_single = np.where(
+                phi_arr > 0.5,
+                np.log10(self._visc_liquid),
+                np.log10(self._visc_solid),
+            )
 
-        # Stage 2: combine_matprop with cached smth
-        log_visc = smth * log_visc_mixed + (1.0 - smth) * log_visc_single
-        is_scalar = np.ndim(self._melt_fraction) == 0
-        self._viscosity_val = 10.0 ** (log_visc.item() if is_scalar else log_visc)
+            # Stage 2: combine_matprop with cached smth
+            log_visc = smth * log_visc_mixed + (1.0 - smth) * log_visc_single
+            is_scalar = np.ndim(self._melt_fraction) == 0
+            self._viscosity_val = 10.0 ** (log_visc.item() if is_scalar else log_visc)
+            self._eta_diff = np.full_like(phi_arr, self._visc_solid, dtype=float)
+            self._tau_y = np.full_like(phi_arr, np.inf, dtype=float)
+            self._rheology_viscosity_dirty = False
+        elif self._defer_rheology_viscosity:
+            self._rheology_viscosity_dirty = True
+        else:
+            self._compute_rheology_viscosity()
 
         # ── Step 7: latent heat ─────────────────────────────────────
         self._latent_heat_val = eos.latent_heat(P)
@@ -469,6 +510,57 @@ class EntropyPhaseEvaluator:
                 f'table [{self._eos.S_min:.0f}, {self._eos.S_max:.0f}]'
             )
 
+    def blend_viscosity_with_solid(self, eta_solid: FloatOrArray) -> FloatOrArray:
+        """Two-stage log10 blend of ``eta_solid`` with ``self._visc_liquid``."""
+        phi_arr = np.atleast_1d(np.asarray(self._melt_fraction, dtype=float))
+        smth = np.atleast_1d(np.asarray(self._smth_val, dtype=float))
+        w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
+        log_visc_solid = np.log10(
+            np.maximum(np.atleast_1d(np.asarray(eta_solid, dtype=float)), 1.0e-30)
+        )
+        log_visc_liq = np.log10(self._visc_liquid)
+        log_visc_mixed = (1.0 - w) * log_visc_solid + w * log_visc_liq
+        phi_thresh = self._rheology.phi_visc_single if self._rheology.enabled else 0.5
+        log_visc_single = np.where(phi_arr > phi_thresh, log_visc_liq, log_visc_solid)
+        log_visc = smth * log_visc_mixed + (1.0 - smth) * log_visc_single
+        is_scalar = (
+            np.ndim(self._melt_fraction) == 0 and np.ndim(eta_solid) == 0 and log_visc.size == 1
+        )
+        return 10.0 ** (log_visc.item() if is_scalar else log_visc)
+
+    def _compute_rheology_viscosity(self) -> None:
+        """Evaluate Arrhenius diffusion creep viscosity, Byerlee yield stress, and unyielded blend."""
+        P_arr = np.atleast_1d(np.asarray(self.pressure, dtype=float))
+        T_arr = np.atleast_1d(np.asarray(self._temperature, dtype=float))
+        T_sol_arr = np.atleast_1d(np.asarray(self._solidus_temperature, dtype=float))
+        rheo = self._rheology
+        self._eta_diff = _compute_arrhenius_viscosity_core(
+            temperature=T_arr,
+            pressure=P_arr,
+            viscosity_solid=self._visc_solid,
+            g_homologous=rheo.g_homologous,
+            solidus_temperature=T_sol_arr,
+            t_sol_0=rheo.t_sol_0,
+            dt_sol_dp=rheo.dt_sol_dp,
+            arrhenius_t_ref=rheo.arrhenius_t_ref,
+            viscosity_max_log10=rheo.viscosity_max_log10,
+            water_prefactor=rheo.water_prefactor,
+            xp=np,
+        )
+        self._tau_y = _compute_yield_stress_core(
+            pressure=P_arr,
+            yield_stress_c=rheo.yield_stress_c,
+            yield_stress_mu=rheo.yield_stress_mu,
+            yield_stress_max=rheo.yield_stress_max,
+            xp=np,
+        )
+        self._viscosity_val = self.blend_viscosity_with_solid(self._eta_diff)
+        self._rheology_viscosity_dirty = False
+
+    def _ensure_rheology_viscosity(self) -> None:
+        if self._rheology_viscosity_dirty:
+            self._compute_rheology_viscosity()
+
     # ── Property accessors (PhaseEvaluatorProtocol) ──────────────────
 
     def density(self) -> FloatOrArray:
@@ -477,6 +569,20 @@ class EntropyPhaseEvaluator:
     def temperature(self) -> FloatOrArray:
         """Temperature from EOS lookup (not a state variable)."""
         return self._temperature
+
+    def solidus_temperature(self) -> npt.NDArray:
+        """Cached solidus temperature T_sol(P) [K] from the current EOS update."""
+        return self._solidus_temperature
+
+    def eta_diff(self) -> npt.NDArray:
+        """Cached unyielded solid diffusion-creep viscosity eta_diff [Pa s]."""
+        self._ensure_rheology_viscosity()
+        return self._eta_diff
+
+    def tau_y(self) -> npt.NDArray:
+        """Cached Byerlee yield stress tau_y(P) [Pa]."""
+        self._ensure_rheology_viscosity()
+        return self._tau_y
 
     def dTdPs(self) -> npt.NDArray:
         """Adiabatic temperature gradient dT/dP|_S [K/Pa]."""
@@ -496,6 +602,7 @@ class EntropyPhaseEvaluator:
         return self._heat_capacity
 
     def kinematic_viscosity(self) -> FloatOrArray:
+        self._ensure_rheology_viscosity()
         return self._viscosity_val / self._density
 
     def melt_fraction(self) -> FloatOrArray:
@@ -515,6 +622,7 @@ class EntropyPhaseEvaluator:
         return self._thermal_expansivity
 
     def viscosity(self) -> FloatOrArray:
+        self._ensure_rheology_viscosity()
         return self._viscosity_val
 
     def relative_velocity(self) -> FloatOrArray:
@@ -560,7 +668,7 @@ class EntropyPhaseEvaluator:
         # Explicit dispatch: a third mode added to SEPARATION_VISCOSITY_MODES
         # must fail here rather than silently fall back to 'melt'.
         if self._separation_viscosity == 'mixture':
-            eta_l = self._viscosity_val
+            eta_l = self.viscosity()
         elif self._separation_viscosity == 'melt':
             eta_l = self._visc_liquid
         else:

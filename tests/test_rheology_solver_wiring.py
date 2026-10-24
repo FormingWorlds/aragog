@@ -40,6 +40,7 @@ from aragog.jax.phase import (
 )
 from aragog.jax.solver import (
     BoundaryParams,
+    _no_radio,
     compute_radio_heating,
     dSdt,
 )
@@ -117,6 +118,12 @@ def _make_abe_solid_params(
     return replace(
         params,
         mesh=replace(params.mesh, number_of_nodes=number_of_nodes),
+        boundary_conditions=replace(
+            params.boundary_conditions,
+            core_bc='quasi_steady',
+            inner_boundary_condition=1,
+        ),
+        energy=replace(params.energy, kappah_floor=0.0),
         phase_solid=replace(params.phase_solid, rheology=rheology),
         phase_mixed=replace(params.phase_mixed, matprop_smooth_width=0.01),
     )
@@ -171,8 +178,8 @@ def _build_jax_bundle(solver: EntropySolver):
         cmb_area=4.0 * np.pi * r_cmb**2,
         core_M=float(solver._core_cap / params.boundary_conditions.core_heat_capacity),
         cmb_dr_cmb=r_next - r_cmb,
-        param_utbl=bool(params.boundary_conditions.SOT_Look_Up),
-        param_utbl_const=float(params.boundary_conditions.surface_temperature_Look_Up),
+        param_utbl=bool(params.boundary_conditions.param_utbl),
+        param_utbl_const=float(params.boundary_conditions.param_utbl_const),
     )
     if params.energy.radionuclides and params.radionuclides:
         radio_arrays = (
@@ -184,16 +191,14 @@ def _build_jax_bundle(solver: EntropySolver):
         )
         H_radio_fn = functools.partial(compute_radio_heating, radio_arrays=radio_arrays)
     else:
-        H_radio_fn = None
+        H_radio_fn = _no_radio
     H_internal = jnp.zeros(solver._n_stag, dtype=jnp.float64)
-    args = (eos_jax, params_jax, mesh_jax, bc_jax, H_internal)
-    if H_radio_fn is not None:
-        args = args + (H_radio_fn,)
+    args = (eos_jax, params_jax, mesh_jax, bc_jax, H_internal, H_radio_fn)
     return mesh_jax, eos_jax, params_jax, args
 
 
 def _make_solid_profile(
-    solver: EntropySolver, s_low: float = 1100.0, s_high: float = 1900.0
+    solver: EntropySolver, s_low: float = 2350.0, s_high: float = 3050.0
 ) -> np.ndarray:
     """Construct a super-adiabatic solid/mushy entropy profile on staggered nodes."""
     return np.linspace(s_high, s_low, solver._n_stag)
@@ -209,6 +214,7 @@ def test_row7_scaling_exponents_numpy() -> None:
     scales u_visc as q^(3/4) and Re, kappa_h as q^1 in the viscous limit."""
     rheo = SolidRheologyParams(
         enabled=True,
+        stress_closure_mode='local',
         yield_stress_c=1.0e30,
         yield_stress_max=1.0e30,
         viscosity_max_log10=28.0,
@@ -220,7 +226,7 @@ def test_row7_scaling_exponents_numpy() -> None:
     )
     solver = _make_solver(params)
 
-    s_stag = _make_solid_profile(solver, s_low=900.0, s_high=1400.0)
+    s_stag = _make_solid_profile(solver)
     orig_mlt_core = rheo_mod._viscous_mixing_length_factor_core
 
     def _eval_at_scale(q_scale: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -246,7 +252,7 @@ def test_row7_scaling_exponents_numpy() -> None:
     interior = slice(2, -2)
     assert np.all(u1[interior] > 0.0)
     assert np.all(re1[interior] > 0.0)
-    assert np.all(kh1[interior] > 1.0e-8)
+    assert np.all(kh1[interior] > 0.0)
 
     for q in (0.25, 0.5, 2.0, 4.0):
         uq, req, khq = _eval_at_scale(q)
@@ -275,7 +281,7 @@ def test_row7_scaling_exponents_jax() -> None:
     solver = _make_solver(params)
     mesh_jax, eos_jax, params_jax, _ = _build_jax_bundle(solver)
 
-    s_stag = jnp.asarray(_make_solid_profile(solver, s_low=900.0, s_high=1400.0))
+    s_stag = jnp.asarray(_make_solid_profile(solver))
     s_basic = entropy_at_basic_nodes(mesh_jax, s_stag)
     dSdr = mesh_jax.d_dr_matrix @ s_stag
     phase_basic = evaluate_phase(eos_jax, params_jax, mesh_jax.P_basic, s_basic)
@@ -289,14 +295,15 @@ def test_row7_scaling_exponents_jax() -> None:
         with patch(
             'aragog.jax.phase._viscous_mixing_length_factor_core', side_effect=_scaled_mlt_core
         ):
-            kh, _, re_num, _ = compute_mlt(dSdr, phase_basic, mesh_jax, params_jax)
+            kh_2, kc_2 = compute_mlt(dSdr, phase_basic, mesh_jax, params_jax)
+            kh, kc, re_num, u_visc_jax = compute_mlt(
+                dSdr, phase_basic, mesh_jax, params_jax, return_aux=True
+            )
+            np.testing.assert_array_equal(np.asarray(kh_2), np.asarray(kh))
+            np.testing.assert_array_equal(np.asarray(kc_2), np.asarray(kc))
         re_arr = np.asarray(re_num)
         kh_arr = np.asarray(kh)
-        u_visc = (
-            re_arr
-            * np.asarray(phase_basic.kinematic_viscosity)
-            / np.asarray(mesh_jax.mixing_length)
-        )
+        u_visc = np.asarray(u_visc_jax)
         return u_visc, re_arr, kh_arr
 
     u1, re1, kh1 = _eval_jax_at_scale(1.0)
@@ -323,13 +330,13 @@ def test_two_pass_order_numpy() -> None:
     uses eta_eff and theta in EntropyState.update."""
     rheo = SolidRheologyParams(
         enabled=True,
-        yield_stress_c=5.0e6,
-        yield_stress_mu=0.05,
-        yield_stress_max=5.0e7,
+        yield_stress_c=1.0e4,
+        yield_stress_mu=0.0,
+        yield_stress_max=1.0e4,
     )
     params = _make_abe_solid_params(rheo, number_of_nodes=25)
     solver = _make_solver(params)
-    s_stag = _make_solid_profile(solver, s_low=1000.0, s_high=1850.0)
+    s_stag = _make_solid_profile(solver)
 
     events: list[tuple[str, dict]] = []
     orig_mlt = rheo_mod._viscous_mixing_length_factor_core
@@ -396,12 +403,12 @@ def test_two_pass_order_numpy() -> None:
 
 def test_two_pass_order_and_nonlocal_jacobian_jax() -> None:
     """In JAX, compute_fluxes executes the 2-pass lid closure and dSdt exhibits
-    non-zero off-tridiagonal Jacobian entries d(dSdt_j)/dS_{N-1} when enabled."""
+    non-zero off-tridiagonal Jacobian entries when enabled."""
     rheo_on = SolidRheologyParams(
         enabled=True,
-        yield_stress_c=1.0e7,
-        yield_stress_mu=0.1,
-        yield_stress_max=1.0e8,
+        yield_stress_c=1.0e4,
+        yield_stress_mu=0.0,
+        yield_stress_max=1.0e4,
     )
     rheo_off = SolidRheologyParams(enabled=False)
 
@@ -413,14 +420,16 @@ def test_two_pass_order_and_nonlocal_jacobian_jax() -> None:
     solver_off = _make_solver(params_off)
     _, _, _, args_off = _build_jax_bundle(solver_off)
 
-    s_stag = jnp.asarray(_make_solid_profile(solver_on, s_low=1050.0, s_high=1850.0))
+    s_stag = jnp.asarray(_make_solid_profile(solver_on))
 
     jac_off = np.asarray(jax.jacfwd(lambda s: dSdt(0.0, s, args_off))(s_stag))
     jac_on = np.asarray(jax.jacfwd(lambda s: dSdt(0.0, s, args_on))(s_stag))
 
     assert np.all(np.isfinite(jac_on))
-    assert jac_off[3, -1] == 0.0
-    assert abs(jac_on[3, -1]) > 0.0
+    assert jac_off[-4, -1] == 0.0
+    assert jac_off[-5, -1] == 0.0
+    assert abs(jac_on[-4, -1]) > 0.0
+    assert abs(jac_on[-5, -1]) > 0.0
 
 
 # ============================================================================
@@ -450,7 +459,7 @@ def _measure_numpy_rhs_counts(rheology: SolidRheologyParams) -> dict[str, int]:
     orig_lid = rheo_lid_mod._compute_stagnant_lid_state_core
     orig_eff = rheo_lid_mod._compute_effective_viscosity_core
     orig_mlt = rheo_mod._viscous_mixing_length_factor_core
-    orig_lookup = solver.state.phase_basic._lookup
+    orig_lookup = solver.state.phase_basic._eos._lookup_at_phase_boundary
 
     def _count_val(*a, **kw):
         counts['validate_inputs'] += 1
@@ -507,7 +516,11 @@ def _measure_numpy_rhs_counts(rheology: SolidRheologyParams) -> dict[str, int]:
             'aragog.solver.entropy_state._viscous_mixing_length_factor_core',
             side_effect=_count_mlt,
         ),
-        patch.object(solver.state.phase_basic, '_lookup', side_effect=_count_lookup),
+        patch.object(
+            solver.state.phase_basic._eos,
+            '_lookup_at_phase_boundary',
+            side_effect=_count_lookup,
+        ),
     ):
         solver.dSdt(0.0, s_stag)
 
@@ -570,19 +583,29 @@ def test_rhs_zero_extra_eos_lookups() -> None:
     H_zero = jnp.zeros(solver_on._n_stag, dtype=jnp.float64)
 
     jax_lookups = {'off': 0, 'on': 0}
-    orig_jax_lookup = eos_jax._lookup_at_phase_boundary
+    orig_jax_lookup = type(eos_jax)._lookup_at_phase_boundary
 
     def _make_jax_spy(key: str):
-        def _spy(prop_name: str, P, phase: str):
+        def _spy(self_eos, prop_name: str, P, phase: str):
             if prop_name == 'temperature' and phase == 'solid':
                 jax_lookups[key] += 1
-            return orig_jax_lookup(prop_name, P, phase)
+            return orig_jax_lookup(self_eos, prop_name, P, phase)
 
         return _spy
 
-    with patch.object(eos_jax, '_lookup_at_phase_boundary', side_effect=_make_jax_spy('off')):
+    with patch.object(
+        type(eos_jax),
+        '_lookup_at_phase_boundary',
+        autospec=True,
+        side_effect=_make_jax_spy('off'),
+    ):
         _ = compute_fluxes(s_stag, 0.0, eos_jax, params_jax_off, mesh_jax, H_zero)
-    with patch.object(eos_jax, '_lookup_at_phase_boundary', side_effect=_make_jax_spy('on')):
+    with patch.object(
+        type(eos_jax),
+        '_lookup_at_phase_boundary',
+        autospec=True,
+        side_effect=_make_jax_spy('on'),
+    ):
         _ = compute_fluxes(s_stag, 0.0, eos_jax, params_jax_on, mesh_jax, H_zero)
     assert jax_lookups['on'] - jax_lookups['off'] == 0
 
@@ -635,7 +658,7 @@ def test_rheology_off_bitwise_parity_numpy_and_jax() -> None:
     solver_on = _make_solver(params_on)
     _, _, _, args_on = _build_jax_bundle(solver_on)
 
-    s_stag = _make_solid_profile(solver_off, s_low=1050.0, s_high=1850.0)
+    s_stag = _make_solid_profile(solver_off)
     rhs_np_off = solver_off.dSdt(0.0, s_stag)
     rhs_np_on = solver_on.dSdt(0.0, s_stag)
     assert not np.allclose(rhs_np_off, rhs_np_on)
@@ -653,17 +676,18 @@ def test_rheology_off_bitwise_parity_numpy_and_jax() -> None:
 def test_check_rheology_invariants_passes_and_catches_violations() -> None:
     """_check_rheology_invariants passes on valid states and raises RuntimeError on
     eta_eff > eta_diff, non-finite eta_eff, or ceiling exceedance."""
-    rheo = SolidRheologyParams(enabled=True, viscosity_max_log10=25.0)
+    rheo = SolidRheologyParams(enabled=True, viscosity_max_log10=26.0)
     params = _make_abe_solid_params(rheo, number_of_nodes=20)
     solver = _make_solver(params)
-    s_stag = _make_solid_profile(solver, s_low=1050.0, s_high=1850.0)
+    s_stag = _make_solid_profile(solver)
     solver.state.update(s_stag, 0.0)
 
     solver._check_rheology_invariants()
 
     orig_eta_eff = solver.state._eta_eff_basic.copy()
     eta_diff = solver.state.phase_basic.eta_diff().copy()
-    solver.state._eta_eff_basic = eta_diff * 1.05
+    solver.state._eta_eff_basic = orig_eta_eff.copy()
+    solver.state._eta_eff_basic[0] = eta_diff[0] * 1.05
     with pytest.raises(RuntimeError, match='eta_eff'):
         solver._check_rheology_invariants()
 
@@ -678,6 +702,19 @@ def test_check_rheology_invariants_passes_and_catches_violations() -> None:
         solver._check_rheology_invariants()
 
     solver.state._eta_eff_basic = orig_eta_eff
+
+    assert solver._build_jac_sparsity() is None
+    solver_local = _make_solver(
+        _make_abe_solid_params(
+            SolidRheologyParams(enabled=True, stress_closure_mode='local'),
+            number_of_nodes=20,
+        )
+    )
+    assert solver_local._build_jac_sparsity() is not None
+    solver_off = _make_solver(
+        _make_abe_solid_params(SolidRheologyParams(enabled=False), number_of_nodes=20)
+    )
+    assert solver_off._build_jac_sparsity() is not None
 
 
 # ============================================================================

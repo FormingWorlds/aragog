@@ -8,6 +8,7 @@ and viscosity-contrast-dependent mixing-length scaling for solid-state convectio
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from typing import Any
 
@@ -126,10 +127,10 @@ class SolidRheologyParams:
 
 
 def merge_rheology(
-    rheology: SolidRheologyParams | dict[str, Any] | None, overrides: dict[str, Any]
+    rheology: SolidRheologyParams | Mapping[str, Any] | None, overrides: Mapping[str, Any]
 ) -> SolidRheologyParams:
     """Return ``rheology`` (default parameters when None) with field ``overrides`` applied."""
-    if isinstance(rheology, dict):
+    if isinstance(rheology, Mapping):
         base = SolidRheologyParams(**rheology)
     elif rheology is None:
         base = SolidRheologyParams()
@@ -251,6 +252,21 @@ def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
     return invalid
 
 
+def _compute_mlt_top_slope_core(
+    theta: FloatOrArray,
+    s_top_inf: float | None = None,
+    c_theta: float | None = None,
+    xp: Any = np,
+) -> Any:
+    """Unchecked core evaluation of ``s_top(theta)``."""
+    s_top_inf_eff = SolidRheologyParams.s_top_inf if s_top_inf is None else s_top_inf
+    c_theta_eff = SolidRheologyParams.c_theta if c_theta is None else c_theta
+    theta_pos = xp.maximum(xp.asarray(theta, dtype=float), 0.0)
+    s_top_arr = xp.asarray(s_top_inf_eff, dtype=float)
+    c_th_arr = xp.asarray(c_theta_eff, dtype=float)
+    return s_top_arr + (1.0 - s_top_arr) * xp.exp(-c_th_arr * theta_pos)
+
+
 def compute_mlt_top_slope(
     theta: FloatOrArray,
     s_top_inf: float | None = None,
@@ -292,12 +308,45 @@ def compute_mlt_top_slope(
         ),
         xp,
     )
-    theta_pos = xp.maximum(xp.asarray(theta, dtype=float), 0.0)
-    s_top_arr = xp.asarray(s_top_inf_eff, dtype=float)
-    c_th_arr = xp.asarray(c_theta_eff, dtype=float)
-    s_top = s_top_arr + (1.0 - s_top_arr) * xp.exp(-c_th_arr * theta_pos)
+    s_top = _compute_mlt_top_slope_core(
+        theta, s_top_inf=s_top_inf_eff, c_theta=c_theta_eff, xp=xp
+    )
     s_top = xp.where(invalid, xp.nan, s_top)
     return _unwrap_scalar(s_top, xp, theta)
+
+
+def _viscous_mixing_length_factor_core(
+    radii: Any,
+    r_in: Any,
+    r_out: Any,
+    mixing_length: Any,
+    s_top_inf: float | None = None,
+    bottom_slope: float | None = None,
+    theta: Any = None,
+    c_theta: float | None = None,
+    *,
+    xp: Any = np,
+) -> Any:
+    """Unchecked core evaluation of ``(l_v / l)^4``."""
+    s_top_inf_eff = SolidRheologyParams.s_top_inf if s_top_inf is None else s_top_inf
+    bottom_slope_eff = (
+        SolidRheologyParams.mlt_bottom_slope if bottom_slope is None else bottom_slope
+    )
+    if theta is not None:
+        eff_top_slope = _compute_mlt_top_slope_core(
+            theta, s_top_inf=s_top_inf_eff, c_theta=c_theta, xp=xp
+        )
+    else:
+        eff_top_slope = s_top_inf_eff
+    r_arr = xp.asarray(radii, dtype=float)
+    l_v = xp.minimum(bottom_slope_eff * (r_arr - r_in), eff_top_slope * (r_out - r_arr))
+    ml_arr = xp.asarray(mixing_length, dtype=float)
+    positive = ml_arr > 0.0
+    return xp.where(
+        xp.isnan(ml_arr) | xp.isnan(l_v),
+        xp.nan,
+        xp.where(positive, (l_v / xp.where(positive, ml_arr, 1.0)) ** 4, 1.0),
+    )
 
 
 def viscous_mixing_length_factor(
@@ -369,17 +418,41 @@ def viscous_mixing_length_factor(
         eff_top_slope = compute_mlt_top_slope(
             theta, s_top_inf=s_top_inf_eff, c_theta=c_theta, xp=xp
         )
-    else:
-        eff_top_slope = s_top_inf_eff
-    r_arr = xp.asarray(radii, dtype=float)
-    l_v = xp.minimum(bottom_slope_eff * (r_arr - r_in), eff_top_slope * (r_out - r_arr))
-    ml_arr = xp.asarray(mixing_length, dtype=float)
-    positive = ml_arr > 0.0
-    return xp.where(
-        invalid | xp.isnan(ml_arr) | xp.isnan(l_v),
-        xp.nan,
-        xp.where(positive, (l_v / xp.where(positive, ml_arr, 1.0)) ** 4, 1.0),
+        invalid = invalid | xp.isnan(eff_top_slope)
+    res = _viscous_mixing_length_factor_core(
+        radii,
+        r_in,
+        r_out,
+        mixing_length,
+        s_top_inf=s_top_inf_eff,
+        bottom_slope=bottom_slope_eff,
+        theta=theta,
+        c_theta=c_theta,
+        xp=xp,
     )
+    return xp.where(invalid, xp.nan, res)
+
+
+def _compute_arrhenius_enthalpy_core(
+    pressure: FloatOrArray,
+    g_homologous: float | None = None,
+    solidus_temperature: FloatOrArray | None = None,
+    t_sol_0: float | None = None,
+    dt_sol_dp: float | None = None,
+    r_gas: float = R_GAS,
+    xp: Any = np,
+) -> Any:
+    """Unchecked core evaluation of activation enthalpy ``H(P)``."""
+    g_eff = SolidRheologyParams.g_homologous if g_homologous is None else g_homologous
+    dt_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
+    t_sol_0_eff = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
+    p = _clamp_pressure(pressure, xp)
+    if solidus_temperature is not None:
+        t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
+    else:
+        t_sol = t_sol_0_eff + dt_eff * p
+    g_arr = xp.asarray(g_eff, dtype=float)
+    return g_arr * r_gas * t_sol
 
 
 def compute_arrhenius_enthalpy(
@@ -453,14 +526,87 @@ def compute_arrhenius_enthalpy(
         ),
         xp,
     )
-    p = _clamp_pressure(pressure, xp)
-    if solidus_temperature is not None:
-        t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
-    else:
-        t_sol = t_sol_0_eff + dt_sol_dp * p
-    g_arr = xp.asarray(g_homologous, dtype=float)
-    h = xp.where(invalid, xp.nan, g_arr * r_gas * t_sol)
-    return _unwrap_scalar(h, xp, pressure, solidus_temperature)
+    h = _compute_arrhenius_enthalpy_core(
+        pressure=pressure,
+        g_homologous=g_homologous,
+        solidus_temperature=solidus_temperature,
+        t_sol_0=t_sol_0_eff,
+        dt_sol_dp=dt_sol_dp,
+        r_gas=r_gas,
+        xp=xp,
+    )
+    return _unwrap_scalar(xp.where(invalid, xp.nan, h), xp, pressure, solidus_temperature)
+
+
+def _compute_arrhenius_viscosity_core(
+    temperature: FloatOrArray,
+    pressure: FloatOrArray,
+    viscosity_solid: float | None = None,
+    g_homologous: float | None = None,
+    solidus_temperature: FloatOrArray | None = None,
+    t_sol_0: float | None = None,
+    dt_sol_dp: float | None = None,
+    arrhenius_t_ref: float | None = None,
+    r_gas: float = R_GAS,
+    viscosity_max_log10: float | None = None,
+    water_prefactor: FloatOrArray | None = None,
+    xp: Any = np,
+    *,
+    _precomputed_enthalpy: Any = None,
+) -> Any:
+    """Unchecked core evaluation of homologous Arrhenius diffusion-creep viscosity."""
+    vs_eff = DEFAULT_VISCOSITY_SOLID if viscosity_solid is None else viscosity_solid
+    g_eff = SolidRheologyParams.g_homologous if g_homologous is None else g_homologous
+    dt_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
+    t_ref_eff = (
+        SolidRheologyParams.arrhenius_t_ref if arrhenius_t_ref is None else arrhenius_t_ref
+    )
+    vmax_eff = (
+        SolidRheologyParams.viscosity_max_log10
+        if viscosity_max_log10 is None
+        else viscosity_max_log10
+    )
+    wp_eff = SolidRheologyParams.water_prefactor if water_prefactor is None else water_prefactor
+    t_sol_ref_0 = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
+    h_p = (
+        _compute_arrhenius_enthalpy_core(
+            pressure=pressure,
+            g_homologous=g_eff,
+            solidus_temperature=solidus_temperature,
+            t_sol_0=t_sol_ref_0,
+            dt_sol_dp=dt_eff,
+            r_gas=r_gas,
+            xp=xp,
+        )
+        if _precomputed_enthalpy is None
+        else _precomputed_enthalpy
+    )
+    t = xp.asarray(temperature, dtype=float)
+    wp = xp.asarray(wp_eff, dtype=float)
+    vs = xp.asarray(vs_eff, dtype=float)
+    g_arr = xp.asarray(g_eff, dtype=float)
+    t_ref_arr = xp.asarray(t_ref_eff, dtype=float)
+    vmax_log10 = xp.asarray(vmax_eff, dtype=float)
+    h_0 = g_arr * r_gas * t_sol_ref_0
+    exponent = h_p / (r_gas * t) - h_0 / (r_gas * t_ref_arr) + xp.log(wp)
+    vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
+    min_exponent = xp.maximum(
+        -700.0, _MIN_ARRHENIUS_EXPONENT_BOUND - xp.log(xp.maximum(vs_pos, 1.0e-300))
+    )
+    log10_raw = xp.log10(xp.maximum(vs_pos, 1.0e-300)) + exponent / math.log(10.0)
+    w_cap = VISCOSITY_CEILING_LOG10_WIDTH
+    d_cap = (log10_raw - vmax_log10) / w_cap
+    log10_soft = _softmin2(log10_raw, vmax_log10, w_cap, xp)
+    max_exponent = xp.minimum(
+        (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1.0e-300))) * math.log(10.0), 700.0
+    )
+    log10_clipped = xp.maximum(log10_soft, -300.0)
+    result = xp.where(
+        d_cap < -40.0,
+        vs * xp.exp(xp.clip(exponent, min_exponent, max_exponent)),
+        10.0**log10_clipped,
+    )
+    return xp.where(xp.isnan(h_p), xp.nan, result)
 
 
 def compute_arrhenius_viscosity(
@@ -582,39 +728,42 @@ def compute_arrhenius_viscosity(
         r_gas=r_gas,
         xp=xp,
     )
-
-    t = xp.asarray(temperature, dtype=float)
-    wp = xp.asarray(water_prefactor, dtype=float)
-    vs = xp.asarray(viscosity_solid, dtype=float)
-    g_arr = xp.asarray(g_homologous, dtype=float)
-    t_ref_arr = xp.asarray(arrhenius_t_ref, dtype=float)
-    vmax_log10 = xp.asarray(viscosity_max_log10, dtype=float)
-    h_0 = g_arr * r_gas * t_sol_ref_0
-
-    exponent = h_p / (r_gas * t) - h_0 / (r_gas * t_ref_arr) + xp.log(wp)
-
-    vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
-    # Prevent float64 underflow to zero when viscosity_solid is small.
-    min_exponent = xp.maximum(
-        -700.0, _MIN_ARRHENIUS_EXPONENT_BOUND - xp.log(xp.maximum(vs_pos, 1.0e-300))
-    )
-    log10_raw = xp.log10(xp.maximum(vs_pos, 1.0e-300)) + exponent / math.log(10.0)
-    w_cap = VISCOSITY_CEILING_LOG10_WIDTH
-    d_cap = (log10_raw - vmax_log10) / w_cap
-    log10_soft = _softmin2(log10_raw, vmax_log10, w_cap, xp)
-    max_exponent = xp.minimum(
-        (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1.0e-300))) * math.log(10.0), 700.0
-    )
-    log10_clipped = xp.maximum(log10_soft, -300.0)
-    result = xp.where(
-        d_cap < -40.0,
-        vs * xp.exp(xp.clip(exponent, min_exponent, max_exponent)),
-        10.0**log10_clipped,
+    result = _compute_arrhenius_viscosity_core(
+        temperature=temperature,
+        pressure=pressure,
+        viscosity_solid=viscosity_solid,
+        g_homologous=g_homologous,
+        solidus_temperature=solidus_temperature,
+        t_sol_0=t_sol_ref_0,
+        dt_sol_dp=dt_sol_dp,
+        arrhenius_t_ref=arrhenius_t_ref,
+        r_gas=r_gas,
+        viscosity_max_log10=viscosity_max_log10,
+        water_prefactor=water_prefactor,
+        xp=xp,
+        _precomputed_enthalpy=h_p,
     )
     result = xp.where(invalid | xp.isnan(h_p), xp.nan, result)
     return _unwrap_scalar(
         result, xp, temperature, pressure, water_prefactor, solidus_temperature
     )
+
+
+def _compute_yield_stress_core(
+    pressure: FloatOrArray,
+    yield_stress_c: float | None = None,
+    yield_stress_mu: float | None = None,
+    yield_stress_max: float | None = None,
+    xp: Any = np,
+) -> Any:
+    """Unchecked core evaluation of Byerlee yield stress."""
+    c_eff = SolidRheologyParams.yield_stress_c if yield_stress_c is None else yield_stress_c
+    mu_eff = SolidRheologyParams.yield_stress_mu if yield_stress_mu is None else yield_stress_mu
+    max_eff = (
+        SolidRheologyParams.yield_stress_max if yield_stress_max is None else yield_stress_max
+    )
+    p = _clamp_pressure(pressure, xp)
+    return xp.maximum(0.0, xp.minimum(c_eff + mu_eff * p, max_eff))
 
 
 def compute_yield_stress(
@@ -665,9 +814,27 @@ def compute_yield_stress(
         ),
         xp,
     )
-    p = _clamp_pressure(pressure, xp)
-    tau_y = xp.maximum(0.0, xp.minimum(c_eff + mu_eff * p, max_eff))
+    tau_y = _compute_yield_stress_core(
+        pressure,
+        yield_stress_c=c_eff,
+        yield_stress_mu=mu_eff,
+        yield_stress_max=max_eff,
+        xp=xp,
+    )
     return _unwrap_scalar(xp.where(invalid, xp.nan, tau_y), xp, pressure)
+
+
+def _compute_strain_rate_local_core(
+    viscous_velocity: FloatOrArray,
+    mixing_length: FloatOrArray,
+    eps: float = 1.0e-15,
+    xp: Any = np,
+) -> Any:
+    """Unchecked core evaluation of local convective strain rate."""
+    v = xp.asarray(viscous_velocity, dtype=float)
+    l_mix = xp.asarray(mixing_length, dtype=float)
+    denom = 2.0 * xp.maximum(l_mix, eps)
+    return xp.abs(v) / denom
 
 
 def compute_strain_rate_local(
@@ -706,16 +873,22 @@ def compute_strain_rate_local(
         ),
         xp,
     )
-    v = xp.asarray(viscous_velocity, dtype=float)
-    l_mix = xp.asarray(mixing_length, dtype=float)
-    denom = 2.0 * xp.maximum(l_mix, eps)
-    res = xp.abs(v) / denom
+    res = _compute_strain_rate_local_core(viscous_velocity, mixing_length, eps=eps, xp=xp)
     res = xp.where(invalid, xp.nan, res)
     return _unwrap_scalar(res, xp, viscous_velocity, mixing_length)
 
 
+_LID_EXPORTS = (
+    'compute_stagnant_lid_state',
+    'compute_effective_viscosity',
+    'stress_closure',
+    '_compute_stagnant_lid_state_core',
+    '_compute_effective_viscosity_core',
+)
+
+
 def __getattr__(name: str) -> Any:
-    if name in ('compute_stagnant_lid_state', 'compute_effective_viscosity', 'stress_closure'):
+    if name in _LID_EXPORTS:
         import aragog.rheology_lid as _lid
 
         return getattr(_lid, name)
@@ -723,7 +896,4 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    return sorted(
-        list(globals().keys())
-        + ['compute_stagnant_lid_state', 'compute_effective_viscosity', 'stress_closure']
-    )
+    return sorted(list(globals().keys()) + list(_LID_EXPORTS))
