@@ -53,4 +53,4 @@ Use `solver_method = "radau"` or `"bdf"` when:
 
 ## Verification
 
-The JAX RHS must produce the same numerical result as the numpy `EntropyState.update` to floating-point precision. The verification suite asserts this for every public flux contribution; see [first-principles verification](verification.md) for the parity tests and [code architecture](code_architecture.md) for the file-level layout.
+The JAX RHS must produce the same numerical result as the numpy `EntropyState.update` to floating-point precision. The verification suite asserts this for every public flux contribution; see [first-principles verification](../Validation/numerics.md) for the parity tests and [code architecture](code_architecture.md) for the file-level layout.

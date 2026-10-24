@@ -53,7 +53,7 @@ The fallback is deliberate; an exception would make the JAX extra a hard depende
 
 ## Bit-parity with the numpy path
 
-Every flux contribution in `aragog.jax.phase` is constructed to match the numpy `EntropyState.update` to floating-point precision. The verification suite asserts equality on a per-component basis (conduction, convection, gravitational separation, mixing) for representative `(P, S, T, mesh)` tuples; see [first-principles verification](verification.md).
+Every flux contribution in `aragog.jax.phase` is constructed to match the numpy `EntropyState.update` to floating-point precision. The verification suite asserts equality on a per-component basis (conduction, convection, gravitational separation, mixing) for representative `(P, S, T, mesh)` tuples; see [first-principles verification](../Validation/numerics.md).
 
 Bit-parity is the contract that lets the JAX path be the production default without breaking a regression that was tuned against numpy. If the numpy path is being used as a "ground truth" and the JAX trace diverges, the parity tests catch the drift before it lands.
 
