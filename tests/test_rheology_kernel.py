@@ -1336,7 +1336,7 @@ def test_compute_effective_viscosity_lid_tanh_yield_blend():
             stress_closure_mode='lid',
         )
     )
-    assert (eta_09 / eta_d) == pytest.approx(0.995413283795645, rel=1.0e-12)
+    assert (eta_09 / eta_d) == pytest.approx(0.995412852640275, rel=1.0e-12)
 
     eta_11 = float(
         compute_effective_viscosity(
@@ -1349,9 +1349,7 @@ def test_compute_effective_viscosity_lid_tanh_yield_blend():
         )
     )
     expected_cap_11 = eta_i / 1.1
-    assert (np.log10(eta_11) / np.log10(expected_cap_11)) == pytest.approx(
-        1.0046760013878726, rel=1.0e-12
-    )
+    assert (eta_11 / expected_cap_11) == pytest.approx(1.0046758935808797, rel=1.0e-12)
 
     # Outside band edge d* = 0.378210, output agrees with hard min closure to 1e-12 relative.
     d_star = 0.378210
@@ -1374,8 +1372,12 @@ def test_compute_effective_viscosity_lid_tanh_yield_blend():
 @pytest.mark.physics_invariant
 def test_compute_arrhenius_viscosity_smooth_ceiling_band():
     """Verify smooth softplus viscosity ceiling in compute_arrhenius_viscosity."""
+    import jax
+    import jax.numpy as jnp
+
     import aragog.rheology as rheo_mod
 
+    jax.config.update('jax_enable_x64', True)
     assert getattr(rheo_mod, 'VISCOSITY_CEILING_LOG10_WIDTH', None) == pytest.approx(
         0.05, rel=1.0e-15
     )
@@ -1401,6 +1403,50 @@ def test_compute_arrhenius_viscosity_smooth_ceiling_band():
     )
     expected_mid = 10.0 ** (vmax_log10 - 0.05 * np.log(2.0))
     assert eta_mid == pytest.approx(expected_mid, rel=1.0e-12)
+
+    grad_log10_fn = jax.grad(
+        lambda t_in: jnp.log10(
+            compute_arrhenius_viscosity(
+                t_in,
+                0.0,
+                viscosity_solid=vs,
+                g_homologous=g_hom,
+                t_sol_0=t_sol_0,
+                dt_sol_dp=0.0,
+                arrhenius_t_ref=t_ref,
+                viscosity_max_log10=vmax_log10,
+                xp=jnp,
+            )
+        )
+    )
+    g_left = float(grad_log10_fn(jnp.asarray(t_cross - 1.0e-6)))
+    g_mid = float(grad_log10_fn(jnp.asarray(t_cross)))
+    g_right = float(grad_log10_fn(jnp.asarray(t_cross + 1.0e-6)))
+    assert np.isfinite(g_mid) and g_mid < 0.0
+    assert abs(g_right - g_left) < 1.0e-7
+
+    # Also verify jax.grad remains finite when viscosity_solid is tiny (1e-300) and vmax_log10 = 40
+    # both at the ceiling crossover temperature (~43.49 K, where exponent = 340 * ln(10) = 782.88 > 709.78)
+    # and in the unclipped regime (300 K).
+    t_cross_tiny = (g_hom * t_sol_0) / (340.0 * np.log(10.0) + g_hom * t_sol_0 / t_ref)
+    grad_tiny_fn = jax.grad(
+        lambda t_in: jnp.log10(
+            compute_arrhenius_viscosity(
+                t_in,
+                0.0,
+                viscosity_solid=1.0e-300,
+                g_homologous=g_hom,
+                t_sol_0=t_sol_0,
+                dt_sol_dp=0.0,
+                arrhenius_t_ref=t_ref,
+                viscosity_max_log10=40.0,
+                xp=jnp,
+            )
+        )
+    )
+    for t_probe in (t_cross_tiny, 300.0):
+        grad_tiny_vs = float(grad_tiny_fn(jnp.asarray(t_probe)))
+        assert np.isfinite(grad_tiny_vs) and grad_tiny_vs < 0.0
 
     # Outside band edge d* = 1.273466 decades, soft ceiling matches hard min(eta_raw, 10^vmax) to 1e-12.
     d_star_dec = 1.273466
@@ -1571,6 +1617,9 @@ def test_is_non_real_direct_rejection_and_nonuniform_lid_bound():
         1.0 + 0.0j,
         np.complex128(3.0),
         None,
+        Decimal('1.25'),
+        Fraction(3, 2),
+        [1.0, 2, Decimal('3.0')],
         [1.0, None],
         [1.0, 'a'],
         [1.0, True],
@@ -1586,9 +1635,7 @@ def test_is_non_real_direct_rejection_and_nonuniform_lid_bound():
         1.5,
         np.float64(2.5),
         np.int64(3),
-        Decimal('1.25'),
-        Fraction(3, 2),
-        [1.0, 2, Decimal('3.0')],
+        [1.0, 2, 3.0],
         np.array([1.0, 2.0, 3.0]),
     ):
         assert _is_non_real(good_input) is False

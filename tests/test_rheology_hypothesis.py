@@ -607,6 +607,9 @@ def test_stagnant_lid_state_bounds(phi_mid: list[float], f_scale: float) -> None
         xp=np,
     )
     assert float(st_cold['r_lid_base']) == pytest.approx(float(r[0]), rel=1.0e-9)
+    assert float(st_cold['d_lid']) == pytest.approx(
+        float(r[-1] - r[0]) * float(st_cold['w_active']), rel=1.0e-9
+    )
     assert float(st_cold['d_lid']) <= float(r[-1] - r[0]) * float(st_cold['w_active']) * (
         1.0 + 1.0e-12
     )
@@ -630,6 +633,9 @@ def test_hypothesis_smooth_rheology_blend_tails(
 
     melt_ramp = getattr(lid_mod, '_melt_ramp')
     assert float(melt_ramp(phi_low, 0.01, 0.002, np, compact=True)) == 0.0
+    assert float(melt_ramp(0.01, 0.01, 0.002, np, compact=True)) == pytest.approx(
+        0.5, rel=1.0e-14
+    )
     assert float(melt_ramp(phi_high, 0.01, 0.002, np, compact=True)) == 1.0
 
     eta_d = 1.0e22

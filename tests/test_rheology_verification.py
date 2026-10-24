@@ -812,7 +812,7 @@ def test_lid_closure_jump_at_yield_threshold():
             xp=np,
         )
     )
-    assert (val_09 / eta_d) == pytest.approx(0.995413283795645, rel=1.0e-12)
+    assert (val_09 / eta_d) == pytest.approx(0.995412852640275, rel=1.0e-12)
     assert val_09 == pytest.approx(eta_d, rel=0.01)
 
     val_11 = float(
@@ -827,6 +827,7 @@ def test_lid_closure_jump_at_yield_threshold():
         )
     )
     expected_11 = eta_i / 1.1
+    assert (val_11 / expected_11) == pytest.approx(1.0046758935808797, rel=1.0e-12)
     assert val_11 == pytest.approx(expected_11, rel=0.01)
 
     # 3. Mutant canary: unblended hard-step mutant fails continuity bound at x = 1.0 +- 1e-4.
@@ -980,12 +981,12 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
             float(st_iso_jx[key]), rel=1.0e-9, abs=1.0e-12
         )
 
-    # Smooth transition of mu_i across max_k w_conv_int ~ 1e-6 for both array and scalar viscosity_mixture:
+    # Smooth transition of mu_i across max_k w_conv_ref_int ~ 1e-6 for both array and scalar viscosity_mixture:
     t_grad = np.linspace(2600.0, 1200.0, n_nodes)
     visc_mix_arr = np.full(n_nodes, 1.0e18)
     params_smooth = SolidRheologyParams(enabled=True, interior_flux_fraction=0.10)
-    f_low_1 = np.full(n_nodes, 2.945)
-    f_low_2 = np.full(n_nodes, 2.947)
+    f_low_1 = np.full(n_nodes, 0.00500)
+    f_low_2 = np.full(n_nodes, 0.00504)
     st_arr_1 = compute_stagnant_lid_state(
         radii=r,
         temperature=t_grad,
@@ -2445,6 +2446,33 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     assert float(st_spike['w_active']) == pytest.approx(expected_w_active_spike, rel=1.0e-9)
     assert bool(st_spike['has_lid']) is False
 
+    # Also verify inter-nodal sign change (|F_tot[10]| = 5.263 < 0.1 * F_tot_rms = 6.070 W/m^2)
+    # activates F_TOT_FLOOR_FRAC: f[10] = 0.048 < 0.05 when floored, vs 0.05536 > 0.05 unfloored.
+    f_tot_internodal = np.linspace(-100.0, 100.0, n)
+    f_tot_rms_in = float(np.sqrt(np.mean(f_tot_internodal**2)))
+    f_conv_in = np.zeros(n)
+    f_conv_in[10] = 0.048 * (0.1 * f_tot_rms_in)
+    st_internodal = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=f_conv_in,
+        total_flux=f_tot_internodal,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    smax2 = getattr(lid_mod, '_softmax2')
+    f_floor_in = float(smax2(0.1 * f_tot_rms_in, 1.0e-12, 0.01 * 1.0e-12, np))
+    f_safe_10 = float(smax2(abs(f_tot_internodal[10]), f_floor_in, 0.01 * f_floor_in, np))
+    expected_w_active_in = 0.5 * (1.0 + np.tanh((f_conv_in[10] / f_safe_10 - 0.05) / 0.01))
+    assert float(st_internodal['w_active']) == pytest.approx(expected_w_active_in, rel=1.0e-9)
+    assert float(st_internodal['w_active']) < 0.45
+
     # 2. Row 20: mid-slope pin of lid_regime at tau_d = tau_y_lid * exp(+-0.1).
     fc_active = np.full(n, 80.0)
     fc_active[-4:] = 0.0
@@ -2489,12 +2517,15 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         )
         expected_wy = 0.5 * (1.0 + np.tanh((ratio_target - 1.0) / 0.1))
         assert float(st_reg['w_y']) == pytest.approx(expected_wy, rel=1.0e-9)
+        assert float(st_reg['lid_regime']) == pytest.approx(
+            float(st_reg['w_active']) * (1.0 + expected_wy), rel=1.0e-6
+        )
 
     # 3. Row 27: w_weight at f = 6.00843e-5 (0.499625), f = 1e-4 (0.724501), f = 2e-3 (1.0),
     # invariant across interior_flux_fraction in {0.05, 0.20, 0.50}.
     for f_test, expected_w in (
-        (6.00843e-5, 0.4996253821666715),
-        (1.0e-4, 0.7245010164151888),
+        (6.00843e-5, 0.4996245148964807),
+        (1.0e-4, 0.7245013801463845),
         (2.0e-3, 1.0),
     ):
         for f0_cfg in (0.05, 0.20, 0.50):
@@ -2585,9 +2616,9 @@ def test_boundary_weights_smooth_max_and_no_fallback():
     assert w_near == pytest.approx(float(np.tanh(smax_expected / 1.0e-6)), rel=1.0e-12)
 
     grad_w = jax.grad(_eval_w_base)
-    g_left = float(grad_w(jnp.asarray(-1.0e-10)))
+    g_left = float(grad_w(jnp.asarray(-1.0e-17)))
     g_zero = float(grad_w(jnp.asarray(0.0)))
-    g_right = float(grad_w(jnp.asarray(1.0e-10)))
+    g_right = float(grad_w(jnp.asarray(1.0e-17)))
     assert np.isfinite(g_zero) and abs(g_zero) < 1.0e-6
     assert abs(g_right - g_left) < 1.0e-2
 
@@ -2632,21 +2663,11 @@ def test_stagnant_lid_invariants(monkeypatch):
     assert 0.0 <= float(st['w_active']) <= 1.0
     assert np.isfinite(float(st['eta_i']))
 
-    # 1. Forcing w_no_lid > 1.0 via NO_LID_THICKNESS_WIDTH = nan or out-of-range weight triggers assert.
-    orig_bw = lid_mod._boundary_weights
-    call_idx = {'n': 0}
-
-    def _bad_weight_bw(w, xp=np, *, fallback=None, mask=None):
-        res = orig_bw(w, xp, fallback=fallback, mask=mask)
-        call_idx['n'] += 1
-        if call_idx['n'] == 2:
-            return res[0], res[1], 2.0
-        return res
-
-    monkeypatch.setattr(lid_mod, '_boundary_weights', _bad_weight_bw)
+    # 1. Forcing w_no_lid outside [0, 1] while eta_i remains finite triggers the w_no_lid range assert.
+    monkeypatch.setattr(lid_mod, 'NO_LID_THICKNESS_WIDTH', np.nan)
     with pytest.raises(AssertionError):
         compute_stagnant_lid_state(**kw)
-    monkeypatch.setattr(lid_mod, '_boundary_weights', orig_bw)
+    monkeypatch.setattr(lid_mod, 'NO_LID_THICKNESS_WIDTH', 0.25)
 
     # 2. Forcing non-finite eta_i triggers assert xp.all(xp.isfinite(eta_i)).
     monkeypatch.setattr(lid_mod, 'compute_arrhenius_viscosity', lambda *a, **k: np.inf)

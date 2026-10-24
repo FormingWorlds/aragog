@@ -17,6 +17,7 @@ import numpy.typing as npt
 R_GAS = 8.314462618
 COHESION_FLOOR = 1.0e-6
 DEFAULT_VISCOSITY_SOLID = 1.0e21
+VISCOSITY_CEILING_LOG10_WIDTH = 0.05
 
 FloatOrArray = float | npt.NDArray[np.floating]
 
@@ -462,7 +463,8 @@ def compute_arrhenius_viscosity(
     r_gas : float, default 8.314462618
         Universal gas constant R [J/(mol K)].
     viscosity_max_log10 : float, optional
-        Upper bound on log10 dynamic viscosity [log10(Pa s)]. Defaults to
+        Smooth log10 softplus ceiling on dynamic viscosity [log10(Pa s)] with
+        width ``VISCOSITY_CEILING_LOG10_WIDTH`` (0.05). Defaults to
         ``SolidRheologyParams.viscosity_max_log10`` when None.
     water_prefactor : float or array-like, optional
         Multiplicative prefactor for hydration weakening. Defaults to
@@ -543,10 +545,28 @@ def compute_arrhenius_viscosity(
     exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
-    max_exponent = (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1e-300))) * math.log(10.0)
-    clipped_exp = xp.clip(exponent, -700.0, max_exponent)
-    result = vs * xp.exp(clipped_exp)
-    result = xp.minimum(result, 10.0**vmax_log10)
+    log10_raw = xp.log10(xp.maximum(vs_pos, 1.0e-300)) + exponent / math.log(10.0)
+    w_cap = VISCOSITY_CEILING_LOG10_WIDTH
+    d_cap = (log10_raw - vmax_log10) / w_cap
+    d_cap_fin = xp.where(xp.isfinite(d_cap), d_cap, 0.0)
+    log10_soft = xp.where(
+        d_cap > 40.0,
+        vmax_log10,
+        xp.where(
+            d_cap < -40.0,
+            log10_raw,
+            log10_raw - w_cap * xp.logaddexp(0.0, xp.clip(d_cap_fin, -500.0, 40.0)),
+        ),
+    )
+    max_exponent = xp.minimum(
+        (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1.0e-300))) * math.log(10.0), 700.0
+    )
+    log10_clipped = xp.maximum(log10_soft, -300.0)
+    result = xp.where(
+        d_cap < -40.0,
+        vs * xp.exp(xp.clip(exponent, -700.0, max_exponent)),
+        10.0**log10_clipped,
+    )
     result = xp.where(invalid | xp.isnan(h_p), xp.nan, result)
     return _unwrap_scalar(
         result, xp, temperature, pressure, water_prefactor, solidus_temperature

@@ -1641,7 +1641,7 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
     w_t_zero = 0.5 * (1.0 + np.tanh(-1.0e-3 / 2.5e-4))
     d_raw_iso = float((inputs['radii'][-1] - st_iso['r_lid_base']) * st_iso['w_active'])
     assert bool(st_iso['has_lid']) is False
-    assert float(st_iso['v_i']) > 0.0
+    assert float(st_iso['v_i']) == 0.0
     assert float(st_iso['d_lid']) == pytest.approx(w_t_zero * d_raw_iso, rel=1.0e-9)
     assert float(st_iso['tau_d']) == pytest.approx(
         float(st_iso['tau_d_lid'])
@@ -1665,8 +1665,8 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         assert bool(st_dt['has_lid']) is expected_has_lid
 
     # Discriminating d_lid_raw threshold: N=100 without solidus table brackets 1.0 m from both sides.
-    # Under the compact quintic melt ramp on [0.008, 0.012], phi = 0.011895 gives d_lid_raw ~ 0.80 m
-    # and phi = 0.011870 gives d_lid_raw ~ 1.22 m.
+    # Under the compact quintic melt ramp on [0.008, 0.012], phi = 0.011944 gives d_lid_raw ~ 0.78 m
+    # and phi = 0.011936 gives d_lid_raw ~ 1.17 m.
     n_100 = 100
     r_100 = np.linspace(3480.0e3, 6370.0e3, n_100)
     t_100 = np.full(n_100, 1800.0)
@@ -1683,8 +1683,8 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         arrhenius_t_ref=1600.0,
     )
     for phi_val, expected_has_lid, d_raw_bound in [
-        (0.011895, False, (0.75, 0.85)),
-        (0.011870, True, (1.15, 1.25)),
+        (0.011944, False, (0.75, 0.85)),
+        (0.011936, True, (1.15, 1.25)),
     ]:
         st_dlid = compute_stagnant_lid_state(
             radii=r_100,
