@@ -512,6 +512,25 @@ def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
     assert '`delegate_rheology`' in rheo_api
     assert '`stress_closure`' in lid_api
 
+    assert r'w_\text{no\_lid}' not in doc_text
+    assert 'YIELD_BLEND_LOG10_WIDTH' not in doc_text
+    assert r'w_\text{lid,present}' in doc_text
+    assert 'YIELD_BLEND_RATIO_WIDTH' in doc_text
+    assert '$C^0$' in doc_text
+    for switch_token in (
+        'DeltaT_conv',
+        'max(theta, 1e-6)',
+        'max(T_i, 1.0)',
+        'max(H_T_i, 1e-6)',
+        'f_int_max',
+        'max(dr_min, 1.0)',
+        'max(Ra_rh_raw, 1e-30)',
+        'COHESION_FLOOR',
+    ):
+        assert switch_token in doc_text, (
+            f'Missing retained switch token in docs: {switch_token}'
+        )
+
 
 def test_kernel_signatures_use_none_sentinels_and_match_dataclass_defaults(monkeypatch):
     """Verify kernel signatures use None sentinels that resolve dynamically to SolidRheologyParams."""

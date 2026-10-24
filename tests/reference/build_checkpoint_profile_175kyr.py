@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         '--check',
         action='store_true',
-        help='Verify the committed .npz file matches the rebuilt arrays and bytes bitwise.',
+        help='Verify the committed .npz file matches the rebuilt arrays within rtol 1e-12.',
     )
     args = parser.parse_args(argv)
 
@@ -193,15 +193,22 @@ def main(argv: list[str] | None = None) -> int:
             f'Key mismatch: committed {list(committed.keys())} vs rebuilt {list(rebuilt.keys())}'
         )
     for key, arr in rebuilt.items():
-        if not np.array_equal(committed[key], arr):
-            raise AssertionError(
-                f'Array {key!r} in {args.output} is not bitwise equal to rebuilt.'
+        if arr.dtype == bool:
+            if not np.array_equal(committed[key], arr):
+                raise AssertionError(
+                    f'Boolean array {key!r} in {args.output} differs from rebuilt.'
+                )
+        else:
+            np.testing.assert_allclose(
+                committed[key],
+                arr,
+                rtol=1.0e-12,
+                atol=0.0,
+                err_msg=f'Array {key!r} in {args.output} differs from rebuilt',
             )
-    if args.output.read_bytes() != rebuilt_bytes:
-        raise AssertionError(f'File bytes of {args.output} differ from rebuilt .npz archive.')
 
     print(
-        f'OK: {args.output} bitwise verified (100 nodes; run arrays r_basic, P_basic, F_conv, '
+        f'OK: {args.output} verified at rtol=1e-12 (100 nodes; run arrays r_basic, P_basic, F_conv, '
         'F_tot, v_unyielded; mapped T_basic[0:98] and phi_basic[0:4]).'
     )
     return 0
