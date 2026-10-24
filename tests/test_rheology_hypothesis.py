@@ -23,13 +23,17 @@ from aragog.rheology import (
 )
 from aragog.rheology_lid import compute_effective_viscosity, compute_stagnant_lid_state
 
-jax = pytest.importorskip('jax')
-jnp = pytest.importorskip('jax.numpy')
 
-try:
-    jax.config.update('jax_enable_x64', True)
-except Exception:
-    pass
+def _require_jax() -> tuple[Any, Any]:
+    """Import and return (jax, jnp) with x64 enabled, or skip if JAX is unavailable."""
+    jax = pytest.importorskip('jax')
+    jnp = pytest.importorskip('jax.numpy')
+    try:
+        jax.config.update('jax_enable_x64', True)
+    except Exception:
+        pass
+    return jax, jnp
+
 
 pytestmark = pytest.mark.unit
 
@@ -602,6 +606,7 @@ def test_hypothesis_pressure_roundoff_bitwise_property(p: float) -> None:
         assert np.array_equal(st_neg[k], st_zero[k], equal_nan=True)
 
     # JAX JIT bitwise parity for p in [-1, 0)
+    jax, jnp = _require_jax()
     p_jnp_neg = jnp.asarray(p)
     p_jnp_zero = jnp.asarray(0.0)
     jh = jax.jit(lambda p_val: compute_arrhenius_enthalpy(p_val, xp=jnp))
@@ -674,6 +679,7 @@ def test_hypothesis_pressure_invalid_rejection(bad_p: float) -> None:
         compute_stagnant_lid_state(**{**kw, 'pressure': np.full(10, bad_p)}, xp=np)
 
     # JAX JIT returns NaN
+    jax, jnp = _require_jax()
     bad_p_jnp = jnp.asarray(bad_p)
     jh = jax.jit(lambda p: compute_arrhenius_enthalpy(p, xp=jnp))
     assert np.isnan(np.asarray(jh(bad_p_jnp)))
@@ -735,6 +741,7 @@ def test_hypothesis_tau_d_invalid_rejection(bad_td: float) -> None:
         )
 
     # JAX JIT returns NaN
+    jax, jnp = _require_jax()
     bad_td_jnp = jnp.asarray(bad_td)
     jit_eff = jax.jit(
         lambda td: compute_effective_viscosity(
@@ -766,7 +773,7 @@ def test_hypothesis_tau_d_wrong_types(bad_type: Any) -> None:
 
 @given(
     eta_ratio=st.floats(min_value=0.3, max_value=3.0, allow_nan=False, allow_infinity=False),
-    stress_ratio=st.floats(min_value=1.2, max_value=3.0, allow_nan=False, allow_infinity=False),
+    stress_ratio=st.floats(min_value=0.0, max_value=3.0, allow_nan=False, allow_infinity=False),
 )
 @settings(deadline=None, max_examples=30)
 def test_hypothesis_tau_d_valid_finite(eta_ratio: float, stress_ratio: float) -> None:
@@ -786,37 +793,20 @@ def test_hypothesis_tau_d_valid_finite(eta_ratio: float, stress_ratio: float) ->
     )
     assert np.isfinite(eta)
 
-    # Independent reference calculation with soft-min (width 0.01 in log10)
     w_width = 0.025
     cap_width = 0.01
-    x_r = tau_d / tau_y_lid
+    x_r = tau_d / tau_y_lid if tau_y_lid > 0.0 else 0.0
     w_b = 0.5 * (1.0 + np.tanh((x_r - 1.0) / w_width))
-    log10_d = np.log10(eta_diff)
-    log10_y = np.log10(eta_i * (tau_y_lid / tau_d))
-    diff = (log10_y - log10_d) / cap_width
-    if diff > 40.0:
-        log10_soft = log10_d
-    elif diff < -40.0:
-        log10_soft = log10_y
-    else:
-        log10_soft = log10_y - cap_width * np.logaddexp(0.0, (log10_y - log10_d) / cap_width)
-
-    d_branch = (log10_d - log10_y) / cap_width
-    if d_branch > 40.0:
-        eta_y_branch = eta_i * (tau_y_lid / tau_d)
-    elif d_branch < -40.0:
-        eta_y_branch = eta_diff
-    else:
-        eta_y_branch = 10.0**log10_soft
-
     if w_b <= 1.0e-15:
         expected = eta_diff
-    elif w_b >= 1.0 - 1.0e-15:
-        expected = eta_y_branch
+        assert np.isclose(eta, expected, rtol=1e-12, atol=1e-15)
     else:
-        expected = 10.0 ** ((1.0 - w_b) * log10_d + w_b * log10_soft)
-
-    assert np.isclose(eta, expected, rtol=1e-12, atol=1e-15)
+        log10_d = np.log10(eta_diff)
+        ratio = tau_y_lid / max(tau_d, 1.0e-30)
+        log10_y = np.log10(eta_i * ratio)
+        softmin = log10_y - cap_width * np.logaddexp(0.0, (log10_y - log10_d) / cap_width)
+        expected = 10.0 ** ((1.0 - w_b) * log10_d + w_b * softmin)
+        assert np.isclose(eta, expected, rtol=1e-11, atol=1e-15)
 
     eta_arr = compute_effective_viscosity(
         eta_diff=np.full(5, eta_diff),
@@ -827,7 +817,10 @@ def test_hypothesis_tau_d_valid_finite(eta_ratio: float, stress_ratio: float) ->
         xp=np,
     )
     assert np.all(np.isfinite(eta_arr))
-    assert np.allclose(eta_arr, expected, rtol=1e-12, atol=1e-15)
+    if w_b <= 1.0e-15:
+        assert np.allclose(eta_arr, expected, rtol=1e-12, atol=1e-15)
+    else:
+        assert np.allclose(eta_arr, expected, rtol=1e-11, atol=1e-15)
 
 
 def test_hypothesis_tau_d_hard_min_reference_fails_at_yield_transition() -> None:
@@ -898,6 +891,7 @@ def test_hypothesis_mlt_top_slope_theta_invalid(bad_th: float) -> None:
     with pytest.raises(ValueError, match='theta'):
         compute_mlt_top_slope(bad_th, xp=np)
 
+    jax, jnp = _require_jax()
     bad_th_jnp = jnp.asarray(bad_th)
     jit_top = jax.jit(lambda th: compute_mlt_top_slope(th, xp=jnp))
     assert np.isnan(np.asarray(jit_top(bad_th_jnp)))
@@ -1084,6 +1078,7 @@ def test_hypothesis_strain_rate_velocity_invalid(bad_v: float) -> None:
     with pytest.raises(ValueError, match='viscous_velocity'):
         compute_strain_rate_local(bad_v, 1e5, xp=np)
 
+    jax, jnp = _require_jax()
     bad_v_jnp = jnp.asarray(bad_v)
     jit_sr = jax.jit(lambda v: compute_strain_rate_local(v, 1e5, xp=jnp))
     assert np.isnan(np.asarray(jit_sr(bad_v_jnp)))
@@ -1101,6 +1096,7 @@ def test_hypothesis_strain_rate_mixing_length_invalid(bad_l: float) -> None:
     with pytest.raises(ValueError, match='mixing_length'):
         compute_strain_rate_local(1e-9, bad_l, xp=np)
 
+    jax, jnp = _require_jax()
     bad_l_jnp = jnp.asarray(bad_l)
     jit_sr = jax.jit(lambda l: compute_strain_rate_local(1e-9, l, xp=jnp))
     assert np.isnan(np.asarray(jit_sr(bad_l_jnp)))

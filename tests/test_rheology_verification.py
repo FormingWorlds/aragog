@@ -3062,7 +3062,6 @@ def test_stagnant_lid_flux_floor_zero_crossing_width():
 @pytest.mark.physics_invariant
 def test_stagnant_lid_w_T_negative_dt_lid_zero():
     """Verify w_T and all gated lid outputs are identically 0 for dT_lid <= 0 in rheological and fixed modes."""
-    import aragog.rheology_lid as lid_mod
     from aragog.rheology_lid import compute_stagnant_lid_state
 
     n = 30
@@ -3084,11 +3083,7 @@ def test_stagnant_lid_w_T_negative_dt_lid_zero():
         'w_y',
         'lid_regime',
     )
-    for dt_lid in (-1.0e-4, -1.0e-3, -3.0e-3, -1.0e-2):
-        dt_pos = (
-            dt_lid * np.tanh(dt_lid / (0.3 * lid_mod.NO_LID_DT_WIDTH)) if dt_lid > 0.0 else 0.0
-        )
-        assert dt_pos == 0.0
+    for dt_lid in (-100.0, -1.0e-2, -3.0e-3, -1.0e-3, -1.0e-4):
         t_col = np.full(n, 1600.0)
         t_col[-1] = 1600.0 - dt_lid
         for params_mode in (
@@ -3096,7 +3091,7 @@ def test_stagnant_lid_w_T_negative_dt_lid_zero():
                 enabled=True,
                 stress_closure_mode='lid',
                 lid_base_mode='fixed',
-                lid_base_temperature=2000.0,
+                lid_base_temperature=1600.0,
             ),
             SolidRheologyParams(
                 enabled=True,
@@ -3105,8 +3100,6 @@ def test_stagnant_lid_w_T_negative_dt_lid_zero():
             ),
         ):
             t_run = t_col.copy()
-            if params_mode.lid_base_mode == 'rheological':
-                t_run[-3:-1] = 1000.0
             st = compute_stagnant_lid_state(
                 radii=r,
                 temperature=t_run,
@@ -3122,6 +3115,8 @@ def test_stagnant_lid_w_T_negative_dt_lid_zero():
                 unyielded_velocity=np.full(n, 1.0e-9),
                 xp=np,
             )
+            actual_dt = float(st['T_i']) - float(t_run[-1])
+            np.testing.assert_allclose(actual_dt, dt_lid, rtol=1.0e-10, atol=1.0e-12)
             assert bool(st['has_lid']) is False
             for k in gated_keys:
                 assert float(st[k]) == 0.0, (
@@ -3172,7 +3167,7 @@ def test_stagnant_lid_w_T_and_d_lid_grad_continuity_across_zero():
             xp=jnp,
         )
 
-    def eval_w_T(dt_lid):
+    def eval_w_lid_present(dt_lid):
         st = _lid_state(dt_lid)
         d_raw = (r[-1] - st['r_lid_base']) * st['w_active']
         return st['d_lid'] / d_raw
@@ -3181,20 +3176,22 @@ def test_stagnant_lid_w_T_and_d_lid_grad_continuity_across_zero():
         st = _lid_state(dt_lid)
         return st['d_lid']
 
-    grad_w_T = jax.grad(eval_w_T)
+    grad_w_lid_present = jax.grad(eval_w_lid_present)
     grad_d_lid = jax.grad(eval_d_lid)
 
     steps = (1.0e-6, 1.0e-7, 1.0e-8)
-    diffs_w_T = []
+    diffs_w_lid_present = []
     diffs_d_lid = []
     for step in steps:
         h = jnp.asarray(step)
-        diffs_w_T.append(abs(float(grad_w_T(h)) - float(grad_w_T(-h))))
+        diffs_w_lid_present.append(
+            abs(float(grad_w_lid_present(h)) - float(grad_w_lid_present(-h)))
+        )
         diffs_d_lid.append(abs(float(grad_d_lid(h)) - float(grad_d_lid(-h))))
 
     # Under smooth C1 onset, derivative jump scales as O(h). Ratio falls by ~10x per decade.
-    assert diffs_w_T[1] < 0.2 * diffs_w_T[0]
-    assert diffs_w_T[2] < 0.2 * diffs_w_T[1]
+    assert diffs_w_lid_present[1] < 0.2 * diffs_w_lid_present[0]
+    assert diffs_w_lid_present[2] < 0.2 * diffs_w_lid_present[1]
     assert diffs_d_lid[1] < 0.2 * diffs_d_lid[0]
     assert diffs_d_lid[2] < 0.2 * diffs_d_lid[1]
 
@@ -3202,7 +3199,7 @@ def test_stagnant_lid_w_T_and_d_lid_grad_continuity_across_zero():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_stagnant_lid_w_T_positive_part_subthreshold_values():
-    """Verify w_T values in 0 < dT_lid < 3 NO_LID_DT_WIDTH against documented positive part."""
+    """Verify w_T values in 0 < dT_lid <= 8 NO_LID_DT_WIDTH against hand-computed literals."""
     import aragog.rheology_lid as lid_mod
 
     n = 20
@@ -3220,9 +3217,21 @@ def test_stagnant_lid_w_T_positive_part_subthreshold_values():
         lid_base_temperature=2000.0,
     )
     w_width = lid_mod.NO_LID_DT_WIDTH
-    w_thresh = lid_mod.NO_LID_DT_THRESHOLD
 
-    for factor in (0.1, 0.5, 1.0, 2.0):
+    literals = (
+        (0.1, 2.227177990575e-05, 6.4387715967e01),
+        (0.5, 5.152758399282e-04, 1.4896624538e03),
+        (1.0, 2.125477577685e-03, 6.1447556800e03),
+        (2.0, 1.765655210878e-02, 5.1045092188e04),
+        (3.0, 1.189074449219e-01, 3.4376142309e05),
+        (4.0, 4.998322686756e-01, 1.4450150886e06),
+        (5.0, 8.807570898524e-01, 2.5462687468e06),
+        (6.0, 9.820077563366e-01, 2.8389844236e06),
+        (7.0, 9.975265473707e-01, 2.8838492484e06),
+        (8.0, 9.996645373721e-01, 2.8900301775e06),
+    )
+
+    for factor, w_T_exp, d_lid_exp in literals:
         dt_lid = factor * w_width
         t_run = np.full(n, 1600.0)
         t_run[-1] = 1600.0 - dt_lid
@@ -3241,40 +3250,135 @@ def test_stagnant_lid_w_T_positive_part_subthreshold_values():
             phi_width=0.15,
             xp=np,
         )
-        dt_pos = dt_lid * np.tanh(dt_lid / (0.3 * w_width))
-        w_T_expected = lid_mod._melt_ramp(dt_pos, w_thresh, w_width, xp=np, compact=False)
-        d_lid_expected = (
-            (r[-1] - float(st['r_lid_base'])) * float(st['w_active']) * w_T_expected
+        np.testing.assert_allclose(float(st['d_lid']), d_lid_exp, rtol=1.0e-7)
+        d_raw = (r[-1] - float(st['r_lid_base'])) * float(st['w_active'])
+        w_T_actual = float(st['d_lid']) / d_raw
+        np.testing.assert_allclose(w_T_actual, w_T_exp, rtol=1.0e-7)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_stagnant_lid_local_rms_floor_dip_widths_4_5_6():
+    """Verify 5-node moving RMS floor response to positive dips of width 4, 5, and 6 nodes."""
+    n = 25
+    r = np.linspace(3.48e6, 6.371e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.linspace(2600.0, 1600.0, n)
+    phi = np.zeros(n)
+    v_un = np.full(n, 1.0e-9)
+    params = SolidRheologyParams(enabled=True)
+
+    expected_w_active = {
+        4: 2.577844e-01,
+        5: 1.000000e00,
+        6: 1.000000e00,
+    }
+
+    for width, exp_w_act in expected_w_active.items():
+        ft = np.full(n, 100.0)
+        fc = np.zeros(n)
+        start = 12 - width // 2
+        ft[start : start + width] = 1.0
+        fc[start : start + width] = 0.2
+        st = compute_stagnant_lid_state(
+            radii=r,
+            temperature=t,
+            pressure=p,
+            convective_flux=fc,
+            total_flux=ft,
+            solidus_temperature=None,
+            melt_fraction=phi,
+            params=params,
+            unyielded_velocity=v_un,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
         )
-        np.testing.assert_allclose(float(st['d_lid']), d_lid_expected, rtol=1.0e-7)
+        np.testing.assert_allclose(float(st['w_active']), exp_w_act, rtol=1.0e-5)
+        assert bool(st['has_lid']) is True
 
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_stagnant_lid_local_rms_floor_boundary_window_rule():
-    """Verify local RMS floor excludes boundary nodes F_tot[0] and F_tot[-1]."""
-    n = 20
-    r = np.linspace(3.48e6, 6.37e6, n)
-    p = np.linspace(135.0e9, 1.0e5, n)
-    t = np.linspace(2600.0, 300.0, n)
-    phi = np.zeros(n)
-    v_un = np.full(n, 1.0e-9)
+    """Verify local RMS floor excludes boundary nodes for N = 3, 4, 5, 20."""
     params = SolidRheologyParams(enabled=True)
 
-    ft_base = np.full(n, 100.0)
-    ft_base[1] = 0.0
-    ft_base[-2] = 0.0
+    for n in (3, 4, 5, 20):
+        r = np.linspace(3.48e6, 6.37e6, n)
+        p = np.linspace(135.0e9, 1.0e5, n)
+        t = np.linspace(2600.0, 300.0, n)
+        phi = np.zeros(n)
+        v_un = np.full(n, 1.0e-9)
 
-    fc = np.zeros(n)
-    fc[1] = 1.0
-    fc[-2] = 1.0
+        ft_base = np.full(n, 100.0)
+        ft_base[1] = 0.0
+        ft_base[-2] = 0.0
 
-    st_base = compute_stagnant_lid_state(
+        fc = np.zeros(n)
+        fc[1] = 1.0
+        fc[-2] = 1.0
+
+        st_base = compute_stagnant_lid_state(
+            radii=r,
+            temperature=t,
+            pressure=p,
+            convective_flux=fc,
+            total_flux=ft_base,
+            solidus_temperature=None,
+            melt_fraction=phi,
+            params=params,
+            unyielded_velocity=v_un,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
+        )
+
+        for ft_cmb in (0.0, 1000.0):
+            for ft_surf in (0.0, 1000.0):
+                ft_mod = ft_base.copy()
+                ft_mod[0] = ft_cmb
+                ft_mod[-1] = ft_surf
+                st_mod = compute_stagnant_lid_state(
+                    radii=r,
+                    temperature=t,
+                    pressure=p,
+                    convective_flux=fc,
+                    total_flux=ft_mod,
+                    solidus_temperature=None,
+                    melt_fraction=phi,
+                    params=params,
+                    unyielded_velocity=v_un,
+                    viscosity_solid=1.0e21,
+                    phi_rheo=0.4,
+                    phi_width=0.15,
+                    xp=np,
+                )
+                assert float(st_mod['T_i']) == float(st_base['T_i'])
+                assert float(st_mod['d_lid']) == float(st_base['d_lid'])
+                assert float(st_mod['tau_d']) == float(st_base['tau_d'])
+
+
+def test_stagnant_lid_boundary_window_lead_probe_n3():
+    """Verify N = 3 boundary-window rule preserves convective activity and lid."""
+    r = np.linspace(3.48e6, 6.37e6, 3)
+    p = np.linspace(135.0e9, 1.0e5, 3)
+    t = np.linspace(2600.0, 300.0, 3)
+    phi = np.zeros(3)
+    v_un = np.full(3, 1.0e-9)
+    params = SolidRheologyParams(enabled=True)
+
+    ft = np.array([0.0, 1.0, 1000.0])
+    fc = np.array([0.0, 1.0, 0.0])
+
+    st = compute_stagnant_lid_state(
         radii=r,
         temperature=t,
         pressure=p,
         convective_flux=fc,
-        total_flux=ft_base,
+        total_flux=ft,
         solidus_temperature=None,
         melt_fraction=phi,
         params=params,
@@ -3284,27 +3388,6 @@ def test_stagnant_lid_local_rms_floor_boundary_window_rule():
         phi_width=0.15,
         xp=np,
     )
-
-    for ft_cmb in (0.0, 1000.0):
-        for ft_surf in (0.0, 1000.0):
-            ft_mod = ft_base.copy()
-            ft_mod[0] = ft_cmb
-            ft_mod[-1] = ft_surf
-            st_mod = compute_stagnant_lid_state(
-                radii=r,
-                temperature=t,
-                pressure=p,
-                convective_flux=fc,
-                total_flux=ft_mod,
-                solidus_temperature=None,
-                melt_fraction=phi,
-                params=params,
-                unyielded_velocity=v_un,
-                viscosity_solid=1.0e21,
-                phi_rheo=0.4,
-                phi_width=0.15,
-                xp=np,
-            )
-            assert float(st_mod['T_i']) == float(st_base['T_i'])
-            assert float(st_mod['d_lid']) == float(st_base['d_lid'])
-            assert float(st_mod['tau_d']) == float(st_base['tau_d'])
+    assert bool(st['has_lid']) is True
+    assert float(st['w_active']) > 0.5
+    assert float(st['d_lid']) > 0.0

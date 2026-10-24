@@ -1819,6 +1819,20 @@ def test_rheology_kernel_reference_grid_parity():
     with pytest.raises(RuntimeError, match='--allow-regenerate'):
         gen_mod.main(['--output', str(fixture_path)])
 
+    from unittest.mock import patch
+
+    with (
+        patch.object(gen_mod, '_has_git_commit', return_value=False),
+        pytest.raises(RuntimeError, match='2457a8c95099b04b766a220772d2e55bb3d02608'),
+    ):
+        gen_mod.verify_fixture(fixture_path)
+
+    with (
+        patch.object(gen_mod, '_has_git_commit', return_value=False),
+        pytest.raises(RuntimeError, match='2457a8c95099b04b766a220772d2e55bb3d02608'),
+    ):
+        gen_mod.main(['--check', '--output', str(fixture_path)])
+
     # 8. compute_effective_viscosity
     tau_d_arr = np.linspace(1e4, 1e8, 20)
     eta_diff = np.full(20, 1.0e22)
