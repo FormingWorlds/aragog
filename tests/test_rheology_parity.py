@@ -419,7 +419,6 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             convective_flux=conv_flux,
             total_flux=tot_flux,
             solidus_temperature=t_sol_1d,
-            t_sol_0=2200.0,
             melt_fraction=melt_frac,
             params=params_1d,
             unyielded_velocity=v_unyielded,
@@ -435,7 +434,6 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             convective_flux=jnp.array(conv_flux),
             total_flux=jnp.array(tot_flux),
             solidus_temperature=jnp.array(t_sol_1d),
-            t_sol_0=2200.0,
             melt_fraction=jnp.array(melt_frac),
             params=params_1d,
             unyielded_velocity=jnp.array(v_unyielded),
@@ -576,19 +574,84 @@ def test_jax_jacrev_closure_differentiability():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
+def test_checkpoint_profile_175kyr_paleos_solidus_consistency():
+    """Verify 175 kyr fixture T_basic and phi_basic come from one PALEOS melting curve.
+
+    In ``tests/reference/checkpoint_profile_175kyr.npz`` (built and verified bitwise by
+    ``tests/reference/build_checkpoint_profile_175kyr.py``), ``r_basic``, ``P_basic``,
+    ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and ``phi_basic[4:100]``
+    are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]`` by the
+    PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4,
+    and ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
+    import importlib.util
+
+    builder_path = os.path.join(
+        os.path.dirname(__file__), 'reference', 'build_checkpoint_profile_175kyr.py'
+    )
+    spec = importlib.util.spec_from_file_location(
+        'build_checkpoint_profile_175kyr', builder_path
+    )
+    assert spec is not None and spec.loader is not None
+    builder_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder_mod)
+    assert builder_mod.main(['--check']) == 0
+    offline_rebuilt = builder_mod.build_fixture_arrays(source_commit='0' * 40)
+    assert np.array_equal(
+        offline_rebuilt['T_basic'],
+        np.load(builder_path.replace('build_', '').replace('.py', '.npz'))['T_basic'],
+    )
+    assert f'{float(offline_rebuilt["T_basic"][98]):.2f} K' in builder_mod.__doc__
+    assert f'{float(offline_rebuilt["T_basic"][99]):.2f} K' in builder_mod.__doc__
+
+    ckpt_path = os.path.join(
+        os.path.dirname(__file__), 'reference', 'checkpoint_profile_175kyr.npz'
+    )
+    data = np.load(ckpt_path)
+    p_gpa = data['P_basic'] * 1.0e-9
+    t_basic = data['T_basic']
+    phi_basic = data['phi_basic']
+    p0_gpa = 2.551686137257537
+    t_liq = np.where(
+        p_gpa < p0_gpa,
+        1831.0 * (1.0 + p_gpa / 4.6) ** 0.33,
+        6000.0 * (np.maximum(p_gpa, 0.0) / 140.0) ** 0.26,
+    )
+    t_sol = 0.8 * t_liq
+
+    np.testing.assert_array_equal(
+        phi_basic > 0.0,
+        t_basic > t_sol,
+        err_msg='phi_basic > 0 must hold if and only if T_basic > T_sol(P_basic)',
+    )
+    phi_expected = np.clip((t_basic - t_sol) / (t_liq - t_sol), 0.0, 1.0)
+    np.testing.assert_allclose(phi_basic, phi_expected, rtol=1.0e-12, atol=1.0e-12)
+    # Canary: shifting T_sol by +100 K at the uppermost molten node breaks the equivalence.
+    t_sol_shifted = t_sol.copy()
+    t_sol_shifted[97] += 100.0
+    assert not np.array_equal(phi_basic > 0.0, t_basic > t_sol_shifted)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
 def test_stagnant_lid_checkpoint_profile_parity():
     """Verify stagnant lid state on 175 kyr checkpoint profile matches between NumPy and JAX.
 
-    Fixture ``tests/reference/checkpoint_profile_175kyr.npz`` is a 100-node Earth-sized
-    magma-ocean solidification snapshot at ``t = 175 kyr`` (``r_basic`` 3480 to 6371 km,
-    ``P_basic`` 145.5 to 0.71 GPa, ``T_basic`` 4794.8 to 452.6 K, ``phi_basic`` 0.141 at
-    the CMB to 0.0 at the surface) with ``T_basic[-1] = 452.559`` K and
-    ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Because the interior temperature
-    selector ``w_Ti`` is centred at ``0.9 * f_int_max`` (``0.9`` on this profile) and
-    excludes the boundary nodes, both the default ``interior_flux_fraction = 0.05`` and
-    ``0.10`` give ``T_i = 1423.012`` K, ``eta_i = 2.760821e+22`` Pa s,
-    ``d_lid = 42026.67`` m, ``max(w_lid) = 1.000000``,
-    ``tau_d = 1.299379e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.
+    Fixture ``tests/reference/checkpoint_profile_175kyr.npz`` (built by
+    ``tests/reference/build_checkpoint_profile_175kyr.py``) is a 100-node Earth-sized
+    magma-ocean solidification snapshot at ``t = 175 kyr`` where ``r_basic`` (3480 to
+    6371 km), ``P_basic`` (145.5 to 0.71 GPa), ``F_conv``, ``F_tot``, ``v_unyielded``,
+    ``T_basic[98:100]``, and ``phi_basic[4:100]`` are 175 kyr run values, while
+    ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]`` by the PALEOS lever rule,
+    ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule
+    (``T_basic`` 5040.9 to 452.6 K, ``phi_basic`` 0.159 at the CMB to 0.0 at the surface)
+    with ``T_basic[-1] = 452.559`` K and ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``.
+    Because the interior temperature selector ``w_Ti`` is centred at ``0.9 * f_int_max``
+    (``0.9`` on this profile) and excludes the boundary nodes, both the default
+    ``interior_flux_fraction = 0.05`` and ``0.10`` give ``T_i = 1423.015`` K,
+    ``eta_i = 2.760705e+22`` Pa s, ``d_lid = 42134.62`` m, ``max(w_lid) = 1.000000``,
+    ``tau_d = 1.299363e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.
     """
     # Evaluates under linear solidus fallback (table-free) with solidus_temperature=None.
     ckpt_path = os.path.join(
@@ -631,11 +694,11 @@ def test_stagnant_lid_checkpoint_profile_parity():
     state_np = _lid_state(np, **lid_inputs)
     state_jx = _lid_state(jnp, **lid_inputs)
 
-    assert float(state_np['T_i']) == pytest.approx(1423.012466, rel=1.0e-6)
-    assert float(state_np['eta_i']) == pytest.approx(2.760821e22, rel=1.0e-5)
-    assert float(state_np['d_lid']) == pytest.approx(42026.67, rel=1.0e-5)
+    assert float(state_np['T_i']) == pytest.approx(1423.014834, rel=1.0e-6)
+    assert float(state_np['eta_i']) == pytest.approx(2.760705e22, rel=1.0e-5)
+    assert float(state_np['d_lid']) == pytest.approx(42134.62, rel=1.0e-5)
     assert float(np.max(state_np['w_lid'])) == pytest.approx(1.000000, rel=1.0e-5)
-    assert float(state_np['tau_d']) == pytest.approx(1.299379e6, rel=1.0e-5)
+    assert float(state_np['tau_d']) == pytest.approx(1.299363e6, rel=1.0e-5)
     assert float(state_np['tau_y_lid']) == pytest.approx(5.0e8, rel=1.0e-12)
 
     for key in [

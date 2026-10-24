@@ -56,26 +56,20 @@ _BOUNDS = (
 
 @dataclass(frozen=True, eq=True)
 class SolidRheologyParams:
-    """Parameters for solid-state mantle rheology and stagnant lid scaling.
+    r"""Parameters for solid-state mantle rheology and stagnant lid scaling.
 
     This class is the single source of truth for rheology parameter defaults
     and bounds validation across Aragog and PROTEUS.
 
     Notes
     -----
-    At the default ``g_homologous = 25.0`` and ``t_sol_0 = 1400.0`` K, the
-    zero-pressure activation enthalpy is :math:`H(0) = 291` kJ/mol, close to a
-    standard olivine diffusion-creep activation energy :math:`E_a = 300` kJ/mol
-    (Karato & Wu 1993). The linear solidus fallback defaults ``t_sol_0 = 1400.0`` K
-    and ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a single-slope benchmark
-    form (comparable to the 21.1 K/GPa whole-mantle secant of the Wolf & Bower
-    2018 solidus curve ``wolf_bower_2018/r15728072/solidus.dat``, 1380.6 K at
-    0 GPa to 4232.1 K at 135 GPa). Because the physical solidus is concave
-    downward overall (steep below about 25 GPa, about 16 K/GPa above), the
-    linear form is 1.4 % high at 0 GPa (1400 K versus 1380.6 K), 19 % low at
-    25 GPa (2000 K versus 2475.9 K), and 9.6 % high at 135 GPa (4640 K versus
-    4232.1 K), crossing the table curve below 1 GPa and at 84.3 GPa,
-    and serves table-free constant-property benchmarks only.
+    Coupled and tabulated PALEOS runs evaluate the phase-boundary solidus
+    :math:`T_\mathrm{sol}(P) = 0.8\,T_\mathrm{liq}(P)` from the PALEOS
+    :math:`\mathrm{MgSiO_3}` melting curve. When no solidus table reaches a
+    call, the linear fallback defaults ``t_sol_0 = 1400.0`` K and
+    ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a table-free benchmark form
+    whose largest deviation from the PALEOS solidus over 0 to 135 GPa is
+    1108.1 K (see ``docs/Explanations/solid_state_convection.md`` Section 1).
     """
 
     enabled: bool = False
