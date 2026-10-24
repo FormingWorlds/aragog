@@ -302,10 +302,13 @@ def compute_stagnant_lid_state(
     ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are smoothly
     gated by ``w_lid_present = w_d * w_T * w_act_gate * w_sum_gate * w_weight``
     (where ``w_d`` and ``w_sum_gate`` are $C^0$ with a one-sided slope at the
-    domain edge ``d_lid_raw >= 0`` and ``W_sum >= 0``, and ``w_T`` uses the $C^1$
-    positive part ``where(dT_lid > 0, dT_lid * tanh(dT_lid / (0.3 * NO_LID_DT_WIDTH)), 0)``
-    so ``w_lid_present`` vanishes identically when ``d_lid_raw <= 0``,
-    ``T_i - T_surf <= 0``, or ``W_sum <= 0``) and ``has_lid`` is False, while
+    domain edge ``d_lid_raw >= 0`` and ``W_sum >= 0``, and ``w_T`` uses the
+    even-warped positive thermal contrast
+    ``dT_eff = dT_pos * tanh(dT_pos / (0.5 * NO_LID_DT_WIDTH)) - 3.5 * NO_LID_DT_WIDTH * exp(-(dT_pos / (12 * NO_LID_DT_WIDTH))**2)``
+    for ``dT_lid > 0`` so ``w_T`` and ``d_lid`` are $C^1$ with zero slope at
+    ``T_i - T_surf = 0`` and ``w_lid_present`` vanishes identically when
+    ``d_lid_raw <= 0``, ``T_i - T_surf <= 0``, or ``W_sum <= 0``) and ``has_lid``
+    is False, while
     ``T_i``, ``eta_i``, ``mu_i``, and ``theta`` serve as interior fallback
     diagnostics and all solver-facing outputs vary continuously across uniform
     convective flux fractions ``f`` in ``[0, 1e-3]``. Intentional non-smooth
@@ -571,15 +574,22 @@ def compute_stagnant_lid_state(
         & (d_lid_raw > NO_LID_THICKNESS_THRESHOLD)
     )
     dT_lid = xp.sum(W_tilde * (T - T_surf))
-    dT_pos = xp.where(
-        dT_lid > 0.0,
-        dT_lid * xp.tanh(dT_lid / (0.3 * NO_LID_DT_WIDTH)),
-        0.0,
+    dT_pos = xp.maximum(dT_lid, 0.0)
+    dT_eff = dT_pos * xp.tanh(
+        dT_pos / (0.5 * NO_LID_DT_WIDTH)
+    ) - 3.5 * NO_LID_DT_WIDTH * xp.exp(-((dT_pos / (12.0 * NO_LID_DT_WIDTH)) ** 2))
+    w_T_raw = 0.5 * (1.0 + xp.tanh((dT_eff - NO_LID_DT_THRESHOLD) / NO_LID_DT_WIDTH))
+    w_T_0 = 0.5 * (
+        1.0 + xp.tanh(-(3.5 * NO_LID_DT_WIDTH + NO_LID_DT_THRESHOLD) / NO_LID_DT_WIDTH)
     )
     w_d = _melt_ramp(
         d_lid_raw, NO_LID_THICKNESS_THRESHOLD, NO_LID_THICKNESS_WIDTH, xp, compact=False
     )
-    w_T = _melt_ramp(dT_pos, NO_LID_DT_THRESHOLD, NO_LID_DT_WIDTH, xp, compact=False)
+    w_T = xp.where(
+        dT_lid > 0.0,
+        xp.clip((w_T_raw - w_T_0) / xp.maximum(1.0 - w_T_0, 1.0e-12), 0.0, 1.0),
+        0.0,
+    )
     w_act_gate = 0.5 * (1.0 + xp.tanh((w_active - 0.05) / CONV_ACTIVE_GATE_WIDTH))
     w_sum_gate = _melt_ramp(W_sum, 1.0e-6, CONV_SUM_GATE_WIDTH, xp, compact=False)
     w_lid_present = w_d * w_T * w_act_gate * w_sum_gate * w_weight
