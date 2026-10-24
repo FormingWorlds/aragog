@@ -554,7 +554,6 @@ def _make_valid_lid_inputs(n: int = 10) -> dict[str, Any]:
         'viscosity_solid': 1e21,
         'phi_rheo': 0.4,
         'phi_width': 0.15,
-        't_sol_0': params.t_sol_0,
     }
 
 
