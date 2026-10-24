@@ -463,7 +463,10 @@ def compute_stagnant_lid_state(
     # 5-node local interior RMS floor: replace boundary nodes (0, N-1) with (1, N-2)
     # and replicate 2 edge nodes; differs from 1e-12 only where F_conv > 0 and |F_tot| < 0.0014 * F_loc_rms.
     F_tot_safe = _compute_f_tot_safe(F_tot, r, xp)
-    f = xp.clip(xp.maximum(F_conv, 0.0) / F_tot_safe, 0.0, 1.0)
+    # Cap with where, not clip: clip passes half the gradient at f_raw == 1, and the tie in
+    # f_int_max then gives T_i a nonzero jax gradient where T_i is locally constant.
+    f_raw = xp.maximum(F_conv, 0.0) / F_tot_safe
+    f = xp.where(f_raw >= 1.0, 1.0, f_raw)
     invalid_scalar = xp.any((r[1:] - r[:-1]) <= 0.0)
     zero_or_nan = xp.where(
         invalid_inputs | invalid_scalar | xp.any(~xp.isfinite(f)), xp.nan, 0.0
