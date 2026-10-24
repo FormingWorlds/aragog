@@ -5,17 +5,10 @@ from __future__ import annotations
 from dataclasses import asdict, fields
 from typing import Any
 
-import jax
-import jax.numpy as jnp
 import numpy as np
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
-try:
-    jax.config.update('jax_enable_x64', True)
-except Exception:
-    pass
 
 from aragog.config.phases import PhaseConfig
 from aragog.rheology import (
@@ -29,6 +22,14 @@ from aragog.rheology import (
     viscous_mixing_length_factor,
 )
 from aragog.rheology_lid import compute_effective_viscosity, compute_stagnant_lid_state
+
+jax = pytest.importorskip('jax')
+jnp = pytest.importorskip('jax.numpy')
+
+try:
+    jax.config.update('jax_enable_x64', True)
+except Exception:
+    pass
 
 pytestmark = pytest.mark.unit
 
@@ -183,6 +184,18 @@ def _make_phase_config(**kwargs: Any) -> PhaseConfig:
     }
     base.update(kwargs)
     return PhaseConfig(**base)
+
+
+def _scalar_wrong_types_strategy() -> st.SearchStrategy[Any]:
+    """Generate non-numeric or non-scalar types: booleans, text, length-1 arrays, and lists."""
+    return st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+        st.floats(min_value=0.1, max_value=1.0e10, allow_nan=False, allow_infinity=False).map(
+            lambda x: np.array([x])
+        ),
+        st.sampled_from([[1.0e20], np.array([0.5]), np.array([1.0])]),
+    )
 
 
 @pytest.mark.unit
@@ -752,52 +765,98 @@ def test_hypothesis_tau_d_wrong_types(bad_type: Any) -> None:
 
 
 @given(
-    valid_td=st.floats(min_value=0.0, max_value=1e12, allow_nan=False, allow_infinity=False),
+    eta_ratio=st.floats(min_value=0.3, max_value=3.0, allow_nan=False, allow_infinity=False),
+    stress_ratio=st.floats(min_value=1.2, max_value=3.0, allow_nan=False, allow_infinity=False),
 )
 @settings(deadline=None, max_examples=30)
-def test_hypothesis_tau_d_valid_finite(valid_td: float) -> None:
-    """Verify that effective viscosity matches independent reference formula across valid tau_d."""
+def test_hypothesis_tau_d_valid_finite(eta_ratio: float, stress_ratio: float) -> None:
+    """Verify that effective viscosity matches independent soft-min reference formula."""
+    eta_diff = 1.0e20
+    eta_i = eta_diff * eta_ratio
+    tau_y_lid = 1.0e8
+    tau_d = tau_y_lid * stress_ratio
+
     eta = compute_effective_viscosity(
-        eta_diff=1e22,
-        eta_i=1e20,
-        tau_d=valid_td,
-        tau_y_lid=1e8,
+        eta_diff=eta_diff,
+        eta_i=eta_i,
+        tau_d=tau_d,
+        tau_y_lid=tau_y_lid,
         stress_closure_mode='lid',
         xp=np,
     )
     assert np.isfinite(eta)
 
-    # Independent reference calculation
-    ty_lid = 1e8
-    eta_diff = 1e22
-    eta_i = 1e20
-    if valid_td <= 0.0:
-        expected = eta_diff
+    # Independent reference calculation with soft-min (width 0.01 in log10)
+    w_width = 0.025
+    cap_width = 0.01
+    x_r = tau_d / tau_y_lid
+    w_b = 0.5 * (1.0 + np.tanh((x_r - 1.0) / w_width))
+    log10_d = np.log10(eta_diff)
+    log10_y = np.log10(eta_i * (tau_y_lid / tau_d))
+    diff = (log10_y - log10_d) / cap_width
+    if diff > 40.0:
+        log10_soft = log10_d
+    elif diff < -40.0:
+        log10_soft = log10_y
     else:
-        x_ratio = valid_td / ty_lid
-        w_b = 0.5 * (1.0 + np.tanh((x_ratio - 1.0) / 0.025))
-        ratio = ty_lid / max(valid_td, 1e-30)
-        eta_y = min(eta_diff, eta_i * ratio)
-        if w_b <= 1e-15:
-            expected = eta_diff
-        elif w_b >= 1.0 - 1e-15:
-            expected = eta_y
-        else:
-            log10_eff = (1.0 - w_b) * np.log10(eta_diff) + w_b * np.log10(eta_y)
-            expected = 10.0**log10_eff
+        log10_soft = log10_y - cap_width * np.logaddexp(0.0, (log10_y - log10_d) / cap_width)
+
+    d_branch = (log10_d - log10_y) / cap_width
+    if d_branch > 40.0:
+        eta_y_branch = eta_i * (tau_y_lid / tau_d)
+    elif d_branch < -40.0:
+        eta_y_branch = eta_diff
+    else:
+        eta_y_branch = 10.0**log10_soft
+
+    if w_b <= 1.0e-15:
+        expected = eta_diff
+    elif w_b >= 1.0 - 1.0e-15:
+        expected = eta_y_branch
+    else:
+        expected = 10.0 ** ((1.0 - w_b) * log10_d + w_b * log10_soft)
 
     assert np.isclose(eta, expected, rtol=1e-12, atol=1e-15)
 
     eta_arr = compute_effective_viscosity(
-        eta_diff=np.full(5, 1e22),
-        eta_i=np.full(5, 1e20),
-        tau_d=np.full(5, valid_td),
-        tau_y_lid=np.full(5, 1e8),
+        eta_diff=np.full(5, eta_diff),
+        eta_i=np.full(5, eta_i),
+        tau_d=np.full(5, tau_d),
+        tau_y_lid=np.full(5, tau_y_lid),
         stress_closure_mode='lid',
         xp=np,
     )
     assert np.all(np.isfinite(eta_arr))
     assert np.allclose(eta_arr, expected, rtol=1e-12, atol=1e-15)
+
+
+def test_hypothesis_tau_d_hard_min_reference_fails_at_yield_transition() -> None:
+    """Verify that hard-min reference fails to match compute_effective_viscosity in softmin transition."""
+    eta_diff = 1.0e20
+    eta_i = 2.0 * eta_diff
+    tau_y_lid = 1.0e8
+    tau_d = 2.0 * tau_y_lid
+
+    eta = compute_effective_viscosity(
+        eta_diff=eta_diff,
+        eta_i=eta_i,
+        tau_d=tau_d,
+        tau_y_lid=tau_y_lid,
+        stress_closure_mode='lid',
+        xp=np,
+    )
+    eta_y_hard = min(eta_diff, eta_i * (tau_y_lid / tau_d))
+    w_width = 0.025
+    x_r = tau_d / tau_y_lid
+    w_b = 0.5 * (1.0 + np.tanh((x_r - 1.0) / w_width))
+    expected_hard = (
+        eta_y_hard
+        if w_b >= 1.0 - 1.0e-15
+        else 10.0 ** ((1.0 - w_b) * np.log10(eta_diff) + w_b * np.log10(eta_y_hard))
+    )
+    rel_diff = abs(eta - expected_hard) / eta
+    assert rel_diff > 0.01
+    assert not np.isclose(eta, expected_hard, rtol=1e-3)
 
 
 # viscosity_solid validation
@@ -815,10 +874,7 @@ def test_hypothesis_viscosity_solid_invalid_rejection(bad_vs: float) -> None:
 
 
 @given(
-    bad_type=st.one_of(
-        st.booleans(),
-        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
-    ),
+    bad_type=_scalar_wrong_types_strategy(),
 )
 @settings(deadline=None, max_examples=25)
 def test_hypothesis_viscosity_solid_wrong_types(bad_type: Any) -> None:
@@ -874,10 +930,7 @@ def test_hypothesis_mlt_top_slope_s_top_inf_invalid(bad_s: float) -> None:
 
 
 @given(
-    bad_type=st.one_of(
-        st.booleans(),
-        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
-    ),
+    bad_type=_scalar_wrong_types_strategy(),
 )
 @settings(deadline=None, max_examples=25)
 def test_hypothesis_mlt_top_slope_s_top_inf_wrong_types(bad_type: Any) -> None:
@@ -900,10 +953,7 @@ def test_hypothesis_mlt_top_slope_c_theta_invalid(bad_c: float) -> None:
 
 
 @given(
-    bad_type=st.one_of(
-        st.booleans(),
-        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
-    ),
+    bad_type=_scalar_wrong_types_strategy(),
 )
 @settings(deadline=None, max_examples=25)
 def test_hypothesis_mlt_top_slope_c_theta_wrong_types(bad_type: Any) -> None:
@@ -979,10 +1029,7 @@ def test_hypothesis_yield_stress_max_invalid(bad_max: float) -> None:
 
 
 @given(
-    bad_type=st.one_of(
-        st.booleans(),
-        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
-    ),
+    bad_type=_scalar_wrong_types_strategy(),
 )
 @settings(deadline=None, max_examples=25)
 def test_hypothesis_yield_stress_params_wrong_types(bad_type: Any) -> None:

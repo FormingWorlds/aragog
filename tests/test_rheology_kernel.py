@@ -1954,7 +1954,7 @@ def test_scalar_parameters_float32_bitwise_parity() -> None:
 @pytest.mark.physics_invariant
 def test_compute_effective_viscosity_lid_tanh_yield_blend():
     """Verify log10 tanh yield blend in lid mode across transition band and outside d*."""
-    import jax
+    jax = pytest.importorskip('jax')
     import jax.numpy as jnp
 
     import aragog.rheology_lid as lid_mod
@@ -2039,7 +2039,7 @@ def test_compute_effective_viscosity_lid_tanh_yield_blend():
 @pytest.mark.physics_invariant
 def test_compute_arrhenius_viscosity_smooth_ceiling_band():
     """Verify smooth softplus viscosity ceiling in compute_arrhenius_viscosity."""
-    import jax
+    jax = pytest.importorskip('jax')
     import jax.numpy as jnp
 
     import aragog.rheology as rheo_mod
@@ -2140,7 +2140,7 @@ def test_compute_arrhenius_viscosity_smooth_ceiling_band():
 @pytest.mark.physics_invariant
 def test_melt_ramp_compact_quintic_and_solidus_support():
     """Verify C2 quintic Hermite _melt_ramp on [0.008, 0.012] and compact solidus support."""
-    import jax
+    jax = pytest.importorskip('jax')
     import jax.numpy as jnp
 
     import aragog.rheology_lid as lid_mod
@@ -2209,7 +2209,7 @@ def test_melt_ramp_compact_quintic_and_solidus_support():
 @pytest.mark.physics_invariant
 def test_compute_effective_viscosity_local_tiny_strain_rate_grad_and_smooth_cap():
     """Verify finite zero jax.grad at tiny positive strain_rate and 0.01-decade smooth local cap."""
-    import jax
+    jax = pytest.importorskip('jax')
     import jax.numpy as jnp
 
     import aragog.rheology_lid as lid_mod
