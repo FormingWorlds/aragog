@@ -139,7 +139,10 @@ def _make_solver(params: Parameters) -> EntropySolver:
     return solver
 
 
-def _build_jax_bundle(solver: EntropySolver):
+def _build_jax_bundle(
+    solver: EntropySolver,
+    rheology_override: SolidRheologyParams | None = None,
+):
     """Build JAX (mesh_jax, eos_jax, params_jax, dSdt_args) matching ``solver``."""
     params = solver.parameters
     eos_jax = entropy_eos_jax(_resolve_eos_dir())
@@ -163,7 +166,9 @@ def _build_jax_bundle(solver: EntropySolver):
         bottom_up_grav_sep=params.energy.bottom_up_grav_sep,
         phase_smoothing=params.energy.phase_smoothing,
         separation_viscosity=params.phase_mixed.separation_viscosity,
-        rheology=params.phase_solid.rheology,
+        rheology=(
+            rheology_override if rheology_override is not None else params.phase_solid.rheology
+        ),
     )
     r_cmb = float(mesh_jax.radii_basic[0])
     r_next = float(mesh_jax.radii_basic[1])
@@ -1237,33 +1242,69 @@ _BENCHMARK_JSON = Path(__file__).parent / 'reference' / 'ssc_wp2_validation_benc
 @pytest.mark.reference_pinned
 def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     """A2-2: NumPy and JAX right-hand sides agree to relative difference <= 1e-6 across
-    100 cooling states on the active-solid variant of abe_solid.toml (s_init=2500,
-    kappah_floor=0, viscosity_solid=1e18), where the rheology-on vs rheology-off
-    relative difference is >= 100 * 1e-6 = 1e-4 at every state and a JAX-only
-    rheology perturbation fails the 1e-6 tolerance by > 8000x, while the default
-    abe_solid.toml (s_init=2900, kappah_floor=10, viscosity_solid=1e21) remains an
-    inert-path check with RHS_on == RHS_off."""
+    100 cooling states on:
+    1. the active-solid variant of abe_solid.toml (s_init=2500, kappah_floor=0,
+       viscosity_solid=1e18), where Arrhenius strengthening shifts the RHS by >= 1e-4
+       at every state and a JAX-only g_homologous perturbation fails 1e-6 by > 8000x;
+    2. the yield-active lid state set (s_init=2650, kappah_floor=0, viscosity_solid=1e15,
+       yield_stress_c=150 Pa, yield_stress_mu=0), where plastic yielding acts in 34..52
+       nodes across all 100/100 states, changes the RHS relative to yield-off
+       (tau_y -> infinity) by >= 1e-4 at every state, agrees between NumPy and JAX to
+       <= 8.46e-7 <= 1e-6, and a JAX-only yield-stress perturbation fails 1e-6 by > 120x;
+    3. the default abe_solid.toml (s_init=2900, kappah_floor=10, viscosity_solid=1e21),
+       which remains an inert-path check with RHS_on == RHS_off."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
-    var_rec = data['a2_2_rhs_parity_and_activity']['abe_solid_kappah_floor_0']
-    def_rec = data['a2_2_rhs_parity_and_activity']['abe_solid_default']
+    a2_2_block = data['a2_2_rhs_parity_and_activity']
+    var_rec = a2_2_block['abe_solid_kappah_floor_0']
+    yld_rec = a2_2_block['abe_solid_yield_active']
+    def_rec = a2_2_block['abe_solid_default']
+    diag_59b = a2_2_block['ruling_59b_flux_vs_rhs_diagnostic']
 
-    # Verify recorded 100-state benchmark invariants
+    # Verify recorded 100-state benchmark invariants for all 3 state sets
     rel_np_jax = np.asarray(var_rec['rel_rhs_numpy_vs_jax_per_state'], dtype=float)
     rel_on_off = np.asarray(var_rec['rel_rhs_on_vs_off_per_state'], dtype=float)
     rel_canary = np.asarray(var_rec['canary_jax_broken_rel_rhs_per_state'], dtype=float)
+
+    yld_np_jax = np.asarray(yld_rec['rel_rhs_numpy_vs_jax_per_state'], dtype=float)
+    yld_on_yoff = np.asarray(yld_rec['rel_rhs_yield_on_vs_yield_off_per_state'], dtype=float)
+    yld_canary = np.asarray(yld_rec['canary_jax_yield_broken_rel_rhs_per_state'], dtype=float)
+    yld_nodes = np.asarray(yld_rec['n_nodes_eta_eff_ne_eta_diff_per_state'], dtype=int)
+
     def_on_off = np.asarray(def_rec['rel_rhs_on_vs_off_per_state'], dtype=float)
 
     assert rel_np_jax.shape == (100,)
     assert float(np.max(rel_np_jax)) <= 1.0e-6
     assert float(np.min(rel_on_off)) >= 100.0 * 1.0e-6
     assert float(np.min(rel_canary)) > 100.0 * 1.0e-6
-    assert float(np.max(def_on_off)) == 0.0
     assert var_rec['n_nodes_visc_on_ne_visc_off_min'] == 100
     assert var_rec['n_nodes_kappah_on_ne_kappah_off_min'] >= 90
+
+    # Ruling 59 (a): yield-active state set assertions
+    assert yld_np_jax.shape == (100,)
+    assert int(np.sum(yld_nodes > 0)) == 100
+    assert yld_rec['n_states_eta_eff_ne_eta_diff_pos'] == 100
+    assert yld_rec['n_nodes_eta_eff_ne_eta_diff_min'] == 34
+    assert yld_rec['n_nodes_eta_eff_ne_eta_diff_max'] == 52
+    assert float(np.max(yld_np_jax)) <= 1.0e-6
+    assert float(np.min(yld_on_yoff)) >= 1.0e-4
+    assert float(np.min(yld_canary)) >= 1.0e-4
+
+    # Ruling 59 (b): flux vs RHS diagnostic assertions on abe_solid_kappah_floor_0
+    assert diag_59b['worst_state_index'] == 4
+    assert diag_59b['worst_basic_node_index'] == 64
+    assert diag_59b['worst_staggered_cell_index'] == 63
+    assert diag_59b['max_rel_flux_numpy_vs_jax'] == pytest.approx(
+        var_rec['max_rel_flux_numpy_vs_jax'], rel=1.0e-12
+    )
+    assert diag_59b['max_rel_rhs_numpy_vs_jax'] == pytest.approx(
+        var_rec['max_rel_rhs_numpy_vs_jax'], rel=1.0e-12
+    )
+
+    assert float(np.max(def_on_off)) == 0.0
     assert def_rec['n_nodes_visc_on_ne_visc_off_min'] == 100
     assert def_rec['n_nodes_kappah_on_ne_kappah_off_max'] == 0
 
-    # Live solver verification on the active-solid variant and default configs + JAX-only break canary
+    # Live solver verification on the active-solid, yield-active, and default configs + canaries
     rheo_on = SolidRheologyParams(
         enabled=True,
         stress_closure_mode='lid',
@@ -1278,8 +1319,13 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     ) as p:
         base_params = Parameters.from_file(p)
 
-    def _build_pair(kappah_floor: float, viscosity_solid: float):
-        p_on = replace(
+    def _build_pair(
+        kappah_floor: float,
+        viscosity_solid: float,
+        rheo_a: SolidRheologyParams = rheo_on,
+        rheo_b: SolidRheologyParams = rheo_off,
+    ):
+        p_a = replace(
             base_params,
             mesh=replace(base_params.mesh, number_of_nodes=30),
             boundary_conditions=replace(
@@ -1289,48 +1335,23 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
             ),
             energy=replace(base_params.energy, kappah_floor=kappah_floor),
             phase_solid=replace(
-                base_params.phase_solid, viscosity=viscosity_solid, rheology=rheo_on
+                base_params.phase_solid, viscosity=viscosity_solid, rheology=rheo_a
             ),
         )
-        p_off = replace(
-            p_on,
+        p_b = replace(
+            p_a,
             phase_solid=replace(
-                base_params.phase_solid, viscosity=viscosity_solid, rheology=rheo_off
+                base_params.phase_solid, viscosity=viscosity_solid, rheology=rheo_b
             ),
         )
-        return _make_solver(p_on), _make_solver(p_off)
+        return _make_solver(p_a), _make_solver(p_b)
 
     sol_var_on, sol_var_off = _build_pair(0.0, 1.0e18)
     sol_def_on, sol_def_off = _build_pair(10.0, 1.0e21)
 
-    _, eos_jax, params_jax_var, args_var_on = _build_jax_bundle(sol_var_on)
-    mesh_jax_var = args_var_on[2]
-    bc_jax_var = args_var_on[3]
-    H0_var = args_var_on[4]
-
+    _, _, _, args_var_on = _build_jax_bundle(sol_var_on)
     rheo_broken = replace(rheo_on, g_homologous=0.1)
-    params_jax_broken = PhaseParams(
-        phi_rheo=float(sol_var_on.parameters.phase_mixed.rheological_transition_melt_fraction),
-        phi_width=float(sol_var_on.parameters.phase_mixed.rheological_transition_width),
-        viscosity_solid=float(sol_var_on.parameters.phase_solid.viscosity),
-        viscosity_liquid=float(sol_var_on.parameters.phase_liquid.viscosity),
-        grain_size=float(sol_var_on.parameters.phase_mixed.grain_size),
-        k_solid=float(sol_var_on.parameters.phase_solid.thermal_conductivity),
-        k_liquid=float(sol_var_on.parameters.phase_liquid.thermal_conductivity),
-        matprop_smooth_width=float(sol_var_on.parameters.phase_mixed.matprop_smooth_width),
-        conduction=sol_var_on.parameters.energy.conduction,
-        convection=sol_var_on.parameters.energy.convection,
-        grav_sep=sol_var_on.parameters.energy.gravitational_separation,
-        mixing=sol_var_on.parameters.energy.mixing,
-        eddy_diff_thermal=float(sol_var_on.parameters.energy.eddy_diffusivity_thermal),
-        eddy_diff_chemical=float(sol_var_on.parameters.energy.eddy_diffusivity_chemical),
-        kappah_floor=float(sol_var_on.parameters.energy.kappah_floor),
-        bottom_up_grav_sep=sol_var_on.parameters.energy.bottom_up_grav_sep,
-        phase_smoothing=sol_var_on.parameters.energy.phase_smoothing,
-        separation_viscosity=sol_var_on.parameters.phase_mixed.separation_viscosity,
-        rheology=rheo_broken,
-    )
-    args_var_broken = (eos_jax, params_jax_broken, mesh_jax_var, bc_jax_var, H0_var, _no_radio)
+    _, _, _, args_var_broken = _build_jax_bundle(sol_var_on, rheology_override=rheo_broken)
 
     xi_var = np.linspace(0.0, 1.0, sol_var_on._n_stag)
     s_var = 2300.0 - 600.0 * (0.2 * xi_var + 0.8 * xi_var**4)
@@ -1344,6 +1365,34 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_on)) / denom_var_on) <= 1.0e-6
     assert float(np.max(np.abs(rhs_var_np_on - rhs_var_np_off)) / denom_var_off) >= 1.0e-4
     assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_broken)) / denom_var_on) > 1.0e-3
+
+    # Live solver verification of the yield-active state set + JAX-only yield canary (Ruling 59a)
+    rheo_yld_on = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        yield_stress_c=150.0,
+        yield_stress_mu=0.0,
+        yield_stress_max=1.0e8,
+    )
+    rheo_yld_off = replace(rheo_yld_on, yield_stress_c=1.0e30, yield_stress_max=1.0e30)
+    sol_yld_on, sol_yld_off = _build_pair(0.0, 1.0e15, rheo_yld_on, rheo_yld_off)
+    _, _, _, args_yld_on = _build_jax_bundle(sol_yld_on)
+    _, _, _, args_yld_broken = _build_jax_bundle(sol_yld_on, rheology_override=rheo_yld_off)
+
+    s_yld = 2600.0 - 450.0 * (0.2 * xi_var + 0.8 * xi_var**4)
+    rhs_yld_np_on = sol_yld_on.dSdt(0.0, s_yld)
+    eta_eff_yld = sol_yld_on.state._eta_eff_basic.copy()
+    eta_diff_yld = sol_yld_on.state.phase_basic.eta_diff().copy()
+    rhs_yld_np_yoff = sol_yld_off.dSdt(0.0, s_yld)
+    rhs_yld_jax_on = np.asarray(dSdt(0.0, jnp.asarray(s_yld), args_yld_on))
+    rhs_yld_jax_broken = np.asarray(dSdt(0.0, jnp.asarray(s_yld), args_yld_broken))
+
+    denom_yld_on = float(np.max(np.abs(rhs_yld_np_on)))
+    denom_yld_yoff = float(np.max(np.abs(rhs_yld_np_yoff)))
+    assert int(np.sum(eta_eff_yld != eta_diff_yld)) >= 8
+    assert float(np.max(np.abs(rhs_yld_np_on - rhs_yld_jax_on)) / denom_yld_on) <= 1.0e-6
+    assert float(np.max(np.abs(rhs_yld_np_on - rhs_yld_np_yoff)) / denom_yld_yoff) >= 1.0e-4
+    assert float(np.max(np.abs(rhs_yld_np_on - rhs_yld_jax_broken)) / denom_yld_on) >= 1.0e-4
 
     s_def = 2700.0 - 600.0 * (0.2 * xi_var + 0.8 * xi_var**4)
     rhs_def_np_on = sol_def_on.dSdt(0.0, s_def)
@@ -1360,13 +1409,14 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
 
         states = np.arange(100, dtype=float)
         fig, ax = plt.subplots(figsize=(5.6, 3.6))
-        ax.plot(states, np.log10(np.maximum(rel_np_jax, 1.0e-17)), label='NumPy vs JAX')
-        ax.plot(states, np.log10(rel_on_off), label='on vs off')
-        ax.plot(states, np.log10(rel_canary), '--', label='canary')
+        ax.plot(states, np.log10(np.maximum(rel_np_jax, 1.0e-17)), label='NP vs JAX (Arrh)')
+        ax.plot(states, np.log10(np.maximum(yld_np_jax, 1.0e-17)), label='NP vs JAX (yield)')
+        ax.plot(states, np.log10(rel_on_off), '--', label='on vs off (Arrh)')
+        ax.plot(states, np.log10(yld_on_yoff), '-.', label='yield on vs off')
         ax.axhline(-6.0, color=plt.rcParams['text.color'], ls=':')
-        ax.axhline(-4.0, color=plt.rcParams['text.color'], ls='-.')
+        ax.axhline(-4.0, color=plt.rcParams['text.color'], ls=':')
         ax.set(xlabel='State index [-]', ylabel='log10 rel diff [-]')
-        ax.legend()
+        ax.legend(ncol=2)
         fig.tight_layout()
         return fig
 
