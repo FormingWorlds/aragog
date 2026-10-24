@@ -402,9 +402,7 @@ def viscous_mixing_length_factor(
         )
     else:
         eff_top_slope = s_top_inf_eff
-    l_v = xp.maximum(
-        0.0, xp.minimum(bottom_slope_eff * (r_arr - r_in), eff_top_slope * (r_out - r_arr))
-    )
+    l_v = xp.minimum(bottom_slope_eff * (r_arr - r_in), eff_top_slope * (r_out - r_arr))
     ml_arr = xp.asarray(mixing_length, dtype=float)
     positive = ml_arr > 0.0
     return xp.where(
