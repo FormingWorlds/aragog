@@ -2836,3 +2836,67 @@ def test_stagnant_lid_smooth_gates_and_scales_conv_sum_gate():
     assert float(st_hi['tau_d']) == pytest.approx(2.6778658777695420e8, rel=1.0e-12, abs=0.0)
     assert float(st_lo['d_lid']) < float(st_hi['d_lid'])
     assert float(st_lo['tau_d']) < float(st_hi['tau_d'])
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_stagnant_lid_flux_floor_zero_crossing_width():
+    """Verify w_zero_cross activates on F_tot zero crossings (d_zero = 0) and turns off at d_zero ~ 1e-2 * F_tot_rms."""
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    n = 20
+    r = np.linspace(3.48e6, 6.37e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.linspace(2600.0, 300.0, n)
+    phi = np.zeros(n)
+
+    # 1. Sign-changing F_tot (d_zero = 0): w_zero_cross = 1.0 activates F_tot_floor = 0.1 * F_tot_rms.
+    ft_cross = np.linspace(-100.0, 100.0, n)
+    ft_cross[10] = 0.0
+    ft_cross_rms = float(np.sqrt(np.mean(ft_cross**2)))
+    fc_cross = np.zeros(n)
+    fc_cross[10] = 0.045 * (0.1 * ft_cross_rms)
+    st_cross = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc_cross,
+        total_flux=ft_cross,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_cross['w_active']) == pytest.approx(0.268941421369995, rel=1.0e-12, abs=0.0)
+    assert float(st_cross['d_lid']) == pytest.approx(3.617717821797071e5, rel=1.0e-12, abs=0.0)
+    assert float(st_cross['tau_d']) == pytest.approx(2.0853767364515128e9, rel=1.0e-12, abs=0.0)
+
+    # 2. Strictly positive F_tot with d_zero = min(F_tot) ~ 1e-2 * F_tot_rms:
+    # at width 1e-3 * F_tot_rms, w_zero_cross = exp(-105.26) = 0 so F_tot_safe[10] = 1.0 and f[10] = 0.08.
+    ft_near = np.full(n, 100.0)
+    ft_near[10] = 1.0
+    fc_near = np.zeros(n)
+    fc_near[10] = 0.08 * ft_near[10]
+    st_near = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc_near,
+        total_flux=ft_near,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_near['w_active']) == pytest.approx(0.9975273768433652, rel=1.0e-12, abs=0.0)
+    assert float(st_near['d_lid']) == pytest.approx(1.3418433466118898e6, rel=1.0e-12, abs=0.0)
+    assert float(st_near['tau_d']) == pytest.approx(7.734845659125156e9, rel=1.0e-12, abs=0.0)
+    assert float(st_near['w_active']) > float(st_cross['w_active'])
+    assert float(st_near['d_lid']) > float(st_cross['d_lid'])
+    assert float(st_near['tau_d']) > float(st_cross['tau_d'])
