@@ -132,9 +132,9 @@ def _make_abe_solid_params(
     )
 
 
-def _make_solver(params: Parameters) -> EntropySolver:
+def _make_solver(params: Parameters, *, identity_alpha: bool = True) -> EntropySolver:
     """Build and initialize an EntropySolver using the SPIDER P-S tables."""
-    eos_np = entropy_eos_copy(_resolve_eos_dir(), identity_alpha=True)
+    eos_np = entropy_eos_copy(_resolve_eos_dir(), identity_alpha=identity_alpha)
     solver = EntropySolver(params, entropy_eos=eos_np)
     solver.initialize()
     return solver
@@ -1370,32 +1370,51 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
 
     # Verify recorded 100-state benchmark invariants for all 3 state sets
     rel_np_jax = np.asarray(var_rec['rel_rhs_numpy_vs_jax_per_state'], dtype=float)
+    rel_np_jax_harm = np.asarray(
+        var_rec['rel_rhs_numpy_vs_jax_harmonised_alpha_per_state'], dtype=float
+    )
     rel_on_off = np.asarray(var_rec['rel_rhs_on_vs_off_per_state'], dtype=float)
     rel_canary = np.asarray(var_rec['canary_jax_broken_rel_rhs_per_state'], dtype=float)
 
     yld_np_jax = np.asarray(yld_rec['rel_rhs_numpy_vs_jax_per_state'], dtype=float)
+    yld_np_jax_harm = np.asarray(
+        yld_rec['rel_rhs_numpy_vs_jax_harmonised_alpha_per_state'], dtype=float
+    )
     yld_on_yoff = np.asarray(yld_rec['rel_rhs_yield_on_vs_yield_off_per_state'], dtype=float)
     yld_canary = np.asarray(yld_rec['canary_jax_yield_broken_rel_rhs_per_state'], dtype=float)
     yld_nodes = np.asarray(yld_rec['n_nodes_eta_eff_ne_eta_diff_per_state'], dtype=int)
 
+    def_np_jax = np.asarray(def_rec['rel_rhs_numpy_vs_jax_per_state'], dtype=float)
+    def_np_jax_harm = np.asarray(
+        def_rec['rel_rhs_numpy_vs_jax_harmonised_alpha_per_state'], dtype=float
+    )
     def_on_off = np.asarray(def_rec['rel_rhs_on_vs_off_per_state'], dtype=float)
 
     assert rel_np_jax.shape == (100,)
+    assert rel_np_jax_harm.shape == (100,)
     assert float(np.max(rel_np_jax)) <= 1.0e-6
+    assert float(np.max(rel_np_jax_harm)) <= 1.0e-14
     assert float(np.min(rel_on_off)) >= 100.0 * 1.0e-6
     assert float(np.min(rel_canary)) > 100.0 * 1.0e-6
     assert var_rec['n_nodes_visc_on_ne_visc_off_min'] == 100
     assert var_rec['n_nodes_kappah_on_ne_kappah_off_min'] >= 90
 
-    # Ruling 59 (a): yield-active state set assertions
+    # Ruling 59 (a) & 59b (c): yield-active state set assertions (both unharmonised and harmonised alpha)
     assert yld_np_jax.shape == (100,)
+    assert yld_np_jax_harm.shape == (100,)
     assert int(np.sum(yld_nodes > 0)) == 100
     assert yld_rec['n_states_eta_eff_ne_eta_diff_pos'] == 100
     assert yld_rec['n_nodes_eta_eff_ne_eta_diff_min'] == 34
     assert yld_rec['n_nodes_eta_eff_ne_eta_diff_max'] == 52
     assert float(np.max(yld_np_jax)) <= 1.0e-6
+    assert float(np.max(yld_np_jax_harm)) <= 1.0e-14
     assert float(np.min(yld_on_yoff)) >= 1.0e-4
     assert float(np.min(yld_canary)) >= 1.0e-4
+
+    assert def_np_jax.shape == (100,)
+    assert def_np_jax_harm.shape == (100,)
+    assert float(np.max(def_np_jax)) <= 1.0e-14
+    assert float(np.max(def_np_jax_harm)) <= 1.0e-14
 
     # Ruling 59 (b): flux vs RHS diagnostic assertions on abe_solid_kappah_floor_0
     assert diag_59b['worst_state_index'] == 4
@@ -1432,10 +1451,11 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
         viscosity_solid: float,
         rheo_a: SolidRheologyParams = rheo_on,
         rheo_b: SolidRheologyParams = rheo_off,
+        *,
+        identity_alpha: bool = True,
     ):
         p_a = replace(
             base_params,
-            mesh=replace(base_params.mesh, number_of_nodes=30),
             boundary_conditions=replace(
                 base_params.boundary_conditions,
                 core_bc='quasi_steady',
@@ -1452,9 +1472,12 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
                 base_params.phase_solid, viscosity=viscosity_solid, rheology=rheo_b
             ),
         )
-        return _make_solver(p_a), _make_solver(p_b)
+        return _make_solver(p_a, identity_alpha=identity_alpha), _make_solver(
+            p_b, identity_alpha=identity_alpha
+        )
 
-    sol_var_on, sol_var_off = _build_pair(0.0, 1.0e18)
+    sol_var_on, sol_var_off = _build_pair(0.0, 1.0e18, identity_alpha=True)
+    sol_var_on_unharm, _ = _build_pair(0.0, 1.0e18, identity_alpha=False)
     sol_def_on, sol_def_off = _build_pair(10.0, 1.0e21)
 
     _, _, _, args_var_on = _build_jax_bundle(sol_var_on)
@@ -1464,17 +1487,23 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     xi_var = np.linspace(0.0, 1.0, sol_var_on._n_stag)
     s_var = 2300.0 - 600.0 * (0.2 * xi_var + 0.8 * xi_var**4)
     rhs_var_np_on = sol_var_on.dSdt(0.0, s_var)
+    rhs_var_np_on_unharm = sol_var_on_unharm.dSdt(0.0, s_var)
     rhs_var_np_off = sol_var_off.dSdt(0.0, s_var)
     rhs_var_jax_on = np.asarray(dSdt(0.0, jnp.asarray(s_var), args_var_on))
     rhs_var_jax_broken = np.asarray(dSdt(0.0, jnp.asarray(s_var), args_var_broken))
 
     denom_var_on = float(np.max(np.abs(rhs_var_np_on)))
+    denom_var_on_unharm = float(np.max(np.abs(rhs_var_np_on_unharm)))
     denom_var_off = float(np.max(np.abs(rhs_var_np_off)))
-    assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_on)) / denom_var_on) <= 1.0e-6
+    assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_on)) / denom_var_on) <= 1.0e-13
+    assert (
+        float(np.max(np.abs(rhs_var_np_on_unharm - rhs_var_jax_on)) / denom_var_on_unharm)
+        <= 1.0e-6
+    )
     assert float(np.max(np.abs(rhs_var_np_on - rhs_var_np_off)) / denom_var_off) >= 1.0e-4
     assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_broken)) / denom_var_on) > 1.0e-3
 
-    # Live solver verification of the yield-active state set + JAX-only yield canary (Ruling 59a)
+    # Live solver verification of the yield-active state set + JAX-only yield canary (Ruling 59a & 59b)
     rheo_yld_on = SolidRheologyParams(
         enabled=True,
         stress_closure_mode='lid',
@@ -1483,12 +1512,18 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
         yield_stress_max=1.0e8,
     )
     rheo_yld_off = replace(rheo_yld_on, yield_stress_c=1.0e30, yield_stress_max=1.0e30)
-    sol_yld_on, sol_yld_off = _build_pair(0.0, 1.0e15, rheo_yld_on, rheo_yld_off)
+    sol_yld_on, sol_yld_off = _build_pair(
+        0.0, 1.0e15, rheo_yld_on, rheo_yld_off, identity_alpha=True
+    )
+    sol_yld_on_unharm, _ = _build_pair(
+        0.0, 1.0e15, rheo_yld_on, rheo_yld_off, identity_alpha=False
+    )
     _, _, _, args_yld_on = _build_jax_bundle(sol_yld_on)
     _, _, _, args_yld_broken = _build_jax_bundle(sol_yld_on, rheology_override=rheo_yld_off)
 
     s_yld = 2600.0 - 450.0 * (0.2 * xi_var + 0.8 * xi_var**4)
     rhs_yld_np_on = sol_yld_on.dSdt(0.0, s_yld)
+    rhs_yld_np_on_unharm = sol_yld_on_unharm.dSdt(0.0, s_yld)
     eta_eff_yld = sol_yld_on.state._eta_eff_basic.copy()
     eta_diff_yld = sol_yld_on.state.phase_basic.eta_diff().copy()
     rhs_yld_np_yoff = sol_yld_off.dSdt(0.0, s_yld)
@@ -1496,9 +1531,14 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     rhs_yld_jax_broken = np.asarray(dSdt(0.0, jnp.asarray(s_yld), args_yld_broken))
 
     denom_yld_on = float(np.max(np.abs(rhs_yld_np_on)))
+    denom_yld_on_unharm = float(np.max(np.abs(rhs_yld_np_on_unharm)))
     denom_yld_yoff = float(np.max(np.abs(rhs_yld_np_yoff)))
     assert int(np.sum(eta_eff_yld != eta_diff_yld)) >= 8
-    assert float(np.max(np.abs(rhs_yld_np_on - rhs_yld_jax_on)) / denom_yld_on) <= 1.0e-6
+    assert float(np.max(np.abs(rhs_yld_np_on - rhs_yld_jax_on)) / denom_yld_on) <= 1.0e-13
+    assert (
+        float(np.max(np.abs(rhs_yld_np_on_unharm - rhs_yld_jax_on)) / denom_yld_on_unharm)
+        <= 1.0e-6
+    )
     assert float(np.max(np.abs(rhs_yld_np_on - rhs_yld_np_yoff)) / denom_yld_yoff) >= 1.0e-4
     assert float(np.max(np.abs(rhs_yld_np_on - rhs_yld_jax_broken)) / denom_yld_on) >= 1.0e-4
 
@@ -1517,14 +1557,28 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
 
         states = np.arange(100, dtype=float)
         fig, ax = plt.subplots(figsize=(5.6, 3.6))
-        ax.plot(states, np.log10(np.maximum(rel_np_jax, 1.0e-17)), label='NP vs JAX (Arrh)')
-        ax.plot(states, np.log10(np.maximum(yld_np_jax, 1.0e-17)), label='NP vs JAX (yield)')
+        ax.plot(
+            states,
+            np.log10(np.maximum(rel_np_jax_harm, 1.0e-17)),
+            label='NP vs JAX (Arrh, harm alpha)',
+        )
+        ax.plot(
+            states,
+            np.log10(np.maximum(yld_np_jax_harm, 1.0e-17)),
+            label='NP vs JAX (yield, harm alpha)',
+        )
+        ax.plot(
+            states,
+            np.log10(np.maximum(yld_np_jax, 1.0e-17)),
+            ':',
+            label='NP vs JAX (yield, table alpha)',
+        )
         ax.plot(states, np.log10(rel_on_off), '--', label='on vs off (Arrh)')
         ax.plot(states, np.log10(yld_on_yoff), '-.', label='yield on vs off')
         ax.axhline(-6.0, color=plt.rcParams['text.color'], ls=':')
         ax.axhline(-4.0, color=plt.rcParams['text.color'], ls=':')
         ax.set(xlabel='State index [-]', ylabel='log10 rel diff [-]')
-        ax.legend(ncol=2)
+        ax.legend(ncol=2, fontsize=7.5)
         fig.tight_layout()
         return fig
 
