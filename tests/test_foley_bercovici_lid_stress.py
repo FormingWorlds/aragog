@@ -1678,17 +1678,11 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         'params': params_iso,
     }
     st_iso = compute_stagnant_lid_state(**inp_iso)
-    w_t_zero = 0.5 * (1.0 + np.tanh(-1.0e-3 / 2.5e-4))
-    d_raw_iso = float((inputs['radii'][-1] - st_iso['r_lid_base']) * st_iso['w_active'])
     assert bool(st_iso['has_lid']) is False
     assert float(st_iso['v_i']) == 0.0
-    assert float(st_iso['d_lid']) == pytest.approx(w_t_zero * d_raw_iso, rel=1.0e-9)
-    assert float(st_iso['tau_d']) == pytest.approx(
-        float(st_iso['tau_d_lid'])
-        * d_raw_iso
-        / (float(st_iso['w_active']) * (inputs['radii'][-1] - inputs['radii'][0])),
-        rel=1.0e-9,
-    )
+    assert float(st_iso['d_lid']) == 0.0
+    assert float(st_iso['tau_d']) == 0.0
+    assert float(st_iso['tau_d_lid']) == 0.0
     assert float(st_iso['lid_cell_count']) == pytest.approx(
         float(np.sum(st_iso['w_lid'])), rel=1.0e-12
     )
@@ -1747,7 +1741,8 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         d_raw = float((r_100[-1] - st_dlid['r_lid_base']) * st_dlid['w_active'])
         assert d_raw_bound[0] <= d_raw <= d_raw_bound[1]
         assert bool(st_dlid['has_lid']) is expected_has_lid
-        w_d_expected = 0.5 * (1.0 + np.tanh((d_raw - 1.0) / 0.25))
+        w_d_0 = 0.5 * (1.0 + np.tanh(-1.0 / 0.25))
+        w_d_expected = (0.5 * (1.0 + np.tanh((d_raw - 1.0) / 0.25)) - w_d_0) / (1.0 - w_d_0)
         assert float(st_dlid['d_lid']) == pytest.approx(w_d_expected * d_raw, rel=1.0e-9)
 
     # 2. Localized low convective flux: 1e-6 < W_sum < 0.1, w_active > 0.05 -> convecting

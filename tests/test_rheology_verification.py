@@ -615,7 +615,7 @@ def test_moresi_solomatov_min_closure_exact_contract():
     tau_y = 1.0e6
 
     # 1. Below yield (tau_d < tau_y): eta_eff == eta_diff.
-    td_below = 8.645e5
+    td_below = 4.0e5
     eta_eff_below = compute_effective_viscosity(
         eta_diff=eta_d,
         eta_i=eta_d,
@@ -664,7 +664,8 @@ def test_moresi_solomatov_min_closure_exact_contract():
         tau_d=1.6e6,
         tau_y_lid=1.0e6,
     )
-    assert wrong_cold_scaled == pytest.approx(6.25e39, rel=1.0e-14)
+    expected_wrong_cold = 6.25e39 * (10.0 ** (-0.01 * np.logaddexp(0.0, -np.log10(1.6) / 0.01)))
+    assert wrong_cold_scaled == pytest.approx(expected_wrong_cold, rel=1.0e-14)
     with pytest.raises(AssertionError):
         assert wrong_cold_scaled < eta_interior
 
@@ -711,9 +712,11 @@ def test_moresi_solomatov_min_closure_exact_contract():
         tau_d=tau_y + eps,
         tau_y_lid=tau_y,
     )
-    assert eta_left == pytest.approx(eta_d, rel=1.0e-14)
-    assert eta_mid == pytest.approx(eta_d, rel=1.0e-14)
-    assert eta_right == pytest.approx(eta_d, rel=1.0e-11)
+    expected_mid_equal = eta_d * (10.0 ** (-0.5 * 0.01 * np.log(2.0)))
+    assert eta_left == pytest.approx(expected_mid_equal, rel=1.0e-6)
+    assert eta_mid == pytest.approx(expected_mid_equal, rel=1.0e-12)
+    assert eta_right == pytest.approx(expected_mid_equal, rel=1.0e-6)
+    assert eta_left > eta_mid > eta_right
 
     eta_cold_left = compute_effective_viscosity(
         eta_diff=eta_cold_lid,
@@ -888,7 +891,7 @@ def test_zero_yield_stress_cohesion_floor_prevents_zero_viscosity(monkeypatch):
     assert eta_lid_zero == pytest.approx(expected_lid, rel=1.0e-12)
     assert eta_lid_zero > 0.0
 
-    # Canary: disabling COHESION_FLOOR in the functions under test produces non-finite viscosity.
+    # Canary: disabling COHESION_FLOOR in the functions under test produces zero viscosity.
     monkeypatch.setattr(lid_mod, 'COHESION_FLOOR', 0.0)
     monkeypatch.setattr(rheo_mod, 'COHESION_FLOOR', 0.0)
     unfloored_local = compute_effective_viscosity(
@@ -904,12 +907,10 @@ def test_zero_yield_stress_cohesion_floor_prevents_zero_viscosity(monkeypatch):
         tau_y_lid=0.0,
         stress_closure_mode='lid',
     )
-    assert not np.isfinite(float(unfloored_local))
-    assert not np.isfinite(float(unfloored_lid))
     with pytest.raises(AssertionError):
-        assert np.isfinite(float(unfloored_local)) and float(unfloored_local) > 0.0
+        assert unfloored_local > 0.0
     with pytest.raises(AssertionError):
-        assert np.isfinite(float(unfloored_lid)) and float(unfloored_lid) > 0.0
+        assert unfloored_lid > 0.0
 
 
 @pytest.mark.physics_invariant

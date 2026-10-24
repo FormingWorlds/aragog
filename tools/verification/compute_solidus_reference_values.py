@@ -22,10 +22,13 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / 'src'))
 
-from aragog.rheology import R_GAS, SolidRheologyParams  # noqa: E402
+from aragog.rheology import R_GAS, SolidRheologyParams, _softmax2, _softmin2  # noqa: E402
 from aragog.rheology_lid import (  # noqa: E402
+    SCALE_FLOOR_WIDTH,
+    SCALE_MASK_REL_WIDTH,
     SOLIDUS_MELT_FRACTION_THRESHOLD,
     SOLIDUS_MELT_FRACTION_WIDTH,
+    _melt_ramp,
     compute_stagnant_lid_state,
 )
 
@@ -424,20 +427,22 @@ def main(argv: list[str] | None = None) -> None:
             phi_rheo=0.4,
             phi_width=0.15,
         )
-        scale_cell = params_ckpt.lid_mask_width_cells * np.maximum(
-            np.abs(np.gradient(t_prof)), 1.0
+        grad_t_abs = np.sqrt(np.gradient(t_prof) ** 2 + 1.0e-30)
+        scale_cell = params_ckpt.lid_mask_width_cells * _softmax2(
+            grad_t_abs, 1.0, SCALE_FLOOR_WIDTH, np
         )
-        scale_mask = np.minimum(
-            scale_cell, params_ckpt.lid_mask_width_cells * max(float(st['dT_rh']), 1.0)
+        scale_cap = params_ckpt.lid_mask_width_cells * _softmax2(
+            float(st['dT_rh']), 1.0, SCALE_FLOOR_WIDTH, np
         )
+        scale_mask = _softmin2(scale_cell, scale_cap, SCALE_MASK_REL_WIDTH * scale_cap, np)
         w_th = 0.5 * (1.0 + np.tanh((t_prof - t_sol_prof) / scale_cell))
-        zero_sol = 0.5 * (
-            1.0 + np.tanh(-SOLIDUS_MELT_FRACTION_THRESHOLD / SOLIDUS_MELT_FRACTION_WIDTH)
+        w_phi = _melt_ramp(
+            phi,
+            SOLIDUS_MELT_FRACTION_THRESHOLD,
+            SOLIDUS_MELT_FRACTION_WIDTH,
+            np,
+            compact=True,
         )
-        raw_sol = 0.5 * (
-            1.0 + np.tanh((phi - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
-        )
-        w_phi = np.clip((raw_sol - zero_sol) / (1.0 - zero_sol), 0.0, 1.0)
         w_comb = np.maximum(w_th, w_phi)
         w_th_mask = 0.5 * (1.0 + np.tanh((t_prof - t_sol_prof) / scale_mask))
         w_comb_mask = np.maximum(w_th_mask, w_phi)

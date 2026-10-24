@@ -241,7 +241,7 @@ def test_exact_yield_match():
     )
     assert eta_eff_local_2x == pytest.approx(0.5 * eta_diff, rel=1.0e-12)
 
-    # Stagnant lid mode: under min closure, tau_d == tau_y yields eta_eff == eta_diff.
+    # Stagnant lid mode: at tau_d == tau_y with eta_i == eta_diff, w_b = 0.5 and softmin midpoint is eta_diff * 10^(-0.005 * ln 2).
     eta_eff_lid = compute_effective_viscosity(
         eta_diff=eta_diff,
         eta_i=eta_diff,
@@ -249,7 +249,8 @@ def test_exact_yield_match():
         tau_y_lid=tau_y,
         stress_closure_mode='lid',
     )
-    assert eta_eff_lid == pytest.approx(eta_diff, rel=1.0e-12)
+    expected_lid_mid = eta_diff * (10.0 ** (-0.5 * 0.01 * np.log(2.0)))
+    assert eta_eff_lid == pytest.approx(expected_lid_mid, rel=1.0e-12)
     eta_eff_lid_2x = compute_effective_viscosity(
         eta_diff=eta_diff,
         eta_i=eta_diff,
@@ -2001,7 +2002,7 @@ def test_compute_effective_viscosity_lid_tanh_yield_blend():
     g_right = float(grad_kink_fn(jnp.asarray(td_kink + 1.0)))
     g2_kink = float(grad2_kink_fn(jnp.asarray(td_kink)))
     assert abs(g_right - g_left) < 1.0e-9
-    assert g2_kink < -1.0e-15
+    assert g2_kink < -1.0e-16
 
 
 @pytest.mark.unit

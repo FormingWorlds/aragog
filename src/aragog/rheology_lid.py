@@ -14,6 +14,8 @@ from aragog.rheology import (
     _clamp_pressure,
     _is_non_real,
     _require_x64_if_jax,
+    _softmax2,
+    _softmin2,
     _validate_inputs,
     compute_arrhenius_enthalpy,
     compute_arrhenius_viscosity,
@@ -41,7 +43,7 @@ __all__ = [
     'SOFTMAX_VELOCITY_SCALE',
     'SOLIDUS_MELT_FRACTION_THRESHOLD',
     'SOLIDUS_MELT_FRACTION_WIDTH',
-    'YIELD_BLEND_LOG10_WIDTH',
+    'YIELD_BLEND_RATIO_WIDTH',
     'compute_stagnant_lid_state',
     'compute_effective_viscosity',
     'stress_closure',
@@ -53,73 +55,37 @@ FB2014_STRESS_FACTOR: float = 2.0
 
 # Minimum thermal contrast [K] and thickness [m] required for a physical conductive lid.
 NO_LID_DT_THRESHOLD: float = 1.0e-3
-NO_LID_DT_WIDTH = 2.5e-4
+NO_LID_DT_WIDTH: float = 2.5e-4
 NO_LID_THICKNESS_THRESHOLD: float = 1.0
-NO_LID_THICKNESS_WIDTH = 0.25
+NO_LID_THICKNESS_WIDTH: float = 0.25
 
 # Smooth transition widths for convective activity and boundary-weight gates.
-CONV_ACTIVE_GATE_WIDTH = 0.0025
-CONV_SUM_GATE_WIDTH = 2.5e-7
+CONV_ACTIVE_GATE_WIDTH: float = 0.0025
+CONV_SUM_GATE_WIDTH: float = 2.5e-7
 
 # Smooth softplus floor and cap widths for cell/rheological temperature scales.
-SCALE_FLOOR_WIDTH = 0.005
-SCALE_MASK_REL_WIDTH = 0.005
+SCALE_FLOOR_WIDTH: float = 0.005
+SCALE_MASK_REL_WIDTH: float = 0.005
 
 # Relative smoothing width for Boltzmann-weighted smooth maximum and softplus total-flux floor.
-SMOOTH_MAX_REL_WIDTH = 0.02
-F_TOT_FLOOR_FRAC = 0.1
+SMOOTH_MAX_REL_WIDTH: float = 0.02
+F_TOT_FLOOR_FRAC: float = 0.1
 
 # Smooth yield transition widths and local strain-rate regularization floor.
-YIELD_BLEND_LOG10_WIDTH = 0.025
-LOCAL_STRAIN_RATE_FLOOR = 1.0e-100
-LOCAL_CAP_LOG10_WIDTH = 0.01
+YIELD_BLEND_RATIO_WIDTH: float = 0.025
+LOCAL_STRAIN_RATE_FLOOR: float = 1.0e-100
+LOCAL_CAP_LOG10_WIDTH: float = 0.01
 
 # Transition smoothing width that sets the lid_regime diagnostic label and w_has_lid.
-LID_REGIME_LABEL_WIDTH = 0.1
+LID_REGIME_LABEL_WIDTH: float = 0.1
 
 # Melt fraction threshold marking solidus crossing / surface crust solidification.
 # This 1% threshold is distinct from phi_rheo (~0.4), the rheological transition.
 SOLIDUS_MELT_FRACTION_THRESHOLD: float = 0.01
-SOLIDUS_MELT_FRACTION_WIDTH = 0.002
+SOLIDUS_MELT_FRACTION_WIDTH: float = 0.002
 
 # Soft-maximum smoothing scale [m/s] (~0.1 mm/yr) for the upper-mantle velocity diagnostic v_i.
 SOFTMAX_VELOCITY_SCALE: float = 3.17e-12
-
-
-def _softmax2(a: Any, b: Any, width: Any, xp: Any) -> Any:
-    """Smooth softplus maximum ``a + width * log(1 + exp((b - a) / width))``."""
-    a_arr = xp.asarray(a, dtype=float)
-    b_arr = xp.asarray(b, dtype=float)
-    w_arr = xp.asarray(width, dtype=float)
-    both_fin = xp.isfinite(a_arr) & xp.isfinite(b_arr) & xp.isfinite(w_arr)
-    s = xp.where(both_fin, xp.maximum(w_arr, 1.0e-30), 1.0)
-    a_fin = xp.where(both_fin, a_arr, 0.0)
-    b_fin = xp.where(both_fin, b_arr, 0.0)
-    d = (b_fin - a_fin) / s
-    soft = xp.where(
-        d > 40.0,
-        b_fin,
-        xp.where(d < -40.0, a_fin, a_fin + s * xp.logaddexp(0.0, xp.clip(d, -500.0, 40.0))),
-    )
-    return xp.where(both_fin, soft, xp.maximum(a_arr, b_arr) + 0.0 * w_arr)
-
-
-def _softmin2(a: Any, b: Any, width: Any, xp: Any) -> Any:
-    """Smooth softplus minimum ``a - width * log(1 + exp((a - b) / width))``."""
-    a_arr = xp.asarray(a, dtype=float)
-    b_arr = xp.asarray(b, dtype=float)
-    w_arr = xp.asarray(width, dtype=float)
-    both_fin = xp.isfinite(a_arr) & xp.isfinite(b_arr) & xp.isfinite(w_arr)
-    s = xp.where(both_fin, xp.maximum(w_arr, 1.0e-30), 1.0)
-    a_fin = xp.where(both_fin, a_arr, 0.0)
-    b_fin = xp.where(both_fin, b_arr, 0.0)
-    d = (a_fin - b_fin) / s
-    soft = xp.where(
-        d > 40.0,
-        b_fin,
-        xp.where(d < -40.0, a_fin, a_fin - s * xp.logaddexp(0.0, xp.clip(d, -500.0, 40.0))),
-    )
-    return xp.where(both_fin, soft, xp.minimum(a_arr, b_arr) + 0.0 * w_arr)
 
 
 def _smooth_max(v: Any, xp: Any = np, *, mask: Any | None = None) -> Any:
@@ -174,16 +140,12 @@ def _boundary_weights(
     omw = xp.concatenate([xp.ones(1, dtype=w.dtype), 1.0 - w_surf[:-1]])
     W = (w_surf * xp.cumprod(omw))[::-1]
     W_sum = xp.sum(W)
-    smax_w = _smooth_max(w, xp, mask=mask)
-    w_base_weight = xp.tanh(smax_w / 1.0e-6)
+    w_base_weight = xp.tanh(_smooth_max(w, xp, mask=mask) / 1.0e-6)
     n = w.shape[0]
-    W_denom = xp.maximum(W_sum, 1.0e-12)
-    W_norm = W / W_denom
-    if fallback is None:
-        W_fallback = xp.where(xp.arange(n) == 0, 1.0, 0.0)
-    else:
-        W_fallback = fallback
-    W_tilde = w_base_weight * W_norm + (1.0 - w_base_weight) * W_fallback
+    W_fallback = xp.where(xp.arange(n) == 0, 1.0, 0.0) if fallback is None else fallback
+    W_tilde = (
+        w_base_weight * (W / xp.maximum(W_sum, 1.0e-12)) + (1.0 - w_base_weight) * W_fallback
+    )
     return W_tilde, W_sum, w_base_weight
 
 
@@ -218,8 +180,9 @@ def compute_stagnant_lid_state(
     temperature : array-like
         Radial temperature profile T [K].
     pressure : array-like
-        Radial pressure profile P [Pa] (must be non-negative; callers clamp
-        negative round-off excursions at zero).
+        Radial pressure profile P [Pa] (non-negative; negative round-off
+        excursions down to ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are
+        clamped to 0.0 Pa).
     convective_flux : array-like
         Convective heat flux profile F_conv [W/m^2].
     total_flux : array-like
@@ -275,13 +238,14 @@ def compute_stagnant_lid_state(
     -------
     dict[str, Any]
         Dictionary of boundary layer state diagnostics, including
-        ``tau_d = w_no_lid * w_active * 2 * eta_i * v_m_raw / d = w_active * 2 * eta_i * v_m / d``
+        ``tau_d = w_lid_present * w_active * 2 * eta_i * v_m_raw / d = w_active * 2 * eta_i * v_m / d``
         and the lid-thickness-scaled stress diagnostic
-        ``tau_d_lid = w_no_lid * w_active * 2 * eta_i * v_m_raw / max(r_top - r_lid_base, 1e-6 m)``
-        (gated smoothly by ``w_no_lid = w_d * w_T * w_act_gate * w_sum_gate * w_weight``;
-        because ``has_lid`` turns on at ``d_lid_raw > NO_LID_THICKNESS_THRESHOLD`` of 1.0 m,
-        the 1e-6 m floor is inactive whenever ``has_lid`` is True and
-        ``tau_d_lid / tau_d = d / d_geom`` scales as ``1 / d_lid`` down to 1 m).
+        ``tau_d_lid = w_lid_present * w_active * 2 * eta_i * v_m_raw / max(r_top - r_lid_base, 1e-6 m)``
+        (gated smoothly by ``w_lid_present = w_d * w_T * w_act_gate * w_sum_gate * w_weight``;
+        because ``w_d == 0`` at ``d_lid_raw <= 0`` and ``has_lid`` turns on at
+        ``d_lid_raw > NO_LID_THICKNESS_THRESHOLD`` of 1.0 m, the 1e-6 m floor is
+        inactive whenever ``has_lid`` is True, returns 0.0 in non-lid columns,
+        and ``tau_d_lid / tau_d = d / d_geom`` scales as ``1 / d_lid`` down to 1 m).
         ``has_lid`` is False when any input is NaN while numeric diagnostics propagate NaN.
 
     Raises
@@ -327,10 +291,17 @@ def compute_stagnant_lid_state(
     at the default ``interior_flux_fraction = 0.05``), boundary-layer diagnostics
     (``d_lid``, ``Ra_eff``, ``Ra_rh``, ``v_m``, ``tau_d``, ``tau_d_lid``,
     ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are smoothly
-    gated by ``w_no_lid = w_d * w_T * w_act_gate * w_sum_gate * w_weight`` and
-    ``has_lid`` is False, while ``T_i``, ``eta_i``, ``mu_i``, and ``theta`` serve as
-    interior fallback diagnostics and all solver-facing outputs vary continuously
-    across uniform convective flux fractions ``f`` in ``[0, 1e-3]``.
+    gated by ``w_lid_present = w_d * w_T * w_act_gate * w_sum_gate * w_weight``
+    (which vanishes identically when ``d_lid_raw <= 0``, ``T_i - T_surf <= 0``,
+    or ``W_sum <= 0``) and ``has_lid`` is False, while ``T_i``, ``eta_i``,
+    ``mu_i``, and ``theta`` serve as interior fallback diagnostics and all
+    solver-facing outputs vary continuously across uniform convective flux
+    fractions ``f`` in ``[0, 1e-3]``. Intentional non-smooth switches retained
+    for boolean diagnostics and physical bounds are ``is_convecting``,
+    ``has_lid``, the ``is_convecting`` gate on the diagnostic ``v_i``, the
+    ``[0, 1]`` clip on ``f``, the elementwise maxima in ``w_interior`` and
+    ``w_hot_sol``, the temperature-gradient floor ``dTdr_floor`` in ``delta_rh``,
+    and the domain-thickness cap ``r[-1] - r[0]`` on ``delta_rh``.
 
     The lid-base locator ``W_base_tilde = _boundary_weights(w_interior, xp)[0]`` scans
     ``w_interior`` (smoothed over the local cell temperature step
@@ -415,9 +386,20 @@ def compute_stagnant_lid_state(
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)
 
+    n_nodes = r.shape[0]
+    F_pad = xp.concatenate([F_tot[1:2], F_tot[1:-1], F_tot[-2:-1]]) if n_nodes > 3 else F_tot
+    F_left = xp.concatenate([F_pad[:1], F_pad[:-1]])
+    F_right = xp.concatenate([F_pad[1:], F_pad[-1:]])
+    d_zero = xp.maximum(
+        0.0,
+        xp.maximum(
+            xp.minimum(F_left, xp.minimum(F_pad, F_right)),
+            -xp.maximum(F_left, xp.maximum(F_pad, F_right)),
+        ),
+    )
+    F_ref = xp.minimum(xp.sqrt(F_left**2 + 1.0e-300), xp.sqrt(F_right**2 + 1.0e-300))
     F_tot_rms = xp.sqrt(xp.mean(F_tot**2) + 1.0e-300)
-    d_zero = xp.maximum(0.0, xp.maximum(xp.min(F_tot), -xp.max(F_tot)))
-    w_zero_cross = xp.exp(-((d_zero / (1.0e-3 * F_tot_rms + 1.0e-30)) ** 2))
+    w_zero_cross = xp.exp(-((d_zero / (1.0e-3 * F_ref + 1.0e-30)) ** 2))
     F_tot_floor = _softmax2(
         w_zero_cross * F_TOT_FLOOR_FRAC * F_tot_rms, 1.0e-12, 0.01 * 1.0e-12, xp
     )
@@ -567,16 +549,22 @@ def compute_stagnant_lid_state(
         & (d_lid_raw > NO_LID_THICKNESS_THRESHOLD)
     )
     dT_lid = xp.sum(W_tilde * (T - T_surf))
-    w_d = 0.5 * (
-        1.0 + xp.tanh((d_lid_raw - NO_LID_THICKNESS_THRESHOLD) / NO_LID_THICKNESS_WIDTH)
+    dT_pos = (
+        dT_lid
+        * xp.tanh(dT_lid / (0.3 * NO_LID_DT_WIDTH))
+        * 0.5
+        * (1.0 + xp.tanh((dT_lid + 20.0 * NO_LID_DT_WIDTH) / NO_LID_DT_WIDTH))
     )
-    w_T = 0.5 * (1.0 + xp.tanh((dT_lid - NO_LID_DT_THRESHOLD) / NO_LID_DT_WIDTH))
+    w_d = _melt_ramp(
+        d_lid_raw, NO_LID_THICKNESS_THRESHOLD, NO_LID_THICKNESS_WIDTH, xp, compact=False
+    )
+    w_T = _melt_ramp(dT_pos, NO_LID_DT_THRESHOLD, NO_LID_DT_WIDTH, xp, compact=False)
     w_act_gate = 0.5 * (1.0 + xp.tanh((w_active - 0.05) / CONV_ACTIVE_GATE_WIDTH))
-    w_sum_gate = 0.5 * (1.0 + xp.tanh((W_sum - 1.0e-6) / CONV_SUM_GATE_WIDTH))
-    w_no_lid = w_d * w_T * w_act_gate * w_sum_gate * w_weight
+    w_sum_gate = _melt_ramp(W_sum, 1.0e-6, CONV_SUM_GATE_WIDTH, xp, compact=False)
+    w_lid_present = w_d * w_T * w_act_gate * w_sum_gate * w_weight
 
     def if_lid(val):
-        return xp.where(w_no_lid >= 1.0 - 1.0e-12, val, w_no_lid * val) + zero_or_nan
+        return xp.where(w_lid_present >= 1.0 - 1.0e-12, val, w_lid_present * val) + zero_or_nan
 
     d_lid = if_lid(d_lid_raw)
 
@@ -651,7 +639,7 @@ def compute_stagnant_lid_state(
         xp=xp,
     )
 
-    ratio = tau_d / xp.maximum(tau_y_lid, COHESION_FLOOR)
+    ratio = tau_d_raw / xp.maximum(tau_y_lid, COHESION_FLOOR)
     w_y = if_lid(0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH)))
     lid_cell_count = xp.sum(w_lid)
     w_solid_surf = 1.0 - _melt_ramp(
@@ -667,7 +655,7 @@ def compute_stagnant_lid_state(
     lid_regime = if_lid(w_active * w_has_lid * (1.0 + w_y))
 
     if xp is np and not bool(np.any(np.isnan(zero_or_nan))):
-        assert xp.all((w_no_lid >= 0.0) & (w_no_lid <= 1.0))
+        assert xp.all((w_lid_present >= 0.0) & (w_lid_present <= 1.0))
         assert xp.all(xp.isfinite(eta_i))
 
     return {
@@ -727,11 +715,12 @@ def compute_effective_viscosity(
 
     In boundary-layer lid mode, plastic yield viscosity is evaluated at the interior
     convective strain-rate invariant scale D_conv = 2 * v_m / d_conv = tau_d / eta_i:
-        eta_y = min(eta_diff, eta_i * (tau_y_lid / tau_d))
-        w_b = 0.5 * (1 + tanh(((tau_d / tau_y_lid) - 1) / YIELD_BLEND_LOG10_WIDTH))
+        log10(eta_y) = _softmin2(log10(eta_diff), log10(eta_i * (tau_y_lid / tau_d)), LOCAL_CAP_LOG10_WIDTH)
+        w_b = 0.5 * (1 + tanh(((tau_d / tau_y_lid) - 1) / YIELD_BLEND_RATIO_WIDTH))
         log10(eta_eff_lid) = (1 - w_b) * log10(eta_diff) + w_b * log10(eta_y)
-    with width ``YIELD_BLEND_LOG10_WIDTH`` (0.025). ``eta_i``, ``tau_d``, and
-    ``tau_y_lid`` are required in ``'lid'`` mode.
+    with linear stress-ratio width ``YIELD_BLEND_RATIO_WIDTH`` (0.025) and
+    yield-branch log10 cap width ``LOCAL_CAP_LOG10_WIDTH`` (0.01). ``eta_i``,
+    ``tau_d``, and ``tau_y_lid`` are required in ``'lid'`` mode.
 
     In local stress closure mode, ``eta_y = max(tau_y, COHESION_FLOOR) / (2 * sr_safe)``
     with ``sr_safe = sqrt(strain_rate**2 + LOCAL_STRAIN_RATE_FLOOR**2)`` and
@@ -812,29 +801,16 @@ def compute_effective_viscosity(
         ty = xp.asarray(ty_raw, dtype=float)
         eta_d = xp.asarray(eta_diff, dtype=float)
         inf_ty = xp.isinf(ty) & (ty > 0.0)
-        zero_ty = ty <= 0.0
         ty_fin = xp.where(inf_ty, 1.0, xp.maximum(ty, COHESION_FLOOR))
         sr_safe = xp.sqrt(sr**2 + LOCAL_STRAIN_RATE_FLOOR**2)
-        tau_y_term = xp.where(zero_ty & (COHESION_FLOOR <= 0.0), 0.0, ty_fin / (2.0 * sr_safe))
+        tau_y_term = ty_fin / (2.0 * sr_safe)
         is_unyielded = inf_ty | (sr <= 0.0) | xp.isnan(tau_y_term)
         log10_d = xp.log10(xp.maximum(eta_d, 1.0e-300))
         log10_y = xp.log10(xp.maximum(tau_y_term, 1.0e-300))
         d_loc = (log10_d - log10_y) / LOCAL_CAP_LOG10_WIDTH
-        d_loc_fin = xp.where(xp.isfinite(d_loc), d_loc, 0.0)
-        log10_res = xp.where(
-            d_loc > 40.0,
-            log10_y,
-            xp.where(
-                d_loc < -40.0,
-                log10_d,
-                log10_d
-                - LOCAL_CAP_LOG10_WIDTH * xp.logaddexp(0.0, xp.clip(d_loc_fin, -500.0, 40.0)),
-            ),
-        )
+        log10_res = _softmin2(log10_d, log10_y, LOCAL_CAP_LOG10_WIDTH, xp)
         res = xp.where(
-            zero_ty & (COHESION_FLOOR <= 0.0),
-            0.0,
-            xp.where(d_loc > 40.0, tau_y_term, xp.where(d_loc < -40.0, eta_d, 10.0**log10_res)),
+            d_loc > 40.0, tau_y_term, xp.where(d_loc < -40.0, eta_d, 10.0**log10_res)
         )
         return xp.where(
             invalid_local | xp.isnan(sr), xp.nan, xp.where(is_unyielded, eta_d, res)
@@ -870,33 +846,25 @@ def compute_effective_viscosity(
     # Smooth log10 tanh blend at convective strain rate D_conv = tau_d / eta_i:
     ty_raw_lid = xp.asarray(tau_y_lid, dtype=float)
     inf_ty = xp.isinf(ty_raw_lid) & (ty_raw_lid > 0.0)
-    zero_ty_lid = ty_raw_lid <= 0.0
     ty_lid = xp.where(inf_ty, 1.0, xp.maximum(ty_raw_lid, COHESION_FLOOR))
-    ratio = xp.where(
-        (td <= 0.0) | inf_ty,
-        1.0,
-        xp.where(zero_ty_lid & (COHESION_FLOOR <= 0.0), 0.0, ty_lid / xp.maximum(td, 1.0e-30)),
-    )
-    x_ratio = xp.where(
-        (td <= 0.0) | inf_ty, 0.0, xp.maximum(td, 0.0) / xp.maximum(ty_lid, 1.0e-30)
-    )
-    w_b = xp.where(
-        (td <= 0.0) | inf_ty,
-        0.0,
-        0.5 * (1.0 + xp.tanh((x_ratio - 1.0) / YIELD_BLEND_LOG10_WIDTH)),
-    )
-    eta_y_branch = xp.minimum(eta_d, eta_i_arr * ratio)
+    unyielded = (td <= 0.0) | inf_ty
+    ratio = xp.where(unyielded, 1.0, ty_lid / xp.maximum(td, 1.0e-30))
+    x_ratio = xp.where(unyielded, 0.0, td / xp.maximum(ty_lid, 1.0e-30))
+    w_b = 0.5 * (1.0 + xp.tanh((x_ratio - 1.0) / YIELD_BLEND_RATIO_WIDTH))
     log10_d_lid = xp.log10(xp.maximum(eta_d, 1.0e-300))
-    log10_y_lid = xp.log10(xp.maximum(eta_y_branch, 1.0e-300))
+    log10_y_raw = xp.log10(xp.maximum(eta_i_arr * ratio, 1.0e-300))
+    log10_y_lid = _softmin2(log10_d_lid, log10_y_raw, LOCAL_CAP_LOG10_WIDTH, xp)
+    d_y_lid = (log10_d_lid - log10_y_raw) / LOCAL_CAP_LOG10_WIDTH
+    eta_y_branch = xp.where(
+        d_y_lid > 40.0,
+        eta_i_arr * ratio,
+        xp.where(d_y_lid < -40.0, eta_d, 10.0**log10_y_lid),
+    )
     log10_eff_val = (1.0 - w_b) * log10_d_lid + w_b * log10_y_lid
     eta_eff_val = xp.where(
-        zero_ty_lid & (COHESION_FLOOR <= 0.0) & (td > 0.0),
-        0.0,
-        xp.where(
-            w_b <= 1.0e-15,
-            eta_d,
-            xp.where(w_b >= 1.0 - 1.0e-15, eta_y_branch, 10.0**log10_eff_val),
-        ),
+        w_b <= 1.0e-15,
+        eta_d,
+        xp.where(w_b >= 1.0 - 1.0e-15, eta_y_branch, 10.0**log10_eff_val),
     )
 
     if w_lid is not None:

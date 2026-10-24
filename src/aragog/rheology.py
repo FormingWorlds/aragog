@@ -209,6 +209,29 @@ def _clamp_pressure(pressure: Any, xp: Any) -> Any:
     return xp.where((p < 0.0) & (p >= -PRESSURE_ROUNDOFF_TOLERANCE), 0.0, p)
 
 
+def _softmax2(a: Any, b: Any, width: Any, xp: Any) -> Any:
+    """Smooth softplus maximum ``a + width * log(1 + exp((b - a) / width))``."""
+    a_arr = xp.asarray(a, dtype=float)
+    b_arr = xp.asarray(b, dtype=float)
+    w_arr = xp.asarray(width, dtype=float)
+    both_fin = xp.isfinite(a_arr) & xp.isfinite(b_arr) & xp.isfinite(w_arr)
+    s = xp.where(both_fin, xp.maximum(w_arr, 1.0e-30), 1.0)
+    a_fin = xp.where(both_fin, a_arr, 0.0)
+    b_fin = xp.where(both_fin, b_arr, 0.0)
+    d = (b_fin - a_fin) / s
+    soft = xp.where(
+        d > 40.0,
+        b_fin,
+        xp.where(d < -40.0, a_fin, a_fin + s * xp.logaddexp(0.0, xp.clip(d, -500.0, 40.0))),
+    )
+    return xp.where(both_fin, soft, xp.maximum(a_arr, b_arr) + 0.0 * w_arr)
+
+
+def _softmin2(a: Any, b: Any, width: Any, xp: Any) -> Any:
+    """Smooth softplus minimum ``a - width * log(1 + exp((a - b) / width))``."""
+    return -_softmax2(-xp.asarray(a, dtype=float), -xp.asarray(b, dtype=float), width, xp)
+
+
 def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
     """Validate ``(name, value, rule, is_scalar)`` entries; raise ``ValueError`` on ``np`` or return a ``NaN`` mask."""
     invalid: Any = xp.asarray(False)
@@ -331,34 +354,25 @@ def viscous_mixing_length_factor(
     bottom_slope_eff = (
         SolidRheologyParams.mlt_bottom_slope if bottom_slope is None else bottom_slope
     )
-    c_theta_eff = SolidRheologyParams.c_theta if c_theta is None else c_theta
-    checks: list[tuple[str, Any, str, bool]] = [
-        ('radii', radii, 'finite', False),
-        ('r_in', r_in, 'pos', True),
-        ('r_out', r_out, 'pos', True),
-        ('mixing_length', mixing_length, 'nonneg', False),
-        ('s_top_inf', s_top_inf_eff, 'half_open_unit', True),
-        ('bottom_slope', bottom_slope_eff, 'half_open_unit', True),
-    ]
-    if theta is not None:
-        checks.extend(
-            [
-                ('theta', theta, 'finite', False),
-                ('c_theta', c_theta_eff, 'nonneg', True),
-            ]
-        )
-    invalid = _validate_inputs(checks, xp)
+    invalid = _validate_inputs(
+        (
+            ('radii', radii, 'finite', False),
+            ('r_in', r_in, 'pos', True),
+            ('r_out', r_out, 'pos', True),
+            ('mixing_length', mixing_length, 'nonneg', False),
+            ('s_top_inf', s_top_inf_eff, 'half_open_unit', True),
+            ('bottom_slope', bottom_slope_eff, 'half_open_unit', True),
+        ),
+        xp,
+    )
     if theta is not None:
         eff_top_slope = compute_mlt_top_slope(
-            theta, s_top_inf=s_top_inf_eff, c_theta=c_theta_eff, xp=xp
+            theta, s_top_inf=s_top_inf_eff, c_theta=c_theta, xp=xp
         )
     else:
-        eff_top_slope = xp.asarray(s_top_inf_eff, dtype=float)
+        eff_top_slope = s_top_inf_eff
     r_arr = xp.asarray(radii, dtype=float)
-    rin_arr = xp.asarray(r_in, dtype=float)
-    rout_arr = xp.asarray(r_out, dtype=float)
-    b_slope_arr = xp.asarray(bottom_slope_eff, dtype=float)
-    l_v = xp.minimum(b_slope_arr * (r_arr - rin_arr), eff_top_slope * (rout_arr - r_arr))
+    l_v = xp.minimum(bottom_slope_eff * (r_arr - r_in), eff_top_slope * (r_out - r_arr))
     ml_arr = xp.asarray(mixing_length, dtype=float)
     positive = ml_arr > 0.0
     return xp.where(
@@ -389,8 +403,8 @@ def compute_arrhenius_enthalpy(
     Parameters
     ----------
     pressure : float or array-like
-        Pressure P [Pa] (must be non-negative; callers clamp negative round-off
-        excursions at zero).
+        Pressure P [Pa] (non-negative; negative round-off excursions down to
+        ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are clamped to 0.0 Pa).
     g_homologous : float, optional
         Dimensionless homologous activation parameter g_hom [-]. Defaults to
         ``SolidRheologyParams.g_homologous`` when None.
@@ -477,8 +491,8 @@ def compute_arrhenius_viscosity(
     temperature : float or array-like
         Temperature T [K].
     pressure : float or array-like
-        Pressure P [Pa] (must be non-negative; callers clamp negative round-off
-        excursions at zero).
+        Pressure P [Pa] (non-negative; negative round-off excursions down to
+        ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are clamped to 0.0 Pa).
     viscosity_solid : float, optional
         Reference solid-state dynamic viscosity eta_0 [Pa s] at (T_ref, P=0).
         Defaults to ``DEFAULT_VISCOSITY_SOLID`` (1.0e21) when None.
@@ -587,16 +601,7 @@ def compute_arrhenius_viscosity(
     log10_raw = xp.log10(xp.maximum(vs_pos, 1.0e-300)) + exponent / math.log(10.0)
     w_cap = VISCOSITY_CEILING_LOG10_WIDTH
     d_cap = (log10_raw - vmax_log10) / w_cap
-    d_cap_fin = xp.where(xp.isfinite(d_cap), d_cap, 0.0)
-    log10_soft = xp.where(
-        d_cap > 40.0,
-        vmax_log10,
-        xp.where(
-            d_cap < -40.0,
-            log10_raw,
-            log10_raw - w_cap * xp.logaddexp(0.0, xp.clip(d_cap_fin, -500.0, 40.0)),
-        ),
-    )
+    log10_soft = _softmin2(log10_raw, vmax_log10, w_cap, xp)
     max_exponent = xp.minimum(
         (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1.0e-300))) * math.log(10.0), 700.0
     )
@@ -627,7 +632,8 @@ def compute_yield_stress(
     Parameters
     ----------
     pressure : float or array-like
-        Pressure P [Pa].
+        Pressure P [Pa] (non-negative; negative round-off excursions down to
+        ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are clamped to 0.0 Pa).
     yield_stress_c : float, optional
         Cohesion c [Pa]. Defaults to ``SolidRheologyParams.yield_stress_c`` when None.
     yield_stress_mu : float, optional
@@ -660,12 +666,8 @@ def compute_yield_stress(
         xp,
     )
     p = _clamp_pressure(pressure, xp)
-    c = xp.asarray(c_eff, dtype=float)
-    mu = xp.asarray(mu_eff, dtype=float)
-    tau_max = xp.asarray(max_eff, dtype=float)
-    tau_y = xp.maximum(0.0, xp.minimum(c + mu * p, tau_max))
-    tau_y = xp.where(invalid, xp.nan, tau_y)
-    return _unwrap_scalar(tau_y, xp, pressure)
+    tau_y = xp.maximum(0.0, xp.minimum(c_eff + mu_eff * p, max_eff))
+    return _unwrap_scalar(xp.where(invalid, xp.nan, tau_y), xp, pressure)
 
 
 def compute_strain_rate_local(
