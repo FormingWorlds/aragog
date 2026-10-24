@@ -3,7 +3,7 @@
 This tab lists the tests that compare Aragog with an independent result: a published benchmark, an analytical limit or a second implementation. Each case in the table carries the `reference_pinned` marker. Where a page section exists, the table links it.
 
 - [Core](core.md): the core module against Nimmo (2015), the `leeds` and `leeds_thermal` models of thermal_history (Greenwood et al. 2021) and analytical limits.
-- [Numerics](numerics.md): the first-principles checks of the solver, the equation of state and the NumPy and JAX right-hand sides; these are checks, not `reference_pinned` cases.
+- [Numerics](numerics.md): the first-principles checks of the solver, the equation of state and the NumPy and JAX right-hand sides, including the `reference_pinned` solid-rheology solver-wiring benchmarks (`A2-2`, `A2-3`, `A2-4`).
 
 ## Cases by process
 
@@ -22,6 +22,9 @@ This tab lists the tests that compare Aragog with an independent result: a publi
 | Core numerics | NumPy and JAX right-hand sides | `tests/test_jax_dsdt_core_module.py::test_rhs_parity_with_numpy_on_driven_state` | NumPy implementation | 1e-8 relative | [Core](core.md#12-numpy-and-jax-right-hand-sides-and-the-analytic-jacobian) |
 | Mantle heat transport | Theta-dependent top slope of the mixing length | `tests/test_mlt_calibration.py::test_theta_dependent_top_slope_hand_values_and_limits` | hand values and limits | 1e-15 to 1e-13 relative | no page section yet |
 | Mantle rheology | Arrhenius viscosity, yield stress, NumPy and JAX kernels | `tests/test_rheology_verification.py` (its `reference_pinned` tests) | reference limits, NumPy implementation | 1e-12 relative (one bound 1e-9) | no page section yet ([Solid-state convection](../Explanations/solid_state_convection.md) explains the rheology) |
+| Mantle numerics | NumPy and JAX right-hand sides with solid rheology | `tests/test_rheology_solver_wiring.py::test_a2_2_rhs_numpy_jax_parity_rheology_on` | NumPy implementation on active-solid `abe_solid.toml` variant | 1e-6 relative (on vs off >= 1e-4) | [Numerics](numerics.md#numpy-jax-rhs-parity) |
+| Mantle numerics | Round-off perturbation spread with solid rheology | `tests/test_rheology_solver_wiring.py::test_a2_3_perturbed_starts_spread` | 5 perturbed starts $S_0(1 + k \cdot 10^{-12})$ over 100 yr | $\Delta T_\text{on}(r) \le \max(2\Delta T_\text{off}(r), 0.05\text{ K})$ | [Numerics](numerics.md#round-off-perturbation-spread-with-solid-rheology) |
+| Mantle numerics | Two-pass solid rheology RHS call counts and cost | `tests/test_rheology_solver_wiring.py::test_a2_4_rhs_call_counts_and_cost` | per-RHS call-count budget and off-path wall time | $(0, +2, +2, +1, +1, +2)$ calls; JAX ratio $\le 1.25$ | [Numerics](numerics.md#two-pass-solid-rheology-rhs-cost) |
 
 The command of a case is `pytest <test>`; only the young-layer case has a section with its own reference, tolerance, test id and command so far, and the other cases are described by the prose of their linked section.
 

@@ -613,7 +613,7 @@ class EntropyState:
         alpha = np.asarray(self.phase_basic.thermal_expansivity()).ravel()
         T = np.asarray(self.phase_basic.temperature()).ravel()
         Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
-        g = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
+        g = np.abs(np.asarray(self.phase_basic.gravitational_acceleration()).ravel())
 
         conv_drive = np.maximum(
             _smooth_abs_neg(self._dSdr, eps=1.0e-30),
@@ -808,34 +808,9 @@ class EntropyState:
             self._heat_flux += self._jconv
 
         if rheo_enabled:
-            phi_b_rheo = np.asarray(self.phase_basic.melt_fraction()).ravel()
             eta_diff_b = np.asarray(self.phase_basic.eta_diff()).ravel()
-            T_sol_b = self.phase_basic.solidus_temperature()
-            T_sol_b_arr = np.asarray(T_sol_b).ravel() if T_sol_b is not None else None
-            mu_mix_pass1 = np.asarray(self.phase_basic.viscosity()).ravel()
-            kappa_th_b = k / (rho * np.maximum(Cp, 100.0))
-            lid_state = _compute_stagnant_lid_state_core(
-                radii=self._radii_basic,
-                temperature=T,
-                pressure=np.asarray(self.phase_basic.pressure).ravel(),
-                convective_flux=self._jconv,
-                total_flux=self._jcond + self._jconv,
-                solidus_temperature=T_sol_b_arr,
-                melt_fraction=phi_b_rheo,
-                params=rheo,
-                viscosity_solid=self.phase_basic._visc_solid,
-                phi_rheo=self.phase_basic._phi_rheo,
-                phi_width=self.phase_basic._phi_width,
-                unyielded_velocity=viscous_velocity,
-                viscosity_mixture=mu_mix_pass1,
-                density=rho,
-                gravity=g,
-                thermal_expansivity=alpha,
-                thermal_diffusivity=kappa_th_b,
-                xp=np,
-            )
-            self._lid_state = lid_state
             if rheo.stress_closure_mode == 'local':
+                self._lid_state = None
                 tau_y_b = np.asarray(self.phase_basic.tau_y()).ravel()
                 eta_eff_b = _compute_effective_viscosity_core(
                     eta_diff=eta_diff_b,
@@ -846,6 +821,33 @@ class EntropyState:
                     xp=np,
                 )
             else:
+                phi_b_rheo = np.asarray(self.phase_basic.melt_fraction()).ravel()
+                T_sol_b = self.phase_basic.solidus_temperature()
+                T_sol_b_arr = np.asarray(T_sol_b).ravel() if T_sol_b is not None else None
+                mu_mix_pass1 = np.asarray(self.phase_basic.viscosity()).ravel()
+                kappa_th_b = k / (rho * np.maximum(Cp, 100.0))
+                p_b_pos = np.maximum(np.asarray(self.phase_basic.pressure).ravel(), 0.0)
+                lid_state = _compute_stagnant_lid_state_core(
+                    radii=self._radii_basic,
+                    temperature=T,
+                    pressure=p_b_pos,
+                    convective_flux=self._jconv,
+                    total_flux=self._jcond + self._jconv,
+                    solidus_temperature=T_sol_b_arr,
+                    melt_fraction=phi_b_rheo,
+                    params=rheo,
+                    viscosity_solid=self.phase_basic._visc_solid,
+                    phi_rheo=self.phase_basic._phi_rheo,
+                    phi_width=self.phase_basic._phi_width,
+                    unyielded_velocity=viscous_velocity,
+                    viscosity_mixture=mu_mix_pass1,
+                    density=rho,
+                    gravity=np.abs(g),
+                    thermal_expansivity=alpha,
+                    thermal_diffusivity=kappa_th_b,
+                    xp=np,
+                )
+                self._lid_state = lid_state
                 eta_eff_b = _compute_effective_viscosity_core(
                     eta_diff=eta_diff_b,
                     tau_d=lid_state['tau_d'],
@@ -860,6 +862,7 @@ class EntropyState:
                 self.phase_basic.blend_viscosity_with_solid(self._eta_eff_basic)
             ).ravel()
             self.phase_basic._viscosity_val = mu_pass2
+            self.phase_basic._rheology_viscosity_dirty = False
             nu_pass2 = mu_pass2 / rho
             theta_pass2 = None if rheo.stress_closure_mode == 'local' else lid_state['theta']
             q_mlt = np.asarray(
@@ -913,6 +916,8 @@ class EntropyState:
             if self._convection:
                 self._jconv = rho * T * self._eddy_diffusivity * (-self._dSdr)
             self._heat_flux = self._jcond + self._jconv
+        else:
+            self._lid_state = None
 
         if self._grav_sep:
             phi_b = np.asarray(self.phase_basic.melt_fraction()).ravel()

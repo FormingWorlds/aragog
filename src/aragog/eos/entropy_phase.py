@@ -251,21 +251,21 @@ class EntropyPhaseEvaluator:
         self._dTdPs_val = (
             self._const_alpha * self._temperature / (self._const_rho * self._const_Cp)
         )
-        self._viscosity_val = np.full_like(S, 10.0**self._const_log10visc)
         self._thermal_conductivity_val = np.full_like(S, self._const_cond)
         self._latent_heat_val = np.zeros_like(S)
-        P_arr = (
-            np.atleast_1d(np.asarray(self.pressure, dtype=float))
-            if self.pressure.size > 0
-            else np.zeros_like(S)
-        )
-        self._solidus_temperature = (
-            self._rheology.t_sol_0 + self._rheology.dt_sol_dp * np.maximum(P_arr, 0.0)
-        )
+        self._solidus_temperature = None
         self._smth_val = np.zeros_like(S)
-        self._eta_diff = np.full_like(S, self._visc_solid)
-        self._tau_y = np.full_like(S, np.inf)
-        self._rheology_viscosity_dirty = False
+        if not self._rheology.enabled:
+            self._viscosity_val = np.full_like(S, 10.0**self._const_log10visc)
+            self._eta_diff = self._viscosity_val
+            self._tau_y = np.full_like(S, np.inf)
+            self._rheology_viscosity_dirty = False
+        else:
+            self._melt_fraction = np.zeros_like(S)
+            if self._defer_rheology_viscosity:
+                self._rheology_viscosity_dirty = True
+            else:
+                self._compute_rheology_viscosity()
 
         # Flatten if scalar input (capture ndim before atleast_1d)
         if np.ndim(self.entropy) == 0 or np.ndim(self.pressure) == 0:
@@ -278,12 +278,13 @@ class EntropyPhaseEvaluator:
                 '_thermal_conductivity_val',
                 '_melt_fraction',
                 '_latent_heat_val',
-                '_solidus_temperature',
                 '_smth_val',
                 '_eta_diff',
                 '_tau_y',
             ):
-                setattr(self, attr, np.asarray(getattr(self, attr)).ravel())
+                val = getattr(self, attr)
+                if val is not None:
+                    setattr(self, attr, np.asarray(val).ravel())
 
     def _update_eos(self) -> None:
         """EOS-based evaluation mirroring SPIDER EOSEval_Composite_TwoPhase.
@@ -530,9 +531,18 @@ class EntropyPhaseEvaluator:
 
     def _compute_rheology_viscosity(self) -> None:
         """Evaluate Arrhenius diffusion creep viscosity, Byerlee yield stress, and unyielded blend."""
-        P_arr = np.atleast_1d(np.asarray(self.pressure, dtype=float))
         T_arr = np.atleast_1d(np.asarray(self._temperature, dtype=float))
-        T_sol_arr = np.atleast_1d(np.asarray(self._solidus_temperature, dtype=float))
+        P_raw = (
+            np.atleast_1d(np.asarray(self.pressure, dtype=float))
+            if self.pressure.size > 0
+            else np.zeros_like(T_arr)
+        )
+        P_arr = np.maximum(P_raw, 0.0)
+        T_sol_arr = (
+            np.atleast_1d(np.asarray(self._solidus_temperature, dtype=float))
+            if self._solidus_temperature is not None and np.size(self._solidus_temperature) > 0
+            else None
+        )
         rheo = self._rheology
         self._eta_diff = _compute_arrhenius_viscosity_core(
             temperature=T_arr,
@@ -570,9 +580,17 @@ class EntropyPhaseEvaluator:
         """Temperature from EOS lookup (not a state variable)."""
         return self._temperature
 
-    def solidus_temperature(self) -> npt.NDArray:
+    def solidus_temperature(self) -> npt.NDArray | None:
         """Cached solidus temperature T_sol(P) [K] from the current EOS update."""
         return self._solidus_temperature
+
+    def visc_solid_weight(self) -> npt.NDArray:
+        """Two-stage solid log-viscosity blend weight w_solid(phi, smth) in [0, 1]."""
+        phi_arr = np.atleast_1d(np.asarray(self._melt_fraction, dtype=float))
+        smth = np.atleast_1d(np.asarray(self._smth_val, dtype=float))
+        w = tanh_weight(phi_arr, self._phi_rheo, self._phi_width)
+        phi_thresh = self._rheology.phi_visc_single if self._rheology.enabled else 0.5
+        return smth * (1.0 - w) + (1.0 - smth) * np.where(phi_arr > phi_thresh, 0.0, 1.0)
 
     def eta_diff(self) -> npt.NDArray:
         """Cached unyielded solid diffusion-creep viscosity eta_diff [Pa s]."""

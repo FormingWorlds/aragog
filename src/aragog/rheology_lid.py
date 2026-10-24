@@ -1013,13 +1013,18 @@ def compute_effective_viscosity(
             ),
             xp,
         )
+        sr_local = (
+            compute_strain_rate_local(unyielded_velocity, mixing_length, xp=xp)
+            if strain_rate is None
+            else strain_rate
+        )
         res = _compute_effective_viscosity_core(
             eta_diff=eta_diff,
             stress_closure_mode='local',
             unyielded_velocity=unyielded_velocity,
             mixing_length=mixing_length,
             tau_y_profile=tau_y_profile,
-            strain_rate=strain_rate,
+            strain_rate=sr_local,
             tau_y=tau_y,
             xp=xp,
         )

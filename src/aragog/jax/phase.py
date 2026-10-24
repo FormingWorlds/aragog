@@ -12,6 +12,7 @@ Dependencies: jax, equinox (already in PROTEUS ecosystem via atmodeller).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import NamedTuple
 
 import equinox as eqx
@@ -68,6 +69,7 @@ class PhaseProperties(NamedTuple):
     eta_diff: jax.Array | None = None  # [Pa s]
     tau_y: jax.Array | None = None  # [Pa]
     smth: jax.Array | None = None  # [-]
+    visc_solid_weight: jax.Array | None = None  # [-]
 
 
 class FluxOutput(NamedTuple):
@@ -228,7 +230,23 @@ class PhaseParams(eqx.Module):
                 f'got {separation_buoyancy!r}'
             )
         self.separation_buoyancy_mixture = {'mixture': 1.0, 'solid': 0.0}[separation_buoyancy]
-        self.rheology = rheology if rheology is not None else SolidRheologyParams()
+        if isinstance(rheology, Mapping):
+            rheo_obj = SolidRheologyParams(**rheology)
+        elif rheology is None:
+            rheo_obj = SolidRheologyParams()
+        else:
+            rheo_obj = rheology
+        rheo_obj.__post_init__()
+        if rheo_obj.enabled:
+            if not np.isfinite(viscosity_solid) or viscosity_solid <= 0.0:
+                raise ValueError('viscosity_solid must be finite and positive')
+            if float(np.log10(viscosity_solid)) >= float(rheo_obj.viscosity_max_log10):
+                raise ValueError('log10(viscosity_solid) must be < viscosity_max_log10')
+            if not np.isfinite(phi_rheo) or not (0.0 <= float(phi_rheo) <= 1.0):
+                raise ValueError('phi_rheo must lie in [0, 1]')
+            if not np.isfinite(phi_width) or float(phi_width) <= 0.0:
+                raise ValueError('phi_width must be finite and positive')
+        self.rheology = rheo_obj
 
 
 class MeshArrays(eqx.Module):
@@ -315,6 +333,34 @@ class MeshArrays(eqx.Module):
         self.P_stag = P_stag
         self.P_basic = P_basic
         self.gravity = gravity
+        if not isinstance(radii_basic, jax.core.Tracer):
+            r_b = np.asarray(radii_basic, dtype=float).ravel()
+            if (
+                r_b.size < 3
+                or not np.all(np.isfinite(r_b))
+                or r_b[0] <= 0.0
+                or not np.all(np.diff(r_b) > 0.0)
+            ):
+                raise ValueError(
+                    'basic-node radii must be finite, positive, and strictly increasing with >= 3 nodes'
+                )
+            ml = np.asarray(mixing_length, dtype=float).ravel()
+            if not np.all(np.isfinite(ml)) or np.any(ml < 0.0):
+                raise ValueError('basic-node mixing_length must be finite and non-negative')
+            p_b = np.asarray(P_basic, dtype=float).ravel()
+            p_s = np.asarray(P_stag, dtype=float).ravel()
+            if (
+                not np.all(np.isfinite(p_b))
+                or np.any(p_b < -1.0)
+                or not np.all(np.isfinite(p_s))
+                or np.any(p_s < -1.0)
+            ):
+                raise ValueError(
+                    'pressure at basic and staggered nodes must be finite and >= -1.0 Pa'
+                )
+            g_b = np.asarray(gravity, dtype=float).ravel()
+            if not np.all(np.isfinite(g_b)) or np.any(g_b <= 0.0):
+                raise ValueError('gravity at basic nodes must be finite and positive')
         if dP_dr_basic is None:
             import numpy as _np
 
@@ -498,8 +544,9 @@ def spider_get_smoothing(gphi: jax.Array, smooth_width: float) -> jax.Array:
     ``smooth_width`` is the tanh transition width in gphi units (SPIDER
     ``matprop_smooth_width``, default 0.01).
     """
-    upper = 0.5 * (1.0 - jnp.tanh((gphi - 1.0) / smooth_width))
-    lower = 0.5 * (1.0 + jnp.tanh(gphi / smooth_width))
+    w_safe = jnp.maximum(smooth_width, 1.0e-30)
+    upper = 0.5 * (1.0 - jnp.tanh((gphi - 1.0) / w_safe))
+    lower = 0.5 * (1.0 + jnp.tanh(gphi / w_safe))
     return jnp.where(gphi > 0.5, upper, lower)
 
 
@@ -592,11 +639,17 @@ def evaluate_phase(
 
     eta_diff = None
     tau_y = None
+    w_blend = tanh_weight(phi, params.phi_rheo, params.phi_width)
+    phi_thresh = params.rheology.phi_visc_single if params.rheology.enabled else 0.5
+    visc_solid_weight = state.smth * (1.0 - w_blend) + (1.0 - state.smth) * jnp.where(
+        phi > phi_thresh, 0.0, 1.0
+    )
     if params.rheology.enabled and include_rheology:
         visc_solid = 10.0**params.log10_visc_solid
+        p_pos = jnp.maximum(P, 0.0)
         eta_diff = _compute_arrhenius_viscosity_core(
             state.temperature,
-            P,
+            p_pos,
             viscosity_solid=visc_solid,
             g_homologous=params.rheology.g_homologous,
             solidus_temperature=state.solidus_temperature,
@@ -609,7 +662,7 @@ def evaluate_phase(
             xp=jnp,
         )
         tau_y = _compute_yield_stress_core(
-            P,
+            p_pos,
             yield_stress_c=params.rheology.yield_stress_c,
             yield_stress_mu=params.rheology.yield_stress_mu,
             yield_stress_max=params.rheology.yield_stress_max,
@@ -642,6 +695,7 @@ def evaluate_phase(
         eta_diff=eta_diff,
         tau_y=tau_y,
         smth=state.smth,
+        visc_solid_weight=visc_solid_weight,
     )
 
 
@@ -729,6 +783,7 @@ def compute_mlt(
     theta: jax.Array | float | None = None,
     apply_q_mlt: bool = True,
     return_aux: bool = False,
+    return_q_025: bool = False,
 ) -> tuple[jax.Array, ...]:
     """Compute MLT eddy diffusivity from the entropy gradient.
 
@@ -750,12 +805,16 @@ def compute_mlt(
     return_aux : bool, default False
         When True, also return ``(reynolds, viscous_velocity)`` as the
         third and fourth elements of the returned tuple.
+    return_q_025 : bool, default False
+        When True together with ``return_aux``, also append ``q_mlt**0.25``
+        as the fifth element of the returned tuple.
 
     Returns
     -------
     tuple of jax.Array
         ``(kappa_h, kappa_c)`` when ``return_aux`` is False;
-        ``(kappa_h, kappa_c, reynolds, viscous_velocity)`` when True.
+        ``(kappa_h, kappa_c, reynolds, viscous_velocity)`` when True
+        (or 5-tuple with ``q_025`` when ``return_q_025`` is True).
     """
     alpha = phase_basic.thermal_expansivity
     T = phase_basic.temperature
@@ -769,7 +828,7 @@ def compute_mlt(
     # An unstable node is driven by at least the gradient D (convective_threshold).
     drive = jnp.maximum(abs_dSdr_safe, params.convective_threshold)
     effective_superadiabatic = alpha * T * drive / jnp.maximum(Cp, 1.0)
-    velocity_prefactor = mesh.gravity * effective_superadiabatic
+    velocity_prefactor = jnp.abs(mesh.gravity) * effective_superadiabatic
 
     # Hard masks matching the numpy reference: the mixing-length drive acts where
     # dS/dr < 0, the floor where dS/dr < D (convective_threshold).
@@ -807,6 +866,7 @@ def compute_mlt(
             + inviscid_weight * inviscid_velocity
         ) * mesh.mixing_length
     else:
+        q_025 = jnp.ones_like(dSdr)
         viscous_velocity = (
             velocity_prefactor * mesh.mixing_length_cu / (18.0 * nu)
         ) * conv_mask
@@ -847,6 +907,8 @@ def compute_mlt(
     kappa_h = kappa_h.at[0].set(kappa_h[1])
 
     if return_aux:
+        if return_q_025:
+            return kappa_h, kappa_c, reynolds, viscous_velocity, q_025
         return kappa_h, kappa_c, reynolds, viscous_velocity
     return kappa_h, kappa_c
 
@@ -938,18 +1000,16 @@ def compute_fluxes(
     phase_basic = evaluate_phase(eos, params, mesh.P_basic, S_basic)
 
     # MLT eddy diffusivity
-    if params.rheology.enabled:
-        kappa_h, kappa_c, _, u_visc_1 = compute_mlt(
-            dSdr,
-            phase_basic,
-            mesh,
-            params,
-            theta=None,
-            apply_q_mlt=True,
-            return_aux=True,
-        )
-    else:
-        kappa_h, kappa_c = compute_mlt(dSdr, phase_basic, mesh, params)
+    kappa_h, kappa_c, _, u_visc_1, q_025_1 = compute_mlt(
+        dSdr,
+        phase_basic,
+        mesh,
+        params,
+        theta=None,
+        apply_q_mlt=params.rheology.enabled,
+        return_aux=True,
+        return_q_025=True,
+    )
 
     # Basic node properties
     rho = phase_basic.density
@@ -981,49 +1041,47 @@ def compute_fluxes(
     if params.rheology.enabled:
         kappa_th_b = k / (rho * Cp_safe)
         visc_solid = 10.0**params.log10_visc_solid
-        lid_state = _compute_stagnant_lid_state_core(
-            radii=mesh.radii_basic,
-            temperature=T,
-            pressure=mesh.P_basic,
-            convective_flux=jconv,
-            total_flux=jcond + jconv,
-            solidus_temperature=phase_basic.solidus_temperature,
-            melt_fraction=phase_basic.melt_fraction,
-            params=params.rheology,
-            viscosity_solid=visc_solid,
-            phi_rheo=params.phi_rheo,
-            phi_width=params.phi_width,
-            unyielded_velocity=u_visc_1,
-            viscosity_mixture=phase_basic.viscosity,
-            density=rho,
-            gravity=mesh.gravity,
-            thermal_expansivity=phase_basic.thermal_expansivity,
-            thermal_diffusivity=kappa_th_b,
-            xp=jnp,
+        eta_diff_b = (
+            phase_basic.eta_diff
+            if phase_basic.eta_diff is not None
+            else jnp.full_like(T, visc_solid)
+        )
+        tau_y_b = (
+            phase_basic.tau_y if phase_basic.tau_y is not None else jnp.full_like(T, jnp.inf)
         )
         if params.rheology.stress_closure_mode == 'local':
-            q_mlt_1 = _viscous_mixing_length_factor_core(
-                radii=mesh.radii_basic,
-                r_in=mesh.radii_basic[0],
-                r_out=mesh.radii_basic[-1],
-                mixing_length=mesh.mixing_length,
-                bottom_slope=params.rheology.mlt_bottom_slope,
-                theta=None,
-                s_top_inf=params.rheology.s_top_inf,
-                c_theta=params.rheology.c_theta,
-                xp=jnp,
-            )
+            lid_state = None
             eta_eff_b = _compute_effective_viscosity_core(
-                eta_diff=phase_basic.eta_diff,
+                eta_diff=eta_diff_b,
                 stress_closure_mode='local',
                 unyielded_velocity=u_visc_1,
-                mixing_length=(q_mlt_1**0.25) * mesh.mixing_length,
-                tau_y=phase_basic.tau_y,
+                mixing_length=q_025_1 * mesh.mixing_length,
+                tau_y=tau_y_b,
                 xp=jnp,
             )
         else:
+            lid_state = _compute_stagnant_lid_state_core(
+                radii=mesh.radii_basic,
+                temperature=T,
+                pressure=jnp.maximum(mesh.P_basic, 0.0),
+                convective_flux=jconv,
+                total_flux=jcond + jconv,
+                solidus_temperature=phase_basic.solidus_temperature,
+                melt_fraction=phase_basic.melt_fraction,
+                params=params.rheology,
+                viscosity_solid=visc_solid,
+                phi_rheo=params.phi_rheo,
+                phi_width=params.phi_width,
+                unyielded_velocity=u_visc_1,
+                viscosity_mixture=phase_basic.viscosity,
+                density=rho,
+                gravity=jnp.abs(mesh.gravity),
+                thermal_expansivity=phase_basic.thermal_expansivity,
+                thermal_diffusivity=kappa_th_b,
+                xp=jnp,
+            )
             eta_eff_b = _compute_effective_viscosity_core(
-                eta_diff=phase_basic.eta_diff,
+                eta_diff=eta_diff_b,
                 tau_d=lid_state['tau_d'],
                 tau_y_lid=lid_state['tau_y_lid'],
                 stress_closure_mode='lid',

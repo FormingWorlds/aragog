@@ -419,14 +419,16 @@ def viscous_mixing_length_factor(
             theta, s_top_inf=s_top_inf_eff, c_theta=c_theta, xp=xp
         )
         invalid = invalid | xp.isnan(eff_top_slope)
+    else:
+        eff_top_slope = s_top_inf_eff
     res = _viscous_mixing_length_factor_core(
         radii,
         r_in,
         r_out,
         mixing_length,
-        s_top_inf=s_top_inf_eff,
+        s_top_inf=eff_top_slope,
         bottom_slope=bottom_slope_eff,
-        theta=theta,
+        theta=None,
         c_theta=c_theta,
         xp=xp,
     )

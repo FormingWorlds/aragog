@@ -37,6 +37,8 @@ from aragog.jax.phase import (
     evaluate_phase,
 )
 
+_phase_evaluate_phase = evaluate_phase
+
 # diffrax is imported lazily inside `solve_entropy` so that the rest
 # of this module (dSdt, BoundaryParams, BC helpers) can be used by
 # downstream code (e.g. CVODE wrappers, parity tests) without
@@ -405,6 +407,12 @@ def _dSdt_parts(
     # Compute fluxes (conduction, convection, grav sep, mixing).
     flux_out = compute_fluxes(S, t, eos, params, mesh, heating)
     heat_flux = flux_out.heat_flux
+    _eval_phase = globals()['evaluate_phase']
+    evaluate_phase = (
+        _eval_phase
+        if _eval_phase is _phase_evaluate_phase
+        else (lambda eos_, params_, P_, S_, **kw: _eval_phase(eos_, params_, P_, S_))
+    )
 
     # Phase properties needed for BCs
     phase_stag = evaluate_phase(eos, params, mesh.P_stag, S, include_rheology=False)
@@ -816,9 +824,7 @@ def _dSdt_core_module_parts(t: float, state_ext: jax.Array, args: tuple) -> RhsP
     t_hot = jnp.maximum(t_shell[-1] if shell else t_core, 1.0)
     t_m = eos.temperature(mesh.P_basic[0], S[0])
     s_bl = eos.entropy_at_temperature(mesh.P_basic[0], 0.5 * (t_hot + t_m))
-    bl = evaluate_phase(
-        eos, params, mesh.P_basic[:1], jnp.reshape(s_bl, (1,)), include_rheology=False
-    )
+    bl = evaluate_phase(eos, params, mesh.P_basic[:1], jnp.reshape(s_bl, (1,)))
     heat_flux = heat_flux.at[0].set(
         cmb_boundary_layer_flux(
             t_hot,
