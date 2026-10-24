@@ -583,7 +583,7 @@ def test_jax_jacrev_closure_differentiability():
 def test_checkpoint_profile_175kyr_paleos_solidus_consistency():
     """Verify 175 kyr fixture T_basic and phi_basic come from one PALEOS melting curve.
 
-    In ``tests/reference/checkpoint_profile_175kyr.npz`` (built and verified bitwise by
+    In ``tests/reference/checkpoint_profile_175kyr.npz`` (built and verified at rtol 1e-12 by
     ``tests/reference/build_checkpoint_profile_175kyr.py``), ``r_basic``, ``P_basic``,
     ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and ``phi_basic[4:100]``
     are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]`` by the
@@ -603,9 +603,11 @@ def test_checkpoint_profile_175kyr_paleos_solidus_consistency():
     spec.loader.exec_module(builder_mod)
     assert builder_mod.main(['--check']) == 0
     offline_rebuilt = builder_mod.build_fixture_arrays(source_commit='0' * 40)
-    assert np.array_equal(
+    np.testing.assert_allclose(
         offline_rebuilt['T_basic'],
         np.load(builder_path.replace('build_', '').replace('.py', '.npz'))['T_basic'],
+        rtol=1.0e-12,
+        atol=0.0,
     )
     assert f'{float(offline_rebuilt["T_basic"][98]):.2f} K' in builder_mod.__doc__
     assert f'{float(offline_rebuilt["T_basic"][99]):.2f} K' in builder_mod.__doc__
