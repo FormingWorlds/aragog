@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import tomllib  # noqa: F401
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Self
 
@@ -345,7 +345,7 @@ class _PhaseMixedParameters:
             )
 
 
-_PHASE_VISCOSITY_MISSING = object()
+_RHEOLOGY_FIELD_NAMES: frozenset[str] = frozenset(f.name for f in fields(SolidRheologyParams))
 
 
 @delegate_rheology
@@ -374,17 +374,16 @@ class _PhaseParameters:
         melt_fraction: float,
         thermal_conductivity: float | str,
         thermal_expansivity: float | str,
-        viscosity: float | str = _PHASE_VISCOSITY_MISSING,  # type: ignore[assignment]
+        viscosity: float | str,
         entropy: float | str = '',
         rheology: SolidRheologyParams | Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        if viscosity is _PHASE_VISCOSITY_MISSING:
-            raise TypeError(
-                "_PhaseParameters.__init__() missing 1 required positional argument: 'viscosity'"
-            )
-        if viscosity is None:
-            raise ValueError('_PhaseParameters.viscosity must not be None.')
+        for key in kwargs:
+            if key not in _RHEOLOGY_FIELD_NAMES:
+                raise TypeError(
+                    f'_PhaseParameters.__init__() got an unexpected keyword argument {key!r}'
+                )
         self.density = density
         self.heat_capacity = heat_capacity
         self.melt_fraction = melt_fraction
@@ -629,6 +628,14 @@ class Parameters:
                     f'Configuration error: missing required section [{section_name}] '
                     f'in {path.name}'
                 )
+            if dataclass_ is _PhaseParameters:
+                flat_rheo = [k for k in section if k in _RHEOLOGY_FIELD_NAMES]
+                if flat_rheo:
+                    raise ValueError(
+                        f'Configuration error in [{section_name}] of {path.name}: '
+                        f'rheology key {flat_rheo[0]!r} must be in [{section_name}.rheology], '
+                        f'not flat in [{section_name}]'
+                    )
             try:
                 init_dict[section_name] = dataclass_(**section)
             except (TypeError, ValueError) as exc:
@@ -680,6 +687,16 @@ class Parameters:
 
         init_dict: dict[str, Any] = {}
         for section_name, dataclass_ in _get_dataclass_from_section_name().items():
+            if dataclass_ is _PhaseParameters and parser.has_section(section_name):
+                flat_rheo = [
+                    k for k, _ in parser.items(section_name) if k in _RHEOLOGY_FIELD_NAMES
+                ]
+                if flat_rheo:
+                    raise ValueError(
+                        f'Configuration error in [{section_name}] of {Path(filenames[0]).name}: '
+                        f'rheology key {flat_rheo[0]!r} must be in [{section_name}.rheology], '
+                        f'not flat in [{section_name}]'
+                    )
             init_dict[section_name] = parser.parse_section(
                 using_dataclass=dataclass_, section_name=section_name
             )

@@ -111,6 +111,7 @@ class Config:
             Legacy Parameters object, ready for Solver.
         """
         from aragog.parser import (
+            _RHEOLOGY_FIELD_NAMES,
             Parameters,
             _BoundaryConditionsParameters,
             _EnergyParameters,
@@ -157,6 +158,18 @@ class Config:
                     "data['phase_solid.rheology']"
                 )
             phase_solid_data['rheology'] = data['phase_solid.rheology']
+
+        for section_name, phase_data in (
+            ('phase_liquid', phase_liquid_data),
+            ('phase_solid', phase_solid_data),
+        ):
+            flat_rheo = [k for k in phase_data if k in _RHEOLOGY_FIELD_NAMES]
+            if flat_rheo:
+                raise ValueError(
+                    f'Configuration error in [{section_name}]: '
+                    f'rheology key {flat_rheo[0]!r} must be in [{section_name}.rheology], '
+                    f'not flat in [{section_name}]'
+                )
 
         phase_liquid = _PhaseParameters(**phase_liquid_data)
         phase_solid = _PhaseParameters(**phase_solid_data)
