@@ -168,12 +168,15 @@ def _compute_f_tot_safe(
 ) -> FloatOrArray:
     """Compute the smooth softplus total flux floor against the 5-node local interior RMS.
 
+    Grids with N >= 3 replicate adjacent interior nodes at boundaries to isolate
+    the interior from boundary fluxes.
+
     Parameters
     ----------
     total_flux : FloatOrArray
         Total surface and interior heat flux [W/m^2].
     radii : FloatOrArray
-        Cell-centered radial coordinate [m].
+        Cell-centered radial coordinate [m] (length N >= 3 applies boundary replication).
     xp : module, optional
         Array module (numpy or jax.numpy). Default is numpy.
 

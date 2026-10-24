@@ -806,7 +806,7 @@ def test_hypothesis_tau_d_valid_finite(eta_ratio: float, stress_ratio: float) ->
         log10_y = np.log10(eta_i * ratio)
         softmin = log10_y - cap_width * np.logaddexp(0.0, (log10_y - log10_d) / cap_width)
         expected = 10.0 ** ((1.0 - w_b) * log10_d + w_b * softmin)
-        assert np.isclose(eta, expected, rtol=1e-11, atol=1e-15)
+        assert np.isclose(eta, expected, rtol=1e-12, atol=1e-15)
 
     eta_arr = compute_effective_viscosity(
         eta_diff=np.full(5, eta_diff),
