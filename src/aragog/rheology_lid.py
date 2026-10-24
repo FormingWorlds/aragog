@@ -27,7 +27,6 @@ __all__ = [
     'CONV_SUM_GATE_WIDTH',
     'FB2014_STRESS_FACTOR',
     'FB2014_VELOCITY_EXPONENT',
-    'F_FALLBACK_REF_FRAC',
     'F_TOT_FLOOR_FRAC',
     'LID_REGIME_LABEL_WIDTH',
     'LOCAL_CAP_LOG10_WIDTH',
@@ -42,7 +41,6 @@ __all__ = [
     'SOFTMAX_VELOCITY_SCALE',
     'SOLIDUS_MELT_FRACTION_THRESHOLD',
     'SOLIDUS_MELT_FRACTION_WIDTH',
-    'SUBTHRESHOLD_FLUX_CENTER',
     'YIELD_BLEND_LOG10_WIDTH',
     'compute_stagnant_lid_state',
     'compute_effective_viscosity',
@@ -70,10 +68,6 @@ SCALE_MASK_REL_WIDTH = 0.005
 # Relative smoothing width for Boltzmann-weighted smooth maximum and softplus total-flux floor.
 SMOOTH_MAX_REL_WIDTH = 0.02
 F_TOT_FLOOR_FRAC = 0.1
-
-# Reference convective flux threshold and sub-threshold fallback center.
-F_FALLBACK_REF_FRAC = 0.05
-SUBTHRESHOLD_FLUX_CENTER = 6.00843e-05
 
 # Smooth yield transition widths and local strain-rate regularization floor.
 YIELD_BLEND_LOG10_WIDTH = 0.025
@@ -183,7 +177,7 @@ def _boundary_weights(
     smax_w = _smooth_max(w, xp, mask=mask)
     w_base_weight = xp.tanh(smax_w / 1.0e-6)
     n = w.shape[0]
-    W_denom = _softmax2(W_sum, 1.0e-12, 0.1 * 1.0e-12, xp)
+    W_denom = xp.maximum(W_sum, 1.0e-12)
     W_norm = W / W_denom
     if fallback is None:
         W_fallback = xp.where(xp.arange(n) == 0, 1.0, 0.0)
@@ -260,7 +254,7 @@ def compute_stagnant_lid_state(
     viscosity_mixture : float or array-like, optional
         Effective mixture viscosity profile [Pa s] of the convecting layer (in mush,
         the blended two-phase viscosity used by the solver). When provided, mu_i
-        blends smoothly via ``w_weight = tanh(_smooth_max(w_conv_ref_int) / 1e-6)``
+        blends smoothly via ``w_weight = tanh(_smooth_max(w_conv_int) / 1e-6)``
         between the W_tilde-weighted log mean of ``viscosity_mixture`` and the
         solid Arrhenius viscosity ``eta_arr_i``; otherwise falls back to ``eta_arr_i``.
     density : float or array-like, default 3300.0
@@ -338,10 +332,7 @@ def compute_stagnant_lid_state(
     ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are smoothly
     gated by ``w_no_lid = w_d * w_T * w_act_gate * w_sum_gate * w_weight`` and
     ``has_lid`` is False, while ``T_i``, ``eta_i``, ``mu_i``, and ``theta`` serve as
-    interior fallback diagnostics (using the fixed reference baseline
-    ``F_FALLBACK_REF_FRAC`` (0.05) with sub-threshold center
-    ``SUBTHRESHOLD_FLUX_CENTER`` (6.00843e-5) across all configured
-    ``interior_flux_fraction``) and all solver-facing outputs vary continuously
+    interior fallback diagnostics and all solver-facing outputs vary continuously
     across uniform convective flux fractions ``f`` in ``[0, 1e-3]``.
 
     The lid-base locator ``W_base_tilde = _boundary_weights(w_interior, xp)[0]`` scans
@@ -458,25 +449,18 @@ def compute_stagnant_lid_state(
     w_conv_0 = 0.5 * (1.0 + xp.tanh(-params.interior_flux_fraction / 0.01))
     w_conv_int = xp.maximum(w_conv - w_conv_0, 0.0) * interior_node_mask + zero_or_nan
     interior_fallback = xp.where(idx == 1, 1.0, 0.0)
-    W_conv_tilde, W_sum, _ = _boundary_weights(
+    W_conv_tilde, W_sum, w_weight = _boundary_weights(
         w_conv_int, xp, fallback=interior_fallback, mask=interior_node_mask
     )
-    f_ref_center = F_FALLBACK_REF_FRAC * (6.00843e-05 / SUBTHRESHOLD_FLUX_CENTER)
-    w_conv_ref = 0.5 * (1.0 + xp.tanh((f - f_ref_center) / 0.01)) + zero_or_nan
-    w_conv_ref_0 = 0.5 * (1.0 + xp.tanh(-f_ref_center / 0.01))
-    w_conv_ref_int = (
-        xp.maximum(w_conv_ref - w_conv_ref_0, 0.0) * interior_node_mask + zero_or_nan
-    )
-    w_weight = xp.tanh(_smooth_max(w_conv_ref_int, xp, mask=interior_node_mask) / 1.0e-6)
 
     f_int_max = xp.max(f * interior_node_mask)
-    f_int_scale = _softmax2(f_int_max, 1.0e-12, 0.1 * 1.0e-12, xp)
+    f_int_scale = xp.maximum(f_int_max, 1.0e-12)
     f_Ti_thresh = 0.9 * f_int_max
     w_Ti_width = 0.02 * f_int_scale
     w_Ti = (
         0.5 * (1.0 + xp.tanh((f - f_Ti_thresh) / w_Ti_width)) * interior_node_mask + zero_or_nan
     )
-    W_Ti_tilde = _boundary_weights(w_Ti, xp)[0]
+    W_Ti_tilde = _boundary_weights(w_Ti, xp, fallback=W_conv_tilde)[0]
     W_tilde = w_weight * W_Ti_tilde + (1.0 - w_weight) * W_conv_tilde
 
     def _weighted_mean(val):
@@ -591,12 +575,12 @@ def compute_stagnant_lid_state(
     T_lid = xp.sum(W_base_tilde * T)
     d_geom = xp.maximum(r[-1] - r_lid_base, 1.0e-6)
     d_lid_raw = xp.maximum(r[-1] - r_lid_base, 0.0) * w_active
-    dT_lid = xp.sum(W_tilde * (T - T_surf))
     has_lid = (
         is_convecting
-        & (dT_lid > NO_LID_DT_THRESHOLD)
+        & ((T_i - T_surf) > NO_LID_DT_THRESHOLD)
         & (d_lid_raw > NO_LID_THICKNESS_THRESHOLD)
     )
+    dT_lid = xp.sum(W_tilde * (T - T_surf))
     w_d = 0.5 * (
         1.0 + xp.tanh((d_lid_raw - NO_LID_THICKNESS_THRESHOLD) / NO_LID_THICKNESS_WIDTH)
     )

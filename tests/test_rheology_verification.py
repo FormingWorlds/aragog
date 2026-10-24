@@ -981,12 +981,12 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
             float(st_iso_jx[key]), rel=1.0e-9, abs=1.0e-12
         )
 
-    # Smooth transition of mu_i across max_k w_conv_ref_int ~ 1e-6 for both array and scalar viscosity_mixture:
+    # Smooth transition of mu_i across max_k w_conv_int ~ 1e-6 for both array and scalar viscosity_mixture:
     t_grad = np.linspace(2600.0, 1200.0, n_nodes)
     visc_mix_arr = np.full(n_nodes, 1.0e18)
     params_smooth = SolidRheologyParams(enabled=True, interior_flux_fraction=0.10)
-    f_low_1 = np.full(n_nodes, 0.00500)
-    f_low_2 = np.full(n_nodes, 0.00504)
+    f_low_1 = np.full(n_nodes, 2.945)
+    f_low_2 = np.full(n_nodes, 2.947)
     st_arr_1 = compute_stagnant_lid_state(
         radii=r,
         temperature=t_grad,
