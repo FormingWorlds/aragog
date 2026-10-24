@@ -1111,6 +1111,27 @@ def test_required_rheology_inputs_reject_none():
     with pytest.raises(ValueError, match='pressure'):
         compute_yield_stress(None)
 
+    with pytest.raises(ValueError, match='theta'):
+        compute_mlt_top_slope(None)
+
+    with pytest.raises(ValueError, match='radii'):
+        viscous_mixing_length_factor(None, 1.0e6, 3.0e6, 1.0e5)
+
+    with pytest.raises(ValueError, match='r_in'):
+        viscous_mixing_length_factor(np.array([2.0e6]), None, 3.0e6, 1.0e5)
+
+    with pytest.raises(ValueError, match='r_out'):
+        viscous_mixing_length_factor(np.array([2.0e6]), 1.0e6, None, 1.0e5)
+
+    with pytest.raises(ValueError, match='mixing_length'):
+        viscous_mixing_length_factor(np.array([2.0e6]), 1.0e6, 3.0e6, None)
+
+    with pytest.raises(ValueError, match='viscous_velocity'):
+        compute_strain_rate_local(None, 1.0e5)
+
+    with pytest.raises(ValueError, match='mixing_length'):
+        compute_strain_rate_local(1.0e-3, None)
+
 
 @pytest.mark.unit
 def test_viscous_mixing_length_factor_domain_checks():
@@ -1124,6 +1145,10 @@ def test_viscous_mixing_length_factor_domain_checks():
     with pytest.raises(ValueError, match='r_in'):
         viscous_mixing_length_factor(r_valid, 2.0e6, 2.0e6, ml_valid, xp=np)
 
+    # Test r_in == r_out where radii is within [r_in, r_out] so only r_in >= r_out triggers
+    with pytest.raises(ValueError, match='r_in'):
+        viscous_mixing_length_factor(np.array([2.0e6]), 2.0e6, 2.0e6, np.array([1.0e5]), xp=np)
+
     r_bad_low = np.array([0.5e6, 2.0e6])
     with pytest.raises(ValueError, match='radii'):
         viscous_mixing_length_factor(r_bad_low, 1.0e6, 3.0e6, np.ones(2) * 1.0e5, xp=np)
@@ -1131,6 +1156,42 @@ def test_viscous_mixing_length_factor_domain_checks():
     r_bad_high = np.array([2.0e6, 3.5e6])
     with pytest.raises(ValueError, match='radii'):
         viscous_mixing_length_factor(r_bad_high, 1.0e6, 3.0e6, np.ones(2) * 1.0e5, xp=np)
+
+
+@pytest.mark.unit
+def test_viscous_mixing_length_factor_jax_domain_checks():
+    """Verify viscous_mixing_length_factor returns NaN under JAX when domain constraints are violated."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    r_valid = jnp.array([2.0e6])
+    ml = jnp.array([1.0e5])
+
+    # 1. r_in > r_out
+    res1 = viscous_mixing_length_factor(r_valid, 3.0e6, 1.0e6, ml, xp=jnp)
+    assert bool(jnp.all(jnp.isnan(res1)))
+
+    # 2. r_in == r_out
+    res2 = viscous_mixing_length_factor(r_valid, 2.0e6, 2.0e6, ml, xp=jnp)
+    assert bool(jnp.all(jnp.isnan(res2)))
+
+    # 3. radii below r_in
+    res3 = viscous_mixing_length_factor(jnp.array([0.5e6]), 1.0e6, 3.0e6, ml, xp=jnp)
+    assert bool(jnp.all(jnp.isnan(res3)))
+
+    # 4. radii above r_out
+    res4 = viscous_mixing_length_factor(jnp.array([3.5e6]), 1.0e6, 3.0e6, ml, xp=jnp)
+    assert bool(jnp.all(jnp.isnan(res4)))
+
+    # Verify identical behaviour under jax.jit
+    jit_fn = jax.jit(
+        lambda r, rin, rout, m: viscous_mixing_length_factor(r, rin, rout, m, xp=jnp)
+    )
+    assert bool(jnp.all(jnp.isnan(jit_fn(r_valid, 3.0e6, 1.0e6, ml))))
+    assert bool(jnp.all(jnp.isnan(jit_fn(r_valid, 2.0e6, 2.0e6, ml))))
+    assert bool(jnp.all(jnp.isnan(jit_fn(jnp.array([0.5e6]), 1.0e6, 3.0e6, ml))))
+    assert bool(jnp.all(jnp.isnan(jit_fn(jnp.array([3.5e6]), 1.0e6, 3.0e6, ml))))
 
 
 @pytest.mark.unit
