@@ -1786,8 +1786,38 @@ def test_rheology_kernel_reference_grid_parity():
         arr = v if isinstance(v, np.ndarray) else np.array(v)
         if arr.dtype == bool:
             assert bool(arr) == bool(data[f'lid_{k}'])
+        elif k == 'lid_regime':
+            w_solid_surf_main = 0.5 * (1.0 + np.tanh(5.0))
+            assert float(arr) != float(data['lid_lid_regime'])
+            np.testing.assert_allclose(
+                arr,
+                data['lid_lid_regime'] / w_solid_surf_main,
+                rtol=1.0e-12,
+                atol=0.0,
+            )
         else:
             np.testing.assert_allclose(arr, data[f'lid_{k}'], rtol=1.0e-12, atol=0.0)
+
+    assert 'main_commit' in data
+    assert str(data['main_commit']) == '2457a8c95099b04b766a220772d2e55bb3d02608'
+
+    import importlib.util
+
+    gen_path = (
+        Path(__file__).resolve().parent
+        / 'reference'
+        / 'build_rheology_kernel_reference_outputs.py'
+    )
+    spec = importlib.util.spec_from_file_location(
+        'build_rheology_kernel_reference_outputs', gen_path
+    )
+    assert spec is not None and spec.loader is not None
+    gen_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen_mod)
+    assert '8 public rheology kernels' in (gen_mod.__doc__ or '')
+    gen_mod.verify_fixture(fixture_path)
+    with pytest.raises(RuntimeError, match='--allow-regenerate'):
+        gen_mod.main(['--output', str(fixture_path)])
 
     # 8. compute_effective_viscosity
     tau_d_arr = np.linspace(1e4, 1e8, 20)
