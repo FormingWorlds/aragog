@@ -286,13 +286,46 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     p_dense = np.linspace(0.0, 135.0e9, 135001)
+    p_dense_gpa = p_dense * 1.0e-9
     t_dense = np.interp(p_dense, p_table, t_table)
+    t_sol_1gpa = float(np.interp(1.0e9, p_table, t_table))
     diff_dense = (params.t_sol_0 + params.dt_sol_dp * p_dense) - t_dense
     idx_max_abs = int(np.argmax(np.abs(diff_dense)))
     max_abs_dev_k = float(np.abs(diff_dense[idx_max_abs]))
     max_signed_dev_k = float(diff_dense[idx_max_abs])
-    p_max_abs_gpa = float(p_dense[idx_max_abs] * 1.0e-9)
+    p_max_abs_gpa = float(p_dense_gpa[idx_max_abs])
     rms_dev_k = float(np.sqrt(np.mean(diff_dense**2)))
+
+    rel_diff_dense = diff_dense / t_dense * 100.0
+    idx_max_rel = int(np.argmax(np.abs(rel_diff_dense)))
+    max_signed_rel_pct = float(rel_diff_dense[idx_max_rel])
+    p_max_rel_gpa = float(p_dense_gpa[idx_max_rel])
+
+    slope_mm_pa = float((t_dense[-1] - t_dense[0]) / 135.0e9)
+    slope_mm_gpa = slope_mm_pa * 1.0e9
+    excess_mm = t_dense - (t_dense[0] + slope_mm_pa * p_dense)
+    idx_mm_peak = int(np.argmax(np.abs(excess_mm)))
+    t0_mm = float(t_dense[0] + 0.5 * (float(np.max(excess_mm)) + float(np.min(excess_mm))))
+    diff_mm = (t0_mm + slope_mm_pa * p_dense) - t_dense
+    max_abs_mm_k = float(np.max(np.abs(diff_mm)))
+    p_mm_peak_gpa = float(p_dense_gpa[idx_mm_peak])
+    rms_mm_k = float(np.sqrt(np.mean(diff_mm**2)))
+    cross_mm_desc = format_crossings_description(
+        find_solidus_crossings(p_table, t_table, t0_mm, slope_mm_pa, p_max_pa=135.0e9)
+    )
+
+    slope_l2_gpa_arr, t0_l2_arr = np.polyfit(p_dense_gpa, t_dense, 1)
+    t0_l2 = float(t0_l2_arr)
+    slope_l2_gpa = float(slope_l2_gpa_arr)
+    slope_l2_pa = slope_l2_gpa * 1.0e-9
+    diff_l2 = (t0_l2 + slope_l2_pa * p_dense) - t_dense
+    idx_l2_max = int(np.argmax(np.abs(diff_l2)))
+    max_abs_l2_k = float(np.abs(diff_l2[idx_l2_max]))
+    p_l2_max_gpa = float(p_dense_gpa[idx_l2_max])
+    rms_l2_k = float(np.sqrt(np.mean(diff_l2**2)))
+    cross_l2_desc = format_crossings_description(
+        find_solidus_crossings(p_table, t_table, t0_l2, slope_l2_pa, p_max_pa=135.0e9)
+    )
 
     t_sol_0_1dec = round(float(t_sol[0]), 1)
     ratio_eta_exact = math.exp(
@@ -305,6 +338,9 @@ def main(argv: list[str] | None = None) -> None:
     print('\n--- Derived Slopes, Errors, and Viscosity Ratios ---')
     print(
         f'T_sol(0 GPa): {t_sol[0]:.4f} K (1-dec: {t_sol[0]:.1f} K, int: {round(float(t_sol[0])):d} K)'
+    )
+    print(
+        f'T_sol(1 GPa): {t_sol_1gpa:.4f} K (1-dec: {t_sol_1gpa:.1f} K, int: {round(t_sol_1gpa):d} K)'
     )
     print(
         f'T_sol(135 GPa): {t_sol[-1]:.4f} K '
@@ -336,8 +372,24 @@ def main(argv: list[str] | None = None) -> None:
     )
     print(
         f'Max absolute linear deviation over 0..135 GPa: {max_abs_dev_k:.2f} K '
-        f'({max_signed_dev_k:+.2f} K -> {max_signed_dev_k:+.1f} K) at {p_max_abs_gpa:.2f} GPa; '
-        f'RMS deviation: {rms_dev_k:.2f} K ({rms_dev_k:.1f} K)'
+        f'({max_signed_dev_k:+.2f} K -> {max_signed_dev_k:+.1f} K) at {p_max_abs_gpa:.3f} GPa '
+        f'({p_max_abs_gpa:.1f} GPa); RMS deviation: {rms_dev_k:.2f} K ({rms_dev_k:.1f} K)'
+    )
+    print(
+        f'Max relative linear deviation over 0..135 GPa: {max_signed_rel_pct:+.2f}% '
+        f'({max_signed_rel_pct:+.1f}%) at {p_max_rel_gpa:.3f} GPa ({p_max_rel_gpa:.1f} GPa)'
+    )
+    print(
+        f'Chebyshev minimax line over 0..135 GPa: {t0_mm:.1f} K + {slope_mm_gpa:.2f} K/GPa * P '
+        f'(exact: {t0_mm:.2f} K + {slope_mm_gpa:.4f} K/GPa * P); max abs deviation: '
+        f'{max_abs_mm_k:.2f} K ({max_abs_mm_k:.1f} K) at {p_mm_peak_gpa:.3f} GPa; '
+        f'RMS: {rms_mm_k:.2f} K ({rms_mm_k:.1f} K); {cross_mm_desc}'
+    )
+    print(
+        f'Least-squares (L2) line over 0..135 GPa: {t0_l2:.1f} K + {slope_l2_gpa:.2f} K/GPa * P '
+        f'(exact: {t0_l2:.2f} K + {slope_l2_gpa:.4f} K/GPa * P); max abs deviation: '
+        f'{max_abs_l2_k:.2f} K ({max_abs_l2_k:.1f} K) at {p_l2_max_gpa:.1f} GPa; '
+        f'RMS: {rms_l2_k:.2f} K ({rms_l2_k:.1f} K); {cross_l2_desc}'
     )
     print(
         f'Table-to-linear eta_diff({params.arrhenius_t_ref:.0f} K, 0) ratio at '

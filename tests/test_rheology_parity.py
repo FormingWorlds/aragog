@@ -575,7 +575,35 @@ def test_jax_jacrev_closure_differentiability():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_checkpoint_profile_175kyr_paleos_solidus_consistency():
-    """Verify 175 kyr fixture T_basic and phi_basic come from one PALEOS melting curve."""
+    """Verify 175 kyr fixture T_basic and phi_basic come from one PALEOS melting curve.
+
+    In ``tests/reference/checkpoint_profile_175kyr.npz`` (built and verified bitwise by
+    ``tests/reference/build_checkpoint_profile_175kyr.py``), ``r_basic``, ``P_basic``,
+    ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and ``phi_basic[4:100]``
+    are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]`` by the
+    PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4,
+    and ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
+    import importlib.util
+
+    builder_path = os.path.join(
+        os.path.dirname(__file__), 'reference', 'build_checkpoint_profile_175kyr.py'
+    )
+    spec = importlib.util.spec_from_file_location(
+        'build_checkpoint_profile_175kyr', builder_path
+    )
+    assert spec is not None and spec.loader is not None
+    builder_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder_mod)
+    assert builder_mod.main(['--check']) == 0
+    offline_rebuilt = builder_mod.build_fixture_arrays(source_commit='0' * 40)
+    assert np.array_equal(
+        offline_rebuilt['T_basic'],
+        np.load(builder_path.replace('build_', '').replace('.py', '.npz'))['T_basic'],
+    )
+    assert f'{float(offline_rebuilt["T_basic"][98]):.2f} K' in builder_mod.__doc__
+    assert f'{float(offline_rebuilt["T_basic"][99]):.2f} K' in builder_mod.__doc__
+
     ckpt_path = os.path.join(
         os.path.dirname(__file__), 'reference', 'checkpoint_profile_175kyr.npz'
     )
@@ -609,15 +637,20 @@ def test_checkpoint_profile_175kyr_paleos_solidus_consistency():
 def test_stagnant_lid_checkpoint_profile_parity():
     """Verify stagnant lid state on 175 kyr checkpoint profile matches between NumPy and JAX.
 
-    Fixture ``tests/reference/checkpoint_profile_175kyr.npz`` is a 100-node Earth-sized
-    magma-ocean solidification snapshot at ``t = 175 kyr`` (``r_basic`` 3480 to 6371 km,
-    ``P_basic`` 145.5 to 0.71 GPa, ``T_basic`` 5040.9 to 452.6 K, ``phi_basic`` 0.159 at
-    the CMB to 0.0 at the surface) with ``T_basic[-1] = 452.559`` K and
-    ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``. Because the interior temperature
-    selector ``w_Ti`` is centred at ``0.9 * f_int_max`` (``0.9`` on this profile) and
-    excludes the boundary nodes, both the default ``interior_flux_fraction = 0.05`` and
-    ``0.10`` give ``T_i = 1423.015`` K, ``eta_i = 2.760705e+22`` Pa s,
-    ``d_lid = 42134.62`` m, ``max(w_lid) = 1.000000``,
+    Fixture ``tests/reference/checkpoint_profile_175kyr.npz`` (built by
+    ``tests/reference/build_checkpoint_profile_175kyr.py``) is a 100-node Earth-sized
+    magma-ocean solidification snapshot at ``t = 175 kyr`` where ``r_basic`` (3480 to
+    6371 km), ``P_basic`` (145.5 to 0.71 GPa), ``F_conv``, ``F_tot``, ``v_unyielded``,
+    ``T_basic[98:100]``, and ``phi_basic[4:100]`` are 175 kyr run values, while
+    ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]`` by the PALEOS lever rule,
+    ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule
+    (``T_basic`` 5040.9 to 452.6 K, ``phi_basic`` 0.159 at the CMB to 0.0 at the surface)
+    with ``T_basic[-1] = 452.559`` K and ``f[-1] = F_conv[-1] / |F_tot[-1]| = 0.08007493``.
+    Because the interior temperature selector ``w_Ti`` is centred at ``0.9 * f_int_max``
+    (``0.9`` on this profile) and excludes the boundary nodes, both the default
+    ``interior_flux_fraction = 0.05`` and ``0.10`` give ``T_i = 1423.015`` K,
+    ``eta_i = 2.760705e+22`` Pa s, ``d_lid = 42134.62`` m, ``max(w_lid) = 1.000000``,
     ``tau_d = 1.299363e+06`` Pa, and ``tau_y_lid = 5.000000e+08`` Pa.
     """
     # Evaluates under linear solidus fallback (table-free) with solidus_temperature=None.

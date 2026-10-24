@@ -387,7 +387,14 @@ def _collect_nav_strings(mkdocs_text: str) -> set[str]:
 
 
 def test_rheology_docs_and_mkdocs_nav_registration(monkeypatch):
-    """Verify docs page parameter table, API stubs, and mkdocs.yml nav entries match this tip."""
+    """Verify docs page parameter table, API stubs, and mkdocs.yml nav entries match this tip.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     import sys
     from pathlib import Path
 
@@ -642,6 +649,36 @@ def test_stagnant_lid_state_rejects_mismatched_t_sol_0():
     expected_ratio = np.exp(params.g_homologous * (2000.0 - 1400.0) / params.arrhenius_t_ref)
     assert float(state_1400['eta_solid_arrhenius'] / state_2000['eta_solid_arrhenius']) == (
         pytest.approx(expected_ratio, rel=1.0e-12)
+    )
+
+    state_none_1400 = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=np.full(n_nodes, 80.0),
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=dataclasses.replace(params, dt_sol_dp=0.0),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    state_none_2000 = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=np.full(n_nodes, 80.0),
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_nodes),
+        params=dataclasses.replace(params_2000, dt_sol_dp=0.0),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    assert float(state_none_1400['dT_rh'] / state_none_2000['dT_rh']) == pytest.approx(
+        2000.0 / 1400.0, rel=1.0e-12
     )
 
 

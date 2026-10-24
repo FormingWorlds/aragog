@@ -63,26 +63,13 @@ class SolidRheologyParams:
 
     Notes
     -----
-    At the default ``g_homologous = 25.0`` and ``t_sol_0 = 1400.0`` K, the
-    zero-pressure activation enthalpy is :math:`H(0) = 291` kJ/mol, close to a
-    standard olivine diffusion-creep activation energy :math:`E_a = 300` kJ/mol
-    (Karato & Wu 1993). Coupled and tabulated PALEOS runs evaluate the
-    phase-boundary solidus :math:`T_\mathrm{sol}(P) = 0.8\,T_\mathrm{liq}(P)` from
-    the PALEOS :math:`\mathrm{MgSiO_3}` melting curve (1464.8 K at 0 GPa to
-    4754.8 K at 135 GPa, whole-mantle secant slope 24.4 K/GPa, high-pressure
-    slope 15.3 K/GPa above 25 GPa; 1420.9 K to 4692.8 K with secant 24.2 K/GPa
-    on the tabulated P-S grid). The linear solidus fallback defaults
-    ``t_sol_0 = 1400.0`` K and ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a
-    single-slope benchmark form for table-free constant-property runs. Because
-    the PALEOS solidus is concave downward in pressure, the default linear form
-    is 4.4 % low at 0 GPa (1400.0 K versus 1464.8 K), 34.8 % low at 25 GPa
-    (2000.0 K versus 3067.0 K), and 2.4 % low at 135 GPa (4640.0 K versus
-    4754.8 K), with a maximum absolute deviation of 1108.1 K (-35.0 % at
-    20.4 GPa, -1108.1 K at 36.7 GPa, RMS deviation 817.6 K, and no crossings
-    over 0 to 135 GPa; even the minimax linear line 1979.7 K + 24.37 K/GPa * P
-    deviates by up to 514.9 K and the least-squares line 2489.3 K + 19.10 K/GPa * P
-    deviates by up to 1024.5 K at 0 GPa with RMS 239.0 K), and serves
-    table-free constant-property benchmarks only.
+    Coupled and tabulated PALEOS runs evaluate the phase-boundary solidus
+    :math:`T_\mathrm{sol}(P) = 0.8\,T_\mathrm{liq}(P)` from the PALEOS
+    :math:`\mathrm{MgSiO_3}` melting curve. When no solidus table reaches a
+    call, the linear fallback defaults ``t_sol_0 = 1400.0`` K and
+    ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a table-free benchmark form
+    whose largest deviation from the PALEOS solidus over 0 to 135 GPa is
+    1108.1 K (see ``docs/Explanations/solid_state_convection.md`` Section 1).
     """
 
     enabled: bool = False

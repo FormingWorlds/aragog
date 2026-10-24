@@ -354,7 +354,14 @@ def test_hot_convecting_cmb_node_excluded_from_ti():
 
 @pytest.mark.unit
 def test_erf_boundary_layer_ti_and_175kyr_default_ti():
-    """Verify T_i on an erf boundary layer across N in {100, 200, 400, 800} and on the 175 kyr fixture."""
+    """Verify T_i on an erf boundary layer across N in {100, 200, 400, 800} and on the 175 kyr fixture.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     import os
     from math import erf
 
@@ -867,7 +874,14 @@ def test_depth_varying_solidus_surface_temperature_pins_eta_contrast():
 
 @pytest.mark.unit
 def test_baseline_subtraction_w_weight_and_viscosity_mixture_blend():
-    """Verify baseline subtraction gives w_weight < 0.5 at f=0, < 1e-5 at f=1e-12, and ~1 at f=1."""
+    """Verify baseline subtraction gives w_weight < 0.5 at f=0, < 1e-5 at f=1e-12, and ~1 at f=1.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
@@ -914,7 +928,14 @@ def test_baseline_subtraction_w_weight_and_viscosity_mixture_blend():
 
 @pytest.mark.unit
 def test_ti_selector_scale_invariance_and_subthreshold_regime():
-    """Verify T_i selector scale invariance across s x N on 175 kyr and 2-node transition."""
+    """Verify T_i selector scale invariance across s x N on 175 kyr and 2-node transition.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
@@ -1089,7 +1110,14 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
 
 @pytest.mark.unit
 def test_wlid_mask_width_surface_saturation_and_no_lid_finiteness():
-    """Verify w_lid[-1] == 1 within 1e-12 on 175 kyr and erf lid (N=25..800), and finite when has_lid is False."""
+    """Verify w_lid[-1] == 1 within 1e-12 on 175 kyr and erf lid (N=25..800), and finite when has_lid is False.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     from scipy.special import erf
@@ -1285,7 +1313,14 @@ def test_w_active_scaling_relations_when_lid_is_active():
 
 @pytest.mark.unit
 def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
-    """Verify w_weight = tanh(max_k w_conv_int / 1e-6) mesh invariance across N and continuity over s in [0, 1e-3]."""
+    """Verify w_weight = tanh(max_k w_conv_int / 1e-6) mesh invariance across N and continuity over s in [0, 1e-3].
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     params = SolidRheologyParams(enabled=True)
@@ -1392,6 +1427,7 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
         assert abs(ti_n - ti_175_400) <= max_dt_175kyr
         assert abs(log_eta_n - log_eta_175_400) <= max_dlog_eta_175kyr
 
+    # Regression bound measured on this fixture (peak ratio 9246.48 + 0.04% margin; 9069.40 on main).
     dw_weight_df_max = 9250.0
     f_int_s1 = float(
         np.max(np.maximum(d['F_conv'][1:-1] / np.maximum(d['F_tot'][1:-1], 1.0e-30), 0.0))
@@ -1434,7 +1470,14 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
 
 @pytest.mark.unit
 def test_tau_d_lid_scales_monotonically_with_w_active():
-    """Verify tau_d_lid -> 0 as w_active -> 0, rises monotonically with w_active, and matches s=1 reference pins."""
+    """Verify tau_d_lid -> 0 as w_active -> 0, rises monotonically with w_active, and matches s=1 reference pins.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     from aragog.rheology_lid import FB2014_STRESS_FACTOR

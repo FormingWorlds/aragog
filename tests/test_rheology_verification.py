@@ -1186,22 +1186,8 @@ def test_rheology_and_lid_branch_coverage():
         phi_rheo=0.4,
         phi_width=0.15,
     )
-    params_bad_ts0 = dataclasses.replace(params_fixed_2000)
-    object.__setattr__(params_bad_ts0, 't_sol_0', 0.0)
     with pytest.raises(ValueError, match='t_sol_0'):
-        compute_stagnant_lid_state(
-            radii=r,
-            temperature=T,
-            pressure=P,
-            convective_flux=F_conv,
-            total_flux=F_tot,
-            solidus_temperature=np.full(n_nodes, 2000.0),
-            melt_fraction=phi,
-            params=params_bad_ts0,
-            viscosity_solid=1.0e21,
-            phi_rheo=0.4,
-            phi_width=0.15,
-        )
+        dataclasses.replace(params_fixed_2000, t_sol_0=0.0)
     t_i_val = float(st_scalar_sol['T_i'])
     expected_dt_rh_sol = t_i_val**2 / (params_fixed.g_homologous * 2000.0)
     expected_theta_sol = (t_i_val - T[-1]) / expected_dt_rh_sol
@@ -1395,7 +1381,6 @@ def test_validation_and_lid_base_edge_cases():
         'viscosity_solid',
         'phi_rheo',
         'phi_width',
-        't_sol_0',
         'a_rh_fb',
         'C4',
     ],
@@ -1433,8 +1418,6 @@ def test_lid_state_nan_propagation_per_input(nan_field: str, lid_base_mode: str)
         bad = base_arrays[nan_field].copy()
         bad[5] = np.nan
         base_arrays[nan_field] = bad
-    elif nan_field == 't_sol_0':
-        object.__setattr__(params, 't_sol_0', float('nan'))
     else:
         scalars[nan_field] = float('nan')
 
@@ -1642,19 +1625,15 @@ def _valid_lid_state_kwargs(n_nodes: int = 10) -> dict[str, Any]:
 
 @pytest.mark.unit
 def test_stagnant_lid_state_t_sol_0_inf_and_mismatch_validation():
-    """Verify params.t_sol_0 rejects +-inf and non-positive values while propagating NaN, and t_sol_0 kwarg raises TypeError."""
+    """Verify SolidRheologyParams rejects invalid t_sol_0 and compute_stagnant_lid_state rejects t_sol_0 kwarg."""
     valid_kw = _valid_lid_state_kwargs()
     with pytest.raises(TypeError, match='t_sol_0'):
         compute_stagnant_lid_state(**{**valid_kw, 't_sol_0': 1500.0})
-    for bad_ts0 in (np.inf, -np.inf, 0.0, -100.0):
-        bad_params = dataclasses.replace(valid_kw['params'])
-        object.__setattr__(bad_params, 't_sol_0', bad_ts0)
+    for bad_ts0 in (np.inf, -np.inf, 0.0, -100.0, np.nan):
         with pytest.raises(ValueError, match='t_sol_0'):
-            compute_stagnant_lid_state(**{**valid_kw, 'params': bad_params})
-    nan_params = dataclasses.replace(valid_kw['params'])
-    object.__setattr__(nan_params, 't_sol_0', np.nan)
-    st_nan_ts0 = compute_stagnant_lid_state(**{**valid_kw, 'params': nan_params})
-    assert np.isnan(float(st_nan_ts0['tau_d']))
+            SolidRheologyParams(enabled=True, t_sol_0=bad_ts0)
+        with pytest.raises(ValueError, match='t_sol_0'):
+            dataclasses.replace(valid_kw['params'], t_sol_0=bad_ts0)
 
 
 @pytest.mark.unit
@@ -1711,14 +1690,8 @@ def test_stagnant_lid_state_rejects_array_valued_scalars():
         ('phi_rheo', np.full(n_nodes, -5.0)),
         ('a_rh_fb', np.full(n_nodes, 1.3)),
         ('C4', np.full(n_nodes, 0.125)),
-        ('t_sol_0', np.full(n_nodes, 1400.0)),
     ):
-        if scalar_name == 't_sol_0':
-            bad_params = dataclasses.replace(valid_kw['params'])
-            object.__setattr__(bad_params, 't_sol_0', bad_arr)
-            call_kw = {**valid_kw, 'params': bad_params}
-        else:
-            call_kw = {**valid_kw, scalar_name: bad_arr}
+        call_kw = {**valid_kw, scalar_name: bad_arr}
         with pytest.raises(ValueError, match=rf'{scalar_name} must be a scalar'):
             compute_stagnant_lid_state(**call_kw)
 
@@ -1737,13 +1710,10 @@ def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():
     j_kw = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in valid_kw.items()}
 
     @jax.jit
-    def _jit_eval(vs, pw, pr, arh, c4, ts0):
-        p = dataclasses.replace(valid_kw['params'])
-        object.__setattr__(p, 't_sol_0', ts0)
+    def _jit_eval(vs, pw, pr, arh, c4):
         return compute_stagnant_lid_state(
             **{
                 **j_kw,
-                'params': p,
                 'viscosity_solid': vs,
                 'phi_width': pw,
                 'phi_rheo': pr,
@@ -1753,17 +1723,15 @@ def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():
             }
         )
 
-    st_jit_ok = _jit_eval(1.0e21, 0.15, 0.4, 1.3, 0.125, 1400.0)
+    st_jit_ok = _jit_eval(1.0e21, 0.15, 0.4, 1.3, 0.125)
     assert bool(jnp.isfinite(st_jit_ok['tau_d']))
     for bad_args in (
-        (-1.0e21, 0.15, 0.4, 1.3, 0.125, 1400.0),
-        (jnp.inf, 0.15, 0.4, 1.3, 0.125, 1400.0),
-        (1.0e21, 0.0, 0.4, 1.3, 0.125, 1400.0),
-        (1.0e21, 0.15, 1.5, 1.3, 0.125, 1400.0),
-        (1.0e21, 0.15, 0.4, 0.0, 0.125, 1400.0),
-        (1.0e21, 0.15, 0.4, 1.3, -0.125, 1400.0),
-        (1.0e21, 0.15, 0.4, 1.3, 0.125, 0.0),
-        (1.0e21, 0.15, 0.4, 1.3, 0.125, jnp.inf),
+        (-1.0e21, 0.15, 0.4, 1.3, 0.125),
+        (jnp.inf, 0.15, 0.4, 1.3, 0.125),
+        (1.0e21, 0.0, 0.4, 1.3, 0.125),
+        (1.0e21, 0.15, 1.5, 1.3, 0.125),
+        (1.0e21, 0.15, 0.4, 0.0, 0.125),
+        (1.0e21, 0.15, 0.4, 1.3, -0.125),
     ):
         try:
             st_jit_bad = _jit_eval(*bad_args)
@@ -2108,9 +2076,26 @@ def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys,
     mod.main([])
     out_default = capsys.readouterr().out
     assert 'PALEOS MgSiO3 solidus' in out_default
+    assert 'T_sol(1 GPa): 1563.0407 K (1-dec: 1563.0 K, int: 1563 K)' in out_default
     assert '[1464.8000, 3066.9899, 3672.6551, 4397.9263, 4754.8271]' in out_default
     assert 'no crossings over 0..135 GPa' in out_default
     assert '-1108.1 K' in out_default
+    assert (
+        'Max relative linear deviation over 0..135 GPa: -35.04% (-35.0%) at 20.495 GPa (20.5 GPa)'
+        in out_default
+    )
+    assert 'Chebyshev minimax line over 0..135 GPa: 1979.7 K + 24.37 K/GPa * P' in out_default
+    assert 'max abs deviation: 514.93 K (514.9 K) at 35.965 GPa' in out_default
+    assert (
+        'RMS: 350.64 K (350.6 K); crossings at 6.1, 98.5 GPa (all: [6.15, 98.54] GPa)'
+        in out_default
+    )
+    assert 'Least-squares (L2) line over 0..135 GPa: 2489.3 K + 19.10 K/GPa * P' in out_default
+    assert 'max abs deviation: 1024.49 K (1024.5 K) at 0.0 GPa' in out_default
+    assert (
+        'RMS: 239.01 K (239.0 K); crossings at 18.8, 99.9 GPa (all: [18.82, 99.89] GPa)'
+        in out_default
+    )
 
     # 1-crossing synthetic table (crossing at 45 GPa on a 30 GPa step grid).
     p_1 = np.array([0.0, 30.0, 60.0, 100.0, 135.0]) * 1.0e9

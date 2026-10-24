@@ -175,14 +175,14 @@ def compute_stagnant_lid_state(
     ValueError
         If ``viscosity_solid``, ``phi_rheo``, or ``phi_width`` is None; if
         scalar parameters (``viscosity_solid``, ``phi_rheo``, ``phi_width``,
-        ``a_rh_fb``, ``C4``, ``params.t_sol_0``) are non-scalar; if ``radii``
+        ``a_rh_fb``, ``C4``) are non-scalar; if ``radii``
         is not a 1-D array of at least 3 nodes; if any profile input does not
         match ``radii`` in 1-D length; if any input is non-real (such as a
         boolean, string, or complex value); or, on the eager NumPy path
         (``xp is np``), if ``radii`` is not strictly increasing or has ``inf``
         values (``NaN`` propagates), if any input is infinite, if
         ``viscosity_solid``, ``phi_width``, ``a_rh_fb``, ``C4``,
-        ``params.t_sol_0``, ``temperature``, ``solidus_temperature``,
+        ``temperature``, ``solidus_temperature``,
         ``viscosity_mixture``, ``density``, ``gravity``,
         ``thermal_expansivity``, or ``thermal_diffusivity`` is non-positive, if
         ``pressure`` is negative, or if ``phi_rheo`` or ``melt_fraction`` lies
@@ -292,7 +292,6 @@ def compute_stagnant_lid_state(
             ('phi_rheo', phi_rheo, 'unit', True),
             ('a_rh_fb', a_rh_fb, 'pos', True),
             ('C4', C4, 'pos', True),
-            ('t_sol_0', params.t_sol_0, 'pos', True),
             ('radii', radii, 'finite', False),
             ('temperature', temperature, 'pos', False),
             ('pressure', pressure, 'nonneg', False),

@@ -924,12 +924,6 @@ _RADII_DUP[3] = _RADII_DUP[2]
         ('thermal_diffusivity', -np.inf, False, False),
         ('thermal_diffusivity', 0.0, True, False),
         ('thermal_diffusivity', -1.0e-6, False, False),
-        ('t_sol_0', 0.0, True, False),
-        ('t_sol_0', -100.0, True, False),
-        ('t_sol_0', 1400.0 + 1.0j, True, True),
-        ('t_sol_0', '1400.0', True, True),
-        ('t_sol_0', object(), True, True),
-        ('t_sol_0', Decimal('1400.0'), True, True),
     ],
 )
 def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
@@ -970,16 +964,11 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
     def _call_lid_np(**kw):
         kw = dict(kw)
         p = kw.pop('params', params)
-        if 't_sol_0' in kw:
-            p = dataclasses.replace(p)
-            object.__setattr__(p, 't_sol_0', kw.pop('t_sol_0'))
         return compute_stagnant_lid_state(**kw, params=p)
 
     def _call_lid_jax(kw):
         kw = dict(kw)
         p = dataclasses.replace(params)
-        if 't_sol_0' in kw:
-            object.__setattr__(p, 't_sol_0', kw.pop('t_sol_0'))
         return compute_stagnant_lid_state(**kw, params=p, xp=jnp)
 
     jit_lid = jax.jit(_call_lid_jax)
