@@ -221,14 +221,24 @@ def test_arrhenius_viscosity_water_prefactor_ceiling_numpy_and_jax():
     P = 0.0
     cap_log10 = 35.0
     expected_cap = 10.0**cap_log10
-    expected_dry_650 = 1.0e21 * np.exp(25.0 * (1400.0 / 650.0 - 1400.0 / 1600.0))
-    assert expected_dry_650 < expected_cap < 100.0 * expected_dry_650
+    raw_dry_650 = 1.0e21 * np.exp(25.0 * (1400.0 / 650.0 - 1400.0 / 1600.0))
+    log10_dry_650 = np.log10(raw_dry_650)
+    expected_dry_650 = 10.0 ** (
+        log10_dry_650 - 0.05 * np.logaddexp(0.0, (log10_dry_650 - cap_log10) / 0.05)
+    )
+    assert expected_dry_650 < expected_cap < 100.0 * raw_dry_650
 
     res_dry_np = compute_arrhenius_viscosity(
         T, P, viscosity_solid=1e21, viscosity_max_log10=cap_log10, water_prefactor=1.0
     )
     assert res_dry_np == pytest.approx(expected_dry_650, rel=1.0e-12)
     assert res_dry_np < expected_cap
+
+    # With cap_log10 = 37.0 (> log10_dry_650 + d* = 36.158), output equals unclipped raw_dry_650 to 1e-12.
+    res_uncapped_np = compute_arrhenius_viscosity(
+        T, P, viscosity_solid=1e21, viscosity_max_log10=37.0, water_prefactor=1.0
+    )
+    assert res_uncapped_np == pytest.approx(raw_dry_650, rel=1.0e-12)
 
     res_np = compute_arrhenius_viscosity(
         T, P, viscosity_solid=1e21, viscosity_max_log10=cap_log10, water_prefactor=100.0

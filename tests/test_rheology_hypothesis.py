@@ -515,3 +515,164 @@ def test_hypothesis_bounded_interval_field_validators(
             SolidRheologyParams(phi_visc_single=bad_p)
 
     _assert_wrong_types_raise_type_error(BOUNDED_INTERVAL_FIELDS, wrong_types)
+
+
+@pytest.mark.unit
+@settings(max_examples=40, deadline=None)
+@given(
+    phi_mid=st.lists(
+        st.floats(min_value=0.0, max_value=0.05, allow_nan=False, allow_infinity=False),
+        min_size=10,
+        max_size=10,
+    ),
+    f_scale=st.floats(min_value=0.1, max_value=0.95, allow_nan=False, allow_infinity=False),
+)
+def test_stagnant_lid_state_bounds(phi_mid: list[float], f_scale: float) -> None:
+    """Verify general non-uniform d_lid_raw upper bound and fallback base weight bounds."""
+    import aragog.rheology_lid as lid_mod
+    from aragog.rheology_lid import _boundary_weights, compute_stagnant_lid_state
+
+    melt_ramp = getattr(lid_mod, '_melt_ramp')
+    n = len(phi_mid)
+    r = np.linspace(3.48e6, 6.37e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.linspace(2600.0, 300.0, n)
+    fc = np.full(n, f_scale * 100.0)
+    fc[-2:] = 0.0
+    ft = np.full(n, 100.0)
+    phi = np.asarray(phi_mid, dtype=float)
+    params = SolidRheologyParams(enabled=True)
+
+    st_res = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert r[0] <= float(st_res['r_lid_base']) <= r[-1]
+    assert 0.0 <= float(st_res['w_active']) <= 1.0
+    assert np.all((st_res['w_lid'] >= 0.0) & (st_res['w_lid'] <= 1.0))
+    assert np.isfinite(float(st_res['eta_i']))
+
+    w_sol_phi = melt_ramp(
+        phi,
+        lid_mod.SOLIDUS_MELT_FRACTION_THRESHOLD,
+        lid_mod.SOLIDUS_MELT_FRACTION_WIDTH,
+        np,
+        compact=True,
+    )
+    w_hot_phi = melt_ramp(phi, 0.4, 0.15, np, compact=False)
+    grad_t = np.sqrt(np.gradient(t) ** 2 + 1.0e-30)
+    smax2 = getattr(lid_mod, '_softmax2')
+    scale = params.lid_mask_width_cells * smax2(grad_t, 1.0, lid_mod.SCALE_FLOOR_WIDTH, np)
+    w_hot_iso = 0.5 * (1.0 + np.tanh((t - float(st_res['T_lid_iso'])) / scale))
+    w_int = np.maximum(np.maximum(w_hot_iso, w_sol_phi), w_hot_phi)
+    _, w_base_sum, w_base_weight = _boundary_weights(w_int, np)
+
+    dr = np.diff(r)
+    w_act = float(st_res['w_active'])
+    d_lid_raw = w_act * max(float(r[-1] - st_res['r_lid_base']), 0.0)
+    upper_bound = w_act * (
+        float(w_base_weight)
+        * float(np.sum((1.0 - w_sol_phi[1:]) * dr))
+        / max(float(w_base_sum), 1.0e-12)
+        + (1.0 - float(w_base_weight)) * float(r[-1] - r[0])
+    )
+    assert d_lid_raw <= upper_bound * (1.0 + 1.0e-12) + 1.0e-9
+
+    # Cold fixed-lid column where w_interior ~ 0 requires w_base_weight = tanh(smax_w / 1e-6) -> 0
+    # so r_lid_base relaxes to r[0] and d_lid_raw <= (r[-1] - r[0]) * w_active.
+    st_cold = compute_stagnant_lid_state(
+        radii=r,
+        temperature=np.linspace(400.0, 300.0, n),
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n),
+        params=SolidRheologyParams(
+            enabled=True, lid_base_mode='fixed', lid_base_temperature=5000.0
+        ),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_cold['r_lid_base']) == pytest.approx(float(r[0]), rel=1.0e-9)
+    assert float(st_cold['d_lid']) <= float(r[-1] - r[0]) * float(st_cold['w_active']) * (
+        1.0 + 1.0e-12
+    )
+
+
+@pytest.mark.unit
+@settings(max_examples=40, deadline=None)
+@given(
+    x_offset=st.floats(min_value=0.55, max_value=2.0, allow_nan=False, allow_infinity=False),
+    dec_offset=st.floats(min_value=1.35, max_value=5.0, allow_nan=False, allow_infinity=False),
+    phi_low=st.floats(min_value=0.0, max_value=0.008, allow_nan=False, allow_infinity=False),
+    phi_high=st.floats(min_value=0.012, max_value=1.0, allow_nan=False, allow_infinity=False),
+)
+def test_hypothesis_smooth_rheology_blend_tails(
+    x_offset: float, dec_offset: float, phi_low: float, phi_high: float
+) -> None:
+    """Verify blend tail agreement outside d* and compact _melt_ramp support via Hypothesis."""
+    import aragog.rheology_lid as lid_mod
+    from aragog.rheology import compute_arrhenius_viscosity
+    from aragog.rheology_lid import compute_effective_viscosity
+
+    melt_ramp = getattr(lid_mod, '_melt_ramp')
+    assert float(melt_ramp(phi_low, 0.01, 0.002, np, compact=True)) == 0.0
+    assert float(melt_ramp(phi_high, 0.01, 0.002, np, compact=True)) == 1.0
+
+    eta_d = 1.0e22
+    eta_i = 1.0e16
+    tau_y = 1.0e7
+    x_above = 1.0 + x_offset
+    eta_above = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            eta_i=eta_i,
+            tau_d=x_above * tau_y,
+            tau_y_lid=tau_y,
+            w_lid=1.0,
+            stress_closure_mode='lid',
+        )
+    )
+    assert eta_above == pytest.approx(min(eta_d, eta_i / x_above), rel=1.0e-12)
+
+    sr_cross = tau_y / (2.0 * eta_d)
+    sr_high = sr_cross * (10.0**dec_offset)
+    eta_loc = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            tau_y=tau_y,
+            strain_rate=sr_high,
+            stress_closure_mode='local',
+        )
+    )
+    assert eta_loc == pytest.approx(tau_y / (2.0 * sr_high), rel=1.0e-12)
+
+    vmax = 30.0
+    ln_high = (vmax + dec_offset - 21.0) * np.log(10.0)
+    t_cold = (25.0 * 1400.0) / (ln_high + 25.0 * 1400.0 / 1600.0)
+    eta_ceil = float(
+        compute_arrhenius_viscosity(
+            t_cold,
+            0.0,
+            viscosity_solid=1.0e21,
+            g_homologous=25.0,
+            t_sol_0=1400.0,
+            dt_sol_dp=0.0,
+            arrhenius_t_ref=1600.0,
+            viscosity_max_log10=vmax,
+        )
+    )
+    assert eta_ceil == pytest.approx(10.0**vmax, rel=1.0e-12)
