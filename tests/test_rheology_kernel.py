@@ -1097,6 +1097,22 @@ def test_pressure_surface_roundoff_clamping_and_validation():
 
 
 @pytest.mark.unit
+def test_required_rheology_inputs_reject_none():
+    """Verify that None for required inputs raises ValueError naming the field."""
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_enthalpy(None)
+
+    with pytest.raises(ValueError, match='temperature'):
+        compute_arrhenius_viscosity(None, 1.0e9)
+
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_viscosity(1600.0, None)
+
+    with pytest.raises(ValueError, match='pressure'):
+        compute_yield_stress(None)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ('mode', 'field_name', 'bad_val', 'static_error'),
     [
