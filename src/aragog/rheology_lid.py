@@ -1,12 +1,15 @@
 """Stagnant lid boundary layer indicators and effective viscosity closures.
 
 Intentional non-smooth switches retained for boolean diagnostics and physical bounds
-are ``is_convecting``, ``has_lid``, the ``is_convecting`` gate on ``v_i``, the
+include ``is_convecting``, ``has_lid``, the ``is_convecting`` gate on ``v_i``, the
 ``[0, 1]`` clip on ``f``, ``f_int_max = max(f * interior_node_mask)``,
 ``max(T_i, 1.0)``, ``max(H_T_i, 1.0e-6)``, ``DeltaT_conv = max(T_i - T_surf, 1.0e-6)``,
 ``max(theta, 1.0e-6)``, ``max(Ra_rh_raw, 1.0e-30)``, the elementwise maxima in
 ``w_interior`` and ``w_hot_sol``, ``dTdr_floor`` with ``max(dr_min, 1.0)``, the
-``r[-1] - r[0]`` cap on ``delta_rh``, and the ``COHESION_FLOOR`` yield-stress clamp.
+``r[-1] - r[0]`` cap on ``delta_rh``, the ``COHESION_FLOOR`` yield-stress clamp,
+``if_lid`` (``where(w_lid_present >= 1 - 1e-12)``), ``d_geom``, the max in ``d_lid_raw``,
+``max(w_conv - w_conv_0, 0)``, ``f_int_scale``, the ``v_m_raw`` branches, and the
+``1.0e-30`` denominators.
 """
 
 from __future__ import annotations
@@ -309,7 +312,7 @@ def compute_stagnant_lid_state(
     ``T_i``, ``eta_i``, ``mu_i``, and ``theta`` serve as interior fallback
     diagnostics and all solver-facing outputs vary continuously across uniform
     convective flux fractions ``f`` in ``[0, 1e-3]``. Intentional non-smooth
-    switches retained for boolean diagnostics and physical bounds are
+    switches retained for boolean diagnostics and physical bounds include
     ``is_convecting``, ``has_lid``, the ``is_convecting`` gate on the diagnostic
     ``v_i``, the ``[0, 1]`` clip on ``f``, ``f_int_max = max(f * interior_node_mask)``,
     ``max(T_i, 1.0)``, ``max(H_T_i, 1.0e-6)``,
@@ -317,13 +320,17 @@ def compute_stagnant_lid_state(
     ``max(Ra_rh_raw, 1.0e-30)``, the elementwise maxima in ``w_interior`` and
     ``w_hot_sol``, the temperature-gradient floor ``dTdr_floor`` with
     ``max(dr_min, 1.0)`` in ``delta_rh``, the domain-thickness cap ``r[-1] - r[0]``
-    on ``delta_rh``, and the ``COHESION_FLOOR`` clamp on yield stress (while the
+    on ``delta_rh``, the ``COHESION_FLOOR`` clamp on yield stress,
+    ``if_lid`` (``where(w_lid_present >= 1 - 1e-12)``), ``d_geom``, the max in
+    ``d_lid_raw``, ``max(w_conv - w_conv_0, 0)``, ``f_int_scale``, the
+    ``v_m_raw`` branches, and the ``1.0e-30`` denominators (while the
     5-node local interior RMS ``|F_tot|`` floor
     ``F_tot_floor = _softmax2(F_TOT_FLOOR_FRAC * F_loc_rms, 1.0e-12, 0.01 * 1.0e-12)``
     replaces boundary nodes ``k = 0`` and ``k = N - 1`` by their adjacent interior
-    nodes ``F_tot[1]`` and ``F_tot[N - 2]`` for ``N > 3`` before 2-node edge
-    replication, contains no ``min`` or ``max``, and differs from a scalar ``1.0e-12``
-    floor only at nodes where ``F_conv > 0`` and ``|F_tot| < 0.14 * F_loc_rms``).
+    nodes ``F_tot[1]`` and ``F_tot[N - 2]`` before 2-node edge replication, is
+    continuous in every ``F_k``, and differs from a scalar ``1.0e-12`` floor only at
+    nodes where ``F_conv > 0`` and ``|F_tot| < 0.14 * F_loc_rms`` when
+    ``0.1 * F_loc_rms >> 1.0e-12 W/m2``).
 
     The lid-base locator ``W_base_tilde = _boundary_weights(w_interior, xp)[0]`` scans
     ``w_interior`` (smoothed over the local cell temperature step
@@ -408,10 +415,10 @@ def compute_stagnant_lid_state(
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)
 
-    # 5-node local interior RMS floor: replace boundary nodes (0, N-1) with (1, N-2) for N > 3
+    # 5-node local interior RMS floor: replace boundary nodes (0, N-1) with (1, N-2)
     # and replicate 2 edge nodes; differs from 1e-12 only where F_conv > 0 and |F_tot| < 0.14 * F_loc_rms.
     n_nodes = r.shape[0]
-    F_pad = xp.concatenate([F_tot[1:2], F_tot[1:-1], F_tot[-2:-1]]) if n_nodes > 3 else F_tot
+    F_pad = xp.concatenate([F_tot[1:2], F_tot[1:-1], F_tot[-2:-1]]) if n_nodes >= 3 else F_tot
     F_ext = xp.concatenate([F_pad[:1], F_pad[:1], F_pad, F_pad[-1:], F_pad[-1:]])
     F_loc_rms = xp.sqrt(
         0.2

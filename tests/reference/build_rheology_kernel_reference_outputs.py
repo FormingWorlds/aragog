@@ -207,21 +207,26 @@ def verify_fixture(path: Path = FIXTURE_PATH) -> None:
             f'Expected main_commit={MAIN_BASE_COMMIT!r} in {path.name}, got {saved.get("main_commit")!r}'
         )
 
-    if _has_git_commit(MAIN_BASE_COMMIT):
-        expected_main = compute_main_reference_grid_outputs(MAIN_BASE_COMMIT)
-        if set(saved.keys()) != set(expected_main.keys()):
-            raise AssertionError(
-                f'Key mismatch in {path.name}: {sorted(saved.keys())} vs {sorted(expected_main.keys())}'
-            )
-        for k, exp_arr in expected_main.items():
-            got_arr = saved[k]
-            if k == 'main_commit':
-                assert str(got_arr) == str(exp_arr)
-            elif exp_arr.dtype == bool:
-                if bool(got_arr) != bool(exp_arr):
-                    raise AssertionError(f'Boolean mismatch for {k}: {got_arr} != {exp_arr}')
-            else:
-                np.testing.assert_allclose(got_arr, exp_arr, rtol=1.0e-12, atol=0.0, err_msg=k)
+    if not _has_git_commit(MAIN_BASE_COMMIT):
+        raise RuntimeError(
+            f'Main baseline commit {MAIN_BASE_COMMIT} is not present in local git object database; '
+            f'cannot verify against main.'
+        )
+
+    expected_main = compute_main_reference_grid_outputs(MAIN_BASE_COMMIT)
+    if set(saved.keys()) != set(expected_main.keys()):
+        raise AssertionError(
+            f'Key mismatch in {path.name}: {sorted(saved.keys())} vs {sorted(expected_main.keys())}'
+        )
+    for k, exp_arr in expected_main.items():
+        got_arr = saved[k]
+        if k == 'main_commit':
+            assert str(got_arr) == str(exp_arr)
+        elif exp_arr.dtype == bool:
+            if bool(got_arr) != bool(exp_arr):
+                raise AssertionError(f'Boolean mismatch for {k}: {got_arr} != {exp_arr}')
+        else:
+            np.testing.assert_allclose(got_arr, exp_arr, rtol=1.0e-12, atol=0.0, err_msg=k)
 
     # Also verify current branch kernels against saved main outputs outside transition bands
     p_grid = np.linspace(0.0, 135e9, 25)
