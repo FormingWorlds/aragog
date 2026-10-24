@@ -2352,3 +2352,35 @@ def test_is_non_real_direct_rejection_and_nonuniform_lid_bound():
         np.array([1.0, 2.0, 3.0]),
     ):
         assert _is_non_real(good_input) is False
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_arrhenius_viscosity_grad_finite_at_masked_invalid_nodes():
+    """Verify jax.grad is zero, not NaN, at nodes with T <= 0 or water_prefactor <= 0 masked out."""
+    jax = pytest.importorskip('jax')
+    import jax.numpy as jnp
+
+    jax.config.update('jax_enable_x64', True)
+    mask = jnp.array([True, True, False])
+    pressure = jnp.array([1.0e9, 2.0e9, 3.0e9])
+
+    def masked_sum(temperature, water_prefactor):
+        eta = compute_arrhenius_viscosity(
+            temperature, pressure, water_prefactor=water_prefactor, xp=jnp
+        )
+        return jnp.sum(jnp.where(mask, jnp.log10(eta), 0.0))
+
+    t_bad = jnp.array([1500.0, 1700.0, 0.0])
+    wp_bad = jnp.array([1.0, 1.0, -1.0])
+    grad_t = np.asarray(jax.grad(masked_sum, argnums=0)(t_bad, jnp.ones(3)))
+    grad_wp = np.asarray(jax.grad(masked_sum, argnums=1)(t_bad.at[2].set(1600.0), wp_bad))
+    assert np.all(np.isfinite(grad_t)) and grad_t[2] == 0.0
+    assert np.all(np.isfinite(grad_wp)) and grad_wp[2] == 0.0
+    # d log10(eta) / dT = -H(P) / (R T^2 ln 10) at the valid nodes.
+    h = np.asarray(compute_arrhenius_enthalpy(np.asarray(pressure[:2])))
+    expected = -h / (R_GAS * np.array([1500.0, 1700.0]) ** 2 * np.log(10.0))
+    np.testing.assert_allclose(grad_t[:2], expected, rtol=1.0e-12)
+    np.testing.assert_allclose(grad_wp[:2], 1.0 / np.log(10.0), rtol=1.0e-12)
+    # The invalid node itself still returns NaN.
+    assert np.isnan(float(compute_arrhenius_viscosity(t_bad, pressure, xp=jnp)[2]))
