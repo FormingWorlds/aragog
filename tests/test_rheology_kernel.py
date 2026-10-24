@@ -2384,3 +2384,31 @@ def test_arrhenius_viscosity_grad_finite_at_masked_invalid_nodes():
     np.testing.assert_allclose(grad_wp[:2], 1.0 / np.log(10.0), rtol=1.0e-12)
     # The invalid node itself still returns NaN.
     assert np.isnan(float(compute_arrhenius_viscosity(t_bad, pressure, xp=jnp)[2]))
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_arrhenius_viscosity_exact_below_ceiling_for_small_viscosity_solid():
+    """Verify log10(eta) tracks the raw Arrhenius value when the exponent exceeds 700."""
+    g_hom, t_sol_0, t_ref, vmax = 25.0, 1400.0, 1600.0, 300.0
+    for vs, target in ((1.0e-10, 297.0), (1.0e-10, 297.9), (1.0e-200, 290.0)):
+        exponent = (target - np.log10(vs)) * np.log(10.0)
+        assert exponent > 700.0
+        t = g_hom * t_sol_0 / (exponent + g_hom * t_sol_0 / t_ref)
+        eta = compute_arrhenius_viscosity(
+            t, 0.0, viscosity_solid=vs, dt_sol_dp=0.0, viscosity_max_log10=vmax
+        )
+        # A clip of the exponent at 700 gives 10^(log10(vs) + 304.0), decades too low.
+        assert np.log10(eta) == pytest.approx(target, abs=1.0e-9)
+        assert abs(np.log10(eta) - (np.log10(vs) + 700.0 / np.log(10.0))) > 1.0
+
+    # Pressure scan at vs=1e-10, vmax=300, T=300 K across P=3.07e11 Pa has no 4-decade jump.
+    p_scan = np.linspace(2.9e11, 3.2e11, 61)
+    log10_eta = np.log10(
+        compute_arrhenius_viscosity(
+            300.0, p_scan, viscosity_solid=1.0e-10, viscosity_max_log10=300.0
+        )
+    )
+    diffs = np.diff(log10_eta)
+    assert np.all(diffs >= 0.0)
+    assert np.max(diffs) < 0.5
