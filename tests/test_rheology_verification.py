@@ -550,13 +550,14 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
     tau_y = 1.0e8
 
     sr_match = tau_y / (2.0 * eta_d)
+    expected_mid = eta_d * (10.0 ** (-0.01 * np.log(2.0)))
     eta_match = compute_effective_viscosity(
         eta_diff=eta_d,
         tau_y=tau_y,
         strain_rate=sr_match,
         stress_closure_mode='local',
     )
-    assert eta_match == pytest.approx(eta_d, rel=1.0e-12)
+    assert eta_match == pytest.approx(expected_mid, rel=1.0e-12)
 
     sr_low = 1.0e-18
     eta_below = compute_effective_viscosity(
@@ -586,7 +587,7 @@ def test_effective_viscosity_unyielded_and_yielded_limits():
         stress_closure_mode='local',
         xp=jnp,
     )
-    assert float(eta_match_jax) == pytest.approx(eta_d, rel=1.0e-12)
+    assert float(eta_match_jax) == pytest.approx(expected_mid, rel=1.0e-12)
 
     eta_below_jax = compute_effective_viscosity(
         eta_diff=eta_d,
@@ -614,7 +615,7 @@ def test_moresi_solomatov_min_closure_exact_contract():
     tau_y = 1.0e6
 
     # 1. Below yield (tau_d < tau_y): eta_eff == eta_diff.
-    td_below = 8.645e5
+    td_below = 4.0e5
     eta_eff_below = compute_effective_viscosity(
         eta_diff=eta_d,
         eta_i=eta_d,
@@ -640,7 +641,7 @@ def test_moresi_solomatov_min_closure_exact_contract():
     eta_unyielded_cold = compute_effective_viscosity(
         eta_diff=eta_cold_lid,
         eta_i=eta_interior,
-        tau_d=8.645e5,
+        tau_d=4.0e5,
         tau_y_lid=1.0e6,
     )
     assert eta_unyielded_cold == pytest.approx(eta_cold_lid, rel=1.0e-14)
@@ -648,30 +649,31 @@ def test_moresi_solomatov_min_closure_exact_contract():
     eta_yielded_cold = compute_effective_viscosity(
         eta_diff=eta_cold_lid,
         eta_i=eta_interior,
-        tau_d=1.2e6,
+        tau_d=1.6e6,
         tau_y_lid=1.0e6,
     )
-    expected_yielded_cold = eta_interior * (1.0e6 / 1.2e6)
+    expected_yielded_cold = eta_interior * (1.0e6 / 1.6e6)
     assert eta_yielded_cold == pytest.approx(expected_yielded_cold, rel=1.0e-14)
     assert eta_yielded_cold < eta_interior
 
     # Canary: calling compute_effective_viscosity with cold-lid creep viscosity as the scale
-    # (eta_i=eta_cold_lid or omitted) leaves 8.333e39 Pa s >> eta_interior and fails mobilization.
+    # (eta_i=eta_cold_lid or omitted) leaves 6.25e39 Pa s >> eta_interior and fails mobilization.
     wrong_cold_scaled = compute_effective_viscosity(
         eta_diff=eta_cold_lid,
         eta_i=eta_cold_lid,
-        tau_d=1.2e6,
+        tau_d=1.6e6,
         tau_y_lid=1.0e6,
     )
-    assert wrong_cold_scaled == pytest.approx(8.333333333333334e39, rel=1.0e-14)
+    expected_wrong_cold = 6.25e39 * (10.0 ** (-0.01 * np.logaddexp(0.0, -np.log10(1.6) / 0.01)))
+    assert wrong_cold_scaled == pytest.approx(expected_wrong_cold, rel=1.0e-14)
     with pytest.raises(AssertionError):
         assert wrong_cold_scaled < eta_interior
 
     # Three reference regimes (cold surface 300 K, warm surface 700 K, and low-yield lid):
     _, jnp = _import_jax_x64()
     cases = [
-        (1.0e40, 1.0e21, 1.2e6, 1.0e6, 8.333333333333334e20),
-        (8.30e24, 1.0e21, 1.2e6, 1.0e6, 8.333333333333334e20),
+        (1.0e40, 1.0e21, 1.6e6, 1.0e6, 6.25e20),
+        (8.30e24, 1.0e21, 1.6e6, 1.0e6, 6.25e20),
         (8.30e24, 1.0e20, 8.65e5, 1.0e4, 1.0e20 * (1.0e4 / 8.65e5)),
     ]
     for ed_c, ei_c, td_c, ty_c, exp_c in cases:
@@ -690,7 +692,7 @@ def test_moresi_solomatov_min_closure_exact_contract():
         assert v_np == pytest.approx(exp_c, rel=1.0e-12)
         assert v_jx == pytest.approx(exp_c, rel=1.0e-12)
 
-    # 4. Yield threshold transition at tau_d = tau_y (both eta_i == eta_d and eta_i < eta_d).
+    # 4. Smooth log10 tanh yield transition at tau_d = tau_y (both eta_i == eta_d and eta_i < eta_d).
     eps = 1.0e-6
     eta_left = compute_effective_viscosity(
         eta_diff=eta_d,
@@ -710,29 +712,41 @@ def test_moresi_solomatov_min_closure_exact_contract():
         tau_d=tau_y + eps,
         tau_y_lid=tau_y,
     )
-    assert eta_left == pytest.approx(eta_d, rel=1.0e-14)
-    assert eta_mid == pytest.approx(eta_d, rel=1.0e-14)
-    assert eta_right == pytest.approx(eta_d, rel=1.0e-11)
+    expected_mid_equal = eta_d * (10.0 ** (-0.5 * 0.01 * np.log(2.0)))
+    assert eta_left == pytest.approx(expected_mid_equal, rel=1.0e-6)
+    assert eta_mid == pytest.approx(expected_mid_equal, rel=1.0e-12)
+    assert eta_right == pytest.approx(expected_mid_equal, rel=1.0e-6)
+    assert eta_left > eta_mid > eta_right
 
     eta_cold_left = compute_effective_viscosity(
         eta_diff=eta_cold_lid,
         eta_i=eta_interior,
-        tau_d=tau_y - eps,
+        tau_d=tau_y * (1.0 - eps),
+        tau_y_lid=tau_y,
+    )
+    eta_cold_mid = compute_effective_viscosity(
+        eta_diff=eta_cold_lid,
+        eta_i=eta_interior,
+        tau_d=tau_y,
         tau_y_lid=tau_y,
     )
     eta_cold_right = compute_effective_viscosity(
         eta_diff=eta_cold_lid,
         eta_i=eta_interior,
-        tau_d=tau_y + eps,
+        tau_d=tau_y * (1.0 + eps),
         tau_y_lid=tau_y,
     )
-    assert eta_cold_left == pytest.approx(eta_cold_lid, rel=1.0e-14)
-    assert eta_cold_right == pytest.approx(eta_interior, rel=1.0e-11)
+    expected_geom_mid = 10.0 ** (0.5 * (np.log10(eta_cold_lid) + np.log10(eta_interior)))
+    assert eta_cold_mid == pytest.approx(expected_geom_mid, rel=1.0e-12)
+    assert eta_cold_left > eta_cold_mid > eta_cold_right
+    assert abs(np.log10(eta_cold_left) - np.log10(eta_cold_right)) < 1.0e-3
 
 
 @pytest.mark.physics_invariant
 def test_lid_closure_jump_at_yield_threshold():
-    """Verify lid closure jumps at tau_d = tau_y_lid from eta_diff below/at yield to eta_i * tau_y/tau_d above."""
+    """Verify lid closure log10 tanh blend across tau_d = tau_y_lid, asymptotic limits, and hard-step canary."""
+    import jax
+
     _, jnp = _import_jax_x64()
 
     eta_d = 1.0e26
@@ -740,52 +754,12 @@ def test_lid_closure_jump_at_yield_threshold():
     tau_y = 1.0e8
     w_lid = 1.0
 
-    # Below yield (tau_d / tau_y = 0.999999) and at yield (tau_d / tau_y = 1.0): eta_eff == eta_diff (1.0e26).
-    for ratio_td_ty in (0.999999, 1.0):
-        td = ratio_td_ty * tau_y
-        val_np = float(
-            compute_effective_viscosity(
-                eta_diff=eta_d,
-                tau_d=td,
-                tau_y_lid=tau_y,
-                stress_closure_mode='lid',
-                w_lid=w_lid,
-                eta_i=eta_i,
-                xp=np,
-            )
-        )
-        val_jx = float(
-            compute_effective_viscosity(
-                eta_diff=jnp.asarray(eta_d),
-                tau_d=jnp.asarray(td),
-                tau_y_lid=jnp.asarray(tau_y),
-                stress_closure_mode='lid',
-                w_lid=jnp.asarray(w_lid),
-                eta_i=jnp.asarray(eta_i),
-                xp=jnp,
-            )
-        )
-        assert val_np == pytest.approx(1.0e26, rel=1.0e-14)
-        assert val_jx == pytest.approx(1.0e26, rel=1.0e-14)
-
-    # Immediately above yield (tau_d / tau_y = 1.000001): eta_eff == eta_i * (tau_y / tau_d) = 1.0e20 / 1.000001.
-    td_above = 1.000001 * tau_y
-    expected_above = 1.0e20 / 1.000001
-    val_above_np = float(
-        compute_effective_viscosity(
-            eta_diff=eta_d,
-            tau_d=td_above,
-            tau_y_lid=tau_y,
-            stress_closure_mode='lid',
-            w_lid=w_lid,
-            eta_i=eta_i,
-            xp=np,
-        )
-    )
-    val_above_jx = float(
-        compute_effective_viscosity(
+    # 1. Continuity and finiteness of eta_eff(x) and d(eta_eff)/dx over x in [0.8, 1.2].
+    xs = np.linspace(0.8, 1.2, 81)
+    grad_fn = jax.grad(
+        lambda x_val: compute_effective_viscosity(
             eta_diff=jnp.asarray(eta_d),
-            tau_d=jnp.asarray(td_above),
+            tau_d=x_val * jnp.asarray(tau_y),
             tau_y_lid=jnp.asarray(tau_y),
             stress_closure_mode='lid',
             w_lid=jnp.asarray(w_lid),
@@ -793,25 +767,98 @@ def test_lid_closure_jump_at_yield_threshold():
             xp=jnp,
         )
     )
-    assert val_above_np == pytest.approx(expected_above, rel=1.0e-14)
-    assert val_above_jx == pytest.approx(expected_above, rel=1.0e-14)
-    assert val_above_np == pytest.approx(1.0e20, rel=2.0e-6)
-    assert (1.0e26 / val_above_np) == pytest.approx(1.0e6 * 1.000001, rel=1.0e-14)
+    vals_np = np.array(
+        [
+            float(
+                compute_effective_viscosity(
+                    eta_diff=eta_d,
+                    tau_d=float(xv * tau_y),
+                    tau_y_lid=tau_y,
+                    stress_closure_mode='lid',
+                    w_lid=w_lid,
+                    eta_i=eta_i,
+                    xp=np,
+                )
+            )
+            for xv in xs
+        ]
+    )
+    grads_jx = np.array([float(grad_fn(jnp.asarray(xv))) for xv in xs])
+    assert np.all(np.isfinite(vals_np))
+    assert np.all(np.isfinite(grads_jx))
+    assert np.all(np.diff(vals_np) < 0.0)
+    assert np.all(grads_jx < 0.0)
 
-    # Canary: cold-lid scaling eta_diff * (tau_y / tau_d) = 1.0e26 / 1.000001 fails the interior-scaled contract.
-    wrong_cold_above = float(
+    # At x = 1.0, w_b = 0.5 gives geometric mean sqrt(eta_d * eta_i) = 1.0e23 Pa s.
+    val_mid = float(
         compute_effective_viscosity(
             eta_diff=eta_d,
-            tau_d=td_above,
+            tau_d=tau_y,
             tau_y_lid=tau_y,
             stress_closure_mode='lid',
             w_lid=w_lid,
-            eta_i=eta_d,
+            eta_i=eta_i,
             xp=np,
         )
     )
+    assert val_mid == pytest.approx(1.0e23, rel=1.0e-12)
+
+    # 2. Asymptotic limit checks at x = 0.9 and x = 1.1 (within 0.5% of branch over 6-decade contrast).
+    val_09 = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            tau_d=0.9 * tau_y,
+            tau_y_lid=tau_y,
+            stress_closure_mode='lid',
+            w_lid=w_lid,
+            eta_i=eta_i,
+            xp=np,
+        )
+    )
+    assert (val_09 / eta_d) == pytest.approx(0.995412852640275, rel=1.0e-12)
+    assert val_09 == pytest.approx(eta_d, rel=0.01)
+
+    val_11 = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            tau_d=1.1 * tau_y,
+            tau_y_lid=tau_y,
+            stress_closure_mode='lid',
+            w_lid=w_lid,
+            eta_i=eta_i,
+            xp=np,
+        )
+    )
+    expected_11 = eta_i / 1.1
+    assert (val_11 / expected_11) == pytest.approx(1.0046758935808797, rel=1.0e-12)
+    assert val_11 == pytest.approx(expected_11, rel=0.01)
+
+    # 3. Mutant canary: unblended hard-step mutant fails continuity bound at x = 1.0 +- 1e-4.
+    def _eval_smooth(x_pt: float) -> float:
+        return float(
+            compute_effective_viscosity(
+                eta_diff=eta_d,
+                tau_d=x_pt * tau_y,
+                tau_y_lid=tau_y,
+                stress_closure_mode='lid',
+                w_lid=w_lid,
+                eta_i=eta_i,
+                xp=np,
+            )
+        )
+
+    def _eval_hard_mutant(x_pt: float) -> float:
+        return float(eta_d if x_pt <= 1.0 else min(eta_d, eta_i / x_pt))
+
+    smooth_step_decades = abs(
+        np.log10(_eval_smooth(1.0 - 1.0e-4)) - np.log10(_eval_smooth(1.0 + 1.0e-4))
+    )
+    mutant_step_decades = abs(
+        np.log10(_eval_hard_mutant(1.0 - 1.0e-4)) - np.log10(_eval_hard_mutant(1.0 + 1.0e-4))
+    )
+    assert smooth_step_decades < 0.05
     with pytest.raises(AssertionError):
-        assert wrong_cold_above == pytest.approx(expected_above, rel=1.0e-3)
+        assert mutant_step_decades < 0.05
 
 
 @pytest.mark.physics_invariant
@@ -910,9 +957,10 @@ def test_no_lid_zero_diagnostics_and_smooth_w_sum_transition():
         phi_width=0.15,
         xp=jnp,
     )
-    # if_lid sets isothermal no-lid diagnostics to literal 0.0.
+    # Isothermal column has d_lid == 0.0 and remaining boundary-layer diagnostics == 0.0.
+    assert float(st_iso_np['d_lid']) == 0.0
+    assert float(st_iso_jx['d_lid']) == 0.0
     for key in (
-        'd_lid',
         'Ra_eff',
         'Ra_rh',
         'v_m',
@@ -1048,8 +1096,8 @@ def test_rheology_and_lid_branch_coverage():
         1.0e21, rel=1e-12
     )
     assert np.isnan(compute_arrhenius_viscosity(np.nan, 0.0))
-    # Exact by construction: xp.maximum(0.0, ...) clamps negative Byerlee stress to literal 0.0.
-    assert compute_yield_stress(-200.0e6, yield_stress_c=50.0e6, yield_stress_mu=0.6) == 0.0
+    with pytest.raises(ValueError, match='pressure'):
+        compute_yield_stress(-200.0e6, yield_stress_c=50.0e6, yield_stress_mu=0.6)
     with pytest.raises(ValueError, match='eta_diff'):
         compute_effective_viscosity(
             eta_diff=np.inf,
@@ -1102,7 +1150,6 @@ def test_rheology_and_lid_branch_coverage():
         convective_flux=F_conv,
         total_flux=F_tot,
         solidus_temperature=T_sol,
-        t_sol_0=1400.0,
         melt_fraction=phi,
         params=params_fixed,
         viscosity_solid=1.0e21,
@@ -1144,7 +1191,7 @@ def test_rheology_and_lid_branch_coverage():
             strain_rate=1.0e-14,
         )
 
-    with pytest.raises(ValueError, match='t_sol_0 must be provided when solidus_temperature'):
+    with pytest.raises(TypeError, match='t_sol_0'):
         compute_stagnant_lid_state(
             radii=r,
             temperature=T,
@@ -1152,7 +1199,7 @@ def test_rheology_and_lid_branch_coverage():
             convective_flux=F_conv,
             total_flux=F_tot,
             solidus_temperature=2000.0,
-            t_sol_0=None,
+            t_sol_0=2000.0,
             melt_fraction=phi,
             params=params_fixed,
             viscosity_solid=1.0e21,
@@ -1168,7 +1215,6 @@ def test_rheology_and_lid_branch_coverage():
         convective_flux=F_conv,
         total_flux=F_tot,
         solidus_temperature=2000.0,
-        t_sol_0=2000.0,
         melt_fraction=phi,
         params=params_fixed_2000,
         viscosity_solid=1.0e21,
@@ -1182,7 +1228,6 @@ def test_rheology_and_lid_branch_coverage():
         convective_flux=F_conv,
         total_flux=F_tot,
         solidus_temperature=np.full(n_nodes, 2000.0),
-        t_sol_0=2000.0,
         melt_fraction=phi,
         params=params_fixed_2000,
         viscosity_solid=1.0e21,
@@ -1190,20 +1235,7 @@ def test_rheology_and_lid_branch_coverage():
         phi_width=0.15,
     )
     with pytest.raises(ValueError, match='t_sol_0'):
-        compute_stagnant_lid_state(
-            radii=r,
-            temperature=T,
-            pressure=P,
-            convective_flux=F_conv,
-            total_flux=F_tot,
-            solidus_temperature=np.full(n_nodes, 2000.0),
-            t_sol_0=2000.0,
-            melt_fraction=phi,
-            params=dataclasses.replace(params_fixed, t_sol_0=2200.0),
-            viscosity_solid=1.0e21,
-            phi_rheo=0.4,
-            phi_width=0.15,
-        )
+        dataclasses.replace(params_fixed_2000, t_sol_0=0.0)
     t_i_val = float(st_scalar_sol['T_i'])
     expected_dt_rh_sol = t_i_val**2 / (params_fixed.g_homologous * 2000.0)
     expected_theta_sol = (t_i_val - T[-1]) / expected_dt_rh_sol
@@ -1266,9 +1298,11 @@ def test_validation_and_lid_base_edge_cases():
         jnp.isnan(compute_arrhenius_viscosity(1600.0, 0.0, water_prefactor=-1.0, xp=jnp))
     )
 
-    # 5. Water prefactor clipped in log space after multiplication:
-    # At T=520 K, P=0, wp=0.1: unclipped is 1e21 * 0.1 * exp(25 * 1400 * (1/520 - 1/1600)) = 5.424869e39 Pa s.
-    expected_520 = 1.0e21 * 0.1 * math.exp(25.0 * 1400.0 * (1.0 / 520.0 - 1.0 / 1600.0))
+    # 5. Water prefactor clipped smoothly in log space after multiplication:
+    # At T=520 K, P=0, wp=0.1: unclipped log10(eta) = 39.731168 is 0.2688 decades below ceiling 40.0.
+    raw_520 = 1.0e21 * 0.1 * math.exp(25.0 * 1400.0 * (1.0 / 520.0 - 1.0 / 1600.0))
+    log10_520 = math.log10(raw_520)
+    expected_520 = 10.0 ** (log10_520 - 0.05 * math.log1p(math.exp((log10_520 - 40.0) / 0.05)))
     assert compute_arrhenius_viscosity(520.0, 0.0, water_prefactor=0.1) == pytest.approx(
         expected_520, rel=1e-12
     )
@@ -1397,7 +1431,6 @@ def test_validation_and_lid_base_edge_cases():
         'viscosity_solid',
         'phi_rheo',
         'phi_width',
-        't_sol_0',
         'a_rh_fb',
         'C4',
     ],
@@ -1427,10 +1460,10 @@ def test_lid_state_nan_propagation_per_input(nan_field: str, lid_base_mode: str)
         'viscosity_solid': 1.0e21,
         'phi_rheo': 0.4,
         'phi_width': 0.15,
-        't_sol_0': 1400.0,
         'a_rh_fb': 1.3,
         'C4': 0.125,
     }
+    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0, lid_base_mode=lid_base_mode)
     if nan_field in base_arrays:
         bad = base_arrays[nan_field].copy()
         bad[5] = np.nan
@@ -1438,7 +1471,6 @@ def test_lid_state_nan_propagation_per_input(nan_field: str, lid_base_mode: str)
     else:
         scalars[nan_field] = float('nan')
 
-    params = SolidRheologyParams(enabled=True, t_sol_0=1400.0, lid_base_mode=lid_base_mode)
     for xp_mod in (np, jnp):
         kw = {k: xp_mod.asarray(v) for k, v in base_arrays.items()}
         st = compute_stagnant_lid_state(
@@ -1620,11 +1652,8 @@ def test_compute_stagnant_lid_state_input_validation():
         'thermal_expansivity',
         'thermal_diffusivity',
     ):
-        extra = {'t_sol_0': 1400.0} if opt_name == 'solidus_temperature' else {}
         with pytest.raises(ValueError, match=rf'{opt_name}.*same 1-D length as radii'):
-            compute_stagnant_lid_state(
-                **{**valid_kw, **extra, opt_name: np.ones((5, 2), dtype=float)}
-            )
+            compute_stagnant_lid_state(**{**valid_kw, opt_name: np.ones((5, 2), dtype=float)})
 
 
 def _valid_lid_state_kwargs(n_nodes: int = 10) -> dict[str, Any]:
@@ -1646,13 +1675,15 @@ def _valid_lid_state_kwargs(n_nodes: int = 10) -> dict[str, Any]:
 
 @pytest.mark.unit
 def test_stagnant_lid_state_t_sol_0_inf_and_mismatch_validation():
-    """Verify t_sol_0 rejects +-inf and mismatched values while propagating NaN."""
+    """Verify SolidRheologyParams rejects invalid t_sol_0 and compute_stagnant_lid_state rejects t_sol_0 kwarg."""
     valid_kw = _valid_lid_state_kwargs()
-    for bad_ts0 in (np.inf, -np.inf, 1500.0):
+    with pytest.raises(TypeError, match='t_sol_0'):
+        compute_stagnant_lid_state(**{**valid_kw, 't_sol_0': 1500.0})
+    for bad_ts0 in (np.inf, -np.inf, 0.0, -100.0, np.nan):
         with pytest.raises(ValueError, match='t_sol_0'):
-            compute_stagnant_lid_state(**{**valid_kw, 't_sol_0': bad_ts0})
-    st_nan_ts0 = compute_stagnant_lid_state(**{**valid_kw, 't_sol_0': np.nan})
-    assert np.isnan(float(st_nan_ts0['tau_d']))
+            SolidRheologyParams(enabled=True, t_sol_0=bad_ts0)
+        with pytest.raises(ValueError, match='t_sol_0'):
+            dataclasses.replace(valid_kw['params'], t_sol_0=bad_ts0)
 
 
 @pytest.mark.unit
@@ -1680,7 +1711,7 @@ def test_stagnant_lid_state_a_rh_fb_bounds_validation():
 @pytest.mark.unit
 def test_stagnant_lid_state_rejects_array_valued_scalars():
     """Verify array-valued, bool, and string scalar arguments raise ValueError instead of being accepted."""
-    from aragog.rheology_lid import _scalar_or_nan
+    from aragog.rheology import _scalar_or_nan
 
     for bad_scalar in (
         '1e21',
@@ -1709,10 +1740,10 @@ def test_stagnant_lid_state_rejects_array_valued_scalars():
         ('phi_rheo', np.full(n_nodes, -5.0)),
         ('a_rh_fb', np.full(n_nodes, 1.3)),
         ('C4', np.full(n_nodes, 0.125)),
-        ('t_sol_0', np.full(n_nodes, 1400.0)),
     ):
+        call_kw = {**valid_kw, scalar_name: bad_arr}
         with pytest.raises(ValueError, match=rf'{scalar_name} must be a scalar'):
-            compute_stagnant_lid_state(**{**valid_kw, scalar_name: bad_arr})
+            compute_stagnant_lid_state(**call_kw)
 
     assert _scalar_or_nan(10**21, 'viscosity_solid') == 1.0e21
     st_float = compute_stagnant_lid_state(**valid_kw)
@@ -1729,7 +1760,7 @@ def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():
     j_kw = {k: jnp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in valid_kw.items()}
 
     @jax.jit
-    def _jit_eval(vs, pw, pr, arh, c4, ts0):
+    def _jit_eval(vs, pw, pr, arh, c4):
         return compute_stagnant_lid_state(
             **{
                 **j_kw,
@@ -1738,22 +1769,19 @@ def test_stagnant_lid_state_jitted_invalid_scalars_propagate_nan():
                 'phi_rheo': pr,
                 'a_rh_fb': arh,
                 'C4': c4,
-                't_sol_0': ts0,
                 'xp': jnp,
             }
         )
 
-    st_jit_ok = _jit_eval(1.0e21, 0.15, 0.4, 1.3, 0.125, 1400.0)
+    st_jit_ok = _jit_eval(1.0e21, 0.15, 0.4, 1.3, 0.125)
     assert bool(jnp.isfinite(st_jit_ok['tau_d']))
     for bad_args in (
-        (-1.0e21, 0.15, 0.4, 1.3, 0.125, 1400.0),
-        (jnp.inf, 0.15, 0.4, 1.3, 0.125, 1400.0),
-        (1.0e21, 0.0, 0.4, 1.3, 0.125, 1400.0),
-        (1.0e21, 0.15, 1.5, 1.3, 0.125, 1400.0),
-        (1.0e21, 0.15, 0.4, 0.0, 0.125, 1400.0),
-        (1.0e21, 0.15, 0.4, 1.3, -0.125, 1400.0),
-        (1.0e21, 0.15, 0.4, 1.3, 0.125, 1500.0),
-        (1.0e21, 0.15, 0.4, 1.3, 0.125, jnp.inf),
+        (-1.0e21, 0.15, 0.4, 1.3, 0.125),
+        (jnp.inf, 0.15, 0.4, 1.3, 0.125),
+        (1.0e21, 0.0, 0.4, 1.3, 0.125),
+        (1.0e21, 0.15, 1.5, 1.3, 0.125),
+        (1.0e21, 0.15, 0.4, 0.0, 0.125),
+        (1.0e21, 0.15, 0.4, 1.3, -0.125),
     ):
         try:
             st_jit_bad = _jit_eval(*bad_args)
@@ -2074,3 +2102,880 @@ def test_solver_modules_do_not_direct_import_rheology_kernels():
     assert _scan_ast_for_direct_rheology_imports(ast.parse(attr_code)), (
         'Canary 6 failed: attribute chain aragog.rheology was not caught'
     )
+
+
+@pytest.mark.unit
+def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys, monkeypatch):
+    """Verify PALEOS defaults, multi-crossing reporting, and non-1-GPa grid slicing."""
+    import importlib.util
+    from pathlib import Path
+
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / 'tools'
+        / 'verification'
+        / 'compute_solidus_reference_values.py'
+    )
+    spec = importlib.util.spec_from_file_location(
+        'compute_solidus_reference_values', script_path
+    )
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    mod.main([])
+    out_default = capsys.readouterr().out
+    assert 'PALEOS MgSiO3 solidus' in out_default
+    assert 'T_sol(1 GPa): 1563.0407 K (1-dec: 1563.0 K, int: 1563 K)' in out_default
+    assert '[1464.8000, 3066.9899, 3672.6551, 4397.9263, 4754.8271]' in out_default
+    assert 'no crossings over 0..135 GPa' in out_default
+    assert '-1108.1 K' in out_default
+    assert (
+        'Max relative linear deviation over 0..135 GPa: -35.04% (-35.0%) at 20.495 GPa (20.5 GPa)'
+        in out_default
+    )
+    assert 'Chebyshev minimax line over 0..135 GPa: 1979.7 K + 24.37 K/GPa * P' in out_default
+    assert 'max abs deviation: 514.93 K (514.9 K) at 35.965 GPa' in out_default
+    assert (
+        'RMS: 350.64 K (350.6 K); crossings at 6.1, 98.5 GPa (all: [6.15, 98.54] GPa)'
+        in out_default
+    )
+    assert 'Least-squares (L2) line over 0..135 GPa: 2489.3 K + 19.10 K/GPa * P' in out_default
+    assert 'max abs deviation: 1024.49 K (1024.5 K) at 0.0 GPa' in out_default
+    assert (
+        'RMS: 239.01 K (239.0 K); crossings at 18.8, 99.9 GPa (all: [18.82, 99.89] GPa)'
+        in out_default
+    )
+
+    # 1-crossing synthetic table (crossing at 45 GPa on a 30 GPa step grid).
+    p_1 = np.array([0.0, 30.0, 60.0, 100.0, 135.0]) * 1.0e9
+    t_lin_1 = 1400.0 + 2.4e-8 * p_1
+    t_tab_1 = t_lin_1 + np.array([100.0, 50.0, -50.0, -100.0, -120.0])
+    t1_file = tmp_path / 'solidus_1cross.dat'
+    np.savetxt(t1_file, np.column_stack([p_1, t_tab_1]))
+    c1 = mod.find_solidus_crossings(p_1, t_tab_1, 1400.0, 2.4e-8)
+    assert len(c1) == 1
+    assert c1[0] == pytest.approx(45.0, rel=1.0e-12)
+    mod.main(['--table', str(t1_file)])
+    out_1 = capsys.readouterr().out
+    assert 'crossings at 45.0 GPa (all: [45.0] GPa)' in out_1
+
+    monkeypatch.setattr(mod, 'EXPECTED_MD5', '00000000000000000000000000000000')
+    with pytest.raises(SystemExit, match='MD5 mismatch'):
+        mod.main(['--table', str(t1_file)])
+    capsys.readouterr()
+    mod.main(['--table', str(t1_file), '--allow-md5-mismatch'])
+    capsys.readouterr()
+    monkeypatch.setattr(mod, 'EXPECTED_MD5', None)
+
+    t_short = tmp_path / 'solidus_short.dat'
+    np.savetxt(t_short, np.column_stack([p_1[:3], t_tab_1[:3]]))
+    with pytest.raises(ValueError, match='135.0e9'):
+        mod.main(['--table', str(t_short)])
+
+    # 3-crossing table on a non-1-GPa grid: roots at 0.40, 50.0 (node), and 134.0 GPa,
+    # plus an excluded root at 145.0 GPa above the 135 GPa mantle bound.
+    p_3_gpa = np.array([0.0, 0.2, 0.8, 25.0, 50.0, 80.0, 133.0, 140.0, 150.0])
+    p_3 = p_3_gpa * 1.0e9
+    t_lin_3 = 1400.0 + 24.0 * p_3_gpa
+    offset_3 = np.array([-20.0, -10.0, 20.0, 100.0, 0.0, -80.0, -10.0, 60.0, -60.0])
+    t_tab_3 = t_lin_3 - offset_3
+    t3_file = tmp_path / 'solidus_3cross.dat'
+    np.savetxt(t3_file, np.column_stack([p_3, t_tab_3]))
+
+    c3 = mod.find_solidus_crossings(p_3, t_tab_3, 1400.0, 2.4e-8)
+    assert len(c3) == 3
+    assert c3[0] == pytest.approx(0.4, rel=1.0e-12)
+    assert c3[1] == pytest.approx(50.0, rel=1.0e-12)
+    assert c3[2] == pytest.approx(134.0, rel=1.0e-12)
+
+    mod.main(['--table', str(t3_file), '--allow-md5-mismatch'])
+    out_3 = capsys.readouterr().out
+    assert '0.40 GPa' in out_3
+    assert '50.0, 134.0 GPa' in out_3
+    assert '[0.4, 50.0, 134.0]' in out_3
+
+    # Canary: the old formatter dropped crossings_gpa[2:] when crossings_gpa[0] < 1.0.
+    old_truncated_desc = f'crossings below 1 GPa and at {c3[1]:.1f} GPa'
+    assert '134.0' not in old_truncated_desc
+    assert '134.0' in mod.format_crossings_description(c3)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_stagnant_lid_smooth_gates_and_scales():
+    """Verify smooth lid weights w_d, w_T, w_act_gate, w_sum_gate and smooth scale/scale_mask."""
+    import jax
+
+    import aragog.rheology_lid as lid_mod
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    _, jnp = _import_jax_x64()
+
+    assert getattr(lid_mod, 'NO_LID_THICKNESS_WIDTH', None) == pytest.approx(0.25, rel=1.0e-15)
+    assert getattr(lid_mod, 'NO_LID_DT_WIDTH', None) == pytest.approx(2.5e-4, rel=1.0e-15)
+    assert getattr(lid_mod, 'CONV_ACTIVE_GATE_WIDTH', None) == pytest.approx(
+        0.0025, rel=1.0e-15
+    )
+    assert getattr(lid_mod, 'CONV_SUM_GATE_WIDTH', None) == pytest.approx(2.5e-7, rel=1.0e-15)
+    assert getattr(lid_mod, 'SCALE_FLOOR_WIDTH', None) == pytest.approx(0.005, rel=1.0e-15)
+    assert getattr(lid_mod, 'SCALE_MASK_REL_WIDTH', None) == pytest.approx(0.005, rel=1.0e-15)
+
+    w_lim_0 = 0.5 * (1.0 + np.tanh(-4.0))
+    w_lim_2x = 0.5 * (1.0 + np.tanh(4.0))
+    assert w_lim_0 == pytest.approx(3.353501304664781e-4, rel=1.0e-12)
+    assert w_lim_2x == pytest.approx(1.0 - 3.353501304664781e-4, rel=1.0e-12)
+
+    # 1. w_T transition across T_i - T_surf in [0, 2e-3 K] with fixed lid base above column temperature.
+    n = 20
+    r = np.linspace(3.48e6, 6.37e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    fc = np.full(n, 80.0)
+    fc[-1] = 0.0
+    ft = np.full(n, 100.0)
+    phi = np.zeros(n)
+    params_fixed = SolidRheologyParams(
+        enabled=True, lid_base_mode='fixed', lid_base_temperature=2500.0
+    )
+
+    def _eval_dt(dt_surf: float):
+        t_arr = np.full(n, 1600.0)
+        t_arr[-1] = 1600.0 - dt_surf
+        return compute_stagnant_lid_state(
+            radii=r,
+            temperature=t_arr,
+            pressure=p,
+            convective_flux=fc,
+            total_flux=ft,
+            solidus_temperature=None,
+            melt_fraction=phi,
+            params=params_fixed,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
+        )
+
+    st_dt_0 = _eval_dt(0.0)
+    st_dt_mid = _eval_dt(1.0e-3)
+    st_dt_2x = _eval_dt(2.0e-3)
+    st_dt_out = _eval_dt(1.0e-2)
+    d_raw_dt = float((r[-1] - st_dt_out['r_lid_base']) * st_dt_out['w_active'])
+    w_t_mid_expected = (0.5 - w_lim_0) / (1.0 - w_lim_0)
+    w_t_2x_expected = (w_lim_2x - w_lim_0) / (1.0 - w_lim_0)
+    assert float(st_dt_0['d_lid']) == 0.0
+    assert float(st_dt_mid['d_lid']) / d_raw_dt == pytest.approx(w_t_mid_expected, rel=1.0e-6)
+    assert float(st_dt_2x['d_lid']) / d_raw_dt == pytest.approx(w_t_2x_expected, rel=1.0e-6)
+    # Outside band edge d* = 3.453878e-3 K (at 1e-2 K > 1e-3 + d*), d_lid matches d_raw_dt to 1e-12.
+    assert float(st_dt_out['d_lid']) == pytest.approx(d_raw_dt, rel=1.0e-12)
+
+    # Verify w_y uses un-gated tau_d_raw so yield onset does not shift inside the w_lid_present gate band.
+    tau_d_raw_mid = float(st_dt_out['tau_d'])
+    t_mid_arr = np.full(n, 1600.0)
+    t_mid_arr[-1] = 1600.0 - 1.0e-3
+    st_wy_mid = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_mid_arr,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(
+            enabled=True,
+            lid_base_mode='fixed',
+            lid_base_temperature=2500.0,
+            yield_stress_c=tau_d_raw_mid,
+            yield_stress_mu=0.0,
+            yield_stress_max=tau_d_raw_mid,
+        ),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_wy_mid['w_y']) == pytest.approx(0.5 * w_t_mid_expected, rel=1.0e-6)
+
+    grad_dt_fn = jax.grad(
+        lambda dt_s: compute_stagnant_lid_state(
+            radii=jnp.asarray(r),
+            temperature=jnp.concatenate(
+                [jnp.full(n - 1, 1600.0), jnp.asarray([1600.0 - dt_s])]
+            ),
+            pressure=jnp.asarray(p),
+            convective_flux=jnp.asarray(fc),
+            total_flux=jnp.asarray(ft),
+            solidus_temperature=None,
+            melt_fraction=jnp.asarray(phi),
+            params=params_fixed,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=jnp,
+        )['d_lid']
+    )
+    g_dt_mid = float(grad_dt_fn(jnp.asarray(1.0e-3)))
+    assert np.isfinite(g_dt_mid) and g_dt_mid > 0.0
+
+    # Hard-gate mutant canary for T_i - T_surf > 1e-3 K:
+    smooth_jump_dt = abs(
+        float(_eval_dt(1.0e-3 + 1.0e-6)['d_lid']) - float(_eval_dt(1.0e-3 - 1.0e-6)['d_lid'])
+    )
+    hard_jump_dt = d_raw_dt
+    assert smooth_jump_dt < 0.01 * d_raw_dt
+    with pytest.raises(AssertionError):
+        assert hard_jump_dt < 0.01 * d_raw_dt
+
+    # 2. w_d transition across d_lid_raw = 1.0 m (at d_lid_raw = 0.75 m, w_d = 0.5*(1 + tanh(-1))).
+    n100 = 100
+    r100 = np.linspace(3480.0e3, 6370.0e3, n100)
+    t100 = np.full(n100, 1800.0)
+    t100[-1] = 1600.0
+    p100 = np.linspace(135.0e9, 1.0e5, n100)
+    fc100 = np.full(n100, 100.0)
+    fc100[-1] = 0.0
+    params_dlid = SolidRheologyParams(
+        enabled=True, g_homologous=25.0, t_sol_0=1600.0, dt_sol_dp=0.0, arrhenius_t_ref=1600.0
+    )
+    st_d08 = compute_stagnant_lid_state(
+        radii=r100,
+        temperature=t100,
+        pressure=p100,
+        convective_flux=fc100,
+        total_flux=np.full(n100, 100.0),
+        solidus_temperature=None,
+        melt_fraction=np.full(n100, 0.011895),
+        params=params_dlid,
+        viscosity_solid=1.0e20,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    d_raw_08 = float((r100[-1] - st_d08['r_lid_base']) * st_d08['w_active'])
+    expected_wd_08 = (0.5 * (1.0 + np.tanh((d_raw_08 - 1.0) / 0.25)) - w_lim_0) / (
+        1.0 - w_lim_0
+    )
+    assert float(st_d08['d_lid']) == pytest.approx(expected_wd_08 * d_raw_08, rel=1.0e-12)
+
+    # Hard-gate mutant canary for d_lid_raw > 1.0 m:
+    st_d12 = compute_stagnant_lid_state(
+        radii=r100,
+        temperature=t100,
+        pressure=p100,
+        convective_flux=fc100,
+        total_flux=np.full(n100, 100.0),
+        solidus_temperature=None,
+        melt_fraction=np.full(n100, 0.011870),
+        params=params_dlid,
+        viscosity_solid=1.0e20,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert 0.1 < float(st_d08['d_lid']) < float(st_d12['d_lid'])
+    with pytest.raises(AssertionError):
+        assert 0.1 < 0.0 < float(st_d12['d_lid'])
+
+    # 3. w_act_gate (width 0.0025 at w_active = 0.05) and w_sum_gate (width 2.5e-7 at W_sum = 1e-6).
+    f_at_wact_0045 = 0.05 + 0.01 * np.arctanh(2.0 * 0.045 - 1.0)
+    t_cold = np.linspace(2400.0, 300.0, n)
+    st_act = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_cold,
+        pressure=p,
+        convective_flux=np.full(n, f_at_wact_0045 * 100.0),
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    d_raw_act = float((r[-1] - st_act['r_lid_base']) * st_act['w_active'])
+    expected_w_act_gate = 0.5 * (1.0 + np.tanh((0.045 - 0.05) / 0.0025))
+    assert float(st_act['d_lid']) / d_raw_act == pytest.approx(expected_w_act_gate, rel=1.0e-5)
+
+    # Localize convective flux on node 1 with interior_flux_fraction = 0.01 so w_active > 0.05 and W_sum = 1.25e-6.
+    params_sum = SolidRheologyParams(enabled=True)
+    object.__setattr__(params_sum, 'interior_flux_fraction', 0.01)
+    w_c0 = 0.5 * (1.0 + np.tanh(-1.0))
+    target_w_sum = 1.25e-6
+    f_node1 = 0.01 + 0.01 * np.arctanh(2.0 * (w_c0 + target_w_sum) - 1.0)
+    fc_sum = np.zeros(n)
+    fc_sum[1] = f_node1 * 100.0
+    st_sum = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_cold,
+        pressure=p,
+        convective_flux=fc_sum,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_sum,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n, 1.0e-8),
+        xp=np,
+    )
+    # Changing CONV_SUM_GATE_WIDTH from 2.5e-7 to 2.5e-6 shifts w_sum_gate at W_sum = 1.25e-6 from tanh(1) to tanh(0.1).
+    expected_w_sum_gate = (
+        0.5 * (1.0 + np.tanh((target_w_sum - 1.0e-6) / 2.5e-7)) - w_lim_0
+    ) / (1.0 - w_lim_0)
+    expected_w_act_low = 0.5 * (1.0 + np.tanh((float(st_sum['w_active']) - 0.05) / 0.0025))
+    w_w_sum = np.tanh(target_w_sum / 1.0e-6)
+    d_raw_sum = float((r[-1] - st_sum['r_lid_base']) * st_sum['w_active'])
+    assert float(st_sum['d_lid']) == pytest.approx(2.3550870370491588e5, rel=1.0e-12, abs=0.0)
+    assert float(st_sum['d_lid']) / d_raw_sum == pytest.approx(
+        w_w_sum * expected_w_act_low * expected_w_sum_gate, rel=1.0e-5, abs=0.0
+    )
+
+    # 4. Smooth temperature gradient floor (SCALE_FLOOR_WIDTH = 0.005) and scale_mask cap (SCALE_MASK_REL_WIDTH = 0.005).
+    t_grad_1k = 2000.0 - np.arange(n, dtype=float) * 1.0
+    st_grad_1k = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_grad_1k,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(
+            enabled=True, lid_base_mode='fixed', lid_base_temperature=1990.5
+        ),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    scale_1k = 1.0 + 0.005 * np.log(2.0)
+    expected_w_hot_top = 0.5 * (1.0 + np.tanh((t_grad_1k[-1] - 1990.5) / scale_1k))
+    assert float(st_grad_1k['w_lid'][-1]) == pytest.approx(
+        (1.0 - expected_w_hot_top) * float(st_grad_1k['w_active']), rel=1.0e-9
+    )
+
+    # At scale == scale_cap (dT_rh == |grad T| = 10.0 K), scale_mask = scale_cap * (1 - 0.005 * ln 2).
+    t_grad_10k = 2000.0 - np.arange(n, dtype=float) * 10.0
+    # Choose g_homologous so dT_rh = T_i^2 / (g_hom * t_sol_0) == 10.0 K.
+    st_probe = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_grad_10k,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True, dt_sol_dp=0.0),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    ti_val = float(st_probe['T_i'])
+    g_match = (ti_val**2) / (10.0 * 1400.0)
+    params_cap_match = SolidRheologyParams(
+        enabled=True,
+        g_homologous=g_match,
+        t_sol_0=1400.0,
+        dt_sol_dp=0.0,
+        lid_base_mode='fixed',
+        lid_base_temperature=1850.0,
+    )
+    st_cap_match = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_grad_10k,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_cap_match,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    scale_cap_10k = 10.0 * (1.0 - 0.005 * np.log(2.0))
+    expected_mask_top = (
+        1.0 - 0.5 * (1.0 + np.tanh((t_grad_10k[-1] - 1850.0) / scale_cap_10k))
+    ) * float(st_cap_match['w_active'])
+    assert float(st_cap_match['w_lid'][-1]) == pytest.approx(expected_mask_top, rel=1.0e-7)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
+    """Verify F_TOT_FLOOR_FRAC zero-crossing protection, LID_REGIME_LABEL_WIDTH slope, and main parity across interior_flux_fraction."""
+    from pathlib import Path
+
+    import aragog.rheology_lid as lid_mod
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    assert getattr(lid_mod, 'F_TOT_FLOOR_FRAC', None) == pytest.approx(0.1, rel=1.0e-15)
+    assert getattr(lid_mod, 'LID_REGIME_LABEL_WIDTH', None) == pytest.approx(0.1, rel=1.0e-15)
+
+    n = 20
+    r = np.linspace(3.48e6, 6.37e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.linspace(2600.0, 300.0, n)
+    phi = np.zeros(n)
+
+    # 1. Row 12: sign-changing F_tot with zero crossing at interior node k0 and tiny dust F_conv.
+    f_tot_sign = np.linspace(-100.0, 100.0, n)
+    f_tot_sign[10] = 0.0
+    f_tot_rms = float(np.sqrt(np.mean(f_tot_sign**2)))
+    f_conv_spike = np.zeros(n)
+    f_conv_spike[10] = 0.025 * (0.1 * f_tot_rms)
+    st_spike = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=f_conv_spike,
+        total_flux=f_tot_sign,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    # With F_TOT_FLOOR_FRAC = 0.1, f[10] = 0.025, so w_active = 0.5*(1 + tanh((0.025 - 0.05)/0.01)).
+    expected_w_active_spike = 0.5 * (1.0 + np.tanh((0.025 - 0.05) / 0.01))
+    assert float(st_spike['w_active']) == pytest.approx(expected_w_active_spike, rel=1.0e-9)
+    assert bool(st_spike['has_lid']) is False
+
+    # Also verify inter-nodal sign change (|F_tot[10]| = 5.263 < 0.1 * F_tot_rms = 6.070 W/m^2)
+    # activates F_TOT_FLOOR_FRAC: f[10] = 0.048 < 0.05 when floored, vs 0.05536 > 0.05 unfloored.
+    f_tot_internodal = np.linspace(-100.0, 100.0, n)
+    f_tot_rms_in = float(np.sqrt(np.mean(f_tot_internodal**2)))
+    f_conv_in = np.zeros(n)
+    f_conv_in[10] = 0.048 * (0.1 * f_tot_rms_in)
+    st_internodal = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=f_conv_in,
+        total_flux=f_tot_internodal,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    smax2 = getattr(lid_mod, '_softmax2')
+    f_floor_in = float(smax2(0.1 * f_tot_rms_in, 1.0e-12, 0.01 * 1.0e-12, np))
+    f_safe_10 = float(smax2(abs(f_tot_internodal[10]), f_floor_in, 0.01 * f_floor_in, np))
+    expected_w_active_in = 0.5 * (1.0 + np.tanh((f_conv_in[10] / f_safe_10 - 0.05) / 0.01))
+    assert float(st_internodal['w_active']) == pytest.approx(expected_w_active_in, rel=1.0e-9)
+    assert float(st_internodal['w_active']) < 0.45
+
+    # 2. Row 20: mid-slope pin of lid_regime at tau_d = tau_y_lid * exp(+-0.1).
+    fc_active = np.full(n, 80.0)
+    fc_active[-4:] = 0.0
+    ft_active = np.full(n, 100.0)
+    st_base = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc_active,
+        total_flux=ft_active,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(
+            enabled=True, yield_stress_c=0.0, yield_stress_mu=0.0, yield_stress_max=1.0e6
+        ),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    tau_d_val = float(st_base['tau_d'])
+    for sign, ratio_target in ((-1.0, np.exp(-0.1)), (1.0, np.exp(0.1))):
+        ty_target = tau_d_val / ratio_target
+        st_reg = compute_stagnant_lid_state(
+            radii=r,
+            temperature=t,
+            pressure=p,
+            convective_flux=fc_active,
+            total_flux=ft_active,
+            solidus_temperature=None,
+            melt_fraction=phi,
+            params=SolidRheologyParams(
+                enabled=True,
+                yield_stress_c=ty_target,
+                yield_stress_mu=0.0,
+                yield_stress_max=ty_target,
+            ),
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
+        )
+        expected_wy = 0.5 * (1.0 + np.tanh((ratio_target - 1.0) / 0.1))
+        assert float(st_reg['w_y']) == pytest.approx(expected_wy, rel=1.0e-9)
+        assert float(st_reg['lid_regime']) == pytest.approx(
+            float(st_reg['w_active']) * (1.0 + expected_wy), rel=1.0e-6
+        )
+
+    # 3. Sub-threshold and low-flux parity of eta_i, T_i, and mu_i across interior_flux_fraction
+    # in {0.05, 0.10, 0.20, 0.50} against reference literals from main.
+    n_l1 = 50
+    r_l1 = np.linspace(3.48e6, 6.371e6, n_l1)
+    t_l1 = np.linspace(2600.0, 1400.0, n_l1)
+    p_l1 = np.linspace(135.0e9, 0.0, n_l1)
+    phi_l1 = np.zeros(n_l1)
+    visc_mix_l1 = np.full(n_l1, 1.0e15)
+    main_literals = {
+        (0.05, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.05, 6.00843e-5): (8.96482698673302e20, 1856.5546317909584, 8.96482698673302e20),
+        (0.05, 1.0e-4): (5.440139164192721e17, 1626.722938791537, 5.440139164192721e17),
+        (0.05, 1.0e-3): (1000000065827473.5, 1424.4909098970506, 1000000065827473.5),
+        (0.05, 0.03): (1000000000000004.1, 1424.490907753382, 1000000000000004.1),
+        (0.10, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.10, 6.00843e-5): (6.038913358705211e30, 2575.467182755998, 6.038913358705211e30),
+        (0.10, 1.0e-4): (6.033682850271591e30, 2575.438315702754, 6.033682850271591e30),
+        (0.10, 1.0e-3): (5.905401456212067e30, 2574.722430755179, 5.905401456212067e30),
+        (0.10, 0.03): (1.9932572310324982e18, 1667.4062468015593, 1.9932572310324982e18),
+        (0.20, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.20, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.20, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.20, 1.0e-3): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.20, 0.03): (6.046716533609499e30, 2575.5101979531364, 6.046716533609499e30),
+        (0.50, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.50, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.50, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.50, 1.0e-3): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.50, 0.03): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+    }
+    for (f0_cfg, f_test), (exp_eta_i, exp_t_i, exp_mu_i) in main_literals.items():
+        st_sub = compute_stagnant_lid_state(
+            radii=r_l1,
+            temperature=t_l1,
+            pressure=p_l1,
+            convective_flux=np.full(n_l1, f_test),
+            total_flux=np.ones(n_l1),
+            solidus_temperature=None,
+            melt_fraction=phi_l1,
+            params=SolidRheologyParams(enabled=True, interior_flux_fraction=f0_cfg),
+            viscosity_solid=1.0e21,
+            viscosity_mixture=visc_mix_l1,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
+        )
+        assert float(st_sub['eta_i']) == pytest.approx(exp_eta_i, rel=1.0e-12)
+        assert float(st_sub['T_i']) == pytest.approx(exp_t_i, rel=1.0e-12)
+        assert float(st_sub['mu_i']) == pytest.approx(exp_mu_i, rel=1.0e-12)
+
+    # 4. A3-2 check on checkpoint_profile_175kyr.npz across all 4 interior_flux_fraction values:
+    # outside transition bands, outputs match hard reference to 1e-12.
+    ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
+    ckpt = np.load(ckpt_path)
+    for f0_ckpt in (0.05, 0.10, 0.20, 0.50):
+        st_ckpt = compute_stagnant_lid_state(
+            radii=ckpt['r_basic'],
+            temperature=ckpt['T_basic'],
+            pressure=ckpt['P_basic'],
+            convective_flux=ckpt['F_conv'],
+            total_flux=ckpt['F_tot'],
+            solidus_temperature=None,
+            melt_fraction=ckpt['phi_basic'],
+            params=SolidRheologyParams(enabled=True, interior_flux_fraction=f0_ckpt),
+            unyielded_velocity=ckpt['v_unyielded'],
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
+        )
+        assert float(st_ckpt['eta_i']) == pytest.approx(2.760705302477158e22, rel=1.0e-12)
+        assert float(st_ckpt['T_i']) == pytest.approx(1423.0148338372128, rel=1.0e-12)
+        assert float(st_ckpt['mu_i']) == pytest.approx(2.760705302477158e22, rel=1.0e-12)
+        assert float(st_ckpt['d_lid']) == pytest.approx(42134.621325017884, rel=1.0e-12)
+        assert float(st_ckpt['tau_d']) == pytest.approx(1299363.3191059122, rel=1.0e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_boundary_weights_smooth_max_and_no_fallback():
+    """Verify _smooth_max and _boundary_weights continuity across two-node peak swap and uniform invariance."""
+    import inspect
+
+    import jax
+
+    import aragog.rheology_lid as lid_mod
+    from aragog.rheology_lid import _boundary_weights
+
+    _, jnp = _import_jax_x64()
+
+    assert getattr(lid_mod, 'SMOOTH_MAX_REL_WIDTH', None) == pytest.approx(0.02, rel=1.0e-15)
+    smooth_max = getattr(lid_mod, '_smooth_max')
+
+    # 1. Uniform positive array returns c identically for any N.
+    for n_len in (5, 20, 100):
+        u_arr = np.full(n_len, 3.5e-7)
+        assert float(smooth_max(u_arr, np)) == pytest.approx(3.5e-7, rel=1.0e-15)
+        w_t, w_s, w_b = _boundary_weights(u_arr, np)
+        assert float(w_b) == pytest.approx(float(np.tanh(3.5e-7 / 1.0e-6)), rel=1.0e-12)
+        assert float(np.sum(w_t)) == pytest.approx(1.0, rel=1.0e-12)
+        assert float(w_s) > 0.0
+
+    # 2. Two-node peak crossing at delta = 0 has continuous derivative and value < hard max at tie.
+    def _eval_w_base(delta_val):
+        arr = jnp.array([0.0, 5.0e-7 - delta_val, 5.0e-7 + delta_val, 0.0])
+        return _boundary_weights(arr, jnp)[2]
+
+    w_tie = float(_eval_w_base(jnp.asarray(0.0)))
+    assert w_tie == pytest.approx(float(np.tanh(5.0e-7 / 1.0e-6)), rel=1.0e-12)
+    w_near = float(_eval_w_base(jnp.asarray(5.0e-9)))
+    v_arr_near = np.array([0.0, 5.0e-7 - 5.0e-9, 5.0e-7 + 5.0e-9, 0.0])
+    v_rms_near = float(np.sqrt(np.mean(v_arr_near**2)))
+    sigma_near = 0.02 * v_rms_near
+    u_near = (v_arr_near - np.max(v_arr_near)) / sigma_near
+    smax_expected = float(
+        np.max(v_arr_near)
+        + np.sum(np.exp(u_near) * (v_arr_near - np.max(v_arr_near))) / np.sum(np.exp(u_near))
+    )
+    assert w_near == pytest.approx(float(np.tanh(smax_expected / 1.0e-6)), rel=1.0e-12)
+
+    grad_w = jax.grad(_eval_w_base)
+    g_left = float(grad_w(jnp.asarray(-1.0e-17)))
+    g_zero = float(grad_w(jnp.asarray(0.0)))
+    g_right = float(grad_w(jnp.asarray(1.0e-17)))
+    assert np.isfinite(g_zero) and abs(g_zero) < 1.0e-6
+    assert abs(g_right - g_left) < 1.0e-2
+
+    # 3. Verify compute_stagnant_lid_state calls _boundary_weights(w_Ti, xp, ...) without a uniform fallback.
+    src_text = inspect.getsource(lid_mod.compute_stagnant_lid_state)
+    assert '_boundary_weights(w_Ti, xp' in src_text
+    assert 'xp.ones_like(r) / r.shape[0]' not in src_text
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_stagnant_lid_invariants(monkeypatch):
+    """Verify runtime assertions in compute_stagnant_lid_state for weights in [0, 1] and finite eta_i."""
+    import aragog.rheology_lid as lid_mod
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    n = 20
+    r = np.linspace(3.48e6, 6.37e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.linspace(2600.0, 300.0, n)
+    fc = np.full(n, 80.0)
+    fc[-4:] = 0.0
+    ft = np.full(n, 100.0)
+    phi = np.zeros(n)
+    kw = dict(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+
+    st = compute_stagnant_lid_state(**kw)
+    assert np.all((st['w_lid'] >= 0.0) & (st['w_lid'] <= 1.0))
+    assert 0.0 <= float(st['w_active']) <= 1.0
+    assert np.isfinite(float(st['eta_i']))
+
+    # 1. Forcing w_lid_present outside [0, 1] while eta_i remains finite triggers the w_lid_present range assert.
+    monkeypatch.setattr(lid_mod, 'NO_LID_THICKNESS_WIDTH', np.nan)
+    with pytest.raises(AssertionError):
+        compute_stagnant_lid_state(**kw)
+    monkeypatch.setattr(lid_mod, 'NO_LID_THICKNESS_WIDTH', 0.25)
+
+    # 2. Forcing non-finite eta_i triggers assert xp.all(xp.isfinite(eta_i)).
+    monkeypatch.setattr(lid_mod, 'compute_arrhenius_viscosity', lambda *a, **k: np.inf)
+    with pytest.raises(AssertionError):
+        compute_stagnant_lid_state(**kw)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_stagnant_lid_smooth_gates_and_scales_conv_sum_gate():
+    """Verify w_sum_gate across the W_sum = 1e-6 +/- 2.5e-7 gate band on gated lid outputs."""
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    n = 20
+    r = np.linspace(3.48e6, 6.37e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t_cold = np.linspace(2400.0, 300.0, n)
+    ft = np.full(n, 100.0)
+    phi = np.zeros(n)
+
+    # Set interior_flux_fraction = 0.01 so w_conv_0 > 0.05 (w_act_gate = 1) while W_sum sits in 1e-6 +/- 2.5e-7.
+    params_sum = SolidRheologyParams(enabled=True)
+    object.__setattr__(params_sum, 'interior_flux_fraction', 0.01)
+    w_c0 = 0.5 * (1.0 + np.tanh(-1.0))
+
+    fc_lo = np.zeros(n)
+    fc_lo[1] = (0.01 + 0.01 * np.arctanh(2.0 * (w_c0 + 0.75e-6) - 1.0)) * 100.0
+    st_lo = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_cold,
+        pressure=p,
+        convective_flux=fc_lo,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_sum,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n, 1.0e-8),
+        xp=np,
+    )
+
+    fc_hi = np.zeros(n)
+    fc_hi[1] = (0.01 + 0.01 * np.arctanh(2.0 * (w_c0 + 1.25e-6) - 1.0)) * 100.0
+    st_hi = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_cold,
+        pressure=p,
+        convective_flux=fc_hi,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_sum,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n, 1.0e-8),
+        xp=np,
+    )
+
+    assert float(st_lo['d_lid']) == pytest.approx(2.3806335181320017e4, rel=1.0e-12, abs=0.0)
+    assert float(st_lo['tau_d']) == pytest.approx(2.7067907640183691e7, rel=1.0e-12, abs=0.0)
+    assert float(st_hi['d_lid']) == pytest.approx(2.3550870370491588e5, rel=1.0e-12, abs=0.0)
+    assert float(st_hi['tau_d']) == pytest.approx(2.6777443028467780e8, rel=1.0e-12, abs=0.0)
+    assert float(st_lo['d_lid']) < float(st_hi['d_lid'])
+    assert float(st_lo['tau_d']) < float(st_hi['tau_d'])
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_stagnant_lid_flux_floor_zero_crossing_width():
+    """Verify w_zero_cross activates on local F_tot zero crossings and leaves positive interior profiles untouched."""
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    n = 20
+    r = np.linspace(3.48e6, 6.37e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.linspace(2600.0, 300.0, n)
+    phi = np.zeros(n)
+
+    # 1. Sign-changing F_tot (d_zero = 0): w_zero_cross = 1.0 activates F_tot_floor = 0.1 * F_tot_rms.
+    ft_cross = np.linspace(-100.0, 100.0, n)
+    ft_cross[10] = 0.0
+    ft_cross_rms = float(np.sqrt(np.mean(ft_cross**2)))
+    fc_cross = np.zeros(n)
+    fc_cross[10] = 0.045 * (0.1 * ft_cross_rms)
+    st_cross = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc_cross,
+        total_flux=ft_cross,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_cross['w_active']) == pytest.approx(0.268941421369995, rel=1.0e-12, abs=0.0)
+    assert float(st_cross['d_lid']) == pytest.approx(3.617717821797071e5, rel=1.0e-12, abs=0.0)
+    assert float(st_cross['tau_d']) == pytest.approx(2.0853767364515128e9, rel=1.0e-12, abs=0.0)
+
+    # 2. Strictly positive F_tot with d_zero = min(F_tot) ~ 1e-2 * F_ref:
+    # at width 1e-3 * F_ref, w_zero_cross = exp(-100.0) = 0 so F_tot_safe[10] = 1.0 and f[10] = 0.08.
+    ft_near = np.full(n, 100.0)
+    ft_near[10] = 1.0
+    fc_near = np.zeros(n)
+    fc_near[10] = 0.08 * ft_near[10]
+    st_near = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc_near,
+        total_flux=ft_near,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_near['w_active']) == pytest.approx(0.9975273768433652, rel=1.0e-12, abs=0.0)
+    assert float(st_near['d_lid']) == pytest.approx(1.3418433466118898e6, rel=1.0e-12, abs=0.0)
+    assert float(st_near['tau_d']) == pytest.approx(7.734845659125156e9, rel=1.0e-12, abs=0.0)
+    assert float(st_near['w_active']) > float(st_cross['w_active'])
+    assert float(st_near['d_lid']) > float(st_cross['d_lid'])
+    assert float(st_near['tau_d']) > float(st_cross['tau_d'])
+
+    # 3. Zero total flux at CMB boundary node (F_tot[0] = 0) with large deep flux leaves interior T_i and d_lid untouched.
+    n40 = 40
+    r40 = np.linspace(3.48e6, 6.371e6, n40)
+    p40 = np.linspace(135.0e9, 1.0e5, n40)
+    t40 = np.linspace(3000.0, 1500.0, n40)
+    phi40 = np.zeros(n40)
+    ft_cmb_0 = np.full(n40, 100.0)
+    ft_cmb_0[0] = 0.0
+    ft_cmb_0[1:10] = 3000.0
+    fc_cmb = 0.99 * ft_cmb_0
+    fc_cmb[0] = 0.0
+    fc_cmb[-5:] = 0.0
+    st_cmb_0 = compute_stagnant_lid_state(
+        radii=r40,
+        temperature=t40,
+        pressure=p40,
+        convective_flux=fc_cmb,
+        total_flux=ft_cmb_0,
+        solidus_temperature=None,
+        melt_fraction=phi40,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_cmb_0['T_i']) == pytest.approx(1692.3094384588371, rel=1.0e-12, abs=0.0)
+    assert float(st_cmb_0['d_lid']) == pytest.approx(129026.7742045084, rel=1.0e-12, abs=0.0)
+    assert float(st_cmb_0['tau_d']) == pytest.approx(2404798.925410915, rel=1.0e-12, abs=0.0)
+
+    # 4. Positive interior total flux with a 1e4 step contrast (F_tot[:32] = 1, F_tot[32:] = 1e4) does not floor deep nodes.
+    ft_steep = np.ones(n40)
+    ft_steep[32:] = 1.0e4
+    fc_steep = np.zeros(n40)
+    fc_steep[:20] = 1.0
+    st_steep = compute_stagnant_lid_state(
+        radii=r40,
+        temperature=t40,
+        pressure=p40,
+        convective_flux=fc_steep,
+        total_flux=ft_steep,
+        solidus_temperature=None,
+        melt_fraction=phi40,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_steep['w_active']) == pytest.approx(1.0, rel=1.0e-12, abs=0.0)
+    assert float(st_steep['d_lid']) == pytest.approx(1221182.1912324484, rel=1.0e-12, abs=0.0)
+    assert float(st_steep['tau_d']) == pytest.approx(25121340.963971354, rel=1.0e-12, abs=0.0)

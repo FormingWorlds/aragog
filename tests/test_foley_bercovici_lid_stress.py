@@ -354,7 +354,14 @@ def test_hot_convecting_cmb_node_excluded_from_ti():
 
 @pytest.mark.unit
 def test_erf_boundary_layer_ti_and_175kyr_default_ti():
-    """Verify T_i on an erf boundary layer across N in {100, 200, 400, 800} and on the 175 kyr fixture."""
+    """Verify T_i on an erf boundary layer across N in {100, 200, 400, 800} and on the 175 kyr fixture.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     import os
     from math import erf
 
@@ -447,9 +454,9 @@ def test_erf_boundary_layer_ti_and_175kyr_default_ti():
     )
     assert abs(float(st_ckpt['T_i']) - t_at_f09) <= 1.0
     # Regression pin: interior temperature T_i for 175 kyr checkpoint profile
-    assert float(st_ckpt['T_i']) == pytest.approx(1423.012466223234, rel=1.0e-9)
-    assert float(st_ckpt['tau_d']) == pytest.approx(1299378.5915329107, rel=1.0e-9)
-    assert float(st_ckpt['eta_i']) == pytest.approx(2.760821023551699e22, rel=1.0e-9)
+    assert float(st_ckpt['T_i']) == pytest.approx(1423.014833837213, rel=1.0e-9)
+    assert float(st_ckpt['tau_d']) == pytest.approx(1299363.319105912, rel=1.0e-9)
+    assert float(st_ckpt['eta_i']) == pytest.approx(2.760705302477158e22, rel=1.0e-9)
 
 
 def _eval_adiabat_lid_profile(f_conv_arr: np.ndarray) -> tuple[dict[str, Any], np.ndarray]:
@@ -600,8 +607,13 @@ def test_w_active_mesh_independence_and_low_flux_solver_continuity():
             rel_tol = 1.0e-6 if f_val == 0.03 else 1.0e-4
             assert float(st['w_active']) == pytest.approx(expected_w, rel=rel_tol)
             assert bool(st['has_lid']) is False
-            assert float(st['d_lid']) == 0.0
-            assert float(st['tau_d']) == 0.0
+            w_act_gate = 0.5 * (1.0 + np.tanh((float(st['w_active']) - 0.05) / 0.0025))
+            d_raw = float((r[-1] - st['r_lid_base']) * st['w_active'])
+            assert float(st['d_lid']) == pytest.approx(w_act_gate * d_raw, rel=1.0e-6)
+            assert float(st['tau_d']) == pytest.approx(
+                float(st['tau_d_lid']) * d_raw / (float(st['w_active']) * (r[-1] - r[0])),
+                rel=1.0e-9,
+            )
             assert abs(float(st['T_i']) - float(t[0])) > 1.0
             if f_val == 0.03:
                 w_act_by_n_003.append(float(st['w_active']))
@@ -796,7 +808,6 @@ def test_depth_varying_solidus_pins_theta_and_eta_i():
     inputs = _make_earth_reference_inputs()
     n_nodes = len(inputs['radii'])
     inputs['solidus_temperature'] = np.linspace(2200.0, 1400.0, n_nodes)
-    inputs['t_sol_0'] = 1400.0
     inputs['params'] = replace(inputs['params'], t_sol_0=1400.0)
     st = compute_stagnant_lid_state(**inputs)
 
@@ -847,7 +858,6 @@ def test_depth_varying_solidus_surface_temperature_pins_eta_contrast():
     inputs = _make_earth_reference_inputs()
     n_nodes = len(inputs['radii'])
     inputs['solidus_temperature'] = np.linspace(2200.0, 1400.0, n_nodes)
-    inputs['t_sol_0'] = 1400.0
     inputs['params'] = replace(inputs['params'], t_sol_0=1400.0)
     # Warm surface temperature 1300 K keeps surface viscosity unclipped below 10^40.
     inputs['temperature'][-8:] = np.linspace(1600.0, 1300.0, 8)
@@ -869,7 +879,14 @@ def test_depth_varying_solidus_surface_temperature_pins_eta_contrast():
 
 @pytest.mark.unit
 def test_baseline_subtraction_w_weight_and_viscosity_mixture_blend():
-    """Verify baseline subtraction gives w_weight < 0.5 at f=0, < 1e-5 at f=1e-12, and ~1 at f=1."""
+    """Verify baseline subtraction gives w_weight < 0.5 at f=0, < 1e-5 at f=1e-12, and ~1 at f=1.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
@@ -910,13 +927,20 @@ def test_baseline_subtraction_w_weight_and_viscosity_mixture_blend():
     )
     assert float(st_f1['eta_i']) == pytest.approx(1.0e15, rel=1.0e-6)
     # Regression pin: resolved lid thickness d_lid for f_int = 0.040 profile
-    assert float(st_f1['d_lid']) == pytest.approx(42026.66884939559, rel=1.0e-12)
+    assert float(st_f1['d_lid']) == pytest.approx(42134.621325017884, rel=1.0e-12)
     assert abs(np.log10(float(st_f0['eta_i'])) - np.log10(float(st_f1['eta_i']))) > 5.0
 
 
 @pytest.mark.unit
 def test_ti_selector_scale_invariance_and_subthreshold_regime():
-    """Verify T_i selector scale invariance across s x N on 175 kyr and 2-node transition."""
+    """Verify T_i selector scale invariance across s x N on 175 kyr and 2-node transition.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
@@ -970,7 +994,7 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
         dtrh_s1 = float(st_s1['dT_rh'])
         if n_nodes == 100:
             # Regression pin: interior temperature T_i on 100-node reference profile
-            assert ti_s1 == pytest.approx(1423.012466223234, rel=1.0e-12)
+            assert ti_s1 == pytest.approx(1423.014833837213, rel=1.0e-12)
 
         for s in s_list:
             st_s = compute_stagnant_lid_state(
@@ -1091,7 +1115,14 @@ def test_ti_selector_scale_invariance_and_subthreshold_regime():
 
 @pytest.mark.unit
 def test_wlid_mask_width_surface_saturation_and_no_lid_finiteness():
-    """Verify w_lid[-1] == 1 within 1e-12 on 175 kyr and erf lid (N=25..800), and finite when has_lid is False."""
+    """Verify w_lid[-1] == 1 within 1e-12 on 175 kyr and erf lid (N=25..800), and finite when has_lid is False.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     from scipy.special import erf
@@ -1171,7 +1202,6 @@ def test_wlid_mask_width_surface_saturation_and_no_lid_finiteness():
         convective_flux=d['F_conv'],
         total_flux=d['F_tot'],
         solidus_temperature=t_sol_175,
-        t_sol_0=1400.0,
         melt_fraction=d['phi_basic'],
         params=params_sol,
         viscosity_solid=1.0e21,
@@ -1223,11 +1253,7 @@ def test_wlid_mask_width_surface_saturation_and_no_lid_finiteness():
 @pytest.mark.unit
 def test_w_active_scaling_relations_when_lid_is_active():
     """Verify w_active scaling on tau_d, tau_buoy, d_lid, and lid_regime for weak convection."""
-    from aragog.rheology_lid import (
-        FB2014_STRESS_FACTOR,
-        SOLIDUS_MELT_FRACTION_THRESHOLD,
-        SOLIDUS_MELT_FRACTION_WIDTH,
-    )
+    from aragog.rheology_lid import FB2014_STRESS_FACTOR
 
     inputs_weak = _make_earth_reference_inputs()
     inputs_weak['convective_flux'] = np.zeros(50)
@@ -1249,7 +1275,6 @@ def test_w_active_scaling_relations_when_lid_is_active():
     alpha_arr = np.broadcast_to(
         np.asarray(inputs_weak['thermal_expansivity'], dtype=float), r.shape
     )
-    phi = inputs_weak['melt_fraction']
 
     rho_i = float(np.interp(r_i, r, rho_arr))
     g_i = float(np.interp(r_i, r, g_arr))
@@ -1262,13 +1287,9 @@ def test_w_active_scaling_relations_when_lid_is_active():
     w_y = float(st_weak['w_y'])
 
     lid_cell_count = float(np.sum(st_weak['w_lid']))
-    w_solid_surf = float(
-        0.5
-        * (
-            1.0
-            - np.tanh((phi[-1] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH)
-        )
-    )
+    # At phi[-1] = 0.0 < SOLIDUS_MELT_FRACTION_THRESHOLD - SOLIDUS_MELT_FRACTION_WIDTH, w_solid_surf = 1.0.
+    assert SOLIDUS_MELT_FRACTION_THRESHOLD - SOLIDUS_MELT_FRACTION_WIDTH == pytest.approx(0.008)
+    w_solid_surf = 1.0
     w_has_lid = float(0.5 * (1.0 + np.tanh((lid_cell_count - 0.5) / 0.1)) * w_solid_surf)
 
     expected_tau_d = FB2014_STRESS_FACTOR * eta_i * v_m / d_conv * w_active
@@ -1288,7 +1309,14 @@ def test_w_active_scaling_relations_when_lid_is_active():
 
 @pytest.mark.unit
 def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
-    """Verify w_weight = tanh(max_k w_conv_int / 1e-6) mesh invariance across N and continuity over s in [0, 1e-3]."""
+    """Verify w_weight = tanh(max_k w_conv_int / 1e-6) mesh invariance across N and continuity over s in [0, 1e-3].
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     params = SolidRheologyParams(enabled=True)
@@ -1395,7 +1423,8 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
         assert abs(ti_n - ti_175_400) <= max_dt_175kyr
         assert abs(log_eta_n - log_eta_175_400) <= max_dlog_eta_175kyr
 
-    dw_weight_df_max = 9085.0
+    # Regression bound measured on this fixture (peak ratio 9246.48 + 0.04% margin; 9069.40 on main).
+    dw_weight_df_max = 9250.0
     f_int_s1 = float(
         np.max(np.maximum(d['F_conv'][1:-1] / np.maximum(d['F_tot'][1:-1], 1.0e-30), 0.0))
     )
@@ -1437,7 +1466,14 @@ def test_w_weight_max_k_mesh_invariance_and_subthreshold_continuity():
 
 @pytest.mark.unit
 def test_tau_d_lid_scales_monotonically_with_w_active():
-    """Verify tau_d_lid -> 0 as w_active -> 0, rises monotonically with w_active, and matches s=1 reference pins."""
+    """Verify tau_d_lid -> 0 as w_active -> 0, rises monotonically with w_active, and matches s=1 reference pins.
+
+    In ``checkpoint_profile_175kyr.npz`` (built by ``tests/reference/build_checkpoint_profile_175kyr.py``),
+    ``r_basic``, ``P_basic``, ``F_conv``, ``F_tot``, ``v_unyielded``, ``T_basic[98:100]``, and
+    ``phi_basic[4:100]`` are 175 kyr run values; ``T_basic[4:98]`` is mapped from ``phi_basic[4:98]``
+    by the PALEOS lever rule, ``T_basic[0:4]`` preserves ``T_old[0:4] - T_old[4]`` above node 4, and
+    ``phi_basic[0:4]`` is recomputed from ``T_basic[0:4]`` by the PALEOS lever rule.
+    """
     from pathlib import Path
 
     from aragog.rheology_lid import FB2014_STRESS_FACTOR
@@ -1461,7 +1497,19 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
             phi_rheo=0.4,
             phi_width=0.15,
         )
-        assert float(st_off['tau_d_lid']) == 0.0
+        assert bool(st_off['has_lid']) is False
+        if s_off == 0.0:
+            assert float(st_off['tau_d_lid']) == 0.0
+        else:
+            d_geom_off = max(float(r0[-1] - st_off['r_lid_base']), 1.0e-6)
+            expected_off = (
+                float(st_off['w_active'])
+                * FB2014_STRESS_FACTOR
+                * float(st_off['eta_i'])
+                * float(st_off['v_m'])
+                / d_geom_off
+            )
+            assert float(st_off['tau_d_lid']) == pytest.approx(expected_off, rel=1.0e-12)
 
     s_active = (0.0353, 0.036, 0.04, 0.045, 0.05, 0.06, 0.08, 0.1, 0.2, 1.0)
     tau_d_lid_vals: list[float] = []
@@ -1493,7 +1541,7 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
     for prev_val, curr_val in zip(tau_d_lid_vals[:-1], tau_d_lid_vals[1:], strict=True):
         assert curr_val > prev_val
     assert tau_d_lid_vals[0] < 0.1 * tau_d_lid_vals[-1]
-    assert tau_d_lid_vals[-1] == pytest.approx(89383803.45069079, rel=1.0e-12)
+    assert tau_d_lid_vals[-1] == pytest.approx(89153746.66734585, rel=1.0e-12)
 
     earth_inputs = _make_earth_reference_inputs()
     st_earth = compute_stagnant_lid_state(**earth_inputs)
@@ -1570,33 +1618,42 @@ def test_lid_mask_width_cells_nodal_scaling_and_dtrh_floor():
     # Regression pin of the hard mask-scaling switch.
     inputs = _make_earth_reference_inputs()
     T = inputs['temperature']
-    gradT = np.abs(np.gradient(T))
 
+    def _smax2(a, b, s=0.005):
+        d = (b - a) / s
+        return np.where(d > 40.0, b, np.where(d < -40.0, a, a + s * np.logaddexp(0.0, d)))
+
+    def _smin2(a, b, s):
+        d = (a - b) / s
+        return np.where(d > 40.0, b, np.where(d < -40.0, a, a - s * np.logaddexp(0.0, d)))
+
+    gradT_safe = np.sqrt(np.gradient(T) ** 2 + 1.0e-30)
     for w in [1.0, 3.0, 10.0]:
         params = replace(inputs['params'], lid_mask_width_cells=w)
         st = compute_stagnant_lid_state(**{**inputs, 'params': params})
         dT_rh = float(st['dT_rh'])
         T_lid_iso = float(st['T_i']) - params.lid_contrast_coeff * dT_rh
 
-        # Independent formula rebuild of scale_mask and w_lid
-        scale_cell = w * np.maximum(gradT, 1.0)
-        scale_mask = np.minimum(scale_cell, w * np.maximum(dT_rh, 1.0))
+        # Independent formula rebuild of smooth scale_mask and w_lid
+        scale_cell = w * _smax2(gradT_safe, 1.0)
+        scale_cap = w * _smax2(dT_rh, 1.0)
+        scale_mask = _smin2(scale_cell, scale_cap, 0.005 * scale_cap)
         w_hot_iso_mask = 0.5 * (1.0 + np.tanh((T - T_lid_iso) / scale_mask))
         expected_w_lid = (1.0 - w_hot_iso_mask) * float(st['w_active'])
 
         np.testing.assert_allclose(st['w_lid'], expected_w_lid, rtol=1.0e-12, atol=1.0e-12)
 
-    # Test 1 K floor with small dT_rh (< 1.0 K) via large g_homologous
+    # Test smooth 1 K floor with small dT_rh (< 1.0 K) via large g_homologous
     params_high_g = replace(inputs['params'], g_homologous=3000.0)
     st_floor = compute_stagnant_lid_state(**{**inputs, 'params': params_high_g})
     dT_rh_floor = float(st_floor['dT_rh'])
     assert dT_rh_floor < 1.0
     T_lid_iso_floor = float(st_floor['T_i']) - params_high_g.lid_contrast_coeff * dT_rh_floor
 
-    # The 1 K floor forces max(dT_rh, 1.0) = 1.0 K
-    scale_cell_f = 1.0 * np.maximum(gradT, 1.0)
-    scale_mask_with_floor = np.minimum(scale_cell_f, 1.0 * 1.0)
-    scale_mask_without_floor = np.minimum(scale_cell_f, 1.0 * dT_rh_floor)
+    scale_cell_f = 1.0 * _smax2(gradT_safe, 1.0)
+    scale_cap_f = 1.0 * float(_smax2(dT_rh_floor, 1.0))
+    scale_mask_with_floor = _smin2(scale_cell_f, scale_cap_f, 0.005 * scale_cap_f)
+    scale_mask_without_floor = _smin2(scale_cell_f, 1.0 * dT_rh_floor, 0.005 * dT_rh_floor)
     assert not np.allclose(scale_mask_with_floor, scale_mask_without_floor)
 
     w_hot_iso_floor = 0.5 * (1.0 + np.tanh((T - T_lid_iso_floor) / scale_mask_with_floor))
@@ -1609,12 +1666,11 @@ def test_lid_mask_width_cells_nodal_scaling_and_dtrh_floor():
 @pytest.mark.unit
 def test_lid_thresholds_isothermal_convective_and_cell_count():
     """Verify has_lid, is_convecting, and lid_regime thresholds and exact cell count."""
-    # Regression pin of the lid threshold and cell-count switches.
     inputs = _make_earth_reference_inputs()
     n_nodes = len(inputs['radii'])
 
     # 1. Isothermal column at 1600 K with fixed lid base above 1600 K:
-    # d_lid_raw is positive, but T_i - T_surf <= 1e-3 K -> has_lid is False and diagnostics zeroed
+    # d_lid_raw is positive, but T_i - T_surf <= 1e-3 K -> has_lid is False and diagnostics scaled by w_T(0)
     params_iso = replace(inputs['params'], lid_base_mode='fixed', lid_base_temperature=1700.0)
     inp_iso = {
         **inputs,
@@ -1624,8 +1680,9 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
     st_iso = compute_stagnant_lid_state(**inp_iso)
     assert bool(st_iso['has_lid']) is False
     assert float(st_iso['v_i']) == 0.0
-    assert float(st_iso['tau_d']) == 0.0
     assert float(st_iso['d_lid']) == 0.0
+    assert float(st_iso['tau_d']) == 0.0
+    assert float(st_iso['tau_d_lid']) == 0.0
     assert float(st_iso['lid_cell_count']) == pytest.approx(
         float(np.sum(st_iso['w_lid'])), rel=1.0e-12
     )
@@ -1642,7 +1699,8 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         assert bool(st_dt['has_lid']) is expected_has_lid
 
     # Discriminating d_lid_raw threshold: N=100 without solidus table brackets 1.0 m from both sides.
-    # phi = 0.0205 gives d_lid_raw ~ 0.80 m <= 1.0 m (no lid); phi = 0.0201 gives d_lid_raw ~ 1.20 m > 1.0 m (lid).
+    # Under the compact quintic melt ramp on [0.008, 0.012], phi = 0.011944 gives d_lid_raw ~ 0.78 m
+    # and phi = 0.011936 gives d_lid_raw ~ 1.17 m.
     n_100 = 100
     r_100 = np.linspace(3480.0e3, 6370.0e3, n_100)
     t_100 = np.full(n_100, 1800.0)
@@ -1659,8 +1717,8 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         arrhenius_t_ref=1600.0,
     )
     for phi_val, expected_has_lid, d_raw_bound in [
-        (0.0205, False, (0.75, 0.85)),
-        (0.0201, True, (1.15, 1.25)),
+        (0.011944, False, (0.75, 0.85)),
+        (0.011936, True, (1.15, 1.25)),
     ]:
         st_dlid = compute_stagnant_lid_state(
             radii=r_100,
@@ -1683,10 +1741,9 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
         d_raw = float((r_100[-1] - st_dlid['r_lid_base']) * st_dlid['w_active'])
         assert d_raw_bound[0] <= d_raw <= d_raw_bound[1]
         assert bool(st_dlid['has_lid']) is expected_has_lid
-        if expected_has_lid:
-            assert float(st_dlid['d_lid']) == pytest.approx(d_raw, rel=1.0e-9)
-        else:
-            assert float(st_dlid['d_lid']) == 0.0
+        w_d_0 = 0.5 * (1.0 + np.tanh(-1.0 / 0.25))
+        w_d_expected = (0.5 * (1.0 + np.tanh((d_raw - 1.0) / 0.25)) - w_d_0) / (1.0 - w_d_0)
+        assert float(st_dlid['d_lid']) == pytest.approx(w_d_expected * d_raw, rel=1.0e-9)
 
     # 2. Localized low convective flux: 1e-6 < W_sum < 0.1, w_active > 0.05 -> convecting
     inp_low_conv = {**inputs}
@@ -1714,21 +1771,9 @@ def test_lid_thresholds_isothermal_convective_and_cell_count():
     assert float(st_1cell['lid_cell_count']) == pytest.approx(
         float(np.sum(st_1cell['w_lid'])), rel=1.0e-12
     )
-    # w_solid_surf evaluates at phi[-1] = 0.0 (~1.0); reading phi[0] = 0.2 gives ~0.0
-    w_solid_surf = 0.5 * (
-        1.0
-        - np.tanh(
-            (phi_1cell[-1] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH
-        )
-    )
-    w_solid_surf_wrong = 0.5 * (
-        1.0
-        - np.tanh(
-            (phi_1cell[0] - SOLIDUS_MELT_FRACTION_THRESHOLD) / SOLIDUS_MELT_FRACTION_WIDTH
-        )
-    )
-    assert w_solid_surf > 0.999
-    assert w_solid_surf_wrong < 1.0e-6
+    # w_solid_surf evaluates at phi[-1] = 0.0 (== 1.0); reading phi[0] = 0.2 gives == 0.0
+    w_solid_surf = 1.0
+    w_solid_surf_wrong = 0.0
     expected_w_has_lid = 0.5 * (1.0 + np.tanh((cell_count - 0.5) / 0.1)) * w_solid_surf
     assert 0.1 < expected_w_has_lid < 0.9
     assert float(st_1cell['lid_regime']) == pytest.approx(
@@ -1781,7 +1826,6 @@ def test_melt_fraction_lid_indicator_moves_with_phi_rheo_and_width():
         **inputs,
         'temperature': t_prof,
         'solidus_temperature': t_sol,
-        't_sol_0': 2500.0,
         'melt_fraction': phi_prof,
         'params': params,
         'phi_rheo': 0.002,
