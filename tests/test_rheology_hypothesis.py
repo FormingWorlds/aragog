@@ -227,8 +227,11 @@ def test_hypothesis_phase_config_rheology_construction_and_delegation(
             expected_merged = SolidRheologyParams(**(rheo_dict | partial_overrides))
             assert cfg_merged.rheology == expected_merged
 
-        with pytest.raises(ValueError, match='viscosity must not be None'):
-            builder(viscosity=None, rheology=params)
+        if builder is _make_phase_config:
+            with pytest.raises(ValueError, match='viscosity must not be None'):
+                builder(viscosity=None, rheology=params)
+        else:
+            assert builder(viscosity=None, rheology=params).viscosity is None
 
     # TOML reachability: tomllib parses `true`/`false` as bool, reaching PhaseConfig and
     # _PhaseParameters -> merge_rheology -> SolidRheologyParams.
@@ -332,6 +335,11 @@ def test_hypothesis_merge_rheology_dict_round_trip_and_unknown_key(
         merge_rheology(SolidRheologyParams(), {unknown_key: 1.0})
     with pytest.raises(TypeError):
         _make_phase_config(**{unknown_key: 1.0})
+    with pytest.raises(
+        TypeError,
+        match=r'_PhaseParameters\.__init__\(\) got an unexpected keyword argument',
+    ):
+        _make_phase_parameters(**{unknown_key: 1.0})
 
 
 @pytest.mark.unit
@@ -655,7 +663,11 @@ def test_hypothesis_phase_solid_rheology_toml_ini_dict_round_trip(
 
     d_flat = _minimal_config_dict()
     d_flat['phase_solid'].update(sub_dict)
-    assert Config.from_dict(d_flat).phase_solid.rheology == expected_sub
+    if sub_dict:
+        with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+            Config.from_dict(d_flat)
+    else:
+        assert Config.from_dict(d_flat).phase_solid.rheology == expected_sub
 
     d_dotted = _minimal_config_dict()
     d_dotted['phase_solid.rheology'] = dict(sub_dict)
