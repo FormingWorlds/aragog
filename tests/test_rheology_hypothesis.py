@@ -972,6 +972,23 @@ def test_hypothesis_pressure_nan_propagation() -> None:
     assert np.isnan(compute_yield_stress(np.nan, xp=np))
 
 
+@given(
+    p_opt=st.floats(min_value=0.0, max_value=1e11, allow_nan=False, allow_infinity=False),
+    t_opt=st.floats(min_value=300.0, max_value=4000.0, allow_nan=False, allow_infinity=False),
+)
+@settings(deadline=None, max_examples=25)
+def test_hypothesis_required_inputs_reject_none(p_opt: float, t_opt: float) -> None:
+    """Verify that None for required inputs raises ValueError naming the field."""
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_enthalpy(None, xp=np)
+    with pytest.raises(ValueError, match='temperature'):
+        compute_arrhenius_viscosity(None, p_opt, xp=np)
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_viscosity(t_opt, None, xp=np)
+    with pytest.raises(ValueError, match='pressure'):
+        compute_yield_stress(None, xp=np)
+
+
 # tau_d rejection on eager NumPy and JAX JIT
 @given(
     bad_td=st.one_of(
