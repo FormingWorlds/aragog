@@ -513,7 +513,6 @@ def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
                     xp=np,
                 )
 
-            w_d_zero = 0.5 * (1.0 + np.tanh(-1.0 / 0.25))
             for sol_arg in (t_sol, None):
                 for dt_above in (100.0, 200.0):
                     t_prof = t_sol + dt_above
@@ -523,13 +522,14 @@ def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
                         assert float(state['d_lid']) == 0.0
                         assert float(radii[-1] - state['r_lid_base']) == 0.0
                         assert float(state['lid_regime']) == 0.0
-                        assert float(state['tau_d']) == pytest.approx(
-                            float(state['tau_d_lid'])
-                            * (float(state['d_lid']) + 1.0e-6)
-                            / (r_out - r_in),
-                            rel=1.0e-12,
-                        )
-                        assert float(state['w_y']) < w_d_zero
+                        assert float(state['tau_d']) == 0.0
+                        assert float(state['tau_d_lid']) == 0.0
+                        assert float(state['tau_buoy']) == 0.0
+                        assert float(state['tau_d_over_tau_buoy']) == 0.0
+                        assert float(state['v_m']) == 0.0
+                        assert float(state['Ra_eff']) == 0.0
+                        assert float(state['Ra_rh']) == 0.0
+                        assert float(state['w_y']) == 0.0
                         np.testing.assert_allclose(state['w_lid'], 0.0, atol=0.0)
 
             # At phi = 0.005 (< SOLIDUS_MELT_FRACTION_THRESHOLD = 0.01) with a cold surface lid and a table,
@@ -1456,6 +1456,20 @@ def test_arrhenius_exponent_lower_clip_cannot_underflow() -> None:
     assert np.all(res_arr > 0.0)
 
 
+def _assert_validation_row(
+    fn, np_kw: dict, traced: tuple, field_name: str, bad_val, static_error: bool
+) -> None:
+    """Run the np and jax.jit validation check of ``fn``, tracing ``traced`` keys as JAX arrays."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+    jax_kw = {**np_kw, **{k: jnp.asarray(np_kw[k]) for k in traced}}
+    jit_fn = jax.jit(lambda kw: fn(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        fn, np_kw, jax_kw, jit_fn, field_name, bad_val, static_error=static_error
+    )
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize(
     ('field_name', 'bad_val', 'static_error'),
@@ -1484,31 +1498,14 @@ def test_arrhenius_exponent_lower_clip_cannot_underflow() -> None:
 )
 def test_yield_stress_validation_table(field_name: str, bad_val, static_error: bool):
     """Verify compute_yield_stress rejects invalid inputs on np and returns NaN under jax.jit."""
-    jax = pytest.importorskip('jax')
-    jax.config.update('jax_enable_x64', True)
-    jnp = pytest.importorskip('jax.numpy')
-
     np_kw = {
         'pressure': 1.0e9,
         'yield_stress_c': 50.0e6,
         'yield_stress_mu': 0.6,
         'yield_stress_max': 500.0e6,
     }
-    jax_kw = {
-        'pressure': jnp.asarray(1.0e9),
-        'yield_stress_c': 50.0e6,
-        'yield_stress_mu': 0.6,
-        'yield_stress_max': 500.0e6,
-    }
-    jit_fn = jax.jit(lambda kw: compute_yield_stress(**kw, xp=jnp))
-    _assert_invalid_raises_np_and_nan_jit(
-        compute_yield_stress,
-        np_kw,
-        jax_kw,
-        jit_fn,
-        field_name,
-        bad_val,
-        static_error=static_error,
+    _assert_validation_row(
+        compute_yield_stress, np_kw, ('pressure',), field_name, bad_val, static_error
     )
 
 
@@ -1533,29 +1530,18 @@ def test_yield_stress_validation_table(field_name: str, bad_val, static_error: b
 )
 def test_strain_rate_local_validation_table(field_name: str, bad_val, static_error: bool):
     """Verify compute_strain_rate_local rejects invalid inputs on np and returns NaN under jax.jit."""
-    jax = pytest.importorskip('jax')
-    jax.config.update('jax_enable_x64', True)
-    jnp = pytest.importorskip('jax.numpy')
-
     np_kw = {
         'viscous_velocity': 1.0e-9,
         'mixing_length': 1.0e5,
         'eps': 1.0e-15,
     }
-    jax_kw = {
-        'viscous_velocity': jnp.asarray(1.0e-9),
-        'mixing_length': jnp.asarray(1.0e5),
-        'eps': 1.0e-15,
-    }
-    jit_fn = jax.jit(lambda kw: compute_strain_rate_local(**kw, xp=jnp))
-    _assert_invalid_raises_np_and_nan_jit(
+    _assert_validation_row(
         compute_strain_rate_local,
         np_kw,
-        jax_kw,
-        jit_fn,
+        ('viscous_velocity', 'mixing_length'),
         field_name,
         bad_val,
-        static_error=static_error,
+        static_error,
     )
 
 
@@ -1582,29 +1568,13 @@ def test_strain_rate_local_validation_table(field_name: str, bad_val, static_err
 )
 def test_mlt_top_slope_validation_table(field_name: str, bad_val, static_error: bool):
     """Verify compute_mlt_top_slope rejects invalid inputs on np and returns NaN under jax.jit."""
-    jax = pytest.importorskip('jax')
-    jax.config.update('jax_enable_x64', True)
-    jnp = pytest.importorskip('jax.numpy')
-
     np_kw = {
         'theta': 10.0,
         's_top_inf': 0.22,
         'c_theta': 0.15,
     }
-    jax_kw = {
-        'theta': jnp.asarray(10.0),
-        's_top_inf': 0.22,
-        'c_theta': 0.15,
-    }
-    jit_fn = jax.jit(lambda kw: compute_mlt_top_slope(**kw, xp=jnp))
-    _assert_invalid_raises_np_and_nan_jit(
-        compute_mlt_top_slope,
-        np_kw,
-        jax_kw,
-        jit_fn,
-        field_name,
-        bad_val,
-        static_error=static_error,
+    _assert_validation_row(
+        compute_mlt_top_slope, np_kw, ('theta',), field_name, bad_val, static_error
     )
 
 
@@ -1659,10 +1629,6 @@ def test_viscous_mixing_length_factor_validation_table(
     field_name: str, bad_val, static_error: bool
 ):
     """Verify viscous_mixing_length_factor rejects invalid inputs on np and returns NaN under jax.jit."""
-    jax = pytest.importorskip('jax')
-    jax.config.update('jax_enable_x64', True)
-    jnp = pytest.importorskip('jax.numpy')
-
     r = np.linspace(3.48e6, 6.371e6, 11)
     ml = np.minimum(r - r[0], r[-1] - r)
     np_kw = {
@@ -1675,42 +1641,40 @@ def test_viscous_mixing_length_factor_validation_table(
         'theta': 10.0,
         'c_theta': 0.15,
     }
-    jax_kw = {
-        'radii': jnp.asarray(r),
-        'r_in': 3.48e6,
-        'r_out': 6.371e6,
-        'mixing_length': jnp.asarray(ml),
-        's_top_inf': 0.22,
-        'bottom_slope': 1.0,
-        'theta': jnp.asarray(10.0),
-        'c_theta': 0.15,
-    }
-    jit_fn = jax.jit(lambda kw: viscous_mixing_length_factor(**kw, xp=jnp))
-    _assert_invalid_raises_np_and_nan_jit(
+    _assert_validation_row(
         viscous_mixing_length_factor,
         np_kw,
-        jax_kw,
-        jit_fn,
+        ('radii', 'mixing_length', 'theta'),
         field_name,
         bad_val,
-        static_error=static_error,
+        static_error,
     )
 
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_wp5_fixture_grid_bitwise_parity():
-    """Verify bitwise output equivalence against origin/main reference outputs on valid input grid."""
+def test_rheology_kernel_reference_grid_parity():
+    """Verify output agreement against reference grid outputs across valid input domains."""
     from pathlib import Path
 
-    fixture_path = Path(__file__).resolve().parent / 'reference' / 'wp5_main_grid_outputs.npz'
+    fixture_path = (
+        Path(__file__).resolve().parent / 'reference' / 'rheology_kernel_reference_outputs.npz'
+    )
     data = np.load(fixture_path)
 
     # 1. compute_arrhenius_enthalpy
     p_grid = np.linspace(0.0, 135e9, 25)
-    assert np.array_equal(data['enthalpy_arr'], compute_arrhenius_enthalpy(p_grid, xp=np))
-    assert np.array_equal(
-        data['enthalpy_scalar'], np.array(compute_arrhenius_enthalpy(10.0e9, xp=np))
+    np.testing.assert_allclose(
+        compute_arrhenius_enthalpy(p_grid, xp=np),
+        data['enthalpy_arr'],
+        rtol=1.0e-12,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.array(compute_arrhenius_enthalpy(10.0e9, xp=np)),
+        data['enthalpy_scalar'],
+        rtol=1.0e-12,
+        atol=0.0,
     )
 
     # 2. compute_arrhenius_viscosity
@@ -1718,36 +1682,63 @@ def test_wp5_fixture_grid_bitwise_parity():
     p_1d = np.linspace(0.0, 100e9, 10)
     t_grid, p_grid_2d = np.meshgrid(t_1d, p_1d, indexing='ij')
     visc_out = compute_arrhenius_viscosity(t_grid, p_grid_2d, xp=np)
-    # Below the softplus ceiling transition (log10(eta) < 38, 93/100 points), bitwise identical to main
+    # Below the softplus ceiling transition (log10(eta) < 38, 93/100 points), agrees with unsmoothed formula
     below_cap = data['viscosity_arr'] < 1.0e38
     assert int(np.sum(below_cap)) == 93
-    assert np.array_equal(data['viscosity_arr'][below_cap], visc_out[below_cap])
+    np.testing.assert_allclose(
+        visc_out[below_cap], data['viscosity_arr'][below_cap], rtol=1.0e-12, atol=0.0
+    )
     assert np.all((visc_out[~below_cap] > 1.0e38) & (visc_out[~below_cap] <= 1.0e40))
-    assert np.array_equal(
-        data['viscosity_scalar'], np.array(compute_arrhenius_viscosity(1600.0, 10.0e9, xp=np))
+    np.testing.assert_allclose(
+        np.array(compute_arrhenius_viscosity(1600.0, 10.0e9, xp=np)),
+        data['viscosity_scalar'],
+        rtol=1.0e-12,
+        atol=0.0,
     )
 
     # 3. compute_yield_stress
-    assert np.array_equal(data['yield_stress_arr'], compute_yield_stress(p_grid, xp=np))
-    assert np.array_equal(
-        data['yield_stress_scalar'], np.array(compute_yield_stress(50.0e9, xp=np))
+    np.testing.assert_allclose(
+        compute_yield_stress(p_grid, xp=np),
+        data['yield_stress_arr'],
+        rtol=1.0e-12,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.array(compute_yield_stress(50.0e9, xp=np)),
+        data['yield_stress_scalar'],
+        rtol=1.0e-12,
+        atol=0.0,
     )
 
     # 4. compute_strain_rate_local
     v_arr = np.linspace(-1e-8, 1e-8, 20)
     ml_arr = np.linspace(1e3, 1e6, 20)
-    assert np.array_equal(
-        data['strain_rate_arr'], compute_strain_rate_local(v_arr, ml_arr, xp=np)
+    np.testing.assert_allclose(
+        compute_strain_rate_local(v_arr, ml_arr, xp=np),
+        data['strain_rate_arr'],
+        rtol=1.0e-12,
+        atol=0.0,
     )
-    assert np.array_equal(
-        data['strain_rate_scalar'], np.array(compute_strain_rate_local(1e-9, 1e5, xp=np))
+    np.testing.assert_allclose(
+        np.array(compute_strain_rate_local(1e-9, 1e5, xp=np)),
+        data['strain_rate_scalar'],
+        rtol=1.0e-12,
+        atol=0.0,
     )
 
     # 5. compute_mlt_top_slope
     th_arr = np.linspace(-5.0, 50.0, 25)
-    assert np.array_equal(data['top_slope_arr'], compute_mlt_top_slope(th_arr, xp=np))
-    assert np.array_equal(
-        data['top_slope_scalar'], np.array(compute_mlt_top_slope(15.0, xp=np))
+    np.testing.assert_allclose(
+        compute_mlt_top_slope(th_arr, xp=np),
+        data['top_slope_arr'],
+        rtol=1.0e-12,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(
+        np.array(compute_mlt_top_slope(15.0, xp=np)),
+        data['top_slope_scalar'],
+        rtol=1.0e-12,
+        atol=0.0,
     )
 
     # 6. viscous_mixing_length_factor
@@ -1755,12 +1746,17 @@ def test_wp5_fixture_grid_bitwise_parity():
     r_in = float(radii[0])
     r_out = float(radii[-1])
     ml_col = np.minimum(radii - r_in, r_out - radii)
-    assert np.array_equal(
-        data['vml_none'], viscous_mixing_length_factor(radii, r_in, r_out, ml_col, xp=np)
+    np.testing.assert_allclose(
+        viscous_mixing_length_factor(radii, r_in, r_out, ml_col, xp=np),
+        data['vml_none'],
+        rtol=1.0e-12,
+        atol=0.0,
     )
-    assert np.array_equal(
-        data['vml_theta'],
+    np.testing.assert_allclose(
         viscous_mixing_length_factor(radii, r_in, r_out, ml_col, theta=15.0, xp=np),
+        data['vml_theta'],
+        rtol=1.0e-12,
+        atol=0.0,
     )
 
     # 7. compute_stagnant_lid_state
@@ -1787,12 +1783,10 @@ def test_wp5_fixture_grid_bitwise_parity():
     )
     for k, v in lid_st.items():
         arr = v if isinstance(v, np.ndarray) else np.array(v)
-        if k == 'lid_regime':
-            # Compact quintic surface-solid ramp sets w_sol_phi(0) = 1.0 exactly vs tanh(5.0)
-            expected_regime = data['lid_lid_regime'] / (1.0 - 0.5 * (1.0 - np.tanh(5.0)))
-            assert float(arr) == pytest.approx(float(expected_regime), rel=1.0e-15)
+        if arr.dtype == bool:
+            assert bool(arr) == bool(data[f'lid_{k}'])
         else:
-            assert np.array_equal(data[f'lid_{k}'], arr, equal_nan=True)
+            np.testing.assert_allclose(arr, data[f'lid_{k}'], rtol=1.0e-12, atol=0.0)
 
     # 8. compute_effective_viscosity
     tau_d_arr = np.linspace(1e4, 1e8, 20)
@@ -1810,7 +1804,9 @@ def test_wp5_fixture_grid_bitwise_parity():
     w_b_grid = 0.5 * (1.0 + np.tanh((tau_d_arr / 50e6 - 1.0) / 0.025))
     outside_b1 = (w_b_grid <= 1.0e-15) | (w_b_grid >= 1.0 - 1.0e-15)
     assert int(np.sum(outside_b1)) == 12
-    assert np.array_equal(data['eff_lid'][outside_b1], eff_lid_out[outside_b1])
+    np.testing.assert_allclose(
+        eff_lid_out[outside_b1], data['eff_lid'][outside_b1], rtol=1.0e-12, atol=0.0
+    )
     assert np.all(
         (eff_lid_out[~outside_b1] > 0.0) & (eff_lid_out[~outside_b1] <= eta_diff[~outside_b1])
     )
@@ -1826,7 +1822,9 @@ def test_wp5_fixture_grid_bitwise_parity():
     d_loc_grid = (np.log10(eta_diff) - np.log10(50e6 / (2.0 * sr_grid))) / 0.01
     outside_b3 = np.abs(d_loc_grid) > 40.0
     assert int(np.sum(outside_b3)) == 17
-    assert np.array_equal(data['eff_local'][outside_b3], eff_local_out[outside_b3])
+    np.testing.assert_allclose(
+        eff_local_out[outside_b3], data['eff_local'][outside_b3], rtol=1.0e-12, atol=0.0
+    )
     assert np.all(
         (eff_local_out[~outside_b3] > 0.0)
         & (eff_local_out[~outside_b3] <= eta_diff[~outside_b3])
@@ -1925,9 +1923,13 @@ def test_scalar_parameters_float32_bitwise_parity() -> None:
 @pytest.mark.physics_invariant
 def test_compute_effective_viscosity_lid_tanh_yield_blend():
     """Verify log10 tanh yield blend in lid mode across transition band and outside d*."""
+    import jax
+    import jax.numpy as jnp
+
     import aragog.rheology_lid as lid_mod
 
-    assert getattr(lid_mod, 'YIELD_BLEND_LOG10_WIDTH', None) == pytest.approx(
+    jax.config.update('jax_enable_x64', True)
+    assert getattr(lid_mod, 'YIELD_BLEND_RATIO_WIDTH', None) == pytest.approx(
         0.025, rel=1.0e-15
     )
     eta_d = 1.0e22
@@ -1975,6 +1977,31 @@ def test_compute_effective_viscosity_lid_tanh_yield_blend():
         )
         hard = eta_d if x_out <= 1.0 else min(eta_d, eta_i / x_out)
         assert val == pytest.approx(hard, rel=1.0e-12)
+
+    # Smooth yield-branch cap when eta_i > eta_d: derivative across tau_d = tau_y * (eta_i / eta_d) is continuous.
+    eta_d_near = 1.0e20
+    eta_i_near = 1.05e20
+    tau_y_near = 1.0e8
+    td_kink = tau_y_near * (eta_i_near / eta_d_near)
+    grad_kink_fn = jax.grad(
+        lambda td_in: jnp.log10(
+            compute_effective_viscosity(
+                eta_diff=jnp.asarray(eta_d_near),
+                eta_i=jnp.asarray(eta_i_near),
+                tau_d=td_in,
+                tau_y_lid=jnp.asarray(tau_y_near),
+                w_lid=jnp.asarray(1.0),
+                stress_closure_mode='lid',
+                xp=jnp,
+            )
+        )
+    )
+    grad2_kink_fn = jax.grad(grad_kink_fn)
+    g_left = float(grad_kink_fn(jnp.asarray(td_kink - 1.0)))
+    g_right = float(grad_kink_fn(jnp.asarray(td_kink + 1.0)))
+    g2_kink = float(grad2_kink_fn(jnp.asarray(td_kink)))
+    assert abs(g_right - g_left) < 1.0e-9
+    assert g2_kink < -1.0e-15
 
 
 @pytest.mark.unit

@@ -349,17 +349,17 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             assert float(state_np['w_y']) > 0.99
             assert float(state_np['lid_regime']) > 1.99
     elif regime in ('no_lid', 'mushy'):
-        # Non-lid profiles have d_lid == 0.0 and tau_d/v_m scaled by the smooth no-lid gate w_d(0).
-        w_d_zero = 0.5 * (1.0 + np.tanh(-4.0))
+        # Non-lid profiles have d_lid == 0.0 and remaining boundary-layer diagnostics == 0.0.
         assert state_np['d_lid'] == 0.0, f'{regime} must suppress stagnant lid formation'
-        if regime == 'mushy':
-            assert state_np['lid_regime'] == 0.0, f'{regime} must have lid_regime == 0'
-        else:
-            assert state_np['lid_regime'] < (w_d_zero**2)
-        assert float(state_np['w_y']) < w_d_zero
-        assert float(state_np['tau_d']) == pytest.approx(
-            float(state_np['tau_d_lid']) * 1.0e-6 / (radii[-1] - radii[0]), rel=1.0e-12
-        )
+        assert state_np['lid_regime'] == 0.0, f'{regime} must have lid_regime == 0'
+        assert float(state_np['w_y']) == 0.0
+        assert float(state_np['tau_d']) == 0.0
+        assert float(state_np['tau_d_lid']) == 0.0
+        assert float(state_np['tau_buoy']) == 0.0
+        assert float(state_np['tau_d_over_tau_buoy']) == 0.0
+        assert float(state_np['v_m']) == 0.0
+        assert float(state_np['Ra_eff']) == 0.0
+        assert float(state_np['Ra_rh']) == 0.0
     elif regime == 'inactive_convection':
         # Zero convective flux gives w_weight == 0.0, setting inactive-convection diagnostics to literal 0.0.
         assert state_np['d_lid'] == 0.0
