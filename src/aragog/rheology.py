@@ -610,8 +610,9 @@ def compute_arrhenius_viscosity(
         (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1.0e-300))) * math.log(10.0), 700.0
     )
     log10_clipped = xp.maximum(log10_soft, -300.0)
+    # Above 700 the clip on exp would cut the value; the log10 branch is exact there.
     result = xp.where(
-        d_cap < -40.0,
+        (d_cap < -40.0) & (exponent <= max_exponent),
         vs * xp.exp(xp.clip(exponent, min_exponent, max_exponent)),
         10.0**log10_clipped,
     )
