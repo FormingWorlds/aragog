@@ -5,13 +5,30 @@ from __future__ import annotations
 from dataclasses import asdict, fields
 from typing import Any
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+try:
+    jax.config.update('jax_enable_x64', True)
+except Exception:
+    pass
+
 from aragog.config.phases import PhaseConfig
-from aragog.rheology import SolidRheologyParams, merge_rheology
+from aragog.rheology import (
+    SolidRheologyParams,
+    compute_arrhenius_enthalpy,
+    compute_arrhenius_viscosity,
+    compute_mlt_top_slope,
+    compute_strain_rate_local,
+    compute_yield_stress,
+    merge_rheology,
+    viscous_mixing_length_factor,
+)
+from aragog.rheology_lid import compute_effective_viscosity, compute_stagnant_lid_state
 
 pytestmark = pytest.mark.unit
 
@@ -515,3 +532,527 @@ def test_hypothesis_bounded_interval_field_validators(
             SolidRheologyParams(phi_visc_single=bad_p)
 
     _assert_wrong_types_raise_type_error(BOUNDED_INTERVAL_FIELDS, wrong_types)
+
+
+def _make_valid_lid_inputs(n: int = 10) -> dict[str, Any]:
+    r = np.linspace(3480e3, 6371e3, n)
+    t = np.linspace(3000.0, 1600.0, n)
+    p = np.linspace(135e9, 0.0, n)
+    f_conv = np.full(n, 100.0)
+    f_tot = np.full(n, 120.0)
+    phi = np.zeros(n)
+    params = SolidRheologyParams(enabled=True)
+    return {
+        'radii': r,
+        'temperature': t,
+        'pressure': p,
+        'convective_flux': f_conv,
+        'total_flux': f_tot,
+        'solidus_temperature': None,
+        'melt_fraction': phi,
+        'params': params,
+        'viscosity_solid': 1e21,
+        'phi_rheo': 0.4,
+        'phi_width': 0.15,
+        't_sol_0': params.t_sol_0,
+    }
+
+
+# Property 1: For p in [-1 Pa, 0), each of the 4 functions gives the output at p = 0 bitwise
+@given(
+    p=st.floats(min_value=-1.0, max_value=-1e-15, allow_nan=False, allow_infinity=False),
+)
+@settings(deadline=None, max_examples=30)
+def test_hypothesis_pressure_roundoff_bitwise_property(p: float) -> None:
+    # 1. compute_arrhenius_enthalpy
+    h_neg = compute_arrhenius_enthalpy(p, xp=np)
+    h_zero = compute_arrhenius_enthalpy(0.0, xp=np)
+    assert np.array_equal(h_neg, h_zero)
+
+    # 2. compute_arrhenius_viscosity
+    v_neg = compute_arrhenius_viscosity(1600.0, p, xp=np)
+    v_zero = compute_arrhenius_viscosity(1600.0, 0.0, xp=np)
+    assert np.array_equal(v_neg, v_zero)
+
+    # 3. compute_yield_stress
+    y_neg = compute_yield_stress(p, xp=np)
+    y_zero = compute_yield_stress(0.0, xp=np)
+    assert np.array_equal(y_neg, y_zero)
+
+    # 4. compute_stagnant_lid_state
+    kw = _make_valid_lid_inputs(n=10)
+    kw_neg = {**kw, 'pressure': np.full(10, p)}
+    kw_zero = {**kw, 'pressure': np.full(10, 0.0)}
+    st_neg = compute_stagnant_lid_state(**kw_neg, xp=np)
+    st_zero = compute_stagnant_lid_state(**kw_zero, xp=np)
+    for k in st_zero.keys():
+        assert np.array_equal(st_neg[k], st_zero[k], equal_nan=True)
+
+    # JAX JIT bitwise parity for p in [-1, 0)
+    p_jnp_neg = jnp.asarray(p)
+    p_jnp_zero = jnp.asarray(0.0)
+    jh = jax.jit(lambda p_val: compute_arrhenius_enthalpy(p_val, xp=jnp))
+    assert np.array_equal(np.asarray(jh(p_jnp_neg)), np.asarray(jh(p_jnp_zero)))
+
+    jv = jax.jit(lambda p_val: compute_arrhenius_viscosity(1600.0, p_val, xp=jnp))
+    assert np.array_equal(np.asarray(jv(p_jnp_neg)), np.asarray(jv(p_jnp_zero)))
+
+    jy = jax.jit(lambda p_val: compute_yield_stress(p_val, xp=jnp))
+    assert np.array_equal(np.asarray(jy(p_jnp_neg)), np.asarray(jy(p_jnp_zero)))
+
+
+# Property 2: Underflow test reaches new lower bound and asserts eta >= tiny
+@given(
+    vs=st.floats(min_value=1e-30, max_value=1e-4, allow_nan=False, allow_infinity=False),
+    temp=st.floats(min_value=1000.0, max_value=1e6, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=30)
+def test_hypothesis_arrhenius_underflow_bound_property(vs: float, temp: float) -> None:
+    tiny = np.finfo(float).tiny
+    t_ref = 50.0
+    g_hom = 50.0
+    r_gas = 8.314462618
+    t_sol_0 = 1400.0
+    # Unclipped exponent
+    h_p = g_hom * r_gas * t_sol_0
+    h_0 = g_hom * r_gas * t_sol_0
+    unclipped_exp = h_p / (r_gas * temp) - h_0 / (r_gas * t_ref)
+    min_exp_bound = np.log(tiny) + 1e-5 - np.log(max(vs, 1e-300))
+    min_exponent = max(-700.0, min_exp_bound)
+    assert unclipped_exp < min_exponent
+
+    eta = compute_arrhenius_viscosity(
+        temp,
+        0.0,
+        viscosity_solid=vs,
+        arrhenius_t_ref=t_ref,
+        g_homologous=g_hom,
+        xp=np,
+    )
+    assert eta >= tiny > 0.0
+    assert np.isfinite(eta)
+
+
+# Pressure rejection on eager NumPy and JAX JIT
+@given(
+    bad_p=st.sampled_from([-1.0001, -10.0, -1e6, float('-inf'), float('inf')]),
+)
+@settings(deadline=None, max_examples=10)
+def test_hypothesis_pressure_invalid_rejection(bad_p: float) -> None:
+    for fn in (
+        lambda p: compute_arrhenius_enthalpy(p, xp=np),
+        lambda p: compute_arrhenius_viscosity(1600.0, p, xp=np),
+        lambda p: compute_yield_stress(p, xp=np),
+    ):
+        with pytest.raises(ValueError, match='pressure'):
+            fn(bad_p)
+
+    kw = _make_valid_lid_inputs(n=10)
+    with pytest.raises(ValueError, match='pressure'):
+        compute_stagnant_lid_state(**{**kw, 'pressure': np.full(10, bad_p)}, xp=np)
+
+    # JAX JIT returns NaN
+    bad_p_jnp = jnp.asarray(bad_p)
+    jh = jax.jit(lambda p: compute_arrhenius_enthalpy(p, xp=jnp))
+    assert np.isnan(np.asarray(jh(bad_p_jnp)))
+
+    jv = jax.jit(lambda p: compute_arrhenius_viscosity(1600.0, p, xp=jnp))
+    assert np.isnan(np.asarray(jv(bad_p_jnp)))
+
+    jy = jax.jit(lambda p: compute_yield_stress(p, xp=jnp))
+    assert np.isnan(np.asarray(jy(bad_p_jnp)))
+
+
+@given(
+    bad_type=st.sampled_from([True, False, 'invalid_pressure']),
+)
+def test_hypothesis_pressure_wrong_types(bad_type: Any) -> None:
+    for fn in (
+        lambda p: compute_arrhenius_enthalpy(p, xp=np),
+        lambda p: compute_arrhenius_viscosity(1600.0, p, xp=np),
+        lambda p: compute_yield_stress(p, xp=np),
+    ):
+        with pytest.raises(ValueError, match='pressure'):
+            fn(bad_type)
+
+
+def test_hypothesis_pressure_nan_propagation() -> None:
+    assert np.isnan(compute_arrhenius_enthalpy(np.nan, xp=np))
+    assert np.isnan(compute_arrhenius_viscosity(1600.0, np.nan, xp=np))
+    assert np.isnan(compute_yield_stress(np.nan, xp=np))
+
+
+# tau_d rejection on eager NumPy and JAX JIT
+@given(
+    bad_td=st.sampled_from([-1e-12, -10.0, -1e8, float('-inf'), float('inf')]),
+)
+@settings(deadline=None, max_examples=10)
+def test_hypothesis_tau_d_invalid_rejection(bad_td: float) -> None:
+    with pytest.raises(ValueError, match='tau_d'):
+        compute_effective_viscosity(
+            eta_diff=1e22,
+            eta_i=1e20,
+            tau_d=bad_td,
+            tau_y_lid=1e8,
+            stress_closure_mode='lid',
+            xp=np,
+        )
+
+    # JAX JIT returns NaN
+    bad_td_jnp = jnp.asarray(bad_td)
+    jit_eff = jax.jit(
+        lambda td: compute_effective_viscosity(
+            1e22, eta_i=1e20, tau_d=td, tau_y_lid=1e8, stress_closure_mode='lid', xp=jnp
+        )
+    )
+    assert np.isnan(np.asarray(jit_eff(bad_td_jnp)))
+
+
+@given(
+    bad_type=st.sampled_from([True, False, 'bad_tau_d']),
+)
+def test_hypothesis_tau_d_wrong_types(bad_type: Any) -> None:
+    with pytest.raises(ValueError, match='tau_d'):
+        compute_effective_viscosity(
+            eta_diff=1e22,
+            eta_i=1e20,
+            tau_d=bad_type,
+            tau_y_lid=1e8,
+            stress_closure_mode='lid',
+            xp=np,
+        )
+
+
+@given(
+    valid_td=st.floats(min_value=0.0, max_value=1e12, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=20)
+def test_hypothesis_tau_d_valid_finite(valid_td: float) -> None:
+    res = compute_effective_viscosity(
+        eta_diff=1e22,
+        eta_i=1e20,
+        tau_d=valid_td,
+        tau_y_lid=1e8,
+        stress_closure_mode='lid',
+        xp=np,
+    )
+    assert np.isfinite(res)
+
+
+# viscosity_solid validation
+@given(
+    bad_vs=st.sampled_from([0.0, -1.0, -1e10, float('-inf'), float('inf')]),
+)
+@settings(max_examples=10)
+def test_hypothesis_viscosity_solid_invalid_rejection(bad_vs: float) -> None:
+    with pytest.raises(ValueError, match='viscosity_solid'):
+        compute_arrhenius_viscosity(1600.0, 0.0, viscosity_solid=bad_vs, xp=np)
+
+
+@given(
+    bad_type=st.sampled_from([True, False, 'bad_vs', [1e20]]),
+)
+def test_hypothesis_viscosity_solid_wrong_types(bad_type: Any) -> None:
+    with pytest.raises(ValueError, match='viscosity_solid'):
+        compute_arrhenius_viscosity(1600.0, 0.0, viscosity_solid=bad_type, xp=np)
+
+
+def test_hypothesis_viscosity_solid_nan_propagation() -> None:
+    assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, viscosity_solid=np.nan, xp=np))
+
+
+# Helper 1: compute_mlt_top_slope(theta, s_top_inf, c_theta)
+@given(
+    bad_th=st.sampled_from([float('-inf'), float('inf')]),
+)
+@settings(deadline=None, max_examples=10)
+def test_hypothesis_mlt_top_slope_theta_invalid(bad_th: float) -> None:
+    with pytest.raises(ValueError, match='theta'):
+        compute_mlt_top_slope(bad_th, xp=np)
+
+    bad_th_jnp = jnp.asarray(bad_th)
+    jit_top = jax.jit(lambda th: compute_mlt_top_slope(th, xp=jnp))
+    assert np.isnan(np.asarray(jit_top(bad_th_jnp)))
+
+
+@given(
+    bad_type=st.sampled_from([True, False, 'bad_theta']),
+)
+def test_hypothesis_mlt_top_slope_theta_wrong_types(bad_type: Any) -> None:
+    with pytest.raises(ValueError, match='theta'):
+        compute_mlt_top_slope(bad_type, xp=np)
+
+
+@given(
+    bad_s=st.sampled_from([0.0, -0.1, -10.0, 1.0001, 2.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_mlt_top_slope_s_top_inf_invalid(bad_s: float) -> None:
+    with pytest.raises(ValueError, match='s_top_inf'):
+        compute_mlt_top_slope(10.0, s_top_inf=bad_s, xp=np)
+
+
+@given(
+    bad_type=st.sampled_from([True, False, 'bad_s_top_inf', np.array([0.5])]),
+)
+def test_hypothesis_mlt_top_slope_s_top_inf_wrong_types(bad_type: Any) -> None:
+    with pytest.raises(ValueError, match='s_top_inf'):
+        compute_mlt_top_slope(10.0, s_top_inf=bad_type, xp=np)
+
+
+@given(
+    bad_c=st.sampled_from([-0.0001, -1.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_mlt_top_slope_c_theta_invalid(bad_c: float) -> None:
+    with pytest.raises(ValueError, match='c_theta'):
+        compute_mlt_top_slope(10.0, c_theta=bad_c, xp=np)
+
+
+@given(
+    bad_type=st.sampled_from([True, False, 'bad_c_theta', np.array([0.5])]),
+)
+def test_hypothesis_mlt_top_slope_c_theta_wrong_types(bad_type: Any) -> None:
+    with pytest.raises(ValueError, match='c_theta'):
+        compute_mlt_top_slope(10.0, c_theta=bad_type, xp=np)
+
+
+def test_hypothesis_mlt_top_slope_nan_propagation() -> None:
+    assert np.isnan(compute_mlt_top_slope(np.nan, xp=np))
+    assert np.isnan(compute_mlt_top_slope(10.0, s_top_inf=np.nan, xp=np))
+    assert np.isnan(compute_mlt_top_slope(10.0, c_theta=np.nan, xp=np))
+
+
+@given(
+    th=st.floats(min_value=-1000.0, max_value=1000.0, allow_nan=False, allow_infinity=False),
+    s=st.floats(min_value=1e-4, max_value=1.0, allow_nan=False, allow_infinity=False),
+    c=st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=25)
+def test_hypothesis_mlt_top_slope_valid_finite(th: float, s: float, c: float) -> None:
+    res = compute_mlt_top_slope(th, s_top_inf=s, c_theta=c, xp=np)
+    assert np.isfinite(res)
+
+
+# Helper 2: compute_yield_stress(pressure, yield_stress_c, yield_stress_mu, yield_stress_max)
+@given(
+    bad_c=st.sampled_from([-1e-4, -10.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_yield_stress_c_invalid(bad_c: float) -> None:
+    with pytest.raises(ValueError, match='yield_stress_c'):
+        compute_yield_stress(1e9, yield_stress_c=bad_c, xp=np)
+
+
+@given(
+    bad_mu=st.sampled_from([-1e-4, -1.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_yield_stress_mu_invalid(bad_mu: float) -> None:
+    with pytest.raises(ValueError, match='yield_stress_mu'):
+        compute_yield_stress(1e9, yield_stress_mu=bad_mu, xp=np)
+
+
+@given(
+    bad_max=st.sampled_from([0.0, -1.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_yield_stress_max_invalid(bad_max: float) -> None:
+    with pytest.raises(ValueError, match='yield_stress_max'):
+        compute_yield_stress(1e9, yield_stress_max=bad_max, xp=np)
+
+
+@given(
+    bad_type=st.sampled_from([True, False, 'bad_val', np.array([1.0])]),
+)
+def test_hypothesis_yield_stress_params_wrong_types(bad_type: Any) -> None:
+    with pytest.raises(ValueError, match='yield_stress_c'):
+        compute_yield_stress(1e9, yield_stress_c=bad_type, xp=np)
+    with pytest.raises(ValueError, match='yield_stress_mu'):
+        compute_yield_stress(1e9, yield_stress_mu=bad_type, xp=np)
+    with pytest.raises(ValueError, match='yield_stress_max'):
+        compute_yield_stress(1e9, yield_stress_max=bad_type, xp=np)
+
+
+def test_hypothesis_yield_stress_nan_propagation() -> None:
+    assert np.isnan(compute_yield_stress(1e9, yield_stress_c=np.nan, xp=np))
+    assert np.isnan(compute_yield_stress(1e9, yield_stress_mu=np.nan, xp=np))
+    assert np.isnan(compute_yield_stress(1e9, yield_stress_max=np.nan, xp=np))
+
+
+@given(
+    p=st.floats(min_value=0.0, max_value=1e12, allow_nan=False, allow_infinity=False),
+    c=st.floats(min_value=0.0, max_value=1e9, allow_nan=False, allow_infinity=False),
+    mu=st.floats(min_value=0.0, max_value=10.0, allow_nan=False, allow_infinity=False),
+    mx=st.floats(min_value=1e-3, max_value=1e12, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=25)
+def test_hypothesis_yield_stress_valid_finite(p: float, c: float, mu: float, mx: float) -> None:
+    res = compute_yield_stress(
+        p, yield_stress_c=c, yield_stress_mu=mu, yield_stress_max=mx, xp=np
+    )
+    assert np.isfinite(res)
+
+
+# Helper 3: compute_strain_rate_local(viscous_velocity, mixing_length, eps)
+@given(
+    bad_v=st.sampled_from([float('-inf'), float('inf')]),
+)
+@settings(deadline=None, max_examples=10)
+def test_hypothesis_strain_rate_velocity_invalid(bad_v: float) -> None:
+    with pytest.raises(ValueError, match='viscous_velocity'):
+        compute_strain_rate_local(bad_v, 1e5, xp=np)
+
+    bad_v_jnp = jnp.asarray(bad_v)
+    jit_sr = jax.jit(lambda v: compute_strain_rate_local(v, 1e5, xp=jnp))
+    assert np.isnan(np.asarray(jit_sr(bad_v_jnp)))
+
+
+@given(
+    bad_l=st.sampled_from([-1e-12, -10.0, float('-inf'), float('inf')]),
+)
+@settings(deadline=None, max_examples=10)
+def test_hypothesis_strain_rate_mixing_length_invalid(bad_l: float) -> None:
+    with pytest.raises(ValueError, match='mixing_length'):
+        compute_strain_rate_local(1e-9, bad_l, xp=np)
+
+    bad_l_jnp = jnp.asarray(bad_l)
+    jit_sr = jax.jit(lambda l: compute_strain_rate_local(1e-9, l, xp=jnp))
+    assert np.isnan(np.asarray(jit_sr(bad_l_jnp)))
+
+
+@given(
+    bad_eps=st.sampled_from([0.0, -1e-15, -1.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_strain_rate_eps_invalid(bad_eps: float) -> None:
+    with pytest.raises(ValueError, match='eps'):
+        compute_strain_rate_local(1e-9, 1e5, eps=bad_eps, xp=np)
+
+
+@given(
+    bad_type=st.sampled_from([True, False, 'bad_val']),
+)
+def test_hypothesis_strain_rate_wrong_types(bad_type: Any) -> None:
+    with pytest.raises(ValueError, match='viscous_velocity'):
+        compute_strain_rate_local(bad_type, 1e5, xp=np)
+    with pytest.raises(ValueError, match='mixing_length'):
+        compute_strain_rate_local(1e-9, bad_type, xp=np)
+    with pytest.raises(ValueError, match='eps'):
+        compute_strain_rate_local(1e-9, 1e5, eps=bad_type, xp=np)
+
+
+def test_hypothesis_strain_rate_nan_propagation() -> None:
+    assert np.isnan(compute_strain_rate_local(np.nan, 1e5, xp=np))
+    assert np.isnan(compute_strain_rate_local(1e-9, np.nan, xp=np))
+    assert np.isnan(compute_strain_rate_local(1e-9, 1e5, eps=np.nan, xp=np))
+
+
+@given(
+    v=st.floats(min_value=-1e3, max_value=1e3, allow_nan=False, allow_infinity=False),
+    l_mix=st.floats(min_value=0.0, max_value=1e7, allow_nan=False, allow_infinity=False),
+    eps=st.floats(min_value=1e-20, max_value=1.0, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=25)
+def test_hypothesis_strain_rate_valid_finite(v: float, l_mix: float, eps: float) -> None:
+    res = compute_strain_rate_local(v, l_mix, eps=eps, xp=np)
+    assert np.isfinite(res)
+
+
+# Helper 4: viscous_mixing_length_factor(radii, r_in, r_out, mixing_length, s_top_inf, bottom_slope, theta, c_theta)
+@given(
+    bad_r=st.sampled_from([float('-inf'), float('inf')]),
+)
+def test_hypothesis_viscous_factor_radii_invalid(bad_r: float) -> None:
+    r = np.array([3480e3, bad_r, 6371e3])
+    with pytest.raises(ValueError, match='radii'):
+        viscous_mixing_length_factor(r, 3480e3, 6371e3, np.ones(3), xp=np)
+
+
+@given(
+    bad_rin=st.sampled_from([0.0, -10.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_viscous_factor_rin_invalid(bad_rin: float) -> None:
+    r = np.linspace(3480e3, 6371e3, 5)
+    with pytest.raises(ValueError, match='r_in'):
+        viscous_mixing_length_factor(r, bad_rin, 6371e3, np.ones(5), xp=np)
+
+
+@given(
+    bad_rout=st.sampled_from([0.0, -10.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_viscous_factor_rout_invalid(bad_rout: float) -> None:
+    r = np.linspace(3480e3, 6371e3, 5)
+    with pytest.raises(ValueError, match='r_out'):
+        viscous_mixing_length_factor(r, 3480e3, bad_rout, np.ones(5), xp=np)
+
+
+@given(
+    bad_l=st.sampled_from([-1.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_viscous_factor_mixing_length_invalid(bad_l: float) -> None:
+    r = np.linspace(3480e3, 6371e3, 5)
+    with pytest.raises(ValueError, match='mixing_length'):
+        viscous_mixing_length_factor(r, 3480e3, 6371e3, np.full(5, bad_l), xp=np)
+
+
+@given(
+    bad_b=st.sampled_from([0.0, -0.1, 1.0001, 5.0, float('-inf'), float('inf')]),
+)
+def test_hypothesis_viscous_factor_bottom_slope_invalid(bad_b: float) -> None:
+    r = np.linspace(3480e3, 6371e3, 5)
+    with pytest.raises(ValueError, match='bottom_slope'):
+        viscous_mixing_length_factor(r, 3480e3, 6371e3, np.ones(5), bottom_slope=bad_b, xp=np)
+
+
+@given(
+    bad_type=st.sampled_from([True, False, 'bad_type']),
+)
+def test_hypothesis_viscous_factor_wrong_types(bad_type: Any) -> None:
+    r = np.linspace(3480e3, 6371e3, 5)
+    with pytest.raises(ValueError, match='radii'):
+        viscous_mixing_length_factor(bad_type, 3480e3, 6371e3, np.ones(5), xp=np)
+    with pytest.raises(ValueError, match='r_in'):
+        viscous_mixing_length_factor(r, bad_type, 6371e3, np.ones(5), xp=np)
+    with pytest.raises(ValueError, match='r_out'):
+        viscous_mixing_length_factor(r, 3480e3, bad_type, np.ones(5), xp=np)
+    with pytest.raises(ValueError, match='mixing_length'):
+        viscous_mixing_length_factor(r, 3480e3, 6371e3, bad_type, xp=np)
+    with pytest.raises(ValueError, match='bottom_slope'):
+        viscous_mixing_length_factor(
+            r, 3480e3, 6371e3, np.ones(5), bottom_slope=bad_type, xp=np
+        )
+
+
+def test_hypothesis_viscous_factor_nan_propagation() -> None:
+    r = np.linspace(3480e3, 6371e3, 5)
+    assert np.isnan(viscous_mixing_length_factor(r, np.nan, 6371e3, np.ones(5), xp=np)[0])
+    assert np.isnan(viscous_mixing_length_factor(r, 3480e3, np.nan, np.ones(5), xp=np)[0])
+    assert np.isnan(
+        viscous_mixing_length_factor(r, 3480e3, 6371e3, np.full(5, np.nan), xp=np)[0]
+    )
+    assert np.isnan(
+        viscous_mixing_length_factor(r, 3480e3, 6371e3, np.ones(5), bottom_slope=np.nan, xp=np)[
+            0
+        ]
+    )
+
+
+@given(
+    s=st.floats(min_value=1e-4, max_value=1.0, allow_nan=False, allow_infinity=False),
+    b=st.floats(min_value=1e-4, max_value=1.0, allow_nan=False, allow_infinity=False),
+    th=st.floats(min_value=-100.0, max_value=100.0, allow_nan=False, allow_infinity=False),
+    c=st.floats(min_value=0.0, max_value=50.0, allow_nan=False, allow_infinity=False),
+)
+@settings(max_examples=20)
+def test_hypothesis_viscous_factor_valid_finite(
+    s: float, b: float, th: float, c: float
+) -> None:
+    r = np.linspace(3480e3, 6371e3, 5)
+    l_mix = np.linspace(0.0, 1e5, 5)
+    res = viscous_mixing_length_factor(
+        r,
+        3480e3,
+        6371e3,
+        l_mix,
+        s_top_inf=s,
+        bottom_slope=b,
+        theta=th,
+        c_theta=c,
+        xp=np,
+    )
+    assert np.all(np.isfinite(res))

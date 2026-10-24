@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from aragog.rheology import (
+    _RULES,
     R_GAS,
     SolidRheologyParams,
     compute_arrhenius_enthalpy,
@@ -21,6 +22,8 @@ from aragog.rheology import (
     compute_mlt_top_slope,
     compute_stagnant_lid_state,
     compute_strain_rate_local,
+    compute_yield_stress,
+    viscous_mixing_length_factor,
 )
 from aragog.rheology_lid import (
     SOLIDUS_MELT_FRACTION_THRESHOLD,
@@ -53,14 +56,24 @@ def test_limit_infinite_yield_stress():
     tau_d = 5.0e6
     tau_y_lid = float('inf')
 
-    eta_eff = compute_effective_viscosity(
-        eta_diff=eta_diff,
-        eta_i=eta_diff,
-        tau_d=tau_d,
-        tau_y_lid=tau_y_lid,
-        stress_closure_mode='lid',
-    )
+    try:
+        eta_eff = compute_effective_viscosity(
+            eta_diff=eta_diff,
+            eta_i=eta_diff,
+            tau_d=tau_d,
+            tau_y_lid=tau_y_lid,
+            stress_closure_mode='lid',
+        )
+    except ValueError as exc:
+        pytest.fail(f'compute_effective_viscosity rejected infinite tau_y_lid: {exc}')
     assert eta_eff == pytest.approx(eta_diff, rel=1.0e-10)
+
+
+@pytest.mark.unit
+def test_rules_nonneg_or_posinf_exists():
+    """Verify nonneg_or_posinf rule exists and not_neginf is renamed."""
+    assert 'nonneg_or_posinf' in _RULES
+    assert 'not_neginf' not in _RULES
 
 
 @pytest.mark.unit
@@ -666,7 +679,7 @@ def _assert_invalid_raises_np_and_nan_jit(
 @pytest.mark.parametrize(
     ('field_name', 'bad_val', 'static_error'),
     [
-        ('pressure', -1.0, False),
+        ('pressure', -10.0, False),
         ('pressure', np.inf, False),
         ('pressure', -np.inf, False),
         ('pressure', True, True),
@@ -748,7 +761,7 @@ def test_arrhenius_enthalpy_validation_table(field_name: str, bad_val, static_er
         ('temperature', np.array(['1600', '1500']), True),
         ('temperature', [1600.0, None], True),
         ('temperature', np.array([1600.0, object()], dtype=object), True),
-        ('pressure', -1.0, False),
+        ('pressure', -10.0, False),
         ('pressure', np.inf, False),
         ('pressure', -np.inf, False),
         ('pressure', False, True),
@@ -994,6 +1007,88 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
 
 
 @pytest.mark.unit
+def test_pressure_surface_roundoff_clamping_and_validation():
+    """Verify near-zero negative surface pressure is clamped to zero and large negative pressure raises ValueError."""
+    p_tol_val = -1.0e-4
+    h_clamped = compute_arrhenius_enthalpy(p_tol_val, xp=np)
+    h_zero = compute_arrhenius_enthalpy(0.0, xp=np)
+    assert h_clamped == pytest.approx(h_zero, abs=1e-12)
+
+    eta_clamped = compute_arrhenius_viscosity(1600.0, p_tol_val, xp=np)
+    eta_zero = compute_arrhenius_viscosity(1600.0, 0.0, xp=np)
+    assert eta_clamped == pytest.approx(eta_zero, rel=1e-12)
+
+    tau_y_clamped = compute_yield_stress(p_tol_val, xp=np)
+    tau_y_zero = compute_yield_stress(0.0, xp=np)
+    assert tau_y_clamped == pytest.approx(tau_y_zero, rel=1e-12)
+
+    n_nodes = 12
+    params = SolidRheologyParams(enabled=True)
+    radii = np.linspace(3.48e6, 6.37e6, n_nodes)
+    temp = np.linspace(2600.0, 300.0, n_nodes)
+    press_zero = np.linspace(135.0e9, 0.0, n_nodes)
+    press_roundoff = press_zero.copy()
+    press_roundoff[-1] = p_tol_val
+
+    st_roundoff = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp,
+        pressure=press_roundoff,
+        convective_flux=np.full(n_nodes, 80.0),
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=None,
+        params=params,
+        melt_fraction=np.zeros(n_nodes),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        xp=np,
+    )
+    st_zero = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp,
+        pressure=press_zero,
+        convective_flux=np.full(n_nodes, 80.0),
+        total_flux=np.full(n_nodes, 100.0),
+        solidus_temperature=None,
+        params=params,
+        melt_fraction=np.zeros(n_nodes),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n_nodes, 1.0e-9),
+        xp=np,
+    )
+    assert float(st_roundoff['d_lid']) == pytest.approx(float(st_zero['d_lid']), rel=1e-12)
+
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_enthalpy(-10.0, xp=np)
+
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_viscosity(1600.0, -10.0, xp=np)
+
+    press_bad = press_zero.copy()
+    press_bad[-1] = -10.0
+    with pytest.raises(ValueError, match='pressure'):
+        compute_stagnant_lid_state(
+            radii=radii,
+            temperature=temp,
+            pressure=press_bad,
+            convective_flux=np.full(n_nodes, 80.0),
+            total_flux=np.full(n_nodes, 100.0),
+            solidus_temperature=None,
+            params=params,
+            melt_fraction=np.zeros(n_nodes),
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            unyielded_velocity=np.full(n_nodes, 1.0e-9),
+            xp=np,
+        )
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ('mode', 'field_name', 'bad_val', 'static_error'),
     [
@@ -1015,6 +1110,7 @@ def test_stagnant_lid_state_rejects_inf_in_array_and_profile_inputs(
         ('lid', 'eta_i', np.inf, False),
         ('lid', 'eta_i', -np.inf, False),
         ('lid', 'eta_i', True, True),
+        ('lid', 'tau_d', -1.0, False),
         ('lid', 'tau_d', np.inf, False),
         ('lid', 'tau_d', -np.inf, False),
         ('lid', 'tau_d', True, True),
@@ -1308,3 +1404,491 @@ def test_stagnant_lid_state_unyielded_velocity_list_input():
     np.testing.assert_allclose(
         state_jnp['w_upper'], ref_np['w_upper'], rtol=1.0e-12, atol=1.0e-15
     )
+
+
+@pytest.mark.unit
+def test_arrhenius_exponent_lower_clip_cannot_underflow() -> None:
+    """Verify compute_arrhenius_viscosity does not underflow to zero when viscosity_solid is small."""
+    tiny = np.finfo(float).tiny
+    res_np = compute_arrhenius_viscosity(
+        1600.0,
+        0.0,
+        viscosity_solid=1e-20,
+        arrhenius_t_ref=50.0,
+        g_homologous=50.0,
+        xp=np,
+    )
+    assert res_np >= tiny > 0.0
+
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+    jit_visc = jax.jit(
+        lambda vs: compute_arrhenius_viscosity(
+            1600.0,
+            0.0,
+            viscosity_solid=vs,
+            arrhenius_t_ref=50.0,
+            g_homologous=50.0,
+            xp=jnp,
+        )
+    )
+    res_jax = float(jit_visc(jnp.asarray(1e-20, dtype=float)))
+    assert res_jax >= tiny > 0.0
+
+    temp_arr = np.array([1600.0, 1800.0])
+    res_arr = compute_arrhenius_viscosity(
+        temp_arr,
+        0.0,
+        viscosity_solid=1e-20,
+        arrhenius_t_ref=50.0,
+        g_homologous=50.0,
+        xp=np,
+    )
+    assert np.all(res_arr >= tiny)
+    assert np.all(res_arr > 0.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('pressure', -10.0, False),
+        ('pressure', np.inf, False),
+        ('pressure', -np.inf, False),
+        ('pressure', False, True),
+        ('yield_stress_c', -1.0, False),
+        ('yield_stress_c', np.inf, False),
+        ('yield_stress_c', -np.inf, False),
+        ('yield_stress_c', True, True),
+        ('yield_stress_c', [50.0e6, 50.0e6], True),
+        ('yield_stress_mu', -0.1, False),
+        ('yield_stress_mu', np.inf, False),
+        ('yield_stress_mu', -np.inf, False),
+        ('yield_stress_mu', True, True),
+        ('yield_stress_mu', [0.6, 0.6], True),
+        ('yield_stress_max', 0.0, False),
+        ('yield_stress_max', -100.0, False),
+        ('yield_stress_max', np.inf, False),
+        ('yield_stress_max', -np.inf, False),
+        ('yield_stress_max', True, True),
+        ('yield_stress_max', [500.0e6, 500.0e6], True),
+    ],
+)
+def test_yield_stress_validation_table(field_name: str, bad_val, static_error: bool):
+    """Verify compute_yield_stress rejects invalid inputs on np and returns NaN under jax.jit."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    np_kw = {
+        'pressure': 1.0e9,
+        'yield_stress_c': 50.0e6,
+        'yield_stress_mu': 0.6,
+        'yield_stress_max': 500.0e6,
+    }
+    jax_kw = {
+        'pressure': jnp.asarray(1.0e9),
+        'yield_stress_c': 50.0e6,
+        'yield_stress_mu': 0.6,
+        'yield_stress_max': 500.0e6,
+    }
+    jit_fn = jax.jit(lambda kw: compute_yield_stress(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_yield_stress,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('viscous_velocity', np.inf, False),
+        ('viscous_velocity', -np.inf, False),
+        ('viscous_velocity', True, True),
+        ('mixing_length', -1.0, False),
+        ('mixing_length', np.inf, False),
+        ('mixing_length', -np.inf, False),
+        ('mixing_length', True, True),
+        ('eps', 0.0, False),
+        ('eps', -1.0e-15, False),
+        ('eps', np.inf, False),
+        ('eps', -np.inf, False),
+        ('eps', True, True),
+        ('eps', [1.0e-15, 1.0e-15], True),
+    ],
+)
+def test_strain_rate_local_validation_table(field_name: str, bad_val, static_error: bool):
+    """Verify compute_strain_rate_local rejects invalid inputs on np and returns NaN under jax.jit."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    np_kw = {
+        'viscous_velocity': 1.0e-9,
+        'mixing_length': 1.0e5,
+        'eps': 1.0e-15,
+    }
+    jax_kw = {
+        'viscous_velocity': jnp.asarray(1.0e-9),
+        'mixing_length': jnp.asarray(1.0e5),
+        'eps': 1.0e-15,
+    }
+    jit_fn = jax.jit(lambda kw: compute_strain_rate_local(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_strain_rate_local,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('theta', np.inf, False),
+        ('theta', -np.inf, False),
+        ('theta', True, True),
+        ('s_top_inf', 0.0, False),
+        ('s_top_inf', -0.1, False),
+        ('s_top_inf', 1.1, False),
+        ('s_top_inf', np.inf, False),
+        ('s_top_inf', -np.inf, False),
+        ('s_top_inf', True, True),
+        ('s_top_inf', [0.22, 0.22], True),
+        ('c_theta', -0.1, False),
+        ('c_theta', np.inf, False),
+        ('c_theta', -np.inf, False),
+        ('c_theta', True, True),
+        ('c_theta', [0.15, 0.15], True),
+    ],
+)
+def test_mlt_top_slope_validation_table(field_name: str, bad_val, static_error: bool):
+    """Verify compute_mlt_top_slope rejects invalid inputs on np and returns NaN under jax.jit."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    np_kw = {
+        'theta': 10.0,
+        's_top_inf': 0.22,
+        'c_theta': 0.15,
+    }
+    jax_kw = {
+        'theta': jnp.asarray(10.0),
+        's_top_inf': 0.22,
+        'c_theta': 0.15,
+    }
+    jit_fn = jax.jit(lambda kw: compute_mlt_top_slope(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        compute_mlt_top_slope,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ('field_name', 'bad_val', 'static_error'),
+    [
+        ('radii', np.inf, False),
+        ('radii', -np.inf, False),
+        ('radii', True, True),
+        ('r_in', 0.0, False),
+        ('r_in', -1.0e6, False),
+        ('r_in', np.inf, False),
+        ('r_in', -np.inf, False),
+        ('r_in', True, True),
+        ('r_in', [3.48e6, 3.48e6], True),
+        ('r_out', 0.0, False),
+        ('r_out', -1.0e6, False),
+        ('r_out', np.inf, False),
+        ('r_out', -np.inf, False),
+        ('r_out', True, True),
+        ('r_out', [6.371e6, 6.371e6], True),
+        ('mixing_length', -1.0, False),
+        ('mixing_length', np.inf, False),
+        ('mixing_length', -np.inf, False),
+        ('mixing_length', True, True),
+        ('s_top_inf', 0.0, False),
+        ('s_top_inf', -0.1, False),
+        ('s_top_inf', 1.1, False),
+        ('s_top_inf', np.inf, False),
+        ('s_top_inf', -np.inf, False),
+        ('s_top_inf', True, True),
+        ('s_top_inf', [0.22, 0.22], True),
+        ('bottom_slope', 0.0, False),
+        ('bottom_slope', -0.1, False),
+        ('bottom_slope', 1.1, False),
+        ('bottom_slope', np.inf, False),
+        ('bottom_slope', -np.inf, False),
+        ('bottom_slope', True, True),
+        ('bottom_slope', [1.0, 1.0], True),
+        ('theta', np.inf, False),
+        ('theta', -np.inf, False),
+        ('theta', True, True),
+        ('c_theta', -0.1, False),
+        ('c_theta', np.inf, False),
+        ('c_theta', -np.inf, False),
+        ('c_theta', True, True),
+        ('c_theta', [0.15, 0.15], True),
+    ],
+)
+def test_viscous_mixing_length_factor_validation_table(
+    field_name: str, bad_val, static_error: bool
+):
+    """Verify viscous_mixing_length_factor rejects invalid inputs on np and returns NaN under jax.jit."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    r = np.linspace(3.48e6, 6.371e6, 11)
+    ml = np.minimum(r - r[0], r[-1] - r)
+    np_kw = {
+        'radii': r,
+        'r_in': 3.48e6,
+        'r_out': 6.371e6,
+        'mixing_length': ml,
+        's_top_inf': 0.22,
+        'bottom_slope': 1.0,
+        'theta': 10.0,
+        'c_theta': 0.15,
+    }
+    jax_kw = {
+        'radii': jnp.asarray(r),
+        'r_in': 3.48e6,
+        'r_out': 6.371e6,
+        'mixing_length': jnp.asarray(ml),
+        's_top_inf': 0.22,
+        'bottom_slope': 1.0,
+        'theta': jnp.asarray(10.0),
+        'c_theta': 0.15,
+    }
+    jit_fn = jax.jit(lambda kw: viscous_mixing_length_factor(**kw, xp=jnp))
+    _assert_invalid_raises_np_and_nan_jit(
+        viscous_mixing_length_factor,
+        np_kw,
+        jax_kw,
+        jit_fn,
+        field_name,
+        bad_val,
+        static_error=static_error,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_wp5_fixture_grid_bitwise_parity():
+    """Verify bitwise output equivalence against origin/main reference outputs on valid input grid."""
+    from pathlib import Path
+
+    fixture_path = Path(__file__).resolve().parent / 'reference' / 'wp5_main_grid_outputs.npz'
+    data = np.load(fixture_path)
+
+    # 1. compute_arrhenius_enthalpy
+    p_grid = np.linspace(0.0, 135e9, 25)
+    assert np.array_equal(data['enthalpy_arr'], compute_arrhenius_enthalpy(p_grid, xp=np))
+    assert np.array_equal(
+        data['enthalpy_scalar'], np.array(compute_arrhenius_enthalpy(10.0e9, xp=np))
+    )
+
+    # 2. compute_arrhenius_viscosity
+    t_1d = np.linspace(1200.0, 2500.0, 10)
+    p_1d = np.linspace(0.0, 100e9, 10)
+    t_grid, p_grid_2d = np.meshgrid(t_1d, p_1d, indexing='ij')
+    assert np.array_equal(
+        data['viscosity_arr'], compute_arrhenius_viscosity(t_grid, p_grid_2d, xp=np)
+    )
+    assert np.array_equal(
+        data['viscosity_scalar'], np.array(compute_arrhenius_viscosity(1600.0, 10.0e9, xp=np))
+    )
+
+    # 3. compute_yield_stress
+    assert np.array_equal(data['yield_stress_arr'], compute_yield_stress(p_grid, xp=np))
+    assert np.array_equal(
+        data['yield_stress_scalar'], np.array(compute_yield_stress(50.0e9, xp=np))
+    )
+
+    # 4. compute_strain_rate_local
+    v_arr = np.linspace(-1e-8, 1e-8, 20)
+    ml_arr = np.linspace(1e3, 1e6, 20)
+    assert np.array_equal(
+        data['strain_rate_arr'], compute_strain_rate_local(v_arr, ml_arr, xp=np)
+    )
+    assert np.array_equal(
+        data['strain_rate_scalar'], np.array(compute_strain_rate_local(1e-9, 1e5, xp=np))
+    )
+
+    # 5. compute_mlt_top_slope
+    th_arr = np.linspace(-5.0, 50.0, 25)
+    assert np.array_equal(data['top_slope_arr'], compute_mlt_top_slope(th_arr, xp=np))
+    assert np.array_equal(
+        data['top_slope_scalar'], np.array(compute_mlt_top_slope(15.0, xp=np))
+    )
+
+    # 6. viscous_mixing_length_factor
+    radii = np.linspace(3.48e6, 6.371e6, 30)
+    r_in = float(radii[0])
+    r_out = float(radii[-1])
+    ml_col = np.minimum(radii - r_in, r_out - radii)
+    assert np.array_equal(
+        data['vml_none'], viscous_mixing_length_factor(radii, r_in, r_out, ml_col, xp=np)
+    )
+    assert np.array_equal(
+        data['vml_theta'],
+        viscous_mixing_length_factor(radii, r_in, r_out, ml_col, theta=15.0, xp=np),
+    )
+
+    # 7. compute_stagnant_lid_state
+    temp = np.linspace(3000.0, 1500.0, 30)
+    press = np.linspace(135e9, 0.0, 30)
+    conv_flux = np.full(30, 100.0)
+    conv_flux[-5:] = 0.0
+    tot_flux = np.full(30, 100.0)
+    params = SolidRheologyParams(enabled=True)
+    lid_st = compute_stagnant_lid_state(
+        radii=radii,
+        temperature=temp,
+        pressure=press,
+        convective_flux=conv_flux,
+        total_flux=tot_flux,
+        solidus_temperature=None,
+        params=params,
+        melt_fraction=np.zeros(30),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(30, 1e-9),
+        xp=np,
+    )
+    for k, v in lid_st.items():
+        arr = v if isinstance(v, np.ndarray) else np.array(v)
+        assert np.array_equal(data[f'lid_{k}'], arr, equal_nan=True)
+
+    # 8. compute_effective_viscosity
+    tau_d_arr = np.linspace(1e4, 1e8, 20)
+    eta_diff = np.full(20, 1.0e22)
+    w_lid = np.linspace(0.0, 1.0, 20)
+    assert np.array_equal(
+        data['eff_lid'],
+        compute_effective_viscosity(
+            eta_diff=eta_diff,
+            eta_i=1.0e21,
+            tau_d=tau_d_arr,
+            tau_y_lid=50e6,
+            stress_closure_mode='lid',
+            w_lid=w_lid,
+            xp=np,
+        ),
+    )
+    assert np.array_equal(
+        data['eff_local'],
+        compute_effective_viscosity(
+            eta_diff=eta_diff,
+            tau_y=50e6,
+            strain_rate=np.logspace(-18, -12, 20),
+            stress_closure_mode='local',
+            xp=np,
+        ),
+    )
+
+
+def test_scalar_parameters_float32_bitwise_parity() -> None:
+    """Verify scalar parameters passed as np.float32 produce bitwise identical outputs to Python float."""
+    p = 10e9
+
+    # 1. compute_arrhenius_enthalpy
+    for kw, val in [
+        ('g_homologous', 50.0),
+        ('t_sol_0', 1400.0),
+        ('dt_sol_dp', 2.4e-8),
+        ('r_gas', 8.314462618),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_arrhenius_enthalpy(p, **{kw: val32})
+        out64 = compute_arrhenius_enthalpy(p, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_arrhenius_enthalpy failed for {kw}'
+
+    # 2. compute_arrhenius_viscosity
+    for kw, val in [
+        ('viscosity_solid', 1e21),
+        ('g_homologous', 50.0),
+        ('t_sol_0', 1400.0),
+        ('dt_sol_dp', 2.4e-8),
+        ('arrhenius_t_ref', 1600.0),
+        ('r_gas', 8.314462618),
+        ('viscosity_max_log10', 40.0),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_arrhenius_viscosity(1600.0, p, **{kw: val32})
+        out64 = compute_arrhenius_viscosity(1600.0, p, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_arrhenius_viscosity failed for {kw}'
+
+    # 3. compute_yield_stress
+    for kw, val in [
+        ('yield_stress_c', 5e6),
+        ('yield_stress_mu', 0.6),
+        ('yield_stress_max', 1e8),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_yield_stress(p, **{kw: val32})
+        out64 = compute_yield_stress(p, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_yield_stress failed for {kw}'
+
+    # 4. compute_mlt_top_slope
+    for kw, val in [
+        ('s_top_inf', 0.5),
+        ('c_theta', 2.0),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_mlt_top_slope(10.0, **{kw: val32})
+        out64 = compute_mlt_top_slope(10.0, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_mlt_top_slope failed for {kw}'
+
+    # 5. compute_strain_rate_local
+    for kw, val in [
+        ('eps', 1e-15),
+    ]:
+        val32 = np.float32(val)
+        val64 = float(val32)
+        out32 = compute_strain_rate_local(1e-9, 1e5, **{kw: val32})
+        out64 = compute_strain_rate_local(1e-9, 1e5, **{kw: val64})
+        assert np.array_equal(out32, out64), f'compute_strain_rate_local failed for {kw}'
+
+    # 6. viscous_mixing_length_factor
+    r = np.linspace(3480e3, 6371e3, 5)
+    l_mix = np.full(5, 1e4)
+    base_kwargs = {
+        'radii': r,
+        'r_in': 3480e3,
+        'r_out': 6371e3,
+        'mixing_length': l_mix,
+        's_top_inf': 0.5,
+        'bottom_slope': 0.2,
+        'c_theta': 2.0,
+        'theta': 10.0,
+    }
+    for kw in ['r_in', 'r_out', 's_top_inf', 'bottom_slope', 'c_theta']:
+        val32 = np.float32(base_kwargs[kw])
+        val64 = float(val32)
+        out32 = viscous_mixing_length_factor(**{**base_kwargs, kw: val32})
+        out64 = viscous_mixing_length_factor(**{**base_kwargs, kw: val64})
+        assert np.array_equal(out32, out64), f'viscous_mixing_length_factor failed for {kw}'

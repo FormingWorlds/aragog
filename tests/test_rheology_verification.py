@@ -1048,8 +1048,8 @@ def test_rheology_and_lid_branch_coverage():
         1.0e21, rel=1e-12
     )
     assert np.isnan(compute_arrhenius_viscosity(np.nan, 0.0))
-    # Exact by construction: xp.maximum(0.0, ...) clamps negative Byerlee stress to literal 0.0.
-    assert compute_yield_stress(-200.0e6, yield_stress_c=50.0e6, yield_stress_mu=0.6) == 0.0
+    with pytest.raises(ValueError, match='pressure'):
+        compute_yield_stress(-200.0e6, yield_stress_c=50.0e6, yield_stress_mu=0.6)
     with pytest.raises(ValueError, match='eta_diff'):
         compute_effective_viscosity(
             eta_diff=np.inf,

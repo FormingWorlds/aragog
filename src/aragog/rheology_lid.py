@@ -11,6 +11,7 @@ from aragog.rheology import (
     COHESION_FLOOR,
     R_GAS,
     FloatOrArray,
+    _clamp_pressure,
     _is_non_real,
     _require_x64_if_jax,
     _validate_inputs,
@@ -192,6 +193,9 @@ def compute_stagnant_lid_state(
 
     Notes
     -----
+    See ``docs/Explanations/solid_state_convection.md`` for model formulation
+    and derivations.
+
     The Frank-Kamenetskii parameter uses the homologous activation enthalpy at the
     interior pressure ``P_i``:
     ``theta = H(P_i) * (T_i - T_surf) / (R_GAS * T_i**2)`` with
@@ -294,7 +298,7 @@ def compute_stagnant_lid_state(
             ('C4', C4, 'pos', True),
             ('radii', radii, 'finite', False),
             ('temperature', temperature, 'pos', False),
-            ('pressure', pressure, 'nonneg', False),
+            ('pressure', pressure, 'pressure', False),
             ('convective_flux', convective_flux, 'finite', False),
             ('total_flux', total_flux, 'finite', False),
             ('melt_fraction', melt_fraction, 'unit', False),
@@ -310,7 +314,7 @@ def compute_stagnant_lid_state(
         reduce_any=True,
     )
     T = xp.asarray(temperature, dtype=float)
-    P = xp.asarray(pressure, dtype=float)
+    P = _clamp_pressure(pressure, xp)
     F_conv = xp.asarray(convective_flux, dtype=float)
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)
@@ -661,8 +665,8 @@ def compute_effective_viscosity(
                 ('strain_rate', strain_rate, 'nonneg', False),
                 ('unyielded_velocity', unyielded_velocity, 'finite', False),
                 ('mixing_length', mixing_length, 'nonneg', False),
-                ('tau_y', tau_y, 'not_neginf', False),
-                ('tau_y_profile', tau_y_profile, 'not_neginf', False),
+                ('tau_y', tau_y, 'nonneg_or_posinf', False),
+                ('tau_y_profile', tau_y_profile, 'nonneg_or_posinf', False),
             ),
             xp,
         )
@@ -699,8 +703,8 @@ def compute_effective_viscosity(
         (
             ('eta_diff', eta_diff, 'pos', False),
             ('eta_i', eta_i, 'pos', False),
-            ('tau_d', tau_d, 'finite', False),
-            ('tau_y_lid', tau_y_lid, 'not_neginf', False),
+            ('tau_d', tau_d, 'nonneg', False),
+            ('tau_y_lid', tau_y_lid, 'nonneg_or_posinf', False),
             ('w_lid', w_lid, 'unit', False),
         ),
         xp,
