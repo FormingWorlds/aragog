@@ -223,7 +223,7 @@ def test_exact_yield_match():
     eta_diff = 1.0e22
     tau_y = 1.0e8
 
-    # Local mode: strain_rate chosen so eta_y = tau_y / (2 * strain_rate) == eta_diff.
+    # Local mode: at strain_rate_match (eta_y == eta_diff), the 0.01-decade softmin midpoint is eta_diff * 10^(-0.01 * ln 2).
     strain_rate_match = tau_y / (2.0 * eta_diff)
     eta_eff_local = compute_effective_viscosity(
         eta_diff=eta_diff,
@@ -231,7 +231,8 @@ def test_exact_yield_match():
         strain_rate=strain_rate_match,
         stress_closure_mode='local',
     )
-    assert eta_eff_local == pytest.approx(eta_diff, rel=1.0e-12)
+    expected_local_mid = eta_diff * (10.0 ** (-0.01 * np.log(2.0)))
+    assert eta_eff_local == pytest.approx(expected_local_mid, rel=1.0e-12)
     eta_eff_local_2x = compute_effective_viscosity(
         eta_diff=eta_diff,
         tau_y=tau_y,
@@ -512,18 +513,24 @@ def test_molten_column_with_solidus_table_has_no_lid_across_mesh_resolutions():
                     xp=np,
                 )
 
+            w_d_zero = 0.5 * (1.0 + np.tanh(-1.0 / 0.25))
             for sol_arg in (t_sol, None):
                 for dt_above in (100.0, 200.0):
                     t_prof = t_sol + dt_above
-                    for phi_val in (0.03, 0.05, 0.10, 0.41, 0.50):
+                    for phi_val in (0.012, 0.015, 0.02, 0.03, 0.05, 0.10, 0.41, 0.50):
                         state = run(t_prof, conv_flux, phi_val, sol_arg)
                         assert bool(state['has_lid']) is False
                         assert float(state['d_lid']) == 0.0
-                        assert float(radii[-1] - state['r_lid_base']) < 1.0
-                        assert float(state['tau_d']) == 0.0
+                        assert float(radii[-1] - state['r_lid_base']) == 0.0
                         assert float(state['lid_regime']) == 0.0
-                        atol = 1.0e-8 if phi_val == 0.03 else 1.0e-12
-                        np.testing.assert_allclose(state['w_lid'], 0.0, atol=atol)
+                        assert float(state['tau_d']) == pytest.approx(
+                            float(state['tau_d_lid'])
+                            * (float(state['d_lid']) + 1.0e-6)
+                            / (r_out - r_in),
+                            rel=1.0e-12,
+                        )
+                        assert float(state['w_y']) < w_d_zero
+                        np.testing.assert_allclose(state['w_lid'], 0.0, atol=0.0)
 
             # At phi = 0.005 (< SOLIDUS_MELT_FRACTION_THRESHOLD = 0.01) with a cold surface lid and a table,
             # the lid remains active, pinning the solidus melt threshold from both sides.
@@ -1710,9 +1717,12 @@ def test_wp5_fixture_grid_bitwise_parity():
     t_1d = np.linspace(1200.0, 2500.0, 10)
     p_1d = np.linspace(0.0, 100e9, 10)
     t_grid, p_grid_2d = np.meshgrid(t_1d, p_1d, indexing='ij')
-    assert np.array_equal(
-        data['viscosity_arr'], compute_arrhenius_viscosity(t_grid, p_grid_2d, xp=np)
-    )
+    visc_out = compute_arrhenius_viscosity(t_grid, p_grid_2d, xp=np)
+    # Below the softplus ceiling transition (log10(eta) < 38, 93/100 points), bitwise identical to main
+    below_cap = data['viscosity_arr'] < 1.0e38
+    assert int(np.sum(below_cap)) == 93
+    assert np.array_equal(data['viscosity_arr'][below_cap], visc_out[below_cap])
+    assert np.all((visc_out[~below_cap] > 1.0e38) & (visc_out[~below_cap] <= 1.0e40))
     assert np.array_equal(
         data['viscosity_scalar'], np.array(compute_arrhenius_viscosity(1600.0, 10.0e9, xp=np))
     )
@@ -1777,33 +1787,49 @@ def test_wp5_fixture_grid_bitwise_parity():
     )
     for k, v in lid_st.items():
         arr = v if isinstance(v, np.ndarray) else np.array(v)
-        assert np.array_equal(data[f'lid_{k}'], arr, equal_nan=True)
+        if k == 'lid_regime':
+            # Compact quintic surface-solid ramp sets w_sol_phi(0) = 1.0 exactly vs tanh(5.0)
+            expected_regime = data['lid_lid_regime'] / (1.0 - 0.5 * (1.0 - np.tanh(5.0)))
+            assert float(arr) == pytest.approx(float(expected_regime), rel=1.0e-15)
+        else:
+            assert np.array_equal(data[f'lid_{k}'], arr, equal_nan=True)
 
     # 8. compute_effective_viscosity
     tau_d_arr = np.linspace(1e4, 1e8, 20)
     eta_diff = np.full(20, 1.0e22)
     w_lid = np.linspace(0.0, 1.0, 20)
-    assert np.array_equal(
-        data['eff_lid'],
-        compute_effective_viscosity(
-            eta_diff=eta_diff,
-            eta_i=1.0e21,
-            tau_d=tau_d_arr,
-            tau_y_lid=50e6,
-            stress_closure_mode='lid',
-            w_lid=w_lid,
-            xp=np,
-        ),
+    eff_lid_out = compute_effective_viscosity(
+        eta_diff=eta_diff,
+        eta_i=1.0e21,
+        tau_d=tau_d_arr,
+        tau_y_lid=50e6,
+        stress_closure_mode='lid',
+        w_lid=w_lid,
+        xp=np,
     )
-    assert np.array_equal(
-        data['eff_local'],
-        compute_effective_viscosity(
-            eta_diff=eta_diff,
-            tau_y=50e6,
-            strain_rate=np.logspace(-18, -12, 20),
-            stress_closure_mode='local',
-            xp=np,
-        ),
+    w_b_grid = 0.5 * (1.0 + np.tanh((tau_d_arr / 50e6 - 1.0) / 0.025))
+    outside_b1 = (w_b_grid <= 1.0e-15) | (w_b_grid >= 1.0 - 1.0e-15)
+    assert int(np.sum(outside_b1)) == 12
+    assert np.array_equal(data['eff_lid'][outside_b1], eff_lid_out[outside_b1])
+    assert np.all(
+        (eff_lid_out[~outside_b1] > 0.0) & (eff_lid_out[~outside_b1] <= eta_diff[~outside_b1])
+    )
+
+    sr_grid = np.logspace(-18, -12, 20)
+    eff_local_out = compute_effective_viscosity(
+        eta_diff=eta_diff,
+        tau_y=50e6,
+        strain_rate=sr_grid,
+        stress_closure_mode='local',
+        xp=np,
+    )
+    d_loc_grid = (np.log10(eta_diff) - np.log10(50e6 / (2.0 * sr_grid))) / 0.01
+    outside_b3 = np.abs(d_loc_grid) > 40.0
+    assert int(np.sum(outside_b3)) == 17
+    assert np.array_equal(data['eff_local'][outside_b3], eff_local_out[outside_b3])
+    assert np.all(
+        (eff_local_out[~outside_b3] > 0.0)
+        & (eff_local_out[~outside_b3] <= eta_diff[~outside_b3])
     )
 
 
@@ -1892,3 +1918,332 @@ def test_scalar_parameters_float32_bitwise_parity() -> None:
         out32 = viscous_mixing_length_factor(**{**base_kwargs, kw: val32})
         out64 = viscous_mixing_length_factor(**{**base_kwargs, kw: val64})
         assert np.array_equal(out32, out64), f'viscous_mixing_length_factor failed for {kw}'
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_compute_effective_viscosity_lid_tanh_yield_blend():
+    """Verify log10 tanh yield blend in lid mode across transition band and outside d*."""
+    import aragog.rheology_lid as lid_mod
+
+    assert getattr(lid_mod, 'YIELD_BLEND_LOG10_WIDTH', None) == pytest.approx(
+        0.025, rel=1.0e-15
+    )
+    eta_d = 1.0e22
+    eta_i = 1.0e16
+    tau_y = 1.0e7
+
+    # At x = 0.9 and x = 1.1 over 6-decade contrast, ratio to asymptotic branch matches derived values.
+    eta_09 = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            eta_i=eta_i,
+            tau_d=0.9 * tau_y,
+            tau_y_lid=tau_y,
+            w_lid=1.0,
+            stress_closure_mode='lid',
+        )
+    )
+    assert (eta_09 / eta_d) == pytest.approx(0.995412852640275, rel=1.0e-12)
+
+    eta_11 = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            eta_i=eta_i,
+            tau_d=1.1 * tau_y,
+            tau_y_lid=tau_y,
+            w_lid=1.0,
+            stress_closure_mode='lid',
+        )
+    )
+    expected_cap_11 = eta_i / 1.1
+    assert (eta_11 / expected_cap_11) == pytest.approx(1.0046758935808797, rel=1.0e-12)
+
+    # Outside band edge d* = 0.378210, output agrees with hard min closure to 1e-12 relative.
+    d_star = 0.378210
+    for x_out in (1.0 - d_star - 0.01, 0.5, 1.0 + d_star + 0.01, 2.0):
+        val = float(
+            compute_effective_viscosity(
+                eta_diff=eta_d,
+                eta_i=eta_i,
+                tau_d=x_out * tau_y,
+                tau_y_lid=tau_y,
+                w_lid=1.0,
+                stress_closure_mode='lid',
+            )
+        )
+        hard = eta_d if x_out <= 1.0 else min(eta_d, eta_i / x_out)
+        assert val == pytest.approx(hard, rel=1.0e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_compute_arrhenius_viscosity_smooth_ceiling_band():
+    """Verify smooth softplus viscosity ceiling in compute_arrhenius_viscosity."""
+    import jax
+    import jax.numpy as jnp
+
+    import aragog.rheology as rheo_mod
+
+    jax.config.update('jax_enable_x64', True)
+    assert getattr(rheo_mod, 'VISCOSITY_CEILING_LOG10_WIDTH', None) == pytest.approx(
+        0.05, rel=1.0e-15
+    )
+    vmax_log10 = 30.0
+    g_hom = 25.0
+    t_sol_0 = 1400.0
+    t_ref = 1600.0
+    vs = 1.0e21
+    # Temperature where unclipped log10(eta) equals vmax_log10 = 30.0 exactly.
+    target_ln = (vmax_log10 - 21.0) * np.log(10.0)
+    t_cross = (g_hom * t_sol_0) / (target_ln + g_hom * t_sol_0 / t_ref)
+    eta_mid = float(
+        compute_arrhenius_viscosity(
+            t_cross,
+            0.0,
+            viscosity_solid=vs,
+            g_homologous=g_hom,
+            t_sol_0=t_sol_0,
+            dt_sol_dp=0.0,
+            arrhenius_t_ref=t_ref,
+            viscosity_max_log10=vmax_log10,
+        )
+    )
+    expected_mid = 10.0 ** (vmax_log10 - 0.05 * np.log(2.0))
+    assert eta_mid == pytest.approx(expected_mid, rel=1.0e-12)
+
+    grad_log10_fn = jax.grad(
+        lambda t_in: jnp.log10(
+            compute_arrhenius_viscosity(
+                t_in,
+                0.0,
+                viscosity_solid=vs,
+                g_homologous=g_hom,
+                t_sol_0=t_sol_0,
+                dt_sol_dp=0.0,
+                arrhenius_t_ref=t_ref,
+                viscosity_max_log10=vmax_log10,
+                xp=jnp,
+            )
+        )
+    )
+    g_left = float(grad_log10_fn(jnp.asarray(t_cross - 1.0e-6)))
+    g_mid = float(grad_log10_fn(jnp.asarray(t_cross)))
+    g_right = float(grad_log10_fn(jnp.asarray(t_cross + 1.0e-6)))
+    assert np.isfinite(g_mid) and g_mid < 0.0
+    assert abs(g_right - g_left) < 1.0e-7
+
+    # Also verify jax.grad remains finite when viscosity_solid is tiny (1e-300) and vmax_log10 = 40
+    # both at the ceiling crossover temperature (~43.49 K, where exponent = 340 * ln(10) = 782.88 > 709.78)
+    # and in the unclipped regime (300 K).
+    t_cross_tiny = (g_hom * t_sol_0) / (340.0 * np.log(10.0) + g_hom * t_sol_0 / t_ref)
+    grad_tiny_fn = jax.grad(
+        lambda t_in: jnp.log10(
+            compute_arrhenius_viscosity(
+                t_in,
+                0.0,
+                viscosity_solid=1.0e-300,
+                g_homologous=g_hom,
+                t_sol_0=t_sol_0,
+                dt_sol_dp=0.0,
+                arrhenius_t_ref=t_ref,
+                viscosity_max_log10=40.0,
+                xp=jnp,
+            )
+        )
+    )
+    for t_probe in (t_cross_tiny, 300.0):
+        grad_tiny_vs = float(grad_tiny_fn(jnp.asarray(t_probe)))
+        assert np.isfinite(grad_tiny_vs) and grad_tiny_vs < 0.0
+
+    # Outside band edge d* = 1.273466 decades, soft ceiling matches hard min(eta_raw, 10^vmax) to 1e-12.
+    d_star_dec = 1.273466
+    for delta_dec in (-d_star_dec - 0.05, -3.0, d_star_dec + 0.05, 5.0):
+        ln_val = (vmax_log10 + delta_dec - 21.0) * np.log(10.0)
+        t_val = (g_hom * t_sol_0) / (ln_val + g_hom * t_sol_0 / t_ref)
+        eta_val = float(
+            compute_arrhenius_viscosity(
+                t_val,
+                0.0,
+                viscosity_solid=vs,
+                g_homologous=g_hom,
+                t_sol_0=t_sol_0,
+                dt_sol_dp=0.0,
+                arrhenius_t_ref=t_ref,
+                viscosity_max_log10=vmax_log10,
+            )
+        )
+        hard_val = min(vs * np.exp(ln_val), 10.0**vmax_log10)
+        assert eta_val == pytest.approx(hard_val, rel=1.0e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_melt_ramp_compact_quintic_and_solidus_support():
+    """Verify C2 quintic Hermite _melt_ramp on [0.008, 0.012] and compact solidus support."""
+    import jax
+    import jax.numpy as jnp
+
+    import aragog.rheology_lid as lid_mod
+
+    jax.config.update('jax_enable_x64', True)
+    melt_ramp = getattr(lid_mod, '_melt_ramp')
+    c = lid_mod.SOLIDUS_MELT_FRACTION_THRESHOLD
+    w = lid_mod.SOLIDUS_MELT_FRACTION_WIDTH
+    assert c == pytest.approx(0.01, rel=1.0e-15)
+    assert w == pytest.approx(0.002, rel=1.0e-15)
+
+    for phi_low in (0.0, 0.004, 0.008):
+        assert float(melt_ramp(phi_low, c, w, np, compact=True)) == 0.0
+    for phi_high in (0.012, 0.015, 0.02, 0.03, 1.0):
+        assert float(melt_ramp(phi_high, c, w, np, compact=True)) == 1.0
+
+    # At t = 0.25 (phi = 0.009) and t = 0.75 (phi = 0.011), C2 quintic differs from linear ramp.
+    val_009 = float(melt_ramp(0.009, c, w, np, compact=True))
+    val_010 = float(melt_ramp(0.010, c, w, np, compact=True))
+    val_011 = float(melt_ramp(0.011, c, w, np, compact=True))
+    assert val_009 == pytest.approx(
+        (0.25**3) * (10.0 - 15.0 * 0.25 + 6.0 * (0.25**2)), rel=1.0e-14
+    )
+    assert val_010 == pytest.approx(0.5, rel=1.0e-14)
+    assert val_011 == pytest.approx(
+        (0.75**3) * (10.0 - 15.0 * 0.75 + 6.0 * (0.75**2)), rel=1.0e-14
+    )
+
+    grad_1 = jax.grad(lambda x: melt_ramp(x, c, w, jnp, compact=True))
+    grad_2 = jax.grad(grad_1)
+    assert float(grad_1(jnp.asarray(0.010))) == pytest.approx(468.75, rel=1.0e-12)
+    assert float(grad_2(jnp.asarray(0.010))) == pytest.approx(0.0, abs=1.0e-10)
+    for edge in (0.008, 0.012):
+        assert float(grad_1(jnp.asarray(edge))) == pytest.approx(0.0, abs=1.0e-12)
+        assert float(grad_2(jnp.asarray(edge))) == pytest.approx(0.0, abs=1.0e-10)
+
+    # Verify compute_stagnant_lid_state uses SOLIDUS_MELT_FRACTION_WIDTH and C2 quintic at phi = 0.009.
+    r = np.linspace(3.48e6, 6.37e6, 20)
+    p = np.linspace(135.0e9, 1.0e5, 20)
+    t = np.full(20, 2200.0)
+    t[-1] = 300.0
+    fc = np.full(20, 80.0)
+    fc[-1] = 0.0
+    ft = np.full(20, 100.0)
+    phi_prof = np.full(20, 0.05)
+    phi_prof[-1] = 0.009
+    st = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi_prof,
+        params=SolidRheologyParams(enabled=True),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    expected_w_lid_top = (1.0 - val_009) * float(st['w_active'])
+    assert float(st['w_lid'][-1]) == pytest.approx(expected_w_lid_top, rel=1.0e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_compute_effective_viscosity_local_tiny_strain_rate_grad_and_smooth_cap():
+    """Verify finite zero jax.grad at tiny positive strain_rate and 0.01-decade smooth local cap."""
+    import jax
+    import jax.numpy as jnp
+
+    import aragog.rheology_lid as lid_mod
+
+    jax.config.update('jax_enable_x64', True)
+    assert getattr(lid_mod, 'LOCAL_STRAIN_RATE_FLOOR', None) == pytest.approx(
+        1.0e-100, rel=1.0e-15
+    )
+    assert getattr(lid_mod, 'LOCAL_CAP_LOG10_WIDTH', None) == pytest.approx(0.01, rel=1.0e-15)
+
+    eta_d = 1.0e21
+    grad_fn = jax.grad(
+        lambda sr, ty: compute_effective_viscosity(
+            eta_diff=jnp.asarray(eta_d),
+            tau_y=ty,
+            strain_rate=sr,
+            stress_closure_mode='local',
+            xp=jnp,
+        )
+    )
+    for ty_val in (1.0e8, jnp.inf):
+        for sr_tiny in (0.0, 1.0e-300, 1.0e-200, 1.0e-170, 4.0e-151, 1.0e-100):
+            g_val = float(grad_fn(jnp.asarray(sr_tiny), jnp.asarray(ty_val)))
+            assert np.isfinite(g_val)
+            assert g_val == 0.0
+
+    # At crossover sr_cross = tau_y / (2 * eta_d), softmin reduces log10(eta) by 0.01 * ln(2).
+    tau_y = 1.0e8
+    sr_cross = tau_y / (2.0 * eta_d)
+    eta_cross = float(
+        compute_effective_viscosity(
+            eta_diff=eta_d,
+            tau_y=tau_y,
+            strain_rate=sr_cross,
+            stress_closure_mode='local',
+        )
+    )
+    assert eta_cross == pytest.approx(eta_d * (10.0 ** (-0.01 * np.log(2.0))), rel=1.0e-12)
+
+    # Outside band edge d* = 0.238599 decades, local mode agrees with hard min to 1e-12.
+    d_star = 0.238599
+    for delta_dec in (-d_star - 0.02, -1.0, d_star + 0.02, 1.0):
+        sr_test = sr_cross * (10.0**delta_dec)
+        val = float(
+            compute_effective_viscosity(
+                eta_diff=eta_d,
+                tau_y=tau_y,
+                strain_rate=sr_test,
+                stress_closure_mode='local',
+            )
+        )
+        hard = min(eta_d, tau_y / (2.0 * sr_test))
+        assert val == pytest.approx(hard, rel=1.0e-12)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_is_non_real_direct_rejection_and_nonuniform_lid_bound():
+    """Verify _is_non_real directly on non-real inputs and check non-uniform d_lid_raw upper bound."""
+    from decimal import Decimal
+    from fractions import Fraction
+
+    from aragog.rheology import _is_non_real
+
+    for bad_input in (
+        True,
+        False,
+        np.bool_(True),
+        '100.0',
+        b'100.0',
+        1.0 + 2.0j,
+        1.0 + 0.0j,
+        np.complex128(3.0),
+        None,
+        Decimal('1.25'),
+        Fraction(3, 2),
+        [1.0, 2, Decimal('3.0')],
+        [1.0, None],
+        [1.0, 'a'],
+        [1.0, True],
+        np.array([1.0, 'a'], dtype=object),
+        np.array([1.0, None], dtype=object),
+    ):
+        assert _is_non_real(bad_input) is True
+
+    for good_input in (
+        0,
+        1,
+        -5,
+        1.5,
+        np.float64(2.5),
+        np.int64(3),
+        [1.0, 2, 3.0],
+        np.array([1.0, 2.0, 3.0]),
+    ):
+        assert _is_non_real(good_input) is False

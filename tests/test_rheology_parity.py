@@ -349,13 +349,19 @@ def test_lid_state_and_effective_viscosity_parity(regime: str):
             assert float(state_np['w_y']) > 0.99
             assert float(state_np['lid_regime']) > 1.99
     elif regime in ('no_lid', 'mushy'):
-        # if_lid sets non-lid diagnostics to literal 0.0.
+        # Non-lid profiles have d_lid == 0.0 and tau_d/v_m scaled by the smooth no-lid gate w_d(0).
+        w_d_zero = 0.5 * (1.0 + np.tanh(-4.0))
         assert state_np['d_lid'] == 0.0, f'{regime} must suppress stagnant lid formation'
-        assert state_np['lid_regime'] == 0.0, f'{regime} must have lid_regime == 0'
-        assert state_np['tau_d'] == 0.0, f'{regime} must have tau_d == 0'
-        assert state_np['v_m'] == 0.0, f'{regime} must have v_m == 0'
+        if regime == 'mushy':
+            assert state_np['lid_regime'] == 0.0, f'{regime} must have lid_regime == 0'
+        else:
+            assert state_np['lid_regime'] < (w_d_zero**2)
+        assert float(state_np['w_y']) < w_d_zero
+        assert float(state_np['tau_d']) == pytest.approx(
+            float(state_np['tau_d_lid']) * 1.0e-6 / (radii[-1] - radii[0]), rel=1.0e-12
+        )
     elif regime == 'inactive_convection':
-        # if_lid sets inactive-convection diagnostics to literal 0.0.
+        # Zero convective flux gives w_weight == 0.0, setting inactive-convection diagnostics to literal 0.0.
         assert state_np['d_lid'] == 0.0
         assert state_np['tau_d'] == 0.0
 
@@ -906,7 +912,9 @@ def test_local_stress_closure_min_form_parity():
         err_msg='Mismatch in local mode eta_eff between NumPy and JAX',
     )
     assert eta_eff_np[0] == pytest.approx(eta_diff[0], rel=1.0e-12)
-    assert eta_eff_np[1] == pytest.approx(eta_diff[1], rel=1.0e-12)
+    assert eta_eff_np[1] == pytest.approx(
+        eta_diff[1] * (10.0 ** (-0.01 * np.log(2.0))), rel=1.0e-12
+    )
     expected_eta_y = tau_y[2] / (2.0 * sr[2])
     assert eta_eff_np[2] == pytest.approx(expected_eta_y, rel=1.0e-12)
     assert eta_eff_np[3] == pytest.approx(eta_diff[3], rel=1.0e-12)
