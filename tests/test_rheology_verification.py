@@ -3436,3 +3436,111 @@ def test_stagnant_lid_local_rms_floor_p5_profile_floored_at_1e_minus_3_wm2():
     f_10 = float(np.clip(fc[10] / f_tot_safe[10], 0.0, 1.0))
     assert f_10 < 0.01
     assert f_10 == pytest.approx(0.99 * 1.0e-3 / (1.0e-3 * 6324.7134), rel=1.0e-3)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_stagnant_lid_ti_jax_gradient_zero_at_saturated_flux_fraction():
+    """Verify jax.grad of T_i and eta_i equals finite differences (0) at saturated f == 1 nodes.
+
+    Raising F_conv at a saturated node leaves f at the cap and lowering it leaves
+    f_int_max at 1 through the other tied nodes, so finite differences are zero; a [0, 1]
+    clip passes half the gradient at the cap and the max tie then gives T_i a large gradient.
+    """
+    jax = pytest.importorskip('jax')
+    import jax.numpy as jnp
+    from scipy.special import erf
+
+    jax.config.update('jax_enable_x64', True)
+    params = SolidRheologyParams(enabled=True)
+
+    # N = 40 erf profile where F_conv equals F_tot to round-off over deep interior nodes.
+    n40 = 40
+    dlt = 1.5e5
+    r40 = np.linspace(3.48e6, 6.371e6, n40)
+    z40 = r40[-1] - r40
+    t40 = 300.0 + 1300.0 * erf(z40 / dlt)
+    p40 = 4000.0 * 9.81 * z40
+    ft40 = 0.08 * np.ones(n40) + 0.02 * (r40 - r40[0]) / (r40[-1] - r40[0])
+    fc40 = ft40 * (1.0 - np.exp(-((z40 / dlt) ** 2)))
+    phi40 = np.zeros(n40)
+
+    def eval_40(fc_arr, key, xp):
+        st = compute_stagnant_lid_state(
+            radii=r40,
+            temperature=t40,
+            pressure=p40,
+            convective_flux=fc_arr,
+            total_flux=ft40,
+            solidus_temperature=None,
+            melt_fraction=phi40,
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=xp,
+        )
+        return st[key]
+
+    node = 13
+    t_i_40_0 = float(eval_40(fc40, 'T_i', np))
+    eta_i_40_0 = float(eval_40(fc40, 'eta_i', np))
+    for h_rel in (1.0e-3, 1.0e-5, 1.0e-7):
+        step = h_rel * fc40[node]
+        fc_plus = fc40.copy()
+        fc_plus[node] += step
+        fc_minus = fc40.copy()
+        fc_minus[node] -= step
+        fd_right_ti = (float(eval_40(fc_plus, 'T_i', np)) - t_i_40_0) / step
+        fd_left_ti = (t_i_40_0 - float(eval_40(fc_minus, 'T_i', np))) / step
+        assert fd_right_ti == 0.0
+        assert fd_left_ti == 0.0
+        fd_right_eta = (float(eval_40(fc_plus, 'eta_i', np)) - eta_i_40_0) / step
+        fd_left_eta = (eta_i_40_0 - float(eval_40(fc_minus, 'eta_i', np))) / step
+        assert fd_right_eta == 0.0
+        assert fd_left_eta == 0.0
+
+    ad_ti_40 = np.asarray(jax.grad(lambda x: eval_40(x, 'T_i', jnp))(jnp.asarray(fc40)))
+    ad_eta_40 = np.asarray(jax.grad(lambda x: eval_40(x, 'eta_i', jnp))(jnp.asarray(fc40)))
+    assert np.all(np.isfinite(ad_ti_40))
+    assert np.all(np.isfinite(ad_eta_40))
+    assert ad_ti_40[node] == 0.0
+    assert ad_eta_40[node] == 0.0
+
+    # N = 10 profile with interior nodes 1..6 saturated at f == 1 and node 7 at f == 0.9.
+    n = 10
+    r = np.linspace(3.48e6, 6.371e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.linspace(2600.0, 300.0, n)
+    ft = np.full(n, 0.1)
+    fc = ft.copy()
+    fc[7:] = (0.09, 0.05, 0.0)
+    phi = np.zeros(n)
+
+    def t_i(fc_arr, xp):
+        st = compute_stagnant_lid_state(
+            radii=r,
+            temperature=t,
+            pressure=p,
+            convective_flux=fc_arr,
+            total_flux=ft,
+            solidus_temperature=None,
+            melt_fraction=phi,
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=xp,
+        )
+        return st['T_i']
+
+    t_i_0 = float(t_i(fc, np))
+    for k in (2, 3, 4):
+        for h in (1.0e-3, -1.0e-3):
+            fc_h = fc.copy()
+            fc_h[k] += h
+            assert abs(float(t_i(fc_h, np)) - t_i_0) < 1.0e-9
+    grad = np.asarray(jax.grad(lambda x: t_i(x, jnp))(jnp.asarray(fc)))
+    assert np.all(np.isfinite(grad))
+    assert np.max(np.abs(grad[1:7])) == 0.0
+    assert abs(grad[7]) > 1.0
