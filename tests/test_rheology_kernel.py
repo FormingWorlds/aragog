@@ -2408,13 +2408,13 @@ def test_is_non_real_direct_rejection_and_nonuniform_lid_bound():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_arrhenius_viscosity_grad_finite_at_masked_invalid_nodes():
-    """Verify jax.grad is zero, not NaN, at nodes with T <= 0 or water_prefactor <= 0 masked out."""
+    """Verify jax.grad is zero, not NaN, when non-positive or NaN T, water_prefactor, or t_ref are masked."""
     jax = pytest.importorskip('jax')
     import jax.numpy as jnp
 
     jax.config.update('jax_enable_x64', True)
-    mask = jnp.array([True, True, False])
-    pressure = jnp.array([1.0e9, 2.0e9, 3.0e9])
+    mask = jnp.array([True, True, False, False, False])
+    pressure = jnp.array([1.0e9, 2.0e9, 3.0e9, 4.0e9, 5.0e9])
 
     def masked_sum(temperature, water_prefactor):
         eta = compute_arrhenius_viscosity(
@@ -2422,19 +2422,42 @@ def test_arrhenius_viscosity_grad_finite_at_masked_invalid_nodes():
         )
         return jnp.sum(jnp.where(mask, jnp.log10(eta), 0.0))
 
-    t_bad = jnp.array([1500.0, 1700.0, 0.0])
-    wp_bad = jnp.array([1.0, 1.0, -1.0])
-    grad_t = np.asarray(jax.grad(masked_sum, argnums=0)(t_bad, jnp.ones(3)))
-    grad_wp = np.asarray(jax.grad(masked_sum, argnums=1)(t_bad.at[2].set(1600.0), wp_bad))
-    assert np.all(np.isfinite(grad_t)) and grad_t[2] == 0.0
-    assert np.all(np.isfinite(grad_wp)) and grad_wp[2] == 0.0
+    t_valid = jnp.array([1500.0, 1700.0, 1600.0, 1600.0, 1600.0])
+    wp_valid = jnp.ones(5)
+    t_bad = jnp.array([1500.0, 1700.0, 0.0, -100.0, jnp.nan])
+    wp_bad = jnp.array([1.0, 1.0, 0.0, -1.0, jnp.nan])
+
+    grad_t = np.asarray(jax.grad(masked_sum, argnums=0)(t_bad, wp_valid))
+    grad_wp = np.asarray(jax.grad(masked_sum, argnums=1)(t_valid, wp_bad))
+    assert np.all(np.isfinite(grad_t)) and np.all(grad_t[2:] == 0.0)
+    assert np.all(np.isfinite(grad_wp)) and np.all(grad_wp[2:] == 0.0)
     # d log10(eta) / dT = -H(P) / (R T^2 ln 10) at the valid nodes.
     h = np.asarray(compute_arrhenius_enthalpy(np.asarray(pressure[:2])))
     expected = -h / (R_GAS * np.array([1500.0, 1700.0]) ** 2 * np.log(10.0))
     np.testing.assert_allclose(grad_t[:2], expected, rtol=1.0e-12)
     np.testing.assert_allclose(grad_wp[:2], 1.0 / np.log(10.0), rtol=1.0e-12)
-    # The invalid node itself still returns NaN.
-    assert np.isnan(float(compute_arrhenius_viscosity(t_bad, pressure, xp=jnp)[2]))
+    # The invalid nodes themselves still return NaN.
+    eta_bad_t = np.asarray(compute_arrhenius_viscosity(t_bad, pressure, xp=jnp))
+    eta_bad_wp = np.asarray(
+        compute_arrhenius_viscosity(t_valid, pressure, water_prefactor=wp_bad, xp=jnp)
+    )
+    assert np.all(np.isnan(eta_bad_t[2:]))
+    assert np.all(np.isnan(eta_bad_wp[2:]))
+
+    # Masked arrhenius_t_ref gradient is finite (0.0) at non-positive and NaN t_ref.
+    def masked_t_ref_loss(t_ref):
+        eta = compute_arrhenius_viscosity(
+            t_valid[:2], pressure[:2], arrhenius_t_ref=t_ref, xp=jnp
+        )
+        return jnp.where(t_ref > 0.0, jnp.sum(jnp.log10(eta)), 0.0)
+
+    for bad_t_ref in (0.0, -100.0, jnp.nan):
+        g_tr = float(jax.grad(masked_t_ref_loss)(jnp.asarray(bad_t_ref, dtype=jnp.float64)))
+        assert np.isfinite(g_tr) and g_tr == 0.0
+    g_tr_valid = float(jax.grad(masked_t_ref_loss)(jnp.asarray(1600.0)))
+    h_0 = float(compute_arrhenius_enthalpy(0.0))
+    expected_tr = 2.0 * h_0 / (R_GAS * 1600.0**2 * np.log(10.0))
+    assert g_tr_valid == pytest.approx(expected_tr, rel=1.0e-12)
 
 
 @pytest.mark.unit
