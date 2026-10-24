@@ -1,4 +1,13 @@
-"""Stagnant lid boundary layer indicators and effective viscosity closures."""
+"""Stagnant lid boundary layer indicators and effective viscosity closures.
+
+Intentional non-smooth switches retained for boolean diagnostics and physical bounds
+are ``is_convecting``, ``has_lid``, the ``is_convecting`` gate on ``v_i``, the
+``[0, 1]`` clip on ``f``, ``f_int_max = max(f * interior_node_mask)``,
+``max(T_i, 1.0)``, ``max(H_T_i, 1.0e-6)``, ``DeltaT_conv = max(T_i - T_surf, 1.0e-6)``,
+``max(theta, 1.0e-6)``, ``max(Ra_rh_raw, 1.0e-30)``, the elementwise maxima in
+``w_interior`` and ``w_hot_sol``, ``dTdr_floor`` with ``max(dr_min, 1.0)``, the
+``r[-1] - r[0]`` cap on ``delta_rh``, and the ``COHESION_FLOOR`` yield-stress clamp.
+"""
 
 from __future__ import annotations
 
@@ -292,16 +301,29 @@ def compute_stagnant_lid_state(
     (``d_lid``, ``Ra_eff``, ``Ra_rh``, ``v_m``, ``tau_d``, ``tau_d_lid``,
     ``tau_buoy``, ``tau_d_over_tau_buoy``, ``w_y``, ``lid_regime``) are smoothly
     gated by ``w_lid_present = w_d * w_T * w_act_gate * w_sum_gate * w_weight``
-    (which vanishes identically when ``d_lid_raw <= 0``, ``T_i - T_surf <= 0``,
-    or ``W_sum <= 0``) and ``has_lid`` is False, while ``T_i``, ``eta_i``,
-    ``mu_i``, and ``theta`` serve as interior fallback diagnostics and all
-    solver-facing outputs vary continuously across uniform convective flux
-    fractions ``f`` in ``[0, 1e-3]``. Intentional non-smooth switches retained
-    for boolean diagnostics and physical bounds are ``is_convecting``,
-    ``has_lid``, the ``is_convecting`` gate on the diagnostic ``v_i``, the
-    ``[0, 1]`` clip on ``f``, the elementwise maxima in ``w_interior`` and
-    ``w_hot_sol``, the temperature-gradient floor ``dTdr_floor`` in ``delta_rh``,
-    and the domain-thickness cap ``r[-1] - r[0]`` on ``delta_rh``.
+    (where ``w_d`` and ``w_sum_gate`` are $C^0$ with a one-sided slope at the
+    domain edge ``d_lid_raw >= 0`` and ``W_sum >= 0``, and ``w_T`` uses the $C^1$
+    positive part ``where(dT_lid > 0, dT_lid * tanh(dT_lid / (0.3 * NO_LID_DT_WIDTH)), 0)``
+    so ``w_lid_present`` vanishes identically when ``d_lid_raw <= 0``,
+    ``T_i - T_surf <= 0``, or ``W_sum <= 0``) and ``has_lid`` is False, while
+    ``T_i``, ``eta_i``, ``mu_i``, and ``theta`` serve as interior fallback
+    diagnostics and all solver-facing outputs vary continuously across uniform
+    convective flux fractions ``f`` in ``[0, 1e-3]``. Intentional non-smooth
+    switches retained for boolean diagnostics and physical bounds are
+    ``is_convecting``, ``has_lid``, the ``is_convecting`` gate on the diagnostic
+    ``v_i``, the ``[0, 1]`` clip on ``f``, ``f_int_max = max(f * interior_node_mask)``,
+    ``max(T_i, 1.0)``, ``max(H_T_i, 1.0e-6)``,
+    ``DeltaT_conv = max(T_i - T_surf, 1.0e-6)``, ``max(theta, 1.0e-6)``,
+    ``max(Ra_rh_raw, 1.0e-30)``, the elementwise maxima in ``w_interior`` and
+    ``w_hot_sol``, the temperature-gradient floor ``dTdr_floor`` with
+    ``max(dr_min, 1.0)`` in ``delta_rh``, the domain-thickness cap ``r[-1] - r[0]``
+    on ``delta_rh``, and the ``COHESION_FLOOR`` clamp on yield stress (while the
+    5-node local interior RMS ``|F_tot|`` floor
+    ``F_tot_floor = _softmax2(F_TOT_FLOOR_FRAC * F_loc_rms, 1.0e-12, 0.01 * 1.0e-12)``
+    replaces boundary nodes ``k = 0`` and ``k = N - 1`` by their adjacent interior
+    nodes ``F_tot[1]`` and ``F_tot[N - 2]`` for ``N > 3`` before 2-node edge
+    replication, contains no ``min`` or ``max``, and differs from a scalar ``1.0e-12``
+    floor only at nodes where ``F_conv > 0`` and ``|F_tot| < 0.14 * F_loc_rms``).
 
     The lid-base locator ``W_base_tilde = _boundary_weights(w_interior, xp)[0]`` scans
     ``w_interior`` (smoothed over the local cell temperature step
@@ -386,23 +408,23 @@ def compute_stagnant_lid_state(
     F_tot = xp.asarray(total_flux, dtype=float)
     phi = xp.asarray(melt_fraction, dtype=float)
 
+    # 5-node local interior RMS floor: replace boundary nodes (0, N-1) with (1, N-2) for N > 3
+    # and replicate 2 edge nodes; differs from 1e-12 only where F_conv > 0 and |F_tot| < 0.14 * F_loc_rms.
     n_nodes = r.shape[0]
     F_pad = xp.concatenate([F_tot[1:2], F_tot[1:-1], F_tot[-2:-1]]) if n_nodes > 3 else F_tot
-    F_left = xp.concatenate([F_pad[:1], F_pad[:-1]])
-    F_right = xp.concatenate([F_pad[1:], F_pad[-1:]])
-    d_zero = xp.maximum(
-        0.0,
-        xp.maximum(
-            xp.minimum(F_left, xp.minimum(F_pad, F_right)),
-            -xp.maximum(F_left, xp.maximum(F_pad, F_right)),
-        ),
+    F_ext = xp.concatenate([F_pad[:1], F_pad[:1], F_pad, F_pad[-1:], F_pad[-1:]])
+    F_loc_rms = xp.sqrt(
+        0.2
+        * (
+            F_ext[:-4] ** 2
+            + F_ext[1:-3] ** 2
+            + F_ext[2:-2] ** 2
+            + F_ext[3:-1] ** 2
+            + F_ext[4:] ** 2
+        )
+        + 1.0e-300
     )
-    F_ref = xp.minimum(xp.sqrt(F_left**2 + 1.0e-300), xp.sqrt(F_right**2 + 1.0e-300))
-    F_tot_rms = xp.sqrt(xp.mean(F_tot**2) + 1.0e-300)
-    w_zero_cross = xp.exp(-((d_zero / (1.0e-3 * F_ref + 1.0e-30)) ** 2))
-    F_tot_floor = _softmax2(
-        w_zero_cross * F_TOT_FLOOR_FRAC * F_tot_rms, 1.0e-12, 0.01 * 1.0e-12, xp
-    )
+    F_tot_floor = _softmax2(F_TOT_FLOOR_FRAC * F_loc_rms, 1.0e-12, 0.01 * 1.0e-12, xp)
     F_tot_abs = xp.sqrt(F_tot**2 + 1.0e-60)
     F_tot_safe = _softmax2(F_tot_abs, F_tot_floor, 0.01 * F_tot_floor, xp)
     f = xp.clip(xp.maximum(F_conv, 0.0) / F_tot_safe, 0.0, 1.0)
@@ -549,11 +571,10 @@ def compute_stagnant_lid_state(
         & (d_lid_raw > NO_LID_THICKNESS_THRESHOLD)
     )
     dT_lid = xp.sum(W_tilde * (T - T_surf))
-    dT_pos = (
-        dT_lid
-        * xp.tanh(dT_lid / (0.3 * NO_LID_DT_WIDTH))
-        * 0.5
-        * (1.0 + xp.tanh((dT_lid + 20.0 * NO_LID_DT_WIDTH) / NO_LID_DT_WIDTH))
+    dT_pos = xp.where(
+        dT_lid > 0.0,
+        dT_lid * xp.tanh(dT_lid / (0.3 * NO_LID_DT_WIDTH)),
+        0.0,
     )
     w_d = _melt_ramp(
         d_lid_raw, NO_LID_THICKNESS_THRESHOLD, NO_LID_THICKNESS_WIDTH, xp, compact=False

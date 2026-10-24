@@ -2525,9 +2525,9 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     # 1. Row 12: sign-changing F_tot with zero crossing at interior node k0 and tiny dust F_conv.
     f_tot_sign = np.linspace(-100.0, 100.0, n)
     f_tot_sign[10] = 0.0
-    f_tot_rms = float(np.sqrt(np.mean(f_tot_sign**2)))
+    f_loc_rms_10 = float(np.sqrt(np.mean(f_tot_sign[8:13] ** 2)))
     f_conv_spike = np.zeros(n)
-    f_conv_spike[10] = 0.025 * (0.1 * f_tot_rms)
+    f_conv_spike[10] = 0.025 * (0.1 * f_loc_rms_10)
     st_spike = compute_stagnant_lid_state(
         radii=r,
         temperature=t,
@@ -2547,12 +2547,13 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     assert float(st_spike['w_active']) == pytest.approx(expected_w_active_spike, rel=1.0e-9)
     assert bool(st_spike['has_lid']) is False
 
-    # Also verify inter-nodal sign change (|F_tot[10]| = 5.263 < 0.1 * F_tot_rms = 6.070 W/m^2)
-    # activates F_TOT_FLOOR_FRAC: f[10] = 0.048 < 0.05 when floored, vs 0.05536 > 0.05 unfloored.
+    # Also verify inter-nodal sign change (|F_tot[10]| = 1.0 < 0.1 * F_loc_rms[10] = 1.488 W/m^2)
+    # activates F_TOT_FLOOR_FRAC: f[10] = 0.048 < 0.05 when floored, vs 0.0714 > 0.05 unfloored.
     f_tot_internodal = np.linspace(-100.0, 100.0, n)
-    f_tot_rms_in = float(np.sqrt(np.mean(f_tot_internodal**2)))
+    f_tot_internodal[9:11] = np.array([-1.0, 1.0])
+    f_loc_rms_in = float(np.sqrt(np.mean(f_tot_internodal[8:13] ** 2)))
     f_conv_in = np.zeros(n)
-    f_conv_in[10] = 0.048 * (0.1 * f_tot_rms_in)
+    f_conv_in[10] = 0.048 * (0.1 * f_loc_rms_in)
     st_internodal = compute_stagnant_lid_state(
         radii=r,
         temperature=t,
@@ -2568,7 +2569,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         xp=np,
     )
     smax2 = getattr(lid_mod, '_softmax2')
-    f_floor_in = float(smax2(0.1 * f_tot_rms_in, 1.0e-12, 0.01 * 1.0e-12, np))
+    f_floor_in = float(smax2(0.1 * f_loc_rms_in, 1.0e-12, 0.01 * 1.0e-12, np))
     f_safe_10 = float(smax2(abs(f_tot_internodal[10]), f_floor_in, 0.01 * f_floor_in, np))
     expected_w_active_in = 0.5 * (1.0 + np.tanh((f_conv_in[10] / f_safe_10 - 0.05) / 0.01))
     assert float(st_internodal['w_active']) == pytest.approx(expected_w_active_in, rel=1.0e-9)
@@ -2880,16 +2881,15 @@ def test_stagnant_lid_flux_floor_zero_crossing_width():
     ft_cross = np.linspace(-100.0, 100.0, n)
     ft_cross[10] = 0.0
     f_pad20 = np.concatenate([ft_cross[1:2], ft_cross[1:-1], ft_cross[-2:-1]])
-    f_ext20 = np.concatenate([f_pad20[:1], f_pad20[:1], f_pad20, f_pad20[-1:], f_pad20[-1:]])
     f_loc_rms_10 = float(
         np.sqrt(
             0.2
             * (
-                f_ext20[8] ** 2
-                + f_ext20[9] ** 2
-                + f_ext20[10] ** 2
-                + f_ext20[11] ** 2
-                + f_ext20[12] ** 2
+                f_pad20[8] ** 2
+                + f_pad20[9] ** 2
+                + f_pad20[10] ** 2
+                + f_pad20[11] ** 2
+                + f_pad20[12] ** 2
             )
         )
     )
