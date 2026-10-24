@@ -173,3 +173,20 @@ class Helper:
 @pytest.fixture(scope='module')
 def helper():
     return Helper()
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionstart(session):
+    """Print the data summary of every rendered validation plot, for the platform comparison."""
+    import json
+
+    from proteus_mpl import validation
+
+    render = validation.render
+
+    def logged(*args, **kwargs):
+        files, summary = render(*args, **kwargs)
+        warnings.warn(f'PILOT-SUMMARY {args[1]} {json.dumps(summary)}', stacklevel=2)
+        return files, summary
+
+    validation.render = logged

@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:description>test: tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space[0.1]; command: pytest 'tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space[0.1]' --validation-plots</dc:description>
+    <dc:description>test: tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space[0.1]; command: pytest 'tests/test_core_layer.py::test_a_young_layer_follows_the_erfc_solution_of_a_half_space[0.1]' --validation-plots; summary: {"axes": [{"lines": [[13, 1.0, 37.90024197979272, 17.203233993860785, -0.021575216626792508, 2.000335099899167, 0.4635526584222581], [13, 1.0, 37.90024197979272, 17.203233993860785, -0.02147987618263869, 2.0085919484035912, 0.46683775846745096]], "collections": [], "images": []}, {"lines": [[13, 1.0, 37.90024197979272, 17.203233993860785, 9.53404441538172e-05, 0.008256848504424319, 0.003285100045192855], [2, 0.0, 1.0, 0.5, 0.02000335099899167, 0.02000335099899167, 0.02000335099899167]], "collections": [], "images": []}]}</dc:description>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
