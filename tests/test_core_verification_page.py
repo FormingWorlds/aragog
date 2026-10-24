@@ -14,7 +14,7 @@ import pytest
 from tests.conftest import needs_eos
 
 ROOT = Path(__file__).resolve().parents[1]
-PAGE = ROOT / 'docs' / 'Explanations' / 'core_verification.md'
+PAGE = ROOT / 'docs' / 'Validation' / 'core.md'
 VALUES = json.loads(
     (ROOT / 'docs' / 'figures' / 'vv' / 'core_verification_values.json').read_text()
 )

@@ -215,7 +215,7 @@ The shell must hold the layer and lie above the inner core. The solver refuses a
 
 The resolved layer is experimental, and the solver warns once when `stratification = true`.
 
-Against the `leeds_thermal` model, integrated alone with SciPy BDF, it reproduces a layer under a CMB flow below the conducted adiabatic flow, with heat removed, added or neither at the CMB; when the flow rises above that value the two models erode the layer differently (aragog mixes it from the CMB down, `leeds_thermal` removes it in one step of its stability check), and when the flow falls back both form a new layer of similar depth ([verification, section 13](core_verification.md#13-stable-layer-against-thermal_history)); it meets its analytic limits and resumes where it stopped, and its NumPy and JAX right-hand sides match ([section 12](core_verification.md#12-numpy-and-jax-right-hand-sides-and-the-analytic-jacobian)).
+Against the `leeds_thermal` model, integrated alone with SciPy BDF, it reproduces a layer under a CMB flow below the conducted adiabatic flow, with heat removed, added or neither at the CMB; when the flow rises above that value the two models erode the layer differently (aragog mixes it from the CMB down, `leeds_thermal` removes it in one step of its stability check), and when the flow falls back both form a new layer of similar depth ([verification, section 13](../Validation/core.md#13-stable-layer-against-thermal_history)); it meets its analytic limits and resumes where it stopped, and its NumPy and JAX right-hand sides match ([section 12](../Validation/core.md#12-numpy-and-jax-right-hand-sides-and-the-analytic-jacobian)).
 
 In the solver, an eroding layer stalls CVODE at the default tolerances: the step size collapses where the mixing switches on in the eroding cells. In the SciPy BDF comparison the centre temperature and the inner-core onset have not converged at a relative tolerance of 1e-8, and the comparison runs at 1e-11; the `solver.rtol` that CVODE needs for them is not measured.
 
@@ -230,7 +230,7 @@ Without a layer the smoke tests hold $10^{-6}$:
 
 - with Radau at an rtol of $10^{-6}$;
 - with CVODE at the default rtol for a hot core above the onset;
-- with CVODE at an rtol of $10^{-10}$ across the inner-core onset, which closes to $1.5 \times 10^{-6}$ at the default rtol ([verification, section 9](core_verification.md#9-a-cvode-solve-across-the-inner-core-onset)).
+- with CVODE at an rtol of $10^{-10}$ across the inner-core onset, which closes to $1.5 \times 10^{-6}$ at the default rtol ([verification, section 9](../Validation/core.md#9-a-cvode-solve-across-the-inner-core-onset)).
 
 ## `quasi_steady`
 

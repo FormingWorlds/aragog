@@ -53,11 +53,14 @@ nav:
           - CVODE and JAX: Explanations/cvode_jax.md
           - JAX Jacobian factory: Explanations/jax_jacobian_factory.md
           - Melt-fraction step cap: Explanations/phi_step_cap_rationale.md
-      - Diagnostics & verification:
+      - Diagnostics:
           - EOS sanity checks: Explanations/eos_sanity_checks.md
           - Energy diagnostics: Explanations/energy_diagnostics.md
-          - First-principles verification: Explanations/verification.md
-          - Core module verification: Explanations/core_verification.md
+
+  - Validation:
+      - Overview: Validation/index.md
+      - Core: Validation/core.md
+      - Numerics: Validation/numerics.md
 
   - Reference:
       - API reference:
