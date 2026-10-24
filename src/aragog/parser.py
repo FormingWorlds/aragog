@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import tomllib  # noqa: F401
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Self
@@ -35,6 +36,7 @@ from aragog.config.phases import (
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
 )
+from aragog.rheology import SolidRheologyParams, delegate_rheology, merge_rheology
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -343,6 +345,10 @@ class _PhaseMixedParameters:
             )
 
 
+_PHASE_VISCOSITY_MISSING = object()
+
+
+@delegate_rheology
 @dataclass
 class _PhaseParameters:
     """Stores settings in a phase section in the configuration data.
@@ -359,6 +365,34 @@ class _PhaseParameters:
     thermal_expansivity: float | str
     viscosity: float | str
     entropy: float | str = ''
+    rheology: SolidRheologyParams = field(default_factory=SolidRheologyParams)
+
+    def __init__(
+        self,
+        density: float | str,
+        heat_capacity: float | str,
+        melt_fraction: float,
+        thermal_conductivity: float | str,
+        thermal_expansivity: float | str,
+        viscosity: float | str = _PHASE_VISCOSITY_MISSING,  # type: ignore[assignment]
+        entropy: float | str = '',
+        rheology: SolidRheologyParams | Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if viscosity is _PHASE_VISCOSITY_MISSING:
+            raise TypeError(
+                "_PhaseParameters.__init__() missing 1 required positional argument: 'viscosity'"
+            )
+        if viscosity is None:
+            raise ValueError('_PhaseParameters.viscosity must not be None.')
+        self.density = density
+        self.heat_capacity = heat_capacity
+        self.melt_fraction = melt_fraction
+        self.thermal_conductivity = thermal_conductivity
+        self.thermal_expansivity = thermal_expansivity
+        self.viscosity = viscosity
+        self.entropy = entropy
+        self.rheology = merge_rheology(rheology, kwargs)
 
 
 _PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
@@ -598,8 +632,13 @@ class Parameters:
             try:
                 init_dict[section_name] = dataclass_(**section)
             except TypeError as exc:
+                err_sec = (
+                    f'{section_name}.rheology] of [{section_name}'
+                    if dataclass_ is _PhaseParameters and 'rheology' in section
+                    else section_name
+                )
                 raise ValueError(
-                    f'Configuration error in [{section_name}] of {path.name}: {exc}'
+                    f'Configuration error in [{err_sec}] of {path.name}: {exc}'
                 ) from exc
 
         radionuclides: list[_Radionuclide] = []
@@ -639,6 +678,27 @@ class Parameters:
             init_dict[section_name] = parser.parse_section(
                 using_dataclass=dataclass_, section_name=section_name
             )
+            rheology_section = f'{section_name}.rheology'
+            if dataclass_ is _PhaseParameters and parser.has_section(rheology_section):
+                if parser.has_option(rheology_section, 'enabled'):
+                    raw_enabled = parser.get(rheology_section, 'enabled').strip().lower()
+                    if raw_enabled not in ('true', 'false'):
+                        raise ValueError(
+                            f'Configuration error in [{rheology_section}]: enabled must be '
+                            f"a bool ('true' or 'false'), got "
+                            f'{parser.get(rheology_section, "enabled")!r}'
+                        )
+                try:
+                    init_dict[section_name].rheology = parser.parse_section(
+                        using_dataclass=SolidRheologyParams,
+                        section_name=rheology_section,
+                        extra='error',
+                    )
+                except TypeError as exc:
+                    raise ValueError(
+                        f'Configuration error in [{rheology_section}] of [{section_name}] '
+                        f'of {Path(filenames[0]).name}: {exc}'
+                    ) from exc
         radionuclides: list[_Radionuclide] = []
         for radionuclide_section in cls.radionuclide_sections(parser):
             radionuclide = parser.parse_section(
