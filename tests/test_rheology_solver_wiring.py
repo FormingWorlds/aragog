@@ -32,6 +32,7 @@ import pytest
 import aragog.jax.phase as jax_phase_mod
 import aragog.rheology as rheo_mod
 import aragog.rheology_lid as rheo_lid_mod
+import aragog.solver.entropy_state as entropy_state_mod
 from aragog.jax.phase import (
     MeshArrays,
     PhaseParams,
@@ -746,14 +747,121 @@ def test_rhs_effective_viscosity_core_call_counts() -> None:
     assert counts_jax['effective_viscosity_core'] == 1
 
 
-def test_rhs_viscous_mlt_core_call_counts() -> None:
-    """R11-MLT-CALLS: _viscous_mixing_length_factor_core is called 2 times per RHS."""
+def test_rhs_viscous_mlt_core_call_counts(monkeypatch) -> None:
+    """R11-MLT-CALLS: _viscous_mixing_length_factor_core is called 2 times per RHS,
+    and local mode reuses q_025_1 * mixing_length in _compute_effective_viscosity_core."""
     for mode in ('lid', 'local'):
         rheo = SolidRheologyParams(enabled=True, stress_closure_mode=mode)
         counts_np = _measure_numpy_rhs_counts(rheo)
         counts_jax = _measure_jax_rhs_counts(rheo)
         assert counts_np['viscous_mlt_core'] == 2
         assert counts_jax['viscous_mlt_core'] == 2
+
+    # Verify JAX local mode reuses q_025_1 * mesh.mixing_length and matches NumPy on yielding state
+    rheo_loc_yld = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='local',
+        yield_stress_c=150.0,
+        yield_stress_mu=0.0,
+        yield_stress_max=1.0e8,
+    )
+    base_loc = _make_abe_solid_params(rheo_loc_yld, number_of_nodes=20)
+    params_loc = replace(
+        base_loc,
+        phase_solid=replace(base_loc.phase_solid, viscosity=1.0e15),
+    )
+    solver_loc = _make_solver(params_loc)
+    _, _, _, args_loc = _build_jax_bundle(solver_loc)
+    s_stag = _make_solid_profile(solver_loc)
+
+    captured_np: list[np.ndarray] = []
+    captured_jax: list[np.ndarray] = []
+    orig_eff_np = entropy_state_mod._compute_effective_viscosity_core
+    orig_eff_jax = jax_phase_mod._compute_effective_viscosity_core
+
+    def _spy_np(*a, **kw):
+        if 'mixing_length' in kw and kw['mixing_length'] is not None:
+            captured_np.append(np.asarray(kw['mixing_length'], dtype=float).copy())
+        return orig_eff_np(*a, **kw)
+
+    def _spy_jax(*a, **kw):
+        if 'mixing_length' in kw and kw['mixing_length'] is not None:
+            captured_jax.append(np.asarray(kw['mixing_length'], dtype=float).copy())
+        return orig_eff_jax(*a, **kw)
+
+    monkeypatch.setattr(entropy_state_mod, '_compute_effective_viscosity_core', _spy_np)
+    monkeypatch.setattr(jax_phase_mod, '_compute_effective_viscosity_core', _spy_jax)
+
+    rhs_np = solver_loc.dSdt(0.0, s_stag)
+    rhs_jax = np.asarray(dSdt(0.0, jnp.asarray(s_stag), args_loc))
+    assert len(captured_np) == 1
+    assert len(captured_jax) == 1
+    raw_ml = np.asarray(solver_loc.state._mixing_length, dtype=float)
+    np.testing.assert_allclose(captured_jax[0], captured_np[0], rtol=1.0e-14, atol=0.0)
+    assert not np.allclose(captured_jax[0], raw_ml, rtol=1.0e-3)
+    denom = float(np.max(np.abs(rhs_np)))
+    assert float(np.max(np.abs(rhs_np - rhs_jax)) / denom) <= 1.0e-6
+
+
+def test_signed_negative_gravity_rheology_boundary_parity_numpy_and_jax() -> None:
+    """Passing a signed (inward, negative) gravity at the evaluator produces identical
+    stagnant-lid and effective-viscosity outputs to |g| on both NumPy and JAX paths."""
+    rheo = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        yield_stress_c=150.0,
+        yield_stress_mu=0.0,
+        yield_stress_max=1.0e8,
+    )
+    base_params = _make_abe_solid_params(rheo, number_of_nodes=20)
+    params = replace(
+        base_params,
+        phase_solid=replace(base_params.phase_solid, viscosity=1.0e15),
+    )
+
+    solver_pos = _make_solver(params)
+    solver_neg = _make_solver(params)
+    s_stag = _make_solid_profile(solver_pos)
+
+    g_pos = np.abs(np.asarray(solver_pos.state.phase_basic.gravitational_acceleration())).copy()
+    solver_pos.state.phase_basic._g = g_pos.copy()
+    solver_neg.state.phase_basic._g = -g_pos.copy()
+
+    rhs_np_pos = solver_pos.dSdt(0.0, s_stag)
+    rhs_np_neg = solver_neg.dSdt(0.0, s_stag)
+    lid_np_pos = solver_pos.state._lid_state
+    lid_np_neg = solver_neg.state._lid_state
+    assert lid_np_pos is not None and lid_np_neg is not None
+    assert float(lid_np_neg['Ra_eff']) > 0.0
+    assert float(lid_np_neg['tau_d']) > 0.0
+    assert float(lid_np_neg['v_m']) > 0.0
+    for key in ('Ra_eff', 'Ra_rh', 'v_m', 'tau_d', 'tau_d_lid', 'tau_buoy', 'theta', 'd_lid'):
+        np.testing.assert_allclose(
+            np.asarray(lid_np_neg[key], dtype=float),
+            np.asarray(lid_np_pos[key], dtype=float),
+            rtol=1.0e-14,
+            atol=0.0,
+        )
+    np.testing.assert_allclose(
+        solver_neg.state._eta_eff_basic,
+        solver_pos.state._eta_eff_basic,
+        rtol=1.0e-14,
+        atol=0.0,
+    )
+    np.testing.assert_allclose(rhs_np_neg, rhs_np_pos, rtol=1.0e-14, atol=0.0)
+
+    import copy
+
+    mesh_pos, eos_jax, params_jax, args_pos = _build_jax_bundle(solver_pos)
+    mesh_neg = copy.copy(mesh_pos)
+    object.__setattr__(mesh_neg, 'gravity', -jnp.abs(mesh_pos.gravity))
+    args_neg = (args_pos[0], args_pos[1], mesh_neg, *args_pos[3:])
+
+    rhs_jax_pos = np.asarray(dSdt(0.0, jnp.asarray(s_stag), args_pos))
+    rhs_jax_neg = np.asarray(dSdt(0.0, jnp.asarray(s_stag), args_neg))
+    np.testing.assert_allclose(rhs_jax_neg, rhs_jax_pos, rtol=1.0e-14, atol=0.0)
+    denom = float(np.max(np.abs(rhs_np_pos)))
+    assert float(np.max(np.abs(rhs_np_neg - rhs_jax_neg)) / denom) <= 1.0e-6
 
 
 def test_rheology_off_bitwise_parity_numpy_and_jax() -> None:

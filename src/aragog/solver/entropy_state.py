@@ -613,7 +613,7 @@ class EntropyState:
         alpha = np.asarray(self.phase_basic.thermal_expansivity()).ravel()
         T = np.asarray(self.phase_basic.temperature()).ravel()
         Cp = np.asarray(self.phase_basic.heat_capacity()).ravel()
-        g = np.abs(np.asarray(self.phase_basic.gravitational_acceleration()).ravel())
+        g = np.asarray(self.phase_basic.gravitational_acceleration()).ravel()
 
         conv_drive = np.maximum(
             _smooth_abs_neg(self._dSdr, eps=1.0e-30),
@@ -629,7 +629,7 @@ class EntropyState:
             flag_name='_cp_mlt_floor_warned',
         )
         effective_superadiabatic = alpha * T * conv_drive / Cp_safe_mlt
-        velocity_prefactor = g * effective_superadiabatic
+        velocity_prefactor = np.abs(g) * effective_superadiabatic
 
         # Viscous velocity (Re <= Re_crit). No boolean masking needed:
         # velocity_prefactor is 0 on stable cells via conv_drive.

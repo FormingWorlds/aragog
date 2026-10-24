@@ -460,7 +460,7 @@ def viscous_mixing_length_factor(
         s_top_inf=eff_top_slope,
         bottom_slope=bottom_slope_eff,
         theta=None,
-        c_theta=c_theta_eff,
+        c_theta=c_theta,
         xp=xp,
     )
     return xp.where(invalid, xp.nan, res)
