@@ -1097,6 +1097,56 @@ def test_pressure_surface_roundoff_clamping_and_validation():
 
 
 @pytest.mark.unit
+def test_required_rheology_inputs_reject_none():
+    """Verify that None for required inputs raises ValueError naming the field."""
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_enthalpy(None)
+
+    with pytest.raises(ValueError, match='temperature'):
+        compute_arrhenius_viscosity(None, 1.0e9)
+
+    with pytest.raises(ValueError, match='pressure'):
+        compute_arrhenius_viscosity(1600.0, None)
+
+    with pytest.raises(ValueError, match='pressure'):
+        compute_yield_stress(None)
+
+
+@pytest.mark.unit
+def test_viscous_mixing_length_factor_domain_checks():
+    """Verify viscous_mixing_length_factor rejects r_in >= r_out and radii outside [r_in, r_out]."""
+    r_valid = np.linspace(1.0e6, 3.0e6, 5)
+    ml_valid = np.ones(5) * 1.0e5
+
+    with pytest.raises(ValueError, match='r_in'):
+        viscous_mixing_length_factor(r_valid, 3.0e6, 1.0e6, ml_valid, xp=np)
+
+    with pytest.raises(ValueError, match='r_in'):
+        viscous_mixing_length_factor(r_valid, 2.0e6, 2.0e6, ml_valid, xp=np)
+
+    r_bad_low = np.array([0.5e6, 2.0e6])
+    with pytest.raises(ValueError, match='radii'):
+        viscous_mixing_length_factor(r_bad_low, 1.0e6, 3.0e6, np.ones(2) * 1.0e5, xp=np)
+
+    r_bad_high = np.array([2.0e6, 3.5e6])
+    with pytest.raises(ValueError, match='radii'):
+        viscous_mixing_length_factor(r_bad_high, 1.0e6, 3.0e6, np.ones(2) * 1.0e5, xp=np)
+
+
+@pytest.mark.unit
+def test_viscous_mixing_length_factor_c_theta_validated_when_theta_none():
+    """Verify c_theta is validated even when theta is None."""
+    r = np.linspace(1.0e6, 3.0e6, 5)
+    ml = np.ones(5) * 1.0e5
+
+    with pytest.raises(ValueError, match='c_theta'):
+        viscous_mixing_length_factor(r, 1.0e6, 3.0e6, ml, theta=None, c_theta=-5.0, xp=np)
+
+    with pytest.raises(ValueError, match='c_theta'):
+        viscous_mixing_length_factor(r, 1.0e6, 3.0e6, ml, theta=None, c_theta='invalid', xp=np)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ('mode', 'field_name', 'bad_val', 'static_error'),
     [
@@ -1895,6 +1945,7 @@ def test_rheology_kernel_reference_grid_parity():
     )
 
 
+@pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_rheology_kernel_reference_grid_parity_skips_when_commit_absent():
     """Verify test_rheology_kernel_reference_grid_parity skips when main commit is absent."""

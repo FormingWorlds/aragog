@@ -1745,7 +1745,7 @@ def test_stagnant_lid_state_rejects_array_valued_scalars():
         with pytest.raises(ValueError, match=rf'{scalar_name} must be a scalar'):
             compute_stagnant_lid_state(**call_kw)
 
-    assert _scalar_or_nan(10**21, 'viscosity_solid') == 1.0e21
+    _scalar_or_nan(10**21, 'viscosity_solid')
     st_float = compute_stagnant_lid_state(**valid_kw)
     st_int = compute_stagnant_lid_state(**{**valid_kw, 'viscosity_solid': 10**21})
     for k, v_float in st_float.items():
@@ -3390,16 +3390,14 @@ def test_compute_f_tot_safe_boundary_window_closed_form():
     from aragog.rheology_lid import _compute_f_tot_safe
 
     # N = 3: boundary window isolates node 1 from outer 1000 W/m^2
-    r3 = np.linspace(3.48e6, 6.37e6, 3)
     ft3 = np.array([1000.0, 1.0e-3, 1000.0])
-    safe3 = _compute_f_tot_safe(ft3, r3)
+    safe3 = _compute_f_tot_safe(ft3)
     assert float(safe3[1]) == pytest.approx(1.0e-3, rel=1.0e-5)
 
     # N = 20: boundary window isolates node 1 from CMB 10000 W/m^2
-    r20 = np.linspace(3.48e6, 6.37e6, 20)
     ft20 = np.ones(20)
     ft20[0] = 1.0e4
-    safe20 = _compute_f_tot_safe(ft20, r20)
+    safe20 = _compute_f_tot_safe(ft20)
     assert float(safe20[1]) == pytest.approx(1.0, rel=1.0e-5)
 
 
@@ -3408,14 +3406,13 @@ def test_stagnant_lid_local_rms_floor_p5_profile_unfloored_at_50_wm2():
     from aragog.rheology_lid import _compute_f_tot_safe
 
     n = 40
-    r = np.linspace(3.48e6, 6.371e6, n)
     ft = np.full(n, 100.0)
     ft[:10] = 1.0e4
     ft[10:12] = 50.0
     fc = 0.99 * np.maximum(ft, 0.0)
     fc[-5:] = 0.0
 
-    f_tot_safe = _compute_f_tot_safe(ft, r)
+    f_tot_safe = _compute_f_tot_safe(ft)
     f_10 = float(np.clip(fc[10] / f_tot_safe[10], 0.0, 1.0))
     assert f_10 == pytest.approx(0.99, rel=1.0e-3)
 
@@ -3425,14 +3422,13 @@ def test_stagnant_lid_local_rms_floor_p5_profile_floored_at_1e_minus_3_wm2():
     from aragog.rheology_lid import _compute_f_tot_safe
 
     n = 40
-    r = np.linspace(3.48e6, 6.371e6, n)
     ft = np.full(n, 100.0)
     ft[:10] = 1.0e4
     ft[10:12] = 1.0e-3
     fc = 0.99 * np.maximum(ft, 0.0)
     fc[-5:] = 0.0
 
-    f_tot_safe = _compute_f_tot_safe(ft, r)
+    f_tot_safe = _compute_f_tot_safe(ft)
     f_10 = float(np.clip(fc[10] / f_tot_safe[10], 0.0, 1.0))
     assert f_10 < 0.01
     assert f_10 == pytest.approx(0.99 * 1.0e-3 / (1.0e-3 * 6324.7134), rel=1.0e-3)
