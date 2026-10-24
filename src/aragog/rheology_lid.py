@@ -163,7 +163,6 @@ def _boundary_weights(
 
 def _compute_f_tot_safe(
     total_flux: FloatOrArray,
-    radii: FloatOrArray,
     xp: Any = np,
 ) -> FloatOrArray:
     """Compute the smooth softplus total flux floor against the 5-node local interior RMS.
@@ -175,8 +174,6 @@ def _compute_f_tot_safe(
     ----------
     total_flux : FloatOrArray
         Total surface and interior heat flux [W/m^2].
-    radii : FloatOrArray
-        Cell-centered radial coordinate [m] (length N >= 3 applies boundary replication).
     xp : module, optional
         Array module (numpy or jax.numpy). Default is numpy.
 
@@ -186,21 +183,11 @@ def _compute_f_tot_safe(
         Smoothed total flux safe denominator [W/m^2].
     """
     F_tot = xp.asarray(total_flux, dtype=float)
-    r = xp.asarray(radii, dtype=float)
-    n_nodes = r.shape[0]
-    F_pad = xp.concatenate([F_tot[1:2], F_tot[1:-1], F_tot[-2:-1]]) if n_nodes >= 3 else F_tot
+    F_pad = xp.concatenate([F_tot[1:2], F_tot[1:-1], F_tot[-2:-1]])
     F_ext = xp.concatenate([F_pad[:1], F_pad[:1], F_pad, F_pad[-1:], F_pad[-1:]])
-    F_loc_rms = xp.sqrt(
-        0.2
-        * (
-            F_ext[:-4] ** 2
-            + F_ext[1:-3] ** 2
-            + F_ext[2:-2] ** 2
-            + F_ext[3:-1] ** 2
-            + F_ext[4:] ** 2
-        )
-        + 1.0e-300
-    )
+    n = F_pad.shape[0]
+    sum_sq = sum(F_ext[i : i + n] ** 2 for i in range(5))
+    F_loc_rms = xp.sqrt(0.2 * sum_sq + 1.0e-300)
     F_tot_floor = _softmax2(F_TOT_FLOOR_FRAC * F_loc_rms, 1.0e-12, 0.01 * 1.0e-12, xp)
     F_tot_abs = xp.sqrt(F_tot**2 + 1.0e-60)
     return _softmax2(F_tot_abs, F_tot_floor, 0.01 * F_tot_floor, xp)
@@ -320,7 +307,8 @@ def compute_stagnant_lid_state(
         ``temperature``, ``solidus_temperature``,
         ``viscosity_mixture``, ``density``, ``gravity``,
         ``thermal_expansivity``, or ``thermal_diffusivity`` is non-positive, if
-        ``pressure`` is negative, or if ``phi_rheo`` or ``melt_fraction`` lies
+        ``pressure`` is below ``-PRESSURE_ROUNDOFF_TOLERANCE`` (-1.0 Pa) or
+        infinite, or if ``phi_rheo`` or ``melt_fraction`` lies
         outside ``[0, 1]``. Under ``jax.jit``, traced out-of-range numeric
         values (including non-increasing ``radii``) propagate ``NaN`` through
         ``zero_or_nan``.
@@ -462,7 +450,7 @@ def compute_stagnant_lid_state(
 
     # 5-node local interior RMS floor: replace boundary nodes (0, N-1) with (1, N-2)
     # and replicate 2 edge nodes; differs from 1e-12 only where F_conv > 0 and |F_tot| < 0.0014 * F_loc_rms.
-    F_tot_safe = _compute_f_tot_safe(F_tot, r, xp)
+    F_tot_safe = _compute_f_tot_safe(F_tot, xp)
     f = xp.clip(xp.maximum(F_conv, 0.0) / F_tot_safe, 0.0, 1.0)
     invalid_scalar = xp.any((r[1:] - r[:-1]) <= 0.0)
     zero_or_nan = xp.where(
@@ -791,8 +779,9 @@ def compute_effective_viscosity(
         input is non-real (such as a boolean, string, or complex value), or, on
         the eager NumPy path (``xp is np``), if ``eta_diff`` or ``eta_i`` is
         non-positive or infinite, if ``strain_rate`` or ``mixing_length`` is
-        negative or infinite, if ``tau_d`` or ``unyielded_velocity`` is
-        infinite, if ``w_lid`` lies outside ``[0, 1]``, or if ``tau_y_lid``,
+        negative or infinite, if ``tau_d`` is negative or infinite, if
+        ``unyielded_velocity`` is infinite, if ``w_lid`` lies outside
+        ``[0, 1]``, or if ``tau_y_lid``,
         ``tau_y``, or ``tau_y_profile`` is negative (including ``-inf``;
         ``+inf`` is allowed). On the JAX path, out-of-range numeric values
         return ``NaN``.
@@ -926,7 +915,7 @@ def compute_effective_viscosity(
 
     if w_lid is not None:
         wl = xp.asarray(w_lid, dtype=float)
-        log_diff = xp.log10(xp.maximum(eta_d, 1e-30))
+        log_diff = log10_d_lid
         log_eff = xp.log10(xp.maximum(eta_eff_val, 1e-30))
         log_solid = wl * log_eff + (1.0 - wl) * log_diff
         res = 10.0**log_solid

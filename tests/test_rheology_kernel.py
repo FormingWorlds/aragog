@@ -1945,6 +1945,7 @@ def test_rheology_kernel_reference_grid_parity():
     )
 
 
+@pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_rheology_kernel_reference_grid_parity_skips_when_commit_absent():
     """Verify test_rheology_kernel_reference_grid_parity skips when main commit is absent."""
