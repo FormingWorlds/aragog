@@ -2298,10 +2298,12 @@ def test_stagnant_lid_smooth_gates_and_scales():
     expected_w_act_gate = 0.5 * (1.0 + np.tanh((0.045 - 0.05) / 0.0025))
     assert float(st_act['d_lid']) / d_raw_act == pytest.approx(expected_w_act_gate, rel=1.0e-5)
 
-    # Localize convective flux on node 1 while node 2 has high f so w_active ~ 1 but W_sum ~ 1.25e-6.
-    w_c0 = 0.5 * (1.0 + np.tanh(-5.0))
+    # Localize convective flux on node 1 with interior_flux_fraction = 0.01 so w_active > 0.05 and W_sum = 1.25e-6.
+    params_sum = SolidRheologyParams(enabled=True)
+    object.__setattr__(params_sum, 'interior_flux_fraction', 0.01)
+    w_c0 = 0.5 * (1.0 + np.tanh(-1.0))
     target_w_sum = 1.25e-6
-    f_node1 = 0.05 + 0.01 * np.arctanh(2.0 * (w_c0 + target_w_sum) - 1.0)
+    f_node1 = 0.01 + 0.01 * np.arctanh(2.0 * (w_c0 + target_w_sum) - 1.0)
     fc_sum = np.zeros(n)
     fc_sum[1] = f_node1 * 100.0
     st_sum = compute_stagnant_lid_state(
@@ -2312,7 +2314,7 @@ def test_stagnant_lid_smooth_gates_and_scales():
         total_flux=ft,
         solidus_temperature=None,
         melt_fraction=phi,
-        params=SolidRheologyParams(enabled=True),
+        params=params_sum,
         viscosity_solid=1.0e21,
         phi_rheo=0.4,
         phi_width=0.15,
@@ -2324,8 +2326,9 @@ def test_stagnant_lid_smooth_gates_and_scales():
     expected_w_act_low = 0.5 * (1.0 + np.tanh((float(st_sum['w_active']) - 0.05) / 0.0025))
     w_w_sum = np.tanh(target_w_sum / 1.0e-6)
     d_raw_sum = float((r[-1] - st_sum['r_lid_base']) * st_sum['w_active'])
+    assert float(st_sum['d_lid']) == pytest.approx(2.3551939626896419e5, rel=1.0e-12, abs=0.0)
     assert float(st_sum['d_lid']) / d_raw_sum == pytest.approx(
-        w_w_sum * expected_w_act_low * expected_w_sum_gate, rel=1.0e-5
+        w_w_sum * expected_w_act_low * expected_w_sum_gate, rel=1.0e-5, abs=0.0
     )
 
     # 4. Smooth temperature gradient floor (SCALE_FLOOR_WIDTH = 0.005) and scale_mask cap (SCALE_MASK_REL_WIDTH = 0.005).
@@ -2696,3 +2699,65 @@ def test_stagnant_lid_invariants(monkeypatch):
     monkeypatch.setattr(lid_mod, 'compute_arrhenius_viscosity', lambda *a, **k: np.inf)
     with pytest.raises(AssertionError):
         compute_stagnant_lid_state(**kw)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_stagnant_lid_smooth_gates_and_scales_conv_sum_gate():
+    """Verify w_sum_gate across the W_sum = 1e-6 +/- 2.5e-7 gate band on gated lid outputs."""
+    from aragog.rheology_lid import compute_stagnant_lid_state
+
+    n = 20
+    r = np.linspace(3.48e6, 6.37e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t_cold = np.linspace(2400.0, 300.0, n)
+    ft = np.full(n, 100.0)
+    phi = np.zeros(n)
+
+    # Set interior_flux_fraction = 0.01 so w_conv_0 > 0.05 (w_act_gate = 1) while W_sum sits in 1e-6 +/- 2.5e-7.
+    params_sum = SolidRheologyParams(enabled=True)
+    object.__setattr__(params_sum, 'interior_flux_fraction', 0.01)
+    w_c0 = 0.5 * (1.0 + np.tanh(-1.0))
+
+    fc_lo = np.zeros(n)
+    fc_lo[1] = (0.01 + 0.01 * np.arctanh(2.0 * (w_c0 + 0.75e-6) - 1.0)) * 100.0
+    st_lo = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_cold,
+        pressure=p,
+        convective_flux=fc_lo,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_sum,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n, 1.0e-8),
+        xp=np,
+    )
+
+    fc_hi = np.zeros(n)
+    fc_hi[1] = (0.01 + 0.01 * np.arctanh(2.0 * (w_c0 + 1.25e-6) - 1.0)) * 100.0
+    st_hi = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_cold,
+        pressure=p,
+        convective_flux=fc_hi,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_sum,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        unyielded_velocity=np.full(n, 1.0e-8),
+        xp=np,
+    )
+
+    assert float(st_lo['d_lid']) == pytest.approx(2.3865491821118831e4, rel=1.0e-12, abs=0.0)
+    assert float(st_lo['tau_d']) == pytest.approx(2.7135168999405175e7, rel=1.0e-12, abs=0.0)
+    assert float(st_hi['d_lid']) == pytest.approx(2.3551939626896419e5, rel=1.0e-12, abs=0.0)
+    assert float(st_hi['tau_d']) == pytest.approx(2.6778658777695420e8, rel=1.0e-12, abs=0.0)
+    assert float(st_lo['d_lid']) < float(st_hi['d_lid'])
+    assert float(st_lo['tau_d']) < float(st_hi['tau_d'])
