@@ -630,9 +630,9 @@ def compute_arrhenius_viscosity(
     h_0 = g_arr * r_gas * t_sol_ref_0
 
     # Safe operands keep jax.grad finite at nodes the invalid mask sets to NaN.
-    t_safe = xp.where(t <= 0.0, 1.0, t)
-    t_ref_safe = xp.where(t_ref_arr <= 0.0, 1.0, t_ref_arr)
-    wp_pos = xp.where(wp <= 0.0, 1.0, wp)
+    t_safe = xp.where(t > 0.0, t, 1.0)
+    t_ref_safe = xp.where(t_ref_arr > 0.0, t_ref_arr, 1.0)
+    wp_pos = xp.where(wp > 0.0, wp, 1.0)
     exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
