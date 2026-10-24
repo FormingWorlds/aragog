@@ -1833,6 +1833,7 @@ def test_wp5_fixture_grid_bitwise_parity():
     )
 
 
+@pytest.mark.unit
 def test_scalar_parameters_float32_bitwise_parity() -> None:
     """Verify scalar parameters passed as np.float32 produce bitwise identical outputs to Python float."""
     p = 10e9
