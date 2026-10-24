@@ -631,10 +631,15 @@ class Parameters:
                 )
             try:
                 init_dict[section_name] = dataclass_(**section)
-            except TypeError as exc:
+            except (TypeError, ValueError) as exc:
+                is_rheo_err = (
+                    dataclass_ is _PhaseParameters
+                    and 'rheology' in section
+                    and '_PhaseParameters.__init__()' not in str(exc)
+                )
                 err_sec = (
                     f'{section_name}.rheology] of [{section_name}'
-                    if dataclass_ is _PhaseParameters and 'rheology' in section
+                    if is_rheo_err
                     else section_name
                 )
                 raise ValueError(
@@ -694,7 +699,7 @@ class Parameters:
                         section_name=rheology_section,
                         extra='error',
                     )
-                except TypeError as exc:
+                except (TypeError, ValueError) as exc:
                     raise ValueError(
                         f'Configuration error in [{rheology_section}] of [{section_name}] '
                         f'of {Path(filenames[0]).name}: {exc}'

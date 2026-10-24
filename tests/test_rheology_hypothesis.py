@@ -649,16 +649,34 @@ def test_hypothesis_phase_solid_rheology_toml_ini_dict_round_trip(
     assert p_nested.phase_solid.rheology == expected_full
     assert p_nested.phase_liquid.rheology == SolidRheologyParams()
 
+    d_obj = _minimal_config_dict()
+    d_obj['phase_solid']['rheology'] = expected_full
+    assert Config.from_dict(d_obj).phase_solid.rheology == expected_full
+
+    d_flat = _minimal_config_dict()
+    d_flat['phase_solid'].update(sub_dict)
+    assert Config.from_dict(d_flat).phase_solid.rheology == expected_sub
+
     d_dotted = _minimal_config_dict()
     d_dotted['phase_solid.rheology'] = dict(sub_dict)
     p_dotted = Config.from_dict(d_dotted)
     assert p_dotted.phase_solid.rheology == expected_sub
+
+    d_liq_dotted = _minimal_config_dict()
+    d_liq_dotted['phase_liquid.rheology'] = dict(sub_dict)
+    assert Config.from_dict(d_liq_dotted).phase_liquid.rheology == expected_sub
 
     d_conflict = _minimal_config_dict()
     d_conflict['phase_solid']['rheology'] = dict(sub_dict)
     d_conflict['phase_solid.rheology'] = dict(sub_dict)
     with pytest.raises(ValueError, match='phase_solid'):
         Config.from_dict(d_conflict)
+
+    d_liq_conflict = _minimal_config_dict()
+    d_liq_conflict['phase_liquid']['rheology'] = dict(sub_dict)
+    d_liq_conflict['phase_liquid.rheology'] = dict(sub_dict)
+    with pytest.raises(ValueError, match='phase_liquid'):
+        Config.from_dict(d_liq_conflict)
 
     # 2. TOML and INI file round-trip for full 20-field dict and subset dict
     toml_base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml').read_text()
@@ -717,6 +735,22 @@ def test_hypothesis_phase_solid_rheology_toml_ini_dict_round_trip(
         )
         with pytest.raises(ValueError, match=r'\[phase_solid'):
             Parameters.from_file(bad_ini_key)
+
+        bad_toml_val = tmp / 'bad_val.toml'
+        bad_toml_val.write_text(
+            toml_base + '\n[phase_solid.rheology]\ng_homologous = -1.0\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+            Parameters.from_file(bad_toml_val)
+
+        bad_ini_val = tmp / 'bad_val.cfg'
+        bad_ini_val.write_text(
+            ini_base + '\n[phase_solid.rheology]\ng_homologous = -1.0\n',
+            encoding='utf-8',
+        )
+        with pytest.raises(ValueError, match=r'\[phase_solid\.rheology\]'):
+            Parameters.from_file(bad_ini_val)
 
         bad_ini_bool = tmp / 'bad_bool.cfg'
         bad_ini_bool.write_text(

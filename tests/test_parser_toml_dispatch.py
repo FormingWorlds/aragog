@@ -31,6 +31,8 @@ import importlib.resources
 
 import pytest
 
+from tests.conftest import entropy_eos_copy, needs_eos
+
 pytestmark = pytest.mark.unit
 
 
@@ -416,19 +418,18 @@ def test_phase_boundary_cap_reaches_energy_through_both_loaders(tmp_path, cfg, v
         assert Parameters.from_file(path).energy.phase_boundary_cap == value
 
 
+@needs_eos
 @pytest.mark.unit
 @pytest.mark.parametrize('cfg_name', ['abe_solid.toml', 'abe_solid.cfg', 'abe_mixed.cfg'])
 def test_a2_1_rheology_off_bundled_configs_bitwise_parity(tmp_path, cfg_name):
     """Verify bundled configs default to rheology.enabled=False and match explicit off bitwise."""
     import dataclasses
     import math
-    import os
     from pathlib import Path
 
     import numpy as np
 
     from aragog.config import Config
-    from aragog.eos.entropy import EntropyEOS
     from aragog.parser import Parameters
     from aragog.rheology import SolidRheologyParams
     from aragog.solver.entropy_solver import EntropySolver, SolverOutput
@@ -466,14 +467,7 @@ def test_a2_1_rheology_off_bundled_configs_bitwise_parity(tmp_path, cfg_name):
     assert c_exp.phase_solid.g_homologous == 18.0
     assert c_exp.phase_solid.stress_closure_mode == 'local'
 
-    eos_dir = (
-        os.environ.get('ARAGOG_TEST_EOS_DIR')
-        or '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos'
-    )
-    if not Path(eos_dir).exists():
-        pytest.skip(f'EOS unavailable at {eos_dir}')
-
-    eos = EntropyEOS(eos_dir)
+    eos = entropy_eos_copy()
     c_def.solver.end_time = 1.0
     c_exp.solver.end_time = 1.0
     s_init = 2900.0
@@ -511,12 +505,11 @@ def test_a2_1_rheology_off_bundled_configs_bitwise_parity(tmp_path, cfg_name):
     assert array_count == 27
     assert scalar_count == 35
 
-    if cfg_name == 'abe_solid.toml':
-        c_canary = Config.from_file(str(explicit_path))
-        c_canary.solver.end_time = 1.0
-        solver_canary = EntropySolver(c_canary, entropy_eos=eos)
-        solver_canary.initialize()
-        solver_canary.set_initial_entropy(s_init * (1.0 + 1.0e-12))
-        solver_canary.solve()
-        state_canary = solver_canary.get_state()
-        assert not np.array_equal(state_def.S_final, state_canary.S_final)
+    c_canary = Config.from_file(str(explicit_path))
+    c_canary.solver.end_time = 1.0
+    solver_canary = EntropySolver(c_canary, entropy_eos=eos)
+    solver_canary.initialize()
+    solver_canary.set_initial_entropy(s_init * (1.0 + 1.0e-12))
+    solver_canary.solve()
+    state_canary = solver_canary.get_state()
+    assert not np.array_equal(state_def.S_final, state_canary.S_final)
