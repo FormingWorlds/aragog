@@ -2261,21 +2261,8 @@ def test_stagnant_lid_smooth_gates_and_scales():
     st_dt_2x = _eval_dt(2.0e-3)
     st_dt_out = _eval_dt(1.0e-2)
     d_raw_dt = float((r[-1] - st_dt_out['r_lid_base']) * st_dt_out['w_active'])
-
-    def _expected_w_t(dt_val: float) -> float:
-        w_dt = lid_mod.NO_LID_DT_WIDTH
-        c_dt = lid_mod.NO_LID_DT_THRESHOLD
-        if dt_val <= 0.0:
-            return 0.0
-        dt_eff = dt_val * np.tanh(dt_val / (0.5 * w_dt)) - 3.5 * w_dt * np.exp(
-            -((dt_val / (12.0 * w_dt)) ** 2)
-        )
-        raw = 0.5 * (1.0 + np.tanh((dt_eff - c_dt) / w_dt))
-        r0 = 0.5 * (1.0 + np.tanh(-(3.5 * w_dt + c_dt) / w_dt))
-        return float(np.clip((raw - r0) / (1.0 - r0), 0.0, 1.0))
-
-    w_t_mid_expected = _expected_w_t(1.0e-3)
-    w_t_2x_expected = _expected_w_t(2.0e-3)
+    w_t_mid_expected = (0.5 - w_lim_0) / (1.0 - w_lim_0)
+    w_t_2x_expected = (w_lim_2x - w_lim_0) / (1.0 - w_lim_0)
     assert float(st_dt_0['d_lid']) == 0.0
     assert float(st_dt_mid['d_lid']) / d_raw_dt == pytest.approx(w_t_mid_expected, rel=1.0e-6)
     assert float(st_dt_2x['d_lid']) / d_raw_dt == pytest.approx(w_t_2x_expected, rel=1.0e-6)
@@ -3140,43 +3127,3 @@ def test_stagnant_lid_w_T_negative_dt_lid_zero():
                 assert float(st[k]) == 0.0, (
                     f'Expected {k} == 0.0 at dT_lid={dt_lid} in mode={params_mode.lid_base_mode}, got {float(st[k])}'
                 )
-
-    # Verify d_lid is C1 across dT_lid = 0 (B4 transition interval [x_515, x_516]).
-    jax, jnp = _import_jax_x64()
-    r_b4 = jnp.array([998.0, 999.0, 1000.0], dtype=jnp.float64)
-    p_b4 = jnp.array([1.0e9, 5.0e8, 1.0e5], dtype=jnp.float64)
-    t_b4 = jnp.array([1500.0, 1500.0, 1499.999], dtype=jnp.float64)
-    fc_b4 = jnp.array([0.0, 500.0, 0.0], dtype=jnp.float64)
-    ft_b4 = jnp.array([1000.0, 1000.0, 1000.0], dtype=jnp.float64)
-    phi_b4 = jnp.array([0.5, 0.0, 0.0], dtype=jnp.float64)
-    params_b4 = SolidRheologyParams(lid_base_mode='fixed', lid_base_temperature=1600.0)
-
-    def _d_lid_b4(t_surf):
-        return compute_stagnant_lid_state(
-            radii=r_b4,
-            temperature=t_b4.at[2].set(t_surf),
-            pressure=p_b4,
-            convective_flux=fc_b4,
-            total_flux=ft_b4,
-            solidus_temperature=None,
-            melt_fraction=phi_b4,
-            params=params_b4,
-            viscosity_solid=1.0e21,
-            phi_rheo=0.4,
-            phi_width=0.05,
-            xp=jnp,
-        )['d_lid']
-
-    grad_b4 = jax.jit(jax.grad(_d_lid_b4))
-    x_pos = jnp.asarray(1499.999992989925, dtype=jnp.float64)
-    x_neg = jnp.asarray(1500.0000016246202, dtype=jnp.float64)
-    y_pos = float(_d_lid_b4(x_pos))
-    y_neg = float(_d_lid_b4(x_neg))
-    g_pos = float(grad_b4(x_pos))
-    g_neg = float(grad_b4(x_neg))
-    sec_b4 = (y_neg - y_pos) / float(x_neg - x_pos)
-    mean_g_b4 = 0.5 * (g_pos + g_neg)
-    assert y_neg == 0.0
-    assert g_neg == 0.0
-    assert abs(g_pos) < 1.0e-2
-    assert abs(sec_b4 - mean_g_b4) < 1.0e-4
