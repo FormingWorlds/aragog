@@ -437,6 +437,8 @@ def compute_arrhenius_enthalpy(
         infinite. On the JAX path, out-of-range numeric values return ``NaN``.
     """
     _require_x64_if_jax(xp)
+    if pressure is None:
+        raise ValueError('pressure must be a real number or array, got None')
     if g_homologous is None:
         g_homologous = SolidRheologyParams.g_homologous
     if dt_sol_dp is None:
@@ -547,6 +549,10 @@ def compute_arrhenius_viscosity(
         return ``NaN``.
     """
     _require_x64_if_jax(xp)
+    if temperature is None:
+        raise ValueError('temperature must be a real number or array, got None')
+    if pressure is None:
+        raise ValueError('pressure must be a real number or array, got None')
     if viscosity_solid is None:
         viscosity_solid = DEFAULT_VISCOSITY_SOLID
     if g_homologous is None:
@@ -651,6 +657,8 @@ def compute_yield_stress(
         Yield stress tau_y [Pa].
     """
     _require_x64_if_jax(xp)
+    if pressure is None:
+        raise ValueError('pressure must be a real number or array, got None')
     c_eff = SolidRheologyParams.yield_stress_c if yield_stress_c is None else yield_stress_c
     mu_eff = SolidRheologyParams.yield_stress_mu if yield_stress_mu is None else yield_stress_mu
     max_eff = (
