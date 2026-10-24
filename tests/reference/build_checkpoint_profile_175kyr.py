@@ -4,9 +4,8 @@ Provenance of ``tests/reference/checkpoint_profile_175kyr.npz`` (100 basic nodes
 index ``k = 0`` at the CMB ``r = 3480 km`` to ``k = 99`` at the surface ``r = 6371 km``):
 
 - **Unchanged 175 kyr run arrays (all 100 nodes):** ``r_basic`` [m], ``P_basic`` [Pa],
-  ``F_conv`` [W/m^2], ``F_tot`` [W/m^2], and ``v_unyielded`` [m/s] come directly from the
-  175 kyr magma-ocean solidification snapshot on ``main``
-  (commit ``056b1af8cf6963d1f9cd9c55618f2a20e84e3b24``).
+  ``F_conv`` [W/m^2], ``F_tot`` [W/m^2], and ``v_unyielded`` [m/s] come directly from
+  the 175 kyr fixture on ``main``.
 - **Unchanged 175 kyr run nodes in ``T_basic`` and ``phi_basic``:**
   - At the 2 solid surface nodes ``k = 98, 99`` (where ``phi_basic == 0.0``), ``T_basic[98:100]``
     and ``phi_basic[98:100]`` are the unchanged 175 kyr run values (``1423.00 K`` and ``452.56 K``).
