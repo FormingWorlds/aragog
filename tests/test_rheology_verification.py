@@ -2513,7 +2513,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     import aragog.rheology_lid as lid_mod
     from aragog.rheology_lid import compute_stagnant_lid_state
 
-    assert getattr(lid_mod, 'F_TOT_FLOOR_FRAC', None) == pytest.approx(0.1, rel=1.0e-15)
+    assert getattr(lid_mod, 'F_TOT_FLOOR_FRAC', None) == pytest.approx(1.0e-3, rel=1.0e-15)
     assert getattr(lid_mod, 'LID_REGIME_LABEL_WIDTH', None) == pytest.approx(0.1, rel=1.0e-15)
 
     n = 20
@@ -2527,7 +2527,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     f_tot_sign[10] = 0.0
     f_loc_rms_10 = float(np.sqrt(np.mean(f_tot_sign[8:13] ** 2)))
     f_conv_spike = np.zeros(n)
-    f_conv_spike[10] = 0.025 * (0.1 * f_loc_rms_10)
+    f_conv_spike[10] = 0.025 * (1.0e-3 * f_loc_rms_10)
     st_spike = compute_stagnant_lid_state(
         radii=r,
         temperature=t,
@@ -2542,18 +2542,18 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         phi_width=0.15,
         xp=np,
     )
-    # With F_TOT_FLOOR_FRAC = 0.1, f[10] = 0.025, so w_active = 0.5*(1 + tanh((0.025 - 0.05)/0.01)).
+    # With F_TOT_FLOOR_FRAC = 1e-3, f[10] = 0.025, so w_active = 0.5*(1 + tanh((0.025 - 0.05)/0.01)).
     expected_w_active_spike = 0.5 * (1.0 + np.tanh((0.025 - 0.05) / 0.01))
     assert float(st_spike['w_active']) == pytest.approx(expected_w_active_spike, rel=1.0e-9)
     assert bool(st_spike['has_lid']) is False
 
-    # Also verify inter-nodal sign change (|F_tot[10]| = 1.0 < 0.1 * F_loc_rms[10] = 1.488 W/m^2)
-    # activates F_TOT_FLOOR_FRAC: f[10] = 0.048 < 0.05 when floored, vs 0.0714 > 0.05 unfloored.
+    # Also verify inter-nodal sign change (|F_tot[10]| = 0.01 < 1e-3 * F_loc_rms[10] = 0.01543 W/m^2)
+    # activates F_TOT_FLOOR_FRAC: f[10] = 0.048 < 0.05 when floored, vs 0.0741 > 0.05 unfloored.
     f_tot_internodal = np.linspace(-100.0, 100.0, n)
-    f_tot_internodal[9:11] = np.array([-1.0, 1.0])
+    f_tot_internodal[9:11] = np.array([-0.01, 0.01])
     f_loc_rms_in = float(np.sqrt(np.mean(f_tot_internodal[8:13] ** 2)))
     f_conv_in = np.zeros(n)
-    f_conv_in[10] = 0.048 * (0.1 * f_loc_rms_in)
+    f_conv_in[10] = 0.048 * (1.0e-3 * f_loc_rms_in)
     st_internodal = compute_stagnant_lid_state(
         radii=r,
         temperature=t,
@@ -2569,7 +2569,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         xp=np,
     )
     smax2 = getattr(lid_mod, '_softmax2')
-    f_floor_in = float(smax2(0.1 * f_loc_rms_in, 1.0e-12, 0.01 * 1.0e-12, np))
+    f_floor_in = float(smax2(1.0e-3 * f_loc_rms_in, 1.0e-12, 0.01 * 1.0e-12, np))
     f_safe_10 = float(smax2(abs(f_tot_internodal[10]), f_floor_in, 0.01 * f_floor_in, np))
     expected_w_active_in = 0.5 * (1.0 + np.tanh((f_conv_in[10] / f_safe_10 - 0.05) / 0.01))
     assert float(st_internodal['w_active']) == pytest.approx(expected_w_active_in, rel=1.0e-9)
@@ -2877,7 +2877,7 @@ def test_stagnant_lid_flux_floor_zero_crossing_width():
     t = np.linspace(2600.0, 300.0, n)
     phi = np.zeros(n)
 
-    # 1. Sign-changing F_tot (d_zero = 0): 5-node local interior RMS floor F_tot_floor = 0.1 * F_loc_rms.
+    # 1. Sign-changing F_tot (d_zero = 0): 5-node local interior RMS floor F_tot_floor = 1.0e-3 * F_loc_rms.
     ft_cross = np.linspace(-100.0, 100.0, n)
     ft_cross[10] = 0.0
     f_pad20 = np.concatenate([ft_cross[1:2], ft_cross[1:-1], ft_cross[-2:-1]])
@@ -2894,7 +2894,7 @@ def test_stagnant_lid_flux_floor_zero_crossing_width():
         )
     )
     fc_cross = np.zeros(n)
-    fc_cross[10] = 0.045 * (0.1 * f_loc_rms_10)
+    fc_cross[10] = 0.045 * (1.0e-3 * f_loc_rms_10)
     st_cross = compute_stagnant_lid_state(
         radii=r,
         temperature=t,
@@ -2909,13 +2909,11 @@ def test_stagnant_lid_flux_floor_zero_crossing_width():
         phi_width=0.15,
         xp=np,
     )
-    assert float(st_cross['w_active']) == pytest.approx(
-        0.26894142136999466, rel=1.0e-12, abs=0.0
-    )
-    assert float(st_cross['d_lid']) == pytest.approx(3.617717821797066e5, rel=1.0e-12, abs=0.0)
-    assert float(st_cross['tau_d']) == pytest.approx(2.0853767364515102e9, rel=1.0e-12, abs=0.0)
+    assert float(st_cross['w_active']) == pytest.approx(0.268941421369995, rel=1.0e-12, abs=0.0)
+    assert float(st_cross['d_lid']) == pytest.approx(3.617717821797071e5, rel=1.0e-12, abs=0.0)
+    assert float(st_cross['tau_d']) == pytest.approx(2.0853767364515128e9, rel=1.0e-12, abs=0.0)
 
-    # 2. Strictly positive F_tot above the 0.14 * F_loc_rms floor (F_tot[10] = 20.0 on 100.0):
+    # 2. Strictly positive F_tot above the 0.0014 * F_loc_rms floor (F_tot[10] = 20.0 on 100.0):
     # F_tot_safe[10] = 20.0 bitwise and f[10] = 0.08.
     ft_near = np.full(n, 100.0)
     ft_near[10] = 20.0
@@ -3025,12 +3023,10 @@ def test_stagnant_lid_flux_floor_zero_crossing_width():
             unyielded_velocity=np.full(n30, 1.0e-9),
             xp=np,
         )
-        assert float(st_nb['T_i']) == pytest.approx(1927.5891813747085, rel=1.0e-11, abs=0.0)
-        assert float(st_nb['eta_i']) == pytest.approx(
-            3.4040698340690033e22, rel=1.0e-10, abs=0.0
-        )
-        assert float(st_nb['d_lid']) == pytest.approx(277000.64917623065, rel=1.0e-11, abs=0.0)
-        assert float(st_nb['tau_d']) == pytest.approx(1696403.7780507116, rel=1.0e-11, abs=0.0)
+        assert float(st_nb['T_i']) == pytest.approx(1796.5576729592096, rel=1.0e-11, abs=0.0)
+        assert float(st_nb['eta_i']) == pytest.approx(9.68874084044789e21, rel=1.0e-10, abs=0.0)
+        assert float(st_nb['d_lid']) == pytest.approx(93552.92084194534, rel=1.0e-11, abs=0.0)
+        assert float(st_nb['tau_d']) == pytest.approx(1101349.6769275344, rel=1.0e-11, abs=0.0)
 
     for sl in (slice(20, 21), slice(20, 22), slice(19, 22)):
         ft_dip = np.full(n30, 100.0)
@@ -3269,7 +3265,7 @@ def test_stagnant_lid_local_rms_floor_dip_widths_4_5_6():
     params = SolidRheologyParams(enabled=True)
 
     expected_w_active = {
-        4: 2.577844e-01,
+        4: 1.110329e-04,
         5: 1.000000e00,
         6: 1.000000e00,
     }
@@ -3278,8 +3274,8 @@ def test_stagnant_lid_local_rms_floor_dip_widths_4_5_6():
         ft = np.full(n, 100.0)
         fc = np.zeros(n)
         start = 12 - width // 2
-        ft[start : start + width] = 1.0
-        fc[start : start + width] = 0.2
+        ft[start : start + width] = 1.0e-3
+        fc[start : start + width] = 2.0e-4
         st = compute_stagnant_lid_state(
             radii=r,
             temperature=t,
@@ -3296,7 +3292,7 @@ def test_stagnant_lid_local_rms_floor_dip_widths_4_5_6():
             xp=np,
         )
         np.testing.assert_allclose(float(st['w_active']), exp_w_act, rtol=1.0e-5)
-        assert bool(st['has_lid']) is True
+        assert bool(st['has_lid']) is (width >= 5)
 
 
 @pytest.mark.unit
@@ -3312,13 +3308,9 @@ def test_stagnant_lid_local_rms_floor_boundary_window_rule():
         phi = np.zeros(n)
         v_un = np.full(n, 1.0e-9)
 
-        ft_base = np.full(n, 100.0)
-        ft_base[1] = 0.0
-        ft_base[-2] = 0.0
-
+        ft_base = np.full(n, 1.0)
         fc = np.zeros(n)
-        fc[1] = 1.0
-        fc[-2] = 1.0
+        fc[1] = 0.1
 
         st_base = compute_stagnant_lid_state(
             radii=r,
@@ -3336,8 +3328,8 @@ def test_stagnant_lid_local_rms_floor_boundary_window_rule():
             xp=np,
         )
 
-        for ft_cmb in (0.0, 1000.0):
-            for ft_surf in (0.0, 1000.0):
+        for ft_cmb in (0.0, 10000.0):
+            for ft_surf in (0.0, 10000.0):
                 ft_mod = ft_base.copy()
                 ft_mod[0] = ft_cmb
                 ft_mod[-1] = ft_surf
@@ -3358,7 +3350,7 @@ def test_stagnant_lid_local_rms_floor_boundary_window_rule():
                 )
                 assert float(st_mod['T_i']) == float(st_base['T_i'])
                 assert float(st_mod['d_lid']) == float(st_base['d_lid'])
-                assert float(st_mod['tau_d']) == float(st_base['tau_d'])
+                assert float(st_mod['w_active']) == float(st_base['w_active'])
 
 
 def test_stagnant_lid_boundary_window_lead_probe_n3():
@@ -3370,8 +3362,8 @@ def test_stagnant_lid_boundary_window_lead_probe_n3():
     v_un = np.full(3, 1.0e-9)
     params = SolidRheologyParams(enabled=True)
 
-    ft = np.array([0.0, 1.0, 1000.0])
-    fc = np.array([0.0, 1.0, 0.0])
+    ft = np.array([1000.0, 1.0e-3, 1000.0])
+    fc = np.array([0.0, 0.5e-3, 0.0])
 
     st = compute_stagnant_lid_state(
         radii=r,
@@ -3391,3 +3383,56 @@ def test_stagnant_lid_boundary_window_lead_probe_n3():
     assert bool(st['has_lid']) is True
     assert float(st['w_active']) > 0.5
     assert float(st['d_lid']) > 0.0
+
+
+def test_compute_f_tot_safe_boundary_window_closed_form():
+    """Verify _compute_f_tot_safe closed-form boundary window values for N = 3 and N = 20."""
+    from aragog.rheology_lid import _compute_f_tot_safe
+
+    # N = 3: boundary window isolates node 1 from outer 1000 W/m^2
+    r3 = np.linspace(3.48e6, 6.37e6, 3)
+    ft3 = np.array([1000.0, 1.0e-3, 1000.0])
+    safe3 = _compute_f_tot_safe(ft3, r3)
+    assert float(safe3[1]) == pytest.approx(1.0e-3, rel=1.0e-5)
+
+    # N = 20: boundary window isolates node 1 from CMB 10000 W/m^2
+    r20 = np.linspace(3.48e6, 6.37e6, 20)
+    ft20 = np.ones(20)
+    ft20[0] = 1.0e4
+    safe20 = _compute_f_tot_safe(ft20, r20)
+    assert float(safe20[1]) == pytest.approx(1.0, rel=1.0e-5)
+
+
+def test_stagnant_lid_local_rms_floor_p5_profile_unfloored_at_50_wm2():
+    """Verify p5 profile with 50 W/m2 at nodes 10-11 keeps convective fraction unfloored at main value."""
+    from aragog.rheology_lid import _compute_f_tot_safe
+
+    n = 40
+    r = np.linspace(3.48e6, 6.371e6, n)
+    ft = np.full(n, 100.0)
+    ft[:10] = 1.0e4
+    ft[10:12] = 50.0
+    fc = 0.99 * np.maximum(ft, 0.0)
+    fc[-5:] = 0.0
+
+    f_tot_safe = _compute_f_tot_safe(ft, r)
+    f_10 = float(np.clip(fc[10] / f_tot_safe[10], 0.0, 1.0))
+    assert f_10 == pytest.approx(0.99, rel=1.0e-3)
+
+
+def test_stagnant_lid_local_rms_floor_p5_profile_floored_at_1e_minus_3_wm2():
+    """Verify p5 profile with 1e-3 W/m2 at nodes 10-11 is floored far below main's 0.99."""
+    from aragog.rheology_lid import _compute_f_tot_safe
+
+    n = 40
+    r = np.linspace(3.48e6, 6.371e6, n)
+    ft = np.full(n, 100.0)
+    ft[:10] = 1.0e4
+    ft[10:12] = 1.0e-3
+    fc = 0.99 * np.maximum(ft, 0.0)
+    fc[-5:] = 0.0
+
+    f_tot_safe = _compute_f_tot_safe(ft, r)
+    f_10 = float(np.clip(fc[10] / f_tot_safe[10], 0.0, 1.0))
+    assert f_10 < 0.01
+    assert f_10 == pytest.approx(0.99 * 1.0e-3 / (1.0e-3 * 6324.7134), rel=1.0e-3)

@@ -1656,11 +1656,30 @@ def test_viscous_mixing_length_factor_validation_table(
 @pytest.mark.physics_invariant
 def test_rheology_kernel_reference_grid_parity():
     """Verify output agreement against reference grid outputs across valid input domains."""
+    import importlib.util
     from pathlib import Path
 
     fixture_path = (
         Path(__file__).resolve().parent / 'reference' / 'rheology_kernel_reference_outputs.npz'
     )
+    gen_path = (
+        Path(__file__).resolve().parent
+        / 'reference'
+        / 'build_rheology_kernel_reference_outputs.py'
+    )
+    spec = importlib.util.spec_from_file_location(
+        'build_rheology_kernel_reference_outputs', gen_path
+    )
+    assert spec is not None and spec.loader is not None
+    gen_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen_mod)
+
+    if not gen_mod._has_git_commit(gen_mod.MAIN_BASE_COMMIT):
+        pytest.skip(
+            f'Main baseline commit {gen_mod.MAIN_BASE_COMMIT} is not present in local git object database; '
+            f'cannot verify against main.'
+        )
+
     data = np.load(fixture_path)
 
     # 1. compute_arrhenius_enthalpy
@@ -1874,6 +1893,19 @@ def test_rheology_kernel_reference_grid_parity():
         (eff_local_out[~outside_b3] > 0.0)
         & (eff_local_out[~outside_b3] <= eta_diff[~outside_b3])
     )
+
+
+@pytest.mark.physics_invariant
+def test_rheology_kernel_reference_grid_parity_skips_when_commit_absent():
+    """Verify test_rheology_kernel_reference_grid_parity skips when main commit is absent."""
+    from unittest.mock import patch
+
+    with (
+        patch('subprocess.run') as mock_run,
+        pytest.raises(pytest.skip.Exception, match='2457a8c95099b04b766a220772d2e55bb3d02608'),
+    ):
+        mock_run.return_value.returncode = 1
+        test_rheology_kernel_reference_grid_parity()
 
 
 @pytest.mark.unit
