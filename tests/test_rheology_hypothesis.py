@@ -563,6 +563,7 @@ def _make_valid_lid_inputs(n: int = 10) -> dict[str, Any]:
 )
 @settings(deadline=None, max_examples=30)
 def test_hypothesis_pressure_roundoff_bitwise_property(p: float) -> None:
+    """Verify bitwise parity between p in [-1 Pa, 0) and p = 0 across pressure functions."""
     # 1. compute_arrhenius_enthalpy
     h_neg = compute_arrhenius_enthalpy(p, xp=np)
     h_zero = compute_arrhenius_enthalpy(0.0, xp=np)
@@ -607,6 +608,7 @@ def test_hypothesis_pressure_roundoff_bitwise_property(p: float) -> None:
 )
 @settings(max_examples=30)
 def test_hypothesis_arrhenius_underflow_bound_property(vs: float, temp: float) -> None:
+    """Verify that Arrhenius viscosity under extreme cold conditions stays bounded above tiny floor."""
     tiny = np.finfo(float).tiny
     t_ref = 50.0
     g_hom = 50.0
@@ -634,10 +636,18 @@ def test_hypothesis_arrhenius_underflow_bound_property(vs: float, temp: float) -
 
 # Pressure rejection on eager NumPy and JAX JIT
 @given(
-    bad_p=st.sampled_from([-1.0001, -10.0, -1e6, float('-inf'), float('inf')]),
+    bad_p=st.one_of(
+        st.floats(
+            max_value=np.nextafter(-1.0, -np.inf),
+            allow_nan=False,
+            allow_infinity=True,
+        ),
+        st.just(float('inf')),
+    ),
 )
-@settings(deadline=None, max_examples=10)
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_pressure_invalid_rejection(bad_p: float) -> None:
+    """Verify that pressures outside [-1 Pa, inf) are rejected on NumPy and produce NaN on JAX."""
     for fn in (
         lambda p: compute_arrhenius_enthalpy(p, xp=np),
         lambda p: compute_arrhenius_viscosity(1600.0, p, xp=np),
@@ -663,9 +673,14 @@ def test_hypothesis_pressure_invalid_rejection(bad_p: float) -> None:
 
 
 @given(
-    bad_type=st.sampled_from([True, False, 'invalid_pressure']),
+    bad_type=st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_pressure_wrong_types(bad_type: Any) -> None:
+    """Verify that non-numeric types for pressure raise ValueError."""
     for fn in (
         lambda p: compute_arrhenius_enthalpy(p, xp=np),
         lambda p: compute_arrhenius_viscosity(1600.0, p, xp=np),
@@ -676,6 +691,7 @@ def test_hypothesis_pressure_wrong_types(bad_type: Any) -> None:
 
 
 def test_hypothesis_pressure_nan_propagation() -> None:
+    """Verify that NaN pressure propagates to NaN output across pressure functions."""
     assert np.isnan(compute_arrhenius_enthalpy(np.nan, xp=np))
     assert np.isnan(compute_arrhenius_viscosity(1600.0, np.nan, xp=np))
     assert np.isnan(compute_yield_stress(np.nan, xp=np))
@@ -683,10 +699,18 @@ def test_hypothesis_pressure_nan_propagation() -> None:
 
 # tau_d rejection on eager NumPy and JAX JIT
 @given(
-    bad_td=st.sampled_from([-1e-12, -10.0, -1e8, float('-inf'), float('inf')]),
+    bad_td=st.one_of(
+        st.floats(
+            max_value=np.nextafter(0.0, -np.inf),
+            allow_nan=False,
+            allow_infinity=True,
+        ),
+        st.just(float('inf')),
+    ),
 )
-@settings(deadline=None, max_examples=10)
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_tau_d_invalid_rejection(bad_td: float) -> None:
+    """Verify that negative or non-finite tau_d is rejected on NumPy and produces NaN on JAX."""
     with pytest.raises(ValueError, match='tau_d'):
         compute_effective_viscosity(
             eta_diff=1e22,
@@ -708,9 +732,14 @@ def test_hypothesis_tau_d_invalid_rejection(bad_td: float) -> None:
 
 
 @given(
-    bad_type=st.sampled_from([True, False, 'bad_tau_d']),
+    bad_type=st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_tau_d_wrong_types(bad_type: Any) -> None:
+    """Verify that non-numeric types for tau_d raise ValueError."""
     with pytest.raises(ValueError, match='tau_d'):
         compute_effective_viscosity(
             eta_diff=1e22,
@@ -725,9 +754,10 @@ def test_hypothesis_tau_d_wrong_types(bad_type: Any) -> None:
 @given(
     valid_td=st.floats(min_value=0.0, max_value=1e12, allow_nan=False, allow_infinity=False),
 )
-@settings(max_examples=20)
+@settings(deadline=None, max_examples=30)
 def test_hypothesis_tau_d_valid_finite(valid_td: float) -> None:
-    res = compute_effective_viscosity(
+    """Verify that effective viscosity matches independent reference formula across valid tau_d."""
+    eta = compute_effective_viscosity(
         eta_diff=1e22,
         eta_i=1e20,
         tau_d=valid_td,
@@ -735,28 +765,70 @@ def test_hypothesis_tau_d_valid_finite(valid_td: float) -> None:
         stress_closure_mode='lid',
         xp=np,
     )
-    assert np.isfinite(res)
+    assert np.isfinite(eta)
+
+    # Independent reference calculation
+    ty_lid = 1e8
+    eta_diff = 1e22
+    eta_i = 1e20
+    if valid_td <= 0.0:
+        expected = eta_diff
+    else:
+        x_ratio = valid_td / ty_lid
+        w_b = 0.5 * (1.0 + np.tanh((x_ratio - 1.0) / 0.025))
+        ratio = ty_lid / max(valid_td, 1e-30)
+        eta_y = min(eta_diff, eta_i * ratio)
+        if w_b <= 1e-15:
+            expected = eta_diff
+        elif w_b >= 1.0 - 1e-15:
+            expected = eta_y
+        else:
+            log10_eff = (1.0 - w_b) * np.log10(eta_diff) + w_b * np.log10(eta_y)
+            expected = 10.0**log10_eff
+
+    assert np.isclose(eta, expected, rtol=1e-12, atol=1e-15)
+
+    eta_arr = compute_effective_viscosity(
+        eta_diff=np.full(5, 1e22),
+        eta_i=np.full(5, 1e20),
+        tau_d=np.full(5, valid_td),
+        tau_y_lid=np.full(5, 1e8),
+        stress_closure_mode='lid',
+        xp=np,
+    )
+    assert np.all(np.isfinite(eta_arr))
+    assert np.allclose(eta_arr, expected, rtol=1e-12, atol=1e-15)
 
 
 # viscosity_solid validation
 @given(
-    bad_vs=st.sampled_from([0.0, -1.0, -1e10, float('-inf'), float('inf')]),
+    bad_vs=st.one_of(
+        st.floats(max_value=0.0, allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
-@settings(max_examples=10)
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_viscosity_solid_invalid_rejection(bad_vs: float) -> None:
+    """Verify that non-positive or infinite viscosity_solid raises ValueError."""
     with pytest.raises(ValueError, match='viscosity_solid'):
         compute_arrhenius_viscosity(1600.0, 0.0, viscosity_solid=bad_vs, xp=np)
 
 
 @given(
-    bad_type=st.sampled_from([True, False, 'bad_vs', [1e20]]),
+    bad_type=st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_viscosity_solid_wrong_types(bad_type: Any) -> None:
+    """Verify that non-numeric types for viscosity_solid raise ValueError."""
     with pytest.raises(ValueError, match='viscosity_solid'):
         compute_arrhenius_viscosity(1600.0, 0.0, viscosity_solid=bad_type, xp=np)
 
 
 def test_hypothesis_viscosity_solid_nan_propagation() -> None:
+    """Verify that NaN viscosity_solid propagates to NaN output."""
     assert np.isnan(compute_arrhenius_viscosity(1600.0, 0.0, viscosity_solid=np.nan, xp=np))
 
 
@@ -766,6 +838,7 @@ def test_hypothesis_viscosity_solid_nan_propagation() -> None:
 )
 @settings(deadline=None, max_examples=10)
 def test_hypothesis_mlt_top_slope_theta_invalid(bad_th: float) -> None:
+    """Verify that non-finite theta values raise ValueError on NumPy and return NaN on JAX."""
     with pytest.raises(ValueError, match='theta'):
         compute_mlt_top_slope(bad_th, xp=np)
 
@@ -775,46 +848,72 @@ def test_hypothesis_mlt_top_slope_theta_invalid(bad_th: float) -> None:
 
 
 @given(
-    bad_type=st.sampled_from([True, False, 'bad_theta']),
+    bad_type=st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_mlt_top_slope_theta_wrong_types(bad_type: Any) -> None:
+    """Verify that non-numeric types for theta raise ValueError."""
     with pytest.raises(ValueError, match='theta'):
         compute_mlt_top_slope(bad_type, xp=np)
 
 
 @given(
-    bad_s=st.sampled_from([0.0, -0.1, -10.0, 1.0001, 2.0, float('-inf'), float('inf')]),
+    bad_s=st.one_of(
+        st.floats(max_value=0.0, allow_nan=False, allow_infinity=True),
+        st.floats(min_value=np.nextafter(1.0, np.inf), allow_nan=False, allow_infinity=True),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_mlt_top_slope_s_top_inf_invalid(bad_s: float) -> None:
+    """Verify that s_top_inf outside (0, 1] raises ValueError."""
     with pytest.raises(ValueError, match='s_top_inf'):
         compute_mlt_top_slope(10.0, s_top_inf=bad_s, xp=np)
 
 
 @given(
-    bad_type=st.sampled_from([True, False, 'bad_s_top_inf', np.array([0.5])]),
+    bad_type=st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_mlt_top_slope_s_top_inf_wrong_types(bad_type: Any) -> None:
+    """Verify that non-numeric types for s_top_inf raise ValueError."""
     with pytest.raises(ValueError, match='s_top_inf'):
         compute_mlt_top_slope(10.0, s_top_inf=bad_type, xp=np)
 
 
 @given(
-    bad_c=st.sampled_from([-0.0001, -1.0, float('-inf'), float('inf')]),
+    bad_c=st.one_of(
+        st.floats(max_value=np.nextafter(0.0, -np.inf), allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_mlt_top_slope_c_theta_invalid(bad_c: float) -> None:
+    """Verify that negative or infinite c_theta raises ValueError."""
     with pytest.raises(ValueError, match='c_theta'):
         compute_mlt_top_slope(10.0, c_theta=bad_c, xp=np)
 
 
 @given(
-    bad_type=st.sampled_from([True, False, 'bad_c_theta', np.array([0.5])]),
+    bad_type=st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_mlt_top_slope_c_theta_wrong_types(bad_type: Any) -> None:
+    """Verify that non-numeric types for c_theta raise ValueError."""
     with pytest.raises(ValueError, match='c_theta'):
         compute_mlt_top_slope(10.0, c_theta=bad_type, xp=np)
 
 
 def test_hypothesis_mlt_top_slope_nan_propagation() -> None:
+    """Verify that NaN inputs to compute_mlt_top_slope propagate to NaN output."""
     assert np.isnan(compute_mlt_top_slope(np.nan, xp=np))
     assert np.isnan(compute_mlt_top_slope(10.0, s_top_inf=np.nan, xp=np))
     assert np.isnan(compute_mlt_top_slope(10.0, c_theta=np.nan, xp=np))
@@ -825,41 +924,69 @@ def test_hypothesis_mlt_top_slope_nan_propagation() -> None:
     s=st.floats(min_value=1e-4, max_value=1.0, allow_nan=False, allow_infinity=False),
     c=st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False),
 )
-@settings(max_examples=25)
+@settings(deadline=None, max_examples=30)
 def test_hypothesis_mlt_top_slope_valid_finite(th: float, s: float, c: float) -> None:
+    """Verify that MLT upper mixing-length slope matches reference formula across valid inputs."""
     res = compute_mlt_top_slope(th, s_top_inf=s, c_theta=c, xp=np)
     assert np.isfinite(res)
+
+    expected = s + (1.0 - s) * np.exp(-c * max(th, 0.0))
+    assert res == expected
+
+    res_arr = compute_mlt_top_slope(np.full(5, th), s_top_inf=s, c_theta=c, xp=np)
+    assert np.all(np.isfinite(res_arr))
+    assert np.array_equal(res_arr, np.full(5, expected))
 
 
 # Helper 2: compute_yield_stress(pressure, yield_stress_c, yield_stress_mu, yield_stress_max)
 @given(
-    bad_c=st.sampled_from([-1e-4, -10.0, float('-inf'), float('inf')]),
+    bad_c=st.one_of(
+        st.floats(max_value=np.nextafter(0.0, -np.inf), allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_yield_stress_c_invalid(bad_c: float) -> None:
+    """Verify that negative or infinite yield_stress_c raises ValueError."""
     with pytest.raises(ValueError, match='yield_stress_c'):
         compute_yield_stress(1e9, yield_stress_c=bad_c, xp=np)
 
 
 @given(
-    bad_mu=st.sampled_from([-1e-4, -1.0, float('-inf'), float('inf')]),
+    bad_mu=st.one_of(
+        st.floats(max_value=np.nextafter(0.0, -np.inf), allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_yield_stress_mu_invalid(bad_mu: float) -> None:
+    """Verify that negative or infinite yield_stress_mu raises ValueError."""
     with pytest.raises(ValueError, match='yield_stress_mu'):
         compute_yield_stress(1e9, yield_stress_mu=bad_mu, xp=np)
 
 
 @given(
-    bad_max=st.sampled_from([0.0, -1.0, float('-inf'), float('inf')]),
+    bad_max=st.one_of(
+        st.floats(max_value=0.0, allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_yield_stress_max_invalid(bad_max: float) -> None:
+    """Verify that non-positive or infinite yield_stress_max raises ValueError."""
     with pytest.raises(ValueError, match='yield_stress_max'):
         compute_yield_stress(1e9, yield_stress_max=bad_max, xp=np)
 
 
 @given(
-    bad_type=st.sampled_from([True, False, 'bad_val', np.array([1.0])]),
+    bad_type=st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_yield_stress_params_wrong_types(bad_type: Any) -> None:
+    """Verify that non-numeric types for yield stress parameters raise ValueError."""
     with pytest.raises(ValueError, match='yield_stress_c'):
         compute_yield_stress(1e9, yield_stress_c=bad_type, xp=np)
     with pytest.raises(ValueError, match='yield_stress_mu'):
@@ -869,23 +996,35 @@ def test_hypothesis_yield_stress_params_wrong_types(bad_type: Any) -> None:
 
 
 def test_hypothesis_yield_stress_nan_propagation() -> None:
+    """Verify that NaN inputs to compute_yield_stress propagate to NaN output."""
     assert np.isnan(compute_yield_stress(1e9, yield_stress_c=np.nan, xp=np))
     assert np.isnan(compute_yield_stress(1e9, yield_stress_mu=np.nan, xp=np))
     assert np.isnan(compute_yield_stress(1e9, yield_stress_max=np.nan, xp=np))
 
 
 @given(
-    p=st.floats(min_value=0.0, max_value=1e12, allow_nan=False, allow_infinity=False),
+    p=st.floats(min_value=-1.0, max_value=1e12, allow_nan=False, allow_infinity=False),
     c=st.floats(min_value=0.0, max_value=1e9, allow_nan=False, allow_infinity=False),
     mu=st.floats(min_value=0.0, max_value=10.0, allow_nan=False, allow_infinity=False),
     mx=st.floats(min_value=1e-3, max_value=1e12, allow_nan=False, allow_infinity=False),
 )
-@settings(max_examples=25)
+@settings(deadline=None, max_examples=30)
 def test_hypothesis_yield_stress_valid_finite(p: float, c: float, mu: float, mx: float) -> None:
+    """Verify that yield stress matches independent reference formula across valid inputs."""
     res = compute_yield_stress(
         p, yield_stress_c=c, yield_stress_mu=mu, yield_stress_max=mx, xp=np
     )
     assert np.isfinite(res)
+
+    p_eff = 0.0 if (-1.0 <= p < 0.0) else p
+    expected = max(0.0, min(c + mu * p_eff, mx))
+    assert res == expected
+
+    res_arr = compute_yield_stress(
+        np.full(5, p), yield_stress_c=c, yield_stress_mu=mu, yield_stress_max=mx, xp=np
+    )
+    assert np.all(np.isfinite(res_arr))
+    assert np.array_equal(res_arr, np.full(5, expected))
 
 
 # Helper 3: compute_strain_rate_local(viscous_velocity, mixing_length, eps)
@@ -894,6 +1033,7 @@ def test_hypothesis_yield_stress_valid_finite(p: float, c: float, mu: float, mx:
 )
 @settings(deadline=None, max_examples=10)
 def test_hypothesis_strain_rate_velocity_invalid(bad_v: float) -> None:
+    """Verify that infinite velocity raises ValueError on NumPy and returns NaN on JAX."""
     with pytest.raises(ValueError, match='viscous_velocity'):
         compute_strain_rate_local(bad_v, 1e5, xp=np)
 
@@ -903,10 +1043,14 @@ def test_hypothesis_strain_rate_velocity_invalid(bad_v: float) -> None:
 
 
 @given(
-    bad_l=st.sampled_from([-1e-12, -10.0, float('-inf'), float('inf')]),
+    bad_l=st.one_of(
+        st.floats(max_value=np.nextafter(0.0, -np.inf), allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
-@settings(deadline=None, max_examples=10)
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_strain_rate_mixing_length_invalid(bad_l: float) -> None:
+    """Verify that negative or infinite mixing length raises ValueError or returns NaN on JAX."""
     with pytest.raises(ValueError, match='mixing_length'):
         compute_strain_rate_local(1e-9, bad_l, xp=np)
 
@@ -916,17 +1060,27 @@ def test_hypothesis_strain_rate_mixing_length_invalid(bad_l: float) -> None:
 
 
 @given(
-    bad_eps=st.sampled_from([0.0, -1e-15, -1.0, float('-inf'), float('inf')]),
+    bad_eps=st.one_of(
+        st.floats(max_value=0.0, allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_strain_rate_eps_invalid(bad_eps: float) -> None:
+    """Verify that non-positive or infinite epsilon raises ValueError."""
     with pytest.raises(ValueError, match='eps'):
         compute_strain_rate_local(1e-9, 1e5, eps=bad_eps, xp=np)
 
 
 @given(
-    bad_type=st.sampled_from([True, False, 'bad_val']),
+    bad_type=st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_strain_rate_wrong_types(bad_type: Any) -> None:
+    """Verify that non-numeric types for strain rate arguments raise ValueError."""
     with pytest.raises(ValueError, match='viscous_velocity'):
         compute_strain_rate_local(bad_type, 1e5, xp=np)
     with pytest.raises(ValueError, match='mixing_length'):
@@ -936,6 +1090,7 @@ def test_hypothesis_strain_rate_wrong_types(bad_type: Any) -> None:
 
 
 def test_hypothesis_strain_rate_nan_propagation() -> None:
+    """Verify that NaN inputs to compute_strain_rate_local propagate to NaN output."""
     assert np.isnan(compute_strain_rate_local(np.nan, 1e5, xp=np))
     assert np.isnan(compute_strain_rate_local(1e-9, np.nan, xp=np))
     assert np.isnan(compute_strain_rate_local(1e-9, 1e5, eps=np.nan, xp=np))
@@ -946,62 +1101,97 @@ def test_hypothesis_strain_rate_nan_propagation() -> None:
     l_mix=st.floats(min_value=0.0, max_value=1e7, allow_nan=False, allow_infinity=False),
     eps=st.floats(min_value=1e-20, max_value=1.0, allow_nan=False, allow_infinity=False),
 )
-@settings(max_examples=25)
+@settings(deadline=None, max_examples=30)
 def test_hypothesis_strain_rate_valid_finite(v: float, l_mix: float, eps: float) -> None:
+    """Verify that local strain rate matches reference formula across valid inputs."""
     res = compute_strain_rate_local(v, l_mix, eps=eps, xp=np)
     assert np.isfinite(res)
+
+    expected = abs(v) / (2.0 * max(l_mix, eps))
+    assert res == expected
+
+    res_arr = compute_strain_rate_local(np.full(5, v), np.full(5, l_mix), eps=eps, xp=np)
+    assert np.all(np.isfinite(res_arr))
+    assert np.array_equal(res_arr, np.full(5, expected))
 
 
 # Helper 4: viscous_mixing_length_factor(radii, r_in, r_out, mixing_length, s_top_inf, bottom_slope, theta, c_theta)
 @given(
     bad_r=st.sampled_from([float('-inf'), float('inf')]),
 )
+@settings(deadline=None, max_examples=10)
 def test_hypothesis_viscous_factor_radii_invalid(bad_r: float) -> None:
+    """Verify that non-finite radius entries raise ValueError."""
     r = np.array([3480e3, bad_r, 6371e3])
     with pytest.raises(ValueError, match='radii'):
         viscous_mixing_length_factor(r, 3480e3, 6371e3, np.ones(3), xp=np)
 
 
 @given(
-    bad_rin=st.sampled_from([0.0, -10.0, float('-inf'), float('inf')]),
+    bad_rin=st.one_of(
+        st.floats(max_value=0.0, allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_viscous_factor_rin_invalid(bad_rin: float) -> None:
+    """Verify that non-positive or infinite r_in raises ValueError."""
     r = np.linspace(3480e3, 6371e3, 5)
     with pytest.raises(ValueError, match='r_in'):
         viscous_mixing_length_factor(r, bad_rin, 6371e3, np.ones(5), xp=np)
 
 
 @given(
-    bad_rout=st.sampled_from([0.0, -10.0, float('-inf'), float('inf')]),
+    bad_rout=st.one_of(
+        st.floats(max_value=0.0, allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_viscous_factor_rout_invalid(bad_rout: float) -> None:
+    """Verify that non-positive or infinite r_out raises ValueError."""
     r = np.linspace(3480e3, 6371e3, 5)
     with pytest.raises(ValueError, match='r_out'):
         viscous_mixing_length_factor(r, 3480e3, bad_rout, np.ones(5), xp=np)
 
 
 @given(
-    bad_l=st.sampled_from([-1.0, float('-inf'), float('inf')]),
+    bad_l=st.one_of(
+        st.floats(max_value=np.nextafter(0.0, -np.inf), allow_nan=False, allow_infinity=True),
+        st.just(float('inf')),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_viscous_factor_mixing_length_invalid(bad_l: float) -> None:
+    """Verify that negative or infinite mixing length raises ValueError."""
     r = np.linspace(3480e3, 6371e3, 5)
     with pytest.raises(ValueError, match='mixing_length'):
         viscous_mixing_length_factor(r, 3480e3, 6371e3, np.full(5, bad_l), xp=np)
 
 
 @given(
-    bad_b=st.sampled_from([0.0, -0.1, 1.0001, 5.0, float('-inf'), float('inf')]),
+    bad_b=st.one_of(
+        st.floats(max_value=np.nextafter(0.0, -np.inf), allow_nan=False, allow_infinity=True),
+        st.floats(min_value=np.nextafter(1.0, np.inf), allow_nan=False, allow_infinity=True),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_viscous_factor_bottom_slope_invalid(bad_b: float) -> None:
+    """Verify that bottom_slope outside [0, 1] raises ValueError."""
     r = np.linspace(3480e3, 6371e3, 5)
     with pytest.raises(ValueError, match='bottom_slope'):
         viscous_mixing_length_factor(r, 3480e3, 6371e3, np.ones(5), bottom_slope=bad_b, xp=np)
 
 
 @given(
-    bad_type=st.sampled_from([True, False, 'bad_type']),
+    bad_type=st.one_of(
+        st.booleans(),
+        st.text(min_size=1, alphabet=st.characters(blacklist_categories=('Cs',))),
+    ),
 )
+@settings(deadline=None, max_examples=25)
 def test_hypothesis_viscous_factor_wrong_types(bad_type: Any) -> None:
+    """Verify that non-numeric types for viscous factor arguments raise ValueError."""
     r = np.linspace(3480e3, 6371e3, 5)
     with pytest.raises(ValueError, match='radii'):
         viscous_mixing_length_factor(bad_type, 3480e3, 6371e3, np.ones(5), xp=np)
@@ -1018,6 +1208,7 @@ def test_hypothesis_viscous_factor_wrong_types(bad_type: Any) -> None:
 
 
 def test_hypothesis_viscous_factor_nan_propagation() -> None:
+    """Verify that NaN inputs to viscous_mixing_length_factor propagate to NaN output."""
     r = np.linspace(3480e3, 6371e3, 5)
     assert np.isnan(viscous_mixing_length_factor(r, np.nan, 6371e3, np.ones(5), xp=np)[0])
     assert np.isnan(viscous_mixing_length_factor(r, 3480e3, np.nan, np.ones(5), xp=np)[0])
@@ -1037,10 +1228,11 @@ def test_hypothesis_viscous_factor_nan_propagation() -> None:
     th=st.floats(min_value=-100.0, max_value=100.0, allow_nan=False, allow_infinity=False),
     c=st.floats(min_value=0.0, max_value=50.0, allow_nan=False, allow_infinity=False),
 )
-@settings(max_examples=20)
+@settings(deadline=None, max_examples=30)
 def test_hypothesis_viscous_factor_valid_finite(
     s: float, b: float, th: float, c: float
 ) -> None:
+    """Verify that viscous mixing length factor matches reference formula across valid inputs."""
     r = np.linspace(3480e3, 6371e3, 5)
     l_mix = np.linspace(0.0, 1e5, 5)
     res = viscous_mixing_length_factor(
@@ -1055,6 +1247,12 @@ def test_hypothesis_viscous_factor_valid_finite(
         xp=np,
     )
     assert np.all(np.isfinite(res))
+
+    # Independent reference calculation
+    s_top = s + (1.0 - s) * np.exp(-c * max(th, 0.0))
+    lv = np.minimum(b * (r - 3480e3), s_top * (6371e3 - r))
+    expected = np.where(l_mix > 0.0, (lv / np.where(l_mix > 0.0, l_mix, 1.0)) ** 4.0, 1.0)
+    assert np.array_equal(res, expected)
 
 
 @pytest.mark.unit
