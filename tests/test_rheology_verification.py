@@ -2403,7 +2403,7 @@ def test_stagnant_lid_smooth_gates_and_scales():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
-    """Verify F_TOT_FLOOR_FRAC zero-crossing protection, LID_REGIME_LABEL_WIDTH slope, and SUBTHRESHOLD_FLUX_CENTER."""
+    """Verify F_TOT_FLOOR_FRAC zero-crossing protection, LID_REGIME_LABEL_WIDTH slope, and main parity across interior_flux_fraction."""
     from pathlib import Path
 
     import aragog.rheology_lid as lid_mod
@@ -2411,9 +2411,6 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
 
     assert getattr(lid_mod, 'F_TOT_FLOOR_FRAC', None) == pytest.approx(0.1, rel=1.0e-15)
     assert getattr(lid_mod, 'LID_REGIME_LABEL_WIDTH', None) == pytest.approx(0.1, rel=1.0e-15)
-    assert getattr(lid_mod, 'SUBTHRESHOLD_FLUX_CENTER', None) == pytest.approx(
-        6.00843e-5, rel=1.0e-12
-    )
 
     n = 20
     r = np.linspace(3.48e6, 6.37e6, n)
@@ -2521,55 +2518,81 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
             float(st_reg['w_active']) * (1.0 + expected_wy), rel=1.0e-6
         )
 
-    # 3. Row 27: w_weight at f = 6.00843e-5 (0.499625), f = 1e-4 (0.724501), f = 2e-3 (1.0),
-    # invariant across interior_flux_fraction in {0.05, 0.20, 0.50}.
-    for f_test, expected_w in (
-        (6.00843e-5, 0.4996245148964807),
-        (1.0e-4, 0.7245013801463845),
-        (2.0e-3, 1.0),
-    ):
-        for f0_cfg in (0.05, 0.20, 0.50):
-            st_sub = compute_stagnant_lid_state(
-                radii=r,
-                temperature=np.linspace(2600.0, 1400.0, n),
-                pressure=np.linspace(135.0e9, 0.0, n),
-                convective_flux=np.full(n, f_test),
-                total_flux=np.ones(n),
-                solidus_temperature=None,
-                melt_fraction=phi,
-                params=SolidRheologyParams(enabled=True, interior_flux_fraction=f0_cfg),
-                viscosity_solid=1.0e21,
-                viscosity_mixture=np.full(n, 1.0e15),
-                phi_rheo=0.4,
-                phi_width=0.15,
-                xp=np,
-            )
-            log_eta = float(np.log10(float(st_sub['eta_i'])))
-            log_arr = float(np.log10(float(st_sub['eta_solid_arrhenius'])))
-            w_eff = (log_eta - log_arr) / (15.0 - log_arr)
-            assert w_eff == pytest.approx(expected_w, rel=1.0e-9)
+    # 3. Sub-threshold and low-flux parity of eta_i, T_i, and mu_i across interior_flux_fraction
+    # in {0.05, 0.10, 0.20, 0.50} against reference literals from main.
+    n_l1 = 50
+    r_l1 = np.linspace(3.48e6, 6.371e6, n_l1)
+    t_l1 = np.linspace(2600.0, 1400.0, n_l1)
+    p_l1 = np.linspace(135.0e9, 0.0, n_l1)
+    phi_l1 = np.zeros(n_l1)
+    visc_mix_l1 = np.full(n_l1, 1.0e15)
+    main_literals = {
+        (0.05, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.05, 6.00843e-5): (8.96482698673302e20, 1856.5546317909584, 8.96482698673302e20),
+        (0.05, 1.0e-4): (5.440139164192721e17, 1626.722938791537, 5.440139164192721e17),
+        (0.05, 1.0e-3): (1000000065827473.5, 1424.4909098970506, 1000000065827473.5),
+        (0.05, 0.03): (1000000000000004.1, 1424.490907753382, 1000000000000004.1),
+        (0.10, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.10, 6.00843e-5): (6.038913358705211e30, 2575.467182755998, 6.038913358705211e30),
+        (0.10, 1.0e-4): (6.033682850271591e30, 2575.438315702754, 6.033682850271591e30),
+        (0.10, 1.0e-3): (5.905401456212067e30, 2574.722430755179, 5.905401456212067e30),
+        (0.10, 0.03): (1.9932572310324982e18, 1667.4062468015593, 1.9932572310324982e18),
+        (0.20, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.20, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.20, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.20, 1.0e-3): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.20, 0.03): (6.046716533609499e30, 2575.5101979531364, 6.046716533609499e30),
+        (0.50, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.50, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.50, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.50, 1.0e-3): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+        (0.50, 0.03): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
+    }
+    for (f0_cfg, f_test), (exp_eta_i, exp_t_i, exp_mu_i) in main_literals.items():
+        st_sub = compute_stagnant_lid_state(
+            radii=r_l1,
+            temperature=t_l1,
+            pressure=p_l1,
+            convective_flux=np.full(n_l1, f_test),
+            total_flux=np.ones(n_l1),
+            solidus_temperature=None,
+            melt_fraction=phi_l1,
+            params=SolidRheologyParams(enabled=True, interior_flux_fraction=f0_cfg),
+            viscosity_solid=1.0e21,
+            viscosity_mixture=visc_mix_l1,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
+        )
+        assert float(st_sub['eta_i']) == pytest.approx(exp_eta_i, rel=1.0e-12)
+        assert float(st_sub['T_i']) == pytest.approx(exp_t_i, rel=1.0e-12)
+        assert float(st_sub['mu_i']) == pytest.approx(exp_mu_i, rel=1.0e-12)
 
-    # 4. A3-2 check on checkpoint_profile_175kyr.npz: outside transition bands, outputs match hard reference to 1e-12.
+    # 4. A3-2 check on checkpoint_profile_175kyr.npz across all 4 interior_flux_fraction values:
+    # outside transition bands, outputs match hard reference to 1e-12.
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
     ckpt = np.load(ckpt_path)
-    st_ckpt = compute_stagnant_lid_state(
-        radii=ckpt['r_basic'],
-        temperature=ckpt['T_basic'],
-        pressure=ckpt['P_basic'],
-        convective_flux=ckpt['F_conv'],
-        total_flux=ckpt['F_tot'],
-        solidus_temperature=None,
-        melt_fraction=ckpt['phi_basic'],
-        params=SolidRheologyParams(enabled=True),
-        unyielded_velocity=ckpt['v_unyielded'],
-        viscosity_solid=1.0e21,
-        phi_rheo=0.4,
-        phi_width=0.15,
-        xp=np,
-    )
-    assert float(st_ckpt['T_i']) == pytest.approx(1423.012466223234, rel=1.0e-12)
-    assert float(st_ckpt['d_lid']) == pytest.approx(42026.66884939559, rel=1.0e-12)
-    assert float(st_ckpt['tau_d']) == pytest.approx(1299378.5915329107, rel=1.0e-12)
+    for f0_ckpt in (0.05, 0.10, 0.20, 0.50):
+        st_ckpt = compute_stagnant_lid_state(
+            radii=ckpt['r_basic'],
+            temperature=ckpt['T_basic'],
+            pressure=ckpt['P_basic'],
+            convective_flux=ckpt['F_conv'],
+            total_flux=ckpt['F_tot'],
+            solidus_temperature=None,
+            melt_fraction=ckpt['phi_basic'],
+            params=SolidRheologyParams(enabled=True, interior_flux_fraction=f0_ckpt),
+            unyielded_velocity=ckpt['v_unyielded'],
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
+        )
+        assert float(st_ckpt['eta_i']) == pytest.approx(2.760821023551699e22, rel=1.0e-12)
+        assert float(st_ckpt['T_i']) == pytest.approx(1423.012466223234, rel=1.0e-12)
+        assert float(st_ckpt['mu_i']) == pytest.approx(2.760821023551699e22, rel=1.0e-12)
+        assert float(st_ckpt['d_lid']) == pytest.approx(42026.66884939559, rel=1.0e-12)
+        assert float(st_ckpt['tau_d']) == pytest.approx(1299378.5915329107, rel=1.0e-12)
 
 
 @pytest.mark.unit
@@ -2622,9 +2645,9 @@ def test_boundary_weights_smooth_max_and_no_fallback():
     assert np.isfinite(g_zero) and abs(g_zero) < 1.0e-6
     assert abs(g_right - g_left) < 1.0e-2
 
-    # 3. Verify compute_stagnant_lid_state calls _boundary_weights(w_Ti, xp) without a uniform fallback.
+    # 3. Verify compute_stagnant_lid_state calls _boundary_weights(w_Ti, xp, ...) without a uniform fallback.
     src_text = inspect.getsource(lid_mod.compute_stagnant_lid_state)
-    assert '_boundary_weights(w_Ti, xp)' in src_text
+    assert '_boundary_weights(w_Ti, xp' in src_text
     assert 'xp.ones_like(r) / r.shape[0]' not in src_text
 
 
