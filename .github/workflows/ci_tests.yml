@@ -76,7 +76,7 @@ jobs:
 
       - name: Install pip-only test deps (scikits-odes-sundials builds against conda SUNDIALS)
         run: |
-          pip install pytest pytest-xdist pytest-dependency pytest-timeout hypothesis ruff "proteus-mpl @ git+https://github.com/FormingWorlds/proteus-visual-language@775724f7ff4335673aa64224e0757c6f7d83f617#subdirectory=figures/proteus-mpl"
+          pip install pytest pytest-xdist pytest-dependency pytest-timeout hypothesis ruff "proteus-mpl @ git+https://github.com/FormingWorlds/proteus-visual-language@d08e36930d2a96909b52a05b62df244eb3208301#subdirectory=figures/proteus-mpl"
           # Install scikits-odes-sundials directly (skip the scikits-odes
           # metapackage). This avoids scikits-odes-daepack, which is a
           # transitive Fortran dep with f2py incompatibility with numpy
