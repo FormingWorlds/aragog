@@ -1111,6 +1111,27 @@ def test_required_rheology_inputs_reject_none():
     with pytest.raises(ValueError, match='pressure'):
         compute_yield_stress(None)
 
+    with pytest.raises(ValueError, match='theta'):
+        compute_mlt_top_slope(None)
+
+    with pytest.raises(ValueError, match='radii'):
+        viscous_mixing_length_factor(None, 1.0e6, 3.0e6, 1.0e5)
+
+    with pytest.raises(ValueError, match='r_in'):
+        viscous_mixing_length_factor(np.array([2.0e6]), None, 3.0e6, 1.0e5)
+
+    with pytest.raises(ValueError, match='r_out'):
+        viscous_mixing_length_factor(np.array([2.0e6]), 1.0e6, None, 1.0e5)
+
+    with pytest.raises(ValueError, match='mixing_length'):
+        viscous_mixing_length_factor(np.array([2.0e6]), 1.0e6, 3.0e6, None)
+
+    with pytest.raises(ValueError, match='viscous_velocity'):
+        compute_strain_rate_local(None, 1.0e5)
+
+    with pytest.raises(ValueError, match='mixing_length'):
+        compute_strain_rate_local(1.0e-3, None)
+
 
 @pytest.mark.unit
 def test_viscous_mixing_length_factor_domain_checks():
@@ -1124,6 +1145,10 @@ def test_viscous_mixing_length_factor_domain_checks():
     with pytest.raises(ValueError, match='r_in'):
         viscous_mixing_length_factor(r_valid, 2.0e6, 2.0e6, ml_valid, xp=np)
 
+    # Test r_in == r_out where radii is within [r_in, r_out] so only r_in >= r_out triggers
+    with pytest.raises(ValueError, match='r_in'):
+        viscous_mixing_length_factor(np.array([2.0e6]), 2.0e6, 2.0e6, np.array([1.0e5]), xp=np)
+
     r_bad_low = np.array([0.5e6, 2.0e6])
     with pytest.raises(ValueError, match='radii'):
         viscous_mixing_length_factor(r_bad_low, 1.0e6, 3.0e6, np.ones(2) * 1.0e5, xp=np)
@@ -1131,6 +1156,42 @@ def test_viscous_mixing_length_factor_domain_checks():
     r_bad_high = np.array([2.0e6, 3.5e6])
     with pytest.raises(ValueError, match='radii'):
         viscous_mixing_length_factor(r_bad_high, 1.0e6, 3.0e6, np.ones(2) * 1.0e5, xp=np)
+
+
+@pytest.mark.unit
+def test_viscous_mixing_length_factor_jax_domain_checks():
+    """Verify viscous_mixing_length_factor returns NaN under JAX when domain constraints are violated."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
+    r_valid = jnp.array([2.0e6])
+    ml = jnp.array([1.0e5])
+
+    # 1. r_in > r_out
+    res1 = viscous_mixing_length_factor(r_valid, 3.0e6, 1.0e6, ml, xp=jnp)
+    assert bool(jnp.all(jnp.isnan(res1)))
+
+    # 2. r_in == r_out
+    res2 = viscous_mixing_length_factor(r_valid, 2.0e6, 2.0e6, ml, xp=jnp)
+    assert bool(jnp.all(jnp.isnan(res2)))
+
+    # 3. radii below r_in
+    res3 = viscous_mixing_length_factor(jnp.array([0.5e6]), 1.0e6, 3.0e6, ml, xp=jnp)
+    assert bool(jnp.all(jnp.isnan(res3)))
+
+    # 4. radii above r_out
+    res4 = viscous_mixing_length_factor(jnp.array([3.5e6]), 1.0e6, 3.0e6, ml, xp=jnp)
+    assert bool(jnp.all(jnp.isnan(res4)))
+
+    # Verify identical behaviour under jax.jit
+    jit_fn = jax.jit(
+        lambda r, rin, rout, m: viscous_mixing_length_factor(r, rin, rout, m, xp=jnp)
+    )
+    assert bool(jnp.all(jnp.isnan(jit_fn(r_valid, 3.0e6, 1.0e6, ml))))
+    assert bool(jnp.all(jnp.isnan(jit_fn(r_valid, 2.0e6, 2.0e6, ml))))
+    assert bool(jnp.all(jnp.isnan(jit_fn(jnp.array([0.5e6]), 1.0e6, 3.0e6, ml))))
+    assert bool(jnp.all(jnp.isnan(jit_fn(jnp.array([3.5e6]), 1.0e6, 3.0e6, ml))))
 
 
 @pytest.mark.unit
@@ -2420,7 +2481,7 @@ def test_is_non_real_direct_rejection_and_nonuniform_lid_bound():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_arrhenius_viscosity_grad_finite_at_masked_invalid_nodes():
-    """Verify jax.grad is zero, not NaN, when non-positive or NaN T, water_prefactor, or t_ref are masked."""
+    """Verify jax.grad is zero, not NaN, when invalid T, P, solidus_temperature, water_prefactor, or t_ref are masked."""
     jax = pytest.importorskip('jax')
     import jax.numpy as jnp
 
@@ -2470,6 +2531,132 @@ def test_arrhenius_viscosity_grad_finite_at_masked_invalid_nodes():
     h_0 = float(compute_arrhenius_enthalpy(0.0))
     expected_tr = 2.0 * h_0 / (R_GAS * 1600.0**2 * np.log(10.0))
     assert g_tr_valid == pytest.approx(expected_tr, rel=1.0e-12)
+
+    # Masked invalid pressure (P = -5, NaN, +inf, -inf) and solidus_temperature (<= 0, NaN, +inf):
+    # gradients wrt T and each scalar parameter are finite and equal the unmasked valid slice.
+    mask6 = jnp.array([True, True, False, False, False, False])
+    t_valid6 = jnp.array([1500.0, 1700.0, 1600.0, 1600.0, 1600.0, 1600.0])
+    p_valid6 = jnp.array([1.0e9, 2.0e9, 3.0e9, 4.0e9, 5.0e9, 6.0e9])
+    p_bad = jnp.array([1.0e9, 2.0e9, -5.0, jnp.nan, jnp.inf, -jnp.inf])
+    tsol_bad = jnp.array([1500.0, 1600.0, 0.0, -100.0, jnp.nan, jnp.inf])
+    scalar_args = (
+        jnp.asarray(1.0e21),
+        jnp.asarray(25.0),
+        jnp.asarray(1400.0),
+        jnp.asarray(2.4e-8),
+        jnp.asarray(1600.0),
+        jnp.asarray(R_GAS),
+        jnp.asarray(40.0),
+        jnp.asarray(1.0),
+    )
+
+    def loss_p_masked(t, p, vs, g_hom, t_sol_0, dt_sol_dp, t_ref, r_gas, vmax, wp):
+        eta = compute_arrhenius_viscosity(
+            t,
+            p,
+            viscosity_solid=vs,
+            g_homologous=g_hom,
+            t_sol_0=t_sol_0,
+            dt_sol_dp=dt_sol_dp,
+            arrhenius_t_ref=t_ref,
+            r_gas=r_gas,
+            viscosity_max_log10=vmax,
+            water_prefactor=wp,
+            xp=jnp,
+        )
+        return jnp.sum(jnp.where(mask6, jnp.log10(eta), 0.0))
+
+    def loss_p_clean(t, p, vs, g_hom, t_sol_0, dt_sol_dp, t_ref, r_gas, vmax, wp):
+        eta = compute_arrhenius_viscosity(
+            t,
+            p,
+            viscosity_solid=vs,
+            g_homologous=g_hom,
+            t_sol_0=t_sol_0,
+            dt_sol_dp=dt_sol_dp,
+            arrhenius_t_ref=t_ref,
+            r_gas=r_gas,
+            viscosity_max_log10=vmax,
+            water_prefactor=wp,
+            xp=jnp,
+        )
+        return jnp.sum(jnp.log10(eta))
+
+    grads_p_bad = jax.grad(loss_p_masked, argnums=tuple(range(10)))(
+        t_valid6, p_bad, *scalar_args
+    )
+    grads_p_ref = jax.grad(loss_p_clean, argnums=tuple(range(10)))(
+        t_valid6[:2], p_valid6[:2], *scalar_args
+    )
+    assert np.all(np.isfinite(np.asarray(grads_p_bad[0])))
+    assert np.all(np.asarray(grads_p_bad[0])[2:] == 0.0)
+    np.testing.assert_allclose(grads_p_bad[0][:2], grads_p_ref[0], rtol=1.0e-12)
+    assert np.all(np.isfinite(np.asarray(grads_p_bad[1])))
+    assert np.all(np.asarray(grads_p_bad[1])[2:] == 0.0)
+    np.testing.assert_allclose(grads_p_bad[1][:2], grads_p_ref[1], rtol=1.0e-12)
+    for idx in range(2, 10):
+        g_val = float(grads_p_bad[idx])
+        assert np.isfinite(g_val)
+        assert g_val == pytest.approx(float(grads_p_ref[idx]), rel=1.0e-12, abs=1.0e-30)
+    eta_bad_p = np.asarray(compute_arrhenius_viscosity(t_valid6, p_bad, xp=jnp))
+    assert np.all(np.isnan(eta_bad_p[2:]))
+
+    def loss_tsol_masked(t, tsol, vs, g_hom, t_sol_0, dt_sol_dp, t_ref, r_gas, vmax, wp):
+        eta = compute_arrhenius_viscosity(
+            t,
+            p_valid6,
+            viscosity_solid=vs,
+            g_homologous=g_hom,
+            solidus_temperature=tsol,
+            t_sol_0=t_sol_0,
+            dt_sol_dp=dt_sol_dp,
+            arrhenius_t_ref=t_ref,
+            r_gas=r_gas,
+            viscosity_max_log10=vmax,
+            water_prefactor=wp,
+            xp=jnp,
+        )
+        return jnp.sum(jnp.where(mask6, jnp.log10(eta), 0.0))
+
+    def loss_tsol_clean(t, tsol, vs, g_hom, t_sol_0, dt_sol_dp, t_ref, r_gas, vmax, wp):
+        eta = compute_arrhenius_viscosity(
+            t,
+            p_valid6[:2],
+            viscosity_solid=vs,
+            g_homologous=g_hom,
+            solidus_temperature=tsol,
+            t_sol_0=t_sol_0,
+            dt_sol_dp=dt_sol_dp,
+            arrhenius_t_ref=t_ref,
+            r_gas=r_gas,
+            viscosity_max_log10=vmax,
+            water_prefactor=wp,
+            xp=jnp,
+        )
+        return jnp.sum(jnp.log10(eta))
+
+    grads_tsol_bad = jax.grad(loss_tsol_masked, argnums=tuple(range(10)))(
+        t_valid6, tsol_bad, *scalar_args
+    )
+    grads_tsol_ref = jax.grad(loss_tsol_clean, argnums=tuple(range(10)))(
+        t_valid6[:2], tsol_bad[:2], *scalar_args
+    )
+    assert np.all(np.isfinite(np.asarray(grads_tsol_bad[0])))
+    assert np.all(np.asarray(grads_tsol_bad[0])[2:] == 0.0)
+    np.testing.assert_allclose(grads_tsol_bad[0][:2], grads_tsol_ref[0], rtol=1.0e-12)
+    assert np.all(np.isfinite(np.asarray(grads_tsol_bad[1])))
+    assert np.all(np.asarray(grads_tsol_bad[1])[2:] == 0.0)
+    np.testing.assert_allclose(grads_tsol_bad[1][:2], grads_tsol_ref[1], rtol=1.0e-12)
+    for idx in range(2, 10):
+        g_val = float(grads_tsol_bad[idx])
+        assert np.isfinite(g_val)
+        assert g_val == pytest.approx(float(grads_tsol_ref[idx]), rel=1.0e-12, abs=1.0e-30)
+    eta_bad_tsol = np.asarray(
+        compute_arrhenius_viscosity(
+            t_valid6, p_valid6, solidus_temperature=tsol_bad, t_sol_0=1400.0, xp=jnp
+        )
+    )
+    assert np.all(np.isnan(eta_bad_tsol[2:]))
 
 
 @pytest.mark.unit
