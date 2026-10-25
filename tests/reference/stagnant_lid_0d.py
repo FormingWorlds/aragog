@@ -14,7 +14,6 @@ passed in via :class:`StagnantLid0DParams`.
 
 from __future__ import annotations
 
-import ast
 import math
 import tomllib
 from collections.abc import Sequence
@@ -24,6 +23,30 @@ from typing import Any
 
 import numpy as np
 from scipy.integrate import solve_ivp
+
+# Reference physical and model defaults for the 0-D stagnant lid reference model
+R_GAS_DEFAULT: float = 8.314462618
+COHESION_FLOOR_DEFAULT: float = 1.0e-6
+VISCOSITY_CEILING_LOG10_WIDTH_DEFAULT: float = 0.05
+
+# SolidRheologyParams solver defaults
+G_HOMOLOGOUS_DEFAULT: float = 25.0
+T_SOL_0_DEFAULT: float = 1400.0
+DT_SOL_DP_DEFAULT: float = 2.4e-8
+ARRHENIUS_T_REF_DEFAULT: float = 1600.0
+VISCOSITY_MAX_LOG10_DEFAULT: float = 40.0
+WATER_PREFACTOR_DEFAULT: float = 1.0
+ACTIVATION_ENERGY_DEFAULT: float | None = None
+ACTIVATION_VOLUME_DEFAULT: float = 0.0
+ACTIVATION_VOLUME_DECAY_PRESSURE_DEFAULT: float = float('inf')
+LID_BASE_MODE_DEFAULT: str = 'rheological'
+LID_CONTRAST_COEFF_DEFAULT: float = 2.2
+LID_BASE_TEMPERATURE_DEFAULT: float = 1400.0
+YIELD_STRESS_C_DEFAULT: float = 50.0e6
+YIELD_STRESS_MU_DEFAULT: float = 0.6
+YIELD_STRESS_MAX_DEFAULT: float = 500.0e6
+INTERIOR_FLUX_FRACTION_DEFAULT: float = 0.05
+
 
 _POSITIVE_PARAM_FIELDS: tuple[str, ...] = (
     'r_cmb',
@@ -237,12 +260,12 @@ def load_aragog_0d_params(
     a_nu: float,
     yield_blend_ratio_width: float,
 ) -> StagnantLid0DParams:
-    """Construct :class:`StagnantLid0DParams` by parsing repo files without importing ``aragog``.
+    """Construct :class:`StagnantLid0DParams` from explicit solver defaults and configuration.
 
     Parameters
     ----------
     rheology_py : Path
-        Path to ``src/aragog/rheology.py`` read via ``ast.parse``.
+        Unused path kept for backwards compatibility with existing test signatures.
     abe_solid_toml : Path
         Path to ``src/aragog/cfg/abe_solid.toml`` read via ``tomllib``.
     viscosity_solid : float
@@ -265,33 +288,7 @@ def load_aragog_0d_params(
     StagnantLid0DParams
         Validated parameter bundle for the 0-D model.
     """
-    tree = ast.parse(rheology_py.read_text(encoding='utf-8'), filename=str(rheology_py))
-    mod_consts: dict[str, Any] = {}
-    cls_defaults: dict[str, Any] = {}
-
-    def _eval_literal(node: ast.AST) -> Any:
-        if isinstance(node, ast.Call):
-            return float(ast.literal_eval(node.args[0]))
-        return ast.literal_eval(node)
-
-    for stmt in tree.body:
-        if isinstance(stmt, ast.Assign):
-            for target in stmt.targets:
-                if isinstance(target, ast.Name) and target.id in (
-                    'R_GAS',
-                    'COHESION_FLOOR',
-                    'VISCOSITY_CEILING_LOG10_WIDTH',
-                ):
-                    mod_consts[target.id] = _eval_literal(stmt.value)
-        elif isinstance(stmt, ast.ClassDef) and stmt.name == 'SolidRheologyParams':
-            for item in stmt.body:
-                if (
-                    isinstance(item, ast.AnnAssign)
-                    and isinstance(item.target, ast.Name)
-                    and item.value is not None
-                ):
-                    cls_defaults[item.target.id] = _eval_literal(item.value)
-
+    _ = rheology_py
     cfg = tomllib.loads(abe_solid_toml.read_text(encoding='utf-8'))
     rho = float(cfg['phase_solid']['density'])
     gravity = float(cfg['mesh']['gravitational_acceleration'])
@@ -308,27 +305,27 @@ def load_aragog_0d_params(
         t_surf=float(t_surf),
         viscosity_solid=float(viscosity_solid),
         p_i_ref=p_i_ref,
-        r_gas=float(mod_consts['R_GAS']),
-        g_homologous=float(cls_defaults['g_homologous']),
-        t_sol_0=float(cls_defaults['t_sol_0']),
-        dt_sol_dp=float(cls_defaults['dt_sol_dp']),
-        arrhenius_t_ref=float(cls_defaults['arrhenius_t_ref']),
-        viscosity_max_log10=float(cls_defaults['viscosity_max_log10']),
-        viscosity_ceiling_width=float(mod_consts['VISCOSITY_CEILING_LOG10_WIDTH']),
-        water_prefactor=float(cls_defaults['water_prefactor']),
-        activation_energy=cls_defaults['activation_energy'],
-        activation_volume=float(cls_defaults['activation_volume']),
-        activation_volume_decay_p=float(cls_defaults['activation_volume_decay_pressure']),
-        lid_base_mode=str(cls_defaults['lid_base_mode']),
-        lid_contrast_coeff=float(cls_defaults['lid_contrast_coeff']),
-        lid_base_temperature=float(cls_defaults['lid_base_temperature']),
+        r_gas=R_GAS_DEFAULT,
+        g_homologous=G_HOMOLOGOUS_DEFAULT,
+        t_sol_0=T_SOL_0_DEFAULT,
+        dt_sol_dp=DT_SOL_DP_DEFAULT,
+        arrhenius_t_ref=ARRHENIUS_T_REF_DEFAULT,
+        viscosity_max_log10=VISCOSITY_MAX_LOG10_DEFAULT,
+        viscosity_ceiling_width=VISCOSITY_CEILING_LOG10_WIDTH_DEFAULT,
+        water_prefactor=WATER_PREFACTOR_DEFAULT,
+        activation_energy=ACTIVATION_ENERGY_DEFAULT,
+        activation_volume=ACTIVATION_VOLUME_DEFAULT,
+        activation_volume_decay_p=ACTIVATION_VOLUME_DECAY_PRESSURE_DEFAULT,
+        lid_base_mode=LID_BASE_MODE_DEFAULT,
+        lid_contrast_coeff=LID_CONTRAST_COEFF_DEFAULT,
+        lid_base_temperature=LID_BASE_TEMPERATURE_DEFAULT,
         a_rh_fb=float(a_rh_fb),
         c4_fb=float(c4_fb),
         a_nu=float(a_nu),
-        yield_stress_c=float(cls_defaults['yield_stress_c']),
-        yield_stress_mu=float(cls_defaults['yield_stress_mu']),
-        yield_stress_max=float(cls_defaults['yield_stress_max']),
-        yield_stress_floor=float(mod_consts['COHESION_FLOOR']),
+        yield_stress_c=YIELD_STRESS_C_DEFAULT,
+        yield_stress_mu=YIELD_STRESS_MU_DEFAULT,
+        yield_stress_max=YIELD_STRESS_MAX_DEFAULT,
+        yield_stress_floor=COHESION_FLOOR_DEFAULT,
         yield_blend_ratio_width=float(yield_blend_ratio_width),
     )
 
@@ -645,6 +642,8 @@ def integrate_stagnant_lid_0d(
         rtol=rtol_val,
         atol=atol_val,
     )
+    if not sol.success:
+        raise RuntimeError(f'solve_ivp integration failed: {sol.message}')
 
     states = [evaluate_stagnant_lid_0d(float(tv), params) for tv in sol.y[0]]
     f_top_arr = np.array([st[flux_key] for st in states], dtype=float)

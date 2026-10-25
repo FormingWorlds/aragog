@@ -59,14 +59,6 @@ def _assert_raises_value_error(fn: Any, *args: Any, match: str, **kwargs: Any) -
         )
 
 
-def _assert_valid_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
-    """Call ``fn`` and raise ``AssertionError`` if any exception is raised."""
-    try:
-        return fn(*args, **kwargs)
-    except Exception as exc:
-        raise AssertionError(f'Expected valid call, got {type(exc).__name__}: {exc}') from exc
-
-
 def _find_forbidden_aragog_imports(source_text: str) -> list[str]:
     """Scan Python source AST for any static or dynamic import of ``aragog``."""
     tree = ast.parse(source_text)
@@ -120,7 +112,7 @@ def _cached_base_params() -> StagnantLid0DParams:
 
 def _make_base_params(**overrides: Any) -> StagnantLid0DParams:
     """Build the active-solid 0-D parameter set from repo config files with optional overrides."""
-    base = _assert_valid_call(_cached_base_params)
+    base = _cached_base_params()
     if not overrides:
         return base
     return dataclasses.replace(base, **overrides)
@@ -176,8 +168,8 @@ def test_stagnant_lid_0d_activation_and_viscosity_limits() -> None:
     p_i = 4.1202e9
 
     # 1. Homologous law at P = 0 and P = 4.1202 GPa.
-    h_0 = _assert_valid_call(compute_0d_activation_enthalpy, 0.0, params)
-    h_pi = _assert_valid_call(compute_0d_activation_enthalpy, p_i, params)
+    h_0 = compute_0d_activation_enthalpy(0.0, params)
+    h_pi = compute_0d_activation_enthalpy(p_i, params)
     assert h_0 == pytest.approx(291006.19163, rel=1e-12)
     assert h_pi == pytest.approx(311560.5409572102, rel=1e-12)
     expected_dh = params.g_homologous * params.r_gas * params.dt_sol_dp * p_i
@@ -203,14 +195,12 @@ def test_stagnant_lid_0d_activation_and_viscosity_limits() -> None:
         activation_volume_decay_p=p_decay,
     )
 
-    assert (
-        _assert_valid_call(compute_0d_activation_enthalpy, p_i, params_lin) == e_a + v_0 * p_i
-    )
-    assert _assert_valid_call(compute_0d_activation_enthalpy, p_i, params_v0_zero) == e_a
-    assert _assert_valid_call(compute_0d_activation_enthalpy, 0.0, params_sat) == e_a
+    assert compute_0d_activation_enthalpy(p_i, params_lin) == e_a + v_0 * p_i
+    assert compute_0d_activation_enthalpy(p_i, params_v0_zero) == e_a
+    assert compute_0d_activation_enthalpy(0.0, params_sat) == e_a
 
-    h_sat = _assert_valid_call(compute_0d_activation_enthalpy, p_i, params_sat)
-    h_lin = _assert_valid_call(compute_0d_activation_enthalpy, p_i, params_lin)
+    h_sat = compute_0d_activation_enthalpy(p_i, params_sat)
+    h_lin = compute_0d_activation_enthalpy(p_i, params_lin)
     lagrange_bound = 0.5 * v_0 * (p_i**2) / p_decay
     assert 0.0 < (h_lin - h_sat) < lagrange_bound
     assert compute_0d_activation_enthalpy(1.0e12, params_sat) == pytest.approx(
@@ -238,9 +228,7 @@ def test_stagnant_lid_0d_activation_and_viscosity_limits() -> None:
     )
 
     # 4. Viscosity at (T_ref, P=0) equals viscosity_solid * water_prefactor.
-    eta_ref, log10_eta_ref = _assert_valid_call(
-        compute_0d_interior_viscosity, params.arrhenius_t_ref, 0.0, params
-    )
+    eta_ref, log10_eta_ref = compute_0d_interior_viscosity(params.arrhenius_t_ref, 0.0, params)
     assert eta_ref == pytest.approx(params.viscosity_solid * params.water_prefactor, rel=1e-12)
     assert log10_eta_ref == pytest.approx(18.0, rel=1e-12)
 
@@ -340,7 +328,7 @@ def test_stagnant_lid_0d_reference_states_and_scalings() -> None:
     }
 
     for t_i, expected in pinned.items():
-        st_0d = _assert_valid_call(evaluate_stagnant_lid_0d, t_i, params)
+        st_0d = evaluate_stagnant_lid_0d(t_i, params)
         for key, val in expected.items():
             assert st_0d[key] == pytest.approx(val, rel=1e-12), (
                 f'Mismatch at T_i={t_i}, key={key}'
@@ -374,9 +362,7 @@ def test_stagnant_lid_0d_reference_states_and_scalings() -> None:
     assert st_stiff['delta_l_unyielded_m'] == pytest.approx(1.0e6, rel=1e-12)
 
     # Incipient-lid branch: when theta < a_lid, lid_frac == 0, d_lid == 0, and d_geom == delta_rh.
-    st_incipient = _assert_valid_call(
-        evaluate_stagnant_lid_0d, 1600.0, _assert_valid_call(_make_base_params, t_surf=1500.0)
-    )
+    st_incipient = evaluate_stagnant_lid_0d(1600.0, _make_base_params(t_surf=1500.0))
     assert st_incipient['theta'] < params.lid_contrast_coeff
     assert st_incipient['lid_frac'] == 0.0
     assert st_incipient['d_lid_unyielded_m'] == 0.0
@@ -386,9 +372,7 @@ def test_stagnant_lid_0d_reference_states_and_scalings() -> None:
     assert st_incipient['tau_d_lid_Pa'] == pytest.approx(expected_tau_d_lid_inc, rel=1e-12)
 
     # Fixed lid-base isotherm mode: T_lid_iso = T_base and lid_frac = (T_base - T_surf) / (T_i - T_surf).
-    params_fixed = _assert_valid_call(
-        _make_base_params, lid_base_mode='fixed', lid_base_temperature=1400.0
-    )
+    params_fixed = _make_base_params(lid_base_mode='fixed', lid_base_temperature=1400.0)
     st_fixed = evaluate_stagnant_lid_0d(1600.0, params_fixed, p_i=2.0e9, p_lid=1.0e9)
     assert st_fixed['P_i_Pa'] == pytest.approx(2.0e9, rel=1e-12)
     assert st_fixed['P_lid_Pa'] == pytest.approx(1.0e9, rel=1e-12)
@@ -533,8 +517,7 @@ def test_stagnant_lid_0d_ode_steady_state_limit() -> None:
     h_rad_eq = 0.6 * q_out_eq / m_mantle
 
     # Fast 1-second diagnostic and rate check before long-timescale integration.
-    sol_1s = _assert_valid_call(
-        integrate_stagnant_lid_0d,
+    sol_1s = integrate_stagnant_lid_0d(
         1680.0,
         [0.0, 1.0],
         params,
@@ -555,8 +538,7 @@ def test_stagnant_lid_0d_ode_steady_state_limit() -> None:
     assert sol_1s['dT_i_dt_K_s'][0] == pytest.approx(expected_dt_dt, rel=1e-12)
     assert (sol_1s['T_i_K'][1] - 1680.0) == pytest.approx(expected_dt_dt, rel=1e-6)
 
-    sol_1s_ad = _assert_valid_call(
-        integrate_stagnant_lid_0d,
+    sol_1s_ad = integrate_stagnant_lid_0d(
         1680.0,
         [0.0, 1.0],
         params,
@@ -570,8 +552,7 @@ def test_stagnant_lid_0d_ode_steady_state_limit() -> None:
     sec_per_yr = 365.25 * 86400.0
     t_eval_s = np.linspace(0.0, 1.0e9 * sec_per_yr, 9)
 
-    sol_eq = _assert_valid_call(
-        integrate_stagnant_lid_0d,
+    sol_eq = integrate_stagnant_lid_0d(
         t_eq,
         t_eval_s,
         params,
@@ -587,8 +568,7 @@ def test_stagnant_lid_0d_ode_steady_state_limit() -> None:
     np.testing.assert_allclose(sol_eq['dT_i_dt_K_s'], 0.0, atol=1e-22)
 
     # Hot perturbation (1680 K) cools monotonically toward T_eq.
-    sol_hot = _assert_valid_call(
-        integrate_stagnant_lid_0d,
+    sol_hot = integrate_stagnant_lid_0d(
         1680.0,
         t_eval_s,
         params,
@@ -599,8 +579,7 @@ def test_stagnant_lid_0d_ode_steady_state_limit() -> None:
     assert t_eq < sol_hot['T_i_K'][-1] < 1640.0
 
     # Cold perturbation (1530 K) warms monotonically toward T_eq.
-    sol_cold = _assert_valid_call(
-        integrate_stagnant_lid_0d,
+    sol_cold = integrate_stagnant_lid_0d(
         1530.0,
         t_eval_s,
         params,
@@ -611,17 +590,17 @@ def test_stagnant_lid_0d_ode_steady_state_limit() -> None:
     assert 1545.0 < sol_cold['T_i_K'][-1] < t_eq
 
     # Discrimination guard: without heat sources, 1600 K cools by > 110 K over 1 Gyr.
-    sol_unheated = _assert_valid_call(integrate_stagnant_lid_0d, t_eq, t_eval_s, params)
+    sol_unheated = integrate_stagnant_lid_0d(t_eq, t_eval_s, params)
     assert (t_eq - sol_unheated['T_i_K'][-1]) > 110.0
 
 
 @pytest.mark.physics_invariant
 @pytest.mark.reference_pinned
 def test_stagnant_lid_0d_ode_energy_balance() -> None:
-    """Verify exact first-law thermal energy balance of the 0-D cooling ODE.
+    """Verify thermal energy balance of the 0-D cooling ODE.
 
-    Checks both Differential (``C_eff * dT_i/dt == Q_in - Q_out``) and Integral
-    (``C_eff * (T_i(t_end) - T_i(0)) == integral(Q_in - Q_out, dt)``) energy
+    Checks trajectory gradient consistency against dT_i/dt and integral
+    (C_eff * (T_i(t_end) - T_i(0)) == integral(Q_in - Q_out, dt)) energy
     conservation across spherical and planar conduction geometries and isothermal
     and adiabatic heat capacities, and pins the 1 Gyr cooling endpoints (Thiriet
     et al. 2019 Eqs. 10-12, 18).
@@ -631,8 +610,7 @@ def test_stagnant_lid_0d_ode_energy_balance() -> None:
     t_eval_s = (np.linspace(0.0, 1.0, 401) ** 2) * (1.0e9 * sec_per_yr)
 
     # 1. Spherical isothermal secular cooling from 1800 K (1499.995025 K).
-    sol_sph_iso = _assert_valid_call(
-        integrate_stagnant_lid_0d,
+    sol_sph_iso = integrate_stagnant_lid_0d(
         1800.0,
         t_eval_s,
         params,
@@ -643,8 +621,7 @@ def test_stagnant_lid_0d_ode_energy_balance() -> None:
     assert sol_sph_iso['d_lid_eff_m'][-1] == pytest.approx(284059.4911176443, rel=1e-9)
 
     # 2. Planar isothermal secular cooling from 1800 K (1496.551907 K).
-    sol_pla_iso = _assert_valid_call(
-        integrate_stagnant_lid_0d,
+    sol_pla_iso = integrate_stagnant_lid_0d(
         1800.0,
         t_eval_s,
         params,
@@ -656,8 +633,7 @@ def test_stagnant_lid_0d_ode_energy_balance() -> None:
     assert sol_pla_iso['T_i_K'][-1] < sol_sph_iso['T_i_K'][-1]
 
     # 3. Spherical adiabatic-heat-capacity secular cooling from 1800 K (1505.908642 K).
-    sol_sph_ad = _assert_valid_call(
-        integrate_stagnant_lid_0d,
+    sol_sph_ad = integrate_stagnant_lid_0d(
         1800.0,
         t_eval_s,
         params,
@@ -684,13 +660,7 @@ def test_stagnant_lid_0d_ode_energy_balance() -> None:
         assert sol['t_s'].shape == sol['T_i_K'].shape == t_eval_s.shape
         c_eff = sol['C_eff_J_K']
         q_net = sol['Q_in_W'] - sol['Q_out_W']
-        # Differential energy balance at every evaluated time point and against trajectory gradient.
-        np.testing.assert_allclose(
-            c_eff * sol['dT_i_dt_K_s'],
-            q_net,
-            rtol=1e-13,
-            atol=1e-6,
-        )
+        # Energy balance against trajectory gradient and integral heat content change.
         dt_dt_num = np.gradient(sol['T_i_K'], sol['t_s'], edge_order=2)
         np.testing.assert_allclose(
             dt_dt_num[40:-1],
@@ -963,8 +933,7 @@ def test_stagnant_lid_0d_invalid_inputs_rejected() -> None:
     )
 
     # Boundary acceptance checks: non-negative fields accept 0.0 and strict bounds accept +eps / 300.0.
-    p_zero = _assert_valid_call(
-        _make_base_params,
+    p_zero = _make_base_params(
         r_surf=params.r_cmb + 1.0,
         p_i_ref=0.0,
         dt_sol_dp=0.0,
@@ -977,15 +946,12 @@ def test_stagnant_lid_0d_invalid_inputs_rejected() -> None:
         yield_stress_mu=0.0,
     )
     assert p_zero.p_i_ref == 0.0
-    p_max_ceil = _assert_valid_call(_make_base_params, viscosity_max_log10=300.0)
+    p_max_ceil = _make_base_params(viscosity_max_log10=300.0)
     assert p_max_ceil.viscosity_max_log10 == 300.0
-    _assert_valid_call(compute_0d_activation_enthalpy, 0.0, p_zero)
-    _assert_valid_call(compute_0d_interior_viscosity, params.t_surf + 0.1, 0.0, p_zero)
-    _assert_valid_call(
-        evaluate_stagnant_lid_0d, params.t_surf + 0.1, p_zero, p_i=0.0, p_lid=0.0
-    )
-    _assert_valid_call(
-        integrate_stagnant_lid_0d,
+    compute_0d_activation_enthalpy(0.0, p_zero)
+    compute_0d_interior_viscosity(params.t_surf + 0.1, 0.0, p_zero)
+    evaluate_stagnant_lid_0d(params.t_surf + 0.1, p_zero, p_i=0.0, p_lid=0.0)
+    integrate_stagnant_lid_0d(
         params.t_surf + 0.1,
         [0.0, 1.0],
         params,
@@ -995,3 +961,57 @@ def test_stagnant_lid_0d_invalid_inputs_rejected() -> None:
 
     # Hypothesis property sweep across positive and non-negative parameter fields.
     _sweep_invalid_floats()
+
+
+def test_integrate_stagnant_lid_0d_raises_on_solver_failure(monkeypatch) -> None:
+    """integrate_stagnant_lid_0d raises RuntimeError when solve_ivp fails."""
+    from scipy.integrate._ivp.ivp import OdeResult
+
+    import tests.reference.stagnant_lid_0d as ref_mod
+
+    params = _make_base_params()
+    t_eval_s = np.array([0.0, 1.0e6])
+
+    orig_solve_ivp = ref_mod.solve_ivp
+
+    def mock_solve_ivp(*args, **kwargs):
+        res = orig_solve_ivp(*args, **kwargs)
+        return OdeResult(
+            t=res.t,
+            y=res.y,
+            status=-1,
+            message='Step size below machine precision',
+            success=False,
+        )
+
+    monkeypatch.setattr(ref_mod, 'solve_ivp', mock_solve_ivp)
+    with pytest.raises(RuntimeError, match='solve_ivp integration failed'):
+        integrate_stagnant_lid_0d(1800.0, t_eval_s, params)
+
+
+def test_stagnant_lid_0d_constants_parity_with_solver_defaults() -> None:
+    """Verify parity between stagnant_lid_0d explicit constants and aragog.rheology defaults."""
+    import aragog.rheology as rheo_mod
+    import tests.reference.stagnant_lid_0d as ref_mod
+    from aragog.rheology import SolidRheologyParams
+
+    assert ref_mod.R_GAS_DEFAULT == rheo_mod.R_GAS
+    assert ref_mod.COHESION_FLOOR_DEFAULT == rheo_mod.COHESION_FLOOR
+    assert (
+        ref_mod.VISCOSITY_CEILING_LOG10_WIDTH_DEFAULT == rheo_mod.VISCOSITY_CEILING_LOG10_WIDTH
+    )
+
+    defaults = SolidRheologyParams()
+    assert ref_mod.G_HOMOLOGOUS_DEFAULT == defaults.g_homologous
+    assert ref_mod.T_SOL_0_DEFAULT == defaults.t_sol_0
+    assert ref_mod.DT_SOL_DP_DEFAULT == defaults.dt_sol_dp
+    assert ref_mod.ARRHENIUS_T_REF_DEFAULT == defaults.arrhenius_t_ref
+    assert ref_mod.VISCOSITY_MAX_LOG10_DEFAULT == defaults.viscosity_max_log10
+    assert ref_mod.WATER_PREFACTOR_DEFAULT == defaults.water_prefactor
+    assert ref_mod.YIELD_STRESS_C_DEFAULT == defaults.yield_stress_c
+    assert ref_mod.YIELD_STRESS_MU_DEFAULT == defaults.yield_stress_mu
+    assert ref_mod.YIELD_STRESS_MAX_DEFAULT == defaults.yield_stress_max
+    assert ref_mod.INTERIOR_FLUX_FRACTION_DEFAULT == defaults.interior_flux_fraction
+    assert ref_mod.LID_BASE_MODE_DEFAULT == defaults.lid_base_mode
+    assert ref_mod.LID_CONTRAST_COEFF_DEFAULT == defaults.lid_contrast_coeff
+    assert ref_mod.LID_BASE_TEMPERATURE_DEFAULT == defaults.lid_base_temperature

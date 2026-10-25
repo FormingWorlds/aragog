@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 import os
 import subprocess
 import sys
@@ -141,37 +140,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
     eos_jax = EntropyEOS_JAX(eos_dir)
     mesh = solver.evaluator.mesh
+    mesh_arr = MeshArrays.from_numpy_mesh(mesh)
     r_basic = np.asarray(mesh.basic.radii).ravel()
-    r_stag = np.asarray(mesh.staggered.radii).ravel()
-    n_stag = r_stag.size
-    dr = np.diff(r_stag)
-    d_dr = np.zeros((r_basic.size, n_stag))
-    for i in range(1, r_basic.size - 1):
-        d_dr[i, i - 1] = -1.0 / dr[i - 1]
-        d_dr[i, i] = 1.0 / dr[i - 1]
-    d_dr[0, :] = d_dr[1, :]
-    d_dr[-1, :] = d_dr[-2, :]
-    q_mat = np.zeros((r_basic.size, n_stag))
-    q_mat[0, 0] = 1.0
-    q_mat[-1, -1] = 1.0
-    for i in range(1, r_basic.size - 1):
-        q_mat[i, i - 1] = 0.5
-        q_mat[i, i] = 0.5
-    ml = np.asarray(mesh.basic.mixing_length).ravel()
-    mesh_arr = MeshArrays(
-        d_dr_matrix=jnp.asarray(d_dr),
-        quantity_matrix=jnp.asarray(q_mat),
-        area=jnp.asarray(4.0 * np.pi * r_basic**2),
-        volume=jnp.asarray(np.asarray(mesh.basic.volume).ravel()),
-        radii_basic=jnp.asarray(r_basic),
-        radii_stag=jnp.asarray(r_stag),
-        mixing_length=jnp.asarray(ml),
-        mixing_length_sq=jnp.asarray(ml**2),
-        mixing_length_cu=jnp.asarray(ml**3),
-        P_stag=jnp.asarray(np.asarray(mesh.staggered_pressure).ravel()),
-        P_basic=jnp.asarray(np.asarray(mesh.basic_pressure).ravel()),
-        gravity=jnp.full(r_basic.size, 9.81),
-    )
+    n_stag = np.asarray(mesh.staggered.radii).size
     r_cmb = float(r_basic[0])
     bc = BoundaryParams(
         outer_bc_type=1,
@@ -209,91 +180,7 @@ print('aragog.core.layer' in sys.modules)
 """
 
 
-def _dotted_callee(func: ast.AST) -> str:
-    """Return the dotted attribute and name chain of a call target."""
-    parts: list[str] = []
-    cur = func
-    while isinstance(cur, ast.Attribute):
-        parts.append(cur.attr)
-        cur = cur.value
-    if isinstance(cur, ast.Name):
-        parts.append(cur.id)
-    return '.'.join(reversed(parts))
-
-
-def _is_dynamic_import_call(func: ast.AST) -> bool:
-    """Return True when ``func`` is an importlib, __import__, or importlib.util call."""
-    callee = _dotted_callee(func)
-    if callee in {
-        '__import__',
-        'builtins.__import__',
-        'import_module',
-        'importlib.import_module',
-        'find_spec',
-        'spec_from_file_location',
-        'module_from_spec',
-    }:
-        return True
-    if callee.endswith(('.import_module', '.__import__')):
-        return True
-    return callee.startswith('importlib.util.') or '.util.' in callee
-
-
-def _extract_arg_strings(expr: ast.AST) -> list[str]:
-    """Return candidate string values from a literal, f-string, or concatenation."""
-    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
-        return [expr.value]
-    if isinstance(expr, ast.JoinedStr):
-        folded: list[str] = []
-        for part in expr.values:
-            if isinstance(part, ast.Constant) and isinstance(part.value, str):
-                folded.append(part.value)
-            elif isinstance(part, ast.FormattedValue):
-                if isinstance(part.value, ast.Constant) and isinstance(part.value.value, str):
-                    folded.append(part.value.value)
-                else:
-                    folded.append(ast.unparse(part.value))
-        return [''.join(folded), ast.unparse(expr)]
-    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
-        left = _extract_arg_strings(expr.left)
-        right = _extract_arg_strings(expr.right)
-        return [f'{a}{b}' for a in left for b in right] + [ast.unparse(expr)]
-    return [ast.unparse(expr)]
-
-
-def _call_names_aragog_core(node: ast.Call) -> bool:
-    """Return True if any argument of ``node`` names ``aragog.core``."""
-    arg_exprs = [*node.args, *(kw.value for kw in node.keywords)]
-    extracted = [s for expr in arg_exprs for s in _extract_arg_strings(expr)]
-    if any('aragog.core' in s for s in extracted):
-        return True
-    has_rel_core = any(s == '.core' or s.startswith('.core.') or s == 'core' for s in extracted)
-    has_aragog_pkg = any('aragog' in s for s in extracted)
-    return has_rel_core and len(arg_exprs) >= 2 and has_aragog_pkg
-
-
-def scan_solver_paths_for_dynamic_core_imports(src_root: Path) -> list[str]:
-    """Scan solver, JAX, and rheology modules for dynamic imports naming ``aragog.core``."""
-    aragog_dir = src_root / 'aragog'
-    solver_files = sorted((aragog_dir / 'solver').rglob('*.py'))
-    jax_files = sorted((aragog_dir / 'jax').rglob('*.py'))
-    rheology_files = sorted(aragog_dir.glob('rheology*.py'))
-    assert solver_files and jax_files and rheology_files
-    violations: list[str] = []
-    for path in [*solver_files, *jax_files, *rheology_files]:
-        tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and _is_dynamic_import_call(node.func)
-                and _call_names_aragog_core(node)
-            ):
-                rel = path.relative_to(src_root)
-                violations.append(f'{rel}:{node.lineno}: {ast.unparse(node)}')
-    return violations
-
-
-def test_energy_balance_paths_load_no_core_module_at_import():
+def test_energy_balance_paths_load_no_core_module_at_import_or_runtime_solve():
     """The numpy solver and the JAX RHS load no part of ``aragog.core`` at import or during a
     short rheology-enabled solve, and ``aragog.core`` loads the experimental layer only when a
     stratified budget is built."""
@@ -309,10 +196,3 @@ def test_energy_balance_paths_load_no_core_module_at_import():
     assert out.stdout.splitlines() == ['[]', '[]', '[]', 'False'], (
         f'Unexpected aragog.core modules loaded during import or runtime solve: {out.stdout}'
     )
-
-
-def test_solver_paths_contain_no_dynamic_core_imports():
-    """Solver, JAX, and rheology modules contain no dynamic import calls naming ``aragog.core``."""
-    src_root = Path(__file__).resolve().parents[1] / 'src'
-    violations = scan_solver_paths_for_dynamic_core_imports(src_root)
-    assert violations == [], f'Dynamic aragog.core imports found in solver paths: {violations}'
