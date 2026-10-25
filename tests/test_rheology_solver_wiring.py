@@ -2671,6 +2671,19 @@ def test_build_jax_rhs_and_jacobian_validates_mesh_arrays_for_rheology() -> None
     bad_radii = mesh_jax.radii_basic.at[0].set(0.0)
     bad_mesh = replace(mesh_jax, radii_basic=bad_radii)
 
+    # Valid call exposes phase_params and rheology on rhs_fn
+    rhs_fn, _, _ = build_jax_rhs_and_jacobian(
+        eos_jax=eos_jax,
+        phase_params=pp,
+        mesh_arrays=mesh_jax,
+        boundary_params=bc_jax,
+        heating_array=heating_arr,
+        scales=solver._build_nondim_scales(),
+        core_bc_mode='quasi_steady',
+    )
+    assert getattr(rhs_fn, 'phase_params', None) is not None
+    assert getattr(rhs_fn, 'rheology', None) == pp.rheology
+
     with pytest.raises(ValueError, match='basic-node radii'):
         build_jax_rhs_and_jacobian(
             eos_jax=eos_jax,
