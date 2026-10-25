@@ -191,7 +191,7 @@ def test_toml_dispatch_reports_missing_required_section(tmp_path):
 
     cfg = tmp_path / 'incomplete.toml'
     cfg.write_text(
-        # Only [solver] – [boundary_conditions] / [mesh] / etc. all missing.
+        # Only [solver]: [boundary_conditions] / [mesh] / etc. all missing.
         '[solver]\nstart_time = 0\nend_time = 1\natol = 1e-9\nrtol = 1e-9\n'
         'tsurf_poststep_change = 30\n',
         encoding='utf-8',
@@ -421,7 +421,7 @@ def test_phase_boundary_cap_reaches_energy_through_both_loaders(tmp_path, cfg, v
 @needs_eos
 @pytest.mark.unit
 @pytest.mark.parametrize('cfg_name', ['abe_solid.toml', 'abe_solid.cfg', 'abe_mixed.cfg'])
-def test_a2_1_rheology_off_bundled_configs_bitwise_parity(tmp_path, cfg_name):
+def test_rheology_off_bundled_configs_bitwise_parity(tmp_path, cfg_name):
     """Verify bundled configs default to rheology.enabled=False and match explicit off bitwise."""
     import dataclasses
     import math
@@ -502,8 +502,9 @@ def test_a2_1_rheology_off_bundled_configs_bitwise_parity(tmp_path, cfg_name):
             assert val_a == val_b, (
                 f'Scalar mismatch on {f.name} in {cfg_name}: {val_a} != {val_b}'
             )
-    assert array_count == 27
-    assert scalar_count == 35
+    assert array_count + scalar_count == len(dataclasses.fields(SolverOutput))
+    assert array_count > 0
+    assert scalar_count > 0
 
     c_canary = Config.from_file(str(explicit_path))
     c_canary.solver.end_time = 1.0
