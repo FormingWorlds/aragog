@@ -2905,6 +2905,11 @@ def test_arrhenius_viscosity_exact_below_ceiling_for_small_viscosity_solid():
 @pytest.mark.physics_invariant
 def test_arrhenius_viscosity_ceiling_when_enthalpy_overflows():
     """Verify eta reaches the ceiling, not exp(-H_0 / (R T_ref)), when H(P) overflows to +inf."""
+    from aragog.rheology import (
+        _compute_arrhenius_enthalpy_core,
+        _compute_arrhenius_viscosity_core,
+    )
+
     for xp_name in ('np', 'jnp'):
         if xp_name == 'jnp':
             jax = pytest.importorskip('jax')
@@ -2915,12 +2920,19 @@ def test_arrhenius_viscosity_ceiling_when_enthalpy_overflows():
         h_p = compute_arrhenius_enthalpy(
             1.0e9, solidus_temperature=1.0e307, t_sol_0=1400.0, xp=xp
         )
+        h_p_core = _compute_arrhenius_enthalpy_core(
+            1.0e9, solidus_temperature=1.0e307, t_sol_0=1400.0, xp=xp
+        )
         assert np.isposinf(float(h_p))
+        assert np.isposinf(float(h_p_core))
         for kwargs in (
             {'pressure': 1.0e9, 'solidus_temperature': 1.0e307, 't_sol_0': 1400.0},
             {'pressure': 1.0e308, 'dt_sol_dp': 1.0},
         ):
             eta = float(compute_arrhenius_viscosity(1600.0, xp=xp, **kwargs))
-            # Dropping the infinite H(P) to 0 gives 1e21 * exp(-21.875) = 3.2e11 Pa s.
+            eta_core = float(_compute_arrhenius_viscosity_core(1600.0, xp=xp, **kwargs))
+            # Dropping the infinite H(P) to 0 or H_0 gives <= 1e21 Pa s instead of the 1e40 ceiling.
             assert np.log10(eta) == pytest.approx(40.0, abs=1.0e-9)
+            assert np.log10(eta_core) == pytest.approx(40.0, abs=1.0e-9)
             assert abs(np.log10(eta) - np.log10(1.0e21 * np.exp(-21.875))) > 25.0
+            assert abs(np.log10(eta_core) - 21.0) > 15.0
