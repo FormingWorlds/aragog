@@ -2925,7 +2925,7 @@ def test_arrhenius_viscosity_exact_below_ceiling_for_small_viscosity_solid():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
+def test_cross_field_viscosity_max_and_boundary_checks():
     """Verify viscosity_max_log10 > log10(viscosity_solid), 1-D w_lid shape check, and huge-int ValueError."""
     import jax
     import jax.numpy as jnp
@@ -2940,14 +2940,10 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
     )
     assert np.isfinite(val_ok) and val_ok > 0.0
     for bad_vs, bad_vmax in ((1.0e22, 21.0), (1.0e21, 21.0), (1.0e35, 30.0)):
-        err_arr = None
-        try:
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
             compute_arrhenius_viscosity(
                 1600.0, 0.0, viscosity_solid=bad_vs, viscosity_max_log10=bad_vmax
             )
-        except Exception as exc:
-            err_arr = exc
-        assert isinstance(err_arr, ValueError) and 'viscosity_max_log10' in str(err_arr)
         jit_fn = jax.jit(
             lambda vs, vm: compute_arrhenius_viscosity(
                 jnp.asarray(1600.0),
@@ -2969,8 +2965,7 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
     ft = np.full(n, 0.10)
     phi = np.zeros(n)
     for bad_vs, bad_vmax in ((1.0e22, 21.0), (1.0e21, 21.0)):
-        err_lid = None
-        try:
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
             compute_stagnant_lid_state(
                 radii=r,
                 temperature=t,
@@ -2985,9 +2980,6 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
                 phi_width=0.15,
                 xp=np,
             )
-        except Exception as exc:
-            err_lid = exc
-        assert isinstance(err_lid, ValueError) and 'viscosity_max_log10' in str(err_lid)
         st_jx = compute_stagnant_lid_state(
             radii=jnp.asarray(r),
             temperature=jnp.asarray(t),
@@ -3020,8 +3012,7 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
         rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=25.0),
     )
     assert cfg_ok.viscosity_max_log10 == 25.0
-    err_cfg = None
-    try:
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
         PhaseConfig(
             density=4000.0,
             heat_capacity=1000.0,
@@ -3031,12 +3022,8 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
             viscosity=1.0e22,
             rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
         )
-    except Exception as exc:
-        err_cfg = exc
-    assert isinstance(err_cfg, ValueError) and 'viscosity_max_log10' in str(err_cfg)
 
-    err_pp = None
-    try:
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
         _PhaseParameters(
             density=4000.0,
             heat_capacity=1000.0,
@@ -3046,13 +3033,9 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
             viscosity=1.0e22,
             rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
         )
-    except Exception as exc:
-        err_pp = exc
-    assert isinstance(err_pp, ValueError) and 'viscosity_max_log10' in str(err_pp)
 
     # 4. 1-D w_lid length mismatch in compute_effective_viscosity raises ValueError.
-    err_wlid = None
-    try:
+    with pytest.raises(ValueError, match='w_lid'):
         compute_effective_viscosity(
             eta_diff=np.full(10, 1.0e22),
             eta_i=1.0e20,
@@ -3062,26 +3045,19 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
             w_lid=np.ones(5),
             xp=np,
         )
-    except Exception as exc:
-        err_wlid = exc
-    assert isinstance(err_wlid, ValueError) and 'w_lid' in str(err_wlid)
 
     # 5. Huge Python int (10**400) raises ValueError instead of OverflowError.
     for call_kwargs in (
         {'pressure': 10**400},
         {'pressure': 0.0, 'g_homologous': 10**400},
     ):
-        err_ovf = None
-        try:
+        with pytest.raises(ValueError):
             compute_arrhenius_enthalpy(**call_kwargs, xp=np)
-        except Exception as exc:
-            err_ovf = exc
-        assert isinstance(err_ovf, ValueError)
 
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_wp4_item5_saturating_activation_enthalpy_and_viscosity():
+def test_saturating_activation_enthalpy_and_viscosity():
     """Verify saturating integral activation law H(P) = E_a + V_0 P_decay (1 - exp(-P/P_decay)), limits, validation, and solver wiring."""
     import math
 
@@ -3134,24 +3110,16 @@ def test_wp4_item5_saturating_activation_enthalpy_and_viscosity():
             'activation_volume_decay_pressure',
         ),
     ):
-        err_srp = None
-        try:
+        with pytest.raises(ValueError, match=expected_substr):
             SolidRheologyParams(**bad_kwargs)
-        except Exception as exc:
-            err_srp = exc
-        assert isinstance(err_srp, ValueError) and expected_substr in str(err_srp)
 
     for bool_kwargs in (
         {'activation_energy': True},
         {'activation_energy': 300.0e3, 'activation_volume': True},
         {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': True},
     ):
-        err_bool = None
-        try:
+        with pytest.raises((TypeError, ValueError)):
             SolidRheologyParams(**bool_kwargs)
-        except Exception as exc:
-            err_bool = exc
-        assert isinstance(err_bool, (TypeError, ValueError))
 
     for bad_call, expected_field in (
         ({'pressure': 1.0e9, 'activation_energy': -10.0}, 'activation_energy'),
@@ -3182,12 +3150,8 @@ def test_wp4_item5_saturating_activation_enthalpy_and_viscosity():
             'activation_energy',
         ),
     ):
-        err_fn = None
-        try:
+        with pytest.raises(ValueError, match=expected_field):
             compute_arrhenius_enthalpy(**bad_call, xp=np)
-        except Exception as exc:
-            err_fn = exc
-        assert isinstance(err_fn, ValueError) and expected_field in str(err_fn)
 
     # 3. Isobaric limit (V_0 = 0, Korenaga 2009 Table 1 E_a = 300 kJ/mol): H(P) == E_a.
     e_a = 300.0e3
@@ -3279,10 +3243,49 @@ def test_wp4_item5_saturating_activation_enthalpy_and_viscosity():
     assert np.all(np.diff(h_sat_np) > 0.0)
     h_asymptote = e_pv + v_pv * p_dec
     assert np.all(h_sat_np < h_asymptote)
-    # At P = 200 GPa (x = 1): integral form gives 831.519 kJ/mol whereas secant form gives 638.550 kJ/mol.
+    # At P = 135 GPa (index 5, x = 0.675): integral form gives 728.316 kJ/mol.
     assert h_sat_np[5] == pytest.approx(
         e_pv + v_pv * p_dec * (1.0 - np.exp(-135.0 / 200.0)), rel=1.0e-15
     )
+
+    # Taylor threshold continuity across x = 1e-8 +/- 1e-10 and mutant check at x = 5e-7 (Lens 2 F4b)
+    x_lo = 1.0e-8 - 1.0e-10
+    x_hi = 1.0e-8 + 1.0e-10
+    p_lo = x_lo * p_dec
+    p_hi = x_hi * p_dec
+    h_lo = float(
+        compute_arrhenius_enthalpy(
+            p_lo,
+            activation_energy=e_pv,
+            activation_volume=v_pv,
+            activation_volume_decay_pressure=p_dec,
+            xp=np,
+        )
+    )
+    h_hi = float(
+        compute_arrhenius_enthalpy(
+            p_hi,
+            activation_energy=e_pv,
+            activation_volume=v_pv,
+            activation_volume_decay_pressure=p_dec,
+            xp=np,
+        )
+    )
+    dh_exp = v_pv * (p_hi - p_lo) * (1.0 - 1.0e-8)
+    assert abs((h_hi - h_lo) - dh_exp) / dh_exp < 1.0e-6
+    x_mid = 5.0e-7
+    p_mid = x_mid * p_dec
+    h_mid = float(
+        compute_arrhenius_enthalpy(
+            p_mid,
+            activation_energy=0.0,
+            activation_volume=1.0,
+            activation_volume_decay_pressure=p_dec,
+            xp=np,
+        )
+    )
+    assert h_mid == pytest.approx(float(-p_dec * np.expm1(-x_mid)), rel=1.0e-15, abs=0.0)
+    assert h_mid != float(p_mid * (1.0 - 0.5 * x_mid))
 
     # 6. Propagation through compute_stagnant_lid_state in NumPy and JAX.
     n = 20

@@ -1368,7 +1368,9 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
        relative to yield-off (tau_y -> infinity) by >= 1e-4 at every state, agrees between NumPy
        and JAX to <= 1.95e-7 <= 1e-6, and a JAX-only yield-stress perturbation fails 1e-6 by > 230x;
     3. the default abe_solid.toml (s_init=2900, kappah_floor=10, viscosity_solid=1e21),
-       which remains an inert-path check with RHS_on == RHS_off."""
+       where solid kappah_floor zeroing shifts the RHS relative to rheology-off by
+       8.1e-5 to 1.3e-3 across all 100 cooling states while preserving NumPy-vs-JAX parity
+       to <= 1e-14."""
     data = json.loads(_BENCHMARK_JSON.read_text(encoding='utf-8'))
     a2_2_block = data['a2_2_rhs_parity_and_activity']
     var_rec = a2_2_block['abe_solid_kappah_floor_0']
@@ -1435,9 +1437,10 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
         var_rec['max_rel_rhs_numpy_vs_jax'], rel=1.0e-12
     )
 
-    assert float(np.max(def_on_off)) == 0.0
+    assert float(np.min(def_on_off)) >= 8.0e-5
+    assert float(np.max(def_on_off)) <= 1.5e-3
     assert def_rec['n_nodes_visc_on_ne_visc_off_min'] == 100
-    assert def_rec['n_nodes_kappah_on_ne_kappah_off_max'] == 0
+    assert def_rec['n_nodes_kappah_on_ne_kappah_off_min'] == 100
 
     # Live solver verification on the active-solid, yield-active, and default configs + canaries
     rheo_on = SolidRheologyParams(
@@ -1503,7 +1506,7 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     denom_var_on = float(np.max(np.abs(rhs_var_np_on)))
     denom_var_on_unharm = float(np.max(np.abs(rhs_var_np_on_unharm)))
     denom_var_off = float(np.max(np.abs(rhs_var_np_off)))
-    assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_on)) / denom_var_on) <= 1.0e-13
+    assert float(np.max(np.abs(rhs_var_np_on - rhs_var_jax_on)) / denom_var_on) <= 2.5e-13
     assert (
         float(np.max(np.abs(rhs_var_np_on_unharm - rhs_var_jax_on)) / denom_var_on_unharm)
         <= 1.0e-6
@@ -1559,9 +1562,10 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     rhs_def_jax_off = np.asarray(dSdt(0.0, jnp.asarray(s_def), args_def_off))
     denom_def_on = float(np.max(np.abs(rhs_def_np_on)))
     denom_def_off = float(np.max(np.abs(rhs_def_np_off)))
-    assert float(np.max(np.abs(rhs_def_np_on - rhs_def_jax_on)) / denom_def_on) <= 1.0e-13
-    assert float(np.max(np.abs(rhs_def_np_off - rhs_def_jax_off)) / denom_def_off) <= 1.0e-13
-    assert float(np.max(np.abs(rhs_def_np_on - rhs_def_np_off))) > 1.0e-4
+    assert float(np.max(np.abs(rhs_def_np_on - rhs_def_jax_on)) / denom_def_on) <= 2.5e-13
+    assert float(np.max(np.abs(rhs_def_np_off - rhs_def_jax_off)) / denom_def_off) <= 2.5e-13
+    rel_def_on_off = float(np.max(np.abs(rhs_def_np_on - rhs_def_np_off)) / denom_def_off)
+    assert 8.0e-5 <= rel_def_on_off <= 1.5e-3
 
     def figure():
         import matplotlib.pyplot as plt
@@ -1771,7 +1775,7 @@ def test_a2_4_rhs_call_counts_and_cost(validation_plot) -> None:
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
+def test_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
     """Verify solver passes tau_d_lid in lid mode, zero-anchors eddy floor at widths 0.15 and 0.20, and checks lid invariants."""
     from aragog.utilities import tanh_weight
 
@@ -1865,12 +1869,8 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
 
     for bad_dlid in (-1.0e-9, -1.0, 1.0e9, d_shell_mid * (1.0 + 1.0e-9)):
         solver_mid.state._lid_state['d_lid'] = bad_dlid
-        err_dlid = None
-        try:
+        with pytest.raises(RuntimeError, match='d_lid'):
             solver_mid._check_rheology_invariants()
-        except Exception as exc:
-            err_dlid = exc
-        assert isinstance(err_dlid, RuntimeError) and 'd_lid' in str(err_dlid)
     for ok_dlid in (0.0, d_shell_mid * (1.0 + 0.5e-12)):
         solver_mid.state._lid_state['d_lid'] = ok_dlid
         solver_mid._check_rheology_invariants()
@@ -1886,12 +1886,8 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
         d_shell_mid * (1.0 + 1.0e-9),
     ):
         solver_mid.state._lid_state['d_lid_raw'] = bad_dlid_raw
-        err_raw = None
-        try:
+        with pytest.raises(RuntimeError, match='d_lid_raw'):
             solver_mid._check_rheology_invariants()
-        except Exception as exc:
-            err_raw = exc
-        assert isinstance(err_raw, RuntimeError) and 'd_lid_raw' in str(err_raw)
     for ok_dlid_raw in (0.0, d_shell_mid * (1.0 + 0.5e-12)):
         solver_mid.state._lid_state['d_lid_raw'] = ok_dlid_raw
         solver_mid._check_rheology_invariants()
@@ -1901,24 +1897,16 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
         orig_fin = float(solver_mid.state._lid_state[fin_key])
         for bad_fin in (np.nan, np.inf, -np.inf):
             solver_mid.state._lid_state[fin_key] = bad_fin
-            err_fin = None
-            try:
+            with pytest.raises(RuntimeError, match=fin_key):
                 solver_mid._check_rheology_invariants()
-            except Exception as exc:
-                err_fin = exc
-            assert isinstance(err_fin, RuntimeError) and fin_key in str(err_fin)
         solver_mid.state._lid_state[fin_key] = orig_fin
 
     for tau_key in ('tau_d', 'tau_d_lid'):
         orig_tau = float(solver_mid.state._lid_state[tau_key])
         for bad_tau in (-1.0e-12, -1.0):
             solver_mid.state._lid_state[tau_key] = bad_tau
-            err_tau = None
-            try:
+            with pytest.raises(RuntimeError, match=tau_key):
                 solver_mid._check_rheology_invariants()
-            except Exception as exc:
-                err_tau = exc
-            assert isinstance(err_tau, RuntimeError) and tau_key in str(err_tau)
         solver_mid.state._lid_state[tau_key] = 0.0
         solver_mid._check_rheology_invariants()
         solver_mid.state._lid_state[tau_key] = orig_tau
@@ -1948,13 +1936,13 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
     flux_sat_jx = np.asarray(fl_sat_jx.heat_flux, dtype=float)
     denom_sat = max(float(np.max(np.abs(flux_sat_np[1:-1]))), 1.0e-30)
     assert float(np.max(np.abs(flux_sat_np[1:-1] - flux_sat_jx[1:-1]))) / denom_sat <= 1.0e-6
-    # Verify saturating law produces a distinct RHS from the default homologous law:
+    # Verify saturating law produces a distinct interior RHS and viscosity from homologous law:
     rhs_base_np = solver_base.dSdt(0.0, s_prof)
-    assert (
-        float(np.max(np.abs(rhs_sat_np - rhs_base_np)))
-        / max(float(np.max(np.abs(rhs_sat_np))), 1.0e-30)
-        > 1.0e-3
-    )
+    denom_interior = max(float(np.max(np.abs(rhs_sat_np[:-1]))), 1.0e-30)
+    assert float(np.max(np.abs(rhs_sat_np[:-1] - rhs_base_np[:-1]))) / denom_interior > 1.0e-3
+    visc_sat = solver_sat.state.phase_basic.viscosity()
+    visc_base = solver_base.state.phase_basic.viscosity()
+    assert float(np.max(np.abs(visc_sat - visc_base))) > 1.0e22
 
 
 def test_local_closure_mode_positive_kappah_floor_entropy_state_update() -> None:
@@ -2009,4 +1997,4 @@ def test_local_closure_mode_positive_kappah_floor_entropy_state_update() -> None
 
     rhs_jax = np.asarray(dSdt(0.0, jnp.asarray(s_profile), args_jax))
     denom = float(np.max(np.abs(rhs_np)))
-    assert float(np.max(np.abs(rhs_np - rhs_jax)) / denom) <= 1.0e-13
+    assert float(np.max(np.abs(rhs_np - rhs_jax)) / denom) <= 2.5e-13

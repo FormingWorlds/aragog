@@ -665,7 +665,7 @@ def test_hypothesis_activation_fields_and_cross_field_validators(
         for wt_num in (True, False, np.bool_(True), np.bool_(False), None, bad_str):
             _assert_raises_with_match(
                 TypeError,
-                '',
+                'real number',
                 {'enabled': False, 'activation_energy': ea_pos, f_name: wt_num},
             )
 
@@ -1865,7 +1865,7 @@ def test_stagnant_lid_state_bounds(phi_mid: list[float], f_scale: float) -> None
     )
     assert d_lid_raw <= upper_bound * (1.0 + 1.0e-12) + 1.0e-9
 
-    # Cold fixed-lid column (Form 6B): convecting nodes have w_nonconv = 0 so r_lid_base = r[-3]
+    # Cold fixed-lid column (compact non-convective selector): convecting nodes have w_nonconv = 0 so r_lid_base = r[-3]
     # with fc[-2:] = 0, r[-1] (d_lid = 0) when all nodes convect, and r[0] when no node convects.
     st_cold = compute_stagnant_lid_state(
         radii=r,
@@ -2006,10 +2006,10 @@ def test_hypothesis_smooth_rheology_blend_tails(
     delta_vmax=st.floats(min_value=0.2, max_value=20.0, allow_nan=False, allow_infinity=False),
     f_thresh=st.floats(min_value=0.05, max_value=0.30, allow_nan=False, allow_infinity=False),
 )
-def test_hypothesis_wp4_viscosity_max_cross_field_and_fixed_lid_convecting_gate(
+def test_hypothesis_viscosity_max_cross_field_and_fixed_lid_convecting_selector(
     log10_vs: float, delta_vmax: float, f_thresh: float
 ) -> None:
-    """Property test for viscosity_max_log10 > log10(viscosity_solid) and fixed-mode non-convective w_lid gate."""
+    """Property test for viscosity_max_log10 > log10(viscosity_solid) and fixed-mode non-convective w_lid selector."""
     from aragog.config.phases import PhaseConfig
     from aragog.rheology import compute_arrhenius_viscosity
 
@@ -2079,7 +2079,7 @@ def test_hypothesis_wp4_viscosity_max_cross_field_and_fixed_lid_convecting_gate(
     ),
     p_hi=st.floats(min_value=1.0e7, max_value=1000.0e9, allow_nan=False, allow_infinity=False),
 )
-def test_hypothesis_wp4_item5_saturating_activation_law(
+def test_hypothesis_saturating_activation_law(
     e_a: float, v_0: float, p_decay: float, p_hi: float
 ) -> None:
     """Property test for saturating integral activation enthalpy bounds, monotonicity, concavity, and JAX parity."""
