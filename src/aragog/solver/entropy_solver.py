@@ -1982,11 +1982,28 @@ class EntropySolver:
                 raise RuntimeError(
                     f'rheology invariant violated at step {step_idx}: lid_state is None in lid mode'
                 )
-            for key in ('eta_i', 'T_i', 'theta', 'tau_d', 'tau_d_lid', 'd_lid', 'd_lid_raw'):
+            for key in (
+                'eta_i',
+                'T_i',
+                'P_T_i',
+                'r_i',
+                'theta',
+                'tau_d',
+                'tau_d_lid',
+                'd_lid',
+                'd_lid_raw',
+            ):
                 if not np.isfinite(float(lid[key])):
                     raise RuntimeError(
                         f'rheology invariant violated at step {step_idx}: '
                         f'non-finite lid_state[{key!r}]={lid[key]!r}'
+                    )
+            for tau_key in ('tau_d', 'tau_d_lid'):
+                tau_val = float(lid[tau_key])
+                if tau_val < 0.0:
+                    raise RuntimeError(
+                        f'rheology invariant violated at step {step_idx}: '
+                        f'{tau_key}={tau_val!r} < 0'
                     )
             w_lid = np.asarray(lid['w_lid'], dtype=float).ravel()
             if np.any(w_lid < -1.0e-12) or np.any(w_lid > 1.0 + 1.0e-12):
@@ -2002,13 +2019,14 @@ class EntropySolver:
                         f'rheology invariant violated at step {step_idx}: '
                         f'{w_key}={w_val!r} outside [0, 1]'
                     )
-            d_lid = float(lid['d_lid'])
             d_shell = float(self._r_basic_flat[-1] - self._r_basic_flat[0])
-            if not (0.0 <= d_lid <= d_shell * (1.0 + 1.0e-12)):
-                raise RuntimeError(
-                    f'rheology invariant violated at step {step_idx}: '
-                    f'd_lid={d_lid!r} outside shell thickness [0, {d_shell!r}]'
-                )
+            for d_key in ('d_lid', 'd_lid_raw'):
+                d_val = float(lid[d_key])
+                if not (0.0 <= d_val <= d_shell * (1.0 + 1.0e-12)):
+                    raise RuntimeError(
+                        f'rheology invariant violated at step {step_idx}: '
+                        f'{d_key}={d_val!r} outside shell thickness [0, {d_shell!r}]'
+                    )
 
     def _check_eos_floors(self) -> None:
         """Scan loaded EOS tables for proximity to runtime floors.
