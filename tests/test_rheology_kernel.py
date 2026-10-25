@@ -1912,31 +1912,30 @@ def test_rheology_kernel_reference_grid_parity():
         unyielded_velocity=np.full(30, 1e-9),
         xp=np,
     )
+    # Independent expected values for the 3 WP-4 changed/added keys derived solely from main (2457a8c9) fixture data:
+    exp_d_lid_raw = (radii[-1] - float(data['lid_r_lid_base'])) * float(data['lid_w_active'])
+    w_lid_pres_main = float(data['lid_d_lid']) / exp_d_lid_raw
+    tau_d_lid_raw_main = float(data['lid_tau_d_lid']) / w_lid_pres_main
+    exp_wy_from_main = (
+        w_lid_pres_main
+        * 0.5
+        * (1.0 + np.tanh((tau_d_lid_raw_main / float(data['lid_tau_y_lid']) - 1.0) / 0.1))
+    )
+    exp_regime_from_main = float(data['lid_w_active']) * (1.0 + exp_wy_from_main)
+
     for k, v in lid_st.items():
         arr = v if isinstance(v, np.ndarray) else np.array(v)
         if arr.dtype == bool:
             assert bool(arr) == bool(data[f'lid_{k}'])
         elif k == 'd_lid_raw':
             assert 'lid_d_lid_raw' not in data
-            np.testing.assert_allclose(
-                arr,
-                (radii[-1] - lid_st['r_lid_base']) * lid_st['w_active'],
-                rtol=1.0e-12,
-                atol=0.0,
-            )
+            np.testing.assert_allclose(arr, exp_d_lid_raw, rtol=1.0e-12, atol=0.0)
         elif k == 'w_y':
-            w_lid_pres = float(lid_st['d_lid']) / float(lid_st['d_lid_raw'])
-            ratio_lid = float(lid_st['tau_d_lid']) / w_lid_pres / float(lid_st['tau_y_lid'])
-            exp_wy = w_lid_pres * 0.5 * (1.0 + np.tanh((ratio_lid - 1.0) / 0.1))
-            np.testing.assert_allclose(arr, exp_wy, rtol=1.0e-12, atol=0.0)
+            assert float(arr) > float(data['lid_w_y']) * 3.8
+            np.testing.assert_allclose(arr, exp_wy_from_main, rtol=1.0e-12, atol=0.0)
         elif k == 'lid_regime':
             assert float(arr) != float(data['lid_lid_regime'])
-            np.testing.assert_allclose(
-                arr,
-                float(lid_st['w_active']) * (1.0 + float(lid_st['w_y'])),
-                rtol=1.0e-12,
-                atol=0.0,
-            )
+            np.testing.assert_allclose(arr, exp_regime_from_main, rtol=1.0e-12, atol=0.0)
         else:
             np.testing.assert_allclose(arr, data[f'lid_{k}'], rtol=1.0e-12, atol=0.0)
 

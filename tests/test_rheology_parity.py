@@ -229,7 +229,14 @@ def test_yield_stress_parity_float64():
     ['unyielded', 'yielding', 'mobile', 'no_lid', 'mushy', 'inactive_convection'],
 )
 def test_lid_state_and_effective_viscosity_parity(regime: str):
-    """Verify lid diagnostics and effective viscosity match between NumPy and JAX."""
+    """Verify lid diagnostics and effective viscosity match between NumPy and JAX across regimes.
+
+    Under Row 8 (tau_d_lid = tau_d * d_conv / d_geom), unyielded has tau_d = 1.672e6 Pa and
+    tau_d_lid = 2.473e7 Pa (d_conv/d_geom = 14.791), so tau_y_max = 2500e6 Pa keeps
+    tau_d_lid/tau_y_lid = 0.009892 < 0.01; yielding has tau_d = 2.584e6 Pa and
+    tau_d_lid = 2.259e7 Pa (d_conv/d_geom = 8.745), so tau_y_max = 23.2e6 Pa places
+    tau_d_lid/tau_y_lid = 0.9738 in (0.95, 1.0) with w_y = 0.3721 in (0.2, 0.5).
+    """
     n_nodes = 40
     radii = np.linspace(3.48e6, 6.371e6, n_nodes)
     pressure = np.linspace(135.0e9, 1.0e5, n_nodes)
