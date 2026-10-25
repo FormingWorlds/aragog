@@ -2212,9 +2212,12 @@ def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys,
     out_copilot = capsys.readouterr().out
     assert 'Chebyshev minimax line over 0..135 GPa: 1775.0 K + 18.89 K/GPa * P' in out_copilot
     assert 'max abs deviation: 375.00 K (375.0 K)' in out_copilot
-    err_secant = 450.0
-    err_copilot = 400.0
-    err_minimax = 375.0
+    dev_line = [ln for ln in out_copilot.splitlines() if 'max abs deviation:' in ln][0]
+    err_minimax = float(dev_line.split('max abs deviation:')[1].split('K')[0].strip())
+    err_copilot = float(np.max(np.abs(t_copilot - (1700.0 + 20.0 * p_copilot_gpa))))
+    sec_slope = (t_copilot[-1] - t_copilot[0]) / (p_copilot_gpa[-1] - p_copilot_gpa[0])
+    sec_dev = t_copilot - (t_copilot[0] + sec_slope * p_copilot_gpa)
+    err_secant = float((np.max(sec_dev) - np.min(sec_dev)) / 2.0)
     assert err_minimax < err_copilot < err_secant
 
 
