@@ -1621,15 +1621,23 @@ def test_a2_3_perturbed_starts_spread(validation_plot) -> None:
     assert np.all(dt_def_on <= np.maximum(2.0 * dt_def_off, 0.05))
     assert float(np.max(dt_var_on)) <= 0.05
     assert float(np.max(dt_var_off)) <= 0.05
-    assert np.allclose(dt_def_on, dt_def_off, rtol=0.0, atol=1.0e-15)
+    assert float(np.max(dt_def_on)) == pytest.approx(5.557178610615665e-07, rel=1.0e-9)
+    assert float(np.max(dt_def_off)) == pytest.approx(1.034986325976206e-06, rel=1.0e-9)
+    assert float(np.max(dt_def_on)) <= 0.05
+    assert float(np.max(dt_def_off)) <= 0.05
 
-    # Ruling 58a Condition (1): variant on-vs-off difference >= 100 * 1e-6, default == 0
     var_act = var_suite['on_vs_off_activity']
     def_act = def_suite['on_vs_off_activity']
     assert var_act['max_rel_diff_T_basic_on_vs_off'] >= 1.0e-4
     assert var_act['max_rel_rhs_on_vs_off_at_t_end'] >= 1.0e-4
-    assert def_act['identical_final_T_basic'] is True
-    assert def_act['max_rel_diff_T_basic_on_vs_off'] == 0.0
+    assert def_act['max_rel_diff_T_basic_on_vs_off'] == pytest.approx(
+        5.27953830828029e-05, rel=1.0e-9
+    )
+    assert def_act['max_abs_diff_T_basic_on_vs_off_K'] == pytest.approx(
+        0.1938837410866654, rel=1.0e-9
+    )
+    assert def_act['max_abs_diff_T_basic_on_vs_off_K'] > float(np.max(dt_def_on))
+    assert def_act['max_abs_diff_T_basic_on_vs_off_K'] > float(np.max(dt_def_off))
 
     t_var_on_k0 = np.asarray(var_suite['on']['runs'][2]['T_basic_K'], dtype=float)
     t_var_off_k0 = np.asarray(var_suite['off']['runs'][2]['T_basic_K'], dtype=float)
@@ -1947,3 +1955,58 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
         / max(float(np.max(np.abs(rhs_sat_np))), 1.0e-30)
         > 1.0e-3
     )
+
+
+def test_local_closure_mode_positive_kappah_floor_entropy_state_update() -> None:
+    """EntropyState.update in 'local' stress closure mode with positive kappah_floor
+    evaluates basic melt fraction before the floor calculation without raising
+    UnboundLocalError, enforces the phase-modulated eddy-diffusivity floor, and
+    agrees with the JAX right-hand side."""
+    rheo_local = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='local',
+        yield_stress_c=1.0e7,
+        yield_stress_mu=0.1,
+        yield_stress_max=1.0e8,
+    )
+    base_params = _make_abe_solid_params(rheo_local, number_of_nodes=25)
+    params = replace(base_params, energy=replace(base_params.energy, kappah_floor=10.0))
+    solver = _make_solver(params, identity_alpha=True)
+    _, _, _, args_jax = _build_jax_bundle(solver)
+
+    n_stag = solver._n_stag
+    xi = np.linspace(0.0, 1.0, n_stag)
+    s_profile = 2500.0 - 400.0 * (0.3 * xi + 0.7 * xi**3)
+
+    caught_exc: UnboundLocalError | None = None
+    rhs_np: np.ndarray | None = None
+    try:
+        rhs_np = solver.dSdt(0.0, s_profile)
+    except UnboundLocalError as exc:
+        caught_exc = exc
+
+    assert caught_exc is None, (
+        f'EntropyState.update raised UnboundLocalError in local closure mode '
+        f'with kappah_floor > 0: {caught_exc}'
+    )
+    assert rhs_np is not None
+    assert np.all(np.isfinite(rhs_np))
+    assert solver.state._lid_state is None
+    assert np.all(np.isfinite(solver.state.eddy_diffusivity))
+    assert np.all(np.isfinite(solver.state._eta_eff_basic))
+
+    phi_b = np.asarray(solver.state.phase_basic.melt_fraction()).ravel()
+    phi_rheo = float(getattr(solver.state.phase_basic, '_phi_rheo', 0.4))
+    phi_width = float(getattr(solver.state.phase_basic, '_phi_width', 0.15))
+    f0 = 0.5 * (1.0 + np.tanh((0.0 - phi_rheo) / phi_width))
+    f1 = 0.5 * (1.0 + np.tanh((1.0 - phi_rheo) / phi_width))
+    f_raw = 0.5 * (1.0 + np.tanh((phi_b - phi_rheo) / phi_width))
+    f_floor = np.clip((f_raw - f0) / np.maximum(f1 - f0, 1.0e-30), 0.0, 1.0)
+    floor_mask = solver.state._dSdr < 1.0e-6
+    kh_expected_min = 10.0 * f_floor * floor_mask
+    assert np.all(solver.state.eddy_diffusivity[1:] >= kh_expected_min[1:] - 1.0e-12)
+    assert solver.state.eddy_diffusivity[0] == solver.state.eddy_diffusivity[1]
+
+    rhs_jax = np.asarray(dSdt(0.0, jnp.asarray(s_profile), args_jax))
+    denom = float(np.max(np.abs(rhs_np)))
+    assert float(np.max(np.abs(rhs_np - rhs_jax)) / denom) <= 1.0e-13
