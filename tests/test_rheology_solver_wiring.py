@@ -2683,9 +2683,9 @@ def test_solve_rheology_invariants_checked_inside_step_energy_integrals_without_
     step_invariant_indices: list[int] = []
     orig_step_check = solver._check_rheology_step_invariants
 
-    def _spy_step_check(rheo_arg, step_idx: int = 0) -> None:
+    def _spy_step_check(rheo_arg, step_idx: int = 0, time_yr: float | None = None) -> None:
         step_invariant_indices.append(step_idx)
-        orig_step_check(rheo_arg, step_idx=step_idx)
+        orig_step_check(rheo_arg, step_idx=step_idx, time_yr=time_yr)
 
     monkeypatch.setattr(solver, '_check_rheology_step_invariants', _spy_step_check)
 
