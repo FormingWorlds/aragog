@@ -1349,8 +1349,8 @@ def test_validation_and_lid_base_edge_cases():
             phi_width=0.15,
         )
 
-    # 7. When W_base_sum -> 0 (entire mantle below lid_base_temperature=5000 K),
-    # r_lid_base goes to r[0] (CMB) and d_lid equals full mantle thickness r[-1] - r[0].
+    # 7. In 'fixed' mode (Form 6B) when T < lid_base_temperature=5000 K everywhere: r_lid_base sits
+    # at r[-2] when nodes 0..n-2 convect, r[-1] (d_lid = 0) when all convect, and r[0] when none do.
     st_full_lid = compute_stagnant_lid_state(
         radii=r,
         temperature=T,
@@ -1364,8 +1364,40 @@ def test_validation_and_lid_base_edge_cases():
         phi_rheo=0.4,
         phi_width=0.15,
     )
-    assert float(st_full_lid['r_lid_base']) == pytest.approx(r[0], rel=1e-9)
-    assert float(st_full_lid['d_lid']) == pytest.approx(r[-1] - r[0], rel=1e-4)
+    assert float(st_full_lid['r_lid_base']) == pytest.approx(r[-2], rel=1e-9)
+    assert float(st_full_lid['d_lid']) == pytest.approx(r[-1] - r[-2], rel=1e-4)
+
+    st_all_conv = compute_stagnant_lid_state(
+        radii=r,
+        temperature=T,
+        pressure=P,
+        convective_flux=np.full_like(r, 50.0),
+        total_flux=F_tot,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_fixed_high,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    assert float(st_all_conv['r_lid_base']) == pytest.approx(r[-1], rel=1e-9)
+    assert float(st_all_conv['d_lid']) == 0.0
+    assert bool(st_all_conv['has_lid']) is False
+
+    st_no_conv = compute_stagnant_lid_state(
+        radii=r,
+        temperature=T,
+        pressure=P,
+        convective_flux=np.zeros_like(r),
+        total_flux=F_tot,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_fixed_high,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+    )
+    assert float(st_no_conv['r_lid_base']) == pytest.approx(r[0], rel=1e-9)
 
     # 8. NaN in total_flux or temperature propagates NaN to lid diagnostics (NumPy and JAX).
     params_rheo = SolidRheologyParams(enabled=True)
@@ -3215,16 +3247,16 @@ def test_stagnant_lid_w_T_positive_part_subthreshold_values():
     w_width = lid_mod.NO_LID_DT_WIDTH
 
     literals = (
-        (0.1, 2.227177990575e-05, 6.4387715967e01),
-        (0.5, 5.152758399282e-04, 1.4896624538e03),
-        (1.0, 2.125477577685e-03, 6.1447556800e03),
-        (2.0, 1.765655210878e-02, 5.1045092188e04),
-        (3.0, 1.189074449219e-01, 3.4376142309e05),
-        (4.0, 4.998322686756e-01, 1.4450150886e06),
-        (5.0, 8.807570898524e-01, 2.5462687468e06),
-        (6.0, 9.820077563366e-01, 2.8389844236e06),
-        (7.0, 9.975265473707e-01, 2.8838492484e06),
-        (8.0, 9.996645373721e-01, 2.8900301775e06),
+        (0.1, 2.227177990575e-05, 3.3888271425e00),
+        (0.5, 5.152758399282e-04, 7.8403287012e01),
+        (1.0, 2.125477577685e-03, 3.2340819353e02),
+        (2.0, 1.765655210878e-02, 2.6865837972e03),
+        (3.0, 1.189074449219e-01, 1.8092706488e04),
+        (4.0, 4.998322686756e-01, 7.6053425723e04),
+        (5.0, 8.807570898524e-01, 1.3401414457e05),
+        (6.0, 9.820077563366e-01, 1.4942023282e05),
+        (7.0, 9.975265473707e-01, 1.5178153939e05),
+        (8.0, 9.996645373721e-01, 1.5210685145e05),
     )
 
     for factor, w_T_exp, d_lid_exp in literals:
@@ -3548,7 +3580,7 @@ def test_stagnant_lid_ti_jax_gradient_zero_at_saturated_flux_fraction():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
-    """Verify P_T_i stays on the geotherm and eta_solid_arrhenius(s), eta_i(s), and theta(s) are monotone across s in [0, 1e-3]."""
+    """Verify P_T_i and r_i are continuous across is_mono_T and eta_solid_arrhenius(s), eta_i(s), and theta(s) are monotone across s in [0, 1e-3]."""
     from pathlib import Path
 
     ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
@@ -3587,14 +3619,10 @@ def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
             phi_width=0.15,
             xp=np,
         )
-        t_i = float(st['T_i'])
         p_t_i = float(st['P_T_i'])
         r_i = float(st['r_i'])
-        p_geo = float(np.interp(t_i, t[::-1], p[::-1]))
-        r_geo = float(np.interp(t_i, t[::-1], r[::-1]))
-        # Geotherm pressure and radius agree to within the endpoint discretization offset.
-        assert abs(p_t_i - p_geo) < 1.0e6
-        assert abs(r_i - r_geo) < 50.0
+        assert float(np.min(p)) <= p_t_i <= float(np.max(p))
+        assert float(r[0]) <= r_i <= float(r[-1])
         log_eta_arr_vals.append(np.log10(float(st['eta_solid_arrhenius'])))
         log_eta_i_vals.append(np.log10(float(st['eta_i'])))
         theta_vals.append(float(st['theta']))
@@ -3606,6 +3634,45 @@ def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
     assert np.all(diffs_arr >= -1.0e-14) or np.all(diffs_arr <= 1.0e-14)
     assert np.all(diffs_eta_i >= -1.0e-14) or np.all(diffs_eta_i <= 1.0e-14)
     assert np.all(diffs_theta <= 1.0e-14)
+
+    # Continuity across the is_mono_T boundary at s = 1e-4 (cell k=10..11 straddling -1e-12 K):
+    # P_T_i and r_i use the same weights W_tilde as T_i, so no 20.0 GPa / 390.5 km jump occurs.
+    t_mono = t.copy()
+    t_nonmono = t.copy()
+    t_mono[11] = t_mono[10] - 1.5e-12
+    t_nonmono[11] = t_nonmono[10] - 0.5e-12
+    st_mono = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_mono,
+        pressure=p,
+        convective_flux=fc * 1.0e-4,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    st_nonmono = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_nonmono,
+        pressure=p,
+        convective_flux=fc * 1.0e-4,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert abs(float(st_mono['P_T_i']) - float(st_nonmono['P_T_i'])) < 1.0e-3
+    assert abs(float(st_mono['r_i']) - float(st_nonmono['r_i'])) < 1.0e-6
+    assert float(st_mono['P_T_i']) == pytest.approx(26560519263.972023, rel=1.0e-12)
+    assert float(st_mono['r_i']) == pytest.approx(5818711.995719336, rel=1.0e-12)
 
     # Affine geotherm P(T) = a * T + b: P_T_i matches the linear chord sum to machine precision.
     n_aff = 40
@@ -3633,8 +3700,7 @@ def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
     assert float(st_aff['P_T_i']) == pytest.approx(p_aff_expected, rel=1.0e-14)
     assert float(st_aff['r_i']) == pytest.approx(r_aff_expected, rel=1.0e-14)
 
-    # Curved geotherm where endpoint blending pushes unclipped P_T_i > max(P) and r_i < r[0]:
-    # clipping keeps P_T_i inside [min(P), max(P)] and r_i inside [r[0], r[-1]].
+    # Curved geotherm: W_tilde-weighted P_T_i and r_i stay inside [min(P), max(P)] and [r[0], r[-1]].
     r_clip = np.array([3.0e6, 3.01e6, 3.02e6, 5.98e6, 5.99e6, 6.0e6])
     t_clip = np.array([3000.0, 2900.0, 2500.0, 2100.0, 1300.0, 1000.0])
     p_clip = np.array([100.0e9, 99.0e9, 98.0e9, 1.0e9, 0.5e9, 0.0])
@@ -3655,14 +3721,14 @@ def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
     )
     assert float(np.min(p_clip)) <= float(st_clip['P_T_i']) <= float(np.max(p_clip))
     assert float(r_clip[0]) <= float(st_clip['r_i']) <= float(r_clip[-1])
-    assert float(st_clip['P_T_i']) == pytest.approx(float(np.max(p_clip)), rel=1.0e-14)
-    assert float(st_clip['r_i']) == pytest.approx(float(r_clip[0]), rel=1.0e-14)
+    assert float(st_clip['P_T_i']) == pytest.approx(86857702271.90578, rel=1.0e-14)
+    assert float(st_clip['r_i']) == pytest.approx(3377350.733296657, rel=1.0e-14)
 
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_wp4_row6_fixed_lid_base_mode_excludes_convecting_nodes():
-    """Verify fixed lid-base mode sets w_lid == 0 on convecting interior nodes when T_surf < T_i < T_lid_fixed."""
+    """Verify fixed lid-base mode (Form 6B) gates both w_hot_iso and w_hot_iso_mask by w_nonconv."""
     import jax.numpy as jnp
 
     n = 50
@@ -3670,9 +3736,9 @@ def test_wp4_row6_fixed_lid_base_mode_excludes_convecting_nodes():
     p = np.linspace(135.0e9, 1.0e5, n)
     t = np.full(n, 1500.0)
     t[45:] = np.linspace(1500.0, 300.0, 5)
-    fc = np.full(n, 0.08)
+    fc = np.full(n, 50.0)
     fc[45:] = 0.0
-    ft = np.full(n, 0.10)
+    ft = np.full(n, 60.0)
     phi = np.zeros(n)
     params = SolidRheologyParams(
         enabled=True,
@@ -3680,6 +3746,9 @@ def test_wp4_row6_fixed_lid_base_mode_excludes_convecting_nodes():
         lid_base_mode='fixed',
         lid_base_temperature=1800.0,
         interior_flux_fraction=0.05,
+        g_homologous=25.0,
+        t_sol_0=1400.0,
+        dt_sol_dp=0.0,
     )
     for xp_mod in (np, jnp):
         st = compute_stagnant_lid_state(
@@ -3703,7 +3772,12 @@ def test_wp4_row6_fixed_lid_base_mode_excludes_convecting_nodes():
         assert float(st['lid_cell_count']) == pytest.approx(
             float(np.sum(w_lid[45:])), rel=1.0e-12
         )
-        assert 4.99 < float(st['lid_cell_count']) < 5.01
+        assert float(st['lid_cell_count']) == pytest.approx(4.999911573009957, rel=1.0e-12)
+        assert float(st['r_lid_base']) == pytest.approx(6078786.231143484, rel=1.0e-12)
+        assert float(st['d_lid']) == pytest.approx(291213.7688565161, rel=1.0e-12)
+        d_geom = float(r[-1] - r[0]) * float(st['tau_d']) / float(st['tau_d_lid'])
+        assert d_geom == pytest.approx(385333.5273929512, rel=1.0e-12)
+        assert float(st['tau_d_lid']) == pytest.approx(5715108.044708197, rel=1.0e-12)
 
 
 @pytest.mark.unit

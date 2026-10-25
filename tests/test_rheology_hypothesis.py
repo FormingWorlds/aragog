@@ -1865,8 +1865,8 @@ def test_stagnant_lid_state_bounds(phi_mid: list[float], f_scale: float) -> None
     )
     assert d_lid_raw <= upper_bound * (1.0 + 1.0e-12) + 1.0e-9
 
-    # Cold fixed-lid column where w_interior ~ 0 requires w_base_weight = tanh(smax_w / 1e-6) -> 0
-    # so r_lid_base relaxes to r[0] and d_lid_raw <= (r[-1] - r[0]) * w_active.
+    # Cold fixed-lid column (Form 6B): convecting nodes have w_nonconv = 0 so r_lid_base = r[-3]
+    # with fc[-2:] = 0, r[-1] (d_lid = 0) when all nodes convect, and r[0] when no node convects.
     st_cold = compute_stagnant_lid_state(
         radii=r,
         temperature=np.linspace(400.0, 300.0, n),
@@ -1883,13 +1883,51 @@ def test_stagnant_lid_state_bounds(phi_mid: list[float], f_scale: float) -> None
         phi_width=0.15,
         xp=np,
     )
-    assert float(st_cold['r_lid_base']) == pytest.approx(float(r[0]), rel=1.0e-9)
+    assert float(st_cold['r_lid_base']) == pytest.approx(float(r[-3]), rel=1.0e-9)
     assert float(st_cold['d_lid']) == pytest.approx(
-        float(r[-1] - r[0]) * float(st_cold['w_active']), rel=1.0e-9
+        float(r[-1] - r[-3]) * float(st_cold['w_active']), rel=1.0e-9
     )
     assert float(st_cold['d_lid']) <= float(r[-1] - r[0]) * float(st_cold['w_active']) * (
         1.0 + 1.0e-12
     )
+
+    st_cold_all_conv = compute_stagnant_lid_state(
+        radii=r,
+        temperature=np.linspace(400.0, 300.0, n),
+        pressure=p,
+        convective_flux=np.full(n, f_scale * 100.0),
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n),
+        params=SolidRheologyParams(
+            enabled=True, lid_base_mode='fixed', lid_base_temperature=5000.0
+        ),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_cold_all_conv['r_lid_base']) == pytest.approx(float(r[-1]), rel=1.0e-9)
+    assert float(st_cold_all_conv['d_lid']) == 0.0
+
+    st_cold_no_conv = compute_stagnant_lid_state(
+        radii=r,
+        temperature=np.linspace(400.0, 300.0, n),
+        pressure=p,
+        convective_flux=np.zeros(n),
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n),
+        params=SolidRheologyParams(
+            enabled=True, lid_base_mode='fixed', lid_base_temperature=5000.0
+        ),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert float(st_cold_no_conv['r_lid_base']) == pytest.approx(float(r[0]), rel=1.0e-9)
+    assert float(st_cold_no_conv['d_lid']) == 0.0
 
 
 @pytest.mark.unit

@@ -1824,7 +1824,7 @@ def test_tau_y_lid_evaluates_at_lid_base_pressure():
 
 @pytest.mark.unit
 def test_melt_fraction_lid_indicator_moves_with_phi_rheo_and_width():
-    """Verify r_lid_base moves with phi_rheo and phi_width when T < T_sol."""
+    """Verify r_lid_base moves with phi_rheo and phi_width across non-convecting lid nodes when T < T_sol."""
     inputs = _make_earth_reference_inputs()
     n_nodes = len(inputs['radii'])
     t_sol = np.full(n_nodes, 2500.0)
@@ -1848,15 +1848,26 @@ def test_melt_fraction_lid_indicator_moves_with_phi_rheo_and_width():
     }
     st_base = compute_stagnant_lid_state(**base_inp)
 
-    # Shifting phi_rheo by +0.1 moves the transition deeper (smaller radius).
+    # Shifting phi_rheo by +0.1 moves the transition deeper into the conductive lid (smaller radius).
     st_a1 = compute_stagnant_lid_state(**{**base_inp, 'phi_rheo': 0.102})
-    assert float(st_a1['r_lid_base']) < float(st_base['r_lid_base']) - 100.0e3
+    assert float(st_a1['r_lid_base']) == pytest.approx(5898163.265306123, rel=1.0e-12)
+    assert float(st_base['r_lid_base']) == pytest.approx(5924965.788707826, rel=1.0e-12)
+    assert float(st_a1['r_lid_base']) < float(st_base['r_lid_base']) - 25.0e3
 
     # Doubling phi_width changes the smooth transition location.
     st_l33 = compute_stagnant_lid_state(**{**base_inp, 'phi_width': 0.002})
-    assert abs(float(st_l33['r_lid_base']) - float(st_base['r_lid_base'])) > 100.0e3
-    # Regression pin: base r_lid_base ~ 5668.0 km
-    assert float(st_base['r_lid_base']) == pytest.approx(5668000.2, rel=1.0e-4)
+    assert float(st_l33['r_lid_base']) == pytest.approx(5961284.616364969, rel=1.0e-12)
+    assert abs(float(st_l33['r_lid_base']) - float(st_base['r_lid_base'])) > 35.0e3
+
+    # Melt ramp confined to the 8 non-convecting lid nodes (-8:): moves from 6190.27 km to 5898.16 km.
+    phi_lid = np.zeros(n_nodes)
+    phi_lid[-8:] = np.linspace(0.005, 0.0, 8)
+    st_lid_base = compute_stagnant_lid_state(**{**base_inp, 'melt_fraction': phi_lid})
+    st_lid_a1 = compute_stagnant_lid_state(
+        **{**base_inp, 'melt_fraction': phi_lid, 'phi_rheo': 0.102}
+    )
+    assert float(st_lid_base['r_lid_base']) == pytest.approx(6190274.209267668, rel=1.0e-12)
+    assert float(st_lid_a1['r_lid_base']) == pytest.approx(5898163.265306123, rel=1.0e-12)
 
 
 @pytest.mark.unit
