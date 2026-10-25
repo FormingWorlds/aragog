@@ -1598,7 +1598,7 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     var_rec = a2_2_block['abe_solid_kappah_floor_0']
     yld_rec = a2_2_block['abe_solid_yield_active']
     def_rec = a2_2_block['abe_solid_default']
-    diag_59b = a2_2_block['ruling_59b_flux_vs_rhs_diagnostic']
+    flux_diag = a2_2_block['flux_vs_rhs_diagnostic']
 
     # Verify recorded 100-state benchmark invariants for all 3 state sets
     rel_np_jax = np.asarray(var_rec['rel_rhs_numpy_vs_jax_per_state'], dtype=float)
@@ -1649,13 +1649,13 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     assert float(np.max(def_np_jax_harm)) <= 1.0e-14
 
     # Flux vs RHS diagnostic assertions on abe_solid_kappah_floor_0
-    assert diag_59b['worst_state_index'] == 4
-    assert diag_59b['worst_basic_node_index'] == 64
-    assert diag_59b['worst_staggered_cell_index'] == 63
-    assert diag_59b['max_rel_flux_numpy_vs_jax'] == pytest.approx(
+    assert flux_diag['worst_state_index'] == 4
+    assert flux_diag['worst_basic_node_index'] == 64
+    assert flux_diag['worst_staggered_cell_index'] == 63
+    assert flux_diag['max_rel_flux_numpy_vs_jax'] == pytest.approx(
         var_rec['max_rel_flux_numpy_vs_jax'], rel=1.0e-12
     )
-    assert diag_59b['max_rel_rhs_numpy_vs_jax'] == pytest.approx(
+    assert flux_diag['max_rel_rhs_numpy_vs_jax'] == pytest.approx(
         var_rec['max_rel_rhs_numpy_vs_jax'], rel=1.0e-12
     )
 

@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,13 @@ DEFAULT_BENCHMARK_PATH = (
     REPO_ROOT / 'tests' / 'reference' / 'ssc_wp2_validation_benchmarks.json'
 )
 TABLE_FILES = ('density_melt.dat', 'density_solid.dat', 'temperature_solid.dat')
+FORBIDDEN_SUBSTRINGS = (
+    'ruling',
+    'plan_v2',
+    'wp2_derivation',
+    'p8_wp2',
+    '/users/',
+)
 
 
 def compute_table_hashes(eos_dir: Path) -> dict[str, str]:
@@ -52,6 +60,45 @@ def compute_table_hashes(eos_dir: Path) -> dict[str, str]:
     return hashes
 
 
+def sanitize_benchmarks(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize benchmark keys and rationales so no internal labels or local paths remain."""
+    parity_block = data.get('a2_2_rhs_parity_and_activity')
+    if isinstance(parity_block, dict):
+        if 'ruling_59b_flux_vs_rhs_diagnostic' in parity_block:
+            parity_block['flux_vs_rhs_diagnostic'] = parity_block.pop(
+                'ruling_59b_flux_vs_rhs_diagnostic'
+            )
+        kf0 = parity_block.get('abe_solid_kappah_floor_0')
+        if isinstance(kf0, dict) and isinstance(kf0.get('rationale'), str):
+            kf0['rationale'] = kf0['rationale'].replace(' (Ruling 58a)', '')
+        yld = parity_block.get('abe_solid_yield_active')
+        if isinstance(yld, dict) and isinstance(yld.get('rationale'), str):
+            yld['rationale'] = yld['rationale'].replace(
+                'stream EOS table (Ruling 59a & Ruling 61b)',
+                'SPIDER EOS table',
+            )
+
+    cost_block = data.get('a2_4_rhs_wall_time')
+    if isinstance(cost_block, dict):
+        for row in cost_block.get('six_row_call_count_table', []):
+            if not isinstance(row, dict):
+                continue
+            item = row.get('item')
+            if item == 'compute_stagnant_lid_state':
+                row['reason'] = (
+                    'In lid mode: 1 call per RHS between Pass 1 and Pass 2 (+1). '
+                    'In local mode: only active when stress_closure_mode == "lid" (+0).'
+                )
+            elif item == 'viscous_mixing_length_factor':
+                row['reason'] = (
+                    'Relative to rheology.enabled=False (0 calls), Pass 1 (theta=None) '
+                    'and Pass 2 (theta=lid_state["theta"] in lid mode, None in local mode) '
+                    'each invoke _viscous_mixing_length_factor_core once, giving +2 calls '
+                    'per RHS in both NumPy and JAX.'
+                )
+    return data
+
+
 def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list[str]:
     """Verify that benchmark data satisfy all required consistency invariants.
 
@@ -69,6 +116,11 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
         List of failure descriptions. An empty list indicates full verification.
     """
     failures: list[str] = []
+
+    raw_lower = json.dumps(data).lower()
+    for token in FORBIDDEN_SUBSTRINGS:
+        if token in raw_lower:
+            failures.append(f'Forbidden label or local path token {token!r} found in JSON')
 
     # 1. Canary section
     canary = data.get('canary')
@@ -94,6 +146,8 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
     if not isinstance(parity_block, dict):
         failures.append("Missing 'a2_2_rhs_parity_and_activity' section")
     else:
+        if not isinstance(parity_block.get('flux_vs_rhs_diagnostic'), dict):
+            failures.append("Missing 'flux_vs_rhs_diagnostic' in parity block")
         for suite_name in (
             'abe_solid_kappah_floor_0',
             'abe_solid_yield_active',
@@ -163,18 +217,7 @@ def verify_benchmarks(data: dict[str, Any], eos_dir: Path | None = None) -> list
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command line arguments for the benchmark generator.
-
-    Parameters
-    ----------
-    argv : list[str], optional
-        Command line argument list. If None, sys.argv[1:] is used.
-
-    Returns
-    -------
-    argparse.Namespace
-        Parsed CLI arguments namespace.
-    """
+    """Parse command line arguments for the benchmark generator."""
     parser = argparse.ArgumentParser(
         description='Generate or check validation benchmarks for solid rheology.'
     )
@@ -187,12 +230,7 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         '--eos-dir',
         type=Path,
-        default=Path(
-            os.environ.get(
-                'ARAGOG_TEST_EOS_DIR',
-                '/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos',
-            )
-        ),
+        default=Path(os.environ.get('ARAGOG_TEST_EOS_DIR', '')),
         help='Path to directory containing SPIDER equation of state tables.',
     )
     parser.add_argument(
@@ -209,27 +247,17 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point for benchmark generation and checking.
-
-    Parameters
-    ----------
-    argv : list[str], optional
-        Command line arguments.
-
-    Returns
-    -------
-    int
-        Exit code (0 for success, non-zero for failure).
-    """
+    """CLI entry point for benchmark generation and checking."""
     args = parse_arguments(argv)
     output_path = args.output.resolve()
+    has_eos_dir = bool(str(args.eos_dir)) and args.eos_dir.is_dir()
 
     if args.check:
         if not output_path.is_file():
             sys.stderr.write(f'Benchmark file not found: {output_path}\n')
             return 1
         data = json.loads(output_path.read_text(encoding='utf-8'))
-        eos_dir = args.eos_dir if args.eos_dir.is_dir() else None
+        eos_dir = args.eos_dir if has_eos_dir else None
         failures = verify_benchmarks(data, eos_dir=eos_dir)
         if failures:
             sys.stderr.write(f'Validation failed with {len(failures)} issue(s):\n')
@@ -243,11 +271,18 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(f'Baseline benchmark file not found: {output_path}\n')
         return 1
 
-    # Load baseline, update canary table hashes if EOS dir exists, and write
-    data = json.loads(output_path.read_text(encoding='utf-8'))
-    if args.eos_dir.is_dir():
+    data = sanitize_benchmarks(json.loads(output_path.read_text(encoding='utf-8')))
+    if has_eos_dir:
         table_hashes = compute_table_hashes(args.eos_dir)
         data.setdefault('canary', {})['table_md5'] = table_hashes
+    try:
+        head_sha = subprocess.check_output(
+            ['git', '-C', str(REPO_ROOT), 'rev-parse', 'HEAD'], text=True
+        ).strip()
+        if head_sha:
+            data.setdefault('canary', {})['aragog_commit'] = head_sha
+    except Exception:
+        pass
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')

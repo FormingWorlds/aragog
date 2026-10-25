@@ -1,6 +1,6 @@
 {
   "canary": {
-    "aragog_commit": "0295f909a7a013a3c99ce62fb4f24485e839296b",
+    "aragog_commit": "0cf32b380d7351b1b64cfbdf163fe2e694be7413",
     "table_md5": {
       "density_melt.dat": "5f1dafa207d677668e4bbdd977b350ed",
       "density_solid.dat": "d54cb60d201e1713c5dfef290e53acda",
@@ -10,7 +10,7 @@
   "a2_2_rhs_parity_and_activity": {
     "abe_solid_kappah_floor_0": {
       "case_name": "abe_solid_kappah_floor_0",
-      "rationale": "Active-solid Arrhenius state set (Ruling 58a): s_init=2500 J/kg/K, kappah_floor=0, viscosity_solid=1e18 Pa s, yield_stress_c=1e7 Pa. Exercises Arrhenius homologous strengthening across all 100 states (min rel RHS on vs off = 8.60e-3), while F_conv < 0.5 F_tot in Pass 1 so has_lid=False and n_nodes(eta_eff != eta_diff) = 0.",
+      "rationale": "Active-solid Arrhenius state set: s_init=2500 J/kg/K, kappah_floor=0, viscosity_solid=1e18 Pa s, yield_stress_c=1e7 Pa. Exercises Arrhenius homologous strengthening across all 100 states (min rel RHS on vs off = 8.60e-3), while F_conv < 0.5 F_tot in Pass 1 so has_lid=False and n_nodes(eta_eff != eta_diff) = 0.",
       "n_states": 100,
       "s_init": 2500.0,
       "s_bot_span": 650.0,
@@ -1282,7 +1282,7 @@
     },
     "abe_solid_yield_active": {
       "case_name": "abe_solid_yield_active",
-      "rationale": "Yield-active lid state set on the stream EOS table (Ruling 59a & Ruling 61b): sub-rheological-transition interior (s_init=2150 J/kg/K, s_bot in [1950, 2150], delta_s in [1620, 1820], s_surf=330 < S_sol(0)=455.17 J/kg/K) with kappah_floor=0, viscosity_solid=3e17 Pa s, and yield_stress_c=150 Pa (yield_stress_mu=0). Pass 1 interior convection exceeds conduction (f_conv > 0.5) beneath a cold sub-solidus conductive upper boundary layer (has_lid=True in all 100 states), generating convective driving stress tau_d_lid >> tau_y_lid = 150 Pa so plastic yielding acts in 9..13 nodes across all 100/100 states and changes the RHS relative to yield-off (tau_y -> infinity) by 2.331e-4..7.270e-4 (>= 1e-4 in all 100 states) while keeping NumPy vs JAX relative RHS difference <= 1.944e-7 <= 1e-6 (and <= 6.105e-16 with harmonised alpha).",
+      "rationale": "Yield-active lid state set on the SPIDER EOS table: sub-rheological-transition interior (s_init=2150 J/kg/K, s_bot in [1950, 2150], delta_s in [1620, 1820], s_surf=330 < S_sol(0)=455.17 J/kg/K) with kappah_floor=0, viscosity_solid=3e17 Pa s, and yield_stress_c=150 Pa (yield_stress_mu=0). Pass 1 interior convection exceeds conduction (f_conv > 0.5) beneath a cold sub-solidus conductive upper boundary layer (has_lid=True in all 100 states), generating convective driving stress tau_d_lid >> tau_y_lid = 150 Pa so plastic yielding acts in 9..13 nodes across all 100/100 states and changes the RHS relative to yield-off (tau_y -> infinity) by 2.331e-4..7.270e-4 (>= 1e-4 in all 100 states) while keeping NumPy vs JAX relative RHS difference <= 1.944e-7 <= 1e-6 (and <= 6.105e-16 with harmonised alpha).",
       "n_states": 100,
       "s_init": 2150.0,
       "s_bot_span": 200.0,
@@ -3824,7 +3824,7 @@
         5.334932367605449e-16
       ]
     },
-    "ruling_59b_flux_vs_rhs_diagnostic": {
+    "flux_vs_rhs_diagnostic": {
       "worst_state_index": 4,
       "worst_basic_node_index": 64,
       "worst_staggered_cell_index": 63,
@@ -3989,7 +3989,7 @@
         "measured_numpy_local_delta": 0,
         "measured_jax_local_delta": 0,
         "difference_from_plan": 0,
-        "reason": "In lid mode: 1 call per RHS between Pass 1 and Pass 2 (+1). In local mode: gated on stress_closure_mode == \"lid\" per wp2_derivation.md line 92 (+0)."
+        "reason": "In lid mode: 1 call per RHS between Pass 1 and Pass 2 (+1). In local mode: only active when stress_closure_mode == \"lid\" (+0)."
       },
       {
         "item": "compute_effective_viscosity",
@@ -4009,7 +4009,7 @@
         "measured_numpy_local_delta": 2,
         "measured_jax_local_delta": 2,
         "difference_from_plan": 1,
-        "reason": "Row A2-4 quoted the Pass 2 increment (+1 relative to Pass 1 from P8_WP2_wiring.md line 98); relative to rheology.enabled=False (0 calls), Pass 1 (theta=None) and Pass 2 (theta=lid_state[\"theta\"] in lid mode, None in local mode) each invoke _viscous_mixing_length_factor_core once, giving +2 calls per RHS in both NumPy and JAX (wp2_derivation.md lines 85, 101, 222)."
+        "reason": "Relative to rheology.enabled=False (0 calls), Pass 1 (theta=None) and Pass 2 (theta=lid_state[\"theta\"] in lid mode, None in local mode) each invoke _viscous_mixing_length_factor_core once, giving +2 calls per RHS in both NumPy and JAX."
       }
     ]
   },
