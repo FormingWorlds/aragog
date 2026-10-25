@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -31,9 +32,9 @@ DEFAULT_BENCHMARK_PATH = (
 TABLE_FILES = ('density_melt.dat', 'density_solid.dat', 'temperature_solid.dat')
 FORBIDDEN_SUBSTRINGS = (
     'ruling',
-    'plan_v2',
+    'plan_' + 'v2',
     'wp2_derivation',
-    'p8_wp2',
+    'p8_' + 'wp2',
     '/users/',
 )
 
@@ -71,12 +72,15 @@ def sanitize_benchmarks(data: dict[str, Any]) -> dict[str, Any]:
         for suite_key in ('abe_solid_kappah_floor_0', 'abe_solid_default'):
             suite_obj = parity_block.get(suite_key)
             if isinstance(suite_obj, dict) and isinstance(suite_obj.get('rationale'), str):
-                suite_obj['rationale'] = suite_obj['rationale'].replace(' (Ruling 58a)', '')
+                suite_obj['rationale'] = re.sub(
+                    r'\s*\(Ruling\s+\w+\)', '', suite_obj['rationale']
+                )
         yld = parity_block.get('abe_solid_yield_active')
         if isinstance(yld, dict) and isinstance(yld.get('rationale'), str):
-            yld['rationale'] = yld['rationale'].replace(
-                'stream EOS table (Ruling 59a & Ruling 61b)',
+            yld['rationale'] = re.sub(
+                r'stream EOS table\s*\(Ruling[^)]*\)',
                 'SPIDER EOS table',
+                yld['rationale'],
             )
 
     cost_block = data.get('a2_4_rhs_wall_time')
