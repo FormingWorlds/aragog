@@ -2593,7 +2593,12 @@ def test_stagnant_lid_smooth_gates_and_scales():
 @pytest.mark.unit
 @pytest.mark.physics_invariant
 def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
-    """Verify F_TOT_FLOOR_FRAC zero-crossing protection, LID_REGIME_LABEL_WIDTH slope, and main parity across interior_flux_fraction."""
+    """Verify F_TOT_FLOOR_FRAC zero-crossing protection, LID_REGIME_LABEL_WIDTH slope, and stagnant-lid interior state parity across interior_flux_fraction.
+
+    The 13 unchanged points are pinned to merge-base c8f0b6cd literals at rel=1e-12.
+    The 7 transition points are pinned to an independent evaluation of the derivation 1.1
+    endpoint-blended formula at rel=1e-12, with merge-base values noted beside each.
+    """
     from pathlib import Path
 
     import aragog.rheology_lid as lid_mod
@@ -2608,7 +2613,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     t = np.linspace(2600.0, 300.0, n)
     phi = np.zeros(n)
 
-    # 1. Row 12: sign-changing F_tot with zero crossing at interior node k0 and tiny dust F_conv.
+    # 1. Sign-changing F_tot with zero crossing at interior node k0 and tiny dust F_conv:
     f_tot_sign = np.linspace(-100.0, 100.0, n)
     f_tot_sign[10] = 0.0
     f_loc_rms_10 = float(np.sqrt(np.mean(f_tot_sign[8:13] ** 2)))
@@ -2661,7 +2666,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     assert float(st_internodal['w_active']) == pytest.approx(expected_w_active_in, rel=1.0e-9)
     assert float(st_internodal['w_active']) < 0.45
 
-    # 2. Row 20: mid-slope pin of lid_regime at tau_d = tau_y_lid * exp(+-0.1).
+    # 2. Mid-slope pin of lid_regime at tau_d = tau_y_lid * exp(+-0.1):
     fc_active = np.full(n, 80.0)
     fc_active[-4:] = 0.0
     ft_active = np.full(n, 100.0)
@@ -2710,36 +2715,73 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         )
 
     # 3. Sub-threshold and low-flux parity of eta_i, T_i, and mu_i across interior_flux_fraction
-    # in {0.05, 0.10, 0.20, 0.50} with geotherm endpoint blending (Row 5).
+    # in {0.05, 0.10, 0.20, 0.50} with geotherm endpoint blending.
     n_l1 = 50
     r_l1 = np.linspace(3.48e6, 6.371e6, n_l1)
     t_l1 = np.linspace(2600.0, 1400.0, n_l1)
     p_l1 = np.linspace(135.0e9, 0.0, n_l1)
     phi_l1 = np.zeros(n_l1)
     visc_mix_l1 = np.full(n_l1, 1.0e15)
-    main_literals = {
+
+    # 13 points outside transition bands pinned to merge-base c8f0b6cd literals:
+    merge_base_literals = {
         (0.05, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
-        (0.05, 6.00843e-5): (2.3060133389415036e20, 1856.5546317909584, 2.3060133389415036e20),
-        (0.05, 1.0e-4): (3.211682389068213e17, 1626.722938791537, 3.211682389068213e17),
-        (0.05, 1.0e-3): (1000000065827477.6, 1424.4909098970506, 1000000065827477.6),
-        (0.05, 0.03): (1000000000000000.0, 1424.490907753382, 1000000000000000.0),
+        (0.05, 1.0e-3): (1000000065827473.5, 1424.4909098970506, 1000000065827473.5),
+        (0.05, 0.03): (1000000000000004.1, 1424.490907753382, 1000000000000004.1),
         (0.10, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
-        (0.10, 6.00843e-5): (6.037030713767539e30, 2575.467182755998, 6.037030713767539e30),
-        (0.10, 1.0e-4): (6.030540111438592e30, 2575.438315702754, 6.030540111438592e30),
-        (0.10, 1.0e-3): (5.871807349442422e30, 2574.722430755179, 5.871807349442422e30),
-        (0.10, 0.03): (1.0036004104618392e18, 1667.4062468015593, 1.0036004104618392e18),
         (0.20, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.20, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.20, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.20, 1.0e-3): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
-        (0.20, 0.03): (6.046715914763067e30, 2575.5101979531364, 6.046715914763067e30),
         (0.50, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 1.0e-3): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 0.03): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
     }
-    for (f0_cfg, f_test), (exp_eta_i, exp_t_i, exp_mu_i) in main_literals.items():
+
+    # 7 transition points (0 < w_weight < 1) evaluated from derivation 1.1 formula:
+    transition_derivation_literals = {
+        (0.05, 6.00843e-5): (
+            2.3060133389415036e20,
+            1856.5546317909584,
+            2.3060133389415036e20,
+        ),  # c8f0b6cd merge base: 8.9648269867330201e20, 1856.5546317909584, 8.9648269867330201e20
+        (0.05, 1.0e-4): (
+            3.2116823890682131e17,
+            1626.7229387915370,
+            3.2116823890682131e17,
+        ),  # c8f0b6cd merge base: 5.4401391641927213e17, 1626.7229387915370, 5.4401391641927213e17
+        (0.10, 6.00843e-5): (
+            6.0370307137675392e30,
+            2575.4671827559978,
+            6.0370307137675392e30,
+        ),  # c8f0b6cd merge base: 6.0389133587052112e30, 2575.4671827559978, 6.0389133587052112e30
+        (0.10, 1.0e-4): (
+            6.0305401114385923e30,
+            2575.4383157027542,
+            6.0305401114385923e30,
+        ),  # c8f0b6cd merge base: 6.0336828502715910e30, 2575.4383157027542, 6.0336828502715910e30
+        (0.10, 1.0e-3): (
+            5.8718073494424216e30,
+            2574.7224307551792,
+            5.8718073494424216e30,
+        ),  # c8f0b6cd merge base: 5.9054014562120670e30, 2574.7224307551792, 5.9054014562120670e30
+        (0.10, 0.03): (
+            1.0036004104618392e18,
+            1667.4062468015593,
+            1.0036004104618392e18,
+        ),  # c8f0b6cd merge base: 1.9932572310324982e18, 1667.4062468015593, 1.9932572310324982e18
+        (0.20, 0.03): (
+            6.0467159147630670e30,
+            2575.5101979531364,
+            6.0467159147630670e30,
+        ),  # c8f0b6cd merge base: 6.0467165336094990e30, 2575.5101979531364, 6.0467165336094990e30
+    }
+    for (f0_cfg, f_test), (exp_eta_i, exp_t_i, exp_mu_i) in {
+        **merge_base_literals,
+        **transition_derivation_literals,
+    }.items():
         st_sub = compute_stagnant_lid_state(
             radii=r_l1,
             temperature=t_l1,

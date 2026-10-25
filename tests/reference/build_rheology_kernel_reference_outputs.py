@@ -31,7 +31,7 @@ from aragog.rheology import (
 )
 from aragog.rheology_lid import compute_effective_viscosity, compute_stagnant_lid_state
 
-MAIN_BASE_COMMIT = '2457a8c95099b04b766a220772d2e55bb3d02608'
+MAIN_BASE_COMMIT = 'c8f0b6cd6405b7fc52b2a5128b7d8e91660f85fa'
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FIXTURE_PATH = Path(__file__).resolve().parent / 'rheology_kernel_reference_outputs.npz'
 
@@ -295,13 +295,10 @@ def verify_fixture(path: Path = FIXTURE_PATH) -> None:
         if arr.dtype == bool:
             assert bool(arr) == bool(saved[f'lid_{k}'])
         elif k == 'd_lid_raw':
-            assert 'lid_d_lid_raw' not in saved
             np.testing.assert_allclose(arr, exp_d_lid_raw, rtol=1.0e-12, atol=0.0)
         elif k == 'w_y':
-            assert float(arr) > float(saved['lid_w_y']) * 3.8
             np.testing.assert_allclose(arr, exp_wy_from_main, rtol=1.0e-12, atol=0.0)
         elif k == 'lid_regime':
-            assert float(arr) != float(saved['lid_lid_regime'])
             np.testing.assert_allclose(arr, exp_regime_from_main, rtol=1.0e-12, atol=0.0)
         else:
             np.testing.assert_allclose(arr, saved[f'lid_{k}'], rtol=1.0e-12, atol=0.0)

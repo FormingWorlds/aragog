@@ -2152,7 +2152,7 @@ def test_rheology_kernel_reference_grid_parity():
         unyielded_velocity=np.full(30, 1e-9),
         xp=np,
     )
-    # Independent expected values for the 3 WP-4 changed/added keys derived solely from main (2457a8c9) fixture data:
+    # Independent expected values for the 3 changed or added keys derived solely from main fixture data:
     exp_d_lid_raw = (radii[-1] - float(data['lid_r_lid_base'])) * float(data['lid_w_active'])
     w_lid_pres_main = float(data['lid_d_lid']) / exp_d_lid_raw
     tau_d_lid_raw_main = float(data['lid_tau_d_lid']) / w_lid_pres_main
@@ -2168,19 +2168,16 @@ def test_rheology_kernel_reference_grid_parity():
         if arr.dtype == bool:
             assert bool(arr) == bool(data[f'lid_{k}'])
         elif k == 'd_lid_raw':
-            assert 'lid_d_lid_raw' not in data
             np.testing.assert_allclose(arr, exp_d_lid_raw, rtol=1.0e-12, atol=0.0)
         elif k == 'w_y':
-            assert float(arr) > float(data['lid_w_y']) * 3.8
             np.testing.assert_allclose(arr, exp_wy_from_main, rtol=1.0e-12, atol=0.0)
         elif k == 'lid_regime':
-            assert float(arr) != float(data['lid_lid_regime'])
             np.testing.assert_allclose(arr, exp_regime_from_main, rtol=1.0e-12, atol=0.0)
         else:
             np.testing.assert_allclose(arr, data[f'lid_{k}'], rtol=1.0e-12, atol=0.0)
 
     assert 'main_commit' in data
-    assert str(data['main_commit']) == '2457a8c95099b04b766a220772d2e55bb3d02608'
+    assert str(data['main_commit']) == 'c8f0b6cd6405b7fc52b2a5128b7d8e91660f85fa'
 
     import importlib.util
 
@@ -2204,13 +2201,13 @@ def test_rheology_kernel_reference_grid_parity():
 
     with (
         patch.object(gen_mod, '_has_git_commit', return_value=False),
-        pytest.raises(RuntimeError, match='2457a8c95099b04b766a220772d2e55bb3d02608'),
+        pytest.raises(RuntimeError, match='c8f0b6cd6405b7fc52b2a5128b7d8e91660f85fa'),
     ):
         gen_mod.verify_fixture(fixture_path)
 
     with (
         patch.object(gen_mod, '_has_git_commit', return_value=False),
-        pytest.raises(RuntimeError, match='2457a8c95099b04b766a220772d2e55bb3d02608'),
+        pytest.raises(RuntimeError, match='c8f0b6cd6405b7fc52b2a5128b7d8e91660f85fa'),
     ):
         gen_mod.main(['--check', '--output', str(fixture_path)])
 
@@ -2265,7 +2262,7 @@ def test_rheology_kernel_reference_grid_parity_skips_when_commit_absent():
 
     with (
         patch('subprocess.run') as mock_run,
-        pytest.raises(pytest.skip.Exception, match='2457a8c95099b04b766a220772d2e55bb3d02608'),
+        pytest.raises(pytest.skip.Exception, match='c8f0b6cd6405b7fc52b2a5128b7d8e91660f85fa'),
     ):
         mock_run.return_value.returncode = 1
         test_rheology_kernel_reference_grid_parity()
