@@ -809,6 +809,7 @@ class EntropyState:
 
         if rheo_enabled:
             eta_diff_b = np.asarray(self.phase_basic.eta_diff()).ravel()
+            phi_b_rheo = np.asarray(self.phase_basic.melt_fraction()).ravel()
             if rheo.stress_closure_mode == 'local':
                 self._lid_state = None
                 tau_y_b = np.asarray(self.phase_basic.tau_y()).ravel()
@@ -821,7 +822,6 @@ class EntropyState:
                     xp=np,
                 )
             else:
-                phi_b_rheo = np.asarray(self.phase_basic.melt_fraction()).ravel()
                 T_sol_b = self.phase_basic.solidus_temperature()
                 T_sol_b_arr = np.asarray(T_sol_b).ravel() if T_sol_b is not None else None
                 mu_mix_pass1 = np.asarray(self.phase_basic.viscosity()).ravel()
