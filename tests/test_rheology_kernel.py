@@ -2925,14 +2925,20 @@ def test_arrhenius_viscosity_exact_below_ceiling_for_small_viscosity_solid():
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
-def test_cross_field_viscosity_max_and_boundary_checks():
-    """Verify viscosity_max_log10 > log10(viscosity_solid), 1-D w_lid shape check, and huge-int ValueError."""
+def test_cross_field_viscosity_max_and_boundary_checks(tmp_path):
+    """Verify viscosity_max_log10 > log10(viscosity_solid) across kernels, TOML/INI/dict config loaders, and EntropyPhaseEvaluator, plus 1-D w_lid shape check and huge-int ValueError."""
+    import copy
+    import importlib.resources
+    import tomllib
+
     import jax
     import jax.numpy as jnp
 
     jax.config.update('jax_enable_x64', True)
+    from aragog.config import Config
     from aragog.config.phases import PhaseConfig
-    from aragog.parser import _PhaseParameters
+    from aragog.eos.entropy_phase import EntropyPhaseEvaluator
+    from aragog.parser import Parameters, _PhaseParameters
 
     # 1. compute_arrhenius_viscosity: valid when viscosity_max_log10 > log10(viscosity_solid), invalid otherwise.
     val_ok = compute_arrhenius_viscosity(
@@ -3031,6 +3037,56 @@ def test_cross_field_viscosity_max_and_boundary_checks():
             thermal_conductivity=4.0,
             thermal_expansivity=3.0e-5,
             viscosity=1.0e22,
+            rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+        )
+
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        PhaseConfig(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3.0e-5,
+            viscosity=np.asarray(1.0e22),
+            rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+        )
+
+    toml_base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    ini_base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.cfg').read_text()
+
+    toml_bad = tmp_path / 'bad_vmax.toml'
+    toml_bad.write_text(
+        toml_base + '\n[phase_solid.rheology]\nenabled = true\nviscosity_max_log10 = 21.0\n',
+        encoding='utf-8',
+    )
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Parameters.from_file(toml_bad)
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Config.from_toml(str(toml_bad))
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Config.from_file(str(toml_bad))
+
+    ini_bad = tmp_path / 'bad_vmax.cfg'
+    ini_bad.write_text(
+        ini_base + '\n[phase_solid.rheology]\nenabled = True\nviscosity_max_log10 = 21.0\n',
+        encoding='utf-8',
+    )
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Parameters.from_file(ini_bad)
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Config.from_file(str(ini_bad))
+
+    d_bad = copy.deepcopy(tomllib.loads(toml_base))
+    d_bad['phase_solid']['rheology'] = {'enabled': True, 'viscosity_max_log10': 21.0}
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        Config.from_dict(d_bad)
+
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        EntropyPhaseEvaluator(
+            pressure=np.array([1.0e9, 2.0e9]),
+            eos=None,
+            const_properties=True,
+            viscosity_solid=1.0e22,
             rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
         )
 
@@ -3178,6 +3234,79 @@ def test_saturating_activation_enthalpy_and_viscosity():
     )
     eta_iso_expected = 1.0e21 * np.exp((e_a / R_GAS) * (1.0 / t_grid - 1.0 / 1600.0))
     np.testing.assert_allclose(eta_iso_np, eta_iso_expected, rtol=1.0e-13)
+
+    # Homologous parameters (solidus_temperature, g_homologous, t_sol_0, dt_sol_dp) are ignored
+    # when activation_energy is set, and t_sol_0 is not required when solidus_temperature is given.
+    sol_unused = np.linspace(1500.0, 4500.0, p_grid.size)
+    h_with_hom_np = compute_arrhenius_enthalpy(
+        p_grid,
+        g_homologous=42.0,
+        solidus_temperature=sol_unused,
+        t_sol_0=None,
+        dt_sol_dp=9.9e-8,
+        activation_energy=e_a,
+        activation_volume=0.0,
+        xp=np,
+    )
+    h_with_hom_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_grid),
+            g_homologous=42.0,
+            solidus_temperature=jnp.asarray(sol_unused),
+            t_sol_0=None,
+            dt_sol_dp=9.9e-8,
+            activation_energy=e_a,
+            activation_volume=0.0,
+            xp=jnp,
+        )
+    )
+    np.testing.assert_array_equal(h_with_hom_np, h_iso_np)
+    np.testing.assert_array_equal(h_with_hom_jx, h_iso_jx)
+
+    eta_with_hom_np = compute_arrhenius_viscosity(
+        t_grid,
+        p_grid,
+        viscosity_solid=1.0e21,
+        g_homologous=42.0,
+        solidus_temperature=sol_unused,
+        t_sol_0=None,
+        dt_sol_dp=9.9e-8,
+        arrhenius_t_ref=1600.0,
+        activation_energy=e_a,
+        activation_volume=0.0,
+        viscosity_max_log10=60.0,
+        xp=np,
+    )
+    eta_with_hom_jx = np.asarray(
+        compute_arrhenius_viscosity(
+            jnp.asarray(t_grid),
+            jnp.asarray(p_grid),
+            viscosity_solid=1.0e21,
+            g_homologous=42.0,
+            solidus_temperature=jnp.asarray(sol_unused),
+            t_sol_0=None,
+            dt_sol_dp=9.9e-8,
+            arrhenius_t_ref=1600.0,
+            activation_energy=e_a,
+            activation_volume=0.0,
+            viscosity_max_log10=60.0,
+            xp=jnp,
+        )
+    )
+    eta_iso_jx = np.asarray(
+        compute_arrhenius_viscosity(
+            jnp.asarray(t_grid),
+            jnp.asarray(p_grid),
+            viscosity_solid=1.0e21,
+            arrhenius_t_ref=1600.0,
+            activation_energy=e_a,
+            activation_volume=0.0,
+            viscosity_max_log10=60.0,
+            xp=jnp,
+        )
+    )
+    np.testing.assert_array_equal(eta_with_hom_np, eta_iso_np)
+    np.testing.assert_array_equal(eta_with_hom_jx, eta_iso_jx)
 
     # 4. Linear activation-volume limit (P_decay = +inf, Karato & Wu 1993 E_a = 300 kJ/mol, V_0 = 6 cm^3/mol)
     # and Taylor expansion accuracy for small x = P / P_decay < 1e-8.
