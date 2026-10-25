@@ -7,6 +7,7 @@ import math
 from typing import Any
 
 import attrs
+import numpy as np
 
 from aragog.rheology import (
     PRESSURE_ROUNDOFF_TOLERANCE as PRESSURE_ROUNDOFF_TOLERANCE,
@@ -123,8 +124,8 @@ class PhaseConfig:
         self.entropy = entropy
         self.rheology = merge_rheology(rheology, flat_rheo)
         if (
-            isinstance(viscosity, (int, float))
-            and not isinstance(viscosity, bool)
+            isinstance(viscosity, (int, float, np.number))
+            and not isinstance(viscosity, (bool, np.bool_))
             and math.isfinite(float(viscosity))
             and float(viscosity) > 0.0
             and self.rheology.viscosity_max_log10 <= math.log10(float(viscosity))

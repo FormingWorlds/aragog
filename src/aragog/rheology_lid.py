@@ -571,8 +571,8 @@ def _compute_stagnant_lid_state_core(
         xp.clip((T_0 - T_i) / xp.where(dT_ep_nz, dT_ep, 1.0), 0.0, 1.0),
         w_weight,
     )
-    is_mono_T = xp.all(T[1:] <= T[:-1])
-    T_rev = T[::-1]
+    is_mono_T = xp.all(T[1:] < T[:-1] - 1.0e-12)
+    T_rev = xp.where(is_mono_T, T[::-1], xp.linspace(0.0, 1.0, T.shape[0]))
     P_geo_Ti = xp.interp(T_i, T_rev, P[::-1])
     P_geo_T1 = xp.interp(T_1, T_rev, P[::-1])
     P_geo_T0 = xp.interp(T_0, T_rev, P[::-1])
@@ -581,7 +581,11 @@ def _compute_stagnant_lid_state_core(
         xp.sum(W_tilde * P),
         xp.where(
             is_mono_T,
-            P_geo_Ti + w_eff * (P_1 - P_geo_T1) + (1.0 - w_eff) * (P_0 - P_geo_T0),
+            xp.clip(
+                P_geo_Ti + w_eff * (P_1 - P_geo_T1) + (1.0 - w_eff) * (P_0 - P_geo_T0),
+                xp.min(P),
+                xp.max(P),
+            ),
             xp.sum(W_tilde * P),
         ),
     )
@@ -593,7 +597,11 @@ def _compute_stagnant_lid_state_core(
         xp.sum(W_tilde * r),
         xp.where(
             is_mono_T,
-            r_geo_Ti + w_eff * (r_1 - r_geo_T1) + (1.0 - w_eff) * (r_0 - r_geo_T0),
+            xp.clip(
+                r_geo_Ti + w_eff * (r_1 - r_geo_T1) + (1.0 - w_eff) * (r_0 - r_geo_T0),
+                r[0],
+                r[-1],
+            ),
             xp.sum(W_tilde * r),
         ),
     )
