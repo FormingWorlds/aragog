@@ -4048,31 +4048,49 @@ def test_saturating_activation_enthalpy_limits(validation_plot) -> None:
     def figure():
         import matplotlib.pyplot as plt
 
-        sl = slice(None, None, 4)
+        sl = slice(None, None, 8)
         sl_pd = slice(None, None, 2)
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.8, 3.1))
+        plt.rcParams.update(
+            {
+                'axes.labelsize': 11,
+                'xtick.labelsize': 9.5,
+                'ytick.labelsize': 9.5,
+                'legend.fontsize': 7.5,
+            }
+        )
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.8, 3.0))
         ax1.plot(p_gpa[sl], (h_lin_ref / 1.0e3)[sl], label='P_decay = inf')
         ax1.plot(p_gpa[sl], curves_kj[1610.0][sl], '--', label='1610 GPa')
         ax1.plot(p_gpa[sl], curves_kj[1100.0][sl], '-.', label='1100 GPa')
         ax1.plot(p_gpa[sl], curves_kj[200.0][sl], ':', label='200 GPa (int)')
         ax1.plot(p_gpa[sl], h_sec_200_kj[sl], '--', label='200 GPa (sec)')
         ax1.plot(p_gpa[sl], (expected_v0_zero / 1.0e3)[sl], '-', label='V_0 = 0')
-        ax1.set(xlabel='P [GPa]', ylabel='H(P) [kJ/mol]')
-        ax1.legend(fontsize=6.5)
+        ax1.set(
+            xlabel='(a) P [GPa]',
+            ylabel='H(P) [kJ/mol]',
+            xticks=[0, 500, 1000],
+            yticks=[1000, 3000, 5000],
+        )
+        ax1.legend()
 
         ax2.plot(
             np.log10(p_decay_sweep_gpa[sl_pd]),
             np.log10(dev_cmb_kj[sl_pd]),
-            label='H_lin - H_int',
+            label='dH = H_lin - H_int',
         )
         ax2.plot(
             np.log10(p_decay_sweep_gpa[sl_pd]),
             np.log10(bound_cmb_kj[sl_pd]),
             '--',
-            label='Bound',
+            label='Bound V_0 P^2 / (2 P_decay)',
         )
-        ax2.set(xlabel='log10 P_decay [GPa]', ylabel='log10 dH [kJ/mol]')
-        ax2.legend(fontsize=7.0)
+        ax2.set(
+            xlabel='(b) log10 P_decay [GPa] (P = 135 GPa)',
+            ylabel='log10 dH(135 GPa) [kJ/mol]',
+            xticks=[2, 4, 6],
+            yticks=[-1, 1, 3],
+        )
+        ax2.legend()
         fig.tight_layout()
         return fig
 
