@@ -2403,7 +2403,7 @@ def test_stagnant_lid_smooth_gates_and_scales():
     g_dt_mid = float(grad_dt_fn(jnp.asarray(1.0e-3)))
     assert np.isfinite(g_dt_mid) and g_dt_mid > 0.0
 
-    # Hard-gate mutant canary for T_i - T_surf > 1e-3 K:
+    # Hard-threshold mutant canary for T_i - T_surf > 1e-3 K:
     smooth_jump_dt = abs(
         float(_eval_dt(1.0e-3 + 1.0e-6)['d_lid']) - float(_eval_dt(1.0e-3 - 1.0e-6)['d_lid'])
     )
@@ -2443,7 +2443,7 @@ def test_stagnant_lid_smooth_gates_and_scales():
     )
     assert float(st_d08['d_lid']) == pytest.approx(expected_wd_08 * d_raw_08, rel=1.0e-12)
 
-    # Hard-gate mutant canary for d_lid_raw > 1.0 m:
+    # Hard-threshold mutant canary for d_lid_raw > 1.0 m:
     st_d12 = compute_stagnant_lid_state(
         radii=r100,
         temperature=t100,
