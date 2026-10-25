@@ -208,7 +208,7 @@ def _is_non_real(val: Any) -> bool:
     return True
 
 
-def _scalar_or_nan(val: Any, name: str) -> None:
+def _require_scalar(val: Any, name: str) -> None:
     """Reject arrays, collections, and non-real types for scalar inputs."""
     if _is_non_real(val) or isinstance(val, (list, tuple)) or np.ndim(val) > 0:
         raise ValueError(f'{name} must be a scalar')
@@ -266,7 +266,7 @@ def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
         if val is None:
             continue
         if is_scalar:
-            _scalar_or_nan(val, name)
+            _require_scalar(val, name)
         elif _is_non_real(val):
             raise ValueError(f'{name} must be a real number or array, got {val!r}')
         ok, msg = _RULES[rule]
@@ -325,6 +325,12 @@ def compute_mlt_top_slope(
     -------
     float or array-like
         Upper mixing-length slope s_top(theta) [-].
+
+    Raises
+    ------
+    ValueError
+        If ``theta`` is None.
+        If ``s_top_inf`` is not in ``(0, 1]`` or ``c_theta`` is negative on NumPy.
     """
     _require_x64_if_jax(xp)
     if theta is None:
@@ -428,6 +434,15 @@ def viscous_mixing_length_factor(
     -------
     array
         ``(l_v / l)^4``, and 1 where ``l`` is 0 (the boundary nodes).
+
+    Raises
+    ------
+    ValueError
+        If ``radii``, ``r_in``, ``r_out``, or ``mixing_length`` is None.
+        If ``r_in >= r_out`` or any finite radius lies outside ``[r_in, r_out]``
+        beyond tolerance ``max(1 m, 1e-9 * (r_out - r_in))`` on NumPy.
+        If ``c_theta`` is negative.
+        On JAX (``xp is jnp``), domain violations evaluate the profile to NaN.
     """
     _require_x64_if_jax(xp)
     if radii is None:
@@ -459,20 +474,20 @@ def viscous_mixing_length_factor(
     rin_val = xp.asarray(r_in, dtype=float)
     rout_val = xp.asarray(r_out, dtype=float)
     if xp is np:
-        if np.any(np.isnan(r_arr)) or np.isnan(rin_val) or np.isnan(rout_val):
-            pass
-        elif float(rin_val) >= float(rout_val):
+        rin_finite = np.isfinite(rin_val)
+        rout_finite = np.isfinite(rout_val)
+        if rin_finite and rout_finite and float(rin_val) >= float(rout_val):
             raise ValueError(
                 f'r_in must be strictly less than r_out, got r_in={r_in}, r_out={r_out}'
             )
-        else:
-            tol = 1.0e-12 * (float(rout_val) - float(rin_val))
+        if rin_finite and rout_finite:
+            tol = max(1.0, 1.0e-9 * (float(rout_val) - float(rin_val)))
             if np.any((r_arr < float(rin_val) - tol) | (r_arr > float(rout_val) + tol)):
                 raise ValueError(
                     f'radii must lie within [r_in, r_out], got radii outside [{r_in}, {r_out}]'
                 )
     else:
-        tol = 1.0e-12 * (rout_val - rin_val)
+        tol = xp.maximum(1.0, 1.0e-9 * (rout_val - rin_val))
         domain_bad = (rin_val >= rout_val) | xp.any(
             (r_arr < rin_val - tol) | (r_arr > rout_val + tol)
         )
@@ -543,8 +558,10 @@ def _compute_arrhenius_enthalpy_core(
     dt_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
     t_sol_0_eff = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
     if solidus_temperature is not None:
-        t_sol_raw = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p_safe)
-        t_sol = xp.where(xp.isfinite(t_sol_raw) & (t_sol_raw > 0.0), t_sol_raw, 1000.0)
+        ts_arr = xp.asarray(solidus_temperature, dtype=float)
+        t_sol = xp.where((ts_arr > 0.0) & xp.isfinite(ts_arr), ts_arr, 1.0) + xp.zeros_like(
+            p_safe
+        )
     else:
         t_sol = t_sol_0_eff + dt_eff * p_safe
     g_arr = xp.asarray(g_eff, dtype=float)
@@ -767,7 +784,7 @@ def _compute_arrhenius_viscosity_core(
     t_safe = xp.where((t > 0.0) & xp.isfinite(t), t, 1.0)
     t_ref_safe = xp.where((t_ref_arr > 0.0) & xp.isfinite(t_ref_arr), t_ref_arr, 1.0)
     wp_pos = xp.where((wp > 0.0) & xp.isfinite(wp), wp, 1.0)
-    h_p_safe = xp.where(xp.isfinite(h_p), h_p, h_0)
+    h_p_safe = xp.where(xp.isnan(h_p), 0.0, h_p)
     exponent = h_p_safe / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
@@ -1093,6 +1110,12 @@ def compute_strain_rate_local(
     -------
     float or array-like
         Local strain rate [1/s].
+
+    Raises
+    ------
+    ValueError
+        If ``viscous_velocity`` or ``mixing_length`` is None.
+        If ``mixing_length`` is negative or infinite on NumPy.
     """
     _require_x64_if_jax(xp)
     if viscous_velocity is None:

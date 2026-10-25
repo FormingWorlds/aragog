@@ -979,14 +979,41 @@ def test_hypothesis_pressure_nan_propagation() -> None:
 @settings(deadline=None, max_examples=25)
 def test_hypothesis_required_inputs_reject_none(p_opt: float, t_opt: float) -> None:
     """Verify that None for required inputs raises ValueError naming the field."""
-    with pytest.raises(ValueError, match='pressure'):
+    err = None
+    try:
         compute_arrhenius_enthalpy(None, xp=np)
-    with pytest.raises(ValueError, match='temperature'):
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'pressure' in str(err), (
+        f'compute_arrhenius_enthalpy did not raise ValueError naming pressure for pressure=None, got {err}'
+    )
+
+    err = None
+    try:
         compute_arrhenius_viscosity(None, p_opt, xp=np)
-    with pytest.raises(ValueError, match='pressure'):
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'temperature' in str(err), (
+        f'compute_arrhenius_viscosity did not raise ValueError naming temperature for temperature=None, got {err}'
+    )
+
+    err = None
+    try:
         compute_arrhenius_viscosity(t_opt, None, xp=np)
-    with pytest.raises(ValueError, match='pressure'):
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'pressure' in str(err), (
+        f'compute_arrhenius_viscosity did not raise ValueError naming pressure for pressure=None, got {err}'
+    )
+
+    err = None
+    try:
         compute_yield_stress(None, xp=np)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'pressure' in str(err), (
+        f'compute_yield_stress did not raise ValueError naming pressure for pressure=None, got {err}'
+    )
 
 
 # tau_d rejection on eager NumPy and JAX JIT

@@ -1099,55 +1099,229 @@ def test_pressure_surface_roundoff_clamping_and_validation():
 @pytest.mark.unit
 def test_required_rheology_inputs_reject_none():
     """Verify that None for required inputs raises ValueError naming the field."""
-    with pytest.raises(ValueError, match='pressure'):
+    err = None
+    try:
         compute_arrhenius_enthalpy(None)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'pressure' in str(err), (
+        f'compute_arrhenius_enthalpy did not raise ValueError naming pressure for pressure=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='temperature'):
+    err = None
+    try:
         compute_arrhenius_viscosity(None, 1.0e9)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'temperature' in str(err), (
+        f'compute_arrhenius_viscosity did not raise ValueError naming temperature for temperature=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='pressure'):
+    err = None
+    try:
         compute_arrhenius_viscosity(1600.0, None)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'pressure' in str(err), (
+        f'compute_arrhenius_viscosity did not raise ValueError naming pressure for pressure=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='pressure'):
+    err = None
+    try:
         compute_yield_stress(None)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'pressure' in str(err), (
+        f'compute_yield_stress did not raise ValueError naming pressure for pressure=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='theta'):
+    err = None
+    try:
         compute_mlt_top_slope(None)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'theta' in str(err), (
+        f'compute_mlt_top_slope did not raise ValueError naming theta for theta=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='radii'):
+    err = None
+    try:
         viscous_mixing_length_factor(None, 1.0e6, 3.0e6, 1.0e5)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'radii' in str(err), (
+        f'viscous_mixing_length_factor did not raise ValueError naming radii for radii=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='r_in'):
+    err = None
+    try:
         viscous_mixing_length_factor(np.array([2.0e6]), None, 3.0e6, 1.0e5)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'r_in' in str(err), (
+        f'viscous_mixing_length_factor did not raise ValueError naming r_in for r_in=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='r_out'):
+    err = None
+    try:
         viscous_mixing_length_factor(np.array([2.0e6]), 1.0e6, None, 1.0e5)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'r_out' in str(err), (
+        f'viscous_mixing_length_factor did not raise ValueError naming r_out for r_out=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='mixing_length'):
+    err = None
+    try:
         viscous_mixing_length_factor(np.array([2.0e6]), 1.0e6, 3.0e6, None)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'mixing_length' in str(err), (
+        f'viscous_mixing_length_factor did not raise ValueError naming mixing_length for mixing_length=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='viscous_velocity'):
+    err = None
+    try:
         compute_strain_rate_local(None, 1.0e5)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'viscous_velocity' in str(err), (
+        f'compute_strain_rate_local did not raise ValueError naming viscous_velocity for viscous_velocity=None, got {err}'
+    )
 
-    with pytest.raises(ValueError, match='mixing_length'):
+    err = None
+    try:
         compute_strain_rate_local(1.0e-3, None)
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'mixing_length' in str(err), (
+        f'compute_strain_rate_local did not raise ValueError naming mixing_length for mixing_length=None, got {err}'
+    )
+
+    err = None
+    try:
+        compute_effective_viscosity(
+            None, stress_closure_mode='lid', eta_i=1.0e20, tau_d=1.0e7, tau_y_lid=1.0e8
+        )
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'eta_diff' in str(err), (
+        f'compute_effective_viscosity did not raise ValueError naming eta_diff for eta_diff=None (lid), got {err}'
+    )
+
+    err = None
+    try:
+        compute_effective_viscosity(
+            None,
+            stress_closure_mode='local',
+            tau_y_profile=1.0e8,
+            mixing_length=1.0e5,
+            unyielded_velocity=1.0e-3,
+        )
+    except Exception as exc:
+        err = exc
+    assert isinstance(err, ValueError) and 'eta_diff' in str(err), (
+        f'compute_effective_viscosity did not raise ValueError naming eta_diff for eta_diff=None (local), got {err}'
+    )
+
+    r_test = np.linspace(3.48e6, 6.371e6, 11)
+    ones11 = np.ones(11)
+    base_lid_kwargs = {
+        'radii': r_test,
+        'temperature': ones11 * 1600.0,
+        'pressure': ones11 * 1.0e9,
+        'convective_flux': ones11 * 0.1,
+        'total_flux': ones11 * 0.1,
+        'solidus_temperature': None,
+        'melt_fraction': ones11 * 0.0,
+        'params': SolidRheologyParams(),
+        'viscosity_solid': 1.0e20,
+        'phi_rheo': 0.4,
+        'phi_width': 0.05,
+    }
+    for field in ('temperature', 'pressure', 'convective_flux', 'total_flux', 'melt_fraction'):
+        err = None
+        try:
+            compute_stagnant_lid_state(**{**base_lid_kwargs, field: None})
+        except Exception as exc:
+            err = exc
+        assert isinstance(err, ValueError) and field in str(err), (
+            f'compute_stagnant_lid_state did not raise ValueError naming {field} for {field}=None, got {err}'
+        )
 
 
 @pytest.mark.unit
 def test_viscous_mixing_length_factor_domain_checks():
     """Verify viscous_mixing_length_factor rejects r_in >= r_out and radii outside [r_in, r_out]."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
     r_valid = np.linspace(1.0e6, 3.0e6, 5)
     ml_valid = np.ones(5) * 1.0e5
 
-    with pytest.raises(ValueError, match='r_in'):
+    with pytest.raises(ValueError, match='strictly less than'):
         viscous_mixing_length_factor(r_valid, 3.0e6, 1.0e6, ml_valid, xp=np)
 
-    with pytest.raises(ValueError, match='r_in'):
+    with pytest.raises(ValueError, match='strictly less than'):
         viscous_mixing_length_factor(r_valid, 2.0e6, 2.0e6, ml_valid, xp=np)
 
     # Test r_in == r_out where radii is within [r_in, r_out] so only r_in >= r_out triggers
-    with pytest.raises(ValueError, match='r_in'):
+    with pytest.raises(ValueError, match='strictly less than'):
         viscous_mixing_length_factor(np.array([2.0e6]), 2.0e6, 2.0e6, np.array([1.0e5]), xp=np)
+
+    # NaN radius with finite radii outside [r_in, r_out] must still raise ValueError on np
+    with pytest.raises(ValueError, match='radii'):
+        viscous_mixing_length_factor(
+            np.array([np.nan, 4.0e6, 9.0e6]), 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np
+        )
+
+    # NaN radius with all finite radii inside [r_in, r_out] does not raise on np
+    res_nan_inside = viscous_mixing_length_factor(
+        np.array([np.nan, 4.0e6, 5.0e6]), 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np
+    )
+    assert np.isnan(res_nan_inside[0])
+    assert np.all(np.isfinite(res_nan_inside[1:]))
+
+    # Radius tolerance: repo mesh rule max(1 m, 1e-9 span)
+    span = 3.0e6
+    tol = max(1.0, 1.0e-9 * span)  # 1.0 m
+    # 0.5 * tol excursion must pass on NumPy and JAX
+    r_excursion_pass = np.array([3.0e6 - 0.5 * tol, 4.5e6, 6.0e6 + 0.5 * tol])
+    try:
+        out_pass_np = viscous_mixing_length_factor(
+            r_excursion_pass, 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np
+        )
+    except Exception as exc:
+        pytest.fail(
+            f'viscous_mixing_length_factor unexpectedly raised {type(exc).__name__}: {exc}'
+        )
+    assert np.all(np.isfinite(out_pass_np))
+    try:
+        out_pass_jax = viscous_mixing_length_factor(
+            jnp.asarray(r_excursion_pass), 3.0e6, 6.0e6, jnp.ones(3) * 1.0e5, xp=jnp
+        )
+    except Exception as exc:
+        pytest.fail(
+            f'viscous_mixing_length_factor JAX unexpectedly raised {type(exc).__name__}: {exc}'
+        )
+    assert bool(jnp.all(jnp.isfinite(out_pass_jax)))
+
+    # 2.0 * tol excursion must raise on NumPy and evaluate to all NaN on JAX
+    r_excursion_fail = np.array([3.0e6 - 2.0 * tol, 4.5e6, 6.0e6])
+    try:
+        viscous_mixing_length_factor(r_excursion_fail, 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np)
+        pytest.fail(
+            'viscous_mixing_length_factor did not raise ValueError on 2.0*tol excursion'
+        )
+    except ValueError as exc:
+        assert 'radii' in str(exc)
+    except Exception as exc:
+        pytest.fail(f'Expected ValueError for radii, got {type(exc).__name__}: {exc}')
+    out_fail_jax = viscous_mixing_length_factor(
+        jnp.asarray(r_excursion_fail), 3.0e6, 6.0e6, jnp.ones(3) * 1.0e5, xp=jnp
+    )
+    assert bool(jnp.all(jnp.isnan(out_fail_jax)))
 
     r_bad_low = np.array([0.5e6, 2.0e6])
     with pytest.raises(ValueError, match='radii'):
@@ -1184,6 +1358,31 @@ def test_viscous_mixing_length_factor_jax_domain_checks():
     res4 = viscous_mixing_length_factor(jnp.array([3.5e6]), 1.0e6, 3.0e6, ml, xp=jnp)
     assert bool(jnp.all(jnp.isnan(res4)))
 
+    # 5. [nan, inside, outside] evaluates to all NaN
+    res5 = viscous_mixing_length_factor(
+        jnp.array([jnp.nan, 2.0e6, 3.5e6]), 1.0e6, 3.0e6, jnp.ones(3) * 1.0e5, xp=jnp
+    )
+    assert bool(jnp.all(jnp.isnan(res5)))
+
+    # 6. [nan, inside, inside] has only node 0 NaN
+    res6 = viscous_mixing_length_factor(
+        jnp.array([jnp.nan, 2.0e6, 2.5e6]), 1.0e6, 3.0e6, jnp.ones(3) * 1.0e5, xp=jnp
+    )
+    assert bool(jnp.isnan(res6[0]))
+    assert bool(jnp.all(jnp.isfinite(res6[1:])))
+
+    # Valid 3-node case including both endpoints (r_in, midpoint, r_out)
+    r_valid3 = np.array([1.0e6, 2.0e6, 3.0e6])
+    ml3 = np.array([1.0e5, 1.0e5, 1.0e5])
+    out_np3 = viscous_mixing_length_factor(r_valid3, 1.0e6, 3.0e6, ml3, xp=np)
+    out_jax3 = np.asarray(
+        viscous_mixing_length_factor(
+            jnp.asarray(r_valid3), 1.0e6, 3.0e6, jnp.asarray(ml3), xp=jnp
+        )
+    )
+    assert np.all(np.isfinite(out_jax3))
+    np.testing.assert_allclose(out_jax3, out_np3, rtol=1.0e-12)
+
     # Verify identical behaviour under jax.jit
     jit_fn = jax.jit(
         lambda r, rin, rout, m: viscous_mixing_length_factor(r, rin, rout, m, xp=jnp)
@@ -1192,6 +1391,9 @@ def test_viscous_mixing_length_factor_jax_domain_checks():
     assert bool(jnp.all(jnp.isnan(jit_fn(r_valid, 2.0e6, 2.0e6, ml))))
     assert bool(jnp.all(jnp.isnan(jit_fn(jnp.array([0.5e6]), 1.0e6, 3.0e6, ml))))
     assert bool(jnp.all(jnp.isnan(jit_fn(jnp.array([3.5e6]), 1.0e6, 3.0e6, ml))))
+    out_jit3 = np.asarray(jit_fn(jnp.asarray(r_valid3), 1.0e6, 3.0e6, jnp.asarray(ml3)))
+    assert np.all(np.isfinite(out_jit3))
+    np.testing.assert_allclose(out_jit3, out_np3, rtol=1.0e-12)
 
 
 @pytest.mark.unit
@@ -1205,6 +1407,30 @@ def test_viscous_mixing_length_factor_c_theta_validated_when_theta_none():
 
     with pytest.raises(ValueError, match='c_theta'):
         viscous_mixing_length_factor(r, 1.0e6, 3.0e6, ml, theta=None, c_theta='invalid', xp=np)
+
+
+@pytest.mark.unit
+def test_effective_viscosity_lid_floor_pinned_sub_1e30():
+    """Verify compute_effective_viscosity uses 1e-300 floor in log_eff for eta_diff below 1e-30."""
+    res_35 = compute_effective_viscosity(
+        eta_diff=1.0e-35,
+        stress_closure_mode='lid',
+        eta_i=1.0e-34,
+        tau_d=1.0e6,
+        tau_y_lid=1.0e3,
+        w_lid=0.5,
+    )
+    np.testing.assert_allclose(res_35, 1.0e-36, rtol=1.0e-12)
+
+    res_31 = compute_effective_viscosity(
+        eta_diff=1.0e-31,
+        stress_closure_mode='lid',
+        eta_i=1.0e-30,
+        tau_d=1.0e6,
+        tau_y_lid=1.0e3,
+        w_lid=0.5,
+    )
+    np.testing.assert_allclose(res_31, 1.0e-32, rtol=1.0e-12)
 
 
 @pytest.mark.unit
@@ -3098,3 +3324,40 @@ def test_wp4_item5_saturating_activation_enthalpy_and_viscosity():
     assert float(st_sat_np['theta']) == pytest.approx(theta_expected, rel=1.0e-12)
     assert float(st_sat_jx['theta']) == pytest.approx(float(st_sat_np['theta']), rel=1.0e-13)
     assert float(st_sat_jx['eta_i']) == pytest.approx(float(st_sat_np['eta_i']), rel=1.0e-13)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_arrhenius_viscosity_ceiling_when_enthalpy_overflows():
+    """Verify eta reaches the ceiling, not exp(-H_0 / (R T_ref)), when H(P) overflows to +inf."""
+    from aragog.rheology import (
+        _compute_arrhenius_enthalpy_core,
+        _compute_arrhenius_viscosity_core,
+    )
+
+    for xp_name in ('np', 'jnp'):
+        if xp_name == 'jnp':
+            jax = pytest.importorskip('jax')
+            jax.config.update('jax_enable_x64', True)
+            import jax.numpy as xp
+        else:
+            xp = np
+        h_p = compute_arrhenius_enthalpy(
+            1.0e9, solidus_temperature=1.0e307, t_sol_0=1400.0, xp=xp
+        )
+        h_p_core = _compute_arrhenius_enthalpy_core(
+            1.0e9, solidus_temperature=1.0e307, t_sol_0=1400.0, xp=xp
+        )
+        assert np.isposinf(float(h_p))
+        assert np.isposinf(float(h_p_core))
+        for kwargs in (
+            {'pressure': 1.0e9, 'solidus_temperature': 1.0e307, 't_sol_0': 1400.0},
+            {'pressure': 1.0e308, 'dt_sol_dp': 1.0},
+        ):
+            eta = float(compute_arrhenius_viscosity(1600.0, xp=xp, **kwargs))
+            eta_core = float(_compute_arrhenius_viscosity_core(1600.0, xp=xp, **kwargs))
+            # Dropping the infinite H(P) to 0 or H_0 gives <= 1e21 Pa s instead of the 1e40 ceiling.
+            assert np.log10(eta) == pytest.approx(40.0, abs=1.0e-9)
+            assert np.log10(eta_core) == pytest.approx(40.0, abs=1.0e-9)
+            assert abs(np.log10(eta) - np.log10(1.0e21 * np.exp(-21.875))) > 25.0
+            assert abs(np.log10(eta_core) - 21.0) > 15.0

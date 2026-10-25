@@ -1711,7 +1711,7 @@ def test_stagnant_lid_state_a_rh_fb_bounds_validation():
 @pytest.mark.unit
 def test_stagnant_lid_state_rejects_array_valued_scalars():
     """Verify array-valued, bool, and string scalar arguments raise ValueError instead of being accepted."""
-    from aragog.rheology import _scalar_or_nan
+    from aragog.rheology import _require_scalar
 
     for bad_scalar in (
         '1e21',
@@ -1723,7 +1723,7 @@ def test_stagnant_lid_state_rejects_array_valued_scalars():
         np.bool_(True),
     ):
         with pytest.raises(ValueError, match='viscosity_solid must be a scalar'):
-            _scalar_or_nan(bad_scalar, 'viscosity_solid')
+            _require_scalar(bad_scalar, 'viscosity_solid')
 
     n_nodes = 10
     valid_kw = _valid_lid_state_kwargs(n_nodes)
@@ -1745,7 +1745,7 @@ def test_stagnant_lid_state_rejects_array_valued_scalars():
         with pytest.raises(ValueError, match=rf'{scalar_name} must be a scalar'):
             compute_stagnant_lid_state(**call_kw)
 
-    _scalar_or_nan(10**21, 'viscosity_solid')
+    assert _require_scalar(10**21, 'viscosity_solid') is None
     st_float = compute_stagnant_lid_state(**valid_kw)
     st_int = compute_stagnant_lid_state(**{**valid_kw, 'viscosity_solid': 10**21})
     for k, v_float in st_float.items():
@@ -3449,6 +3449,7 @@ def test_stagnant_lid_ti_jax_gradient_zero_at_saturated_flux_fraction():
 
     jax.config.update('jax_enable_x64', True)
     params = SolidRheologyParams(enabled=True)
+    from aragog.rheology_lid import _compute_f_tot_safe
 
     # N = 40 erf profile where F_conv equals F_tot to round-off over deep interior nodes.
     n40 = 40
@@ -3479,6 +3480,8 @@ def test_stagnant_lid_ti_jax_gradient_zero_at_saturated_flux_fraction():
         return st[key]
 
     node = 13
+    f_raw_val = float(fc40[node] / _compute_f_tot_safe(ft40, np)[node])
+    assert f_raw_val >= 1.0
     t_i_40_0 = float(eval_40(fc40, 'T_i', np))
     eta_i_40_0 = float(eval_40(fc40, 'eta_i', np))
     for h_rel in (1.0e-3, 1.0e-5, 1.0e-7):
