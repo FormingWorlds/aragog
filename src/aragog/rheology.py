@@ -17,6 +17,9 @@ import numpy.typing as npt
 R_GAS = 8.314462618
 COHESION_FLOOR = 1.0e-6
 DEFAULT_VISCOSITY_SOLID = 1.0e21
+PRESSURE_ROUNDOFF_TOLERANCE = 1.0
+_MIN_ARRHENIUS_EXPONENT_BOUND = math.log(np.finfo(float).tiny) + 1.0e-5
+VISCOSITY_CEILING_LOG10_WIDTH = 0.05
 
 FloatOrArray = float | npt.NDArray[np.floating]
 
@@ -56,26 +59,22 @@ _BOUNDS = (
 
 @dataclass(frozen=True, eq=True)
 class SolidRheologyParams:
-    """Parameters for solid-state mantle rheology and stagnant lid scaling.
+    r"""Parameters for solid-state mantle rheology and stagnant lid scaling.
 
     This class is the single source of truth for rheology parameter defaults
     and bounds validation across Aragog and PROTEUS.
 
     Notes
     -----
-    At the default ``g_homologous = 25.0`` and ``t_sol_0 = 1400.0`` K, the
-    zero-pressure activation enthalpy is :math:`H(0) = 291` kJ/mol, close to a
-    standard olivine diffusion-creep activation energy :math:`E_a = 300` kJ/mol
-    (Karato & Wu 1993). The linear solidus fallback defaults ``t_sol_0 = 1400.0`` K
-    and ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a single-slope benchmark
-    form (comparable to the 21.1 K/GPa whole-mantle secant of the Wolf & Bower
-    2018 solidus curve ``wolf_bower_2018/r15728072/solidus.dat``, 1380.6 K at
-    0 GPa to 4232.1 K at 135 GPa). Because the physical solidus is concave
-    downward overall (steep below about 25 GPa, about 16 K/GPa above), the
-    linear form is 1.4 % high at 0 GPa (1400 K versus 1380.6 K), 19 % low at
-    25 GPa (2000 K versus 2475.9 K), and 9.6 % high at 135 GPa (4640 K versus
-    4232.1 K), crossing the table curve below 1 GPa and at 84.3 GPa,
-    and serves table-free constant-property benchmarks only.
+    Coupled and tabulated PALEOS runs evaluate the phase-boundary solidus
+    :math:`T_\mathrm{sol}(P) = 0.8\,T_\mathrm{liq}(P)` from the PALEOS
+    :math:`\mathrm{MgSiO_3}` melting curve. When no solidus table reaches a
+    call, the linear fallback defaults ``t_sol_0 = 1400.0`` K and
+    ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a table-free benchmark form
+    whose largest deviation from the PALEOS solidus over 0 to 135 GPa is
+    1108.1 K (see ``docs/Explanations/solid_state_convection.md`` Section 1).
+    See ``docs/Explanations/solid_state_convection.md`` for model formulation
+    and derivations.
     """
 
     enabled: bool = False
@@ -179,24 +178,54 @@ def _is_non_real(val: Any) -> bool:
     return True
 
 
-def _scalar_or_nan(val: Any, name: str) -> float:
-    """Return ``float(val)`` on numeric scalars, ``nan`` on traced scalars; reject arrays and non-reals."""
+def _require_scalar(val: Any, name: str) -> None:
+    """Reject arrays, collections, and non-real types for scalar inputs."""
     if _is_non_real(val) or isinstance(val, (list, tuple)) or np.ndim(val) > 0:
         raise ValueError(f'{name} must be a scalar')
-    try:
-        return float(val)
-    except TypeError:
-        return np.nan
 
 
 _RULES: dict[str, tuple[Any, str]] = {
     'pos': (lambda a: (a > 0.0) & (a < np.inf), 'positive and finite'),
     'nonneg': (lambda a: (a >= 0.0) & (a < np.inf), 'non-negative and finite'),
+    'pressure': (
+        lambda a: (a >= -PRESSURE_ROUNDOFF_TOLERANCE) & (a < np.inf),
+        'non-negative and finite',
+    ),
     'unit': (lambda a: (a >= 0.0) & (a <= 1.0), 'in [0, 1]'),
+    'half_open_unit': (lambda a: (a > 0.0) & (a <= 1.0), 'in (0, 1]'),
     'finite': (lambda a: (a > -np.inf) & (a < np.inf), 'finite (no inf values)'),
     'vmax_scalar': (_in_vmax_range, 'in (20, 300]'),
-    'not_neginf': (lambda a: a >= 0.0, 'non-negative (or +inf)'),
+    'nonneg_or_posinf': (lambda a: a >= 0.0, 'non-negative (or +inf)'),
 }
+
+
+def _clamp_pressure(pressure: Any, xp: Any) -> Any:
+    """Clamp small negative pressures in [-PRESSURE_ROUNDOFF_TOLERANCE, 0.0) to 0.0."""
+    p = xp.asarray(pressure, dtype=float)
+    return xp.where((p < 0.0) & (p >= -PRESSURE_ROUNDOFF_TOLERANCE), 0.0, p)
+
+
+def _softmax2(a: Any, b: Any, width: Any, xp: Any) -> Any:
+    """Smooth softplus maximum ``a + width * log(1 + exp((b - a) / width))``."""
+    a_arr = xp.asarray(a, dtype=float)
+    b_arr = xp.asarray(b, dtype=float)
+    w_arr = xp.asarray(width, dtype=float)
+    both_fin = xp.isfinite(a_arr) & xp.isfinite(b_arr) & xp.isfinite(w_arr)
+    s = xp.where(both_fin, xp.maximum(w_arr, 1.0e-30), 1.0)
+    a_fin = xp.where(both_fin, a_arr, 0.0)
+    b_fin = xp.where(both_fin, b_arr, 0.0)
+    d = (b_fin - a_fin) / s
+    soft = xp.where(
+        d > 40.0,
+        b_fin,
+        xp.where(d < -40.0, a_fin, a_fin + s * xp.logaddexp(0.0, xp.clip(d, -500.0, 40.0))),
+    )
+    return xp.where(both_fin, soft, xp.maximum(a_arr, b_arr) + 0.0 * w_arr)
+
+
+def _softmin2(a: Any, b: Any, width: Any, xp: Any) -> Any:
+    """Smooth softplus minimum ``a - width * log(1 + exp((a - b) / width))``."""
+    return -_softmax2(-xp.asarray(a, dtype=float), -xp.asarray(b, dtype=float), width, xp)
 
 
 def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
@@ -206,17 +235,14 @@ def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
         if val is None:
             continue
         if is_scalar:
-            v = _scalar_or_nan(val, name)
-            arr = xp.asarray(val if np.isnan(v) else v, dtype=float)
-        else:
-            if _is_non_real(val):
-                raise ValueError(f'{name} must be a real number or array, got {val!r}')
-            arr = xp.asarray(val, dtype=float)
+            _require_scalar(val, name)
+        elif _is_non_real(val):
+            raise ValueError(f'{name} must be a real number or array, got {val!r}')
+        arr = xp.asarray(val, dtype=float)
         ok, msg = _RULES[rule]
-        allow_nan = rule != 'vmax_scalar'
-        if xp is np and np.any((~np.isnan(arr) if allow_nan else True) & ~ok(arr)):
-            raise ValueError(f'{name} must be {msg}, got {val}')
         bad = ~ok(arr)
+        if xp is np and np.any((~np.isnan(arr) if rule != 'vmax_scalar' else True) & bad):
+            raise ValueError(f'{name} must be {msg}, got {val}')
         invalid = invalid | (xp.any(bad) if reduce_any else bad)
     return invalid
 
@@ -250,14 +276,31 @@ def compute_mlt_top_slope(
     -------
     float or array-like
         Upper mixing-length slope s_top(theta) [-].
+
+    Raises
+    ------
+    ValueError
+        If ``theta`` is None.
+        If ``s_top_inf`` is not in ``(0, 1]`` or ``c_theta`` is negative on NumPy.
     """
     _require_x64_if_jax(xp)
-    if s_top_inf is None:
-        s_top_inf = SolidRheologyParams.s_top_inf
-    if c_theta is None:
-        c_theta = SolidRheologyParams.c_theta
+    if theta is None:
+        raise ValueError('theta must be a real number or array, got None')
+    s_top_inf_eff = SolidRheologyParams.s_top_inf if s_top_inf is None else s_top_inf
+    c_theta_eff = SolidRheologyParams.c_theta if c_theta is None else c_theta
+    invalid = _validate_inputs(
+        (
+            ('theta', theta, 'finite', False),
+            ('s_top_inf', s_top_inf_eff, 'half_open_unit', True),
+            ('c_theta', c_theta_eff, 'nonneg', True),
+        ),
+        xp,
+    )
     theta_pos = xp.maximum(xp.asarray(theta, dtype=float), 0.0)
-    s_top = s_top_inf + (1.0 - s_top_inf) * xp.exp(-c_theta * theta_pos)
+    s_top_arr = xp.asarray(s_top_inf_eff, dtype=float)
+    c_th_arr = xp.asarray(c_theta_eff, dtype=float)
+    s_top = s_top_arr + (1.0 - s_top_arr) * xp.exp(-c_th_arr * theta_pos)
+    s_top = xp.where(invalid, xp.nan, s_top)
     return _unwrap_scalar(s_top, xp, theta)
 
 
@@ -309,23 +352,78 @@ def viscous_mixing_length_factor(
     -------
     array
         ``(l_v / l)^4``, and 1 where ``l`` is 0 (the boundary nodes).
+
+    Raises
+    ------
+    ValueError
+        If ``radii``, ``r_in``, ``r_out``, or ``mixing_length`` is None.
+        If ``r_in >= r_out`` or any finite radius lies outside ``[r_in, r_out]``
+        beyond tolerance ``max(1 m, 1e-9 * (r_out - r_in))`` on NumPy.
+        If ``c_theta`` is negative.
+        On JAX (``xp is jnp``), domain violations evaluate the profile to NaN.
     """
     _require_x64_if_jax(xp)
-    if s_top_inf is None:
-        s_top_inf = SolidRheologyParams.s_top_inf
-    if bottom_slope is None:
-        bottom_slope = SolidRheologyParams.mlt_bottom_slope
-    eff_top_slope = s_top_inf
+    if radii is None:
+        raise ValueError('radii must be a real number or array, got None')
+    if r_in is None:
+        raise ValueError('r_in must be a real number or array, got None')
+    if r_out is None:
+        raise ValueError('r_out must be a real number or array, got None')
+    if mixing_length is None:
+        raise ValueError('mixing_length must be a real number or array, got None')
+    s_top_inf_eff = SolidRheologyParams.s_top_inf if s_top_inf is None else s_top_inf
+    bottom_slope_eff = (
+        SolidRheologyParams.mlt_bottom_slope if bottom_slope is None else bottom_slope
+    )
+    c_theta_eff = SolidRheologyParams.c_theta if c_theta is None else c_theta
+    invalid = _validate_inputs(
+        (
+            ('radii', radii, 'finite', False),
+            ('r_in', r_in, 'pos', True),
+            ('r_out', r_out, 'pos', True),
+            ('mixing_length', mixing_length, 'nonneg', False),
+            ('s_top_inf', s_top_inf_eff, 'half_open_unit', True),
+            ('bottom_slope', bottom_slope_eff, 'half_open_unit', True),
+            ('c_theta', c_theta_eff, 'nonneg', True),
+        ),
+        xp,
+    )
+    r_arr = xp.asarray(radii, dtype=float)
+    rin_val = xp.asarray(r_in, dtype=float)
+    rout_val = xp.asarray(r_out, dtype=float)
+    if xp is np:
+        rin_finite = np.isfinite(rin_val)
+        rout_finite = np.isfinite(rout_val)
+        if rin_finite and rout_finite and float(rin_val) >= float(rout_val):
+            raise ValueError(
+                f'r_in must be strictly less than r_out, got r_in={r_in}, r_out={r_out}'
+            )
+        if rin_finite and rout_finite:
+            tol = max(1.0, 1.0e-9 * (float(rout_val) - float(rin_val)))
+            if np.any((r_arr < float(rin_val) - tol) | (r_arr > float(rout_val) + tol)):
+                raise ValueError(
+                    f'radii must lie within [r_in, r_out], got radii outside [{r_in}, {r_out}]'
+                )
+    else:
+        tol = xp.maximum(1.0, 1.0e-9 * (rout_val - rin_val))
+        domain_bad = (rin_val >= rout_val) | xp.any(
+            (r_arr < rin_val - tol) | (r_arr > rout_val + tol)
+        )
+        invalid = invalid | domain_bad
+
     if theta is not None:
         eff_top_slope = compute_mlt_top_slope(
-            theta, s_top_inf=s_top_inf, c_theta=c_theta, xp=xp
+            theta, s_top_inf=s_top_inf_eff, c_theta=c_theta_eff, xp=xp
         )
-    l_v = xp.minimum(bottom_slope * (radii - r_in), eff_top_slope * (r_out - radii))
-    positive = mixing_length > 0.0
+    else:
+        eff_top_slope = s_top_inf_eff
+    l_v = xp.minimum(bottom_slope_eff * (r_arr - r_in), eff_top_slope * (r_out - r_arr))
+    ml_arr = xp.asarray(mixing_length, dtype=float)
+    positive = ml_arr > 0.0
     return xp.where(
-        xp.isnan(mixing_length) | xp.isnan(l_v),
+        invalid | xp.isnan(ml_arr) | xp.isnan(l_v),
         xp.nan,
-        xp.where(positive, (l_v / xp.where(positive, mixing_length, 1.0)) ** 4, 1.0),
+        xp.where(positive, (l_v / xp.where(positive, ml_arr, 1.0)) ** 4, 1.0),
     )
 
 
@@ -350,8 +448,8 @@ def compute_arrhenius_enthalpy(
     Parameters
     ----------
     pressure : float or array-like
-        Pressure P [Pa] (must be non-negative; callers clamp negative round-off
-        excursions at zero).
+        Pressure P [Pa] (non-negative; negative round-off excursions down to
+        ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are clamped to 0.0 Pa).
     g_homologous : float, optional
         Dimensionless homologous activation parameter g_hom [-]. Defaults to
         ``SolidRheologyParams.g_homologous`` when None.
@@ -378,34 +476,39 @@ def compute_arrhenius_enthalpy(
     ValueError
         If ``g_homologous``, ``t_sol_0``, ``dt_sol_dp``, or ``r_gas`` is not a
         scalar; if any input is non-real (such as a boolean, string, or complex
-        value); or, on the eager NumPy path (``xp is np``), if ``pressure``,
-        ``g_homologous``, or ``dt_sol_dp`` is negative or infinite, or if
+        value); or, on the eager NumPy path (``xp is np``), if ``pressure`` is
+        below ``-PRESSURE_ROUNDOFF_TOLERANCE`` (-1.0 Pa) or infinite, if
+        ``g_homologous`` or ``dt_sol_dp`` is negative or infinite, or if
         ``solidus_temperature``, ``t_sol_0``, or ``r_gas`` is non-positive or
         infinite. On the JAX path, out-of-range numeric values return ``NaN``.
     """
     _require_x64_if_jax(xp)
-    if g_homologous is None:
-        g_homologous = SolidRheologyParams.g_homologous
-    if dt_sol_dp is None:
-        dt_sol_dp = SolidRheologyParams.dt_sol_dp
+    if pressure is None:
+        raise ValueError('pressure must be a real number or array, got None')
+    g_hom_eff = SolidRheologyParams.g_homologous if g_homologous is None else g_homologous
+    dt_sol_dp_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
     t_sol_0_eff = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
     invalid = _validate_inputs(
         (
-            ('pressure', pressure, 'nonneg', False),
-            ('g_homologous', g_homologous, 'nonneg', True),
+            ('pressure', pressure, 'pressure', False),
+            ('g_homologous', g_hom_eff, 'nonneg', True),
             ('solidus_temperature', solidus_temperature, 'pos', False),
             ('t_sol_0', t_sol_0_eff, 'pos', True),
-            ('dt_sol_dp', dt_sol_dp, 'nonneg', True),
+            ('dt_sol_dp', dt_sol_dp_eff, 'nonneg', True),
             ('r_gas', r_gas, 'pos', True),
         ),
         xp,
     )
-    g_arr = xp.asarray(g_homologous, dtype=float)
-    p = xp.asarray(pressure, dtype=float)
+    p = _clamp_pressure(pressure, xp)
+    p_safe = xp.where((p >= 0.0) & xp.isfinite(p), p, 0.0)
     if solidus_temperature is not None:
-        t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
+        ts_arr = xp.asarray(solidus_temperature, dtype=float)
+        t_sol = xp.where((ts_arr > 0.0) & xp.isfinite(ts_arr), ts_arr, 1.0) + xp.zeros_like(
+            p_safe
+        )
     else:
-        t_sol = t_sol_0_eff + dt_sol_dp * p
+        t_sol = t_sol_0_eff + dt_sol_dp_eff * p_safe
+    g_arr = xp.asarray(g_hom_eff, dtype=float)
     h = xp.where(invalid, xp.nan, g_arr * r_gas * t_sol)
     return _unwrap_scalar(h, xp, pressure, solidus_temperature)
 
@@ -438,8 +541,8 @@ def compute_arrhenius_viscosity(
     temperature : float or array-like
         Temperature T [K].
     pressure : float or array-like
-        Pressure P [Pa] (must be non-negative; callers clamp negative round-off
-        excursions at zero).
+        Pressure P [Pa] (non-negative; negative round-off excursions down to
+        ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are clamped to 0.0 Pa).
     viscosity_solid : float, optional
         Reference solid-state dynamic viscosity eta_0 [Pa s] at (T_ref, P=0).
         Defaults to ``DEFAULT_VISCOSITY_SOLID`` (1.0e21) when None.
@@ -462,7 +565,8 @@ def compute_arrhenius_viscosity(
     r_gas : float, default 8.314462618
         Universal gas constant R [J/(mol K)].
     viscosity_max_log10 : float, optional
-        Upper bound on log10 dynamic viscosity [log10(Pa s)]. Defaults to
+        Smooth log10 softplus ceiling on dynamic viscosity [log10(Pa s)] with
+        width ``VISCOSITY_CEILING_LOG10_WIDTH`` (0.05). Defaults to
         ``SolidRheologyParams.viscosity_max_log10`` when None.
     water_prefactor : float or array-like, optional
         Multiplicative prefactor for hydration weakening. Defaults to
@@ -488,23 +592,28 @@ def compute_arrhenius_viscosity(
         ``viscosity_max_log10`` is not in ``(20, 300]``, if ``temperature``,
         ``viscosity_solid``, ``solidus_temperature``, ``t_sol_0``,
         ``arrhenius_t_ref``, ``r_gas``, or ``water_prefactor`` is non-positive
-        or infinite, or if ``pressure``, ``g_homologous``, or ``dt_sol_dp`` is
+        or infinite, or if ``pressure`` is below ``-PRESSURE_ROUNDOFF_TOLERANCE``
+        (-1.0 Pa) or infinite, or if ``g_homologous`` or ``dt_sol_dp`` is
         negative or infinite. On the JAX path, out-of-range numeric values
         return ``NaN``.
     """
     _require_x64_if_jax(xp)
-    if viscosity_solid is None:
-        viscosity_solid = DEFAULT_VISCOSITY_SOLID
-    if g_homologous is None:
-        g_homologous = SolidRheologyParams.g_homologous
-    if dt_sol_dp is None:
-        dt_sol_dp = SolidRheologyParams.dt_sol_dp
-    if arrhenius_t_ref is None:
-        arrhenius_t_ref = SolidRheologyParams.arrhenius_t_ref
-    if viscosity_max_log10 is None:
-        viscosity_max_log10 = SolidRheologyParams.viscosity_max_log10
-    if water_prefactor is None:
-        water_prefactor = SolidRheologyParams.water_prefactor
+    if temperature is None:
+        raise ValueError('temperature must be a real number or array, got None')
+    if pressure is None:
+        raise ValueError('pressure must be a real number or array, got None')
+    vs_eff = DEFAULT_VISCOSITY_SOLID if viscosity_solid is None else viscosity_solid
+    g_hom_eff = SolidRheologyParams.g_homologous if g_homologous is None else g_homologous
+    dt_sol_dp_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
+    t_ref_eff = (
+        SolidRheologyParams.arrhenius_t_ref if arrhenius_t_ref is None else arrhenius_t_ref
+    )
+    vmax_eff = (
+        SolidRheologyParams.viscosity_max_log10
+        if viscosity_max_log10 is None
+        else viscosity_max_log10
+    )
+    wp_eff = SolidRheologyParams.water_prefactor if water_prefactor is None else water_prefactor
     if solidus_temperature is not None and t_sol_0 is None:
         raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
 
@@ -512,41 +621,57 @@ def compute_arrhenius_viscosity(
     invalid = _validate_inputs(
         (
             ('temperature', temperature, 'pos', False),
-            ('viscosity_solid', viscosity_solid, 'pos', True),
-            ('arrhenius_t_ref', arrhenius_t_ref, 'pos', True),
-            ('viscosity_max_log10', viscosity_max_log10, 'vmax_scalar', True),
-            ('water_prefactor', water_prefactor, 'pos', False),
+            ('viscosity_solid', vs_eff, 'pos', True),
+            ('arrhenius_t_ref', t_ref_eff, 'pos', True),
+            ('viscosity_max_log10', vmax_eff, 'vmax_scalar', True),
+            ('water_prefactor', wp_eff, 'pos', False),
         ),
         xp,
     )
     h_p = compute_arrhenius_enthalpy(
         pressure=pressure,
-        g_homologous=g_homologous,
+        g_homologous=g_hom_eff,
         solidus_temperature=solidus_temperature,
         t_sol_0=t_sol_ref_0,
-        dt_sol_dp=dt_sol_dp,
+        dt_sol_dp=dt_sol_dp_eff,
         r_gas=r_gas,
         xp=xp,
     )
 
     t = xp.asarray(temperature, dtype=float)
-    wp = xp.asarray(water_prefactor, dtype=float)
-    vs = xp.asarray(viscosity_solid, dtype=float)
-    g_arr = xp.asarray(g_homologous, dtype=float)
-    t_ref_arr = xp.asarray(arrhenius_t_ref, dtype=float)
-    vmax_log10 = xp.asarray(viscosity_max_log10, dtype=float)
+    wp = xp.asarray(wp_eff, dtype=float)
+    vs = xp.asarray(vs_eff, dtype=float)
+    g_arr = xp.asarray(g_hom_eff, dtype=float)
+    t_ref_arr = xp.asarray(t_ref_eff, dtype=float)
+    vmax_log10 = xp.asarray(vmax_eff, dtype=float)
     h_0 = g_arr * r_gas * t_sol_ref_0
 
-    t_safe = xp.where(t > 0.0, t, 1.0)
-    t_ref_safe = xp.where(t_ref_arr > 0.0, t_ref_arr, 1.0)
-    wp_pos = xp.where(wp > 0.0, wp, 1.0)
-    exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
+    # Safe operands keep jax.grad finite at nodes the invalid mask sets to NaN.
+    t_safe = xp.where((t > 0.0) & xp.isfinite(t), t, 1.0)
+    t_ref_safe = xp.where((t_ref_arr > 0.0) & xp.isfinite(t_ref_arr), t_ref_arr, 1.0)
+    wp_pos = xp.where((wp > 0.0) & xp.isfinite(wp), wp, 1.0)
+    h_p_safe = xp.where(xp.isnan(h_p), 0.0, h_p)
+    exponent = h_p_safe / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
-    max_exponent = (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1e-300))) * math.log(10.0)
-    clipped_exp = xp.clip(exponent, -700.0, max_exponent)
-    result = vs * xp.exp(clipped_exp)
-    result = xp.minimum(result, 10.0**vmax_log10)
+    # Prevent float64 underflow to zero when viscosity_solid is small.
+    min_exponent = xp.maximum(
+        -700.0, _MIN_ARRHENIUS_EXPONENT_BOUND - xp.log(xp.maximum(vs_pos, 1.0e-300))
+    )
+    log10_raw = xp.log10(xp.maximum(vs_pos, 1.0e-300)) + exponent / math.log(10.0)
+    w_cap = VISCOSITY_CEILING_LOG10_WIDTH
+    d_cap = (log10_raw - vmax_log10) / w_cap
+    log10_soft = _softmin2(log10_raw, vmax_log10, w_cap, xp)
+    max_exponent = xp.minimum(
+        (vmax_log10 - xp.log10(xp.maximum(vs_pos, 1.0e-300))) * math.log(10.0), 700.0
+    )
+    log10_clipped = xp.maximum(log10_soft, -300.0)
+    # Above 700 the clip on exp would cut the value; the log10 branch is exact there.
+    result = xp.where(
+        (d_cap < -40.0) & (exponent <= max_exponent),
+        vs * xp.exp(xp.clip(exponent, min_exponent, max_exponent)),
+        10.0**log10_clipped,
+    )
     result = xp.where(invalid | xp.isnan(h_p), xp.nan, result)
     return _unwrap_scalar(
         result, xp, temperature, pressure, water_prefactor, solidus_temperature
@@ -568,7 +693,8 @@ def compute_yield_stress(
     Parameters
     ----------
     pressure : float or array-like
-        Pressure P [Pa].
+        Pressure P [Pa] (non-negative; negative round-off excursions down to
+        ``-PRESSURE_ROUNDOFF_TOLERANCE`` = -1.0 Pa are clamped to 0.0 Pa).
     yield_stress_c : float, optional
         Cohesion c [Pa]. Defaults to ``SolidRheologyParams.yield_stress_c`` when None.
     yield_stress_mu : float, optional
@@ -584,17 +710,37 @@ def compute_yield_stress(
     -------
     float or array-like
         Yield stress tau_y [Pa].
+
+    Raises
+    ------
+    ValueError
+        If ``yield_stress_c``, ``yield_stress_mu``, or ``yield_stress_max`` is
+        not a scalar; if any input is non-real; or, on the eager NumPy path
+        (``xp is np``), if ``pressure`` is below ``-PRESSURE_ROUNDOFF_TOLERANCE``
+        (-1.0 Pa) or infinite, if ``yield_stress_c`` or ``yield_stress_mu`` is
+        negative or infinite, or if ``yield_stress_max`` is non-positive or
+        infinite. On the JAX path, out-of-range numeric values return ``NaN``.
     """
     _require_x64_if_jax(xp)
-    if yield_stress_c is None:
-        yield_stress_c = SolidRheologyParams.yield_stress_c
-    if yield_stress_mu is None:
-        yield_stress_mu = SolidRheologyParams.yield_stress_mu
-    if yield_stress_max is None:
-        yield_stress_max = SolidRheologyParams.yield_stress_max
-    p = xp.asarray(pressure, dtype=float)
-    tau_y = xp.maximum(0.0, xp.minimum(yield_stress_c + yield_stress_mu * p, yield_stress_max))
-    return _unwrap_scalar(tau_y, xp, pressure)
+    if pressure is None:
+        raise ValueError('pressure must be a real number or array, got None')
+    c_eff = SolidRheologyParams.yield_stress_c if yield_stress_c is None else yield_stress_c
+    mu_eff = SolidRheologyParams.yield_stress_mu if yield_stress_mu is None else yield_stress_mu
+    max_eff = (
+        SolidRheologyParams.yield_stress_max if yield_stress_max is None else yield_stress_max
+    )
+    invalid = _validate_inputs(
+        (
+            ('pressure', pressure, 'pressure', False),
+            ('yield_stress_c', c_eff, 'nonneg', True),
+            ('yield_stress_mu', mu_eff, 'nonneg', True),
+            ('yield_stress_max', max_eff, 'pos', True),
+        ),
+        xp,
+    )
+    p = _clamp_pressure(pressure, xp)
+    tau_y = xp.maximum(0.0, xp.minimum(c_eff + mu_eff * p, max_eff))
+    return _unwrap_scalar(xp.where(invalid, xp.nan, tau_y), xp, pressure)
 
 
 def compute_strain_rate_local(
@@ -623,12 +769,32 @@ def compute_strain_rate_local(
     -------
     float or array-like
         Local strain rate [1/s].
+
+    Raises
+    ------
+    ValueError
+        If ``viscous_velocity`` or ``mixing_length`` is None.
+        If ``mixing_length`` is negative or infinite on NumPy.
     """
     _require_x64_if_jax(xp)
+    if viscous_velocity is None:
+        raise ValueError('viscous_velocity must be a real number or array, got None')
+    if mixing_length is None:
+        raise ValueError('mixing_length must be a real number or array, got None')
+    invalid = _validate_inputs(
+        (
+            ('viscous_velocity', viscous_velocity, 'finite', False),
+            ('mixing_length', mixing_length, 'nonneg', False),
+            ('eps', eps, 'pos', True),
+        ),
+        xp,
+    )
     v = xp.asarray(viscous_velocity, dtype=float)
     l_mix = xp.asarray(mixing_length, dtype=float)
     denom = 2.0 * xp.maximum(l_mix, eps)
-    return _unwrap_scalar(xp.abs(v) / denom, xp, viscous_velocity, mixing_length)
+    res = xp.abs(v) / denom
+    res = xp.where(invalid, xp.nan, res)
+    return _unwrap_scalar(res, xp, viscous_velocity, mixing_length)
 
 
 def __getattr__(name: str) -> Any:
