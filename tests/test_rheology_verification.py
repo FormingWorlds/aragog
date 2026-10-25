@@ -2200,6 +2200,23 @@ def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys,
     assert '134.0' not in old_truncated_desc
     assert '134.0' in mod.format_crossings_description(c3)
 
+    # Copilot non-convex 4-point table: shifted secant gives 450 K max error,
+    # while Chebyshev minimax fit via linear programming achieves 375 K.
+    p_copilot_gpa = np.array([0.0, 45.0, 90.0, 135.0])
+    p_copilot = p_copilot_gpa * 1.0e9
+    t_copilot = np.array([1400.0, 3000.0, 3100.0, 4400.0])
+    t_copilot_file = tmp_path / 'solidus_copilot_nonconvex.dat'
+    np.savetxt(t_copilot_file, np.column_stack([p_copilot, t_copilot]))
+
+    mod.main(['--table', str(t_copilot_file), '--allow-md5-mismatch'])
+    out_copilot = capsys.readouterr().out
+    assert 'Chebyshev minimax line over 0..135 GPa: 1775.0 K + 18.89 K/GPa * P' in out_copilot
+    assert 'max abs deviation: 375.00 K (375.0 K)' in out_copilot
+    err_secant = 450.0
+    err_copilot = 400.0
+    err_minimax = 375.0
+    assert err_minimax < err_copilot < err_secant
+
 
 @pytest.mark.unit
 @pytest.mark.physics_invariant
