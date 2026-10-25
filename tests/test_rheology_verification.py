@@ -2596,8 +2596,12 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     """Verify F_TOT_FLOOR_FRAC zero-crossing protection, LID_REGIME_LABEL_WIDTH slope, and stagnant-lid interior state parity across interior_flux_fraction.
 
     The 13 unchanged points are pinned to merge-base c8f0b6cd literals at rel=1e-12.
-    The 7 transition points are pinned to an independent evaluation of the derivation 1.1
-    endpoint-blended formula at rel=1e-12, with merge-base values noted beside each.
+    The 7 transition points (0 < w_weight < 1) are pinned to the independent evaluation
+    of the Section 1.1 geotherm endpoint-blended formulas produced by
+    tools/verification/evaluate_lid_transition_reference.py
+    (command: python tools/verification/evaluate_lid_transition_reference.py)
+    at rel=1e-12 (just above the measured kernel difference of <= 1e-15), with merge-base
+    values noted beside each.
     """
     from pathlib import Path
 
@@ -2740,7 +2744,8 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         (0.50, 0.03): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
     }
 
-    # 7 transition points (0 < w_weight < 1) evaluated from derivation 1.1 formula:
+    # 7 transition points (0 < w_weight < 1) evaluated independently by
+    # tools/verification/evaluate_lid_transition_reference.py from Section 1.1 formulas:
     transition_derivation_literals = {
         (0.05, 6.00843e-5): (
             2.3060133389415036e20,
