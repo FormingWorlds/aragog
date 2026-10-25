@@ -660,6 +660,9 @@ def evaluate_phase(
             viscosity_max_log10=params.rheology.viscosity_max_log10,
             water_prefactor=params.rheology.water_prefactor,
             xp=jnp,
+            activation_energy=params.rheology.activation_energy,
+            activation_volume=params.rheology.activation_volume,
+            activation_volume_decay_pressure=params.rheology.activation_volume_decay_pressure,
         )
         tau_y = _compute_yield_stress_core(
             p_pos,

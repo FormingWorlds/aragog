@@ -633,6 +633,9 @@ def _compute_stagnant_lid_state_core(
         dt_sol_dp=params.dt_sol_dp,
         r_gas=R_GAS,
         xp=xp,
+        activation_energy=params.activation_energy,
+        activation_volume=params.activation_volume,
+        activation_volume_decay_pressure=params.activation_volume_decay_pressure,
     )
     H_1 = enthalpy_fn(
         P_1,
@@ -642,6 +645,9 @@ def _compute_stagnant_lid_state_core(
         dt_sol_dp=params.dt_sol_dp,
         r_gas=R_GAS,
         xp=xp,
+        activation_energy=params.activation_energy,
+        activation_volume=params.activation_volume,
+        activation_volume_decay_pressure=params.activation_volume_decay_pressure,
     )
     T_0_safe = xp.maximum(T_0, 1.0)
     T_1_safe = xp.maximum(T_1, 1.0)
@@ -666,6 +672,9 @@ def _compute_stagnant_lid_state_core(
             viscosity_max_log10=params.viscosity_max_log10,
             water_prefactor=params.water_prefactor,
             xp=xp,
+            activation_energy=params.activation_energy,
+            activation_volume=params.activation_volume,
+            activation_volume_decay_pressure=params.activation_volume_decay_pressure,
         )
         eta_surf = arrhenius(T_surf, P_surf, solidus_temperature=T_sol_surf)
         eta_arr_0 = arrhenius(T_0, P_0, solidus_temperature=T_sol_0_ep)
@@ -691,6 +700,9 @@ def _compute_stagnant_lid_state_core(
             viscosity_max_log10=params.viscosity_max_log10,
             water_prefactor=params.water_prefactor,
             xp=xp,
+            activation_energy=params.activation_energy,
+            activation_volume=params.activation_volume,
+            activation_volume_decay_pressure=params.activation_volume_decay_pressure,
         )
         eta_surf = eta_triple[0]
         eta_arr_0 = eta_triple[1]

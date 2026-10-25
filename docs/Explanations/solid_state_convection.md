@@ -53,6 +53,16 @@ The table below reports the solidus temperature $T_\text{sol}(P) = 0.8\,T_\text{
 | 100 | 4397.9 | 511.9 | 914.2 | 16.083 |
 | 135 | 4754.8 | 553.5 | 988.3 | 16.083 |
 
+### Optional Saturating Integral Activation Law
+
+When `activation_energy` ($E_a$, default `None`) is set on `SolidRheologyParams`, `compute_arrhenius_enthalpy`, or `compute_arrhenius_viscosity`, activation enthalpy is evaluated from the saturating integral law rather than the homologous law:
+
+$$
+H(P) = E_a + \int_0^P V_0 \exp\left(-\frac{p'}{P_\text{decay}}\right) dp' = E_a + V_0 P_\text{decay} \left(1 - \exp\left(-\frac{P}{P_\text{decay}}\right)\right)
+$$
+
+with zero-pressure activation energy $E_a \ge 0$ (`activation_energy`, strictly positive when `enabled = True`), zero-pressure activation volume $V_0 \ge 0$ (`activation_volume`, default $0.0\text{ m}^3\text{ mol}^{-1}$), and decay pressure $P_\text{decay} > 0$ (`activation_volume_decay_pressure`, default $+\infty$). For $P / P_\text{decay} < 10^{-8}$, the effective pressure term is evaluated via the second-order Taylor series $P (1 - \tfrac{1}{2} P / P_\text{decay})$ so that $P_\text{decay} = +\infty$ recovers the linear activation-volume law $H(P) = E_a + V_0 P$ (Karato and Wu, 1993; Armann and Tackley, 2012) and $V_0 = 0$ recovers the isobaric Arrhenius law $H(P) = E_a$ (Korenaga, 2009, Table 1) without floating-point cancellation. The local differential activation volume $\partial H / \partial P = V_0 \exp(-P / P_\text{decay}) \ge 0$ remains non-negative at all pressures, and $H(P)$ saturates monotonically toward $E_a + V_0 P_\text{decay}$ as $P \to \infty$; note that the published secant-form parameter sets of Tackley et al. (2013, Table 2) for $E_0 + P V_0 \exp(-P / P_\text{decay})$ are not parameter sets of the integral law.
+
 ### Viscosity-Contrast-Dependent Mixing-Length Slope
 
 In the viscous mixing-length formulation, the effective mixing length $l_v(r)$ near the mantle boundaries is given by:
@@ -382,3 +392,6 @@ Solid-state convection parameters are stored on `SolidRheologyParams` in `aragog
 | `mlt_bottom_slope` | - | `1.0` |
 | `s_top_inf` | - | `0.22` |
 | `c_theta` | - | `0.15` |
+| `activation_energy` | J/mol | `None` |
+| `activation_volume` | m^3/mol | `0.0` |
+| `activation_volume_decay_pressure` | Pa | `inf` |

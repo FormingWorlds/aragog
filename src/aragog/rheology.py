@@ -26,18 +26,18 @@ FloatOrArray = float | npt.NDArray[np.floating]
 
 
 def _positive(v: float) -> bool:
-    return v > 0.0
+    return math.isfinite(v) and v > 0.0
 
 
 def _non_negative(v: float) -> bool:
-    return v >= 0.0
+    return math.isfinite(v) and v >= 0.0
 
 
 def _in_vmax_range(v: Any) -> Any:
     return (v > 20.0) & (v <= 300.0)
 
 
-# (field, in-range test, expectation text) for the finite-and-bounded numeric fields.
+# (field, in-range test, expectation text) for the bounded numeric fields.
 _BOUNDS = (
     *((n, lambda v: 0.0 < v <= 1.0, 'in (0, 1]') for n in ('mlt_bottom_slope', 's_top_inf')),
     ('c_theta', _non_negative, 'non-negative and finite'),
@@ -55,6 +55,8 @@ _BOUNDS = (
     ('lid_contrast_coeff', _positive, 'positive'),
     ('lid_mask_width_cells', _positive, 'positive'),
     ('phi_visc_single', lambda v: 0.0 < v < 1.0, 'in (0, 1)'),
+    ('activation_volume', _non_negative, 'non-negative and finite'),
+    ('activation_volume_decay_pressure', lambda v: v > 0.0, 'positive (finite or +inf)'),
 )
 
 
@@ -74,8 +76,13 @@ class SolidRheologyParams:
     ``dt_sol_dp = 2.4e-8`` K/Pa (24 K/GPa) provide a table-free benchmark form
     whose largest deviation from the PALEOS solidus over 0 to 135 GPa is
     1108.1 K (see ``docs/Explanations/solid_state_convection.md`` Section 1).
-    See ``docs/Explanations/solid_state_convection.md`` for model formulation
-    and derivations.
+    When ``activation_energy`` is set, activation enthalpy follows the saturating
+    integral law :math:`H(P) = E_a + V_0 P_\mathrm{decay} (1 - \exp(-P / P_\mathrm{decay}))`
+    (reducing to :math:`E_a + V_0 P` when :math:`P_\mathrm{decay} = \infty`); the
+    published secant-form parameter sets of Tackley et al. (2013, Table 2) for
+    :math:`E_0 + P V_0 \exp(-P / P_\mathrm{decay})` are not parameter sets of the
+    integral law. See ``docs/Explanations/solid_state_convection.md`` for model
+    formulation and derivations.
     """
 
     enabled: bool = False
@@ -99,6 +106,10 @@ class SolidRheologyParams:
     mlt_bottom_slope: float = 1.0
     s_top_inf: float = 0.22
     c_theta: float = 0.15
+    # Optional saturating integral activation enthalpy law H(P) = E_a + V_0 P_decay (1 - exp(-P/P_decay)).
+    activation_energy: float | None = None
+    activation_volume: float = 0.0
+    activation_volume_decay_pressure: float = float('inf')
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
@@ -117,13 +128,31 @@ class SolidRheologyParams:
             val = getattr(self, name)
             if isinstance(val, (bool, np.bool_)):
                 raise TypeError(f'{name} must be a real number, got {val!r}')
-            if not math.isfinite(val) or not in_range(val):
+            if math.isnan(val) or not in_range(val):
                 raise ValueError(f'{name} must be {expected}, got {val}')
-        if self.enabled and self.g_homologous <= 0.0:
-            raise ValueError(
-                'Invalid combination: enabled=True requires positive '
-                f'g_homologous, got g_homologous={self.g_homologous}'
-            )
+        if self.activation_energy is None:
+            if self.activation_volume != 0.0:
+                raise ValueError('activation_volume requires activation_energy to be set')
+            if math.isfinite(float(self.activation_volume_decay_pressure)):
+                raise ValueError(
+                    'activation_volume_decay_pressure requires activation_energy to be set'
+                )
+            if self.enabled and self.g_homologous <= 0.0:
+                raise ValueError(
+                    'Invalid combination: enabled=True requires positive '
+                    f'g_homologous, got g_homologous={self.g_homologous}'
+                )
+        else:
+            ea = self.activation_energy
+            if isinstance(ea, (bool, np.bool_)) or _is_non_real(ea) or np.ndim(ea) > 0:
+                raise TypeError(f'activation_energy must be a real number, got {ea!r}')
+            if not math.isfinite(float(ea)) or float(ea) < 0.0:
+                raise ValueError(f'activation_energy must be non-negative and finite, got {ea}')
+            if self.enabled and float(ea) <= 0.0:
+                raise ValueError(
+                    'Invalid combination: enabled=True requires positive '
+                    f'activation_energy, got activation_energy={ea}'
+                )
 
 
 def merge_rheology(
@@ -197,6 +226,7 @@ _RULES: dict[str, tuple[Any, str]] = {
     'finite': (lambda a: (a > -np.inf) & (a < np.inf), 'finite (no inf values)'),
     'vmax_scalar': (_in_vmax_range, 'in (20, 300]'),
     'nonneg_or_posinf': (lambda a: a >= 0.0, 'non-negative (or +inf)'),
+    'pos_or_inf': (lambda a: a > 0.0, 'positive (finite or +inf)'),
 }
 
 
@@ -477,13 +507,41 @@ def _compute_arrhenius_enthalpy_core(
     dt_sol_dp: float | None = None,
     r_gas: float = R_GAS,
     xp: Any = np,
+    *,
+    activation_energy: float | None = None,
+    activation_volume: float | None = None,
+    activation_volume_decay_pressure: float | None = None,
 ) -> Any:
     """Unchecked core evaluation of activation enthalpy ``H(P)``."""
+    p = _clamp_pressure(pressure, xp)
+    p_safe = xp.where(xp.isfinite(p) & (p >= 0.0), p, 0.0)
+    if activation_energy is not None:
+        v_eff = (
+            SolidRheologyParams.activation_volume
+            if activation_volume is None
+            else activation_volume
+        )
+        p_dec_eff = (
+            SolidRheologyParams.activation_volume_decay_pressure
+            if activation_volume_decay_pressure is None
+            else activation_volume_decay_pressure
+        )
+        e_arr = xp.asarray(activation_energy, dtype=float)
+        v_arr = xp.asarray(v_eff, dtype=float)
+        p_dec_arr = xp.asarray(p_dec_eff, dtype=float)
+        p_dec_safe = xp.where(p_dec_arr > 0.0, p_dec_arr, 1.0)
+        p_dec_fin = xp.where(xp.isfinite(p_dec_safe), p_dec_safe, 1.0)
+        x = p_safe / p_dec_safe
+        x_fin = xp.where(x < 1.0e-8, 1.0, x)
+        eff_p = xp.where(
+            x < 1.0e-8,
+            p_safe * (1.0 - 0.5 * x),
+            -p_dec_fin * xp.expm1(-x_fin),
+        )
+        return e_arr + v_arr * eff_p + xp.zeros_like(p_safe)
     g_eff = SolidRheologyParams.g_homologous if g_homologous is None else g_homologous
     dt_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
     t_sol_0_eff = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
-    p = _clamp_pressure(pressure, xp)
-    p_safe = xp.where(xp.isfinite(p) & (p >= 0.0), p, 0.0)
     if solidus_temperature is not None:
         t_sol_raw = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p_safe)
         t_sol = xp.where(xp.isfinite(t_sol_raw) & (t_sol_raw > 0.0), t_sol_raw, 1000.0)
@@ -501,15 +559,29 @@ def compute_arrhenius_enthalpy(
     dt_sol_dp: float | None = None,
     r_gas: float = R_GAS,
     xp: Any = np,
+    *,
+    activation_energy: float | None = None,
+    activation_volume: float | None = None,
+    activation_volume_decay_pressure: float | None = None,
 ) -> FloatOrArray:
-    r"""Compute homologous-temperature activation enthalpy H(P) [J/mol].
+    r"""Compute homologous-temperature or saturating-integral activation enthalpy H(P) [J/mol].
+
+    When ``activation_energy`` is ``None`` (the default), evaluates the homologous law:
 
     .. math::
         H(P) = g_\mathrm{hom} R T_\mathrm{sol}(P)
 
-    When ``solidus_temperature`` is not provided, the linear fallback
-    :math:`T_\mathrm{sol}(P) = T_{\mathrm{sol},0} + (dT_\mathrm{sol}/dP) P` is
-    used; it serves table-free benchmarks only (see ``SolidRheologyParams``).
+    When ``activation_energy`` is provided, evaluates the saturating integral law:
+
+    .. math::
+        H(P) = E_a + \int_0^P V_0 \exp(-p' / P_\mathrm{decay}) \, dp'
+             = E_a + V_0 P_\mathrm{decay} \left(1 - \exp(-P / P_\mathrm{decay})\right)
+
+    which reduces to :math:`H(P) = E_a + V_0 P` when :math:`P_\mathrm{decay} = \infty`
+    and to :math:`H(P) = E_a` when :math:`V_0 = 0`. Note that the published secant-form
+    parameter sets of Tackley et al. (2013, Table 2) for
+    :math:`E_0 + P V_0 \exp(-P / P_\mathrm{decay})` are not parameter sets of the
+    integral law.
 
     Parameters
     ----------
@@ -531,6 +603,15 @@ def compute_arrhenius_enthalpy(
         Universal gas constant R [J/(mol K)].
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
+    activation_energy : float, optional
+        Zero-pressure activation energy E_a [J/mol] for the saturating integral
+        law. When None (default), uses the homologous law.
+    activation_volume : float, optional
+        Zero-pressure activation volume V_0 [m^3/mol] for the saturating integral
+        law. Requires ``activation_energy`` to be set when non-zero.
+    activation_volume_decay_pressure : float, optional
+        Characteristic decay pressure P_decay [Pa] (> 0, finite or +inf) for the
+        saturating integral law. Requires ``activation_energy`` to be set when finite.
 
     Returns
     -------
@@ -540,39 +621,83 @@ def compute_arrhenius_enthalpy(
     Raises
     ------
     ValueError
-        If ``g_homologous``, ``t_sol_0``, ``dt_sol_dp``, or ``r_gas`` is not a
-        scalar; if any input is non-real (such as a boolean, string, or complex
-        value); or, on the eager NumPy path (``xp is np``), if ``pressure`` is
-        below ``-PRESSURE_ROUNDOFF_TOLERANCE`` (-1.0 Pa) or infinite, if
-        ``g_homologous`` or ``dt_sol_dp`` is negative or infinite, or if
-        ``solidus_temperature``, ``t_sol_0``, or ``r_gas`` is non-positive or
-        infinite. On the JAX path, out-of-range numeric values return ``NaN``.
+        If scalar arguments are non-scalar; if any input is non-real; if
+        ``activation_volume`` or finite ``activation_volume_decay_pressure`` is
+        given when ``activation_energy`` is None; or, on the eager NumPy path,
+        if any parameter lies outside its valid domain. On the JAX path,
+        out-of-range numeric values return ``NaN``.
     """
     _require_x64_if_jax(xp)
     if pressure is None:
         raise ValueError('pressure must be a real number or array, got None')
-    g_hom_eff = SolidRheologyParams.g_homologous if g_homologous is None else g_homologous
-    dt_sol_dp_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
-    t_sol_0_eff = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
+    if activation_energy is None:
+        if activation_volume is not None and activation_volume != 0.0:
+            raise ValueError('activation_volume requires activation_energy to be set')
+        if activation_volume_decay_pressure is not None:
+            if (
+                _is_non_real(activation_volume_decay_pressure)
+                or np.ndim(activation_volume_decay_pressure) > 0
+                or not (
+                    math.isinf(float(activation_volume_decay_pressure))
+                    and float(activation_volume_decay_pressure) > 0.0
+                )
+            ):
+                raise ValueError(
+                    'activation_volume_decay_pressure requires activation_energy to be set'
+                )
+        g_hom_eff = SolidRheologyParams.g_homologous if g_homologous is None else g_homologous
+        dt_sol_dp_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
+        t_sol_0_eff = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
+        invalid = _validate_inputs(
+            (
+                ('pressure', pressure, 'pressure', False),
+                ('g_homologous', g_hom_eff, 'nonneg', True),
+                ('solidus_temperature', solidus_temperature, 'pos', False),
+                ('t_sol_0', t_sol_0_eff, 'pos', True),
+                ('dt_sol_dp', dt_sol_dp_eff, 'nonneg', True),
+                ('r_gas', r_gas, 'pos', True),
+            ),
+            xp,
+        )
+        h = _compute_arrhenius_enthalpy_core(
+            pressure=pressure,
+            g_homologous=g_hom_eff,
+            solidus_temperature=solidus_temperature,
+            t_sol_0=t_sol_0_eff,
+            dt_sol_dp=dt_sol_dp_eff,
+            r_gas=r_gas,
+            xp=xp,
+        )
+        return _unwrap_scalar(xp.where(invalid, xp.nan, h), xp, pressure, solidus_temperature)
+
+    v_eff = (
+        SolidRheologyParams.activation_volume
+        if activation_volume is None
+        else activation_volume
+    )
+    p_dec_eff = (
+        SolidRheologyParams.activation_volume_decay_pressure
+        if activation_volume_decay_pressure is None
+        else activation_volume_decay_pressure
+    )
     invalid = _validate_inputs(
         (
             ('pressure', pressure, 'pressure', False),
-            ('g_homologous', g_hom_eff, 'nonneg', True),
+            ('activation_energy', activation_energy, 'nonneg', True),
+            ('activation_volume', v_eff, 'nonneg', True),
+            ('activation_volume_decay_pressure', p_dec_eff, 'pos_or_inf', True),
             ('solidus_temperature', solidus_temperature, 'pos', False),
-            ('t_sol_0', t_sol_0_eff, 'pos', True),
-            ('dt_sol_dp', dt_sol_dp_eff, 'nonneg', True),
             ('r_gas', r_gas, 'pos', True),
         ),
         xp,
     )
     h = _compute_arrhenius_enthalpy_core(
         pressure=pressure,
-        g_homologous=g_hom_eff,
-        solidus_temperature=solidus_temperature,
-        t_sol_0=t_sol_0_eff,
-        dt_sol_dp=dt_sol_dp_eff,
         r_gas=r_gas,
         xp=xp,
+        activation_energy=activation_energy,
+        activation_volume=v_eff,
+        activation_volume_decay_pressure=p_dec_eff,
     )
     return _unwrap_scalar(xp.where(invalid, xp.nan, h), xp, pressure, solidus_temperature)
 
@@ -591,9 +716,12 @@ def _compute_arrhenius_viscosity_core(
     water_prefactor: FloatOrArray | None = None,
     xp: Any = np,
     *,
+    activation_energy: float | None = None,
+    activation_volume: float | None = None,
+    activation_volume_decay_pressure: float | None = None,
     _precomputed_enthalpy: Any = None,
 ) -> Any:
-    """Unchecked core evaluation of homologous Arrhenius diffusion-creep viscosity."""
+    """Unchecked core evaluation of homologous or saturating Arrhenius diffusion-creep viscosity."""
     vs_eff = DEFAULT_VISCOSITY_SOLID if viscosity_solid is None else viscosity_solid
     g_eff = SolidRheologyParams.g_homologous if g_homologous is None else g_homologous
     dt_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
@@ -616,6 +744,9 @@ def _compute_arrhenius_viscosity_core(
             dt_sol_dp=dt_eff,
             r_gas=r_gas,
             xp=xp,
+            activation_energy=activation_energy,
+            activation_volume=activation_volume,
+            activation_volume_decay_pressure=activation_volume_decay_pressure,
         )
         if _precomputed_enthalpy is None
         else _precomputed_enthalpy
@@ -626,7 +757,11 @@ def _compute_arrhenius_viscosity_core(
     g_arr = xp.asarray(g_eff, dtype=float)
     t_ref_arr = xp.asarray(t_ref_eff, dtype=float)
     vmax_log10 = xp.asarray(vmax_eff, dtype=float)
-    h_0 = g_arr * r_gas * t_sol_ref_0
+    h_0 = (
+        xp.asarray(activation_energy, dtype=float)
+        if activation_energy is not None
+        else g_arr * r_gas * t_sol_ref_0
+    )
 
     # Safe operands keep jax.grad finite at nodes the invalid mask sets to NaN.
     t_safe = xp.where((t > 0.0) & xp.isfinite(t), t, 1.0)
@@ -670,15 +805,25 @@ def compute_arrhenius_viscosity(
     viscosity_max_log10: float | None = None,
     water_prefactor: FloatOrArray | None = None,
     xp: Any = np,
+    *,
+    activation_energy: float | None = None,
+    activation_volume: float | None = None,
+    activation_volume_decay_pressure: float | None = None,
 ) -> FloatOrArray:
-    r"""Compute temperature- and pressure-dependent homologous Arrhenius viscosity.
+    r"""Compute temperature- and pressure-dependent Arrhenius diffusion-creep viscosity.
 
     .. math::
-        \eta_\mathrm{diff}(T, P) = \eta_0 f_\mathrm{water} \exp\left[
-            g_\mathrm{hom} \left(
-                \frac{T_\mathrm{sol}(P)}{T} - \frac{T_\mathrm{sol}(0)}{T_\mathrm{ref}}
-            \right)
-        \right]
+        \eta_\mathrm{diff}(T, P) = \eta_0 f_\mathrm{water} \exp\left(
+            \frac{H(P)}{R T} - \frac{H(0)}{R T_\mathrm{ref}}
+        \right)
+
+    where :math:`H(P) = g_\mathrm{hom} R T_\mathrm{sol}(P)` when
+    ``activation_energy`` is ``None`` (default) and
+    :math:`H(P) = E_a + V_0 P_\mathrm{decay} (1 - \exp(-P / P_\mathrm{decay}))`
+    when ``activation_energy`` is set. Note that the published secant-form
+    parameter sets of Tackley et al. (2013, Table 2) for
+    :math:`E_0 + P V_0 \exp(-P / P_\mathrm{decay})` are not parameter sets of
+    the integral law.
 
     Parameters
     ----------
@@ -698,8 +843,8 @@ def compute_arrhenius_viscosity(
         ``t_sol_0 + dt_sol_dp * P``.
     t_sol_0 : float, optional
         Zero-pressure reference solidus temperature T_sol(0) [K]. Required when
-        ``solidus_temperature`` is provided; defaults to
-        ``SolidRheologyParams.t_sol_0`` for the linear fallback.
+        ``solidus_temperature`` is provided and ``activation_energy`` is None;
+        defaults to ``SolidRheologyParams.t_sol_0`` for the linear fallback.
     dt_sol_dp : float, optional
         Linear solidus slope dT_sol/dP [K/Pa] for the linear fallback. Defaults to
         ``SolidRheologyParams.dt_sol_dp`` when None.
@@ -719,6 +864,13 @@ def compute_arrhenius_viscosity(
         on the JAX path for JIT compatibility.
     xp : array module, default np
         Array namespace module (numpy or jax.numpy).
+    activation_energy : float, optional
+        Zero-pressure activation energy E_a [J/mol] for the saturating integral law.
+    activation_volume : float, optional
+        Zero-pressure activation volume V_0 [m^3/mol] for the saturating integral law.
+    activation_volume_decay_pressure : float, optional
+        Characteristic decay pressure P_decay [Pa] (> 0, finite or +inf) for the
+        saturating integral law.
 
     Returns
     -------
@@ -728,18 +880,11 @@ def compute_arrhenius_viscosity(
     Raises
     ------
     ValueError
-        If ``solidus_temperature`` is provided without ``t_sol_0``; if
-        ``viscosity_solid``, ``g_homologous``, ``t_sol_0``, ``dt_sol_dp``,
-        ``arrhenius_t_ref``, ``r_gas``, or ``viscosity_max_log10`` is not a
-        scalar; if any input is non-real (such as a boolean, string, or complex
-        value); or, on the eager NumPy path (``xp is np``), if
-        ``viscosity_max_log10`` is not in ``(20, 300]``, if ``temperature``,
-        ``viscosity_solid``, ``solidus_temperature``, ``t_sol_0``,
-        ``arrhenius_t_ref``, ``r_gas``, or ``water_prefactor`` is non-positive
-        or infinite, or if ``pressure`` is below ``-PRESSURE_ROUNDOFF_TOLERANCE``
-        (-1.0 Pa) or infinite, or if ``g_homologous`` or ``dt_sol_dp`` is
-        negative or infinite. On the JAX path, out-of-range numeric values
-        return ``NaN``.
+        If ``solidus_temperature`` is provided without ``t_sol_0`` when
+        ``activation_energy`` is None; if scalar parameters are non-scalar; if
+        any input is non-real; or, on the eager NumPy path (``xp is np``), if
+        any parameter lies outside its valid domain. On the JAX path,
+        out-of-range numeric values return ``NaN``.
     """
     _require_x64_if_jax(xp)
     if temperature is None:
@@ -758,7 +903,7 @@ def compute_arrhenius_viscosity(
         else viscosity_max_log10
     )
     wp_eff = SolidRheologyParams.water_prefactor if water_prefactor is None else water_prefactor
-    if solidus_temperature is not None and t_sol_0 is None:
+    if activation_energy is None and solidus_temperature is not None and t_sol_0 is None:
         raise ValueError('t_sol_0 must be provided when solidus_temperature is given')
 
     t_sol_ref_0 = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
@@ -794,6 +939,9 @@ def compute_arrhenius_viscosity(
         dt_sol_dp=dt_sol_dp_eff,
         r_gas=r_gas,
         xp=xp,
+        activation_energy=activation_energy,
+        activation_volume=activation_volume,
+        activation_volume_decay_pressure=activation_volume_decay_pressure,
     )
     result = _compute_arrhenius_viscosity_core(
         temperature=temperature,
@@ -808,6 +956,9 @@ def compute_arrhenius_viscosity(
         viscosity_max_log10=vmax_eff,
         water_prefactor=wp_eff,
         xp=xp,
+        activation_energy=activation_energy,
+        activation_volume=activation_volume,
+        activation_volume_decay_pressure=activation_volume_decay_pressure,
         _precomputed_enthalpy=h_p,
     )
     result = xp.where(invalid | xp.isnan(h_p), xp.nan, result)

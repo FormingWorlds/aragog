@@ -556,6 +556,9 @@ class EntropyPhaseEvaluator:
             viscosity_max_log10=rheo.viscosity_max_log10,
             water_prefactor=rheo.water_prefactor,
             xp=np,
+            activation_energy=rheo.activation_energy,
+            activation_volume=rheo.activation_volume,
+            activation_volume_decay_pressure=rheo.activation_volume_decay_pressure,
         )
         self._tau_y = _compute_yield_stress_core(
             pressure=P_arr,
