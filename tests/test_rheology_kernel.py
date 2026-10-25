@@ -1434,6 +1434,20 @@ def test_effective_viscosity_lid_floor_pinned_sub_1e30():
 
 
 @pytest.mark.unit
+def test_effective_viscosity_lid_floor_pinned_sub_1e300():
+    """Verify compute_effective_viscosity clamps log_eff to 1e-300 for eta_diff below 1e-300."""
+    res = compute_effective_viscosity(
+        eta_diff=1.0e-310,
+        stress_closure_mode='lid',
+        eta_i=1.0e-310,
+        tau_d=1.0e6,
+        tau_y_lid=1.0e3,
+        w_lid=0.5,
+    )
+    np.testing.assert_allclose(res, 1.0e-300, rtol=1.0e-12)
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ('mode', 'field_name', 'bad_val', 'static_error'),
     [
