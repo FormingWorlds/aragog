@@ -62,7 +62,7 @@ def _resolve_eos_dir() -> Path:
     """Resolve SPIDER P-S table directory or generate a synthetic fallback."""
     candidates = [
         EOS_DIR,
-        Path('/Users/timlichtenberg/work/aragog-test-data-dev3set/spider_eos'),
+        Path('/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos'),
         Path('/Users/timlichtenberg/work/fwl_data-dev-5/aragog/spider_eos'),
     ]
     for cand in candidates:
@@ -206,9 +206,19 @@ def _build_jax_bundle(
 
 
 def _make_solid_profile(
-    solver: EntropySolver, s_low: float = 2350.0, s_high: float = 3050.0
+    solver: EntropySolver,
+    s_low: float | None = None,
+    s_high: float | None = None,
 ) -> np.ndarray:
-    """Construct a super-adiabatic solid/mushy entropy profile on staggered nodes."""
+    """Construct a super-adiabatic solid entropy profile on staggered nodes."""
+    if s_low is None or s_high is None:
+        eos = solver.state.phase_basic._eos
+        p_b = np.asarray(solver.state.phase_basic.pressure, dtype=float)
+        s_sol = np.asarray(eos.solidus_entropy(p_b), dtype=float)
+        if s_low is None:
+            s_low = float(s_sol[-1]) - 120.0
+        if s_high is None:
+            s_high = float(s_sol[0]) - 65.0
     return np.linspace(s_high, s_low, solver._n_stag)
 
 
@@ -835,6 +845,10 @@ def test_signed_negative_gravity_rheology_boundary_parity_numpy_and_jax() -> Non
     assert float(lid_np_neg['Ra_eff']) > 0.0
     assert float(lid_np_neg['tau_d']) > 0.0
     assert float(lid_np_neg['v_m']) > 0.0
+    assert (
+        int(np.sum(solver_neg.state._eta_eff_basic != solver_neg.state.phase_basic.eta_diff()))
+        >= 8
+    )
     for key in ('Ra_eff', 'Ra_rh', 'v_m', 'tau_d', 'tau_d_lid', 'tau_buoy', 'theta', 'd_lid'):
         np.testing.assert_allclose(
             np.asarray(lid_np_neg[key], dtype=float),
@@ -1513,15 +1527,15 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     )
     rheo_yld_off = replace(rheo_yld_on, yield_stress_c=1.0e30, yield_stress_max=1.0e30)
     sol_yld_on, sol_yld_off = _build_pair(
-        0.0, 1.0e15, rheo_yld_on, rheo_yld_off, identity_alpha=True
+        0.0, 1.0e17, rheo_yld_on, rheo_yld_off, identity_alpha=True
     )
     sol_yld_on_unharm, _ = _build_pair(
-        0.0, 1.0e15, rheo_yld_on, rheo_yld_off, identity_alpha=False
+        0.0, 1.0e17, rheo_yld_on, rheo_yld_off, identity_alpha=False
     )
     _, _, _, args_yld_on = _build_jax_bundle(sol_yld_on)
     _, _, _, args_yld_broken = _build_jax_bundle(sol_yld_on, rheology_override=rheo_yld_off)
 
-    s_yld = 2600.0 - 450.0 * (0.2 * xi_var + 0.8 * xi_var**4)
+    s_yld = 2050.0 - 1720.0 * (0.2 * xi_var + 0.8 * xi_var**4)
     rhs_yld_np_on = sol_yld_on.dSdt(0.0, s_yld)
     rhs_yld_np_on_unharm = sol_yld_on_unharm.dSdt(0.0, s_yld)
     eta_eff_yld = sol_yld_on.state._eta_eff_basic.copy()
