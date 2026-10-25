@@ -2950,3 +2950,61 @@ def test_arrhenius_viscosity_ceiling_when_enthalpy_overflows():
             assert np.log10(eta_core) == pytest.approx(40.0, abs=1.0e-9)
             assert abs(np.log10(eta) - np.log10(1.0e21 * np.exp(-21.875))) > 25.0
             assert abs(np.log10(eta_core) - 21.0) > 15.0
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_local_mode_zero_strain_rate_continuity_at_high_viscosity():
+    """Verify local-mode effective viscosity is continuous at strain_rate = 0 when eta_diff exceeds the floor limit."""
+    from aragog.rheology_lid import LOCAL_STRAIN_RATE_FLOOR
+
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    import jax.numpy as jnp
+
+    eta_diff_high = 1.0e200
+    for tau_y_val, expected_limit in (
+        (1.0e8, 1.0e8 / (2.0 * LOCAL_STRAIN_RATE_FLOOR)),
+        (1.0e-6, 1.0e-6 / (2.0 * LOCAL_STRAIN_RATE_FLOOR)),
+    ):
+        for xp_mod in (np, jnp):
+            vals_pub = [
+                float(
+                    compute_effective_viscosity(
+                        eta_diff=eta_diff_high,
+                        tau_y=tau_y_val,
+                        strain_rate=sr_val,
+                        stress_closure_mode='local',
+                        xp=xp_mod,
+                    )
+                )
+                for sr_val in (0.0, 1.0e-300, 1.0e-200)
+            ]
+            val_vel0 = float(
+                compute_effective_viscosity(
+                    eta_diff=eta_diff_high,
+                    tau_y_profile=tau_y_val,
+                    mixing_length=1.0e5,
+                    unyielded_velocity=0.0,
+                    stress_closure_mode='local',
+                    xp=xp_mod,
+                )
+            )
+            for v in (*vals_pub, val_vel0):
+                assert v == pytest.approx(expected_limit, rel=1.0e-12)
+            assert vals_pub[0] == pytest.approx(vals_pub[1], rel=1.0e-12)
+            assert vals_pub[0] == pytest.approx(vals_pub[2], rel=1.0e-12)
+
+        grad_sr0 = float(
+            jax.grad(
+                lambda sr: compute_effective_viscosity(
+                    eta_diff=eta_diff_high,
+                    tau_y=tau_y_val,
+                    strain_rate=sr,
+                    stress_closure_mode='local',
+                    xp=jnp,
+                )
+            )(jnp.asarray(0.0))
+        )
+        assert np.isfinite(grad_sr0)
+        assert grad_sr0 == 0.0
