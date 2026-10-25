@@ -49,7 +49,6 @@ POSITIVE_FIELDS: tuple[str, ...] = (
     'lid_base_temperature',
     'lid_contrast_coeff',
     'lid_mask_width_cells',
-    'activation_volume_decay_pressure',
 )
 
 NON_NEGATIVE_FIELDS: tuple[str, ...] = (
@@ -58,7 +57,6 @@ NON_NEGATIVE_FIELDS: tuple[str, ...] = (
     'dt_sol_dp',
     'yield_stress_c',
     'yield_stress_mu',
-    'activation_volume',
 )
 
 UNIT_HALF_OPEN_FIELDS: tuple[str, ...] = (
@@ -75,7 +73,10 @@ BOUNDED_INTERVAL_FIELDS: tuple[str, ...] = (
 )
 
 NUMERIC_FIELD_NAMES: tuple[str, ...] = (
-    POSITIVE_FIELDS + NON_NEGATIVE_FIELDS + BOUNDED_INTERVAL_FIELDS
+    POSITIVE_FIELDS
+    + NON_NEGATIVE_FIELDS
+    + BOUNDED_INTERVAL_FIELDS
+    + ('activation_volume', 'activation_volume_decay_pressure')
 )
 
 
