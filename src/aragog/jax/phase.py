@@ -896,7 +896,17 @@ def compute_mlt(
     # solver/entropy_state.py:apply_kappah_floor for why cells with
     # dS/dr >= D keep their raw value.
     phi_basic = phase_basic.melt_fraction
-    f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
+    if params.rheology.enabled:
+        f0 = tanh_weight(0.0, params.phi_rheo, params.phi_width)
+        f1 = tanh_weight(1.0, params.phi_rheo, params.phi_width)
+        f_floor = jnp.clip(
+            (tanh_weight(phi_basic, params.phi_rheo, params.phi_width) - f0)
+            / jnp.maximum(f1 - f0, 1.0e-30),
+            0.0,
+            1.0,
+        )
+    else:
+        f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)
     kh_floor = params.kappah_floor * f_floor * floor_mask
     kappa_h = jnp.maximum(kappa_h, kh_floor)
 
@@ -1082,7 +1092,7 @@ def compute_fluxes(
             )
             eta_eff_b = _compute_effective_viscosity_core(
                 eta_diff=eta_diff_b,
-                tau_d=lid_state['tau_d'],
+                tau_d=lid_state['tau_d_lid'],
                 tau_y_lid=lid_state['tau_y_lid'],
                 stress_closure_mode='lid',
                 w_lid=lid_state['w_lid'],

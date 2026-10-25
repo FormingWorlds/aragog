@@ -239,8 +239,11 @@ def _validate_inputs(checks: Any, xp: Any, *, reduce_any: bool = False) -> Any:
             _scalar_or_nan(val, name)
         elif _is_non_real(val):
             raise ValueError(f'{name} must be a real number or array, got {val!r}')
-        arr = xp.asarray(val, dtype=float)
         ok, msg = _RULES[rule]
+        try:
+            arr = xp.asarray(val, dtype=float)
+        except OverflowError as exc:
+            raise ValueError(f'{name} must be {msg}, got {val}') from exc
         bad = ~ok(arr)
         if xp is np and np.any((~np.isnan(arr) if rule != 'vmax_scalar' else True) & bad):
             raise ValueError(f'{name} must be {msg}, got {val}')
@@ -480,10 +483,12 @@ def _compute_arrhenius_enthalpy_core(
     dt_eff = SolidRheologyParams.dt_sol_dp if dt_sol_dp is None else dt_sol_dp
     t_sol_0_eff = SolidRheologyParams.t_sol_0 if t_sol_0 is None else t_sol_0
     p = _clamp_pressure(pressure, xp)
+    p_safe = xp.where(xp.isfinite(p) & (p >= 0.0), p, 0.0)
     if solidus_temperature is not None:
-        t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
+        t_sol_raw = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p_safe)
+        t_sol = xp.where(xp.isfinite(t_sol_raw) & (t_sol_raw > 0.0), t_sol_raw, 1000.0)
     else:
-        t_sol = t_sol_0_eff + dt_eff * p
+        t_sol = t_sol_0_eff + dt_eff * p_safe
     g_arr = xp.asarray(g_eff, dtype=float)
     return g_arr * r_gas * t_sol
 
@@ -627,7 +632,8 @@ def _compute_arrhenius_viscosity_core(
     t_safe = xp.where(t > 0.0, t, 1.0)
     t_ref_safe = xp.where(t_ref_arr > 0.0, t_ref_arr, 1.0)
     wp_pos = xp.where(wp > 0.0, wp, 1.0)
-    exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
+    h_p_safe = xp.where(xp.isfinite(h_p), h_p, h_0)
+    exponent = h_p_safe / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
     # Prevent float64 underflow to zero when viscosity_solid is small.
@@ -766,6 +772,20 @@ def compute_arrhenius_viscosity(
         ),
         xp,
     )
+    vs_arr = xp.asarray(vs_eff, dtype=float)
+    vmax_arr = xp.asarray(vmax_eff, dtype=float)
+    vs_pos_chk = xp.where((vs_arr > 0.0) & xp.isfinite(vs_arr), vs_arr, 1.0)
+    bad_vmax_vs = (
+        (vs_arr > 0.0)
+        & xp.isfinite(vs_arr)
+        & xp.isfinite(vmax_arr)
+        & (vmax_arr <= xp.log10(vs_pos_chk))
+    )
+    if xp is np and bool(np.any(bad_vmax_vs)):
+        raise ValueError(
+            f'viscosity_max_log10 ({vmax_eff}) must be > log10(viscosity_solid) ({math.log10(float(vs_eff))})'
+        )
+    invalid = invalid | bad_vmax_vs
     h_p = compute_arrhenius_enthalpy(
         pressure=pressure,
         g_homologous=g_hom_eff,

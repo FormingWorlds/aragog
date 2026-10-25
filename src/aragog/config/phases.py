@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 import attrs
@@ -121,6 +122,17 @@ class PhaseConfig:
         self.viscosity = viscosity
         self.entropy = entropy
         self.rheology = merge_rheology(rheology, flat_rheo)
+        if (
+            isinstance(viscosity, (int, float))
+            and not isinstance(viscosity, bool)
+            and math.isfinite(float(viscosity))
+            and float(viscosity) > 0.0
+            and self.rheology.viscosity_max_log10 <= math.log10(float(viscosity))
+        ):
+            raise ValueError(
+                f'viscosity_max_log10 ({self.rheology.viscosity_max_log10}) must be > '
+                f'log10(viscosity) ({math.log10(float(viscosity))})'
+            )
 
 
 @attrs.define

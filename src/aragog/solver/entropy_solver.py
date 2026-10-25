@@ -1982,7 +1982,7 @@ class EntropySolver:
                 raise RuntimeError(
                     f'rheology invariant violated at step {step_idx}: lid_state is None in lid mode'
                 )
-            for key in ('eta_i', 'T_i', 'theta', 'tau_d', 'd_lid'):
+            for key in ('eta_i', 'T_i', 'theta', 'tau_d', 'tau_d_lid', 'd_lid', 'd_lid_raw'):
                 if not np.isfinite(float(lid[key])):
                     raise RuntimeError(
                         f'rheology invariant violated at step {step_idx}: '
@@ -2004,7 +2004,7 @@ class EntropySolver:
                     )
             d_lid = float(lid['d_lid'])
             d_shell = float(self._r_basic_flat[-1] - self._r_basic_flat[0])
-            if not (-1.0e-6 <= d_lid <= d_shell * (1.0 + 1.0e-12)):
+            if not (0.0 <= d_lid <= d_shell * (1.0 + 1.0e-12)):
                 raise RuntimeError(
                     f'rheology invariant violated at step {step_idx}: '
                     f'd_lid={d_lid!r} outside shell thickness [0, {d_shell!r}]'

@@ -720,7 +720,17 @@ class EntropyState:
             phi_basic = np.asarray(self.phase_basic.melt_fraction()).flatten()
             phi_rheo = float(getattr(self.phase_basic, '_phi_rheo', 0.4))
             phi_width = float(getattr(self.phase_basic, '_phi_width', 0.15))
-            f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
+            if rheo_enabled:
+                f0 = tanh_weight(0.0, phi_rheo, phi_width)
+                f1 = tanh_weight(1.0, phi_rheo, phi_width)
+                f_floor = np.clip(
+                    (tanh_weight(phi_basic, phi_rheo, phi_width) - f0)
+                    / np.maximum(f1 - f0, 1.0e-30),
+                    0.0,
+                    1.0,
+                )
+            else:
+                f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
             self._eddy_diffusivity = apply_kappah_floor(
                 self._eddy_diffusivity,
                 self._kappah_floor,
@@ -809,6 +819,7 @@ class EntropyState:
 
         if rheo_enabled:
             eta_diff_b = np.asarray(self.phase_basic.eta_diff()).ravel()
+            phi_b_rheo = np.asarray(self.phase_basic.melt_fraction()).ravel()
             if rheo.stress_closure_mode == 'local':
                 self._lid_state = None
                 tau_y_b = np.asarray(self.phase_basic.tau_y()).ravel()
@@ -821,7 +832,6 @@ class EntropyState:
                     xp=np,
                 )
             else:
-                phi_b_rheo = np.asarray(self.phase_basic.melt_fraction()).ravel()
                 T_sol_b = self.phase_basic.solidus_temperature()
                 T_sol_b_arr = np.asarray(T_sol_b).ravel() if T_sol_b is not None else None
                 mu_mix_pass1 = np.asarray(self.phase_basic.viscosity()).ravel()
@@ -850,7 +860,7 @@ class EntropyState:
                 self._lid_state = lid_state
                 eta_eff_b = _compute_effective_viscosity_core(
                     eta_diff=eta_diff_b,
-                    tau_d=lid_state['tau_d'],
+                    tau_d=lid_state['tau_d_lid'],
                     tau_y_lid=lid_state['tau_y_lid'],
                     stress_closure_mode='lid',
                     w_lid=lid_state['w_lid'],
@@ -902,7 +912,14 @@ class EntropyState:
             else:
                 self._kappac = np.full_like(kh_raw, -self._eddy_diff_chem)
             if self._kappah_floor > 0.0:
-                f_floor = tanh_weight(phi_b_rheo, phi_rheo, phi_width)
+                f0 = tanh_weight(0.0, phi_rheo, phi_width)
+                f1 = tanh_weight(1.0, phi_rheo, phi_width)
+                f_floor = np.clip(
+                    (tanh_weight(phi_b_rheo, phi_rheo, phi_width) - f0)
+                    / np.maximum(f1 - f0, 1.0e-30),
+                    0.0,
+                    1.0,
+                )
                 self._eddy_diffusivity = apply_kappah_floor(
                     self._eddy_diffusivity,
                     self._kappah_floor,

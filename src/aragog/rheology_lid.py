@@ -446,6 +446,21 @@ def compute_stagnant_lid_state(
         xp,
         reduce_any=True,
     )
+    vs_arr = xp.asarray(viscosity_solid, dtype=float)
+    vmax_arr = xp.asarray(params.viscosity_max_log10, dtype=float)
+    vs_pos_chk = xp.where((vs_arr > 0.0) & xp.isfinite(vs_arr), vs_arr, 1.0)
+    bad_vmax_vs = (
+        (vs_arr > 0.0)
+        & xp.isfinite(vs_arr)
+        & xp.isfinite(vmax_arr)
+        & (vmax_arr <= xp.log10(vs_pos_chk))
+    )
+    if xp is np and bool(np.any(bad_vmax_vs)):
+        raise ValueError(
+            f'viscosity_max_log10 ({params.viscosity_max_log10}) must be > '
+            f'log10(viscosity_solid) ({float(np.log10(float(viscosity_solid)))})'
+        )
+    invalid_inputs = invalid_inputs | bad_vmax_vs
     # Evaluates _boundary_weights(w_Ti, xp, fallback=W_conv_tilde) inside the core helper.
     return _compute_stagnant_lid_state_core(
         radii=radii,
@@ -542,44 +557,94 @@ def _compute_stagnant_lid_state_core(
         arr = xp.asarray(val, dtype=float)
         return arr if xp.ndim(arr) == 0 else xp.sum(W_tilde * xp.ravel(arr))
 
+    T_0 = T[1]
+    P_0 = P[1]
+    r_0 = r[1]
+    T_1 = xp.sum(W_Ti_tilde * T)
+    P_1 = xp.sum(W_Ti_tilde * P)
+    r_1 = xp.sum(W_Ti_tilde * r)
     T_i = xp.sum(W_tilde * T)
-    P_T_i = xp.sum(W_tilde * P)
-    r_i = xp.sum(W_tilde * r)
+    dT_ep = T_0 - T_1
+    dT_ep_nz = xp.abs(dT_ep) > 1.0e-12
+    w_eff = xp.where(
+        dT_ep_nz,
+        xp.clip((T_0 - T_i) / xp.where(dT_ep_nz, dT_ep, 1.0), 0.0, 1.0),
+        w_weight,
+    )
+    is_mono_T = xp.all(T[1:] <= T[:-1])
+    T_rev = T[::-1]
+    P_geo_Ti = xp.interp(T_i, T_rev, P[::-1])
+    P_geo_T1 = xp.interp(T_1, T_rev, P[::-1])
+    P_geo_T0 = xp.interp(T_0, T_rev, P[::-1])
+    P_T_i = xp.where(
+        w_weight >= 1.0 - 1.0e-15,
+        xp.sum(W_tilde * P),
+        xp.where(
+            is_mono_T,
+            P_geo_Ti + w_eff * (P_1 - P_geo_T1) + (1.0 - w_eff) * (P_0 - P_geo_T0),
+            xp.sum(W_tilde * P),
+        ),
+    )
+    r_geo_Ti = xp.interp(T_i, T_rev, r[::-1])
+    r_geo_T1 = xp.interp(T_1, T_rev, r[::-1])
+    r_geo_T0 = xp.interp(T_0, T_rev, r[::-1])
+    r_i = xp.where(
+        w_weight >= 1.0 - 1.0e-15,
+        xp.sum(W_tilde * r),
+        xp.where(
+            is_mono_T,
+            r_geo_Ti + w_eff * (r_1 - r_geo_T1) + (1.0 - w_eff) * (r_0 - r_geo_T0),
+            xp.sum(W_tilde * r),
+        ),
+    )
 
     w_active = (
         0.5 * (1.0 + xp.tanh((f_int_max - params.interior_flux_fraction) / 0.01)) + zero_or_nan
     )
     is_convecting = (W_sum > 1e-6) & (w_active > 0.05)
 
-    T_sol_arr = T_sol_i = T_sol_surf = None
+    T_sol_arr = T_sol_0_ep = T_sol_1_ep = T_sol_surf = None
     if solidus_temperature is not None:
         T_sol_arr = xp.asarray(solidus_temperature, dtype=float)
         if xp.ndim(T_sol_arr) > 0:
             T_sol_arr = xp.ravel(T_sol_arr)
-            T_sol_i = xp.sum(W_tilde * T_sol_arr)
+            T_sol_0_ep = T_sol_arr[1]
+            T_sol_1_ep = xp.sum(W_Ti_tilde * T_sol_arr)
             T_sol_surf = T_sol_arr[-1]
         else:
-            T_sol_i = T_sol_surf = T_sol_arr
+            T_sol_0_ep = T_sol_1_ep = T_sol_surf = T_sol_arr
 
     enthalpy_fn = (
         compute_arrhenius_enthalpy if _use_public_kernels else _compute_arrhenius_enthalpy_core
     )
-    H_T_i = enthalpy_fn(
-        P_T_i,
+    H_0 = enthalpy_fn(
+        P_0,
         g_homologous=params.g_homologous,
-        solidus_temperature=T_sol_i,
+        solidus_temperature=T_sol_0_ep,
         t_sol_0=params.t_sol_0,
         dt_sol_dp=params.dt_sol_dp,
         r_gas=R_GAS,
         xp=xp,
     )
-    H_safe = xp.maximum(H_T_i, 1e-6)
-    T_i_safe = xp.maximum(T_i, 1.0)
-    dT_rh = (R_GAS * T_i_safe**2) / H_safe
+    H_1 = enthalpy_fn(
+        P_1,
+        g_homologous=params.g_homologous,
+        solidus_temperature=T_sol_1_ep,
+        t_sol_0=params.t_sol_0,
+        dt_sol_dp=params.dt_sol_dp,
+        r_gas=R_GAS,
+        xp=xp,
+    )
+    T_0_safe = xp.maximum(T_0, 1.0)
+    T_1_safe = xp.maximum(T_1, 1.0)
+    dT_rh_0 = (R_GAS * T_0_safe**2) / xp.maximum(H_0, 1e-6)
+    dT_rh_1 = (R_GAS * T_1_safe**2) / xp.maximum(H_1, 1e-6)
     T_surf = T[-1]
     P_surf = P[-1]
-    # Homologous Frank-Kamenetskii contrast: theta = H(P_i) * (T_i - T_surf) / (R * T_i**2).
-    theta = (H_T_i * (T_i - T_surf)) / (R_GAS * T_i_safe**2)
+    theta_0 = (H_0 * (T_0 - T_surf)) / (R_GAS * T_0_safe**2)
+    theta_1 = (H_1 * (T_1 - T_surf)) / (R_GAS * T_1_safe**2)
+    dT_rh = w_eff * dT_rh_1 + (1.0 - w_eff) * dT_rh_0
+    theta = w_eff * theta_1 + (1.0 - w_eff) * theta_0
 
     if _use_public_kernels:
         arrhenius = partial(
@@ -595,21 +660,22 @@ def _compute_stagnant_lid_state_core(
             xp=xp,
         )
         eta_surf = arrhenius(T_surf, P_surf, solidus_temperature=T_sol_surf)
-        eta_arr_i = arrhenius(T_i, P_T_i, solidus_temperature=T_sol_i)
+        eta_arr_0 = arrhenius(T_0, P_0, solidus_temperature=T_sol_0_ep)
+        eta_arr_1 = arrhenius(T_1, P_1, solidus_temperature=T_sol_1_ep)
     else:
-        t_pair = xp.stack([T_surf, T_i])
-        p_pair = xp.stack([P_surf, P_T_i])
-        tsol_pair = (
-            xp.stack([T_sol_surf, T_sol_i])
-            if (T_sol_surf is not None and T_sol_i is not None)
+        t_triple = xp.stack([T_surf, T_0, T_1])
+        p_triple = xp.stack([P_surf, P_0, P_1])
+        tsol_triple = (
+            xp.stack([T_sol_surf, T_sol_0_ep, T_sol_1_ep])
+            if (T_sol_surf is not None and T_sol_0_ep is not None and T_sol_1_ep is not None)
             else None
         )
-        eta_pair = _compute_arrhenius_viscosity_core(
-            t_pair,
-            p_pair,
+        eta_triple = _compute_arrhenius_viscosity_core(
+            t_triple,
+            p_triple,
             viscosity_solid=viscosity_solid,
             g_homologous=params.g_homologous,
-            solidus_temperature=tsol_pair,
+            solidus_temperature=tsol_triple,
             t_sol_0=params.t_sol_0,
             dt_sol_dp=params.dt_sol_dp,
             arrhenius_t_ref=params.arrhenius_t_ref,
@@ -618,15 +684,41 @@ def _compute_stagnant_lid_state_core(
             water_prefactor=params.water_prefactor,
             xp=xp,
         )
-        eta_surf = eta_pair[0]
-        eta_arr_i = eta_pair[1]
+        eta_surf = eta_triple[0]
+        eta_arr_0 = eta_triple[1]
+        eta_arr_1 = eta_triple[2]
+    log_eta_0 = xp.log10(xp.clip(eta_arr_0, 1.0e-300, 1.0e308))
+    log_eta_1 = xp.log10(xp.clip(eta_arr_1, 1.0e-300, 1.0e308))
+    log_eta_arr = xp.where(
+        w_eff >= 1.0 - 1.0e-15,
+        xp.log10(xp.maximum(eta_arr_1, 1.0e-300)),
+        xp.where(
+            w_eff <= 1.0e-15,
+            xp.log10(xp.maximum(eta_arr_0, 1.0e-300)),
+            w_eff * log_eta_1 + (1.0 - w_eff) * log_eta_0,
+        ),
+    )
+    eta_arr_i = xp.where(
+        w_eff >= 1.0 - 1.0e-15,
+        eta_arr_1,
+        xp.where(w_eff <= 1.0e-15, eta_arr_0, 10.0**log_eta_arr),
+    )
     if viscosity_mixture is not None:
-        log_eta_arr = xp.log10(xp.maximum(eta_arr_i, 1e-30))
         log_mu_mix = _weighted_mean(
             xp.log10(xp.maximum(xp.asarray(viscosity_mixture, dtype=float), 1e-30))
         )
+        log_eta_arr_clipped = xp.clip(log_eta_arr, -300.0, 308.0)
+        log_eta_i = xp.where(
+            w_weight >= 1.0 - 1.0e-15,
+            log_mu_mix,
+            xp.where(
+                w_weight <= 1.0e-15,
+                log_eta_arr,
+                w_weight * log_mu_mix + (1.0 - w_weight) * log_eta_arr_clipped,
+            ),
+        )
         # Smooth log-blend from eta_arr_i when convection is inactive to mu_i_mix when active.
-        eta_i = 10.0 ** (w_weight * log_mu_mix + (1.0 - w_weight) * log_eta_arr)
+        eta_i = 10.0**log_eta_i
     else:
         eta_i = eta_arr_i
     eta_i_fin = xp.where(xp.isfinite(eta_i), eta_i, 1.0)
@@ -648,6 +740,11 @@ def _compute_stagnant_lid_state_core(
 
     w_hot_iso = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale))
     w_hot_iso_mask = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale_mask))
+    if params.lid_base_mode == 'fixed':
+        f_thresh = params.interior_flux_fraction
+        df_nonconv = max(0.2 * float(f_thresh), 1.0e-6)
+        w_nonconv = 1.0 - _melt_ramp(f, f_thresh, df_nonconv, xp, compact=True)
+        w_hot_iso_mask = 1.0 - (1.0 - w_hot_iso_mask) * w_nonconv
     w_sol_phi = _melt_ramp(
         phi,
         SOLIDUS_MELT_FRACTION_THRESHOLD,
@@ -676,8 +773,7 @@ def _compute_stagnant_lid_state_core(
     r_lid_base = xp.sum(W_base_tilde * r)
     P_lid_base = xp.sum(W_base_tilde * P)
     T_lid = xp.sum(W_base_tilde * T)
-    d_geom = xp.maximum(r[-1] - r_lid_base, 1.0e-6)
-    d_lid_raw = xp.maximum(r[-1] - r_lid_base, 0.0) * w_active
+    d_lid_raw = xp.maximum(r[-1] - r_lid_base, 0.0) * w_active + zero_or_nan
     has_lid = (
         is_convecting
         & ((T_i - T_surf) > NO_LID_DT_THRESHOLD)
@@ -709,6 +805,9 @@ def _compute_stagnant_lid_state_core(
     dTdr_lid_base = xp.sum(W_base_tilde * dTdr_safe)
     delta_rh = dT_rh / xp.maximum(dTdr_lid_base, 1e-12)
     delta_rh = xp.minimum(delta_rh, r[-1] - r[0])
+    dr_top = xp.maximum(r[-1] - r[-2], 1.0e-6)
+    d_geom_floor = _softmax2(delta_rh, dr_top, 0.01 * dr_top, xp)
+    d_geom = _softmax2(r[-1] - r_lid_base, d_geom_floor, 0.01 * d_geom_floor, xp)
 
     if unyielded_velocity is not None:
         T_v = SOFTMAX_VELOCITY_SCALE
@@ -774,7 +873,7 @@ def _compute_stagnant_lid_state_core(
         xp=xp,
     )
 
-    ratio = tau_d_raw / xp.maximum(tau_y_lid, COHESION_FLOOR)
+    ratio = tau_d_lid_raw / xp.maximum(tau_y_lid, COHESION_FLOOR)
     w_y = if_lid(0.5 * (1.0 + xp.tanh((ratio - 1.0) / LID_REGIME_LABEL_WIDTH)))
     lid_cell_count = xp.sum(w_lid)
     w_solid_surf = 1.0 - _melt_ramp(
@@ -803,6 +902,7 @@ def _compute_stagnant_lid_state_core(
         'T_lid': T_lid,
         'T_lid_iso': T_lid_iso,
         'd_lid': d_lid,
+        'd_lid_raw': d_lid_raw,
         'r_lid_base': r_lid_base,
         'P_lid_base': P_lid_base,
         'delta_rh': delta_rh,
@@ -1035,6 +1135,13 @@ def compute_effective_viscosity(
     if tau_d is None or tau_y_lid is None:
         raise ValueError("tau_d and tau_y_lid are required when stress_closure_mode='lid'")
 
+    if w_lid is not None and not _is_non_real(w_lid) and not _is_non_real(eta_diff):
+        ed_arr = xp.asarray(eta_diff, dtype=float)
+        wl_arr = xp.asarray(w_lid, dtype=float)
+        if wl_arr.ndim > 0 and ed_arr.ndim > 0 and wl_arr.shape != ed_arr.shape:
+            raise ValueError(
+                f'w_lid shape {wl_arr.shape} must match eta_diff shape {ed_arr.shape}'
+            )
     invalid_lid = _validate_inputs(
         (
             ('eta_diff', eta_diff, 'pos', False),

@@ -392,6 +392,17 @@ class _PhaseParameters:
         self.viscosity = viscosity
         self.entropy = entropy
         self.rheology = merge_rheology(rheology, kwargs)
+        if (
+            isinstance(viscosity, (int, float, np.number))
+            and not isinstance(viscosity, (bool, np.bool_))
+            and np.isfinite(float(viscosity))
+            and float(viscosity) > 0.0
+            and self.rheology.viscosity_max_log10 <= float(np.log10(float(viscosity)))
+        ):
+            raise ValueError(
+                f'viscosity_max_log10 ({self.rheology.viscosity_max_log10}) must be > '
+                f'log10(viscosity) ({float(np.log10(float(viscosity)))})'
+            )
 
 
 _PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
