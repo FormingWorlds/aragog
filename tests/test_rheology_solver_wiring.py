@@ -1856,7 +1856,9 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
     d_lid_orig = float(solver_mid.state._lid_state['d_lid'])
     d_lid_raw_orig = float(solver_mid.state._lid_state['d_lid_raw'])
 
-    for bad_dlid in (-1.0e-9, -1.0, 1.0e9):
+    d_shell_mid = float(solver_mid._r_basic_flat[-1] - solver_mid._r_basic_flat[0])
+
+    for bad_dlid in (-1.0e-9, -1.0, 1.0e9, d_shell_mid * (1.0 + 1.0e-9)):
         solver_mid.state._lid_state['d_lid'] = bad_dlid
         err_dlid = None
         try:
@@ -1864,9 +1866,20 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
         except Exception as exc:
             err_dlid = exc
         assert isinstance(err_dlid, RuntimeError) and 'd_lid' in str(err_dlid)
+    for ok_dlid in (0.0, d_shell_mid * (1.0 + 0.5e-12)):
+        solver_mid.state._lid_state['d_lid'] = ok_dlid
+        solver_mid._check_rheology_invariants()
     solver_mid.state._lid_state['d_lid'] = d_lid_orig
 
-    for bad_dlid_raw in (np.nan, np.inf, -np.inf, -1.0e-9, -1.0, 1.0e9):
+    for bad_dlid_raw in (
+        np.nan,
+        np.inf,
+        -np.inf,
+        -1.0e-9,
+        -1.0,
+        1.0e9,
+        d_shell_mid * (1.0 + 1.0e-9),
+    ):
         solver_mid.state._lid_state['d_lid_raw'] = bad_dlid_raw
         err_raw = None
         try:
@@ -1874,7 +1887,6 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
         except Exception as exc:
             err_raw = exc
         assert isinstance(err_raw, RuntimeError) and 'd_lid_raw' in str(err_raw)
-    d_shell_mid = float(solver_mid._r_basic_flat[-1] - solver_mid._r_basic_flat[0])
     for ok_dlid_raw in (0.0, d_shell_mid * (1.0 + 0.5e-12)):
         solver_mid.state._lid_state['d_lid_raw'] = ok_dlid_raw
         solver_mid._check_rheology_invariants()
