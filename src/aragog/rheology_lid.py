@@ -3,7 +3,9 @@
 Intentional non-smooth switches retained for boolean diagnostics and physical bounds
 include ``is_convecting``, ``has_lid``, the ``is_convecting`` gate on ``v_i``, the
 cap of ``f`` at 1, ``f_int_max = max(f * interior_node_mask)``,
-``max(T_i, 1.0)``, ``max(H_T_i, 1.0e-6)``, ``DeltaT_conv = max(T_i - T_surf, 1.0e-6)``,
+``max(T_0, 1.0)``, ``max(T_1, 1.0)``, ``max(H_0, 1.0e-6)``, ``max(H_1, 1.0e-6)``,
+the ``w_eff`` clip to ``[0, 1]``, ``dT_ep_nz``, ``is_mono_T``, the ``1 - 1e-15``
+selectors on ``w_eff`` and ``w_weight``, ``DeltaT_conv = max(T_i - T_surf, 1.0e-6)``,
 ``max(theta, 1.0e-6)``, ``max(Ra_rh_raw, 1.0e-30)``, the elementwise maxima in
 ``w_interior`` and ``w_hot_sol``, ``dTdr_floor`` with ``max(dr_min, 1.0)``, the
 ``r[-1] - r[0]`` cap on ``delta_rh``, the ``COHESION_FLOOR`` yield-stress clamp,
@@ -33,6 +35,7 @@ from aragog.rheology import (
     _softmax2,
     _softmin2,
     _validate_inputs,
+    _vmax_not_above_log10_viscosity,
     compute_arrhenius_enthalpy,
     compute_arrhenius_viscosity,
     compute_strain_rate_local,
@@ -241,7 +244,8 @@ def compute_stagnant_lid_state(
         elementwise maximum of the thermal ``tanh((T - T_sol) / scale)`` ramp
         and the melt-fraction ramp centered at
         ``SOLIDUS_MELT_FRACTION_THRESHOLD`` (0.01). When None, they use the
-        melt-fraction ramp alone.
+        melt-fraction ramp alone. Not used in the activation enthalpy ``H(P)``
+        when ``params.activation_energy`` is set.
     melt_fraction : array-like
         Melt mass fraction profile phi [-].
     params : SolidRheologyParams
@@ -249,12 +253,14 @@ def compute_stagnant_lid_state(
     viscosity_solid : float
         Reference solid mantle viscosity [Pa s] such that
         ``viscosity_solid * f_water`` equals ``eta_diff`` at
-        ``(params.arrhenius_t_ref, P = 0)`` for the linear solidus; when a
-        ``solidus_temperature`` table is provided, ``viscosity_solid`` is
-        referenced to ``params.t_sol_0``, so the table ``eta_diff(T, 0)``
-        scales relative to the linear-solidus ``eta_diff(T, 0)`` at the same
-        ``T`` by ``exp(g_hom * (T_sol(0) - params.t_sol_0) / T)`` (a ratio
-        of 2.752, or 2.75x, at 1600 K for 1464.8 K against 1400 K).
+        ``(params.arrhenius_t_ref, P = 0)`` for the linear solidus and for the
+        saturating activation law (``params.activation_energy`` set); when
+        ``params.activation_energy`` is ``None`` and a ``solidus_temperature``
+        table is provided, ``viscosity_solid`` is referenced to ``params.t_sol_0``,
+        so the table ``eta_diff(T, 0)`` scales relative to the linear-solidus
+        ``eta_diff(T, 0)`` at the same ``T`` by
+        ``exp(g_hom * (T_sol(0) - params.t_sol_0) / T)`` (a ratio of 2.752, or
+        2.75x, at 1600 K for 1464.8 K against 1400 K).
     phi_rheo : float
         Critical melt fraction for rheological transition [-].
     phi_width : float
@@ -326,11 +332,27 @@ def compute_stagnant_lid_state(
     See ``docs/Explanations/solid_state_convection.md`` for model formulation
     and derivations.
 
-    The Frank-Kamenetskii parameter uses the homologous activation enthalpy at the
-    interior pressure ``P_i``:
-    ``theta = H(P_i) * (T_i - T_surf) / (R_GAS * T_i**2)`` with
-    ``H(P_i) = params.g_homologous * R_GAS * T_sol(P_i)``; when ``solidus_temperature``
-    is None, ``T_sol`` is the linear fallback ``t_sol_0 + dt_sol_dp * P``.
+    The Frank-Kamenetskii parameter ``theta``, rheological temperature scale
+    ``dT_rh``, interior Arrhenius log-viscosity ``log10(eta_arr_i)`` (and thus
+    ``eta_i`` when ``viscosity_mixture`` is ``None``), and geotherm diagnostics
+    ``(P_T_i, r_i)`` (on a monotone temperature profile) are endpoint-blended
+    between the conduction-limit state 0 at node 1 ``(T_0 = T[1], P_0 = P[1])``
+    and the convecting-interior boundary state 1
+    ``(T_1 = sum(W_Ti_tilde * T), P_1 = sum(W_Ti_tilde * P))``:
+    ``theta = w_eff * theta_1 + (1 - w_eff) * theta_0`` and
+    ``dT_rh = w_eff * dT_rh_1 + (1 - w_eff) * dT_rh_0``, where
+    ``theta_k = H_k * (T_k - T_surf) / (R_GAS * max(T_k, 1.0)**2)`` and
+    ``dT_rh_k = R_GAS * max(T_k, 1.0)**2 / max(H_k, 1.0e-6)`` for ``k in {0, 1}``,
+    with ``w_eff = clip((T_0 - T_i) / (T_0 - T_1), 0.0, 1.0)`` when
+    ``dT_ep_nz`` (``|T_0 - T_1| > 1.0e-12``) holds and ``w_weight`` otherwise.
+    Activation enthalpy ``H_k = H(P_k)`` follows the homologous law
+    ``H(P) = params.g_homologous * R_GAS * T_sol(P)`` when
+    ``params.activation_energy`` is ``None`` (using ``t_sol_0 + dt_sol_dp * P``
+    when ``solidus_temperature`` is ``None``), and the saturating integral law
+    ``H(P) = E_a + V_0 * P_decay * (1 - exp(-P / P_decay))`` when
+    ``params.activation_energy`` is set (``solidus_temperature``, ``g_homologous``,
+    ``t_sol_0``, and ``dt_sol_dp`` are not used in ``H(P)`` when
+    ``params.activation_energy`` is set).
 
     When convective layer weights place interior temperature T_i below lid base
     temperature T_lid (for example in cold_top_lid where T_i < T_lid), the solver
@@ -356,7 +378,9 @@ def compute_stagnant_lid_state(
     switches retained for boolean diagnostics and physical bounds include
     ``is_convecting``, ``has_lid``, the ``is_convecting`` gate on the diagnostic
     ``v_i``, the cap of ``f`` at 1, ``f_int_max = max(f * interior_node_mask)``,
-    ``max(T_i, 1.0)``, ``max(H_T_i, 1.0e-6)``,
+    ``max(T_0, 1.0)``, ``max(T_1, 1.0)``, ``max(H_0, 1.0e-6)``, ``max(H_1, 1.0e-6)``,
+    the ``w_eff`` clip to ``[0, 1]``, ``dT_ep_nz``, ``is_mono_T``, the ``1 - 1e-15``
+    selectors on ``w_eff`` and ``w_weight``,
     ``DeltaT_conv = max(T_i - T_surf, 1.0e-6)``, ``max(theta, 1.0e-6)``,
     ``max(Ra_rh_raw, 1.0e-30)``, the elementwise maxima in ``w_interior`` and
     ``w_hot_sol``, the temperature-gradient floor ``dTdr_floor`` with
@@ -382,7 +406,7 @@ def compute_stagnant_lid_state(
     ``scale_cap = lid_mask_width_cells * _softmax2(dT_rh, 1.0 K, SCALE_FLOOR_WIDTH)``.
     In ``'fixed'`` mode (``lid_base_mode = 'fixed'``), both ``1 - w_hot_iso`` and
     ``1 - w_hot_iso_mask`` are multiplied by
-    ``w_nonconv = 1 - _melt_ramp(f, f_thresh, max(0.2 * f_thresh, 1e-6), compact=True)``
+    ``w_nonconv = 1 - _melt_ramp(f, f_thresh, 0.2 * f_thresh, compact=True)``
     so a convecting node is never part of the lid; when no node is non-convecting
     (``w_nonconv == 0`` everywhere), ``w_interior == 1`` on all nodes and ``r_lid_base``
     sits at ``r[-1]`` with ``d_lid_raw = 0`` and ``d_lid = 0``.
@@ -468,21 +492,9 @@ def compute_stagnant_lid_state(
         xp,
         reduce_any=True,
     )
-    vs_arr = xp.asarray(viscosity_solid, dtype=float)
-    vmax_arr = xp.asarray(params.viscosity_max_log10, dtype=float)
-    vs_pos_chk = xp.where((vs_arr > 0.0) & xp.isfinite(vs_arr), vs_arr, 1.0)
-    bad_vmax_vs = (
-        (vs_arr > 0.0)
-        & xp.isfinite(vs_arr)
-        & xp.isfinite(vmax_arr)
-        & (vmax_arr <= xp.log10(vs_pos_chk))
+    invalid_inputs = invalid_inputs | _vmax_not_above_log10_viscosity(
+        viscosity_solid, params.viscosity_max_log10, xp
     )
-    if xp is np and bool(np.any(bad_vmax_vs)):
-        raise ValueError(
-            f'viscosity_max_log10 ({params.viscosity_max_log10}) must be > '
-            f'log10(viscosity_solid) ({float(np.log10(float(viscosity_solid)))})'
-        )
-    invalid_inputs = invalid_inputs | bad_vmax_vs
     # Evaluates _boundary_weights(w_Ti, xp, fallback=W_conv_tilde) inside the core helper.
     return _compute_stagnant_lid_state_core(
         radii=radii,
@@ -581,10 +593,8 @@ def _compute_stagnant_lid_state_core(
 
     T_0 = T[1]
     P_0 = P[1]
-    r_0 = r[1]
     T_1 = xp.sum(W_Ti_tilde * T)
     P_1 = xp.sum(W_Ti_tilde * P)
-    r_1 = xp.sum(W_Ti_tilde * r)
     T_i = xp.sum(W_tilde * T)
     dT_ep = T_0 - T_1
     dT_ep_nz = xp.abs(dT_ep) > 1.0e-12
@@ -595,38 +605,19 @@ def _compute_stagnant_lid_state_core(
     )
     is_mono_T = xp.all(T[1:] < T[:-1] - 1.0e-12)
     T_rev = xp.where(is_mono_T, T[::-1], xp.linspace(0.0, 1.0, T.shape[0]))
-    P_geo_Ti = xp.interp(T_i, T_rev, P[::-1])
-    P_geo_T1 = xp.interp(T_1, T_rev, P[::-1])
-    P_geo_T0 = xp.interp(T_0, T_rev, P[::-1])
-    P_T_i = xp.where(
-        w_weight >= 1.0 - 1.0e-15,
-        xp.sum(W_tilde * P),
-        xp.where(
-            is_mono_T,
-            xp.clip(
-                P_geo_Ti + w_eff * (P_1 - P_geo_T1) + (1.0 - w_eff) * (P_0 - P_geo_T0),
-                xp.min(P),
-                xp.max(P),
-            ),
-            xp.sum(W_tilde * P),
-        ),
-    )
-    r_geo_Ti = xp.interp(T_i, T_rev, r[::-1])
-    r_geo_T1 = xp.interp(T_1, T_rev, r[::-1])
-    r_geo_T0 = xp.interp(T_0, T_rev, r[::-1])
-    r_i = xp.where(
-        w_weight >= 1.0 - 1.0e-15,
-        xp.sum(W_tilde * r),
-        xp.where(
-            is_mono_T,
-            xp.clip(
-                r_geo_Ti + w_eff * (r_1 - r_geo_T1) + (1.0 - w_eff) * (r_0 - r_geo_T0),
-                r[0],
-                r[-1],
-            ),
-            xp.sum(W_tilde * r),
-        ),
-    )
+    use_geo = is_mono_T & (w_weight < 1.0 - 1.0e-15)
+
+    def _geotherm_mean(q):
+        q_rev = q[::-1]
+        geo = (
+            xp.interp(T_i, T_rev, q_rev)
+            + w_eff * (xp.sum(W_Ti_tilde * q) - xp.interp(T_1, T_rev, q_rev))
+            + (1.0 - w_eff) * (q[1] - xp.interp(T_0, T_rev, q_rev))
+        )
+        return xp.where(use_geo, xp.clip(geo, xp.min(q), xp.max(q)), xp.sum(W_tilde * q))
+
+    P_T_i = _geotherm_mean(P)
+    r_i = _geotherm_mean(r)
 
     w_active = (
         0.5 * (1.0 + xp.tanh((f_int_max - params.interior_flux_fraction) / 0.01)) + zero_or_nan
@@ -647,10 +638,9 @@ def _compute_stagnant_lid_state_core(
     enthalpy_fn = (
         compute_arrhenius_enthalpy if _use_public_kernels else _compute_arrhenius_enthalpy_core
     )
-    H_0 = enthalpy_fn(
-        P_0,
+    enthalpy = partial(
+        enthalpy_fn,
         g_homologous=params.g_homologous,
-        solidus_temperature=T_sol_0_ep,
         t_sol_0=params.t_sol_0,
         dt_sol_dp=params.dt_sol_dp,
         r_gas=R_GAS,
@@ -659,18 +649,8 @@ def _compute_stagnant_lid_state_core(
         activation_volume=params.activation_volume,
         activation_volume_decay_pressure=params.activation_volume_decay_pressure,
     )
-    H_1 = enthalpy_fn(
-        P_1,
-        g_homologous=params.g_homologous,
-        solidus_temperature=T_sol_1_ep,
-        t_sol_0=params.t_sol_0,
-        dt_sol_dp=params.dt_sol_dp,
-        r_gas=R_GAS,
-        xp=xp,
-        activation_energy=params.activation_energy,
-        activation_volume=params.activation_volume,
-        activation_volume_decay_pressure=params.activation_volume_decay_pressure,
-    )
+    H_0 = enthalpy(P_0, solidus_temperature=T_sol_0_ep)
+    H_1 = enthalpy(P_1, solidus_temperature=T_sol_1_ep)
     T_0_safe = xp.maximum(T_0, 1.0)
     T_1_safe = xp.maximum(T_1, 1.0)
     dT_rh_0 = (R_GAS * T_0_safe**2) / xp.maximum(H_0, 1e-6)
@@ -784,8 +764,7 @@ def _compute_stagnant_lid_state_core(
     w_hot_iso_mask = 0.5 * (1.0 + xp.tanh((T - T_lid_iso) / scale_mask))
     if params.lid_base_mode == 'fixed':
         f_thresh = params.interior_flux_fraction
-        df_nonconv = max(0.2 * float(f_thresh), 1.0e-6)
-        w_nonconv = 1.0 - _melt_ramp(f, f_thresh, df_nonconv, xp, compact=True)
+        w_nonconv = 1.0 - _melt_ramp(f, f_thresh, 0.2 * f_thresh, xp, compact=True)
         w_hot_iso = 1.0 - (1.0 - w_hot_iso) * w_nonconv
         w_hot_iso_mask = 1.0 - (1.0 - w_hot_iso_mask) * w_nonconv
     w_sol_phi = _melt_ramp(

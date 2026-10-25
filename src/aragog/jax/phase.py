@@ -34,10 +34,11 @@ from aragog.config.phases import (
     _compute_stagnant_lid_state_core,
     _compute_yield_stress_core,
     _viscous_mixing_length_factor_core,
+    check_viscosity_ceiling,
 )
 from aragog.jax.eos import EntropyEOS_JAX
 from aragog.mesh import top_node_entropy
-from aragog.utilities import positive_gravity
+from aragog.utilities import positive_gravity, zero_anchored_weight
 
 # Enable float64
 jax.config.update('jax_enable_x64', True)
@@ -237,11 +238,10 @@ class PhaseParams(eqx.Module):
         else:
             rheo_obj = rheology
         rheo_obj.__post_init__()
+        check_viscosity_ceiling(viscosity_solid, rheo_obj)
         if rheo_obj.enabled:
             if not np.isfinite(viscosity_solid) or viscosity_solid <= 0.0:
                 raise ValueError('viscosity_solid must be finite and positive')
-            if float(np.log10(viscosity_solid)) >= float(rheo_obj.viscosity_max_log10):
-                raise ValueError('log10(viscosity_solid) must be < viscosity_max_log10')
             if not np.isfinite(phi_rheo) or not (0.0 <= float(phi_rheo) <= 1.0):
                 raise ValueError('phi_rheo must lie in [0, 1]')
             if not np.isfinite(phi_width) or float(phi_width) <= 0.0:
@@ -933,13 +933,8 @@ def compute_mlt(
     # dS/dr >= D keep their raw value.
     phi_basic = phase_basic.melt_fraction
     if params.rheology.enabled:
-        f0 = tanh_weight(0.0, params.phi_rheo, params.phi_width)
-        f1 = tanh_weight(1.0, params.phi_rheo, params.phi_width)
-        f_floor = jnp.clip(
-            (tanh_weight(phi_basic, params.phi_rheo, params.phi_width) - f0)
-            / jnp.maximum(f1 - f0, 1.0e-30),
-            0.0,
-            1.0,
+        f_floor = zero_anchored_weight(
+            tanh_weight, phi_basic, params.phi_rheo, params.phi_width, jnp
         )
     else:
         f_floor = tanh_weight(phi_basic, params.phi_rheo, params.phi_width)

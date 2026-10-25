@@ -38,6 +38,7 @@ from aragog.config.phases import (
     SEPARATION_BUOYANCY_DEFAULT,
     SEPARATION_VISCOSITY_DEFAULT,
     SolidRheologyParams,
+    check_viscosity_ceiling,
 )
 from aragog.eos.entropy import EntropyEOS
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
@@ -1943,8 +1944,7 @@ class EntropySolver:
         ph = self.state.phase_basic
         if not np.isfinite(ph._visc_solid) or ph._visc_solid <= 0.0:
             raise ValueError('viscosity_solid must be finite and positive')
-        if np.log10(ph._visc_solid) >= float(rheo.viscosity_max_log10):
-            raise ValueError('log10(viscosity_solid) must be < viscosity_max_log10')
+        check_viscosity_ceiling(ph._visc_solid, rheo)
         if not np.isfinite(ph._phi_rheo) or not (0.0 <= ph._phi_rheo <= 1.0):
             raise ValueError('rheological_transition_melt_fraction must lie in [0, 1]')
         if not np.isfinite(ph._phi_width) or ph._phi_width <= 0.0:

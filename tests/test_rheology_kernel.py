@@ -3083,12 +3083,46 @@ def test_cross_field_viscosity_max_and_boundary_checks(tmp_path):
 
     with pytest.raises(ValueError, match='viscosity_max_log10'):
         EntropyPhaseEvaluator(
-            pressure=np.array([1.0e9, 2.0e9]),
-            eos=None,
+            entropy_eos=None,
+            gravitational_acceleration=9.8,
             const_properties=True,
             viscosity_solid=1.0e22,
             rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
         )
+
+    from aragog.jax.phase import PhaseParams
+
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        PhaseParams(
+            phi_rheo=0.4,
+            phi_width=0.15,
+            viscosity_solid=1.0e22,
+            viscosity_liquid=1.0e2,
+            grain_size=1.0e-3,
+            k_solid=4.0,
+            k_liquid=4.0,
+            matprop_smooth_width=0.01,
+            conduction=True,
+            convection=True,
+            grav_sep=False,
+            mixing=False,
+            eddy_diff_thermal=1.0,
+            eddy_diff_chemical=1.0,
+            kappah_floor=0.0,
+            rheology=SolidRheologyParams(enabled=False, viscosity_max_log10=21.0),
+        )
+
+    for bad_visc in (jnp.asarray(1.0e22), 10**400):
+        with pytest.raises(ValueError):
+            PhaseConfig(
+                density=4000.0,
+                heat_capacity=1000.0,
+                melt_fraction=0.0,
+                thermal_conductivity=4.0,
+                thermal_expansivity=3.0e-5,
+                viscosity=bad_visc,
+                rheology=SolidRheologyParams(enabled=False, viscosity_max_log10=21.0),
+            )
 
     # 4. 1-D w_lid length mismatch in compute_effective_viscosity raises ValueError.
     with pytest.raises(ValueError, match='w_lid'):

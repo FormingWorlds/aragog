@@ -2508,6 +2508,7 @@ def test_rhs_parity_rheology_on_core_module_mode() -> None:
     rheo = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
     solver.parameters.phase_solid.rheology = rheo
     solver.state.phase_basic._rheology = rheo
+    solver._bl_phase._rheology = rheo
 
     args = _build_jax_pieces(solver)
 

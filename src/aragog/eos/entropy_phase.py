@@ -24,6 +24,7 @@ from aragog.config.phases import (
     SolidRheologyParams,
     _compute_arrhenius_viscosity_core,
     _compute_yield_stress_core,
+    check_viscosity_ceiling,
     merge_rheology,
 )
 from aragog.eos.entropy import EntropyEOS
@@ -157,6 +158,7 @@ class EntropyPhaseEvaluator:
         self._k_liquid = thermal_conductivity_liquid
         self._matprop_smooth_width = matprop_smooth_width
         self._rheology: SolidRheologyParams = merge_rheology(rheology, {})
+        check_viscosity_ceiling(self._visc_solid, self._rheology)
         self._defer_rheology_viscosity: bool = bool(defer_rheology_viscosity)
         self._rheology_viscosity_dirty: bool = False
         # Constant-properties mode (matches SPIDER -use_const_properties)

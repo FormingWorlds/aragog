@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import logging
-import math
 from typing import Any
 
 import attrs
-import numpy as np
 
 from aragog.rheology import (
     PRESSURE_ROUNDOFF_TOLERANCE as PRESSURE_ROUNDOFF_TOLERANCE,
@@ -35,6 +33,9 @@ from aragog.rheology import (
 )
 from aragog.rheology import (
     _viscous_mixing_length_factor_core as _viscous_mixing_length_factor_core,
+)
+from aragog.rheology import (
+    check_viscosity_ceiling as check_viscosity_ceiling,
 )
 from aragog.rheology import (
     delegate_rheology as delegate_rheology,
@@ -123,17 +124,7 @@ class PhaseConfig:
         self.viscosity = viscosity
         self.entropy = entropy
         self.rheology = merge_rheology(rheology, flat_rheo)
-        if (
-            isinstance(viscosity, (int, float, np.number))
-            and not isinstance(viscosity, (bool, np.bool_))
-            and math.isfinite(float(viscosity))
-            and float(viscosity) > 0.0
-            and self.rheology.viscosity_max_log10 <= math.log10(float(viscosity))
-        ):
-            raise ValueError(
-                f'viscosity_max_log10 ({self.rheology.viscosity_max_log10}) must be > '
-                f'log10(viscosity) ({math.log10(float(viscosity))})'
-            )
+        check_viscosity_ceiling(viscosity, self.rheology)
 
 
 @attrs.define

@@ -23,7 +23,7 @@ from aragog.config.phases import (
     _viscous_mixing_length_factor_core,
 )
 from aragog.eos.entropy_phase import EntropyPhaseEvaluator
-from aragog.utilities import FloatOrArray, tanh_weight
+from aragog.utilities import FloatOrArray, tanh_weight, zero_anchored_weight
 
 if TYPE_CHECKING:
     from aragog.solver.evaluator import Evaluator
@@ -717,14 +717,7 @@ class EntropyState:
                 phi_rheo = float(getattr(self.phase_basic, '_phi_rheo', 0.4))
                 phi_width = float(getattr(self.phase_basic, '_phi_width', 0.15))
                 if rheo_enabled:
-                    f0 = tanh_weight(0.0, phi_rheo, phi_width)
-                    f1 = tanh_weight(1.0, phi_rheo, phi_width)
-                    f_floor = np.clip(
-                        (tanh_weight(phi_basic, phi_rheo, phi_width) - f0)
-                        / np.maximum(f1 - f0, 1.0e-30),
-                        0.0,
-                        1.0,
-                    )
+                    f_floor = zero_anchored_weight(tanh_weight, phi_basic, phi_rheo, phi_width)
                 else:
                     f_floor = tanh_weight(phi_basic, phi_rheo, phi_width)
                 eddy = apply_kappah_floor(eddy, self._kappah_floor, f_floor, floor_mask)

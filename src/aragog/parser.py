@@ -36,7 +36,12 @@ from aragog.config.phases import (
     SEPARATION_VISCOSITY_DEFAULT,
     SEPARATION_VISCOSITY_MODES,
 )
-from aragog.rheology import SolidRheologyParams, delegate_rheology, merge_rheology
+from aragog.rheology import (
+    SolidRheologyParams,
+    check_viscosity_ceiling,
+    delegate_rheology,
+    merge_rheology,
+)
 
 logger: logging.Logger = logging.getLogger('fwl.' + __name__)
 
@@ -403,17 +408,7 @@ class _PhaseParameters:
         self.viscosity = viscosity
         self.entropy = entropy
         self.rheology = merge_rheology(rheology, kwargs)
-        if (
-            isinstance(viscosity, (int, float, np.number))
-            and not isinstance(viscosity, (bool, np.bool_))
-            and np.isfinite(float(viscosity))
-            and float(viscosity) > 0.0
-            and self.rheology.viscosity_max_log10 <= float(np.log10(float(viscosity)))
-        ):
-            raise ValueError(
-                f'viscosity_max_log10 ({self.rheology.viscosity_max_log10}) must be > '
-                f'log10(viscosity) ({float(np.log10(float(viscosity)))})'
-            )
+        check_viscosity_ceiling(viscosity, self.rheology)
 
 
 _PPM = 1e-6  # radionuclide concentration unit (ppm) as a mass fraction
@@ -590,6 +585,8 @@ class Parameters:
                 'Solid-state rheology is only supported on phase_solid; '
                 'phase_liquid.rheology must keep default values (enabled=False).'
             )
+        check_viscosity_ceiling(self.phase_solid.viscosity, self.phase_solid.rheology)
+        check_viscosity_ceiling(self.phase_liquid.viscosity, self.phase_liquid.rheology)
 
     @classmethod
     def from_file(cls, *filenames) -> Self:
