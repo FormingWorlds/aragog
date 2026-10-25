@@ -43,6 +43,9 @@ EXPECTED_FIELDS = {
     'mlt_bottom_slope',
     's_top_inf',
     'c_theta',
+    'activation_energy',
+    'activation_volume',
+    'activation_volume_decay_pressure',
 }
 
 

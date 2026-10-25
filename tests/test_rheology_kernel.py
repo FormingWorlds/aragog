@@ -2840,3 +2840,261 @@ def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
         except Exception as exc:
             err_ovf = exc
         assert isinstance(err_ovf, ValueError)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_wp4_item5_saturating_activation_enthalpy_and_viscosity():
+    """Verify saturating integral activation law H(P) = E_a + V_0 P_decay (1 - exp(-P/P_decay)), limits, validation, and solver wiring."""
+    import math
+
+    import jax
+    import jax.numpy as jnp
+
+    jax.config.update('jax_enable_x64', True)
+
+    # 1. Defaults preserve homologous law (activation_energy is None, activation_volume == 0.0, P_decay == +inf).
+    p_def = SolidRheologyParams()
+    assert p_def.activation_energy is None
+    assert p_def.activation_volume == 0.0
+    assert math.isinf(p_def.activation_volume_decay_pressure) and (
+        p_def.activation_volume_decay_pressure > 0.0
+    )
+
+    p_grid = np.array([0.0, 1.0e9, 25.0e9, 50.0e9, 100.0e9, 135.0e9, 500.0e9, 1000.0e9])
+    t_grid = np.linspace(1500.0, 2900.0, p_grid.size)
+    h_hom_np = compute_arrhenius_enthalpy(p_grid, xp=np)
+    h_none_np = compute_arrhenius_enthalpy(p_grid, activation_energy=None, xp=np)
+    np.testing.assert_array_equal(h_hom_np, h_none_np)
+    eta_hom_np = compute_arrhenius_viscosity(t_grid, p_grid, xp=np)
+    eta_none_np = compute_arrhenius_viscosity(t_grid, p_grid, activation_energy=None, xp=np)
+    np.testing.assert_array_equal(eta_hom_np, eta_none_np)
+
+    # 2. Cross-field and domain validation on SolidRheologyParams and compute_arrhenius_enthalpy.
+    for bad_kwargs, expected_substr in (
+        ({'activation_volume': 6.0e-6}, 'activation_energy'),
+        ({'activation_volume_decay_pressure': 200.0e9}, 'activation_energy'),
+        ({'enabled': True, 'activation_energy': 0.0}, 'activation_energy'),
+        ({'activation_energy': -1.0}, 'activation_energy'),
+        ({'activation_energy': math.inf}, 'activation_energy'),
+        ({'activation_energy': float('nan')}, 'activation_energy'),
+        ({'activation_energy': 300.0e3, 'activation_volume': -1.0e-6}, 'activation_volume'),
+        ({'activation_energy': 300.0e3, 'activation_volume': math.inf}, 'activation_volume'),
+        (
+            {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': 0.0},
+            'activation_volume_decay_pressure',
+        ),
+        (
+            {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': -10.0},
+            'activation_volume_decay_pressure',
+        ),
+        (
+            {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': -math.inf},
+            'activation_volume_decay_pressure',
+        ),
+        (
+            {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': float('nan')},
+            'activation_volume_decay_pressure',
+        ),
+    ):
+        err_srp = None
+        try:
+            SolidRheologyParams(**bad_kwargs)
+        except Exception as exc:
+            err_srp = exc
+        assert isinstance(err_srp, ValueError) and expected_substr in str(err_srp)
+
+    for bool_kwargs in (
+        {'activation_energy': True},
+        {'activation_energy': 300.0e3, 'activation_volume': True},
+        {'activation_energy': 300.0e3, 'activation_volume_decay_pressure': True},
+    ):
+        err_bool = None
+        try:
+            SolidRheologyParams(**bool_kwargs)
+        except Exception as exc:
+            err_bool = exc
+        assert isinstance(err_bool, (TypeError, ValueError))
+
+    for bad_call, expected_field in (
+        ({'pressure': 1.0e9, 'activation_energy': -10.0}, 'activation_energy'),
+        ({'pressure': 1.0e9, 'activation_energy': math.inf}, 'activation_energy'),
+        (
+            {'pressure': 1.0e9, 'activation_energy': 300.0e3, 'activation_volume': -1.0e-6},
+            'activation_volume',
+        ),
+        (
+            {
+                'pressure': 1.0e9,
+                'activation_energy': 300.0e3,
+                'activation_volume_decay_pressure': 0.0,
+            },
+            'activation_volume_decay_pressure',
+        ),
+        (
+            {
+                'pressure': 1.0e9,
+                'activation_energy': 300.0e3,
+                'activation_volume_decay_pressure': -1.0e9,
+            },
+            'activation_volume_decay_pressure',
+        ),
+        ({'pressure': 1.0e9, 'activation_volume': 6.0e-6}, 'activation_energy'),
+        (
+            {'pressure': 1.0e9, 'activation_volume_decay_pressure': 200.0e9},
+            'activation_energy',
+        ),
+    ):
+        err_fn = None
+        try:
+            compute_arrhenius_enthalpy(**bad_call, xp=np)
+        except Exception as exc:
+            err_fn = exc
+        assert isinstance(err_fn, ValueError) and expected_field in str(err_fn)
+
+    # 3. Isobaric limit (V_0 = 0, Korenaga 2009 Table 1 E_a = 300 kJ/mol): H(P) == E_a.
+    e_a = 300.0e3
+    h_iso_np = compute_arrhenius_enthalpy(
+        p_grid, activation_energy=e_a, activation_volume=0.0, xp=np
+    )
+    h_iso_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_grid), activation_energy=e_a, activation_volume=0.0, xp=jnp
+        )
+    )
+    np.testing.assert_allclose(h_iso_np, e_a, rtol=1.0e-15, atol=0.0)
+    np.testing.assert_allclose(h_iso_jx, e_a, rtol=1.0e-15, atol=0.0)
+
+    eta_iso_np = compute_arrhenius_viscosity(
+        t_grid,
+        p_grid,
+        viscosity_solid=1.0e21,
+        arrhenius_t_ref=1600.0,
+        activation_energy=e_a,
+        activation_volume=0.0,
+        viscosity_max_log10=60.0,
+        xp=np,
+    )
+    eta_iso_expected = 1.0e21 * np.exp((e_a / R_GAS) * (1.0 / t_grid - 1.0 / 1600.0))
+    np.testing.assert_allclose(eta_iso_np, eta_iso_expected, rtol=1.0e-13)
+
+    # 4. Linear activation-volume limit (P_decay = +inf, Karato & Wu 1993 E_a = 300 kJ/mol, V_0 = 6 cm^3/mol)
+    # and Taylor expansion accuracy for small x = P / P_decay < 1e-8.
+    v_0 = 6.0e-6
+    h_lin_np = compute_arrhenius_enthalpy(
+        p_grid,
+        activation_energy=e_a,
+        activation_volume=v_0,
+        activation_volume_decay_pressure=math.inf,
+        xp=np,
+    )
+    h_lin_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_grid),
+            activation_energy=e_a,
+            activation_volume=v_0,
+            activation_volume_decay_pressure=math.inf,
+            xp=jnp,
+        )
+    )
+    h_lin_expected = e_a + v_0 * p_grid
+    np.testing.assert_allclose(h_lin_np, h_lin_expected, rtol=1.0e-15)
+    np.testing.assert_allclose(h_lin_jx, h_lin_expected, rtol=1.0e-15)
+
+    p_test = 10.0e9
+    p_decay_huge = 1.0e20  # x = 1e-10 < 1e-8 enters Taylor branch
+    h_taylor = float(
+        compute_arrhenius_enthalpy(
+            p_test,
+            activation_energy=e_a,
+            activation_volume=v_0,
+            activation_volume_decay_pressure=p_decay_huge,
+            xp=np,
+        )
+    )
+    expected_taylor = e_a + v_0 * p_test * (1.0 - 0.5 * (p_test / p_decay_huge))
+    assert h_taylor == pytest.approx(expected_taylor, rel=1.0e-15)
+
+    # 5. Saturating integral law vs. Tackley et al. (2013) secant law:
+    # Integral law is strictly increasing and concave for all P > 0 and approaches E_a + V_0 P_decay.
+    e_pv = 370.0e3
+    v_pv = 3.65e-6
+    p_dec = 200.0e9
+    h_sat_np = compute_arrhenius_enthalpy(
+        p_grid,
+        activation_energy=e_pv,
+        activation_volume=v_pv,
+        activation_volume_decay_pressure=p_dec,
+        xp=np,
+    )
+    h_sat_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_grid),
+            activation_energy=e_pv,
+            activation_volume=v_pv,
+            activation_volume_decay_pressure=p_dec,
+            xp=jnp,
+        )
+    )
+    h_sat_expected = e_pv - v_pv * p_dec * np.expm1(-p_grid / p_dec)
+    np.testing.assert_allclose(h_sat_np, h_sat_expected, rtol=1.0e-15)
+    np.testing.assert_allclose(h_sat_jx, h_sat_expected, rtol=1.0e-15)
+    assert np.all(np.diff(h_sat_np) > 0.0)
+    h_asymptote = e_pv + v_pv * p_dec
+    assert np.all(h_sat_np < h_asymptote)
+    # At P = 200 GPa (x = 1): integral form gives 831.519 kJ/mol whereas secant form gives 638.550 kJ/mol.
+    assert h_sat_np[5] == pytest.approx(
+        e_pv + v_pv * p_dec * (1.0 - np.exp(-135.0 / 200.0)), rel=1.0e-15
+    )
+
+    # 6. Propagation through compute_stagnant_lid_state in NumPy and JAX.
+    n = 20
+    r = np.linspace(3.48e6, 6.371e6, n)
+    p_prof = np.linspace(135.0e9, 1.0e5, n)
+    t_prof = np.full(n, 1600.0)
+    t_prof[-4:] = np.linspace(1600.0, 300.0, 4)
+    fc = np.full(n, 0.08)
+    fc[-4:] = 0.0
+    ft = np.full(n, 0.10)
+    phi = np.zeros(n)
+    params_sat = SolidRheologyParams(
+        enabled=True,
+        activation_energy=e_pv,
+        activation_volume=v_pv,
+        activation_volume_decay_pressure=p_dec,
+        arrhenius_t_ref=1600.0,
+    )
+    st_sat_np = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t_prof,
+        pressure=p_prof,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=phi,
+        params=params_sat,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    st_sat_jx = compute_stagnant_lid_state(
+        radii=jnp.asarray(r),
+        temperature=jnp.asarray(t_prof),
+        pressure=jnp.asarray(p_prof),
+        convective_flux=jnp.asarray(fc),
+        total_flux=jnp.asarray(ft),
+        solidus_temperature=None,
+        melt_fraction=jnp.asarray(phi),
+        params=params_sat,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=jnp,
+    )
+    p_ti = float(st_sat_np['P_T_i'])
+    h_ti_expected = e_pv - v_pv * p_dec * math.expm1(-p_ti / p_dec)
+    theta_expected = (h_ti_expected * (1600.0 - 300.0)) / (R_GAS * 1600.0**2)
+    assert float(st_sat_np['theta']) == pytest.approx(theta_expected, rel=1.0e-12)
+    assert float(st_sat_jx['theta']) == pytest.approx(float(st_sat_np['theta']), rel=1.0e-13)
+    assert float(st_sat_jx['eta_i']) == pytest.approx(float(st_sat_np['eta_i']), rel=1.0e-13)

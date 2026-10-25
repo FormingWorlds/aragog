@@ -1806,3 +1806,56 @@ def test_hypothesis_wp4_viscosity_max_cross_field_and_fixed_lid_convecting_gate(
         xp=np,
     )
     assert np.all(np.asarray(st['w_lid'])[:-4] == 0.0)
+
+
+@pytest.mark.unit
+@settings(max_examples=40, deadline=None)
+@given(
+    e_a=st.floats(min_value=50.0e3, max_value=1000.0e3, allow_nan=False, allow_infinity=False),
+    v_0=st.floats(min_value=0.0, max_value=30.0e-6, allow_nan=False, allow_infinity=False),
+    p_decay=st.floats(
+        min_value=1.0e6, max_value=5000.0e9, allow_nan=False, allow_infinity=False
+    ),
+    p_hi=st.floats(min_value=1.0e7, max_value=1000.0e9, allow_nan=False, allow_infinity=False),
+)
+def test_hypothesis_wp4_item5_saturating_activation_law(
+    e_a: float, v_0: float, p_decay: float, p_hi: float
+) -> None:
+    """Property test for saturating integral activation enthalpy bounds, monotonicity, concavity, and JAX parity."""
+    import jax
+    import jax.numpy as jnp
+
+    jax.config.update('jax_enable_x64', True)
+    from aragog.rheology import compute_arrhenius_enthalpy
+
+    p_mid = 0.5 * p_hi
+    p_arr = np.array([0.0, p_mid, p_hi], dtype=float)
+    h_np = np.asarray(
+        compute_arrhenius_enthalpy(
+            p_arr,
+            activation_energy=e_a,
+            activation_volume=v_0,
+            activation_volume_decay_pressure=p_decay,
+            xp=np,
+        ),
+        dtype=float,
+    )
+    h_jx = np.asarray(
+        compute_arrhenius_enthalpy(
+            jnp.asarray(p_arr),
+            activation_energy=e_a,
+            activation_volume=v_0,
+            activation_volume_decay_pressure=p_decay,
+            xp=jnp,
+        ),
+        dtype=float,
+    )
+    np.testing.assert_allclose(h_np, h_jx, rtol=1.0e-14, atol=0.0)
+    # Exact zero-pressure anchor, non-decreasing monotonicity, concavity, and upper envelope bound:
+    assert h_np[0] == pytest.approx(e_a, rel=1.0e-15, abs=0.0)
+    assert h_np[0] <= h_np[1] * (1.0 + 1.0e-15)
+    assert h_np[1] <= h_np[2] * (1.0 + 1.0e-15)
+    # Concavity: midpoint enthalpy >= chord average 0.5 * (H(0) + H(p_hi))
+    assert h_np[1] + 1.0e-9 >= 0.5 * (h_np[0] + h_np[2])
+    upper_bound = e_a + v_0 * min(p_hi, p_decay)
+    assert h_np[2] <= upper_bound * (1.0 + 1.0e-14)

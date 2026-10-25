@@ -1876,3 +1876,35 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
         assert isinstance(err_raw, RuntimeError) and 'd_lid_raw' in str(err_raw)
     solver_mid.state._lid_state['d_lid_raw'] = d_lid_raw_orig
     solver_mid._check_rheology_invariants()
+
+    # 4. Saturating activation law propagates identically through NumPy EntropyState and JAX compute_fluxes.
+    rheo_sat = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        activation_energy=370.0e3,
+        activation_volume=3.65e-6,
+        activation_volume_decay_pressure=200.0e9,
+        arrhenius_t_ref=1600.0,
+    )
+    solver_sat = _make_solver(_make_abe_solid_params(rheo_sat, number_of_nodes=20))
+    rhs_sat_np = solver_sat.dSdt(0.0, s_prof)
+    flux_sat_np = solver_sat.state.heat_flux.copy()
+    mesh_sat, eos_sat, p_jax_sat, _ = _build_jax_bundle(solver_sat)
+    fl_sat_jx = compute_fluxes(
+        jnp.asarray(s_prof),
+        0.0,
+        eos_sat,
+        p_jax_sat,
+        mesh_sat,
+        jnp.zeros(solver_sat._n_stag, dtype=jnp.float64),
+    )
+    flux_sat_jx = np.asarray(fl_sat_jx.heat_flux, dtype=float)
+    denom_sat = max(float(np.max(np.abs(flux_sat_np[1:-1]))), 1.0e-30)
+    assert float(np.max(np.abs(flux_sat_np[1:-1] - flux_sat_jx[1:-1]))) / denom_sat <= 1.0e-6
+    # Verify saturating law produces a distinct RHS from the default homologous law:
+    rhs_base_np = solver_base.dSdt(0.0, s_prof)
+    assert (
+        float(np.max(np.abs(rhs_sat_np - rhs_base_np)))
+        / max(float(np.max(np.abs(rhs_sat_np))), 1.0e-30)
+        > 1.0e-3
+    )
