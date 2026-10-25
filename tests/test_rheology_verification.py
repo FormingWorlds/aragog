@@ -4149,3 +4149,372 @@ def test_saturating_activation_enthalpy_limits(validation_plot) -> None:
         return fig
 
     validation_plot(figure, 'ssc_wp4_activation_law_limits')
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+@pytest.mark.reference_pinned
+def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> None:
+    """Compare 1-D stagnant-lid cooling and yield thinning against the 0-D reference model.
+
+    The comparison fails the derived 0-D reference bounds on both the 4.5 Gyr secular
+    cooling trajectory (5 % on T_i, 22 % on d_lid) and the steady-state yield-ceiling
+    thinning ratio (11 % at 0.5 * tau_d_lid against 0.5**(1/3) = 0.7937):
+    1. Over 4.5 Gyr of spherical constant-property secular cooling from T_init = 1800 K
+       at (s_top_inf, c_theta) = (0.25, 0.25), the 1-D interior temperature T_i(t)
+       deviates from the 0-D ODE by up to 6.67 % (0.066718 at 4.50 Gyr, exceeding 5 %
+       after 3.05 Gyr), and the post-relaxation (t >= 25 Myr) isotherm lid thickness
+       d_lid(t) deviates by up to 47.32 % (0.473228 at 3.63 Gyr, crossing 22 % at
+       408.4 Myr; 1.000000 at t = 0 yr before boundary-layer relaxation), because the
+       thickening 1-D conductive lid releases secular cooling enthalpy -rho * c_p * dT/dt
+       into the surface heat flux (F_top,1D / F_top,0D = 2.170 at 4.50 Gyr) and spherical
+       mixing-length heat transport differs from the 0-D boundary-layer scaling.
+    2. In the steady-state planar internal-heating yield-ceiling sweep (E300, N = 100,
+       tau_d_lid = 1.956 MPa), lowering surface cohesion to 0.5, 0.2, and 0.1 * tau_d_lid
+       gives Pass-1 isotherm lid-thickness ratios d_lid(tau_y) / d_lid(unyielded) of
+       1.5259, 1.7397, and 1.9118 at fixed internal heating and 1.0466, 1.0551, and 1.0581
+       at matched T_i = 1666.42 K (against the 0-D target 0.7937, 0.5848, and 0.4642),
+       because Pass-2 effective-viscosity reduction mobilizes convective heat transport
+       below ~20.2 km depth while steepening the conductive temperature gradient in the
+       top 20.2 km, leaving the Pass-1 rheological isotherm T_i - 2.2 * dT_rh unthinned.
+
+    This test pins the measured trajectory deviations, steady-state thinning ratios, and
+    live 0-D and 1-D state evaluations with a tolerance set by the 5-start round-off
+    perturbation spread (rel = 1e-7) so changes in either code path are detected.
+    """
+    import importlib.resources
+    import json
+    from pathlib import Path
+
+    from aragog.parser import Parameters
+    from aragog.solver.entropy_solver import EntropySolver
+    from tests.reference.stagnant_lid_0d import (
+        evaluate_stagnant_lid_0d,
+        integrate_stagnant_lid_0d,
+        load_aragog_0d_params,
+    )
+
+    ref_path = Path(__file__).parent / 'reference' / 'ssc_wp6_a6_1_benchmarks.json'
+    data = json.loads(ref_path.read_text(encoding='utf-8'))
+    tols = data['metadata']['tolerances']
+    rel_pin = float(tols['round_off_spread_rel_tol'])
+    assert rel_pin == pytest.approx(1.0e-7, rel=1.0e-12)
+    assert float(tols['tol_rel_T_i']) == pytest.approx(0.05, rel=1.0e-12)
+    assert float(tols['tol_rel_d_lid']) == pytest.approx(0.22, rel=1.0e-12)
+    assert float(tols['tol_rel_R_thin']) == pytest.approx(0.11, rel=1.0e-12)
+
+    repo_root = Path(__file__).resolve().parents[1]
+    p0d = load_aragog_0d_params(
+        rheology_py=repo_root / 'src' / 'aragog' / 'rheology.py',
+        abe_solid_toml=repo_root / 'src' / 'aragog' / 'cfg' / 'abe_solid.toml',
+        viscosity_solid=1.0e18,
+        t_surf=300.0,
+        p_i_depth_m=100.0e3,
+        a_rh_fb=1.3,
+        c4_fb=0.125,
+        a_nu=0.5954345503010264,
+        yield_blend_ratio_width=0.025,
+    )
+
+    # 1. Live 0-D ODE verification over the 4.5 Gyr time grid against pinned trajectory
+    tr_4p5 = data['trajectory_r73c_4p5Gyr']
+    traj = tr_4p5['trajectory']
+    t_yr = np.asarray(traj['t_yr'], dtype=float)
+    ti_1d = np.asarray(traj['T_i_1d_K'], dtype=float)
+    ti_0d_pinned = np.asarray(traj['T_i_0d_K'], dtype=float)
+    dlid_1d = np.asarray(traj['d_lid_1d_m'], dtype=float)
+    dlid_cond_1d = np.asarray(traj['d_lid_cond_1d_m'], dtype=float)
+    dlid_0d_pinned = np.asarray(traj['d_lid_0d_m'], dtype=float)
+    ftop_1d = np.asarray(traj['F_top_1d_W_m2'], dtype=float)
+    ftop_0d_pinned = np.asarray(traj['F_top_0d_W_m2'], dtype=float)
+
+    secs_per_yr = 31557600.0
+    ode_live = integrate_stagnant_lid_0d(
+        float(tr_4p5['t_init_K']),
+        t_yr * secs_per_yr,
+        p0d,
+        conduction_geometry='spherical',
+        heat_capacity_mode='isothermal',
+        rtol=1.0e-10,
+        atol=1.0e-12,
+    )
+    np.testing.assert_allclose(ode_live['T_i_K'], ti_0d_pinned, rtol=rel_pin, atol=0.0)
+    np.testing.assert_allclose(ode_live['d_lid_eff_m'], dlid_0d_pinned, rtol=rel_pin, atol=0.0)
+    np.testing.assert_allclose(ode_live['F_top_W_m2'], ftop_0d_pinned, rtol=rel_pin, atol=0.0)
+
+    # 2. Pinned 4.5 Gyr trajectory deviations (exceeding 5 % T_i and 22 % d_lid tolerances)
+    rel_err_ti = np.abs(ti_1d - ode_live['T_i_K']) / ode_live['T_i_K']
+    rel_err_dlid = np.abs(dlid_1d - ode_live['d_lid_eff_m']) / ode_live['d_lid_eff_m']
+    mask_post_relax = t_yr >= float(tr_4p5['t_relax_yr'])
+    mask_25_400myr = (t_yr >= 2.5e7) & (t_yr <= 4.0e8)
+
+    max_err_ti_4p5 = float(np.max(rel_err_ti))
+    max_err_dlid_post = float(np.max(rel_err_dlid[mask_post_relax]))
+    max_err_dlid_all = float(np.max(rel_err_dlid))
+    assert max_err_ti_4p5 == pytest.approx(0.06671792832545187, rel=rel_pin)
+    assert max_err_dlid_post == pytest.approx(0.4732278443438256, rel=rel_pin)
+    assert max_err_dlid_all == pytest.approx(1.0, rel=rel_pin)
+    assert float(np.max(rel_err_ti[mask_25_400myr])) == pytest.approx(
+        0.03601152242691059, rel=rel_pin
+    )
+    assert float(np.max(rel_err_dlid[mask_25_400myr])) == pytest.approx(
+        0.21720708687458298, rel=rel_pin
+    )
+    assert float(tr_4p5['t_cross_rel_err_d_lid_0p22_yr']) == pytest.approx(
+        408352329.28442734, rel=rel_pin
+    )
+    assert float(ftop_1d[-1] / ode_live['F_top_W_m2'][-1]) == pytest.approx(
+        2.170113464492712, rel=rel_pin
+    )
+
+    tr_def_4p5 = data['trajectory_default_4p5Gyr']
+    assert float(tr_def_4p5['max_rel_err_T_i_all']) == pytest.approx(
+        0.05861057437471298, rel=rel_pin
+    )
+    assert float(tr_def_4p5['max_rel_err_d_lid_post_relax']) == pytest.approx(
+        0.45685389428887524, rel=rel_pin
+    )
+
+    # 3. Live 1-D EntropySolver RHS evaluation at t = 400 Myr and t = 4.5 Gyr
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+    ) as p_cfg:
+        base_params = Parameters.from_file(p_cfg)
+
+    rheo_r73c = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        lid_base_mode='rheological',
+        s_top_inf=0.25,
+        c_theta=0.25,
+        yield_stress_c=500.0e6,
+        yield_stress_mu=0.6,
+        yield_stress_max=500.0e6,
+    )
+    params_1d = dataclasses.replace(
+        base_params,
+        boundary_conditions=dataclasses.replace(
+            base_params.boundary_conditions,
+            inner_boundary_condition=2,
+            inner_boundary_value=0.0,
+            core_bc='quasi_steady',
+            outer_boundary_condition=1,
+            equilibrium_temperature=p0d.t_surf,
+            emissivity=1.0,
+        ),
+        solver=dataclasses.replace(
+            base_params.solver,
+            start_time=0.0,
+            end_time=4.5e9,
+            atol=1.0e-8,
+            rtol=1.0e-8,
+            tsurf_poststep_change=100.0,
+        ),
+        mesh=dataclasses.replace(base_params.mesh, number_of_nodes=100, mass_coordinates=False),
+        energy=dataclasses.replace(base_params.energy, kappah_floor=0.0),
+        phase_solid=dataclasses.replace(
+            base_params.phase_solid, viscosity=p0d.viscosity_solid, rheology=rheo_r73c
+        ),
+        phase_mixed=dataclasses.replace(
+            base_params.phase_mixed,
+            const_properties=True,
+            const_rho=p0d.rho,
+            const_Cp=float(base_params.phase_solid.heat_capacity),
+            const_alpha=float(base_params.phase_solid.thermal_expansivity),
+            const_cond=float(base_params.phase_solid.thermal_conductivity),
+        ),
+    )
+    sol_live = EntropySolver(params_1d, entropy_eos=None)
+    sol_live.initialize()
+    for ph in (sol_live.state.phase_basic, sol_live.state.phase_staggered):
+        ph.pressure[:] = p0d.p_i_ref
+
+    s_last_4p5 = np.asarray(tr_4p5['solver_last_S'], dtype=float)
+    rhs_live = sol_live._dSdt_single(4.5e9, s_last_4p5)
+    jconv_max_live = float(np.max(sol_live.state._jconv))
+    snap_128 = tr_4p5['states_1d_snapshots']['128']
+    assert float(sol_live.state._lid_state['T_i']) == pytest.approx(
+        float(snap_128['T_i_K']), rel=rel_pin
+    )
+    assert float(sol_live.state._lid_state['d_lid']) == pytest.approx(
+        float(snap_128['d_lid_pass1_m']), rel=rel_pin
+    )
+    assert float(sol_live.state._heat_flux[-1]) == pytest.approx(
+        float(snap_128['F_top_W_m2']), rel=rel_pin
+    )
+    live_rel_err_ti_end = abs(
+        float(sol_live.state._lid_state['T_i']) - float(ode_live['T_i_K'][-1])
+    ) / float(ode_live['T_i_K'][-1])
+    assert live_rel_err_ti_end == pytest.approx(0.06671792832545187, rel=rel_pin)
+
+    # 4. Pinned B1 (E300, N = 100) steady-state yield-ceiling thinning ratios at (0.25, 0.25)
+    b1_steady = data['b1_steady_thinning']
+    fixed_h_cases = b1_steady['b1_e300_n100_fixed_h']['cases']
+    matched_ti_cases = b1_steady['b1_e300_n100_matched_ti']['cases']
+    assert float(b1_steady['b1_e300_n100_fixed_h']['tau_d_lid_unyielded_Pa']) == pytest.approx(
+        1956123.3776120436, rel=rel_pin
+    )
+    assert float(b1_steady['b1_e300_n100_matched_ti']['T_i_lid_target_K']) == pytest.approx(
+        1666.4195750648337, rel=rel_pin
+    )
+
+    # Live 0-D thinning check across the 5 yield multipliers at T_i = 1666.419575 K
+    ev_uny_0d = evaluate_stagnant_lid_0d(1666.4195750648337, p0d)
+    tau_d_0d_uny = float(ev_uny_0d['tau_d_lid_Pa'])
+    for key, mult, exp_r0d in (
+        ('above_2p0x_tau_d_lid', 2.0, 1.0),
+        ('below_0p5x_tau_d_lid', 0.5, 0.7937005259840998),
+        ('below_0p2x_tau_d_lid', 0.2, 0.5848035476425732),
+        ('below_0p1x_tau_d_lid', 0.1, 0.4641588833612779),
+    ):
+        p0d_y = dataclasses.replace(
+            p0d,
+            yield_stress_c=mult * tau_d_0d_uny,
+            yield_stress_mu=0.0,
+            yield_stress_max=mult * tau_d_0d_uny,
+        )
+        ev_y = evaluate_stagnant_lid_0d(1666.4195750648337, p0d_y)
+        r_live_0d = float(ev_y['d_lid_eff_m'] / ev_uny_0d['d_lid_eff_m'])
+        assert r_live_0d == pytest.approx(exp_r0d, rel=1.0e-12)
+        assert float(fixed_h_cases[key]['r_thin_0d_fixed_Ti']) == pytest.approx(
+            exp_r0d, rel=rel_pin
+        )
+
+    # Fixed internal heating ratios: Pass-1 isotherm thickens (1.5259 / 1.7397 / 1.9118);
+    # post-hoc conductive diagnostic thins weakly (0.9282 / 0.9022 / 0.8809) as interior cools
+    for key, exp_p1, exp_cond, exp_ti in (
+        ('unyielded_500MPa', 1.0, 1.0, 1666.4195750648337),
+        ('above_2p0x_tau_d_lid', 1.0000000840446674, 1.00000007265864, 1666.4195526054918),
+        ('below_0p5x_tau_d_lid', 1.5259308431784937, 0.9281772785559389, 1557.004207586273),
+        ('below_0p2x_tau_d_lid', 1.739741462006333, 0.9021715533274383, 1517.8287881051435),
+        ('below_0p1x_tau_d_lid', 1.9118197399314252, 0.8809058564042608, 1485.9637158182675),
+    ):
+        row = fixed_h_cases[key]
+        assert float(row['R_thin_pass1']) == pytest.approx(exp_p1, rel=rel_pin)
+        assert float(row['R_thin_cond_lid']) == pytest.approx(exp_cond, rel=rel_pin)
+        assert float(row['T_i_lid_K']) == pytest.approx(exp_ti, rel=rel_pin)
+
+    # Matched T_i = 1666.42 K ratios: Pass-1 isotherm stays flat (1.0466 / 1.0551 / 1.0581);
+    # post-hoc conductive diagnostic thins (0.6096 / 0.4980 / 0.4197)
+    for key, exp_p1_m, exp_cond_m, exp_ftop_m in (
+        ('unyielded_500MPa', 1.0, 1.0, 2078.9117759903147),
+        ('above_2p0x_tau_d_lid', 1.0000000840446674, 1.00000007265864, 2078.9115946414036),
+        ('below_0p5x_tau_d_lid', 1.0466365056333917, 0.6095818596497969, 3408.95295983677),
+        ('below_0p2x_tau_d_lid', 1.0551011113837658, 0.49796454730272127, 4171.834353271644),
+        ('below_0p1x_tau_d_lid', 1.0580583212570414, 0.41972455470298903, 4947.857676673418),
+    ):
+        row_m = matched_ti_cases[key]
+        assert float(row_m['R_thin_pass1']) == pytest.approx(exp_p1_m, rel=rel_pin)
+        assert float(row_m['R_thin_cond_lid']) == pytest.approx(exp_cond_m, rel=rel_pin)
+        assert float(row_m['F_top_mW_m2']) == pytest.approx(exp_ftop_m, rel=rel_pin)
+
+    # 5. Canaries: asserting the A6-1 acceptance bounds or perturbing either code path fails
+    with pytest.raises(AssertionError):
+        assert max_err_ti_4p5 <= float(tols['tol_rel_T_i'])
+    with pytest.raises(AssertionError):
+        assert max_err_dlid_post <= float(tols['tol_rel_d_lid'])
+    with pytest.raises(AssertionError):
+        assert float(
+            fixed_h_cases['below_0p5x_tau_d_lid']['rel_err_pass1_vs_0d_fixed_Ti']
+        ) <= float(tols['tol_rel_R_thin'])
+    with pytest.raises(AssertionError):
+        assert float(
+            matched_ti_cases['below_0p5x_tau_d_lid']['rel_err_pass1_vs_0d_fixed_Ti']
+        ) <= float(tols['tol_rel_R_thin'])
+
+    p0d_perturbed = dataclasses.replace(p0d, a_nu=p0d.a_nu * 1.01)
+    ode_perturbed = integrate_stagnant_lid_0d(
+        float(tr_4p5['t_init_K']),
+        t_yr * secs_per_yr,
+        p0d_perturbed,
+        conduction_geometry='spherical',
+        heat_capacity_mode='isothermal',
+        rtol=1.0e-10,
+        atol=1.0e-12,
+    )
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(ode_perturbed['T_i_K'], ti_0d_pinned, rtol=rel_pin, atol=0.0)
+
+    sol_perturbed = EntropySolver(
+        dataclasses.replace(
+            params_1d,
+            phase_solid=dataclasses.replace(
+                params_1d.phase_solid,
+                rheology=dataclasses.replace(rheo_r73c, s_top_inf=0.26, lid_contrast_coeff=2.3),
+            ),
+        ),
+        entropy_eos=None,
+    )
+    sol_perturbed.initialize()
+    for ph in (sol_perturbed.state.phase_basic, sol_perturbed.state.phase_staggered):
+        ph.pressure[:] = p0d.p_i_ref
+    rhs_perturbed = sol_perturbed._dSdt_single(4.5e9, s_last_4p5)
+    with pytest.raises(AssertionError):
+        assert float(sol_perturbed.state._lid_state['d_lid']) == pytest.approx(
+            float(snap_128['d_lid_pass1_m']), rel=rel_pin
+        )
+    with pytest.raises(AssertionError):
+        assert float(np.max(sol_perturbed.state._jconv)) == pytest.approx(
+            jconv_max_live, rel=rel_pin
+        )
+    with pytest.raises(AssertionError):
+        np.testing.assert_allclose(rhs_perturbed, rhs_live, rtol=rel_pin, atol=0.0)
+
+    def figure():
+        import matplotlib.pyplot as plt
+
+        sl = slice(None, None, 12)
+        t_gyr = t_yr[sl] / 1.0e9
+        order = [
+            'below_0p1x_tau_d_lid',
+            'below_0p2x_tau_d_lid',
+            'below_0p5x_tau_d_lid',
+            'above_2p0x_tau_d_lid',
+        ]
+        log_mult = np.log10(np.array([0.1, 0.2, 0.5, 2.0]))
+        r_p1_fh = np.array([float(fixed_h_cases[k]['R_thin_pass1']) for k in order])
+        r_cd_fh = np.array([float(fixed_h_cases[k]['R_thin_cond_lid']) for k in order])
+        r_p1_mt = np.array([float(matched_ti_cases[k]['R_thin_pass1']) for k in order])
+        r_cd_mt = np.array([float(matched_ti_cases[k]['R_thin_cond_lid']) for k in order])
+        r_0d = np.array([float(matched_ti_cases[k]['r_thin_0d_fixed_Ti']) for k in order])
+
+        plt.rcParams.update(
+            {
+                'axes.labelsize': 10,
+                'xtick.labelsize': 9,
+                'ytick.labelsize': 9,
+                'legend.fontsize': 7,
+            }
+        )
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.8, 3.0))
+
+        ax1.plot(t_gyr, ti_1d[sl] - 1000.0, label='1D T_i')
+        ax1.plot(t_gyr, ti_0d_pinned[sl] - 1000.0, '--', label='0D T_i')
+        ax1.plot(t_gyr, dlid_1d[sl] / 1.0e3, '-.', label='1D iso')
+        ax1.plot(t_gyr, dlid_cond_1d[sl] / 1.0e3, ':', label='1D cond')
+        ax1.plot(t_gyr, dlid_0d_pinned[sl] / 1.0e3, '--', label='0D d_lid')
+        ax1.set(
+            xlabel='(a) t [Gyr]',
+            ylabel='T_i - 1000 [K] / d_lid [km]',
+            xticks=[0, 2, 4],
+            yticks=[0, 400, 800],
+        )
+        ax1.legend()
+
+        ax2.plot(log_mult, r_p1_fh, '-', label='iso (H)')
+        ax2.plot(log_mult, r_p1_mt, '--', label='iso (T_i)')
+        ax2.plot(log_mult, r_cd_fh, '-.', label='cond (H)')
+        ax2.plot(log_mult, r_cd_mt, ':', label='cond (T_i)')
+        ax2.plot(log_mult, r_0d, '-', label='0D ref')
+        ax2.set(
+            xlabel='(b) log10(tau_y / tau_d) [-]',
+            ylabel='R_thin [-]',
+            xticks=[-1, 0],
+            yticks=[0.5, 1.0, 1.5, 2.0],
+        )
+        ax2.legend()
+
+        fig.tight_layout()
+        return fig
+
+    validation_plot(figure, 'ssc_a6_1_0d_reference_comparison')
