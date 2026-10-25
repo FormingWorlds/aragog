@@ -20,7 +20,7 @@ from aragog.rheology import (
     merge_rheology,
 )
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.timeout(30)]
 
 EXPECTED_FIELDS = {
     'enabled',
