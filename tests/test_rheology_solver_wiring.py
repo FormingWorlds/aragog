@@ -60,15 +60,8 @@ pytestmark = pytest.mark.unit
 @functools.cache
 def _resolve_eos_dir() -> Path:
     """Resolve SPIDER P-S table directory or generate a synthetic fallback."""
-    candidates = [
-        EOS_DIR,
-        Path('/Users/timlichtenberg/work/ssc-verify-task6/test-data/spider_eos'),
-        Path('/Users/timlichtenberg/work/aragog-test-data-dev3set/spider_eos'),
-        Path('/Users/timlichtenberg/work/fwl_data-dev-5/aragog/spider_eos'),
-    ]
-    for cand in candidates:
-        if cand.is_dir():
-            return cand
+    if EOS_DIR.is_dir():
+        return EOS_DIR
 
     tmp_dir = Path(tempfile.mkdtemp(prefix='aragog_rheo_eos_'))
     p_grid = np.linspace(0.0, 150.0e9, 16)
@@ -846,6 +839,10 @@ def test_signed_negative_gravity_rheology_boundary_parity_numpy_and_jax() -> Non
     assert float(lid_np_neg['Ra_eff']) > 0.0
     assert float(lid_np_neg['tau_d']) > 0.0
     assert float(lid_np_neg['v_m']) > 0.0
+    assert (
+        int(np.sum(solver_neg.state._eta_eff_basic != solver_neg.state.phase_basic.eta_diff()))
+        >= 8
+    )
     for key in ('Ra_eff', 'Ra_rh', 'v_m', 'tau_d', 'tau_d_lid', 'tau_buoy', 'theta', 'd_lid'):
         np.testing.assert_allclose(
             np.asarray(lid_np_neg[key], dtype=float),
