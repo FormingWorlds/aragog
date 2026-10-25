@@ -49,6 +49,7 @@ POSITIVE_FIELDS: tuple[str, ...] = (
     'lid_base_temperature',
     'lid_contrast_coeff',
     'lid_mask_width_cells',
+    'activation_volume_decay_pressure',
 )
 
 NON_NEGATIVE_FIELDS: tuple[str, ...] = (
@@ -57,6 +58,7 @@ NON_NEGATIVE_FIELDS: tuple[str, ...] = (
     'dt_sol_dp',
     'yield_stress_c',
     'yield_stress_mu',
+    'activation_volume',
 )
 
 UNIT_HALF_OPEN_FIELDS: tuple[str, ...] = (
@@ -174,6 +176,9 @@ def valid_rheology_dict_strategy(draw: st.DrawFn) -> dict[str, Any]:
         'c_theta': draw(
             st.floats(min_value=0.0, max_value=100.0, allow_nan=False, allow_infinity=False)
         ),
+        'activation_energy': None,
+        'activation_volume': 0.0,
+        'activation_volume_decay_pressure': float('inf'),
     }
 
 
@@ -275,6 +280,7 @@ def test_hypothesis_phase_config_rheology_construction_and_delegation(
         'enabled',
         'stress_closure_mode',
         'lid_base_mode',
+        'activation_energy',
     }
     toml_failures: list[str] = []
     for num_field in NUMERIC_FIELD_NAMES:
@@ -646,6 +652,8 @@ def _format_rheology_section(sub_dict: dict[str, Any], *, is_toml: bool) -> str:
     """Serialize a [phase_solid.rheology] section in TOML or INI syntax."""
     lines = ['\n[phase_solid.rheology]']
     for k, v in sub_dict.items():
+        if v is None:
+            continue
         if isinstance(v, bool):
             val_str = ('true' if v else 'false') if is_toml else ('True' if v else 'False')
         elif isinstance(v, str):

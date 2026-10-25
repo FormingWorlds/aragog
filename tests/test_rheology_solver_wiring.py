@@ -1866,7 +1866,7 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
         assert isinstance(err_dlid, RuntimeError) and 'd_lid' in str(err_dlid)
     solver_mid.state._lid_state['d_lid'] = d_lid_orig
 
-    for bad_dlid_raw in (np.nan, np.inf, -np.inf):
+    for bad_dlid_raw in (np.nan, np.inf, -np.inf, -1.0e-9, -1.0, 1.0e9):
         solver_mid.state._lid_state['d_lid_raw'] = bad_dlid_raw
         err_raw = None
         try:
@@ -1874,7 +1874,37 @@ def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
         except Exception as exc:
             err_raw = exc
         assert isinstance(err_raw, RuntimeError) and 'd_lid_raw' in str(err_raw)
+    d_shell_mid = float(solver_mid._r_basic_flat[-1] - solver_mid._r_basic_flat[0])
+    for ok_dlid_raw in (0.0, d_shell_mid * (1.0 + 0.5e-12)):
+        solver_mid.state._lid_state['d_lid_raw'] = ok_dlid_raw
+        solver_mid._check_rheology_invariants()
     solver_mid.state._lid_state['d_lid_raw'] = d_lid_raw_orig
+
+    for fin_key in ('P_T_i', 'r_i'):
+        orig_fin = float(solver_mid.state._lid_state[fin_key])
+        for bad_fin in (np.nan, np.inf, -np.inf):
+            solver_mid.state._lid_state[fin_key] = bad_fin
+            err_fin = None
+            try:
+                solver_mid._check_rheology_invariants()
+            except Exception as exc:
+                err_fin = exc
+            assert isinstance(err_fin, RuntimeError) and fin_key in str(err_fin)
+        solver_mid.state._lid_state[fin_key] = orig_fin
+
+    for tau_key in ('tau_d', 'tau_d_lid'):
+        orig_tau = float(solver_mid.state._lid_state[tau_key])
+        for bad_tau in (-1.0e-12, -1.0):
+            solver_mid.state._lid_state[tau_key] = bad_tau
+            err_tau = None
+            try:
+                solver_mid._check_rheology_invariants()
+            except Exception as exc:
+                err_tau = exc
+            assert isinstance(err_tau, RuntimeError) and tau_key in str(err_tau)
+        solver_mid.state._lid_state[tau_key] = 0.0
+        solver_mid._check_rheology_invariants()
+        solver_mid.state._lid_state[tau_key] = orig_tau
     solver_mid._check_rheology_invariants()
 
     # 4. Saturating activation law propagates identically through NumPy EntropyState and JAX compute_fluxes.
