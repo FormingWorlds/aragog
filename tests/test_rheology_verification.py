@@ -2108,6 +2108,7 @@ def test_solver_modules_do_not_direct_import_rheology_kernels():
 def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys, monkeypatch):
     """Verify PALEOS defaults, multi-crossing reporting, and non-1-GPa grid slicing."""
     import importlib.util
+    import re
     from pathlib import Path
 
     script_path = (
@@ -2135,7 +2136,24 @@ def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys,
         in out_default
     )
     assert 'Chebyshev minimax line over 0..135 GPa: 1979.7 K + 24.37 K/GPa * P' in out_default
-    assert 'max abs deviation: 514.93 K (514.9 K) at 35.965 GPa' in out_default
+    assert 'max abs deviation: 514.93 K (514.9 K) at 0.000, 35.965, 135.000 GPa' in out_default
+    mm_line_default = [ln for ln in out_default.splitlines() if 'Chebyshev minimax line' in ln][
+        0
+    ]
+    mm_match_default = re.search(
+        r'exact:\s*([0-9.]+)\s*K\s*\+\s*([0-9.]+)\s*K/GPa\s*\*.*'
+        r'max abs deviation:\s*([0-9.]+)\s*K\s*\(([0-9.]+)\s*K\)\s*at\s*([0-9., ]+)\s*GPa',
+        mm_line_default,
+    )
+    assert mm_match_default is not None
+    assert float(mm_match_default.group(1)) == pytest.approx(1979.73, rel=1.0e-6)
+    assert float(mm_match_default.group(2)) == pytest.approx(24.3706, rel=1.0e-6)
+    assert float(mm_match_default.group(3)) == pytest.approx(514.93, abs=0.01)
+    assert float(mm_match_default.group(4)) == pytest.approx(514.9, abs=0.1)
+    peaks_default = [float(p.strip()) for p in mm_match_default.group(5).split(',')]
+    assert len(peaks_default) == 3
+    for p_act, p_exp in zip(peaks_default, [0.000, 35.965, 135.000]):
+        assert p_act == pytest.approx(p_exp, abs=1.0e-3)
     assert (
         'RMS: 350.64 K (350.6 K); crossings at 6.1, 98.5 GPa (all: [6.15, 98.54] GPa)'
         in out_default
@@ -2211,7 +2229,7 @@ def test_compute_solidus_reference_values_crossings_and_paleos(tmp_path, capsys,
     mod.main(['--table', str(t_copilot_file), '--allow-md5-mismatch'])
     out_copilot = capsys.readouterr().out
     assert 'Chebyshev minimax line over 0..135 GPa: 1775.0 K + 18.89 K/GPa * P' in out_copilot
-    assert 'max abs deviation: 375.00 K (375.0 K)' in out_copilot
+    assert 'max abs deviation: 375.00 K (375.0 K) at 0.000, 45.000, 90.000 GPa' in out_copilot
     dev_line = [ln for ln in out_copilot.splitlines() if 'max abs deviation:' in ln][0]
     err_minimax = float(dev_line.split('max abs deviation:')[1].split('K')[0].strip())
     err_copilot = float(np.max(np.abs(t_copilot - (1700.0 + 20.0 * p_copilot_gpa))))
