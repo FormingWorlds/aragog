@@ -151,29 +151,11 @@ def _build_jax_bundle(
     """Build JAX (mesh_jax, eos_jax, params_jax, dSdt_args) matching ``solver``."""
     params = solver.parameters
     eos_jax = entropy_eos_jax(_resolve_eos_dir())
-    mesh_jax = MeshArrays.from_numpy_mesh(solver.evaluator.mesh)
-    params_jax = PhaseParams(
-        phi_rheo=float(params.phase_mixed.rheological_transition_melt_fraction),
-        phi_width=float(params.phase_mixed.rheological_transition_width),
-        viscosity_solid=float(params.phase_solid.viscosity),
-        viscosity_liquid=float(params.phase_liquid.viscosity),
-        grain_size=float(params.phase_mixed.grain_size),
-        k_solid=float(params.phase_solid.thermal_conductivity),
-        k_liquid=float(params.phase_liquid.thermal_conductivity),
-        matprop_smooth_width=float(params.phase_mixed.matprop_smooth_width),
-        conduction=params.energy.conduction,
-        convection=params.energy.convection,
-        grav_sep=params.energy.gravitational_separation,
-        mixing=params.energy.mixing,
-        eddy_diff_thermal=float(params.energy.eddy_diffusivity_thermal),
-        eddy_diff_chemical=float(params.energy.eddy_diffusivity_chemical),
-        kappah_floor=float(params.energy.kappah_floor),
-        bottom_up_grav_sep=params.energy.bottom_up_grav_sep,
-        phase_smoothing=params.energy.phase_smoothing,
-        separation_viscosity=params.phase_mixed.separation_viscosity,
-        rheology=(
-            rheology_override if rheology_override is not None else params.phase_solid.rheology
-        ),
+    overrides = {'rheology': rheology_override} if rheology_override is not None else {}
+    params_jax = PhaseParams.from_parameters(params, **overrides)
+    mesh_jax = MeshArrays.from_numpy_mesh(
+        solver.evaluator.mesh,
+        validate_rheology=bool(params_jax.rheology.enabled),
     )
     r_cmb = float(mesh_jax.radii_basic[0])
     r_next = float(mesh_jax.radii_basic[1])
@@ -1445,6 +1427,7 @@ def test_jax_phase_params_dict_validation_smoothing_weight_and_core_bl() -> None
             P_stag=jnp.ones(2),
             P_basic=jnp.ones(3),
             gravity=jnp.ones(3) * 9.8,
+            validate_rheology=True,
         )
 
     # (4.3) smooth_width == 0.0 in cubic_hermite mode does not produce 0.0 * NaN
@@ -2093,7 +2076,9 @@ def test_phase_params_phi_rheo_and_phi_width_validation() -> None:
 
 
 def test_mesh_arrays_invariant_validation() -> None:
-    """MeshArrays validates node count, non-negative mixing length, pressure, and positive gravity."""
+    """MeshArrays accepts rheology-off inputs on main by default and validates
+    node count, non-negative mixing length, pressure, and positive gravity when
+    validate_rheology=True or validate_for_rheology() is called."""
 
     def _valid_kwargs():
         return dict(
@@ -2111,29 +2096,62 @@ def test_mesh_arrays_invariant_validation() -> None:
             gravity=jnp.ones(3) * 9.8,
         )
 
-    # Node count < 3
+    # Node count < 3: accepted when validate_rheology=False, rejected when True
     kw_size = _valid_kwargs()
     kw_size['radii_basic'] = jnp.array([1.0e6, 2.0e6])
+    kw_size['P_basic'] = jnp.ones(2)
+    m_size = MeshArrays(**kw_size)
     with pytest.raises(ValueError, match='radii'):
-        MeshArrays(**kw_size)
+        m_size.validate_for_rheology()
+    with pytest.raises(ValueError, match='radii'):
+        MeshArrays(**kw_size, validate_rheology=True)
 
-    # Negative mixing length
+    # r_0 = 0: accepted when validate_rheology=False, rejected when True
+    kw_r0 = _valid_kwargs()
+    kw_r0['radii_basic'] = jnp.array([0.0, 2.0e6, 3.0e6])
+    m_r0 = MeshArrays(**kw_r0)
+    with pytest.raises(ValueError, match='radii'):
+        m_r0.validate_for_rheology()
+    with pytest.raises(ValueError, match='radii'):
+        MeshArrays(**kw_r0, validate_rheology=True)
+
+    # Negative mixing length: accepted when validate_rheology=False, rejected when True
     kw_ml = _valid_kwargs()
     kw_ml['mixing_length'] = jnp.array([-1.0, 1.0, 1.0])
+    m_ml = MeshArrays(**kw_ml)
     with pytest.raises(ValueError, match='mixing_length'):
-        MeshArrays(**kw_ml)
+        m_ml.validate_for_rheology()
+    with pytest.raises(ValueError, match='mixing_length'):
+        MeshArrays(**kw_ml, validate_rheology=True)
 
-    # Negative pressure
+    # Negative pressure (< -1.0 Pa): accepted when validate_rheology=False, rejected when True
     kw_p = _valid_kwargs()
     kw_p['P_basic'] = jnp.array([-5.0, 1.0e5, 1.0e5])
+    m_p = MeshArrays(**kw_p)
     with pytest.raises(ValueError, match='pressure'):
-        MeshArrays(**kw_p)
+        m_p.validate_for_rheology()
+    with pytest.raises(ValueError, match='pressure'):
+        MeshArrays(**kw_p, validate_rheology=True)
 
-    # Non-positive gravity
+    # Non-positive / negative gravity: accepted when validate_rheology=False, rejected when True
     kw_g = _valid_kwargs()
-    kw_g['gravity'] = jnp.array([0.0, 9.8, 9.8])
+    kw_g['gravity'] = jnp.array([-9.8, -9.8, -9.8])
+    m_g = MeshArrays(**kw_g)
     with pytest.raises(ValueError, match='gravity'):
-        MeshArrays(**kw_g)
+        m_g.validate_for_rheology()
+    with pytest.raises(ValueError, match='gravity'):
+        MeshArrays(**kw_g, validate_rheology=True)
+
+    # Traced P_basic under jax.jit with validate_rheology=True does not raise TracerArrayConversionError
+    @jax.jit
+    def _build_traced(p_b):
+        kw_t = _valid_kwargs()
+        kw_t['P_basic'] = p_b
+        kw_t['dP_dr_basic'] = jnp.zeros(3)
+        m = MeshArrays(**kw_t, validate_rheology=True)
+        return jnp.sum(m.P_basic)
+
+    assert float(_build_traced(jnp.array([1.0e5, 2.0e5, 3.0e5]))) == pytest.approx(6.0e5)
 
 
 def test_cvode_dense_linear_solver_selected_for_nonlocal_lid_mode() -> None:
@@ -2321,3 +2339,299 @@ def test_rhs_parity_rheology_on_core_module_mode() -> None:
     denom = float(np.max(np.abs(rhs_np)))
     rel_diff = float(np.max(np.abs(rhs_np - rhs_jax)) / denom)
     assert rel_diff <= 1.0e-10
+
+
+def test_phase_liquid_rheology_nondefault_rejected_across_all_config_paths(tmp_path) -> None:
+    """Non-default [phase_liquid.rheology] is rejected with ValueError on TOML, INI, and
+    Config.from_dict paths, while default phase_liquid.rheology is accepted."""
+    toml_base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml').read_text()
+    ini_base = importlib.resources.files('aragog').joinpath('cfg/abe_solid.cfg').read_text()
+
+    toml_bad = tmp_path / 'bad_liq.toml'
+    toml_bad.write_text(
+        toml_base + '\n[phase_liquid.rheology]\nenabled = true\n',
+        encoding='utf-8',
+    )
+    with pytest.raises(ValueError, match='phase_liquid'):
+        Parameters.from_file(toml_bad)
+    with pytest.raises(ValueError, match='phase_liquid'):
+        Config.from_toml(str(toml_bad))
+    with pytest.raises(ValueError, match='phase_liquid'):
+        Config.from_file(str(toml_bad))
+
+    ini_bad = tmp_path / 'bad_liq.cfg'
+    ini_bad.write_text(
+        ini_base + '\n[phase_liquid.rheology]\nenabled = True\n',
+        encoding='utf-8',
+    )
+    with pytest.raises(ValueError, match='phase_liquid'):
+        Parameters.from_file(ini_bad)
+    with pytest.raises(ValueError, match='phase_liquid'):
+        Config.from_file(str(ini_bad))
+
+    import tomllib
+
+    raw_dict = tomllib.loads(toml_base)
+    d_nested = copy.deepcopy(raw_dict)
+    d_nested['phase_liquid']['rheology'] = {'enabled': True}
+    with pytest.raises(ValueError, match='phase_liquid'):
+        Config.from_dict(d_nested)
+
+    d_dotted = copy.deepcopy(raw_dict)
+    d_dotted['phase_liquid.rheology'] = {'g_homologous': 30.0}
+    with pytest.raises(ValueError, match='phase_liquid'):
+        Config.from_dict(d_dotted)
+
+    d_default = copy.deepcopy(raw_dict)
+    d_default['phase_liquid']['rheology'] = {'enabled': False}
+    loaded = Config.from_dict(d_default)
+    assert loaded.phase_liquid.rheology == SolidRheologyParams()
+
+
+def test_const_properties_with_rheology_enabled_sets_phi_zero_arrhenius_viscosity_and_logs(
+    caplog,
+) -> None:
+    """When const_properties=True and rheology.enabled=True, setup logs once,
+    melt_fraction is 0 (solid), and viscosity is the Arrhenius solid viscosity
+    rather than 10**const_log10visc."""
+    import logging
+
+    from aragog.rheology import compute_arrhenius_viscosity
+
+    rheo = SolidRheologyParams(
+        enabled=True,
+        g_homologous=25.0,
+        t_sol_0=1400.0,
+        dt_sol_dp=2.4e-8,
+        arrhenius_t_ref=1600.0,
+    )
+    base_params = _make_abe_solid_params(rheo, number_of_nodes=12)
+    params = replace(
+        base_params,
+        phase_solid=replace(base_params.phase_solid, viscosity=1.0e20),
+        phase_mixed=replace(
+            base_params.phase_mixed,
+            const_properties=True,
+            const_log10visc=2.0,
+            const_T_ref=1600.0,
+            const_S_ref=2500.0,
+            const_Cp=1200.0,
+            const_rho=4000.0,
+            const_alpha=3.0e-5,
+            const_cond=4.0,
+        ),
+    )
+    solver = EntropySolver(params, entropy_eos=None)
+    with caplog.at_level(logging.INFO, logger='fwl.aragog.solver.entropy_solver'):
+        solver.initialize()
+    log_msgs = [r.message for r in caplog.records if 'const_properties' in r.message]
+    assert len(log_msgs) == 1
+    assert 'phi=0' in log_msgs[0]
+    assert 'const_log10visc' in log_msgs[0]
+
+    s_stag = np.full(solver._n_stag, 2500.0, dtype=float)
+    solver.dSdt(0.0, s_stag)
+    phi_b = np.asarray(solver.state.phase_basic.melt_fraction(), dtype=float)
+    phi_s = np.asarray(solver.state.phase_staggered.melt_fraction(), dtype=float)
+    assert np.all(phi_b == 0.0)
+    assert np.all(phi_s == 0.0)
+
+    t_b = np.asarray(solver.state.phase_basic.temperature(), dtype=float)
+    p_b = np.asarray(solver.state.phase_basic.pressure, dtype=float)
+    eta_expected = np.asarray(
+        compute_arrhenius_viscosity(
+            temperature=t_b,
+            pressure=p_b,
+            viscosity_solid=1.0e20,
+            g_homologous=25.0,
+            solidus_temperature=None,
+            t_sol_0=1400.0,
+            dt_sol_dp=2.4e-8,
+            arrhenius_t_ref=1600.0,
+        ),
+        dtype=float,
+    )
+    eta_diff_b = np.asarray(solver.state.phase_basic.eta_diff(), dtype=float)
+    np.testing.assert_allclose(eta_diff_b, eta_expected, rtol=1.0e-14, atol=0.0)
+    assert not np.any(np.isclose(eta_diff_b, 100.0))
+
+    params_solve = replace(
+        params,
+        solver=replace(params.solver, end_time=10.0, max_steps=20),
+    )
+    solver_on = EntropySolver(params_solve, entropy_eos=None)
+    solver_on.initialize()
+    solver_on.set_initial_entropy(2500.0)
+    solver_on.solve()
+    out_on = solver_on.get_state()
+    assert float(out_on.Phi_global) == 0.0
+    assert float(out_on.Phi_global_vol) == 0.0
+    assert np.all(np.asarray(out_on.phi_stag) == 0.0)
+    assert np.all(np.asarray(out_on.porosity_b) == 0.0)
+
+    params_off = replace(
+        params_solve,
+        phase_solid=replace(params_solve.phase_solid, rheology=SolidRheologyParams()),
+    )
+    solver_off = EntropySolver(params_off, entropy_eos=None)
+    solver_off.initialize()
+    solver_off.set_initial_entropy(2500.0)
+    solver_off.solve()
+    out_off = solver_off.get_state()
+    assert float(out_off.Phi_global) == pytest.approx(1.0)
+    assert float(out_off.Phi_global_vol) == pytest.approx(1.0)
+    assert np.all(np.asarray(out_off.phi_stag) == 1.0)
+    assert np.all(np.asarray(out_off.porosity_b) == 1.0)
+
+
+def test_solve_rheology_invariants_checked_inside_step_energy_integrals_without_double_replay(
+    monkeypatch,
+) -> None:
+    """solve() checks rheology step invariants inside _compute_step_energy_integrals()
+    without a duplicate NumPy _dSdt_single replay loop per step."""
+    rheo = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
+    params = _make_abe_solid_params(rheo, number_of_nodes=12)
+    params = replace(
+        params,
+        solver=replace(params.solver, end_time=20.0, max_steps=50),
+    )
+    solver = _make_solver(params)
+    solver.set_initial_entropy(2500.0)
+
+    step_invariant_indices: list[int] = []
+    orig_step_check = solver._check_rheology_step_invariants
+
+    def _spy_step_check(rheo_arg, step_idx: int = 0) -> None:
+        step_invariant_indices.append(step_idx)
+        orig_step_check(rheo_arg, step_idx=step_idx)
+
+    monkeypatch.setattr(solver, '_check_rheology_step_invariants', _spy_step_check)
+
+    orig_step_powers = solver._step_powers
+    step_powers_calls = [0]
+
+    def _spy_step_powers(t: float, y: np.ndarray):
+        step_powers_calls[0] += 1
+        return orig_step_powers(t, y)
+
+    monkeypatch.setattr(solver, '_step_powers', _spy_step_powers)
+    solver.solve()
+
+    assert step_powers_calls[0] >= 2
+    assert step_invariant_indices == list(range(step_powers_calls[0]))
+
+
+def test_phase_params_from_parameters_and_jax_factory_rheology_mismatch_guard() -> None:
+    """PhaseParams.from_parameters mirrors all fields of Parameters, and solve() /
+    set_jax_cvode_factory raise ValueError when factory PhaseParams.rheology mismatches
+    parameters.phase_solid.rheology."""
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    rheo_on = SolidRheologyParams(enabled=True, g_homologous=27.5, stress_closure_mode='lid')
+    params = _make_abe_solid_params(rheo_on, number_of_nodes=12)
+    params = replace(
+        params,
+        energy=replace(params.energy, use_jax_jacobian=True),
+        solver=replace(params.solver, end_time=10.0, max_steps=30),
+    )
+    pp = PhaseParams.from_parameters(params)
+    assert pp.rheology == rheo_on
+    assert pp.phi_rheo == float(params.phase_mixed.rheological_transition_melt_fraction)
+    assert pp.phi_width == float(params.phase_mixed.rheological_transition_width)
+    assert float(pp.log10_visc_solid) == pytest.approx(np.log10(params.phase_solid.viscosity))
+    assert float(pp.log10_visc_liquid) == pytest.approx(np.log10(params.phase_liquid.viscosity))
+    assert pp.kappah_floor == float(params.energy.kappah_floor)
+
+    solver = _make_solver(params)
+    solver.set_initial_entropy(2500.0)
+    mesh_jax, eos_jax, _, dSdt_args = _build_jax_bundle(solver)
+    bc_jax = dSdt_args[3]
+    heating_arr = np.zeros(solver._n_stag, dtype=float)
+
+    pp_mismatch = PhaseParams.from_parameters(
+        params, rheology=SolidRheologyParams(enabled=False)
+    )
+    with pytest.raises(ValueError, match='rheology'):
+        solver.set_jax_cvode_factory(
+            lambda scales, core_bc: (None, None), phase_params=pp_mismatch
+        )
+
+    def _mismatched_factory(scales, core_bc_mode):
+        rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
+            eos_jax=eos_jax,
+            phase_params=pp_mismatch,
+            mesh_arrays=mesh_jax,
+            boundary_params=bc_jax,
+            heating_array=heating_arr,
+            scales=scales,
+            core_bc_mode=core_bc_mode,
+        )
+        return rhs_fn, jac_fn
+
+    solver.set_jax_cvode_factory(_mismatched_factory)
+    with pytest.raises(ValueError, match='rheology'):
+        solver.solve()
+
+    def _matched_factory(scales, core_bc_mode):
+        rhs_fn, jac_fn, _ = build_jax_rhs_and_jacobian(
+            eos_jax=eos_jax,
+            phase_params=pp,
+            mesh_arrays=mesh_jax,
+            boundary_params=bc_jax,
+            heating_array=heating_arr,
+            scales=scales,
+            core_bc_mode=core_bc_mode,
+        )
+        return rhs_fn, jac_fn
+
+    solver.set_jax_cvode_factory(_matched_factory)
+    solver.solve()
+    assert np.all(np.isfinite(solver.get_state().S_final))
+
+
+def test_arrhenius_reference_viscosity_ci_table_vs_linear_solidus() -> None:
+    """At (T_ref = 1600 K, P = 0 Pa) with viscosity_solid = 1e21 Pa s, g_homologous = 25,
+    and t_sol_0 = 1400 K, the linear solidus gives 1.0e21 Pa s and the CI EOS solidus
+    table (T_sol(0) = 1439.230032 K) gives 1.8459e21 Pa s."""
+    import math
+
+    from aragog.rheology import compute_arrhenius_viscosity
+
+    eta_linear = float(
+        compute_arrhenius_viscosity(
+            temperature=1600.0,
+            pressure=0.0,
+            viscosity_solid=1.0e21,
+            g_homologous=25.0,
+            solidus_temperature=None,
+            t_sol_0=1400.0,
+            dt_sol_dp=2.4e-8,
+            arrhenius_t_ref=1600.0,
+        )
+    )
+    assert eta_linear == pytest.approx(1.0e21, rel=1.0e-15, abs=0.0)
+
+    eos_np = entropy_eos_copy(_resolve_eos_dir(), identity_alpha=True)
+    t_sol_0_ci = float(
+        eos_np._lookup_at_phase_boundary('temperature', np.array([0.0]), 'solid')[0]
+    )
+    assert t_sol_0_ci == pytest.approx(1439.2298575750483, rel=1.0e-12, abs=0.0)
+    assert t_sol_0_ci == pytest.approx(1439.230032, rel=2.0e-7, abs=0.0)
+
+    expected_ci = 1.0e21 * math.exp(25.0 * (t_sol_0_ci - 1400.0) / 1600.0)
+    assert expected_ci == pytest.approx(1.8459e21, rel=1.0e-4, abs=0.0)
+
+    eta_ci = float(
+        compute_arrhenius_viscosity(
+            temperature=1600.0,
+            pressure=0.0,
+            viscosity_solid=1.0e21,
+            g_homologous=25.0,
+            solidus_temperature=t_sol_0_ci,
+            t_sol_0=1400.0,
+            dt_sol_dp=2.4e-8,
+            arrhenius_t_ref=1600.0,
+        )
+    )
+    assert eta_ci == pytest.approx(expected_ci, rel=1.0e-14, abs=0.0)
+    assert eta_ci == pytest.approx(1.8459e21, rel=1.0e-4, abs=0.0)

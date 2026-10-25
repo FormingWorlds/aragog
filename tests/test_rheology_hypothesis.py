@@ -710,7 +710,11 @@ def test_hypothesis_phase_solid_rheology_toml_ini_dict_round_trip(
 
     d_liq_dotted = _minimal_config_dict()
     d_liq_dotted['phase_liquid.rheology'] = dict(sub_dict)
-    assert Config.from_dict(d_liq_dotted).phase_liquid.rheology == expected_sub
+    if expected_sub != SolidRheologyParams():
+        with pytest.raises(ValueError, match='phase_liquid'):
+            Config.from_dict(d_liq_dotted)
+    else:
+        assert Config.from_dict(d_liq_dotted).phase_liquid.rheology == expected_sub
 
     d_conflict = _minimal_config_dict()
     d_conflict['phase_solid']['rheology'] = dict(sub_dict)
