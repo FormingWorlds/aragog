@@ -1855,12 +1855,24 @@ def test_rheology_kernel_reference_grid_parity():
         arr = v if isinstance(v, np.ndarray) else np.array(v)
         if arr.dtype == bool:
             assert bool(arr) == bool(data[f'lid_{k}'])
+        elif k == 'd_lid_raw':
+            assert 'lid_d_lid_raw' not in data
+            np.testing.assert_allclose(
+                arr,
+                (radii[-1] - lid_st['r_lid_base']) * lid_st['w_active'],
+                rtol=1.0e-12,
+                atol=0.0,
+            )
+        elif k == 'w_y':
+            w_lid_pres = float(lid_st['d_lid']) / float(lid_st['d_lid_raw'])
+            ratio_lid = float(lid_st['tau_d_lid']) / w_lid_pres / float(lid_st['tau_y_lid'])
+            exp_wy = w_lid_pres * 0.5 * (1.0 + np.tanh((ratio_lid - 1.0) / 0.1))
+            np.testing.assert_allclose(arr, exp_wy, rtol=1.0e-12, atol=0.0)
         elif k == 'lid_regime':
-            w_solid_surf_main = 0.5 * (1.0 + np.tanh(5.0))
             assert float(arr) != float(data['lid_lid_regime'])
             np.testing.assert_allclose(
                 arr,
-                data['lid_lid_regime'] / w_solid_surf_main,
+                float(lid_st['w_active']) * (1.0 + float(lid_st['w_y'])),
                 rtol=1.0e-12,
                 atol=0.0,
             )
@@ -2486,3 +2498,126 @@ def test_arrhenius_viscosity_exact_below_ceiling_for_small_viscosity_solid():
     diffs = np.diff(log10_eta)
     assert np.all(diffs >= 0.0)
     assert np.max(diffs) < 0.5
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_wp4_row29_cross_field_viscosity_max_and_low_confidence_items():
+    """Verify viscosity_max_log10 > log10(viscosity_solid), 1-D w_lid shape check, and huge-int ValueError."""
+    import jax
+    import jax.numpy as jnp
+
+    from aragog.config.phases import PhaseConfig
+    from aragog.parser import _PhaseParameters
+
+    # 1. compute_arrhenius_viscosity: valid when viscosity_max_log10 > log10(viscosity_solid), invalid otherwise.
+    val_ok = compute_arrhenius_viscosity(
+        1600.0, 0.0, viscosity_solid=1.0e21, viscosity_max_log10=21.1
+    )
+    assert np.isfinite(val_ok) and val_ok > 0.0
+    for bad_vs, bad_vmax in ((1.0e22, 21.0), (1.0e21, 21.0), (1.0e35, 30.0)):
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
+            compute_arrhenius_viscosity(
+                1600.0, 0.0, viscosity_solid=bad_vs, viscosity_max_log10=bad_vmax
+            )
+        jit_fn = jax.jit(
+            lambda vs, vm: compute_arrhenius_viscosity(
+                jnp.asarray(1600.0),
+                jnp.asarray(0.0),
+                viscosity_solid=vs,
+                viscosity_max_log10=vm,
+                xp=jnp,
+            )
+        )
+        assert np.isnan(float(jit_fn(jnp.asarray(bad_vs), jnp.asarray(bad_vmax))))
+
+    # 2. compute_stagnant_lid_state: rejects viscosity_max_log10 <= log10(viscosity_solid).
+    n = 10
+    r = np.linspace(3.48e6, 6.371e6, n)
+    t = np.linspace(2600.0, 1200.0, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    fc = np.full(n, 0.08)
+    fc[-1] = 0.0
+    ft = np.full(n, 0.10)
+    phi = np.zeros(n)
+    for bad_vs, bad_vmax in ((1.0e22, 21.0), (1.0e21, 21.0)):
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
+            compute_stagnant_lid_state(
+                radii=r,
+                temperature=t,
+                pressure=p,
+                convective_flux=fc,
+                total_flux=ft,
+                solidus_temperature=None,
+                melt_fraction=phi,
+                params=SolidRheologyParams(enabled=True, viscosity_max_log10=bad_vmax),
+                viscosity_solid=bad_vs,
+                phi_rheo=0.4,
+                phi_width=0.15,
+                xp=np,
+            )
+        st_jx = compute_stagnant_lid_state(
+            radii=jnp.asarray(r),
+            temperature=jnp.asarray(t),
+            pressure=jnp.asarray(p),
+            convective_flux=jnp.asarray(fc),
+            total_flux=jnp.asarray(ft),
+            solidus_temperature=None,
+            melt_fraction=jnp.asarray(phi),
+            params=SolidRheologyParams(enabled=True, viscosity_max_log10=bad_vmax),
+            viscosity_solid=bad_vs,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=jnp,
+        )
+        assert np.isnan(float(st_jx['eta_i']))
+
+    # 3. PhaseConfig and _PhaseParameters enforce viscosity_max_log10 > log10(viscosity).
+    cfg_ok = PhaseConfig(
+        density=4000.0,
+        heat_capacity=1000.0,
+        melt_fraction=0.0,
+        thermal_conductivity=4.0,
+        thermal_expansivity=3.0e-5,
+        viscosity=1.0e21,
+        rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=25.0),
+    )
+    assert cfg_ok.viscosity_max_log10 == 25.0
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        PhaseConfig(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3.0e-5,
+            viscosity=1.0e22,
+            rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+        )
+    with pytest.raises(ValueError, match='viscosity_max_log10'):
+        _PhaseParameters(
+            density=4000.0,
+            heat_capacity=1000.0,
+            melt_fraction=0.0,
+            thermal_conductivity=4.0,
+            thermal_expansivity=3.0e-5,
+            viscosity=1.0e22,
+            rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=21.0),
+        )
+
+    # 4. 1-D w_lid length mismatch in compute_effective_viscosity raises ValueError.
+    with pytest.raises(ValueError, match='w_lid'):
+        compute_effective_viscosity(
+            eta_diff=np.full(10, 1.0e22),
+            eta_i=1.0e20,
+            tau_d=1.0e7,
+            tau_y_lid=5.0e7,
+            stress_closure_mode='lid',
+            w_lid=np.ones(5),
+            xp=np,
+        )
+
+    # 5. Huge Python int (10**400) raises ValueError instead of OverflowError.
+    with pytest.raises(ValueError):
+        compute_arrhenius_enthalpy(10**400, xp=np)
+    with pytest.raises(ValueError):
+        compute_arrhenius_enthalpy(0.0, g_homologous=10**400, xp=np)

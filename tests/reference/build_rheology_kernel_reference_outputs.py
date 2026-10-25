@@ -280,14 +280,29 @@ def verify_fixture(path: Path = FIXTURE_PATH) -> None:
         unyielded_velocity=np.full(30, 1e-9),
         xp=np,
     )
-    w_solid_surf_main = 0.5 * (1.0 + np.tanh(5.0))
     for k, v in lid_st.items():
         arr = v if isinstance(v, np.ndarray) else np.asarray(v)
         if arr.dtype == bool:
             assert bool(arr) == bool(saved[f'lid_{k}'])
+        elif k == 'd_lid_raw':
+            assert 'lid_d_lid_raw' not in saved
+            np.testing.assert_allclose(
+                arr,
+                (radii[-1] - lid_st['r_lid_base']) * lid_st['w_active'],
+                rtol=1.0e-12,
+                atol=0.0,
+            )
+        elif k == 'w_y':
+            w_lid_pres = float(lid_st['d_lid']) / float(lid_st['d_lid_raw'])
+            ratio_lid = float(lid_st['tau_d_lid']) / w_lid_pres / float(lid_st['tau_y_lid'])
+            exp_wy = w_lid_pres * 0.5 * (1.0 + np.tanh((ratio_lid - 1.0) / 0.1))
+            np.testing.assert_allclose(arr, exp_wy, rtol=1.0e-12, atol=0.0)
         elif k == 'lid_regime':
             np.testing.assert_allclose(
-                arr, saved['lid_lid_regime'] / w_solid_surf_main, rtol=1.0e-12, atol=0.0
+                arr,
+                float(lid_st['w_active']) * (1.0 + float(lid_st['w_y'])),
+                rtol=1.0e-12,
+                atol=0.0,
             )
         else:
             np.testing.assert_allclose(arr, saved[f'lid_{k}'], rtol=1.0e-12, atol=0.0)

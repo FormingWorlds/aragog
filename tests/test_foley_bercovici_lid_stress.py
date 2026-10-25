@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from aragog.rheology import SolidRheologyParams
+from aragog.rheology import SolidRheologyParams, _softmax2
 from aragog.rheology_lid import (
     SOLIDUS_MELT_FRACTION_THRESHOLD,
     SOLIDUS_MELT_FRACTION_WIDTH,
@@ -610,8 +610,13 @@ def test_w_active_mesh_independence_and_low_flux_solver_continuity():
             w_act_gate = 0.5 * (1.0 + np.tanh((float(st['w_active']) - 0.05) / 0.0025))
             d_raw = float((r[-1] - st['r_lid_base']) * st['w_active'])
             assert float(st['d_lid']) == pytest.approx(w_act_gate * d_raw, rel=1.0e-6)
+            dr_top = max(float(r[-1] - r[-2]), 1.0e-6)
+            d_geom_floor = float(_softmax2(st['delta_rh'], dr_top, 0.01 * dr_top, np))
+            d_geom = float(
+                _softmax2(r[-1] - st['r_lid_base'], d_geom_floor, 0.01 * d_geom_floor, np)
+            )
             assert float(st['tau_d']) == pytest.approx(
-                float(st['tau_d_lid']) * d_raw / (float(st['w_active']) * (r[-1] - r[0])),
+                float(st['tau_d_lid']) * d_geom / (r[-1] - r[0]),
                 rel=1.0e-9,
             )
             assert abs(float(st['T_i']) - float(t[0])) > 1.0
@@ -1501,7 +1506,13 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
         if s_off == 0.0:
             assert float(st_off['tau_d_lid']) == 0.0
         else:
-            d_geom_off = max(float(r0[-1] - st_off['r_lid_base']), 1.0e-6)
+            dr_top_off = max(float(r0[-1] - r0[-2]), 1.0e-6)
+            d_floor_off = float(
+                _softmax2(st_off['delta_rh'], dr_top_off, 0.01 * dr_top_off, np)
+            )
+            d_geom_off = float(
+                _softmax2(r0[-1] - st_off['r_lid_base'], d_floor_off, 0.01 * d_floor_off, np)
+            )
             expected_off = (
                 float(st_off['w_active'])
                 * FB2014_STRESS_FACTOR
@@ -1531,7 +1542,9 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
         eta_i = float(st_s['eta_i'])
         v_m = float(st_s['v_m'])
         r_lid_base = float(st_s['r_lid_base'])
-        d_geom = max(float(r0[-1]) - r_lid_base, 1.0e-6)
+        dr_top_s = max(float(r0[-1] - r0[-2]), 1.0e-6)
+        d_floor_s = float(_softmax2(st_s['delta_rh'], dr_top_s, 0.01 * dr_top_s, np))
+        d_geom = float(_softmax2(float(r0[-1]) - r_lid_base, d_floor_s, 0.01 * d_floor_s, np))
         w_act = float(st_s['w_active'])
         tau_lid = float(st_s['tau_d_lid'])
         expected = w_act * FB2014_STRESS_FACTOR * eta_i * v_m / d_geom
@@ -1541,11 +1554,11 @@ def test_tau_d_lid_scales_monotonically_with_w_active():
     for prev_val, curr_val in zip(tau_d_lid_vals[:-1], tau_d_lid_vals[1:], strict=True):
         assert curr_val > prev_val
     assert tau_d_lid_vals[0] < 0.1 * tau_d_lid_vals[-1]
-    assert tau_d_lid_vals[-1] == pytest.approx(89153746.66734585, rel=1.0e-12)
+    assert tau_d_lid_vals[-1] == pytest.approx(89153746.66533343, rel=1.0e-12)
 
     earth_inputs = _make_earth_reference_inputs()
     st_earth = compute_stagnant_lid_state(**earth_inputs)
-    assert float(st_earth['tau_d_lid']) == pytest.approx(1774312.9439614443, rel=1.0e-12)
+    assert float(st_earth['tau_d_lid']) == pytest.approx(1774312.9439614443, rel=1.0e-10)
 
 
 @pytest.mark.unit

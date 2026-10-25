@@ -2269,8 +2269,8 @@ def test_stagnant_lid_smooth_gates_and_scales():
     # Outside band edge d* = 3.453878e-3 K (at 1e-2 K > 1e-3 + d*), d_lid matches d_raw_dt to 1e-12.
     assert float(st_dt_out['d_lid']) == pytest.approx(d_raw_dt, rel=1.0e-12)
 
-    # Verify w_y uses un-gated tau_d_raw so yield onset does not shift inside the w_lid_present gate band.
-    tau_d_raw_mid = float(st_dt_out['tau_d'])
+    # Verify w_y uses un-gated tau_d_lid_raw so yield onset does not shift inside the w_lid_present gate band.
+    tau_d_raw_mid = float(st_dt_out['tau_d_lid'])
     t_mid_arr = np.full(n, 1600.0)
     t_mid_arr[-1] = 1600.0 - 1.0e-3
     st_wy_mid = compute_stagnant_lid_state(
@@ -2595,7 +2595,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         phi_width=0.15,
         xp=np,
     )
-    tau_d_val = float(st_base['tau_d'])
+    tau_d_val = float(st_base['tau_d_lid'])
     for sign, ratio_target in ((-1.0, np.exp(-0.1)), (1.0, np.exp(0.1))):
         ty_target = tau_d_val / ratio_target
         st_reg = compute_stagnant_lid_state(
@@ -2624,7 +2624,7 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
         )
 
     # 3. Sub-threshold and low-flux parity of eta_i, T_i, and mu_i across interior_flux_fraction
-    # in {0.05, 0.10, 0.20, 0.50} against reference literals from main.
+    # in {0.05, 0.10, 0.20, 0.50} with geotherm endpoint blending (Row 5).
     n_l1 = 50
     r_l1 = np.linspace(3.48e6, 6.371e6, n_l1)
     t_l1 = np.linspace(2600.0, 1400.0, n_l1)
@@ -2633,20 +2633,20 @@ def test_stagnant_lid_flux_floor_regime_slope_and_subthreshold_center():
     visc_mix_l1 = np.full(n_l1, 1.0e15)
     main_literals = {
         (0.05, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
-        (0.05, 6.00843e-5): (8.96482698673302e20, 1856.5546317909584, 8.96482698673302e20),
-        (0.05, 1.0e-4): (5.440139164192721e17, 1626.722938791537, 5.440139164192721e17),
-        (0.05, 1.0e-3): (1000000065827473.5, 1424.4909098970506, 1000000065827473.5),
-        (0.05, 0.03): (1000000000000004.1, 1424.490907753382, 1000000000000004.1),
+        (0.05, 6.00843e-5): (2.3060133389415036e20, 1856.5546317909584, 2.3060133389415036e20),
+        (0.05, 1.0e-4): (3.211682389068213e17, 1626.722938791537, 3.211682389068213e17),
+        (0.05, 1.0e-3): (1000000065827477.6, 1424.4909098970506, 1000000065827477.6),
+        (0.05, 0.03): (1000000000000000.0, 1424.490907753382, 1000000000000000.0),
         (0.10, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
-        (0.10, 6.00843e-5): (6.038913358705211e30, 2575.467182755998, 6.038913358705211e30),
-        (0.10, 1.0e-4): (6.033682850271591e30, 2575.438315702754, 6.033682850271591e30),
-        (0.10, 1.0e-3): (5.905401456212067e30, 2574.722430755179, 5.905401456212067e30),
-        (0.10, 0.03): (1.9932572310324982e18, 1667.4062468015593, 1.9932572310324982e18),
+        (0.10, 6.00843e-5): (6.037030713767539e30, 2575.467182755998, 6.037030713767539e30),
+        (0.10, 1.0e-4): (6.030540111438592e30, 2575.438315702754, 6.030540111438592e30),
+        (0.10, 1.0e-3): (5.871807349442422e30, 2574.722430755179, 5.871807349442422e30),
+        (0.10, 0.03): (1.0036004104618392e18, 1667.4062468015593, 1.0036004104618392e18),
         (0.20, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.20, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.20, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.20, 1.0e-3): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
-        (0.20, 0.03): (6.046716533609499e30, 2575.5101979531364, 6.046716533609499e30),
+        (0.20, 0.03): (6.046715914763067e30, 2575.5101979531364, 6.046715914763067e30),
         (0.50, 0.0): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 6.00843e-5): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
         (0.50, 1.0e-4): (6.046716893870374e30, 2575.5102040816328, 6.046716893870374e30),
@@ -3540,3 +3540,205 @@ def test_stagnant_lid_ti_jax_gradient_zero_at_saturated_flux_fraction():
     assert np.all(np.isfinite(grad))
     assert np.max(np.abs(grad[1:7])) == 0.0
     assert abs(grad[7]) > 1.0
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_wp4_row5_geotherm_interior_state_and_monotone_subthreshold_band():
+    """Verify P_T_i stays on the geotherm and eta_solid_arrhenius(s), eta_i(s), and theta(s) are monotone across s in [0, 1e-3]."""
+    from pathlib import Path
+
+    ckpt_path = Path(__file__).parent / 'reference' / 'checkpoint_profile_175kyr.npz'
+    d = np.load(ckpt_path)
+    r = np.asarray(d['r_basic'], dtype=float)
+    t = np.asarray(d['T_basic'], dtype=float)
+    p = np.asarray(d['P_basic'], dtype=float)
+    phi = np.asarray(d['phi_basic'], dtype=float)
+    fc = np.asarray(d['F_conv'], dtype=float)
+    ft = np.asarray(d['F_tot'], dtype=float)
+
+    params = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        interior_flux_fraction=0.05,
+        g_homologous=25.0,
+        t_sol_0=1400.0,
+    )
+    s_grid = [0.0, 1.0e-5, 2.0e-5, 5.0e-5, 6.00843e-5, 1.0e-4, 2.0e-4, 5.0e-4, 1.0e-3]
+    log_eta_arr_vals = []
+    log_eta_i_vals = []
+    theta_vals = []
+
+    for s_val in s_grid:
+        st = compute_stagnant_lid_state(
+            radii=r,
+            temperature=t,
+            pressure=p,
+            convective_flux=fc * s_val,
+            total_flux=ft,
+            solidus_temperature=None,
+            melt_fraction=phi,
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=np,
+        )
+        t_i = float(st['T_i'])
+        p_t_i = float(st['P_T_i'])
+        p_geo = float(np.interp(t_i, t[::-1], p[::-1]))
+        # Geotherm pressure agrees to within the endpoint discretization offset (< 1e-3 GPa).
+        assert abs(p_t_i - p_geo) < 1.0e6
+        log_eta_arr_vals.append(np.log10(float(st['eta_solid_arrhenius'])))
+        log_eta_i_vals.append(np.log10(float(st['eta_i'])))
+        theta_vals.append(float(st['theta']))
+
+    # Monotone across the sub-threshold band (no 0.82-decade chord dip at s = 1e-4).
+    diffs_arr = np.diff(log_eta_arr_vals)
+    diffs_eta_i = np.diff(log_eta_i_vals)
+    diffs_theta = np.diff(theta_vals)
+    assert np.all(diffs_arr >= -1.0e-14) or np.all(diffs_arr <= 1.0e-14)
+    assert np.all(diffs_eta_i >= -1.0e-14) or np.all(diffs_eta_i <= 1.0e-14)
+    assert np.all(diffs_theta <= 1.0e-14)
+
+    # Affine geotherm P(T) = a * T + b: P_T_i matches the linear chord sum to machine precision.
+    n_aff = 40
+    r_aff = np.linspace(3.48e6, 6.371e6, n_aff)
+    t_aff = np.linspace(3000.0, 1200.0, n_aff)
+    p_aff = np.linspace(120.0e9, 0.0, n_aff)
+    st_aff = compute_stagnant_lid_state(
+        radii=r_aff,
+        temperature=t_aff,
+        pressure=p_aff,
+        convective_flux=np.full(n_aff, 1.0e-4),
+        total_flux=np.ones(n_aff),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n_aff),
+        params=params,
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    p_aff_expected = 120.0e9 * (float(st_aff['T_i']) - 1200.0) / (3000.0 - 1200.0)
+    assert float(st_aff['P_T_i']) == pytest.approx(p_aff_expected, rel=1.0e-14)
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_wp4_row6_fixed_lid_base_mode_excludes_convecting_nodes():
+    """Verify fixed lid-base mode sets w_lid == 0 on convecting interior nodes when T_surf < T_i < T_lid_fixed."""
+    import jax.numpy as jnp
+
+    n = 50
+    r = np.linspace(3.48e6, 6.370e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.full(n, 1500.0)
+    t[45:] = np.linspace(1500.0, 300.0, 5)
+    fc = np.full(n, 0.08)
+    fc[45:] = 0.0
+    ft = np.full(n, 0.10)
+    phi = np.zeros(n)
+    params = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        lid_base_mode='fixed',
+        lid_base_temperature=1800.0,
+        interior_flux_fraction=0.05,
+    )
+    for xp_mod in (np, jnp):
+        st = compute_stagnant_lid_state(
+            radii=xp_mod.asarray(r),
+            temperature=xp_mod.asarray(t),
+            pressure=xp_mod.asarray(p),
+            convective_flux=xp_mod.asarray(fc),
+            total_flux=xp_mod.asarray(ft),
+            solidus_temperature=None,
+            melt_fraction=xp_mod.asarray(phi),
+            params=params,
+            viscosity_solid=1.0e21,
+            phi_rheo=0.4,
+            phi_width=0.15,
+            xp=xp_mod,
+        )
+        w_lid = np.asarray(st['w_lid'], dtype=float)
+        assert np.max(w_lid[:45]) == 0.0
+        assert np.sum(w_lid[:45]) == 0.0
+        assert np.all(w_lid[45:] > 0.999)
+        assert float(st['lid_cell_count']) == pytest.approx(
+            float(np.sum(w_lid[45:])), rel=1.0e-12
+        )
+        assert 4.99 < float(st['lid_cell_count']) < 5.01
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_wp4_row8_and_row18_d_geom_floor_tau_d_lid_yield_and_d_lid_raw():
+    """Verify d_geom floor bounds tau_d_lid on incipient lids, w_y compares tau_d_lid with tau_y_lid, and d_lid_raw is returned."""
+    for n in (3, 10, 50, 100):
+        r = np.linspace(3.48e6, 6.371e6, n)
+        p = np.linspace(135.0e9, 1.0e5, n)
+        t = np.linspace(2600.0, 1200.0, n)
+        fc = np.full(n, 0.08)
+        fc[-1] = 0.0
+        ft = np.full(n, 0.10)
+        for phi_val in (0.0, 0.015, 0.020, 0.025):
+            st = compute_stagnant_lid_state(
+                radii=r,
+                temperature=t,
+                pressure=p,
+                convective_flux=fc,
+                total_flux=ft,
+                solidus_temperature=None,
+                melt_fraction=np.full(n, phi_val),
+                params=SolidRheologyParams(enabled=True, stress_closure_mode='lid'),
+                viscosity_solid=1.0e21,
+                phi_rheo=0.4,
+                phi_width=0.15,
+                xp=np,
+            )
+            assert 'd_lid_raw' in st
+            assert len(st) == 32
+            d_lid = float(st['d_lid'])
+            d_lid_raw = float(st['d_lid_raw'])
+            w_act = float(st['w_active'])
+            assert 0.0 <= d_lid <= d_lid_raw * (1.0 + 1.0e-12)
+            assert d_lid_raw <= float(r[-1] - r[0]) * w_act * (1.0 + 1.0e-12)
+
+            dr_top = float(r[-1] - r[-2])
+            delta_rh = float(st['delta_rh'])
+            d_floor = max(delta_rh, dr_top)
+            d_conv = float(r[-1] - r[0])
+            tau_d = float(st['tau_d'])
+            tau_d_lid = float(st['tau_d_lid'])
+            if tau_d > 0.0:
+                assert tau_d_lid / tau_d <= (d_conv / d_floor) * (1.0 + 1.0e-12)
+
+    # Sub-threshold thermal contrast (0 < T_i - T_surf < 1.0e-3 K): has_lid is False, d_lid_raw > d_lid > 0.
+    r_sub = np.linspace(3.48e6, 6.371e6, 10)
+    p_sub = np.zeros(10)
+    t_sub = np.full(10, 2000.0)
+    t_sub[-1] = 2000.0 - 0.0005
+    fc_sub = np.full(10, 0.08)
+    fc_sub[-1] = 0.0
+    st_sub = compute_stagnant_lid_state(
+        radii=r_sub,
+        temperature=t_sub,
+        pressure=p_sub,
+        convective_flux=fc_sub,
+        total_flux=np.full(10, 0.10),
+        solidus_temperature=None,
+        melt_fraction=np.zeros(10),
+        params=SolidRheologyParams(
+            enabled=True,
+            interior_flux_fraction=0.05,
+            lid_base_mode='fixed',
+            lid_base_temperature=1999.9998,
+        ),
+        viscosity_solid=1.0e21,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert bool(st_sub['has_lid']) is False
+    assert 0.0 < float(st_sub['d_lid']) < float(st_sub['d_lid_raw'])

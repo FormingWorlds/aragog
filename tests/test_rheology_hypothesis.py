@@ -115,7 +115,7 @@ def valid_rheology_dict_strategy(draw: st.DrawFn) -> dict[str, Any]:
         ),
         'viscosity_max_log10': draw(
             st.floats(
-                min_value=np.nextafter(20.0, np.inf),
+                min_value=np.nextafter(21.0, np.inf),
                 max_value=300.0,
                 allow_nan=False,
                 allow_infinity=False,
@@ -1736,3 +1736,73 @@ def test_hypothesis_smooth_rheology_blend_tails(
         )
     )
     assert eta_ceil == pytest.approx(10.0**vmax, rel=1.0e-12)
+
+
+@pytest.mark.unit
+@settings(max_examples=40, deadline=None)
+@given(
+    log10_vs=st.floats(min_value=15.0, max_value=35.0, allow_nan=False, allow_infinity=False),
+    delta_vmax=st.floats(min_value=0.2, max_value=20.0, allow_nan=False, allow_infinity=False),
+    f_thresh=st.floats(min_value=0.05, max_value=0.30, allow_nan=False, allow_infinity=False),
+)
+def test_hypothesis_wp4_viscosity_max_cross_field_and_fixed_lid_convecting_gate(
+    log10_vs: float, delta_vmax: float, f_thresh: float
+) -> None:
+    """Property test for viscosity_max_log10 > log10(viscosity_solid) and fixed-mode non-convective w_lid gate."""
+    from aragog.config.phases import PhaseConfig
+    from aragog.rheology import compute_arrhenius_viscosity
+
+    vs = 10.0**log10_vs
+    vmax_valid = max(20.1, min(300.0, log10_vs + delta_vmax))
+    if vmax_valid > log10_vs:
+        eta_ok = compute_arrhenius_viscosity(
+            1600.0, 0.0, viscosity_solid=vs, viscosity_max_log10=vmax_valid
+        )
+        assert np.isfinite(eta_ok) and eta_ok > 0.0
+
+    vmax_bad = max(20.1, min(300.0, log10_vs - delta_vmax))
+    if vmax_bad <= log10_vs:
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
+            compute_arrhenius_viscosity(
+                1600.0, 0.0, viscosity_solid=vs, viscosity_max_log10=vmax_bad
+            )
+        with pytest.raises(ValueError, match='viscosity_max_log10'):
+            PhaseConfig(
+                density=4000.0,
+                heat_capacity=1000.0,
+                melt_fraction=0.0,
+                thermal_conductivity=4.0,
+                thermal_expansivity=3.0e-5,
+                viscosity=vs,
+                rheology=SolidRheologyParams(enabled=True, viscosity_max_log10=vmax_bad),
+            )
+
+    # Fixed lid-base mode: every node with f_k >= f_thresh + 0.2 * f_thresh has w_lid[k] == 0.0.
+    n = 20
+    r = np.linspace(3.48e6, 6.371e6, n)
+    p = np.linspace(135.0e9, 1.0e5, n)
+    t = np.full(n, 1400.0)
+    t[-4:] = np.linspace(1400.0, 300.0, 4)
+    ft = np.ones(n)
+    fc = np.full(n, min(1.0, f_thresh * 1.25 + 1.0e-3))
+    fc[-4:] = 0.0
+    st = compute_stagnant_lid_state(
+        radii=r,
+        temperature=t,
+        pressure=p,
+        convective_flux=fc,
+        total_flux=ft,
+        solidus_temperature=None,
+        melt_fraction=np.zeros(n),
+        params=SolidRheologyParams(
+            enabled=True,
+            lid_base_mode='fixed',
+            lid_base_temperature=2000.0,
+            interior_flux_fraction=f_thresh,
+        ),
+        viscosity_solid=1.0e20,
+        phi_rheo=0.4,
+        phi_width=0.15,
+        xp=np,
+    )
+    assert np.all(np.asarray(st['w_lid'])[:-4] == 0.0)

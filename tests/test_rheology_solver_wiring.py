@@ -1545,12 +1545,15 @@ def test_a2_2_rhs_numpy_jax_parity_rheology_on(validation_plot) -> None:
     s_def = 2700.0 - 600.0 * (0.2 * xi_var + 0.8 * xi_var**4)
     rhs_def_np_on = sol_def_on.dSdt(0.0, s_def)
     rhs_def_np_off = sol_def_off.dSdt(0.0, s_def)
-    np.testing.assert_allclose(rhs_def_np_on, rhs_def_np_off, rtol=1.0e-14, atol=0.0)
     _, _, _, args_def_on = _build_jax_bundle(sol_def_on)
     _, _, _, args_def_off = _build_jax_bundle(sol_def_off)
     rhs_def_jax_on = np.asarray(dSdt(0.0, jnp.asarray(s_def), args_def_on))
     rhs_def_jax_off = np.asarray(dSdt(0.0, jnp.asarray(s_def), args_def_off))
-    np.testing.assert_allclose(rhs_def_jax_on, rhs_def_jax_off, rtol=1.0e-14, atol=0.0)
+    denom_def_on = float(np.max(np.abs(rhs_def_np_on)))
+    denom_def_off = float(np.max(np.abs(rhs_def_np_off)))
+    assert float(np.max(np.abs(rhs_def_np_on - rhs_def_jax_on)) / denom_def_on) <= 1.0e-13
+    assert float(np.max(np.abs(rhs_def_np_off - rhs_def_jax_off)) / denom_def_off) <= 1.0e-13
+    assert float(np.max(np.abs(rhs_def_np_on - rhs_def_np_off))) > 1.0e-4
 
     def figure():
         import matplotlib.pyplot as plt
@@ -1748,3 +1751,99 @@ def test_a2_4_rhs_call_counts_and_cost(validation_plot) -> None:
         return fig
 
     validation_plot(figure, 'ssc_a2_4_rhs_cost')
+
+
+@pytest.mark.unit
+@pytest.mark.physics_invariant
+def test_wp4_solver_tau_d_lid_and_zero_anchored_eddy_floor_and_invariants():
+    """Verify solver passes tau_d_lid in lid mode, zero-anchors eddy floor at widths 0.15 and 0.20, and checks lid invariants."""
+    from aragog.utilities import tanh_weight
+
+    # 1. Zero-anchored eddy-diffusivity floor at widths 0.15 (Aragog default) and 0.20 (PROTEUS rfront_wid default).
+    for width in (0.15, 0.20):
+        rheo_on = SolidRheologyParams(
+            enabled=True,
+            stress_closure_mode='lid',
+            yield_stress_c=1.0e9,
+            yield_stress_mu=0.6,
+            yield_stress_max=1.0e10,
+        )
+        params_on = _make_abe_solid_params(rheo_on, number_of_nodes=20)
+        params_on.phase_mixed.rheological_transition_width = width
+        params_on.energy.kappah_floor = 100.0
+        solver_on = _make_solver(params_on)
+        s_solid = _make_solid_profile(solver_on)
+        solver_on.state.update(s_solid, 0.0)
+        phi_basic = np.asarray(solver_on.state.phase_basic.melt_fraction(), dtype=float)
+        assert np.all(phi_basic == 0.0)
+
+        # Compare against kappah_floor = 0.0: at phi == 0, zero-anchored floor adds 0.0.
+        params_no_floor = _make_abe_solid_params(rheo_on, number_of_nodes=20)
+        params_no_floor.phase_mixed.rheological_transition_width = width
+        params_no_floor.energy.kappah_floor = 0.0
+        solver_no_floor = _make_solver(params_no_floor)
+        solver_no_floor.state.update(s_solid, 0.0)
+        np.testing.assert_allclose(
+            solver_on.state._eddy_diffusivity,
+            solver_no_floor.state._eddy_diffusivity,
+            rtol=1.0e-14,
+            atol=0.0,
+        )
+
+        # JAX compute_fluxes parity at phi == 0 with floor = 100 vs floor = 0.
+        mesh_on, eos_on, p_jax_on, _ = _build_jax_bundle(solver_on)
+        mesh_nf, eos_nf, p_jax_nf, _ = _build_jax_bundle(solver_no_floor)
+        h_zero = jnp.zeros(solver_on._n_stag, dtype=jnp.float64)
+        fl_on = compute_fluxes(jnp.asarray(s_solid), 0.0, eos_on, p_jax_on, mesh_on, h_zero)
+        fl_nf = compute_fluxes(jnp.asarray(s_solid), 0.0, eos_nf, p_jax_nf, mesh_nf, h_zero)
+        np.testing.assert_allclose(
+            np.asarray(fl_on.eddy_diffusivity),
+            np.asarray(fl_nf.eddy_diffusivity),
+            rtol=1.0e-14,
+            atol=0.0,
+        )
+
+        # Disabled mode preserves the un-anchored tanh_weight(0.0, 0.4, width) > 0 floor.
+        f_unanchored_0 = float(tanh_weight(0.0, 0.4, width))
+        assert f_unanchored_0 > 0.004
+
+    # 2. Solver passes tau_d_lid (not tau_d) to _compute_effective_viscosity_core in lid mode.
+    rheo_base = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        yield_stress_c=1.0e9,
+        yield_stress_mu=0.0,
+        yield_stress_max=1.0e9,
+    )
+    solver_base = _make_solver(_make_abe_solid_params(rheo_base, number_of_nodes=20))
+    s_prof = _make_solid_profile(solver_base)
+    solver_base.state.update(s_prof, 0.0)
+    lid_base = solver_base.state._lid_state
+    assert lid_base is not None
+    tau_d_val = float(lid_base['tau_d'])
+    tau_d_lid_val = float(lid_base['tau_d_lid'])
+    assert tau_d_lid_val > tau_d_val * 1.3
+
+    # Choose tau_y strictly between tau_d and tau_d_lid: yielding must activate under tau_d_lid!
+    tau_y_mid = 0.5 * (tau_d_val + tau_d_lid_val)
+    rheo_mid = SolidRheologyParams(
+        enabled=True,
+        stress_closure_mode='lid',
+        yield_stress_c=tau_y_mid,
+        yield_stress_mu=0.0,
+        yield_stress_max=tau_y_mid,
+    )
+    solver_mid = _make_solver(_make_abe_solid_params(rheo_mid, number_of_nodes=20))
+    solver_mid.state.update(s_prof, 0.0)
+    eta_diff = np.asarray(solver_mid.state.phase_basic.eta_diff(), dtype=float)
+    eta_eff = np.asarray(solver_mid.state._eta_eff_basic, dtype=float)
+    assert np.any(eta_eff < eta_diff * 0.99)
+
+    # 3. _check_rheology_invariants enforces 0 <= d_lid <= mantle_thickness.
+    solver_mid._check_rheology_invariants()
+    solver_mid.state._lid_state['d_lid'] = -1.0
+    with pytest.raises(RuntimeError, match='d_lid'):
+        solver_mid._check_rheology_invariants()
+    solver_mid.state._lid_state['d_lid'] = 1.0e9
+    with pytest.raises(RuntimeError, match='d_lid'):
+        solver_mid._check_rheology_invariants()
