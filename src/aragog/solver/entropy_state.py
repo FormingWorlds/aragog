@@ -267,6 +267,7 @@ class EntropyState:
         self._last_reynolds = np.zeros(n_basic)
         self._eta_eff_basic = np.zeros(n_basic)
         self._lid_state: dict | None = None
+        self._time: float = 0.0
 
         # Per-component flux decomposition at basic nodes for diagnostic
         # output. These mirror the accumulations into ``_heat_flux`` below
@@ -514,6 +515,8 @@ class EntropyState:
 
         S = np.asarray(entropy).ravel()
         self._entropy_staggered = S
+        t_arr = np.asarray(time, dtype=float)
+        self._time = float(t_arr.flat[0]) if t_arr.size > 0 else 0.0
         if entropy_basic is not None:
             self._entropy_basic = np.asarray(entropy_basic).ravel()
         else:
