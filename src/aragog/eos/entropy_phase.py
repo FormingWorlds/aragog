@@ -226,8 +226,12 @@ class EntropyPhaseEvaluator:
 
         Two modes:
         - const_properties=True: analytical T(S) with constant rho, Cp,
-          alpha, k, visc. Matches SPIDER's -use_const_properties. No EOS
-          table lookups. phi=1 always (no phase transitions).
+          alpha, k. Matches SPIDER's -use_const_properties. No EOS
+          table lookups. When ``rheology.enabled`` is False, ``phi = 1``
+          (liquid) with constant viscosity ``10**const_log10visc``; when
+          ``rheology.enabled`` is True, ``phi = 0`` (solid) and the
+          viscosity is the Arrhenius solid viscosity
+          (``const_log10visc`` is not used).
         - const_properties=False (default): single-pass EOS evaluation
           mirroring SPIDER's EOSEval_Composite_TwoPhase.
         """
@@ -238,8 +242,11 @@ class EntropyPhaseEvaluator:
     def _update_const(self) -> None:
         """Constant-properties mode matching SPIDER -use_const_properties.
 
-        T = T_ref * exp((S - S_ref) / Cp). All other properties constant.
-        No EOS tables, no phase transitions (phi=1 always).
+        T = T_ref * exp((S - S_ref) / Cp). All other properties constant
+        except when ``rheology.enabled`` is True, where ``phi = 0`` (solid)
+        and viscosity is the Arrhenius solid viscosity (``const_log10visc``
+        is not used); when ``rheology.enabled`` is False, ``phi = 1`` with
+        constant viscosity ``10**const_log10visc``.
         """
         S = np.atleast_1d(np.asarray(self.entropy, dtype=float))
 
@@ -727,7 +734,11 @@ class EntropyPhaseEvaluator:
         where ``rho_s <= rho_l``: test the sign of the contrast first.
         """
         if self._const_properties:
-            return np.ones_like(self._density)
+            return (
+                np.zeros_like(self._density)
+                if self._rheology.enabled
+                else np.ones_like(self._density)
+            )
         return self._porosity_from(*self.phase_boundary_densities())
 
     def _porosity_from(self, rho_s: FloatOrArray, rho_l: FloatOrArray) -> FloatOrArray:

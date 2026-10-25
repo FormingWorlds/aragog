@@ -1079,7 +1079,12 @@ def compute_effective_viscosity(
 
     In local stress closure mode, ``eta_y = max(tau_y, COHESION_FLOOR) / (2 * sr_safe)``
     with ``sr_safe = sqrt(strain_rate**2 + LOCAL_STRAIN_RATE_FLOOR**2)`` and
-    smooth log10 softplus cap of width ``LOCAL_CAP_LOG10_WIDTH`` (0.01).
+    smooth log10 softplus cap of width ``LOCAL_CAP_LOG10_WIDTH`` (0.01). In the
+    two-pass mixing-length solver, where the pass-1 viscous buoyancy stress
+    ``tau_buoy,1 = eta_diff * |v_visc,1| / l_v`` is independent of ``eta_diff``,
+    yielding in ``'local'`` mode lowers ``eta_eff`` by ``tau_y / tau_buoy,1`` so
+    pass 2 scales the viscous velocity and eddy diffusivity by
+    ``tau_buoy,1 / tau_y``; it is not a stress cap.
 
     Raises
     ------
