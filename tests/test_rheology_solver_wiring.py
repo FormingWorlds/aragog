@@ -2817,3 +2817,106 @@ def test_arrhenius_reference_viscosity_ci_table_vs_linear_solidus() -> None:
     )
     assert eta_ci == pytest.approx(expected_ci, rel=1.0e-14, abs=0.0)
     assert eta_ci == pytest.approx(1.8459e21, rel=1.0e-4, abs=0.0)
+
+
+def test_check_rheology_invariants_enforces_eos_entropy_range_and_stops_table_excursion() -> (
+    None
+):
+    """_check_rheology_invariants requires every accepted state's entropy S to lie inside
+    [S_min, S_max] of the loaded EOS table (raising RuntimeError naming node, time, and S),
+    and stops the radiative cooling case (abe_solid.toml, T_eqm = 273 K) at 17 to 18 kyr."""
+    import re
+
+    from aragog.solver.cvode_jax import build_jax_rhs_and_jacobian
+
+    rheo = SolidRheologyParams(enabled=True, stress_closure_mode='lid')
+    params_20 = _make_abe_solid_params(rheo, number_of_nodes=20)
+    solver_20 = _make_solver(params_20)
+    eos = solver_20.entropy_eos
+    assert eos is not None
+    s_min = float(eos.S_min)
+    s_max = float(eos.S_max)
+
+    s_good = _make_solid_profile(solver_20)
+    solver_20.state.update(s_good, 100.0)
+    solver_20._check_rheology_invariants()
+
+    # 1. Direct state check below S_min names node, time, and S
+    s_below = s_good.copy()
+    s_below[14] = s_min - 10.0
+    solver_20.state.update(s_below, 1234.5)
+    with pytest.raises(RuntimeError) as exc_below:
+        solver_20._check_rheology_invariants()
+    msg_below = str(exc_below.value)
+    assert 'node 14' in msg_below
+    assert '1.234500e+03' in msg_below
+    assert f'{s_min - 10.0:.6f}' in msg_below
+
+    # 2. Direct state check above S_max names node, time, and S
+    s_above = s_good.copy()
+    s_above[7] = s_max + 25.0
+    solver_20.state.update(s_above, 5678.0)
+    with pytest.raises(RuntimeError) as exc_above:
+        solver_20._check_rheology_invariants()
+    msg_above = str(exc_above.value)
+    assert 'node 7' in msg_above
+    assert '5.678000e+03' in msg_above
+    assert f'{s_max + 25.0:.6f}' in msg_above
+
+    # 3. Trace check catches an intermediate accepted column outside [S_min, S_max]
+    trace_y = np.column_stack([s_good, s_good, s_good])
+    trace_y[11, 1] = s_min - 5.0
+    trace_t = np.array([0.0, 42.0, 100.0])
+    with pytest.raises(RuntimeError) as exc_trace:
+        solver_20._check_rheology_invariants(trace_y, trace_t)
+    msg_trace = str(exc_trace.value)
+    assert 'step 1' in msg_trace
+    assert 'node 11' in msg_trace
+    assert '4.200000e+01' in msg_trace
+
+    # 4. Radiative cooling case (cfg/abe_solid.toml at (0.25, 0.25), T_eqm = 273 K)
+    # stops at ~17 to 18 kyr when top staggered node 98 crosses below S_min.
+    with importlib.resources.as_file(
+        importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
+    ) as p:
+        base_abe = Parameters.from_file(p)
+    rheo_cool = SolidRheologyParams(enabled=True, s_top_inf=0.25, c_theta=0.25)
+    params_cool = replace(
+        base_abe,
+        energy=replace(base_abe.energy, use_jax_jacobian=True),
+        solver=replace(base_abe.solver, end_time=1.0e6),
+        phase_solid=replace(base_abe.phase_solid, rheology=rheo_cool),
+    )
+    solver_cool = _make_solver(params_cool, identity_alpha=False)
+    solver_cool.set_initial_entropy(2900.0)
+    mesh_jax, eos_jax, pp, dSdt_args = _build_jax_bundle(solver_cool)
+    bc_jax = dSdt_args[3]
+    heating_arr = np.zeros(solver_cool._n_stag, dtype=float)
+
+    def _factory(scales, core_bc_mode):
+        rhs_fn, jac_fn, step_powers_fn = build_jax_rhs_and_jacobian(
+            eos_jax=eos_jax,
+            phase_params=pp,
+            mesh_arrays=mesh_jax,
+            boundary_params=bc_jax,
+            heating_array=heating_arr,
+            scales=scales,
+            core_bc_mode=core_bc_mode,
+        )
+        solver_cool._cvode_step_powers_batch = step_powers_fn
+        return rhs_fn, jac_fn
+
+    solver_cool.set_jax_cvode_factory(_factory, phase_params=pp)
+    with pytest.raises(RuntimeError) as exc_cool:
+        solver_cool.solve()
+    msg_cool = str(exc_cool.value)
+    assert 'node 98' in msg_cool
+    m_time = re.search(r't=([0-9.eE+-]+)\s*yr', msg_cool)
+    assert m_time is not None, f'Expected time in error message, got: {msg_cool}'
+    t_fail_yr = float(m_time.group(1))
+    assert 1.7e4 <= t_fail_yr <= 1.85e4
+    m_s = re.search(r'S=([0-9.eE+-]+)\s*J/\(kg K\)', msg_cool)
+    assert m_s is not None, f'Expected entropy S in error message, got: {msg_cool}'
+    s_fail = float(m_s.group(1))
+    assert s_fail < s_min
+    assert 1.7e4 <= float(solver_cool._solution.t[-1]) <= 1.85e4
