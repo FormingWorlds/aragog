@@ -19,6 +19,7 @@ import copy
 import functools
 import importlib.resources
 import json
+import subprocess
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -905,6 +906,26 @@ def test_rheology_off_preserves_main_bitwise_rhs_and_solve() -> None:
 
     ref_path = Path(__file__).parent / 'reference' / 'rheology_off_main_reference.npz'
     ref = np.load(ref_path)
+
+    assert 'source_commit' in ref, 'rheology_off_main_reference.npz must record source_commit'
+    source_commit = str(ref['source_commit']).strip()
+    assert len(source_commit) == 40, f'Invalid commit SHA: {source_commit}'
+
+    proc_ancestor = subprocess.run(
+        ['git', 'merge-base', '--is-ancestor', source_commit, 'origin/main'],
+        cwd=Path(__file__).parent,
+        capture_output=True,
+    )
+    if proc_ancestor.returncode != 0:
+        proc_mb = subprocess.run(
+            ['git', 'merge-base', 'HEAD', 'origin/main'],
+            cwd=Path(__file__).parent,
+            capture_output=True,
+            text=True,
+        )
+        assert proc_mb.returncode == 0 and proc_mb.stdout.strip() == source_commit, (
+            f'Stored commit {source_commit} is not an ancestor of origin/main or equal to merge base'
+        )
 
     with importlib.resources.as_file(
         importlib.resources.files('aragog').joinpath('cfg/abe_solid.toml')
