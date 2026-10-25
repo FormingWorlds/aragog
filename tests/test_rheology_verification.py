@@ -4462,7 +4462,7 @@ def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> N
     def figure():
         import matplotlib.pyplot as plt
 
-        idx = np.unique(np.append(np.arange(0, len(t_yr), 24), len(t_yr) - 1))
+        idx = np.unique(np.append(np.arange(0, len(t_yr), 16), len(t_yr) - 1))
         t_gyr = t_yr[idx] / 1.0e9
         order = [
             'below_0p1x_tau_d_lid',
@@ -4483,49 +4483,60 @@ def test_a6_1_0d_stagnant_lid_reference_and_yield_thinning(validation_plot) -> N
                 'xtick.labelsize': 8,
                 'ytick.labelsize': 8,
                 'legend.fontsize': 6.5,
+                'legend.title_fontsize': 6.5,
                 'axes.grid': False,
             }
         )
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.8, 3.0))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.4, 3.9))
         ax1b = ax1.twinx()
+        ax1b.spines['right'].set_visible(True)
+        cyc = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-        l1 = ax1.plot(t_gyr, ti_1d[idx], '-', label='1-D T_i')
-        l2 = ax1.plot(t_gyr, ti_0d_pinned[idx], '--', label='0-D T_i')
-        l3 = ax1b.plot(t_gyr, dlid_1d[idx] / 1.0e3, '-.', label='1-D d_lid')
-        l4 = ax1b.plot(t_gyr, dlid_0d_pinned[idx] / 1.0e3, ':', label='0-D d_lid')
+        l1 = ax1.plot(t_gyr, ti_1d[idx], '-', color=cyc[0], label='1D T_i')
+        l2 = ax1.plot(t_gyr, ti_0d_pinned[idx], '--', color=cyc[1], label='0D T_i')
+        l3 = ax1b.plot(t_gyr, dlid_1d[idx] / 1.0e3, '-.', color=cyc[4], label='1D d_lid')
+        l4 = ax1b.plot(t_gyr, dlid_0d_pinned[idx] / 1.0e3, ':', color=cyc[2], label='0D d_lid')
         ax1.set(
             xlabel='(a) t [Gyr]',
             ylabel='T_i [K]',
             xlim=(0.0, 4.5),
+            ylim=(1200, 1850),
             xticks=[0, 2, 4],
             yticks=[1200, 1800],
         )
         ax1b.set(
             ylabel='d_lid [km]',
+            ylim=(0, 950),
             yticks=[0, 400, 800],
         )
         lines = l1 + l2 + l3 + l4
-        ax1.legend(lines, [ln.get_label() for ln in lines], loc='center right')
+        ax1.legend(
+            lines,
+            [ln.get_label() for ln in lines],
+            loc='upper center',
+            bbox_to_anchor=(0.5, -0.24),
+            ncol=2,
+        )
 
         ax2.plot(log_mult, r_p1_fh, '-', label='isotherm lid, fixed heating')
         ax2.plot(log_mult, r_p1_mt, '--', label='isotherm lid, matched T_i')
-        ax2.plot(log_mult, r_cd_fh, '-.', label='conductive lid, fixed heating')
-        ax2.plot(
-            log_mult,
-            r_cd_mt,
-            ':',
-            label='conductive lid (diagnostic chosen after the result), matched T_i',
-        )
-        ax2.plot(log_mult, r_0d, '-', label='0-D cube-root law')
+        ax2.plot(log_mult, r_cd_fh, '-.', label='conductive lid*, fixed heating')
+        ax2.plot(log_mult, r_cd_mt, ':', label='conductive lid*, matched T_i')
+        ax2.plot(log_mult, r_0d, '-', label='0D cube-root law')
         ax2.set(
-            xlabel='(b) log10(tau_y/tau_d) [-]',
-            ylabel='R_thin [-]',
+            xlabel='(b) log10(tau_y/tau_d)',
+            ylabel='R_thin',
+            ylim=(0.35, 2.05),
             xticks=[-1, 0],
             yticks=[0.5, 1, 2],
         )
-        ax2.legend(loc='upper right')
+        ax2.legend(
+            loc='upper center',
+            bbox_to_anchor=(0.5, -0.24),
+            title='* diagnostic chosen after the result',
+        )
 
-        fig.tight_layout()
+        fig.subplots_adjust(left=0.09, right=0.97, top=0.95, bottom=0.42, wspace=0.42)
         return fig
 
     validation_plot(figure, 'ssc_a6_1_0d_reference_comparison')
