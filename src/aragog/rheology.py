@@ -400,15 +400,14 @@ def viscous_mixing_length_factor(
             )
         if rin_finite and rout_finite:
             tol = max(1.0, 1.0e-9 * (float(rout_val) - float(rin_val)))
-            finite_r = r_arr[np.isfinite(r_arr)]
-            if np.any((finite_r < float(rin_val) - tol) | (finite_r > float(rout_val) + tol)):
+            if np.any((r_arr < float(rin_val) - tol) | (r_arr > float(rout_val) + tol)):
                 raise ValueError(
                     f'radii must lie within [r_in, r_out], got radii outside [{r_in}, {r_out}]'
                 )
     else:
         tol = xp.maximum(1.0, 1.0e-9 * (rout_val - rin_val))
         domain_bad = (rin_val >= rout_val) | xp.any(
-            xp.isfinite(r_arr) & ((r_arr < rin_val - tol) | (r_arr > rout_val + tol))
+            (r_arr < rin_val - tol) | (r_arr > rout_val + tol)
         )
         invalid = invalid | domain_bad
 
