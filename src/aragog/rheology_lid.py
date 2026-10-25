@@ -296,6 +296,9 @@ def compute_stagnant_lid_state(
         returns 0.0 in non-lid columns, and ``tau_d_lid / tau_d = d_conv / d_geom``
         is bounded above by ``d_conv / max(delta_rh, dr_top)`` on incipient lids).
         ``has_lid`` is False when any input is NaN while numeric diagnostics propagate NaN.
+        ``P_T_i`` and ``r_i`` are diagnostics, evaluated on the geotherm for a
+        monotone ``T`` profile and as the ``W_tilde`` mean otherwise, and the
+        two can differ by tens of GPa (no solver term reads them).
 
     Raises
     ------
