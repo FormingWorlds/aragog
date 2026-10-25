@@ -485,10 +485,14 @@ def compute_arrhenius_enthalpy(
         xp,
     )
     p = _clamp_pressure(pressure, xp)
+    p_safe = xp.where((p >= 0.0) & xp.isfinite(p), p, 0.0)
     if solidus_temperature is not None:
-        t_sol = xp.asarray(solidus_temperature, dtype=float) + xp.zeros_like(p)
+        ts_arr = xp.asarray(solidus_temperature, dtype=float)
+        t_sol = xp.where((ts_arr > 0.0) & xp.isfinite(ts_arr), ts_arr, 1.0) + xp.zeros_like(
+            p_safe
+        )
     else:
-        t_sol = t_sol_0_eff + dt_sol_dp_eff * p
+        t_sol = t_sol_0_eff + dt_sol_dp_eff * p_safe
     g_arr = xp.asarray(g_hom_eff, dtype=float)
     h = xp.where(invalid, xp.nan, g_arr * r_gas * t_sol)
     return _unwrap_scalar(h, xp, pressure, solidus_temperature)
@@ -628,10 +632,11 @@ def compute_arrhenius_viscosity(
     h_0 = g_arr * r_gas * t_sol_ref_0
 
     # Safe operands keep jax.grad finite at nodes the invalid mask sets to NaN.
-    t_safe = xp.where(t > 0.0, t, 1.0)
-    t_ref_safe = xp.where(t_ref_arr > 0.0, t_ref_arr, 1.0)
-    wp_pos = xp.where(wp > 0.0, wp, 1.0)
-    exponent = h_p / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
+    t_safe = xp.where((t > 0.0) & xp.isfinite(t), t, 1.0)
+    t_ref_safe = xp.where((t_ref_arr > 0.0) & xp.isfinite(t_ref_arr), t_ref_arr, 1.0)
+    wp_pos = xp.where((wp > 0.0) & xp.isfinite(wp), wp, 1.0)
+    h_p_safe = xp.where(xp.isfinite(h_p), h_p, 0.0)
+    exponent = h_p_safe / (r_gas * t_safe) - h_0 / (r_gas * t_ref_safe) + xp.log(wp_pos)
 
     vs_pos = xp.where((vs > 0.0) & xp.isfinite(vs), vs, 1.0)
     # Prevent float64 underflow to zero when viscosity_solid is small.
