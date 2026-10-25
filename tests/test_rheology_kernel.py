@@ -1132,22 +1132,95 @@ def test_required_rheology_inputs_reject_none():
     with pytest.raises(ValueError, match='mixing_length'):
         compute_strain_rate_local(1.0e-3, None)
 
+    with pytest.raises(ValueError, match='eta_diff'):
+        compute_effective_viscosity(
+            None, stress_closure_mode='lid', eta_i=1.0e20, tau_d=1.0e7, tau_y_lid=1.0e8
+        )
+
+    with pytest.raises(ValueError, match='eta_diff'):
+        compute_effective_viscosity(
+            None,
+            stress_closure_mode='local',
+            tau_y_profile=1.0e8,
+            mixing_length=1.0e5,
+            unyielded_velocity=1.0e-3,
+        )
+
+    r_test = np.linspace(3.48e6, 6.371e6, 11)
+    ones11 = np.ones(11)
+    base_lid_kwargs = {
+        'radii': r_test,
+        'temperature': ones11 * 1600.0,
+        'pressure': ones11 * 1.0e9,
+        'convective_flux': ones11 * 0.1,
+        'total_flux': ones11 * 0.1,
+        'solidus_temperature': None,
+        'melt_fraction': ones11 * 0.0,
+        'params': SolidRheologyParams(),
+        'viscosity_solid': 1.0e20,
+        'phi_rheo': 0.4,
+        'phi_width': 0.05,
+    }
+    for field in ('temperature', 'pressure', 'convective_flux', 'total_flux', 'melt_fraction'):
+        with pytest.raises(ValueError, match=field):
+            compute_stagnant_lid_state(**{**base_lid_kwargs, field: None})
+
 
 @pytest.mark.unit
 def test_viscous_mixing_length_factor_domain_checks():
     """Verify viscous_mixing_length_factor rejects r_in >= r_out and radii outside [r_in, r_out]."""
+    jax = pytest.importorskip('jax')
+    jax.config.update('jax_enable_x64', True)
+    jnp = pytest.importorskip('jax.numpy')
+
     r_valid = np.linspace(1.0e6, 3.0e6, 5)
     ml_valid = np.ones(5) * 1.0e5
 
-    with pytest.raises(ValueError, match='r_in'):
+    with pytest.raises(ValueError, match='strictly less than'):
         viscous_mixing_length_factor(r_valid, 3.0e6, 1.0e6, ml_valid, xp=np)
 
-    with pytest.raises(ValueError, match='r_in'):
+    with pytest.raises(ValueError, match='strictly less than'):
         viscous_mixing_length_factor(r_valid, 2.0e6, 2.0e6, ml_valid, xp=np)
 
     # Test r_in == r_out where radii is within [r_in, r_out] so only r_in >= r_out triggers
-    with pytest.raises(ValueError, match='r_in'):
+    with pytest.raises(ValueError, match='strictly less than'):
         viscous_mixing_length_factor(np.array([2.0e6]), 2.0e6, 2.0e6, np.array([1.0e5]), xp=np)
+
+    # NaN radius with finite radii outside [r_in, r_out] must still raise ValueError on np
+    with pytest.raises(ValueError, match='radii'):
+        viscous_mixing_length_factor(
+            np.array([np.nan, 4.0e6, 9.0e6]), 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np
+        )
+
+    # NaN radius with all finite radii inside [r_in, r_out] does not raise on np
+    res_nan_inside = viscous_mixing_length_factor(
+        np.array([np.nan, 4.0e6, 5.0e6]), 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np
+    )
+    assert np.isnan(res_nan_inside[0])
+    assert np.all(np.isfinite(res_nan_inside[1:]))
+
+    # Radius tolerance: repo mesh rule max(1 m, 1e-9 span)
+    span = 3.0e6
+    tol = max(1.0, 1.0e-9 * span)  # 1.0 m
+    # 0.5 * tol excursion must pass on NumPy and JAX
+    r_excursion_pass = np.array([3.0e6 - 0.5 * tol, 4.5e6, 6.0e6 + 0.5 * tol])
+    out_pass_np = viscous_mixing_length_factor(
+        r_excursion_pass, 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np
+    )
+    assert np.all(np.isfinite(out_pass_np))
+    out_pass_jax = viscous_mixing_length_factor(
+        jnp.asarray(r_excursion_pass), 3.0e6, 6.0e6, jnp.ones(3) * 1.0e5, xp=jnp
+    )
+    assert bool(jnp.all(jnp.isfinite(out_pass_jax)))
+
+    # 2.0 * tol excursion must raise on NumPy and evaluate to all NaN on JAX
+    r_excursion_fail = np.array([3.0e6 - 2.0 * tol, 4.5e6, 6.0e6])
+    with pytest.raises(ValueError, match='radii'):
+        viscous_mixing_length_factor(r_excursion_fail, 3.0e6, 6.0e6, np.ones(3) * 1.0e5, xp=np)
+    out_fail_jax = viscous_mixing_length_factor(
+        jnp.asarray(r_excursion_fail), 3.0e6, 6.0e6, jnp.ones(3) * 1.0e5, xp=jnp
+    )
+    assert bool(jnp.all(jnp.isnan(out_fail_jax)))
 
     r_bad_low = np.array([0.5e6, 2.0e6])
     with pytest.raises(ValueError, match='radii'):
@@ -1184,6 +1257,31 @@ def test_viscous_mixing_length_factor_jax_domain_checks():
     res4 = viscous_mixing_length_factor(jnp.array([3.5e6]), 1.0e6, 3.0e6, ml, xp=jnp)
     assert bool(jnp.all(jnp.isnan(res4)))
 
+    # 5. [nan, inside, outside] evaluates to all NaN
+    res5 = viscous_mixing_length_factor(
+        jnp.array([jnp.nan, 2.0e6, 3.5e6]), 1.0e6, 3.0e6, jnp.ones(3) * 1.0e5, xp=jnp
+    )
+    assert bool(jnp.all(jnp.isnan(res5)))
+
+    # 6. [nan, inside, inside] has only node 0 NaN
+    res6 = viscous_mixing_length_factor(
+        jnp.array([jnp.nan, 2.0e6, 2.5e6]), 1.0e6, 3.0e6, jnp.ones(3) * 1.0e5, xp=jnp
+    )
+    assert bool(jnp.isnan(res6[0]))
+    assert bool(jnp.all(jnp.isfinite(res6[1:])))
+
+    # Valid 3-node case including both endpoints (r_in, midpoint, r_out)
+    r_valid3 = np.array([1.0e6, 2.0e6, 3.0e6])
+    ml3 = np.array([1.0e5, 1.0e5, 1.0e5])
+    out_np3 = viscous_mixing_length_factor(r_valid3, 1.0e6, 3.0e6, ml3, xp=np)
+    out_jax3 = np.asarray(
+        viscous_mixing_length_factor(
+            jnp.asarray(r_valid3), 1.0e6, 3.0e6, jnp.asarray(ml3), xp=jnp
+        )
+    )
+    assert np.all(np.isfinite(out_jax3))
+    np.testing.assert_allclose(out_jax3, out_np3, rtol=1.0e-12)
+
     # Verify identical behaviour under jax.jit
     jit_fn = jax.jit(
         lambda r, rin, rout, m: viscous_mixing_length_factor(r, rin, rout, m, xp=jnp)
@@ -1192,6 +1290,9 @@ def test_viscous_mixing_length_factor_jax_domain_checks():
     assert bool(jnp.all(jnp.isnan(jit_fn(r_valid, 2.0e6, 2.0e6, ml))))
     assert bool(jnp.all(jnp.isnan(jit_fn(jnp.array([0.5e6]), 1.0e6, 3.0e6, ml))))
     assert bool(jnp.all(jnp.isnan(jit_fn(jnp.array([3.5e6]), 1.0e6, 3.0e6, ml))))
+    out_jit3 = np.asarray(jit_fn(jnp.asarray(r_valid3), 1.0e6, 3.0e6, jnp.asarray(ml3)))
+    assert np.all(np.isfinite(out_jit3))
+    np.testing.assert_allclose(out_jit3, out_np3, rtol=1.0e-12)
 
 
 @pytest.mark.unit
